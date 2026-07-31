@@ -36,8 +36,20 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 #
 # 所以现在按语法穷举三种形式：双引号 / 单引号 / 无引号（值不含空白与 " \' ` = < >）。
 # 这是 HTML 属性值的全部合法写法，不再是「我想到的那几种」。
+# 属性名与标签名在 HTML 里是 ASCII 大小写不敏感的，故名字部分一律 (?i:)；
+# **属性值不套 (?i:)**——class 值在标准模式下大小写敏感，CSS 的 `.emblem`
+# 本来就匹配不上 `class="EMBLEM"`，值上放宽反而会造假阳。
 EMBLEM_ATTR_RE = re.compile(
-    r"""data-emblem\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))""")
+    r"""(?i:data-emblem)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))""")
+
+
+def open_tag_re(tags, cls):
+    """构造「带某个 class 的开标签」正则：标签名/属性名不敏感，class 值敏感，
+    单双引号与无引号三种写法都认。"""
+    return re.compile(
+        r'<(?i:(%s))\b[^>]*(?i:class)\s*=\s*'
+        r'(?:"[^"]*\b%s\b[^"]*"|\'[^\']*\b%s\b[^\']*\'|%s(?=[\s/>]))'
+        r'[^>]*>' % (tags, cls, cls, cls))
 
 
 def emblem_value(m):
@@ -188,7 +200,7 @@ def _close_at(text, m):
     """
     tag = m.group(1)
     depth, i = 1, m.end()
-    pat = re.compile(r'</?%s\b' % tag)
+    pat = re.compile(r'</?(?i:%s)\b' % re.escape(tag))
     while depth and (nxt := pat.search(text, i)):
         depth += -1 if nxt.group(0).startswith("</") else 1
         i = nxt.end()
@@ -200,7 +212,7 @@ def _masthead_block(text):
 
     两种产物的标签名不同（模板用 header，验收生成器用 div），故走同名标签配对。
     """
-    m = re.search(r'<(header|div)\b[^>]*class="[^"]*\bmasthead\b[^"]*"[^>]*>', text)
+    m = open_tag_re("header|div", "masthead").search(text)
     if not m:
         return None
     span = _close_at(text, m)
@@ -210,7 +222,7 @@ def _masthead_block(text):
 def _emblem_spans(block):
     """返回报头内所有 `.emblem` 包裹元素的 [起, 止) 区间（相对 block）。"""
     spans = []
-    for m in re.finditer(r'<(div|span)\b[^>]*class="[^"]*\bemblem\b[^"]*"[^>]*>', block):
+    for m in open_tag_re("div|span", "emblem").finditer(block):
         span = _close_at(block, m)
         if span:
             spans.append(span)
@@ -261,8 +273,8 @@ def check_svg_integrity(label, rel, kind, text):
     页面不报错，肉眼在 0.13 透明度下也未必看得出，属于典型的静默失效。
     """
     k = re.escape(kind)
-    m = re.search(r'<svg[^>]*data-emblem\s*=\s*(?:"%s"|\'%s\'|%s(?=[\s/>])).*?</svg>'
-                  % (k, k, k), text, re.S)
+    m = re.search(r'<(?i:svg)[^>]*(?i:data-emblem)\s*=\s*'
+                  r'(?:"%s"|\'%s\'|%s(?=[\s/>])).*?</(?i:svg)>' % (k, k, k), text, re.S)
     if not m:
         fail(f"{label}: {kind} 的 <svg> 标签不完整（截不出闭合片段）")
         return
@@ -302,7 +314,7 @@ def _media_block_spans(text):
     `}}` 连减两次，深度归零的位置一致）。
     """
     spans = []
-    for m in re.finditer(r'@media[^{]*', text):
+    for m in re.finditer(r'(?i:@media)[^{]*', text):
         i = m.end()
         # 跳到块的第一个 {
         while i < len(text) and text[i] != "{":
@@ -390,7 +402,9 @@ def cascade_value(bodies, prop):
     """
     found = []
     for b in bodies:
-        for m in re.finditer(r"(?:^|;)%s:([^;]+)" % re.escape(prop), b):
+        # CSS 属性名同样 ASCII 大小写不敏感：`POSITION:static` 浏览器照用，
+        # 而按小写字面匹配的判据看不见它。
+        for m in re.finditer(r"(?:^|;)(?i:%s):([^;]+)" % re.escape(prop), b):
             found.append(m.group(1).strip())
     return (found[-1] if found else None), found
 
@@ -473,8 +487,8 @@ CONTRACT_SHORTHANDS = re.compile(
 def reject_contract_shorthands(label, rel, rules, what):
     """契约元素的规则里不许出现能绕过长属性判据的简写。"""
     for r in rules:
-        for m in re.finditer(r"(?:^|;)([a-z-]+):", r["body"]):
-            prop = m.group(1)
+        for m in re.finditer(r"(?:^|;)([A-Za-z-]+):", r["body"]):
+            prop = m.group(1).lower()
             if CONTRACT_SHORTHANDS.match(prop):
                 fail(f"{label}({rel}): 规则 `{r['sel']}` 用了简写/逻辑属性 {prop!r}——"
                      f"它能在不写出长属性名的情况下推翻{what}的契约"
@@ -500,14 +514,14 @@ def check_foreground_stacking(label, rel, text):
         reject_contract_shorthands(label, rel, rules, f"报头前景 `.{cls}`")
         seen_pos = require_all_declarations(
             label, rel, rules, "position",
-            lambda v: v in POSITIONED,
+            lambda v: v.lower() in POSITIONED,
             f"报头前景 `.{cls}` 必须已定位，未定位元素的 z-index 不生效，刊徽会画到报头文字之上")
         if not seen_pos:
             fail(f"{label}({rel}): 报头前景 `.{cls}` 没有 position 声明——"
                  f"未定位元素的 z-index 不生效，刊徽会画到报头文字之上")
         seen_z = require_all_declarations(
             label, rel, rules, "z-index",
-            lambda v: bool(re.fullmatch(r"-?\d+", v)) and int(v) > 0,
+            lambda v: bool(re.fullmatch(r"-?\d+", v.strip())) and int(v) > 0,
             f"报头前景 `.{cls}` 的层级必须是整数且严格高于刊徽的 0，衬字水印才成立")
         if not seen_z:
             fail(f"{label}({rel}): 报头前景 `.{cls}` 没有 z-index 声明——"
@@ -529,7 +543,7 @@ def check_positioning_context(label, rel, text):
     reject_contract_shorthands(label, rel, rules, "报头定位上下文")
     seen = require_all_declarations(
         label, rel, rules, "position",
-        lambda v: v in POSITIONED,
+        lambda v: v.lower() in POSITIONED,
         "`.masthead` 必须是已定位元素，否则刊徽的 top/right 会相对页面级祖先解析，水印跑出报头")
     if not seen:
         fail(f"{label}({rel}): `.masthead` 没有任何 position 声明——"
@@ -586,7 +600,7 @@ def check_css_wiring(label, rel):
         ("z-index", "0", "衬字水印必须垫在刊名/期号之下，抬上去就成了盖住报头的贴纸"),
     ):
         seen = require_all_declarations(label, rel, rules, prop,
-                                        lambda v, w=want: v == w, why)
+                                        lambda v, w=want: v.lower() == w, why)
         if not seen:
             fail(f"{label}({rel}): .emblem 规则里没有 {prop} —— {why}")
 

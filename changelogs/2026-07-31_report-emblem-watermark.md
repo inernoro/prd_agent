@@ -28,3 +28,4 @@
 | fix | ci | 契约元素上拒收能绕过长属性判据的简写/逻辑属性（inset* / all / inline-size / block-size）：判据按长属性名精确取值，这些写法根本不进那条正则——`.emblem{inset:0}` 把桌面偏移改成 0、`all:initial` 把整份契约重置，守卫都判绿 |
 | fix | ci | data-emblem 属性正则允许等号两侧空白：HTML 允许 `data-emblem = "x"`，此前那枚水印在发现环节就消失 |
 | fix | ci | data-emblem 发现正则改为按 HTML 属性语法穷举三种合法写法（双引号/单引号/无引号），不再按「想得到的写法」枚举：该正则已被连续三轮指出收窄，回头对照语法自查又发现第四个维度——无引号值 `data-emblem=asteroid2` 同样合法且仍然漏 |
+| fix | ci | 刊徽守卫统一大小写口径：HTML 属性名/标签名、CSS 属性名/at 规则名、关键字值在规范里都是 ASCII 大小写不敏感，判据此前一律按小写字面匹配——DATA-EMBLEM="x"、.emblem{POSITION:static}、<SVG> 三种写法浏览器照用而守卫全绿；同时修好三种合法写法（大写标签、单引号 class 值、@MEDIA）此前会被误判为红的假阳 |
