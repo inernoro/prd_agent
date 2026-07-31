@@ -1,13 +1,13 @@
 ---
 name: acceptance-test-design
-version: 2.1.0
+version: 2.0.0
 description: 把需求、缺陷、PR、commit 或时间窗口转换为风险假设、影响面、融合用例和证据矩阵；先设计证明方法，再交给可用的测试或浏览器工具执行。触发词：/验收设计、验收测试设计、覆盖规划、融合测试。
 allowed-tools: Read Bash Glob Grep
 ---
 
 # 验收测试设计
 
-> 版本：v2.1.0 | 设计测试，不伪造执行结果
+> 版本：v2.0.0 | 设计测试，不伪造执行结果
 
 ## 目标
 
