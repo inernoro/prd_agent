@@ -3,7 +3,7 @@
 > 本文件是"下限基线"。任何功能/PR 验收**至少**满足本标准,才能声称"已验收"。
 > 主纲在 `SKILL.md`,本文件是按需加载的完整规则。项目无关,配置见 `acceptance.config.json`。
 >
-> **本标准实现"视觉测试协议 v1.0"**(固化自元 issue #605,见 `doc/rule.visual-testing-protocol.md`)。
+> **本标准实现"视觉测试协议 v1.0"**(固化自元 issue #605,见 `doc/rule.acceptance.ssot.md`)。
 > v1.0 相对 v0.1 的核心增量(均已落地 harness + 自测 10/10 通过):运行时错误自动捕获(§5.3)、
 > dark-only 双主题伪命令消除(§5.4)、可选过程视频(§5.5)、机读 `result.json`(§5.3)。
 

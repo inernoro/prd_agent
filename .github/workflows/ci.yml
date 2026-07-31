@@ -125,10 +125,10 @@ jobs:
         # 否则取到的就是刚推上去的自己，基线又变成跟自己比
         run: |
           if [ -n "${{ github.base_ref }}" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/base" || true
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/base"
           else
-            git fetch --no-tags --depth=2 origin "${{ github.event.before }}" || true
-            git update-ref refs/remotes/origin/base "${{ github.event.before }}" || true
+            git fetch --no-tags --depth=2 origin "${{ github.event.before }}"
+            git update-ref refs/remotes/origin/base "${{ github.event.before }}"
           fi
 
       - name: Doc reader-header ratchet

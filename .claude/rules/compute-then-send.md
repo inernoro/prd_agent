@@ -150,4 +150,4 @@ var resp = await sender.SendAsync(resolved, body, ct);
 ## 相关
 
 - `.claude/skills/llm-call-trace/SKILL.md` — 大模型调用链路排查 skill（从这次的血泪经验总结）
-- 对应详细设计：`doc/design.compute-then-send.md`（待补）
+- 对应详细设计尚未成文；判据与反面案例以本规则为准

@@ -106,9 +106,13 @@ def fence_delim(line: str) -> tuple[str, int] | None:
     return (m.group(1)[0], len(m.group(1))) if m else None
 
 
-def fence_closes(opener: tuple[str, int], candidate: tuple[str, int]) -> bool:
-    """同种定界符、且不短于开启行，才算闭合（CommonMark 规则）。"""
-    return candidate[0] == opener[0] and candidate[1] >= opener[1]
+def fence_closes(opener: tuple[str, int], candidate: tuple[str, int], info: str = "") -> bool:
+    """同种定界符、不短于开启行、且不带信息串，才算闭合（CommonMark 规则）。
+
+    ```not-a-close 这种带后缀的行在 Markdown 里仍在块内，判据若把它当闭合，
+    后面的实现代码就漏出块外不再计数、链接扫描也会伸进示例里。
+    """
+    return candidate[0] == opener[0] and candidate[1] >= opener[1] and not info.strip()
 
 
 def fence_lang(line: str) -> str:
@@ -139,7 +143,7 @@ def parse_header(text: str) -> dict[str, str]:
         line = raw.strip()
         # 代码块里的示例不算数 —— 否则「展示导读格式的模板文档」会自己骗过闸门
         delim = fence_delim(line)
-        if delim and (not in_fence or fence_closes(fence_kind, delim)):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(line))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
@@ -262,7 +266,7 @@ def scan_body(text: str) -> tuple[int, int]:
     for idx, raw in enumerate(lines):
         st = raw.strip()
         delim = fence_delim(st)
-        if delim and (not in_fence or fence_closes(fence_kind, delim)):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(st))):
             if not in_fence:
                 fence_kind = delim
                 in_fence, lang = True, fence_lang(st)
@@ -362,7 +366,7 @@ def body_lines(text: str):
     fence_kind: tuple[str, int] | None = None
     for idx, raw in enumerate(text.splitlines()):
         delim = fence_delim(raw)
-        if delim and (not in_fence or fence_closes(fence_kind, delim)):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(raw))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
@@ -417,7 +421,7 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
     fence_kind: tuple[str, int] | None = None
     for raw in text.splitlines(keepends=True):
         delim = fence_delim(raw)
-        if delim and (not in_fence or fence_closes(fence_kind, delim)):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(raw))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             out.append(raw)
@@ -494,7 +498,7 @@ def check_rule_text(text: str) -> list[str]:
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
         delim = fence_delim(line)
-        if delim and (not in_fence or fence_closes(fence_kind, delim)):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(line))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
@@ -688,6 +692,16 @@ def load_baseline() -> dict[str, dict[str, int]]:
         return _normalize_baseline(json.load(fh))
 
 
+def git_ref_exists(ref: str) -> bool:
+    import subprocess
+    try:
+        out = subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0
+
+
 def load_baseline_at(ref: str) -> dict | None:
     """读某个 git ref 上的基线；取不到返回 None（本地没 fetch 时不阻塞）。"""
     import subprocess
@@ -858,9 +872,17 @@ def main() -> int:
     if args.ratchet:
         baseline = load_baseline()
         if args.baseline_ref:
+            if not git_ref_exists(args.baseline_ref):
+                # 静默降级等于把闸门关掉：取不到对照物就该失败，而不是拿本分支
+                # 自己放宽后的基线跟自己比
+                print(f"\n[FAIL] 取不到用于对照的 {args.baseline_ref} —— 无法确认基线没被放宽。"
+                      f"CI 里通常是 base 分支没 fetch 到；本地跑加 --baseline-ref 请先 git fetch",
+                      file=sys.stderr)
+                return 1
             base_baseline = load_baseline_at(args.baseline_ref)
             if base_baseline is None:
-                print(f"[WARN] 取不到 {args.baseline_ref} 上的基线，跳过「基线是否被放宽」检查",
+                # ref 在、但那上面还没有基线文件：这是基线首次引入的正常情况
+                print(f"[INFO] {args.baseline_ref} 上还没有基线文件（首次引入），跳过放宽检查",
                       file=sys.stderr)
             else:
                 relaxed = baseline_regressions(base_baseline, baseline)

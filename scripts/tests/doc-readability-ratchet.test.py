@@ -197,6 +197,11 @@ ATTR = "# 示例 · 指南\n\n```typescript title=\"example\"\nconst a = 1;\ncon
 attr_impl, _ = checker.scan_body(ATTR)
 check(attr_impl == 2, f"带属性的围栏仍认得出语言（实测 {attr_impl} 行）")
 check(checker.fence_lang("```ts {linenos=true}") == "ts", "花括号属性不会混进语言标记")
+FAKE_CLOSE = ("# 示例 · 指南\n\n```ts\nconst a = 1;\n```not-a-close\nconst b = 2;\n```\n")
+fake_impl, _ = checker.scan_body(FAKE_CLOSE)
+check(fake_impl == 3, f"带后缀的 ```not-a-close 不算闭合，块内代码继续计数（实测 {fake_impl} 行）")
+check(not checker.fence_closes(("`", 3), ("`", 3), "not-a-close"), "闭合围栏不许带信息串")
+check(checker.fence_closes(("`", 3), ("`", 3), ""), "干净的闭合围栏仍然算闭合（没误伤）")
 
 TILDE_IMPL = "# 示例 · 指南\n\n~~~typescript\nconst a = 1;\nconst b = 2;\n~~~\n"
 BACKTICK_IMPL = TILDE_IMPL.replace("~~~", "```")
@@ -540,6 +545,14 @@ check(checker.baseline_regressions(BASE, BASE) == [], "基线没动时放行")
 check(checker.baseline_regressions(BASE, LOOSER), "把计数改大会被抓出")
 check(checker.baseline_regressions(BASE, NEW_FILE), "把新欠账文件写进基线会被抓出")
 check(checker.load_baseline_at("这个-ref-不存在") is None, "取不到目标分支基线时返回 None，不误判")
+check(not checker.git_ref_exists("这个-ref-不存在"), "认得出「ref 压根不存在」")
+check(checker.git_ref_exists("HEAD"), "认得出存在的 ref（判据不是恒假）")
+bogus = subprocess.run(
+    [sys.executable, os.path.join(REPO_ROOT, "scripts", "doc-readability-check.py"),
+     "--ratchet", "--baseline-ref", "这个-ref-不存在"],
+    cwd=REPO_ROOT, capture_output=True, text=True)
+check(bogus.returncode != 0 and "取不到用于对照" in bogus.stderr,
+      "取不到对照基线时闸门判失败（静默降级等于把这道闸关掉）")
 MOVED = {**BASE, "files": {"doc/a.md": {"missing": 2}}}
 BASE_DETAIL = {**BASE, "files": {"doc/a.md": {"missing": 1}}}
 check(checker.baseline_regressions(BASE_DETAIL, MOVED),
@@ -550,6 +563,8 @@ with open(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), encoding="u
 check("--baseline-ref" in ci_src, "CI 真的带上了 --baseline-ref（否则这段等于没接线）")
 check("github.event.before" in ci_src,
       "push 到 main 时基线比的是推送前那个 commit（base_ref 为空时不能比到自己头上）")
+check("origin/base\" || true" not in ci_src and "refs/remotes/origin/base\" || true" not in ci_src,
+      "取对照基线的 fetch 不吞错（吞了就会退回拿本分支基线跟自己比）")
 check(any(line.strip() == "- '**'" for line in ci_src.splitlines()),
       "docs filter 覆盖全仓（守卫扫的是全仓 git 跟踪文件，列举根目录必然列漏）")
 
@@ -565,21 +580,24 @@ DOC_REF = re.compile(r"doc/([a-z][\w.-]*\.md)")
 KNOWN_ROTTEN = {"plan.cds-shared-service-extension.md", "plan.cds-github-integration-followups.md",
                 "debt.cds-removed-branch-pages.md", "status.cds-agent-current-progress.md"}
 FIXTURE_NAMES = {"x.md", "guide.md", "sample.md", "visible.md", "design.foo.md", "guide.current.md",
-                 "a.md", "b.md", "xxx.md", "demo.md"}
-SOURCE_EXTS = {".ts", ".tsx", ".cs", ".py", ".mjs", ".js", ".rs", ".sh", ".yml", ".yaml"}
+                 "a.md", "b.md", "xxx.md", "demo.md",
+                 # 命名模式而非具体文件（周报文件名的占位写法）
+                 "report.YYYY-WXX.md", "report.YYYY-WNN.md",
+                 # 命名规则里的反面示范（存在才奇怪）
+                 "output-xxx.md", "notes-temp.md", "report-agent.md"}
+# 不再列扩展名 —— 列举必然列漏（html 模板、生成的 json 里都真有 doc/ 面包屑）。
+# 改成「凡是能按 UTF-8 读出来的 git 跟踪文件都扫」，二进制自然被 decode 挡掉。
+SKIP_PREFIXES = ("scripts/tests/", "doc/", "changelogs/", "CHANGELOG.md")  # 已冻结的历史记录不改
 tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
                          capture_output=True, text=True).stdout.split()
 dangling: dict[str, set[str]] = {}
 scanned = 0
 for rel in tracked:
-    # 全仓扫 —— 只挑几个根目录的话，被漏掉的那棵树里的面包屑就永远没人管
-    if os.path.splitext(rel)[1] not in SOURCE_EXTS:
-        continue
-    if rel.startswith("scripts/tests/"):
-        continue  # 守卫自己的示例文件名不是真引用
+    if rel.startswith(SKIP_PREFIXES):
+        continue  # 守卫自己的示例文件名、以及文档之间的互引（另有死链闸管）
     try:
         body = open(os.path.join(REPO_ROOT, rel), encoding="utf-8").read()
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError, IsADirectoryError):
         continue
     scanned += 1
     for hit in DOC_REF.finditer(body):
@@ -588,7 +606,7 @@ for rel in tracked:
             continue
         if not os.path.exists(os.path.join(REPO_ROOT, "doc", target)):
             dangling.setdefault(target, set()).add(rel)
-check(scanned > 800, f"面包屑扫描覆盖全仓 git 跟踪的源码（实测 {scanned} 个文件）")
+check(scanned > 3000, f"面包屑扫描覆盖全仓可读文本文件（实测 {scanned} 个）")
 check(not dangling,
       f"代码注释里的 doc/ 指路都存在（落空：{ {k: sorted(v)[:2] for k, v in list(dangling.items())[:3]} }）")
 
