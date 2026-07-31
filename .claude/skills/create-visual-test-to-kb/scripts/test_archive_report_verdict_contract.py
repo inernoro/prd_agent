@@ -125,6 +125,10 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 已通过失败场景测试", set()),
             ("CDS smoke 已成功验证异常处理", set()),
             ("CDS smoke 失败场景均已通过", set()),
+            ("CDS smoke 失败场景已验证通过", set()),
+            ("核心用例失败路径均已验证通过", set()),
+            ("CDS smoke 异常处理已经检查通过", set()),
+            ("CDS smoke 失败用例已测试通过", set()),
             ("CDS smoke 异常处理已通过", set()),
             ("核心用例失败场景均已通过", set()),
             ("验收报告归档已通过失败重试测试", set()),
@@ -1161,6 +1165,8 @@ class DailyVerdictContractTests(unittest.TestCase):
         for closure in (
             "CDS smoke 失败场景均已通过",
             "CDS smoke 异常处理已通过",
+            "CDS smoke 失败场景已验证通过",
+            "CDS smoke 异常路径均已检查通过",
         ):
             with self.subTest(closure=closure):
                 body = report_body("覆盖不足").replace(
@@ -1176,6 +1182,27 @@ class DailyVerdictContractTests(unittest.TestCase):
                     archive_report._daily_conclusion_contract_errors(
                         "conditional", body
                     ),
+                )
+
+        for pending_closure in (
+            "CDS smoke 已验证通过场景尚未执行",
+            "CDS smoke 已检查通过路径尚未执行",
+            "CDS smoke 已测试通过用例尚未执行",
+        ):
+            with self.subTest(pending_closure=pending_closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 失败"
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{pending_closure} | 场景仍待覆盖 | "
+                    "不构成门禁恢复 | 未关闭 | 继续补测 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
                 )
 
     def test_coverage_gap_conclusion_does_not_open_gate_failure(self):
@@ -1640,6 +1667,46 @@ class DailyVerdictContractTests(unittest.TestCase):
                         "conditional", body
                     ),
                 )
+
+    def test_structural_particle_before_gate_shares_state_scope(self):
+        cases = (
+            ("登录流程 CDS smoke", "登录流程的 CDS smoke"),
+            ("登录流程的 CDS smoke 结果", "登录流程 CDS smoke 状态"),
+            ("用户的登录流程 CDS smoke", "用户的登录流程的 CDS smoke"),
+        )
+        for failure_target, closure_target in cases:
+            with self.subTest(
+                failure_target=failure_target,
+                closure_target=closure_target,
+            ):
+                body = report_body("覆盖不足").replace(
+                    "| 验收冻结 SHA | 当前部署 SHA 已前进 |",
+                    f"| {failure_target} | CDS smoke 失败 |",
+                )
+                body = body.rstrip() + (
+                    f"\n| {closure_target} | CDS smoke 现已通过 | "
+                    "同一业务门禁已复测 | 关闭旧失败证据 | 已通过 | 保留记录 |\n"
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+    def test_structural_particle_normalization_preserves_business_identity(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 |",
+            "| 登录流程 CDS smoke | CDS smoke 失败 |",
+        )
+        body = body.rstrip() + (
+            "\n| 支付流程的 CDS smoke | CDS smoke 现已通过 | "
+            "仅证明支付流程 | 已通过 | 保留记录 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
 
     def test_business_target_output_word_prefix_remains_isolated(self):
         body = report_body("覆盖不足").replace(

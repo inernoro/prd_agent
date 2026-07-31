@@ -714,8 +714,12 @@ _DIAGNOSTIC_MODIFIER_PATTERN = (
 _RESOLVED_STATUS_PREFIX_PATTERN = (
     r"(?:(?:现已|已经|已)|(?:重试后|随后)\s*已|最终(?:已)?)"
 )
+_VERIFICATION_RESOLVED_ACTION_PATTERN = (
+    r"(?:验证|检查|测试)(?:结果)?\s*(?:已)?\s*通过"
+)
 _RESOLVED_ACTION_PATTERN = (
-    r"(?:通过|完成|送达|归档|发布|打开|访问|连接|恢复|解决|关闭|修复|"
+    rf"(?:{_VERIFICATION_RESOLVED_ACTION_PATTERN}"
+    r"|通过|完成|送达|归档|发布|打开|访问|连接|恢复|解决|关闭|修复|"
     r"正常|可用|就绪|部署|上线|生效|合并|ready|"
     rf"成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
 )
@@ -1067,6 +1071,15 @@ def _closure_changes_subject(clause, event, previous_event_end):
     ):
         return True
     if re.fullmatch(_RETEST_RESOLVED_PATTERN, event.group(0), re.I) and re.match(
+        rf"\s*{_VERIFIED_SCENARIO_OBJECT_PATTERN}", suffix, re.I
+    ):
+        return True
+    if re.fullmatch(
+        rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*"
+        rf"{_VERIFICATION_RESOLVED_ACTION_PATTERN}",
+        event.group(0),
+        re.I,
+    ) and re.match(
         rf"\s*{_VERIFIED_SCENARIO_OBJECT_PATTERN}", suffix, re.I
     ):
         return True
@@ -1510,6 +1523,7 @@ def _root_cause_state_scope(row, row_index):
             business_target,
             flags=re.I,
         )
+        business_target = re.sub(r"的\s*$", " ", business_target)
         business_target = re.sub(
             r"[`*_\s:：;,，。|/\\()（）\[\]【】<>《》-]+",
             "",
