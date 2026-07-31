@@ -44,3 +44,4 @@
 | test | scripts | 刊徽守卫覆盖 .emblem 后代（SVG）的可见性；判据与接线纪律补形状 8（把不成立的证据当成证据） |
 | test | scripts | 刊徽守卫覆盖 SVG 自身的行内 style 与表现属性，并解析 color 引用的自定义属性 |
 | test | scripts | 刊徽守卫递归解析 var() 颜色链、opacity 支持百分比；自测新增「合法写法必须判绿」用例类 |
+| test | scripts | 刊徽守卫按继承作用域解析自定义属性（修误伤），并解析嵌在颜色函数里的 var() |

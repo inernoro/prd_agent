@@ -387,7 +387,66 @@ def check_emblem_inner_elements(label, rel, block, spans):
                          f"{prop}={v!r}——{why}")
 
 
-def _color_problems(text, value, seen):
+def _find_var(value):
+    """找值里第一个 `var(...)`，返回 (起, 止, 变量名, 兜底值)；没有则 None。
+
+    按括号配对切，不用正则——兜底值本身可以再嵌函数（`var(--a, rgb(0 0 0 / .5))`），
+    `[^)]*` 那种写法会在第一个右括号处截断。
+    """
+    m = re.search(r"var\(", value)
+    if not m:
+        return None
+    depth, j = 1, m.end()
+    while j < len(value) and depth:
+        depth += {"(": 1, ")": -1}.get(value[j], 0)
+        j += 1
+    inner = value[m.end():j - 1]
+    name, _, fallback = inner.partition(",")
+    return m.start(), j, name.strip(), fallback.strip()
+
+
+def emblem_scope_classes(text):
+    """刊徽自己 + 它祖先链上的 class 集合。
+
+    自定义属性是**继承**的：只有定义在刊徽自己或它某个祖先上的 `--x` 才可能影响它。
+    此前按全文 `re.findall` 找定义，于是一条与刊徽毫不相干的
+    `.unrelated{--terra:transparent}` 也会被算进链条里判红——**误伤**：那份声明
+    在浏览器里根本到不了刊徽，水印好端端的，CI 却被拦住。
+    守卫误伤合法改动同样是缺陷，只是更隐蔽（这一条正是被 review 实测出来的）。
+    """
+    spots = [m.start() for m in EMBLEM_ATTR_RE.finditer(text)]
+    if not spots:
+        return {"emblem"}
+    out = {"emblem"}
+    for m in re.finditer(r'<([A-Za-z][\w-]*)\b([^>]*)>', text):
+        cls = attr_value(m.group(2), "class")
+        if not cls:
+            continue
+        span = _close_at(text, m)
+        if span and any(span[0] <= s < span[1] for s in spots):
+            out |= set(cls.split())
+    return out
+
+
+# 这些选择器无条件覆盖刊徽（文档根 / html / body / 通配），其上的自定义属性会继承下来
+_ROOT_SUBJECTS = (":root", "html", "body", "*")
+
+
+def _scoped_custom_decls(text, name, scope):
+    """取 `--name` 的定义，但**只取能级联到刊徽的那些**（根/祖先/它自己）。"""
+    out = []
+    for m in re.finditer(r'([^{};\n]*)\{\{?([^{}]*)\}', text):
+        subjects = [subject_compound(p) for p in m.group(1).split(",") if p.strip()]
+        if not any(s in _ROOT_SUBJECTS
+                   or any(re.search(r'\.%s(?![\w-])' % re.escape(c), s) for c in scope)
+                   for s in subjects):
+            continue
+        out += [d.strip() for d in
+                re.findall(r"%s\s*:\s*([^;}]+)" % re.escape(name), m.group(2))]
+    return out
+
+
+def _color_problems(text, value, seen, scope):
     """顺着 var() 链一路解析到底，返回问题描述列表（空 = 这个颜色可见）。
 
     **必须递归**：只查一层的话，`--terra: var(--invisible)` 会因为中间值是个
@@ -399,20 +458,30 @@ def _color_problems(text, value, seen):
     没定义才轮到兜底。两者都没有就判红——无法确认的东西不许默认通过。
     """
     v = value.strip()
-    m = re.fullmatch(r"var\(\s*(--[\w-]+)\s*(?:,([^)]*))?\)", v)
-    if not m:
+    found = _find_var(v)
+    if not found:
         return [] if _is_visible_color(v) else [f"{v!r} 不可见"]
-    name, fallback = m.group(1), (m.group(2) or "").strip()
+
+    # **不能只认「整个值就是一个 var()」**：`rgb(0 0 0 / var(--alpha))` 里的 var 嵌在
+    # 颜色函数的括号里，fullmatch 匹配不上，而 `_is_visible_color` 的函数正则又被
+    # 嵌套括号挡住，最终落到「认不出即可见」那条兜底上——`--alpha: 0` 全透明照样判绿。
+    # 所以改成：在值里**任意位置**找到 var()，把它替换成候选解析结果再递归，
+    # 直到值里不再有 var() 为止，最后才评估颜色本身。
+    start, end, name, fallback = found
     if name in seen:
         return [f"{name} 自引用成环，无法解析出确定的颜色"]
-    decls = re.findall(r"%s\s*:\s*([^;}]+)" % re.escape(name), text)
+
+    def substituted(replacement):
+        return v[:start] + replacement + v[end:]
+
+    decls = _scoped_custom_decls(text, name, scope)
     if decls:
         return [f"{name} -> {p}" for d in decls
-                for p in _color_problems(text, d, seen | {name})]
+                for p in _color_problems(text, substituted(d), seen | {name}, scope)]
     if fallback:
         return [f"{name} 未定义，走兜底值：{p}"
-                for p in _color_problems(text, fallback, seen | {name})]
-    return [f"{name} 全文找不到定义，也没有兜底值"]
+                for p in _color_problems(text, substituted(fallback), seen | {name}, scope)]
+    return [f"{name} 在刊徽的作用域里找不到定义，也没有兜底值"]
 
 
 def check_color_custom_properties(label, rel, text):
@@ -428,11 +497,12 @@ def check_color_custom_properties(label, rel, text):
     **全部定义**都拿出来，逐一要求是可见颜色；一处定义成透明就判红。
     找不到定义也判红——无法确认的东西不许默认通过。
     """
+    scope = emblem_scope_classes(text)
     for rules in (rules_targeting(text, "emblem"), rules_under(text, "emblem")):
         for r in rules:
             _, declared = cascade_value([r["body"]], "color")
             for v in declared:
-                for why in _color_problems(text, v, frozenset()):
+                for why in _color_problems(text, v, frozenset(), scope):
                     fail(f"{label}({rel}): 刊徽 color 解析不出可见颜色——{why}。"
                          f"刊徽全用 currentColor 上色，颜色一旦不可见，水印整个消失")
 

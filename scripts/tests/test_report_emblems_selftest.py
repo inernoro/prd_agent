@@ -164,6 +164,12 @@ CASES = [
      lambda t: t.replace('<svg viewBox="0 0 120 120" fill="none" data-emblem="moon"',
                          '<svg opacity="0" viewBox="0 0 120 120" fill="none"'
                          ' data-emblem="moon"', 1)),
+    ("R26-函数内变量", "rgb(0 0 0 / var(--alpha)) 且 --alpha:0（var 嵌在括号里）", DAILY,
+     lambda t: sub_after(
+         t.replace("color: var(--terra); opacity: 0.13;",
+                   "color: rgb(0 0 0 / var(--alpha)); opacity: 0.13;", 1),
+         "  .emblem svg { display: block; width: 100%; height: 100%; }",
+         "\n  .emblem { --alpha: 0; }")),
     ("R25-变量链透明", "--terra 指向 --invisible，链条末端才透明", DAILY,
      lambda t: sub_after(t, "  .emblem svg { display: block; width: 100%; height: 100%; }",
                          "\n  .emblem { --terra: var(--invisible); }"
@@ -229,6 +235,9 @@ GREEN_CASES = [
                          "color: var(--terra); opacity: 13%;", 1)),
     ("G2-多token类名", 'class="emblem extra" 仍是 .emblem，不该失配', DAILY,
      lambda t: t.replace('<div class="emblem">', '<div class="emblem extra">', 1)),
+    ("G4-无关选择器同名变量", "`.unrelated{--terra:transparent}` 级联不到刊徽，不该拦", DAILY,
+     lambda t: sub_after(t, "  .emblem svg { display: block; width: 100%; height: 100%; }",
+                         "\n  .unrelated { --terra: transparent; }")),
     ("G3-变量链可见", "--terra 指向另一个变量、末端是可见色，应放行", DAILY,
      lambda t: sub_after(t, "  .emblem svg { display: block; width: 100%; height: 100%; }",
                          "\n  .emblem { --terra: var(--ok); }"
