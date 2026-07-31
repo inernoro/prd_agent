@@ -322,12 +322,27 @@ def check_dimensions(label, rel, base_rules, media_rules):
         return
     want = REGISTERED[dim_key]
 
-    def px(bodies, prop):
+    def px(bodies, prop, where):
+        """取该属性在这一层的**层叠胜者**，并拒收互相打架的重复声明。
+
+        不能取第一条：CSS 同特异性下后写的赢。在合法的 92px 规则后面追加一条
+        `.emblem{width:120px}`，实际渲染 120px，而「取第一条」的判据仍报符合登记值——
+        守卫看到的值和浏览器用的值不是同一个（本 PR 里第五次栽在这个形状上）。
+        bodies 已按源码顺序排列，故最后一条即胜者。
+
+        同层出现互相打架的值，即便胜者恰好正确也判红：这种写法下「实际生效的是哪个」
+        要靠读者自己推层叠，是后续漂移的温床。
+        """
+        found = []
         for b in bodies:
-            m = re.search(r"(?:^|;)%s:(-?[0-9.]+)px" % prop, b)
-            if m:
-                return float(m.group(1))
-        return None
+            for m in re.finditer(r"(?:^|;)%s:(-?[0-9.]+)px" % prop, b):
+                found.append(float(m.group(1)))
+        if not found:
+            return None
+        if len(set(found)) > 1:
+            fail(f"{label}({rel}): {where}的 .emblem 对 {prop} 有互相打架的声明 {found}"
+                 f"——实际生效的是最后一条（{found[-1]:g}px），这种写法请合并成一条")
+        return found[-1]
 
     base = [r["body"] for r in base_rules]
     media = [r["body"] for r in media_rules]
@@ -342,7 +357,7 @@ def check_dimensions(label, rel, base_rules, media_rules):
         ("width", "mobile", "窄屏", media),
         ("height", "mobile", "窄屏", media),
     ):
-        got = px(bodies, prop)
+        got = px(bodies, prop, where)
         if got is None:
             fail(f"{label}({rel}): {where}的 .emblem 规则里没有 {prop} —— "
                  f"规则 §1.4（key={dim_key}）登记的是 {want[key]}px")
