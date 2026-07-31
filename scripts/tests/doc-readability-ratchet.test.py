@@ -347,6 +347,14 @@ with tempfile.TemporaryDirectory() as tmp:
         fh.write(body % "demo-skill")
     check(not checker.check_skill(wrong_name),
           "name 与目录一致且是 kebab-case 时放行（判据没有误伤）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write("---\nname: demo-skill\ndescription: # TODO: 回头再补一段说清触发时机的描述\n---\n")
+    check(any("缺 description" in p for p in checker.check_skill(wrong_name)),
+          "description 只写了 YAML 注释被抓出（注释在 YAML 里是 null，不是描述）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write("---\nname: demo-skill # 与目录同名\ndescription: %s\n---\n"
+                 % "这是一段足够长的描述，说清了这个技能在什么场景下会被触发、以及它会产出什么东西。")
+    check(not checker.check_skill(wrong_name), "值后面跟行内注释时取的是值本身（没误伤）")
 
 print("[4] 报告双产物的那句话有人盯着")
 
@@ -412,6 +420,41 @@ for name in ("rule.doc.readability.md", "guide.doc.reading-map.md", "debt.doc.re
 
 print()
 
+print("[6.5] 两份目录里的标题跟得上 H1")
+
+# 改了文档标题却忘了改目录，doc/index.yml（外部同步消费）和 guide.list.directory.md
+# （人类索引）就会对外发布一个已经不存在的标题。两份都是从 H1 派生的副本，
+# 副本不刷新等于没改（config-runtime-drift 的文档版）。
+def _h1(path: str) -> str:
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("# "):
+                return line[2:].strip()
+    return ""
+
+
+doc_dir = os.path.join(REPO_ROOT, "doc")
+titles = {name[:-3]: _h1(os.path.join(doc_dir, name))
+          for name in os.listdir(doc_dir) if name.endswith(".md")}
+with open(os.path.join(doc_dir, "index.yml"), encoding="utf-8") as fh:
+    index_src = fh.read()
+with open(os.path.join(doc_dir, "guide.list.directory.md"), encoding="utf-8") as fh:
+    list_src = fh.read()
+
+index_drift = [k for k, t in re.findall(r'^\s{2}([a-z][\w.-]+):\s*"(.*)"\s*$', index_src, re.M)
+               if k in titles and titles[k] and t != titles[k]]
+check(not index_drift, f"doc/index.yml 的标题与 H1 一致（漂移：{index_drift[:5]}）")
+
+list_drift = [k for k, t in titles.items()
+              if t and f"](./{k}.md)" in list_src and f"[{t}](./{k}.md)" not in list_src]
+check(not list_drift, f"guide.list.directory.md 的标题与 H1 一致（漂移：{list_drift[:5]}）")
+# 反向用例：换一个不存在的标题，检查必须报漂 —— 否则上面两条等于空跑
+check("[这个标题根本不存在](./rule.doc.readability.md)" not in list_src
+      and f"[{titles['rule.doc.readability']}](./rule.doc.readability.md)" in list_src,
+      "标题比对读的是真正的链接文本（不是恒真断言）")
+
+print()
+
 print("[7] 这道闸看得见守卫读的每一个文件")
 
 # `.claude/rules/predicate-and-wiring-discipline.md` 形状 7：守卫接进了 CI，
@@ -426,6 +469,8 @@ GUARDED_INPUTS = [
     ".claude/skills/weekly-update-summary/reference/report-template.md",
     ".claude/skills/weekly-update-summary/reference/report-template-html.html",
     ".claude/skills/daily-report-summary/reference/report-template-html.html",
+    "doc/index.yml",
+    "doc/guide.list.directory.md",
     "scripts/doc-readability-check.py",
     "scripts/fixtures/doc-readability-baseline.json",
     "scripts/tests/doc-readability-ratchet.test.py",

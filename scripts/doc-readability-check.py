@@ -444,6 +444,22 @@ def check_rule_text(text: str) -> list[str]:
     return problems
 
 
+def yaml_scalar(raw: str) -> str:
+    """取 YAML 未加引号标量的真实值：剥掉行内注释与引号。
+
+    `description: # TODO 回头再写` 在 YAML 里值是 null，不是那句 TODO —— 判据
+    要是把注释当值，占位符就能冒充一句合格的描述。
+    """
+    value = raw.strip()
+    if value.startswith("#"):
+        return ""
+    if value[:1] in ("\"", "'"):   # 注意空串 in 任何字符串恒为真，必须比元组
+        quote = value[0]
+        end = value.find(quote, 1)
+        return value[1:end] if end > 0 else value[1:]
+    value = re.split(r"\s+#", value, 1)[0]
+    return value.strip()
+
 def check_skill(path: str) -> list[str]:
     """技能文档：frontmatter 必须有 name 与 description，且 description 要说清什么时候用它。"""
     with open(path, encoding="utf-8") as fh:
@@ -457,7 +473,7 @@ def check_skill(path: str) -> list[str]:
     if not name_match:
         problems.append("frontmatter 缺 name")
     else:
-        skill_name = name_match.group(1).strip().strip("\"'")
+        skill_name = yaml_scalar(name_match.group(1))
         skill_dir = os.path.basename(os.path.dirname(path))
         if not skill_name:
             # 有键无值等于没有 —— 技能靠 name 被找到，空值找不到任何东西
@@ -484,7 +500,8 @@ def _frontmatter_description(fm: str) -> str | None:
             continue
         head = m.group(1).strip()
         if head and head[0] not in "|>":
-            return head
+            # 纯注释的 head 在 YAML 里就是 null，返回 None 让上面判「缺 description」
+            return yaml_scalar(head) or None
         body = []
         for nxt in lines[i + 1:]:
             if nxt.strip() and not nxt.startswith((" ", "\t")):

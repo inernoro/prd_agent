@@ -74,7 +74,7 @@
 - [CDS 项目初始化（Project Bootstrap） · 设计](./design.cds.project-bootstrap.md) `design.cds.project-bootstrap`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
 - [CDS 复制集压测（A/B 负载对比台） · 设计](./design.cds.replica-loadtest.md) `design.cds.replica-loadtest`
-- [CDS 复制集模式（一个入口多版本并排） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
+- [CDS 复制集模式（一个入口，多个版本并行） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
 - [CDS 容量预算与故障隔离设计 · 设计](./design.cds.resilience.md) `design.cds.resilience`
 - [CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计](./design.cds.self-hosting.md) `design.cds.self-hosting`
 - [CDS 技能版本与更新架构 · 设计](./design.cds.skill-version-update.md) `design.cds.skill-version-update`
@@ -109,7 +109,7 @@
 - [CDS 部署架构与冲突分析 · 设计](./design.platform.exec-bt-deployment.md) `design.platform.exec-bt-deployment`
 - [外部授权中心 · 设计](./design.platform.external-authorization.md) `design.platform.external-authorization`
 - [生成快照 · 设计](./design.platform.generation-snapshot.md) `design.platform.generation-snapshot`
-- [GitHub 基础设施层（Infrastructure.GitHub） · 设计](./design.platform.github-infrastructure.md) `design.platform.github-infrastructure`
+- [GitHub 基础设施层 · 设计](./design.platform.github-infrastructure.md) `design.platform.github-infrastructure`
 - [图片引用日志与消息持久化 · 设计](./design.platform.image-ref-and-persistence.md) `design.platform.image-ref-and-persistence`
 - [LLM Gateway 全量迁移与生产发布复盘 · 设计](./design.platform.llm-gateway.migration-retrospective.md) `design.platform.llm-gateway.migration-retrospective`
 - [LLM 网关物理独立设计 · 设计](./design.platform.llm-gateway.physical-isolation.md) `design.platform.llm-gateway.physical-isolation`
@@ -117,7 +117,7 @@
 - [LLM 网关与模型池统一 · 设计](./design.platform.llm-gateway.unification.md) `design.platform.llm-gateway.unification`
 - [LLM Gateway 统一调用 · 设计](./design.platform.llm-gateway.md) `design.platform.llm-gateway`
 - [MAP MCP 连接器 · 设计](./design.platform.map-mcp-connector.md) `design.platform.map-mcp-connector`
-- [大模型池设计（三级调度/三级链路） · 设计](./design.platform.model-pool.md) `design.platform.model-pool`
+- [逻辑模型、上游 Offering 与默认模型池设计](./design.platform.model-pool.md) `design.platform.model-pool`
 - [网络诊断功能 · 设计](./design.platform.network-diagnostics.md) `design.platform.network-diagnostics`
 - [桌面端更新与分布式登录/会话审计说明 · 设计](./design.platform.ops-auth.md) `design.platform.ops-auth`
 - [系统级跨节点互传（Peer Sync） · 设计](./design.platform.peer-sync.md) `design.platform.peer-sync`
@@ -140,7 +140,7 @@
 - [团队动态（工作日志时间线）设计 · 设计](./design.team-activity.md) `design.team-activity`
 - [Remotion 视频质量差距分析 · 设计](./design.video-agent.remotion-gap.md) `design.video-agent.remotion-gap`
 - [视频场景代码生成 · 设计](./design.video-agent.scene-codegen.md) `design.video-agent.scene-codegen`
-- [视觉创作画布与对话输入原理 · 设计](./design.visual-agent.canvas-composer.md) `design.visual-agent.canvas-composer`
+- [视觉创作 画布与对话输入 · 设计](./design.visual-agent.canvas-composer.md) `design.visual-agent.canvas-composer`
 - [内联图片聊天分析 · 设计](./design.visual-agent.inline-image-chat.md) `design.visual-agent.inline-image-chat`
 - [Visual Agent 多图组合生成设计 · 设计](./design.visual-agent.multi-image-compose.md) `design.visual-agent.multi-image-compose`
 - [多图视觉生成 · 设计](./design.visual-agent.multi-image-vision-api.md) `design.visual-agent.multi-image-vision-api`
@@ -225,7 +225,7 @@
 - [CDS state.json → MongoDB 迁移与回滚 · 规则](./rule.cds.mongo-migration.md) `rule.cds.mongo-migration`
 - [CDS 多项目隔离审计规则 · 规则](./rule.cds.project-isolation-audit.md) `rule.cds.project-isolation-audit`
 - [文档维护与收敛 · 规则](./rule.doc.maintenance.md) `rule.doc.maintenance`
-- [文档说人话标准（导读三行 + 人先于机器） · 规则](./rule.doc.readability.md) `rule.doc.readability`
+- [文档说人话标准（导读三行 + 只写人类要掌控的层次） · 规则](./rule.doc.readability.md) `rule.doc.readability`
 - [文档命名规则（doc/） · 规则](./rule.doc.naming.md) `rule.doc.naming`
 - [七类文档内容模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
 - [默认可编辑原则 · 规则](./rule.frontend.default-editable.md) `rule.frontend.default-editable`
@@ -274,7 +274,7 @@
 - [Report Agent 采集优先升级 · 计划](./plan.report-agent.v3.md) `plan.report-agent.v3`
 - [海鲜市场开放接口产品化 · 计划](./plan.skill.marketplace-open-api-next.md) `plan.skill.marketplace-open-api-next`
 - [视觉创作配图标记人工控制 · 计划](./plan.visual-agent.manual-image-marking.md) `plan.visual-agent.manual-image-marking`
-- [视觉创作优化清单 · 计划](./plan.visual-agent.optimization-backlog.md) `plan.visual-agent.optimization-backlog`
+- [视觉创作 优化清单 · 计划](./plan.visual-agent.optimization-backlog.md) `plan.visual-agent.optimization-backlog`
 
 ### 六、技术债务台账
 
@@ -339,8 +339,8 @@
 - [2026-W26 (2026-06-22 ~ 2026-06-28) · 周报](./report.2026-W26.md) `report.2026-W26`
 - [2026-W27 (2026-06-29 ~ 2026-07-05) · 周报](./report.2026-W27.md) `report.2026-W27`
 - [2026-W28 (2026-07-06 ~ 2026-07-12) · 周报](./report.2026-W28.md) `report.2026-W28`
-- [2026-W29 (2026-07-13 ~ 2026-07-19) · 周报](./report.2026-W29.md) `report.2026-W29`
-- [2026-W30 (2026-07-20 ~ 2026-07-26) · 周报](./report.2026-W30.md) `report.2026-W30`
+- [周报 2026-W29 (2026-07-13 ~ 2026-07-19)](./report.2026-W29.md) `report.2026-W29`
+- [周报 2026-W30 (2026-07-20 ~ 2026-07-26)](./report.2026-W30.md) `report.2026-W30`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`
