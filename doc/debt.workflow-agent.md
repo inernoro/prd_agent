@@ -10,7 +10,7 @@
 | in-progress | 0 |
 | paid | 7（Phase 2 留尾全部偿还） |
 
-模块范围：`prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs`、`prd-admin/src/pages/workflow-agent/`、所有 `CapsuleTypes.*` 胶囊执行链路。本文件只覆盖工作流胶囊侧的债务；视频生成（OpenRouter 直出）的债务见 `debt.video-agent.md`。
+模块范围：`prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs`、`prd-admin/src/pages/workflow-agent/`、所有 `CapsuleTypes.*` 胶囊执行链路。本文件只覆盖工作流胶囊侧的债务；视频生成（OpenRouter 直出）的债务见 [debt.video-agent.md](./debt.video-agent.md)。
 
 ---
 
@@ -105,7 +105,7 @@
 
 ### 6. 自动配置闭环：缺项卡只读 + 入口未对话化（2026-06-14 Phase 1）
 
-**已落地**（`design.workflow-agent.auto-config.md` 首期）：`WorkflowValidationService` 校验 + 自动接线 + 自愈 + 缺项扫描，对话气泡新增「已自动校验/接线/待补项」卡；已用 Playwright 直连预览域名验收（AI 一句话生成 → 「结构可执行」+ 列出 TAPD 工作空间 ID / Cookie 两项待补）。
+**已落地**（[design.workflow-agent.auto-config.md](./design.workflow-agent.auto-config.md) 首期）：`WorkflowValidationService` 校验 + 自动接线 + 自愈 + 缺项扫描，对话气泡新增「已自动校验/接线/待补项」卡；已用 Playwright 直连预览域名验收（AI 一句话生成 → 「结构可执行」+ 列出 TAPD 工作空间 ID / Cookie 两项待补）。
 
 **已落地（Phase 2 + 3，2026-06-15）**：
 - 缺项卡改为**就地可填表单**（密钥掩码），一键「补齐并应用到编辑器」把值烘焙进节点配置/变量；
@@ -136,9 +136,9 @@
 
 ## 相关文档
 
-- `doc/plan.emergence.tiktok-douyin-poster.md`：抖音与 TikTok 真订阅的未完成闭环
-- `doc/guide.submission-gallery.poster-feed-card.md`：用户教程（多平台博主订阅 → 首页海报）
-- `doc/debt.video-agent.md`：视频生成 Agent 债务（Remotion 已废弃路径）
+- [doc/plan.emergence.tiktok-douyin-poster.md](./plan.emergence.tiktok-douyin-poster.md)：抖音与 TikTok 真订阅的未完成闭环
+- [doc/guide.submission-gallery.poster-feed-card.md](./guide.submission-gallery.poster-feed-card.md)：用户教程（多平台博主订阅 → 首页海报）
+- [doc/debt.video-agent.md](./debt.video-agent.md)：视频生成 Agent 债务（Remotion 已废弃路径）
 - `.claude/rules/llm-gateway.md`：LlmRequestContext 强制要求
 - `.claude/rules/server-authority.md`：CancellationToken.None + Run/Worker 模式
 - `cds-compose.yml`：api 服务部署模式定义（dev / static）

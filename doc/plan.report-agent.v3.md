@@ -47,7 +47,7 @@
 
 - 记录草稿来源、实际模型、fallback 原因和用户编辑差异。
 - 质量评估按脱敏样本和明确指标执行，不用批量付费调用试模型。
-- 模型池治理继续由 `plan.report-agent.model-governance.md` 负责。
+- 模型池治理继续由 [plan.report-agent.model-governance.md](./plan.report-agent.model-governance.md) 负责。
 
 ## 数据边界
 
@@ -77,7 +77,7 @@
 
 ## 关联文档
 
-- `doc/spec.report-agent.v2.md`
-- `doc/design.report-agent.md`
-- `doc/plan.report-agent.model-governance.md`
-- `doc/guide.report-agent.weekly.md`
+- [doc/spec.report-agent.v2.md](./spec.report-agent.v2.md)
+- [doc/design.report-agent.md](./design.report-agent.md)
+- [doc/plan.report-agent.model-governance.md](./plan.report-agent.model-governance.md)
+- [doc/guide.report-agent.weekly.md](./guide.report-agent.weekly.md)

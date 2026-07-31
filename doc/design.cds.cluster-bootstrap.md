@@ -108,7 +108,7 @@ embedded 主节点的负载由 registry 在读取容量和列表时刷新，以�
 
 CLI 入口以 `cds/exec_cds.sh` 为准，Dashboard API 以 `cds/src/routes/cluster.ts` 和 `cds/src/scheduler/routes.ts` 为准，环境文件更新以 `cds/src/services/env-file.ts` 为准。
 
-本文不复制可执行命令和配置模板，避免与脚本漂移。操作步骤见 `doc/guide.cds.cluster-setup.md`。
+本文不复制可执行命令和配置模板，避免与脚本漂移。操作步骤见 [doc/guide.cds.cluster-setup.md](./guide.cds.cluster-setup.md)。
 
 ## 7. 不在本协议内
 
@@ -122,8 +122,8 @@ CLI 入口以 `cds/exec_cds.sh` 为准，Dashboard API 以 `cds/src/routes/clust
 
 ## 8. 关联文档
 
-- `doc/guide.cds.cluster-setup.md`
-- `doc/design.cds.resilience.md`
-- `doc/design.cds.data-migration.md`
-- `doc/guide.cds.mongo-migration.md`
-- `doc/design.cds.md`
+- [doc/guide.cds.cluster-setup.md](./guide.cds.cluster-setup.md)
+- [doc/design.cds.resilience.md](./design.cds.resilience.md)
+- [doc/design.cds.data-migration.md](./design.cds.data-migration.md)
+- [doc/guide.cds.mongo-migration.md](./guide.cds.mongo-migration.md)
+- [doc/design.cds.md](./design.cds.md)

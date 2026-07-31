@@ -6,7 +6,7 @@
 
 让 prd-admin 的核心用户路径在手机与窄窗口中可完成，而不是只做到“页面能缩小”。移动端必须保持导航可达、主操作可见、表单可提交、长内容可滚动，并与 Desktop 和宽屏 Web 共用业务状态。
 
-Apple 视觉双轨迁移由 `plan.frontend.apple-design-migration.md` 管理；本计划只负责响应式能力和功能可达性。
+Apple 视觉双轨迁移由 [plan.frontend.apple-design-migration.md](./plan.frontend.apple-design-migration.md) 管理；本计划只负责响应式能力和功能可达性。
 
 ## 基线原则
 
@@ -72,8 +72,8 @@ Apple 视觉双轨迁移由 `plan.frontend.apple-design-migration.md` 管理；�
 
 ## 关联文档
 
-- `doc/plan.frontend.apple-design-migration.md`
-- `doc/rule.frontend.mobile-visual-check-matrix.md`
-- `doc/design.frontend.left-right-layout.md`
+- [doc/plan.frontend.apple-design-migration.md](./plan.frontend.apple-design-migration.md)
+- [doc/rule.frontend.mobile-visual-check-matrix.md](./rule.frontend.mobile-visual-check-matrix.md)
+- [doc/design.frontend.left-right-layout.md](./design.frontend.left-right-layout.md)
 - `.Codex/rules/full-height-layout.md`
 - `.Codex/rules/frontend-modal.md`

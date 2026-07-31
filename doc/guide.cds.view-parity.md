@@ -8,7 +8,7 @@
 
 ## 1. 本文档是什么
 
-- **不是** design 文档(那是 `design.cds.md`)
+- **不是** design 文档(那是 [design.cds.md](./design.cds.md))
 - **是** 一份"该有的功能都在哪?"的速查表
 - 每一行都指向具体代码位置,便于改一方时同步另一方
 - 附带一套自测冒烟流程(`§5 冒烟测试清单`),提交前过一遍
@@ -293,7 +293,7 @@ curl -s -X POST $BASE/api/branches/smoke/container-logs \
 
 ## 8. 关联文档
 
-- `doc/design.cds.md` — CDS 架构设计
-- `doc/plan.cds.backlog-matrix.md` — 问题矩阵 SSOT
-- `doc/plan.cds.multi-project-phases.md` — P0-P6 里程碑
-- `doc/design.cds.resilience.md` — 服务器权威 / SSE 重连
+- [doc/design.cds.md](./design.cds.md) — CDS 架构设计
+- [doc/plan.cds.backlog-matrix.md](./plan.cds.backlog-matrix.md) — 问题矩阵 SSOT
+- [doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md) — P0-P6 里程碑
+- [doc/design.cds.resilience.md](./design.cds.resilience.md) — 服务器权威 / SSE 重连

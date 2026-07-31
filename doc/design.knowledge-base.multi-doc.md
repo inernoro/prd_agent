@@ -140,7 +140,7 @@
 | 文档类型粒度有限 | 四种稳定角色 | 在技能上下文中按类型筛选或加权 |
 | 引用主要围绕主文档 | 保持既有引用体验 | 扩展多文档来源定位与证据展示 |
 
-RAG、Embedding、语义检索及技能级文档类型过滤仍属于知识库债务，统一记录在 `debt.knowledge-base.md`，不在本设计中标成已完成。
+RAG、Embedding、语义检索及技能级文档类型过滤仍属于知识库债务，统一记录在 [debt.knowledge-base.md](./debt.knowledge-base.md)，不在本设计中标成已完成。
 
 ## 事实来源
 
@@ -166,6 +166,6 @@ RAG、Embedding、语义检索及技能级文档类型过滤仍属于知识库�
 
 ## 关联文档
 
-- `design.knowledge-base.multi-doc.md`：多文档能力当前设计事实源。
-- `design.knowledge-base.store.md`：文档存储基础设施。
-- `debt.knowledge-base.md`：RAG、Embedding 与类型过滤债务。
+- [design.knowledge-base.multi-doc.md](./design.knowledge-base.multi-doc.md)：多文档能力当前设计事实源。
+- [design.knowledge-base.store.md](./design.knowledge-base.store.md)：文档存储基础设施。
+- [debt.knowledge-base.md](./debt.knowledge-base.md)：RAG、Embedding 与类型过滤债务。

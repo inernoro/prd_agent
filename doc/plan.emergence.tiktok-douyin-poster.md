@@ -10,7 +10,7 @@
 
 - Workflow 已有短视频解析、创作者作品抓取、视频转文字、素材重托管和首页海报发布能力。
 - TikTok、抖音、B 站、小红书和 YouTube 的响应差异已有适配；这些已完成实现不属于本计划。
-- `ad-rich-text`、feed-card、ASR 字幕和最小化交互已经落地，已知边界归 `debt.workflow-agent.md`。
+- `ad-rich-text`、feed-card、ASR 字幕和最小化交互已经落地，已知边界归 [debt.workflow-agent.md](./debt.workflow-agent.md)。
 - 当前缺口是抖音授权身份、长 token 生命周期、可靠调度和新增作品去重。
 
 ## P1：授权与凭据
@@ -51,6 +51,6 @@
 
 ## 关联文档
 
-- `doc/guide.submission-gallery.poster-feed-card.md`
-- `doc/debt.workflow-agent.md`
-- `doc/design.workflow-agent.engine.md`
+- [doc/guide.submission-gallery.poster-feed-card.md](./guide.submission-gallery.poster-feed-card.md)
+- [doc/debt.workflow-agent.md](./debt.workflow-agent.md)
+- [doc/design.workflow-agent.engine.md](./design.workflow-agent.engine.md)

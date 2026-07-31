@@ -2,7 +2,7 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
-> **关联 PRD**: `doc/spec.report-agent.v2.md`
+> **关联 PRD**: [doc/spec.report-agent.v2.md](./spec.report-agent.v2.md)
 > **Phase 主题**: Workflow as Data Pipeline — 复用工作流引擎采集数据，AI 一键生成周报
 
 
@@ -298,6 +298,6 @@
 
 | 文档 | 关系 |
 |------|------|
-| `doc/spec.report-agent.v2.md` | PRD v2.0 (产品需求) |
-| `doc/design.report-agent.md` | 当前架构与实现边界 |
-| `doc/spec.report-agent.md` | PRD v1.0 (存档，已删除) |
+| [doc/spec.report-agent.v2.md](./spec.report-agent.v2.md) | PRD v2.0 (产品需求) |
+| [doc/design.report-agent.md](./design.report-agent.md) | 当前架构与实现边界 |
+| [doc/spec.report-agent.md](./spec.report-agent.md) | PRD v1.0 (存档，已删除) |

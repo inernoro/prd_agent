@@ -102,5 +102,5 @@ Bridge 按 branch 隔离连接和命令队列。一个命令只交付一次，�
 ## 关联文档
 
 - `doc/rule.platform.bridge-ops.md`
-- `doc/guide.cds.agent.workbench.md`
-- `doc/design.cds.md`
+- [doc/guide.cds.agent.workbench.md](./guide.cds.agent.workbench.md)
+- [doc/design.cds.md](./design.cds.md)

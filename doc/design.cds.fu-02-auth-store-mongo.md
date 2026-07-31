@@ -117,6 +117,6 @@ Mongo 数据库名优先读取 `CDS_AUTH_MONGO_DB`，其次读取 `CDS_MONGO_DB`
 
 ## 关联文档
 
-- `plan.cds.status.md`：CDS 能力与后续事项总览。
-- `design.cds.agent.commercial-architecture-and-roadmap.md`：团队工作空间和商业化架构。
-- `guide.cds.env.md`：环境变量配置说明。
+- [plan.cds.status.md](./plan.cds.status.md)：CDS 能力与后续事项总览。
+- [design.cds.agent.commercial-architecture-and-roadmap.md](./design.cds.agent.commercial-architecture-and-roadmap.md)：团队工作空间和商业化架构。
+- [guide.cds.env.md](./guide.cds.env.md)：环境变量配置说明。

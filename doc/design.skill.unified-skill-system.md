@@ -117,7 +117,7 @@
 
 ## 关联文档
 
-- `doc/rule.skill.system.md`
-- `doc/rule.skill.header.md`
-- `doc/design.skill.marketplace-open-api.md`
-- `doc/guide.skill.workflow.md`
+- [doc/rule.skill.system.md](./rule.skill.system.md)
+- [doc/rule.skill.header.md](./rule.skill.header.md)
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md)
+- [doc/guide.skill.workflow.md](./guide.skill.workflow.md)

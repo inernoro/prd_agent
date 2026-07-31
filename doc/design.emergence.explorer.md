@@ -119,6 +119,6 @@ event: done     → { totalNew, error? }   // 完成
 
 ## 七、关联设计文档
 
-- `design.knowledge-base.store.md` — 文档空间（涌现的种子来源）
-- `design.emergence.system.md` — 系统涌现概念文档（涌现探索器是这个概念的具体实现）
+- [design.knowledge-base.store.md](./design.knowledge-base.store.md) — 文档空间（涌现的种子来源）
+- [design.emergence.system.md](./design.emergence.system.md) — 系统涌现概念文档（涌现探索器是这个概念的具体实现）
 - `.claude/rules/no-rootless-tree.md` — 无根之木禁令 + 借用法则

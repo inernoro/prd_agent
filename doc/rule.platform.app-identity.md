@@ -68,4 +68,4 @@
 - 日志、计量、开放接口和自动化测试。
 - 存量数据与兼容读取。
 
-唯一事实源和当前应用清单见 `doc/spec.platform.app-registry.md` 与 `AppCallerRegistry`。
+唯一事实源和当前应用清单见 [doc/spec.platform.app-registry.md](./spec.platform.app-registry.md) 与 `AppCallerRegistry`。

@@ -5,9 +5,9 @@
 > 本文档定义 CDS v4 引入的 10 个 MongoDB 集合的完整字段表、约束、索引与关系。
 > **受众**：后端工程师（写 Mongoose / Mongo 原生 schema 时直接参照），DBA（对照索引汇总建索引）。
 > **文档导航**：
-> - 主设计稿：`doc/design.cds.multi-project.md`
-> - 7 期交付计划：`doc/plan.cds.multi-project-phases.md`
-> - 迁移规范：`doc/rule.cds.mongo-migration.md`
+> - 主设计稿：[doc/design.cds.multi-project.md](./design.cds.multi-project.md)
+> - 7 期交付计划：[doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md)
+> - 迁移规范：[doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md)
 
 
 ## 1. 集合清单

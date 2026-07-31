@@ -82,7 +82,7 @@ API key 只在「往市场上传技能」时才需要，不挡在门口。
 |---|---|
 | 探测 | 项目根、是否 git、已有骨架、已装技能、项目类型；能推断的一律不问 |
 | 提问 | 最多 2 个（项目一句话简介、文档目录），其余用默认值 |
-| 生成 | `CLAUDE.md`（八条核心规则）、`doc/rule.doc.naming.md`、第一份 `spec.*`、`changelogs/` |
+| 生成 | `CLAUDE.md`（八条核心规则）、[doc/rule.doc.naming.md](./rule.doc.naming.md)、第一份 `spec.*`、`changelogs/` |
 | 报告 | 已生成 / 已跳过 / 已装技能 / 缺什么 / 下一步做什么（具体到敲哪个命令） |
 
 硬约束：不覆盖已有文件、探测不到就写「待补」不编造、生成内容禁 emoji。
@@ -99,12 +99,12 @@ API key 只在「往市场上传技能」时才需要，不挡在门口。
 
 ## 七、已知边界
 
-见 `doc/debt.skill.role-bundle.md`。
+见 [doc/debt.skill.role-bundle.md](./debt.skill.role-bundle.md)。
 
 ## 八、关联
 
-- `doc/design.skill.marketplace-open-api.md` —— 海鲜市场开放接口
-- `doc/design.skill.unified-skill-system.md` —— 技能系统领域边界
-- `doc/debt.platform.emoji-corpus.md` —— 对外产物 de-emoji（本次落了第一步）
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— 海鲜市场开放接口
+- [doc/design.skill.unified-skill-system.md](./design.skill.unified-skill-system.md) —— 技能系统领域边界
+- [doc/debt.platform.emoji-corpus.md](./debt.platform.emoji-corpus.md) —— 对外产物 de-emoji（本次落了第一步）
 - `.claude/skills/sdd-init/SKILL.md` —— 入口技能
 - `scripts/skill-bundles.json` —— 角色与套装事实源

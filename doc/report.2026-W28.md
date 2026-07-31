@@ -150,8 +150,8 @@ timeline
 
 | 方向 | 建议动作 | 依据 |
 |------|----------|------|
-| 网关产品化真视觉验收闭环 | 对 llmgw 控制台 P0/P1（租户首页 / 学习中心 / RBAC / 密钥自助 / 四协议 Quickstart）走真人路径 + 双主题 + 最新 sha 取证，挂回 `plan.platform.llm-gateway.full-cutover.md` 验收门 | `real-visual-acceptance.md`：控制台已产品化，需闭环取证证明"可运营" |
-| 移动端双皮肤存量清扫 | 按 `admin-dual-theme.md` 棘轮台账（`debt.frontend.mobile-light-theme.md`）"用户走到哪修到哪"，优先移动端 Tab 直达页 > 高频 Agent 页，逐文件把硬编码降到基线以下 | 双皮肤机制已落地但存量债务仍在，棘轮只防新增不清存量 |
+| 网关产品化真视觉验收闭环 | 对 llmgw 控制台 P0/P1（租户首页 / 学习中心 / RBAC / 密钥自助 / 四协议 Quickstart）走真人路径 + 双主题 + 最新 sha 取证，挂回 [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md) 验收门 | `real-visual-acceptance.md`：控制台已产品化，需闭环取证证明"可运营" |
+| 移动端双皮肤存量清扫 | 按 `admin-dual-theme.md` 棘轮台账（[debt.frontend.mobile-light-theme.md](./debt.frontend.mobile-light-theme.md)）"用户走到哪修到哪"，优先移动端 Tab 直达页 > 高频 Agent 页，逐文件把硬编码降到基线以下 | 双皮肤机制已落地但存量债务仍在，棘轮只防新增不清存量 |
 | CDS 托管交付端到端验收 | 对不可变版本存储 + 托管构建 + 版本复用回滚 + 流式部署解释走一次真实项目端到端（clone → 托管构建 → 部署 → 回滚），确认双车道（托管/compose）不打架 | 托管交付是本周新体系，需真实项目跑通而非单元测试绿即宣布完成（CLAUDE.md §8） |
 | 网关租户隔离涟漪确认 | 租户隔离 + RBAC + 密钥自助接入后，全栈回归所有依赖 appCaller / 密钥的旧入口（MAP 内部调用 / 外部平台 / 影子比对），确认无被新租户边界锁死的路径 | `cross-project-isolation.md`：租户隔离是高影响边界，需全栈涟漪审计避免静默 401 |
 

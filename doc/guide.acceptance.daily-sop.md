@@ -2,7 +2,7 @@
 
 > **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
 
-关联规范: `doc/rule.acceptance.map-enterprise.md`。
+关联规范: [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md)。
 
 ## 1. 目标
 
@@ -10,7 +10,7 @@
 
 自动化只做调度壳。报告结构、证据规则、深度门禁、CDS ready、归档、`verify-open` 和失败降级必须来自技能链和规范文档，不在 automation prompt 中复制维护。
 
-每日验收和日报不是同一类产物。链路边界以 `doc/rule.acceptance.map-enterprise.md` 的“验收链路总控矩阵”为准:
+每日验收和日报不是同一类产物。链路边界以 [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) 的“验收链路总控矩阵”为准:
 
 | 项目 | 每日验收 | 日报 |
 |---|---|---|

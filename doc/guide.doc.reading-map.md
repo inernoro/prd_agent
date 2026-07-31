@@ -40,11 +40,11 @@
 
 按顺序读，总共约 40 分钟：
 
-1. [`spec.project-vision.md`](./spec.project-vision.md) —— 我们到底在解决什么问题，为什么要有这个系统。
-2. [`spec.prd.md`](./spec.prd.md) —— 产品做成什么样，有哪些能力。
-3. [`guide.platform.quickstart.md`](./guide.platform.quickstart.md) —— 怎么把系统跑起来。
-4. [`guide.platform.principles.md`](./guide.platform.principles.md) —— 系统里所有「有名号的原则」一页速查（2 秒原则、好用四原则、无根之木禁令……），读完就知道这里做事的价值观。
-5. [`rule.doc.naming.md`](./rule.doc.naming.md) —— 文件名怎么读，这决定了你以后能不能自己找到东西。
+1. [spec.project-vision.md](./spec.project-vision.md) —— 我们到底在解决什么问题，为什么要有这个系统。
+2. [spec.prd.md](./spec.prd.md) —— 产品做成什么样，有哪些能力。
+3. [guide.platform.quickstart.md](./guide.platform.quickstart.md) —— 怎么把系统跑起来。
+4. [guide.platform.principles.md](./guide.platform.principles.md) —— 系统里所有「有名号的原则」一页速查（2 秒原则、好用四原则、无根之木禁令……），读完就知道这里做事的价值观。
+5. [rule.doc.naming.md](./rule.doc.naming.md) —— 文件名怎么读，这决定了你以后能不能自己找到东西。
 6. **本文** —— 怎么找剩下的 346 篇。
 
 ---
@@ -53,24 +53,24 @@
 
 ### 老板 / 投资人（想知道在做什么、做得怎么样）
 - 常读：**周报**（知识库「周报知识库」，业务价值 + 质量闸 + 下周优先级，技术细节在附录）
-- 偶尔：[`spec.project-vision.md`](./spec.project-vision.md)（愿景）、[`spec.prd.md`](./spec.prd.md)（产品全貌）
+- 偶尔：[spec.project-vision.md](./spec.project-vision.md)（愿景）、[spec.prd.md](./spec.prd.md)（产品全貌）
 - **不用读**：`design.` / `debt.` / `plan.` 全部。那是施工图，不是竣工报告。
 
 ### 产品经理（要提需求、要验收）
-- 起手：[`spec.prd.md`](./spec.prd.md) + 目标模块的 `spec.{应用名}.md`（如 `spec.defect-agent.md`）
-- 验收前：[`rule.acceptance.map-enterprise.md`](./rule.acceptance.map-enterprise.md)（验收标准）+ 最近的验收报告（CDS 验收中心）
+- 起手：[spec.prd.md](./spec.prd.md) + 目标模块的 `spec.{应用名}.md`（如 [spec.defect-agent.md](./spec.defect-agent.md)）
+- 验收前：[rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md)（验收标准）+ 最近的验收报告（CDS 验收中心）
 - 提需求前：跑 `/validate` 技能，比读任何文档都快
 
 ### 新来的工程师（第一周）
-- 第 1 天：地基六篇 + [`guide.platform.development-guide.md`](./guide.platform.development-guide.md)
+- 第 1 天：地基六篇 + [guide.platform.development-guide.md](./guide.platform.development-guide.md)
 - 第 2 天：`CLAUDE.md`（开发纪律总纲）+ 你要动的那个模块的 `design.{模块}.md`
 - 第 3 天起：**别再读了，去改一个小东西**。撞上什么再查什么——这套文档是为「撞上了」设计的。
 
 ### 值班 / 排障（线上出事了）
 - 先查 `debt.{模块}.md` —— **看看是不是已知边界**，这一步能省掉大部分无用排查。
-- 再查 `guide.{模块}.*` 里的 runbook（如 `guide.cds.agent.runbook.md`）。
-- 发布相关：[`rule.platform.production-release-safety.md`](./rule.platform.production-release-safety.md)。
-- 找数据在哪：[`rule.platform.data-dictionary.md`](./rule.platform.data-dictionary.md)。
+- 再查 `guide.{模块}.*` 里的 runbook（如 [guide.cds.agent.runbook.md](./guide.cds.agent.runbook.md)）。
+- 发布相关：[rule.platform.production-release-safety.md](./rule.platform.production-release-safety.md)。
+- 找数据在哪：[rule.platform.data-dictionary.md](./rule.platform.data-dictionary.md)。
 
 ### 接手一个模块的人
 按这个顺序读同一个应用名的四篇，从「是什么」到「欠什么」：
@@ -82,8 +82,8 @@ spec.{应用}.md   →   design.{应用}.md   →   plan.{应用}.*.md   →   d
 
 ### AI Agent
 `CLAUDE.md` + `.claude/rules/*.md` 是强制纪律（按 glob 自动加载），`doc/` 是查证来源。
-写文档前先读 [`rule.doc.naming.md`](./rule.doc.naming.md)（放哪、叫什么）和
-[`rule.doc.readability.md`](./rule.doc.readability.md)（开头怎么写）。
+写文档前先读 [rule.doc.naming.md](./rule.doc.naming.md)（放哪、叫什么）和
+[rule.doc.readability.md](./rule.doc.readability.md)（开头怎么写）。
 
 ---
 
@@ -99,8 +99,8 @@ spec.{应用}.md   →   design.{应用}.md   →   plan.{应用}.*.md   →   d
 | 这个坑是不是已知的 | `debt.{模块}.md` |
 | 上周做了什么 / 昨天做了什么 | 周报知识库 / 日报知识库（不在 `doc/`） |
 | 这次改动验收过了吗 | CDS 验收中心的验收报告（不在 `doc/`） |
-| 有哪些文档 | [`guide.list.directory.md`](./guide.list.directory.md)（人看）/ `index.yml`（工具看） |
-| 有哪些技能可以用 | `CLAUDE.md` 技能表 + [`guide.skill.catalog.md`](./guide.skill.catalog.md) |
+| 有哪些文档 | [guide.list.directory.md](./guide.list.directory.md)（人看）/ `index.yml`（工具看） |
+| 有哪些技能可以用 | `CLAUDE.md` 技能表 + [guide.skill.catalog.md](./guide.skill.catalog.md) |
 
 ---
 
@@ -145,13 +145,15 @@ grep -l "关键词" doc/*.md  # 不知道在哪篇时全文搜
 **读不懂是文档的问题，不是你的问题。** 按这条规则处理：
 
 1. 那篇文档如果没有开头的「导读三行」（一句话 / 谁该读 / 读完能做什么），
-   直接按 [`rule.doc.readability.md`](./rule.doc.readability.md) 给它补上——谁读到谁补，这是本仓库的常规操作。
+   直接按 [rule.doc.readability.md](./rule.doc.readability.md) 给它补上——谁读到谁补，这是本仓库的常规操作。
 2. 补完跑一次 `python3 scripts/doc-readability-check.py --update-baseline`，把欠账基线压低一格。
-3. 如果是内容本身讲不清楚，在对应 `debt.{模块}.md` 记一条，别让下一个人再踩一遍。
+3. 引用点不开（写成了灰底代码而不是蓝色链接）时，跑一次
+   `python3 scripts/doc-readability-check.py --fix-links` 就会全库改成可点链接。
+4. 如果是内容本身讲不清楚，在对应 `debt.{模块}.md` 记一条，别让下一个人再踩一遍。
 
 ## 九、相关
 
-- [`rule.doc.readability.md`](./rule.doc.readability.md) —— 作者视角：单篇文档开头怎么写。
-- [`rule.doc.naming.md`](./rule.doc.naming.md) —— 文件放哪、叫什么名。
-- [`rule.doc.templates.md`](./rule.doc.templates.md) —— 七类文档的正文模板。
-- [`guide.list.directory.md`](./guide.list.directory.md) —— 全量文档清单（按类型排序）。
+- [rule.doc.readability.md](./rule.doc.readability.md) —— 作者视角：单篇文档开头怎么写。
+- [rule.doc.naming.md](./rule.doc.naming.md) —— 文件放哪、叫什么名。
+- [rule.doc.templates.md](./rule.doc.templates.md) —— 七类文档的正文模板。
+- [guide.list.directory.md](./guide.list.directory.md) —— 全量文档清单（按类型排序）。

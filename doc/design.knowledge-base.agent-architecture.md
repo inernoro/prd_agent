@@ -136,7 +136,7 @@ public record CreateInfraAgentSessionInput(
 
 ## 关联文档
 
-- `design.cds.agent.runtime-architecture.md` — CDS Agent 整体运行时架构
+- [design.cds.agent.runtime-architecture.md](./design.cds.agent.runtime-architecture.md) — CDS Agent 整体运行时架构
 - `doc/debt.cds-agent-workspace.md` — 工作区注入工程债务台账（待创建）
 - `.claude/rules/agent-runtime-sdk-boundary.md` — SDK 边界声明规则
 - `.claude/rules/no-rootless-tree.md` — 禁止声明未实现的能力

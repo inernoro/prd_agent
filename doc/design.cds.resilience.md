@@ -142,7 +142,7 @@ Dispatcher 支持按分支数量、实时负载或温池容量选择节点：
 
 ## 关联文档
 
-- `doc/design.cds.cluster-bootstrap.md`
-- `doc/design.cds.branch-network-isolation.md`
-- `doc/design.cds.lifecycle-atomicity.md`
-- `doc/guide.cds.cluster-setup.md`
+- [doc/design.cds.cluster-bootstrap.md](./design.cds.cluster-bootstrap.md)
+- [doc/design.cds.branch-network-isolation.md](./design.cds.branch-network-isolation.md)
+- [doc/design.cds.lifecycle-atomicity.md](./design.cds.lifecycle-atomicity.md)
+- [doc/guide.cds.cluster-setup.md](./guide.cds.cluster-setup.md)

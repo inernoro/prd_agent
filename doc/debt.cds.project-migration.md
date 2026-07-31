@@ -45,4 +45,4 @@ API label 都还在，但**路由处理器文件与前端 UI 早已丢失**—�
 - `cds/web/src/pages/ProjectSettingsPage.tsx` —— `ProjectMigrationTab`
 - `cds/src/routes/branches.ts` —— `/api/export-config` `/api/import-config`（复刻底座）
 - `cds/src/routes/infra-backup.ts` —— mongodump/mongorestore（数据迁移底座）
-- `doc/design.cds.data-migration.md` —— 原始数据迁移设计（本次校正"已落地"口径）
+- [doc/design.cds.data-migration.md](./design.cds.data-migration.md) —— 原始数据迁移设计（本次校正"已落地"口径）

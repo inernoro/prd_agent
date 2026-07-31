@@ -99,7 +99,7 @@ SSOT:`cds/src/services/preview-instance.ts`。
 - `cds/cds-compose.selfhost.yml` — cds-self 项目 compose 合同(粘贴导入)
 - `cds/tests/services/preview-instance.test.ts` — 拦截边界 + seed 幂等单测
 - `.claude/rules/cross-project-isolation.md` — 通道 4(共享库)/通道 5(self-update 重启)是本设计要消灭的痛
-- `doc/plan.cds.status.md` — CDS 活状态与路线入口
+- [doc/plan.cds.status.md](./plan.cds.status.md) — CDS 活状态与路线入口
 
 ## 七、风险与已知边界
 

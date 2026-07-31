@@ -7,13 +7,13 @@
 > 最后更新：2026-07-28 | 轨道：单轨（claude/workflow-issues-verification-8pkmcq）
 > **距离可发布**：阶段一二三均已达成各自判据。阶段三引入了本仓库唯一一处
 > **默认开启、无人值守、在生产机器上执行删除**的路径（远端产物回收），安全边界与
-> 对抗性回归见 `doc/debt.cds.release-system.md` 债务 10；真出事的逃生阀是
+> 对抗性回归见 [doc/debt.cds.release-system.md](./debt.cds.release-system.md) 债务 10；真出事的逃生阀是
 > `CDS_RELEASE_ARTIFACT_RETENTION=0`（只巡检不回收，改环境变量重启即可，不必发版）。
 > 阶段四需单独立项，理由见下方判断。
 
 | 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
 | --- | --- | --- | --- | --- | --- |
-| 一 止血 | 100 | 已验收 | 无 | — | PR #1273（Codex 七轮 20+ 条逐条修复）；真 sshd 端到端四条行为 A/B/C/D 逐条红绿闭环，见 `doc/debt.cds.release-system.md`「真实环境证据」 |
+| 一 止血 | 100 | 已验收 | 无 | — | PR #1273（Codex 七轮 20+ 条逐条修复）；真 sshd 端到端四条行为 A/B/C/D 逐条红绿闭环，见 [doc/debt.cds.release-system.md](./debt.cds.release-system.md)「真实环境证据」 |
 | 二 可见 | 100 | 已验收 | 无 | — | 四条判据逐条核过：`第 N/M 步 · 标题` + ETA 同屏（`ReleaseCenterPage.tsx`）；事件上 `cds-events-bus` 且 `isAlertCdsEvent` 收敛告警判定；状态页生产目标独立分组出 24h 柱条；发布中心实时探测数 = 0（`tests/routes/releases-center-health-snapshot.test.ts`，红检确认改回实时探测即红） |
 | 三 记账 | 100 | 已验收 | 无 | — | 七轮 Codex 审查收口（P1 8 条 / P2 12 条，逐条红绿闭环，见 PR #1281 收口小结）。四条判据逐条实测：落盘 1200 行从 1200 次降到 24 次（红检确认改回每行一落即 1200）；200 条 run 入库后按目标收敛到 100 且回滚链完整；`GET /releases/center` 带 DORA 四项且无样本恒 `null`；漂移告警 `release.drift-detected` 已上总线且 `isAlertCdsEvent` 为 true。远端回收另有对抗性套件 `tests/services/release-reclaim-adversarial.test.ts`（6 例，红检确认摘掉符号链接保护即红 4 例） |
 | 四 架构升级 | 0 | 未开始（需单独立项） | 依赖不可变产物链路改造，工作量大 | 见本节下方「阶段四判断」 | — |
@@ -75,7 +75,7 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 
 另外三条必须先说清的边界，避免下游误判：
 
-- `doc/debt.platform.production-release.md`（open = 0）和 `doc/rule.platform.production-release-safety.md` 讲的是 **MAP 自己的 `exec_dep.sh` 发布链**，不是 CDS 的发布系统。CDS 只是通过 `existing-script` 模式把它 SSH 跑一遍。不要把那份"零债务"当成 CDS 发布系统没有债务。
+- [doc/debt.platform.production-release.md](./debt.platform.production-release.md)（open = 0）和 [doc/rule.platform.production-release-safety.md](./rule.platform.production-release-safety.md) 讲的是 **MAP 自己的 `exec_dep.sh` 发布链**，不是 CDS 的发布系统。CDS 只是通过 `existing-script` 模式把它 SSH 跑一遍。不要把那份"零债务"当成 CDS 发布系统没有债务。
 - 回滚**不会**因为分支被回收而失效（走远端 git，不依赖本地 worktree）。受损的只有策略重检测与证据可追溯。
 - 目前 `doc/` 下**没有任何 CDS 发布系统的设计或规格文档**。两条生命周期之所以漂移到差一个代际，缺 SSOT 是结构性原因之一。本文补的就是这个缺口。
 
@@ -143,7 +143,7 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 | 去掉本仓脚本名硬编码 | 步骤来自 plan 而非 `./fast.sh` 字面量（`ReleaseCenterPage.tsx:247,249`、`release-service.ts:671-676`），CDS 恢复成通用产品 | — |
 | 发布 ETA | 发布耗时进耗时台账并在 UI 出"预计还需 MM:SS（近 N 次中位）"。**注意**：现有 `DeployDurationMode = 'release' \| 'source' \| 'restart'`（`types.ts:1469`）里的 `release` 指的是**极速版构建模式**，不是生产发布，必须新增独立 bucket，不要复用 | `state.ts:3436-3480` 的采样 + p50 + "近 N 次"文案口径 |
 | 生产存活监控 | `UptimeStateSource` 增加发布目标 getter，`selectProbeTargets` 多产一类 URL 型目标，探测走 `ReleaseTarget.ssh.healthcheckUrl`；状态页出现生产目标的 24h 可用率、响应时间、故障时间线 | `uptime-metrics.ts` 纯函数（采样 / 聚合 / 去抖 / incident 合成，有单测）+ `ProbeFn` 可注入（`uptime-monitor.ts:171`）+ 全 URL 探测函数 `probeHealthcheckStatus` 已存在（`release-service.ts:825`） |
-| 事件上总线 + 告警外发 | 发布 started / succeeded / failed / rolled-back 上 `cds-events-bus`；告警通道与存活告警**共用一条**——`doc/debt.cds.uptime-monitor.md` 已把"无告警外发"登记为 open，不要当两件事做 | `cds-events-bus` 已存在 |
+| 事件上总线 + 告警外发 | 发布 started / succeeded / failed / rolled-back 上 `cds-events-bus`；告警通道与存活告警**共用一条**——[doc/debt.cds.uptime-monitor.md](./debt.cds.uptime-monitor.md) 已把"无告警外发"登记为 open，不要当两件事做 | `cds-events-bus` 已存在 |
 | SSE 补 `id:` 行 | 支持 `Last-Event-ID` 标准续传，与分支部署流对齐 | `routes/deployment-runs.ts:70-71,106` |
 | 停掉现场探测 | 发布中心健康改读监控快照，不再每次请求同步打生产 | 依赖上面的存活监控 |
 
@@ -217,10 +217,10 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 | 生产存活监控 | 采样 / 聚合 / 去抖 / incident 纯函数 + 可注入 `ProbeFn` | `cds/src/services/uptime-metrics.ts`、`uptime-monitor.ts:171` |
 | 探测实现 | 已有的全 URL 健康探测函数 | `cds/src/services/release-service.ts:825` |
 | ETA | 耗时采样 + p50 + "近 N 次"文案口径（**需新 bucket，勿复用 `'release'` 构建模式**） | `cds/src/services/state.ts:3436-3480` |
-| 事件外发 | `cds-events-bus` + uptime 告警通道（同一条） | 与 `doc/debt.cds.uptime-monitor.md` 的 open 项合并做 |
+| 事件外发 | `cds-events-bus` + uptime 告警通道（同一条） | 与 [doc/debt.cds.uptime-monitor.md](./debt.cds.uptime-monitor.md) 的 open 项合并做 |
 | SSE 标准续传 | 分支部署流的 `id:` + `Last-Event-ID` 实现 | `cds/src/routes/deployment-runs.ts:70-71,106` |
 | 不可变产物 | `DeploymentVersion` 内容寻址 + 不可变镜像断言 | `cds/src/services/deployment-version.ts:52-72,178` |
-| 取证账本格式参考 | MAP 自己 `exec_dep.sh` 那套结构化取证（操作者 / PID / 起止 / SHA256 / 切换前后 owner-mode / 首个失败阶段 / 回滚结果） | `doc/debt.platform.production-release.md` |
+| 取证账本格式参考 | MAP 自己 `exec_dep.sh` 那套结构化取证（操作者 / PID / 起止 / SHA256 / 切换前后 owner-mode / 首个失败阶段 / 回滚结果） | [doc/debt.platform.production-release.md](./debt.platform.production-release.md) |
 
 ---
 

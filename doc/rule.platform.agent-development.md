@@ -48,7 +48,7 @@
 - 新权限同步覆盖内置角色、管理配置和负面测试。
 - 用户、团队、应用和环境隔离边界必须能从设计中确认。
 
-身份和权限的具体事实源见 `doc/rule.platform.app-identity.md` 及应用注册规格。
+身份和权限的具体事实源见 [doc/rule.platform.app-identity.md](./rule.platform.app-identity.md) 及应用注册规格。
 
 ## 5. 数据与服务端权威
 
@@ -129,4 +129,4 @@
 - [ ] 文档、索引、变更记录和债务同步。
 - [ ] 入口、路径、预览和风险已交接。
 
-详细产品功能描述应放在对应 `spec.*`，例如 `doc/spec.report-agent.md`；本规则不维护具体 Agent 功能模块清单。
+详细产品功能描述应放在对应 `spec.*`，例如 [doc/spec.report-agent.md](./spec.report-agent.md)；本规则不维护具体 Agent 功能模块清单。

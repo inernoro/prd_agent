@@ -27,7 +27,7 @@
 5. 视觉创作的现有可用池接口先提供逻辑模型兼容投影，应用只看到 PublicId；控制台与日志同时展示逻辑模型和真实上游。
 6. 旧平台、模型、Exchange 与池不删除，作为回滚点和未迁移调用方兼容路径。
 
-独立 PR 的完成门为：后端与两个前端构建通过；逻辑模型权限、默认池回退、Offering 原子限流和异构协议重建测试通过；CDS 精确提交的 Console、Serving、MAP 与 Web 全部就绪；测试环境实际配置至少两个视觉逻辑模型，每个关键逻辑模型至少两个 Offering；浏览器从视觉创作选择模型完成请求并在日志中核对 LogicalModelId、OfferingId、实际模型和 Provider；教程源文件、实战目录、知识库发布计划和回滚证据同步完成。完整对象与解析不变量见 `doc/design.platform.model-pool.md` v3.0。
+独立 PR 的完成门为：后端与两个前端构建通过；逻辑模型权限、默认池回退、Offering 原子限流和异构协议重建测试通过；CDS 精确提交的 Console、Serving、MAP 与 Web 全部就绪；测试环境实际配置至少两个视觉逻辑模型，每个关键逻辑模型至少两个 Offering；浏览器从视觉创作选择模型完成请求并在日志中核对 LogicalModelId、OfferingId、实际模型和 Provider；教程源文件、实战目录、知识库发布计划和回滚证据同步完成。完整对象与解析不变量见 [doc/design.platform.model-pool.md](./design.platform.model-pool.md) v3.0。
 
 ## 1.1 执行目标与推进合同
 
@@ -393,7 +393,7 @@ PR #1168 在不重做 full-http、模型迁移、模型池算法或发布 Gate �
 - 教程与验收：公共《模型网关权威教程》原生产版本为 33 章、253 步、132 张唯一图片、222 个步骤映射和 292 个正文图片引用，正文 SHA256 为 `83b2e0253c5538bd5079ed55f1368c7becb4c3a903829b5538445ce25b329973`；PR [#1178](https://github.com/inernoro/prd_agent/pull/1178) 已 squash 合并为 `ac1434df91563824b6c1589748cb3041e320ffaa`，把仓库源扩展为 255 步、136 张唯一图片和 294 个正文图片引用。教程地址保持 `https://map.ebcone.net/s/lib/PNyJj8JYqXJN?entry=3e4e51616ce64cb8f9e09c105dc7aaaa`；生产正文是否已采用该增量必须以发布记录和读回哈希为准，不从代码合并状态推断，最终 L2 报告继续使用本节 9.1 的固定链接。
 - 权限与恢复：`rel_14c4f9a0786d81ef` 证明临时用户与 membership 活跃数均为 0；两个 CDS 目标分别按配置哈希 `b1b7226583996002af33c9a226915440dac7e19f9c8c3ef4e9010d0c0e058775` 与 `e1c318dfd8c65a74531e28dd1d912138e88d0a6aac7a2bf34e47768a08a1705b` 原样恢复并禁用；临时 CDS 自更新分支已删除，没有修改任何既有用户密码。
 - 事故闭环：两次早期发布尝试因重新创建 gateway 容器改变反向代理目标地址而短暂出现 502，均由自动回滚和显式恢复发布恢复。收尾分支将所有发布路径改为只强制更新 gateway 之外的服务；非 gateway 容器更新完成后先用当前配置原地 reload gateway 刷新 API/LLMGW 地址，再进入较长 readiness。gateway 仅在不存在时首次启动，已有容器随后同步其真实宿主挂载中的 standalone 配置，再 `nginx -t` 与第二次热重载。inproc 紧急回滚和保守 shadow 恢复也只重启 API、原地 reload gateway。契约测试锁定正常发布、静态复用、inproc 回滚和 shadow 恢复都不得对 gateway 执行 `--force-recreate`。
-- 发布面闭环：`deploy/web/dist` 保持 gateway 的稳定 bind 根，静态产物不再清空在线目录，而是在根内 `.staging-*` 中完成权限归一化、index 与实际入口资源校验，再原子切换 `current`，由 `previous` 保存上一版；standalone Nginx root 指向 bind 根内的 `current`。任一强制探针失败会恢复 previous，并原地 `nginx -t`、reload 后复验公网，正常发布、复用发布和回滚都不改变 gateway 容器 IP。不可变产物必须具备可核验 SHA256，`./exec_dep.sh release` 恢复为 latest 兼容别名。发布后强制验证主 HTML、实际 JS/CSS、根级 health、API 版本、LLMGW 页面和双健康，并以操作者、主机、release PID、目标、hash、权限、链接、首个失败阶段与回滚结果生成不可覆盖 JSON；每 6 小时的独立巡检还会对网关独立入口验证产品标识、实际资源、Console/Serving 精确提交和四协议无密钥拒绝。因此 `doc/debt.platform.production-release.md` 的历史 open 已迁入已还归档。
+- 发布面闭环：`deploy/web/dist` 保持 gateway 的稳定 bind 根，静态产物不再清空在线目录，而是在根内 `.staging-*` 中完成权限归一化、index 与实际入口资源校验，再原子切换 `current`，由 `previous` 保存上一版；standalone Nginx root 指向 bind 根内的 `current`。任一强制探针失败会恢复 previous，并原地 `nginx -t`、reload 后复验公网，正常发布、复用发布和回滚都不改变 gateway 容器 IP。不可变产物必须具备可核验 SHA256，`./exec_dep.sh release` 恢复为 latest 兼容别名。发布后强制验证主 HTML、实际 JS/CSS、根级 health、API 版本、LLMGW 页面和双健康，并以操作者、主机、release PID、目标、hash、权限、链接、首个失败阶段与回滚结果生成不可覆盖 JSON；每 6 小时的独立巡检还会对网关独立入口验证产品标识、实际资源、Console/Serving 精确提交和四协议无密钥拒绝。因此 [doc/debt.platform.production-release.md](./debt.platform.production-release.md) 的历史 open 已迁入已还归档。
 
 ### 9.3 独立登录首页、真实测试数据与品牌域名（2026-07-17）
 
@@ -401,7 +401,7 @@ PR #1168 在不重做 full-http、模型迁移、模型池算法或发布 Gate �
 - 登录页改为左右分区的完整入口：匿名 `/gw/healthz` 明确显示服务状态，正文解释为什么登录前不能展示租户数据，并在同屏说明 Quickstart、Activity、费用和租户隔离。用户名与密码增加显式 label，桌面、平板和手机分别收敛布局；没有放宽任何鉴权，也没有展示租户数量或请求摘要。
 - CDS main 在本轮检查前已经通过正常网页链路创建 appCaller 和 tenant-scoped service key，并完成一次 OpenAI-compatible Quickstart 安全连通请求；后续只读复核确认该请求在模型解析前结束，没有 `ActualModel`、`ActualPlatformId` 或模型池证据，因此不得再表述为“真实 chat 成功”。同一测试库当时有 3 个 appCaller、0 个 GW 权威模型池，真实调用并未闭环。
 - 正式环境当前仍兼容 `https://map.ebcone.net/llmgw/` 二级目录；独立域名应把根路径反代到正式机 `127.0.0.1:8081`。仓库新增 `llmgw/deploy/public-domain.nginx.example.conf` 和完整 DNS、证书、Nginx、健康与无 key 拒绝验收顺序。
-- `sirius.ebcone.net` 的公共权威 DNS 在本轮检查时为 NXDOMAIN；现有腾讯云 COS 凭据调用 DNSPod 只读接口返回 `OperationDenied.NoPermissionToOperateDomain`。`map.ebcone.net` 现有证书 SAN 也只包含 `map.ebcone.net`。因此没有伪造“已上线”：代码、Nginx 模板和回跳语义已就绪，正式域名仍需域名管理员创建 DNS 记录并签发独立证书，具体阻塞进入 `doc/debt.platform.llm-gateway.md`。
+- `sirius.ebcone.net` 的公共权威 DNS 在本轮检查时为 NXDOMAIN；现有腾讯云 COS 凭据调用 DNSPod 只读接口返回 `OperationDenied.NoPermissionToOperateDomain`。`map.ebcone.net` 现有证书 SAN 也只包含 `map.ebcone.net`。因此没有伪造“已上线”：代码、Nginx 模板和回跳语义已就绪，正式域名仍需域名管理员创建 DNS 记录并签发独立证书，具体阻塞进入 [doc/debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)。
 
 ### 9.4 真实请求与 OpenRouter 微观体验补强（2026-07-17）
 

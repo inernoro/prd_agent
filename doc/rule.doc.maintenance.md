@@ -13,7 +13,7 @@
 ## 维护规则
 
 1. 新增、删除或重命名顶级路由、Controller 契约、数据模型语义、鉴权边界、存储策略或 Run/SSE 链路时，更新对应 `spec.*`、`design.*` 或 `rule.*`。
-2. 每篇文档必须使用 `doc/rule.doc.naming.md` 定义的文件名、H1 和 blockquote 元数据头；新建或重命名时同步 `doc/index.yml` 与 `doc/guide.list.directory.md`。
+2. 每篇文档必须使用 [doc/rule.doc.naming.md](./rule.doc.naming.md) 定义的文件名、H1 和 blockquote 元数据头；新建或重命名时同步 `doc/index.yml` 与 [doc/guide.list.directory.md](./guide.list.directory.md)。
 3. `design.*` 保留管理摘要、决策、架构与边界；前四节不放代码，全文代码块不超过 30%。可从源码获得的长实现、完整 DTO 或组件改为职责说明和稳定源码路径。
 4. `plan.*` 只维护尚未完成的执行路线；已完成工作吸收至设计、债务或 Git 历史后，不继续作为计划正文累积。
 5. `report.*` 只新增周报。验收、事故、评测和临时进度报告进入知识库；已被代码、脚本或存量文档引用的非周报报告，在完成迁移和引用更新前按 grandfather 保留。

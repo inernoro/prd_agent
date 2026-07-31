@@ -4,12 +4,12 @@
 
 > **更新**:2026-07-15
 > 背景:用户计划迁移 CDS 宿主。本 runbook 把迁移前中后的检查单固化下来,数据依据来自
-> `doc/debt.cds.performance.md`(2026-06-21/22 性能专项实测)与 `doc/debt.cds.ci-prebuilt.md`。
+> [doc/debt.cds.performance.md](./debt.cds.performance.md)(2026-06-21/22 性能专项实测)与 [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md)。
 
 
 ## 一、迁移前(旧实例上,提前做)
 
-- [ ] **注册 cds-self 项目**(见 `doc/design.cds.self-hosting.md` §四):迁移期是 CDS 改动最频繁、最怕生产不稳的窗口,迁移相关的 CDS 改动先在预览实例上验收,生产实例只在确认后 self-update 一次。
+- [ ] **注册 cds-self 项目**(见 [doc/design.cds.self-hosting.md](./design.cds.self-hosting.md) §四):迁移期是 CDS 改动最频繁、最怕生产不稳的窗口,迁移相关的 CDS 改动先在预览实例上验收,生产实例只在确认后 self-update 一次。
 - [ ] **抄录当前调度器配置**:`GET /api/scheduler/state`(2026-07-15 实测:enabled=true, maxHotBranches=14, idleTTLSeconds=1800)。该配置持久化在 state 里,随数据迁移;但迁移后必须核对(见 §三.1)。
 - [ ] **抄录构建并发闸**:`CDS_MAX_CONCURRENT_BUILDS`(默认 3),迁移后按新机核数调。
 - [ ] **盘点必迁清单**(只有这三样是不可再生的,见 §二):mongo-split 状态库、`.cds.env`、TLS 证书。
@@ -51,7 +51,7 @@
 
 ## 五、关联
 
-- `doc/debt.cds.performance.md` — 性能根因实测台账(调度器禁用事故、并发闸、两个假设证伪)
-- `doc/debt.cds.ci-prebuilt.md` — 极速版债务(ghcr public、首拉 I/O、回退链)
-- `doc/design.cds.self-hosting.md` — cds-self 预览实例(迁移期 CDS 改动的验收通道)
+- [doc/debt.cds.performance.md](./debt.cds.performance.md) — 性能根因实测台账(调度器禁用事故、并发闸、两个假设证伪)
+- [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md) — 极速版债务(ghcr public、首拉 I/O、回退链)
+- [doc/design.cds.self-hosting.md](./design.cds.self-hosting.md) — cds-self 预览实例(迁移期 CDS 改动的验收通道)
 - `.claude/rules/cross-project-isolation.md` — 通道 1/2(JWT 密钥两用)、通道 4(共享库全局状态)

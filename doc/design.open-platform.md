@@ -114,7 +114,7 @@ Scope 只代表调用某类接口的资格，不自动授予任意数据访问�
 
 ## 关联文档
 
-- `design.open-platform.open-api.md`：通用 OpenAI 兼容网关详细设计。
-- `guide.open-platform.open-api.md`：外部调用指南。
-- `design.platform.external-authorization.md`：外部身份与资源授权。
-- `design.skill.marketplace-open-api.md`：海鲜市场开放接口。
+- [design.open-platform.open-api.md](./design.open-platform.open-api.md)：通用 OpenAI 兼容网关详细设计。
+- [guide.open-platform.open-api.md](./guide.open-platform.open-api.md)：外部调用指南。
+- [design.platform.external-authorization.md](./design.platform.external-authorization.md)：外部身份与资源授权。
+- [design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md)：海鲜市场开放接口。

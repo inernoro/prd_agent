@@ -104,6 +104,6 @@ Exchange 模型与真实平台模型遵循同一 appCallerCode、模型类型、
 
 ## 关联文档
 
-- `doc/design.platform.model-pool.md`
-- `doc/design.platform.llm-gateway.md`
-- `doc/rule.platform.llm-gateway.md`
+- [doc/design.platform.model-pool.md](./design.platform.model-pool.md)
+- [doc/design.platform.llm-gateway.md](./design.platform.llm-gateway.md)
+- [doc/rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)

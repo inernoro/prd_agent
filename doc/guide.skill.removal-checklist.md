@@ -13,7 +13,7 @@
 |----|------------|
 | 1 | 删的 2 个技能其实是「职责分离」的载荷技能（auto-fix-issues 被 cds/cds-deploy/issues-autofix 路由；issues-visual-create 是 issues-visual-run 的开单端）→ 被迫还原 |
 | 2 | `prd-api` 的 `official-skills.generated.json` 仍含该技能，经 marketplace API 对外可装；删的 html/pdf 是 CI 冒烟脚本 `require_file` 的证据文件 |
-| 3 | `doc/guide.skill.catalog.md`、`guide.platform.agent-onboarding.md`、`guide.skill.workflow.md` 仍把它当可用技能；`prd-admin/src/lib/skillGlyphRegistry.ts`（前端）有图标条目 |
+| 3 | [doc/guide.skill.catalog.md](./guide.skill.catalog.md)、[guide.platform.agent-onboarding.md](./guide.platform.agent-onboarding.md)、[guide.skill.workflow.md](./guide.skill.workflow.md) 仍把它当可用技能；`prd-admin/src/lib/skillGlyphRegistry.ts`（前端）有图标条目 |
 | 4 | `scripts/bundle-official-skills.mjs` 的 INCLUDE 白名单仍列该技能；`createzzdemo/SKILL.md` 散文级 fallback 「走 bridge 技能」 |
 
 **根因**：删技能的爆炸半径远超直觉，且单 `grep doc/ .claude/` 探不到 `scripts/ prd-api/ prd-admin/src/`。
@@ -32,9 +32,9 @@
 ### B. 注册表 / 索引（SSOT）
 
 - [ ] `CLAUDE.md` 质量保障技能链表格：删行
-- [ ] `doc/guide.skill.catalog.md`：删技能总览行（注意重编号）+ 补「已删除/裁剪」说明
-- [ ] `doc/guide.skill.workflow.md`：删触发词速查行
-- [ ] `doc/guide.platform.agent-onboarding.md`：删/改新手引导里的技能行与示例（改指替代技能）
+- [ ] [doc/guide.skill.catalog.md](./guide.skill.catalog.md)：删技能总览行（注意重编号）+ 补「已删除/裁剪」说明
+- [ ] [doc/guide.skill.workflow.md](./guide.skill.workflow.md)：删触发词速查行
+- [ ] [doc/guide.platform.agent-onboarding.md](./guide.platform.agent-onboarding.md)：删/改新手引导里的技能行与示例（改指替代技能）
 
 ### C. 后端官方技能包（marketplace 对外）
 
@@ -55,7 +55,7 @@
 
 ### F. 文档矩阵 + 散文 fallback
 
-- [ ] `doc/index.yml` + `doc/guide.list.directory.md`：若技能有独立 doc，删条目（技能本身不在此二者，但相关 design/guide 可能引用）
+- [ ] `doc/index.yml` + [doc/guide.list.directory.md](./guide.list.directory.md)：若技能有独立 doc，删条目（技能本身不在此二者，但相关 design/guide 可能引用）
 - [ ] grep 全仓散文级「走 X 技能」「用 X 技能」类 fallback（最易漏，如 `createzzdemo` 引用 `bridge`）
 - [ ] 功能 vs 技能辨析：如 `bridge` 技能已删但 **Bridge 功能/HTTP API/规则** 仍在——只清「作为技能」的引用，保留功能引用
 

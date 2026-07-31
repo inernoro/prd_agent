@@ -2,7 +2,7 @@
 
 > **版本**：v1.0 | **日期**：2026-07-26 | **状态**：已落地
 >
-> 关联：`design.cds.control-data-split.md`、`design.cds.multi-project.md`、`guide.cds.multi-branch-db.md`
+> 关联：[design.cds.control-data-split.md](./design.cds.control-data-split.md)、[design.cds.multi-project.md](./design.cds.multi-project.md)、[guide.cds.multi-branch-db.md](./guide.cds.multi-branch-db.md)
 
 ---
 

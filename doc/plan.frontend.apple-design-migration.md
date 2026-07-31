@@ -51,6 +51,6 @@ library、md-to-ppt、首页品牌页、DailyPost 和复杂画布先判断是否
 
 ## 关联文档
 
-- `doc/plan.frontend.mobile-adaptation.md`
+- [doc/plan.frontend.mobile-adaptation.md](./plan.frontend.mobile-adaptation.md)
 - `.claude/rules/admin-dual-theme.md`
 - `.claude/rules/full-height-layout.md`

@@ -103,5 +103,5 @@
 
 - 后端：`prd-api/src/PrdAgent.Api/Controllers/Api/WorkflowAgentController.cs`、`PrdAgent.Api/Services/WorkflowRunWorker.cs`、`PrdAgent.Api/Services/WorkflowScheduleWorker.cs`、`PrdAgent.Core/Models/WorkflowModels.cs`。
 - 前端：`prd-admin/src/pages/workflow-agent/`、`prd-admin/src/services/contracts/workflowAgent.ts`、`prd-admin/src/services/real/workflowAgent.ts`。
-- 增量设计：`design.workflow-agent.auto-config.md`。
-- 规则：`rule.platform.server-authority.md`、`rule.platform.llm-gateway.md`、`rule.platform.gesture-unification.md`。
+- 增量设计：[design.workflow-agent.auto-config.md](./design.workflow-agent.auto-config.md)。
+- 规则：`rule.platform.server-authority.md`、[rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)、`rule.platform.gesture-unification.md`。

@@ -48,8 +48,8 @@
 
 - 服务端：`prd-api/src/PrdAgent.Api/Controllers/Api/ExecutiveController.cs`。
 - 前端：`prd-admin/src/pages/ExecutiveDashboardPage.tsx`、`prd-admin/src/services/contracts/executive.ts`、`prd-admin/src/services/real/executive.ts`。
-- 周报主设计：`design.report-agent.md`、`spec.report-agent.md`。
-- 工作流能力：`design.workflow-agent.engine.md`。
+- 周报主设计：[design.report-agent.md](./design.report-agent.md)、[spec.report-agent.md](./spec.report-agent.md)。
+- 工作流能力：[design.workflow-agent.engine.md](./design.workflow-agent.engine.md)。
 
 ## 风险与验收
 

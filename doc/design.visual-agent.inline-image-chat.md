@@ -110,6 +110,6 @@ Visual Agent 同时存在画布图片、聊天中插入的图片 Chip 和从其�
 
 ## 关联文档
 
-- `design.platform.image-ref-and-persistence.md`：图片引用与消息持久化。
-- `design.visual-agent.multi-image-compose.md`：多图合成能力。
-- `design.visual-agent.multi-image-vision-api.md`：多图理解与协议边界。
+- [design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)：图片引用与消息持久化。
+- [design.visual-agent.multi-image-compose.md](./design.visual-agent.multi-image-compose.md)：多图合成能力。
+- [design.visual-agent.multi-image-vision-api.md](./design.visual-agent.multi-image-vision-api.md)：多图理解与协议边界。

@@ -73,6 +73,6 @@ SSE 事件只通知客户端刷新显示，不能作为持久化的唯一来源�
 
 ## 关联文档
 
-- `design.visual-agent.md`：视觉创作能力与消息展示上下文。
-- `design.platform.llm-gateway.md`：统一 Gateway 调用与日志边界。
+- [design.visual-agent.md](./design.visual-agent.md)：视觉创作能力与消息展示上下文。
+- [design.platform.llm-gateway.md](./design.platform.llm-gateway.md)：统一 Gateway 调用与日志边界。
 - `rule.platform.server-authority.md`：服务端保存业务事实的约束。

@@ -10,11 +10,11 @@
 
 ## 背景
 
-2026-07-31 落地 `doc/rule.doc.readability.md`（导读三行标准）与 `doc/guide.doc.reading-map.md`（百科全书导读）时，
+2026-07-31 落地 [doc/rule.doc.readability.md](./rule.doc.readability.md)（导读三行标准）与 [doc/guide.doc.reading-map.md](./guide.doc.reading-map.md)（百科全书导读）时，
 实测 `doc/` 352 篇长期文档里，开头能让人判断「这篇关不关我事」的是 **0 篇**。
 本次只做了标准 + 守卫 + 各类入口文档的示范回填，存量走棘轮渐进偿还，欠账记在这里。
 
-- 判据 SSOT：`doc/rule.doc.readability.md`
+- 判据 SSOT：[doc/rule.doc.readability.md](./rule.doc.readability.md)
 - 守卫：`scripts/doc-readability-check.py` + `scripts/fixtures/doc-readability-baseline.json`
 - 回归：`scripts/tests/doc-readability-ratchet.test.py`（CI `docs-readability` job）
 
@@ -26,10 +26,12 @@
 | 2 | `.claude/rules/*.md` 未上闸 | 52 条规则里 32 条有开头的一句话主张，格式不统一，且没有「谁该读 / 什么时候会撞上」。它们主要被 AI 按 glob 自动加载，人是次要读者，故第一版不强制 | 人查规则时要读完才知道适不适用 | 规则总数超过 60 条，或有人反馈「找不到该看哪条」时 |
 | 3 | `.claude/skills/*/SKILL.md` 未上闸 | 技能文档有自己的 frontmatter + 触发词格式，已能回答「什么时候用它」，但缺「读完能做什么」 | 影响小 | 技能目录再次改版时一并处理 |
 | 4 | 机器只判形状，判不了内容 | 脚本能判「有没有写、是不是一句话的形状」，判不了「这句话是否真的说清楚了」。有人可以写一句合规但无信息量的废话骗过闸门 | 需要 review 兜底 | 出现第一例「合规废话」时，在本表补记并考虑抽检机制 |
-| 5 | 历史周报（2026-W29 及以前）有意不回填 | 周报是已发生事实的冻结记录，回头改开头等于篡改历史记录。它们会长期留在棘轮基线里 | 基线数字里恒含这部分，不代表待办 | 不还（有意） |
+| 5 | 引用只管 `doc/` 内部互引 | 指向 `.claude/rules/` 与源码路径的引用仍是行内代码——跨目录相对路径在知识库渲染下会断，转链接反而制造死链 | 从文档跳规则仍要手动找 | 若把 `doc/` 整体发布到知识库并解决路径改写时 |
+| 6 | 历史周报（2026-W29 及以前）有意不回填 | 周报是已发生事实的冻结记录，回头改开头等于篡改历史记录。它们会长期留在棘轮基线里 | 基线数字里恒含这部分，不代表待办 | 不还（有意） |
 
 ## 已还（供回溯）
 
 | 日期 | 内容 |
 |------|------|
+| 2026-07-31 | 引用可点：791 处裸引用一次性改写为可点链接，死链 0；判据进 CI（棘轮 + 死链零容忍），熵减扫描加 D7 维度 |
 | 2026-07-31 | 标准 `rule.doc.readability` + 导读 `guide.doc.reading-map` + 校验脚本 + 棘轮基线 + CI 闸门 + 12 篇入口文档示范回填（连同 3 篇新文档，全库达标 15 篇） |

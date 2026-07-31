@@ -93,4 +93,4 @@
 | 页面没有增量 | 服务端 SSE、部分结果事件和代理超时 |
 | 文本为空 | 音频格式、声道、采样率和上游结果 |
 
-设计边界见 `doc/design.speech-agent.md`，产品行为见 `doc/spec.speech-agent.md`。
+设计边界见 [doc/design.speech-agent.md](./design.speech-agent.md)，产品行为见 [doc/spec.speech-agent.md](./spec.speech-agent.md)。

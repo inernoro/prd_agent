@@ -126,7 +126,7 @@ appCallerCode 是业务用途，逻辑模型 PublicId 是应用选择，真实�
 
 ## 关联文档
 
-- `doc/design.platform.llm-gateway.md`
-- `doc/design.platform.llm-gateway.physical-isolation.md`
-- `doc/plan.platform.llm-gateway.external-platform.md`
-- `doc/rule.platform.llm-gateway.md`
+- [doc/design.platform.llm-gateway.md](./design.platform.llm-gateway.md)
+- [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)
+- [doc/plan.platform.llm-gateway.external-platform.md](./plan.platform.llm-gateway.external-platform.md)
+- [doc/rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)

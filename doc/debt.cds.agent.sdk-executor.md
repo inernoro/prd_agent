@@ -6,7 +6,7 @@
 |---|---|
 | 模块 | claude-sdk 执行器 / Python sidecar |
 | 状态 | 活跃 |
-| 关联 | `doc/design.cds.agent.sdk-executor.md` |
+| 关联 | [doc/design.cds.agent.sdk-executor.md](./design.cds.agent.sdk-executor.md) |
 
 
 ## 已知工程债务

@@ -70,6 +70,6 @@
 
 ## 关联文档
 
-- `doc/design.daily-tips.md`
+- [doc/design.daily-tips.md](./design.daily-tips.md)
 - `doc/guide.daily-tips.md`
 - `.Codex/rules/guided-exploration.md`

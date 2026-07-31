@@ -121,6 +121,6 @@ Provider 切换只影响切换后的读写实现。历史记录中保存的完�
 
 ## 关联文档
 
-- `doc/design.platform.image-ref-and-persistence.md`
-- `doc/design.platform.workspace.md`
+- [doc/design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)
+- [doc/design.platform.workspace.md](./design.platform.workspace.md)
 - `doc/debt.platform.md`

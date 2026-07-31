@@ -157,7 +157,7 @@
 
 **真实案例**：
 
-- 移动端适配计划 (`plan.frontend.mobile-adaptation.md`) 中明确要求：Phase 1 完成后跑 `/smoke` 验证 API 层未因布局改动产生回归，发版后再跑一次线上冒烟
+- 移动端适配计划 ([plan.frontend.mobile-adaptation.md](./plan.frontend.mobile-adaptation.md)) 中明确要求：Phase 1 完成后跑 `/smoke` 验证 API 层未因布局改动产生回归，发版后再跑一次线上冒烟
 
 ---
 

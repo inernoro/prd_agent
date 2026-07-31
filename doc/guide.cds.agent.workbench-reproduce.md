@@ -13,7 +13,7 @@
 - 页面和 API 里仍有历史 runtime 名 `claude-sdk`。
 - `claude-agent-sdk` 是官方 Claude Agent SDK，不是本仓库自研；本仓库只写 adapter，把官方 SDK 事件、权限、取消和结果映射到 MAP/CDS。
 - 当前默认目标路径是 `runtimeAdapter=claude-agent-sdk`；`legacy-sidecar` 只作为显式 fallback，仍使用官方 `anthropic` Python SDK + 本仓库自研 loop。
-- 复现通过只证明 CDS Agent 工作台链路可用；要证明完整官方 SDK 迁移，必须额外通过 `doc/guide.cds.agent.runtime-pool-recovery.md` 里的 official SDK smoke。
+- 复现通过只证明 CDS Agent 工作台链路可用；要证明完整官方 SDK 迁移，必须额外通过 [doc/guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md) 里的 official SDK smoke。
 
 ## 前置条件
 

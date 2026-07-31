@@ -188,7 +188,7 @@ https://{tail}-{prefix}-{projectSlug}.miduo.org/
 
 CDS 部署模式问题。dev 模式下 dotnet watch hot-reload 遇到 rude edit 不能完整重启进程，跑旧 IL。
 
-**解法**：CDS dashboard → 当前分支 → api 服务 → 部署模式切到「**静态部署 (publish)**」。详情见 `doc/debt.workflow-agent.md` 第 1 项。
+**解法**：CDS dashboard → 当前分支 → api 服务 → 部署模式切到「**静态部署 (publish)**」。详情见 [doc/debt.workflow-agent.md](./debt.workflow-agent.md) 第 1 项。
 
 ### Q2：海报视频白屏点 Play 没反应
 
@@ -216,8 +216,8 @@ videoUrl,coverUrl,authorAvatarUrl
 
 ## 关联文档
 
-- `doc/plan.emergence.tiktok-douyin-poster.md`：抖音与 TikTok 真订阅的未完成闭环
-- `doc/debt.workflow-agent.md`：本功能已知边界与未还债务（含 dotnet watch 卡进程根因）
+- [doc/plan.emergence.tiktok-douyin-poster.md](./plan.emergence.tiktok-douyin-poster.md)：抖音与 TikTok 真订阅的未完成闭环
+- [doc/debt.workflow-agent.md](./debt.workflow-agent.md)：本功能已知边界与未还债务（含 dotnet watch 卡进程根因）
 - `.claude/rules/marketplace.md`：把工作流模板分享到海鲜市场
 - `.claude/rules/server-authority.md`：Run/Worker 模式（cron 调度真订阅时必读）
 

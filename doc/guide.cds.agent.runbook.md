@@ -17,7 +17,7 @@
 - `claude-sdk` 是历史配置名；新的代码审查目标路径是 `claude-agent-sdk`。
 - `claude-agent-sdk` 是官方 Claude Agent SDK；本仓库不自研这层 agent turn loop，只维护 thin adapter、MAP/CDS 控制面、审批、事件、日志和 workspace 入口。
 - `legacy-sidecar` 是兼容 fallback，只能显式使用，不能作为“官方 SDK 已接入”的证据。
-- 真实远程 official SDK run 依赖 MAP 能发现 healthy CDS sidecar runtime pool；恢复步骤见 `doc/guide.cds.agent.runtime-pool-recovery.md`。
+- 真实远程 official SDK run 依赖 MAP 能发现 healthy CDS sidecar runtime pool；恢复步骤见 [doc/guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md)。
 
 ## 部署后检查
 
@@ -81,11 +81,11 @@
 
 ## 商业级就绪门禁
 
-面向“我怎么审自己的仓库或其他仓库”的上手流程，先读 `doc/guide.cds.agent.code-review-quickstart.md`。本 runbook 只保留运行和排障口径；不要在两份文档里维护两套门禁定义。
+面向“我怎么审自己的仓库或其他仓库”的上手流程，先读 [doc/guide.cds.agent.code-review-quickstart.md](./guide.cds.agent.code-review-quickstart.md)。本 runbook 只保留运行和排障口径；不要在两份文档里维护两套门禁定义。
 
 不要只看 `smoke-all.sh` 退出码。默认 smoke-all 会把尚未配置真实 provider 的 S1/S2/S3 识别为 readiness/skip，以便部署不断；商业级验收必须单独看 readiness pending。
 
-当前进度看 `doc/design.cds.agent.commercial-architecture-and-roadmap.md`（架构与进度已合并为单一权威入口；旧 `status.cds-agent-current-progress.md` 是不入库的本地跳转页）。它记录最新 evidence 目录、当前阻塞、耗时和下一步，不需要从聊天或多个 `/tmp` 路径里拼状态。
+当前进度看 [doc/design.cds.agent.commercial-architecture-and-roadmap.md](./design.cds.agent.commercial-architecture-and-roadmap.md)（架构与进度已合并为单一权威入口；旧 `status.cds-agent-current-progress.md` 是不入库的本地跳转页）。它记录最新 evidence 目录、当前阻塞、耗时和下一步，不需要从聊天或多个 `/tmp` 路径里拼状态。
 
 远程 preview 的默认入口是：
 
@@ -93,7 +93,7 @@
 CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
-不要手动填 `SMOKE_TEST_HOST`，除非你明确要覆盖目标环境。脚本会从 CDS branch status 推断当前 preview host，并把 doctor、R0 alias stability、A0 官方 SDK 边界、R1、S1/S2/S3、V1、N6 的证据写入 `/tmp/cds-agent-cycle-*`。如果结果是 runtime pool blocked，不要继续普通 preview redeploy；先按 `doc/guide.cds.agent.runtime-pool-recovery.md` 清理 branch-local sidecar residual、登记 remote host，并恢复 shared-service runtime pool。只有 R0 已证明 `instanceCount > 0`、`healthyCount > 0`、`loopOwner=claude-agent-sdk` 后，`blocked_r1` 才表示下一步是修 runtime profile。
+不要手动填 `SMOKE_TEST_HOST`，除非你明确要覆盖目标环境。脚本会从 CDS branch status 推断当前 preview host，并把 doctor、R0 alias stability、A0 官方 SDK 边界、R1、S1/S2/S3、V1、N6 的证据写入 `/tmp/cds-agent-cycle-*`。如果结果是 runtime pool blocked，不要继续普通 preview redeploy；先按 [doc/guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md) 清理 branch-local sidecar residual、登记 remote host，并恢复 shared-service runtime pool。只有 R0 已证明 `instanceCount > 0`、`healthyCount > 0`、`loopOwner=claude-agent-sdk` 后，`blocked_r1` 才表示下一步是修 runtime profile。
 如果忘记设置 `CDS_HOST`，脚本默认会打本地 `http://localhost:5000`；本地 API 没启动时 summary 会写出 `failure.kind=local_api_unreachable` 和远程 preview 的 `narrowRerunCommand`。如果远程域名在当前环境无法解析，会写出 `failure.kind=remote_dns_unreachable`。这两种都不是应用代码或部署失败，先修目标/网络再重跑同一条验证链路。
 
 本地工具链也不要手工猜。A0 会自动选择能 import sidecar 依赖的 Python，并在报告里记录 `executableEvidence.pythonBin`；N6 会自动选择能看到 `Microsoft.NETCore.App 8.x` 的 dotnet，并在终端打印实际 `dotnet:` 路径。这样即使从登录 shell 进入，`python3` 指向缺 `fastapi` 的 Homebrew Python，或 `dotnet` 只看到 .NET 9，也不应再被误判成官方 SDK 边界或非代码兼容性失败。只有自动选择后仍失败，才看对应日志判断是否是真失败。
@@ -126,7 +126,7 @@ heartbeat 只用于暴露进度，不会让快步骤额外等待；如果看到�
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
 ```
 
-截至 2026-05-18，最新 runtime pool 恢复证据是 `/tmp/cds-agent-runtime-pool-evidence-latest`：`BRANCH_LOCAL_SIDECAR_CLEAN=pass`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`，总耗时约 12s。结构性调查报告在 `doc/report.cds.agent.runtime-pool-contamination.2026-05-18.md`，当前进度面板在 `doc/design.cds.agent.commercial-architecture-and-roadmap.md`（已合并为单一权威入口）。当前正确顺序是登记 enabled remote host 并部署 shared official SDK runtime，最后重跑 MAP R0/S1/S2/S3/one-cycle。此前 `/tmp/cds-agent-cycle-20260518131650` 的 `blocked_r1` 证据只代表当时 preview sidecar alias 绕行可用；它不能覆盖当前 shared runtime pool 为空的事实。
+截至 2026-05-18，最新 runtime pool 恢复证据是 `/tmp/cds-agent-runtime-pool-evidence-latest`：`BRANCH_LOCAL_SIDECAR_CLEAN=pass`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`，总耗时约 12s。结构性调查报告在 [doc/report.cds.agent.runtime-pool-contamination.2026-05-18.md](./report.cds.agent.runtime-pool-contamination.2026-05-18.md)，当前进度面板在 [doc/design.cds.agent.commercial-architecture-and-roadmap.md](./design.cds.agent.commercial-architecture-and-roadmap.md)（已合并为单一权威入口）。当前正确顺序是登记 enabled remote host 并部署 shared official SDK runtime，最后重跑 MAP R0/S1/S2/S3/one-cycle。此前 `/tmp/cds-agent-cycle-20260518131650` 的 `blocked_r1` 证据只代表当时 preview sidecar alias 绕行可用；它不能覆盖当前 shared runtime pool 为空的事实。
 
 R0 恢复后，当前默认 profile 仍需要按 Anthropic/Claude-compatible 模板修复。此前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；R0 通过后的 provider 闭环命令是：
 
@@ -215,7 +215,7 @@ api/admin/runtime 重新部署；如果看到这类提交仍在 building，优�
 
 1. 记录 sessionId、traceId、sidecar 名称和时间窗口。
 2. 必要时在 sidecar 侧按 runId 或日志排查。
-3. 如果 MAP 状态停止但 sidecar 仍输出，按 `doc/guide.cds.agent.runtime-pool-recovery.md` 的 S3 cancel smoke 定位。
+3. 如果 MAP 状态停止但 sidecar 仍输出，按 [doc/guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md) 的 S3 cancel smoke 定位。
 
 ## 工具审批卡住
 

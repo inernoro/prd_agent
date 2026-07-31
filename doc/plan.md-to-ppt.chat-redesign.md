@@ -11,7 +11,7 @@
 - `MdToPptRun` 已支持 `convert`、`patch` 和 `outline`，大纲由服务端持久化。
 - `md-to-ppt-agent.outline::chat` 已进入 AppCaller 注册表。
 - 前端已有对话工作台、下一步状态栏、选区反馈和 artifact 预览。
-- 生成 HTML 可以发布为网页，但预览隔离与多轮状态恢复仍要按 `debt.md-to-ppt.md` 收口。
+- 生成 HTML 可以发布为网页，但预览隔离与多轮状态恢复仍要按 [debt.md-to-ppt.md](./debt.md-to-ppt.md) 收口。
 
 ## 未完成范围
 
@@ -60,6 +60,6 @@
 
 ## 关联文档
 
-- `doc/debt.md-to-ppt.md`
-- `doc/design.web-hosting.md`
+- [doc/debt.md-to-ppt.md](./debt.md-to-ppt.md)
+- [doc/design.web-hosting.md](./design.web-hosting.md)
 - `doc/rule.platform.app-caller-registry.md`

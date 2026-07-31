@@ -2,7 +2,7 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
-> 定位同 `design.platform.llm-gateway.md` | 关联 `rule.platform.app-identity.md`
+> 定位同 [design.platform.llm-gateway.md](./design.platform.llm-gateway.md) | 关联 [rule.platform.app-identity.md](./rule.platform.app-identity.md)
 
 
 ## 1. 管理摘要（30 秒看懂）
@@ -237,9 +237,9 @@ Exception
 
 ## 7. 关联文档
 
-- `doc/design.pr-review.v2.md` — PR 审查工作台 V2 设计（本次基础设施的第一个消费方）
-- `doc/design.platform.llm-gateway.md` — LlmGateway 设计（本组件对照的基础设施组件样板）
-- `rule.platform.app-identity.md` — appKey 硬编码规范（消费方层面）
+- [doc/design.pr-review.v2.md](./design.pr-review.v2.md) — PR 审查工作台 V2 设计（本次基础设施的第一个消费方）
+- [doc/design.platform.llm-gateway.md](./design.platform.llm-gateway.md) — LlmGateway 设计（本组件对照的基础设施组件样板）
+- [rule.platform.app-identity.md](./rule.platform.app-identity.md) — appKey 硬编码规范（消费方层面）
 - `rule.server-authority.md` — 长任务必须 `CancellationToken.None`（GitHub 同步场景需要）
 - `changelogs/2026-04-11_github-infrastructure.md` — 本次迁移的碎片记录
 

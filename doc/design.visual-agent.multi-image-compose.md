@@ -112,7 +112,7 @@
 
 ## 关联文档
 
-- `doc/design.visual-agent.md`
-- `doc/design.visual-agent.inline-image-chat.md`
-- `doc/design.visual-agent.multi-image-vision-api.md`
-- `doc/design.platform.model-pool.md`
+- [doc/design.visual-agent.md](./design.visual-agent.md)
+- [doc/design.visual-agent.inline-image-chat.md](./design.visual-agent.inline-image-chat.md)
+- [doc/design.visual-agent.multi-image-vision-api.md](./design.visual-agent.multi-image-vision-api.md)
+- [doc/design.platform.model-pool.md](./design.platform.model-pool.md)

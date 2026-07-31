@@ -45,5 +45,5 @@
 
 ## 关联文档
 
-- `doc/spec.product-agent.pa.md`
-- `doc/debt.product-agent.md`
+- [doc/spec.product-agent.pa.md](./spec.product-agent.pa.md)
+- [doc/debt.product-agent.md](./debt.product-agent.md)

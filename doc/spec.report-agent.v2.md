@@ -157,8 +157,8 @@
 
 ## 12. 关联文档
 
-- `doc/spec.report-agent.phase5.md`：工作流采集阶段专项规格。
-- `doc/plan.report-agent.v3.md`：尚未完成的后续演进计划。
-- `doc/design.report-agent.md`：当前技术设计。
+- [doc/spec.report-agent.phase5.md](./spec.report-agent.phase5.md)：工作流采集阶段专项规格。
+- [doc/plan.report-agent.v3.md](./plan.report-agent.v3.md)：尚未完成的后续演进计划。
+- [doc/design.report-agent.md](./design.report-agent.md)：当前技术设计。
 
 历史 v1 管理流程不再是当前产品事实源。

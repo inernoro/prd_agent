@@ -119,7 +119,7 @@ timeline
 - **划词 AI 局部编辑**：AI 改写选区 + 选区配图、划词选区定位改 DOM 序号指认 + thinking 可见 + 分享页返回知识库常驻
 - **划词替换语法安全守卫**：canReplace 实时计算 + 配图浮层裁掉不适用动作
 - **wikilink 协议修复**：被 rehype-sanitize 剥光导致蓝链失效 → 改用 `#wikilink/` hash 锚替代自定义协议
-- **设计文档 + 债务台账**：`doc/design.knowledge-base.mention-network.md` + `doc/debt.knowledge-base.mention-network.md`（v2 候选：跨实体引用 / AI 自动补链 / 时间轴回放）
+- **设计文档 + 债务台账**：[doc/design.knowledge-base.mention-network.md](./design.knowledge-base.mention-network.md) + [doc/debt.knowledge-base.mention-network.md](./debt.knowledge-base.mention-network.md)（v2 候选：跨实体引用 / AI 自动补链 / 时间轴回放）
 - **知识详情页重写**：富文本编辑 + HTML 预览 + 文件夹目录、产品知识库重构 P1（版本调取 + 总览聚合 + 旧库迁移）、知识编辑器双模式 + 目录拖拽移动/排序
 
 ### 5. CDS 资源工作台协议 + 数据库工作台闭环 + SSH 站点发布作战台 + Agent 请求观测台
@@ -163,7 +163,7 @@ timeline
 - **行为洞察三连**：从沉默的行为信号读出改进方向 → AI 简报流式生成并发布到知识库 → 处理闭环（转缺陷/已修复/忽略）+ 面板视觉打磨
 - **团队动态改控制台三栏布局**：两侧空白变统计面板
 - **后端**：BehaviorController 采集路由级行为信号到 `behavior_events`
-- **设计文档**：`doc/design.team-activity.md` 同步索引
+- **设计文档**：[doc/design.team-activity.md](./design.team-activity.md) 同步索引
 - **多轮 Codex 评审修复**：刷新失败时清空过期列表并显示错误态、二轮评审两个 P2、三个问题（#778）
 
 ### 9. 网页托管团队空间 P0/P1/P2 — 空间结构两级化 + 标签聚合

@@ -133,9 +133,9 @@ Controller 不应成为领域事实源。状态规则、授权和外部协作契
 | 后端 API 与状态操作 | `prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs` |
 | 核心模型 | `prd-api/src/PrdAgent.Core/Models/` 中的 Defect 相关模型 |
 | 前端页面 | `prd-admin/src/pages/defect-agent/` |
-| 截图分析 | `doc/design.defect-agent.image-analysis.md` |
-| 分享修复 | `doc/design.defect-agent.share-skill-architecture.md` |
-| 自动化自治 | `doc/design.defect-agent.automation-autonomy.md` |
+| 截图分析 | [doc/design.defect-agent.image-analysis.md](./design.defect-agent.image-analysis.md) |
+| 分享修复 | [doc/design.defect-agent.share-skill-architecture.md](./design.defect-agent.share-skill-architecture.md) |
+| 自动化自治 | [doc/design.defect-agent.automation-autonomy.md](./design.defect-agent.automation-autonomy.md) |
 
 ## 11. 验收标准
 
@@ -148,8 +148,8 @@ Controller 不应成为领域事实源。状态规则、授权和外部协作契
 
 ## 关联文档
 
-- `doc/design.defect-agent.labels.md`
-- `doc/design.defect-agent.image-analysis.md`
-- `doc/design.defect-agent.share-skill-architecture.md`
-- `doc/design.defect-agent.automation-autonomy.md`
+- [doc/design.defect-agent.labels.md](./design.defect-agent.labels.md)
+- [doc/design.defect-agent.image-analysis.md](./design.defect-agent.image-analysis.md)
+- [doc/design.defect-agent.share-skill-architecture.md](./design.defect-agent.share-skill-architecture.md)
+- [doc/design.defect-agent.automation-autonomy.md](./design.defect-agent.automation-autonomy.md)
 - `doc/rule.app-feature-definition.md`

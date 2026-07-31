@@ -88,8 +88,8 @@
 
 ## 六、关联设计文档
 
-- `design.emergence.explorer.md` — 涌现探索器（文档空间的消费者）
-- `design.knowledge-base.multi-doc.md` — 桌面端多文档知识库（同一文档基础设施的另一个消费者）
+- [design.emergence.explorer.md](./design.emergence.explorer.md) — 涌现探索器（文档空间的消费者）
+- [design.knowledge-base.multi-doc.md](./design.knowledge-base.multi-doc.md) — 桌面端多文档知识库（同一文档基础设施的另一个消费者）
 
 ## 七、知识库卡片置顶（2026-06-16）
 

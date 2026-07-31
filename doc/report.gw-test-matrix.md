@@ -5,7 +5,7 @@
 > 自动生成（`scripts/gen-gw-matrix-report.py`），勿手改。一处定义三处消费：本报告 +
 > `protocol-cells.json`(B 层 [Theory]) + `transport-cells.json`(C 层 [Theory])。
 > 报告里 B/C 的每一行都是 CI 真执行的一个 cell（非只列不跑）。矩阵设计 SSOT：
-> `doc/spec.platform.llm-gateway.test-matrix.md`；债务台账：`doc/debt.platform.llm-gateway.isolation.md`。
+> [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)；债务台账：[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)。
 
 全枚举、不压缩：
 - **A 层解析全量**：153 个 appCallerCode 真实解析结果（golden SSOT，第 2 节）。

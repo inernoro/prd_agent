@@ -1,5 +1,5 @@
 {
-  "_comment": "doc/ 导读三行欠账棘轮基线。判据见 doc/rule.doc.readability.md。数值只许下降：修好存量就跑 --update-baseline 把它压低；上调必须在 PR 里说明原因，否则一律 reject。",
+  "_comment": "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数。两个数值都只许下降：修好存量就跑 --update-baseline 把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。",
   "missing": {
     "spec": 19,
     "design": 103,
@@ -8,5 +8,14 @@
     "guide": 62,
     "report": 37,
     "debt": 73
+  },
+  "bare_refs": {
+    "spec": 0,
+    "design": 0,
+    "plan": 0,
+    "rule": 0,
+    "guide": 0,
+    "report": 0,
+    "debt": 0
   }
 }

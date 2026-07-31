@@ -29,7 +29,7 @@
 ## 吸取「文学创作版本删图片」教训（已规避）
 
 文学创作旧坑根因：版本切换时按 `ArticleInsertionIndex != null` **批量删除 image_asset**，且只按 SHA256 引用计数，
-导致回看旧版本图片没了（见 `doc/report.2026-W12.md` PR #303）。
+导致回看旧版本图片没了（见 [doc/report.2026-W12.md](./report.2026-W12.md) PR #303）。
 
 知识库版本**从机制上不会重演**：KB 正文里的图片是 markdown 外链 URL（COS / 外部），不是受版本管理的 image_asset。
 版本快照只存文本；恢复 = 写回文本，URL 始终有效，**不触发任何资产删除**。单测
@@ -50,4 +50,4 @@
 - **大小徽章刷新**：`refreshKey` 绑 `entries.length`，增删条目即时刷新；同一条文档内容增大不一定即时刷新，
   重进库或增删条目后准确。
 - **索引**：`document_entry_versions` 未建索引（项目规则禁止应用自动建索引）。按 `EntryId`/`StoreId` 查询量大时，
-  需 DBA 手动建 `{EntryId:1, VersionNumber:-1}` 与 `{StoreId:1}` 索引（见 `doc/guide.platform.mongodb-indexes.md`）。
+  需 DBA 手动建 `{EntryId:1, VersionNumber:-1}` 与 `{StoreId:1}` 索引（见 [doc/guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md)）。

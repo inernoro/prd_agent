@@ -282,14 +282,14 @@ PrdAgent 也是如此——
 
 | 文档 | 与涌现的关系 |
 |------|-------------|
-| `design.workflow-agent.engine.md` | 编排层核心 — DAG 引擎设计 |
-| `design.workflow-agent.engine.md` | 编排层 — DAG、控制流舱与 SSE 实时推送 |
-| `design.visual-agent.md` | 能力层 — 视觉创作 Agent 架构 |
-| `design.report-agent.md` | 能力层 — 周报 Agent 架构（含工作流集成） |
-| `design.literary-agent.md` | 能力层 — 文学创作 Agent |
-| `design.defect-agent.md` | 能力层 — 缺陷管理 Agent |
-| `design.channel-agent.adapter.md` | 接入层 — 多通道适配（邮件/SMS/快捷指令） |
-| `design.open-platform.md` | 接入层 — 外部 App 接入 |
-| `design.skill.unified-skill-system.md` | 能力层 — 技能系统扩展点 |
-| `design.platform.server-authority.md` | 基础层 — 服务器权威性保证任务必达 |
-| `design.platform.model-pool.md` | 基础层 — LLM Gateway 三级调度 |
+| [design.workflow-agent.engine.md](./design.workflow-agent.engine.md) | 编排层核心 — DAG 引擎设计 |
+| [design.workflow-agent.engine.md](./design.workflow-agent.engine.md) | 编排层 — DAG、控制流舱与 SSE 实时推送 |
+| [design.visual-agent.md](./design.visual-agent.md) | 能力层 — 视觉创作 Agent 架构 |
+| [design.report-agent.md](./design.report-agent.md) | 能力层 — 周报 Agent 架构（含工作流集成） |
+| [design.literary-agent.md](./design.literary-agent.md) | 能力层 — 文学创作 Agent |
+| [design.defect-agent.md](./design.defect-agent.md) | 能力层 — 缺陷管理 Agent |
+| [design.channel-agent.adapter.md](./design.channel-agent.adapter.md) | 接入层 — 多通道适配（邮件/SMS/快捷指令） |
+| [design.open-platform.md](./design.open-platform.md) | 接入层 — 外部 App 接入 |
+| [design.skill.unified-skill-system.md](./design.skill.unified-skill-system.md) | 能力层 — 技能系统扩展点 |
+| [design.platform.server-authority.md](./design.platform.server-authority.md) | 基础层 — 服务器权威性保证任务必达 |
+| [design.platform.model-pool.md](./design.platform.model-pool.md) | 基础层 — LLM Gateway 三级调度 |

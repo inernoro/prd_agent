@@ -193,15 +193,15 @@
 
 | 文档 | 关系 |
 |------|------|
-| `design.platform.model-pool.md` | 三级调度的详细设计（模型组、策略引擎、AppCaller 注册） |
-| `design.platform.model-pool.md` | 模型池解析、故障转移与自动探活设计 |
-| `design.emergence.system.md` | Gateway 作为基础层支撑所有 Agent 的涌现能力 |
+| [design.platform.model-pool.md](./design.platform.model-pool.md) | 三级调度的详细设计（模型组、策略引擎、AppCaller 注册） |
+| [design.platform.model-pool.md](./design.platform.model-pool.md) | 模型池解析、故障转移与自动探活设计 |
+| [design.emergence.system.md](./design.emergence.system.md) | Gateway 作为基础层支撑所有 Agent 的涌现能力 |
 | `.claude/rules/llm-gateway.md` | Gateway 使用规则（AppCallerCode 命名规范、调度优先级） |
-| `design.platform.llm-gateway.refactor.md` | Compute-then-Send 重构详细设计 |
+| [design.platform.llm-gateway.refactor.md](./design.platform.llm-gateway.refactor.md) | Compute-then-Send 重构详细设计 |
 
 ## 九、Compute-then-Send 原则（外部调用两阶段）
 
-> 详见 `.claude/rules/compute-then-send.md` 和 `doc/design.platform.llm-gateway.refactor.md`
+> 详见 `.claude/rules/compute-then-send.md` 和 [doc/design.platform.llm-gateway.refactor.md](./design.platform.llm-gateway.refactor.md)
 
 外部调用（LLM / 图片生成 / 视频生成）必须把**计算阶段**和**发送阶段**严格拆分：
 

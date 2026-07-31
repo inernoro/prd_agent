@@ -6,7 +6,7 @@
 |---|---|
 | 模块 | LLM 网关协议保真层（函数调用穿协议 + 能力描述符路由） |
 | 状态 | partial（核心已落地；Claude 流式 tool_use、池路径能力兜底与 OpenAI logprobs Extensions 消费已补齐，以下保留未完成边界） |
-| 关联 | `doc/design.platform.llm-gateway.unification.md` 决策一、`prd-api/src/PrdAgent.Infrastructure/LlmGateway/`、`OpenApiController.cs`、`changelogs/2026-06-26_vision-detail-fix.md` |
+| 关联 | [doc/design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md) 决策一、`prd-api/src/PrdAgent.Infrastructure/LlmGateway/`、`OpenApiController.cs`、`changelogs/2026-06-26_vision-detail-fix.md` |
 | 提出 | 用户「协议不能归一，要保真」+ 取证后分波落地（F1 识图 / F3a 采样 / G1-G6 函数调用穿协议） |
 
 

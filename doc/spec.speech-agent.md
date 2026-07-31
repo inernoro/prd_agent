@@ -67,8 +67,8 @@ PM 写完 PRD，需要在评审会上 15 分钟讲完。打开演讲智能体 �
 
 ## 五、关联设计文档
 
-- `doc/design.speech-agent.md`：技术设计（数据模型 / Controller / Service / 前端结构）
-- `doc/debt.speech-agent.md`：已知边界与债务台账
+- [doc/design.speech-agent.md](./design.speech-agent.md)：技术设计（数据模型 / Controller / Service / 前端结构）
+- [doc/debt.speech-agent.md](./debt.speech-agent.md)：已知边界与债务台账
 
 ## 六、与其他智能体的边界
 

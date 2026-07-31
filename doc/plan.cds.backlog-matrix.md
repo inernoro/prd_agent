@@ -26,10 +26,10 @@
 
 下列旧矩阵内容不再作为计划项：
 
-- Mongo 单文档与 `state.json` 退场：`debt.cds.state-json.md`。
-- 分支网络、共享别名和队列隔离：`debt.cds.branch-isolation.md`。
-- 项目迁移和跨节点复制：`debt.cds.project-migration.md`。
-- UI 视觉与响应性能：`debt.cds.performance.md`。
+- Mongo 单文档与 `state.json` 退场：[debt.cds.state-json.md](./debt.cds.state-json.md)。
+- 分支网络、共享别名和队列隔离：[debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md)。
+- 项目迁移和跨节点复制：[debt.cds.project-migration.md](./debt.cds.project-migration.md)。
+- UI 视觉与响应性能：[debt.cds.performance.md](./debt.cds.performance.md)。
 
 ## 执行顺序
 
@@ -47,8 +47,8 @@
 
 ## 关联文档
 
-- `doc/plan.cds.status.md`
-- `doc/plan.cds.multi-project-phases.md`
-- `doc/plan.cds.web-migration.md`
-- `doc/design.cds.md`
-- `doc/guide.cds.view-parity.md`
+- [doc/plan.cds.status.md](./plan.cds.status.md)
+- [doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md)
+- [doc/plan.cds.web-migration.md](./plan.cds.web-migration.md)
+- [doc/design.cds.md](./design.cds.md)
+- [doc/guide.cds.view-parity.md](./guide.cds.view-parity.md)

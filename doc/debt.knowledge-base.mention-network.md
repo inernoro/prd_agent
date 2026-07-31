@@ -18,7 +18,7 @@
 
 
 
-> **关联文档**：`design.knowledge-base.mention-network.md`（本设计的主文档，本文是其遗留事项台账）
+> **关联文档**：[design.knowledge-base.mention-network.md](./design.knowledge-base.mention-network.md)（本设计的主文档，本文是其遗留事项台账）
 
 ## 一、MVP 已知边界（2026-06-11 上线时明确告知用户）
 

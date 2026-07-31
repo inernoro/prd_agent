@@ -186,4 +186,4 @@ POST  GitHub 推送 Webhook · check_run    200   15ms
 - `cds/src/services/github-webhook-dispatcher.ts` — 事件分发核心
 - `cds/tests/routes/github-webhook.test.ts` — 单测(噪声过滤/去重/500→200)
 - `.claude/rules/cds-auto-deploy.md` — push 即部署原则
-- `doc/design.cds.md` — CDS 总体设计
+- [doc/design.cds.md](./design.cds.md) — CDS 总体设计

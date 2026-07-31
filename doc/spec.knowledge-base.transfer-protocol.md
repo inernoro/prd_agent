@@ -3,7 +3,7 @@
 > **版本**：v1.1 | **日期**：2026-06-22 | **状态**：已落地
 
 > 负责模块：prd-api（PeerSync + DocumentStoreSyncResource）、prd-admin（同步中心）
-> 关联：`design.platform.peer-sync.md`（节点配对设计）、`spec.cds.compose-contract.md`（同类对外契约写法）
+> 关联：[design.platform.peer-sync.md](./design.platform.peer-sync.md)（节点配对设计）、[spec.cds.compose-contract.md](./spec.cds.compose-contract.md)（同类对外契约写法）
 
 
 ## 1. 管理摘要（30 秒看懂）
@@ -194,4 +194,4 @@ MAP 侧的参考实现就是 `DocumentStoreSyncResource` + `PeerSyncController`�
 - **图片大文件**：单图上限 25MB，超限计 failed（不阻塞其余）。
 - **mirror 误删**：强制对齐有数据破坏性，前端必须二次确认（列出将删条目数）；建议先 `both` 同时对准再视情况 mirror。
 - **三方实现差异**：`signature` 算法若两端不一致会导致永远「不同步」；接入方需对齐 §6 哈希口径。
-- 详见 `debt.knowledge-base.md`。
+- 详见 [debt.knowledge-base.md](./debt.knowledge-base.md)。

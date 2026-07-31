@@ -60,7 +60,7 @@
 
 ## 关联文档
 
-- `doc/design.ai-toolbox.md`
-- `doc/design.web-hosting.md`
-- `doc/rule.platform.app-identity.md`
-- `doc/design.platform.llm-gateway.physical-isolation.md`
+- [doc/design.ai-toolbox.md](./design.ai-toolbox.md)
+- [doc/design.web-hosting.md](./design.web-hosting.md)
+- [doc/rule.platform.app-identity.md](./rule.platform.app-identity.md)
+- [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)

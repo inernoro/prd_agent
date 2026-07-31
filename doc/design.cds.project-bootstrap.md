@@ -176,12 +176,12 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 
 ## 八、风险与已知边界
 
-见 `doc/debt.cds.project-bootstrap.md`。
+见 [doc/debt.cds.project-bootstrap.md](./debt.cds.project-bootstrap.md)。
 
 ## 九、关联
 
-- `doc/design.skill.role-bundle.md` —— 角色套装与 `sdd-init`
-- `doc/design.skill.marketplace-open-api.md` —— MAP 技能开放接口
+- [doc/design.skill.role-bundle.md](./design.skill.role-bundle.md) —— 角色套装与 `sdd-init`
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— MAP 技能开放接口
 - `.claude/rules/quickstart-zero-friction.md` —— 引导脚本的大包大揽纪律
 - `.claude/rules/anti-detour.md` —— 少绕路：能一步做完不让用户走多步
 - `.claude/rules/cds-theme-tokens.md` —— CDS 前端双主题与 z-index 纪律

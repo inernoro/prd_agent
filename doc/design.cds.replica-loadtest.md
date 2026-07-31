@@ -2,7 +2,7 @@
 
 > **版本**：v1.0 | **日期**：2026-07-27 | **状态**：已落地（MVP）
 >
-> 关联：`design.cds.replica-set.md`、`debt.cds.replica-set.md`、`.claude/rules/concurrency-gate-discipline.md`
+> 关联：[design.cds.replica-set.md](./design.cds.replica-set.md)、[debt.cds.replica-set.md](./debt.cds.replica-set.md)、`.claude/rules/concurrency-gate-discipline.md`
 
 ---
 

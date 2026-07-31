@@ -10,7 +10,7 @@
 
 ## 目标
 
-在生产 `Mode=http`、配置权威和六类协议验收已经稳定的基础上，物理删除 MAP 进程内网关及传统解析兜底，使所有模型调用只经过独立 LLM Gateway。本文只保留尚未完成的退场动作和发布门禁；已落地架构以 `design.platform.llm-gateway.physical-isolation.md` 为准，风险与证据缺口以 `debt.platform.llm-gateway.md` 为准。
+在生产 `Mode=http`、配置权威和六类协议验收已经稳定的基础上，物理删除 MAP 进程内网关及传统解析兜底，使所有模型调用只经过独立 LLM Gateway。本文只保留尚未完成的退场动作和发布门禁；已落地架构以 [design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md) 为准，风险与证据缺口以 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 为准。
 
 ## 当前事实
 
@@ -83,8 +83,8 @@
 
 ## 关联文档
 
-- `doc/design.platform.llm-gateway.physical-isolation.md`
-- `doc/design.platform.llm-gateway.migration-retrospective.md`
-- `doc/debt.platform.llm-gateway.md`
-- `doc/debt.platform.llm-gateway.isolation.md`
+- [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)
+- [doc/design.platform.llm-gateway.migration-retrospective.md](./design.platform.llm-gateway.migration-retrospective.md)
+- [doc/debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)
+- [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)
 - `llmgw/docs/README.md`

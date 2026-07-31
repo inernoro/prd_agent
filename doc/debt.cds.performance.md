@@ -80,7 +80,7 @@ admin/api 的编译耗时是 **CPU 固有成本**，I/O/并行旋钮榨不动；
 ## 2026-07-09 批次补记（四维扫描 + 债务对账，台账外新修一并登记）
 
 - **前端缓慢的第二根因已修**：BranchListPage 顶层 1s 时钟曾令 5800 行页面 + 全部分支卡每秒整树重渲染（构建期间持续掉帧）——已删页面级 tick，计时下沉 `useNowTick` 到卡片/抽屉内部，BranchCard memo 化 + content-visibility 离屏跳过（commit `3fd5a1e`）。此根因原不在本台账根因表内（表内只讲主机资源），补记。
-- **state 膨胀源两处堵住**：容器日志黑匣子加 per-branch 双闸（10 条/2MB）+ 启动孤儿裁剪；JSON 存储 save 从每次同步 stringify+fsync 改为去抖合并异步落盘（commit `d9fb5dc`）——间接减轻本台账「前端缓慢」与 `debt.cds.state-json.md` 的 save 阻塞痛点。
+- **state 膨胀源两处堵住**：容器日志黑匣子加 per-branch 双闸（10 条/2MB）+ 启动孤儿裁剪；JSON 存储 save 从每次同步 stringify+fsync 改为去抖合并异步落盘（commit `d9fb5dc`）——间接减轻本台账「前端缓慢」与 [debt.cds.state-json.md](./debt.cds.state-json.md) 的 save 阻塞痛点。
 - **报告 IO 异步化 + export-skill 异步打包**：请求路径不再同步阻塞事件循环（commit `d9fb5dc`）。
 
 ## 2026-07-21 批次补记（接口持续排队 3.7s→40s+ 根因之一 + 一批高频路径优化，见 `changelogs/2026-07-21_cds-release-dialog-perf-fixes.md`）
@@ -102,7 +102,7 @@ admin/api 的编译耗时是 **CPU 固有成本**，I/O/并行旋钮榨不动；
 1. [x] janitor 安全清理悬空镜像 + 构建缓存（非破坏性，默认开 `config.janitor.dockerPrune`）
 2. [x] 资源回收对账（2026-07-09，降级版——原「停 per-branch infra」前提与代码不符，见根因表 #2 改写）：janitor 孤儿 infra 报告 + 删分支遗留 app 容器 sweep
 3. [x] getActivityLogs 热路径：已被 `/api/branches` 整包 TTL 缓存旁路缓解（见根因表 #5），函数级记忆化降为低优可选
-4. [x] mongo-split 迁移 activity/webhook 到独立集合（2026-07-09，见 `debt.cds.state-json.md` Phase 1+2）；索引由 `mongo-split-store.init()` 自动创建，DDL 记录备查于 `doc/guide.platform.mongodb-indexes.md` CDS 段
+4. [x] mongo-split 迁移 activity/webhook 到独立集合（2026-07-09，见 [debt.cds.state-json.md](./debt.cds.state-json.md) Phase 1+2）；索引由 `mongo-split-store.init()` 自动创建，DDL 记录备查于 [doc/guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md) CDS 段
 5. [ ] 评估卷/网络的安全自动清理（涉数据，需白名单 `cds.precious`，维持谨慎不动）
 
 ## 相关

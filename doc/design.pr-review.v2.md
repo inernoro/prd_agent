@@ -150,6 +150,6 @@ CDS 的分支预览域名动态变化，Web OAuth callback 难以预注册且不
 
 ## 关联文档
 
-- `doc/rule.platform.app-identity.md`
+- [doc/rule.platform.app-identity.md](./rule.platform.app-identity.md)
 - `doc/rule.platform.server-authority.md`
-- `doc/design.platform.github-infrastructure.md`
+- [doc/design.platform.github-infrastructure.md](./design.platform.github-infrastructure.md)

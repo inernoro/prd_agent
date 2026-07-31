@@ -145,4 +145,4 @@ CDS 改动需远端容器实跑才能端到端验证 Java 缓存效果（本环�
 - `cds/src/services/deploy-runtime.ts` —— 发布版/热加载模式归类 SSOT
 - `cds/src/services/auto-lifecycle.ts` —— 自动发布调度
 - `.claude/rules/cross-project-isolation.md` —— 共享缓存/卷的隔离边界
-- `doc/design.cds.multi-project.md` —— CDS 多项目设计
+- [doc/design.cds.multi-project.md](./design.cds.multi-project.md) —— CDS 多项目设计

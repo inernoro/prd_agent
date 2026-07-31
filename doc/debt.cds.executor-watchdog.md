@@ -44,5 +44,5 @@ isMaster` 在 executor 上**关闭硬超时**，只做时间戳证据收敛 + �
 
 - `cds/src/services/deploy-stuck-reconciler.ts` —— 看门狗纯函数 SSOT
 - `cds/src/services/build-log-meta.ts` —— 构建历史元数据纯函数（commit/mode/触发器，已单测）
-- `doc/debt.cds.ci-prebuilt.md` —— 极速版（CI 预构建）债务（同属 cluster/部署模式族）
+- [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md) —— 极速版（CI 预构建）债务（同属 cluster/部署模式族）
 - PR #940 评审：Bugbot #228（关）、Codex #233（开）；#2-#4 见 PR #940 review threads

@@ -72,5 +72,5 @@ fetch+blob 有破坏 iOS "添加快捷指令"系统交接的风险，需真机�
 ## 相关
 
 - `.claude/rules/zero-friction-input.md` / `chief-designer-usability.md` —— 体验底线
-- `doc/guide.shortcuts-agent.md` —— 用户使用指南
-- `doc/design.shortcuts-agent.apple.md` —— 设计文档
+- [doc/guide.shortcuts-agent.md](./guide.shortcuts-agent.md) —— 用户使用指南
+- [doc/design.shortcuts-agent.apple.md](./design.shortcuts-agent.apple.md) —— 设计文档

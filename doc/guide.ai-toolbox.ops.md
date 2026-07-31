@@ -157,7 +157,7 @@ cd prd-api && dotnet test
 3. 已绑定的文档会预先列出，可继续上传新文档或移除已有项
 4. 保存时列表里所有已完成文件的绑定会被去重保存
 
-> 说明：当前为「文档级全文注入」——文档越多/越大占用上下文越多。语义检索（RAG）为后续规划，见 `doc/debt.knowledge-base.md`。
+> 说明：当前为「文档级全文注入」——文档越多/越大占用上下文越多。语义检索（RAG）为后续规划，见 [doc/debt.knowledge-base.md](./debt.knowledge-base.md)。
 
 ---
 

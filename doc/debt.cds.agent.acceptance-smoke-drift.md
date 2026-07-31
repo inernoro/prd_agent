@@ -43,5 +43,5 @@
 ## 四、关联
 
 - `scripts/smoke-cds-agent-p4-1-remote-preflight.sh` / `smoke-cds-agent-phase3-acceptance.sh`
-- `doc/design.cds.agent.commercial-architecture-and-roadmap.md`（被断言的 roadmap）
+- [doc/design.cds.agent.commercial-architecture-and-roadmap.md](./design.cds.agent.commercial-architecture-and-roadmap.md)（被断言的 roadmap）
 - `.claude/rules/blocked-state-circuit-breaker.md` —— 不在腐化脚本上 grinding

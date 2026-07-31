@@ -7,13 +7,13 @@
 - **解决什么问题**：我们的缺陷自动化（`DefectEscalationWorker` 定时催办 + `workflow.v1` 修复流水线）目前是一条「领单 → 修 → 提交 → 复测」的线性脚本。它会办事，但「判断」是隐性的、没有被建模的——它不知道自己什么时候该停下来问人。
 - **方案概述**：把缺陷自动化从「会办事的脚本」收敛成一个有边界、能担责的**自治体系**。第一性原则是**自主边界先行**（全权自主 / 请示后做 / 禁止自动做三档），其上叠加**五层自治回路**（认知 / 规划 / 执行 / 记忆 / 监督），每一层都接到本仓库真实存在的代码和字段上，明确「现状有什么、缺口要建什么」。
 - **业务价值**：自动修复变得可信、可担责——不确定时主动请示、触红线时拒绝执行、异常循环时自动熔断。信任来自「知道它什么时候会停」。
-- **影响范围**：现状机制散落在 `DefectEscalationWorker`、`DefectAgentController`（workflow.v1）、`DefectAutomationRun` / `DefectResolutionTrace` / `DefectFixReport` 模型、`ai-defect-resolve` 技能。本设计在其上补两处缺口（规划层「值不值」加权、记忆层「情景召回」）并把监督三道阀统一收口。本文是 `design.defect-agent.md` 的子设计，只管「自治治理」，不重复缺陷管理主流程。
+- **影响范围**：现状机制散落在 `DefectEscalationWorker`、`DefectAgentController`（workflow.v1）、`DefectAutomationRun` / `DefectResolutionTrace` / `DefectFixReport` 模型、`ai-defect-resolve` 技能。本设计在其上补两处缺口（规划层「值不值」加权、记忆层「情景召回」）并把监督三道阀统一收口。本文是 [design.defect-agent.md](./design.defect-agent.md) 的子设计，只管「自治治理」，不重复缺陷管理主流程。
 
 ## 二、背景：它现在是「脚本」，不是「员工」
 
 判定一个自动化系统是脚本还是数字员工，只看一句话：**它知道自己什么时候该停下来问人吗？**
 
-我们的缺陷自动化协议（`spec.defect-agent.automation-protocol.md`）写得很诚实——「智能体只负责理解、判断、修复、提交」「一次只处理一个缺陷」，这是一条线性流水线。对照「自治」的标准逐层审计（均经代码核实）：
+我们的缺陷自动化协议（[spec.defect-agent.automation-protocol.md](./spec.defect-agent.automation-protocol.md)）写得很诚实——「智能体只负责理解、判断、修复、提交」「一次只处理一个缺陷」，这是一条线性流水线。对照「自治」的标准逐层审计（均经代码核实）：
 
 | 层 | 现状（真实代码） | 判定 |
 |----|------------------|------|
@@ -129,9 +129,9 @@ start-next 领单
 
 ## 九、关联文档
 
-- `spec.defect-agent.automation-protocol.md` —— 机械契约（端点/状态机/幂等），本体系是它之上的决策治理层
-- `design.defect-agent.md` —— 缺陷管理主设计（本文是其自治治理子设计）
-- `design.defect-agent.share-skill-architecture.md` —— `FixReport.ConfidenceScore` 的来源路径
+- [spec.defect-agent.automation-protocol.md](./spec.defect-agent.automation-protocol.md) —— 机械契约（端点/状态机/幂等），本体系是它之上的决策治理层
+- [design.defect-agent.md](./design.defect-agent.md) —— 缺陷管理主设计（本文是其自治治理子设计）
+- [design.defect-agent.share-skill-architecture.md](./design.defect-agent.share-skill-architecture.md) —— `FixReport.ConfidenceScore` 的来源路径
 - 技能 `.claude/skills/ai-defect-resolve/SKILL.md`（v1.8.0 起）—— 本体系的**执行落地**：把自主三档边界 + 五层自治回路写成智能体每条缺陷必跑的自检（complete/block 前门禁）。设计是架构，技能是操作手册，二者双向引用
 - 技能 `.claude/skills/issues-autofix/SKILL.md`（v2.0.0 起）—— **同源无人值守 Agent**，共用本体系的五层自治模型（§0.5），按 GitHub issue 场景做等价落地（认知/规划补齐，监督层复用其既有跳过/边界/兜底）
 - 规则：`blocked-state-circuit-breaker.md`（紧急熔断）、`closed-loop-acceptance.md` / `e2e-verification.md`（现状核实与闭环）、`snapshot-fallback.md`（旧描述未必成立）、`expectation-management.md`（对外申明）、`no-rootless-tree.md`（缺什么暴露什么，不假装能造）

@@ -2,7 +2,7 @@
 
 > **版本**：v1.1 | **日期**：2026-06-14 | **状态**：已落地
 
-> **appKey**：`workflow-agent` | **主文档**：`design.workflow-agent.engine.md`
+> **appKey**：`workflow-agent` | **主文档**：[design.workflow-agent.engine.md](./design.workflow-agent.engine.md)
 > 本文只覆盖「降低配置门槛 + AI 一次把问题配清楚」这一子领域，工作流引擎本体（DAG 执行、舱执行链路、调度）见主文档。
 
 ## 一、管理摘要
@@ -115,8 +115,8 @@ LLM 经常把 slotId 写错或留空。生成后由服务端按「节点声明�
 
 ## 九、关联文档
 
-- `design.workflow-agent.engine.md`：工作流引擎本体（执行/调度/舱执行链路）
-- `debt.workflow-agent.md`：工作流债务台账（触发舱开放属此）
+- [design.workflow-agent.engine.md](./design.workflow-agent.engine.md)：工作流引擎本体（执行/调度/舱执行链路）
+- [debt.workflow-agent.md](./debt.workflow-agent.md)：工作流债务台账（触发舱开放属此）
 - `.claude/rules/no-rootless-tree.md`：触发能力接地依据
 - `.claude/rules/llm-gateway.md`：自愈回路的 LlmRequestContext / structured output 约束
 - `.claude/rules/artifact-is-experience.md`：校验/自愈期间的等待体验

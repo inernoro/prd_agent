@@ -2,7 +2,7 @@
 
 > **版本**：v1.1 | **日期**：2026-07-23 | **状态**：已落地
 
-关联规范: `doc/rule.acceptance.map-enterprise.md`。
+关联规范: [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md)。
 
 ## 1. 目标
 

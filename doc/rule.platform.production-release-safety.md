@@ -134,7 +134,7 @@
 
 ## 关联债务
 
-- `debt.platform.production-release.md`：记录尚未完成的原子静态切换、发布证据账本、外部监控和命令兼容整改。
+- [debt.platform.production-release.md](./debt.platform.production-release.md)：记录尚未完成的原子静态切换、发布证据账本、外部监控和命令兼容整改。
 
 ## 关联技能与闭环
 

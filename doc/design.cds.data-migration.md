@@ -105,8 +105,8 @@ MongoDB 迁移使用官方 database tools，而不是自行序列化 BSON。全�
 | 迁移任务持久化 | `cds/src/services/state.ts` |
 | 迁移类型 | `cds/src/types.ts` |
 | 项目迁移 | `cds/src/routes/project-migration.ts` |
-| 迁移债务 | `doc/debt.cds.project-migration.md` |
-| Mongo 迁移规则 | `doc/rule.cds.mongo-migration.md` |
+| 迁移债务 | [doc/debt.cds.project-migration.md](./debt.cds.project-migration.md) |
+| Mongo 迁移规则 | [doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md) |
 
 ## 11. 验收标准
 
@@ -119,7 +119,7 @@ MongoDB 迁移使用官方 database tools，而不是自行序列化 BSON。全�
 
 ## 关联文档
 
-- `doc/design.cds.md`
-- `doc/debt.cds.project-migration.md`
-- `doc/rule.cds.mongo-migration.md`
-- `doc/guide.cds.mongo-migration.md`
+- [doc/design.cds.md](./design.cds.md)
+- [doc/debt.cds.project-migration.md](./debt.cds.project-migration.md)
+- [doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md)
+- [doc/guide.cds.mongo-migration.md](./guide.cds.mongo-migration.md)

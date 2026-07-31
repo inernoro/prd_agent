@@ -2,7 +2,7 @@
 
 > **版本**：v1.1 | **日期**：2026-07-23 | **状态**：已落地
 
-关联规范: `doc/rule.acceptance.map-enterprise.md`。
+关联规范: [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md)。
 
 ## 1. 目标
 
@@ -20,9 +20,9 @@
 
 | 层级 | 作用 | 放哪里 | 内容边界 |
 |---|---|---|---|
-| 基础规范 | 统一术语和判断口径 | `doc/rule.acceptance.map-enterprise.md` | MAP 验收、L0/L1/L2、P0-P3、证据链、Verdict、CDS/CDS Agent 边界 |
-| 执行 SOP | 教会如何跑一轮 | `doc/guide.acceptance.daily-sop.md` | 范围冻结、CDS ready、取证、归档、verify-open、Slack |
-| 报告证据规范 | 规范报告长什么样 | `doc/guide.acceptance.report-evidence.md` | 信息架构、截图、链接、失败红标、右侧证据栏 |
+| 基础规范 | 统一术语和判断口径 | [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) | MAP 验收、L0/L1/L2、P0-P3、证据链、Verdict、CDS/CDS Agent 边界 |
+| 执行 SOP | 教会如何跑一轮 | [doc/guide.acceptance.daily-sop.md](./guide.acceptance.daily-sop.md) | 范围冻结、CDS ready、取证、归档、verify-open、Slack |
+| 报告证据规范 | 规范报告长什么样 | [doc/guide.acceptance.report-evidence.md](./guide.acceptance.report-evidence.md) | 信息架构、截图、链接、失败红标、右侧证据栏 |
 | 技能实现 | 可执行规则和脚本 | `.claude/skills/**` | 技能触发、脚本、模板、准入校验 |
 | 执行报告 | 每次验收结果 | CDS `/reports` | HTML/Markdown 报告、截图资产、元数据、分享链 |
 | 治理台账 | 例外和债务 | `doc/debt.*` | 暂未覆盖能力、计划迁移、规范冲突 |
@@ -83,7 +83,7 @@ prd-agent
 {验收前缀} · {重点对象} · {目标日期}
 ```
 
-验收前缀只允许 `功能验收`、`每日验收`、`PR验收`、`Commit验收`、`分支验收`、`缺陷复测`、`视觉回归`、`发布验收`、`规范演练`。项目已由 CDS 项目目录和 `projectId` 表达；状态、档位、分支、commit、PR 和操作方式放元数据，不重复进入标题。完整命名合同见 `doc/rule.acceptance.map-enterprise.md` §4.1.2。
+验收前缀只允许 `功能验收`、`每日验收`、`PR验收`、`Commit验收`、`分支验收`、`缺陷复测`、`视觉回归`、`发布验收`、`规范演练`。项目已由 CDS 项目目录和 `projectId` 表达；状态、档位、分支、commit、PR 和操作方式放元数据，不重复进入标题。完整命名合同见 [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) §4.1.2。
 
 | 元数据 | 用途 |
 |---|---|

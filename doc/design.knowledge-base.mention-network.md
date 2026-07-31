@@ -2,7 +2,7 @@
 
 > **版本**：v1.0 | **日期**：2026-06-11 | **状态**：已落地
 
-> **关联文档**：`design.knowledge-base.store.md`（知识库整体架构，本设计是其扩展层）·  `debt.knowledge-base.mention-network.md`（已知边界与遗留事项）· `rule.frontend-architecture.md`（注册表模式 + SSOT 原则） | `rule.data-audit.md`（实体引用涟漪审计原则）
+> **关联文档**：[design.knowledge-base.store.md](./design.knowledge-base.store.md)（知识库整体架构，本设计是其扩展层）·  [debt.knowledge-base.mention-network.md](./debt.knowledge-base.mention-network.md)（已知边界与遗留事项）· `rule.frontend-architecture.md`（注册表模式 + SSOT 原则） | `rule.data-audit.md`（实体引用涟漪审计原则）
 
 ## 一、管理摘要（30 秒看懂）
 

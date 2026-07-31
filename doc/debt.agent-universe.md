@@ -2,7 +2,7 @@
 
 > **版本**：v4.0 | **日期**：2026-07-17 | **状态**：开发中
 
-> **关联设计**：`design.agent-universe.md`
+> **关联设计**：[design.agent-universe.md](./design.agent-universe.md)
 
 记录"智能体宇宙"主动声明的已知边界、剩余技术债务、需用户判断的分叉，避免下一次 session 没人记得。
 

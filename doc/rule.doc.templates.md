@@ -10,7 +10,7 @@
 
 ## 适用范围
 
-`doc/` 下所有 Markdown 必须先选择一种职责，再按对应模板组织。文件名、状态枚举和索引要求见 `rule.doc.naming.md`；存量维护和回收规则见 `rule.doc.maintenance.md`。
+`doc/` 下所有 Markdown 必须先选择一种职责，再按对应模板组织。文件名、状态枚举和索引要求见 [rule.doc.naming.md](./rule.doc.naming.md)；存量维护和回收规则见 [rule.doc.maintenance.md](./rule.doc.maintenance.md)。
 
 ## 通用要求
 
@@ -26,7 +26,7 @@
 **读完能做什么**：读完能采取的具体动作，或能回答的具体问题。
 ```
 
-导读三行是硬要求，判据与闸门见 `rule.doc.readability.md`（`report.` 周报读者固定，沿用 `**本周一句话**` 即可）。
+导读三行是硬要求，判据与闸门见 [rule.doc.readability.md](./rule.doc.readability.md)（`report.` 周报读者固定，沿用 `**本周一句话**` 即可）。
 
 所有类型共同遵守：
 
@@ -35,7 +35,7 @@
 3. 代码只用于说明无法用契约表表达的关键点，全文不超过 30%。
 4. 命令、实现清单和一次性日志不复制进设计；引用真实文件或脚本。
 5. 不写临时分支、短期预览地址、上下文交接话术或“下一个 Agent”日记。
-6. 新增、删除或改名后同步 `index.yml` 与 `guide.list.directory.md`。
+6. 新增、删除或改名后同步 `index.yml` 与 [guide.list.directory.md](./guide.list.directory.md)。
 
 ## spec.*：定义做什么
 

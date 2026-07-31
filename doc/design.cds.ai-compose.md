@@ -9,7 +9,7 @@
 | 日期 | 2026-06-01 |
 | 状态 | draft |
 | 模块 | CDS（mini-PaaS）/ 项目接入（onboarding）/ cds-compose 契约 |
-| 关联 | `doc/spec.cds.compose-contract.md`、`doc/design.cds.agent.runtime-architecture.md`、`doc/design.cds.agent.api.md`、`doc/debt.cds.agent.md` |
+| 关联 | [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md)、[doc/design.cds.agent.runtime-architecture.md](./design.cds.agent.runtime-architecture.md)、[doc/design.cds.agent.api.md](./design.cds.agent.api.md)、[doc/debt.cds.agent.md](./debt.cds.agent.md) |
 
 
 ## 1. 管理摘要（30 秒）
@@ -78,7 +78,7 @@ AI 起草开关关闭，或系统侧 CDS Agent 运行时不健康。界面**不�
 2. **用户可配（开关 + 选模型）**：项目级开关决定「这个项目能不能用 AI 起草」；系统级开关 + 模型选择决定「整个 CDS 实例有没有这个能力、用哪个模型」。两级关闭时，行为精确等于今天的确定性探测。
 3. **人在回路（Human-in-the-loop）**：AI 只产出**草稿 + 理由 + 逐字段置信度**，永不自动应用。草稿强制经过可视化 compose 编辑器由人确认/编辑。
 4. **算/发两阶段分离**：「生成草稿」（compute）与「应用到项目」（send）是两个独立步骤；应用步骤重新跑 `cdscli verify`，遇 ERROR 阻断。
-5. **强制契约对齐**：草稿必须符合 `spec.cds.compose-contract.md` 的字段契约，并通过 `cdscli verify` 的评分门禁，杜绝「AI 写了 CDS 跑不了的 YAML」。
+5. **强制契约对齐**：草稿必须符合 [spec.cds.compose-contract.md](./spec.cds.compose-contract.md) 的字段契约，并通过 `cdscli verify` 的评分门禁，杜绝「AI 写了 CDS 跑不了的 YAML」。
 6. **全程可视、禁止空白等待**：起草过程通过流式事件推送四个阶段进度（对齐 CLAUDE.md 规则 #6）。
 
 ---
@@ -91,12 +91,12 @@ AI 起草开关关闭，或系统侧 CDS Agent 运行时不健康。界面**不�
 
 **CDS 自身（`cds/src`）没有任何原生 LLM 客户端。** 全量 grep `openrouter|anthropic|sk-ant|llm|gateway|model` 后确认：`cds/src` 里与「模型」相关的代码只有 `cds/src/routes/remote-hosts.ts` 的 Agent 会话端点，它**接收** `runtime` / `modelBaseUrl` / `modelApiKey` / `model` 等参数（`remote-hosts.ts:606-636`），把它们连同会话一起转交给一个**远程 sidecar 容器**去执行，CDS 进程本身从不发起对模型 API 的 HTTP 调用（`grep "fetch('https://api.openai|anthropic|openrouter'"` 在 `cds/src` 命中 0 条）。
 
-**那个出现在测试里的 `https://openrouter.ai/api` 是什么？** 它只是 `cds/tests/routes/remote-hosts-instances.test.ts`（如 `:635`、`:756`、`:1019`）里给 Agent 会话造的一个 **runtime profile 夹具值**——一个会被原样转发给 sidecar 的 `modelBaseUrl` 字符串。CDS 并不在自己进程里「配置 OpenRouter」，也不直接调它。OpenRouter 作为 baseUrl，是由 **MAP / prd-api 侧的 runtime profile** 决定并下发的（profile 模型见 `doc/design.cds.agent.api.md` 的 `POST /api/infra-agent-runtime-profiles`）。
+**那个出现在测试里的 `https://openrouter.ai/api` 是什么？** 它只是 `cds/tests/routes/remote-hosts-instances.test.ts`（如 `:635`、`:756`、`:1019`）里给 Agent 会话造的一个 **runtime profile 夹具值**——一个会被原样转发给 sidecar 的 `modelBaseUrl` 字符串。CDS 并不在自己进程里「配置 OpenRouter」，也不直接调它。OpenRouter 作为 baseUrl，是由 **MAP / prd-api 侧的 runtime profile** 决定并下发的（profile 模型见 [doc/design.cds.agent.api.md](./design.cds.agent.api.md) 的 `POST /api/infra-agent-runtime-profiles`）。
 
 **真正能发起 LLM 调用的能力在哪里？** 在 prd-api 侧的 CDS Agent 运行时，有两条真实路径：
 
-- **Lite 只读模式（现成、最稳）**：`GatewayReviewRuntimeAdapter` 走 prd-api 的 `ILlmGateway` 默认 chat 池，做有界只读分析，无需任何 Anthropic key 即可跑（见 `doc/debt.cds.agent.md` D1/D2、`prd-api/.../AgentRuntime/GatewayReviewRuntimeAdapter.cs`）。
-- **官方 `claude-agent-sdk` 模式（商业级、有门禁）**：sidecar 内用官方 `claude-agent-sdk`（解析版本 `0.2.82`，见 `doc/design.cds.agent.official-sdk-adapter.md` §8）跑带工具/审批的 agent loop，但需要有效的 Anthropic / Claude-compatible runtime profile 才放行（债务 D1，未闭合）。
+- **Lite 只读模式（现成、最稳）**：`GatewayReviewRuntimeAdapter` 走 prd-api 的 `ILlmGateway` 默认 chat 池，做有界只读分析，无需任何 Anthropic key 即可跑（见 [doc/debt.cds.agent.md](./debt.cds.agent.md) D1/D2、`prd-api/.../AgentRuntime/GatewayReviewRuntimeAdapter.cs`）。
+- **官方 `claude-agent-sdk` 模式（商业级、有门禁）**：sidecar 内用官方 `claude-agent-sdk`（解析版本 `0.2.82`，见 [doc/design.cds.agent.official-sdk-adapter.md](./design.cds.agent.official-sdk-adapter.md) §8）跑带工具/审批的 agent loop，但需要有效的 Anthropic / Claude-compatible runtime profile 才放行（债务 D1，未闭合）。
 
 **结论（诚实版）**：CDS **现在不能在自己进程里直接调一个 LLM**。它要触达模型，只能经由「CDS Agent 运行时」这条链路；这条链路的真正模型客户端运行在 prd-api 侧（Lite 用 `ILlmGateway`）或 sidecar 内（官方 SDK）。因此本设计**面向 Lite / ILlmGateway 这条已经可用、零外部 key 依赖的路径来设计**，把官方 SDK 模式列为可选升级。
 
@@ -165,7 +165,7 @@ AI 起草开关关闭，或系统侧 CDS Agent 运行时不健康。界面**不�
 
 草稿是一次性计算产物，随响应返回，不写持久化业务集合（落库的是用户确认后的 `cds-compose.yml` 本身）。其形态围绕「契约 + 可解释 + 可校验」：
 
-- `yaml`：符合 `spec.cds.compose-contract.md` 的 compose 文本；
+- `yaml`：符合 [spec.cds.compose-contract.md](./spec.cds.compose-contract.md) 的 compose 文本；
 - `rationale`：整体起草思路（为何这样拆 service、为何选这些 infra）；
 - `fieldConfidence`：逐字段置信度数组，每项含字段路径、置信度、依据信号、是否猜测；
 - `verifyPreview`：本地 `cdscli verify` 的结构化结果（issues 分级 + score + grade）；
@@ -202,24 +202,24 @@ POST /api/projects/:id/ai-compose-draft
 | `done` | 完整草稿对象 + verify 预览 |
 | `error` | 结构化错误（运行时不可用 / 未授权 / 模型失败），并提示「已退回确定性探测」 |
 
-`asking-model` 与 `drafting` 两个阶段直接复用 CDS Agent 运行时已有的流式事件（`text_delta` 等，见 `doc/design.cds.agent.api.md` 事件 schema），CDS 只做阶段归类与转译。
+`asking-model` 与 `drafting` 两个阶段直接复用 CDS Agent 运行时已有的流式事件（`text_delta` 等，见 [doc/design.cds.agent.api.md](./design.cds.agent.api.md) 事件 schema），CDS 只做阶段归类与转译。
 
 ### 7.2 应用（send 阶段，复用既有入口）
 
 应用**不新增 AI 专用写接口**，直接复用 CDS 既有的 compose 落库 / detect-profile 流程（`POST /api/projects/:id/clone` 链路已负责 clone 后 detect/profile；compose 写入走既有项目设置入口）。应用前置条件：
 
 1. 入参是**用户在编辑器里最终确认的 YAML**（可能已手改），不是 AI 原始草稿；
-2. 落库前**重跑 `cdscli verify`**，有 ERROR 一律拒绝（与 `--apply-to-cds` 的现有门禁一致，见 `spec.cds.compose-contract.md` §4）；
+2. 落库前**重跑 `cdscli verify`**，有 ERROR 一律拒绝（与 `--apply-to-cds` 的现有门禁一致，见 [spec.cds.compose-contract.md](./spec.cds.compose-contract.md) §4）；
 3. 应用阶段**不调用模型**。
 
 ---
 
 ## 8. 关联文档
 
-- `doc/spec.cds.compose-contract.md`：cds-compose 字段契约与 `cdscli verify` 规则（评分 / 自愈），草稿必须符合此契约——本设计的「校验」环节即引用它。
-- `doc/design.cds.agent.runtime-architecture.md`：CDS Agent 运行时架构（控制面 vs sidecar vs runtime pool），本设计借用其运行时。
-- `doc/design.cds.agent.api.md`：CDS Agent / runtime profile / 会话事件 API 契约，本设计的「询问模型」复用其事件流。
-- `doc/debt.cds.agent.md`：Lite 模式能力边界（D1/D2/D4），本设计默认依赖 Lite 这条已可用路径。
+- [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md)：cds-compose 字段契约与 `cdscli verify` 规则（评分 / 自愈），草稿必须符合此契约——本设计的「校验」环节即引用它。
+- [doc/design.cds.agent.runtime-architecture.md](./design.cds.agent.runtime-architecture.md)：CDS Agent 运行时架构（控制面 vs sidecar vs runtime pool），本设计借用其运行时。
+- [doc/design.cds.agent.api.md](./design.cds.agent.api.md)：CDS Agent / runtime profile / 会话事件 API 契约，本设计的「询问模型」复用其事件流。
+- [doc/debt.cds.agent.md](./debt.cds.agent.md)：Lite 模式能力边界（D1/D2/D4），本设计默认依赖 Lite 这条已可用路径。
 - `cds/src/services/stack-detector.ts`：确定性探测器（`detectStack` / `detectModules` / `StackDetection`），始终是默认路径与兜底。
 - `.claude/rules/no-rootless-tree.md`、`.claude/rules/compute-then-send.md`、`.claude/rules/agent-runtime-sdk-boundary.md`、`cds/.claude/rules/scope-naming.md`：本设计遵循的四条规则。
 

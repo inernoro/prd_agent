@@ -52,7 +52,7 @@
 - 编排与 Worker：`prd-api/src/PrdAgent.Api/Services/Toolbox/ToolboxOrchestrator.cs`、`ToolboxRunWorker.cs`、`Adapters/`。
 - 数据模型：`prd-api/src/PrdAgent.Core/Models/Toolbox/ToolboxModels.cs`。
 - 前端：`prd-admin/src/pages/ai-toolbox/`、`prd-admin/src/stores/toolboxStore.ts`、`prd-admin/src/services/real/aiToolbox.ts`。
-- 关联规则：`rule.platform.llm-gateway.md`、`rule.platform.server-authority.md`、`rule.platform.navigation-registry.md`。
+- 关联规则：[rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)、`rule.platform.server-authority.md`、`rule.platform.navigation-registry.md`。
 
 ## 风险与验收
 

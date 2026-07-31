@@ -113,12 +113,12 @@ sidecar 可与主服务同一编排部署，也可由 CDS 共享运行时池提�
 - MAP 已保存 runtime adapter、run id、实例和取消状态；
 - 静态 sidecar 与 CDS paired runtime 均可参与发现。
 
-剩余迁移和商业化门禁记录在 `doc/debt.cds.agent.sdk-executor.md` 与 `doc/plan.cds.agent.official-sdk-migration.md`，不在本设计里维护执行清单。
+剩余迁移和商业化门禁记录在 [doc/debt.cds.agent.sdk-executor.md](./debt.cds.agent.sdk-executor.md) 与 [doc/plan.cds.agent.official-sdk-migration.md](./plan.cds.agent.official-sdk-migration.md)，不在本设计里维护执行清单。
 
 ## 10. 关联文档
 
-- `doc/design.cds.agent.official-sdk-adapter.md`
-- `doc/design.cds.agent.runtime-architecture.md`
-- `doc/design.cds.agent.managed-runtime-fact-source.md`
-- `doc/guide.cds.agent.sdk-quickstart.md`
-- `doc/debt.cds.agent.sdk-executor.md`
+- [doc/design.cds.agent.official-sdk-adapter.md](./design.cds.agent.official-sdk-adapter.md)
+- [doc/design.cds.agent.runtime-architecture.md](./design.cds.agent.runtime-architecture.md)
+- [doc/design.cds.agent.managed-runtime-fact-source.md](./design.cds.agent.managed-runtime-fact-source.md)
+- [doc/guide.cds.agent.sdk-quickstart.md](./guide.cds.agent.sdk-quickstart.md)
+- [doc/debt.cds.agent.sdk-executor.md](./debt.cds.agent.sdk-executor.md)

@@ -246,7 +246,7 @@ config: {
 
 - `.claude/rules/marketplace.md` — 类型注册表模式参考
 - `.claude/rules/frontend-architecture.md` — 前端 CONFIG_TYPE_REGISTRY 参考
-- `doc/spec.srs.md` — 待更新，收录本模块
+- [doc/spec.srs.md](./spec.srs.md) — 待更新，收录本模块
 - `.claude/rules/codebase-snapshot.md` — 待更新，新增 `external_authorizations` 集合
 
 ---

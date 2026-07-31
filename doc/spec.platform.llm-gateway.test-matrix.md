@@ -2,15 +2,15 @@
 
 > **版本**：v1.0 | **日期**：2026-06-29 | **状态**：已落地
 
-> 关联: `doc/design.platform.llm-gateway.physical-isolation.md`、`doc/debt.platform.llm-gateway.isolation.md`、
-> `doc/report.gw-test-matrix.md`（全量可见报告）、`prd-api/tests/PrdAgent.Api.Tests/Gateway/`、`scripts/gw-smoke.py`
+> 关联: [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)、
+> [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（全量可见报告）、`prd-api/tests/PrdAgent.Api.Tests/Gateway/`、`scripts/gw-smoke.py`
 
 AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维度不漏不叠地覆盖每个真实调用入口与协议边界，
 先用桩 + 必败 canary 证明用例能抓异常，再用 OpenRouter 便宜模型/桩真打。
 
 ## 全量可见报告（不压缩）+ 数据驱动 SSOT
 
-矩阵不是几行摘要，而是**全枚举的大表**，落在 `doc/report.gw-test-matrix.md`（约 284 行）：A 层 153 个入口逐条真实解析
+矩阵不是几行摘要，而是**全枚举的大表**，落在 [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（约 284 行）：A 层 153 个入口逐条真实解析
 结果 + B 层 93 个协议保真 cell + C 层 18 个跨进程 cell + 20 个扩展维度。报告里 B/C 的**每一行 = CI 真执行的一个 cell**
 （非只列不跑）。三处同源、一处生成：`scripts/gen-gw-matrix-report.py` 产出报告 + `protocol-cells.json` + `transport-cells.json`，
 后两者被 `GatewayProtocolFidelityTests` / `CrossProcessServingErrorLoadTests` 的 `[Theory]/[MemberData]` 读取逐 cell 真跑。
@@ -56,6 +56,6 @@ AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维
 
 - `ModelTestStub.FailureMode` 当前**未接入** serving 路径（resolver/gateway 不查 `model_test_stubs`）——
   canary 不依赖它，改用桩上游错误端点 / 坏 URL 模型（真实失败路径）。让 FailureMode 生效是独立改动，记
-  `doc/debt.platform.llm-gateway.isolation.md`。
+  [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)。
 - D8 生图走 `ImageGenGateway`/`OpenAIImageClient`，不经 chat 适配器；图片格式还原在 `LlmRequestLogWriter`。
 - 不覆盖计费、不重写调度算法。

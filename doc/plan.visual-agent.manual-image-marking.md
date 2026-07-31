@@ -54,6 +54,6 @@
 
 ## 关联文档
 
-- `doc/design.literary-agent.md`
-- `doc/design.platform.image-ref-and-persistence.md`
-- `doc/design.visual-agent.md`
+- [doc/design.literary-agent.md](./design.literary-agent.md)
+- [doc/design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)
+- [doc/design.visual-agent.md](./design.visual-agent.md)

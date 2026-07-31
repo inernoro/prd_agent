@@ -148,7 +148,7 @@
 
 实现细节由上述代码与对应设计文档负责，本规格不复制控制器、数据模型或前端实现代码。
 
-竞品调研与分期改进方案见 `doc/plan.product-agent.pa.competitive-improvements.md`。
+竞品调研与分期改进方案见 [doc/plan.product-agent.pa.competitive-improvements.md](./plan.product-agent.pa.competitive-improvements.md)。
 
 ---
 

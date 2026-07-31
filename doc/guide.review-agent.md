@@ -363,4 +363,4 @@ A：企微群机器人 @所有人 要求机器人的**创建者必须是群主**
 
 ---
 
-*文档路径：`doc/guide.review-agent.md` | 如有问题请反馈至系统管理员*
+*文档路径：[doc/guide.review-agent.md](./guide.review-agent.md) | 如有问题请反馈至系统管理员*

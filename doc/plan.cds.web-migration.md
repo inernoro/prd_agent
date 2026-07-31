@@ -4,7 +4,7 @@
 
 ## 目标
 
-在 React 控制台已成为 dashboard 权威的基础上，完成 legacy 功能差距复核、真实路径验收和旧 HTML/JS/CSS 的物理退场。本文只保留尚未完成的退场门禁；现行页面结构由 `cds/web/` 代码和 `guide.cds.web-migration-runbook.md` 说明。
+在 React 控制台已成为 dashboard 权威的基础上，完成 legacy 功能差距复核、真实路径验收和旧 HTML/JS/CSS 的物理退场。本文只保留尚未完成的退场门禁；现行页面结构由 `cds/web/` 代码和 [guide.cds.web-migration-runbook.md](./guide.cds.web-migration-runbook.md) 说明。
 
 ## 当前事实
 
@@ -26,7 +26,7 @@
 | 安全 | GitHub 授权、管理员操作、危险确认、密钥只显示一次 |
 | 恢复 | factory reset、自更新、配置快照、备份恢复和失败回滚 |
 
-发现缺口时必须登记到 `plan.cds.backlog-matrix.md`，说明“迁移、放弃或被新能力替代”。禁止仅因 legacy 有按钮就机械复制没有真实后端能力的空壳。
+发现缺口时必须登记到 [plan.cds.backlog-matrix.md](./plan.cds.backlog-matrix.md)，说明“迁移、放弃或被新能力替代”。禁止仅因 legacy 有按钮就机械复制没有真实后端能力的空壳。
 
 ## Week 4.6：视觉与主链路验收
 
@@ -70,6 +70,6 @@
 
 ## 关联文档
 
-- `doc/guide.cds.web-migration-runbook.md`
-- `doc/guide.cds.view-parity.md`
-- `doc/plan.cds.backlog-matrix.md`
+- [doc/guide.cds.web-migration-runbook.md](./guide.cds.web-migration-runbook.md)
+- [doc/guide.cds.view-parity.md](./guide.cds.view-parity.md)
+- [doc/plan.cds.backlog-matrix.md](./plan.cds.backlog-matrix.md)

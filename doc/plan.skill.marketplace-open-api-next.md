@@ -51,6 +51,6 @@
 
 ## 关联文档
 
-- `doc/design.skill.marketplace-open-api.md`
-- `doc/rule.platform.data-dictionary.md`
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md)
+- [doc/rule.platform.data-dictionary.md](./rule.platform.data-dictionary.md)
 - `doc/rule.platform.app-caller-registry.md`

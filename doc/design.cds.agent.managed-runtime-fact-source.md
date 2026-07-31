@@ -160,4 +160,4 @@ R0.7 完成必须取得真实 CDS shared-service runtime 的证据：running 数
 
 - `doc/design.cds.agent-orchestration.md`
 - `doc/design.cds.shared-sidecar-runtime.md`
-- `doc/design.cds.md`
+- [doc/design.cds.md](./design.cds.md)

@@ -156,7 +156,7 @@ MAP 数据库继续保存 MAP 业务日志、会话、Run 和业务产物。两�
 
 ## 10. 关联文档
 
-- `doc/plan.platform.llm-gateway.full-cutover.md`
-- `doc/spec.platform.llm-gateway.test-matrix.md`
-- `doc/debt.platform.llm-gateway.isolation.md`
-- `doc/design.platform.llm-gateway.migration-retrospective.md`
+- [doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)
+- [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)
+- [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)
+- [doc/design.platform.llm-gateway.migration-retrospective.md](./design.platform.llm-gateway.migration-retrospective.md)

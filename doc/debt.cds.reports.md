@@ -19,4 +19,4 @@
 
 - 文件夹树/移动菜单/筛选菜单跨项目串扰（PR #1062）
 - 验收归档不进文件夹：archive_report.py 三级解析 + SKILL.md 固化「文件夹归类是默认行为」（PR #1062）
-- 每日验收按月分桶：`guide.acceptance.daily-sop.md` 要求 `--folder-path "每日验收/<YYYY-MM>"`（PR #1062）
+- 每日验收按月分桶：[guide.acceptance.daily-sop.md](./guide.acceptance.daily-sop.md) 要求 `--folder-path "每日验收/<YYYY-MM>"`（PR #1062）

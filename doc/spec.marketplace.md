@@ -132,7 +132,7 @@ Fork 后：
 
 ## 11. 关联文档
 
-- `doc/design.skill.marketplace-open-api.md`：市场与开放接口的技术设计。
-- `doc/plan.skill.marketplace-open-api-next.md`：仍未完成的市场开放能力计划。
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md)：市场与开放接口的技术设计。
+- [doc/plan.skill.marketplace-open-api-next.md](./plan.skill.marketplace-open-api-next.md)：仍未完成的市场开放能力计划。
 
 实现代码和类型清单是运行事实源，本规格只定义产品契约。

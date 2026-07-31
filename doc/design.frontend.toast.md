@@ -100,6 +100,6 @@
 
 ## 关联文档
 
-- `doc/rule.frontend.frontend-modal.md`
-- `doc/rule.frontend.streaming-text.md`
-- `doc/rule.frontend.landing-visual-style.md`
+- [doc/rule.frontend.frontend-modal.md](./rule.frontend.frontend-modal.md)
+- [doc/rule.frontend.streaming-text.md](./rule.frontend.streaming-text.md)
+- [doc/rule.frontend.landing-visual-style.md](./rule.frontend.landing-visual-style.md)

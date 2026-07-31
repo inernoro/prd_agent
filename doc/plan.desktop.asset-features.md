@@ -64,4 +64,4 @@ Web 管理端已有 `DesktopAssetsPage`，但它不等于 Tauri Desktop 已完�
 
 - `doc/design.platform.asset-storage.md`
 - `doc/spec.desktop.mobile.md`
-- `doc/guide.platform.quickstart.md`
+- [doc/guide.platform.quickstart.md](./guide.platform.quickstart.md)

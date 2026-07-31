@@ -34,24 +34,24 @@
 
 | 能力 | 状态 | 当前入口 |
 | --- | --- | --- |
-| 项目与分支基础设施 | 已落地 | `design.cds.md`、`spec.cds.project-model.md` |
-| GitHub 授权与 Webhook | 已落地 | `guide.cds.github-webhook-events.md` |
-| MySQL、Postgres、Mongo 接入 | 已落地，持续兼容验证 | `guide.cds.orm-support.md` |
-| 多项目隔离 | 已落地，残留偿债 | `plan.cds.multi-project-phases.md`、`debt.cds.branch-isolation.md` |
-| React 控制台 | 现行权威，旧代码待删 | `plan.cds.web-migration.md` |
-| Agent 工作台 | Lite 可用，官方 SDK 商业闭环未关闭 | `plan.cds.agent.official-sdk-migration.md` |
-| 高可用与多 executor | 代码已具备，真实运行验证未关闭 | `plan.cds.resilience-rollout.md` |
-| 集群 bootstrap | 规划中 | `design.cds.cluster-bootstrap.md` |
+| 项目与分支基础设施 | 已落地 | [design.cds.md](./design.cds.md)、[spec.cds.project-model.md](./spec.cds.project-model.md) |
+| GitHub 授权与 Webhook | 已落地 | [guide.cds.github-webhook-events.md](./guide.cds.github-webhook-events.md) |
+| MySQL、Postgres、Mongo 接入 | 已落地，持续兼容验证 | [guide.cds.orm-support.md](./guide.cds.orm-support.md) |
+| 多项目隔离 | 已落地，残留偿债 | [plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md)、[debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md) |
+| React 控制台 | 现行权威，旧代码待删 | [plan.cds.web-migration.md](./plan.cds.web-migration.md) |
+| Agent 工作台 | Lite 可用，官方 SDK 商业闭环未关闭 | [plan.cds.agent.official-sdk-migration.md](./plan.cds.agent.official-sdk-migration.md) |
+| 高可用与多 executor | 代码已具备，真实运行验证未关闭 | [plan.cds.resilience-rollout.md](./plan.cds.resilience-rollout.md) |
+| 集群 bootstrap | 规划中 | [design.cds.cluster-bootstrap.md](./design.cds.cluster-bootstrap.md) |
 
 ## 三、未完成事项归口
 
 | 类型 | 唯一入口 |
 | --- | --- |
-| 横向产品与体验事项 | `plan.cds.backlog-matrix.md` |
-| 多项目与 workspace | `plan.cds.multi-project-phases.md` |
-| React legacy 退场 | `plan.cds.web-migration.md` |
-| 多节点高可用 | `plan.cds.resilience-rollout.md` |
-| Agent 官方 SDK | `plan.cds.agent.official-sdk-migration.md` |
+| 横向产品与体验事项 | [plan.cds.backlog-matrix.md](./plan.cds.backlog-matrix.md) |
+| 多项目与 workspace | [plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md) |
+| React legacy 退场 | [plan.cds.web-migration.md](./plan.cds.web-migration.md) |
+| 多节点高可用 | [plan.cds.resilience-rollout.md](./plan.cds.resilience-rollout.md) |
+| Agent 官方 SDK | [plan.cds.agent.official-sdk-migration.md](./plan.cds.agent.official-sdk-migration.md) |
 | 存储、隔离、迁移与性能风险 | 对应 `debt.cds.*.md` |
 
 已完成故障、旧分支名、测试数量和临时预览地址不进入本看板；这些由 Git 历史、周报和 CI 证据承担。
@@ -60,7 +60,7 @@
 
 1. 读本页确认任务归口。
 2. 读对应 design、spec 或 debt，确认当前事实和边界。
-3. 在 `plan.cds.backlog-matrix.md` 搜索稳定 ID，避免重复登记。
+3. 在 [plan.cds.backlog-matrix.md](./plan.cds.backlog-matrix.md) 搜索稳定 ID，避免重复登记。
 4. 实现后跑 backend/web 类型检查、聚焦单测和行为级冒烟。
 5. 若涉及控制台，走真实导航入口完成双主题验收。
 6. 完成项从计划移除；长期事实更新设计，未偿还边界更新债务。

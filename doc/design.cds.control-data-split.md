@@ -3,7 +3,7 @@
 > **版本**：v2.0 | **日期**：2026-05-09 | **状态**：已落地
 
 > 2026-05-09 更新:本设计的"控制面/数据面分离 + 独立 Forwarder"部分已 100% 落地
-> (见 `doc/report.cds.forwarder-success.md`),但"Admin Daemon 蓝绿热替换"部分
+> (见 [doc/report.cds.forwarder-success.md](./report.cds.forwarder-success.md)),但"Admin Daemon 蓝绿热替换"部分
 > 因 verify-target stage 反复卡死导致放弃,改为更简单的"daemon 走 systemd 重启,
 > 业务流量由独立 forwarder 进程承接"的方案。本文档下文中所有 supervisor /
 > standby / active-color / blue-green 相关章节已**不再代表当前实现**,仅保留作为
@@ -11,7 +11,7 @@
 > / `standby-controller.ts` / `active-color-store.ts` 等)已从仓库删除。
 > 历史信息(原始 v1.0):2026-05-08 方案审批中,代码未启动。
 > 本文档回答一个核心问题:**CDS 自更新时,业务流量为什么会断,怎么改成永远不断?**
-> 关联主文档:`doc/design.cds.md`(CDS 整体架构)、`doc/design.cds.resilience.md`(容量与故障隔离)、`doc/report.cds.self-update-timing-audit.md`(self-update 时序审视)
+> 关联主文档:[doc/design.cds.md](./design.cds.md)(CDS 整体架构)、[doc/design.cds.resilience.md](./design.cds.resilience.md)(容量与故障隔离)、[doc/report.cds.self-update-timing-audit.md](./report.cds.self-update-timing-audit.md)(self-update 时序审视)
 
 
 ## 一、管理摘要
@@ -227,10 +227,10 @@ CDS 是 **多租户分支预览部署平台** — 给开发团队的每个 git �
 
 ## 八、关联设计文档
 
-- `doc/design.cds.md` — CDS 整体架构(本设计是其子模块)
-- `doc/design.cds.resilience.md` — 容量预算与休眠池(forwarder 健康探测可复用其热度策略)
-- `doc/design.platform.server-authority.md` — Run/Worker 模式(admin daemon 蓝绿切换时 worker 怎么接力)
-- `doc/report.cds.self-update-timing-audit.md` — 时序审视(本方案是 Phase B+C 合并实施)
+- [doc/design.cds.md](./design.cds.md) — CDS 整体架构(本设计是其子模块)
+- [doc/design.cds.resilience.md](./design.cds.resilience.md) — 容量预算与休眠池(forwarder 健康探测可复用其热度策略)
+- [doc/design.platform.server-authority.md](./design.platform.server-authority.md) — Run/Worker 模式(admin daemon 蓝绿切换时 worker 怎么接力)
+- [doc/report.cds.self-update-timing-audit.md](./report.cds.self-update-timing-audit.md) — 时序审视(本方案是 Phase B+C 合并实施)
 - `doc/spec.cds-blue-green-mece-acceptance.md` — MECE 验收清单(本设计的契约,先于实现)
 
 ---

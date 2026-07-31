@@ -49,4 +49,4 @@
 - 图片客户端：`prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs`。
 - Vision 契约：`prd-api/src/PrdAgent.Core/Models/MultiImage/VisionApiModels.cs`。
 - 多图领域服务：`prd-api/src/PrdAgent.Infrastructure/Services/MultiImageDomainService.cs`、`MultiImageComposeService.cs`。
-- 关联设计：`design.visual-agent.multi-image-compose.md`、`design.platform.image-ref-and-persistence.md`。
+- 关联设计：[design.visual-agent.multi-image-compose.md](./design.visual-agent.multi-image-compose.md)、[design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)。

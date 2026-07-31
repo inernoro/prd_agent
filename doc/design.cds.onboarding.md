@@ -119,7 +119,7 @@ pending import 保存原始来源、解析结果和校验问题。用户确认�
 
 ## 关联文档
 
-- `doc/design.cds.md`
-- `doc/design.cds.visual-deploy.md`
-- `doc/guide.cds.env.md`
-- `doc/plan.cds.status.md`
+- [doc/design.cds.md](./design.cds.md)
+- [doc/design.cds.visual-deploy.md](./design.cds.visual-deploy.md)
+- [doc/guide.cds.env.md](./guide.cds.env.md)
+- [doc/plan.cds.status.md](./plan.cds.status.md)
