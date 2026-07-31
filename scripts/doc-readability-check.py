@@ -79,17 +79,31 @@ MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 NON_FILE_TARGET = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
-FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})\s*(\S*)")
+FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})\s*(.*)$")
 
 
-def fence_delim(line: str) -> str | None:
-    """返回这行围栏的定界符（``` 或 ~~~），不是围栏则 None。
+def fence_delim(line: str) -> tuple[str, int] | None:
+    """返回这行围栏的 (定界符字符, 长度)，不是围栏则 None。
 
-    Markdown 两种围栏都合法：只认反引号的话，`~~~ts` 里的实现代码在判据眼里
-    压根不存在，闸门形同虚设。
+    两件事都不能省：Markdown 两种围栏都合法（只认反引号的话，`~~~ts` 里的
+    实现代码在判据眼里压根不存在）；长度也必须留着 —— 四个反引号包着的
+    示例里往往还有三个反引号的内层围栏，按三个就闭合会把外层提前关掉。
     """
     m = FENCE_OPEN.match(line.strip())
-    return m.group(1)[0] * 3 if m else None
+    return (m.group(1)[0], len(m.group(1))) if m else None
+
+
+def fence_closes(opener: tuple[str, int], candidate: tuple[str, int]) -> bool:
+    """同种定界符、且不短于开启行，才算闭合（CommonMark 规则）。"""
+    return candidate[0] == opener[0] and candidate[1] >= opener[1]
+
+
+def fence_lang(line: str) -> str:
+    """取围栏的语言标记：只认第一个词，后面的 title="x" / {linenos} 之类属性丢掉。"""
+    m = FENCE_OPEN.match(line.strip())
+    info = (m.group(2) if m else "").strip()
+    token = re.split(r"[\s,{]", info, 1)[0]
+    return token.strip("\"'`{}").lower()
 
 
 def doc_type(name: str) -> str:
@@ -106,15 +120,15 @@ def parse_header(text: str) -> dict[str, str]:
     found: dict[str, str] = {}
     labels = list(ONE_LINER_ALIASES) + [f for f in FIELDS if f != "一句话"]
     in_fence = False
-    fence_kind = ""
+    fence_kind: tuple[str, int] | None = None
     seen_h1 = False
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
         # 代码块里的示例不算数 —— 否则「展示导读格式的模板文档」会自己骗过闸门
         delim = fence_delim(line)
-        if delim and (not in_fence or delim == fence_kind):
+        if delim and (not in_fence or fence_closes(fence_kind, delim)):
             in_fence = not in_fence
-            fence_kind = delim if in_fence else ""
+            fence_kind = delim if in_fence else None
             continue
         if in_fence:
             continue
@@ -224,7 +238,7 @@ def scan_body(text: str) -> tuple[int, int]:
     impl_lines = 0
     src_refs = 0
     in_fence = False
-    fence_kind = ""
+    fence_kind: tuple[str, int] | None = None
     lang = ""
     in_source_section = False
     lines = text.splitlines()
@@ -232,11 +246,10 @@ def scan_body(text: str) -> tuple[int, int]:
     for idx, raw in enumerate(lines):
         st = raw.strip()
         delim = fence_delim(st)
-        if delim and (not in_fence or delim == fence_kind):
+        if delim and (not in_fence or fence_closes(fence_kind, delim)):
             if not in_fence:
                 fence_kind = delim
-                # 定界符可能多于三个（````），一律剥干净再取语言
-                in_fence, lang = True, st.lstrip("`~").strip().lower()
+                in_fence, lang = True, fence_lang(st)
             else:
                 in_fence, lang = False, ""
             continue
@@ -330,12 +343,12 @@ def doc_filenames() -> set[str]:
 def body_lines(text: str):
     """逐行产出正文（跳过围栏代码块）——代码块里的路径是示例，不该变成链接。"""
     in_fence = False
-    fence_kind = ""
+    fence_kind: tuple[str, int] | None = None
     for idx, raw in enumerate(text.splitlines()):
         delim = fence_delim(raw)
-        if delim and (not in_fence or delim == fence_kind):
+        if delim and (not in_fence or fence_closes(fence_kind, delim)):
             in_fence = not in_fence
-            fence_kind = delim if in_fence else ""
+            fence_kind = delim if in_fence else None
             continue
         if not in_fence:
             yield idx + 1, raw
@@ -381,12 +394,12 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
     out: list[str] = []
     changed = 0
     in_fence = False
-    fence_kind = ""
+    fence_kind: tuple[str, int] | None = None
     for raw in text.splitlines(keepends=True):
         delim = fence_delim(raw)
-        if delim and (not in_fence or delim == fence_kind):
+        if delim and (not in_fence or fence_closes(fence_kind, delim)):
             in_fence = not in_fence
-            fence_kind = delim if in_fence else ""
+            fence_kind = delim if in_fence else None
             out.append(raw)
             continue
         if in_fence:
@@ -453,14 +466,14 @@ def check_rule_text(text: str) -> list[str]:
     """
     found: dict[str, str] = {}
     in_fence = False
-    fence_kind = ""
+    fence_kind: tuple[str, int] | None = None
     seen_h1 = False
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
         delim = fence_delim(line)
-        if delim and (not in_fence or delim == fence_kind):
+        if delim and (not in_fence or fence_closes(fence_kind, delim)):
             in_fence = not in_fence
-            fence_kind = delim if in_fence else ""
+            fence_kind = delim if in_fence else None
             continue
         if in_fence:
             continue
@@ -504,6 +517,14 @@ def yaml_scalar(raw: str) -> str:
     value = re.split(r"\s+#", value, 1)[0]
     return value.strip()
 
+# description 必须回答「什么时候轮到这个技能」：触发词、使用场景从句、或斜杠命令。
+# 只讲能力不讲时机的描述，调度器无从判断该不该选它（doc/rule.skill.header.md）。
+TRIGGER_CUE = re.compile(
+    r"触发词|触发|使用时机|时使用|时触发|当用户|什么时候|适用于|用于|"
+    r"[Tt]rigger|[Uu]se (this|when|it when)|[Aa]ctivates|[Ww]hen the user|[Ww]hen you|"
+    r"[Ii]nvoke|Actions?:|/[a-z][a-z0-9-]{3,}")
+
+
 def check_skill(path: str) -> list[str]:
     """技能文档：frontmatter 必须有 name 与 description，且 description 要说清什么时候用它。"""
     with open(path, encoding="utf-8") as fh:
@@ -532,6 +553,9 @@ def check_skill(path: str) -> list[str]:
         problems.append("frontmatter 缺 description")
     elif len(desc) < 30:
         problems.append("description 太短，说不清这个技能什么时候该被触发")
+    elif not TRIGGER_CUE.search(desc):
+        # 长度够但只讲「我能干什么」，没讲「什么时候轮到我」——调度器据此选不中它
+        problems.append("description 只讲了能力，没讲触发时机（触发词 / 什么场景下用 / 斜杠命令）")
     return problems
 
 
@@ -618,16 +642,58 @@ def _debt_words(entry: dict[str, int]) -> str:
     return "、".join(bits) if bits else "无"
 
 
-def load_baseline() -> dict[str, dict[str, int]]:
-    if not os.path.exists(BASELINE_PATH):
-        return {}
-    with open(BASELINE_PATH, encoding="utf-8") as fh:
-        data = json.load(fh)
+def _normalize_baseline(data: dict) -> dict:
     return {"missing": data.get("missing", {}), "bare_refs": data.get("bare_refs", {}),
             "impl_code": data.get("impl_code", {}), "source_refs": data.get("source_refs", {}),
             "rules_missing": data.get("rules_missing", 0),
             "skills_missing": data.get("skills_missing", 0),
             "files": data.get("files", {})}
+
+
+def load_baseline() -> dict[str, dict[str, int]]:
+    if not os.path.exists(BASELINE_PATH):
+        return {}
+    with open(BASELINE_PATH, encoding="utf-8") as fh:
+        return _normalize_baseline(json.load(fh))
+
+
+def load_baseline_at(ref: str) -> dict | None:
+    """读某个 git ref 上的基线；取不到返回 None（本地没 fetch 时不阻塞）。"""
+    import subprocess
+    rel = os.path.relpath(BASELINE_PATH, REPO_ROOT).replace(os.sep, "/")
+    try:
+        out = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    try:
+        return _normalize_baseline(json.loads(out.stdout))
+    except json.JSONDecodeError:
+        return None
+
+
+def baseline_regressions(base: dict, submitted: dict) -> list[str]:
+    """提交的基线相对目标分支是不是被放宽了。
+
+    棘轮只跟工作树比本分支自己的基线，于是「先制造欠账、再跑 --update-baseline」
+    能让 CI 拿放宽后的基线跟自己比，判据形同虚设。所以先比基线本身。
+    """
+    bad: list[str] = []
+    for key in ("missing", "bare_refs", "impl_code", "source_refs"):
+        for doc_t, allowed in base.get(key, {}).items():
+            now = submitted.get(key, {}).get(doc_t, 0)
+            if now > allowed:
+                bad.append(f"{key}.{doc_t}: 目标分支 {allowed} → 本分支 {now}")
+    for key in ("rules_missing", "skills_missing"):
+        if submitted.get(key, 0) > base.get(key, 0):
+            bad.append(f"{key}: 目标分支 {base.get(key, 0)} → 本分支 {submitted.get(key, 0)}")
+    base_files, now_files = base.get("files", {}), submitted.get("files", {})
+    added = [f for f in now_files if f not in base_files]
+    if added:
+        bad.append(f"新增欠账文件被写进基线：{added[:5]}")
+    return bad
 
 
 def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
@@ -665,6 +731,8 @@ def main() -> int:
     ap.add_argument("--ratchet", action="store_true", help="与基线比对，欠账上升即失败（CI 用）")
     ap.add_argument("--update-baseline", action="store_true", help="把当前欠账写回基线")
     ap.add_argument("--list-missing", action="store_true", help="逐条列出欠账文件")
+    ap.add_argument("--baseline-ref", default="",
+                    help="拿这个 git ref 上的基线当上限，防止本分支自己把基线放宽（CI 传 origin/main）")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
     ap.add_argument("--fix-links", action="store_true",
                     help="把指向真实文档的裸引用批量改写成可点链接")
@@ -745,6 +813,21 @@ def main() -> int:
 
     if args.ratchet:
         baseline = load_baseline()
+        if args.baseline_ref:
+            base_baseline = load_baseline_at(args.baseline_ref)
+            if base_baseline is None:
+                print(f"[WARN] 取不到 {args.baseline_ref} 上的基线，跳过「基线是否被放宽」检查",
+                      file=sys.stderr)
+            else:
+                relaxed = baseline_regressions(base_baseline, baseline)
+                if relaxed:
+                    print(f"\n[FAIL] 本分支把基线放宽了 —— 「先制造欠账、再 --update-baseline」"
+                          f"不算持平，判据见 doc/rule.doc.readability.md", file=sys.stderr)
+                    for line in relaxed:
+                        print(f"  {line}", file=sys.stderr)
+                    print("  确有正当理由要抬基线时，在 PR 里说明并让人类 reviewer 放行",
+                          file=sys.stderr)
+                    return 1
         if not baseline:
             print("\n[FAIL] 缺基线文件，先跑 --update-baseline", file=sys.stderr)
             return 1

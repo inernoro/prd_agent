@@ -114,8 +114,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Fetch base branch baseline
+        # 基线要跟目标分支比：不取 main 的话，本分支自己放宽的基线会拿来跟自己比
+        run: git fetch --no-tags --depth=1 origin ${{ github.base_ref || 'main' }}:refs/remotes/origin/base || true
+
       - name: Doc reader-header ratchet
-        run: python3 scripts/doc-readability-check.py --ratchet
+        run: python3 scripts/doc-readability-check.py --ratchet --baseline-ref origin/base
 
       - name: Doc readability checker guard test
         run: python3 scripts/tests/doc-readability-ratchet.test.py

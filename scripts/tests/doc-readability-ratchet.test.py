@@ -148,6 +148,20 @@ META_OK = ("# 示例 · 指南\n\n> **版本**：v1.0 | **状态**：已落地\n
 check(problems_for("guide.demo.md", META_OK) == [],
       "版本行那类元信息不算正文（新判据没有误伤文档头部）")
 
+NESTED = ("# 示例 · 指南\n\n````markdown\n```ts\n"
+          "见 `doc/rule.doc.readability.md`，这行在内层示例里。\nconst a = 1;\n```\n````\n")
+nested_impl, _ = checker.scan_body(NESTED)
+check(nested_impl == 0,
+      f"四反引号外层围栏内的示例不计入实现代码（实测算出 {nested_impl} 行）")
+# 真正暴露「按三个就闭合」的是这条：外层被内层提前关掉后，后面的内容会重新
+# 被当成正文，链接扫描就会伸进示例里去（Codex 指出的那一半后果）。
+leaked = [line for _, line in checker.body_lines(NESTED) if "rule.doc.readability" in line]
+check(not leaked, f"外层围栏不会被内层三反引号提前关掉（漏出的正文行：{leaked}）")
+ATTR = "# 示例 · 指南\n\n```typescript title=\"example\"\nconst a = 1;\nconst b = 2;\n```\n"
+attr_impl, _ = checker.scan_body(ATTR)
+check(attr_impl == 2, f"带属性的围栏仍认得出语言（实测 {attr_impl} 行）")
+check(checker.fence_lang("```ts {linenos=true}") == "ts", "花括号属性不会混进语言标记")
+
 TILDE_IMPL = "# 示例 · 指南\n\n~~~typescript\nconst a = 1;\nconst b = 2;\n~~~\n"
 BACKTICK_IMPL = TILDE_IMPL.replace("~~~", "```")
 tilde_lines, _ = checker.scan_body(TILDE_IMPL)
@@ -403,6 +417,11 @@ with tempfile.TemporaryDirectory() as tmp:
         fh.write("---\nname: demo-skill # 与目录同名\ndescription: %s\n---\n"
                  % "这是一段足够长的描述，说清了这个技能在什么场景下会被触发、以及它会产出什么东西。")
     check(not checker.check_skill(wrong_name), "值后面跟行内注释时取的是值本身（没误伤）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write("---\nname: demo-skill\ndescription: "
+                 "把 Markdown 文档转换成排版精美的 PDF，支持目录、页码与水印，输出可直接打印。\n---\n")
+    check(any("触发时机" in p for p in checker.check_skill(wrong_name)),
+          "只讲能力不讲何时用的 description 被抓出（调度器据此选不中它）")
 
 print("[4] 报告双产物的那句话有人盯着")
 
@@ -465,6 +484,25 @@ print("[6] 标准文档自己得合规")
 for name in ("rule.doc.readability.md", "guide.doc.reading-map.md", "debt.doc.readability.md"):
     path = os.path.join(REPO_ROOT, "doc", name)
     check(os.path.exists(path) and checker.check_file(path) == [], f"{name} 自身合规")
+
+print()
+
+print("[6.2] 基线自己不能被本分支放宽")
+
+# 棘轮只跟工作树比本分支的基线，于是「先制造欠账、再 --update-baseline」能让
+# CI 拿放宽后的基线跟自己比。CI 因此要带 --baseline-ref 跟目标分支的基线比一次。
+BASE = {"missing": {"design": 1}, "bare_refs": {}, "impl_code": {}, "source_refs": {},
+        "rules_missing": 0, "skills_missing": 0, "files": {"doc/a.md": 1}}
+LOOSER = {**BASE, "missing": {"design": 3}}
+NEW_FILE = {**BASE, "files": {"doc/a.md": 1, "doc/b.md": 1}}
+check(checker.baseline_regressions(BASE, BASE) == [], "基线没动时放行")
+check(checker.baseline_regressions(BASE, LOOSER), "把计数改大会被抓出")
+check(checker.baseline_regressions(BASE, NEW_FILE), "把新欠账文件写进基线会被抓出")
+check(checker.load_baseline_at("这个-ref-不存在") is None, "取不到目标分支基线时返回 None，不误判")
+
+with open(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as fh:
+    ci_src = fh.read()
+check("--baseline-ref" in ci_src, "CI 真的带上了 --baseline-ref（否则这段等于没接线）")
 
 print()
 
