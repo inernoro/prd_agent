@@ -51,6 +51,18 @@ const pendingEntry = {
   updatedAt: now,
 };
 
+const olderEntry = {
+  ...pendingEntry,
+  id: 'recording-acceptance-older-entry',
+  title: '较早录音.webm',
+  metadata: {
+    audioArchiveStatus: 'completed',
+    liveTranscript: '这是一条较早的录音。',
+  },
+  createdAt: '2026-07-30T03:45:00.000Z',
+  updatedAt: '2026-07-30T03:45:00.000Z',
+};
+
 function json(route: Route, data: unknown) {
   return route.fulfill({
     status: 200,
@@ -193,13 +205,29 @@ async function installRecordingBrowserFakes(page: Page) {
   }, { transcript: LONG_TRANSCRIPT });
 }
 
-async function installApiFixture(page: Page, requests: string[]) {
-  let recordingCompleted = false;
-  let recordingCompletedAt = 0;
+type RecordingFixtureOptions = {
+  initiallyCompleted?: boolean;
+  completionDelayMs?: number;
+  transcriptReadyAfterMs?: number;
+  archiveReadyAfterMs?: number;
+};
+
+async function installApiFixture(
+  page: Page,
+  requests: string[],
+  {
+    initiallyCompleted = false,
+    completionDelayMs = 900,
+    transcriptReadyAfterMs = 1_200,
+    archiveReadyAfterMs = 4_000,
+  }: RecordingFixtureOptions = {},
+) {
+  let recordingCompleted = initiallyCompleted;
+  let recordingCompletedAt = initiallyCompleted ? Date.now() - archiveReadyAfterMs - 100 : 0;
   let uploadedBytes = 0;
   const completionAge = () => recordingCompletedAt > 0 ? Date.now() - recordingCompletedAt : 0;
-  const transcriptReady = () => completionAge() >= 1_200;
-  const archiveReady = () => completionAge() >= 4_000;
+  const transcriptReady = () => completionAge() >= transcriptReadyAfterMs;
+  const archiveReady = () => completionAge() >= archiveReadyAfterMs;
   const currentEntry = () => archiveReady()
     ? {
         ...pendingEntry,
@@ -244,7 +272,7 @@ async function installApiFixture(page: Page, requests: string[]) {
       return json(route, {
         items: [{
           ...store,
-          documentCount: recordingCompleted ? 1 : 0,
+          documentCount: recordingCompleted ? 2 : 0,
           recentEntries: recordingCompleted
             ? [{ id: ENTRY_ID, title: pendingEntry.title, updatedAt: now, contentType: pendingEntry.contentType }]
             : [],
@@ -255,13 +283,14 @@ async function installApiFixture(page: Page, requests: string[]) {
       });
     }
     if (path === `/api/document-store/stores/${STORE_ID}` && method === 'GET') {
-      return json(route, { ...store, documentCount: recordingCompleted ? 1 : 0 });
+      return json(route, { ...store, documentCount: recordingCompleted ? 2 : 0 });
     }
     if (path === `/api/document-store/stores/${STORE_ID}/entries` && method === 'GET') {
       return json(route, {
-        items: recordingCompleted ? [currentEntry()] : [],
+        // 故意让服务端返回旧录音在前，验收前端默认排序确实把新录音放到最前。
+        items: recordingCompleted ? [olderEntry, currentEntry()] : [],
         sharedEntryIds: [],
-        total: recordingCompleted ? 1 : 0,
+        total: recordingCompleted ? 2 : 0,
         page: 1,
         pageSize: 200,
       });
@@ -285,7 +314,7 @@ async function installApiFixture(page: Page, requests: string[]) {
       });
     }
     if (path === `/api/document-store/recording-uploads/${SESSION_ID}/complete` && method === 'POST') {
-      await new Promise(resolve => setTimeout(resolve, 900));
+      await new Promise(resolve => setTimeout(resolve, completionDelayMs));
       recordingCompleted = true;
       recordingCompletedAt = Date.now();
       return json(route, {
@@ -477,6 +506,7 @@ test.describe('录音连续性发布门禁', () => {
     await playToggle.click();
     await expect(playToggle).toHaveAttribute('title', '暂停');
     await expect(page.getByText('暂无可预览的内容')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '原文', exact: true })).toHaveCount(0);
     await armContinuityProbe(page);
     const transcriptLines = page.locator('button[title="点击跳到这一句"]');
     await expect(transcriptLines).toHaveCount(18);
@@ -538,5 +568,94 @@ test.describe('录音连续性发布门禁', () => {
       /replaceState|maximum update depth|页面渲染出错|render error/i.test(message)
     ));
     expect(criticalErrors, criticalErrors.join('\n')).toHaveLength(0);
+    await testInfo.attach('recording-requirement-coverage', {
+      body: JSON.stringify({
+        evidenceProvenance: 'deterministic-fixture',
+        requirements: [
+          { id: 'recording-entry', result: 'pass', evidence: '快速创建首屏可见快速录音入口' },
+          { id: 'long-transcript-layout', result: 'pass', evidence: '18 段原文滚动且波形、结束按钮仍在视口' },
+          { id: 'finish-to-result', result: 'pass', evidence: '结束后 URL 保持同一 storeId 与 entryId' },
+          { id: 'first-feedback', result: 'pass', evidence: { firstFeedbackMs, limitMs: 2_000 } },
+          { id: 'first-usable-result', result: 'pass', evidence: { firstUsableResultMs, limitMs: 4_000 } },
+          { id: 'local-playback', result: 'pass', evidence: '云端归档期间播放器可用且能进入暂停态' },
+          { id: 'single-content-mode', result: 'pass', evidence: '仅有原文时不存在名为原文的单独按钮' },
+          { id: 'failure-degradation', result: 'pass', evidence: '云端失败时已有播放与原文保留，并说明自动重试' },
+          { id: 'recovery-in-place', result: 'pass', evidence: '恢复时内容加载层出现 0 次，页面未离开' },
+          { id: 'refresh-restore', result: 'pass', evidence: '手动刷新后 URL 与任务身份不变，无 history 循环' },
+        ],
+      }, null, 2),
+      contentType: 'application/json',
+    });
+  });
+});
+
+test.describe('录音结果返回上下文门禁', () => {
+  test.use({
+    viewport: { width: 1280, height: 800 },
+    isMobile: false,
+    hasTouch: false,
+  });
+
+  test('从录音正文返回列表后，新录音排第一并保留来源高光', async ({ page }, testInfo) => {
+    const requests: string[] = [];
+    await installContinuityProbe(page, {
+      loaderText: '加载文档内容',
+      maxHistoryWrites: 40,
+    });
+    await installRecordingBrowserFakes(page);
+    await installApiFixture(page, requests, { initiallyCompleted: true });
+    await page.goto(`/document-store?store=${STORE_ID}&entry=${ENTRY_ID}`, { waitUntil: 'domcontentloaded' });
+
+    await expect.poll(() => {
+      const url = new URL(page.url());
+      return `${url.searchParams.get('store')}:${url.searchParams.get('entry')}`;
+    }).toBe(`${STORE_ID}:${ENTRY_ID}`);
+    await expect(page.getByTestId('audio-play-toggle')).toBeEnabled();
+    await expect(page.getByRole('button', { name: '原文', exact: true })).toHaveCount(0);
+
+    await page.getByRole('button', { name: '返回列表', exact: true }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('entry')).toBeNull();
+
+    const recordingRow = page.locator(`button[data-entry-id="${ENTRY_ID}"]`);
+    await expect(recordingRow).toBeVisible();
+    const visibleEntryIds = await page.locator('button[data-entry-id]').evaluateAll(
+      rows => rows.map(row => row.getAttribute('data-entry-id')),
+    );
+    expect(visibleEntryIds[0]).toBe(ENTRY_ID);
+
+    const returnHighlight = await recordingRow.evaluate(element => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        boxShadow: style.boxShadow,
+      };
+    });
+    const ordinaryRowStyle = await page
+      .locator(`button[data-entry-id="${olderEntry.id}"]`)
+      .evaluate(element => {
+        const style = getComputedStyle(element);
+        return {
+          backgroundColor: style.backgroundColor,
+          boxShadow: style.boxShadow,
+        };
+      });
+    // 验证“来源行有高光”这一产品语义，不把某个主题经过颜色混合后的 RGB 写死。
+    expect(returnHighlight.backgroundColor).not.toBe(ordinaryRowStyle.backgroundColor);
+    expect(returnHighlight.boxShadow).not.toBe(ordinaryRowStyle.boxShadow);
+    expect(returnHighlight.boxShadow).not.toBe('none');
+
+    await testInfo.attach('recording-return-context', {
+      body: JSON.stringify({
+        evidenceProvenance: 'deterministic-fixture',
+        taskIdentity: { storeId: STORE_ID, entryId: ENTRY_ID, sessionId: SESSION_ID },
+        serverOrder: [olderEntry.id, ENTRY_ID],
+        renderedOrder: visibleEntryIds,
+        returnHighlight,
+        ordinaryRowStyle,
+        requestedPaths: requests,
+      }, null, 2),
+      contentType: 'application/json',
+    });
+    await attachViewport(page, testInfo, '07-recording-return-context');
   });
 });
