@@ -4,3 +4,6 @@
 | feat | prd-admin | 知识库下载改为可选范围与格式：默认「当前文章」直接落一个文件，也可整库打包 ZIP；格式支持 Markdown / 纯文本 / 原始文件 |
 | fix | prd-admin | Markdown 代码块与行内代码改走双主题 token，浅色纸面下不再出现黑底白字的暗块；高亮主题跟随明暗切换 |
 | polish | prd-admin | 统一文档阅读区工具栏尺寸规矩：按钮 28px、纯图标 28x28、状态药丸 22px，消除同一行按钮忽大忽小 |
+| fix | prd-admin | 分享默认范围改为「只分享当前这篇」，整库公开不再是默认；面板改成清单式版式（状态一句话 + 链接高亮 + 设置行 + 底部撤销） |
+| security | prd-api | 知识库分享不再默认分配数字短链 /s/{seq}：对外主链恒为不可枚举的 /s/lib/{token}，数字短链改为用户主动点才生成（新增 POST share-links/{id}/short-link） |
+| feat | prd-admin | 分享面板新增二维码，手机扫一扫直接打开分享页 |

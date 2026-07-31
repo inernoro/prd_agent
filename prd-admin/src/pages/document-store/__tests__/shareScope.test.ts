@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isLiveShareLink, pickScopeShareLinks, upsertShareLink } from '../shareScope';
+import {
+  isLiveShareLink,
+  pickScopeShareLinks,
+  shareLinkUrl,
+  shareShortUrl,
+  upsertShareLink,
+} from '../shareScope';
 import type { DocumentStoreShareLink } from '@/services/contracts/documentStore';
 
 const NOW = new Date('2026-07-31T00:00:00Z').getTime();
@@ -53,6 +59,26 @@ describe('pickScopeShareLinks — 分享范围不许串台', () => {
 
   it('该范围没有生效链接时返回空，让弹窗落到「生成链接」态', () => {
     expect(pickScopeShareLinks([link({ id: 'x', isRevoked: true })], undefined, NOW)).toEqual([]);
+  });
+});
+
+describe('分享地址形态 — 数字短链不是常态', () => {
+  const origin = 'https://example.test';
+
+  it('主链恒为不可枚举的字母长链，哪怕这条分享已经有数字短链', () => {
+    // 用户 2026-07-31 指出：统一分享后数字短链只在用户特殊设置时才用，不该是默认看到的地址
+    const withSeq = link({ id: 'a', token: 'AbCdEfGh', shortSeq: 100 });
+    expect(shareLinkUrl(origin, withSeq)).toBe('https://example.test/s/lib/AbCdEfGh');
+    expect(shareLinkUrl(origin, withSeq)).not.toContain('/s/100');
+  });
+
+  it('没生成过数字短链时返回 null，让面板显示「未生成 · 点击生成」', () => {
+    expect(shareShortUrl(origin, link({ id: 'a' }))).toBeNull();
+    expect(shareShortUrl(origin, link({ id: 'b', shortSeq: 0 }))).toBeNull();
+  });
+
+  it('生成过才给数字短链地址', () => {
+    expect(shareShortUrl(origin, link({ id: 'a', shortSeq: 100 }))).toBe('https://example.test/s/100');
   });
 });
 

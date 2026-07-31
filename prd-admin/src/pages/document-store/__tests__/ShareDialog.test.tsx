@@ -10,16 +10,24 @@ describe('ShareDialog', () => {
     vi.stubGlobal('navigator', { clipboard: { writeText: () => Promise.resolve() } });
   });
 
-  it('从顶栏进入：默认整库范围，并直说会公开全部文档', () => {
+  it('顶栏进入且正读着一篇时：默认就是「只分享当前这篇」，不默认公开整库', () => {
     const html = renderToStaticMarkup(
       <ShareDialog storeId="s1" storeName="MAP系统和设计" isPublic={false}
         currentEntryId="e1" currentEntryTitle="以后怎么说" onClose={vi.fn()} />,
     );
 
-    expect(html).toContain('分享范围');
+    // 默认范围必须落在当前这篇：整库公开后果更大，不能当默认（用户 2026-07-31 明确要求）。
+    // 面板第一行的范围说明就是默认范围的直接体现（弹窗打开、链接还在加载时就已可见）。
+    expect(html).toContain('拿到链接的人只能看到《以后怎么说》这一篇，看不到知识库里的其他文档。');
+    expect(html).not.toContain('拿到链接的人可以浏览「MAP系统和设计」里的全部文档。');
+  });
+
+  it('没打开文档时才回落到整库范围', () => {
+    const html = renderToStaticMarkup(
+      <ShareDialog storeId="s1" storeName="MAP系统和设计" isPublic={false} onClose={vi.fn()} />,
+    );
+
     expect(html).toContain('拿到链接的人可以浏览「MAP系统和设计」里的全部文档。');
-    // 当前正在读的那篇要能一键切过去，不必回文件树右键才能单篇分享
-    expect(html).toContain('只分享当前这篇');
   });
 
   it('从文件树进入某篇：默认单篇范围，并直说看不到其他文档', () => {
@@ -41,13 +49,5 @@ describe('ShareDialog', () => {
     expect(html).toContain('智识殿堂公开页');
     expect(html).toContain('https://example.test/library/s1');
   });
-
-  it('没有打开文档时，「只分享一篇」不可点并说明原因', () => {
-    const html = renderToStaticMarkup(
-      <ShareDialog storeId="s1" storeName="MAP系统和设计" isPublic={false} onClose={vi.fn()} />,
-    );
-
-    expect(html).toContain('只分享一篇（未打开文档）');
-    expect(html).toContain('先打开一篇文档，才能单独分享它');
-  });
 });
+

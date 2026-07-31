@@ -21,7 +21,6 @@ import {
   Lock as GlobeLock,
   Copy,
   Link as LinkIcon,
-  Calendar,
   Eye,
   Pencil,
   Heart,
@@ -70,7 +69,8 @@ import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
-import { isLiveShareLink, pickScopeShareLinks, upsertShareLink } from './shareScope';
+import { isLiveShareLink, pickScopeShareLinks, shareLinkUrl, upsertShareLink } from './shareScope';
+import { ShareLinkPanel } from './ShareLinkPanel';
 import {
   DOC_DOWNLOAD_FORMATS,
   resolveTextExtension,
@@ -126,6 +126,7 @@ import {
   createDocStoreShareLink,
   listDocStoreShareLinks,
   revokeDocStoreShareLink,
+  ensureDocStoreShareLinkShortSeq,
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
   setStoreTeams,
@@ -670,7 +671,9 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
 }) {
   const pickedEntryId = entryId ?? currentEntryId;
   const pickedEntryTitle = entryTitle ?? currentEntryTitle;
-  const [scope, setScope] = useState<'store' | 'entry'>(entryId ? 'entry' : 'store');
+  // 默认分享「当前这篇」：只要手上有正在读的文档就落单篇范围（2026-07-31 用户明确要求）。
+  // 分享的绝大多数场景是「把我正在看的这篇发给别人」，整库公开是少数且后果更大，不该当默认。
+  const [scope, setScope] = useState<'store' | 'entry'>(pickedEntryId ? 'entry' : 'store');
   // 没有可选文档时永远停在整库范围，避免出现「选了这一篇却没有这一篇」的空范围
   const activeScope: 'store' | 'entry' = pickedEntryId ? scope : 'store';
   const targetEntryId = activeScope === 'entry' ? pickedEntryId : undefined;
@@ -679,6 +682,7 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [expiresInDays, setExpiresInDays] = useState(0);
+  const [shortLinkBusy, setShortLinkBusy] = useState(false);
 
   const loadLinks = useCallback(async () => {
     setLoading(true);
@@ -720,12 +724,24 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
     }
   };
 
-  const buildShareUrl = (link: DocumentStoreShareLink) => {
-    const path = link.shortSeq && link.shortSeq > 0 ? `/s/${link.shortSeq}` : `/s/lib/${link.token}`;
-    return `${window.location.origin}${path}`;
-  };
+  // 地址形态判定走 shareScope.ts 这一个来源：主链恒长链，数字短链是次级可选项
+  const buildShareUrl = (link: DocumentStoreShareLink) => shareLinkUrl(window.location.origin, link);
 
   const copyText = (url: string) => navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
+
+  // 数字短链懒分配：只有用户在面板里主动点，才去后端占一个号
+  const handleMakeShortLink = async (link: DocumentStoreShareLink) => {
+    setShortLinkBusy(true);
+    const res = await ensureDocStoreShareLinkShortSeq(link.id);
+    if (res.success && res.data.shortSeq > 0) {
+      const seq = res.data.shortSeq;
+      setLinks(prev => prev.map(l => l.id === link.id ? { ...l, shortSeq: seq } : l));
+      copyText(`${window.location.origin}/s/${seq}`);
+    } else {
+      toast.error('生成失败', res.error?.message ?? '数字短链生成失败，请稍后重试');
+    }
+    setShortLinkBusy(false);
+  };
 
   const directLink = `${window.location.origin}/library/${storeId}`;
   // 范围说明：一句话讲清「拿到链接的人能看到什么」，这是本弹窗唯一需要用户理解的事
@@ -751,51 +767,39 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {/* 范围选择：两个选项，默认落在你进来的那个范围 */}
-          <div className="mb-2 text-[12px] font-semibold text-token-primary">分享范围</div>
-          <div className="surface-inset flex gap-1 rounded-[10px] p-1">
-            <button type="button" onClick={() => setScope('store')}
-              className={`flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors ${activeScope === 'store' ? 'surface-action-accent' : 'text-token-muted hover-bg-soft'}`}>
-              <Library size={12} /> 整个知识库
-            </button>
-            <button type="button" onClick={() => setScope('entry')} disabled={!pickedEntryId}
-              title={pickedEntryId ? `只分享《${pickedEntryTitle ?? ''}》` : '先打开一篇文档，才能单独分享它'}
-              className={`flex h-8 flex-1 items-center justify-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors ${!pickedEntryId ? 'cursor-not-allowed opacity-45 text-token-muted' : activeScope === 'entry' ? 'surface-action-accent cursor-pointer' : 'cursor-pointer text-token-muted hover-bg-soft'}`}>
-              <FileText size={12} />
-              <span className="truncate">{pickedEntryId ? '只分享当前这篇' : '只分享一篇（未打开文档）'}</span>
-            </button>
-          </div>
-          <p className="mb-4 mt-2 text-[11px] leading-relaxed text-token-muted">{scopeNote}</p>
+          {/* 第一行先把当前状态说清楚（同语雀「当前文档为公开…」），再谈操作 */}
+          <p className="mb-3 text-[12px] leading-relaxed text-token-secondary">{scopeNote}</p>
 
-          {/* 本范围的链接：有就直接给，没有就一键生成 */}
+          {/* 链接区：主链恒为不可枚举长链，复制 + 二维码并排 */}
           {loading ? (
             <div className="flex justify-center py-8"><MapSpinner size={14} /></div>
           ) : activeLink ? (
-            <div className="surface-inset rounded-[12px] p-4">
-              <div className="flex items-center gap-2">
-                <input value={buildShareUrl(activeLink)} readOnly
-                  onFocus={(e) => e.currentTarget.select()}
-                  className="prd-field h-9 min-w-0 flex-1 rounded-[9px] px-3 font-mono text-[12px] outline-none" />
-                <button onClick={() => copyText(buildShareUrl(activeLink))}
-                  className="surface-action-accent flex h-9 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 text-[12px] font-semibold">
-                  <Copy size={12} /> 复制
-                </button>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-token-muted">
-                <span className="flex items-center gap-1"><Eye size={11} /> 已被打开 {activeLink.viewCount} 次</span>
-                <span className="flex items-center gap-1">
-                  <Calendar size={11} />
-                  {activeLink.expiresAt ? `${new Date(activeLink.expiresAt).toLocaleDateString()} 过期` : '永不过期'}
-                </span>
-                <button onClick={() => handleRevoke(activeLink.id)}
-                  className="hover-text-error ml-auto flex cursor-pointer items-center gap-1 text-[11px] text-token-muted transition-colors"
-                  title="撤销后这条链接立即失效">
-                  <Trash2 size={11} /> 撤销链接
-                </button>
-              </div>
-            </div>
+            <ShareLinkPanel
+              link={activeLink}
+              activeScope={activeScope}
+              storeName={storeName}
+              entryTitle={pickedEntryTitle}
+              canPickEntry={Boolean(pickedEntryId)}
+              shortLinkBusy={shortLinkBusy}
+              onCopy={copyText}
+              onSelectScope={setScope}
+              onShortLink={() => handleMakeShortLink(activeLink)}
+              onRevoke={() => handleRevoke(activeLink.id)}
+            />
           ) : (
             <div className="surface-inset rounded-[12px] p-4">
+              {/* 还没链接：范围 + 有效期 摆在一起，一次点完 */}
+              <div className="mb-2 flex gap-1">
+                <button type="button" onClick={() => setScope('entry')} disabled={!pickedEntryId}
+                  title={pickedEntryId ? `只分享《${pickedEntryTitle ?? ''}》` : '先打开一篇文档，才能单独分享它'}
+                  className={`flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[9px] px-3 text-[12px] font-semibold transition-colors ${!pickedEntryId ? 'cursor-not-allowed opacity-45 text-token-muted' : activeScope === 'entry' ? 'surface-action-accent cursor-pointer' : 'cursor-pointer text-token-muted hover-bg-soft'}`}>
+                  <FileText size={12} /> 只分享当前这篇
+                </button>
+                <button type="button" onClick={() => setScope('store')}
+                  className={`flex h-9 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[9px] px-3 text-[12px] font-semibold transition-colors ${activeScope === 'store' ? 'surface-action-accent' : 'text-token-muted hover-bg-soft'}`}>
+                  <Library size={12} /> 整个知识库
+                </button>
+              </div>
               <div className="flex gap-2">
                 <select value={expiresInDays} onChange={e => setExpiresInDays(Number(e.target.value))}
                   className="prd-field h-9 flex-1 cursor-pointer rounded-[9px] px-3 text-[12px] outline-none">

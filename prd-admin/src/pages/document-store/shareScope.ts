@@ -29,6 +29,25 @@ export function pickScopeShareLinks(
 }
 
 /**
+ * 对外分享地址（唯一来源）：恒为不可枚举的字母长链 /s/lib/{token}。
+ *
+ * 数字短链 /s/{seq} 是全局自增号，攻击者可以从 1 逐个试出别人的分享，
+ * 统一分享体系里它只是「用户主动生成后的次级可选项」，绝不能当默认对外地址
+ * （doc/debt.platform.share-link-security.md；网页托管 2026-06-11 已按此口径改过）。
+ */
+export function shareLinkUrl(origin: string, link: Pick<DocumentStoreShareLink, 'token'>): string {
+  return `${origin}/s/lib/${link.token}`;
+}
+
+/** 数字短链地址；没生成过（ShortSeq<=0）返回 null，由调用方决定是否提供「生成」入口。 */
+export function shareShortUrl(
+  origin: string,
+  link: Pick<DocumentStoreShareLink, 'shortSeq'>,
+): string | null {
+  return link.shortSeq && link.shortSeq > 0 ? `${origin}/s/${link.shortSeq}` : null;
+}
+
+/**
  * 把新建/复用得到的链接并回列表：同 id 视为同一条，替换而非追加。
  *
  * 后端对同一 (知识库, 创建者, 范围) 会复用已有链接并原样返回，前端若无脑 prepend，
