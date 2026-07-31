@@ -719,8 +719,7 @@ def _daily_fact_signals(values, body):
     coverage_gap_count = _coverage_gap_count(body)
     completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)
     incomplete = bool(
-        root_coverage_gap
-        or coverage_gap_count > 0
+        coverage_gap_count > 0
         or re.search(
             r"不完整|无法确认|未覆盖|覆盖不足|覆盖缺口|\d+\s*项?缺口",
             completeness_with_zero_gaps_removed,

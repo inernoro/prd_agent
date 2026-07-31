@@ -110,6 +110,15 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("根因链结论没有「覆盖缺口」" in error for error in errors))
 
+    def test_root_conclusion_cannot_manufacture_incomplete_fact(self):
+        body = report_body("覆盖不足").replace(
+            "不完整，1 项无法确认", "完整，全部计划范围均已确认"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(
+            any("验收完整性和覆盖缺口没有缺口事实" in error for error in errors)
+        )
+
     def test_product_failure_can_use_fail(self):
         body = report_body("产品失败").replace(
             "未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P1 产品缺陷"
