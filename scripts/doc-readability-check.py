@@ -571,10 +571,15 @@ def check_skill(path: str) -> list[str]:
     """技能文档：frontmatter 必须有 name 与 description，且 description 要说清什么时候用它。"""
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    if not text.startswith("---"):
+    # 定界行必须是独占一行的 ---：---not-frontmatter 这种前缀相同的行，
+    # 宿主根本不当 frontmatter 认，判据认了就等于给「装不上的技能」发通行证。
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
         return ["缺 frontmatter（技能靠它被发现和触发）"]
-    end = text.find("\n---", 3)
-    fm = text[3:end] if end != -1 else ""
+    close = next((i for i, ln in enumerate(lines[1:], start=1) if ln.strip() == "---"), None)
+    if close is None:
+        return ["frontmatter 没有闭合的 --- 定界行"]
+    fm = "\n".join(lines[1:close])
     problems = []
     # 同一个键写两遍时，判据看第一处、YAML 消费方通常取最后一处 —— 两边看的
     # 不是同一个值，判据就等于没判。重复键一律判红，不去猜哪一处才算数。

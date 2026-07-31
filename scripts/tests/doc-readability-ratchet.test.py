@@ -625,8 +625,20 @@ print("[6.4] 代码注释里的文档指路都点得到")
 DOC_REF = re.compile(r"doc/([a-z][\w.-]*\.md)")
 # 两类不算数：① 引用的文档在本仓库历史里从未存在过（更早的重命名遗留，定位不到
 # 目标，不许凭空指一个）；② 测试用例里现编的示例文件名。都写清楚，不做模糊放过。
-KNOWN_ROTTEN = {"plan.cds-shared-service-extension.md", "plan.cds-github-integration-followups.md",
-                "debt.cds-removed-branch-pages.md", "status.cds-agent-current-progress.md"}
+# 白名单按「文件 + 目标」配对，不按目标一刀切 —— 只认目标的话，同一个死名字
+# 明天出现在任何新文件里都能蒙混过关（豁免的是这几处历史遗留，不是这几个名字）。
+KNOWN_ROTTEN_PAIRS = {
+    ("cds/src/index.ts", "debt.cds-removed-branch-pages.md"),
+    ("cds/src/routes/remote-hosts.ts", "plan.cds-shared-service-extension.md"),
+    ("cds/src/services/sidecar/sidecar-deployer.ts", "plan.cds-shared-service-extension.md"),
+    ("cds/src/services/state.ts", "plan.cds-shared-service-extension.md"),
+    ("cds/src/types.ts", "plan.cds-github-integration-followups.md"),
+    ("cds/src/types.ts", "plan.cds-shared-service-extension.md"),
+    ("cds/web/src/pages/cds-settings/tabs/RemoteHostsTab.tsx", "plan.cds-shared-service-extension.md"),
+    ("prd-admin/src/pages/infra-services/InfraServicesPage.tsx", "plan.cds-shared-service-extension.md"),
+    ("prd-api/src/PrdAgent.Core/Interfaces/IDynamicSidecarRegistry.cs", "plan.cds-shared-service-extension.md"),
+    ("prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarOptions.cs", "plan.cds-shared-service-extension.md"),
+}
 FIXTURE_NAMES = {"x.md", "guide.md", "sample.md", "visible.md", "design.foo.md", "guide.current.md",
                  "a.md", "b.md", "xxx.md", "demo.md",
                  # 命名模式而非具体文件（周报文件名的占位写法）
@@ -650,11 +662,18 @@ for rel in tracked:
     scanned += 1
     for hit in DOC_REF.finditer(body):
         target = hit.group(1)
-        if target in KNOWN_ROTTEN or target in FIXTURE_NAMES:
+        if (rel, target) in KNOWN_ROTTEN_PAIRS or target in FIXTURE_NAMES:
             continue
         if not os.path.exists(os.path.join(REPO_ROOT, "doc", target)):
             dangling.setdefault(target, set()).add(rel)
 check(scanned > 3000, f"面包屑扫描覆盖全仓可读文本文件（实测 {scanned} 个）")
+
+# 白名单本身也要防腐：配对里的文件若已不再引用那个名字，就该把这条删掉
+stale_pairs = [(f, tgt) for f, tgt in KNOWN_ROTTEN_PAIRS
+               if not os.path.exists(os.path.join(REPO_ROOT, f))
+               or f"doc/{tgt}" not in open(os.path.join(REPO_ROOT, f), encoding="utf-8",
+                                           errors="ignore").read()]
+check(not stale_pairs, f"历史遗留白名单里没有已经失效的条目（可删：{stale_pairs[:3]}）")
 check(not dangling,
       f"代码注释里的 doc/ 指路都存在（落空：{ {k: sorted(v)[:2] for k, v in list(dangling.items())[:3]} }）")
 
