@@ -50,7 +50,10 @@ def _open_tag_any(tags):
 
 def attr_value(attrs, name):
     """从属性串里取某个属性的值；属性名不敏感，三种引号写法都认。取不到返回 None。"""
-    m = re.search(r'(?i:%s)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'`=<>]+))'
+    # 属性名前必须是标签起始或空白/斜杠——否则 `data-class="masthead"` 会被
+    # 当成 class 属性命中。浏览器里 `.masthead` 根本不匹配 data-class，
+    # 刊徽的全部样式失配而守卫判绿（形状 1：判据边界没画对）。
+    m = re.search(r'(?:^|[\s/])(?i:%s)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'`=<>]+))'
                   % re.escape(name), attrs)
     if not m:
         return None
@@ -191,13 +194,17 @@ def fail(msg):
 
 
 def strip_comments(text):
-    """去掉 HTML 注释再做任何标记扫描。
+    """去掉 HTML 与 CSS 注释再做任何扫描。
 
-    把 SVG 用 `<!-- ... -->` 包起来「先留着参考」是很常见的改法，浏览器不渲染它，
-    而按原始文本扫描的判据照样数到那个 data-emblem、照样去查它的 SVG 完整性——
-    报告上一枚水印都没有，守卫却判绿。
+    两种注释都是「先留着参考」的常见改法，浏览器一律不生效，而按原始文本扫描的
+    判据照样把它们当成真的：
+      `<!-- <svg data-emblem=...> -->`  -> 刊徽一枚都不渲染，守卫却数到了
+      `/* .emblem { position:absolute; ... } */` -> 整条契约规则失效，
+                                                   而 rules_targeting 照样收得到它
+    第一次只剥了 HTML 那种，CSS 这种同轮就被指出来——同一个形状的两个面。
     """
-    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    return re.sub(r"/\*.*?\*/", "", text, flags=re.S)
 
 
 def count_emblem(text, kind):
