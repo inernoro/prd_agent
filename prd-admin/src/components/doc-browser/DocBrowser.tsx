@@ -382,6 +382,19 @@ export type DocBrowserEntry = {
 };
 
 /**
+ * 阅读区工具栏的尺寸规矩（唯一来源，新增控件一律引用这三个常量）：
+ * - 带文字的按钮：28px 高（h-7）、圆角 8、字号 11、图标 12
+ * - 纯图标按钮：28x28（手机端 32x32，保证点得中）
+ * - 状态药丸（README / 置顶 / 标签 / new / 验收结论）：22px 高，比按钮矮一档，形成两级节奏
+ * 历史教训（2026-07-31 用户反馈「按钮忽大忽小，没有任何规矩」）：这一排原本混着
+ * h-6 / h-7 / h-8 与 py-0.5 药丸，同一行里三四种高度，看上去毫无章法。
+ */
+const TOOLBAR_BTN = 'h-7 px-2.5 rounded-[8px] text-[11px] font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_ICON_BTN = 'h-7 w-7 rounded-[8px] inline-flex items-center justify-center cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_ICON_BTN_MOBILE = 'h-8 w-8 rounded-[9px] inline-flex items-center justify-center cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_CHIP = 'h-[22px] px-2 rounded-full text-[10px] inline-flex items-center gap-1 flex-shrink-0';
+
+/**
  * 目录排序模式：
  * - 'default'：置顶 → 文件夹 → 主文档 → SortOrder → 自然标题顺序（用于书籍和自定义目录）
  * - 'created-desc'：置顶 → 文件夹 → 按创建时间倒序（用于阅读/分享场景，新内容先看到）
@@ -3358,7 +3371,7 @@ export function DocBrowser({
               {isMobile && (
                 <button
                   onClick={() => setMobileDirectoryOpen(true)}
-                  className="flex-shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-[9px] text-[12px] cursor-pointer transition-colors hover:opacity-80"
+                  className={`${TOOLBAR_ICON_BTN_MOBILE} hover:opacity-80`}
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
                   aria-label="打开目录"
                   title="打开目录"
@@ -3370,11 +3383,11 @@ export function DocBrowser({
               {onBackToList && !isMobile && (
                 <button
                   onClick={onBackToList}
-                  className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-[8px] text-[11px] cursor-pointer transition-colors hover:opacity-80"
+                  className={`${TOOLBAR_BTN} hover:opacity-80`}
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
                   title="返回文档列表"
                 >
-                  <ChevronLeft size={13} /> 返回列表
+                  <ChevronLeft size={12} /> 返回列表
                 </button>
               )}
               <Breadcrumbs entryId={selectedEntryId} entries={entries} />
@@ -3386,7 +3399,7 @@ export function DocBrowser({
                 const tier = sel!.metadata?.tier;
                 return (
                   <span
-                    className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold tabular-nums"
+                    className={`${TOOLBAR_CHIP} font-bold tabular-nums`}
                     style={{ background: vc.background, color: vc.color, border: vc.border }}
                     title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
                   >
@@ -3395,13 +3408,13 @@ export function DocBrowser({
                 );
               })()}
               {selectedEntryId === primaryEntryId && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                <span className={TOOLBAR_CHIP}
                   style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
                   README
                 </span>
               )}
               {pinnedSet.has(selectedEntryId) && selectedEntryId !== primaryEntryId && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                <span className={TOOLBAR_CHIP}
                   style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
                   置顶
                 </span>
@@ -3415,7 +3428,7 @@ export function DocBrowser({
                     {sel.tags!.slice(0, tagLimit).map(tag => {
                       const c = getTagColor(tag, tagColorMap);
                       return (
-                        <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                        <span key={tag} className={TOOLBAR_CHIP}
                           style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
                           #{tag}
                         </span>
@@ -3468,7 +3481,7 @@ export function DocBrowser({
                   <>
                     {recentlyChanged && (
                       <span
-                        className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold"
+                        className={`${TOOLBAR_CHIP} font-bold`}
                         style={{
                           background: 'rgba(34,197,94,0.1)',
                           color: 'rgba(74,222,128,0.95)',
@@ -3483,7 +3496,7 @@ export function DocBrowser({
                     {isSubscription && onOpenSubscription && (
                       <button
                         onClick={() => onOpenSubscription(sel.id)}
-                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        className={TOOLBAR_BTN}
                         style={{
                           background: 'var(--selection-bg)',
                           border: '1px solid var(--selection-border)',
@@ -3510,7 +3523,7 @@ export function DocBrowser({
                     {showTranscribe && (
                       <button
                         onClick={() => onTranscribe!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
+                        className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_BTN}
                         style={{
                           background: 'rgba(34,197,94,0.08)',
                           border: '1px solid rgba(34,197,94,0.2)',
@@ -3518,14 +3531,14 @@ export function DocBrowser({
                         }}
                         title="转录并生成 AI 摘要"
                       >
-                        <AudioLines size={isMobile ? 14 : 11} />
+                        <AudioLines size={isMobile ? 14 : 12} />
                         {!isMobile && '转录'}
                       </button>
                     )}
                     {showSubtitle && (
                       <button
                         onClick={() => onGenerateSubtitle!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
+                        className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_BTN}
                         style={{
                           background: 'rgba(168,85,247,0.1)',
                           border: '1px solid rgba(168,85,247,0.22)',
@@ -3533,14 +3546,14 @@ export function DocBrowser({
                         }}
                         title="一键生成字幕"
                       >
-                        <Sparkles size={isMobile ? 14 : 11} />
+                        <Sparkles size={isMobile ? 14 : 12} />
                         {!isMobile && '生成字幕'}
                       </button>
                     )}
                     {showReprocess && (
                       <button
                         onClick={() => onReprocess!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
+                        className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_BTN}
                         style={{
                           background: 'var(--selection-bg)',
                           border: '1px solid var(--selection-border)',
@@ -3548,7 +3561,7 @@ export function DocBrowser({
                         }}
                         title="用智能体加工文档"
                       >
-                        <Wand2 size={isMobile ? 14 : 11} />
+                        <Wand2 size={isMobile ? 14 : 12} />
                         {!isMobile && '智能体'}
                       </button>
                     )}
@@ -3565,7 +3578,7 @@ export function DocBrowser({
                 return (
                   <button
                     onClick={() => setEvidenceGraphOpen(true)}
-                    className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
+                    className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_BTN}
                     style={{
                       background: 'rgba(99,102,241,0.1)',
                       border: '1px solid rgba(99,102,241,0.22)',
@@ -3573,7 +3586,7 @@ export function DocBrowser({
                     }}
                     title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
                   >
-                    <Workflow size={isMobile ? 14 : 11} />
+                    <Workflow size={isMobile ? 14 : 12} />
                     {!isMobile && '证据板'}
                   </button>
                 );
@@ -3583,11 +3596,9 @@ export function DocBrowser({
               {trackedEntryForComments && (
                 <button
                   onClick={() => setInlineCommentsOpen(true)}
-                  className="h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                  // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
+                  className={commentCount > 0 ? TOOLBAR_BTN : TOOLBAR_ICON_BTN}
                   style={{
-                    // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
-                    width: commentCount > 0 ? undefined : 28,
-                    padding: commentCount > 0 ? '0 8px' : 0,
                     background: 'rgba(168,85,247,0.08)',
                     border: '1px solid rgba(168,85,247,0.18)',
                     color: 'rgba(216,180,254,0.95)',
@@ -3602,21 +3613,21 @@ export function DocBrowser({
               {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && tocContent && !isMobile && (
                 <button
                   onClick={toggleRightPanel}
-                  className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                  className={TOOLBAR_BTN}
                   style={{
                     background: rightPanelCollapsed ? 'var(--nested-block-bg)' : 'var(--selection-bg)',
                     border: `1px solid ${rightPanelCollapsed ? 'var(--nested-block-border)' : 'var(--selection-border)'}`,
                     color: rightPanelCollapsed ? 'var(--text-muted)' : 'var(--selection-text)',
                   }}
                   title={rightPanelCollapsed ? '显示本页章节 / 批注栏' : '收起本页章节 / 批注栏'}>
-                  <PanelRight size={11} /> {rightPanelCollapsed ? '章节' : '收起'}
+                  <PanelRight size={12} /> {rightPanelCollapsed ? '章节' : '收起'}
                 </button>
               )}
               {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
               {selectedEntryId && !isMobile && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
-                  className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
+                  className={TOOLBAR_ICON_BTN}
                   style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
                   title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
                   {readerFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
@@ -3633,7 +3644,7 @@ export function DocBrowser({
                     {versionApi && !isMobile && !editMode && (
                       <button
                         onClick={() => setVersionHistoryOpen(true)}
-                        className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
+                        className={TOOLBAR_ICON_BTN}
                         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
                         title="历史版本 — 查看并恢复">
                         <History size={13} />
@@ -3645,7 +3656,7 @@ export function DocBrowser({
                         {getFileTypeConfig(sel.title, sel.contentType).label === 'Markdown' && (
                           <button
                             onClick={() => setMdEditRich((v) => !v)}
-                            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                            className={TOOLBAR_BTN}
                             style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.18)', color: 'rgba(216,180,254,0.95)' }}
                             title={mdEditRich ? '切换到源码模式（支持 [[ 引用自动补全）' : '切换到富文本（所见即所得）'}>
                             {mdEditRich ? '源码' : '富文本'}
@@ -3663,22 +3674,22 @@ export function DocBrowser({
                             }
                           }}
                           disabled={saving}
-                          className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          className={TOOLBAR_BTN}
                           style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
-                          {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={11} />}
+                          {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={12} />}
                           保存
                         </button>
                         <button
                           onClick={() => setEditMode(false)}
-                          className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          className={TOOLBAR_BTN}
                           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                          <X size={11} /> 取消
+                          <X size={12} /> 取消
                         </button>
                       </>
                     ) : (
                       <button
                         onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
-                        className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
+                        className={TOOLBAR_ICON_BTN}
                         style={{ background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }}
                         title="编辑文档">
                         <Pencil size={13} />

@@ -70,6 +70,14 @@ import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
+import { isLiveShareLink, pickScopeShareLinks, upsertShareLink } from './shareScope';
+import {
+  DOC_DOWNLOAD_FORMATS,
+  resolveTextExtension,
+  shouldFetchOriginalFile,
+  type DocDownloadFormat,
+  type DocDownloadScope,
+} from './downloadFormats';
 import {
   hasQuickRecordRequest,
   parseDocumentStoreDeepLink,
@@ -642,21 +650,34 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
   );
 }
 
-// ── 分享对话框（创建短链 + 列表 + 撤销） ──
-function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClose }: {
+// ── 分享对话框 ──
+// 一个范围 = 一条链接。范围（整库 / 这一篇）写在最上面，不让用户猜。
+// export 供 __tests__/ShareDialog.test.tsx 直接渲染断言范围文案。
+// 历史教训（2026-07-31 用户反馈）：旧版把「公开直链 + 创建短链 + 全部链接列表（整库与单篇混排）」
+// 三段并列，从顶栏点「分享」只能建整库链接 —— 用户以为在分享当前这篇，结果整库被公开；
+// 重复点「生成链接」时后端复用旧链接、前端仍无脑 prepend，列表里就多出一行同 id 同短链的重复卡片。
+export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, currentEntryId, currentEntryTitle, onClose }: {
   storeId: string;
   storeName: string;
   isPublic: boolean;
-  /** 非空 = 分享单篇文档而非整库 */
+  /** 非空 = 从文件树「分享此文档」进来，范围默认落在这一篇 */
   entryId?: string;
   entryTitle?: string;
+  /** 顶栏「分享」进来时当前正在阅读的文档，用于「只分享这一篇」的范围切换 */
+  currentEntryId?: string;
+  currentEntryTitle?: string;
   onClose: () => void;
 }) {
-  const isDocShare = Boolean(entryId);
+  const pickedEntryId = entryId ?? currentEntryId;
+  const pickedEntryTitle = entryTitle ?? currentEntryTitle;
+  const [scope, setScope] = useState<'store' | 'entry'>(entryId ? 'entry' : 'store');
+  // 没有可选文档时永远停在整库范围，避免出现「选了这一篇却没有这一篇」的空范围
+  const activeScope: 'store' | 'entry' = pickedEntryId ? scope : 'store';
+  const targetEntryId = activeScope === 'entry' ? pickedEntryId : undefined;
+
   const [links, setLinks] = useState<DocumentStoreShareLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState('');
   const [expiresInDays, setExpiresInDays] = useState(0);
 
   const loadLinks = useCallback(async () => {
@@ -668,52 +689,60 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 
   useEffect(() => { loadLinks(); }, [loadLinks]);
 
+  // 当前范围内生效中的链接（后端对同一 (库, 人, 范围) 会复用，正常最多一条）
+  const scopeLinks = useMemo(() => pickScopeShareLinks(links, targetEntryId), [links, targetEntryId]);
+  const activeLink = scopeLinks[0];
+  // 站在「只分享这一篇」的范围里时，整库链接仍然生效 = 全部文档照样对外可见，必须当面告知
+  const liveStoreLinks = useMemo(() => links.filter(l => isLiveShareLink(l) && !l.entryId), [links]);
+
   const handleCreate = async () => {
     setCreating(true);
-    const res = await createDocStoreShareLink(storeId, { title: title.trim() || undefined, expiresInDays, entryId });
+    const res = await createDocStoreShareLink(storeId, { expiresInDays, entryId: targetEntryId });
     if (res.success) {
-      setLinks(prev => [res.data, ...prev]);
-      setTitle('');
-      toast.success('分享链接已创建', '快去复制吧');
+      // 按 id 去重：后端复用旧链接时返回的就是已在列表里的那条，不能再 prepend 一行
+      const created = res.data;
+      setLinks(prev => upsertShareLink(prev, created));
+      toast.success('链接已生成', '复制后发给别人就能打开');
     } else {
-      toast.error('创建失败', res.error?.message);
+      toast.error('生成失败', res.error?.message);
     }
     setCreating(false);
   };
 
   const handleRevoke = async (linkId: string) => {
-    if (!confirm('确认撤销此分享链接？已访问的用户无法再次打开。')) return;
+    if (!confirm('确认撤销此分享链接？撤销后拿到链接的人立即无法打开。')) return;
     const res = await revokeDocStoreShareLink(linkId);
     if (res.success) {
       setLinks(prev => prev.map(l => l.id === linkId ? { ...l, isRevoked: true } : l));
-      toast.success('已撤销');
+      toast.success('已撤销', '这条链接已经失效');
+    } else {
+      toast.error('撤销失败', res.error?.message);
     }
   };
 
-  const buildShareUrl = (link: DocumentStoreShareLink, view?: 'galaxy' | 'universe') => {
+  const buildShareUrl = (link: DocumentStoreShareLink) => {
     const path = link.shortSeq && link.shortSeq > 0 ? `/s/${link.shortSeq}` : `/s/lib/${link.token}`;
-    return `${window.location.origin}${path}${view ? `?view=${view}` : ''}`;
+    return `${window.location.origin}${path}`;
   };
 
-  const copyShareViewLink = (link: DocumentStoreShareLink, view?: 'galaxy' | 'universe') => {
-    const url = buildShareUrl(link, view);
-    navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
-  };
+  const copyText = (url: string) => navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
 
   const directLink = `${window.location.origin}/library/${storeId}`;
+  // 范围说明：一句话讲清「拿到链接的人能看到什么」，这是本弹窗唯一需要用户理解的事
+  const scopeNote = activeScope === 'entry'
+    ? `拿到链接的人只能看到《${pickedEntryTitle ?? '当前文档'}》这一篇，看不到知识库里的其他文档。`
+    : `拿到链接的人可以浏览「${storeName}」里的全部文档。`;
 
   return (
     <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="surface-popover flex max-h-[85vh] w-[640px] max-w-[92vw] flex-col rounded-[16px] p-6">
-        <div className="flex items-center justify-between mb-5 flex-shrink-0">
+      <div className="surface-popover flex max-h-[85vh] w-[560px] max-w-[92vw] flex-col rounded-[16px] p-6">
+        <div className="flex items-center justify-between mb-4 flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
               <Share2 size={15} />
             </div>
-            <span className="text-[15px] font-semibold text-token-primary">
-              {isDocShare ? `分享文档「${entryTitle ?? ''}」` : `分享「${storeName}」`}
-            </span>
+            <span className="text-[15px] font-semibold text-token-primary">分享</span>
           </div>
           <button onClick={onClose}
             className="hover-bg-soft flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors">
@@ -721,163 +750,263 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
           </button>
         </div>
 
-        {/* 公开访问直链（整库公开时；单篇分享不适用） */}
-        {isPublic && !isDocShare && (
-          <div className="surface-inset mb-5 rounded-[12px] p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Globe size={12} className="text-token-accent" />
-              <span className="text-[12px] font-semibold text-token-accent">
-                公开访问链接
-              </span>
-            </div>
-            <p className="mb-3 text-[11px] text-token-muted">
-              已发布到智识殿堂，任何人都可以通过此链接访问
-            </p>
-            <div className="flex items-center gap-2">
-              <input value={directLink} readOnly
-                className="prd-field h-8 flex-1 rounded-[8px] px-3 font-mono text-[11px] outline-none" />
-              <button
-                onClick={() => navigator.clipboard.writeText(directLink).then(() => toast.success('已复制'))}
-                className="surface-action-accent flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold">
-                <Copy size={11} /> 复制
-              </button>
-            </div>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {/* 范围选择：两个选项，默认落在你进来的那个范围 */}
+          <div className="mb-2 text-[12px] font-semibold text-token-primary">分享范围</div>
+          <div className="surface-inset flex gap-1 rounded-[10px] p-1">
+            <button type="button" onClick={() => setScope('store')}
+              className={`flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors ${activeScope === 'store' ? 'surface-action-accent' : 'text-token-muted hover-bg-soft'}`}>
+              <Library size={12} /> 整个知识库
+            </button>
+            <button type="button" onClick={() => setScope('entry')} disabled={!pickedEntryId}
+              title={pickedEntryId ? `只分享《${pickedEntryTitle ?? ''}》` : '先打开一篇文档，才能单独分享它'}
+              className={`flex h-8 flex-1 items-center justify-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors ${!pickedEntryId ? 'cursor-not-allowed opacity-45 text-token-muted' : activeScope === 'entry' ? 'surface-action-accent cursor-pointer' : 'cursor-pointer text-token-muted hover-bg-soft'}`}>
+              <FileText size={12} />
+              <span className="truncate">{pickedEntryId ? '只分享当前这篇' : '只分享一篇（未打开文档）'}</span>
+            </button>
           </div>
-        )}
+          <p className="mb-4 mt-2 text-[11px] leading-relaxed text-token-muted">{scopeNote}</p>
 
-        {/* 创建分享链接 */}
-        <div className="mb-5">
-          <div className="mb-3 text-[12px] font-semibold text-token-primary">
-            创建分享短链
-          </div>
-          <div className="space-y-2">
-            <input value={title} onChange={e => setTitle(e.target.value)}
-              placeholder="自定义标题（可选）"
-              className="prd-field h-9 w-full rounded-[10px] px-3 text-[12px] outline-none" />
-            <div className="flex gap-2">
-              <select value={expiresInDays} onChange={e => setExpiresInDays(Number(e.target.value))}
-                className="prd-field h-9 flex-1 cursor-pointer rounded-[10px] px-3 text-[12px] outline-none">
-                <option value={0}>永不过期</option>
-                <option value={1}>1 天后过期</option>
-                <option value={7}>7 天后过期</option>
-                <option value={30}>30 天后过期</option>
-                <option value={90}>90 天后过期</option>
-              </select>
-              <Button variant="primary" size="xs" onClick={handleCreate} disabled={creating}>
-                {creating ? <MapSpinner size={12} /> : <LinkIcon size={12} />}
-                {creating ? '创建中…' : '生成链接'}
-              </Button>
+          {/* 本范围的链接：有就直接给，没有就一键生成 */}
+          {loading ? (
+            <div className="flex justify-center py-8"><MapSpinner size={14} /></div>
+          ) : activeLink ? (
+            <div className="surface-inset rounded-[12px] p-4">
+              <div className="flex items-center gap-2">
+                <input value={buildShareUrl(activeLink)} readOnly
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="prd-field h-9 min-w-0 flex-1 rounded-[9px] px-3 font-mono text-[12px] outline-none" />
+                <button onClick={() => copyText(buildShareUrl(activeLink))}
+                  className="surface-action-accent flex h-9 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 text-[12px] font-semibold">
+                  <Copy size={12} /> 复制
+                </button>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-token-muted">
+                <span className="flex items-center gap-1"><Eye size={11} /> 已被打开 {activeLink.viewCount} 次</span>
+                <span className="flex items-center gap-1">
+                  <Calendar size={11} />
+                  {activeLink.expiresAt ? `${new Date(activeLink.expiresAt).toLocaleDateString()} 过期` : '永不过期'}
+                </span>
+                <button onClick={() => handleRevoke(activeLink.id)}
+                  className="hover-text-error ml-auto flex cursor-pointer items-center gap-1 text-[11px] text-token-muted transition-colors"
+                  title="撤销后这条链接立即失效">
+                  <Trash2 size={11} /> 撤销链接
+                </button>
+              </div>
             </div>
+          ) : (
+            <div className="surface-inset rounded-[12px] p-4">
+              <div className="flex gap-2">
+                <select value={expiresInDays} onChange={e => setExpiresInDays(Number(e.target.value))}
+                  className="prd-field h-9 flex-1 cursor-pointer rounded-[9px] px-3 text-[12px] outline-none">
+                  <option value={0}>永不过期</option>
+                  <option value={1}>1 天后过期</option>
+                  <option value={7}>7 天后过期</option>
+                  <option value={30}>30 天后过期</option>
+                  <option value={90}>90 天后过期</option>
+                </select>
+                <Button variant="primary" size="xs" className="h-9 rounded-[9px]" onClick={handleCreate} disabled={creating}>
+                  {creating ? <MapSpinner size={12} /> : <LinkIcon size={12} />}
+                  {creating ? '生成中…' : '生成链接'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* 同一范围还有别的历史链接时如实列出，不藏 */}
+          {scopeLinks.length > 1 && (
+            <div className="mt-3">
+              <div className="mb-2 text-[11px] font-semibold text-token-muted">
+                这个范围还有 {scopeLinks.length - 1} 条早先生成的链接仍然有效
+              </div>
+              <div className="space-y-1.5">
+                {scopeLinks.slice(1).map(link => (
+                  <div key={link.id} className="surface-row flex items-center gap-2 rounded-[9px] px-3 py-2">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-token-muted">{buildShareUrl(link)}</span>
+                    <button onClick={() => copyText(buildShareUrl(link))}
+                      className="surface-action flex h-7 flex-shrink-0 cursor-pointer items-center gap-1 rounded-[8px] px-2.5 text-[11px] font-semibold">
+                      <Copy size={11} /> 复制
+                    </button>
+                    <button onClick={() => handleRevoke(link.id)}
+                      className="hover-text-error flex h-7 flex-shrink-0 cursor-pointer items-center gap-1 rounded-[8px] px-2 text-[11px] text-token-muted transition-colors">
+                      <Trash2 size={11} /> 撤销
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 只分享一篇时，如果整库链接还生效，必须当面说清并给出撤销入口 */}
+          {activeScope === 'entry' && liveStoreLinks.length > 0 && (
+            <div className="mt-3 rounded-[12px] p-3.5"
+              style={{ background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)' }}>
+              <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
+                <AlertCircle size={12} /> 这个知识库另有整库分享链接生效中
+              </div>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-token-muted">
+                只分享单篇不会收回已经发出去的整库链接。拿到那条链接的人依旧能看到全部文档，需要的话在这里撤销。
+              </p>
+              <div className="mt-2.5 space-y-1.5">
+                {liveStoreLinks.map(link => (
+                  <div key={link.id} className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-token-muted">{buildShareUrl(link)}</span>
+                    <button onClick={() => handleRevoke(link.id)}
+                      className="hover-text-error flex h-7 flex-shrink-0 cursor-pointer items-center gap-1 rounded-[8px] px-2 text-[11px] text-token-muted transition-colors">
+                      <Trash2 size={11} /> 撤销
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 已发布到智识殿堂时的公开直链：与分享短链是两回事，单篇范围下不适用 */}
+          {isPublic && activeScope === 'store' && (
+            <div className="surface-inset mt-3 rounded-[12px] p-4">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <Globe size={12} className="text-token-accent" />
+                <span className="text-[12px] font-semibold text-token-accent">智识殿堂公开页</span>
+              </div>
+              <p className="mb-2.5 text-[11px] text-token-muted">
+                这个知识库已发布到智识殿堂，不用分享链接也能被访问
+              </p>
+              <div className="flex items-center gap-2">
+                <input value={directLink} readOnly
+                  className="prd-field h-9 min-w-0 flex-1 rounded-[9px] px-3 font-mono text-[12px] outline-none" />
+                <button onClick={() => copyText(directLink)}
+                  className="surface-action flex h-9 flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 text-[12px] font-semibold">
+                  <Copy size={12} /> 复制
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 下载：范围 + 格式 ──
+// 范围/格式判定是纯函数，抽到 downloadFormats.ts 供测试（见 __tests__/downloadFormats.test.ts）
+/**
+ * 按所选格式把一条文档导出成一个可写盘的文件。
+ * 返回 null = 这条确实没有可导出的内容（正文为空且原始文件也取不到），由调用方计入失败数。
+ */
+async function buildEntryDownload(
+  entry: { id: string; title: string },
+  format: DocDownloadFormat,
+  makeName: (title: string, ext: string) => string,
+): Promise<{ name: string; data: Blob | string } | null> {
+  const res = await getDocumentContent(entry.id);
+  if (!res.success || !res.data) return null;
+  const { content, fileUrl, contentType } = res.data;
+  const hasText = content != null && content !== '';
+
+  // 「原始文件」且是二进制条目（pdf/docx/图片…）：先试原文件。fileUrl 多为对象存储/CDN 绝对
+  // 地址（TencentCosStorage 返回公网 URL），不带 Access-Control-Allow-Origin，浏览器端 fetch
+  // 会被 CORS 拦掉；取不到就降级为抽取正文，至少不整条丢失（真·原文件需后端同源代理）。
+  if (shouldFetchOriginalFile(format, contentType, fileUrl)) {
+    try {
+      const resp = await fetch(fileUrl!);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const m = /\.([a-zA-Z0-9]{1,8})(?:\?|$)/.exec(fileUrl!);
+        return {
+          name: makeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), m ? `.${m[1]}` : ''),
+          data: blob,
+        };
+      }
+    } catch {
+      // CORS / 网络失败 → 落到下面的正文降级
+    }
+  }
+  if (!hasText) return null;
+  return { name: makeName(entry.title, resolveTextExtension(format, contentType)), data: content! };
+}
+
+// 下载对话框：范围默认「当前这篇」，没有打开文档时自动落到整库并禁用单篇选项。
+// export 供 __tests__/DownloadDialog.test.tsx 直接渲染断言默认范围（用户明确要求默认当前文章）。
+export function DownloadDialog({ storeName, entryTitle, busy, onDownload, onClose }: {
+  storeName: string;
+  /** 当前正在阅读的文档标题；undefined = 没打开文档，只能整库下载 */
+  entryTitle?: string;
+  busy: boolean;
+  onDownload: (scope: DocDownloadScope, format: DocDownloadFormat) => void;
+  onClose: () => void;
+}) {
+  const [scope, setScope] = useState<DocDownloadScope>(entryTitle ? 'entry' : 'store');
+  const [format, setFormat] = useState<DocDownloadFormat>('markdown');
+  const activeScope: DocDownloadScope = entryTitle ? scope : 'store';
+
+  return (
+    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="surface-popover flex max-h-[85vh] w-[460px] max-w-[92vw] flex-col rounded-[16px] p-6">
+        <div className="mb-4 flex flex-shrink-0 items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
+              <Download size={15} />
+            </div>
+            <span className="text-[15px] font-semibold text-token-primary">下载文档</span>
+          </div>
+          <button onClick={onClose}
+            className="hover-bg-soft flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors">
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="mb-2 text-[12px] font-semibold text-token-primary">下载范围</div>
+          <div className="surface-inset flex gap-1 rounded-[10px] p-1">
+            <button type="button" onClick={() => setScope('entry')} disabled={!entryTitle}
+              title={entryTitle ? `只下载《${entryTitle}》` : '先打开一篇文档，才能单独下载它'}
+              className={`flex h-8 flex-1 items-center justify-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors ${!entryTitle ? 'cursor-not-allowed opacity-45 text-token-muted' : activeScope === 'entry' ? 'surface-action-accent cursor-pointer' : 'cursor-pointer text-token-muted hover-bg-soft'}`}>
+              <FileText size={12} /> 当前文章
+            </button>
+            <button type="button" onClick={() => setScope('store')}
+              className={`flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors ${activeScope === 'store' ? 'surface-action-accent' : 'text-token-muted hover-bg-soft'}`}>
+              <Library size={12} /> 整个知识库
+            </button>
+          </div>
+          <p className="mb-4 mt-2 truncate text-[11px] text-token-muted"
+            title={activeScope === 'entry' ? entryTitle : storeName}>
+            {activeScope === 'entry'
+              ? `只下载《${entryTitle ?? ''}》一篇，直接得到一个文件`
+              : `下载「${storeName}」的全部文档，打包成一个 ZIP`}
+          </p>
+
+          <div className="mb-2 text-[12px] font-semibold text-token-primary">文件格式</div>
+          <div className="space-y-1.5">
+            {DOC_DOWNLOAD_FORMATS.map(opt => (
+              <button key={opt.value} type="button" onClick={() => setFormat(opt.value)}
+                className={`surface-row flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left transition-colors ${format === opt.value ? 'surface-row-active' : ''}`}
+                style={format === opt.value
+                  ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)' }
+                  : undefined}>
+                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full"
+                  style={{
+                    border: `1px solid ${format === opt.value ? 'var(--selection-border)' : 'var(--border-default)'}`,
+                    background: format === opt.value ? 'var(--selection-bg)' : 'transparent',
+                  }}>
+                  {format === opt.value && <Check size={10} style={{ color: 'var(--selection-text)' }} />}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[12px] font-semibold text-token-primary">{opt.label}</span>
+                  <span className="block text-[11px] text-token-muted">{opt.hint}</span>
+                </span>
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* 分享链接列表 */}
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <div className="sticky top-0 mb-3 py-1 text-[12px] font-semibold text-token-primary">
-            已有分享链接 ({links.filter(l => !l.isRevoked).length})
-          </div>
-          {loading ? (
-            <div className="flex justify-center py-6"><MapSpinner size={14} /></div>
-          ) : links.length === 0 ? (
-            <p className="py-6 text-center text-[11px] text-token-muted">
-              暂无分享链接，创建一个开始分享吧
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {links.map(link => {
-                const hasShortLink = Boolean(link.shortSeq && link.shortSeq > 0);
-                const visibleUrl = buildShareUrl(link);
-                return (
-                  <div
-                    key={link.id}
-                    className={`surface-row rounded-[10px] p-3 ${link.isRevoked ? 'opacity-60' : ''}`}
-                    style={link.isRevoked ? undefined : {
-                      // 已分享出去 = 标黄（左侧黄条 + 淡黄底），一眼区分「分享中 / 已撤销」
-                      borderLeft: '3px solid rgba(234,179,8,0.85)',
-                      background: 'rgba(234,179,8,0.06)',
-                    }}>
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        {!link.isRevoked && (
-                          <span
-                            className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
-                            style={{ background: 'rgba(234,179,8,0.16)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.3)' }}>
-                            已分享
-                          </span>
-                        )}
-                        <span className="truncate text-[12px] font-semibold text-token-primary">
-                          {link.title || (link.entryId ? (link.entryTitle || '文档分享') : '整库分享')}
-                        </span>
-                        {hasShortLink && (
-                          <span className="flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
-                            style={{ background: 'rgba(59,130,246,0.14)', color: 'rgba(147,197,253,0.96)', border: '1px solid rgba(59,130,246,0.28)' }}>
-                            全局短链 #{link.shortSeq}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 text-[10px] text-token-muted flex-shrink-0">
-                        <span className="flex items-center gap-1">
-                          <Eye size={9} /> {link.viewCount}
-                        </span>
-                        {link.expiresAt && (
-                          <span className="flex items-center gap-1">
-                            <Calendar size={9} />
-                            {new Date(link.expiresAt).toLocaleDateString()} 过期
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {link.isRevoked ? (
-                      // 已撤销：链接失效，明示状态（不再提供复制）
-                      <div className="flex items-center gap-2">
-                        <span className="flex-1 min-w-0 truncate font-mono text-[11px] text-token-muted line-through">
-                          {visibleUrl}
-                        </span>
-                        <span className="text-[11px] font-semibold text-token-error flex-shrink-0">已撤销</span>
-                      </div>
-                    ) : (
-                      // 有效：完整链接直接平铺可选中 + 醒目「复制」，撤销降为次要操作
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <input
-                            value={visibleUrl}
-                            readOnly
-                            onFocus={(e) => e.currentTarget.select()}
-                            className="prd-field h-8 flex-1 min-w-0 rounded-[8px] px-3 font-mono text-[11px] outline-none"
-                          />
-                          <button
-                            onClick={() => copyShareViewLink(link)}
-                            className="surface-action-accent flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold flex-shrink-0">
-                            <Copy size={11} /> 复制
-                          </button>
-                          <button
-                            onClick={() => handleRevoke(link.id)}
-                            className="hover-text-error flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-2.5 text-[11px] text-token-muted transition-colors flex-shrink-0"
-                            title="撤销此分享（撤销后链接立即失效）">
-                            <Trash2 size={11} /> 撤销
-                          </button>
-                        </div>
-                        {!link.entryId && (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button type="button" onClick={() => copyShareViewLink(link)} className="surface-action flex h-7 cursor-pointer items-center gap-1 rounded-[7px] px-2.5 text-[11px] font-semibold">
-                              <BookOpen size={11} /> 复制阅读页
-                            </button>
-                            <button type="button" onClick={() => copyShareViewLink(link, 'galaxy')} className="surface-action flex h-7 cursor-pointer items-center gap-1 rounded-[7px] px-2.5 text-[11px] font-semibold">
-                              <Orbit size={11} /> 复制知识星球
-                            </button>
-                            <button type="button" onClick={() => copyShareViewLink(link, 'universe')} className="surface-action flex h-7 cursor-pointer items-center gap-1 rounded-[7px] px-2.5 text-[11px] font-semibold">
-                              <LinkIcon size={11} /> 复制双链图
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+        <div className="mt-5 flex flex-shrink-0 items-center justify-end gap-2">
+          <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
+          <Button variant="primary" size="xs" disabled={busy}
+            onClick={() => onDownload(activeScope, format)}>
+            {busy ? <MapSpinner size={12} /> : <Download size={12} />}
+            {busy ? '导出中…' : '开始下载'}
+          </Button>
         </div>
       </div>
     </div>
@@ -915,6 +1044,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     const sourceId = entry.metadata?.sourceId;
     return sourceId && entry.metadata?.publisher === tutorialPublisher ? [[sourceId, entry.title]] : [];
   })), [entries]);
+  // 当前正在阅读的那一篇（目录不算）。分享与下载都以它作为「当前文章」范围的锚点，
+  // 免得用户读着一篇却只能对整库操作。
+  const selectedDocEntry = useMemo(
+    () => entries.find(e => e.id === selectedEntryId && !e.isFolder),
+    [entries, selectedEntryId]);
 
   // 从宇宙图等外部页面跳转过来时，sessionStorage 里可能有一个 pending entry：
   // 在 entries 加载完成后消费一次（设置选中条目并清理 key，避免下次进入再次自动跳转）。
@@ -976,8 +1110,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  /** 下载整库文档（打包 ZIP）进行中 */
+  /** 下载进行中（单篇直接下、整库打包 ZIP） */
   const [downloading, setDownloading] = useState(false);
+  /** 下载对话框：选范围（当前文章 / 整个知识库）与格式，默认当前文章 */
+  const [showDownloadDialog, setShowDownloadDialog] = useState(false);
   /** 离开本详情视图后置 false：下载这类长异步流程据此中止 setState / 触发下载，避免用户已离开还弹出文件 */
   const downloadAliveRef = useRef(true);
   useEffect(() => {
@@ -1630,18 +1766,54 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     setPublishing(false);
   }, [store, storeId]);
 
-  // 下载当前知识库的全部文档：分页拉全量条目（不止内存首页）→ 文本类存为 .md/.html、
-  // 二进制类（pdf/docx/图片…）即使有抽取正文也下原文件 → 打包成 ZIP。
+  // 下载：范围（当前这篇 / 整个知识库）+ 格式由用户在对话框里选，默认「当前这篇」。
+  // 单篇 → 直接落一个文件（不再逼人为了一篇文章下载整库 ZIP）；整库 → 分页拉全量后打包 ZIP。
   // 禁止空白等待：按钮转圈 + toast 报进度，失败计数照实报。
-  const handleDownloadStore = useCallback(async () => {
+  const handleDownload = useCallback(async (scope: DocDownloadScope, format: DocDownloadFormat) => {
     // 同步闸门挡并发：连点两下时 downloading state 还没刷新，靠 ref 立刻拒绝第二次进入
     if (!store || downloadInFlightRef.current) return;
+    if (scope === 'entry' && !selectedDocEntry) return;
     downloadInFlightRef.current = true;
+    setShowDownloadDialog(false);
     setMoreOpen(false);
     setDownloading(true);
-    toast.info('正在准备下载…', '正在汇总知识库全部文档');
+    // 文件名安全化 + 去重（同名加序号），保留可读标题
+    const usedNames = new Set<string>();
+    const safeName = (title: string, ext: string) => {
+      const base = (title || '未命名').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || '未命名';
+      let name = `${base}${ext}`;
+      let i = 2;
+      while (usedNames.has(name)) name = `${base} (${i++})${ext}`;
+      usedNames.add(name);
+      return name;
+    };
+    const saveFile = (data: Blob, filename: string) => {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(data);
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    };
     try {
-      // 1) 分页拉全量条目（loadEntries 只取首页 200，大库会漏；这里按 total 翻页拉齐）
+      // ── 单篇：一次内容请求 + 一个文件，没有打包环节 ──
+      if (scope === 'entry') {
+        const target = selectedDocEntry!;
+        toast.info('正在准备下载…', `正在导出《${target.title}》`);
+        const file = await buildEntryDownload(target, format, safeName);
+        if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
+        if (!file) {
+          toast.error('下载失败', '这篇文档没有可导出的内容（正文为空，或原始文件取不到）');
+          return;
+        }
+        saveFile(
+          file.data instanceof Blob ? file.data : new Blob([file.data], { type: 'text/plain;charset=utf-8' }),
+          file.name);
+        toast.success('下载完成', file.name);
+        return;
+      }
+
+      // ── 整库：分页拉全量条目（loadEntries 只取首页 200，大库会漏；这里按 total 翻页拉齐）──
+      toast.info('正在准备下载…', '正在汇总知识库全部文档');
       const PAGE = 200;
       const allEntries: DocumentEntry[] = [];
       let page = 1;
@@ -1673,68 +1845,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
-      const usedNames = new Set<string>();
-      // 文件名安全化 + 去重（同名加序号），保留可读标题
-      const safeName = (title: string, ext: string) => {
-        const base = (title || '未命名').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || '未命名';
-        let name = `${base}${ext}`;
-        let i = 2;
-        while (usedNames.has(name)) name = `${base} (${i++})${ext}`;
-        usedNames.add(name);
-        return name;
-      };
-      // 是否为「文字类」内容（与 DocBrowser 同口径）：text/* 、markdown、html、空 contentType。
-      // 上传的 pdf/docx 等即使抽取出正文，contentType 仍是 application/*，走二进制分支下原文件。
-      const isTextType = (ct: string) => {
-        const c = (ct ?? '').toLowerCase();
-        return c === '' || c.startsWith('text/') || c.includes('markdown') || c.includes('html');
-      };
       let ok = 0;
       let fail = 0;
       for (const entry of docs) {
         if (!downloadAliveRef.current) return; // 已离开视图：中止逐篇拉取
         try {
-          const res = await getDocumentContent(entry.id);
-          if (!res.success || !res.data) { fail++; continue; }
-          const { content, fileUrl, contentType } = res.data;
-          const textType = isTextType(contentType);
-          if (textType && content != null && content !== '') {
-            // 纯文字类：markdown/纯文本存 .md，html 存 .html（阅读器即按 markdown 渲染）
-            const ext = (contentType ?? '').toLowerCase().includes('html') ? '.html' : '.md';
-            zip.file(safeName(entry.title, ext), content);
-            ok++;
-          } else if (fileUrl) {
-            // 二进制附件（pdf/docx/图片…）：优先下原文件。但 fileUrl 多为对象存储/CDN 绝对地址
-            // （TencentCosStorage 返回公网 URL），其不带 Access-Control-Allow-Origin，浏览器
-            // 端 fetch 会被 CORS 拦掉（见 AudioWavePlayer 注释）。因此 fetch 失败时降级：
-            // 有抽取正文就存 .txt，至少不整条丢失（真·原文件打包需后端同源代理，见提交说明）。
-            let added = false;
-            try {
-              const resp = await fetch(fileUrl);
-              if (resp.ok) {
-                const blob = await resp.blob();
-                const urlExt = (() => {
-                  const m = /\.([a-zA-Z0-9]{1,8})(?:\?|$)/.exec(fileUrl);
-                  return m ? `.${m[1]}` : '';
-                })();
-                zip.file(safeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), urlExt), blob);
-                added = true;
-              }
-            } catch {
-              // CORS / 网络失败 → 走下面的正文降级
-            }
-            if (!added && content != null && content !== '') {
-              zip.file(safeName(entry.title, '.txt'), content);
-              added = true;
-            }
-            if (added) ok++; else fail++;
-          } else if (content != null && content !== '') {
-            // 二进制类但拿不到 fileUrl：退而保留抽取出的正文为 .txt，不至于整条丢失
-            zip.file(safeName(entry.title, '.txt'), content);
-            ok++;
-          } else {
-            fail++;
-          }
+          const file = await buildEntryDownload(entry, format, safeName);
+          if (!file) { fail++; continue; }
+          zip.file(file.name, file.data);
+          ok++;
         } catch {
           fail++;
         }
@@ -1745,20 +1864,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       }
       const out = await zip.generateAsync({ type: 'blob' });
       if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(out);
-      link.download = `${(store.name || '知识库').replace(/[\\/:*?"<>|]/g, '_')}.zip`;
-      link.click();
-      URL.revokeObjectURL(link.href);
+      saveFile(out, `${(store.name || '知识库').replace(/[\\/:*?"<>|]/g, '_')}.zip`);
       toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
     } catch (err) {
       console.error('[DocumentStore] download failed:', err);
-      if (downloadAliveRef.current) toast.error('下载失败', '打包文档时出错，请重试');
+      if (downloadAliveRef.current) toast.error('下载失败', '导出文档时出错，请重试');
     } finally {
       downloadInFlightRef.current = false;
       if (downloadAliveRef.current) setDownloading(false);
     }
-  }, [store, storeId]);
+  }, [store, storeId, selectedDocEntry]);
 
   if (!store) {
     return (
@@ -2025,7 +2140,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 ) : (
                   <MoreItem icon={<Globe size={14} />} label={publishing ? '处理中…' : '发布到智识殿堂'} disabled={publishing} onClick={handleTogglePublish} dataTourId="document-store-publish" />
                 )}
-                <MoreItem icon={<Download size={14} />} label={downloading ? '打包中…' : '下载全部文档（ZIP）'} disabled={downloading} onClick={handleDownloadStore} />
+                <MoreItem icon={<Download size={14} />} label={downloading ? '导出中…' : '下载文档…'} disabled={downloading}
+                  onClick={() => { setMoreOpen(false); setShowDownloadDialog(true); }} />
                 <MoreItem icon={<LinkIcon size={14} />} label="Obsidian 双链图" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/universe`); }} />
                 <MoreItem icon={<Orbit size={14} />} label="知识星球（3D 星系）" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/galaxy`); }} />
                 <MoreItem icon={<BarChart3 size={14} />} label="访客统计" onClick={() => { setMoreOpen(false); setShowViewers(true); }} />
@@ -2225,13 +2341,26 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         />
       )}
 
-      {/* 分享对话框 */}
+      {/* 分享对话框：把「当前正在读的这篇」一并带进去，用户不必回文件树右键才能单篇分享 */}
       {showShareDialog && (
         <ShareDialog
           storeId={storeId}
           storeName={store.name}
           isPublic={store.isPublic}
+          currentEntryId={selectedDocEntry?.id}
+          currentEntryTitle={selectedDocEntry?.title}
           onClose={() => setShowShareDialog(false)}
+        />
+      )}
+
+      {/* 下载对话框：范围（当前文章 / 整个知识库）+ 文件格式 */}
+      {showDownloadDialog && (
+        <DownloadDialog
+          storeName={store.name}
+          entryTitle={selectedDocEntry?.title}
+          busy={downloading}
+          onDownload={handleDownload}
+          onClose={() => setShowDownloadDialog(false)}
         />
       )}
 
