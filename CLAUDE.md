@@ -330,7 +330,9 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 ## 架构规则索引
 
-以下规则按需加载（仅当编辑匹配 glob 的文件时），详见 `.claude/rules/`：
+以下规则按需加载（仅当编辑匹配 glob 的文件时），详见 `.claude/rules/`。
+每条规则开头有两行导读（`**一句话**` 这条要求什么 / `**什么时候撞上**` 什么改动会触发它），
+扫一眼就知道要不要往下读；新增规则不带这两行会把 CI 的 `docs-readability` 弄红（判据见 `doc/rule.doc.readability.md` 条款 7）。
 
 | 规则文件 | 触发范围 | 核心要点 |
 |----------|----------|----------|
