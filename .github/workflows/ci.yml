@@ -264,6 +264,10 @@ jobs:
         working-directory: ${{ github.workspace }}/e2e
         run: pnpm install --frozen-lockfile
 
+      - name: Type check recording acceptance
+        working-directory: ${{ github.workspace }}/e2e
+        run: pnpm typecheck
+
       - name: Install Chromium for recording acceptance
         working-directory: ${{ github.workspace }}/e2e
         run: pnpm exec playwright install --with-deps chromium

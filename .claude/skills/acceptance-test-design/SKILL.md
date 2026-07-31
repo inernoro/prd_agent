@@ -1,12 +1,12 @@
 ---
 name: acceptance-test-design
-version: 1.0.0
+version: 1.1.0
 description: Convert PRs, commits, yesterday's changes, or release scope into a test-minded acceptance design before visual execution. Use when the user asks for daily acceptance, visual acceptance, PR/commit acceptance, proof that code changes really affected product behavior, coverage planning, fusion testing, evidence strength, or when screenshots/reports looked related but failed to prove the assigned task.
 ---
 
 # 验收测试设计
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/验收设计`、"验收设计"、"PR/commit 验收"、"覆盖规划"、"融合测试"
+> **版本**：v1.1.0 | **状态**：已落地 | **触发**：`/验收设计`、"验收设计"、"PR/commit 验收"、"覆盖规划"、"融合测试"
 
 ## 用途
 
@@ -80,12 +80,15 @@ The brief must state the proportionality decision: why this depth is enough, wha
    - Identify who can notice the change and where: page, breadcrumb, entry, status, result row, detail panel, error text, toast, permission state, sync log, or absence of a forbidden action.
    - Trace likely affected areas: upstream inputs, downstream outputs, persisted state, background jobs, permissions, integration boundaries, rollback/restore, and existing user workflows.
    - Mark hidden influence clearly. If users cannot see it directly, describe the expected visible consequence or classify it as internal-only.
+   - For recording, upload, transcription, generation, sync, archive, deploy, or any other multi-stage task, apply `doc/rule.acceptance.map-enterprise.md` section “连续任务状态机验收硬门禁”. Build an explicit state matrix before choosing screenshots. Include normal, slow, failure, and recovery paths; immediate feedback, first usable result, background progress, refresh recovery, and return-context behavior are separate assertions.
    - Separate `cds` platform changes from `CDS Agent` product/runtime changes. `cds/` deploy, preview, reports, branch network, extra-services, self-update, scheduler, smoke, or proxy changes must be proven with CDS platform evidence such as cdscli/API status, `/reports`, branch/deploy state, smoke results, logs, or preview routing. Do not use the prd-admin `/cds-agent` page as proof for those platform changes. Only use `/cds-agent` when the changed behavior is specifically CDS Agent UI/runtime/session behavior.
 
 4. Design proof, not screenshots.
    - Read `references/proof-strength.md`.
    - For each assertion, write the strongest practical proof: page result first, interaction path second, internal corroboration third.
    - Reject weak proof such as a nearby page, entry page, generic API 200, or screenshot that only proves the module loaded.
+   - Label every proof by provenance: `deterministic-fixture`, `preview-live`, or `integration-live`. Fixture injection may prove UI state transitions and layout, but it cannot prove a real external dependency completed.
+   - For continuity-sensitive work, require measurable churn and waiting evidence such as document boot count, history writes, content-loader reappearances, first-feedback time, first-usable-result time, and task identity across transitions.
 
 5. Design fusion tests.
    - Read `references/fusion-testing.md`.
@@ -100,6 +103,7 @@ The brief must state the proportionality decision: why this depth is enough, wha
      - `昨日/范围总结`
      - `改动断言表`
      - `影响面矩阵`
+     - `连续性状态矩阵` when the task contains multiple foreground/background stages
      - `融合测试设计`
      - `证明力矩阵`
      - `覆盖缺口与不可测项`
@@ -123,6 +127,8 @@ The brief must state the proportionality decision: why this depth is enough, wha
 - No pass without falsifiability. Every planned proof must say what would make it fail.
 - No disappearing commits. Each commit is passed, failed, fused into a higher-level scenario, marked non-runtime, or marked uncovered.
 - No "looks right" verdict. A pass must answer: what changed, who sees it, where they see it, what action caused it, and what result proves it.
+- No final-state-only pass for multi-stage work. A continuous task must cover normal, slow, failure, and recovery paths, including refresh recovery and task identity.
+- No fixture laundering. Deterministic injected data is valid state-machine evidence, but it cannot be relabeled as proof that ASR, object storage, queues, LLMs, or other live dependencies succeeded.
 
 ## Failure Signals
 

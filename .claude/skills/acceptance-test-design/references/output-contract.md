@@ -36,6 +36,20 @@ Rules:
 
 The goal is not exhaustive imagination. The goal is to reveal where a correct-looking code change could still fail users.
 
+## 3.1 连续性状态矩阵
+
+Required for recording, upload, transcription, generation, sync, archive, deploy, or any other multi-stage foreground/background task.
+
+| 状态/路径 | 触发条件 | 用户必须看到 | 可继续使用的结果 | 更新方式 | 等待预算 | 失败条件 | 证据来源 |
+|-----------|----------|--------------|------------------|----------|----------|----------|----------|
+
+Rules:
+- Cover normal, slow, failure, and recovery paths.
+- Record immediate feedback separately from first usable result and final background completion.
+- State whether updates are local, route-level, or full-document. Unexpected document reload, route oscillation, or content-loader regression is a failure.
+- Use `deterministic-fixture`, `preview-live`, or `integration-live` for evidence provenance.
+- Fixture evidence cannot prove a real external dependency succeeded.
+
 ## 4. 融合测试设计
 
 | 融合场景 | 覆盖断言 | 用户路径 | 主要页面证据 | 内部佐证 | 负面/边界路径 | 证明密度 | 风险 |
@@ -45,8 +59,8 @@ Mark a scenario as invalid if its covered assertions are only file-adjacent or m
 
 ## 5. 证明力矩阵
 
-| 改动断言 | 页面主证据 | 交互动作 | 内部佐证 | 失败条件 | 证明力 0-4 | 结论 |
-|----------|------------|----------|----------|----------|------------|------|
+| 改动断言 | 页面主证据 | 交互动作 | 内部佐证 | 失败条件 | 证据来源 | 证明力 0-4 | 结论 |
+|----------|------------|----------|----------|----------|----------|------------|------|
 
 Use `references/proof-strength.md` for scoring.
 

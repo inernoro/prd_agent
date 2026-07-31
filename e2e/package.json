@@ -5,6 +5,7 @@
   "description": "Playwright E2E tests for prd-agent / CDS preview environments",
   "type": "module",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "test:ui": "playwright test --ui",
@@ -13,6 +14,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
   }
 }

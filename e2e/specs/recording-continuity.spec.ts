@@ -1,4 +1,9 @@
 import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test';
+import {
+  armContinuityProbe,
+  installContinuityProbe,
+  readContinuityProbe,
+} from '../utils/continuityProbe';
 
 const STORE_ID = 'recording-acceptance-store';
 const ENTRY_ID = 'recording-acceptance-entry';
@@ -56,19 +61,6 @@ function json(route: Route, data: unknown) {
 
 async function installRecordingBrowserFakes(page: Page) {
   await page.addInitScript(({ transcript }) => {
-    const acceptanceWindow = window as typeof window & {
-      __recordingAcceptance: { replaceStateCalls: number; contentLoaderAppearances: number };
-    };
-    acceptanceWindow.__recordingAcceptance = { replaceStateCalls: 0, contentLoaderAppearances: 0 };
-    const originalReplaceState = history.replaceState.bind(history);
-    history.replaceState = (...args: Parameters<History['replaceState']>) => {
-      acceptanceWindow.__recordingAcceptance.replaceStateCalls += 1;
-      if (acceptanceWindow.__recordingAcceptance.replaceStateCalls > 40) {
-        throw new Error('录音详情发生 history.replaceState 循环');
-      }
-      return originalReplaceState(...args);
-    };
-
     localStorage.setItem('prd-admin-auth', JSON.stringify({
       state: {
         isAuthenticated: true,
@@ -390,6 +382,10 @@ test.describe('录音连续性发布门禁', () => {
     });
     page.on('pageerror', (error) => pageErrors.push(error.message));
 
+    await installContinuityProbe(page, {
+      loaderText: '加载文档内容',
+      maxHistoryWrites: 40,
+    });
     await installRecordingBrowserFakes(page);
     await installApiFixture(page, apiRequests);
     await page.goto('/', { waitUntil: 'domcontentloaded' });
@@ -449,9 +445,12 @@ test.describe('录音连续性发布门禁', () => {
     // 等待首个 MediaRecorder 分片真实进入写入队列，确保完成动作覆盖落盘竞态。
     await page.waitForTimeout(80);
     await finish.click();
+    const finalizingStartedAt = Date.now();
     await page.getByRole('button', { name: '仍要转成文字' }).click();
     const finalizingPanel = page.getByTestId('recording-finalizing-panel');
     await expect(finalizingPanel).toBeVisible();
+    const firstFeedbackMs = Date.now() - finalizingStartedAt;
+    expect(firstFeedbackMs).toBeLessThan(2_000);
     await expect(finalizingPanel).toContainText('正在创建录音结果');
     await expect(finalizingPanel).toContainText('最多前台等待 45 秒');
     await attachViewport(page, testInfo, '02-finalizing-progress');
@@ -472,23 +471,13 @@ test.describe('录音连续性发布门禁', () => {
     const playToggle = page.getByTestId('audio-play-toggle');
     await expect(playToggle).toBeVisible();
     await expect(playToggle).toBeEnabled();
+    const firstUsableResultMs = Date.now() - finalizingStartedAt;
+    expect(firstUsableResultMs).toBeLessThan(4_000);
     await expect(page.getByText('智能估算跟随，可点句跳播')).toBeVisible();
     await playToggle.click();
     await expect(playToggle).toHaveAttribute('title', '暂停');
     await expect(page.getByText('暂无可预览的内容')).toHaveCount(0);
-    await page.evaluate(() => {
-      const acceptanceWindow = window as typeof window & {
-        __recordingAcceptance: { replaceStateCalls: number; contentLoaderAppearances: number };
-      };
-      let loaderVisible = document.body.innerText.includes('加载文档内容');
-      new MutationObserver(() => {
-        const nextVisible = document.body.innerText.includes('加载文档内容');
-        if (nextVisible && !loaderVisible) {
-          acceptanceWindow.__recordingAcceptance.contentLoaderAppearances += 1;
-        }
-        loaderVisible = nextVisible;
-      }).observe(document.body, { childList: true, subtree: true, characterData: true });
-    });
+    await armContinuityProbe(page);
     const transcriptLines = page.locator('button[title="点击跳到这一句"]');
     await expect(transcriptLines).toHaveCount(18);
     const lastTranscriptLine = transcriptLines.nth(17);
@@ -508,17 +497,20 @@ test.describe('录音连续性发布门禁', () => {
     await expect(backgroundProgress).toContainText('不需要停在本页等待');
     await backgroundProgress.scrollIntoViewIfNeeded();
     await attachViewport(page, testInfo, '05b-cloud-retry-is-non-blocking');
-    const beforeManualReload = await page.evaluate(() => {
-      const acceptanceWindow = window as typeof window & {
-        __recordingAcceptance: { replaceStateCalls: number; contentLoaderAppearances: number };
-      };
-      return {
-        navigationEntries: performance.getEntriesByType('navigation').length,
-        contentLoaderAppearances: acceptanceWindow.__recordingAcceptance.contentLoaderAppearances,
-      };
-    });
-    expect(beforeManualReload.navigationEntries).toBe(1);
+    const beforeManualReload = await readContinuityProbe(page);
+    expect(beforeManualReload.documentBootCount).toBe(1);
+    expect(beforeManualReload.beforeUnloadCount).toBe(0);
     expect(beforeManualReload.contentLoaderAppearances).toBe(0);
+    await testInfo.attach('recording-continuity-metrics-before-reload', {
+      body: JSON.stringify({
+        evidenceProvenance: 'deterministic-fixture',
+        taskIdentity: { storeId: STORE_ID, entryId: ENTRY_ID, sessionId: SESSION_ID },
+        firstFeedbackMs,
+        firstUsableResultMs,
+        ...beforeManualReload,
+      }, null, 2),
+      contentType: 'application/json',
+    });
 
     await expect(backgroundProgress).toHaveCount(0, { timeout: 8_000 });
     await expect(page.getByText('云端副本已保存', { exact: true })).toBeVisible();
@@ -528,10 +520,18 @@ test.describe('录音连续性发布门禁', () => {
     await expect(page.getByTestId('recording-background-progress')).toHaveCount(0);
     await page.waitForTimeout(1_200);
     expect(page.url()).toBe(stableUrl);
-    const replaceStateCalls = await page.evaluate(() => (
-      window as typeof window & { __recordingAcceptance: { replaceStateCalls: number } }
-    ).__recordingAcceptance.replaceStateCalls);
-    expect(replaceStateCalls).toBeLessThan(20);
+    const afterManualReload = await readContinuityProbe(page);
+    expect(afterManualReload.documentBootCount).toBe(2);
+    expect(afterManualReload.beforeUnloadCount).toBe(1);
+    expect(afterManualReload.replaceStateCount).toBeLessThan(20);
+    await testInfo.attach('recording-continuity-metrics-after-reload', {
+      body: JSON.stringify({
+        evidenceProvenance: 'deterministic-fixture',
+        taskIdentity: { storeId: STORE_ID, entryId: ENTRY_ID, sessionId: SESSION_ID },
+        ...afterManualReload,
+      }, null, 2),
+      contentType: 'application/json',
+    });
     await attachViewport(page, testInfo, '06-recording-refresh-stable');
 
     const criticalErrors = [...consoleErrors, ...pageErrors].filter(message => (

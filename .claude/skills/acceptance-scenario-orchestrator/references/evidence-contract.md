@@ -6,7 +6,7 @@ Every acceptance report must let the reader audit how the conclusion was reached
 
 Each test unit must connect:
 
-`PR/commit -> changed files -> change assertion -> user-visible surface -> real workflow/API/state -> expected result -> actual evidence -> conclusion`
+`PR/commit -> changed files -> change assertion -> user-visible surface -> state transition -> real workflow/API/state -> expected result -> actual evidence -> evidence provenance -> conclusion`
 
 Rules:
 - If a link in the chain is unknown, write `未知` and mark the unit as not fully accepted.
@@ -17,6 +17,27 @@ Rules:
 - The evidence must exercise the changed behavior, not merely the same module. For example, a knowledge-base sync commit requires sync action/result/log evidence; a knowledge-base list screenshot only proves the list page is reachable.
 - `CDS` and `CDS Agent` are different evidence domains. CDS platform changes (`cds/` deploy, preview, report center, branch network, extra-services, self-update, scheduler, proxy, smoke) require CDS platform proof such as cdscli/API state, deploy/smoke logs, `/reports`, preview routing, or service status. The prd-admin `/cds-agent` page proves only CDS Agent UI/runtime/session behavior. If a row uses `/cds-agent` to prove CDS platform work, mark the relevance as `无关` or split the row.
 - For user-facing changes, page evidence is primary. API/log/database/file evidence is secondary corroboration unless the item is explicitly non-visual or internal-only.
+
+## Continuity And Evidence Provenance
+
+For recording, upload, transcription, generation, sync, archive, deploy, or another multi-stage task, a final screenshot is not sufficient. Each applicable test unit must record:
+
+| Field | Meaning |
+|-------|---------|
+| State path | Normal, slow, failure, or recovery |
+| Task identity | The recording, run, upload, document, or deployment ID before and after transitions |
+| First feedback | Time from user action to the first visible changing response |
+| First usable result | Time until the user can play, read, inspect, or otherwise obtain value |
+| Background completion | Final persisted or external result, measured separately from first usable result |
+| Page churn | Document boots, unloads, history writes, route changes, and content-loader reappearances |
+| Evidence provenance | `deterministic-fixture`, `preview-live`, or `integration-live` |
+
+Rules:
+- A fixture can prove deterministic UI transitions, failure copy, layout, local playback, and recovery logic.
+- A fixture cannot prove a real ASR provider, object store, queue, LLM, payment provider, or other external dependency succeeded.
+- A deployed preview with mocked API responses is still fixture evidence for the mocked boundary.
+- When live integration proof is missing, keep the UI/state-machine conclusion separate and downgrade the integration conclusion.
+- Once a usable intermediate result appears, later background updates must not replace it with a blank body or generic loading state.
 
 ## Page-First Evidence Philosophy
 

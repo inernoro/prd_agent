@@ -2,12 +2,12 @@
 name: acceptance-scenario-orchestrator
 description: 识别每日验收、PR 验收、commit 验收、未发布分支验收、缺陷复测、视觉回归和发布前验收等场景，并为 create-visual-test-to-kb 生成测试范围、指差法步骤、预期结果、证据链、截图回读和报告结构。Use when the user asks to optimize or run visual acceptance across different scenarios, asks whether yesterday's changes, a PR, a commit range, or an unpublished branch were really accepted, or needs PR/commit results to map to screenshots and MAP knowledge base reports.
 metadata:
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # 验收场景编排器
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/验收场景`、"PR 验收"、"每日验收"、"commit 验收"、"未发布分支验收"、"缺陷复测"
+> **版本**：v1.1.0 | **状态**：已落地 | **触发**：`/验收场景`、"PR 验收"、"每日验收"、"commit 验收"、"未发布分支验收"、"缺陷复测"
 
 ## 用途
 
@@ -50,6 +50,7 @@ The chain boundary is controlled by `doc/rule.acceptance.map-enterprise.md` sect
    - Allow preview-environment test data with a clear prefix such as `每日验收-YYYY-MM-DD-...` when the automation policy permits it. Never use production-destructive data paths.
    - Keep `cds` and `CDS Agent` separate. `cds/` platform changes use CDS platform evidence: cdscli/API branch status, deploy/smoke result, preview routing, reports page, scheduler/self-update state, logs, or extra-services state. `CDS Agent` evidence means the prd-admin `/cds-agent` workbench or its runtime/session flow, and can only prove CDS Agent-specific assertions.
    - Mark items as `runtime`, `visual`, `api`, `docs/rules`, or `environment-only`.
+   - For multi-stage foreground/background work, preserve the upstream continuity state matrix. Schedule normal, slow, failure, and recovery test units; do not flatten them into one final-state screenshot.
    - Compute a depth budget before testing: target date, commit count, PR count, module count, high-risk module count, planned evidence count, and whether the run is `广度冒烟`, `深度验收`, or `发布前阻断验收`.
    - For daily/yesterday runs, do not allow a small set of entry screenshots to stand in for deep functional acceptance. If the budget cannot cover real workflows, label the run `广度冒烟` or mark uncovered items explicitly.
    - Compute a proportionality ceiling as well as a depth floor. The brief must say where testing stops: which low-risk rows are grouped, which are non-runtime, which are observation-only, and which are intentionally left to follow-up because more evidence would not change the current Verdict.
@@ -65,6 +66,10 @@ The chain boundary is controlled by `doc/rule.acceptance.map-enterprise.md` sect
    - `预期结果`: user-visible observable conditions that must appear before the test can pass.
    - `证据要求`: page screenshot first, then API response, log, database state, or file evidence as corroboration.
    - `用户心智`: what a user or reviewer should understand from the page before seeing internal evidence.
+   - `状态序列`: the expected task identity and visible states before, during, and after background transitions.
+   - `等待预算`: first-feedback and first-usable-result expectations, distinct from final background completion.
+   - `局部更新指标`: expected document boot, unload, history-write, and content-loader counts.
+   - `证据来源`: `deterministic-fixture`, `preview-live`, or `integration-live`; state exactly which claim each source can prove.
    - `停止条件`: what evidence is sufficient for this unit and what would be over-testing.
 
    The brief must be verbose enough to execute safely:
@@ -167,6 +172,8 @@ If multiple scenarios match, choose the narrowest scenario as primary and list t
 - Do not use the CDS Agent page as evidence for CDS platform changes. A row about CDS deploy/preview/reports/branch network/extra-services/self-update/scheduler/proxy must cite CDS platform proof, not `/cds-agent`. If both changed, split them into separate rows.
 - Do not mark an assertion passed unless the evidence exercises the changed path or inspects the changed result state. Otherwise mark it `未覆盖` or `关联不足`.
 - Do not mark a high-risk module as deeply accepted without an action/result pair or a negative-path/API proof. High-risk modules include auth, async workers, uploads/compression, external downloads, deployment, state transitions, and data restore.
+- Do not accept a multi-stage task from its final screenshot alone. The execution brief must cover normal, slow, failure, and recovery paths and record continuity metrics.
+- Do not use injected completion to claim a live external integration passed. Pair fixture state-machine proof with preview/live integration evidence or downgrade the integration assertion.
 - Do not publish a MAP report whose share link has not been opened and verified.
 - Do not include an in-body table of contents for daily acceptance reports.
 - Do not accept thin daily reports. If the report cannot teach a reviewer what changed, where it was tested, why the evidence is relevant, what was not covered, and why the verdict is downgraded, send it back for expansion before archiving.
