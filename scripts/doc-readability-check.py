@@ -44,7 +44,15 @@ FIELDS = ("一句话", "谁该读", "读完能做什么")
 # 周报是定期刊物，读者固定（老板 / 产品经理，在周报技能里已声明），
 # 因此只要求一句话，且沿用它既有的「本周一句话」写法，不强加另外两行样板。
 ONE_LINER_ALIASES = {"一句话", "本周一句话"}
-REQUIRED_BY_TYPE = {"report": ("一句话",)}
+# 豁免只给定期周报 report.YYYY-WNN（读者固定、且是已冻结的历史记录），
+# 不给 report. 前缀下所有文件 —— 那批 CDS 审计/验收报告仍要三行。
+WEEKLY_REPORT = re.compile(r"^report\.\d{4}-W\d{2}")
+
+
+def required_fields(name: str) -> tuple[str, ...]:
+    if WEEKLY_REPORT.match(name):
+        return ("一句话",)
+    return FIELDS
 
 # 一句话里出现这些形状就不算人话：代码引用、文件路径
 CODE_SPAN = re.compile(r"`[^`]+`")
@@ -164,7 +172,7 @@ def check_file(path: str) -> list[str]:
     header = parse_header(text)
     problems: list[str] = []
 
-    for field in REQUIRED_BY_TYPE.get(doc_type(name), FIELDS):
+    for field in required_fields(name):
         if field not in header:
             problems.append(f"缺「{field}」")
 
@@ -207,9 +215,12 @@ IMPL_LANGS = {"cs", "csharp", "c#", "ts", "tsx", "typescript", "js", "jsx", "jav
               "rust", "rs", "python", "py", "java", "go", "vue", "css", "scss", "sql"}
 
 # 正文里散落的源码路径 / 行号引用。集中列在「实现来源」类小节里是允许的。
+# 源码面不止六个产品目录：脚本、技能、规则、工作流同样是实现，散落在散文里
+# 一样让读者去读实现。只认产品目录 = 判据比它该管的范围窄。
 SOURCE_PATH = re.compile(
-    r"\b(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw)/[\w./-]+"
-    r"\.(?:cs|ts|tsx|js|mjs|py|rs|css|sh)\b")
+    r"(?:\b|(?<=[（(\s]))(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw"
+    r"|scripts|\.claude/skills|\.claude/rules|\.Codex/rules|\.github/workflows)/[\w./-]+"
+    r"\.(?:cs|ts|tsx|js|mjs|py|rs|css|sh|yml|yaml)\b")
 SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")
 # 这些小节就是专门用来指路的，里面列路径不算欠账
 SOURCE_SECTION = re.compile(
@@ -693,6 +704,19 @@ def baseline_regressions(base: dict, submitted: dict) -> list[str]:
     added = [f for f in now_files if f not in base_files]
     if added:
         bad.append(f"新增欠账文件被写进基线：{added[:5]}")
+    # 只挡新文件名挡不住「债务在文件之间挪位」：A 篇加一处、B 篇减一处，
+    # 总数持平、文件名也没新增，逐篇明细却被放宽了。
+    for fname, now_val in now_files.items():
+        base_val = base_files.get(fname)
+        if base_val is None:
+            continue
+        if isinstance(now_val, dict) and isinstance(base_val, dict):
+            for k, v in now_val.items():
+                if v > base_val.get(k, 0):
+                    bad.append(f"{fname}.{k}: 目标分支 {base_val.get(k, 0)} → 本分支 {v}")
+        elif isinstance(now_val, (int, float)) and isinstance(base_val, (int, float)):
+            if now_val > base_val:
+                bad.append(f"{fname}: 目标分支 {base_val} → 本分支 {now_val}")
     return bad
 
 

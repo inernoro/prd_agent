@@ -28,18 +28,24 @@
     "debt": 0
   },
   "source_refs": {
-    "spec": 3,
-    "design": 47,
-    "plan": 4,
-    "rule": 11,
-    "guide": 28,
-    "report": 4,
-    "debt": 33
+    "spec": 7,
+    "design": 77,
+    "plan": 16,
+    "rule": 20,
+    "guide": 54,
+    "report": 27,
+    "debt": 141
   },
   "rules_missing": 0,
   "skills_missing": 0,
   "files": {
     "debt.acceptance-center-cds.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "debt.cds.agent.acceptance-smoke-drift.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
@@ -81,6 +87,12 @@
       "impl": 0,
       "src": 2
     },
+    "debt.doc.readability.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
     "debt.frontend.md": {
       "missing": 0,
       "bare": 0,
@@ -97,19 +109,37 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 6
+      "src": 9
     },
     "debt.platform.llm-gateway.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 92
+    },
+    "debt.platform.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
     },
     "debt.report-agent.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
+    },
+    "debt.skill.role-bundle.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "debt.visual-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
     },
     "debt.workflow-agent.md": {
       "missing": 0,
@@ -121,13 +151,31 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 3
     },
     "design.agent-universe.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 4
+    },
+    "design.cds.agent.commercial-architecture-and-roadmap.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 8
+    },
+    "design.cds.agent.managed-runtime-fact-source.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "design.cds.agent.official-sdk-adapter.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
     },
     "design.cds.ai-compose.md": {
       "missing": 0,
@@ -169,7 +217,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 6
     },
     "design.cds.skill-version-update.md": {
       "missing": 0,
@@ -199,19 +247,31 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 3
     },
     "design.platform.llm-gateway.unification.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 5
     },
     "design.platform.map-mcp-connector.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
+    },
+    "design.platform.ops-auth.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.skill.role-bundle.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
     },
     "design.team-activity.md": {
       "missing": 0,
@@ -243,6 +303,30 @@
       "impl": 0,
       "src": 1
     },
+    "guide.cds.agent.code-review-quickstart.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 9
+    },
+    "guide.cds.agent.runbook.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 7
+    },
+    "guide.cds.agent.runtime-pool-recovery.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.cloud-dev-tutorial.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
     "guide.cds.github-webhook-events.md": {
       "missing": 0,
       "bare": 0,
@@ -267,6 +351,12 @@
       "impl": 0,
       "src": 5
     },
+    "guide.doc.reading-map.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
     "guide.infra-sandbox-agent.md": {
       "missing": 0,
       "bare": 0,
@@ -283,25 +373,49 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 5
+      "src": 6
     },
     "guide.platform.mongodb-indexes.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 2
     },
     "guide.skill.removal-checklist.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 5
+    },
+    "guide.visual-agent.acceptance-skill.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "plan.cds.agent.official-sdk-migration.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "plan.doc.readability.rollout.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
     },
     "plan.platform.llm-gateway.authoritative-tutorial.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
+    },
+    "plan.platform.llm-gateway.full-cutover.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
     },
     "plan.visual-agent.optimization-backlog.md": {
       "missing": 0,
@@ -373,7 +487,7 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 3
     },
     "report.2026-W18.md": {
       "missing": 1,
@@ -409,7 +523,7 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 2
     },
     "report.2026-W24.md": {
       "missing": 1,
@@ -469,19 +583,19 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 5
     },
     "report.cds.agent.p4-4-release-merge-strategy.2026-05-19.md": {
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 6
     },
     "report.cds.agent.p4-5-writable-trial-plan.2026-05-19.md": {
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 6
     },
     "report.cds.agent.phase1-acceptance.2026-05-19.md": {
       "missing": 1,
@@ -505,7 +619,7 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 2
     },
     "report.cds.agent.workbench.2026-05-15.md": {
       "missing": 1,
@@ -529,13 +643,19 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 2
     },
     "rule.cds.mongo-migration.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 5
+    },
+    "rule.doc.readability.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
     },
     "rule.frontend.landing-visual-style.md": {
       "missing": 0,
@@ -561,11 +681,35 @@
       "impl": 0,
       "src": 2
     },
+    "rule.platform.production-release-safety.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "rule.skill.issues-system.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
     "spec.cds.project-model.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
+    },
+    "spec.defect-agent.automation-protocol.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "spec.platform.llm-gateway.test-matrix.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
     },
     "spec.platform.short-links.md": {
       "missing": 0,

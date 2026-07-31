@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import pathlib
 import re
 import sys
 import tempfile
@@ -147,6 +148,13 @@ META_OK = ("# 示例 · 指南\n\n> **版本**：v1.0 | **状态**：已落地\n
            "**读完能做什么**：知道哪些行不会把导读判成迟到。\n")
 check(problems_for("guide.demo.md", META_OK) == [],
       "版本行那类元信息不算正文（新判据没有误伤文档头部）")
+
+WEEKLY_ONE_LINER = ("# 周报 2026-W30 (2026-07-20 ~ 2026-07-26)\n\n"
+                    "**本周一句话**：这一周把说人话标准落地到了全部文档，闸门与棘轮同步上线。\n")
+check(problems_for("report.2026-W30.md", WEEKLY_ONE_LINER) == [],
+      "定期周报只要一句话就放行（读者固定，不强加另外两行）")
+check([p for p in problems_for("report.cds.some-audit.md", WEEKLY_ONE_LINER) if "谁该读" in p],
+      "非周报的 report 仍要三行（豁免只给 report.YYYY-WNN，不给整个前缀）")
 
 NESTED = ("# 示例 · 指南\n\n````markdown\n```ts\n"
           "见 `doc/rule.doc.readability.md`，这行在内层示例里。\nconst a = 1;\n```\n````\n")
@@ -499,10 +507,50 @@ check(checker.baseline_regressions(BASE, BASE) == [], "基线没动时放行")
 check(checker.baseline_regressions(BASE, LOOSER), "把计数改大会被抓出")
 check(checker.baseline_regressions(BASE, NEW_FILE), "把新欠账文件写进基线会被抓出")
 check(checker.load_baseline_at("这个-ref-不存在") is None, "取不到目标分支基线时返回 None，不误判")
+MOVED = {**BASE, "files": {"doc/a.md": {"missing": 2}}}
+BASE_DETAIL = {**BASE, "files": {"doc/a.md": {"missing": 1}}}
+check(checker.baseline_regressions(BASE_DETAIL, MOVED),
+      "逐篇明细被放宽会被抓出（债务在文件之间挪位，总数持平也不算）")
 
 with open(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as fh:
     ci_src = fh.read()
 check("--baseline-ref" in ci_src, "CI 真的带上了 --baseline-ref（否则这段等于没接线）")
+
+print()
+
+print("[6.4] 代码注释里的文档指路都点得到")
+
+# 台账合并后，代码注释里的 doc/xxx.md 面包屑会指向已删除的册子。人跟着注释走
+# 却落空，比没有注释更糟 —— 所以扫一遍源码里的文档引用，逐个验存在。
+DOC_REF = re.compile(r"doc/([a-z][\w.-]*\.md)")
+# 两条历史遗留：引用的文档在本仓库历史里从未存在过（更早的重命名遗留），
+# 定位不到目标，不许凭空指一个 —— 记在 doc/debt.doc.readability.md 里等人认领。
+KNOWN_ROTTEN = {"plan.cds-shared-service-extension.md", "plan.cds-github-integration-followups.md",
+                "debt.cds-removed-branch-pages.md"}
+SOURCE_ROOTS = ["cds/src", "prd-api/src", "prd-admin/src", "llmgw", "scripts", ".claude/skills"]
+SOURCE_EXTS = {".ts", ".tsx", ".cs", ".py", ".mjs", ".js"}
+dangling: dict[str, set[str]] = {}
+scanned = 0
+for root in SOURCE_ROOTS:
+    for path in pathlib.Path(os.path.join(REPO_ROOT, root)).rglob("*"):
+        if path.suffix not in SOURCE_EXTS or not path.is_file():
+            continue
+        if "scripts/tests" in path.as_posix():
+            continue  # 守卫自己的示例文件名（doc/a.md 之类）不是真引用
+        scanned += 1
+        try:
+            body = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for hit in DOC_REF.finditer(body):
+            target = hit.group(1)
+            if target in KNOWN_ROTTEN:
+                continue
+            if not os.path.exists(os.path.join(REPO_ROOT, "doc", target)):
+                dangling.setdefault(target, set()).add(str(path.relative_to(REPO_ROOT)))
+check(scanned > 200, f"文档指路扫描真的读到了源码（实测 {scanned} 个文件）")
+check(not dangling,
+      f"代码注释里的 doc/ 指路都存在（落空：{ {k: sorted(v)[:2] for k, v in list(dangling.items())[:3]} }）")
 
 print()
 

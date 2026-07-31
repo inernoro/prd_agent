@@ -1450,7 +1450,7 @@ export class GitHubWebhookDispatcher {
         branchId, entryForMode.projectId, branchName, repoFullName, commitSha,
       );
       if (claimed) return claimed;
-      // 入口校验（debt.cds.removed-branch-pages #7，2026-07-09）：进 waiting 前确认
+      // 入口校验（doc/debt.cds.md「CDS 过期分支预览页」 #7，2026-07-09）：进 waiting 前确认
       // 仓库该 commit 下真的有 branch-image.yml。缺文件时 CI 完成事件永远不会来，
       // 与其让分支苦等 15 分钟看门狗超时，不如立即按看门狗同一失败语义归因。
       // API 失败/无凭据 = unknown → fail-open 照旧 waiting（看门狗仍兜底）。
