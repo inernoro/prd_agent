@@ -20,6 +20,7 @@ CI 通过 .github/workflows/ci.yml 的 `for t in scripts/tests/test_*.py` 自动
 import pathlib
 import re
 import sys
+import types
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -111,7 +112,11 @@ def check_file(label, rel, expected_kinds):
         return
     text = path.read_text(encoding="utf-8")
 
-    found = set(re.findall(r'data-emblem="([a-z]+)"', text))
+    # 捕获**整个属性值**，不能写成 `([a-z]+)`：那样 data-emblem="asteroid-2" 这类
+    # 合法但不在注册表里的值根本进不了 found，混装判定与 SVG 完整性检查都看不到它——
+    # 报告上多一枚完全不受检的水印而守卫全绿。上一轮把「先与 ALL_KINDS 求交」去掉了，
+    # 却没发现**发现环节本身**还在窄化：集合在源头就少了元素，后面判得再宽也没用。
+    found = set(re.findall(r'data-emblem="([^"]*)"', text))
 
     missing = expected_kinds - found
     if missing:
@@ -299,29 +304,30 @@ def check_flavor_wiring():
     源码扫描全绿，而生成出来的报告戴错徽。这正是
     predicate-and-wiring-discipline.md 形状 2：建到一半的接线，删掉不会红。
     """
-    import importlib.util
-
     rel = ".claude/skills/create-visual-test-to-kb/scripts/archive_report.py"
     path = ROOT / rel
     if not path.is_file():
         fail(f"验收生成器不存在：{rel}")
         return
-    spec = importlib.util.spec_from_file_location("archive_report_for_emblem_guard", path)
-    mod = importlib.util.module_from_spec(spec)
+    # **直接编译执行盘上的源码文本**，完全绕开字节码缓存。
+    #
+    # 为什么不能走 importlib 的 exec_module：.pyc 的有效性按 (源码 mtime 秒, 文件大小)
+    # 判定，而「把一处标记改成等长的另一种写法」恰好两项都不变，缓存被认定有效。
+    # 上一轮我以为置 sys.dont_write_bytecode 就够了——那只挡住**写**，挡不住**读**：
+    # 只要之前有进程留下过合法 .pyc，exec_module 照样会加载它，守卫验的就成了
+    # 上一次的旧代码而不是盘上这份。（我上一轮之所以以为修好了，是因为验证前先清了
+    # 缓存，根本没有旧 .pyc 可读——测试方向与缺陷方向重合，照不出洞。）
+    src = path.read_text(encoding="utf-8")
+    mod = types.ModuleType("archive_report_for_emblem_guard")
+    mod.__file__ = str(path)
     saved_argv, sys.argv = sys.argv, ["archive_report"]
-    # 禁止写 .pyc：Python 的字节码缓存按 (mtime 秒, 文件大小) 判新旧，
-    # 而「改一处等长的标记再改回来」恰好两项都不变——缓存被判定有效，
-    # 导入到的是上一次的旧字节码。红绿自测时这会让「已恢复」的基线仍报红、
-    # 或更糟：让一次本该变红的验证悄悄判绿。守卫必须读盘上的真实源码。
-    saved_dwb, sys.dont_write_bytecode = sys.dont_write_bytecode, True
     try:
-        spec.loader.exec_module(mod)
+        exec(compile(src, str(path), "exec"), mod.__dict__)
     except Exception as e:                      # 导入失败要显式红，不能静默跳过
-        fail(f"无法导入验收生成器做渲染验证：{type(e).__name__}: {e}")
+        fail(f"无法加载验收生成器做渲染验证：{type(e).__name__}: {e}")
         return
     finally:
         sys.argv = saved_argv
-        sys.dont_write_bytecode = saved_dwb
 
     label = "验收/巡检"
     md = "# 刊徽接线自测\n\n## 目标\n验证 flavor 与刊徽的映射。\n\n## 结论\n通过。\n"
