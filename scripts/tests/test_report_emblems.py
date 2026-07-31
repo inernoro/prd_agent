@@ -387,6 +387,34 @@ def check_emblem_inner_elements(label, rel, block, spans):
                          f"{prop}={v!r}——{why}")
 
 
+def _color_problems(text, value, seen):
+    """顺着 var() 链一路解析到底，返回问题描述列表（空 = 这个颜色可见）。
+
+    **必须递归**：只查一层的话，`--terra: var(--invisible)` 会因为中间值是个
+    `var(...)` 而被 `_is_visible_color` 判成「可见」，而浏览器继续往下解析到
+    `--invisible: transparent`，水印照样消失。链条上任意一环透明，整条就是透明——
+    判据只看第一环，等于又一次把「我没查到底」当成「没问题」。
+
+    `var(--x, 兜底)` 按 CSS 语义分流：`--x` 有定义就顺着定义走（兜底不生效），
+    没定义才轮到兜底。两者都没有就判红——无法确认的东西不许默认通过。
+    """
+    v = value.strip()
+    m = re.fullmatch(r"var\(\s*(--[\w-]+)\s*(?:,([^)]*))?\)", v)
+    if not m:
+        return [] if _is_visible_color(v) else [f"{v!r} 不可见"]
+    name, fallback = m.group(1), (m.group(2) or "").strip()
+    if name in seen:
+        return [f"{name} 自引用成环，无法解析出确定的颜色"]
+    decls = re.findall(r"%s\s*:\s*([^;}]+)" % re.escape(name), text)
+    if decls:
+        return [f"{name} -> {p}" for d in decls
+                for p in _color_problems(text, d, seen | {name})]
+    if fallback:
+        return [f"{name} 未定义，走兜底值：{p}"
+                for p in _color_problems(text, fallback, seen | {name})]
+    return [f"{name} 全文找不到定义，也没有兜底值"]
+
+
 def check_color_custom_properties(label, rel, text):
     """`color` 走 `var(--x)` 时，那个自定义属性本身必须解析出可见颜色。
 
@@ -400,27 +428,13 @@ def check_color_custom_properties(label, rel, text):
     **全部定义**都拿出来，逐一要求是可见颜色；一处定义成透明就判红。
     找不到定义也判红——无法确认的东西不许默认通过。
     """
-    names = set()
     for rules in (rules_targeting(text, "emblem"), rules_under(text, "emblem")):
         for r in rules:
             _, declared = cascade_value([r["body"]], "color")
             for v in declared:
-                names |= set(re.findall(r"var\(\s*(--[\w-]+)", v))
-                # `var(--x, 兜底色)` 的兜底值同样会真的生效
-                for fb in re.findall(r"var\(\s*--[\w-]+\s*,([^)]*)\)", v):
-                    if fb.strip() and not _is_visible_color(fb):
-                        fail(f"{label}({rel}): 刊徽 color 的 var() 兜底值 {fb.strip()!r} "
-                             f"不可见——自定义属性缺失时水印会整个消失")
-    for name in sorted(names):
-        decls = re.findall(r"%s\s*:\s*([^;}]+)" % re.escape(name), text)
-        if not decls:
-            fail(f"{label}({rel}): 刊徽 color 引用了 {name}，但全文找不到它的定义——"
-                 f"无法确认 currentColor 解析出的颜色可见")
-            continue
-        for d in decls:
-            if not _is_visible_color(d):
-                fail(f"{label}({rel}): {name} 被定义成 {d.strip()!r}——"
-                     f"刊徽全用 currentColor 上色，它一旦不可见，水印整个消失")
+                for why in _color_problems(text, v, frozenset()):
+                    fail(f"{label}({rel}): 刊徽 color 解析不出可见颜色——{why}。"
+                         f"刊徽全用 currentColor 上色，颜色一旦不可见，水印整个消失")
 
 
 def check_svg_integrity(label, rel, kind, text):
@@ -707,9 +721,31 @@ def reject_contract_shorthands(label, rel, rules, what):
 POSITIONED = ("relative", "absolute", "fixed", "sticky")
 
 
-def _is_low_opacity(v):
+def _opacity_value(v):
+    """把 opacity 解析成 0-1 的数；认不出返回 None。
+
+    CSS 允许两种写法：`0.13` 与 `13%`。判据只认小数的话，`opacity:0%` 这种
+    合法的全透明写法会从数值检查旁边溜过去（review 实测判绿）。
+    """
     v = v.strip()
-    return bool(re.fullmatch(r"[0-9.]+", v)) and 0 < float(v) <= 0.3
+    m = re.fullmatch(r"([0-9.]+)%", v)
+    if m:
+        return float(m.group(1)) / 100
+    return float(v) if re.fullmatch(r"[0-9.]+", v) else None
+
+
+def _is_low_opacity(v):
+    n = _opacity_value(v)
+    return n is not None and 0 < n <= 0.3
+
+
+def _is_nonzero_opacity(v):
+    """后代那一档只要求「别是 0」，但同样**拒收认不出的写法**。
+
+    认不出就放行等于把「我查不了」当成「没问题」（形状 8）——包裹元素那档的
+    `_is_low_opacity` 本来就拒收非数值，两档口径保持一致。
+    """
+    return _opacity_value(v) not in (None, 0)
 
 
 def _is_visible_color(v):
@@ -784,8 +820,9 @@ EMBLEM_DESCENDANT_CONTRACT = (
      "刊徽 SVG 被 display:none 隐藏，报头上一枚水印都不会出现", False),
     ("visibility", lambda v: v.strip().lower() not in ("hidden", "collapse"),
      "刊徽 SVG visibility:hidden/collapse 后不可见", False),
-    ("opacity", lambda v: not (re.fullmatch(r"[0-9.]+", v.strip()) and float(v) == 0),
-     "刊徽 SVG opacity:0 等于没有水印（包裹元素那档已另有 (0,0.3] 的约束）", False),
+    ("opacity", _is_nonzero_opacity,
+     "刊徽 SVG opacity 为 0（或写成认不出的形式）等于没有水印；"
+     "包裹元素那档已另有 (0,0.3] 的约束，这一档只要求别归零", False),
     ("color", _is_visible_color,
      "刊徽 SVG 全用 currentColor 上色，在它自己这层把 color 改透明同样会让水印消失", False),
 )

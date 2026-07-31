@@ -164,6 +164,19 @@ CASES = [
      lambda t: t.replace('<svg viewBox="0 0 120 120" fill="none" data-emblem="moon"',
                          '<svg opacity="0" viewBox="0 0 120 120" fill="none"'
                          ' data-emblem="moon"', 1)),
+    ("R25-变量链透明", "--terra 指向 --invisible，链条末端才透明", DAILY,
+     lambda t: sub_after(t, "  .emblem svg { display: block; width: 100%; height: 100%; }",
+                         "\n  .emblem { --terra: var(--invisible); }"
+                         "\n  :root { --invisible: transparent; }")),
+    ("R25-变量成环", "--terra 自引用成环，解析不出确定颜色", DAILY,
+     lambda t: sub_after(t, "  .emblem svg { display: block; width: 100%; height: 100%; }",
+                         "\n  .emblem { --terra: var(--terra); }")),
+    ("R25-透明度不可解析", ".emblem svg{opacity:var(--o)} 无法确认是否为 0", DAILY,
+     lambda t: t.replace("  .emblem svg { display: block;",
+                         "  .emblem svg { opacity: var(--o); display: block;", 1)),
+    ("R25-百分比零透明", ".emblem svg{opacity:0%}（合法写法，数值正则认不出）", DAILY,
+     lambda t: t.replace("  .emblem svg { display: block;",
+                         "  .emblem svg { opacity: 0%; display: block;", 1)),
     ("R24-变量透明", "把 --terra 定义成 transparent，currentColor 解析成透明", DAILY,
      lambda t: sub_after(t, "  .emblem svg { display: block; width: 100%; height: 100%; }",
                          "\n  .emblem { --terra: transparent; }")),
@@ -197,6 +210,29 @@ CASES = [
      lambda t: t.replace("              - '.claude/rules/report-design-system.md'\n", "", 1)),
     ("R20-守卫自己未接线", "守卫脚本自己的 glob 从 CI path filter 摘掉", CI,
      lambda t: t.replace("              - 'scripts/tests/test_*.py'\n", "", 1)),
+]
+
+
+# 「合法写法必须判绿」用例：与上面相反的方向。
+#
+# 为什么单列一类：守卫误伤合法写法同样是缺陷，只是更隐蔽——没人会去测「正确的代码
+# 会不会被判红」，于是它只会在某个人正当改动被拦住时才暴露，而那时他多半会以为
+# 是自己写错了。此前每轮我都在终端里手工确认「不误伤」，那些确认和红绿一样，
+# 只存在于我那次会话里。
+#
+# 直接动因：`opacity` 支持百分比这条改动，用红用例根本测不到——`opacity:0%`
+# 在支持百分比之前会因为「认不出的写法」被拒收，照样判红，两种实现都红。
+# 它真正的作用是让合法的 `opacity:13%` **不被误判**，那只能用绿用例表达。
+GREEN_CASES = [
+    ("G1-百分比透明度", "opacity 写成百分比是合法 CSS，不该被误判", DAILY,
+     lambda t: t.replace("color: var(--terra); opacity: 0.13;",
+                         "color: var(--terra); opacity: 13%;", 1)),
+    ("G2-多token类名", 'class="emblem extra" 仍是 .emblem，不该失配', DAILY,
+     lambda t: t.replace('<div class="emblem">', '<div class="emblem extra">', 1)),
+    ("G3-变量链可见", "--terra 指向另一个变量、末端是可见色，应放行", DAILY,
+     lambda t: sub_after(t, "  .emblem svg { display: block; width: 100%; height: 100%; }",
+                         "\n  .emblem { --terra: var(--ok); }"
+                         "\n  :root { --ok: #c05b3c; }")),
 ]
 
 
@@ -263,13 +299,34 @@ def main():
             finally:
                 src.write_text(original, encoding="utf-8")
 
+        for cid, desc, rel, mutate in GREEN_CASES:
+            src = tmp / rel
+            original = src.read_text(encoding="utf-8")
+            mutated = mutate(original)
+            if mutated == original:
+                failures.append(f"{cid} {desc}：变换没有改动文件（锚点已失效？）")
+                print(f"  [FAIL] {cid:22} 变换没有改动文件——锚点失效，用例是空跑的")
+                continue
+            src.write_text(mutated, encoding="utf-8")
+            try:
+                code, out = run_guard(tmp)
+                if code != 0:
+                    failures.append(f"{cid} {desc}：守卫判红（误伤合法写法）")
+                    print(f"  [FAIL] {cid:22} {desc} —— 守卫误伤，合法写法被判红")
+                    print("\n".join("         " + l for l in out.splitlines()
+                                    if "[FAIL]" in l)[:400])
+                else:
+                    print(f"  [ ok ] {cid:22} {desc}")
+            finally:
+                src.write_text(original, encoding="utf-8")
+
     print("-" * 62)
     if failures:
-        print(f"自测未通过：{len(failures)} 条退化守卫抓不到")
+        print(f"自测未通过：{len(failures)} 条")
         for f in failures:
             print(f"  - {f}")
         return 1
-    print(f"自测通过（{len(CASES)} 种退化全部被守卫判红）")
+    print(f"自测通过（{len(CASES)} 种退化判红 / {len(GREEN_CASES)} 种合法写法判绿）")
     return 0
 
 
