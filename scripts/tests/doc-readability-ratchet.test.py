@@ -182,6 +182,26 @@ check(not checker.find_bare_refs("# t\n\n详见 rule.does-not-exist.md。\n", KN
       "指向不存在文档的名字不算裸引用（命名规则里的反面示范不被误伤）")
 check(len(checker.find_bare_refs("# t\n\n请阅读 doc/rule.doc.naming.md。\n", KNOWN_ONE)) == 1,
       "带 doc/ 路径前缀的裸名同样算（负向前瞻别把它挡在外面）")
+_, agents_skill = checker.scan_body("# t\n\n见 `.agents/skills/x/scripts/run.py` 这个脚本。\n")
+check(agents_skill == 1, f"Codex 技能根下的实现路径也计入散落（实测 {agents_skill} 处）")
+check(checker.nested_docs() == [], f"doc/ 当前是扁平的（子目录里的 .md：{checker.nested_docs()[:3]}）")
+nested_probe = os.path.join(REPO_ROOT, "doc", "samples", "notes.md")
+try:
+    os.makedirs(os.path.dirname(nested_probe), exist_ok=True)
+    with open(nested_probe, "w", encoding="utf-8") as fh:
+        fh.write("# 探针\n\n正文。\n")
+    check(any("samples/notes.md" in x for x in checker.nested_docs()),
+          "子目录里的文档会被发现（非递归列目录时它连查都不会被查）")
+    nested_run = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "scripts", "doc-readability-check.py"), "--ratchet"],
+        cwd=REPO_ROOT, capture_output=True, text=True)
+    check(nested_run.returncode != 0 and "必须保持扁平" in nested_run.stderr,
+          "doc/ 出现子目录文档时闸门判失败")
+finally:
+    if os.path.exists(nested_probe):
+        os.remove(nested_probe)
+    if os.path.isdir(os.path.dirname(nested_probe)) and not os.listdir(os.path.dirname(nested_probe)):
+        os.rmdir(os.path.dirname(nested_probe))
 check(not checker.find_bare_refs(
         "# t\n\n见 [doc/rule.doc.naming.md](./rule.doc.naming.md)。\n", KNOWN_ONE),
       "链接文字里带 doc/ 前缀时不误报")
@@ -641,6 +661,10 @@ with open(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), encoding="u
 check("--baseline-ref" in ci_src, "CI 真的带上了 --baseline-ref（否则这段等于没接线）")
 check("github.event.before" in ci_src,
       "push 到 main 时基线比的是推送前那个 commit（base_ref 为空时不能比到自己头上）")
+check("github.event.repository.default_branch" in ci_src,
+      "手动 dispatch / 新分支首推有单独的 base 选择（否则会拿空 SHA 去 update-ref）")
+check("0000000000000000000000000000000000000000" in ci_src,
+      "新分支首推的全零 SHA 被排除（那不是一个可比对的 commit）")
 check("origin/base\" || true" not in ci_src and "refs/remotes/origin/base\" || true" not in ci_src,
       "取对照基线的 fetch 不吞错（吞了就会退回拿本分支基线跟自己比）")
 check(any(line.strip() == "- '**'" for line in ci_src.splitlines()),

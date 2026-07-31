@@ -259,7 +259,7 @@ IMPL_LANGS = {"cs", "csharp", "c#", "ts", "tsx", "typescript", "js", "jsx", "jav
 # 一样让读者去读实现。只认产品目录 = 判据比它该管的范围窄。
 SOURCE_PATH = re.compile(
     r"(?<![\w./-])(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw"
-    r"|scripts|\.claude/skills|\.claude/rules|\.Codex/rules|\.github/workflows)/[\w./-]+"
+    r"|scripts|\.claude/skills|\.claude/rules|\.agents/skills|\.Codex/rules|\.github/workflows)/[\w./-]+"
     r"\.(?:cs|csproj|ts|tsx|js|jsx|mjs|py|rs|css|scss|less|sh|yml|yaml|json|html|vue|sql|razor|cshtml)\b")
 SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")
 # 这些小节就是专门用来指路的，里面列路径不算欠账
@@ -707,6 +707,23 @@ def scan_skills() -> tuple[int, int, list[str]]:
 
 
 
+def nested_docs() -> list[str]:
+    """doc/ 子目录里的 .md —— 规则要求 doc/ 保持扁平。
+
+    非递归列目录时这类文件连「有没有导读」都不会被查：目录项是个文件夹，
+    直接跳过，两份目录的成员比对也看不见它。
+    """
+    found: list[str] = []
+    for root, _dirs, files in os.walk(DOC_DIR):
+        if os.path.abspath(root) == os.path.abspath(DOC_DIR):
+            continue
+        for name in sorted(files):
+            if name.endswith(".md"):
+                rel = os.path.relpath(os.path.join(root, name), REPO_ROOT)
+                found.append(rel.replace(os.sep, "/"))
+    return found
+
+
 def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
     stats: dict[str, dict[str, int]] = {t: {"total": 0, "missing": 0} for t in TYPES}
     bad_prefix: list[str] = []
@@ -948,6 +965,13 @@ def main() -> int:
             print(line)
 
     if args.ratchet:
+        nested = nested_docs()
+        if nested:
+            print("\n[FAIL] doc/ 必须保持扁平 —— 子目录里的文档不会被闸门检查，"
+                  "判据见 doc/rule.doc.naming.md", file=sys.stderr)
+            for line in nested:
+                print(f"  {line}", file=sys.stderr)
+            return 1
         if bad_prefix:
             print("\n[FAIL] 有文档用了七类之外的前缀 —— 命名判据见 doc/rule.doc.naming.md",
                   file=sys.stderr)
