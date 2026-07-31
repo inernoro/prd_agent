@@ -323,7 +323,7 @@ EXTRA_FLAG: ${EXTRA_FLAG:+on}    # :+ 有值则替换为固定串,否则空串
 
 实现位置:`_AUTOFIX_RULES`(rule → fixer 注册表)+ `_verify_autofix`。新增可自愈规则 = 写一个 `_autofix_<rule>(doc, issue)` fixer 并注册到 `_AUTOFIX_RULES`。需自动修的 issue 必须在生产端带结构化 `meta`(如 `{"var": ...}` / `{"service":..., "infra":...}`),fixer 不靠解析 message。
 
-> 限制:`--write` 用 PyYAML 重序列化整文件,注释会丢、缩进风格会变。务必先看 diff 再 write。详见 [doc/debt.cds.tutorial.md](./debt.cds.tutorial.md)。
+> 限制:`--write` 用 PyYAML 重序列化整文件,注释会丢、缩进风格会变。务必先看 diff 再 write。详见 [doc/debt.cds.md](./debt.cds.md)。
 
 ---
 

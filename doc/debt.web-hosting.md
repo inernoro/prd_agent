@@ -1,12 +1,16 @@
 # 网页托管 · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-06-03 | **状态**：开发中
+> **版本**：v1.0 | **日期**：2026-07-31 | **状态**：开发中
 
-**一句话**：网页托管的债务总表，含翻页方向兼容垫片与分组级权限的已知边界。
-**谁该读**：接手网页托管的工程师。
-**读完能做什么**：查清某条限制是否已知，并找到对应处置。
+**一句话**：网页托管三条线的欠账合成一册：托管本体、评论能力、访问统计取到内网地址。
+**谁该读**：接手网页托管的工程师；看访问统计的运营。
+**读完能做什么**：按线定位欠账，判断统计数据可信到什么程度。
 
 ---
+
+> 本台账由 3 份同模块台账合并而成，内容原样保留、只做归位；原文件已回收，引用已改指本文。
+
+## 主台账
 
 ## 总览
 
@@ -68,9 +72,6 @@
 | 1 | reveal.js 带纵向子页（vertical stacks）的 deck，垫片调 `Reveal.next()/prev()`（按阅读顺序前进），而非 reveal 原生的「进入纵向子页」 | 极少数依赖纵向栈结构的 reveal deck，上下键语义被改为「统一前进」。为保证「上下键一定能翻页」的刻意取舍 | 若有反馈，对 reveal 改用 `Reveal.down()/up()` 优先、`next()/prev()` 兜底 |
 | 2 | 既无任何可识别驱动（reveal/swiper/impress/带 next-prev 的自定义元素/scroll-snap 全不命中）、又忽略 `isTrusted=false` 合成事件的纯 JS deck，用户点「开启」后上下键兜底仍可能不生效 | 长尾 deck（v4 起为邀请式，需用户主动点开启）。此时不破坏原生键，只是开启后上下键无增益 | 评估直接 DOM 滚动或探测 deck 内部 index 字段 |
 | 5（v4 已缓解） | 误判普通网页为幻灯片（主要靠 `.slide≥2` 松散启发） | v4 起一律邀请式，不点「开启」就完全不绑定键盘，误判最多多显示一个可忽略的角落邀请条，**不再劫持任何键** | 可进一步给邀请条加「不是幻灯片?隐藏」 |
-| 3（已解决，PR #721 review） | ~~仅覆盖用户上传路径，未覆盖 API/工作流生成内容（CreateFromContentAsync）~~ | `CreateFromContentAsync` 现也注入当前版垫片 + 标版本号（Codex P2 反馈），API/工作流/工作空间发布的幻灯片创建即生效，无需等重启 backfill | — |
-| 4（已解决） | ~~垫片随上传注入一次，历史站点不含垫片需重传~~ | 已由 startup 存量回填解决（见上「零重传直接生效」），老 PPT 无需重传自动生效 | 遗留：回填首启 IO 偏重，无批量限流 |
-| 6（已修复，PR #721 review） | ~~回填对 `saved-share` 引用副本按 `savedId` 重建 SiteUrl→404 + 写回原站共享对象；下载瞬时失败仍升级版本号致永久跳过；saved-share 不刷新 `?v=` 致 library 访客读旧缓存~~ | saved-share 回填改为**检验地面真值**：下载共享对象、确认已含当前版 shim 才刷副本 `?v=`+标版本，确认不了就 defer 下次重试——对任意回填顺序 / 原站 deferred / 下载失败都正确，根除「副本提前标版本后再不刷新」整类竞态。普通站下载失败 `deferred` 保旧版本重试；URL 一律取入口真实 CosKey 不按 site.Id 推断；回填先原站后副本（让副本同 pass 即能确认） | Codex P1/P2 + Bugbot ×4 反馈，时序补丁三轮后换结构性解 |
 | 7 | iframe `sandbox` 原缺 `allow-fullscreen`，deck 自带全屏按钮（reveal「F」等）失效 | 已加 `allow-fullscreen`（Bugbot 反馈）。MAP 顶栏「全屏演示」是父页驱动不受影响，本项补的是 deck 内部全屏 | — |
 
 ### 测试状态
@@ -103,9 +104,7 @@
 
 ### 已修复（closed）
 
-| # | 边界 | 修复 |
-|---|------|------|
-| 11 | ~~`CopyToTeamAsync`（网页复制进团队）只校验团队级 owner/editor 角色和分组归属团队，缺失 `SetSiteGroup` 已有的受限分组写权限门控——团队有编辑权但受限分组无编辑权的用户可把网页复制进受限分组（越权写入）~~（已修复 2026-07-09，#802） | 补齐 `WebPageGroupAccess.IsRestricted -> ResolveGroupRole` 校验，与 `SetSiteGroup` 同款，无编辑权抛 `UnauthorizedAccessException` |
+> 本节条目已全部结清，明细见文末「已结清（供回溯）」。
 
 ### 测试状态
 
@@ -113,3 +112,106 @@
 - 后端：本地沙箱无 dotnet SDK（builds.dotnet.microsoft.com 不在网络白名单），已通过
   workflow_dispatch 触发本分支 GitHub CI（dotnet build + dotnet test 含新增
   WebPageGroupAccessTests 15 例）远端验证；CDS push 自动构建部署
+
+## Web Hosting 评论
+
+网页托管评论能力的已知边界、权限模型与验收状态。
+
+> 模块：网页托管评论 | 更新：2026-05-30
+
+### 背景
+
+为「网页托管允许被评论」落地的评论能力，记录本次交付的已知边界与后续可补项。
+
+### 已知边界（本次交付未做，刻意留尾）
+
+| 项 | 现状 | 后续可补 |
+|----|------|---------|
+| 评论回复/盖楼 | 仅平铺单层评论，无 `ParentCommentId` | 如需讨论串，仿 `ReportComment.ParentCommentId` 扩展 |
+| 评论编辑 | 仅支持发表 / 删除（软删 `IsDeleted`），不支持编辑 | 加 `PUT comments/{id}`，仿 ReportComment 编辑路径 |
+| 实时推送 | 发表后本地乐观插入，不走 SSE；他人评论需刷新 | 复用 `GET /api/branches/stream` 模式做评论流 |
+| 防刷 | 评论无独立速率限制（仅借分享 view 门禁） | 如遇滥用，加 per-user / per-site 滑动窗口（仿 `EnforceShareAccessAsync`） |
+| 通知 | owner 不会收到「有人评论了你的站点」通知 | 接 `admin_notifications` 或团队活动流 |
+| 合集分享评论 | 合集分享（多站点）评论只挂到 `sites[0]` 首个站点 | 如需逐站点评论，前端按 site 分区 + 后端按 siteId 查询 |
+| 索引 | `hosted_site_comments` 未建索引（遵守 no-auto-index 规则） | DBA 手动建 `(siteId, createdAt)` 复合索引，写入 [doc/guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md) |
+
+### 权限模型（已实现）
+
+- 读：站内路径走 `GetByIdAsync`（owner / 团队成员）；分享路径走分享可见性 + 密码门禁（owner-only / logged-in / public）。访客未登录也可读公开分享评论。
+- 写：恒需登录。站内路径需对站点有访问权；分享路径需过门禁 + 站点 `CommentsEnabled`。
+- 删：评论作者本人 或 站点 owner。
+- 开关：仅 owner / editor 可切换 `CommentsEnabled`（默认 true，存量站点反序列化为 true）。
+
+### 验收状态（2026-05-31 已通过）
+
+- 前端：`pnpm tsc --noEmit` 0 error、`pnpm lint` 改动文件 0 告警。
+- 后端：CDS 远端编译——期间修复 3 轮真实编译错误（接口未实现 CS0535×6、`AddCommentRequest` 与 PmAgent 重名 CS0101、前端评论入口未接线 TS6133），最终 deploy 流水线全绿、L1/L2/L3 探针 200。
+- API E2E（灰度直连，AI 密钥 impersonate）：列表/发表/再查/开关/关闭后发表 403/重开/删除 8 条用例全过；存量站点 `commentsEnabled` 反序列化为 true。
+- 视觉验收：Playwright 真人路径 10 张截图（站点卡评论管理弹窗发表/开关 + 分享页访客只读 + 登录可评）全部通过，已归档知识库并自查可打开。
+- 报告分享链：https://fervent-meitner-lcue8-claude-prd-agent.miduo.org/s/lib/ftDV5mobkfHt?entry=7f3cdff238d640448019536ba23f75a7
+- 早前「CDS building 30 分钟」判断有误：实为容器构建失败进入 error 态（CDS proxy 把 error 也包成 `status` JSON 返回 200，误导了轮询）；真正根因是编译错误，看 `branch logs --profile api-prd-agent` 才暴露。
+
+### 关联
+
+- 后端：`HostedSiteComment.cs`、`HostedSiteService.cs`（评论段）、`WebPagesController.cs`（评论端点）、`IHostedSiteService.cs`（DTO）
+- 前端：`components/web-hosting/CommentsSection.tsx`、`components/web-hosting/SitePreviewModal.tsx`、`pages/SharedSitePage.tsx`、`services/real/webPages.ts`
+
+## Web Hosting 客户端 IP
+
+分享访问统计取到的是内网地址，本文记刻意留尾的原因与彻底方案的前置条件。
+
+> 模块：网页托管 / 分享访问统计 | 更新：2026-06-01
+
+### 背景
+
+PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」时新增
+`HttpRequestExtensions.GetRealClientIp`。经多轮 review，方案在「防伪造」与「穿透多层代理拿真实
+访客 IP」之间存在本质冲突——二者不可兼得，除非提供部署侧「可信代理地址」配置。
+
+维护者 2026-06-01 最终决策：**只信不可伪造的代理覆盖值，不解析 X-Forwarded-For**。
+即 `X-Real-IP`（反代 `$remote_addr` 覆盖写）→ `RemoteIpAddress`（socket 对端）。
+
+### 已知边界（刻意留尾，维护者已知并接受）
+
+| 项 | 现状 | 影响 | 后续可补 |
+|----|------|------|---------|
+| 多层 public 拓扑下记到代理 IP | `public-nginx→gateway→branch-nginx→api`，内层 nginx 用 `$remote_addr` 覆盖 `X-Real-IP` = gateway 内网地址 | 生产环境分享/站点访问统计的 IP、独立 IP 计数会**坍缩到 gateway 代理 IP**，而非真实访客——即原始诉求「正式环境拿真实访客 IP」在此方案下未达成 | 见下「彻底方案」 |
+| 单层/直连拓扑正确 | CDS 预览（Cloudflare→branch-nginx 直连）下 `X-Real-IP` = Cloudflare 边缘公网 IP | 预览域名统计能看到边缘 IP（非内网），可用 | — |
+
+为何取此方案：彻底 spoof-safe 的 XFF 解析必须知道「可信代理地址」（hop 数 / CIDR），而该输入
+是部署侧拓扑配置，代码推断不出来；且该统计字段语义为「仅用于访问统计 / 审计展示，不作安全判定」。
+权衡后维护者选择「绝不接受可伪造值」优先于「穿透多层代理的精确性」。
+
+### 彻底方案（需要部署侧输入时再做，可同时满足防伪 + 真实访客 IP）
+
+1. `app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor, KnownNetworks = <内层反代 CIDR>, ForwardLimit = <可信跳数> })`；
+2. 由运维提供 public-nginx / gateway / branch-nginx 的确切内网 IP 段作为 `KnownNetworks`（注意不能放整段私网，否则 LAN 客户端会被当可信代理）；
+3. 改用框架填好的 `HttpContext.Connection.RemoteIpAddress`，删除本 helper 的 X-Real-IP 优先逻辑；
+4. 这是**全局中间件**，影响所有 `RemoteIpAddress` 消费方（限流、其它日志），需回归。
+
+### 关联
+
+- 实现：`prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs`（`GetRealClientIp`）
+- 消费：`WebPagesController.cs`（分享 view / 评论）、`WebPageAnalyticsController.cs`（record-view）、`HostedSiteService.cs`（`MaskIp` 脱敏展示）
+- 部署拓扑：`deploy/nginx/nginx.conf`、`deploy/nginx/public-nginx.example.conf`
+- 来源：PR #699 Codex/Bugbot 多轮 review + 维护者决策
+
+---
+
+## 已结清（供回溯）
+
+下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
+
+### 已知边界（open）
+
+| # | 边界 | 影响 | 后续可补 |
+|---|------|------|----------|
+| 3（已解决，PR #721 review） | ~~仅覆盖用户上传路径，未覆盖 API/工作流生成内容（CreateFromContentAsync）~~ | `CreateFromContentAsync` 现也注入当前版垫片 + 标版本号（Codex P2 反馈），API/工作流/工作空间发布的幻灯片创建即生效，无需等重启 backfill | — |
+| 4（已解决） | ~~垫片随上传注入一次，历史站点不含垫片需重传~~ | 已由 startup 存量回填解决（见上「零重传直接生效」），老 PPT 无需重传自动生效 | 遗留：回填首启 IO 偏重，无批量限流 |
+| 6（已修复，PR #721 review） | ~~回填对 `saved-share` 引用副本按 `savedId` 重建 SiteUrl→404 + 写回原站共享对象；下载瞬时失败仍升级版本号致永久跳过；saved-share 不刷新 `?v=` 致 library 访客读旧缓存~~ | saved-share 回填改为**检验地面真值**：下载共享对象、确认已含当前版 shim 才刷副本 `?v=`+标版本，确认不了就 defer 下次重试——对任意回填顺序 / 原站 deferred / 下载失败都正确，根除「副本提前标版本后再不刷新」整类竞态。普通站下载失败 `deferred` 保旧版本重试；URL 一律取入口真实 CosKey 不按 site.Id 推断；回填先原站后副本（让副本同 pass 即能确认） | Codex P1/P2 + Bugbot ×4 反馈，时序补丁三轮后换结构性解 |
+
+### 已修复（closed）
+
+| # | 边界 | 修复 |
+|---|------|------|
+| 11 | ~~`CopyToTeamAsync`（网页复制进团队）只校验团队级 owner/editor 角色和分组归属团队，缺失 `SetSiteGroup` 已有的受限分组写权限门控——团队有编辑权但受限分组无编辑权的用户可把网页复制进受限分组（越权写入）~~（已修复 2026-07-09，#802） | 补齐 `WebPageGroupAccess.IsRestricted -> ResolveGroupRole` 校验，与 `SetSiteGroup` 同款，无编辑权抛 `UnauthorizedAccessException` |

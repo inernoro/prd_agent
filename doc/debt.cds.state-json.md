@@ -81,7 +81,7 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 **分析纪律教训（务必记住）**：本 AI 在拿到宿主数据前，仅凭 CDS API 读到「磁盘 85%、内存可用 44GB」就判定「不是磁盘打满」——**那是人工清理完之后的读数**。事后测量不能用来否定事故当时的状态；没有宿主时间序列时，只能说「当前不紧张」，不能推断「当时没满」。
 
 **已排除的怀疑（实测取证，勿再重复排查）**：
-- **未释放的数据库克隆不是本次原因**：全量盘点 55 个分支，隔离快照仅剩 1 条（`prd-agent-main` 的 `prdagent_rs_guard_1` / `cds-rsdb-prdagent_rs_guard_1`，即 [doc/debt.cds.replica-set.md](./debt.cds.replica-set.md) #28 已登记的存量实例，其 `replicaSets` 已空——按「回切=隔离库转快照保留」设计留存）。该实例硬上限 `--memory 1536m`，磁盘占用量级与 159GB 的 containerd 不可比；孤儿容器扫描（dryRun + includeStopped）候选为 0。
+- **未释放的数据库克隆不是本次原因**：全量盘点 55 个分支，隔离快照仅剩 1 条（`prd-agent-main` 的 `prdagent_rs_guard_1` / `cds-rsdb-prdagent_rs_guard_1`，即 [doc/debt.cds.md](./debt.cds.md) #28 已登记的存量实例，其 `replicaSets` 已空——按「回切=隔离库转快照保留」设计留存）。该实例硬上限 `--memory 1536m`，磁盘占用量级与 159GB 的 containerd 不可比；孤儿容器扫描（dryRun + includeStopped）候选为 0。
 - 生产当时运行 `95d1c24`（复制集第 25 轮），已逐行排除该 commit 三处改动与本事故的因果（均有异常兜底且不在崩溃路径）。
 
 **磁盘构成（宿主实测，已用 285GB）**：
@@ -92,7 +92,7 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 | `/root/inernoro/prd_agent`（`.cds-worktrees` 45.5G + `.cds-cache` 7.4G + `.cds-repos` 2.2G） | 57GB | 20% |
 | `/var/lib/docker`（volumes 46.4G，其中 **319 个 dangling 卷**；containers 日志 3.5G） | 50GB | 18% |
 
-**取证缺口**：`InfraLifecycleWatcher` 的 die/oom 事件缓冲区是**内存态**，master 重启即清空——事后无法从 CDS 侧判定自用 mongo 死因（本次靠宿主 mongo 日志才定位到 FileStreamFailed）。取证器（[debt.cds.replica-set.md](./debt.cds.replica-set.md) #17）需要持久化才能支撑跨重启复盘。
+**取证缺口**：`InfraLifecycleWatcher` 的 die/oom 事件缓冲区是**内存态**，master 重启即清空——事后无法从 CDS 侧判定自用 mongo 死因（本次靠宿主 mongo 日志才定位到 FileStreamFailed）。取证器（[debt.cds.md](./debt.cds.md) #17）需要持久化才能支撑跨重启复盘。
 
 **暴露的结构性债务（按优先级，均对照 `cds/src/services/janitor.ts` 现状核对过）**：
 

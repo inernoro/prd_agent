@@ -95,7 +95,7 @@ export interface CdsEventEnvelope<T = unknown> {
  * 告警级事件白名单 —— 「哪些事件够格在没人盯屏时叫醒人」的唯一判定源。
  *
  * 为什么先立这张表、而不是等真接通道时再说:CDS 至今**没有**任何告警外发
- * (站内通知 / Webhook / 邮件),`doc/debt.cds.uptime-monitor.md` 债务 2-1 把
+ * (站内通知 / Webhook / 邮件),`doc/debt.cds.md「CDS 存活监控（uptime-monitor）」` 债务 2-1 把
  * 「无告警外发」登记为 open。发布失败同样无外发。这两件事必须共用一条通道,
  * 否则会长出「存活监控一套、发布一套」两条各判各的分发逻辑 —— 那正是本仓库
  * 反复栽跟头的形状。所以先把判定收敛到这里,将来的分发器只需

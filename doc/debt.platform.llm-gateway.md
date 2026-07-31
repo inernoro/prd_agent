@@ -20,13 +20,11 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
-| 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | paid | PR #1085、#1086 已落地 tenant/team/user/membership/RBAC、服务端租户解析、租户数据隔离、tenant-scoped key 和自助接入；请求自报 tenantId 不进入权威上下文 |
 | 2026-07-16-tenant-aggregate-hard-limit | medium | 2026-07-16 | 当前请求硬限制位于 appCaller 月预算、appCaller RPM 与 service key RPM；用量页能按 TenantId 汇总，但 `LlmGwTenant` 没有跨 appCaller 的月预算或速率字段，因此不存在单独的租户总硬上限 | 外部客户合同要求整个租户共享一个强制总预算或总速率，且不能只靠覆盖全部 appCaller 达成时 | paid | 已新增租户总月预算、单次原子预占和总 RPM；serving 以租户账本与分钟窗口跨 appCaller 原子执行，并与 appCaller 层同时返回限流头；控制台、并发/跨租户测试和权威教程同步更新。 |
 | 2026-07-14-tenant-provision-crash-consistency | high | 2026-07-14 | 租户和成员创建已对可捕获写异常执行补偿，并按 slug 或成员目标支持幂等重放；成员关键变更也会先写入包含 TenantId 的 pending 审计意图，再执行业务写入并完成审计。但 standalone Mongo 无多文档事务，进程在多次写入之间硬退出时仍可能留下半成品引用，或留下已完成业务但尚未收口的 pending 审计 | 开放匿名租户注册、控制台改为多副本，出现 provisioning 残留或 pending 审计告警前 | paid | 租户、成员和 owner 边界写入先登记带精确对象 ID、租约和 generation 的恢复操作；启动与 30 秒循环会 fencing 接管过期 pending/repairing 操作，回滚半成品或完成已提交的 owner 变更。Mongo 故障注入测试覆盖租户/成员硬退出和修复器二次退出接管 |
 | 2026-07-14-owner-mutation-lease-fencing | high | 2026-07-14 | 最后一个 owner 保护已使用租户级 30 秒租约和 membership version CAS 串行化常规并发；若一次 owner 变更停顿超过租约且另一实例接管，旧持有者仍可能在过期后继续提交不同 membership 的写入，租约 token 尚未形成跨文档 fencing | 控制台多副本运行、owner 变更可能超过 30 秒，或开放外部组织自主管理前 | paid | 移除可过期的进程锁；租户文档现在保存 active owner membership 权威集合和递增 fencing generation，移除 owner 使用单文档原子条件要求集合长度大于 1。并发移除测试证明两名 owner 只会成功移除一名；硬退出时 owner 权限按权威集合 fail-closed，并由恢复操作收口 membership |
 | 2026-07-15-cross-tenant-membership-invitation | high | 2026-07-15 | 为阻止用户名枚举和未经本人确认的跨租户挂载，成员自助页首版只允许创建租户专属新账号；同一既有用户加入第二个租户尚缺少一次性邀请、本人接受、过期和撤销流程 | 需要让已有 Gateway 用户加入另一个外部租户时 | open | 新增 tenant-scoped invitation，邀请明文只展示一次，落库只存 hash；接受者必须以自己的服务端会话确认，创建 membership 时再次校验 TenantId、角色、团队、过期时间和撤销状态；完成前教程不得宣称可直接添加已有其他租户账号 |
 | 2026-07-15-external-exchange-websocket | medium | 2026-07-15 | 外部租户自助 Exchange 的 HTTP 上游已使用固定 DNS 解析结果的安全出站连接；WebSocket 客户端尚不能固定已验证地址，直接放开会留下 DNS 重绑定进入内网的风险，因此首版明确拒绝外部 WebSocket Exchange | 外部租户需要接入 WebSocket ASR 或其他长连接上游时 | paid | 外部 Exchange 只开放 WSS；保存和执行均拒绝 userinfo、localhost、私网及保留地址，运行时重新解析并固定全部已验证公网 IP，以原始主机名校验证书且禁用代理和跳转。内部租户既有私网 WebSocket 路径保持不变，定向安全测试和每日教程漂移巡检防止边界回退 |
-| 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
 | 2026-07-12-cost-chart-truthfulness | high | 2026-07-12 | 金额依赖模型池价格快照；缺价格、币种或汇率时 `Estimated USD` 可能显示 0 或不可比较，时间图表也存在比例和渲染可读性问题 | 将控制台金额用于预算、账单或团队决策前 | paid | PR #1088 已区分 estimated/unknown、按币种汇总并展示价格覆盖率；unknown cost 不再显示为 0，CNY/USD 不再无汇率相加 |
 | 2026-06-24-protocol-on-platform | high | 2026-06-24 | 接口模式（adapter/transformer 选择）历史上绑在平台 `PlatformType`；当前文本模型解析链已支持 `池条目 Protocol > 模型 Protocol > 平台 PlatformType`，并按解析出的 Protocol 选 adapter；Gateway adapter 选择已识别 `anthropic/openai-compatible/claude-compatible/openrouter/gemini-compatible` 协议别名；生图 adapter 选择也已改为 Gateway `Protocol` 优先，`apiUrl/modelName` 只做后备；Agent runtime profile 从模型池物化时也已优先使用模型 `Protocol`；ASR chat-audio 分支已按解析 `Protocol` 优先判断，`PlatformType` 只做旧数据后备；raw 发送阶段已修复 `GatewayModelResolution -> ModelResolutionResult` 漏传 `Protocol`，避免 raw 重新按 `PlatformType` 选 adapter；Exchange transformer/WebSocket 专用分支按 `ExchangeTransformerType` 路由，剩余风险主要是生产证据与重放边界 | 任何"同平台多协议"或"某模型换格式"需求 | in-progress | 已补 `ModelResolverTests.PoolProtocolPriority_ShouldPreferPoolItemThenModelThenPlatform`、`GatewayAdapterProtocolAliasTests`、`ImageGenPlatformAdapterTests.GetAdapter_ByExplicitProtocol_OverridesModelAndUrlDetection`、`InfraAgentRuntimeProfileProtocolTests`、`AsrAudioRoutePolicyTests`、`LlmGatewayTests.SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter` 防退化；剩余解法=补齐生产 shadow/canary 证据并明确 Exchange async poll、二进制下载、WebSocket ASR 不跨 provider 重放的发布边界 |
 | 2026-07-09-gw-config-authority-not-migrated | high | 2026-07-09 | GW-owned appCaller、模型池、平台、模型、Exchange、key 和控制台治理能力已经落地，生产也已开启 active caller MAP fallback 退场门；但 `2026-07-10` 快照只有 `active=3`、`configured=15`、`disabled=1`，resolver 对 configured/discovered caller 仍可能读取 MAP 路由配置。执行经过 GW HTTP 不等于全部模型池权威已经迁移 | 宣称“GW 已成为全部 AI 请求的唯一配置权威”或准备让外部系统长期接入 GW 时 | paid | 生产 config-authority 为 ready，MAP fallback 0，configured/active caller 均由 GW-owned 池解析；静态和运行时守卫持续防漂移 |
@@ -36,7 +34,6 @@
 | 2026-07-11-appcaller-static-runtime-authority | high | 2026-07-11 | serving 会把首次请求写入 `llm_gateway.llmgw_app_callers`，但 `LlmGateway.TryValidateAppCaller` 曾要求命中 MAP `AppCallerRegistry` 静态常量 | 外部系统或新 MAP 功能只按目标协议携带 appCallerCode、未先修改 MAP 代码常量时 | paid | PR #1070 已把运行时准入改为 canonical 格式和 modelType 后缀；生产动态 caller、预算、并发、scoped key、failover 与清理验收全部通过 |
 | 2026-07-11-release-probe-transport-label | medium | 2026-07-11 | 当前提交 19 条日志中有 1 条发布探针记录标为 `inproc`，且 `SourceSystem/IngressProtocol` 为空；其余 18 条为 `http` | 操作者按 transport 过滤判断 MAP 是否回退时 | paid | PR #1076 已统一注入 `release-probe / gw-native / http / IsHealthProbe=true`；最终生产 commit 的 25 条发布门日志均为 `transport=http` |
 | 2026-07-11-appcaller-mixed-route-policy-drift | medium | 2026-07-11 | registry 仅保存单值 `LastObservedModelPolicy`；同一 appCaller 合法混用 auto 与 pinned 时，后一次请求会覆盖观测值并让 runtime gate 反复报告 route drift | 生产 preflight 使用 auto，但验收或实验请求使用 pinned 时 | paid | PR #1076 改为累计 observed policy/pool/parameter 集合，配置值命中集合即无漂移；最终视频 pinned 治理后 runtime gate `blocked=0` |
-| 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | paid | PR #1076、#1079、#1080 已完成 `--maintenance-from-commit`、基线审计和部署层证据交接；最终 commit 的 `http-full success` 台账已验证该路径 |
 | 2026-07-13-maintenance-rollout-ledger-runtime-gate | high | 2026-07-13 | `exec_dep.sh` 已能在审计过的 full-http 维护发布中跳过首次切换 runtime gate，但 `llmgw-rollout-ledger.py` 最终追加阶段仍要求 `runtimeGates.required+ok+ready`，导致容器、health、serving probe 与生产 preflight 全部通过后仍把维护发布记为失败 | full-http 后通过 `--maintenance-from-commit` 发布维护版本 | paid | PR #1103 修复部署执行层；PR #1109（`changelogs/2026-07-13_llmgw-maintenance-ledger-runtime-skip.md`）已让 `llmgw-rollout-ledger.py` 明确区分首次切换与维护发布，并在 `GatewayDataDomainGuardTests.cs` 新增维护发布严格放行、普通发布拒绝跳过 Gate 的回归测试；2026-07-13 生产使用 CDS 精确 SHA 只读验证 Run `rel_51f99e083b7d6b4d` 完成台账收口。后续 2026-07-14 `llmgw-maintenance-ledger-gate` 修复的"重复要求配置权威与运行门"为独立衍生问题，不影响本行结论 |
 | 2026-07-13-release-static-artifact-worktree-drift | high | 2026-07-13 | CDS 生产 release worktree 能绑定后端不可变镜像，但 `prd-admin` 静态包没有随目标 commit 形成同等级的可复用产物；首次 v2 发布因 release worktree 缺少 dist 中止，需要从当前生产 dist 复制后才能继续 | 从非最新 main 的精确提交发布同时包含控制台改动时 | open | 应让 CDS release artifact 同时携带 commit 级后端镜像、LLMGW web 和 `prd-admin` dist 及 SHA256 manifest；发布脚本必须验证三者 revision 一致，禁止依赖生产工作树或 latest 静态包 |
 | 2026-07-10-gw-log-index-retention | high | 2026-07-10 | `llm_gateway` 请求日志、shadow、审计集合基本只有 `_id` 索引，且日志保留请求/响应/thinking 等内容时没有分层保留期 | 日志增长、summary/预算查询或隐私审计时 | paid | PR #1078 已实现查询索引、敏感正文清理、分层 TTL、dry-run 与 lifecycle 状态；生产最近一次 lifecycle 为 `applied` 且全部索引 ready |
@@ -603,7 +600,6 @@
 
 | ID | 严重度 | 状态 | 事实与收口条件 |
 |---|---|---|---|
-| `2026-07-17-sirius-dns-certificate` | P1 | blocked | `sirius.ebcone.net` 的公共权威 DNS 为 NXDOMAIN。现有腾讯云 COS 凭据调用 DNSPod `DescribeRecordList` 返回 `OperationDenied.NoPermissionToOperateDomain`，不能创建记录；正式 `map.ebcone.net` 证书 SAN 只包含自身，也不能复用。域名管理员需创建指向 `43.136.77.61` 的 A 记录，随后为 `sirius.ebcone.net` 单独签证书，套用 `llmgw/deploy/public-domain.nginx.example.conf`，经 `nginx -t`、reload、根页/实际资源/双健康/四协议无 key 401 和登录后真实数据复验后才可关闭。不得把仓库模板或 HTTP Host 预检写成“HTTPS 已上线”。 |
 | `2026-07-17-cds-dataprotection-persistence` | P2 | open | CDS main 的 Console API 启动日志提示 `/root/.aspnet/DataProtection-Keys` 不持久且未配置 XML encryptor。当前 Gateway JWT 使用独立 `LlmGwJwt__Secret`，尚未发现会话故障；但若后续引入 ASP.NET DataProtection cookie、临时令牌或受保护载荷，容器替换会使旧数据失效。收口前应先盘点真实消费点，再决定挂载受限 volume 或显式禁用未使用能力，不能仅为消除 warning 保存明文 key。 |
 
 测试环境“真实数据”已经通过控制台正常链路形成，不能把密钥明文、生产租户快照或前端硬编码示例当作修复。若 CDS Mongo 被重建，恢复方式是使用独立测试租户从 Quickstart 创建 appCaller 和 tenant-scoped key，再对公开假上游发送请求；禁止复用生产 key，禁止批量调用付费模型。
@@ -614,6 +610,31 @@
 
 | ID | 修复 PR | 修复日期 | 备注 |
 |----|---------|---------|------|
+| 2026-07-06-multipart-http-rehydrate | 待 PR | 2026-07-06 | 已实现 MAP 侧 inline multipart 上传为 `MultipartFileRefs`、serving `/gw/v1/raw` 侧按 ref 下载并校验 size/hash 后 rehydrate 为 `MultipartFiles`；新增 `GatewayMultipartHttpTests` 覆盖上传过线、rehydrate、hash mismatch 拦截。生产 shadow 样本与 allowlist 灰度仍是发布 gate。 |
+
+---
+
+## 已结清（供回溯）
+
+下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
+
+### 债务列表
+
+| ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
+|----|--------|---------|------|---------|------|------|
+| 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | paid | PR #1085、#1086 已落地 tenant/team/user/membership/RBAC、服务端租户解析、租户数据隔离、tenant-scoped key 和自助接入；请求自报 tenantId 不进入权威上下文 |
+| 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
+| 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | paid | PR #1076、#1079、#1080 已完成 `--maintenance-from-commit`、基线审计和部署层证据交接；最终 commit 的 `http-full success` 台账已验证该路径 |
+
+### 独立品牌域名待办（2026-07-17）
+
+| ID | 严重度 | 状态 | 事实与收口条件 |
+|---|---|---|---|
+| `2026-07-17-sirius-dns-certificate` | P1 | blocked | `sirius.ebcone.net` 的公共权威 DNS 为 NXDOMAIN。现有腾讯云 COS 凭据调用 DNSPod `DescribeRecordList` 返回 `OperationDenied.NoPermissionToOperateDomain`，不能创建记录；正式 `map.ebcone.net` 证书 SAN 只包含自身，也不能复用。域名管理员需创建指向 `43.136.77.61` 的 A 记录，随后为 `sirius.ebcone.net` 单独签证书，套用 `llmgw/deploy/public-domain.nginx.example.conf`，经 `nginx -t`、reload、根页/实际资源/双健康/四协议无 key 401 和登录后真实数据复验后才可关闭。不得把仓库模板或 HTTP Host 预检写成“HTTPS 已上线”。 |
+
+### 已还的债务（归档）
+
+| ID | 修复 PR | 修复日期 | 备注 |
+|----|---------|---------|------|
 | 2026-07-12-external-developer-onboarding | PR #1086 | 2026-07-12 | 已落地 tenant-scoped key 自助管理、四协议 Quickstart、错误排查与 requestId 定位。 |
 | 2026-07-12-appcaller-prompt-policy | PR #1087 | 2026-07-12 | 已落地不可变版本、预览、冲突、禁用、回滚、审计、chat/vision 注入与日志正文脱敏。 |
-| 2026-07-06-multipart-http-rehydrate | 待 PR | 2026-07-06 | 已实现 MAP 侧 inline multipart 上传为 `MultipartFileRefs`、serving `/gw/v1/raw` 侧按 ref 下载并校验 size/hash 后 rehydrate 为 `MultipartFiles`；新增 `GatewayMultipartHttpTests` 覆盖上传过线、rehydrate、hash mismatch 拦截。生产 shadow 样本与 allowlist 灰度仍是发布 gate。 |

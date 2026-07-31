@@ -1,12 +1,16 @@
 # 知识库 · 债务台账
 
-> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：开发中
+> **版本**：v1.0 | **日期**：2026-07-31 | **状态**：开发中
 
-**一句话**：系统里并存两套「知识库」实现、且没有语义检索，本文记这两层债务与还债计划草稿。
-**谁该读**：接手知识库的工程师；关心文档能否被智能体用上的产品。
-**读完能做什么**：分清两套实现的差异，并挑出优先级最高的一项来还。
+**一句话**：知识库全家的欠账合成一册：两套实现并存、无语义检索、划词评论与改写、双链引用网络、跨库同步、版本管理、阅读器收口、两套关系可视化并存。
+**谁该读**：接手知识库任一子能力的工程师；关心文档能否被智能体用上的产品。
+**读完能做什么**：按子能力定位欠账，并挑出优先级最高的一项来还。
 
 ---
+
+> 本台账由 8 份同模块台账合并而成，内容原样保留、只做归位；原文件已回收，引用已改指本文。
+
+## 主台账
 
 | 字段 | 内容 |
 |---|---|
@@ -118,3 +122,405 @@
 1. 手机端文章页 Notion 化大标题头（返回/分享/更多三键 + 大标题块），当前沿用既有移动工具栏。
 2. 手机端详情页底部常驻「问 AI」输入条（复用 ReprocessChatDrawer 多轮对话后端）。
 3. 转录中细分阶段的时间预估（当前只有阶段名，无「预计还需 N 秒」，见 expectation-management 约束 1）。
+
+## 知识库划词评论
+
+知识库里选中一段文字就地评论这个能力的已知边界与待偿还项。
+
+### 总览
+
+模块范围：`prd-admin/src/components/doc-browser/`（DocBrowser + InlineCommentOverlay/Margin/Composer + inlineCommentShared）、
+`prd-admin/src/stores/docReaderPrefsStore.ts`、
+`prd-api/.../DocumentStoreController.cs`（recent-comments 接口）、
+`.claude/skills/create-visual-test-to-kb/scripts/read_comments.py`（回读闭环）。
+
+本次落地了「边读边看」批注栏 + 批注栏/内联布局切换 + 划词就地输入 + 批注头像/名字显示 +
+后端最近批注聚合接口 + 验收技能回读脚本。以下为主动声明的已知边界。
+
+### 已知边界（待后续偿还）
+
+| # | 边界 | 现状 | 后续方向 |
+|---|------|------|----------|
+| 1 | 图片批注 | 仅文字锚点 + 全文评论；右键图片/框选图片区域批注未实现 | 新增 image-anchor 数据模型（坐标框）+ 前端图片框选交互 |
+| 2 | inline 布局展开卡片定位 | 绝对定位在高亮末行下方，可能与下方正文视觉重叠（MVP） | 改为 in-flow 占位插入，或碰撞规避 |
+| 3 | margin 批注栏卡片排序 | 按 createdAt 排序，非按锚点在正文中的垂直位置对齐（无 Docs 式连线） | 计算每组锚点 top，按位置排序 + 可选连线 |
+| 4 | 批注栏  TOC | 有评论时默认批注栏取代 TOC，「收起」临时切回；未做并存 | 评估窄屏并存 / 可拖拽分栏 |
+| 5 | 回读闭环 | read_comments.py 为按需轮询（GET recent-comments） | 监听式 webhook/SSE 主动推送 |
+| 6 | 布局偏好存储 | localStorage（设备本地，符合 no-localstorage 例外清单） | 如需跨设备同步，迁移到 user_preferences |
+| 7 | 同一短语多处分别评论 | 完全相同的选中文字在文档不同位置被分别评论时，按归一化文本合并为一张卡（两处的评论混在一起），正文只高亮其中一处，回复用首处偏移。**产品决定保持现状**（2026-06-06 用户拍板，低频场景）。group key = 归一化文本 是 overlay 高亮解析/连线/激活态共享的身份，按出现位置拆分属较大重构 | 如需精确区分：group key 带 contextBefore/offset，overlay 改为逐出现位置解析锚点 |
+
+### 相关
+
+- 设计：本次为增量交付，无独立 design 文档；交互 mock 见会话记录
+- 接口：`GET /api/document-store/stores/{storeId}/recent-comments?since=&limit=`
+- 鉴权：AgentApiKey `document-store:read`（write 蕴含 read），与归档脚本同一把 MAP_DOC_STORE_KEY
+
+## 知识库划词 AI 局部编辑
+
+知识库划词后让 AI 局部改写这块的已知边界与未排期的第二波候选。
+
+### 总览
+
+模块范围：`prd-admin/src/components/doc-browser/`（SelectionAiPopover / SelectionImagePopover / selectionEdit.ts + DocBrowser 划词动作条）、
+`prd-api/.../DocumentStoreController.cs`（selection-rewrite SSE 端点 + actions 清单）、
+`prd-api/.../Services/SelectionRewriteActionRegistry.cs`（动作 SSOT）、
+`AppCallerRegistry.DocumentStoreAgent.Selection.Rewrite`。
+
+第一波落地：划词浮层从单一「添加评论」扩展为 评论 / AI 改写 / 配图 动作条；
+AI 改写支持润色/精简/扩写/书面化/纠错 + 自定义指令，SSE 流式生成 + diff 对比 + 替换原文（唯一定位校验）/ 插到原文后；
+配图内嵌视觉创作 mini 面板（appKey=visual-agent），按选区 + 文档上下文生成并插入选区段落之后。
+写回复用既有 `PUT entries/{id}/content`，服务端自动重锚定行内评论 + 重算双链账本。以下为主动声明的已知边界。
+
+### 已知边界（待后续偿还）
+
+| # | 边界 | 现状 | 后续方向 |
+|---|------|------|----------|
+| 1 | 多处出现的选区定位 | 已升级为 DOM 序号指认（2026-06-12 Bugbot High 修复）：从真实 DOM Range 数"选区前同文出现次数"指认第几处；仅当 DOM 总数与正文统计不一致（评论气泡等副本混入 DOM）时仍禁用替换 | 如需进一步收窄禁用面：DOM 计数时排除浮层/批注 DOM 子树 |
+| 2 | 无撤销 | 替换/插入直接走 PUT content 落库，无一键撤销（可通过再次编辑恢复） | 写回前在前端暂存上一版，提供 toast 内「撤销」按钮；或接入条目版本历史 |
+| 3 | 并发编辑 | 选区快照与写回之间若他人改了正文，靠"重定位失败即拒绝"兜底，无乐观锁 | PUT content 增加 baseUpdatedAt 预检（409 冲突提示） |
+| 4 | 配图定位失败兜底 | 选区无法在正文定位时图片追加到文末（toast 未单独提示落点） | 同 #1 提升定位成功率；失败时明确提示"已插入文末" |
+| 5 | 改写动作集 | 首批 5 个内置动作 + 自定义指令；翻译/表格化/Mermaid 图等靠自定义指令 | 按使用数据沉淀高频自定义指令为内置动作（注册表加一行即可） |
+| 6 | 仅文本类条目 | PDF/图片等非 `preview=text` 条目不露 AI 入口（改不了正文） | 暂无计划 |
+| 7 | 富文本编辑模式 | AI 动作条只在阅读态出现；编辑态（textarea/富文本）内划词无 AI 入口 | 编辑态接 textarea selectionStart/End（offset 精确，无需消歧），成本低收益高 |
+| 8 | 后端编译验证 | 开发环境无 dotnet SDK，C# 改动依赖 CDS push 后远端编译验证 | CDS 绿灯后此条自动关闭 |
+
+### 第二波候选（涌现池收敛，未排期）
+
+- 划词追问（解释这段 / 与全库知识对照）：只读也可用，输出进侧栏不改正文
+- 划词转双链：选中概念一键 `[[包裹]]` 并建联（联动 mentions 账本）
+- AI 改写建议以"行内评论"形式挂在选区上（复用 InlineComment 数据模型，作者审阅后采纳）
+- 全文体检：逐段跑纠错/一致性检查，按段落生成批量建议
+
+### 相关
+
+- 接口：`POST /api/document-store/entries/{entryId}/selection-rewrite`（SSE：start/thinking/text/done/error）、`GET /api/document-store/selection-rewrite/actions`
+- 单测：`prd-admin/src/components/doc-browser/__tests__/selectionEdit.test.ts`（定位/替换/插入/前缀拼接 14 例）
+- 关联台账：[doc/debt.knowledge-base.md](./debt.knowledge-base.md)（划词评论）、[doc/debt.knowledge-base.md](./debt.knowledge-base.md)（双链）
+
+## 知识库引用网络
+
+文档双链与关系图首版的边界、技术债、用户提过但没承诺的功能，以及要盯的风险。
+
+### v2 进度更新（2026-06-11 晚，commit `28610fc`）
+
+本轮落地 4 件套，§1.1 / §1.2 / §1.3 / §1.4 部分已**消除**：
+
+| § | 事项 | 状态 |
+|---|---|---|
+| 1.1 | 编辑器 `[[` 自动补全 | 是 `WikilinkAutocomplete.tsx` 已挂入 DocBrowser 编辑模式，调 `/api/mentions/stores/:id/suggest`，上下键 + Enter + Esc 全通 |
+| 1.2 | 编辑器 `@` 触发 | 是 同组件同时识别 `@`，中文 IME 友好 |
+| 1.3 | 悬停预览卡 | 是 `WikilinkHoverCard.tsx` + `MarkdownViewer` 派发 `wikilink:hover` 事件，蓝链浮 280px 预览（标题 + 摘要 + 「双链目标」徽章 + 「点击跳转 · 鼠标移开关闭」） |
+| 1.4（部分） | 「文档不存在」虚链 UX 兜底 | 是 MarkdownViewer 查 `wikilinkCache` 判断目标是否存在，不存在→橙色虚线下划线 + 悬停浮橙色提示卡 |
+| 1.4（完整） | AI 自动补链（保存时扫描"提到 X 但没标 [[]]"） | 否 转 v3，见 §1.4 |
+
+剩余条目按下述 §1 / §2 / §3 / §4 处理，编号保持不变以兼容历史引用。
+
+
+
+> **关联文档**：[design.knowledge-base.mention-network.md](./design.knowledge-base.mention-network.md)（本设计的主文档，本文是其遗留事项台账）
+
+### 一、MVP 已知边界（2026-06-11 上线时明确告知用户）
+
+#### 1. 编辑器 `[[` 自动补全 — 是 已消除（v2，2026-06-11，commit `28610fc`）
+落地组件：`prd-admin/src/components/doc-browser/WikilinkAutocomplete.tsx`。
+
+#### 2. 编辑器 `@` 触发 — 是 已消除（v2，2026-06-11，commit `28610fc`）
+同组件同时识别 `@`，中文 IME 友好。
+
+#### 3. wikilink 悬停预览卡 — 是 已消除（v2，2026-06-11，commit `28610fc`）
+落地：`MarkdownViewer` 派发 `wikilink:hover` / `wikilink:unhover`，`WikilinkHoverCard.tsx` 全局监听并查 `lib/wikilinkCache.ts` 渲染卡片。蓝链 = 存在卡，橙链 = 「文档不存在」卡。
+
+#### 4. AI 自动补链（推荐气泡）— 警告 仅完成 UX 兜底（虚链提示），AI 推荐部分仍未做
+v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫描"提到 X 但没标 `[[]]`"** 仍未做。完整实现：
+- 在 `AppCallerRegistry` 加 `document-store.suggest-wikilinks::chat`
+- 新增 `LinkSuggestService`（参考 `LlmGateway` 调用样例）
+- 在 `UpdateEntryContent` 异步触发（不阻塞保存）
+- 前端 `BacklinksPanel` 旁挂一个「待确认链接」组件
+- 用户「采纳」时回写正文 `[[xxx]]`，再次保存触发 `MentionService.ResyncDocumentMentionsAsync`
+
+#### 5. 跨库引用未支持
+`MentionService.ResyncDocumentMentionsAsync` 只在同库 `StoreId` 内按标题匹配。跨库引用需要扩展协议（如 `[[storeA::标题]]`）+ Resolver 路由。
+
+#### 6. 跨实体引用未支持（缺陷 / PR / 周报）
+`Mention` 模型已通用化（FromType / ToType 都是字符串），但解析器层 hard-code 了 `Document`。扩展路径：
+- 抽象 `IMentionResolver` 接口（GetTitle / GetSummary / GetUrl）
+- DI 注册各实体的 resolver
+- `MentionService.ResyncMentionsAsync` 接受实体类型参数
+
+#### 7. 别名（aka）未实现
+文档 model 没有 `Aliases: List<string>` 字段。MVP 只支持精确标题匹配。
+
+#### 8. 改名时不会更新已有 wiki 链接
+改了文档标题，其他文档正文里的 `[[旧标题]]` 不会自动改成 `[[新标题]]`。但**双链反向解析仍然走 ID（不走标题字面）**，所以"被引用"卡片不会丢，只是正文里的 anchor 文字停留在旧标题。改进：保存或改名时遍历 mentions 找到引用方，自动重写正文（需要权衡：是否要修改用户没保存的内容）。
+
+#### 9. 宇宙图无 AI 推荐"虚线"连接
+原型设计稿里有"AI 检测到这两篇可能也该连"的虚线，未在 MVP 实现。
+
+#### 10. 宇宙图节点 ≥ 500 性能未压测
+当前一次性返回全图数据 + 一次性力导向计算。10000 节点级别可能卡顿。需要：
+- 节点数 ≥ 阈值时切换 WebGL 渲染（PixiJS / Sigma.js）
+- 分层加载（按 category 折叠成"超级节点"）
+- 力导向用 web worker 异步算
+
+#### 11. 宇宙图无时间轴回放
+原型设计稿里有"看知识网怎么长出来"的功能，未实现。
+
+#### 12. 宇宙图无按团队分色
+现按 `category` 字段哈希取色。"按用户" / "按团队"维度需要后端在 graph 接口里额外返回 createdBy + ownerTeamId。
+
+#### 13. 宇宙图设置面板的滑块改不触发立即重绘
+当前 stateRef + onChange 改 ref，但渲染循环本身在跑，所以下一帧就生效。**已生效**，无 bug，但设置面板里的"已选值"label 没显示当前数值。改进：把 Display / Forces 滑块也走 useState 而非 ref。
+
+#### 14. UniverseGraphPage 没有 `[stay-on-page]` 防滥用
+宇宙图持续 60fps 跑物理引擎，CPU 占用偏高。用户切走 tab 时应自动 pause requestAnimationFrame。
+
+#### 15. MongoDB 索引未建
+`mentions` 集合的 `{scopeId}`, `{toType, toId}`, `{fromType, fromId}` 索引未建。当前数据量小，不影响；到 1 万 mentions 以上时需手动建（遵循 `no-auto-index` 规则，不能自动建）。
+
+#### 16. 标题撞名时取最早创建的
+同库内多篇同名文档时，`MentionService` 取 `GroupBy(Title).First()` 即"最早创建的"。可能链错。改进：取「最近更新的」可能更符合用户预期；或在 UI 层提示用户选择。
+
+### 二、技术债务
+
+#### T1. WikiLinkParser 不识别 markdown 代码块内的 `[[xxx]]`
+正则全文匹配，包括代码块和行内代码。用户写 markdown 代码示例时可能误伤。改进：用 remark AST 走 mdast → 只在 paragraph / list-item 等正文节点扫。
+
+#### T2. 上下文截取按字符不按 UTF-16 surrogate pair
+对 emoji 等 surrogate pair 字符在 60 字符截取边界可能切坏。改进：用 `Intl.Segmenter` 或 grapheme-splitter。
+
+#### T3. 反向链接面板没分页
+一篇热门文档可能被 100+ 篇引用，全部一次性渲染。改进：分页或「显示前 10 条 / 展开更多」。
+
+#### T4. MentionsController 没区分 read-only 共享访问
+当前权限走 `[AdminController]` + 内部 `CanReadAsync`。如果未来加分享链接公开访问（非登录用户），需要新增 public 端点（参考 `DocumentStoreController` 的 publicShare 系列）。
+
+#### T5. 双链/graph 接口读权限比文档列表更严（产品库/PM/识途库用户拿不到引用图）— 待专项修复
+**现象**（Codex #923 P2，2026-06-25）：`MentionsController.CanReadAsync` 只放行 `owner / IsPublic / SharedTeamIds`，而 `DocumentStoreController.CanReadStoreAsync` 还放行 **产品知识库（`ProductKnowledgeRef`）/ PM 项目库（`PmProjectId`）/ 识途库（`ShituCategoryRef`）** 成员与对应全局管理权限。结果：这些库的用户能 `ListEntries` 加载全部文档，却在并行的 `getStoreGraph(storeId)` 上恒拿 403 → 文档星系显示「引用未知 + 无连线」，尽管他们对该库有合法读权限。
+
+**影响面**：仅产品库/PM/识途库类型的非 owner/非团队成员；owner 与 public/团队共享库不受影响（如本仓库 prd_agent doc 库走 owner，正常）。前端已对 graph 403 做了显式降级（「引用关系加载失败 / 引用未知」chip，不再静默 0 引用），所以是「功能缺失」而非「静默错误」。
+
+**推荐修法（SSOT，不留漂移）**：把 `CanReadStoreAsync` 那套读权限判定（`IsTeamShared` / `IsPmProjectMemberAsync(write:false)` / `IsProductKnowledgeMemberAsync` / `IsShituKnowledgeReadableAsync` / `GetEffectivePermissionsAsync`）抽成共享 helper（如 `DocumentStoreAccess` 服务或扩展方法），`MentionsController` 与 `DocumentStoreController` 共用，避免在两个控制器重复 ~80 行安全逻辑。改后走 `/cds-deploy` 远端编译 + 用一个产品/PM 库账号验证 graph 不再 403。
+
+**为何暂缓**：属后端权限模型对齐（安全敏感），与本 PR 的星系前端 UI 是两个范畴；本地无 dotnet 需走 CDS 验证。2026-06-25 用户裁定「先记债务，之后专项处理」。
+
+### 三、用户提出但暂未承诺的功能
+
+- 拖文档进编辑器变成链接（`@` 的另一种触发方式）
+- 工具栏「插入文档引用」按钮
+- 选中文字 → 浮出「链到文档」（像微信选中弹「复制/翻译」）
+- 双击宇宙图节点直接弹出文档预览侧抽屉（不离开宇宙）
+
+### 四、风险监控
+
+- **滥用风险**：恶意用户可能在文档里写一大堆 `[[]]` 撑账本。当前 `MentionService` 用 HashSet 去重，单文档对单 to 只保留一条；但 1 篇文档可链到 1000 个不同 to 仍然成立。需限流：单文档 mentions 上限（如 200）+ 告警。
+- **隐私风险**：反向链接面板会暴露「谁引用了我」。如果跨用户/跨团队可见 mentions，可能泄露对方在编辑什么文档。MVP 通过 `CanReadAsync` 控制 store 级访问，OK；但跨库引用 v2 时需要重新审计权限路径。
+- **性能风险**：参考 §1 的 10、15 项。
+
+## 知识库跨库同步
+
+跨库同步首版只做新增与更新、不传播删除，也只搬文本不搬二进制附件，本文记这些有意的取舍。
+
+| 字段 | 内容 |
+|---|---|
+| 模块 | 知识库跨环境 / 本地库库 同步（`DocumentStoreSyncController` + `SyncManagerPanel`） |
+| 关联 | `prd-api/.../Controllers/Api/DocumentStoreSyncController.cs`、`prd-admin/src/pages/document-store/SyncManagerPanel.tsx`、集合 `document_store_sync_links`、`DocumentStore.SyncToken`、设计文档 [design.knowledge-base.store-sync.md](./design.knowledge-base.store-sync.md) |
+| 提出 | 用户需求：两个环境（或同环境两个库）之间互相同步知识库内容，令牌永久有效、支持单向/双向、手动触发 + 改动检测 |
+
+
+### 已知边界（首版有意不做，后续可补）
+
+1. **不传播删除**：同步只做「新增 / 更新」幂等 upsert，永不删除对端条目。一侧删了文档，另一侧仍保留（符合「不丢数据」，但两侧会渐渐不一致）。后续可加「软删除标记 + 同步删除」开关。
+2. **只同步文本正文**：Markdown / 文本条目同步正文；二进制附件（PDF / 图片 / 音视频）只在 bundle 里标 skipped，不搬文件体（与现有 export/import 一致）。需要搬附件得走附件存储跨环境复制。
+3. **双向冲突 = 本地优先（无字段级合并）**：`both` 方向用「上次同步的两侧签名快照」判定哪侧改了；两侧都改的真冲突，共享条目以本地为准覆盖对端（用户已确认「不自动合并冲突」）。无三方合并、无 diff 选择。
+4. **变更检测为库级粒度**：`待同步 / 同步完成` 基于整库签名（lineage|UpdatedAt|title 哈希）与上次同步快照对比，不是条目级。极端情况下「A 改一条、B 改另一条」会被判为两侧都改走冲突分支，而非各自合并。
+5. **令牌为 per-store 永久令牌**：存在 `DocumentStore.SyncToken`，无 TTL（用户明确要求不过期）。撤销靠「撤销令牌 / 撤销配对」手动操作。令牌泄露 = 对端可读写该库，需用户自行保管链接。
+6. **跨环境需网络互通**：remote 配对要求两个环境能互相 HTTP 访问（受 `ISafeOutboundUrlValidator` SSRF 约束，私网地址会被拒）。本地库库配对无此要求，走 DB 直读写。
+7. **同步为同步阻塞调用**：`run` 端点同步执行 build/apply（含跨环境 HTTP），大库可能较慢。未来可改 Run/Worker 异步 + 进度 SSE（呼应 CLAUDE.md §6）。
+8. **页面教程未补步**：文档空间新增「跨环境同步」页签，`document-store-page-guide` 暂未加对应 Tour 步骤（`.claude/rules/onboarding-tips.md`）。后续可补一步指向 `library-tabs` 锚点讲解同步入口。
+9. **PM 项目库 / 产品知识库在同步 UI 与发现里缺席**（Codex PR #730 评审，多次）：后端 `LoadWritableStoreAsync` 已允许 PM 项目成员、产品成员 write-sync 这类库（与 `DocumentStoreController.CanWriteStoreAsync` 对齐），运行/改方向/删除（`LoadManageableLinkAsync` 凭 id）也都放行。但有两处只按「owner + 团队共享」口径，**有意排除** `PmProjectId` / `ProductKnowledgeRef` 非空的库：
+   - 前端「启动链接 / 生成连接链接」选择器（拉 `mine` + 团队共享列表，列表端点本就排除隐藏库）；
+   - 后端 `ListAllLinks` 的共享本地配对发现（候选集 = owner + 团队共享 store id，见 round-12 收窄）。
+   结果：有权限的用户能凭 id 管理这些库的本地配对，但在「跨环境同步」页签既选不到、也看不到。完整补法需聚合「我可写的全部库（含隐藏的项目库/产品库）」——新增一个 `scope=writable-all` 后端端点（同时供选择器和 ListAllLinks 候选集复用），或前端额外拉项目/产品 KB 列表合并。属跨 Agent 聚合，留作后续；当前以 owner+团队共享为准（覆盖常规知识库主场景）。
+
+### 后续可做（按价值排序）
+
+- [ ] 删除传播（软删除标记 + 双向删除开关）
+- [ ] 附件二进制跨环境搬运
+- [ ] 同步异步化（Run/Worker + 进度 SSE），大库不阻塞
+- [ ] 条目级变更检测 + 两侧各改不同条目时自动各自合并（不再一律走冲突）
+- [ ] 冲突可视化：列出冲突条目让用户逐条选「用本地 / 用对端」
+- [ ] 页面教程补「跨环境同步」一步
+
+## 知识库版本管理
+
+知识库版本管理的已落地范围与边界，含从文学创作那次「版本回滚删掉图片」吸取的教训。
+
+> 模块：知识库（document-store）版本控制 / 图片插入 / 大小统计
+> 最近更新：2026-06-16
+
+### 背景
+
+2026-06-16 客户演示反馈三类问题，本轮处理：
+
+1. 插入图片/保存正文时整页刷新回到顶部，多图时定位丢失；github 订阅文档插入图片后图片"刷新一下消失"。
+2. 知识库修改后没有版本，希望存历史版本（参考"文学创作版本曾导致图片丢失"，要更谨慎、可用独立存储、加测试）。
+3. 希望看到知识库大小 / 图片大小。
+
+### 本轮已落地
+
+- **图片插入不刷新（根因修复）**：`DocBrowser` 的内容重拉 effect 以 `loadedContentKey=${entryId}:${updatedAt}` 为缓存键。
+  此前每次本地保存会把父级 `entries[].updatedAt` 改新 → `selectedEntryData` 变化 → effect 用新 key 触发
+  `loadEntryContent`（`setPreview(null)` 闪烁 + 滚动回顶 + 重新拉取，github 文档还可能拉回旧正文把图片盖没）。
+  修复：保存路径统一走 `commitLocalSave`，用服务端返回的 `updatedAt` 把 `loadedContentKey` 推进到同一版本，
+  effect 命中缓存键短路，不再重拉。`onSaveContent` 返回类型加 `{ updatedAt? }`。
+- **版本控制**：独立集合 `document_entry_versions` + `DocumentVersionService`。`UpdateEntryContent` 每次保存
+  先留改动前基线、再留新内容（hash 去重，留存上限 100）。新增端点：
+  `GET entries/{id}/versions`、`GET entries/{id}/versions/{vid}`、`POST entries/{id}/versions/{vid}/restore`。
+  恢复 = 把目标版本文本写回当前正文（恢复前先把当前内容快照保留），全程**只写文本、不删除任何图片资产**。
+- **大小统计**：`GET stores/{id}/size` 聚合正文/附件/图片/历史版本字节与数量；前端标题栏徽章展示。
+
+### 吸取「文学创作版本删图片」教训（已规避）
+
+文学创作旧坑根因：版本切换时按 `ArticleInsertionIndex != null` **批量删除 image_asset**，且只按 SHA256 引用计数，
+导致回看旧版本图片没了（见 [doc/report.2026-W12.md](./report.2026-W12.md) PR #303）。
+
+知识库版本**从机制上不会重演**：KB 正文里的图片是 markdown 外链 URL（COS / 外部），不是受版本管理的 image_asset。
+版本快照只存文本；恢复 = 写回文本，URL 始终有效，**不触发任何资产删除**。单测
+`DocumentVersionLogicTests.ImageMarkdown_PreservedInSnapshot_TextOnly_NoAssetTouched` 固化该不变量。
+
+### 已知边界 / 后续可补
+
+- **github / RSS 每日同步覆盖**：后台定时同步仍可能用远端（无图）正文覆盖本地手动编辑（属罕见、非即时路径）。
+  本轮不改同步语义；安全网是版本历史——被覆盖前的用户内容已快照，可在「历史版本」一键恢复。
+  后续可补：同步覆盖手动编辑前先 `SnapshotAsync(source=sync)`（`ApplyContentToEntryAsync` 已具备能力，
+  但 RSS/GitHub Worker 的写入路径尚未接入版本快照，是当前主要缺口），或给手动编辑过的订阅条目加"本地优先/冲突提示"。
+- **大小统计口径**：`totalBytes` = 正文字节 + 附件字节（图片含在附件里）。markdown 里**外链图片 URL** 的真实
+  字节无法不发请求得知，故未计入 `imageBytes`（`imageBytes` 仅统计 `Attachment.Type=Image` 的上传图片）。
+  ParsedPrd 内容寻址去重时，多 entry 共享同一 Document 会在按 entry 累加正文字节时少量重复/偏差，当前按
+  documentId 去重后求和，足够"判断大小量级"，非精确账单级。
+- **版本留存上限 100**：超出裁剪最旧。极重度编辑的文档更早的历史会丢；如需永久留存可调大或冷归档。
+- **版本 diff**：弹窗目前是「整篇正文预览 + 恢复」，未做逐行 diff 高亮，后续可补。
+- **大小徽章刷新**：`refreshKey` 绑 `entries.length`，增删条目即时刷新；同一条文档内容增大不一定即时刷新，
+  重进库或增删条目后准确。
+- **索引**：`document_entry_versions` 未建索引（项目规则禁止应用自动建索引）。按 `EntryId`/`StoreId` 查询量大时，
+  需 DBA 手动建 `{EntryId:1, VersionNumber:-1}` 与 `{StoreId:1}` 索引（见 [doc/guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md)）。
+
+## 知识库文档阅读器
+
+多个阅读型页面本可统一成一个文档阅读器，本文记为什么这次没融合与重新评估的条件。
+
+| 字段 | 内容 |
+|---|---|
+| 模块 | 殿堂阅读器（公开知识库浏览） |
+| 状态 | open · 已评估不合 |
+| 关联 | `prd-admin/src/pages/library/LibraryDocReader.tsx`（720 行）、`prd-admin/src/pages/library/LibraryStoreDetailPage.tsx`（140 行）、`prd-admin/src/components/doc-browser/DocBrowser.tsx` |
+| 创建 | 2026-05-28 |
+
+
+### 背景
+
+2026-05-28 在做"统一文档阅读器"收口时，把 `DocumentStorePage`、`LibraryShareViewPage`、`WeeklyReportsTab` 三处都收敛到了 `DocBrowser` 共享组件（删了 1425 行重复实现）。**殿堂阅读器 `LibraryDocReader.tsx` 是有意保留没动**，本文件记录留债原因与未来融合条件，避免下次 session 又重新评估一次。
+
+---
+
+### 为什么这次没融合
+
+`LibraryDocReader` 是公开知识库（殿堂）的专用阅读器，**视觉刻意做了差异化**：
+
+- 米黄底色 `#FFFBF0`（vs DocBrowser 的深色玻璃）
+- 圆体字 `'Nunito', 'Fredoka', sans-serif`
+- 厚边框白卡片 + 暖色调（vs DocBrowser 的玻璃灰）
+- 图标走 `#F59E0B` 琥珀色（vs DocBrowser 的蓝/灰）
+
+这是**殿堂品牌的视觉差异化**——让用户进到「对所有人公开」的殿堂时，立刻感知到"这是公共陈列馆"而不是"工作台"。强制套 DocBrowser 的深色玻璃风会破坏这种区分。
+
+数据契约是**完全可融合的**（左侧 `DocumentEntry[]`，右侧 markdown content，跟 DocBrowser 完全同构），仅卡在视觉皮肤。
+
+---
+
+### 已知工程债务
+
+| ID | 说明 | 优先级 | 触发条件 | 状态 |
+|---|---|---|---|---|
+| LDR-1 | **DocBrowser 缺皮肤系统**：当前 `appearance` prop 只有 `inset` / `cards` 两种，都是深色玻璃基线。融合 LibraryDocReader 需要新增 `appearance: 'warm-public'`（或更通用的 theme/skin 体系），把"米黄底 + 暖色调 + 圆体字"封装为 token 集合。改造面：DocBrowser 内所有硬编码颜色（`border-token-subtle`、`bg-token-nested` 等）需走 token 转写，否则切皮就漏。预估 ~1 天。 | P3 | 殿堂被业务要求改造（如加新功能、改交互），或团队决定彻底统一视觉收口 | open |
+| LDR-2 | **LibraryStoreDetailPage 是 LibraryDocReader 的直接调用方**：140 行薄壳，融合 LDR-1 后会跟着改 70 行左右（移除自己的数据 fetch + format 转换，直接传给 DocBrowser）。LDR-1 没动它就别动。 | P3 | LDR-1 落地后 | blocked-on-LDR-1 |
+| LDR-3 | **后续 DocBrowser 优化拿不到殿堂**：现在私人知识库 / 分享 / 周报三处共享 DocBrowser，任一优化三处同步获益；**殿堂第四处不在内**。如：分享页加了 `?entry=` URL 高亮，殿堂没有；周报加了双卡片布局，殿堂没有。每次 DocBrowser 升级都要同步评估殿堂要不要也加。 | P2（持续累积） | DocBrowser 加大改动时 | open |
+| LDR-4 | **殿堂的"克莱风"无 design 文档背书**：当前视觉差异化是隐式约定，没写在任何 design.* 里。如果有新设计师加入团队，可能误把殿堂统一回深色。建议补 `doc/design.library-visual-language.md` 写清"为什么殿堂用暖色 = 公共陈列馆隐喻"。 | P3 | 视觉迭代或新设计师 onboarding | open |
+
+---
+
+### 重新评估的条件
+
+下面任一条件满足时，才值得重新评估"要不要融合"：
+
+1. 殿堂被要求加 DocBrowser 已有但 LibraryDocReader 没有的能力（如全文搜索、文件夹树、字幕生成等）
+2. DocBrowser 完成皮肤系统改造（独立项目），融合成本降到 ~半天
+3. 用户反馈"殿堂阅读体验和我自己的知识库不一致让我困惑"
+4. 团队决定彻底放弃"殿堂 vs 工作台"视觉区分，统一品牌
+
+**当前不满足任一条件 → 维持现状，不动**。
+
+---
+
+### 反面参考
+
+否 "顺手把殿堂也融合了" — 720 行视觉细节，半天改不完；改完会破坏品牌差异化，要回滚成本更高
+否 "给 DocBrowser 加 theme prop 同时改三处" — 改造面太大，不该跟"周报融合"打包做
+
+正确路径见 `frontend-architecture.md` 复用原则 + `no-rootless-tree.md` 借用法则。
+
+## 知识库知识星球与宇宙图并存
+
+知识库里并存两套关系可视化（星系与宇宙图），本文记本轮处置、待办与为什么先记债不合并。
+
+> **关联**：`prd-admin/src/pages/document-store/DocumentGalaxyView.tsx`（星系）、
+> `prd-admin/src/pages/document-store/UniverseGraphPage.tsx`（宇宙图）、
+> `prd-admin/src/pages/document-store/DocumentStorePage.tsx`（库详情入口）。
+
+### 一、背景
+
+知识库目前有两套「图谱」视图，心智完全不同：
+
+| 视图 | 是什么 | 数据 |
+|------|--------|------|
+| 知识星球 / 3D 星系 | 按 `{type}.{appname}[.{sub}]` 命名层级把文档摆成 3D 星系（根→分类→应用→子模块→文档星） | 纯文档树 + 命名分类，无需引用关系 |
+| 宇宙图 / obsidian 群星 | obsidian 风力导向图，靠 `mentions`（双链/反向链接）连边 | 依赖 `mentions` 账本，部分库该接口 403 时是错误页 |
+
+用户 2026-06-26 反馈两点问题：
+
+1. **返回关系混乱**：从星系「返回」会落到宇宙图（obsidian 群星列表），但用户认为这两个不是一回事，不该互为返回目的地。
+2. **二选一困惑**：用户分不清某个库该看星系还是宇宙图，期望系统能「智能判别该展示哪一个」。
+
+### 二、本轮处置（2026-06-26，临时收口）
+
+- 星系「返回」一律回到**该知识库详情**，不再回宇宙图（`GalaxyStandalonePage.back()` 去掉按来源分流）。
+- 库详情「更多」菜单**收起「关系图谱/宇宙图」入口**，只保留「知识星球（3D 星系）」直达；宇宙图路由 `/document-store/:storeId/universe` 仍在，深链可达（旧链接不破）。
+- 即「默认先只展示星系」。
+
+### 三、待办（转后续）
+
+#### 1. 智能判别该库展示星系还是宇宙图 — 待做
+判据候选：
+- 该库 `mentions` 边数 / 双链密度高（值得力导向图）→ 提供宇宙图；否则只给星系。
+- 该库文档命名规范度（多少比例文档能解析出 `{type}.{appname}` 分类）→ 高则星系层级清晰，优先星系。
+- 该库 `mentions` 接口是否 403 / 是否启用引用网络 → 否则宇宙图必然是空图/错误页，不该展示。
+落点：库详情据此**只暴露合适的那一个入口**，或在一个入口里给「切换视图」子菜单，而非两个并列入口让用户猜。
+
+#### 2. 宇宙图顶栏残留文案 — 待做（被本轮隐藏入口绕过，未根治）
+用户截图指出宇宙图返回后左上角「怎么有字」（返回 + 库名 + 竖线分隔的视觉冗余）。本轮通过隐藏入口规避；将来若重新启用宇宙图，需清理其顶栏（与星系顶栏统一风格）。
+
+### 四、为什么记债而不是现在就做
+
+「智能判别」需要先有 `mentions` 密度 / 命名规范度的统计口径，且要决定交互形态（自动二选一 vs 手动切换），属于产品决策 + 数据指标双前置，超出本轮 UI 收口范围。先以「默认只展示星系」消除用户当下的困惑与错误返回，判别逻辑落地后再放开宇宙图。
+
+---
+
+## 已结清（供回溯）
+
+下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
+
+### 知识库跨库同步
+
+| 字段 | 内容 |
+|---|---|
+| 状态 | open（首版已交付，2026-06-04；以下为已知边界） |

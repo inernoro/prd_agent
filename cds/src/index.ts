@@ -3640,7 +3640,7 @@ function buildBranchAbandonedPageHtml(opts: {
 
 // buildTransitPageHtml（未构建分支的全屏过渡页）已于 2026-07-09 删除：全仓零调用点的
 // 死代码（已被 React PreviewPreparingPage / preview-canary 流程取代）。历史实现见 git
-// 记录；等待页 SSOT 见 src/loading-pages/index.ts（doc/debt.cds.nginx-loading-pages.md D2）。
+// 记录；等待页 SSOT 见 src/loading-pages/index.ts（doc/debt.cds.md「CDS Loading Pages」 D2）。
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.

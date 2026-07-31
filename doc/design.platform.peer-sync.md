@@ -240,7 +240,7 @@ bundle 里每个"作者/拥有者"字段带**用户名 + 邮箱**（不带 userI
 - 知识库现有同步：`DocumentStoreSyncController`（保留 token 路径）
 
 ## 10. 风险与债务
-- **二进制附件跨节点**：v1 只传正文 + 引用元数据，对端无对应附件时图片可能断链 → 列入 [debt.platform.peer-sync.md](./debt.platform.peer-sync.md)。
+- **二进制附件跨节点**：v1 只传正文 + 引用元数据，对端无对应附件时图片可能断链 → 列入 [debt.platform.md](./debt.platform.md)。
 - **影子用户**：v1 不创建，未对齐作者归到操作者 → 后续可加"按邮箱建影子账户"开关。
 - **解除配对的对端清理**：v1 仅本端删除，对端残留 PeerNode 需对端管理员手动删 → 后续加 revoke 通知。
 - **SSRF**：对端 baseUrl 必须过 `ISafeOutboundUrlValidator`（沿用知识库同步）。

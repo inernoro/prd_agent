@@ -4,7 +4,7 @@
 
 > **关联实现**：`cds/web/src/pages/ProjectListPage.tsx`（一键部署弹窗）、`cds/src/services/infra-catalog.ts`（基建注册表 SSOT）、`cds/src/routes/projects.ts`（detect-runtime / validate-runtime / infra 实例化 / customEnv）、`cds/web/src/components/deployment/RuntimeValidateButton.tsx`、`cds/web/src/components/BranchDetailDrawer.tsx`（应用已上线横幅）
 > **关联设计**：[design.cds.railway-onboarding-flow.md](./design.cds.railway-onboarding-flow.md)（一键部署向导基线）、[design.cds.onboarding.md](./design.cds.onboarding.md)、[design.cds.ai-compose.md](./design.cds.ai-compose.md)（AI 备选路径）、[spec.cds.compose-contract.md](./spec.cds.compose-contract.md)（compose 契约 SSOT）
-> **关联文档**：[debt.cds.visual-deploy.md](./debt.cds.visual-deploy.md)（已知边界与待补）、[guide.cds.one-click-deploy.md](./guide.cds.one-click-deploy.md)（使用教程）
+> **关联文档**：[debt.cds.md](./debt.cds.md)（已知边界与待补）、[guide.cds.one-click-deploy.md](./guide.cds.one-click-deploy.md)（使用教程）
 > **一句话**：一键可视化部署：从选仓库到识别服务、确认依赖、观察部署、打开预览，全程有画面可看。
 > **谁该读**：做部署体验的产品与前端。
 > **读完能做什么**：说清每一步给用户看什么、卡住时怎么提示。
@@ -123,4 +123,4 @@ flowchart TD
 
 ## 6. 风险与边界
 
-完整已知边界、待补项与 backlog 见 **[debt.cds.visual-deploy.md](./debt.cds.visual-deploy.md)**。要点：同类型多实例当前仅对数据库开放；initSql 自动随就绪执行仍为一键手动；AI 生成 compose 仅设计（[design.cds.ai-compose.md](./design.cds.ai-compose.md)）；实时部署阶段流/就绪计数/HTTPS 校验/一键回滚为低边际 backlog。
+完整已知边界、待补项与 backlog 见 **[debt.cds.md](./debt.cds.md)**。要点：同类型多实例当前仅对数据库开放；initSql 自动随就绪执行仍为一键手动；AI 生成 compose 仅设计（[design.cds.ai-compose.md](./design.cds.ai-compose.md)）；实时部署阶段流/就绪计数/HTTPS 校验/一键回滚为低边际 backlog。

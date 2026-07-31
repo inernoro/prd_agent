@@ -1048,7 +1048,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // 后台任务(worker,"无 HTTP 入口")就绪探测走 noHttp:跳过 HTTP "/" 探测,只 TCP 探活
       // 端口。否则 deploy 的 waitForReadiness 会按 HTTP 探测一直 ECONNRESET 直到超时,把活着的
       // worker 误判为部署失败(PR #711 review)。绑定健康/TCP 端口的 worker 即就绪;完全不监听
-      // 端口的纯 worker 仍需 startupSignal(见 debt.cds.visual-deploy.md)。
+      // 端口的纯 worker 仍需 startupSignal(见 debt.cds.md「CDS 绝对可视化一键部署 · 工程债务与待补台账」)。
       ...(service?.role === 'worker' ? { readinessProbe: { noHttp: true } } : {}),
       ...(defaultCacheMountsFor(resolved.image) ? { cacheMounts: defaultCacheMountsFor(resolved.image) } : {}),
     };

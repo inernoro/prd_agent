@@ -26,7 +26,7 @@ doc/{type}.{topic}.md
 | `rule.` | 规范约定 | 长期规则、约束与门禁 | [rule.platform.app-identity.md](./rule.platform.app-identity.md), [rule.frontend.streaming-text.md](./rule.frontend.streaming-text.md) |
 | `guide.` | 操作指南 | 指南、教程、运行手册 | [guide.platform.quickstart.md](./guide.platform.quickstart.md), [guide.platform.e2e-tests.md](./guide.platform.e2e-tests.md) |
 | `report.` | 周报 | 周报 | [report.2026-W09.md](./report.2026-W09.md) |
-| `debt.` | 技术债务台账 | 模块级未还工程债（已知边界、后续可补、TODO、留尾风险） | [debt.video-agent.md](./debt.video-agent.md), `debt.cds.md` |
+| `debt.` | 技术债务台账 | 模块级未还工程债（已知边界、后续可补、TODO、留尾风险） | [debt.video-agent.md](./debt.video-agent.md), [debt.cds.md](./debt.cds.md) |
 
 ---
 
@@ -181,12 +181,12 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 
 ## debt.* 专项约定
 
-技术债务台账遵循与其他类型**相同的「appname 优先 + 点分层级」格式**（见 §topic 命名）：`debt.{appname}[.{子模块}].md`。按债务的分散程度选层级：
+技术债务台账遵循与其他类型**相同的「appname 优先 + 点分层级」格式**（见 §topic 命名）：`debt.{appname}[.{子模块}].md`。层级选择有**默认值**，不是自由发挥：
 
-- **债务少的模块** → 一个 `debt.{appname}.md` 汇总（如 [debt.video-agent.md](./debt.video-agent.md)、[debt.workflow-agent.md](./debt.workflow-agent.md)、[debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)）。
-- **债务多、话题分散的大模块** → 按子模块拆成 `debt.{appname}.{子模块}.md`，避免单文件臃肿（如 [debt.cds.agent.md](./debt.cds.agent.md)、[debt.cds.selfupdate-prebuilt.md](./debt.cds.selfupdate-prebuilt.md)、[debt.knowledge-base.galaxy-vs-universe.md](./debt.knowledge-base.galaxy-vs-universe.md)、[debt.frontend.mobile-light-theme.md](./debt.frontend.mobile-light-theme.md)、[debt.platform.production-release.md](./debt.platform.production-release.md)）。
+- **默认：一个模块一册** `debt.{appname}.md`，同模块的债务全部往里追加（如 [debt.cds.md](./debt.cds.md)、[debt.platform.md](./debt.platform.md)、[debt.knowledge-base.md](./debt.knowledge-base.md)、[debt.frontend.md](./debt.frontend.md)）。
+- **例外：单独成册** `debt.{appname}.{子模块}.md`，只在该子模块**同时**满足两条时才拆——(a) 债务量大到夹在模块册里读不下去；(b) 被其他文档反复独立引用（如 [debt.cds.agent.md](./debt.cds.agent.md)、[debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)、[debt.platform.production-release.md](./debt.platform.production-release.md)）。
 
-> 现状（2026-07-15）：66 个 debt 文件中 51 个已是子模块级——**子模块拆分是既定实践**。本节据此更正 v3.1「一个模块一个文件」的过窄表述，与通用格式（`[.{子模块}]`）对齐；`debt.*` 不是特例，一样走 appname 优先点分层级。
+> 为什么给默认值（2026-07-31 收拢）：一债一文件曾把台账刷到 75 篇，`ls doc/` 里债务淹掉了设计文档，读者要开十几个文件才能看全一个模块欠了什么。本次按上面两条判据合并回 36 篇（11 册吸收 44 篇），并把「默认一册」写成规则——**新增债务先找同模块的册子追加，不要新开文件**。
 
 ### 适用场景
 

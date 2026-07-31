@@ -131,7 +131,7 @@ CDS 全局默认(_global 变量层)
 
 - **已落地**:仓库 `cds-compose.yml` 的 `x-cds-env` 已剥离全部密钥/占位符键(仅留
   `ASSETS_PROVIDER` / `TENCENT_COS_PREFIX` 结构默认),密钥统一走 CDS env scope →
-  消除 [debt.cds.compose-secrets.md](./debt.cds.compose-secrets.md) D1 的 import-reject 根因(占位覆盖真实密钥);
+  消除 [debt.cds.md](./debt.cds.md) D1 的 import-reject 根因(占位覆盖真实密钥);
 - **已落地**:`config-authority.classifyEnvSeed(key,value)` = seed 级判定(`repo-structural`
   vs `cds-env-scope`);`compose-drift.computeComposeDrift(repo, live)` 纯函数按权威分级
   产出漂移报告(密钥应剥离 / 结构漂移同步建议 / CDS 运行时独占不回写);
@@ -168,7 +168,7 @@ CDS 全局默认(_global 变量层)
 - [doc/design.cds.branch-local-extra-services.md](./design.cds.branch-local-extra-services.md) —— 分支临时服务的底层设计
 - [doc/design.cds.branch-network-isolation.md](./design.cds.branch-network-isolation.md) —— 分支专属网(cds-br-*)
 - [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md) —— compose 契约(波4 的改造对象)
-- [doc/debt.cds.compose-secrets.md](./debt.cds.compose-secrets.md) —— D1 债务(波4 偿还)
+- [doc/debt.cds.md](./debt.cds.md) —— D1 债务(波4 偿还)
 - [doc/guide.cds.multi-branch-db.md](./guide.cds.multi-branch-db.md) —— per-branch DB 用法
 - `.claude/rules/cross-project-isolation.md` —— 隔离穿透审计(派生拷贝的风险对照)
 

@@ -153,7 +153,7 @@ timeline
 - **`.claude/rules/content-fills-canvas.md` 新增**：内容填满画布三条硬约束（产物必须 flex-1 占满 / 高度从外壳传到产物 / 主从布局产物是主角）
 - **[doc/spec.defect-agent.automation-protocol.md](./spec.defect-agent.automation-protocol.md) 新增**：缺陷自动化协议契约 SSOT
 - **[doc/debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md) 新增**：跨分支隔离债务台账
-- **[doc/debt.cds.backend-deploy-freeze.md](./debt.cds.backend-deploy-freeze.md) 新增**：CDS 后端发布冻结期处理债务
+- **[doc/debt.cds.md](./debt.cds.md) 新增**：CDS 后端发布冻结期处理债务
 - **[doc/design.cds.build-time.md](./design.cds.build-time.md) 新增**：CDS 构建耗时设计文档（配合 ETA 上线）
 
 ### 10. 其他修补

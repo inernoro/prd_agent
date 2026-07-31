@@ -3,7 +3,7 @@
 > **版本**：v1.0 | **日期**：2026-06-04 | **状态**：已落地
 
 > **关联实现**：`prd-api/.../Controllers/Api/DocumentStoreSyncController.cs`、`prd-api/.../Models/DocumentStoreSyncLink.cs`、`prd-admin/.../pages/document-store/SyncManagerPanel.tsx`、`prd-admin/.../services/real/documentStoreSync.ts`
-> **关联设计**：[design.knowledge-base.store.md](./design.knowledge-base.store.md)（知识库主设计）、[design.acceptance.kb.md](./design.acceptance.kb.md) §5.C（前身：export/import + kb_sync.py CLI，本设计将其泛化为通用 UI 能力）、[debt.knowledge-base.store-sync.md](./debt.knowledge-base.store-sync.md)（已知边界与还款台账）
+> **关联设计**：[design.knowledge-base.store.md](./design.knowledge-base.store.md)（知识库主设计）、[design.acceptance.kb.md](./design.acceptance.kb.md) §5.C（前身：export/import + kb_sync.py CLI，本设计将其泛化为通用 UI 能力）、[debt.knowledge-base.md](./debt.knowledge-base.md)（已知边界与还款台账）
 > **一句话**：把"知识库内容只能困在单个环境里"升级为"任一知识库都能和另一处的库（跨环境，或本环境另一个库）建立永久配对、一键双向同步、改了显示待同步、同步完显示对勾"。
 > **谁该读**：做跨环境同步的工程师。
 > **读完能做什么**：说清同步的方向语义与归属对齐规则。
@@ -201,14 +201,14 @@ bundle 形态沿用 `design.acceptance.kb.md §5.C`：`{version, store{...}, ent
 
 - [design.knowledge-base.store.md](./design.knowledge-base.store.md) —— 知识库（文档空间）主设计，本特性是其子能力。
 - [design.acceptance.kb.md](./design.acceptance.kb.md) §5.C —— 前身 export/import 端点 + `kb_sync.py` CLI；本设计复用其 bundle 形态，并将"运维一次性搬运"泛化为"用户自助的持续配对同步"，且把幂等从 reportId 升级为血缘 ID。
-- [debt.knowledge-base.store-sync.md](./debt.knowledge-base.store-sync.md) —— 本特性的已知边界与还款台账（删除传播 / 附件 / 异步化 / 条目级合并 / 教程补步）。
+- [debt.knowledge-base.md](./debt.knowledge-base.md) —— 本特性的已知边界与还款台账（删除传播 / 附件 / 异步化 / 条目级合并 / 教程补步）。
 - 规则：`compute-then-send.md`（算/发两阶段）、`no-rootless-tree.md`（令牌只授权真实存在的单库）、`server-authority.md`（同步为服务端权威动作）。
 
 ---
 
 ## 11. 风险与已知边界
 
-详见 [debt.knowledge-base.store-sync.md](./debt.knowledge-base.store-sync.md)，要点：
+详见 [debt.knowledge-base.md](./debt.knowledge-base.md)，要点：
 
 | 边界 | 说明 | 缓解 / 后续 |
 |------|------|------------|

@@ -34,7 +34,7 @@
 
 - Mongo 单文档与 `state.json` 退场：[debt.cds.state-json.md](./debt.cds.state-json.md)。
 - 分支网络、共享别名和队列隔离：[debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md)。
-- 项目迁移和跨节点复制：[debt.cds.project-migration.md](./debt.cds.project-migration.md)。
+- 项目迁移和跨节点复制：[debt.cds.md](./debt.cds.md)。
 - UI 视觉与响应性能：[debt.cds.performance.md](./debt.cds.performance.md)。
 
 ## 执行顺序

@@ -100,4 +100,4 @@ P6 已结束。后续只维护以下不变量：
 - [doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md)
 - [doc/debt.cds.state-json.md](./debt.cds.state-json.md)
 - [doc/debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md)
-- [doc/debt.cds.project-migration.md](./debt.cds.project-migration.md)
+- [doc/debt.cds.md](./debt.cds.md)

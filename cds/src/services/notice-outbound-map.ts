@@ -16,7 +16,7 @@
  *  3. source 必须命中 MAP 的 AllowedEventSources（AdminNotificationSourceCatalog），
  *     而那张白名单里**没有任何 CDS 专属来源**。本轮不改 prd-api，故默认借
  *     'system-alert'（系统预警）。代价是 MAP 站内信里 CDS 告警与模型池/密钥告警
- *     混在一起、无法按来源筛，已登记进 doc/debt.cds.uptime-monitor.md。
+ *     混在一起、无法按来源筛，已登记进 doc/debt.cds.md「CDS 存活监控（uptime-monitor）」。
  */
 
 import type { CdsNoticeRecord } from './notice-ledger.js';

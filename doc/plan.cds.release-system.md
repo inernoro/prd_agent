@@ -149,7 +149,7 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 | 去掉本仓脚本名硬编码 | 步骤来自 plan 而非 `./fast.sh` 字面量（`ReleaseCenterPage.tsx:247,249`、`release-service.ts:671-676`），CDS 恢复成通用产品 | — |
 | 发布 ETA | 发布耗时进耗时台账并在 UI 出"预计还需 MM:SS（近 N 次中位）"。**注意**：现有 `DeployDurationMode = 'release' \| 'source' \| 'restart'`（`types.ts:1469`）里的 `release` 指的是**极速版构建模式**，不是生产发布，必须新增独立 bucket，不要复用 | `state.ts:3436-3480` 的采样 + p50 + "近 N 次"文案口径 |
 | 生产存活监控 | `UptimeStateSource` 增加发布目标 getter，`selectProbeTargets` 多产一类 URL 型目标，探测走 `ReleaseTarget.ssh.healthcheckUrl`；状态页出现生产目标的 24h 可用率、响应时间、故障时间线 | `uptime-metrics.ts` 纯函数（采样 / 聚合 / 去抖 / incident 合成，有单测）+ `ProbeFn` 可注入（`uptime-monitor.ts:171`）+ 全 URL 探测函数 `probeHealthcheckStatus` 已存在（`release-service.ts:825`） |
-| 事件上总线 + 告警外发 | 发布 started / succeeded / failed / rolled-back 上 `cds-events-bus`；告警通道与存活告警**共用一条**——[doc/debt.cds.uptime-monitor.md](./debt.cds.uptime-monitor.md) 已把"无告警外发"登记为 open，不要当两件事做 | `cds-events-bus` 已存在 |
+| 事件上总线 + 告警外发 | 发布 started / succeeded / failed / rolled-back 上 `cds-events-bus`；告警通道与存活告警**共用一条**——[doc/debt.cds.md](./debt.cds.md) 已把"无告警外发"登记为 open，不要当两件事做 | `cds-events-bus` 已存在 |
 | SSE 补 `id:` 行 | 支持 `Last-Event-ID` 标准续传，与分支部署流对齐 | `routes/deployment-runs.ts:70-71,106` |
 | 停掉现场探测 | 发布中心健康改读监控快照，不再每次请求同步打生产 | 依赖上面的存活监控 |
 
@@ -223,7 +223,7 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 | 生产存活监控 | 采样 / 聚合 / 去抖 / incident 纯函数 + 可注入 `ProbeFn` | `cds/src/services/uptime-metrics.ts`、`uptime-monitor.ts:171` |
 | 探测实现 | 已有的全 URL 健康探测函数 | `cds/src/services/release-service.ts:825` |
 | ETA | 耗时采样 + p50 + "近 N 次"文案口径（**需新 bucket，勿复用 `'release'` 构建模式**） | `cds/src/services/state.ts:3436-3480` |
-| 事件外发 | `cds-events-bus` + uptime 告警通道（同一条） | 与 [doc/debt.cds.uptime-monitor.md](./debt.cds.uptime-monitor.md) 的 open 项合并做 |
+| 事件外发 | `cds-events-bus` + uptime 告警通道（同一条） | 与 [doc/debt.cds.md](./debt.cds.md) 的 open 项合并做 |
 | SSE 标准续传 | 分支部署流的 `id:` + `Last-Event-ID` 实现 | `cds/src/routes/deployment-runs.ts:70-71,106` |
 | 不可变产物 | `DeploymentVersion` 内容寻址 + 不可变镜像断言 | `cds/src/services/deployment-version.ts:52-72,178` |
 | 取证账本格式参考 | MAP 自己 `exec_dep.sh` 那套结构化取证（操作者 / PID / 起止 / SHA256 / 切换前后 owner-mode / 首个失败阶段 / 回滚结果） | [doc/debt.platform.production-release.md](./debt.platform.production-release.md) |

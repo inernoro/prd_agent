@@ -19,7 +19,7 @@ MAP 现在是一个 **MCP（Model Context Protocol）连接器**——和 GitHub
 | 端点 | `https://<你的域名>/api/mcp` |
 | 传输 | Streamable HTTP（JSON-RPC 2.0） |
 | 鉴权 | `Authorization: Bearer sk-ak-...` |
-| 设计 / 债务 | [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) / [doc/debt.platform.map-mcp-connector.md](./debt.platform.map-mcp-connector.md) |
+| 设计 / 债务 | [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) / [doc/debt.platform.md](./debt.platform.md) |
 
 ## 三步接入
 
@@ -92,7 +92,7 @@ POST /api/admin/agent-open-endpoints
 理想情况下，带 `AiAccessKey` 全局超级密钥的自动化应能代用户签发 scoped sk-ak、端到端验证开放接口，无需人工进 UI。
 
 > **当前状态**：曾试过在 `AgentApiKeysController` 同时挂 `Bearer,AiAccessKey` 双方案，但「同请求同时带 JWT + 全局 key」时 `FindFirst(sub)` 会选错用户（Bugbot Medium）。已撤回。
-> **正确做法**（见 [debt.platform.map-mcp-connector.md](./debt.platform.map-mcp-connector.md)）：单独建一个**只接受 `AiAccessKey` 方案**的专用签发端点（单身份、无歧义），而不是给用户自助管理端点叠加全局密钥。`AiAccessKey` 鉴权器本身（`X-AI-Access-Key` + `X-AI-Impersonate`）是既有设计，不动。
+> **正确做法**（见 [debt.platform.md](./debt.platform.md)）：单独建一个**只接受 `AiAccessKey` 方案**的专用签发端点（单身份、无歧义），而不是给用户自助管理端点叠加全局密钥。`AiAccessKey` 鉴权器本身（`X-AI-Access-Key` + `X-AI-Impersonate`）是既有设计，不动。
 
 ## 排障
 

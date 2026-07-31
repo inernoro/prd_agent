@@ -247,7 +247,7 @@ doc-store 归档是两步:`POST /entries`(建标题条目)→ `PUT /entries/{id}
 
 ## 5.5 过程视频(可选,本地附件,不进知识库正文)
 
-issue #605 二.1 建议过程视频(`launch(cfg, {recordVideoDir})` + `finalizeVideo()`)。**默认关闭**;开启后产出 `walkthrough.webm` 作**本地可选证据**。沿用用户 2026-05-27 决定:视频**体积大、阅读器不渲染、不进知识库正文**(见 `debt.visual-agent.acceptance-skill.md`)——仅本地留存/聊天直发,**不上传 KB**。需要长期托管走外部对象存储仅存链接。
+issue #605 二.1 建议过程视频(`launch(cfg, {recordVideoDir})` + `finalizeVideo()`)。**默认关闭**;开启后产出 `walkthrough.webm` 作**本地可选证据**。沿用用户 2026-05-27 决定:视频**体积大、阅读器不渲染、不进知识库正文**(见 `debt.visual-agent.md「Visual Agent 验收技能」`)——仅本地留存/聊天直发,**不上传 KB**。需要长期托管走外部对象存储仅存链接。
 
 ---
 

@@ -320,7 +320,7 @@ public class AdminPeerNodesController : ControllerBase
         }
     }
 
-    /// <summary>解除配对（删除本端记录；对端残留需对端管理员手动删，见 debt.platform.peer-sync.md）。</summary>
+    /// <summary>解除配对（删除本端记录；对端残留需对端管理员手动删，见 debt.platform.md「工程债务台账：系统级跨节点互传（Peer Sync）」）。</summary>
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {

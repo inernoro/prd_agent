@@ -182,7 +182,7 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 
 ## 八、风险与已知边界
 
-见 [doc/debt.cds.project-bootstrap.md](./debt.cds.project-bootstrap.md)。
+见 [doc/debt.cds.md](./debt.cds.md)。
 
 ## 九、关联
 
