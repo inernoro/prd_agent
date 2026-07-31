@@ -115,6 +115,16 @@ def fence_closes(opener: tuple[str, int], candidate: tuple[str, int], info: str 
     return candidate[0] == opener[0] and candidate[1] >= opener[1] and not info.strip()
 
 
+def fence_info(line: str) -> str:
+    """围栏行定界符后面的原始后缀。
+
+    闭合判定必须看原始值：```{} 和 ```"" 归一化后都是空串，但 Markdown 里
+    它们仍是块内的一行（闭合围栏只允许跟空白）。
+    """
+    m = FENCE_OPEN.match(line.strip())
+    return m.group(2) if m else ""
+
+
 def fence_lang(line: str) -> str:
     """取围栏的语言标记：只认第一个词，后面的 title="x" / {linenos} 之类属性丢掉。"""
     m = FENCE_OPEN.match(line.strip())
@@ -143,7 +153,7 @@ def parse_header(text: str) -> dict[str, str]:
         line = raw.strip()
         # 代码块里的示例不算数 —— 否则「展示导读格式的模板文档」会自己骗过闸门
         delim = fence_delim(line)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(line))):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(line))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
@@ -266,7 +276,7 @@ def scan_body(text: str) -> tuple[int, int]:
     for idx, raw in enumerate(lines):
         st = raw.strip()
         delim = fence_delim(st)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(st))):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(st))):
             if not in_fence:
                 fence_kind = delim
                 in_fence, lang = True, fence_lang(st)
@@ -366,7 +376,7 @@ def body_lines(text: str):
     fence_kind: tuple[str, int] | None = None
     for idx, raw in enumerate(text.splitlines()):
         delim = fence_delim(raw)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(raw))):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
@@ -421,7 +431,7 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
     fence_kind: tuple[str, int] | None = None
     for raw in text.splitlines(keepends=True):
         delim = fence_delim(raw)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(raw))):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             out.append(raw)
@@ -498,7 +508,7 @@ def check_rule_text(text: str) -> list[str]:
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
         delim = fence_delim(line)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_lang(line))):
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(line))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
@@ -651,6 +661,7 @@ def scan_skills() -> tuple[int, int, list[str]]:
 
 def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
     stats: dict[str, dict[str, int]] = {t: {"total": 0, "missing": 0} for t in TYPES}
+    bad_prefix: list[str] = []
     missing: dict[str, list[str]] = {t: [] for t in TYPES}
 
     for name in sorted(os.listdir(DOC_DIR)):
@@ -658,7 +669,9 @@ def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
             continue
         t = doc_type(name)
         if t not in TYPES:
-            # 前缀非法由 doc-sync / rule.doc.naming 管，这里不重复报
+            # 前缀非法的文档过去被整篇跳过 —— 连「有没有导读」都没人查，
+            # 只要进了两份目录就一路绿灯。单独收集，由棘轮直接判红。
+            bad_prefix.append(f"doc/{name} — 前缀 {t} 不在七类里")
             continue
         stats[t]["total"] += 1
         problems = check_file(os.path.join(DOC_DIR, name))
@@ -666,7 +679,7 @@ def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
             stats[t]["missing"] += 1
             missing[t].append(f"doc/{name} — {'；'.join(problems)}")
 
-    return stats, missing
+    return stats, missing, bad_prefix
 
 
 _DEBT_WORDS = {"missing": "缺导读", "bare": "裸引用", "impl": "实现代码", "src": "散落源码路径"}
@@ -813,7 +826,7 @@ def main() -> int:
         print(f"已把 {rewritten} 处裸引用改写为可点链接，涉及 {touched} 篇")
         return 0
 
-    stats, missing = scan()
+    stats, missing, bad_prefix = scan()
     bare_per_type, bare_detail, dead_detail = scan_links()
     impl_per_type, src_per_type, body_detail = scan_bodies()
     rules_total, rules_missing, rules_detail = scan_rules()
@@ -870,6 +883,12 @@ def main() -> int:
             print(line)
 
     if args.ratchet:
+        if bad_prefix:
+            print("\n[FAIL] 有文档用了七类之外的前缀 —— 命名判据见 doc/rule.doc.naming.md",
+                  file=sys.stderr)
+            for line in bad_prefix:
+                print(f"  {line}", file=sys.stderr)
+            return 1
         baseline = load_baseline()
         if args.baseline_ref:
             if not git_ref_exists(args.baseline_ref):

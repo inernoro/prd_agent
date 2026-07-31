@@ -210,6 +210,12 @@ FAKE_CLOSE = ("# 示例 · 指南\n\n```ts\nconst a = 1;\n```not-a-close\nconst 
 fake_impl, _ = checker.scan_body(FAKE_CLOSE)
 check(fake_impl == 3, f"带后缀的 ```not-a-close 不算闭合，块内代码继续计数（实测 {fake_impl} 行）")
 check(not checker.fence_closes(("`", 3), ("`", 3), "not-a-close"), "闭合围栏不许带信息串")
+check(not checker.fence_closes(("`", 3), ("`", 3), checker.fence_info("```{}")),
+      "```{} 不算闭合（闭合判定要看原始后缀，不能看归一化后的语言标记）")
+check(not checker.fence_closes(("`", 3), ("`", 3), checker.fence_info('```""')),
+      '```"" 不算闭合（同上）')
+brace_impl, _ = checker.scan_body("# 示例 · 指南\n\n```ts\nconst a = 1;\n```{}\nconst b = 2;\n```\n")
+check(brace_impl == 3, f"被 ```{{}} 假闭合骗过去的话代码会漏计（实测 {brace_impl} 行）")
 check(checker.fence_closes(("`", 3), ("`", 3), ""), "干净的闭合围栏仍然算闭合（没误伤）")
 
 TILDE_IMPL = "# 示例 · 指南\n\n~~~typescript\nconst a = 1;\nconst b = 2;\n~~~\n"
@@ -504,7 +510,7 @@ if os.path.exists(baseline_path):
     check(set(missing) == set(checker.TYPES), "基线覆盖全部七类文档")
     check(set(bare_base) == set(checker.TYPES), "基线记录了裸引用欠账")
 
-    stats, _ = checker.scan()
+    stats, _, _ = checker.scan()
     over = [t for t in checker.TYPES if stats[t]["missing"] > missing.get(t, 0)]
     check(not over, f"当前导读欠账未超过基线（超出：{over}）")
 
@@ -686,6 +692,27 @@ check(not list_drift, f"guide.list.directory.md 的标题与 H1 一致（漂移�
 check(catalog.get("rule.doc.readability") == titles["rule.doc.readability"],
       "标题比对读的是目录条目里的真实标题（不是恒真断言）")
 check(len(catalog) > 300, f"目录条目解析到了全部条目（实测 {len(catalog)} 条）")
+
+# 前缀非法的文档过去被整篇跳过：只要进了两份目录就绕开全部导读判据
+with tempfile.TemporaryDirectory() as tmp:
+    stray = os.path.join(REPO_ROOT, "doc", "notes.guard-probe.md")
+    try:
+        with open(stray, "w", encoding="utf-8") as fh:
+            fh.write("# 探针\n\n**一句话**：前缀非法但导读齐全，用来确认闸门不会放它过去。\n"
+                     "**谁该读**：验证判据的人。\n**读完能做什么**：知道前缀非法照样判红。\n")
+        _, _, stray_bad = checker.scan()
+        check(any("notes.guard-probe" in x for x in stray_bad),
+              "前缀不在七类里的文档会被点名（不再整篇跳过）")
+        probe = subprocess.run(
+            [sys.executable, os.path.join(REPO_ROOT, "scripts", "doc-readability-check.py"), "--ratchet"],
+            cwd=REPO_ROOT, capture_output=True, text=True)
+        check(probe.returncode != 0 and "七类之外的前缀" in probe.stderr,
+              "前缀非法时闸门判失败")
+    finally:
+        if os.path.exists(stray):
+            os.remove(stray)
+_, _, clean_bad = checker.scan()
+check(not clean_bad, f"当前 doc/ 没有非法前缀（判据不是恒真：{clean_bad[:3]}）")
 
 print()
 
