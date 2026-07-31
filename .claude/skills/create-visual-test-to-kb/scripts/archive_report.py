@@ -607,26 +607,1092 @@ def _strip_severity_count_claims(text):
     return re.sub(r"\bP[0-3]\s*[:：=]\s*\d+\b", " ", raw, flags=re.I)
 
 
+_FAILURE_ACTION_PATTERN = (
+    r"(?:通过|完成|成功|送达|归档|发布|打开|访问|连接|恢复|解决|"
+    r"关闭|修复|正常|可用|就绪|部署|上线|生效|合并|ready)"
+)
+_DELIVERY_ACTION_PATTERN = r"(?:部署|发布|上线|生效|合并)"
+_CLOSURE_OBJECT_PATTERN = (
+    r"(?:代码|补丁|配置|脚本|实现|逻辑|版本|提交|分支|镜像|依赖|文档|"
+    r"模板|数据|记录|材料|工单|缺陷)"
+)
+_DIAGNOSTIC_COMPLETION_OBJECT_PATTERN = (
+    r"(?:(?:问题|故障|异常|根因|日志|证据|信息|数据|现场|链路)\s*)?"
+    r"(?:定位|分析|收集|排查|调查|诊断|复盘|梳理)"
+)
+_ROOT_CAUSE_UNRELATED_FAILURE_OBJECT_PATTERN = re.compile(
+    rf"(?:截图|证据|日志|记录|样本|材料|附件|图片)\s*"
+    r"(?:上传|保存|采集|收集|归档|生成|打开|下载)"
+    rf"|{_DIAGNOSTIC_COMPLETION_OBJECT_PATTERN}",
+    re.I,
+)
+_PENDING_DELIVERY_PATTERN = (
+    rf"(?:(?:(?:仍|尚|还|暂时?)?未|没(?:有)?)\s*{_DELIVERY_ACTION_PATTERN}"
+    rf"|(?:等待|待)\s*{_DELIVERY_ACTION_PATTERN})"
+)
+_ONGOING_FAILURE_PREFIX_PATTERN = (
+    r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?(?:未|没(?:有)?))"
+)
+_FAILURE_QUANTIFIER_PATTERN = r"(?:(?:全部|完全|全量|全数|全都|悉数)\s*)?"
+_RAW_FAILURE_VALUE_PATTERN = (
+    r"(?:missing|error|failed|failure|stopped|unhealthy|cancelled|"
+    r"timeout|timed[\s_-]?out)"
+)
+_RAW_BARE_FAILURE_STATUS_PATTERN = (
+    rf"(?<![\"'])\b{_RAW_FAILURE_VALUE_PATTERN}\b"
+    r"(?![\"']?\s*[:：=])"
+)
+_CDS_DEPLOY_FAILURE_STAGE_PATTERN = (
+    r"(?:deploy_blocked_pending_import|deploy_trigger_failed|deploy_failed|"
+    r"building_timeout|deploy_poll_timeout)"
+)
+_RAW_RESOLVED_VALUE_PATTERN = (
+    r"(?:passed|succeeded|success|successful|ready|running|healthy|completed|ok)"
+)
+_RAW_FAILURE_STATUS_PATTERN = (
+    r"(?:(?:非|不为|不等于)\s*0(?![\d.])"
+    r"|(?:exit[\s_-]*code|退出码|返回码|错误码|错误代码)\s*"
+    r"(?:(?:[:：=]|为)\s*)?[1-9]\d*"
+    r"|(?:返回|状态码|HTTP)\s*(?:(?:[:：=]|为)\s*)?"
+    r"(?:[45][xX]{2}|[45]\d{2})"
+    r"|(?-i:\bFAIL\b)"
+    r"|(?-i:\bERROR\b)"
+    r"|\b(?:failed|failure)\b"
+    rf"|{_RAW_BARE_FAILURE_STATUS_PATTERN}"
+    r"|\"?(?:pass|ok|healthy|success)\"?\s*[:：=]\s*false\b"
+    r"|\"?(?:status|状态|http[\s_-]*status|status[\s_-]*code)\"?\s*"
+    r"[:：=]\s*\"?(?:[45]\d{2})\b\"?"
+    r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
+    r"(?:fail|failed|failure|error)\b\"?"
+    rf"|\"?(?:status|状态|branch[\s_-]*status)\"?\s*[:：=]\s*\"?"
+    rf"{_RAW_FAILURE_VALUE_PATTERN}\b\"?"
+    rf"|\"?(?:stage|阶段)\"?\s*[:：=]\s*\"?(?:{_RAW_FAILURE_VALUE_PATTERN}"
+    rf"|{_CDS_DEPLOY_FAILURE_STAGE_PATTERN})\b\"?)"
+)
+_RAW_RESOLVED_STATUS_PATTERN = (
+    r"(?:(?-i:\bPASS\b)"
+    r"|\bpassed\b(?![\"']?\s*[:：=])"
+    r"|\bsucceeded\b"
+    r"|\"?(?:pass|ok|healthy|success)\"?\s*[:：=]\s*true\b"
+    r"|\"?(?:status|状态|http[\s_-]*status|status[\s_-]*code)\"?\s*"
+    r"[:：=]\s*\"?2\d{2}\b\"?"
+    r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
+    r"(?:pass|passed|succeeded|success|successful|ok)\b\"?"
+    rf"|\"?(?:status|状态|branch[\s_-]*status)\"?\s*[:：=]\s*\"?"
+    rf"{_RAW_RESOLVED_VALUE_PATTERN}\b\"?"
+    rf"|\"?(?:stage|阶段)\"?\s*[:：=]\s*\"?"
+    rf"(?:{_RAW_RESOLVED_VALUE_PATTERN}|deployed)\b\"?"
+    r"|(?:exit[\s_-]*code|退出码|返回码|错误码|错误代码)\s*"
+    r"(?:(?:[:：=]|为)\s*)?0(?![\d.])"
+    r"|(?:返回|状态码|HTTP)\s*(?:(?:[:：=]|为)\s*)?"
+    r"(?:2[xX]{2}|2\d{2}))"
+)
+_FAILURE_FACT_PATTERN = re.compile(
+    rf"{_ONGOING_FAILURE_PREFIX_PATTERN}"
+    rf"\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}"
+    r"|失败|不通过|未通过|没通过|未成功|没成功|未完成|没完成"
+    rf"|未能\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}"
+    r"|阻断|不可用|不可交付"
+    r"|超时|报错|中断|漏发|错误|异常|崩溃|卡死|无响应|不可达|断连|断开"
+    r"|(?:未能|无法)\s*执行"
+    r"|返回\s*[45]\d{2}|状态码\s*[45]\d{2}|HTTP\s*[45]\d{2}"
+    rf"|{_RAW_FAILURE_STATUS_PATTERN}"
+    rf"|{_PENDING_DELIVERY_PATTERN}"
+    rf"|无法\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}",
+    re.I,
+)
+_DIAGNOSTIC_ACTION_PATTERN = (
+    r"(?:复现|重现|再现|定位|捕获|观察到|检测到|发现|触发|确认|验证|记录|"
+    r"收集|采集|分析|排查|调查|诊断|复盘|梳理)"
+)
+_SUCCESS_DIAGNOSTIC_PATTERN = (
+    rf"成功\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}"
+)
+_DIAGNOSTIC_MODIFIER_PATTERN = (
+    rf"(?:已|已经)?{_SUCCESS_DIAGNOSTIC_PATTERN}(?:到了|到|出|了)?"
+)
+_RESOLVED_STATUS_PREFIX_PATTERN = (
+    r"(?:(?:现已|已经|已)|(?:重试后|随后)\s*已|最终(?:已)?)"
+)
+_VERIFICATION_RESOLVED_ACTION_PATTERN = (
+    r"(?:验证|检查|测试)(?:结果)?\s*(?:已)?\s*通过"
+)
+_RESOLVED_ACTION_PATTERN = (
+    rf"(?:{_VERIFICATION_RESOLVED_ACTION_PATTERN}"
+    r"|通过|完成|送达|归档|发布|打开|访问|连接|恢复|解决|关闭|修复|"
+    r"正常|可用|就绪|部署|上线|生效|合并|ready|"
+    rf"成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
+)
+_RETEST_RESOLVED_PATTERN = (
+    r"(?:复测|重试|回归(?:测试)?)(?:结果)?\s*(?:已)?\s*"
+    r"(?:通过|成功|正常|可用|就绪)"
+)
+_NEGATED_FAILURE_RESOLVED_OBJECT_PATTERN = (
+    r"(?:失败|异常|报错|错误|超时|故障|不可用|不可达|无响应)"
+    r"(?!(?:场景|路径|用例|测试|处理|证据|记录|样本|日志|信息))"
+)
+_NEGATED_FAILURE_RESOLVED_PATTERN = (
+    rf"(?:(?:现已|已经|已|当前|目前|现在)\s*)?"
+    rf"不再\s*{_NEGATED_FAILURE_RESOLVED_OBJECT_PATTERN}"
+    rf"|(?:(?:复测|重试|回归(?:测试)?)(?:结果)?(?:后)?\s*"
+    rf"|(?:现已|已经|已|当前|目前|现在)\s*)"
+    rf"(?:已\s*)?(?:无|没有)\s*{_NEGATED_FAILURE_RESOLVED_OBJECT_PATTERN}"
+)
+_RESOLVED_FACT_PATTERN = re.compile(
+    rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*{_RESOLVED_ACTION_PATTERN}"
+    rf"|{_RETEST_RESOLVED_PATTERN}"
+    rf"|{_NEGATED_FAILURE_RESOLVED_PATTERN}"
+    rf"|{_RAW_RESOLVED_STATUS_PATTERN}",
+    re.I,
+)
+_FAILURE_SUBJECT_PATTERNS = (
+    (
+        "core-case",
+        re.compile(r"(?:核心用例|核心流程)(?:执行|测试|验证|检查)?", re.I),
+    ),
+    (
+        "ready",
+        re.compile(
+            r"(?<![A-Za-z0-9_])ready(?![A-Za-z0-9_])"
+            r"(?:\s*(?:检查|门禁|状态|check|gate|status))?",
+            re.I,
+        ),
+    ),
+    (
+        "smoke",
+        re.compile(
+            r"(?:smoke|冒烟)(?:\s*(?:测试|检查|门禁|tests?|check|gate))?",
+            re.I,
+        ),
+    ),
+    (
+        "build",
+        re.compile(
+            r"(?:构建|编译)(?:\s*(?:产物|结果|job|task))?"
+            r"|(?<![A-Za-z0-9_])build(?![A-Za-z0-9_])"
+            r"(?:\s*(?:产物|结果|job|task))?",
+            re.I,
+        ),
+    ),
+    (
+        "deploy",
+        re.compile(
+            r"(?<![A-Za-z0-9_])CDS\s*(?:部署|deploy(?![A-Za-z0-9_]))"
+            r"(?:\s*(?:阶段|状态|stage|status|job|task))?",
+            re.I,
+        ),
+    ),
+    (
+        "service-ready",
+        re.compile(
+            rf"(?:CDS\s*)?服务\s*"
+            rf"(?:(?:{_ONGOING_FAILURE_PREFIX_PATTERN}"
+            rf"|{_RESOLVED_STATUS_PREFIX_PATTERN})\s*)?"
+            r"就绪(?:检查|门禁)?",
+            re.I,
+        ),
+    ),
+    ("forced-test", re.compile(r"强制测试", re.I)),
+    ("acceptance-chain", re.compile(r"验收链路", re.I)),
+    ("evidence-chain", re.compile(r"证据链", re.I)),
+    ("archive", re.compile(r"(?:验收报告)?归档(?:流程|任务|操作)?", re.I)),
+    (
+        "report-publish",
+        re.compile(
+            rf"(?:验收)?报告\s*"
+            rf"(?:(?:{_ONGOING_FAILURE_PREFIX_PATTERN}"
+            rf"|{_RESOLVED_STATUS_PREFIX_PATTERN})\s*)?"
+            r"发布(?:流程|任务|操作)?",
+            re.I,
+        ),
+    ),
+    ("verify-open", re.compile(r"verify-open|打开验证(?:步骤|操作)?", re.I)),
+    ("slack", re.compile(r"Slack\s*通知(?:发送)?", re.I)),
+)
+_ROOT_CAUSE_INSTANCE_PATTERN = re.compile(
+    r"移动端|后端|前端|桌面端|管理端|客户端|服务端|网页端"
+    r"|(?<![A-Za-z0-9_])"
+    r"(?:iOS|Android|Windows|macOS|Linux|Chrome|Safari|Firefox|Edge)"
+    r"(?![A-Za-z0-9_])"
+    r"|生产(?:环境)?|预览(?:环境)?|测试(?:环境)?|灰度(?:环境)?"
+    r"|开发(?:环境)?|本地(?:环境)?|主站|控制台"
+    r"|(?<![A-Za-z0-9_])(?:API(?:服务)?|Web(?:端)?)(?![A-Za-z0-9_])"
+    r"|prd-(?:api|admin|desktop|video)|llmgw(?:-[A-Za-z0-9_-]+)?",
+    re.I,
+)
+_ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN = re.compile(
+    rf"(?:在|于)?\s*(?:{_ROOT_CAUSE_INSTANCE_PATTERN.pattern})(?:\s*环境)?",
+    re.I,
+)
+_ROOT_CAUSE_GATE_OUTPUT_SUFFIX_PATTERN = re.compile(
+    r"\s*(?:的\s*)?"
+    r"(?:(?:门禁|执行|运行|测试|检查|验证|复测)\s*)?"
+    r"(?:状态|结果|输出)(?:栏|项|字段)?"
+    r"(?=\s*[`*_\s:：;,，。|/\\()（）\[\]【】<>《》-]*$)",
+    re.I,
+)
+
+
+def _normalize_root_cause_instance(identity):
+    """Collapse short and explicit environment labels into one instance key."""
+    normalized = (identity or "").strip().lower()
+    if normalized in {"生产", "预览", "测试", "灰度", "开发", "本地"}:
+        return f"{normalized}环境"
+    if normalized in {"api", "api服务"}:
+        return "api服务"
+    if normalized in {"web", "web端"}:
+        return "web端"
+    return normalized
+
+
+_VERIFIED_SCENARIO_OBJECT_PATTERN = (
+    r"(?:场景|用例|测试|重试|处理|请求|响应|路径|分支|案例|样本|输入|"
+    r"数据|状态码|逻辑|机制|流程)"
+)
+_POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN = (
+    rf"(?:{_VERIFIED_SCENARIO_OBJECT_PATTERN})"
+    r"(?:\s*(?:均|都|全部|全量|全数|现|现在|目前|本次))*"
+)
+
+
+def _split_fact_clauses(text):
+    """Split facts at punctuation without allowing matches to cross subjects."""
+    return re.split(r"([。；;，,|\n])", text or "")
+
+
+def _failure_subjects(text):
+    """Return canonical failure subjects mentioned in a fact fragment."""
+    return {
+        name
+        for name, pattern in _FAILURE_SUBJECT_PATTERNS
+        if pattern.search(text or "")
+    }
+
+
+def _subject_occurrences(text, instance_aware=False):
+    """Return canonical subject positions for nearest-event binding."""
+    occurrences = []
+    for name, pattern in _FAILURE_SUBJECT_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            occurrences.append((match.start(), match.end(), name))
+    occurrences.sort()
+    if not instance_aware:
+        return occurrences
+
+    scoped_occurrences = []
+    previous_end = 0
+    raw_text = text or ""
+    for index, (start, end, name) in enumerate(occurrences):
+        prefix = (text or "")[previous_end:start]
+        next_subject_start = (
+            occurrences[index + 1][0]
+            if index + 1 < len(occurrences)
+            else len(raw_text)
+        )
+        suffix = raw_text[end:next_subject_start]
+        suffix_events = [
+            match
+            for pattern in (_FAILURE_FACT_PATTERN, _RESOLVED_FACT_PATTERN)
+            for match in pattern.finditer(suffix)
+        ]
+        qualifier = suffix[
+            : min((match.start() for match in suffix_events), default=len(suffix))
+        ]
+        if index + 1 < len(occurrences):
+            coordination_matches = list(
+                re.finditer(r"(?:以及|并且|和|与|及|、|并|且)", qualifier)
+            )
+            if coordination_matches:
+                qualifier = qualifier[: coordination_matches[-1].start()]
+        raw_identities = [
+            _normalize_root_cause_instance(match.group(0))
+            for match in _ROOT_CAUSE_INSTANCE_PATTERN.finditer(
+                f"{prefix} {qualifier}"
+            )
+        ]
+        identities = tuple(dict.fromkeys(raw_identities))
+        for identity in identities or ("__unspecified__",):
+            scoped_occurrences.append((start, end, (name, (identity,))))
+        previous_end = end
+    return sorted(scoped_occurrences)
+
+
+def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
+    """Bind a status to the preceding subject, except for prefix-status wording."""
+    if not occurrences:
+        return set()
+    overlapping = {
+        occurrence
+        for occurrence in occurrences
+        if occurrence[0] < event.end() and occurrence[1] > event.start()
+    }
+    if overlapping:
+        return overlapping
+    left = [occurrence for occurrence in occurrences if occurrence[1] <= event.start()]
+    right = [occurrence for occurrence in occurrences if occurrence[0] >= event.end()]
+    if right:
+        first_right_start = min(start for start, _, _ in right)
+        right_gap = clause[event.end() : first_right_start]
+        prefix_status = bool(
+            re.fullmatch(
+                r"\s*的\s*(?:CDS\s*)?(?:验收报告\s*)?",
+                right_gap,
+                re.I,
+            )
+        )
+        if prefix_status:
+            return {
+                occurrence
+                for occurrence in right
+                if occurrence[0] == first_right_start
+            }
+    if not left:
+        return set()
+    last_left_end = max(end for _, end, _ in left)
+    left_gap = clause[last_left_end : event.start()]
+    left_gap = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", left_gap)
+    left_gap = re.sub(r"[{}()（）\[\]【】'\"“”‘’]", " ", left_gap)
+    if previous_event_end > last_left_end or not re.fullmatch(
+        rf"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
+        rf"再次|重新|均|都|同时|全部|一并|共同|二者|两者|已|已经|连续|"
+        rf"执行|运行|重试|复测|回归|后|任务|操作|流程|作业|步骤|环节|"
+        rf"过程|用例|测试|检查|验证|"
+        rf"检测|校验|判定|被判定|显示|表明|呈现|处于|问题|故障|异常|"
+        rf"缺陷|结果|状态|的|为|是|already|currently|previously|still|"
+        rf"和|与|及|、|/|"
+        rf"[:：=]|[-=]>|→|{_DIAGNOSTIC_MODIFIER_PATTERN})\s*)*",
+        left_gap,
+        re.I,
+    ):
+        return set()
+    return {
+        occurrence
+        for occurrence in left
+        if occurrence[1] == last_left_end
+    }
+
+
+def _coordinated_subject_groups(occurrences, clause):
+    """Group only adjacent subjects joined by an explicit coordination marker."""
+    ordered = sorted(occurrences)
+    groups = []
+    for occurrence in ordered:
+        if not groups:
+            groups.append([occurrence])
+            continue
+        previous = groups[-1][-1]
+        gap = clause[previous[1] : occurrence[0]]
+        normalized_gap = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", gap)
+        normalized_gap = re.sub(r"[()（）\[\]【】]", " ", normalized_gap)
+        if re.fullmatch(
+            r"\s*(?:以及|并且|和|与|及|、|/|并|且)"
+            r"\s*(?:CDS\s*)?(?:验收报告\s*)?",
+            normalized_gap,
+            re.I,
+        ):
+            groups[-1].append(occurrence)
+        else:
+            groups.append([occurrence])
+    return groups
+
+
+def _event_subjects(event, occurrences, clause, previous_event_end):
+    """Apply a status only to its nearest explicitly coordinated subject group."""
+    anchor_occurrences = _event_anchor_occurrences(
+        event, occurrences, clause, previous_event_end
+    )
+    if not anchor_occurrences:
+        return set()
+    groups = _coordinated_subject_groups(occurrences, clause)
+    subjects = set()
+    for group in groups:
+        if any(occurrence in anchor_occurrences for occurrence in group):
+            subjects.update(name for _, _, name in group)
+    return subjects
+
+
+def _apply_subject_state(states, subjects, state):
+    """Apply an ordered status event to its explicit or carried subjects."""
+    for subject in subjects:
+        states[subject] = state
+
+
+def _subjects_for_structured_status(event, subjects):
+    """Bind cdscli deployment-only fields exclusively to the deploy gate."""
+    if not re.search(
+        r"[\"']?(?:branch[\s_-]*status|stage|阶段)[\"']?\s*[:：=]",
+        event.group(0),
+        re.I,
+    ):
+        return subjects
+    return {
+        subject
+        for subject in subjects
+        if (subject[0] if isinstance(subject, tuple) else subject) == "deploy"
+    }
+
+
+def _resolved_subjects_for_action(clause, event, subjects):
+    """Keep delivery completion from closing unrelated quality gates."""
+    resolution_text = clause[event.start() : event.end() + 12]
+    delivery_match = re.match(
+        r"(?:现已|已经|已)?\s*(?:(?:完成|成功)\s*)?"
+        r"(部署|发布|上线|生效|合并)",
+        resolution_text,
+        re.I,
+    )
+    if not delivery_match:
+        return subjects
+    allowed_subjects = {"deploy"}
+    if delivery_match.group(1) == "发布":
+        allowed_subjects.add("report-publish")
+    return {
+        subject
+        for subject in subjects
+        if (subject[0] if isinstance(subject, tuple) else subject)
+        in allowed_subjects
+    }
+
+
+def _closure_changes_subject(clause, event, previous_event_end):
+    """Reject negated closures and closures retargeted to an unnamed dependency."""
+    scope = clause[previous_event_end : event.start()]
+    suffix = clause[event.end() : event.end() + 32]
+    if re.search(r"并非|并不是|不是|未曾|尚未|没有", scope, re.I):
+        return True
+    if re.search(r"并非事实|不是事实|不属实|为假", suffix, re.I):
+        return True
+    if re.match(rf"\s*(?:的\s*)?{_CLOSURE_OBJECT_PATTERN}", suffix, re.I):
+        return True
+    if re.match(
+        rf"\s*(?:的\s*)?{_DIAGNOSTIC_COMPLETION_OBJECT_PATTERN}",
+        suffix,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(_RETEST_RESOLVED_PATTERN, event.group(0), re.I) and re.match(
+        rf"\s*{_VERIFIED_SCENARIO_OBJECT_PATTERN}", suffix, re.I
+    ):
+        return True
+    if re.fullmatch(
+        rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*"
+        rf"{_VERIFICATION_RESOLVED_ACTION_PATTERN}",
+        event.group(0),
+        re.I,
+    ) and re.match(
+        rf"\s*{_VERIFIED_SCENARIO_OBJECT_PATTERN}", suffix, re.I
+    ):
+        return True
+    if re.fullmatch(
+        rf"\s*{_POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN}\s*",
+        scope,
+        re.I,
+    ):
+        return False
+    if re.search(_PENDING_DELIVERY_PATTERN, suffix, re.I):
+        return True
+    if re.search(r"后\s*$", scope):
+        return False
+    for _, pattern in _FAILURE_SUBJECT_PATTERNS:
+        for match in pattern.finditer(clause):
+            if match.start() < event.start() < match.end():
+                subject_prefix = clause[match.start() : event.start()]
+                if subject_prefix and scope.endswith(subject_prefix):
+                    scope = scope[: -len(subject_prefix)]
+    for _, pattern in _FAILURE_SUBJECT_PATTERNS:
+        scope = pattern.sub(" ", scope)
+    scope = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", scope)
+    scope = re.sub(r"[()（）\[\]【】]", " ", scope)
+    scope = re.sub(
+        r"CDS|的|但是|不过|然而|但|并且|且|并|而|后|前|先前|此前|一度|曾"
+        r"|问题|故障|异常|事项|缺陷|本项|该项|该问题|此问题|上述问题"
+        r"|该异常|此异常|本根因|该根因|根因"
+        r"|重试|复测|验证|再次|重新|二者|全部|均|都|目前|现在|本次|当前"
+        r"|和|与|以及|及|、|并且|并|且|验收报告",
+        " ",
+        scope,
+        flags=re.I,
+    )
+    return bool(re.search(r"[A-Za-z0-9\u4e00-\u9fff]", scope))
+
+
+def _failure_is_negated(clause, event, previous_event_end):
+    """Ignore failure words that the surrounding clause explicitly negates."""
+    prefix = clause[max(previous_event_end, event.start() - 12) : event.start()]
+    scope = clause[previous_event_end : event.start()]
+    suffix = clause[event.end() : event.end() + 12]
+    scenario_prefix = clause[max(0, event.start() - 32) : event.start()]
+    if re.fullmatch(
+        r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?未(?:能)?|没(?:有|能)?)\s*成功",
+        event.group(0),
+        re.I,
+    ) and re.match(
+        rf"\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}", suffix, re.I
+    ):
+        return True
+    if re.fullmatch(
+        _RAW_FAILURE_VALUE_PATTERN, event.group(0), re.I
+    ) and re.match(
+        r"\s*(?:配置|设置|阈值|参数|字段|文案|说明|策略|机制|处理|兜底|"
+        r"config(?:uration)?|setting|threshold|field|wording|handling)",
+        suffix,
+        re.I,
+    ):
+        return True
+    if re.match(_VERIFIED_SCENARIO_OBJECT_PATTERN, suffix, re.I):
+        if re.match(
+            rf"{_POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN}\s*"
+            rf"(?:{_RESOLVED_STATUS_PREFIX_PATTERN}\s*)"
+            rf"{_RESOLVED_ACTION_PATTERN}",
+            suffix,
+            re.I,
+        ):
+            return True
+        if re.match(
+            rf"{_VERIFIED_SCENARIO_OBJECT_PATTERN}\s*"
+            r"(?:(?:尚|还|仍然?|依然|暂时?)?未|没(?:有)?|待)\s*"
+            r"(?:执行|验证|覆盖|测试|检查|复测)",
+            suffix,
+            re.I,
+        ):
+            return True
+        successful_diagnostic = re.search(
+            rf"(?:{_DIAGNOSTIC_MODIFIER_PATTERN}"
+            r"|(?:已|已经)(?:验证|测试|检查|覆盖|复测))\s*$",
+            scenario_prefix,
+            re.I,
+        )
+        resolved_match = None
+        for match in _RESOLVED_FACT_PATTERN.finditer(scenario_prefix):
+            resolved_match = match
+        resolved_bridge = bool(
+            resolved_match
+            and re.fullmatch(
+                r"\s*(?:对|针对|关于)?\s*",
+                scenario_prefix[resolved_match.end() :],
+                re.I,
+            )
+        )
+        if successful_diagnostic or resolved_bridge:
+            return True
+    if re.search(
+        r"(?:并未|没有|并非|并不是|不是|不算|不再|未曾|从未|无|未|没)"
+        r"(?:发生|出现|处于|被判定为)?\s*$",
+        prefix,
+        re.I,
+    ):
+        return True
+    for _, pattern in _FAILURE_SUBJECT_PATTERNS:
+        scope = pattern.sub(" ", scope)
+    scope = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", scope)
+    scope = re.sub(r"[()（）\[\]【】]", " ", scope)
+    scope = re.sub(r"CDS|\s", "", scope, flags=re.I)
+    if re.search(
+        r"(?:并未|并非|并不是|不是|不算|不再|未曾|从未|无|未|没)"
+        r"(?:发生|出现|处于|被判定为)?$"
+        r"|(?:未|没|没有)(?:发现|观察到|检测到|证据表明)$"
+        r"|(?:0(?:\.0+)?|零|〇)(?:个|次|项)?$",
+        scope,
+        re.I,
+    ):
+        return True
+    if re.match(
+        r"\s*(?:总数|计数|数量|数|率|次数|码|代码)?\s*"
+        r"(?:(?:共计|合计|总计|共)\s*)?(?:为|是|等于|[:：=])?\s*"
+        r"(?:0(?:\.0+)?|零|〇)(?![\d一二三四五六七八九十百千万点.])"
+        r"(?:个|次|项|%|％)?",
+        suffix,
+        re.I,
+    ):
+        return True
+    return bool(
+        re.match(r"\s*(?:并不存在|不成立|并非事实|不属实|为假)", suffix, re.I)
+    )
+
+
+def _event_inherits_context(clause, event, state, previous_event_end):
+    """Allow omitted subjects only for explicit same-subject continuation wording."""
+    prefix = clause[previous_event_end : event.start()]
+    suffix = clause[event.end() :]
+    if re.match(r"\s*的", suffix) and not re.match(
+        r"\s*的\s*(?:该|本|此|上述)(?:项|问题|事项|异常|故障|根因)",
+        suffix,
+        re.I,
+    ):
+        return False
+    normalized = re.sub(
+        r"^\s*(?:(?:但是|不过|然而|并且|但|而|并|且)\s*)*",
+        "",
+        prefix,
+        flags=re.I,
+    )
+    normalized = re.sub(r"[\s'\"“”‘’]+", "", normalized)
+    if (
+        state == "failed"
+        and re.fullmatch(_PENDING_DELIVERY_PATTERN, event.group(0), re.I)
+        and re.fullmatch(
+            rf"(?:该|本|此|上述)?{_CLOSURE_OBJECT_PATTERN}(?:仍|尚|还|暂时?)?",
+            normalized,
+            re.I,
+        )
+    ):
+        return True
+    if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", normalized):
+        return True
+    if re.fullmatch(
+        r"(?:(?:该|本|此|上述)?(?:项|问题|事项|异常|故障|根因))"
+        r"(?:(?:再次|重新)?(?:重试|复测|验证)(?:结果)?(?:后)?)?"
+        r"(?:仍|仍然|依然|再次|重新|当前|目前|现在|本次)?",
+        normalized,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        r"(?:再次|重新)?(?:重试|复测|验证)(?:结果)?(?:后)?"
+        r"(?:仍|仍然|依然|再次|重新|当前|目前|现在|本次)?",
+        normalized,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        rf"(?:{_VERIFIED_SCENARIO_OBJECT_PATTERN})+(?:后)?"
+        r"(?:但是|但|不过|然而)?(?:再次|重新)?"
+        r"(?:重试|复测|验证)(?:结果)?(?:后)?"
+        r"(?:仍|仍然|依然|再次|重新|当前|目前|现在|本次)?",
+        normalized,
+        re.I,
+    ):
+        return True
+    if state == "resolved" and re.fullmatch(
+        _POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN,
+        normalized,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        r"(?:二者|两者|全部)?(?:均|都)(?:仍|仍然|依然|再次|重新|当前)?"
+        r"|(?:二者|两者|全部)",
+        normalized,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        r"(?:随后|后来|之后|此后|最终|再次|重新|依然|仍然|仍|又|此前|先前|一度|曾|"
+        r"当前|目前|现在|本次)+",
+        normalized,
+        re.I,
+    ):
+        return True
+    return bool(
+        state == "resolved"
+        and re.search(r"后$", normalized, re.I)
+    )
+
+
+_RAW_PASSED_COUNT_PATTERN = re.compile(
+    r"[\"']?passed[\"']?\s*[:：=]\s*[\"']?\s*"
+    r"(?P<passed>\d+)\s*/\s*(?P<total>\d+)\s*[\"']?",
+    re.I,
+)
+_CORE_CASE_PASSED_COUNT_PATTERN = re.compile(
+    r"(?P<subject>(?:核心用例|核心流程)(?:执行|测试|验证|检查)?)\s*"
+    r"(?:已)?通过\s*[:：=]?\s*"
+    r"(?P<passed>\d+)\s*/\s*(?P<total>\d+)",
+    re.I,
+)
+
+
+def _normalize_raw_passed_counts(text):
+    """Convert cdscli passed fractions into explicit ordered status events."""
+    raw_text = text or ""
+    object_stack = []
+    object_ranges = []
+    quote = None
+    escaped = False
+    for index, character in enumerate(raw_text):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {'"', "'"} and object_stack:
+            quote = character
+        elif character == "{":
+            object_stack.append(index)
+        elif character == "}" and object_stack:
+            object_ranges.append((object_stack.pop(), index))
+
+    edits = []
+    aggregate_insertions = {}
+    for match in _RAW_PASSED_COUNT_PATTERN.finditer(raw_text):
+        passed = int(match.group("passed"))
+        total = int(match.group("total"))
+        result = "PASS" if passed == total else "FAIL"
+        canonical_result = f"result={result}"
+        edits.append((match.start(), match.end(), canonical_result))
+
+        containing_ranges = [
+            span
+            for span in object_ranges
+            if span[0] < match.start() and match.end() <= span[1]
+        ]
+        if containing_ranges:
+            _, object_end = min(
+                containing_ranges,
+                key=lambda span: span[1] - span[0],
+            )
+            # The aggregate count is authoritative over nested probe fields.
+            aggregate_insertions[object_end] = canonical_result
+
+    edits.extend(
+        (object_end, object_end, f" {canonical_result}")
+        for object_end, canonical_result in aggregate_insertions.items()
+    )
+    for start, end, replacement in sorted(edits, reverse=True):
+        raw_text = raw_text[:start] + replacement + raw_text[end:]
+    return raw_text
+
+
+def _normalize_core_case_passed_counts(text):
+    """Convert core-case pass fractions into explicit ordered status events."""
+
+    def replace(match):
+        passed = int(match.group("passed"))
+        total = int(match.group("total"))
+        result = "PASS" if passed == total else "FAIL"
+        return f"{match.group('subject')} result={result}"
+
+    return _CORE_CASE_PASSED_COUNT_PATTERN.sub(replace, text or "")
+
+
+def _failure_subject_states(
+    text,
+    initial_states=None,
+    instance_aware=False,
+    default_subjects=None,
+    default_subject_exclusion_pattern=None,
+    subject_aliases=None,
+):
+    """Apply ordered status events while keeping context local to this row."""
+    text = _normalize_core_case_passed_counts(
+        _normalize_raw_passed_counts(text)
+    )
+    states = dict(initial_states or {})
+    fallback_subjects = set(default_subjects or ())
+    context_subjects = set()
+    for index, clause in enumerate(_split_fact_clauses(text)):
+        if index % 2:
+            continue
+        occurrences = _subject_occurrences(clause, instance_aware=instance_aware)
+        explicit_subjects = {name for _, _, name in occurrences}
+
+        resolved_events = [
+            (match, "resolved")
+            for match in _RESOLVED_FACT_PATTERN.finditer(clause)
+        ]
+        failure_events = [
+            (match, "failed")
+            for match in _FAILURE_FACT_PATTERN.finditer(clause)
+            if not any(
+                resolved.start() <= match.start()
+                and match.end() <= resolved.end()
+                for resolved, _ in resolved_events
+            )
+        ]
+        events = failure_events + resolved_events
+        events.sort(key=lambda item: item[0].start())
+        previous_event_end = 0
+        clause_context_subjects = set(explicit_subjects or context_subjects)
+        for event, state in events:
+            inherits_context = _event_inherits_context(
+                clause, event, state, previous_event_end
+            )
+            subjects = _event_subjects(
+                event, occurrences, clause, previous_event_end
+            )
+            if subjects and subject_aliases:
+                subjects = {
+                    alias
+                    for subject in subjects
+                    for alias in subject_aliases.get(subject, {subject})
+                }
+            if state == "failed" and _failure_is_negated(
+                clause, event, previous_event_end
+            ):
+                if subjects:
+                    clause_context_subjects = subjects
+                elif not inherits_context:
+                    clause_context_subjects = set()
+                previous_event_end = event.end()
+                continue
+            if state == "resolved" and _closure_changes_subject(
+                clause, event, previous_event_end
+            ):
+                if subjects:
+                    clause_context_subjects = subjects
+                elif not inherits_context:
+                    clause_context_subjects = set()
+                previous_event_end = event.end()
+                continue
+            fallback_prefix = clause[
+                max(previous_event_end, event.start() - 48) : event.start()
+            ]
+            fallback_blocked = bool(
+                default_subject_exclusion_pattern
+                and default_subject_exclusion_pattern.search(fallback_prefix)
+            )
+            if (
+                not subjects
+                and fallback_subjects
+                and not explicit_subjects
+                and not fallback_blocked
+            ):
+                subjects = fallback_subjects
+            if (
+                not subjects
+                and clause_context_subjects
+                and inherits_context
+            ):
+                subjects = clause_context_subjects
+            if subjects:
+                subjects = _subjects_for_structured_status(event, subjects)
+            if state == "resolved" and subjects:
+                subjects = _resolved_subjects_for_action(
+                    clause,
+                    event,
+                    subjects,
+                )
+            if subjects:
+                _apply_subject_state(states, subjects, state)
+                clause_context_subjects = subjects
+            elif not inherits_context:
+                clause_context_subjects = set()
+            previous_event_end = event.end()
+        if explicit_subjects or events:
+            context_subjects = clause_context_subjects
+    return states
+
+
+def _current_failure_subjects(text):
+    """Return subjects whose final state is failed within one fact row."""
+    states = _failure_subject_states(text)
+    return {subject for subject, state in states.items() if state == "failed"}
+
+
+def _strip_root_cause_gate_output_suffixes(target):
+    """Remove output labels after a gate without erasing business identity."""
+    normalized = target or ""
+    occurrences = _subject_occurrences(normalized)
+    for _, subject_end, _ in reversed(occurrences):
+        match = _ROOT_CAUSE_GATE_OUTPUT_SUFFIX_PATTERN.match(
+            normalized,
+            subject_end,
+        )
+        if match:
+            normalized = normalized[:subject_end] + normalized[match.end():]
+    return normalized
+
+
+def _root_cause_state_scope(row, row_index):
+    """Keep same-kind gates independent when root-cause targets differ."""
+    target = row[0] if row else ""
+    normalized_target = _strip_root_cause_gate_output_suffixes(target)
+    gate_subjects = tuple(
+        sorted(
+            {
+                subject
+                for _, _, subject in _subject_occurrences(
+                    normalized_target, instance_aware=True
+                )
+            }
+        )
+    )
+    if gate_subjects:
+        business_target = normalized_target
+        for _, pattern in _FAILURE_SUBJECT_PATTERNS:
+            business_target = pattern.sub(" ", business_target)
+        business_target = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(
+            " ", business_target
+        )
+        business_target = re.sub(
+            r"(?<![A-Za-z0-9_])CDS(?![A-Za-z0-9_])",
+            " ",
+            business_target,
+            flags=re.I,
+        )
+        business_target = re.sub(r"的\s*$", " ", business_target)
+        business_target = re.sub(
+            r"[`*_\s:：;,，。|/\\()（）\[\]【】<>《》-]+",
+            "",
+            business_target,
+        ).lower()
+        return ("__gate_scope__", business_target or "__default__")
+    normalized = re.sub(r"[`*_\s]+", "", target).lower()
+    return normalized or f"__root_cause_row_{row_index}"
+
+
+def _root_cause_row_states(row, initial_states=None):
+    """Apply root-cause cells without leaking narrative text across columns."""
+    cells = list(row or [])
+    target = cells[0] if cells else ""
+    normalized_target = _strip_root_cause_gate_output_suffixes(target)
+    target_subjects = {
+        subject
+        for _, _, subject in _subject_occurrences(
+            normalized_target,
+            instance_aware=True,
+        )
+    }
+    states = dict(initial_states or {})
+
+    observation_subjects = set()
+    if len(cells) > 1:
+        observation_subjects = {
+            subject
+            for _, _, subject in _subject_occurrences(
+                cells[1],
+                instance_aware=True,
+            )
+        }
+        observation_aliases = {}
+        for subject in observation_subjects:
+            subject_name, identities = subject
+            if identities != ("__unspecified__",):
+                continue
+            target_matches = {
+                target_subject
+                for target_subject in target_subjects
+                if target_subject[0] == subject_name
+                and target_subject[1] != ("__unspecified__",)
+            }
+            if target_matches:
+                observation_aliases[subject] = target_matches
+        resolved_observation_subjects = {
+            alias
+            for subject in observation_subjects
+            for alias in observation_aliases.get(subject, {subject})
+        }
+        states = _failure_subject_states(
+            _normalize_evidence_usage_gap_clauses(cells[1]),
+            states,
+            instance_aware=True,
+            default_subjects=target_subjects,
+            default_subject_exclusion_pattern=(
+                _ROOT_CAUSE_UNRELATED_FAILURE_OBJECT_PATTERN
+            ),
+            subject_aliases=observation_aliases,
+        )
+        observation_subjects = resolved_observation_subjects
+
+    for cell in cells[2:4]:
+        if _failure_subjects(cell):
+            states = _failure_subject_states(
+                _normalize_evidence_usage_gap_clauses(cell),
+                states,
+                instance_aware=True,
+            )
+
+    conclusion = cells[4].strip() if len(cells) > 4 else ""
+    generic_resolved_conclusion = bool(
+        re.fullmatch(
+            r"(?:(?:现已|已|已经)(?:修复|解决|恢复|通过|成功|正常|可用|就绪)"
+            r"|通过|成功|正常)",
+            conclusion,
+            re.I,
+        )
+    )
+    generic_failed_conclusion = bool(
+        _FAILURE_FACT_PATTERN.search(conclusion)
+        and not re.fullmatch(
+            r"(?:(?:当前|仍|尚|暂时?)\s*)?未关闭",
+            conclusion,
+            re.I,
+        )
+    )
+    if (
+        _failure_subjects(conclusion)
+        or generic_resolved_conclusion
+        or generic_failed_conclusion
+    ):
+        conclusion_status = (
+            f"已{conclusion}"
+            if generic_resolved_conclusion
+            and not _RESOLVED_FACT_PATTERN.search(conclusion)
+            else conclusion
+        )
+        states = _failure_subject_states(
+            _normalize_evidence_usage_gap_clauses(conclusion_status),
+            states,
+            instance_aware=True,
+            default_subjects=target_subjects or observation_subjects,
+        )
+    return states
+
+
+def _normalize_evidence_usage_gap_clauses(text):
+    """Neutralize evidence-use wording without removing real failures beside it."""
+    clauses = _split_fact_clauses(text)
+    evidence_subject = r"截图|证据|日志|记录|样本|材料|结果|产出|产物"
+    usage_pattern = re.compile(
+        rf"({evidence_subject})"
+        rf"((?:(?!(?:{evidence_subject}))[^。；;，,|\n]){{0,20}}?)"
+        r"(不可用于|无法用于|不能用于)"
+        r"(?=\s*(?:(?:直接|继续|后续|当前|本次|目标日)\s*)?"
+        r"(?:确认|验证|证明|覆盖|判断|评估))",
+        re.I,
+    )
+    evidence_status_pattern = re.compile(
+        rf"({evidence_subject})"
+        rf"((?:(?!(?:{evidence_subject}))[^。；;，,|\n]){{0,20}}?)"
+        r"(?:未成功|没成功|未完成|没完成)"
+        r"(?=(?:确认|验证|证明|覆盖|判断|评估))",
+        re.I,
+    )
+
+    def neutralize_usage(match):
+        if _failure_subjects(match.group(2)):
+            return match.group(0)
+        return f"{match.group(1)}{match.group(2)}不足以用于"
+
+    def neutralize_evidence_status(match):
+        if _failure_subjects(match.group(2)):
+            return match.group(0)
+        return f"{match.group(1)}{match.group(2)}不足以"
+
+    for index in range(0, len(clauses), 2):
+        clauses[index] = usage_pattern.sub(neutralize_usage, clauses[index])
+        clauses[index] = evidence_status_pattern.sub(
+            neutralize_evidence_status, clauses[index]
+        )
+    return "".join(clauses)
+
+
 def _daily_fact_signals(values, body):
     """Extract the product and coverage facts used to justify a daily Verdict."""
     product_quality = values.get("产品质量", "").strip()
     completeness = values.get("验收完整性", "").strip()
 
     severity_counts = _severity_counts_from_text(product_quality)
+    has_complete_severity_counts = bool(
+        severity_counts is not None and len(severity_counts) == 4
+    )
     zero_defects = bool(
         (
-            severity_counts is not None
-            and len(severity_counts) == 4
+            has_complete_severity_counts
             and sum(severity_counts.values()) == 0
         )
         or (
-            severity_counts is None
+            not has_complete_severity_counts
             and re.search(
-            r"(?:未发现|没有发现|未检测到|无|不存在)[^。；;|\n]{0,32}(?:产品)?缺陷"
-            r"|(?:缺陷(?:数(?:量)?)?)[^。；;|\n]{0,12}(?:为|[:：=])\s*0(?:\s*个)?"
-            r"|\b0\s*/\s*0\s*/\s*0\s*/\s*0\b",
-            product_quality,
-            re.I,
+                r"(?:未发现|没有发现|未检测到|无|不存在)\s*"
+                r"(?:(?:任何|明确|已知|可(?:稳定)?复现(?:的)?|目标日|产品)\s*){0,5}缺陷"
+                r"|(?:缺陷(?:数(?:量)?)?)[^。；;|\n]{0,12}(?:为|[:：=])\s*0(?:\s*个)?"
+                r"|\b0\s*/\s*0\s*/\s*0\s*/\s*0\b",
+                product_quality,
+                re.I,
             )
         )
     )
@@ -678,7 +1744,7 @@ def _daily_fact_signals(values, body):
         or blocking_defect_rows
         or re.search(
             r"\bP[01]\b"
-            r"|(?:产品|核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
+            r"|产品[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
             positive_product,
             re.I,
         )
@@ -688,37 +1754,40 @@ def _daily_fact_signals(values, body):
         or nonblocking_defect_rows
         or re.search(r"\bP[23]\b|非阻断风险", positive_product, re.I)
     )
-    product_risk = blocking_product_failure or nonblocking_product_risk
-    core_failure = bool(
-        re.search(
-            r"(?:核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
-            positive_product,
-            re.I,
-        )
+    product_core_failure = "core-case" in _current_failure_subjects(
+        positive_product
     )
+    product_risk = blocking_product_failure or nonblocking_product_risk
     root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
-    root_fact_cells = []
-    for row in root_cause_rows:
-        root_fact_cells.extend(row[:4])
-    root_facts = "；".join(root_fact_cells)
-    chain_failure = bool(
-        re.search(
-            r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)",
-            root_facts,
-            re.I,
+    failure_states_by_scope = {}
+    for row_index, row in enumerate(root_cause_rows):
+        scope = _root_cause_state_scope(row, row_index)
+        failure_states_by_scope[scope] = _root_cause_row_states(
+            row,
+            failure_states_by_scope.get(scope),
         )
+    current_failure_subjects = {
+        subject[0] if isinstance(subject, tuple) else subject
+        for states in failure_states_by_scope.values()
+        for subject, state in states.items()
+        if state == "failed"
+    }
+    chain_failure = bool(
+        current_failure_subjects
+        & {
+            "acceptance-chain",
+            "evidence-chain",
+            "archive",
+            "report-publish",
+            "verify-open",
+            "slack",
+        }
     )
     hard_gate_failure = bool(
-        re.search(
-            r"(?:CDS\s*)?(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|阻断|不可用)"
-            r"|(?:失败|未通过)[^。；;|\n]{0,20}"
-            r"(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)",
-            root_facts,
-            re.I,
-        )
+        current_failure_subjects
+        & {"ready", "smoke", "build", "deploy", "service-ready", "forced-test"}
     )
+    core_failure = product_core_failure or "core-case" in current_failure_subjects
     coverage_gap_count = _coverage_gap_count(body)
     completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)
     incomplete = bool(
@@ -808,6 +1877,22 @@ def _daily_conclusion_contract_errors(verdict, body):
         errors.append("[事实一致性] pass 与未覆盖/无法确认或 P0-P3 缺陷事实不一致")
     if verdict == "conditional" and facts["blocking_product_failure"]:
         errors.append("[事实一致性] 已有 P0/P1 产品失败事实时不能使用 conditional，必须使用 fail")
+    if verdict in {"pass", "conditional"}:
+        fail_only_facts = [
+            label
+            for label, present in (
+                ("核心用例", facts["core_failure"]),
+                ("验收链路", facts["chain_failure"]),
+                ("硬门禁", facts["hard_gate_failure"]),
+            )
+            if present
+        ]
+        if fail_only_facts:
+            errors.append(
+                f"[事实一致性] verdict={verdict} 与"
+                + "、".join(fail_only_facts)
+                + "失败事实不一致，必须使用 fail"
+            )
     coverage_only = (
         facts["zero_defects"]
         and facts["incomplete"]
