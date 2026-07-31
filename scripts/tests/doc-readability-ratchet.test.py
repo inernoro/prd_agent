@@ -438,6 +438,11 @@ with tempfile.TemporaryDirectory() as tmp:
     check(any("与目录名" in p for p in checker.check_skill(wrong_name)),
           "name 与目录名对不上被抓出（name 就是技能的身份）")
     with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write("---\nname: demo-skill\nname: wrong-name\ndescription: %s\n---\n"
+                 % "这是一段足够长的描述，说清了这个技能在什么场景下会被触发、以及它会产出什么东西。")
+    check(any("写了多遍" in p for p in checker.check_skill(wrong_name)),
+          "frontmatter 同一个键写两遍被抓出（判据看第一处、YAML 取最后一处）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
         fh.write(body % "Demo_Skill")
     check(any("kebab-case" in p for p in checker.check_skill(wrong_name)),
           "name 不是 kebab-case 被抓出")

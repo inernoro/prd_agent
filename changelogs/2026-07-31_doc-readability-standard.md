@@ -43,3 +43,4 @@
 | fix | doc | 周报豁免加尾锚；push 到 main 时基线与推送前 commit 比对；docs 闸门覆盖源码树；面包屑守卫改扫全仓 |
 | fix | doc | docs 闸门触发面改为全仓兜底，与面包屑守卫的扫描面对齐；guide.list 成员判定只认目录条目行 |
 | fix | doc | 死链闸认带标题的链接与引用式定义行；散落路径识别补齐 jsx/sql/html 等实现扩展名 |
+| fix | doc | 技能 frontmatter 里 name/description 写多遍判红，避免判据与 YAML 消费方看到不同的值 |

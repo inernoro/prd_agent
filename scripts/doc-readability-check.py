@@ -554,6 +554,11 @@ def check_skill(path: str) -> list[str]:
     end = text.find("\n---", 3)
     fm = text[3:end] if end != -1 else ""
     problems = []
+    # 同一个键写两遍时，判据看第一处、YAML 消费方通常取最后一处 —— 两边看的
+    # 不是同一个值，判据就等于没判。重复键一律判红，不去猜哪一处才算数。
+    for key in ("name", "description"):
+        if len(re.findall(rf"^{key}\s*:", fm, re.M)) > 1:
+            problems.append(f"frontmatter 里 {key} 写了多遍（判据看第一处、YAML 取最后一处，必须去重）")
     name_match = re.search(r"^name\s*:(.*)$", fm, re.M)
     if not name_match:
         problems.append("frontmatter 缺 name")
