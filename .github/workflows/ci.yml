@@ -73,6 +73,15 @@ jobs:
               - 'scripts/gw-smoke.py'
               - 'scripts/llmgw-rollout-ledger.py'
               - 'scripts/tests/test_*.py'
+              # 守卫的**被测文件**也必须登记，否则这道闸只在「守卫自己被改」时开，
+              # 而它要防的漂移恰恰发生在被测文件那边：只改模板/规则的 PR 一路全绿，
+              # 守卫从头到尾没跑过（predicate-and-wiring-discipline 形状 2）。
+              # cds/** 虽有自己的 filter，但那个 job 不跑这批 Python 守卫，不能顶替。
+              - '.claude/rules/report-design-system.md'
+              - '.claude/skills/daily-report-summary/reference/report-template-html.html'
+              - '.claude/skills/weekly-update-summary/reference/report-template-html.html'
+              - '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py'
+              - 'cds/src/scheduler/nginx-template.ts'
               - 'scripts/tests/validate-static-dist.test.sh'
               - 'scripts/validate-static-dist.sh'
               - 'deploy/nginx/**'
