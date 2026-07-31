@@ -24,11 +24,12 @@ SOURCE_DOCS = [
     "doc/design.acceptance.knowledge-governance.md",
 ]
 
-SKILLS = [
-    "acceptance-test-design",
+SNAPSHOT_SKILLS = [
     "acceptance-scenario-orchestrator",
     "create-visual-test-to-kb",
 ]
+
+GENERIC_SKILLS = ["acceptance-test-design"]
 
 SNAPSHOTS = [
     "rule.acceptance.map-enterprise.md",
@@ -88,13 +89,27 @@ def check_official_catalog() -> None:
         return
     catalog = json.loads(path.read_text(encoding="utf-8"))
     by_key = {item.get("key"): item for item in catalog.get("skills", [])}
-    for skill in SKILLS:
+    for skill in [*SNAPSHOT_SKILLS, *GENERIC_SKILLS]:
         item = by_key.get(skill)
         if not item:
             fail(f"official catalog missing skill: {skill}")
         files_by_path = {f.get("path"): f for f in item.get("files", [])}
         if "references/rules/manifest.json" not in files_by_path:
             fail(f"official catalog missing rules manifest: {skill}")
+        if skill in GENERIC_SKILLS:
+            for embedded_path in [
+                "references/rules/manifest.json",
+                "references/rules/baseline.md",
+            ]:
+                file_entry = files_by_path.get(embedded_path)
+                if not file_entry:
+                    fail(f"official catalog missing generic rule file: {skill}/{embedded_path}")
+                if file_entry.get("truncated"):
+                    fail(f"official catalog embedded rule file is truncated: {skill}/{embedded_path}")
+                disk_text = rel(f".claude/skills/{skill}/{embedded_path}").read_text(encoding="utf-8")
+                if file_entry.get("content") != disk_text:
+                    fail(f"official catalog stale embedded rule file: {skill}/{embedded_path}")
+            continue
         for embedded_path in ["references/rules/manifest.json", *[f"references/rules/{s}" for s in SNAPSHOTS]]:
             file_entry = files_by_path.get(embedded_path)
             if not file_entry:
@@ -114,7 +129,7 @@ def main() -> None:
         require_contains("doc/index.yml", key)
         require_contains("doc/guide.list.directory.md", key)
 
-    for skill in SKILLS:
+    for skill in SNAPSHOT_SKILLS:
         skill_md = f".claude/skills/{skill}/SKILL.md"
         require_file(skill_md)
         require_contains(skill_md, "references/rules")
@@ -123,6 +138,14 @@ def main() -> None:
         require_file(str(rules_dir.relative_to(ROOT) / "manifest.json"))
         for snapshot in SNAPSHOTS:
             require_file(str(rules_dir.relative_to(ROOT) / snapshot))
+
+    for skill in GENERIC_SKILLS:
+        skill_md = f".claude/skills/{skill}/SKILL.md"
+        require_file(skill_md)
+        require_contains(skill_md, "references/rules/baseline.md")
+        rules_dir = rel(f".claude/skills/{skill}/references/rules")
+        require_file(str(rules_dir.relative_to(ROOT) / "manifest.json"))
+        require_file(str(rules_dir.relative_to(ROOT) / "baseline.md"))
 
     require_file(".claude/skills/create-visual-test-to-kb/scripts/publish_acceptance_rules_to_cds.py")
     if rel(".claude/skills/create-visual-test-to-kb/scripts/restyle_method_docs.py").exists():

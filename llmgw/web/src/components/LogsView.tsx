@@ -313,7 +313,7 @@ export function LogsView() {
       appCallerCode: filterAppCaller || undefined,
       transport: filterTransport || undefined,
       requestType: filterRequestType || undefined,
-      operation: filterOperation || undefined,
+      operation: subtab === 'upstream' ? filterOperation || undefined : undefined,
       view: subtab === 'upstream' ? 'physical' as const : 'logical' as const,
       sourceSystem: filterSourceSystem || undefined,
       ingressProtocol: filterIngressProtocol || undefined,
@@ -879,7 +879,7 @@ export function LogsView() {
     filterAppCaller,
     filterTransport,
     filterRequestType,
-    filterOperation,
+    subtab === 'upstream' ? filterOperation : '',
     filterSourceSystem,
     filterIngressProtocol,
     filterModelPolicy,
@@ -1020,10 +1020,12 @@ export function LogsView() {
                 <option value="">全部请求类型</option>
                 {meta.requestTypes.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
-              <select aria-label="操作类型" value={filterOperation} onChange={(event) => setFilterOperation(event.target.value)}>
-                <option value="">全部操作类型</option>
-                {meta.operations.map((value) => <option key={value} value={value}>{getOperationMeta(value).label}</option>)}
-              </select>
+              {subtab === 'upstream' ? (
+                <select aria-label="操作类型" value={filterOperation} onChange={(event) => setFilterOperation(event.target.value)}>
+                  <option value="">全部操作类型</option>
+                  {meta.operations.map((value) => <option key={value} value={value}>{getOperationMeta(value).label}</option>)}
+                </select>
+              ) : null}
               {activeFilterCount > 0 ? <button className="lg-log-clear" type="button" onClick={clearFilters}>清除 {activeFilterCount} 个筛选</button> : null}
             </div>
           </details>

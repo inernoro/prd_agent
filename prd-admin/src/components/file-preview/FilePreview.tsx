@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { Check, CloudUpload, FileText, Clock3 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
@@ -6,8 +8,124 @@ import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/Doc
 import { extractTranscriptSummary } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from './MarkdownViewer';
 import { listTranscribeStyles } from '@/services';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
+
+function formatBackgroundDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function RecordingArchiveProgress({
+  hasPlayback,
+  hasTranscript,
+  startedAt,
+  waitingForRetry,
+}: {
+  hasPlayback: boolean;
+  hasTranscript: boolean;
+  startedAt?: string;
+  waitingForRetry: boolean;
+}) {
+  const startedMs = startedAt ? new Date(startedAt).getTime() : Date.now();
+  const [elapsed, setElapsed] = useState(() => (
+    Number.isFinite(startedMs) ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0
+  ));
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setElapsed(value => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const stages = [
+    { label: '录音已保存', state: 'done' as const, icon: Check },
+    waitingForRetry
+      ? { label: '等待自动重试', state: 'waiting' as const, icon: Clock3 }
+      : { label: '保存云端副本', state: 'active' as const, icon: CloudUpload },
+    { label: '本页自动更新', state: 'pending' as const, icon: FileText },
+  ];
+
+  return (
+    <section
+      data-testid="recording-background-progress"
+      aria-live="polite"
+      className="w-full max-w-[760px] rounded-[14px] p-4"
+      style={{
+        background: 'var(--semantic-info-soft)',
+        border: '1px solid var(--semantic-info-border)',
+        color: 'var(--text-secondary)',
+      }}>
+      <div className="flex items-start gap-3">
+        <span
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]"
+          style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.98)' }}>
+          <CloudUpload size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-token-primary">
+            {waitingForRetry ? '云端服务暂时不可用，已排队重试' : '正在保存云端副本'}
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-token-secondary">
+            {waitingForRetry
+              ? '录音和原文已经可用，不需要停在本页等待。系统会在后台自动重试云端副本。'
+              : '后台只负责保存正式音频并确认原文可恢复，不会自动总结或改写。'}
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
+            {hasPlayback
+              ? hasTranscript
+                ? '现在可以播放、编辑原文，并使用按语速估算的逐句跟随。完成后本页会自动切换正式音频。'
+                : '现在可以播放本机录音。云端副本完成后，本页会自动补齐原文。'
+              : '录音已经安全保存。云端副本完成后，本页会自动出现正式音频和原文。'}
+          </p>
+        </div>
+      </div>
+
+      <div
+        className="mt-3 h-1.5 overflow-hidden rounded-full"
+        role="progressbar"
+        aria-label="保存云端副本"
+        aria-valuetext={waitingForRetry
+          ? `等待云端服务恢复，已等待 ${formatBackgroundDuration(elapsed)}`
+          : `已后台处理 ${formatBackgroundDuration(elapsed)}`}
+        style={{ background: 'rgba(59,130,246,0.10)' }}>
+        <span
+          className={`block h-full w-2/5 rounded-full ${waitingForRetry ? '' : 'animate-pulse motion-reduce:animate-none'}`}
+          style={{ background: 'linear-gradient(90deg, rgba(59,130,246,0.45), rgba(129,140,248,0.95))' }}
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2" aria-label="云端副本处理阶段">
+        {stages.map(({ label, state, icon: Icon }) => (
+          <div key={label} className="flex min-w-0 flex-col items-center text-center">
+            <span
+              className="flex h-7 w-7 items-center justify-center rounded-full"
+              style={{
+                background: state === 'done' ? 'rgba(34,197,94,0.14)' : 'var(--bg-elevated)',
+                color: state === 'done'
+                  ? 'rgba(74,222,128,0.95)'
+                  : state === 'active'
+                    ? 'rgba(96,165,250,0.98)'
+                    : 'var(--text-muted)',
+                border: '1px solid var(--border-faint)',
+              }}>
+              {state === 'active'
+                ? <MapSpinner size={13} color="rgba(96,165,250,0.98)" />
+                : <Icon size={13} />}
+            </span>
+            <span className="mt-1.5 text-[10px] leading-4 text-token-muted">{label}</span>
+          </div>
+        ))}
+      </div>
+
+      <p className="mt-3 text-center text-[10px] tabular-nums text-token-muted">
+        {waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'}
+        {' · '}{waitingForRetry ? '已等待' : '已处理'} {formatBackgroundDuration(elapsed)}
+      </p>
+    </section>
+  );
+}
 
 /**
  * 给 srcDoc 渲染的 HTML 正文注入移动端响应式能力：
@@ -28,13 +146,11 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscribe, onSaveTranscriptNote }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
   transcriptNoteMd?: string | null;
-  /** 打开既有的「换个整理方式」流程；交互播放器不在前端伪造新摘要。 */
-  onRestyleTranscribe?: () => void;
   /** 保存用户在原文句子上的直接校对。 */
   onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
 }) {
@@ -57,6 +173,9 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
   const kind: FilePreviewKind = cfg.preview;
   const fileUrl = preview?.fileUrl ?? null;
   const text = preview?.text ?? null;
+  // MIME 是服务端对实际媒体内容的权威判断。录音产出的 .webm 扩展名也可用于
+  // 视频，不能在检查 audio/* 之前按扩展名提前渲染成黑色视频框。
+  const isAudioEntry = (entry.contentType ?? '').toLowerCase().startsWith('audio/');
 
   // 图片预览
   if (kind === 'image' && fileUrl) {
@@ -73,7 +192,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
   }
 
   // 视频预览
-  if (kind === 'video' && fileUrl) {
+  if (kind === 'video' && fileUrl && !isAudioEntry) {
     return (
       <div className="flex items-center justify-center py-4 w-full">
         <video
@@ -89,22 +208,59 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
   // 音频预览 — 自定义波形播放器（wavesurfer.js）。
   // contentType audio/* 优先于扩展名路由：录音产出的 .webm 是音频（audio/webm），
   // 不能因扩展名被当成视频渲染成黑盒播放器（2026-07-13 用户截图反馈）。
-  const isAudioEntry = (entry.contentType ?? '').toLowerCase().startsWith('audio/');
-  if ((kind === 'audio' || isAudioEntry) && fileUrl) {
+  const isAudio = kind === 'audio' || isAudioEntry;
+  const liveTranscript = entry.metadata?.liveTranscript?.trim() || null;
+  const effectiveTranscript = transcriptNoteMd?.trim() || liveTranscript;
+  const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
+  const archiveWaitingForRetry = entry.metadata?.audioArchiveNeedsRetry === 'true';
+  if (isAudio && fileUrl) {
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
-      <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-2' : 'justify-center py-12'}`}>
+      <div className={`flex min-h-full w-full flex-col items-center gap-5 ${effectiveTranscript ? 'justify-start py-2' : 'justify-center py-12'}`}>
+        {archivePending && (
+          <RecordingArchiveProgress
+            hasPlayback
+            hasTranscript={Boolean(effectiveTranscript)}
+            startedAt={entry.createdAt}
+            waitingForRetry={archiveWaitingForRetry}
+          />
+        )}
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
-        {transcriptNoteMd ? (
+        {effectiveTranscript ? (
           <AudioDocumentPreview
             src={fileUrl}
-            noteMd={transcriptNoteMd}
+            noteMd={effectiveTranscript}
             styleKey={entry.metadata?.transcribe_style_key}
-            onRestyle={onRestyleTranscribe}
             onSaveNote={onSaveTranscriptNote}
           />
         ) : <AudioWavePlayer src={fileUrl} />}
+      </div>
+    );
+  }
+
+  // 对象存储暂不可用时，服务端会先创建待归档音频条目。此时不能把它渲染成
+  // “暂无内容”：有实时原文就先展示原文，没有则明确说明后台状态。播放器会在
+  // 本机保险音频或云端地址任一可用后自动出现。
+  if (isAudio && archivePending) {
+    return (
+      <div className="mx-auto flex h-full w-full max-w-[760px] flex-col gap-4 py-4">
+        <RecordingArchiveProgress
+          hasPlayback={false}
+          hasTranscript={Boolean(liveTranscript)}
+          startedAt={entry.createdAt}
+          waitingForRetry={archiveWaitingForRetry}
+        />
+        {liveTranscript ? (
+          <section
+            className="rounded-[14px] p-4"
+            style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
+            <p className="mb-3 text-[12px] font-semibold text-token-secondary">实时原文</p>
+            <MarkdownViewer content={liveTranscript} />
+          </section>
+        ) : (
+          <p className="text-center text-[12px] text-token-muted">正在等待完整音频生成原文</p>
+        )}
       </div>
     );
   }
@@ -384,11 +540,10 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
   );
 }
 
-function AudioDocumentPreview({ src, noteMd, styleKey, onRestyle, onSaveNote }: {
+function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
   src: string;
   noteMd: string;
   styleKey?: string;
-  onRestyle?: () => void;
   onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
 }) {
   const summary = extractTranscriptSummary(noteMd);
@@ -405,6 +560,7 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onRestyle, onSaveNote }: 
 
   return (
     <div className="flex w-full flex-col items-center gap-4">
+      {summary && (
       <div className="flex min-h-11 w-full max-w-[760px] items-center gap-1 rounded-[11px] p-1" style={{ background: 'var(--bg-nested)' }}>
         <button
           type="button"
@@ -413,16 +569,15 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onRestyle, onSaveNote }: 
           style={tab === 'raw' ? { background: 'var(--bg-elevated)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}>
           原文
         </button>
-        {summary && (
-          <button
-            type="button"
-            onClick={() => setTab('organized')}
-            className="min-h-11 flex-1 rounded-[8px] px-3 text-[12px] font-semibold"
-            style={tab === 'organized' ? { background: 'var(--bg-elevated)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}>
-            {styleLabel}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => setTab('organized')}
+          className="min-h-11 flex-1 rounded-[8px] px-3 text-[12px] font-semibold"
+          style={tab === 'organized' ? { background: 'var(--bg-elevated)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}>
+          {styleLabel}
+        </button>
       </div>
+      )}
       {tab === 'organized' && summary ? (
         <>
           <AudioWavePlayer src={src} />
@@ -435,8 +590,6 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onRestyle, onSaveNote }: 
           src={src}
           noteMd={noteMd}
           documentMode
-          styleKey={styleKey}
-          onRestyle={onRestyle}
           onSaveNote={onSaveNote}
         />
       )}
@@ -445,4 +598,3 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onRestyle, onSaveNote }: 
 }
 
 export default FilePreview;
-import { useEffect, useState } from 'react';

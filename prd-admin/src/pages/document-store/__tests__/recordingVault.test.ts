@@ -55,7 +55,7 @@ describe('recording vault deferred transcription recovery', () => {
     [true, false, 'run-2', { kind: 'watch-deferred-run', runId: 'run-2' }],
     [true, true, 'run-3', { kind: 'watch-deferred-run', runId: 'run-3' }],
     [true, false, null, { kind: 'wait-for-archive' }],
-    [true, true, null, { kind: 'open-transcription' }],
+    [true, true, null, { kind: 'wait-for-archive' }],
     [false, false, null, { kind: 'open-transcription' }],
     [false, true, null, { kind: 'open-transcription' }],
   ])(

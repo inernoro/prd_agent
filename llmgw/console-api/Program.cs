@@ -1795,9 +1795,15 @@ app.MapGet("/gw/logs/summary", async (
         .Include("RequestType")
         .Include("HttpMethod")
         .Include("Path")
-        .Include("IsHealthProbe");
+        .Include("IsHealthProbe")
+        .Include("ProviderAttempts");
     var docs = await logs.Find(filter).Project(projection).ToListAsync();
     var physicalDocs = await logs.Find(physicalFilter).Project(projection).ToListAsync();
+    var physicalAttempts = physicalDocs
+        .SelectMany(MapProviderAttempts)
+        .Where(IsUpstreamProviderAttempt)
+        .ToList();
+    var internalStatusQueries = physicalAttempts.LongCount(IsProviderPollAttempt);
 
     var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
     var pricedDocs = docs
@@ -1825,9 +1831,9 @@ app.MapGet("/gw/logs/summary", async (
     var data = new LogsSummaryData
     {
         Total = docs.Count,
-        UpstreamCalls = physicalDocs.Count,
-        ControlCalls = physicalDocs.LongCount(d => !IsBusinessOperation(ResolveLogOperation(d))),
-        StatusQueries = physicalDocs.LongCount(d => ResolveLogOperation(d) == "status"),
+        UpstreamCalls = physicalAttempts.Count,
+        ControlCalls = physicalDocs.LongCount(d => !IsBusinessOperation(ResolveLogOperation(d))) + internalStatusQueries,
+        StatusQueries = physicalDocs.LongCount(d => ResolveLogOperation(d) == "status") + internalStatusQueries,
         Succeeded = docs.LongCount(d => d.GetStringOrEmpty("Status") == "succeeded"),
         Failed = docs.LongCount(d => d.GetStringOrEmpty("Status") == "failed"),
         Running = docs.LongCount(d => d.GetStringOrEmpty("Status") == "running"),
@@ -9429,7 +9435,7 @@ static FilterDefinition<BsonDocument> BuildBusinessOperationFilter()
 {
     var fb = Builders<BsonDocument>.Filter;
     var legacyBusiness = fb.And(
-        fb.Exists("Operation", false),
+        BuildLegacyOperationFilter(),
         fb.Ne("IsHealthProbe", true),
         fb.Or(
             fb.Ne("RequestType", "video-gen"),
@@ -9443,7 +9449,7 @@ static FilterDefinition<BsonDocument> BuildOperationFilter(string operation)
 {
     var fb = Builders<BsonDocument>.Filter;
     var normalized = operation.Trim().ToLowerInvariant();
-    var legacy = fb.Exists("Operation", false);
+    var legacy = BuildLegacyOperationFilter();
     return normalized switch
     {
         "submit" => fb.Or(
@@ -9483,6 +9489,14 @@ static FilterDefinition<BsonDocument> BuildOperationFilter(string operation)
     };
 }
 
+static FilterDefinition<BsonDocument> BuildLegacyOperationFilter()
+{
+    var fb = Builders<BsonDocument>.Filter;
+    return fb.Or(
+        fb.Exists("Operation", false),
+        fb.Eq("Operation", BsonNull.Value));
+}
+
 static string ResolveLogOperation(BsonDocument doc)
 {
     var stored = doc.AsNullableString("Operation")?.Trim().ToLowerInvariant();
@@ -9503,6 +9517,13 @@ static string ResolveLogOperation(BsonDocument doc)
 
 static bool IsBusinessOperation(string operation)
     => operation is "invoke" or "submit";
+
+static bool IsUpstreamProviderAttempt(ProviderAttemptDto attempt)
+    => string.Equals(attempt.Stage, "send", StringComparison.OrdinalIgnoreCase)
+       || IsProviderPollAttempt(attempt);
+
+static bool IsProviderPollAttempt(ProviderAttemptDto attempt)
+    => string.Equals(attempt.Stage, "poll", StringComparison.OrdinalIgnoreCase);
 
 static string? InferProviderTaskId(BsonDocument doc)
 {

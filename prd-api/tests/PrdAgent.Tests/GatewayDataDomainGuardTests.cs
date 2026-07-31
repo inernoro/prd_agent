@@ -3261,6 +3261,35 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void AsyncVideoLogViews_PreserveLogicalChainsAndPhysicalAttemptCounts()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+
+        Assert.Contains("fb.Eq(\"Operation\", BsonNull.Value)", console);
+        Assert.Contains(".Include(\"ProviderAttempts\")", console);
+        Assert.Contains(".SelectMany(MapProviderAttempts)", console);
+        Assert.Contains("UpstreamCalls = physicalAttempts.Count", console);
+        Assert.Contains("StatusQueries = physicalDocs.LongCount(d => ResolveLogOperation(d) == \"status\") + internalStatusQueries", console);
+
+        const string sceneMethodSignature = "internal async Task ProcessSceneRenderAsync(";
+        var sceneStart = worker.IndexOf(sceneMethodSignature, StringComparison.Ordinal);
+        var sceneEnd = worker.IndexOf("private async Task<bool> RenewSceneRenderLeaseAsync", sceneStart, StringComparison.Ordinal);
+        Assert.True(sceneStart >= 0 && sceneEnd > sceneStart, "找不到单镜渲染方法");
+        var sceneMethod = worker[sceneStart..sceneEnd];
+        var contextScope = sceneMethod.IndexOf("using var sceneContextScope = ctxAccessor.BeginScope", StringComparison.Ordinal);
+        var submitBranch = sceneMethod.IndexOf("if (!resumeExistingJob)", StringComparison.Ordinal);
+        var pollingLoop = sceneMethod.IndexOf("while (DateTime.UtcNow < deadline)", StringComparison.Ordinal);
+        Assert.True(contextScope >= 0 && contextScope < submitBranch && contextScope < pollingLoop,
+            "场景逻辑请求上下文必须覆盖提交、恢复轮询和下载全链路");
+
+        Assert.Contains("operation: subtab === 'upstream' ? filterOperation || undefined : undefined", logsView);
+        Assert.Contains("subtab === 'upstream' ? filterOperation : ''", logsView);
+        Assert.Contains("{subtab === 'upstream' ? (", logsView);
+    }
+
+    [Fact]
     public void ExternalConsole_CostSummaryPreservesUnknownAndCurrencyBoundaries()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");

@@ -16,6 +16,17 @@ export function withoutQuickRecordRequest(search: string): string {
   return query ? `?${query}` : '';
 }
 
+/**
+ * `tab` 是列表页的一次性导航意图。进入具体知识库后只能消费它本身，不能顺带
+ * 删除 `store` / `entry`，否则刷新详情页时会与 history 状态恢复互相改写 URL。
+ */
+export function withoutDocumentStoreTabRequest(search: string): string {
+  const params = new URLSearchParams(search);
+  params.delete('tab');
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
 export function parseDocumentStoreDeepLink(search: string): DocumentStoreDeepLink {
   const params = new URLSearchParams(search);
   const storeId = params.get('store');

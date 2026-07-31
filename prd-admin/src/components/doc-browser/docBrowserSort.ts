@@ -1,5 +1,14 @@
 export type DocBrowserSortMode = 'default' | 'created-desc' | 'updated-desc';
 
+/**
+ * 知识库缺少持久化排序偏好时，默认让新内容出现在最前面。
+ * 只有用户明确选择过“书籍顺序”时才返回 default。
+ */
+export function resolveDocBrowserSortMode(value?: string | null): DocBrowserSortMode {
+  if (value === 'default' || value === 'created-desc' || value === 'updated-desc') return value;
+  return 'created-desc';
+}
+
 export interface SortableDocBrowserEntry {
   id: string;
   title: string;

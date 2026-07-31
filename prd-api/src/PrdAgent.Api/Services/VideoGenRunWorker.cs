@@ -876,6 +876,21 @@ public class VideoGenRunWorker : BackgroundService
         var client = scope.ServiceProvider.GetRequiredService<IOpenRouterVideoClient>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
         var expectedJobId = resumeExistingJob ? scene.JobId! : claimId;
+        var sceneLogicalRequestId = $"{run.Id}_scene_{sceneIdx}";
+        using var sceneContextScope = ctxAccessor.BeginScope(new LlmRequestContext(
+            RequestId: sceneLogicalRequestId,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.OwnerAdminId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[VIDEO_GEN_SCENE]",
+            RequestType: ModelTypes.VideoGen,
+            AppCallerCode: appCallerCode,
+            ForceFullShadowSample: run.ForceFullShadowSample,
+            RunId: run.Id,
+            LogicalRequestId: sceneLogicalRequestId));
 
         try
         {
@@ -901,23 +916,8 @@ public class VideoGenRunWorker : BackgroundService
                     DurationSeconds = scene.Duration ?? run.DirectDuration,
                     GenerateAudio = run.GenerateAudio,
                     UserId = run.OwnerAdminId,
-                    RequestId = $"{run.Id}_scene_{sceneIdx}",
+                    RequestId = sceneLogicalRequestId,
                 };
-
-                using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
-                RequestId: $"{run.Id}_scene_{sceneIdx}",
-                GroupId: null,
-                SessionId: run.Id,
-                UserId: run.OwnerAdminId,
-                ViewRole: null,
-                DocumentChars: null,
-                DocumentHash: null,
-                SystemPromptRedacted: "[VIDEO_GEN_SCENE]",
-                RequestType: ModelTypes.VideoGen,
-                AppCallerCode: appCallerCode,
-                ForceFullShadowSample: run.ForceFullShadowSample,
-                RunId: run.Id,
-                LogicalRequestId: $"{run.Id}_scene_{sceneIdx}"));
 
                 var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
                 if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
