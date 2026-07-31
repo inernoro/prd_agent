@@ -815,7 +815,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(overviewSignature, overview);
         Assert.Contains("TenantAccess.FilterTeamScope(http, fb.And(", overview);
         Assert.Contains("serviceKeys.Find(TenantAccess.FilterTeamScope(http, fb.Empty))", overview);
-        Assert.Contains("fb.Ne(\"IsHealthProbe\", true)", overview);
+        Assert.Contains("BuildBusinessOperationFilter()", overview);
+        Assert.Contains("fb.Ne(\"IsHealthProbe\", true)", console);
         Assert.Contains("from/to 必须是有效的 UTC 日期时间", overview);
         Assert.Contains("TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead)", overview);
         Assert.Contains("RequireAuthorization(\"UsageRead\")", overview);
