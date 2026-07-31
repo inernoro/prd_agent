@@ -782,6 +782,25 @@ class DailyVerdictContractTests(unittest.TestCase):
                     any("硬门禁失败事实" in error for error in errors)
                 )
 
+    def test_cds_probe_pass_and_numeric_status_open_hard_gate(self):
+        for fact in (
+            'CDS smoke {"status":503,"pass":false}',
+            'CDS smoke {"pass":false}',
+            'CDS smoke {"status":503}',
+            "CDS ready httpStatus=401",
+            "CDS build status_code=500",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
     def test_boolean_cds_results_close_prior_failure(self):
         for closure in (
             'CDS smoke {"ok":true}',
@@ -795,6 +814,30 @@ class DailyVerdictContractTests(unittest.TestCase):
                 body = body.rstrip() + (
                     "\n| 验收冻结 SHA | "
                     f"{closure} | 同一门禁已复测 | 布尔结果证明通过 | "
+                    "已通过 | 保留记录 |\n"
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+    def test_cds_probe_pass_and_numeric_status_close_prior_failure(self):
+        for closure in (
+            'CDS smoke {"status":200,"pass":true}',
+            'CDS smoke {"pass":true}',
+            'CDS smoke {"status":204}',
+            "CDS smoke httpStatus=200",
+            "CDS smoke status_code=200",
+        ):
+            with self.subTest(closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 先前失败"
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 同一探针已复测 | 探针结果证明通过 | "
                     "已通过 | 保留记录 |\n"
                 )
                 self.assertEqual(
