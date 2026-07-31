@@ -24,11 +24,25 @@ import types
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# data-emblem 属性的发现正则。**单双引号都要认**，且捕获整个属性值。
-# 收窄任何一处都会让某些合法写法在「发现」环节就消失，后面判得再宽也看不到它：
-#   `([a-z]+)` 漏掉 asteroid-2 / Moon；只认双引号漏掉 data-emblem='asteroid-2'；
-#   等号两侧不许空白则漏掉 `data-emblem = "asteroid-2"`。三处都是合法 HTML。
-EMBLEM_ATTR_RE = re.compile(r"""data-emblem\s*=\s*(["\'])(.*?)\1""")
+# data-emblem 属性的发现正则。**按 HTML 属性语法穷举，而不是按我想得到的写法枚举。**
+#
+# 这条正则被连着指出收窄过三次，每次都是一个我没想到的合法维度：
+#   第 12 轮 值的字符集 `([a-z]+)`      -> 漏 asteroid-2 / Moon
+#   第 13 轮 引号种类只认 `"`           -> 漏 data-emblem='x'
+#   第 14 轮 等号两侧不许空白           -> 漏 data-emblem = "x"
+# 每次我修完都以为「这条正则对了」，因为修的是**被指出的那一个**维度。
+# 第 14 轮修完我回头把 HTML 属性语法本身过了一遍，自己找到第四个：**无引号值**
+# （`data-emblem=asteroid2` 同样合法），确认仍然漏。
+#
+# 所以现在按语法穷举三种形式：双引号 / 单引号 / 无引号（值不含空白与 " \' ` = < >）。
+# 这是 HTML 属性值的全部合法写法，不再是「我想到的那几种」。
+EMBLEM_ATTR_RE = re.compile(
+    r"""data-emblem\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))""")
+
+
+def emblem_value(m):
+    """从 EMBLEM_ATTR_RE 的 match 取属性值（三种写法命中哪个组取哪个）。"""
+    return next(g for g in m.groups() if g is not None)
 
 # 刊物 -> (产物文件, 该刊物应有的刊徽)
 # 月报（sun）尚无模板，故不在此表；它的刊徽定义保留在设计系统规则里备用，
@@ -113,7 +127,7 @@ def fail(msg):
 
 def count_emblem(text, kind):
     """数某枚刊徽出现次数——同样两种引号都认，不能用 f'data-emblem="{kind}"' 硬拼。"""
-    return sum(1 for m in EMBLEM_ATTR_RE.finditer(text) if m.group(2) == kind)
+    return sum(1 for m in EMBLEM_ATTR_RE.finditer(text) if emblem_value(m) == kind)
 
 
 def check_file(label, rel, expected_kinds):
@@ -127,7 +141,7 @@ def check_file(label, rel, expected_kinds):
     # 合法但不在注册表里的值根本进不了 found，混装判定与 SVG 完整性检查都看不到它——
     # 报告上多一枚完全不受检的水印而守卫全绿。上一轮把「先与 ALL_KINDS 求交」去掉了，
     # 却没发现**发现环节本身**还在窄化：集合在源头就少了元素，后面判得再宽也没用。
-    found = set(m.group(2) for m in re.finditer(EMBLEM_ATTR_RE, text))
+    found = set(emblem_value(m) for m in EMBLEM_ATTR_RE.finditer(text))
 
     missing = expected_kinds - found
     if missing:
@@ -246,8 +260,9 @@ def check_svg_integrity(label, rel, kind, text):
     为什么要查 id：mask/clipPath 引不到就渲染成空白或整块实心——
     页面不报错，肉眼在 0.13 透明度下也未必看得出，属于典型的静默失效。
     """
-    m = re.search(r'<svg[^>]*data-emblem\s*=\s*(["\'])%s\1.*?</svg>' % re.escape(kind),
-                  text, re.S)
+    k = re.escape(kind)
+    m = re.search(r'<svg[^>]*data-emblem\s*=\s*(?:"%s"|\'%s\'|%s(?=[\s/>])).*?</svg>'
+                  % (k, k, k), text, re.S)
     if not m:
         fail(f"{label}: {kind} 的 <svg> 标签不完整（截不出闭合片段）")
         return

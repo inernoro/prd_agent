@@ -27,3 +27,4 @@
 | fix | ci | data-emblem 发现与计数改为单双引号都认；顺带修好规则体正则会把 @media 整块吞掉、导致嵌套的窄屏规则整档消失的问题 |
 | fix | ci | 契约元素上拒收能绕过长属性判据的简写/逻辑属性（inset* / all / inline-size / block-size）：判据按长属性名精确取值，这些写法根本不进那条正则——`.emblem{inset:0}` 把桌面偏移改成 0、`all:initial` 把整份契约重置，守卫都判绿 |
 | fix | ci | data-emblem 属性正则允许等号两侧空白：HTML 允许 `data-emblem = "x"`，此前那枚水印在发现环节就消失 |
+| fix | ci | data-emblem 发现正则改为按 HTML 属性语法穷举三种合法写法（双引号/单引号/无引号），不再按「想得到的写法」枚举：该正则已被连续三轮指出收窄，回头对照语法自查又发现第四个维度——无引号值 `data-emblem=asteroid2` 同样合法且仍然漏 |
