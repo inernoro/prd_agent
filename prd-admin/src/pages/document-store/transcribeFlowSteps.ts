@@ -8,7 +8,7 @@ export type TranscribeStepState = 'pending' | 'active' | 'done' | 'failed';
 export type TranscribeFlowStatus = 'uploading' | 'running' | 'done' | 'failed';
 
 export type TranscribeStep = {
-  key: 'upload' | 'transcribe' | 'summary' | 'save';
+  key: 'audio' | 'transcribe' | 'finish';
   label: string;
   sub?: string;
   state: TranscribeStepState;
@@ -47,34 +47,26 @@ export function deriveTranscribeSteps(input: {
         : inTranscribe ? 'active'
           : 'pending';
 
-  const summaryState: TranscribeStepState =
-    summaryFailed ? 'failed'
-      : status === 'done' || phase === '写入中' || phase === '完成' ? 'done'
-        : phase === '生成摘要' ? 'active'
-          : 'pending';
-
-  const saveState: TranscribeStepState =
-    status === 'done' ? 'done'
-      : phase === '写入中' ? 'active'
+  const finishState: TranscribeStepState = summaryFailed
+    ? 'failed'
+    : status === 'done' ? 'done'
+      : phase === '生成摘要' || phase === '写入中' ? 'active'
         : 'pending';
 
   const steps: TranscribeStep[] = [
-    { key: 'upload', label: hasFile ? '上传音频' : '音频已就绪', state: uploadState },
+    { key: 'audio', label: hasFile ? '保存录音' : '录音已就绪', state: uploadState },
     {
       key: 'transcribe',
-      label: '转录',
+      label: '生成原文',
       sub: isTranscribePhase(phase) && phase !== '排队中' ? phase : undefined,
       state: transcribeState,
     },
+    {
+      key: 'finish',
+      label: includeSummary ? '整理并保存' : '保存到本页',
+      sub: summaryFailed ? '原文已保留，整理失败' : undefined,
+      state: finishState,
+    },
   ];
-  if (includeSummary) {
-    steps.push({
-      key: 'summary',
-      label: '按所选方式整理',
-      sub: summaryFailed ? '整理失败，已保留转录全文' : undefined,
-      state: summaryState,
-    });
-  }
-  steps.push({ key: 'save', label: includeSummary ? '保存录音、原文和整理结果' : '保存录音和原文', state: saveState });
   return steps;
 }

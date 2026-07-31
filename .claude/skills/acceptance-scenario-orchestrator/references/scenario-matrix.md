@@ -79,6 +79,8 @@ Required behavior:
 - Test the failure path first, then the expected fixed path.
 - Keep screenshots of failures even when a retry later passes.
 - Report severity using the same labels as the acceptance report.
+- Convert every user-discovered symptom into a falsifiable regression assertion. For multi-stage tasks, cover the original state, slow path, dependency failure, recovery, manual refresh, and return-context behavior instead of checking only the final screen.
+- Record whether evidence comes from a deterministic fixture, a deployed preview, or a live integration. Fixture recovery cannot prove the real dependency recovered.
 
 ## visual-regression
 
@@ -89,6 +91,7 @@ Required behavior:
 - Check for blank bodies, loading placeholders, wrong viewport, clipped content, overlays, theme issues, and text overflow.
 - Use baseline/diff only when a meaningful baseline exists.
 - Mark screenshot problems separately from product defects.
+- For pages that appear to refresh or jump, instrument document boots, unloads, history writes, route changes, and content-loader reappearances. Visual similarity between two screenshots cannot prove continuity.
 
 ## release-preflight
 

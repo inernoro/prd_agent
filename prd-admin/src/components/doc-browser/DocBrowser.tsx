@@ -1131,6 +1131,7 @@ function TreeNode({
   childrenMap,
   depth,
   selectedEntryId,
+  returnEntryId,
   primaryEntryId,
   pinnedEntryIds,
   folderPrimaryMap,
@@ -1165,6 +1166,8 @@ function TreeNode({
   childrenMap: Map<string, DocBrowserEntry[]>;
   depth: number;
   selectedEntryId?: string;
+  /** 从正文退回列表后保留的来源行，只做浅色定位，不代表仍处于选中态。 */
+  returnEntryId?: string;
   isEntryFresh?: (entry: DocBrowserEntry) => boolean;
   primaryEntryId?: string;
   pinnedEntryIds: Set<string>;
@@ -1201,6 +1204,7 @@ function TreeNode({
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
   const isSelected = entry.id === selectedEntryId;
+  const isReturnContext = !isSelected && entry.id === returnEntryId;
   const isPrimary = entry.id === primaryEntryId || (entry.parentId ? folderPrimaryMap.get(entry.parentId) === entry.id : false);
   const isPinned = pinnedEntryIds.has(entry.id);
   const children = childrenMap.get(entry.id) ?? [];
@@ -1314,14 +1318,20 @@ function TreeNode({
             ? 'var(--accent-soft, rgba(99,102,241,0.14))'
             : (isSelected && !isFolder
                 ? 'var(--selection-bg)'
-                : undefined),
+                : isReturnContext && !isFolder
+                  ? 'rgba(99,102,241,0.08)'
+                  : undefined),
           outline: dragOver ? '1px dashed var(--accent-primary, var(--accent-gold))' : 'none',
           // 排序放置指示线：目标行顶/底一条 2px 主题色插入线（Notion/语雀式拖拽换位反馈）
           boxShadow: reorderHint === 'before'
             ? 'inset 0 2px 0 0 var(--accent-primary, #818cf8)'
             : reorderHint === 'after'
               ? 'inset 0 -2px 0 0 var(--accent-primary, #818cf8)'
-              : (isSelected && !isFolder ? 'inset 0 0 0 1px var(--selection-border)' : undefined),
+              : (isSelected && !isFolder
+                  ? 'inset 0 0 0 1px var(--selection-border)'
+                  : isReturnContext && !isFolder
+                    ? 'inset 0 0 0 1px rgba(99,102,241,0.22)'
+                    : undefined),
           // 文件夹「章节分组」标题：上方单条细分隔线 + 克制留白，更接近文档站目录观感
           ...(isFolder
             ? {
@@ -1541,6 +1551,7 @@ function TreeNode({
           childrenMap={childrenMap}
           depth={depth + 1}
           selectedEntryId={selectedEntryId}
+          returnEntryId={returnEntryId}
           primaryEntryId={primaryEntryId}
           pinnedEntryIds={pinnedEntryIds}
           folderPrimaryMap={folderPrimaryMap}
@@ -1823,8 +1834,10 @@ export function DocBrowser({
   const { isMobile } = useBreakpoint();
   const [mobileDetail, setMobileDetail] = useState(false);
   const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
+  const [lastVisitedEntryId, setLastVisitedEntryId] = useState<string | undefined>(selectedEntryId);
   const prevSelForMobileRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (selectedEntryId) setLastVisitedEntryId(selectedEntryId);
     if (!isMobile) return;
     if (!selectedEntryId) {
       setMobileDetail(false);
@@ -1871,12 +1884,12 @@ export function DocBrowser({
     return m;
   }, [entries, searchResults]);
 
-  // 选中条目（含通过 ?entry 传入的初始选中）自动展开其所有祖先文件夹 + 滚动到可见。
-  // 否则在分享链 / 子文件夹归档场景下，选中的那篇藏在折叠文件夹里，用户看不到"当前在读哪一篇"。
+  // 选中条目自动展开祖先；退回列表后继续滚到刚才阅读的来源行，保留空间记忆。
   useEffect(() => {
-    if (!selectedEntryId) return;
+    const focusEntryId = selectedEntryId ?? lastVisitedEntryId;
+    if (!focusEntryId) return;
     const ancestors: string[] = [];
-    let pid = parentMap.get(selectedEntryId);
+    let pid = parentMap.get(focusEntryId);
     let guard = 0;
     while (pid && guard++ < 50) {
       ancestors.push(pid);
@@ -1892,11 +1905,11 @@ export function DocBrowser({
     }
     // 展开后下一帧把选中行滚到可见区
     const t = setTimeout(() => {
-      const el = sidebarRef.current?.querySelector(`[data-entry-id="${selectedEntryId}"]`);
+      const el = sidebarRef.current?.querySelector(`[data-entry-id="${focusEntryId}"]`);
       el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }, 80);
     return () => clearTimeout(t);
-  }, [selectedEntryId, parentMap]);
+  }, [selectedEntryId, lastVisitedEntryId, parentMap]);
 
   // 批次 C：只对选中的非文件夹条目埋点
   const trackedEntryId = useMemo(() => {
@@ -2623,17 +2636,24 @@ export function DocBrowser({
       return;
     }
     const fid = ++contentFetchIdRef.current;
-    setContentLoading(true);
-    setPreview(null);
+    // 同一篇文档的 updatedAt 可能因录音转录、云端归档、订阅同步连续变化。
+    // 保留当前可用内容并在后台拉取新版本，只有切换文档时才清空预览。
+    // 否则每次元数据变化都会露出整块加载页，视觉上像页面反复刷新。
+    const refreshInBackground = loadedContentKey?.startsWith(`${entryId}:`)
+      && previewRef.current !== null;
+    if (!refreshInBackground) {
+      setContentLoading(true);
+      setPreview(null);
+    }
     try {
       const data = await loadContent(entryId);
       if (fid !== contentFetchIdRef.current) return; // 过期：更晚的加载/本地保存已发生，丢弃本次结果
       setPreview(data);
       setLoadedContentKey(contentKey);
     } catch {
-      if (fid === contentFetchIdRef.current) setPreview(null);
+      if (fid === contentFetchIdRef.current && !refreshInBackground) setPreview(null);
     }
-    if (fid === contentFetchIdRef.current) setContentLoading(false);
+    if (fid === contentFetchIdRef.current && !refreshInBackground) setContentLoading(false);
   }, [loadContent, loadedContentKey]);
 
   useEffect(() => {
@@ -3142,6 +3162,7 @@ export function DocBrowser({
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() || selectedTags.size > 0 ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
+              returnEntryId={!selectedEntryId ? lastVisitedEntryId : undefined}
               primaryEntryId={primaryEntryId}
               pinnedEntryIds={pinnedSet}
               folderPrimaryMap={folderPrimaryMap}
@@ -3697,9 +3718,6 @@ export function DocBrowser({
                     entry={selectedEntryData}
                     preview={preview}
                     transcriptNoteMd={transcriptNoteMd}
-                    onRestyleTranscribe={onRestyleTranscribe && selectedEntryData
-                      ? () => onRestyleTranscribe(selectedEntryData.id)
-                      : undefined}
                     onSaveTranscriptNote={audioNoteId && onSaveContent ? async (nextNoteMd) => {
                       const saved = audioNoteId === selectedEntryData?.id
                         ? await commitLocalSave(audioNoteId, nextNoteMd)

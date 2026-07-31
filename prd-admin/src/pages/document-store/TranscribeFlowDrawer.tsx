@@ -348,7 +348,7 @@ export function TranscribeFlowDrawer({
     }
   }, [rawDraft, runId, savingRaw]);
 
-  // ── 阶段清单状态推导（默认三步；主动整理时四步，纯函数与单测覆盖） ──
+  // ── 阶段清单状态推导（三步横向标志，纯函数与单测覆盖） ──
   const steps = useMemo(
     () => deriveTranscribeSteps({
       status,
@@ -363,6 +363,7 @@ export function TranscribeFlowDrawer({
 
   const running = status === 'uploading' || status === 'running';
   const inPlace = !!entryId && outputEntryId === entryId;
+  const restylingSavedTranscript = running && includeSummary && Boolean(outputEntryId);
   const activeStep = steps.find(step => step.state === 'active');
   const selectedStyle = styles.find(style => style.key === styleKey);
   const meetingContextFields = useMemo(
@@ -414,8 +415,8 @@ export function TranscribeFlowDrawer({
   }, []);
 
   const body = (
-    <div className={running ? 'flex min-h-full flex-col justify-center gap-5 py-6' : 'space-y-4 py-4'}>
-      {running && (
+    <div className={running && !restylingSavedTranscript ? 'flex min-h-full flex-col justify-center gap-5 py-6' : 'space-y-4 py-4'}>
+      {running && !restylingSavedTranscript && (
         <div className="mx-auto flex w-full max-w-[340px] flex-col items-center text-center" aria-live="polite">
           <motion.div
             className="mb-4 flex h-20 w-20 items-center justify-center rounded-[24px]"
@@ -436,16 +437,27 @@ export function TranscribeFlowDrawer({
         </div>
       )}
 
-      {/* 阶段清单（Notion 式逐项点亮） */}
+      {/* 三步横向标志：移动端只表达里程碑，不用纵向清单占满首屏。 */}
       <div
-        className={`space-y-2.5 ${running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : ''}`}
+        aria-label="处理进度"
+        className={running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : 'w-full'}
         style={running ? { background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' } : undefined}>
-        {steps.map((s) => (
-          <div key={s.key} className="flex items-center gap-2.5">
-            <StepIcon state={s.state} />
+        {restylingSavedTranscript ? (
+          <div className="flex items-start gap-2.5" aria-live="polite">
+            <MapSpinner size={14} />
             <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-token-primary">正在整理已保存的原文</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-token-muted">不会重新上传或转录音频，结果会更新在当前录音中。</p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {steps.map((s) => (
+              <div key={s.key} className="flex min-w-0 flex-col items-center text-center">
+                <StepIcon state={s.state} />
+                <div className="mt-2 min-w-0">
               <span
-                className="text-[13px]"
+                    className="block text-[11px] leading-4"
                 style={{
                   color: s.state === 'pending'
                     ? 'var(--text-muted)'
@@ -457,11 +469,13 @@ export function TranscribeFlowDrawer({
                 {s.label}
               </span>
               {s.sub && (
-                <span className="ml-2 text-[11px] text-token-muted">{s.sub}</span>
+                    <span className="mt-0.5 block text-[10px] leading-4 text-token-muted">{s.sub}</span>
               )}
             </div>
           </div>
-        ))}
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 上传进度条：仅上传阶段显示 */}
@@ -819,8 +833,14 @@ export function TranscribeFlowDrawer({
             {discarding ? <MapSpinner size={12} /> : null} 取消本次录音
           </Button>
         )}
-        <Button variant={status === 'done' ? 'primary' : 'ghost'} size="sm" onClick={onClose}>
-          {running ? '后台运行' : '关闭'}
+        <Button
+          variant={status === 'done' ? 'primary' : 'ghost'}
+          size="sm"
+          onClick={() => {
+            if (status === 'done' && outputEntryId) onOpenEntry?.(outputEntryId);
+            onClose();
+          }}>
+          {running ? '后台运行' : status === 'done' ? '查看录音原文' : '关闭'}
         </Button>
       </div>
     </div>

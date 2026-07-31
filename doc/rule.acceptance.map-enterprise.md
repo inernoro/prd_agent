@@ -1,6 +1,6 @@
 # MAP 企业级自动化验收规范 · 规则
 
-> **版本**：v1.3 | **日期**：2026-07-23 | **状态**：已落地
+> **版本**：v1.4 | **日期**：2026-07-31 | **状态**：已落地
 
 ## 1. 目标
 
@@ -398,6 +398,84 @@ Verdict 只按下表判定：
 
 只有明确不提供移动 Web 体验的桌面原生页面或内部非页面变更，才允许报告写「移动端不适用」并说明产品边界。此类报告不得声称移动端通过；若目标含任何用户可见 Web 页面，不能使用该豁免。
 
+## 11.3 连续任务状态机验收硬门禁
+
+录音、上传、转录、生成、同步、归档、发布等包含前台动作和后台阶段的功能，验收对象不是某一张最终页面，而是从用户发起任务到结果稳定可恢复的完整状态机。只证明入口可见、最终结果存在或某次 API 成功，不能支撑连续任务通过。
+
+### 11.3.1 必测状态
+
+测试设计必须把实际适用的状态写成状态矩阵。下表是通用基线，不适用的状态必须写明原因，不能静默省略。
+
+| 状态 | 用户问题 | 页面必须回答 | 主要失败信号 |
+|---|---|---|---|
+| 入口 | 我从哪里开始 | 入口名称、用途和下一步明确 | 入口缺失、入口在移动端不可达 |
+| 执行中 | 系统正在接收什么 | 当前动作可见，核心控制持续可用 | 长内容遮挡控制区、操作无反馈 |
+| 收口中 | 我点结束后发生什么 | 立即出现阶段反馈，不让用户面对静止页面 | 点击后空白、长时间无状态变化 |
+| 首次可用 | 我最早什么时候能得到价值 | 可播放、可阅读或可查看的结果尽早出现 | 等待非必要后台工作后才展示结果 |
+| 后台处理中 | 后台还在做什么 | 处理范围、当前阶段、是否可离开明确 | 含糊的“处理中”、伪造耗时 |
+| 慢路径 | 为什么比平时慢 | 持续变化的进度、已等待时间或明确慢因 | 静止加载超过 2 秒、用户误以为卡死 |
+| 失败路径 | 哪一步失败了 | 已获得结果继续可用，失败范围和重试方式明确 | 整页报错、已有结果消失、把排队写成成功 |
+| 恢复路径 | 重试后是否真的恢复 | 当前页局部更新到真实结果，状态与内部结果一致 | 反复整页刷新、路由循环、假成功 |
+| 刷新恢复 | 我刷新后还在原任务吗 | 同一任务、同一结果和可用能力恢复 | 跳回列表、详情与列表来回切换 |
+| 返回定位 | 我从哪里进来的 | 返回列表后能定位刚访问或刚生成的条目 | 新条目排到末尾、用户失去上下文 |
+
+### 11.3.2 连续性不变量
+
+连续任务的深度验收必须至少证明以下不变量：
+
+1. 用户身份、任务身份和结果身份在状态跃迁中保持一致，不因后台更新切换到另一条记录。
+2. 一旦音频、原文、草稿或其他阶段性结果可用，后续刷新不得清空或遮蔽它；采用保留旧内容的局部更新。
+3. 后台状态变化不得制造浏览器整页重载、详情与列表互跳、无限 `pushState` / `replaceState` 或重复加载层。
+4. 首次反馈和首次可用结果分别计时。前台反馈超过 2 秒没有持续变化，或可用结果被非必要后台工作阻塞，均为体验失败。
+5. 单一选项不得伪装成切换控件；没有第二种视图时直接展示内容。
+6. 页面文案必须区分“本地已可用”“后台处理中”“排队重试”“云端已成功”，不得把降级状态包装成完成。
+7. 移动端必须同时检查滚动归属、固定控制可达、长内容遮挡、软键盘和安全区；桌面截图不能替代。
+
+### 11.3.3 四态测试与证据来源
+
+每个高风险连续任务至少覆盖以下四条路径：
+
+| 路径 | 注入或操作方式 | 必须证明 |
+|---|---|---|
+| 正常路径 | 正常速度、依赖成功 | 入口、动作、首次可用结果、最终稳定结果 |
+| 慢路径 | 人工延迟关键响应或数据流 | 立即反馈、等待过程持续可理解、核心控制不消失 |
+| 失败路径 | 注入超时、外部依赖失败或队列错误 | 页面诚实说明失败范围，已有结果仍可用，不跳页 |
+| 恢复路径 | 失败后重试成功、后台状态二次更新、手动刷新 | 局部更新、任务身份稳定、刷新恢复、无路由循环 |
+
+证据必须标明来源：
+
+- `deterministic-fixture`：注入麦克风、数据流、计时、API 状态或故障，用于稳定证明前端状态机、布局、动作和恢复逻辑。
+- `preview-live`：在目标 SHA 的公网预览环境中执行真实页面和真实网络路径。
+- `integration-live`：真实外部依赖、队列、对象存储、ASR 或其他集成结果，并由 API、日志或持久化状态佐证。
+
+fixture 证据不能证明真实外部依赖成功。若前端四态已通过但 `integration-live` 缺失或失败，必须把对应集成项标记为 `conditional`、`uncovered` 或 `fail`，不得用模拟完成态给产品整体判完整通过。
+
+### 11.3.4 可观测指标
+
+连续任务报告或自动化结果至少记录：
+
+| 指标 | 含义 | 判定用途 |
+|---|---|---|
+| `first_feedback_ms` | 用户动作到第一个可见反馈 | 识别点击后静止等待 |
+| `first_usable_result_ms` | 用户动作到首次可播放、可读或可操作结果 | 识别被后台非必要阶段阻塞 |
+| `document_boot_count` | 手动刷新前文档实际启动次数 | 大于 1 表示发生非预期整页刷新 |
+| `before_unload_count` | 手动刷新前卸载次数 | 识别浏览器级跳转或刷新 |
+| `history_write_count` | `pushState` 和 `replaceState` 次数 | 识别路由抖动和循环 |
+| `content_loader_appearances` | 首次结果可用后正文加载层重新出现次数 | 应为 0，状态更新必须保留现有内容 |
+| `task_identity` | 状态跃迁前后的任务或结果 ID | 必须保持一致 |
+| `evidence_provenance` | fixture、preview 或 live integration | 防止模拟证据冒充真实集成 |
+
+阈值由具体产品合同决定；没有业务阈值时，至少执行“反馈不静止、首次可用不等最终后台完成、手动刷新前不发生文档重启、已有内容不回退为加载态”四项硬断言。
+
+### 11.3.5 视觉状态使用语义对照
+
+主题、材质和浏览器颜色混合会改变最终 RGB。对“来源高光、选中、禁用、失败、处理中”等状态做自动化验收时，必须验证产品语义，不得只写死某个主题的颜色常量：
+
+1. 同屏选取一个普通状态作为对照，比较背景、边框、阴影、图标或文案中至少一个稳定差异；
+2. 同时保留目标状态与对照状态的截图，证明差异在人眼下可辨认；
+3. 若产品合同明确规定设计 token，可断言 token 或语义属性；只有颜色本身就是合同值时才断言精确 RGB；
+4. 目标状态与普通状态计算样式相同，或截图中不可辨认，即使 DOM 中存在对应 class，也不得判通过。
+
 ## 12. CDS 与 CDS Agent 边界
 
 | 目标 | 有效证据 | 无效替代 |
@@ -426,6 +504,7 @@ Verdict 只按下表判定：
 | 报告规范引用与实际流程不一致 | 判规范一致性失败，补写自测或修正流程 |
 | 执行类验收 HTML 缺少标准模板血统 | CDS 拒收，返回 `acceptance_html_template_required`；必须从 Markdown 源和 manifest 重新跑 `archive_report.py` |
 | L1/L2 用户可见 Web 页面缺少真实触控移动端证据，或报告缺「移动端验收」 | 归档拒收；桌面 context 仅缩窄视口不得计入移动端证据 |
+| 高风险连续任务缺正常、慢、失败、恢复四态，或 fixture 冒充真实集成成功 | 不得判完整通过；缺状态降级为 `conditional`，真实依赖已失败则按产品失败判定 |
 
 ## 14. 可审计字段
 
@@ -433,8 +512,8 @@ Verdict 只按下表判定：
 |---|---|
 | 范围 | `target_type`、`target_date`、`timezone`、`repo`、`branch`、`target_sha`、`tested_sha`、`preview_url`、`scope_source` |
 | 变更 | `pr`、`commit`、`changed_files`、`module`、`risk_tags`、`assertion_id`、`change_assertion` |
-| 设计 | `user_visible_surface`、`impact_model`、`proof_strategy`、`proof_strength_score`、`fusion_scenario_id`、`coverage_decision` |
-| 执行 | `test_unit_id`、`breadcrumb`、`final_url`、`expected_result`、`actual_result`、`evidence_ids`、`screenshot_anchors`、`api_log_state_refs`、`viewport_width`、`viewport_height`、`is_mobile`、`touch_points`、`mobile_path_id` |
+| 设计 | `user_visible_surface`、`impact_model`、`proof_strategy`、`proof_strength_score`、`fusion_scenario_id`、`coverage_decision`、`state_matrix`、`wait_budget` |
+| 执行 | `test_unit_id`、`breadcrumb`、`final_url`、`expected_result`、`actual_result`、`evidence_ids`、`screenshot_anchors`、`api_log_state_refs`、`viewport_width`、`viewport_height`、`is_mobile`、`touch_points`、`mobile_path_id`、`first_feedback_ms`、`first_usable_result_ms`、`document_boot_count`、`before_unload_count`、`history_write_count`、`content_loader_appearances`、`task_identity`、`evidence_provenance` |
 | 质量 | `tier`、`depth_label`、`verdict`、`defect_counts`、`uncovered_items`、`downgrade_reason`、`retry_record`、`readback_status` |
 | 归档 | `report_id`、`standard_id`、`standard_version`、`skill_versions`、`script_checksums`、`cds_project`、`cds_folder`、`deeplink`、`verify_open_attempts` |
 

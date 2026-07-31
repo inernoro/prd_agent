@@ -12,6 +12,8 @@
 
 Daily or PR deep acceptance should prefer score 3 or 4 evidence. Score 1 or 2 can appear in a report only as entry evidence, context, or a known gap.
 
+For behavior that crosses an external boundary, score 4 also requires evidence provenance to match the claim. A deterministic fixture can strongly prove the UI state machine, but it cannot prove that a real object store, ASR provider, queue, LLM, payment provider, or other live dependency succeeded. Keep the UI conclusion and integration conclusion separate when their evidence sources differ.
+
 ## Page-First Rule
 
 For user-facing changes, the primary proof is visible product behavior:
