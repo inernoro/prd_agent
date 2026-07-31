@@ -663,7 +663,8 @@ _RAW_FAILURE_STATUS_PATTERN = (
 )
 _RAW_RESOLVED_STATUS_PATTERN = (
     r"(?:(?-i:\bPASS\b)"
-    r"|\b(?:passed|succeeded)\b"
+    r"|\bpassed\b(?![\"']?\s*[:：=])"
+    r"|\bsucceeded\b"
     r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
     r"(?:pass|passed|succeeded|success|successful|ok)\b\"?"
     rf"|\"?(?:status|状态|branch[\s_-]*status)\"?\s*[:：=]\s*\"?"
@@ -1224,6 +1225,24 @@ def _event_inherits_context(clause, event, state, previous_event_end):
     )
 
 
+_RAW_PASSED_COUNT_PATTERN = re.compile(
+    r"[\"']?passed[\"']?\s*[:：=]\s*[\"']?\s*"
+    r"(?P<passed>\d+)\s*/\s*(?P<total>\d+)\s*[\"']?",
+    re.I,
+)
+
+
+def _normalize_raw_passed_counts(text):
+    """Convert cdscli passed fractions into explicit ordered status events."""
+
+    def replace(match):
+        passed = int(match.group("passed"))
+        total = int(match.group("total"))
+        return "result=PASS" if passed == total else "result=FAIL"
+
+    return _RAW_PASSED_COUNT_PATTERN.sub(replace, text or "")
+
+
 def _failure_subject_states(
     text,
     initial_states=None,
@@ -1233,6 +1252,7 @@ def _failure_subject_states(
     subject_aliases=None,
 ):
     """Apply ordered status events while keeping context local to this row."""
+    text = _normalize_raw_passed_counts(text)
     states = dict(initial_states or {})
     fallback_subjects = set(default_subjects or ())
     context_subjects = set()

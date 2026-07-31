@@ -708,6 +708,69 @@ class DailyVerdictContractTests(unittest.TestCase):
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
 
+    def test_partial_passed_count_opens_hard_gate(self):
+        for fact in (
+            'CDS smoke {"passed":"1/2"}',
+            "CDS smoke passed=3/2",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
+    def test_partial_passed_count_does_not_close_prior_failure(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 先前失败"
+        )
+        body = body.rstrip() + (
+            '\n| 验收冻结 SHA | CDS smoke {"passed":"1/2"} | '
+            "仅部分探针通过 | 尚有失败探针 | 未关闭 | 继续修复 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+    def test_complete_passed_count_closes_prior_failure(self):
+        for closure in (
+            'CDS smoke {"passed":"2/2"}',
+            "CDS smoke passed=3/3",
+        ):
+            with self.subTest(closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 先前失败"
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 全部探针通过 | 已取得完整结果 | "
+                    "未关闭 | 保留记录 |\n"
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+    def test_noncount_passed_field_does_not_close_prior_failure(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 先前失败"
+        )
+        body = body.rstrip() + (
+            '\n| 验收冻结 SHA | CDS smoke {"passed":null} | '
+            "没有可解析计数 | 未证明全部通过 | 未关闭 | 继续复测 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
     def test_successful_raw_cds_statuses_do_not_open_hard_gate(self):
         for fact in (
             "CDS smoke exit code 0",
