@@ -315,6 +315,25 @@ install_agent_contract() {
   target="$1"
   clean="$TMP_DIR/$(basename "$target").rules"
   if [ -f "$target" ]; then
+    if ! awk '
+      /<!-- CDS_AGENT_DECISION_CARD:START -->/ {
+        if (managed || seen) invalid = 1
+        managed = 1
+        seen = 1
+        next
+      }
+      /<!-- CDS_AGENT_DECISION_CARD:END -->/ {
+        if (!managed) invalid = 1
+        managed = 0
+        next
+      }
+      END {
+        if (managed) invalid = 1
+        exit invalid
+      }
+    ' "$target"; then
+      fail "$target 中的角色决策受管标记不完整或重复，已保留原文件。请修复标记后重试。"
+    fi
     awk '
       /<!-- CDS_AGENT_DECISION_CARD:START -->/ { managed = 1; next }
       /<!-- CDS_AGENT_DECISION_CARD:END -->/ { managed = 0; next }
@@ -327,7 +346,7 @@ install_agent_contract() {
   cat >> "$clean" <<'AGENT_RULES'
 ${decisionContract}
 AGENT_RULES
-  mv "$clean" "$target"
+  cat "$clean" > "$target" || fail "无法更新 $target，已保留原文件路径。"
 }
 
 install_agent_contract AGENTS.md
