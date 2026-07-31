@@ -323,6 +323,16 @@ RULE_BEFORE_H1 = """**一句话**：导读跑到 H1 上面去了，读者打开�
 check(checker.check_rule_text(RULE_BEFORE_H1) == ["缺「一句话」", "缺「什么时候撞上」"],
       "规则导读必须在 H1 之后（写在标题前读者看不见）")
 
+RULE_BURIED = """# 某条规则
+
+## 核心原则
+
+**一句话**：导读被埋进正文小节，读者翻到这儿之前早就走了。
+**什么时候撞上**：把导读写在第一个小节标题之后的时候。
+"""
+check(checker.check_rule_text(RULE_BURIED) == ["缺「一句话」", "缺「什么时候撞上」"],
+      "规则导读埋在第一个小节标题之后不算数（与 doc/ 同一口径）")
+
 with tempfile.TemporaryDirectory() as tmp:
     empty_name = os.path.join(tmp, "SKILL.md")
     with open(empty_name, "w", encoding="utf-8") as fh:
@@ -440,6 +450,17 @@ with open(os.path.join(doc_dir, "index.yml"), encoding="utf-8") as fh:
     index_src = fh.read()
 with open(os.path.join(doc_dir, "guide.list.directory.md"), encoding="utf-8") as fh:
     list_src = fh.read()
+
+index_keys = {m.group(1) for m in re.finditer(r'^\s{2}([a-z][\w.-]+):\s*"', index_src, re.M)}
+list_keys = {m.group(1) for m in re.finditer(r"\]\(\./([\w.-]+)\.md\)", list_src)}
+doc_keys = set(titles)
+# 只比标题会漏掉「压根没登记」的那一类：新文档不进目录时，标题比对因为找不到
+# 链接而静默跳过，两份索引各少一篇而 CI 全绿（形状 1：判据比它该管的范围窄）。
+check(not (doc_keys - index_keys), f"每篇 doc 都登记进 index.yml（漏登：{sorted(doc_keys - index_keys)[:5]}）")
+check(not (index_keys - doc_keys), f"index.yml 没有幽灵条目（幽灵：{sorted(index_keys - doc_keys)[:5]}）")
+check(not (doc_keys - list_keys), f"每篇 doc 都登记进 guide.list（漏登：{sorted(doc_keys - list_keys)[:5]}）")
+check(not (list_keys - doc_keys), f"guide.list 没有幽灵条目（幽灵：{sorted(list_keys - doc_keys)[:5]}）")
+check(len(doc_keys) > 100, f"成员集比对读到的是真实文档集（实测 {len(doc_keys)} 篇）")
 
 index_drift = [k for k, t in re.findall(r'^\s{2}([a-z][\w.-]+):\s*"(.*)"\s*$', index_src, re.M)
                if k in titles and titles[k] and t != titles[k]]

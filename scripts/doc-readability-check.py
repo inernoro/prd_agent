@@ -426,6 +426,9 @@ def check_rule_text(text: str) -> list[str]:
         if line.startswith("# "):
             seen_h1 = True
             continue
+        # 与 doc/ 同一口径：正文一开张导读就迟到了，埋在小节里的两行不算数
+        if seen_h1 and re.match(r"^#{2,6} ", line):
+            break
         if not seen_h1:
             continue
         for label in RULE_FIELDS:
