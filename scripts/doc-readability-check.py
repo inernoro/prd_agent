@@ -82,7 +82,12 @@ AUDIENCE_MIN = 8
 # 行内代码里出现的 .md 文件名。只有当它指向 doc/ 下真实存在的文档时才算「本该可点的裸引用」——
 # 命名规则里那些「错误示范」文件名并不存在，不会被误伤。
 BARE_REF = re.compile(r"`([^`\n]*?([\w][\w.-]*\.md))`")
-MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+# 行内链接：目标后面可以跟一个 "标题"（单双引号或圆括号三种写法都合法）。
+# 只认最朴素那一种，等于给「带标题的死链」开了一道后门。
+MD_LINK = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\"|\s+'[^']*'|\s+\([^)]*\))?\s*\)")
+# 引用式链接的目标写在定义行上（[ref]: ./x.md），用法处 [文字][ref] 不带路径，
+# 所以校验定义行就等于校验了这一类链接。
+MD_REF_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*<?([^\s>]+)>?", re.M)
 # 形如 wikilink:xxx / prd-nav:4.2 / https:// 的不是文件路径，不做存在性校验
 NON_FILE_TARGET = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
@@ -220,7 +225,7 @@ IMPL_LANGS = {"cs", "csharp", "c#", "ts", "tsx", "typescript", "js", "jsx", "jav
 SOURCE_PATH = re.compile(
     r"(?:\b|(?<=[（(\s]))(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw"
     r"|scripts|\.claude/skills|\.claude/rules|\.Codex/rules|\.github/workflows)/[\w./-]+"
-    r"\.(?:cs|ts|tsx|js|mjs|py|rs|css|sh|yml|yaml)\b")
+    r"\.(?:cs|csproj|ts|tsx|js|jsx|mjs|py|rs|css|scss|less|sh|yml|yaml|json|html|vue|sql|razor|cshtml)\b")
 SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")
 # 这些小节就是专门用来指路的，里面列路径不算欠账
 SOURCE_SECTION = re.compile(
@@ -391,12 +396,16 @@ def find_dead_links(path: str, text: str) -> list[tuple[int, str]]:
     dead: list[tuple[int, str]] = []
     base = os.path.dirname(path)
     for lineno, line in body_lines(text):
-        for m in MD_LINK.finditer(line):
-            target = m.group(1).split("#")[0]
+        targets = [m.group(1) for m in MD_LINK.finditer(line)]
+        # 引用式链接的定义行（[ref]: ./x.md）也得验：用法处不带路径，漏了它
+        # 这一类死链永远没人发现
+        targets += [m.group(1) for m in MD_REF_DEF.finditer(line)]
+        for raw_target in targets:
+            target = raw_target.split("#")[0]
             if not target or NON_FILE_TARGET.match(target):
                 continue
             if not os.path.exists(os.path.normpath(os.path.join(base, target))):
-                dead.append((lineno, m.group(1)))
+                dead.append((lineno, raw_target))
     return dead
 
 

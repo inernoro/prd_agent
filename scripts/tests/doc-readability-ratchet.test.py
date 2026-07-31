@@ -159,6 +159,31 @@ check([p for p in problems_for("report.cds.some-audit.md", WEEKLY_ONE_LINER) if 
 check([p for p in problems_for("report.2026-W30-retro.md", WEEKLY_ONE_LINER) if "谁该读" in p],
       "report.2026-W30-retro 不吃周报豁免（正则要有尾锚，不能前缀匹配）")
 
+with tempfile.TemporaryDirectory() as tmp:
+    doc_dir = os.path.join(tmp, "doc")
+    os.makedirs(doc_dir)
+    titled = os.path.join(doc_dir, "guide.demo.md")
+    with open(titled, "w", encoding="utf-8") as fh:
+        fh.write('见 [说明](./guide.not-here.md "补充标题")。\n')
+    check(checker.find_dead_links(titled, open(titled, encoding="utf-8").read()),
+          "带标题的行内链接也验目标（不能因为多了个标题就绕过死链闸）")
+    ref_style = os.path.join(doc_dir, "guide.ref.md")
+    with open(ref_style, "w", encoding="utf-8") as fh:
+        fh.write("见 [说明][ref]。\n\n[ref]: ./guide.not-here.md\n")
+    check(checker.find_dead_links(ref_style, open(ref_style, encoding="utf-8").read()),
+          "引用式链接的定义行也验目标")
+    alive = os.path.join(doc_dir, "guide.alive.md")
+    with open(alive, "w", encoding="utf-8") as fh:
+        fh.write('见 [自己](./guide.alive.md "标题")。\n\n[me]: ./guide.alive.md\n')
+    check(not checker.find_dead_links(alive, open(alive, encoding="utf-8").read()),
+          "目标存在时两种写法都不误报")
+
+SRC_EXT_SAMPLE = ("# 示例 · 指南\n\n"
+                  "正文里散着 cds/web/src/components/Foo.jsx 和 cds/examples/init.sql "
+                  "还有 cds/web/index.html 三处实现路径。\n")
+_, sample_src = checker.scan_body(SRC_EXT_SAMPLE)
+check(sample_src >= 3, f"jsx/sql/html 这些也是实现文件，要计入散落路径（实测 {sample_src} 处）")
+
 NESTED = ("# 示例 · 指南\n\n````markdown\n```ts\n"
           "见 `doc/rule.doc.readability.md`，这行在内层示例里。\nconst a = 1;\n```\n````\n")
 nested_impl, _ = checker.scan_body(NESTED)

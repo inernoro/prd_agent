@@ -29,12 +29,12 @@
   },
   "source_refs": {
     "spec": 7,
-    "design": 77,
+    "design": 87,
     "plan": 16,
-    "rule": 20,
-    "guide": 54,
-    "report": 27,
-    "debt": 141
+    "rule": 22,
+    "guide": 66,
+    "report": 29,
+    "debt": 148
   },
   "rules_missing": 0,
   "skills_missing": 0,
@@ -62,6 +62,12 @@
       "bare": 0,
       "impl": 0,
       "src": 2
+    },
+    "debt.cds.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
     },
     "debt.cds.performance.md": {
       "missing": 0,
@@ -91,7 +97,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 3
     },
     "debt.frontend.md": {
       "missing": 0,
@@ -121,7 +127,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 4
+      "src": 5
     },
     "debt.report-agent.md": {
       "missing": 0,
@@ -133,7 +139,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 3
+      "src": 4
     },
     "debt.visual-agent.md": {
       "missing": 0,
@@ -163,7 +169,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 8
+      "src": 10
     },
     "design.cds.agent.managed-runtime-fact-source.md": {
       "missing": 0,
@@ -201,6 +207,12 @@
       "impl": 0,
       "src": 1
     },
+    "design.cds.control-data-split.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
     "design.cds.fu-02-auth-store-mongo.md": {
       "missing": 0,
       "bare": 0,
@@ -211,13 +223,19 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
+      "src": 3
+    },
+    "design.cds.project-bootstrap.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
       "src": 1
     },
     "design.cds.self-hosting.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 6
+      "src": 7
     },
     "design.cds.skill-version-update.md": {
       "missing": 0,
@@ -253,7 +271,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 5
+      "src": 6
     },
     "design.platform.map-mcp-connector.md": {
       "missing": 0,
@@ -265,13 +283,13 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 2
     },
     "design.skill.role-bundle.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 3
     },
     "design.team-activity.md": {
       "missing": 0,
@@ -303,6 +321,12 @@
       "impl": 0,
       "src": 1
     },
+    "guide.cds.agent-onboarding-harness.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
     "guide.cds.agent.code-review-quickstart.md": {
       "missing": 0,
       "bare": 0,
@@ -321,11 +345,23 @@
       "impl": 0,
       "src": 1
     },
+    "guide.cds.ai-auth.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
     "guide.cds.cloud-dev-tutorial.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
+    },
+    "guide.cds.env.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
     },
     "guide.cds.github-webhook-events.md": {
       "missing": 0,
@@ -333,11 +369,23 @@
       "impl": 0,
       "src": 5
     },
+    "guide.cds.managed-delivery.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
     "guide.cds.multi-branch-db.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
+    },
+    "guide.cds.tutorial.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
     },
     "guide.cds.view-parity.md": {
       "missing": 0,
@@ -385,7 +433,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 5
+      "src": 6
     },
     "guide.visual-agent.acceptance-skill.md": {
       "missing": 0,
@@ -589,13 +637,13 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 6
+      "src": 7
     },
     "report.cds.agent.p4-5-writable-trial-plan.2026-05-19.md": {
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 6
+      "src": 7
     },
     "report.cds.agent.phase1-acceptance.2026-05-19.md": {
       "missing": 1,
@@ -655,13 +703,13 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 3
+      "src": 4
     },
     "rule.frontend.landing-visual-style.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 2
     },
     "rule.platform.ai-model-visibility.md": {
       "missing": 0,
