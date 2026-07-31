@@ -12,6 +12,7 @@
 |---|---|
 | 2026-05-20 | 用户提出 4 个分享场景中"快速分享"按钮存在 5 类问题：默认数字短链 /s/{seq} 可枚举、短链无强密码要求、取消密码无警告、明文密码存储、无在线暴破防护 |
 | 2026-05-20 C1 | 前端 ShareDialog 改造：默认长链、短链强 12 位密码、取消密码 10s 倒计时（网页托管 + 周报） |
+| 2026-07-31 | 知识库分享补齐 C1 口径：此前 `DocumentStoreController.CreateShareLink` 无条件分配数字短链、前端 `buildShareUrl` 又优先展示 `/s/{seq}`，用户看到的分享地址一直是可枚举的数字链。现改为默认只给 `/s/lib/{token}`，数字短链走 `POST share-links/{id}/short-link` 按需生成（与网页托管 2026-06-11 懒分配同口径） |
 | 2026-05-20 C2 | 后端 `SharePasswordService`（PBKDF2-SHA256 + FixedTimeEquals + per-shareLink 滑动窗口 1 分钟 10 次限速）落地网页/周报；DB 字段 `PasswordHash/PasswordSalt/RecentAttempts` 新增 |
 
 ## 已知边界 / 待补项
