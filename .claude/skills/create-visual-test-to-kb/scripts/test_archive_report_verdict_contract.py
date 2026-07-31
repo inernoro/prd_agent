@@ -944,6 +944,21 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
 
+    def test_completed_diagnostics_do_not_close_failed_gate(self):
+        for fact in (
+            "CDS smoke 失败，已完成问题定位，等待修复",
+            "构建失败，已完成日志收集，尚待修复",
+            "CDS ready 失败，已完成根因分析，等待复测",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
     def test_resolved_state_in_later_root_cause_column_closes_failure(self):
         body = report_body("覆盖不足").replace(
             "当前部署 SHA 已前进", "CDS smoke 先前失败"
@@ -984,6 +999,30 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
+
+    def test_gate_scope_preserves_business_target_identity(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 |",
+            "| 登录流程 CDS smoke | CDS smoke 失败 |",
+        )
+        body = body.rstrip() + (
+            "\n| 支付流程 CDS smoke | CDS smoke 现已通过 | 支付流程复测完成 | "
+            "仅证明支付流程 | 已通过 | 保留记录 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 |",
+            "| 登录流程 CDS smoke | CDS smoke 失败 |",
+        )
+        body = body.rstrip() + (
+            "\n| 登录流程 CDS smoke 门禁 | CDS smoke 现已通过 | "
+            "登录流程复测完成 | 证明同一业务目标 | 已通过 | 保留记录 |\n"
+        )
+        self.assertEqual(
+            [], archive_report._daily_conclusion_contract_errors("conditional", body)
+        )
 
     def test_target_gate_instances_remain_separate_after_normalization(self):
         body = report_body("覆盖不足").replace(

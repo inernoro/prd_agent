@@ -616,6 +616,10 @@ _CLOSURE_OBJECT_PATTERN = (
     r"(?:代码|补丁|配置|脚本|实现|逻辑|版本|提交|分支|镜像|依赖|文档|"
     r"模板|数据|记录|材料|工单|缺陷)"
 )
+_DIAGNOSTIC_COMPLETION_OBJECT_PATTERN = (
+    r"(?:(?:问题|故障|异常|根因|日志|证据|信息|数据|现场|链路)\s*)?"
+    r"(?:定位|分析|收集|排查|调查|诊断|复盘|梳理)"
+)
 _PENDING_DELIVERY_PATTERN = (
     rf"(?:(?:(?:仍|尚|还|暂时?)?未|没(?:有)?)\s*{_DELIVERY_ACTION_PATTERN}"
     rf"|(?:等待|待)\s*{_DELIVERY_ACTION_PATTERN})"
@@ -939,6 +943,12 @@ def _closure_changes_subject(clause, event, previous_event_end):
         return True
     if re.match(rf"\s*(?:的\s*)?{_CLOSURE_OBJECT_PATTERN}", suffix, re.I):
         return True
+    if re.match(
+        rf"\s*(?:的\s*)?{_DIAGNOSTIC_COMPLETION_OBJECT_PATTERN}",
+        suffix,
+        re.I,
+    ):
+        return True
     if re.search(_PENDING_DELIVERY_PATTERN, suffix, re.I):
         return True
     if re.search(r"后\s*$", scope):
@@ -1182,7 +1192,26 @@ def _root_cause_state_scope(row, row_index):
         )
     )
     if gate_subjects:
-        return ("__gate_scope__", gate_subjects)
+        business_target = target
+        for _, pattern in _FAILURE_SUBJECT_PATTERNS:
+            business_target = pattern.sub(" ", business_target)
+        business_target = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", business_target)
+        business_target = re.sub(
+            r"(?<![A-Za-z0-9_])CDS(?![A-Za-z0-9_])",
+            " ",
+            business_target,
+            flags=re.I,
+        )
+        business_target = re.sub(
+            r"[`*_\s:：;,，。|/\\()（）\[\]【】<>《》-]+",
+            "",
+            business_target,
+        ).lower()
+        return (
+            "__gate_scope__",
+            gate_subjects,
+            business_target or "__default__",
+        )
     normalized = re.sub(r"[`*_\s]+", "", target).lower()
     return normalized or f"__root_cause_row_{row_index}"
 
