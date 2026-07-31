@@ -903,7 +903,7 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
         rf"再次|重新|均|都|同时|全部|一并|共同|二者|两者|已|已经|执行|"
         rf"运行|任务|操作|流程|作业|步骤|环节|过程|用例|测试|检查|验证|"
         rf"检测|校验|判定|被判定|显示|表明|呈现|处于|问题|故障|异常|"
-        rf"缺陷|结果|状态|为|是|already|currently|previously|still|"
+        rf"缺陷|结果|状态|的|为|是|already|currently|previously|still|"
         rf"和|与|及|、|/|"
         rf"[:：=]|[-=]>|→|{_DIAGNOSTIC_MODIFIER_PATTERN})\s*)*",
         left_gap,

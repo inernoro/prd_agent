@@ -417,6 +417,9 @@ class DailyVerdictContractTests(unittest.TestCase):
             "构建状态=异常",
             "CDS smoke 结果显示为失败",
             "构建被判定为异常",
+            "CDS smoke 的执行结果失败",
+            "CDS smoke 的结果为失败",
+            "构建的状态为异常",
         ):
             with self.subTest(fact=fact):
                 body = report_body("硬门禁失败").replace(
@@ -424,6 +427,23 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
+
+    def test_possessive_gate_results_reject_non_fail_verdict(self):
+        for fact in (
+            "CDS smoke 的执行结果失败",
+            "CDS smoke 的结果为失败",
+            "构建的状态为异常",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
 
     def test_acceptance_chain_failure_requires_chain_fact(self):
         errors = archive_report._daily_conclusion_contract_errors(
