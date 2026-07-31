@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -286,6 +287,26 @@ check(checker._frontmatter_description("name: x\ndescription: |\n  " + "很长�
       and len(checker._frontmatter_description("name: x\ndescription: |\n  " + "很长的描述" * 8)) >= 30,
       "YAML 折叠块里的 description 要被完整取出")
 
+RULE_FENCED = """# 某条规则
+
+```markdown
+**一句话**：这只是展示给作者看的格式示例，正文里并没有真的写导读。
+**什么时候撞上**：想知道规则导读长什么样的时候。
+```
+
+## 正文
+"""
+check(checker.check_rule_text(RULE_FENCED) == ["缺「一句话」", "缺「什么时候撞上」"],
+      "规则导读只写在代码块示例里不算数（模板不能自己骗过闸门）")
+
+RULE_BEFORE_H1 = """**一句话**：导读跑到 H1 上面去了，读者打开先看到的是标题不是它。
+**什么时候撞上**：把导读写在标题之前的时候。
+
+# 某条规则
+"""
+check(checker.check_rule_text(RULE_BEFORE_H1) == ["缺「一句话」", "缺「什么时候撞上」"],
+      "规则导读必须在 H1 之后（写在标题前读者看不见）")
+
 print("[4] 报告双产物的那句话有人盯着")
 
 SKILLS = os.path.join(REPO_ROOT, ".claude", "skills")
@@ -349,6 +370,67 @@ for name in ("rule.doc.readability.md", "guide.doc.reading-map.md", "debt.doc.re
     check(os.path.exists(path) and checker.check_file(path) == [], f"{name} 自身合规")
 
 print()
+
+print("[7] 这道闸看得见守卫读的每一个文件")
+
+# `.claude/rules/predicate-and-wiring-discipline.md` 形状 7：守卫接进了 CI，
+# 但 CI 那道闸有 path filter，被守的文件不在 filter 里——于是只改被守文件、
+# 不碰守卫本身的那种 PR 一路全绿，守卫从落地那天起就对它要防的场景不设防。
+# 所以守卫自己解析 filter，断言它读的每个文件都被看着；日后新增被守对象时
+# 忘了改 filter，这里会红，而不是静默失去覆盖。
+GUARDED_INPUTS = [
+    "doc/rule.doc.readability.md",
+    ".claude/rules/predicate-and-wiring-discipline.md",
+    ".claude/skills/cds/SKILL.md",
+    ".claude/skills/weekly-update-summary/reference/report-template.md",
+    ".claude/skills/weekly-update-summary/reference/report-template-html.html",
+    ".claude/skills/daily-report-summary/reference/report-template-html.html",
+    "scripts/doc-readability-check.py",
+    "scripts/fixtures/doc-readability-baseline.json",
+    "scripts/tests/doc-readability-ratchet.test.py",
+]
+
+
+def _docs_filter_patterns() -> list[str]:
+    """从 ci.yml 抠出 docs 这一组 filter 的 glob 列表。"""
+    with open(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    out: list[str] = []
+    inside = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "docs:":
+            inside = True
+            continue
+        if inside:
+            if stripped.startswith("- '") and stripped.endswith("'"):
+                out.append(stripped[3:-1])
+            elif stripped and not stripped.startswith("#"):
+                break
+    return out
+
+
+def _covered(path: str, patterns: list[str]) -> bool:
+    for pat in patterns:
+        rx = "".join("[^/]*" if part == "*" else ".*" if part == "**" else re.escape(part)
+                     for part in re.split(r"(\*\*|\*)", pat))
+        if re.fullmatch(rx, path):
+            return True
+    return False
+
+
+patterns = _docs_filter_patterns()
+check(len(patterns) >= 5, f"能从 ci.yml 解析出 docs filter（实测 {len(patterns)} 条）")
+uncovered = [p for p in GUARDED_INPUTS if not _covered(p, patterns)]
+check(not uncovered, f"守卫读的文件全部在 docs filter 里（漏网：{uncovered}）")
+# 反向用例：把模板那条 filter 拿掉，覆盖检查必须立刻报缺 —— 否则这段等于空跑
+without = [p for p in patterns if "weekly-update-summary" not in p]
+check(not _covered(".claude/skills/weekly-update-summary/reference/report-template.md", without),
+      "去掉模板那条 filter 后覆盖检查会报缺（说明这段没有空跑）")
+check(all(os.path.exists(os.path.join(REPO_ROOT, p)) for p in GUARDED_INPUTS),
+      "被守文件都真实存在（改名后这里会红，提醒同步 filter）")
+
+
 if failures:
     print(f"FAILED: {len(failures)} 项")
     sys.exit(1)

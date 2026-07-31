@@ -63,6 +63,10 @@ jobs:
               # 规则与技能同闸：规则要有导读两行，技能 frontmatter 要能说清触发时机
               - '.claude/rules/**'
               - '.claude/skills/**/SKILL.md'
+              # 守卫会读这几份汇报模板，断言「本周一句话 / 今日大事」还在。
+              # 不登记进来的话，只改模板的 PR 会整个跳过这道闸——守卫等于没接上线。
+              - '.claude/skills/weekly-update-summary/reference/**'
+              - '.claude/skills/daily-report-summary/reference/**'
               - 'scripts/doc-readability-check.py'
               - 'scripts/fixtures/doc-readability-baseline.json'
               - 'scripts/tests/doc-readability-ratchet.test.py'

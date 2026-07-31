@@ -398,10 +398,26 @@ def check_rule(path: str) -> list[str]:
 
 
 def check_rule_text(text: str) -> list[str]:
-    """规则文档的轻量导读校验：H1 之后必须有一句话 + 什么时候撞上。"""
+    """规则文档的轻量导读校验：H1 之后必须有一句话 + 什么时候撞上。
+
+    和 doc/ 的 parse_header 同口径：代码块里的示例不算数（否则「展示规则导读格式的
+    模板」会自己骗过闸门），H1 之前的也不算数（导读要在标题下面，读者才看得见）。
+    """
     found: dict[str, str] = {}
+    in_fence = False
+    seen_h1 = False
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.startswith("# "):
+            seen_h1 = True
+            continue
+        if not seen_h1:
+            continue
         for label in RULE_FIELDS:
             m = re.match(rf"\*\*{label}\*\*\s*[：:]\s*(.+)$", line)
             if m:
