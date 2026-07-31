@@ -1,5 +1,8 @@
 # Codex 生产发布安全触发规则
 
+**一句话**：碰生产发布链路前必须先读那份安全合同——公网页面和入口资源可用才算发布完成，容器或接口健康都不算数。
+**什么时候撞上**：用 Codex 改发布脚本、nginx 配置、compose 或发布类工作流时。
+
 本文件只负责让 Codex 在接触生产发布链路时加载长期规则，不复制完整规范。
 
 触发范围：`exec_dep.sh`、`fast.sh`、`deploy/nginx/**`、`docker-compose*.yml`、`.github/workflows/web-latest-pages.yml`、`.github/workflows/server-deploy.yml` 及生产发布、回滚、健康检查相关脚本。

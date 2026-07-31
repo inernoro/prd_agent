@@ -133,6 +133,32 @@ BURIED = ("# 示例 · 指南\n\n> **版本**：v1.0\n\n## 一、正文\n\n"
 check(any("缺「一句话」" in p for p in problems_for("guide.demo.md", BURIED)),
       "导读埋在第一个小节标题之后不算数（正文一开张导读就迟到了）")
 
+AFTER_PROSE = ("# 示例 · 指南\n\n> **版本**：v1.0\n\n"
+               "这是一段正文散文，它一出现就说明导读迟到了。\n\n"
+               "**一句话**：导读排在整段散文后面，读者早就开始读正文了。\n"
+               "**谁该读**：把导读写在正文后面的人。\n"
+               "**读完能做什么**：知道导读必须排在任何正文之前。\n")
+check(any("缺「一句话」" in p for p in problems_for("guide.demo.md", AFTER_PROSE)),
+      "导读排在正文散文之后不算数（只挡小节标题挡不住这一种）")
+META_OK = ("# 示例 · 指南\n\n> **版本**：v1.0 | **状态**：已落地\n\n"
+           "> **范围**：某个边界\n\n"
+           "**一句话**：版本行、范围行这类元信息不算正文，导读跟在它们后面仍然算数。\n"
+           "**谁该读**：写文档头部元信息的人。\n"
+           "**读完能做什么**：知道哪些行不会把导读判成迟到。\n")
+check(problems_for("guide.demo.md", META_OK) == [],
+      "版本行那类元信息不算正文（新判据没有误伤文档头部）")
+
+TILDE_IMPL = "# 示例 · 指南\n\n~~~typescript\nconst a = 1;\nconst b = 2;\n~~~\n"
+BACKTICK_IMPL = TILDE_IMPL.replace("~~~", "```")
+tilde_lines, _ = checker.scan_body(TILDE_IMPL)
+backtick_lines, _ = checker.scan_body(BACKTICK_IMPL)
+check(backtick_lines == 2, f"反引号围栏里的实现代码算得出来（实测 {backtick_lines} 行）")
+check(tilde_lines == backtick_lines,
+      f"波浪号围栏一视同仁（波浪号 {tilde_lines} 行 vs 反引号 {backtick_lines} 行）")
+TILDE_LINK = "# 示例 · 指南\n\n~~~markdown\n见 `doc/rule.doc.readability.md`\n~~~\n"
+check(not [line for _, line in checker.body_lines(TILDE_LINK) if "rule.doc.readability" in line],
+      "波浪号围栏里的引用不参与链接扫描（真调 body_lines，不是空跑）")
+
 print("[2] 周报走定期刊物口径")
 
 WEEKLY = """# 周报 2026-W99 (2026-07-20 ~ 2026-07-26)
@@ -333,6 +359,18 @@ RULE_BURIED = """# 某条规则
 check(checker.check_rule_text(RULE_BURIED) == ["缺「一句话」", "缺「什么时候撞上」"],
       "规则导读埋在第一个小节标题之后不算数（与 doc/ 同一口径）")
 
+RULE_TILDE = """# 某条规则
+
+~~~markdown
+**一句话**：这是写在波浪号围栏里的示例，不该被当成这条规则自己的导读。
+**什么时候撞上**：抄模板的时候。
+~~~
+
+## 正文
+"""
+check(checker.check_rule_text(RULE_TILDE) == ["缺「一句话」", "缺「什么时候撞上」"],
+      "波浪号围栏里的示例同样不算数（Markdown 两种围栏都合法）")
+
 with tempfile.TemporaryDirectory() as tmp:
     empty_name = os.path.join(tmp, "SKILL.md")
     with open(empty_name, "w", encoding="utf-8") as fh:
@@ -476,6 +514,11 @@ check("[这个标题根本不存在](./rule.doc.readability.md)" not in list_src
 
 print()
 
+check(any(".Codex" in d for d in checker.RULE_DIRS),
+      "规则扫描覆盖 Codex 侧规则目录（少扫一处那一处就能绕开导读要求）")
+_, codex_missing, _ = checker.scan_rules()
+check(codex_missing == 0, f"两处规则目录合起来零欠账（实测 {codex_missing} 条）")
+
 print("[7] 这道闸看得见守卫读的每一个文件")
 
 # `.claude/rules/predicate-and-wiring-discipline.md` 形状 7：守卫接进了 CI，
@@ -485,6 +528,7 @@ print("[7] 这道闸看得见守卫读的每一个文件")
 # 忘了改 filter，这里会红，而不是静默失去覆盖。
 GUARDED_INPUTS = [
     "doc/rule.doc.readability.md",
+    ".Codex/rules/production-release-safety.md",
     ".claude/rules/predicate-and-wiring-discipline.md",
     ".claude/skills/cds/SKILL.md",
     ".claude/skills/weekly-update-summary/reference/report-template.md",

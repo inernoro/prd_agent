@@ -79,8 +79,26 @@ MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 NON_FILE_TARGET = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
+FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})\s*(\S*)")
+
+
+def fence_delim(line: str) -> str | None:
+    """返回这行围栏的定界符（``` 或 ~~~），不是围栏则 None。
+
+    Markdown 两种围栏都合法：只认反引号的话，`~~~ts` 里的实现代码在判据眼里
+    压根不存在，闸门形同虚设。
+    """
+    m = FENCE_OPEN.match(line.strip())
+    return m.group(1)[0] * 3 if m else None
+
+
 def doc_type(name: str) -> str:
     return name.split(".", 1)[0]
+
+
+# 标题与导读之间允许的「元信息」：版本行、appKey、关联实现、表格、分隔线、注释、徽章。
+# 除此之外的任何一行正文（散文、列表）都意味着导读迟到了。
+HEADER_META = re.compile(r"^(\*\*[^*]+\*\*\s*[：:]|\||[-*_]{3,}|!\[|<!--|<img)")
 
 
 def parse_header(text: str) -> dict[str, str]:
@@ -88,21 +106,28 @@ def parse_header(text: str) -> dict[str, str]:
     found: dict[str, str] = {}
     labels = list(ONE_LINER_ALIASES) + [f for f in FIELDS if f != "一句话"]
     in_fence = False
+    fence_kind = ""
     seen_h1 = False
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
         # 代码块里的示例不算数 —— 否则「展示导读格式的模板文档」会自己骗过闸门
-        if line.startswith("```"):
+        delim = fence_delim(line)
+        if delim and (not in_fence or delim == fence_kind):
             in_fence = not in_fence
+            fence_kind = delim if in_fence else ""
             continue
         if in_fence:
             continue
         if line.startswith("# "):
             seen_h1 = True
             continue
-        # 正文一开张，导读就迟到了 —— 埋在某个小节里的三行，读者翻到时早已不需要它
-        if seen_h1 and re.match(r"^#{2,6} ", line):
-            break
+        # 正文一开张，导读就迟到了 —— 埋在某个小节里、或排在整段散文后面的三行，
+        # 读者翻到时早已不需要它。标题与导读之间只允许版本行那类元信息。
+        if seen_h1 and line:
+            core = line.lstrip(">").strip() if line.startswith(">") else line
+            is_field = any(re.match(rf"\*\*{lb}\*\*\s*[：:]", core) for lb in labels)
+            if not is_field and (re.match(r"^#{2,6} ", line) or not HEADER_META.match(core)):
+                break
         # 导读要写在标题下面读者才看得见；写在 H1 之前、或整篇没有 H1，都不算数
         if not seen_h1:
             continue
@@ -199,15 +224,19 @@ def scan_body(text: str) -> tuple[int, int]:
     impl_lines = 0
     src_refs = 0
     in_fence = False
+    fence_kind = ""
     lang = ""
     in_source_section = False
     lines = text.splitlines()
     pointer_cols: set[int] = set()
     for idx, raw in enumerate(lines):
         st = raw.strip()
-        if st.startswith("```"):
+        delim = fence_delim(st)
+        if delim and (not in_fence or delim == fence_kind):
             if not in_fence:
-                in_fence, lang = True, st[3:].strip().lower()
+                fence_kind = delim
+                # 定界符可能多于三个（````），一律剥干净再取语言
+                in_fence, lang = True, st.lstrip("`~").strip().lower()
             else:
                 in_fence, lang = False, ""
             continue
@@ -301,9 +330,12 @@ def doc_filenames() -> set[str]:
 def body_lines(text: str):
     """逐行产出正文（跳过围栏代码块）——代码块里的路径是示例，不该变成链接。"""
     in_fence = False
+    fence_kind = ""
     for idx, raw in enumerate(text.splitlines()):
-        if raw.strip().startswith("```"):
+        delim = fence_delim(raw)
+        if delim and (not in_fence or delim == fence_kind):
             in_fence = not in_fence
+            fence_kind = delim if in_fence else ""
             continue
         if not in_fence:
             yield idx + 1, raw
@@ -349,9 +381,12 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
     out: list[str] = []
     changed = 0
     in_fence = False
+    fence_kind = ""
     for raw in text.splitlines(keepends=True):
-        if raw.strip().startswith("```"):
+        delim = fence_delim(raw)
+        if delim and (not in_fence or delim == fence_kind):
             in_fence = not in_fence
+            fence_kind = delim if in_fence else ""
             out.append(raw)
             continue
         if in_fence:
@@ -392,6 +427,9 @@ def scan_links() -> tuple[dict[str, int], list[str], list[str]]:
     return per_type, bare_detail, dead_detail
 
 
+# 规则不止一处：Claude 读 .claude/rules，Codex 读 .Codex/rules。少扫一处，
+# 那一处就能绕开导读要求（形状 1：判据比它该管的范围窄）。
+RULE_DIRS = [os.path.join(".claude", "rules"), os.path.join(".Codex", "rules")]
 RULES_DIR = os.path.join(REPO_ROOT, ".claude", "rules")
 SKILLS_DIR = os.path.join(REPO_ROOT, ".claude", "skills")
 
@@ -415,11 +453,14 @@ def check_rule_text(text: str) -> list[str]:
     """
     found: dict[str, str] = {}
     in_fence = False
+    fence_kind = ""
     seen_h1 = False
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
-        if line.startswith("```"):
+        delim = fence_delim(line)
+        if delim and (not in_fence or delim == fence_kind):
             in_fence = not in_fence
+            fence_kind = delim if in_fence else ""
             continue
         if in_fence:
             continue
@@ -517,16 +558,18 @@ def _frontmatter_description(fm: str) -> str | None:
 def scan_rules() -> tuple[int, int, list[str]]:
     total = missing = 0
     detail: list[str] = []
-    if not os.path.isdir(RULES_DIR):
-        return 0, 0, detail
-    for name in sorted(os.listdir(RULES_DIR)):
-        if not name.endswith(".md"):
+    for rel_dir in RULE_DIRS:
+        abs_dir = os.path.join(REPO_ROOT, rel_dir)
+        if not os.path.isdir(abs_dir):
             continue
-        total += 1
-        problems = check_rule(os.path.join(RULES_DIR, name))
-        if problems:
-            missing += 1
-            detail.append(f".claude/rules/{name} — {'；'.join(problems)}")
+        for name in sorted(os.listdir(abs_dir)):
+            if not name.endswith(".md"):
+                continue
+            total += 1
+            problems = check_rule(os.path.join(abs_dir, name))
+            if problems:
+                missing += 1
+                detail.append(f"{rel_dir.replace(os.sep, '/')}/{name} — {'；'.join(problems)}")
     return total, missing, detail
 
 
