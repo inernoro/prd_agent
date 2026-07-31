@@ -867,6 +867,45 @@ class DailyVerdictContractTests(unittest.TestCase):
             [], archive_report._daily_conclusion_contract_errors("conditional", body)
         )
 
+    def test_deployment_status_fields_do_not_close_smoke_failure(self):
+        for fact in (
+            "CDS smoke 失败，branchStatus=running",
+            'CDS smoke status=failed，"branchStatus":"ready"',
+            "CDS smoke 失败，stage=deployed",
+        ):
+            with self.subTest(fact=fact):
+                self.assertEqual(
+                    {"smoke"},
+                    archive_report._current_failure_subjects(fact),
+                )
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
+        self.assertEqual(
+            set(),
+            archive_report._current_failure_subjects(
+                "CDS deploy 失败，branchStatus=running"
+            ),
+        )
+
+    def test_deployment_failure_fields_do_not_open_smoke_gate(self):
+        for fact in (
+            "CDS smoke 已通过，branchStatus=error",
+            "CDS smoke 已通过，stage=deploy_failed",
+        ):
+            with self.subTest(fact=fact):
+                self.assertEqual(
+                    set(),
+                    archive_report._current_failure_subjects(fact),
+                )
+
     def test_english_success_results_close_prior_raw_failure(self):
         for closure in (
             "CDS smoke passed",
@@ -1683,6 +1722,23 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+    def test_generic_conclusion_prefers_target_subject_over_observation(self):
+        root_cause_row = (
+            "\n| CDS smoke | 验收报告归档现已正常 | 归档链路已恢复 | "
+            "smoke 仍无通过证据 | 失败 | 继续复测 smoke |\n"
+        )
+        body = report_body("覆盖不足").rstrip() + root_cause_row
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+        body = report_body("硬门禁失败").rstrip() + root_cause_row
+        self.assertEqual(
+            [],
+            archive_report._daily_conclusion_contract_errors("fail", body),
+        )
 
     def test_parallel_failure_subjects_support_each_fail_nature(self):
         for nature in ("硬门禁失败", "验收链路失败"):

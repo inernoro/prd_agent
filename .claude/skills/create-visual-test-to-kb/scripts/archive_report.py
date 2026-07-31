@@ -994,6 +994,21 @@ def _apply_subject_state(states, subjects, state):
         states[subject] = state
 
 
+def _subjects_for_structured_status(event, subjects):
+    """Bind cdscli deployment-only fields exclusively to the deploy gate."""
+    if not re.search(
+        r"[\"']?(?:branch[\s_-]*status|stage|阶段)[\"']?\s*[:：=]",
+        event.group(0),
+        re.I,
+    ):
+        return subjects
+    return {
+        subject
+        for subject in subjects
+        if (subject[0] if isinstance(subject, tuple) else subject) == "deploy"
+    }
+
+
 def _resolved_subjects_for_action(clause, event, subjects):
     """Keep delivery completion from closing unrelated quality gates."""
     resolution_text = clause[event.start() : event.end() + 12]
@@ -1330,6 +1345,8 @@ def _failure_subject_states(
                 and inherits_context
             ):
                 subjects = clause_context_subjects
+            if subjects:
+                subjects = _subjects_for_structured_status(event, subjects)
             if state == "resolved" and subjects:
                 subjects = _resolved_subjects_for_action(
                     clause,
@@ -1485,7 +1502,7 @@ def _root_cause_row_states(row, initial_states=None):
             _normalize_evidence_usage_gap_clauses(conclusion_status),
             states,
             instance_aware=True,
-            default_subjects=observation_subjects or target_subjects,
+            default_subjects=target_subjects or observation_subjects,
         )
     return states
 
