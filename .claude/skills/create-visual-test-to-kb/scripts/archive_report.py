@@ -993,6 +993,28 @@ def _apply_subject_state(states, subjects, state):
         states[subject] = state
 
 
+def _resolved_subjects_for_action(clause, event, subjects):
+    """Keep delivery completion from closing unrelated quality gates."""
+    resolution_text = clause[event.start() : event.end() + 12]
+    delivery_match = re.match(
+        r"(?:现已|已经|已)?\s*(?:(?:完成|成功)\s*)?"
+        r"(部署|发布|上线|生效|合并)",
+        resolution_text,
+        re.I,
+    )
+    if not delivery_match:
+        return subjects
+    allowed_subjects = {"deploy"}
+    if delivery_match.group(1) == "发布":
+        allowed_subjects.add("report-publish")
+    return {
+        subject
+        for subject in subjects
+        if (subject[0] if isinstance(subject, tuple) else subject)
+        in allowed_subjects
+    }
+
+
 def _closure_changes_subject(clause, event, previous_event_end):
     """Reject negated closures and closures retargeted to an unnamed dependency."""
     scope = clause[previous_event_end : event.start()]
@@ -1288,6 +1310,12 @@ def _failure_subject_states(
                 and inherits_context
             ):
                 subjects = clause_context_subjects
+            if state == "resolved" and subjects:
+                subjects = _resolved_subjects_for_action(
+                    clause,
+                    event,
+                    subjects,
+                )
             if subjects:
                 _apply_subject_state(states, subjects, state)
                 clause_context_subjects = subjects

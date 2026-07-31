@@ -844,7 +844,7 @@ class DailyVerdictContractTests(unittest.TestCase):
                 body = body.rstrip() + (
                     "\n| 验收冻结 SHA | "
                     f"{closure} | 同一事项已复测 | 关闭旧失败证据 | "
-                    "已通过 | 保留记录 |\n"
+                    "未关闭 | 保留记录 |\n"
                 )
                 errors = archive_report._daily_conclusion_contract_errors(
                     "conditional", body
@@ -1180,6 +1180,56 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
+
+    def test_delivery_completion_does_not_close_quality_gate(self):
+        for closure in (
+            "CDS smoke 已部署修复版本，等待复测",
+            "CDS smoke 已发布修复版本，等待复测",
+            "CDS smoke 已上线修复版本，等待复测",
+            "CDS smoke 已完成部署，等待复测",
+        ):
+            with self.subTest(closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 先前失败"
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 仅证明修复版本已交付 | 尚无复测结果 | "
+                    "未关闭 | 完成 smoke 复测 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
+    def test_delivery_then_explicit_retest_can_close_quality_gate(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 先前失败"
+        )
+        body = body.rstrip() + (
+            "\n| 验收冻结 SHA | CDS smoke 已部署修复版本；"
+            "CDS smoke 复测通过 | 同一门禁已复测 | 已取得通过结果 | "
+            "未关闭 | 保留记录 |\n"
+        )
+        self.assertEqual(
+            [],
+            archive_report._daily_conclusion_contract_errors("conditional", body),
+        )
+
+    def test_delivery_completion_can_close_deploy_gate(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS deploy stage=deploy_failed"
+        )
+        body = body.rstrip() + (
+            "\n| 验收冻结 SHA | CDS deploy 已部署 | 部署任务完成 | "
+            "已证明 deploy 恢复 | 未关闭 | 保留记录 |\n"
+        )
+        self.assertEqual(
+            [],
+            archive_report._daily_conclusion_contract_errors("conditional", body),
+        )
 
     def test_completed_diagnostics_do_not_close_failed_gate(self):
         for fact in (
