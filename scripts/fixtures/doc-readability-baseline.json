@@ -1,11 +1,11 @@
 {
   "_comment": "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数。两个数值都只许下降：修好存量就跑 --update-baseline 把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。",
   "missing": {
-    "spec": 19,
+    "spec": 14,
     "design": 103,
     "plan": 23,
     "rule": 23,
-    "guide": 62,
+    "guide": 55,
     "report": 37,
     "debt": 73
   },
