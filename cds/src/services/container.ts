@@ -9,7 +9,7 @@ import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import { collectReuseCandidates, targetShaOf, normalizeBuildScope, type ReuseCandidate } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
-import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
+import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 
 /**
@@ -50,6 +50,15 @@ export interface ProjectNetworkResolver {
    * fallback 到 projectId)。
    */
   getProjectSlug?(projectId: string): string | undefined;
+  /**
+   * 返回「本分支已发布入口表」的 env 片段(CDS_PREVIEW_URL / CDS_SERVICE_URLS)。
+   *
+   * ContainerService 只做透传,不自己算 —— 算它需要 StateService(有效 profile 的
+   * subdomain)与 config.previewDomain,而容器层刻意不依赖 StateService(避免循环导入)。
+   * 唯一实现见 preview-entrypoints.resolveBranchEntrypointsEnv;index.ts 负责接线。
+   * 可选方法:测试与旧适配器不实现时不注入该表(等同「未声明入口」)。
+   */
+  getPublishedEntrypointsEnv?(entry: BranchEntry): PublishedEntrypointsEnv | undefined;
 }
 
 export interface ContainerRemoveContext {
@@ -843,6 +852,10 @@ export class ContainerService {
         // 纯函数不读 process.env，由这里读取后传入；effective-env 检查器端点同值传入，
         // 保证「检查器看到的」=「部署实际注入的」。
         injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
+        // 已发布入口表（2026-07-29）：让容器里的应用不必自己按 hostname 推算兄弟服务的
+        // 公网地址（根 CLAUDE.md 规则 #11）。算这张表要 StateService,容器层不依赖它,
+        // 故经适配器注入；适配器未实现则整张表缺席，应用据此显示「未发布该入口」。
+        publishedEntrypoints: this.networkResolver?.getPublishedEntrypointsEnv?.(entry),
       },
     ).env;
   }

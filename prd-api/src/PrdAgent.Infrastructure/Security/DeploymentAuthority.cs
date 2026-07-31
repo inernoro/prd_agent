@@ -39,11 +39,19 @@ public static class DeploymentAuthority
         if (bool.TryParse(explicitFlag, out var forced))
             return forced;
 
-        // CDS 给每个分支预览容器注入 CDS_PROJECT_ID（cds/src/routes/branches.ts）；
-        // 生产走独立发布链路，没有这个标记。
-        var cdsProjectId = ReadFirst(configuration, "CDS_PROJECT_ID");
-        return string.IsNullOrWhiteSpace(cdsProjectId);
+        return !IsCdsBranchPreview(configuration);
     }
+
+    /// <summary>
+    /// 当前容器是不是 CDS 分支预览。
+    ///
+    /// CDS 给每个分支预览容器注入 CDS_PROJECT_ID（cds/src/routes/branches.ts）；
+    /// 生产走独立发布链路，没有这个标记。这条判据此前在本类里被读了两遍、
+    /// 又要被第三个消费方（PlatformEntrypoints）用到，抽出来作为唯一来源
+    /// （predicate-and-wiring-discipline 形状 3：同一判断不许抄成多份）。
+    /// </summary>
+    public static bool IsCdsBranchPreview(IConfiguration configuration)
+        => string.IsNullOrWhiteSpace(ReadFirst(configuration, "CDS_PROJECT_ID")) is false;
 
     /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。
@@ -65,8 +73,7 @@ public static class DeploymentAuthority
             return false;
 
         // 条件 2：rotation 只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
-        var cdsProjectId = ReadFirst(configuration, "CDS_PROJECT_ID");
-        return string.IsNullOrWhiteSpace(cdsProjectId);
+        return !IsCdsBranchPreview(configuration);
     }
 
     /// <summary>

@@ -9,6 +9,8 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Deployment;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -25,11 +27,16 @@ public sealed class LlmGatewaySsoController : ControllerBase
     private const string TicketCollectionName = "llmgw_map_sso_tickets";
     private readonly MongoDbContext _db;
     private readonly LlmGatewayDataContext _gatewayData;
+    private readonly IConfiguration _configuration;
 
-    public LlmGatewaySsoController(MongoDbContext db, LlmGatewayDataContext gatewayData)
+    public LlmGatewaySsoController(
+        MongoDbContext db,
+        LlmGatewayDataContext gatewayData,
+        IConfiguration configuration)
     {
         _db = db;
         _gatewayData = gatewayData;
+        _configuration = configuration;
     }
 
     [HttpPost("ticket")]
@@ -95,6 +102,51 @@ public sealed class LlmGatewaySsoController : ControllerBase
         {
             code,
             expiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+            console = ResolveConsoleTarget(),
         }));
+    }
+
+    /// <summary>
+    /// 票据要送去哪个控制台——由**服务端**回答，前端不再按 hostname 自己拼域名。
+    ///
+    /// 四种结果各自明确（根 CLAUDE.md 规则 #11：预览地址只能来自平台，禁止本地推算）：
+    ///   ① 表里有这一项           → CDS 已发布独立控制台入口，直接去；
+    ///   ② 表里没有这一项         → 该部署确实没有这个入口（控制台服务未部署，或改了子域声明），
+    ///                              如实告知而不是拼一个不存在的域名；
+    ///   ③ 预览环境但没有表       → 跑着旧版 CDS（入口下发是 2026-07-29 才加的能力）。此时
+    ///                              「有没有入口」是未知，既不能断言没发布，也不能自己推算
+    ///                              ——如实说未知，并指出 CDS 更新后自愈；
+    ///   ④ 非预览、也没有表       → 正式环境，控制台与本站同源，前端走 /llmgw/。
+    /// </summary>
+    private object ResolveConsoleTarget()
+    {
+        var baseUrl = PlatformEntrypoints.ResolveGatewayConsoleBaseUrl(_configuration);
+        if (baseUrl is not null)
+        {
+            return new { baseUrl, unavailableReason = (string?)null };
+        }
+
+        if (PlatformEntrypoints.HasEntrypointTable(_configuration))
+        {
+            return new
+            {
+                baseUrl = (string?)null,
+                // 不要再把原因归到「分支名太长」：命名子域现在会截断 + 摘要压进 DNS 上限，
+                // 而子域本身受 ≤40 字符校验，长分支已不会因此丢入口。此时真实原因是
+                // 控制台服务没部署或子域声明变了 —— 让人去改短分支名重发是个救不回来的建议。
+                unavailableReason = "本环境没有独立的模型网关控制台入口：该服务可能未部署，或其子域声明与平台记录不一致。请在部署面板确认控制台服务状态，或在正式域名上打开。",
+            };
+        }
+
+        if (DeploymentAuthority.IsCdsBranchPreview(_configuration))
+        {
+            return new
+            {
+                baseUrl = (string?)null,
+                unavailableReason = "当前预览环境的平台尚未下发入口表（CDS 版本早于该能力），无法确定模型网关控制台地址。CDS 更新后本入口会自动恢复；在此之前请在正式域名上打开。",
+            };
+        }
+
+        return new { baseUrl = (string?)null, unavailableReason = (string?)null };
     }
 }

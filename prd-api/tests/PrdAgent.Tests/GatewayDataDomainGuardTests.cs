@@ -713,12 +713,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("2026-07-12-public-surface-smoke", debt);
         Assert.Contains("2026-07-12-release-command-compatibility", debt);
         Assert.Contains("2026-07-12-release-forensic-ledger", debt);
-        foreach (var skill in new[] { hotfixSkill, cdsDeploySkill, smokeSkill, acceptanceSkill, handoffSkill })
+        foreach (var skill in new[] { hotfixSkill, cdsDeploySkill, smokeSkill, acceptanceSkill })
             Assert.Contains("doc/rule.platform.production-release-safety.md", skill);
+        Assert.Contains("| 发布与运维 |", handoffSkill);
+        Assert.Contains("部署、迁移、回滚、监控、开关、依赖和环境变量", handoffSkill);
+        Assert.Contains("不得根据分支名、项目名或历史规律拼接 URL", handoffSkill);
+        Assert.Contains("不得把密码写入仓库或公开报告", handoffSkill);
         Assert.Contains("API smoke 通过后继续使用 `preview-url` 与 `acceptance-checklist`", smokeSkill);
         Assert.Contains("实际入口 JS/CSS", hotfixSkill);
         Assert.Contains("previous/回滚验证", acceptanceSkill);
-        Assert.Contains("不能写完成", handoffSkill);
+        Assert.Contains("只有证据支持时才写“已完成”", handoffSkill);
     }
 
     [Fact]
@@ -1067,10 +1071,14 @@ public class GatewayDataDomainGuardTests
     public void VideoSceneWorker_SynchronizesProjectStatusAfterSceneTerminalStates()
     {
         var videoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+        var videoService = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/VideoGenService.cs");
 
         Assert.Contains("await SyncProjectSceneActivityAsync(run.Id);", videoWorker);
         Assert.Contains("await SyncProjectSceneActivityAsync(runId);", videoWorker);
         Assert.Contains("ResolveProjectStatusForScenes(run.Scenes)", videoWorker);
+        Assert.Contains("SceneItemStatus.Submitting", videoService);
+        Assert.Contains("FindOneAndUpdateAsync", videoWorker);
+        Assert.Contains("Scenes.{sceneIdx}.JobId", videoWorker);
     }
 
     [Fact]

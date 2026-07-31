@@ -54,6 +54,10 @@ const commitInboxSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/CommitInbox.tsx'),
   'utf8',
 );
+const informationCenterSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/components/SiteNoticeInbox.tsx'),
+  'utf8',
+);
 const styles = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/index.css'),
   'utf8',
@@ -84,11 +88,13 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
   it('在侧栏常驻 Agent 接入入口，并由全局壳层提供上下文弹窗', () => {
     const footerIndex = shellSource.indexOf('<div className="cds-rail-footer">');
     const agentIndex = shellSource.indexOf('aria-label="接入 Agent"', footerIndex);
+    const bugIndex = shellSource.indexOf('aria-label="提交缺陷"', footerIndex);
     const settingsIndex = shellSource.indexOf('aria-label="CDS 系统设置"', footerIndex);
     const accountIndex = shellSource.indexOf('<UserAccountMenu', footerIndex);
 
     expect(agentIndex).toBeGreaterThan(footerIndex);
-    expect(settingsIndex).toBeGreaterThan(agentIndex);
+    expect(bugIndex).toBeGreaterThan(agentIndex);
+    expect(settingsIndex).toBeGreaterThan(bugIndex);
     expect(accountIndex).toBeGreaterThan(settingsIndex);
     expect(shellSource).toContain('data-agent-action="connect"');
     expect(shellSource).toContain('data-agent-context={agentContext.id}');
@@ -106,9 +112,10 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
 
   it('按项目、分类和横排任务卡选择 Agent 上下文', () => {
     expect(agentDialogSource).toContain('<AgentAccessMap');
-    // 4 列：项目初始化 / 自动接入 / 手动安装 / 海鲜市场。
-    // 2026-07-28 新增「项目初始化」并排在第一位，tab 数从 3 变 4。
-    expect(agentDialogSource).toContain('grid grid-cols-4');
+    // 5 项：上手助手 / 项目初始化 / 自动接入 / 手动安装 / 海鲜市场。
+    // 小屏两列避免挤压，sm 以上五列完整横排。
+    expect(agentDialogSource).toContain('grid grid-cols-2 gap-1');
+    expect(agentDialogSource).toContain('sm:grid-cols-5');
     expect(agentDialogSource).toContain('min-w-0 items-center justify-center');
     expect(agentDialogSource).toContain('resolveAgentMissionContextForTarget(');
     expect(agentDialogSource).toContain('连接已有项目');
@@ -166,40 +173,40 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(shellSource).toContain('authStatus.postLogoutRedirect || shellLoginHref(authStatus.mode)');
   });
 
-  it('将更新、导入和授权统一放在右下角消息栈', () => {
-    const stackIndex = shellSource.indexOf('<div className="cds-global-action-stack">');
-    const accessIndex = shellSource.indexOf('<AccessRequestInbox />', stackIndex);
-    const pendingIndex = shellSource.indexOf('<PendingImportInbox />', stackIndex);
-    const updateIndex = shellSource.indexOf('<GlobalUpdateBadge />', stackIndex);
+  it('将普通提醒放进信息中心，授权申请同时提供右下角决策入口', () => {
+    const floatingAccessIndex = informationCenterSource.indexOf('<AccessRequestInbox placement="floating" onCountChange={handleAccessCount} />');
+    const accessIndex = informationCenterSource.indexOf('<AccessRequestInbox />');
+    const pendingIndex = informationCenterSource.indexOf('<PendingImportInbox onCountChange={handleImportCount} />');
+    const updateIndex = informationCenterSource.indexOf('<GlobalUpdateBadge onCountChange={handleUpdateCount} />');
+    const commitIndex = informationCenterSource.indexOf('<CommitInbox onCountChange={handleCommitCount} />');
 
-    expect(stackIndex).toBeGreaterThan(-1);
-    expect(accessIndex).toBeGreaterThan(stackIndex);
+    expect(floatingAccessIndex).toBeGreaterThan(-1);
+    expect(accessIndex).toBeGreaterThan(floatingAccessIndex);
     expect(pendingIndex).toBeGreaterThan(accessIndex);
     expect(updateIndex).toBeGreaterThan(pendingIndex);
-    // 2026-07-28：定位从两个坞各自贴角，收敛到唯一的 .cds-bottom-docks 底部带
-    // （它让开常驻 rail 并在窄视口折行）。右下角消息栈的成员与顺序契约不变。
-    expect(styles).toMatch(/\.cds-bottom-docks\s*\{[\s\S]*?right:\s*1rem;[\s\S]*?bottom:\s*1rem;/);
-    expect(shellSource).toContain("data-nav-open={navOpen ? 'true' : 'false'}");
-    expect(styles).toContain(".cds-app-shell[data-nav-open='true'] .cds-bottom-docks");
+    expect(commitIndex).toBeGreaterThan(updateIndex);
+    expect(shellSource).toContain('id="cds-information-center-host"');
+    expect(shellSource).toContain('<SiteNoticeInbox />');
+    expect(informationCenterSource).toContain('信息中心');
+    expect(informationCenterSource).toContain('informationCount');
+    expect(styles).not.toContain('.cds-bottom-docks');
     expect(updateSource).not.toContain('fixed bottom-4 left-4');
     expect(pendingImportSource).not.toContain('fixed bottom-4 right-4');
-    // 曾经断言 CommitInbox **必须**自己 `fixed bottom-4 left-4` —— 那正是用户
-    // 2026-07-28 反馈的遮挡：它压在 72px 宽 rail 的导航图标上。现在改由
-    // AppShell 把它放进 .cds-bottom-left-dock，组件自身不许再定位。
     expect(commitInboxSource).not.toMatch(/className[^\n]*fixed bottom-4 left-4/);
-    expect(shellSource).toMatch(/cds-bottom-left-dock[\s\S]{0,200}<CommitInbox \/>/);
     expect(commitInboxSource).not.toContain('updateBadgeVisible');
   });
 
   it('有授权时直接展示申请详情和明确操作，不再退化成小徽章', () => {
-    expect(accessSource).toContain('role="alert"');
-    expect(accessSource).toContain('aria-live="assertive"');
+    expect(accessSource).toContain("role={placement === 'floating' ? 'alert' : 'region'}");
+    expect(accessSource).toContain("aria-live={placement === 'floating' ? 'assertive' : 'off'}");
     expect(accessSource).toContain('需要你的授权');
     expect(accessSource).toContain('{primary.purpose}');
     expect(accessSource).toContain('void reject(primary.id)');
     expect(accessSource).toContain('void approve(primary.id)');
     expect(accessSource).toContain('批准项目访问');
-    expect(accessSource).not.toContain('fixed bottom-16 right-4');
+    expect(accessSource).toContain('data-testid="cds-access-request-floating"');
+    expect(accessSource).toContain('fixed bottom-[84px] right-5');
+    expect(accessSource).toContain('createPortal');
     expect(accessSource).toContain('className="max-w-3xl overflow-hidden"');
   });
 

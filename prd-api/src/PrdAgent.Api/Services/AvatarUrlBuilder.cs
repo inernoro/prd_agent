@@ -72,6 +72,13 @@ public static class AvatarUrlBuilder
         return $"{url}{sep}v={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
     }
 
+    public static string? NormalizePublicBaseUrl(string? raw)
+    {
+        var value = (raw ?? string.Empty).Trim().TrimEnd('/');
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return null;
+        return uri.Scheme is "http" or "https" ? value : null;
+    }
+
     private static string ResolveAvatarFileName(User? user)
     {
         if (user == null) return DefaultNoHeadFile;

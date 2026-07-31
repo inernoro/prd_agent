@@ -50,6 +50,7 @@ ENV_FILE="$SCRIPT_DIR/.cds.env"
 CONFIG_FILE="${CDS_CONFIG:-cds.config.json}"
 STATE_DIR="$SCRIPT_DIR/.cds"
 PID_FILE="$STATE_DIR/cds.pid"
+SUPERVISOR_PID_FILE="$STATE_DIR/cds-supervisor.pid"
 LOG_FILE="$SCRIPT_DIR/cds.log"
 
 # P4 Part 18 (G1.4): multi-repo clone storage.
@@ -1715,6 +1716,24 @@ cds_post_start_probe() {
 cds_stop() {
   local stopped=0
 
+  # 非 systemd 后台模式由 supervisor 保活。必须先停 supervisor，再处理 child；
+  # 否则只杀 Node 会被 2 秒后自动拉起，stop 表面成功但端口很快又回来。
+  if [ -f "$SUPERVISOR_PID_FILE" ]; then
+    local supervisor_pid; supervisor_pid="$(cat "$SUPERVISOR_PID_FILE" 2>/dev/null || true)"
+    if [ -n "$supervisor_pid" ] && kill -0 "$supervisor_pid" 2>/dev/null; then
+      info "停止 CDS supervisor (PID: $supervisor_pid) ..."
+      kill "$supervisor_pid" 2>/dev/null || true
+      local supervisor_wait=0
+      while [ "$supervisor_wait" -lt 10 ] && kill -0 "$supervisor_pid" 2>/dev/null; do
+        sleep 1
+        supervisor_wait=$((supervisor_wait + 1))
+      done
+      kill -9 "$supervisor_pid" 2>/dev/null || true
+      stopped=1
+    fi
+    rm -f "$SUPERVISOR_PID_FILE"
+  fi
+
   if [ -f "$PID_FILE" ]; then
     local pid; pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
@@ -1791,10 +1810,33 @@ cds_start_background() {
   export CDS_REPOS_BASE="${CDS_REPOS_BASE:-$REPOS_BASE_DEFAULT}"
   mkdir -p "$CDS_REPOS_BASE"
 
-  info "启动 CDS (后台模式) ..."
-  nohup node dist/index.js "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
-  local pid=$!
-  echo "$pid" > "$PID_FILE"
+  # 非 systemd 环境也必须由 supervisor 托管。旧实现直接 nohup node，终端退出
+  # 虽然不影响进程，但 self-update 的 process.exit 或运行时崩溃后没有任何人拉起，
+  # 浏览器就会永久停在“重启中”。supervisor 负责在 2s 后重启 child。
+  local supervisor="$SCRIPT_DIR/scripts/cds-supervisor.sh"
+  local node_bin; node_bin="$(command -v node)"
+  info "启动 CDS (后台保活模式) ..."
+  CDS_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)" \
+  CDS_NODE_BIN="$node_bin" \
+  CDS_RUN_DIR="$STATE_DIR" \
+  CDS_LOG_DIR="$STATE_DIR/logs" \
+  CDS_LOG_FILE="$LOG_FILE" \
+  CDS_CHILD_PID_FILE="$PID_FILE" \
+  CDS_SUPERVISOR_PID_FILE="$SUPERVISOR_PID_FILE" \
+    nohup bash "$supervisor" master > /dev/null 2>&1 &
+  local supervisor_pid=$!
+  echo "$supervisor_pid" > "$SUPERVISOR_PID_FILE"
+
+  local pid="$supervisor_pid"
+  local pid_wait=0
+  while [ "$pid_wait" -lt 20 ]; do
+    if [ -f "$PID_FILE" ]; then
+      pid="$(cat "$PID_FILE" 2>/dev/null || echo "$supervisor_pid")"
+      break
+    fi
+    sleep 0.1
+    pid_wait=$((pid_wait + 1))
+  done
 
   # Wait for master port to bind (max 20s)
   local i=0

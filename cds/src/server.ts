@@ -30,13 +30,18 @@ import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
-import { createBugReportsRouter } from './routes/bug-reports.js';
+import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
+import { createNoticesRouter } from './routes/notices.js';
+import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
+import { resolveNoticeOutboundConfig } from './services/notice-outbound-map.js';
+import { isSealingEnabled } from './infra/secret-seal.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
 import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
+import { sha256Hex } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
@@ -753,6 +758,24 @@ export function resolveApiLabel(method: string, path: string): string {
     // 快捷提 bug（Ctrl+B 全局面板，2026-07-27）
     'POST /bug-reports': '提交缺陷反馈',
     'GET /bug-reports': '列出缺陷反馈',
+    // 定时任务（含 2026-07-29 新增的 release 动作 = 自动发布规则）
+    'GET /scheduled-jobs': '列出定时任务',
+    'POST /scheduled-jobs': '创建定时任务',
+    'GET /scheduled-jobs/runs': '列出任务运行',
+    'POST /scheduled-jobs/check-target': '试运行任务动作',
+    'PATCH /scheduled-jobs/:id': '更新定时任务',
+    'DELETE /scheduled-jobs/:id': '删除定时任务',
+    'POST /scheduled-jobs/:id/run': '立即执行任务',
+    // 服务端站内信账本（2026-07-29）
+    'GET /notices': '列出站内信',
+    'POST /notices': '记录站内信',
+    'POST /notices/read-all': '全部标已读',
+    'POST /notices/:id/dismiss': '忽略站内信',
+    'GET /cds-system/integrations/bug-report': '查看缺陷转发接入',
+    'PUT /cds-system/integrations/bug-report': '保存缺陷转发接入',
+    'DELETE /cds-system/integrations/bug-report': '清除缺陷转发接入',
+    'POST /cds-system/integrations/bug-report/authorize': '接收 MAP 缺陷转发授权',
+    'POST /cds-system/integrations/bug-report/test': '测试缺陷转发接入',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
@@ -768,6 +791,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /releases/targets/:id/archive': '归档发布目标并保留审计证据',
     'GET /releases/targets/:id/changes': '查看发布目标变更历史',
     'GET /releases/targets/:id/remote-state': '查看远端发布现场',
+    'GET /releases/targets/:id/disk-diagnosis': '目标磁盘只读诊断',
     'POST /releases/targets/:id/reclaim': '回收远端发布产物',
     'POST /releases/branches/:branchId/preflight': '执行发布前检查',
     'POST /releases/branches/:branchId/runs': '启动分支发布',
@@ -1001,6 +1025,14 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
+    // 站内信：read-all 是静态路径（上面 staticMap 已覆盖），这里只需 :id 那条。
+    // segment-safe `[^/]+`，别用贪婪 `(.+)`（PR #522 的教训：会跨 `/` 截胡）。
+    [/^POST \/notices\/[^/]+\/dismiss$/, '忽略站内信'],
+    // 定时任务：staticMap 的 `:id` 条目只够 auditApiLabels 比对 express 路由原样，
+    // 真实调用带的是具体 id，必须靠 pattern 才有 label。segment-safe `[^/]+`。
+    [/^POST \/scheduled-jobs\/[^/]+\/run$/, '立即执行任务'],
+    [/^PATCH \/scheduled-jobs\/[^/]+$/, '更新定时任务'],
+    [/^DELETE \/scheduled-jobs\/[^/]+$/, '删除定时任务'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
@@ -1606,10 +1638,57 @@ export function createServer(deps: ServerDeps): express.Express {
     listTargets: () => deps.stateService.getReleaseTargets(),
     releaseService,
   });
+
+  // ── 服务端站内信账本（2026-07-29） ──
+  //
+  // CDS_EVENT_ALERT_CLASS 早就把「哪些事件够格叫醒人」收敛好了，但至今没有任何
+  // 生产代码订阅它——铃装好了、线没接，于是发布失败在没人开着页面时彻底沉默。
+  // 这段就是那根线：订阅总线 → 记进 .cds/notice-ledger.json → 可选外发到 MAP。
+  // 专用通知 env 优先；没有时复用 CDS 系统设置里已经加密保存的 MAP 服务端接入，
+  // 避免同一个 MAP 重复配两套 Token。两条都没有才如实记「未外发」。
+  let storedMapForwarding: { baseUrl: string; token: string } | undefined;
+  try {
+    storedMapForwarding = deps.stateService.getBugReportForwardingConfig();
+  } catch (err) {
+    console.warn(`[notice] CDS 系统设置中的 MAP Token 无法读取: ${(err as Error).message}`);
+    storedMapForwarding = undefined;
+  }
+  const noticeOutbound = resolveNoticeOutboundConfig(
+    process.env,
+    storedMapForwarding ?? resolveForwardConfig(process.env),
+  );
+  const noticeLedger = new NoticeLedgerService({
+    storePath: path.join(deps.config.repoRoot, '.cds', 'notice-ledger.json'),
+    logger: { warn: (m) => console.warn(m) },
+    // 删项目后旧通知的深链会 404，服务端在 GET 时惰性清掉（原前端探活逻辑搬过来）。
+    projectExists: (projectId) => !!deps.stateService.getProject(projectId),
+  });
+  startNoticeLedger({
+    ledger: noticeLedger,
+    outbound: noticeOutbound,
+    publish: (type, data) => { cdsEventsBus.publish(type, data); },
+    logger: { warn: (m) => console.warn(m) },
+  });
+  // 读写路由挂在下面全局认证网关之后（搜 createNoticesRouter），这里只做事件接线。
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
-    config: { masterPort: deps.config.masterPort, repoRoot: deps.config.repoRoot, dockerNetwork: deps.config.dockerNetwork },
+    config: {
+      masterPort: deps.config.masterPort,
+      repoRoot: deps.config.repoRoot,
+      dockerNetwork: deps.config.dockerNetwork,
+      // 首次定时发布时分支还没有历史发布记录，预览地址只能现推。
+      previewDomain: deps.config.previewDomain,
+      rootDomains: deps.config.rootDomains,
+    },
+    // 必须注入**上面那个** releaseService 实例，绝不能再 new 一个：
+    // inFlight 表是实例私有的，多一个实例就多一张互不可见的表，settling 判定当场失明。
+    // 路由侧曾经自建过第二个（debt #6），2026-07-29 已改为共用本实例 —— 这条不变式
+    // 现在由 tests/services/release-service-single-instance.test.ts 守住。
+    release: releaseService,
+    // 治理事件（待人工确认 / 自动停用）走同一条总线 → 站内信账本，
+    // 不另造通知路径（否则会长出「定时发布一套、发布一套」两条分发逻辑）。
+    publishEvent: (type, data) => { cdsEventsBus.publish(type, data); },
   });
   scheduledJobService.start();
   app.set('etag', false);            // Disable ETag — prevents 304 on API polling (CDS is a dev tool, caching is misleading)
@@ -2318,7 +2397,8 @@ export function createServer(deps: ServerDeps): express.Express {
       if (isPublicAccessRequestRoute(req.method, req.path)) return next();
       if (req.path === '/api/cds-system/connections/authorize'
         || req.path === '/api/cds-system/connections/token'
-        || req.path === '/api/cds-system/connections/accept') return next();
+        || req.path === '/api/cds-system/connections/accept'
+        || (req.method === 'POST' && req.path === '/api/cds-system/integrations/bug-report/authorize')) return next();
       // GitHub webhook is public — it's authenticated by HMAC signature
       // verification inside the handler, not by the cookie/token middleware.
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
@@ -2768,6 +2848,13 @@ export function createServer(deps: ServerDeps): express.Express {
       if (
         reqMethod === 'GET' &&
         /^\/api\/projects\/[^/]+\/instances$/.test(reqPath) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
+      }
+      if (
+        reqMethod === 'POST' &&
+        reqPath === '/api/cds-system/integrations/bug-report/authorize' &&
         /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
       ) {
         return next();
@@ -3940,6 +4027,10 @@ export function createServer(deps: ServerDeps): express.Express {
     skillProxy: new SkillProxy({
       mapBase: process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+      localSkillRoots: [
+        path.join(deps.config.repoRoot, '.claude', 'skills'),
+        path.join(deps.config.repoRoot, '..', '.claude', 'skills'),
+      ],
     }),
     cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
     repoRoot: deps.config.repoRoot,
@@ -4016,6 +4107,9 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
     config: deps.config,
+    // 与定时调度器共用同一个实例：settling 期的在途句柄只存在于实例内存里，
+    // 分两个实例等于两侧互相看不见对方的在途发布。见 ReleasesRouterDeps.releaseService。
+    releaseService,
   }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({
@@ -4205,6 +4299,34 @@ export function createServer(deps: ServerDeps): express.Express {
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。
   app.use('/api', createBugReportsRouter({
     getDataDir: () => path.dirname(deps.stateService.getCacheBase()),
+    readStoredForwardConfig: () => deps.stateService.getBugReportForwardingConfig(),
+    readEnvironmentForwardConfig: () => resolveForwardConfig(),
+    writeStoredForwardConfig: (input) => {
+      const saved = deps.stateService.setBugReportForwardingConfig(input);
+      return { ...input, updatedAt: saved.updatedAt };
+    },
+    clearStoredForwardConfig: () => deps.stateService.clearBugReportForwardingConfig(),
+    getSuggestedMapBaseUrl: () => deps.stateService.getActiveCdsConnections()
+      .find((connection) => connection.partnerKind === 'map' && connection.partnerBaseUrl)
+      ?.partnerBaseUrl || process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
+    authenticateMapConnectionToken: (rawToken) => {
+      if (!rawToken) return null;
+      return deps.stateService.findActiveCdsConnectionByLongTokenHash(sha256Hex(rawToken)) ?? null;
+    },
+    isSecretStorageEncrypted: () => isSealingEnabled(),
+  }));
+
+  // 服务端站内信账本读写。挂在全局认证网关之后，与 bug-reports 同款；账本本身与
+  // 事件订阅在上面（搜 startNoticeLedger）。外发未配置时如实回 configured:false，
+  // 前端面板顶部据此显示「仅记录在本地，未外发」——绝不暗示已经通知过谁。
+  app.use('/api', createNoticesRouter({
+    ledger: noticeLedger,
+    getOutboundStatus: () => (noticeOutbound
+      ? { configured: true }
+      : {
+        configured: false,
+        reason: '未连接 MAP，通知仅保存在 CDS',
+      }),
   }));
 
   app.use('/api', createDeploymentRunsRouter({

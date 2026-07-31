@@ -102,12 +102,8 @@ function PrimaryContainerLogPanel({
   const hasTabs = !!(containerLogControls && containerLogControls.services.length > 1);
   const [maximized, setMaximized] = useState(false);
   const logs = state?.status === 'ok' ? (state.logs || '') : '';
-  /*
-   * Inline logs are a preview, not the full terminal. Keep roughly 20 readable
-   * rows so the deployment history below remains visible; the modal keeps the
-   * complete scrollable log.
-   */
-  const logViewportClass = 'h-[424px]';
+  // 日志内容自然撑开，外层部署页负责滚动；只保留最低可读高度，不设置上限。
+  const logViewportClass = 'min-h-80';
   const emptyLogStateClass = `${logViewportClass} flex items-center justify-center`;
 
   return (

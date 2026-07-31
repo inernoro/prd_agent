@@ -7,6 +7,7 @@ import {
 import { getHealth, getTenantOverview } from '@/lib/api';
 import type { OverviewRankItem, TenantOverviewData } from '@/lib/types';
 import { Card, Chip, SectionLoader } from '@/components/ui';
+import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { fmtCost, fmtMs, fmtShortTime, statusBadgeStyle } from '@/lib/logsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canAccessPage } from '@/lib/access';
@@ -129,8 +130,9 @@ export function OverviewPage() {
 
         <Card className="lg-home-quickstart-card">
           <div className="lg-card-kicker"><Rocket size={15} /> 快速接入</div>
-          <h2>三步完成第一条请求</h2>
-          <p>创建租户密钥、选择兼容协议、执行安全直测，再用 requestId 定位完整链路。</p>
+          {/* 新人轨：四步派生清单，四项全成立后整体消失（见 lib/onboarding.ts）。
+              此处原是一段静态的「三步完成第一条请求」说明——它对新人太抽象、对熟人是噪音。 */}
+          <OnboardingChecklist />
           <div className="lg-protocol-list" aria-label="支持协议">
             {['GW Native', 'OpenAI', 'Claude', 'Gemini'].map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}
           </div>

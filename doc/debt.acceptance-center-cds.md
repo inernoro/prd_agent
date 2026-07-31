@@ -11,6 +11,14 @@ MAP 等系统通过知识库开放协议（MAP-KBTP v1 peer-sync）从 CDS 拉�
 
 ## 已知边界（交付时主动声明）
 
+### 冻结 commit 验收 —— 缺少不可变预览环境（2026-07-30）
+- **目标要求**：每日验收需要按目标日结束时冻结的 commit 分别验证已合并、open PR 与未发布分支，测试对象不能被分支后续提交替换。
+- **当前事实**：CDS 分支预览跟随分支当前 HEAD；当目标分支在目标日后继续推进时，现有预览不能证明历史冻结 SHA 的行为。
+- **根因**：CDS 尚未提供“指定 project + commit SHA 创建不可变、隔离预览”的标准入口，也没有等价的历史快照复用接口。
+- **证据影响**：当前 HEAD 冒烟通过只能证明当前版本健康，不能充当冻结 commit 的产品证据；对应范围必须标为 `unverifiable`，并列入未覆盖数量。
+- **判定规则**：若没有观察到真实产品失败，单纯因冻结 SHA 无法复现只能给 `conditional`，不得把产品质量写成 FAIL；报告必须输出目标 SHA、实际测试 SHA、缺失能力与关闭动作的根因链条。
+- **关闭动作**：CDS 增加 commit-pinned preview 或不可变快照复用能力，并让验收报告记录可核对的环境 ID、目标 SHA、部署 SHA。能力落地后补跑历史冻结范围，才可关闭该覆盖缺口。
+
 ### WS3 peer-sync —— 真实 MAP 配对已通；内容 pull 卡在 MAP 侧 item 映射（2026-06-25 实测）
 - **真实配对成功**：用 MAP 管理员凭据登录真实 MAP（main-prd-agent.miduo.org）→ `POST /api/admin/peer-nodes`
   以 CDS 配对码 + `https://cds.miduo.org` 配对 → 返回 `status:connected`。证明 CDS 侧两处修复

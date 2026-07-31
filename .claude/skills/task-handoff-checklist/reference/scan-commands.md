@@ -1,81 +1,32 @@
-# 各维度扫描命令
+# 通用交接扫描命令
 
-> 被 SKILL.md Phase 2 引用。Claude 执行扫描时按需读取。
-
-## 维度一：导航与入口变更
+以下命令用于取证。先把 `<base>` 替换为动态发现的默认分支，不要直接假定分支名。
 
 ```bash
-# 管理后台路由/页面变更
-git diff main...HEAD -- "prd-admin/src/App.tsx" "prd-admin/src/pages/**" --name-only
-
-# API 端点变更
-git diff main...HEAD -- "prd-api/src/PrdAgent.Api/Controllers/**" --name-only
-
-# 菜单变更
-grep -rn "sidebar\|menu\|nav" prd-admin/src/ --include="*.tsx" | head -20
-
-# 桌面端入口变更
-git diff main...HEAD -- "prd-desktop/src/pages/**" "prd-desktop/src/components/**" --name-only
+git symbolic-ref --quiet --short refs/remotes/origin/HEAD
+git merge-base HEAD <base>
+git diff --name-status <base>...HEAD
+git diff --stat <base>...HEAD
+git status --short
 ```
 
-## 维度二：文档沉淀
+## 发现仓库约定
 
 ```bash
-# 文档变更
-git diff main...HEAD -- "doc/**" --name-only
-
-# 新 MongoDB 集合（需更新数据字典）
-git diff main...HEAD -- "prd-api/src/PrdAgent.Infrastructure/Data/MongoDbContext.cs"
-
-# 新 Controller（需更新 SRS）
-git diff main...HEAD -- "prd-api/src/PrdAgent.Api/Controllers/**" --name-only | grep -i "controller"
+find .. -name AGENTS.md -o -name CLAUDE.md -o -name CODEOWNERS
+find . -maxdepth 3 \( -name package.json -o -name pyproject.toml -o -name Cargo.toml -o -name go.mod -o -name '*.sln' \)
+find . -maxdepth 3 \( -path '*/.github/workflows/*' -o -name 'docker-compose*.yml' -o -name Dockerfile \)
 ```
 
-## 维度三：规则与约定
+只读取与变更目录或验证命令相关的文件，避免无边界扫描大型仓库。
+
+## 按变更内容查证
 
 ```bash
-# 新 appKey
-git diff main...HEAD | grep -i "appkey\|AppKey\|app-key"
-
-# 新 AppCallerCode
-git diff main...HEAD | grep -i "appcallercode\|AppCallerCode"
-
-# 新权限
-git diff main...HEAD | grep -i "AdminPermission\|PermissionCatalog"
-
-# 新 MongoDB 集合
-git diff main...HEAD | grep -i "GetCollection\|IMongoCollection"
+git diff <base>...HEAD -- '*test*' '*spec*'
+git diff <base>...HEAD -- '*.md'
+git diff <base>...HEAD -- '*.yml' '*.yaml' 'Dockerfile*'
+git diff <base>...HEAD | rg -i 'route|endpoint|schema|migration|permission|secret|token|env|deploy|rollback'
 ```
 
-## 维度四：流程变更
-
-```bash
-# DTO/Model 变更
-git diff main...HEAD -- "prd-api/src/PrdAgent.Core/Models/**" --name-only
-
-# 接口定义变更
-git diff main...HEAD -- "prd-api/src/PrdAgent.Core/Interfaces/**" --name-only
-
-# 前端 API 服务变更
-git diff main...HEAD -- "prd-admin/src/services/**" --name-only
-```
-
-## 维度五：测试
-
-```bash
-# 测试文件变更
-git diff main...HEAD -- "**/*Test*" "**/*test*" "**/*spec*" --name-only
-```
-
-## 维度七：代码质量
-
-```bash
-# 后端编译
-cd prd-api && dotnet build --no-restore 2>&1 | tail -5
-
-# 前端类型检查
-cd prd-admin && pnpm tsc --noEmit 2>&1 | tail -10
-
-# 桌面端检查
-cd prd-desktop/src-tauri && cargo check 2>&1 | tail -5
-```
+模式命中只是线索，不是结论。验证命令必须来自仓库规则、CI 或 manifest，不凭经验拼装。

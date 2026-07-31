@@ -4,12 +4,10 @@ import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
 import { useLanguage } from '../contexts/LanguageContext';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
+import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
 import { createLlmGatewaySsoTicket } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
-
-export { resolveGatewayConsoleHref } from '@/lib/llmGatewaySso';
 
 /**
  * CompatibilityStack — 幕 7 · 模型兼容性矩阵
@@ -44,14 +42,19 @@ export function CompatibilityStack() {
     setGatewayOpening(true);
     const result = await createLlmGatewaySsoTicket();
     if (result.success) {
-      const target = resolveLlmGatewaySsoHref(result.data.code);
-      if (target) {
-        window.location.assign(target);
+      // 票据签发成功后仍可能没有可去的入口（例如预览分支名过长时，平台不会发布网关子域）。
+      // 那与凭据无关，必须报出服务端给的真实原因，否则会把人引向「是不是被封号了」的错误方向。
+      const resolution = resolveLlmGatewaySso(result.data.code, result.data.console);
+      if (resolution.ok) {
+        window.location.assign(resolution.href);
         return;
       }
+      setGatewayOpening(false);
+      toast.error('模型网关暂时无法打开', resolution.message);
+      return;
     }
     setGatewayOpening(false);
-    toast.error('模型网关暂时无法打开', result.success ? '登录凭据未通过安全校验' : result.error?.message);
+    toast.error('模型网关暂时无法打开', result.error?.message);
   };
 
   const getProviderName = (p: (typeof PROVIDERS)[number]) =>

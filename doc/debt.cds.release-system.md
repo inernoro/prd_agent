@@ -35,6 +35,10 @@ PR #1273 落地了**阶段一（止血）**：心跳 + 中断收敛 + 执行超�
 | 9 | 无告警外发（与存活监控同一笔债） | 发布 started / succeeded / failed / rolled-back 已上 `cds-events-bus`，`isAlertCdsEvent` 也已把 failed / rolled-back 标成告警级；但 CDS 至今没有任何外发通道（站内通知 / Webhook / 邮件），见 `doc/debt.cds.uptime-monitor.md` 债务 2-1 | 关掉页面后发布失败**能被记录、能被订阅**，但不会主动叫醒人。接通道时只需 `subscribe` + `isAlertCdsEvent`，不许再判一遍事件名 |
 | 6 | 收割器实例与执行实例不同 | `server.ts` 的周期收割用的是**独立 new 出来的** `ReleaseService`，与路由里执行发布的不是同一个实例，故其 `inFlight` 恒为空。当前靠心跳阈值判定，行为正确；但 `reconcileInterruptedReleases` 里那句 `this.inFlight.has(...)` 对收割器而言是死代码 | 无行为影响；语义容易误导后来人 |
 | 7 | `DrainableReleaseStatus` 并了两个过渡期成员 | 类型并上 `cancelled`（取消能力落地后可能进联合）与 `prechecking`（已删的死状态），让两侧独立演进不互相卡编译。并集不削弱穷尽性 | 仅可读性 |
+| 13 | 定时发布的「人工确认」没有服务端待办账本 | 2026-07-29 新增。`ScheduledJobTarget.release.requireApproval` 的语义是「到点只跑预检 + 发一条 `release.schedule.approval-required` 站内信，永不自动发布」，人看到通知后**手动**去发布中心点发布。没有「批准/驳回」这两个动作，也没有待办状态 | 语义是 fail-safe 的（永远不会因为没人批准而误发），但「谁批了、什么时候批的」没有审计记录。真做需要服务端待办账本 + 审批端点，列 v2 |
+| 14 | 定时发布只在单进程内去重 | `ScheduledJobService` 的去重是实例内 `running: Set` + `claimScheduledOccurrence` 先推进 `nextRunAt`。蓝绿 promote 期间若出现双 daemon 同时活跃，同一 occurrence 可能被抢两次 | 兜底是 `ReleaseService.isTargetBusy` 与 `assertTargetFree` 的 state 级判据（读的是共享台账，跨实例可见），第二次会记 `skipped` 而不是并发部署。可接受 |
+| 15 | 定时发布超时后不知道最终结果 | 任务超时（默认 3600s）只把 `ScheduledJobRun` 记成 failed 并写明 `releaseId`，**绝不**调 `cancelRelease`（调度器不是发布的主人）。发布本身可能随后成功 | 任务运行记录会留一条假失败，需要人点进 releaseId 看真实结果；连续 2 次假失败还会触发规则自动停用。缓解办法是把 timeoutSeconds 设得高于发布 P95 |
+| 16 | 定时发布的前端只做只读 + 启停 | 本轮 `TaskSchedulePage` 只让 release 规则「看得见、能启停、能看运行记录 + 自动停用原因」，动作弹窗对 release 是只读摘要；创建与编辑目前只能走 API。完整表单在发布中心「自动发布」页签落地（前端轨道） | 编辑路径已防数据丢失（`ActionForm.release` 原样回传 + 类型分段控件对 release 隐藏），不会因为在本页改个名字就把发布配置抹掉 |
 
 ## 真实环境证据（2026-07-28 已补齐）
 

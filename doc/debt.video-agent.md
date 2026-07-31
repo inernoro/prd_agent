@@ -1,6 +1,6 @@
 # 视频生成 Agent · 债务台账
 
-> **版本**：v3.0 | **日期**：2026-07-13 | **状态**：开发中
+> **版本**：v3.1 | **日期**：2026-07-30 | **状态**：开发中
 
 ## 当前架构
 
@@ -31,6 +31,7 @@
 | project-run-separation | medium | 一个项目产生大量生成尝试和多条时间线 | 当前仍以 VideoGenRun 兼容承载项目和任务，镜头版本嵌入文档 | 使用真实生产数据确认粒度后，再拆分 VideoProject、GenerationAttempt 和 ExportRun，避免提前迁移线上集合 |
 | model-capability-schema | medium | 不同视频模型支持不同参数 | 前端展示公共参数，模型特有控制暂不出现 | 由模型池 API 返回视频 capability schema，控制器按后端描述渲染 |
 | upstream-availability | critical | 正式模型余额、授权或渠道变化 | 代码和协议可用不等于上游随时可用；模型池健康状态仍是最终权威 | 正式发布前运行 scoped video canary，失败时阻止提交并展示供应商健康原因 |
+| historical-video-faststart | medium | 打开 2026-07-30 前已入库且 MP4 索引位于文件尾的历史版本 | 播放器会立即显示加载反馈并保持可操作，但首帧仍可能慢于新生成版本；新视频入库前已自动执行 fast-start | 增加受控历史资产迁移任务，逐个无损重排并更新资产引用；必须保留原文件和可回滚映射 |
 
 ## 验收约束
 

@@ -2,7 +2,7 @@ import { Activity, ArrowLeft, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { resolveMapHomeHref } from '@/lib/mapNavigation';
+import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 
 const MAP_SSO_CODE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -25,6 +25,8 @@ export function takeSafeMapReturnTo(search: string): string {
 
 export function MapSsoPage() {
   const { loginWithMapCode } = useAuth();
+  // 同上：失败态那条「返回 MAP」链接要能等到权威地址。
+  usePlatformMapHome();
   const navigate = useNavigate();
   const [code] = useState(takeMapSsoCode);
   const [returnTo] = useState(() => takeSafeMapReturnTo(window.location.search));

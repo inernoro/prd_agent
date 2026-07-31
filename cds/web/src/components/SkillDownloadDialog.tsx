@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Check, Copy, Download, ExternalLink, Package, Rocket, ShieldCheck } from 'lucide-react';
+import { Bot, Check, Copy, Download, ExternalLink, GraduationCap, Package, Rocket, ShieldCheck } from 'lucide-react';
 
 import {
   AgentAccessMap,
   defaultMissionForMap,
   type AgentAccessMapSelection,
 } from '@/components/AgentAccessMap';
+import { AgentStarterTab } from '@/components/AgentStarterTab';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -38,12 +39,13 @@ interface Props {
   context?: AgentPageContext;
 }
 
-type TabKey = 'init' | 'connect' | 'manual' | 'marketplace';
+type TabKey = 'starter' | 'init' | 'connect' | 'manual' | 'marketplace';
 
 // 「项目初始化」排在第一位：从零建项目是新用户最常见的入口，
 // 藏在第四个 tab 等于没有。详见 doc/design.cds.project-bootstrap.md。
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: boolean }> = [
-  { key: 'init', label: '项目初始化', icon: Rocket, recommended: true },
+  { key: 'starter', label: '上手助手', icon: GraduationCap, recommended: true },
+  { key: 'init', label: '快速初始化', icon: Rocket },
   { key: 'connect', label: '自动接入', icon: Bot },
   { key: 'manual', label: '手动安装', icon: Package },
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
@@ -61,7 +63,7 @@ function initialMapSelection(
 }
 
 export function SkillDownloadDialog({ open, onOpenChange, projects, context }: Props): JSX.Element {
-  const [active, setActive] = useState<TabKey>('init');
+  const [active, setActive] = useState<TabKey>('starter');
   const sourceContext = context || createAgentMissionContext('projects');
   const [mapSelection, setMapSelection] = useState<AgentAccessMapSelection>(
     () => initialMapSelection(projects, sourceContext),
@@ -131,16 +133,16 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </DialogDescription>
         </DialogHeader>
 
-        <AgentAccessMap
+        {active === 'connect' ? <AgentAccessMap
           projects={projects}
           selection={mapSelection}
           context={selectedContext}
           sourceContextId={sourceContext.id}
           onSelectionChange={handleMapSelection}
           onMissionChange={setMissionId}
-        />
+        /> : null}
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        {active === 'connect' ? <div className="grid gap-2 sm:grid-cols-2">
           <button
             type="button"
             onClick={chooseExistingTarget}
@@ -166,9 +168,9 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
             <div className="font-medium">创建一个新项目</div>
             <div className="mt-0.5 text-xs">一次性权限，创建后自动失效</div>
           </button>
-        </div>
+        </div> : null}
 
-        {targetKind === 'existing' ? (
+        {active === 'connect' && targetKind === 'existing' ? (
           <label className="space-y-1 text-sm">
             <span className="text-xs font-medium text-foreground">选择项目</span>
             <select
@@ -183,7 +185,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </label>
         ) : null}
 
-        <nav className="grid grid-cols-4 gap-1 border-b border-[hsl(var(--hairline))]">
+        <nav className="grid grid-cols-2 gap-1 border-b border-[hsl(var(--hairline))] sm:grid-cols-5">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const selected = active === tab.key;
@@ -210,6 +212,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
         </nav>
 
         <div className="min-h-[260px]">
+          {active === 'starter' ? <AgentStarterTab cdsPrompt={prompt} /> : null}
           {active === 'init' ? <ProjectInitTab /> : null}
           {active === 'connect' ? <ConnectTab prompt={prompt} /> : null}
           {active === 'manual' ? <ManualTab /> : null}

@@ -48,6 +48,7 @@ jobs:
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
+              - 'e2e/**'
               - '.github/workflows/ci.yml'
             desktop:
               - 'prd-desktop/**'
@@ -64,6 +65,26 @@ jobs:
               - 'scripts/tests/public-surface-smoke.test.py'
               - 'scripts/tests/asset-storage-readiness-gate.test.py'
               - 'scripts/tests/release-evidence.test.py'
+              - 'scripts/llmgw-prod-preflight.py'
+              - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
+              # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
+              # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
+              # 它们守的是 gw-smoke / 发布双密钥 / rollout 账本 / ASR WebSocket 转发，
+              # 所以连同各自的被测脚本一起登记进这道闸。
+              - 'scripts/gw-smoke.py'
+              - 'scripts/llmgw-rollout-ledger.py'
+              - 'scripts/tests/test_*.py'
+              # 守卫的**被测文件**也必须登记，否则这道闸只在「守卫自己被改」时开，
+              # 而它要防的漂移恰恰发生在被测文件那边：只改模板/规则的 PR 一路全绿，
+              # 守卫从头到尾没跑过（predicate-and-wiring-discipline 形状 2）。
+              # cds/** 虽有自己的 filter，但那个 job 不跑这批 Python 守卫，不能顶替。
+              - '.claude/rules/report-design-system.md'
+              - '.claude/skills/daily-report-summary/reference/report-template-html.html'
+              - '.claude/skills/weekly-update-summary/reference/report-template-html.html'
+              - '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py'
+              - 'cds/src/scheduler/nginx-template.ts'
+              - 'scripts/tests/validate-static-dist.test.sh'
+              - 'scripts/validate-static-dist.sh'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
 
@@ -90,6 +111,20 @@ jobs:
 
       - name: Release evidence ledger
         run: python3 scripts/tests/release-evidence.test.py
+
+      - name: Gateway route self-test failure diagnosis
+        run: python3 scripts/tests/gateway-route-self-test-diagnosis.test.py
+
+      - name: Static dist validation
+        run: sh scripts/tests/validate-static-dist.test.sh
+
+      - name: Release script source guards
+        run: |
+          set -e
+          for t in scripts/tests/test_*.py; do
+            echo "--- $t"
+            python3 "$t"
+          done
 
   # 后端服务构建和测试
   server-build:
@@ -258,6 +293,35 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Install recording acceptance dependencies
+        working-directory: ${{ github.workspace }}/e2e
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check recording acceptance
+        working-directory: ${{ github.workspace }}/e2e
+        run: pnpm typecheck
+
+      - name: Install Chromium for recording acceptance
+        working-directory: ${{ github.workspace }}/e2e
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run recording continuity acceptance
+        working-directory: ${{ github.workspace }}/e2e
+        env:
+          E2E_LOCAL_SERVER: '1'
+        run: pnpm exec playwright test specs/recording-continuity.spec.ts
+
+      - name: Upload recording acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recording-continuity-acceptance-${{ github.run_id }}
+          path: |
+            e2e/playwright-report/
+            e2e/results.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # 桌面客户端构建检查（不打包）
   desktop-check:
@@ -439,12 +503,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-cds-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json') }}
+          key: ${{ runner.os }}-pnpm-cds-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-cds-
 
       - name: Install dependencies
         run: pnpm install
+
+      # 前端依赖装在 cds/web/node_modules。tests/ 里的渲染冒烟直接 import 前端组件，
+      # vitest.config.ts 把 react / react-dom 别名指向那里；这一步缺了别名就解析不到，
+      # 整个测试文件加载失败。守卫见 tests/lint/ci-installs-web-deps.test.ts。
+      - name: Install web dependencies
+        run: pnpm run install:web
 
       - name: Type check
         run: pnpm exec tsc --noEmit

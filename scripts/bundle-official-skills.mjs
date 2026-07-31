@@ -51,7 +51,7 @@ const INCLUDE = new Set([
   'phase0-guard',            // 底座阶段护栏 + 面向老板/PM 的六段式沟通规范
   'plan-first',              // 通用先方案后动手
   'product-document-generator', // 通用产品文档生成
-  'doc-writer',              // 通用七类文档模板
+  'doc-writer',              // 仓库自适应文档生成
   'flow-trace',              // 通用端到端链路追踪（大白话版）
   'laowang',                 // 精英·米多文化人格
   'ui-ux-pro-max',           // 通用 UI/UX 设计智能
@@ -64,6 +64,7 @@ const INCLUDE = new Set([
   'find-skills',             // 通用技能发现
   'code-hygiene',            // 通用代码卫生方法论
   'conflict-resolution',     // 通用 git 冲突解决
+  'scope-check',             // 通用分支边界审计
   'acceptance-test-design',  // 通用验收测试设计
   'acceptance-scenario-orchestrator', // 通用验收场景编排
   'acceptance-checklist',    // 通用 UAT 清单
@@ -81,7 +82,7 @@ const DISPLAY_NAME = {
   'conflict-resolution': 'conflict-resolution · Git 冲突解决',
   'create-skill-file': 'create-skill-file · 技能文件生成',
   'create-visual-test-to-kb': 'create-visual-test-to-kb · 视觉验收归档',
-  'doc-writer': 'doc-writer · 七类文档模板',
+  'doc-writer': 'doc-writer · 仓库自适应文档',
   'find-skills': 'find-skills · 技能发现',
   'flow-trace': 'flow-trace · 端到端链路追踪',
   'human-verify': 'human-verify · 多视角人工验证',
@@ -90,6 +91,7 @@ const DISPLAY_NAME = {
   'product-document-generator': 'product-document-generator · 产品文档生成',
   'remotion-scene-codegen': 'remotion-scene-codegen · 视频场景代码生成',
   'risk-matrix': 'risk-matrix · MECE 风险评估',
+  'scope-check': 'scope-check · 分支边界审计',
   'phase0-guard': 'phase0-guard · 底座阶段护栏',
   'findmapskills': 'findmapskills · 海鲜市场操作技能',
   'sdd-init': 'sdd-init · 项目骨架落地',
@@ -106,13 +108,13 @@ const DISPLAY_NAME = {
 // **不动 frontmatter**（那是 harness 的触发依据，改了会影响技能识别准确度）。
 const DISPLAY_SUMMARY = {
   'acceptance-checklist': '生成真人逐步打勾的验收清单，每步带预期结果和失败排查手册',
-  'acceptance-test-design': '把 PR、提交或发布范围转成可执行的验收设计：风险假设、用户可见影响、证据要求',
+  'acceptance-test-design': '把需求或代码变化转成风险假设、融合用例和可审计证据矩阵',
   'acceptance-scenario-orchestrator': '复杂验收目标的范围编排：场景识别、结果映射、指差法清单、证据链契约',
   'code-hygiene': '十个维度扫技术债：死代码、兼容垫片、命名残留、冗余参数、配置漂移',
-  'conflict-resolution': '把主分支合进当前分支，AI 分级解决冲突，产出预合并报告',
+  'conflict-resolution': '动态识别默认分支，分级解决冲突并保留可恢复锚点',
   'create-skill-file': '按规范生成 SKILL.md 并打分，头部格式、渐进披露、触发词一并校验',
   'create-visual-test-to-kb': '工业级视觉验收全流水线：模拟真人浏览器取证、双主题截图、报告归档出深链',
-  'doc-writer': '守护 doc/ 的命名与表头，自动套用七类标准文档模板',
+  'doc-writer': '先识别目标仓库的文档约定，再生成适合业务和工程协作的清晰文档',
   'find-skills': '按你的能力需求搜索并推荐可安装的第三方技能',
   'flow-trace': '从前端一路追到数据库的端到端链路图，含大白话版和技术版',
   'human-verify': '四个角度模拟人工审查：魔鬼辩护、反向验证、边界测试、用户场景',
@@ -123,9 +125,10 @@ const DISPLAY_SUMMARY = {
   'preview-url': '读取 CDS 实际发布的预览地址，多入口全部列出，禁止本地推算',
   'remotion-scene-codegen': '提供 Remotion API 上下文，生成高质量视频场景代码',
   'risk-matrix': '按 MECE 在六个不重叠维度评估风险，产出可决策的风险矩阵',
+  'scope-check': '结合仓库规则、目录边界和所有权证据识别越界与未知变更',
   'sdd-init': '把刚装的技能套装落到你的项目：生成协作规则、七类文档骨架和下一步路线图',
   'skill-validation': '需求上马前先验一遍：八种气味检测、与已有功能查重、七维度评分',
-  'task-handoff-checklist': '八个维度扫变更生成交接清单，让验收者零追问就能核对',
+  'task-handoff-checklist': '把改动、用户路径、验收证据、发布风险和后续行动完整交接',
   'theme-transition': '给前端加主题切换的圆形水波纹动效，含降级方案',
   'ui-ux-pro-max': '设计智能：67 种风格、96 种配色、57 种字体搭配，覆盖 13 种技术栈',
   'findmapskills': '搜索、下载、上传、订阅海鲜市场的技能包；搜索下载免凭据',
@@ -154,6 +157,7 @@ const TAG_OVERRIDE = {
   'acceptance-scenario-orchestrator': ['分析'],
   // 下面 5 条是修启发式误判（曾把 conflict-resolution 标成「周报」、risk-matrix 标成「部署」）
   'conflict-resolution': ['工具'],
+  'scope-check': ['工具', '分析'],
   'risk-matrix': ['分析'],
   'acceptance-checklist': ['分析'],
   'create-visual-test-to-kb': ['分析'],
@@ -221,7 +225,8 @@ function collectFiles(skillDir, skillKey) {
 }
 
 function parseFrontmatter(md) {
-  // 取首个 --- ... --- 块里的 name / version / description（description 可能是多行 > 折叠）
+  // 取首个 --- ... --- 块里的 name / version / description（description 可能是多行 > 折叠）。
+  // version 优先兼容历史顶层写法，也支持 skill-creator 合法 schema 的 metadata.version。
   const lines = md.split('\n');
   let i = 0;
   while (i < lines.length && lines[i].trim() === '') i++;
@@ -230,13 +235,21 @@ function parseFrontmatter(md) {
   let name = null;
   let version = null;
   let description = null;
+  let inMetadata = false;
   for (; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === '---') break;
+    if (/^metadata:\s*$/.test(line)) {
+      inMetadata = true;
+      continue;
+    }
+    if (/^\S/.test(line)) inMetadata = false;
     const mName = line.match(/^name:\s*(.+?)\s*$/);
     if (mName && !name) { name = mName[1].replace(/^["']|["']$/g, ''); continue; }
     const mVersion = line.match(/^version:\s*(.+?)\s*$/);
     if (mVersion && !version) { version = mVersion[1].replace(/^["']|["']$/g, ''); continue; }
+    const mMetadataVersion = inMetadata ? line.match(/^\s+version:\s*(.+?)\s*$/) : null;
+    if (mMetadataVersion && !version) { version = mMetadataVersion[1].replace(/^["']|["']$/g, ''); continue; }
     const mDesc = line.match(/^description:\s*(.*)$/);
     if (mDesc && description === null) {
       let val = mDesc[1].trim();

@@ -23,6 +23,16 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import {
+  branchEntrypointDepsFromState,
+  isGatewayConsoleEntry,
+  isPublishableNamedLabel,
+  namedServiceLabel,
+  publishedServiceLabels,
+  occupiedHostOwners,
+  resolveBranchEntrypointsEnv,
+  resolveServiceLandingPath,
+} from '../services/preview-entrypoints.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
@@ -49,9 +59,15 @@ import {
   checkoutSelfUpdateTarget,
   evaluateSelfUpdateTransition,
   recommendSelfUpdateTargetBranch,
+  resolveForceSyncTransition,
   resolveRemoteDefaultBranch,
   resolveSelfUpdateTargetBranch,
 } from '../services/self-update-checkout.js';
+import {
+  diagnoseSelfUpdateFailure,
+  formatSelfUpdateFailureMessage,
+  type SelfUpdateFailureStage,
+} from '../services/self-update-failure-diagnosis.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
@@ -304,23 +320,6 @@ function isSyntheticCdsManagedRuntimeBranch(
  * readiness path when it declares one, else '/'. Never force a generic service onto /gw/* — that
  * would 404 despite a valid host (Codex P2).
  */
-function resolveGatewayLandingPath(subdomain: string, readinessPath?: string): string {
-  const sub = subdomain.toLowerCase();
-  // Gateway console (llmgw-web): a standalone Vite SPA whose nginx falls back to
-  // index.html for any non-/gw/* path, so land on the console root — clicking it
-  // opens the real login → LLM logs UI, not a health JSON. This is the entry we
-  // want most prominent in the panel.
-  if (sub === 'llmgw-web') return '/';
-  // Serving engine (llmgw-serve): API-only, mounts under /gw/v1/* and 404s at the
-  // bare root, so land on its health endpoint.
-  if (sub === 'llmgw-serve') return '/gw/v1/healthz';
-  // Backend/API engine (llmgw): API-only, mounts under /gw/* and 404s at the bare
-  // root, so land on its health endpoint.
-  if (sub === 'llmgw') return '/gw/healthz';
-  const trimmed = (readinessPath ?? '').trim();
-  if (trimmed && trimmed.startsWith('/')) return trimmed;
-  return '/';
-}
 
 function githubLoginFromCommitEmail(email: string): string | null {
   const normalized = email.trim().toLowerCase();
@@ -2423,55 +2422,96 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const launch = () => {
       const cdsDir = path.join(config.repoRoot, 'cds');
       const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
-      try {
+      /**
+       * 记账动作一律各自 try/catch。
+       *
+       * 2026-07-30 真实事故：一次强制同步把 dist/ 和 web/dist 都换成了新版本，
+       * 但进程没重启 —— 生产变成「新前端 + 旧后端」，而 lastSelfUpdate 还写着
+       * success。根因是整个 launch 被一个大 try 包着，而 `process.exit(0)` 排在
+       * 写日志文件、`fs.openSync`、`interruptAll` **后面**：这些记账动作里任意
+       * 一处同步抛异常，都会跳到 catch，而 catch 在 exitOnFailure 未设时**不退出**。
+       * 于是一个写日志的小失败取消掉了整件事的目的。
+       *
+       * 现在的顺序保证：spawn 成功 → 退出一定会被排上，任何记账失败都碰不到它。
+       */
+      const safely = (label: string, fn: () => void): void => {
+        try {
+          fn();
+        } catch (err) {
+          console.warn(`[self-update] restart bookkeeping "${label}" failed: ${(err as Error).message}`);
+        }
+      };
+
+      safely('open-log', () => {
         fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
         fs.appendFileSync(
           errorLogPath,
           `\n=== ${input.source} spawn at ${new Date().toISOString()} (branch=${input.branchLabel || '(same)'}) ===\n`,
         );
-        const out = fs.openSync(errorLogPath, 'a');
-        const errFd = fs.openSync(errorLogPath, 'a');
+      });
+
+      // stdio 目标拿不到就退回 'ignore'：日志重定向失败绝不能成为不重启的理由。
+      let stdio: ['ignore', number | 'ignore', number | 'ignore'] = ['ignore', 'ignore', 'ignore'];
+      safely('open-log-fd', () => {
+        stdio = ['ignore', fs.openSync(errorLogPath, 'a'), fs.openSync(errorLogPath, 'a')];
+      });
+
+      let spawned = false;
+      try {
         const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
           cwd: cdsDir,
           detached: true,
-          stdio: ['ignore', out, errFd],
+          stdio,
           env: { ...process.env },
         });
         child.on('error', (err) => {
-          fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
+          safely('spawn-error-log', () => {
+            fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
+          });
         });
         child.unref();
-        branchOperationCoordinator?.interruptAll(
-          `CDS restart requested by ${input.source}`,
-          input.source,
-        );
-        // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
-        // 只有「重启没真的发生」（spawn 静默失败、上层提前返回）时它才会跑到，
-        // 把排空闸提前放掉。否则闸要等满 timeoutMs+60s（默认 6 分钟）才 fail-open，
-        // 这期间每一次 webhook 部署都拿 503 + 红灯 CI —— 2026-07-28 本 PR 实际中招
-        // 一次：一次 fast-forward 自更新没重启进程，随后的部署被闸了。
-        setTimeout(() => {
-          endSelfUpdateDrain();
-          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
-        }, RESTART_GATE_RELEASE_MS).unref?.();
-        setTimeout(() => process.exit(0), 1000);
+        spawned = true;
       } catch (spawnErr) {
-        try {
+        safely('pre-spawn-log', () => {
           fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
-        } catch {
-          /* ignore */
-        }
-        if (input.exitOnFailure) {
+        });
+      }
+
+      if (!spawned) {
+        // 只有**spawn 本身**失败才不退出：退出了就没人把 CDS 拉起来，等于自己造停机。
+        safely('interrupt-on-failure', () => {
           branchOperationCoordinator?.interruptAll(
             `CDS restart failed for ${input.source}`,
             input.source,
           );
+        });
+        if (input.exitOnFailure) {
           setTimeout(() => process.exit(1), 1000);
         } else {
           // 进程要继续活下去，闸必须立刻放开，不能把部署晾满 fail-open 窗口。
           endSelfUpdateDrain();
         }
+        return;
       }
+
+      // 退出先排上，再做剩下的记账 —— 顺序即保障。
+      setTimeout(() => process.exit(0), 1000);
+      // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
+      // 只有「重启没真的发生」时它才会跑到，把排空闸提前放掉。否则闸要等满
+      // timeoutMs+60s（默认 6 分钟）才 fail-open，这期间每一次 webhook 部署都拿
+      // 503 + 红灯 CI —— 2026-07-28 实际中招一次。
+      safely('gate-release-timer', () => {
+        setTimeout(() => {
+          endSelfUpdateDrain();
+          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
+        }, RESTART_GATE_RELEASE_MS).unref?.();
+      });
+      safely('interrupt-all', () => {
+        branchOperationCoordinator?.interruptAll(
+          `CDS restart requested by ${input.source}`,
+          input.source,
+        );
+      });
     };
     setTimeout(launch, Math.max(0, input.delayMs || 0));
   }
@@ -10226,7 +10266,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // getMergedEnv() 的结果按来源分类返回,前端可以按「来源 chip」过滤:
   //   - cds-builtin: CDS_HOST / CDS_PROJECT_SLUG 等系统注入,只读不可改
   //   - mirror:      镜像加速变量(NPM_REGISTRY 等),开关在 CDS 系统设置
-  //   - global:      _global scope customEnv,所有项目共享
+  //   - global:      _global scope customEnv,仅项目显式开启 inheritGlobalEnv 时继承
   //   - project:     当前项目的 customEnv,只影响这个项目
   //
   // **敏感值默认 redact**(显示 `••••<最后4位>`),前端单条「显示值」按钮按需
@@ -10266,7 +10306,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       builtinDerived.CDS_PROJECT_ID = project.id;
       builtinDerived.CDS_PROJECT_SLUG = project.slug;
     }
-    const rawGlobal = stateService.getCustomEnvScope('_global');
+    // 与真实部署路径 stateService.getCustomEnv(projectId) 保持一致：_global 默认只
+    // 服务 CDS 控制面，项目只有显式开启 inheritGlobalEnv 才能看到并继承。
+    // 此前本接口无条件读取 _global，导致 mos 这类未继承项目被错误展示为“已生效”。
+    const rawGlobal = project?.inheritGlobalEnv === true
+      ? stateService.getCustomEnvScope('_global')
+      : {};
     const rawProjectScoped = projectId === '_global'
       ? {}
       : stateService.getCustomEnvScope(projectId);
@@ -10703,7 +10748,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
     const cdsEnv = stateService.getCdsEnvVars(projectId);
     const mirrorEnv = stateService.getMirrorEnvVars();
-    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawGlobal = project?.inheritGlobalEnv === true
+      ? stateService.getCustomEnvScope('_global')
+      : {};
     const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
     const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
     const derivedReserved: Record<string, string> = {};
@@ -10751,8 +10798,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try {
         const resolved = resolveProfileRuntimeEnvWithProvenance(
           entry, effective, customLayers, profileLayers,
-          // injectBullmqPrefix 与部署路径（container.ts resolveProfileRuntimeEnv）同源同值
-          { jwtIssuer: config.jwt.issuer, injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0' },
+          // injectBullmqPrefix / publishedEntrypoints 与部署路径（container.ts
+          // resolveProfileRuntimeEnv）同源同值,否则检查器显示的 env ≠ 容器实际拿到的 env
+          {
+            jwtIssuer: config.jwt.issuer,
+            injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
+            publishedEntrypoints: resolveBranchEntrypointsEnv(
+              entry,
+              branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
+            ),
+          },
         );
         // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
         const maskedEnv = maskSecrets(resolved.env);
@@ -15163,11 +15218,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function computeBranchGatewayUrls(
     entry: BranchEntry,
     primaryRoot: string,
-  ): Array<{ subdomain: string; name: string; url: string }> {
+  ): Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> {
     const project = stateService.getProject(entry.projectId);
     const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
-    const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
+    const gatewayUrls: Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> = [];
     if (!gwPreviewSlug) return gatewayUrls;
+    // 被已保存别名**或自定义域名**占走的 host，发布器不会写（那条路由指向别人的应用），
+    // 面板与 GET /api/branches 也就不能把它当自己的入口列出来 —— 否则用户点开打开的是
+    // 另一个分支的应用（Codex P1）。判据与发布器 / 入口表同用 occupiedHostOwners 一份，
+    // 按**完整 host** 比（自定义域名存的是整条 host，只按标签判会漏）。
+    const gwOccupied = occupiedHostOwners(stateService.getAllBranches(), [primaryRoot]);
     const profileById = new Map<string, BuildProfile>();
     for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
       // resolveEffectiveProfile applies branch profileOverrides (subdomain / readinessProbe / …),
@@ -15187,8 +15247,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const sub = profile?.subdomain;
       if (!sub) continue;
       if (seenSubdomains.has(sub)) continue;
-      const namedLabel = `${gwPreviewSlug}-${sub}`;
-      if (namedLabel.length > 63) continue; // RFC 1035 single-label limit + wildcard cert coverage
+      const namedLabel = namedServiceLabel(gwPreviewSlug, sub);
+      // RFC 1035 single-label limit + wildcard cert coverage — shared predicate with the publisher
+      // and the env-injected entrypoint table (preview-entrypoints.ts), so the three never drift.
+      if (!isPublishableNamedLabel(namedLabel)) continue;
+      if (gwOccupied.has(`${namedLabel}.${primaryRoot}`.toLowerCase())) continue;
       seenSubdomains.add(sub);
       // Landing path — pick the path most likely to return a live 200 when the entry is clicked
       // (Codex P2: don't force every named service onto the LLM gateway health path):
@@ -15196,7 +15259,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       //      and 404 at the bare root, so land on their health endpoint explicitly.
       //   2) Any other named service (docs / metrics / …) — the forwarder publishes the named host to
       //      the container root, so honor the profile's readiness path when set, else land at '/'.
-      const landingPath = resolveGatewayLandingPath(sub, profile?.readinessProbe?.path);
+      const landingPath = resolveServiceLandingPath(sub, profile?.readinessProbe?.path);
       gatewayUrls.push({
         subdomain: sub,
         name: profileId,
@@ -15204,9 +15267,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // nginx `*.<root>` server 块已在 443 用同一份通配证书服务命名子域，此前误印成 http:// 才导致
         // 「1 HTTPS + 3 HTTP」。命名子域是单标签（连字符不产生新点），落在 *.<root> 通配证书覆盖内。
         url: `https://${namedLabel}.${primaryRoot}${landingPath}`,
+        // 「这是不是可登录的控制台」由平台判定后下发。面板此前自己按子域名字判，
+        // 改名当天那 4 处判定整块失效（Codex P2）；命名约定的解释权归这一侧。
+        // 判据与落点同源：叫 llmgw 但声明了 /gw/healthz 的存量 API profile 不算控制台，
+        // 否则面板把它排最前、标成「网关控制台」，点开是一串 JSON（Codex P2）。
+        isConsole: isGatewayConsoleEntry(sub, profile?.readinessProbe?.path),
       });
     }
     return gatewayUrls;
+  }
+
+  /**
+   * 该分支**实际被发布出去的全部命名 host**（含历史别名），用于跨分支撞名判定。
+   *
+   * 与 computeBranchGatewayUrls 的区别：那个是给面板看的「入口清单」，刻意只列规范名，
+   * 免得同一个服务出现两行。撞名判定要的是「谁已经占了哪些 host」，别名同样占着，
+   * 漏算就会放行一个与别的分支重复的别名（Codex P1）。两者共用 publishedServiceLabels
+   * 作为发布口径，不各自拼。
+   */
+  function computeBranchPublishedServiceHosts(entry: BranchEntry, root: string): string[] {
+    const project = stateService.getProject(entry.projectId);
+    const slug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
+    if (!slug) return [];
+    const hosts: string[] = [];
+    const seen = new Set<string>();
+    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
+      const sub = resolveEffectiveProfile(bp, entry).subdomain;
+      if (!sub || seen.has(sub)) continue;
+      seen.add(sub);
+      for (const label of publishedServiceLabels(slug, sub)) {
+        hosts.push(`${label}.${root}`.toLowerCase());
+      }
+    }
+    return hosts;
   }
 
   const findPreviewHostCollisions = (
@@ -15237,10 +15330,48 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
 
-        for (const gateway of computeBranchGatewayUrls(other, root)) {
-          const host = new URL(gateway.url).host.toLowerCase();
+        // 必须用「实际发布的全部 host」而不是面板入口清单：历史别名同样被发布、同样占位，
+        // 只比规范名会放行一个与别的分支重复的别名（Codex P1）。
+        for (const host of computeBranchPublishedServiceHosts(other, root)) {
           if (candidates.has(host)) {
             conflicts.push({ domain: host, conflictWith: other.id, reason: 'service-subdomain' });
+          }
+        }
+      }
+    }
+    return conflicts;
+  };
+
+  /**
+   * 别名会不会撞上**已发布的命名服务 host**（含历史别名）。
+   *
+   * 别名和命名子域挤在同一个命名空间里：别名 `foo-llmgw` 生成的 host 与分支 foo 的
+   * 控制台 host 是同一个字符串，forwarder 会收到两条同 host 不同上游的路由。
+   *
+   * 为什么单独写而不是直接调 findPreviewHostCollisions：那个还会顺带查 preview slug
+   * 与其它分支的别名，而这两项 `stateService.findAliasCollisions` 已经查过，
+   * 复用会让同一个冲突报两遍。host 的枚举口径仍然共用 computeBranchPublishedServiceHosts，
+   * 不另起一份。
+   *
+   * **不跳过自己**：别名撞上自己分支的服务 host 同样是「一个 host 两个上游」
+   * （别名指向主应用、服务路由指向那个命名服务），并不因为同属一个分支就无害。
+   */
+  const findAliasServiceHostCollisions = (
+    candidateAliases: string[],
+  ): Array<{ alias: string; domain: string; conflictWith: string; reason: 'service-subdomain' }> => {
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    if (rootDomains.length === 0) return [];
+
+    const conflicts: Array<{ alias: string; domain: string; conflictWith: string; reason: 'service-subdomain' }> = [];
+    for (const alias of candidateAliases) {
+      for (const rawRoot of rootDomains) {
+        const root = rawRoot.toLowerCase();
+        const host = `${alias.toLowerCase()}.${root}`;
+        for (const other of stateService.getAllBranches()) {
+          if (computeBranchPublishedServiceHosts(other, root).includes(host)) {
+            conflicts.push({ alias, domain: host, conflictWith: other.id, reason: 'service-subdomain' });
           }
         }
       }
@@ -15445,12 +15576,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Check collisions with other branches' slugs/aliases
     const collisions = stateService.findAliasCollisions(id, normalized);
     const customDomainCollisions = findAliasCustomDomainCollisions(id, normalized);
-    const allCollisions = [...collisions, ...customDomainCollisions];
+    // 命名服务 host 也占着同一个命名空间。此前只查 slug/别名/自定义域名，
+    // 于是别名可以直接占走另一个分支已发布的 `<slug>-llmgw` —— helper 建好了却
+    // 只接进了 PUT /custom-domains，别名这条路径一直没人查（Codex P1，形状 2）。
+    const serviceHostCollisions = findAliasServiceHostCollisions(normalized);
+    const allCollisions = [...collisions, ...customDomainCollisions, ...serviceHostCollisions];
     if (allCollisions.length > 0) {
       res.status(409).json({
         error: `子域名冲突: ${allCollisions.map(c => {
           if (c.reason === 'slug') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的默认 slug 占用`;
           if (c.reason === 'alias') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的别名占用`;
+          // service-subdomain 必须排在 `'domain' in c` 之前：它同样带 domain 字段，
+          // 落到下一条会被说成「自定义域名占用」，指错排查方向。
+          if (c.reason === 'service-subdomain') return `"${c.alias}" 生成的域名 "${c.domain}" 已被分支 "${c.conflictWith}" 已发布的命名服务入口占用`;
           if ('domain' in c) return `"${c.alias}" 生成的域名 "${c.domain}" 已被分支 "${c.conflictWith}" 的完整自定义域名占用`;
           return `"${c.alias}" 已被分支 "${c.conflictWith}" 占用`;
         }).join('; ')}`,
@@ -21768,7 +21906,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
       commitSelfUpdateState();
-      sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
+      const concurrencyDiagnosis = diagnoseSelfUpdateFailure({ stage: 'concurrency', message });
+      sendSSE(res, 'error', {
+        message: formatSelfUpdateFailureMessage(concurrencyDiagnosis),
+        cause: concurrencyDiagnosis.cause,
+        nextAction: concurrencyDiagnosis.nextAction,
+        raw: concurrencyDiagnosis.raw,
+        stage: concurrencyDiagnosis.stage,
+        activeSelfUpdate: existingActive,
+      });
       res.end();
       return;
     }
@@ -21818,7 +21964,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       commitSelfUpdateState(true);
     };
-    const recordFailure = (errMsg: string): void => {
+    const recordFailure = (
+      errMsg: string,
+      failure?: import('../types.js').SelfUpdateRecord['failure'],
+    ): void => {
       recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
@@ -21829,6 +21978,44 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         durationMs: Date.now() - startedAt,
         error: errMsg.slice(0, 300),
         actor,
+        ...(failure ? { failure } : {}),
+      });
+    };
+
+    /**
+     * 统一的失败出口(2026-07-30)。
+     *
+     * 以前每个失败点各自拼 `sendSSE(res,'error',{message:`中文壳: ${英文原文}`})`,
+     * 用户看到的主文案里嵌着 git/pnpm/tsc 的英文 stderr。现在一律走这里:
+     * 归因交给 self-update-failure-diagnosis(唯一判定源),SSE 同时给出
+     * cause/nextAction/raw,message 保留拼接串供未升级的旧前端使用。
+     */
+    const failWith = (
+      stage: SelfUpdateFailureStage,
+      opts: { raw?: string; code?: string; message?: string; extra?: Record<string, unknown> } = {},
+    ): void => {
+      const diagnosis = diagnoseSelfUpdateFailure({
+        stage,
+        branch: branch || undefined,
+        raw: opts.raw,
+        code: opts.code,
+        message: opts.message,
+      });
+      sendSSE(res, 'error', {
+        message: formatSelfUpdateFailureMessage(diagnosis),
+        cause: diagnosis.cause,
+        nextAction: diagnosis.nextAction,
+        raw: diagnosis.raw,
+        stage: diagnosis.stage,
+        ...(opts.code ? { code: opts.code } : {}),
+        ...(opts.extra || {}),
+      });
+      res.end();
+      recordFailure(diagnosis.cause, {
+        stage: diagnosis.stage,
+        cause: diagnosis.cause,
+        nextAction: diagnosis.nextAction,
+        raw: diagnosis.raw,
       });
     };
 
@@ -21842,13 +22029,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (fetchRes.exitCode !== 0) {
         const errMsg = (combinedOutput(fetchRes) || 'git fetch --all --prune 失败').trim();
         send('fetch', 'error', `拉取远程更新失败: ${errMsg.slice(0, 240)}`);
-        sendSSE(res, 'error', {
-          message: `拉取远程更新失败: ${errMsg.slice(0, 500)}`,
-          authSource: fetchAuth.source,
-          projectId: fetchAuth.projectId,
+        failWith('fetch', {
+          raw: errMsg,
+          extra: { authSource: fetchAuth.source, projectId: fetchAuth.projectId },
         });
-        res.end();
-        recordFailure(`git fetch 失败: ${errMsg}`);
         return;
       }
       send('fetch', 'done', '远程更新已拉取');
@@ -21862,9 +22046,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         // `shell.exec()`.
         if (!isSafeGitRef(branch)) {
           send('checkout', 'error', `拒绝不安全分支名: ${branch.slice(0, 80)}`);
-          sendSSE(res, 'error', { message: `不合法的分支名: ${branch}` });
-          res.end();
-          recordFailure(`不合法的分支名: ${branch}`);
+          failWith('checkout', { message: `分支名 ${branch.slice(0, 80)} 含不安全字符，已拒绝执行。` });
           return;
         }
 
@@ -21881,9 +22063,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
             `请改选 main 或别的活分支(可在「目标分支」下拉重选)。` +
             `如果你刚把分支合并到 main 后被自动删,选 main 即可。`;
           send('checkout', 'error', msg);
-          sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
-          res.end();
-          recordFailure(`origin/${branch} 不存在`);
+          failWith('checkout', { message: msg, extra: { suggestedFallback: 'main' } });
           return;
         }
         const currentFullSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
@@ -21891,9 +22071,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         if (!/^[0-9a-f]{40}$/i.test(currentFullSha) || !/^[0-9a-f]{40}$/i.test(targetFullSha)) {
           const message = '无法解析当前或目标 CDS 的完整提交 SHA，已在切换代码前停止。';
           send('transition-guard', 'error', message);
-          sendSSE(res, 'error', { code: 'invalid_transition_sha', message });
-          res.end();
-          recordFailure(message);
+          failWith('gate', { code: 'invalid_transition_sha', message });
           return;
         }
         const ancestorResult = await shell.exec(
@@ -21910,16 +22088,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         });
         if (!transition.allowed) {
           send('transition-guard', 'error', transition.message);
-          sendSSE(res, 'error', {
+          failWith('gate', {
             code: transition.code,
             message: transition.message,
-            currentSha: currentFullSha,
-            targetSha: targetFullSha,
-            targetBranch: branch,
-            hint: '新版 cdscli 可传 --transition-intent、--expected-from-sha 和 --reason；普通重启不要切分支。',
+            extra: {
+              currentSha: currentFullSha,
+              targetSha: targetFullSha,
+              targetBranch: branch,
+              hint: '新版 cdscli 可传 --transition-intent、--expected-from-sha 和 --reason；普通重启不要切分支。',
+            },
           });
-          res.end();
-          recordFailure(`${transition.code}: ${transition.message}`);
           return;
         }
         transitionMode = transition.mode;
@@ -21941,9 +22119,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         if (!checkoutResult.ok) {
           const errMsg = checkoutResult.error || '未知错误';
           send('checkout', 'error', `切换分支失败: ${errMsg}`);
-          sendSSE(res, 'error', { message: `无法切换到 ${branch}: ${errMsg}` });
-          res.end();
-          recordFailure(`切换分支失败: ${errMsg}`);
+          failWith('checkout', { raw: errMsg });
           return;
         }
         // Verify the checkout actually worked
@@ -21951,9 +22127,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         const actualBranch = verifyResult.stdout.trim();
         if (actualBranch !== checkoutResult.actualBranch) {
           send('checkout', 'error', `切换失败: 期望 ${checkoutResult.actualBranch}，实际仍在 ${actualBranch}`);
-          sendSSE(res, 'error', { message: `分支切换未生效: 仍在 ${actualBranch}` });
-          res.end();
-          recordFailure(`分支切换未生效: 仍在 ${actualBranch}`);
+          failWith('checkout', { message: `分支切换未生效，代码目录仍停在 ${actualBranch}。` });
           return;
         }
         send(
@@ -22012,9 +22186,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // check costs nothing).
       if (!isSafeGitRef(targetBranch)) {
         send('pull', 'error', `拒绝不安全分支名: ${targetBranch.slice(0, 80)}`);
-        sendSSE(res, 'error', { message: `不合法的 target branch: ${targetBranch}` });
-        res.end();
-        recordFailure(`不合法的 target branch: ${targetBranch}`);
+        failWith('reset', { message: `目标分支名 ${targetBranch.slice(0, 80)} 含不安全字符，已拒绝执行。` });
         return;
       }
       // 2026-05-04 v5 fix(用户反馈"更新时间太长 + 没自动刷新"):
@@ -22074,9 +22246,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (resetResult.exitCode !== 0) {
         const errMsg = (resetResult.stderr || resetResult.stdout || '未知错误').trim();
         send('pull', 'error', `硬对齐失败: ${errMsg}`);
-        sendSSE(res, 'error', { message: `无法对齐到 origin/${targetBranch}: ${errMsg}` });
-        res.end();
-        recordFailure(`硬对齐失败: ${errMsg}`);
+        failWith('reset', { raw: errMsg });
         return;
       }
       const newFullHead = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
@@ -22252,10 +22422,20 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       send('validate-timings', 'info', `预检耗时: ${timingSummary}`);
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error}`);
+        // 预检失败携带的是 pnpm / tsc 的原始英文输出,先归因再出场。
+        // 这里不走 failWith:验证失败旧进程仍在跑,流水要标 'aborted' 而非 'failed'。
+        const diagnosis = diagnoseSelfUpdateFailure({
+          stage: validation.stage === 'install' ? 'install' : 'typecheck',
+          branch: branch || undefined,
+          raw: validation.error,
+        });
         sendSSE(res, 'error', {
-          message: `self-update 已中止 — 新代码未通过预检: ${validation.error}`,
-          stage: validation.stage,
-          hint: '原 CDS 进程保持运行中。修复后请重新触发 self-update。',
+          message: formatSelfUpdateFailureMessage(diagnosis),
+          cause: diagnosis.cause,
+          nextAction: diagnosis.nextAction,
+          raw: diagnosis.raw,
+          stage: diagnosis.stage,
+          hint: '原 CDS 进程保持运行中。修复后请重新触发更新。',
         });
         res.end();
         // Aborted (vs failed) — 验证失败,旧进程仍在跑,流水标 'aborted'
@@ -22268,8 +22448,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           trigger: 'manual',
           status: 'aborted',
           durationMs: Date.now() - startedAt,
-          error: `预检失败 (${validation.stage}): ${(validation.error || '').slice(0, 250)}`,
+          error: diagnosis.cause,
           actor,
+          failure: {
+            stage: diagnosis.stage,
+            cause: diagnosis.cause,
+            nextAction: diagnosis.nextAction,
+            raw: diagnosis.raw,
+          },
         });
         return;
       }
@@ -22314,9 +22500,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         const errMsg = (combinedOutput(esbuildRes) || '').slice(0, 800);
         try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
         send('build-backend', 'error', `后端 esbuild 失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
-        sendSSE(res, 'error', { message: `cds/dist.next esbuild 失败 — cds 继续跑老版本:\n${errMsg}` });
-        res.end();
-        recordFailure(`esbuild 编译失败: ${errMsg.slice(0, 300)}`);
+        failWith('build', { raw: errMsg });
         return;
       }
       // 验证 dist.next/index.js 真的写出来
@@ -22324,9 +22508,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!fs.existsSync(distNextEntry)) {
         try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
         send('build-backend', 'error', 'esbuild 报成功但 dist.next/index.js 不存在(旧 dist 保留)');
-        sendSSE(res, 'error', { message: 'esbuild 报成功但 dist.next/index.js 缺失,中止重启' });
-        res.end();
-        recordFailure('esbuild exit=0 but dist.next/index.js missing');
+        failWith('build', {
+          message: '编译报告成功但没有产出可执行文件(dist.next/index.js 缺失)，已中止重启避免 CDS 起不来。',
+        });
         return;
       }
       // Atomic swap: dist → dist.old.<ts>, dist.next → dist
@@ -22351,9 +22535,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
       } catch (swapErr) {
         send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
-        sendSSE(res, 'error', { message: `dist atomic swap failed,已尝试回滚: ${(swapErr as Error).message}` });
-        res.end();
-        recordFailure(`dist atomic swap failed: ${(swapErr as Error).message}`);
+        failWith('swap', { raw: (swapErr as Error).message });
         return;
       }
       const backendSec = Math.floor((Date.now() - cdsBackendStart) / 1000);
@@ -22470,10 +22652,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       if (!res.writableEnded) {
-        sendSSE(res, 'error', { message: (err as Error).message });
-        res.end();
+        failWith('unknown', { raw: (err as Error).message });
+      } else {
+        const diagnosis = diagnoseSelfUpdateFailure({ stage: 'unknown', raw: (err as Error).message });
+        recordFailure(diagnosis.cause, {
+          stage: diagnosis.stage,
+          cause: diagnosis.cause,
+          nextAction: diagnosis.nextAction,
+          raw: diagnosis.raw,
+        });
       }
-      recordFailure(`更新失败(异常): ${(err as Error).message}`);
     } finally {
       // Bugbot 31da8d97 (HIGH):兜底清 in-progress 标记。
       // recordSelfUpdate 已经在 success/aborted/failed 三种正常路径上清掉,
@@ -22609,7 +22797,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次强制更新已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
       commitSelfUpdateState();
-      sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
+      const concurrencyDiagnosis = diagnoseSelfUpdateFailure({ stage: 'concurrency', message });
+      sendSSE(res, 'error', {
+        message: formatSelfUpdateFailureMessage(concurrencyDiagnosis),
+        cause: concurrencyDiagnosis.cause,
+        nextAction: concurrencyDiagnosis.nextAction,
+        raw: concurrencyDiagnosis.raw,
+        stage: concurrencyDiagnosis.stage,
+        activeSelfUpdate: existingActive,
+      });
       res.end();
       return;
     }
@@ -22650,7 +22846,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       commitSelfUpdateState(true);
     };
-    const recordFailure = (errMsg: string): void => {
+    const recordFailure = (
+      errMsg: string,
+      failure?: import('../types.js').SelfUpdateRecord['failure'],
+    ): void => {
       recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
@@ -22661,6 +22860,37 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         durationMs: Date.now() - startedAt,
         error: errMsg.slice(0, 300),
         actor,
+        ...(failure ? { failure } : {}),
+      });
+    };
+
+    /** 同 /api/self-update 的 failWith：失败一律先归因,英文原文降级到 raw。 */
+    const failWith = (
+      stage: SelfUpdateFailureStage,
+      opts: { raw?: string; code?: string; message?: string; extra?: Record<string, unknown> } = {},
+    ): void => {
+      const diagnosis = diagnoseSelfUpdateFailure({
+        stage,
+        branch: branch || undefined,
+        raw: opts.raw,
+        code: opts.code,
+        message: opts.message,
+      });
+      sendSSE(res, 'error', {
+        message: formatSelfUpdateFailureMessage(diagnosis),
+        cause: diagnosis.cause,
+        nextAction: diagnosis.nextAction,
+        raw: diagnosis.raw,
+        stage: diagnosis.stage,
+        ...(opts.code ? { code: opts.code } : {}),
+        ...(opts.extra || {}),
+      });
+      res.end();
+      recordFailure(diagnosis.cause, {
+        stage: diagnosis.stage,
+        cause: diagnosis.cause,
+        nextAction: diagnosis.nextAction,
+        raw: diagnosis.raw,
       });
     };
 
@@ -22675,13 +22905,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (fetchRes.exitCode !== 0) {
         const errMsg = (combinedOutput(fetchRes) || 'git fetch 失败').trim();
         send('fetch', 'error', 'git fetch 失败: ' + errMsg.slice(0, 200));
-        sendSSE(res, 'error', {
-          message: errMsg.slice(0, 500),
-          authSource: fetchAuth.source,
-          projectId: fetchAuth.projectId,
+        failWith('fetch', {
+          raw: errMsg,
+          extra: { authSource: fetchAuth.source, projectId: fetchAuth.projectId },
         });
-        res.end();
-        recordFailure(`git fetch 失败: ${errMsg}`);
         return;
       }
       send('fetch', 'done', '远端 ref 已同步');
@@ -22701,9 +22928,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       }
       if (!isSafeGitRef(target)) {
         send('resolve', 'error', `拒绝不安全分支名: ${target.slice(0, 80)}`);
-        sendSSE(res, 'error', { message: `不合法的 branch: ${target}` });
-        res.end();
-        recordFailure(`不合法的 branch: ${target}`);
+        failWith('checkout', { message: `分支名 ${target.slice(0, 80)} 含不安全字符，已拒绝执行。` });
         return;
       }
       send('resolve', 'done', '目标分支: ' + target);
@@ -22719,9 +22944,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           `远端分支 origin/${target} 不存在或已被删除。` +
           `请在 body.branch 显式指定一个活分支(如 main),或在 UI 下拉重选。`;
         send('resolve', 'error', msg);
-        sendSSE(res, 'error', { message: msg, suggestedFallback: 'main' });
-        res.end();
-        recordFailure(`origin/${target} 不存在`);
+        failWith('checkout', { message: msg, extra: { suggestedFallback: 'main' } });
         return;
       }
 
@@ -22730,47 +22953,35 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!/^[0-9a-f]{40}$/i.test(currentFullSha) || !/^[0-9a-f]{40}$/i.test(targetFullSha)) {
         const message = '无法解析当前或目标 CDS 的完整提交 SHA，已在切换代码前停止。';
         send('transition-guard', 'error', message);
-        sendSSE(res, 'error', { code: 'invalid_transition_sha', message });
-        res.end();
-        recordFailure(message);
+        failWith('gate', { code: 'invalid_transition_sha', message });
         return;
       }
       const ancestorResult = await shell.exec(
         `git merge-base --is-ancestor ${currentFullSha} ${targetFullSha}`,
         { cwd: repoRoot },
       );
-      const transition = evaluateSelfUpdateTransition({
+      // 强制同步**不设闸**：它是用户控制 CDS 的最后手段。CDS 卡在坏分支上、门禁判据
+      // 本身出问题、或运维侧关了普通更新时，必须还有一条一定走得通的路。能被策略拒绝
+      // 的「强制」不叫强制（2026-07-30 用户定的原则）。这里只判性质 + 记审计原因。
+      // 普通更新 /api/self-update 仍走 evaluateSelfUpdateTransition 严格闸门。
+      const transition = resolveForceSyncTransition({
         currentSha: currentFullSha,
         targetSha: targetFullSha,
         targetContainsCurrent: ancestorResult.exitCode === 0,
         intent: transitionIntent,
-        expectedFromSha,
         reason: transitionReason,
       });
-      if (!transition.allowed) {
-        send('transition-guard', 'error', transition.message);
-        sendSSE(res, 'error', {
-          code: transition.code,
-          message: transition.message,
-          currentSha: currentFullSha,
-          targetSha: targetFullSha,
-          targetBranch: target,
-          hint: '强制同步不能绕过版本继承门禁；请显式声明 release/rollback、expectedFromSha 和原因。',
-        });
-        res.end();
-        recordFailure(`${transition.code}: ${transition.message}`);
-        return;
-      }
       forceSyncTransitionMode = transition.mode;
       forceSyncTransitionReason = transition.reason;
+      // 非快进照样放行，但要在日志里说清「这次会丢掉当前提交」——不拦，但绝不静悄悄。
       send(
         'transition-guard',
         transition.mode === 'release' || transition.mode === 'rollback' ? 'warning' : 'done',
         transition.mode === 'fast-forward'
-          ? '版本继承检查通过：目标包含当前 CDS 提交'
+          ? '版本继承检查：目标包含当前 CDS 提交'
           : transition.mode === 'same-sha'
-            ? '版本继承检查通过：目标与当前 CDS 提交一致'
-            : `已确认非快进 ${transition.mode}：${transition.reason}`,
+            ? '版本继承检查：目标与当前 CDS 提交一致'
+            : `强制${transition.mode === 'rollback' ? '回滚' : '切换'}：目标 ${targetFullSha.slice(0, 7)} 不包含当前 ${currentFullSha.slice(0, 7)}，将丢弃当前版本。原因：${transition.reason}`,
       );
 
       // Step 3a: checkout target branch BEFORE the hard reset.
@@ -22785,9 +22996,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!checkoutResult.ok) {
         const errMsg = checkoutResult.error || '未知错误';
         send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
-        sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
-        res.end();
-        recordFailure(`无法切换到 ${target}: ${errMsg}`);
+        failWith('checkout', { raw: errMsg });
         return;
       }
       // Verify we actually ended up on the target branch — catch any
@@ -22796,9 +23005,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const actual = verify.stdout.trim();
       if (actual !== checkoutResult.actualBranch) {
         send('checkout', 'error', `切换未生效: 期望 ${checkoutResult.actualBranch},实际 ${actual}`);
-        sendSSE(res, 'error', { message: `git checkout 未生效: 仍在 ${actual}` });
-        res.end();
-        recordFailure(`git checkout 未生效: 仍在 ${actual}`);
+        failWith('checkout', { message: `分支切换未生效，代码目录仍停在 ${actual}。` });
         return;
       }
       send(
@@ -22814,9 +23021,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const resetRes = await shell.exec(`git reset --hard origin/${target}`, { cwd: repoRoot, timeout: 30_000 });
       if (resetRes.exitCode !== 0) {
         send('reset', 'error', 'reset 失败: ' + (combinedOutput(resetRes) || '').slice(0, 200));
-        sendSSE(res, 'error', { message: `git reset --hard origin/${target} 失败` });
-        res.end();
-        recordFailure(`git reset --hard origin/${target} 失败`);
+        failWith('reset', { raw: combinedOutput(resetRes) || '' });
         return;
       }
       const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
@@ -23062,7 +23267,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         timingRecorder.mergeValidation(validation.timings);
         if (!validation.ok) {
           send('validate', 'error', `pnpm install 失败: ${validation.error.slice(0, 300)}`);
-          sendSSE(res, 'error', { message: `force-sync 已中止 — pnpm install 失败: ${validation.error}` });
+          const installDiagnosis = diagnoseSelfUpdateFailure({
+            stage: 'install',
+            branch: branch || target || undefined,
+            raw: validation.error,
+          });
+          sendSSE(res, 'error', {
+            message: formatSelfUpdateFailureMessage(installDiagnosis),
+            cause: installDiagnosis.cause,
+            nextAction: installDiagnosis.nextAction,
+            raw: installDiagnosis.raw,
+            stage: installDiagnosis.stage,
+            hint: '原 CDS 进程保持运行中。修复后请重新触发更新。',
+          });
           res.end();
           recordSelfUpdate({
             ts: new Date().toISOString(),
@@ -23072,8 +23289,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
             trigger: 'force-sync',
             status: 'aborted',
             durationMs: Date.now() - startedAt,
-            error: `pnpm install 失败: ${(validation.error || '').slice(0, 1500)}`,
+            error: installDiagnosis.cause,
             actor,
+            failure: {
+              stage: installDiagnosis.stage,
+              cause: installDiagnosis.cause,
+              nextAction: installDiagnosis.nextAction,
+              raw: installDiagnosis.raw,
+            },
           });
           return;
         }
@@ -23084,8 +23307,18 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       timingRecorder.mergeValidation(validation.timings);
       if (!validation.ok) {
         send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
+        const validateDiagnosis = diagnoseSelfUpdateFailure({
+          stage: validation.stage === 'install' ? 'install' : 'typecheck',
+          branch: branch || target || undefined,
+          raw: validation.error,
+        });
         sendSSE(res, 'error', {
-          message: `force-sync 已中止 — ${target} 的代码没过预检: ${validation.error}`,
+          message: formatSelfUpdateFailureMessage(validateDiagnosis),
+          cause: validateDiagnosis.cause,
+          nextAction: validateDiagnosis.nextAction,
+          raw: validateDiagnosis.raw,
+          stage: validateDiagnosis.stage,
+          hint: '原 CDS 进程保持运行中。修复后请重新触发更新。',
         });
         res.end();
         // 流水标 'aborted' 同 self-update 处理 — 安全中止,不是真正的故障。
@@ -23200,18 +23433,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         const errMsg = combinedOutput(esbuildRes).slice(0, 1500);
         try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
         send('build-backend', 'error', `esbuild 编译失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
-        sendSSE(res, 'error', { message: `cds/dist.next 编译失败 — cds 继续跑老版本,请检查代码:\n${errMsg.slice(0, 800)}` });
-        res.end();
-        recordFailure(`esbuild 编译失败: ${errMsg.slice(0, 300)}`);
+        failWith('build', { raw: errMsg });
         return;
       }
       if (tscCheckRes && tscCheckRes.exitCode !== 0) {
         const errMsg = combinedOutput(tscCheckRes).slice(0, 1500);
         try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
         send('build-backend', 'error', `tsc 类型检查失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
-        sendSSE(res, 'error', { message: `cds/ 类型检查失败 — cds 继续跑老版本,请检查代码:\n${errMsg.slice(0, 800)}` });
-        res.end();
-        recordFailure(`tsc 类型检查失败: ${errMsg.slice(0, 300)}`);
+        failWith('typecheck', { raw: errMsg });
         return;
       }
       send(
@@ -23225,9 +23454,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!fs.existsSync(nextEntry)) {
         try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
         send('build-backend', 'error', 'tsc 报成功但 dist.next/index.js 不存在（旧 dist 保留）');
-        sendSSE(res, 'error', { message: 'tsc 编译报成功但 dist.next/index.js 缺失，已中止重启避免 cds 起不来' });
-        res.end();
-        recordFailure('tsc exit=0 but dist.next/index.js missing');
+        failWith('build', {
+          message: '编译报告成功但没有产出可执行文件(dist.next/index.js 缺失)，已中止重启避免 CDS 起不来。',
+        });
         return;
       }
 
@@ -23260,9 +23489,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         } catch { /* tolerate — fast-path 失效但功能不受影响 */ }
       } catch (swapErr) {
         send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
-        sendSSE(res, 'error', { message: `dist 原子替换失败,已尝试回滚: ${(swapErr as Error).message}` });
-        res.end();
-        recordFailure(`dist atomic swap failed: ${(swapErr as Error).message}`);
+        failWith('swap', { raw: (swapErr as Error).message });
         return;
       }
       send('build-backend', 'done', 'dist/ 已原子替换（旧版已删除）');
@@ -23351,11 +23578,23 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         source: 'api.self-force-sync',
       });
     } catch (err) {
+      const catchDiagnosis = diagnoseSelfUpdateFailure({ stage: 'unknown', raw: (err as Error).message });
       if (!res.writableEnded) {
-        sendSSE(res, 'error', { message: (err as Error).message });
+        sendSSE(res, 'error', {
+          message: formatSelfUpdateFailureMessage(catchDiagnosis),
+          cause: catchDiagnosis.cause,
+          nextAction: catchDiagnosis.nextAction,
+          raw: catchDiagnosis.raw,
+          stage: catchDiagnosis.stage,
+        });
         try { res.end(); } catch { /* already ended */ }
       }
-      recordFailure(`force-sync 异常: ${(err as Error).message}`);
+      recordFailure(catchDiagnosis.cause, {
+        stage: catchDiagnosis.stage,
+        cause: catchDiagnosis.cause,
+        nextAction: catchDiagnosis.nextAction,
+        raw: catchDiagnosis.raw,
+      });
     } finally {
       // Bugbot 31da8d97 (HIGH):同 /self-update,兜底清 marker。
       stateService.clearSelfUpdateActive();

@@ -43,6 +43,7 @@ REPORT_KINDS = (
 )
 
 DAILY_REQUIRED_SECTIONS = (
+    "结论分层",
     "昨日工作总结",
     "改动规模与深度预算",
     "标记法则与验收标准",
@@ -52,6 +53,37 @@ DAILY_REQUIRED_SECTIONS = (
     "重试记录",
     "未发布状态",
 )
+
+DAILY_CONCLUSION_FIELDS = (
+    "产品质量",
+    "验收完整性",
+    "综合结论",
+    "发布建议",
+    "判定性质",
+)
+DAILY_ROOT_CAUSE_FIELDS = (
+    "目标要求",
+    "观察事实",
+    "系统原因",
+    "证据影响",
+    "结论",
+    "关闭动作",
+)
+VERDICT_NATURES = {
+    "pass": {"完整通过"},
+    "conditional": {"覆盖不足", "非阻断风险"},
+    "fail": {"产品失败", "核心用例失败", "验收链路失败", "硬门禁失败"},
+}
+ROOT_CAUSE_CONCLUSIONS = {
+    "通过",
+    "覆盖缺口",
+    "非阻断风险",
+    "产品失败",
+    "核心用例失败",
+    "验收链路失败",
+    "硬门禁失败",
+}
+CORE_CASE_RESULTS = {"通过", "失败", "未执行"}
 
 
 def curl(args, retries=5):
@@ -487,15 +519,15 @@ def _split_markdown_table_row(row):
     return cells
 
 
-def _section_table_rows(markdown, heading):
-    """Return data rows from the first Markdown table under an H2 section."""
+def _section_table(markdown, heading):
+    """Return the header and data rows from the first table under an exact H2."""
     section = re.search(
         rf"^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
         markdown or "",
         re.M | re.S,
     )
     if not section:
-        return []
+        return [], []
 
     table = []
     for line in section.group(1).splitlines():
@@ -505,7 +537,7 @@ def _section_table_rows(markdown, heading):
         elif table:
             break
     if len(table) < 2:
-        return []
+        return [], []
 
     parsed = [_split_markdown_table_row(row) for row in table]
     has_separator = bool(re.match(
@@ -513,7 +545,377 @@ def _section_table_rows(markdown, heading):
         table[1],
     ))
     rows = parsed[2:] if has_separator else parsed[1:]
-    return [row for row in rows if any(cell.strip() for cell in row)]
+    return parsed[0], [row for row in rows if any(cell.strip() for cell in row)]
+
+
+def _section_table_rows(markdown, heading):
+    """Return data rows from the first Markdown table under an exact H2."""
+    _, rows = _section_table(markdown, heading)
+    return rows
+
+
+def _section_text(markdown, heading):
+    """Return the Markdown body of the first exact H2 section."""
+    section = re.search(
+        rf"^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
+        markdown or "",
+        re.M | re.S,
+    )
+    return section.group(1) if section else ""
+
+
+ZERO_COVERAGE_GAP_PAT = re.compile(
+    r"(?:(?:0|零)\s*(?:项|个)?\s*(?:无法确认|未覆盖|覆盖缺口|缺口)"
+    r"|(?:无法确认|未覆盖|覆盖缺口|缺口)\s*(?:为|[:：=])?\s*(?:0|零)\s*(?:项|个)?"
+    r"|(?:无|没有)\s*(?:任何)?\s*(?:无法确认|未覆盖|覆盖缺口|缺口))",
+    re.I,
+)
+
+
+def _strip_zero_coverage_gap_phrases(text):
+    """Remove explicit zero/negated gap claims before positive gap detection."""
+    return ZERO_COVERAGE_GAP_PAT.sub(" ", text or "")
+
+
+def _severity_counts_from_text(text):
+    """Parse P0-P3 counts without losing non-zero values later in a vector."""
+    raw = text or ""
+    labels = r"P0\s*/\s*P1\s*/\s*P2\s*/\s*P3"
+    vector = re.search(
+        labels
+        + r"\s*[:：=]\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)",
+        raw,
+        re.I,
+    )
+    if vector:
+        return {f"P{index}": int(value) for index, value in enumerate(vector.groups())}
+
+    uniform = re.search(labels + r"\s*均?为\s*(\d+)", raw, re.I)
+    if uniform:
+        value = int(uniform.group(1))
+        return {f"P{index}": value for index in range(4)}
+
+    individual = {
+        severity.upper(): int(value)
+        for severity, value in re.findall(r"\b(P[0-3])\s*[:：=]\s*(\d+)\b", raw, re.I)
+    }
+    return individual or None
+
+
+def _strip_severity_count_claims(text):
+    """Remove parsed P0-P3 count declarations before free-text severity checks."""
+    raw = text or ""
+    labels = r"P0\s*/\s*P1\s*/\s*P2\s*/\s*P3"
+    raw = re.sub(
+        labels
+        + r"\s*[:：=]\s*\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+",
+        " ",
+        raw,
+        flags=re.I,
+    )
+    raw = re.sub(labels + r"\s*均?为\s*\d+", " ", raw, flags=re.I)
+    return re.sub(r"\bP[0-3]\s*[:：=]\s*\d+\b", " ", raw, flags=re.I)
+
+
+def _core_case_results_from_product_quality(text):
+    """Read the finite core-case token from the product-quality field."""
+    return [
+        re.sub(r"[`*_\s]", "", value)
+        for value in re.findall(
+            r"核心用例\s*[:：=]\s*([^；;，,|\n]+)", text or "", re.I
+        )
+    ]
+
+
+def _daily_fact_signals(values, body):
+    """Extract only structured facts used to justify a daily Verdict.
+
+    The first four root-cause columns are human-readable evidence. They may
+    describe goals, counterfactuals and causes, so treating their wording as an
+    observed failure makes the gate unstable. Machine judgment therefore reads
+    only the finite conclusion column.
+    """
+    product_quality = values.get("产品质量", "").strip()
+    completeness = values.get("验收完整性", "").strip()
+    core_case_results = _core_case_results_from_product_quality(product_quality)
+    core_case_result = core_case_results[0] if len(core_case_results) == 1 else ""
+
+    severity_counts = _severity_counts_from_text(product_quality)
+    zero_defects = bool(
+        (
+            severity_counts is not None
+            and len(severity_counts) == 4
+            and sum(severity_counts.values()) == 0
+        )
+        or (
+            severity_counts is None
+            and re.search(
+            r"(?:未发现|没有发现|未检测到|无|不存在)[^。；;|\n]{0,32}(?:产品)?缺陷"
+            r"|(?:缺陷(?:数(?:量)?)?)[^。；;|\n]{0,12}(?:为|[:：=])\s*0(?:\s*个)?"
+            r"|\b0\s*/\s*0\s*/\s*0\s*/\s*0\b",
+            product_quality,
+            re.I,
+            )
+        )
+    )
+
+    positive_product = re.sub(
+        r"(?:未发现|没有发现|未检测到|无|没有|未出现|不存在)"
+        r"[^。；;，,|\n]{0,32}(?:缺陷|失败|错误|阻断|不通过)",
+        " ",
+        product_quality,
+        flags=re.I,
+    )
+    positive_product = _strip_severity_count_claims(positive_product)
+
+    defect_headers, defect_rows = _section_table(body, "缺陷清单")
+    severity_index = next(
+        (
+            index
+            for index, header in enumerate(defect_headers)
+            if re.search(r"严重(?:级|程度)|severity", header, re.I)
+        ),
+        -1,
+    )
+    blocking_defect_rows = (
+        severity_index >= 0
+        and any(
+            severity_index < len(row)
+            and bool(re.search(r"\bP[01]\b", row[severity_index], re.I))
+            for row in defect_rows
+        )
+    )
+    nonblocking_defect_rows = (
+        severity_index >= 0
+        and any(
+            severity_index < len(row)
+            and bool(re.search(r"\bP[23]\b", row[severity_index], re.I))
+            for row in defect_rows
+        )
+    )
+    blocking_count = bool(
+        severity_counts
+        and (severity_counts.get("P0", 0) > 0 or severity_counts.get("P1", 0) > 0)
+    )
+    nonblocking_count = bool(
+        severity_counts
+        and (severity_counts.get("P2", 0) > 0 or severity_counts.get("P3", 0) > 0)
+    )
+    blocking_product_failure = bool(
+        blocking_count
+        or blocking_defect_rows
+        or re.search(
+            r"\bP[01]\b"
+            r"|产品[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
+            positive_product,
+            re.I,
+        )
+    )
+    nonblocking_product_risk = bool(
+        nonblocking_count
+        or nonblocking_defect_rows
+        or re.search(r"\bP[23]\b|非阻断风险", positive_product, re.I)
+    )
+    product_risk = blocking_product_failure or nonblocking_product_risk
+    _, root_cause_rows = _section_table(body, "根因链条")
+    root_conclusions = {
+        re.sub(r"[`*_\s]", "", row[4])
+        for row in root_cause_rows
+        if len(row) == len(DAILY_ROOT_CAUSE_FIELDS)
+    }
+    core_failure = core_case_result == "失败"
+    core_unexecuted = core_case_result == "未执行"
+    root_core_failure = "核心用例失败" in root_conclusions
+    chain_failure = "验收链路失败" in root_conclusions
+    hard_gate_failure = "硬门禁失败" in root_conclusions
+    root_product_failure = "产品失败" in root_conclusions
+    root_nonblocking_risk = "非阻断风险" in root_conclusions
+    root_coverage_gap = "覆盖缺口" in root_conclusions
+    coverage_gap_count = _coverage_gap_count(body)
+    completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)
+    incomplete = bool(
+        core_unexecuted
+        or coverage_gap_count > 0
+        or re.search(
+            r"不完整|无法确认|未覆盖|覆盖不足|覆盖缺口|\d+\s*项?缺口",
+            completeness_with_zero_gaps_removed,
+            re.I,
+        )
+    )
+    claims_complete = bool(re.search(r"(?:^|[：:；;，,\s])完整(?:$|[；;，,\s])", completeness))
+
+    return {
+        "zero_defects": zero_defects,
+        "blocking_product_failure": blocking_product_failure,
+        "nonblocking_product_risk": nonblocking_product_risk,
+        "product_risk": product_risk,
+        "root_product_failure": root_product_failure,
+        "root_nonblocking_risk": root_nonblocking_risk,
+        "root_coverage_gap": root_coverage_gap,
+        "root_conclusions": root_conclusions,
+        "core_case_results": core_case_results,
+        "core_case_result": core_case_result,
+        "core_failure": core_failure,
+        "core_unexecuted": core_unexecuted,
+        "root_core_failure": root_core_failure,
+        "chain_failure": chain_failure,
+        "hard_gate_failure": hard_gate_failure,
+        "coverage_gap_count": coverage_gap_count,
+        "incomplete": incomplete,
+        "claims_complete": claims_complete,
+    }
+
+
+def _daily_conclusion_contract_errors(verdict, body):
+    """Keep product quality, acceptance completeness and delivery judgment distinct.
+
+    A coverage-only gap must not be rendered as a product failure. Requiring a
+    small structured contract makes the report readable to humans and gives the
+    archive gate a deterministic consistency check.
+    """
+    errors = []
+    conclusion_text = _section_text(body, "结论分层")
+    conclusion_rows = _section_table_rows(body, "结论分层")
+    if not conclusion_text or not conclusion_rows:
+        return ["[结论语义] 每日验收缺少实质填写的「结论分层」表"]
+
+    values = {}
+    for row in conclusion_rows:
+        if len(row) >= 2:
+            values[re.sub(r"[`*_\s]", "", row[0])] = row[1].strip()
+
+    for field in DAILY_CONCLUSION_FIELDS:
+        if not values.get(field):
+            errors.append(f"[结论语义] 「结论分层」缺少「{field}」字段或结果")
+
+    nature = re.sub(r"[`*_\s]", "", values.get("判定性质", ""))
+    allowed = VERDICT_NATURES.get(verdict, set())
+    if nature and nature not in allowed:
+        expected = "/".join(sorted(allowed)) or "合法判定性质"
+        errors.append(
+            f"[Verdict 语义] verdict={verdict} 与判定性质「{nature}」不一致；"
+            f"该 Verdict 只允许：{expected}。覆盖不足且无真实失败时必须用 conditional"
+        )
+
+    overall = re.sub(r"[`*_\s（）()/／·-]", "", values.get("综合结论", "")).lower()
+    overall_matches = {
+        "pass": overall in {"pass", "通过", "pass通过"},
+        "conditional": overall in {"conditional", "有条件通过", "conditional有条件通过"},
+        "fail": overall in {"fail", "不通过", "fail不通过"},
+    }
+    if overall and not overall_matches.get(verdict, False):
+        errors.append(
+            f"[Verdict 语义] verdict={verdict} 与综合结论「{values.get('综合结论')}」不一致"
+        )
+
+    facts = _daily_fact_signals(values, body)
+    if not facts["core_case_results"]:
+        errors.append(
+            "[事实一致性] 产品质量必须填写结构化核心用例结果：核心用例=通过/失败/未执行"
+        )
+    elif len(facts["core_case_results"]) != 1:
+        errors.append("[事实一致性] 产品质量只能填写一个结构化核心用例结果")
+    elif facts["core_case_result"] not in CORE_CASE_RESULTS:
+        errors.append(
+            "[事实一致性] 核心用例结果只允许："
+            + "/".join(sorted(CORE_CASE_RESULTS))
+        )
+    if facts["zero_defects"] and facts["product_risk"]:
+        errors.append("[事实一致性] 产品质量同时声称缺陷为 0/未发现缺陷，又报告了 P0-P3 缺陷事实")
+    if facts["claims_complete"] and facts["coverage_gap_count"] > 0:
+        errors.append(
+            f"[事实一致性] 验收完整性声称完整，但覆盖缺口表仍有 {facts['coverage_gap_count']} 项"
+        )
+    if facts["claims_complete"] and facts["core_unexecuted"]:
+        errors.append("[事实一致性] 核心用例=未执行时，验收完整性不能声称完整")
+    if facts["claims_complete"] and facts["root_coverage_gap"]:
+        errors.append("[事实一致性] 验收完整性声称完整，但根因链仍有覆盖缺口")
+    product_failure = bool(
+        facts["blocking_product_failure"] and facts["root_product_failure"]
+    )
+    if facts["root_product_failure"] and not facts["blocking_product_failure"]:
+        errors.append("[事实一致性] 根因链结论为产品失败，但产品质量和缺陷清单没有 P0/P1 产品失败事实")
+    if nature == "产品失败" and not product_failure:
+        errors.append("[事实一致性] 判定性质为产品失败，但缺少 P0/P1 产品失败事实或根因链结构化结论")
+    if facts["root_core_failure"] and not facts["core_failure"]:
+        errors.append("[事实一致性] 根因链结论为核心用例失败，但产品质量的核心用例结果不是失败")
+    if nature == "核心用例失败" and not (
+        facts["core_failure"] and facts["root_core_failure"]
+    ):
+        errors.append(
+            "[事实一致性] 判定性质为核心用例失败，但缺少产品质量的核心用例=失败或根因链同名结论"
+        )
+    if nature == "验收链路失败" and not facts["chain_failure"]:
+        errors.append("[事实一致性] 判定性质为验收链路失败，但根因链结论没有「验收链路失败」")
+    if nature == "硬门禁失败" and not facts["hard_gate_failure"]:
+        errors.append("[事实一致性] 判定性质为硬门禁失败，但根因链结论没有「硬门禁失败」")
+    if nature == "覆盖不足" and not facts["incomplete"]:
+        errors.append("[事实一致性] 判定性质为覆盖不足，但验收完整性和覆盖缺口没有缺口事实")
+    if nature == "覆盖不足" and not facts["root_coverage_gap"]:
+        errors.append("[事实一致性] 判定性质为覆盖不足，但根因链结论没有「覆盖缺口」")
+    if nature == "非阻断风险" and not facts["root_nonblocking_risk"]:
+        errors.append("[事实一致性] 判定性质为非阻断风险，但根因链结论没有「非阻断风险」")
+    blocking_failure = bool(
+        facts["blocking_product_failure"]
+        or facts["core_failure"]
+        or facts["chain_failure"]
+        or facts["hard_gate_failure"]
+    )
+    if verdict == "pass" and (
+        facts["incomplete"]
+        or facts["product_risk"]
+        or facts["root_nonblocking_risk"]
+        or facts["root_coverage_gap"]
+        or facts["core_case_result"] != "通过"
+        or blocking_failure
+    ):
+        errors.append("[事实一致性] pass 与未覆盖/无法确认、风险或失败事实不一致")
+    if verdict == "conditional" and blocking_failure:
+        errors.append("[事实一致性] 已有产品、核心用例、验收链路或硬门禁失败事实时不能使用 conditional，必须使用 fail")
+    coverage_only = (
+        facts["zero_defects"]
+        and facts["incomplete"]
+        and not facts["product_risk"]
+        and not blocking_failure
+    )
+    if verdict == "fail" and coverage_only:
+        errors.append(
+            "[Verdict 语义] 已报事实仅支持覆盖不足且未发现产品失败，必须使用 conditional"
+        )
+
+    root_cause_text = _section_text(body, "根因链条")
+    root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
+    if verdict in {"conditional", "fail"} and (not root_cause_text or not root_cause_rows):
+        errors.append("[根因链] 每日验收缺少实质填写的「根因链条」表")
+    elif root_cause_text or root_cause_rows:
+        normalized_headers = [re.sub(r"[`*_\s]", "", cell) for cell in root_cause_headers]
+        if normalized_headers != list(DAILY_ROOT_CAUSE_FIELDS):
+            errors.append(
+                "[根因链] 表头必须严格为：" + "、".join(DAILY_ROOT_CAUSE_FIELDS)
+            )
+        malformed_rows = [
+            index
+            for index, row in enumerate(root_cause_rows, start=1)
+            if len(row) != len(DAILY_ROOT_CAUSE_FIELDS)
+            or any(not cell.strip() for cell in row)
+        ]
+        if malformed_rows:
+            errors.append(
+                "[根因链] 每条数据必须完整填写六列；无效数据行："
+                + "、".join(str(index) for index in malformed_rows)
+            )
+        unknown_conclusions = sorted(
+            facts["root_conclusions"] - ROOT_CAUSE_CONCLUSIONS
+        )
+        if unknown_conclusions:
+            errors.append(
+                "[根因链] 「结论」只允许："
+                + "、".join(sorted(ROOT_CAUSE_CONCLUSIONS))
+                + "；当前无效值："
+                + "、".join(unknown_conclusions)
+            )
+
+    return errors
 
 
 def _coverage_gap_count(markdown):
@@ -544,12 +946,15 @@ def _coverage_gap_count(markdown):
     if gap_ids:
         return len(gap_ids)
 
-    legacy_lines = {
-        re.sub(r"\s+", " ", line).strip()
-        for line in (markdown or "").splitlines()
-        if re.search(r"未覆盖|not-run|未深测|弱相关|无关", line, re.I)
-        and not re.match(r"^#{1,6}\s", line.strip())
-    }
+    legacy_lines = set()
+    for line in (markdown or "").splitlines():
+        stripped = line.strip()
+        positive_gap_text = _strip_zero_coverage_gap_phrases(stripped)
+        if (
+            not re.match(r"^#{1,6}\s", stripped)
+            and re.search(r"未覆盖|not-run|未深测|弱相关|无关", positive_gap_text, re.I)
+        ):
+            legacy_lines.add(re.sub(r"\s+", " ", stripped))
     return len(legacy_lines)
 
 
@@ -1222,6 +1627,12 @@ def _wrap_body_figures(body_html, manifest, figure_srcs=None):
     return body_html
 
 
+# ── 米多刊系刊徽（SSOT 见 .claude/rules/report-design-system.md）──
+# 模板必须自包含，无法 import 共享，故靠 data-emblem 标记 +
+# scripts/tests/test_report_emblems.py 防止各处拷贝漂移。
+_EMBLEM_POLARIS = '''<svg viewBox="0 0 120 120" fill="none" data-emblem="polaris" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-polaris-c"><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z"/></clipPath></defs><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z" fill="currentColor" fill-opacity="0.16"/><g clip-path="url(#emb-polaris-c)" stroke="currentColor" stroke-width="1.8" opacity="0.7"><path d="M10 30 L96 116 M28 12 L114 98 M4 52 L74 122 M50 -6 L120 64"/></g><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><g stroke="currentColor" stroke-width="2" opacity="0.8"><path d="M98 20 L104 34 L118 40 L104 46 L98 60 L92 46 L78 40 L92 34 Z"/></g><circle cx="24" cy="96" r="3.5" fill="currentColor" fill-opacity="0.8"/></svg>'''
+_EMBLEM_COMET = '''<svg viewBox="0 0 120 120" fill="none" data-emblem="comet" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-comet-c"><circle cx="82" cy="38" r="20"/></clipPath></defs><g stroke="currentColor" stroke-linecap="round" opacity="0.75"><path d="M66 54 L14 106" stroke-width="3"/><path d="M72 62 L28 106" stroke-width="2.4" opacity="0.8"/><path d="M60 46 L8 98" stroke-width="2.4" opacity="0.8"/><path d="M78 68 L44 102" stroke-width="1.8" opacity="0.55"/><path d="M54 38 L6 86" stroke-width="1.8" opacity="0.55"/><path d="M84 76 L60 100" stroke-width="1.4" opacity="0.35"/></g><circle cx="82" cy="38" r="20" fill="currentColor" fill-opacity="0.18"/><g clip-path="url(#emb-comet-c)" stroke="currentColor" stroke-width="1.6" opacity="0.75"><path d="M58 26 L106 26 M58 36 L106 36 M58 46 L106 46"/></g><circle cx="82" cy="38" r="20" stroke="currentColor" stroke-width="3"/></svg>'''
+
 def build_interactive_html(
     title,
     verdict,
@@ -1245,17 +1656,20 @@ def build_interactive_html(
             "accent": "#0f766e", "accent_soft": "rgba(15,118,110,0.08)",
             "byline": "验收智能体 · 自动编档",
             "section_label": "档案",
+            "emblem": _EMBLEM_POLARIS,   # 北极星 = 基准/标尺
         },
         "daily": {
             "cn": "每日巡检特刊", "en": "DAILY PATROL EDITION",
             "accent": "#3b5f8a", "accent_soft": "rgba(59,95,138,0.08)",
             "byline": "每日全量巡检 · 自动编档",
             "section_label": "巡检",
+            "emblem": _EMBLEM_COMET,     # 彗星 = 每天扫过全站一圈
         },
     }
     fl = _FLAVORS.get(flavor) or _FLAVORS["acceptance"]
     flavor_cn, flavor_en = fl["cn"], fl["en"]
     accent, accent_soft, byline = fl["accent"], fl["accent_soft"], fl["byline"]
+    emblem_svg = fl["emblem"]
     section_label = fl["section_label"]
     report_version = (report_version or "v0.9").strip()
     if not re.fullmatch(r"v\d+\.\d+", report_version):
@@ -1483,6 +1897,12 @@ main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px
 .hero{{padding:26px 0 0}}
 .masthead{{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:3px solid var(--ink);position:relative}}
 .masthead::after{{content:"";position:absolute;left:0;right:0;bottom:-6px;height:1px;background:var(--ink)}}
+/* 刊徽水印（衬字板式）：垫在右侧 mono 小字背后，只做刊物区分，不承载信息。
+   验收=北极星 / 巡检=彗星，见 .claude/rules/report-design-system.md。
+   结构性 class 未动，模板契约 map-acceptance-interactive-html-v2 不受影响。 */
+.masthead .emblem{{position:absolute;top:-12px;right:-6px;width:86px;height:86px;color:var(--accent);opacity:.13;z-index:0;pointer-events:none}}
+.masthead .emblem svg{{display:block;width:100%;height:100%}}
+.masthead .t,.masthead .r,.masthead .stamp{{position:relative;z-index:1}}
 .masthead .stamp{{width:44px;height:44px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:14px;box-shadow:3px 3px 0 rgba(33,29,24,.82)}}
 .masthead .t b{{font-family:var(--serif);font-size:clamp(19px,2.2vw,24px);font-weight:700;display:block;letter-spacing:.02em}}
 .masthead .t span{{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);letter-spacing:.3em}}
@@ -1674,6 +2094,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 .figure-anchor,#evidence-gallery,h1,h2,h3{{scroll-margin-top:118px}}
 .masthead .r{{display:none}}
 .masthead .stamp{{width:36px;height:36px;font-size:12px}}
+.masthead .emblem{{width:60px;height:60px;top:-8px;right:-2px}}
 .dateline{{gap:0 12px;font-size:9.5px}}
 .dl-verdict{{margin-left:0}}
 .title-row{{gap:12px}}
@@ -1710,6 +2131,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 <main>
   <header class="hero">
     <div class="masthead">
+      <div class="emblem">{emblem_svg}</div>
       <div class="stamp">MAP</div>
       <div class="t"><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><span>{flavor_en}</span></div>
       <div class="r"><span>MAP 验收标准 v2 · 真人路径取证</span><span>{byline}</span></div>
@@ -2958,6 +3380,7 @@ def validate_inputs(a, body, manifest, cfg=None):
             if section not in body:
                 errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
     if daily_acceptance_claim:
+        errs.extend(_daily_conclusion_contract_errors(a.verdict, body))
         for section in DAILY_REQUIRED_SECTIONS:
             if section not in body:
                 errs.append(f"[结构] 每日/昨日报告缺「{section}」：每日自动验收必须能说明范围、标准、未发布状态、截图回读和重试事实")
