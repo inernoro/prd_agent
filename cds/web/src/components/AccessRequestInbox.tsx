@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { KeyRound, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -39,8 +40,10 @@ interface AccessRequestsResponse {
 
 export function AccessRequestInbox({
   onCountChange,
+  placement = 'inline',
 }: {
   onCountChange?: (count: number) => void;
+  placement?: 'inline' | 'floating';
 } = {}): JSX.Element | null {
   const events = useCdsEvents();
   const [pending, setPending] = useState<AccessRequest[]>([]);
@@ -94,80 +97,96 @@ export function AccessRequestInbox({
   const primary = pending[0];
   const primaryBusy = busy === primary.id;
 
+  const primaryCard = (
+    <section
+      className="relative w-full overflow-hidden rounded-xl border border-amber-500/45
+                 bg-[hsl(var(--surface-raised))] shadow-2xl"
+      role={placement === 'floating' ? 'alert' : 'region'}
+      aria-live={placement === 'floating' ? 'assertive' : 'off'}
+      aria-label={`${count} 个授权申请需要处理`}
+    >
+      <div className="absolute inset-y-0 left-0 w-1 bg-amber-500" aria-hidden />
+      <div className="p-4 pl-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                          bg-amber-500/15 text-amber-700 dark:text-amber-300">
+            <ShieldAlert className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-base font-semibold text-foreground">需要你的授权</h2>
+              <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full
+                               bg-amber-500 px-2 text-xs font-bold text-black">
+                {count}
+              </span>
+            </div>
+            <p className="mt-1 text-sm leading-5 text-muted-foreground">
+              <strong className="text-foreground">{primary.agentName || '未知 Agent'}</strong>
+              {' '}申请
+              {primary.kind === 'bootstrap' ? '创建一个新项目' : (
+                <>访问项目 <code className="font-mono text-foreground">{primary.projectId}</code></>
+              )}
+            </p>
+            {primary.purpose ? (
+              <p className="mt-2 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2
+                            text-xs leading-5 text-foreground/85">
+                {primary.purpose}
+              </p>
+            ) : null}
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              {new Date(primary.createdAt).toLocaleString('zh-CN')}，授权内容只会交付给发起方一次
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-10"
+            onClick={() => { void reject(primary.id); }}
+            disabled={primaryBusy}
+          >
+            {primaryBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            拒绝
+          </Button>
+          <Button
+            type="button"
+            variant="default"
+            className="min-h-10"
+            onClick={() => { void approve(primary.id); }}
+            disabled={primaryBusy}
+          >
+            {primaryBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+            {primary.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
+          </Button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="mt-2 min-h-10 w-full rounded-md text-xs font-medium text-muted-foreground
+                     transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+        >
+          {count > 1 ? `查看全部 ${count} 条申请` : '查看申请详情'}
+        </button>
+      </div>
+    </section>
+  );
+
+  const primarySurface = placement === 'floating' && typeof document !== 'undefined'
+    ? createPortal((
+      <div
+        data-testid="cds-access-request-floating"
+        className="pointer-events-auto fixed bottom-[84px] right-5 z-[210] max-h-[calc(100dvh-104px)]
+                   w-[min(420px,calc(100vw-40px))] overflow-y-auto"
+      >
+        {primaryCard}
+      </div>
+    ), document.body)
+    : primaryCard;
+
   return (
     <>
-      <section
-        className="relative w-full overflow-hidden rounded-xl border border-amber-500/45
-                   bg-[hsl(var(--surface-raised))] shadow-2xl"
-        role="alert"
-        aria-live="assertive"
-        aria-label={`${count} 个授权申请需要处理`}
-      >
-        <div className="absolute inset-y-0 left-0 w-1 bg-amber-500" aria-hidden />
-        <div className="p-4 pl-5">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                            bg-amber-500/15 text-amber-700 dark:text-amber-300">
-              <ShieldAlert className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold text-foreground">需要你的授权</h2>
-                <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full
-                                 bg-amber-500 px-2 text-xs font-bold text-black">
-                  {count}
-                </span>
-              </div>
-              <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                <strong className="text-foreground">{primary.agentName || '未知 Agent'}</strong>
-                {' '}申请
-                {primary.kind === 'bootstrap' ? '创建一个新项目' : (
-                  <>访问项目 <code className="font-mono text-foreground">{primary.projectId}</code></>
-                )}
-              </p>
-              {primary.purpose ? (
-                <p className="mt-2 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2
-                              text-xs leading-5 text-foreground/85">
-                  {primary.purpose}
-                </p>
-              ) : null}
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                {new Date(primary.createdAt).toLocaleString('zh-CN')}，授权内容只会交付给发起方一次
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-10"
-              onClick={() => { void reject(primary.id); }}
-              disabled={primaryBusy}
-            >
-              {primaryBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              拒绝
-            </Button>
-            <Button
-              type="button"
-              variant="default"
-              className="min-h-10"
-              onClick={() => { void approve(primary.id); }}
-              disabled={primaryBusy}
-            >
-              {primaryBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-              {primary.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
-            </Button>
-          </div>
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="mt-2 min-h-10 w-full rounded-md text-xs font-medium text-muted-foreground
-                       transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
-          >
-            {count > 1 ? `查看全部 ${count} 条申请` : '查看申请详情'}
-          </button>
-        </div>
-      </section>
+      {primarySurface}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
