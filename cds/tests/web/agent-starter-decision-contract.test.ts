@@ -42,6 +42,9 @@ describe('Agent 上手助手角色决策协议', () => {
     expect(prompt).toContain('八、角色决策回复');
     expect(prompt).toContain('当前角色：业务专家 / 需求专家');
     expect(prompt).toContain('业务目标、规则覆盖、待确认规则');
+    expect(prompt).toContain('先检查目标项目的长期规则是否已包含角色决策回复受管区块');
+    expect(prompt).toContain('如果不存在，把本提示词中的角色决策协议增量写入长期规则');
+    expect(prompt).not.toContain('一键脚本已经把角色决策回复增量写入长期规则');
   });
 
   it('重复运行 harness 时替换受管规则且保留项目原有内容', () => {
