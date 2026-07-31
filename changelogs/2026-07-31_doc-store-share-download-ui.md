@@ -14,3 +14,6 @@
 | fix | prd-admin | 修复文档行首悬浮时出现黑方块：批量勾选框不再用近黑遮罩盖住文件图标，改为与图标互斥同槽显示，token 底色同步改为常规表面 |
 | polish | prd-admin | 筛选面板内「排序」与「标题显示」段控尺寸统一（取小号），并去掉与分组标题重复的「排序」二字 |
 | polish | prd-admin | 阅读区工具栏收敛：转录 / 生成字幕 / 智能体 / 证据板 / 历史版本 / 订阅信息 收进「更多」菜单，外面只留评论 / 收起 / 全屏 / 编辑 |
+| fix | prd-admin | 修复大库里读着「后端搜索命中」的文档时分享范围静默回落整库：DocBrowser 回传带 searchResults 兜底的选中条目，页面用它做「当前这篇」的锚点 |
+| fix | prd-admin | 分享与下载弹窗改为 createPortal 到 body + 高度走 inline style，避免被祖先 overflow/transform 裁切（frontend-modal.md 三硬约束） |
+| fix | prd-admin | 下载「纯文本」格式真正去标记（Markdown 语法 / HTML 标签），不再只换后缀 |

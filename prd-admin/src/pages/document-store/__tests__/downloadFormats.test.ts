@@ -3,7 +3,9 @@ import {
   DOC_DOWNLOAD_FORMATS,
   isTextDownloadType,
   resolveTextExtension,
+  resolveInitialDownloadScope,
   shouldFetchOriginalFile,
+  toPlainText,
 } from '../downloadFormats';
 
 describe('isTextDownloadType', () => {
@@ -63,5 +65,67 @@ describe('DOC_DOWNLOAD_FORMATS', () => {
       expect(f.label.length).toBeGreaterThan(0);
       expect(f.hint.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// Codex P2：「纯文本 (.txt)」的文案承诺「只留文字内容」，只换后缀等于骗人。
+describe('toPlainText — 纯文本要真的是纯文本', () => {
+  it('去掉 Markdown 标记但保留文字本身', () => {
+    const md = [
+      '# 标题',
+      '',
+      '> 引用一句',
+      '',
+      '- 列表项 **加粗** 和 `代码`',
+      '',
+      '[链接文字](https://example.com) 与 ![图片说明](a.png)',
+      '',
+      '[[双链条目|别名]]',
+    ].join('\n');
+    const out = toPlainText(md, 'text/markdown');
+
+    expect(out).toContain('标题');
+    expect(out).toContain('引用一句');
+    expect(out).toContain('列表项 加粗 和 代码');
+    expect(out).toContain('链接文字');
+    expect(out).toContain('图片说明');
+    expect(out).toContain('双链条目');
+    // 标记符号不该留下
+    expect(out).not.toContain('# ');
+    expect(out).not.toContain('](');
+    expect(out).not.toContain('**');
+    expect(out).not.toContain('[[');
+  });
+
+  it('代码围栏行去掉，围栏内的代码正文保留（那也是用户的字）', () => {
+    const out = toPlainText('```ts\nconst a = 1;\n```', 'text/markdown');
+    expect(out).toContain('const a = 1;');
+    expect(out).not.toContain('```');
+  });
+
+  it('HTML 去标签、丢脚本样式、解实体', () => {
+    const html = '<style>.a{color:red}</style><p>第一段</p><script>bad()</script><p>第二段 &amp; 收尾</p>';
+    const out = toPlainText(html, 'text/html');
+
+    expect(out).toContain('第一段');
+    expect(out).toContain('第二段 & 收尾');
+    expect(out).not.toContain('bad()');
+    expect(out).not.toContain('color:red');
+    expect(out).not.toContain('<');
+  });
+
+  it('不吃掉普通正文里的星号/井号（不重排、不误删）', () => {
+    const out = toPlainText('单价 3 * 4 元，编号 #1234', 'text/markdown');
+    expect(out).toBe('单价 3 * 4 元，编号 #1234');
+  });
+});
+
+describe('resolveInitialDownloadScope — 默认下载当前文章', () => {
+  it('有正在读的文章：默认只下这一篇，不逼人下整库 ZIP', () => {
+    expect(resolveInitialDownloadScope(true)).toBe('entry');
+  });
+
+  it('没打开文档：才回落整库', () => {
+    expect(resolveInitialDownloadScope(false)).toBe('store');
   });
 });

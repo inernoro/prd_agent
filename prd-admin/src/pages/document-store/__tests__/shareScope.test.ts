@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeShareScope,
   isLiveShareLink,
+  resolveInitialShareScope,
   pickScopeShareLinks,
   shareLinkUrl,
   shareShortUrl,
@@ -95,5 +97,35 @@ describe('upsertShareLink — 后端复用旧链接时不许多出一行', () =>
   it('新 id 正常插到最前', () => {
     const next = upsertShareLink([link({ id: 'a' })], link({ id: 'c' }));
     expect(next.map(l => l.id)).toEqual(['c', 'a']);
+  });
+});
+
+// 默认范围是用户明确要求的行为（不是样式），抽成纯函数守：
+// 弹窗改 createPortal 后 SSR 字符串渲染测不到整段 HTML，纯函数反而更结实。
+describe('resolveInitialShareScope — 默认落「当前这篇」', () => {
+  it('从文件树某篇进来：默认单篇', () => {
+    expect(resolveInitialShareScope('e1', undefined)).toBe('entry');
+  });
+
+  it('顶栏进来且正读着一篇：默认单篇，不默认公开整库', () => {
+    expect(resolveInitialShareScope(undefined, 'e1')).toBe('entry');
+  });
+
+  it('没打开任何文档：才回落整库', () => {
+    expect(resolveInitialShareScope(undefined, undefined)).toBe('store');
+  });
+});
+
+describe('describeShareScope — 一句话讲清可见范围', () => {
+  it('单篇范围点明「看不到其他文档」', () => {
+    const note = describeShareScope('entry', 'MAP系统和设计', '以后怎么说');
+    expect(note).toContain('《以后怎么说》');
+    expect(note).toContain('看不到知识库里的其他文档');
+  });
+
+  it('整库范围点明「全部文档」', () => {
+    const note = describeShareScope('store', 'MAP系统和设计', '以后怎么说');
+    expect(note).toContain('「MAP系统和设计」');
+    expect(note).toContain('全部文档');
   });
 });

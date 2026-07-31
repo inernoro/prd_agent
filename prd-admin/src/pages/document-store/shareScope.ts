@@ -59,3 +59,26 @@ export function upsertShareLink(
 ): DocumentStoreShareLink[] {
   return [created, ...links.filter(l => l.id !== created.id)];
 }
+
+/**
+ * 弹窗打开时的默认范围：手上有正在读的文档就落「只分享这一篇」。
+ * 整库公开影响面更大、场景更少，绝不能当默认（2026-07-31 用户明确要求）。
+ * entryId = 从文件树某篇进来；currentEntryId = 顶栏分享时正在阅读的那篇。
+ */
+export function resolveInitialShareScope(
+  entryId: string | undefined,
+  currentEntryId: string | undefined,
+): ShareScope {
+  return entryId ?? currentEntryId ? 'entry' : 'store';
+}
+
+/** 一句话讲清「拿到链接的人能看到什么」——弹窗里唯一需要用户理解的事。 */
+export function describeShareScope(
+  scope: ShareScope,
+  storeName: string,
+  entryTitle: string | undefined,
+): string {
+  return scope === 'entry'
+    ? `拿到链接的人只能看到《${entryTitle ?? '当前文档'}》这一篇，看不到知识库里的其他文档。`
+    : `拿到链接的人可以浏览「${storeName}」里的全部文档。`;
+}

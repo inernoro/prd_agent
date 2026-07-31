@@ -403,6 +403,12 @@ export type DocBrowserProps = {
    */
   sidebarFilters?: ReactNode;
   /**
+   * 当前选中条目的解析结果回传（含 searchResults 兜底）。
+   * 调用方自己 `entries.find()` 会漏掉「只存在于后端搜索结果里的命中」（大库超过首页 200 条时常见），
+   * 分享 / 下载的「当前这篇」锚点会因此静默回落到整库 —— 正是本次要防的暴露（Codex P1）。
+   */
+  onSelectedEntryChange?: (entry: DocBrowserEntry | undefined) => void;
+  /**
    * 分享视图传入分享 token，用于私有库读取划词评论气泡（PR #685 Codex P1）。
    * 后端凭此 token 验证调用方确实通过有效分享访问，而非靠"存在分享链"放行。
    * 私人编辑场景（DocumentStorePage）不需要传，走 owner 身份读评论。
@@ -1669,6 +1675,7 @@ export function DocBrowser({
   sortMode = 'default',
   showUpdatedTimeDefault = false,
   sidebarFilters,
+  onSelectedEntryChange,
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
@@ -1851,6 +1858,8 @@ export function DocBrowser({
     () => entries.find(e => e.id === selectedEntryId) ?? searchResults?.find(e => e.id === selectedEntryId),
     [entries, searchResults, selectedEntryId],
   );
+  // 把解析结果回传调用方，让「当前这篇」的范围锚点也能覆盖搜索命中
+  useEffect(() => { onSelectedEntryChange?.(selectedEntryData); }, [selectedEntryData, onSelectedEntryChange]);
 
   // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹。
   // 合并 searchResults：搜索命中 / 深链 ?entry 的条目可能不在已加载的 entries 里，

@@ -69,12 +69,14 @@ import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
-import { isLiveShareLink, pickScopeShareLinks, shareLinkUrl, upsertShareLink } from './shareScope';
+import { describeShareScope, isLiveShareLink, pickScopeShareLinks, resolveInitialShareScope, shareLinkUrl, upsertShareLink, type ShareScope } from './shareScope';
 import { ShareLinkPanel } from './ShareLinkPanel';
 import {
   DOC_DOWNLOAD_FORMATS,
+  resolveInitialDownloadScope,
   resolveTextExtension,
   shouldFetchOriginalFile,
+  toPlainText,
   type DocDownloadFormat,
   type DocDownloadScope,
 } from './downloadFormats';
@@ -676,9 +678,9 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
   const pickedEntryTitle = entryTitle ?? currentEntryTitle;
   // 默认分享「当前这篇」：只要手上有正在读的文档就落单篇范围（2026-07-31 用户明确要求）。
   // 分享的绝大多数场景是「把我正在看的这篇发给别人」，整库公开是少数且后果更大，不该当默认。
-  const [scope, setScope] = useState<'store' | 'entry'>(pickedEntryId ? 'entry' : 'store');
+  const [scope, setScope] = useState<ShareScope>(() => resolveInitialShareScope(entryId, currentEntryId));
   // 没有可选文档时永远停在整库范围，避免出现「选了这一篇却没有这一篇」的空范围
-  const activeScope: 'store' | 'entry' = pickedEntryId ? scope : 'store';
+  const activeScope: ShareScope = pickedEntryId ? scope : 'store';
   const targetEntryId = activeScope === 'entry' ? pickedEntryId : undefined;
 
   const [links, setLinks] = useState<DocumentStoreShareLink[]>([]);
@@ -748,9 +750,7 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
 
   const directLink = `${window.location.origin}/library/${storeId}`;
   // 范围说明：一句话讲清「拿到链接的人能看到什么」，这是本弹窗唯一需要用户理解的事
-  const scopeNote = activeScope === 'entry'
-    ? `拿到链接的人只能看到《${pickedEntryTitle ?? '当前文档'}》这一篇，看不到知识库里的其他文档。`
-    : `拿到链接的人可以浏览「${storeName}」里的全部文档。`;
+  const scopeNote = describeShareScope(activeScope, storeName, pickedEntryTitle);
 
   // 桌面端从「分享」按钮右上角就地悬浮弹出（不遮挡正文、不打断阅读）；
   // 手机端屏幕窄，仍走居中弹窗，否则悬浮层会挤成一条（2026-07-31 用户要求）。
@@ -902,14 +902,19 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
     );
   }
 
-  // 手机 / 无锚点（文件树右键分享）：居中弹窗
-  return (
+  // 手机 / 无锚点（文件树右键分享）：居中弹窗。
+  // createPortal 到 body + 布局关键尺寸走 inline style，见 .claude/rules/frontend-modal.md：
+  // 祖先的 overflow-hidden / transform 会裁掉 fixed 层，Tailwind arbitrary 值也可能在某些
+  // 构建模式下不生效，高度约束一旦丢失内容就会撑破屏幕。
+  return createPortal(
     <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="surface-popover flex max-h-[85vh] w-[560px] max-w-[92vw] flex-col rounded-[16px] p-6">
+      <div className="surface-popover flex flex-col rounded-[16px] p-6"
+        style={{ height: 'auto', maxHeight: '85vh', width: 560, maxWidth: '92vw' }}>
         {body}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -948,7 +953,10 @@ async function buildEntryDownload(
     }
   }
   if (!hasText) return null;
-  return { name: makeName(entry.title, resolveTextExtension(format, contentType)), data: content! };
+  // 纯文本格式要真的去掉标记，不能只换后缀（否则 .txt 里全是 # / [](), 与文案不符）
+  const data = format === 'text' ? toPlainText(content!, contentType) : content!;
+  if (data === '') return null;
+  return { name: makeName(entry.title, resolveTextExtension(format, contentType)), data };
 }
 
 // 下载对话框：范围默认「当前这篇」，没有打开文档时自动落到整库并禁用单篇选项。
@@ -961,14 +969,16 @@ export function DownloadDialog({ storeName, entryTitle, busy, onDownload, onClos
   onDownload: (scope: DocDownloadScope, format: DocDownloadFormat) => void;
   onClose: () => void;
 }) {
-  const [scope, setScope] = useState<DocDownloadScope>(entryTitle ? 'entry' : 'store');
+  const [scope, setScope] = useState<DocDownloadScope>(() => resolveInitialDownloadScope(Boolean(entryTitle)));
   const [format, setFormat] = useState<DocDownloadFormat>('markdown');
   const activeScope: DocDownloadScope = entryTitle ? scope : 'store';
 
-  return (
+  // 同 ShareDialog：createPortal 到 body + 尺寸走 inline style（frontend-modal.md 三硬约束）
+  return createPortal(
     <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="surface-popover flex max-h-[85vh] w-[460px] max-w-[92vw] flex-col rounded-[16px] p-6">
+      <div className="surface-popover flex flex-col rounded-[16px] p-6"
+        style={{ height: 'auto', maxHeight: '85vh', width: 460, maxWidth: '92vw' }}>
         <div className="mb-4 flex flex-shrink-0 items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
@@ -1035,7 +1045,8 @@ export function DownloadDialog({ storeName, entryTitle, busy, onDownload, onClos
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1072,9 +1083,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   })), [entries]);
   // 当前正在阅读的那一篇（目录不算）。分享与下载都以它作为「当前文章」范围的锚点，
   // 免得用户读着一篇却只能对整库操作。
-  const selectedDocEntry = useMemo(
-    () => entries.find(e => e.id === selectedEntryId && !e.isFolder),
-    [entries, selectedEntryId]);
+  // entries 只是首页 200 条：大库里「后端搜索命中」的条目不在其中，只能靠 DocBrowser 回传的
+  // 解析结果兜底，否则读着搜索结果点分享会静默回落到整库范围（Codex P1）。
+  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean } | undefined>();
+  const selectedDocEntry = useMemo(() => {
+    const local = entries.find(e => e.id === selectedEntryId && !e.isFolder);
+    if (local) return local;
+    const fallback = browserSelectedEntry;
+    return fallback && fallback.id === selectedEntryId && !fallback.isFolder ? fallback : undefined;
+  }, [entries, selectedEntryId, browserSelectedEntry]);
 
   // 从宇宙图等外部页面跳转过来时，sessionStorage 里可能有一个 pending entry：
   // 在 entries 加载完成后消费一次（设置选中条目并清理 key，避免下次进入再次自动跳转）。
@@ -2248,6 +2265,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
+          onSelectedEntryChange={setBrowserSelectedEntry}
           onBackToList={() => setSelectedEntryId(undefined)}
           onSetPrimary={handleSetPrimary}
           onTogglePin={handleTogglePin}
