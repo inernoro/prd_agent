@@ -119,12 +119,20 @@ def check_css_wiring(label, rel):
 
     # 取出所有选择器含 .emblem 的规则块（`{` 或 f-string 里的 `{{` 都认），
     # 排除 `.emblem svg` 这种只管内部 svg 尺寸的从属规则。
-    bodies = []
+    # 记下每条规则的位置与「是否在 @media 里」，用于下面的层叠顺序检查。
+    rules = []
     for m in re.finditer(r'([^{};\n]*\.emblem[^{};\n]*)\{\{?([^}]*)\}', text):
         selector, body = m.group(1), m.group(2)
         if "svg" in selector:
             continue
-        bodies.append(re.sub(r"\s+", "", body))
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        in_media = "@media" in text[line_start:m.start()]
+        rules.append({
+            "pos": m.start(),
+            "body": re.sub(r"\s+", "", body),
+            "in_media": in_media,
+        })
+    bodies = [r["body"] for r in rules]
 
     if not bodies:
         fail(f"{label}({rel}): 找不到 .emblem 的 CSS 规则——刊徽没有样式，"
@@ -140,12 +148,30 @@ def check_css_wiring(label, rel):
         if not any(needle in b for b in bodies):
             fail(f"{label}({rel}): .emblem 规则里没有 {needle} —— {why}")
 
-    # 透明度必须真的「浅」：写成 1 就不是水印了，会盖住报头文字
-    for b in bodies:
-        mo = re.search(r"opacity:([0-9.]+)", b)
-        if mo and float(mo.group(1)) > 0.3:
-            fail(f"{label}({rel}): .emblem 的 opacity={mo.group(1)} 过高，"
-                 f"水印会盖住报头文字（约定 ≈0.13）")
+    # 透明度必须真的「浅」，而且必须**显式写出来**。
+    # 只判「写了但过高」是不够的：整条 opacity 声明被删掉时 CSS 默认 opacity:1，
+    # 刊徽变成完全不透明的遮挡物盖住报头——正是本守卫号称要防的退化之一，
+    # 而 re.search 返回 None 会让循环一声不吭地放行（本守卫第一版就是这个洞）。
+    opacities = [float(mo.group(1))
+                 for b in bodies
+                 if (mo := re.search(r"opacity:([0-9.]+)", b))]
+    if not opacities:
+        fail(f"{label}({rel}): .emblem 没有任何 opacity 声明——"
+             f"CSS 会默认 opacity:1，刊徽变成不透明遮挡物盖住报头（约定 ≈0.13）")
+    for v in opacities:
+        if not (0 < v <= 0.3):
+            fail(f"{label}({rel}): .emblem 的 opacity={v} 不在 (0, 0.3] 内，"
+                 f"过高会盖住报头文字、为 0 则等于没有刊徽（约定 ≈0.13）")
+
+    # 层叠顺序：@media 覆盖必须排在基础规则**之后**。
+    # 两者选择器特异性相同，靠源码顺序决胜——媒体查询若写在前面，
+    # 后面的基础规则会把它整条盖掉，窄屏拿到的仍是桌面尺寸。
+    # 这种错编译不报、桌面端看不出来，只有真机窄屏才暴露（日报模板首版即如此）。
+    base_pos = [r["pos"] for r in rules if not r["in_media"]]
+    media_pos = [r["pos"] for r in rules if r["in_media"]]
+    if base_pos and media_pos and min(media_pos) < max(base_pos):
+        fail(f"{label}({rel}): .emblem 的 @media 覆盖写在基础规则之前——"
+             f"同特异性下会被后面的基础规则整条盖掉，窄屏仍是桌面尺寸")
 
 
 print("米多刊系刊徽守卫")
