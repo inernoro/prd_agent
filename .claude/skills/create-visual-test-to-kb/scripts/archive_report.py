@@ -654,6 +654,7 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"|(?-i:\bFAIL\b)"
     r"|(?-i:\bERROR\b)"
     r"|\b(?:failed|failure)\b"
+    r"|\"?(?:ok|healthy|success)\"?\s*[:：=]\s*false\b"
     r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
     r"(?:fail|failed|failure|error)\b\"?"
     rf"|\"?(?:status|状态|branch[\s_-]*status)\"?\s*[:：=]\s*\"?"
@@ -665,6 +666,7 @@ _RAW_RESOLVED_STATUS_PATTERN = (
     r"(?:(?-i:\bPASS\b)"
     r"|\bpassed\b(?![\"']?\s*[:：=])"
     r"|\bsucceeded\b"
+    r"|\"?(?:ok|healthy|success)\"?\s*[:：=]\s*true\b"
     r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
     r"(?:pass|passed|succeeded|success|successful|ok)\b\"?"
     rf"|\"?(?:status|状态|branch[\s_-]*status)\"?\s*[:：=]\s*\"?"
@@ -691,7 +693,8 @@ _FAILURE_FACT_PATTERN = re.compile(
     re.I,
 )
 _DIAGNOSTIC_ACTION_PATTERN = (
-    r"(?:复现|重现|再现|定位|捕获|观察到|检测到|发现|触发|确认|验证|记录)"
+    r"(?:复现|重现|再现|定位|捕获|观察到|检测到|发现|触发|确认|验证|记录|"
+    r"收集|采集|分析|排查|调查|诊断|复盘|梳理)"
 )
 _SUCCESS_DIAGNOSTIC_PATTERN = (
     rf"成功\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}"
@@ -1090,6 +1093,14 @@ def _failure_is_negated(clause, event, previous_event_end):
     scope = clause[previous_event_end : event.start()]
     suffix = clause[event.end() : event.end() + 12]
     scenario_prefix = clause[max(0, event.start() - 32) : event.start()]
+    if re.fullmatch(
+        r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?未(?:能)?|没(?:有|能)?)\s*成功",
+        event.group(0),
+        re.I,
+    ) and re.match(
+        rf"\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}", suffix, re.I
+    ):
+        return True
     if re.match(_VERIFIED_SCENARIO_OBJECT_PATTERN, suffix, re.I):
         if re.match(
             rf"{_POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN}\s*"

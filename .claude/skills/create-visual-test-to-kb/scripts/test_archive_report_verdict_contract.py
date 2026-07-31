@@ -724,6 +724,46 @@ class DailyVerdictContractTests(unittest.TestCase):
                     any("硬门禁失败事实" in error for error in errors)
                 )
 
+    def test_boolean_cds_results_open_hard_gate(self):
+        for fact in (
+            'CDS smoke {"ok":false,"error":"缺少可用的 CDS 连接"}',
+            'CDS ready {"success":false}',
+            "CDS build healthy=false",
+            'CDS smoke {"ok":false,"branchStatus":"running"}',
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
+    def test_boolean_cds_results_close_prior_failure(self):
+        for closure in (
+            'CDS smoke {"ok":true}',
+            "CDS smoke success=true",
+            "CDS smoke healthy=true",
+        ):
+            with self.subTest(closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 先前失败"
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 同一门禁已复测 | 布尔结果证明通过 | "
+                    "已通过 | 保留记录 |\n"
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
     def test_partial_passed_count_does_not_close_prior_failure(self):
         body = report_body("覆盖不足").replace(
             "当前部署 SHA 已前进", "CDS smoke 先前失败"
@@ -1053,6 +1093,32 @@ class DailyVerdictContractTests(unittest.TestCase):
                     ),
                 )
 
+    def test_unsuccessful_diagnostic_attempt_is_not_gate_failure(self):
+        for observation in (
+            "CDS smoke 未成功复现问题",
+            "CDS smoke 未成功定位根因",
+            "CDS smoke 未成功收集日志",
+            "CDS smoke 未能成功验证异常场景",
+        ):
+            with self.subTest(observation=observation):
+                self.assertEqual(
+                    set(),
+                    archive_report._current_failure_subjects(observation),
+                )
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", observation
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+        for fact in ("CDS smoke 未成功通过", "构建未成功完成"):
+            with self.subTest(fact=fact):
+                self.assertTrue(archive_report._current_failure_subjects(fact))
+
     def test_explicit_failure_conclusion_uses_target_subject(self):
         for conclusion in (
             "失败",
@@ -1336,6 +1402,7 @@ class DailyVerdictContractTests(unittest.TestCase):
     def test_completed_diagnostics_do_not_close_failed_gate(self):
         for fact in (
             "CDS smoke 失败，已完成问题定位，等待修复",
+            "CDS smoke 失败，已成功收集日志，等待修复",
             "构建失败，已完成日志收集，尚待修复",
             "CDS ready 失败，已完成根因分析，等待复测",
         ):
