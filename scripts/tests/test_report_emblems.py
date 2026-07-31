@@ -514,6 +514,11 @@ def cascade_value(bodies, prop):
     return (found[-1] if found else None), found
 
 
+def subject_compound(sel):
+    """选择器的主语段（最后一段复合选择器）。"""
+    return re.split(r'[\s>+~]+', sel.strip())[-1]
+
+
 def selector_targets(sel, cls, must_mention=None):
     """这条选择器是否**以 `.cls` 为目标元素**（即最后一段复合选择器含该类）。
 
@@ -550,10 +555,17 @@ def rules_targeting(text, cls, must_mention=None):
     # `@media (...) { .emblem { ... } }` 整条当成一个「选择器=@media、体=里面全部」的
     # 匹配吞掉，嵌套在里面的 .emblem 规则再也匹配不到——窄屏那一档会整个消失。
     for m in re.finditer(r'([^{};\n]*)\{\{?([^{}]*)\}', text):
-        if any(selector_targets(part, cls, must_mention) for part in m.group(1).split(",")):
-            out.append({"pos": m.start(),
-                        "body": re.sub(r"\s+", "", m.group(2)),
-                        "sel": m.group(1).strip()})
+        hits = [p for p in m.group(1).split(",") if selector_targets(p, cls, must_mention)]
+        if not hits:
+            continue
+        # `default_state`：这条规则在**默认状态**下是否真的作用于该元素。
+        # 主语带伪类/伪元素（`:focus` / `:hover` / `::after`）的规则只在特定状态或
+        # 生成盒上生效，不能用来证明契约成立。逐个命中的选择器判，因为一条规则
+        # 可以写成 `.masthead .t, .masthead .r, .masthead .stamp` 这样的逗号列表。
+        out.append({"pos": m.start(),
+                    "body": re.sub(r"\s+", "", m.group(2)),
+                    "sel": m.group(1).strip(),
+                    "default_state": any(":" not in subject_compound(p) for p in hits)})
     return out
 
 
@@ -566,7 +578,13 @@ def require_all_declarations(label, rel, rules, prop, ok, why):
     for r in rules:
         _, declared = cascade_value([r["body"]], prop)
         for v in declared:
-            seen = True
+            # 只有**默认状态下就成立**的规则才算「声明过」。`.emblem:focus{...}` 里
+            # 那份声明浏览器永远不会应用（包裹元素是不可聚焦的 div），却能让
+            # required 判据以为契约已满足——判据看到了声明，页面从未生效。
+            # 违规仍然照报：`:hover{position:static}` 会让刊徽在悬停时跳回文档流，
+            # 那是真的坏，只是它不能用来**证明**契约成立。
+            if r.get("default_state", True):
+                seen = True
             if not ok(v):
                 fail(f"{label}({rel}): 规则 `{r['sel']}` 把 {prop} 声明成 {v!r}——{why}")
     return seen
