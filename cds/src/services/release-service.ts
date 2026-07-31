@@ -5,6 +5,8 @@ import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
 import { classifyDeploymentFailure } from './deployment-failure-classifier.js';
+import { formatSshExecFailure, maskSshExecSecrets } from './ssh-exec-failure.js';
+import { parseDfAvailableMb, parseDiskGuardShortfall } from './release-disk-guard.js';
 import {
   advanceReleaseSteps,
   buildReleaseRunProgress,
@@ -76,8 +78,10 @@ interface Ssh2ConnectOptions {
   host: string;
   port: number;
   username: string;
-  privateKey: string | Buffer;
+  /** 私钥与密码二选一，所以两个都是可选：ssh2 把 undefined 当「这项没配」。 */
+  privateKey?: string | Buffer;
   passphrase?: string;
+  password?: string;
   readyTimeout?: number;
 }
 
@@ -107,6 +111,31 @@ export interface ReleaseStartInput {
   previewUrl?: string;
   /** 向导那次预检的落库 id。缺省时服务端按 (分支,目标,预览地址,操作人) 再找一次。 */
   preflightId?: string;
+  /**
+   * 期望发布的 commit（fail-closed 版本钳制）。给了就必须与预检算出的
+   * artifact.commitSha 逐字相等，否则直接拒绝。
+   *
+   * 为什么必须有它：startRelease 恒按分支**当前** commit 建 artifact
+   * （resolveCommitSha = pinnedCommit || githubCommitSha）。「把 A 环境正在跑的那一版
+   * 原样提升到 B」这件事，若不钳制，在分支已经前进时会把一个从未在 A 验证过的新版本
+   * 推上 B —— 而 UI 上写的是「原样提升」。这是语义级静默错误，编译和测试都发现不了。
+   *
+   * 手动「提升」按钮、POST /releases/branches/:branchId/runs、定时 promote 动作
+   * 三者必须传同一个字段；不传时行为与历史完全一致（存量路径零回归）。
+   */
+  expectedCommitSha?: string;
+}
+
+export type ReleaseTargetBusyKind = 'in-flight' | 'settling' | 'lock';
+
+/** 「这个发布目标现在忙不忙」的结论。busy=false 时其余字段一律缺省。 */
+export interface ReleaseTargetBusyState {
+  busy: boolean;
+  /** 中文原因（不含「请稍候再发起 X」这类动作后缀，由调用方按语境拼）。 */
+  reason?: string;
+  kind?: ReleaseTargetBusyKind;
+  /** in-flight / settling 时占着目标的那次 run。 */
+  releaseId?: string;
 }
 
 /** 一次远端现场只读盘点的结果。inventory 缺省 = 读不回来（readError 说明原因）。 */
@@ -142,6 +171,15 @@ export interface ReleaseHealthProbe {
   checkedAt: string;
   responseTimeMs?: number;
   message?: string;
+  /**
+   * 近 24 小时可用率 0-1；窗口内无采样为 null（前端渲染「无数据」而不是 0%）。
+   * 整组字段可缺省：实时探测（probeHealthcheckStatus）本来就只有单次结果，
+   * 监控关闭时也没有窗口数据 —— 缺省即「不知道」，不许编造。
+   */
+  availability24h?: number | null;
+  sampleCount24h?: number;
+  upCount24h?: number;
+  avgLatencyMs24h?: number | null;
 }
 
 /**
@@ -298,6 +336,11 @@ export function classifyReleaseFailure(input: {
   return { ...delegated, summary: sanitizeFailureSummary(input.message) };
 }
 
+/**
+ * 注意这一刀是从**头**切的。SSH 失败消息的判据在尾部，所以
+ * ssh-exec-failure.ts 的 SSH_EXEC_FAILURE_MAX_CHARS 必须严格小于这里的 2 * 1024，
+ * 否则执行器那边保下来的尾巴会在这里被原样切掉。两者是硬耦合，改一处要看另一处。
+ */
 function sanitizeFailureSummary(message: string): string {
   return String(message || '发布失败').replace(/\u001b\[[0-9;]*m/g, '').slice(0, 2 * 1024);
 }
@@ -305,8 +348,10 @@ function sanitizeFailureSummary(message: string): string {
 /** 注入式 SSH 执行请求。把「连哪台、跑什么、何时中止」与「怎么连」解耦，便于回归测试。 */
 export interface ReleaseSshExecRequest {
   host: RemoteHost;
-  privateKey: string | Buffer;
+  /** 私钥与密码二选一（见 decryptRemoteHostSecrets），两个都可能缺席。 */
+  privateKey?: string | Buffer;
   passphrase?: string;
+  password?: string;
   command: string;
   /** 中止信号：执行超时、取消发布、心跳收割都通过它掐断在跑的 SSH。 */
   signal: AbortSignal;
@@ -340,6 +385,7 @@ export class ReleaseService {
   private readonly heartbeatIntervalMs: number;
   private readonly sshExecutor: ReleaseSshExecutor;
   private readonly inFlight = new Map<string, ReleaseExecutionHandle>();
+  private readonly runStartedHooks: Array<(run: ReleaseRun) => void> = [];
 
   constructor(private readonly stateService: StateService, options: ReleaseServiceOptions = {}) {
     this.now = options.now || (() => new Date());
@@ -348,6 +394,31 @@ export class ReleaseService {
       ?? RELEASE_EXEC_TIMEOUT_MS;
     this.heartbeatIntervalMs = resolvePositiveMs(options.heartbeatIntervalMs) ?? RELEASE_HEARTBEAT_INTERVAL_MS;
     this.sshExecutor = options.sshExecutor || defaultReleaseSshExecutor;
+  }
+
+  /**
+   * 「一次发布刚落库」的回调。
+   *
+   * 存在的理由：commit 元信息（时间 / 说明 / 作者）此前只在 HTTP 路由里记，
+   * 于是定时发布的成功记录**从不进** ReleaseCommitClock —— DORA 的变更前置时间
+   * 只统计到人手点的那些发布，自动发布越多，指标越偏，而且没有任何东西会报错
+   * （Codex review P2，2026-07-29）。挂在服务层，路由与调度器共用同一实例即同时覆盖。
+   *
+   * 回调必须是旁路语义：任何异常都被吞掉，绝不让一个统计动作把「发布已经启动」
+   * 这个既成事实变成异常。
+   */
+  onRunStarted(hook: (run: ReleaseRun) => void): void {
+    this.runStartedHooks.push(hook);
+  }
+
+  private notifyRunStarted(run: ReleaseRun): void {
+    for (const hook of this.runStartedHooks) {
+      try {
+        hook(run);
+      } catch {
+        /* 旁路，不影响发布 */
+      }
+    }
   }
 
   /**
@@ -495,6 +566,16 @@ export class ReleaseService {
       : '';
     const deployScripts = extractReleaseScriptPaths(deployCommand);
     const previousRelease = target ? this.stateService.getLatestSuccessfulReleaseRun(target.id) : undefined;
+    // 上次磁盘护栏失败、且之后再没成功过 → 预检要做磁盘复查（见下方 disk 检查）。
+    // 一旦有更新的成功发布，说明磁盘已经过了脚本自己的护栏，这道复查自动消失。
+    const latestFailedRun = target
+      ? this.stateService.getReleaseRuns({ targetId: target.id })
+        .find((run) => run.status === 'failed' || run.status === 'rollback_failed')
+      : undefined;
+    const lastDiskShortfall = latestFailedRun
+      && (!previousRelease || latestFailedRun.startedAt > previousRelease.startedAt)
+      ? parseDiskGuardShortfall((latestFailedRun.logs || []).map((log) => log.message))
+      : null;
     const isFirstManagedRelease = Boolean(
       target?.ssh
       && (isLocalProdReleaseCommand(deployCommand) || strategy.mode !== 'existing-script')
@@ -622,6 +703,37 @@ export class ReleaseService {
           } else if (deployCommand) {
             push({ id: 'scripts', label: '发布脚本可执行', status: 'warn', message: '自定义发布命令未识别到 ./script.sh，已跳过脚本文件检查', blocking: false });
           }
+
+          // 磁盘复查：只在「最近一次失败就是磁盘护栏、且之后还没成功过」时出现。
+          // 上次的 requiredMb 是**发布脚本自己声明过的**需求（不由 CDS 拍脑袋定阈值），
+          // 复查 df 不够线就拦在「开始发布」之前——2026-07-30 同一磁盘原因连烧四次
+          // run 之后加的闸；同时也是用户「下次可以在 CDS 里警报」的预防面。
+          if (target?.ssh && lastDiskShortfall) {
+            try {
+              const dfOutput = await this.sshExec(
+                target,
+                `df -Pm ${shellQuote(target.ssh.appPath || '.')} 2>/dev/null || df -Pm /`,
+              );
+              const availableMb = parseDfAvailableMb(dfOutput);
+              if (availableMb === null) {
+                push({ id: 'disk', label: '目标磁盘余量', status: 'warn', message: '无法解析 df 输出，跳过磁盘复查（发布脚本自身仍会守护）', blocking: false });
+              } else if (availableMb < lastDiskShortfall.requiredMb) {
+                push({
+                  id: 'disk',
+                  label: '目标磁盘余量',
+                  status: 'fail',
+                  message: `上次发布因磁盘不足失败（脚本要求 ${lastDiskShortfall.requiredMb}MB 空闲），`
+                    + `当前仍只有 ${availableMb}MB，还差 ${lastDiskShortfall.requiredMb - availableMb}MB。`
+                    + '先清理目标机磁盘（失败详情里有只读磁盘诊断），否则这次发布会在同一处失败。',
+                  blocking: true,
+                });
+              } else {
+                push({ id: 'disk', label: '目标磁盘余量', status: 'pass', message: `${availableMb}MB 空闲，已满足上次失败时的 ${lastDiskShortfall.requiredMb}MB 要求`, blocking: false });
+              }
+            } catch (err) {
+              push({ id: 'disk', label: '目标磁盘余量', status: 'warn', message: `磁盘复查未完成: ${(err as Error).message}`, blocking: false });
+            }
+          }
         }
       }
     } else if (deployScripts.length > 0 && !target?.ssh?.privateKeyRef && canProbeTarget) {
@@ -742,6 +854,12 @@ export class ReleaseService {
     if (!preflight.ok || !preflight.artifact || !preflight.target || !preflight.plan) {
       throw new Error(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
     }
+    // 版本钳制（fail-closed）：调用方说「我要发的是这个 commit」时，绝不能因为分支
+    // 在这期间前进了就默默改发别的版本。见 ReleaseStartInput.expectedCommitSha。
+    const expectedCommitSha = (input.expectedCommitSha || '').trim();
+    if (expectedCommitSha && expectedCommitSha !== preflight.artifact.commitSha) {
+      throw new Error(`分支已前进到 ${preflight.artifact.commitSha}，与请求的版本 ${expectedCommitSha} 不一致，已拒绝发布`);
+    }
     // 并发串行化：同一发布目标已有在途 run（未到终态）时拒绝新发布，避免两个 SSH
     // 部署并发跑互相打架。在途 = 非终态，从 RELEASE_STATUS_TERMINAL 取反推导，
     // 不再手写字面量数组（旧数组里还挂着一个永不出现的 prechecking）。
@@ -779,6 +897,7 @@ export class ReleaseService {
     // run 一入库（queued）就带完整步骤表，UI 立刻能画出「共 M 步」而不是等第一条日志。
     run.progress = buildReleaseRunProgress(preflight.plan, execution.command);
     this.stateService.addReleaseRun(run);
+    this.notifyRunStarted(run);
     this.emitLog(releaseId, 'info', 'release queued', 'queued');
     // 把「放行依据是哪一份结论、是复用还是现跑」写进日志：出事时这是第一现场。
     if (preflight.preflightId) {
@@ -850,6 +969,7 @@ export class ReleaseService {
     const useCustomRollback = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand);
     run.progress = buildRollbackRunProgress(current.planId, rollbackExecution.command, useCustomRollback);
     const persisted = this.stateService.addReleaseRun(run);
+    this.notifyRunStarted(persisted);
     const strategy = useCustomRollback ? 'rollbackCommand' : '重新发布历史版本';
     // 回滚 run **一落库就是 rollback_running**，不经过 patchStatus，所以整条回滚
     // 在 cds-events-bus 上一个 start 事件都没有 —— 观测方看到的第一条生命周期事件
@@ -989,6 +1109,17 @@ export class ReleaseService {
    *  - **安全失败**：SSH 不通 / 目录不存在一律收敛成 unknown 并把原因带出来，
    *    绝不抛给调用方——它跑在定时器或 HTTP 请求里，炸出去会拖累别的目标。
    */
+  /**
+   * 只读磁盘诊断：在发布目标主机上跑 df/du/docker df，回答「空间被什么吃掉了」。
+   * 命令内容见 buildDiskDiagnosisCommand（守卫测试钉死它只许读）；
+   * 输出过一遍脱敏（与发布日志同一判据），杜绝 docker 输出里带出凭据。
+   */
+  async diskDiagnosis(target: ReleaseTarget): Promise<string> {
+    if (target.type !== 'ssh' || !target.ssh) throw new Error('MVP 只支持站点发布目标的磁盘诊断');
+    const output = await this.sshExec(target, buildDiskDiagnosisCommand(target.ssh.appPath));
+    return maskSshExecSecrets(output);
+  }
+
   async readRemoteReleaseState(target: ReleaseTarget): Promise<ReleaseRemoteStateResult> {
     const strategy = effectiveReleaseStrategy(target);
     const mode = strategy.mode;
@@ -1166,28 +1297,59 @@ export class ReleaseService {
    *   不给这个出口就会自锁：回收先 acquire、再走本闸，本闸看见自己那把锁判「目标忙」，
    *   于是回收永远跳过自己。既有用例第一时间抓到，值得留个显式参数而不是靠巧合。
    */
-  private assertTargetFree(
-    targetId: string,
-    action: '发布' | '回滚' | '产物回收',
-    options: { holdsTargetLock?: boolean } = {},
-  ): void {
+  /**
+   * 「目标忙不忙」的**唯一判定源**（公开只读，无副作用）。
+   *
+   * assertTargetFree 消费它；定时发布、UI 禁用态、未来的队列也只许读它。
+   * 谁都不许在别处重写一遍 in-flight / settling / lock 三段谓词 —— 判据一分裂，
+   * 两处必然漂移，而漂移的表现是「一边说忙一边真发了」这种并发写生产。
+   */
+  isTargetBusy(targetId: string, options: { holdsTargetLock?: boolean } = {}): ReleaseTargetBusyState {
     const inFlight = this.stateService
       .getReleaseRuns({ targetId })
       .find((r) => isReleaseRunInFlight(r));
     if (inFlight) {
-      throw new Error(`该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}），请等待其完成后再发起${action}`);
+      return {
+        busy: true,
+        kind: 'in-flight',
+        releaseId: inFlight.releaseId,
+        reason: `该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}）`,
+      };
     }
     const settling = this.findSettlingExecution(targetId);
     if (settling) {
-      throw new Error(`该发布目标上一次发布（${settling}）已停止但执行体尚未退出，请稍候再发起${action}`);
+      return {
+        busy: true,
+        kind: 'settling',
+        releaseId: settling,
+        reason: `该发布目标上一次发布（${settling}）已停止但执行体尚未退出`,
+      };
     }
     // 产物回收不建 run、不留台账痕迹，上面两条判据都看不见它；而它正在远端跑
     // `git worktree remove` / `prune` / `rm -rf`，与发布抢同一个 git 仓库和同一批目录。
     // 这把锁是进程级的，因此巡检器与路由各自 new 的 ReleaseService 也拦得住（debt #6）。
     const lock = options.holdsTargetLock ? null : peekReleaseTargetLock(targetId);
     if (lock) {
-      throw new Error(`该发布目标正在${lock.kind}（远端目录正在变更），请稍候再发起${action}`);
+      return { busy: true, kind: 'lock', reason: `该发布目标正在${lock.kind}（远端目录正在变更）` };
     }
+    return { busy: false };
+  }
+
+  private assertTargetFree(
+    targetId: string,
+    action: '发布' | '回滚' | '产物回收',
+    options: { holdsTargetLock?: boolean } = {},
+  ): void {
+    const state = this.isTargetBusy(targetId, options);
+    if (!state.busy) return;
+    // in-flight 是「它自己会结束」，其余两种是「等一会儿再来」，措辞照旧不变。
+    const suffix = state.kind === 'in-flight' ? `请等待其完成后再发起${action}` : `请稍候再发起${action}`;
+    throw new Error(`${state.reason}，${suffix}`);
+  }
+
+  /** 只读转发：定时发布等外部消费方靠它轮询 run 终态，不必自己拿 StateService。 */
+  getRun(releaseId: string): ReleaseRun | undefined {
+    return this.stateService.getReleaseRun(releaseId);
   }
 
   /** 该发布目标上是否还有「已终态但执行体没退出」的 run；有则返回它的 releaseId。 */
@@ -1548,7 +1710,7 @@ export class ReleaseService {
       sshPort: target.ssh.port,
       sshUser: target.ssh.user,
     };
-    const { privateKey, passphrase } = decryptRemoteHostSecrets(host);
+    const { privateKey, passphrase, password } = decryptRemoteHostSecrets(host);
 
     // 预检类探测跑在 HTTP 请求生命周期里，用短超时；发布命令用长超时。
     const timeoutMs = releaseId ? this.execTimeoutMs : RELEASE_PREFLIGHT_EXEC_TIMEOUT_MS;
@@ -1573,6 +1735,7 @@ export class ReleaseService {
         host,
         privateKey,
         passphrase,
+        password,
         command: cmd,
         signal: controller.signal,
         onOutput: (level, chunk) => {
@@ -1626,7 +1789,9 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
         stream.on('close', (code: unknown) => {
           const exitCode = typeof code === 'number' ? code : 0;
           if (exitCode === 0) return settle(() => resolve(stdout));
-          settle(() => reject(new Error(`ssh exec exit=${exitCode} stderr=${stderr.slice(0, 500)}`)));
+          // stdout 也得进摘要：门禁判据（llmgw-prod-preflight.py 的那段 JSON）走的是
+          // stdout，旧写法只取 stderr 头部，真正的失败原因一个字都留不下来。
+          settle(() => reject(new Error(formatSshExecFailure({ exitCode, stdout, stderr }))));
         });
       });
     });
@@ -1637,6 +1802,7 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
       username: req.host.sshUser,
       privateKey: req.privateKey,
       passphrase: req.passphrase,
+      password: req.password,
       readyTimeout: 10_000,
     });
   });
@@ -1682,6 +1848,38 @@ export function shouldUseCustomRollbackCommand(
   rollbackCommand: string | undefined,
 ): rollbackCommand is string {
   return mode === 'existing-script' && Boolean(rollbackCommand?.trim());
+}
+
+/**
+ * 发布目标的只读磁盘诊断命令。
+ *
+ * 背景（2026-07-30）：生产发布连续三次死在发布脚本自己的磁盘护栏
+ * （`requires at least 4096MB free on /`），但 CDS 只有发布通道、没有自由 shell，
+ * 用户和 Agent 都只能对着「差 226MB」干瞪眼，猜空间被什么吃掉了。
+ * 这条命令把「猜」变成「看」：df 总览 + docker 占用 + 已知热点目录逐个 du。
+ *
+ * 安全边界：**只许读**。全部命令是 df / du / docker system df / docker images，
+ * 没有任何删除、修剪、写入动作——清理仍然是人的决定（配套守卫测试扫这条红线）。
+ * 每段都容错（`|| true` 语义），一段失败不吞掉其余结果。
+ */
+export function buildDiskDiagnosisCommand(appPath: string): string {
+  const app = shellQuote(appPath || '.');
+  return [
+    // 第一行先亮明「这是哪台机器」：2026-07-30 用户按诊断结果去清理，
+    // 结果在另一台机器（CDS 预览服务器）上执行了 prune，生产机纹丝不动。
+    // 主机名放在最前，杜绝「看着 A 机的数据、清着 B 机的盘」。
+    "printf '== 主机 =='; printf ' %s (%s)\\n' \"$(hostname 2>/dev/null || uname -n)\" \"$(whoami 2>/dev/null || echo unknown)\"",
+    "echo '== df -Pm (appPath 所在文件系统) =='",
+    `df -Pm ${app} 2>/dev/null || df -Pm /`,
+    "echo; echo '== docker system df =='",
+    "docker system df 2>/dev/null || echo 'docker 不可用'",
+    "echo; echo '== docker images 体积排行 (前 40) =='",
+    "docker images --format '{{.Size}}\\t{{.Repository}}:{{.Tag}}\\t{{.CreatedSince}}' 2>/dev/null | head -40 || true",
+    "echo; echo '== 热点目录 du -sm =='",
+    `du -sm ${app}/.llmgw-release-evidence /root/.llmgw-temp-release /root/prd-agent-release-evidence /var/log /var/lib/docker/containers 2>/dev/null | sort -rn || true`,
+    "echo; echo '== 站点目录一级明细 du -m -d1 =='",
+    `du -m -d1 ${app} 2>/dev/null | sort -rn | head -20 || true`,
+  ].join('\n');
 }
 
 export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]): string {
@@ -1848,10 +2046,14 @@ export async function probeHealthcheckStatus(url: string, timeoutMs = 8_000): Pr
   }
 }
 
+/**
+ * 发布日志脱敏。**唯一实现**在 ssh-exec-failure.ts —— 这里曾经是一份独立的、
+ * 少两条规则的拷贝（不认 `*_KEY=`、不认 Authorization 头、不认 JSON 口令），
+ * 于是同一条凭据在失败摘要里被盖住、在运行日志里照样露出来。两份判据分头漂移
+ * 正是 predicate-and-wiring-discipline 形状 3，收敛成一处。
+ */
 function maskLog(value: string): string {
-  return value
-    .replace(/-----BEGIN [\s\S]*?PRIVATE KEY-----[\s\S]*?-----END [\s\S]*?PRIVATE KEY-----/g, '***PRIVATE_KEY***')
-    .replace(/(TOKEN|SECRET|PASSWORD|PRIVATE_KEY)=([^\s]+)/gi, '$1=***');
+  return maskSshExecSecrets(value);
 }
 
 async function loadSsh2(): Promise<{ Client: new () => unknown }> {

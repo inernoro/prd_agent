@@ -32,6 +32,15 @@ describe('ScheduledJobService', () => {
       stateService,
       shell,
       config: { masterPort: 9900, repoRoot: tmpDir },
+      // release 端口是必填依赖（刻意的：可选会让「忘记接线」静默通过）。
+      // 本套件不测发布动作，给一个「一被调用就说明测错了」的哑实现。
+      release: {
+        isTargetBusy: () => ({ busy: false }),
+        preflight: async () => { throw new Error('本套件不应触发发布前检查'); },
+        startRelease: async () => { throw new Error('本套件不应触发发布'); },
+        startRollback: async () => { throw new Error('本套件不应触发回滚'); },
+        getRun: () => undefined,
+      },
     });
   });
 

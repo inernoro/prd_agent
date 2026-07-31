@@ -6,7 +6,20 @@ import {
   normalizeProductionOrigin,
 } from '../../web/src/lib/releaseCenter.js';
 
-const releaseCenterSource = fs.readFileSync(
+/**
+ * 发布中心 v2 把 1600 行单文件拆成了 pages/release-center/ 下的一组组件，
+ * 所以这里扫的是「入口页 + 整个 release-center 目录」而不是单个文件——
+ * 只盯入口页的话，任何一段文案搬进子组件都会让本用例静默变绿（假通过）。
+ */
+const releaseCenterDir = path.resolve(process.cwd(), '../cds/web/src/pages/release-center');
+const releaseCenterFiles = [
+  path.resolve(process.cwd(), '../cds/web/src/pages/ReleaseCenterPage.tsx'),
+  ...fs.readdirSync(releaseCenterDir)
+    .filter((name) => name.endsWith('.tsx') || name.endsWith('.ts'))
+    .map((name) => path.join(releaseCenterDir, name)),
+];
+const releaseCenterSource = releaseCenterFiles.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+const releaseCenterEntrySource = fs.readFileSync(
   path.resolve(process.cwd(), '../cds/web/src/pages/ReleaseCenterPage.tsx'),
   'utf8',
 );
@@ -35,7 +48,8 @@ describe('release site publishing UI contract', () => {
   it('keeps the release center in site publishing language', () => {
     expect(releaseCenterSource).toContain('站点发布');
     expect(releaseCenterSource).toContain('还没有站点发布目标');
-    expect(releaseCenterSource).toContain('添加站点发布');
+    // v2 起「添加站点发布」改叫「添加环境」：左栏是环境列表，不是目标列表。
+    expect(releaseCenterSource).toContain('添加环境');
     expect(releaseCenterSource).toContain('选择服务器');
     expect(releaseCenterSource).toContain('生产域名');
     expect(releaseCenterSource).toContain('远端项目仓库');

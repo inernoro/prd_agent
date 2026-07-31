@@ -184,7 +184,7 @@ describe('CDS Agent 接入口令', () => {
   it('为 MCP 适配明确登记候选、审批或禁止暴露状态', () => {
     // 43 = 40 + uptime（自建存活监控只读能力）+ bug-reports（快捷提 bug，2026-07-27）
     //    + bootstrap（项目初始化路由，匿名只读，2026-07-28）
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(43);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(44);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS
