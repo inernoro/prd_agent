@@ -173,13 +173,15 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(shellSource).toContain('authStatus.postLogoutRedirect || shellLoginHref(authStatus.mode)');
   });
 
-  it('将更新、导入、授权和提交通知统一放进顶部信息中心', () => {
-    const accessIndex = informationCenterSource.indexOf('<AccessRequestInbox onCountChange={handleAccessCount} />');
+  it('将普通提醒放进信息中心，授权申请同时提供右下角决策入口', () => {
+    const floatingAccessIndex = informationCenterSource.indexOf('<AccessRequestInbox placement="floating" onCountChange={handleAccessCount} />');
+    const accessIndex = informationCenterSource.indexOf('<AccessRequestInbox />');
     const pendingIndex = informationCenterSource.indexOf('<PendingImportInbox onCountChange={handleImportCount} />');
     const updateIndex = informationCenterSource.indexOf('<GlobalUpdateBadge onCountChange={handleUpdateCount} />');
     const commitIndex = informationCenterSource.indexOf('<CommitInbox onCountChange={handleCommitCount} />');
 
-    expect(accessIndex).toBeGreaterThan(-1);
+    expect(floatingAccessIndex).toBeGreaterThan(-1);
+    expect(accessIndex).toBeGreaterThan(floatingAccessIndex);
     expect(pendingIndex).toBeGreaterThan(accessIndex);
     expect(updateIndex).toBeGreaterThan(pendingIndex);
     expect(commitIndex).toBeGreaterThan(updateIndex);
@@ -195,14 +197,16 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
   });
 
   it('有授权时直接展示申请详情和明确操作，不再退化成小徽章', () => {
-    expect(accessSource).toContain('role="alert"');
-    expect(accessSource).toContain('aria-live="assertive"');
+    expect(accessSource).toContain("role={placement === 'floating' ? 'alert' : 'region'}");
+    expect(accessSource).toContain("aria-live={placement === 'floating' ? 'assertive' : 'off'}");
     expect(accessSource).toContain('需要你的授权');
     expect(accessSource).toContain('{primary.purpose}');
     expect(accessSource).toContain('void reject(primary.id)');
     expect(accessSource).toContain('void approve(primary.id)');
     expect(accessSource).toContain('批准项目访问');
-    expect(accessSource).not.toContain('fixed bottom-16 right-4');
+    expect(accessSource).toContain('data-testid="cds-access-request-floating"');
+    expect(accessSource).toContain('fixed bottom-[84px] right-5');
+    expect(accessSource).toContain('createPortal');
     expect(accessSource).toContain('className="max-w-3xl overflow-hidden"');
   });
 
