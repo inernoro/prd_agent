@@ -24,6 +24,11 @@ import types
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
+# data-emblem 属性的发现正则。**单双引号都要认**，且捕获整个属性值。
+# 收窄任何一处都会让某些合法写法在「发现」环节就消失，后面判得再宽也看不到它：
+#   `([a-z]+)` 漏掉 asteroid-2 / Moon；只认双引号漏掉 data-emblem='asteroid-2'。
+EMBLEM_ATTR_RE = re.compile(r"""data-emblem=(["\'])(.*?)\1""")
+
 # 刊物 -> (产物文件, 该刊物应有的刊徽)
 # 月报（sun）尚无模板，故不在此表；它的刊徽定义保留在设计系统规则里备用，
 # 等 monthly 模板落地时按同样方式接进来（见规则「刊徽注册表」一节）。
@@ -105,6 +110,11 @@ def fail(msg):
     print(f"  [FAIL] {msg}")
 
 
+def count_emblem(text, kind):
+    """数某枚刊徽出现次数——同样两种引号都认，不能用 f'data-emblem="{kind}"' 硬拼。"""
+    return sum(1 for m in EMBLEM_ATTR_RE.finditer(text) if m.group(2) == kind)
+
+
 def check_file(label, rel, expected_kinds):
     path = ROOT / rel
     if not path.is_file():
@@ -116,7 +126,7 @@ def check_file(label, rel, expected_kinds):
     # 合法但不在注册表里的值根本进不了 found，混装判定与 SVG 完整性检查都看不到它——
     # 报告上多一枚完全不受检的水印而守卫全绿。上一轮把「先与 ALL_KINDS 求交」去掉了，
     # 却没发现**发现环节本身**还在窄化：集合在源头就少了元素，后面判得再宽也没用。
-    found = set(re.findall(r'data-emblem="([^"]*)"', text))
+    found = set(m.group(2) for m in re.finditer(EMBLEM_ATTR_RE, text))
 
     missing = expected_kinds - found
     if missing:
@@ -136,7 +146,7 @@ def check_file(label, rel, expected_kinds):
 
     # 每枚只该出现一次；重复会导致 SVG 内部 id 撞车，后一份引用到前一份的 mask
     for kind in expected_kinds:
-        n = text.count(f'data-emblem="{kind}"')
+        n = count_emblem(text, kind)
         if n > 1:
             fail(f"{label}({rel}): 刊徽 {kind} 出现 {n} 次——"
                  f"SVG 内部 id 会撞车，第二枚会引用到第一枚的 mask/clip")
@@ -215,14 +225,14 @@ def check_emblem_in_masthead(label, rel, text, expected_kinds):
     # 子项把报头撑歪。上一轮我只把范围收到「报头」，还差一层。
     spans = _emblem_spans(block)
     for kind in sorted(expected_kinds):
-        n_all = text.count(f'data-emblem="{kind}"')
-        n_head = block.count(f'data-emblem="{kind}"')
+        n_all = count_emblem(text, kind)
+        n_head = count_emblem(block, kind)
         if n_head != n_all:
             fail(f"{label}({rel}): 刊徽 {kind} 有 {n_all - n_head} 处不在 masthead 报头内——"
                  f"搬出报头后绝对定位会相对别的祖先解析（模板），"
                  f"或 `.masthead .emblem` 选择器整条失效（验收生成器）")
             continue
-        n_wrap = sum(block[a:b].count(f'data-emblem="{kind}"') for a, b in spans)
+        n_wrap = sum(count_emblem(block[a:b], kind) for a, b in spans)
         if n_wrap != n_all:
             fail(f"{label}({rel}): 刊徽 {kind} 有 {n_all - n_wrap} 处虽在报头内、"
                  f"但不在 `.emblem` 包裹元素里——SVG 自身没有任何样式，"
@@ -235,7 +245,7 @@ def check_svg_integrity(label, rel, kind, text):
     为什么要查 id：mask/clipPath 引不到就渲染成空白或整块实心——
     页面不报错，肉眼在 0.13 透明度下也未必看得出，属于典型的静默失效。
     """
-    m = re.search(r'<svg[^>]*data-emblem="%s".*?</svg>' % re.escape(kind), text, re.S)
+    m = re.search(r'<svg[^>]*data-emblem=(["\'])%s\1.*?</svg>' % re.escape(kind), text, re.S)
     if not m:
         fail(f"{label}: {kind} 的 <svg> 标签不完整（截不出闭合片段）")
         return
@@ -339,12 +349,12 @@ def check_flavor_wiring():
         except Exception as e:
             fail(f"flavor={flavor} 渲染失败：{type(e).__name__}: {e}")
             continue
-        if out.count(f'data-emblem="{want}"') != 1:
-            n = out.count('data-emblem="%s"' % want)
+        if count_emblem(out, want) != 1:
+            n = count_emblem(out, want)
             fail(f"flavor={flavor} 渲染出的报告里 {want} 出现 {n} 次，应为 1 次"
                  f"——_FLAVORS 的刊徽映射接错了")
         for other in ALL_KINDS - {want}:
-            if f'data-emblem="{other}"' in out:
+            if count_emblem(out, other):
                 fail(f"flavor={flavor} 渲染出的报告戴了 {other}，应为 {want}"
                      f"——_FLAVORS 里两个 flavor 的刊徽很可能对调了")
         # 报头归属查渲染产物：源码里那份 SVG 常量本就不在 masthead 内，
@@ -368,72 +378,120 @@ def cascade_value(bodies, prop):
     return (found[-1] if found else None), found
 
 
-def rule_bodies_for(text, selector):
-    """取出选择器组里**含有** `selector` 的所有规则体，按源码顺序返回。
+def selector_targets(sel, cls, must_mention=None):
+    """这条选择器是否**以 `.cls` 为目标元素**（即最后一段复合选择器含该类）。
 
-    必须按逗号拆开比对，不能对整串 fullmatch：刊系里前景规则写成
-    `.masthead .t, .masthead .r, .masthead .stamp { ... }` 一条三选择器，
-    整串比对会一条都匹配不到，判据变成永远空转。
+    只看最后一段：`.masthead .t` 的目标是 `.t` 不是 `.masthead`；
+    `.emblem svg` 的目标是 svg，不该被当成 `.emblem` 的规则。
+    反过来 `header.masthead`、`.paper .emblem` 的目标就是 masthead / emblem。
+
+    must_mention 用于前景那种「限定在报头内」的契约：要求整串里出现该词，
+    这样 `header.masthead .t`（更特异）会被收进来，而与报头无关的同名 `.t` 不会。
     """
-    bodies = []
-    for m in re.finditer(r'([^{};\n]*)\{\{?([^}]*)\}', text):
-        parts = [p.strip() for p in m.group(1).split(",")]
-        if selector in parts:
-            bodies.append(re.sub(r"\s+", "", m.group(2)))
-    return bodies
+    sel = sel.strip()
+    if not sel:
+        return False
+    if must_mention and must_mention not in sel:
+        return False
+    last = re.split(r'[\s>+~]+', sel)[-1]
+    return re.search(r'\.%s(?![\w-])' % re.escape(cls), last) is not None
+
+
+def rules_targeting(text, cls, must_mention=None):
+    """收集**所有以 `.cls` 为目标**的规则（含更特异的写法），按源码顺序返回。
+
+    为什么不能只认字面等于 `.cls` 的选择器：CSS 的胜者由**特异性**先于源码顺序决定，
+    在 `.masthead` 之前插一条 `header.masthead{position:static}`，浏览器用 static，
+    而只认字面 `.masthead` 的判据根本看不见这条规则（review 实测判绿）。
+
+    本守卫**不实现特异性计算**——那等于在测试里重写一个 CSS 引擎，是新的漂移源。
+    改用更强的契约：凡是能命中这个元素的规则，其声明**都必须**满足约定值。
+    这比 CSS 语义严格（合法的同值重复写法也会被要求一致），但换来的是判据不会因为
+    有人换个更特异的写法就失明——对守卫来说这个取舍是划算的。
+    """
+    out = []
+    # 规则体用 `[^{}]*`（不含左花括号）而不是 `[^}]*`：后者会把
+    # `@media (...) { .emblem { ... } }` 整条当成一个「选择器=@media、体=里面全部」的
+    # 匹配吞掉，嵌套在里面的 .emblem 规则再也匹配不到——窄屏那一档会整个消失。
+    for m in re.finditer(r'([^{};\n]*)\{\{?([^{}]*)\}', text):
+        if any(selector_targets(part, cls, must_mention) for part in m.group(1).split(",")):
+            out.append({"pos": m.start(),
+                        "body": re.sub(r"\s+", "", m.group(2)),
+                        "sel": m.group(1).strip()})
+    return out
+
+
+def require_all_declarations(label, rel, rules, prop, ok, why):
+    """该元素**每一条**匹配规则里的 prop 声明都必须满足 ok()，否则判红。
+
+    取「全部」而不是「层叠胜者」，是上面那个取舍的落地：不用算特异性也不会漏。
+    """
+    seen = False
+    for r in rules:
+        _, declared = cascade_value([r["body"]], prop)
+        for v in declared:
+            seen = True
+            if not ok(v):
+                fail(f"{label}({rel}): 规则 `{r['sel']}` 把 {prop} 声明成 {v!r}——{why}")
+    return seen
 
 
 # 报头里必须画在刊徽**之上**的前景元素。衬字水印是「刊徽 z-index:0 垫底 +
 # 这些前景元素 position:relative;z-index:1 提到上层」两半合起来才成立的：
 # 删掉前景那一半，已定位的 level-0 刊徽就会盖过普通文档流里的报头内容。
 # 第七轮我说「把同一份契约的属性一次列全」，列的却只有 .emblem 自己那半。
-FOREGROUND_SELECTORS = (".masthead .t", ".masthead .r", ".masthead .stamp")
+FOREGROUND_CLASSES = ("t", "r", "stamp")
 
 POSITIONED = ("relative", "absolute", "fixed", "sticky")
 
 
 def check_foreground_stacking(label, rel, text):
-    """前景元素必须已定位且层级高于刊徽，否则「衬字」这个板式根本不成立。"""
-    for sel in FOREGROUND_SELECTORS:
-        bodies = rule_bodies_for(text, sel)
-        if not bodies:
-            fail(f"{label}({rel}): 找不到 `{sel}` 的 CSS 规则——"
+    """前景元素必须已定位且层级高于刊徽，否则「衬字」这个板式根本不成立。
+
+    同样收集所有以该类为目标、且选择器提到 masthead 的规则——这样
+    `header.masthead .t` 这类更特异的覆盖会被收进来，而与报头无关的同名 `.t` 不会。
+    """
+    for cls in FOREGROUND_CLASSES:
+        rules = rules_targeting(text, cls, must_mention="masthead")
+        if not rules:
+            fail(f"{label}({rel}): 找不到报头内 `.{cls}` 的 CSS 规则——"
                  f"报头前景没有被提到刊徽之上，水印会盖住刊名/期号")
             continue
-        pos, pos_all = cascade_value(bodies, "position")
-        if pos is None or pos not in POSITIONED:
-            fail(f"{label}({rel}): `{sel}` 的 position 层叠胜者是 {pos!r}"
-                 f"（声明依次为 {pos_all}）——未定位元素的 z-index 不生效，"
-                 f"刊徽会画到报头文字之上")
-        z, z_all = cascade_value(bodies, "z-index")
-        if z is None or not re.fullmatch(r"-?\d+", z):
-            fail(f"{label}({rel}): `{sel}` 的 z-index 层叠胜者是 {z!r}"
-                 f"（声明依次为 {z_all}）——必须是明确的整数层级")
-        elif int(z) <= 0:
-            fail(f"{label}({rel}): `{sel}` 的 z-index={z} 未高于刊徽的 0——"
+        seen_pos = require_all_declarations(
+            label, rel, rules, "position",
+            lambda v: v in POSITIONED,
+            f"报头前景 `.{cls}` 必须已定位，未定位元素的 z-index 不生效，刊徽会画到报头文字之上")
+        if not seen_pos:
+            fail(f"{label}({rel}): 报头前景 `.{cls}` 没有 position 声明——"
+                 f"未定位元素的 z-index 不生效，刊徽会画到报头文字之上")
+        seen_z = require_all_declarations(
+            label, rel, rules, "z-index",
+            lambda v: bool(re.fullmatch(r"-?\d+", v)) and int(v) > 0,
+            f"报头前景 `.{cls}` 的层级必须是整数且严格高于刊徽的 0，衬字水印才成立")
+        if not seen_z:
+            fail(f"{label}({rel}): 报头前景 `.{cls}` 没有 z-index 声明——"
                  f"衬字水印要求前景严格在刊徽之上")
 
 
 def check_positioning_context(label, rel, text):
     """`.masthead` 必须是已定位祖先，否则刊徽的绝对偏移会锚到别的元素上。
 
-    走与 .emblem 同一套取值口径（层叠胜者），不另起一条判据——本 PR 已经因为
-    「同一个文件里两套取值口径」复发过两次。
+    收集**所有以 masthead 为目标**的规则（含 `header.masthead` 这类更特异写法），
+    并要求每一条的 position 声明都是已定位值——不算特异性，直接拒绝任何会让它
+    退回 static 的写法（见 rules_targeting 的取舍说明）。
     """
-    bodies = rule_bodies_for(text, ".masthead")
-    if not bodies:
-        fail(f"{label}({rel}): 找不到 `.masthead` 自身的 CSS 规则——"
+    rules = rules_targeting(text, "masthead")
+    if not rules:
+        fail(f"{label}({rel}): 找不到以 `.masthead` 为目标的 CSS 规则——"
              f"刊徽的绝对定位没有可锚定的祖先")
         return
-    winner, declared = cascade_value(bodies, "position")
-    if winner is None:
-        fail(f"{label}({rel}): `.masthead` 没有 position 声明——"
-             f"static 祖先不建立定位上下文，刊徽的 top/right 会相对页面级祖先解析，"
-             f"水印跑出报头")
-    elif winner not in POSITIONED:
-        fail(f"{label}({rel}): `.masthead` 的 position 层叠胜者是 {winner!r}"
-             f"（声明依次为 {declared}）——它必须是已定位元素，"
-             f"否则刊徽的绝对偏移会锚到别的祖先上")
+    seen = require_all_declarations(
+        label, rel, rules, "position",
+        lambda v: v in POSITIONED,
+        "`.masthead` 必须是已定位元素，否则刊徽的 top/right 会相对页面级祖先解析，水印跑出报头")
+    if not seen:
+        fail(f"{label}({rel}): `.masthead` 没有任何 position 声明——"
+             f"static 祖先不建立定位上下文，刊徽的 top/right 会相对页面级祖先解析")
 
 
 def check_css_wiring(label, rel):
@@ -453,17 +511,12 @@ def check_css_wiring(label, rel):
     # 取出所有选择器含 .emblem 的规则块（`{` 或 f-string 里的 `{{` 都认），
     # 排除 `.emblem svg` 这种只管内部 svg 尺寸的从属规则。
     # 记下每条规则的位置与「是否在 @media 里」，用于下面的层叠顺序检查。
-    rules = []
-    for m in re.finditer(r'([^{};\n]*\.emblem[^{};\n]*)\{\{?([^}]*)\}', text):
-        selector, body = m.group(1), m.group(2)
-        if "svg" in selector:
-            continue
-        pos = m.start()
-        rules.append({
-            "pos": pos,
-            "body": re.sub(r"\s+", "", body),
-            "in_media": any(a <= pos < b for a, b in media_spans),
-        })
+    # 走统一的 rules_targeting：`.emblem svg` 因目标是 svg 被自动排除，
+    # 而 `.paper .emblem` / `header.masthead .emblem` 这类更特异的覆盖会被收进来
+    # （只认字面 `.emblem` 的旧写法看不见它们，等于对特异性覆盖失明）。
+    rules = rules_targeting(text, "emblem")
+    for r in rules:
+        r["in_media"] = any(a <= r["pos"] < b for a, b in media_spans)
     bodies = [r["body"] for r in rules]
 
     if not bodies:
@@ -480,20 +533,18 @@ def check_css_wiring(label, rel):
     # z-index 同属这份契约：板式叫「衬字水印」，靠 z-index:0 垫在 .t/.r/.stamp（z-index:1）
     # 之下。它一旦漂成 1 以上，刊徽就从「衬底」变成「盖住刊名」，而前两条依然成立。
     # 既然这一轮的教训是「修的是类不是实例」，就把同一份契约的属性一次列全。
+    # 判据取「所有匹配规则的每一条声明都必须等于约定值」，而不是算层叠胜者：
+    # 胜者由特异性先于源码顺序决定，算特异性等于在测试里重写 CSS 引擎（新的漂移源）。
+    # 要求全体一致更严格，但换来「换个更特异的写法就失明」这一整类洞被堵死。
     for prop, want, why in (
         ("position", "absolute", "水印必须绝对定位，否则会挤进报头 flex 流把版面撑歪"),
         ("pointer-events", "none", "水印压在文字上层会挡住选中/点击"),
         ("z-index", "0", "衬字水印必须垫在刊名/期号之下，抬上去就成了盖住报头的贴纸"),
     ):
-        winner, declared = cascade_value(bodies, prop)
-        if winner is None:
+        seen = require_all_declarations(label, rel, rules, prop,
+                                        lambda v, w=want: v == w, why)
+        if not seen:
             fail(f"{label}({rel}): .emblem 规则里没有 {prop} —— {why}")
-        elif winner != want:
-            fail(f"{label}({rel}): .emblem 的 {prop} 层叠胜者是 {winner!r}，应为 {want!r}"
-                 f"（声明依次为 {declared}）—— {why}")
-        elif len(set(declared)) > 1:
-            fail(f"{label}({rel}): .emblem 对 {prop} 有互相打架的声明 {declared}"
-                 f"——实际生效的是最后一条，这种写法请合并成一条")
 
     # 定位祖先：`position:absolute` 的 top/right 是相对**最近的已定位祖先**解析的。
     # 只查 .emblem 自己的声明不够——把 `.masthead` 的 position:relative 拿掉，
