@@ -117,6 +117,15 @@ FENCED_ONLY = """# 模板示例 · 规则
 check(any("缺「一句话」" in p for p in problems_for("rule.demo.md", FENCED_ONLY)),
       "只在代码块里展示格式不算合规（模板文档不能自己骗过闸门）")
 
+BEFORE_H1 = ("**一句话**：导读跑到标题上面去了，读者打开先看到的是标题不是它。\n"
+             "**谁该读**：把导读写在标题之前的人。\n"
+             "**读完能做什么**：知道导读必须在 H1 之后。\n\n# 示例 · 指南\n")
+check(any("缺「一句话」" in p for p in problems_for("guide.demo.md", BEFORE_H1)),
+      "导读写在 H1 之前不算数（写在标题前读者看不见）")
+check(any("缺「一句话」" in p for p in problems_for(
+    "guide.demo.md", GOOD_HEADER.replace("# 示例 · 指南\n", ""))),
+      "整篇没有 H1 时导读不算数")
+
 print("[2] 周报走定期刊物口径")
 
 WEEKLY = """# 周报 2026-W99 (2026-07-20 ~ 2026-07-26)
@@ -306,6 +315,13 @@ RULE_BEFORE_H1 = """**一句话**：导读跑到 H1 上面去了，读者打开�
 """
 check(checker.check_rule_text(RULE_BEFORE_H1) == ["缺「一句话」", "缺「什么时候撞上」"],
       "规则导读必须在 H1 之后（写在标题前读者看不见）")
+
+with tempfile.TemporaryDirectory() as tmp:
+    empty_name = os.path.join(tmp, "SKILL.md")
+    with open(empty_name, "w", encoding="utf-8") as fh:
+        fh.write("---\nname:\ndescription: 这是一段足够长的描述，说清了这个技能什么时候该被触发。\n---\n")
+    check(any("空值" in p for p in checker.check_skill(empty_name)),
+          "frontmatter 的 name 有键无值被抓出（空名字找不到任何技能）")
 
 print("[4] 报告双产物的那句话有人盯着")
 

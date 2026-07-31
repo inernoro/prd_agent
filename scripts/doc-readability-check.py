@@ -88,6 +88,7 @@ def parse_header(text: str) -> dict[str, str]:
     found: dict[str, str] = {}
     labels = list(ONE_LINER_ALIASES) + [f for f in FIELDS if f != "一句话"]
     in_fence = False
+    seen_h1 = False
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
         # 代码块里的示例不算数 —— 否则「展示导读格式的模板文档」会自己骗过闸门
@@ -95,6 +96,12 @@ def parse_header(text: str) -> dict[str, str]:
             in_fence = not in_fence
             continue
         if in_fence:
+            continue
+        if line.startswith("# "):
+            seen_h1 = True
+            continue
+        # 导读要写在标题下面读者才看得见；写在 H1 之前、或整篇没有 H1，都不算数
+        if not seen_h1:
             continue
         if line.startswith(">"):
             line = line.lstrip(">").strip()
@@ -443,8 +450,12 @@ def check_skill(path: str) -> list[str]:
     end = text.find("\n---", 3)
     fm = text[3:end] if end != -1 else ""
     problems = []
-    if not re.search(r"^name\s*:", fm, re.M):
+    name_match = re.search(r"^name\s*:(.*)$", fm, re.M)
+    if not name_match:
         problems.append("frontmatter 缺 name")
+    elif not name_match.group(1).strip().strip("\"'"):
+        # 有键无值等于没有 —— 技能靠 name 被找到，空值找不到任何东西
+        problems.append("frontmatter 的 name 是空值")
     desc = _frontmatter_description(fm)
     if desc is None:
         problems.append("frontmatter 缺 description")
