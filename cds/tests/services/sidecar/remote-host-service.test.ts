@@ -123,9 +123,13 @@ describe('RemoteHostService', () => {
       expect(() =>
         svc.create({ name: 'x', host: '1', sshUser: '', sshPrivateKey: SAMPLE_PEM }),
       ).toThrow(/sshUser/);
+      // 私钥不再是唯一凭据（还可以填密码 / 让 CDS 生成密钥对），
+      // 所以「只给空私钥」的报错从 "sshPrivateKey is required" 变成
+      // 「一种认证方式都没选」。断言的行为没变：空凭据必须被拒。
+      // 互斥与另外两条路径的覆盖见 remote-host-credentials.test.ts。
       expect(() =>
         svc.create({ name: 'x', host: '1', sshUser: 'r', sshPrivateKey: '' }),
-      ).toThrow(/sshPrivateKey/);
+      ).toThrow(/认证方式/);
     });
 
     it('重名拒绝', () => {

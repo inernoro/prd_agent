@@ -125,15 +125,21 @@ describe('self-update production transition guard', () => {
   });
 
   it('blocks a non-fast-forward branch replacement without explicit intent', () => {
-    expect(evaluateSelfUpdateTransition({
+    const decision = evaluateSelfUpdateTransition({
       currentSha,
       targetSha,
       targetContainsCurrent: false,
-    })).toEqual({
-      allowed: false,
-      code: 'non_fast_forward_update_requires_intent',
-      message: '目标版本不包含当前 CDS 提交；必须显式声明 release 或 rollback。',
     });
+    // 断言 code（稳定契约）而不是逐字锁 message：message 是给人看的文案，
+    // 之前锁成字面量后，改进提示语反而让这条用例变红——测试在阻止修 UX。
+    expect(decision.allowed).toBe(false);
+    expect(decision).toMatchObject({ code: 'non_fast_forward_update_requires_intent' });
+    // 但要求它把「缺哪三个字段」说出来：只说「必须显式声明」的话，
+    // 从「强制更新」按钮点过来的人会以为自己已经声明过了（2026-07-30 用户反馈）。
+    const message = 'message' in decision ? decision.message : '';
+    for (const field of ['transitionIntent', 'expectedFromSha', 'transitionReason']) {
+      expect(message).toContain(field);
+    }
   });
 
   it('requires optimistic locking and an audit reason for an explicit release', () => {

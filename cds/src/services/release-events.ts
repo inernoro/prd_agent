@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { DeploymentFailure, ReleaseLogEntry, ReleaseRun, ReleaseRunStatus } from '../types.js';
 import { cdsEventsBus } from './cds-events-bus.js';
+import { describeDiskShortfall, parseDiskGuardShortfall } from './release-disk-guard.js';
 
 export type ReleaseEventEnvelope =
   | { type: 'release.log'; payload: { releaseId: string; log: ReleaseLogEntry } }
@@ -55,6 +56,8 @@ export interface ReleaseLifecycleEventData {
   finishedAt?: string;
   operator?: string;
   rollbackOf?: string;
+  /** 结构化的人话结论（如磁盘差额），站内信 detail 的第一优先字段。 */
+  message?: string;
   errorMessage?: string;
   failure?: DeploymentFailure;
 }
@@ -115,6 +118,12 @@ class ReleaseEventBus extends EventEmitter {
         const oldest = this.lastLifecycle.keys().next();
         if (!oldest.done) this.lastLifecycle.delete(oldest.value);
       }
+      // 磁盘护栏失败要在站内信里说人话（「还差 226MB」而不是「ssh exec exit=1」）。
+      // data.message 是 notice-ledger 取 detail 的第一优先字段（2026-07-30 用户要求
+      // 「下次可以在 CDS 里警报」的落点）。只在失败事件上算，成功路径零开销。
+      const diskShortfall = type === 'release.failed'
+        ? parseDiskGuardShortfall((run.logs || []).map((log) => log.message))
+        : null;
       const data: ReleaseLifecycleEventData = {
         releaseId: run.releaseId,
         projectId: run.projectId,
@@ -126,6 +135,7 @@ class ReleaseEventBus extends EventEmitter {
         ...(run.finishedAt ? { finishedAt: run.finishedAt } : {}),
         ...(run.operator ? { operator: run.operator } : {}),
         ...(run.rollbackOf ? { rollbackOf: run.rollbackOf } : {}),
+        ...(diskShortfall ? { message: describeDiskShortfall(diskShortfall) } : {}),
         ...(run.errorMessage ? { errorMessage: run.errorMessage } : {}),
         ...(run.failure ? { failure: run.failure } : {}),
       };

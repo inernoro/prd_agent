@@ -170,24 +170,61 @@ else
   llmgw_serve_image="${PRD_AGENT_LLMGW_SERVE_IMAGE:-$default_llmgw_serve_image}"
   llmgw_web_image="${PRD_AGENT_LLMGW_WEB_IMAGE:-$default_llmgw_web_image}"
 fi
-timeout_seconds="${FAST_PULL_TIMEOUT_SECONDS:-30}"
+# 单张镜像的预热超时。30s 是拍出来的，api 镜像每次都拉不完就被掐断，于是每次发布
+# 都稳定产出一串 "context canceled" —— 这些 warn 级噪音会挤占 CDS buildFailure 那个
+# 「只取最后 10 条 warn/error」的窗口，把真正的失败原因顶出摘要。
+# 180s 的依据：api 镜像约数百 MB，按生产机常见的 5-10 MB/s 出口带宽算，冷拉一张需要
+# 60-120s，180s 留一倍余量；仍拉不完就是网络确实有问题，该走下面的 WARN 跳过。
+timeout_seconds="${FAST_PULL_TIMEOUT_SECONDS:-180}"
+# 全部镜像预热的**总**预算。单张放宽到 180s 之后必须有这道闸：整条
+# scripts/llmgw-prod-stage.sh 是一条 SSH 命令，共享 CDS 侧 30 分钟的执行超时，
+# 后面还有 exec_dep.sh 的权威 pull + 构建 + post-deploy 门禁。没有总闸的话，
+# 谁再把单张调大一点，「预热超时」就会变成更难查的 release.exec.timeout。
+total_timeout_seconds="${FAST_PULL_TOTAL_TIMEOUT_SECONDS:-420}"
+warm_started_at="$(date +%s)"
 release_intent_file="${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}"
 
 warm_image() {
   name="$1"
   image="$2"
-  echo "Warming ${name} image: $image"
+
+  elapsed=$(( $(date +%s) - warm_started_at ))
+  if [ "$elapsed" -ge "$total_timeout_seconds" ]; then
+    echo "WARN: ${name} image warmup skipped (total warmup budget ${total_timeout_seconds}s exhausted); exec_dep.sh will enforce release pull" >&2
+    return 0
+  fi
+
+  # 单张的超时必须被**剩余**总预算夹住，否则总闸是假的：
+  # 默认 4 张 x 180s 在 420s 的总预算下，前两张各卡满就已经 360s，
+  # 第三张仍按整 180s 起跑 → 实际 540s，比广告的 420s 多出四分之一，
+  # 而这段时间是从发布 SSH 窗口里借的（Codex review P2，2026-07-29）。
+  # 同理 FAST_PULL_TIMEOUT_SECONDS 被调得比总预算还大时，第一张就该被夹住。
+  remaining=$(( total_timeout_seconds - elapsed ))
+  pull_timeout="$timeout_seconds"
+  if [ "$remaining" -lt "$pull_timeout" ]; then
+    pull_timeout="$remaining"
+  fi
+
+  echo "Warming ${name} image: $image (timeout ${pull_timeout}s, remaining budget ${remaining}s)"
+  # stdout（层进度）继续直连：它是 info 级的，既给人等待反馈又不污染 warn 窗口。
+  # stderr 收进临时文件，失败时只压成一行 WARN —— 掐掉噪音靠的是这里，
+  # 不是靠「不再超时」（超时仍可能发生，但 warn 行数从几十行降到 1 行）。
+  pull_err="$(mktemp)"
   if command -v timeout >/dev/null 2>&1; then
-    if timeout "$timeout_seconds" docker pull "$image"; then
+    if timeout "$pull_timeout" docker pull "$image" 2>"$pull_err"; then
+      rm -f "$pull_err"
       echo "${name} image warmup completed"
     else
-      echo "WARN: ${name} image warmup skipped or timed out after ${timeout_seconds}s; exec_dep.sh will enforce release pull" >&2
+      echo "WARN: ${name} image warmup skipped or timed out after ${pull_timeout}s (last: $(tail -n 3 "$pull_err" | tr '\n' ' ')); exec_dep.sh will enforce release pull" >&2
+      rm -f "$pull_err"
     fi
   else
-    if docker pull "$image"; then
+    if docker pull "$image" 2>"$pull_err"; then
+      rm -f "$pull_err"
       echo "${name} image warmup completed"
     else
-      echo "WARN: ${name} image warmup failed; exec_dep.sh will enforce release pull" >&2
+      echo "WARN: ${name} image warmup failed (last: $(tail -n 3 "$pull_err" | tr '\n' ' ')); exec_dep.sh will enforce release pull" >&2
+      rm -f "$pull_err"
     fi
   fi
 }

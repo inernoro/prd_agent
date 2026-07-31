@@ -22,6 +22,21 @@ function read(relative: string): string {
   return fs.readFileSync(path.join(CDS_ROOT, relative), 'utf8');
 }
 
+/**
+ * 发布中心 v2 已从单文件拆成 pages/release-center/ 下的一组组件，
+ * 所以这里扫「入口页 + 整个目录」——只盯入口页的话，任何一份 ETA 拷贝
+ * 搬进子组件都会让本套件静默变绿。
+ */
+function releaseCenterSurface(): string {
+  const dir = path.join(CDS_ROOT, 'web/src/pages/release-center');
+  const files = fs.readdirSync(dir)
+    .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
+    .map((name) => path.join(dir, name));
+  return [path.join(CDS_ROOT, 'web/src/pages/ReleaseCenterPage.tsx'), ...files]
+    .map((file) => fs.readFileSync(file, 'utf8'))
+    .join('\n');
+}
+
 function walk(relativeDir: string, extensions: string[]): string[] {
   const out: string[] = [];
   const stack = [path.join(CDS_ROOT, relativeDir)];
@@ -98,7 +113,7 @@ describe('发布 ETA 判定只有一个源', () => {
   });
 
   it('发布中心页面只消费，不自己算 median 与 elapsed 的差', () => {
-    const source = read('web/src/pages/ReleaseCenterPage.tsx');
+    const source = releaseCenterSurface();
 
     expect(source).toContain("from '@/lib/releaseEta'");
     expect(source).toContain('releaseEtaText(');
@@ -107,15 +122,20 @@ describe('发布 ETA 判定只有一个源', () => {
   });
 
   it('发布进行中的计时每秒走动，样本不足时也不许静止', () => {
-    const source = read('web/src/pages/ReleaseCenterPage.tsx');
+    const source = releaseCenterSurface();
 
     // 事故值：只在 SSE 状态事件里重渲染。相邻两次状态事件之间可能几分钟没有一条，
     // 秒数定住 = 用户眼里的「页面卡死」；历史样本不足时更是只剩这个计时能证明
     // 系统还活着，静止的「加载中」就是缺陷。
-    expect(source).toMatch(/function useNowTick\(/);
-    expect(source).toMatch(/setInterval\(\(\) => setNow\(Date\.now\(\)\), 1_000\)/);
-    // 卡片与日志弹窗两处都要开表，少一处那一处就是静止的。
-    expect((source.match(/useNowTick\(/g) || []).length).toBe(3);
+    //
+    // v2 起秒表不再在本页复制一份：走全局共享的 @/hooks/useNowTick
+    // （BranchListPage 用的也是它）。判据随之变成「引用共享源 + 该开表的地方都开了」。
+    expect(source).toContain("from '@/hooks/useNowTick'");
+    expect(read('web/src/hooks/useNowTick.ts'))
+      .toMatch(/setInterval\(\(\) => setNow\(Date\.now\(\)\), intervalMs\)/);
+    expect(source).not.toMatch(/function useNowTick\(/);
+    // 概览的「正在发布」、日志弹窗、就地发布抽屉三处都要开表，少一处那一处就是静止的。
+    expect((source.match(/useNowTick\(/g) || []).length).toBeGreaterThanOrEqual(3);
   });
 
   it('无样本文案是唯一的诚实兜底，页面里不许写死一个预计数字', () => {
@@ -124,7 +144,7 @@ describe('发布 ETA 判定只有一个源', () => {
     // 无样本一律 null，不回落到 0（回落即渲染「预计还需 00:00」）。
     expect(lib).toMatch(/remainingMs: null/);
 
-    const pageLiterals = stringLiterals(read('web/src/pages/ReleaseCenterPage.tsx')).join('\n');
+    const pageLiterals = stringLiterals(releaseCenterSurface()).join('\n');
     expect(pageLiterals).not.toContain('预计还需');
     expect(pageLiterals).not.toContain('正在积累历史耗时数据');
   });

@@ -171,6 +171,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['infra-data', '基础设施数据与 Schema', 'infra-data.ts', 'project', 'project', 'write', 'guided', 'cds', '', '查询默认只读，初始化 SQL 和写查询需要额外批准'],
   ['legacy-cleanup', '遗留数据清理', 'legacy-cleanup.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '只允许先查看状态，再由人类明确批准清理或重命名'],
   ['managed-projects', '托管项目目录', 'managed-projects.ts', 'system', 'system', 'write', 'direct', 'cds', '', '托管目录和普通项目身份需要分别核对'],
+  ['notices', '服务端站内信账本', 'notices.ts', 'mixed', 'system', 'write', 'direct', 'cds', '', '账本记录发布失败、生产掉线等告警；外发未配置时状态是「未外发」，不得当作已通知到人'],
   ['operator-console', '系统运维审批台', 'operator-console.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', 'AI 可以发起请求和查状态，批准、拒绝和执行仅人类可做'],
   ['peer-sync', 'Peer Sync 配对与资源同步', 'peer-sync.ts', 'system', 'protocol-token', 'destructive', 'protocol-only', 'cds', 'peer', '配对码、HMAC 和资源 apply 属于专用同步协议'],
   ['pending-import', '项目配置导入审批', 'pending-import.ts', 'project', 'project', 'write', 'direct', 'cds-project-scan', 'import', 'Agent 可提交，审批和拒绝由页面完成'],

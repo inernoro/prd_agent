@@ -28,6 +28,31 @@ export interface ReleaseHealthSnapshot {
   excluded?: boolean;
   /** 探测间隔（秒），用于「等待首次探测」文案给出诚实的等待时长 */
   intervalSeconds?: number;
+  /**
+   * 近 24 小时可用率 0-1。**窗口内无采样时是 null，不是 0** —— 沿用
+   * uptime-metrics 的口径：0 的含义是「全挂」，拿它顶替「没数据」等于报一次假故障。
+   * 整组字段缺省则代表监控没开或该目标未纳入探测，前端渲染「无数据」。
+   */
+  availability24h?: number | null;
+  sampleCount24h?: number;
+  upCount24h?: number;
+  /** 成功采样的平均响应耗时；无数据为 null。 */
+  avgLatencyMs24h?: number | null;
+}
+
+/** 快照里 24h 那一组字段。原样透传给发布中心，本模块不做任何再计算。 */
+type Availability24h = Pick<
+  ReleaseHealthSnapshot,
+  'availability24h' | 'sampleCount24h' | 'upCount24h' | 'avgLatencyMs24h'
+>;
+
+function availability24hOf(record: ReleaseHealthSnapshot): Availability24h {
+  return {
+    ...(record.availability24h !== undefined ? { availability24h: record.availability24h } : {}),
+    ...(record.sampleCount24h !== undefined ? { sampleCount24h: record.sampleCount24h } : {}),
+    ...(record.upCount24h !== undefined ? { upCount24h: record.upCount24h } : {}),
+    ...(record.avgLatencyMs24h !== undefined ? { avgLatencyMs24h: record.avgLatencyMs24h } : {}),
+  };
 }
 
 export type ReleaseHealthSource = (probeTargetId: string) => ReleaseHealthSnapshot | undefined;
@@ -80,12 +105,22 @@ export function readReleaseHealthSnapshot(target: ReleaseTarget): ReleaseHealthP
     return { status: 'unknown', url: record.probeUrl || url, checkedAt: now, message: '该目标已被排除名单命中，未纳入存活监控' };
   }
 
+  // 近 24h 那一组从这里开始随每个分支一起透传：即使当前判定是 paused / unknown，
+  // 「过去一天有多稳」照样是用户要的信息，不该只在 healthy 分支才给。
+  const window24h = availability24hOf(record);
+
   const sample = record.lastSample;
   if (!sample) {
     const eta = record.intervalSeconds && record.intervalSeconds > 0
       ? `，约 ${record.intervalSeconds} 秒后出首个结果`
       : '';
-    return { status: 'unknown', url: record.probeUrl || url, checkedAt: now, message: `等待首次探测${eta}` };
+    return {
+      status: 'unknown',
+      url: record.probeUrl || url,
+      checkedAt: now,
+      message: `等待首次探测${eta}`,
+      ...window24h,
+    };
   }
 
   const checkedAt = new Date(sample.t).toISOString();
@@ -97,10 +132,11 @@ export function readReleaseHealthSnapshot(target: ReleaseTarget): ReleaseHealthP
       checkedAt,
       responseTimeMs: sample.ms,
       message: record.pausedReason || '存活监控已暂停探测该目标',
+      ...window24h,
     };
   }
   if (record.status === 'up') {
-    return { status: 'healthy', url: probeUrl, checkedAt, responseTimeMs: sample.ms };
+    return { status: 'healthy', url: probeUrl, checkedAt, responseTimeMs: sample.ms, ...window24h };
   }
   if (record.status === 'down') {
     return {
@@ -109,6 +145,7 @@ export function readReleaseHealthSnapshot(target: ReleaseTarget): ReleaseHealthP
       checkedAt,
       responseTimeMs: sample.ms,
       message: sample.err || (sample.code ? `healthcheck HTTP ${sample.code}` : 'healthcheck failed'),
+      ...window24h,
     };
   }
   // 'unknown'：去抖还没攒够，已有采样但还不足以定性。给出最近一次的原始结果而不是
@@ -119,5 +156,6 @@ export function readReleaseHealthSnapshot(target: ReleaseTarget): ReleaseHealthP
     checkedAt,
     responseTimeMs: sample.ms,
     message: sample.up ? '存活判定累积中（最近一次探测正常）' : sample.err || '存活判定累积中（最近一次探测失败）',
+    ...window24h,
   };
 }
