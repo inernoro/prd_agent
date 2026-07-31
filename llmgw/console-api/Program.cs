@@ -1666,13 +1666,14 @@ app.MapGet("/gw/logs", async (
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
     string? runId, string? requestId, string? sessionId, string? modelPoolId,
-    string? serviceKeyId, string? clientCode, string? environment) =>
+    string? serviceKeyId, string? clientCode, string? environment,
+    string? operation, string? view) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view));
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -1724,6 +1725,7 @@ app.MapGet("/gw/logs/meta", async (HttpContext http) =>
         ServiceKeyIds = NormalizeDistinct(serviceKeyIdsRaw, 300),
         ClientCodes = NormalizeDistinct(clientCodesRaw, 300),
         Environments = NormalizeDistinct(environmentsRaw, 20),
+        Operations = ["invoke", "submit", "status", "download", "cancel", "probe"],
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -1734,10 +1736,11 @@ app.MapGet("/gw/logs/timeseries", async (
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
     string? runId, string? requestId, string? sessionId, string? modelPoolId,
-    string? serviceKeyId, string? clientCode, string? environment) =>
+    string? serviceKeyId, string? clientCode, string? environment,
+    string? operation, string? view) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view));
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -1767,10 +1770,12 @@ app.MapGet("/gw/logs/summary", async (
     string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
     string? runId, string? requestId, string? sessionId, string? modelPoolId,
-    string? serviceKeyId, string? clientCode, string? environment) =>
+    string? serviceKeyId, string? clientCode, string? environment,
+    string? operation, string? view) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view));
+    var physicalFilter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation: null, view: "physical"));
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -1785,8 +1790,14 @@ app.MapGet("/gw/logs/summary", async (
         .Include("GatewayTransport")
         .Include("SourceSystem")
         .Include("IngressProtocol")
-        .Include("ModelPolicy");
+        .Include("ModelPolicy")
+        .Include("Operation")
+        .Include("RequestType")
+        .Include("HttpMethod")
+        .Include("Path")
+        .Include("IsHealthProbe");
     var docs = await logs.Find(filter).Project(projection).ToListAsync();
+    var physicalDocs = await logs.Find(physicalFilter).Project(projection).ToListAsync();
 
     var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
     var pricedDocs = docs
@@ -1814,6 +1825,9 @@ app.MapGet("/gw/logs/summary", async (
     var data = new LogsSummaryData
     {
         Total = docs.Count,
+        UpstreamCalls = physicalDocs.Count,
+        ControlCalls = physicalDocs.LongCount(d => !IsBusinessOperation(ResolveLogOperation(d))),
+        StatusQueries = physicalDocs.LongCount(d => ResolveLogOperation(d) == "status"),
         Succeeded = docs.LongCount(d => d.GetStringOrEmpty("Status") == "succeeded"),
         Failed = docs.LongCount(d => d.GetStringOrEmpty("Status") == "failed"),
         Running = docs.LongCount(d => d.GetStringOrEmpty("Status") == "running"),
@@ -1857,7 +1871,7 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
     var overviewFilter = TenantAccess.FilterTeamScope(http, fb.And(
         fb.Gte("StartedAt", fromUtc),
         fb.Lt("StartedAt", toUtc),
-        fb.Ne("IsHealthProbe", true)));
+        BuildBusinessOperationFilter()));
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -2119,7 +2133,7 @@ app.MapGet("/gw/logs/sessions", async (
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, view: "logical"));
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -2165,7 +2179,64 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
     {
         return Json(ApiEnvelope<LlmLogDetail>.Fail("NOT_FOUND", "日志不存在"), jsonOptions, statusCode: 404);
     }
-    return Json(ApiEnvelope<LlmLogDetail>.Ok(MapDetail(doc)), jsonOptions);
+    var detail = MapDetail(doc);
+    var logicalRequestId = detail.LogicalRequestId ?? detail.RunId ?? detail.SessionId ?? detail.RequestId;
+    var relatedFilters = new List<FilterDefinition<BsonDocument>>
+    {
+        Builders<BsonDocument>.Filter.Eq("_id", id),
+    };
+    if (!string.IsNullOrWhiteSpace(logicalRequestId))
+    {
+        relatedFilters.Add(
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Eq("LogicalRequestId", logicalRequestId),
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Exists("LogicalRequestId", false),
+                    Builders<BsonDocument>.Filter.Eq("RunId", logicalRequestId))));
+    }
+    if (!string.IsNullOrWhiteSpace(detail.ProviderTaskId))
+    {
+        relatedFilters.Add(Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Eq("ProviderTaskId", detail.ProviderTaskId),
+            Builders<BsonDocument>.Filter.Regex(
+                "Path",
+                new BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(detail.ProviderTaskId)))));
+    }
+    if (relatedFilters.Count > 0)
+    {
+        var relatedFilter = TenantAccess.FilterTeamScope(
+            http,
+            Builders<BsonDocument>.Filter.Or(relatedFilters));
+        var related = await logs.Find(relatedFilter)
+            .Project(Builders<BsonDocument>.Projection
+                .Include("Operation")
+                .Include("RequestType")
+                .Include("HttpMethod")
+                .Include("Path")
+                .Include("ProviderTaskId")
+                .Include("ProviderReportedCost")
+                .Include("ProviderCostCurrency")
+                .Include("IsHealthProbe"))
+            .ToListAsync();
+        detail.UpstreamCallCount = related.Count;
+        detail.StatusQueryCount = related.LongCount(item => ResolveLogOperation(item) == "status");
+        detail.ProviderTaskId ??= related
+            .Select(item => item.AsNullableString("ProviderTaskId") ?? InferProviderTaskId(item))
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        var reportedCost = related
+            .Select(item => new
+            {
+                Amount = item.AsNullableDecimal("ProviderReportedCost"),
+                Currency = item.AsNullableString("ProviderCostCurrency"),
+            })
+            .FirstOrDefault(value => value.Amount is not null);
+        if (detail.ProviderReportedCost is null && reportedCost is not null)
+        {
+            detail.ProviderReportedCost = reportedCost.Amount;
+            detail.ProviderCostCurrency = reportedCost.Currency;
+        }
+    }
+    return Json(ApiEnvelope<LlmLogDetail>.Ok(detail), jsonOptions);
 }).RequireAuthorization("RequestBodyRead");
 
 // ─────────────── 网关配置面（只读，腿 B 第一刀）───────────────
@@ -9315,7 +9386,9 @@ static FilterDefinition<BsonDocument> BuildFilter(
     string? modelPoolId,
     string? serviceKeyId,
     string? clientCode,
-    string? environment)
+    string? environment,
+    string? operation = null,
+    string? view = null)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -9339,9 +9412,137 @@ static FilterDefinition<BsonDocument> BuildFilter(
     if (!string.IsNullOrWhiteSpace(serviceKeyId)) filters.Add(fb.Eq("ServiceKeyId", serviceKeyId.Trim()));
     if (!string.IsNullOrWhiteSpace(clientCode)) filters.Add(fb.Eq("ClientCode", clientCode.Trim()));
     if (!string.IsNullOrWhiteSpace(environment)) filters.Add(fb.Eq("Environment", environment.Trim()));
+    if (!string.IsNullOrWhiteSpace(operation))
+    {
+        filters.Add(BuildOperationFilter(operation));
+    }
+    else if (string.Equals(view, "logical", StringComparison.OrdinalIgnoreCase))
+    {
+        filters.Add(BuildBusinessOperationFilter());
+    }
     var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
     if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
     return fb.And(filters);
+}
+
+static FilterDefinition<BsonDocument> BuildBusinessOperationFilter()
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var legacyBusiness = fb.And(
+        fb.Exists("Operation", false),
+        fb.Ne("IsHealthProbe", true),
+        fb.Or(
+            fb.Ne("RequestType", "video-gen"),
+            fb.Nin("HttpMethod", new[] { "GET", "DELETE" })));
+    return fb.Or(
+        fb.In("Operation", new[] { "invoke", "submit" }),
+        legacyBusiness);
+}
+
+static FilterDefinition<BsonDocument> BuildOperationFilter(string operation)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var normalized = operation.Trim().ToLowerInvariant();
+    var legacy = fb.Exists("Operation", false);
+    return normalized switch
+    {
+        "submit" => fb.Or(
+            fb.Eq("Operation", "submit"),
+            fb.And(legacy, fb.Eq("RequestType", "video-gen"), fb.Eq("HttpMethod", "POST"), fb.Ne("IsHealthProbe", true))),
+        "status" => fb.Or(
+            fb.Eq("Operation", "status"),
+            fb.And(
+                legacy,
+                fb.Eq("RequestType", "video-gen"),
+                fb.Eq("HttpMethod", "GET"),
+                fb.Not(fb.Regex("Path", new BsonRegularExpression("/content", "i"))),
+                fb.Ne("IsHealthProbe", true))),
+        "download" => fb.Or(
+            fb.Eq("Operation", "download"),
+            fb.And(
+                legacy,
+                fb.Eq("RequestType", "video-gen"),
+                fb.Eq("HttpMethod", "GET"),
+                fb.Regex("Path", new BsonRegularExpression("/content", "i")),
+                fb.Ne("IsHealthProbe", true))),
+        "cancel" => fb.Or(
+            fb.Eq("Operation", "cancel"),
+            fb.And(legacy, fb.Eq("RequestType", "video-gen"), fb.Eq("HttpMethod", "DELETE"), fb.Ne("IsHealthProbe", true))),
+        "probe" => fb.Or(
+            fb.Eq("Operation", "probe"),
+            fb.And(legacy, fb.Eq("IsHealthProbe", true))),
+        "invoke" => fb.Or(
+            fb.Eq("Operation", "invoke"),
+            fb.And(
+                legacy,
+                fb.Ne("IsHealthProbe", true),
+                fb.Or(
+                    fb.Ne("RequestType", "video-gen"),
+                    fb.Nin("HttpMethod", new[] { "GET", "DELETE", "POST" })))),
+        _ => fb.Eq("Operation", normalized),
+    };
+}
+
+static string ResolveLogOperation(BsonDocument doc)
+{
+    var stored = doc.AsNullableString("Operation")?.Trim().ToLowerInvariant();
+    if (stored is "invoke" or "submit" or "status" or "download" or "cancel" or "probe")
+        return stored;
+    if (doc.AsNullableBool("IsHealthProbe") == true) return "probe";
+    if (!string.Equals(doc.AsNullableString("RequestType"), "video-gen", StringComparison.OrdinalIgnoreCase))
+        return "invoke";
+
+    var method = doc.AsNullableString("HttpMethod")?.Trim().ToUpperInvariant();
+    if (method == "DELETE") return "cancel";
+    if (method == "GET")
+        return doc.AsNullableString("Path")?.Contains("/content", StringComparison.OrdinalIgnoreCase) == true
+            ? "download"
+            : "status";
+    return method == "POST" ? "submit" : "invoke";
+}
+
+static bool IsBusinessOperation(string operation)
+    => operation is "invoke" or "submit";
+
+static string? InferProviderTaskId(BsonDocument doc)
+{
+    if (!string.Equals(doc.AsNullableString("RequestType"), "video-gen", StringComparison.OrdinalIgnoreCase))
+        return null;
+    var operation = ResolveLogOperation(doc);
+    if (operation == "submit")
+    {
+        var responseBody = doc.AsNullableString("AnswerText");
+        if (string.IsNullOrWhiteSpace(responseBody)) return null;
+        try
+        {
+            using var parsed = JsonDocument.Parse(responseBody);
+            if (parsed.RootElement.ValueKind != JsonValueKind.Object) return null;
+            foreach (var field in new[] { "id", "generation_id", "task_id" })
+            {
+                if (parsed.RootElement.TryGetProperty(field, out var value)
+                    && value.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(value.GetString()))
+                {
+                    return value.GetString();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        return null;
+    }
+    if (operation is not ("status" or "download" or "cancel")) return null;
+    var path = doc.AsNullableString("Path");
+    if (string.IsNullOrWhiteSpace(path)) return null;
+    var segments = path.Split('?', 2)[0]
+        .Split('/', StringSplitOptions.RemoveEmptyEntries);
+    if (segments.Length == 0) return null;
+    var index = operation == "download" && segments[^1].Equals("content", StringComparison.OrdinalIgnoreCase)
+        ? segments.Length - 2
+        : segments.Length - 1;
+    return index >= 0 ? Uri.UnescapeDataString(segments[index]) : null;
 }
 
 static List<string> NormalizeDistinct(IEnumerable<string?> values, int limit) =>
@@ -9506,6 +9707,8 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     GroupId = d.AsNullableString("GroupId"),
     SessionId = d.AsNullableString("SessionId"),
     RunId = d.AsNullableString("RunId"),
+    LogicalRequestId = d.AsNullableString("LogicalRequestId"),
+    ProviderTaskId = d.AsNullableString("ProviderTaskId") ?? InferProviderTaskId(d),
     UserId = d.AsNullableString("UserId"),
     TeamId = d.AsNullableString("TeamId"),
     ServiceKeyId = d.AsNullableString("ServiceKeyId"),
@@ -9515,6 +9718,7 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     Username = null,
     DisplayName = null,
     RequestType = d.AsNullableString("RequestType"),
+    Operation = ResolveLogOperation(d),
     AppCallerCode = d.AsNullableString("AppCallerCode"),
     AppCallerCodeDisplayName = d.AsNullableString("AppCallerCodeDisplayName"),
     AppCallerTitle = d.AsNullableString("AppCallerTitle"),
@@ -9561,6 +9765,8 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     GroupId = d.AsNullableString("GroupId"),
     SessionId = d.AsNullableString("SessionId"),
     RunId = d.AsNullableString("RunId"),
+    LogicalRequestId = d.AsNullableString("LogicalRequestId"),
+    ProviderTaskId = d.AsNullableString("ProviderTaskId") ?? InferProviderTaskId(d),
     UserId = d.AsNullableString("UserId"),
     TeamId = d.AsNullableString("TeamId"),
     ServiceKeyId = d.AsNullableString("ServiceKeyId"),
@@ -9568,6 +9774,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     Environment = d.AsNullableString("Environment"),
     ServiceKeyPrefix = d.AsNullableString("ServiceKeyPrefix"),
     RequestType = d.AsNullableString("RequestType"),
+    Operation = ResolveLogOperation(d),
     AppCallerCode = d.AsNullableString("AppCallerCode"),
     AppCallerCodeDisplayName = d.AsNullableString("AppCallerCodeDisplayName"),
     AppCallerTitle = d.AsNullableString("AppCallerTitle"),

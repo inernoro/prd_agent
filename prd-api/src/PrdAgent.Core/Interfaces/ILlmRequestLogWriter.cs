@@ -97,7 +97,10 @@ public record LlmLogStart(
     string? LogicalModelId = null,
     string? LogicalModelPublicId = null,
     string? OfferingId = null,
-    string? OfferingTargetKind = null);
+    string? OfferingTargetKind = null,
+    string? Operation = null,
+    string? LogicalRequestId = null,
+    string? ProviderTaskId = null);
 
 public record LlmLogDone(
     int? StatusCode,

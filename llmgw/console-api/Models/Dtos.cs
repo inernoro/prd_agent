@@ -93,6 +93,8 @@ public sealed class LlmLogListItem
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    public string? LogicalRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
     public string? UserId { get; set; }
     public string? TeamId { get; set; }
     public string? ServiceKeyId { get; set; }
@@ -102,6 +104,7 @@ public sealed class LlmLogListItem
     public string? Username { get; set; }
     public string? DisplayName { get; set; }
     public string? RequestType { get; set; }
+    public string? Operation { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
     public string? AppCallerTitle { get; set; }
@@ -157,6 +160,10 @@ public sealed class LlmLogDetail
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    public string? LogicalRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
+    public long UpstreamCallCount { get; set; }
+    public long StatusQueryCount { get; set; }
     public string? UserId { get; set; }
     public string? TeamId { get; set; }
     public string? ServiceKeyId { get; set; }
@@ -164,6 +171,7 @@ public sealed class LlmLogDetail
     public string? Environment { get; set; }
     public string? ServiceKeyPrefix { get; set; }
     public string? RequestType { get; set; }
+    public string? Operation { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
     public string? AppCallerTitle { get; set; }
@@ -320,12 +328,16 @@ public sealed class LogsMeta
     public List<string> ServiceKeyIds { get; set; } = new();
     public List<string> ClientCodes { get; set; } = new();
     public List<string> Environments { get; set; } = new();
+    public List<string> Operations { get; set; } = new();
 }
 
 // ── 日志汇总 ──
 public sealed class LogsSummaryData
 {
     public long Total { get; set; }
+    public long UpstreamCalls { get; set; }
+    public long ControlCalls { get; set; }
+    public long StatusQueries { get; set; }
     public long Succeeded { get; set; }
     public long Failed { get; set; }
     public long Running { get; set; }

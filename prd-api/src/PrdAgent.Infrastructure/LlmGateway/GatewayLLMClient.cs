@@ -118,6 +118,8 @@ public class GatewayLLMClient : ILLMClient
                 SessionId = scopeCtx?.SessionId,
                 GroupId = scopeCtx?.GroupId,
                 RunId = scopeCtx?.RunId,
+                LogicalRequestId = scopeCtx?.LogicalRequestId,
+                ProviderTaskId = scopeCtx?.ProviderTaskId,
                 UserId = scopeCtx?.UserId,
                 ViewRole = scopeCtx?.ViewRole,
                 DocumentChars = scopeCtx?.DocumentChars,

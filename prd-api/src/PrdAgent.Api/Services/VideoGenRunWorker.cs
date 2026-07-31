@@ -274,7 +274,9 @@ public class VideoGenRunWorker : BackgroundService
             SystemPromptRedacted: "[VIDEO_GEN_DIRECT]",
             RequestType: ModelTypes.VideoGen,
             AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            ForceFullShadowSample: run.ForceFullShadowSample,
+            RunId: run.Id,
+            LogicalRequestId: run.Id));
 
         var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
         if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
@@ -516,7 +518,9 @@ public class VideoGenRunWorker : BackgroundService
             SystemPromptRedacted: null,
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat,
-            ForceFullShadowSample: run.ForceFullShadowSample
+            ForceFullShadowSample: run.ForceFullShadowSample,
+            RunId: run.Id,
+            LogicalRequestId: run.Id
         ));
 
         var storyboardProject = await GetRunProjectAsync(run);
@@ -911,7 +915,9 @@ public class VideoGenRunWorker : BackgroundService
                 SystemPromptRedacted: "[VIDEO_GEN_SCENE]",
                 RequestType: ModelTypes.VideoGen,
                 AppCallerCode: appCallerCode,
-                ForceFullShadowSample: run.ForceFullShadowSample));
+                ForceFullShadowSample: run.ForceFullShadowSample,
+                RunId: run.Id,
+                LogicalRequestId: $"{run.Id}_scene_{sceneIdx}"));
 
                 var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
                 if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
@@ -1086,7 +1092,9 @@ public class VideoGenRunWorker : BackgroundService
             ViewRole: null, DocumentChars: null, DocumentHash: null, SystemPromptRedacted: null,
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            ForceFullShadowSample: run.ForceFullShadowSample,
+            RunId: run.Id,
+            LogicalRequestId: $"{run.Id}_scene_{sceneIdx}"));
 
         var systemPrompt = "你是视频导演。请重新生成一个英文 prompt 来描述同一主题的新镜头，画面要与原 prompt 不同但风格一致。直接输出 prompt 文本，不要解释、不要 JSON。";
         var userMsg = $"原主题：{scene.Topic}\n原 prompt：{scene.Prompt}\n\n请生成一个新 prompt。";

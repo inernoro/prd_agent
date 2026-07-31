@@ -1834,7 +1834,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     }
 
                     var dur = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                    await FinishRawLogAsync(logId, buildStatusCode, buildMessage, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                    await FinishRawLogAsync(logId, buildStatusCode, buildMessage, dur, resolution, request, gatewayTransport, ct, rawProviderAttempts);
                     return new GatewayRawResponse
                     {
                         Success = false,
@@ -1865,7 +1865,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             $"previous candidate admission rejected: {retryConcurrency.ErrorCode}");
                         continue;
                     }
-                    await FinishRawLogAsync(logId, 429, message, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                    await FinishRawLogAsync(logId, 429, message, dur, resolution, request, gatewayTransport, ct, rawProviderAttempts);
                     return GatewayRawResponse.Fail(retryConcurrency.ErrorCode, message, 429);
                 }
                 providerLease = retryConcurrency.Lease;
@@ -1935,7 +1935,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     var dur = (long)(endedNow - startedAt).TotalMilliseconds;
                     CompleteLastSendAttempt(rawProviderAttempts, (int)response.StatusCode, submitDurationMs, submitError);
                     await FinishRawLogAsync(
-                        logId, (int)response.StatusCode, responseBody, dur, resolution, gatewayTransport, ct,
+                        logId, (int)response.StatusCode, responseBody, dur, resolution, request, gatewayTransport, ct,
                         rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(response, "application/json"));
                     return GatewayRawResponse.Fail("EXCHANGE_ASYNC_SUBMIT_FAILED", submitError, (int)response.StatusCode);
                 }
@@ -2032,7 +2032,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             var endedNow = DateTime.UtcNow;
                             var dur = (long)(endedNow - startedAt).TotalMilliseconds;
                             await FinishRawLogAsync(
-                                logId, (int)queryResp.StatusCode, responseBody, dur, resolution, gatewayTransport, ct,
+                                logId, (int)queryResp.StatusCode, responseBody, dur, resolution, request, gatewayTransport, ct,
                                 rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(queryResp, "application/json"));
                             return GatewayRawResponse.Fail("EXCHANGE_ASYNC_QUERY_FAILED", queryError, (int)queryResp.StatusCode);
                         }
@@ -2069,7 +2069,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             durationMs: dur,
                             error: "轮询超时",
                             reason: $"exchange async poll timeout after {pollAttempt} attempts");
-                        await FinishRawLogAsync(logId, 408, "轮询超时", dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                        await FinishRawLogAsync(logId, 408, "轮询超时", dur, resolution, request, gatewayTransport, ct, rawProviderAttempts);
                         return GatewayRawResponse.Fail("EXCHANGE_ASYNC_TIMEOUT",
                             $"异步任务超时，已轮询 {pollAttempt} 次 ({pollAttempt * asyncTransformer.PollIntervalMs / 1000}秒)", 408);
                     }
@@ -2124,7 +2124,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 9. 写入日志（完成）
             await FinishRawLogAsync(
-                logId, (int)response.StatusCode, finalResponseBody, durationMs, resolution, gatewayTransport, ct,
+                logId, (int)response.StatusCode, finalResponseBody, durationMs, resolution, request, gatewayTransport, ct,
                 rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(
                     response, contentType.Length > 0 ? contentType : "application/json"));
 
@@ -2202,7 +2202,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!TryGetAsrAudioBytes(request, out var audioBytes, out var audioName, out var audioError))
             {
                 var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                await FinishRawLogAsync(logId, 400, audioError, duration, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
+                await FinishRawLogAsync(logId, 400, audioError, duration, resolution, request, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
                 return new GatewayRawResponse
                 {
                     Success = false,
@@ -2221,7 +2221,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                 var message = "doubao-asr-stream 缺少 Access Key，无法建立 WebSocket ASR 连接。";
-                await FinishRawLogAsync(logId, 401, message, duration, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
+                await FinishRawLogAsync(logId, 401, message, duration, resolution, request, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
                 return new GatewayRawResponse
                 {
                     Success = false,
@@ -2264,7 +2264,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     await _modelResolver.RecordFailureAsync(resolution, ct);
             }
 
-            await FinishRawLogAsync(logId, statusCode, content, durationMs, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
+            await FinishRawLogAsync(logId, statusCode, content, durationMs, resolution, request, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
 
             var headers = new Dictionary<string, string>
             {
@@ -3425,6 +3425,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PromptPolicyId: request.Context?.PromptPolicyId,
                     PromptPolicyVersion: request.Context?.PromptPolicyVersion,
                     PromptPolicyHash: request.Context?.PromptPolicyHash,
+                    Operation: GatewayOperations.Invoke,
+                    LogicalRequestId: request.Context?.LogicalRequestId
+                        ?? request.Context?.RunId
+                        ?? request.Context?.RequestId,
+                    ProviderTaskId: request.Context?.ProviderTaskId,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
                     // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
@@ -3801,6 +3806,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ClientCode: request.Context?.ClientCode,
                     Environment: request.Context?.Environment,
                     ServiceKeyPrefix: request.Context?.ServiceKeyPrefix,
+                    Operation: ResolveRawOperation(request, endpoint),
+                    LogicalRequestId: request.Context?.LogicalRequestId
+                        ?? request.Context?.RunId
+                        ?? request.Context?.RequestId,
+                    ProviderTaskId: request.Context?.ProviderTaskId,
                     // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
                     // MAP 侧已把 Context.GatewayTransport 置为 "http"，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
@@ -3832,12 +3842,31 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return clone;
     }
 
+    private static string ResolveRawOperation(GatewayRawRequest request, string? resolvedEndpoint = null)
+    {
+        string? declaredOperation = null;
+        if (request.RequestBody?.TryGetPropertyValue("_gateway_operation", out var operationNode) == true
+            && operationNode is JsonValue operationValue
+            && operationValue.TryGetValue<string>(out var operation))
+        {
+            declaredOperation = operation;
+        }
+
+        return GatewayOperations.Resolve(
+            request.ModelType,
+            request.HttpMethod,
+            resolvedEndpoint ?? request.EndpointPath,
+            declaredOperation,
+            request.Context?.IsHealthProbe);
+    }
+
     private Task FinishRawLogAsync(
         string? logId,
         int statusCode,
         string responseBody,
         long durationMs,
         ModelResolutionResult resolution,
+        GatewayRawRequest request,
         string gatewayTransport,
         CancellationToken ct,
         List<LlmProviderAttempt>? providerAttempts = null,
@@ -3863,7 +3892,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     Source = "response_body"
                 }
                 : null;
-            var cost = EstimateCost(resolution, tokenUsage, countCall: statusCode >= 200 && statusCode < 300);
+            var operation = ResolveRawOperation(request);
+            var cost = EstimateCost(
+                resolution,
+                tokenUsage,
+                countCall: statusCode >= 200
+                    && statusCode < 300
+                    && GatewayOperations.CountsPricePerCall(operation));
 
             _logWriter.MarkDone(
                 logId,

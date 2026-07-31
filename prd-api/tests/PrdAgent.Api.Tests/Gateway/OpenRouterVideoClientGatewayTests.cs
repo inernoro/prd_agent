@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using Shouldly;
@@ -15,10 +16,25 @@ public class OpenRouterVideoClientGatewayTests
     public async Task SubmitStatusAndDownload_ShouldUseGatewayRawPath()
     {
         var gateway = new CapturingGateway();
+        var contextAccessor = new LLMRequestContextAccessor();
+        using var contextScope = contextAccessor.BeginScope(new LlmRequestContext(
+            RequestId: "req-1",
+            GroupId: null,
+            SessionId: "video-run-1",
+            UserId: "user-1",
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: null,
+            RequestType: ModelTypes.VideoGen,
+            AppCallerCode: AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            RunId: "video-run-1",
+            LogicalRequestId: "video-run-1"));
         var client = new OpenRouterVideoClient(
             gateway,
             new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
-            NullLogger<OpenRouterVideoClient>.Instance);
+            NullLogger<OpenRouterVideoClient>.Instance,
+            contextAccessor);
 
         var submit = await client.SubmitAsync(new OpenRouterVideoSubmitRequest
         {
@@ -67,6 +83,9 @@ public class OpenRouterVideoClientGatewayTests
         submitCall.Request.Context!.RequestId.ShouldBe("req-1");
         submitCall.Request.Context.UserId.ShouldBe("user-1");
         submitCall.Request.Context.QuestionText.ShouldBe("生成一个产品演示视频");
+        submitCall.Request.Context.RunId.ShouldBe("video-run-1");
+        submitCall.Request.Context.LogicalRequestId.ShouldBe("video-run-1");
+        submitCall.Request.Context.ProviderTaskId.ShouldBeNull();
         submitCall.Resolution.ActualModel.ShouldBe("openrouter/test-video");
         submitCall.Request.RequestBody.ShouldNotBeNull();
         submitCall.Request.RequestBody!["model"]!.GetValue<string>().ShouldBe("openrouter/test-video");
@@ -82,12 +101,20 @@ public class OpenRouterVideoClientGatewayTests
         statusCall.Request.EndpointPath.ShouldBe("/videos/job-123");
         statusCall.Request.HttpMethod.ShouldBe("GET");
         statusCall.Resolution.ShouldBe(gateway.Resolution);
+        statusCall.Request.Context.ShouldNotBeNull();
+        statusCall.Request.Context!.RequestId.ShouldBeNull();
+        statusCall.Request.Context.RunId.ShouldBe("video-run-1");
+        statusCall.Request.Context.LogicalRequestId.ShouldBe("video-run-1");
+        statusCall.Request.Context.ProviderTaskId.ShouldBe("job-123");
 
         var downloadCall = gateway.RawCalls[2];
         downloadCall.Request.EndpointPath.ShouldBe("/videos/job-123/content?index=0");
         downloadCall.Request.HttpMethod.ShouldBe("GET");
         downloadCall.Request.ExpectBinaryResponse.ShouldBeTrue();
         downloadCall.Resolution.ShouldBe(gateway.Resolution);
+        downloadCall.Request.Context.ShouldNotBeNull();
+        downloadCall.Request.Context!.LogicalRequestId.ShouldBe("video-run-1");
+        downloadCall.Request.Context.ProviderTaskId.ShouldBe("job-123");
     }
 
     [Fact]

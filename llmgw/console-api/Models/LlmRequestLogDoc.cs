@@ -22,6 +22,8 @@ public class LlmRequestLogDoc
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    public string? LogicalRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
     public string? UserId { get; set; }
     public string? ServiceKeyId { get; set; }
     public string? ClientCode { get; set; }
@@ -29,6 +31,7 @@ public class LlmRequestLogDoc
     public string? ServiceKeyPrefix { get; set; }
 
     public string? RequestType { get; set; }
+    public string? Operation { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
     public string? AppCallerTitle { get; set; }
