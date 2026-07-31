@@ -83,6 +83,7 @@ ROOT_CAUSE_CONCLUSIONS = {
     "验收链路失败",
     "硬门禁失败",
 }
+CORE_CASE_RESULTS = {"通过", "失败", "未执行"}
 
 
 def curl(args, retries=5):
@@ -616,6 +617,16 @@ def _strip_severity_count_claims(text):
     return re.sub(r"\bP[0-3]\s*[:：=]\s*\d+\b", " ", raw, flags=re.I)
 
 
+def _core_case_results_from_product_quality(text):
+    """Read the finite core-case token from the product-quality field."""
+    return [
+        re.sub(r"[`*_\s]", "", value)
+        for value in re.findall(
+            r"核心用例\s*[:：=]\s*([^；;，,|\n]+)", text or "", re.I
+        )
+    ]
+
+
 def _daily_fact_signals(values, body):
     """Extract only structured facts used to justify a daily Verdict.
 
@@ -626,6 +637,8 @@ def _daily_fact_signals(values, body):
     """
     product_quality = values.get("产品质量", "").strip()
     completeness = values.get("验收完整性", "").strip()
+    core_case_results = _core_case_results_from_product_quality(product_quality)
+    core_case_result = core_case_results[0] if len(core_case_results) == 1 else ""
 
     severity_counts = _severity_counts_from_text(product_quality)
     zero_defects = bool(
@@ -710,7 +723,8 @@ def _daily_fact_signals(values, body):
         for row in root_cause_rows
         if len(row) == len(DAILY_ROOT_CAUSE_FIELDS)
     }
-    core_failure = "核心用例失败" in root_conclusions
+    core_failure = core_case_result == "失败"
+    root_core_failure = "核心用例失败" in root_conclusions
     chain_failure = "验收链路失败" in root_conclusions
     hard_gate_failure = "硬门禁失败" in root_conclusions
     root_product_failure = "产品失败" in root_conclusions
@@ -737,7 +751,10 @@ def _daily_fact_signals(values, body):
         "root_nonblocking_risk": root_nonblocking_risk,
         "root_coverage_gap": root_coverage_gap,
         "root_conclusions": root_conclusions,
+        "core_case_results": core_case_results,
+        "core_case_result": core_case_result,
         "core_failure": core_failure,
+        "root_core_failure": root_core_failure,
         "chain_failure": chain_failure,
         "hard_gate_failure": hard_gate_failure,
         "coverage_gap_count": coverage_gap_count,
@@ -789,6 +806,17 @@ def _daily_conclusion_contract_errors(verdict, body):
         )
 
     facts = _daily_fact_signals(values, body)
+    if not facts["core_case_results"]:
+        errors.append(
+            "[事实一致性] 产品质量必须填写结构化核心用例结果：核心用例=通过/失败/未执行"
+        )
+    elif len(facts["core_case_results"]) != 1:
+        errors.append("[事实一致性] 产品质量只能填写一个结构化核心用例结果")
+    elif facts["core_case_result"] not in CORE_CASE_RESULTS:
+        errors.append(
+            "[事实一致性] 核心用例结果只允许："
+            + "/".join(sorted(CORE_CASE_RESULTS))
+        )
     if facts["zero_defects"] and facts["product_risk"]:
         errors.append("[事实一致性] 产品质量同时声称缺陷为 0/未发现缺陷，又报告了 P0-P3 缺陷事实")
     if facts["claims_complete"] and facts["coverage_gap_count"] > 0:
@@ -802,8 +830,14 @@ def _daily_conclusion_contract_errors(verdict, body):
         errors.append("[事实一致性] 根因链结论为产品失败，但产品质量和缺陷清单没有 P0/P1 产品失败事实")
     if nature == "产品失败" and not product_failure:
         errors.append("[事实一致性] 判定性质为产品失败，但缺少 P0/P1 产品失败事实或根因链结构化结论")
-    if nature == "核心用例失败" and not facts["core_failure"]:
-        errors.append("[事实一致性] 判定性质为核心用例失败，但根因链结论没有「核心用例失败」")
+    if facts["root_core_failure"] and not facts["core_failure"]:
+        errors.append("[事实一致性] 根因链结论为核心用例失败，但产品质量的核心用例结果不是失败")
+    if nature == "核心用例失败" and not (
+        facts["core_failure"] and facts["root_core_failure"]
+    ):
+        errors.append(
+            "[事实一致性] 判定性质为核心用例失败，但缺少产品质量的核心用例=失败或根因链同名结论"
+        )
     if nature == "验收链路失败" and not facts["chain_failure"]:
         errors.append("[事实一致性] 判定性质为验收链路失败，但根因链结论没有「验收链路失败」")
     if nature == "硬门禁失败" and not facts["hard_gate_failure"]:
@@ -824,6 +858,8 @@ def _daily_conclusion_contract_errors(verdict, body):
         facts["incomplete"]
         or facts["product_risk"]
         or facts["root_nonblocking_risk"]
+        or facts["root_coverage_gap"]
+        or facts["core_case_result"] != "通过"
         or blocking_failure
     ):
         errors.append("[事实一致性] pass 与未覆盖/无法确认、风险或失败事实不一致")

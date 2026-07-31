@@ -1,13 +1,13 @@
 {
   "kind": "acceptance-rule-snapshots",
-  "sourceCommit": "717d407426bf8eeacb8b7be34b8bd2c2dae6e387+worktree",
-  "generatedAt": "2026-07-31T09:35:08.577412+00:00",
+  "sourceCommit": "10e4cd67fe32825286c4769b265fda15a7531c70+worktree",
+  "generatedAt": "2026-07-31T15:49:12.647419+00:00",
   "sources": [
     {
       "sourceId": "acceptance.rule.enterprise",
       "sourcePath": "doc/rule.acceptance.map-enterprise.md",
       "snapshotPath": "references/rules/rule.acceptance.map-enterprise.md",
-      "contentHash": "sha256:9a81dbfabe0b5131885ca286dbc185d3f35b400ec242e8dd233c7dc12b70e936"
+      "contentHash": "sha256:5b1f4d60b8a10a326542bae5d20b27636510c879b2c2456bfad3c20e3605536b"
     },
     {
       "sourceId": "acceptance.rule.ssot",
@@ -19,7 +19,7 @@
       "sourceId": "acceptance.guide.daily-sop",
       "sourcePath": "doc/guide.acceptance.daily-sop.md",
       "snapshotPath": "references/rules/guide.acceptance.daily-sop.md",
-      "contentHash": "sha256:5851b465c63dfdb4319106e61104c174113b13f1d2af1cd45478793da70d9c43"
+      "contentHash": "sha256:21096b94b3b18aec569eb8f857bf35dfb1a26d5307993a438feda60e4e9233fe"
     },
     {
       "sourceId": "acceptance.guide.report-evidence",
