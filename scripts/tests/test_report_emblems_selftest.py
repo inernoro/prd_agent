@@ -16,6 +16,7 @@
 跑法：`python3 scripts/tests/test_report_emblems_selftest.py`
 CI 通过 `for t in scripts/tests/test_*.py` 自动执行（与守卫本身同一道闸）。
 """
+import os
 import pathlib
 import re
 import shutil
@@ -166,11 +167,14 @@ def build_tree(tmp):
 
 def run_guard(tmp):
     """在临时树里跑守卫，返回 (退出码, 输出)。"""
+    # **继承当前环境**再加一个变量，不要自己拼一份最小 env：
+    # 解释器可能依赖 PYTHONHOME / LD_LIBRARY_PATH / VIRTUAL_ENV 等，
+    # 拼一份「我以为够用」的 env 在本机能跑、换个 CI 镜像就起不来——
+    # 而那时它会表现成「自测挂了」，排查方向完全错。
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     proc = subprocess.run(
         [sys.executable, str(tmp / GUARD)],
-        capture_output=True, text=True,
-        # 不写 .pyc：守卫自己也这么做，理由见它的注释（等长突变 + 同秒会命中旧缓存）
-        env={"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/usr/bin:/bin"},
+        capture_output=True, text=True, env=env,
     )
     return proc.returncode, proc.stdout + proc.stderr
 
