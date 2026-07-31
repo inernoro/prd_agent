@@ -46,4 +46,10 @@ describe('信息中心视口碰撞定位', () => {
     expect(informationCenterSource).toContain('), document.body)');
     expect(informationCenterSource).not.toContain('absolute right-0 top-full');
   });
+
+  it('历史长通知默认三行，并允许显式展开和收起', () => {
+    expect(informationCenterSource).toContain("bodyExpanded ? '' : 'line-clamp-3'");
+    expect(informationCenterSource).toContain("bodyExpanded ? '收起详情' : '展开详情'");
+    expect(informationCenterSource).toContain('aria-expanded={bodyExpanded}');
+  });
 });

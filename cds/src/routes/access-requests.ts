@@ -115,7 +115,9 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     cdsEventsBus.publish('access-request.created', {
       requestId: item.id, projectId: project.id, agentName, purpose, pendingCount: pendingCount(stateService),
     });
-    res.status(201).json({ requestId: item.id, pollToken, status: 'pending' });
+    // 调用方允许用 slug 发起，但后续项目级操作必须使用真实 project.id。
+    // 把解析结果随申请返回，避免 CLI 把别名写进 credentials.json 后 project_mismatch。
+    res.status(201).json({ requestId: item.id, pollToken, status: 'pending', projectId: project.id });
   });
 
   // 首次接入:免密申请一把一次性「只能创建项目」授权。批准后签发 create-only

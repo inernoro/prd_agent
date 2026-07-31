@@ -1555,6 +1555,12 @@ def _wrap_body_figures(body_html, manifest, figure_srcs=None):
     return body_html
 
 
+# ── 米多刊系刊徽（SSOT 见 .claude/rules/report-design-system.md）──
+# 模板必须自包含，无法 import 共享，故靠 data-emblem 标记 + 
+# scripts/tests/test_report_emblems.py 防止各处拷贝漂移。
+_EMBLEM_POLARIS = '''<svg viewBox="0 0 120 120" fill="none" data-emblem="polaris" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-polaris-c"><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z"/></clipPath></defs><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z" fill="currentColor" fill-opacity="0.16"/><g clip-path="url(#emb-polaris-c)" stroke="currentColor" stroke-width="1.8" opacity="0.7"><path d="M10 30 L96 116 M28 12 L114 98 M4 52 L74 122 M50 -6 L120 64"/></g><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><g stroke="currentColor" stroke-width="2" opacity="0.8"><path d="M98 20 L104 34 L118 40 L104 46 L98 60 L92 46 L78 40 L92 34 Z"/></g><circle cx="24" cy="96" r="3.5" fill="currentColor" fill-opacity="0.8"/></svg>'''
+_EMBLEM_COMET = '''<svg viewBox="0 0 120 120" fill="none" data-emblem="comet" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-comet-c"><circle cx="82" cy="38" r="20"/></clipPath></defs><g stroke="currentColor" stroke-linecap="round" opacity="0.75"><path d="M66 54 L14 106" stroke-width="3"/><path d="M72 62 L28 106" stroke-width="2.4" opacity="0.8"/><path d="M60 46 L8 98" stroke-width="2.4" opacity="0.8"/><path d="M78 68 L44 102" stroke-width="1.8" opacity="0.55"/><path d="M54 38 L6 86" stroke-width="1.8" opacity="0.55"/><path d="M84 76 L60 100" stroke-width="1.4" opacity="0.35"/></g><circle cx="82" cy="38" r="20" fill="currentColor" fill-opacity="0.18"/><g clip-path="url(#emb-comet-c)" stroke="currentColor" stroke-width="1.6" opacity="0.75"><path d="M58 26 L106 26 M58 36 L106 36 M58 46 L106 46"/></g><circle cx="82" cy="38" r="20" stroke="currentColor" stroke-width="3"/></svg>'''
+
 def build_interactive_html(
     title,
     verdict,
@@ -1578,17 +1584,20 @@ def build_interactive_html(
             "accent": "#0f766e", "accent_soft": "rgba(15,118,110,0.08)",
             "byline": "验收智能体 · 自动编档",
             "section_label": "档案",
+            "emblem": _EMBLEM_POLARIS,   # 北极星 = 基准/标尺
         },
         "daily": {
             "cn": "每日巡检特刊", "en": "DAILY PATROL EDITION",
             "accent": "#3b5f8a", "accent_soft": "rgba(59,95,138,0.08)",
             "byline": "每日全量巡检 · 自动编档",
             "section_label": "巡检",
+            "emblem": _EMBLEM_COMET,     # 彗星 = 每天扫过全站一圈
         },
     }
     fl = _FLAVORS.get(flavor) or _FLAVORS["acceptance"]
     flavor_cn, flavor_en = fl["cn"], fl["en"]
     accent, accent_soft, byline = fl["accent"], fl["accent_soft"], fl["byline"]
+    emblem_svg = fl["emblem"]
     section_label = fl["section_label"]
     report_version = (report_version or "v0.9").strip()
     if not re.fullmatch(r"v\d+\.\d+", report_version):
@@ -1816,6 +1825,12 @@ main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px
 .hero{{padding:26px 0 0}}
 .masthead{{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:3px solid var(--ink);position:relative}}
 .masthead::after{{content:"";position:absolute;left:0;right:0;bottom:-6px;height:1px;background:var(--ink)}}
+/* 刊徽水印（衬字板式）：垫在右侧 mono 小字背后，只做刊物区分，不承载信息。
+   验收=北极星 / 巡检=彗星，见 .claude/rules/report-design-system.md。
+   结构性 class 未动，模板契约 map-acceptance-interactive-html-v2 不受影响。 */
+.masthead .emblem{{position:absolute;top:-12px;right:-6px;width:86px;height:86px;color:var(--accent);opacity:.13;z-index:0;pointer-events:none}}
+.masthead .emblem svg{{display:block;width:100%;height:100%}}
+.masthead .t,.masthead .r,.masthead .stamp{{position:relative;z-index:1}}
 .masthead .stamp{{width:44px;height:44px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:14px;box-shadow:3px 3px 0 rgba(33,29,24,.82)}}
 .masthead .t b{{font-family:var(--serif);font-size:clamp(19px,2.2vw,24px);font-weight:700;display:block;letter-spacing:.02em}}
 .masthead .t span{{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);letter-spacing:.3em}}
@@ -2007,6 +2022,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 .figure-anchor,#evidence-gallery,h1,h2,h3{{scroll-margin-top:118px}}
 .masthead .r{{display:none}}
 .masthead .stamp{{width:36px;height:36px;font-size:12px}}
+.masthead .emblem{{width:60px;height:60px;top:-8px;right:-2px}}
 .dateline{{gap:0 12px;font-size:9.5px}}
 .dl-verdict{{margin-left:0}}
 .title-row{{gap:12px}}
@@ -2043,6 +2059,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 <main>
   <header class="hero">
     <div class="masthead">
+      <div class="emblem">{emblem_svg}</div>
       <div class="stamp">MAP</div>
       <div class="t"><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><span>{flavor_en}</span></div>
       <div class="r"><span>MAP 验收标准 v2 · 真人路径取证</span><span>{byline}</span></div>
