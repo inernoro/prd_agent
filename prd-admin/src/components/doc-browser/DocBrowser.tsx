@@ -3,13 +3,14 @@ import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
 import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
+import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Pin, PinOff,
-  ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
+  Trash2, FilePlus, FolderPlus,
   Upload, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText,
+  Sparkles, Wand2, Tags, Replace, BookOpen, SlidersHorizontal, Share2, ExternalLink, Copy,
+  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText, MoreHorizontal,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -190,126 +191,6 @@ function ReadingProgressBar({ scrollRef }: { scrollRef: React.RefObject<HTMLDivE
   );
 }
 
-// 顶部标签筛选下拉：标签过多时收进一个"标签筛选"下拉按钮，点开弹出长方形面板多选筛选（createPortal 防裁剪）。
-function TagFilterDropdown({
-  tags, selected, colors, onToggle, onClear,
-}: {
-  tags: string[];
-  selected: Set<string>;
-  colors: Record<string, TagColorKey>;
-  onToggle: (tag: string) => void;
-  onClear: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [kw, setKw] = useState('');
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (t.closest('[data-tagfilter-pop]') || t.closest('[data-tagfilter-trigger]')) return;
-      setOpen(false);
-    };
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onEsc);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
-  }, [open]);
-
-  const toggleOpen = () => {
-    const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 240) });
-    setOpen(o => !o);
-  };
-
-  const shown = kw.trim() ? tags.filter(t => t.toLowerCase().includes(kw.trim().toLowerCase())) : tags;
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        data-tagfilter-trigger
-        onClick={toggleOpen}
-        className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] px-2 rounded-full cursor-pointer transition-colors"
-        style={{
-          height: 22, lineHeight: '22px',
-          color: selected.size > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
-          background: selected.size > 0 ? 'var(--accent-soft, rgba(129,140,248,0.12))' : 'var(--bg-input)',
-          border: '1px solid var(--border-faint)',
-        }}
-        title="按标签筛选（多选取并集；再次点击取消）"
-      >
-        <Tags size={12} />
-        标签筛选{selected.size > 0 ? ` · ${selected.size}` : ''}
-        <ChevronDown size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
-      </button>
-      {selected.size > 0 && (
-        <button
-          onClick={onClear}
-          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[9.5px] px-1.5 rounded-full cursor-pointer"
-          style={{ height: 20, lineHeight: '20px', color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
-          title="清空筛选"
-        >
-          <X size={9} /> 清空
-        </button>
-      )}
-      {open && pos && createPortal(
-        <div
-          data-tagfilter-pop
-          style={{
-            position: 'fixed', top: pos.top, left: pos.left, width: pos.width, maxWidth: 360,
-            maxHeight: 320, overflowY: 'auto', overscrollBehavior: 'contain',
-            zIndex: 10000, borderRadius: 10, padding: 10,
-            background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)',
-            boxShadow: '0 8px 28px rgba(0,0,0,0.28)',
-          }}
-        >
-          {tags.length > 12 && (
-            <div className="flex items-center gap-1.5 mb-2 px-2 rounded-md" style={{ height: 28, background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
-              <Search size={12} style={{ color: 'var(--text-muted)' }} />
-              <input
-                value={kw}
-                onChange={e => setKw(e.target.value)}
-                autoFocus
-                placeholder="搜索标签…"
-                className="flex-1 bg-transparent outline-none text-[11px]"
-                style={{ color: 'var(--text-primary)' }}
-              />
-            </div>
-          )}
-          <div className="flex flex-wrap gap-1.5">
-            {shown.map(tag => {
-              const c = getTagColor(tag, colors);
-              const active = selected.has(tag);
-              return (
-                <button
-                  key={tag}
-                  onClick={() => onToggle(tag)}
-                  className="text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
-                  style={{
-                    height: 22, lineHeight: '22px',
-                    color: active ? '#fff' : c.text,
-                    background: active ? c.dot : c.bg,
-                    border: `1px solid ${active ? c.dot : c.border}`,
-                  }}
-                  title={`#${tag}`}
-                >
-                  {truncateTagDisplay(tag, 10)}
-                </button>
-              );
-            })}
-            {shown.length === 0 && (
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无匹配标签</span>
-            )}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </>
-  );
-}
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { VersionHistoryModal, type VersionApi } from './VersionHistoryModal';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -380,6 +261,33 @@ export type DocBrowserEntry = {
   lastChangedAt?: string;
   metadata?: Record<string, string>;
 };
+
+/**
+ * 阅读区工具栏的尺寸规矩（唯一来源，新增控件一律引用这三个常量）：
+ * - 带文字的按钮：28px 高（h-7）、圆角 8、字号 11、图标 12
+ * - 纯图标按钮：28x28（手机端 32x32，保证点得中）
+ * - 状态药丸（README / 置顶 / 标签 / new / 验收结论）：22px 高，比按钮矮一档，形成两级节奏
+ * 历史教训（2026-07-31 用户反馈「按钮忽大忽小，没有任何规矩」）：这一排原本混着
+ * h-6 / h-7 / h-8 与 py-0.5 药丸，同一行里三四种高度，看上去毫无章法。
+ */
+const TOOLBAR_BTN = 'h-7 px-2.5 rounded-[8px] text-[11px] font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_ICON_BTN = 'h-7 w-7 rounded-[8px] inline-flex items-center justify-center cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_ICON_BTN_MOBILE = 'h-8 w-8 rounded-[9px] inline-flex items-center justify-center cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_CHIP = 'h-[22px] px-2 rounded-full text-[10px] inline-flex items-center gap-1 flex-shrink-0';
+
+/** 阅读区「更多」菜单项：图标 + 文字，比一排彩色图标钮更好认。 */
+function ReaderMoreItem({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary transition-colors"
+    >
+      <span className="flex-shrink-0 text-token-muted">{icon}</span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
 
 /**
  * 目录排序模式：
@@ -483,10 +391,23 @@ export type DocBrowserProps = {
   sortMode?: DocBrowserSortMode;
   /**
    * "显示更新时间"的默认值（仅在用户未显式切换过开关时生效）。
-   * 默认 true：时间默认显示（用户反馈要求），且时间永远固定在每行最右边。
-   * 用户手动开/关后以其 sessionStorage 选择为准。
+   * 默认 false（2026-07-31 用户反馈：「自从有了时间，可见区域就少很多」）——时间会挤掉
+   * 标题的可见宽度，改为默认不显示、需要的人去「筛选」面板里打开。
+   * 验收库这类以时间为主线的调用方可显式传 true。用户手动开/关后以其 sessionStorage 选择为准。
    */
   showUpdatedTimeDefault?: boolean;
+  /**
+   * 收进「筛选」面板的调用方控件（排序等纯筛选/排序类）。
+   * 与 sidebarHeader 的区别：sidebarHeader 是常驻在搜索框上方的内容（分类 chip、列表标题、
+   * 快速新建等**动作**），不能藏进筛选面板；sidebarFilters 才是点开筛选后一屏平铺的选项。
+   */
+  sidebarFilters?: ReactNode;
+  /**
+   * 当前选中条目的解析结果回传（含 searchResults 兜底）。
+   * 调用方自己 `entries.find()` 会漏掉「只存在于后端搜索结果里的命中」（大库超过首页 200 条时常见），
+   * 分享 / 下载的「当前这篇」锚点会因此静默回落到整库 —— 正是本次要防的暴露（Codex P1）。
+   */
+  onSelectedEntryChange?: (entry: DocBrowserEntry | undefined) => void;
   /**
    * 分享视图传入分享 token，用于私有库读取划词评论气泡（PR #685 Codex P1）。
    * 后端凭此 token 验证调用方确实通过有效分享访问，而非靠"存在分享链"放行。
@@ -1428,33 +1349,33 @@ function TreeNode({
       >
         {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
         <div className="flex items-center gap-2 w-full min-w-0">
-          {/* 批量多选勾选框：普通状态悬浮覆盖文件图标，不再永久占一列目录宽度。 */}
-          {!isFolder && onToggleSelect && (
+          {/* 图标位 = 勾选框位：hover（或已勾选）时勾选框顶掉文件图标，二者共用同一个 15px 槽。
+              2026-07-31 用户反馈「行首出现一个黑方块」：旧实现是把不透明近黑的勾选框 absolute
+              盖在图标上、再加一圈近黑 ring，暗色下就成了一块挖空似的黑疙瘩，还把图标糊住。
+              改成同槽互斥后既没有黑块，也不产生布局跳动（槽宽恒定）。 */}
+          <span className="relative flex-shrink-0 inline-flex items-center justify-center" style={{ width: 15, height: 15 }}>
             <span
-              role="checkbox"
-              aria-checked={isChecked}
-              onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
-              className={`${reserveSelectSpace ? 'flex-shrink-0' : 'absolute'} inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-              style={{
-                width: 15, height: 15, borderRadius: 4,
-                border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong)'}`,
-                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--selection-checkbox-bg)',
-                ...(!reserveSelectSpace
-                  ? {
-                      left: `${10 + depth * 14}px`,
-                      top: 8,
-                      zIndex: 2,
-                      boxShadow: '0 0 0 2px var(--selection-checkbox-ring)',
-                    }
-                  : {}),
-              }}
-              title={isChecked ? '取消选择' : '选择（批量操作）'}
+              className={`inline-flex items-center justify-center transition-opacity ${!isFolder && onToggleSelect && !reserveSelectSpace ? (isChecked ? 'opacity-0' : 'group-hover:opacity-0') : ''}`}
+              style={{ width: 14, height: 14 }}
             >
-              {isChecked && <Check size={10} style={{ color: '#fff' }} />}
+              <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
             </span>
-          )}
-          <span className="flex-shrink-0 inline-flex items-center justify-center" style={{ width: 14, height: 14 }}>
-            <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+            {!isFolder && onToggleSelect && (
+              <span
+                role="checkbox"
+                aria-checked={isChecked}
+                onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
+                className={`absolute inset-0 inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace || isChecked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                style={{
+                  borderRadius: 4,
+                  border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong)'}`,
+                  background: isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--selection-checkbox-bg)',
+                }}
+                title={isChecked ? '取消选择' : '选择（批量操作）'}
+              >
+                {isChecked && <Check size={10} style={{ color: '#fff' }} />}
+              </span>
+            )}
           </span>
 
           {/* 非文件夹标题不再 flex-1 撑满：取自然宽度，让 NEW 紧贴标题末尾（时间靠 ml-auto 顶右）。
@@ -1763,7 +1684,9 @@ export function DocBrowser({
   emptyState,
   loading,
   sortMode = 'default',
-  showUpdatedTimeDefault = true,
+  showUpdatedTimeDefault = false,
+  sidebarFilters,
+  onSelectedEntryChange,
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
@@ -1805,27 +1728,14 @@ export function DocBrowser({
     const saved = sessionStorage.getItem('doc-browser-show-updated-time');
     if (saved === '1') return true;
     if (saved === '0') return false;
-    return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（验收库默认显示时间）
+    return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（默认关；验收库可显式打开）
   });
   // 列表时间显示哪个字段：跟随排序键，避免"按创建排序却显更新时间"的错位。
   const timeField: 'createdAt' | 'updatedAt' = sortMode === 'created-desc' ? 'createdAt' : 'updatedAt';
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const settingsMenuRef = useRef<HTMLDivElement>(null);
-  // 头部控件行（排序 + 正文标题 + 显示）合并到一行；侧栏很窄时控件只留图标（隐藏文字标签）。
-  const headerControlsRef = useRef<HTMLDivElement>(null);
-  const [compactControls, setCompactControls] = useState(false);
-  useEffect(() => {
-    const el = headerControlsRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 999;
-      // 排序控件(排序+3选项，nowrap)约需 ~210px；窄于 ~380px 时正文标题/显示收成纯图标，
-      // 给排序留足空间、整行一行放下、不触发横向滚动。
-      setCompactControls(w < 380);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const [readerMoreOpen, setReaderMoreOpen] = useState(false);
+  const readerMoreRef = useRef<HTMLDivElement>(null);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const filterAnchorRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -1869,6 +1779,8 @@ export function DocBrowser({
       return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
     } catch { return new Set(); }
   });
+  // 筛选按钮高亮条件：有标签在筛，或打开了更新时间（默认关）——让「我改过设置」这件事看得见
+  const filtersDirty = selectedTags.size > 0 || showUpdatedTime;
   useEffect(() => {
     sessionStorage.setItem('doc-browser-selected-tags', JSON.stringify([...selectedTags]));
   }, [selectedTags]);
@@ -1959,6 +1871,8 @@ export function DocBrowser({
     () => entries.find(e => e.id === selectedEntryId) ?? searchResults?.find(e => e.id === selectedEntryId),
     [entries, searchResults, selectedEntryId],
   );
+  // 把解析结果回传调用方，让「当前这篇」的范围锚点也能覆盖搜索命中
+  useEffect(() => { onSelectedEntryChange?.(selectedEntryData); }, [selectedEntryData, onSelectedEntryChange]);
 
   // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹。
   // 合并 searchResults：搜索命中 / 深链 ?entry 的条目可能不在已加载的 entries 里，
@@ -2533,16 +2447,6 @@ export function DocBrowser({
     setContentFirstLines(lines);
   }, [entries]);
 
-  // 显示设置菜单 click outside
-  useEffect(() => {
-    if (!showSettingsMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node)) setShowSettingsMenu(false);
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showSettingsMenu]);
-
   // 搜索过滤（本地 title 搜索 + 可选后端内容搜索） + tag 过滤
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
     const hasTagFilter = selectedTags.size > 0;
@@ -2997,58 +2901,15 @@ export function DocBrowser({
           </div>
         )}
 
-        {/* 头部控件行：排序(sidebarHeader) + 正文标题切换 + 显示设置，合并到一行省垂直空间；
-            侧栏很窄(compactControls)时正文标题/显示只留图标（文字标签隐藏，title 提示仍在）。 */}
-        <div
-          ref={headerControlsRef}
-          className="shrink-0 flex items-center gap-2 px-3 py-2.5 overflow-x-auto"
-          style={{ borderBottom: '1px solid var(--border-faint)' }}>
-          {/* 排序控件 shrink-0 + 内部 whitespace-nowrap：永不被挤压换行（用户最讨厌的字字竖排折叠） */}
-          <div className="shrink-0">{sidebarHeader}</div>
-          {/* 正文标题/显示 推到最右；窄栏(compactControls)只留图标。整行放不下时横向滚动，绝不竖排折叠 */}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            <button
-              onClick={() => setUseContentTitle(!useContentTitle)}
-              className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
-              title={useContentTitle ? '当前：显示正文第一行为标题' : '当前：显示文件名为标题'}>
-              {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
-              {!compactControls && (useContentTitle ? '正文标题' : '文件名')}
-            </button>
-            <div ref={settingsMenuRef} className="relative">
-              <button
-                onClick={() => setShowSettingsMenu(v => !v)}
-                className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
-                title="显示设置">
-                <Settings size={11} className={showUpdatedTime ? 'text-token-accent' : ''} />
-                {!compactControls && '显示'}
-              </button>
-              {showSettingsMenu && (
-                <div className="surface-popover absolute right-0 top-[26px] z-50 min-w-[180px] rounded-[10px] p-2">
-                  <label className="flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-token-secondary transition-colors hover-bg-soft">
-                    <input
-                      type="checkbox"
-                      checked={showUpdatedTime}
-                      onChange={(e) => {
-                        const next = e.target.checked;
-                        setShowUpdatedTime(next);
-                        sessionStorage.setItem('doc-browser-show-updated-time', next ? '1' : '0');
-                      }}
-                      className="h-3 w-3 cursor-pointer accent-current"
-                    />
-                    显示更新时间
-                  </label>
-                  <div className="px-2 py-1 text-[10px] text-token-muted">
-                    显示每条目最后变更时间，鼠标悬停查看精确时间和作者。
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        {/* 搜索 + 新建文件夹 */}
+        {/* 顶部只留「搜索 + 筛选」一行：排序 / 标题显示 / 更新时间 / 标签筛选 全部收进筛选面板。
+            2026-07-31 用户要求「折叠成一个高级筛选，但尽量减少点击次数，最好一次性完成」——
+            所以面板是一屏平铺（不再套二级菜单），点开即可把所有选项一次调完。
+            已选中的标签仍在外面留一行 chip，保证「当前正被筛选」这件事不会藏起来。 */}
         <div className="surface-panel-header px-3 py-3">
-          <div className="flex gap-1.5">
-            <div className="relative flex-1">
+          {/* 常驻头部内容（分类 chip / 列表标题 / 快速新建等动作）——不属于筛选，不进面板 */}
+          {sidebarHeader && <div className="mb-2">{sidebarHeader}</div>}
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1 min-w-0">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 value={search} onChange={e => handleSearchChange(e.target.value)}
@@ -3066,46 +2927,100 @@ export function DocBrowser({
                 </span>
               )}
             </div>
-            {/* 旧「+」下拉菜单已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口，见 CreatePaletteFab） */}
+            <div ref={filterAnchorRef} className="shrink-0">
+              <button
+                onClick={() => setShowFilterPanel(v => !v)}
+                className="flex h-8 cursor-pointer items-center gap-1 rounded-[9px] px-2.5 text-[11px] font-semibold transition-colors"
+                style={filtersDirty
+                  ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                  : { background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-muted)' }}
+                title="筛选与显示：排序 / 标题显示 / 更新时间 / 标签">
+                <SlidersHorizontal size={12} />
+                筛选{selectedTags.size > 0 ? ` · ${selectedTags.size}` : ''}
+              </button>
+            </div>
           </div>
-          {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
-          {allTagsRanked.length > 0 && (
-            <div
-              className="flex items-center gap-1 overflow-x-auto"
-              style={{
-                paddingTop: 2,
-                paddingBottom: 2,
-                scrollbarWidth: 'thin',
-                scrollbarColor: 'rgba(255,255,255,0.15) transparent',
-              }}
-              title="点击筛选；多选取并集；再次点击取消"
-            >
-              {allTagsRanked.length > 6 ? (
-                <TagFilterDropdown
-                  tags={allTagsRanked}
-                  selected={selectedTags}
-                  colors={tagColorMap}
-                  onToggle={toggleTag}
-                  onClear={() => setSelectedTags(new Set())}
-                />
-              ) : (
-                <>
+
+          {/* 已选标签：留在外面，避免「筛着却看不出在筛」 */}
+          {selectedTags.size > 0 && (
+            <div className="mt-2 flex items-center gap-1 overflow-x-auto" style={{ paddingBottom: 2 }}>
+              {[...selectedTags].map(tag => {
+                const c = getTagColor(tag, tagColorMap);
+                return (
+                  <button key={tag} onClick={() => toggleTag(tag)}
+                    className="flex-shrink-0 cursor-pointer rounded-full px-2 text-[10px] font-medium"
+                    style={{ height: 20, lineHeight: '20px', color: 'white', background: c.dot, border: `1px solid ${c.dot}` }}
+                    title="点击取消该标签筛选">
+                    {truncateTagDisplay(tag)} ×
+                  </button>
+                );
+              })}
+              <button onClick={() => setSelectedTags(new Set())}
+                className="flex-shrink-0 cursor-pointer rounded-full px-1.5 text-[9.5px]"
+                style={{ height: 18, lineHeight: '18px', color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                title="清空标签筛选">
+                清空
+              </button>
+            </div>
+          )}
+
+          <AnchoredMenu open={showFilterPanel} onClose={() => setShowFilterPanel(false)}
+            anchorRef={filterAnchorRef} minWidth={260}
+            className="surface-popover max-h-[70vh] w-[300px] max-w-[92vw] overflow-y-auto rounded-[12px] p-3">
+            {sidebarFilters && (
+              <div className="mb-3">
+                <div className="mb-1.5 text-[11px] font-semibold text-token-primary">排序</div>
+                {sidebarFilters}
+              </div>
+            )}
+
+            <div className="mb-3">
+              <div className="mb-1.5 text-[11px] font-semibold text-token-primary">标题显示</div>
+              {/* 段控尺寸与排序段控严格一致（p-0.5 容器 + px-2 py-1 + 11px 字），
+                  2026-07-31 用户：「这些大小应该一致吧，我偏向小的那个」 */}
+              <div className="inline-flex items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
+                <button onClick={() => setUseContentTitle(true)}
+                  className="cursor-pointer whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+                  style={useContentTitle
+                    ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
+                    : { color: 'var(--text-muted)' }}
+                  title="用正文第一行作为列表标题">正文标题</button>
+                <button onClick={() => setUseContentTitle(false)}
+                  className="cursor-pointer whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+                  style={!useContentTitle
+                    ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
+                    : { color: 'var(--text-muted)' }}
+                  title="用文件名作为列表标题">文件名</button>
+              </div>
+            </div>
+
+            <label className="mb-3 flex cursor-pointer items-start gap-2 text-[11px] text-token-secondary">
+              <input
+                type="checkbox"
+                checked={showUpdatedTime}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setShowUpdatedTime(next);
+                  sessionStorage.setItem('doc-browser-show-updated-time', next ? '1' : '0');
+                }}
+                className="mt-0.5 h-3 w-3 cursor-pointer accent-current"
+              />
+              <span>
+                <span className="block font-semibold text-token-primary">显示更新时间</span>
+                <span className="block text-[10px] text-token-muted">默认关闭：时间会占掉标题的可见宽度，需要时再打开。</span>
+              </span>
+            </label>
+
+            {allTagsRanked.length > 0 && (
+              <div>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-token-primary">标签</span>
                   {selectedTags.size > 0 && (
-                    <button
-                      onClick={() => setSelectedTags(new Set())}
-                      className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
-                      style={{
-                        height: 18,
-                        lineHeight: '18px',
-                        color: 'var(--text-muted)',
-                        background: 'var(--bg-input)',
-                        border: '1px solid var(--border-faint)',
-                      }}
-                      title="清空筛选"
-                    >
-                      清空
-                    </button>
+                    <button onClick={() => setSelectedTags(new Set())}
+                      className="ml-auto cursor-pointer text-[10px] text-token-muted hover-text-primary">清空</button>
                   )}
+                </div>
+                <div className="flex flex-wrap gap-1">
                   {allTagsRanked.map(tag => {
                     const c = getTagColor(tag, tagColorMap);
                     const active = selectedTags.has(tag);
@@ -3113,14 +3028,13 @@ export function DocBrowser({
                       <button
                         key={tag}
                         onClick={() => toggleTag(tag)}
-                        className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                        className="cursor-pointer rounded-full px-2 text-[10px] font-medium transition-all"
                         style={{
                           height: 20,
                           lineHeight: '20px',
                           color: active ? 'white' : c.text,
                           background: active ? c.dot : c.bg,
                           border: `1px solid ${active ? c.dot : c.border}`,
-                          letterSpacing: '0.01em',
                         }}
                         title={`#${tag}`}
                       >
@@ -3128,10 +3042,11 @@ export function DocBrowser({
                       </button>
                     );
                   })}
-                </>
-              )}
-            </div>
-          )}
+                </div>
+              </div>
+            )}
+          </AnchoredMenu>
+
           {creatingFolder && (
             <div className="flex gap-1.5">
               <input
@@ -3379,7 +3294,7 @@ export function DocBrowser({
               {isMobile && (
                 <button
                   onClick={() => setMobileDirectoryOpen(true)}
-                  className="flex-shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-[9px] text-[12px] cursor-pointer transition-colors hover:opacity-80"
+                  className={`${TOOLBAR_ICON_BTN_MOBILE} hover:opacity-80`}
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
                   aria-label="打开目录"
                   title="打开目录"
@@ -3391,11 +3306,11 @@ export function DocBrowser({
               {onBackToList && !isMobile && (
                 <button
                   onClick={onBackToList}
-                  className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-[8px] text-[11px] cursor-pointer transition-colors hover:opacity-80"
+                  className={`${TOOLBAR_BTN} hover:opacity-80`}
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
                   title="返回文档列表"
                 >
-                  <ChevronLeft size={13} /> 返回列表
+                  <ChevronLeft size={12} /> 返回列表
                 </button>
               )}
               <Breadcrumbs entryId={selectedEntryId} entries={entries} />
@@ -3407,7 +3322,7 @@ export function DocBrowser({
                 const tier = sel!.metadata?.tier;
                 return (
                   <span
-                    className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold tabular-nums"
+                    className={`${TOOLBAR_CHIP} font-bold tabular-nums`}
                     style={{ background: vc.background, color: vc.color, border: vc.border }}
                     title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
                   >
@@ -3416,13 +3331,13 @@ export function DocBrowser({
                 );
               })()}
               {selectedEntryId === primaryEntryId && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                <span className={TOOLBAR_CHIP}
                   style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
                   README
                 </span>
               )}
               {pinnedSet.has(selectedEntryId) && selectedEntryId !== primaryEntryId && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                <span className={TOOLBAR_CHIP}
                   style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
                   置顶
                 </span>
@@ -3436,7 +3351,7 @@ export function DocBrowser({
                     {sel.tags!.slice(0, tagLimit).map(tag => {
                       const c = getTagColor(tag, tagColorMap);
                       return (
-                        <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                        <span key={tag} className={TOOLBAR_CHIP}
                           style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
                           #{tag}
                         </span>
@@ -3482,14 +3397,13 @@ export function DocBrowser({
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder || isMobile) return null; // 移动端隐藏 new/订阅徽标，给标题+标签让位
                 const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
-                const isSubscription = sel.sourceType === 'subscription';
-                const githubSha = sel.metadata?.github_sha;
-                if (!recentlyChanged && !isSubscription) return null;
+                // 订阅信息已收进「更多」菜单，这里只留 new 徽章
+                if (!recentlyChanged) return null;
                 return (
                   <>
                     {recentlyChanged && (
                       <span
-                        className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold"
+                        className={`${TOOLBAR_CHIP} font-bold`}
                         style={{
                           background: 'rgba(34,197,94,0.1)',
                           color: 'rgba(74,222,128,0.95)',
@@ -3501,114 +3415,75 @@ export function DocBrowser({
                         new
                       </span>
                     )}
-                    {isSubscription && onOpenSubscription && (
-                      <button
-                        onClick={() => onOpenSubscription(sel.id)}
-                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
-                        style={{
-                          background: 'var(--selection-bg)',
-                          border: '1px solid var(--selection-border)',
-                          color: 'var(--selection-text)',
-                        }}
-                        title={githubSha ? `GitHub 版本 ${githubSha.slice(0, 7)}（点击查看同步详情）` : '查看订阅同步详情'}
-                      >
-                        {githubSha ? `#${githubSha.slice(0, 7)}` : '订阅信息'}
-                      </button>
-                    )}
                   </>
                 );
               })()}
-              {/* 知识库 Agent 按钮：生成字幕 / 再加工 */}
+              {/* 次要动作统一收进「更多」：转录 / 生成字幕 / 智能体 / 证据板 / 历史版本 / 订阅信息。
+                  2026-07-31 用户反馈「这里也遇到了很多选项的问题」——工具栏一排七八个彩色按钮，
+                  谁是主操作看不出来。现在只留 评论 / 收起 / 全屏 / 编辑 四个常用动作在外面，
+                  其余进菜单：菜单项带文字说明，比一排图标更好认，也不再和标题抢宽度。 */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder) return null;
                 const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
                 const showTranscribe = canTranscribe(sel) && !!onTranscribe;
                 const showReprocess = canReprocess(sel) && !!onReprocess;
-                if (!showSubtitle && !showReprocess && !showTranscribe) return null;
+                const isAcc = !!(selectedEntryData?.metadata?.kind === 'acceptance-report' || selectedEntryData?.metadata?.verdict);
+                const showEvidence = isAcc && !!preview?.text && !editMode;
+                const showVersions = !!versionApi && !isMobile && !editMode;
+                const isSubscription = sel.sourceType === 'subscription';
+                const githubSha = sel.metadata?.github_sha;
+                const showSubscription = isSubscription && !!onOpenSubscription;
+                const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions || showSubscription;
+                if (!any) return null;
                 return (
-                  <>
-                    {showTranscribe && (
-                      <button
-                        onClick={() => onTranscribe!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
-                        style={{
-                          background: 'rgba(34,197,94,0.08)',
-                          border: '1px solid rgba(34,197,94,0.2)',
-                          color: 'rgba(74,222,128,0.95)',
-                        }}
-                        title="转录并生成 AI 摘要"
-                      >
-                        <AudioLines size={isMobile ? 14 : 11} />
-                        {!isMobile && '转录'}
-                      </button>
-                    )}
-                    {showSubtitle && (
-                      <button
-                        onClick={() => onGenerateSubtitle!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
-                        style={{
-                          background: 'rgba(168,85,247,0.1)',
-                          border: '1px solid rgba(168,85,247,0.22)',
-                          color: 'rgba(216,180,254,0.95)',
-                        }}
-                        title="一键生成字幕"
-                      >
-                        <Sparkles size={isMobile ? 14 : 11} />
-                        {!isMobile && '生成字幕'}
-                      </button>
-                    )}
-                    {showReprocess && (
-                      <button
-                        onClick={() => onReprocess!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
-                        style={{
-                          background: 'var(--selection-bg)',
-                          border: '1px solid var(--selection-border)',
-                          color: 'var(--selection-text)',
-                        }}
-                        title="用智能体加工文档"
-                      >
-                        <Wand2 size={isMobile ? 14 : 11} />
-                        {!isMobile && '智能体'}
-                      </button>
-                    )}
-                  </>
+                  <div ref={readerMoreRef} className="relative flex-shrink-0">
+                    <button
+                      onClick={() => setReaderMoreOpen(v => !v)}
+                      className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                      title="更多操作">
+                      <MoreHorizontal size={13} />
+                    </button>
+                    <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
+                      anchorRef={readerMoreRef} minWidth={190}
+                      className="surface-popover rounded-[10px] p-1.5">
+                      {showTranscribe && (
+                        <ReaderMoreItem icon={<AudioLines size={13} />} label="转录并生成摘要"
+                          onClick={() => { setReaderMoreOpen(false); onTranscribe!(sel.id); }} />
+                      )}
+                      {showSubtitle && (
+                        <ReaderMoreItem icon={<Sparkles size={13} />} label="生成字幕"
+                          onClick={() => { setReaderMoreOpen(false); onGenerateSubtitle!(sel.id); }} />
+                      )}
+                      {showReprocess && (
+                        <ReaderMoreItem icon={<Wand2 size={13} />} label="用智能体加工"
+                          onClick={() => { setReaderMoreOpen(false); onReprocess!(sel.id); }} />
+                      )}
+                      {showEvidence && (
+                        <ReaderMoreItem icon={<Workflow size={13} />} label="证据板"
+                          onClick={() => { setReaderMoreOpen(false); setEvidenceGraphOpen(true); }} />
+                      )}
+                      {showVersions && (
+                        <ReaderMoreItem icon={<History size={13} />} label="历史版本"
+                          onClick={() => { setReaderMoreOpen(false); setVersionHistoryOpen(true); }} />
+                      )}
+                      {showSubscription && (
+                        <ReaderMoreItem icon={<Rss size={13} />}
+                          label={githubSha ? `订阅信息 · #${githubSha.slice(0, 7)}` : '订阅信息'}
+                          onClick={() => { setReaderMoreOpen(false); onOpenSubscription!(sel.id); }} />
+                      )}
+                    </AnchoredMenu>
+                  </div>
                 );
               })()}
-              {/* 验收报告「证据关系图」按钮：仅验收类条目 + 有正文时显示，放在工具栏（非文章正中） */}
-              {(() => {
-                // 用 selectedEntryData（含 searchResults 回退），与正文/GitHub 渲染一致，
-                // 否则搜索命中的验收报告点开后「证据图」按钮不显示。
-                const sel = selectedEntryData;
-                const isAcc = !!(sel?.metadata?.kind === 'acceptance-report' || sel?.metadata?.verdict);
-                if (!isAcc || !preview?.text || editMode) return null;
-                return (
-                  <button
-                    onClick={() => setEvidenceGraphOpen(true)}
-                    className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
-                    style={{
-                      background: 'rgba(99,102,241,0.1)',
-                      border: '1px solid rgba(99,102,241,0.22)',
-                      color: 'rgba(165,180,252,0.95)',
-                    }}
-                    title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
-                  >
-                    <Workflow size={isMobile ? 14 : 11} />
-                    {!isMobile && '证据板'}
-                  </button>
-                );
-              })()}
-              {/* 批注布局开关已移除：评论默认内联，点击某条 → 右侧批注栏展开，关掉即回内联（activeCommentKey 单独驱动） */}
               {/* 批次 D：划词评论开关按钮 */}
               {trackedEntryForComments && (
                 <button
                   onClick={() => setInlineCommentsOpen(true)}
-                  className="h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                  // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
+                  className={commentCount > 0 ? TOOLBAR_BTN : TOOLBAR_ICON_BTN}
                   style={{
-                    // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
-                    width: commentCount > 0 ? undefined : 28,
-                    padding: commentCount > 0 ? '0 8px' : 0,
                     background: 'rgba(168,85,247,0.08)',
                     border: '1px solid rgba(168,85,247,0.18)',
                     color: 'rgba(216,180,254,0.95)',
@@ -3623,21 +3498,21 @@ export function DocBrowser({
               {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && tocContent && !isMobile && (
                 <button
                   onClick={toggleRightPanel}
-                  className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                  className={TOOLBAR_BTN}
                   style={{
                     background: rightPanelCollapsed ? 'var(--nested-block-bg)' : 'var(--selection-bg)',
                     border: `1px solid ${rightPanelCollapsed ? 'var(--nested-block-border)' : 'var(--selection-border)'}`,
                     color: rightPanelCollapsed ? 'var(--text-muted)' : 'var(--selection-text)',
                   }}
                   title={rightPanelCollapsed ? '显示本页章节 / 批注栏' : '收起本页章节 / 批注栏'}>
-                  <PanelRight size={11} /> {rightPanelCollapsed ? '章节' : '收起'}
+                  <PanelRight size={12} /> {rightPanelCollapsed ? '章节' : '收起'}
                 </button>
               )}
               {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
               {selectedEntryId && !isMobile && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
-                  className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
+                  className={TOOLBAR_ICON_BTN}
                   style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
                   title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
                   {readerFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
@@ -3651,22 +3526,13 @@ export function DocBrowser({
                 if (!cfg.editable) return null;
                 return (
                   <div className="flex items-center gap-1.5">
-                    {versionApi && !isMobile && !editMode && (
-                      <button
-                        onClick={() => setVersionHistoryOpen(true)}
-                        className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
-                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                        title="历史版本 — 查看并恢复">
-                        <History size={13} />
-                      </button>
-                    )}
                     {editMode ? (
                       <>
                         {/* Markdown：富文本（所见即所得）/ 源码（支持 [[ 自动补全）双模式 */}
                         {getFileTypeConfig(sel.title, sel.contentType).label === 'Markdown' && (
                           <button
                             onClick={() => setMdEditRich((v) => !v)}
-                            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                            className={TOOLBAR_BTN}
                             style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.18)', color: 'rgba(216,180,254,0.95)' }}
                             title={mdEditRich ? '切换到源码模式（支持 [[ 引用自动补全）' : '切换到富文本（所见即所得）'}>
                             {mdEditRich ? '源码' : '富文本'}
@@ -3684,22 +3550,22 @@ export function DocBrowser({
                             }
                           }}
                           disabled={saving}
-                          className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          className={TOOLBAR_BTN}
                           style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
-                          {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={11} />}
+                          {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={12} />}
                           保存
                         </button>
                         <button
                           onClick={() => setEditMode(false)}
-                          className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          className={TOOLBAR_BTN}
                           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                          <X size={11} /> 取消
+                          <X size={12} /> 取消
                         </button>
                       </>
                     ) : (
                       <button
                         onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
-                        className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
+                        className={TOOLBAR_ICON_BTN}
                         style={{ background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }}
                         title="编辑文档">
                         <Pencil size={13} />

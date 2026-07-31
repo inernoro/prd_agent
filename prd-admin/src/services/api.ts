@@ -1307,6 +1307,7 @@ export const api = {
       // 分享链接
       shareLinks: (storeId: string) => `/api/document-store/stores/${storeId}/share-links`,
       shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
+      shareLinkShortSeq: (linkId: string) => `/api/document-store/share-links/${linkId}/short-link`,
       // 知识库 Agent：再加工模板列表
       reprocessTemplates: () => `/api/document-store/reprocess-templates`,
       // 知识库 Agent：可调用智能体（内置 + 用户自建）

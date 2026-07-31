@@ -2026,6 +2026,7 @@ export {
   createShareLink as createDocStoreShareLink,
   listShareLinks as listDocStoreShareLinks,
   revokeShareLink as revokeDocStoreShareLink,
+  ensureShareLinkShortSeq as ensureDocStoreShareLinkShortSeq,
   getDocStoreShareView,
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,

@@ -66,12 +66,37 @@ describe('resolveNoticeOutboundConfig', () => {
     expect(overridden?.targetUserId).toBe('u1');
   });
 
+  it('专用通知配置缺失时复用已加密保存的 MAP 服务端接入，不要求重复配置', () => {
+    const fallback = resolveNoticeOutboundConfig({} as NodeJS.ProcessEnv, {
+      baseUrl: 'https://stored-map.example.com/',
+      token: 'stored-token',
+    });
+    expect(fallback).toEqual({
+      baseUrl: 'https://stored-map.example.com',
+      token: 'stored-token',
+      source: 'system-alert',
+    });
+
+    const dedicated = resolveNoticeOutboundConfig({
+      CDS_NOTICE_MAP_BASE_URL: 'https://notice-map.example.com',
+      CDS_NOTICE_MAP_TOKEN: 'notice-token',
+    } as NodeJS.ProcessEnv, {
+      baseUrl: 'https://stored-map.example.com',
+      token: 'stored-token',
+    });
+    expect(dedicated?.baseUrl).toBe('https://notice-map.example.com');
+    expect(dedicated?.token).toBe('notice-token');
+  });
+
   it('逃生阀 CDS_NOTICE_OUTBOUND_ENABLED=0 一刀关停', () => {
     expect(resolveNoticeOutboundConfig({
       CDS_NOTICE_MAP_BASE_URL: 'https://map.example.com',
       CDS_NOTICE_MAP_TOKEN: 'tok',
       CDS_NOTICE_OUTBOUND_ENABLED: '0',
-    } as NodeJS.ProcessEnv)).toBeNull();
+    } as NodeJS.ProcessEnv, {
+      baseUrl: 'https://stored-map.example.com',
+      token: 'stored-token',
+    })).toBeNull();
   });
 });
 
