@@ -33,19 +33,54 @@ EXPECTED = [
 
 ALL_KINDS = {"moon", "earth", "sun", "polaris", "comet"}
 
-# 每个产物的水印尺寸与偏移（与 .claude/rules/report-design-system.md §1.4 的表一一对应）。
-# 尺寸按各刊报头的紧凑度等比取，不是全刊系一个数——验收档案的报头本来就更矮
-# （stamp 44px vs 46px、padding-bottom 12px vs 14px），硬套 92px 会显得过重。
-# 把这张表变成可执行契约，是为了让规则里那串数字不至于退化成没人校验的散文：
-# 改实现而不改规则（或反过来）都会在这里红。
-DIMENSIONS = {
-    ".claude/skills/daily-report-summary/reference/report-template-html.html":
-        {"desktop": 92, "mobile": 70, "top": -14, "right": -8},
-    ".claude/skills/weekly-update-summary/reference/report-template-html.html":
-        {"desktop": 92, "mobile": 70, "top": -14, "right": -8},
-    ".claude/skills/create-visual-test-to-kb/scripts/archive_report.py":
-        {"desktop": 86, "mobile": 60, "top": -12, "right": -6},
+RULE_DOC = ".claude/rules/report-design-system.md"
+
+# 产物 -> 规则 §1.4 表里的 key。**只映射，不存数值**：
+# 数值一律运行时从规则表解析。守卫若自己存一份副本，就成了本 PR 要防的同一种分裂
+# （改规则不改守卫仍绿、改实现加守卫不改规则也仍绿）——等于在防漂移的工具里
+# 内置一处漂移。第一版正是这么写的，被 review 抓出来。
+PRODUCT_DIMENSION_KEY = {
+    ".claude/skills/daily-report-summary/reference/report-template-html.html": "template",
+    ".claude/skills/weekly-update-summary/reference/report-template-html.html": "template",
+    ".claude/skills/create-visual-test-to-kb/scripts/archive_report.py": "archive",
 }
+
+
+def load_registered_dimensions():
+    """解析规则 §1.4 的尺寸表，返回 {key: {desktop, mobile, top, right}}。
+
+    解析不出来必须**显式判红**，不能回退到内置默认值——一旦有默认值兜底，
+    表格被改坏时守卫会拿着过时的数字继续判绿，比没有守卫更糟。
+    """
+    path = ROOT / RULE_DOC
+    if not path.is_file():
+        fail(f"设计系统规则不存在：{RULE_DOC}")
+        return None
+    out = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 5:
+            continue
+        m_key = re.fullmatch(r"`([a-z]+)`", cells[1])
+        m_desk = re.fullmatch(r"(\d+)px", cells[2])
+        m_mob = re.fullmatch(r"(\d+)px", cells[3])
+        m_off = re.search(r"top:(-?\d+)px;\s*right:(-?\d+)px", cells[4])
+        if not (m_key and m_desk and m_mob and m_off):
+            continue
+        out[m_key.group(1)] = {
+            "desktop": int(m_desk.group(1)),
+            "mobile": int(m_mob.group(1)),
+            "top": int(m_off.group(1)),
+            "right": int(m_off.group(2)),
+        }
+    missing = set(PRODUCT_DIMENSION_KEY.values()) - set(out)
+    if missing:
+        fail(f"规则 {RULE_DOC} §1.4 尺寸表里解析不到 key {sorted(missing)}——"
+             f"表格结构或 key 变了？守卫拒绝用内置默认值兜底")
+        return None
+    return out
 
 failures = []
 
@@ -278,11 +313,14 @@ def check_dimensions(label, rel, base_rules, media_rules):
     实现悄悄改了没人知道，四刊摆在一起就会看出参差——而这恰恰是本 PR 要解决的
     「四刊分不出来」的反面：分得出来但对不齐。
     """
-    want = DIMENSIONS.get(rel)
-    if not want:
-        fail(f"{label}({rel}): 未在 DIMENSIONS 登记尺寸——"
-             f"新增产物时必须同步登记，否则水印大小可以随意漂")
+    if REGISTERED is None:
+        return                              # 规则表解析失败已单独判红，此处不重复刷屏
+    dim_key = PRODUCT_DIMENSION_KEY.get(rel)
+    if not dim_key:
+        fail(f"{label}({rel}): 未在 PRODUCT_DIMENSION_KEY 登记——"
+             f"新增产物时必须映射到规则 §1.4 的某个 key，否则水印大小可以随意漂")
         return
+    want = REGISTERED[dim_key]
 
     def px(bodies, prop):
         for b in bodies:
@@ -294,24 +332,32 @@ def check_dimensions(label, rel, base_rules, media_rules):
     base = [r["body"] for r in base_rules]
     media = [r["body"] for r in media_rules]
 
+    # width 与 height 都要查：刊徽 viewBox 是正方形，两者不等会把水印拉扁或压瘦，
+    # 只查 width 的话 height 可以悄悄漂走（第一版就漏了 height）。
     for prop, key, where, bodies in (
         ("width", "desktop", "桌面", base),
+        ("height", "desktop", "桌面", base),
         ("top", "top", "桌面", base),
         ("right", "right", "桌面", base),
         ("width", "mobile", "窄屏", media),
+        ("height", "mobile", "窄屏", media),
     ):
         got = px(bodies, prop)
         if got is None:
             fail(f"{label}({rel}): {where}的 .emblem 规则里没有 {prop} —— "
-                 f"设计系统规则 §1.4 登记的是 {want[key]}px")
+                 f"规则 §1.4（key={dim_key}）登记的是 {want[key]}px")
         elif got != want[key]:
             fail(f"{label}({rel}): {where} {prop}={got:g}px，"
-                 f"与设计系统规则 §1.4 登记的 {want[key]}px 不符——"
-                 f"改实现请同步改规则表，两边必须一致")
+                 f"与规则 §1.4（key={dim_key}）登记的 {want[key]}px 不符——"
+                 f"尺寸唯一来源是规则表，改实现请先改表")
 
 
 print("米多刊系刊徽守卫")
 print("-" * 60)
+# 尺寸来自规则表，不在本文件另存副本
+REGISTERED = load_registered_dimensions()
+if REGISTERED:
+    print(f"已从 {RULE_DOC} §1.4 读到尺寸登记：{REGISTERED}")
 for label, rel, kinds in EXPECTED:
     print(f"检查 {label}: {rel}")
     check_file(label, rel, kinds)
