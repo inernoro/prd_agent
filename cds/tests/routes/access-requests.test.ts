@@ -246,6 +246,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     // proj-a 的 slug 是 proj-alpha
     const init = await request(server, 'POST', '/api/projects/proj-alpha/access-requests', { purpose: 'slug' });
     expect(init.status).toBe(201);
+    expect(init.body.projectId).toBe('proj-a');
     const reqId = init.body.requestId as string;
     const token = init.body.pollToken as string;
     // 用 slug 轮询

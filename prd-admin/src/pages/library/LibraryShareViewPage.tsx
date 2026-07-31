@@ -316,7 +316,7 @@ export function LibraryShareViewPage() {
           </span>
         </div>
         <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} />
+          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} variant="inline" />
           {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
           <button
             onClick={() => navigate(knowledgeBaseReturnPath)}
@@ -397,7 +397,7 @@ export function LibraryShareViewPage() {
             onSelectEntry={selectSharedEntry}
             loadContent={loadContent}
             sortMode={shareSortMode}
-            sidebarHeader={
+            sidebarFilters={
               <ReaderSortControl value={shareSortMode} onChange={setShareSortMode} />
             }
             inlineCommentShareToken={token ?? undefined}
@@ -436,10 +436,10 @@ function ReaderSortControl({ value, onChange }: { value: DocBrowserSortMode; onC
     { mode: 'created-desc', label: '最新创建' },
     { mode: 'updated-desc', label: '最近更新' },
   ];
+  // 标签由筛选面板分组标题承担；段控尺寸与知识库详情的排序段控保持一致
   return (
-    <div className="flex items-center gap-1.5" aria-label="文章排序">
-      <span className="shrink-0 text-[11px] font-medium text-token-muted">排序</span>
-      <div role="group" aria-label="排序方式" className="surface-inset flex shrink-0 items-center gap-0.5 rounded-[9px] p-0.5">
+    <div className="flex items-center" aria-label="文章排序">
+      <div role="group" aria-label="排序方式" className="inline-flex shrink-0 items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
         {options.map((option) => {
           const active = option.mode === value;
           return (
@@ -448,7 +448,8 @@ function ReaderSortControl({ value, onChange }: { value: DocBrowserSortMode; onC
               type="button"
               onClick={() => onChange(option.mode)}
               aria-pressed={active}
-              className={`shrink-0 whitespace-nowrap rounded-[7px] px-2.5 py-1.5 text-[11px] font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover-bg-soft'}`}
+              className={`shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${active ? '' : 'text-token-muted hover-bg-soft'}`}
+              style={active ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 } : undefined}
             >
               {option.label}
             </button>

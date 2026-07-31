@@ -74,6 +74,14 @@
   /* 刊头 */
   .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 3px solid var(--ink); position: relative; }
   .masthead::after { content: ""; position: absolute; left: 0; right: 0; bottom: -7px; height: 1px; background: var(--ink); }
+  /* 刊徽水印（衬字板式）：垫在右侧 mono 小字背后，只做刊物区分，不承载信息。
+     日报=月亮 / 周报=地球 / 月报=太阳 / 验收=北极星 / 巡检=彗星，见 .claude/rules/report-design-system.md。
+     right 负值不会撑出横向滚动条：.paper 左右 padding 都大于这里的偏移量。 */
+  .emblem { position: absolute; top: -14px; right: -8px; width: 92px; height: 92px;
+            color: var(--indigo); opacity: 0.13; z-index: 0; pointer-events: none; }
+  .emblem svg { display: block; width: 100%; height: 100%; }
+  .masthead .t, .masthead .r, .masthead .stamp { position: relative; z-index: 1; }
+  @media (max-width: 640px) { .emblem { width: 70px; height: 70px; top: -8px; right: -4px; } }
   .stamp { width: 46px; height: 46px; flex-shrink: 0; background: var(--indigo); color: #f2f1ff; border-radius: 4px;
     display: grid; place-items: center; font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
     box-shadow: 3px 3px 0 rgba(33,29,24,0.82); }
@@ -208,6 +216,7 @@
 <div class="paper">
 
   <header class="masthead">
+    <div class="emblem"><svg viewBox="0 0 120 120" fill="none" data-emblem="earth" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-earth-c"><circle cx="60" cy="60" r="44"/></clipPath></defs><circle cx="60" cy="60" r="44" fill="currentColor" fill-opacity="0.08"/><g clip-path="url(#emb-earth-c)"><g fill="currentColor" fill-opacity="0.42"><path d="M34 26 q16 -4 20 8 q4 12 -6 16 q-4 14 -14 12 q-12 -4 -10 -18 q0 -14 10 -18 z"/><path d="M40 68 q12 -2 12 10 q0 16 -8 26 q-10 6 -12 -6 q-2 -20 8 -30 z"/><path d="M70 30 q22 -6 30 8 q8 14 -4 22 q-6 16 -22 12 q-14 -6 -12 -22 q0 -16 8 -20 z"/><path d="M84 78 q14 -4 16 8 q0 12 -12 14 q-12 0 -12 -10 q0 -10 8 -12 z"/></g><path d="M16 60 H104" stroke="currentColor" stroke-width="1.8" opacity="0.45"/></g><circle cx="60" cy="60" r="44" stroke="currentColor" stroke-width="3"/></svg></div>
     <div class="stamp">MAP</div>
     <div class="t"><b>米多智能体周刊</b><span>MIDUO AGENT WEEKLY</span></div>
     <div class="r">一周纵深读本<br>周报智能体 · 自动编印</div>

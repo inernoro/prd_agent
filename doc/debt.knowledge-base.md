@@ -40,6 +40,7 @@
 | K-5 | **不存"原始 KB 选择来源"**：AI Toolbox 智能体的 `KnowledgeBaseIds` 只存 `attachmentId`，不区分"用户当时是直接上传文件" vs"从文档空间选了一个 entry"。一旦 K-1 落地后会丢失这层语义，难以反向追溯。建议增加 `KnowledgeBaseSources: List<{type: "attachment"\|"document-entry", id}>` 结构存原始引用。 | P3 | K-1 立项后 | blocked-on-K-1 |
 | K-6 | **缺少"按 documentType 过滤"的技能权重**：[design.knowledge-base.multi-doc.md](./design.knowledge-base.multi-doc.md) 的“风险与边界”仍将类型过滤列为后续方向。当前技能只能 `contextScope=all/current/prd/none`，不能说"我这个技能只看 product 类型的文档"。整合 K-1 时一起做。 | P3 | K-1 立项后 | blocked-on-K-1 |
 | K-7 | **访问统计无应用层消费**：`document_store_view_events` 集合已经在记数据（含 `ViewDedupWindow` 去重），但没有"热度排序"、"用户协同推荐"、"最近访问的知识库快速接入智能体"之类的应用。 | P4 | 用户反馈"找不到我之前上传过的文档"时 | open |
+| K-9 | **下载「原始文件」格式在跨域对象存储上会降级**：2026-07-31 下载弹窗新增「当前文章 / 整个知识库」范围与三种格式后，选「原始文件」时前端对 `fileUrl` 发 `fetch`。该地址多为对象存储/CDN 公网 URL（`TencentCosStorage`），不带 `Access-Control-Allow-Origin`，浏览器会拦掉；当前实现降级为导出抽取正文（`.md`/`.txt`），用户拿不到真正的 PDF/Word 原件，且降级是静默的（只体现在整库导出的失败计数里）。彻底解决需后端加一个同源下载代理端点（`GET /api/document-store/entries/{id}/raw`，带鉴权透传对象存储流）。 | P2 | 用户反馈「选了原始文件却下到 .md」或需要批量取回原始附件时 | open |
 | K-8 | **二进制文档抽取能力有限**：Excel/CSV 当前按纯文本对待，无表格结构化提取；代码仓库（如 GitHub repo）无自动同步接口（SyncWorker 框架已有，但 GitHub 集成代码未确认完整）。 | P3 | 用户要求把 Excel 报表 / GitHub README 作为知识源时 | open |
 
 ---

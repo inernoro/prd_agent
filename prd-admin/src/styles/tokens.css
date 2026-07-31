@@ -76,6 +76,14 @@
   --text-secondary: rgba(247, 247, 251, 0.80);
   --text-muted: rgba(247, 247, 251, 0.68);
 
+  /* Markdown 代码块 / 行内代码：正文阅读区唯一的等宽块，必须跟着主题翻面。
+     浅色纸面上摆黑底白字的代码框曾是「文档样式混乱」的头号来源（2026-07-31）。 */
+  --code-block-bg: rgba(0, 0, 0, 0.30);
+  --code-block-border: rgba(255, 255, 255, 0.12);
+  --code-block-text: rgba(255, 255, 255, 0.85);
+  --code-inline-bg: rgba(255, 255, 255, 0.05);
+  --code-inline-text: rgba(248, 113, 113, 0.90);
+
   /* 跨主题状态文字：组件只表达语义，不再各自维护明暗两套前景色。 */
   --semantic-success-text: #86efac;
   --semantic-warning-text: #fcd34d;
@@ -290,8 +298,9 @@
   --selection-icon-bg: rgba(129, 140, 248, 0.22);
   --selection-border: rgba(129, 140, 248, 0.38);
   --selection-text: #c7d2fe;
-  --selection-checkbox-bg: rgba(20, 20, 24, 0.92);
-  --selection-checkbox-ring: rgba(20, 20, 24, 0.72);
+  /* 复选框底色：过去是「盖住文件图标」的近黑遮罩，暗色下看着像一块黑疙瘩（2026-07-31 用户反馈）。
+     现在复选框与图标互斥同槽显示，不需要遮罩，改为比行底稍亮一档的常规表面。 */
+  --selection-checkbox-bg: rgba(255, 255, 255, 0.10);
 
   /* Finder 风格标签。solid 保证白字小字号也达到可读对比度。 */
   --tag-red-solid: #b91c1c;
@@ -492,6 +501,13 @@
   --text-secondary: rgba(15, 23, 42, 0.78);
   --text-muted: rgba(15, 23, 42, 0.68);          /* 暖灰底上保持 WCAG AA 对比度。 */
 
+  /* 浅色下代码块走「比纸面深一档的暖灰 + 石墨字」，与正文同源，不再是纸上的黑洞。 */
+  --code-block-bg: #F1ECE3;
+  --code-block-border: rgba(89, 65, 50, 0.18);
+  --code-block-text: #23303F;
+  --code-inline-bg: rgba(26, 26, 31, 0.06);
+  --code-inline-text: #B3261E;
+
   --semantic-success-text: #166534;
   --semantic-warning-text: #854d0e;
   --semantic-danger-text: #b91c1c;
@@ -535,7 +551,6 @@
   --selection-border: rgba(166, 75, 53, 0.34);
   --selection-text: #8F3F2B;
   --selection-checkbox-bg: var(--bg-card);
-  --selection-checkbox-ring: rgba(248, 245, 239, 0.82);
 
   --button-primary-bg: #CC785C;
   --button-primary-bg-hover: #B8684C;
