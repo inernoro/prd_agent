@@ -46,13 +46,22 @@ FIELDS = ("一句话", "谁该读", "读完能做什么")
 ONE_LINER_ALIASES = {"一句话", "本周一句话"}
 REQUIRED_BY_TYPE = {"report": ("一句话",)}
 
-# 一句话里出现这些形状就不算人话：代码引用、文件路径、驼峰/蛇形标识符
+# 一句话里出现这些形状就不算人话：代码引用、文件路径
 CODE_SPAN = re.compile(r"`[^`]+`")
 FILE_PATH = re.compile(r"[\w./-]+\.(?:cs|ts|tsx|js|mjs|py|sh|json|yml|yaml|md|css|rs)\b")
-IDENTIFIER = re.compile(r"\b[A-Za-z]+(?:[A-Z][a-z0-9]+)+\b|\b[a-z]+_[a-z_]+\b")
+# 驼峰 / 蛇形标识符不禁止 —— 术语是信息密度的延伸。但首次出现必须就地解释，
+# 即紧跟一个中文括号把它翻译成人话：`ModelResolver（决定这次调用走哪个模型的那一步）`。
+IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[A-Z][a-z0-9]+)+\b|\b[a-z]+_[a-z_]+\b")
+GLOSS_AFTER = re.compile(r"^\s*[（(]")
 
-# 一句话的长度上限（按字符数，中文一字算一个）。超了就不是一句话，是一段话。
-ONE_LINER_MAX = 80
+# 空话套话：写了等于没写，占着一句话的位置却不给任何信息
+VACUOUS = ("相关内容", "有关内容", "进行说明", "做了介绍", "本文介绍了", "进行了阐述",
+           "相关规范", "等等", "若干", "诸多")
+
+# 一句话的长度区间（按字符数，中文一字算一个）。
+# 上限：超了就不是一句话，是一段话。下限：太短基本等于没说，密度不够。
+ONE_LINER_MAX = 100
+ONE_LINER_MIN = 20
 # 周报的「本周一句话」要向老板交代业务进展 + 关键数字，放宽到 140 字。
 ONE_LINER_MAX_BY_TYPE = {"report": 140}
 # 谁该读的长度下限：低于此长度基本等于没写（如「所有人」）
@@ -111,12 +120,20 @@ def check_file(path: str) -> list[str]:
         limit = ONE_LINER_MAX_BY_TYPE.get(doc_type(name), ONE_LINER_MAX)
         if len(one_liner) > limit:
             problems.append(f"「一句话」{len(one_liner)} 字，超过 {limit} 字上限")
+        elif len(one_liner) < ONE_LINER_MIN:
+            problems.append(f"「一句话」只有 {len(one_liner)} 字，密度不够，说不出内核")
         if CODE_SPAN.search(one_liner):
             problems.append("「一句话」里有代码引用（反引号）")
         elif FILE_PATH.search(one_liner):
             problems.append("「一句话」里有文件路径")
-        elif IDENTIFIER.search(one_liner):
-            problems.append("「一句话」里有驼峰/蛇形标识符")
+        else:
+            for m in IDENTIFIER.finditer(one_liner):
+                if not GLOSS_AFTER.match(one_liner[m.end():]):
+                    problems.append(f"术语「{m.group(0)}」未就地解释，后面要紧跟一个中文括号说人话")
+                    break
+        hit = next((w for w in VACUOUS if w in one_liner), None)
+        if hit:
+            problems.append(f"「一句话」里有空话「{hit}」，换成这篇独有的信息")
 
     audience = header.get("谁该读", "")
     if audience and len(audience) < AUDIENCE_MIN:

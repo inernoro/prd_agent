@@ -48,7 +48,7 @@ GOOD_HEADER = """# 示例 · 指南
 
 > **版本**：v1.0 | **日期**：2026-07-31 | **状态**：已落地
 
-**一句话**：讲清楚这份示例文档解决什么问题。
+**一句话**：给守卫测试用的合规样例：导读三行齐、有硬信息、术语都就地解释过。
 **谁该读**：写测试的人，以及想看合规样例的人。
 **读完能做什么**：照着写出一份合规的导读三行。
 
@@ -67,20 +67,34 @@ check(any("缺「谁该读」" in p for p in problems_for(
 check(any("缺「一句话」" in p for p in problems_for("guide.demo.md", "# 无导读 · 指南\n\n正文\n")),
       "整篇没有导读被抓出")
 
-check(any("驼峰" in p for p in problems_for(
-    "guide.demo.md", GOOD_HEADER.replace("讲清楚这份示例文档解决什么问题。", "说明 buildGate 的行为。"))),
-      "「一句话」里的驼峰标识符被抓出")
+check(any("未就地解释" in p for p in problems_for(
+    "guide.demo.md", GOOD_HEADER.replace("给守卫测试用的合规样例：导读三行齐、有硬信息、术语都就地解释过。",
+        "说明 buildGate 这道闸在排队时怎么把僵尸请求踢出去的判定。"))),
+      "术语没跟中文括号解释被抓出")
+
+check(problems_for("guide.demo.md", GOOD_HEADER.replace("给守卫测试用的合规样例：导读三行齐、有硬信息、术语都就地解释过。",
+        "说明 buildGate（同时只放三个构建过闸的那道闸）怎么把僵尸请求踢出队列。")) == [],
+      "术语紧跟中文括号解释就放行（术语是信息密度的延伸）")
+
+check(any("空话" in p for p in problems_for(
+    "guide.demo.md", GOOD_HEADER.replace("给守卫测试用的合规样例：导读三行齐、有硬信息、术语都就地解释过。",
+        "本文介绍了构建队列的相关内容，以及若干注意事项和使用说明。"))),
+      "空话套话被抓出")
+
+check(any("密度不够" in p for p in problems_for(
+    "guide.demo.md", GOOD_HEADER.replace("给守卫测试用的合规样例：导读三行齐、有硬信息、术语都就地解释过。", "讲构建队列。"))),
+      "一句话太短（密度不够）被抓出")
 
 check(any("文件路径" in p for p in problems_for(
-    "guide.demo.md", GOOD_HEADER.replace("讲清楚这份示例文档解决什么问题。", "说明 cds/src/services/proxy.ts 的行为。"))),
+    "guide.demo.md", GOOD_HEADER.replace("给守卫测试用的合规样例：导读三行齐、有硬信息、术语都就地解释过。", "说明 cds/src/services/proxy.ts 的行为。"))),
       "「一句话」里的文件路径被抓出")
 
 check(any("代码引用" in p for p in problems_for(
-    "guide.demo.md", GOOD_HEADER.replace("讲清楚这份示例文档解决什么问题。", "说明 `--ratchet` 参数怎么用。"))),
+    "guide.demo.md", GOOD_HEADER.replace("给守卫测试用的合规样例：导读三行齐、有硬信息、术语都就地解释过。", "说明 `--ratchet` 参数怎么用。"))),
       "「一句话」里的反引号代码被抓出")
 
 check(any("上限" in p for p in problems_for(
-    "guide.demo.md", GOOD_HEADER.replace("讲清楚这份示例文档解决什么问题。", "很长的一句话。" * 20))),
+    "guide.demo.md", GOOD_HEADER.replace("给守卫测试用的合规样例：导读三行齐、有硬信息、术语都就地解释过。", "很长的一句话。" * 20))),
       "「一句话」超长被抓出")
 
 check(any("等于没写" in p for p in problems_for(
