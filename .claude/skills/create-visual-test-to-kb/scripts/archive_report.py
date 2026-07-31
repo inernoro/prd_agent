@@ -645,18 +645,22 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
     r"|(?-i:\bFAIL\b)"
     r"|\b(?:failed|failure)\b"
-    r"|(?:result|结果)\s*[:：=]\s*(?:fail|failed|failure)\b"
-    rf"|(?:status|状态)\s*[:：=]\s*{_RAW_FAILURE_VALUE_PATTERN}\b"
-    rf"|(?:stage|阶段)\s*[:：=]\s*(?:{_RAW_FAILURE_VALUE_PATTERN}"
-    rf"|{_CDS_DEPLOY_FAILURE_STAGE_PATTERN})\b)"
+    r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
+    r"(?:fail|failed|failure)\b\"?"
+    rf"|\"?(?:status|状态|branch[\s_-]*status)\"?\s*[:：=]\s*\"?"
+    rf"{_RAW_FAILURE_VALUE_PATTERN}\b\"?"
+    rf"|\"?(?:stage|阶段)\"?\s*[:：=]\s*\"?(?:{_RAW_FAILURE_VALUE_PATTERN}"
+    rf"|{_CDS_DEPLOY_FAILURE_STAGE_PATTERN})\b\"?)"
 )
 _RAW_RESOLVED_STATUS_PATTERN = (
     r"(?:(?-i:\bPASS\b)"
     r"|\b(?:passed|succeeded)\b"
-    r"|(?:result|结果)\s*[:：=]\s*"
-    r"(?:pass|passed|succeeded|success|successful|ok)\b"
-    rf"|(?:status|状态)\s*[:：=]\s*{_RAW_RESOLVED_VALUE_PATTERN}\b"
-    rf"|(?:stage|阶段)\s*[:：=]\s*(?:{_RAW_RESOLVED_VALUE_PATTERN}|deployed)\b"
+    r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
+    r"(?:pass|passed|succeeded|success|successful|ok)\b\"?"
+    rf"|\"?(?:status|状态|branch[\s_-]*status)\"?\s*[:：=]\s*\"?"
+    rf"{_RAW_RESOLVED_VALUE_PATTERN}\b\"?"
+    rf"|\"?(?:stage|阶段)\"?\s*[:：=]\s*\"?"
+    rf"(?:{_RAW_RESOLVED_VALUE_PATTERN}|deployed)\b\"?"
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?0(?![\d.])"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?2[xX]{2})"
 )
@@ -784,6 +788,10 @@ _VERIFIED_SCENARIO_OBJECT_PATTERN = (
     r"(?:场景|用例|测试|重试|处理|请求|响应|路径|分支|案例|样本|输入|"
     r"数据|状态码|逻辑|机制|流程)"
 )
+_POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN = (
+    rf"(?:{_VERIFIED_SCENARIO_OBJECT_PATTERN})"
+    r"(?:\s*(?:均|都|全部|全量|全数|现|现在|目前|本次))*"
+)
 
 
 def _split_fact_clauses(text):
@@ -882,7 +890,7 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
     last_left_end = max(end for _, end, _ in left)
     left_gap = clause[last_left_end : event.start()]
     left_gap = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", left_gap)
-    left_gap = re.sub(r"[()（）\[\]【】]", " ", left_gap)
+    left_gap = re.sub(r"[{}()（）\[\]【】'\"“”‘’]", " ", left_gap)
     if previous_event_end > last_left_end or not re.fullmatch(
         rf"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
         rf"再次|重新|均|都|同时|全部|一并|共同|二者|两者|已|已经|执行|"
@@ -967,6 +975,12 @@ def _closure_changes_subject(clause, event, previous_event_end):
         rf"\s*{_VERIFIED_SCENARIO_OBJECT_PATTERN}", suffix, re.I
     ):
         return True
+    if re.fullmatch(
+        rf"\s*{_POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN}\s*",
+        scope,
+        re.I,
+    ):
+        return False
     if re.search(_PENDING_DELIVERY_PATTERN, suffix, re.I):
         return True
     if re.search(r"后\s*$", scope):
@@ -1001,6 +1015,14 @@ def _failure_is_negated(clause, event, previous_event_end):
     suffix = clause[event.end() : event.end() + 12]
     scenario_prefix = clause[max(0, event.start() - 32) : event.start()]
     if re.match(_VERIFIED_SCENARIO_OBJECT_PATTERN, suffix, re.I):
+        if re.match(
+            rf"{_POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN}\s*"
+            rf"(?:{_RESOLVED_STATUS_PREFIX_PATTERN}\s*)"
+            rf"{_RESOLVED_ACTION_PATTERN}",
+            suffix,
+            re.I,
+        ):
+            return True
         if re.match(
             rf"{_VERIFIED_SCENARIO_OBJECT_PATTERN}\s*"
             r"(?:(?:尚|还|仍然?|依然|暂时?)?未|没(?:有)?|待)\s*"
@@ -1112,6 +1134,12 @@ def _event_inherits_context(clause, event, state, previous_event_end):
         r"(?:但是|但|不过|然而)?(?:再次|重新)?"
         r"(?:重试|复测|验证)(?:结果)?(?:后)?"
         r"(?:仍|仍然|依然|再次|重新|当前|目前|现在|本次)?",
+        normalized,
+        re.I,
+    ):
+        return True
+    if state == "resolved" and re.fullmatch(
+        _POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN,
         normalized,
         re.I,
     ):
@@ -1244,6 +1272,29 @@ def _root_cause_state_scope(row, row_index):
     return normalized or f"__root_cause_row_{row_index}"
 
 
+def _root_cause_state_text(row):
+    """Read gate state from target/fact cells without inheriting narrative columns."""
+    cells = list(row or [])
+    status_cells = cells[:2]
+    status_cells.extend(
+        cell for cell in cells[2:5] if _failure_subjects(cell)
+    )
+    conclusion = cells[4].strip() if len(cells) > 4 else ""
+    generic_resolved_conclusion = bool(
+        re.fullmatch(
+            r"(?:现已|已|已经)(?:修复|解决|恢复|通过|成功|正常|可用|就绪)",
+            conclusion,
+            re.I,
+        )
+    )
+    if generic_resolved_conclusion:
+        status_cells.append(conclusion)
+    return "；".join(
+        _normalize_evidence_usage_gap_clauses(cell)
+        for cell in status_cells
+    )
+
+
 def _normalize_evidence_usage_gap_clauses(text):
     """Neutralize evidence-use wording without removing real failures beside it."""
     clauses = _split_fact_clauses(text)
@@ -1374,10 +1425,7 @@ def _daily_fact_signals(values, body):
     failure_states_by_scope = {}
     for row_index, row in enumerate(root_cause_rows):
         scope = _root_cause_state_scope(row, row_index)
-        normalized_row = "；".join(
-            _normalize_evidence_usage_gap_clauses(cell)
-            for cell in row[:5]
-        )
+        normalized_row = _root_cause_state_text(row)
         failure_states_by_scope[scope] = _failure_subject_states(
             normalized_row,
             failure_states_by_scope.get(scope),
