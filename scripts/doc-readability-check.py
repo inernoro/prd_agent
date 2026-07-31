@@ -53,6 +53,10 @@ FILE_PATH = re.compile(r"[\w./-]+\.(?:cs|ts|tsx|js|mjs|py|sh|json|yml|yaml|md|cs
 # 即紧跟一个中文括号把它翻译成人话：`ModelResolver（决定这次调用走哪个模型的那一步）`。
 IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[A-Z][a-z0-9]+)+\b|\b[a-z]+_[a-z_]+\b")
 GLOSS_AFTER = re.compile(r"^\s*[（(]")
+# 业界通用专有名词，读者不需要解释；只有内部黑话才要就地翻译
+WELL_KNOWN = {"GitHub", "GitLab", "JavaScript", "TypeScript", "PostgreSQL", "MongoDB",
+              "MySQL", "JetBrains", "OpenAI", "WebSocket", "DevOps", "PowerShell",
+              "OAuth", "GraphQL", "JetPack", "iPhone", "macOS", "iOS"}
 
 # 空话套话：写了等于没写，占着一句话的位置却不给任何信息
 VACUOUS = ("相关内容", "有关内容", "进行说明", "做了介绍", "本文介绍了", "进行了阐述",
@@ -128,6 +132,8 @@ def check_file(path: str) -> list[str]:
             problems.append("「一句话」里有文件路径")
         else:
             for m in IDENTIFIER.finditer(one_liner):
+                if m.group(0) in WELL_KNOWN:
+                    continue
                 if not GLOSS_AFTER.match(one_liner[m.end():]):
                     problems.append(f"术语「{m.group(0)}」未就地解释，后面要紧跟一个中文括号说人话")
                     break
@@ -143,6 +149,75 @@ def check_file(path: str) -> list[str]:
         problems.append(f"前缀 {doc_type(name)} 不在七类里")
 
     return problems
+
+
+# 实现语言的代码块：人类不需要在文档里读它，AI 直接读源码更准。
+# 允许的代码块语言：契约样例（json/yaml/http）、图（mermaid）、示意（text/无标注）、
+# 单条命令（bash/sh）、模板（markdown）。
+IMPL_LANGS = {"cs", "csharp", "c#", "ts", "tsx", "typescript", "js", "jsx", "javascript",
+              "rust", "rs", "python", "py", "java", "go", "vue", "css", "scss", "sql"}
+
+# 正文里散落的源码路径 / 行号引用。集中列在「实现来源」类小节里是允许的。
+SOURCE_PATH = re.compile(
+    r"\b(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw)/[\w./-]+"
+    r"\.(?:cs|ts|tsx|js|mjs|py|rs|css|sh)\b")
+SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")
+# 这些小节就是专门用来指路的，里面列路径不算欠账
+SOURCE_SECTION = re.compile(r"实现来源|关联实现|相关文件|关联代码|事实源|代码位置|相关实现")
+
+
+def scan_body(text: str) -> tuple[int, int]:
+    """返回 (实现语言代码行数, 正文里散落的源码路径引用数)。"""
+    impl_lines = 0
+    src_refs = 0
+    in_fence = False
+    lang = ""
+    in_source_section = False
+    for raw in text.splitlines():
+        st = raw.strip()
+        if st.startswith("```"):
+            if not in_fence:
+                in_fence, lang = True, st[3:].strip().lower()
+            else:
+                in_fence, lang = False, ""
+            continue
+        if in_fence:
+            if lang in IMPL_LANGS:
+                impl_lines += 1
+            continue
+        if st.startswith("#"):
+            in_source_section = bool(SOURCE_SECTION.search(st))
+            continue
+        if in_source_section:
+            continue
+        src_refs += len(SOURCE_PATH.findall(raw)) + len(SOURCE_LINEREF.findall(raw))
+    return impl_lines, src_refs
+
+
+def scan_bodies() -> tuple[dict[str, int], dict[str, int], list[str]]:
+    """按类型统计正文里的实现细节欠账。"""
+    impl = {t: 0 for t in TYPES}
+    srcs = {t: 0 for t in TYPES}
+    detail: list[str] = []
+    for name in sorted(os.listdir(DOC_DIR)):
+        if not name.endswith(".md"):
+            continue
+        t = doc_type(name)
+        if t not in TYPES:
+            continue
+        with open(os.path.join(DOC_DIR, name), encoding="utf-8") as fh:
+            text = fh.read()
+        i, s = scan_body(text)
+        impl[t] += i
+        srcs[t] += s
+        if i or s:
+            bits = []
+            if i:
+                bits.append(f"实现代码 {i} 行")
+            if s:
+                bits.append(f"散落源码路径 {s} 处")
+            detail.append(f"doc/{name} — {'，'.join(bits)}")
+    return impl, srcs, detail
 
 
 def doc_filenames() -> set[str]:
@@ -268,19 +343,24 @@ def load_baseline() -> dict[str, dict[str, int]]:
         return {}
     with open(BASELINE_PATH, encoding="utf-8") as fh:
         data = json.load(fh)
-    return {"missing": data.get("missing", {}), "bare_refs": data.get("bare_refs", {})}
+    return {"missing": data.get("missing", {}), "bare_refs": data.get("bare_refs", {}),
+            "impl_code": data.get("impl_code", {}), "source_refs": data.get("source_refs", {})}
 
 
-def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int]) -> None:
+def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
+                   impl: dict[str, int], srcs: dict[str, int]) -> None:
     payload = {
         "_comment": (
             "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。"
-            "missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数。"
-            "两个数值都只许下降：修好存量就跑 --update-baseline 把它压低；"
-            "上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。"
+            "missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数；"
+            "impl_code = 正文里实现语言代码块的行数；source_refs = 正文里散落的源码路径引用数"
+            "（集中列在「实现来源」小节里的不计）。数值只许下降：修好存量就跑 --update-baseline "
+            "把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。"
         ),
         "missing": {t: stats[t]["missing"] for t in TYPES},
         "bare_refs": {t: bare.get(t, 0) for t in TYPES},
+        "impl_code": {t: impl.get(t, 0) for t in TYPES},
+        "source_refs": {t: srcs.get(t, 0) for t in TYPES},
     }
     os.makedirs(os.path.dirname(BASELINE_PATH), exist_ok=True)
     with open(BASELINE_PATH, "w", encoding="utf-8") as fh:
@@ -317,18 +397,23 @@ def main() -> int:
 
     stats, missing = scan()
     bare_per_type, bare_detail, dead_detail = scan_links()
+    impl_per_type, src_per_type, body_detail = scan_bodies()
     total = sum(s["total"] for s in stats.values())
     total_missing = sum(s["missing"] for s in stats.values())
     total_bare = sum(bare_per_type.values())
+    total_impl = sum(impl_per_type.values())
+    total_src = sum(src_per_type.values())
 
     if args.update_baseline:
-        write_baseline(stats, bare_per_type)
-        print(f"基线已更新：{total_missing} / {total} 篇仍欠导读三行；裸引用 {total_bare} 处")
+        write_baseline(stats, bare_per_type, impl_per_type, src_per_type)
+        print(f"基线已更新：{total_missing} / {total} 篇仍欠导读三行；裸引用 {total_bare} 处；"
+              f"实现代码 {total_impl} 行；散落源码路径 {total_src} 处")
         return 0
 
     if args.json:
         print(json.dumps({"stats": stats, "missing": missing,
-                          "bare_refs": bare_per_type, "dead_links": dead_detail},
+                          "bare_refs": bare_per_type, "dead_links": dead_detail,
+                          "impl_code": impl_per_type, "source_refs": src_per_type},
                          ensure_ascii=False, indent=2))
         return 0
 
@@ -341,6 +426,7 @@ def main() -> int:
     print(f"{'合计':<8}{total:>6}{total - total_missing:>8}{total_missing:>6}"
           f"{(total - total_missing) / total * 100:>7.0f}%")
     print(f"\n引用可点击：裸引用 {total_bare} 处，死链 {len(dead_detail)} 处")
+    print(f"正文实现细节：实现语言代码 {total_impl} 行，散落源码路径 {total_src} 处")
 
     if args.list_missing:
         print()
@@ -348,6 +434,8 @@ def main() -> int:
             for line in missing[t]:
                 print(line)
         for line in bare_detail:
+            print(line)
+        for line in body_detail:
             print(line)
         for line in dead_detail:
             print(line)
@@ -381,6 +469,23 @@ def main() -> int:
             print("    修法：python3 scripts/doc-readability-check.py --fix-links", file=sys.stderr)
             return 1
 
+        for key, actual_map, label, howto in (
+            ("impl_code", impl_per_type, "正文实现代码",
+             "实现代码不进文档——删掉，或换成契约表 / 数据流说明；AI 需要细节时直接读源码"),
+            ("source_refs", src_per_type, "散落的源码路径引用",
+             "把路径集中到文末「实现来源」小节，正文用人话讲清职责与数据流"),
+        ):
+            over = [(t, baseline[key].get(t, 0), actual_map[t])
+                    for t in TYPES if actual_map[t] > baseline[key].get(t, 0)]
+            if over:
+                print(f"\n[FAIL] {label}增加 —— {howto}，判据见 doc/rule.doc.readability.md",
+                      file=sys.stderr)
+                for t, allowed, actual in over:
+                    print(f"  {t}: 基线 {allowed} → 当前 {actual}", file=sys.stderr)
+                for line in body_detail[:10]:
+                    print(f"    {line}", file=sys.stderr)
+                return 1
+
         regressions = []
         for t in TYPES:
             allowed = baseline["missing"].get(t, 0)
@@ -401,11 +506,15 @@ def main() -> int:
             return 1
         improved = sum(baseline["missing"].get(t, 0) for t in TYPES) - total_missing
         bare_improved = sum(baseline["bare_refs"].get(t, 0) for t in TYPES) - total_bare
-        if improved > 0 or bare_improved > 0:
-            print(f"\n[OK] 比基线少 {improved} 篇缺导读、少 {bare_improved} 处裸引用。"
+        impl_improved = sum(baseline["impl_code"].get(t, 0) for t in TYPES) - total_impl
+        src_improved = sum(baseline["source_refs"].get(t, 0) for t in TYPES) - total_src
+        gains = improved + bare_improved + impl_improved + src_improved
+        if gains > 0:
+            print(f"\n[OK] 比基线少 {improved} 篇缺导读、少 {bare_improved} 处裸引用、"
+                  f"少 {impl_improved} 行实现代码、少 {src_improved} 处源码路径。"
                   f"修完记得跑 --update-baseline 把基线压低。")
         else:
-            print("\n[OK] 导读欠账与裸引用均未上升，无死链。")
+            print("\n[OK] 四项欠账均未上升，无死链。")
 
     return 0
 

@@ -158,6 +158,46 @@ with tempfile.TemporaryDirectory() as tmp:
     dead = checker.find_dead_links(p, open(p, encoding="utf-8").read())
     check(len(dead) == 1 and "guide.nope.md" in dead[0][1], "死链被抓出，伪协议与外链不误报")
 
+print("[3.5] 正文只写人类要掌控的层次")
+
+IMPL_DOC = """# 示例 · 设计
+
+> **版本**：v1.0 | **日期**：2026-07-31 | **状态**：已落地
+
+## 接口设计
+
+```csharp
+public interface IFoo { Task BarAsync(string token); }
+```
+
+调用方从 prd-api/src/PrdAgent.Api/Services/Foo/FooService.cs 拿到令牌后传入。
+"""
+impl, srcs = checker.scan_body(IMPL_DOC)
+check(impl == 1, f"实现语言代码块被计为欠账（实测 {impl} 行）")
+check(srcs == 1, f"正文里散落的源码路径被计为欠账（实测 {srcs} 处）")
+
+ALLOWED_DOC = """# 示例 · 设计
+
+> **版本**：v1.0 | **日期**：2026-07-31 | **状态**：已落地
+
+## 数据流
+
+```mermaid
+graph LR; A-->B
+```
+
+```json
+{"status": "queued"}
+```
+
+## 实现来源
+
+- prd-api/src/PrdAgent.Api/Services/Foo/FooService.cs
+"""
+impl2, srcs2 = checker.scan_body(ALLOWED_DOC)
+check(impl2 == 0, "图与契约样例的代码块不算实现代码")
+check(srcs2 == 0, "「实现来源」小节里集中列的路径不算欠账")
+
 print("[4] 报告双产物的那句话有人盯着")
 
 SKILLS = os.path.join(REPO_ROOT, ".claude", "skills")
@@ -187,6 +227,16 @@ if os.path.exists(baseline_path):
     stats, _ = checker.scan()
     over = [t for t in checker.TYPES if stats[t]["missing"] > missing.get(t, 0)]
     check(not over, f"当前导读欠账未超过基线（超出：{over}）")
+
+    impl_base = baseline.get("impl_code", {})
+    src_base = baseline.get("source_refs", {})
+    check(set(impl_base) == set(checker.TYPES) and set(src_base) == set(checker.TYPES),
+          "基线记录了正文实现代码与源码路径两项欠账")
+    impl_now, src_now, _ = checker.scan_bodies()
+    check(not [t for t in checker.TYPES if impl_now[t] > impl_base.get(t, 0)],
+          "正文实现代码未超过基线")
+    check(not [t for t in checker.TYPES if src_now[t] > src_base.get(t, 0)],
+          "散落源码路径未超过基线")
 
     bare_now, _, dead_now = checker.scan_links()
     bare_over = [t for t in checker.TYPES if bare_now[t] > bare_base.get(t, 0)]
