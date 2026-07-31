@@ -18,3 +18,4 @@
 | rule | doc | report-design-system §1.4 尺寸表新增「窄屏偏移」列（模板 top:-8px right:-4px / 档案 top:-8px right:-2px）：原先只登记桌面偏移，窄屏可随意漂——档案窄屏 right 改成 -200px 刊徽整个移出屏幕而守卫判绿 |
 | rule | doc | predicate-and-wiring-discipline 补形状 6（判据读的值不是真正生效的那个值：取第一条而非层叠胜者 / 扫源码字面量而非求值结果 / 修完要横扫同类）与形状 7（守卫自己没接上线，形状 2 的递归：CI path filter 不含被守文件），自查清单同步补两条 |
 | fix | ci | 刊徽守卫补定位上下文两条判据：刊徽必须长在 masthead 报头内（模板查源码、验收生成器查渲染产物，两条路径合起来必须覆盖全部产物否则判红），且 .masthead 必须是已定位祖先（position:relative 被拿掉时绝对偏移会锚到页面级祖先，水印跑出报头，而只看 .emblem 自身声明的判据全绿） |
+| fix | ci | 刊徽守卫补前景层级判据：衬字板式是「刊徽 z-index:0 垫底 + .masthead .t/.r/.stamp position:relative;z-index:1 提到上层」两半合起来才成立，原先只查刊徽那半——三个产物同时删掉前景规则守卫仍判绿，而已定位的 level-0 刊徽会盖过文档流里的报头内容。选择器匹配同时改为按逗号拆开比对（前景是一条三选择器规则，整串 fullmatch 一条都匹配不到） |

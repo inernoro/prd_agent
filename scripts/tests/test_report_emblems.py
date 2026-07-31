@@ -325,19 +325,59 @@ def cascade_value(bodies, prop):
     return (found[-1] if found else None), found
 
 
+def rule_bodies_for(text, selector):
+    """取出选择器组里**含有** `selector` 的所有规则体，按源码顺序返回。
+
+    必须按逗号拆开比对，不能对整串 fullmatch：刊系里前景规则写成
+    `.masthead .t, .masthead .r, .masthead .stamp { ... }` 一条三选择器，
+    整串比对会一条都匹配不到，判据变成永远空转。
+    """
+    bodies = []
+    for m in re.finditer(r'([^{};\n]*)\{\{?([^}]*)\}', text):
+        parts = [p.strip() for p in m.group(1).split(",")]
+        if selector in parts:
+            bodies.append(re.sub(r"\s+", "", m.group(2)))
+    return bodies
+
+
+# 报头里必须画在刊徽**之上**的前景元素。衬字水印是「刊徽 z-index:0 垫底 +
+# 这些前景元素 position:relative;z-index:1 提到上层」两半合起来才成立的：
+# 删掉前景那一半，已定位的 level-0 刊徽就会盖过普通文档流里的报头内容。
+# 第七轮我说「把同一份契约的属性一次列全」，列的却只有 .emblem 自己那半。
+FOREGROUND_SELECTORS = (".masthead .t", ".masthead .r", ".masthead .stamp")
+
+POSITIONED = ("relative", "absolute", "fixed", "sticky")
+
+
+def check_foreground_stacking(label, rel, text):
+    """前景元素必须已定位且层级高于刊徽，否则「衬字」这个板式根本不成立。"""
+    for sel in FOREGROUND_SELECTORS:
+        bodies = rule_bodies_for(text, sel)
+        if not bodies:
+            fail(f"{label}({rel}): 找不到 `{sel}` 的 CSS 规则——"
+                 f"报头前景没有被提到刊徽之上，水印会盖住刊名/期号")
+            continue
+        pos, pos_all = cascade_value(bodies, "position")
+        if pos is None or pos not in POSITIONED:
+            fail(f"{label}({rel}): `{sel}` 的 position 层叠胜者是 {pos!r}"
+                 f"（声明依次为 {pos_all}）——未定位元素的 z-index 不生效，"
+                 f"刊徽会画到报头文字之上")
+        z, z_all = cascade_value(bodies, "z-index")
+        if z is None or not re.fullmatch(r"-?\d+", z):
+            fail(f"{label}({rel}): `{sel}` 的 z-index 层叠胜者是 {z!r}"
+                 f"（声明依次为 {z_all}）——必须是明确的整数层级")
+        elif int(z) <= 0:
+            fail(f"{label}({rel}): `{sel}` 的 z-index={z} 未高于刊徽的 0——"
+                 f"衬字水印要求前景严格在刊徽之上")
+
+
 def check_positioning_context(label, rel, text):
     """`.masthead` 必须是已定位祖先，否则刊徽的绝对偏移会锚到别的元素上。
 
     走与 .emblem 同一套取值口径（层叠胜者），不另起一条判据——本 PR 已经因为
     「同一个文件里两套取值口径」复发过两次。
     """
-    bodies = []
-    for m in re.finditer(r'([^{};\n]*)\{\{?([^}]*)\}', text):
-        sel = m.group(1).strip()
-        # 只认 `.masthead` 自身的规则；`.masthead .emblem` / `.masthead .t` 这类后代规则不算
-        if not re.fullmatch(r'\.masthead', sel):
-            continue
-        bodies.append(re.sub(r"\s+", "", m.group(2)))
+    bodies = rule_bodies_for(text, ".masthead")
     if not bodies:
         fail(f"{label}({rel}): 找不到 `.masthead` 自身的 CSS 规则——"
              f"刊徽的绝对定位没有可锚定的祖先")
@@ -347,7 +387,7 @@ def check_positioning_context(label, rel, text):
         fail(f"{label}({rel}): `.masthead` 没有 position 声明——"
              f"static 祖先不建立定位上下文，刊徽的 top/right 会相对页面级祖先解析，"
              f"水印跑出报头")
-    elif winner not in ("relative", "absolute", "fixed", "sticky"):
+    elif winner not in POSITIONED:
         fail(f"{label}({rel}): `.masthead` 的 position 层叠胜者是 {winner!r}"
              f"（声明依次为 {declared}）——它必须是已定位元素，"
              f"否则刊徽的绝对偏移会锚到别的祖先上")
@@ -417,6 +457,7 @@ def check_css_wiring(label, rel):
     # 刊徽的 -14px/-8px 就会相对页面级祖先解析，水印跑到报头外面去，
     # 而只看 .emblem 的判据全绿。判据必须连它成立所依赖的上下文一起查（形状 1）。
     check_positioning_context(label, rel, text)
+    check_foreground_stacking(label, rel, text)
 
     # 透明度必须真的「浅」，而且必须**显式写出来**。
     # 只判「写了但过高」是不够的：整条 opacity 声明被删掉时 CSS 默认 opacity:1，
