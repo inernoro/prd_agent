@@ -337,10 +337,10 @@ function DocSortControl({ value, onChange }: { value: DocBrowserSortMode; onChan
     { key: 'created-desc', label: '最新创建' },
     { key: 'updated-desc', label: '最近更新' },
   ];
+  // 标签由筛选面板的分组标题承担，这里不再重复写「排序」二字
   return (
-    <div className="flex shrink-0 items-center gap-1.5 px-1">
-      <span className="shrink-0 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-muted)' }}>排序</span>
-      <div className="flex shrink-0 items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
+    <div className="flex shrink-0 items-center">
+      <div className="inline-flex shrink-0 items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
         {opts.map(o => {
           const active = o.key === value;
           return (

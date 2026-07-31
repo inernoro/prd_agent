@@ -298,8 +298,9 @@
   --selection-icon-bg: rgba(129, 140, 248, 0.22);
   --selection-border: rgba(129, 140, 248, 0.38);
   --selection-text: #c7d2fe;
-  --selection-checkbox-bg: rgba(20, 20, 24, 0.92);
-  --selection-checkbox-ring: rgba(20, 20, 24, 0.72);
+  /* 复选框底色：过去是「盖住文件图标」的近黑遮罩，暗色下看着像一块黑疙瘩（2026-07-31 用户反馈）。
+     现在复选框与图标互斥同槽显示，不需要遮罩，改为比行底稍亮一档的常规表面。 */
+  --selection-checkbox-bg: rgba(255, 255, 255, 0.10);
 
   /* Finder 风格标签。solid 保证白字小字号也达到可读对比度。 */
   --tag-red-solid: #b91c1c;
@@ -550,7 +551,6 @@
   --selection-border: rgba(166, 75, 53, 0.34);
   --selection-text: #8F3F2B;
   --selection-checkbox-bg: var(--bg-card);
-  --selection-checkbox-ring: rgba(248, 245, 239, 0.82);
 
   --button-primary-bg: #CC785C;
   --button-primary-bg-hover: #B8684C;

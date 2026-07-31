@@ -10,7 +10,7 @@ import {
   Trash2, FilePlus, FolderPlus,
   Upload, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, SlidersHorizontal, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText,
+  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText, MoreHorizontal,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -274,6 +274,20 @@ const TOOLBAR_BTN = 'h-7 px-2.5 rounded-[8px] text-[11px] font-semibold inline-f
 const TOOLBAR_ICON_BTN = 'h-7 w-7 rounded-[8px] inline-flex items-center justify-center cursor-pointer transition-colors flex-shrink-0';
 const TOOLBAR_ICON_BTN_MOBILE = 'h-8 w-8 rounded-[9px] inline-flex items-center justify-center cursor-pointer transition-colors flex-shrink-0';
 const TOOLBAR_CHIP = 'h-[22px] px-2 rounded-full text-[10px] inline-flex items-center gap-1 flex-shrink-0';
+
+/** 阅读区「更多」菜单项：图标 + 文字，比一排彩色图标钮更好认。 */
+function ReaderMoreItem({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary transition-colors"
+    >
+      <span className="flex-shrink-0 text-token-muted">{icon}</span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
 
 /**
  * 目录排序模式：
@@ -1319,33 +1333,33 @@ function TreeNode({
       >
         {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
         <div className="flex items-center gap-2 w-full min-w-0">
-          {/* 批量多选勾选框：普通状态悬浮覆盖文件图标，不再永久占一列目录宽度。 */}
-          {!isFolder && onToggleSelect && (
+          {/* 图标位 = 勾选框位：hover（或已勾选）时勾选框顶掉文件图标，二者共用同一个 15px 槽。
+              2026-07-31 用户反馈「行首出现一个黑方块」：旧实现是把不透明近黑的勾选框 absolute
+              盖在图标上、再加一圈近黑 ring，暗色下就成了一块挖空似的黑疙瘩，还把图标糊住。
+              改成同槽互斥后既没有黑块，也不产生布局跳动（槽宽恒定）。 */}
+          <span className="relative flex-shrink-0 inline-flex items-center justify-center" style={{ width: 15, height: 15 }}>
             <span
-              role="checkbox"
-              aria-checked={isChecked}
-              onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
-              className={`${reserveSelectSpace ? 'flex-shrink-0' : 'absolute'} inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-              style={{
-                width: 15, height: 15, borderRadius: 4,
-                border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong)'}`,
-                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--selection-checkbox-bg)',
-                ...(!reserveSelectSpace
-                  ? {
-                      left: `${10 + depth * 14}px`,
-                      top: 8,
-                      zIndex: 2,
-                      boxShadow: '0 0 0 2px var(--selection-checkbox-ring)',
-                    }
-                  : {}),
-              }}
-              title={isChecked ? '取消选择' : '选择（批量操作）'}
+              className={`inline-flex items-center justify-center transition-opacity ${!isFolder && onToggleSelect && !reserveSelectSpace ? (isChecked ? 'opacity-0' : 'group-hover:opacity-0') : ''}`}
+              style={{ width: 14, height: 14 }}
             >
-              {isChecked && <Check size={10} style={{ color: '#fff' }} />}
+              <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
             </span>
-          )}
-          <span className="flex-shrink-0 inline-flex items-center justify-center" style={{ width: 14, height: 14 }}>
-            <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+            {!isFolder && onToggleSelect && (
+              <span
+                role="checkbox"
+                aria-checked={isChecked}
+                onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
+                className={`absolute inset-0 inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace || isChecked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                style={{
+                  borderRadius: 4,
+                  border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong)'}`,
+                  background: isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--selection-checkbox-bg)',
+                }}
+                title={isChecked ? '取消选择' : '选择（批量操作）'}
+              >
+                {isChecked && <Check size={10} style={{ color: '#fff' }} />}
+              </span>
+            )}
           </span>
 
           {/* 非文件夹标题不再 flex-1 撑满：取自然宽度，让 NEW 紧贴标题末尾（时间靠 ml-auto 顶右）。
@@ -1700,6 +1714,8 @@ export function DocBrowser({
   });
   // 列表时间显示哪个字段：跟随排序键，避免"按创建排序却显更新时间"的错位。
   const timeField: 'createdAt' | 'updatedAt' = sortMode === 'created-desc' ? 'createdAt' : 'updatedAt';
+  const [readerMoreOpen, setReaderMoreOpen] = useState(false);
+  const readerMoreRef = useRef<HTMLDivElement>(null);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const filterAnchorRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
@@ -2931,15 +2947,17 @@ export function DocBrowser({
 
             <div className="mb-3">
               <div className="mb-1.5 text-[11px] font-semibold text-token-primary">标题显示</div>
-              <div className="flex gap-1 rounded-[9px] p-0.5" style={{ background: 'var(--bg-input)' }}>
+              {/* 段控尺寸与排序段控严格一致（p-0.5 容器 + px-2 py-1 + 11px 字），
+                  2026-07-31 用户：「这些大小应该一致吧，我偏向小的那个」 */}
+              <div className="inline-flex items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
                 <button onClick={() => setUseContentTitle(true)}
-                  className="h-7 flex-1 cursor-pointer rounded-[7px] text-[11px] transition-colors"
+                  className="cursor-pointer whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
                   style={useContentTitle
                     ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
                     : { color: 'var(--text-muted)' }}
                   title="用正文第一行作为列表标题">正文标题</button>
                 <button onClick={() => setUseContentTitle(false)}
-                  className="h-7 flex-1 cursor-pointer rounded-[7px] text-[11px] transition-colors"
+                  className="cursor-pointer whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
                   style={!useContentTitle
                     ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
                     : { color: 'var(--text-muted)' }}
@@ -3349,9 +3367,8 @@ export function DocBrowser({
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder || isMobile) return null; // 移动端隐藏 new/订阅徽标，给标题+标签让位
                 const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
-                const isSubscription = sel.sourceType === 'subscription';
-                const githubSha = sel.metadata?.github_sha;
-                if (!recentlyChanged && !isSubscription) return null;
+                // 订阅信息已收进「更多」菜单，这里只留 new 徽章
+                if (!recentlyChanged) return null;
                 return (
                   <>
                     {recentlyChanged && (
@@ -3368,105 +3385,68 @@ export function DocBrowser({
                         new
                       </span>
                     )}
-                    {isSubscription && onOpenSubscription && (
-                      <button
-                        onClick={() => onOpenSubscription(sel.id)}
-                        className={TOOLBAR_BTN}
-                        style={{
-                          background: 'var(--selection-bg)',
-                          border: '1px solid var(--selection-border)',
-                          color: 'var(--selection-text)',
-                        }}
-                        title={githubSha ? `GitHub 版本 ${githubSha.slice(0, 7)}（点击查看同步详情）` : '查看订阅同步详情'}
-                      >
-                        {githubSha ? `#${githubSha.slice(0, 7)}` : '订阅信息'}
-                      </button>
-                    )}
                   </>
                 );
               })()}
-              {/* 知识库 Agent 按钮：生成字幕 / 再加工 */}
+              {/* 次要动作统一收进「更多」：转录 / 生成字幕 / 智能体 / 证据板 / 历史版本 / 订阅信息。
+                  2026-07-31 用户反馈「这里也遇到了很多选项的问题」——工具栏一排七八个彩色按钮，
+                  谁是主操作看不出来。现在只留 评论 / 收起 / 全屏 / 编辑 四个常用动作在外面，
+                  其余进菜单：菜单项带文字说明，比一排图标更好认，也不再和标题抢宽度。 */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder) return null;
                 const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
                 const showTranscribe = canTranscribe(sel) && !!onTranscribe;
                 const showReprocess = canReprocess(sel) && !!onReprocess;
-                if (!showSubtitle && !showReprocess && !showTranscribe) return null;
+                const isAcc = !!(selectedEntryData?.metadata?.kind === 'acceptance-report' || selectedEntryData?.metadata?.verdict);
+                const showEvidence = isAcc && !!preview?.text && !editMode;
+                const showVersions = !!versionApi && !isMobile && !editMode;
+                const isSubscription = sel.sourceType === 'subscription';
+                const githubSha = sel.metadata?.github_sha;
+                const showSubscription = isSubscription && !!onOpenSubscription;
+                const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions || showSubscription;
+                if (!any) return null;
                 return (
-                  <>
-                    {showTranscribe && (
-                      <button
-                        onClick={() => onTranscribe!(sel.id)}
-                        className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_BTN}
-                        style={{
-                          background: 'rgba(34,197,94,0.08)',
-                          border: '1px solid rgba(34,197,94,0.2)',
-                          color: 'rgba(74,222,128,0.95)',
-                        }}
-                        title="转录并生成 AI 摘要"
-                      >
-                        <AudioLines size={isMobile ? 14 : 12} />
-                        {!isMobile && '转录'}
-                      </button>
-                    )}
-                    {showSubtitle && (
-                      <button
-                        onClick={() => onGenerateSubtitle!(sel.id)}
-                        className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_BTN}
-                        style={{
-                          background: 'rgba(168,85,247,0.1)',
-                          border: '1px solid rgba(168,85,247,0.22)',
-                          color: 'rgba(216,180,254,0.95)',
-                        }}
-                        title="一键生成字幕"
-                      >
-                        <Sparkles size={isMobile ? 14 : 12} />
-                        {!isMobile && '生成字幕'}
-                      </button>
-                    )}
-                    {showReprocess && (
-                      <button
-                        onClick={() => onReprocess!(sel.id)}
-                        className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_BTN}
-                        style={{
-                          background: 'var(--selection-bg)',
-                          border: '1px solid var(--selection-border)',
-                          color: 'var(--selection-text)',
-                        }}
-                        title="用智能体加工文档"
-                      >
-                        <Wand2 size={isMobile ? 14 : 12} />
-                        {!isMobile && '智能体'}
-                      </button>
-                    )}
-                  </>
+                  <div ref={readerMoreRef} className="relative flex-shrink-0">
+                    <button
+                      onClick={() => setReaderMoreOpen(v => !v)}
+                      className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                      title="更多操作">
+                      <MoreHorizontal size={13} />
+                    </button>
+                    <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
+                      anchorRef={readerMoreRef} minWidth={190}
+                      className="surface-popover rounded-[10px] p-1.5">
+                      {showTranscribe && (
+                        <ReaderMoreItem icon={<AudioLines size={13} />} label="转录并生成摘要"
+                          onClick={() => { setReaderMoreOpen(false); onTranscribe!(sel.id); }} />
+                      )}
+                      {showSubtitle && (
+                        <ReaderMoreItem icon={<Sparkles size={13} />} label="生成字幕"
+                          onClick={() => { setReaderMoreOpen(false); onGenerateSubtitle!(sel.id); }} />
+                      )}
+                      {showReprocess && (
+                        <ReaderMoreItem icon={<Wand2 size={13} />} label="用智能体加工"
+                          onClick={() => { setReaderMoreOpen(false); onReprocess!(sel.id); }} />
+                      )}
+                      {showEvidence && (
+                        <ReaderMoreItem icon={<Workflow size={13} />} label="证据板"
+                          onClick={() => { setReaderMoreOpen(false); setEvidenceGraphOpen(true); }} />
+                      )}
+                      {showVersions && (
+                        <ReaderMoreItem icon={<History size={13} />} label="历史版本"
+                          onClick={() => { setReaderMoreOpen(false); setVersionHistoryOpen(true); }} />
+                      )}
+                      {showSubscription && (
+                        <ReaderMoreItem icon={<Rss size={13} />}
+                          label={githubSha ? `订阅信息 · #${githubSha.slice(0, 7)}` : '订阅信息'}
+                          onClick={() => { setReaderMoreOpen(false); onOpenSubscription!(sel.id); }} />
+                      )}
+                    </AnchoredMenu>
+                  </div>
                 );
               })()}
-              {/* 验收报告「证据关系图」按钮：仅验收类条目 + 有正文时显示，放在工具栏（非文章正中） */}
-              {(() => {
-                // 用 selectedEntryData（含 searchResults 回退），与正文/GitHub 渲染一致，
-                // 否则搜索命中的验收报告点开后「证据图」按钮不显示。
-                const sel = selectedEntryData;
-                const isAcc = !!(sel?.metadata?.kind === 'acceptance-report' || sel?.metadata?.verdict);
-                if (!isAcc || !preview?.text || editMode) return null;
-                return (
-                  <button
-                    onClick={() => setEvidenceGraphOpen(true)}
-                    className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_BTN}
-                    style={{
-                      background: 'rgba(99,102,241,0.1)',
-                      border: '1px solid rgba(99,102,241,0.22)',
-                      color: 'rgba(165,180,252,0.95)',
-                    }}
-                    title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
-                  >
-                    <Workflow size={isMobile ? 14 : 12} />
-                    {!isMobile && '证据板'}
-                  </button>
-                );
-              })()}
-              {/* 批注布局开关已移除：评论默认内联，点击某条 → 右侧批注栏展开，关掉即回内联（activeCommentKey 单独驱动） */}
               {/* 批次 D：划词评论开关按钮 */}
               {trackedEntryForComments && (
                 <button
@@ -3516,15 +3496,6 @@ export function DocBrowser({
                 if (!cfg.editable) return null;
                 return (
                   <div className="flex items-center gap-1.5">
-                    {versionApi && !isMobile && !editMode && (
-                      <button
-                        onClick={() => setVersionHistoryOpen(true)}
-                        className={TOOLBAR_ICON_BTN}
-                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                        title="历史版本 — 查看并恢复">
-                        <History size={13} />
-                      </button>
-                    )}
                     {editMode ? (
                       <>
                         {/* Markdown：富文本（所见即所得）/ 源码（支持 [[ 自动补全）双模式 */}
