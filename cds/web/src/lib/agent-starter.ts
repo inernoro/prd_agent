@@ -15,6 +15,7 @@ export interface AgentRoleProfile {
   description: string;
   defaultBundleKey: 'pm-starter' | 'dev-starter' | 'qa-starter';
   promptRule: string;
+  decisionFields: readonly string[];
 }
 
 export const AGENT_EXPERIENCE_PROFILES: readonly AgentExperienceProfile[] = [
@@ -41,6 +42,7 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     description: '关注用户、问题、范围、优先级和验收。',
     defaultBundleKey: 'pm-starter',
     promptRule: '我的角色是产品经理。默认用产品语言说明用户价值、范围、验收和风险，不要把技术选型题直接丢给我。',
+    decisionFields: ['用户价值', '范围变化', '验收结果'],
   },
   {
     id: 'owner',
@@ -48,13 +50,15 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     description: '负责把业务目标、需求规则、例外情况和验收标准讲清楚。',
     defaultBundleKey: 'pm-starter',
     promptRule: '我的角色是业务专家或需求专家。优先把业务目标、需求规则、例外情况和验收标准讲清楚，技术实现由你负责。',
+    decisionFields: ['业务目标', '规则覆盖', '待确认规则'],
   },
   {
     id: 'domain-expert',
     label: '领域专家',
     description: '关注业务规则、例外情况和专业准确性。',
     defaultBundleKey: 'pm-starter',
-    promptRule: '我的角色是业务专家。优先确认业务规则、例外条件和结果准确性；技术实现由你负责，并用业务流程解释。',
+    promptRule: '我的角色是领域专家。优先确认专业规则、例外条件和结果准确性；技术实现由你负责，并用业务流程解释。',
+    decisionFields: ['专业结论', '判断依据', '不确定项与业务风险'],
   },
   {
     id: 'dev',
@@ -62,6 +66,7 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     description: '关注架构、实现、验证和可维护性。',
     defaultBundleKey: 'dev-starter',
     promptRule: '我的角色是开发。可以使用必要的技术术语，但结论必须关联真实代码、运行证据和部署路径。',
+    decisionFields: ['工程状态', '核心改动与验证证据', '技术风险'],
   },
   {
     id: 'qa',
@@ -69,6 +74,7 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     description: '关注场景、断言、证据和回归。',
     defaultBundleKey: 'qa-starter',
     promptRule: '我的角色是测试与验收。优先说明场景、行为断言、证据和回归范围，不把接口成功等同于用户验收通过。',
+    decisionFields: ['验收结论', '覆盖范围', '失败或未覆盖项与发布建议'],
   },
 ] as const;
 
@@ -88,9 +94,44 @@ function roleProfile(id: AgentRoleId): AgentRoleProfile {
   return AGENT_ROLE_PROFILES.find((item) => item.id === id) || AGENT_ROLE_PROFILES[0];
 }
 
+export function buildRoleDecisionContract(
+  experienceId: AgentExperienceId,
+  roleId: AgentRoleId,
+): string {
+  const experience = experienceProfile(experienceId);
+  const role = roleProfile(roleId);
+  const depthRule = experience.id === 'newcomer'
+    ? '少用术语，必须解释结果对用户的影响；不要要求用户理解 Git、构建、部署或接口细节。'
+    : '保持简洁，可保留关键技术证据和风险，但仍只给一个默认推荐动作。';
+
+  return [
+    '<!-- CDS_AGENT_DECISION_CARD:START -->',
+    '## 角色决策回复（强制）',
+    '',
+    `当前角色：${role.label}。每次最终回复必须以简短决策卡收尾，不得只给执行日志。`,
+    `角色重点：${role.decisionFields.join('、')}。`,
+    depthRule,
+    '',
+    '【任务状态】只能使用：已完成，可使用 / 已完成，待验收 / 部分完成，待决策 / 执行中 / 被阻塞，需提供信息 / 未通过，已停止。',
+    '【当前阶段】说明本阶段是否结束，以及产出了什么。',
+    '【整体任务】说明整体是否结束；未结束时明确还差什么。阶段完成不得冒充整体完成。',
+    '【角色结论】围绕当前角色重点，用一到三句话说明结果和影响。',
+    '【完成边界】明确本次做了什么、没有做什么。',
+    '【验证证据】只写实际运行或验收过的内容；未验证必须直说。',
+    '【需要你决定】写“无”，或只提出一个必须由用户决定的业务问题；技术实现默认由 Agent 负责。',
+    '【下一步】只给一个默认推荐动作，并写明由 Agent 还是用户执行。',
+    '【验收入口】给真实可点击的最终深链；没有或不适用时直说，不得猜测地址。',
+    '【登录方式】写无需登录、安全获取方式或当前阻塞；不得把密码写入仓库、PR、报告或公开日志。',
+    '',
+    '决策卡默认不超过 10 行。禁止使用“基本完成”“应该可以”“大概没问题”。没有真实验证证据时，不得标记“已完成，可使用”或“已完成，待验收”。',
+    '<!-- CDS_AGENT_DECISION_CARD:END -->',
+  ].join('\n');
+}
+
 export function buildAgentStarterPrompt(input: AgentStarterPromptInput): string {
   const experience = experienceProfile(input.experienceId);
   const role = roleProfile(input.roleId);
+  const decisionContract = buildRoleDecisionContract(input.experienceId, input.roleId);
   const skills = input.selectedSkillKeys.length > 0
     ? input.selectedSkillKeys.map((key) => `- ${key}`).join('\n')
     : '- 当前没有额外方法论技能，先使用项目已有能力';
@@ -129,7 +170,7 @@ export function buildAgentStarterPrompt(input: AgentStarterPromptInput): string 
     '',
     '四、把长期规则写进项目',
     '识别当前宿主：Codex/通用 Agent Skills 使用 AGENTS.md，Claude Code 使用 CLAUDE.md，Cursor 使用 AGENTS.md；多个宿主同时存在时，从同一段规则生成对应文件，避免漂移。',
-    '已有规则文件时只增量补齐，绝不整篇覆盖。把本提示词中的沟通方式、自动交付、预览和账号交付规则写入长期规则。',
+    '一键脚本已经把角色决策回复增量写入长期规则。已有规则文件时只补齐其他缺失内容，绝不整篇覆盖，也不要重复创建相同规则。',
     '',
     '五、自动交付规则',
     '纯讨论和方案分析不创建分支。只要开始修改项目文件，就先确认不在受保护主分支直接开发，并创建或复用独立功能分支。',
@@ -148,17 +189,8 @@ export function buildAgentStarterPrompt(input: AgentStarterPromptInput): string 
     '.env 只允许保存项目运行需要且已被忽略的配置；不要把 CDS 管理凭据、海鲜市场 Key 或已有用户密码塞进 .env。',
     '任何 Key、令牌和生产密码都不得出现在对话、提交、PR、报告或公开日志中。',
     '',
-    '八、最终回复格式',
-    '【一句话结论】页面是否已经可以打开和验收',
-    '【对业务意味着什么】用户现在能看到和操作什么',
-    '【预览】真实可点击的最终深链',
-    '【登录方式】无需登录 / 临时验收账号 / 现有测试账号',
-    '【账号】需要登录时提供',
-    '【临时密码】仅在安全创建并验证后提供',
-    '【有效期】临时账号的失效时间或回收方式',
-    '【已验证】实际打开、登录和操作过什么',
-    '【没有做】仍不在本次范围内的内容',
-    '【风险和边界】当前限制及影响',
+    '八、角色决策回复',
+    decisionContract,
     cdsSection,
   ].join('\n');
 }
@@ -180,6 +212,7 @@ export function buildAgentStarterHarness(input: AgentStarterHarnessInput): strin
   const origin = input.cdsOrigin.replace(/\/+$/, '');
   const skills = safeSkills.join(' ');
   const selectedSkillsJson = JSON.stringify(safeSkills);
+  const decisionContract = buildRoleDecisionContract(input.experienceId, input.roleId);
 
   return `#!/bin/sh
 # CDS Agent 上手助手生成。不含任何密钥，不修改 shell profile 或用户主目录。
@@ -277,7 +310,31 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   grep -qxF '/.cds/credentials.json' "$exclude_file" 2>/dev/null || printf '%s\n' '/.cds/credentials.json' >> "$exclude_file"
 fi
 
-say "安装完成。没有写入任何 CDS 凭据。"
+install_agent_contract() {
+  target="$1"
+  clean="$TMP_DIR/$(basename "$target").rules"
+  if [ -f "$target" ]; then
+    awk '
+      /<!-- CDS_AGENT_DECISION_CARD:START -->/ { managed = 1; next }
+      /<!-- CDS_AGENT_DECISION_CARD:END -->/ { managed = 0; next }
+      !managed { print }
+    ' "$target" > "$clean"
+  else
+    : > "$clean"
+  fi
+  [ ! -s "$clean" ] || printf '\n' >> "$clean"
+  cat >> "$clean" <<'AGENT_RULES'
+${decisionContract}
+AGENT_RULES
+  mv "$clean" "$target"
+}
+
+install_agent_contract AGENTS.md
+if [ -d .claude ] || [ -f CLAUDE.md ]; then
+  install_agent_contract CLAUDE.md
+fi
+
+say "安装完成。已写入角色决策规则，没有写入任何 CDS 凭据。"
 echo "下一步: 把 CDS 页面生成的启动提示词交给当前项目里的 Agent。"
 `;
 }
