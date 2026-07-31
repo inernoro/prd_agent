@@ -1164,9 +1164,15 @@ def _event_inherits_context(clause, event, state, previous_event_end):
     )
 
 
-def _failure_subject_states(text, initial_states=None, instance_aware=False):
+def _failure_subject_states(
+    text,
+    initial_states=None,
+    instance_aware=False,
+    default_subjects=None,
+):
     """Apply ordered status events while keeping context local to this row."""
     states = dict(initial_states or {})
+    fallback_subjects = set(default_subjects or ())
     context_subjects = set()
     for index, clause in enumerate(_split_fact_clauses(text)):
         if index % 2:
@@ -1209,6 +1215,8 @@ def _failure_subject_states(text, initial_states=None, instance_aware=False):
                     clause_context_subjects = set()
                 previous_event_end = event.end()
                 continue
+            if not subjects and fallback_subjects and not explicit_subjects:
+                subjects = fallback_subjects
             if (
                 not subjects
                 and clause_context_subjects
@@ -1272,13 +1280,47 @@ def _root_cause_state_scope(row, row_index):
     return normalized or f"__root_cause_row_{row_index}"
 
 
-def _root_cause_state_text(row):
-    """Read gate state from target/fact cells without inheriting narrative columns."""
+def _root_cause_row_states(row, initial_states=None):
+    """Apply root-cause cells without leaking narrative text across columns."""
     cells = list(row or [])
-    status_cells = cells[:2]
-    status_cells.extend(
-        cell for cell in cells[2:5] if _failure_subjects(cell)
+    target = cells[0] if cells else ""
+    target_subjects = {
+        subject
+        for _, _, subject in _subject_occurrences(
+            target,
+            instance_aware=True,
+        )
+    }
+    states = _failure_subject_states(
+        _normalize_evidence_usage_gap_clauses(target),
+        initial_states,
+        instance_aware=True,
     )
+
+    observation_subjects = set()
+    if len(cells) > 1:
+        observation_subjects = {
+            subject
+            for _, _, subject in _subject_occurrences(
+                cells[1],
+                instance_aware=True,
+            )
+        }
+        states = _failure_subject_states(
+            _normalize_evidence_usage_gap_clauses(cells[1]),
+            states,
+            instance_aware=True,
+            default_subjects=target_subjects,
+        )
+
+    for cell in cells[2:4]:
+        if _failure_subjects(cell):
+            states = _failure_subject_states(
+                _normalize_evidence_usage_gap_clauses(cell),
+                states,
+                instance_aware=True,
+            )
+
     conclusion = cells[4].strip() if len(cells) > 4 else ""
     generic_resolved_conclusion = bool(
         re.fullmatch(
@@ -1287,12 +1329,27 @@ def _root_cause_state_text(row):
             re.I,
         )
     )
-    if generic_resolved_conclusion:
-        status_cells.append(conclusion)
-    return "；".join(
-        _normalize_evidence_usage_gap_clauses(cell)
-        for cell in status_cells
+    generic_failed_conclusion = bool(
+        re.fullmatch(
+            rf"(?:(?:当前|现|仍|仍然|依然)\s*)?"
+            rf"(?:失败|不通过|未通过|异常|错误|阻断|不可用|不可交付)"
+            rf"|{_RAW_FAILURE_STATUS_PATTERN}",
+            conclusion,
+            re.I,
+        )
     )
+    if (
+        _failure_subjects(conclusion)
+        or generic_resolved_conclusion
+        or generic_failed_conclusion
+    ):
+        states = _failure_subject_states(
+            _normalize_evidence_usage_gap_clauses(conclusion),
+            states,
+            instance_aware=True,
+            default_subjects=observation_subjects or target_subjects,
+        )
+    return states
 
 
 def _normalize_evidence_usage_gap_clauses(text):
@@ -1425,11 +1482,9 @@ def _daily_fact_signals(values, body):
     failure_states_by_scope = {}
     for row_index, row in enumerate(root_cause_rows):
         scope = _root_cause_state_scope(row, row_index)
-        normalized_row = _root_cause_state_text(row)
-        failure_states_by_scope[scope] = _failure_subject_states(
-            normalized_row,
+        failure_states_by_scope[scope] = _root_cause_row_states(
+            row,
             failure_states_by_scope.get(scope),
-            instance_aware=True,
         )
     current_failure_subjects = {
         subject[0] if isinstance(subject, tuple) else subject

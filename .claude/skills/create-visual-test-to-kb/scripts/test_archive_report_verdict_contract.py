@@ -877,6 +877,38 @@ class DailyVerdictContractTests(unittest.TestCase):
             [], archive_report._daily_conclusion_contract_errors("conditional", body)
         )
 
+    def test_target_subject_binds_unscoped_observation_failure(self):
+        for observation in ("API 持续返回 500", "测试执行失败"):
+            with self.subTest(observation=observation):
+                body = report_body("覆盖不足").replace(
+                    "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | "
+                    "当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
+                    f"| CDS smoke | {observation} | 执行结果异常 | "
+                    "门禁不可交付 | 仍需修复 | 修复后复测 |",
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
+    def test_explicit_failure_conclusion_uses_target_subject(self):
+        for conclusion in ("失败", "未通过", "status=failed"):
+            with self.subTest(conclusion=conclusion):
+                body = report_body("覆盖不足").replace(
+                    "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | "
+                    "当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
+                    "| CDS smoke | 请求返回 200 | 服务响应正常 | "
+                    f"已取得响应 | {conclusion} | 修复后复测 |",
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
     def test_already_failed_binds_to_archive_instead_of_ready(self):
         fact = "验收报告归档 already failed"
         self.assertEqual({"archive"}, archive_report._current_failure_subjects(fact))
