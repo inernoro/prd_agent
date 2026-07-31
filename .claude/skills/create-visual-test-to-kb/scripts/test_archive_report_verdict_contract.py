@@ -1029,6 +1029,36 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 self.assertEqual([], errors)
 
+    def test_embedded_latin_identity_names_do_not_create_fake_instances(self):
+        for failure in (
+            "Webhook 构建失败",
+            "Knowledge 构建失败",
+            "ChromeDriver 构建失败",
+            "myAPI 构建失败",
+        ):
+            with self.subTest(failure=failure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", failure
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | 构建现已通过 | 同一构建已复测 | "
+                    "关闭旧失败证据 | 已通过 | 保留记录 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "Web 构建失败"
+        )
+        body = body.rstrip() + (
+            "\n| 验收冻结 SHA | 构建现已通过 | 未注明 Web 实例 | "
+            "不能关闭 Web 失败 | 无法确认 | 补充实例复测 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
     def test_same_postfixed_gate_instance_can_close_failure(self):
         body = report_body("覆盖不足").replace(
             "当前部署 SHA 已前进", "CDS smoke（移动端）失败"

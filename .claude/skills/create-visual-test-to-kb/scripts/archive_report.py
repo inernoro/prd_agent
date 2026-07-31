@@ -728,9 +728,12 @@ _FAILURE_SUBJECT_PATTERNS = (
 )
 _ROOT_CAUSE_INSTANCE_PATTERN = re.compile(
     r"移动端|后端|前端|桌面端|管理端|客户端|服务端|网页端"
-    r"|iOS|Android|Windows|macOS|Linux|Chrome|Safari|Firefox|Edge"
+    r"|(?<![A-Za-z0-9_])"
+    r"(?:iOS|Android|Windows|macOS|Linux|Chrome|Safari|Firefox|Edge)"
+    r"(?![A-Za-z0-9_])"
     r"|生产(?:环境)?|预览(?:环境)?|测试(?:环境)?|灰度(?:环境)?"
-    r"|开发(?:环境)?|本地(?:环境)?|主站|控制台|API(?:服务)?|Web(?:端)?"
+    r"|开发(?:环境)?|本地(?:环境)?|主站|控制台"
+    r"|(?<![A-Za-z0-9_])(?:API(?:服务)?|Web(?:端)?)(?![A-Za-z0-9_])"
     r"|prd-(?:api|admin|desktop|video)|llmgw(?:-[A-Za-z0-9_-]+)?",
     re.I,
 )
