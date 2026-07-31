@@ -60,6 +60,9 @@ jobs:
               # 文档说人话闸门：判据 doc/rule.doc.readability.md。
               # 新增文档必须自带导读三行，否则棘轮欠账上升，这道闸会红。
               - 'doc/**'
+              # 规则与技能同闸：规则要有导读两行，技能 frontmatter 要能说清触发时机
+              - '.claude/rules/**'
+              - '.claude/skills/**/SKILL.md'
               - 'scripts/doc-readability-check.py'
               - 'scripts/fixtures/doc-readability-baseline.json'
               - 'scripts/tests/doc-readability-ratchet.test.py'

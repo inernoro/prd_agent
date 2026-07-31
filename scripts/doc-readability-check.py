@@ -355,6 +355,113 @@ def scan_links() -> tuple[dict[str, int], list[str], list[str]]:
     return per_type, bare_detail, dead_detail
 
 
+RULES_DIR = os.path.join(REPO_ROOT, ".claude", "rules")
+SKILLS_DIR = os.path.join(REPO_ROOT, ".claude", "skills")
+
+# 规则文档的导读只要两行：这条规则要求什么、什么改动会撞上它。
+# 规则的主要读者是按 glob 自动加载它的 AI，人是次要读者，所以比 doc/ 少一行、不强求「读完能做什么」。
+RULE_FIELDS = ("一句话", "什么时候撞上")
+RULE_ONE_LINER_MIN = 20
+RULE_WHEN_MIN = 6
+
+
+def check_rule(path: str) -> list[str]:
+    with open(path, encoding="utf-8") as fh:
+        return check_rule_text(fh.read())
+
+
+def check_rule_text(text: str) -> list[str]:
+    """规则文档的轻量导读校验：H1 之后必须有一句话 + 什么时候撞上。"""
+    found: dict[str, str] = {}
+    for raw in text.splitlines()[:HEAD_LINES]:
+        line = raw.strip()
+        for label in RULE_FIELDS:
+            m = re.match(rf"\*\*{label}\*\*\s*[：:]\s*(.+)$", line)
+            if m:
+                found.setdefault(label, m.group(1).strip())
+    problems = [f"缺「{f}」" for f in RULE_FIELDS if f not in found]
+    one = found.get("一句话", "")
+    if one and len(one) < RULE_ONE_LINER_MIN:
+        problems.append(f"「一句话」只有 {len(one)} 字，说不出这条规则要求什么")
+    if one and CODE_SPAN.search(one) and FILE_PATH.search(one):
+        problems.append("「一句话」被文件路径占满，先说人话再说路径")
+    when = found.get("什么时候撞上", "")
+    if when and len(when) < RULE_WHEN_MIN:
+        problems.append(f"「什么时候撞上」只有 {len(when)} 字，等于没写")
+    return problems
+
+
+def check_skill(path: str) -> list[str]:
+    """技能文档：frontmatter 必须有 name 与 description，且 description 要说清什么时候用它。"""
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if not text.startswith("---"):
+        return ["缺 frontmatter（技能靠它被发现和触发）"]
+    end = text.find("\n---", 3)
+    fm = text[3:end] if end != -1 else ""
+    problems = []
+    if not re.search(r"^name\s*:", fm, re.M):
+        problems.append("frontmatter 缺 name")
+    desc = _frontmatter_description(fm)
+    if desc is None:
+        problems.append("frontmatter 缺 description")
+    elif len(desc) < 30:
+        problems.append("description 太短，说不清这个技能什么时候该被触发")
+    return problems
+
+
+def _frontmatter_description(fm: str) -> str | None:
+    """取 description 的完整值，支持 YAML 折叠块（`|` / `>`）——它们的正文在后续缩进行里。"""
+    lines = fm.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"^description\s*:\s*(.*)$", line)
+        if not m:
+            continue
+        head = m.group(1).strip()
+        if head and head[0] not in "|>":
+            return head
+        body = []
+        for nxt in lines[i + 1:]:
+            if nxt.strip() and not nxt.startswith((" ", "\t")):
+                break
+            body.append(nxt.strip())
+        return " ".join(x for x in body if x)
+    return None
+
+
+def scan_rules() -> tuple[int, int, list[str]]:
+    total = missing = 0
+    detail: list[str] = []
+    if not os.path.isdir(RULES_DIR):
+        return 0, 0, detail
+    for name in sorted(os.listdir(RULES_DIR)):
+        if not name.endswith(".md"):
+            continue
+        total += 1
+        problems = check_rule(os.path.join(RULES_DIR, name))
+        if problems:
+            missing += 1
+            detail.append(f".claude/rules/{name} — {'；'.join(problems)}")
+    return total, missing, detail
+
+
+def scan_skills() -> tuple[int, int, list[str]]:
+    total = missing = 0
+    detail: list[str] = []
+    if not os.path.isdir(SKILLS_DIR):
+        return 0, 0, detail
+    for entry in sorted(os.listdir(SKILLS_DIR)):
+        path = os.path.join(SKILLS_DIR, entry, "SKILL.md")
+        if not os.path.exists(path):
+            continue
+        total += 1
+        problems = check_skill(path)
+        if problems:
+            missing += 1
+            detail.append(f".claude/skills/{entry}/SKILL.md — {'；'.join(problems)}")
+    return total, missing, detail
+
+
 def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
     stats: dict[str, dict[str, int]] = {t: {"total": 0, "missing": 0} for t in TYPES}
     missing: dict[str, list[str]] = {t: [] for t in TYPES}
@@ -381,23 +488,30 @@ def load_baseline() -> dict[str, dict[str, int]]:
     with open(BASELINE_PATH, encoding="utf-8") as fh:
         data = json.load(fh)
     return {"missing": data.get("missing", {}), "bare_refs": data.get("bare_refs", {}),
-            "impl_code": data.get("impl_code", {}), "source_refs": data.get("source_refs", {})}
+            "impl_code": data.get("impl_code", {}), "source_refs": data.get("source_refs", {}),
+            "rules_missing": data.get("rules_missing", 0),
+            "skills_missing": data.get("skills_missing", 0)}
 
 
 def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
-                   impl: dict[str, int], srcs: dict[str, int]) -> None:
+                   impl: dict[str, int], srcs: dict[str, int],
+                   rules_missing: int = 0, skills_missing: int = 0) -> None:
     payload = {
         "_comment": (
             "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。"
             "missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数；"
             "impl_code = 正文里实现语言代码块的行数；source_refs = 正文里散落的源码路径引用数"
-            "（集中列在「实现来源」小节里的不计）。数值只许下降：修好存量就跑 --update-baseline "
+            "（集中列在「实现来源」小节里的不计）；rules_missing = .claude/rules 里缺导读两行的条数；"
+            "skills_missing = 技能 frontmatter 缺 name/description 的个数。"
+            "数值只许下降：修好存量就跑 --update-baseline "
             "把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。"
         ),
         "missing": {t: stats[t]["missing"] for t in TYPES},
         "bare_refs": {t: bare.get(t, 0) for t in TYPES},
         "impl_code": {t: impl.get(t, 0) for t in TYPES},
         "source_refs": {t: srcs.get(t, 0) for t in TYPES},
+        "rules_missing": rules_missing,
+        "skills_missing": skills_missing,
     }
     os.makedirs(os.path.dirname(BASELINE_PATH), exist_ok=True)
     with open(BASELINE_PATH, "w", encoding="utf-8") as fh:
@@ -435,6 +549,8 @@ def main() -> int:
     stats, missing = scan()
     bare_per_type, bare_detail, dead_detail = scan_links()
     impl_per_type, src_per_type, body_detail = scan_bodies()
+    rules_total, rules_missing, rules_detail = scan_rules()
+    skills_total, skills_missing, skills_detail = scan_skills()
     total = sum(s["total"] for s in stats.values())
     total_missing = sum(s["missing"] for s in stats.values())
     total_bare = sum(bare_per_type.values())
@@ -442,15 +558,21 @@ def main() -> int:
     total_src = sum(src_per_type.values())
 
     if args.update_baseline:
-        write_baseline(stats, bare_per_type, impl_per_type, src_per_type)
+        write_baseline(stats, bare_per_type, impl_per_type, src_per_type,
+                       rules_missing, skills_missing)
         print(f"基线已更新：{total_missing} / {total} 篇仍欠导读三行；裸引用 {total_bare} 处；"
-              f"实现代码 {total_impl} 行；散落源码路径 {total_src} 处")
+              f"实现代码 {total_impl} 行；散落源码路径 {total_src} 处；"
+              f"规则欠导读 {rules_missing} 条；技能 frontmatter 欠账 {skills_missing} 个")
         return 0
 
     if args.json:
         print(json.dumps({"stats": stats, "missing": missing,
                           "bare_refs": bare_per_type, "dead_links": dead_detail,
-                          "impl_code": impl_per_type, "source_refs": src_per_type},
+                          "impl_code": impl_per_type, "source_refs": src_per_type,
+                          "rules": {"total": rules_total, "missing": rules_missing,
+                                    "detail": rules_detail},
+                          "skills": {"total": skills_total, "missing": skills_missing,
+                                     "detail": skills_detail}},
                          ensure_ascii=False, indent=2))
         return 0
 
@@ -464,6 +586,8 @@ def main() -> int:
           f"{(total - total_missing) / total * 100:>7.0f}%")
     print(f"\n引用可点击：裸引用 {total_bare} 处，死链 {len(dead_detail)} 处")
     print(f"正文实现细节：实现语言代码 {total_impl} 行，散落源码路径 {total_src} 处")
+    print(f"规则与技能：{rules_total} 条规则欠导读 {rules_missing} 条；"
+          f"{skills_total} 个技能 frontmatter 欠账 {skills_missing} 个")
 
     if args.list_missing:
         print()
@@ -523,6 +647,19 @@ def main() -> int:
                     print(f"    {line}", file=sys.stderr)
                 return 1
 
+        for label, actual, allowed, detail, hint in (
+            ("规则导读", rules_missing, baseline.get("rules_missing", 0), rules_detail,
+             ".claude/rules 下每条规则的 H1 之后要有「一句话」+「什么时候撞上」两行"),
+            ("技能 frontmatter ", skills_missing, baseline.get("skills_missing", 0), skills_detail,
+             "每个 SKILL.md 的 frontmatter 要有 name 与能说清触发时机的 description"),
+        ):
+            if actual > allowed:
+                print(f"\n[FAIL] {label}欠账上升 —— {hint}", file=sys.stderr)
+                print(f"  基线 {allowed} → 当前 {actual}", file=sys.stderr)
+                for line in detail[:10]:
+                    print(f"    {line}", file=sys.stderr)
+                return 1
+
         regressions = []
         for t in TYPES:
             allowed = baseline["missing"].get(t, 0)
@@ -551,7 +688,7 @@ def main() -> int:
                   f"少 {impl_improved} 行实现代码、少 {src_improved} 处源码路径。"
                   f"修完记得跑 --update-baseline 把基线压低。")
         else:
-            print("\n[OK] 四项欠账均未上升，无死链。")
+            print("\n[OK] 六项欠账均未上升，无死链。")
 
     return 0
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数；impl_code = 正文里实现语言代码块的行数；source_refs = 正文里散落的源码路径引用数（集中列在「实现来源」小节里的不计）。数值只许下降：修好存量就跑 --update-baseline 把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。",
+  "_comment": "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数；impl_code = 正文里实现语言代码块的行数；source_refs = 正文里散落的源码路径引用数（集中列在「实现来源」小节里的不计）；rules_missing = .claude/rules 里缺导读两行的条数；skills_missing = 技能 frontmatter 缺 name/description 的个数。数值只许下降：修好存量就跑 --update-baseline 把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。",
   "missing": {
     "spec": 0,
     "design": 0,
@@ -35,5 +35,7 @@
     "guide": 28,
     "report": 4,
     "debt": 33
-  }
+  },
+  "rules_missing": 0,
+  "skills_missing": 0
 }

@@ -238,6 +238,39 @@ check(checker._is_pointer_name("事实入口") and checker._is_pointer_name("现
 check(not checker._is_pointer_name("这一列写的是相关文件与用途说明"),
       "长表头不算点名——指路列必须是短标签")
 
+print("[3.6] 规则与技能的轻量导读")
+
+RULE_OK = """# 某条规则
+
+**一句话**：这条规则要求所有颜色都走主题 token，不许在组件里裸写十六进制色值。
+**什么时候撞上**：改任何带颜色的前端组件时。
+
+正文……
+"""
+check(checker.check_rule_text(RULE_OK) == [], "合规规则不该报问题")
+check("缺「什么时候撞上」" in checker.check_rule_text(
+    RULE_OK.replace("**什么时候撞上**：改任何带颜色的前端组件时。\n", "")),
+    "规则缺「什么时候撞上」必须报出来")
+check(any("说不出这条规则要求什么" in x for x in checker.check_rule_text(
+    RULE_OK.replace("这条规则要求所有颜色都走主题 token，不许在组件里裸写十六进制色值。", "颜色走 token。"))),
+    "规则的一句话太短要报出来")
+
+rules_total, rules_missing, _ = checker.scan_rules()
+ci = open(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), encoding="utf-8").read()
+check("'.claude/rules/**'" in ci and "'.claude/skills/**/SKILL.md'" in ci,
+      "CI 的 docs 过滤要覆盖规则与技能，否则改规则不会触发这道闸")
+
+check(rules_total >= 50, f"规则目录应被扫到（实测 {rules_total} 条）")
+check(rules_missing == 0, f"现存规则应全部带导读两行（实测欠 {rules_missing} 条）")
+
+skills_total, skills_missing, skills_detail = checker.scan_skills()
+check(skills_total >= 50, f"技能目录应被扫到（实测 {skills_total} 个）")
+check(skills_missing == 0, f"现存技能 frontmatter 应齐备（实测欠 {skills_missing} 个）：{skills_detail[:3]}")
+# YAML 折叠块（| 与 >）里的描述必须被完整读出来，否则会把长描述误判成太短
+check(checker._frontmatter_description("name: x\ndescription: |\n  " + "很长的描述" * 8) is not None
+      and len(checker._frontmatter_description("name: x\ndescription: |\n  " + "很长的描述" * 8)) >= 30,
+      "YAML 折叠块里的 description 要被完整取出")
+
 print("[4] 报告双产物的那句话有人盯着")
 
 SKILLS = os.path.join(REPO_ROOT, ".claude", "skills")

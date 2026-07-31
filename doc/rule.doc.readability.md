@@ -241,7 +241,26 @@ html 周刊版（发知识库给人读），二者同构同数：
 只写结论不给证据的句子，读者无法判断可信度，等于没写。承接 `.claude/rules/living-status-board.md`
 与 `.claude/rules/real-visual-acceptance.md`。
 
-### 条款 7：存量走棘轮，新文档零欠账
+### 条款 7：规则与技能走轻量导读（两行，不是三行）
+
+`.claude/rules/*.md` 的主要读者是按 glob 自动加载它的 AI，人是次要读者，所以比 `doc/` 少一行：
+
+```markdown
+**一句话**：这条规则要求什么（结论，20 字起）
+**什么时候撞上**：什么改动或场景会触发它
+```
+
+写在 H1 之后、正文之前。**不要**再单独留一行 `> 触发：...`——那和「什么时候撞上」是同一件事，
+说两遍只会让两处随时间漂移。glob 由文件自己的 frontmatter 或 `CLAUDE.md` 的规则索引表承载，
+导读行写人话就够。
+
+`.claude/skills/*/SKILL.md` 不加导读行：它的 frontmatter `description` 本来就要回答
+「什么时候该触发我」，那是技能被发现的唯一入口。闸门只保证 frontmatter 有 `name` 与
+一段**说得清触发时机**的 `description`（太短即判欠账），格式不动。
+
+两者都进同一条棘轮，见条款 8。
+
+### 条款 8：存量走棘轮，新文档零欠账
 
 ```bash
 python3 scripts/doc-readability-check.py                 # 看当前达标率
@@ -250,7 +269,7 @@ python3 scripts/doc-readability-check.py --ratchet        # CI 闸门：欠账�
 python3 scripts/doc-readability-check.py --update-baseline # 修好一批后压低基线
 ```
 
-- 基线文件：`scripts/fixtures/doc-readability-baseline.json`，按类型记录四组欠账：缺导读篇数、裸引用处数、正文实现代码行数、散落源码路径处数。
+- 基线文件：`scripts/fixtures/doc-readability-baseline.json`，记六组欠账：缺导读篇数、裸引用处数、正文实现代码行数、散落源码路径处数（这四组按类型分），外加规则缺导读条数、技能 frontmatter 欠账个数。
 - **新增文档必须自带导读三行**——否则欠账数上升，CI 直接 fail。
 - **存量走到哪修到哪**：改一篇文档就顺手补上它的导读三行，然后跑 `--update-baseline` 把基线压低。
 - 基线**上调一律 reject**。确有合理原因（如批量迁入历史文档）必须在 PR 里写明。

@@ -4,13 +4,16 @@ globs: ["prd-api/src/**/*.cs"]
 
 # LLM Gateway 统一调用规则
 
+**一句话**：所有大模型调用走网关，且调用前必须开 LlmRequestContext 作用域把 UserId 填进去——漏了会以「User not found」的形式炸在运行时。
+**什么时候撞上**：写任何调用大模型的 Controller、Service 或 Worker。
+
 所有大模型调用必须通过 `ILlmGateway`，禁止直接调用底层 LLM 客户端。
 
 ## 使用方式
 
 通过 `GatewayRequest` 调用，必填字段：`AppCallerCode`、`ModelType`。
 
-## ⚠️ 必须设置 LlmRequestContext（最常被漏掉的陷阱）
+## 必须设置 LlmRequestContext（最常被漏掉的陷阱）
 
 **症状**：日志里先看到 `[LlmLog] UserId 为空，请检查调用方是否设置了 LlmRequestContext 或 GatewayRequestContext`，紧跟着就是 `LLM stream error: User not found`。这不是"上游 LLM 的 User not found"，是**我方 LLM 访问控制层**因为拿不到 UserId 而拒绝调用。
 
@@ -25,7 +28,7 @@ using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
     RequestId: Guid.NewGuid().ToString("N"),
     GroupId:   groupId,                     // 可为 null
     SessionId: sessionId,                   // 可为 null
-    UserId:    this.GetRequiredUserId(),    // ❗ Controller 里必填
+    UserId:    this.GetRequiredUserId(),    //  Controller 里必填
     ViewRole:  null,
     DocumentChars: null,
     DocumentHash:  null,
@@ -84,7 +87,7 @@ Gateway 自动记录到 `llmrequestlogs`：`RequestPurpose`、`ModelResolutionTy
 
 ---
 
-## ⚠️ 流式场景关键陷阱
+## 流式场景关键陷阱
 
 下列坑都是真实线上踩过的，每一条都对应过"几十秒空白等待"级别的故障。
 **任何新增的流式 LLM 调用必须逐条对照**。
