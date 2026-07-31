@@ -620,6 +620,12 @@ _DIAGNOSTIC_COMPLETION_OBJECT_PATTERN = (
     r"(?:(?:问题|故障|异常|根因|日志|证据|信息|数据|现场|链路)\s*)?"
     r"(?:定位|分析|收集|排查|调查|诊断|复盘|梳理)"
 )
+_ROOT_CAUSE_UNRELATED_FAILURE_OBJECT_PATTERN = re.compile(
+    rf"(?:截图|证据|日志|记录|样本|材料|附件|图片)\s*"
+    r"(?:上传|保存|采集|收集|归档|生成|打开|下载)"
+    rf"|{_DIAGNOSTIC_COMPLETION_OBJECT_PATTERN}",
+    re.I,
+)
 _PENDING_DELIVERY_PATTERN = (
     rf"(?:(?:(?:仍|尚|还|暂时?)?未|没(?:有)?)\s*{_DELIVERY_ACTION_PATTERN}"
     rf"|(?:等待|待)\s*{_DELIVERY_ACTION_PATTERN})"
@@ -644,9 +650,10 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?[1-9]\d*"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
     r"|(?-i:\bFAIL\b)"
+    r"|(?-i:\bERROR\b)"
     r"|\b(?:failed|failure)\b"
     r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
-    r"(?:fail|failed|failure)\b\"?"
+    r"(?:fail|failed|failure|error)\b\"?"
     rf"|\"?(?:status|状态|branch[\s_-]*status)\"?\s*[:：=]\s*\"?"
     rf"{_RAW_FAILURE_VALUE_PATTERN}\b\"?"
     rf"|\"?(?:stage|阶段)\"?\s*[:：=]\s*\"?(?:{_RAW_FAILURE_VALUE_PATTERN}"
@@ -1169,6 +1176,7 @@ def _failure_subject_states(
     initial_states=None,
     instance_aware=False,
     default_subjects=None,
+    default_subject_exclusion_pattern=None,
 ):
     """Apply ordered status events while keeping context local to this row."""
     states = dict(initial_states or {})
@@ -1215,7 +1223,19 @@ def _failure_subject_states(
                     clause_context_subjects = set()
                 previous_event_end = event.end()
                 continue
-            if not subjects and fallback_subjects and not explicit_subjects:
+            fallback_prefix = clause[
+                max(previous_event_end, event.start() - 48) : event.start()
+            ]
+            fallback_blocked = bool(
+                default_subject_exclusion_pattern
+                and default_subject_exclusion_pattern.search(fallback_prefix)
+            )
+            if (
+                not subjects
+                and fallback_subjects
+                and not explicit_subjects
+                and not fallback_blocked
+            ):
                 subjects = fallback_subjects
             if (
                 not subjects
@@ -1311,6 +1331,9 @@ def _root_cause_row_states(row, initial_states=None):
             states,
             instance_aware=True,
             default_subjects=target_subjects,
+            default_subject_exclusion_pattern=(
+                _ROOT_CAUSE_UNRELATED_FAILURE_OBJECT_PATTERN
+            ),
         )
 
     for cell in cells[2:4]:
@@ -1324,7 +1347,8 @@ def _root_cause_row_states(row, initial_states=None):
     conclusion = cells[4].strip() if len(cells) > 4 else ""
     generic_resolved_conclusion = bool(
         re.fullmatch(
-            r"(?:现已|已|已经)(?:修复|解决|恢复|通过|成功|正常|可用|就绪)",
+            r"(?:(?:现已|已|已经)(?:修复|解决|恢复|通过|成功|正常|可用|就绪)"
+            r"|通过|成功|正常)",
             conclusion,
             re.I,
         )
@@ -1343,8 +1367,14 @@ def _root_cause_row_states(row, initial_states=None):
         or generic_resolved_conclusion
         or generic_failed_conclusion
     ):
+        conclusion_status = (
+            f"已{conclusion}"
+            if generic_resolved_conclusion
+            and not _RESOLVED_FACT_PATTERN.search(conclusion)
+            else conclusion
+        )
         states = _failure_subject_states(
-            _normalize_evidence_usage_gap_clauses(conclusion),
+            _normalize_evidence_usage_gap_clauses(conclusion_status),
             states,
             instance_aware=True,
             default_subjects=observation_subjects or target_subjects,

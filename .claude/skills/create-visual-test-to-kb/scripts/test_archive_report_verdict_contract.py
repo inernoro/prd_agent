@@ -138,6 +138,8 @@ class DailyVerdictContractTests(unittest.TestCase):
                 {"smoke", "build"},
             ),
             ("CDS smoke 结果：失败", {"smoke"}),
+            ("CDS smoke ERROR", {"smoke"}),
+            ("CDS smoke result=ERROR", {"smoke"}),
             ("验收报告归档结果为失败", {"archive"}),
             ("验收报告归档 already failed", {"archive"}),
             ("构建状态=异常", {"build"}),
@@ -893,6 +895,22 @@ class DailyVerdictContractTests(unittest.TestCase):
                     any("硬门禁失败事实" in error for error in errors)
                 )
 
+    def test_target_subject_does_not_capture_named_evidence_or_diagnostics(self):
+        for observation in ("截图上传失败", "问题定位失败", "日志收集失败"):
+            with self.subTest(observation=observation):
+                body = report_body("覆盖不足").replace(
+                    "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | "
+                    "当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
+                    f"| CDS smoke | {observation} | 证据或诊断链路受阻 | "
+                    "当前证据不足 | 未关闭 | 修复后补充证据 |",
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
     def test_explicit_failure_conclusion_uses_target_subject(self):
         for conclusion in ("失败", "未通过", "status=failed"):
             with self.subTest(conclusion=conclusion):
@@ -907,6 +925,22 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 self.assertTrue(
                     any("硬门禁失败事实" in error for error in errors)
+                )
+
+    def test_bare_success_conclusion_closes_observed_failure(self):
+        for conclusion in ("通过", "成功", "正常"):
+            with self.subTest(conclusion=conclusion):
+                body = report_body("覆盖不足").replace(
+                    "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | "
+                    "当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
+                    "| CDS smoke | CDS smoke 先前返回 500，复测返回 200 | "
+                    f"服务已恢复 | 复测证据完整 | {conclusion} | 保留记录 |",
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
                 )
 
     def test_already_failed_binds_to_archive_instead_of_ready(self):
