@@ -724,6 +724,46 @@ class DailyVerdictContractTests(unittest.TestCase):
                     any("硬门禁失败事实" in error for error in errors)
                 )
 
+    def test_bare_cds_terminal_values_open_hard_gate(self):
+        for fact in (
+            "CDS smoke timeout",
+            "CDS smoke timed out",
+            "CDS smoke timed_out",
+            "CDS smoke timed-out",
+            "CDS ready unhealthy",
+            "CDS ready stopped",
+            "CDS build cancelled",
+            "CDS ready missing",
+            "CDS smoke error",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
+        for fact in (
+            "CDS smoke timeout 配置已核对",
+            "CDS ready unhealthy 阈值已确认",
+            "CDS build error 处理机制已验证",
+            "CDS smoke timeout configuration reviewed",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
     def test_boolean_cds_results_open_hard_gate(self):
         for fact in (
             'CDS smoke {"ok":false,"error":"缺少可用的 CDS 连接"}',
@@ -2028,6 +2068,42 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
+
+    def test_later_core_status_inherits_product_quality_subject(self):
+        for connector in ("后来", "之后", "此后"):
+            fact = f"核心用例已通过，{connector}失败"
+            with self.subTest(verdict="conditional", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "未发现可复现产品缺陷，缺陷 0 个", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("核心用例失败事实" in error for error in errors)
+                )
+
+            with self.subTest(verdict="fail", fact=fact):
+                body = report_body("核心用例失败").replace(
+                    "未发现可复现产品缺陷，缺陷 0 个", fact
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors("fail", body),
+                )
+
+        self.assertEqual(
+            set(),
+            archive_report._current_failure_subjects(
+                "核心用例已通过，之后截图上传失败"
+            ),
+        )
+        self.assertEqual(
+            {"build"},
+            archive_report._current_failure_subjects(
+                "核心用例已通过，之后构建失败"
+            ),
+        )
 
     def test_core_failure_is_independent_from_product_defect_risk(self):
         product_quality = "核心用例执行失败，未发现可复现产品缺陷，缺陷 0 个"

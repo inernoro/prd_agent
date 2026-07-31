@@ -636,7 +636,11 @@ _ONGOING_FAILURE_PREFIX_PATTERN = (
 _FAILURE_QUANTIFIER_PATTERN = r"(?:(?:全部|完全|全量|全数|全都|悉数)\s*)?"
 _RAW_FAILURE_VALUE_PATTERN = (
     r"(?:missing|error|failed|failure|stopped|unhealthy|cancelled|"
-    r"timeout|timed[_-]?out)"
+    r"timeout|timed[\s_-]?out)"
+)
+_RAW_BARE_FAILURE_STATUS_PATTERN = (
+    rf"(?<![\"'])\b{_RAW_FAILURE_VALUE_PATTERN}\b"
+    r"(?![\"']?\s*[:：=])"
 )
 _CDS_DEPLOY_FAILURE_STAGE_PATTERN = (
     r"(?:deploy_blocked_pending_import|deploy_trigger_failed|deploy_failed|"
@@ -654,6 +658,7 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"|(?-i:\bFAIL\b)"
     r"|(?-i:\bERROR\b)"
     r"|\b(?:failed|failure)\b"
+    rf"|{_RAW_BARE_FAILURE_STATUS_PATTERN}"
     r"|\"?(?:ok|healthy|success)\"?\s*[:：=]\s*false\b"
     r"|\"?(?:result|结果)\"?\s*[:：=]\s*\"?"
     r"(?:fail|failed|failure|error)\b\"?"
@@ -1101,6 +1106,15 @@ def _failure_is_negated(clause, event, previous_event_end):
         rf"\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}", suffix, re.I
     ):
         return True
+    if re.fullmatch(
+        _RAW_FAILURE_VALUE_PATTERN, event.group(0), re.I
+    ) and re.match(
+        r"\s*(?:配置|设置|阈值|参数|字段|文案|说明|策略|机制|处理|兜底|"
+        r"config(?:uration)?|setting|threshold|field|wording|handling)",
+        suffix,
+        re.I,
+    ):
+        return True
     if re.match(_VERIFIED_SCENARIO_OBJECT_PATTERN, suffix, re.I):
         if re.match(
             rf"{_POSTFIX_SCENARIO_RESULT_BRIDGE_PATTERN}\s*"
@@ -1239,7 +1253,7 @@ def _event_inherits_context(clause, event, state, previous_event_end):
     ):
         return True
     if re.fullmatch(
-        r"(?:随后|最终|再次|重新|依然|仍然|仍|又|此前|先前|一度|曾|"
+        r"(?:随后|后来|之后|此后|最终|再次|重新|依然|仍然|仍|又|此前|先前|一度|曾|"
         r"当前|目前|现在|本次)+",
         normalized,
         re.I,
