@@ -766,6 +766,10 @@ _ROOT_CAUSE_INSTANCE_PATTERN = re.compile(
     r"|prd-(?:api|admin|desktop|video)|llmgw(?:-[A-Za-z0-9_-]+)?",
     re.I,
 )
+_ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN = re.compile(
+    rf"(?:在|于)?\s*(?:{_ROOT_CAUSE_INSTANCE_PATTERN.pattern})(?:\s*环境)?",
+    re.I,
+)
 _VERIFIED_SCENARIO_OBJECT_PATTERN = (
     r"(?:场景|用例|测试|重试|处理|请求|响应|路径|分支|案例|样本|输入|"
     r"数据|状态码|逻辑|机制|流程)"
@@ -867,7 +871,7 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
         return set()
     last_left_end = max(end for _, end, _ in left)
     left_gap = clause[last_left_end : event.start()]
-    left_gap = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", left_gap)
+    left_gap = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", left_gap)
     left_gap = re.sub(r"[()（）\[\]【】]", " ", left_gap)
     if previous_event_end > last_left_end or not re.fullmatch(
         rf"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
@@ -898,7 +902,7 @@ def _coordinated_subject_groups(occurrences, clause):
             continue
         previous = groups[-1][-1]
         gap = clause[previous[1] : occurrence[0]]
-        normalized_gap = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", gap)
+        normalized_gap = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", gap)
         normalized_gap = re.sub(r"[()（）\[\]【】]", " ", normalized_gap)
         if re.fullmatch(
             r"\s*(?:以及|并且|和|与|及|、|/|并|且)"
@@ -961,7 +965,7 @@ def _closure_changes_subject(clause, event, previous_event_end):
                     scope = scope[: -len(subject_prefix)]
     for _, pattern in _FAILURE_SUBJECT_PATTERNS:
         scope = pattern.sub(" ", scope)
-    scope = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", scope)
+    scope = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", scope)
     scope = re.sub(r"[()（）\[\]【】]", " ", scope)
     scope = re.sub(
         r"CDS|的|但是|不过|然而|但|并且|且|并|而|后|前|先前|此前|一度|曾"
@@ -983,6 +987,14 @@ def _failure_is_negated(clause, event, previous_event_end):
     suffix = clause[event.end() : event.end() + 12]
     scenario_prefix = clause[max(0, event.start() - 32) : event.start()]
     if re.match(_VERIFIED_SCENARIO_OBJECT_PATTERN, suffix, re.I):
+        if re.match(
+            rf"{_VERIFIED_SCENARIO_OBJECT_PATTERN}\s*"
+            r"(?:(?:尚|还|仍然?|依然|暂时?)?未|没(?:有)?|待)\s*"
+            r"(?:执行|验证|覆盖|测试|检查|复测)",
+            suffix,
+            re.I,
+        ):
+            return True
         successful_diagnostic = re.search(
             rf"(?:{_DIAGNOSTIC_MODIFIER_PATTERN}"
             r"|(?:已|已经)(?:验证|测试|检查|覆盖|复测))\s*$",
@@ -1011,7 +1023,7 @@ def _failure_is_negated(clause, event, previous_event_end):
         return True
     for _, pattern in _FAILURE_SUBJECT_PATTERNS:
         scope = pattern.sub(" ", scope)
-    scope = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", scope)
+    scope = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(" ", scope)
     scope = re.sub(r"[()（）\[\]【】]", " ", scope)
     scope = re.sub(r"CDS|\s", "", scope, flags=re.I)
     if re.search(
@@ -1195,7 +1207,9 @@ def _root_cause_state_scope(row, row_index):
         business_target = target
         for _, pattern in _FAILURE_SUBJECT_PATTERNS:
             business_target = pattern.sub(" ", business_target)
-        business_target = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", business_target)
+        business_target = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(
+            " ", business_target
+        )
         business_target = re.sub(
             r"(?<![A-Za-z0-9_])CDS(?![A-Za-z0-9_])",
             " ",
