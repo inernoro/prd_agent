@@ -13,6 +13,9 @@ publish.py 发布闸），所以同一枚刊徽在日报模板、周报模板、
   3. 刊徽是纯内联的（不引外部资源），不会被发布闸拒收
 
 CI 通过 .github/workflows/ci.yml 的 `for t in scripts/tests/test_*.py` 自动执行。
+但「被 CI 引用」只是必要条件——那道闸有 path filter，被测文件不登记进去，
+守卫就只在自己被改时才跑，而漂移恰恰发生在被测文件那边。故本守卫最后一项
+自查就是 check_ci_wiring()：确认自己的每个输入都在闸的 filter 里。
 """
 import pathlib
 import re
@@ -367,6 +370,77 @@ def check_dimensions(label, rel, base_rules, media_rules):
                  f"尺寸唯一来源是规则表，改实现请先改表")
 
 
+CI_WORKFLOW = ".github/workflows/ci.yml"
+CI_FILTER_NAME = "release_scripts"
+
+
+def _glob_to_regex(pat):
+    """把 paths-filter 的 glob 转成正则。`**` 跨目录，`*`/`?` 不跨 `/`。"""
+    out, i = [], 0
+    while i < len(pat):
+        c = pat[i]
+        if pat.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif c == "*":
+            out.append("[^/]*")
+            i += 1
+        elif c == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def check_ci_wiring():
+    """本守卫的每个**输入文件**都必须登记进 CI 那道闸的 path filter。
+
+    「测试被 workflow 引用」只是必要条件。release-script-test 有 path filter，
+    filter 里若只有 `scripts/tests/test_*.py` 而没有被测的模板与规则文档，
+    那这道闸就只在「守卫自己被改」时开——而漂移恰恰发生在被测文件那边：
+    一个只改模板的 PR 可以引入本守卫存在的意义所要拒绝的那种漂移，
+    而所有必需检查全绿（predicate-and-wiring-discipline 形状 2 的递归形态：
+    防漂移的工具自己没接上线）。
+
+    有了这一条，日后加第五刊时忘了改 ci.yml 会当场红，而不是静默失去覆盖。
+    """
+    path = ROOT / CI_WORKFLOW
+    if not path.is_file():
+        fail(f"找不到 {CI_WORKFLOW}，无法确认守卫是否真被 CI 触发")
+        return
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    # 截出 `release_scripts:` 这一段的 `- '...'` 条目（下一个同缩进的 key 为界）
+    pats, indent = [], None
+    for line in lines:
+        if indent is None:
+            m = re.match(r"^(\s*)%s:\s*$" % re.escape(CI_FILTER_NAME), line)
+            if m:
+                indent = len(m.group(1))
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cur = len(line) - len(line.lstrip())
+        if cur <= indent and not line.lstrip().startswith("-"):
+            break                                   # 到下一个 filter 了
+        m = re.match(r"^\s*-\s*['\"]?([^'\"]+)['\"]?\s*$", line)
+        if m:
+            pats.append(m.group(1).strip())
+    if indent is None or not pats:
+        fail(f"{CI_WORKFLOW} 里解析不到 {CI_FILTER_NAME} 的 path filter——"
+             f"结构变了？守卫拒绝在无法确认触发条件的情况下判绿")
+        return
+
+    regexes = [_glob_to_regex(p) for p in pats]
+    watched = [RULE_DOC] + [rel for _, rel, _ in EXPECTED]
+    for rel in watched:
+        if not any(r.match(rel) for r in regexes):
+            fail(f"{rel} 没有登记进 {CI_WORKFLOW} 的 {CI_FILTER_NAME} filter——"
+                 f"只改这个文件的 PR 不会触发本守卫，漂移会一路绿灯合进来")
+
+
 print("米多刊系刊徽守卫")
 print("-" * 60)
 # 尺寸来自规则表，不在本文件另存副本
@@ -387,6 +461,9 @@ for label, rel in [
     ("验收/巡检", ".claude/skills/create-visual-test-to-kb/scripts/archive_report.py"),
 ]:
     check_css_wiring(label, rel)
+
+print("CI 触发验证：被测文件都登记进了 release-script-test 的 path filter")
+check_ci_wiring()
 
 print("-" * 60)
 if failures:
