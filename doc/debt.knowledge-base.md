@@ -17,7 +17,6 @@
 | 状态 | open |
 | 关联 | `prd-api/src/PrdAgent.Api/Controllers/Api/AiToolboxController.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs`、`prd-admin/src/pages/ai-toolbox/components/*.tsx` |
 
-
 ## 背景
 
 2026-05-21 review 发现两个层面的债务：
@@ -222,8 +221,6 @@ AI 改写支持润色/精简/扩写/书面化/纠错 + 自定义指令，SSE 流
 
 剩余条目按下述 §1 / §2 / §3 / §4 处理，编号保持不变以兼容历史引用。
 
-
-
 > **关联文档**：[design.knowledge-base.mention-network.md](./design.knowledge-base.mention-network.md)（本设计的主文档，本文是其遗留事项台账）
 
 ### 一、MVP 已知边界（2026-06-11 上线时明确告知用户）
@@ -330,9 +327,9 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 | 字段 | 内容 |
 |---|---|
 | 模块 | 知识库跨环境 / 本地库库 同步（`DocumentStoreSyncController` + `SyncManagerPanel`） |
+| 状态 | open（首版已交付，2026-06-04；以下为已知边界） |
 | 关联 | `prd-api/.../Controllers/Api/DocumentStoreSyncController.cs`、`prd-admin/src/pages/document-store/SyncManagerPanel.tsx`、集合 `document_store_sync_links`、`DocumentStore.SyncToken`、设计文档 [design.knowledge-base.store-sync.md](./design.knowledge-base.store-sync.md) |
 | 提出 | 用户需求：两个环境（或同环境两个库）之间互相同步知识库内容，令牌永久有效、支持单向/双向、手动触发 + 改动检测 |
-
 
 ### 已知边界（首版有意不做，后续可补）
 
@@ -422,7 +419,6 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 | 状态 | open · 已评估不合 |
 | 关联 | `prd-admin/src/pages/library/LibraryDocReader.tsx`（720 行）、`prd-admin/src/pages/library/LibraryStoreDetailPage.tsx`（140 行）、`prd-admin/src/components/doc-browser/DocBrowser.tsx` |
 | 创建 | 2026-05-28 |
-
 
 ### 背景
 
@@ -520,16 +516,6 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 
 ---
 
-## 已结清（供回溯）
-
-下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
-
-### 知识库跨库同步
-
-| 字段 | 内容 |
-|---|---|
-| 状态 | open（首版已交付，2026-06-04；以下为已知边界） |
-
 ---
 
 ## 实现来源
@@ -539,15 +525,6 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 | 位置 | 文件 |
 |------|------|
 | 总览 | `prd-admin/src/stores/docReaderPrefsStore.ts` |
-
----
-
-## 实现来源
-
-给要跳去看代码的人；只读这篇文档的人可以整块跳过。
-
-| 位置 | 文件 |
-|------|------|
 | 划词评论 | `prd-admin/src/components/doc-browser/`（阅读器 + 批注浮层 / 批注栏 / 输入框）、`prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs`（recent-comments）、`.claude/skills/create-visual-test-to-kb/scripts/read_comments.py` |
 | 划词 AI 改写 / 配图 | `prd-admin/src/components/doc-browser/`（SelectionAiPopover / SelectionImagePopover / selectionEdit.ts）、`prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs`（selection-rewrite SSE）、`prd-api/src/PrdAgent.Infrastructure/Services/SelectionRewriteActionRegistry.cs` |
 | 划词编辑单测 | `prd-admin/src/components/doc-browser/__tests__/selectionEdit.test.ts` |

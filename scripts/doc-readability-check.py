@@ -464,6 +464,9 @@ def scan_links() -> tuple[dict[str, int], list[str], list[str]]:
 # 那一处就能绕开导读要求（形状 1：判据比它该管的范围窄）。
 RULE_DIRS = [os.path.join(".claude", "rules"), os.path.join(".Codex", "rules")]
 RULES_DIR = os.path.join(REPO_ROOT, ".claude", "rules")
+# 技能根同样不止一处：Claude 读 .claude/skills，Codex 读 .agents/skills
+# （skill-install-contract 规定安装时所有存在的宿主目录都要装一份）。
+SKILL_DIRS = [os.path.join(".claude", "skills"), os.path.join(".agents", "skills")]
 SKILLS_DIR = os.path.join(REPO_ROOT, ".claude", "skills")
 
 # 规则文档的导读只要两行：这条规则要求什么、什么改动会撞上它。
@@ -625,18 +628,21 @@ def scan_rules() -> tuple[int, int, list[str]]:
 def scan_skills() -> tuple[int, int, list[str]]:
     total = missing = 0
     detail: list[str] = []
-    if not os.path.isdir(SKILLS_DIR):
-        return 0, 0, detail
-    for entry in sorted(os.listdir(SKILLS_DIR)):
-        path = os.path.join(SKILLS_DIR, entry, "SKILL.md")
-        if not os.path.exists(path):
+    for rel_dir in SKILL_DIRS:
+        abs_dir = os.path.join(REPO_ROOT, rel_dir)
+        if not os.path.isdir(abs_dir):
             continue
-        total += 1
-        problems = check_skill(path)
-        if problems:
-            missing += 1
-            detail.append(f".claude/skills/{entry}/SKILL.md — {'；'.join(problems)}")
+        for name in sorted(os.listdir(abs_dir)):
+            path = os.path.join(abs_dir, name, "SKILL.md")
+            if not os.path.isfile(path):
+                continue
+            total += 1
+            problems = check_skill(path)
+            if problems:
+                missing += 1
+                detail.append(f"{rel_dir.replace(os.sep, '/')}/{name}/SKILL.md — {'；'.join(problems)}")
     return total, missing, detail
+
 
 
 def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:

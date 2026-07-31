@@ -160,6 +160,7 @@
 | 字段 | 内容 |
 |---|---|
 | 模块 | 个人任务树 Agent（`prd-api` TaskTreeController + `prd-admin` pages/task-tree） |
+| 状态 | open（v1 已落地，2026-05-30；以下为已知边界，未排期） |
 | 关联 | `prd-api/.../Controllers/Api/TaskTreeController.cs`、`prd-admin/src/pages/task-tree/`、`changelogs/2026-05-30_task-tree-agent.md` |
 | 提出 | 用户需求：方便地（含对话）摘出个人任务与卡点，按树枝方式呈现进度，给自己/上级看 |
 
@@ -195,8 +196,3 @@
 
 下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
 
-### Workflow Agent 任务树
-
-| 字段 | 内容 |
-|---|---|
-| 状态 | open（v1 已落地，2026-05-30；以下为已知边界，未排期） |

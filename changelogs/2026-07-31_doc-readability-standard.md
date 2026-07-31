@@ -44,3 +44,4 @@
 | fix | doc | docs 闸门触发面改为全仓兜底，与面包屑守卫的扫描面对齐；guide.list 成员判定只认目录条目行 |
 | fix | doc | 死链闸认带标题的链接与引用式定义行；散落路径识别补齐 jsx/sql/html 等实现扩展名 |
 | fix | doc | 技能 frontmatter 里 name/description 写多遍判红，避免判据与 YAML 消费方看到不同的值 |
+| fix | doc | 技能扫描覆盖 .agents/skills；两笔误埋进「已结清」的活账归位并加守卫；合并知识库册重复的实现来源小节 |

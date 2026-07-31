@@ -624,6 +624,24 @@ list_keys = set(catalog)
 doc_keys = set(titles)
 # 只比标题会漏掉「压根没登记」的那一类：新文档不进目录时，标题比对因为找不到
 # 链接而静默跳过，两份索引各少一篇而 CI 全绿（形状 1：判据比它该管的范围窄）。
+# 台账合并时按「文中出现已交付/已解决」下沉条目，会把状态其实是 open 的活账
+# 误埋进「已结清」——读者扫到那一节会以为这笔账还完了。
+settled_open: list[str] = []
+for name in sorted(os.listdir(doc_dir)):
+    if not name.startswith("debt.") or not name.endswith(".md"):
+        continue
+    ledger = open(os.path.join(doc_dir, name), encoding="utf-8").read()
+    pos = ledger.find("## 已结清")
+    if pos < 0:
+        continue
+    settled = ledger[pos:]
+    for entry in re.finditer(r"^### (.+)$", settled, re.M):
+        window = settled[entry.end():entry.end() + 600]
+        status = re.search(r"\|\s*状态\s*\|\s*([^|]+)\|", window)
+        if status and status.group(1).strip().lower().startswith("open"):
+            settled_open.append(f"{name}::{entry.group(1)}")
+check(not settled_open, f"「已结清」区里没有状态仍是 open 的活账（误埋：{settled_open[:3]}）")
+
 check(not (doc_keys - index_keys), f"每篇 doc 都登记进 index.yml（漏登：{sorted(doc_keys - index_keys)[:5]}）")
 check(not (index_keys - doc_keys), f"index.yml 没有幽灵条目（幽灵：{sorted(index_keys - doc_keys)[:5]}）")
 check(not (doc_keys - list_keys), f"每篇 doc 都登记进 guide.list（漏登：{sorted(doc_keys - list_keys)[:5]}）")
@@ -646,6 +664,11 @@ print()
 
 check(any(".Codex" in d for d in checker.RULE_DIRS),
       "规则扫描覆盖 Codex 侧规则目录（少扫一处那一处就能绕开导读要求）")
+check(any(".agents" in d for d in checker.SKILL_DIRS),
+      "技能扫描覆盖 Codex 侧技能根（.agents/skills 里也有真实技能）")
+skill_total, skill_missing, _ = checker.scan_skills()
+check(skill_total >= 60, f"两处技能根都扫到了（实测 {skill_total} 个）")
+check(skill_missing == 0, f"两处技能根合起来零欠账（实测 {skill_missing} 个）")
 _, codex_missing, _ = checker.scan_rules()
 check(codex_missing == 0, f"两处规则目录合起来零欠账（实测 {codex_missing} 条）")
 
