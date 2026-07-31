@@ -100,7 +100,7 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 | `prebuilt:` | bool | **极速版**：true → 跳过 source mount，直接 `docker pull image` + run 镜像里的编译产物（CI 已编译，CDS 不本机编译）。对齐 `BuildProfile.prebuiltImage` |
 | `containerPort:` | int | 覆盖容器端口（预构建镜像监听端口常与源码模式不同，如 prd-api 源码 5000 / 生产镜像 8080） |
 
-极速版（CI 预构建）整体链路：push → GitHub Actions（`.github/workflows/branch-image.yml`）按 `sha-<github.sha>` 推 ghcr 镜像 → CDS 收 `workflow_run.completed` 后按 commit SHA `docker pull` + run。镜像 tag 公式与 CDS `slugifyBranchForImage` / `resolveImageTemplate` 保持 SSOT。详见 [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md)。
+极速版（CI 预构建）整体链路：push → GitHub Actions 的分支镜像工作流按 `sha-<github.sha>` 推 ghcr 镜像 → CDS 收 `workflow_run.completed` 后按 commit SHA `docker pull` + run。镜像 tag 公式与 CDS `slugifyBranchForImage` / `resolveImageTemplate` 保持 SSOT。详见 [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md)。
 
 ### 2.3 基础设施 service(无相对路径,纯下载镜像)
 
@@ -336,6 +336,7 @@ EXTRA_FLAG: ${EXTRA_FLAG:+on}    # :+ 有值则替换为固定串,否则空串
 | infra 容器发现 | 同上 | `discoverInfraContainers` (Map key = containerName) |
 | deploy 自动起 infra | `cds/src/routes/branches.ts:1546+` | Phase 2 兜底 + 不信 stale state |
 | 预览域名公式 | `cds/src/services/preview-slug.ts` | `computePreviewSlug(branch, projectSlug)` |
+| 分支镜像工作流 | `.github/workflows/branch-image.yml` |
 | cdscli scan | `.claude/skills/cds/cli/cdscli.py` | `cmd_scan` / `_parse_compose_services` / `_yaml_from_compose_services` |
 | cdscli verify | 同上 | `cmd_verify`(Phase 2.5 新增) |
 | cdscli verify 评分 | 同上 | `_verify_score` / `_verify_grade`(§4.4) |

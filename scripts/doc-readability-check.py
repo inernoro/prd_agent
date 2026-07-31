@@ -227,7 +227,7 @@ IMPL_LANGS = {"cs", "csharp", "c#", "ts", "tsx", "typescript", "js", "jsx", "jav
 # 源码面不止六个产品目录：脚本、技能、规则、工作流同样是实现，散落在散文里
 # 一样让读者去读实现。只认产品目录 = 判据比它该管的范围窄。
 SOURCE_PATH = re.compile(
-    r"(?:\b|(?<=[（(\s]))(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw"
+    r"(?<![\w./-])(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw"
     r"|scripts|\.claude/skills|\.claude/rules|\.Codex/rules|\.github/workflows)/[\w./-]+"
     r"\.(?:cs|csproj|ts|tsx|js|jsx|mjs|py|rs|css|scss|less|sh|yml|yaml|json|html|vue|sql|razor|cshtml)\b")
 SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")

@@ -29,12 +29,12 @@
   },
   "source_refs": {
     "spec": 7,
-    "design": 87,
+    "design": 85,
     "plan": 16,
     "rule": 22,
-    "guide": 66,
+    "guide": 56,
     "report": 29,
-    "debt": 148
+    "debt": 144
   },
   "rules_missing": 0,
   "skills_missing": 0,
@@ -67,7 +67,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 4
+      "src": 1
     },
     "debt.cds.performance.md": {
       "missing": 0,
@@ -85,7 +85,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 3
+      "src": 4
     },
     "debt.cds.state-json.md": {
       "missing": 0,
@@ -121,7 +121,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 92
+      "src": 91
     },
     "debt.platform.md": {
       "missing": 0,
@@ -139,7 +139,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 4
+      "src": 3
     },
     "debt.visual-agent.md": {
       "missing": 0,
@@ -225,17 +225,11 @@
       "impl": 0,
       "src": 3
     },
-    "design.cds.project-bootstrap.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 1
-    },
     "design.cds.self-hosting.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 7
+      "src": 6
     },
     "design.cds.skill-version-update.md": {
       "missing": 0,
@@ -321,12 +315,6 @@
       "impl": 0,
       "src": 1
     },
-    "guide.cds.agent-onboarding-harness.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 1
-    },
     "guide.cds.agent.code-review-quickstart.md": {
       "missing": 0,
       "bare": 0,
@@ -345,23 +333,11 @@
       "impl": 0,
       "src": 1
     },
-    "guide.cds.ai-auth.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 2
-    },
     "guide.cds.cloud-dev-tutorial.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
-    },
-    "guide.cds.env.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 3
     },
     "guide.cds.github-webhook-events.md": {
       "missing": 0,
@@ -369,23 +345,11 @@
       "impl": 0,
       "src": 5
     },
-    "guide.cds.managed-delivery.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 3
-    },
     "guide.cds.multi-branch-db.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
-    },
-    "guide.cds.tutorial.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 2
     },
     "guide.cds.view-parity.md": {
       "missing": 0,
@@ -428,6 +392,12 @@
       "bare": 0,
       "impl": 0,
       "src": 2
+    },
+    "guide.platform.smoke-tests.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
     },
     "guide.skill.removal-checklist.md": {
       "missing": 0,
@@ -733,13 +703,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 5
-    },
-    "rule.skill.issues-system.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 1
+      "src": 6
     },
     "spec.cds.project-model.md": {
       "missing": 0,

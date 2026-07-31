@@ -184,6 +184,15 @@ SRC_EXT_SAMPLE = ("# 示例 · 指南\n\n"
 _, sample_src = checker.scan_body(SRC_EXT_SAMPLE)
 check(sample_src >= 3, f"jsx/sql/html 这些也是实现文件，要计入散落路径（实测 {sample_src} 处）")
 
+# 隐藏目录（.claude/.github/.Codex）的路径在文档里通常被反引号包着，
+# \b 在「反引号 + 点」这种非词字符之间不成立 —— 词边界必须换成「前面不是路径字符」。
+_, dot_in_code = checker.scan_body("# 示例 · 指南\n\n见 `.claude/skills/x/run.py` 这个脚本。\n")
+check(dot_in_code == 1, f"反引号包着的隐藏目录路径算得出来（实测 {dot_in_code} 处）")
+_, dot_bare = checker.scan_body("# 示例 · 指南\n\n见 .github/workflows/ci.yml 这个工作流。\n")
+check(dot_bare == 1, f"裸写的隐藏目录路径同样算（实测 {dot_bare} 处）")
+_, nested = checker.scan_body("# 示例 · 指南\n\n见 vendor/cds/src/index.ts 这个第三方副本。\n")
+check(nested == 0, "更长路径里的同名片段不算根（新边界没把误判带进来）")
+
 NESTED = ("# 示例 · 指南\n\n````markdown\n```ts\n"
           "见 `doc/rule.doc.readability.md`，这行在内层示例里。\nconst a = 1;\n```\n````\n")
 nested_impl, _ = checker.scan_body(NESTED)
