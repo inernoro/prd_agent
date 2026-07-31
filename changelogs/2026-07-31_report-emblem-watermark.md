@@ -42,3 +42,4 @@
 | test | scripts | 刊徽守卫校验窄屏断点与规则表登记一致，颜色 alpha 支持 CSS Color 4 斜杠写法，规则表改按表头名解析 |
 | test | scripts | 刊徽守卫区分「默认状态成立」与「有状态」规则：伪类主语不能供给必需声明，但仍须合契约 |
 | test | scripts | 刊徽守卫覆盖 .emblem 后代（SVG）的可见性；判据与接线纪律补形状 8（把不成立的证据当成证据） |
+| test | scripts | 刊徽守卫覆盖 SVG 自身的行内 style 与表现属性，并解析 color 引用的自定义属性 |

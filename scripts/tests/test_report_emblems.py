@@ -344,6 +344,8 @@ def check_emblem_in_masthead(label, rel, text, expected_kinds):
             check_inline_style(label, rel, attrs, f"报头前景 `.{cls}`", FOREGROUND_CONTRACT)
 
     spans = _emblem_spans(block)
+    check_emblem_inner_elements(label, rel, block, spans)
+    check_color_custom_properties(label, rel, text)
     for kind in sorted(expected_kinds):
         n_all = count_emblem(text, kind)
         n_head = count_emblem(block, kind)
@@ -357,6 +359,68 @@ def check_emblem_in_masthead(label, rel, text, expected_kinds):
             fail(f"{label}({rel}): 刊徽 {kind} 有 {n_all - n_wrap} 处虽在报头内、"
                  f"但不在 `.emblem` 包裹元素里——SVG 自身没有任何样式，"
                  f"脱离 wrapper 后会退化成 120x120 的文档流 flex 子项把报头撑歪")
+
+
+def check_emblem_inner_elements(label, rel, block, spans):
+    """包裹元素**内部**的元素（那枚 SVG 及其子节点）不能把自己藏起来。
+
+    后代契约此前只查样式表规则，而元素自己身上还有两条优先级更高的通道：
+
+      行内 style     `<svg style="display:none">`  —— 优先于任何样式表规则
+      SVG 表现属性   `<svg opacity="0">`            —— 与 CSS 声明等价（作者层最低优先级）
+
+    两条都得查。只查「会让它不可见」的那几项，不查尺寸——这一层的尺寸是相对
+    包裹元素的百分比，与规则表登记的 px 不是一回事。
+
+    `fill-opacity` / `stroke-opacity` 不会被误当成 `opacity`：attr_value 要求属性名
+    前面是标签起始或空白/斜杠，连字符不算边界。
+    """
+    for a, b in spans:
+        for m in re.finditer(r'<([A-Za-z][\w-]*)\b([^>]*)>', block[a:b]):
+            tag, attrs = m.group(1), m.group(2)
+            check_inline_style(label, rel, attrs, f"刊徽内 `<{tag}>`",
+                               EMBLEM_DESCENDANT_CONTRACT)
+            for prop, ok, why, _required in EMBLEM_DESCENDANT_CONTRACT:
+                v = attr_value(attrs, prop)
+                if v is not None and not ok(v):
+                    fail(f"{label}({rel}): 刊徽内 `<{tag}>` 的表现属性 "
+                         f"{prop}={v!r}——{why}")
+
+
+def check_color_custom_properties(label, rel, text):
+    """`color` 走 `var(--x)` 时，那个自定义属性本身必须解析出可见颜色。
+
+    刊徽的 color 全部写成 `var(--terra)` / `var(--indigo)` / `var(--accent)`，而
+    `_is_visible_color` 对认不出的写法一律返回「可见」——于是加一条
+    `.emblem{--terra:transparent}` 就能让 currentColor 解析成透明、水印整个消失，
+    而每一条被守的声明都仍然合法。判据在 var() 这一层直接放行，等于把
+    「我查不了」当成了「没问题」。
+
+    做法不是实现自定义属性的层叠（那又是一个引擎），而是：把该文件里这个属性的
+    **全部定义**都拿出来，逐一要求是可见颜色；一处定义成透明就判红。
+    找不到定义也判红——无法确认的东西不许默认通过。
+    """
+    names = set()
+    for rules in (rules_targeting(text, "emblem"), rules_under(text, "emblem")):
+        for r in rules:
+            _, declared = cascade_value([r["body"]], "color")
+            for v in declared:
+                names |= set(re.findall(r"var\(\s*(--[\w-]+)", v))
+                # `var(--x, 兜底色)` 的兜底值同样会真的生效
+                for fb in re.findall(r"var\(\s*--[\w-]+\s*,([^)]*)\)", v):
+                    if fb.strip() and not _is_visible_color(fb):
+                        fail(f"{label}({rel}): 刊徽 color 的 var() 兜底值 {fb.strip()!r} "
+                             f"不可见——自定义属性缺失时水印会整个消失")
+    for name in sorted(names):
+        decls = re.findall(r"%s\s*:\s*([^;}]+)" % re.escape(name), text)
+        if not decls:
+            fail(f"{label}({rel}): 刊徽 color 引用了 {name}，但全文找不到它的定义——"
+                 f"无法确认 currentColor 解析出的颜色可见")
+            continue
+        for d in decls:
+            if not _is_visible_color(d):
+                fail(f"{label}({rel}): {name} 被定义成 {d.strip()!r}——"
+                     f"刊徽全用 currentColor 上色，它一旦不可见，水印整个消失")
 
 
 def check_svg_integrity(label, rel, kind, text):
