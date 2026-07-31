@@ -23,10 +23,12 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('var BRIDGE_ENABLED=true;');
   });
 
-  it('keeps the preview widget above mobile bottom navigation by default', () => {
+  it('docks the preview widget away from desktop user controls and mobile bottom content', () => {
     const script = buildWidgetScript('branch-a', 'branch/a');
-    expect(script).toContain('function defaultWidgetBottom(){');
-    expect(script).toContain('return window.innerWidth<=640?88:12;');
-    expect(script).toContain('var pos={x:12,y:defaultWidgetBottom()};');
+    expect(script).toContain('#cds-widget{position:fixed;right:12px;bottom:12px;');
+    expect(script).toContain('#cds-widget{top:12px;right:12px;bottom:auto;left:auto;');
+    expect(script).toContain('#cds-widget:not(.cds-widget-expanded) .cds-badge-main>:not([data-action="toggle"]){display:none}');
+    expect(script).toContain("root.classList.toggle('cds-widget-expanded',expanded);");
+    expect(script).toContain('var pos=null;');
   });
 });
