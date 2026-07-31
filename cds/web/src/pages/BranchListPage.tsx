@@ -65,6 +65,7 @@ import { canQuickStartBranch } from '@/lib/branch-quick-actions';
 import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
+import { multiPreviewUrl, simplePreviewUrl } from '@/lib/previewUrl';
 import { resolveReleaseSteps, type ReleaseRunProgressLike, type ReleaseStepState } from '@/lib/releaseSteps';
 import {
   buildBranchResources,
@@ -1273,37 +1274,8 @@ function isBusy(branch?: BranchSummary): boolean {
   return branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || branch.status === 'stopping';
 }
 
-function cleanHost(host?: string): string {
-  if (!host) return '';
-  return host.replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim();
-}
-
-function isLocalHost(host: string): boolean {
-  const clean = host.split(':')[0];
-  return clean === 'localhost' || clean.endsWith('.localhost') || clean === '127.0.0.1' || clean === '::1';
-}
-
-function hostWithPort(host: string, port?: number): string {
-  if (!port || host.includes(':')) return host;
-  if (!isLocalHost(host)) return host;
-  return `${host}:${port}`;
-}
-
-function multiPreviewUrl(branch: BranchSummary, config: CdsConfigResponse): string {
-  const host = cleanHost(config.previewDomain || config.rootDomains?.[0]);
-  if (!host) return '';
-  const slug = branch.previewSlug || branch.id;
-  return `${window.location.protocol}//${slug}.${hostWithPort(host, config.workerPort || 5500)}`;
-}
-
-function simplePreviewUrl(config: CdsConfigResponse): string {
-  const configured = cleanHost(config.mainDomain);
-  if (configured) {
-    return `${window.location.protocol}//${hostWithPort(configured, config.workerPort || 5500)}`;
-  }
-  const port = config.workerPort || 5500;
-  return `${window.location.protocol}//${window.location.hostname}:${port}`;
-}
+// 预览地址推导已抽到 @/lib/previewUrl 作为唯一判定源：发布中心的就地发布
+// 也要算同一个地址，两处各留一份必然漂移（判据分裂）。这里只保留调用。
 
 function parseSseBlock(raw: string): { event: string; data: unknown } | null {
   let event = 'message';

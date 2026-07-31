@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
+import { ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { resolveTaskScheduleProjectId, taskScheduleProjectReference } from '@/li
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 type ScheduleType = 'manual' | 'interval' | 'daily';
-type TargetType = 'http' | 'command';
+type TargetType = 'http' | 'command' | 'release';
 type RunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -35,6 +35,9 @@ interface ScheduledJob {
   lastRunAt?: string;
   lastRunStatus?: RunStatus;
   nextRunAt?: string | null;
+  consecutiveFailureCount?: number;
+  autoDisabledAt?: string;
+  autoDisabledReason?: string;
 }
 
 interface ScheduledJobTarget {
@@ -45,6 +48,15 @@ interface ScheduledJobTarget {
   body?: string;
   command?: string;
   cwd?: string;
+  // release 动作（定时发布）。本页这一轮只做「看得见 + 能启停 + 能看运行记录」，
+  // 编辑表单在发布中心的「自动发布」页签落地；这些字段必须原样带回后端，
+  // 否则用户在本页改个名字就会把发布配置整块抹掉。
+  targetId?: string;
+  source?: { kind: 'branch'; branchId: string } | { kind: 'promote'; fromTargetId: string };
+  dryRun?: boolean;
+  requireApproval?: boolean;
+  rollbackOnFailure?: boolean;
+  skipWhenUnchanged?: boolean;
 }
 
 interface ScheduledJobAction extends ScheduledJobTarget {
@@ -64,6 +76,8 @@ interface ActionForm {
   cwd: string;
   targetType: TargetType;
   headersJson: string;
+  /** release 动作的原始载荷。本页不编辑它，只负责原样带回后端（防静默丢配置）。 */
+  release?: ScheduledJobTarget;
 }
 
 interface ScheduledJobRun {
@@ -106,7 +120,7 @@ type FormState = {
 };
 
 type ActionDraft = ActionForm;
-type ActionLike = Pick<ActionForm, 'targetType' | 'method' | 'url' | 'command' | 'name'>;
+type ActionLike = Pick<ActionForm, 'targetType' | 'method' | 'url' | 'command' | 'name' | 'release'>;
 
 const emptyForm = (projectId = ''): FormState => ({
   projectId,
@@ -424,6 +438,12 @@ export function TaskSchedulePage(): JSX.Element {
                       <span className="truncate">下次 {formatTime(job.nextRunAt)}</span>
                       <span className="shrink-0">{targetLabel(job)}</span>
                     </div>
+                    {job.autoDisabledReason ? (
+                      // 自动停用不解释原因，用户只会看到「怎么自己关了」——那比不停用更糟。
+                      <div className="mt-2 rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] leading-4 text-destructive">
+                        {job.autoDisabledReason}
+                      </div>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -619,16 +639,27 @@ export function TaskSchedulePage(): JSX.Element {
             </DialogHeader>
 
             <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                <SegmentButton icon={Globe2} label="HTTP 接口" active={actionDraft.targetType === 'http'} onClick={() => setActionDraft({ ...actionDraft, type: 'http', targetType: 'http' })} />
-                <SegmentButton icon={Terminal} label="命令脚本" active={actionDraft.targetType === 'command'} onClick={() => setActionDraft({ ...actionDraft, type: 'command', targetType: 'command' })} />
-              </div>
+              {actionDraft.targetType === 'release' ? null : (
+                <div className="flex flex-wrap gap-2">
+                  <SegmentButton icon={Globe2} label="HTTP 接口" active={actionDraft.targetType === 'http'} onClick={() => setActionDraft({ ...actionDraft, type: 'http', targetType: 'http' })} />
+                  <SegmentButton icon={Terminal} label="命令脚本" active={actionDraft.targetType === 'command'} onClick={() => setActionDraft({ ...actionDraft, type: 'command', targetType: 'command' })} />
+                </div>
+              )}
 
               <Field label="动作名称">
                 <input className={compactInputClass} value={actionDraft.name} onChange={(e) => setActionDraft({ ...actionDraft, name: e.target.value })} placeholder={actionDraft.targetType === 'http' ? '调用旧总后台接口' : '清洗同步数据'} />
               </Field>
 
-              {actionDraft.targetType === 'http' ? (
+              {actionDraft.targetType === 'release' ? (
+                <div className="space-y-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2.5 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <Rocket className="h-4 w-4" />
+                    发布动作
+                  </div>
+                  <div className="font-mono text-[11px] leading-5">{releaseActionSummary(actionDraft.release)}</div>
+                  <div>本页只展示与启停发布规则；来源、目标与闸门请到发布中心的「自动发布」页签编辑，避免在两处各改一半。</div>
+                </div>
+              ) : actionDraft.targetType === 'http' ? (
                 <div className="space-y-3">
                   <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
                     <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground">从 curl 导入</summary>
@@ -767,19 +798,45 @@ function IconButton({
 }
 
 function hasActionConfigured(action: ActionLike): boolean {
+  if (action.targetType === 'release') return Boolean(action.release?.targetId);
   return action.targetType === 'http' ? Boolean(action.url.trim()) : Boolean(action.command.trim());
 }
 
 function actionTitle(action: ActionLike): string {
-  return action.name.trim() || (action.targetType === 'http' ? '调用 HTTP 接口' : '执行命令脚本');
+  if (action.name.trim()) return action.name.trim();
+  if (action.targetType === 'release') return '发布到环境';
+  return action.targetType === 'http' ? '调用 HTTP 接口' : '执行命令脚本';
 }
 
 function actionDescription(action: ActionLike): string {
+  if (action.targetType === 'release') return releaseActionSummary(action.release);
   if (action.targetType === 'http') return `${action.method} ${action.url}`;
   return action.command.split('\n')[0] || '命令脚本';
 }
 
+/** 一行说清「发到哪、发哪一版、有没有闸」。用户扫一眼就知道这条规则会做什么。 */
+function releaseActionSummary(release?: ScheduledJobTarget): string {
+  if (!release?.targetId) return '发布动作';
+  const source = release.source?.kind === 'promote'
+    ? `提升 ${release.source.fromTargetId} 正在跑的版本`
+    : release.source?.kind === 'branch'
+      ? `分支 ${release.source.branchId}`
+      : '来源未配置';
+  const flags = [
+    release.requireApproval ? '需人工确认' : '',
+    release.dryRun ? '仅预检' : '',
+    release.rollbackOnFailure ? '失败自动回滚' : '',
+    release.skipWhenUnchanged ? '版本未变则跳过' : '',
+  ].filter(Boolean);
+  return `发布到 ${release.targetId} · ${source}${flags.length ? ` · ${flags.join(' / ')}` : ''}`;
+}
+
 function targetPayloadFromAction(action: ActionDraft): ScheduledJobTarget {
+  if (action.targetType === 'release') {
+    // 本页不编辑发布动作，原样回传。丢一个字段就等于把发布配置改成另一条规则。
+    if (!action.release?.targetId) throw new Error('发布动作缺少发布目标，请到发布中心的自动发布页签配置');
+    return action.release;
+  }
   if (action.targetType === 'command') {
     if (!action.command.trim()) throw new Error('命令必填');
     if (action.cwd.trim() && !isSafeRelativeCwd(action.cwd)) throw new Error('工作目录必须是 sandbox 内的相对路径');
@@ -858,6 +915,7 @@ function targetLabel(job: ScheduledJob): string {
   if (actions.length === 0) return '无动作';
   if (actions.length === 1) {
     const action = actions[0];
+    if (action.targetType === 'release') return releaseActionSummary(action.release);
     return action.targetType === 'http' ? `${action.method || 'POST'} ${action.url || ''}` : '命令';
   }
   return `${actions.length} 个动作`;
@@ -921,5 +979,6 @@ function normalizeJobActions(job: ScheduledJob): ActionForm[] {
     body: action.body || '',
     command: action.command || '',
     cwd: action.cwd || '',
+    ...(action.type === 'release' ? { release: action } : {}),
   }));
 }

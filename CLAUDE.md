@@ -337,7 +337,8 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |
 | `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | 快照反规范化必须有等价覆盖的兜底查询路径 |
 | `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
-| `predicate-and-wiring-discipline.md` | 任何新增判定函数 / 新增模块 / 新增测试 | 四种「编译过、测试绿、通读也挑不出」的形状：判据太窄 / 链路只建到一半（删掉不会红）/ 判据分裂漂移 / 测试反向锁死 bug 或静默空跑。判据：**改动删掉后测试仍全绿 = 需要一条守卫** |
+| `predicate-and-wiring-discipline.md` | 任何新增判定函数 / 新增模块 / 新增测试 | 五种「编译过、测试绿、通读也挑不出」的形状：判据太窄 / 链路只建到一半（删掉不会红）/ 判据分裂漂移 / 测试反向锁死 bug 或静默空跑 / 用变更前状态 gate 那个会改变它的变更（门禁死锁）。判据：**改动删掉后测试仍全绿 = 需要一条守卫** |
+| `config-runtime-drift.md` | `.env` / compose env / 密钥 / 上游地址等被进程启动时快照的配置 | 改的是源头，生效的是副本：副本不刷新等于没改。三条漂移通道（env 快照 / 代理与连接池缓存 / 密钥轮换）+ recreate 而非 restart + 重建后 reload 代理 + 对账只出哈希前缀 |
 | `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、118 个 MongoDB 集合 |
 | `zero-friction-input.md` | `**/*.{ts,tsx}` | 能上传不手输，不确定就两个都给，禁止空白发呆 |
 | `admin-dual-theme.md` | `prd-admin/src/**/*.{tsx,css}` | 系统级双皮肤：颜色只能来自 token 或双皮肤分支；硬编码棘轮测试只减不增，基线上调必须 PR 说明 |

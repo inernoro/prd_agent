@@ -59,7 +59,15 @@
   @media (max-width: 640px) { .paper { padding: 18px 16px 44px; } }
 
   /* ══ 报头 ══ */
-  .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 2.5px solid var(--ink); }
+  .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 2.5px solid var(--ink); position: relative; }
+  /* 刊徽水印（衬字板式）：垫在右侧 mono 小字背后，只做刊物区分，不承载信息。
+     日报=月亮 / 周报=地球 / 月报=太阳 / 验收=北极星 / 巡检=彗星，见 .claude/rules/report-design-system.md。
+     right 负值不会撑出横向滚动条：.paper 左右 padding 34px（移动端 16px）都大于这里的偏移量。 */
+  .emblem { position: absolute; top: -14px; right: -8px; width: 92px; height: 92px;
+            color: var(--terra); opacity: 0.13; z-index: 0; pointer-events: none; }
+  .emblem svg { display: block; width: 100%; height: 100%; }
+  @media (max-width: 640px) { .emblem { width: 70px; height: 70px; top: -8px; right: -4px; } }
+  .masthead .t, .masthead .r, .masthead .stamp { position: relative; z-index: 1; }
   .stamp {
     width: 46px; height: 46px; flex-shrink: 0;
     background: var(--terra); color: #fff7ee; border-radius: 4px;
@@ -238,6 +246,7 @@
 
   <!-- 报头 -->
   <header class="masthead">
+    <div class="emblem"><svg viewBox="0 0 120 120" fill="none" data-emblem="moon" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><mask id="emb-moon-m"><rect width="120" height="120" fill="#000"/><circle cx="56" cy="60" r="44" fill="#fff"/><circle cx="84" cy="46" r="38" fill="#000"/></mask></defs><g mask="url(#emb-moon-m)"><circle cx="56" cy="60" r="44" fill="currentColor" fill-opacity="0.18"/><g stroke="currentColor" stroke-width="2" opacity="0.85"><path d="M6 44 L64 102 M6 62 L52 108 M6 80 L34 108 M14 30 L78 94 M26 18 L92 84"/></g><circle cx="56" cy="60" r="44" stroke="currentColor" stroke-width="3"/></g><g stroke="currentColor" stroke-width="2.2" opacity="0.9"><circle cx="38" cy="48" r="7"/><circle cx="30" cy="74" r="4.5"/><circle cx="48" cy="88" r="3.5"/></g></svg></div>
     <div class="stamp">MAP</div>
     <div class="t">
       <b>米多智能体日报</b>

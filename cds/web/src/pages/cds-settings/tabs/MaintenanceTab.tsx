@@ -14,9 +14,16 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
+import { diagnoseSelfUpdateHttpFailure } from '@/lib/selfUpdateHttpFailure';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { useNowTick } from '@/hooks/useNowTick';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
+import {
+  buildForceSyncBody,
+  defaultTransitionReason,
+  type ForceSyncTransitionBody,
+  type SelfUpdateIntent,
+} from '@/lib/selfUpdateTransition';
 
 interface BranchMeta {
   name: string;
@@ -72,7 +79,17 @@ interface SelfUpdateRecord {
   durationMs?: number;
   /** 2026-05-07 真实总耗时(含 daemon 重启 + SSE 重连)。 */
   totalElapsedMs?: number;
+  /** 失败简述。2026-07-30 起是中文归因(failure.cause)，不再是工具的英文原文。 */
   error?: string;
+  /** 失败归因(2026-07-30)。用户反馈「更新总是报错还是英文错」——以前这里直接展示
+   *  git/pnpm/tsc 的英文 stderr。现在后端统一归因，前端把 cause + nextAction 当主文案，
+   *  英文原文 raw 收进折叠区。旧记录没有这个字段，回退到 error。 */
+  failure?: {
+    stage: string;
+    cause: string;
+    nextAction: string;
+    raw: string;
+  };
   actor?: string;
   /** 用户反馈 2026-05-06 — 让用户看到走了哪种更新模式。
    *  hot-reload = 跳过 validate(节省 50s)+ systemd 软重启,~15-25s。
@@ -261,6 +278,24 @@ function formatElapsed(ms: number): string {
   return `${m}m${s.toString().padStart(2, '0')}s`;
 }
 
+/**
+ * 从 SSE error payload 取结构化失败归因（2026-07-30 起后端统一下发）。
+ *
+ * 老后端只有 message（里面嵌着英文原文），此时返回 undefined，
+ * 调用方回退到原有的单串标题显示，不会白屏。
+ */
+function extractFailure(data: unknown): SelfUpdateRecord['failure'] | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.cause !== 'string' || !obj.cause) return undefined;
+  return {
+    stage: typeof obj.stage === 'string' ? obj.stage : 'unknown',
+    cause: obj.cause,
+    nextAction: typeof obj.nextAction === 'string' ? obj.nextAction : '',
+    raw: typeof obj.raw === 'string' ? obj.raw : '',
+  };
+}
+
 function eventTitle(event: string, data: unknown): string {
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>;
@@ -390,8 +425,19 @@ async function postSse(
     body: JSON.stringify(body || {}),
   });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `${path} -> ${response.status}`);
+    // 请求被边缘层挡回（没进到应用），后端归因覆盖不到；先翻成中文再抛，
+    // 否则面板上只会出现「/api/self-update -> 503」这种谁也看不懂的串。
+    const text = await response.text().catch(() => '');
+    const retryAfter = Number(response.headers.get('retry-after') || '') || undefined;
+    const failure = diagnoseSelfUpdateHttpFailure(response.status, text, retryAfter);
+    const err = new Error(failure.cause) as Error & { selfUpdateFailure?: SelfUpdateRecord['failure'] };
+    err.selfUpdateFailure = {
+      stage: 'unknown',
+      cause: failure.cause,
+      nextAction: failure.nextAction,
+      raw: failure.raw,
+    };
+    throw err;
   }
   if (!response.body) return;
 
@@ -435,6 +481,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const suppressFocusOpenRef = useRef(false);
   const [runState, setRunState] = useState<UpdateRunState>('idle');
   const [runTitle, setRunTitle] = useState('');
+  // 2026-07-30:本次运行的失败归因(cause/nextAction/raw)。以前失败只在标题里
+  // 显示一串「中文壳 + 英文原文」,用户第一眼撞见英文。现在标题只放 cause,
+  // 下一步和英文原文交给 SelfUpdateFailureCard 分层展示。
+  const [runFailure, setRunFailure] = useState<SelfUpdateRecord['failure'] | undefined>(undefined);
   const [runLog, setRunLog] = useState<string[]>([]);
   // 2026-05-04 v7(用户:'添加前端计时器,我倒要看看重启了多长时间')
   // runStartedAt:点更新时记 ms 时间戳;runEndedAt:done/error/reload 时记停。
@@ -449,6 +499,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
+  // 强制更新的版本切换声明。后端对非快进切换要求 intent + 原因，所以这两件事
+  // 必须在同一个对话框里问清楚（不许猜，见 lib/selfUpdateTransition.ts 顶部）。
+  const [forceIntent, setForceIntent] = useState<SelfUpdateIntent>('release');
+  const [forceReason, setForceReason] = useState('');
+  const [forceReasonTouched, setForceReasonTouched] = useState(false);
   // 2026-05-28 删除 historyOpen — 列表常驻显示在面板下方,不再走 Dialog
 
   // 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
@@ -457,6 +512,15 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 因为 activeSelfUpdate 真存在时不会回退到 idle。
   const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
   const lastSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.lastSelfUpdate : null;
+
+  // 强制更新带的这几个字段是**审计信息**，不是通行条件：后端 resolveForceSyncTransition
+  // 永不拒绝（强制更新是用户控制 CDS 的最后手段）。所以这里也绝不因为它们不完整
+  // 就禁用按钮——那等于在 UI 侧又给逃生门加了一把锁。
+  const forceHeadSha = selfStatus.status === 'ok' ? selfStatus.data.headSha || '' : '';
+  // 用户没动过输入框就跟着 intent / 分支走，动过之后就是他的内容，不再被覆盖。
+  const forceReasonValue = forceReasonTouched
+    ? forceReason
+    : defaultTransitionReason(forceIntent, selectedBranch);
 
   // 进度条专用 elapsed:必须与 step 同源(都来自后端 activeSelfUpdate)。
   // runStartedAt 是点按钮那一刻的客户端时间,从本 tab 触发时不会回填后端
@@ -707,9 +771,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   }
 
   async function runSelfUpdate(
-    endpoint: '/api/self-update' | '/api/self-force-sync',
+    endpoint: '/api/self-update' | '/api/self-force-sync' | '/api/self-restart',
     label: string,
-    opts: { force?: boolean } = {},
+    opts: { force?: boolean; transition?: ForceSyncTransitionBody } = {},
   ): Promise<void> {
     if (runState === 'running') return;
 
@@ -718,6 +782,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunEndedAt(null);
     setRunState('running');
     setRunTitle(`${label} 已启动`);
+    setRunFailure(undefined);
     setRunLog([]);
     let sawDone = false;
     let sawNoOp = false;
@@ -725,11 +790,22 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     try {
       // 2026-05-08:force=true 让后端跳过 no-op fast-path,即使 HEAD 没变也走完整
       // 流程。"强制更新"按钮带这个 flag,这样测试人员可以反复点同一 commit。
-      await postSse(endpoint, { branch: selectedBranch || undefined, force: opts.force }, (event, data) => {
+      //
+      // 2026-07-30:强制更新还必须带上版本切换声明（transitionIntent /
+      // expectedFromSha / transitionReason）。缺了它，后端的非快进闸门会回
+      // 「必须显式声明 release 或 rollback」—— 而用户刚刚点的按钮就叫「强制更新」。
+      // 见 lib/selfUpdateTransition.ts。
+      const requestBody = opts.transition
+        ? opts.transition
+        : { branch: selectedBranch || undefined, force: opts.force };
+      await postSse(endpoint, requestBody, (event, data) => {
         const title = eventTitle(event, data);
         if (event === 'error') {
           setRunState('error');
-          setRunTitle(title);
+          const failure = extractFailure(data);
+          setRunFailure(failure);
+          // 标题只放一句中文原因；下一步与英文原文进失败卡，不挤在标题里。
+          setRunTitle(failure?.cause || title);
           setRunEndedAt(Date.now());
         } else if (event === 'done') {
           sawDone = true;
@@ -791,6 +867,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       const message = err instanceof Error ? err.message : String(err);
       setRunState('error');
       setRunTitle(message);
+      // postSse 对「没进到应用」的失败会挂上归因，一并展示下一步与服务端原文。
+      const attached = (err as { selfUpdateFailure?: SelfUpdateRecord['failure'] }).selfUpdateFailure;
+      if (attached) setRunFailure(attached);
       appendRunLine(message);
       onToast(`${label} 失败：${message}`);
       // 2026-05-28: 旧的 loadSelfStatus() 已删,改为触发后端 refresh job。
@@ -817,6 +896,8 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           <SelfUpdateStatusPanel
             state={selfStatus}
             onRefresh={() => void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ })}
+            onRestart={() => void runSelfUpdate('/api/self-restart', '重启')}
+            restarting={runState === 'running'}
           />
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
@@ -1012,10 +1093,61 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                   />
                   <ConfirmAction
                     title="强制更新"
-                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。即使 HEAD 没变也会走完整流程(force=true,跳过 no-op 短路),便于测试人员重复触发同一版本验证更新链路。`}
+                    description={
+                      <div className="grid gap-2">
+                        <div>
+                          会 git fetch 后 hard reset 到 origin/{selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。
+                          即使 HEAD 没变也会走完整流程,便于重复触发同一版本验证更新链路。
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          当前 {forceHeadSha ? forceHeadSha.slice(0, 7) : '未知'} → origin/{selectedBranch || '当前分支'}
+                        </div>
+                        {/* 目标不包含当前提交时后端要求声明这是发布还是回滚。
+                            前端算不出「包不包含」（self-status 的 ahead 数是拿当前分支比的，
+                            不是目标分支），所以直接问人，而不是猜一个自信的错答案。 */}
+                        <div className="grid gap-1">
+                          <span className="text-[11px] text-muted-foreground">这次切换属于</span>
+                          <div className="flex gap-1">
+                            {(['release', 'rollback'] as const).map((value) => (
+                              <button
+                                key={value}
+                                type="button"
+                                onClick={() => setForceIntent(value)}
+                                className={`flex-1 rounded-md border px-2 py-1 text-xs ${
+                                  forceIntent === value
+                                    ? 'border-primary/45 bg-primary/10 text-primary'
+                                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'
+                                }`}
+                              >
+                                {value === 'release' ? '发布新版本' : '回滚旧版本'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="grid gap-1">
+                          <span className="text-[11px] text-muted-foreground">原因（会记进自更新历史）</span>
+                          <input
+                            value={forceReasonValue}
+                            onChange={(event) => { setForceReason(event.target.value); setForceReasonTouched(true); }}
+                            className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2 py-1 text-xs"
+                          />
+                          <span className="text-[11px] text-muted-foreground">
+                            仅用于自更新历史的审计记录。留空或格式不符也照样执行 —— 强制更新不设前置条件。
+                          </span>
+                        </div>
+                      </div>
+                    }
                     confirmLabel="强制更新"
                     pending={runState === 'running'}
-                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新', { force: true })}
+                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新', {
+                      force: true,
+                      transition: buildForceSyncBody({
+                        headSha: forceHeadSha,
+                        targetBranch: selectedBranch,
+                        intent: forceIntent,
+                        reason: forceReasonValue,
+                      }),
+                    })}
                     trigger={
                       <Button type="button" variant="outline" disabled={runState === 'running'}>
                         <AlertTriangle />
@@ -1045,6 +1177,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           >
               {runState === 'running' ? (
                 <SelfUpdateLiveProgress elapsedMs={liveElapsedMs} currentStep={activeSelfUpdate?.step} records={selfHistoryRecords} />
+              ) : null}
+              {runState === 'error' && runFailure ? (
+                <div className="px-4 pt-3">
+                  <SelfUpdateFailureCard failure={runFailure} />
+                </div>
               ) : null}
               <div className="flex justify-end px-4 py-3">
                 <Button type="button" variant="outline" size="sm" onClick={() => void copyRunLog()} disabled={runLog.length === 0}>
@@ -1334,9 +1471,13 @@ function DockerNetworkMetric({
 function SelfUpdateStatusPanel({
   state,
   onRefresh,
+  onRestart,
+  restarting,
 }: {
   state: SelfStatusState;
   onRefresh: () => void;
+  onRestart: () => void;
+  restarting: boolean;
 }): JSX.Element {
   if (state.status === 'loading') {
     return (
@@ -1430,6 +1571,25 @@ function SelfUpdateStatusPanel({
           >
             PID {data.runningPid || '-'} · 重启{data.restartStatus === 'completed' ? '已确认' : data.restartStatus === 'pending' ? '进行中' : '未确认'}
           </span>
+        ) : null}
+
+        {/* 「更新成功但进程没换」是最危险的一种状态：代码与 web/dist 已经是新版本，
+            跑着的却是旧后端 —— 新前端会去调旧后端没有的接口，页面直接报错，而上面
+            那条 chip 只是小字「重启未确认」，用户根本不会当回事。
+            2026-07-30 真实发生：强制同步换完产物没重启，生产半吊子跑了几分钟。
+            所以这里给整条横幅 + 一键重启，而不是让人自己去猜下一步。 */}
+        {data.restartStatus === 'incomplete' ? (
+          <div className="mt-2 flex w-full flex-wrap items-center gap-3 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+            <span className="min-w-0 flex-1">
+              代码与前端产物已切到 {data.headSha || '新版本'}，但进程仍是更新前那个
+              （PID {data.runningPid || '-'}，启动于 {data.pidStartedAt ? formatAbsoluteTime(data.pidStartedAt) : '-'}）。
+              现在是「新前端 + 旧后端」，页面可能报错。重启后才算真正完成。
+            </span>
+            <Button type="button" size="sm" variant="outline" disabled={restarting} onClick={onRestart} className="shrink-0">
+              {restarting ? <RefreshCw className="animate-spin" /> : <RotateCw />}
+              立即重启
+            </Button>
+          </div>
         ) : null}
 
         <div className="ml-auto flex items-center gap-2">
@@ -1664,10 +1824,8 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
               </div>
             </div>
             {selected.timings ? <SelfUpdateStageBar timings={selected.timings} totalMs={selected.durationMs} /> : null}
-            {selected.error ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                {selected.error}
-              </div>
+            {selected.failure || selected.error ? (
+              <SelfUpdateFailureCard failure={selected.failure} fallbackError={selected.error} />
             ) : null}
             <div>
               <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -1701,6 +1859,55 @@ function SelfUpdateDetailMetric({ label, value, mono = false }: { label: string;
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className={`mt-1 truncate text-sm font-medium ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
+    </div>
+  );
+}
+
+/**
+ * 更新失败的展示卡（2026-07-30）。
+ *
+ * 用户原话：「为什么 cds 普通更新总是有问题报错，还是英文错」。以前这里直接把
+ * git/pnpm/tsc 的英文 stderr 铺在红框里，用户第一眼撞见的就是英文。
+ * 现在的层级是：中文主要原因（最大）→ 下一步做什么 → 英文原文（默认折叠）。
+ *
+ * 旧记录没有 failure 字段，回退到 error 单串显示，不会因为字段缺失变成空白。
+ */
+function SelfUpdateFailureCard({
+  failure,
+  fallbackError,
+}: {
+  failure?: SelfUpdateRecord['failure'];
+  fallbackError?: string;
+}): JSX.Element {
+  if (!failure) {
+    return (
+      <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        {fallbackError}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+      <div className="text-sm font-medium leading-relaxed text-destructive">{failure.cause}</div>
+      {failure.nextAction ? (
+        <div className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-2 text-xs leading-relaxed text-foreground">
+          <span className="font-medium text-muted-foreground">下一步：</span>
+          {failure.nextAction}
+        </div>
+      ) : null}
+      {failure.raw ? (
+        <details className="group">
+          <summary className="cursor-pointer select-none text-[11px] text-muted-foreground hover:text-foreground">
+            原始输出（工具原文，通常是英文）
+          </summary>
+          <pre
+            className="mt-1.5 max-h-[240px] overflow-auto whitespace-pre-wrap break-all rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-2 font-mono text-[11px] leading-5 text-muted-foreground"
+            style={{ overscrollBehavior: 'contain' }}
+          >
+            {failure.raw}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }

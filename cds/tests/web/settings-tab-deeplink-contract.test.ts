@@ -27,6 +27,11 @@ const settingsIndexSource = fs.readFileSync(
   'utf8',
 );
 
+const inlineHostCreatorSource = fs.readFileSync(
+  path.resolve(process.cwd(), '../cds/web/src/pages/release-center/InlineHostCreator.tsx'),
+  'utf8',
+);
+
 describe('CDS 系统设置深链契约', () => {
   it('getInitialTab 兼容 ?tab= query 作为 #hash 的 fallback', () => {
     expect(settingsSource).toContain("window.location.hash.replace(/^#/, '')");
@@ -36,7 +41,11 @@ describe('CDS 系统设置深链契约', () => {
   });
 
   it('发布中心引导深链使用 #hash 规范写法', () => {
-    expect(releaseSource).toContain('/cds-settings#remote-hosts');
+    // 链接搬了家，契约没变：2026-07-29 起「去 CDS 系统设置管服务器」不再是
+    // 发布中心空状态把人支走的主路径（用户原话：不允许操作用户跳来跳去），
+    // 而是就地新建服务器面板里的一个次要入口。断言跟着链接走，仍然只认 #hash 写法。
+    expect(inlineHostCreatorSource).toContain('/cds-settings#remote-hosts');
+    expect(inlineHostCreatorSource).not.toContain('/cds-settings?tab=remote-hosts');
     expect(releaseSource).not.toContain('/cds-settings?tab=remote-hosts');
   });
 
