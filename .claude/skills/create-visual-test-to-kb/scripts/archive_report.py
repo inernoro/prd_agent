@@ -710,9 +710,21 @@ _RETEST_RESOLVED_PATTERN = (
     r"(?:复测|重试|回归(?:测试)?)(?:结果)?\s*(?:已)?\s*"
     r"(?:通过|成功|正常|可用|就绪)"
 )
+_NEGATED_FAILURE_RESOLVED_OBJECT_PATTERN = (
+    r"(?:失败|异常|报错|错误|超时|故障|不可用|不可达|无响应)"
+    r"(?!(?:场景|路径|用例|测试|处理|证据|记录|样本|日志|信息))"
+)
+_NEGATED_FAILURE_RESOLVED_PATTERN = (
+    rf"(?:(?:现已|已经|已|当前|目前|现在)\s*)?"
+    rf"不再\s*{_NEGATED_FAILURE_RESOLVED_OBJECT_PATTERN}"
+    rf"|(?:(?:复测|重试|回归(?:测试)?)(?:结果)?(?:后)?\s*"
+    rf"|(?:现已|已经|已|当前|目前|现在)\s*)"
+    rf"(?:已\s*)?(?:无|没有)\s*{_NEGATED_FAILURE_RESOLVED_OBJECT_PATTERN}"
+)
 _RESOLVED_FACT_PATTERN = re.compile(
     rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*{_RESOLVED_ACTION_PATTERN}"
     rf"|{_RETEST_RESOLVED_PATTERN}"
+    rf"|{_NEGATED_FAILURE_RESOLVED_PATTERN}"
     rf"|{_RAW_RESOLVED_STATUS_PATTERN}",
     re.I,
 )
@@ -802,6 +814,10 @@ def _normalize_root_cause_instance(identity):
     normalized = (identity or "").strip().lower()
     if normalized in {"生产", "预览", "测试", "灰度", "开发", "本地"}:
         return f"{normalized}环境"
+    if normalized in {"api", "api服务"}:
+        return "api服务"
+    if normalized in {"web", "web端"}:
+        return "web端"
     return normalized
 
 
@@ -1072,7 +1088,7 @@ def _failure_is_negated(clause, event, previous_event_end):
         if successful_diagnostic or resolved_bridge:
             return True
     if re.search(
-        r"(?:并未|没有|并非|并不是|不是|不算|未曾|从未|无|未|没)"
+        r"(?:并未|没有|并非|并不是|不是|不算|不再|未曾|从未|无|未|没)"
         r"(?:发生|出现|处于|被判定为)?\s*$",
         prefix,
         re.I,
@@ -1084,7 +1100,7 @@ def _failure_is_negated(clause, event, previous_event_end):
     scope = re.sub(r"[()（）\[\]【】]", " ", scope)
     scope = re.sub(r"CDS|\s", "", scope, flags=re.I)
     if re.search(
-        r"(?:并未|并非|并不是|不是|不算|未曾|从未|无|未|没)"
+        r"(?:并未|并非|并不是|不是|不算|不再|未曾|从未|无|未|没)"
         r"(?:发生|出现|处于|被判定为)?$"
         r"|(?:未|没|没有)(?:发现|观察到|检测到|证据表明)$"
         r"|(?:0(?:\.0+)?|零|〇)(?:个|次|项)?$",
@@ -1203,13 +1219,20 @@ def _failure_subject_states(
         occurrences = _subject_occurrences(clause, instance_aware=instance_aware)
         explicit_subjects = {name for _, _, name in occurrences}
 
-        events = [
-            (match, "failed")
-            for match in _FAILURE_FACT_PATTERN.finditer(clause)
-        ] + [
+        resolved_events = [
             (match, "resolved")
             for match in _RESOLVED_FACT_PATTERN.finditer(clause)
         ]
+        failure_events = [
+            (match, "failed")
+            for match in _FAILURE_FACT_PATTERN.finditer(clause)
+            if not any(
+                resolved.start() <= match.start()
+                and match.end() <= resolved.end()
+                for resolved, _ in resolved_events
+            )
+        ]
+        events = failure_events + resolved_events
         events.sort(key=lambda item: item[0].start())
         previous_event_end = 0
         clause_context_subjects = set(explicit_subjects or context_subjects)
