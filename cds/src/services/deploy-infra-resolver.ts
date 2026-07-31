@@ -71,7 +71,7 @@ export function computeRequiredInfra(
   // Layer 2 — 兜底:项目下所有非 stopped 且 docker 实际未 running 的 infra
   for (const svc of projectInfra) {
     if (svc.status === 'stopped') continue;
-    // ★ 必须用 containerName 当 key — svc.id 跨项目可重复,会撞 key
+    // 注意: 必须用 containerName 当 key — svc.id 跨项目可重复,会撞 key
     const actual = actualInfraState.get(svc.containerName);
     const trulyRunning = actual?.running === true;
     if (trulyRunning) continue;

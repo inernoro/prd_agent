@@ -49,6 +49,7 @@ jobs:
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
+              - 'e2e/**'
               - '.github/workflows/ci.yml'
             desktop:
               - 'prd-desktop/**'
@@ -341,6 +342,35 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Install recording acceptance dependencies
+        working-directory: ${{ github.workspace }}/e2e
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check recording acceptance
+        working-directory: ${{ github.workspace }}/e2e
+        run: pnpm typecheck
+
+      - name: Install Chromium for recording acceptance
+        working-directory: ${{ github.workspace }}/e2e
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run recording continuity acceptance
+        working-directory: ${{ github.workspace }}/e2e
+        env:
+          E2E_LOCAL_SERVER: '1'
+        run: pnpm exec playwright test specs/recording-continuity.spec.ts
+
+      - name: Upload recording acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recording-continuity-acceptance-${{ github.run_id }}
+          path: |
+            e2e/playwright-report/
+            e2e/results.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # 桌面客户端构建检查（不打包）
   desktop-check:

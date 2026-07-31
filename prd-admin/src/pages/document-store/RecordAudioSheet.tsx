@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileUp, Mic, MicOff, Pause, Play, Square, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, CloudUpload, FileCheck2, FileUp, Mic, MicOff, Pause, Play, Square, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -205,11 +205,15 @@ export function RecordAudioSheet({
   const [state, setState] = useState<RecState>('requesting');
   const [unavailableReason, setUnavailableReason] = useState('');
   const [elapsed, setElapsed] = useState(0);
+  const [finalizingSeconds, setFinalizingSeconds] = useState(0);
+  const [finalizationStage, setFinalizationStage] = useState<1 | 2 | 3>(1);
   const [targetStoreId, setTargetStoreId] = useState(storeId ?? '');
   const [protectedBytes, setProtectedBytes] = useState(0);
   const [liveProtection, setLiveProtection] = useState<'pending' | 'active' | 'local'>('pending');
   const [liveTranscript, setLiveTranscript] = useState('');
+  const [liveTranscriptExpanded, setLiveTranscriptExpanded] = useState(false);
   const liveTranscriptValueRef = useRef('');
+  const liveTranscriptScrollRef = useRef<HTMLParagraphElement | null>(null);
   const [liveTranscriptState, setLiveTranscriptState] = useState<LiveTranscriptionState>('connecting');
   const [liveTranscriptMessage, setLiveTranscriptMessage] = useState('正在连接实时转写');
   const [changingDestination, setChangingDestination] = useState(false);
@@ -222,7 +226,7 @@ export function RecordAudioSheet({
   // 静音守卫：整段峰值电平过低时，完成前先确认（避免上传一段空录音）
   const [confirmSilent, setConfirmSilent] = useState(false);
   const peakLevelRef = useRef(0);
-  // 本机保险箱会话：分片实时落 IndexedDB，上传成功前不删（断网/崩溃可恢复）
+  // 本机保险箱会话：分片实时落 IndexedDB，云端归档可用前不删（断网/崩溃可恢复）
   const vaultIdRef = useRef(`rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   const streamRef = useRef<MediaStream | null>(null);
@@ -234,9 +238,18 @@ export function RecordAudioSheet({
   const uploadSessionIdRef = useRef<string | null>(null);
   const uploadSessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // IndexedDB 写入也必须串行并在完成录音前收口。否则结果页可能先于最后一个
+  // 分片落盘读取保险箱，表现为同一条录音偶发没有播放按钮。
+  const vaultWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const uploadChunkIndexRef = useRef(0);
   const liveUploadFailedRef = useRef(false);
   const liveTranscriptionRef = useRef<LiveTranscriptionSocket | null>(null);
+
+  useEffect(() => {
+    const container = liveTranscriptScrollRef.current;
+    if (!container || liveTranscriptExpanded) return;
+    container.scrollTop = container.scrollHeight;
+  }, [liveTranscript, liveTranscriptExpanded]);
   const pendingLivePcmRef = useRef<Int16Array[]>([]);
   const livePcmCompleteRef = useRef(true);
   const liveCaptureRef = useRef<LivePcmCaptureController | null>(null);
@@ -444,6 +457,8 @@ export function RecordAudioSheet({
         finalizationLockedRef.current,
         mode,
       );
+      setFinalizationStage(1);
+      setFinalizingSeconds(0);
       setState('finalizing');
     }
     finishModeRef.current = mode;
@@ -487,14 +502,21 @@ export function RecordAudioSheet({
           audioBitsPerSecond: 64_000,
         });
         recorderRef.current = rec;
-        void vaultStartSession(vaultIdRef.current, mime || 'audio/webm', storeId);
+        vaultWriteQueueRef.current = vaultStartSession(
+          vaultIdRef.current,
+          mime || 'audio/webm',
+          storeId,
+        ).then(() => undefined);
         void ensureUploadSession();
         rec.ondataavailable = (e) => {
           if (e.data.size > 0) {
             chunksRef.current.push(e.data);
             bytesRef.current += e.data.size;
             // 分片实时落本机保险箱：崩溃/断网/忘关都不丢已录内容
-            void vaultAppendChunk(vaultIdRef.current, e.data);
+            vaultWriteQueueRef.current = vaultWriteQueueRef.current
+              .then(() => vaultAppendChunk(vaultIdRef.current, e.data))
+              .then(() => undefined)
+              .catch(() => undefined);
             queueLiveChunk(e.data);
             // 接近后端 20MB 上限：自动收尾并直接进转录，不让录音白费
             if (bytesRef.current >= MAX_BYTES && rec.state !== 'inactive') {
@@ -506,6 +528,7 @@ export function RecordAudioSheet({
         };
         rec.onstop = async () => {
           if (finishModeRef.current === 'complete' && chunksRef.current.length > 0) {
+            setFinalizationStage(2);
             await liveTranscriptionRef.current?.finish();
             const liveSessionId = uploadSessionIdRef.current;
             if (liveSessionId) {
@@ -520,6 +543,8 @@ export function RecordAudioSheet({
               }
             }
             await uploadQueueRef.current;
+            await vaultWriteQueueRef.current;
+            setFinalizationStage(3);
             const sessionId = uploadSessionIdRef.current;
             if (sessionId && !liveUploadFailedRef.current) {
               const completionStartedAt = Date.now();
@@ -636,6 +661,7 @@ export function RecordAudioSheet({
             onCompleteRef.current(file, vaultIdRef.current, targetStoreIdRef.current || storeId);
           } else if (finishModeRef.current === 'discard') {
             // 用户主动放弃：保险箱一并清掉，不留恢复弹窗骚扰
+            await vaultWriteQueueRef.current;
             void vaultDeleteSession(vaultIdRef.current);
             await uploadQueueRef.current;
             const sessionId = uploadSessionIdRef.current;
@@ -708,6 +734,13 @@ export function RecordAudioSheet({
   useEffect(() => {
     if (state !== 'recording') return;
     const id = window.setInterval(() => setElapsed(v => v + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [state]);
+
+  // 完成阶段单独计时：用户最容易把这段网络确认误判为卡死。
+  useEffect(() => {
+    if (state !== 'finalizing') return;
+    const id = window.setInterval(() => setFinalizingSeconds(value => value + 1), 1000);
     return () => window.clearInterval(id);
   }, [state]);
 
@@ -825,6 +858,75 @@ export function RecordAudioSheet({
         <FileUp size={14} /> 上传音频文件
       </Button>
     </div>
+  ) : state === 'finalizing' ? (
+    <div
+      data-testid="recording-finalizing-panel"
+      aria-live="polite"
+      className="mx-auto flex min-h-full w-full max-w-[380px] flex-col items-center justify-center gap-5 py-8 text-center">
+      <motion.div
+        className="flex h-20 w-20 items-center justify-center rounded-[24px]"
+        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
+        animate={{ borderColor: ['var(--border-faint)', 'rgba(74,222,128,0.58)', 'var(--border-faint)'] }}
+        transition={{ duration: 2.2, repeat: Infinity }}>
+        <MapSpinner size={28} />
+      </motion.div>
+      <div>
+        <p className="text-[18px] font-semibold text-token-primary">正在创建录音结果</p>
+        <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
+          {finalizationStage === 1
+            ? '正在锁定最后一段声音，避免结束瞬间漏字。'
+            : finalizationStage === 2
+              ? '正在核对并补传最后的录音分片。'
+              : '录音已经安全保存，正在创建可立即播放的结果页。'}
+        </p>
+        <p className="mt-2 text-[11px] tabular-nums text-token-muted">
+          已等待 {formatElapsed(finalizingSeconds)} · 通常几秒，弱网时最多前台等待 45 秒
+        </p>
+      </div>
+
+      <div
+        className="w-full rounded-[16px] p-4"
+        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
+        aria-label="录音完成进度">
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            { label: '锁定录音', stage: 1, icon: Check },
+            { label: '完成上传', stage: 2, icon: CloudUpload },
+            { label: '创建结果页', stage: 3, icon: FileCheck2 },
+          ].map(({ label, stage, icon: Icon }) => {
+            const done = finalizationStage > stage;
+            const active = finalizationStage === stage;
+            return (
+              <div key={label} className="flex min-w-0 flex-col items-center">
+                <span
+                  className="flex h-8 w-8 items-center justify-center rounded-full"
+                  style={{
+                    background: done ? 'rgba(34,197,94,0.14)' : 'var(--bg-primary)',
+                    color: done ? 'rgba(74,222,128,0.95)' : active ? 'rgba(96,165,250,0.98)' : 'var(--text-muted)',
+                    border: '1px solid var(--border-faint)',
+                  }}>
+                  {active && !done ? <MapSpinner size={13} /> : <Icon size={14} />}
+                </span>
+                <span className="mt-2 text-[10px] leading-4 text-token-muted">{label}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
+          <span
+            className="block h-full rounded-full transition-all duration-300 motion-reduce:transition-none"
+            style={{
+              width: `${finalizationStage === 1 ? 20 : finalizationStage === 2 ? 62 : 92}%`,
+              background: 'linear-gradient(90deg, rgba(34,197,94,0.75), rgba(96,165,250,0.95))',
+            }}
+          />
+        </div>
+      </div>
+
+      <p className="text-[11px] leading-relaxed text-token-muted">
+        这里不做 AI 总结；结果页打开后，你可以立即播放，再决定是否一键整理。
+      </p>
+    </div>
   ) : (
     <div
       aria-live="polite"
@@ -833,8 +935,6 @@ export function RecordAudioSheet({
       <div className="flex items-center gap-2 text-[12px] font-semibold">
         {state === 'requesting' ? (
           <><MapSpinner size={12} /><span className="text-token-muted">正在请求麦克风权限…</span></>
-        ) : state === 'finalizing' ? (
-          <><MapSpinner size={12} /><span className="text-token-muted">正在完成保存…</span></>
         ) : state === 'paused' ? (
           <span className="text-token-muted">已暂停</span>
         ) : (
@@ -891,9 +991,31 @@ export function RecordAudioSheet({
         }}>
         <div className="flex items-center justify-between gap-3">
           <span className="text-[12px] font-semibold text-token-primary">实时原文</span>
-          <span className="text-[11px] text-token-muted">{liveTranscriptMessage}</span>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-token-muted">{liveTranscriptMessage}</span>
+            {liveTranscript.length > 120 && (
+              <button
+                type="button"
+                onClick={() => setLiveTranscriptExpanded(value => !value)}
+                className="flex min-h-11 cursor-pointer items-center gap-1 rounded-[8px] px-2 text-[11px] font-semibold text-token-secondary hover-bg-soft"
+                aria-expanded={liveTranscriptExpanded}
+                aria-controls="recording-live-transcript">
+                {liveTranscriptExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                {liveTranscriptExpanded ? '收起' : '展开'}
+              </button>
+            )}
+          </div>
         </div>
-        <p className="mt-2 min-h-10 whitespace-pre-wrap text-[13px] leading-6 text-token-secondary">
+        <p
+          id="recording-live-transcript"
+          data-testid="recording-live-transcript"
+          ref={liveTranscriptScrollRef}
+          className="mt-2 min-h-10 whitespace-pre-wrap break-words pr-1 text-[13px] leading-6 text-token-secondary"
+          style={{
+            maxHeight: liveTranscriptExpanded ? 'min(34dvh, 280px)' : 120,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+          }}>
           {liveTranscript || (
             liveTranscriptState === 'degraded'
               ? '录音仍在本机和服务端持续保存，结束后会自动生成原文。'
@@ -904,6 +1026,7 @@ export function RecordAudioSheet({
 
       {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}
       <div
+        data-testid="recording-waveform"
         className="w-full rounded-[16px] px-3 py-4"
         style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
         <canvas ref={canvasRef} width={560} height={64} className="w-full" style={{ height: 64 }} />
@@ -931,7 +1054,7 @@ export function RecordAudioSheet({
       <div className="flex items-center gap-3">
         <button
           onClick={togglePause}
-          disabled={state === 'requesting' || state === 'finalizing'}
+          disabled={state === 'requesting'}
           aria-label={state === 'paused' ? '继续录音' : '暂停录音'}
           className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full transition-colors disabled:opacity-40"
           style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
@@ -939,7 +1062,8 @@ export function RecordAudioSheet({
         </button>
         <button
           onClick={requestComplete}
-          disabled={state === 'requesting' || state === 'finalizing'}
+          data-testid="recording-finish"
+          disabled={state === 'requesting'}
           aria-label="结束录音并转成文字"
           className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
           style={{
@@ -952,7 +1076,7 @@ export function RecordAudioSheet({
         <span className="w-12" />
       </div>
       <p className="text-[11px] text-token-muted">
-        {state === 'finalizing' ? '正在核对已上传分片，完成后开始生成原文' : '结束后先生成可编辑原文，是否整理由你决定'}
+        结束后先生成可编辑原文，是否整理由你决定
       </p>
     </div>
   );

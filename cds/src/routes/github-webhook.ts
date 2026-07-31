@@ -1350,7 +1350,7 @@ async function runSlashCommand(
   if (sc.command === 'help' || sc.command === 'unknown') {
     const unknownLine = sc.command === 'unknown' ? `未知命令 \`${sc.arg}\` — 列一下支持的:\n\n` : '';
     await postReply(
-      '## 🤖 CDS Slash Commands\n\n' +
+      '## CDS Slash Commands\n\n' +
       unknownLine +
       '| 命令 | 说明 |\n' +
       '|------|------|\n' +
@@ -1365,7 +1365,7 @@ async function runSlashCommand(
 
   if (!sc.branchId) {
     await postReply(
-      `@${sc.commenter} ⚠ 这个 PR 的分支 CDS 还没跟踪到,无法执行 \`/cds ${sc.command}\`。` +
+      `@${sc.commenter} 这个 PR 的分支 CDS 还没跟踪到,无法执行 \`/cds ${sc.command}\`。` +
       `通常等一次 push 触发 webhook 后就能跟踪到; 或者手动推一次空 commit 再试。`,
     );
     return;
@@ -1373,7 +1373,7 @@ async function runSlashCommand(
 
   const branch = stateService.getBranch(sc.branchId);
   if (!branch) {
-    await postReply(`@${sc.commenter} ⚠ CDS 分支 \`${sc.branchId}\` 不存在或已被删除。`);
+    await postReply(`@${sc.commenter} CDS 分支 \`${sc.branchId}\` 不存在或已被删除。`);
     return;
   }
 
@@ -1385,7 +1385,7 @@ async function runSlashCommand(
     // HEAD` on the worktree.
     const sha = branch.githubCommitSha || '';
     await postReply(
-      `@${sc.commenter} 🔄 已排队重新部署 \`${sc.branchId}\`${sha ? ` @ ${sha.slice(0, 7)}` : ''}。` +
+      `@${sc.commenter} 已排队重新部署 \`${sc.branchId}\`${sha ? ` @ ${sha.slice(0, 7)}` : ''}。` +
       `进度见 Checks 面板的 "CDS Deploy" 条目。`,
     );
     dispatcherFn(sc.branchId, sha).catch((err) => {
@@ -1396,12 +1396,12 @@ async function runSlashCommand(
   }
 
   if (sc.command === 'stop') {
-    await postReply(`@${sc.commenter} 🛑 正在停止 \`${sc.branchId}\` 的预览容器…`);
+    await postReply(`@${sc.commenter} 正在停止 \`${sc.branchId}\` 的预览容器…`);
     try {
       await defaultLocalhostStop(config, stateService, sc.branchId);
-      await postReply(`@${sc.commenter} ✓ 预览容器已停。push 或 \`/cds redeploy\` 可重新启动。`);
+      await postReply(`@${sc.commenter} 预览容器已停。push 或 \`/cds redeploy\` 可重新启动。`);
     } catch (err) {
-      await postReply(`@${sc.commenter} ✖ 停止失败: ${(err as Error).message}`);
+      await postReply(`@${sc.commenter} 停止失败: ${(err as Error).message}`);
     }
     return;
   }
@@ -1412,14 +1412,14 @@ async function runSlashCommand(
     const logs = stateService.getLogs?.(sc.branchId) || stateService.getState().logs?.[sc.branchId] || [];
     const latest = logs.length > 0 ? logs[logs.length - 1] : null;
     if (!latest) {
-      await postReply(`@${sc.commenter} ℹ 分支 \`${sc.branchId}\` 暂无部署日志。`);
+      await postReply(`@${sc.commenter} 分支 \`${sc.branchId}\` 暂无部署日志。`);
       return;
     }
     const events = (latest.events || []).slice(-40);
     const rendered = events.map((ev) => `[${ev.status || '?'}] ${ev.step}: ${ev.title || ''}`).join('\n');
     const tail = rendered.slice(-8000);
     await postReply(
-      `@${sc.commenter} 📋 \`${sc.branchId}\` 最近 ${events.length} 条部署事件:\n\n` +
+      `@${sc.commenter} \`${sc.branchId}\` 最近 ${events.length} 条部署事件:\n\n` +
       '```\n' + tail + '\n```\n\n' +
       `<sub>完整日志: ${(config.publicBaseUrl || '').replace(/\/$/, '')}/branch-panel?id=${encodeURIComponent(sc.branchId)}</sub>`,
     );

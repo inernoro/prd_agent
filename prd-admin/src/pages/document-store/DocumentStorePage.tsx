@@ -84,6 +84,7 @@ import {
   hasQuickRecordRequest,
   parseDocumentStoreDeepLink,
   withDocumentStoreEntry,
+  withoutDocumentStoreTabRequest,
   withoutOrphanedDocumentStoreEntry,
   withoutQuickRecordRequest,
 } from './documentStoreDeepLink';
@@ -166,6 +167,7 @@ import type {
   TutorialLinkGraphSnapshot,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview, DocBrowserSortMode } from '@/components/doc-browser/DocBrowser';
+import { resolveDocBrowserSortMode } from '@/components/doc-browser/docBrowserSort';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -1070,6 +1072,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -1172,7 +1176,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
   // 录音转录全链路：file = 新上传录音；entryId = 已有音/视频条目。
-  // vaultSessionId = 本机保险箱会话（上传成功才删除，断网/崩溃可恢复，不丢数据）。
+  // vaultSessionId = 本机保险箱会话（云端归档可用后才删除，断网/崩溃可恢复，不丢数据）。
   // style = 首次转录整理方式；restyleRun = 「换个整理方式」直接进 done 态整理面板。
   const [transcribeFlow, setTranscribeFlow] = useState<{
     file?: File;
@@ -1194,9 +1198,48 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const transcribeRunRef = useRef<string | null>(null);
   const transcribeFlowOpenRef = useRef(false);
   const [bgTranscribeRunIds, setBgTranscribeRunIds] = useState<string[]>([]);
-  const watchBackgroundTranscription = useCallback((runId: string) => {
+  const revealCompletedTranscribeRunsRef = useRef(new Set<string>());
+  const recordingVaultByEntryIdRef = useRef(new Map<string, string>());
+  const recordingRunSourceRef = useRef(new Map<string, { entryId: string; vaultSessionId: string }>());
+  const localRecordingPlaybackUrlsRef = useRef(new Map<string, string>());
+  const localRecordingPlaybackLoadsRef = useRef(new Map<string, Promise<string | null>>());
+  const resolveLocalRecordingPlaybackUrl = useCallback(async (
+    entryId: string,
+    serverUploadSessionId?: string,
+  ): Promise<string | null> => {
+    const cached = localRecordingPlaybackUrlsRef.current.get(entryId);
+    if (cached) return cached;
+    const running = localRecordingPlaybackLoadsRef.current.get(entryId);
+    if (running) return running;
+    const load = (async () => {
+      let vaultSessionId = recordingVaultByEntryIdRef.current.get(entryId);
+      if (!vaultSessionId && serverUploadSessionId) {
+        const sessions = await vaultListSessions();
+        const matched = sessions.find(session => session.serverUploadSessionId === serverUploadSessionId);
+        vaultSessionId = matched?.id;
+        if (vaultSessionId) recordingVaultByEntryIdRef.current.set(entryId, vaultSessionId);
+      }
+      if (!vaultSessionId) return null;
+      const file = await vaultLoadSessionFile(vaultSessionId);
+      if (!file) return null;
+      const url = URL.createObjectURL(file);
+      localRecordingPlaybackUrlsRef.current.set(entryId, url);
+      return url;
+    })().finally(() => {
+      localRecordingPlaybackLoadsRef.current.delete(entryId);
+    });
+    localRecordingPlaybackLoadsRef.current.set(entryId, load);
+    return load;
+  }, []);
+  useEffect(() => () => {
+    for (const url of localRecordingPlaybackUrlsRef.current.values()) URL.revokeObjectURL(url);
+    localRecordingPlaybackUrlsRef.current.clear();
+    localRecordingPlaybackLoadsRef.current.clear();
+  }, []);
+  const watchBackgroundTranscription = useCallback((runId: string, revealOnComplete = false) => {
     const normalized = runId.trim();
     if (!normalized) return;
+    if (revealOnComplete) revealCompletedTranscribeRunsRef.current.add(normalized);
     transcribeRunRef.current = normalized;
     setBgTranscribeRunIds(current => enqueueBackgroundTranscriptionRun(current, normalized));
   }, []);
@@ -1234,12 +1277,21 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         const decision = decideVaultServerRecovery(status, completion);
         if (decision === 'completed' && completion?.success) {
           const deferredRunId = deferredRunIdForRecoveredVaultCompletion(completion);
-          if (deferredRunId) watchBackgroundTranscription(deferredRunId);
+          if (completion.data.entry.metadata?.audioArchiveStatus === 'pending') {
+            recordingVaultByEntryIdRef.current.set(completion.data.entry.id, session.id);
+          }
+          if (deferredRunId) {
+            recordingRunSourceRef.current.set(deferredRunId, {
+              entryId: completion.data.entry.id,
+              vaultSessionId: session.id,
+            });
+            watchBackgroundTranscription(deferredRunId);
+          }
           setEntries(prev => [
             completion.data.entry,
             ...prev.filter(item => item.id !== completion.data.entry.id),
           ]);
-          await vaultDeleteSession(session.id);
+          if (completion.data.archivePending !== true) await vaultDeleteSession(session.id);
           toast.success(
             '后台录音已完成',
             deferredRunId
@@ -1337,6 +1389,101 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
     setLoading(false);
   }, [storeId]);
+
+  const pendingRecordingArchiveSignature = useMemo(
+    () => entries
+      .filter(entry => (entry.contentType ?? '').toLowerCase().startsWith('audio/')
+        && entry.metadata?.audioArchiveStatus === 'pending')
+      .map(entry => entry.id)
+      .sort()
+      .join('|'),
+    [entries],
+  );
+  const notifiedRecordingArchivesRef = useRef(new Set<string>());
+
+  const applyPolledEntries = useCallback((nextEntries: DocumentEntry[]) => {
+    setEntries(previous => {
+      if (previous.length !== nextEntries.length) return nextEntries;
+      const unchanged = previous.every((entry, index) => {
+        const next = nextEntries[index];
+        return entry.id === next?.id
+          && entry.updatedAt === next.updatedAt
+          && entry.title === next.title
+          && entry.metadata?.audioArchiveStatus === next.metadata?.audioArchiveStatus
+          && entry.metadata?.audioArchiveNeedsRetry === next.metadata?.audioArchiveNeedsRetry
+          && entry.metadata?.liveTranscript === next.metadata?.liveTranscript;
+      });
+      return unchanged ? previous : nextEntries;
+    });
+  }, []);
+
+  // 待归档录音不能只留一张静态“后台处理中”卡片。只要本库仍有 pending 录音，
+  // 就静默刷新条目；归档完成后 updatedAt 改变会驱动 DocBrowser 重拉正式音频，
+  // 当前页面原地更新，不要求用户手动刷新或猜测后台是否结束。
+  useEffect(() => {
+    if (!pendingRecordingArchiveSignature) return;
+    const pendingIds = new Set(pendingRecordingArchiveSignature.split('|').filter(Boolean));
+    let cancelled = false;
+    let checking = false;
+    const check = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const res = await listDocumentEntries(storeId, 1, 200);
+        if (cancelled || !res.success) return;
+        let nextEntries = res.data.items;
+        const selectedPending = nextEntries.find(entry => (
+          entry.id === selectedEntryId
+          && entry.metadata?.audioArchiveStatus === 'pending'
+          && Boolean(entry.metadata?.recordingUploadSessionId)
+        ));
+        if (selectedPending?.metadata?.recordingUploadSessionId) {
+          const status = await getRecordingUpload(
+            selectedPending.metadata.recordingUploadSessionId,
+            4_000,
+          ).catch(() => null);
+          if (!cancelled && status?.success && status.data.archiveStatus !== 'completed') {
+            const needsRetry = Boolean(status.data.archiveError);
+            nextEntries = nextEntries.map(entry => entry.id === selectedPending.id
+              ? {
+                  ...entry,
+                  metadata: {
+                    ...entry.metadata,
+                    audioArchiveNeedsRetry: needsRetry ? 'true' : 'false',
+                    audioArchiveAttempts: String(status.data.archiveAttempts),
+                  },
+                }
+              : entry);
+          }
+        }
+        if (cancelled) return;
+        const completed = nextEntries.filter(entry => (
+          pendingIds.has(entry.id) && entry.metadata?.audioArchiveStatus !== 'pending'
+        ));
+        applyPolledEntries(nextEntries);
+        setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+        for (const entry of completed) {
+          const vaultSessionId = recordingVaultByEntryIdRef.current.get(entry.id);
+          if (vaultSessionId) {
+            recordingVaultByEntryIdRef.current.delete(entry.id);
+            void vaultDeleteSession(vaultSessionId);
+          }
+          if (notifiedRecordingArchivesRef.current.has(entry.id)) continue;
+          notifiedRecordingArchivesRef.current.add(entry.id);
+          toast.success('云端副本已保存', '当前页面已自动切换正式音频，原文跟随可继续使用');
+        }
+      } finally {
+        checking = false;
+      }
+    };
+    const first = window.setTimeout(() => { void check(); }, 2500);
+    const timer = window.setInterval(() => { void check(); }, 6000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [applyPolledEntries, pendingRecordingArchiveSignature, selectedEntryId, storeId]);
 
   // 轮询本库运行台账：有 syncing 记录时让顶栏「同步」按钮动起来（含对端推来的 incoming）。
   // 4s 一刷足够即时；无任务时也保持 4s（payload 很小），关页自动停。
@@ -1496,12 +1643,27 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         if (cancelled || !res.success) continue;
         const st = res.data.status;
         if (st !== 'done' && st !== 'failed' && st !== 'cancelled') continue;
+        const recordingSource = recordingRunSourceRef.current.get(runId);
+        recordingRunSourceRef.current.delete(runId);
+        // 只有转录真正完成才证明云端归档已经可供后续消费。失败或取消时继续保留
+        // 本地保险音频，避免后台任务失败反而让用户失去唯一可播放副本。
+        if (recordingSource && st === 'done') {
+          recordingVaultByEntryIdRef.current.delete(recordingSource.entryId);
+          void vaultDeleteSession(recordingSource.vaultSessionId);
+        }
         setBgTranscribeRunIds(current => current.filter(id => id !== runId));
         if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
         void loadEntries();
         if (st === 'done') {
-          toast.success('录音转录完成', '转录笔记已生成，可在列表中查看');
+          const shouldReveal = revealCompletedTranscribeRunsRef.current.delete(runId);
+          if (shouldReveal && res.data.outputEntryId) {
+            setSelectedEntryId(res.data.outputEntryId);
+            toast.success('录音转录完成', '已打开录音原文');
+          } else {
+            toast.success('录音转录完成', '录音原文已保存');
+          }
         } else if (st === 'failed') {
+          revealCompletedTranscribeRunsRef.current.delete(runId);
           toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
         }
       }
@@ -1727,13 +1889,26 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     const res = await getDocumentContent(entryId);
-    if (!res.success) return null;
+    const entry = entriesRef.current.find(item => item.id === entryId);
+    const isPendingAudio = Boolean(
+      entry
+      && (entry.contentType ?? '').toLowerCase().startsWith('audio/')
+      && entry.metadata?.audioArchiveStatus === 'pending',
+    );
+    const localFileUrl = isPendingAudio
+      ? await resolveLocalRecordingPlaybackUrl(entryId, entry?.metadata?.recordingUploadSessionId)
+      : null;
+    if (!res.success) {
+      return localFileUrl && entry
+        ? { text: null, fileUrl: localFileUrl, contentType: entry.contentType }
+        : null;
+    }
     return {
       text: res.data.hasContent ? res.data.content : null,
-      fileUrl: res.data.fileUrl,
+      fileUrl: res.data.fileUrl || localFileUrl,
       contentType: res.data.contentType,
     };
-  }, []);
+  }, [resolveLocalRecordingPlaybackUrl]);
 
   const handleCreateFolder = useCallback(async (name: string) => {
     const res = await createFolder(storeId, name);
@@ -2245,19 +2420,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           /* 验收库以时间为主线（哪天验收的是关键信息），保留时间默认显示；普通知识库默认不显示，
              需要的人去「筛选」面板打开（2026-07-31 用户：有了时间可见区域就少很多）。 */
           showUpdatedTimeDefault={store.templateKey === ACCEPTANCE_TEMPLATE_KEY}
-          /* 排序：服务端持久化的 store.defaultSortMode 为 SSOT；缺省按模板默认（验收库 created-desc，其余 default）兜底 */
-          sortMode={
-            (store.defaultSortMode === 'created-desc' || store.defaultSortMode === 'updated-desc' || store.defaultSortMode === 'default')
-              ? store.defaultSortMode
-              : (store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default')
-          }
+          /* 排序：持久化偏好为 SSOT；未设置时所有知识库统一按创建时间倒序，新内容在最前。
+             用户明确选择“书籍顺序”后仍返回 default，并跨设备持久化。 */
+          sortMode={resolveDocBrowserSortMode(store.defaultSortMode)}
           sidebarFilters={
             <DocSortControl
-              value={
-                (store.defaultSortMode === 'created-desc' || store.defaultSortMode === 'updated-desc' || store.defaultSortMode === 'default')
-                  ? store.defaultSortMode
-                  : (store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default')
-              }
+              value={resolveDocBrowserSortMode(store.defaultSortMode)}
               onChange={handleChangeSort}
             />
           }
@@ -2479,8 +2647,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 deferredTranscriptionRunId,
               );
               setShowRecorder(false);
-              if (destination === storeId) setEntries(prev => [entry, ...prev.filter(item => item.id !== entry.id)]);
-              void vaultDeleteSession(vaultSessionId);
+              recordingVaultByEntryIdRef.current.set(entry.id, vaultSessionId);
+              if (destination === storeId) {
+                setEntries(prev => [entry, ...prev.filter(item => item.id !== entry.id)]);
+                setSelectedEntryId(entry.id);
+              } else {
+                navigate({ pathname: '/document-store', search: withDocumentStoreEntry('', destination, entry.id) });
+              }
+              if (!archivePending) {
+                recordingVaultByEntryIdRef.current.delete(entry.id);
+                void vaultDeleteSession(vaultSessionId);
+              }
               if (archivePending) {
                 toast.info(
                   '录音已安全保存',
@@ -2490,13 +2667,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 );
               }
               if (followUp.kind === 'watch-deferred-run') {
+                if (archivePending) {
+                  recordingRunSourceRef.current.set(followUp.runId, { entryId: entry.id, vaultSessionId });
+                }
                 if (!archivePending) {
                   toast.info(
                     '录音已安全保存',
                     '完整音频正在后台转录，完成后会通知你',
                   );
                 }
-                watchBackgroundTranscription(followUp.runId);
+                watchBackgroundTranscription(followUp.runId, true);
                 return;
               }
               if (followUp.kind === 'wait-for-archive') return;
@@ -3017,9 +3197,14 @@ export function DocumentStorePage() {
     const t = new URLSearchParams(location.search).get('tab');
     const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
     if (t && (valid as string[]).includes(t)) {
-      setSelectedStoreId(null);
       setTab(t as StoreTab);
-      navigate(location.pathname, { replace: true });
+      const deepLink = parseDocumentStoreDeepLink(location.search);
+      if (!deepLink.storeId) setSelectedStoreId(null);
+      navigate({
+        pathname: location.pathname,
+        search: withoutDocumentStoreTabRequest(location.search),
+        hash: location.hash,
+      }, { replace: true });
       return;
     }
     if (location.hash === '#guide-list') {

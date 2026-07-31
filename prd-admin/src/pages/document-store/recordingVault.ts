@@ -1,6 +1,6 @@
 /**
  * 录音数据保险箱（IndexedDB，best-effort）——录音期间每个音频分片实时落库，
- * 只有「上传成功」才清除。页面崩溃 / 忘记关闭 / 网络断开 / 标签页被杀，
+ * 只有云端归档已可用才清除。页面崩溃 / 忘记关闭 / 网络断开 / 标签页被杀，
  * 已录内容都能在下次进入知识库时恢复并继续转录，不丢数据。
  *
  * 结构：
@@ -113,12 +113,14 @@ export type UploadedRecordingFollowUp =
  */
 export function decideUploadedRecordingFollowUp(
   archivePending: boolean,
-  liveTranscriptReady: boolean,
+  _liveTranscriptReady: boolean,
   deferredTranscriptionRunId?: string | null,
 ): UploadedRecordingFollowUp {
   const runId = deferredTranscriptionRunId?.trim();
   if (runId) return { kind: 'watch-deferred-run', runId };
-  if (archivePending && !liveTranscriptReady) return { kind: 'wait-for-archive' };
+  // 待归档音频还没有可播放的云端地址。即使实时原文已就绪，也应停留在同一
+  // 音频结果页等待归档，不能重新打开上传/转录流程制造第二次处理的错觉。
+  if (archivePending) return { kind: 'wait-for-archive' };
   return { kind: 'open-transcription' };
 }
 
