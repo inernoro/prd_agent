@@ -20,7 +20,6 @@
 | 状态 | 活跃 |
 | 关联 | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/` |
 
-
 ### 已知工程债务
 
 | ID | 说明 | 优先级 | 触发条件 | 状态 |
@@ -35,8 +34,8 @@
 
 | ID | 说明 | 文件 | 优先级 | 触发条件 |
 |---|---|---|---|---|
-| X-3 | 前端 `AsrDiagnostic` 类型 + `DiagnosticBlock` / `KV` helper 在 `SubtitleGenerationDrawer.tsx` 与 `ExchangeTestPanel.tsx` 两处复制。后端加 diagnostic 字段需双改。抽到 `prd-admin/src/components/exchange/AsrDiagnosticBlock.tsx` 共享。 | `prd-admin/src/pages/document-store/SubtitleGenerationDrawer.tsx` + `prd-admin/src/components/exchange/ExchangeTestPanel.tsx` | P3 | 后端字段变更 |
-| X-4 | `DocumentStoreAgentWorker.cs:154-157` 错误消息+诊断 JSON 拼接后用 `combined[..1500]` 截断，可能切断 JSON 字符串中段。前端 `refreshRun` fallback 拿到带 `[diagnostic]` 标记的字符串后 `JSON.parse` 失败→诊断面板丢失。修法：截断前先做 `JsonNode.Parse` 取字段值优先丢弃 `redactedBody` / `rawSnippet` 等大字段，不要在 JSON 中段切。 | `prd-api/src/PrdAgent.Api/Services/DocumentStoreAgentWorker.cs` | P3 | 错误消息很长（>1500 字符）的极端场景 |
+| X-3 | 语音识别诊断块的类型与渲染 helper 在字幕生成抽屉与交换测试面板两处复制，后端加诊断字段要双改。修法：抽成一个共享组件。 | `prd-admin/src/pages/document-store/SubtitleGenerationDrawer.tsx` + `prd-admin/src/components/exchange/ExchangeTestPanel.tsx` | P3 | 后端字段变更 |
+| X-4 | 知识库 Agent 的错误消息与诊断 JSON 拼在一起后按 1500 字符硬截断，可能从 JSON 中段切开，前端解析失败、诊断面板直接消失。修法：截断前先解析，优先丢掉体积最大的字段，不在 JSON 中段切。 | `prd-api/src/PrdAgent.Api/Services/DocumentStoreAgentWorker.cs` | P3 | 错误消息很长（>1500 字符）的极端场景 |
 
 ---
 
@@ -67,7 +66,6 @@
 
 模块范围：`prd-api/.../Services/Changelog/*`（ChangelogReader / ChangelogSnapshotStore /
 ChangelogPushHub / ChangelogRefreshWorker）、`ChangelogController` 的 `/api/changelog/stream`、
-`prd-admin/src/pages/changelog/ChangelogPage.tsx`。
 
 ### 背景
 
@@ -144,7 +142,7 @@ CLAUDE.md / AGENTS.md §0 禁止任何 emoji。但仓库**存量语料**里仍�
 
 登录后首页重组交付时声明的已知边界，以及明确否决不做的事。
 
-> **关联改动**：`prd-api/src/PrdAgent.Api/Controllers/Api/HomeRecentWorkController.cs`、`prd-admin/src/pages/AgentLauncherPage.tsx`、`prd-admin/src/stores/homeRecentWorkStore.ts`
+> **关联改动**：后端「最近打开」端点 + 前端 Agent 启动页与其 store（文件见文末「实现来源」）
 
 记录登录后首页重组（继续上次 + 视觉纪律收敛）主动声明的已知边界，避免下一次 session 没人记得。
 
@@ -198,12 +196,11 @@ CLAUDE.md / AGENTS.md §0 禁止任何 emoji。但仓库**存量语料**里仍�
 
 #### 2. 网关续期依赖每条已鉴权请求都接住响应头
 
-滑动续期靠 `X-Gw-Token` 响应头下发：走 `llmgw/web/src/lib/api.ts` 的 `apiRequest` 自动覆盖；
-绕开它的裸 fetch 必须自己调 `applyRenewedToken(res, token)`。漏一处的后果不是「不续期」那么轻——
-「只用那一个功能」的用户会在最初的 7 天期限上掉登录（真实案例：BugReportDialog 的提交请求，
-已修）。守卫：`cds/tests/services/llmgw-session-renewal-source-guard.test.ts` 扫描 llmgw/web 源码，
-用会话 token 的裸 fetch 必须出现 `applyRenewedToken`（用服务密钥打 serving 网关的调用不在此列，
-那条链路本就没有会话）。EventSource 无法读响应头，若将来引入需另设续期通道。
+滑动续期靠 `X-Gw-Token` 响应头下发：走统一请求封装的调用自动接住；绕开封装的裸 fetch 必须自己
+把新 token 写回。漏一处的后果不是「不续期」那么轻——「只用那一个功能」的用户会在最初的 7 天期限上
+掉登录（真实案例：缺陷上报弹窗的提交请求，已修）。守卫是一条源码扫描测试：带会话 token 的裸 fetch
+必须出现回写调用（用服务密钥打 serving 网关的调用不在此列，那条链路本就没有会话）。
+EventSource 无法读响应头，若将来引入需另设续期通道。
 
 #### 3. 网关旧 token 不会被续期
 
@@ -297,7 +294,6 @@ MAP SSO 会话）原样到期，用户需重登一次才进入 7 天滑动窗口
 | A1 | 租约无心跳续租 | 固定 30min TTL，覆盖单库最坏同步耗时（两阶段 HTTP 各 120s + 资源重传）。若出现 >30min 的超大库，超时后锁可被另一发起方抢走 → 同库并发 | 同步期间周期性续租（heartbeat），持短 TTL 但活着就续 |
 | A2 | force-align mirror 删除未级联 | 镜像删除对端缺失条目时只删 DocumentEntry（+可能的解析文档），未清其 sync 日志 / view events / 内联评论 / 版本 / mentions / agent runs / 附件 —— 与 `DocumentStoreController.DeleteEntry` 的级联不一致，留孤儿数据。仅手动 force-align 路径触发（自动同步只 Overwrite 不删，不受影响） | 抽 `DeleteEntry` 的级联清理为共享 helper（跨 Api/Infrastructure 层），mirror 删除复用 |
 | A3 | apply 不清理「源已清空」的 primary/pins/defaultSortMode | 源库清空主文档 / 移除全部置顶 / 清空默认排序后，apply 的 overwrite/mirror 路径只在「解析到新值 / 字段非 null」时才写 → 目标残留旧 PrimaryEntryId / PinnedEntryIds / DefaultSortMode（含 mirror 刚删的条目 id）。注：per-record 的 sortOrder/category 已纳入变更检测+签名（已修）；本项专指**库级**这三个「null=已清空 还是 null=旧节点没传」无法区分的字段 | 需先在协议层用「null=旧节点字段缺失 / 空=显式清空」哨兵区分，否则旧节点同步会误清目标；区分后 overwrite/mirror 显式清空 |
-
 | A4 | 库级互斥锁未覆盖 incoming apply | `TryAcquireStoreSyncLeaseAsync` 已让**出站**两条路径（手动 `POST /transfer` + 自动 worker）互斥，但**入站** `RemoteApply`（对端 push 进来）直接 `ApplyAsync`，未取同一把锁。故「本地正在出站同步某库」与「对端同时 push 该库进来」仍可交错写。自动同步恒 Overwrite（幂等 upsert，最终收敛、不丢数据）；唯一真风险是入站 mirror 删除与本地写交错，而 mirror 仅手动 force-align（用户二次确认）触发 | RemoteApply 对 document-store 也取同一把锁；需处理「目标库尚不存在（首次接收）」时不存在锁文档、不应误判冲突的边界 |
 
 A2/A3/A4 都是 **手动 force-align/mirror 或入站 apply 路径**的既有/完整性问题，与本次新增的「自动出站同步」无关
@@ -359,14 +355,12 @@ CDS 灰度环境下两个分支共用同一 MongoDB，导致 `appsettings.global
 
 ### 背景
 
-CDS 用 `cds/src/services/preview-slug.ts` 的 `computePreviewSlug` 产出分支 slug，用
-`forwarder-route-publisher` 把 `<previewSlug>.<root>` 与命名子域 `<previewSlug>-<sub>.<root>`
+CDS 自己算出分支 slug，再把 `<previewSlug>.<root>` 与命名子域 `<previewSlug>-<sub>.<root>`
 写成显式路由记录。这一套在 CDS **内部**是 SSOT：解析走前向匹配（重算再比），不做反向解析，
 v1/v2/v3 三代格式都能兼容。
 
-问题出在 CDS **外部**：MAP 前端 `prd-admin/src/lib/llmGatewaySso.ts` 曾经自己按
-`location.hostname` 拼 `<预览 slug>-llmgw-web.miduo.org`，这是第二份域名实现，违反根
-`CLAUDE.md` 规则 #11（禁止自己 slugify / 拼域名）。
+问题出在 CDS **外部**：MAP 前端曾经自己按当前域名拼 `<预览 slug>-llmgw-web.miduo.org`，
+这是第二份域名实现，违反根 `CLAUDE.md` 规则 #11（禁止自己 slugify / 拼域名）。
 
 2026-07-29 现场事故：分支 `claude/llmgw-self-service-panel-redesign-f4oeh6` 的 previewSlug
 长 57，加 `-llmgw-web`（10）= 67 > 63（RFC 1035 单标签上限）。CDS 按判据**跳过不发布**
@@ -382,9 +376,8 @@ v1/v2/v3 三代格式都能兼容。
 **做法**：CDS 在部署时注入 `CDS_PREVIEW_URL` 与 `CDS_SERVICE_URLS`（JSON: subdomain → URL），
 prd-api 读取后由 `POST /api/llm-gateway/sso/ticket` 的 `console` 字段下发，前端只消费。
 
-链路：`cds/src/services/preview-entrypoints.ts`（计算 SSOT）→ `env-provenance` 第 4.6 层
-（平台事实，强制覆盖，项目 env 不得伪造）→ `PrdAgent.Infrastructure/Deployment/PlatformEntrypoints.cs`
-→ `LlmGatewaySsoController.ResolveConsoleTarget()` → `prd-admin/src/lib/llmGatewaySso.ts`。
+链路四段：CDS 侧算出入口（计算 SSOT）→ 注入容器 env 时按「平台事实」层强制覆盖，项目 env 不得伪造
+→ MAP 后端读取并在 SSO 票据里下发 → MAP 前端只消费，不再自己拼。
 
 四态明确（第 ③ 态是过渡期专用，见下）：
 
@@ -440,16 +433,15 @@ CDS 平台自更新到本次改动之前，预览容器拿不到入口表。此�
 #### PE-consumer-sweep · 全仓守卫 —— 已落地待验证
 
 单文件断言只锁得住已知的那一个文件，锁不住下一个人新建的文件 —— 这正是同一个反模式
-能长出三份拷贝的原因。已加 `prd-admin/src/lib/__tests__/previewHostDerivation.guard.test.ts`：
-扫 `prd-admin/src` 与 `llmgw/web/src` 全部源码，命中即红，例外必须写进 ALLOWLIST 并注明
-理由与清除条件。
+能长出三份拷贝的原因。已加一条全仓守卫测试：扫 MAP 前端与网关前端的全部源码，命中即红，
+例外必须写进 ALLOWLIST 并注明理由与清除条件。
 
 判据盯**构造**不盯**提及**：首版写成「出现 miduo.org 就红」，立刻误伤了联系邮箱
 `contact@miduo.org` 与产品截图文案 `map.miduo.org`。那种误报会逼后来人把无辜文件塞进
 例外清单，守卫就此失效。现判据是「用模板拼预览域名」「根域后缀常量」「网关子域后缀常量」
 三条，已做红绿闭环（塞一个假推算文件进去两条同时变红，删掉转绿）。
 
-当前例外只有 1 条：`llmgw/web/src/lib/mapNavigation.ts` 的兜底推算（见下条）。
+当前例外只有 1 条：网关前端「回到 MAP」链接的兜底推算（见下条）。
 
 #### PE-console-subdomain-rename · 控制台子域 llmgw-web → llmgw —— 已落地待验证
 
@@ -510,7 +502,7 @@ branch 实体，改读存储字段即可，无存储值的存量分支回落现�
 
 **状态**：open（边界已知，影响面窄）
 
-`llmgw/web/src/lib/onboarding.ts` 判「这个租户有没有一把能用的密钥」，目前镜像了
+网关前端判「这个租户有没有一把能用的密钥」，目前镜像了
 serving 侧三项判据里的三条：`enabled`、未过期、scope 含业务调用（`invoke` /
 `stream:invoke` / `raw:invoke`，对应 `GatewaySuccessorObservationPolicy.IsBusinessInvocationScope`）。
 
@@ -527,7 +519,7 @@ console-api 不引用 serving，要复用得先抽一个共享判定项目。属
 
 **状态**：open（边界已知，触发条件极窄）
 
-`GET /gw/service-keys`（`llmgw/console-api/Program.cs`）按 `CreatedAt` 倒序 `Limit(500)`。
+`GET /gw/service-keys`按 `CreatedAt` 倒序 `Limit(500)`。
 轮换过 500 把以上密钥的租户，若**最新 500 把全部被吊销/禁用**而更早的那把仍启用，
 或唯一带 `lastUsedAt` 的记录落在 500 条之外，清单会把「签一把密钥」「跑通首条请求」
 两步误判成未完成 —— 已上手的老租户会看到清单重新出现。
@@ -565,8 +557,6 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 - 根 `CLAUDE.md` 规则 #11 —— 预览地址只能来自 CDS API，禁止本地推算
 - `.claude/rules/no-rootless-tree.md` —— 缺席要可声明，不假定不存在的能力
 - `.claude/rules/predicate-and-wiring-discipline.md` 形状 3 —— 63 判据此前分裂在三处，本轮收敛
-- `cds/src/services/preview-slug.ts` —— slug 计算 SSOT（含 v1/v2/v3 沿革）
-- `cds/tests/services/preview-entrypoints.test.ts` —— 入口表守卫（含 67 字符现场用例）
 
 ## 分享链接安全
 
@@ -589,20 +579,18 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 #### -1. 历史发现：知识库 / 工作流 分享前端展示路由缺失（非本次引入）
 
 **事实**（2026-05-21 curl 自查）：
-- 知识库分享：`DocumentStorePage.tsx:333` 创建分享生成 URL `/library/share/{token}`，但 `App.tsx` 没有 `/library/share/:token` Route，只有 `/library/:storeId`
+- 知识库分享：创建分享时生成的是 `/library/share/{token}`，但前端路由表里压根没有这条 Route，只有 `/library/:storeId`
 - 工作流分享：URL `/s/{token}` 走 ShortLinkRouter，但 ShortLinkRouter 没有 workflow 专用渲染分支
 - 后端 `WorkflowAgentController` 没有 `shares/view/{token}` 端点（只有 list 端点）
 
 **结论**：知识库 / 工作流分享的"分享出去给别人看"流程历史上就是不完整的，访客点击 URL 看到的是 SPA fallback（一般是 home 或 404 兜底）。
 
 **修复方向**（独立任务，本系列不做）：
-- 知识库：App.tsx 加 `/library/share/:token` Route → 新建 LibraryStoreShareViewPage 组件 → 调用 `GET /api/document-store/public/share/{token}` 渲染
-- 工作流：新建 `GET /api/workflow/shares/view/{token}` 后端端点 + `/s/workflow/:token` 前端 Route + WorkflowShareViewPage 组件
+- 知识库：补上缺的那条 Route → 新建只读页面 → 调公开分享端点渲染
+- 工作流：补一个按 token 取分享内容的后端端点 + 对应前端 Route 与只读页面
 - 或者：把这两类的"分享"实质改为站内导航链接（私有功能），不发对外 URL
 
 #### 0. P1.next：周报 / 知识库 / 工作流 ShareView 接 `tokenOverride` prop
-
-**位置**：`prd-admin/src/pages/ReportTeamShareViewPage.tsx`、`prd-admin/src/pages/DocumentStoreShareView*.tsx`、`prd-admin/src/pages/WorkflowShareView*.tsx`、`prd-admin/src/pages/ShortLinkRouter.tsx::renderTarget`
 
 **现状**：P1 把 4 处分享 URL 统一到 `/s/{token}`，但只有 `ShareViewPage`（网页托管）支持通过 prop 接收 token；其它 3 个 ViewPage 还在用 `useParams().token`，因此 `ShortLinkRouter` 拿到 (type=report/docstore/workflow, token) 后只能 `<Navigate to="/s/report-team/..." />` 跳转到旧专用路径。结果：**用户从字母 URL `/s/{token}` 打开周报分享时，URL bar 会闪一下变成 `/s/report-team/{token}`**。
 
@@ -612,8 +600,6 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 - 验证：用 `/s/{字母 token}` 打开周报分享时 URL bar 始终保持 `/s/{token}` 不变
 
 #### 1. 分享链接体检 / 测试器实验室页
-
-**位置**：拟新增 `prd-admin/src/pages/labs/ShareLinkTesterPage.tsx`
 
 **现状**：用户希望"做成功能，然后在实验室点击测试"。目前测试分享链接只能去具体页面（网页托管/周报/知识库/工作流）创建，且无法对比 3 种 URL 形态（`/s/{token}` / `/s/{seq}` / 旧 `/s/wp/{token}`）的行为差异。
 
@@ -626,8 +612,6 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 
 #### 2. 知识库分享尚未支持密码保护
 
-**位置**：`prd-api/src/PrdAgent.Core/Models/DocumentStoreShareLink.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs::AccessShareLink`
-
 **现状**：知识库分享链接是"匿名公开访问"，Model 没有 `AccessLevel` / `Password` 字段，端点也没有密码校验逻辑。本次 C2 没有触碰，因为"加密码"是新功能（需前后端联动 UI 改造）而非纯安全修复。
 
 **待办**：
@@ -637,8 +621,6 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 
 #### 2. 工作流分享 ShareLink.Password 是 dead code
 
-**位置**：`prd-api/src/PrdAgent.Core/Models/WorkflowModels.cs::ShareLink`、`prd-api/src/PrdAgent.Api/Controllers/Api/WorkflowAgentController.cs::ViewShare`（line ~1167）
-
 **现状**：Model 有 `Password` 字段但 `ViewShare` 端点仅校验 `AccessLevel ∈ { public, authenticated }`，根本没引用 `Password`。前端 ExecutionDetailPanel 用 `window.prompt` + `alert` 完成分享（不是 Dialog 组件）。
 
 **待办**：
@@ -647,8 +629,6 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 - 工作流的 ShareLink Model 也加 `PasswordHash/Salt/RecentAttempts`（与其他三个同步）
 
 #### 3. 数字短链端点速率限制
-
-**位置**：`prd-api/src/PrdAgent.Api/Controllers/Api/ShortLinksController.cs`（或类似）
 
 **现状**：`/s/{seq}` 端点根据 seq 直接解析 token 重定向；如果攻击者枚举 seq，每个不存在的 seq 也会消耗一次 DB 查询。本次 C2 没有为 `/s/{seq}` 入口加 IP-level 限流（前面提到 IP 不可靠，但对 `/s/{seq}` 这种枚举攻击只能按 IP 限流 —— 因为不绑定具体 shareLink）。
 
@@ -690,9 +670,12 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 
 ### 关联文件
 
-- `prd-api/src/PrdAgent.Infrastructure/Services/SharePasswordService.cs`（SSOT）
-- `prd-admin/src/pages/WebPagesPage.tsx::ShareDialog`
-- `prd-admin/src/pages/report-agent/components/ShareTeamWeekDialog.tsx`
+- `prd-api/src/PrdAgent.Infrastructure/Services/SharePasswordService.cs`（分享密码校验 SSOT）
+- `prd-api/src/PrdAgent.Api/Controllers/Api/HomeRecentWorkController.cs`、`prd-admin/src/pages/AgentLauncherPage.tsx`、`prd-admin/src/stores/homeRecentWorkStore.ts`（登录后首页「继续上次」）
+- `prd-api/src/PrdAgent.Core/Models/WorkflowModels.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/WorkflowAgentController.cs`（工作流分享与 dead 的 Password 字段）
+- `prd-api/src/PrdAgent.Api/Controllers/Api/ShortLinksController.cs`（数字短链解析入口，待评估限流）
+- `prd-admin/src/pages/labs/ShareLinkTesterPage.tsx`（分享链接体检页，待建）
+- `prd-api/src/PrdAgent.Api/Services/DocumentStoreAgentWorker.cs`、`prd-admin/src/components/exchange/ExchangeTestPanel.tsx`、`prd-admin/src/pages/document-store/SubtitleGenerationDrawer.tsx`（跨模块债务 X-3 / X-4）
 - `.claude/rules/no-rootless-tree.md`（无根之木禁令：本债务台账即"暴露未实现的能力"实践）
 
 ---
@@ -714,3 +697,19 @@ readiness 或 route preflight（例如自动化探针）就会把「跑通首条
 | # | 边界 | 说明 | 补法 |
 |---|------|------|------|
 | 2 | ~~实体全局时间戳近似~~（已修复 2026-07-05） | 首版用实体 `UpdatedAt/LastOpenedAt/LastExecutedAt` 近似"我的最近"，实测共享成员编辑、定时工作流自跑会顶进所有用户的继续上次（用户反馈"人人一样且不是自己操作的"）。已改为每用户台账 `home_recent_opens`（打开详情时 `RecentOpenTracker.TouchAsync` 打点），端点只读台账 | 已闭环；禁止回退全局时间戳方案 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `prd-admin/src/pages/changelog/ChangelogPage.tsx` |
+| ONB-key-page-cap — 密钥列表 500 条上限会影响新人清单的两个事实 | `llmgw/console-api/Program.cs` |
+| 0. P1.next：周报 / 知识库 / 工作流 ShareView 接 `tokenOverride` prop | `prd-admin/src/pages/ReportTeamShareViewPage.tsx`、`prd-admin/src/pages/DocumentStoreShareView*.tsx`、`prd-admin/src/pages/WorkflowShareView*.tsx`、`prd-admin/src/pages/ShortLinkRouter.tsx::renderTarget` |
+| 2. 知识库分享尚未支持密码保护 | `prd-api/src/PrdAgent.Core/Models/DocumentStoreShareLink.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs::AccessShareLink` |
+| 关联文件 | `prd-admin/src/pages/WebPagesPage.tsx::ShareDialog`、`prd-admin/src/pages/report-agent/components/ShareTeamWeekDialog.tsx` |
+| 相关 | `cds/src/services/preview-slug.ts`（slug 计算 SSOT含 v1/v2/v3 沿革） |
+| 相关 | `cds/tests/services/preview-entrypoints.test.ts`（入口表守卫含 67 字符现场用例） |

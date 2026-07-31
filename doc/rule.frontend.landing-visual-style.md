@@ -12,7 +12,6 @@
 > **权威出处**：PR inernoro/prd_agent#405（`claude/redesign-homepage-gTSAf`），把 /home 从"粒子堆 + 代理卡片秀"重做成 Linear.app × Retro-Futurism 融合的九幕叙事。
 > **维护原则**：每次更新整页替换，不保留历史变更记录（历史由 git + changelogs 承担）。
 
-
 ## 一、风格定位：Linear × Retro-Futurism
 
 一句话：**Linear.app 的克制排版 + 80 年代 Synthwave / Tron 的冷光装饰**。
@@ -31,7 +30,6 @@
 
 签名渐变是一个**统一导出的常量**（135 度，蓝紫三段过渡），落地页与登录页共用同一份。
 **不许就地写渐变**：任何自造的渐变都会让品牌色出现第二套，两套一旦并存就再也收不回来。
-
 
 用途：主 CTA 背景、顶栏登录按钮、Logo 内底色、标题渐变文字、FinalCta 大字、登录页 RetroHorizon 装饰与主 CTA 投影（2026-07-07 起登录页同步收敛到同一渐变，不再自造独立配色）。
 
@@ -75,7 +73,6 @@
 背景取强调色约 4% 透明度、边框约 24%、外发光与内发光都由同一个强调色派生。
 **规格不许逐处调**——要改就改那份共享的标签组件，否则每个页面都会长出一个「差一点点」的版本。
 
-
 带 live dot 的版本（"Live · ONLINE"）用 `animate-ping` + emerald-400 发光。参考 `HeroSection` 的状态条和 `SectionHeader.tsx`。
 
 ### R6 · CTA 必须是对称双胞胎
@@ -115,7 +112,6 @@ emerald   (#34d399)  ← 状态 / 存活 / 成功（不变）
 卡片玻璃感的配方同样固定：深色半透明底（约 72% 不透明）、极淡白边（约 12%）、
 中等强度背景模糊、一层大而软的外投影加一层极淡内发光、圆角约 22。
 **这几个数是一组，不是六个独立参数**——单独调其中一个（比如只加深投影）就会脱离整套视觉语言。
-
 
 内层 headline 用 `SectionHeader` 版式，不再自造 `<h2>` 样式。
 
@@ -197,11 +193,20 @@ emerald   (#34d399)  ← 状态 / 存活 / 成功（不变）
 
 ## 七、关联文件
 
-- `prd-admin/src/pages/home/LandingPage.tsx` — 十一幕骨架
-- `prd-admin/src/pages/home/sections/HeroSection.tsx` — 风格源头（HERO_GRADIENT / hero-title-pulse / hud-pulse）
-- `prd-admin/src/pages/home/components/StaticBackdrop.tsx` — 背景
-- `prd-admin/src/pages/home/components/SectionHeader.tsx` — 幕头版式
-- `prd-admin/src/pages/home/components/Reveal.tsx` — 进场动效
-- `prd-admin/src/styles/tokens.css` — 字体 CSS 变量
 - `prd-admin/index.html` — Google Fonts 预连接
 - `.claude/rules/frontend-architecture.md` — 组件复用与注册表模式
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 七、关联文件 | `prd-admin/src/pages/home/LandingPage.tsx` | 十一幕骨架 |
+| 七、关联文件 | `prd-admin/src/pages/home/sections/HeroSection.tsx` | 风格源头（HERO_GRADIENT / hero-title-pulse / hud-pulse） |
+| 七、关联文件 | `prd-admin/src/pages/home/components/StaticBackdrop.tsx` | 背景 |
+| 七、关联文件 | `prd-admin/src/pages/home/components/SectionHeader.tsx` | 幕头版式 |
+| 七、关联文件 | `prd-admin/src/pages/home/components/Reveal.tsx` | 进场动效 |
+| 七、关联文件 | `prd-admin/src/styles/tokens.css` | 字体 CSS 变量 |

@@ -28,12 +28,12 @@
     "debt": 0
   },
   "source_refs": {
-    "spec": 26,
-    "design": 297,
-    "plan": 86,
-    "rule": 34,
-    "guide": 82,
-    "report": 20,
-    "debt": 153
+    "spec": 3,
+    "design": 47,
+    "plan": 4,
+    "rule": 11,
+    "guide": 28,
+    "report": 4,
+    "debt": 33
   }
 }

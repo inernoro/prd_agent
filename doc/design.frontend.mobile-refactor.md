@@ -161,5 +161,14 @@
 - `.claude/rules/mobile-first-density.md` — 手机端密度纪律（本次改造的执行标准）
 - `.claude/rules/content-fills-canvas.md` — 内容填满画布（主从折叠依据）
 - `.claude/rules/chief-designer-usability.md` — 好用四原则（收纳/不杜撰长链）
-- `prd-admin/src/lib/mobileCompatibility.ts` — 兼容性 SSOT（改造完成后回写）
-- `prd-admin/src/pages/_dev/MobileAuditPage.tsx` — 回归审计工具
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 关联 | `prd-admin/src/lib/mobileCompatibility.ts` | 兼容性 SSOT（改造完成后回写） |
+| 关联 | `prd-admin/src/pages/_dev/MobileAuditPage.tsx` | 回归审计工具 |

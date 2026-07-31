@@ -108,13 +108,7 @@
 
 ## 9. 当前实现入口
 
-- `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs`
-- `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs`
-- `prd-api/src/PrdAgent.Infrastructure/Services/MultiImageDomainService.cs`
-- `prd-api/src/PrdAgent.Core/Interfaces/IMultiImageDomainService.cs`
 - `prd-api/src/PrdAgent.Core/Models/MultiImage/`
-- `prd-api/src/PrdAgent.Core/Models/ImageAsset.cs`
-- `prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs`
 
 ## 关联文档
 
@@ -122,3 +116,13 @@
 - [doc/design.visual-agent.inline-image-chat.md](./design.visual-agent.inline-image-chat.md)
 - [doc/design.visual-agent.multi-image-vision-api.md](./design.visual-agent.multi-image-vision-api.md)
 - [doc/design.platform.model-pool.md](./design.platform.model-pool.md)
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 9. 当前实现入口 | `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs`、`prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs`、`prd-api/src/PrdAgent.Infrastructure/Services/MultiImageDomainService.cs`、`prd-api/src/PrdAgent.Core/Interfaces/IMultiImageDomainService.cs`、`prd-api/src/PrdAgent.Core/Models/ImageAsset.cs`、`prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs` |

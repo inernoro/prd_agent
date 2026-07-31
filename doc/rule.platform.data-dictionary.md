@@ -12,7 +12,7 @@
 
 维护规则（强制）：
 - 新增/变更任何持久化点（集合/索引/TTL、缓存 key、COS key、localStorage/IndexedDB、落盘文件路径/格式）时，**必须同步更新本文件**。
-- 以代码为准：后端集合以 `prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` 和实际 `GetCollection` 调用为权威来源，索引/TTL 以 `scripts/mongodb-indexes.js` 可执行 DBA 清单为权威来源；缓存 key 以 `prd-api/src/PrdAgent.Core/Interfaces/ICacheManager.cs` 为权威来源；COS key 以 `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs` 为权威来源。
+- 以代码为准：本文与代码冲突时一律信代码。四类东西各有自己的权威来源——集合看数据库上下文类的实际取集合调用，索引与 TTL 看 DBA 可执行清单脚本，缓存 key 看缓存管理接口，对象存储 key 看腾讯云存储实现（文件见文末「实现来源」）。
 
 
 ## MongoDB（长期存储）
@@ -142,7 +142,7 @@
 
 ### Redis 基本配置
 
-- **默认 TTL**：`Session:TimeoutMinutes`（默认 30 分钟），由 `RedisCacheManager` 的 `defaultExpiryMinutes` 决定（见 `prd-api/src/PrdAgent.Api/Program.cs`）。
+- **默认 TTL**：`Session:TimeoutMinutes`（默认 30 分钟），由 `RedisCacheManager` 的 `defaultExpiryMinutes` 决定。
 - **序列化**：JSON（camelCase）。
 
 ### Redis Key 清单
@@ -171,8 +171,6 @@
 ## 对象存储（Tencent COS）
 
 ### COS Key（对象名）规则
-
-权威实现：`prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs`
 
 - **Key 必须全小写**。
 - 业务 Key 由 `domain/type/sha/ext` 决定，形如：
@@ -218,7 +216,7 @@
 
 | Key | 值 | 说明 |
 |---|---|---|
-| `prd-admin-auth` | zustand persist（`{ state, version }`） | 管理端登录态（`prd-admin/src/stores/authStore.ts`）；入口会读取它来判断是否触发 post-login 特效（`prd-admin/src/main.tsx`） |
+| `prd-admin-auth` | zustand persist（`{ state, version }`） | 管理端登录态；入口会读取它来判断是否触发 post-login 特效 |
 | `prd-admin-layout` | zustand persist | 仅持久化 `navCollapsed`（侧边栏折叠） |
 | `prdAdmin.aiChat.sessions.{userId}` | `LocalSession[]` | AI Chat 页面本地会话列表（仅 UI 层） |
 | `prdAdmin.aiChat.messages.{userId}.{sessionId}` | `UiMessage[]` | AI Chat 页面本地消息（仅 UI 层） |
@@ -247,12 +245,12 @@
 
 ### localStorage（Zustand persist）
 
-| Key | 值 | 说明 |
+| Key | 值 | 实现文件 |
 |---|---|---|
 | `auth-storage` | 认证信息（token/refresh/sessionKey/user） | `prd-desktop/src/stores/authStore.ts` |
 | `session-storage` | 会话/角色/模式/文档/群游标等（partialize） | `prd-desktop/src/stores/sessionStore.ts` |
 | `message-storage` | 已加载消息（partialize），并在 rehydrate 时 revive Date | `prd-desktop/src/stores/messageStore.ts` |
-| `prd-citation-preview-storage` | `drawerWidth` | 引用预览抽屉宽度（`prd-desktop/src/stores/prdCitationPreviewStore.ts`） |
+| `prd-citation-preview-storage` | `drawerWidth` | 引用预览抽屉宽度 |
 | `ui-prefs-storage` | UI 偏好设置（主题、布局等） | `prd-desktop/src/stores/uiPrefsStore.ts` |
 | `settings-storage` | 用户设置（服务器地址、开发者模式等） | `prd-desktop/src/stores/settingsStore.ts` |
 | `desktop-branding-storage` | 桌面端品牌配置（名称、图标 URL 等） | `prd-desktop/src/stores/desktopBrandingStore.ts` |
@@ -262,16 +260,43 @@
 
 | Key | 值 | 说明 |
 |---|---|---|
-| `prdAgent.sidebarWidth` | string（number） | Sidebar 展开宽度（`prd-desktop/src/components/Layout/Sidebar.tsx`） |
+| `prdAgent.sidebarWidth` | string（number） | Sidebar 展开宽度 |
 
 ### sessionStorage
 
 | Key | 值 | 说明 |
 |---|---|---|
-| `demo-prd-content` | string | 演示模式的 PRD 内容缓存（`prd-desktop/src/components/Settings/SettingsModal.tsx`） |
+| `demo-prd-content` | string | 演示模式的 PRD 内容缓存 |
 
 ### 落盘文件（Tauri）
 
 | 路径 | 格式 | 说明 |
 |---|---|---|
 | `{app_data_dir}/config.json` | JSON（pretty） | 桌面端配置（`apiBaseUrl/isDeveloper/clientId`），由 `src-tauri/src/commands/config.rs` 读写 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| Redis 基本配置 | `prd-api/src/PrdAgent.Api/Program.cs` |
+| localStorage | `prd-admin/src/stores/authStore.ts`、`prd-admin/src/main.tsx` |
+| localStorage（Zustand persist） | `prd-desktop/src/stores/prdCitationPreviewStore.ts` |
+| localStorage（手写 key） | `prd-desktop/src/components/Layout/Sidebar.tsx` |
+| sessionStorage | `prd-desktop/src/components/Settings/SettingsModal.tsx` |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 权威来源 | 文件 |
+|----------|------|
+| 集合清单 | `prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` |
+| 索引与 TTL | `scripts/mongodb-indexes.js` |
+| 缓存 key | `prd-api/src/PrdAgent.Core/Interfaces/ICacheManager.cs` |
+| 对象存储 key | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs` |

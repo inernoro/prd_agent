@@ -191,4 +191,13 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 - `.claude/rules/quickstart-zero-friction.md` —— 引导脚本的大包大揽纪律
 - `.claude/rules/anti-detour.md` —— 少绕路：能一步做完不让用户走多步
 - `.claude/rules/cds-theme-tokens.md` —— CDS 前端双主题与 z-index 纪律
-- `cds/web/src/components/SkillDownloadDialog.tsx` —— 接入智能体弹窗
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 九、关联 | `cds/web/src/components/SkillDownloadDialog.tsx` | 接入智能体弹窗 |

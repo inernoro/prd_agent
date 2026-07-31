@@ -139,4 +139,13 @@ CDS 侧的回收（悬空镜像 / per-SHA 镜像 / 孤儿 worktree）已有进�
 - `cds/CLAUDE.md` —— `CDS_STORAGE_MODE=mongo-split` 是默认值
 - 2026-05-14 commit / PR：webhook buffer 上限从 200 → 1000、新增项目级生命周期调度
   → 都加重了 state.json 单文件压力，需要尽早开工 Phase 1
-- `cds/src/services/state.ts` —— StateService 主体
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 相关 | `cds/src/services/state.ts` | StateService 主体 |

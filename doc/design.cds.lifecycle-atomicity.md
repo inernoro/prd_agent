@@ -10,7 +10,6 @@
 
 > **更新**:2026-07-15
 
-
 ## 一、管理摘要
 
 用户实锤了一类反复出现的问题:**删除了项目/分支,它的容器、基础设施却还在后台跑**。24 小时日志取证证明这不是孤例——上次启动对账发现 **68 个孤儿 app 容器**(最早是 5 月删除的测试分支),外加用户看到的已删项目 infra 容器,合起来正是 perf-health「运行容器 67 个超过核数 2 倍」告警的主要来源。
@@ -61,7 +60,6 @@
 
 ## 六、关联
 
-- `cds/src/services/orphan-container-reaper.ts` — 孤儿判定与收割 SSOT
 - `.claude/rules/cds-first-verification.md` / `closed-loop-acceptance.md` — 验收纪律
 - [doc/debt.cds.performance.md](./debt.cds.performance.md) — too-many-containers 告警(本设计消除其主要来源)
 - [doc/design.cds.self-hosting.md](./design.cds.self-hosting.md) — 预览实例(收割器在预览实例中随后台服务整体跳过)
@@ -73,3 +71,13 @@
 - 判定依赖 label:历史上手工 `docker run` 起的、无 label 的残留容器不在收割范围(宁漏勿误),需人工一次性盘点;
 - 项目删除的物理清理是响应后异步:极端情况下进程在异步段崩溃 → 残留交由收割器下一轮收敛(这正是本架构的设计意图);
 - 收割 stop 与 auto-restart 巡检的交互:孤儿容器不在 state,auto-restart 只扫 state 内 infra,不会把被收割的孤儿重新拉起(已核对口径)。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 六、关联 | `cds/src/services/orphan-container-reaper.ts` | 孤儿判定与收割 SSOT |

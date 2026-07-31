@@ -18,9 +18,6 @@
 教训已固化为规则：`.claude/rules/concurrency-gate-discipline.md`（并发闸五件套设计纪律）。
 本台账记录修复中**有意延期**的边界项，防止下一次 session 无人记得。
 
-模块范围：`cds/src/services/build-gate.ts`、`build-gate-health.ts`、`deploy-layer-runner.ts`、
-`branch-operation-coordinator.ts`、`deployment-run.ts`、`cds/src/routes/branches.ts`、`cluster.ts`、
-`cds/src/index.ts`、`cds/src/services/proxy.ts`。
 
 ## 已知边界 / 待补（open）
 
@@ -48,3 +45,13 @@ CDS 定时任务「构建队列健康回归」（30 分钟探测 `GET /api/clust
 - 规则：`.claude/rules/concurrency-gate-discipline.md`
 - PR：#1160（含 Codex 四轮 8 条审查意见的逐条修复）
 - changelog：`changelogs/2026-07-16_cds-build-gate-overhaul.md`
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `cds/src/services/build-gate.ts`、`build-gate-health.ts`、`deploy-layer-runner.ts`、`branch-operation-coordinator.ts`、`deployment-run.ts`、`cds/src/routes/branches.ts`、`cluster.ts`、`cds/src/index.ts`、`cds/src/services/proxy.ts` |

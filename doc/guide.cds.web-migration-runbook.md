@@ -18,9 +18,8 @@
 
 1. [doc/plan.cds.web-migration.md](./plan.cds.web-migration.md)：路线图、当前完成状态、下一页迁移计划。
 2. [doc/guide.cds.web-migration-runbook.md](./guide.cds.web-migration-runbook.md)：本文件，包含命令、验收清单和防遗忘机制。
-3. `cds/CLAUDE.md`：CDS 模块硬约束，尤其是禁止 emoji、主题 token、API label。
-4. `cds/src/server.ts`：`MIGRATED_REACT_ROUTES` 和 `installSpaFallback()`。
-5. `cds/web/src/App.tsx`：React client 路由表。
+3. CDS 模块硬约束（`cds/CLAUDE.md`），尤其是禁止 emoji、主题 token、API label。
+4. 服务端已迁移路由表与 SPA fallback、前端 client 路由表——这两处是"这一页到底迁没迁"的事实源（文件见下表）。
 
 ---
 
@@ -161,8 +160,8 @@ http://127.0.0.1:9900/settings/<projectId>
 
 同一个改动必须覆盖这些落点：
 
-| 落点 | 必做内容 |
-|------|----------|
+| 落点文件 | 必做内容 |
+|----------|----------|
 | `cds/src/server.ts` | `MIGRATED_REACT_ROUTES` 加路由；必要时加旧 URL redirect |
 | `cds/web/src/App.tsx` | 加 `<Route>`；更新注释里的已迁移/待迁移列表 |
 | `cds/tests/routes/server-integration.test.ts` | 覆盖 React route、legacy fallback、`/api/*` 不被 shadow |
@@ -252,7 +251,7 @@ A/B/C/D 阶段已收口。**Week 4.6 视觉与主链路重构（向 Railway 看�
 
 执行步骤：
 
-1. [x] 抽 `AppShell` + `TopBar` + `Workspace` + `Crumb` 共享布局组件（`cds/web/src/components/layout/AppShell.tsx`）；所有页面共用左侧 56px 导航条、顶部面包屑、居中 1240/1360px 工作区。
+1. [x] 抽 `AppShell` + `TopBar` + `Workspace` + `Crumb` 共享布局组件；所有页面共用左侧 56px 导航条、顶部面包屑、居中 1240/1360px 工作区。
 2. [x] 扩展 `cds/web/src/index.css` 引入 surface 三档（base/raised/sunken）+ hairline 边框 token + `.cds-hero` / `.cds-stat` / `.cds-crumb` utility class。
 3. [x] ProjectListPage 切片：hero 表单收敛 + 项目卡极简化 + 工具入口折叠。
 4. [x] BranchListPage / BranchDetailPage / BranchTopologyPage / ProjectSettingsPage / CdsSettingsPage 5 个页面全部套用 AppShell + TopBar + Workspace + Crumb；删除每页重复的自建 nav + breadcrumb；项目设置/系统设置 TabsList 与内容区改用 surface-raised + hairline。
@@ -277,3 +276,13 @@ A/B/C/D 阶段已收口。**Week 4.6 视觉与主链路重构（向 Railway 看�
 - BranchListPage 部署小卡是否同步阶段树（独立任务，等 Drawer 验收后判断）。
 - 用户确认是否升级简化拓扑为 React Flow（独立动作，不阻塞 Week 5）。
 - 用户确认是否进入 Week 5 删除 `cds/web-legacy/`。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| Week 4.6（已收口） | `cds/web/src/components/layout/AppShell.tsx` |

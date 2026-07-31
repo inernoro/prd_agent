@@ -178,7 +178,6 @@ flowchart LR
 | `profileMode` | `readonly`、`writable`、`kb-readonly`、`kb-writable` |
 | `timeoutSeconds` | 节点超时 |
 | `approvalPolicy` | `none`、`manual`、`auto-readonly` |
-
 | 输出 | 说明 |
 | --- | --- |
 | `status` | completed、failed、timed_out、waiting_approval |

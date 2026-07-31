@@ -226,7 +226,7 @@ timeline
 
 > **价值**：W17 反复反馈"项目名遮住关键信息"——本周把预览 URL 公式升级到 v3（`tail-prefix-project`，重要的靠前），后端 `previewSlug` 字段统一发出，前端归一消费，从此 PR 评论 + Settings 预览 + check-run 摘要全部用同一份算法。"刷新即重建"400 死循环也被 canonical id 兜底根治。
 
-- 预览 URL 公式升级到 v3：`tail-prefix-project`，全栈唯一来源（`cds/src/services/preview-slug.ts`）。
+- 预览 URL 公式升级到 v3：`tail-prefix-project`，全栈唯一来源。
 - dashboard 预览按钮跳 v3 URL —— 后端发 `previewSlug` 字段，前端归一消费。
 - 预览子域名 canonical id 兜底 + 过渡页改按钮态，根治"刷新即重建" 400 死循环。
 - 分支名真撑满 row1 —— `flex:1` + `quick-actions width:0` 默认不占位。
@@ -364,3 +364,13 @@ timeline
 | #501  | AI 竞技场 UI 文案对齐 v1 单轮设计 | prd-admin | UX 细节 |
 | #503  | 预览 URL 公式 v2 修复 + 规则 #11 强制 push 后预览地址 + DailyTips 重构 | doc、prd-admin | 文档 |
 | #500  | CDS nginx ACME 续签 — cert 子命令处理缺 crontab 的系统 + nginx 失败可见 | cds | Bug 修复 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 13. CDS 预览 URL v3 公式 + 自动部署稳定化 | `cds/src/services/preview-slug.ts` |

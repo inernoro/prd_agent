@@ -112,6 +112,15 @@ admin/api 的编译耗时是 **CPU 固有成本**，I/O/并行旋钮榨不动；
 5. [ ] 评估卷/网络的安全自动清理（涉数据，需白名单 `cds.precious`，维持谨慎不动）
 
 ## 相关
-- `cds/src/services/janitor.ts` — 本次首步落地
 - `cds/.claude/rules/` / `no-auto-index.md` — 索引由 DBA 手动建
 - 主仓 `CLAUDE.md` 规则 #11 / CDS 自部署
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 相关 | `cds/src/services/janitor.ts` | 本次首步落地 |

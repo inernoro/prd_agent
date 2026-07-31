@@ -81,7 +81,7 @@ CDS 全局默认(_global 变量层)
 - 段A 分支 customEnv:`cds-builtin → mirror → global → project → branch → cds-derived(保留 key)`
 - 段B 单容器运行时:`customEnv → JWT 兜底 → node PATH → profile 层(底座/分支覆盖/部署模式) → 版本元数据 → per-branch DB 改写 → ${VAR} 模板展开`
 
-实现原则:**单一代码路径**。段B抽为纯函数 `resolveProfileRuntimeEnvWithProvenance`(`cds/src/services/env-provenance.ts`),输入「带来源标注的层数组」,输出 `{env, provenance}`;部署路径退化为单层包装只取 `.env`,行为与旧实现逐字节一致(container.test.ts 43 例护栏)。检查器端点把两段按真实来源拆层传入,免费获得溯源——不存在第二份合并逻辑,永不漂移。
+实现原则:**单一代码路径**。段B抽为纯函数 `resolveProfileRuntimeEnvWithProvenance`,输入「带来源标注的层数组」,输出 `{env, provenance}`;部署路径退化为单层包装只取 `.env`,行为与旧实现逐字节一致(container.test.ts 43 例护栏)。检查器端点把两段按真实来源拆层传入,免费获得溯源——不存在第二份合并逻辑,永不漂移。
 
 `EnvSource` 12 值枚举 + `EnvKeyProvenance`(value/source/detail/shadowed/templated)是公开契约,定义在 `cds/src/types.ts`。
 
@@ -180,3 +180,13 @@ CDS 全局默认(_global 变量层)
 | 溯源端点泄密 | 高 | maskSecrets SSOT + 不提供 reveal + vitest 脱敏断言 |
 | 派生拷贝隔离穿透(硬编码连接串) | 中 | 检查器来源可辨 + 后续警示徽标;跨项目派生直接拒绝 |
 | 快照回滚不重建容器 | 中 | 响应 hint 明示「重新部署后生效」 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 四、配置可观测性(生效配置检查器,波2) | `cds/src/services/env-provenance.ts` |

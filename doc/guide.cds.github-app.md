@@ -57,7 +57,7 @@ CDS 的 push 即部署链路使用 GitHub App，不要求每个仓库分别创�
 | `CDS_GITHUB_APP_PRIVATE_KEY` | **机密（PEM 私钥）** | 持有者可冒充整个 App，为其所有安装 mint installation token，读写全部授权仓库 |
 | `CDS_GITHUB_WEBHOOK_SECRET` | **机密（HMAC 密钥）** | 持有者可伪造合法签名的 webhook，触发任意部署 |
 
-以下三个**不是机密**（但仍不建议随手贴 issue）：`CDS_GITHUB_APP_ID`、`CDS_GITHUB_APP_SLUG`、`CDS_PUBLIC_BASE_URL`。判定依据：`cds/src/config/known-env-keys.ts` 里 `CDS_GITHUB_APP_PRIVATE_KEY` 与 `CDS_GITHUB_WEBHOOK_SECRET` 标 `isSecret: true`，其余标 `false`。
+以下三个**不是机密**（但仍不建议随手贴 issue）：`CDS_GITHUB_APP_ID`、`CDS_GITHUB_APP_SLUG`、`CDS_PUBLIC_BASE_URL`。判定依据不是习惯而是代码：env 键清单里只有私钥和 webhook 密钥两项被标成机密，其余标为非机密。
 
 一旦怀疑泄露：立即在 GitHub App 设置里 **Revoke** 旧 private key / **Regenerate** webhook secret，重写 `.cds.env` 后 `./exec_cds.sh restart`。
 
@@ -84,7 +84,7 @@ CDS 的 push 即部署链路使用 GitHub App，不要求每个仓库分别创�
 | **GitHub App name** | 任意全局唯一名，如 `cds-geole-preview` | 决定 App slug（小写化后即 `CDS_GITHUB_APP_SLUG`），slug 只用于拼安装 URL 展示 |
 | **Homepage URL** | `CDS_PUBLIC_BASE_URL`，如 `https://cds.geole.me` | 无强约束，填 CDS 面板地址即可 |
 | **Webhook → Active** | 勾选 | 不勾则 GitHub 不投递事件，push 即部署链路失效 |
-| **Webhook URL** | `https://<CDS_PUBLIC_BASE_URL>/api/github/webhook` | 例：`https://cds.geole.me/api/github/webhook`。路径固定 `/api/github/webhook`（`cds/src/routes/github-webhook.ts` 挂在 `/api` 下，路由 `POST /github/webhook`） |
+| **Webhook URL** | `https://<CDS_PUBLIC_BASE_URL>/api/github/webhook` | 例：`https://cds.geole.me/api/github/webhook`。路径固定，不可改 |
 | **Webhook secret** | 生成一段高熵随机串（如 `openssl rand -hex 32`） | 即 `CDS_GITHUB_WEBHOOK_SECRET`，**机密**。CDS 用它对每条 webhook 做 HMAC-SHA256 验签，不匹配直接 401 |
 
 > Webhook URL 也可事后核对：App 配好并写入 env、CDS 重启后，带鉴权访问 `GET /api/github/app` 会回显 CDS 侧算出的 `webhookUrl`（`config.publicBaseUrl + /api/github/webhook`），两边应一致。
@@ -94,11 +94,11 @@ CDS 的 push 即部署链路使用 GitHub App，不要求每个仓库分别创�
 - **只服务自己的账号/组织**：选 **"Only on this account"**。
 - **需要装到多个 owner**（如给他人仓库做预览、或个人 + 组织都要）：选 **"Any account"**。geole 复刻场景若只对单一 owner，用 "Only on this account" 即可。
 
-CDS 侧另有一层 **owner 白名单**兜底（`cds/src/services/github-app-whitelist.ts` 的 `evaluateGitHubOwner`）：白名单为空时默认放行所有 owner；一旦填了 owner，就只有名单内的 owner 事件会触发部署，名单外的被 ack 但忽略。白名单在 **CDS 系统设置 → GitHub App 白名单** 维护（`PUT /api/cds-system/github/app-whitelist`）。
+CDS 侧另有一层 **owner 白名单**兜底：白名单为空时默认放行所有 owner；一旦填了 owner，就只有名单内的 owner 事件会触发部署，名单外的被 ack 但忽略。白名单在 **CDS 系统设置 → GitHub App 白名单** 维护。
 
 ### 2.3 权限最小集（Repository permissions）
 
-按 CDS 实际消费的 GitHub API 推导（`cds/src/services/github-app-client.ts`）——只开下面这几项，其余留 "No access"：
+按 CDS 实际消费的 GitHub API 推导——只开下面这几项，其余留 "No access"：
 
 | 权限 | 级别 | 为什么需要（对应代码行为） |
 |------|------|--------------------------|
@@ -112,7 +112,7 @@ CDS 侧另有一层 **owner 白名单**兜底（`cds/src/services/github-app-whi
 
 ### 2.4 事件最小集（Subscribe to events）
 
-CDS 只对固定一组事件动作（`cds/src/routes/github-webhook.ts` 的 `SUPPORTED_EVENTS`），其余一律 ack 后丢弃。核心 7 个：
+CDS 只认固定一组事件动作，其余一律 ack 后丢弃。核心 7 个：
 
 - `Push`
 - `Pull request`
@@ -157,7 +157,7 @@ MIIEow... (多行)
 -----END RSA PRIVATE KEY-----'
 ```
 
-字段语义（`cds/src/config.ts` `resolveGitHubApp`）：`CDS_GITHUB_APP_ID` / `CDS_GITHUB_APP_PRIVATE_KEY` / `CDS_GITHUB_WEBHOOK_SECRET` 三者**缺一，整个 GitHub App 就处于未配置态**，webhook 端点返回 503。`CDS_GITHUB_APP_SLUG` 仅用于拼安装 URL 展示，可选。`CDS_PUBLIC_BASE_URL` 用于 webhook URL 与 check-run 回链。
+字段语义：`CDS_GITHUB_APP_ID` / `CDS_GITHUB_APP_PRIVATE_KEY` / `CDS_GITHUB_WEBHOOK_SECRET` 三者**缺一，整个 GitHub App 就处于未配置态**，webhook 端点返回 503。`CDS_GITHUB_APP_SLUG` 仅用于拼安装 URL 展示，可选。`CDS_PUBLIC_BASE_URL` 用于 webhook URL 与 check-run 回链。
 
 ### 4.2 PEM 私钥必须 shell-safe 单引号包裹（关键）
 
@@ -169,7 +169,7 @@ PEM 私钥是**多行**、含 `$` `` ` `` 等字符的文本。`.cds.env` 会被
 
 **正确姿势**：用 **单引号**包裹整段 PEM（单引号内 shell 不做任何插值，多行原样保留）。
 
-当前 `cds/exec_cds.sh` 已经把这件事做对了，优先用它写入而非手工编辑：
+当前 CDS 的入口脚本已经把这件事做对了，优先用它写入而非手工编辑：
 
 - `env_upsert`（`exec_cds.sh` L109-128）写值时**一律单引号包裹**，并把值内部的每个单引号转义为 `'\''`，因此多行 PEM 能安全落盘、`source` 时原样保留。
 - `lint_env_file`（L130-138）在 `source` 前做**预检**：若发现 `BEGIN ... PRIVATE KEY` 行没有被单引号包裹，打印 `[warn] .cds.env 可能含未用单引号包裹的 PEM 私钥` 告警。
@@ -235,7 +235,7 @@ cd cds && ./exec_cds.sh restart
 
 现象：curl `GET /api/github/app` 得到 401，误以为 App 没配好。
 
-原因：该端点走 CDS 的**正常登录网关**（cookie 或 AI key 鉴权，见 `cds/src/server.ts` 的登录中间件；只有 `POST /api/github/webhook` 因 HMAC 自鉴权被显式放行）。未带凭据访问必然 401，**与 GitHub App 是否配置无关**。
+原因：该端点走 CDS 的**正常登录网关**（cookie 或 AI key 鉴权；只有 webhook 端点因 HMAC 自鉴权被显式放行）。未带凭据访问必然 401，**与 GitHub App 是否配置无关**。
 
 修复：判断 App 是否配置完成，以“CDS 日志确认已配置”中的 `[config] GitHub App configured` 日志为准；要看 `/api/github/app` 的 JSON，先带上有效登录 cookie 或项目权限再请求。
 
@@ -281,4 +281,30 @@ cd cds && ./exec_cds.sh restart
 - [CDS 环境与凭据](guide.cds.env.md) —— 系统配置、项目变量与 Agent 凭据边界
 - [CDS 部署方式选择](guide.cds.deploy-three-paths.md) —— 项目接入方式
 - [CDS 一键可视化部署](guide.cds.one-click-deploy.md) —— 项目用户部署路径
-- 代码 SSOT：`cds/src/config.ts`（env 解析 + configured 日志）、`cds/src/routes/github-webhook.ts`（webhook 端点 + 事件集）、`cds/src/services/github-app-client.ts`（token mint / check run / 评论）、`cds/src/services/github-app-whitelist.ts`（owner 白名单）、`cds/exec_cds.sh`（`.cds.env` 单引号写入 + PEM 预检）
+- 代码 SSOT：见文末「实现来源」
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 2.2 安装范围（install scope） | `PUT /api/cds-system/github/app-whitelist` |
+| 2.3 权限最小集（Repository permissions） | `cds/src/services/github-app-client.ts` |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 职责 | 文件 |
+|------|------|
+| env 解析 + configured 日志 | `cds/src/config.ts`、`cds/src/config/known-env-keys.ts` |
+| webhook 端点 + 支持的事件集 | `cds/src/routes/github-webhook.ts` |
+| token 签发 / check run / PR 评论 | `cds/src/services/github-app-client.ts` |
+| owner 白名单判定 | `cds/src/services/github-app-whitelist.ts` |
+| `.cds.env` 写入 + PEM 预检 | `cds/exec_cds.sh` |
+| 登录中间件（webhook 放行在此） | `cds/src/server.ts` |

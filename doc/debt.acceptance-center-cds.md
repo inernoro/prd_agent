@@ -94,7 +94,15 @@ MAP 等系统通过知识库开放协议（MAP-KBTP v1 peer-sync）从 CDS 拉�
 - `acceptance.config.json` 已移除 MAP 字段；新仓库不要用 doc-store 路径。
 
 ## 关键文件
-- `cds/src/routes/peer-sync.ts`、`cds/src/routes/reports.ts`、`cds/src/services/state.ts`、`cds/src/server.ts`
-- `cds/tests/routes/peer-sync.test.ts`、`cds/tests/services/acceptance-reports.test.ts`
 - `.claude/skills/create-visual-test-to-kb/{scripts/archive_report.py,acceptance.config.json,SKILL.md}`
 - `.claude/skills/cds/cli/cdscli.py`（report / peer 命令）
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 关键文件 | `cds/src/routes/peer-sync.ts`、`cds/src/routes/reports.ts`、`cds/src/services/state.ts`、`cds/src/server.ts`、`cds/tests/routes/peer-sync.test.ts`、`cds/tests/services/acceptance-reports.test.ts` |

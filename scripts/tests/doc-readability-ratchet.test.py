@@ -198,6 +198,46 @@ impl2, srcs2 = checker.scan_body(ALLOWED_DOC)
 check(impl2 == 0, "图与契约样例的代码块不算实现代码")
 check(srcs2 == 0, "「实现来源」小节里集中列的路径不算欠账")
 
+# 成块 vs 夹叙：表头点名的指路列可整列跳过，叙述列不能拿来藏路径
+POINTER_COL_DOC = """# 示例 · 设计
+
+> **版本**：v1.0 | **日期**：2026-07-31 | **状态**：已落地
+
+## 当前事实入口
+
+| 能力 | 文件 |
+|------|------|
+| 取令牌 | `prd-api/src/PrdAgent.Api/Services/Foo/FooService.cs` |
+"""
+check(checker.scan_body(POINTER_COL_DOC)[1] == 0, "表头点名的指路列不算散落")
+
+NARRATIVE_COL_DOC = (POINTER_COL_DOC
+                     .replace("## 当前事实入口", "## 能力清单")
+                     .replace("| 能力 | 文件 |", "| 能力 | 说明 |"))
+check(checker.scan_body(NARRATIVE_COL_DOC)[1] == 1,
+      "叙述列（说明）里的路径必须照算欠账，否则改个表头就能绕过闸门")
+
+POINTER_ROW_DOC = """# 示例 · 债务台账
+
+> **版本**：v1.0 | **日期**：2026-07-31 | **状态**：开发中
+
+## 某条债务
+
+| 状态 | open |
+|------|------|
+| 关联 | `cds/src/services/foo.ts` |
+| 影响 | 用户看到 `cds/src/services/bar.ts` 里的旧文案 |
+"""
+check(checker.scan_body(POINTER_ROW_DOC)[1] == 1,
+      "首列是「关联」的行算成块；同表里「影响」行的路径仍算欠账")
+
+check(not checker._is_pointer_name("做法要点") and not checker._is_pointer_name("说明"),
+      "叙述表头不得被当成指路列")
+check(checker._is_pointer_name("事实入口") and checker._is_pointer_name("现成砖块"),
+      "点名指路含义的短表头要被认出来")
+check(not checker._is_pointer_name("这一列写的是相关文件与用途说明"),
+      "长表头不算点名——指路列必须是短标签")
+
 print("[4] 报告双产物的那句话有人盯着")
 
 SKILLS = os.path.join(REPO_ROOT, ".claude", "skills")

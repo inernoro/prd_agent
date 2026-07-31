@@ -54,7 +54,6 @@
 | `NeonTitle` | 标题 + text-shadow 发光 | CSS text-shadow |
 | `CodeBlock` | 代码 + 打字机光标 | 纯文本，无语法高亮 |
 | `ProgressBar` | (在 StepsScene 中内联) 简单色条 | CSS width transition |
-
 | 场景 | 视觉效果 |
 |------|----------|
 | `IntroScene` | 标题 + 副标题 + 两条装饰线 |

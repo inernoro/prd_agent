@@ -207,12 +207,19 @@
 ## 相关文件
 
 ### 后端
-- `prd-api/src/PrdAgent.Api/Controllers/DiagnosticsController.cs`
 
 ### Rust
-- `prd-desktop/src-tauri/src/commands/config.rs`
-- `prd-desktop/src-tauri/src/lib.rs`
 
 ### 前端
-- `prd-desktop/src/components/NetworkDiagnosticsModal.tsx`
-- `prd-desktop/src/components/Settings/SettingsModal.tsx`
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 后端 | `prd-api/src/PrdAgent.Api/Controllers/DiagnosticsController.cs` |
+| Rust | `prd-desktop/src-tauri/src/commands/config.rs`、`prd-desktop/src-tauri/src/lib.rs` |
+| 前端 | `prd-desktop/src/components/NetworkDiagnosticsModal.tsx`、`prd-desktop/src/components/Settings/SettingsModal.tsx` |

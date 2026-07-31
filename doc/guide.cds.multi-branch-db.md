@@ -11,7 +11,6 @@
 > **覆盖范围**:`BuildProfile.dbScope` 字段;同一 mysql/postgres 实例下用 database name 隔离多分支
 > **目标读者**:用户(开多分支验收时) + AI Agent(写 cdscli 模板表时)
 
-
 ## 0. 30 秒读懂
 
 CDS 多分支同时部署同一项目时,默认所有分支共用一个 `app` 库。一个分支跑了破坏性 migration,**所有分支都炸**。
@@ -172,4 +171,13 @@ Phase 6 实战时,挑一个 Prisma + MySQL 项目,把 backend 的 dbScope 设成
 - [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md) — cds-compose 完整契约 SSOT
 - [doc/guide.cds.orm-support.md](./guide.cds.orm-support.md) — Phase 4 ORM migration 注入(per-branch 后,migration 命令在每个分支独立 DB 上跑一次)
 - [doc/plan.cds.status.md](./plan.cds.status.md) — CDS 当前状态看板(mysql 接入完整里程碑见 §二)
-- `cds/src/services/db-scope-isolation.ts` — 实现 + 内联文档
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 8. 关联文档 | `cds/src/services/db-scope-isolation.ts` | 实现 + 内联文档 |

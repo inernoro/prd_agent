@@ -65,8 +65,8 @@ for nvm_root in /root/.nvm/versions/node /home/*/.nvm/versions/node; do ...
 ### 教训 3:抽简化版反代时,master 1171 行里的"看似杂乱细节"全是真生产打磨
 
 漏抄两笔:
-- **Host header 改写**(`proxy.ts:912`):透传外部域名 → 容器 vhost 全 404
-- **detectProfileFromRequest**(`proxy.ts:861`):前端 / 路径 → admin profile;`/api/*` → api profile
+- **Host header 改写**:透传外部域名 → 容器 vhost 全 404
+- **detectProfileFromRequest**:前端 / 路径 → admin profile;`/api/*` → api profile
 
 简化版的"first running service"在 spec 测试里看不出问题,真生产暴露失败。
 
@@ -155,3 +155,13 @@ cds-forwarder.service (systemd, Restart=always)
 ---
 
 **签收**:今日工作完成,业务面 0 抖动这条硬规则在 forwarder 部署后正式成立。蓝绿改造彻底搁置(代码保留 opt-in),走 forwarder 路线收尾。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 教训 3:抽简化版反代时,master 1171 行里的"看似杂乱细节"全是真生产打磨 | `proxy.ts:912`、`proxy.ts:861` |

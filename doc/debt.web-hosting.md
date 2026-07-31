@@ -20,9 +20,6 @@
 | in-progress | 0 |
 | paid | 0 |
 
-模块范围：`prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs`、
-`prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs`、
-`prd-admin/src/pages/WebPagesPage.tsx`、`prd-admin/src/pages/ShareViewPage.tsx`。
 
 ---
 
@@ -191,7 +188,6 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 
 ### 关联
 
-- 实现：`prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs`（`GetRealClientIp`）
 - 消费：`WebPagesController.cs`（分享 view / 评论）、`WebPageAnalyticsController.cs`（record-view）、`HostedSiteService.cs`（`MaskIp` 脱敏展示）
 - 部署拓扑：`deploy/nginx/nginx.conf`、`deploy/nginx/public-nginx.example.conf`
 - 来源：PR #699 Codex/Bugbot 多轮 review + 维护者决策
@@ -215,3 +211,14 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 | # | 边界 | 修复 |
 |---|------|------|
 | 11 | ~~`CopyToTeamAsync`（网页复制进团队）只校验团队级 owner/editor 角色和分组归属团队，缺失 `SetSiteGroup` 已有的受限分组写权限门控——团队有编辑权但受限分组无编辑权的用户可把网页复制进受限分组（越权写入）~~（已修复 2026-07-09，#802） | 补齐 `WebPageGroupAccess.IsRestricted -> ResolveGroupRole` 校验，与 `SetSiteGroup` 同款，无编辑权抛 `UnauthorizedAccessException` |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs`、`prd-admin/src/pages/WebPagesPage.tsx`、`prd-admin/src/pages/ShareViewPage.tsx` |
+| 关联 | `prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs` |

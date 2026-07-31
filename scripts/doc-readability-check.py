@@ -163,7 +163,25 @@ SOURCE_PATH = re.compile(
     r"\.(?:cs|ts|tsx|js|mjs|py|rs|css|sh)\b")
 SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")
 # 这些小节就是专门用来指路的，里面列路径不算欠账
-SOURCE_SECTION = re.compile(r"实现来源|关联实现|相关文件|关联代码|事实源|代码位置|相关实现")
+SOURCE_SECTION = re.compile(
+    r"实现来源|关联实现|关联文件|相关文件|关联代码|事实源|事实入口|代码位置|相关实现|文件索引|实现索引|源码索引")
+# 表头写明「这一列是指路的」，整列算成块（读者可整列跳过），不算散落。
+# 判据：表头短（≤10 字）且点名了指路含义；「说明」「问题」「做法要点」这类叙述表头不在其中。
+POINTER_TOKEN = re.compile(r"文件|实现|代码|位置|路径|来源|守卫|模块|证据|砖块|参照|单测|测试|SSOT|事实源|事实入口")
+TABLE_SEP = re.compile(r"^\|[\s\-:|]+\|$")
+# 「| 关联 | 一串文件 |」这种元信息行：首列就是指路标签，整行同样算成块。
+POINTER_ROW_LABEL = re.compile(
+    r"^(?:关联|关联文件|关联改动|关联代码|实现|实现文件|相关文件|文件|代码|代码位置|位置|路径|来源|守卫|守卫测试|模块|模块范围|证据|落地组件|单测|测试)$")
+
+
+def _is_pointer_name(name: str) -> bool:
+    name = name.strip().strip("*` ")
+    return len(name) <= 10 and bool(POINTER_TOKEN.search(name))
+
+
+def _pointer_columns(header: str) -> set[int]:
+    return {i for i, c in enumerate(header.strip().strip("|").split("|"))
+            if _is_pointer_name(c)}
 
 
 def scan_body(text: str) -> tuple[int, int]:
@@ -173,7 +191,9 @@ def scan_body(text: str) -> tuple[int, int]:
     in_fence = False
     lang = ""
     in_source_section = False
-    for raw in text.splitlines():
+    lines = text.splitlines()
+    pointer_cols: set[int] = set()
+    for idx, raw in enumerate(lines):
         st = raw.strip()
         if st.startswith("```"):
             if not in_fence:
@@ -187,9 +207,26 @@ def scan_body(text: str) -> tuple[int, int]:
             continue
         if st.startswith("#"):
             in_source_section = bool(SOURCE_SECTION.search(st))
+            pointer_cols = set()
             continue
         if in_source_section:
             continue
+        if st.startswith("|"):
+            # 表头行：记下哪些列是指路列；分隔行跳过
+            if idx + 1 < len(lines) and TABLE_SEP.match(lines[idx + 1].strip()):
+                pointer_cols = _pointer_columns(st)
+                continue
+            if TABLE_SEP.match(st):
+                continue
+            cells = st.strip("|").split("|")
+            if cells and POINTER_ROW_LABEL.match(cells[0].strip().strip("*` ")):
+                continue
+            for i, cell in enumerate(cells):
+                if i in pointer_cols:
+                    continue
+                src_refs += len(SOURCE_PATH.findall(cell)) + len(SOURCE_LINEREF.findall(cell))
+            continue
+        pointer_cols = set()
         src_refs += len(SOURCE_PATH.findall(raw)) + len(SOURCE_LINEREF.findall(raw))
     return impl_lines, src_refs
 

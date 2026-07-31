@@ -10,7 +10,6 @@
 
 > **更新**:2026-07-15
 
-
 ## 一、管理摘要
 
 过去验收 CDS 自身的改动只有一条路:对**生产 CDS** 执行 self-update——切分支、重启进程,所有项目、所有 Agent 一起陪跑(隔离穿透清单通道 5 的已知风险)。结果是"每测一次,CDS 就不稳定一次"。
@@ -103,7 +102,6 @@ SSOT:`cds/src/services/preview-instance.ts`。
 
 - `cds/src/services/preview-instance.ts` / `preview-instance-seed.ts` — 模式 SSOT 与 seed
 - `cds/cds-compose.selfhost.yml` — cds-self 项目 compose 合同(粘贴导入)
-- `cds/tests/services/preview-instance.test.ts` — 拦截边界 + seed 幂等单测
 - `.claude/rules/cross-project-isolation.md` — 通道 4(共享库)/通道 5(self-update 重启)是本设计要消灭的痛
 - [doc/plan.cds.status.md](./plan.cds.status.md) — CDS 活状态与路线入口
 
@@ -113,3 +111,13 @@ SSOT:`cds/src/services/preview-instance.ts`。
 - 演示分支的"运行中"状态是 seed 出来的形状数据,点它的预览链接不会有真页面(分支卡有备注说明);
 - 冷构建(两次 pnpm install + tsc + vite build)约 3-6 分钟,readiness 窗口已放到 1200s;
 - 同仓库双项目会双份 clone(磁盘),janitor 只在父 CDS 生效,子实例无清理需求(无容器、state 随 worktree 回收)。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 六、关联 | `cds/tests/services/preview-instance.test.ts` | 拦截边界 + seed 幂等单测 |

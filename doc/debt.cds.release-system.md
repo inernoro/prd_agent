@@ -22,7 +22,6 @@ PR #1273 落地了**阶段一（止血）**：心跳 + 中断收敛 + 执行超�
 本台账记录阶段一**有意延期**的边界项，以及**尚未取得真实环境证据**的行为，
 防止下一次 session 把「有单测」误当成「已验证」。
 
-模块范围：`cds/src/services/release-service.ts`、`cds/src/routes/releases.ts`、
 `cds/src/services/deploy-drain.ts`、`cds/src/server.ts`（收割器接线 + 排空闸）。
 
 ## 已知边界 / 待补（open）
@@ -115,3 +114,13 @@ abort 定时器（预检类用 60s 短超时）；无法取消 → `cancelReleas
   `.claude/rules/production-release-safety.md`（生产发布安全触发）
 - PR：#1273（含 Codex 七轮 20+ 条 P1/P2 的逐条修复）
 - changelog：`changelogs/2026-07-27_cds-trunk-protection-uptime-loadtest-bugreport.md`
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `cds/src/services/release-service.ts`、`cds/src/routes/releases.ts` |

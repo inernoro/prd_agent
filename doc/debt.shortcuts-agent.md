@@ -16,9 +16,7 @@
 | in-progress | 0 |
 | paid | 0 |
 
-模块范围：`prd-api/src/PrdAgent.Api/Controllers/ShortcutsController.cs`、
 `prd-admin/src/pages/shortcuts-agent/`（`ShortcutsPage.tsx` 管理 + `ShortcutInstallPage.tsx` 扫码安装公开页）、
-`prd-api/src/PrdAgent.Infrastructure/Services/ShortcutPlistGenerator.cs`、`lib/clipboard.ts`。
 
 ---
 
@@ -80,3 +78,13 @@ fetch+blob 有破坏 iOS "添加快捷指令"系统交接的风险，需真机�
 - `.claude/rules/zero-friction-input.md` / `chief-designer-usability.md` —— 体验底线
 - [doc/guide.shortcuts-agent.md](./guide.shortcuts-agent.md) —— 用户使用指南
 - [doc/design.shortcuts-agent.apple.md](./design.shortcuts-agent.apple.md) —— 设计文档
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `prd-api/src/PrdAgent.Api/Controllers/ShortcutsController.cs`、`prd-api/src/PrdAgent.Infrastructure/Services/ShortcutPlistGenerator.cs`、`lib/clipboard.ts` |

@@ -79,9 +79,6 @@
 
 关键回归测试位于：
 
-- `prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs`
-- `prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayServingEndpointContractTests.cs`
-- `prd-api/tests/PrdAgent.Tests/GatewayDataDomainGuardTests.cs`
 
 ## 事实来源
 
@@ -99,3 +96,13 @@
 - [design.platform.llm-gateway.md](./design.platform.llm-gateway.md)：Gateway 总体架构。
 - [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)：Gateway 旧路径清理与生产门禁。
 - `.claude/rules/compute-then-send.md`：所有外部模型调用共用的计算与发送边界。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 可观测性与验证 | `prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs`、`prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayServingEndpointContractTests.cs`、`prd-api/tests/PrdAgent.Tests/GatewayDataDomainGuardTests.cs` |

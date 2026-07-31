@@ -31,7 +31,7 @@
 ### ② DNS 串台机制
 
 - CDS 只做到**项目级**网络隔离:每个项目一张 `cds-proj-<id>` 网络(`cds/src/services/container.ts` Week 4.9),**同一项目的所有分支共享这一张网络**。
-- 服务别名由 `computeProfileAliases`(`container.ts:316`)从 `profile.id` 削出裸短名(`ai-<projectMarker>` → 同时打 `--network-alias ai`),而 profile 是项目级共享的。
+- 服务别名由 `computeProfileAliases`从 `profile.id` 削出裸短名(`ai-<projectMarker>` → 同时打 `--network-alias ai`),而 profile 是项目级共享的。
 - 于是同一张网里同时有多个容器自称 `ai`:本分支的 `ai`(新代码)+ 旧分支的 `ai`(旧代码)。docker DNS round-robin → worker 调 `http://ai:8000/<新路由>` 间歇命中旧分支容器 → 404。
 - 实测:`cdscli branch exec <branchId> "getent hosts ai" --profile worker` 在两个并存分支上各返回两个 IP。
 
@@ -91,3 +91,13 @@ brandai 项目已临时用分支级 env 兜底:`AI_SERVICE_URL=http://cds-<branc
 
 | ID | 修复 PR | 修复日期 | 备注 |
 |----|---------|---------|------|
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| ② DNS 串台机制 | `container.ts:316` |

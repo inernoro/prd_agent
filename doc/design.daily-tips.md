@@ -11,7 +11,6 @@
 > 右下角悬浮「教程小书」+ 落地页 SpotlightOverlay 引导 + 管理后台推送/调试闭环。
 > 2 分钟让新用户学会某个功能的标准套件。
 
-
 ## 1. 管理摘要(30 秒懂)
 
 平台对用户的教育有两种场景:
@@ -75,7 +74,6 @@
 
 **两条约束**：多步引导的每一步都必须落在**页面常驻元素**上（弹层里的元素在新用户空数据时根本不存在，
 会卡在那一步）；教程的排序值决定同一页多条教程谁先讲。
-
 
 ### 4.2 组件拓扑
 
@@ -214,7 +212,6 @@ if Deliveries 非空:
 给目标按钮或输入框加一个稳定的引导锚点属性，值用「页面-元素」的短名。
 **锚点必须加在常驻元素上**，且改页面时锚点要跟着走——锚点没了，教程就会卡在那一步空转。
 
-
 命名规范见 `CLAUDE.md` 规则 #9 / `.claude/rules/navigation-registry.md`。
 
 ### 8.3 需要复杂交互(如选人 dropdown)
@@ -264,20 +261,28 @@ Tour 无法模拟复杂 UI 操作(如 dropdown 选择)。应对:
 ## 11. 文件索引
 
 **后端:**
-- `prd-api/src/PrdAgent.Core/Models/DailyTip.cs`
 - `prd-api/src/PrdAgent.Core/Models/User.cs`(DismissedTipIds)
-- `prd-api/src/PrdAgent.Api/Controllers/Api/DailyTipsController.cs`(`/visible`, `/track`, `/dismiss-forever`, `BuildDefaultTips`)
 - `prd-api/src/PrdAgent.Api/Controllers/Api/AdminDailyTipsController.cs`(CRUD + `/push` + `/stats` + `/seed` + `/reset`)
 
 **前端组件:**
-- `prd-admin/src/components/daily-tips/TipsDrawer.tsx` — 右下角悬浮书 + 抽屉
-- `prd-admin/src/components/daily-tips/TipCard.tsx` — 共享卡片组件
-- `prd-admin/src/components/daily-tips/SpotlightOverlay.tsx` — 落地页引导 **单例**
-- `prd-admin/src/components/daily-tips/TipsRotator.tsx` — 首页副标题轮播 + `writeSpotlightPayload`
 
 **前端管理页:**
-- `prd-admin/src/pages/settings/DailyTipsEditor.tsx` — CRUD + 模板模式 + 试播 + 推送弹窗 + 批量
 
 **其他:**
-- `prd-admin/src/stores/dailyTipsStore.ts` — 60s 轮询 + visibilitychange 自动刷新
 - `prd-admin/src/layouts/AppShell.tsx`(SpotlightOverlay 挂载 + toast 铃铛联动)
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 11. 文件索引 | `prd-api/src/PrdAgent.Core/Models/DailyTip.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/DailyTipsController.cs`、`/visible`、`/track`、`/dismiss-forever` |
+| 11. 文件索引 | `prd-admin/src/components/daily-tips/TipsDrawer.tsx`（右下角悬浮书 + 抽屉） |
+| 11. 文件索引 | `prd-admin/src/components/daily-tips/TipCard.tsx`（共享卡片组件） |
+| 11. 文件索引 | `prd-admin/src/components/daily-tips/SpotlightOverlay.tsx`（落地页引导 **单例**） |
+| 11. 文件索引 | `prd-admin/src/components/daily-tips/TipsRotator.tsx`（首页副标题轮播 + `writeSpotlightPayload`） |
+| 11. 文件索引 | `prd-admin/src/pages/settings/DailyTipsEditor.tsx`（CRUD + 模板模式 + 试播 + 推送弹窗 + 批量） |
+| 11. 文件索引 | `prd-admin/src/stores/dailyTipsStore.ts`（60s 轮询 + visibilitychange 自动刷新） |

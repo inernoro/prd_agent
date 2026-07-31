@@ -227,8 +227,7 @@ unblock deploy"——因为全量导入会用 TODO 占位覆盖线上真实密�
 用户反馈"以前 CDS 的一键导出可被其他平台复刻部署的配置功能不见了"。排查确认：
 `CdsPeer` / `DataMigration` 类型、`state.ts` 的 CRUD、`server.ts` 的 `/data-migrations/*`
 API label 都还在，但**路由处理器文件与前端 UI 早已丢失**——这就是"消失的功能"。本次
-在既有底座上补回，并明确做成**项目级移植**：`cds/src/routes/project-migration.ts` +
-`ProjectSettingsPage` 的「迁移」Tab。
+在既有底座上补回，并明确做成**项目级移植**：新增迁移路由 + 项目设置页的「迁移」Tab。
 
 ### 已落地（2026-06-23）
 
@@ -257,17 +256,13 @@ API label 都还在，但**路由处理器文件与前端 UI 早已丢失**—�
 
 ### 相关
 
-- `cds/src/routes/project-migration.ts` —— 路由处理器
-- `cds/web/src/pages/ProjectSettingsPage.tsx` —— `ProjectMigrationTab`
-- `cds/src/routes/branches.ts` —— `/api/export-config` `/api/import-config`（复刻底座）
-- `cds/src/routes/infra-backup.ts` —— mongodump/mongorestore（数据迁移底座）
 - [doc/design.cds.data-migration.md](./design.cds.data-migration.md) —— 原始数据迁移设计（本次校正"已落地"口径）
 
 ## CDS 过期分支预览页
 
 分支被删后预览页按墓碑原因分流（已合并、已废弃），本文记边界与等待镜像时的可观测性欠账。
 
-> 关联：`cds/src/index.ts`（buildBranchMergedPageHtml / buildBranchAbandonedPageHtml / serveBranchGonePage）、`cds/src/services/state.ts`（recordRemovedBranch）、`cds/src/routes/github-webhook.ts`
+> 关联：墓碑页渲染与分流在 CDS 主入口，墓碑记录写在状态存储，触发来自 GitHub webhook（文件见文末「实现来源」）
 
 ### 背景
 
@@ -288,7 +283,6 @@ PR 合并/关闭后分支被删，原先一律落「启动失败」错误页。�
 | 5 | 墓碑容量上限 200 | 超出按 removedAt 淘汰最旧；大流量多项目实例可能淘汰过快，可改为按项目分桶或调大上限 | 低 |
 | 6 | previewSlug 口径依赖 | 墓碑 key = `computePreviewSlug(branch, projectSlug)`，若未来预览 slug 公式再变（v4），历史墓碑 key 会对不上（与现有预览链接同此风险） | 低 |
 | 7 | 墓碑 merged 粘性的「无 prNumber raw delete」歧义（接受的权衡，**won't-fix**） | `recordRemovedBranch` 用 30min 时间窗 + prNumber 区分「合并后的自动删除」与「同名分支复用后删除」。但 GitHub 的 raw branch `delete` webhook **不带 prNumber**，在合并后 ~30min 窗口内与「快速复用再删」**本质不可区分**（无生命周期标识）。任何窗口都会顾此失彼：窗口短→破坏「合并→自动删除保持 merged」（每个合并 PR 都触发的常见路径，前轮 Codex/Bugbot 明确要求保护）；窗口长→「30min 内复用再删」仍显示「已合并」（本条 Bugbot 指出的罕见路径）。现取 30min **刻意偏向压倒性常见的合并自动删除**。彻底解需把被删分支的 `createdAt` 透传进 delete 路径的墓碑做确定性生命周期比对（更大改面，收益边际）。带 prNumber 的「不同 PR 关闭」已确定性处理，不受此歧义影响 | 低（接受） |
-
 | 10 | ~~停止但未删除的 PR 分支不走分流页~~（完成 2026-06-24） | PR closed 后分支**未被自动删除**时 `BranchEntry` 仍在、`stopped`，原先 `proxy.routeToBranch` 命中现存 entry 服务泛化停止页、走不到 `serveBranchGonePage`（Codex P2）。已修：`routeToBranch` 在 stopped 分支分支兜底前先查墓碑（`findRemovedBranchByIdentifier(branch.id)`），命中且为真实 HTML 导航则走新增 `onBranchGone` 回调 → `serveBranchGonePage` 分流到合并/放弃页。fail-safe（无墓碑照旧、asset 请求不拦），且置于 auto-wake/恢复副作用之前（不复活已合并分支）。守卫测试 `proxy-tombstone.test.ts` | 完成 |
 
 ### 极速版「等待 CI 镜像」可观测性（2026-06-24，关联但独立）
@@ -435,15 +429,10 @@ restart path"。
 
 ### 总览
 
-CDS 自建存活监控（`cds/src/services/uptime-monitor.ts` + `uptime-metrics.ts` + `routes/uptime.ts` +
-状态页 `cds/web/src/pages/StatusPage.tsx`）按固定间隔直连容器宿主端口探测每个分支服务，
-产出可用率柱条、故障事件时间线与状态页。
+CDS 自建存活监控按固定间隔直连容器宿主端口探测每个分支服务，产出可用率柱条、故障事件时间线与状态页。
 
 本台账记录首版复审暴露、且**有意延期**的边界项，防止下一次 session 无人记得。
 第一条是本次已缓解但未根治的核心债务：**探测口径假定所有对外服务都说 HTTP**。
-
-模块范围：`cds/src/services/uptime-monitor.ts`、`cds/src/services/uptime-metrics.ts`、
-`cds/src/routes/uptime.ts`、`cds/web/src/pages/StatusPage.tsx`、`cds/web/src/lib/statusView.ts`。
 
 ### 债务 1（核心）：非 HTTP 服务会被误判为故障
 
@@ -468,8 +457,7 @@ CDS 自建存活监控（`cds/src/services/uptime-monitor.ts` + `uptime-metrics.
 | 逃生阀 | 环境变量 `CDS_UPTIME_EXCLUDE` 排除名单，逗号/分号/空白分隔，单条支持 `*` 通配，按「目标 id / profile id / 分支 id / 项目 或 服务 / 展示名」任一维度匹配。命中者不探测、不计故障，状态页标「未纳入监控」并列出命中的规则 | 全部四类，但需要运维显式配置 |
 | 自动降级 | 目标**从未**成功答过 HTTP、且连续 `failureThreshold` 次拿到**协议层**错误（连接被重置 / 响应解析失败 / 非 HTTP 响应 / socket hang up）时，自动改按容器状态判定，状态页标「已自动降级 · 按容器状态判定」并写明原因。连接被拒、超时、5xx 一律**不**降级（那是真故障） | gRPC / 裸 TCP（端口开着但不说 HTTP）自动生效，零配置 |
 
-回归见 `cds/tests/services/uptime-monitor-cycle.test.ts` 的「排除名单（逃生阀）」与
-「非 HTTP 响应自动降级为容器状态判定」两组用例。
+回归用例两组：「排除名单（逃生阀）」与「非 HTTP 响应自动降级为容器状态判定」。
 
 #### 仍然欠着的（open）
 
@@ -508,20 +496,16 @@ CDS 自建存活监控（`cds/src/services/uptime-monitor.ts` + `uptime-metrics.
 
 ### 相关
 
-- 通知账本：`cds/src/services/notice-ledger.ts`、`cds/src/services/notice-outbound-map.ts`、
-  `cds/src/routes/notices.ts`；回归见 `cds/tests/services/notice-*.test.ts`、
-  `cds/tests/routes/notices-scope.test.ts`。
+- 通知账本：账本服务 + 外发映射 + 通知路由三件套，回归用例齐备；
 - 规则：`.claude/rules/concurrency-gate-discipline.md`（周期收敛 / 健康不变量）、
   `.claude/rules/expectation-management.md`（状态页的三态与等待反馈）。
-- 回归：`cds/tests/services/uptime-monitor-cycle.test.ts`、`cds/tests/services/uptime-metrics.test.ts`、
-  `cds/tests/web/status-page-view-state.test.ts`。
+- 回归：存活监控周期与指标聚合两套用例，
 
 ## CDS 绝对可视化一键部署 · 工程债务与待补台账
 
 onboarding→部署核心已商业级可用（经验收通过）；以下是诚实记录的已知边界与低边际 backlog，按价值排序，供后续按需取用——不在表里的都已落地。
 
 > **关联**：[design.cds.visual-deploy.md](./design.cds.visual-deploy.md)、[guide.cds.one-click-deploy.md](./guide.cds.one-click-deploy.md)
-
 
 ### 一、已知边界（设计取舍，当前不做）
 
@@ -640,8 +624,6 @@ master 的部署（本地 + 远端代理）都持 `BranchOperationCoordinator` �
 判活准、`allowHardTimeout` 可安全开启。**executor 节点不持该租约**，于是当前用 `allowHardTimeout:
 isMaster` 在 executor 上**关闭硬超时**，只做时间戳证据收敛 + 告警。
 
-模块范围：`cds/src/services/deploy-stuck-reconciler.ts`、`cds/src/index.ts`、`cds/src/executor/routes.ts`。
-
 ### 已知边界 / 待补（open）
 
 | # | 债务 | 说明 | 影响 |
@@ -652,8 +634,8 @@ isMaster` 在 executor 上**关闭硬超时**，只做时间戳证据收敛 + �
 
 给 executor 加「本地在途部署感知」，同时满足两条评审：
 
-1. `cds/src/executor/routes.ts` 维护一个模块级 `Set<branchId>` 记录正在跑的 `/exec/deploy`（deploy 开始时 add、finally 时 delete）。
-2. `cds/src/index.ts` executor 模式下，看门狗的 `hasActiveOperation` 改读这个 Set（而非 master 的 coordinator），并把 `allowHardTimeout` 在 executor 也设为 true。
+1. executor 侧维护一份「本机正在跑哪些分支的部署」的集合（部署开始时加入、结束时移除）。
+2. executor 模式下，看门狗判断「有没有在途操作」改读这份本机集合（而不是 master 的协调器），并允许硬超时。
 3. 效果：部署进行中 → `hasActiveOperation=true` → 整条跳过（不误杀，满足 #228）；部署结束/从未开始却卡死 → `hasActiveOperation=false` → 硬超时可收敛成 error（满足 #233）。
 
 未在 PR #940 内实施的原因：本沙箱无法端到端验证 executor 集群模式（CLAUDE §8.1 自测优先），不在安全可验证范围内加未测的集群管线代码。等真正启用 executor 集群、有可验证环境时按上方方案补。守卫：`reconcileStuckDeployStates` 的 `hasActiveOperation` / `allowHardTimeout` 单测已覆盖核心逻辑，补 executor 接线时复用。
@@ -673,8 +655,6 @@ isMaster` 在 executor 上**关闭硬超时**，只做时间戳证据收敛 + �
 
 ### 相关
 
-- `cds/src/services/deploy-stuck-reconciler.ts` —— 看门狗纯函数 SSOT
-- `cds/src/services/build-log-meta.ts` —— 构建历史元数据纯函数（commit/mode/触发器，已单测）
 - [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md) —— 极速版（CI 预构建）债务（同属 cluster/部署模式族）
 - PR #940 评审：Bugbot #228（关）、Codex #233（开）；#2-#4 见 PR #940 review threads
 
@@ -688,7 +668,6 @@ isMaster` 在 executor 上**关闭硬超时**，只做时间戳证据收敛 + �
 | 状态 | open（阻塞中，需 CDS 主机层介入；2026-06-19 发现） |
 | 关联 | `cds/src/services/worktree.ts`、`cds/cds-compose.yml`(api 服务 `dotnet build && dotnet run --no-build`)、分支 `claude/visual-agent-redesign-9vt3lm`、提交 `6a459698` |
 | 提出 | 图生视频成片下载修复 + 额度提醒推了 5 次都"不生效"，逐层排查后定位为 CDS 部署冻结，非代码问题 |
-
 
 ### 债务主题：构建成功 ≠ 运行的是新代码
 
@@ -780,3 +759,23 @@ grep -c LooksBinary prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs
 |---|------|------|------|----------|
 | 4 | done(2026-07-25) | ~~成员容器无独立日志入口~~ 已偿还：container-logs 端点接受 memberId（合成 svc 形状复用主容器同一条归档/掩码/事件链路），抽屉「日志 → 容器」chips 行追加全部副本成员容器（靛蓝区分，项目级/容器级同源） | — | — |
 | 16 | done(2026-07-24) | ~~大库整库克隆在共享宿主上无安全路径~~ **已根治：mongo 隔离改「专用隔离实例」通道**。终局取证（生命周期取证器 die exitCode=139）：共享 mongod 8.0.20 在本宿主上凡大批量写入随机 SIGSEGV（同 cgroup/辅助容器/WT cache 收紧/单并发/索引串行全部无效；纯读 dump 五次全程安全）。方案：dump 只读共享库落盘 → docker run 独立 mongo:7.0 实例（内存 1.5G 上限、CDS_REPLICA_ISO_MONGO_IMAGE 可覆盖）→ restore 写入专用实例 → 副本连接串覆写直连；快照删除 = 整容器移除。R9 终验闭环 PASS，共享库全程零事件 | 残留边界：共享 mongod 8.0.20 自身的大批量写不稳定性仍在（非克隆路径也可能触发，如未来某功能大批量写共享库）——建议排期升级 mongo 镜像版本（容器重建，需拍板） | — |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `cds/src/services/uptime-monitor.ts`、`cds/src/services/uptime-metrics.ts`、`cds/src/routes/uptime.ts`、`cds/web/src/pages/StatusPage.tsx`、`cds/web/src/lib/statusView.ts`、`cds/src/services/deploy-stuck-reconciler.ts`、`cds/src/index.ts`、`cds/src/executor/routes.ts` |
+| 相关 | `cds/tests/routes/notices-scope.test.ts`、`cds/tests/web/status-page-view-state.test.ts` |
+| 相关 | `cds/src/routes/project-migration.ts`（路由处理器） |
+| 相关 | `cds/web/src/pages/ProjectSettingsPage.tsx`（`ProjectMigrationTab`） |
+| 相关 | `cds/src/routes/branches.ts`（导出/导入配置，复刻底座） |
+| 相关 | `cds/src/routes/infra-backup.ts`（mongodump/mongorestore，数据迁移底座） |
+| 相关 | `cds/src/services/deploy-stuck-reconciler.ts`（看门狗纯函数 SSOT） |
+| 相关 | `cds/src/services/build-log-meta.ts`（构建历史元数据纯函数，已单测） |
+| 过期分支预览页 | `cds/src/index.ts`（墓碑页渲染与分流）、`cds/src/services/state.ts`（墓碑记录）、`cds/src/routes/github-webhook.ts`（触发） |
+| 存活监控回归 | `cds/tests/services/uptime-monitor-cycle.test.ts`、`cds/tests/services/uptime-metrics.test.ts` |
+| 通知账本 | `cds/src/services/notice-ledger.ts`、`cds/src/services/notice-outbound-map.ts`、`cds/src/routes/notices.ts` |
