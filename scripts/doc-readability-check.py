@@ -84,7 +84,7 @@ def doc_type(name: str) -> str:
 
 
 def parse_header(text: str) -> dict[str, str]:
-    """从第一屏抓导读三行。允许行首有 '> ' 引用符。"""
+    """从第一屏抓导读三行：H1 之后、第一个小节标题之前。允许行首有 '> ' 引用符。"""
     found: dict[str, str] = {}
     labels = list(ONE_LINER_ALIASES) + [f for f in FIELDS if f != "一句话"]
     in_fence = False
@@ -100,6 +100,9 @@ def parse_header(text: str) -> dict[str, str]:
         if line.startswith("# "):
             seen_h1 = True
             continue
+        # 正文一开张，导读就迟到了 —— 埋在某个小节里的三行，读者翻到时早已不需要它
+        if seen_h1 and re.match(r"^#{2,6} ", line):
+            break
         # 导读要写在标题下面读者才看得见；写在 H1 之前、或整篇没有 H1，都不算数
         if not seen_h1:
             continue
@@ -453,9 +456,17 @@ def check_skill(path: str) -> list[str]:
     name_match = re.search(r"^name\s*:(.*)$", fm, re.M)
     if not name_match:
         problems.append("frontmatter 缺 name")
-    elif not name_match.group(1).strip().strip("\"'"):
-        # 有键无值等于没有 —— 技能靠 name 被找到，空值找不到任何东西
-        problems.append("frontmatter 的 name 是空值")
+    else:
+        skill_name = name_match.group(1).strip().strip("\"'")
+        skill_dir = os.path.basename(os.path.dirname(path))
+        if not skill_name:
+            # 有键无值等于没有 —— 技能靠 name 被找到，空值找不到任何东西
+            problems.append("frontmatter 的 name 是空值")
+        elif not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", skill_name):
+            problems.append(f"frontmatter 的 name「{skill_name}」不是 kebab-case")
+        elif skill_name != skill_dir:
+            # name 就是技能的身份，对不上目录时调用方按目录名找不到它
+            problems.append(f"frontmatter 的 name「{skill_name}」与目录名「{skill_dir}」不一致")
     desc = _frontmatter_description(fm)
     if desc is None:
         problems.append("frontmatter 缺 description")

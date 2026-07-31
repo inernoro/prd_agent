@@ -126,6 +126,13 @@ check(any("缺「一句话」" in p for p in problems_for(
     "guide.demo.md", GOOD_HEADER.replace("# 示例 · 指南\n", ""))),
       "整篇没有 H1 时导读不算数")
 
+BURIED = ("# 示例 · 指南\n\n> **版本**：v1.0\n\n## 一、正文\n\n"
+          "**一句话**：导读被埋进了正文小节，读者翻到这儿的时候早就不需要它了。\n"
+          "**谁该读**：把导读塞进某一节的人。\n"
+          "**读完能做什么**：知道导读必须在第一个小节标题之前。\n")
+check(any("缺「一句话」" in p for p in problems_for("guide.demo.md", BURIED)),
+      "导读埋在第一个小节标题之后不算数（正文一开张导读就迟到了）")
+
 print("[2] 周报走定期刊物口径")
 
 WEEKLY = """# 周报 2026-W99 (2026-07-20 ~ 2026-07-26)
@@ -319,9 +326,27 @@ check(checker.check_rule_text(RULE_BEFORE_H1) == ["缺「一句话」", "缺「�
 with tempfile.TemporaryDirectory() as tmp:
     empty_name = os.path.join(tmp, "SKILL.md")
     with open(empty_name, "w", encoding="utf-8") as fh:
-        fh.write("---\nname:\ndescription: 这是一段足够长的描述，说清了这个技能什么时候该被触发。\n---\n")
+        fh.write("---\nname:\ndescription: 这是一段足够长的描述，说清了这个技能在什么场景下会被触发、以及它会产出什么东西。\n---\n")
     check(any("空值" in p for p in checker.check_skill(empty_name)),
           "frontmatter 的 name 有键无值被抓出（空名字找不到任何技能）")
+
+with tempfile.TemporaryDirectory() as tmp:
+    skill_dir = os.path.join(tmp, "demo-skill")
+    os.makedirs(skill_dir)
+    wrong_name = os.path.join(skill_dir, "SKILL.md")
+    body = "---\nname: %s\ndescription: 这是一段足够长的描述，说清了这个技能在什么场景下会被触发、以及它会产出什么东西。\n---\n"
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write(body % "unrelated-skill")
+    check(any("与目录名" in p for p in checker.check_skill(wrong_name)),
+          "name 与目录名对不上被抓出（name 就是技能的身份）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write(body % "Demo_Skill")
+    check(any("kebab-case" in p for p in checker.check_skill(wrong_name)),
+          "name 不是 kebab-case 被抓出")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write(body % "demo-skill")
+    check(not checker.check_skill(wrong_name),
+          "name 与目录一致且是 kebab-case 时放行（判据没有误伤）")
 
 print("[4] 报告双产物的那句话有人盯着")
 
