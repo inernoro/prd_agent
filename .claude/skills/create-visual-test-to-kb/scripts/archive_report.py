@@ -736,6 +736,7 @@ def _daily_fact_signals(values, body):
         "product_risk": product_risk,
         "root_product_failure": root_product_failure,
         "root_nonblocking_risk": root_nonblocking_risk,
+        "root_coverage_gap": root_coverage_gap,
         "root_conclusions": root_conclusions,
         "core_failure": core_failure,
         "chain_failure": chain_failure,
@@ -810,10 +811,10 @@ def _daily_conclusion_contract_errors(verdict, body):
         errors.append("[事实一致性] 判定性质为硬门禁失败，但根因链结论没有「硬门禁失败」")
     if nature == "覆盖不足" and not facts["incomplete"]:
         errors.append("[事实一致性] 判定性质为覆盖不足，但验收完整性和覆盖缺口没有缺口事实")
-    if nature == "非阻断风险" and not (
-        facts["nonblocking_product_risk"] or facts["root_nonblocking_risk"]
-    ):
-        errors.append("[事实一致性] 判定性质为非阻断风险，但缺陷清单或根因链没有对应事实")
+    if nature == "覆盖不足" and not facts["root_coverage_gap"]:
+        errors.append("[事实一致性] 判定性质为覆盖不足，但根因链结论没有「覆盖缺口」")
+    if nature == "非阻断风险" and not facts["root_nonblocking_risk"]:
+        errors.append("[事实一致性] 判定性质为非阻断风险，但根因链结论没有「非阻断风险」")
     blocking_failure = bool(
         facts["blocking_product_failure"]
         or facts["core_failure"]

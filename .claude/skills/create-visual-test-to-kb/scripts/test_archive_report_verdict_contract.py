@@ -102,6 +102,14 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         self.assertEqual([], errors)
 
+    def test_coverage_nature_requires_matching_root_conclusion(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 覆盖缺口 | 创建冻结预览后复测 |",
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 通过 | 创建冻结预览后复测 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("根因链结论没有「覆盖缺口」" in error for error in errors))
+
     def test_product_failure_can_use_fail(self):
         body = report_body("产品失败").replace(
             "未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P1 产品缺陷"
@@ -135,6 +143,16 @@ class DailyVerdictContractTests(unittest.TestCase):
 """
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
+
+    def test_nonblocking_nature_requires_matching_root_conclusion(self):
+        body = report_body("非阻断风险").replace(
+            "未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P2 产品缺陷"
+        ).replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 非阻断风险 | 创建冻结预览后复测 |",
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 通过 | 创建冻结预览后复测 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("根因链结论没有「非阻断风险」" in error for error in errors))
 
     def test_p1_in_severity_vector_cannot_be_conditional(self):
         body = report_body("覆盖不足").replace(
