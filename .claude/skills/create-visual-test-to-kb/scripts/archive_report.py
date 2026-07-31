@@ -724,6 +724,7 @@ def _daily_fact_signals(values, body):
         if len(row) == len(DAILY_ROOT_CAUSE_FIELDS)
     }
     core_failure = core_case_result == "失败"
+    core_unexecuted = core_case_result == "未执行"
     root_core_failure = "核心用例失败" in root_conclusions
     chain_failure = "验收链路失败" in root_conclusions
     hard_gate_failure = "硬门禁失败" in root_conclusions
@@ -733,7 +734,8 @@ def _daily_fact_signals(values, body):
     coverage_gap_count = _coverage_gap_count(body)
     completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)
     incomplete = bool(
-        coverage_gap_count > 0
+        core_unexecuted
+        or coverage_gap_count > 0
         or re.search(
             r"不完整|无法确认|未覆盖|覆盖不足|覆盖缺口|\d+\s*项?缺口",
             completeness_with_zero_gaps_removed,
@@ -754,6 +756,7 @@ def _daily_fact_signals(values, body):
         "core_case_results": core_case_results,
         "core_case_result": core_case_result,
         "core_failure": core_failure,
+        "core_unexecuted": core_unexecuted,
         "root_core_failure": root_core_failure,
         "chain_failure": chain_failure,
         "hard_gate_failure": hard_gate_failure,
@@ -823,6 +826,8 @@ def _daily_conclusion_contract_errors(verdict, body):
         errors.append(
             f"[事实一致性] 验收完整性声称完整，但覆盖缺口表仍有 {facts['coverage_gap_count']} 项"
         )
+    if facts["claims_complete"] and facts["core_unexecuted"]:
+        errors.append("[事实一致性] 核心用例=未执行时，验收完整性不能声称完整")
     product_failure = bool(
         facts["blocking_product_failure"] and facts["root_product_failure"]
     )
