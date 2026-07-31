@@ -253,7 +253,7 @@
 
 | 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|----------|
-| 生图模型服务不稳定 | 中 | 高 | 模型池故障转移（design.platform.model-pool.md） |
+| 生图模型服务不稳定 | 中 | 高 | 模型池故障转移（[design.platform.model-pool.md](./design.platform.model-pool.md)） |
 | 大量并发生图消耗 API 额度 | 中 | 中 | Run 队列 + 速率限制 |
 | COS 存储成本随资产增长 | 低 | 中 | 定期清理孤立资产 + 用户配额 |
 | 多图组合语义理解偏差 | 中 | 低 | Clarify API 反问澄清 + Plan API 优化 prompt |

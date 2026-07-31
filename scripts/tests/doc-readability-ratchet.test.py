@@ -158,6 +158,28 @@ check([p for p in problems_for("report.cds.some-audit.md", WEEKLY_ONE_LINER) if 
       "非周报的 report 仍要三行（豁免只给 report.YYYY-WNN，不给整个前缀）")
 check([p for p in problems_for("report.2026-W30-retro.md", WEEKLY_ONE_LINER) if "谁该读" in p],
       "report.2026-W30-retro 不吃周报豁免（正则要有尾锚，不能前缀匹配）")
+ALIAS_ABUSE = ("# 示例 · 指南\n\n**本周一句话**：非周报文档拿周报的别名顶替标准字段，应当判缺。\n"
+               "**谁该读**：验证判据的人。\n**读完能做什么**：确认别名不外溢。\n")
+check(any("缺「一句话」" in p for p in problems_for("guide.demo.md", ALIAS_ABUSE)),
+      "「本周一句话」这个别名只给周报（别的文档拿它顶替标准字段不算数）")
+LONG_ONE = "判据额度验证用的长句子，" * 11
+check(any("超过 100 字上限" in p for p in problems_for(
+        "report.cds.audit.md",
+        f"# t\n\n**一句话**：{LONG_ONE}\n**谁该读**：验证的人。\n**读完能做什么**：确认额度。\n")),
+      "140 字额度只给周报文件名，非周报仍按 100 字判")
+check(not [p for p in problems_for("report.2026-W30.md", f"# t\n\n**本周一句话**：{LONG_ONE}\n")
+           if "上限" in p],
+      "周报本身仍享受 140 字额度（没误伤）")
+
+KNOWN_ONE = {"rule.doc.naming.md"}
+check(len(checker.find_bare_refs("# t\n\n详见 rule.doc.naming.md 里的命名规则。\n", KNOWN_ONE)) == 1,
+      "连反引号都没加的裸文档名也算裸引用（它一样点不开）")
+check(not checker.find_bare_refs("# t\n\n详见 [命名规则](./rule.doc.naming.md)。\n", KNOWN_ONE),
+      "已经是链接的不误报")
+check(not checker.find_bare_refs("# t\n\n```text\n详见 rule.doc.naming.md\n```\n", KNOWN_ONE),
+      "代码块里的示例不误报")
+check(not checker.find_bare_refs("# t\n\n详见 rule.does-not-exist.md。\n", KNOWN_ONE),
+      "指向不存在文档的名字不算裸引用（命名规则里的反面示范不被误伤）")
 
 with tempfile.TemporaryDirectory() as tmp:
     doc_dir = os.path.join(tmp, "doc")

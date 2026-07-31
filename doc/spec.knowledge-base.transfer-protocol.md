@@ -95,7 +95,7 @@
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/api/peer-sync/handshake` | 配对握手（校验配对码，建互信），见 design.platform.peer-sync.md |
+| POST | `/api/peer-sync/handshake` | 配对握手（校验配对码，建互信），见 [design.platform.peer-sync.md](./design.platform.peer-sync.md) |
 | GET  | `/api/peer-sync/ping` | 连通 + 验签自检 |
 | GET  | `/api/peer-sync/capabilities` | 本节点支持的资源类型 + schema 版本 |
 | POST | `/api/peer-sync/resources/{type}/signature` | 取条目内容签名（廉价变更检测，不传正文） |

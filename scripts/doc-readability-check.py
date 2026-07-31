@@ -75,13 +75,20 @@ VACUOUS = ("相关内容", "有关内容", "进行说明", "做了介绍", "本�
 ONE_LINER_MAX = 100
 ONE_LINER_MIN = 20
 # 周报的「本周一句话」要向老板交代业务进展 + 关键数字，放宽到 140 字。
-ONE_LINER_MAX_BY_TYPE = {"report": 140}
+# 只给周报文件名，不给 report. 前缀下的其它文档。
+WEEKLY_ONE_LINER_MAX = 140
 # 谁该读的长度下限：低于此长度基本等于没写（如「所有人」）
 AUDIENCE_MIN = 8
 
 # 行内代码里出现的 .md 文件名。只有当它指向 doc/ 下真实存在的文档时才算「本该可点的裸引用」——
 # 命名规则里那些「错误示范」文件名并不存在，不会被误伤。
 BARE_REF = re.compile(r"`([^`\n]*?([\w][\w.-]*\.md))`")
+# 连反引号都没加的裸名（详见 rule.doc.naming.md）同样点不开 —— 只查反引号里的，
+# 等于把最朴素的那种写法放过去。链接与行内代码在扫描前先剔掉，避免误伤。
+PROSE_REF = re.compile(
+    r"(?<![\w./`\-\[(])"
+    r"((?:spec|design|plan|rule|guide|report|debt)\.[\w.-]*\.md)"
+    r"(?![\w`)\]])")
 # 行内链接：目标后面可以跟一个 "标题"（单双引号或圆括号三种写法都合法）。
 # 只认最朴素那一种，等于给「带标题的死链」开了一道后门。
 MD_LINK = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\"|\s+'[^']*'|\s+\([^)]*\))?\s*\)")
@@ -177,10 +184,14 @@ def header_lines(text: str):
         yield core
 
 
-def parse_header(text: str) -> dict[str, str]:
-    """从第一屏抓导读三行：H1 之后、任何正文之前。允许行首有 '> ' 引用符。"""
+def parse_header(text: str, weekly: bool = False) -> dict[str, str]:
+    """从第一屏抓导读三行：H1 之后、任何正文之前。允许行首有 '> ' 引用符。
+
+    weekly=True 时才认「本周一句话」这个别名 —— 它是周报的既有写法，
+    别的文档拿它顶替「一句话」等于绕过标准字段。
+    """
     found: dict[str, str] = {}
-    labels = list(ONE_LINER_ALIASES) + [f for f in FIELDS if f != "一句话"]
+    labels = list(ONE_LINER_ALIASES if weekly else {"一句话"}) + [f for f in FIELDS if f != "一句话"]
     for line in header_lines(text):
         for label in labels:
             m = re.match(rf"\*\*{label}\*\*\s*[：:]\s*(.+)$", line)
@@ -196,7 +207,8 @@ def check_file(path: str) -> list[str]:
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
 
-    header = parse_header(text)
+    weekly = bool(WEEKLY_REPORT.match(name))
+    header = parse_header(text, weekly=weekly)
     problems: list[str] = []
 
     for field in required_fields(name):
@@ -205,7 +217,7 @@ def check_file(path: str) -> list[str]:
 
     one_liner = header.get("一句话", "")
     if one_liner:
-        limit = ONE_LINER_MAX_BY_TYPE.get(doc_type(name), ONE_LINER_MAX)
+        limit = WEEKLY_ONE_LINER_MAX if weekly else ONE_LINER_MAX
         if len(one_liner) > limit:
             problems.append(f"「一句话」{len(one_liner)} 字，超过 {limit} 字上限")
         elif len(one_liner) < ONE_LINER_MIN:
@@ -410,6 +422,14 @@ def find_bare_refs(text: str, known: set[str]) -> list[tuple[int, str]]:
         for m in BARE_REF.finditer(line):
             if m.group(2) in known and not _inside(m.span(), spans):
                 hits.append((lineno, m.group(1)))
+        # 连反引号都没有的裸名同样点不开。先把链接与行内代码抠掉再找，
+        # 免得把「已经是链接」和「反引号里的」重复计一遍。
+        masked = re.sub(r"`[^`]*`", lambda mm: " " * len(mm.group(0)), line)
+        for a, b in spans:
+            masked = masked[:a] + " " * (b - a) + masked[b:]
+        for m in PROSE_REF.finditer(masked):
+            if m.group(1) in known:
+                hits.append((lineno, m.group(1)))
     return hits
 
 
@@ -457,7 +477,18 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
             changed += 1
             return f"[{m.group(1)}](./{m.group(2)})"
 
-        out.append(BARE_REF.sub(repl, raw))
+        fixed = BARE_REF.sub(repl, raw)
+
+        # 裸名（没加反引号的）也一并改写。用改写后的行重算 span，
+        # 免得把刚生成的链接又当成裸名改一遍。
+        def repl_prose(m: re.Match[str]) -> str:
+            nonlocal changed
+            if m.group(1) not in known or _inside(m.span(), link_spans(fixed)):
+                return m.group(0)
+            changed += 1
+            return f"[{m.group(1)}](./{m.group(1)})"
+
+        out.append(PROSE_REF.sub(repl_prose, fixed))
     return "".join(out), changed
 
 

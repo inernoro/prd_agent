@@ -30,7 +30,7 @@
 |---|---|---|---|
 | #1-old | ASR 模型池绑定手动 | caller fallback 链：`video-agent.video-to-text::asr` → `video-agent.v2d.transcribe::asr` → `document-store.subtitle::asr`，任一绑定 doubao-asr-stream 即可 | 错误信息明确列三个 caller 诊断 |
 | #2-old | maxItems 默认 4 硬编码 / 与 count 不联动 | 默认空 = 处理全部上游条目，模板移除 maxItems 配置 | iter 2 实测处理 5 条全转写 |
-| #3-old | 缺 LlmRequestContext | hook 提炼前 `BeginScope`，UserId 从 `__triggeredBy` 取 | rule.platform.llm-gateway.md 合规 |
+| #3-old | 缺 LlmRequestContext | hook 提炼前 `BeginScope`，UserId 从 `__triggeredBy` 取 | [rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md) 合规 |
 | #4-old | rich-text body 空白破图 | body 为空时降级渲染 `PosterAdPageView` 全 bleed 视图 | feed-card 也复用此 fallback 模式 |
 | #5-old | ffmpeg 缺失被误判 | `EnsureFfmpegAvailableAsync` 入口探测 + 平台特定安装指引 | 错误信息含 apt/brew/choco 三种方式 |
 | #6-old | Play 后无返回 | 全屏视频左上角「返回详情」按钮重置 hasPlayed | rich-text 视图体验闭环 |

@@ -247,7 +247,7 @@ MAP SSO 会话）原样到期，用户需重登一次才进入 7 天滑动窗口
 |----|--------|---------|------|---------|------|------|
 | 2026-06-18-ai-provision-endpoint | medium | 2026-06-18 | AI 无人值守自助签发 sk-ak 需一个【只接受 AiAccessKey 方案】的专用端点(单身份无歧义)。曾在 AgentApiKeysController 叠 Bearer+AiAccessKey 自测,但同请求双凭据时 FindFirst(sub) 选错用户(Bugbot Medium),已撤回(AiAccessKey 鉴权器本身是既有设计,未动) | 需 AI/自动化无人值守为指定用户签发 sk-ak 时 | open | 新建 POST /api/agent-api-keys/ai-provision，[Authorize(AuthenticationSchemes="AiAccessKey")] |
 | 2026-06-18-kb-entries-pagination | low | 2026-06-18 | knowledge_base_list_entries 只有 keyword+limit(上限500),无 cursor/page；超 500 条非文件夹条目的大库无法经 MCP 全量遍历 | 出现 >500 条目的知识库且需 MCP 全量读取时 | open | 加 cursor/page 参数 + tool schema 同步;多数库 <500 条,MVP 影响低 |
-| 2026-06-16-stdio-and-oauth | low | 2026-06-16 | v1 只做远程 Streamable HTTP + Bearer 鉴权；本地 stdio 代理包、OAuth 2.0 授权流、`resources`/`prompts` 能力均未做 | 需兼容仅支持本地 stdio 的旧客户端，或需要标准 OAuth 授权而非长效 Bearer 时 | open | 见 design.platform.map-mcp-connector.md 第三节「非目标」与第九节 v2 |
+| 2026-06-16-stdio-and-oauth | low | 2026-06-16 | v1 只做远程 Streamable HTTP + Bearer 鉴权；本地 stdio 代理包、OAuth 2.0 授权流、`resources`/`prompts` 能力均未做 | 需兼容仅支持本地 stdio 的旧客户端，或需要标准 OAuth 授权而非长效 Bearer 时 | open | 见 [design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) 第三节「非目标」与第九节 v2 |
 
 ### 已还的债务（归档）
 
