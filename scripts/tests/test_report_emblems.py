@@ -150,22 +150,41 @@ def check_file(label, rel, expected_kinds):
         _MASTHEAD_CHECKED.add(rel)
 
 
-def _masthead_block(text):
-    """截出报头那一段（`<header class="masthead">` 或 `<div class="masthead">` 到其闭合标签）。
+def _close_at(text, m):
+    """给定一个开标签的 match，按同名标签配对计数返回该元素的 [起, 止)。
 
-    两种产物的标签名不同（模板用 header，验收生成器用 div），故按同名标签配对计数，
-    不能简单找第一个 `</header>`——报头里若嵌了同名标签会截错。
+    不能简单找下一个 `</div>`——元素里嵌了同名标签就会截错（报头里正好嵌着若干 div）。
+    配不上对返回 None，交给调用方显式判红，不静默当成「没问题」。
     """
-    m = re.search(r'<(header|div)\b[^>]*class="[^"]*\bmasthead\b[^"]*"[^>]*>', text)
-    if not m:
-        return None
     tag = m.group(1)
     depth, i = 1, m.end()
     pat = re.compile(r'</?%s\b' % tag)
     while depth and (nxt := pat.search(text, i)):
         depth += -1 if nxt.group(0).startswith("</") else 1
         i = nxt.end()
-    return text[m.start():i] if depth == 0 else None
+    return (m.start(), i) if depth == 0 else None
+
+
+def _masthead_block(text):
+    """截出报头那一段（`<header class="masthead">` 或 `<div class="masthead">` 到其闭合标签）。
+
+    两种产物的标签名不同（模板用 header，验收生成器用 div），故走同名标签配对。
+    """
+    m = re.search(r'<(header|div)\b[^>]*class="[^"]*\bmasthead\b[^"]*"[^>]*>', text)
+    if not m:
+        return None
+    span = _close_at(text, m)
+    return text[span[0]:span[1]] if span else None
+
+
+def _emblem_spans(block):
+    """返回报头内所有 `.emblem` 包裹元素的 [起, 止) 区间（相对 block）。"""
+    spans = []
+    for m in re.finditer(r'<(div|span)\b[^>]*class="[^"]*\bemblem\b[^"]*"[^>]*>', block):
+        span = _close_at(block, m)
+        if span:
+            spans.append(span)
+    return spans
 
 
 def check_emblem_in_masthead(label, rel, text, expected_kinds):
@@ -184,6 +203,12 @@ def check_emblem_in_masthead(label, rel, text, expected_kinds):
         fail(f"{label}({rel}): 找不到成对的 masthead 报头标签——"
              f"结构变了？守卫无法确认刊徽是否长在报头里")
         return
+    # 报头内的 `.emblem` 包裹元素区间。所有 CSS（定位/尺寸/透明度/层级）都挂在
+    # `.emblem` 上，SVG 本身一条样式都没有——所以「在报头里」还不够，必须**在包裹元素里**。
+    # 只比对报头计数的话，把 SVG 从 wrapper 里挪出来当报头的兄弟节点，
+    # `n_head == n_all` 依然成立、守卫照样绿，而 SVG 会退化成 120x120 的文档流 flex
+    # 子项把报头撑歪。上一轮我只把范围收到「报头」，还差一层。
+    spans = _emblem_spans(block)
     for kind in sorted(expected_kinds):
         n_all = text.count(f'data-emblem="{kind}"')
         n_head = block.count(f'data-emblem="{kind}"')
@@ -191,6 +216,12 @@ def check_emblem_in_masthead(label, rel, text, expected_kinds):
             fail(f"{label}({rel}): 刊徽 {kind} 有 {n_all - n_head} 处不在 masthead 报头内——"
                  f"搬出报头后绝对定位会相对别的祖先解析（模板），"
                  f"或 `.masthead .emblem` 选择器整条失效（验收生成器）")
+            continue
+        n_wrap = sum(block[a:b].count(f'data-emblem="{kind}"') for a, b in spans)
+        if n_wrap != n_all:
+            fail(f"{label}({rel}): 刊徽 {kind} 有 {n_all - n_wrap} 处虽在报头内、"
+                 f"但不在 `.emblem` 包裹元素里——SVG 自身没有任何样式，"
+                 f"脱离 wrapper 后会退化成 120x120 的文档流 flex 子项把报头撑歪")
 
 
 def check_svg_integrity(label, rel, kind, text):
@@ -278,6 +309,11 @@ def check_flavor_wiring():
     spec = importlib.util.spec_from_file_location("archive_report_for_emblem_guard", path)
     mod = importlib.util.module_from_spec(spec)
     saved_argv, sys.argv = sys.argv, ["archive_report"]
+    # 禁止写 .pyc：Python 的字节码缓存按 (mtime 秒, 文件大小) 判新旧，
+    # 而「改一处等长的标记再改回来」恰好两项都不变——缓存被判定有效，
+    # 导入到的是上一次的旧字节码。红绿自测时这会让「已恢复」的基线仍报红、
+    # 或更糟：让一次本该变红的验证悄悄判绿。守卫必须读盘上的真实源码。
+    saved_dwb, sys.dont_write_bytecode = sys.dont_write_bytecode, True
     try:
         spec.loader.exec_module(mod)
     except Exception as e:                      # 导入失败要显式红，不能静默跳过
@@ -285,6 +321,7 @@ def check_flavor_wiring():
         return
     finally:
         sys.argv = saved_argv
+        sys.dont_write_bytecode = saved_dwb
 
     label = "验收/巡检"
     md = "# 刊徽接线自测\n\n## 目标\n验证 flavor 与刊徽的映射。\n\n## 结论\n通过。\n"
