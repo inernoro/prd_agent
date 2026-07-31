@@ -49,7 +49,7 @@ export function buildWidgetScript(
     .cds-ai-badge-stop:hover{background:rgba(248,81,73,0.3);border-color:#f85149;color:#fff}
     .cds-ai-badge-stop:disabled{opacity:0.5;cursor:wait}
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
-    #cds-widget{position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
+    #cds-widget{position:fixed;right:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
     #cds-widget *{box-sizing:border-box}
     #cds-widget .cds-badge{position:relative;display:inline-flex;flex-direction:column;align-items:stretch;padding:5px 10px;border-radius:8px;background:rgba(35,134,54,0.85);backdrop-filter:blur(8px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:grab;line-height:1;overflow:hidden;transition:background .22s ease,border-color .22s ease,box-shadow .22s ease}
     #cds-widget .cds-badge:active{cursor:grabbing}
@@ -83,6 +83,12 @@ export function buildWidgetScript(
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
     #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:260px;width:max-content;max-width:min(480px,calc(100vw - 40px));overflow:hidden}
+    @media(max-width:640px){
+      #cds-widget{top:12px;right:12px;bottom:auto;left:auto;max-width:calc(100vw - 24px)}
+      #cds-widget:not(.cds-widget-expanded) .cds-badge{padding:3px}
+      #cds-widget:not(.cds-widget-expanded) .cds-badge-main>:not([data-action="toggle"]){display:none}
+      #cds-widget:not(.cds-widget-expanded) button[data-action="toggle"]{padding:3px;opacity:1}
+    }
     #cds-widget .cds-sync-panel{margin-bottom:8px;padding:7px 8px 8px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(148,163,184,0.16)}
     #cds-widget .cds-sync-panel.done{background:rgba(63,185,80,0.06);border-color:rgba(63,185,80,0.26)}
     #cds-widget .cds-sync-panel.error{background:rgba(248,81,73,0.06);border-color:rgba(248,81,73,0.26)}
@@ -485,15 +491,23 @@ export function buildWidgetScript(
   document.body.appendChild(root);
 
   // ── Drag support ──
-  function defaultWidgetBottom(){
-    return window.innerWidth<=640?88:12;
+  function getWidgetPosition(){
+    if(pos)return pos;
+    var rect=root.getBoundingClientRect();
+    return {x:rect.left,y:Math.max(0,window.innerHeight-rect.bottom)};
   }
 
-  var pos={x:12,y:defaultWidgetBottom()};
+  var pos=null;
   var dragState=null;
 
   function onMouseDown(e){
     if(e.target.closest('button'))return;
+    var current=getWidgetPosition();
+    pos={x:current.x,y:current.y};
+    root.style.right='auto';
+    root.style.top='auto';
+    root.style.left=pos.x+'px';
+    root.style.bottom=pos.y+'px';
     dragState={mx:e.clientX,my:e.clientY,px:pos.x,py:pos.y};
     e.preventDefault();
   }
@@ -646,8 +660,11 @@ export function buildWidgetScript(
     h+='</div>';
 
     root.innerHTML=h;
-    root.style.left=pos.x+'px';
-    root.style.bottom=pos.y+'px';
+    root.classList.toggle('cds-widget-expanded',expanded);
+    if(pos){
+      root.style.left=pos.x+'px';
+      root.style.bottom=pos.y+'px';
+    }
 
     // Attach drag to badge bar
     var badge=root.querySelector('.cds-badge');
@@ -1026,8 +1043,9 @@ export function buildWidgetScript(
       panel.setAttribute('data-page-agent-ignore','');
       document.body.appendChild(panel);
     }
-    panel.style.left=pos.x+'px';
-    panel.style.bottom=(pos.y+42)+'px';
+    var widgetPos=getWidgetPosition();
+    panel.style.left=widgetPos.x+'px';
+    panel.style.bottom=(widgetPos.y+42)+'px';
 
     var h='<div class="ops-header">';
     h+='<span class="ops-header-dot"></span>';
@@ -1658,7 +1676,8 @@ export function buildWidgetScript(
     panel.id='cds-handshake-request';
     panel.setAttribute('data-page-agent-ignore','');
     // 保持与 cds-nav-request 一致的深色科技风
-    panel.style.cssText='position:fixed;left:'+pos.x+'px;bottom:'+(pos.y+42)+'px;z-index:99999;min-width:280px;max-width:400px;padding:12px 14px;border-radius:10px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 4px 20px rgba(96,165,250,0.25);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:12px;color:#e2e8f0;animation:cds-ai-border-glow 2.5s ease-in-out infinite';
+    var widgetPos=getWidgetPosition();
+    panel.style.cssText='position:fixed;left:'+widgetPos.x+'px;bottom:'+(widgetPos.y+42)+'px;z-index:99999;min-width:280px;max-width:400px;padding:12px 14px;border-radius:10px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 4px 20px rgba(96,165,250,0.25);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:12px;color:#e2e8f0;animation:cds-ai-border-glow 2.5s ease-in-out infinite';
 
     var h='<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">';
     h+='<span style="width:8px;height:8px;border-radius:50%;background:#60a5fa;box-shadow:0 0 8px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite"></span>';
@@ -1719,7 +1738,8 @@ export function buildWidgetScript(
   function showHandshakeToast(text,color){
     var t=document.createElement('div');
     t.setAttribute('data-page-agent-ignore','');
-    t.style.cssText='position:fixed;left:'+pos.x+'px;bottom:'+(pos.y+42)+'px;z-index:99999;padding:8px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid '+color+';box-shadow:0 4px 20px rgba(0,0,0,0.4);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;font-weight:600;color:'+color+'';
+    var widgetPos=getWidgetPosition();
+    t.style.cssText='position:fixed;left:'+widgetPos.x+'px;bottom:'+(widgetPos.y+42)+'px;z-index:99999;padding:8px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid '+color+';box-shadow:0 4px 20px rgba(0,0,0,0.4);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;font-weight:600;color:'+color+'';
     t.innerText=text;
     document.body.appendChild(t);
     setTimeout(function(){t.style.opacity='0';t.style.transition='opacity 0.3s';setTimeout(function(){t.remove();},300);},2500);
@@ -1733,7 +1753,8 @@ export function buildWidgetScript(
     var panel=document.createElement('div');
     panel.id='cds-nav-request';
     panel.setAttribute('data-page-agent-ignore','');
-    panel.style.cssText='position:fixed;left:'+pos.x+'px;bottom:'+(pos.y+42)+'px;z-index:99999;min-width:260px;max-width:380px;padding:12px 14px;border-radius:10px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 4px 20px rgba(96,165,250,0.25);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:12px;color:#e2e8f0;animation:cds-ai-border-glow 2.5s ease-in-out infinite';
+    var widgetPos=getWidgetPosition();
+    panel.style.cssText='position:fixed;left:'+widgetPos.x+'px;bottom:'+(widgetPos.y+42)+'px;z-index:99999;min-width:260px;max-width:380px;padding:12px 14px;border-radius:10px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 4px 20px rgba(96,165,250,0.25);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:12px;color:#e2e8f0;animation:cds-ai-border-glow 2.5s ease-in-out infinite';
 
     var h='<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">';
     h+='<span style="width:8px;height:8px;border-radius:50%;background:#60a5fa;box-shadow:0 0 8px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite"></span>';
