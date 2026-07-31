@@ -91,6 +91,10 @@ def load_registered_dimensions():
         return None
     return out
 
+# 哪些产物已经做过「刊徽长在报头里」的判定。收尾时比对 EXPECTED，
+# 防止某个产物两条路径都没覆盖到却静默判绿（形状 2：建到一半的接线）。
+_MASTHEAD_CHECKED = set()
+
 _REPORTED = object()          # px() 的哨兵：该项已单独报过，调用方不要重复叠报
 failures = []
 
@@ -136,6 +140,57 @@ def check_file(label, rel, expected_kinds):
     # 它的 mask/clipPath 引用坏掉、id 撞车、引外部资源，一样会影响这份报告。
     for kind in sorted(found):
         check_svg_integrity(label, rel, kind, text)
+
+    # 报头归属只能在**真正的标记文本**上判：模板文件本身就是标记，直接查；
+    # 验收生成器的 SVG 存在模块级常量里、靠 `{emblem_svg}` 注入报头，源码里那份常量
+    # 天然不在 masthead 内——对它做源码级判定必然误报（我的第一版就这么写，基线直接变红），
+    # 得查渲染产物（由 check_flavor_wiring 渲染两种 flavor 后各查一次）。
+    if rel.endswith(".html"):
+        check_emblem_in_masthead(label, rel, text, expected_kinds)
+        _MASTHEAD_CHECKED.add(rel)
+
+
+def _masthead_block(text):
+    """截出报头那一段（`<header class="masthead">` 或 `<div class="masthead">` 到其闭合标签）。
+
+    两种产物的标签名不同（模板用 header，验收生成器用 div），故按同名标签配对计数，
+    不能简单找第一个 `</header>`——报头里若嵌了同名标签会截错。
+    """
+    m = re.search(r'<(header|div)\b[^>]*class="[^"]*\bmasthead\b[^"]*"[^>]*>', text)
+    if not m:
+        return None
+    tag = m.group(1)
+    depth, i = 1, m.end()
+    pat = re.compile(r'</?%s\b' % tag)
+    while depth and (nxt := pat.search(text, i)):
+        depth += -1 if nxt.group(0).startswith("</") else 1
+        i = nxt.end()
+    return text[m.start():i] if depth == 0 else None
+
+
+def check_emblem_in_masthead(label, rel, text, expected_kinds):
+    """刊徽必须**长在报头里**，不只是「文件里某处有」。
+
+    `data-emblem` 在整个文件里搜得到，不代表它挂在 `.masthead` 下：把那个 div 搬到
+    报头外面，模板的绝对定位会改为相对别的祖先解析（水印跑到页面别处），
+    验收生成器更彻底——它的选择器是 `.masthead .emblem`，搬出去后整条样式直接不生效，
+    刊徽变成一个 120px 的实心块挤进正文。而只按全文匹配的判据对这两种都判绿。
+
+    这与「只查 .emblem 自己的声明、不查它成立所依赖的上下文」是同一个形状：
+    判据比它该管的范围窄（形状 1）。
+    """
+    block = _masthead_block(text)
+    if block is None:
+        fail(f"{label}({rel}): 找不到成对的 masthead 报头标签——"
+             f"结构变了？守卫无法确认刊徽是否长在报头里")
+        return
+    for kind in sorted(expected_kinds):
+        n_all = text.count(f'data-emblem="{kind}"')
+        n_head = block.count(f'data-emblem="{kind}"')
+        if n_head != n_all:
+            fail(f"{label}({rel}): 刊徽 {kind} 有 {n_all - n_head} 处不在 masthead 报头内——"
+                 f"搬出报头后绝对定位会相对别的祖先解析（模板），"
+                 f"或 `.masthead .emblem` 选择器整条失效（验收生成器）")
 
 
 def check_svg_integrity(label, rel, kind, text):
@@ -231,6 +286,7 @@ def check_flavor_wiring():
     finally:
         sys.argv = saved_argv
 
+    label = "验收/巡检"
     md = "# 刊徽接线自测\n\n## 目标\n验证 flavor 与刊徽的映射。\n\n## 结论\n通过。\n"
     for flavor, want in (("acceptance", "polaris"), ("daily", "comet")):
         try:
@@ -248,6 +304,10 @@ def check_flavor_wiring():
             if f'data-emblem="{other}"' in out:
                 fail(f"flavor={flavor} 渲染出的报告戴了 {other}，应为 {want}"
                      f"——_FLAVORS 里两个 flavor 的刊徽很可能对调了")
+        # 报头归属查渲染产物：源码里那份 SVG 常量本就不在 masthead 内，
+        # 只有注入之后的标记才能回答「它到底挂在哪」。
+        check_emblem_in_masthead(f"{label}(flavor={flavor})", rel, out, {want})
+        _MASTHEAD_CHECKED.add(rel)
 
 
 def cascade_value(bodies, prop):
@@ -263,6 +323,34 @@ def cascade_value(bodies, prop):
         for m in re.finditer(r"(?:^|;)%s:([^;]+)" % re.escape(prop), b):
             found.append(m.group(1).strip())
     return (found[-1] if found else None), found
+
+
+def check_positioning_context(label, rel, text):
+    """`.masthead` 必须是已定位祖先，否则刊徽的绝对偏移会锚到别的元素上。
+
+    走与 .emblem 同一套取值口径（层叠胜者），不另起一条判据——本 PR 已经因为
+    「同一个文件里两套取值口径」复发过两次。
+    """
+    bodies = []
+    for m in re.finditer(r'([^{};\n]*)\{\{?([^}]*)\}', text):
+        sel = m.group(1).strip()
+        # 只认 `.masthead` 自身的规则；`.masthead .emblem` / `.masthead .t` 这类后代规则不算
+        if not re.fullmatch(r'\.masthead', sel):
+            continue
+        bodies.append(re.sub(r"\s+", "", m.group(2)))
+    if not bodies:
+        fail(f"{label}({rel}): 找不到 `.masthead` 自身的 CSS 规则——"
+             f"刊徽的绝对定位没有可锚定的祖先")
+        return
+    winner, declared = cascade_value(bodies, "position")
+    if winner is None:
+        fail(f"{label}({rel}): `.masthead` 没有 position 声明——"
+             f"static 祖先不建立定位上下文，刊徽的 top/right 会相对页面级祖先解析，"
+             f"水印跑出报头")
+    elif winner not in ("relative", "absolute", "fixed", "sticky"):
+        fail(f"{label}({rel}): `.masthead` 的 position 层叠胜者是 {winner!r}"
+             f"（声明依次为 {declared}）——它必须是已定位元素，"
+             f"否则刊徽的绝对偏移会锚到别的祖先上")
 
 
 def check_css_wiring(label, rel):
@@ -323,6 +411,12 @@ def check_css_wiring(label, rel):
         elif len(set(declared)) > 1:
             fail(f"{label}({rel}): .emblem 对 {prop} 有互相打架的声明 {declared}"
                  f"——实际生效的是最后一条，这种写法请合并成一条")
+
+    # 定位祖先：`position:absolute` 的 top/right 是相对**最近的已定位祖先**解析的。
+    # 只查 .emblem 自己的声明不够——把 `.masthead` 的 position:relative 拿掉，
+    # 刊徽的 -14px/-8px 就会相对页面级祖先解析，水印跑到报头外面去，
+    # 而只看 .emblem 的判据全绿。判据必须连它成立所依赖的上下文一起查（形状 1）。
+    check_positioning_context(label, rel, text)
 
     # 透明度必须真的「浅」，而且必须**显式写出来**。
     # 只判「写了但过高」是不够的：整条 opacity 声明被删掉时 CSS 默认 opacity:1，
@@ -525,6 +619,13 @@ for label, rel in [
 
 print("CI 触发验证：被测文件都登记进了 release-script-test 的 path filter")
 check_ci_wiring()
+
+# 报头归属两条路径（模板走源码、生成器走渲染产物）合起来必须覆盖全部产物，
+# 否则某个产物会两边都没查到却静默判绿。
+for _, _rel, _ in EXPECTED:
+    if _rel not in _MASTHEAD_CHECKED:
+        fail(f"{_rel} 没有做过「刊徽长在报头里」的判定——"
+             f"新增产物时必须走模板源码或渲染产物两条路径之一")
 
 print("-" * 60)
 if failures:

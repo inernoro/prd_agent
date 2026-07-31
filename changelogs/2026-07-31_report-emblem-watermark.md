@@ -17,3 +17,4 @@
 | fix | ci | 刊徽守卫补三处判据洞：opacity 改走 cascade_value 并拒收非数值胜者（原正则只认数字，opacity:unset 被跳过而保留前面的 0.13，实际解析为 1 完全不透明）；刊徽全集不再与 ALL_KINDS 求交（未注册的 data-emblem 会被交集滤掉，报告多一枚不受检水印仍判绿）；窄屏 top/right 纳入校验 |
 | rule | doc | report-design-system §1.4 尺寸表新增「窄屏偏移」列（模板 top:-8px right:-4px / 档案 top:-8px right:-2px）：原先只登记桌面偏移，窄屏可随意漂——档案窄屏 right 改成 -200px 刊徽整个移出屏幕而守卫判绿 |
 | rule | doc | predicate-and-wiring-discipline 补形状 6（判据读的值不是真正生效的那个值：取第一条而非层叠胜者 / 扫源码字面量而非求值结果 / 修完要横扫同类）与形状 7（守卫自己没接上线，形状 2 的递归：CI path filter 不含被守文件），自查清单同步补两条 |
+| fix | ci | 刊徽守卫补定位上下文两条判据：刊徽必须长在 masthead 报头内（模板查源码、验收生成器查渲染产物，两条路径合起来必须覆盖全部产物否则判红），且 .masthead 必须是已定位祖先（position:relative 被拿掉时绝对偏移会锚到页面级祖先，水印跑出报头，而只看 .emblem 自身声明的判据全绿） |
