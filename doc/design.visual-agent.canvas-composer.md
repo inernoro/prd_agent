@@ -47,7 +47,7 @@ sendText → resolveImageRefs（chipRefs/选中/inline 图统一解析）→ bui
 ## 关联文档
 
 - .claude/rules/gesture-unification.md — 手势统一标准（标准 A 参考实现即本页）
-- doc/plan.visual-agent.optimization-backlog.md — 本次考古沉淀的优化清单
+- [plan.visual-agent.optimization-backlog.md](./plan.visual-agent.optimization-backlog.md) — 本次考古沉淀的优化清单
 - BrandAI 仓库 docs/12、docs/13 — 迁移计划与逐项对齐清单（约 98 项规格）
 
 ## 风险

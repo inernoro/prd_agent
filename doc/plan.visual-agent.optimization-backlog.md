@@ -61,5 +61,5 @@
 
 ## 关联文档
 
-- doc/design.visual-agent.canvas-composer.md — 视觉创作原理（本清单的锚点来源）
+- [design.visual-agent.canvas-composer.md](./design.visual-agent.canvas-composer.md) — 视觉创作原理（本清单的锚点来源）
 - BrandAI 仓库 docs/13_视觉创作对齐清单.md — 逐项对齐状态（约 98 项）

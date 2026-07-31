@@ -86,7 +86,8 @@ BARE_REF = re.compile(r"`([^`\n]*?([\w][\w.-]*\.md))`")
 # 连反引号都没加的裸名（详见 rule.doc.naming.md）同样点不开 —— 只查反引号里的，
 # 等于把最朴素的那种写法放过去。链接与行内代码在扫描前先剔掉，避免误伤。
 PROSE_REF = re.compile(
-    r"(?<![\w./`\-\[(])"
+    r"(?<![\w`\-\[(])"                                        # 前面不是词/反引号/括号
+    r"(?:doc/)?"                                               # 带不带 doc/ 前缀都算
     r"((?:spec|design|plan|rule|guide|report|debt)\.[\w.-]*\.md)"
     r"(?![\w`)\]])")
 # 行内链接：目标后面可以跟一个 "标题"（单双引号或圆括号三种写法都合法）。
@@ -481,9 +482,15 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
 
         # 裸名（没加反引号的）也一并改写。用改写后的行重算 span，
         # 免得把刚生成的链接又当成裸名改一遍。
+        # 行内代码块的范围也要避开：`doc/xxx.md §5` 这种 code span 里塞链接
+        # 会渲染成一段字面量，比不改还糟。
+        code_spans = [mm.span() for mm in re.finditer(r"`[^`]*`", fixed)]
+
         def repl_prose(m: re.Match[str]) -> str:
             nonlocal changed
-            if m.group(1) not in known or _inside(m.span(), link_spans(fixed)):
+            if (m.group(1) not in known
+                    or _inside(m.span(), link_spans(fixed))
+                    or _inside(m.span(), code_spans)):
                 return m.group(0)
             changed += 1
             return f"[{m.group(1)}](./{m.group(1)})"

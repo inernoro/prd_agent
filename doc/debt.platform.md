@@ -266,7 +266,7 @@ MAP SSO 会话）原样到期，用户需重登一次才进入 7 天滑动窗口
 
 跨节点互传首版有意不做的边界、后台自动同步与二进制附件的进展，以及防自指兜底。
 
-> 模块：prd-api PeerSync + prd-admin 系统互联 | 关联：doc/design.platform.peer-sync.md
+> 模块：prd-api PeerSync + prd-admin 系统互联 | 关联：[design.platform.peer-sync.md](./design.platform.peer-sync.md)
 
 记录 v1 已知边界、后续可补项、未覆盖风险。下一次 session 接手先读这里。
 

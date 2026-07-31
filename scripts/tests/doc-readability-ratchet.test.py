@@ -180,6 +180,14 @@ check(not checker.find_bare_refs("# t\n\n```text\n详见 rule.doc.naming.md\n```
       "代码块里的示例不误报")
 check(not checker.find_bare_refs("# t\n\n详见 rule.does-not-exist.md。\n", KNOWN_ONE),
       "指向不存在文档的名字不算裸引用（命名规则里的反面示范不被误伤）")
+check(len(checker.find_bare_refs("# t\n\n请阅读 doc/rule.doc.naming.md。\n", KNOWN_ONE)) == 1,
+      "带 doc/ 路径前缀的裸名同样算（负向前瞻别把它挡在外面）")
+check(not checker.find_bare_refs(
+        "# t\n\n见 [doc/rule.doc.naming.md](./rule.doc.naming.md)。\n", KNOWN_ONE),
+      "链接文字里带 doc/ 前缀时不误报")
+fixed_code_span, n_code = checker.fix_links("见 `doc/rule.doc.naming.md §5` 的约束。\n", KNOWN_ONE)
+check(n_code == 0 and "](" not in fixed_code_span,
+      "行内代码里的引用不被自动改写（往 code span 里塞链接会渲染成字面量）")
 
 with tempfile.TemporaryDirectory() as tmp:
     doc_dir = os.path.join(tmp, "doc")
@@ -795,7 +803,20 @@ check(any(".Codex" in d for d in checker.RULE_DIRS),
 check(any(".agents" in d for d in checker.SKILL_DIRS),
       "技能扫描覆盖 Codex 侧技能根（.agents/skills 里也有真实技能）")
 skill_total, skill_missing, _ = checker.scan_skills()
-check(skill_total >= 60, f"两处技能根都扫到了（实测 {skill_total} 个）")
+# 不拿当前技能数当下界 —— 删掉一个技能不该把闸门弄红。改成断言「每个配置的
+# 技能根都真的被扫到了」，扫描面才是这条守卫要守的东西。
+per_root = {}
+for rel_dir in checker.SKILL_DIRS:
+    abs_dir = os.path.join(REPO_ROOT, rel_dir)
+    if not os.path.isdir(abs_dir):
+        continue
+    per_root[rel_dir] = len([n for n in os.listdir(abs_dir)
+                             if os.path.isfile(os.path.join(abs_dir, n, "SKILL.md"))])
+check(len(per_root) == len(checker.SKILL_DIRS),
+      f"配置的技能根都存在（实测 {sorted(per_root)}）")
+check(all(v > 0 for v in per_root.values()), f"每个技能根都扫到了技能（{per_root}）")
+check(skill_total == sum(per_root.values()),
+      f"扫描总数等于两处技能根之和（{skill_total} vs {sum(per_root.values())}）")
 check(skill_missing == 0, f"两处技能根合起来零欠账（实测 {skill_missing} 个）")
 _, codex_missing, _ = checker.scan_rules()
 check(codex_missing == 0, f"两处规则目录合起来零欠账（实测 {codex_missing} 条）")
