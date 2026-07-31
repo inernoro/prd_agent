@@ -555,6 +555,52 @@ with tempfile.TemporaryDirectory() as tmp:
                  "把 Markdown 文档转换成排版精美的 PDF，支持目录、页码与水印，输出可直接打印。\n---\n")
     check(any("触发时机" in p for p in checker.check_skill(wrong_name)),
           "只讲能力不讲何时用的 description 被抓出（调度器据此选不中它）")
+    # 语法先于内容：frontmatter 本身是坏 YAML 的话，宿主根本加载不到这个技能，
+    # 判据却因为自己手写解析而对着一段读得挺顺的描述报绿。
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write("---\nname: demo-skill\ndescription: Use when: 用户要导出报表，"
+                 "或者说「导出」「出个表」这类话时触发，产出一份可下载的表格。\n---\n")
+    check(any("不是合法 YAML" in p for p in checker.check_skill(wrong_name)),
+          "description 里没加引号的「: 」被抓出（YAML 解析器会当成嵌套键直接报错）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write("---\nname: demo-skill\ndescription: 'Use when: 用户要导出报表，"
+                 "或者说「导出」「出个表」这类话时触发，产出一份可下载的表格。'\n---\n")
+    check(not checker.check_skill(wrong_name),
+          "整句用引号包起来就放行（没误伤把触发词写成「Trigger words:」的正常写法）")
+
+# 手写判据要跟真 YAML 解析器对答案，否则它只是「我以为的 YAML」
+YAML_CASES = [
+    "普通一句话描述",
+    "Use when: 用户要导出",
+    "'Use when: 用户要导出'",
+    '"Use when: 用户要导出"',
+    "结尾有冒号:",
+    "@保留字符开头",
+    "&锚点开头",
+    "[流式集合]",
+    "值里有 http://x 这种冒号不带空格",
+]
+try:
+    import yaml as _yaml
+except ImportError:                                    # pragma: no cover
+    _yaml = None
+    print("  跳过 PyYAML 对答案：当前环境没装 PyYAML（判据本身不依赖它）")
+if _yaml is not None:
+    mismatched = []
+    for case in YAML_CASES:
+        try:
+            _yaml.safe_load(f"description: {case}")
+            yaml_ok = True
+        except Exception:
+            yaml_ok = False
+        ours_ok = checker.plain_scalar_problem(case) is None
+        # 流式集合能被 YAML 解析但结果不是字符串，判据比 YAML 严一档是有意的
+        if case.startswith("[") and yaml_ok and not ours_ok:
+            continue
+        if yaml_ok != ours_ok:
+            mismatched.append((case, yaml_ok, ours_ok))
+    check(not mismatched, f"手写标量判据与 PyYAML 对得上（分歧：{mismatched}）")
+    check(len(YAML_CASES) >= 8, f"对答案的用例覆盖了正反两面（实测 {len(YAML_CASES)} 条）")
 
 check(checker.yaml_scalar('"Use when the user says \\"export\\" and wants a file"')
       == 'Use when the user says "export" and wants a file',
@@ -802,21 +848,54 @@ doc_keys = set(titles)
 # 链接而静默跳过，两份索引各少一篇而 CI 全绿（形状 1：判据比它该管的范围窄）。
 # 台账合并时按「文中出现已交付/已解决」下沉条目，会把状态其实是 open 的活账
 # 误埋进「已结清」——读者扫到那一节会以为这笔账还完了。
+def settled_residuals(ledger: str) -> list[str]:
+    """「已结清」区里还没做完的账。三种形状都要认，只认第一种等于没判：
+
+    1. 小节的元信息行写着「状态 | open」；
+    2. 小节标题自己带着（open）；
+    3. 主行标 done、尾巴留在别的列（「残留边界 / 残留： / 遗留：」）——
+       这一种最隐蔽，读者扫到「已结清」会以为这笔账真的还完了。
+    """
+    pos = ledger.find("## 已结清")
+    if pos < 0:
+        return []
+    settled = ledger[pos:]
+    hits: list[str] = []
+    for entry in re.finditer(r"^### (.+)$", settled, re.M):
+        window = settled[entry.end():entry.end() + 600]
+        status = re.search(r"\|\s*状态\s*\|\s*([^|]+)\|", window)
+        if status and status.group(1).strip().lower().startswith("open"):
+            hits.append(entry.group(1))
+        if re.search(r"[（(]open[）)]", entry.group(1), re.I):
+            hits.append(f"{entry.group(1)}（标题写着 open）")
+    for row in re.finditer(r"^\|.+\|$", settled, re.M):
+        cells = [c.strip() for c in row.group(0).strip("|").split("|")]
+        if any(re.fullmatch(r"open(\(.*\))?", c, re.I) for c in cells):
+            hits.append(f"{cells[0]}（行状态 open）")
+        if any(("残留边界" in c or c.startswith(("残留：", "遗留："))) for c in cells):
+            hits.append(f"{cells[0]}（还留着没做完的尾巴，应挪回活账区）")
+    return hits
+
+
 settled_open: list[str] = []
 for name in sorted(os.listdir(doc_dir)):
     if not name.startswith("debt.") or not name.endswith(".md"):
         continue
     ledger = open(os.path.join(doc_dir, name), encoding="utf-8").read()
-    pos = ledger.find("## 已结清")
-    if pos < 0:
-        continue
-    settled = ledger[pos:]
-    for entry in re.finditer(r"^### (.+)$", settled, re.M):
-        window = settled[entry.end():entry.end() + 600]
-        status = re.search(r"\|\s*状态\s*\|\s*([^|]+)\|", window)
-        if status and status.group(1).strip().lower().startswith("open"):
-            settled_open.append(f"{name}::{entry.group(1)}")
-check(not settled_open, f"「已结清」区里没有状态仍是 open 的活账（误埋：{settled_open[:3]}）")
+    settled_open += [f"{name}::{x}" for x in settled_residuals(ledger)]
+check(not settled_open, f"「已结清」区里没有还没做完的账（误埋：{settled_open[:3]}）")
+# 合成用例：三种形状逐一验证，否则上面那条在台账干净时是空跑的绿灯
+SETTLED_HEAD = "## 已结清（供回溯）\n\n### 某小节\n\n| # | 状态 | 债务 | 影响 |\n|---|---|---|---|\n"
+check(not settled_residuals(SETTLED_HEAD + "| 1 | done | ~~某事~~ | — |\n"),
+      "干净的已结清区不误报")
+check(settled_residuals(SETTLED_HEAD + "| 1 | open | 某事 | — |\n"),
+      "行状态写 open 的行被抓出")
+check(settled_residuals("## 已结清（供回溯）\n\n### 某小节（open）\n\n正文\n"),
+      "小节标题自己写着（open）被抓出")
+check(settled_residuals(SETTLED_HEAD + "| 1 | done | ~~某事~~ | 残留边界：还有一半没做 |\n"),
+      "主行标 done、尾巴留在别的列的被抓出（Codex 指出的那一种）")
+check(not settled_residuals("## 主台账\n\n| # | 状态 |\n|---|---|\n| 1 | open |\n"),
+      "活账区的 open 不算误埋（只管已结清区）")
 
 check(not (doc_keys - index_keys), f"每篇 doc 都登记进 index.yml（漏登：{sorted(doc_keys - index_keys)[:5]}）")
 check(not (index_keys - doc_keys), f"index.yml 没有幽灵条目（幽灵：{sorted(index_keys - doc_keys)[:5]}）")
