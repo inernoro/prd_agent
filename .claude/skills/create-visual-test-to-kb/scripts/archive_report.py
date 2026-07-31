@@ -820,6 +820,13 @@ _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN = re.compile(
     rf"(?:在|于)?\s*(?:{_ROOT_CAUSE_INSTANCE_PATTERN.pattern})(?:\s*环境)?",
     re.I,
 )
+_ROOT_CAUSE_GATE_OUTPUT_SUFFIX_PATTERN = re.compile(
+    r"\s*(?:的\s*)?"
+    r"(?:(?:门禁|执行|运行|测试|检查|验证|复测)\s*)?"
+    r"(?:状态|结果|输出)(?:栏|项|字段)?"
+    r"(?=\s*[`*_\s:：;,，。|/\\()（）\[\]【】<>《》-]*$)",
+    re.I,
+)
 
 
 def _normalize_root_cause_instance(identity):
@@ -1462,21 +1469,36 @@ def _current_failure_subjects(text):
     return {subject for subject, state in states.items() if state == "failed"}
 
 
+def _strip_root_cause_gate_output_suffixes(target):
+    """Remove output labels after a gate without erasing business identity."""
+    normalized = target or ""
+    occurrences = _subject_occurrences(normalized)
+    for _, subject_end, _ in reversed(occurrences):
+        match = _ROOT_CAUSE_GATE_OUTPUT_SUFFIX_PATTERN.match(
+            normalized,
+            subject_end,
+        )
+        if match:
+            normalized = normalized[:subject_end] + normalized[match.end():]
+    return normalized
+
+
 def _root_cause_state_scope(row, row_index):
     """Keep same-kind gates independent when root-cause targets differ."""
     target = row[0] if row else ""
+    normalized_target = _strip_root_cause_gate_output_suffixes(target)
     gate_subjects = tuple(
         sorted(
             {
                 subject
                 for _, _, subject in _subject_occurrences(
-                    target, instance_aware=True
+                    normalized_target, instance_aware=True
                 )
             }
         )
     )
     if gate_subjects:
-        business_target = target
+        business_target = normalized_target
         for _, pattern in _FAILURE_SUBJECT_PATTERNS:
             business_target = pattern.sub(" ", business_target)
         business_target = _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN.sub(
@@ -1502,10 +1524,11 @@ def _root_cause_row_states(row, initial_states=None):
     """Apply root-cause cells without leaking narrative text across columns."""
     cells = list(row or [])
     target = cells[0] if cells else ""
+    normalized_target = _strip_root_cause_gate_output_suffixes(target)
     target_subjects = {
         subject
         for _, _, subject in _subject_occurrences(
-            target,
+            normalized_target,
             instance_aware=True,
         )
     }
