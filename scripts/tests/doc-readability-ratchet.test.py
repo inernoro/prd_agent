@@ -238,6 +238,21 @@ check(checker._is_pointer_name("事实入口") and checker._is_pointer_name("现
 check(not checker._is_pointer_name("这一列写的是相关文件与用途说明"),
       "长表头不算点名——指路列必须是短标签")
 
+print("[3.55] 棘轮记到文件级，拦得住拆东墙补西墙")
+
+# Codex review #1311 P2：只比总数的话，「修好一篇旧的 + 新增一篇不合规的」总数持平、CI 照绿。
+debt = checker.per_file_debt()
+check(isinstance(debt, dict) and all(
+    set(v) == {"missing", "bare", "impl", "src"} for v in debt.values()),
+    "逐篇欠账明细结构正确（missing/bare/impl/src）")
+check(all(any(v.values()) for v in debt.values()), "零欠账的文件不进明细表")
+
+baseline = json.load(open(os.path.join(REPO_ROOT, "scripts", "fixtures",
+                                       "doc-readability-baseline.json"), encoding="utf-8"))
+check("files" in baseline and baseline["files"], "基线必须记逐篇明细，否则总数持平就能偷换")
+check(set(baseline["files"]) == set(debt),
+      "基线的逐篇明细要与实测一致（修完存量记得 --update-baseline）")
+
 print("[3.6] 规则与技能的轻量导读")
 
 RULE_OK = """# 某条规则

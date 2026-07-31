@@ -647,7 +647,7 @@ export async function listMyLikedDocumentStores() {
 /**
  * 创建分享链接（entryId 非空 = 单篇文档分享）。
  * allocateShortLink 默认不传 = 不分配数字短链 /s/{seq}：数字短链全局自增可枚举，
- * 只在用户主动要时才生成（见 doc/debt.platform.share-link-security.md）。
+ * 只在用户主动要时才生成（见 doc/debt.platform.md「分享链接安全」）。
  */
 export async function createShareLink(storeId: string, input: { title?: string; description?: string; expiresInDays?: number; entryId?: string; allocateShortLink?: boolean }) {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreShareLink>(

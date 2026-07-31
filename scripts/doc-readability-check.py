@@ -231,6 +231,33 @@ def scan_body(text: str) -> tuple[int, int]:
     return impl_lines, src_refs
 
 
+def per_file_debt() -> dict[str, dict[str, int]]:
+    """按文件记欠账：{文件名: {missing/bare/impl/src: 数值}}。
+
+    棘轮只比总数是拦不住「拆东墙补西墙」的：修好一篇旧的、同时新增一篇不合规的，
+    总数没变、CI 照样绿。所以基线必须记到文件级——**新出现的欠账文件一律判红**，
+    存量文件也只许比基线少。
+    """
+    known = doc_filenames()
+    out: dict[str, dict[str, int]] = {}
+    for name in sorted(os.listdir(DOC_DIR)):
+        if not name.endswith(".md") or doc_type(name) not in TYPES:
+            continue
+        path = os.path.join(DOC_DIR, name)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        impl, src = scan_body(text)
+        entry = {
+            "missing": 1 if check_file(path) else 0,
+            "bare": len(find_bare_refs(text, known)),
+            "impl": impl,
+            "src": src,
+        }
+        if any(entry.values()):
+            out[name] = entry
+    return out
+
+
 def scan_bodies() -> tuple[dict[str, int], dict[str, int], list[str]]:
     """按类型统计正文里的实现细节欠账。"""
     impl = {t: 0 for t in TYPES}
@@ -482,6 +509,14 @@ def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
     return stats, missing
 
 
+_DEBT_WORDS = {"missing": "缺导读", "bare": "裸引用", "impl": "实现代码", "src": "散落源码路径"}
+
+
+def _debt_words(entry: dict[str, int]) -> str:
+    bits = [f"{_DEBT_WORDS[k]} {v}" for k, v in entry.items() if v]
+    return "、".join(bits) if bits else "无"
+
+
 def load_baseline() -> dict[str, dict[str, int]]:
     if not os.path.exists(BASELINE_PATH):
         return {}
@@ -490,12 +525,14 @@ def load_baseline() -> dict[str, dict[str, int]]:
     return {"missing": data.get("missing", {}), "bare_refs": data.get("bare_refs", {}),
             "impl_code": data.get("impl_code", {}), "source_refs": data.get("source_refs", {}),
             "rules_missing": data.get("rules_missing", 0),
-            "skills_missing": data.get("skills_missing", 0)}
+            "skills_missing": data.get("skills_missing", 0),
+            "files": data.get("files", {})}
 
 
 def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
                    impl: dict[str, int], srcs: dict[str, int],
-                   rules_missing: int = 0, skills_missing: int = 0) -> None:
+                   rules_missing: int = 0, skills_missing: int = 0,
+                   files: dict[str, dict[str, int]] | None = None) -> None:
     payload = {
         "_comment": (
             "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。"
@@ -503,6 +540,8 @@ def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
             "impl_code = 正文里实现语言代码块的行数；source_refs = 正文里散落的源码路径引用数"
             "（集中列在「实现来源」小节里的不计）；rules_missing = .claude/rules 里缺导读两行的条数；"
             "skills_missing = 技能 frontmatter 缺 name/description 的个数。"
+            "files = 逐篇欠账明细（missing/bare/impl/src），用来拦住「修好一篇旧的、同时新增一篇新的」"
+            "这种总数不变的偷换：不在这张表里的文件一旦欠账即判红。"
             "数值只许下降：修好存量就跑 --update-baseline "
             "把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。"
         ),
@@ -512,6 +551,7 @@ def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
         "source_refs": {t: srcs.get(t, 0) for t in TYPES},
         "rules_missing": rules_missing,
         "skills_missing": skills_missing,
+        "files": files or {},
     }
     os.makedirs(os.path.dirname(BASELINE_PATH), exist_ok=True)
     with open(BASELINE_PATH, "w", encoding="utf-8") as fh:
@@ -550,6 +590,7 @@ def main() -> int:
     bare_per_type, bare_detail, dead_detail = scan_links()
     impl_per_type, src_per_type, body_detail = scan_bodies()
     rules_total, rules_missing, rules_detail = scan_rules()
+    file_debt = per_file_debt()
     skills_total, skills_missing, skills_detail = scan_skills()
     total = sum(s["total"] for s in stats.values())
     total_missing = sum(s["missing"] for s in stats.values())
@@ -559,7 +600,7 @@ def main() -> int:
 
     if args.update_baseline:
         write_baseline(stats, bare_per_type, impl_per_type, src_per_type,
-                       rules_missing, skills_missing)
+                       rules_missing, skills_missing, file_debt)
         print(f"基线已更新：{total_missing} / {total} 篇仍欠导读三行；裸引用 {total_bare} 处；"
               f"实现代码 {total_impl} 行；散落源码路径 {total_src} 处；"
               f"规则欠导读 {rules_missing} 条；技能 frontmatter 欠账 {skills_missing} 个")
@@ -646,6 +687,29 @@ def main() -> int:
                 for line in body_detail[:10]:
                     print(f"    {line}", file=sys.stderr)
                 return 1
+
+        base_files = baseline.get("files", {})
+        newly: list[str] = []
+        worse: list[str] = []
+        for name, cur in sorted(file_debt.items()):
+            was = base_files.get(name)
+            if was is None:
+                newly.append(f"doc/{name} — {_debt_words(cur)}")
+                continue
+            up = [k for k in ("missing", "bare", "impl", "src") if cur[k] > was.get(k, 0)]
+            if up:
+                worse.append(f"doc/{name} — {_debt_words({k: cur[k] for k in up})}"
+                             f"（基线 {_debt_words({k: was.get(k, 0) for k in up})}）")
+        if newly or worse:
+            print("\n[FAIL] 有文档新欠账 —— 棘轮记到文件级，"
+                  "「修好一篇旧的、同时新增一篇不合规的」不算持平，判据见 doc/rule.doc.readability.md",
+                  file=sys.stderr)
+            for line in newly[:10]:
+                print(f"  新增欠账：{line}", file=sys.stderr)
+            for line in worse[:10]:
+                print(f"  欠账变多：{line}", file=sys.stderr)
+            print("  修好它，或确有正当理由时跑 --update-baseline 并在 PR 里说明", file=sys.stderr)
+            return 1
 
         for label, actual, allowed, detail, hint in (
             ("规则导读", rules_missing, baseline.get("rules_missing", 0), rules_detail,

@@ -154,7 +154,7 @@
 | security | cds | Agent 预览地址仅暴露公开 previewDomain，隐藏、备用和内部根域不再进入 API 输出 |
 | fix | prd-api | 同步官方技能内嵌目录中的真实预览地址交付规则 |
 | security | cds | 项目级 Agent Key 的项目列表仅返回绑定项目，防止跨项目元数据泄露 |
-| chore | doc | 每日熵减计划：D1-D5 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动），D6 核对 5 条 changelog（GPT-5.6 raw chat 默认修复/首页明暗主题重塑/LLM 网关逻辑模型与 Offering/网关实战教程目录/移动端验收硬门禁），均无需向 design 文档追加新章节（GPT-5.6 raw chat 修复无对应设计文档；首页主题重塑属前端 UI 层且已有 admin-dual-theme.md 规则与 debt.frontend.md「移动端全局浅色主题」 台账覆盖；逻辑模型与 Offering 已由同日更新的 design.platform.model-pool.md v3.0 完整覆盖；网关实战教程目录与既有 plan.platform.llm-gateway-authoritative-tutorial.md 范围不同、无匹配章节；移动端验收硬门禁已由 real-visual-acceptance.md 等规则层覆盖），仅登记 manifest 避免向无关文档强行插入内容，manifest 累计 472 条 |
+| chore | doc | 每日熵减计划：D1-D5 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动），D6 核对 5 条 changelog（GPT-5.6 raw chat 默认修复/首页明暗主题重塑/LLM 网关逻辑模型与 Offering/网关实战教程目录/移动端验收硬门禁），均无需向 design 文档追加新章节（GPT-5.6 raw chat 修复无对应设计文档；首页主题重塑属前端 UI 层且已有 admin-dual-theme.md 规则与 debt.frontend.mobile-light-theme.md 台账覆盖；逻辑模型与 Offering 已由同日更新的 design.platform.model-pool.md v3.0 完整覆盖；网关实战教程目录与既有 plan.platform.llm-gateway-authoritative-tutorial.md 范围不同、无匹配章节；移动端验收硬门禁已由 real-visual-acceptance.md 等规则层覆盖），仅登记 manifest 避免向无关文档强行插入内容，manifest 累计 472 条 |
 | polish | llmgw | 对齐 OpenRouter 日志字体、字号、完整列布局，并消除单列吞占造成的大段空白 |
 | feat | llmgw | 日志行进入独立请求详情路径，App 链接进入对应 appCaller 配置与治理页面 |
 | docs | llmgw | 同步请求记录实战教程的列表字段、独立详情和 App 跳转步骤 |
@@ -655,7 +655,7 @@
 | feat | prd-admin | 首页近7日卡改健康摘要式 2x2(大数 + 真实七日迷你柱 MiniBars,全 0 显示哑柱不造假);继续上次接 progress 进度条与状态标签;契约 MobileStats.daily/RecentWorkItemDto.progress 同步,getMobileStats 自动携带时区 |
 | fix | prd-admin | 首页七日迷你柱重设计:改 Apple 健身/屏幕时间图表范式(每日全高浅轨道 + 底部填充,轨道走 pillBg token 双主题适配,sqrt 缩放让偏态小值可见);修复真实数据下全 0/尖刺分布渲染成"一排丑点"的问题(用真实数据形态本地复现丑态并对比验证后落码) |
 | fix | prd-admin | 修复继续上次卡 button 嵌套 button 非法 DOM(Codex P2):导出 span 版 AppStorePillLabel,headline 药丸改非交互(整卡本身可点) |
-| docs | prd-admin | 新增 doc/debt.frontend.md「前端 Apple 设计迁移」 债务台账(手机轨剩余/PC 底座轨/刻意取舍),同步 index.yml 与 guide.list |
+| docs | prd-admin | 新增 doc/debt.frontend.apple-design-migration.md 债务台账(手机轨剩余/PC 底座轨/刻意取舍),同步 index.yml 与 guide.list |
 | merge | prd-admin | 预合并 main(35 commits)进 apple-design 分支,零冲突,tsc+守卫测试绿 |
 | fix | prd-admin | 主题切换按钮移出 recentWork 门(Codex P2):继续上次为空的新用户不再失去全站唯一明暗开关,空态下单独右对齐渲染 |
 | feat | prd-api | /api/mobile/stats 新增 aiCalls(LLM 请求次数,复用 token 日志查询)与 defects(缺陷提报数)及对应按日桶;sessions/messages 字段保留兼容 |
@@ -940,7 +940,7 @@
 | feat | cds | 验收报告列表新增标题搜索框（搜索时平铺命中项）与「30 天前」系统视图（给巡检/日报类报告批量清理入口） |
 | feat | cds | 「全部项目」视图报告树按项目一级分组（CDS 自身 + 各项目各成一组，可折叠），全部折叠/展开按钮同时作用于分组行 |
 | polish | cds | 报告与文件夹删除确认从原生 window.confirm 统一为 Dialog 风格 |
-| rule | skills | 每日验收 SOP 固化归档必须带 --folder-path「每日验收/YYYY-MM」按月分桶；新增 doc/debt.cds.md 记录存量迁移/保留策略/批量操作等剩余债务 |
+| rule | skills | 每日验收 SOP 固化归档必须带 --folder-path「每日验收/YYYY-MM」按月分桶；新增 doc/debt.cds.reports.md 记录存量迁移/保留策略/批量操作等剩余债务 |
 | chore | prd-api | 每日验收 SOP 的 --folder-path 要求改到源文档 doc/guide.acceptance.daily-sop.md 并重跑快照同步与官方技能打包，official-skills.generated.json 同步收录 archive_report.py 新归类行为（Codex review P1/P2） |
 | polish | cds | 将 CDS 更新、自更新历史、Docker 网络容量和危险操作拆分为独立设置页签 |
 | fix | prd-admin | 修复命令面板搜索后快速回车可能进入错误入口的问题 |
@@ -1179,7 +1179,7 @@
 | style | prd-admin | 液态玻璃配方去发泡：glassStyles/GlassCard/工具箱条移除"上白下黑 inset 凸面对 + brightness 提亮 + 纵向渐变"的 aqua 按钮公式，玻璃回归平整 |
 | fix | prd-admin | 海鲜市场去页面私有整幅背景（深色遮罩+运营封面图的错位"图片盒子"）与列表双重内边距，min-h-screen 改 min-h-full，对齐统一基准 |
 | fix | prd-admin | 百宝箱瓦片补齐内置工具图标映射（缺失项整排回退成 Bot）并修卡片键盘事件吞掉子按钮操作（Codex P2 x2） |
-| chore | doc | 每日熵清理：D1/D2/D3/D4 净变更为 0（D3/D4 命中的 24+1 条均核实为历史变更表/文档正文中的反引号引用，非真实幽灵条目）；D6 登记 5 条已被 design.cds.config-tree.md / debt.cds.md「CDS compose 模板 TODO secrets」 覆盖的 CDS wave3-5 changelog 到 manifest |
+| chore | doc | 每日熵清理：D1/D2/D3/D4 净变更为 0（D3/D4 命中的 24+1 条均核实为历史变更表/文档正文中的反引号引用，非真实幽灵条目）；D6 登记 5 条已被 design.cds.config-tree.md / debt.cds.compose-secrets.md 覆盖的 CDS wave3-5 changelog 到 manifest |
 | style | prd-admin | 卡片表面从"渐变+顶部高光"玻璃改为现代扁平（单层微透白+发丝描边，去渐变/高光/静息投影），治"像 2000 年代水晶按钮"；首页与百宝箱经 tileAccent SSOT 同步生效 |
 | style | prd-admin | 首页"继续上次"从卡片网格改为 ghost 履历胶囊条，flex-wrap 铺满整行（桌面默认露 8 条），与下方智能体卡区隔 |
 | fix | prd-admin | 海报设计器非嵌入模式去掉不透明近黑页面底色，坐回外壳画布（治"海报背景发黑"） |

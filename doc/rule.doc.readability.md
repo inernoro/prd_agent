@@ -270,6 +270,9 @@ python3 scripts/doc-readability-check.py --update-baseline # 修好一批后压�
 ```
 
 - 基线文件：`scripts/fixtures/doc-readability-baseline.json`，记六组欠账：缺导读篇数、裸引用处数、正文实现代码行数、散落源码路径处数（这四组按类型分），外加规则缺导读条数、技能 frontmatter 欠账个数。
+- **棘轮记到文件级，不是只比总数**：基线同时存一张逐篇明细表。只比总数拦不住「修好一篇旧的、
+  同时新增一篇不合规的」——总数持平，CI 照绿。现在**不在明细表里的文件一旦欠账即判红**，
+  表里的文件也只许比基线少。（这条来自 PR #1311 的 review 意见，属 `.claude/rules/predicate-and-wiring-discipline.md` 形状 1：判据比它该管的范围窄。）
 - **新增文档必须自带导读三行**——否则欠账数上升，CI 直接 fail。
 - **存量走到哪修到哪**：改一篇文档就顺手补上它的导读三行，然后跑 `--update-baseline` 把基线压低。
 - 基线**上调一律 reject**。确有合理原因（如批量迁入历史文档）必须在 PR 里写明。
