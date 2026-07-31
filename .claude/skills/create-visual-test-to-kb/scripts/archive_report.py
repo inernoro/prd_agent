@@ -629,12 +629,12 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?[1-9]\d*"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
     r"|\b(?:failed|failure)\b"
-    r"|(?:status|状态)\s*[:：=]\s*"
-    r"(?:missing|error|failed|failure|stopped|unhealthy)\b)"
+    r"|(?:status|stage|状态|阶段)\s*[:：=]\s*"
+    r"(?:missing|error|failed|failure|stopped|unhealthy|timeout|timed[_-]?out|building[_-]?timeout)\b)"
 )
 _RAW_RESOLVED_STATUS_PATTERN = (
     r"(?:\b(?:passed|succeeded)\b"
-    r"|(?:status|状态)\s*[:：=]\s*"
+    r"|(?:status|stage|状态|阶段)\s*[:：=]\s*"
     r"(?:passed|succeeded|success|successful|ready|running|healthy|completed|ok)\b"
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?0(?![\d.])"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?2[xX]{2})"
@@ -697,7 +697,20 @@ _FAILURE_SUBJECT_PATTERNS = (
     ),
     (
         "build",
-        re.compile(r"(?:构建|编译|build)(?:\s*(?:产物|结果|job|task))?", re.I),
+        re.compile(
+            r"(?:构建|编译)(?:\s*(?:产物|结果|job|task))?"
+            r"|(?<![A-Za-z0-9_])build(?![A-Za-z0-9_])"
+            r"(?:\s*(?:产物|结果|job|task))?",
+            re.I,
+        ),
+    ),
+    (
+        "deploy",
+        re.compile(
+            r"(?<![A-Za-z0-9_])CDS\s*(?:部署|deploy(?![A-Za-z0-9_]))"
+            r"(?:\s*(?:阶段|状态|stage|status|job|task))?",
+            re.I,
+        ),
     ),
     (
         "service-ready",
@@ -1318,7 +1331,7 @@ def _daily_fact_signals(values, body):
     )
     hard_gate_failure = bool(
         current_failure_subjects
-        & {"ready", "smoke", "build", "service-ready", "forced-test"}
+        & {"ready", "smoke", "build", "deploy", "service-ready", "forced-test"}
     )
     core_failure = product_core_failure or "core-case" in current_failure_subjects
     coverage_gap_count = _coverage_gap_count(body)

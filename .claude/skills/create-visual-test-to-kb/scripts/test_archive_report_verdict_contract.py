@@ -663,6 +663,54 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 self.assertEqual([], errors)
 
+    def test_timeout_raw_cds_statuses_open_and_close_hard_gate(self):
+        self.assertEqual(
+            {"deploy"},
+            archive_report._current_failure_subjects(
+                "CDS deploy stage=building_timeout"
+            ),
+        )
+        for failure, closure in (
+            ("CDS smoke status=timeout", "CDS smoke status=healthy"),
+            ("CDS smoke status=timed_out", "CDS smoke status=passed"),
+            ("CDS deploy stage=building_timeout", "CDS deploy stage=completed"),
+        ):
+            with self.subTest(stage="opens", failure=failure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", failure
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+            with self.subTest(stage="closes", failure=failure, closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", failure
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 同一门禁已复测 | 关闭旧失败证据 | "
+                    "已通过 | 保留记录 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke timeout 配置已核对"
+        )
+        self.assertEqual(
+            [], archive_report._daily_conclusion_contract_errors("conditional", body)
+        )
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "myCDSdeploy stage=building_timeout"
+        )
+        self.assertEqual(
+            [], archive_report._daily_conclusion_contract_errors("conditional", body)
+        )
+
     def test_english_success_results_close_prior_raw_failure(self):
         for closure in (
             "CDS smoke passed",
