@@ -644,6 +644,9 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS ready failed",
             "CDS ready check failure",
             "CDS build failed",
+            "CDS smoke FAIL",
+            "CDS smoke result=FAIL",
+            "CDS smoke result=fail",
             "CDS ready status=missing",
             "CDS ready status=error",
             "CDS ready status=stopped",
@@ -677,6 +680,9 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS ready status=running",
             "CDS ready check passed",
             "CDS build passed",
+            "CDS smoke PASS",
+            "CDS smoke result=PASS",
+            "CDS smoke result=pass",
         ):
             with self.subTest(fact=fact):
                 body = report_body("覆盖不足").replace(
@@ -795,6 +801,42 @@ class DailyVerdictContractTests(unittest.TestCase):
                     "conditional", body
                 )
                 self.assertEqual([], errors)
+
+    def test_retest_results_close_prior_failure_without_closing_scenario_names(self):
+        for closure in (
+            "CDS smoke 复测通过",
+            "CDS smoke 复测结果通过",
+            "CDS smoke 复测成功",
+            "CDS smoke PASS",
+            "CDS smoke result=PASS",
+        ):
+            with self.subTest(closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 失败"
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 同一门禁已复测 | 关闭旧失败证据 | "
+                    "已通过 | 保留记录 |\n"
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 失败"
+        )
+        body = body.rstrip() + (
+            "\n| 验收冻结 SHA | CDS smoke 复测通过场景尚未执行 | "
+            "场景仍待覆盖 | 不构成门禁恢复 | 未关闭 | 继续补测 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
 
     def test_already_failed_binds_to_archive_instead_of_ready(self):
         fact = "验收报告归档 already failed"

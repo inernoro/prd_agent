@@ -643,13 +643,18 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"(?:(?:非|不为|不等于)\s*0(?![\d.])"
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?[1-9]\d*"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
+    r"|(?-i:\bFAIL\b)"
     r"|\b(?:failed|failure)\b"
+    r"|(?:result|结果)\s*[:：=]\s*(?:fail|failed|failure)\b"
     rf"|(?:status|状态)\s*[:：=]\s*{_RAW_FAILURE_VALUE_PATTERN}\b"
     rf"|(?:stage|阶段)\s*[:：=]\s*(?:{_RAW_FAILURE_VALUE_PATTERN}"
     rf"|{_CDS_DEPLOY_FAILURE_STAGE_PATTERN})\b)"
 )
 _RAW_RESOLVED_STATUS_PATTERN = (
-    r"(?:\b(?:passed|succeeded)\b"
+    r"(?:(?-i:\bPASS\b)"
+    r"|\b(?:passed|succeeded)\b"
+    r"|(?:result|结果)\s*[:：=]\s*"
+    r"(?:pass|passed|succeeded|success|successful|ok)\b"
     rf"|(?:status|状态)\s*[:：=]\s*{_RAW_RESOLVED_VALUE_PATTERN}\b"
     rf"|(?:stage|阶段)\s*[:：=]\s*(?:{_RAW_RESOLVED_VALUE_PATTERN}|deployed)\b"
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?0(?![\d.])"
@@ -686,8 +691,13 @@ _RESOLVED_ACTION_PATTERN = (
     r"正常|可用|就绪|部署|上线|生效|合并|ready|"
     rf"成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
 )
+_RETEST_RESOLVED_PATTERN = (
+    r"(?:复测|重试|回归(?:测试)?)(?:结果)?\s*(?:已)?\s*"
+    r"(?:通过|成功|正常|可用|就绪)"
+)
 _RESOLVED_FACT_PATTERN = re.compile(
     rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*{_RESOLVED_ACTION_PATTERN}"
+    rf"|{_RETEST_RESOLVED_PATTERN}"
     rf"|{_RAW_RESOLVED_STATUS_PATTERN}",
     re.I,
 )
@@ -951,6 +961,10 @@ def _closure_changes_subject(clause, event, previous_event_end):
         rf"\s*(?:的\s*)?{_DIAGNOSTIC_COMPLETION_OBJECT_PATTERN}",
         suffix,
         re.I,
+    ):
+        return True
+    if re.fullmatch(_RETEST_RESOLVED_PATTERN, event.group(0), re.I) and re.match(
+        rf"\s*{_VERIFIED_SCENARIO_OBJECT_PATTERN}", suffix, re.I
     ):
         return True
     if re.search(_PENDING_DELIVERY_PATTERN, suffix, re.I):
