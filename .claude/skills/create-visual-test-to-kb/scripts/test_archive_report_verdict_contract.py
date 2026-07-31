@@ -1160,6 +1160,36 @@ class DailyVerdictContractTests(unittest.TestCase):
                     any("硬门禁失败事实" in error for error in errors)
                 )
 
+    def test_target_condition_does_not_create_failure_fact(self):
+        for target, observation in (
+            ("CDS smoke 未通过时不得归档", "CDS smoke 尚未执行"),
+            ("CDS smoke 失败则停止验收", "尚未执行"),
+        ):
+            with self.subTest(target=target):
+                body = report_body("覆盖不足").replace(
+                    "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | "
+                    "当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
+                    f"| {target} | {observation} | 等待执行 | "
+                    "当前无事实结果 | 无法确认 | 执行后补充证据 |",
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | "
+            "当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
+            "| CDS smoke 未通过时不得归档 | 实际执行失败 | 门禁执行异常 | "
+            "已有失败事实 | 未关闭 | 修复后复测 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
     def test_target_subject_does_not_capture_named_evidence_or_diagnostics(self):
         for observation in ("截图上传失败", "问题定位失败", "日志收集失败"):
             with self.subTest(observation=observation):
@@ -2111,6 +2141,51 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
+
+    def test_partial_core_case_pass_count_is_failure(self):
+        for fact in (
+            "核心用例通过 3/5",
+            "核心流程已通过 1/2",
+            "核心用例通过 6/5",
+        ):
+            with self.subTest(verdict="conditional", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "未发现可复现产品缺陷，缺陷 0 个", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("核心用例失败事实" in error for error in errors)
+                )
+
+            with self.subTest(verdict="fail", fact=fact):
+                body = report_body("核心用例失败").replace(
+                    "未发现可复现产品缺陷，缺陷 0 个", fact
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors("fail", body),
+                )
+
+    def test_complete_core_case_pass_count_is_resolved(self):
+        for fact in ("核心用例通过 5/5", "核心流程已通过 2/2"):
+            with self.subTest(fact=fact):
+                self.assertEqual(
+                    set(),
+                    archive_report._current_failure_subjects(
+                        f"核心用例先前失败，{fact}"
+                    ),
+                )
+                body = report_body("覆盖不足").replace(
+                    "未发现可复现产品缺陷，缺陷 0 个", fact
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
 
     def test_later_core_status_inherits_product_quality_subject(self):
         for connector in ("后来", "之后", "此后"):
