@@ -148,22 +148,39 @@ def load_registered_dimensions():
     if not path.is_file():
         fail(f"设计系统规则不存在：{RULE_DOC}")
         return None
-    out = {}
+    # **按表头名取列，不按列序号**。加一列（比如这次加「断点」）会把后面所有列右移，
+    # 位置式解析要么解析失败、要么把「桌面偏移」读成「断点」——前者尚能判红，
+    # 后者是静默读错。表头名是这张表真正的契约，位置不是。
+    NEEDED = ("key", "桌面", "窄屏", "断点", "桌面偏移", "窄屏偏移")
+    out, cols = {}, None
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.startswith("|"):
+            cols = None                       # 表结束，下一张表要重新认表头
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) < 5:
+        if cols is None:
+            if all(h in cells for h in NEEDED):
+                cols = {h: cells.index(h) for h in NEEDED}
             continue
-        m_key = re.fullmatch(r"`([a-z]+)`", cells[1])
-        m_desk = re.fullmatch(r"(\d+)px", cells[2])
-        m_mob = re.fullmatch(r"(\d+)px", cells[3])
-        m_off = re.search(r"top:(-?\d+)px;\s*right:(-?\d+)px", cells[4])
+        if len(cells) <= max(cols.values()):
+            continue
+
+        def cell(h):
+            return cells[cols[h]]
+
+        m_key = re.fullmatch(r"`([a-z]+)`", cell("key"))
+        m_desk = re.fullmatch(r"(\d+)px", cell("桌面"))
+        m_mob = re.fullmatch(r"(\d+)px", cell("窄屏"))
+        m_off = re.search(r"top:(-?\d+)px;\s*right:(-?\d+)px", cell("桌面偏移"))
         # 窄屏偏移与桌面偏移是两档独立登记：刊徽变小时压进报头的量也要跟着变小。
         # 只登记桌面档等于窄屏可以随便漂——把档案窄屏 right 从 -2px 改成 -200px
         # 刊徽会整个移出屏幕，而只查桌面偏移的守卫照样判绿（review 实测）。
-        m_moff = re.search(r"top:(-?\d+)px;\s*right:(-?\d+)px", cells[5]) if len(cells) > 5 else None
-        if not (m_key and m_desk and m_mob and m_off and m_moff):
+        m_moff = re.search(r"top:(-?\d+)px;\s*right:(-?\d+)px", cell("窄屏偏移"))
+        # 断点同样要登记：不登记的话「窄屏那一档」没有边界，把 max-width:640px 改成
+        # max-width:1px，窄屏尺寸原样写着、守卫照样找得到并判绿，而任何真实手机
+        # 都仍然拿到桌面刊徽（review 实测）。
+        m_bp = re.fullmatch(r"`([^`]+)`", cell("断点"))
+        if not (m_key and m_desk and m_mob and m_off and m_moff and m_bp):
             continue
         out[m_key.group(1)] = {
             "desktop": int(m_desk.group(1)),
@@ -172,6 +189,7 @@ def load_registered_dimensions():
             "right": int(m_off.group(2)),
             "mobile_top": int(m_moff.group(1)),
             "mobile_right": int(m_moff.group(2)),
+            "breakpoint": normalize_media_condition(m_bp.group(1)),
         }
     missing = set(PRODUCT_DIMENSION_KEY.values()) - set(out)
     if missing:
@@ -377,8 +395,20 @@ def check_svg_integrity(label, rel, kind, text):
              f"刊系刊徽统一画布，尺寸不一致会导致同一 CSS 下大小不一")
 
 
+def normalize_media_condition(cond):
+    """把媒体查询条件归一成可比对的形式：去空白、转小写、剥外层括号。
+
+    `@media (max-width: 640px)` 与 `@media(max-width:640px)` 是同一个条件，
+    模板与生成器恰好各写一种。
+    """
+    c = re.sub(r"\s+", "", cond).lower()
+    while c.startswith("(") and c.endswith(")"):
+        c = c[1:-1]
+    return c
+
+
 def _media_block_spans(text):
-    """返回所有 @media 块的 [起, 止) 区间，靠**花括号配对**判定，不靠行首前缀。
+    """返回所有 @media 块的 [起, 止, 条件)，靠**花括号配对**判定，不靠行首前缀。
 
     不能只看规则所在行有没有 @media：验收生成器里 `@media(max-width:640px){{` 和
     `.masthead .emblem{{...}}` 分处两行，按行判会把响应式规则误认成基础规则，
@@ -389,7 +419,7 @@ def _media_block_spans(text):
     `}}` 连减两次，深度归零的位置一致）。
     """
     spans = []
-    for m in re.finditer(r'(?i:@media)[^{]*', text):
+    for m in re.finditer(r'(?i:@media)([^{]*)', text):
         i = m.end()
         # 跳到块的第一个 {
         while i < len(text) and text[i] != "{":
@@ -405,7 +435,7 @@ def _media_block_spans(text):
                 if depth == 0:
                     break
             j += 1
-        spans.append((m.start(), j + 1))
+        spans.append((m.start(), j + 1, normalize_media_condition(m.group(1))))
     return spans
 
 
@@ -593,14 +623,27 @@ def _is_visible_color(v):
     if m:
         h = m.group(1)
         return int(h[3] * 2 if len(h) == 4 else h[6:8], 16) != 0
-    m = re.fullmatch(r"(?:rgba?|hsla?)\(([^)]*)\)", v)     # 逗号式与斜杠式都认
+    # 颜色函数的 alpha 有两种语法，**分开取**：
+    #   逗号式（CSS Color 3）：rgba(0, 0, 0, 0)      -> 第 4 段是 alpha
+    #   斜杠式（CSS Color 4）：rgb(0 0 0 / 0)        -> 斜杠之后是 alpha
+    # 第一版把两者混在一个 `[,/]` 里切，`rgb(0 0 0 / 0)` 切出来只有 2 段，
+    # 于是 `len(parts) >= 4` 不成立、alpha 检查整个跳过，判绿——而那正是全透明。
+    # 现代写法本来就不带逗号，把它当逗号式来数段数必然落空。
+    m = re.fullmatch(
+        r"(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(([^)]*)\)", v)
     if m:
-        parts = [p.strip() for p in re.split(r"[,/]", m.group(1)) if p.strip()]
-        if len(parts) >= 4:
+        body = m.group(1)
+        alpha = (body.rsplit("/", 1)[1] if "/" in body
+                 else (lambda p: p[3] if len(p) >= 4 else None)(
+                     [x.strip() for x in body.split(",")]))
+        if alpha is not None:
+            alpha = alpha.strip()
+            if alpha == "none":                            # CSS Color 4 的缺省 alpha
+                return False
             try:
-                return float(parts[-1].rstrip("%")) != 0
+                return float(alpha.rstrip("%")) != 0
             except ValueError:
-                return True
+                return True                                # var() 之类，认为可见
     return True                                            # var()/具名色等，认为可见
 
 
@@ -784,7 +827,9 @@ def check_css_wiring(label, rel):
     # （只认字面 `.emblem` 的旧写法看不见它们，等于对特异性覆盖失明）。
     rules = rules_targeting(text, "emblem")
     for r in rules:
-        r["in_media"] = any(a <= r["pos"] < b for a, b in media_spans)
+        conds = [c for a, b, c in media_spans if a <= r["pos"] < b]
+        r["in_media"] = bool(conds)
+        r["media_cond"] = conds[-1] if conds else None    # 嵌套时取最内层
     bodies = [r["body"] for r in rules]
 
     if not bodies:
@@ -817,6 +862,19 @@ def check_css_wiring(label, rel):
     # 这种错编译不报、桌面端看不出来，只有真机窄屏才暴露（日报模板首版即如此）。
     base_rules = [r for r in rules if not r["in_media"]]
     media_rules = [r for r in rules if r["in_media"]]
+
+    # 「在 @media 里」不等于「在窄屏那一档里」。此前任何 @media 块都被当成移动端层，
+    # 于是把 max-width:640px 改成 max-width:1px 后：窄屏尺寸原样写在那儿、守卫照样
+    # 找得到并判绿，而任何真实手机都仍然拿到桌面刊徽（review 实测）。判据取的是
+    # 「有没有这一档的声明」，浏览器取的是「这一档在哪些视口生效」——又一次不是同一个值。
+    # 断点登记在规则 §1.4，故这里比对的是登记值而不是硬编码的 640。
+    if REGISTERED is not None and PRODUCT_DIMENSION_KEY.get(rel):
+        want_bp = REGISTERED[PRODUCT_DIMENSION_KEY[rel]]["breakpoint"]
+        for r in media_rules:
+            if r["media_cond"] != want_bp:
+                fail(f"{label}({rel}): .emblem 的窄屏规则写在 `@media {r['media_cond']}` 里，"
+                     f"与规则 §1.4 登记的断点 `{want_bp}` 不符——"
+                     f"这一档的尺寸虽然写着，但在真实手机视口上不会生效")
     base_pos = [r["pos"] for r in base_rules]
     media_pos = [r["pos"] for r in media_rules]
     if base_pos and media_pos and min(media_pos) < max(base_pos):

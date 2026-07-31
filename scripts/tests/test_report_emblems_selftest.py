@@ -153,11 +153,18 @@ CASES = [
     ("R20-color透明", "color:transparent 让 currentColor 画的刊徽整个消失", DAILY,
      lambda t: t.replace("color: var(--terra); opacity: 0.13;",
                          "color: transparent; opacity: 0.13;", 1)),
+    ("R21-斜杠零alpha", "rgb(0 0 0 / 0) 空格分隔的零 alpha 写法", DAILY,
+     lambda t: t.replace("color: var(--terra); opacity: 0.13;",
+                         "color: rgb(0 0 0 / 0); opacity: 0.13;", 1)),
+    ("R21-断点失效", "窄屏断点改成 max-width:1px，真机永远拿不到窄屏档", DAILY,
+     lambda t: t.replace("@media (max-width: 640px) { .emblem {",
+                         "@media (max-width: 1px) { .emblem {", 1)),
 
     # ── 规则表本身 ─────────────────────────────────────────────────
     ("R8-规则表列缺失", "规则 §1.4 删掉窄屏偏移列", RULE,
-     lambda t: t.replace("| 92px | 70px | `top:-14px; right:-8px` | `top:-8px; right:-4px` |",
-                         "| 92px | 70px | `top:-14px; right:-8px` |", 1)),
+     lambda t: t.replace(
+         "| 92px | 70px | `max-width:640px` | `top:-14px; right:-8px` | `top:-8px; right:-4px` |",
+         "| 92px | 70px | `max-width:640px` | `top:-14px; right:-8px` |", 1)),
 
     # ── 守卫自己的 CI 接线 ─────────────────────────────────────────
     ("R6-CI未接线", "被测文件从 CI path filter 摘掉", CI,

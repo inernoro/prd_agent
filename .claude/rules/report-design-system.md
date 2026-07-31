@@ -62,10 +62,14 @@
 
 尺寸按刊物报头的实际紧凑度**等比**取，不是全刊系一个数：
 
-| 产物 | key | 桌面 | 窄屏 | 桌面偏移 | 窄屏偏移 | 依据 |
-|---|---|---|---|---|---|---|
-| 日报 / 周报模板 | `template` | 92px | 70px | `top:-14px; right:-8px` | `top:-8px; right:-4px` | 报头 stamp 46px、`padding-bottom:14px` |
-| 验收档案 / 巡检特刊 | `archive` | 86px | 60px | `top:-12px; right:-6px` | `top:-8px; right:-2px` | 报头更紧凑：stamp 44px、`padding-bottom:12px`，窄屏 stamp 再缩到 36px |
+| 产物 | key | 桌面 | 窄屏 | 断点 | 桌面偏移 | 窄屏偏移 | 依据 |
+|---|---|---|---|---|---|---|---|
+| 日报 / 周报模板 | `template` | 92px | 70px | `max-width:640px` | `top:-14px; right:-8px` | `top:-8px; right:-4px` | 报头 stamp 46px、`padding-bottom:14px` |
+| 验收档案 / 巡检特刊 | `archive` | 86px | 60px | `max-width:640px` | `top:-12px; right:-6px` | `top:-8px; right:-2px` | 报头更紧凑：stamp 44px、`padding-bottom:12px`，窄屏 stamp 再缩到 36px |
+
+断点也必须登记，否则「窄屏那一档」是个没有边界的说法：把 `max-width:640px` 改成
+`max-width:1px`，窄屏尺寸原样写在那里、守卫照样找得到并判绿，而任何真实手机都仍然
+拿到 92px 桌面刊徽（2026-07-31 review 实测）。断点与 §1.5 的全刊系收边距断点同值。
 
 窄屏偏移随尺寸一起收（刊徽变小，压进报头的量也要变小），两档都必须登记——**只登记桌面档
 等于窄屏可以随便漂**：把档案窄屏的 `right` 从 `-2px` 改成 `-200px`，刊徽整个移出屏幕，

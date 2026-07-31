@@ -39,3 +39,4 @@
 | fix | ci | 属性名匹配补边界：`data-class="masthead"` 此前会被当成 class 属性命中，浏览器里 `.masthead` 根本不匹配它，刊徽全部样式失配而守卫判绿 |
 | fix | ci | 注释剥离补 CSS 注释：只剥 `<!-- -->` 不够，把基础 `.emblem` 规则用 `/* */` 注释掉后浏览器忽略该规则而 rules_targeting 照样收得到，整条契约失效仍判绿 |
 | test | scripts | 刊徽守卫补三处判据：主语必须正向点名（:not/:has 里的类不算）、color 纳入可见性契约、守卫脚本自身纳入 CI 接线自查 |
+| test | scripts | 刊徽守卫校验窄屏断点与规则表登记一致，颜色 alpha 支持 CSS Color 4 斜杠写法，规则表改按表头名解析 |
