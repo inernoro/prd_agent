@@ -569,6 +569,27 @@ def rules_targeting(text, cls, must_mention=None):
     return out
 
 
+def rules_under(text, cls):
+    """作用在 `.cls` **后代**上的规则（选择器提到它，但主语不是它自己）。
+
+    `rules_targeting` 有意排除了 `.emblem svg`（主语是 svg 不是 emblem）——排除是对的，
+    否则 svg 的 `width:100%` 会被拿去和规则表登记的 92px 比。但排除完就**没有任何判据
+    管它了**：`.emblem svg{display:none}` 之后报头上一枚水印都不会出现，而包裹元素的
+    position / z-index / opacity / color 全部合法。可见性属性写在后代上一样奏效。
+    """
+    out = []
+    for m in re.finditer(r'([^{};\n]*)\{\{?([^{}]*)\}', text):
+        hits = [p.strip() for p in m.group(1).split(",")
+                if re.search(r'\.%s(?![\w-])' % re.escape(cls), p)
+                and not selector_targets(p, cls)]
+        if hits:
+            out.append({"pos": m.start(),
+                        "body": re.sub(r"\s+", "", m.group(2)),
+                        "sel": m.group(1).strip(),
+                        "default_state": any(":" not in subject_compound(p) for p in hits)})
+    return out
+
+
 def require_all_declarations(label, rel, rules, prop, ok, why):
     """该元素**每一条**匹配规则里的 prop 声明都必须满足 ok()，否则判红。
 
@@ -689,6 +710,20 @@ EMBLEM_CONTRACT = (
      "display:none 会让刊徽在任何视口下都不渲染", False),
     ("visibility", lambda v: v.strip().lower() not in ("hidden", "collapse"),
      "visibility:hidden/collapse 会让刊徽不可见", False),
+)
+
+# 刊徽 SVG（`.emblem` 的后代）的可见性契约。**只管「别把它藏起来」，不管尺寸**——
+# 尺寸在这一层是 `width:100%`（相对包裹元素），与规则表登记的 px 值不是一回事。
+# 这些属性样式表里可以不写（默认就可见），写了就必须是可见值。
+EMBLEM_DESCENDANT_CONTRACT = (
+    ("display", lambda v: v.strip().lower() != "none",
+     "刊徽 SVG 被 display:none 隐藏，报头上一枚水印都不会出现", False),
+    ("visibility", lambda v: v.strip().lower() not in ("hidden", "collapse"),
+     "刊徽 SVG visibility:hidden/collapse 后不可见", False),
+    ("opacity", lambda v: not (re.fullmatch(r"[0-9.]+", v.strip()) and float(v) == 0),
+     "刊徽 SVG opacity:0 等于没有水印（包裹元素那档已另有 (0,0.3] 的约束）", False),
+    ("color", _is_visible_color,
+     "刊徽 SVG 全用 currentColor 上色，在它自己这层把 color 改透明同样会让水印消失", False),
 )
 
 MASTHEAD_CONTRACT = (
@@ -873,6 +908,11 @@ def check_css_wiring(label, rel):
     check_positioning_context(label, rel, text)
     check_foreground_stacking(label, rel, text)
     check_structural_selectors(label, rel, text)
+
+    # 包裹元素合契约还不够：可见性属性写在**后代**（那枚 SVG）上一样能把水印抹掉，
+    # 而后代规则被 rules_targeting 有意排除在外，此前无人过问。
+    check_contract(label, rel, rules_under(text, "emblem"),
+                   EMBLEM_DESCENDANT_CONTRACT, "`.emblem` 内的刊徽 SVG")
 
     # 层叠顺序：@media 覆盖必须排在基础规则**之后**。
     # 两者选择器特异性相同，靠源码顺序决胜——媒体查询若写在前面，
