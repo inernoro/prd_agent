@@ -335,21 +335,98 @@ def _gateway_route_self_test_result(result: dict, key_name: str) -> dict:
         and total >= len(required_protocols)
         and not missing_protocols
     )
+    detail = {
+        "status": result.get("status"),
+        "keyEnv": key_name,
+        "selfTestStatus": status,
+        "mode": mode,
+        "upstreamCalled": upstream_called,
+        "total": total,
+        "passed": passed,
+        "protocols": protocols,
+        "missingProtocols": missing_protocols,
+    }
+    if not ok:
+        detail["likelyCause"], detail["nextAction"] = _diagnose_route_self_test_failure(
+            status_code=result.get("status"),
+            key_name=key_name,
+            total=total,
+            passed=passed,
+            missing_protocols=missing_protocols,
+        )
     return {
         "name": "gateway_route_self_test",
         "ok": ok,
-        "detail": json.dumps({
-            "status": result.get("status"),
-            "keyEnv": key_name,
-            "selfTestStatus": status,
-            "mode": mode,
-            "upstreamCalled": upstream_called,
-            "total": total,
-            "passed": passed,
-            "protocols": protocols,
-            "missingProtocols": missing_protocols,
-        }, ensure_ascii=False),
+        "detail": json.dumps(detail, ensure_ascii=False),
     }
+
+
+def _diagnose_route_self_test_failure(
+    status_code: object,
+    key_name: str,
+    total: object,
+    passed: object,
+    missing_protocols: list[str],
+) -> tuple[str, str]:
+    """把 route-self-test 失败收敛成一个主要原因 + 一条恢复动作。
+
+    对齐 rule.platform.production-release-safety §5「错误必须收敛为一个主要原因」。
+    没有这段归因时，操作者看到的只有 `"ok": false` 和一个裸状态码，无法区分
+    「网关真的坏了」和「预检的凭据跟运行态对不上」——2026-07-30 就是在这里
+    连烧两次生产发布 run 才定位到根因。
+
+    401 尤其要说清楚：它几乎不代表网关不可用（同一轮预检里 gateway_health_commit
+    与 gateway_protected_requires_key 都是 pass），而是**预检持有的 key 与运行中
+    serving 容器持有的 `LlmGwServe__ApiKey` 不是同一个值**——典型场景是 `.env`
+    已经轮换成新 key，但持 key 容器从未随之重建，仍带着旧值。
+
+    这里还藏着一个死锁，必须在提示里点破：本预检由 scripts/llmgw-prod-stage.sh 在
+    `exec_dep.sh` **之前**调用（run_prod_preflight 在前、exec_dep.sh 在后），判定用的是
+    **发布前**的运行态；而这次发布走到 compose up 时恰恰会用新 `.env` 重建容器、
+    自动消解这个不一致。于是「上一次没做完的轮换」把「本可以修好它的这次发布」
+    永久挡在门外，反复重试同一条 run 只会反复烧在同一处。正确处置是先补完轮换
+    （重建持 key 容器）再发布，而不是重试或调大超时。
+    """
+    if status_code == 401 or status_code == 403:
+        return (
+            f"网关拒绝了预检使用的 X-Gateway-Key（{key_name}，HTTP {status_code}）。"
+            "同轮 gateway_health_commit / gateway_protected_requires_key 若为 pass，"
+            "说明网关服务本身健康，问题是凭据与运行态不一致："
+            "最常见的是 .env 的 LLMGW_SERVE_KEY 已轮换，但持 key 容器"
+            "（llmgw-serve / llmgw-serve-b / api）从未随之重建，仍带着旧 key。",
+            "先补完这次轮换再发布：在生产机执行 "
+            "`docker compose --env-file .env up -d --no-deps --force-recreate "
+            "llmgw-serve-b llmgw-serve llmgw api`，容器 healthy 后重跑发布。"
+            "注意本预检在部署之前运行，判定的是发布前的运行态，"
+            "所以重试同一条 run 不会自愈；重建非 gateway 容器后还需原地 "
+            "`nginx -s reload` 刷新 gateway 缓存的上游地址，否则公网会 502。",
+        )
+    if not isinstance(status_code, int) or status_code == 0 or status_code >= 500:
+        return (
+            f"网关 /route-self-test 未返回可用响应（status={status_code}），"
+            "serving 可能未就绪、正在重启或被上游代理拦截。",
+            "先确认 llmgw-serve 与 llmgw-serve-b 容器 running 且 healthy、"
+            "gateway 的上游地址是最新的，再重跑发布。",
+        )
+    if missing_protocols:
+        return (
+            "网关缺少必需的入口协议：" + "、".join(missing_protocols) + "。"
+            "通常表示当前运行的 serving 版本早于本次要发布的 commit。",
+            "确认 llmgw-serve 运行的镜像 tag 与目标 commit 一致；"
+            "若是首次引入该协议，按阶段顺序先完成上一阶段的 rollout。",
+        )
+    if isinstance(total, int) and isinstance(passed, int) and total != passed:
+        return (
+            f"路由自检有用例未通过（passed={passed}/total={total}），"
+            "属于网关自身的路由/模型池配置问题，不是凭据问题。",
+            "读取 /route-self-test 响应里失败用例的 ingressProtocol 与原因，"
+            "修好配置后重跑；不要用重试或调大超时绕过。",
+        )
+    return (
+        "路由自检未达成放行条件（要求 status=ok、mode=dry-run、upstreamCalled=false、"
+        "四协议全部通过）。",
+        "查看本条 detail 中的各字段定位偏差项，修复后重跑发布。",
+    )
 
 
 def _self_test() -> int:

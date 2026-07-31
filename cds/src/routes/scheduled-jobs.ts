@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import type { StateService } from '../services/state.js';
-import type { ScheduledJob, ScheduledJobAction, ScheduledJobSchedule, ScheduledJobTarget } from '../types.js';
+import type { ReleaseJobSource, ScheduledJob, ScheduledJobAction, ScheduledJobSchedule, ScheduledJobTarget } from '../types.js';
 import type { ScheduledJobService } from '../services/scheduled-job-service.js';
 
 export interface ScheduledJobsRouterDeps {
@@ -50,13 +50,15 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     const access = deps.assertProjectAccess(req, projectId);
     if (access) { res.status(access.status).json(access.body); return; }
 
-    const target = parseTarget(req.body?.target);
+    const target = parseTarget(req.body?.target, { projectId, stateService });
     if ('error' in target) { res.status(400).json({ error: target.error }); return; }
 
     try {
       const result = await scheduledJobService.checkTarget(
         target,
-        clampInt(req.body?.timeoutSeconds, 30, 1, 300)
+        // release 的试运行要跑一整轮预检（SSH + 上线地址探测），30 秒不够；
+        // 它不发布，放宽超时没有生产风险。
+        clampInt(req.body?.timeoutSeconds, target.type === 'release' ? 120 : 30, 1, 300)
       );
       res.json({ result });
     } catch (err) {
@@ -65,7 +67,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
   });
 
   router.post('/scheduled-jobs', (req, res) => {
-    const input = parseJobInput(req.body);
+    const input = parseJobInput(req.body, stateService);
     if ('error' in input) { res.status(400).json({ error: input.error }); return; }
     const project = stateService.getProject(input.projectId);
     if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
@@ -98,7 +100,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     const access = deps.assertProjectAccess(req, existing.projectId);
     if (access) { res.status(access.status).json(access.body); return; }
 
-    const input = parseJobInput({ ...existing, ...req.body, projectId: existing.projectId });
+    const input = parseJobInput({ ...existing, ...req.body, projectId: existing.projectId }, stateService);
     if ('error' in input) { res.status(400).json({ error: input.error }); return; }
 
     const preserveNextRunAt = existing.enabled === input.enabled && schedulesEqual(existing.schedule, input.schedule);
@@ -112,6 +114,11 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       actions: input.actions,
       timeoutSeconds: input.timeoutSeconds,
       retryCount: input.retryCount,
+      // 人工重新启用 = 认领了这条规则，连续失败计数与自动停用痕迹一并清掉；
+      // 不清的话下一次失败就直接触顶，规则刚开又被关掉。
+      ...(input.enabled && !existing.enabled
+        ? { consecutiveFailureCount: 0, autoDisabledAt: undefined, autoDisabledReason: undefined }
+        : {}),
       updatedAt: new Date().toISOString(),
     }, { preserveNextRunAt });
     stateService.upsertScheduledJob(job);
@@ -159,7 +166,7 @@ function resolveProjectFilter(
   return projectId;
 }
 
-function parseJobInput(body: any): {
+function parseJobInput(body: any, stateService: StateService): {
   projectId: string;
   name: string;
   description?: string;
@@ -176,8 +183,10 @@ function parseJobInput(body: any): {
 
   const schedule = parseSchedule(body?.schedule);
   if ('error' in schedule) return schedule;
-  const actions = parseActions(body?.actions, body?.target);
+  const actions = parseActions(body?.actions, body?.target, { projectId, stateService });
   if ('error' in actions) return actions;
+
+  const hasRelease = actions.some((action) => action.type === 'release');
 
   return {
     projectId,
@@ -186,8 +195,11 @@ function parseJobInput(body: any): {
     enabled: body?.enabled !== false,
     schedule,
     actions,
-    timeoutSeconds: clampInt(body?.timeoutSeconds, 300, 1, 3600),
-    retryCount: clampInt(body?.retryCount, 0, 0, 5),
+    // 发布默认要等一整轮部署 + 健康检查（发布执行超时本身就是 30 分钟量级），
+    // 沿用 300 秒默认值会让绝大多数定时发布在还没跑完时就被记成失败，制造假告警。
+    timeoutSeconds: clampInt(body?.timeoutSeconds, hasRelease ? 3600 : 300, 1, 3600),
+    // 一次生产部署失败自动重放是危险动作；恢复走 rollbackOnFailure，不走 retry。
+    retryCount: hasRelease ? 0 : clampInt(body?.retryCount, 0, 0, 5),
   };
 }
 
@@ -205,23 +217,57 @@ function parseSchedule(raw: any): ScheduledJobSchedule | { error: string } {
   return { type, timeOfDay, timezone };
 }
 
-function parseActions(rawActions: any, legacyTarget: any): ScheduledJobAction[] | { error: string } {
+/** 校验 release 动作所需的语境：跨项目发布必须在这一层就被拒。 */
+interface ParseTargetContext {
+  projectId: string;
+  stateService: StateService;
+}
+
+function parseActions(rawActions: any, legacyTarget: any, ctx: ParseTargetContext): ScheduledJobAction[] | { error: string } {
   const source = Array.isArray(rawActions) && rawActions.length > 0 ? rawActions : legacyTarget ? [legacyTarget] : [];
   if (source.length === 0) return { error: '至少需要一个动作' };
   const actions: ScheduledJobAction[] = [];
   for (let index = 0; index < source.length; index += 1) {
-    const target = parseTarget(source[index]);
+    const target = parseTarget(source[index], ctx);
     if ('error' in target) return { error: `动作 ${index + 1}: ${target.error}` };
     actions.push({
       ...target,
       id: cleanText(source[index]?.id, 80) || `action_${index + 1}`,
-      name: cleanText(source[index]?.name, 120) || (target.type === 'http' ? '调用 HTTP 接口' : '执行命令脚本'),
+      name: cleanText(source[index]?.name, 120) || defaultActionName(target),
     });
   }
   return actions;
 }
 
-function parseTarget(raw: any): ScheduledJobTarget | { error: string } {
+function defaultActionName(target: ScheduledJobTarget): string {
+  if (target.type === 'release') return '发布到环境';
+  return target.type === 'http' ? '调用 HTTP 接口' : '执行命令脚本';
+}
+
+function parseTarget(raw: any, ctx: ParseTargetContext): ScheduledJobTarget | { error: string } {
+  if (raw?.type === 'release') {
+    const targetId = cleanText(raw.targetId, 120);
+    if (!targetId) return { error: '发布目标必填' };
+    const releaseTarget = ctx.stateService.getReleaseTarget(targetId);
+    if (!releaseTarget) return { error: `发布目标不存在: ${targetId}` };
+    // ScheduledJob.projectId 与 ReleaseTarget.projectId 是两条独立的项目归属；
+    // 不比对就能用 A 项目的定时任务去发 B 项目的生产（scheduled-jobs 的
+    // assertProjectAccess 只认 job.projectId，看不见发布目标那一侧）。
+    if (releaseTarget.projectId !== ctx.projectId) {
+      return { error: `发布目标属于项目 ${releaseTarget.projectId}，与任务所属项目 ${ctx.projectId} 不一致，禁止跨项目定时发布` };
+    }
+    const source = parseReleaseSource(raw.source, ctx);
+    if ('error' in source) return source;
+    return {
+      type: 'release',
+      targetId,
+      source,
+      ...(raw.dryRun === true ? { dryRun: true } : {}),
+      ...(raw.requireApproval === true ? { requireApproval: true } : {}),
+      ...(raw.rollbackOnFailure === true ? { rollbackOnFailure: true } : {}),
+      ...(raw.skipWhenUnchanged === true ? { skipWhenUnchanged: true } : {}),
+    };
+  }
   if (raw?.type === 'http') {
     const url = cleanText(raw.url, 2000);
     if (!url) return { error: 'HTTP URL 必填' };
@@ -247,6 +293,30 @@ function parseTarget(raw: any): ScheduledJobTarget | { error: string } {
     };
   }
   return { error: '执行目标类型无效' };
+}
+
+function parseReleaseSource(raw: any, ctx: ParseTargetContext): ReleaseJobSource | { error: string } {
+  if (raw?.kind === 'promote') {
+    const fromTargetId = cleanText(raw.fromTargetId, 120);
+    if (!fromTargetId) return { error: '提升来源环境必填' };
+    const fromTarget = ctx.stateService.getReleaseTarget(fromTargetId);
+    if (!fromTarget) return { error: `提升来源环境不存在: ${fromTargetId}` };
+    if (fromTarget.projectId !== ctx.projectId) {
+      return { error: `提升来源环境属于项目 ${fromTarget.projectId}，与任务所属项目不一致` };
+    }
+    return { kind: 'promote', fromTargetId };
+  }
+  if (raw?.kind === 'branch') {
+    const branchId = cleanText(raw.branchId, 120);
+    if (!branchId) return { error: '来源分支必填' };
+    const branch = ctx.stateService.getBranch(branchId);
+    if (!branch) return { error: `来源分支不存在: ${branchId}` };
+    if (branch.projectId !== ctx.projectId) {
+      return { error: `来源分支属于项目 ${branch.projectId}，与任务所属项目不一致` };
+    }
+    return { kind: 'branch', branchId };
+  }
+  return { error: '发布来源无效，必须是 branch 或 promote' };
 }
 
 function isSafeRelativeCommandCwd(cwd: string): boolean {

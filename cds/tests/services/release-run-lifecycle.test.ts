@@ -171,6 +171,41 @@ describe('ReleaseService 阶段一止血', () => {
     });
   }
 
+  // ── 版本钳制 expectedCommitSha（「原样提升」成立的前提） ────────────────
+
+  describe('expectedCommitSha 版本钳制', () => {
+    it('与分支当前 commit 不一致时 fail-closed，且不建 ReleaseRun', async () => {
+      const { service } = createService(async () => 'deployed');
+      await expect(service.startRelease({
+        branchId: 'b1',
+        targetId: 'target-prod',
+        operator: 'tester',
+        previewUrl: 'https://preview.example.test',
+        expectedCommitSha: 'c'.repeat(40),
+      })).rejects.toThrow(/已前进到|不一致/);
+      expect(stateService.getReleaseRuns({ targetId: 'target-prod' })).toHaveLength(0);
+    });
+
+    it('一致时正常放行', async () => {
+      const { service } = createService(async () => 'deployed');
+      const run = await service.startRelease({
+        branchId: 'b1',
+        targetId: 'target-prod',
+        operator: 'tester',
+        previewUrl: 'https://preview.example.test',
+        expectedCommitSha: 'a'.repeat(40),
+      });
+      expect(run.commitSha).toBe('a'.repeat(40));
+    });
+
+    it('不传时行为与现状完全一致（存量路径零回归）', async () => {
+      const { service } = createService(async () => 'deployed');
+      const run = await start(service);
+      expect(run.releaseId).toMatch(/^rel_/);
+      expect(run.commitSha).toBe('a'.repeat(40));
+    });
+  });
+
   // ── 中断收敛（本阶段最重要的一件事） ────────────────────────────────────
 
   it('CDS 发布中途重启：心跳过期的 run 收敛为失败，该发布目标可以再次发布', async () => {

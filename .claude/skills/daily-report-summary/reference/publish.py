@@ -17,9 +17,11 @@ find-or-create「日报知识库」→（有截图则先上传图、回填 {{IMG
   python3 publish.py --base https://main-prd-agent.miduo.org \
     --impersonate inernoro --title "日报-2026-05-31-今日大事早知道" \
     --daily-date 2026-05-31 --report-md /tmp/daily.md \
+    --last-commit $(git rev-parse origin/main) \   # 必传：下一期的水位线起点
     --manifest /tmp/acc_shots/manifest.json   # 可选：harness 产出的截图清单
   # HTML 报纸版：
-  python3 publish.py --base ... --title "..." --report-html /tmp/daily.html
+  python3 publish.py --base ... --title "..." --report-html /tmp/daily.html \
+    --last-commit $(git rev-parse origin/main) --replace-same-date
   # 无密钥 / 无文档空间时退化为本地：
   python3 publish.py --local --title "..." --report-md /tmp/daily.md --out fallback.md \
     --manifest /tmp/acc_shots/manifest.json
@@ -90,6 +92,62 @@ def find_store(base, H, name):
         page += 1
         if page > 1000:                          # 防无限循环（需 10 万+ 满页库才触顶）；触顶则报错而非误判不存在
             raise RuntimeError("知识库分页超过 1000 页仍未翻到尾，疑似分页异常，停止以免误建重复库")
+
+
+def list_entries_by_date(base, H, store_id, kind, daily_date):
+    """列出同 dailyDate + 同 kind 的既有条目 id（--replace-same-date 用）。
+
+    分页翻全库：重跑当天时如果只翻首页，旧条目可能漏在后面，结果是库里留下两篇
+    同日日报（一篇残缺一篇完整），读者不知道该信哪篇。
+    """
+    if not daily_date:
+        return []
+    found, page = [], 1
+    while True:
+        # 返回 (id, createdAt) 而不只是 id：并发替换时要靠 createdAt 判「谁更早」，
+        # 见调用处的竞态说明。
+        # all=true 必须带：后端 ListEntries 默认只返回根级条目，
+        # 日报若被整理进文件夹就查不到，--replace-same-date 会漏删并留下重复条目。
+        res = curl(H + [f"{base}/stores/{store_id}/entries?page={page}&pageSize=100&all=true"])
+        if not res.get("success"):
+            # 列不出来就别删——宁可留重复条目，也不能因为读失败而误删别的东西
+            raise RuntimeError("列出条目失败，无法安全执行 --replace-same-date")
+        data = res.get("data") or {}
+        items = data.get("items") or []
+        for it in items:
+            md = it.get("metadata") or {}
+            if (md.get("kind") or "") == kind and (md.get("dailyDate") or "").strip() == daily_date:
+                found.append((it["id"], it.get("createdAt") or ""))
+        if data.get("hasNextPage") is False or len(items) < 100:
+            break
+        page += 1
+        if page > 1000:
+            break
+    return found
+
+
+def shared_entry_ids(base, H, store_id):
+    """本库中**已被分享且分享链仍有效**的 entryId 集合。
+
+    删重复条目前必须查它：分享链是钉在 entryId 上的，删掉带链条目会让已经发出去的
+    链接和别人的书签永久变空（后端 DeleteEntry 不会迁移 EntryId）。取不到时返回 None，
+    调用方据此选择"宁可不删"，绝不在信息缺失的情况下做不可逆删除。
+    """
+    try:
+        res = curl(H + [f"{base}/stores/{store_id}/share-links"], retries=2)
+        if not res.get("success"):
+            return None
+        items = ((res.get("data") or {}).get("items")) or []
+        out = set()
+        for l in items:
+            if l.get("isRevoked"):
+                continue
+            eid = l.get("entryId")
+            if eid:
+                out.add(eid)
+        return out
+    except Exception:
+        return None
 
 
 def resolve_daily_date(daily_date, title):
@@ -446,7 +504,25 @@ def main():
     ap.add_argument("--store-desc", default=STORE_DESC, help="新建目标库时的描述")
     ap.add_argument("--kind", default="daily-report", help="metadata.kind，如 weekly-report")
     ap.add_argument("--tags", default="日报,今日大事", help="条目 tags，逗号分隔")
+    # 水位线（纪律 2）：本期采到哪，写进 metadata 供**下一期**续采。
+    # 不写 = 下一期读不到水位线，只能退化回「按日历日采」的老行为并漏掉当天晚些时候的提交。
+    ap.add_argument("--last-commit", default="", help="本期覆盖到的最后一个主干提交 SHA（下期水位线起点，必传）")
+    ap.add_argument("--cover-from", default="", help="本期窗口起点（ISO 时间戳或 YYYY-MM-DD），仅记账用")
+    ap.add_argument("--cover-to", default="", help="本期窗口终点（ISO 时间戳），SHA 不可达时的降级水位线")
+    ap.add_argument("--replace-same-date", action="store_true",
+                    help="同 dailyDate 已有条目时替换它（先建新条目并校验落库成功，再删旧条目）")
     a = ap.parse_args()
+
+    # 日报联网发布必须带水位线：没有它，下一期读不到 lastCommit/coverTo 就会退化为
+    # 当日口径，把「上期水位线 → 今天 00:00」之间落地的提交整段漏掉——正是本技能存在的理由。
+    # 只对 kind=daily-report 且非 --local 强制：周报等复用本脚本的刊物没有水位线概念。
+    if (a.kind or "daily-report") == "daily-report" and not a.local and not a.last_commit:
+        sys.stderr.write(
+            "[错误] 联网发布日报必须传 --last-commit <本期覆盖到的最后一个主干提交 SHA>。\n"
+            "  缺了它，下一期读不到水位线会退回「按日历日采」，把本期之前落地的提交整段漏掉。\n"
+            "  取值：git rev-parse origin/main（或 coverage_window.py 输出的 headSha）。\n"
+            "  确实不需要水位线（如周报）请显式传 --kind，或用 --local 落本地。\n")
+        sys.exit(7)
 
     if bool(a.report_md) == bool(a.report_html):
         sys.stderr.write("[错误] --report-md 与 --report-html 恰好传一个（格式二选项）。\n")
@@ -530,36 +606,105 @@ def main():
 
     # create entry（失败则回滚新建的库）
     daily_date = resolve_daily_date(a.daily_date, a.title)
-    meta = {"kind": a.kind or "daily-report", "dailyDate": daily_date,
+    kind = a.kind or "daily-report"
+
+    # --replace-same-date：**优先原地更新已有条目，而不是「建新 + 删旧」**。
+    # 为什么：分享链是**钉在 entryId 上**的（后端 ListShareEntries 按 link.EntryId 过滤）。
+    # 建新删旧会让当天已经发出去的分享链、别人的书签全部失效——重跑一次就断一次。
+    # 保留 entryId 则连分享链都不用换：CreateShareLink 的 reuseFilter 也按 entryId 匹配，
+    # 会直接复用同一个 token 返回（见 DocumentStoreController 的 reuseFilter）。
+    # 附带好处：原地更新没有「建新」这一步，两个并发进程只会先后写同一条，
+    # 不会各建一条留下重复，也不可能互删成零条。
+    # 多于一条（历史竞态留下的重复）时：取**最早**那条作为保留对象（它最可能是分享链
+    # 指向的那条），其余的在正文确认落库后删除。
+    stale, stale_ids, my_created_at = [], [], ""
+    reuse_eid = ""
+    if a.replace_same_date:
+        stale = list_entries_by_date(base, H, rid, kind, daily_date)
+        if stale:
+            # createdAt 升序取最早；缺 createdAt 的排最后，避免它抢占保留位
+            reuse_eid = sorted(stale, key=lambda x: (x[1] == "", x[1]))[0][0]
+            others = [sid for sid, _ in stale if sid != reuse_eid]
+            print(f"  同日({daily_date})已有 {len(stale)} 条条目 → 原地更新 {reuse_eid}（保住已发出的分享链）"
+                  + (f"，另 {len(others)} 条重复将在正文落库后删除" if others else ""))
+
+    meta = {"kind": kind, "dailyDate": daily_date,
             "format": "html" if is_html else "md"}
+    # 水位线：写给下一期读（纪律 2）。缺 lastCommit 会让下期退化回当日口径并漏报，
+    # 所以这里明确告警，不静默放过。
+    if a.last_commit:
+        meta["lastCommit"] = a.last_commit
+    else:
+        print("  [告警] 未传 --last-commit：下一期读不到水位线，会退回「按日历日采」并漏掉今天晚些时候的提交")
+    if a.cover_from:
+        meta["coverFrom"] = a.cover_from
+    if a.cover_to:
+        meta["coverTo"] = a.cover_to
+    # 身份字段（建条目时就要有，用于同日查重）与水位线字段（必须等正文验完才写）分开。
+    meta_identity = {"kind": kind, "dailyDate": daily_date, "format": "html" if is_html else "md"}
     content_type = "text/html" if is_html else "text/markdown"
     tags = [t.strip() for t in (a.tags or "").split(",") if t.strip()] or ["日报", "今日大事"]
     try:
-        eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
-            "title": a.title, "summary": a.title if is_html else f"# {a.title}",
-            "sourceType": "reference", "contentType": content_type,
-            "tags": tags, "metadata": meta,
-        }), f"{base}/stores/{rid}/entries"])["data"]["id"]
+        if reuse_eid:
+            # 原地更新：**先不动 title/metadata**，等正文确认落库后再改（见下方）。
+            # 顺序颠倒的话，正文 PUT 失败会留下「新标题 + 旧正文 + 新水位线」的错配条目，
+            # 而水位线错配会让下一期从错误的位置续采。
+            eid = reuse_eid
+        else:
+            # 建条目时**不带水位线**（lastCommit/coverFrom/coverTo），只带身份字段。
+            # 否则：正文 PUT 失败、随后的清理 DELETE 又失败时，库里会留下一个**空壳**
+            # 却带着已推进的水位线；下一期 latest_daily_entry 正好选中它，
+            # 于是从「本期其实没发出去」的位置继续采，那批提交永久跳过。
+            # 水位线统一在正文逐字校验通过后再写（与原地更新路径同一条规则）。
+            created = curl(HJ + ["-X", "POST", "-d", json.dumps({
+                "title": a.title, "summary": a.title if is_html else f"# {a.title}",
+                "sourceType": "reference", "contentType": content_type,
+                "tags": tags, "metadata": meta_identity,
+            }), f"{base}/stores/{rid}/entries"])["data"]
+            eid = created["id"]
+            my_created_at = created.get("createdAt") or ""
     except Exception as e:
         print(f"  建条目失败：{str(e)[:120]}")
         rollback_store_if_new()
         raise
-    print(f"  条目 id={eid} title={a.title} dailyDate={daily_date} shots={len(manifest)}")
+    print(f"  条目 id={eid}{'（原地更新）' if reuse_eid else ''} title={a.title} "
+          f"dailyDate={daily_date} shots={len(manifest)}")
 
-    # write content + verify hasContent（空壳兜底）
-    # content_state(): True=确认有正文 / False=确认为空 / None=验证不可达(524等，不能下结论)
+    # write content + verify（校验的是「**本次**正文是否落库」，不是「有没有正文」）
+    # content_state(): True=确认本次正文已落库 / False=确认不是本次正文 / None=验证不可达
+    #
+    # 为什么不能只看 hasContent：原地更新的条目**本来就有正文**，hasContent 恒为 true，
+    # 于是 PUT 失败/未持久化也会被判成成功，接着水位线被推进到 HEAD，而库里still是旧正文。
+    # 下一期从「其实从未被报道过的位置」继续采 —— 那批提交永久丢失，且没有任何报错。
+    # 这正是本 PR 要根治的形状，只是这次由我自己的原地更新改动引入。
+    # 故改为**比对正文本体**：content 端点实测原样返回正文（30800 字节逐字节相等）。
     def content_state():
         try:
             r = curl(H + [f"{base}/entries/{eid}/content"], retries=2)
             if not r.get("success"):
                 return None
-            return bool((r.get("data") or {}).get("hasContent"))
+            d = r.get("data") or {}
+            got = d.get("content")
+            if got is None:
+                # 老后端可能不回正文：新建路径下 hasContent 仍是有效判据（空 → 非空即证明写入），
+                # 但原地更新路径下它等于没校验，必须明说，不能让人以为验过了。
+                if reuse_eid:
+                    print("  [告警] content 端点未返回正文，原地更新无法确认本次正文是否落库；"
+                          "水位线可能与库中正文不匹配，请核对后重跑")
+                return bool(d.get("hasContent"))
+            # strip 容忍后端对首尾空白的规范化，但仍能区分「新正文」与「旧正文」
+            return got.strip() == body.strip()
         except Exception:
             return None
 
     def put_content():
         try:
-            w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": body}), f"{base}/entries/{eid}/content"])
+            # contentType 必须**随正文一起**提交：后端 UpdateEntryContent 用请求里的
+            # contentType 去跑 ToIndexableText 生成检索索引。若留到后面的元数据 PUT 才改，
+            # 索引已经按旧格式（md/html）生成完了 —— 条目按新类型渲染，检索与 LLM 取回
+            # 拿到的却是按旧格式解析的乱码正文。原地复用把 md 条目改写成 html 时会踩到。
+            w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": body, "contentType": content_type}),
+                           f"{base}/entries/{eid}/content"])
             return bool(w.get("success"))
         except Exception as e:
             print(f"  写正文异常：{str(e)[:120]}")
@@ -571,20 +716,34 @@ def main():
     # 先处理"确认为空"：即便 PUT 返回 success，但 GET 明确 hasContent=false（returned-but-not-persisted）
     # 也必须再写一次；仍为空才算失败（Codex：put_ok 单独不足以判定已发布）。
     if state is False:
+        # 不是本次正文（写失败/未持久化/被并发覆盖）→ 再写一次
         put_ok = put_content()
         state = content_state()
 
     if state is True:
-        print(f"  正文已校验落库 hasContent=true（put_ok={put_ok}）")
+        print(f"  正文已逐字校验落库（内容与本次一致，put_ok={put_ok}）")
     elif state is False:
-        # 重试后仍确认为空壳 → 清理，不留断头报告
-        try:
-            curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
-            print(f"  正文确认为空，已删空壳条目 {eid}")
-        except Exception:
-            print(f"  正文确认为空且删除失败；稳定后请手动删条目 {eid}")
+        # 重试后仍确认为空壳 → 清理，不留断头报告。
+        # **但原地更新的条目绝不能删**：它是本来就存在的那篇，删了会连同已发出去的
+        # 分享链一起永久失效；正文写空是可重跑修复的，删条目不可逆。
+        if reuse_eid:
+            print(f"  [告警] 原地更新的条目 {eid} 未能确认写入本次正文（库中仍非本次内容），"
+                  "已保留该条目与其分享链不删、且**不推进水位线**，请稍后重跑覆盖")
+        else:
+            try:
+                dr = curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
+                if dr.get("success"):
+                    print(f"  正文未落库，已删空壳条目 {eid}")
+                else:
+                    # curl() 只在解析不出 JSON 时才抛；{"success":false} 会静默通过。
+                    # 空壳若留在库里，虽已不带水位线（见建条目处），仍会被下期选为"最新一篇"
+                    # 而退化成 today 口径，必须让人看见。
+                    print(f"  [告警] 空壳条目 {eid} 删除被拒（{json.dumps(dr.get('error'), ensure_ascii=False)[:80]}），"
+                          "请手动删除，否则下一期会把它当成最新一篇并退化为当日口径")
+            except Exception:
+                print(f"  [告警] 正文未落库且删除失败；请手动删条目 {eid}")
         rollback_store_if_new()
-        raise RuntimeError("正文写入未生效(hasContent=false)，请稍后重跑")
+        raise RuntimeError("正文写入未确认落库（库中内容与本次正文不一致），请稍后重跑")
     elif put_ok:
         # state=None：验证接口不可达，但 PUT 已返回成功 → 接受，不删（Cursor High：勿误删已落库正文）
         print(f"  正文 PUT 成功，但验证接口暂不可达(state=None)——按已发布处理，不删条目")
@@ -593,6 +752,166 @@ def main():
         raise RuntimeError(
             f"正文写入结果未确认（PUT 未返回成功且验证接口不可达）。已保留条目 {eid} 避免误删，"
             "请稍后登录该库人工确认/重写，勿盲目重跑造成重复。")
+
+    # 正文已确认落库，这时才把 title / summary / metadata 更新到原地复用的那条上。
+    # 顺序不可提前（见上文）：先改元数据后写正文，一旦正文失败就会留下
+    #「新水位线 + 旧正文」的错配条目，而错配的水位线会让下一期从错误的位置续采。
+    # 水位线是**发布成功的一部分**，不是可选的收尾动作：
+    # 少了它，下一期读不到水位线会退化为当日口径，把「上期水位线 → 今天 00:00」之间
+    # 落地的提交整段漏掉（新建路径尤其致命：条目只有身份字段，连降级依据都没有）。
+    # 所以这里写完必须**读回确认**，确认不了就判定本次发布失败，让人重跑（原地更新是幂等的）。
+    # state is None（校验接口暂时不可达）时同样要写：此时 put_ok 已表明正文写入被接受，
+    # 跳过水位线只会把「无法确认」升级成「确定漏报」。
+    def watermark_persisted():
+        """读回条目 metadata 确认水位线已落库。True/False/None(读不到)。"""
+        if not a.last_commit:
+            return True                      # 没有水位线可写（已在上面告警）
+        try:
+            r = curl(H + [f"{base}/entries/{eid}"], retries=2)
+            if not r.get("success"):
+                return None
+            md = ((r.get("data") or {}).get("metadata")) or {}
+            return md.get("lastCommit") == a.last_commit
+        except Exception:
+            return None
+
+    # 原地复用时先快照现有 metadata：一旦下面检出并发覆盖要中止，必须把本次写进去的
+    # 水位线**回滚**，否则库里留下「他期正文 + 本期水位线」——中止了却把损坏留在原地。
+    prev_meta = None
+    if reuse_eid and (state is True or (state is None and put_ok)):
+        try:
+            r0 = curl(H + [f"{base}/entries/{eid}"], retries=2)
+            if r0.get("success"):
+                prev_meta = ((r0.get("data") or {}).get("metadata")) or {}
+        except Exception:
+            prev_meta = None
+
+    if state is True or (state is None and put_ok):
+        try:
+            ok = curl(HJ + ["-X", "PUT", "-d", json.dumps({
+                "title": a.title, "tags": tags, "metadata": meta, "contentType": content_type,
+            }), f"{base}/entries/{eid}"]).get("success")
+        except Exception as e:
+            ok = False
+            print(f"  元数据更新异常：{str(e)[:100]}")
+        print(f"  {'原地更新' if reuse_eid else '回写'}标题/标签/水位线 ok={ok}")
+        if watermark_persisted() is not True:
+            raise RuntimeError(
+                "水位线未确认落库：正文可能已发布，但 metadata.lastCommit 没写进去。"
+                "就此收工的话，下一期读不到水位线会退化为当日口径、漏掉本期覆盖区间内的提交。"
+                "请重跑本命令（同日重跑是原地更新，幂等安全）。")
+        # 正文与元数据是两次独立 PUT，中间可能被并发重跑覆盖正文。
+        # 若此刻正文**确定**已不是本次内容，库里就是「本期水位线 + 他期正文」——
+        # 下一期会从「本期正文其实没覆盖到」的位置续采，那段提交永久丢失。
+        # 这是确定性的不一致，必须让本次发布失败，而不是发条分享链宣布完成。
+        # （content_state() 返回 None 只是校验不可达，非确定性不一致，降为告警。）
+        recheck = content_state() if reuse_eid else True
+        if recheck is False:
+            # 先把元数据回滚回快照值，再抛。回滚后的组合有两种，都优于"他期正文 + 本期水位线"：
+            #   - 快照取到的是对方刚写的元数据 -> 正文与水位线完全一致
+            #   - 快照取到的是更旧的元数据     -> 水位线偏旧，下期至多**重复**报道一段
+            # 重复可见可修，跳过不可逆，所以宁可偏旧。
+            if prev_meta is not None:
+                try:
+                    rb = curl(HJ + ["-X", "PUT", "-d", json.dumps({"metadata": prev_meta}),
+                                    f"{base}/entries/{eid}"]).get("success")
+                    print(f"  已回滚本次元数据 ok={rb}（避免留下「他期正文 + 本期水位线」）")
+                except Exception as e:
+                    print(f"  [告警] 元数据回滚失败，库中可能是「他期正文 + 本期水位线」，"
+                          f"请立刻重跑本命令：{str(e)[:80]}")
+            else:
+                print("  [告警] 未取到元数据快照，无法回滚；库中可能是「他期正文 + 本期水位线」，请立刻重跑")
+            raise RuntimeError(
+                "元数据写入后检出正文已不是本次内容（并发重跑覆盖）：已回滚本次元数据并中止发布，"
+                "请重跑本命令恢复一致。")
+        if recheck is None:
+            print("  [告警] 元数据写入后无法复核正文（校验接口不可达），"
+                  "若同时有并发重跑请事后核对正文与水位线是否匹配")
+
+    # 同日重复条目清理：**只在 state 明确为 True（正文确认落库）时才删**。
+    # state=None（验证接口不可达）时宁可留一条重复，也不能删掉可能是唯一完好的那篇。
+    if a.replace_same_date and state is True:
+        if reuse_eid:
+            # 原地更新路径：待删的只是历史竞态留下的重复条目，全部来自**建前快照**，
+            # 都是本次运行之前就存在的。不重新查——否则可能删掉另一个进程刚建的新条目。
+            stale_ids = [sid for sid, _ in stale if sid != eid]
+            # 但凡还挂着**有效分享链**的重复条目一律不删：链接钉在 entryId 上，
+            # 删了就让已经发出去的那条链接永久变空，而这不可逆。保留一个重复条目只是
+            # 库里多一篇（可见、可人工清理），两害相权取其轻。
+            shared = shared_entry_ids(base, H, rid)
+            if shared is None:
+                if stale_ids:
+                    print(f"  [告警] 查不到分享链清单，为避免删掉仍被分享的条目，"
+                          f"本次跳过清理 {len(stale_ids)} 条重复条目（可稍后人工处理）")
+                stale_ids = []
+            else:
+                keep = [sid for sid in stale_ids if sid in shared]
+                stale_ids = [sid for sid in stale_ids if sid not in shared]
+                # 保留还不够：ListEntries 按 CreatedAt 倒序返回，而水位线查询在同 dailyDate
+                # 时取先遇到的那条 —— 于是下一期读到的可能正是这条**没被更新**的重复条目，
+                # 拿到过期/缺失的水位线，重新制造重复覆盖或缺口。
+                # 所以保留的同时必须把它同步成与本期一致的正文 + 水位线：谁被读到都一样。
+                # 附带好处：那条分享链打开看到的也是最新内容，而不是停在旧版本。
+                # 同步顺序与主条目同一条不变量：**正文写入并逐字校验通过，才写水位线**。
+                # 两次独立 PUT 无法原子化，但这个顺序让任何中途失败都只能落到安全方向：
+                #   正文失败 -> 不碰元数据，该条目维持「旧正文 + 旧水位线」（自洽，只是陈旧）
+                #   元数据失败 -> 「新正文 + 旧水位线」，水位线偏旧
+                # 两种残留都只会让下期**重复**报道一段（可见可修），绝不会「旧正文 + 新水位线」
+                # 那种导致永久跳过的组合。再叠加水位线查询的选取判据（同日优先 coverTo 更新的
+                # 那条），主条目本来就会赢过这些陈旧副本。
+                for sid in keep:
+                    stage = "正文"
+                    synced = False
+                    try:
+                        c1 = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": body, "contentType": content_type}),
+                                        f"{base}/entries/{sid}/content"]).get("success")
+                        ok_body = False
+                        if c1:
+                            r2 = curl(H + [f"{base}/entries/{sid}/content"], retries=2)
+                            got = ((r2.get("data") or {}).get("content")) if r2.get("success") else None
+                            # 读不到正文时按"未确认"处理，不往下写水位线
+                            ok_body = (got is not None and got.strip() == body.strip())
+                        if ok_body:
+                            stage = "水位线"
+                            synced = bool(curl(HJ + ["-X", "PUT", "-d", json.dumps({
+                                "title": a.title, "tags": tags, "metadata": meta, "contentType": content_type,
+                            }), f"{base}/entries/{sid}"]).get("success"))
+                    except Exception as e:
+                        print(f"  [告警] 同步重复条目 {sid} 于「{stage}」阶段异常：{str(e)[:80]}")
+                    if synced:
+                        print(f"  重复条目 {sid} 仍挂有效分享链 -> 已保留并同步为本期内容")
+                    else:
+                        print(f"  [告警] 重复条目 {sid}（挂着有效分享链）同步在「{stage}」阶段未完成："
+                              "它保持旧水位线不变，最坏只会让下期重复报道一段（不会跳过）；"
+                              "如需彻底一致请手动同步，或撤销该链接后删除该条目")
+        elif my_created_at:
+            # 新建路径（库里原本没有同日条目）：两个进程可能都查到空、各建一条。
+            # 删除前重新查一次（能看见对方刚建的），且只删 createdAt **严格早于**自己的
+            # ——打破互删对称性，两个进程绝不会把彼此都删掉而留下零条。
+            fresh = list_entries_by_date(base, H, rid, kind, daily_date)
+            stale_ids = [sid for sid, cat in fresh
+                         if sid != eid and cat and cat < my_created_at]
+        else:
+            print("  [告警] 新条目未返回 createdAt，跳过清理（并发重跑时可能留下重复条目）")
+
+    if stale_ids:
+        if state is True:
+            for sid in stale_ids:
+                try:
+                    # 必须查 success：curl() 只在**解析不出 JSON** 时才抛，
+                    # 后端返回 {"success":false,...}（权限/500 等）会被正常解析并返回，
+                    # 不查就会打印「已删」而条目其实还在——静默架空 --replace-same-date。
+                    r = curl(H + ["-X", "DELETE", f"{base}/entries/{sid}"], retries=2)
+                    if r.get("success"):
+                        print(f"  已删同日旧条目 {sid}（被本期替换）")
+                    else:
+                        err = json.dumps(r.get("error"), ensure_ascii=False)[:100] if r.get("error") else "未知错误"
+                        print(f"  [告警] 同日旧条目 {sid} 删除被拒（{err}），库里会有两篇同日日报，请手动清理")
+                except Exception as de:
+                    print(f"  [告警] 同日旧条目 {sid} 删除失败，库里会有两篇同日日报，请手动清理：{str(de)[:80]}")
+        else:
+            print(f"  [告警] 新条目落库未获确认(state={state})，保留同日旧条目 {stale_ids} 不删；"
+                  "请人工确认后手动清理，避免误删唯一完好版本")
 
     # html 条目摘要兜底：正文 PUT 会用正文前 200 字重算 summary，旧版后端不剥标签时
     # 列表/卡片/搜索会展示裸 <!DOCTYPE html> 片段（Bugbot Medium）。发布成功后回写

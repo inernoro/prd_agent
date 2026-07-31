@@ -77,6 +77,10 @@
     "conflict-resolution": [
       "dev"
     ],
+    "scope-check": [
+      "dev",
+      "qa"
+    ],
     "create-skill-file": [
       "dev"
     ],
@@ -160,6 +164,7 @@
         "human-verify",
         "code-hygiene",
         "conflict-resolution",
+        "scope-check",
         "doc-writer",
         "flow-trace",
         "task-handoff-checklist",
@@ -185,6 +190,7 @@
         "sdd-init",
         "phase0-guard",
         "acceptance-test-design",
+        "scope-check",
         "acceptance-scenario-orchestrator",
         "acceptance-checklist",
         "create-visual-test-to-kb",

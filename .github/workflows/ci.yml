@@ -65,6 +65,17 @@ jobs:
               - 'scripts/tests/public-surface-smoke.test.py'
               - 'scripts/tests/asset-storage-readiness-gate.test.py'
               - 'scripts/tests/release-evidence.test.py'
+              - 'scripts/llmgw-prod-preflight.py'
+              - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
+              # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
+              # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
+              # 它们守的是 gw-smoke / 发布双密钥 / rollout 账本 / ASR WebSocket 转发，
+              # 所以连同各自的被测脚本一起登记进这道闸。
+              - 'scripts/gw-smoke.py'
+              - 'scripts/llmgw-rollout-ledger.py'
+              - 'scripts/tests/test_*.py'
+              - 'scripts/tests/validate-static-dist.test.sh'
+              - 'scripts/validate-static-dist.sh'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
 
@@ -91,6 +102,20 @@ jobs:
 
       - name: Release evidence ledger
         run: python3 scripts/tests/release-evidence.test.py
+
+      - name: Gateway route self-test failure diagnosis
+        run: python3 scripts/tests/gateway-route-self-test-diagnosis.test.py
+
+      - name: Static dist validation
+        run: sh scripts/tests/validate-static-dist.test.sh
+
+      - name: Release script source guards
+        run: |
+          set -e
+          for t in scripts/tests/test_*.py; do
+            echo "--- $t"
+            python3 "$t"
+          done
 
   # 后端服务构建和测试
   server-build:
@@ -469,12 +494,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-cds-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json') }}
+          key: ${{ runner.os }}-pnpm-cds-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-cds-
 
       - name: Install dependencies
         run: pnpm install
+
+      # 前端依赖装在 cds/web/node_modules。tests/ 里的渲染冒烟直接 import 前端组件，
+      # vitest.config.ts 把 react / react-dom 别名指向那里；这一步缺了别名就解析不到，
+      # 整个测试文件加载失败。守卫见 tests/lint/ci-installs-web-deps.test.ts。
+      - name: Install web dependencies
+        run: pnpm run install:web
 
       - name: Type check
         run: pnpm exec tsc --noEmit

@@ -2136,6 +2136,20 @@ export type ScheduledJobSchedule =
   | { type: 'interval'; intervalMinutes: number; timezone?: string }
   | { type: 'daily'; timeOfDay: string; timezone?: string };
 
+/**
+ * 定时发布动作的版本来源。
+ *
+ * promote 的语义**锁死**为「把 fromTargetId 最近一次成功 run 的那个 commit 原样发到
+ * 本动作的目标」：取该 run 的 branchId / commitSha / artifact.previewUrl，并把 commitSha
+ * 作为 expectedCommitSha 传给 ReleaseService 做 fail-closed 钳制。
+ * 少了那道钳制，startRelease 会按分支**当前** commit 建 artifact（resolveCommitSha =
+ * pinnedCommit || githubCommitSha），于是「原样提升」会静默发出一个从未在源环境验证过
+ * 的新版本——编译和测试都发现不了的语义级错误。
+ */
+export type ReleaseJobSource =
+  | { kind: 'branch'; branchId: string }
+  | { kind: 'promote'; fromTargetId: string };
+
 export type ScheduledJobTarget =
   | {
       type: 'http';
@@ -2148,6 +2162,28 @@ export type ScheduledJobTarget =
       type: 'command';
       command: string;
       cwd?: string;
+    }
+  | {
+      /**
+       * 定时发布。执行时直接调 ReleaseService 的服务方法（不走 HTTP 自调本机），
+       * 并发与幂等全部复用发布侧既有判据（ReleaseService.isTargetBusy），
+       * 绝不另起调度器、另起锁。
+       */
+      type: 'release';
+      /** 发布目标 id。必须与所属 ScheduledJob 同项目，跨项目一律拒绝。 */
+      targetId: string;
+      source: ReleaseJobSource;
+      /** true = 只跑发布前检查，不发布。用于验证规则本身是否配对。 */
+      dryRun?: boolean;
+      /**
+       * true = 这条规则「需要人工确认」，**永不自动发布**：到点只跑预检并产生一条
+       * 待确认站内信，把发不发的决定权留给人。与 dryRun 的区别只在于它会叫醒人。
+       */
+      requireApproval?: boolean;
+      /** 发布失败且未发生过自动恢复时，自动回滚到上一版本。 */
+      rollbackOnFailure?: boolean;
+      /** 目标已经在这个 commit 上时跳过本次发布（记 skipped 而不是 failed）。 */
+      skipWhenUnchanged?: boolean;
     };
 
 export type ScheduledJobAction = ScheduledJobTarget & {
@@ -2175,6 +2211,15 @@ export interface ScheduledJob {
   lastRunStatus?: ScheduledJobRunStatus;
   lastRunId?: string;
   nextRunAt?: string | null;
+  /**
+   * 连续失败计数（成功或跳过即清零）。只对含 release 动作的任务累计——
+   * 给 http/command 任务加自动停用会改变存量行为，本轮不动它们。
+   */
+  consecutiveFailureCount?: number;
+  /** 因连续失败被系统自动停用的时刻。人工重新启用时应清空。 */
+  autoDisabledAt?: string;
+  /** 自动停用的原因，供列表页直接展示，不必让用户翻运行记录。 */
+  autoDisabledReason?: string;
 }
 
 export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
@@ -2193,6 +2238,13 @@ export interface ScheduledJobRun {
   httpStatus?: number;
   log?: string;
   error?: string;
+  /**
+   * 本次运行触发的 ReleaseRun id。没有它，用户在任务页只看得到一行日志，
+   * 点不进发布详情——「定时发了一版」和「那一版长什么样」就断成两截。
+   */
+  releaseId?: string;
+  /** 观察到的发布终态（或超时时的最后一次观察值）。 */
+  releaseStatus?: ReleaseRunStatus;
 }
 
 /**
@@ -2413,11 +2465,35 @@ export interface RemoteHost {
    * SealedSecret 对象。**不要 JSON.stringify SealedSecret 再存** —— 那
    * 会绕过 unsealToken 的 isSealedSecret 校验，把序列化字符串当明文返回。
    */
-  sshPrivateKeyEncrypted: string | SealedSecret;
-  /** 私钥指纹（明文 SHA256，前 16 hex 字符），用于 UI 展示和日志去敏。 */
+  sshPrivateKeyEncrypted?: string | SealedSecret;
+  /**
+   * 凭据指纹（明文 SHA256，前 16 hex 字符），用于 UI 展示和日志去敏。
+   *
+   * 私钥与密码两种认证都算这个指纹：它唯一的用途是「让人认出这是不是同一份凭据」，
+   * 而不是「这是一把私钥」。所以密码主机也有指纹，UI 按 sshAuthMethod 决定怎么称呼它。
+   */
   sshPrivateKeyFingerprint: string;
   /** 私钥口令密文（可选，同样走 sealToken）。 */
   sshPassphraseEncrypted?: string | SealedSecret;
+  /**
+   * SSH 登录密码密文（可选，同样走 sealToken）。
+   *
+   * 与 sshPrivateKeyEncrypted 二选一：CDS 一直只支持私钥，但很多人手上只有
+   * 一串用户名密码，为了「加一台服务器」先去生成密钥、传公钥，等于把人挡在门外。
+   * 两个字段都为空的 RemoteHost 是非法的（RemoteHostService.create 会拒）。
+   */
+  sshPasswordEncrypted?: string | SealedSecret;
+  /**
+   * 认证方式。存量数据没有这个字段，一律按 private-key 解读（当时只有这一种）。
+   */
+  sshAuthMethod?: 'private-key' | 'password';
+  /**
+   * 由 CDS 生成密钥对时留下的 OpenSSH 公钥明文（如 "ssh-rsa AAAA..."）。
+   *
+   * 公钥本身不是秘密，存明文是为了让用户随时能回来复制它去 authorized_keys ——
+   * 只在创建那一刻给一次，人一旦关掉弹窗就再也拿不到，等于这台机器永远连不上。
+   */
+  sshPublicKey?: string;
   /** 路由 / 分类标签（如 ["prod","asia"]）。 */
   tags: string[];
   /** 是否启用；false 表示 deploy 不会路由到此主机。 */
@@ -2560,8 +2636,20 @@ export interface SelfUpdateRecord {
    *  success entry 的此字段。比 durationMs 更接近用户体感等待时长。
    *  2026-05-07 timing 审视新增 (report.cds.self-update-timing-audit)。 */
   totalElapsedMs?: number;
-  /** 失败/中止时的简短原因(已截断,前端不展开) */
+  /** 失败/中止时的简短原因(已截断,前端不展开)。
+   *  2026-07-30 起这里存的是**中文归因**(diagnosis.cause)而不是外部工具的英文原文；
+   *  英文原文放 failure.raw。 */
   error?: string;
+  /** 失败归因(2026-07-30)。用户反馈「更新总是报错还是英文错」——根因是 git/pnpm/tsc/esbuild
+   *  的原始英文 stderr 被当成主文案直接抛给用户。现在统一由
+   *  services/self-update-failure-diagnosis.ts 收敛成「中文主要原因 + 恢复动作」，
+   *  英文原文降级到 raw 由前端折叠展示。历史记录也一并保存，便于事后复盘。 */
+  failure?: {
+    stage: string;
+    cause: string;
+    nextAction: string;
+    raw: string;
+  };
   /** 触发用户,用于审计;manual 时 = cookie 里 username,自动触发时为 'system' */
   actor?: string;
   requestId?: string;

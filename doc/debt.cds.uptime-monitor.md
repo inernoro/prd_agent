@@ -55,12 +55,32 @@ CDS 自建存活监控（`cds/src/services/uptime-monitor.ts` + `uptime-metrics.
 
 | # | 债务 | 说明 | 影响 |
 |---|------|------|------|
-| 1 | 无告警外发 | 判 down 只体现在状态页与故障时间线，没有站内通知 / Webhook / 邮件。用户不主动打开 `/status` 就不知道 | 需人工巡视 |
+| 1 | ~~无告警外发~~（2026-07-29 已偿还，见下方「债务 3」的残留边界） | 判 down 现在会经 `uptime.target.down` 上 `cds-events-bus`，由服务端通知账本（`src/services/notice-ledger.ts`）记进 `.cds/notice-ledger.json`，并可选外发到 MAP 站内通知 | 已闭环 |
 | 2 | 探测台账不跨实例共享 | 落盘在单机 `.cds/uptime-monitor.json`，多实例部署各存各的，可用率不合并 | 集群场景数据分散 |
 | 3 | 状态页无单目标下钻 | `GET /api/uptime/targets/:id/history` 已就绪并做了降采样，前端尚未提供点开柱条看时序的入口 | 排障需直接调 API |
 
+## 债务 3：服务端通知账本的残留边界（open，2026-07-29 随告警外发一并登记）
+
+告警外发这条链路已经打通（事件总线 → `notice-ledger` → 可选 MAP 外发 → 前端铃铛），
+但下面几条是本轮**刻意没做**的，交付时已声明，不得因为「债务 2-1 已偿还」就当作全解决。
+
+| # | 债务 | 说明 | 影响 |
+|---|------|------|------|
+| 1 | 只有 MAP 一个外发适配器 | 没有 Webhook / 邮件 / 企微。新增渠道要照 `notice-outbound-map.ts` 再写一个适配器并在 `startNoticeLedger` 处分发 | 只能发到 MAP |
+| 2 | 借用 MAP 的 `system-alert` 来源 | `AdminNotificationSourceCatalog.SourceDefinitions` 白名单里没有 CDS 专属来源，未知 source 会被 MAP 直接 400。本轮不改 prd-api，默认取 `system-alert`（可用 `CDS_NOTICE_MAP_SOURCE` 覆盖）。后果：MAP 站内信里 CDS 告警与模型池 / 平台密钥告警混在一起，无法按来源筛 | 下一轮给 prd-api 补一条 `new("cds", "CDS 部署", Admin, ...)` |
+| 3 | 账本不跨实例共享 | 与债务 2-2 同因：落盘在单机 `.cds/notice-ledger.json`，多实例各存各的，通知不合并 | 集群场景数据分散 |
+| 4 | `readAt` / `dismissedAt` 不分用户 | 从 localStorage（每浏览器一份）搬到服务端后语义变成全实例共享：一个人点「不再提醒」对所有人生效，一个人打开面板就把所有人的未读清零。CDS 是运维工具、用户数很少，v1 接受；要按用户需先确认全局网关在 `req` 上盖的用户标识字段名 | 多人同时用时未读数会互相影响 |
+| 5 | 系统级告警拿不到项目归属 | `preview.canary.alert`（`services/preview-canary.ts`）与 `infra.flap.circuit-breaker`（`services/infra-flap-watchdog.ts`）的 payload 都不含 `projectId`，只能记为系统级条目，项目级 Key 一条都看不到。要让项目 owner 也收到，得先给这两个 payload 补 `projectId` | 项目级凭据看不到这两类告警 |
+
+本轮实际覆盖的告警源共七类：发布失败、自动回滚（`rollbackOf` 存在的成功）、发布现场漂移、
+生产/分支健康掉线（连续失败达阈值）、CDS 自更新失败、预览入口探测失败、基础设施抖动熔断。
+成功类事件默认**不**通知（判据在 `cds-events-bus.ts` 的 `shouldLedgerEvent`）。
+
 ## 相关
 
+- 通知账本：`cds/src/services/notice-ledger.ts`、`cds/src/services/notice-outbound-map.ts`、
+  `cds/src/routes/notices.ts`；回归见 `cds/tests/services/notice-*.test.ts`、
+  `cds/tests/routes/notices-scope.test.ts`。
 - 规则：`.claude/rules/concurrency-gate-discipline.md`（周期收敛 / 健康不变量）、
   `.claude/rules/expectation-management.md`（状态页的三态与等待反馈）。
 - 回归：`cds/tests/services/uptime-monitor-cycle.test.ts`、`cds/tests/services/uptime-metrics.test.ts`、

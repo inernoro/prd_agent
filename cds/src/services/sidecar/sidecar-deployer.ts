@@ -29,6 +29,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { StateService } from '../state.js';
 import type { ServiceDeployment, RemoteHost } from '../../types.js';
 import { decryptRemoteHostSecrets } from './remote-host-service.js';
+import { formatSshExecFailure } from '../ssh-exec-failure.js';
 
 // 注意：ssh2 是异步 / 事件驱动 API，我们用 callback → Promise 简单包装。
 // 在没有 ssh2 依赖的本地 sandbox 也能 tsc 通过 —— 真实运行时才动态 import。
@@ -51,8 +52,10 @@ interface Ssh2ConnectOptions {
   host: string;
   port: number;
   username: string;
-  privateKey: string | Buffer;
+  /** 私钥与密码二选一，所以两个都是可选：ssh2 把 undefined 当「这项没配」。 */
+  privateKey?: string | Buffer;
   passphrase?: string;
+  password?: string;
   readyTimeout?: number;
 }
 
@@ -282,7 +285,7 @@ export class SidecarDeployer {
   /** 执行 SSH 命令。仅返回 stdout；非 0 退出码抛错。 */
   private async sshExec(host: RemoteHost, cmd: string): Promise<string> {
     const ssh2Mod = await loadSsh2();
-    const { privateKey, passphrase } = decryptRemoteHostSecrets(host);
+    const { privateKey, passphrase, password } = decryptRemoteHostSecrets(host);
     const client = new ssh2Mod.Client() as unknown as Ssh2Client;
 
     return new Promise<string>((resolve, reject) => {
@@ -306,9 +309,11 @@ export class SidecarDeployer {
           stream.on('close', (code: unknown) => {
             const exitCode = typeof code === 'number' ? code : 0;
             if (exitCode === 0) return settle(() => resolve(stdout));
-            settle(() =>
-              reject(new Error(`ssh exec exit=${exitCode} stderr=${stderr.slice(0, 500)}`)),
-            );
+            // 与 release 侧同语义，且这里更要命：sshExec 没有任何流式日志回调，
+            // Error.message 是唯一的诊断通道——旧写法之下 stdout 全丢、stderr 只留头部
+            // 500 字符，bootstrap 失败基本无从查起。脱敏也在格式化内部完成
+            // （这条命令的 stdout 里出现凭据的概率不低）。
+            settle(() => reject(new Error(formatSshExecFailure({ exitCode, stdout, stderr }))));
           });
           stream.on('data', (chunk: unknown) => {
             stdout += String(chunk);
@@ -326,6 +331,7 @@ export class SidecarDeployer {
         username: host.sshUser,
         privateKey,
         passphrase,
+        password,
         readyTimeout: 10_000,
       });
     });
