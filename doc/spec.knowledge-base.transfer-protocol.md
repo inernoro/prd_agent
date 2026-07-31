@@ -2,6 +2,12 @@
 
 > **版本**：v1.1 | **日期**：2026-06-22 | **状态**：已落地
 
+**一句话**：两个节点之间传知识库内容的协议：分层、数据契约、方向语义与去重规则。
+**谁该读**：要实现或对接同步的工程师；排查「显示跳过却转很久」的人。
+**读完能做什么**：按协议实现一端，并说清同步的方向与去重是怎么判的。
+
+---
+
 > 负责模块：prd-api（PeerSync + DocumentStoreSyncResource）、prd-admin（同步中心）
 > 关联：[design.platform.peer-sync.md](./design.platform.peer-sync.md)（节点配对设计）、[spec.cds.compose-contract.md](./spec.cds.compose-contract.md)（同类对外契约写法）
 

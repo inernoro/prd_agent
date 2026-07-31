@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-05-08 | **状态**：已落地
 
+**一句话**：蓝绿方案的交接留档：为什么没达成流量不抖动的目标，以及改用独立转发进程后哪些坑仍要防。
+**谁该读**：做流量切换方案的工程师；想知道当初为什么放弃的人。
+**读完能做什么**：避开已记录的十二个坑，并找到取代方案的现行文档。
+
+---
+
 > 2026-05-09 更新:蓝绿方案因 verify-target stage 反复卡住未达成"业务流量永不抖动"目标,
 > 改为更简单的"独立 forwarder 进程"方案 —— 见 [doc/report.cds.forwarder-success.md](./report.cds.forwarder-success.md) +
 > [doc/guide.cds.forwarder-deploy.md](./guide.cds.forwarder-deploy.md)。蓝绿相关代码(supervisor / standby-controller /

@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-30 | **状态**：已落地
 
+**一句话**：网关验收的逐屏面包屑：每个界面看什么、点什么、留什么证据，外加压测计划与边界清单。
+**谁该读**：做网关验收的人；补自动化验收脚本的工程师。
+**读完能做什么**：照单逐屏取证，并说清哪些属于已知例外。
+
+---
+
 > 关联: [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（测什么 SSOT）、[doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（全量可见报告）、
 > [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)、
 > `.claude/rules/closed-loop-acceptance.md`（验收必须闭环）、`.claude/skills/create-visual-test-to-kb/`（取证流水线）

@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-29 | **状态**：已落地
 
+**一句话**：网关测试怎么分层与怎么覆盖：按「在哪一层能判定」切四层，再按互不重叠的维度铺矩阵。
+**谁该读**：给网关补测试的工程师；判断某次发布证据够不够的评审人。
+**读完能做什么**：定位一条待验行为该写在哪一层，并看出当前矩阵缺哪一格。
+
+---
+
 > 关联: [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)、
 > [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（全量可见报告）、`prd-api/tests/PrdAgent.Api.Tests/Gateway/`、`scripts/gw-smoke.py`
 
