@@ -5,6 +5,9 @@ import unittest
 
 SCRIPT = pathlib.Path(__file__).with_name("archive_report.py")
 TEMPLATES = SCRIPT.parent.parent / "templates"
+STANDARD = SCRIPT.parent.parent / "reference" / "standard-v2.md"
+REPO_ROOT = SCRIPT.parents[4]
+ENTERPRISE_RULE = REPO_ROOT / "doc" / "rule.acceptance.map-enterprise.md"
 SPEC = importlib.util.spec_from_file_location("archive_report", SCRIPT)
 archive_report = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
@@ -70,6 +73,22 @@ class DailyVerdictContractTests(unittest.TestCase):
                 self.assertEqual(len(archive_report.DAILY_ROOT_CAUSE_FIELDS), len(rows[0]))
                 conclusions = set(rows[0][4].strip("{}").split("/"))
                 self.assertEqual(archive_report.ROOT_CAUSE_CONCLUSIONS, conclusions)
+
+    def test_standard_root_cause_template_uses_exact_conclusions(self):
+        body = STANDARD.read_text(encoding="utf-8")
+        rows = archive_report._section_table_rows(body, "根因链条")
+        self.assertEqual(1, len(rows))
+        conclusions = set(rows[0][4].strip("{}").split("/"))
+        self.assertEqual(archive_report.ROOT_CAUSE_CONCLUSIONS, conclusions)
+
+    def test_enterprise_rule_example_uses_structured_coverage_conclusion(self):
+        body = ENTERPRISE_RULE.read_text(encoding="utf-8")
+        example = next(
+            line for line in body.splitlines() if line.startswith("| 应验收目标日冻结 SHA |")
+        )
+        cells = [cell.strip() for cell in example.strip("|").split("|")]
+        self.assertEqual("覆盖缺口", cells[4])
+        self.assertIn("不是已知产品缺陷", cells[3])
 
     def test_coverage_only_fail_is_rejected(self):
         errors = archive_report._daily_conclusion_contract_errors(
