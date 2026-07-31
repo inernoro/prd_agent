@@ -218,5 +218,63 @@ class DailyVerdictContractTests(unittest.TestCase):
         self.assertTrue(any("表头必须严格为" in error for error in errors))
 
 
+class InteractiveReportLinkContractTests(unittest.TestCase):
+    manifest = [{
+        "name": "01-proof",
+        "caption": "请求记录：业务请求与轮询调用已经分层展示",
+        "warnings": [],
+    }]
+    figure_srcs = {"fig-01-proof": "https://assets.example.test/01-proof.png"}
+
+    @staticmethod
+    def body(gap_heading: str) -> str:
+        return f"""
+## 缺陷清单
+
+无。
+
+## {gap_heading}
+
+| 编号 | 未覆盖项 | 风险级别 |
+|---|---|---|
+| GAP-1 | 真实租户数据链路 | 非阻断风险 |
+
+## 步骤 1
+
+<span id="fig-01-proof" class="figure-anchor"></span>
+
+![请求记录](https://assets.example.test/01-proof.png)
+"""
+
+    def build(self, gap_heading: str) -> str:
+        return archive_report.build_interactive_html(
+            "Commit验收 · 报告内部链接",
+            "conditional",
+            self.body(gap_heading),
+            self.manifest,
+            figure_srcs=self.figure_srcs,
+        )
+
+    def test_gap_card_uses_coverage_gap_heading_when_total_ledger_is_absent(self):
+        content = self.build("覆盖缺口")
+        self.assertIn('href="#覆盖缺口">查看完整缺口账本</a>', content)
+        self.assertNotIn('href="#总缺口账本">查看完整缺口账本</a>', content)
+        self.assertEqual([], archive_report._interactive_evidence_errors(content, self.manifest))
+
+    def test_gap_card_uses_total_ledger_heading_when_present(self):
+        content = self.build("总缺口账本")
+        self.assertIn('href="#总缺口账本">查看完整缺口账本</a>', content)
+        self.assertEqual([], archive_report._interactive_evidence_errors(content, self.manifest))
+
+    def test_any_unresolved_internal_link_is_rejected(self):
+        content = self.build("覆盖缺口").replace(
+            'href="#覆盖缺口">查看完整缺口账本</a>',
+            'href="#不存在的章节">查看完整缺口账本</a>',
+            1,
+        )
+        errors = archive_report._interactive_evidence_errors(content, self.manifest)
+        self.assertTrue(any("无法唯一解析的内部链接" in error for error in errors))
+
+
 if __name__ == "__main__":
     unittest.main()
