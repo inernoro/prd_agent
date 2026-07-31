@@ -623,6 +623,8 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS ready status=missing",
             "CDS ready status=error",
             "CDS ready status=stopped",
+            "CDS ready status=unhealthy",
+            "CDS smoke status=unhealthy",
         ):
             with self.subTest(verdict="conditional", fact=fact):
                 body = report_body("覆盖不足").replace(
@@ -984,6 +986,48 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+    def test_multiple_postfixed_gate_instances_are_preserved_and_independent(self):
+        for failure in (
+            "CDS smoke（移动端/后端）失败",
+            "CDS smoke（移动端和后端）失败",
+        ):
+            with self.subTest(stage="opens", failure=failure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", failure
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+            with self.subTest(stage="partial-close", failure=failure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", failure
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | 移动端 CDS smoke 已通过 | "
+                    "移动端复测完成 | 仅关闭移动端 | 已通过 | 保留记录 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+            with self.subTest(stage="full-close", failure=failure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", failure
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | 移动端 CDS smoke 已通过 | "
+                    "移动端复测完成 | 关闭移动端 | 已通过 | 保留记录 |"
+                    "\n| 验收冻结 SHA | 后端 CDS smoke 已通过 | "
+                    "后端复测完成 | 关闭后端 | 已通过 | 保留记录 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
 
     def test_same_postfixed_gate_instance_can_close_failure(self):
         body = report_body("覆盖不足").replace(

@@ -630,7 +630,7 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
     r"|\b(?:failed|failure)\b"
     r"|(?:status|状态)\s*[:：=]\s*"
-    r"(?:missing|error|failed|failure|stopped)\b)"
+    r"(?:missing|error|failed|failure|stopped|unhealthy)\b)"
 )
 _RAW_RESOLVED_STATUS_PATTERN = (
     r"(?:\b(?:passed|succeeded)\b"
@@ -783,9 +783,12 @@ def _subject_occurrences(text, instance_aware=False):
         qualifier = suffix[
             : min((match.start() for match in suffix_events), default=len(suffix))
         ]
-        qualifier = re.split(
-            r"(?:以及|并且|和|与|及|、|/|并|且)", qualifier, maxsplit=1
-        )[0]
+        if index + 1 < len(occurrences):
+            coordination_matches = list(
+                re.finditer(r"(?:以及|并且|和|与|及|、|并|且)", qualifier)
+            )
+            if coordination_matches:
+                qualifier = qualifier[: coordination_matches[-1].start()]
         raw_identities = [
             match.group(0).lower()
             for match in _ROOT_CAUSE_INSTANCE_PATTERN.finditer(
@@ -793,11 +796,10 @@ def _subject_occurrences(text, instance_aware=False):
             )
         ]
         identities = tuple(dict.fromkeys(raw_identities))
-        scoped_occurrences.append(
-            (start, end, (name, identities or ("__unspecified__",)))
-        )
+        for identity in identities or ("__unspecified__",):
+            scoped_occurrences.append((start, end, (name, (identity,))))
         previous_end = end
-    return scoped_occurrences
+    return sorted(scoped_occurrences)
 
 
 def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
@@ -839,6 +841,7 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
         rf"运行|任务|操作|流程|作业|步骤|环节|过程|用例|测试|检查|验证|"
         rf"检测|校验|判定|被判定|显示|表明|呈现|处于|问题|故障|异常|"
         rf"缺陷|结果|状态|为|是|already|currently|previously|still|"
+        rf"和|与|及|、|/|"
         rf"[:：=]|[-=]>|→|{_DIAGNOSTIC_MODIFIER_PATTERN})\s*)*",
         left_gap,
         re.I,
