@@ -56,9 +56,20 @@
 `currentColor` 上色。**禁止画成经纬线框球那类线框图**——线框是 clipart 长相，与月亮/太阳的
 剪影语法不是一套，摆在一起会显得突兀（2026-07-31 周报刊徽第一版即因此返工）。
 
-**板式固定为「衬字水印」**：绝对定位在 `.masthead` 右上角（`top:-14px; right:-8px`，
-92px；窄屏 70px），`z-index:0` 垫在 `.t/.r/.stamp` 之下，`pointer-events:none`。
-`right` 取负值不会撑出横向滚动条——`.paper` 左右 padding（34px / 移动端 16px）都大于该偏移。
+**板式固定为「衬字水印」**：绝对定位在 `.masthead` 右上角，`z-index:0` 垫在 `.t/.r/.stamp`
+之下，`pointer-events:none`。`right` 取负值不会撑出横向滚动条——`.paper` 左右 padding
+（34px / 移动端 16px）都大于该偏移。
+
+尺寸按刊物报头的实际紧凑度**等比**取，不是全刊系一个数：
+
+| 产物 | 桌面 | 窄屏 | 偏移 | 依据 |
+|---|---|---|---|---|
+| 日报 / 周报模板 | 92px | 70px | `top:-14px; right:-8px` | 报头 stamp 46px、`padding-bottom:14px` |
+| 验收档案 / 巡检特刊 | 86px | 60px | `top:-12px; right:-6px` | 报头更紧凑：stamp 44px、`padding-bottom:12px`，窄屏 stamp 再缩到 36px |
+
+这是**显式例外**，不是漂移：86/92 ≈ 0.935 与 stamp 的 44/46 ≈ 0.957 基本等比，硬套 92px
+会在更矮的档案报头里显得过重。这张表由 `scripts/tests/test_report_emblems.py` 逐产物校验，
+改任一数值而不同步本表即 CI 红——避免这串数字退化成没人校验的散文。
 
 **五份拷贝靠守卫钉住**：报告模板必须自包含（内联 SVG，无外部资源），所以同一枚刊徽在
 日报模板、周报模板、验收生成器里各存一份，无法 import 共享——这正是

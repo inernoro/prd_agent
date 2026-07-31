@@ -33,6 +33,20 @@ EXPECTED = [
 
 ALL_KINDS = {"moon", "earth", "sun", "polaris", "comet"}
 
+# 每个产物的水印尺寸与偏移（与 .claude/rules/report-design-system.md §1.4 的表一一对应）。
+# 尺寸按各刊报头的紧凑度等比取，不是全刊系一个数——验收档案的报头本来就更矮
+# （stamp 44px vs 46px、padding-bottom 12px vs 14px），硬套 92px 会显得过重。
+# 把这张表变成可执行契约，是为了让规则里那串数字不至于退化成没人校验的散文：
+# 改实现而不改规则（或反过来）都会在这里红。
+DIMENSIONS = {
+    ".claude/skills/daily-report-summary/reference/report-template-html.html":
+        {"desktop": 92, "mobile": 70, "top": -14, "right": -8},
+    ".claude/skills/weekly-update-summary/reference/report-template-html.html":
+        {"desktop": 92, "mobile": 70, "top": -14, "right": -8},
+    ".claude/skills/create-visual-test-to-kb/scripts/archive_report.py":
+        {"desktop": 86, "mobile": 60, "top": -12, "right": -6},
+}
+
 failures = []
 
 
@@ -246,11 +260,54 @@ def check_css_wiring(label, rel):
     # 两者选择器特异性相同，靠源码顺序决胜——媒体查询若写在前面，
     # 后面的基础规则会把它整条盖掉，窄屏拿到的仍是桌面尺寸。
     # 这种错编译不报、桌面端看不出来，只有真机窄屏才暴露（日报模板首版即如此）。
-    base_pos = [r["pos"] for r in rules if not r["in_media"]]
-    media_pos = [r["pos"] for r in rules if r["in_media"]]
+    base_rules = [r for r in rules if not r["in_media"]]
+    media_rules = [r for r in rules if r["in_media"]]
+    base_pos = [r["pos"] for r in base_rules]
+    media_pos = [r["pos"] for r in media_rules]
     if base_pos and media_pos and min(media_pos) < max(base_pos):
         fail(f"{label}({rel}): .emblem 的 @media 覆盖写在基础规则之前——"
              f"同特异性下会被后面的基础规则整条盖掉，窄屏仍是桌面尺寸")
+
+    check_dimensions(label, rel, base_rules, media_rules)
+
+
+def check_dimensions(label, rel, base_rules, media_rules):
+    """尺寸与偏移必须与设计系统规则登记的一致。
+
+    规则 §1.4 逐产物写死了桌面/窄屏尺寸与偏移；不校验的话那张表就只是散文，
+    实现悄悄改了没人知道，四刊摆在一起就会看出参差——而这恰恰是本 PR 要解决的
+    「四刊分不出来」的反面：分得出来但对不齐。
+    """
+    want = DIMENSIONS.get(rel)
+    if not want:
+        fail(f"{label}({rel}): 未在 DIMENSIONS 登记尺寸——"
+             f"新增产物时必须同步登记，否则水印大小可以随意漂")
+        return
+
+    def px(bodies, prop):
+        for b in bodies:
+            m = re.search(r"(?:^|;)%s:(-?[0-9.]+)px" % prop, b)
+            if m:
+                return float(m.group(1))
+        return None
+
+    base = [r["body"] for r in base_rules]
+    media = [r["body"] for r in media_rules]
+
+    for prop, key, where, bodies in (
+        ("width", "desktop", "桌面", base),
+        ("top", "top", "桌面", base),
+        ("right", "right", "桌面", base),
+        ("width", "mobile", "窄屏", media),
+    ):
+        got = px(bodies, prop)
+        if got is None:
+            fail(f"{label}({rel}): {where}的 .emblem 规则里没有 {prop} —— "
+                 f"设计系统规则 §1.4 登记的是 {want[key]}px")
+        elif got != want[key]:
+            fail(f"{label}({rel}): {where} {prop}={got:g}px，"
+                 f"与设计系统规则 §1.4 登记的 {want[key]}px 不符——"
+                 f"改实现请同步改规则表，两边必须一致")
 
 
 print("米多刊系刊徽守卫")
