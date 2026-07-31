@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   Library,
   Orbit,
@@ -657,7 +657,7 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
 // 历史教训（2026-07-31 用户反馈）：旧版把「公开直链 + 创建短链 + 全部链接列表（整库与单篇混排）」
 // 三段并列，从顶栏点「分享」只能建整库链接 —— 用户以为在分享当前这篇，结果整库被公开；
 // 重复点「生成链接」时后端复用旧链接、前端仍无脑 prepend，列表里就多出一行同 id 同短链的重复卡片。
-export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, currentEntryId, currentEntryTitle, onClose }: {
+export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, currentEntryId, currentEntryTitle, anchorRef, onClose }: {
   storeId: string;
   storeName: string;
   isPublic: boolean;
@@ -667,8 +667,11 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
   /** 顶栏「分享」进来时当前正在阅读的文档，用于「只分享这一篇」的范围切换 */
   currentEntryId?: string;
   currentEntryTitle?: string;
+  /** 桌面端锚点：传入则就地悬浮在该按钮下方，不传（或手机）走居中弹窗 */
+  anchorRef?: RefObject<HTMLElement | null>;
   onClose: () => void;
 }) {
+  const isMobile = useIsMobile();
   const pickedEntryId = entryId ?? currentEntryId;
   const pickedEntryTitle = entryTitle ?? currentEntryTitle;
   // 默认分享「当前这篇」：只要手上有正在读的文档就落单篇范围（2026-07-31 用户明确要求）。
@@ -749,10 +752,10 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
     ? `拿到链接的人只能看到《${pickedEntryTitle ?? '当前文档'}》这一篇，看不到知识库里的其他文档。`
     : `拿到链接的人可以浏览「${storeName}」里的全部文档。`;
 
-  return (
-    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="surface-popover flex max-h-[85vh] w-[560px] max-w-[92vw] flex-col rounded-[16px] p-6">
+  // 桌面端从「分享」按钮右上角就地悬浮弹出（不遮挡正文、不打断阅读）；
+  // 手机端屏幕窄，仍走居中弹窗，否则悬浮层会挤成一条（2026-07-31 用户要求）。
+  const body = (
+    <>
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
@@ -886,6 +889,25 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
             </div>
           )}
         </div>
+    </>
+  );
+
+  // 桌面：锚定在「分享」按钮下方的悬浮面板（createPortal 到 body，见 frontend-modal.md）
+  if (!isMobile && anchorRef) {
+    return (
+      <AnchoredMenu open onClose={onClose} anchorRef={anchorRef} minWidth={420}
+        className="surface-popover flex max-h-[80vh] w-[440px] max-w-[92vw] flex-col rounded-[16px] p-5">
+        {body}
+      </AnchoredMenu>
+    );
+  }
+
+  // 手机 / 无锚点（文件树右键分享）：居中弹窗
+  return (
+    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="surface-popover flex max-h-[85vh] w-[560px] max-w-[92vw] flex-col rounded-[16px] p-6">
+        {body}
       </div>
     </div>
   );
@@ -1112,6 +1134,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, [location.hash, location.pathname, location.search, navigate, selectedEntryId, storeId]);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  /** 桌面端分享面板的锚点：就地悬浮在「分享」按钮下方 */
+  const shareAnchorRef = useRef<HTMLSpanElement>(null);
   const [showViewers, setShowViewers] = useState(false);
   const [publishing, setPublishing] = useState(false);
   /** 下载进行中（单篇直接下、整库打包 ZIP） */
@@ -1973,9 +1997,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 <Network size={13} /><span className={isMobile ? 'sr-only' : ''}>教程关系</span>
               </button>
             )}
-            <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
-              <Share2 size={13} /> 分享
-            </Button>
+            <span ref={shareAnchorRef} className="inline-flex">
+              <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(v => !v)}>
+                <Share2 size={13} /> 分享
+              </Button>
+            </span>
             {/* 顶栏「上传文档」按钮已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口）。
                 上传中的状态提示保留在此处，避免用户点完 FAB 上传后失去反馈。 */}
             {uploading && (
@@ -2199,13 +2225,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               }
             })();
           }}
+          /* 验收库以时间为主线（哪天验收的是关键信息），保留时间默认显示；普通知识库默认不显示，
+             需要的人去「筛选」面板打开（2026-07-31 用户：有了时间可见区域就少很多）。 */
+          showUpdatedTimeDefault={store.templateKey === ACCEPTANCE_TEMPLATE_KEY}
           /* 排序：服务端持久化的 store.defaultSortMode 为 SSOT；缺省按模板默认（验收库 created-desc，其余 default）兜底 */
           sortMode={
             (store.defaultSortMode === 'created-desc' || store.defaultSortMode === 'updated-desc' || store.defaultSortMode === 'default')
               ? store.defaultSortMode
               : (store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default')
           }
-          sidebarHeader={
+          sidebarFilters={
             <DocSortControl
               value={
                 (store.defaultSortMode === 'created-desc' || store.defaultSortMode === 'updated-desc' || store.defaultSortMode === 'default')
@@ -2353,6 +2382,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           isPublic={store.isPublic}
           currentEntryId={selectedDocEntry?.id}
           currentEntryTitle={selectedDocEntry?.title}
+          anchorRef={shareAnchorRef}
           onClose={() => setShowShareDialog(false)}
         />
       )}

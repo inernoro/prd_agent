@@ -3,12 +3,13 @@ import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
 import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
+import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Pin, PinOff,
-  ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
+  Trash2, FilePlus, FolderPlus,
   Upload, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
+  Sparkles, Wand2, Tags, Replace, BookOpen, SlidersHorizontal, Share2, ExternalLink, Copy,
   ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
@@ -190,126 +191,6 @@ function ReadingProgressBar({ scrollRef }: { scrollRef: React.RefObject<HTMLDivE
   );
 }
 
-// 顶部标签筛选下拉：标签过多时收进一个"标签筛选"下拉按钮，点开弹出长方形面板多选筛选（createPortal 防裁剪）。
-function TagFilterDropdown({
-  tags, selected, colors, onToggle, onClear,
-}: {
-  tags: string[];
-  selected: Set<string>;
-  colors: Record<string, TagColorKey>;
-  onToggle: (tag: string) => void;
-  onClear: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [kw, setKw] = useState('');
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (t.closest('[data-tagfilter-pop]') || t.closest('[data-tagfilter-trigger]')) return;
-      setOpen(false);
-    };
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onEsc);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
-  }, [open]);
-
-  const toggleOpen = () => {
-    const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 240) });
-    setOpen(o => !o);
-  };
-
-  const shown = kw.trim() ? tags.filter(t => t.toLowerCase().includes(kw.trim().toLowerCase())) : tags;
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        data-tagfilter-trigger
-        onClick={toggleOpen}
-        className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] px-2 rounded-full cursor-pointer transition-colors"
-        style={{
-          height: 22, lineHeight: '22px',
-          color: selected.size > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
-          background: selected.size > 0 ? 'var(--accent-soft, rgba(129,140,248,0.12))' : 'var(--bg-input)',
-          border: '1px solid var(--border-faint)',
-        }}
-        title="按标签筛选（多选取并集；再次点击取消）"
-      >
-        <Tags size={12} />
-        标签筛选{selected.size > 0 ? ` · ${selected.size}` : ''}
-        <ChevronDown size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
-      </button>
-      {selected.size > 0 && (
-        <button
-          onClick={onClear}
-          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[9.5px] px-1.5 rounded-full cursor-pointer"
-          style={{ height: 20, lineHeight: '20px', color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
-          title="清空筛选"
-        >
-          <X size={9} /> 清空
-        </button>
-      )}
-      {open && pos && createPortal(
-        <div
-          data-tagfilter-pop
-          style={{
-            position: 'fixed', top: pos.top, left: pos.left, width: pos.width, maxWidth: 360,
-            maxHeight: 320, overflowY: 'auto', overscrollBehavior: 'contain',
-            zIndex: 10000, borderRadius: 10, padding: 10,
-            background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)',
-            boxShadow: '0 8px 28px rgba(0,0,0,0.28)',
-          }}
-        >
-          {tags.length > 12 && (
-            <div className="flex items-center gap-1.5 mb-2 px-2 rounded-md" style={{ height: 28, background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
-              <Search size={12} style={{ color: 'var(--text-muted)' }} />
-              <input
-                value={kw}
-                onChange={e => setKw(e.target.value)}
-                autoFocus
-                placeholder="搜索标签…"
-                className="flex-1 bg-transparent outline-none text-[11px]"
-                style={{ color: 'var(--text-primary)' }}
-              />
-            </div>
-          )}
-          <div className="flex flex-wrap gap-1.5">
-            {shown.map(tag => {
-              const c = getTagColor(tag, colors);
-              const active = selected.has(tag);
-              return (
-                <button
-                  key={tag}
-                  onClick={() => onToggle(tag)}
-                  className="text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
-                  style={{
-                    height: 22, lineHeight: '22px',
-                    color: active ? '#fff' : c.text,
-                    background: active ? c.dot : c.bg,
-                    border: `1px solid ${active ? c.dot : c.border}`,
-                  }}
-                  title={`#${tag}`}
-                >
-                  {truncateTagDisplay(tag, 10)}
-                </button>
-              );
-            })}
-            {shown.length === 0 && (
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无匹配标签</span>
-            )}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </>
-  );
-}
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { VersionHistoryModal, type VersionApi } from './VersionHistoryModal';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -496,10 +377,17 @@ export type DocBrowserProps = {
   sortMode?: DocBrowserSortMode;
   /**
    * "显示更新时间"的默认值（仅在用户未显式切换过开关时生效）。
-   * 默认 true：时间默认显示（用户反馈要求），且时间永远固定在每行最右边。
-   * 用户手动开/关后以其 sessionStorage 选择为准。
+   * 默认 false（2026-07-31 用户反馈：「自从有了时间，可见区域就少很多」）——时间会挤掉
+   * 标题的可见宽度，改为默认不显示、需要的人去「筛选」面板里打开。
+   * 验收库这类以时间为主线的调用方可显式传 true。用户手动开/关后以其 sessionStorage 选择为准。
    */
   showUpdatedTimeDefault?: boolean;
+  /**
+   * 收进「筛选」面板的调用方控件（排序等纯筛选/排序类）。
+   * 与 sidebarHeader 的区别：sidebarHeader 是常驻在搜索框上方的内容（分类 chip、列表标题、
+   * 快速新建等**动作**），不能藏进筛选面板；sidebarFilters 才是点开筛选后一屏平铺的选项。
+   */
+  sidebarFilters?: ReactNode;
   /**
    * 分享视图传入分享 token，用于私有库读取划词评论气泡（PR #685 Codex P1）。
    * 后端凭此 token 验证调用方确实通过有效分享访问，而非靠"存在分享链"放行。
@@ -1765,7 +1653,8 @@ export function DocBrowser({
   emptyState,
   loading,
   sortMode = 'default',
-  showUpdatedTimeDefault = true,
+  showUpdatedTimeDefault = false,
+  sidebarFilters,
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
@@ -1807,27 +1696,12 @@ export function DocBrowser({
     const saved = sessionStorage.getItem('doc-browser-show-updated-time');
     if (saved === '1') return true;
     if (saved === '0') return false;
-    return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（验收库默认显示时间）
+    return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（默认关；验收库可显式打开）
   });
   // 列表时间显示哪个字段：跟随排序键，避免"按创建排序却显更新时间"的错位。
   const timeField: 'createdAt' | 'updatedAt' = sortMode === 'created-desc' ? 'createdAt' : 'updatedAt';
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const settingsMenuRef = useRef<HTMLDivElement>(null);
-  // 头部控件行（排序 + 正文标题 + 显示）合并到一行；侧栏很窄时控件只留图标（隐藏文字标签）。
-  const headerControlsRef = useRef<HTMLDivElement>(null);
-  const [compactControls, setCompactControls] = useState(false);
-  useEffect(() => {
-    const el = headerControlsRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 999;
-      // 排序控件(排序+3选项，nowrap)约需 ~210px；窄于 ~380px 时正文标题/显示收成纯图标，
-      // 给排序留足空间、整行一行放下、不触发横向滚动。
-      setCompactControls(w < 380);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const filterAnchorRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -1871,6 +1745,8 @@ export function DocBrowser({
       return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
     } catch { return new Set(); }
   });
+  // 筛选按钮高亮条件：有标签在筛，或打开了更新时间（默认关）——让「我改过设置」这件事看得见
+  const filtersDirty = selectedTags.size > 0 || showUpdatedTime;
   useEffect(() => {
     sessionStorage.setItem('doc-browser-selected-tags', JSON.stringify([...selectedTags]));
   }, [selectedTags]);
@@ -2533,16 +2409,6 @@ export function DocBrowser({
     setContentFirstLines(lines);
   }, [entries]);
 
-  // 显示设置菜单 click outside
-  useEffect(() => {
-    if (!showSettingsMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node)) setShowSettingsMenu(false);
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showSettingsMenu]);
-
   // 搜索过滤（本地 title 搜索 + 可选后端内容搜索） + tag 过滤
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
     const hasTagFilter = selectedTags.size > 0;
@@ -2990,58 +2856,15 @@ export function DocBrowser({
           </div>
         )}
 
-        {/* 头部控件行：排序(sidebarHeader) + 正文标题切换 + 显示设置，合并到一行省垂直空间；
-            侧栏很窄(compactControls)时正文标题/显示只留图标（文字标签隐藏，title 提示仍在）。 */}
-        <div
-          ref={headerControlsRef}
-          className="shrink-0 flex items-center gap-2 px-3 py-2.5 overflow-x-auto"
-          style={{ borderBottom: '1px solid var(--border-faint)' }}>
-          {/* 排序控件 shrink-0 + 内部 whitespace-nowrap：永不被挤压换行（用户最讨厌的字字竖排折叠） */}
-          <div className="shrink-0">{sidebarHeader}</div>
-          {/* 正文标题/显示 推到最右；窄栏(compactControls)只留图标。整行放不下时横向滚动，绝不竖排折叠 */}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            <button
-              onClick={() => setUseContentTitle(!useContentTitle)}
-              className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
-              title={useContentTitle ? '当前：显示正文第一行为标题' : '当前：显示文件名为标题'}>
-              {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
-              {!compactControls && (useContentTitle ? '正文标题' : '文件名')}
-            </button>
-            <div ref={settingsMenuRef} className="relative">
-              <button
-                onClick={() => setShowSettingsMenu(v => !v)}
-                className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
-                title="显示设置">
-                <Settings size={11} className={showUpdatedTime ? 'text-token-accent' : ''} />
-                {!compactControls && '显示'}
-              </button>
-              {showSettingsMenu && (
-                <div className="surface-popover absolute right-0 top-[26px] z-50 min-w-[180px] rounded-[10px] p-2">
-                  <label className="flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-token-secondary transition-colors hover-bg-soft">
-                    <input
-                      type="checkbox"
-                      checked={showUpdatedTime}
-                      onChange={(e) => {
-                        const next = e.target.checked;
-                        setShowUpdatedTime(next);
-                        sessionStorage.setItem('doc-browser-show-updated-time', next ? '1' : '0');
-                      }}
-                      className="h-3 w-3 cursor-pointer accent-current"
-                    />
-                    显示更新时间
-                  </label>
-                  <div className="px-2 py-1 text-[10px] text-token-muted">
-                    显示每条目最后变更时间，鼠标悬停查看精确时间和作者。
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        {/* 搜索 + 新建文件夹 */}
+        {/* 顶部只留「搜索 + 筛选」一行：排序 / 标题显示 / 更新时间 / 标签筛选 全部收进筛选面板。
+            2026-07-31 用户要求「折叠成一个高级筛选，但尽量减少点击次数，最好一次性完成」——
+            所以面板是一屏平铺（不再套二级菜单），点开即可把所有选项一次调完。
+            已选中的标签仍在外面留一行 chip，保证「当前正被筛选」这件事不会藏起来。 */}
         <div className="surface-panel-header px-3 py-3">
-          <div className="flex gap-1.5">
-            <div className="relative flex-1">
+          {/* 常驻头部内容（分类 chip / 列表标题 / 快速新建等动作）——不属于筛选，不进面板 */}
+          {sidebarHeader && <div className="mb-2">{sidebarHeader}</div>}
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1 min-w-0">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 value={search} onChange={e => handleSearchChange(e.target.value)}
@@ -3059,46 +2882,98 @@ export function DocBrowser({
                 </span>
               )}
             </div>
-            {/* 旧「+」下拉菜单已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口，见 CreatePaletteFab） */}
+            <div ref={filterAnchorRef} className="shrink-0">
+              <button
+                onClick={() => setShowFilterPanel(v => !v)}
+                className="flex h-8 cursor-pointer items-center gap-1 rounded-[9px] px-2.5 text-[11px] font-semibold transition-colors"
+                style={filtersDirty
+                  ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                  : { background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-muted)' }}
+                title="筛选与显示：排序 / 标题显示 / 更新时间 / 标签">
+                <SlidersHorizontal size={12} />
+                筛选{selectedTags.size > 0 ? ` · ${selectedTags.size}` : ''}
+              </button>
+            </div>
           </div>
-          {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
-          {allTagsRanked.length > 0 && (
-            <div
-              className="flex items-center gap-1 overflow-x-auto"
-              style={{
-                paddingTop: 2,
-                paddingBottom: 2,
-                scrollbarWidth: 'thin',
-                scrollbarColor: 'rgba(255,255,255,0.15) transparent',
-              }}
-              title="点击筛选；多选取并集；再次点击取消"
-            >
-              {allTagsRanked.length > 6 ? (
-                <TagFilterDropdown
-                  tags={allTagsRanked}
-                  selected={selectedTags}
-                  colors={tagColorMap}
-                  onToggle={toggleTag}
-                  onClear={() => setSelectedTags(new Set())}
-                />
-              ) : (
-                <>
+
+          {/* 已选标签：留在外面，避免「筛着却看不出在筛」 */}
+          {selectedTags.size > 0 && (
+            <div className="mt-2 flex items-center gap-1 overflow-x-auto" style={{ paddingBottom: 2 }}>
+              {[...selectedTags].map(tag => {
+                const c = getTagColor(tag, tagColorMap);
+                return (
+                  <button key={tag} onClick={() => toggleTag(tag)}
+                    className="flex-shrink-0 cursor-pointer rounded-full px-2 text-[10px] font-medium"
+                    style={{ height: 20, lineHeight: '20px', color: 'white', background: c.dot, border: `1px solid ${c.dot}` }}
+                    title="点击取消该标签筛选">
+                    {truncateTagDisplay(tag)} ×
+                  </button>
+                );
+              })}
+              <button onClick={() => setSelectedTags(new Set())}
+                className="flex-shrink-0 cursor-pointer rounded-full px-1.5 text-[9.5px]"
+                style={{ height: 18, lineHeight: '18px', color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                title="清空标签筛选">
+                清空
+              </button>
+            </div>
+          )}
+
+          <AnchoredMenu open={showFilterPanel} onClose={() => setShowFilterPanel(false)}
+            anchorRef={filterAnchorRef} minWidth={260}
+            className="surface-popover max-h-[70vh] w-[300px] max-w-[92vw] overflow-y-auto rounded-[12px] p-3">
+            {sidebarFilters && (
+              <div className="mb-3">
+                <div className="mb-1.5 text-[11px] font-semibold text-token-primary">排序</div>
+                {sidebarFilters}
+              </div>
+            )}
+
+            <div className="mb-3">
+              <div className="mb-1.5 text-[11px] font-semibold text-token-primary">标题显示</div>
+              <div className="flex gap-1 rounded-[9px] p-0.5" style={{ background: 'var(--bg-input)' }}>
+                <button onClick={() => setUseContentTitle(true)}
+                  className="h-7 flex-1 cursor-pointer rounded-[7px] text-[11px] transition-colors"
+                  style={useContentTitle
+                    ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
+                    : { color: 'var(--text-muted)' }}
+                  title="用正文第一行作为列表标题">正文标题</button>
+                <button onClick={() => setUseContentTitle(false)}
+                  className="h-7 flex-1 cursor-pointer rounded-[7px] text-[11px] transition-colors"
+                  style={!useContentTitle
+                    ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
+                    : { color: 'var(--text-muted)' }}
+                  title="用文件名作为列表标题">文件名</button>
+              </div>
+            </div>
+
+            <label className="mb-3 flex cursor-pointer items-start gap-2 text-[11px] text-token-secondary">
+              <input
+                type="checkbox"
+                checked={showUpdatedTime}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setShowUpdatedTime(next);
+                  sessionStorage.setItem('doc-browser-show-updated-time', next ? '1' : '0');
+                }}
+                className="mt-0.5 h-3 w-3 cursor-pointer accent-current"
+              />
+              <span>
+                <span className="block font-semibold text-token-primary">显示更新时间</span>
+                <span className="block text-[10px] text-token-muted">默认关闭：时间会占掉标题的可见宽度，需要时再打开。</span>
+              </span>
+            </label>
+
+            {allTagsRanked.length > 0 && (
+              <div>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-token-primary">标签</span>
                   {selectedTags.size > 0 && (
-                    <button
-                      onClick={() => setSelectedTags(new Set())}
-                      className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
-                      style={{
-                        height: 18,
-                        lineHeight: '18px',
-                        color: 'var(--text-muted)',
-                        background: 'var(--bg-input)',
-                        border: '1px solid var(--border-faint)',
-                      }}
-                      title="清空筛选"
-                    >
-                      清空
-                    </button>
+                    <button onClick={() => setSelectedTags(new Set())}
+                      className="ml-auto cursor-pointer text-[10px] text-token-muted hover-text-primary">清空</button>
                   )}
+                </div>
+                <div className="flex flex-wrap gap-1">
                   {allTagsRanked.map(tag => {
                     const c = getTagColor(tag, tagColorMap);
                     const active = selectedTags.has(tag);
@@ -3106,14 +2981,13 @@ export function DocBrowser({
                       <button
                         key={tag}
                         onClick={() => toggleTag(tag)}
-                        className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                        className="cursor-pointer rounded-full px-2 text-[10px] font-medium transition-all"
                         style={{
                           height: 20,
                           lineHeight: '20px',
                           color: active ? 'white' : c.text,
                           background: active ? c.dot : c.bg,
                           border: `1px solid ${active ? c.dot : c.border}`,
-                          letterSpacing: '0.01em',
                         }}
                         title={`#${tag}`}
                       >
@@ -3121,10 +2995,11 @@ export function DocBrowser({
                       </button>
                     );
                   })}
-                </>
-              )}
-            </div>
-          )}
+                </div>
+              </div>
+            )}
+          </AnchoredMenu>
+
           {creatingFolder && (
             <div className="flex gap-1.5">
               <input

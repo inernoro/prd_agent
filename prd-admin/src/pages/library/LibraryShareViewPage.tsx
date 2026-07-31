@@ -316,7 +316,7 @@ export function LibraryShareViewPage() {
           </span>
         </div>
         <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} />
+          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} variant="inline" />
           {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
           <button
             onClick={() => navigate(knowledgeBaseReturnPath)}
@@ -397,7 +397,7 @@ export function LibraryShareViewPage() {
             onSelectEntry={selectSharedEntry}
             loadContent={loadContent}
             sortMode={shareSortMode}
-            sidebarHeader={
+            sidebarFilters={
               <ReaderSortControl value={shareSortMode} onChange={setShareSortMode} />
             }
             inlineCommentShareToken={token ?? undefined}
