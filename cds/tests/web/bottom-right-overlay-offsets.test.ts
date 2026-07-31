@@ -1,8 +1,8 @@
 /**
  * 全局入口与提醒不重叠守卫。
  *
- * 用户可主动触发的「提交缺陷」固定在左侧导航；授权、导入、更新和 GitHub
- * push 等被动消息统一进入顶部信息中心。页面级 toast 是唯一允许使用右下角的反馈。
+ * 用户可主动触发的「提交缺陷」固定在左侧导航；普通被动消息进入顶部信息中心。
+ * 授权申请是唯一双入口：信息中心保留一份，同时右下角必须直接出现决策卡。
  */
 
 import { describe, expect, it } from 'vitest';
@@ -51,10 +51,11 @@ describe('全局操作与信息中心', () => {
     expect(bugDialog).not.toContain('useOverlayDock');
   });
 
-  it('所有被动提醒只在信息中心聚合，壳层不再渲染底部坞', () => {
+  it('普通提醒在信息中心聚合，授权申请同时保留右下角决策浮窗', () => {
     expect(shell).toContain('<SiteNoticeInbox />');
     expect(shell).toContain('id="cds-information-center-host"');
-    expect(informationCenter).toContain('<AccessRequestInbox onCountChange={handleAccessCount} />');
+    expect(informationCenter).toContain('<AccessRequestInbox placement="floating" onCountChange={handleAccessCount} />');
+    expect(informationCenter).toContain('<AccessRequestInbox />');
     expect(informationCenter).toContain('<PendingImportInbox onCountChange={handleImportCount} />');
     expect(informationCenter).toContain('<GlobalUpdateBadge onCountChange={handleUpdateCount} />');
     expect(informationCenter).toContain('<CommitInbox onCountChange={handleCommitCount} />');
@@ -62,6 +63,10 @@ describe('全局操作与信息中心', () => {
     expect(css).not.toContain('.cds-bottom-docks');
     expect(css).not.toContain('.cds-global-action-stack');
     expect(css).not.toContain('.cds-bottom-left-dock');
+    const access = readWeb('components/AccessRequestInbox.tsx');
+    expect(access).toContain('data-testid="cds-access-request-floating"');
+    expect(access).toContain('fixed bottom-[84px] right-5');
+    expect(access).toContain('createPortal');
   });
 
   it('信息中心宿主通过共享 hook 解析，不在 render 期直接查询', () => {

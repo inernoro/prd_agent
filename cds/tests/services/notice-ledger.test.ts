@@ -3,8 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  NOTICE_BODY_MAX_CHARS,
   NOTICE_MERGE_WINDOW_MS,
   NoticeLedgerService,
+  compactNoticeText,
   mergeNotice,
   renderNoticeFromEvent,
   startNoticeLedger,
@@ -200,6 +202,27 @@ describe('renderNoticeFromEvent — 只读结构化字段，不认事件名', ()
     expect(rendered!.body).toContain('生产 / 官网');
     expect(rendered!.body).toContain('gateway_route_self_test');
     expect(rendered!.dedupeKey).toContain('tgt-1');
+  });
+
+  it('优先展示结构化失败摘要，并把原始多行日志压缩到通知正文上限', () => {
+    const structured = renderNoticeFromEvent({
+      type: 'release.failed',
+      ts: new Date().toISOString(),
+      data: {
+        projectId: 'prd-agent',
+        targetId: 'tgt-1',
+        targetName: '生产 / 官网',
+        errorMessage: 'raw stderr '.repeat(100),
+        failure: { summary: '镜像拉取失败，请检查不可变版本是否存在' },
+      },
+    });
+    expect(structured?.body).toContain('镜像拉取失败');
+    expect(structured?.body).not.toContain('raw stderr');
+
+    const compact = compactNoticeText(`第一行\n${'下载日志 '.repeat(100)}`);
+    expect(compact).not.toContain('\n');
+    expect(compact.length).toBeLessThanOrEqual(NOTICE_BODY_MAX_CHARS);
+    expect(compact.endsWith('…')).toBe(true);
   });
 
   it('存活掉线 → 落到状态页；不入账的事件返回 null', () => {
