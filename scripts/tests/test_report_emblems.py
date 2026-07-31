@@ -80,8 +80,8 @@ def find_elements(text, tags, cls):
     return out
 
 
-def check_inline_style(label, rel, attrs, who, expect):
-    """行内 style 优先于任何样式表规则，必须一并查。
+def check_inline_style(label, rel, attrs, who, contract, forbid_dimensions=False):
+    """行内 style 优先于任何样式表规则，按**同一份契约**校验。
 
     判据只扫样式表时，给 `.emblem` 包裹元素加一句
     `style="position:static;pointer-events:auto;opacity:1"` 就能让刊徽回到文档流、
@@ -91,16 +91,18 @@ def check_inline_style(label, rel, attrs, who, expect):
     style = attr_value(attrs, "style")
     if not style:
         return
-    body = re.sub(r"\s+", "", style)
-    fake = [{"body": body, "sel": f"{who} 的行内 style"}]
-    reject_contract_shorthands(label, rel, fake, who)
-    for prop, want in expect.items():
-        _, declared = cascade_value([body], prop)
-        for v in declared:
-            if v.strip().lower() != want:
-                fail(f"{label}({rel}): {who} 的行内 style 把 {prop} 写成 {v.strip()!r}，"
-                     f"应为 {want!r}——行内声明优先于任何样式表规则，"
-                     f"只扫样式表的判据看不见它")
+    rules = [{"body": re.sub(r"\s+", "", style), "sel": f"{who} 的行内 style"}]
+    reject_contract_shorthands(label, rel, rules, who)
+    for prop, ok, why, _required in contract:
+        # 行内没写某项是允许的（样式表那份仍然生效），写了就必须合契约
+        require_all_declarations(label, rel, rules, prop, ok, why)
+    if forbid_dimensions:
+        for prop in INLINE_FORBIDDEN_DIMENSIONS:
+            _, declared = cascade_value([rules[0]["body"]], prop)
+            if declared:
+                fail(f"{label}({rel}): {who} 的行内 style 写了 {prop}:{declared[-1]!r}——"
+                     f"尺寸与偏移是分档的（桌面/窄屏各一套），行内声明在所有视口一律生效，"
+                     f"必然打破其中一档；请只在样式表里按档位写")
 
 
 def emblem_value(m):
@@ -308,16 +310,13 @@ def check_emblem_in_masthead(label, rel, text, expected_kinds):
     # 子项把报头撑歪。上一轮我只把范围收到「报头」，还差一层。
     # 行内 style 优先于样式表，三类契约元素都要查（报头 / 刊徽包裹 / 报头前景）。
     for _m, attrs, _sp in find_elements(text, "header|div", "masthead"):
-        check_inline_style(label, rel, attrs, "`.masthead` 报头",
-                           {"position": "relative"})
+        check_inline_style(label, rel, attrs, "`.masthead` 报头", MASTHEAD_CONTRACT)
     for _m, attrs, _sp in find_elements(block, "div|span", "emblem"):
-        check_inline_style(label, rel, attrs, "`.emblem` 刊徽包裹",
-                           {"position": "absolute", "pointer-events": "none",
-                            "z-index": "0"})
+        check_inline_style(label, rel, attrs, "`.emblem` 刊徽包裹", EMBLEM_CONTRACT,
+                           forbid_dimensions=True)
     for cls in FOREGROUND_CLASSES:
         for _m, attrs, _sp in find_elements(block, "div|span|b|i|em|strong", cls):
-            check_inline_style(label, rel, attrs, f"报头前景 `.{cls}`",
-                               {"position": "relative", "z-index": "1"})
+            check_inline_style(label, rel, attrs, f"报头前景 `.{cls}`", FOREGROUND_CONTRACT)
 
     spans = _emblem_spans(block)
     for kind in sorted(expected_kinds):
@@ -568,6 +567,63 @@ def reject_contract_shorthands(label, rel, rules, what):
 POSITIONED = ("relative", "absolute", "fixed", "sticky")
 
 
+def _is_low_opacity(v):
+    v = v.strip()
+    return bool(re.fullmatch(r"[0-9.]+", v)) and 0 < float(v) <= 0.3
+
+
+# ── 契约 SSOT ──────────────────────────────────────────────────────────────
+# (属性, 判定, 说明, 样式表里是否必须声明)
+#
+# **样式表路径与行内 style 路径共用这一份**。此前两条路径各自手列属性：样式表那边
+# 查 6 项，行内那边只查 3 项，于是 `style="opacity:1"` / `display:none` /
+# `width:120px` 加在包裹元素上全都判绿——行内优先级最高，恰恰是最不该漏的一档。
+# 这是本 PR 里第四次「同一个判据分了两份然后各自漂移」（形状 3），所以这次不是
+# 往行内那份补 opacity，而是让两边根本没有第二份可漂。
+EMBLEM_CONTRACT = (
+    ("position", lambda v: v.strip().lower() == "absolute",
+     "水印必须绝对定位，否则会挤进报头 flex 流把版面撑歪", True),
+    ("pointer-events", lambda v: v.strip().lower() == "none",
+     "水印压在文字上层会挡住选中/点击", True),
+    ("z-index", lambda v: v.strip() == "0",
+     "衬字水印必须垫在刊名/期号之下，抬上去就成了盖住报头的贴纸", True),
+    ("opacity", _is_low_opacity,
+     "透明度须落在 (0, 0.3]：过高会盖住报头文字，为 0 等于没有刊徽（约定 ≈0.13）", True),
+    # 下面两项样式表里可以不写（默认就是可见），但写了就必须是可见值
+    ("display", lambda v: v.strip().lower() != "none",
+     "display:none 会让刊徽在任何视口下都不渲染", False),
+    ("visibility", lambda v: v.strip().lower() not in ("hidden", "collapse"),
+     "visibility:hidden/collapse 会让刊徽不可见", False),
+)
+
+MASTHEAD_CONTRACT = (
+    ("position", lambda v: v.strip().lower() in POSITIONED,
+     "`.masthead` 必须是已定位元素，否则刊徽的 top/right 会相对页面级祖先解析，水印跑出报头", True),
+    ("display", lambda v: v.strip().lower() != "none",
+     "报头 display:none 会连刊徽一起消失", False),
+)
+
+FOREGROUND_CONTRACT = (
+    ("position", lambda v: v.strip().lower() in POSITIONED,
+     "报头前景必须已定位，未定位元素的 z-index 不生效，刊徽会画到报头文字之上", True),
+    ("z-index", lambda v: bool(re.fullmatch(r"-?\d+", v.strip())) and int(v) > 0,
+     "报头前景的层级必须是整数且严格高于刊徽的 0，衬字水印才成立", True),
+)
+
+# 行内 style 里出现即判红的属性：它们在所有视口下一律生效，而尺寸/偏移是**分档**的
+# （桌面 92px / 窄屏 70px），行内写死必然打破其中一档，无论写哪个值都不可能对。
+INLINE_FORBIDDEN_DIMENSIONS = ("width", "height", "top", "right", "bottom", "left")
+
+
+def check_contract(label, rel, rules, contract, who):
+    """按契约逐条校验一组规则；required 的属性缺声明也判红。"""
+    reject_contract_shorthands(label, rel, rules, who)
+    for prop, ok, why, required in contract:
+        seen = require_all_declarations(label, rel, rules, prop, ok, why)
+        if required and not seen:
+            fail(f"{label}({rel}): {who} 没有 {prop} 声明——{why}")
+
+
 def check_foreground_stacking(label, rel, text):
     """前景元素必须已定位且层级高于刊徽，否则「衬字」这个板式根本不成立。
 
@@ -580,21 +636,7 @@ def check_foreground_stacking(label, rel, text):
             fail(f"{label}({rel}): 找不到报头内 `.{cls}` 的 CSS 规则——"
                  f"报头前景没有被提到刊徽之上，水印会盖住刊名/期号")
             continue
-        reject_contract_shorthands(label, rel, rules, f"报头前景 `.{cls}`")
-        seen_pos = require_all_declarations(
-            label, rel, rules, "position",
-            lambda v: v.lower() in POSITIONED,
-            f"报头前景 `.{cls}` 必须已定位，未定位元素的 z-index 不生效，刊徽会画到报头文字之上")
-        if not seen_pos:
-            fail(f"{label}({rel}): 报头前景 `.{cls}` 没有 position 声明——"
-                 f"未定位元素的 z-index 不生效，刊徽会画到报头文字之上")
-        seen_z = require_all_declarations(
-            label, rel, rules, "z-index",
-            lambda v: bool(re.fullmatch(r"-?\d+", v.strip())) and int(v) > 0,
-            f"报头前景 `.{cls}` 的层级必须是整数且严格高于刊徽的 0，衬字水印才成立")
-        if not seen_z:
-            fail(f"{label}({rel}): 报头前景 `.{cls}` 没有 z-index 声明——"
-                 f"衬字水印要求前景严格在刊徽之上")
+        check_contract(label, rel, rules, FOREGROUND_CONTRACT, f"报头前景 `.{cls}`")
 
 
 def check_structural_selectors(label, rel, text):
@@ -638,14 +680,7 @@ def check_positioning_context(label, rel, text):
         fail(f"{label}({rel}): 找不到以 `.masthead` 为目标的 CSS 规则——"
              f"刊徽的绝对定位没有可锚定的祖先")
         return
-    reject_contract_shorthands(label, rel, rules, "报头定位上下文")
-    seen = require_all_declarations(
-        label, rel, rules, "position",
-        lambda v: v.lower() in POSITIONED,
-        "`.masthead` 必须是已定位元素，否则刊徽的 top/right 会相对页面级祖先解析，水印跑出报头")
-    if not seen:
-        fail(f"{label}({rel}): `.masthead` 没有任何 position 声明——"
-             f"static 祖先不建立定位上下文，刊徽的 top/right 会相对页面级祖先解析")
+    check_contract(label, rel, rules, MASTHEAD_CONTRACT, "`.masthead` 报头")
 
 
 def check_css_wiring(label, rel):
@@ -687,62 +722,15 @@ def check_css_wiring(label, rel):
     # z-index 同属这份契约：板式叫「衬字水印」，靠 z-index:0 垫在 .t/.r/.stamp（z-index:1）
     # 之下。它一旦漂成 1 以上，刊徽就从「衬底」变成「盖住刊名」，而前两条依然成立。
     # 既然这一轮的教训是「修的是类不是实例」，就把同一份契约的属性一次列全。
-    reject_contract_shorthands(label, rel, rules, "刊徽水印")
+    # 走共用契约（EMBLEM_CONTRACT），不在这里另手列一份——行内那条路径吃的是同一份，
+    # 两边不可能再各自漂移。
+    check_contract(label, rel, rules, EMBLEM_CONTRACT, ".emblem 刊徽水印")
 
-    # 可见性也是契约的一部分：前面查的每一条属性都对，但 `display:none` 或
-    # `visibility:hidden` 一加，任何视口下都根本不渲染刊徽——「水印存在」这件事
-    # 本身没进过判据。契约要列的是「让这枚水印成立的全部条件」，可见是第一条。
-    require_all_declarations(label, rel, rules, "display",
-                             lambda v: v.strip().lower() != "none",
-                             "display:none 会让刊徽在任何视口下都不渲染")
-    require_all_declarations(label, rel, rules, "visibility",
-                             lambda v: v.strip().lower() not in ("hidden", "collapse"),
-                             "visibility:hidden/collapse 会让刊徽不可见")
-
-    # 判据取「所有匹配规则的每一条声明都必须等于约定值」，而不是算层叠胜者：
-    # 胜者由特异性先于源码顺序决定，算特异性等于在测试里重写 CSS 引擎（新的漂移源）。
-    # 要求全体一致更严格，但换来「换个更特异的写法就失明」这一整类洞被堵死。
-    for prop, want, why in (
-        ("position", "absolute", "水印必须绝对定位，否则会挤进报头 flex 流把版面撑歪"),
-        ("pointer-events", "none", "水印压在文字上层会挡住选中/点击"),
-        ("z-index", "0", "衬字水印必须垫在刊名/期号之下，抬上去就成了盖住报头的贴纸"),
-    ):
-        seen = require_all_declarations(label, rel, rules, prop,
-                                        lambda v, w=want: v.lower() == w, why)
-        if not seen:
-            fail(f"{label}({rel}): .emblem 规则里没有 {prop} —— {why}")
-
-    # 定位祖先：`position:absolute` 的 top/right 是相对**最近的已定位祖先**解析的。
-    # 只查 .emblem 自己的声明不够——把 `.masthead` 的 position:relative 拿掉，
-    # 刊徽的 -14px/-8px 就会相对页面级祖先解析，水印跑到报头外面去，
-    # 而只看 .emblem 的判据全绿。判据必须连它成立所依赖的上下文一起查（形状 1）。
+    # 刊徽自身的声明对了还不够：祖先要建立定位上下文、前景要压在它之上、
+    # 报头内不许用判不了归属的结构性选择器。三条缺一，水印就不成立。
     check_positioning_context(label, rel, text)
     check_foreground_stacking(label, rel, text)
     check_structural_selectors(label, rel, text)
-
-    # 透明度必须真的「浅」，而且必须**显式写出来**。
-    # 只判「写了但过高」是不够的：整条 opacity 声明被删掉时 CSS 默认 opacity:1，
-    # 刊徽变成完全不透明的遮挡物盖住报头——正是本守卫号称要防的退化之一，
-    # 而 re.search 返回 None 会让循环一声不吭地放行（本守卫第一版就是这个洞）。
-    # 走统一的 cascade_value：不能自己再写一条 `re.search(r"opacity:([0-9.]+)")`，
-    # 那个正则只认数字，遇到 `opacity: unset` 会**跳过这条声明**并保留前面那个合法的 0.13——
-    # 而 unset 对这个非继承属性解析为初始值 1，刊徽变成完全不透明的遮挡物。
-    # 上一轮我把 position/pointer-events/z-index/尺寸都收敛到 cascade_value 了，
-    # 唯独漏了这一处，于是同一个形状第三次复发。**「横扫同类」要扫到最后一个，不是扫到手顺为止。**
-    winner, declared = cascade_value(bodies, "opacity")
-    if winner is None:
-        fail(f"{label}({rel}): .emblem 没有任何 opacity 声明——"
-             f"CSS 会默认 opacity:1，刊徽变成不透明遮挡物盖住报头（约定 ≈0.13）")
-    else:
-        for v in declared:
-            if not re.fullmatch(r"[0-9.]+", v):
-                fail(f"{label}({rel}): .emblem 的 opacity:{v} 不是数值——"
-                     f"unset/initial/inherit 之类会解析成初始值 1（完全不透明），"
-                     f"请写明确的小数（约定 ≈0.13）")
-                continue
-            if not (0 < float(v) <= 0.3):
-                fail(f"{label}({rel}): .emblem 的 opacity={v} 不在 (0, 0.3] 内，"
-                     f"过高会盖住报头文字、为 0 则等于没有刊徽（约定 ≈0.13）")
 
     # 层叠顺序：@media 覆盖必须排在基础规则**之后**。
     # 两者选择器特异性相同，靠源码顺序决胜——媒体查询若写在前面，
