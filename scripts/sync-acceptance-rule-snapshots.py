@@ -48,11 +48,12 @@ SOURCES = [
     },
 ]
 
-SKILLS = [
-    "acceptance-test-design",
+SNAPSHOT_SKILLS = [
     "acceptance-scenario-orchestrator",
     "create-visual-test-to-kb",
 ]
+
+GENERIC_SKILL = "acceptance-test-design"
 
 
 def git_commit() -> str:
@@ -118,7 +119,7 @@ def sync(check: bool) -> int:
     source_commit, docs = build_payload()
     generated_at = datetime.now(timezone.utc).isoformat()
     failures: list[str] = []
-    for skill in SKILLS:
+    for skill in SNAPSHOT_SKILLS:
         rules_dir = ROOT / ".claude" / "skills" / skill / "references" / "rules"
         if check and not rules_dir.parent.is_dir():
             failures.append(f"missing skill references dir: {skill}")
@@ -174,6 +175,29 @@ def sync(check: bool) -> int:
                     failures.append(f"stale manifest sources: {manifest_path.relative_to(ROOT)}")
         else:
             manifest_path.write_text(json.dumps(expected_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    generic_rules_dir = ROOT / ".claude" / "skills" / GENERIC_SKILL / "references" / "rules"
+    generic_manifest_path = generic_rules_dir / "manifest.json"
+    generic_baseline_path = generic_rules_dir / "baseline.md"
+    if not generic_manifest_path.is_file():
+        failures.append(f"missing generic manifest: {generic_manifest_path.relative_to(ROOT)}")
+    if not generic_baseline_path.is_file():
+        failures.append(f"missing generic baseline: {generic_baseline_path.relative_to(ROOT)}")
+    if generic_manifest_path.is_file():
+        try:
+            generic_manifest = json.loads(generic_manifest_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            failures.append(f"invalid generic manifest: {generic_manifest_path.relative_to(ROOT)} {exc}")
+        else:
+            if generic_manifest.get("kind") != "acceptance-rule-bundle":
+                failures.append(f"invalid generic manifest kind: {generic_manifest_path.relative_to(ROOT)}")
+            profiles = generic_manifest.get("profiles", [])
+            baseline_profile = next(
+                (profile for profile in profiles if profile.get("id") == "generic-baseline"),
+                None,
+            )
+            if baseline_profile is None or baseline_profile.get("path") != "references/rules/baseline.md":
+                failures.append(f"generic baseline profile missing: {generic_manifest_path.relative_to(ROOT)}")
+
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)

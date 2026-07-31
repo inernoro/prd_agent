@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeReorderUpdates, sortDocBrowserEntries } from '../docBrowserSort';
+import { computeReorderUpdates, resolveDocBrowserSortMode, sortDocBrowserEntries } from '../docBrowserSort';
 
 const base = {
   isFolder: false,
@@ -9,6 +9,13 @@ const base = {
 };
 
 describe('docBrowserSort', () => {
+  it('defaults an unset preference to newest-created first while preserving an explicit book order', () => {
+    expect(resolveDocBrowserSortMode()).toBe('created-desc');
+    expect(resolveDocBrowserSortMode(null)).toBe('created-desc');
+    expect(resolveDocBrowserSortMode('legacy-value')).toBe('created-desc');
+    expect(resolveDocBrowserSortMode('default')).toBe('default');
+  });
+
   it('uses persisted SortOrder for book order across folders and chapters', () => {
     const entries = [
       { ...base, id: 'advanced', title: '高级篇', isFolder: true, sortOrder: 300 },
