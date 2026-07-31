@@ -577,10 +577,17 @@ check(checker.baseline_regressions(BASE, BASE) == [], "基线没动时放行")
 check(checker.baseline_regressions(BASE, LOOSER), "把计数改大会被抓出")
 check(checker.baseline_regressions(BASE, NEW_FILE), "把新欠账文件写进基线会被抓出")
 check(checker.load_baseline_at("这个-ref-不存在") is None, "取不到目标分支基线时返回 None，不误判")
-check(checker.changed_docs_since("这个-ref-不存在") == [],
-      "取不到 ref 时「本次碰过的文档」返回空表，不误判")
-touched_now = checker.changed_docs_since("origin/main")
-check(len(touched_now) > 50, f"能列出本次碰过的 doc（实测 {len(touched_now)} 篇）")
+check(checker.changed_docs_since("这个-ref-不存在") is None,
+      "算不出来时返回 None 而不是空表（空表会被当成「一篇没碰」，又是静默降级）")
+# CI 里 fetch 的是 origin/base，本地一般只有 origin/main —— 取第一个存在的，
+# 两个都没有就明确打印跳过原因，不假装跑过（空跑的绿灯比没有更糟）。
+base_ref = next((r for r in ("origin/base", "origin/main") if checker.git_ref_exists(r)), "")
+touched_now = checker.changed_docs_since(base_ref) if base_ref else []
+if base_ref:
+    check(len(touched_now) > 50,
+          f"能列出本次碰过的 doc（对照 {base_ref}，实测 {len(touched_now)} 篇）")
+else:
+    print("  skip 「本次碰过的文档」用例：没有可对照的 base ref（origin/base / origin/main 都不在）")
 still_bad = [r for r in touched_now
              if os.path.exists(os.path.join(REPO_ROOT, r))
              and not checker.WEEKLY_REPORT.match(os.path.basename(r)[:-3])

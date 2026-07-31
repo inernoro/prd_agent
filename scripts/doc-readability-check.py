@@ -710,16 +710,20 @@ def load_baseline() -> dict[str, dict[str, int]]:
         return _normalize_baseline(json.load(fh))
 
 
-def changed_docs_since(ref: str) -> list[str]:
-    """本次改动碰过的 doc/*.md（相对目标分支）。取不到就返回空列表。"""
+def changed_docs_since(ref: str) -> list[str] | None:
+    """本次改动碰过的 doc/*.md（相对目标分支）。算不出来返回 None。
+
+    None 与空表要分开：空表 = 确实一篇没碰；None = 算不出来（浅克隆没有共同
+    祖先、ref 不存在）。把后者当成前者，就是又一次静默降级。
+    """
     import subprocess
     try:
         out = subprocess.run(["git", "diff", "--name-only", f"{ref}...HEAD", "--", "doc/"],
                              cwd=REPO_ROOT, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
-        return []
+        return None
     if out.returncode != 0:
-        return []
+        return None
     return [line for line in out.stdout.split() if line.endswith(".md")]
 
 
@@ -919,6 +923,11 @@ def main() -> int:
             # 「走到哪修到哪」不能只是句口号：这次动过的存量文档，必须顺手把
             # 导读补上，否则棘轮总数持平就放行，那批老文档永远轮不到人修。
             touched = changed_docs_since(args.baseline_ref)
+            if touched is None:
+                print(f"\n[FAIL] 算不出相对 {args.baseline_ref} 碰过哪些文档 —— "
+                      f"通常是克隆太浅、没有共同祖先。CI 里请用 fetch-depth: 0",
+                      file=sys.stderr)
+                return 1
             still_missing = []
             for rel in touched:
                 abs_path = os.path.join(REPO_ROOT, rel)

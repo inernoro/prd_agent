@@ -117,7 +117,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
+        # 要跟目标分支算「本次碰过哪些文档」，浅克隆没有共同祖先，算不出来
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Fetch base branch baseline
         # 基线要跟目标分支比：不取 main 的话，本分支自己放宽的基线会拿来跟自己比
@@ -125,9 +128,9 @@ jobs:
         # 否则取到的就是刚推上去的自己，基线又变成跟自己比
         run: |
           if [ -n "${{ github.base_ref }}" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/base"
+            git fetch --no-tags origin "${{ github.base_ref }}:refs/remotes/origin/base"
           else
-            git fetch --no-tags --depth=2 origin "${{ github.event.before }}"
+            git fetch --no-tags origin "${{ github.event.before }}"
             git update-ref refs/remotes/origin/base "${{ github.event.before }}"
           fi
 
