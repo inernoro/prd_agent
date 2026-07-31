@@ -667,6 +667,10 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS smoke 退出码=2",
             "CDS smoke 返回 5xx",
             "CDS smoke HTTP 4xx",
+            "CDS smoke HTTP=503",
+            "CDS smoke HTTP: 503",
+            "CDS smoke 状态码=503",
+            "CDS smoke 返回为 500",
             "CDS smoke failed",
             "CDS smoke tests failed",
             "CDS ready failed",
@@ -702,6 +706,10 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS smoke exit code 0",
             "CDS smoke 退出码=0",
             "CDS smoke 返回 2xx",
+            "CDS smoke HTTP=200",
+            "CDS smoke HTTP: 204",
+            "CDS smoke 状态码=200",
+            "CDS smoke 返回为 200",
             "CDS smoke passed",
             "CDS smoke tests passed",
             "CDS ready status=ready",
@@ -796,6 +804,8 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS smoke succeeded",
             "CDS smoke exit code 0",
             "CDS smoke HTTP 2xx",
+            "CDS smoke HTTP=200",
+            "CDS smoke 状态码: 204",
             "CDS smoke status=healthy",
         ):
             with self.subTest(closure=closure):
@@ -1315,6 +1325,47 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
+
+    def test_environment_instance_aliases_share_state(self):
+        aliases = (
+            ("生产", "生产环境"),
+            ("预览", "预览环境"),
+            ("测试", "测试环境"),
+            ("灰度", "灰度环境"),
+            ("开发", "开发环境"),
+            ("本地", "本地环境"),
+        )
+        for failure_instance, closure_instance in aliases:
+            with self.subTest(
+                failure=failure_instance,
+                closure=closure_instance,
+            ):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进",
+                    f"{failure_instance} CDS smoke 失败",
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure_instance} CDS smoke 已通过 | 同一环境复测完成 | "
+                    "已证明同一实例 | 已通过 | 保留记录 |\n"
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+    def test_different_environment_instances_remain_separate(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "生产 CDS smoke 失败"
+        )
+        body = body.rstrip() + (
+            "\n| 验收冻结 SHA | 预览环境 CDS smoke 已通过 | "
+            "预览环境复测完成 | 仅证明预览环境 | 已通过 | 保留记录 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
 
     def test_parallel_subject_instances_can_be_closed_independently(self):
         body = report_body("覆盖不足").replace(

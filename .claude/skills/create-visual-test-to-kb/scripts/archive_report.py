@@ -649,7 +649,8 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"(?:(?:非|不为|不等于)\s*0(?![\d.])"
     r"|(?:exit[\s_-]*code|退出码|返回码|错误码|错误代码)\s*"
     r"(?:(?:[:：=]|为)\s*)?[1-9]\d*"
-    r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
+    r"|(?:返回|状态码|HTTP)\s*(?:(?:[:：=]|为)\s*)?"
+    r"(?:[45][xX]{2}|[45]\d{2})"
     r"|(?-i:\bFAIL\b)"
     r"|(?-i:\bERROR\b)"
     r"|\b(?:failed|failure)\b"
@@ -671,7 +672,8 @@ _RAW_RESOLVED_STATUS_PATTERN = (
     rf"(?:{_RAW_RESOLVED_VALUE_PATTERN}|deployed)\b\"?"
     r"|(?:exit[\s_-]*code|退出码|返回码|错误码|错误代码)\s*"
     r"(?:(?:[:：=]|为)\s*)?0(?![\d.])"
-    r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?2[xX]{2})"
+    r"|(?:返回|状态码|HTTP)\s*(?:(?:[:：=]|为)\s*)?"
+    r"(?:2[xX]{2}|2\d{2}))"
 )
 _FAILURE_FACT_PATTERN = re.compile(
     rf"{_ONGOING_FAILURE_PREFIX_PATTERN}"
@@ -793,6 +795,16 @@ _ROOT_CAUSE_INSTANCE_QUALIFIER_PATTERN = re.compile(
     rf"(?:在|于)?\s*(?:{_ROOT_CAUSE_INSTANCE_PATTERN.pattern})(?:\s*环境)?",
     re.I,
 )
+
+
+def _normalize_root_cause_instance(identity):
+    """Collapse short and explicit environment labels into one instance key."""
+    normalized = (identity or "").strip().lower()
+    if normalized in {"生产", "预览", "测试", "灰度", "开发", "本地"}:
+        return f"{normalized}环境"
+    return normalized
+
+
 _VERIFIED_SCENARIO_OBJECT_PATTERN = (
     r"(?:场景|用例|测试|重试|处理|请求|响应|路径|分支|案例|样本|输入|"
     r"数据|状态码|逻辑|机制|流程)"
@@ -853,7 +865,7 @@ def _subject_occurrences(text, instance_aware=False):
             if coordination_matches:
                 qualifier = qualifier[: coordination_matches[-1].start()]
         raw_identities = [
-            match.group(0).lower()
+            _normalize_root_cause_instance(match.group(0))
             for match in _ROOT_CAUSE_INSTANCE_PATTERN.finditer(
                 f"{prefix} {qualifier}"
             )
