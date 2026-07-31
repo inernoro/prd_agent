@@ -188,6 +188,16 @@ def fail(msg):
     print(f"  [FAIL] {msg}")
 
 
+def strip_comments(text):
+    """去掉 HTML 注释再做任何标记扫描。
+
+    把 SVG 用 `<!-- ... -->` 包起来「先留着参考」是很常见的改法，浏览器不渲染它，
+    而按原始文本扫描的判据照样数到那个 data-emblem、照样去查它的 SVG 完整性——
+    报告上一枚水印都没有，守卫却判绿。
+    """
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+
+
 def count_emblem(text, kind):
     """数某枚刊徽出现次数——同样两种引号都认，不能用 f'data-emblem="{kind}"' 硬拼。"""
     return sum(1 for m in EMBLEM_ATTR_RE.finditer(text) if emblem_value(m) == kind)
@@ -198,7 +208,7 @@ def check_file(label, rel, expected_kinds):
     if not path.is_file():
         fail(f"{label}: 产物文件不存在 {rel}")
         return
-    text = path.read_text(encoding="utf-8")
+    text = strip_comments(path.read_text(encoding="utf-8"))
 
     # 捕获**整个属性值**，不能写成 `([a-z]+)`：那样 data-emblem="asteroid-2" 这类
     # 合法但不在注册表里的值根本进不了 found，混装判定与 SVG 完整性检查都看不到它——
@@ -447,7 +457,7 @@ def check_flavor_wiring():
                      f"——_FLAVORS 里两个 flavor 的刊徽很可能对调了")
         # 报头归属查渲染产物：源码里那份 SVG 常量本就不在 masthead 内，
         # 只有注入之后的标记才能回答「它到底挂在哪」。
-        check_emblem_in_masthead(f"{label}(flavor={flavor})", rel, out, {want})
+        check_emblem_in_masthead(f"{label}(flavor={flavor})", rel, strip_comments(out), {want})
         _MASTHEAD_CHECKED.add(rel)
 
 
@@ -587,6 +597,35 @@ def check_foreground_stacking(label, rel, text):
                  f"衬字水印要求前景严格在刊徽之上")
 
 
+def check_structural_selectors(label, rel, text):
+    """报头内不许用「不点名类」的结构性选择器。
+
+    `.masthead > div:first-child` 能以更高特异性命中刊徽包裹元素，却完全不提
+    `.emblem`——本守卫靠「选择器最后一段是否含该类」判归属，对这种写法必然失明。
+    要真正解决它得拿选择器去匹配真实 DOM，那就是一个 CSS 引擎 + DOM，
+    与第 13 轮拒绝写引擎的理由一致：不做。
+
+    改为**在源头禁掉这种写法**：凡是选择器进了报头（提到 masthead）又在其后
+    一个类都不点名的，一律判红。现有 CSS 全部是 `.masthead .t` / `.masthead .emblem`
+    这类点名写法，不受影响；真需要结构性选择器时，请给元素加个类再选它。
+    """
+    for m in re.finditer(r'([^{};\n]*)\{\{?([^{}]*)\}', text):
+        for part in m.group(1).split(","):
+            sel = part.strip()
+            if "masthead" not in sel:
+                continue
+            # 取 masthead 之后的部分；没有后续段就是报头自身的规则（含 ::after）
+            tail = re.split(r'masthead', sel, maxsplit=1)[1]
+            if not re.search(r'[\s>+~]', tail):
+                continue                       # 报头自身，交给 check_positioning_context
+            if re.search(r'\.[A-Za-z_-]', tail):
+                continue                       # 点名了类，归属可判
+            fail(f"{label}({rel}): 选择器 `{sel}` 在报头内用了不点名类的结构性写法——"
+                 f"它能以更高特异性命中刊徽包裹元素而判据无法确定归属"
+                 f"（`.masthead > div:first-child` 即可推翻整份契约）。"
+                 f"请给目标元素加一个类再选它。")
+
+
 def check_positioning_context(label, rel, text):
     """`.masthead` 必须是已定位祖先，否则刊徽的绝对偏移会锚到别的元素上。
 
@@ -619,7 +658,7 @@ def check_css_wiring(label, rel):
     path = ROOT / rel
     if not path.is_file():
         return
-    text = path.read_text(encoding="utf-8")
+    text = strip_comments(path.read_text(encoding="utf-8"))
 
     media_spans = _media_block_spans(text)
 
@@ -650,6 +689,16 @@ def check_css_wiring(label, rel):
     # 既然这一轮的教训是「修的是类不是实例」，就把同一份契约的属性一次列全。
     reject_contract_shorthands(label, rel, rules, "刊徽水印")
 
+    # 可见性也是契约的一部分：前面查的每一条属性都对，但 `display:none` 或
+    # `visibility:hidden` 一加，任何视口下都根本不渲染刊徽——「水印存在」这件事
+    # 本身没进过判据。契约要列的是「让这枚水印成立的全部条件」，可见是第一条。
+    require_all_declarations(label, rel, rules, "display",
+                             lambda v: v.strip().lower() != "none",
+                             "display:none 会让刊徽在任何视口下都不渲染")
+    require_all_declarations(label, rel, rules, "visibility",
+                             lambda v: v.strip().lower() not in ("hidden", "collapse"),
+                             "visibility:hidden/collapse 会让刊徽不可见")
+
     # 判据取「所有匹配规则的每一条声明都必须等于约定值」，而不是算层叠胜者：
     # 胜者由特异性先于源码顺序决定，算特异性等于在测试里重写 CSS 引擎（新的漂移源）。
     # 要求全体一致更严格，但换来「换个更特异的写法就失明」这一整类洞被堵死。
@@ -669,6 +718,7 @@ def check_css_wiring(label, rel):
     # 而只看 .emblem 的判据全绿。判据必须连它成立所依赖的上下文一起查（形状 1）。
     check_positioning_context(label, rel, text)
     check_foreground_stacking(label, rel, text)
+    check_structural_selectors(label, rel, text)
 
     # 透明度必须真的「浅」，而且必须**显式写出来**。
     # 只判「写了但过高」是不够的：整条 opacity 声明被删掉时 CSS 默认 opacity:1，

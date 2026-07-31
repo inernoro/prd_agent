@@ -31,3 +31,6 @@
 | fix | ci | 刊徽守卫统一大小写口径：HTML 属性名/标签名、CSS 属性名/at 规则名、关键字值在规范里都是 ASCII 大小写不敏感，判据此前一律按小写字面匹配——DATA-EMBLEM="x"、.emblem{POSITION:static}、<SVG> 三种写法浏览器照用而守卫全绿；同时修好三种合法写法（大写标签、单引号 class 值、@MEDIA）此前会被误判为红的假阳 |
 | fix | ci | class 匹配改为按空白分词整词比对，不再用 `\bcls\b`：`\b` 把连字符当词边界，`class="masthead-alt"` / `"emblem-alt"` 会命中判据而浏览器里 `.masthead`/`.emblem` 根本不匹配——重命名 class 导致样式全断，守卫却判绿 |
 | fix | ci | 补查行内 style：行内声明优先于任何样式表规则，而判据只扫样式表。给刊徽包裹加 `style="position:static;pointer-events:auto;opacity:1"` 就能让水印回到文档流、变不透明、拦鼠标，守卫全绿。三类契约元素（报头/刊徽包裹/报头前景）的行内 style 一并按同一契约校验并拒收简写 |
+| fix | ci | 扫描前先剥 HTML 注释：把 SVG 用 `<!-- -->` 包起来「先留着参考」是常见改法，浏览器不渲染而按原始文本扫描的判据照样数到它，报告上一枚水印都没有却判绿 |
+| fix | ci | 可见性纳入刊徽契约：`display:none` / `visibility:hidden` 下前面查的每条属性都仍然正确，但任何视口都不渲染水印——「水印存在」这件事本身此前没进过判据 |
+| fix | ci | 报头内禁用不点名类的结构性选择器：`.masthead > div:first-child` 能以更高特异性命中刊徽包裹元素却不提 `.emblem`，靠类名判归属的守卫必然失明；真解需要 CSS 引擎 + DOM，故改为在源头禁掉该写法（现有 CSS 全是点名写法，不受影响） |
