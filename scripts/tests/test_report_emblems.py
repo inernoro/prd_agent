@@ -85,6 +85,7 @@ def load_registered_dimensions():
         return None
     return out
 
+_REPORTED = object()          # px() 的哨兵：该项已单独报过，调用方不要重复叠报
 failures = []
 
 
@@ -235,6 +236,21 @@ def check_flavor_wiring():
                      f"——_FLAVORS 里两个 flavor 的刊徽很可能对调了")
 
 
+def cascade_value(bodies, prop):
+    """返回 (层叠胜者, 该层全部声明值)。**这是本守卫唯一的取值口径。**
+
+    CSS 同特异性下后写的赢，所以判据必须取最后一条；取第一条会让守卫读到的值
+    和浏览器渲染用的值不是同一个。本文件里尺寸与定位两处都栽过这个形状
+    （第五轮、第七轮），故收成一个函数——判据分裂成两份就会各自漂移
+    （predicate-and-wiring-discipline 形状 3）。
+    """
+    found = []
+    for b in bodies:
+        for m in re.finditer(r"(?:^|;)%s:([^;]+)" % re.escape(prop), b):
+            found.append(m.group(1).strip())
+    return (found[-1] if found else None), found
+
+
 def check_css_wiring(label, rel):
     """光有 SVG 不够：CSS 没接上的话，刊徽会当成普通块元素挤进报头把版面撑歪。
 
@@ -270,14 +286,29 @@ def check_css_wiring(label, rel):
              f"会当成普通块元素挤进报头 flex 流")
         return
 
-    # 基础规则（非 media query 覆盖）必须同时具备这两条，否则它不是「水印」而是「遮挡物」
-    required = [
-        ("position:absolute", "水印必须绝对定位，否则会挤进报头 flex 流把版面撑歪"),
-        ("pointer-events:none", "水印压在文字上层会挡住选中/点击"),
-    ]
-    for needle, why in required:
-        if not any(needle in b for b in bodies):
-            fail(f"{label}({rel}): .emblem 规则里没有 {needle} —— {why}")
+    # 定位类声明必须同时具备这两条，否则它不是「水印」而是「遮挡物」。
+    # 判据取**层叠胜者**而不是「某条规则里出现过」：`any(needle in b ...)` 的写法下，
+    # 在合法规则之后追加一条 `.emblem{position:static;pointer-events:auto}`，
+    # 刊徽重新挤回 flex 流并开始拦鼠标，而守卫全绿——和尺寸校验栽过的是同一个形状
+    # （判据取的值 ≠ 真正生效的值）。第五轮只修了尺寸那一处，没有横扫同文件的同类判据，
+    # 于是第七轮在这里原样复发：修的是实例，不是那一类。
+    # z-index 同属这份契约：板式叫「衬字水印」，靠 z-index:0 垫在 .t/.r/.stamp（z-index:1）
+    # 之下。它一旦漂成 1 以上，刊徽就从「衬底」变成「盖住刊名」，而前两条依然成立。
+    # 既然这一轮的教训是「修的是类不是实例」，就把同一份契约的属性一次列全。
+    for prop, want, why in (
+        ("position", "absolute", "水印必须绝对定位，否则会挤进报头 flex 流把版面撑歪"),
+        ("pointer-events", "none", "水印压在文字上层会挡住选中/点击"),
+        ("z-index", "0", "衬字水印必须垫在刊名/期号之下，抬上去就成了盖住报头的贴纸"),
+    ):
+        winner, declared = cascade_value(bodies, prop)
+        if winner is None:
+            fail(f"{label}({rel}): .emblem 规则里没有 {prop} —— {why}")
+        elif winner != want:
+            fail(f"{label}({rel}): .emblem 的 {prop} 层叠胜者是 {winner!r}，应为 {want!r}"
+                 f"（声明依次为 {declared}）—— {why}")
+        elif len(set(declared)) > 1:
+            fail(f"{label}({rel}): .emblem 对 {prop} 有互相打架的声明 {declared}"
+                 f"——实际生效的是最后一条，这种写法请合并成一条")
 
     # 透明度必须真的「浅」，而且必须**显式写出来**。
     # 只判「写了但过高」是不够的：整条 opacity 声明被删掉时 CSS 默认 opacity:1，
@@ -326,26 +357,26 @@ def check_dimensions(label, rel, base_rules, media_rules):
     want = REGISTERED[dim_key]
 
     def px(bodies, prop, where):
-        """取该属性在这一层的**层叠胜者**，并拒收互相打架的重复声明。
-
-        不能取第一条：CSS 同特异性下后写的赢。在合法的 92px 规则后面追加一条
-        `.emblem{width:120px}`，实际渲染 120px，而「取第一条」的判据仍报符合登记值——
-        守卫看到的值和浏览器用的值不是同一个（本 PR 里第五次栽在这个形状上）。
-        bodies 已按源码顺序排列，故最后一条即胜者。
+        """走统一的 cascade_value 取层叠胜者，并拒收互相打架的重复声明。
 
         同层出现互相打架的值，即便胜者恰好正确也判红：这种写法下「实际生效的是哪个」
         要靠读者自己推层叠，是后续漂移的温床。
         """
-        found = []
-        for b in bodies:
-            for m in re.finditer(r"(?:^|;)%s:(-?[0-9.]+)px" % prop, b):
-                found.append(float(m.group(1)))
-        if not found:
+        winner, declared = cascade_value(bodies, prop)
+        if winner is None:
             return None
-        if len(set(found)) > 1:
-            fail(f"{label}({rel}): {where}的 .emblem 对 {prop} 有互相打架的声明 {found}"
-                 f"——实际生效的是最后一条（{found[-1]:g}px），这种写法请合并成一条")
-        return found[-1]
+        nums = []
+        for v in declared:
+            m = re.fullmatch(r"(-?[0-9.]+)px", v)
+            if not m:
+                fail(f"{label}({rel}): {where}的 .emblem 里 {prop}:{v} 不是 px 值——"
+                     f"规则 §1.4 登记的是像素尺寸，非 px 写法无法与之比对")
+                return _REPORTED           # 已报过，别再叠一条「没有该属性」
+            nums.append(float(m.group(1)))
+        if len(set(nums)) > 1:
+            fail(f"{label}({rel}): {where}的 .emblem 对 {prop} 有互相打架的声明 {nums}"
+                 f"——实际生效的是最后一条（{nums[-1]:g}px），这种写法请合并成一条")
+        return nums[-1]
 
     base = [r["body"] for r in base_rules]
     media = [r["body"] for r in media_rules]
@@ -361,6 +392,8 @@ def check_dimensions(label, rel, base_rules, media_rules):
         ("height", "mobile", "窄屏", media),
     ):
         got = px(bodies, prop, where)
+        if got is _REPORTED:
+            continue
         if got is None:
             fail(f"{label}({rel}): {where}的 .emblem 规则里没有 {prop} —— "
                  f"规则 §1.4（key={dim_key}）登记的是 {want[key]}px")

@@ -13,3 +13,4 @@
 | fix | ci | 尺寸校验改取层叠胜者：CSS 同特异性下后写的赢，原实现取第一条匹配——在合法 92px 之后追加一条 .emblem{width:120px}，浏览器渲染 120px 而守卫仍报「符合登记值」；同层出现互相打架的重复声明一律判红 |
 | fix | ci | 刊徽守卫接上 CI 触发：release-script-test 的 path filter 原先只含 scripts/tests/test_*.py，被测的三个产物与设计系统规则都没登记——只改模板/规则的 PR 一路全绿而守卫从未跑过，防漂移的工具自己没接上线。顺带补上 test_live_asr_websocket_proxy 的被测文件 cds/src/scheduler/nginx-template.ts（原只在 cds filter 里，那个 job 不跑这批 Python 守卫） |
 | test | ci | 刊徽守卫新增 check_ci_wiring：解析 ci.yml 的 release_scripts filter，断言自己的每个输入文件都被某条 glob 覆盖；filter 结构变了解析不出来也判红。日后加第五刊时忘改 ci.yml 会当场红，而不是静默失去覆盖 |
+| fix | ci | 定位类判据改取层叠胜者：position/pointer-events 原用「某条规则里出现过」判定，在合法规则后追加一条 .emblem{position:static;pointer-events:auto} 即可让刊徽重回 flex 流并拦鼠标而守卫全绿。取值口径收敛成唯一的 cascade_value，尺寸校验一并复用；顺带把同属衬字契约但一直没查的 z-index 纳入（漂成 1 以上刊徽就从衬底变成盖住刊名） |
