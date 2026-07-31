@@ -2,6 +2,12 @@
 
 > **版本**：v1.2 | **日期**：2026-07-27 | **状态**：已接线（灰度开关默认开，待生产观察窗口）
 
+**一句话**：自更新从本机现编改为拉预构建产物再原子替换，本文记已验证部分与尚未验证的开放债务。
+**谁该读**：维护自更新链路的人。
+**读完能做什么**：判断自更新当前的可靠性边界。
+
+---
+
 ## 总览
 
 把 CDS 自更新的「本机现编」（tsc 52s + vite 1.6min ≈ 3min）改为「拉 CI 预构建产物 + 原子替换 + 重启」（几十秒）。
@@ -18,7 +24,7 @@
 | 运行层拉取 | `cds/src/services/cds-prebuilt-runtime.ts` | **完成 + 8 单测**。`fetchCdsPrebuilt`：docker pull/create/cp 解出 `/dist` `/web-dist` 到 staging + 校验 manifest；失败 `ok:false` 供回退 |
 | orchestrator 接线 | `cds/src/routes/branches.ts` 的 `tryApplyCdsPrebuiltForSelfUpdate` | **已接线**。`!forceMode` 时先判 `shouldTryCdsPrebuilt` → `fetchCdsPrebuilt` → `validateWebDistCandidate` 校验入口 HTML/JS/CSS 真实存在 → `replaceDirectoriesAtomically` 原子替换 `dist` 与 `web/dist` → 写 `.build-sha` 标记；命中后额外跑一次 `nginx-render` 用预构建 dist 重渲染模板。命中失败或 `applied=false` 时**原地 fall through 到本机现编路径**（`if (!prebuiltApplied) { ... }`），行为零回归 |
 
-**⚠ 与本文档 v1.0 描述不同的地方（2026-07-20 核对代码后更正）**：灰度开关 `CDS_SELFUPDATE_PREBUILT` 的默认值是**开**，不是"默认 off"——`selfUpdatePrebuiltEnabled()` 只在值命中 `0/false/off/no` 时才关闭，未设置该变量时视为启用。生产环境如需继续走本机现编，必须显式设置 `CDS_SELFUPDATE_PREBUILT=0`。
+**注意：与本文档 v1.0 描述不同的地方（2026-07-20 核对代码后更正）**：灰度开关 `CDS_SELFUPDATE_PREBUILT` 的默认值是**开**，不是"默认 off"——`selfUpdatePrebuiltEnabled()` 只在值命中 `0/false/off/no` 时才关闭，未设置该变量时视为启用。生产环境如需继续走本机现编，必须显式设置 `CDS_SELFUPDATE_PREBUILT=0`。
 
 ## 近期相关补丁（同一 self-update 路径，2026-07-20 落地）
 

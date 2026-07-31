@@ -4,6 +4,8 @@
 
 > **关联**：[design.cds.visual-deploy.md](./design.cds.visual-deploy.md)、[guide.cds.one-click-deploy.md](./guide.cds.one-click-deploy.md)
 > **一句话**：onboarding→部署核心已商业级可用（经验收通过）；以下是诚实记录的已知边界与低边际 backlog，按价值排序，供后续按需取用——不在表里的都已落地。
+> **谁该读**：接手一键部署的人；想知道某个体验为什么没做的人。
+> **读完能做什么**：按价值挑出值得补的打磨项。
 
 
 ## 一、已知边界（设计取舍，当前不做）

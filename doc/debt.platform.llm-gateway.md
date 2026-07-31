@@ -1,6 +1,12 @@
 # LLM 网关与模型池 · 债务台账
 
 > **版本**：v2.7 | **日期**：2026-07-18 | **状态**：开发中
+
+**一句话**：网关与模型池的债务总表，含协议路由收口与多次生产取证记录。
+**谁该读**：接手网关的工程师；做发布判断的人。
+**读完能做什么**：查清某条债务的状态与对应证据。
+
+---
 > **关联设计**：[design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
 > **整改计划**：[plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)
 

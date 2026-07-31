@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-29 | **状态**：开发中
 
+**一句话**：分支预览域名怎么产生、谁有权推算它，这条链路上的欠账与过渡期风险。
+**谁该读**：接手预览地址下发的工程师；排查地址不对的人。
+**读完能做什么**：判断地址异常属于哪一条已知欠账。
+
+---
+
 ## 总览
 
 当前 open: 3（PE-transition-window / PE-env-staleness / PE-long-branch-hash）/ 已落地待验证: 6（PE-ssot-inversion / PE-truncation / PE-console-subdomain-rename / PE-truncation-readability / PE-consumer-sweep / PE-llmgw-console-mapnav）/ 总计: 9

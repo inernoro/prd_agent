@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-05 | **状态**：开发中
 
+**一句话**：登录后首页重组交付时声明的已知边界，以及明确否决不做的事。
+**谁该读**：接手首页的产品与前端工程师。
+**读完能做什么**：分清「后续可补」与「明确不做」，避免重复提案。
+
+---
+
 > **关联改动**：`prd-api/src/PrdAgent.Api/Controllers/Api/HomeRecentWorkController.cs`、`prd-admin/src/pages/AgentLauncherPage.tsx`、`prd-admin/src/stores/homeRecentWorkStore.ts`
 
 记录登录后首页重组（继续上次 + 视觉纪律收敛）主动声明的已知边界，避免下一次 session 没人记得。

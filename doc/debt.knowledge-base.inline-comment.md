@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-05 | **状态**：开发中
 
+**一句话**：知识库里选中一段文字就地评论这个能力的已知边界与待偿还项。
+**谁该读**：接手划词评论的工程师。
+**读完能做什么**：判断某个缺失是刻意留尾还是新问题。
+
+---
+
 ## 总览
 
 模块范围：`prd-admin/src/components/doc-browser/`（DocBrowser + InlineCommentOverlay/Margin/Composer + inlineCommentShared）、

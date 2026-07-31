@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-30 | **状态**：开发中
 
+**一句话**：网关物理剥离各波的进度、已验证部分、已知坑，以及等待拍板的切换时机。
+**谁该读**：参与网关剥离的工程师；要拍板切换的人。
+**读完能做什么**：判断剥离到哪一步，以及还差什么才能切。
+
+---
+
 > 进度：波1 + 波2 跨进程 + 波2.5 影子/灰度/命名子域 已落地；生产翻 http = T12 待拍板。
 > 负责人：AI / 待用户拍板（合并到 main + 翻 http 时机）
 > 关联设计：[doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)；旧路径清理与发布门禁：[doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)；

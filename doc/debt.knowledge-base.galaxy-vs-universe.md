@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-26 | **状态**：开发中
 
+**一句话**：知识库里并存两套关系可视化（星系与宇宙图），本文记本轮处置、待办与为什么先记债不合并。
+**谁该读**：做知识库可视化的人。
+**读完能做什么**：知道两套视图各自的定位，以及合并的触发条件。
+
+---
+
 > **关联**：`prd-admin/src/pages/document-store/DocumentGalaxyView.tsx`（星系）、
 > `prd-admin/src/pages/document-store/UniverseGraphPage.tsx`（宇宙图）、
 > `prd-admin/src/pages/document-store/DocumentStorePage.tsx`（库详情入口）。

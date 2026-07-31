@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-12 | **状态**：开发中
 
+**一句话**：知识库划词后让 AI 局部改写这块的已知边界与未排期的第二波候选。
+**谁该读**：接手划词改写的工程师。
+**读完能做什么**：知道当前能改什么，以及下一波可能做什么。
+
+---
+
 ## 总览
 
 模块范围：`prd-admin/src/components/doc-browser/`（SelectionAiPopover / SelectionImagePopover / selectionEdit.ts + DocBrowser 划词动作条）、

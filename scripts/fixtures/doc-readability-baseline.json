@@ -4,10 +4,10 @@
     "spec": 0,
     "design": 88,
     "plan": 23,
-    "rule": 17,
+    "rule": 0,
     "guide": 0,
     "report": 37,
-    "debt": 73
+    "debt": 0
   },
   "bare_refs": {
     "spec": 0,

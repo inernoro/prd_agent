@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-24 | **状态**：开发中
 
+**一句话**：分支被删后预览页按墓碑原因分流（已合并、已废弃），本文记边界与等待镜像时的可观测性欠账。
+**谁该读**：维护预览页的工程师。
+**读完能做什么**：知道各类过期分支会看到什么页面，以及缺什么提示。
+
+---
+
 > 关联：`cds/src/index.ts`（buildBranchMergedPageHtml / buildBranchAbandonedPageHtml / serveBranchGonePage）、`cds/src/services/state.ts`（recordRemovedBranch）、`cds/src/routes/github-webhook.ts`
 
 ## 背景
