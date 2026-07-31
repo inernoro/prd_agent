@@ -22,6 +22,15 @@ def report_body(nature: str) -> str:
         "硬门禁失败": "fail（不通过）",
     }[nature]
     completeness = "完整，全部计划范围均已确认" if nature == "完整通过" else "不完整，1 项无法确认"
+    root_conclusion = {
+        "完整通过": "通过",
+        "覆盖不足": "覆盖缺口",
+        "非阻断风险": "非阻断风险",
+        "产品失败": "产品失败",
+        "核心用例失败": "核心用例失败",
+        "验收链路失败": "验收链路失败",
+        "硬门禁失败": "硬门禁失败",
+    }[nature]
     return f"""
 ## 结论分层
 
@@ -37,7 +46,7 @@ def report_body(nature: str) -> str:
 
 | 目标要求 | 观察事实 | 系统原因 | 证据影响 | 结论 | 关闭动作 |
 |---|---|---|---|---|---|
-| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |
+| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | {root_conclusion} | 创建冻结预览后复测 |
 """
 
 
@@ -59,6 +68,8 @@ class DailyVerdictContractTests(unittest.TestCase):
                 rows = archive_report._section_table_rows(body, "根因链条")
                 self.assertEqual(1, len(rows))
                 self.assertEqual(len(archive_report.DAILY_ROOT_CAUSE_FIELDS), len(rows[0]))
+                conclusions = set(rows[0][4].strip("{}").split("/"))
+                self.assertEqual(archive_report.ROOT_CAUSE_CONCLUSIONS, conclusions)
 
     def test_coverage_only_fail_is_rejected(self):
         errors = archive_report._daily_conclusion_contract_errors(
@@ -83,7 +94,7 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors(
             "fail", report_body("产品失败")
         )
-        self.assertTrue(any("没有 P0/P1 产品失败事实" in error for error in errors))
+        self.assertTrue(any("缺少 P0/P1 产品失败事实" in error for error in errors))
         self.assertTrue(any("必须使用 conditional" in error for error in errors))
 
     def test_blocking_product_defect_cannot_be_conditional(self):
@@ -133,33 +144,52 @@ class DailyVerdictContractTests(unittest.TestCase):
         self.assertTrue(any("同时声称缺陷为 0" in error for error in errors))
 
     def test_hard_gate_failure_requires_hard_gate_fact(self):
-        errors = archive_report._daily_conclusion_contract_errors(
-            "fail", report_body("硬门禁失败")
-        )
-        self.assertTrue(any("没有 ready、smoke、构建或强制测试失败事实" in error for error in errors))
-        self.assertTrue(any("必须使用 conditional" in error for error in errors))
-
-    def test_hard_gate_failure_with_smoke_fact_can_use_fail(self):
         body = report_body("硬门禁失败").replace(
-            "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
-            "CDS smoke 未通过 | API 持续返回 500",
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 硬门禁失败 | 创建冻结预览后复测 |",
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 覆盖缺口 | 创建冻结预览后复测 |",
         )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertTrue(any("根因链结论没有「硬门禁失败」" in error for error in errors))
+
+    def test_hard_gate_failure_with_structured_conclusion_can_use_fail(self):
+        body = report_body("硬门禁失败")
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
 
     def test_acceptance_chain_failure_requires_chain_fact(self):
-        errors = archive_report._daily_conclusion_contract_errors(
-            "fail", report_body("验收链路失败")
-        )
-        self.assertTrue(any("没有归档、打开验证或通知链路失败事实" in error for error in errors))
-
-    def test_acceptance_chain_failure_with_archive_fact_can_use_fail(self):
         body = report_body("验收链路失败").replace(
-            "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
-            "验收报告归档失败 | CDS 报告 API 不可用",
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 验收链路失败 | 创建冻结预览后复测 |",
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 覆盖缺口 | 创建冻结预览后复测 |",
         )
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertTrue(any("根因链结论没有「验收链路失败」" in error for error in errors))
+
+    def test_acceptance_chain_failure_with_structured_conclusion_can_use_fail(self):
+        body = report_body("验收链路失败")
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
+
+    def test_failure_words_in_narrative_do_not_override_coverage_conclusion(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本",
+            "CDS smoke 失败 | 归档失败导致无法取证 | 失败日志仅描述目标版本",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
+    def test_core_failure_is_distinct_from_zero_product_defects(self):
+        errors = archive_report._daily_conclusion_contract_errors(
+            "fail", report_body("核心用例失败")
+        )
+        self.assertEqual([], errors)
+
+    def test_unknown_root_conclusion_is_rejected(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 覆盖缺口 | 创建冻结预览后复测 |",
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("当前无效值：无法确认" in error for error in errors))
 
     def test_missing_root_cause_chain_is_rejected(self):
         body = report_body("覆盖不足").split("## 根因链条", 1)[0]
@@ -206,7 +236,7 @@ class DailyVerdictContractTests(unittest.TestCase):
 
     def test_malformed_root_cause_data_row_is_rejected(self):
         body = report_body("覆盖不足").replace(
-            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 覆盖缺口 | 创建冻结预览后复测 |",
             "| 无 |",
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)

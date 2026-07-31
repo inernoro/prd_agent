@@ -74,6 +74,15 @@ VERDICT_NATURES = {
     "conditional": {"覆盖不足", "非阻断风险"},
     "fail": {"产品失败", "核心用例失败", "验收链路失败", "硬门禁失败"},
 }
+ROOT_CAUSE_CONCLUSIONS = {
+    "通过",
+    "覆盖缺口",
+    "非阻断风险",
+    "产品失败",
+    "核心用例失败",
+    "验收链路失败",
+    "硬门禁失败",
+}
 
 
 def curl(args, retries=5):
@@ -608,7 +617,13 @@ def _strip_severity_count_claims(text):
 
 
 def _daily_fact_signals(values, body):
-    """Extract the product and coverage facts used to justify a daily Verdict."""
+    """Extract only structured facts used to justify a daily Verdict.
+
+    The first four root-cause columns are human-readable evidence. They may
+    describe goals, counterfactuals and causes, so treating their wording as an
+    observed failure makes the gate unstable. Machine judgment therefore reads
+    only the finite conclusion column.
+    """
     product_quality = values.get("产品质量", "").strip()
     completeness = values.get("验收完整性", "").strip()
 
@@ -678,7 +693,7 @@ def _daily_fact_signals(values, body):
         or blocking_defect_rows
         or re.search(
             r"\bP[01]\b"
-            r"|(?:产品|核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
+            r"|产品[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
             positive_product,
             re.I,
         )
@@ -689,40 +704,23 @@ def _daily_fact_signals(values, body):
         or re.search(r"\bP[23]\b|非阻断风险", positive_product, re.I)
     )
     product_risk = blocking_product_failure or nonblocking_product_risk
-    core_failure = bool(
-        re.search(
-            r"(?:核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
-            positive_product,
-            re.I,
-        )
-    )
-    root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
-    root_fact_cells = []
-    for row in root_cause_rows:
-        root_fact_cells.extend(row[:4])
-    root_facts = "；".join(root_fact_cells)
-    chain_failure = bool(
-        re.search(
-            r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)",
-            root_facts,
-            re.I,
-        )
-    )
-    hard_gate_failure = bool(
-        re.search(
-            r"(?:CDS\s*)?(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|阻断|不可用)"
-            r"|(?:失败|未通过)[^。；;|\n]{0,20}"
-            r"(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)",
-            root_facts,
-            re.I,
-        )
-    )
+    _, root_cause_rows = _section_table(body, "根因链条")
+    root_conclusions = {
+        re.sub(r"[`*_\s]", "", row[4])
+        for row in root_cause_rows
+        if len(row) == len(DAILY_ROOT_CAUSE_FIELDS)
+    }
+    core_failure = "核心用例失败" in root_conclusions
+    chain_failure = "验收链路失败" in root_conclusions
+    hard_gate_failure = "硬门禁失败" in root_conclusions
+    root_product_failure = "产品失败" in root_conclusions
+    root_nonblocking_risk = "非阻断风险" in root_conclusions
+    root_coverage_gap = "覆盖缺口" in root_conclusions
     coverage_gap_count = _coverage_gap_count(body)
     completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)
     incomplete = bool(
-        coverage_gap_count > 0
+        root_coverage_gap
+        or coverage_gap_count > 0
         or re.search(
             r"不完整|无法确认|未覆盖|覆盖不足|覆盖缺口|\d+\s*项?缺口",
             completeness_with_zero_gaps_removed,
@@ -736,6 +734,9 @@ def _daily_fact_signals(values, body):
         "blocking_product_failure": blocking_product_failure,
         "nonblocking_product_risk": nonblocking_product_risk,
         "product_risk": product_risk,
+        "root_product_failure": root_product_failure,
+        "root_nonblocking_risk": root_nonblocking_risk,
+        "root_conclusions": root_conclusions,
         "core_failure": core_failure,
         "chain_failure": chain_failure,
         "hard_gate_failure": hard_gate_failure,
@@ -794,27 +795,45 @@ def _daily_conclusion_contract_errors(verdict, body):
         errors.append(
             f"[事实一致性] 验收完整性声称完整，但覆盖缺口表仍有 {facts['coverage_gap_count']} 项"
         )
-    if nature == "产品失败" and not facts["blocking_product_failure"]:
-        errors.append("[事实一致性] 判定性质为产品失败，但产品质量和缺陷清单没有 P0/P1 产品失败事实")
+    product_failure = bool(
+        facts["blocking_product_failure"] and facts["root_product_failure"]
+    )
+    if facts["root_product_failure"] and not facts["blocking_product_failure"]:
+        errors.append("[事实一致性] 根因链结论为产品失败，但产品质量和缺陷清单没有 P0/P1 产品失败事实")
+    if nature == "产品失败" and not product_failure:
+        errors.append("[事实一致性] 判定性质为产品失败，但缺少 P0/P1 产品失败事实或根因链结构化结论")
     if nature == "核心用例失败" and not facts["core_failure"]:
-        errors.append("[事实一致性] 判定性质为核心用例失败，但产品质量没有核心用例/流程失败事实")
+        errors.append("[事实一致性] 判定性质为核心用例失败，但根因链结论没有「核心用例失败」")
     if nature == "验收链路失败" and not facts["chain_failure"]:
-        errors.append("[事实一致性] 判定性质为验收链路失败，但根因链没有归档、打开验证或通知链路失败事实")
+        errors.append("[事实一致性] 判定性质为验收链路失败，但根因链结论没有「验收链路失败」")
     if nature == "硬门禁失败" and not facts["hard_gate_failure"]:
-        errors.append("[事实一致性] 判定性质为硬门禁失败，但根因链没有 ready、smoke、构建或强制测试失败事实")
+        errors.append("[事实一致性] 判定性质为硬门禁失败，但根因链结论没有「硬门禁失败」")
     if nature == "覆盖不足" and not facts["incomplete"]:
         errors.append("[事实一致性] 判定性质为覆盖不足，但验收完整性和覆盖缺口没有缺口事实")
-    if verdict == "pass" and (facts["incomplete"] or facts["product_risk"]):
-        errors.append("[事实一致性] pass 与未覆盖/无法确认或 P0-P3 缺陷事实不一致")
-    if verdict == "conditional" and facts["blocking_product_failure"]:
-        errors.append("[事实一致性] 已有 P0/P1 产品失败事实时不能使用 conditional，必须使用 fail")
+    if nature == "非阻断风险" and not (
+        facts["nonblocking_product_risk"] or facts["root_nonblocking_risk"]
+    ):
+        errors.append("[事实一致性] 判定性质为非阻断风险，但缺陷清单或根因链没有对应事实")
+    blocking_failure = bool(
+        facts["blocking_product_failure"]
+        or facts["core_failure"]
+        or facts["chain_failure"]
+        or facts["hard_gate_failure"]
+    )
+    if verdict == "pass" and (
+        facts["incomplete"]
+        or facts["product_risk"]
+        or facts["root_nonblocking_risk"]
+        or blocking_failure
+    ):
+        errors.append("[事实一致性] pass 与未覆盖/无法确认、风险或失败事实不一致")
+    if verdict == "conditional" and blocking_failure:
+        errors.append("[事实一致性] 已有产品、核心用例、验收链路或硬门禁失败事实时不能使用 conditional，必须使用 fail")
     coverage_only = (
         facts["zero_defects"]
         and facts["incomplete"]
         and not facts["product_risk"]
-        and not facts["core_failure"]
-        and not facts["chain_failure"]
-        and not facts["hard_gate_failure"]
+        and not blocking_failure
     )
     if verdict == "fail" and coverage_only:
         errors.append(
@@ -841,6 +860,16 @@ def _daily_conclusion_contract_errors(verdict, body):
             errors.append(
                 "[根因链] 每条数据必须完整填写六列；无效数据行："
                 + "、".join(str(index) for index in malformed_rows)
+            )
+        unknown_conclusions = sorted(
+            facts["root_conclusions"] - ROOT_CAUSE_CONCLUSIONS
+        )
+        if unknown_conclusions:
+            errors.append(
+                "[根因链] 「结论」只允许："
+                + "、".join(sorted(ROOT_CAUSE_CONCLUSIONS))
+                + "；当前无效值："
+                + "、".join(unknown_conclusions)
             )
 
     return errors
