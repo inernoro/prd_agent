@@ -1284,13 +1284,56 @@ _CORE_CASE_PASSED_COUNT_PATTERN = re.compile(
 
 def _normalize_raw_passed_counts(text):
     """Convert cdscli passed fractions into explicit ordered status events."""
+    raw_text = text or ""
+    object_stack = []
+    object_ranges = []
+    quote = None
+    escaped = False
+    for index, character in enumerate(raw_text):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {'"', "'"} and object_stack:
+            quote = character
+        elif character == "{":
+            object_stack.append(index)
+        elif character == "}" and object_stack:
+            object_ranges.append((object_stack.pop(), index))
 
-    def replace(match):
+    edits = []
+    aggregate_insertions = {}
+    for match in _RAW_PASSED_COUNT_PATTERN.finditer(raw_text):
         passed = int(match.group("passed"))
         total = int(match.group("total"))
-        return "result=PASS" if passed == total else "result=FAIL"
+        result = "PASS" if passed == total else "FAIL"
+        canonical_result = f"result={result}"
+        edits.append((match.start(), match.end(), canonical_result))
 
-    return _RAW_PASSED_COUNT_PATTERN.sub(replace, text or "")
+        containing_ranges = [
+            span
+            for span in object_ranges
+            if span[0] < match.start() and match.end() <= span[1]
+        ]
+        if containing_ranges:
+            _, object_end = min(
+                containing_ranges,
+                key=lambda span: span[1] - span[0],
+            )
+            # The aggregate count is authoritative over nested probe fields.
+            aggregate_insertions[object_end] = canonical_result
+
+    edits.extend(
+        (object_end, object_end, f" {canonical_result}")
+        for object_end, canonical_result in aggregate_insertions.items()
+    )
+    for start, end, replacement in sorted(edits, reverse=True):
+        raw_text = raw_text[:start] + replacement + raw_text[end:]
+    return raw_text
 
 
 def _normalize_core_case_passed_counts(text):

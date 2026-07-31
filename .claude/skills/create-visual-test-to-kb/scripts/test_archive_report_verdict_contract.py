@@ -724,6 +724,51 @@ class DailyVerdictContractTests(unittest.TestCase):
                     any("硬门禁失败事实" in error for error in errors)
                 )
 
+    def test_passed_summary_overrides_nested_probe_results(self):
+        for fact in (
+            'CDS smoke {"passed":"1/2","layers":['
+            '{"layer":"L1","pass":false},'
+            '{"layer":"L2","pass":true}]}',
+            'CDS smoke {"passed":"2/3","probes":['
+            '{"status":503,"pass":false},'
+            '{"status":200,"pass":true}]}',
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in errors)
+                )
+
+    def test_complete_passed_summary_overrides_nested_probe_failure(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 先前失败"
+        )
+        body = body.rstrip() + (
+            '\n| 验收冻结 SHA | CDS smoke {"passed":"2/2","probes":['
+            '{"status":503,"pass":false},{"status":200,"pass":true}]} | '
+            "汇总结果证明全部层级通过 | 以汇总计数为准 | 已关闭 | 保留记录 |\n"
+        )
+        self.assertEqual(
+            [],
+            archive_report._daily_conclusion_contract_errors("conditional", body),
+        )
+
+    def test_later_explicit_retest_can_close_partial_passed_summary(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进",
+            'CDS smoke {"passed":"1/2","layers":['
+            '{"pass":false},{"pass":true}]}，CDS smoke 复测已通过',
+        )
+        self.assertEqual(
+            [],
+            archive_report._daily_conclusion_contract_errors("conditional", body),
+        )
+
     def test_bare_cds_terminal_values_open_hard_gate(self):
         for fact in (
             "CDS smoke timeout",
