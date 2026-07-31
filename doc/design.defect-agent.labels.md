@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-05-12 | **状态**：已落地
 
+**一句话**：在缺陷的流程状态之外，加一层轻量的协作标签：谁在跟进、要补什么信息、归属哪个方向。
+**谁该读**：缺陷管理的产品与研发；要新增或调整标签枚举的人。
+**读完能做什么**：说清标签与状态的分工，并按权限规则判断谁能打哪种标签。
+
+---
+
 ## 背景
 
 缺陷协作需要一个比状态更轻、更灵活的标记层。状态表示流程位置，例如“待处理、处理中、待验收”；标签表示协作语义，例如“AI 正在跟进、需要补充信息、复现不稳定”。标签的目标不是替代状态，而是让人类和 AI 快速判断“当前谁在看、缺什么、下一步是什么”。
@@ -26,26 +32,16 @@
 
 ## 标签模型
 
-后端在 `DefectReport` 上扩展标签字段：
+缺陷记录上挂一个标签数组，默认空。
 
-```csharp
-public List<DefectLabel> Labels { get; set; } = new();
-```
 
 标签项结构：
 
-```csharp
-public class DefectLabel
-{
-    public string Code { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public string Group { get; set; } = string.Empty;
-    public string ColorToken { get; set; } = string.Empty;
-    public string AddedById { get; set; } = string.Empty;
-    public string AddedByName { get; set; } = string.Empty;
-    public DateTime AddedAt { get; set; } = DateTime.UtcNow;
-}
-```
+每个标签存七样：**编码**（机器用，稳定不变）、**显示名**、**所属分组**、**颜色令牌**（取自主题，不存色值）、
+以及**谁在什么时候打的**（操作人标识、姓名、时间）。
+
+打标签的人和时间必须存——标签是协作痕迹，没有署名就无法回溯「这个优先级是谁定的」。
+
 
 `Code` 是稳定枚举值，前后端以 `Code` 判断逻辑。`Name` 仅用于显示，可跟随语言统一调整。
 

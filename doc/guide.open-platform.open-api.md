@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-04 | **状态**：已落地
 
+**一句话**：外部调用方用兼容标准协议的客户端直接调本平台的模型，改两行配置即可接入。
+**谁该读**：要接入本平台模型的外部开发者；答复接入咨询的人。
+**读完能做什么**：三步完成接入，并知道模型选择、限流与配额的规则。
+
+---
+
 > 模块：开放接口（OpenAI 兼容对外网关）
 
 开放接口让外部调用方用**标准 OpenAI 兼容**方式（借鉴 OpenRouter 风格）调用本平台模型。
@@ -16,14 +22,10 @@
 - Base URL：`https://<你的域名>/api/v1`
 - Auth：`Authorization: Bearer sk-ak-xxxx`
 
-OpenAI Python SDK 示例：
-```python
-from openai import OpenAI
-client = OpenAI(base_url="https://<域名>/api/v1", api_key="sk-ak-xxxx")
-resp = client.chat.completions.create(model="deepseek/deepseek-v3.2",
-    messages=[{"role":"user","content":"你好"}])
-print(resp.choices[0].message.content)
-```
+**接入方式**：任何兼容 OpenAI 协议的客户端，把服务地址指到本平台的开放接口前缀、
+密钥填成签发的接入密钥即可，模型名用平台里已启用的那些。**不需要专用 SDK**——
+这正是选择兼容协议的目的：客户端改两行配置就能切过来。
+
 
 ### 3. 三条 curl 自检
 ```bash

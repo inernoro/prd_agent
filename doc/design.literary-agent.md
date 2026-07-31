@@ -15,6 +15,8 @@
 ## 二、产品定位
 
 **一句话**：AI 驱动的文学创作助手——写作配图一条龙，创作资产可沉淀。
+**谁该读**：文学创作智能体的产品与工程师；想了解配图链路的人。
+**读完能做什么**：说清从文章到成图的完整流程，以及标题层级如何影响分段配图。
 
 **目标用户**：
 
@@ -161,14 +163,9 @@ Upload(0) → Editing(1) → MarkersGenerated(2) → ImagesGenerating(3) → Ima
 
 正确做法：**扫全文，取所有 `#{1,6}` heading 中 level 最小的那一级当"大标题"**，小标题 = 大标题之下任意更深的 level。前端 `bigHeadingLevel = Math.min(...levels)`；后端 prompt 用文字描述让 LLM 做同样的相对判断："先识别本文中所有标题里 level 最小的那一级……"
 
-```ts
-// prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx
-const bigHeadingLevel = useMemo(() => {
-  const levels = splitParagraphs(articleContent)
-    .map(headingLevelOf).filter(l => l > 0);
-  return levels.length > 0 ? Math.min(...levels) : 0;
-}, [articleContent]);
-```
+前后端用同一条相对判据：**先扫全文找出出现过的最小标题层级，那一级就是「大标题」**，
+比它更深的都是小标题。绝不硬编码「二级标题就是大标题」——文章的层级起点因人而异。
+
 
 **用户锚点（user-anchor）的三种打点路径**：
 

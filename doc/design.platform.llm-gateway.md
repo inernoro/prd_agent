@@ -12,6 +12,8 @@
 ## 二、产品定位
 
 **一句话**：所有大模型调用的唯一入口——屏蔽平台差异，统一调度、监控、容灾。
+**谁该读**：任何要调大模型的工程师；排查「选了 A 却跑了 B」的人。
+**读完能做什么**：按先算后发的模式发起调用，并知道模型是怎么被三级调度选出来的。
 
 **服务对象**：
 
@@ -214,20 +216,12 @@
 
 ### 标准调用模式
 
-```csharp
-// 是 正确：先算后发
-var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelType, expectedModel, ct);
-if (!resolution.Success) { /* 返回错误 */ }
+**先算后发，算一次**：先解析出这次要用的平台与模型，解析失败就直接返回错误；
+解析成功后把**同一份解析结果**交给发送阶段。
 
-var response = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
-{
-    AppCallerCode = appCallerCode,
-    ModelType     = ModelType,
-    EndpointPath  = "/chat/completions",
-    RequestBody   = body,
-    HttpMethod    = "POST",
-}, resolution, ct);
-```
+发送阶段**不许再解析第二次**——那正是「用户选了 A、实际发给 B」这类问题的根源
+（详见「先算后发」纪律）。调用方要展示模型名时，用的也是这份解析结果，保证展示与实际一致。
+
 
 ### 已落地的实现（2026-04-23）
 

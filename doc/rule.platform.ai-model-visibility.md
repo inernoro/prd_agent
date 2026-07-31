@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：用户面对的 AI 功能必须在顶部显示当前用的是哪个模型、哪个平台，且数据来自真实调用结果。
+**谁该读**：做 AI 功能界面的前后端工程师。
+**读完能做什么**：判断自己的功能要不要显示模型名，以及那行信息该从哪取。
+
+---
+
 中大型专门使用大模型的功能，**必须**在 UI 最顶部展示当前正在调用的模型名称，让用户一眼看到"AI 在用什么模型为我服务"。
 
 ## 规则
@@ -39,30 +45,17 @@
 
 Service 层应把这些字段从 stream 中捕获并**通过 SSE 的 `phase` 或 `model-info` 事件**回传给前端：
 
-```csharp
-await foreach (var chunk in _gateway.StreamAsync(req, CancellationToken.None))
-{
-    if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
-    {
-        // 立即推送模型信息给前端
-        yield return new { type = "model", model = chunk.Resolution.ActualModel, platform = chunk.Resolution.ActualPlatformName };
-        continue;
-    }
-    // ...
-}
-```
+流式响应的**第一个数据块**就带着「这次实际用了哪个模型、哪个平台」。服务层要在拿到它的那一刻
+立即通过流推给前端，**不要等整段回答结束**——用户在等待期就该知道是谁在答。
+
 
 Service 层若不走 SSE（`SendAsync` 同步调用），应在返回值里带 `Resolution` 字段。
 
 ### 前端（展示样式参考）
 
-```tsx
-<div className="flex items-center gap-1.5 text-[11px] text-white/40">
-  <CircleDot size={10} className="text-violet-400" />
-  <span className="font-mono">{model}</span>
-  {platform && <span>· {platform}</span>}
-</div>
-```
+展示规格：面板顶部一行小字，一个圆点 + 等宽字体的模型名，平台名跟在后面用间隔号分开。
+**低饱和度、不抢主内容**——它是背景信息，不是主角。
+
 
 最小要求：**顶部区域一行、字号小、颜色弱**，不喧宾夺主，但用户扫一眼能看到。
 

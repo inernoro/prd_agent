@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-05-17 | **状态**：已落地
 
+**一句话**：官方软件开发包只承接「模型对话」这一段，其余的运行循环、工具执行、审批与事件流仍是自建的，本文划清这条边界。
+**谁该读**：要改 Agent 运行时的工程师；想知道「这块到底有多少是官方能力」的评审人。
+**读完能做什么**：说清哪一层是官方的、哪一层是自建的，并判断某个能力该找谁修。
+
+---
+
 | 字段 | 内容 |
 | --- | --- |
 | 模块 | CDS Agent / MAP 控制面 / Agent Runtime |
@@ -121,16 +127,11 @@ MAP UI / Toolbox / workflow
 
 新增运行时抽象只承接“官方 SDK 输出到 MAP 事件”的薄层，不再承接通用 agent loop：
 
-```csharp
-public interface IAgentRuntimeAdapter
-{
-    string RuntimeKey { get; }
-    Task<RuntimeRunHandle> StartAsync(RuntimeRunRequest request, CancellationToken ct);
-    IAsyncEnumerable<RuntimeEvent> StreamAsync(string runId, long afterSeq, CancellationToken ct);
-    Task CancelAsync(string runId, CancellationToken ct);
-    Task<RuntimeHealth> HealthAsync(CancellationToken ct);
-}
-```
+这层薄适配只提供五件事：**自报运行时名字**、**起一次运行**、**按序号续读事件流**、**取消运行**、**报健康**。
+
+关键在「按序号续读」：事件带单调递增的序号，客户端断线重连时带上已读到的位置继续拉，
+**不重放、不丢事件**。取消是运行时级的显式动作，浏览器断开不算取消。
+
 
 `RuntimeRunRequest` 必须包含：
 

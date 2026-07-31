@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-06-07 | **状态**：已落地
 
+**一句话**：Agent 的工作区从「必须绑一个代码仓库」改成「绑一个知识库」，仓库降级为可选。
+**谁该读**：要改 Agent 会话创建链路的工程师；想知道工作区来源怎么变的人。
+**读完能做什么**：说清会话的工作区来自哪里，以及旧配置如何向后兼容。
+
+---
+
 ## 管理摘要
 
 CDS Agent 的工作区基础设施模型已从「GitHub 仓库为主」调整为「文件夹/知识库为主」。GitHub 仓库从原先的必填项降级为可选钩子，仅用于 PR 审查、Webhook 通知等 Git 侧场景。这一调整使得绝大多数用户（不依赖 GitHub 的分析、代码审阅、运维巡检场景）无需配置任何 Git 远端，即可向 CDS Agent 提供有意义的上下文。
@@ -101,27 +107,14 @@ document: infra_agent_sessions
 
 ### 前端新增字段（draft state）
 
-```typescript
-// CdsAgentPage.tsx draft
-{
-  workspaceKbId: string;  // 知识库 ID，空字符串表示未选择
-  gitRepository: string;  // GitHub 仓库 URL（可选，钩子用）
-  gitRef: string;         // 分支（随 gitRepository）
-}
-```
+前端草稿态要多存三样：**选中的知识库**（空表示没选）、**可选的代码仓库地址**、
+以及**跟着仓库走的分支**。仓库与分支必须成对出现，只填其一视为未配置。
+
 
 ### 后端 DTO（待实现，见债务节）
 
-```csharp
-// InfraAgentSessionService.CreateSession 输入需新增：
-public record CreateInfraAgentSessionInput(
-    string ConnectionId,
-    string? WorkspaceKbId,   // 新增
-    string? GitRepository,
-    string? GitRef,
-    // ... 其他现有字段
-);
-```
+创建会话的入参相应新增这三项（均可空），**旧调用方不传即保持原行为**——这是向后兼容的硬要求。
+
 
 ### 前端 UI 层级
 

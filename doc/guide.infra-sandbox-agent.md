@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-05-07 | **状态**：已落地
 
+**一句话**：教你在平台上把共享基础设施服务托管起来：从设计思路到操作步骤、验证方法与已知边界。
+**谁该读**：要托管基础设施服务的运维与开发；接手这块的人。
+**读完能做什么**：照着步骤完成一次托管，并在出问题时知道去哪一段查。
+
+---
+
 > **基础设施建设 — 沙箱 Agent**
 > 完整端到端手册：设计思路、历程、UI 位置、操作步骤、测试方法、已知边界。
 > 这是面向"想要在 MAP 平台上把 sidecar / 共享基础设施服务托管起来"的运营 / 开发的 SSOT。
@@ -327,11 +333,9 @@ npx tsx scripts/mvp-demo.ts
 
 **修复**：`cds/src/routes/cds-system-connections.ts:125-135` 加协议字段映射，优先读 `mapXxx`，回退兼容 `partnerXxx`：
 
-```ts
-const partnerId = String(body.mapId || body.partnerId || '');
-const partnerName = String(body.mapName || body.partnerName || '');
-const partnerBaseUrl = String(body.mapBaseUrl || body.partnerBaseUrl || '');
-```
+**修复原则**：接收方按「新字段优先、旧字段兜底」读三个身份字段（标识、名称、基础地址），
+新旧协议同时在线时都能握手成功。等两端都升级后再删兜底分支。
+
 
 13 个单测继续全绿。
 

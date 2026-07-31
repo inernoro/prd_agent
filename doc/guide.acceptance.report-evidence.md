@@ -2,6 +2,12 @@
 
 > **版本**：v1.1 | **日期**：2026-07-23 | **状态**：已落地
 
+**一句话**：规定一份验收报告长什么样：证据要能点开、失败要在首屏显眼、图文不许断链。
+**谁该读**：写验收报告的人和 AI；要复核报告是否可信的评审人。
+**读完能做什么**：按规格组织报告，并逐条检查证据是否达标。
+
+---
+
 关联规范: [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md)。
 
 ## 1. 目标
@@ -29,34 +35,21 @@
 
 每个证据对象至少包含:
 
-```ts
-type Evidence = {
-  id: string;
-  kind: "screenshot" | "api" | "log" | "video" | "manual-note";
-  title: string;
-  claim: string;
-  userRequirement: string;
-  expected: string;
-  actual: string;
-  verdict: "pass" | "conditional" | "fail" | "uncovered";
-  severity?: "P0" | "P1" | "P2" | "P3";
-  chapterId: string;
-  caseId?: string;
-  imageUrl?: string;
-  duplicateOf?: string;
-  anchor: string;
-  annotations: Array<{
-    label: string;
-    color: "red" | "orange" | "blue" | "green";
-    target: string;
-  }>;
-  sourceRef?: {
-    text: string;
-    url?: string;
-    line?: string;
-  };
-};
-```
+| 字段 | 必填 | 含义 |
+|---|---|---|
+| 标识与类型 | 是 | 证据编号，以及它是截图、接口响应、日志、录屏还是人工记录 |
+| 标题 | 是 | 这条证据在讲哪一件事 |
+| 断言 | 是 | 声称被证明的行为 |
+| 用户诉求 | 是 | 这条断言对应用户提出的哪个要求 |
+| 预期 / 实际 | 是 | 应该发生什么、实际发生了什么，两者必须都写 |
+| 结论 | 是 | 通过、有条件通过、失败、未覆盖，四选一 |
+| 严重级 | 失败时必填 | P0 到 P3 |
+| 归属 | 是 | 属于报告的哪一章、哪个用例 |
+| 图片与标注 | 截图类必填 | 图片地址，以及图上画的框：标签、颜色、指向哪个元素 |
+| 锚点 | 是 | 报告内可跳转的定位标识 |
+| 重复指向 | 否 | 与前面哪条证据重复，避免同一事实重复计数 |
+| 来源引用 | 否 | 出处文本、链接或行号 |
+
 
 `claim`、`expected`、`actual`、`userRequirement` 不能为空。只写“图01”“已验证”“页面正常”不合格。
 

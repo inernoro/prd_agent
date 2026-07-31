@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-04-21 | **状态**：已落地
 
+**一句话**：把「教用户用某个功能」做成可配置的引导：跳到指定页面、高亮指定元素、一步步带着做完。
+**谁该读**：要给新功能加教程的产品与工程师；维护教程内容的运营。
+**读完能做什么**：配出一条多步引导，并知道锚点为什么必须落在常驻元素上。
+
+---
+
 > 右下角悬浮「教程小书」+ 落地页 SpotlightOverlay 引导 + 管理后台推送/调试闭环。
 > 2 分钟让新用户学会某个功能的标准套件。
 
@@ -56,28 +62,20 @@
 
 ### 4.1 数据模型(MongoDB)
 
-```csharp
-DailyTip {
-  Id, Kind("text"|"card"|"spotlight"), Title, Body?, CoverImageUrl?,
-  ActionUrl("/defect-agent"), CtaText("从头开始"),
-  TargetSelector("[data-tour-id=defect-create]"),
-  AutoAction {
-    Scroll("center"|"top"|"none"),
-    Expand?("selector 先点一下展开"),
-    Prefill? { Selector, Value },
-    AutoClick?("selector"), AutoClickDelayMs?,
-    Steps?: [{ Selector, Title, Body? }]  // ← 多步 Tour
-  },
-  TargetUserId?, TargetRoles?,
-  Deliveries: [{ UserId, Status, ViewCount, MaxViews, PushedAt, ... }],
-  DisplayOrder, IsActive, StartAt?, EndAt?, SourceType, SourceId
-}
+一条「教程」记录要存四组信息：
 
-User {
-  ...existing...,
-  DismissedTipIds: string[]  // 永久不再提示
-}
-```
+| 组 | 存什么 | 为什么需要 |
+|---|---|---|
+| 内容 | 形态（纯文字 / 卡片 / 高亮引导）、标题、正文、封面图、按钮文案 | 决定在界面上长什么样 |
+| 落点 | 跳去哪个页面、高亮页面上的哪个元素 | 教程要能把人带到具体那一屏、那个按钮 |
+| 自动动作 | 是否滚动到目标、是否先展开、是否预填内容、是否自动点击、多步引导的步骤序列 | 「跟我做」式引导的核心：每一步落在哪个元素、说什么话 |
+| 触达与生命周期 | 定向给谁、按角色投放、每人的观看次数与状态、排序、生效起止时间、来源 | 控制谁看得到、看几次、什么时候下线 |
+
+用户侧另存一份「不再提示」的清单，用户主动关掉的教程永久不再出现。
+
+**两条约束**：多步引导的每一步都必须落在**页面常驻元素**上（弹层里的元素在新用户空数据时根本不存在，
+会卡在那一步）；教程的排序值决定同一页多条教程谁先讲。
+
 
 ### 4.2 组件拓扑
 
@@ -213,10 +211,9 @@ if Deliveries 非空:
 
 在目标页面的关键按钮 / 输入框加 `data-tour-id="xxx-yyy"`:
 
-```tsx
-<Button data-tour-id="defect-submit" onClick={handleSubmit}>提交</Button>
-<input data-tour-id="defect-description" value={...} />
-```
+给目标按钮或输入框加一个稳定的引导锚点属性，值用「页面-元素」的短名。
+**锚点必须加在常驻元素上**，且改页面时锚点要跟着走——锚点没了，教程就会卡在那一步空转。
+
 
 命名规范见 `CLAUDE.md` 规则 #9 / `.claude/rules/navigation-registry.md`。
 

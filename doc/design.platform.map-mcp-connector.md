@@ -2,6 +2,12 @@
 
 > **版本**：v1.1 | **日期**：2026-06-16 | **状态**：已落地
 
+**一句话**：给已有的开放接口加一层协议翻译，让本平台能像常见连接器那样被外部智能体直接挂载使用。
+**谁该读**：要接入外部智能体生态的产品与工程师。
+**读完能做什么**：说清这层翻译做了什么、不做什么，以及外部怎么连上来。
+
+---
+
 ## 一、管理摘要（30 秒看懂）
 
 我们要让 MAP 系统变成一个 **MCP 连接器（connector）**——就像 GitHub、Slack 在 Claude / Codex 里那样，用户在客户端"连接器"列表里加一行，Claude 就能直接调用 MAP 内部的各种 Agent 能力（生成周报、修复缺陷、搜索/上传技能等）。
@@ -89,14 +95,9 @@ Claude / Codex ──MCP(JSON-RPC over Streamable HTTP)──► POST /mcp (新�
 
 MCP 客户端发请求时带 `Authorization: Bearer sk-ak-xxx`。这把密钥经现有 `ApiKeyAuthenticationHandler` 解析后，会在 `ClaimsPrincipal` 上注入 `boundUserId` 和若干 `scope` claim——MCP 网关直接读这些 claim 即可，**不需要自己验密钥**。
 
-因此网关端点声明：
+网关挂在一个独立的路径前缀下，**只认长效接入密钥这一种身份**，不接受浏览器会话。
+理由：它面向的是机器对机器调用，会话态在这里既没意义也扩大了攻击面。
 
-```csharp
-[ApiController]
-[Route("mcp")]
-[Authorize(AuthenticationSchemes = "ApiKey")]
-public class McpGatewayController : ControllerBase { ... }
-```
 
 网关里拿到的 `scope` claim 集合，决定了 `tools/list` 能看到哪些工具、`tools/call` 能不能放行。
 
