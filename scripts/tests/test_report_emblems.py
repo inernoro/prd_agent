@@ -105,6 +105,84 @@ def check_svg_integrity(label, rel, kind, text):
              f"刊系刊徽统一画布，尺寸不一致会导致同一 CSS 下大小不一")
 
 
+def _media_block_spans(text):
+    """返回所有 @media 块的 [起, 止) 区间，靠**花括号配对**判定，不靠行首前缀。
+
+    不能只看规则所在行有没有 @media：验收生成器里 `@media(max-width:640px){{` 和
+    `.masthead .emblem{{...}}` 分处两行，按行判会把响应式规则误认成基础规则，
+    于是层叠顺序检查直接跳过——守卫对它声称要防的那个退化完全失明。
+
+    这些 CSS 有两种写法：模板是纯 CSS（单花括号），生成器在 f-string 里（双花括号）。
+    统一按「遇到 { 深度加一、遇到 } 深度减一」扫，两种都能配对（`{{` 相当于连加两次、
+    `}}` 连减两次，深度归零的位置一致）。
+    """
+    spans = []
+    for m in re.finditer(r'@media[^{]*', text):
+        i = m.end()
+        # 跳到块的第一个 {
+        while i < len(text) and text[i] != "{":
+            i += 1
+        if i >= len(text):
+            continue
+        depth, j = 0, i
+        while j < len(text):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        spans.append((m.start(), j + 1))
+    return spans
+
+
+def check_flavor_wiring():
+    """真的把两种 flavor 渲染出来，断言各自戴对刊徽。
+
+    为什么必须渲染而不能只扫源码：验收与巡检共用一个生成器文件，
+    「文件里同时出现 polaris 和 comet」只证明两个常量都在，不证明**映射对**——
+    把 _FLAVORS 里两者对调、或给两个 flavor 赋同一个常量（另一个声明变成死代码），
+    源码扫描全绿，而生成出来的报告戴错徽。这正是
+    predicate-and-wiring-discipline.md 形状 2：建到一半的接线，删掉不会红。
+    """
+    import importlib.util
+
+    rel = ".claude/skills/create-visual-test-to-kb/scripts/archive_report.py"
+    path = ROOT / rel
+    if not path.is_file():
+        fail(f"验收生成器不存在：{rel}")
+        return
+    spec = importlib.util.spec_from_file_location("archive_report_for_emblem_guard", path)
+    mod = importlib.util.module_from_spec(spec)
+    saved_argv, sys.argv = sys.argv, ["archive_report"]
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:                      # 导入失败要显式红，不能静默跳过
+        fail(f"无法导入验收生成器做渲染验证：{type(e).__name__}: {e}")
+        return
+    finally:
+        sys.argv = saved_argv
+
+    md = "# 刊徽接线自测\n\n## 目标\n验证 flavor 与刊徽的映射。\n\n## 结论\n通过。\n"
+    for flavor, want in (("acceptance", "polaris"), ("daily", "comet")):
+        try:
+            out = mod.build_interactive_html(
+                title="刊徽接线自测", verdict="pass",
+                markdown_content=md, manifest=[], flavor=flavor)
+        except Exception as e:
+            fail(f"flavor={flavor} 渲染失败：{type(e).__name__}: {e}")
+            continue
+        if out.count(f'data-emblem="{want}"') != 1:
+            n = out.count('data-emblem="%s"' % want)
+            fail(f"flavor={flavor} 渲染出的报告里 {want} 出现 {n} 次，应为 1 次"
+                 f"——_FLAVORS 的刊徽映射接错了")
+        for other in ALL_KINDS - {want}:
+            if f'data-emblem="{other}"' in out:
+                fail(f"flavor={flavor} 渲染出的报告戴了 {other}，应为 {want}"
+                     f"——_FLAVORS 里两个 flavor 的刊徽很可能对调了")
+
+
 def check_css_wiring(label, rel):
     """光有 SVG 不够：CSS 没接上的话，刊徽会当成普通块元素挤进报头把版面撑歪。
 
@@ -117,6 +195,8 @@ def check_css_wiring(label, rel):
         return
     text = path.read_text(encoding="utf-8")
 
+    media_spans = _media_block_spans(text)
+
     # 取出所有选择器含 .emblem 的规则块（`{` 或 f-string 里的 `{{` 都认），
     # 排除 `.emblem svg` 这种只管内部 svg 尺寸的从属规则。
     # 记下每条规则的位置与「是否在 @media 里」，用于下面的层叠顺序检查。
@@ -125,12 +205,11 @@ def check_css_wiring(label, rel):
         selector, body = m.group(1), m.group(2)
         if "svg" in selector:
             continue
-        line_start = text.rfind("\n", 0, m.start()) + 1
-        in_media = "@media" in text[line_start:m.start()]
+        pos = m.start()
         rules.append({
-            "pos": m.start(),
+            "pos": pos,
             "body": re.sub(r"\s+", "", body),
-            "in_media": in_media,
+            "in_media": any(a <= pos < b for a, b in media_spans),
         })
     bodies = [r["body"] for r in rules]
 
@@ -179,6 +258,9 @@ print("-" * 60)
 for label, rel, kinds in EXPECTED:
     print(f"检查 {label}: {rel}")
     check_file(label, rel, kinds)
+
+print("渲染验证：两种 flavor 各自戴对刊徽")
+check_flavor_wiring()
 
 # 三处的水印都必须是「绝对定位 + 低透明度 + 不吃鼠标」，否则不是水印而是遮挡物
 for label, rel in [

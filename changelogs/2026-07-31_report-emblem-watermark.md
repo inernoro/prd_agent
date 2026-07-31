@@ -4,3 +4,5 @@
 | chore | api | 重新生成 official-skills.generated.json（create-visual-test-to-kb 在分发套装内，archive_report.py 改动须同步嵌入资源） |
 | fix | skill | 日报模板的刊徽 media 覆盖原本写在基础规则之前，同特异性下被整条盖掉，窄屏拿到的仍是桌面尺寸；移到基础规则之后与周报对齐 |
 | test | ci | 刊徽守卫补两条判据：opacity 必须显式声明且落在 (0,0.3]（原先整条删掉时 re.search 返回 None 会静默放行，而 CSS 默认 opacity:1 正是要防的退化）；@media 覆盖必须排在基础规则之后 |
+| test | ci | 刊徽守卫补真实渲染验证：实跑 build_interactive_html 两种 flavor，断言各自戴对刊徽——原先只扫源码，_FLAVORS 里两枚对调或都赋同一枚都查不出 |
+| fix | ci | 刊徽守卫的 @media 归属判定改按花括号配对，不再看规则所在行有无 @media：验收生成器里 @media 与规则分处两行，按行判会把响应式规则误认成基础规则，层叠顺序检查对它完全失明 |
