@@ -46,7 +46,7 @@ FIELDS = ("一句话", "谁该读", "读完能做什么")
 ONE_LINER_ALIASES = {"一句话", "本周一句话"}
 # 豁免只给定期周报 report.YYYY-WNN（读者固定、且是已冻结的历史记录），
 # 不给 report. 前缀下所有文件 —— 那批 CDS 审计/验收报告仍要三行。
-WEEKLY_REPORT = re.compile(r"^report\.\d{4}-W\d{2}")
+WEEKLY_REPORT = re.compile(r"^report\.\d{4}-W\d{2}$")   # 尾锚不能省：report.2026-W10-retro 不是周报
 
 
 def required_fields(name: str) -> tuple[str, ...]:

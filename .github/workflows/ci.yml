@@ -64,6 +64,15 @@ jobs:
               - '.claude/rules/**'
               # Codex 侧规则同属这道闸：少扫一处，那一处就能绕开导读要求
               - '.Codex/rules/**'
+              # 面包屑守卫扫全仓源码里的 doc/ 指路：只改源码引入死引用时这道闸也要跑
+              - 'cds/src/**'
+              - 'cds/tests/**'
+              - 'prd-api/src/**'
+              - 'prd-api/tests/**'
+              - 'prd-admin/src/**'
+              - 'prd-desktop/src/**'
+              - 'llmgw/**'
+              - 'e2e/**'
               - '.claude/skills/**/SKILL.md'
               # 守卫会读这几份汇报模板，断言「本周一句话 / 今日大事」还在。
               # 不登记进来的话，只改模板的 PR 会整个跳过这道闸——守卫等于没接上线。
@@ -116,7 +125,15 @@ jobs:
 
       - name: Fetch base branch baseline
         # 基线要跟目标分支比：不取 main 的话，本分支自己放宽的基线会拿来跟自己比
-        run: git fetch --no-tags --depth=1 origin ${{ github.base_ref || 'main' }}:refs/remotes/origin/base || true
+        # PR 比目标分支；push 到 main 时 base_ref 是空的，必须比这次推送之前的那个 commit，
+        # 否则取到的就是刚推上去的自己，基线又变成跟自己比
+        run: |
+          if [ -n "${{ github.base_ref }}" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/base" || true
+          else
+            git fetch --no-tags --depth=2 origin "${{ github.event.before }}" || true
+            git update-ref refs/remotes/origin/base "${{ github.event.before }}" || true
+          fi
 
       - name: Doc reader-header ratchet
         run: python3 scripts/doc-readability-check.py --ratchet --baseline-ref origin/base
