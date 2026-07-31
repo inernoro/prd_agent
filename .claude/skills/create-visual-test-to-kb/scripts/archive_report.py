@@ -828,6 +828,8 @@ def _daily_conclusion_contract_errors(verdict, body):
         )
     if facts["claims_complete"] and facts["core_unexecuted"]:
         errors.append("[事实一致性] 核心用例=未执行时，验收完整性不能声称完整")
+    if facts["claims_complete"] and facts["root_coverage_gap"]:
+        errors.append("[事实一致性] 验收完整性声称完整，但根因链仍有覆盖缺口")
     product_failure = bool(
         facts["blocking_product_failure"] and facts["root_product_failure"]
     )

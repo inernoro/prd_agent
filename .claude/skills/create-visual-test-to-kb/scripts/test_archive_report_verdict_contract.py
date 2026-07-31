@@ -93,12 +93,12 @@ class DailyVerdictContractTests(unittest.TestCase):
         conclusions = set(rows[0][4].strip("{}").split("/"))
         self.assertEqual(archive_report.ROOT_CAUSE_CONCLUSIONS, conclusions)
         self.assertIn("核心用例=通过/失败/未执行", body)
-        self.assertIn("未执行时验收完整性必须为不完整", body)
+        self.assertIn("未执行或根因链含覆盖缺口时验收完整性必须为不完整", body)
 
     def test_enterprise_rule_example_uses_structured_coverage_conclusion(self):
         body = ENTERPRISE_RULE.read_text(encoding="utf-8")
         self.assertIn("核心用例=通过/失败/未执行", body)
-        self.assertIn("未执行时验收完整性必须为不完整", body)
+        self.assertIn("未执行或根因链含覆盖缺口时验收完整性必须为不完整", body)
         example = next(
             line for line in body.splitlines() if line.startswith("| 应验收目标日冻结 SHA |")
         )
@@ -279,6 +279,29 @@ class DailyVerdictContractTests(unittest.TestCase):
         body = report_body("覆盖不足").replace("核心用例=通过", "核心用例=未执行")
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
+
+    def test_secondary_root_coverage_gap_cannot_claim_complete_for_any_verdict(self):
+        cases = (
+            (
+                "conditional",
+                report_body("非阻断风险")
+                .replace("不完整，1 项无法确认", "完整，全部计划范围均已确认")
+                .replace("未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P2 产品缺陷"),
+            ),
+            (
+                "fail",
+                report_body("产品失败")
+                .replace("不完整，1 项无法确认", "完整，全部计划范围均已确认")
+                .replace("未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P1 产品缺陷"),
+            ),
+        )
+        secondary_gap = "| 次要浏览器范围 | Safari 未执行 | 环境不可用 | 无法证明兼容性 | 覆盖缺口 | 补环境后复测 |"
+        for verdict, body in cases:
+            with self.subTest(verdict=verdict):
+                errors = archive_report._daily_conclusion_contract_errors(
+                    verdict, body.rstrip() + "\n" + secondary_gap + "\n"
+                )
+                self.assertTrue(any("根因链仍有覆盖缺口" in error for error in errors))
 
     def test_unknown_root_conclusion_is_rejected(self):
         body = report_body("覆盖不足").replace(
