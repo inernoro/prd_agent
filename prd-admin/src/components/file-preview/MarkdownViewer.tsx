@@ -9,7 +9,8 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import 'katex/dist/katex.min.css';
 import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useDataTheme } from '@/hooks/useDataTheme';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { MermaidDiagram } from '@/components/ui/MermaidDiagram';
@@ -125,6 +126,9 @@ function preprocessWikilinks(body: string): string {
 }
 
 function MarkdownViewerBase({ content }: { content: string }) {
+  // 代码块配色跟随主题：浅色纸面上再摆一块黑底白字的代码框，是「样式混乱」的头号来源
+  // （2026-07-31 用户反馈）。高亮主题也要换，否则 oneDark 的浅色 token 会打在浅底上。
+  const theme = useDataTheme();
   // 剥离首个 YAML frontmatter 块，避免 ---/title:/description: 被当正文渲染。
   // 与左侧标题提取共用 parseFrontmatter（SSOT）。
   // 同时把 [[xxx]] 双链预处理成标准 markdown 链接（wikilink: 协议）。
@@ -299,7 +303,8 @@ function MarkdownViewerBase({ content }: { content: string }) {
               style={{
                 borderLeft: '3px solid var(--accent-primary, var(--accent-gold))',
                 background: 'var(--bg-input-hover)',
-                color: 'var(--text-muted)',
+                // 引用块常是「重点原话」，用 muted 会比正文还淡；跟正文同级更好读
+                color: 'var(--text-secondary)',
               }}
             >
               {children}
@@ -318,7 +323,7 @@ function MarkdownViewerBase({ content }: { content: string }) {
             // 块级判断：有 language- 类名 或 内容包含换行（兼容未指定语言的 fenced code block）
             const isBlock = !!match || text.includes('\n');
             if (!isBlock) {
-              return <code className="px-1.5 py-0.5 rounded text-[12px] bg-token-nested" style={{ color: 'rgba(248,113,113,0.9)' }} {...props}>{children}</code>;
+              return <code className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'var(--code-inline-bg)', color: 'var(--code-inline-text)' }} {...props}>{children}</code>;
             }
             // 块级且指定了语言 → Mermaid 图表交给 MermaidDiagram 渲染，其余走 Prism 高亮
             if (match) {
@@ -332,12 +337,12 @@ function MarkdownViewerBase({ content }: { content: string }) {
               return (
                 <CodeBlockShell text={text}>
                   <SyntaxHighlighter
-                    style={oneDark}
+                    style={theme === 'light' ? oneLight : oneDark}
                     language={match[1]}
                     PreTag="div"
                     customStyle={{
                       margin: 0, borderRadius: '10px', fontSize: '12px',
-                      background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-subtle)',
+                      background: 'var(--code-block-bg)', border: '1px solid var(--code-block-border)',
                     }}
                   >
                     {text}
@@ -349,7 +354,7 @@ function MarkdownViewerBase({ content }: { content: string }) {
             return (
               <CodeBlockShell text={text}>
               <pre
-                className="border border-token-subtle" style={{ margin: 0, padding: '14px 16px', borderRadius: '10px', fontSize: '12px', lineHeight: 1.6, background: 'rgba(0,0,0,0.3)', color: 'rgba(255,255,255,0.85)', fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", whiteSpace: 'pre', overflowX: 'auto' }}
+                style={{ margin: 0, padding: '14px 16px', borderRadius: '10px', fontSize: '12px', lineHeight: 1.6, background: 'var(--code-block-bg)', border: '1px solid var(--code-block-border)', color: 'var(--code-block-text)', fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", whiteSpace: 'pre', overflowX: 'auto' }}
               >
                 {text}
               </pre>
