@@ -81,7 +81,7 @@ public class OfficialSkillCatalogTests
         Assert.Contains(design.Files, f => f.Path == "references/fusion-testing.md");
         Assert.Contains(design.Files, f => f.Path == "references/output-contract.md");
         Assert.Contains(design.Files, f => f.Path == "references/rules/manifest.json");
-        Assert.Contains(design.Files, f => f.Path == "references/rules/rule.acceptance.map-enterprise.md");
+        Assert.Contains(design.Files, f => f.Path == "references/rules/baseline.md");
 
         Assert.NotNull(orchestrator);
         Assert.Contains(orchestrator.Files, f => f.Path == "references/evidence-contract.md");
@@ -131,7 +131,7 @@ public class OfficialSkillCatalogTests
         Assert.Contains("acceptance-scenario-orchestrator/SKILL.md", names);
         Assert.Contains("acceptance-test-design/references/proof-strength.md", names);
         Assert.Contains("acceptance-test-design/references/rules/manifest.json", names);
-        Assert.Contains("acceptance-test-design/references/rules/rule.acceptance.map-enterprise.md", names);
+        Assert.Contains("acceptance-test-design/references/rules/baseline.md", names);
         Assert.Contains("acceptance-scenario-orchestrator/references/evidence-contract.md", names);
         Assert.Contains("acceptance-scenario-orchestrator/references/rules/manifest.json", names);
         Assert.Contains("create-visual-test-to-kb/references/rules/manifest.json", names);

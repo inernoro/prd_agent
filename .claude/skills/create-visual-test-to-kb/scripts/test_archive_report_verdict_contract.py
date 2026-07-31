@@ -83,7 +83,7 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors(
             "fail", report_body("产品失败")
         )
-        self.assertTrue(any("没有 P0-P2 产品失败事实" in error for error in errors))
+        self.assertTrue(any("没有 P0/P1 产品失败事实" in error for error in errors))
         self.assertTrue(any("必须使用 conditional" in error for error in errors))
 
     def test_blocking_product_defect_cannot_be_conditional(self):
@@ -92,6 +92,34 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("必须使用 fail" in error for error in errors))
+
+    def test_p2_only_defect_can_remain_conditional(self):
+        body = report_body("非阻断风险").replace(
+            "未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P2 产品缺陷"
+        ) + """
+## 缺陷清单
+
+| ID | 严重级 | 现象 |
+|---|---|---|
+| D-1 | P2 | 非阻断体验问题 |
+"""
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
+    def test_p1_in_severity_vector_cannot_be_conditional(self):
+        body = report_body("覆盖不足").replace(
+            "未发现可复现产品缺陷，缺陷 0 个", "P0/P1/P2/P3: 0/1/0/0"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("必须使用 fail" in error for error in errors))
+        self.assertFalse(any("同时声称缺陷为 0" in error for error in errors))
+
+    def test_p2_in_severity_vector_can_remain_conditional(self):
+        body = report_body("非阻断风险").replace(
+            "未发现可复现产品缺陷，缺陷 0 个", "P0/P1/P2/P3: 0/0/1/0"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
 
     def test_zero_defect_claim_conflicts_with_blocking_defect_table(self):
         body = report_body("产品失败") + """
@@ -104,10 +132,33 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertTrue(any("同时声称缺陷为 0" in error for error in errors))
 
-    def test_hard_gate_failure_can_have_zero_product_defects(self):
+    def test_hard_gate_failure_requires_hard_gate_fact(self):
         errors = archive_report._daily_conclusion_contract_errors(
             "fail", report_body("硬门禁失败")
         )
+        self.assertTrue(any("没有 ready、smoke、构建或强制测试失败事实" in error for error in errors))
+        self.assertTrue(any("必须使用 conditional" in error for error in errors))
+
+    def test_hard_gate_failure_with_smoke_fact_can_use_fail(self):
+        body = report_body("硬门禁失败").replace(
+            "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
+            "CDS smoke 未通过 | API 持续返回 500",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
+
+    def test_acceptance_chain_failure_requires_chain_fact(self):
+        errors = archive_report._daily_conclusion_contract_errors(
+            "fail", report_body("验收链路失败")
+        )
+        self.assertTrue(any("没有归档、打开验证或通知链路失败事实" in error for error in errors))
+
+    def test_acceptance_chain_failure_with_archive_fact_can_use_fail(self):
+        body = report_body("验收链路失败").replace(
+            "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
+            "验收报告归档失败 | CDS 报告 API 不可用",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
 
     def test_missing_root_cause_chain_is_rejected(self):
