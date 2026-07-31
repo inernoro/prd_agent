@@ -579,6 +579,31 @@ def _is_low_opacity(v):
     return bool(re.fullmatch(r"[0-9.]+", v)) and 0 < float(v) <= 0.3
 
 
+def _is_visible_color(v):
+    """刊徽的 SVG 全部用 `currentColor` 描边填充，所以 `color` 是它的**可见性开关**。
+
+    `color:transparent` 会让整枚刊徽消失，而 position / z-index / opacity /
+    pointer-events 四条依然完全合法——契约的每一项都对，水印却没了。
+    与 display/visibility 是同一类「不改布局只改可见性」的退化，故一并纳入契约。
+    """
+    v = v.strip().lower()
+    if v == "transparent":
+        return False
+    m = re.fullmatch(r"#([0-9a-f]{4}|[0-9a-f]{8})", v)     # #RGBA / #RRGGBBAA
+    if m:
+        h = m.group(1)
+        return int(h[3] * 2 if len(h) == 4 else h[6:8], 16) != 0
+    m = re.fullmatch(r"(?:rgba?|hsla?)\(([^)]*)\)", v)     # 逗号式与斜杠式都认
+    if m:
+        parts = [p.strip() for p in re.split(r"[,/]", m.group(1)) if p.strip()]
+        if len(parts) >= 4:
+            try:
+                return float(parts[-1].rstrip("%")) != 0
+            except ValueError:
+                return True
+    return True                                            # var()/具名色等，认为可见
+
+
 # ── 契约 SSOT ──────────────────────────────────────────────────────────────
 # (属性, 判定, 说明, 样式表里是否必须声明)
 #
@@ -596,6 +621,8 @@ EMBLEM_CONTRACT = (
      "衬字水印必须垫在刊名/期号之下，抬上去就成了盖住报头的贴纸", True),
     ("opacity", _is_low_opacity,
      "透明度须落在 (0, 0.3]：过高会盖住报头文字，为 0 等于没有刊徽（约定 ≈0.13）", True),
+    ("color", _is_visible_color,
+     "刊徽 SVG 全用 currentColor 上色，color 透明等于水印整个消失", True),
     # 下面两项样式表里可以不写（默认就是可见），但写了就必须是可见值
     ("display", lambda v: v.strip().lower() != "none",
      "display:none 会让刊徽在任何视口下都不渲染", False),
@@ -646,6 +673,36 @@ def check_foreground_stacking(label, rel, text):
         check_contract(label, rel, rules, FOREGROUND_CONTRACT, f"报头前景 `.{cls}`")
 
 
+def _drop_pseudo_args(compound, names=("not", "has")):
+    """去掉 `:not(...)` / `:has(...)` 的参数（括号可嵌套）。
+
+    这两处的类名**不指认主语**，恰恰相反：`:not(.never)` 是排除条件，浏览器用它去匹配
+    「没有 .never 这个类」的元素——刊徽正好符合；`:has(.x)` 说的是后代不是自己。
+    把它们当成「点名了目标」，就等于给绕过判据留了一个字面上的后门。
+    """
+    head = re.compile(r":(?:%s)\(" % "|".join(names), re.I)
+    out, i = [], 0
+    while i < len(compound):
+        m = head.match(compound, i)
+        if not m:
+            out.append(compound[i])
+            i += 1
+            continue
+        depth, j = 1, m.end()
+        while j < len(compound) and depth:
+            depth += {"(": 1, ")": -1}.get(compound[j], 0)
+            j += 1
+        i = j
+    return "".join(out)
+
+
+def emblem_wrapper_tags(text):
+    """刊徽包裹元素的标签名集合（从真实标记里取，不硬编码 div）。"""
+    tags = {m.group(1).lower() for m in re.finditer(
+        r'<([A-Za-z][\w-]*)\b[^>]*class\s*=\s*["\'][^"\']*\bemblem\b', text)}
+    return tags or {"div"}
+
+
 def check_structural_selectors(label, rel, text):
     """报头内不许用「不点名类」的结构性选择器。
 
@@ -657,7 +714,18 @@ def check_structural_selectors(label, rel, text):
     改为**在源头禁掉这种写法**：凡是选择器进了报头（提到 masthead）又在其后
     一个类都不点名的，一律判红。现有 CSS 全部是 `.masthead .t` / `.masthead .emblem`
     这类点名写法，不受影响；真需要结构性选择器时，请给元素加个类再选它。
+
+    判据只看**最后一段（主语）**，且只认能「正向指认主语」的记号：
+
+    - 第一版查的是「整条 tail 里有没有 `.` 开头的类名」。于是
+      `.masthead > div:first-child:not(.never)` 判绿——`.never` 让它看着点了名，
+      而浏览器恰恰因为刊徽**没有**这个类才匹配上它。祖先段上的类同理：
+      `.masthead .emblem > div:first-child` 的主语是 emblem 的孩子，不是 emblem。
+    - 标签名也是一种正向限定：`.masthead .t b` 的主语是 `b`，刊徽包裹元素是 `div`，
+      两者不可能是同一个，所以它没有归属歧义。包裹元素的标签名从真实标记里取，
+      不硬编码——将来包裹元素换成别的标签，判据自己跟着变。
     """
+    wrapper_tags = emblem_wrapper_tags(text)
     for m in re.finditer(r'([^{};\n]*)\{\{?([^{}]*)\}', text):
         for part in m.group(1).split(","):
             sel = part.strip()
@@ -667,11 +735,15 @@ def check_structural_selectors(label, rel, text):
             tail = re.split(r'masthead', sel, maxsplit=1)[1]
             if not re.search(r'[\s>+~]', tail):
                 continue                       # 报头自身，交给 check_positioning_context
-            if re.search(r'\.[A-Za-z_-]', tail):
-                continue                       # 点名了类，归属可判
+            subject = _drop_pseudo_args(re.split(r'[\s>+~]+', tail.strip())[-1])
+            if re.search(r'\.[A-Za-z_-]', subject):
+                continue                       # 主语点名了类，归属可判
+            tag = re.match(r'^([A-Za-z][\w-]*)', subject)
+            if tag and tag.group(1).lower() not in wrapper_tags:
+                continue                       # 主语是别的标签，不可能是刊徽包裹元素
             fail(f"{label}({rel}): 选择器 `{sel}` 在报头内用了不点名类的结构性写法——"
                  f"它能以更高特异性命中刊徽包裹元素而判据无法确定归属"
-                 f"（`.masthead > div:first-child` 即可推翻整份契约）。"
+                 f"（`.masthead > div:first-child` 与 `...:not(.never)` 都是这一种）。"
                  f"请给目标元素加一个类再选它。")
 
 
@@ -824,6 +896,8 @@ def check_dimensions(label, rel, base_rules, media_rules):
 
 CI_WORKFLOW = ".github/workflows/ci.yml"
 CI_FILTER_NAME = "release_scripts"
+GUARD_SCRIPTS = ("scripts/tests/test_report_emblems.py",
+                 "scripts/tests/test_report_emblems_selftest.py")
 
 
 def _glob_to_regex(pat):
@@ -886,7 +960,11 @@ def check_ci_wiring():
         return
 
     regexes = [_glob_to_regex(p) for p in pats]
-    watched = [RULE_DOC] + [rel for _, rel, _ in EXPECTED]
+    # 守卫脚本自己也必须在 watched 里。上一轮只登记了「被守的文件」，于是把
+    # `scripts/tests/test_*.py` 这条 glob 从 filter 里删掉/改名，本检查照样绿——
+    # 而那次改动本身因为动了 ci.yml 会触发 job，绿灯合进来之后，此后任何只改
+    # 守卫或只改自测的 PR 都不再启动这道闸。防漂移的工具把自己漏在了审计之外。
+    watched = [RULE_DOC] + [rel for _, rel, _ in EXPECTED] + list(GUARD_SCRIPTS)
     for rel in watched:
         if not any(r.match(rel) for r in regexes):
             fail(f"{rel} 没有登记进 {CI_WORKFLOW} 的 {CI_FILTER_NAME} filter——"

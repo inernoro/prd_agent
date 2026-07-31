@@ -146,6 +146,14 @@ CASES = [
      lambda t: re.sub(r"(  \.emblem \{ position: absolute;.*?pointer-events: none; \})",
                       r"/* \1 */", t, count=1, flags=re.S)),
 
+    ("R20-not伪装", "结构性选择器用 :not(.never) 伪装成点了名", DAILY,
+     lambda t: sub_after(t, "  .emblem svg { display: block; width: 100%; height: 100%; }",
+                         "\n  .masthead > div:first-child:not(.never)"
+                         " { position: static; opacity: 1; }")),
+    ("R20-color透明", "color:transparent 让 currentColor 画的刊徽整个消失", DAILY,
+     lambda t: t.replace("color: var(--terra); opacity: 0.13;",
+                         "color: transparent; opacity: 0.13;", 1)),
+
     # ── 规则表本身 ─────────────────────────────────────────────────
     ("R8-规则表列缺失", "规则 §1.4 删掉窄屏偏移列", RULE,
      lambda t: t.replace("| 92px | 70px | `top:-14px; right:-8px` | `top:-8px; right:-4px` |",
@@ -154,6 +162,8 @@ CASES = [
     # ── 守卫自己的 CI 接线 ─────────────────────────────────────────
     ("R6-CI未接线", "被测文件从 CI path filter 摘掉", CI,
      lambda t: t.replace("              - '.claude/rules/report-design-system.md'\n", "", 1)),
+    ("R20-守卫自己未接线", "守卫脚本自己的 glob 从 CI path filter 摘掉", CI,
+     lambda t: t.replace("              - 'scripts/tests/test_*.py'\n", "", 1)),
 ]
 
 
