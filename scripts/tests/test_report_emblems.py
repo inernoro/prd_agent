@@ -43,13 +43,64 @@ EMBLEM_ATTR_RE = re.compile(
     r"""(?i:data-emblem)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))""")
 
 
-def open_tag_re(tags, cls):
-    """构造「带某个 class 的开标签」正则：标签名/属性名不敏感，class 值敏感，
-    单双引号与无引号三种写法都认。"""
-    return re.compile(
-        r'<(?i:(%s))\b[^>]*(?i:class)\s*=\s*'
-        r'(?:"[^"]*\b%s\b[^"]*"|\'[^\']*\b%s\b[^\']*\'|%s(?=[\s/>]))'
-        r'[^>]*>' % (tags, cls, cls, cls))
+# 任意开标签（标签名不敏感），属性串留给下面按需解析。
+def _open_tag_any(tags):
+    return re.compile(r'<(?i:(%s))\b([^>]*)>' % tags)
+
+
+def attr_value(attrs, name):
+    """从属性串里取某个属性的值；属性名不敏感，三种引号写法都认。取不到返回 None。"""
+    m = re.search(r'(?i:%s)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'`=<>]+))'
+                  % re.escape(name), attrs)
+    if not m:
+        return None
+    return next(g for g in m.groups() if g is not None)
+
+
+def has_class(attrs, cls):
+    """class 值必须按**空白分词**后整词相等，不能用 `\bcls\b`。
+
+    `\b` 把连字符当词边界，于是 `class="masthead-alt"` 会命中 `\bmasthead\b`——
+    而浏览器里 `.masthead` 根本不匹配它，刊徽的定位与尺寸全部失效，守卫却判绿。
+    这是很现实的一种漂移：有人重命名了 class，样式跟着断，守卫一声不吭。
+    """
+    v = attr_value(attrs, "class")
+    return v is not None and cls in v.split()
+
+
+def find_elements(text, tags, cls):
+    """找出带某个 class 的元素，返回 [(match, attrs, span)]（span 为元素区间）。"""
+    out = []
+    for m in _open_tag_any(tags).finditer(text):
+        if not has_class(m.group(2), cls):
+            continue
+        span = _close_at(text, m)
+        if span:
+            out.append((m, m.group(2), span))
+    return out
+
+
+def check_inline_style(label, rel, attrs, who, expect):
+    """行内 style 优先于任何样式表规则，必须一并查。
+
+    判据只扫样式表时，给 `.emblem` 包裹元素加一句
+    `style="position:static;pointer-events:auto;opacity:1"` 就能让刊徽回到文档流、
+    变不透明、开始拦鼠标，而守卫全绿——「所有命中该元素的规则」这个范围里
+    漏了最优先的那一档。
+    """
+    style = attr_value(attrs, "style")
+    if not style:
+        return
+    body = re.sub(r"\s+", "", style)
+    fake = [{"body": body, "sel": f"{who} 的行内 style"}]
+    reject_contract_shorthands(label, rel, fake, who)
+    for prop, want in expect.items():
+        _, declared = cascade_value([body], prop)
+        for v in declared:
+            if v.strip().lower() != want:
+                fail(f"{label}({rel}): {who} 的行内 style 把 {prop} 写成 {v.strip()!r}，"
+                     f"应为 {want!r}——行内声明优先于任何样式表规则，"
+                     f"只扫样式表的判据看不见它")
 
 
 def emblem_value(m):
@@ -212,20 +263,15 @@ def _masthead_block(text):
 
     两种产物的标签名不同（模板用 header，验收生成器用 div），故走同名标签配对。
     """
-    m = open_tag_re("header|div", "masthead").search(text)
-    if not m:
-        return None
-    span = _close_at(text, m)
-    return text[span[0]:span[1]] if span else None
+    found = find_elements(text, "header|div", "masthead")
+    return text[found[0][2][0]:found[0][2][1]] if found else None
 
 
 def _emblem_spans(block):
     """返回报头内所有 `.emblem` 包裹元素的 [起, 止) 区间（相对 block）。"""
     spans = []
-    for m in open_tag_re("div|span", "emblem").finditer(block):
-        span = _close_at(block, m)
-        if span:
-            spans.append(span)
+    for _m, _attrs, span in find_elements(block, "div|span", "emblem"):
+        spans.append(span)
     return spans
 
 
@@ -250,6 +296,19 @@ def check_emblem_in_masthead(label, rel, text, expected_kinds):
     # 只比对报头计数的话，把 SVG 从 wrapper 里挪出来当报头的兄弟节点，
     # `n_head == n_all` 依然成立、守卫照样绿，而 SVG 会退化成 120x120 的文档流 flex
     # 子项把报头撑歪。上一轮我只把范围收到「报头」，还差一层。
+    # 行内 style 优先于样式表，三类契约元素都要查（报头 / 刊徽包裹 / 报头前景）。
+    for _m, attrs, _sp in find_elements(text, "header|div", "masthead"):
+        check_inline_style(label, rel, attrs, "`.masthead` 报头",
+                           {"position": "relative"})
+    for _m, attrs, _sp in find_elements(block, "div|span", "emblem"):
+        check_inline_style(label, rel, attrs, "`.emblem` 刊徽包裹",
+                           {"position": "absolute", "pointer-events": "none",
+                            "z-index": "0"})
+    for cls in FOREGROUND_CLASSES:
+        for _m, attrs, _sp in find_elements(block, "div|span|b|i|em|strong", cls):
+            check_inline_style(label, rel, attrs, f"报头前景 `.{cls}`",
+                               {"position": "relative", "z-index": "1"})
+
     spans = _emblem_spans(block)
     for kind in sorted(expected_kinds):
         n_all = count_emblem(text, kind)

@@ -29,3 +29,5 @@
 | fix | ci | data-emblem 属性正则允许等号两侧空白：HTML 允许 `data-emblem = "x"`，此前那枚水印在发现环节就消失 |
 | fix | ci | data-emblem 发现正则改为按 HTML 属性语法穷举三种合法写法（双引号/单引号/无引号），不再按「想得到的写法」枚举：该正则已被连续三轮指出收窄，回头对照语法自查又发现第四个维度——无引号值 `data-emblem=asteroid2` 同样合法且仍然漏 |
 | fix | ci | 刊徽守卫统一大小写口径：HTML 属性名/标签名、CSS 属性名/at 规则名、关键字值在规范里都是 ASCII 大小写不敏感，判据此前一律按小写字面匹配——DATA-EMBLEM="x"、.emblem{POSITION:static}、<SVG> 三种写法浏览器照用而守卫全绿；同时修好三种合法写法（大写标签、单引号 class 值、@MEDIA）此前会被误判为红的假阳 |
+| fix | ci | class 匹配改为按空白分词整词比对，不再用 `\bcls\b`：`\b` 把连字符当词边界，`class="masthead-alt"` / `"emblem-alt"` 会命中判据而浏览器里 `.masthead`/`.emblem` 根本不匹配——重命名 class 导致样式全断，守卫却判绿 |
+| fix | ci | 补查行内 style：行内声明优先于任何样式表规则，而判据只扫样式表。给刊徽包裹加 `style="position:static;pointer-events:auto;opacity:1"` 就能让水印回到文档流、变不透明、拦鼠标，守卫全绿。三类契约元素（报头/刊徽包裹/报头前景）的行内 style 一并按同一契约校验并拒收简写 |
