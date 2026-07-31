@@ -62,10 +62,14 @@
 
 尺寸按刊物报头的实际紧凑度**等比**取，不是全刊系一个数：
 
-| 产物 | key | 桌面 | 窄屏 | 偏移 | 依据 |
-|---|---|---|---|---|---|
-| 日报 / 周报模板 | `template` | 92px | 70px | `top:-14px; right:-8px` | 报头 stamp 46px、`padding-bottom:14px` |
-| 验收档案 / 巡检特刊 | `archive` | 86px | 60px | `top:-12px; right:-6px` | 报头更紧凑：stamp 44px、`padding-bottom:12px`，窄屏 stamp 再缩到 36px |
+| 产物 | key | 桌面 | 窄屏 | 桌面偏移 | 窄屏偏移 | 依据 |
+|---|---|---|---|---|---|---|
+| 日报 / 周报模板 | `template` | 92px | 70px | `top:-14px; right:-8px` | `top:-8px; right:-4px` | 报头 stamp 46px、`padding-bottom:14px` |
+| 验收档案 / 巡检特刊 | `archive` | 86px | 60px | `top:-12px; right:-6px` | `top:-8px; right:-2px` | 报头更紧凑：stamp 44px、`padding-bottom:12px`，窄屏 stamp 再缩到 36px |
+
+窄屏偏移随尺寸一起收（刊徽变小，压进报头的量也要变小），两档都必须登记——**只登记桌面档
+等于窄屏可以随便漂**：把档案窄屏的 `right` 从 `-2px` 改成 `-200px`，刊徽整个移出屏幕，
+而只查桌面偏移的守卫照样判绿（2026-07-31 review 实测）。
 
 这是**显式例外**，不是漂移：86/92 ≈ 0.935 与 stamp 的 44/46 ≈ 0.957 基本等比，硬套 92px
 会在更矮的档案报头里显得过重。刊徽 viewBox 是正方形，故 `height` 必须等于 `width`。

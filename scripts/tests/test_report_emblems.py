@@ -70,13 +70,19 @@ def load_registered_dimensions():
         m_desk = re.fullmatch(r"(\d+)px", cells[2])
         m_mob = re.fullmatch(r"(\d+)px", cells[3])
         m_off = re.search(r"top:(-?\d+)px;\s*right:(-?\d+)px", cells[4])
-        if not (m_key and m_desk and m_mob and m_off):
+        # 窄屏偏移与桌面偏移是两档独立登记：刊徽变小时压进报头的量也要跟着变小。
+        # 只登记桌面档等于窄屏可以随便漂——把档案窄屏 right 从 -2px 改成 -200px
+        # 刊徽会整个移出屏幕，而只查桌面偏移的守卫照样判绿（review 实测）。
+        m_moff = re.search(r"top:(-?\d+)px;\s*right:(-?\d+)px", cells[5]) if len(cells) > 5 else None
+        if not (m_key and m_desk and m_mob and m_off and m_moff):
             continue
         out[m_key.group(1)] = {
             "desktop": int(m_desk.group(1)),
             "mobile": int(m_mob.group(1)),
             "top": int(m_off.group(1)),
             "right": int(m_off.group(2)),
+            "mobile_top": int(m_moff.group(1)),
+            "mobile_right": int(m_moff.group(2)),
         }
     missing = set(PRODUCT_DIMENSION_KEY.values()) - set(out)
     if missing:
@@ -107,11 +113,17 @@ def check_file(label, rel, expected_kinds):
     if missing:
         fail(f"{label}({rel}): 缺刊徽 {sorted(missing)}——该刊物的报头会没有水印")
 
-    # 混装：装了别的刊物的徽 = 读者会把这一刊认成另一刊，比没有更糟
-    wrong = (found & ALL_KINDS) - expected_kinds
+    # 混装：装了别的刊物的徽 = 读者会把这一刊认成另一刊，比没有更糟。
+    # 判据**不能先与 ALL_KINDS 求交**：那样一枚未注册的 data-emblem="asteroid"
+    # 会被交集直接滤掉，既不进 wrong、下面的完整性循环也不看它——
+    # 报告上多出一枚不受任何检查的水印而守卫全绿。契约是「有且只有它自己那枚」，
+    # 所以直接拿发现的全集比对期望集（形状 1：判据比它该管的范围窄）。
+    wrong = found - expected_kinds
     if wrong:
         fail(f"{label}({rel}): 混入了不属于它的刊徽 {sorted(wrong)}"
-             f"（应为 {sorted(expected_kinds)}）——会把这一刊错认成另一刊")
+             f"（应为 {sorted(expected_kinds)}）——"
+             f"{'未在刊系注册表登记的刊徽，' if wrong - ALL_KINDS else ''}"
+             f"会多出一枚不受检的水印或把这一刊错认成另一刊")
 
     # 每枚只该出现一次；重复会导致 SVG 内部 id 撞车，后一份引用到前一份的 mask
     for kind in expected_kinds:
@@ -120,7 +132,9 @@ def check_file(label, rel, expected_kinds):
             fail(f"{label}({rel}): 刊徽 {kind} 出现 {n} 次——"
                  f"SVG 内部 id 会撞车，第二枚会引用到第一枚的 mask/clip")
 
-    for kind in sorted(found & ALL_KINDS):
+    # 同理，完整性检查也扫全集而不是交集——未注册的那一枚同样会被渲染出来，
+    # 它的 mask/clipPath 引用坏掉、id 撞车、引外部资源，一样会影响这份报告。
+    for kind in sorted(found):
         check_svg_integrity(label, rel, kind, text)
 
 
@@ -314,16 +328,25 @@ def check_css_wiring(label, rel):
     # 只判「写了但过高」是不够的：整条 opacity 声明被删掉时 CSS 默认 opacity:1，
     # 刊徽变成完全不透明的遮挡物盖住报头——正是本守卫号称要防的退化之一，
     # 而 re.search 返回 None 会让循环一声不吭地放行（本守卫第一版就是这个洞）。
-    opacities = [float(mo.group(1))
-                 for b in bodies
-                 if (mo := re.search(r"opacity:([0-9.]+)", b))]
-    if not opacities:
+    # 走统一的 cascade_value：不能自己再写一条 `re.search(r"opacity:([0-9.]+)")`，
+    # 那个正则只认数字，遇到 `opacity: unset` 会**跳过这条声明**并保留前面那个合法的 0.13——
+    # 而 unset 对这个非继承属性解析为初始值 1，刊徽变成完全不透明的遮挡物。
+    # 上一轮我把 position/pointer-events/z-index/尺寸都收敛到 cascade_value 了，
+    # 唯独漏了这一处，于是同一个形状第三次复发。**「横扫同类」要扫到最后一个，不是扫到手顺为止。**
+    winner, declared = cascade_value(bodies, "opacity")
+    if winner is None:
         fail(f"{label}({rel}): .emblem 没有任何 opacity 声明——"
              f"CSS 会默认 opacity:1，刊徽变成不透明遮挡物盖住报头（约定 ≈0.13）")
-    for v in opacities:
-        if not (0 < v <= 0.3):
-            fail(f"{label}({rel}): .emblem 的 opacity={v} 不在 (0, 0.3] 内，"
-                 f"过高会盖住报头文字、为 0 则等于没有刊徽（约定 ≈0.13）")
+    else:
+        for v in declared:
+            if not re.fullmatch(r"[0-9.]+", v):
+                fail(f"{label}({rel}): .emblem 的 opacity:{v} 不是数值——"
+                     f"unset/initial/inherit 之类会解析成初始值 1（完全不透明），"
+                     f"请写明确的小数（约定 ≈0.13）")
+                continue
+            if not (0 < float(v) <= 0.3):
+                fail(f"{label}({rel}): .emblem 的 opacity={v} 不在 (0, 0.3] 内，"
+                     f"过高会盖住报头文字、为 0 则等于没有刊徽（约定 ≈0.13）")
 
     # 层叠顺序：@media 覆盖必须排在基础规则**之后**。
     # 两者选择器特异性相同，靠源码顺序决胜——媒体查询若写在前面，
@@ -390,6 +413,11 @@ def check_dimensions(label, rel, base_rules, media_rules):
         ("right", "right", "桌面", base),
         ("width", "mobile", "窄屏", media),
         ("height", "mobile", "窄屏", media),
+        # 窄屏偏移必须一起查：三个产物在 @media 里都重写了 top/right，只查桌面档
+        # 等于窄屏可以随便漂——把档案窄屏 right 改成 -200px 刊徽整个移出屏幕，
+        # 而只查两档尺寸的守卫照样判绿（review 实测）。
+        ("top", "mobile_top", "窄屏", media),
+        ("right", "mobile_right", "窄屏", media),
     ):
         got = px(bodies, prop, where)
         if got is _REPORTED:

@@ -14,3 +14,6 @@
 | fix | ci | 刊徽守卫接上 CI 触发：release-script-test 的 path filter 原先只含 scripts/tests/test_*.py，被测的三个产物与设计系统规则都没登记——只改模板/规则的 PR 一路全绿而守卫从未跑过，防漂移的工具自己没接上线。顺带补上 test_live_asr_websocket_proxy 的被测文件 cds/src/scheduler/nginx-template.ts（原只在 cds filter 里，那个 job 不跑这批 Python 守卫） |
 | test | ci | 刊徽守卫新增 check_ci_wiring：解析 ci.yml 的 release_scripts filter，断言自己的每个输入文件都被某条 glob 覆盖；filter 结构变了解析不出来也判红。日后加第五刊时忘改 ci.yml 会当场红，而不是静默失去覆盖 |
 | fix | ci | 定位类判据改取层叠胜者：position/pointer-events 原用「某条规则里出现过」判定，在合法规则后追加一条 .emblem{position:static;pointer-events:auto} 即可让刊徽重回 flex 流并拦鼠标而守卫全绿。取值口径收敛成唯一的 cascade_value，尺寸校验一并复用；顺带把同属衬字契约但一直没查的 z-index 纳入（漂成 1 以上刊徽就从衬底变成盖住刊名） |
+| fix | ci | 刊徽守卫补三处判据洞：opacity 改走 cascade_value 并拒收非数值胜者（原正则只认数字，opacity:unset 被跳过而保留前面的 0.13，实际解析为 1 完全不透明）；刊徽全集不再与 ALL_KINDS 求交（未注册的 data-emblem 会被交集滤掉，报告多一枚不受检水印仍判绿）；窄屏 top/right 纳入校验 |
+| rule | doc | report-design-system §1.4 尺寸表新增「窄屏偏移」列（模板 top:-8px right:-4px / 档案 top:-8px right:-2px）：原先只登记桌面偏移，窄屏可随意漂——档案窄屏 right 改成 -200px 刊徽整个移出屏幕而守卫判绿 |
+| rule | doc | predicate-and-wiring-discipline 补形状 6（判据读的值不是真正生效的那个值：取第一条而非层叠胜者 / 扫源码字面量而非求值结果 / 修完要横扫同类）与形状 7（守卫自己没接上线，形状 2 的递归：CI path filter 不含被守文件），自查清单同步补两条 |
