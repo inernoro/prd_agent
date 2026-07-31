@@ -81,6 +81,43 @@ def test_connect_existing_project_saves_local_credential_without_printing_secret
     ]
 
 
+def test_connect_slug_saves_resolved_project_id(workspace, monkeypatch):
+    secret = "cdsp_resolved_secret-never-print"
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
+        calls.append((method, path))
+        if method == "POST":
+            return 201, {
+                "requestId": "req-slug",
+                "pollToken": "poll-slug",
+                "status": "pending",
+                "projectId": "project-real-id",
+            }, {}
+        if path.endswith("/req-slug"):
+            return 200, {"status": "approved", "authorizationKey": secret}, {}
+        return 200, {"id": "project-real-id"}, {}
+
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _seconds: None)
+
+    code, output = run_command([
+        "connect", "--host", "https://cds.example", "--project", "project-slug",
+        "--agent", "Codex", "--interval", "1",
+    ])
+
+    assert code == 0
+    assert secret not in output
+    saved = json.loads((workspace / ".cds" / "credentials.json").read_text())
+    assert saved["projectId"] == "project-real-id"
+    assert calls == [
+        ("POST", "/api/projects/project-slug/access-requests"),
+        ("GET", "/api/projects/project-slug/access-requests/req-slug"),
+        ("GET", "/api/projects/project-real-id"),
+    ]
+
+
 def test_connect_new_project_uses_bootstrap_request(workspace, monkeypatch):
     secret = "cdsg_bootstrap-secret"
 
