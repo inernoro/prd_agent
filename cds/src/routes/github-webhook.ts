@@ -1412,7 +1412,7 @@ async function runSlashCommand(
     const logs = stateService.getLogs?.(sc.branchId) || stateService.getState().logs?.[sc.branchId] || [];
     const latest = logs.length > 0 ? logs[logs.length - 1] : null;
     if (!latest) {
-      await postReply(`@${sc.commenter} ℹ 分支 \`${sc.branchId}\` 暂无部署日志。`);
+      await postReply(`@${sc.commenter} 分支 \`${sc.branchId}\` 暂无部署日志。`);
       return;
     }
     const events = (latest.events || []).slice(-40);

@@ -10,9 +10,9 @@
  * emojiHardcodeBaseline.json（只是债务台账，不是许可）；新代码一律零容忍，
  * 走文字标签或 SVG icon（见 CLAUDE.md §0 替代方案）。
  *
- * 统计口径：真 emoji 与 dingbat（如 ⚠ 🤖 🔄 🚀 ✓ ✗ ✅ ➜），**排除**用于控制台
- * 横幅的制表/画框字符（═ ║ ╔ 等）与纯方向箭头（→ ← ↑ ↓ ↔ ⇒，项目里大量用于
- * 日志/注释画调用链，不是 emoji）与几何图形块。
+ * 统计口径见下方 EMOJI_RE：按 Unicode 区段覆盖真 emoji 与 dingbat，**排除**用于
+ * 控制台横幅的制表/画框字符（═ ║ ╔ 等）与纯方向箭头（→ ← ↑ ↓ ↔ ⇒，项目里大量
+ * 用于日志/注释画调用链，不是 emoji）与几何图形块。
  *
  * 对外可见输出（PR 评论模板 comment-template.ts、webhook 回帖
  * github-webhook.ts）已在 issue #1289 修复时清零，不在基线里——回归会被本测试拦住。
@@ -32,13 +32,23 @@ const BASELINE_PATH = path.join(TEST_DIR, 'emojiHardcodeBaseline.json');
 const SCAN_ROOTS = ['src', 'web/src'];
 
 /**
- * 真 emoji / dingbat 字符集：
- *  - U+1F300–1FAFF：表情/交通/符号/补充符号与象形文字等 emoji 主力区块
- *  - 显式列出的 Dingbats/Misc-Symbols 常用状态图标（✅✔✓✕✖✗✘❌❗❓⭐➜⚠️）
- * 刻意不含方向箭头（→ ← ↑ ↓ ↔ ⇒，U+2190-21FF）、制表画框（═ ║ ╔）与几何图形块，
- * 这些在本项目里大量用于日志/注释画调用链，不是 emoji。
+ * 真 emoji / dingbat 字符集，按 **区段** 而非逐字枚举：
+ *  - U+1F000–1FAFF：麻将/骰子/扑克/带圈字母（🀄 🃏 🅰 🆗）+ 表情/交通/符号/
+ *    补充符号与象形文字等 emoji 主力区块
+ *  - U+2600–27BF：Misc Symbols + Dingbats（☀ ★ ⚠ ❤ ✨ ✅ ✔ ✓ ✕ ✖ ✗ ❌ ❗ ❓ ➜）
+ *  - U+2B00–2BFF：Misc Symbols and Arrows（⭐ ⬛ ⬅ ⬆）
+ *  - U+2139：Letterlike Symbols 里的 ℹ（信息图标，不在上面任何区段）
+ * 尾随的 U+FE0F（variation selector）并入同一次匹配，`⚠️` 记 1 处而不是 2 处。
+ *
+ * 刻意不含方向箭头（→ ← ↑ ↓ ↔ ⇒，U+2190-21FF）、制表画框（═ ║ ╔，U+2500-257F）
+ * 与几何图形块（U+25A0-25FF），这些在本项目里大量用于日志/注释画调用链，不是 emoji。
+ *
+ * 逐字枚举的旧口径漏过了整个 U+2600-27BF 区段——`ℹ`（github-webhook.ts 的 postReply）
+ * 与 `★`（deploy-infra-resolver.ts 注释）都躲过了守卫，其中 `ℹ` 恰好落在下面那条
+ * 「对外可见输出零 emoji」用例声称已清零的文件里。判据比它该管的范围窄，用例就会
+ * 绿着放行它本该拦住的东西，所以这里改成按区段覆盖。
  */
-const EMOJI_RE = /[\u{1F300}-\u{1FAFF}✅✔✓✕✖✗✘❌❗❓⭐➜⚠️]/gu;
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2139}]\u{FE0F}?/gu;
 
 function skipped(rel: string): boolean {
   return (
