@@ -6,7 +6,7 @@
     "plan": 0,
     "rule": 0,
     "guide": 0,
-    "report": 37,
+    "report": 32,
     "debt": 0
   },
   "bare_refs": {
@@ -579,12 +579,6 @@
       "impl": 0,
       "src": 0
     },
-    "report.cds.agent.goal-completion-audit.2026-05-19.md": {
-      "missing": 1,
-      "bare": 0,
-      "impl": 0,
-      "src": 0
-    },
     "report.cds.agent.p4-1-remote-preflight.2026-05-19.md": {
       "missing": 1,
       "bare": 0,
@@ -610,7 +604,7 @@
       "src": 7
     },
     "report.cds.agent.p4-5-writable-trial-plan.2026-05-19.md": {
-      "missing": 1,
+      "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 7
@@ -622,12 +616,6 @@
       "src": 0
     },
     "report.cds.agent.phase2-acceptance.2026-05-19.md": {
-      "missing": 1,
-      "bare": 0,
-      "impl": 0,
-      "src": 0
-    },
-    "report.cds.agent.phase3-acceptance.2026-05-19.md": {
       "missing": 1,
       "bare": 0,
       "impl": 0,
@@ -645,12 +633,6 @@
       "impl": 0,
       "src": 0
     },
-    "report.cds.forwarder-success.md": {
-      "missing": 1,
-      "bare": 0,
-      "impl": 0,
-      "src": 0
-    },
     "report.cds.self-update-timing-audit.md": {
       "missing": 1,
       "bare": 0,
@@ -658,7 +640,7 @@
       "src": 0
     },
     "report.gw-test-matrix.md": {
-      "missing": 1,
+      "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 2

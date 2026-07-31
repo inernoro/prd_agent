@@ -276,7 +276,7 @@ python3 scripts/doc-readability-check.py --update-baseline # 修好一批后压�
   同时新增一篇不合规的」——总数持平，CI 照绿。现在**不在明细表里的文件一旦欠账即判红**，
   表里的文件也只许比基线少。（这条来自 PR #1311 的 review 意见，属 `.claude/rules/predicate-and-wiring-discipline.md` 形状 1：判据比它该管的范围窄。）
 - **新增文档必须自带导读三行**——否则欠账数上升，CI 直接 fail。
-- **存量走到哪修到哪**：改一篇文档就顺手补上它的导读三行，然后跑 `--update-baseline` 把基线压低。
+- **存量走到哪修到哪**：改一篇文档就顺手补上它的导读三行，然后跑 `--update-baseline` 把基线压低。这条**已进闸门**：CI 拿目标分支比出本次碰过的文档，其中仍缺导读的直接判红（历史周报除外，它们是冻结记录）。
 - 基线**上调一律 reject**。确有合理原因（如批量迁入历史文档）必须在 PR 里写明。
 
 优先补的顺序：读者最多的先补 —— `guide.` > `spec.` > `rule.` > `debt.` > `plan.` > `design.`。

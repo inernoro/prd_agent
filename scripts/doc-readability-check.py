@@ -139,19 +139,21 @@ def doc_type(name: str) -> str:
 
 # 标题与导读之间允许的「元信息」：版本行、appKey、关联实现、表格、分隔线、注释、徽章。
 # 除此之外的任何一行正文（散文、列表）都意味着导读迟到了。
+GUIDE_FIELD = re.compile(r"\*\*(?:一句话|本周一句话|谁该读|读完能做什么|什么时候撞上)\*\*\s*[：:]")
 HEADER_META = re.compile(r"^(\*\*[^*]+\*\*\s*[：:]|\||[-*_]{3,}|!\[|<!--|<img)")
 
 
-def parse_header(text: str) -> dict[str, str]:
-    """从第一屏抓导读三行：H1 之后、第一个小节标题之前。允许行首有 '> ' 引用符。"""
-    found: dict[str, str] = {}
-    labels = list(ONE_LINER_ALIASES) + [f for f in FIELDS if f != "一句话"]
+def header_lines(text: str):
+    """产出第一屏里「算数」的行：H1 之后、任何正文之前、且不在代码块里。
+
+    doc/ 的三行导读和规则的两行导读共用这一个实现 —— 判据在两处各写一遍，
+    改一处忘一处就是这轮 review 反复抓到的形状（判据分裂后各自漂移）。
+    """
     in_fence = False
     fence_kind: tuple[str, int] | None = None
     seen_h1 = False
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
-        # 代码块里的示例不算数 —— 否则「展示导读格式的模板文档」会自己骗过闸门
         delim = fence_delim(line)
         if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(line))):
             in_fence = not in_fence
@@ -162,18 +164,24 @@ def parse_header(text: str) -> dict[str, str]:
         if line.startswith("# "):
             seen_h1 = True
             continue
-        # 正文一开张，导读就迟到了 —— 埋在某个小节里、或排在整段散文后面的三行，
-        # 读者翻到时早已不需要它。标题与导读之间只允许版本行那类元信息。
-        if seen_h1 and line:
-            core = line.lstrip(">").strip() if line.startswith(">") else line
-            is_field = any(re.match(rf"\*\*{lb}\*\*\s*[：:]", core) for lb in labels)
-            if not is_field and (re.match(r"^#{2,6} ", line) or not HEADER_META.match(core)):
-                break
-        # 导读要写在标题下面读者才看得见；写在 H1 之前、或整篇没有 H1，都不算数
         if not seen_h1:
             continue
-        if line.startswith(">"):
-            line = line.lstrip(">").strip()
+        core = line.lstrip(">").strip() if line.startswith(">") else line
+        if not core:
+            continue
+        # 正文一开张导读就迟到了：小节标题算正文，散文和列表也算；
+        # 标题与导读之间只允许版本行那类元信息。
+        if not GUIDE_FIELD.match(core) and (re.match(r"^#{2,6} ", line)
+                                            or not HEADER_META.match(core)):
+            break
+        yield core
+
+
+def parse_header(text: str) -> dict[str, str]:
+    """从第一屏抓导读三行：H1 之后、任何正文之前。允许行首有 '> ' 引用符。"""
+    found: dict[str, str] = {}
+    labels = list(ONE_LINER_ALIASES) + [f for f in FIELDS if f != "一句话"]
+    for line in header_lines(text):
         for label in labels:
             m = re.match(rf"\*\*{label}\*\*\s*[：:]\s*(.+)$", line)
             if m:
@@ -496,32 +504,13 @@ def check_rule(path: str) -> list[str]:
 
 
 def check_rule_text(text: str) -> list[str]:
-    """规则文档的轻量导读校验：H1 之后必须有一句话 + 什么时候撞上。
+    """规则文档的轻量导读校验：H1 之后、正文之前必须有一句话 + 什么时候撞上。
 
-    和 doc/ 的 parse_header 同口径：代码块里的示例不算数（否则「展示规则导读格式的
-    模板」会自己骗过闸门），H1 之前的也不算数（导读要在标题下面，读者才看得见）。
+    扫描口径与 doc/ 的导读共用 header_lines —— 代码块里的示例不算数、H1 之前
+    不算数、排在正文（小节标题或散文）后面同样不算数。
     """
     found: dict[str, str] = {}
-    in_fence = False
-    fence_kind: tuple[str, int] | None = None
-    seen_h1 = False
-    for raw in text.splitlines()[:HEAD_LINES]:
-        line = raw.strip()
-        delim = fence_delim(line)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(line))):
-            in_fence = not in_fence
-            fence_kind = delim if in_fence else None
-            continue
-        if in_fence:
-            continue
-        if line.startswith("# "):
-            seen_h1 = True
-            continue
-        # 与 doc/ 同一口径：正文一开张导读就迟到了，埋在小节里的两行不算数
-        if seen_h1 and re.match(r"^#{2,6} ", line):
-            break
-        if not seen_h1:
-            continue
+    for line in header_lines(text):
         for label in RULE_FIELDS:
             m = re.match(rf"\*\*{label}\*\*\s*[：:]\s*(.+)$", line)
             if m:
@@ -549,8 +538,24 @@ def yaml_scalar(raw: str) -> str:
         return ""
     if value[:1] in ("\"", "'"):   # 注意空串 in 任何字符串恒为真，必须比元组
         quote = value[0]
-        end = value.find(quote, 1)
-        return value[1:end] if end > 0 else value[1:]
+        out: list[str] = []
+        i = 1
+        while i < len(value):
+            ch = value[i]
+            # 双引号标量里 \" 是转义的引号，不是结束符；单引号标量里 '' 才是
+            if quote == '"' and ch == "\\" and i + 1 < len(value):
+                out.append(value[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                if quote == "'" and value[i + 1:i + 2] == "'":
+                    out.append("'")
+                    i += 2
+                    continue
+                break
+            out.append(ch)
+            i += 1
+        return "".join(out)
     value = re.split(r"\s+#", value, 1)[0]
     return value.strip()
 
@@ -703,6 +708,19 @@ def load_baseline() -> dict[str, dict[str, int]]:
         return {}
     with open(BASELINE_PATH, encoding="utf-8") as fh:
         return _normalize_baseline(json.load(fh))
+
+
+def changed_docs_since(ref: str) -> list[str]:
+    """本次改动碰过的 doc/*.md（相对目标分支）。取不到就返回空列表。"""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "diff", "--name-only", f"{ref}...HEAD", "--", "doc/"],
+                             cwd=REPO_ROOT, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0:
+        return []
+    return [line for line in out.stdout.split() if line.endswith(".md")]
 
 
 def git_ref_exists(ref: str) -> bool:
@@ -897,6 +915,25 @@ def main() -> int:
                 print(f"\n[FAIL] 取不到用于对照的 {args.baseline_ref} —— 无法确认基线没被放宽。"
                       f"CI 里通常是 base 分支没 fetch 到；本地跑加 --baseline-ref 请先 git fetch",
                       file=sys.stderr)
+                return 1
+            # 「走到哪修到哪」不能只是句口号：这次动过的存量文档，必须顺手把
+            # 导读补上，否则棘轮总数持平就放行，那批老文档永远轮不到人修。
+            touched = changed_docs_since(args.baseline_ref)
+            still_missing = []
+            for rel in touched:
+                abs_path = os.path.join(REPO_ROOT, rel)
+                if not os.path.exists(abs_path):
+                    continue
+                stem = os.path.basename(rel)[:-3]
+                if WEEKLY_REPORT.match(stem):
+                    continue  # 历史周报是冻结记录，标准里明确不回填
+                if check_file(abs_path):
+                    still_missing.append(f"{rel} — {'；'.join(check_file(abs_path))}")
+            if still_missing:
+                print("\n[FAIL] 本次改动碰过的文档仍缺导读 —— 走到哪修到哪，"
+                      "碰了就得把它补齐（判据见 doc/rule.doc.readability.md）", file=sys.stderr)
+                for line in still_missing:
+                    print(f"  {line}", file=sys.stderr)
                 return 1
             base_baseline = load_baseline_at(args.baseline_ref)
             if base_baseline is None:

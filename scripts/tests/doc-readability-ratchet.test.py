@@ -428,6 +428,17 @@ RULE_BURIED = """# 某条规则
 """
 check(checker.check_rule_text(RULE_BURIED) == ["缺「一句话」", "缺「什么时候撞上」"],
       "规则导读埋在第一个小节标题之后不算数（与 doc/ 同一口径）")
+RULE_AFTER_PROSE = """# 某条规则
+
+这是一段正文散文，它一出现就说明导读迟到了。
+
+**一句话**：导读排在散文后面，读者早就开始读正文了。
+**什么时候撞上**：把导读写在正文后面的时候。
+"""
+check(checker.check_rule_text(RULE_AFTER_PROSE) == ["缺「一句话」", "缺「什么时候撞上」"],
+      "规则导读排在正文散文之后同样不算数（两处扫描共用一个实现）")
+check(checker.parse_header.__doc__ and "header_lines" in checker.check_rule_text.__doc__,
+      "规则校验明写了与 doc/ 共用扫描口径（防止日后又各写一份）")
 
 RULE_TILDE = """# 某条规则
 
@@ -483,6 +494,12 @@ with tempfile.TemporaryDirectory() as tmp:
                  "把 Markdown 文档转换成排版精美的 PDF，支持目录、页码与水印，输出可直接打印。\n---\n")
     check(any("触发时机" in p for p in checker.check_skill(wrong_name)),
           "只讲能力不讲何时用的 description 被抓出（调度器据此选不中它）")
+
+check(checker.yaml_scalar('"Use when the user says \\"export\\" and wants a file"')
+      == 'Use when the user says "export" and wants a file',
+      "双引号标量里的转义引号不截断（截断会把合格描述冤判成太短）")
+check(checker.yaml_scalar("'it''s triggered by 导出'") == "it's triggered by 导出",
+      "单引号标量里的双写引号按 YAML 规则还原")
 
 print("[4] 报告双产物的那句话有人盯着")
 
@@ -560,6 +577,15 @@ check(checker.baseline_regressions(BASE, BASE) == [], "基线没动时放行")
 check(checker.baseline_regressions(BASE, LOOSER), "把计数改大会被抓出")
 check(checker.baseline_regressions(BASE, NEW_FILE), "把新欠账文件写进基线会被抓出")
 check(checker.load_baseline_at("这个-ref-不存在") is None, "取不到目标分支基线时返回 None，不误判")
+check(checker.changed_docs_since("这个-ref-不存在") == [],
+      "取不到 ref 时「本次碰过的文档」返回空表，不误判")
+touched_now = checker.changed_docs_since("origin/main")
+check(len(touched_now) > 50, f"能列出本次碰过的 doc（实测 {len(touched_now)} 篇）")
+still_bad = [r for r in touched_now
+             if os.path.exists(os.path.join(REPO_ROOT, r))
+             and not checker.WEEKLY_REPORT.match(os.path.basename(r)[:-3])
+             and checker.check_file(os.path.join(REPO_ROOT, r))]
+check(not still_bad, f"本次碰过的非周报文档都已补齐导读（漏网：{still_bad[:3]}）")
 check(not checker.git_ref_exists("这个-ref-不存在"), "认得出「ref 压根不存在」")
 check(checker.git_ref_exists("HEAD"), "认得出存在的 ref（判据不是恒假）")
 bogus = subprocess.run(

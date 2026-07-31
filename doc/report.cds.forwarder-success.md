@@ -2,6 +2,10 @@
 
 > **版本**：v1.0 | **日期**：2026-05-08 | **状态**：已落地
 
+**一句话**：蓝绿部署改造连续失败后改推 forwarder 方案，当天七个提交做完切换，业务面零抖动通过验收。
+**谁该读**：想知道 CDS 为什么不走蓝绿的人；维护 forwarder 链路的工程师。
+**读完能做什么**：说清放弃蓝绿的判断依据，以及 forwarder 方案当时验收到什么程度。
+
 > **关联**:[doc/guide.cds.blue-green-handoff.md](./guide.cds.blue-green-handoff.md)(失败收尾)、[doc/design.cds.control-data-split.md](./design.cds.control-data-split.md)(整体设计)
 > 接手昨日交接的蓝绿改造(27 个 hotfix 仍未跑通 verify-target),用户决策"放弃蓝绿,推 forwarder 替代"。本日工作 7 个 commit,业务面 0 抖动验收通过。
 
