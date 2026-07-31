@@ -268,6 +268,17 @@ brace_impl, _ = checker.scan_body("# 示例 · 指南\n\n```ts\nconst a = 1;\n``
 check(brace_impl == 3, f"被 ```{{}} 假闭合骗过去的话代码会漏计（实测 {brace_impl} 行）")
 check(checker.fence_closes(("`", 3), ("`", 3), ""), "干净的闭合围栏仍然算闭合（没误伤）")
 
+# 缩进四格起就是缩进代码块，不是围栏。认了它，一段缩进示例就能把后面的正文
+# 整段藏进「块内」，死链闸门扫不到那些行还照样报绿。
+INDENTED_FENCE = ("# 示例 · 指南\n\n"
+                  "    ```markdown\n"
+                  "    示例里的一行\n"
+                  "[坏链](./missing.md)\n")
+hidden = [line for _, line in checker.body_lines(INDENTED_FENCE) if "missing.md" in line]
+check(hidden, "四格缩进的 ``` 不算围栏，后面的死链藏不住")
+check(checker.fence_delim("    ```ts") is None, "四格缩进不是围栏")
+check(checker.fence_delim("   ```ts") is not None, "三格以内仍是围栏（没误伤列表里的围栏）")
+
 TILDE_IMPL = "# 示例 · 指南\n\n~~~typescript\nconst a = 1;\nconst b = 2;\n~~~\n"
 BACKTICK_IMPL = TILDE_IMPL.replace("~~~", "```")
 tilde_lines, _ = checker.scan_body(TILDE_IMPL)
@@ -754,7 +765,33 @@ with open(os.path.join(doc_dir, "index.yml"), encoding="utf-8") as fh:
 with open(os.path.join(doc_dir, "guide.list.directory.md"), encoding="utf-8") as fh:
     list_src = fh.read()
 
-index_keys = {m.group(1) for m in re.finditer(r'^\s{2}([a-z][\w.-]+):\s*"', index_src, re.M)}
+
+
+def _yaml_block(src: str, key: str) -> str:
+    """截出顶层 `key:` 底下那一段（到下一个顶行开头为止）。
+
+    外部同步工具只读 docs:，所以「有没有登记」只能按 docs: 里的成员算。
+    整份文件通配的话，某篇文档挪进 aliases: 之类的别处也会被判成已登记，
+    而消费者那边其实读不到它（形状 1：判据比它该管的范围宽）。
+    """
+    m = re.search(rf"^{re.escape(key)}:[ \t]*$", src, re.M)
+    if not m:
+        return ""
+    rest = src[m.end():]
+    stop = re.search(r"^\S", rest, re.M)
+    return rest[:stop.start()] if stop else rest
+
+
+INDEX_ENTRY = re.compile(r'^\s{2}([a-z][\w.-]+):\s*"(.*)"\s*$', re.M)
+docs_block = _yaml_block(index_src, "docs")
+index_keys = {m.group(1) for m in INDEX_ENTRY.finditer(docs_block)}
+# 合成用例：只在别的顶层块里露脸的 key 不算登记，docs: 里的才算
+SAMPLE_YML = ('folders:\n  - prefix: spec\n'
+              'docs:\n  spec.real: "真的登记了"\n'
+              'aliases:\n  spec.fake: "只在别处露脸"\n')
+sample_keys = {m.group(1) for m in INDEX_ENTRY.finditer(_yaml_block(SAMPLE_YML, "docs"))}
+check(sample_keys == {"spec.real"},
+      f"index.yml 成员只认 docs: 段（合成用例实测 {sorted(sample_keys)}）")
 # 只认目录条目行：`- [标题](./x.md) `key``。正文里顺手带的链接不算「已登记」，
 # 否则一篇只在导语里被提了一嘴、却没进分类清单的文档会被判成已收录。
 CATALOG_ENTRY = re.compile(r"^- \[(?P<title>[^\]]+)\]\(\./(?P<key>[\w.-]+)\.md\)\s+`(?P=key)`\s*$", re.M)
@@ -787,9 +824,11 @@ check(not (doc_keys - list_keys), f"每篇 doc 都登记进 guide.list（漏登�
 check(not (list_keys - doc_keys), f"guide.list 没有幽灵条目（幽灵：{sorted(list_keys - doc_keys)[:5]}）")
 check(len(doc_keys) > 100, f"成员集比对读到的是真实文档集（实测 {len(doc_keys)} 篇）")
 
-index_drift = [k for k, t in re.findall(r'^\s{2}([a-z][\w.-]+):\s*"(.*)"\s*$', index_src, re.M)
+index_titles = {m.group(1): m.group(2) for m in INDEX_ENTRY.finditer(docs_block)}
+index_drift = [k for k, t in index_titles.items()
                if k in titles and titles[k] and t != titles[k]]
 check(not index_drift, f"doc/index.yml 的标题与 H1 一致（漂移：{index_drift[:5]}）")
+check(len(index_titles) > 100, f"标题比对读到的是 docs: 全段（实测 {len(index_titles)} 条）")
 
 list_drift = [k for k, title in titles.items()
               if title and k in catalog and catalog[k] != title]

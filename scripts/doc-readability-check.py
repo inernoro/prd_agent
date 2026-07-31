@@ -100,17 +100,21 @@ MD_REF_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*<?([^\s>]+)>?", re.M)
 NON_FILE_TARGET = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
-FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})\s*(.*)$")
+# 缩进最多三格才是围栏，第四格起 Markdown 当缩进代码块看（CommonMark）。
+# 这一格之差不是洁癖：把深缩进的 ``` 当围栏，就能用一段缩进代码块把后面的
+# 正文整段藏进「块内」，死链闸门扫不到那些行还照样报绿。
+FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*(.*)$")
 
 
 def fence_delim(line: str) -> tuple[str, int] | None:
     """返回这行围栏的 (定界符字符, 长度)，不是围栏则 None。
 
-    两件事都不能省：Markdown 两种围栏都合法（只认反引号的话，`~~~ts` 里的
+    三件事都不能省：Markdown 两种围栏都合法（只认反引号的话，`~~~ts` 里的
     实现代码在判据眼里压根不存在）；长度也必须留着 —— 四个反引号包着的
-    示例里往往还有三个反引号的内层围栏，按三个就闭合会把外层提前关掉。
+    示例里往往还有三个反引号的内层围栏，按三个就闭合会把外层提前关掉；
+    行首缩进同样要留着（所以这里不 strip），四格以上不算围栏。
     """
-    m = FENCE_OPEN.match(line.strip())
+    m = FENCE_OPEN.match(line)
     return (m.group(1)[0], len(m.group(1))) if m else None
 
 
@@ -129,13 +133,13 @@ def fence_info(line: str) -> str:
     闭合判定必须看原始值：```{} 和 ```"" 归一化后都是空串，但 Markdown 里
     它们仍是块内的一行（闭合围栏只允许跟空白）。
     """
-    m = FENCE_OPEN.match(line.strip())
+    m = FENCE_OPEN.match(line)
     return m.group(2) if m else ""
 
 
 def fence_lang(line: str) -> str:
     """取围栏的语言标记：只认第一个词，后面的 title="x" / {linenos} 之类属性丢掉。"""
-    m = FENCE_OPEN.match(line.strip())
+    m = FENCE_OPEN.match(line)
     info = (m.group(2) if m else "").strip()
     token = re.split(r"[\s,{]", info, 1)[0]
     return token.strip("\"'`{}").lower()
@@ -162,8 +166,10 @@ def header_lines(text: str):
     seen_h1 = False
     for raw in text.splitlines()[:HEAD_LINES]:
         line = raw.strip()
-        delim = fence_delim(line)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(line))):
+        # 围栏判定一律喂原始行：喂 strip 过的行等于把缩进抹平，四格缩进的
+        # ``` 又会被当成围栏，上面那条限制就成了摆设。
+        delim = fence_delim(raw)
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
@@ -296,11 +302,11 @@ def scan_body(text: str) -> tuple[int, int]:
     pointer_cols: set[int] = set()
     for idx, raw in enumerate(lines):
         st = raw.strip()
-        delim = fence_delim(st)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(st))):
+        delim = fence_delim(raw)  # 同上：缩进要留给围栏判定
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
             if not in_fence:
                 fence_kind = delim
-                in_fence, lang = True, fence_lang(st)
+                in_fence, lang = True, fence_lang(raw)
             else:
                 in_fence, lang = False, ""
             continue
