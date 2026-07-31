@@ -673,7 +673,17 @@ class DailyVerdictContractTests(unittest.TestCase):
         for failure, closure in (
             ("CDS smoke status=timeout", "CDS smoke status=healthy"),
             ("CDS smoke status=timed_out", "CDS smoke status=passed"),
-            ("CDS deploy stage=building_timeout", "CDS deploy stage=completed"),
+            (
+                "CDS deploy stage=deploy_blocked_pending_import",
+                "CDS deploy stage=deployed",
+            ),
+            (
+                "CDS deploy stage=deploy_trigger_failed",
+                "CDS deploy stage=deployed",
+            ),
+            ("CDS deploy stage=deploy_failed", "CDS deploy stage=deployed"),
+            ("CDS deploy stage=building_timeout", "CDS deploy stage=deployed"),
+            ("CDS deploy stage=deploy_poll_timeout", "CDS deploy stage=deployed"),
         ):
             with self.subTest(stage="opens", failure=failure):
                 body = report_body("覆盖不足").replace(
@@ -700,6 +710,12 @@ class DailyVerdictContractTests(unittest.TestCase):
 
         body = report_body("覆盖不足").replace(
             "当前部署 SHA 已前进", "CDS smoke timeout 配置已核对"
+        )
+        self.assertEqual(
+            [], archive_report._daily_conclusion_contract_errors("conditional", body)
+        )
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS deploy stage=deployed"
         )
         self.assertEqual(
             [], archive_report._daily_conclusion_contract_errors("conditional", body)

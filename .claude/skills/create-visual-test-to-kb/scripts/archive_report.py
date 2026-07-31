@@ -624,18 +624,30 @@ _ONGOING_FAILURE_PREFIX_PATTERN = (
     r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?(?:未|没(?:有)?))"
 )
 _FAILURE_QUANTIFIER_PATTERN = r"(?:(?:全部|完全|全量|全数|全都|悉数)\s*)?"
+_RAW_FAILURE_VALUE_PATTERN = (
+    r"(?:missing|error|failed|failure|stopped|unhealthy|cancelled|"
+    r"timeout|timed[_-]?out)"
+)
+_CDS_DEPLOY_FAILURE_STAGE_PATTERN = (
+    r"(?:deploy_blocked_pending_import|deploy_trigger_failed|deploy_failed|"
+    r"building_timeout|deploy_poll_timeout)"
+)
+_RAW_RESOLVED_VALUE_PATTERN = (
+    r"(?:passed|succeeded|success|successful|ready|running|healthy|completed|ok)"
+)
 _RAW_FAILURE_STATUS_PATTERN = (
     r"(?:(?:非|不为|不等于)\s*0(?![\d.])"
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?[1-9]\d*"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
     r"|\b(?:failed|failure)\b"
-    r"|(?:status|stage|状态|阶段)\s*[:：=]\s*"
-    r"(?:missing|error|failed|failure|stopped|unhealthy|timeout|timed[_-]?out|building[_-]?timeout)\b)"
+    rf"|(?:status|状态)\s*[:：=]\s*{_RAW_FAILURE_VALUE_PATTERN}\b"
+    rf"|(?:stage|阶段)\s*[:：=]\s*(?:{_RAW_FAILURE_VALUE_PATTERN}"
+    rf"|{_CDS_DEPLOY_FAILURE_STAGE_PATTERN})\b)"
 )
 _RAW_RESOLVED_STATUS_PATTERN = (
     r"(?:\b(?:passed|succeeded)\b"
-    r"|(?:status|stage|状态|阶段)\s*[:：=]\s*"
-    r"(?:passed|succeeded|success|successful|ready|running|healthy|completed|ok)\b"
+    rf"|(?:status|状态)\s*[:：=]\s*{_RAW_RESOLVED_VALUE_PATTERN}\b"
+    rf"|(?:stage|阶段)\s*[:：=]\s*(?:{_RAW_RESOLVED_VALUE_PATTERN}|deployed)\b"
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?0(?![\d.])"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?2[xX]{2})"
 )
