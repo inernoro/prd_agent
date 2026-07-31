@@ -2,6 +2,12 @@
 
 > **版本**：v0.1 | **日期**：2026-04-12 | **状态**：已落地
 
+**一句话**：从单项目走向多项目的主设计：权限边界、资源隔离与配套数据模型。
+**谁该读**：接手多项目架构的工程师。
+**读完能做什么**：说清项目之间靠什么隔离。
+
+---
+
 > 主设计稿。配套文档：
 > - [doc/spec.cds.project-model.md](./spec.cds.project-model.md) — 数据字典
 > - [doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md) — 7 期交付计划

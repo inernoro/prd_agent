@@ -5,6 +5,8 @@
 > **关联实现**：`prd-api/.../Models/AgentUniverse/AgentCapability.cs`、`AgentCapabilityRegistry.cs`、`prd-api/.../Controllers/Api/AgentUniverseController.cs`、`prd-admin/.../services/real/agentUniverse.ts`、`prd-admin/.../pages/document-store/ReprocessChatDrawer.tsx`
 > **关联设计**：`.claude/rules/app-identity.md`（应用身份）、`.claude/rules/llm-gateway.md`（网关）、[debt.agent-universe.md](./debt.agent-universe.md)（债务台账）
 > **一句话**：把"每个智能体各搞各的调用方式、再加工还把视觉创作降级成假聊天"升级为"一套能力契约 + 一套调用信封，让所有智能体像漫威宇宙那样按统一标准互通"。
+> **谁该读**：要新增智能体能力的工程师。
+> **读完能做什么**：按能力契约把自己的智能体接进去。
 
 
 ## 1. 管理摘要

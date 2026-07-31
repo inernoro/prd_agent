@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-05-09 | **状态**：已落地
 
+**一句话**：控制面与数据面分离加独立转发进程已落地，蓝绿那部分已废弃，本文留档说明取舍。
+**谁该读**：维护流量链路的工程师。
+**读完能做什么**：分清哪部分现行、哪部分已废弃。
+
+---
+
 > 2026-05-09 更新:本设计的"控制面/数据面分离 + 独立 Forwarder"部分已 100% 落地
 > (见 [doc/report.cds.forwarder-success.md](./report.cds.forwarder-success.md)),但"Admin Daemon 蓝绿热替换"部分
 > 因 verify-target stage 反复卡死导致放弃,改为更简单的"daemon 走 systemd 重启,

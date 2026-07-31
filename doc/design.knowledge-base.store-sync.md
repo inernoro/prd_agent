@@ -5,6 +5,8 @@
 > **关联实现**：`prd-api/.../Controllers/Api/DocumentStoreSyncController.cs`、`prd-api/.../Models/DocumentStoreSyncLink.cs`、`prd-admin/.../pages/document-store/SyncManagerPanel.tsx`、`prd-admin/.../services/real/documentStoreSync.ts`
 > **关联设计**：[design.knowledge-base.store.md](./design.knowledge-base.store.md)（知识库主设计）、[design.acceptance.kb.md](./design.acceptance.kb.md) §5.C（前身：export/import + kb_sync.py CLI，本设计将其泛化为通用 UI 能力）、[debt.knowledge-base.store-sync.md](./debt.knowledge-base.store-sync.md)（已知边界与还款台账）
 > **一句话**：把"知识库内容只能困在单个环境里"升级为"任一知识库都能和另一处的库（跨环境，或本环境另一个库）建立永久配对、一键双向同步、改了显示待同步、同步完显示对勾"。
+> **谁该读**：做跨环境同步的工程师。
+> **读完能做什么**：说清同步的方向语义与归属对齐规则。
 
 
 ## 1. 管理摘要

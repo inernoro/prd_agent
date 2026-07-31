@@ -1,6 +1,12 @@
 # CDS 复制集模式（一个入口，多个版本并行） · 设计
 
 > **版本**：v1.0 | **日期**：2026-07-26 | **状态**：已落地
+
+**一句话**：一个入口挂多个版本并行运行，用于灰度对比与快速回退。
+**谁该读**：要用多版本并行的人。
+**读完能做什么**：说清入口怎么分流、数据怎么隔离。
+
+---
 >
 > 关联：[design.cds.control-data-split.md](./design.cds.control-data-split.md)、[design.cds.multi-project.md](./design.cds.multi-project.md)、[guide.cds.multi-branch-db.md](./guide.cds.multi-branch-db.md)
 
