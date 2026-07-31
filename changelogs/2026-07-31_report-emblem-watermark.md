@@ -25,3 +25,5 @@
 | fix | ci | 守卫改为直接编译执行生成器源码文本，彻底绕开字节码缓存：上一版置 sys.dont_write_bytecode 只挡住写、挡不住读，只要之前留下过合法 .pyc，exec_module 仍会加载旧字节码，守卫验的就不是盘上这份代码 |
 | fix | ci | 刊徽守卫改为「凡能命中该元素的规则、每条声明都必须合约定值」，不再按字面选择器匹配 + 算层叠胜者：CSS 胜者由特异性先于源码顺序决定，在 .masthead 前插一条 header.masthead{position:static} 浏览器就用 static，而只认字面 .masthead 的判据完全看不见它。守卫不实现特异性计算（那等于在测试里重写 CSS 引擎），改用更强的契约堵死整类失明 |
 | fix | ci | data-emblem 发现与计数改为单双引号都认；顺带修好规则体正则会把 @media 整块吞掉、导致嵌套的窄屏规则整档消失的问题 |
+| fix | ci | 契约元素上拒收能绕过长属性判据的简写/逻辑属性（inset* / all / inline-size / block-size）：判据按长属性名精确取值，这些写法根本不进那条正则——`.emblem{inset:0}` 把桌面偏移改成 0、`all:initial` 把整份契约重置，守卫都判绿 |
+| fix | ci | data-emblem 属性正则允许等号两侧空白：HTML 允许 `data-emblem = "x"`，此前那枚水印在发现环节就消失 |

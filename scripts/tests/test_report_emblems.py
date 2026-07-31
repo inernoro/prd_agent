@@ -26,8 +26,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 # data-emblem 属性的发现正则。**单双引号都要认**，且捕获整个属性值。
 # 收窄任何一处都会让某些合法写法在「发现」环节就消失，后面判得再宽也看不到它：
-#   `([a-z]+)` 漏掉 asteroid-2 / Moon；只认双引号漏掉 data-emblem='asteroid-2'。
-EMBLEM_ATTR_RE = re.compile(r"""data-emblem=(["\'])(.*?)\1""")
+#   `([a-z]+)` 漏掉 asteroid-2 / Moon；只认双引号漏掉 data-emblem='asteroid-2'；
+#   等号两侧不许空白则漏掉 `data-emblem = "asteroid-2"`。三处都是合法 HTML。
+EMBLEM_ATTR_RE = re.compile(r"""data-emblem\s*=\s*(["\'])(.*?)\1""")
 
 # 刊物 -> (产物文件, 该刊物应有的刊徽)
 # 月报（sun）尚无模板，故不在此表；它的刊徽定义保留在设计系统规则里备用，
@@ -245,7 +246,8 @@ def check_svg_integrity(label, rel, kind, text):
     为什么要查 id：mask/clipPath 引不到就渲染成空白或整块实心——
     页面不报错，肉眼在 0.13 透明度下也未必看得出，属于典型的静默失效。
     """
-    m = re.search(r'<svg[^>]*data-emblem=(["\'])%s\1.*?</svg>' % re.escape(kind), text, re.S)
+    m = re.search(r'<svg[^>]*data-emblem\s*=\s*(["\'])%s\1.*?</svg>' % re.escape(kind),
+                  text, re.S)
     if not m:
         fail(f"{label}: {kind} 的 <svg> 标签不完整（截不出闭合片段）")
         return
@@ -442,6 +444,29 @@ def require_all_declarations(label, rel, rules, prop, ok, why):
 # 第七轮我说「把同一份契约的属性一次列全」，列的却只有 .emblem 自己那半。
 FOREGROUND_CLASSES = ("t", "r", "stamp")
 
+# 能在不写出契约长属性名的情况下把契约推翻的简写/逻辑属性。
+# 判据是按属性名精确取值的，这些写法根本不进那条正则：
+#   `.emblem{inset:0}`      -> 桌面 top/right 变 0，刊徽跑到报头左上角
+#   `.emblem{all:initial}`  -> 定位/层级/透明度/尺寸整份契约一起没了
+#   `inline-size/block-size` -> width/height 的逻辑属性别名
+# 与第 13 轮同样的取舍：不展开简写（那要实现 CSS 的简写展开表，又一个引擎），
+# 直接**拒收**——契约元素上本来也没有正当理由写这些。
+CONTRACT_SHORTHANDS = re.compile(
+    r"^(all|inset(-block|-inline)?(-start|-end)?|inline-size|block-size)$")
+
+
+def reject_contract_shorthands(label, rel, rules, what):
+    """契约元素的规则里不许出现能绕过长属性判据的简写。"""
+    for r in rules:
+        for m in re.finditer(r"(?:^|;)([a-z-]+):", r["body"]):
+            prop = m.group(1)
+            if CONTRACT_SHORTHANDS.match(prop):
+                fail(f"{label}({rel}): 规则 `{r['sel']}` 用了简写/逻辑属性 {prop!r}——"
+                     f"它能在不写出长属性名的情况下推翻{what}的契约"
+                     f"（inset 改 top/right、all 重置全部、*-size 顶替 width/height），"
+                     f"判据按长属性名取值看不见它。请改写成明确的长属性。")
+
+
 POSITIONED = ("relative", "absolute", "fixed", "sticky")
 
 
@@ -457,6 +482,7 @@ def check_foreground_stacking(label, rel, text):
             fail(f"{label}({rel}): 找不到报头内 `.{cls}` 的 CSS 规则——"
                  f"报头前景没有被提到刊徽之上，水印会盖住刊名/期号")
             continue
+        reject_contract_shorthands(label, rel, rules, f"报头前景 `.{cls}`")
         seen_pos = require_all_declarations(
             label, rel, rules, "position",
             lambda v: v in POSITIONED,
@@ -485,6 +511,7 @@ def check_positioning_context(label, rel, text):
         fail(f"{label}({rel}): 找不到以 `.masthead` 为目标的 CSS 规则——"
              f"刊徽的绝对定位没有可锚定的祖先")
         return
+    reject_contract_shorthands(label, rel, rules, "报头定位上下文")
     seen = require_all_declarations(
         label, rel, rules, "position",
         lambda v: v in POSITIONED,
@@ -533,6 +560,8 @@ def check_css_wiring(label, rel):
     # z-index 同属这份契约：板式叫「衬字水印」，靠 z-index:0 垫在 .t/.r/.stamp（z-index:1）
     # 之下。它一旦漂成 1 以上，刊徽就从「衬底」变成「盖住刊名」，而前两条依然成立。
     # 既然这一轮的教训是「修的是类不是实例」，就把同一份契约的属性一次列全。
+    reject_contract_shorthands(label, rel, rules, "刊徽水印")
+
     # 判据取「所有匹配规则的每一条声明都必须等于约定值」，而不是算层叠胜者：
     # 胜者由特异性先于源码顺序决定，算特异性等于在测试里重写 CSS 引擎（新的漂移源）。
     # 要求全体一致更严格，但换来「换个更特异的写法就失明」这一整类洞被堵死。
