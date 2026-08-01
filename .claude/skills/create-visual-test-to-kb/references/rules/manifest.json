@@ -1,37 +1,37 @@
 {
   "kind": "acceptance-rule-snapshots",
-  "sourceCommit": "9ff6f9de9e6406a99a648bc6a55aa119a4066d28+worktree",
-  "generatedAt": "2026-07-31T18:35:22.410336+00:00",
+  "sourceCommit": "145754045dcb1725067814c30ae35f1c18113842+worktree",
+  "generatedAt": "2026-08-01T06:18:33.897345+00:00",
   "sources": [
     {
       "sourceId": "acceptance.rule.enterprise",
       "sourcePath": "doc/rule.acceptance.map-enterprise.md",
       "snapshotPath": "references/rules/rule.acceptance.map-enterprise.md",
-      "contentHash": "sha256:c974eb289dca752a7f9ff15700a3575f93882939f405aa151311260599b11c25"
+      "contentHash": "sha256:d6b3c09be18a7ddf12f6b4f4836a36dea38621511d11f16ac2f814a87b6d53b7"
     },
     {
       "sourceId": "acceptance.rule.ssot",
       "sourcePath": "doc/rule.acceptance.ssot.md",
       "snapshotPath": "references/rules/rule.acceptance.ssot.md",
-      "contentHash": "sha256:12839e181f5a4379a1f202f7cd927cc3674f13c63aee8fc70d083dc59fc403ad"
+      "contentHash": "sha256:0a7216389b3101ada56d9c26eb9503863bf91a4223c71fcd863c75da90bf0c88"
     },
     {
       "sourceId": "acceptance.guide.daily-sop",
       "sourcePath": "doc/guide.acceptance.daily-sop.md",
       "snapshotPath": "references/rules/guide.acceptance.daily-sop.md",
-      "contentHash": "sha256:6099390c28b779dcec853558922323320a2209a946f62aac7a4c067d36fe9f36"
+      "contentHash": "sha256:424fd516eea5abca261a801f46166943566921cefc60a76a289f791f4cd5235b"
     },
     {
       "sourceId": "acceptance.guide.report-evidence",
       "sourcePath": "doc/guide.acceptance.report-evidence.md",
       "snapshotPath": "references/rules/guide.acceptance.report-evidence.md",
-      "contentHash": "sha256:9a4b7b750791e08506bbe7fae915ad166956622938be2cd6a0c9ab6fbd22d789"
+      "contentHash": "sha256:308cea07905f10011027cfc915b321a92e27d04849b6f8715b459dd11698fe03"
     },
     {
       "sourceId": "acceptance.design.knowledge-governance",
       "sourcePath": "doc/design.acceptance.knowledge-governance.md",
       "snapshotPath": "references/rules/design.acceptance.knowledge-governance.md",
-      "contentHash": "sha256:436048e71b1660e88701c23371efb434505b495ea30e6e9137194d199366fe64"
+      "contentHash": "sha256:48836751159e34d4d71fb5df2f96117602d0eb4f46548d2179c7238c17b8cea7"
     }
   ]
 }
