@@ -845,15 +845,46 @@ check(checker.baseline_regressions(BASE, NEW_FILE), "把新欠账文件写进基
 check(checker.load_baseline_at("这个-ref-不存在") is None, "取不到目标分支基线时返回 None，不误判")
 check(checker.changed_docs_since("这个-ref-不存在") is None,
       "算不出来时返回 None 而不是空表（空表会被当成「一篇没碰」，又是静默降级）")
+# 用独立 Git 仓库验证 changed_docs_since 能找出真实改动。不能拿当前 PR 的
+# 文档数量当测试数据：只改代码的 PR 合法地会得到空表。
+with tempfile.TemporaryDirectory() as tmp:
+    def probe_git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", *args], cwd=tmp, capture_output=True, text=True, check=True)
+
+    probe_git("init", "-q")
+    probe_git("config", "user.email", "doc-ratchet-test@example.invalid")
+    probe_git("config", "user.name", "Doc Ratchet Test")
+    os.makedirs(os.path.join(tmp, "doc"))
+    probe_doc = os.path.join(tmp, "doc", "design.probe.md")
+    with open(probe_doc, "w", encoding="utf-8") as fh:
+        fh.write("# 初始文档\n")
+    probe_git("add", "doc/design.probe.md")
+    probe_git("commit", "-qm", "初始化")
+    probe_base = probe_git("rev-parse", "HEAD").stdout.strip()
+    with open(probe_doc, "a", encoding="utf-8") as fh:
+        fh.write("\n补充内容\n")
+    with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write("# 非 doc 文件\n")
+    probe_git("add", "doc/design.probe.md", "README.md")
+    probe_git("commit", "-qm", "更新文档")
+    original_repo_root = checker.REPO_ROOT
+    try:
+        checker.REPO_ROOT = tmp
+        probe_changed = checker.changed_docs_since(probe_base)
+    finally:
+        checker.REPO_ROOT = original_repo_root
+    check(probe_changed == ["doc/design.probe.md"],
+          "能从独立 Git 用例列出本次碰过的 doc，并忽略非 doc 文件")
 # CI 里 fetch 的是 origin/base，本地一般只有 origin/main —— 取第一个存在的，
 # 两个都没有就明确打印跳过原因，不假装跑过（空跑的绿灯比没有更糟）。
 base_ref = next((r for r in ("origin/base", "origin/main") if checker.git_ref_exists(r)), "")
-touched_now = checker.changed_docs_since(base_ref) if base_ref else []
+touched_result = checker.changed_docs_since(base_ref) if base_ref else []
 if base_ref:
-    check(touched_now is not None,
-          f"能列出本次碰过的 doc（对照 {base_ref}，实测 {len(touched_now)} 篇）")
+    check(touched_result is not None,
+          f"能计算本分支碰过的 doc（对照 {base_ref}）")
 else:
     print("  skip 「本次碰过的文档」用例：没有可对照的 base ref（origin/base / origin/main 都不在）")
+touched_now = touched_result or []
 still_bad = [r for r in touched_now
              if os.path.exists(os.path.join(REPO_ROOT, r))
              and not checker.WEEKLY_REPORT.match(os.path.basename(r)[:-3])

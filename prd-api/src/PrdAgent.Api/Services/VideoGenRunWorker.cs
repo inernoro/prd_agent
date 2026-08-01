@@ -274,7 +274,9 @@ public class VideoGenRunWorker : BackgroundService
             SystemPromptRedacted: "[VIDEO_GEN_DIRECT]",
             RequestType: ModelTypes.VideoGen,
             AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            ForceFullShadowSample: run.ForceFullShadowSample,
+            RunId: run.Id,
+            LogicalRequestId: run.Id));
 
         var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
         if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
@@ -516,7 +518,9 @@ public class VideoGenRunWorker : BackgroundService
             SystemPromptRedacted: null,
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat,
-            ForceFullShadowSample: run.ForceFullShadowSample
+            ForceFullShadowSample: run.ForceFullShadowSample,
+            RunId: run.Id,
+            LogicalRequestId: run.Id
         ));
 
         var storyboardProject = await GetRunProjectAsync(run);
@@ -872,6 +876,21 @@ public class VideoGenRunWorker : BackgroundService
         var client = scope.ServiceProvider.GetRequiredService<IOpenRouterVideoClient>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
         var expectedJobId = resumeExistingJob ? scene.JobId! : claimId;
+        var sceneLogicalRequestId = $"{run.Id}_scene_{sceneIdx}";
+        using var sceneContextScope = ctxAccessor.BeginScope(new LlmRequestContext(
+            RequestId: sceneLogicalRequestId,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.OwnerAdminId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[VIDEO_GEN_SCENE]",
+            RequestType: ModelTypes.VideoGen,
+            AppCallerCode: appCallerCode,
+            ForceFullShadowSample: run.ForceFullShadowSample,
+            RunId: run.Id,
+            LogicalRequestId: sceneLogicalRequestId));
 
         try
         {
@@ -897,21 +916,8 @@ public class VideoGenRunWorker : BackgroundService
                     DurationSeconds = scene.Duration ?? run.DirectDuration,
                     GenerateAudio = run.GenerateAudio,
                     UserId = run.OwnerAdminId,
-                    RequestId = $"{run.Id}_scene_{sceneIdx}",
+                    RequestId = sceneLogicalRequestId,
                 };
-
-                using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
-                RequestId: $"{run.Id}_scene_{sceneIdx}",
-                GroupId: null,
-                SessionId: run.Id,
-                UserId: run.OwnerAdminId,
-                ViewRole: null,
-                DocumentChars: null,
-                DocumentHash: null,
-                SystemPromptRedacted: "[VIDEO_GEN_SCENE]",
-                RequestType: ModelTypes.VideoGen,
-                AppCallerCode: appCallerCode,
-                ForceFullShadowSample: run.ForceFullShadowSample));
 
                 var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
                 if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
@@ -1086,7 +1092,9 @@ public class VideoGenRunWorker : BackgroundService
             ViewRole: null, DocumentChars: null, DocumentHash: null, SystemPromptRedacted: null,
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            ForceFullShadowSample: run.ForceFullShadowSample,
+            RunId: run.Id,
+            LogicalRequestId: $"{run.Id}_scene_{sceneIdx}"));
 
         var systemPrompt = "你是视频导演。请重新生成一个英文 prompt 来描述同一主题的新镜头，画面要与原 prompt 不同但风格一致。直接输出 prompt 文本，不要解释、不要 JSON。";
         var userMsg = $"原主题：{scene.Topic}\n原 prompt：{scene.Prompt}\n\n请生成一个新 prompt。";

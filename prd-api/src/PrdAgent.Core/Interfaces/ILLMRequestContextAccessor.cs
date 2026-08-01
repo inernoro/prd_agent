@@ -48,7 +48,11 @@ public record LlmRequestContext(
     /// 业务 Run 已持久化的逻辑模型公开标识。只要 <see cref="ModelResolutionType"/> 为
     /// <c>LogicalModel</c>，执行层就必须使用该稳定身份进入独立 Gateway，禁止重新猜测或退回旧模型池。
     /// </summary>
-    string? LogicalModelPublicId = null);
+    string? LogicalModelPublicId = null,
+    /// <summary>一次用户动作或异步任务的稳定关联 ID。</summary>
+    string? LogicalRequestId = null,
+    /// <summary>供应商异步任务 ID。</summary>
+    string? ProviderTaskId = null);
 
 public interface ILLMRequestContextAccessor
 {

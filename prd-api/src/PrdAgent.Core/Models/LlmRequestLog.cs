@@ -21,6 +21,53 @@ public static class GatewayTransports
 }
 
 /// <summary>
+/// 单条网关日志所代表的上游操作。RequestType 表示能力，Operation 表示这次 HTTP 调用在异步任务中的角色。
+/// </summary>
+public static class GatewayOperations
+{
+    public const string Invoke = "invoke";
+    public const string Submit = "submit";
+    public const string Status = "status";
+    public const string Download = "download";
+    public const string Cancel = "cancel";
+    public const string Probe = "probe";
+
+    public static string Resolve(
+        string? requestType,
+        string? httpMethod,
+        string? path,
+        string? declaredOperation = null,
+        bool? isHealthProbe = null)
+    {
+        if (isHealthProbe == true) return Probe;
+
+        var method = httpMethod?.Trim().ToUpperInvariant();
+        var isVideo = string.Equals(requestType, ModelTypes.VideoGen, StringComparison.OrdinalIgnoreCase);
+        if (!isVideo) return Invoke;
+
+        var declared = declaredOperation?.Trim().ToLowerInvariant();
+        if (declared == Status && method == "GET") return Status;
+        if (declared == Download && method == "GET") return Download;
+        if (declared == Cancel && method == "DELETE") return Cancel;
+        if (declared == Submit && method == "POST") return Submit;
+        if (declared == Invoke && method == "POST") return Invoke;
+
+        if (method == "DELETE") return Cancel;
+        if (method == "GET")
+            return path?.Contains("/content", StringComparison.OrdinalIgnoreCase) == true
+                ? Download
+                : Status;
+        return method == "POST" ? Submit : Invoke;
+    }
+
+    public static bool IsBusiness(string? operation)
+        => operation is Invoke or Submit;
+
+    public static bool CountsPricePerCall(string? operation)
+        => IsBusiness(operation);
+}
+
+/// <summary>
 /// 大模型请求日志（用于调试与监控；注意：不得存储 PRD 原文与敏感信息）
 /// </summary>
 [AppOwnership(AppNames.Llm, AppNames.LlmDisplay, IsPrimary = true)]
@@ -46,6 +93,10 @@ public class LlmRequestLog
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    /// <summary>一次用户动作或异步任务的稳定关联 ID；同一任务的 submit/status/download 共用。</summary>
+    public string? LogicalRequestId { get; set; }
+    /// <summary>供应商异步任务 ID；与每次 HTTP 往返的 ProviderRequestId 分开。</summary>
+    public string? ProviderTaskId { get; set; }
     public string? UserId { get; set; }
     public string? ViewRole { get; set; }
 
@@ -54,6 +105,8 @@ public class LlmRequestLog
     // - AppCallerCode: 业务侧用途标识（如 prd-agent-desktop.chat.sendmessage::chat）
     // - AppCallerCodeDisplayName: 中文显示名（日志写入时从 AppCallerRegistry 获取，自包含）
     public string? RequestType { get; set; }
+    /// <summary>本条物理调用的角色：invoke/submit/status/download/cancel/probe。</summary>
+    public string? Operation { get; set; }
     public string? AppCallerCode { get; set; }
     /// <summary>
     /// AppCallerCode 的中文显示名（日志写入时一次性保存，确保日志自包含）
@@ -335,6 +388,7 @@ public class LlmProviderAttempt
     public string? ModelGroupName { get; set; }
     public string? Protocol { get; set; }
     public string? Transport { get; set; }
+    public bool? ReachedProvider { get; set; }
     public string Status { get; set; } = "selected";
     public string? Reason { get; set; }
     public int? StatusCode { get; set; }

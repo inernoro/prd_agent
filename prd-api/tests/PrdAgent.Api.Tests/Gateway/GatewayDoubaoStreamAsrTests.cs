@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Api.Tests.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
@@ -13,10 +14,12 @@ public class GatewayDoubaoStreamAsrTests
     public async Task RawDoubaoStreamAsr_ShouldExecuteInsideGateway_AndReturnVerboseJson()
     {
         var fakeAsr = new FakeDoubaoStreamAsrExecutor();
+        var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(
             new NoopModelResolver(),
             new NoopHttpClientFactory(),
             NullLogger<LlmGateway>.Instance,
+            logWriter,
             doubaoStreamAsr: fakeAsr);
 
         var response = await gateway.SendRawWithResolutionAsync(
@@ -74,6 +77,55 @@ public class GatewayDoubaoStreamAsrTests
         segment.GetProperty("end").GetDouble().ShouldBe(2.5);
         segment.GetProperty("text").GetString().ShouldBe("第一句字幕");
         root.GetProperty("gateway").GetProperty("protocol").GetString().ShouldBe("websocket");
+        logWriter.Done.ShouldNotBeNull();
+        logWriter.Done!.ProviderAttempts.ShouldNotBeNull();
+        logWriter.Done.ProviderAttempts!.Single().ReachedProvider.ShouldBe(true);
+    }
+
+    [Fact]
+    public async Task RawDoubaoStreamAsr_WhenAudioIsMissing_ShouldNotCountProviderCall()
+    {
+        var fakeAsr = new FakeDoubaoStreamAsrExecutor();
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(
+            new NoopModelResolver(),
+            new NoopHttpClientFactory(),
+            NullLogger<LlmGateway>.Instance,
+            logWriter,
+            doubaoStreamAsr: fakeAsr);
+
+        var response = await gateway.SendRawWithResolutionAsync(
+            new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+                ModelType = ModelTypes.Asr,
+                IsMultipart = true,
+                MultipartFields = new Dictionary<string, object>
+                {
+                    ["response_format"] = "verbose_json",
+                },
+            },
+            new GatewayModelResolution
+            {
+                Success = true,
+                ResolutionType = "DedicatedPool",
+                ActualModel = "doubao-asr-stream",
+                ActualPlatformId = "exchange-doubao-stream",
+                ActualPlatformName = "Doubao Stream ASR",
+                PlatformType = "exchange",
+                ApiUrl = "wss://example.test/asr",
+                ApiKey = "app-123|access-456",
+                IsExchange = true,
+                ExchangeName = "Doubao Stream ASR",
+                ExchangeTransformerType = "doubao-asr-stream",
+            });
+
+        response.Success.ShouldBeFalse();
+        response.ErrorCode.ShouldBe("ASR_AUDIO_MISSING");
+        fakeAsr.AudioBytes.ShouldBeEmpty();
+        logWriter.Done.ShouldNotBeNull();
+        logWriter.Done!.ProviderAttempts.ShouldNotBeNull();
+        logWriter.Done.ProviderAttempts!.Single().ReachedProvider.ShouldBe(false);
     }
 
     [Fact]

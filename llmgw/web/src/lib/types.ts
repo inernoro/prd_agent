@@ -56,6 +56,8 @@ export type LlmLogListItem = {
   groupId?: string | null;
   sessionId?: string | null;
   runId?: string | null;
+  logicalRequestId?: string | null;
+  providerTaskId?: string | null;
   userId?: string | null;
   teamId?: string | null;
   serviceKeyId?: string | null;
@@ -65,6 +67,7 @@ export type LlmLogListItem = {
   username?: string | null;
   displayName?: string | null;
   requestType?: string | null;
+  operation?: string | null;
   appCallerCode?: string | null;
   appCallerCodeDisplayName?: string | null;
   appCallerTitle?: string | null;
@@ -111,6 +114,10 @@ export type LlmLogDetail = {
   groupId?: string | null;
   sessionId?: string | null;
   runId?: string | null;
+  logicalRequestId?: string | null;
+  providerTaskId?: string | null;
+  upstreamCallCount: number;
+  statusQueryCount: number;
   userId?: string | null;
   teamId?: string | null;
   serviceKeyId?: string | null;
@@ -118,6 +125,7 @@ export type LlmLogDetail = {
   environment?: string | null;
   serviceKeyPrefix?: string | null;
   requestType?: string | null;
+  operation?: string | null;
   appCallerCode?: string | null;
   appCallerCodeDisplayName?: string | null;
   appCallerTitle?: string | null;
@@ -247,6 +255,7 @@ export type ProviderAttempt = {
   modelGroupName?: string | null;
   protocol?: string | null;
   transport?: string | null;
+  reachedProvider?: boolean | null;
   status: string;
   reason?: string | null;
   statusCode?: number | null;
@@ -269,6 +278,7 @@ export type LogsMeta = {
   serviceKeyIds: string[];
   clientCodes: string[];
   environments: string[];
+  operations: string[];
 };
 
 export type LogsBucketItem = {
@@ -278,6 +288,9 @@ export type LogsBucketItem = {
 
 export type LogsSummaryData = {
   total: number;
+  upstreamCalls: number;
+  controlCalls: number;
+  statusQueries: number;
   succeeded: number;
   failed: number;
   running: number;
@@ -402,6 +415,8 @@ export type LogsListParams = {
   serviceKeyId?: string;
   clientCode?: string;
   environment?: string;
+  operation?: string;
+  view?: 'logical' | 'physical';
 };
 
 export type LogsListData = {

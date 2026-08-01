@@ -98,6 +98,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             RequestId = current?.RequestId ?? Guid.NewGuid().ToString("N"),
             GroupId = current?.GroupId,
             RunId = current?.RunId,
+            LogicalRequestId = current?.LogicalRequestId,
+            ProviderTaskId = current?.ProviderTaskId,
             SessionId = current?.SessionId,
             UserId = current?.UserId,
             ViewRole = current?.ViewRole,

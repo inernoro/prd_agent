@@ -26,6 +26,16 @@ public class LLMRequestContextAccessor : ILLMRequestContextAccessor
         {
             context = context with { RunId = prev.RunId };
         }
+        if (!string.IsNullOrWhiteSpace(prev?.LogicalRequestId)
+            && string.IsNullOrWhiteSpace(context.LogicalRequestId))
+        {
+            context = context with { LogicalRequestId = prev.LogicalRequestId };
+        }
+        if (!string.IsNullOrWhiteSpace(prev?.ProviderTaskId)
+            && string.IsNullOrWhiteSpace(context.ProviderTaskId))
+        {
+            context = context with { ProviderTaskId = prev.ProviderTaskId };
+        }
         if (!string.IsNullOrWhiteSpace(prev?.LogicalModelPublicId)
             && string.IsNullOrWhiteSpace(context.LogicalModelPublicId))
         {

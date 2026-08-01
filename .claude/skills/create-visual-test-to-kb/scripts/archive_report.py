@@ -28,6 +28,7 @@
 import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html, hashlib
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
 REPORT_KINDS = (
@@ -1100,6 +1101,7 @@ class _EvidenceHtmlParser(HTMLParser):
         self.back_links = 0
         self.side_tabs = []
         self.directory_hrefs = []
+        self.internal_hrefs = []
         self.mobile_nav_toggles = 0
         self._card = None
 
@@ -1109,6 +1111,8 @@ class _EvidenceHtmlParser(HTMLParser):
         if element_id:
             self.ids.append(element_id)
         href = values.get("href", "")
+        if tag == "a" and href.startswith("#") and len(href) > 1:
+            self.internal_hrefs.append(unquote(href[1:]))
         if href.startswith("#fig-"):
             self.figure_hrefs.append(href[1:])
         classes = set(values.get("class", "").split())
@@ -1212,6 +1216,14 @@ def _interactive_evidence_errors(html_content, manifest):
     unresolved = sorted({anchor for anchor in parser.figure_hrefs if id_counts.get(anchor, 0) != 1})
     if unresolved:
         errors.append("[证据关系] 存在无法唯一解析的图链接：" + "、".join(unresolved))
+    unresolved_internal = sorted({
+        anchor for anchor in parser.internal_hrefs
+        if id_counts.get(anchor, 0) != 1
+    })
+    if unresolved_internal:
+        errors.append(
+            "[报告交互] 存在无法唯一解析的内部链接：" + "、".join(unresolved_internal)
+        )
     return errors
 
 
@@ -1348,9 +1360,11 @@ def _collect_problem_items(markdown, manifest):
     def section_table_rows(section_name):
         in_section = False
         table_rows = []
+        heading_suffix = r"(?:[（(]P0-P3[）)])?" if section_name == "缺陷清单" else ""
+        heading_pattern = rf"^##\s+(?:\d+\.\s*)?{re.escape(section_name)}{heading_suffix}\s*$"
         for line in (markdown or "").splitlines():
             stripped = line.strip()
-            if re.match(rf"^##\s+{re.escape(section_name)}(?:\s|$)", stripped):
+            if re.match(heading_pattern, stripped, re.I):
                 in_section = True
                 continue
             if in_section and stripped.startswith("## "):
@@ -1753,6 +1767,22 @@ def build_interactive_html(
     body_html = _decorate_problem_figures(markdown_to_html(markdown_content), problem_anchors)
     body_html = _wrap_body_figures(body_html, manifest, figure_srcs)
     section_navigation = _collect_section_navigation(markdown_content, problem_items)
+
+    def section_anchor(pattern):
+        section = next(
+            (entry for entry in section_navigation if re.search(pattern, entry["title"], re.I)),
+            None,
+        )
+        return section["id"] if section else ""
+
+    # 重点卡只能指向正文真实存在的章节。报告允许使用「总缺口账本」或
+    # 「覆盖缺口」两种标题，链接目标必须跟随本次实际解析结果，禁止硬编码标题。
+    gap_section_anchor = (
+        section_anchor(r"^总缺口账本(?:\s|$)")
+        or section_anchor(r"^覆盖缺口(?:\s|$)")
+        or section_anchor(r"缺口")
+    )
+    defect_section_anchor = section_anchor(r"^(?:\d+\.\s*)?缺陷清单(?:[（(]P0-P3[）)])?(?:\s|$)")
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
         "conditional": ("有条件通过", "conditional"),
@@ -1847,28 +1877,37 @@ def build_interactive_html(
                 if item.get("anchor"):
                     href = f' href="#{html.escape(item["anchor"], quote=True)}"'
                     link_label = "查看证据图"
-                elif item.get("severity") == "P3":
-                    href = ' href="#总缺口账本"'
+                elif item.get("severity") == "P3" and gap_section_anchor:
+                    href = f' href="#{html.escape(gap_section_anchor, quote=True)}"'
                     link_label = "查看完整缺口账本"
-                else:
-                    href = ' href="#缺陷清单"'
+                elif defect_section_anchor:
+                    href = f' href="#{html.escape(defect_section_anchor, quote=True)}"'
                     link_label = "查看正文缺陷清单"
+                else:
+                    href = ""
+                    link_label = ""
+                action = f'<a{href}>{link_label}</a>' if href else ""
                 cards.append(
                     f'<div class="problem-card is-{cls}">'
                     f'<strong><span>{sev}</span>{title_text}</strong>'
                     f'<p>{detail}</p>'
-                    f'<a{href}>{link_label}</a>'
+                    f'{action}'
                     f'</div>'
                 )
             cards_html = "".join(cards)
         else:
             fallback_class = "risk" if verdict == "conditional" else "fail"
             fallback_badge = "条件" if verdict == "conditional" else "P0/P1"
+            fallback_anchor = gap_section_anchor if verdict == "conditional" else defect_section_anchor
+            fallback_link = (
+                f'<a href="#{html.escape(fallback_anchor, quote=True)}">查看对应清单</a>'
+                if fallback_anchor else ""
+            )
             cards_html = (
                 f'<div class="problem-card is-{fallback_class}">'
                 f'<strong><span>{fallback_badge}</span>请查看正文风险与缺口清单</strong>'
                 f'<p>报告 Verdict 为{html.escape(verdict_cn)}，但未抽取到结构化重点项。</p>'
-                f'<a href="#缺陷清单">查看缺陷清单</a></div>'
+                f'{fallback_link}</div>'
             )
         if verdict == "conditional":
             focus_kicker = "有条件通过重点"

@@ -683,6 +683,8 @@ public class MongoDbContext
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.SessionId)));
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.LogicalRequestId).Ascending(l => l.StartedAt)));
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.Provider).Ascending(l => l.Model)));
 
         // EndedAt 普通索引（仅用于查询，不自动删除数据）
