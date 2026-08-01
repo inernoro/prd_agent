@@ -14,7 +14,7 @@ assert SPEC and SPEC.loader
 SPEC.loader.exec_module(archive_report)
 
 
-def report_body(nature: str) -> str:
+def report_body(nature: str, counts=(0, 0, 0, 0)) -> str:
     overall = {
         "完整通过": "pass（通过）",
         "覆盖不足": "conditional（有条件通过）",
@@ -35,16 +35,33 @@ def report_body(nature: str) -> str:
         "硬门禁失败": "硬门禁失败",
     }[nature]
     core_case_result = "失败" if nature == "核心用例失败" else "通过"
+    total = sum(counts)
+    highest = next((f"P{index}" for index, count in enumerate(counts) if count), "无")
+    product_quality = (
+        f"未发现可复现产品缺陷，缺陷 0 个；P0/P1/P2/P3={counts[0]}/{counts[1]}/{counts[2]}/{counts[3]}；"
+        if total == 0
+        else f"发现 {total} 个产品缺陷，最高 {highest}；P0/P1/P2/P3={counts[0]}/{counts[1]}/{counts[2]}/{counts[3]}；"
+    )
+    summaries = ["无" if count == 0 else f"{severity} 代表性问题" for severity, count in zip(archive_report.DAILY_SEVERITY_LEVELS, counts)]
     return f"""
 ## 结论分层
 
 | 结论维度 | 结果 |
 |---|---|
-| 产品质量 | 未发现可复现产品缺陷，缺陷 0 个；核心用例={core_case_result} |
+| 产品质量 | {product_quality}核心用例={core_case_result} |
 | 验收完整性 | {completeness} |
 | 综合结论 | {overall} |
 | 发布建议 | main 可继续，未发布分支暂不作质量承诺 |
 | 判定性质 | {nature} |
+
+## 缺陷分级速览
+
+| 严重级 | 数量 | 问题概述 |
+|---|---:|---|
+| P0 | {counts[0]} | {summaries[0]} |
+| P1 | {counts[1]} | {summaries[1]} |
+| P2 | {counts[2]} | {summaries[2]} |
+| P3 | {counts[3]} | {summaries[3]} |
 
 ## 根因链条
 
@@ -74,6 +91,39 @@ class DailyVerdictContractTests(unittest.TestCase):
                     if len(row) >= 2
                 }
                 self.assertIn("核心用例=通过/失败/未执行", values["产品质量"])
+                self.assertIn("P0/P1/P2/P3=0/0/0/0", values["产品质量"])
+
+    def test_shipped_templates_have_glanceable_severity_summary(self):
+        for template_name in ("zz-report.md", "report-template.md"):
+            with self.subTest(template=template_name):
+                body = (TEMPLATES / template_name).read_text(encoding="utf-8")
+                self.assertEqual(1, body.splitlines().count("## 缺陷分级速览"))
+                headers, rows = archive_report._section_table(body, "缺陷分级速览")
+                self.assertEqual(list(archive_report.DAILY_SEVERITY_SUMMARY_FIELDS), headers)
+                self.assertEqual(list(archive_report.DAILY_SEVERITY_LEVELS), [row[0] for row in rows])
+
+    def test_missing_severity_summary_is_rejected(self):
+        body = report_body("覆盖不足")
+        start = body.index("## 缺陷分级速览")
+        end = body.index("## 根因链条")
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body[:start] + body[end:]
+        )
+        self.assertTrue(any("缺陷分级速览" in error for error in errors))
+
+    def test_nonzero_severity_requires_problem_overview(self):
+        body = report_body("非阻断风险", counts=(0, 0, 1, 0)).replace(
+            "| P2 | 1 | P2 代表性问题 |", "| P2 | 1 | 详见报告 |"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("不能只给数量" in error for error in errors))
+
+    def test_severity_summary_must_match_product_quality_vector(self):
+        body = report_body("非阻断风险", counts=(0, 0, 1, 0)).replace(
+            "P0/P1/P2/P3=0/0/1/0", "P0/P1/P2/P3=0/0/0/1"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("数量与「缺陷分级速览」不一致" in error for error in errors))
 
     def test_shipped_templates_have_one_exact_root_cause_section(self):
         for template_name in ("zz-report.md", "report-template.md"):
@@ -136,9 +186,7 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
 
     def test_product_failure_can_use_fail(self):
-        body = report_body("产品失败").replace(
-            "未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P1 产品缺陷"
-        )
+        body = report_body("产品失败", counts=(0, 1, 0, 0))
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
 
@@ -150,16 +198,12 @@ class DailyVerdictContractTests(unittest.TestCase):
         self.assertTrue(any("必须使用 conditional" in error for error in errors))
 
     def test_blocking_product_defect_cannot_be_conditional(self):
-        body = report_body("覆盖不足").replace(
-            "未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P1 产品缺陷"
-        )
+        body = report_body("覆盖不足", counts=(0, 1, 0, 0))
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("必须使用 fail" in error for error in errors))
 
     def test_p2_only_defect_can_remain_conditional(self):
-        body = report_body("非阻断风险").replace(
-            "未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P2 产品缺陷"
-        ) + """
+        body = report_body("非阻断风险", counts=(0, 0, 1, 0)) + """
 ## 缺陷清单
 
 | ID | 严重级 | 现象 |
@@ -170,9 +214,7 @@ class DailyVerdictContractTests(unittest.TestCase):
         self.assertEqual([], errors)
 
     def test_nonblocking_nature_requires_matching_root_conclusion(self):
-        body = report_body("非阻断风险").replace(
-            "未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P2 产品缺陷"
-        ).replace(
+        body = report_body("非阻断风险", counts=(0, 0, 1, 0)).replace(
             "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 非阻断风险 | 创建冻结预览后复测 |",
             "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | 当前截图不能证明冻结版本 | 通过 | 创建冻结预览后复测 |",
         )
@@ -180,17 +222,13 @@ class DailyVerdictContractTests(unittest.TestCase):
         self.assertTrue(any("根因链结论没有「非阻断风险」" in error for error in errors))
 
     def test_p1_in_severity_vector_cannot_be_conditional(self):
-        body = report_body("覆盖不足").replace(
-            "未发现可复现产品缺陷，缺陷 0 个", "P0/P1/P2/P3: 0/1/0/0"
-        )
+        body = report_body("覆盖不足", counts=(0, 1, 0, 0))
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("必须使用 fail" in error for error in errors))
         self.assertFalse(any("同时声称缺陷为 0" in error for error in errors))
 
     def test_p2_in_severity_vector_can_remain_conditional(self):
-        body = report_body("非阻断风险").replace(
-            "未发现可复现产品缺陷，缺陷 0 个", "P0/P1/P2/P3: 0/0/1/0"
-        )
+        body = report_body("非阻断风险", counts=(0, 0, 1, 0))
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
 
@@ -267,10 +305,9 @@ class DailyVerdictContractTests(unittest.TestCase):
 
     def test_unexecuted_core_case_cannot_claim_complete(self):
         body = (
-            report_body("非阻断风险")
+            report_body("非阻断风险", counts=(0, 0, 1, 0))
             .replace("核心用例=通过", "核心用例=未执行")
             .replace("不完整，1 项无法确认", "完整，全部计划范围均已确认")
-            .replace("未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P2 产品缺陷")
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("核心用例=未执行时" in error for error in errors))
@@ -284,15 +321,13 @@ class DailyVerdictContractTests(unittest.TestCase):
         cases = (
             (
                 "conditional",
-                report_body("非阻断风险")
-                .replace("不完整，1 项无法确认", "完整，全部计划范围均已确认")
-                .replace("未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P2 产品缺陷"),
+                report_body("非阻断风险", counts=(0, 0, 1, 0))
+                .replace("不完整，1 项无法确认", "完整，全部计划范围均已确认"),
             ),
             (
                 "fail",
-                report_body("产品失败")
-                .replace("不完整，1 项无法确认", "完整，全部计划范围均已确认")
-                .replace("未发现可复现产品缺陷，缺陷 0 个", "发现 1 个 P1 产品缺陷"),
+                report_body("产品失败", counts=(0, 1, 0, 0))
+                .replace("不完整，1 项无法确认", "完整，全部计划范围均已确认"),
             ),
         )
         secondary_gap = "| 次要浏览器范围 | Safari 未执行 | 环境不可用 | 无法证明兼容性 | 覆盖缺口 | 补环境后复测 |"
