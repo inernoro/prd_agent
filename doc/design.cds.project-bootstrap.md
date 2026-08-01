@@ -128,7 +128,7 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 执行顺序：
 
 1. **依赖自检**：`curl` / `unzip` / `tar`。缺失时给 Debian、RHEL、macOS 三种安装命令让用户复制，不是丢一句「请安装」。
-2. **探测宿主技能目录**：有 `.claude/` 用 `.claude/skills`；有 `.cursor/` 用 `.cursor/skills`；否则 `.agents/skills`。可用 `--skills-dir` 覆盖。**默认项目级**——装到用户级的话，人一走团队什么都没有。
+2. **探测宿主技能目录**：`.claude/` `.cursor/` `.agents/` 三个宿主**存在几个装几个**（不是取第一个命中的——早期首命中写法会让同时装了多个 Agent 的仓库出现「装完了但当前 Agent 看不见」），一个都没有时兜底建 `.agents/skills`。可用 `--skills-dir` 覆盖。**默认项目级**——装到用户级的话，人一走团队什么都没有。
 3. **装 CDS 技能包**（5 个，走匿名的 `cds-pack` 端点——已有的 `export-skill` 需要登录，而客户此刻还没有凭据）
 4. **装方法论套装**（按预设）
 5. **写种子文件** `.cds/bootstrap.json`：预设、CDS 主机、技能目录、安装时间、装了哪些技能。`sdd-init` 读它来判断角色和上下文。
