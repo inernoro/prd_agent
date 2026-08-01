@@ -104,6 +104,15 @@ NON_FILE_TARGET = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 # 这一格之差不是洁癖：把深缩进的 ``` 当围栏，就能用一段缩进代码块把后面的
 # 正文整段藏进「块内」，死链闸门扫不到那些行还照样报绿。
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*(.*)$")
+# 引用块里的围栏（> ```ts）在 Markdown 里照样是围栏。不剥这层前缀的话，
+# 把实现代码往引用块里一放就绕过了实现代码棘轮，链接扫描还会伸进示例里。
+CONTAINER_PREFIX = re.compile(r"^(?: {0,3}>)+ ?")
+INDENTED_CODE = re.compile(r"^ {4,}\S")
+
+
+def strip_container(line: str) -> str:
+    """剥掉引用块前缀，留下容器内的那一行（缩进语义交给 FENCE_OPEN 判）。"""
+    return CONTAINER_PREFIX.sub("", line, count=1)
 
 
 def fence_delim(line: str) -> tuple[str, int] | None:
@@ -114,7 +123,7 @@ def fence_delim(line: str) -> tuple[str, int] | None:
     示例里往往还有三个反引号的内层围栏，按三个就闭合会把外层提前关掉；
     行首缩进同样要留着（所以这里不 strip），四格以上不算围栏。
     """
-    m = FENCE_OPEN.match(line)
+    m = FENCE_OPEN.match(strip_container(line))
     return (m.group(1)[0], len(m.group(1))) if m else None
 
 
@@ -133,13 +142,13 @@ def fence_info(line: str) -> str:
     闭合判定必须看原始值：```{} 和 ```"" 归一化后都是空串，但 Markdown 里
     它们仍是块内的一行（闭合围栏只允许跟空白）。
     """
-    m = FENCE_OPEN.match(line)
+    m = FENCE_OPEN.match(strip_container(line))
     return m.group(2) if m else ""
 
 
 def fence_lang(line: str) -> str:
     """取围栏的语言标记：只认第一个词，后面的 title="x" / {linenos} 之类属性丢掉。"""
-    m = FENCE_OPEN.match(line)
+    m = FENCE_OPEN.match(strip_container(line))
     info = (m.group(2) if m else "").strip()
     token = re.split(r"[\s,{]", info, 1)[0]
     return token.strip("\"'`{}").lower()
@@ -174,6 +183,10 @@ def header_lines(text: str):
             fence_kind = delim if in_fence else None
             continue
         if in_fence:
+            continue
+        # 四格缩进是缩进代码块，渲染出来是代码不是标题也不是导读。不跳过的话，
+        # 把假 H1 与三行导读整段缩进四格就能骗过闸门，而读者打开看到的是一段代码。
+        if INDENTED_CODE.match(raw):
             continue
         if line.startswith("# "):
             seen_h1 = True
@@ -260,6 +273,14 @@ def check_file(path: str) -> list[str]:
 IMPL_LANGS = {"cs", "csharp", "c#", "ts", "tsx", "typescript", "js", "jsx", "javascript",
               "rust", "rs", "python", "py", "java", "go", "vue", "css", "scss", "sql"}
 
+# shell 块的界线：命令（含照着敲的几步命令序列）留在文档里是指南的本职；
+# 成了脚本就该搬进 scripts/ 再在文中给一行调用 —— 否则「禁止实现代码」这条
+# 只要换成 bash 标注就能整段绕过。判据两条，命中任一即按实现计数：
+SHELL_LANGS = {"bash", "sh", "shell", "zsh", "console", "shell-session"}
+SHELL_MAX_LINES = 12                       # 有效行超过这么多就不是「几步命令」了
+SHELL_CONTROL = re.compile(r"^\s*(?:for\s|while\s|until\s|if\s|case\s|function\s"
+                           r"|\w+\s*\(\)\s*\{)|<<-?\s*'?\w+")   # 控制流 / 函数 / heredoc
+
 # 正文里散落的源码路径 / 行号引用。集中列在「实现来源」类小节里是允许的。
 # 源码面不止六个产品目录：脚本、技能、规则、工作流同样是实现，散落在散文里
 # 一样让读者去读实现。只认产品目录 = 判据比它该管的范围窄。
@@ -290,6 +311,16 @@ def _pointer_columns(header: str) -> set[int]:
             if _is_pointer_name(c)}
 
 
+def shell_script_lines(lang: str, block: list[str]) -> int:
+    """这一块 shell 算不算「脚本」；算就返回它的有效行数，不算返回 0。"""
+    if lang not in SHELL_LANGS:
+        return 0
+    body = [ln for ln in block if ln.strip()]
+    if len(body) > SHELL_MAX_LINES or any(SHELL_CONTROL.match(ln) for ln in body):
+        return len(body)
+    return 0
+
+
 def scan_body(text: str) -> tuple[int, int]:
     """返回 (实现语言代码行数, 正文里散落的源码路径引用数)。"""
     impl_lines = 0
@@ -300,6 +331,7 @@ def scan_body(text: str) -> tuple[int, int]:
     in_source_section = False
     lines = text.splitlines()
     pointer_cols: set[int] = set()
+    shell_buf: list[str] = []
     for idx, raw in enumerate(lines):
         st = raw.strip()
         delim = fence_delim(raw)  # 同上：缩进要留给围栏判定
@@ -307,12 +339,16 @@ def scan_body(text: str) -> tuple[int, int]:
             if not in_fence:
                 fence_kind = delim
                 in_fence, lang = True, fence_lang(raw)
+                shell_buf = []
             else:
-                in_fence, lang = False, ""
+                impl_lines += shell_script_lines(lang, shell_buf)
+                in_fence, lang, shell_buf = False, "", []
             continue
         if in_fence:
             if lang in IMPL_LANGS:
                 impl_lines += 1
+            elif lang in SHELL_LANGS:
+                shell_buf.append(raw)
             continue
         if st.startswith("#"):
             in_source_section = bool(SOURCE_SECTION.search(st))

@@ -2,3 +2,4 @@
 | fix | scripts | 围栏判定认行首缩进（四格起是缩进代码块），index.yml 成员只认 docs: 段 |
 | fix | scripts | 技能 frontmatter 先判 YAML 语法（修好 9 个真坏的 SKILL.md），已结清区的活账判定扩到标题/行状态/残留尾巴三种形状 |
 | fix | scripts | 证据脚本的进度页写入目标改回生成物路径（曾指向权威设计文档且是整份覆盖写），并加守卫防复发 |
+| fix | scripts | 缩进代码块里的假导读不算数、引用块里的围栏照样识别、shell 块划出命令与脚本界线 |

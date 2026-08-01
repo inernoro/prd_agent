@@ -22,9 +22,9 @@
     "spec": 0,
     "design": 0,
     "plan": 0,
-    "rule": 0,
-    "guide": 0,
-    "report": 0,
+    "rule": 37,
+    "guide": 65,
+    "report": 5,
     "debt": 0
   },
   "source_refs": {
@@ -336,7 +336,7 @@
     "guide.cds.cloud-dev-tutorial.md": {
       "missing": 0,
       "bare": 0,
-      "impl": 0,
+      "impl": 8,
       "src": 1
     },
     "guide.cds.github-webhook-events.md": {
@@ -354,7 +354,7 @@
     "guide.cds.view-parity.md": {
       "missing": 0,
       "bare": 0,
-      "impl": 0,
+      "impl": 19,
       "src": 4
     },
     "guide.cds.web-migration-runbook.md": {
@@ -396,7 +396,7 @@
     "guide.platform.smoke-tests.md": {
       "missing": 0,
       "bare": 0,
-      "impl": 0,
+      "impl": 38,
       "src": 1
     },
     "guide.skill.removal-checklist.md": {
@@ -633,6 +633,12 @@
       "impl": 0,
       "src": 0
     },
+    "report.cds.forwarder-success.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 5,
+      "src": 0
+    },
     "report.cds.self-update-timing-audit.md": {
       "missing": 1,
       "bare": 0,
@@ -650,6 +656,12 @@
       "bare": 0,
       "impl": 0,
       "src": 5
+    },
+    "rule.cds.project-isolation-audit.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 8,
+      "src": 0
     },
     "rule.doc.readability.md": {
       "missing": 0,
@@ -686,6 +698,12 @@
       "bare": 0,
       "impl": 0,
       "src": 6
+    },
+    "rule.skill.issues-system.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 29,
+      "src": 0
     },
     "spec.cds.project-model.md": {
       "missing": 0,

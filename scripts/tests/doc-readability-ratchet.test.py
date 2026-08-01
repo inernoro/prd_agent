@@ -279,6 +279,33 @@ check(hidden, "四格缩进的 ``` 不算围栏，后面的死链藏不住")
 check(checker.fence_delim("    ```ts") is None, "四格缩进不是围栏")
 check(checker.fence_delim("   ```ts") is not None, "三格以内仍是围栏（没误伤列表里的围栏）")
 
+# 缩进代码块里的假标题与假导读：渲染出来是代码，读者看不到标题也看不到导读
+INDENTED_HEADER = ("    # 看起来像标题 · 指南\n"
+                   "    **一句话**：这三行整段缩进四格，渲染出来是一块代码而不是导读。\n"
+                   "    **谁该读**：想拿缩进糊弄闸门的人。\n"
+                   "    **读完能做什么**：知道缩进代码块里的导读不算数。\n")
+check(any("缺「一句话」" in p for p in problems_for("guide.demo.md", INDENTED_HEADER)),
+      "缩进四格的假标题与假导读不算数（渲染出来是代码块）")
+
+# 引用块里的围栏照样是围栏：不剥这层前缀，实现代码往引用块一放就绕过棘轮
+QUOTED_FENCE = "# 示例 · 指南\n\n> ```ts\n> const a = 1;\n> const b = 2;\n> ```\n"
+quoted_impl, _ = checker.scan_body(QUOTED_FENCE)
+check(quoted_impl == 2, f"引用块里的实现代码照样计数（实测 {quoted_impl} 行）")
+check(checker.fence_delim("> ```ts") is not None, "引用块前缀不挡围栏识别")
+
+# shell：几步命令是指南本职，成脚本就该搬进 scripts/
+STEPS = "# 示例 · 指南\n\n```bash\ncd prd-api\ndotnet build\ndotnet test\n```\n"
+steps_impl, _ = checker.scan_body(STEPS)
+check(steps_impl == 0, f"几步命令序列不算实现代码（实测 {steps_impl} 行）")
+LONG_SH = "# 示例 · 指南\n\n```bash\n" + "".join(f"echo {i}\n" for i in range(20)) + "```\n"
+long_impl, _ = checker.scan_body(LONG_SH)
+check(long_impl == 20, f"超过 12 行的 shell 按实现计数（实测 {long_impl} 行）")
+CTRL_SH = "# 示例 · 指南\n\n```bash\nfor f in *.md; do\n  echo $f\ndone\n```\n"
+ctrl_impl, _ = checker.scan_body(CTRL_SH)
+check(ctrl_impl == 3, f"带控制流的 shell 按实现计数（实测 {ctrl_impl} 行）")
+check(checker.shell_script_lines("ts", ["for x in y; do", "done"]) == 0,
+      "非 shell 语言不走 shell 判据（各算各的，不重复计数）")
+
 TILDE_IMPL = "# 示例 · 指南\n\n~~~typescript\nconst a = 1;\nconst b = 2;\n~~~\n"
 BACKTICK_IMPL = TILDE_IMPL.replace("~~~", "```")
 tilde_lines, _ = checker.scan_body(TILDE_IMPL)
