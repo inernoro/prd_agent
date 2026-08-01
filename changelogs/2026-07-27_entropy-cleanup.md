@@ -1,3 +1,4 @@
 | chore | doc | 每日熵减计划：D1-D5 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项；D4 的 `**pnpm**` 复核为正文加粗提及非技能表行，0 改动），D6 处理 5 条 changelog（开放平台授权表主题对比度修复/CDS 复制集双画布批次/知识库实时转写/CDS 分层冒烟内容契约/llmgw 移动端相关教程入口），其中实时转写批次补充 `doc/debt.knowledge-base.md` 新章节，复制集批次已由 `doc/design.cds.replica-set.md` + `doc/debt.cds.md` 全量覆盖，其余 3 条为窄范围 UI/bug fix 无对应设计文档，仅登记 manifest，manifest 累计 492 条 |
 | fix | scripts | 围栏判定认行首缩进（四格起是缩进代码块），index.yml 成员只认 docs: 段 |
 | fix | scripts | 技能 frontmatter 先判 YAML 语法（修好 9 个真坏的 SKILL.md），已结清区的活账判定扩到标题/行状态/残留尾巴三种形状 |
+| fix | scripts | 证据脚本的进度页写入目标改回生成物路径（曾指向权威设计文档且是整份覆盖写），并加守卫防复发 |

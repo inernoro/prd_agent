@@ -884,6 +884,24 @@ for name in sorted(os.listdir(doc_dir)):
     ledger = open(os.path.join(doc_dir, name), encoding="utf-8").read()
     settled_open += [f"{name}::{x}" for x in settled_residuals(ledger)]
 check(not settled_open, f"「已结清」区里没有还没做完的账（误埋：{settled_open[:3]}）")
+
+# 生成器的「整份覆盖写」目标不许是入库文档：文档合并时把某个已删的生成物路径
+# 顺手改指了权威文档，跑一次脚本就能把那篇文档整篇冲掉（本轮真发生过）。
+overwrite_docs: list[str] = []
+for sh in sorted(pathlib.Path(REPO_ROOT, "scripts").glob("*.sh")):
+    src = sh.read_text(encoding="utf-8", errors="replace")
+    for m in re.finditer(r'^(\w+)="\$\{[^}]*:-([^"]*)\}"', src, re.M):
+        var, default = m.group(1), m.group(2)
+        if "/doc/" not in default:
+            continue
+        if re.search(rf'^\s*\}}\s*>\s*"\${var}"', src, re.M) or f'> "${var}"' in src:
+            overwrite_docs.append(f"{sh.name}::{var} -> {default}")
+check(not overwrite_docs, f"没有脚本把入库文档当整份覆盖写的目标（{overwrite_docs[:3]}）")
+# 反向用例：把目标改回 doc/ 下的文档，这条必须报出来
+PROBE_SH = ('X="${X_ENV:-$ROOT_DIR/doc/design.demo.md}"\n{\n  printf "hi"\n} > "$X"\n')
+probe_hits = [m.group(1) for m in re.finditer(r'^(\w+)="\$\{[^}]*:-([^"]*)\}"', PROBE_SH, re.M)
+              if "/doc/" in m.group(2) and '> "$' + m.group(1) + '"' in PROBE_SH]
+check(probe_hits == ["X"], f"判据认得出「默认写进 doc/」这种形状（实测 {probe_hits}）")
 # 合成用例：三种形状逐一验证，否则上面那条在台账干净时是空跑的绿灯
 SETTLED_HEAD = "## 已结清（供回溯）\n\n### 某小节\n\n| # | 状态 | 债务 | 影响 |\n|---|---|---|---|\n"
 check(not settled_residuals(SETTLED_HEAD + "| 1 | done | ~~某事~~ | — |\n"),
