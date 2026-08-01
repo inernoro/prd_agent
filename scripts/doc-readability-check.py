@@ -120,7 +120,18 @@ def strip_container(line: str) -> str:
     return CONTAINER_PREFIX.sub("", line, count=1)
 
 
-def fence_delim(line: str) -> tuple[str, int] | None:
+def fence_candidate(line: str, in_list: bool = False) -> str:
+    """交给围栏正则去判的那一段。
+
+    列表项的续行里，围栏是相对「列表内容列」缩进的，按文档级的三格上限一刀切
+    会把「- 条目 / 空行 / 四格缩进的 ```ts」整块当成缩进代码块——里面的实现
+    代码不计数、链接又被当正文扫。所以在列表上下文里把缩进整体去掉再判。
+    """
+    stripped = strip_container(line)
+    return stripped.lstrip() if in_list else stripped
+
+
+def fence_delim(line: str, in_list: bool = False) -> tuple[str, int] | None:
     """返回这行围栏的 (定界符字符, 长度)，不是围栏则 None。
 
     三件事都不能省：Markdown 两种围栏都合法（只认反引号的话，`~~~ts` 里的
@@ -128,7 +139,7 @@ def fence_delim(line: str) -> tuple[str, int] | None:
     示例里往往还有三个反引号的内层围栏，按三个就闭合会把外层提前关掉；
     行首缩进同样要留着（所以这里不 strip），四格以上不算围栏。
     """
-    m = FENCE_OPEN.match(strip_container(line))
+    m = FENCE_OPEN.match(fence_candidate(line, in_list))
     return (m.group(1)[0], len(m.group(1))) if m else None
 
 
@@ -141,19 +152,19 @@ def fence_closes(opener: tuple[str, int], candidate: tuple[str, int], info: str 
     return candidate[0] == opener[0] and candidate[1] >= opener[1] and not info.strip()
 
 
-def fence_info(line: str) -> str:
+def fence_info(line: str, in_list: bool = False) -> str:
     """围栏行定界符后面的原始后缀。
 
     闭合判定必须看原始值：```{} 和 ```"" 归一化后都是空串，但 Markdown 里
     它们仍是块内的一行（闭合围栏只允许跟空白）。
     """
-    m = FENCE_OPEN.match(strip_container(line))
+    m = FENCE_OPEN.match(fence_candidate(line, in_list))
     return m.group(2) if m else ""
 
 
-def fence_lang(line: str) -> str:
+def fence_lang(line: str, in_list: bool = False) -> str:
     """取围栏的语言标记：只认第一个词，后面的 title="x" / {linenos} 之类属性丢掉。"""
-    m = FENCE_OPEN.match(strip_container(line))
+    m = FENCE_OPEN.match(fence_candidate(line, in_list))
     info = (m.group(2) if m else "").strip()
     token = re.split(r"[\s,{]", info, 1)[0]
     return token.strip("\"'`{}").lower()
@@ -370,13 +381,19 @@ def scan_body(text: str) -> tuple[int, int]:
     lines = text.splitlines()
     pointer_cols: set[int] = set()
     shell_buf: list[str] = []
+    in_list = False
     for idx, raw in enumerate(lines):
         st = raw.strip()
-        delim = fence_delim(raw)  # 同上：缩进要留给围栏判定
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
+        if not in_fence and raw.strip():
+            if LIST_MARKER.match(raw):
+                in_list = True
+            elif not raw.startswith((" ", "\t")) and not INDENTED_CODE.match(raw):
+                in_list = False
+        delim = fence_delim(raw, in_list)  # 同上：缩进要留给围栏判定
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw, in_list))):
             if not in_fence:
                 fence_kind = delim
-                in_fence, lang = True, fence_lang(raw)
+                in_fence, lang = True, fence_lang(raw, in_list)
                 shell_buf = []
             else:
                 impl_lines += shell_script_lines(lang, shell_buf)
@@ -484,8 +501,8 @@ def body_lines(text: str):
     fence_kind: tuple[str, int] | None = None
     in_list = False
     for idx, raw in enumerate(text.splitlines()):
-        delim = fence_delim(raw)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
+        delim = fence_delim(raw, in_list)
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw, in_list))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
@@ -535,7 +552,10 @@ def find_dead_links(path: str, text: str) -> list[tuple[int, str]]:
     """相对路径 markdown 链接指向不存在的文件 = 死链，零容忍。"""
     dead: list[tuple[int, str]] = []
     base = os.path.dirname(path)
-    for lineno, line in body_lines(text):
+    for lineno, raw_line in body_lines(text):
+        # 行内代码里的链接是给人看的反面示例，Markdown 原样显示、点不开也不该判死链。
+        # 裸引用扫描早就这么做了，死链闸漏了这一步，等于禁止文档举反例。
+        line = CODE_SPAN.sub(lambda m: " " * len(m.group(0)), raw_line)
         targets = [m.group(1) for m in MD_LINK.finditer(line)]
         # 引用式链接的定义行（[ref]: ./x.md）也得验：用法处不带路径，漏了它
         # 这一类死链永远没人发现

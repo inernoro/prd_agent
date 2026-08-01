@@ -338,6 +338,20 @@ for prefix in ("- ```ts", "1. ```ts", "> - ```ts", "  * ```ts"):
     check(checker.fence_delim(prefix) is not None, f"「{prefix}」认得出是围栏")
 check(checker.fence_delim("正文里的 - 号不是列表") is None, "散文里的连字符不会被当成列表前缀")
 
+# 列表项的续行里，围栏是相对「列表内容列」缩进的
+LIST_CONT_FENCE = "# 示例 · 指南\n\n- 某条目\n\n    ```ts\n    const a = 1;\n    const b = 2;\n    ```\n"
+cont_impl, _ = checker.scan_body(LIST_CONT_FENCE)
+check(cont_impl == 2, f"列表续行里的围栏认得出来（实测 {cont_impl} 行）")
+TOP_INDENT_FENCE = "# 示例 · 指南\n\n正文一段。\n\n    ```ts\n    const a = 1;\n    ```\n"
+top_impl, _ = checker.scan_body(TOP_INDENT_FENCE)
+check(top_impl == 0, f"顶层的四格缩进块仍不算围栏（实测 {top_impl} 行）")
+
+# 行内代码里的链接是反面示例，Markdown 原样显示，不该判死链
+check(not checker.find_dead_links("doc/x.md", "# t\n\n错误写法：`[标签](./missing.md)`\n"),
+      "行内代码里的链接示例不判死链")
+check(checker.find_dead_links("doc/x.md", "# t\n\n见 [标签](./missing.md)\n"),
+      "真正的死链照判（上一条没有把闸门关掉）")
+
 # 仓库根上的入口文件没有目录前缀，要求「目录/」的判据一个都认不出来
 check(checker.count_source_refs("先看 exec_dep.sh 再看 quick.ps1") == 2,
       "根上的入口脚本算散落源码引用")
