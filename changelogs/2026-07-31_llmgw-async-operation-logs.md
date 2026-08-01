@@ -7,3 +7,4 @@
 | ci | scripts | 修正文档可读性门禁对无 doc 改动 PR 的误判 |
 | fix | llmgw | 上游调用仅统计已发起的 Provider 请求，排除构建失败和并发准入拒绝的候选 |
 | fix | cds | 修复编号缺陷清单标题无法生成重点卡跳转的问题 |
+| fix | llmgw | 补齐传输异常与 WebSocket ASR 预检失败的 Provider 外呼计数证据 |

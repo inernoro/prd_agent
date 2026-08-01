@@ -1666,6 +1666,42 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenTransportThrows_ShouldPersistReachedProviderAttempt()
+    {
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            new ThrowingHttpClientFactory(),
+            new TestLogger<LlmGateway>(),
+            logWriter);
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "/images/generations",
+            RequestBody = new JsonObject { ["prompt"] = "draw a clean icon" }
+        }, new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DirectModel",
+            ActualModel = "image-model-a",
+            ActualPlatformId = "platform-a",
+            ActualPlatformName = "Provider A",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-a.example.com",
+            ApiKey = "sk-a"
+        });
+
+        Assert.False(response.Success);
+        Assert.NotNull(logWriter.Done);
+        var attempt = Assert.Single(logWriter.Done!.ProviderAttempts!, a => a.Stage == "send");
+        Assert.True(attempt.ReachedProvider);
+        Assert.Equal("failed", attempt.Status);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenGpt56UsesDefaultChatEndpoint_ShouldNormalizeLegacyParameters()
     {
         var resolution = new GatewayModelResolution
@@ -2711,6 +2747,17 @@ internal sealed class TerminalThenBlockingHttpMessageHandler(string body) : Http
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
         return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
     }
+}
+
+internal sealed class ThrowingHttpClientFactory : IHttpClientFactory
+{
+    public HttpClient CreateClient(string name) => new(new ThrowingHttpMessageHandler());
+}
+
+internal sealed class ThrowingHttpMessageHandler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        => throw new HttpRequestException("provider connection reset");
 }
 
 internal sealed class TerminalThenBlockingStream(string body) : Stream
