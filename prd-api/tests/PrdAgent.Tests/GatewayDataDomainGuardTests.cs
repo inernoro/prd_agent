@@ -3278,6 +3278,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("detail.UpstreamCallCount = relatedAttempts.Count", console);
         Assert.Contains("relatedAttempts.LongCount(IsProviderPollAttempt)", console);
         Assert.Contains(".Include(\"ProviderAttempts\")", console);
+        Assert.Contains("var logicalRequestId = detail.LogicalRequestId;", console);
+        Assert.DoesNotContain("detail.LogicalRequestId ?? detail.RunId", console);
+        Assert.DoesNotContain("Filter.Eq(\"RunId\", logicalRequestId)", console);
         Assert.Contains("_logWriter.BindProviderTaskAsync", videoClient);
         Assert.Contains("fallbackLogicalRequestId: jobId", videoClient);
         Assert.Contains("log => log.ProviderTaskId", logWriter);

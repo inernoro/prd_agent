@@ -2186,19 +2186,14 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
         return Json(ApiEnvelope<LlmLogDetail>.Fail("NOT_FOUND", "日志不存在"), jsonOptions, statusCode: 404);
     }
     var detail = MapDetail(doc);
-    var logicalRequestId = detail.LogicalRequestId ?? detail.RunId ?? detail.SessionId ?? detail.RequestId;
+    var logicalRequestId = detail.LogicalRequestId;
     var relatedFilters = new List<FilterDefinition<BsonDocument>>
     {
         Builders<BsonDocument>.Filter.Eq("_id", id),
     };
     if (!string.IsNullOrWhiteSpace(logicalRequestId))
     {
-        relatedFilters.Add(
-            Builders<BsonDocument>.Filter.Or(
-                Builders<BsonDocument>.Filter.Eq("LogicalRequestId", logicalRequestId),
-                Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Exists("LogicalRequestId", false),
-                    Builders<BsonDocument>.Filter.Eq("RunId", logicalRequestId))));
+        relatedFilters.Add(Builders<BsonDocument>.Filter.Eq("LogicalRequestId", logicalRequestId));
     }
     if (!string.IsNullOrWhiteSpace(detail.ProviderTaskId))
     {

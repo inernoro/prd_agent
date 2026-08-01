@@ -146,7 +146,7 @@ async function auditInteractiveReports() {
     clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
     broken,
     clickErrors,
-    ok: broken.length === 0 && clickErrors.length === 0,
+    ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0,
   };
 }
 
