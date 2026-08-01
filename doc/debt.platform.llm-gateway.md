@@ -598,6 +598,7 @@
 
 | ID | 严重度 | 状态 | 事实与收口条件 |
 |---|---|---|---|
+| `2026-07-17-sirius-dns-certificate` | P1 | blocked | `sirius.ebcone.net` 的公共权威 DNS 为 NXDOMAIN。现有腾讯云 COS 凭据调用 DNSPod `DescribeRecordList` 返回 `OperationDenied.NoPermissionToOperateDomain`，不能创建记录；正式 `map.ebcone.net` 证书 SAN 只包含自身，也不能复用。域名管理员需创建指向 `43.136.77.61` 的 A 记录，随后为 `sirius.ebcone.net` 单独签证书，套用 `llmgw/deploy/public-domain.nginx.example.conf`，经 `nginx -t`、reload、根页/实际资源/双健康/四协议无 key 401 和登录后真实数据复验后才可关闭。不得把仓库模板或 HTTP Host 预检写成“HTTPS 已上线”。 |
 | `2026-07-17-cds-dataprotection-persistence` | P2 | open | CDS main 的 Console API 启动日志提示 `/root/.aspnet/DataProtection-Keys` 不持久且未配置 XML encryptor。当前 Gateway JWT 使用独立 `LlmGwJwt__Secret`，尚未发现会话故障；但若后续引入 ASP.NET DataProtection cookie、临时令牌或受保护载荷，容器替换会使旧数据失效。收口前应先盘点真实消费点，再决定挂载受限 volume 或显式禁用未使用能力，不能仅为消除 warning 保存明文 key。 |
 
 测试环境“真实数据”已经通过控制台正常链路形成，不能把密钥明文、生产租户快照或前端硬编码示例当作修复。若 CDS Mongo 被重建，恢复方式是使用独立测试租户从 Quickstart 创建 appCaller 和 tenant-scoped key，再对公开假上游发送请求；禁止复用生产 key，禁止批量调用付费模型。
@@ -623,12 +624,6 @@
 | 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | paid | PR #1085、#1086 已落地 tenant/team/user/membership/RBAC、服务端租户解析、租户数据隔离、tenant-scoped key 和自助接入；请求自报 tenantId 不进入权威上下文 |
 | 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
 | 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | paid | PR #1076、#1079、#1080 已完成 `--maintenance-from-commit`、基线审计和部署层证据交接；最终 commit 的 `http-full success` 台账已验证该路径 |
-
-### 独立品牌域名待办（2026-07-17）
-
-| ID | 严重度 | 状态 | 事实与收口条件 |
-|---|---|---|---|
-| `2026-07-17-sirius-dns-certificate` | P1 | blocked | `sirius.ebcone.net` 的公共权威 DNS 为 NXDOMAIN。现有腾讯云 COS 凭据调用 DNSPod `DescribeRecordList` 返回 `OperationDenied.NoPermissionToOperateDomain`，不能创建记录；正式 `map.ebcone.net` 证书 SAN 只包含自身，也不能复用。域名管理员需创建指向 `43.136.77.61` 的 A 记录，随后为 `sirius.ebcone.net` 单独签证书，套用 `llmgw/deploy/public-domain.nginx.example.conf`，经 `nginx -t`、reload、根页/实际资源/双健康/四协议无 key 401 和登录后真实数据复验后才可关闭。不得把仓库模板或 HTTP Host 预检写成“HTTPS 已上线”。 |
 
 ### 已还的债务（归档）
 

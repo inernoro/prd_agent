@@ -741,6 +741,11 @@ def quoted_scalar_problem(raw: str) -> str | None:
         i += 1
     if not closed:
         return "引号没有闭合"
+    # 收尾引号之后只允许空白或注释：`"一句话" 还有一截` 在 YAML 里是语法错误，
+    # 而判据只看引号里那段的话，内容检查全过、照样报绿。
+    rest = value[i:].strip()
+    if rest and not rest.startswith("#"):
+        return f"收尾引号后面还跟着「{rest[:20]}」，YAML 只允许空白或注释"
     return None
 
 

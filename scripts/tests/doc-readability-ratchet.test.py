@@ -737,6 +737,9 @@ if _yaml is not None:
         '"半个十六进制 \\xZZ 不合法"',
         "'单引号里 \\q 只是两个普通字符'",
         '"引号没闭合',
+        '"一句话说完了" 后面还跟着一截',
+        '"一句话说完了"   ',
+        '"一句话说完了" # 尾随注释是合法的',
     ]
     quoted_mismatch = []
     for case in QUOTED_CASES:
@@ -1026,7 +1029,8 @@ def settled_residuals(ledger: str) -> list[str]:
     for row in re.finditer(r"^\|.+\|$", settled, re.M):
         cells = [c.strip() for c in row.group(0).strip("|").split("|")]
         # 状态列写 open 只是其中一种说法：偿还中 / 进行中 / 待办 同样是没做完
-        if any(re.fullmatch(r"\**(?:open(\(.*\))?|偿还中.*|进行中.*|待办.*|未完成.*)\**", c, re.I)
+        if any(re.fullmatch(r"\**(?:open(\(.*\))?|blocked.*|pending.*|todo.*|"
+                            r"偿还中.*|进行中.*|待办.*|未完成.*|阻塞.*)\**", c, re.I)
                for c in cells):
             hits.append(f"{cells[0]}（行状态未结清）")
         if any(("残留边界" in c or c.startswith(("残留：", "遗留："))) for c in cells):
@@ -1086,6 +1090,8 @@ check(settled_residuals(SETTLED_HEAD + "| 1 | open | 某事 | — |\n"),
       "行状态写 open 的行被抓出")
 check(settled_residuals(SETTLED_HEAD + "| 1 | **偿还中(2026-07-27)** | 某事 | — |\n"),
       "行状态写「偿还中」同样被抓出（open 只是其中一种说法）")
+check(settled_residuals(SETTLED_HEAD + "| 1 | blocked | 某事 | — |\n"),
+      "行状态写 blocked 同样被抓出（卡住不等于结清）")
 check(settled_residuals("## 已结清（供回溯）\n\n### 某小节（open）\n\n正文\n"),
       "小节标题自己写着（open）被抓出")
 check(settled_residuals(SETTLED_HEAD + "| 1 | done | ~~某事~~ | 残留边界：还有一半没做 |\n"),
