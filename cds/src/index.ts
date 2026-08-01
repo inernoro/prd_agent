@@ -2073,7 +2073,7 @@ diskGuard.refreshNow();
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
-// infra 生命周期取证器（debt.cds.replica-set #17）：常驻 docker events 监听，
+// infra 生命周期取证器（doc/debt.cds.md「CDS 复制集模式工程债务」 #17）：常驻 docker events 监听，
 // 记录 infra 容器 oom/die/kill/start 事件，区分 cgroup OOM / 外部 SIGKILL / 自身退出
 const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore });
 
@@ -3640,7 +3640,7 @@ function buildBranchAbandonedPageHtml(opts: {
 
 // buildTransitPageHtml（未构建分支的全屏过渡页）已于 2026-07-09 删除：全仓零调用点的
 // 死代码（已被 React PreviewPreparingPage / preview-canary 流程取代）。历史实现见 git
-// 记录；等待页 SSOT 见 src/loading-pages/index.ts（doc/debt.cds.nginx-loading-pages.md D2）。
+// 记录；等待页 SSOT 见 src/loading-pages/index.ts（doc/debt.cds.md「CDS Loading Pages」 D2）。
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.

@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-03-27 | **状态**：已落地
 
+**一句话**：桌面端把只测健康端点的粗略检查，扩成域名解析、证书、连通性等六项并发诊断。
+**谁该读**：做客户端排障的工程师与支持人员。
+**读完能做什么**：按诊断项定位到具体网络环节。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：桌面端原有"快速测试"仅测试 `/health` 端点，无法精确定位 DNS、SSL、连通性等具体网络问题
@@ -201,12 +207,19 @@
 ## 相关文件
 
 ### 后端
-- `prd-api/src/PrdAgent.Api/Controllers/DiagnosticsController.cs`
 
 ### Rust
-- `prd-desktop/src-tauri/src/commands/config.rs`
-- `prd-desktop/src-tauri/src/lib.rs`
 
 ### 前端
-- `prd-desktop/src/components/NetworkDiagnosticsModal.tsx`
-- `prd-desktop/src/components/Settings/SettingsModal.tsx`
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 后端 | `prd-api/src/PrdAgent.Api/Controllers/DiagnosticsController.cs` |
+| Rust | `prd-desktop/src-tauri/src/commands/config.rs`、`prd-desktop/src-tauri/src/lib.rs` |
+| 前端 | `prd-desktop/src/components/NetworkDiagnosticsModal.tsx`、`prd-desktop/src/components/Settings/SettingsModal.tsx` |

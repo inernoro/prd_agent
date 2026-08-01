@@ -1,7 +1,7 @@
 ---
 name: create-skill-file
 version: 1.0.0
-description: Creates and evaluates Claude Code SKILL.md files following Anthropic best practices. Generates well-structured skills with correct frontmatter, progressive disclosure, and quality validation. Trigger words: "创建技能", "新建 skill", "create skill", "技能评分", "skill score", "/create-skill".
+description: 'Creates and evaluates Claude Code SKILL.md files following Anthropic best practices. Generates well-structured skills with correct frontmatter, progressive disclosure, and quality validation. Trigger words: "创建技能", "新建 skill", "create skill", "技能评分", "skill score", "/create-skill".'
 ---
 
 # 技能创建与质量评估

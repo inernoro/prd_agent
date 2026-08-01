@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-25 | **状态**：开发中
 
+**一句话**：验收中心统一到平台自带之后，剩下的已知边界与后续可补项。
+**谁该读**：接手验收中心的人；想知道某个能力为什么还没有的人。
+**读完能做什么**：判断眼前的缺失是已知边界还是新问题。
+
+---
+
 > 工程债务台账：CDS 验收中心统一（WS1/WS2/WS3 + E1/E2/E4/E6，2026-06-25）的已知边界与后续可补项。
 
 ## 背景
@@ -88,7 +94,15 @@ MAP 等系统通过知识库开放协议（MAP-KBTP v1 peer-sync）从 CDS 拉�
 - `acceptance.config.json` 已移除 MAP 字段；新仓库不要用 doc-store 路径。
 
 ## 关键文件
-- `cds/src/routes/peer-sync.ts`、`cds/src/routes/reports.ts`、`cds/src/services/state.ts`、`cds/src/server.ts`
-- `cds/tests/routes/peer-sync.test.ts`、`cds/tests/services/acceptance-reports.test.ts`
 - `.claude/skills/create-visual-test-to-kb/{scripts/archive_report.py,acceptance.config.json,SKILL.md}`
 - `.claude/skills/cds/cli/cdscli.py`（report / peer 命令）
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 关键文件 | `cds/src/routes/peer-sync.ts`、`cds/src/routes/reports.ts`、`cds/src/services/state.ts`、`cds/src/server.ts`、`cds/tests/routes/peer-sync.test.ts`、`cds/tests/services/acceptance-reports.test.ts` |

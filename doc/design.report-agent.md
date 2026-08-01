@@ -4,6 +4,10 @@
 
 > **appKey**：`report-agent`
 
+**一句话**：让团队周报从"负担"变成"资产"——成员轻松写、管理者秒懂、数据自动来。
+**谁该读**：周报功能的产品与工程师。
+**读完能做什么**：说清采集、生成、汇总三段的整体设计。
+
 ## 一、管理摘要
 
 - **解决什么问题**：团队周报撰写依赖人工汇总，管理者需逐篇阅读成员周报才能掌握全局进展，且缺乏数据驱动的工作量度量
@@ -12,8 +16,6 @@
 - **影响范围**：prd-api（ReportAgentController）、prd-admin（20+ 前端页面）、LLM Gateway（AI 汇总调用）、工作流引擎（数据采集）
 
 ## 二、产品定位
-
-**一句话**：让团队周报从"负担"变成"资产"——成员轻松写、管理者秒懂、数据自动来。
 
 **目标用户**：
 
@@ -260,9 +262,9 @@
 
 | 文档 | 关系 |
 |------|------|
-| `design.report-agent.ai-systems.md` | 市场调研 — Phase 1 前的竞品分析，为功能设计提供灵感 |
-| `design.executive-dashboard.md` | 总裁面板消费周报数据，展示团队级聚合指标 |
-| `design.workflow-agent.engine.md` | 工作流引擎为周报提供外部数据源采集能力 |
+| [design.report-agent.ai-systems.md](./design.report-agent.ai-systems.md) | 市场调研 — Phase 1 前的竞品分析，为功能设计提供灵感 |
+| [design.executive-dashboard.md](./design.executive-dashboard.md) | 总裁面板消费周报数据，展示团队级聚合指标 |
+| [design.workflow-agent.engine.md](./design.workflow-agent.engine.md) | 工作流引擎为周报提供外部数据源采集能力 |
 
 ## 十、影响范围与风险
 

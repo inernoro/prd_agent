@@ -4,6 +4,10 @@
 
 > **appKey**：`literary-agent`
 
+**一句话**：AI 驱动的文学创作助手——写作配图一条龙，创作资产可沉淀。
+**谁该读**：文学创作智能体的产品与工程师；想了解配图链路的人。
+**读完能做什么**：说清从文章到成图的完整流程，以及标题层级如何影响分段配图。
+
 ## 一、管理摘要
 
 - **解决什么问题**：内容创作者写完文章后，配图环节繁琐——需要手动寻找合适的图片位置、编写生图 prompt、逐张生成、下载、插入文章，整个过程耗时且割裂
@@ -13,8 +17,6 @@
 - **当前状态**：已实现，持续迭代。与 VisualAgent 共享底层生图能力，独立维护创作流程和提示词体系
 
 ## 二、产品定位
-
-**一句话**：AI 驱动的文学创作助手——写作配图一条龙，创作资产可沉淀。
 
 **目标用户**：
 
@@ -161,14 +163,8 @@ Upload(0) → Editing(1) → MarkersGenerated(2) → ImagesGenerating(3) → Ima
 
 正确做法：**扫全文，取所有 `#{1,6}` heading 中 level 最小的那一级当"大标题"**，小标题 = 大标题之下任意更深的 level。前端 `bigHeadingLevel = Math.min(...levels)`；后端 prompt 用文字描述让 LLM 做同样的相对判断："先识别本文中所有标题里 level 最小的那一级……"
 
-```ts
-// prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx
-const bigHeadingLevel = useMemo(() => {
-  const levels = splitParagraphs(articleContent)
-    .map(headingLevelOf).filter(l => l > 0);
-  return levels.length > 0 ? Math.min(...levels) : 0;
-}, [articleContent]);
-```
+前后端用同一条相对判据：**先扫全文找出出现过的最小标题层级，那一级就是「大标题」**，
+比它更深的都是小标题。绝不硬编码「二级标题就是大标题」——文章的层级起点因人而异。
 
 **用户锚点（user-anchor）的三种打点路径**：
 
@@ -193,7 +189,7 @@ const bigHeadingLevel = useMemo(() => {
 
 **策略下放到后端的传输方式**：
 
-目前策略本身**不作为独立字段**发到后端——策略提示词在前端拼到 `userInstruction` 前部，后端 `ImageMasterController.GenerateArticleMarkers` 完全无感知。这让 Phase 1/1.5/1.6 后端零改动上线。Phase 2 会把 `positionStrategy` 下沉到 `ArticleIllustrationWorkflow` 做持久化，并在 `ArticleMarkerExtractor` 里对 `[IMG]` 占位符做强约束识别（绕过 LLM 随机性）。详见 `plan.visual-agent.manual-image-marking.md`。
+目前策略本身**不作为独立字段**发到后端——策略提示词在前端拼到 `userInstruction` 前部，后端 `ImageMasterController.GenerateArticleMarkers` 完全无感知。这让 Phase 1/1.5/1.6 后端零改动上线。Phase 2 会把 `positionStrategy` 下沉到 `ArticleIllustrationWorkflow` 做持久化，并在 `ArticleMarkerExtractor` 里对 `[IMG]` 占位符做强约束识别（绕过 LLM 随机性）。详见 [plan.visual-agent.manual-image-marking.md](./plan.visual-agent.manual-image-marking.md)。
 
 ## 六、数据设计
 
@@ -267,10 +263,10 @@ const bigHeadingLevel = useMemo(() => {
 
 | 文档 | 关系 |
 |------|------|
-| `design.visual-agent.md` | 共享底层生图引擎（ImageGen），Literary Agent 复用 VisualAgent 的工作空间和资产集合 |
-| `design.emergence.system.md` | 涌现篇中"内容创作流水线"场景的详细来源 |
-| `design.skill.unified-skill-system.md` | 提示词与技能系统统一设计 |
-| `plan.visual-agent.manual-image-marking.md` | 配图位置策略（Phase 1~3）的分阶段实施计划与落地记录 |
+| [design.visual-agent.md](./design.visual-agent.md) | 共享底层生图引擎（ImageGen），Literary Agent 复用 VisualAgent 的工作空间和资产集合 |
+| [design.emergence.system.md](./design.emergence.system.md) | 涌现篇中"内容创作流水线"场景的详细来源 |
+| [design.skill.unified-skill-system.md](./design.skill.unified-skill-system.md) | 提示词与技能系统统一设计 |
+| [plan.visual-agent.manual-image-marking.md](./plan.visual-agent.manual-image-marking.md) | 配图位置策略（Phase 1~3）的分阶段实施计划与落地记录 |
 
 ## 九、影响范围与风险
 

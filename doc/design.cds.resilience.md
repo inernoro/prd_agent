@@ -2,6 +2,12 @@
 
 > **版本**：v3.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：预览环境不能无限常驻：单机用温池加最近最少使用降温，多节点靠调度器分配执行节点。
+**谁该读**：关心容量与稳定性的运维。
+**读完能做什么**：说清分支什么时候被降温或驱逐。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：分支预览环境无限常驻会耗尽单机资源，多节点场景还需要明确容量派发、节点失联和恢复边界。
@@ -142,7 +148,7 @@ Dispatcher 支持按分支数量、实时负载或温池容量选择节点：
 
 ## 关联文档
 
-- `doc/design.cds.cluster-bootstrap.md`
-- `doc/design.cds.branch-network-isolation.md`
-- `doc/design.cds.lifecycle-atomicity.md`
-- `doc/guide.cds.cluster-setup.md`
+- [doc/design.cds.cluster-bootstrap.md](./design.cds.cluster-bootstrap.md)
+- [doc/design.cds.branch-network-isolation.md](./design.cds.branch-network-isolation.md)
+- [doc/design.cds.lifecycle-atomicity.md](./design.cds.lifecycle-atomicity.md)
+- [doc/guide.cds.cluster-setup.md](./guide.cds.cluster-setup.md)

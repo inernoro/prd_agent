@@ -1,5 +1,8 @@
 # 页面必须撑开高度（Full-Height Layout）
 
+**一句话**：宽屏页面必须撑满视口高度，根容器走 h-full + min-h-0 + flex，禁止 calc(100vh - N px) 魔数，滚动发生在最靠近内容的那一层。
+**什么时候撞上**：写管理后台、桌面端这类宽屏页面。
+
 宽屏 / 桌面端 / 管理后台类页面必须撑满视口可用高度，禁止内容猥琐在屏幕中心或上部留一大片黑底。
 
 ---
@@ -18,7 +21,7 @@
 不允许只写 `flex flex-col gap-N` 当作根。AppShell 已经把 `<Outlet />` 挂在 `flex-1 min-h-0` 容器里，页面根 `h-full min-h-0 flex flex-col` 才能拿到全部高度。
 
 ```tsx
-// ✅ 正确
+// 正确
 return (
   <div className="flex flex-col gap-5 h-full min-h-0">
     <Header />
@@ -26,7 +29,7 @@ return (
   </div>
 );
 
-// ❌ 错误（内容高度由自己决定，宽屏下底部一片黑）
+// 错误（内容高度由自己决定，宽屏下底部一片黑）
 return (
   <div className="flex flex-col gap-5">
     <Header />
@@ -40,11 +43,11 @@ return (
 `100vh` 不包含安全区、mobile 虚拟键盘、AppShell 导航。页面嵌套层级改一次就对不上。
 
 ```tsx
-// ❌ 禁止
+// 错误：禁止
 <div style={{ height: 'calc(100vh - 160px)' }}>...</div>
 <div className="h-[calc(100vh-160px)]">...</div>
 
-// ✅ 走 flex 链
+// 正确：走 flex 链
 <div className="flex-1 min-h-0 flex flex-col">...</div>
 ```
 
@@ -53,8 +56,7 @@ return (
 TabBar + 多 tab 的场景，每个 tab 的容器都必须 `flex-1 min-h-0`，不能只有其中一个 tab 撑开。
 
 ```tsx
-// ✅
-<div className="h-full min-h-0 flex flex-col">
+// 正确：<div className="h-full min-h-0 flex flex-col">
   <TabBar />
   {tab === 'A' && (
     <div className="flex-1 min-h-0 overflow-y-auto">

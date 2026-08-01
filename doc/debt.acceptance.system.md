@@ -2,11 +2,17 @@
 
 > **版本**：v1.0 | **日期**：2026-05-27 | **状态**：开发中
 
+**一句话**：验收体系要从「单技能内联标准」演进成标准创建、验收执行、知识库枢纽三方架构，本文记还债顺序与不做的事。
+**谁该读**：规划验收体系演进的人。
+**读完能做什么**：按分阶段顺序推进，并知道哪些明确不做。
+
+---
+
 | 字段 | 内容 |
 |---|---|
 | 模块 | 功能验收体系（`create-visual-test-to-kb` 技能 + 知识库归档） |
 | 状态 | open（未排期；方向已认可，2026-05-27） |
-| 关联 | `.claude/skills/create-visual-test-to-kb/`、`doc/design.acceptance.system.md`、文档空间 `document_stores` |
+| 关联 | `.claude/skills/create-visual-test-to-kb/`、[doc/design.acceptance.system.md](./design.acceptance.system.md)、文档空间 `document_stores` |
 | 提出 | 用户提议：用知识库当枢纽，把「标准创建 / 验收执行 / 结果归档」三方打通，标准与执行各由独立 Agent 承担 |
 
 

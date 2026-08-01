@@ -2,6 +2,12 @@
 
 > **版本**：v1.3 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：工作台不是新写的智能体循环：控制面留在平台，模型对话交给官方能力，本文讲怎么用。
+**谁该读**：使用工作台的开发者；想知道进度怎么看的人。
+**读完能做什么**：从入口进去跑完一次任务，并看懂进度与审批。
+
+---
+
 ## 先看结论
 
 CDS Agent 工作台不是一个新的自研 Agent loop。当前目标架构是：
@@ -13,7 +19,7 @@ CDS Agent 工作台不是一个新的自研 Agent loop。当前目标架构是�
 
 截至 2026-05-18，远程 preview 已证明 `R0/A0/V1/N6=pass`，但商业级可用仍阻塞在 R1：默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不是 Anthropic/Claude-compatible profile。因此 S1/S2/S3 真实 provider run 不能算完成。
 
-> 2026-05-30 更新（优雅降级，先能用）：R1 未闭合不再让用户面对空白/报错。新增 **Lite 只读审查** 降级路径（`GatewayReviewRuntimeAdapter`，走现有 LLM Gateway）：当默认 profile 不兼容 `claude-agent-sdk` 或官方 sidecar 未就绪时，会话自动改走 Lite，读取工作区代码产出**只读**审查结论（不修改文件、不执行命令、无需审批），页面顶部显示「Lite 预览 · 只读」徽章。配置 Claude/Anthropic provider 闭合 R1 后，默认路径自动回到官方 SDK，Lite 退为显式降级项。Lite 的能力边界与剩余债务见 `doc/debt.cds.agent.md`。
+> 2026-05-30 更新（优雅降级，先能用）：R1 未闭合不再让用户面对空白/报错。新增 **Lite 只读审查** 降级路径（`GatewayReviewRuntimeAdapter`，走现有 LLM Gateway）：当默认 profile 不兼容 `claude-agent-sdk` 或官方 sidecar 未就绪时，会话自动改走 Lite，读取工作区代码产出**只读**审查结论（不修改文件、不执行命令、无需审批），页面顶部显示「Lite 预览 · 只读」徽章。配置 Claude/Anthropic provider 闭合 R1 后，默认路径自动回到官方 SDK，Lite 退为显式降级项。Lite 的能力边界与剩余债务见 [doc/debt.cds.agent.md](./debt.cds.agent.md)。
 
 ## 入口
 
@@ -21,12 +27,12 @@ CDS Agent 工作台不是一个新的自研 Agent loop。当前目标架构是�
 
 相关文档：
 
-- `doc/guide.cds.agent.code-review-quickstart.md`：给自己或其他仓库做代码审查的操作顺序。
-- `doc/design.cds.agent.official-sdk-adapter.md`：官方 SDK adapter 与 MAP/CDS 自研边界。
-- `doc/plan.cds.agent.official-sdk-migration.md`：最小开发周期、验收门禁和时间线口径。
-- `doc/guide.cds.agent.runtime-pool-recovery.md`：runtime pool 或 sidecar alias 异常排障。
-- `doc/plan.cds.agent.official-sdk-migration.md`：当前 N1-N6 商业闭环和“不重复部署”约束。
-- `doc/guide.cds.agent.workbench.md`：当前页面怎么用、进度怎么看、失败先查哪里。
+- [doc/guide.cds.agent.code-review-quickstart.md](./guide.cds.agent.code-review-quickstart.md)：给自己或其他仓库做代码审查的操作顺序。
+- [doc/design.cds.agent.official-sdk-adapter.md](./design.cds.agent.official-sdk-adapter.md)：官方 SDK adapter 与 MAP/CDS 自研边界。
+- [doc/plan.cds.agent.official-sdk-migration.md](./plan.cds.agent.official-sdk-migration.md)：最小开发周期、验收门禁和时间线口径。
+- [doc/guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md)：runtime pool 或 sidecar alias 异常排障。
+- [doc/plan.cds.agent.official-sdk-migration.md](./plan.cds.agent.official-sdk-migration.md)：当前 N1-N6 商业闭环和“不重复部署”约束。
+- [doc/guide.cds.agent.workbench.md](./guide.cds.agent.workbench.md)：当前页面怎么用、进度怎么看、失败先查哪里。
 
 ## 进度怎么看
 

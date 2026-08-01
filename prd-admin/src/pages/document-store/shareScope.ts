@@ -33,7 +33,7 @@ export function pickScopeShareLinks(
  *
  * 数字短链 /s/{seq} 是全局自增号，攻击者可以从 1 逐个试出别人的分享，
  * 统一分享体系里它只是「用户主动生成后的次级可选项」，绝不能当默认对外地址
- * （doc/debt.platform.share-link-security.md；网页托管 2026-06-11 已按此口径改过）。
+ * （doc/debt.platform.md「分享链接安全」；网页托管 2026-06-11 已按此口径改过）。
  */
 export function shareLinkUrl(origin: string, link: Pick<DocumentStoreShareLink, 'token'>): string {
   return `${origin}/s/lib/${link.token}`;

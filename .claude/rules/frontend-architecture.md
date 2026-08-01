@@ -4,14 +4,17 @@ globs: ["prd-admin/src/**/*.{ts,tsx}", "prd-desktop/src/**/*.{ts,tsx}"]
 
 # 前端架构规则
 
+**一句话**：前端只发指令、只展示后端结果，不维护业务中间态；类型到图标或组件的映射一律走注册表，不写 switch。
+**什么时候撞上**：写 prd-admin 或 prd-desktop 的任何 TypeScript 代码。
+
 ## 核心原则
 
 前端仅作为指令发送者与状态观察者。所有业务逻辑与状态流转在后端闭环，前端不维护中间态。
 
 ## 前端职责边界
 
-- ✅ 发送原子化指令（API 调用）、展示后端返回的结果、UI 展示逻辑
-- ❌ 维护业务数据映射、解析后端数据生成业务描述、持有业务中间状态
+- 要做：发送原子化指令（API 调用）、展示后端返回的结果、UI 展示逻辑
+- 不做：维护业务数据映射、解析后端数据生成业务描述、持有业务中间状态
 
 ## 单一数据源原则
 
@@ -85,7 +88,7 @@ export function getFileTypeConfig(filename: string, mimeType?: string): FileType
 ### 反面案例（禁止）
 
 ```tsx
-// ❌ 在组件中硬编码类型判断
+// 错误：在组件中硬编码类型判断
 function FileIcon({ mimeType }: Props) {
   if (mimeType === 'text/markdown') return <FileText />;
   if (mimeType === 'application/pdf') return <FileText color="red" />;
@@ -126,7 +129,7 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 ### 反面案例（禁止）
 
 ```tsx
-// ❌ 直接用 lucide-react 的 Loader2
+// 错误：直接用 lucide-react 的 Loader2
 import { Loader2 } from 'lucide-react';
 {loading && <Loader2 className="animate-spin" />}
 ```

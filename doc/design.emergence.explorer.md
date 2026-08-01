@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-04-07 | **状态**：已落地
 
+**一句话**：从一颗种子出发，让模型在三个维度上探索组合，把头脑风暴长成一棵可视的功能树。
+**谁该读**：做功能规划的产品；接手探索器的工程师。
+**读完能做什么**：说清三个维度各自产出什么。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：团队在规划"下一步做什么"时缺少结构化的发散工具，头脑风暴结果散落在聊天记录和文档注释中
@@ -119,6 +125,6 @@ event: done     → { totalNew, error? }   // 完成
 
 ## 七、关联设计文档
 
-- `design.knowledge-base.store.md` — 文档空间（涌现的种子来源）
-- `design.emergence.system.md` — 系统涌现概念文档（涌现探索器是这个概念的具体实现）
+- [design.knowledge-base.store.md](./design.knowledge-base.store.md) — 文档空间（涌现的种子来源）
+- [design.emergence.system.md](./design.emergence.system.md) — 系统涌现概念文档（涌现探索器是这个概念的具体实现）
 - `.claude/rules/no-rootless-tree.md` — 无根之木禁令 + 借用法则

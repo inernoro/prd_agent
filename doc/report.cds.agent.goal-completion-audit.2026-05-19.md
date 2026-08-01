@@ -2,6 +2,10 @@
 
 > **版本**：v1.0 | **日期**：2026-05-19 | **状态**：已落地
 
+**一句话**：审计结论是 CDS Agent 的商业级闭环达标——远端只读试用可用、本地扩展能力已验收、写入与发布走灰度路径。
+**谁该读**：判断 CDS Agent 能不能对外试用的负责人；接手该闭环的工程师。
+**读完能做什么**：说清当时哪些能力算验收通过、哪些仍限制在只读，以及写入能力的开放前提。
+
 ## 结论
 
 目标级审计通过。当前 CDS Agent 商业级可用闭环达到“远端只读试用 + 本地扩展能力已验收 + 发布/写入灰度路径清晰”的完成标准：
@@ -45,15 +49,15 @@ bash scripts/audit-cds-agent-goal.sh
 
 | 要求 | 证据 |
 | --- | --- |
-| MAP/CDS 控制面 | `scripts/audit-cds-agent-goal.sh` A0/D1 pass；`doc/design.cds.agent.commercial-architecture-and-roadmap.md` §1/§2 |
+| MAP/CDS 控制面 | `scripts/audit-cds-agent-goal.sh` A0/D1 pass；[doc/design.cds.agent.commercial-architecture-and-roadmap.md](./design.cds.agent.commercial-architecture-and-roadmap.md) §1/§2 |
 | 官方 SDK adapter 主路径 | A0 pass：official adapter 289/320，bridge support 509/650，总胶水 798/850，legacy loop 425 |
 | 远端只读代码巡检 | `/tmp/cds-agent-p4-2-one-cycle-accepted/s1-report.json` pass |
 | 危险工具阻断与 stop | `/tmp/cds-agent-p4-2-one-cycle-accepted/controls-report.json` pass |
 | 远端视觉验收 | `/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.png`；coverage pass |
 | 工作流调度 | `scripts/smoke-cds-agent-workflow-node.sh`；Phase 1 report |
 | KB 只读工具 | `scripts/smoke-cds-agent-kb-readonly-tools.sh`；Phase 1 report |
-| 写入扩展路径 | `doc/report.cds.agent.p4-5-writable-trial-plan.2026-05-19.md`；Phase 2 report |
-| 进度唯一看板 | `doc/design.cds.agent.commercial-architecture-and-roadmap.md` |
+| 写入扩展路径 | [doc/report.cds.agent.p4-5-writable-trial-plan.2026-05-19.md](./report.cds.agent.p4-5-writable-trial-plan.2026-05-19.md)；Phase 2 report |
+| 进度唯一看板 | [doc/design.cds.agent.commercial-architecture-and-roadmap.md](./design.cds.agent.commercial-architecture-and-roadmap.md) |
 
 ## 当前发布状态
 

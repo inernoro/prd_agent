@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：不讲某个功能，而是讲基础组件如何组合出远超单件之和的能力，是这套系统的思路说明书。
+**谁该读**：想理解系统组合思路的人；规划下一步做什么的产品。
+**读完能做什么**：说清哪些基础件能互相组合，以及组合的方法。
+
+---
+
 > 取用之于基础，串联其协同，落地之实际，编之于幻想。
 
 ## 一、管理摘要
@@ -27,6 +33,8 @@ PrdAgent 也是如此——
 | **事件驱动 + 自动化** | Agent 产生事件 → 触发其他 Agent 的工作流 | 从"被动响应"变成"主动协同" |
 
 **一句话**：我们不是在做 6 个 AI 产品，我们在做一个**会自我组合的智能体生态**。
+**谁该读**：想理解系统组合思路的人。
+**读完能做什么**：说清哪些基础件能互相组合，以及组合的方法。
 
 ---
 
@@ -282,14 +290,14 @@ PrdAgent 也是如此——
 
 | 文档 | 与涌现的关系 |
 |------|-------------|
-| `design.workflow-agent.engine.md` | 编排层核心 — DAG 引擎设计 |
-| `design.workflow-agent.engine.md` | 编排层 — DAG、控制流舱与 SSE 实时推送 |
-| `design.visual-agent.md` | 能力层 — 视觉创作 Agent 架构 |
-| `design.report-agent.md` | 能力层 — 周报 Agent 架构（含工作流集成） |
-| `design.literary-agent.md` | 能力层 — 文学创作 Agent |
-| `design.defect-agent.md` | 能力层 — 缺陷管理 Agent |
-| `design.channel-agent.adapter.md` | 接入层 — 多通道适配（邮件/SMS/快捷指令） |
-| `design.open-platform.md` | 接入层 — 外部 App 接入 |
-| `design.skill.unified-skill-system.md` | 能力层 — 技能系统扩展点 |
-| `design.platform.server-authority.md` | 基础层 — 服务器权威性保证任务必达 |
-| `design.platform.model-pool.md` | 基础层 — LLM Gateway 三级调度 |
+| [design.workflow-agent.engine.md](./design.workflow-agent.engine.md) | 编排层核心 — DAG 引擎设计 |
+| [design.workflow-agent.engine.md](./design.workflow-agent.engine.md) | 编排层 — DAG、控制流舱与 SSE 实时推送 |
+| [design.visual-agent.md](./design.visual-agent.md) | 能力层 — 视觉创作 Agent 架构 |
+| [design.report-agent.md](./design.report-agent.md) | 能力层 — 周报 Agent 架构（含工作流集成） |
+| [design.literary-agent.md](./design.literary-agent.md) | 能力层 — 文学创作 Agent |
+| [design.defect-agent.md](./design.defect-agent.md) | 能力层 — 缺陷管理 Agent |
+| [design.channel-agent.adapter.md](./design.channel-agent.adapter.md) | 接入层 — 多通道适配（邮件/SMS/快捷指令） |
+| [design.open-platform.md](./design.open-platform.md) | 接入层 — 外部 App 接入 |
+| [design.skill.unified-skill-system.md](./design.skill.unified-skill-system.md) | 能力层 — 技能系统扩展点 |
+| [design.platform.server-authority.md](./design.platform.server-authority.md) | 基础层 — 服务器权威性保证任务必达 |
+| [design.platform.model-pool.md](./design.platform.model-pool.md) | 基础层 — LLM Gateway 三级调度 |

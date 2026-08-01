@@ -2,6 +2,10 @@
 
 > **版本**：v1.0 | **日期**：2026-05-19 | **状态**：已落地
 
+**一句话**：Phase 3 规模化能力在本地验收通过，未执行远端发布，报告里记的是当时的验收基线与范围。
+**谁该读**：回溯 CDS Agent 各阶段验收结论的人。
+**读完能做什么**：查到该阶段验收了哪些能力、基线提交是哪一个、哪些没做。
+
 分支：`codex/cds-agent-workbench-ui`
 验收基线提交：`e9e710e94`
 范围：Phase 3 规模化商业能力，本地验收通过；未执行远端发布。
@@ -100,7 +104,7 @@ Phase 3 明确不做：
 | P3-5b scoped resolve | `/tmp/cds-agent-p3-5b-profile-scope-report.png`；`/tmp/cds-agent-p3-5b-profile-scope-report.pdf` |
 | P3-5c team-shared policy | `/tmp/cds-agent-p3-5c-team-shared-profile-policy-report.png`；`/tmp/cds-agent-p3-5c-team-shared-profile-policy-report.pdf` |
 | P3-5d owner UI | `/tmp/cds-agent-p3-5d-owner-policy-ui-report.png`；`/tmp/cds-agent-p3-5d-owner-policy-ui-report.pdf` |
-| P3-6 验收包 | `doc/report.cds.agent.phase3-acceptance.2026-05-19.md`；`doc/report.cds-agent-phase3-acceptance-2026-05-19.pdf` |
+| P3-6 验收包 | [doc/report.cds.agent.phase3-acceptance.2026-05-19.md](./report.cds.agent.phase3-acceptance.2026-05-19.md)；`doc/report.cds-agent-phase3-acceptance-2026-05-19.pdf` |
 
 ## 使用路径
 

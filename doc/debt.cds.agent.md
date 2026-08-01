@@ -2,6 +2,12 @@
 
 > **版本**：v0.1 | **日期**：2026-07-17 | **状态**：开发中
 
+**一句话**：工作台长期卡在默认运行配置这道门禁，本文记债务清单与用户「看不懂、玩不明白」的根因。
+**谁该读**：接手工作台的人；排查它为什么不好用的人。
+**读完能做什么**：定位卡点在哪一环，并挑出优先偿还项。
+
+---
+
 ## 总览
 
 | 指标 | 当前值 |
@@ -23,7 +29,7 @@
 - **现状**：Lite 模式只读审查可用（非商业级）。官方 `claude-agent-sdk` provider 闭环（S1/S2/S3）仍需有效 Anthropic/Claude-compatible key 才能跑通。
 - **影响**：商业级审查（带工具、审批、Stop interrupt）暂不可用；用户看到的是 Lite 预览级结论。
 - **偿还条件**：配置有效 `sk-ant-...` 或 Claude-compatible provider profile → R1 自动闭合，默认路径回到官方 SDK，Lite 退为显式降级项。
-- **不靠重新部署解决**：见 `guide.cds.agent.workbench.md`「不要反复部署」。
+- **不靠重新部署解决**：见 [guide.cds.agent.workbench.md](./guide.cds.agent.workbench.md)「不要反复部署」。
 
 ### D2 · Lite 模式能力边界（open，按设计）
 
@@ -35,7 +41,7 @@
 ### D3 · CDS Agent 文档群熵减（paid，2026-07-17）
 
 - **原问题**：同一主题同时存在超长工作台计划、SDK 迁移计划和多份阶段验收报告，当前状态被历史进度淹没。
-- **偿还**：删除重复的历史工作台计划，把未完成 N1-N6 归口到 `plan.cds.agent.official-sdk-migration.md`；阶段报告只保留仍被脚本或事实源引用的例外，其余回收；索引同步到 canonical 文档。
+- **偿还**：删除重复的历史工作台计划，把未完成 N1-N6 归口到 [plan.cds.agent.official-sdk-migration.md](./plan.cds.agent.official-sdk-migration.md)；阶段报告只保留仍被脚本或事实源引用的例外，其余回收；索引同步到 canonical 文档。
 
 ### D4 · 无 runtime profile 时的 Lite 直跑（paid，2026-07-09）
 
@@ -48,4 +54,4 @@
 - `prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs`
 - `prd-api/src/PrdAgent.Api/Services/CdsAgentRuntimeEventRenderer.cs`
 - `prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`
-- `doc/guide.cds.agent.workbench.md`、`doc/design.cds.agent.official-sdk-adapter.md`
+- [doc/guide.cds.agent.workbench.md](./guide.cds.agent.workbench.md)、[doc/design.cds.agent.official-sdk-adapter.md](./design.cds.agent.official-sdk-adapter.md)

@@ -19,7 +19,7 @@ import type { NoticeOutboundConfig } from '../../src/services/notice-outbound-ma
 /**
  * 通知账本的行为用例。
  *
- * 事故值：CDS 至今没有任何服务端告警外发（doc/debt.cds.uptime-monitor.md 债务 2-1），
+ * 事故值：CDS 至今没有任何服务端告警外发（doc/debt.cds.md「CDS 存活监控（uptime-monitor）」 债务 2-1），
  * 而「告警缺失」是最难被发现的缺陷——没人会注意到一个从没响过的铃。所以这里断言的
  * 三件事都刻意选了「错了也不会报错、只会静默走歪」的形状：
  *   1. 降噪窗口内不该重复外发（错了 = 刷屏，人学会忽略告警）；

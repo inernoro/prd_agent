@@ -35,7 +35,7 @@
 # the next self-update / rebuild. Always bind-mount it to a host path
 # on persistent storage.
 #
-# See doc/design.cds-resilience.md Phase 2 and the G1 commits.
+# See doc/design.cds.resilience.md Phase 2 and the G1 commits.
 
 FROM node:20-slim AS builder
 

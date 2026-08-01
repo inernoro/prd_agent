@@ -29,7 +29,7 @@ const ALLOWLIST = new Map<string, string>([
     'llmgw/web:lib/mapNavigation.ts',
     '控制台「返回 MAP」的兜底推算。平台已通过 /gw/healthz 的 mapHomeUrl 下发权威地址并优先生效，'
     + '这里保留后缀推算仅用于「平台没下发」的场景（正式环境 / 旧版 CDS）。'
-    + '待所有部署都下发后可删，见 doc/debt.platform.preview-entrypoints.md 的 PE-llmgw-console-mapnav。',
+    + '待所有部署都下发后可删，见 doc/debt.platform.md「预览入口下发（Preview Entrypoints）· 债务台账」 的 PE-llmgw-console-mapnav。',
   ],
 ]);
 

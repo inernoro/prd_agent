@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-03-27 | **状态**：已落地
 
+**一句话**：对照业界优秀作品逐维度找出我们生成的视频差在哪：场景数据太扁平、转场硬切、动画单调。
+**谁该读**：做视频生成的产品与工程师；想知道下一步该先补哪一项的人。
+**读完能做什么**：说清差距集中在哪几个维度，并按建议的升级路径排优先级。
+
+---
+
 > **子类型**：技术分析（质量差距分析）
 
 > 基于 Manus 互联网调研 + 我们 prd-video 源码逐行审计
@@ -48,7 +54,6 @@
 | `NeonTitle` | 标题 + text-shadow 发光 | CSS text-shadow |
 | `CodeBlock` | 代码 + 打字机光标 | 纯文本，无语法高亮 |
 | `ProgressBar` | (在 StepsScene 中内联) 简单色条 | CSS width transition |
-
 | 场景 | 视觉效果 |
 |------|----------|
 | `IntroScene` | 标题 + 副标题 + 两条装饰线 |
@@ -72,17 +77,9 @@
 
 ### 2.4 数据模型
 
-```typescript
-interface SceneData {
-  index: number;
-  topic: string;           // 标题
-  narration: string;       // 旁白文本
-  visualDescription: string; // 只用来提示 AI，实际不渲染
-  durationInFrames: number;
-  sceneType: SceneType;    // 8 种类型
-  backgroundImageUrl?: string; // AI 背景图
-}
-```
+一个「场景」目前只存六样东西：序号、标题、旁白文本、给 AI 看的画面描述、时长（按帧算）、
+场景类型，外加一张可选的 AI 背景图。
+
 
 **关键问题**：数据模型太简单，只有"标题 + 一段文本"，没有结构化的布局信息、动画时间线、元素坐标。
 
@@ -238,20 +235,9 @@ interface SceneData {
 npx remotion add @remotion/transitions
 ```
 
-```tsx
-// 改造前：硬切
-<Series>
-  <Series.Sequence>{scene1}</Series.Sequence>
-  <Series.Sequence>{scene2}</Series.Sequence>
-</Series>
+**改造点**：场景之间从「硬切」换成带转场的序列——在两个场景之间插入一次转场声明（如从右侧滑入），
+时长由转场自己承担。原则是：**转场是场景之间的关系，不是某个场景的属性**，所以它声明在序列层而不是场景内。
 
-// 改造后：丝滑转场
-<TransitionSeries>
-  <TransitionSeries.Sequence>{scene1}</TransitionSeries.Sequence>
-  <TransitionSeries.Transition presentation={slide({ direction: 'from-right' })} />
-  <TransitionSeries.Sequence>{scene2}</TransitionSeries.Sequence>
-</TransitionSeries>
-```
 
 ### 第二阶段：动画升级（3~5 天）
 

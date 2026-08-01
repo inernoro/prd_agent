@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-02-05 | **状态**：开发中
 
+**一句话**：把多个智能体聚成一个统一入口，用户从一处进入所有 AI 能力，管理员在此配置与上下架。
+**谁该读**：维护工具箱条目的运营与工程师；想知道工具怎么注册的人。
+**读完能做什么**：新增或调整一个工具条目，并判断它该走通用版还是定制版路由。
+
+---
+
 > **负责人**：-
 
 
@@ -157,7 +163,7 @@ cd prd-api && dotnet test
 3. 已绑定的文档会预先列出，可继续上传新文档或移除已有项
 4. 保存时列表里所有已完成文件的绑定会被去重保存
 
-> 说明：当前为「文档级全文注入」——文档越多/越大占用上下文越多。语义检索（RAG）为后续规划，见 `doc/debt.knowledge-base.md`。
+> 说明：当前为「文档级全文注入」——文档越多/越大占用上下文越多。语义检索（RAG）为后续规划，见 [doc/debt.knowledge-base.md](./debt.knowledge-base.md)。
 
 ---
 
@@ -253,24 +259,14 @@ prd-admin/src/
 
 ### 数据模型
 
-```typescript
-interface ToolboxItem {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;               // Lucide 图标名称
-  category: 'builtin' | 'custom';
-  type: 'builtin' | 'custom';
-  agentKey?: string;          // 关联的 Agent 标识
-  routePath?: string;         // 定制版跳转路由（有则为定制版）
-  prompt?: string;            // 系统提示词
-  modelId?: string;           // 使用的模型
-  tags: string[];
-  usageCount: number;
-  createdAt: string;
-  createdBy?: string;
-}
-```
+| 字段组 | 存什么 | 说明 |
+|---|---|---|
+| 身份 | 标识、名称、描述、图标 | 图标取自统一图标库的名字，不存图片 |
+| 归类 | 内置还是自建、关联的智能体标识 | 内置项随版本发布，自建项属于创建者 |
+| 落点 | 跳转路由（可空） | **有路由 = 定制版**：点它去专属页面；没有 = 通用版，走默认对话界面 |
+| 能力 | 系统提示词、使用的模型 | 决定这个工具「像谁」 |
+| 检索与统计 | 标签、使用次数、创建时间与创建人 | 排序与去重的依据 |
+
 
 ### API 端点（规划中）
 

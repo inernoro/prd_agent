@@ -2,11 +2,17 @@
 
 > **版本**：v1.0 | **日期**：2026-07-19 | **状态**：规划中
 
+**一句话**：视觉创作逐行考古后暴露的一批陈年问题与可优化点，按修复、体验、增强、工程健康四类排列。
+**谁该读**：接手视觉创作优化的工程师。
+**读完能做什么**：按类别挑出下一项来做。
+
+---
+
 ## 管理摘要
 
 - **解决什么问题**：BrandAI 迁移过程中对视觉创作做了两轮共 7 个子智能体的逐行考古（约 98 项功能规格），顺带暴露出源实现的一批陈年问题与可优化点。本清单把它们固化为可逐项执行的 backlog，避免「看见一个修一个」。
 - **方案概述**：按 缺陷修复 / 体验优化 / 功能增强 / 工程健康 四类排列，每项带根因锚点与建议做法；多项可直接移植 BrandAI 已验证的实现。
-- **业务价值**：视觉创作更稳、更顺手；未来第 N 次迁移时按 design.visual-agent.canvas-composer.md + 本清单直接开工。
+- **业务价值**：视觉创作更稳、更顺手；未来第 N 次迁移时按 [design.visual-agent.canvas-composer.md](./design.visual-agent.canvas-composer.md) + 本清单直接开工。
 - **影响范围**：prd-admin 视觉创作前端为主，少量 prd-api。
 - **主要风险**：逐项独立、可分批合入；仅「展示层分离」涉及消息落库口径需回归。
 
@@ -36,7 +42,7 @@
 | 6 | chip 复制粘贴文本 token 化 | 已落地（2026-07-19，分支 claude/visual-creation-migration-5wrsz9）：`lib/chipTokenText.ts` 纯函数 + `RichComposer/index.tsx` 注册 COPY/CUT/PASTE 命令，7 例 vitest | 复制/剪切得 [@image:#N:canvasKey:src] 混合文本；粘贴时 canvasKey 命中当前 imageOptions 才还原就绪 chip（refId/src 以当前集合为准），未命中保持纯文本防幻觉引用 |
 | 7 | 工具菜单 V/H 快捷键假提示 | 工具切换菜单显示 V/H 快捷键角标但代码未绑定按键（7402-7519） | 绑定 V=Select、H=Hand（画布聚焦且非输入控件时），或删掉角标不做假暗示 |
 | 8 | 上传上限与画布 60 项上限无前置提示 | 超 20 张截断、画布 merged.slice(-60) 静默丢最旧 | 触顶时 toast 明示（对齐「预期管理」规则） |
-| 9 | 单文件 9400 行维护性 | AdvancedVisualAgentTab.tsx 承载画布+输入+生命周期全部逻辑 | 按 design.visual-agent.canvas-composer.md 四层拆文件；行为不变，仅重排 |
+| 9 | 单文件 9400 行维护性 | AdvancedVisualAgentTab.tsx 承载画布+输入+生命周期全部逻辑 | 按 [design.visual-agent.canvas-composer.md](./design.visual-agent.canvas-composer.md) 四层拆文件；行为不变，仅重排 |
 
 ## 三、功能增强（P2，从 BrandAI 迁移反向汲取）
 
@@ -50,10 +56,10 @@
 
 | # | 项 | 说明 |
 |---|---|---|
-| 13 | 原理文档随代码更新 | design.visual-agent.canvas-composer.md 是 2026-07 快照；大改 AdvancedVisualAgentTab 时同步更新，PR 模板勾选 |
+| 13 | 原理文档随代码更新 | [design.visual-agent.canvas-composer.md](./design.visual-agent.canvas-composer.md) 是 2026-07 快照；大改 AdvancedVisualAgentTab 时同步更新，PR 模板勾选 |
 | 14 | 迁移前先出清单 | 任何跨项目迁移先跑穷举盘点（子智能体并行读码 → 逐项规格清单 → 对照打勾），禁止凭印象复刻——BrandAI 迁移七轮返工的直接教训 |
 
 ## 关联文档
 
-- doc/design.visual-agent.canvas-composer.md — 视觉创作原理（本清单的锚点来源）
+- [design.visual-agent.canvas-composer.md](./design.visual-agent.canvas-composer.md) — 视觉创作原理（本清单的锚点来源）
 - BrandAI 仓库 docs/13_视觉创作对齐清单.md — 逐项对齐状态（约 98 项）

@@ -2,12 +2,18 @@
 
 > **版本**：v0.1 | **日期**：2026-04-12 | **状态**：已落地
 
+**一句话**：云开发套件多项目版的数据字典：十个集合各存什么、字段什么含义、约束与索引意图。
+**谁该读**：写数据访问代码的后端工程师；照表建索引的数据库管理员。
+**读完能做什么**：按字段表实现读写逻辑，并按索引意图表建立正确的约束与索引。
+
+---
+
 > 本文档定义 CDS v4 引入的 10 个 MongoDB 集合的完整字段表、约束、索引与关系。
 > **受众**：后端工程师（写 Mongoose / Mongo 原生 schema 时直接参照），DBA（对照索引汇总建索引）。
 > **文档导航**：
-> - 主设计稿：`doc/design.cds.multi-project.md`
-> - 7 期交付计划：`doc/plan.cds.multi-project-phases.md`
-> - 迁移规范：`doc/rule.cds.mongo-migration.md`
+> - 主设计稿：[doc/design.cds.multi-project.md](./design.cds.multi-project.md)
+> - 7 期交付计划：[doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md)
+> - 迁移规范：[doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md)
 
 
 ## 1. 集合清单
@@ -417,55 +423,22 @@ Header / Domain / Pattern 路由（v3.2 已存在，v4 加 projectId）。
 
 ## 14. 索引汇总（DBA 一次性建立）
 
-```js
-// users
-db.users.createIndex({ githubId: 1 }, { unique: true });
-db.users.createIndex({ email: 1 }, { sparse: true });
-db.users.createIndex({ status: 1, deletedAt: 1 });
+| 集合 | 要支撑的查询 | 关键约束 |
+|---|---|---|
+| 用户 | 按 GitHub 账号登录、按邮箱找人、按状态筛活跃用户 | GitHub 账号唯一；邮箱可缺省 |
+| 会话 | 按用户查会话 | 过期即自动清除（到期删除） |
+| 工作区 | 按短名直达、按类型与归属人筛选、按 GitHub 组织关联 | 短名唯一；组织字段可缺省 |
+| 工作区成员 | 查某人属于哪些工作区、查某工作区有哪些人及角色 | 同一工作区内一人一条 |
+| 项目 | 工作区内按短名直达、列未删除项目 | 工作区内短名唯一；容器网络名全局唯一 |
+| 环境 | 项目内按名字取环境、取默认环境 | 项目内环境名唯一 |
+| 分支 | 项目内按分支标识或短名直达、按环境与状态筛、按冷热态回收、跨项目按名字找 | 项目内分支标识与短名各自唯一 |
+| 构建档案 | 项目内按档案标识直达、列未删除档案 | 项目内档案标识唯一 |
+| 基础设施服务 | 项目内按服务标识直达、按状态巡检 | 项目内服务标识唯一 |
+| 路由规则 | 项目内按优先级排序命中、筛生效规则、反查某分支被哪些规则指向 | 无唯一约束，靠优先级决定先后 |
 
-// sessions
-db.sessions.createIndex({ userId: 1 });
-db.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+**为什么按这张表建**：唯一约束是数据正确性的最后一道防线（短名撞车会让两个项目抢同一个预览地址）；
+到期自动删除只用在会话上，其余集合的清理走业务流程而不是数据库定时器。
 
-// workspaces
-db.workspaces.createIndex({ slug: 1 }, { unique: true });
-db.workspaces.createIndex({ kind: 1, ownerId: 1 });
-db.workspaces.createIndex({ githubOrgLogin: 1 }, { sparse: true });
-
-// workspace_members
-db.workspace_members.createIndex({ workspaceId: 1, userId: 1 }, { unique: true });
-db.workspace_members.createIndex({ userId: 1 });
-db.workspace_members.createIndex({ workspaceId: 1, role: 1 });
-
-// projects
-db.projects.createIndex({ workspaceId: 1, slug: 1 }, { unique: true });
-db.projects.createIndex({ workspaceId: 1, deletedAt: 1 });
-db.projects.createIndex({ dockerNetwork: 1 }, { unique: true });
-
-// environments
-db.environments.createIndex({ projectId: 1, name: 1 }, { unique: true });
-db.environments.createIndex({ projectId: 1, isDefault: 1 });
-
-// branches
-db.branches.createIndex({ projectId: 1, branchId: 1 }, { unique: true });
-db.branches.createIndex({ projectId: 1, slug: 1 }, { unique: true });
-db.branches.createIndex({ projectId: 1, environmentId: 1, status: 1 });
-db.branches.createIndex({ projectId: 1, heatState: 1 });
-db.branches.createIndex({ name: 1 });
-
-// build_profiles
-db.build_profiles.createIndex({ projectId: 1, profileId: 1 }, { unique: true });
-db.build_profiles.createIndex({ projectId: 1, deletedAt: 1 });
-
-// infra_services
-db.infra_services.createIndex({ projectId: 1, serviceId: 1 }, { unique: true });
-db.infra_services.createIndex({ projectId: 1, status: 1 });
-
-// routing_rules
-db.routing_rules.createIndex({ projectId: 1, priority: 1 });
-db.routing_rules.createIndex({ projectId: 1, isActive: 1 });
-db.routing_rules.createIndex({ targetBranchId: 1 });
-```
 
 **索引总数**：24 个（含 3 个 unique、1 个 TTL、2 个 sparse）。
 

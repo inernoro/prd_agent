@@ -56,7 +56,7 @@
 
 1. `.claude/rules/codebase-snapshot.md` → 功能注册表、DB 集合、废弃概念
 2. `doc/spec.srs.md` → 功能需求章节
-3. `doc/rule.data-dictionary.md` → 新增 MongoDB 集合或 sessionStorage 条目
+3. `doc/rule.platform.data-dictionary.md` → 新增 MongoDB 集合或 sessionStorage 条目
 
 ### Cross-validation Checklist
 

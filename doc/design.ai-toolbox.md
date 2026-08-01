@@ -2,6 +2,12 @@
 
 > **版本**：v1.2 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：多个智能体和工具聚成统一入口：有工具目录、运行记录与流式交互，真实能力仍由各自领域入口执行。
+**谁该读**：接手工具箱的产品与工程师。
+**读完能做什么**：说清工具箱与真实业务能力的分工。
+
+---
+
 ## 管理摘要
 
 - **问题**：多个智能体和工具分散在不同入口，用户难以判断该使用哪项能力，也难以追踪一次复杂任务的执行状态。
@@ -52,7 +58,7 @@
 - 编排与 Worker：`prd-api/src/PrdAgent.Api/Services/Toolbox/ToolboxOrchestrator.cs`、`ToolboxRunWorker.cs`、`Adapters/`。
 - 数据模型：`prd-api/src/PrdAgent.Core/Models/Toolbox/ToolboxModels.cs`。
 - 前端：`prd-admin/src/pages/ai-toolbox/`、`prd-admin/src/stores/toolboxStore.ts`、`prd-admin/src/services/real/aiToolbox.ts`。
-- 关联规则：`rule.platform.llm-gateway.md`、`rule.platform.server-authority.md`、`rule.platform.navigation-registry.md`。
+- 关联规则：[rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)、`rule.platform.server-authority.md`、`rule.platform.navigation-registry.md`。
 
 ## 风险与验收
 

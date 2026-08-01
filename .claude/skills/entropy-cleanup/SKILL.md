@@ -1,6 +1,6 @@
 ---
 name: entropy-cleanup
-description: 日常熵清理技能。扫描六个维度的一致性债务并双向修复（补缺 + 删幽灵）：(1) doc/ 命名规范违规；(2) doc/index.yml 缺失/幽灵条目；(3) doc/guide.list.directory.md 缺失/幽灵条目；(4) CLAUDE.md 技能表缺失/幽灵行；(5) codebase-snapshot 过期数据；(6) changelog→doc 内容覆盖（增量，manifest 追踪）。触发词："/entropy"、"熵清理"、"文档欠债"、"索引同步"、"entropy cleanup"。
+description: 日常熵清理技能。扫描七个维度的一致性债务并双向修复（补缺 + 删幽灵）：(1) doc/ 命名规范违规；(2) doc/index.yml 缺失/幽灵条目；(3) doc/guide.list.directory.md 缺失/幽灵条目；(4) CLAUDE.md 技能表缺失/幽灵行；(5) codebase-snapshot 过期数据；(6) changelog→doc 内容覆盖（增量，manifest 追踪）；(7) 文档可读性（导读三行缺失 / 引用点不开 / 死链，判据见 doc/rule.doc.readability.md）。触发词："/entropy"、"熵清理"、"文档欠债"、"索引同步"、"entropy cleanup"。
 ---
 
 # 日常熵清理
@@ -42,7 +42,7 @@ description: 日常熵清理技能。扫描六个维度的一致性债务并双�
 
 ---
 
-## 六维扫描目标
+## 七维扫描目标
 
 | 维度 | 补缺方向 | 删幽灵方向 | 验证方式 |
 |------|---------|---------|---------|
@@ -52,6 +52,7 @@ description: 日常熵清理技能。扫描六个维度的一致性债务并双�
 | D4 CLAUDE.md 技能表 | .claude/skills/ 有目录无表格行 → 追加 | 表格有行但 `.claude/skills/${name}/` 不存在 → 删行 | `[ -d .claude/skills/${name} ]` |
 | D5 codebase-snapshot | — | — | 人工确认后更新 |
 | D6 changelog→doc | changelog 未处理 → 追加章节 | — | manifest 记录，已处理跳过 |
+| D7 文档可读性 | 缺导读三行 → 补；规则缺「一句话 + 什么时候撞上」两行 → 补；技能 frontmatter 的 description 说不清触发时机 → 补；裸引用 → 转可点链接 | 死链（引用的文档不存在）→ 修或删 | `python3 scripts/doc-readability-check.py --ratchet`；批量改写用 `--fix-links` |
 
 ---
 

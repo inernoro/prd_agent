@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：认证存储从内存换成数据库后台，重启不再丢会话，多实例也能共享登录态。
+**谁该读**：接手认证存储的工程师。
+**读完能做什么**：说清两种后台的差异与切换方式。
+
+---
+
 ## 管理摘要
 
 - **解决的问题**：内存认证存储在 CDS 重启后丢失用户和会话，也无法在多个实例之间共享认证状态。
@@ -117,6 +123,6 @@ Mongo 数据库名优先读取 `CDS_AUTH_MONGO_DB`，其次读取 `CDS_MONGO_DB`
 
 ## 关联文档
 
-- `plan.cds.status.md`：CDS 能力与后续事项总览。
-- `design.cds.agent.commercial-architecture-and-roadmap.md`：团队工作空间和商业化架构。
-- `guide.cds.env.md`：环境变量配置说明。
+- [plan.cds.status.md](./plan.cds.status.md)：CDS 能力与后续事项总览。
+- [design.cds.agent.commercial-architecture-and-roadmap.md](./design.cds.agent.commercial-architecture-and-roadmap.md)：团队工作空间和商业化架构。
+- [guide.cds.env.md](./guide.cds.env.md)：环境变量配置说明。

@@ -2,6 +2,12 @@
 
 > **版本**：v1.4 | **日期**：2026-07-31 | **状态**：已落地
 
+**一句话**：规定一份验收报告要拿出什么证据才算数，让别人不用问执行人就能复核结论。
+**谁该读**：做验收的人和 AI；要看懂验收报告结论可信度的产品经理与管理者。
+**读完能做什么**：判断一份验收报告能不能采信，以及自己做验收时该留哪些证据。
+
+---
+
 ## 1. 目标
 
 MAP 企业级自动化验收不是“跑脚本、截图片、发链接”。它是一套可审计的质量治理系统，用于回答五个问题:
@@ -29,10 +35,10 @@ MAP 企业级自动化验收不是“跑脚本、截图片、发链接”。它�
 
 | 资产 | 位置 | 作用 | 禁止事项 |
 |---|---|---|---|
-| 企业级规范 | `doc/rule.acceptance.map-enterprise.md` | 定义验收治理主契约 | 不写单次执行结果 |
-| 每日验收 SOP | `doc/guide.acceptance.daily-sop.md` | 定义每日自动化如何运行 | 不复制技能全文到 automation prompt |
-| 报告与证据规范 | `doc/guide.acceptance.report-evidence.md` | 定义报告信息架构、截图、链接和失败呈现 | 不把截图堆成无解释素材墙 |
-| 引用与知识库治理 | `doc/design.acceptance.knowledge-governance.md` | 定义 CDS 文件夹、规范文档和引用方式 | 不把执行报告塞进 `doc/` |
+| 企业级规范 | [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) | 定义验收治理主契约 | 不写单次执行结果 |
+| 每日验收 SOP | [doc/guide.acceptance.daily-sop.md](./guide.acceptance.daily-sop.md) | 定义每日自动化如何运行 | 不复制技能全文到 automation prompt |
+| 报告与证据规范 | [doc/guide.acceptance.report-evidence.md](./guide.acceptance.report-evidence.md) | 定义报告信息架构、截图、链接和失败呈现 | 不把截图堆成无解释素材墙 |
+| 引用与知识库治理 | [doc/design.acceptance.knowledge-governance.md](./design.acceptance.knowledge-governance.md) | 定义 CDS 文件夹、规范文档和引用方式 | 不把执行报告塞进 `doc/` |
 | 技能实现 | `.claude/skills/**` | 可执行规则、脚本和模板 | 不与主规范语义冲突 |
 | 执行报告 | CDS `/reports` | 每次验收结果、截图资产、元数据和分享链 | 不提交到仓库 |
 
@@ -394,7 +400,7 @@ Verdict 只按下表判定：
 2. 视口宽度不大于 `480px`，记录实际 `viewport_width` 与 `viewport_height`。
 3. 移动端使用独立用户路径，从登录页或首页按可见入口点击进入，不复用桌面端已经直达目标状态的页面。
 4. 报告含「移动端验收」章节，写明视口、触控方式、入口路径、核心动作、结果状态、滚动归属、横向溢出、遮挡/裁切和固定元素可达性。
-5. 页面状态与检查项以 `doc/rule.frontend.mobile-visual-check-matrix.md` 为 SSOT；弹窗、抽屉、软键盘、安全区和底部固定操作等按实际改动选取，不用无关状态堆截图。
+5. 页面状态与检查项以 [doc/rule.frontend.mobile-visual-check-matrix.md](./rule.frontend.mobile-visual-check-matrix.md) 为 SSOT；弹窗、抽屉、软键盘、安全区和底部固定操作等按实际改动选取，不用无关状态堆截图。
 
 只有明确不提供移动 Web 体验的桌面原生页面或内部非页面变更，才允许报告写「移动端不适用」并说明产品边界。此类报告不得声称移动端通过；若目标含任何用户可见 Web 页面，不能使用该豁免。
 

@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：把协议各异的外部模型服务包成可命名的虚拟平台，由转换器统一成平台标准请求。
+**谁该读**：要接入非标准模型服务的工程师。
+**读完能做什么**：说清一个新服务怎么被包成虚拟平台。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：非标准模型服务、ASR、图片和视频 API 需要接入统一模型池，但各自的 URL、认证和协议不同。
@@ -104,6 +110,6 @@ Exchange 模型与真实平台模型遵循同一 appCallerCode、模型类型、
 
 ## 关联文档
 
-- `doc/design.platform.model-pool.md`
-- `doc/design.platform.llm-gateway.md`
-- `doc/rule.platform.llm-gateway.md`
+- [doc/design.platform.model-pool.md](./design.platform.model-pool.md)
+- [doc/design.platform.llm-gateway.md](./design.platform.llm-gateway.md)
+- [doc/rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)

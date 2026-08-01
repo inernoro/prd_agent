@@ -2,6 +2,12 @@
 
 > **版本**：v1.1 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：固定模板让成片同质化，改为按分镜生成受约束的场景实现，结果必须过校验且能回退模板。
+**谁该读**：做视频场景生成的工程师。
+**读完能做什么**：说清生成结果不合格时怎么兜底。
+
+---
+
 ## 管理摘要
 
 - **问题**：固定场景模板难以覆盖不同脚本、节奏和视觉主题，视频成片容易同质化。
@@ -50,7 +56,7 @@
 - 执行 Worker：`prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs`。
 - 应用身份：`prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs`。
 - 场景生成知识：`remotion-scene-codegen` 官方技能及其发布目录。
-- 视频运行与素材边界：`design.video-agent.md`、`debt.video-agent.md`。
+- 视频运行与素材边界：`design.video-agent.md`、[debt.video-agent.md](./debt.video-agent.md)。
 
 ## 验收标准
 

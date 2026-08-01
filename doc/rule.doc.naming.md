@@ -2,6 +2,12 @@
 
 > **版本**：v3.2 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：规定每篇文档叫什么名字——先写类型、再写应用名、子模块用点号接下去，让同一个应用的文档自动排在一起。
+**谁该读**：要新建或重命名文档的人和 AI；想学会「看文件名就知道里面写什么」的读者。
+**读完能做什么**：给一篇新文档起出合规的名字，并靠文件名直接定位到想找的那一篇。
+
+---
+
 ## 文件命名格式
 
 ```
@@ -14,13 +20,13 @@ doc/{type}.{topic}.md
 
 | 前缀 | 含义 | 包含子类型 | 示例 |
 |------|------|-----------|------|
-| `spec.` | 产品规格 | 产品规格、Agent 产品文档、用户故事 | `spec.srs.md`, `spec.report-agent.v2.md` |
-| `design.` | 技术设计 | 技术设计、技术分析 | `design.platform.server-authority.md`, `design.video-agent.remotion-gap.md` |
-| `plan.` | 实施计划 | 开发计划、迁移计划 | `plan.platform.llm-gateway.full-cutover.md` |
-| `rule.` | 规范约定 | 长期规则、约束与门禁 | `rule.platform.app-identity.md`, `rule.frontend.streaming-text.md` |
-| `guide.` | 操作指南 | 指南、教程、运行手册 | `guide.platform.quickstart.md`, `guide.platform.e2e-tests.md` |
-| `report.` | 周报 | 周报 | `report.2026-W09.md` |
-| `debt.` | 技术债务台账 | 模块级未还工程债（已知边界、后续可补、TODO、留尾风险） | `debt.video-agent.md`, `debt.cds.md` |
+| `spec.` | 产品规格 | 产品规格、Agent 产品文档、用户故事 | [spec.srs.md](./spec.srs.md), [spec.report-agent.v2.md](./spec.report-agent.v2.md) |
+| `design.` | 技术设计 | 技术设计、技术分析 | [design.platform.server-authority.md](./design.platform.server-authority.md), [design.video-agent.remotion-gap.md](./design.video-agent.remotion-gap.md) |
+| `plan.` | 实施计划 | 开发计划、迁移计划 | [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md) |
+| `rule.` | 规范约定 | 长期规则、约束与门禁 | [rule.platform.app-identity.md](./rule.platform.app-identity.md), [rule.frontend.streaming-text.md](./rule.frontend.streaming-text.md) |
+| `guide.` | 操作指南 | 指南、教程、运行手册 | [guide.platform.quickstart.md](./guide.platform.quickstart.md), [guide.platform.e2e-tests.md](./guide.platform.e2e-tests.md) |
+| `report.` | 周报 | 周报 | [report.2026-W09.md](./report.2026-W09.md) |
+| `debt.` | 技术债务台账 | 模块级未还工程债（已知边界、后续可补、TODO、留尾风险） | [debt.video-agent.md](./debt.video-agent.md), [debt.cds.md](./debt.cds.md) |
 
 ---
 
@@ -34,17 +40,17 @@ doc/{type}.{topic}.md
 {type}.{appname}[.{子模块}[.{子子模块}]].md
 ```
 
-- **第一段 = appname**：应用 / 领域名，尽量对齐 `rule.platform.app-identity.md` 的 appKey（`cds` / `defect-agent` / `visual-agent` / `literary-agent` / `report-agent` / `video-agent` / `review-agent` / `pr-review` / `workflow-agent` 等）。
+- **第一段 = appname**：应用 / 领域名，尽量对齐 [rule.platform.app-identity.md](./rule.platform.app-identity.md) 的 appKey（`cds` / `defect-agent` / `visual-agent` / `literary-agent` / `report-agent` / `video-agent` / `review-agent` / `pr-review` / `workflow-agent` 等）。
 - **子模块用 `.` 续接**，**禁止**用 `-` 把 appname 和子模块黏在一起。每段内部仍是 kebab-case（段内单词用 `-`，段之间用 `.`）。
 - 同一应用的所有文档第一段一致 → 排序后自动成簇。
 
 | 正确（点分层级） | 含义 | 错误（连字符黏连） |
 |------------------|------|--------------------|
-| `spec.cds.md` | cds 整体规格 | — |
+| [spec.cds.md](./spec.cds.md) | cds 整体规格 | — |
 | `spec.cds.settings.md` | cds 的 settings 子模块 | `spec.cds-settings.md` |
 | `design.cds.agent.runtime.md` | cds → agent → runtime | `design.cds-agent-runtime-architecture.md` |
-| `spec.defect-agent.automation-protocol.md` | defect-agent 的自动化协议 | `spec.defect-agent-automation-protocol.md` |
-| `design.defect-agent.automation-autonomy.md` | 缺陷自动化自治体系 | `design.defect-automation-autonomy.md` |
+| [spec.defect-agent.automation-protocol.md](./spec.defect-agent.automation-protocol.md) | defect-agent 的自动化协议 | `spec.defect-agent-automation-protocol.md` |
+| [design.defect-agent.automation-autonomy.md](./design.defect-agent.automation-autonomy.md) | 缺陷自动化自治体系 | `design.defect-automation-autonomy.md` |
 
 > 注意：appKey 本身可含 `-`（如 `defect-agent`），它是**一个**段；`-` 不作分层用。分层只认 `.`。
 
@@ -52,25 +58,25 @@ doc/{type}.{topic}.md
 
 | 类别 | 约定 | 示例 |
 |------|------|------|
-| 周报 | `report.YYYY-WNN.md`，时间即主题 | `report.2026-W13.md` |
+| 周报 | `report.YYYY-WNN.md`，时间即主题 | [report.2026-W13.md](./report.2026-W13.md) |
 | 验收 / 事故报告 | **新增不进 `doc/`** —— 验收报告归验收知识库（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链）；事故 postmortem 的架构教训并入相关 `design.*` / `debt.*`。`doc/` 的 `report.*` 目标收敛到周报（存量被引用者 grandfather，见 §报告/验收/图片不进 doc/） | 知识库分享链，不是 `doc/*.md` |
-| 跨应用 / 平台级（不属单一 app） | 用保留域名段：`platform`（鉴权 / 网关 / 模型池 / 存储）、`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系） | `design.platform.llm-gateway.md`、`rule.frontend.modal.md`、`rule.skill.header.md` |
-| 顶层产品文档 | 保留概念名 | `spec.prd.md`、`spec.srs.md`、`spec.project-vision.md` |
+| 跨应用 / 平台级（不属单一 app） | 用保留域名段：`platform`（鉴权 / 网关 / 模型池 / 存储）、`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系） | [design.platform.llm-gateway.md](./design.platform.llm-gateway.md)、`rule.frontend.modal.md`、[rule.skill.header.md](./rule.skill.header.md) |
+| 顶层产品文档 | 保留概念名 | [spec.prd.md](./spec.prd.md)、[spec.srs.md](./spec.srs.md)、[spec.project-vision.md](./spec.project-vision.md) |
 
 > 例外是「下限」：除上述四类，一律 appname 优先。拿不准时**优先归到某个 app**；确属跨切面才用保留域名段。新建文档前先想清楚它属于哪个 appname。
 
 ### canonical appname 分类（固化清单，2026-06-24）
 
-appname 第一段**只能从下面四类里选，禁止自创**。新增应用 Agent 必须同步 `rule.platform.app-identity.md` 的 appKey。
+appname 第一段**只能从下面四类里选，禁止自创**。新增应用 Agent 必须同步 [rule.platform.app-identity.md](./rule.platform.app-identity.md) 的 appKey。
 
 - **一、应用 Agent**（对齐 `app-identity` appKey；新 Agent 文档加这一类）：`visual-agent` `literary-agent` `defect-agent` `report-agent` `video-agent` `review-agent` `pr-review` `workflow-agent` `product-agent` `speech-agent` `shortcuts-agent` `front-end-agent` `channel-agent` `ccas-agent` `page-agent` `prd-agent` `agent-universe` `emergence` `marketplace` `open-platform` `knowledge-base` `web-hosting` `daily-tips` `team-activity` `ai-toolbox` `arena` `md-to-ppt` `submission-gallery` `executive-dashboard` `admin` `desktop` `infra-sandbox-agent` `acceptance`
 - **二、平台基础设施**：`cds`（云开发套件）、`platform`（鉴权 / 网关 / 模型池 / 存储等系统级）。
-  网关不是独立 appname：LLM 网关文档一律走 `platform.llm-gateway.*`（如 `plan.platform.llm-gateway.full-cutover.md`），
+  网关不是独立 appname：LLM 网关文档一律走 `platform.llm-gateway.*`（如 [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)），
   **禁止**写成 `llm-gateway.*` 或 `platform.llm-gateway-xxx`（后者用 `-` 把 appname 与子模块黏死，违反点分层级）。
 - **三、跨切面保留域**：`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系）
 - **四、顶层产品**（无 appname 段，保留概念名）：`prd` `srs` `project-vision`
 
-> `cds` 已达 100+ 篇（占 doc/ 约三成）。新增 cds 文档前先问能不能并入现有 canonical 文档，别再造「进度剧场」（见 `debt.cds.agent.md` 的收敛计划）。
+> `cds` 已达 100+ 篇（占 doc/ 约三成）。新增 cds 文档前先问能不能并入现有 canonical 文档，别再造「进度剧场」（见 [debt.cds.agent.md](./debt.cds.agent.md) 的收敛计划）。
 
 ### 报告 / 验收 / 图片不进 doc/（2026-06-24 用户强制，最高约束）
 
@@ -175,12 +181,12 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 
 ## debt.* 专项约定
 
-技术债务台账遵循与其他类型**相同的「appname 优先 + 点分层级」格式**（见 §topic 命名）：`debt.{appname}[.{子模块}].md`。按债务的分散程度选层级：
+技术债务台账遵循与其他类型**相同的「appname 优先 + 点分层级」格式**（见 §topic 命名）：`debt.{appname}[.{子模块}].md`。层级选择有**默认值**，不是自由发挥：
 
-- **债务少的模块** → 一个 `debt.{appname}.md` 汇总（如 `debt.video-agent.md`、`debt.workflow-agent.md`、`debt.platform.llm-gateway.md`）。
-- **债务多、话题分散的大模块** → 按子模块拆成 `debt.{appname}.{子模块}.md`，避免单文件臃肿（如 `debt.cds.agent.md`、`debt.cds.selfupdate-prebuilt.md`、`debt.knowledge-base.galaxy-vs-universe.md`、`debt.frontend.mobile-light-theme.md`、`debt.platform.production-release.md`）。
+- **默认：一个模块一册** `debt.{appname}.md`，同模块的债务全部往里追加（如 [debt.cds.md](./debt.cds.md)、[debt.platform.md](./debt.platform.md)、[debt.knowledge-base.md](./debt.knowledge-base.md)、[debt.frontend.md](./debt.frontend.md)）。
+- **例外：单独成册** `debt.{appname}.{子模块}.md`，只在该子模块**同时**满足两条时才拆——(a) 债务量大到夹在模块册里读不下去；(b) 被其他文档反复独立引用（如 [debt.cds.agent.md](./debt.cds.agent.md)、[debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)、[debt.platform.production-release.md](./debt.platform.production-release.md)）。
 
-> 现状（2026-07-15）：66 个 debt 文件中 51 个已是子模块级——**子模块拆分是既定实践**。本节据此更正 v3.1「一个模块一个文件」的过窄表述，与通用格式（`[.{子模块}]`）对齐；`debt.*` 不是特例，一样走 appname 优先点分层级。
+> 为什么给默认值（2026-07-31 收拢）：一债一文件曾把台账刷到 75 篇，`ls doc/` 里债务淹掉了设计文档，读者要开十几个文件才能看全一个模块欠了什么。本次按上面两条判据合并回 36 篇（11 册吸收 44 篇），并把「默认一册」写成规则——**新增债务先找同模块的册子追加，不要新开文件**。
 
 ### 适用场景
 

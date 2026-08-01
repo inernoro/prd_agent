@@ -2,7 +2,11 @@
 
 > **版本**：v1.0 | **日期**：2026-05-08 | **状态**：已落地
 
-> **关联**:`doc/guide.cds.blue-green-handoff.md`(失败收尾)、`doc/design.cds.control-data-split.md`(整体设计)
+**一句话**：蓝绿部署改造连续失败后改推 forwarder 方案，当天七个提交做完切换，业务面零抖动通过验收。
+**谁该读**：想知道 CDS 为什么不走蓝绿的人；维护 forwarder 链路的工程师。
+**读完能做什么**：说清放弃蓝绿的判断依据，以及 forwarder 方案当时验收到什么程度。
+
+> **关联**:[doc/guide.cds.blue-green-handoff.md](./guide.cds.blue-green-handoff.md)(失败收尾)、[doc/design.cds.control-data-split.md](./design.cds.control-data-split.md)(整体设计)
 > 接手昨日交接的蓝绿改造(27 个 hotfix 仍未跑通 verify-target),用户决策"放弃蓝绿,推 forwarder 替代"。本日工作 7 个 commit,业务面 0 抖动验收通过。
 
 
@@ -65,8 +69,8 @@ for nvm_root in /root/.nvm/versions/node /home/*/.nvm/versions/node; do ...
 ### 教训 3:抽简化版反代时,master 1171 行里的"看似杂乱细节"全是真生产打磨
 
 漏抄两笔:
-- **Host header 改写**(`proxy.ts:912`):透传外部域名 → 容器 vhost 全 404
-- **detectProfileFromRequest**(`proxy.ts:861`):前端 / 路径 → admin profile;`/api/*` → api profile
+- **Host header 改写**:透传外部域名 → 容器 vhost 全 404
+- **detectProfileFromRequest**:前端 / 路径 → admin profile;`/api/*` → api profile
 
 简化版的"first running service"在 spec 测试里看不出问题,真生产暴露失败。
 
@@ -129,7 +133,7 @@ cds-forwarder.service (systemd, Restart=always)
 
 ## 六、给下一位 agent 的建议
 
-1. **不要重启蓝绿** — 27 个 hotfix 的失败教训在 `doc/guide.cds.blue-green-handoff.md`。forwarder 替代方案稳定,业务 0 抖动是它的核心承诺,蓝绿在解决一个错误的问题
+1. **不要重启蓝绿** — 27 个 hotfix 的失败教训在 [doc/guide.cds.blue-green-handoff.md](./guide.cds.blue-green-handoff.md)。forwarder 替代方案稳定,业务 0 抖动是它的核心承诺,蓝绿在解决一个错误的问题
 2. **改 master proxy.ts 时检查 publisher** — `detectProfileFromRequest` 与 `pickDefaultProfile` 必须保持等价。本仓库已加注释做提醒
 3. **加新分支预览测试时观察 forwarder stats** — `GET /__forwarder/stats` 看 host → 命中率,error503Count 异常增长说明路由表与实际容器不一致
 4. **nginx 切流前必须验 forwarder healthz routesCount > 0** — 否则用户访问会全部 503。否则就先回滚 cds_worker upstream 到 5500
@@ -149,9 +153,19 @@ cds-forwarder.service (systemd, Restart=always)
 | `cds/systemd/cds-forwarder.service` | systemd unit 模板 |
 | `cds/exec_cds.sh` 的 `forwarder-run` / `install-forwarder` | 入口脚本 |
 | `cds/src/services/blue-green-bootstrap.ts` | 蓝绿(默认禁用,opt-in) |
-| `doc/design.cds.control-data-split.md` | 设计文档 |
-| `doc/guide.cds.blue-green-handoff.md` | 上一位 agent 的失败收尾交接 |
+| [doc/design.cds.control-data-split.md](./design.cds.control-data-split.md) | 设计文档 |
+| [doc/guide.cds.blue-green-handoff.md](./guide.cds.blue-green-handoff.md) | 上一位 agent 的失败收尾交接 |
 
 ---
 
 **签收**:今日工作完成,业务面 0 抖动这条硬规则在 forwarder 部署后正式成立。蓝绿改造彻底搁置(代码保留 opt-in),走 forwarder 路线收尾。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 教训 3:抽简化版反代时,master 1171 行里的"看似杂乱细节"全是真生产打磨 | `proxy.ts:912`、`proxy.ts:861` |

@@ -2,6 +2,12 @@
 
 > **版本**：v2.1 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：周报二版的产品要求：只管把产出整理成可确认的周报，不承担审批、评论、通知这些管理流程。
+**谁该读**：周报功能的产品与工程师；判断需求是否越界的人。
+**读完能做什么**：说清产品边界，并判断一个新需求属不属于周报。
+
+---
+
 周报 Agent 将代码、任务和知识产出整理为可确认的周报。产品重点是减少手工整理，不承担审批、评论和通知等管理流程。应用标识为 `report-agent`。
 
 ## 1. 产品目标
@@ -157,8 +163,8 @@
 
 ## 12. 关联文档
 
-- `doc/spec.report-agent.phase5.md`：工作流采集阶段专项规格。
-- `doc/plan.report-agent.v3.md`：尚未完成的后续演进计划。
-- `doc/design.report-agent.md`：当前技术设计。
+- [doc/spec.report-agent.phase5.md](./spec.report-agent.phase5.md)：工作流采集阶段专项规格。
+- [doc/plan.report-agent.v3.md](./plan.report-agent.v3.md)：尚未完成的后续演进计划。
+- [doc/design.report-agent.md](./design.report-agent.md)：当前技术设计。
 
 历史 v1 管理流程不再是当前产品事实源。

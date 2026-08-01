@@ -239,7 +239,7 @@ export function createInfraDataRouter(deps: InfraDataRouterDeps): Router {
     });
   }
 
-  // 生命周期取证（debt.cds.replica-set #17）：oom/die/kill/start 事件回看，
+  // 生命周期取证（doc/debt.cds.md「CDS 复制集模式工程债务」 #17）：oom/die/kill/start 事件回看，
   // 区分 cgroup OOM / 外部 SIGKILL(exitCode 137 无 oom) / 进程自身退出
   router.get('/infra/:id/lifecycle-events', (req, res) => {
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;

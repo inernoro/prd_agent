@@ -247,6 +247,14 @@ URL 来源见规则 #11：必须调用 `preview-url` 读取 CDS API 实际入口
 
 **`debt.*` 用于记录工程债务台账**（已知边界、后续可补、TODO 留尾、不确定风险）。任务交付时主动声明的"已知边界"段落必须固化到对应 `debt.{module}.md`，不能只留在 commit message 里 —— 否则下一次 session 没人记得。
 
+**每篇文档必须带「导读三行」**（`**一句话**` / `**谁该读**` / `**读完能做什么**`，写在 H1 与版本行之后），
+让读者十秒决定读不读。**说人话不等于稀释信息**——术语允许出现但要就地翻译，写完做一次「可替换性测试」：
+这句话套到同类另一篇上还成立，就是没写出内核。判据 SSOT：`doc/rule.doc.readability.md`；读者视角的入口：`doc/guide.doc.reading-map.md`。
+正文只写人类要掌控的层次（为什么做 / 给谁用 / 数据怎么流动 / 关键表设计 / 取舍与风险 / 验收标准），
+**实现代码、接口签名、目录树、逐文件改法一律不进文档**——AI 要细节直接读源码。
+闸门 `python3 scripts/doc-readability-check.py --ratchet`（CI `docs-readability`）——**新文档不带导读三行会把 CI 弄红**。
+存量走棘轮「走到哪修到哪」，改完跑 `--update-baseline` 压低基线。
+
 新增或重命名文档前：
 1. 先读 `doc/rule.doc.naming.md` 确认前缀、头部、状态枚举
 2. 同步更新 `doc/index.yml`（外部同步工具消费）与 `doc/guide.list.directory.md`（人类索引）
@@ -322,7 +330,9 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 ## 架构规则索引
 
-以下规则按需加载（仅当编辑匹配 glob 的文件时），详见 `.claude/rules/`：
+以下规则按需加载（仅当编辑匹配 glob 的文件时），详见 `.claude/rules/`。
+每条规则开头有两行导读（`**一句话**` 这条要求什么 / `**什么时候撞上**` 什么改动会触发它），
+扫一眼就知道要不要往下读；新增规则不带这两行会把 CI 的 `docs-readability` 弄红（判据见 `doc/rule.doc.readability.md` 条款 7）。
 
 | 规则文件 | 触发范围 | 核心要点 |
 |----------|----------|----------|
@@ -417,7 +427,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **create-executor** | `/create-executor` | 输入执行器名称和用途 → 自动读取代码、生成执行器、注册、自测，全自动接入 CLI Agent 执行器 |
 | **createzzdemo** | `/createzzdemo` | 输入教程名 → 枚举 A-F 6 类步骤让用户选组合，生成 DailyTipUpsert JSON 入库，含大全套 showcase 回归模板 |
 | **tutorial-daily-maintain** | `/tutorial-daily-maintain` | 定时(建议每日) → 扫 git 增量映射受影响页面教程 → 锚点漂移检测(P0-P2) → 起草「本周有更新」提醒(advanced/`*-update-*`) → 教程健康报告发布到独立验收知识库。首版只产草稿+告警，不自动改 seed |
-| **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot 五维一致性，输出欠款清单并自动补齐 |
+| **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot、文档可读性（导读三行 / 引用可点 / 死链）七维一致性，输出欠款清单并自动补齐 |
 | **laowang** | `老王`、`/laowang` | 用户卡住/任务太难/争执不下时触发 → 用米多解决问题五步法（直面问题 → 抓主要矛盾 → 责任到人 → 备齐资源 → 做好才算做）强制拆解。风格直率，副作用：50% 概率追加一项延伸任务 |
 | **phase0-guard** | `/phase0` | 新项目底座阶段触发 → 防止产品定位未定清楚就编数据库实体/业务 API/调度器，固化面向老板与产品经理的六段式回复、术语翻译和文档读者分层 |
 

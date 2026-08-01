@@ -22,7 +22,7 @@
  *      RequireAuth 经 returnUrl 接管。
  *
  * The default template deliberately mirrors the pre-customisation
- * format (🚀 CDS Deploy Preview + Preview link + Branch + Dashboard)
+ * format (CDS Deploy Preview + Preview link + Branch + Dashboard)
  * plus a new "PR Review" line so existing users who never open the
  * Settings panel don't notice a regression.
  *
@@ -90,7 +90,7 @@ export interface TemplateVariables {
  * want cleaner fallbacks.
  */
 export const DEFAULT_TEMPLATE_BODY = [
-  '## 🚀 CDS Deploy Preview',
+  '## CDS Deploy Preview',
   '',
   '- **Preview**: [{{previewUrl}}]({{previewUrl}})',
   '- **Branch**: `{{branch}}` @ {{shortSha}}',

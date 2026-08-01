@@ -2,9 +2,15 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：把调度、资源限制、清理与转发模板从代码可用推进到真实多节点运行可用。
+**谁该读**：做高可用验证的运维与工程师。
+**读完能做什么**：知道还差哪些真实环境验证。
+
+---
+
 ## 目标
 
-把已经落地的调度器、资源限制、Janitor、executor dispatcher 和 Nginx 模板从“代码与单测可用”推进到真实多节点运行可用。架构决策以 `design.cds.resilience.md` 为准，本文不再记录已完成实现的逐文件日记。
+把已经落地的调度器、资源限制、Janitor、executor dispatcher 和 Nginx 模板从“代码与单测可用”推进到真实多节点运行可用。架构决策以 [design.cds.resilience.md](./design.cds.resilience.md) 为准，本文不再记录已完成实现的逐文件日记。
 
 ## 当前事实
 
@@ -38,7 +44,7 @@
 - 增加 Webhook 预热能力，验证新提交到达后目标分支可以在首个用户请求前进入 warming 或 hot。
 - 实现 executor 故障后的重新派发：清理旧租约、在目标节点恢复 worktree、部署并切入口。
 - 实现过载分支迁移，保留事件、审计和回滚，不以删除旧节点数据作为迁移第一步。
-- `state.json` 单点问题不在本计划复制解决，统一依赖 `debt.cds.state-json.md` 的 Mongo 权威退场路线。
+- `state.json` 单点问题不在本计划复制解决，统一依赖 [debt.cds.state-json.md](./debt.cds.state-json.md) 的 Mongo 权威退场路线。
 
 ## 验收矩阵
 
@@ -61,7 +67,7 @@
 
 ## 关联文档
 
-- `doc/design.cds.resilience.md`
-- `doc/debt.cds.state-json.md`
-- `doc/guide.cds.cluster-setup.md`
-- `doc/report.cds.self-update-timing-audit.md`
+- [doc/design.cds.resilience.md](./design.cds.resilience.md)
+- [doc/debt.cds.state-json.md](./debt.cds.state-json.md)
+- [doc/guide.cds.cluster-setup.md](./guide.cds.cluster-setup.md)
+- [doc/report.cds.self-update-timing-audit.md](./report.cds.self-update-timing-audit.md)

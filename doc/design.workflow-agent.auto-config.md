@@ -2,7 +2,13 @@
 
 > **版本**：v1.1 | **日期**：2026-06-14 | **状态**：已落地
 
-> **appKey**：`workflow-agent` | **主文档**：`design.workflow-agent.engine.md`
+**一句话**：只覆盖降低配置门槛这一件事：让模型一次把参数问清楚配好，引擎本体另有主文档。
+**谁该读**：做工作流配置体验的工程师。
+**读完能做什么**：说清自动配置的边界，不与引擎设计混谈。
+
+---
+
+> **appKey**：`workflow-agent` | **主文档**：[design.workflow-agent.engine.md](./design.workflow-agent.engine.md)
 > 本文只覆盖「降低配置门槛 + AI 一次把问题配清楚」这一子领域，工作流引擎本体（DAG 执行、舱执行链路、调度）见主文档。
 
 ## 一、管理摘要
@@ -23,7 +29,7 @@
 | AI 解析 | 只取第一个 ```json 块，正则截取 | 格式漂移即静默返回 null，用户白等 |
 | AI 校验 | 仅验节点类型存在（`TryParseWorkflowFromResponse`） | 不验必填字段 / slot 存在性 / 悬空边 / 成环，产出可能跑不起来 |
 | 缺项提示 | 无 | AI 引用 `{{cookie}}` 等 secret 时不提示补齐，坑留到运行时 |
-| 节点 AI 填写 | 只预填对话框（`WorkflowEditorPage.tsx:1024`） | 不直接填，还要再走一轮对话 |
+| 节点 AI 填写 | 只预填对话框 | 不直接填，还要再走一轮对话 |
 | 触发能力 | `timer`/`webhook-receiver`/`file-upload` 标 `DisabledReason` 被 prompt 过滤 | AI 造不出定时 / Webhook 触发的工作流——最常见诉求的硬缺口 |
 | 输出格式 | `temperature 0.3`，无 structured output | 全靠模型自觉，无回路修正 |
 
@@ -115,8 +121,8 @@ LLM 经常把 slotId 写错或留空。生成后由服务端按「节点声明�
 
 ## 九、关联文档
 
-- `design.workflow-agent.engine.md`：工作流引擎本体（执行/调度/舱执行链路）
-- `debt.workflow-agent.md`：工作流债务台账（触发舱开放属此）
+- [design.workflow-agent.engine.md](./design.workflow-agent.engine.md)：工作流引擎本体（执行/调度/舱执行链路）
+- [debt.workflow-agent.md](./debt.workflow-agent.md)：工作流债务台账（触发舱开放属此）
 - `.claude/rules/no-rootless-tree.md`：触发能力接地依据
 - `.claude/rules/llm-gateway.md`：自愈回路的 LlmRequestContext / structured output 约束
 - `.claude/rules/artifact-is-experience.md`：校验/自愈期间的等待体验
@@ -139,3 +145,13 @@ Phase 1-2 已全量落地，与本文设计方案基本一致，以下为落地�
 | 门禁加严 | 结构无效（环/重复/停用舱）时禁用「应用到编辑器」，防止残缺工作流写入画布 |
 | 校验结果持久化 | 随对话消息持久化，刷新后「应用门禁」与缺项卡可恢复 |
 | 空状态入口 | 工作流列表页新增「一句话生成工作流」大输入框，不必先建空白流 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 二、现状验收结论（为什么要改） | `WorkflowEditorPage.tsx:1024` |

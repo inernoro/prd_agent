@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：图片生成曾在发送前又解析一次模型，覆盖用户选择；改成算与发分离，一次请求最多解析一次。
+**谁该读**：改模型调用链路的工程师。
+**读完能做什么**：说清为什么二次解析会导致选 A 跑 B。
+
+---
+
 ## 管理摘要
 
 - **解决的问题**：图片生成链路曾在发送前再次解析模型，覆盖用户已经选择的模型，出现“选择 A、实际调用 B”。
@@ -73,9 +79,6 @@
 
 关键回归测试位于：
 
-- `prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs`
-- `prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayServingEndpointContractTests.cs`
-- `prd-api/tests/PrdAgent.Tests/GatewayDataDomainGuardTests.cs`
 
 ## 事实来源
 
@@ -90,6 +93,16 @@
 
 ## 关联文档
 
-- `design.platform.llm-gateway.md`：Gateway 总体架构。
-- `plan.platform.llm-gateway.full-cutover.md`：Gateway 旧路径清理与生产门禁。
+- [design.platform.llm-gateway.md](./design.platform.llm-gateway.md)：Gateway 总体架构。
+- [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)：Gateway 旧路径清理与生产门禁。
 - `.claude/rules/compute-then-send.md`：所有外部模型调用共用的计算与发送边界。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 可观测性与验证 | `prd-api/tests/PrdAgent.Tests/GatewayDirectClientRatchetTests.cs`、`prd-api/tests/PrdAgent.Api.Tests/Gateway/GatewayServingEndpointContractTests.cs`、`prd-api/tests/PrdAgent.Tests/GatewayDataDomainGuardTests.cs` |

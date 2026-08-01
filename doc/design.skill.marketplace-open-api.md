@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-04-21 | **状态**：已落地
 
+**一句话**：给外部智能体开出程序化入口浏览、下载、上传技能，靠长效密钥加权限白名单控制。
+**谁该读**：做技能开放接口的工程师。
+**读完能做什么**：说清外部方凭什么密钥能做哪些操作。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：AI / 外部 Agent 想浏览、下载、上传我们海鲜市场的技能，却没有程序化入口；用户无法让 Cursor/Claude Code 一键接通本平台
@@ -82,7 +88,7 @@
 - `AgentOpenEndpoint`（集合 `agent_open_endpoints`）—— P3 Agent 开放接口登记
 - `MarketplaceSkill` 新增字段 —— `ReferenceType`（`zip` / `open-api-reference`）+ `ReferenceEndpointId` 为自动桥接铺路
 
-详见 `doc/rule.platform.data-dictionary.md`。
+详见 [doc/rule.platform.data-dictionary.md](./rule.platform.data-dictionary.md)。
 
 ### 4.2 鉴权链路
 
@@ -139,7 +145,7 @@ Controller 方法用 User.FindFirst("boundUserId").Value 当 userId 执行业务
 
 ### 5.1 AgentApiKey 字段
 
-见 `doc/rule.platform.data-dictionary.md`。关键不变量：
+见 [doc/rule.platform.data-dictionary.md](./rule.platform.data-dictionary.md)。关键不变量：
 - `ApiKeyHash` 只存 SHA256，**禁止**存明文
 - `KeyPrefix` 前 12 字符仅 UI 识别用
 - `ExpiresAt == null` 仅允许管理员创建
@@ -265,8 +271,8 @@ GET /api/official-skills/findmapskills/download
 
 ## 十、关联设计文档
 
-- `doc/spec.marketplace.md` — 海鲜市场整体规格
-- `doc/rule.platform.data-dictionary.md` — 数据字典（含本 PR 两新集合）
+- [doc/spec.marketplace.md](./spec.marketplace.md) — 海鲜市场整体规格
+- [doc/rule.platform.data-dictionary.md](./rule.platform.data-dictionary.md) — 数据字典（含本 PR 两新集合）
 - `.claude/rules/llm-gateway.md` — LLM 调用约束（本 PR 未触发）
 - `.claude/rules/frontend-modal.md` — 弹窗物理约束
 - `.claude/rules/server-authority.md` — 服务器权威性

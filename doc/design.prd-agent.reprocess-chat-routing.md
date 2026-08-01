@@ -2,6 +2,12 @@
 
 > **版本**：v1.1 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：文档再加工要同时支持内置智能体、自建工具与个人快捷智能体，按能力契约决定走哪条管道。
+**谁该读**：做再加工入口的工程师。
+**读完能做什么**：说清一次再加工请求怎么路由到正确的执行链路。
+
+---
+
 ## 管理摘要
 
 - **问题**：知识库文档再加工需要在同一抽屉中支持内置智能体、自建百宝箱工具和个人快捷智能体，同时不能把业务专属能力伪装成普通聊天。
@@ -51,6 +57,6 @@
 
 ## 关联文档
 
-- `doc/debt.agent-universe.md`：能力契约与已知边界。
-- `design.knowledge-base.agent-architecture.md`：知识库智能体架构。
-- `design.visual-agent.md`、`design.literary-agent.md`：生成型智能体的业务入口。
+- [doc/debt.agent-universe.md](./debt.agent-universe.md)：能力契约与已知边界。
+- [design.knowledge-base.agent-architecture.md](./design.knowledge-base.agent-architecture.md)：知识库智能体架构。
+- [design.visual-agent.md](./design.visual-agent.md)、[design.literary-agent.md](./design.literary-agent.md)：生成型智能体的业务入口。

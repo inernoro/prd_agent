@@ -2,6 +2,12 @@
 
 > **版本**：v0.4 | **日期**：2026-07-27 | **状态**：开发中
 
+**一句话**：单文件状态存储作为影子存储仍在写，本文记它的债务、偿还路线与一次生产事故档案。
+**谁该读**：接手状态存储迁移的工程师。
+**读完能做什么**：知道影子存储还剩哪些依赖，以及事故是怎么发生的。
+
+---
+
 ## 总览
 
 | 指标 | 当前值 |
@@ -10,7 +16,7 @@
 | in-progress | 0 |
 | paid | 2（#1 / #2，2026-07-09） |
 
-**2026-07-09 缓解补记**（本轮偿还前的台账外缓解，与 `debt.cds.performance.md` #4 同根）：
+**2026-07-09 缓解补记**（本轮偿还前的台账外缓解，与 [debt.cds.performance.md](./debt.cds.performance.md) #4 同根）：
 - JSON 存储 `save()` 从「每次同步 stringify + fsync + 写 .bak」改为 dirty + setImmediate 合并异步落盘（.bak 60s 节流 + flush + shutdown 兜底）——「save 阻塞主循环」的痛点大幅缓解（commit `d9fb5dc`）。
 - 容器日志黑匣子（另一条隐性膨胀源，本台账原未登记）加 per-branch 10 条/2MB 双闸 + 启动孤儿裁剪。
 - mongo-split 层原有 `compactGlobalRestToFit` 12MB 裁剪兜底仍在。
@@ -33,7 +39,7 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 | 编号 | 债务 | 影响 | 状态 |
 |---|---|---|---|
 | #1 | webhook deliveries ring buffer 按一次性 `save()` 整数组刷盘 | 启动加载慢 / save 抖动 | **paid（2026-07-09）**：拆独立 collection `cds_webhook_deliveries`（`_id=delivery.id`，diff-based bulkWrite 只写变化条目；内存 ring buffer 淘汰经 diff 产生 deleteOne 天然上限，不用 capped collection）。global doc 不再含此字段，旧数据 legacy 回退读，零迁移脚本 |
-| #2 | branch activity log（ProjectActivityLog ring buffer）按整对象 save | save 频率提高时阻塞主循环 | **paid（2026-07-09）**：拆独立 collection `cds_activity_logs`（复合 `_id=${projectId}__${at}__${log.id}`，log.id 非全局唯一故用复合键），同 #1 的 diff-based 写与 legacy 回退。索引由 `init()` 自动创建（`{projectId:1, at:-1}` / `{receivedAt:-1}`，沿 split store 既有惯例；no-auto-index 规则针对 prd-api 应用库，不适用 CDS 自持库。DDL 记录见 `doc/guide.platform.mongodb-indexes.md` CDS 段） |
+| #2 | branch activity log（ProjectActivityLog ring buffer）按整对象 save | save 频率提高时阻塞主循环 | **paid（2026-07-09）**：拆独立 collection `cds_activity_logs`（复合 `_id=${projectId}__${at}__${log.id}`，log.id 非全局唯一故用复合键），同 #1 的 diff-based 写与 legacy 回退。索引由 `init()` 自动创建（`{projectId:1, at:-1}` / `{receivedAt:-1}`，沿 split store 既有惯例；no-auto-index 规则针对 prd-api 应用库，不适用 CDS 自持库。DDL 记录见 [doc/guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md) CDS 段） |
 | #3 | 项目级 `defaultDeployModes` / `autoPublishAfterMinutes` / `autoStopAfterMinutes` 等元信息混在 state 顶级 | 任何改设置都要重写整个 state.json | open（Phase 3） |
 | #4 | mongo-split 模式仍保留 state.json fallback，意外回滚到 json 模式时数据可能落后 mongo | 容易踩到"为什么我新建的分支不见了"陷阱 | open（Phase 4） |
 | #5 | CDS master 对自用 mongo（`cds-infra-mongodb`）无可用性降级：mongo 死亡时 state 持久化直接失败，master 随后整体宕机且无快速拉回 | 2026-07-27 生产事故（见下）：约 35 分钟全局 502，期间所有分支预览 / webhook / check-run 回写全部中断 | open |
@@ -75,7 +81,7 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 **分析纪律教训（务必记住）**：本 AI 在拿到宿主数据前，仅凭 CDS API 读到「磁盘 85%、内存可用 44GB」就判定「不是磁盘打满」——**那是人工清理完之后的读数**。事后测量不能用来否定事故当时的状态；没有宿主时间序列时，只能说「当前不紧张」，不能推断「当时没满」。
 
 **已排除的怀疑（实测取证，勿再重复排查）**：
-- **未释放的数据库克隆不是本次原因**：全量盘点 55 个分支，隔离快照仅剩 1 条（`prd-agent-main` 的 `prdagent_rs_guard_1` / `cds-rsdb-prdagent_rs_guard_1`，即 `doc/debt.cds.replica-set.md` #28 已登记的存量实例，其 `replicaSets` 已空——按「回切=隔离库转快照保留」设计留存）。该实例硬上限 `--memory 1536m`，磁盘占用量级与 159GB 的 containerd 不可比；孤儿容器扫描（dryRun + includeStopped）候选为 0。
+- **未释放的数据库克隆不是本次原因**：全量盘点 55 个分支，隔离快照仅剩 1 条（`prd-agent-main` 的 `prdagent_rs_guard_1` / `cds-rsdb-prdagent_rs_guard_1`，即 [doc/debt.cds.md](./debt.cds.md) #28 已登记的存量实例，其 `replicaSets` 已空——按「回切=隔离库转快照保留」设计留存）。该实例硬上限 `--memory 1536m`，磁盘占用量级与 159GB 的 containerd 不可比；孤儿容器扫描（dryRun + includeStopped）候选为 0。
 - 生产当时运行 `95d1c24`（复制集第 25 轮），已逐行排除该 commit 三处改动与本事故的因果（均有异常兜底且不在崩溃路径）。
 
 **磁盘构成（宿主实测，已用 285GB）**：
@@ -86,7 +92,7 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 | `/root/inernoro/prd_agent`（`.cds-worktrees` 45.5G + `.cds-cache` 7.4G + `.cds-repos` 2.2G） | 57GB | 20% |
 | `/var/lib/docker`（volumes 46.4G，其中 **319 个 dangling 卷**；containers 日志 3.5G） | 50GB | 18% |
 
-**取证缺口**：`InfraLifecycleWatcher` 的 die/oom 事件缓冲区是**内存态**，master 重启即清空——事后无法从 CDS 侧判定自用 mongo 死因（本次靠宿主 mongo 日志才定位到 FileStreamFailed）。取证器（`debt.cds.replica-set.md` #17）需要持久化才能支撑跨重启复盘。
+**取证缺口**：`InfraLifecycleWatcher` 的 die/oom 事件缓冲区是**内存态**，master 重启即清空——事后无法从 CDS 侧判定自用 mongo 死因（本次靠宿主 mongo 日志才定位到 FileStreamFailed）。取证器（[debt.cds.md](./debt.cds.md) #17）需要持久化才能支撑跨重启复盘。
 
 **暴露的结构性债务（按优先级，均对照 `cds/src/services/janitor.ts` 现状核对过）**：
 
@@ -100,7 +106,7 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 | P2 | janitor 看不见孤儿 worktree 与依赖卷 | sweep 只遍历 `stateService.getAllBranches()`；孤儿 infra 容器**只报不删**；`cds-nm-*` 依赖卷、319 个 dangling 卷完全不在清理范围。生产 55 个分支全部无 `executorId`，按 TTL 只有 3 个够格删——而宿主 `.cds-worktrees` 已 45.5GB | 增加「磁盘上的 worktree 目录 ↔ 台账分支」双向对账（目录无对应分支 = 孤儿，可删）；`cds-nm-*` 依赖卷纳入 dangling 回收 | **已偿还并生产验证**（2026-07-28）：`orphan-worktree.ts` 双向对账，三重护栏（够老 / 无容器挂载 / 单轮上限）。上线后经三轮生产实测定位（命令用错 → 丢 stdout → Go 模板转义）才真正跑通，实测 `removed 20 / deferred 45`，磁盘 37%→35%，按每轮 20 个自动收敛。三次故障表现均为「不删」，护栏未失守。**仍欠**：`cds-nm-*` 依赖卷纳入回收 |
 | P2 | 无全局 prune 互斥 | janitor 内部是串行 for，但与人工/其他路径无锁——人工恢复时即撞上 `a prune operation is already running` | 全局 prune 锁（同一时刻只允许一个回收操作） | **已偿还**（2026-07-28）：`reclaim-lock.ts` CDS 侧回收互斥，拿不到锁跳过本轮不排队。边界：管不到宿主上的人工 prune |
 | P2 | 关键容器无保护标记 | janitor 自身**安全**（不跑 `container prune` / `volume prune`），但 `cds-infra-cds-state-mongo` 停止后被人工 `docker container prune` 连带删除 | 给关键容器/卷打 `cds.protected=true`，并在运维手册明确「禁止裸跑 container/volume prune」 | **代码已偿还、生产待迁移**（2026-07-28）：CDS 状态库 mongo + 全部 infra 打 `cds.protected=true`，孤儿收割器按标记豁免；安全清理命令见下方运维须知。**存量容器仍是裸的**——docker 不能给已存在的容器补 label，而现网走的是「复用已有容器」路径，`exec_cds.sh` 现在会体检并打印重建命令，实际重建待低峰期人工执行（见下方运维须知） |
-| P2 | 中断派发不自动补发 | 机制已存在但被 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 默认关闭 | 与 `doc/debt.cds.selfupdate-prebuilt.md` 开放债务 #1 合并偿还，评估默认开启 | **已偿还**（2026-07-27，走事前避免而非事后补偿）：`deploy-drain.ts` 自更新重启前排空在途部署 + 排空期间关闭部署入口；刻意不打开 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED`（那道闸是治重试风暴关的） |
+| P2 | 中断派发不自动补发 | 机制已存在但被 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 默认关闭 | 与 [doc/debt.cds.selfupdate-prebuilt.md](./debt.cds.selfupdate-prebuilt.md) 开放债务 #1 合并偿还，评估默认开启 | **已偿还**（2026-07-27，走事前避免而非事后补偿）：`deploy-drain.ts` 自更新重启前排空在途部署 + 排空期间关闭部署入口；刻意不打开 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED`（那道闸是治重试风暴关的） |
 
 ## 运维须知：安全的 Docker 清理命令（2026-07-28 补）
 
@@ -133,4 +139,13 @@ CDS 侧的回收（悬空镜像 / per-SHA 镜像 / 孤儿 worktree）已有进�
 - `cds/CLAUDE.md` —— `CDS_STORAGE_MODE=mongo-split` 是默认值
 - 2026-05-14 commit / PR：webhook buffer 上限从 200 → 1000、新增项目级生命周期调度
   → 都加重了 state.json 单文件压力，需要尽早开工 Phase 1
-- `cds/src/services/state.ts` —— StateService 主体
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 相关 | `cds/src/services/state.ts` | StateService 主体 |

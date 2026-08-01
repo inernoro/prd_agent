@@ -2,10 +2,15 @@
 
 > **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
 
+**一句话**：对外展示类页面的视觉契约：一种签名渐变、一套标签规格、一套玻璃卡配方，都不许就地自造。
+**谁该读**：改首页、登录页或任何对外页面的前端工程师与设计。
+**读完能做什么**：按硬规则检查自己的页面有没有自造颜色或样式，并找到该复用的零件。
+
+---
+
 > **范围**：`prd-admin/src/pages/home/` + 所有对外展示类页面（登录、分享、落地、订阅邮件 H5 等）。
 > **权威出处**：PR inernoro/prd_agent#405（`claude/redesign-homepage-gTSAf`），把 /home 从"粒子堆 + 代理卡片秀"重做成 Linear.app × Retro-Futurism 融合的九幕叙事。
 > **维护原则**：每次更新整页替换，不保留历史变更记录（历史由 git + changelogs 承担）。
-
 
 ## 一、风格定位：Linear × Retro-Futurism
 
@@ -23,10 +28,8 @@
 
 所有品牌强调色必须引用 `HERO_GRADIENT`，不得自造渐变。
 
-```ts
-// 出处：prd-admin/src/pages/home/sections/HeroSection.tsx
-export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)';
-```
+签名渐变是一个**统一导出的常量**（135 度，蓝紫三段过渡），落地页与登录页共用同一份。
+**不许就地写渐变**：任何自造的渐变都会让品牌色出现第二套，两套一旦并存就再也收不回来。
 
 用途：主 CTA 背景、顶栏登录按钮、Logo 内底色、标题渐变文字、FinalCta 大字、登录页 RetroHorizon 装饰与主 CTA 投影（2026-07-07 起登录页同步收敛到同一渐变，不再自造独立配色）。
 
@@ -66,24 +69,9 @@ export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #
 
 ### R5 · HUD Chip 必须按 SectionHeader 规格
 
-所有"小标签 / eyebrow / 状态条"必须是：
-
-```tsx
-<div
-  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-md"
-  style={{
-    fontFamily: 'var(--font-mono)',
-    background: `${accent}0a`,                  // 10/255 alpha
-    border: `1px solid ${accent}3d`,            // 61/255 alpha
-    boxShadow: `0 0 20px ${accent}33, inset 0 0 10px ${accent}0a`,
-  }}
->
-  <Icon style={{ color: accent }} />
-  <span style={{ color: accent, letterSpacing: '0.2em', textShadow: `0 0 10px ${accent}99` }}>
-    TEXT UPPERCASE
-  </span>
-</div>
-```
+所有"小标签 / 状态条"的规格是**一套固定配方**，只有强调色一个变量：等宽字体、宽字距、全大写文案，
+背景取强调色约 4% 透明度、边框约 24%、外发光与内发光都由同一个强调色派生。
+**规格不许逐处调**——要改就改那份共享的标签组件，否则每个页面都会长出一个「差一点点」的版本。
 
 带 live dot 的版本（"Live · ONLINE"）用 `animate-ping` + emerald-400 发光。参考 `HeroSection` 的状态条和 `SectionHeader.tsx`。
 
@@ -121,15 +109,9 @@ emerald   (#34d399)  ← 状态 / 存活 / 成功（不变）
 
 ### R9 · 卡片玻璃化
 
-任何 card/panel 的"玻璃效果"必须遵循：
-
-```css
-background: rgba(10, 14, 22, 0.72);    /* 深色半透明 */
-border: 1px solid rgba(255, 255, 255, 0.12);
-backdrop-filter: blur(14px);
-box-shadow: 0 18px 54px rgba(0, 0, 0, 0.55), inset 0 0 10px rgba(148, 163, 184, 0.04);
-border-radius: 22px;                   /* clamp 18-24 */
-```
+卡片玻璃感的配方同样固定：深色半透明底（约 72% 不透明）、极淡白边（约 12%）、
+中等强度背景模糊、一层大而软的外投影加一层极淡内发光、圆角约 22。
+**这几个数是一组，不是六个独立参数**——单独调其中一个（比如只加深投影）就会脱离整套视觉语言。
 
 内层 headline 用 `SectionHeader` 版式，不再自造 `<h2>` 样式。
 
@@ -211,11 +193,20 @@ border-radius: 22px;                   /* clamp 18-24 */
 
 ## 七、关联文件
 
-- `prd-admin/src/pages/home/LandingPage.tsx` — 十一幕骨架
-- `prd-admin/src/pages/home/sections/HeroSection.tsx` — 风格源头（HERO_GRADIENT / hero-title-pulse / hud-pulse）
-- `prd-admin/src/pages/home/components/StaticBackdrop.tsx` — 背景
-- `prd-admin/src/pages/home/components/SectionHeader.tsx` — 幕头版式
-- `prd-admin/src/pages/home/components/Reveal.tsx` — 进场动效
-- `prd-admin/src/styles/tokens.css` — 字体 CSS 变量
 - `prd-admin/index.html` — Google Fonts 预连接
 - `.claude/rules/frontend-architecture.md` — 组件复用与注册表模式
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 七、关联文件 | `prd-admin/src/pages/home/LandingPage.tsx` | 十一幕骨架 |
+| 七、关联文件 | `prd-admin/src/pages/home/sections/HeroSection.tsx` | 风格源头（HERO_GRADIENT / hero-title-pulse / hud-pulse） |
+| 七、关联文件 | `prd-admin/src/pages/home/components/StaticBackdrop.tsx` | 背景 |
+| 七、关联文件 | `prd-admin/src/pages/home/components/SectionHeader.tsx` | 幕头版式 |
+| 七、关联文件 | `prd-admin/src/pages/home/components/Reveal.tsx` | 进场动效 |
+| 七、关联文件 | `prd-admin/src/styles/tokens.css` | 字体 CSS 变量 |

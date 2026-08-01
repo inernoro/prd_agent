@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：把已落地的对话生成闭环，补成可恢复、可直接编辑、可安全发布的完整工作台。
+**谁该读**：接手该工作台的工程师。
+**读完能做什么**：知道还剩哪些增量没做。
+
+---
+
 ## 目标
 
 把已经落地的“对话、大纲、生成、局部修改和 artifact 预览”闭环补成可恢复、可直接编辑、可安全发布的完整工作台。本文只保留尚未完成的增量；现有生成、patch、SSE、主题和运行记录不得重做。
@@ -11,7 +17,7 @@
 - `MdToPptRun` 已支持 `convert`、`patch` 和 `outline`，大纲由服务端持久化。
 - `md-to-ppt-agent.outline::chat` 已进入 AppCaller 注册表。
 - 前端已有对话工作台、下一步状态栏、选区反馈和 artifact 预览。
-- 生成 HTML 可以发布为网页，但预览隔离与多轮状态恢复仍要按 `debt.md-to-ppt.md` 收口。
+- 生成 HTML 可以发布为网页，但预览隔离与多轮状态恢复仍要按 [debt.md-to-ppt.md](./debt.md-to-ppt.md) 收口。
 
 ## 未完成范围
 
@@ -60,6 +66,6 @@
 
 ## 关联文档
 
-- `doc/debt.md-to-ppt.md`
-- `doc/design.web-hosting.md`
+- [doc/debt.md-to-ppt.md](./debt.md-to-ppt.md)
+- [doc/design.web-hosting.md](./design.web-hosting.md)
 - `doc/rule.platform.app-caller-registry.md`
