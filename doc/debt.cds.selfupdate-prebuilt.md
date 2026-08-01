@@ -31,7 +31,7 @@
 以下三个改动都改的是 `tryApplyCdsPrebuiltForSelfUpdate` / self-update handler 同一条路径，记录于此避免散在 commit message 里：
 
 - **原子切换保留上一代 web 资源**（`replaceDirectoriesAtomically` 新增 `previousPath` 参数）：切换 `web/dist` 时把旧产物移到 `web/dist.previous` 而不是直接删除，修复自更新后已打开的浏览器标签页请求到新 `index.html` 但旧懒加载 chunk 已被删除导致的黑屏（跨代不一致）。同时 `validateWebDistCandidate` 会真实解析候选 `index.html` 的 `src`/`href`，逐个校验入口资源存在且非空，不再只查 `index.html` 是否存在。
-- **生产更新防护（乐观锁 + 精确 SHA 重启）**：共享控制面的非快进更新（版本回退 / 跳跃）现在要求显式 `intent`（`release`/`rollback`）+ `expectedFromSha` 乐观锁 + `reason` 审计原因；同 SHA 与快进更新保持旧客户端兼容路径。新增不拉代码、不切分支、仅按精确 SHA 重启当前工作区的接口和 `cdscli` 命令。另修复 `cdscli` 收到 self-update SSE `error` 事件后仍返回成功退出码的问题。
+- **生产更新防护（乐观锁 + 精确 SHA 重启）**：共享控制面的**普通**非快进更新（版本回退 / 跳跃）要求显式 `intent`（`release`/`rollback`）+ `expectedFromSha` 乐观锁 + `reason` 审计原因；同 SHA 与快进更新保持旧客户端兼容路径。新增不拉代码、不切分支、仅按精确 SHA 重启当前工作区的接口和 `cdscli` 命令。另修复 `cdscli` 收到 self-update SSE `error` 事件后仍返回成功退出码的问题。**这条闸门只挡普通更新**——2026-07-30 起「强制更新」走独立解析（`resolveForceSyncTransition`）永不拒绝，`intent`/`reason` 缺省时记「未声明」而非拒绝，因为强制更新是用户控制 CDS 的最后手段，能被策略拒绝的强制不叫强制。两条路径分工：普通更新守严格闸门，强制更新是逃生阀。
 - **渐进式 Agent 操作者身份**：新增 `agent-operation-context.ts` + `actor-resolver.ts`，采集调用方 Agent session，贯通请求 ID、操作 ID 与服务端事件日志，self-update / 精确 SHA 重启的结果会带上这三个标识供复盘关联；旧版不带身份信息的客户端调用保持兼容（身份字段全部可选）。
 
 ## 尚未验证（open）

@@ -57,6 +57,10 @@ CDS 全局默认(_global 变量层)
 
 合并中枢不变:`resolveEffectiveProfile`(baseline → 分支覆盖 → 部署模式)与 `mergeBranchProfiles`(项目底座 + 分支追加,撞 id 底座赢)。字段权威边界由 `config-authority.ts` 三级(repo/platform/user)把守。
 
+### 全局默认层的显式开关
+
+`_global` scope 的 CDS 全局变量默认**不**对项目生效——只有项目显式打开 `Project.inheritGlobalEnv` 才继承。这是有意设计(全局变量改动不应静默打穿所有项目,呼应本文「八、关联文档」列出的跨项目隔离规则通道 3),但要求配置可观测性检查器(§四)与合并中枢对这个开关读同一份真相:曾出现过检查器在未开启继承时仍把全局变量显示为「已生效」的展示层 bug(检查器与实际合并逻辑各判了一遍)。
+
 ### 派生的三层判定策略(W3a)
 
 | 场景 | 行为 | 理由 |

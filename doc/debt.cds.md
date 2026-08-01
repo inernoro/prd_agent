@@ -489,6 +489,7 @@ CDS 自建存活监控按固定间隔直连容器宿主端口探测每个分支�
 | 3 | 账本不跨实例共享 | 与债务 2-2 同因：落盘在单机 `.cds/notice-ledger.json`，多实例各存各的，通知不合并 | 集群场景数据分散 |
 | 4 | `readAt` / `dismissedAt` 不分用户 | 从 localStorage（每浏览器一份）搬到服务端后语义变成全实例共享：一个人点「不再提醒」对所有人生效，一个人打开面板就把所有人的未读清零。CDS 是运维工具、用户数很少，v1 接受；要按用户需先确认全局网关在 `req` 上盖的用户标识字段名 | 多人同时用时未读数会互相影响 |
 | 5 | 系统级告警拿不到项目归属 | `preview.canary.alert`（`services/preview-canary.ts`）与 `infra.flap.circuit-breaker`（`services/infra-flap-watchdog.ts`）的 payload 都不含 `projectId`，只能记为系统级条目，项目级 Key 一条都看不到。要让项目 owner 也收到，得先给这两个 payload 补 `projectId` | 项目级凭据看不到这两类告警 |
+| 6 | 系统级密钥存储未配置加密密钥时明文兼容 | `sealToken` 在系统加密密钥未设置时原样返回明文，包括「外部接入」一节的缺陷转发凭据（`BugReportForwardingSettings.tokenEncrypted`）。已有运行时自检暴露「当前是否加密落库」，但未配置加密密钥不会阻止该功能启用 | 未配置加密密钥的实例，缺陷转发凭据以明文形式落库；运维应显式配置加密密钥而非假设默认已加密 |
 
 本轮实际覆盖的告警源共七类：发布失败、自动回滚（`rollbackOf` 存在的成功）、发布现场漂移、
 生产/分支健康掉线（连续失败达阈值）、CDS 自更新失败、预览入口探测失败、基础设施抖动熔断。

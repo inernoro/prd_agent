@@ -245,6 +245,7 @@
 | GET | `/api/report/reports/{id}/comments` | 获取评论列表 |
 | POST | `/api/report/reports/{id}/comments` | 发表评论 |
 | DELETE | `/api/report/reports/{reportId}/comments/{commentId}` | 删除评论 |
+| POST | `/api/report-agent/reports/{id}/comments/images` | 上传评论图片（有权查看该周报即可上传，不限作者与状态；≤5MB，白名单 MIME；返回 `attachmentId` 供创建评论时填入 `attachmentIds`） |
 | GET | `/api/report/reports/{id}/likes` | 获取点赞列表 |
 | POST | `/api/report/reports/{id}/likes` | 点赞 |
 | DELETE | `/api/report/reports/{id}/likes` | 取消点赞 |
@@ -285,3 +286,7 @@
 | AI 汇总生成质量不稳定 | 中 | 中 | 支持自定义 prompt + 重新生成 |
 | 大团队周报数据量大导致汇总超 token 限制 | 中 | 中 | 分批汇总或摘要后再汇总 |
 | 身份映射不准导致 commit 归属错误 | 中 | 低 | 管理界面支持手动修正映射 |
+
+## 十一、评论图片附件
+
+周报（富文本正文、日报、评论）三处独立的图片上传表单收敛为共用实现，评论输入器升级为支持粘贴截图、选图上传、待发缩略图删除的多行 composer。评论创建接口新增 `attachmentIds`（上限 9 张、按归属校验），支持纯文字、图文混合、纯图片三种形态——仅当正文与附件同时为空才拒绝；列表接口批量解析并返回附件详情。图片大图预览统一走 `createPortal` 挂载到 `document.body` 并提升层级，避免被右侧栏或卡片遮挡（呼应 [浮层三硬约束](./rule.frontend.frontend-modal.md)）。
