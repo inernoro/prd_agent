@@ -868,6 +868,11 @@ def check_skill(path: str) -> list[str]:
     for line in fm.splitlines():
         kv = re.match(r"^([\w.-]+)\s*:(.*)$", line)
         if not kv:
+            # 顶格、非空、非注释、又不是 key: value 的行（如 `allowed-tools [Read]`）
+            # 在 YAML 里就是语法错误。静默跳过等于「看不懂的行一律放行」。
+            bare = line.rstrip()
+            if bare and not bare.startswith((" ", "\t", "#")):
+                problems.append(f"frontmatter 有一行不是「键: 值」：{bare[:30]}")
             continue
         bad = frontmatter_syntax_problem(kv.group(2))
         if not bad and kv.group(1) in ("name", "description"):

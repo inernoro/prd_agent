@@ -14,6 +14,11 @@
 | 关联 | [doc/design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md) 决策一、`prd-api/src/PrdAgent.Infrastructure/LlmGateway/`、`OpenApiController.cs`、`changelogs/2026-06-26_vision-detail-fix.md` |
 | 提出 | 用户「协议不能归一，要保真」+ 取证后分波落地（F1 识图 / F3a 采样 / G1-G6 函数调用穿协议） |
 
+## 债务台账（状态：partial）
+
+| 字段 | 内容 |
+|---|---|
+| 状态 | partial（核心已落地；Claude 流式 tool_use、池路径能力兜底与 OpenAI logprobs Extensions 消费已补齐，以下保留未完成边界） |
 
 ## 债务主题
 
@@ -49,14 +54,3 @@
 
 - gateway 物理独立成服务、观测性页面（Logs Generations/Upstream/Sessions）、池清理（IsMain/IsVision legacy 字段下线）、管理 UI OpenRouter 超集。
 
----
-
-## 已结清（供回溯）
-
-下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
-
-### LLM Gateway 协议保真 · 债务台账
-
-| 字段 | 内容 |
-|---|---|
-| 状态 | partial（核心已落地；Claude 流式 tool_use、池路径能力兜底与 OpenAI logprobs Extensions 消费已补齐，以下保留未完成边界） |

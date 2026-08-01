@@ -688,6 +688,14 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(wrong_name, "w", encoding="utf-8") as fh:
         fh.write(f"---\nname: demo-skill\nallowed-tools: [Read, Write]\ndescription: {good_desc}\n---\n")
     check(not checker.check_skill(wrong_name), "写法正确的流式集合放行（没误伤 allowed-tools 的正常写法）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write(f"---\nname: demo-skill\nallowed-tools [Read]\ndescription: {good_desc}\n---\n")
+    check(any("不是「键: 值」" in p for p in checker.check_skill(wrong_name)),
+          "frontmatter 里压根没有冒号的行被抓出（静默跳过等于看不懂就放行）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write(f"---\nname: demo-skill\n# 一行注释\ndescription: |\n  {good_desc}\n---\n")
+    check(not checker.check_skill(wrong_name),
+          "注释行与折叠块的缩进续行不被误判成坏行")
     # 只数深度不行：[Read} 的深度也回到零，而 YAML 认的是同类闭合
     check(checker.frontmatter_syntax_problem("[Read}") is not None,
           "括号不配对的流式集合被抓出（只数深度会放过 [Read}）")
@@ -1006,13 +1014,37 @@ doc_keys = set(titles)
 # 链接而静默跳过，两份索引各少一篇而 CI 全绿（形状 1：判据比它该管的范围窄）。
 # 台账合并时按「文中出现已交付/已解决」下沉条目，会把状态其实是 open 的活账
 # 误埋进「已结清」——读者扫到那一节会以为这笔账还完了。
-def settled_residuals(ledger: str) -> list[str]:
-    """「已结清」区里还没做完的账。三种形状都要认，只认第一种等于没判：
+# 「已结清」区里的状态一律反着判：只认一份「确实还完了」的词表，其余全算没做完。
+# 这道守卫被正着扩过四次（open → 标题 open → 偿还中 → blocked），每次都漏下一个
+# 新说法（partial、pending、待排期……）—— 因为台账是不同人在不同时候写的，
+# 状态说法本来就穷举不完。反过来判之后，新说法默认落在「未结清」一侧。
+SETTLED_WORD = re.compile(
+    r"已解决|已交付|已完成|已落地|已闭环|已偿还|已修复|已还|完成|"
+    r"done|paid|closed|fixed|resolved|delivered", re.I)
+NO_STATUS = re.compile(r"^[\s—\-–~]*$")
 
-    1. 小节的元信息行写着「状态 | open」；
-    2. 小节标题自己带着（open）；
-    3. 主行标 done、尾巴留在别的列（「残留边界 / 残留： / 遗留：」）——
-       这一种最隐蔽，读者扫到「已结清」会以为这笔账真的还完了。
+
+def _unsettled(value: str) -> bool:
+    """状态只看开头那个词，不看后面括号里的解释。
+
+    `partial（核心已落地；……）` 的括号里带着「已落地」，整串去搜就会被当成结清 ——
+    而它开头明写着 partial。先剥掉 P0-P3 这类优先级前缀，再取第一个词来判。
+    """
+    v = value.strip().strip("*` ")
+    if not v or NO_STATUS.match(v):
+        return False
+    v = re.sub(r"^P\d\s+", "", v)
+    head = re.split(r"[（(\s]", v, 1)[0]
+    return not SETTLED_WORD.search(head)
+
+
+def settled_residuals(ledger: str) -> list[str]:
+    """「已结清」区里还没做完的账。四种形状都要认，只认第一种等于没判：
+
+    1. 竖排元信息行 `| 状态 | X |`：X 里没有「确实还完了」的词就算没做完；
+    2. 横排表格里 `状态` 那一列：同上；
+    3. 小节标题自己带着（open）之类的未结清标记；
+    4. 主行标 done、尾巴留在别的列（「残留边界 / 残留： / 遗留：」）。
     """
     pos = ledger.find("## 已结清")
     if pos < 0:
@@ -1021,20 +1053,30 @@ def settled_residuals(ledger: str) -> list[str]:
     hits: list[str] = []
     for entry in re.finditer(r"^### (.+)$", settled, re.M):
         window = settled[entry.end():entry.end() + 600]
-        status = re.search(r"\|\s*状态\s*\|\s*([^|]+)\|", window)
-        if status and status.group(1).strip().lower().startswith("open"):
-            hits.append(entry.group(1))
-        if re.search(r"[（(]open[）)]", entry.group(1), re.I):
-            hits.append(f"{entry.group(1)}（标题写着 open）")
-    for row in re.finditer(r"^\|.+\|$", settled, re.M):
-        cells = [c.strip() for c in row.group(0).strip("|").split("|")]
-        # 状态列写 open 只是其中一种说法：偿还中 / 进行中 / 待办 同样是没做完
-        if any(re.fullmatch(r"\**(?:open(\(.*\))?|blocked.*|pending.*|todo.*|"
-                            r"偿还中.*|进行中.*|待办.*|未完成.*|阻塞.*)\**", c, re.I)
-               for c in cells):
-            hits.append(f"{cells[0]}（行状态未结清）")
+        # 只认「竖排元信息行」——整行就两列：| 状态 | X |。
+        # 横排表的表头 `| # | 状态 | 债务 |` 也含「状态」，误当成它会把表头名当值。
+        status = re.search(r"^\|\s*状态\s*\|\s*([^|]+)\|\s*$", window, re.M)
+        if status and _unsettled(status.group(1)):
+            hits.append(f"{entry.group(1)}（状态 {status.group(1).strip()[:20]}）")
+        if re.search(r"[（(](?:open|blocked|partial|pending|todo)[）)]", entry.group(1), re.I):
+            hits.append(f"{entry.group(1)}（标题写着未结清）")
+    status_col: int | None = None
+    for line in settled.splitlines():
+        if not line.strip().startswith("|"):
+            status_col = None
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if all(c and set(c) <= set("-: ") for c in cells):
+            continue                                  # 表格分隔行
+        if status_col is None:
+            named = [i for i, c in enumerate(cells) if c in ("状态", "status", "Status", "state")]
+            if named:
+                status_col = named[0]
+            continue
+        if len(cells) > status_col and _unsettled(cells[status_col]):
+            hits.append(f"{cells[0][:24]}（行状态 {cells[status_col][:20]}）")
         if any(("残留边界" in c or c.startswith(("残留：", "遗留："))) for c in cells):
-            hits.append(f"{cells[0]}（还留着没做完的尾巴，应挪回活账区）")
+            hits.append(f"{cells[0][:24]}（还留着没做完的尾巴，应挪回活账区）")
     return hits
 
 
@@ -1092,6 +1134,10 @@ check(settled_residuals(SETTLED_HEAD + "| 1 | **偿还中(2026-07-27)** | 某事
       "行状态写「偿还中」同样被抓出（open 只是其中一种说法）")
 check(settled_residuals(SETTLED_HEAD + "| 1 | blocked | 某事 | — |\n"),
       "行状态写 blocked 同样被抓出（卡住不等于结清）")
+check(settled_residuals("## 已结清（供回溯）\n\n### 某台账\n\n| 字段 | 内容 |\n|---|---|\n| 状态 | partial（核心已落地；边界还在） |\n"),
+      "竖排元信息行的 partial 被抓出（括号里的「已落地」不算数，只看开头那个词）")
+check(not settled_residuals("## 已结清（供回溯）\n\n### 某台账\n\n| 字段 | 内容 |\n|---|---|\n| 状态 | P2 已解决 |\n"),
+      "带优先级前缀的「P2 已解决」仍算结清（没误伤）")
 check(settled_residuals("## 已结清（供回溯）\n\n### 某小节（open）\n\n正文\n"),
       "小节标题自己写着（open）被抓出")
 check(settled_residuals(SETTLED_HEAD + "| 1 | done | ~~某事~~ | 残留边界：还有一半没做 |\n"),
