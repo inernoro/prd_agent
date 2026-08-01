@@ -28,13 +28,13 @@
     "debt": 0
   },
   "source_refs": {
-    "spec": 7,
-    "design": 85,
-    "plan": 16,
-    "rule": 22,
-    "guide": 56,
-    "report": 29,
-    "debt": 144
+    "spec": 11,
+    "design": 107,
+    "plan": 18,
+    "rule": 27,
+    "guide": 89,
+    "report": 42,
+    "debt": 186
   },
   "rules_missing": 0,
   "skills_missing": 0,
@@ -49,7 +49,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 8
     },
     "debt.cds.branch-isolation.md": {
       "missing": 0,
@@ -67,7 +67,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 12
     },
     "debt.cds.performance.md": {
       "missing": 0,
@@ -91,7 +91,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 4
     },
     "debt.doc.readability.md": {
       "missing": 0,
@@ -115,13 +115,13 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 9
+      "src": 11
     },
     "debt.platform.llm-gateway.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 91
+      "src": 107
     },
     "debt.platform.md": {
       "missing": 0,
@@ -151,7 +151,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 6
     },
     "design.acceptance.kb.md": {
       "missing": 0,
@@ -169,7 +169,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 10
+      "src": 13
     },
     "design.cds.agent.managed-runtime-fact-source.md": {
       "missing": 0,
@@ -187,7 +187,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 3
+      "src": 7
     },
     "design.cds.branch-network-isolation.md": {
       "missing": 0,
@@ -201,11 +201,17 @@
       "impl": 0,
       "src": 7
     },
-    "design.cds.config-tree.md": {
+    "design.cds.cluster-bootstrap.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 1
+    },
+    "design.cds.config-tree.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
     },
     "design.cds.control-data-split.md": {
       "missing": 0,
@@ -219,17 +225,29 @@
       "impl": 0,
       "src": 1
     },
+    "design.cds.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
     "design.cds.multi-project.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
       "src": 3
     },
+    "design.cds.railway-onboarding-flow.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
     "design.cds.self-hosting.md": {
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 6
+      "src": 7
     },
     "design.cds.skill-version-update.md": {
       "missing": 0,
@@ -259,7 +277,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 3
+      "src": 6
     },
     "design.platform.llm-gateway.unification.md": {
       "missing": 0,
@@ -277,7 +295,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 3
     },
     "design.skill.role-bundle.md": {
       "missing": 0,
@@ -325,7 +343,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 7
+      "src": 8
     },
     "guide.cds.agent.runtime-pool-recovery.md": {
       "missing": 0,
@@ -333,11 +351,47 @@
       "impl": 0,
       "src": 1
     },
+    "guide.cds.agent.workbench.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.blue-green-handoff.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
     "guide.cds.cloud-dev-tutorial.md": {
       "missing": 0,
       "bare": 0,
       "impl": 8,
       "src": 1
+    },
+    "guide.cds.deploy-three-paths.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "guide.cds.env.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.fullstack-infra-smoke.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.github-app.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
     },
     "guide.cds.github-webhook-events.md": {
       "missing": 0,
@@ -393,11 +447,17 @@
       "impl": 0,
       "src": 2
     },
+    "guide.platform.quickstart.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
     "guide.platform.smoke-tests.md": {
       "missing": 0,
       "bare": 0,
       "impl": 38,
-      "src": 1
+      "src": 19
     },
     "guide.skill.removal-checklist.md": {
       "missing": 0,
@@ -416,6 +476,12 @@
       "bare": 0,
       "impl": 0,
       "src": 6
+    },
+    "plan.cds.release-system.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
     },
     "plan.doc.readability.rollout.md": {
       "missing": 0,
@@ -451,13 +517,13 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 1
     },
     "report.2026-W09.md": {
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 6
     },
     "report.2026-W10.md": {
       "missing": 1,
@@ -469,7 +535,7 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 1
     },
     "report.2026-W12.md": {
       "missing": 1,
@@ -493,7 +559,7 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 1
     },
     "report.2026-W16.md": {
       "missing": 1,
@@ -511,7 +577,7 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 0
+      "src": 1
     },
     "report.2026-W19.md": {
       "missing": 1,
@@ -547,7 +613,7 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 1
+      "src": 2
     },
     "report.2026-W25.md": {
       "missing": 1,
@@ -625,7 +691,7 @@
       "missing": 1,
       "bare": 0,
       "impl": 0,
-      "src": 2
+      "src": 4
     },
     "report.cds.agent.workbench.2026-05-15.md": {
       "missing": 1,
@@ -661,7 +727,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 8,
-      "src": 0
+      "src": 2
     },
     "rule.doc.readability.md": {
       "missing": 0,
@@ -697,13 +763,19 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 6
+      "src": 9
     },
     "rule.skill.issues-system.md": {
       "missing": 0,
       "bare": 0,
       "impl": 29,
       "src": 0
+    },
+    "spec.cds.compose-contract.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
     },
     "spec.cds.project-model.md": {
       "missing": 0,

@@ -110,6 +110,8 @@ FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*(.*)$")
 # （`- ```ts`），不剥这层前缀同样识别不出来。两种前缀可以叠加（`> - ```ts`）。
 CONTAINER_PREFIX = re.compile(r"^(?: {0,3}(?:>|[-*+] |\d{1,9}[.)] ))+")
 INDENTED_CODE = re.compile(r"^ {4,}\S")
+# 列表项标记：列表里的缩进是续行不是代码块，两者必须分开判
+LIST_MARKER = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])\s")
 
 
 def strip_container(line: str) -> str:
@@ -290,6 +292,11 @@ SOURCE_PATH = re.compile(
     r"(?<![\w./-])(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw"
     r"|scripts|\.claude/skills|\.claude/rules|\.agents/skills|\.Codex/rules|\.github/workflows)/[\w./-]+"
     r"\.(?:cs|csproj|ts|tsx|js|jsx|mjs|py|rs|css|scss|less|sh|yml|yaml|json|html|vue|sql|razor|cshtml)\b")
+# 仓库根上的入口文件没有目录前缀（exec_dep.sh / quick.ps1 / cds-compose.yml），
+# 上面那条要求「目录/」所以一个都认不出来。这里按形状认而不是列一张名单 ——
+# 列名单等于新加一个根脚本判据就瞎（判据比它该管的范围窄的老形状）。
+ROOT_ENTRYPOINT = re.compile(
+    r"(?<![\w./-])(?:[\w][\w.-]*\.(?:sh|ps1|sln|csproj)|[\w.-]*compose[\w.-]*\.ya?ml)(?![\w/])")
 SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")
 # 这些小节就是专门用来指路的，里面列路径不算欠账
 SOURCE_SECTION = re.compile(
@@ -311,6 +318,14 @@ def _is_pointer_name(name: str) -> bool:
 def _pointer_columns(header: str) -> set[int]:
     return {i for i, c in enumerate(header.strip().strip("|").split("|"))
             if _is_pointer_name(c)}
+
+
+def count_source_refs(text: str) -> int:
+    """一行（或一个单元格）里散落的源码引用数：带目录的路径 + 行号引用 + 根上的入口文件。"""
+    spans = [m.span() for m in SOURCE_PATH.finditer(text)]
+    roots = [m for m in ROOT_ENTRYPOINT.finditer(text)
+             if not any(s <= m.start() and m.end() <= e for s, e in spans)]
+    return len(spans) + len(SOURCE_LINEREF.findall(text)) + len(roots)
 
 
 def shell_script_lines(lang: str, block: list[str]) -> int:
@@ -371,10 +386,10 @@ def scan_body(text: str) -> tuple[int, int]:
             for i, cell in enumerate(cells):
                 if i in pointer_cols:
                     continue
-                src_refs += len(SOURCE_PATH.findall(cell)) + len(SOURCE_LINEREF.findall(cell))
+                src_refs += count_source_refs(cell)
             continue
         pointer_cols = set()
-        src_refs += len(SOURCE_PATH.findall(raw)) + len(SOURCE_LINEREF.findall(raw))
+        src_refs += count_source_refs(raw)
     # 没闭合的围栏在 Markdown 里一直开到文末，缓冲里的 shell 块也得结算 ——
     # 不结算的话，不写闭合行就等于让整段脚本从棘轮里消失。
     impl_lines += shell_script_lines(lang, shell_buf)
@@ -439,17 +454,31 @@ def doc_filenames() -> set[str]:
 
 
 def body_lines(text: str):
-    """逐行产出正文（跳过围栏代码块）——代码块里的路径是示例，不该变成链接。"""
+    """逐行产出正文（跳过围栏与缩进代码块）——代码块里的路径是示例，不该变成链接。
+
+    缩进代码块要跟「列表项的续行」分开：列表里缩进四格的仍是正文，一刀切按代码
+    跳过的话，嵌套列表里的真死链就被藏起来了 —— 那是这一族判据一直在堵的洞。
+    """
     in_fence = False
     fence_kind: tuple[str, int] | None = None
+    in_list = False
     for idx, raw in enumerate(text.splitlines()):
         delim = fence_delim(raw)
         if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             continue
-        if not in_fence:
-            yield idx + 1, raw
+        if in_fence:
+            continue
+        if raw.strip():
+            if INDENTED_CODE.match(raw):
+                if not in_list:
+                    continue          # 顶层的缩进代码块：渲染出来是代码，不是正文
+            elif LIST_MARKER.match(raw):
+                in_list = True
+            elif not raw.startswith((" ", "\t")):
+                in_list = False
+        yield idx + 1, raw
 
 
 def link_spans(line: str) -> list[tuple[int, int]]:

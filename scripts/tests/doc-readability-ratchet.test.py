@@ -318,6 +318,22 @@ for prefix in ("- ```ts", "1. ```ts", "> - ```ts", "  * ```ts"):
     check(checker.fence_delim(prefix) is not None, f"「{prefix}」认得出是围栏")
 check(checker.fence_delim("正文里的 - 号不是列表") is None, "散文里的连字符不会被当成列表前缀")
 
+# 仓库根上的入口文件没有目录前缀，要求「目录/」的判据一个都认不出来
+check(checker.count_source_refs("先看 exec_dep.sh 再看 quick.ps1") == 2,
+      "根上的入口脚本算散落源码引用")
+check(checker.count_source_refs("改 cds-compose.yml 就行") == 1, "根上的 compose 文件同样算")
+check(checker.count_source_refs("见 cds/scripts/run.sh 一处") == 1,
+      "带目录的路径不会被根判据重复计数")
+check(checker.count_source_refs("这句话里没有任何路径") == 0, "普通句子不误报")
+
+# 顶层缩进代码块不是正文；列表里的缩进续行仍是正文（一刀切会把嵌套列表里的死链藏起来）
+TOP_INDENTED = "# t\n\n正文一段。\n\n    [示例](./does-not-exist.md)\n"
+check(not [l for _, l in checker.body_lines(TOP_INDENTED) if "does-not-exist" in l],
+      "顶层缩进代码块里的示例链接不当正文扫")
+LIST_CONT = "# t\n\n- 一级\n  - 二级\n    见 [真链接](./does-not-exist.md) 这一条\n"
+check([l for _, l in checker.body_lines(LIST_CONT) if "does-not-exist" in l],
+      "列表里缩进四格的续行仍算正文（真死链藏不住）")
+
 TILDE_IMPL = "# 示例 · 指南\n\n~~~typescript\nconst a = 1;\nconst b = 2;\n~~~\n"
 BACKTICK_IMPL = TILDE_IMPL.replace("~~~", "```")
 tilde_lines, _ = checker.scan_body(TILDE_IMPL)
