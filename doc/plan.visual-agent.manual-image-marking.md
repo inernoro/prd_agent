@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：配图标记从依赖模型随机输出，升级为可持久化、可精确编辑、可复现的用户控制流程。
+**谁该读**：做配图标记的前端与后端。
+**读完能做什么**：知道还差哪些持久化与约束没做。
+
+---
+
 ## 目标
 
 让文章配图标记从依赖模型随机输出，升级为可持久化、可精确编辑、可复现的用户控制流程。
@@ -54,6 +60,6 @@
 
 ## 关联文档
 
-- `doc/design.literary-agent.md`
-- `doc/design.platform.image-ref-and-persistence.md`
-- `doc/design.visual-agent.md`
+- [doc/design.literary-agent.md](./design.literary-agent.md)
+- [doc/design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)
+- [doc/design.visual-agent.md](./design.visual-agent.md)

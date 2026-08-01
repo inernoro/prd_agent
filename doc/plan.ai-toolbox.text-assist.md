@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：给需要自动命名、摘要、润色、打标签的页面提供轻量文本辅助，但调用身份与入口归各应用自己。
+**谁该读**：要接入文本辅助的工程师。
+**读完能做什么**：判断自己的场景该不该接，以及接口归属放哪。
+
+---
+
 ## 目标
 
 为需要自动命名、摘要、润色和标签生成的页面提供轻量文本辅助能力。能力可以复用，但调用身份、权限、输入限制和产品入口必须归属各自应用，不能建立一个无边界的通用 Controller。
@@ -60,7 +66,7 @@
 
 ## 关联文档
 
-- `doc/design.ai-toolbox.md`
-- `doc/design.web-hosting.md`
-- `doc/rule.platform.app-identity.md`
-- `doc/design.platform.llm-gateway.physical-isolation.md`
+- [doc/design.ai-toolbox.md](./design.ai-toolbox.md)
+- [doc/design.web-hosting.md](./design.web-hosting.md)
+- [doc/rule.platform.app-identity.md](./rule.platform.app-identity.md)
+- [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)

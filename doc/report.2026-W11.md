@@ -124,7 +124,7 @@ timeline
 
 > **价值**：doc-sync 技能将文档索引从手动维护升级为自动同步（扫描 doc/ → 重建 index.yml → 更新目录页），周报生成后自动触发。设计文档按 design.* 标准模板重写，为外部平台（语雀/Confluence）拉取 index.yml 做好联邦化准备。
 
-- doc-sync 技能：扫描 doc/*.md 提取标题 → 重建 index.yml 单一数据源 → 同步 guide.list.directory.md 渲染视图
+- doc-sync 技能：扫描 doc/*.md 提取标题 → 重建 index.yml 单一数据源 → 同步 [guide.list.directory.md](./guide.list.directory.md) 渲染视图
 - 文档索引按阅读优先级重排
 - 多通道适配器 + 账户数据共享设计文档按 design.* 标准模板重写
 

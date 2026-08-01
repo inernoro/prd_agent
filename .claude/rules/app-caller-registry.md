@@ -1,5 +1,8 @@
 # AppCallerCode 注册规则
 
+**一句话**：调网关必须传 AppCallerCode，且只能引用注册表常量、写成 kebab-case，裸字符串会被 CI 扫出来。
+**什么时候撞上**：新增任何一处大模型调用。
+
 任何对 `ILlmGateway` 的调用都必须传 `AppCallerCode`。这个 code 不允许在 Controller / Service 里写裸字符串字面量——必须先在 `prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs` 用 `[AppCallerMetadata]` 注册一条 `public const string`，再在调用处 `= AppCallerRegistry.X.Y.Z` 引用。
 
 ## 强制规则
@@ -7,7 +10,7 @@
 ### 1. 不允许裸字符串
 
 ```csharp
-// ❌ 错误：硬编码字面量，注册表不知道有这条 caller
+// 错误：硬编码字面量，注册表不知道有这条 caller
 var req = new GatewayRequest
 {
     AppCallerCode = "my-agent.feature::chat",  // 运行时炸 "appCallerCode 未注册"
@@ -15,7 +18,7 @@ var req = new GatewayRequest
     ...
 };
 
-// ✅ 正确：先在 Registry 加常量，再引用
+// 正确：先在 Registry 加常量，再引用
 // 在 AppCallerRegistry.cs:
 //   public static class MyAgent {
 //     public static class Feature {
@@ -36,13 +39,13 @@ var req = new GatewayRequest
 `AppCallerCode` 整体格式：`{app-prefix}.{path-segments}.{...}::{model-type}`。每段（点分割）只能用**小写字母 / 数字 / 连字符**。
 
 ```
-✅ prd-admin.changelog.ai-summary::chat
-✅ visual-agent.image-gen.batch-generate::generation
-✅ pr-review.summary::chat
+[有] prd-admin.changelog.ai-summary::chat
+[有] visual-agent.image-gen.batch-generate::generation
+[有] pr-review.summary::chat
 
-❌ prd-admin.changelog.aiSummary::chat       —— camelCase
-❌ prd-admin.changelog.ai_summary::chat      —— 下划线
-❌ PrdAdmin.Changelog.AiSummary::chat        —— PascalCase
+[缺] prd-admin.changelog.aiSummary::chat       —— camelCase
+[缺] prd-admin.changelog.ai_summary::chat      —— 下划线
+[缺] PrdAdmin.Changelog.AiSummary::chat        —— PascalCase
 ```
 
 允许的应用前缀已在 `AppCallerCodeRegistryGuardTests.AllowedPrefixes` 列出；`ModelType` 必须是 `chat / vision / generation / intent / embedding / rerank / long-context / code` 之一。
@@ -100,4 +103,4 @@ public static class Admin                    // 应用大类
 - [ ] 常量名 / 值是不是 kebab-case？没有大写、没有下划线？
 - [ ] 本地跑 `dotnet test PrdAgent.sln --filter "FullyQualifiedName~AppCallerCodeRegistry"` 能过？
 
-任何一项 ❌，先修再 push。
+任何一项不达标，先修再 push。

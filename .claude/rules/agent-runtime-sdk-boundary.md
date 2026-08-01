@@ -1,5 +1,8 @@
 # Agent Runtime SDK Boundary
 
+**一句话**：写 Agent 运行时集成时别让「官方 SDK」四个字盖住自建部分，必须逐层说清哪层是官方的、哪层是自己搭的。
+**什么时候撞上**：写或评审 Agent 运行时设计文档、要给「集成到什么程度」下结论时。
+
 When documenting or reviewing an agent runtime integration, do not let a historical runtime name imply a stronger vendor integration than the code actually provides.
 
 ## Required Checks

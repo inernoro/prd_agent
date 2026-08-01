@@ -2,6 +2,12 @@
 
 > **版本**：v1.6 | **日期**：2026-07-28 | **状态**：已完成并持续维护
 
+**一句话**：把网关已有的租户、密钥、模型池、路由、费用等能力，串成一本从空状态做到可运营的教程。
+**谁该读**：写这本教程的人。
+**读完能做什么**：知道教程要覆盖哪几条连续操作路径。
+
+---
+
 ## 一、目标与完成定义
 
 本计划把 LLM Gateway 已经存在的租户、密钥、模型、模型池、路由、提示词、请求记录、费用和治理能力，串成一本可连续操作的产品教程。教程最终发布到 MAP 全新知识库 **“模型网关权威教程”**；视觉验收证据按 MAP 验收规范归档到 CDS 验收中心。
@@ -197,7 +203,7 @@ G2-E 本地实现证据：控制台已提供空状态创建、动态模型映射
 
 ## 九、关联 SSOT
 
-- `design.platform.llm-gateway.physical-isolation.md`：租户平台化、密钥、提示词、控制台与物理隔离的当前架构事实。
-- `rule.acceptance.map-enterprise.md`、`rule.acceptance.ssot.md`：视觉验收和归档规则。
-- `guide.acceptance.report-evidence.md`：截图、说明和证据完整性合同。
-- `debt.platform.llm-gateway.md`：不在本教程批次内重开的运行边界和技术债。
+- [design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)：租户平台化、密钥、提示词、控制台与物理隔离的当前架构事实。
+- [rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md)、[rule.acceptance.ssot.md](./rule.acceptance.ssot.md)：视觉验收和归档规则。
+- [guide.acceptance.report-evidence.md](./guide.acceptance.report-evidence.md)：截图、说明和证据完整性合同。
+- [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)：不在本教程批次内重开的运行边界和技术债。

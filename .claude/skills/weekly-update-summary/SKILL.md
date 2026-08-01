@@ -1,6 +1,6 @@
 ---
 name: weekly-update-summary
-description: Generates business-facing weekly project reports for executives, product managers and business owners. Aggregates git history with this week's daily reports, CDS acceptance verdicts, defect ledger and production releases, then produces a structured Chinese-language weekly report (business value, quality gate, daily trail, evidence links, next-week priorities) saved to doc/report.YYYY-WXX.md and published as a weekly magazine edition. Trigger words: "生成周报", "写周报", "weekly report", "本周总结".
+description: 'Generates business-facing weekly project reports for executives, product managers and business owners. Aggregates git history with this week''s daily reports, CDS acceptance verdicts, defect ledger and production releases, then produces a structured Chinese-language weekly report (business value, quality gate, daily trail, evidence links, next-week priorities) saved to doc/report.YYYY-WXX.md and published as a weekly magazine edition. Trigger words: "生成周报", "写周报", "weekly report", "本周总结".'
 ---
 
 # 自动化周报生成

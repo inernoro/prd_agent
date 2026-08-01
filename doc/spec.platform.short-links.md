@@ -2,6 +2,12 @@
 
 > **版本**：v1.0.0 | **日期**：2026-05-14 | **状态**：已落地
 
+**一句话**：把多套分享系统各自的随机长串统一成一套短链：一个入口、一套鉴权、一致的过期与失效语义。
+**谁该读**：要接入分享能力的工程师；关心链接安全的产品。
+**读完能做什么**：按统一接口签发短链，并说清各类分享的鉴权差异。
+
+---
+
 ## 概述
 
 把 web hosting / workflow / defect / report / document_store / toolbox 等多套分享系统的随机长 token 统一收敛到一个全局自增数字短码 `/s/{seq}`，URL 从 15+ 字符压缩到 3-5 字符。
@@ -52,7 +58,16 @@
 
 ## 关联
 
-- 实现：`prd-api/src/PrdAgent.Core/Models/ShortLink.cs`、`ShortLinkService.cs`、`ShortLinksController.cs`、`AdminShortLinksController.cs`
 - 前端：`prd-admin/src/pages/ShortLinkRouter.tsx`、`prd-admin/src/pages/settings/ShortLinksAdminSettings.tsx`
-- 索引手册：`doc/guide.platform.mongodb-indexes.md` → `short_links` 段
+- 索引手册：[doc/guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md) → `short_links` 段
 - PR：[#613](https://github.com/inernoro/prd_agent/pull/613)
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 关联 | `prd-api/src/PrdAgent.Core/Models/ShortLink.cs`、`ShortLinkService.cs`、`ShortLinksController.cs`、`AdminShortLinksController.cs` |

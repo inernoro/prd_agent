@@ -251,7 +251,7 @@ timeline
 |------------------------------|--------------|
 | P0 **4 个 W22 新智能体真人验收**（第六次提醒，硬约束） | 未做。CCAS / Project Route / 个人任务树仍未跑 `create-visual-test-to-kb`。**已第七次提醒**——硬约束未兑现，连续 7 周搁置。 |
 | P0 **跨项目隔离 6 类通道完整复测** | 部分。本周 #886 持久化投影剥离 runtime 派生（属隔离穿透清单的根因修复）已落地，但 #3 `_global` customEnv / #4 共享 Mongo+Redis / #5 单实例多 Agent / #6 compose 占位值四类回归测试仍未跑，未归档 `report.cross-project-isolation-channel-regression.md`。 |
-| P0 **CDS Agent R1 vs Lite 路线决策**（第五次提醒） | 未做。W26 CDS 全力在自更新极速版 + 部署稳定性 + 验收中心，没动 Agent R1/Lite 路线。**已第六次提醒**——建议本周在 `doc/debt.cds.agent.md` 记一次"长期搁置"。 |
+| P0 **CDS Agent R1 vs Lite 路线决策**（第五次提醒） | 未做。W26 CDS 全力在自更新极速版 + 部署稳定性 + 验收中心，没动 Agent R1/Lite 路线。**已第六次提醒**——建议本周在 [doc/debt.cds.agent.md](./debt.cds.agent.md) 记一次"长期搁置"。 |
 | P0 **PM Agent Phase 2 真人 UAT**（含移动端，第二次提醒） | 未做。PM Agent 本周无新代码。**已第三次提醒**。 |
 | P1 **CDS 灰度预览 ETA 真人 UAT** | 未做。W25 的构建 ETA + 本地账号 + 验收报告鉴权仍仅靠脚本验证。W26 又叠加了自更新极速版 + 卡死收敛器，验证债更重。 |
 | P1 **缺陷自动化端到端真人 UAT** | 未做。W26 仅固化每日闭环 + revert 催办，全链路真人 UAT 仍欠。 |
@@ -275,7 +275,7 @@ timeline
 | P0 | **真人验收专项周（硬约束）** | 累积的 UAT 欠款已到危险水位。W27 建议**冻结新功能**，集中跑：4 个 W22 智能体（CCAS / Project Route / 个人任务树）+ PM Agent Phase 2 + 缺陷自动化端到端 + 文档星系 + VOC 下钻，每条出一份归档到知识库 / CDS 验收中心的报告。不出 ≥5 份验收报告不准开 W28 新坑。 |
 | P0 | **文档星系 / VOC 下钻真人验收（含双主题 + 移动端）** | W26 两条最大新功能（文档星系六批交互 + VOC 三段式下钻）全靠脚本验证。下周走 `/验收` 流：模拟人类浏览器点击导航进入、双主题截图、触控板手势真机验证、加载动效闭环（产物是否真出现，非 spinner）。 |
 | P0 | **CDS 自更新极速版 + 卡死收敛器灰度验证** | 自更新极速版仅基建落地（orchestrator 接线待灰度）、卡死收敛器是 runtime 行为改动，必须在灰度环境真跑一次自更新 + 制造一次卡死看收敛器是否兜住，归档 `report.cds-self-update-fast.md`。 |
-| P0 | **CDS Agent R1 vs Lite 路线决策**（第六次提醒） | 已连续 6 周未决策。本周必须在 `doc/debt.cds.agent.md` 记一次"长期搁置"并给出明确时间线，或正式砍掉 R1 把 Lite 定为正式形态。 |
+| P0 | **CDS Agent R1 vs Lite 路线决策**（第六次提醒） | 已连续 6 周未决策。本周必须在 [doc/debt.cds.agent.md](./debt.cds.agent.md) 记一次"长期搁置"并给出明确时间线，或正式砍掉 R1 把 Lite 定为正式形态。 |
 | P1 | **跨项目隔离 #3/#4/#5/#6 通道回归测试** | #886 已修根因（runtime 派生剥离），下周补齐 `_global` customEnv / 共享 Mongo+Redis / 单实例多 Agent / compose 占位值四类回归，归档 `report.cross-project-isolation-channel-regression.md`。 |
 | P1 | **知识库双链 v2 跨实体引用 + 文档星系扩边**（第三次提醒） | 文档星系目前只有 document→document 一种边。把 document→requirement/defect/milestone 接入双链，星系就能展示跨实体引用网络（自然延伸本周最大新功能）。 |
 | P1 | **手机端整体重构第二批** | W26 落了首批（headbar / 首页 Hero / 知识库瘦身 / 百宝箱发现），按 `doc/design.*` 手机端重构调研推进剩余高频页，配 375px 真机自审。 |

@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-20 | **状态**：已落地
 
+**一句话**：构建为什么经常超过十分钟，以及发布版与热加载两套机制各自适用什么、何时会冲突。
+**谁该读**：关心构建耗时的人；选择部署模式的工程师。
+**读完能做什么**：按场景选对模式，并知道慢在哪三个根源。
+
+---
+
 ## 管理摘要（30 秒）
 
 用户反馈两件事：CDS 构建经常超过 10 分钟；"发布版"与"热加载版"两套机制说不清、有时会冲突。
@@ -61,7 +67,7 @@ worktree（准备源码工作区）
 时间几乎都耗在 `build` 这一步的 `docker run`（执行 install/build 命令）。两个关键参数：
 
 - **就绪探测超时**：`waitForReadiness` 默认 180s（TCP→HTTP 两段，HTTP 探 `/`，详见 `container.ts:1183`）。这是"等应用起来"的等待上限，不是构建上限。
-- **构建超时**：`profile.buildTimeout ?? 600000`（10 分钟），作为 `docker run` 这条命令的 shell exec 超时（`container.ts:1049`）。慢构建撞到这里就失败。
+- **构建超时**：`profile.buildTimeout ?? 600000`（10 分钟），作为 `docker run` 这条命令的 shell exec 超时。慢构建撞到这里就失败。
 
 ### 为什么 Java 会撞 10 分钟
 
@@ -116,7 +122,7 @@ worktree（准备源码工作区）
 
 ### 3. 构建超时已可配，无代码缺口
 
-`buildTimeout` 已是每个构建配置的可选字段，默认 600000ms，从 compose 解析（`compose-parser.ts`）一路透传到 `docker run` 的执行超时（`container.ts:1049`），并在 `executor/routes.ts` 的 profile 契约里传递。慢栈（大型 Java）可在构建配置里调高这个值。本次确认链路完整，未改代码，仅在此文档说明配置位置，供需要时调整（UI 暴露该字段可作为后续增强）。
+`buildTimeout` 已是每个构建配置的可选字段，默认 600000ms，从 compose 解析一路透传到 `docker run` 的执行超时，并在 `executor/routes.ts` 的 profile 契约里传递。慢栈（大型 Java）可在构建配置里调高这个值。本次确认链路完整，未改代码，仅在此文档说明配置位置，供需要时调整（UI 暴露该字段可作为后续增强）。
 
 ---
 
@@ -141,8 +147,19 @@ CDS 改动需远端容器实跑才能端到端验证 Java 缓存效果（本环�
 
 ## 关联
 
-- `cds/src/services/cache-catalog.ts` —— 依赖缓存挂载 SSOT
-- `cds/src/services/deploy-runtime.ts` —— 发布版/热加载模式归类 SSOT
-- `cds/src/services/auto-lifecycle.ts` —— 自动发布调度
 - `.claude/rules/cross-project-isolation.md` —— 共享缓存/卷的隔离边界
-- `doc/design.cds.multi-project.md` —— CDS 多项目设计
+- [doc/design.cds.multi-project.md](./design.cds.multi-project.md) —— CDS 多项目设计
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 二、构建流水线：时间花在哪 | `container.ts:1049` |
+| 3. 构建超时已可配，无代码缺口 | `compose-parser.ts`、`container.ts:1049` |
+| 关联 | `cds/src/services/cache-catalog.ts`（依赖缓存挂载 SSOT） |
+| 关联 | `cds/src/services/deploy-runtime.ts`（发布版/热加载模式归类 SSOT） |
+| 关联 | `cds/src/services/auto-lifecycle.ts`（自动发布调度） |

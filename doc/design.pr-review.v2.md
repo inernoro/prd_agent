@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：代码审查工作台改为每用户授权：全局令牌无法表达个人的真实仓库权限，也会绑错数据归属。
+**谁该读**：做代码审查工作台的工程师。
+**读完能做什么**：说清授权为什么必须按用户而不是全局。
+
+---
+
 > **appKey**：`pr-review`
 
 ## 一、管理摘要
@@ -150,6 +156,6 @@ CDS 的分支预览域名动态变化，Web OAuth callback 难以预注册且不
 
 ## 关联文档
 
-- `doc/rule.platform.app-identity.md`
+- [doc/rule.platform.app-identity.md](./rule.platform.app-identity.md)
 - `doc/rule.platform.server-authority.md`
-- `doc/design.platform.github-infrastructure.md`
+- [doc/design.platform.github-infrastructure.md](./design.platform.github-infrastructure.md)

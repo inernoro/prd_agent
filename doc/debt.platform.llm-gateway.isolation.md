@@ -2,10 +2,16 @@
 
 > **版本**：v1.0 | **日期**：2026-06-30 | **状态**：开发中
 
+**一句话**：网关物理剥离各波的进度、已验证部分、已知坑，以及等待拍板的切换时机。
+**谁该读**：参与网关剥离的工程师；要拍板切换的人。
+**读完能做什么**：判断剥离到哪一步，以及还差什么才能切。
+
+---
+
 > 进度：波1 + 波2 跨进程 + 波2.5 影子/灰度/命名子域 已落地；生产翻 http = T12 待拍板。
 > 负责人：AI / 待用户拍板（合并到 main + 翻 http 时机）
-> 关联设计：`doc/design.platform.llm-gateway.physical-isolation.md`；旧路径清理与发布门禁：`doc/plan.platform.llm-gateway.full-cutover.md`；
-> 验收面包屑：`doc/guide.platform.llm-gateway.acceptance-breadcrumbs.md`
+> 关联设计：[doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)；旧路径清理与发布门禁：[doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)；
+> 验收面包屑：[doc/guide.platform.llm-gateway.acceptance-breadcrumbs.md](./guide.platform.llm-gateway.acceptance-breadcrumbs.md)
 
 AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用户 / 已知边界 / 后续」。
 
@@ -101,7 +107,7 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 
 ## 真实环境 MECE 冒烟矩阵：表 + B/C 层 CI 真跑通过
 
-- `doc/spec.platform.llm-gateway.test-matrix.md`：14 维 MECE 矩阵（入口×流式×档位×协议×think位置×工具×token/cache×图片×
+- [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)：14 维 MECE 矩阵（入口×流式×档位×协议×think位置×工具×token/cache×图片×
   上下文×环境×中断×负载×演示×一平台多协议）+ 4 层分工（A 解析/B 协议保真/C 跨进程/D 真机）+ 每层 canary。
 - **B 层** `GatewayProtocolFidelityTests`（14 用例，CI 真跑绿）：喂 canned payload 给真实
   `OpenAIGatewayAdapter`/`ClaudeGatewayAdapter`/`ThinkTagStripper`，断言 think 三形态
@@ -117,7 +123,7 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 ### v2 扩展：从压缩版改数据驱动全枚举 + 可见大报告（commit b30218ab，CI 绿）
 
 - 用户反馈「这么少的表，能有效吗，是内容压缩了吗」——v1 确实压缩了（14 维摘要 + 18 手写 [Fact]）。v2 改为：
-  - `scripts/gen-gw-matrix-report.py`（纯 Python，无需 SDK，一处定义三处消费）→ `doc/report.gw-test-matrix.md`
+  - `scripts/gen-gw-matrix-report.py`（纯 Python，无需 SDK，一处定义三处消费）→ [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)
     （约 284 行可见大表）+ `protocol-cells.json`(93 B cell) + `transport-cells.json`(18 C cell)。报告里 B/C 每一行
     = CI 真执行的一个 cell（非只列不跑）。
   - **B 层** `GatewayProtocolFidelityTests` 改 `[Theory]+MemberData` 读 `protocol-cells.json`（93 cell：think 三形态/

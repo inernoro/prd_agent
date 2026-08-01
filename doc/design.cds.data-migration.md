@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：环境之间复制数据库做成可追踪任务：连接检查、库与集合发现、工具检查与实时进度。
+**谁该读**：做数据迁移的运维。
+**读完能做什么**：说清一次迁移经过哪些步骤与检查点。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：环境之间复制数据库时，手工 dump、传输、restore 和连接配置容易出错，也缺少可追踪进度。
@@ -105,8 +111,8 @@ MongoDB 迁移使用官方 database tools，而不是自行序列化 BSON。全�
 | 迁移任务持久化 | `cds/src/services/state.ts` |
 | 迁移类型 | `cds/src/types.ts` |
 | 项目迁移 | `cds/src/routes/project-migration.ts` |
-| 迁移债务 | `doc/debt.cds.project-migration.md` |
-| Mongo 迁移规则 | `doc/rule.cds.mongo-migration.md` |
+| 迁移债务 | [doc/debt.cds.md](./debt.cds.md) |
+| Mongo 迁移规则 | [doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md) |
 
 ## 11. 验收标准
 
@@ -119,7 +125,7 @@ MongoDB 迁移使用官方 database tools，而不是自行序列化 BSON。全�
 
 ## 关联文档
 
-- `doc/design.cds.md`
-- `doc/debt.cds.project-migration.md`
-- `doc/rule.cds.mongo-migration.md`
-- `doc/guide.cds.mongo-migration.md`
+- [doc/design.cds.md](./design.cds.md)
+- [doc/debt.cds.md](./debt.cds.md)
+- [doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md)
+- [doc/guide.cds.mongo-migration.md](./guide.cds.mongo-migration.md)

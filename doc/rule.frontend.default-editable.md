@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-03-04 | **状态**：已落地
 
+**一句话**：字段默认可编辑，只有会破坏数据一致性或确实无权时才禁用，且禁用必须说明原因。
+**谁该读**：写表单界面的前端工程师和 AI。
+**读完能做什么**：判断一个字段该不该禁用，以及禁用时该怎么提示。
+
+---
+
 ## 核心原则
 
 **系统开发初期，减少约束。除非业务明确禁止或具有破坏性，所有字段默认可编辑。**
@@ -25,12 +31,10 @@
 
 ## 示例
 
-```typescript
-// 是 正确：默认可编辑
-<ModelTypePicker value={form.modelType} onChange={v => setForm({...form, modelType: v})} />
-<input value={form.code} onChange={e => setForm({...form, code: e.target.value})} />
+**正确**：字段默认可编辑，用户随时能改。
+**错误**：因为「正在编辑已有记录」就把字段禁用掉，还配上半透明样式——
+这属于无业务理由的禁用，用户会以为系统坏了。
 
-// 否 错误：无业务理由的禁用
-<ModelTypePicker value={form.modelType} onChange={...} disabled={!!editing} />
-<input value={form.code} disabled={!!editing} style={{ opacity: 0.6 }} />
-```
+只有两种情况允许禁用：改这个字段会破坏已有数据的一致性（如已被引用的唯一编码），
+或者当前角色确实无权改。**禁用时必须说明原因**，不能只把控件变灰。
+

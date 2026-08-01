@@ -2,7 +2,13 @@
 
 > **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
 
-关联规范: `doc/rule.acceptance.map-enterprise.md`。
+**一句话**：每日自动验收怎么运转：冻结上一自然日范围、三技能链取证、归档进验收中心、发通知与失败降级。
+**谁该读**：维护每日验收自动化的人；想知道某天验收为什么没覆盖到自己改动的人。
+**读完能做什么**：判断每日验收的范围与降级是否正常，并知道出问题该找哪一环。
+
+---
+
+关联规范: [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md)。
 
 ## 1. 目标
 
@@ -10,7 +16,7 @@
 
 自动化只做调度壳。报告结构、证据规则、深度门禁、CDS ready、归档、`verify-open` 和失败降级必须来自技能链和规范文档，不在 automation prompt 中复制维护。
 
-每日验收和日报不是同一类产物。链路边界以 `doc/rule.acceptance.map-enterprise.md` 的“验收链路总控矩阵”为准:
+每日验收和日报不是同一类产物。链路边界以 [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) 的“验收链路总控矩阵”为准:
 
 | 项目 | 每日验收 | 日报 |
 |---|---|---|

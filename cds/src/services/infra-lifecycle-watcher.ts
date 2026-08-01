@@ -1,4 +1,4 @@
-// Infra 容器生命周期取证器（debt.cds.replica-set #17，2026-07-24）
+// Infra 容器生命周期取证器（doc/debt.cds.md「CDS 复制集模式工程债务」 #17，2026-07-24）
 //
 // 背景：复制集六轮验收中共享 mongod 四次「Detected unclean shutdown」，但平台
 // 日志通道 tail 500 行被重启后的清理日志秒级刷满，OOM 与否、谁发的 SIGKILL

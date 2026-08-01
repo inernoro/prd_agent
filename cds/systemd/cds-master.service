@@ -23,11 +23,11 @@
 #   systemctl status cds-master
 #   journalctl -u cds-master -f
 #
-# See doc/design.cds-resilience.md Phase 2 + the P4 Part 18 hardening
+# See doc/design.cds.resilience.md Phase 2 + the P4 Part 18 hardening
 # commit for why ExecStartPre exists.
 
 Description=CDS Master (Cloud Development Suite)
-Documentation=file:///home/user/prd_agent/doc/design.cds-resilience.md
+Documentation=file:///home/user/prd_agent/doc/design.cds.resilience.md
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service

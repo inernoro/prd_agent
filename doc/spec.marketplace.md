@@ -2,6 +2,12 @@
 
 > **版本**：v4.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：配置分享市场规格：发布自己的配置，别人复制出独立副本，不转移所有权、不暴露敏感字段。
+**谁该读**：要把新配置类型接进市场的工程师；想了解发布与复制规则的产品。
+**读完能做什么**：说清发布、浏览、复制、下架各自的规则与权限边界，并知道新类型怎么接入。
+
+---
+
 海鲜市场是平台内可共享配置的发现与复制入口。用户可以发布本人拥有的配置，其他用户通过 Fork 获得独立副本。市场不转移原配置所有权，也不直接暴露敏感字段。
 
 ## 1. 目标与边界
@@ -132,7 +138,7 @@ Fork 后：
 
 ## 11. 关联文档
 
-- `doc/design.skill.marketplace-open-api.md`：市场与开放接口的技术设计。
-- `doc/plan.skill.marketplace-open-api-next.md`：仍未完成的市场开放能力计划。
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md)：市场与开放接口的技术设计。
+- [doc/plan.skill.marketplace-open-api-next.md](./plan.skill.marketplace-open-api-next.md)：仍未完成的市场开放能力计划。
 
 实现代码和类型清单是运行事实源，本规格只定义产品契约。

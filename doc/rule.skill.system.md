@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：技能的数据模型、命名规范、可见性与执行流程，统一之后 AI 与人建出来的技能才互相认得。
+**谁该读**：要新建技能的人和 AI。
+**读完能做什么**：按规范建出一个结构合规、可被正确调用的技能。
+
+---
+
 ## 1. 目标
 
 - 统一技能（Skill）的数据模型、创建规范和执行流程
@@ -125,7 +131,7 @@
 |------|------|------|
 | `PromptTemplate` | string | 提示词模板，支持 `{{变量}}` 占位符 |
 | `SystemPromptOverride` | string? | 系统提示词覆盖（null = 使用默认角色系统提示词） |
-| `AppCallerCode` | string? | LLM Gateway 路由标识（遵循 `core/rule.platform.app-identity.md`） |
+| `AppCallerCode` | string? | LLM Gateway 路由标识（遵循 [core/rule.platform.app-identity.md](./rule.platform.app-identity.md)） |
 | `ModelType` | string | 模型类型偏好，默认 `"chat"` |
 | `ExpectedModel` | string? | 期望模型提示（如 `"gpt-4o"`），仅作调度参考 |
 | `ToolChain` | SkillToolStep[] | 后处理工具链（见 3.4.2） |

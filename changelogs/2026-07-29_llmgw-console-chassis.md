@@ -34,7 +34,7 @@
 | fix | prd-admin | 删除前端按 location.hostname 拼网关子域的第二份域名实现（违反规则 #11）：预览分支名过长导致平台未发布该子域时，此前会拼出一个不存在的域名并把失败报成「登录凭据未通过安全校验」，现改为如实报出未发布原因 |
 | test | cds | 新增 preview-entrypoints 守卫（含 2026-07-29 现场 67 字符分支用例、63/64 边界、项目 env 不得伪造平台注入） |
 | test | prd-admin | SSO 落点测试改为契约驱动，新增源码守卫禁止 llmGatewaySso.ts 再出现域名推算痕迹 |
-| docs | doc | 新增 debt.platform.preview-entrypoints.md 台账：记录截断未覆盖复合标签、入口表容器创建时定格、其他消费方未清查三项欠账 |
+| docs | doc | 新增 debt.platform.md「预览入口下发（Preview Entrypoints）· 债务台账」 台账：记录截断未覆盖复合标签、入口表容器创建时定格、其他消费方未清查三项欠账 |
 | fix | prd-api | 区分「入口确实未发布」与「旧版平台没下发入口表」：过渡期预览环境不再误判为正式环境而回退到并不存在的同源控制台 |
 | refactor | prd-api | DeploymentAuthority 里读了两遍的 CDS_PROJECT_ID 判据抽成 IsCdsBranchPreview，供第三个消费方复用 |
 | test | prd-api | 新增 PlatformEntrypointsTests：表里取值 / 尾斜杠归一 / 缺项返回 null 不猜 / 畸形 JSON 降级 / 「没有表」与「表里没这项」可区分 |

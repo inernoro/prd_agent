@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：多项目架构剩下的收口事项：团队工作区、远程执行节点与旧方案退场。
+**谁该读**：推进多项目收口的工程师。
+**读完能做什么**：知道还剩哪几件事没做完。
+
+---
+
 ## 1. 目标
 
 收口 CDS 从单项目到多项目架构后仍未完成的团队 workspace、远程 executor 和迁移退场事项。P0-P4 与 P6 的已落地事实由设计、规格和代码承担，本文保留 P0-P6 编号，是因为代码注释和规则仍用这些阶段标识解释所属能力。
@@ -10,11 +16,11 @@
 
 | 阶段 | 当前状态 | 事实源或剩余动作 |
 | --- | --- | --- |
-| P0 设计与规格 | 已落地 | `design.cds.multi-project.md`、`spec.cds.project-model.md` |
+| P0 设计与规格 | 已落地 | [design.cds.multi-project.md](./design.cds.multi-project.md)、[spec.cds.project-model.md](./spec.cds.project-model.md) |
 | P1 项目外壳 | 已落地 | React 项目列表与项目级路由已取代早期单项目外壳 |
 | P2 认证 | 已落地 | GitHub OAuth、Device Flow 和 auth store 已有现行实现 |
-| P3 Mongo 数据层 | 部分退场未完成 | 默认 `mongo-split` 已落地；`state.json` 影子写仍见 `debt.cds.state-json.md` |
-| P4 多项目隔离 | 已落地，持续偿债 | 项目网络、projectId 过滤和分支隔离已落地；残留见 `debt.cds.branch-isolation.md` |
+| P3 Mongo 数据层 | 部分退场未完成 | 默认 `mongo-split` 已落地；`state.json` 影子写仍见 [debt.cds.state-json.md](./debt.cds.state-json.md) |
+| P4 多项目隔离 | 已落地，持续偿债 | 项目网络、projectId 过滤和分支隔离已落地；残留见 [debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md) |
 | P5 团队 workspace | 基础能力已落地 | 需要验证成员同步、RBAC 和跨 workspace 越权边界 |
 | P6 手动项目与自动部署 | 已落地 | 手动创建、Webhook 和自动部署已有现行实现，不再作为待开发阶段 |
 
@@ -22,9 +28,9 @@
 
 P0 已结束。后续架构变更只更新 canonical 文档，不恢复四份并行实施稿：
 
-- 主设计：`doc/design.cds.multi-project.md`
-- 数据模型：`doc/spec.cds.project-model.md`
-- Mongo 迁移规则：`doc/rule.cds.mongo-migration.md`
+- 主设计：[doc/design.cds.multi-project.md](./design.cds.multi-project.md)
+- 数据模型：[doc/spec.cds.project-model.md](./spec.cds.project-model.md)
+- Mongo 迁移规则：[doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md)
 
 ## 4. P1：项目外壳
 
@@ -36,7 +42,7 @@ P1 已结束。当前验收基线是：
 
 ## 5. P2：GitHub 认证
 
-P2 已结束，代码中的 `P2` 注释继续表示认证能力来源。仍需偿还的多用户 Device Flow 隔离归 `plan.cds.backlog-matrix.md`，不再把整期标为未完成。
+P2 已结束，代码中的 `P2` 注释继续表示认证能力来源。仍需偿还的多用户 Device Flow 隔离归 [plan.cds.backlog-matrix.md](./plan.cds.backlog-matrix.md)，不再把整期标为未完成。
 
 ## 6. P3：MongoDB 数据层迁移
 
@@ -46,7 +52,7 @@ P2 已结束，代码中的 `P2` 注释继续表示认证能力来源。仍需�
 2. 明确 Mongo 权威下的备份、恢复和降级读策略。
 3. 删除 `state.json` 正常写路径，只保留一次性迁移读取；执行前必须验证回滚不会读取落后的影子数据。
 
-详细顺序和风险以 `doc/debt.cds.state-json.md` 为准。
+详细顺序和风险以 [doc/debt.cds.state-json.md](./debt.cds.state-json.md) 为准。
 
 ## 7. P4：多项目隔离
 
@@ -89,9 +95,9 @@ P6 已结束。后续只维护以下不变量：
 
 ## 11. 关联文档
 
-- `doc/design.cds.multi-project.md`
-- `doc/spec.cds.project-model.md`
-- `doc/rule.cds.mongo-migration.md`
-- `doc/debt.cds.state-json.md`
-- `doc/debt.cds.branch-isolation.md`
-- `doc/debt.cds.project-migration.md`
+- [doc/design.cds.multi-project.md](./design.cds.multi-project.md)
+- [doc/spec.cds.project-model.md](./spec.cds.project-model.md)
+- [doc/rule.cds.mongo-migration.md](./rule.cds.mongo-migration.md)
+- [doc/debt.cds.state-json.md](./debt.cds.state-json.md)
+- [doc/debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md)
+- [doc/debt.cds.md](./debt.cds.md)

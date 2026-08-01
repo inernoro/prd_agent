@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-10 | **状态**：开发中
 
+**一句话**：手机截图分享直接拉起缺陷提交并自动填充，首版的已知边界与后续可补项。
+**谁该读**：接手这条链路的工程师。
+**读完能做什么**：判断当前能力边界，并挑下一步补什么。
+
+---
+
 > **关联变更**：分支 `claude/map-screenshot-bug-submit-p6lmd4`（prd-admin：manifest.webmanifest / sw.js / defectDeepLink `?action=submit` / DefectSubmitPanel 移动布局与 AI 追加填充）
 
 记录「手机截图 → 系统分享 → 拉起缺陷提交面板 → VLM 自动填充」首版的已知边界与后续可补项，避免下一次 session 没人记得。

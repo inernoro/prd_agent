@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：画布选图、聊天编辑器、页面带入三个入口原本各自解析引用，改为统一以结构化引用为事实源。
+**谁该读**：接手图片引用链路的工程师。
+**读完能做什么**：说清引用怎么被去重、校验与标准化。
+
+---
+
 ## 管理摘要
 
 - **解决的问题**：Visual Agent 的画布选择、聊天编辑器和页面带入图片曾各自解析引用，容易出现重复、悬空或文字标记与真实图片不一致。
@@ -110,6 +116,6 @@ Visual Agent 同时存在画布图片、聊天中插入的图片 Chip 和从其�
 
 ## 关联文档
 
-- `design.platform.image-ref-and-persistence.md`：图片引用与消息持久化。
-- `design.visual-agent.multi-image-compose.md`：多图合成能力。
-- `design.visual-agent.multi-image-vision-api.md`：多图理解与协议边界。
+- [design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)：图片引用与消息持久化。
+- [design.visual-agent.multi-image-compose.md](./design.visual-agent.multi-image-compose.md)：多图合成能力。
+- [design.visual-agent.multi-image-vision-api.md](./design.visual-agent.multi-image-vision-api.md)：多图理解与协议边界。

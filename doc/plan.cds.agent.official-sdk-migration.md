@@ -2,11 +2,17 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：控制面留在自家平台，代码智能体的对话循环、工具调用与中断交给官方开发包，本文跟踪这次迁移。
+**谁该读**：参与该迁移的工程师。
+**读完能做什么**：说清哪些环节交出去了、哪些必须自己留着。
+
+---
+
 ## 目标
 
 保留 MAP/CDS 的登录、工作区、运行配置、审批、事件、日志和产物控制面，把代码 Agent 的 turn loop、工具调用、流式输出和中断交给官方 Claude Agent SDK，并完成真实 provider 下的商业级闭环。
 
-历史工作台建设、页面功能和已完成阶段不再放在计划中。当前架构以 `design.cds.agent.official-sdk-adapter.md` 为准，用户操作以 `guide.cds.agent.workbench.md` 为准，已知边界以 `debt.cds.agent.md` 为准。
+历史工作台建设、页面功能和已完成阶段不再放在计划中。当前架构以 [design.cds.agent.official-sdk-adapter.md](./design.cds.agent.official-sdk-adapter.md) 为准，用户操作以 [guide.cds.agent.workbench.md](./guide.cds.agent.workbench.md) 为准，已知边界以 [debt.cds.agent.md](./debt.cds.agent.md) 为准。
 
 ## 当前事实
 
@@ -70,9 +76,9 @@ OpenAI Agents SDK、Google ADK 和 Codex-like adapter 在完成各自契约与�
 
 ## 关联文档
 
-- `doc/design.cds.agent.official-sdk-adapter.md`
-- `doc/design.cds.agent.runtime-architecture.md`
-- `doc/guide.cds.agent.workbench.md`
-- `doc/guide.cds.agent.runtime-pool-recovery.md`
-- `doc/guide.cds.agent.code-review-quickstart.md`
-- `doc/debt.cds.agent.md`
+- [doc/design.cds.agent.official-sdk-adapter.md](./design.cds.agent.official-sdk-adapter.md)
+- [doc/design.cds.agent.runtime-architecture.md](./design.cds.agent.runtime-architecture.md)
+- [doc/guide.cds.agent.workbench.md](./guide.cds.agent.workbench.md)
+- [doc/guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md)
+- [doc/guide.cds.agent.code-review-quickstart.md](./guide.cds.agent.code-review-quickstart.md)
+- [doc/debt.cds.agent.md](./debt.cds.agent.md)

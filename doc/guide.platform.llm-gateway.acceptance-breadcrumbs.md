@@ -2,8 +2,14 @@
 
 > **版本**：v1.0 | **日期**：2026-06-30 | **状态**：已落地
 
-> 关联: `doc/spec.platform.llm-gateway.test-matrix.md`（测什么 SSOT）、`doc/report.gw-test-matrix.md`（全量可见报告）、
-> `doc/design.platform.llm-gateway.physical-isolation.md`、`doc/debt.platform.llm-gateway.isolation.md`、
+**一句话**：网关验收的逐屏面包屑：每个界面看什么、点什么、留什么证据，外加压测计划与边界清单。
+**谁该读**：做网关验收的人；补自动化验收脚本的工程师。
+**读完能做什么**：照单逐屏取证，并说清哪些属于已知例外。
+
+---
+
+> 关联: [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（测什么 SSOT）、[doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（全量可见报告）、
+> [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)、
 > `.claude/rules/closed-loop-acceptance.md`（验收必须闭环）、`.claude/skills/create-visual-test-to-kb/`（取证流水线）
 
 ## 1. 管理摘要 + 怎么用
@@ -45,7 +51,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 
 ## 2. 测试覆盖矩阵摘要（A/B/C/D 四层 + shadow）
 
-事实来源：`doc/spec.platform.llm-gateway.test-matrix.md`（设计 SSOT）+ `doc/report.gw-test-matrix.md`（约 284 行全量报告，
+事实来源：[doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（设计 SSOT）+ [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（约 284 行全量报告，
 `scripts/gen-gw-matrix-report.py` 自动生成）。本节只给摘要，不复制全文。
 
 | 层 | 测什么 | 跑在哪 | CI 测试类 | 规模 |
@@ -66,7 +72,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 ## 3. 例外 / 边界清单
 
 每条写「怎么触发 + 预期表现」。触发以桩上游 / 坏 URL 模型 / canned payload 为主（真实失败路径），
-**不依赖** `ModelTestStub.FailureMode`（当前未接入 serving 路径，见 spec §边界 + `debt.platform.llm-gateway.isolation.md`）。
+**不依赖** `ModelTestStub.FailureMode`（当前未接入 serving 路径，见 spec §边界 + [debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)）。
 
 | # | 边界 | 怎么触发 | 预期表现 |
 |---|------|---------|---------|
@@ -88,7 +94,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 ## 4. 压测计划
 
 事实来源：`.claude/rules/llm-gateway.md`（流式陷阱）、`.claude/rules/server-authority.md`（断开不取消 / SSE 心跳 / afterSeq）、
-`doc/spec.platform.llm-gateway.test-matrix.md` D12（负载/极速）。
+[doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md) D12（负载/极速）。
 
 | # | 压测项 | 方法 | 通过判据 |
 |---|--------|------|---------|

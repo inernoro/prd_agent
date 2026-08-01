@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：轻量提示不该用阻塞弹窗打断用户：统一队列管理成功、失败、提示、带动作与加载态。
+**谁该读**：写前端提示的工程师。
+**读完能做什么**：按场景选对提示类型，不滥用阻塞弹窗。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：轻量成功、失败和提示信息不应使用阻塞对话框打断用户。
@@ -100,6 +106,6 @@
 
 ## 关联文档
 
-- `doc/rule.frontend.frontend-modal.md`
-- `doc/rule.frontend.streaming-text.md`
-- `doc/rule.frontend.landing-visual-style.md`
+- [doc/rule.frontend.frontend-modal.md](./rule.frontend.frontend-modal.md)
+- [doc/rule.frontend.streaming-text.md](./rule.frontend.streaming-text.md)
+- [doc/rule.frontend.landing-visual-style.md](./rule.frontend.landing-visual-style.md)

@@ -54,7 +54,7 @@ timeline
 
 - 引入独立 forwarder 进程：替代原"主进程 + 蓝绿端口切换"模型，nginx upstream 由 forwarder 统一编排。
 - self-update 失败自动降级路径：写盘 → 启动新进程 → 健康探活失败 → 回滚 → 通知。
-- 文档体系化：`design.cds.control-data-split.md`（架构）、`spec.cds-blue-green-mece-acceptance.md`（验收）、`guide.cds.forwarder-deploy.md`（部署 runbook）、`guide.cds.blue-green-handoff.md`（蓝绿改造交接）、`report.cds.forwarder-success.md`（验收报告）。
+- 文档体系化：[design.cds.control-data-split.md](./design.cds.control-data-split.md)（架构）、`spec.cds-blue-green-mece-acceptance.md`（验收）、[guide.cds.forwarder-deploy.md](./guide.cds.forwarder-deploy.md)（部署 runbook）、[guide.cds.blue-green-handoff.md](./guide.cds.blue-green-handoff.md)（蓝绿改造交接）、[report.cds.forwarder-success.md](./report.cds.forwarder-success.md)（验收报告）。
 - 相关 PR：#533、#526 主载，配套 changelog 50+ 个碎片记录"forwarder 完整对标 master 行为"的 5 个连续工作日。
 
 ### 2. CDS 自更新十八轮收尾 — 三件套终结
@@ -75,7 +75,7 @@ timeline
 - 五平台覆盖：TikTok / 抖音 / B 站 / 小红书 / YouTube，统一通过 `PLATFORM_OPTIONS` 共享常量定义。
 - Phase 2：媒体层三选一互斥渲染（cover image / video / hero）+ 视频流式下载 OOM 修复 + media-rehost 防 CDN 防盗链。
 - Phase 3：YouTube 截断优化、播放状态保留、首页弹窗多页轮播、coverUrl 优先 WebP。
-- 文档：`guide.submission-gallery.poster-feed-card.md`（feed-card 版式说明）。
+- 文档：[guide.submission-gallery.poster-feed-card.md](./guide.submission-gallery.poster-feed-card.md)（feed-card 版式说明）。
 - 相关 PR：#527（订阅工作流 + 首页海报发布，11 commits）、#530（Phase 2+3 全量，23 commits）。
 
 ### 4. 周报海报工坊产品化
@@ -95,7 +95,7 @@ timeline
 - Claude SDK 执行器：基于 Python sidecar 微服务，三种部署形态（本地进程 / 容器 / 跨服务器 SSE）。
 - CDS-MAP 沙箱配对协议 v1：JSON over HTTP 握手，Token 用常量时间比对（防时序攻击）。
 - 七轮 review 收尾：SSE flush 幂等、环境变量校验、AsyncAnthropic 资源泄漏修复。
-- 文档：`design.cds.agent.sdk-executor.md`、`guide.cds.agent.sdk-quickstart.md`、`debt.cds.agent.sdk-executor.md`、`spec.cds.map-pairing-protocol.md`、`guide.infra-sandbox-agent.md`。
+- 文档：[design.cds.agent.sdk-executor.md](./design.cds.agent.sdk-executor.md)、[guide.cds.agent.sdk-quickstart.md](./guide.cds.agent.sdk-quickstart.md)、[debt.cds.agent.sdk-executor.md](./debt.cds.agent.sdk-executor.md)、[spec.cds.map-pairing-protocol.md](./spec.cds.map-pairing-protocol.md)、[guide.infra-sandbox-agent.md](./guide.infra-sandbox-agent.md)。
 - 相关 PR：#529（20 commits）。
 
 ### 6. CDS 多轮 Bugbot 安全加固 — 30+ 轮审查累计收口
@@ -206,7 +206,7 @@ timeline
 
 ## 三、与上周（W18）对比
 
-> 注：W17 / W18 周报已在本次同期补齐（doc/report.2026-W17.md / doc/report.2026-W18.md），对比锚点切回直接上周 W18。
+> 注：W17 / W18 周报已在本次同期补齐（[report.2026-W17.md](./report.2026-W17.md) / [report.2026-W18.md](./report.2026-W18.md)），对比锚点切回直接上周 W18。
 
 | 指标       | W18      | W19      | 变化     |
 | -------- | -------- | -------- | ------ |

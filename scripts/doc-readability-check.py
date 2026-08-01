@@ -1,0 +1,1399 @@
+#!/usr/bin/env python3
+"""doc/ 说人话导读校验 + 棘轮。
+
+判据 SSOT：doc/rule.doc.readability.md
+每篇 doc/*.md 的第一屏必须有「导读三行」：
+
+    **一句话**：……
+    **谁该读**：……
+    **读完能做什么**：……
+
+同时校验「引用可点击」：正文里提到另一篇 doc 文档时必须写成相对路径链接，
+不能写成一段不能点的行内代码；相对链接的目标必须真实存在（死链零容忍）。
+
+本脚本只做机械判定（有没有、是不是人话形状），不判断内容好坏。
+存量欠账走棘轮：`scripts/fixtures/doc-readability-baseline.json` 记录当前欠账数，
+只许下降不许上升 —— 新文档必须合规，存量走到哪修到哪。
+
+用法：
+    python3 scripts/doc-readability-check.py                # 人读报告
+    python3 scripts/doc-readability-check.py --list-missing # 只列欠账文件
+    python3 scripts/doc-readability-check.py --ratchet      # CI 闸门
+    python3 scripts/doc-readability-check.py --fix-links    # 把裸引用改写成可点链接
+    python3 scripts/doc-readability-check.py --update-baseline
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DOC_DIR = os.path.join(REPO_ROOT, "doc")
+BASELINE_PATH = os.path.join(REPO_ROOT, "scripts", "fixtures", "doc-readability-baseline.json")
+
+# 导读三行必须出现在文件开头这么多行内（第一屏）
+HEAD_LINES = 25
+
+TYPES = ["spec", "design", "plan", "rule", "guide", "report", "debt"]
+
+FIELDS = ("一句话", "谁该读", "读完能做什么")
+# 周报是定期刊物，读者固定（老板 / 产品经理，在周报技能里已声明），
+# 因此只要求一句话，且沿用它既有的「本周一句话」写法，不强加另外两行样板。
+ONE_LINER_ALIASES = {"一句话", "本周一句话"}
+# 豁免只给定期周报 report.YYYY-WNN（读者固定、且是已冻结的历史记录），
+# 不给 report. 前缀下所有文件 —— 那批 CDS 审计/验收报告仍要三行。
+WEEKLY_REPORT = re.compile(r"^report\.\d{4}-W\d{2}$")   # 尾锚不能省：report.2026-W10-retro 不是周报
+
+
+def required_fields(name: str) -> tuple[str, ...]:
+    if WEEKLY_REPORT.match(name):
+        return ("一句话",)
+    return FIELDS
+
+# 一句话里出现这些形状就不算人话：代码引用、文件路径
+CODE_SPAN = re.compile(r"`[^`]+`")
+FILE_PATH = re.compile(r"[\w./-]+\.(?:cs|ts|tsx|js|mjs|py|sh|json|yml|yaml|md|css|rs)\b")
+# 驼峰 / 蛇形标识符不禁止 —— 术语是信息密度的延伸。但首次出现必须就地解释，
+# 即紧跟一个中文括号把它翻译成人话：`ModelResolver（决定这次调用走哪个模型的那一步）`。
+IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[A-Z][a-z0-9]+)+\b|\b[a-z]+_[a-z_]+\b")
+GLOSS_AFTER = re.compile(r"^\s*[（(]")
+# 业界通用专有名词，读者不需要解释；只有内部黑话才要就地翻译
+WELL_KNOWN = {"GitHub", "GitLab", "JavaScript", "TypeScript", "PostgreSQL", "MongoDB",
+              "MySQL", "JetBrains", "OpenAI", "WebSocket", "DevOps", "PowerShell",
+              "OAuth", "GraphQL", "JetPack", "iPhone", "macOS", "iOS"}
+
+# 空话套话：写了等于没写，占着一句话的位置却不给任何信息
+VACUOUS = ("相关内容", "有关内容", "进行说明", "做了介绍", "本文介绍了", "进行了阐述",
+           "相关规范", "等等", "若干", "诸多")
+
+# 一句话的长度区间（按字符数，中文一字算一个）。
+# 上限：超了就不是一句话，是一段话。下限：太短基本等于没说，密度不够。
+ONE_LINER_MAX = 100
+ONE_LINER_MIN = 20
+# 周报的「本周一句话」要向老板交代业务进展 + 关键数字，放宽到 140 字。
+# 只给周报文件名，不给 report. 前缀下的其它文档。
+WEEKLY_ONE_LINER_MAX = 140
+# 谁该读的长度下限：低于此长度基本等于没写（如「所有人」）
+AUDIENCE_MIN = 8
+
+# 行内代码里出现的 .md 文件名。只有当它指向 doc/ 下真实存在的文档时才算「本该可点的裸引用」——
+# 命名规则里那些「错误示范」文件名并不存在，不会被误伤。
+BARE_REF = re.compile(r"`([^`\n]*?([\w][\w.-]*\.md))`")
+# 连反引号都没加的裸名（详见 rule.doc.naming.md）同样点不开 —— 只查反引号里的，
+# 等于把最朴素的那种写法放过去。链接与行内代码在扫描前先剔掉，避免误伤。
+PROSE_REF = re.compile(
+    r"(?<![\w`\-\[(])"                                        # 前面不是词/反引号/括号
+    r"(?:doc/)?"                                               # 带不带 doc/ 前缀都算
+    r"((?:spec|design|plan|rule|guide|report|debt)\.[\w.-]*\.md)"
+    r"(?![\w`)\]])")
+# 行内链接：目标后面可以跟一个 "标题"（单双引号或圆括号三种写法都合法）。
+# 只认最朴素那一种，等于给「带标题的死链」开了一道后门。
+MD_LINK = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\"|\s+'[^']*'|\s+\([^)]*\))?\s*\)")
+# 引用式链接的目标写在定义行上（[ref]: ./x.md），用法处 [文字][ref] 不带路径，
+# 所以校验定义行就等于校验了这一类链接。
+MD_REF_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*<?([^\s>]+)>?", re.M)
+# 形如 wikilink:xxx / prd-nav:4.2 / https:// 的不是文件路径，不做存在性校验
+NON_FILE_TARGET = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+# 缩进最多三格才是围栏，第四格起 Markdown 当缩进代码块看（CommonMark）。
+# 这一格之差不是洁癖：把深缩进的 ``` 当围栏，就能用一段缩进代码块把后面的
+# 正文整段藏进「块内」，死链闸门扫不到那些行还照样报绿。
+FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*(.*)$")
+# 引用块里的围栏（> ```ts）在 Markdown 里照样是围栏。不剥这层前缀的话，
+# 把实现代码往引用块里一放就绕过了实现代码棘轮，链接扫描还会伸进示例里。
+# 容器前缀：引用块 `>` 与列表项标记 `- ` / `1. `。列表项第一块就是围栏时
+# （`- ```ts`），不剥这层前缀同样识别不出来。两种前缀可以叠加（`> - ```ts`）。
+CONTAINER_PREFIX = re.compile(r"^(?: {0,3}(?:>|[-*+] |\d{1,9}[.)] ))+")
+# 四个空格或一个制表符起都是缩进代码块（CommonMark 把 tab 展开成四格）
+INDENTED_CODE = re.compile(r"^(?: {4,}|\t)\S")
+# 列表项标记：列表里的缩进是续行不是代码块，两者必须分开判
+LIST_MARKER = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])\s")
+
+
+def strip_container(line: str) -> str:
+    """剥掉引用块与列表项前缀，留下容器内的那一行（缩进语义交给 FENCE_OPEN 判）。"""
+    return CONTAINER_PREFIX.sub("", line, count=1)
+
+
+def fence_candidate(line: str, in_list: bool = False) -> str:
+    """交给围栏正则去判的那一段。
+
+    列表项的续行里，围栏是相对「列表内容列」缩进的，按文档级的三格上限一刀切
+    会把「- 条目 / 空行 / 四格缩进的 ```ts」整块当成缩进代码块——里面的实现
+    代码不计数、链接又被当正文扫。所以在列表上下文里把缩进整体去掉再判。
+    """
+    stripped = strip_container(line)
+    return stripped.lstrip() if in_list else stripped
+
+
+def fence_delim(line: str, in_list: bool = False) -> tuple[str, int] | None:
+    """返回这行围栏的 (定界符字符, 长度)，不是围栏则 None。
+
+    三件事都不能省：Markdown 两种围栏都合法（只认反引号的话，`~~~ts` 里的
+    实现代码在判据眼里压根不存在）；长度也必须留着 —— 四个反引号包着的
+    示例里往往还有三个反引号的内层围栏，按三个就闭合会把外层提前关掉；
+    行首缩进同样要留着（所以这里不 strip），四格以上不算围栏。
+    """
+    m = FENCE_OPEN.match(fence_candidate(line, in_list))
+    return (m.group(1)[0], len(m.group(1))) if m else None
+
+
+def fence_closes(opener: tuple[str, int], candidate: tuple[str, int], info: str = "") -> bool:
+    """同种定界符、不短于开启行、且不带信息串，才算闭合（CommonMark 规则）。
+
+    ```not-a-close 这种带后缀的行在 Markdown 里仍在块内，判据若把它当闭合，
+    后面的实现代码就漏出块外不再计数、链接扫描也会伸进示例里。
+    """
+    return candidate[0] == opener[0] and candidate[1] >= opener[1] and not info.strip()
+
+
+def fence_info(line: str, in_list: bool = False) -> str:
+    """围栏行定界符后面的原始后缀。
+
+    闭合判定必须看原始值：```{} 和 ```"" 归一化后都是空串，但 Markdown 里
+    它们仍是块内的一行（闭合围栏只允许跟空白）。
+    """
+    m = FENCE_OPEN.match(fence_candidate(line, in_list))
+    return m.group(2) if m else ""
+
+
+def fence_lang(line: str, in_list: bool = False) -> str:
+    """取围栏的语言标记：只认第一个词，后面的 title="x" / {linenos} 之类属性丢掉。"""
+    m = FENCE_OPEN.match(fence_candidate(line, in_list))
+    info = (m.group(2) if m else "").strip()
+    token = re.split(r"[\s,{]", info, 1)[0]
+    return token.strip("\"'`{}").lower()
+
+
+def doc_type(name: str) -> str:
+    return name.split(".", 1)[0]
+
+
+# 标题与导读之间允许的「元信息」：版本行、appKey、关联实现、表格、分隔线、注释、徽章。
+# 除此之外的任何一行正文（散文、列表）都意味着导读迟到了。
+GUIDE_FIELD = re.compile(r"\*\*(?:一句话|本周一句话|谁该读|读完能做什么|什么时候撞上)\*\*\s*[：:]")
+# 「加粗标签 + 冒号」这个形状不足以判定是元信息：`**背景**：……` 是正文，
+# 认了它，导读排在一段背景后面也照样过。所以按标签白名单认，不按形状认。
+META_LABEL = re.compile(
+    r"^(?:版本|日期|状态|创建|更新|更新日期|作者|负责人|主文档|路由|分支|技能|appKey|定位|子类型|"
+    r"难度|读者|目标读者|预计阅读|阅读时间|前置要求|统计基线|整改计划|生产环境|当前发布提交|当前教程基准版本|"
+    r"关联[\w一-龥]*|适用[\w一-龥]*|[\w一-龥]*范围)$")
+HEADER_META = re.compile(r"^(\||[-*_]{3,}|!\[|<!--|<img)")
+
+
+def is_header_meta(core: str) -> bool:
+    """这一行算不算「标题与导读之间允许的元信息」。"""
+    if HEADER_META.match(core):
+        return True
+    m = re.match(r"\*\*([^*]+)\*\*\s*[：:]", core)
+    return bool(m and META_LABEL.match(m.group(1).strip()))
+
+
+def header_lines(text: str):
+    """产出第一屏里「算数」的行：H1 之后、任何正文之前、且不在代码块里。
+
+    doc/ 的三行导读和规则的两行导读共用这一个实现 —— 判据在两处各写一遍，
+    改一处忘一处就是这轮 review 反复抓到的形状（判据分裂后各自漂移）。
+    """
+    in_fence = False
+    fence_kind: tuple[str, int] | None = None
+    seen_h1 = False
+    for raw in text.splitlines()[:HEAD_LINES]:
+        line = raw.strip()
+        # 围栏判定一律喂原始行：喂 strip 过的行等于把缩进抹平，四格缩进的
+        # ``` 又会被当成围栏，上面那条限制就成了摆设。
+        delim = fence_delim(raw)
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
+            in_fence = not in_fence
+            fence_kind = delim if in_fence else None
+            continue
+        if in_fence:
+            continue
+        # 四格缩进是缩进代码块，渲染出来是代码不是标题也不是导读。不跳过的话，
+        # 把假 H1 与三行导读整段缩进四格就能骗过闸门，而读者打开看到的是一段代码。
+        if INDENTED_CODE.match(raw):
+            continue
+        if line.startswith("# "):
+            seen_h1 = True
+            continue
+        if not seen_h1:
+            continue
+        core = line.lstrip(">").strip() if line.startswith(">") else line
+        if not core:
+            continue
+        # 正文一开张导读就迟到了：小节标题算正文，散文和列表也算；
+        # 标题与导读之间只允许版本行那类元信息。
+        if not GUIDE_FIELD.match(core) and (re.match(r"^#{2,6} ", line)
+                                            or not is_header_meta(core)):
+            break
+        yield core
+
+
+def parse_header(text: str, weekly: bool = False) -> dict[str, str]:
+    """从第一屏抓导读三行：H1 之后、任何正文之前。允许行首有 '> ' 引用符。
+
+    weekly=True 时才认「本周一句话」这个别名 —— 它是周报的既有写法，
+    别的文档拿它顶替「一句话」等于绕过标准字段。
+    """
+    found: dict[str, str] = {}
+    labels = list(ONE_LINER_ALIASES if weekly else {"一句话"}) + [f for f in FIELDS if f != "一句话"]
+    for line in header_lines(text):
+        for label in labels:
+            m = re.match(rf"\*\*{label}\*\*\s*[：:]\s*(.+)$", line)
+            if m:
+                key = "一句话" if label in ONE_LINER_ALIASES else label
+                found.setdefault(key, m.group(1).strip())
+    return found
+
+
+def check_file(path: str) -> list[str]:
+    """返回该文件的问题列表；空列表 = 合规。"""
+    name = os.path.basename(path)[: -len(".md")]
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+
+    weekly = bool(WEEKLY_REPORT.match(name))
+    header = parse_header(text, weekly=weekly)
+    problems: list[str] = []
+
+    for field in required_fields(name):
+        if field not in header:
+            problems.append(f"缺「{field}」")
+
+    one_liner = header.get("一句话", "")
+    if one_liner:
+        limit = WEEKLY_ONE_LINER_MAX if weekly else ONE_LINER_MAX
+        if len(one_liner) > limit:
+            problems.append(f"「一句话」{len(one_liner)} 字，超过 {limit} 字上限")
+        elif len(one_liner) < ONE_LINER_MIN:
+            problems.append(f"「一句话」只有 {len(one_liner)} 字，密度不够，说不出内核")
+        if CODE_SPAN.search(one_liner):
+            problems.append("「一句话」里有代码引用（反引号）")
+        elif FILE_PATH.search(one_liner):
+            problems.append("「一句话」里有文件路径")
+        else:
+            for m in IDENTIFIER.finditer(one_liner):
+                if m.group(0) in WELL_KNOWN:
+                    continue
+                if not GLOSS_AFTER.match(one_liner[m.end():]):
+                    problems.append(f"术语「{m.group(0)}」未就地解释，后面要紧跟一个中文括号说人话")
+                    break
+        hit = next((w for w in VACUOUS if w in one_liner), None)
+        if hit:
+            problems.append(f"「一句话」里有空话「{hit}」，换成这篇独有的信息")
+
+    audience = header.get("谁该读", "")
+    if audience and len(audience) < AUDIENCE_MIN:
+        problems.append(f"「谁该读」只有 {len(audience)} 字，等于没写")
+
+    if doc_type(name) not in TYPES:
+        problems.append(f"前缀 {doc_type(name)} 不在七类里")
+
+    return problems
+
+
+# 实现语言的代码块：人类不需要在文档里读它，AI 直接读源码更准。
+# 允许的代码块语言：契约样例（json/yaml/http）、图（mermaid）、示意（text/无标注）、
+# 单条命令（bash/sh）、模板（markdown）。
+IMPL_LANGS = {"cs", "csharp", "c#", "ts", "tsx", "typescript", "js", "jsx", "javascript",
+              "rust", "rs", "python", "py", "java", "go", "vue", "css", "scss", "sql"}
+
+# shell 块的界线：命令（含照着敲的几步命令序列）留在文档里是指南的本职；
+# 成了脚本就该搬进 scripts/ 再在文中给一行调用 —— 否则「禁止实现代码」这条
+# 只要换成 bash 标注就能整段绕过。判据两条，命中任一即按实现计数：
+SHELL_LANGS = {"bash", "sh", "shell", "zsh", "console", "shell-session"}
+SHELL_MAX_LINES = 12                       # 有效行超过这么多就不是「几步命令」了
+SHELL_CONTROL = re.compile(r"^\s*(?:for\s|while\s|until\s|if\s|case\s|function\s"
+                           r"|\w+\s*\(\)\s*\{)|<<-?\s*'?\w+")   # 控制流 / 函数 / heredoc
+
+# 正文里散落的源码路径 / 行号引用。集中列在「实现来源」类小节里是允许的。
+# 源码面不止六个产品目录：脚本、技能、规则、工作流同样是实现，散落在散文里
+# 一样让读者去读实现。只认产品目录 = 判据比它该管的范围窄。
+SOURCE_PATH = re.compile(
+    r"(?<![\w./-])(?:prd-api|prd-admin|prd-desktop|prd-video|cds|llmgw"
+    r"|scripts|\.claude/skills|\.claude/rules|\.agents/skills|\.Codex/rules|\.github/workflows)/[\w./-]+"
+    r"\.(?:cs|csproj|ts|tsx|js|jsx|mjs|py|rs|css|scss|less|sh|yml|yaml|json|html|vue|sql|razor|cshtml)\b")
+# 仓库根上的入口文件没有目录前缀（exec_dep.sh / quick.ps1 / cds-compose.yml），
+# 上面那条要求「目录/」所以一个都认不出来。这里按形状认而不是列一张名单 ——
+# 列名单等于新加一个根脚本判据就瞎（判据比它该管的范围窄的老形状）。
+# 技能与规则的「实现」本身就是 markdown：`.claude/skills/x/SKILL.md` 指的是那个
+# 技能的实现，不是一篇讲它的文档。所以这几个根要额外认 .md —— 产品目录下的 .md
+# 多半是说明文档，不在此列。
+SKILL_RULE_SOURCE = re.compile(
+    r"(?<![\w./-])(?:\.claude/skills|\.claude/rules|\.agents/skills|\.Codex/rules)"
+    r"/[\w./-]+\.md\b")
+ROOT_ENTRYPOINT = re.compile(
+    r"(?<![\w./-])(?:[\w][\w.-]*\.(?:sh|ps1|sln|csproj)|[\w.-]*compose[\w.-]*\.ya?ml)(?![\w/])")
+SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")
+# 这些小节就是专门用来指路的，里面列路径不算欠账
+SOURCE_SECTION = re.compile(
+    r"实现来源|关联实现|关联文件|相关文件|关联代码|事实源|事实入口|代码位置|相关实现|文件索引|实现索引|源码索引")
+# 表头写明「这一列是指路的」，整列算成块（读者可整列跳过），不算散落。
+# 判据：表头短（≤10 字）且点名了指路含义；「说明」「问题」「做法要点」这类叙述表头不在其中。
+POINTER_TOKEN = re.compile(r"文件|实现|代码|位置|路径|来源|守卫|模块|证据|砖块|参照|单测|测试|SSOT|事实源|事实入口")
+TABLE_SEP = re.compile(r"^\|[\s\-:|]+\|$")
+# 「| 关联 | 一串文件 |」这种元信息行：首列就是指路标签，整行同样算成块。
+POINTER_ROW_LABEL = re.compile(
+    r"^(?:关联|关联文件|关联改动|关联代码|实现|实现文件|相关文件|文件|代码|代码位置|位置|路径|来源|守卫|守卫测试|模块|模块范围|证据|落地组件|单测|测试)$")
+
+
+def _is_pointer_name(name: str) -> bool:
+    name = name.strip().strip("*` ")
+    return len(name) <= 10 and bool(POINTER_TOKEN.search(name))
+
+
+def _pointer_columns(header: str) -> set[int]:
+    return {i for i, c in enumerate(header.strip().strip("|").split("|"))
+            if _is_pointer_name(c)}
+
+
+def count_source_refs(text: str) -> int:
+    """一行（或一个单元格）里散落的源码引用数：带目录的路径 + 行号引用 + 根上的入口文件。"""
+    spans = [m.span() for m in SOURCE_PATH.finditer(text)]
+    spans += [m.span() for m in SKILL_RULE_SOURCE.finditer(text)]
+
+    def overlaps(m) -> bool:
+        return any(m.start() < e and s < m.end() for s, e in spans)
+
+    # `a.ts:10` 会同时被完整路径和行号引用各数一次 —— 同一处引用数成两处，
+    # 既把台账数字吹高，又让「加一条路径 + 从旧的那条去掉 :10」在棘轮里持平。
+    linerefs = [m for m in SOURCE_LINEREF.finditer(text) if not overlaps(m)]
+    roots = [m for m in ROOT_ENTRYPOINT.finditer(text) if not overlaps(m)]
+    return len(spans) + len(linerefs) + len(roots)
+
+
+def shell_script_lines(lang: str, block: list[str]) -> int:
+    """这一块 shell 算不算「脚本」；算就返回它的有效行数，不算返回 0。"""
+    if lang not in SHELL_LANGS:
+        return 0
+    body = [ln for ln in block if ln.strip()]
+    if len(body) > SHELL_MAX_LINES or any(SHELL_CONTROL.match(ln) for ln in body):
+        return len(body)
+    return 0
+
+
+def scan_body(text: str) -> tuple[int, int]:
+    """返回 (实现语言代码行数, 正文里散落的源码路径引用数)。"""
+    impl_lines = 0
+    src_refs = 0
+    in_fence = False
+    fence_kind: tuple[str, int] | None = None
+    lang = ""
+    in_source_section = False
+    lines = text.splitlines()
+    pointer_cols: set[int] = set()
+    shell_buf: list[str] = []
+    in_list = False
+    for idx, raw in enumerate(lines):
+        st = raw.strip()
+        if not in_fence and raw.strip():
+            if LIST_MARKER.match(raw):
+                in_list = True
+            elif not raw.startswith((" ", "\t")) and not INDENTED_CODE.match(raw):
+                in_list = False
+        delim = fence_delim(raw, in_list)  # 同上：缩进要留给围栏判定
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw, in_list))):
+            if not in_fence:
+                fence_kind = delim
+                in_fence, lang = True, fence_lang(raw, in_list)
+                shell_buf = []
+            else:
+                impl_lines += shell_script_lines(lang, shell_buf)
+                in_fence, lang, shell_buf = False, "", []
+            continue
+        if in_fence:
+            if lang in IMPL_LANGS:
+                impl_lines += 1
+            elif lang in SHELL_LANGS:
+                shell_buf.append(raw)
+            continue
+        if st.startswith("#"):
+            in_source_section = bool(SOURCE_SECTION.search(st))
+            pointer_cols = set()
+            continue
+        if in_source_section:
+            continue
+        if st.startswith("|"):
+            # 表头行：记下哪些列是指路列；分隔行跳过
+            if idx + 1 < len(lines) and TABLE_SEP.match(lines[idx + 1].strip()):
+                pointer_cols = _pointer_columns(st)
+                continue
+            if TABLE_SEP.match(st):
+                continue
+            cells = st.strip("|").split("|")
+            if cells and POINTER_ROW_LABEL.match(cells[0].strip().strip("*` ")):
+                continue
+            for i, cell in enumerate(cells):
+                if i in pointer_cols:
+                    continue
+                src_refs += count_source_refs(cell)
+            continue
+        pointer_cols = set()
+        src_refs += count_source_refs(raw)
+    # 没闭合的围栏在 Markdown 里一直开到文末，缓冲里的 shell 块也得结算 ——
+    # 不结算的话，不写闭合行就等于让整段脚本从棘轮里消失。
+    impl_lines += shell_script_lines(lang, shell_buf)
+    return impl_lines, src_refs
+
+
+def per_file_debt() -> dict[str, dict[str, int]]:
+    """按文件记欠账：{文件名: {missing/bare/impl/src: 数值}}。
+
+    棘轮只比总数是拦不住「拆东墙补西墙」的：修好一篇旧的、同时新增一篇不合规的，
+    总数没变、CI 照样绿。所以基线必须记到文件级——**新出现的欠账文件一律判红**，
+    存量文件也只许比基线少。
+    """
+    known = doc_filenames()
+    out: dict[str, dict[str, int]] = {}
+    for name in sorted(os.listdir(DOC_DIR)):
+        if not name.endswith(".md") or doc_type(name) not in TYPES:
+            continue
+        path = os.path.join(DOC_DIR, name)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        impl, src = scan_body(text)
+        entry = {
+            "missing": 1 if check_file(path) else 0,
+            "bare": len(find_bare_refs(text, known)),
+            "impl": impl,
+            "src": src,
+        }
+        if any(entry.values()):
+            out[name] = entry
+    return out
+
+
+def scan_bodies() -> tuple[dict[str, int], dict[str, int], list[str]]:
+    """按类型统计正文里的实现细节欠账。"""
+    impl = {t: 0 for t in TYPES}
+    srcs = {t: 0 for t in TYPES}
+    detail: list[str] = []
+    for name in sorted(os.listdir(DOC_DIR)):
+        if not name.endswith(".md"):
+            continue
+        t = doc_type(name)
+        if t not in TYPES:
+            continue
+        with open(os.path.join(DOC_DIR, name), encoding="utf-8") as fh:
+            text = fh.read()
+        i, s = scan_body(text)
+        impl[t] += i
+        srcs[t] += s
+        if i or s:
+            bits = []
+            if i:
+                bits.append(f"实现代码 {i} 行")
+            if s:
+                bits.append(f"散落源码路径 {s} 处")
+            detail.append(f"doc/{name} — {'，'.join(bits)}")
+    return impl, srcs, detail
+
+
+def doc_filenames() -> set[str]:
+    return {n for n in os.listdir(DOC_DIR) if n.endswith(".md")}
+
+
+def body_lines(text: str):
+    """逐行产出正文（跳过围栏与缩进代码块）——代码块里的路径是示例，不该变成链接。
+
+    缩进代码块要跟「列表项的续行」分开：列表里缩进四格的仍是正文，一刀切按代码
+    跳过的话，嵌套列表里的真死链就被藏起来了 —— 那是这一族判据一直在堵的洞。
+    """
+    in_fence = False
+    fence_kind: tuple[str, int] | None = None
+    in_list = False
+    for idx, raw in enumerate(text.splitlines()):
+        delim = fence_delim(raw, in_list)
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw, in_list))):
+            in_fence = not in_fence
+            fence_kind = delim if in_fence else None
+            continue
+        if in_fence:
+            continue
+        if raw.strip():
+            if INDENTED_CODE.match(raw):
+                if not in_list:
+                    continue          # 顶层的缩进代码块：渲染出来是代码，不是正文
+            elif LIST_MARKER.match(raw):
+                in_list = True
+            elif not raw.startswith((" ", "\t")):
+                in_list = False
+        yield idx + 1, raw
+
+
+def link_spans(line: str) -> list[tuple[int, int]]:
+    """已经是 markdown 链接的区间。链接文字里的行内代码已经可点，不算裸引用，
+    也绝不能再包一层——那会生成 [[x](./x)](./x) 这种嵌套坏链。"""
+    return [m.span() for m in MD_LINK.finditer(line)]
+
+
+def _inside(span: tuple[int, int], spans: list[tuple[int, int]]) -> bool:
+    return any(s <= span[0] and span[1] <= e for s, e in spans)
+
+
+def find_bare_refs(text: str, known: set[str]) -> list[tuple[int, str]]:
+    """行内代码写的 doc 引用（目标真实存在 = 本该是可点链接）。"""
+    hits: list[tuple[int, str]] = []
+    for lineno, line in body_lines(text):
+        spans = link_spans(line)
+        for m in BARE_REF.finditer(line):
+            if m.group(2) in known and not _inside(m.span(), spans):
+                hits.append((lineno, m.group(1)))
+        # 连反引号都没有的裸名同样点不开。先把链接与行内代码抠掉再找，
+        # 免得把「已经是链接」和「反引号里的」重复计一遍。
+        masked = re.sub(r"`[^`]*`", lambda mm: " " * len(mm.group(0)), line)
+        for a, b in spans:
+            masked = masked[:a] + " " * (b - a) + masked[b:]
+        for m in PROSE_REF.finditer(masked):
+            if m.group(1) in known:
+                hits.append((lineno, m.group(1)))
+    return hits
+
+
+def find_dead_links(path: str, text: str) -> list[tuple[int, str]]:
+    """相对路径 markdown 链接指向不存在的文件 = 死链，零容忍。"""
+    dead: list[tuple[int, str]] = []
+    base = os.path.dirname(path)
+    for lineno, raw_line in body_lines(text):
+        # 行内代码里的链接是给人看的反面示例，Markdown 原样显示、点不开也不该判死链。
+        # 裸引用扫描早就这么做了，死链闸漏了这一步，等于禁止文档举反例。
+        line = CODE_SPAN.sub(lambda m: " " * len(m.group(0)), raw_line)
+        targets = [m.group(1) for m in MD_LINK.finditer(line)]
+        # 引用式链接的定义行（[ref]: ./x.md）也得验：用法处不带路径，漏了它
+        # 这一类死链永远没人发现
+        targets += [m.group(1) for m in MD_REF_DEF.finditer(line)]
+        for raw_target in targets:
+            target = raw_target.split("#")[0]
+            if not target or NON_FILE_TARGET.match(target):
+                continue
+            if not os.path.exists(os.path.normpath(os.path.join(base, target))):
+                dead.append((lineno, raw_target))
+    return dead
+
+
+def fix_links(text: str, known: set[str]) -> tuple[str, int]:
+    """把 `xxx.md` 形式的裸引用改写成 [xxx.md](./xxx.md)，只动正文、只动真实存在的目标。"""
+    out: list[str] = []
+    changed = 0
+    in_fence = False
+    fence_kind: tuple[str, int] | None = None
+    in_list = False
+    for raw in text.splitlines(keepends=True):
+        delim = fence_delim(raw, in_list)
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw, in_list))):
+            in_fence = not in_fence
+            fence_kind = delim if in_fence else None
+            out.append(raw)
+            continue
+        if in_fence:
+            out.append(raw)
+            continue
+        # 跳过范围必须与检测端（body_lines）一致：检测端当代码不报的行，
+        # 改写端却动手改，等于批量改写偷偷动了判据故意放过的示例。
+        if raw.strip():
+            if INDENTED_CODE.match(raw):
+                if not in_list:
+                    out.append(raw)
+                    continue
+            elif LIST_MARKER.match(raw):
+                in_list = True
+            elif not raw.startswith((" ", "\t")):
+                in_list = False
+
+        spans = link_spans(raw)
+
+        def repl(m: re.Match[str]) -> str:
+            nonlocal changed
+            if m.group(2) not in known or _inside(m.span(), spans):
+                return m.group(0)
+            changed += 1
+            return f"[{m.group(1)}](./{m.group(2)})"
+
+        fixed = BARE_REF.sub(repl, raw)
+
+        # 裸名（没加反引号的）也一并改写。用改写后的行重算 span，
+        # 免得把刚生成的链接又当成裸名改一遍。
+        # 行内代码块的范围也要避开：`doc/xxx.md §5` 这种 code span 里塞链接
+        # 会渲染成一段字面量，比不改还糟。
+        code_spans = [mm.span() for mm in re.finditer(r"`[^`]*`", fixed)]
+
+        def repl_prose(m: re.Match[str]) -> str:
+            nonlocal changed
+            if (m.group(1) not in known
+                    or _inside(m.span(), link_spans(fixed))
+                    or _inside(m.span(), code_spans)):
+                return m.group(0)
+            changed += 1
+            return f"[{m.group(1)}](./{m.group(1)})"
+
+        out.append(PROSE_REF.sub(repl_prose, fixed))
+    return "".join(out), changed
+
+
+def scan_links() -> tuple[dict[str, int], list[str], list[str]]:
+    """返回 (每类裸引用数, 裸引用明细, 死链明细)。"""
+    known = doc_filenames()
+    per_type = {t: 0 for t in TYPES}
+    bare_detail: list[str] = []
+    dead_detail: list[str] = []
+    for name in sorted(known):
+        t = doc_type(name)
+        if t not in TYPES:
+            continue
+        path = os.path.join(DOC_DIR, name)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for lineno, ref in find_bare_refs(text, known):
+            per_type[t] += 1
+            bare_detail.append(f"doc/{name}:{lineno} — 裸引用 `{ref}`，应写成可点链接")
+        for lineno, target in find_dead_links(path, text):
+            dead_detail.append(f"doc/{name}:{lineno} — 死链 {target}")
+    return per_type, bare_detail, dead_detail
+
+
+# 规则不止一处：Claude 读 .claude/rules，Codex 读 .Codex/rules。少扫一处，
+# 那一处就能绕开导读要求（形状 1：判据比它该管的范围窄）。
+RULE_DIRS = [os.path.join(".claude", "rules"), os.path.join(".Codex", "rules")]
+RULES_DIR = os.path.join(REPO_ROOT, ".claude", "rules")
+# 技能根同样不止一处：Claude 读 .claude/skills，Codex 读 .agents/skills
+# （skill-install-contract 规定安装时所有存在的宿主目录都要装一份）。
+SKILL_DIRS = [os.path.join(".claude", "skills"), os.path.join(".agents", "skills")]
+SKILLS_DIR = os.path.join(REPO_ROOT, ".claude", "skills")
+
+# 规则文档的导读只要两行：这条规则要求什么、什么改动会撞上它。
+# 规则的主要读者是按 glob 自动加载它的 AI，人是次要读者，所以比 doc/ 少一行、不强求「读完能做什么」。
+RULE_FIELDS = ("一句话", "什么时候撞上")
+RULE_ONE_LINER_MIN = 20
+RULE_WHEN_MIN = 6
+
+
+def check_rule(path: str) -> list[str]:
+    with open(path, encoding="utf-8") as fh:
+        return check_rule_text(fh.read())
+
+
+def check_rule_text(text: str) -> list[str]:
+    """规则文档的轻量导读校验：H1 之后、正文之前必须有一句话 + 什么时候撞上。
+
+    扫描口径与 doc/ 的导读共用 header_lines —— 代码块里的示例不算数、H1 之前
+    不算数、排在正文（小节标题或散文）后面同样不算数。
+    """
+    found: dict[str, str] = {}
+    for line in header_lines(text):
+        for label in RULE_FIELDS:
+            m = re.match(rf"\*\*{label}\*\*\s*[：:]\s*(.+)$", line)
+            if m:
+                found.setdefault(label, m.group(1).strip())
+    problems = [f"缺「{f}」" for f in RULE_FIELDS if f not in found]
+    one = found.get("一句话", "")
+    if one and len(one) < RULE_ONE_LINER_MIN:
+        problems.append(f"「一句话」只有 {len(one)} 字，说不出这条规则要求什么")
+    if one and CODE_SPAN.search(one) and FILE_PATH.search(one):
+        problems.append("「一句话」被文件路径占满，先说人话再说路径")
+    when = found.get("什么时候撞上", "")
+    if when and len(when) < RULE_WHEN_MIN:
+        problems.append(f"「什么时候撞上」只有 {len(when)} 字，等于没写")
+    return problems
+
+
+# 双引号标量里合法的转义字符（YAML 1.2）。判据把任意 \x 都当成转义放行的话，
+# `\q` 这种在 YAML 里是语法错误、宿主加载不到，而判据读到的是一段挺正常的描述。
+YAML_ESCAPES = set('0abtnvfre"/\\N_LP \t\n')
+YAML_HEX_ESCAPES = {"x": 2, "u": 4, "U": 8}
+
+
+def quoted_scalar_problem(raw: str) -> str | None:
+    """引号标量里会让 YAML 解析器报错的形状：非法转义、引号没闭合。"""
+    value = raw.strip()
+    if value[:1] not in ('"', "'"):
+        return None
+    quote = value[0]
+    i, closed = 1, False
+    while i < len(value):
+        ch = value[i]
+        if quote == '"' and ch == "\\":
+            nxt = value[i + 1:i + 2]
+            if not nxt:
+                return "值里有落单的反斜杠（双引号标量的转义没写完）"
+            if nxt in YAML_HEX_ESCAPES:
+                width = YAML_HEX_ESCAPES[nxt]
+                digits = value[i + 2:i + 2 + width]
+                if len(digits) < width or not all(c in "0123456789abcdefABCDEF" for c in digits):
+                    return f"值里的 \\{nxt} 后面不是 {width} 位十六进制，YAML 会报错"
+                i += 2 + width
+                continue
+            if nxt not in YAML_ESCAPES:
+                return f"值里有 YAML 不认的转义「\\{nxt}」，反斜杠要写成 \\\\ 或换单引号"
+            i += 2
+            continue
+        if ch == quote:
+            if quote == "'" and value[i + 1:i + 2] == "'":
+                i += 2
+                continue
+            closed = True
+            i += 1
+            break
+        i += 1
+    if not closed:
+        return "引号没有闭合"
+    # 收尾引号之后只允许空白或注释：`"一句话" 还有一截` 在 YAML 里是语法错误，
+    # 而判据只看引号里那段的话，内容检查全过、照样报绿。
+    rest = value[i:].strip()
+    if rest and not rest.startswith("#"):
+        return f"收尾引号后面还跟着「{rest[:20]}」，YAML 只允许空白或注释"
+    return None
+
+
+def frontmatter_syntax_problem(raw: str) -> str | None:
+    """任何一个键的值里，会让 YAML 解析器报错的形状（不限 name / description）。
+
+    宿主解析的是整份 frontmatter：`allowed-tools: [unclosed` 一坏，整个技能
+    都加载不了，而只挑两个字段查的判据照样报绿。
+    """
+    value = raw.strip()
+    if not value or value[:1] in ("|", ">", "#"):
+        return None                       # 折叠块与整行注释各有各的规则
+    if value[:1] in ("[", "{"):
+        # 只数深度不行：[Read} 的深度也回到零，而 YAML 认的是「同类闭合」
+        pairs = {"[": "]", "{": "}"}
+        stack: list[str] = []
+        for ch in value:
+            if ch in pairs:
+                stack.append(ch)
+            elif ch in "]}":
+                if not stack or pairs[stack.pop()] != ch:
+                    return f"流式集合的括号没有配对（出现了不匹配的「{ch}」）"
+        if stack:
+            return f"流式集合没有闭合（缺 {pairs[stack[-1]]}）"
+        return None
+    if value[:1] in ("\"", "'"):
+        return quoted_scalar_problem(value)
+    if ": " in value or value.endswith(":"):
+        return "值里有没加引号的「: 」，YAML 会当成嵌套键直接报错（整句用引号包起来）"
+    if value[0] in "@`":
+        return f"值以 YAML 保留字符「{value[0]}」开头，必须加引号"
+    if value[0] in "&*!" and len(value) > 1:
+        return f"值以 YAML 指示符「{value[0]}」开头（锚点/别名/标签），必须加引号"
+    return None
+
+
+def plain_scalar_problem(raw: str) -> str | None:
+    """未加引号的 YAML 平文标量里，会让解析器直接报错的那几种形状。
+
+    判据自己手写解析，就得自己认这些形状：`description: Use when: 导出报表`
+    在 YAML 里是语法错误（第二个冒号会被当成嵌套键），宿主根本加载不到这个技能，
+    而手写解析照样把整句读成一段挺像话的描述然后报绿。
+    """
+    value = raw.strip()
+    if not value or value[:1] in ("\"", "'", "|", ">", "#"):
+        return None                       # 引号标量 / 折叠块 / 整行注释各有各的规则
+    if ": " in value or value.endswith(":"):
+        return "值里有没加引号的「: 」，YAML 会当成嵌套键直接报错（整句用引号包起来）"
+    if value[0] in "@`":
+        return f"值以 YAML 保留字符「{value[0]}」开头，必须加引号"
+    if value[0] in "&*!" and len(value) > 1:
+        return f"值以 YAML 指示符「{value[0]}」开头（锚点/别名/标签），必须加引号"
+    if value[0] in "{[":
+        return f"值以「{value[0]}」开头会被解析成流式集合而不是字符串，必须加引号"
+    return None
+
+
+def yaml_scalar(raw: str) -> str:
+    """取 YAML 未加引号标量的真实值：剥掉行内注释与引号。
+
+    `description: # TODO 回头再写` 在 YAML 里值是 null，不是那句 TODO —— 判据
+    要是把注释当值，占位符就能冒充一句合格的描述。
+    """
+    value = raw.strip()
+    if value.startswith("#"):
+        return ""
+    if value[:1] in ("\"", "'"):   # 注意空串 in 任何字符串恒为真，必须比元组
+        quote = value[0]
+        out: list[str] = []
+        i = 1
+        while i < len(value):
+            ch = value[i]
+            # 双引号标量里 \" 是转义的引号，不是结束符；单引号标量里 '' 才是
+            if quote == '"' and ch == "\\" and i + 1 < len(value):
+                out.append(value[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                if quote == "'" and value[i + 1:i + 2] == "'":
+                    out.append("'")
+                    i += 2
+                    continue
+                break
+            out.append(ch)
+            i += 1
+        return "".join(out)
+    value = re.split(r"\s+#", value, 1)[0]
+    return value.strip()
+
+# description 必须回答「什么时候轮到这个技能」：触发词、使用场景从句、或斜杠命令。
+# 只讲能力不讲时机的描述，调度器无从判断该不该选它（doc/rule.skill.header.md）。
+TRIGGER_CUE = re.compile(
+    r"触发词|触发|使用时机|时使用|时触发|当用户|什么时候|适用于|用于|"
+    r"[Tt]rigger|[Uu]se (this|when|it when)|[Aa]ctivates|[Ww]hen the user|[Ww]hen you|"
+    r"[Ii]nvoke|Actions?:|/[a-z][a-z0-9-]{3,}")
+
+
+def check_skill(path: str) -> list[str]:
+    """技能文档：frontmatter 必须有 name 与 description，且 description 要说清什么时候用它。"""
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    # 定界行必须是独占一行的 ---：---not-frontmatter 这种前缀相同的行，
+    # 宿主根本不当 frontmatter 认，判据认了就等于给「装不上的技能」发通行证。
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ["缺 frontmatter（技能靠它被发现和触发）"]
+    close = next((i for i, ln in enumerate(lines[1:], start=1) if ln.strip() == "---"), None)
+    if close is None:
+        return ["frontmatter 没有闭合的 --- 定界行"]
+    fm = "\n".join(lines[1:close])
+    problems = []
+    # 同一个键写两遍时，判据看第一处、YAML 消费方通常取最后一处 —— 两边看的
+    # 不是同一个值，判据就等于没判。重复键一律判红，不去猜哪一处才算数。
+    for key in ("name", "description"):
+        if len(re.findall(rf"^{key}\s*:", fm, re.M)) > 1:
+            problems.append(f"frontmatter 里 {key} 写了多遍（判据看第一处、YAML 取最后一处，必须去重）")
+    # 语法先于内容：frontmatter 本身解析不了的话，下面所有字段判定都是在读一份
+    # 宿主根本读不到的东西。宿主解析的是整份 frontmatter，所以每个键都要查 ——
+    # 只挑 name / description 两个的话，别的键写坏了同样加载不了却报绿。
+    for line in fm.splitlines():
+        kv = re.match(r"^([\w.-]+)\s*:(.*)$", line)
+        if not kv:
+            # 顶格、非空、非注释、又不是 key: value 的行（如 `allowed-tools [Read]`）
+            # 在 YAML 里就是语法错误。静默跳过等于「看不懂的行一律放行」。
+            bare = line.rstrip()
+            if bare and not bare.startswith((" ", "\t", "#")):
+                problems.append(f"frontmatter 有一行不是「键: 值」：{bare[:30]}")
+            continue
+        bad = frontmatter_syntax_problem(kv.group(2))
+        if not bad and kv.group(1) in ("name", "description"):
+            # 这两个必须是字符串：写成流式集合语法虽然能解析，但值不是一句话
+            bad = plain_scalar_problem(kv.group(2))
+        if bad:
+            problems.append(f"frontmatter 的 {kv.group(1)} 不是合法 YAML：{bad}")
+    name_match = re.search(r"^name\s*:(.*)$", fm, re.M)
+    if not name_match:
+        problems.append("frontmatter 缺 name")
+    else:
+        skill_name = yaml_scalar(name_match.group(1))
+        skill_dir = os.path.basename(os.path.dirname(path))
+        if not skill_name:
+            # 有键无值等于没有 —— 技能靠 name 被找到，空值找不到任何东西
+            problems.append("frontmatter 的 name 是空值")
+        elif not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", skill_name):
+            problems.append(f"frontmatter 的 name「{skill_name}」不是 kebab-case")
+        elif skill_name != skill_dir:
+            # name 就是技能的身份，对不上目录时调用方按目录名找不到它
+            problems.append(f"frontmatter 的 name「{skill_name}」与目录名「{skill_dir}」不一致")
+    desc = _frontmatter_description(fm)
+    if desc is None:
+        problems.append("frontmatter 缺 description")
+    elif len(desc) < 30:
+        problems.append("description 太短，说不清这个技能什么时候该被触发")
+    elif not TRIGGER_CUE.search(desc):
+        # 长度够但只讲「我能干什么」，没讲「什么时候轮到我」——调度器据此选不中它
+        problems.append("description 只讲了能力，没讲触发时机（触发词 / 什么场景下用 / 斜杠命令）")
+    return problems
+
+
+def _frontmatter_description(fm: str) -> str | None:
+    """取 description 的完整值，支持 YAML 折叠块（`|` / `>`）——它们的正文在后续缩进行里。"""
+    lines = fm.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"^description\s*:\s*(.*)$", line)
+        if not m:
+            continue
+        head = m.group(1).strip()
+        if head and head[0] not in "|>":
+            # 纯注释的 head 在 YAML 里就是 null，返回 None 让上面判「缺 description」
+            return yaml_scalar(head) or None
+        body = []
+        for nxt in lines[i + 1:]:
+            if nxt.strip() and not nxt.startswith((" ", "\t")):
+                break
+            body.append(nxt.strip())
+        return " ".join(x for x in body if x)
+    return None
+
+
+def scan_rules() -> tuple[int, int, list[str]]:
+    total = missing = 0
+    detail: list[str] = []
+    for rel_dir in RULE_DIRS:
+        abs_dir = os.path.join(REPO_ROOT, rel_dir)
+        if not os.path.isdir(abs_dir):
+            continue
+        for name in sorted(os.listdir(abs_dir)):
+            if not name.endswith(".md"):
+                continue
+            total += 1
+            problems = check_rule(os.path.join(abs_dir, name))
+            if problems:
+                missing += 1
+                detail.append(f"{rel_dir.replace(os.sep, '/')}/{name} — {'；'.join(problems)}")
+    return total, missing, detail
+
+
+def scan_skills() -> tuple[int, int, list[str]]:
+    total = missing = 0
+    detail: list[str] = []
+    for rel_dir in SKILL_DIRS:
+        abs_dir = os.path.join(REPO_ROOT, rel_dir)
+        if not os.path.isdir(abs_dir):
+            continue
+        for name in sorted(os.listdir(abs_dir)):
+            path = os.path.join(abs_dir, name, "SKILL.md")
+            if not os.path.isfile(path):
+                continue
+            total += 1
+            problems = check_skill(path)
+            if problems:
+                missing += 1
+                detail.append(f"{rel_dir.replace(os.sep, '/')}/{name}/SKILL.md — {'；'.join(problems)}")
+    return total, missing, detail
+
+
+
+def nested_docs() -> list[str]:
+    """doc/ 子目录里的 .md —— 规则要求 doc/ 保持扁平。
+
+    非递归列目录时这类文件连「有没有导读」都不会被查：目录项是个文件夹，
+    直接跳过，两份目录的成员比对也看不见它。
+    """
+    found: list[str] = []
+    for root, _dirs, files in os.walk(DOC_DIR):
+        if os.path.abspath(root) == os.path.abspath(DOC_DIR):
+            continue
+        for name in sorted(files):
+            if name.endswith(".md"):
+                rel = os.path.relpath(os.path.join(root, name), REPO_ROOT)
+                found.append(rel.replace(os.sep, "/"))
+    return found
+
+
+def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
+    stats: dict[str, dict[str, int]] = {t: {"total": 0, "missing": 0} for t in TYPES}
+    bad_prefix: list[str] = []
+    missing: dict[str, list[str]] = {t: [] for t in TYPES}
+
+    for name in sorted(os.listdir(DOC_DIR)):
+        if not name.endswith(".md"):
+            continue
+        t = doc_type(name)
+        if t not in TYPES:
+            # 前缀非法的文档过去被整篇跳过 —— 连「有没有导读」都没人查，
+            # 只要进了两份目录就一路绿灯。单独收集，由棘轮直接判红。
+            bad_prefix.append(f"doc/{name} — 前缀 {t} 不在七类里")
+            continue
+        stats[t]["total"] += 1
+        problems = check_file(os.path.join(DOC_DIR, name))
+        if problems:
+            stats[t]["missing"] += 1
+            missing[t].append(f"doc/{name} — {'；'.join(problems)}")
+
+    return stats, missing, bad_prefix
+
+
+_DEBT_WORDS = {"missing": "缺导读", "bare": "裸引用", "impl": "实现代码", "src": "散落源码路径"}
+
+
+def _debt_words(entry: dict[str, int]) -> str:
+    bits = [f"{_DEBT_WORDS[k]} {v}" for k, v in entry.items() if v]
+    return "、".join(bits) if bits else "无"
+
+
+def _normalize_baseline(data: dict) -> dict:
+    return {"missing": data.get("missing", {}), "bare_refs": data.get("bare_refs", {}),
+            "impl_code": data.get("impl_code", {}), "source_refs": data.get("source_refs", {}),
+            "rules_missing": data.get("rules_missing", 0),
+            "skills_missing": data.get("skills_missing", 0),
+            "files": data.get("files", {})}
+
+
+def load_baseline() -> dict[str, dict[str, int]]:
+    if not os.path.exists(BASELINE_PATH):
+        return {}
+    with open(BASELINE_PATH, encoding="utf-8") as fh:
+        return _normalize_baseline(json.load(fh))
+
+
+def changed_docs_since(ref: str) -> list[str] | None:
+    """本次改动碰过的 doc/*.md（相对目标分支）。算不出来返回 None。
+
+    None 与空表要分开：空表 = 确实一篇没碰；None = 算不出来（浅克隆没有共同
+    祖先、ref 不存在）。把后者当成前者，就是又一次静默降级。
+    """
+    import subprocess
+    try:
+        out = subprocess.run(["git", "diff", "--name-only", f"{ref}...HEAD", "--", "doc/"],
+                             cwd=REPO_ROOT, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return [line for line in out.stdout.split() if line.endswith(".md")]
+
+
+def git_ref_exists(ref: str) -> bool:
+    import subprocess
+    try:
+        out = subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0
+
+
+def load_baseline_at(ref: str) -> dict | None:
+    """读某个 git ref 上的基线；取不到返回 None（本地没 fetch 时不阻塞）。"""
+    import subprocess
+    rel = os.path.relpath(BASELINE_PATH, REPO_ROOT).replace(os.sep, "/")
+    try:
+        out = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    try:
+        return _normalize_baseline(json.loads(out.stdout))
+    except json.JSONDecodeError:
+        return None
+
+
+def baseline_regressions(base: dict, submitted: dict) -> list[str]:
+    """提交的基线相对目标分支是不是被放宽了。
+
+    棘轮只跟工作树比本分支自己的基线，于是「先制造欠账、再跑 --update-baseline」
+    能让 CI 拿放宽后的基线跟自己比，判据形同虚设。所以先比基线本身。
+    """
+    bad: list[str] = []
+    for key in ("missing", "bare_refs", "impl_code", "source_refs"):
+        for doc_t, allowed in base.get(key, {}).items():
+            now = submitted.get(key, {}).get(doc_t, 0)
+            if now > allowed:
+                bad.append(f"{key}.{doc_t}: 目标分支 {allowed} → 本分支 {now}")
+    for key in ("rules_missing", "skills_missing"):
+        if submitted.get(key, 0) > base.get(key, 0):
+            bad.append(f"{key}: 目标分支 {base.get(key, 0)} → 本分支 {submitted.get(key, 0)}")
+    base_files, now_files = base.get("files", {}), submitted.get("files", {})
+    added = [f for f in now_files if f not in base_files]
+    if added:
+        bad.append(f"新增欠账文件被写进基线：{added[:5]}")
+    # 只挡新文件名挡不住「债务在文件之间挪位」：A 篇加一处、B 篇减一处，
+    # 总数持平、文件名也没新增，逐篇明细却被放宽了。
+    for fname, now_val in now_files.items():
+        base_val = base_files.get(fname)
+        if base_val is None:
+            continue
+        if isinstance(now_val, dict) and isinstance(base_val, dict):
+            for k, v in now_val.items():
+                if v > base_val.get(k, 0):
+                    bad.append(f"{fname}.{k}: 目标分支 {base_val.get(k, 0)} → 本分支 {v}")
+        elif isinstance(now_val, (int, float)) and isinstance(base_val, (int, float)):
+            if now_val > base_val:
+                bad.append(f"{fname}: 目标分支 {base_val} → 本分支 {now_val}")
+    return bad
+
+
+def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
+                   impl: dict[str, int], srcs: dict[str, int],
+                   rules_missing: int = 0, skills_missing: int = 0,
+                   files: dict[str, dict[str, int]] | None = None) -> None:
+    payload = {
+        "_comment": (
+            "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。"
+            "missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数；"
+            "impl_code = 正文里实现语言代码块的行数；source_refs = 正文里散落的源码路径引用数"
+            "（集中列在「实现来源」小节里的不计）；rules_missing = .claude/rules 里缺导读两行的条数；"
+            "skills_missing = 技能 frontmatter 缺 name/description 的个数。"
+            "files = 逐篇欠账明细（missing/bare/impl/src），用来拦住「修好一篇旧的、同时新增一篇新的」"
+            "这种总数不变的偷换：不在这张表里的文件一旦欠账即判红。"
+            "数值只许下降：修好存量就跑 --update-baseline "
+            "把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。"
+        ),
+        "missing": {t: stats[t]["missing"] for t in TYPES},
+        "bare_refs": {t: bare.get(t, 0) for t in TYPES},
+        "impl_code": {t: impl.get(t, 0) for t in TYPES},
+        "source_refs": {t: srcs.get(t, 0) for t in TYPES},
+        "rules_missing": rules_missing,
+        "skills_missing": skills_missing,
+        "files": files or {},
+    }
+    os.makedirs(os.path.dirname(BASELINE_PATH), exist_ok=True)
+    with open(BASELINE_PATH, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ratchet", action="store_true", help="与基线比对，欠账上升即失败（CI 用）")
+    ap.add_argument("--update-baseline", action="store_true", help="把当前欠账写回基线")
+    ap.add_argument("--list-missing", action="store_true", help="逐条列出欠账文件")
+    ap.add_argument("--baseline-ref", default="",
+                    help="拿这个 git ref 上的基线当上限，防止本分支自己把基线放宽（CI 传 origin/main）")
+    ap.add_argument("--json", action="store_true", help="输出 JSON")
+    ap.add_argument("--fix-links", action="store_true",
+                    help="把指向真实文档的裸引用批量改写成可点链接")
+    args = ap.parse_args()
+
+    if args.fix_links:
+        known = doc_filenames()
+        touched = 0
+        rewritten = 0
+        for name in sorted(known):
+            path = os.path.join(DOC_DIR, name)
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            new_text, n = fix_links(text, known)
+            if n:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(new_text)
+                touched += 1
+                rewritten += n
+        print(f"已把 {rewritten} 处裸引用改写为可点链接，涉及 {touched} 篇")
+        return 0
+
+    stats, missing, bad_prefix = scan()
+    bare_per_type, bare_detail, dead_detail = scan_links()
+    impl_per_type, src_per_type, body_detail = scan_bodies()
+    rules_total, rules_missing, rules_detail = scan_rules()
+    file_debt = per_file_debt()
+    skills_total, skills_missing, skills_detail = scan_skills()
+    total = sum(s["total"] for s in stats.values())
+    total_missing = sum(s["missing"] for s in stats.values())
+    total_bare = sum(bare_per_type.values())
+    total_impl = sum(impl_per_type.values())
+    total_src = sum(src_per_type.values())
+
+    if args.update_baseline:
+        write_baseline(stats, bare_per_type, impl_per_type, src_per_type,
+                       rules_missing, skills_missing, file_debt)
+        print(f"基线已更新：{total_missing} / {total} 篇仍欠导读三行；裸引用 {total_bare} 处；"
+              f"实现代码 {total_impl} 行；散落源码路径 {total_src} 处；"
+              f"规则欠导读 {rules_missing} 条；技能 frontmatter 欠账 {skills_missing} 个")
+        return 0
+
+    if args.json:
+        print(json.dumps({"stats": stats, "missing": missing,
+                          "bare_refs": bare_per_type, "dead_links": dead_detail,
+                          "impl_code": impl_per_type, "source_refs": src_per_type,
+                          "rules": {"total": rules_total, "missing": rules_missing,
+                                    "detail": rules_detail},
+                          "skills": {"total": skills_total, "missing": skills_missing,
+                                     "detail": skills_detail}},
+                         ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"{'类型':<8}{'篇数':>6}{'已达标':>8}{'欠账':>6}{'达标率':>8}")
+    for t in TYPES:
+        s = stats[t]
+        ok = s["total"] - s["missing"]
+        rate = f"{ok / s['total'] * 100:.0f}%" if s["total"] else "-"
+        print(f"{t:<8}{s['total']:>6}{ok:>8}{s['missing']:>6}{rate:>8}")
+    print(f"{'合计':<8}{total:>6}{total - total_missing:>8}{total_missing:>6}"
+          f"{(total - total_missing) / total * 100:>7.0f}%")
+    print(f"\n引用可点击：裸引用 {total_bare} 处，死链 {len(dead_detail)} 处")
+    print(f"正文实现细节：实现语言代码 {total_impl} 行，散落源码路径 {total_src} 处")
+    print(f"规则与技能：{rules_total} 条规则欠导读 {rules_missing} 条；"
+          f"{skills_total} 个技能 frontmatter 欠账 {skills_missing} 个")
+
+    if args.list_missing:
+        print()
+        for t in TYPES:
+            for line in missing[t]:
+                print(line)
+        for line in bare_detail:
+            print(line)
+        for line in body_detail:
+            print(line)
+        for line in dead_detail:
+            print(line)
+
+    if args.ratchet:
+        nested = nested_docs()
+        if nested:
+            print("\n[FAIL] doc/ 必须保持扁平 —— 子目录里的文档不会被闸门检查，"
+                  "判据见 doc/rule.doc.naming.md", file=sys.stderr)
+            for line in nested:
+                print(f"  {line}", file=sys.stderr)
+            return 1
+        if bad_prefix:
+            print("\n[FAIL] 有文档用了七类之外的前缀 —— 命名判据见 doc/rule.doc.naming.md",
+                  file=sys.stderr)
+            for line in bad_prefix:
+                print(f"  {line}", file=sys.stderr)
+            return 1
+        baseline = load_baseline()
+        if args.baseline_ref:
+            if not git_ref_exists(args.baseline_ref):
+                # 静默降级等于把闸门关掉：取不到对照物就该失败，而不是拿本分支
+                # 自己放宽后的基线跟自己比
+                print(f"\n[FAIL] 取不到用于对照的 {args.baseline_ref} —— 无法确认基线没被放宽。"
+                      f"CI 里通常是 base 分支没 fetch 到；本地跑加 --baseline-ref 请先 git fetch",
+                      file=sys.stderr)
+                return 1
+            # 「走到哪修到哪」不能只是句口号：这次动过的存量文档，必须顺手把
+            # 导读补上，否则棘轮总数持平就放行，那批老文档永远轮不到人修。
+            touched = changed_docs_since(args.baseline_ref)
+            if touched is None:
+                print(f"\n[FAIL] 算不出相对 {args.baseline_ref} 碰过哪些文档 —— "
+                      f"通常是克隆太浅、没有共同祖先。CI 里请用 fetch-depth: 0",
+                      file=sys.stderr)
+                return 1
+            still_missing = []
+            for rel in touched:
+                abs_path = os.path.join(REPO_ROOT, rel)
+                if not os.path.exists(abs_path):
+                    continue
+                stem = os.path.basename(rel)[:-3]
+                if WEEKLY_REPORT.match(stem):
+                    continue  # 历史周报是冻结记录，标准里明确不回填
+                if check_file(abs_path):
+                    still_missing.append(f"{rel} — {'；'.join(check_file(abs_path))}")
+            if still_missing:
+                print("\n[FAIL] 本次改动碰过的文档仍缺导读 —— 走到哪修到哪，"
+                      "碰了就得把它补齐（判据见 doc/rule.doc.readability.md）", file=sys.stderr)
+                for line in still_missing:
+                    print(f"  {line}", file=sys.stderr)
+                return 1
+            base_baseline = load_baseline_at(args.baseline_ref)
+            if base_baseline is None:
+                # ref 在、但那上面还没有基线文件：这是基线首次引入的正常情况
+                print(f"[INFO] {args.baseline_ref} 上还没有基线文件（首次引入），跳过放宽检查",
+                      file=sys.stderr)
+            else:
+                relaxed = baseline_regressions(base_baseline, baseline)
+                if relaxed:
+                    print(f"\n[FAIL] 本分支把基线放宽了 —— 「先制造欠账、再 --update-baseline」"
+                          f"不算持平，判据见 doc/rule.doc.readability.md", file=sys.stderr)
+                    for line in relaxed:
+                        print(f"  {line}", file=sys.stderr)
+                    print("  确有正当理由要抬基线时，在 PR 里说明并让人类 reviewer 放行",
+                          file=sys.stderr)
+                    return 1
+        if not baseline:
+            print("\n[FAIL] 缺基线文件，先跑 --update-baseline", file=sys.stderr)
+            return 1
+
+        if dead_detail:
+            print("\n[FAIL] 存在死链 —— 引用的文档不存在，零容忍（不走棘轮）", file=sys.stderr)
+            for line in dead_detail[:20]:
+                print(f"    {line}", file=sys.stderr)
+            return 1
+
+        bare_regressions = [
+            (t, baseline["bare_refs"].get(t, 0), bare_per_type[t])
+            for t in TYPES if bare_per_type[t] > baseline["bare_refs"].get(t, 0)
+        ]
+        if bare_regressions:
+            print("\n[FAIL] 裸引用增加 —— 引用别的文档要写成可点链接 [xxx.md](./xxx.md)，"
+                  "判据见 doc/rule.doc.readability.md", file=sys.stderr)
+            for t, allowed, actual in bare_regressions:
+                print(f"  {t}: 基线 {allowed} → 当前 {actual}", file=sys.stderr)
+            for line in bare_detail[:10]:
+                print(f"    {line}", file=sys.stderr)
+            if len(bare_detail) > 10:
+                print(f"    ……另有 {len(bare_detail) - 10} 处，跑 --list-missing 看全部",
+                      file=sys.stderr)
+            print("    修法：python3 scripts/doc-readability-check.py --fix-links", file=sys.stderr)
+            return 1
+
+        for key, actual_map, label, howto in (
+            ("impl_code", impl_per_type, "正文实现代码",
+             "实现代码不进文档——删掉，或换成契约表 / 数据流说明；AI 需要细节时直接读源码"),
+            ("source_refs", src_per_type, "散落的源码路径引用",
+             "把路径集中到文末「实现来源」小节，正文用人话讲清职责与数据流"),
+        ):
+            over = [(t, baseline[key].get(t, 0), actual_map[t])
+                    for t in TYPES if actual_map[t] > baseline[key].get(t, 0)]
+            if over:
+                print(f"\n[FAIL] {label}增加 —— {howto}，判据见 doc/rule.doc.readability.md",
+                      file=sys.stderr)
+                for t, allowed, actual in over:
+                    print(f"  {t}: 基线 {allowed} → 当前 {actual}", file=sys.stderr)
+                for line in body_detail[:10]:
+                    print(f"    {line}", file=sys.stderr)
+                return 1
+
+        base_files = baseline.get("files", {})
+        newly: list[str] = []
+        worse: list[str] = []
+        for name, cur in sorted(file_debt.items()):
+            was = base_files.get(name)
+            if was is None:
+                newly.append(f"doc/{name} — {_debt_words(cur)}")
+                continue
+            up = [k for k in ("missing", "bare", "impl", "src") if cur[k] > was.get(k, 0)]
+            if up:
+                worse.append(f"doc/{name} — {_debt_words({k: cur[k] for k in up})}"
+                             f"（基线 {_debt_words({k: was.get(k, 0) for k in up})}）")
+        if newly or worse:
+            print("\n[FAIL] 有文档新欠账 —— 棘轮记到文件级，"
+                  "「修好一篇旧的、同时新增一篇不合规的」不算持平，判据见 doc/rule.doc.readability.md",
+                  file=sys.stderr)
+            for line in newly[:10]:
+                print(f"  新增欠账：{line}", file=sys.stderr)
+            for line in worse[:10]:
+                print(f"  欠账变多：{line}", file=sys.stderr)
+            print("  修好它，或确有正当理由时跑 --update-baseline 并在 PR 里说明", file=sys.stderr)
+            return 1
+
+        for label, actual, allowed, detail, hint in (
+            ("规则导读", rules_missing, baseline.get("rules_missing", 0), rules_detail,
+             ".claude/rules 下每条规则的 H1 之后要有「一句话」+「什么时候撞上」两行"),
+            ("技能 frontmatter ", skills_missing, baseline.get("skills_missing", 0), skills_detail,
+             "每个 SKILL.md 的 frontmatter 要有 name 与能说清触发时机的 description"),
+        ):
+            if actual > allowed:
+                print(f"\n[FAIL] {label}欠账上升 —— {hint}", file=sys.stderr)
+                print(f"  基线 {allowed} → 当前 {actual}", file=sys.stderr)
+                for line in detail[:10]:
+                    print(f"    {line}", file=sys.stderr)
+                return 1
+
+        regressions = []
+        for t in TYPES:
+            allowed = baseline["missing"].get(t, 0)
+            actual = stats[t]["missing"]
+            if actual > allowed:
+                regressions.append((t, allowed, actual))
+        if regressions:
+            print("\n[FAIL] 导读欠账上升 —— 新文档必须带导读三行，判据见 doc/rule.doc.readability.md",
+                  file=sys.stderr)
+            for t, allowed, actual in regressions:
+                print(f"  {t}: 基线 {allowed} → 当前 {actual}", file=sys.stderr)
+                shown = missing[t][:10]
+                for line in shown:
+                    print(f"    {line}", file=sys.stderr)
+                if len(missing[t]) > len(shown):
+                    print(f"    ……另有 {len(missing[t]) - len(shown)} 篇欠账未列出，"
+                          f"跑 --list-missing 看全部", file=sys.stderr)
+            return 1
+        improved = sum(baseline["missing"].get(t, 0) for t in TYPES) - total_missing
+        bare_improved = sum(baseline["bare_refs"].get(t, 0) for t in TYPES) - total_bare
+        impl_improved = sum(baseline["impl_code"].get(t, 0) for t in TYPES) - total_impl
+        src_improved = sum(baseline["source_refs"].get(t, 0) for t in TYPES) - total_src
+        gains = improved + bare_improved + impl_improved + src_improved
+        if gains > 0:
+            print(f"\n[OK] 比基线少 {improved} 篇缺导读、少 {bare_improved} 处裸引用、"
+                  f"少 {impl_improved} 行实现代码、少 {src_improved} 处源码路径。"
+                  f"修完记得跑 --update-baseline 把基线压低。")
+        else:
+            print("\n[OK] 六项欠账均未上升，无死链。")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

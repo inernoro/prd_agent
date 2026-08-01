@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-28 | **状态**：已落地
 
+**一句话**：外部用户搜岗位搜不到技能、装完二十个也不知道从哪开始，本文用角色套装解决这两层问题。
+**谁该读**：做技能对外分发的产品与工程师。
+**读完能做什么**：说清套装怎么按角色打包与引导。
+
+---
+
 ## 一、管理摘要
 
 **解决什么问题**：海鲜市场已经能把本仓库的优质技能虚拟上架、匿名下载，但外部用户（尤其非技术角色）拿到的是「一堆按功能分类的散装技能」——搜「产品经理」搜不到东西，装完二十个技能之后面对空仓库不知从哪开始。技能是零件，缺的是把零件串成工作方法的机床。
@@ -82,7 +88,7 @@ API key 只在「往市场上传技能」时才需要，不挡在门口。
 |---|---|
 | 探测 | 项目根、是否 git、已有骨架、已装技能、项目类型；能推断的一律不问 |
 | 提问 | 最多 2 个（项目一句话简介、文档目录），其余用默认值 |
-| 生成 | `CLAUDE.md`（八条核心规则）、`doc/rule.doc.naming.md`、第一份 `spec.*`、`changelogs/` |
+| 生成 | `CLAUDE.md`（八条核心规则）、[doc/rule.doc.naming.md](./rule.doc.naming.md)、第一份 `spec.*`、`changelogs/` |
 | 报告 | 已生成 / 已跳过 / 已装技能 / 缺什么 / 下一步做什么（具体到敲哪个命令） |
 
 硬约束：不覆盖已有文件、探测不到就写「待补」不编造、生成内容禁 emoji。
@@ -99,12 +105,12 @@ API key 只在「往市场上传技能」时才需要，不挡在门口。
 
 ## 七、已知边界
 
-见 `doc/debt.skill.role-bundle.md`。
+见 [doc/debt.skill.role-bundle.md](./debt.skill.role-bundle.md)。
 
 ## 八、关联
 
-- `doc/design.skill.marketplace-open-api.md` —— 海鲜市场开放接口
-- `doc/design.skill.unified-skill-system.md` —— 技能系统领域边界
-- `doc/debt.platform.emoji-corpus.md` —— 对外产物 de-emoji（本次落了第一步）
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— 海鲜市场开放接口
+- [doc/design.skill.unified-skill-system.md](./design.skill.unified-skill-system.md) —— 技能系统领域边界
+- [doc/debt.platform.md](./debt.platform.md) —— 对外产物 de-emoji（本次落了第一步）
 - `.claude/skills/sdd-init/SKILL.md` —— 入口技能
 - `scripts/skill-bundles.json` —— 角色与套装事实源

@@ -2,12 +2,18 @@
 
 > **版本**：v1.0 | **日期**：2026-05-17 | **状态**：已落地
 
+**一句话**：不是在平台里跑本地编码工具：平台负责体验与控制面，运行时在远端，两者靠事件流对接。
+**谁该读**：第一次接触这套架构的工程师。
+**读完能做什么**：说清各层职责边界，避免把控制面逻辑写进运行时。
+
+---
+
 | 字段 | 内容 |
 |---|---|
 | 版本 | v2026-05-17 |
 | 状态 | active |
 | 读者 | 想理解 CDS Agent 为什么这样设计、哪里已完成、哪里还欠账的人 |
-| 关联 | `doc/report.cds.agent.workbench.2026-05-15.md`、`doc/guide.cds.agent.workbench-reproduce.md`、`doc/guide.cds.agent.next-agent-testing.md`、`doc/spec.cds.map-pairing-protocol.md` |
+| 关联 | [doc/report.cds.agent.workbench.2026-05-15.md](./report.cds.agent.workbench.2026-05-15.md)、[doc/guide.cds.agent.workbench-reproduce.md](./guide.cds.agent.workbench-reproduce.md)、[doc/guide.cds.agent.next-agent-testing.md](./guide.cds.agent.next-agent-testing.md)、[doc/spec.cds.map-pairing-protocol.md](./spec.cds.map-pairing-protocol.md) |
 
 
 ## 1. 先说人话

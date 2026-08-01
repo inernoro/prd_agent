@@ -2,6 +2,12 @@
 
 > **版本**：v2.1 | **日期**：2026-07-18 | **状态**：已落地
 
+**一句话**：全部长期文档的清单，按七类前缀排好，用来确认「有没有这么一篇」并拿到准确文件名。
+**谁该读**：已经知道自己要找哪一类文档、想扫一眼有哪些的人。
+**读完能做什么**：找到目标文档的准确文件名。不知道该找哪一类时，先看[百科全书导读](./guide.doc.reading-map.md)。
+
+---
+
 本目录由 `doc/index.yml` 的同一份文件清单生成。文档标题以各文件 H1 为准；新增、重命名或删除文档后必须重新同步两份索引。
 
 ## 使用方式
@@ -68,7 +74,7 @@
 - [CDS 项目初始化（Project Bootstrap） · 设计](./design.cds.project-bootstrap.md) `design.cds.project-bootstrap`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
 - [CDS 复制集压测（A/B 负载对比台） · 设计](./design.cds.replica-loadtest.md) `design.cds.replica-loadtest`
-- [CDS 复制集模式（一个入口多版本并排） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
+- [CDS 复制集模式（一个入口，多个版本并行） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
 - [CDS 容量预算与故障隔离设计 · 设计](./design.cds.resilience.md) `design.cds.resilience`
 - [CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计](./design.cds.self-hosting.md) `design.cds.self-hosting`
 - [CDS 技能版本与更新架构 · 设计](./design.cds.skill-version-update.md) `design.cds.skill-version-update`
@@ -103,7 +109,7 @@
 - [CDS 部署架构与冲突分析 · 设计](./design.platform.exec-bt-deployment.md) `design.platform.exec-bt-deployment`
 - [外部授权中心 · 设计](./design.platform.external-authorization.md) `design.platform.external-authorization`
 - [生成快照 · 设计](./design.platform.generation-snapshot.md) `design.platform.generation-snapshot`
-- [GitHub 基础设施层（Infrastructure.GitHub） · 设计](./design.platform.github-infrastructure.md) `design.platform.github-infrastructure`
+- [GitHub 基础设施层 · 设计](./design.platform.github-infrastructure.md) `design.platform.github-infrastructure`
 - [图片引用日志与消息持久化 · 设计](./design.platform.image-ref-and-persistence.md) `design.platform.image-ref-and-persistence`
 - [LLM Gateway 全量迁移与生产发布复盘 · 设计](./design.platform.llm-gateway.migration-retrospective.md) `design.platform.llm-gateway.migration-retrospective`
 - [LLM 网关物理独立设计 · 设计](./design.platform.llm-gateway.physical-isolation.md) `design.platform.llm-gateway.physical-isolation`
@@ -111,7 +117,7 @@
 - [LLM 网关与模型池统一 · 设计](./design.platform.llm-gateway.unification.md) `design.platform.llm-gateway.unification`
 - [LLM Gateway 统一调用 · 设计](./design.platform.llm-gateway.md) `design.platform.llm-gateway`
 - [MAP MCP 连接器 · 设计](./design.platform.map-mcp-connector.md) `design.platform.map-mcp-connector`
-- [大模型池设计（三级调度/三级链路） · 设计](./design.platform.model-pool.md) `design.platform.model-pool`
+- [逻辑模型、上游 Offering 与默认模型池设计](./design.platform.model-pool.md) `design.platform.model-pool`
 - [网络诊断功能 · 设计](./design.platform.network-diagnostics.md) `design.platform.network-diagnostics`
 - [桌面端更新与分布式登录/会话审计说明 · 设计](./design.platform.ops-auth.md) `design.platform.ops-auth`
 - [系统级跨节点互传（Peer Sync） · 设计](./design.platform.peer-sync.md) `design.platform.peer-sync`
@@ -134,7 +140,7 @@
 - [团队动态（工作日志时间线）设计 · 设计](./design.team-activity.md) `design.team-activity`
 - [Remotion 视频质量差距分析 · 设计](./design.video-agent.remotion-gap.md) `design.video-agent.remotion-gap`
 - [视频场景代码生成 · 设计](./design.video-agent.scene-codegen.md) `design.video-agent.scene-codegen`
-- [视觉创作画布与对话输入原理 · 设计](./design.visual-agent.canvas-composer.md) `design.visual-agent.canvas-composer`
+- [视觉创作 画布与对话输入 · 设计](./design.visual-agent.canvas-composer.md) `design.visual-agent.canvas-composer`
 - [内联图片聊天分析 · 设计](./design.visual-agent.inline-image-chat.md) `design.visual-agent.inline-image-chat`
 - [Visual Agent 多图组合生成设计 · 设计](./design.visual-agent.multi-image-compose.md) `design.visual-agent.multi-image-compose`
 - [多图视觉生成 · 设计](./design.visual-agent.multi-image-vision-api.md) `design.visual-agent.multi-image-vision-api`
@@ -181,6 +187,7 @@
 - [CDS Web 迁移运行手册 · 指南](./guide.cds.web-migration-runbook.md) `guide.cds.web-migration-runbook`
 - [缺陷管理 Agent 使用 · 指南](./guide.defect-agent.md) `guide.defect-agent`
 - [基础设施 Sandbox Agent · 指南](./guide.infra-sandbox-agent.md) `guide.infra-sandbox-agent`
+- [百科全书导读 —— 人类怎么读这套文档 · 指南](./guide.doc.reading-map.md) `guide.doc.reading-map`
 - [MAP 平台文档索引 · 指南](./guide.list.directory.md) `guide.list.directory`
 - [文学创作 Agent 使用 · 指南](./guide.literary-agent.md) `guide.literary-agent`
 - [海鲜市场（配置市场）使用 · 指南](./guide.marketplace.md) `guide.marketplace`
@@ -218,6 +225,7 @@
 - [CDS state.json → MongoDB 迁移与回滚 · 规则](./rule.cds.mongo-migration.md) `rule.cds.mongo-migration`
 - [CDS 多项目隔离审计规则 · 规则](./rule.cds.project-isolation-audit.md) `rule.cds.project-isolation-audit`
 - [文档维护与收敛 · 规则](./rule.doc.maintenance.md) `rule.doc.maintenance`
+- [文档说人话标准（导读三行 + 只写人类要掌控的层次） · 规则](./rule.doc.readability.md) `rule.doc.readability`
 - [文档命名规则（doc/） · 规则](./rule.doc.naming.md) `rule.doc.naming`
 - [七类文档内容模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
 - [默认可编辑原则 · 规则](./rule.frontend.default-editable.md) `rule.frontend.default-editable`
@@ -242,6 +250,7 @@
 
 ### 五、计划
 
+- [文档说人话标准推广 · 计划](./plan.doc.readability.rollout.md) `plan.doc.readability.rollout`
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
@@ -265,84 +274,46 @@
 - [Report Agent 采集优先升级 · 计划](./plan.report-agent.v3.md) `plan.report-agent.v3`
 - [海鲜市场开放接口产品化 · 计划](./plan.skill.marketplace-open-api-next.md) `plan.skill.marketplace-open-api-next`
 - [视觉创作配图标记人工控制 · 计划](./plan.visual-agent.manual-image-marking.md) `plan.visual-agent.manual-image-marking`
-- [视觉创作优化清单 · 计划](./plan.visual-agent.optimization-backlog.md) `plan.visual-agent.optimization-backlog`
+- [视觉创作 优化清单 · 计划](./plan.visual-agent.optimization-backlog.md) `plan.visual-agent.optimization-backlog`
 
 ### 六、技术债务台账
 
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
 - [功能验收体系 · 债务台账](./debt.acceptance.system.md) `debt.acceptance.system`
 - [智能体宇宙 · 债务台账](./debt.agent-universe.md) `debt.agent-universe`
+- [CDS 平台杂项 · 债务台账](./debt.cds.md) `debt.cds`
+- [CDS Agent 工作台 · 债务台账](./debt.cds.agent.md) `debt.cds.agent`
 - [CDS Agent 验收 smoke 断言漂移 · 债务台账](./debt.cds.agent.acceptance-smoke-drift.md) `debt.cds.agent.acceptance-smoke-drift`
 - [CDS Agent SDK 执行器 · 债务台账](./debt.cds.agent.sdk-executor.md) `debt.cds.agent.sdk-executor`
-- [CDS Agent 工作台 · 债务台账](./debt.cds.agent.md) `debt.cds.agent`
-- [CDS 后端部署冻结 · 分支 api 跑旧代码 · debt · 债务台账](./debt.cds.backend-deploy-freeze.md) `debt.cds.backend-deploy-freeze`
 - [CDS 多分支跨分支隔离 · 债务台账](./debt.cds.branch-isolation.md) `debt.cds.branch-isolation`
 - [CDS 构建闸（build-gate） · 债务台账](./debt.cds.build-gate.md) `debt.cds.build-gate`
 - [CDS 极速版（CI 预构建） · 债务台账](./debt.cds.ci-prebuilt.md) `debt.cds.ci-prebuilt`
-- [CDS 项目初始化 · 债务台账](./debt.cds.project-bootstrap.md) `debt.cds.project-bootstrap`
-- [CDS compose 模板 TODO secrets · 债务台账](./debt.cds.compose-secrets.md) `debt.cds.compose-secrets`
-- [CDS executor 卡死看门狗 · 债务台账](./debt.cds.executor-watchdog.md) `debt.cds.executor-watchdog`
-- [CDS Loading Pages · 债务台账](./debt.cds.nginx-loading-pages.md) `debt.cds.nginx-loading-pages`
 - [CDS 构建与前端性能 · 债务台账](./debt.cds.performance.md) `debt.cds.performance`
-- [项目迁移（CDS 项目移植） · 债务台账](./debt.cds.project-migration.md) `debt.cds.project-migration`
 - [CDS 生产发布系统 · 债务台账](./debt.cds.release-system.md) `debt.cds.release-system`
-- [CDS 过期分支预览页 · 债务台账](./debt.cds.removed-branch-pages.md) `debt.cds.removed-branch-pages`
-- [CDS 复制集模式 · 债务台账](./debt.cds.replica-set.md) `debt.cds.replica-set`
-- [CDS 验收报告治理 · 债务台账](./debt.cds.reports.md) `debt.cds.reports`
 - [CDS 自更新极速版（预构建产物） · 债务台账](./debt.cds.selfupdate-prebuilt.md) `debt.cds.selfupdate-prebuilt`
 - [CDS state.json 影子存储 · 债务台账](./debt.cds.state-json.md) `debt.cds.state-json`
-- [CDS 教程 · 债务台账](./debt.cds.tutorial.md) `debt.cds.tutorial`
-- [CDS 存活监控（uptime-monitor） · 债务台账](./debt.cds.uptime-monitor.md) `debt.cds.uptime-monitor`
-- [CDS 绝对可视化一键部署 · 工程债务与待补台账 · 债务台账](./debt.cds.visual-deploy.md) `debt.cds.visual-deploy`
-- [每日小贴士新手引导 · 债务台账](./debt.daily-tips.onboarding.md) `debt.daily-tips.onboarding`
-- [小技巧与首页提醒过时机制 · 债务台账](./debt.daily-tips.md) `debt.daily-tips`
+- [小技巧与新手引导 · 债务台账](./debt.daily-tips.md) `debt.daily-tips`
 - [缺陷管理手机截图分享提交 · 债务台账](./debt.defect-agent.mobile-share.md) `debt.defect-agent.mobile-share`
-- [前端 Apple 设计迁移 · 债务台账](./debt.frontend.apple-design-migration.md) `debt.frontend.apple-design-migration`
-- [界面材质系统 · 债务台账](./debt.frontend.material-system.md) `debt.frontend.material-system`
-- [移动端控制条过载 治理台账 · 债务台账](./debt.frontend.mobile-control-bar-overload.md) `debt.frontend.mobile-control-bar-overload`
-- [移动端全局浅色主题 · 债务台账](./debt.frontend.mobile-light-theme.md) `debt.frontend.mobile-light-theme`
-- [前端导航历史（返回上一页） · 债务台账](./debt.frontend.navigation-history.md) `debt.frontend.navigation-history`
-- [知识库知识星球与宇宙图并存 · 债务台账](./debt.knowledge-base.galaxy-vs-universe.md) `debt.knowledge-base.galaxy-vs-universe`
-- [知识库划词评论 · 债务台账](./debt.knowledge-base.inline-comment.md) `debt.knowledge-base.inline-comment`
-- [知识库文档阅读器 · 债务台账](./debt.knowledge-base.library-doc-reader.md) `debt.knowledge-base.library-doc-reader`
-- [知识库引用网络 · 债务台账](./debt.knowledge-base.mention-network.md) `debt.knowledge-base.mention-network`
-- [知识库划词 AI 局部编辑 · 债务台账](./debt.knowledge-base.selection-ai.md) `debt.knowledge-base.selection-ai`
-- [知识库跨库同步 · 债务台账](./debt.knowledge-base.store-sync.md) `debt.knowledge-base.store-sync`
-- [知识库版本管理 · 债务台账](./debt.knowledge-base.versioning.md) `debt.knowledge-base.versioning`
+- [文档可读性 · 债务台账](./debt.doc.readability.md) `debt.doc.readability`
+- [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
 - [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
 - [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`
-- [平台资产存储 · 债务台账](./debt.platform.asset-storage.md) `debt.platform.asset-storage`
-- [更新中心（终身存储 + 推送） · 债务台账](./debt.platform.changelog-center.md) `debt.platform.changelog-center`
-- [历史 emoji 语料清理 · 债务台账](./debt.platform.emoji-corpus.md) `debt.platform.emoji-corpus`
-- [登录后首页（Agent 启动页） · 债务台账](./debt.platform.home-launcher.md) `debt.platform.home-launcher`
+- [平台基础设施杂项 · 债务台账](./debt.platform.md) `debt.platform`
+- [LLM 网关与模型池 · 债务台账](./debt.platform.llm-gateway.md) `debt.platform.llm-gateway`
 - [LLM 网关物理剥离 · 债务台账](./debt.platform.llm-gateway.isolation.md) `debt.platform.llm-gateway.isolation`
 - [LLM Gateway 协议保真 · 债务台账](./debt.platform.llm-gateway.protocol-fidelity.md) `debt.platform.llm-gateway.protocol-fidelity`
-- [LLM 网关与模型池 · 债务台账](./debt.platform.llm-gateway.md) `debt.platform.llm-gateway`
-- [登录会话（超长登录期） · 债务台账](./debt.platform.login-session.md) `debt.platform.login-session`
-- [预览入口下发 · 债务台账](./debt.platform.preview-entrypoints.md) `debt.platform.preview-entrypoints`
-- [MAP MCP 连接器 · 债务台账](./debt.platform.map-mcp-connector.md) `debt.platform.map-mcp-connector`
-- [工程债务台账：系统级跨节点互传（Peer Sync） · 债务台账](./debt.platform.peer-sync.md) `debt.platform.peer-sync`
 - [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
-- [分享链接安全 · 债务台账](./debt.platform.share-link-security.md) `debt.platform.share-link-security`
-- [项目管理智能体 · 债务台账](./debt.product-agent.pm.md) `debt.product-agent.pm`
-- [产品管理智能体（product-agent） · 债务台账](./debt.product-agent.md) `debt.product-agent`
-- [周报 Agent 日报能力 · 债务台账](./debt.report-agent.daily.md) `debt.report-agent.daily`
-- [周报 Agent 详情页 · 债务台账](./debt.report-agent.detail.md) `debt.report-agent.detail`
+- [产品与项目管理智能体 · 债务台账](./debt.product-agent.md) `debt.product-agent`
+- [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
 - [角色技能套装 · 债务台账](./debt.skill.role-bundle.md) `debt.skill.role-bundle`
 - [演讲智能体 · 债务台账](./debt.speech-agent.md) `debt.speech-agent`
-- [团队动态团队能力 · 债务台账](./debt.team-activity.team-feature.md) `debt.team-activity.team-feature`
-- [行为洞察与 VOC 旧版边界 · 债务台账](./debt.team-activity.voc-legacy.md) `debt.team-activity.voc-legacy`
 - [团队动态 · 债务台账](./debt.team-activity.md) `debt.team-activity`
 - [视频生成 Agent · 债务台账](./debt.video-agent.md) `debt.video-agent`
-- [Visual Agent 验收技能 · 债务台账](./debt.visual-agent.acceptance-skill.md) `debt.visual-agent.acceptance-skill`
-- [Visual Agent 视觉分镜台 · 债务台账](./debt.visual-agent.storyboard.md) `debt.visual-agent.storyboard`
-- [Web Hosting 客户端 IP · 债务台账](./debt.web-hosting.client-ip.md) `debt.web-hosting.client-ip`
-- [Web Hosting 评论 · 债务台账](./debt.web-hosting.comments.md) `debt.web-hosting.comments`
+- [视觉创作 · 债务台账](./debt.visual-agent.md) `debt.visual-agent`
 - [网页托管 · 债务台账](./debt.web-hosting.md) `debt.web-hosting`
-- [Workflow Agent 任务树 · 债务台账](./debt.workflow-agent.task-tree.md) `debt.workflow-agent.task-tree`
-- [工作流 Agent · 债务台账](./debt.workflow-agent.md) `debt.workflow-agent`
+- [工作流 · 债务台账](./debt.workflow-agent.md) `debt.workflow-agent`
 
 ### 七、报告与周报
 
@@ -368,8 +339,8 @@
 - [2026-W26 (2026-06-22 ~ 2026-06-28) · 周报](./report.2026-W26.md) `report.2026-W26`
 - [2026-W27 (2026-06-29 ~ 2026-07-05) · 周报](./report.2026-W27.md) `report.2026-W27`
 - [2026-W28 (2026-07-06 ~ 2026-07-12) · 周报](./report.2026-W28.md) `report.2026-W28`
-- [2026-W29 (2026-07-13 ~ 2026-07-19) · 周报](./report.2026-W29.md) `report.2026-W29`
-- [2026-W30 (2026-07-20 ~ 2026-07-26) · 周报](./report.2026-W30.md) `report.2026-W30`
+- [周报 2026-W29 (2026-07-13 ~ 2026-07-19)](./report.2026-W29.md) `report.2026-W29`
+- [周报 2026-W30 (2026-07-20 ~ 2026-07-26)](./report.2026-W30.md) `report.2026-W30`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`

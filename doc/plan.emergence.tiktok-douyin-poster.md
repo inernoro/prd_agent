@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：把手工粘贴链接生成海报，升级为带授权、定时增量同步与去重通知的真实订阅。
+**谁该读**：做订阅闭环的产品与工程师。
+**读完能做什么**：知道从手工到订阅还差哪几件事。
+
+---
+
 ## 目标
 
 在已经落地的短视频解析、创作者作品抓取、ASR、素材重托管和 feed-card 海报链路上，补齐用户授权、定时增量同步和去重通知，让“手工粘贴链接生成海报”升级为真实订阅。
@@ -10,7 +16,7 @@
 
 - Workflow 已有短视频解析、创作者作品抓取、视频转文字、素材重托管和首页海报发布能力。
 - TikTok、抖音、B 站、小红书和 YouTube 的响应差异已有适配；这些已完成实现不属于本计划。
-- `ad-rich-text`、feed-card、ASR 字幕和最小化交互已经落地，已知边界归 `debt.workflow-agent.md`。
+- `ad-rich-text`、feed-card、ASR 字幕和最小化交互已经落地，已知边界归 [debt.workflow-agent.md](./debt.workflow-agent.md)。
 - 当前缺口是抖音授权身份、长 token 生命周期、可靠调度和新增作品去重。
 
 ## P1：授权与凭据
@@ -51,6 +57,6 @@
 
 ## 关联文档
 
-- `doc/guide.submission-gallery.poster-feed-card.md`
-- `doc/debt.workflow-agent.md`
-- `doc/design.workflow-agent.engine.md`
+- [doc/guide.submission-gallery.poster-feed-card.md](./guide.submission-gallery.poster-feed-card.md)
+- [doc/debt.workflow-agent.md](./debt.workflow-agent.md)
+- [doc/design.workflow-agent.engine.md](./design.workflow-agent.engine.md)

@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-03-07 | **状态**：已落地
 
+**一句话**：把一段网页内容变成可访问的站点：支持分享链接、密码保护与过期控制，其他功能直接调用建站能力。
+**谁该读**：要把生成结果对外分享的工程师；关心分享安全边界的产品。
+**读完能做什么**：说清托管流程与分享控制，并知道调用建站能力时必须填什么。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：缺乏轻量级静态站点托管能力，工作流和视频 Agent 生成的 HTML 无法直接分享
@@ -187,25 +193,10 @@ IHostedSiteService
 
 ### 对接示例
 
-```csharp
-// 其他服务通过 DI 注入即可使用
-public class VideoGenRunWorker
-{
-    private readonly IHostedSiteService _siteService;
+任何后端功能想把一段 HTML 变成可访问的站点，都调同一个建站能力：传入用户、内容、标题、
+来源类型和来源标识，拿回一个可直接打开的地址。**来源类型与来源标识必须填真**——
+它们是日后按功能反查站点、批量清理的唯一线索。
 
-    public async Task ExecuteAsync(string userId, string html, string runId)
-    {
-        var site = await _siteService.CreateFromContentAsync(
-            userId, html,
-            title: "视频教程页面",
-            description: null,
-            sourceType: "video-agent",
-            sourceRef: runId,
-            tags: null, folder: null);
-        // site.SiteUrl → 可直接访问的 URL
-    }
-}
-```
 
 ---
 
@@ -354,8 +345,8 @@ public class VideoGenRunWorker
 
 | 事项 | 说明 | 依赖 |
 |------|------|------|
-| AI 文本辅助 | 上传 HTML 后自动提取/生成标题、描述、标签 | `IHostedSiteService` + LLM Gateway，详见 `doc/plan.ai-toolbox.text-assist.md` |
-| 数据字典补全 | `hosted_sites` 和 `web_page_share_links` 需补录到 `rule.platform.data-dictionary.md` | 无 |
+| AI 文本辅助 | 上传 HTML 后自动提取/生成标题、描述、标签 | `IHostedSiteService` + LLM Gateway，详见 [doc/plan.ai-toolbox.text-assist.md](./plan.ai-toolbox.text-assist.md) |
+| 数据字典补全 | `hosted_sites` 和 `web_page_share_links` 需补录到 [rule.platform.data-dictionary.md](./rule.platform.data-dictionary.md) | 无 |
 
 ### P2 — 中期增强
 

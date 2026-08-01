@@ -2,13 +2,18 @@
 
 > **版本**：v1.1 | **日期**：2026-07-10 | **状态**：开发中
 
+**一句话**：把编译从部署服务器卸载到持续集成、按提交拉镜像跑的方案，本文记它的已知边界与验证状态。
+**谁该读**：关心构建耗时的人；接手这条链路的工程师。
+**读完能做什么**：判断极速版当前能用到什么程度，以及还差哪些验证。
+
+---
+
 ## 总览
 
 把「编译」从 CDS 服务器卸载到 GitHub Actions：push → CI 按 commit SHA 编译成 ghcr 镜像 →
 CDS 收 `workflow_run.completed` 后 `docker pull` + run（跳过本机编译）。在现有「热加载 / 发布版」
 之外新增第三种部署模式「极速版（CI 预构建）」。旧源码编译模式全部保留兼容。
 
-模块范围：`.github/workflows/branch-image.yml`、`cds-compose.yml`、`cds/src/services/{container,deploy-runtime,github-webhook-dispatcher,state,branch-events}.ts`、`cds/src/routes/{branches,github-webhook}.ts`、`cds/web/src/pages/BranchListPage.tsx`、`cds/src/services/compose-parser.ts`。
 
 SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。CI 推什么 tag、CDS 拉什么 tag，
 两边走同一公式（CI `docker/metadata-action`  CDS `resolveImageTemplate` / `slugifyBranchForImage`）。
@@ -21,7 +26,6 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 |---|------|------|------|
 | 1 | ghcr 包需手动设为 public | 首次 push 后 `prdagent-server` / `prdagent-admin` 两个包默认 private，需在 GitHub Packages 设置里改 Public，CDS 才能匿名 `docker pull`。否则极速版部署报「镜像拉取失败」 | 一次性 ops；未设则极速版不可用，分支显示「CI 构建失败」可切回源码 |
 | 2 | 工作流名硬编码 | CDS 只认 `branch-image.yml` / name `Branch Image` 的 workflow_run（避免 ci.yml 等先完成误触发）。常量在 `github-webhook-dispatcher.ts` 的 `CI_PREBUILT_WORKFLOW_FILE/NAME` | 泛化到任意 public 仓库时需做成 project 级配置 |
-| 3 | ~~每次 push 构建两镜像~~（已改为 path-filter，2026-06-23） | **已偿还**：改为 `dorny/paths-filter` 只构建改动组件（`prd-api/**`→api、`prd-admin/**`→admin），不再重复构建。某 commit 缺某组件镜像时，runService 走 `DeployModeOverride.fallbackImage` **有序回退链**：① `:branch-<slug>`（本分支该组件最近一次构建，保住本分支已有改动）② `:branch-main`（本分支从未构建过该组件时退到主分支）。避免「A 改 api、B 只改 admin」部署 B 把 api 直接退 main 丢掉本分支 A 的 api 改动。三种缺镜像场景均由回退链兜底，预览不硬失败 | 回退链写在 cds-compose `fallbackImage`（数组）；新仓库接入需同步配置；`:branch-<slug>` 依赖 CI 的 `type=ref,event=branch` 移动 tag 与 CDS slugify 一致 |
 | 4 | 极速版仍 git pull worktree | 部署时未跳过 `worktreeService.pull`（仅跳过编译）。pull 是廉价 git fetch，且保留 worktree 同步利于「切回源码编译」兜底；真正的重负载（编译）已由 prebuiltImage/skipSrcMount 消除 | 轻微冗余，不影响目标（卸载编译算力） |
 | 5 | 构建时延（分钟级） | push → 预览就绪比源码热加载慢出现（要等 CI 构建）。等待期分支卡有「等待 CI 镜像」徽章（非静止），符合预期管理 | 体验取舍：省 CDS CPU 换首次时延 |
 | 6 | 「切回源码编译」非一键 | 失败态徽章的「切回源码编译」打开分支详情抽屉，由现有部署模式下拉切回 source 模式（已可用），未在卡片做单击直切 | 能力已存在，仅少一步快捷 |
@@ -48,3 +52,25 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 ## 已偿还（paid）
 
 （暂无）
+
+---
+
+## 已结清（供回溯）
+
+下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
+
+### 已知边界 / 待补（本节的行均已偿还）
+
+| # | 债务 | 说明 | 影响 |
+|---|------|------|------|
+| 3 | ~~每次 push 构建两镜像~~（已改为 path-filter，2026-06-23） | **已偿还**：改为 `dorny/paths-filter` 只构建改动组件（`prd-api/**`→api、`prd-admin/**`→admin），不再重复构建。某 commit 缺某组件镜像时，runService 走 `DeployModeOverride.fallbackImage` **有序回退链**：① `:branch-<slug>`（本分支该组件最近一次构建，保住本分支已有改动）② `:branch-main`（本分支从未构建过该组件时退到主分支）。避免「A 改 api、B 只改 admin」部署 B 把 api 直接退 main 丢掉本分支 A 的 api 改动。三种缺镜像场景均由回退链兜底，预览不硬失败 | 回退链写在 cds-compose `fallbackImage`（数组）；新仓库接入需同步配置；`:branch-<slug>` 依赖 CI 的 `type=ref,event=branch` 移动 tag 与 CDS slugify 一致 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `.github/workflows/branch-image.yml`、`cds-compose.yml`、`cds/src/services/{container,deploy-runtime,github-webhook-dispatcher,state,branch-events}.ts`、`cds/src/routes/{branches,github-webhook}.ts`、`cds/web/src/pages/BranchListPage.tsx`、`cds/src/services/compose-parser.ts` |

@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-04 | **状态**：已落地
 
+**一句话**：外部客户用兼容协议直接调本平台模型，不重造模型调度，密钥的模型选择钉到具体模型。
+**谁该读**：接手开放接口的工程师。
+**读完能做什么**：说清一次外部调用怎么落到具体模型上。
+
+---
+
 ## 1. 管理摘要（30 秒）
 
 开放接口让**外部客户**用标准 OpenAI 兼容方式（借鉴 OpenRouter 风格）调用本平台模型：对方把 SDK 的 `base_url` 指到本服务、填入签发的 `sk-ak-*` 密钥即可。核心价值是**按客户隔离模型**——每个密钥配一个模型白名单，客户只能在白名单内选，平台改总模型池不会误伤已配置客户。配套限流、配额、降级预警、用量统计与密钥自省，保证对外开放不被流量打挂、可计量、可排障。
@@ -174,7 +180,7 @@
 
 ## 14. 关联文档
 
-- `doc/guide.open-platform.open-api.md`：客户接入指南（quickstart + 契约）
-- `doc/debt.open-platform.open-api.md`：债务台账（并发/账本/embeddings/日志TTL 等留尾）
-- `doc/design.platform.model-pool.md`：三级模型池调度
+- [doc/guide.open-platform.open-api.md](./guide.open-platform.open-api.md)：客户接入指南（quickstart + 契约）
+- [doc/debt.open-platform.open-api.md](./debt.open-platform.open-api.md)：债务台账（并发/账本/embeddings/日志TTL 等留尾）
+- [doc/design.platform.model-pool.md](./design.platform.model-pool.md)：三级模型池调度
 - `.claude/rules/llm-gateway.md`、`server-authority.md`、`compute-then-send.md`

@@ -2,7 +2,11 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
-> 范围：MAP 与独立 LLM Gateway 的控制面、数据面和迁移边界
+> **范围**：MAP 与独立 LLM Gateway 的控制面、数据面和迁移边界
+
+**一句话**：大模型调用已从主系统剥离成独立服务：主系统跨进程调它，模型池、协议适配、网关日志全归网关侧。
+**谁该读**：要改模型调用链路的工程师；想知道「模型出问题该找谁」的排障值班。
+**读完能做什么**：说清一次模型调用经过哪些组件、哪边持有配置权威，并判断某个问题该在主系统还是网关侧排查。
 
 ## 1. 结论
 
@@ -152,7 +156,7 @@ MAP 数据库继续保存 MAP 业务日志、会话、Run 和业务产物。两�
 
 ## 10. 关联文档
 
-- `doc/plan.platform.llm-gateway.full-cutover.md`
-- `doc/spec.platform.llm-gateway.test-matrix.md`
-- `doc/debt.platform.llm-gateway.isolation.md`
-- `doc/design.platform.llm-gateway.migration-retrospective.md`
+- [doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)
+- [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)
+- [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)
+- [doc/design.platform.llm-gateway.migration-retrospective.md](./design.platform.llm-gateway.migration-retrospective.md)

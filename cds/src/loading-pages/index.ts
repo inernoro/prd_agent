@@ -13,7 +13,7 @@
  * 维护者以为改了 light 块能生效。现已移除该假分支；若未来真要做浅色等待页，
  * 按 cds-theme-tokens 规则给 light 块填**真实浅色值**再恢复 media query。
  *
- * Migration status (see doc/debt.cds.nginx-loading-pages.md):
+ * Migration status (see doc/debt.cds.md「CDS Loading Pages」):
  *   buildNginxWaitingHtml         - DONE (was exec_cds.sh heredoc)
  *   buildForwarderWaitingPageHtml - DONE 2026-07-09 (moved verbatim from forwarder/waiting-page.ts,
  *                                   old module re-exports for compat; snapshot test locks output)

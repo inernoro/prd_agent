@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：缺陷管理总体设计：解决提交信息不全、状态不透明、内外协作与验收证据分散三个问题。
+**谁该读**：缺陷管理的产品与工程师。
+**读完能做什么**：说清缺陷从提交到验收的整体设计。
+
+---
+
 > **appKey**：`defect-agent`
 
 ## 一、管理摘要
@@ -133,9 +139,9 @@ Controller 不应成为领域事实源。状态规则、授权和外部协作契
 | 后端 API 与状态操作 | `prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs` |
 | 核心模型 | `prd-api/src/PrdAgent.Core/Models/` 中的 Defect 相关模型 |
 | 前端页面 | `prd-admin/src/pages/defect-agent/` |
-| 截图分析 | `doc/design.defect-agent.image-analysis.md` |
-| 分享修复 | `doc/design.defect-agent.share-skill-architecture.md` |
-| 自动化自治 | `doc/design.defect-agent.automation-autonomy.md` |
+| 截图分析 | [doc/design.defect-agent.image-analysis.md](./design.defect-agent.image-analysis.md) |
+| 分享修复 | [doc/design.defect-agent.share-skill-architecture.md](./design.defect-agent.share-skill-architecture.md) |
+| 自动化自治 | [doc/design.defect-agent.automation-autonomy.md](./design.defect-agent.automation-autonomy.md) |
 
 ## 11. 验收标准
 
@@ -148,8 +154,8 @@ Controller 不应成为领域事实源。状态规则、授权和外部协作契
 
 ## 关联文档
 
-- `doc/design.defect-agent.labels.md`
-- `doc/design.defect-agent.image-analysis.md`
-- `doc/design.defect-agent.share-skill-architecture.md`
-- `doc/design.defect-agent.automation-autonomy.md`
+- [doc/design.defect-agent.labels.md](./design.defect-agent.labels.md)
+- [doc/design.defect-agent.image-analysis.md](./design.defect-agent.image-analysis.md)
+- [doc/design.defect-agent.share-skill-architecture.md](./design.defect-agent.share-skill-architecture.md)
+- [doc/design.defect-agent.automation-autonomy.md](./design.defect-agent.automation-autonomy.md)
 - `doc/rule.app-feature-definition.md`

@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-28 | **状态**：草案
 
+**一句话**：帮外部团队从零建项目：不要求对方注册内部平台，走一条从提示词到技能到规则骨架的完整路。
+**谁该读**：做对外交付的产品与工程师。
+**读完能做什么**：说清外部用户拿到的是一整套还是一堆散件。
+
+---
+
 ## 一、管理摘要
 
 **解决什么问题**：我们要帮别人（产品经理、老板、非技术团队）从零建项目时，对方接不进 MAP——MAP 是我们的内部平台，让客户注册账号才能拿技能是不成立的。但所有人都要上 CDS 拿云端预览。**CDS 天然就是那个中介**。
@@ -176,13 +182,22 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 
 ## 八、风险与已知边界
 
-见 `doc/debt.cds.project-bootstrap.md`。
+见 [doc/debt.cds.md](./debt.cds.md)。
 
 ## 九、关联
 
-- `doc/design.skill.role-bundle.md` —— 角色套装与 `sdd-init`
-- `doc/design.skill.marketplace-open-api.md` —— MAP 技能开放接口
+- [doc/design.skill.role-bundle.md](./design.skill.role-bundle.md) —— 角色套装与 `sdd-init`
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— MAP 技能开放接口
 - `.claude/rules/quickstart-zero-friction.md` —— 引导脚本的大包大揽纪律
 - `.claude/rules/anti-detour.md` —— 少绕路：能一步做完不让用户走多步
 - `.claude/rules/cds-theme-tokens.md` —— CDS 前端双主题与 z-index 纪律
-- `cds/web/src/components/SkillDownloadDialog.tsx` —— 接入智能体弹窗
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 九、关联 | `cds/web/src/components/SkillDownloadDialog.tsx` | 接入智能体弹窗 |

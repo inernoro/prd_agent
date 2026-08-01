@@ -22,6 +22,7 @@ jobs:
       admin: ${{ steps.filter.outputs.admin }}
       desktop: ${{ steps.filter.outputs.desktop }}
       cds: ${{ steps.filter.outputs.cds }}
+      docs: ${{ steps.filter.outputs.docs }}
       release_scripts: ${{ steps.filter.outputs.release_scripts }}
     steps:
       - name: Checkout
@@ -56,6 +57,27 @@ jobs:
             cds:
               - 'cds/**'
               - '.github/workflows/ci.yml'
+            docs:
+              # 文档说人话闸门：判据 doc/rule.doc.readability.md。
+              # 新增文档必须自带导读三行，否则棘轮欠账上升，这道闸会红。
+              - 'doc/**'
+              # 规则与技能同闸：规则要有导读两行，技能 frontmatter 要能说清触发时机
+              - '.claude/rules/**'
+              # Codex 侧规则同属这道闸：少扫一处，那一处就能绕开导读要求
+              - '.Codex/rules/**'
+              # 面包屑守卫扫的是全仓 git 跟踪的源码文件，所以这道闸的触发面也必须是全仓：
+              # 列举根目录 = 列漏的那棵树里引入死引用时闸门照样跳过（形状 7）。
+              # 代价是这个 job 每个 PR 都跑一次，十几秒，换的是「守卫扫到哪、闸门就管到哪」。
+              - '**'
+              - '.claude/skills/**/SKILL.md'
+              # 守卫会读这几份汇报模板，断言「本周一句话 / 今日大事」还在。
+              # 不登记进来的话，只改模板的 PR 会整个跳过这道闸——守卫等于没接上线。
+              - '.claude/skills/weekly-update-summary/reference/**'
+              - '.claude/skills/daily-report-summary/reference/**'
+              - 'scripts/doc-readability-check.py'
+              - 'scripts/fixtures/doc-readability-baseline.json'
+              - 'scripts/tests/doc-readability-ratchet.test.py'
+              - '.github/workflows/ci.yml'
             release_scripts:
               - 'exec_dep.sh'
               - 'scripts/lib/static-release.sh'
@@ -87,6 +109,43 @@ jobs:
               - 'scripts/validate-static-dist.sh'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
+
+  docs-readability:
+    name: Docs Readability Ratchet
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # 要跟目标分支算「本次碰过哪些文档」，浅克隆没有共同祖先，算不出来
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch baseline
+        # 基线要跟目标分支比：不取 main 的话，本分支自己放宽的基线会拿来跟自己比
+        # PR 比目标分支；push 到 main 时 base_ref 是空的，必须比这次推送之前的那个 commit，
+        # 否则取到的就是刚推上去的自己，基线又变成跟自己比
+        run: |
+          if [ -n "${{ github.base_ref }}" ]; then
+            # PR：跟目标分支比
+            git fetch --no-tags origin "${{ github.base_ref }}:refs/remotes/origin/base"
+          elif [ -n "${{ github.event.before }}" ] \
+               && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            # push：跟这次推送之前的那个 commit 比
+            git fetch --no-tags origin "${{ github.event.before }}"
+            git update-ref refs/remotes/origin/base "${{ github.event.before }}"
+          else
+            # 手动 dispatch / 新分支首推：两个值都没有，退回默认分支。
+            # 不能沿用 push 分支 —— 那会执行 update-ref 传空 SHA，直接报错。
+            git fetch --no-tags origin "${{ github.event.repository.default_branch }}:refs/remotes/origin/base"
+          fi
+
+      - name: Doc reader-header ratchet
+        run: python3 scripts/doc-readability-check.py --ratchet --baseline-ref origin/base
+
+      - name: Doc readability checker guard test
+        run: python3 scripts/tests/doc-readability-ratchet.test.py
 
   release-script-test:
     name: Production Release Script Test
@@ -526,7 +585,7 @@ jobs:
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [changes, server-build, admin-build, desktop-check, cds-build]
+    needs: [changes, server-build, admin-build, desktop-check, cds-build, docs-readability]
     if: always()
     steps:
       - name: Check CI status
@@ -536,6 +595,7 @@ jobs:
           echo "  Admin: ${{ needs.changes.outputs.admin }}"
           echo "  Desktop: ${{ needs.changes.outputs.desktop }}"
           echo "  CDS: ${{ needs.changes.outputs.cds }}"
+          echo "  Docs: ${{ needs.changes.outputs.docs }}"
 
           # main push 是发布线,所有关键 job 都必须成功。
           # PR/develop 仍只要求本次改动涉及的模块成功。
@@ -544,6 +604,7 @@ jobs:
           admin_required="${{ needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
           desktop_required="${{ needs.changes.outputs.desktop == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
           cds_required="${{ needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
+          docs_required="${{ needs.changes.outputs.docs == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
 
           echo "Main push: $main_push"
           echo "Required jobs:"
@@ -551,13 +612,15 @@ jobs:
           echo "  Admin: $admin_required"
           echo "  Desktop: $desktop_required"
           echo "  CDS: $cds_required"
+          echo "  Docs: $docs_required"
 
           server_ok="$([[ "$server_required" != "true" || "${{ needs.server-build.result }}" == "success" ]] && echo true || echo false)"
           admin_ok="$([[ "$admin_required" != "true" || "${{ needs.admin-build.result }}" == "success" ]] && echo true || echo false)"
           desktop_ok="$([[ "$desktop_required" != "true" || "${{ needs.desktop-check.result }}" == "success" ]] && echo true || echo false)"
           cds_ok="$([[ "$cds_required" != "true" || "${{ needs.cds-build.result }}" == "success" ]] && echo true || echo false)"
+          docs_ok="$([[ "$docs_required" != "true" || "${{ needs.docs-readability.result }}" == "success" ]] && echo true || echo false)"
 
-          if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" && "$cds_ok" == "true" ]]; then
+          if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" && "$cds_ok" == "true" && "$docs_ok" == "true" ]]; then
             echo "All required checks passed!"
             exit 0
           else
@@ -566,5 +629,6 @@ jobs:
             echo "  Admin: ${{ needs.admin-build.result }}"
             echo "  Desktop: ${{ needs.desktop-check.result }}"
             echo "  CDS: ${{ needs.cds-build.result }}"
+            echo "  Docs: ${{ needs.docs-readability.result }}"
             exit 1
           fi

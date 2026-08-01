@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-22 | **状态**：已落地
 
+**一句话**：用真机视口对十六个常用页面做视觉取证后得出的手机端重构结论与优先级。
+**谁该读**：做移动端重构的产品与前端。
+**读完能做什么**：按取证结论挑出该先改的页面。
+
+---
+
 ## 一、管理摘要（30 秒看懂）
 
 本系统已经有一套相当完整的手机端基建：底部 5 Tab 导航、抽屉、安全区适配、`MobileCompatGate`（按页声明 full/limited/pc-only）、以及一个已经做成「App Store 今日」风格的移动首页。问题不在「没有手机端」，而在「首页做完了，首页点出去的关联页面没跟上」——用户从首页/底部导航点进去的几个核心目的地，要么卡在加载动画、要么把桌面多栏布局原样塞进手机，控制条堆三层、内容被挤到角落。
@@ -155,5 +161,14 @@
 - `.claude/rules/mobile-first-density.md` — 手机端密度纪律（本次改造的执行标准）
 - `.claude/rules/content-fills-canvas.md` — 内容填满画布（主从折叠依据）
 - `.claude/rules/chief-designer-usability.md` — 好用四原则（收纳/不杜撰长链）
-- `prd-admin/src/lib/mobileCompatibility.ts` — 兼容性 SSOT（改造完成后回写）
-- `prd-admin/src/pages/_dev/MobileAuditPage.tsx` — 回归审计工具
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 关联 | `prd-admin/src/lib/mobileCompatibility.ts` | 兼容性 SSOT（改造完成后回写） |
+| 关联 | `prd-admin/src/pages/_dev/MobileAuditPage.tsx` | 回归审计工具 |
