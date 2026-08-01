@@ -308,6 +308,11 @@ await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
         .Ascending("Provider")
         .Ascending("ProviderRequestId"),
     new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_request" }));
+await logs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+    Builders<BsonDocument>.IndexKeys
+        .Ascending("TenantId")
+        .Ascending("ProviderTaskId"),
+    new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_task" }));
 await serviceKeyRateWindows.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<BsonDocument>(
@@ -1796,6 +1801,8 @@ app.MapGet("/gw/logs/summary", async (
         .Include("HttpMethod")
         .Include("Path")
         .Include("IsHealthProbe")
+        .Include("Model")
+        .Include("Provider")
         .Include("ProviderAttempts");
     var docs = await logs.Find(filter).Project(projection).ToListAsync();
     var physicalDocs = await logs.Find(physicalFilter).Project(projection).ToListAsync();
@@ -2197,30 +2204,46 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
     }
     if (!string.IsNullOrWhiteSpace(detail.ProviderTaskId))
     {
-        var escapedProviderTaskId = System.Text.RegularExpressions.Regex.Escape(detail.ProviderTaskId);
-        relatedFilters.Add(Builders<BsonDocument>.Filter.Or(
-            Builders<BsonDocument>.Filter.Eq("ProviderTaskId", detail.ProviderTaskId),
-            Builders<BsonDocument>.Filter.Regex(
-                "Path",
-                new BsonRegularExpression($"(^|/){escapedProviderTaskId}(/|$)"))));
+        relatedFilters.Add(Builders<BsonDocument>.Filter.Eq("ProviderTaskId", detail.ProviderTaskId));
     }
     if (relatedFilters.Count > 0)
     {
         var relatedFilter = TenantAccess.FilterTeamScope(
             http,
             Builders<BsonDocument>.Filter.Or(relatedFilters));
+        var relatedProjection = Builders<BsonDocument>.Projection
+            .Include("Operation")
+            .Include("RequestType")
+            .Include("HttpMethod")
+            .Include("Path")
+            .Include("ProviderTaskId")
+            .Include("Model")
+            .Include("Provider")
+            .Include("ProviderReportedCost")
+            .Include("ProviderCostCurrency")
+            .Include("IsHealthProbe")
+            .Include("ProviderAttempts");
         var related = await logs.Find(relatedFilter)
-            .Project(Builders<BsonDocument>.Projection
-                .Include("Operation")
-                .Include("RequestType")
-                .Include("HttpMethod")
-                .Include("Path")
-                .Include("ProviderTaskId")
-                .Include("ProviderReportedCost")
-                .Include("ProviderCostCurrency")
-                .Include("IsHealthProbe")
-                .Include("ProviderAttempts"))
+            .Project(relatedProjection)
             .ToListAsync();
+        // 存量日志没有 ProviderTaskId 时才走路径回退，避免把不可索引正则放进常规 OR 查询。
+        if (!string.IsNullOrWhiteSpace(detail.ProviderTaskId) && related.Count == 1)
+        {
+            var escapedProviderTaskId = System.Text.RegularExpressions.Regex.Escape(detail.ProviderTaskId);
+            var legacyPathFilter = TenantAccess.FilterTeamScope(
+                http,
+                Builders<BsonDocument>.Filter.Regex(
+                    "Path",
+                    new BsonRegularExpression($"(^|/){escapedProviderTaskId}(/|$)")));
+            var legacyRelated = await logs.Find(legacyPathFilter)
+                .Project(relatedProjection)
+                .ToListAsync();
+            related = related
+                .Concat(legacyRelated)
+                .GroupBy(item => item.GetStringOrEmpty("_id"), StringComparer.Ordinal)
+                .Select(group => group.First())
+                .ToList();
+        }
         var relatedAttempts = related
             .SelectMany(MapProviderAttempts)
             .Where(IsUpstreamProviderAttempt)

@@ -3278,13 +3278,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("detail.UpstreamCallCount = relatedAttempts.Count", console);
         Assert.Contains("relatedAttempts.LongCount(IsProviderPollAttempt)", console);
         Assert.Contains(".Include(\"ProviderAttempts\")", console);
+        Assert.Contains(".Include(\"Model\")", console);
+        Assert.Contains(".Include(\"Provider\")", console);
         Assert.Contains("var logicalRequestId = detail.LogicalRequestId;", console);
         Assert.DoesNotContain("detail.LogicalRequestId ?? detail.RunId", console);
         Assert.DoesNotContain("Filter.Eq(\"RunId\", logicalRequestId)", console);
+        Assert.Contains("idx_llmgw_logs_tenant_provider_task", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"ProviderTaskId\", detail.ProviderTaskId)", console);
+        Assert.Contains("related.Count == 1", console);
+        Assert.Contains("var legacyPathFilter", console);
         Assert.Contains("_logWriter.BindProviderTaskAsync", videoClient);
         Assert.Contains("fallbackLogicalRequestId: jobId", videoClient);
         Assert.Contains("log => log.ProviderTaskId", logWriter);
         Assert.Contains("log => log.LogicalRequestId", logWriter);
+        Assert.DoesNotContain("?? request.Context?.RunId\n                        ?? request.Context?.RequestId", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
 
         const string sceneMethodSignature = "internal async Task ProcessSceneRenderAsync(";
         var sceneStart = worker.IndexOf(sceneMethodSignature, StringComparison.Ordinal);

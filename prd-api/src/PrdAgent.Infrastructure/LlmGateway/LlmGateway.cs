@@ -3427,7 +3427,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PromptPolicyHash: request.Context?.PromptPolicyHash,
                     Operation: GatewayOperations.Invoke,
                     LogicalRequestId: request.Context?.LogicalRequestId
-                        ?? request.Context?.RunId
                         ?? request.Context?.RequestId,
                     ProviderTaskId: request.Context?.ProviderTaskId,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
@@ -3808,7 +3807,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ServiceKeyPrefix: request.Context?.ServiceKeyPrefix,
                     Operation: ResolveRawOperation(request, endpoint),
                     LogicalRequestId: request.Context?.LogicalRequestId
-                        ?? request.Context?.RunId
                         ?? request.Context?.RequestId,
                     ProviderTaskId: request.Context?.ProviderTaskId,
                     // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
