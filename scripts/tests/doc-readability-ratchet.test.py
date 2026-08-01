@@ -1016,6 +1016,25 @@ for name in sorted(os.listdir(doc_dir)):
         continue
     ledger = open(os.path.join(doc_dir, name), encoding="utf-8").read()
     settled_open += [f"{name}::{x}" for x in settled_residuals(ledger)]
+# 嵌套链接是坏 Markdown（渲染出多余方括号、点击目标不确定），
+# 多半是批量改写在链接文字里又套了一层。全库零容忍。
+# 逐行匹配，且先把行内代码挖掉：`[[xxx]]` 这种 wikilink 写法常出现在
+# 代码引用里，跨行通配会把它和后面的链接连成假嵌套。
+NESTED_LINK = re.compile(r"\[[^\]\n]*\[[^\]\n]*\]\([^)\n]*\)[^\]\n]*\]\([^)\n]*\)")
+CODE_SPAN_MASK = re.compile(r"`[^`\n]*`")
+nested: list[str] = []
+for name in sorted(os.listdir(doc_dir)):
+    if not name.endswith(".md"):
+        continue
+    for line in open(os.path.join(doc_dir, name), encoding="utf-8"):
+        m = NESTED_LINK.search(CODE_SPAN_MASK.sub("", line))
+        if m:
+            nested.append(f"{name}: {m.group(0)[:60]}")
+check(not nested, f"doc/ 里没有嵌套链接（{nested[:3]}）")
+check(NESTED_LINK.search("[[a](./a.md)](a.md)") is not None
+      and NESTED_LINK.search("[a](./a.md) 和 [b](./b.md)") is None,
+      "嵌套链接判据认得出真嵌套、不误伤同一行的两个正常链接")
+
 check(not settled_open, f"「已结清」区里没有还没做完的账（误埋：{settled_open[:3]}）")
 
 # 生成器的「整份覆盖写」目标不许是入库文档：文档合并时把某个已删的生成物路径

@@ -19,7 +19,7 @@
 | **"我要亲手做一个 Agent"**（推荐起点） | 本文 ↓，或直接在终端敲 `/help` 启动陪伴式引导 |
 | 只想把代码跑起来、不涉及 Agent 开发 | [`README.md`](../README.md) → "Quick Start" |
 | 想 30 秒扫完"项目在讲什么" | [`README.md`](../README.md) 顶部 + [`.cursorrules`](../.cursorrules) |
-| 想知道产品愿景和方法论由来 | [[doc/spec.project-vision.md](./spec.project-vision.md)](spec.project-vision.md)（"四味药" 故事） |
+| 想知道产品愿景和方法论由来 | [doc/spec.project-vision.md](./spec.project-vision.md)（"四味药" 故事） |
 | 想查当前平台有什么功能/集合/模式 | [`.claude/rules/codebase-snapshot.md`](../.claude/rules/codebase-snapshot.md) |
 | 想查 8 个 appKey 的权威清单 | [`.claude/rules/app-identity.md`](../.claude/rules/app-identity.md) |
 

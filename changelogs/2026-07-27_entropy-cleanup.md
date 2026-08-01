@@ -9,3 +9,4 @@
 | fix | scripts | 带行号的源码路径不重复计数，--fix-links 跳过范围与检测端对齐 |
 | fix | scripts | 面包屑扫描按 NUL 读跟踪文件（中文名不再被静默跳过），技能 frontmatter 每个键都查 YAML 语法 |
 | fix | scripts | 缩进代码块判据认制表符，流式集合括号按同类配对判 |
+| fix | doc | 修一处嵌套坏链并加全库零容忍守卫 |
