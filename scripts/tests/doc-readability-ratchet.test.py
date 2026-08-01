@@ -305,6 +305,18 @@ ctrl_impl, _ = checker.scan_body(CTRL_SH)
 check(ctrl_impl == 3, f"带控制流的 shell 按实现计数（实测 {ctrl_impl} 行）")
 check(checker.shell_script_lines("ts", ["for x in y; do", "done"]) == 0,
       "非 shell 语言不走 shell 判据（各算各的，不重复计数）")
+# 没写闭合行的围栏在 Markdown 里一直开到文末，缓冲里的块也得结算
+UNCLOSED_SH = "# 示例 · 指南\n\n```bash\n" + "".join(f"echo {i}\n" for i in range(20))
+unclosed_impl, _ = checker.scan_body(UNCLOSED_SH)
+check(unclosed_impl == 20, f"没闭合的 shell 围栏在文末结算（实测 {unclosed_impl} 行）")
+
+# 列表项里的围栏（- ```ts / 1. ```ts）同样是围栏
+LIST_FENCE = "# 示例 · 指南\n\n- ```ts\n  const a = 1;\n  const b = 2;\n  ```\n"
+list_impl, _ = checker.scan_body(LIST_FENCE)
+check(list_impl == 2, f"列表项里的实现代码照样计数（实测 {list_impl} 行）")
+for prefix in ("- ```ts", "1. ```ts", "> - ```ts", "  * ```ts"):
+    check(checker.fence_delim(prefix) is not None, f"「{prefix}」认得出是围栏")
+check(checker.fence_delim("正文里的 - 号不是列表") is None, "散文里的连字符不会被当成列表前缀")
 
 TILDE_IMPL = "# 示例 · 指南\n\n~~~typescript\nconst a = 1;\nconst b = 2;\n~~~\n"
 BACKTICK_IMPL = TILDE_IMPL.replace("~~~", "```")
@@ -594,6 +606,11 @@ with tempfile.TemporaryDirectory() as tmp:
                  "或者说「导出」「出个表」这类话时触发，产出一份可下载的表格。'\n---\n")
     check(not checker.check_skill(wrong_name),
           "整句用引号包起来就放行（没误伤把触发词写成「Trigger words:」的正常写法）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write('---\nname: demo-skill\ndescription: "用户说导出报表时触发，'
+                 '产出一份可下载的表格；路径写成 C:\\q 这种 YAML 不认的转义。"\n---\n')
+    check(any("不是合法 YAML" in p for p in checker.check_skill(wrong_name)),
+          "引号标量里 YAML 不认的转义被抓出（判定得真接进 check_skill，不能只写个函数）")
 
 # 手写判据要跟真 YAML 解析器对答案，否则它只是「我以为的 YAML」
 YAML_CASES = [
@@ -628,6 +645,28 @@ if _yaml is not None:
             mismatched.append((case, yaml_ok, ours_ok))
     check(not mismatched, f"手写标量判据与 PyYAML 对得上（分歧：{mismatched}）")
     check(len(YAML_CASES) >= 8, f"对答案的用例覆盖了正反两面（实测 {len(YAML_CASES)} 条）")
+    # 引号标量的转义同样要跟 PyYAML 对答案：把任意 \x 都当合法转义放行的话，
+    # `\q` 这种 YAML 直接报错、宿主加载不到，判据却读到一段正常描述。
+    QUOTED_CASES = [
+        '"一句正常的描述"',
+        '"值里有 \\q 这种 YAML 不认的转义"',
+        '"换行转义 \\n 是合法的"',
+        '"十六进制 \\x41 合法"',
+        '"半个十六进制 \\xZZ 不合法"',
+        "'单引号里 \\q 只是两个普通字符'",
+        '"引号没闭合',
+    ]
+    quoted_mismatch = []
+    for case in QUOTED_CASES:
+        try:
+            _yaml.safe_load(f"description: {case}")
+            yaml_ok = True
+        except Exception:
+            yaml_ok = False
+        ours_ok = checker.quoted_scalar_problem(case) is None
+        if yaml_ok != ours_ok:
+            quoted_mismatch.append((case, yaml_ok, ours_ok))
+    check(not quoted_mismatch, f"引号标量的转义判据与 PyYAML 对得上（分歧：{quoted_mismatch}）")
 
 check(checker.yaml_scalar('"Use when the user says \\"export\\" and wants a file"')
       == 'Use when the user says "export" and wants a file',

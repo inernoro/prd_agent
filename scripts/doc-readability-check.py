@@ -106,12 +106,14 @@ NON_FILE_TARGET = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*(.*)$")
 # 引用块里的围栏（> ```ts）在 Markdown 里照样是围栏。不剥这层前缀的话，
 # 把实现代码往引用块里一放就绕过了实现代码棘轮，链接扫描还会伸进示例里。
-CONTAINER_PREFIX = re.compile(r"^(?: {0,3}>)+ ?")
+# 容器前缀：引用块 `>` 与列表项标记 `- ` / `1. `。列表项第一块就是围栏时
+# （`- ```ts`），不剥这层前缀同样识别不出来。两种前缀可以叠加（`> - ```ts`）。
+CONTAINER_PREFIX = re.compile(r"^(?: {0,3}(?:>|[-*+] |\d{1,9}[.)] ))+")
 INDENTED_CODE = re.compile(r"^ {4,}\S")
 
 
 def strip_container(line: str) -> str:
-    """剥掉引用块前缀，留下容器内的那一行（缩进语义交给 FENCE_OPEN 判）。"""
+    """剥掉引用块与列表项前缀，留下容器内的那一行（缩进语义交给 FENCE_OPEN 判）。"""
     return CONTAINER_PREFIX.sub("", line, count=1)
 
 
@@ -373,6 +375,9 @@ def scan_body(text: str) -> tuple[int, int]:
             continue
         pointer_cols = set()
         src_refs += len(SOURCE_PATH.findall(raw)) + len(SOURCE_LINEREF.findall(raw))
+    # 没闭合的围栏在 Markdown 里一直开到文末，缓冲里的 shell 块也得结算 ——
+    # 不结算的话，不写闭合行就等于让整段脚本从棘轮里消失。
+    impl_lines += shell_script_lines(lang, shell_buf)
     return impl_lines, src_refs
 
 
@@ -607,6 +612,49 @@ def check_rule_text(text: str) -> list[str]:
     return problems
 
 
+# 双引号标量里合法的转义字符（YAML 1.2）。判据把任意 \x 都当成转义放行的话，
+# `\q` 这种在 YAML 里是语法错误、宿主加载不到，而判据读到的是一段挺正常的描述。
+YAML_ESCAPES = set('0abtnvfre"/\\N_LP \t\n')
+YAML_HEX_ESCAPES = {"x": 2, "u": 4, "U": 8}
+
+
+def quoted_scalar_problem(raw: str) -> str | None:
+    """引号标量里会让 YAML 解析器报错的形状：非法转义、引号没闭合。"""
+    value = raw.strip()
+    if value[:1] not in ('"', "'"):
+        return None
+    quote = value[0]
+    i, closed = 1, False
+    while i < len(value):
+        ch = value[i]
+        if quote == '"' and ch == "\\":
+            nxt = value[i + 1:i + 2]
+            if not nxt:
+                return "值里有落单的反斜杠（双引号标量的转义没写完）"
+            if nxt in YAML_HEX_ESCAPES:
+                width = YAML_HEX_ESCAPES[nxt]
+                digits = value[i + 2:i + 2 + width]
+                if len(digits) < width or not all(c in "0123456789abcdefABCDEF" for c in digits):
+                    return f"值里的 \\{nxt} 后面不是 {width} 位十六进制，YAML 会报错"
+                i += 2 + width
+                continue
+            if nxt not in YAML_ESCAPES:
+                return f"值里有 YAML 不认的转义「\\{nxt}」，反斜杠要写成 \\\\ 或换单引号"
+            i += 2
+            continue
+        if ch == quote:
+            if quote == "'" and value[i + 1:i + 2] == "'":
+                i += 2
+                continue
+            closed = True
+            i += 1
+            break
+        i += 1
+    if not closed:
+        return "引号没有闭合"
+    return None
+
+
 def plain_scalar_problem(raw: str) -> str | None:
     """未加引号的 YAML 平文标量里，会让解析器直接报错的那几种形状。
 
@@ -691,7 +739,9 @@ def check_skill(path: str) -> list[str]:
     # 宿主根本读不到的东西。
     for key in ("name", "description"):
         head = re.search(rf"^{key}\s*:(.*)$", fm, re.M)
-        bad = plain_scalar_problem(head.group(1)) if head else None
+        bad = None
+        if head:
+            bad = plain_scalar_problem(head.group(1)) or quoted_scalar_problem(head.group(1))
         if bad:
             problems.append(f"frontmatter 的 {key} 不是合法 YAML：{bad}")
     name_match = re.search(r"^name\s*:(.*)$", fm, re.M)
