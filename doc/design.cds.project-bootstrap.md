@@ -114,7 +114,7 @@ CDS  GET /api/bootstrap/{preset}          现场生成引导脚本（内嵌 CDS 
               └──回源──> MAP /api/official-skills/{key}/download（匿名，已有）
      │
      ▼
-项目级技能目录（.claude/skills 或 .agents/skills 或 .cursor/skills）
+项目级技能目录（.claude/skills、.agents/skills、.cursor/skills——存在几个装几个，非二选一）
      │
      │  一句话：/sdd-init
      ▼

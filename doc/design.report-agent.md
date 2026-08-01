@@ -245,6 +245,7 @@
 | GET | `/api/report/reports/{id}/comments` | 获取评论列表 |
 | POST | `/api/report/reports/{id}/comments` | 发表评论 |
 | DELETE | `/api/report/reports/{reportId}/comments/{commentId}` | 删除评论 |
+| POST | `/api/report-agent/reports/{id}/comments/images` | 上传评论图片（有权查看该周报即可上传，不限作者与状态；≤5MB，白名单 MIME；返回 `attachmentId` 供创建评论时填入 `attachmentIds`） |
 | GET | `/api/report/reports/{id}/likes` | 获取点赞列表 |
 | POST | `/api/report/reports/{id}/likes` | 点赞 |
 | DELETE | `/api/report/reports/{id}/likes` | 取消点赞 |
