@@ -716,6 +716,37 @@ def quoted_scalar_problem(raw: str) -> str | None:
     return None
 
 
+def frontmatter_syntax_problem(raw: str) -> str | None:
+    """任何一个键的值里，会让 YAML 解析器报错的形状（不限 name / description）。
+
+    宿主解析的是整份 frontmatter：`allowed-tools: [unclosed` 一坏，整个技能
+    都加载不了，而只挑两个字段查的判据照样报绿。
+    """
+    value = raw.strip()
+    if not value or value[:1] in ("|", ">", "#"):
+        return None                       # 折叠块与整行注释各有各的规则
+    if value[:1] in ("[", "{"):
+        pairs = {"[": "]", "{": "}"}
+        depth = 0
+        for ch in value:
+            if ch in "[{":
+                depth += 1
+            elif ch in "]}":
+                depth -= 1
+        if depth != 0:
+            return f"流式集合没有闭合（缺 {pairs[value[0]]}）"
+        return None
+    if value[:1] in ("\"", "'"):
+        return quoted_scalar_problem(value)
+    if ": " in value or value.endswith(":"):
+        return "值里有没加引号的「: 」，YAML 会当成嵌套键直接报错（整句用引号包起来）"
+    if value[0] in "@`":
+        return f"值以 YAML 保留字符「{value[0]}」开头，必须加引号"
+    if value[0] in "&*!" and len(value) > 1:
+        return f"值以 YAML 指示符「{value[0]}」开头（锚点/别名/标签），必须加引号"
+    return None
+
+
 def plain_scalar_problem(raw: str) -> str | None:
     """未加引号的 YAML 平文标量里，会让解析器直接报错的那几种形状。
 
@@ -797,14 +828,18 @@ def check_skill(path: str) -> list[str]:
         if len(re.findall(rf"^{key}\s*:", fm, re.M)) > 1:
             problems.append(f"frontmatter 里 {key} 写了多遍（判据看第一处、YAML 取最后一处，必须去重）")
     # 语法先于内容：frontmatter 本身解析不了的话，下面所有字段判定都是在读一份
-    # 宿主根本读不到的东西。
-    for key in ("name", "description"):
-        head = re.search(rf"^{key}\s*:(.*)$", fm, re.M)
-        bad = None
-        if head:
-            bad = plain_scalar_problem(head.group(1)) or quoted_scalar_problem(head.group(1))
+    # 宿主根本读不到的东西。宿主解析的是整份 frontmatter，所以每个键都要查 ——
+    # 只挑 name / description 两个的话，别的键写坏了同样加载不了却报绿。
+    for line in fm.splitlines():
+        kv = re.match(r"^([\w.-]+)\s*:(.*)$", line)
+        if not kv:
+            continue
+        bad = frontmatter_syntax_problem(kv.group(2))
+        if not bad and kv.group(1) in ("name", "description"):
+            # 这两个必须是字符串：写成流式集合语法虽然能解析，但值不是一句话
+            bad = plain_scalar_problem(kv.group(2))
         if bad:
-            problems.append(f"frontmatter 的 {key} 不是合法 YAML：{bad}")
+            problems.append(f"frontmatter 的 {kv.group(1)} 不是合法 YAML：{bad}")
     name_match = re.search(r"^name\s*:(.*)$", fm, re.M)
     if not name_match:
         problems.append("frontmatter 缺 name")

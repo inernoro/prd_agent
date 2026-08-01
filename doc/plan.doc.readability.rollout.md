@@ -14,7 +14,7 @@
 
 | 阶段 | 进度 | 状态 | 当前 blocker | 下一步 | 验收证据 |
 |------|------|------|--------------|--------|----------|
-| 波 0 标准与闸门 | 100% | 已落地 | 无 | — | 判据 [rule.doc.readability.md](./rule.doc.readability.md)；守卫 `scripts/tests/doc-readability-ratchet.test.py`（212 项全绿；review 过程中随判据收口从 61 项加到这个数）；CI `docs-readability` 已并入 CI Status |
+| 波 0 标准与闸门 | 100% | 已落地 | 无 | — | 判据 [rule.doc.readability.md](./rule.doc.readability.md)；守卫 `scripts/tests/doc-readability-ratchet.test.py`（215 项全绿；review 过程中随判据收口从 61 项加到这个数）；CI `docs-readability` 已并入 CI Status |
 | 波 1 引用可点 | 100% | 已落地 | 无 | — | 791 处裸引用改写为链接，死链 0；红绿闭环已验（临时插入裸引用与死链均触发 fail） |
 | 波 2 高频入口回填 | 100% | 已落地 | 无 | — | `guide.` 66/66、`spec.` 21/21 全部带导读三行；读者最多的两类清零 |
 | 波 3 规则与债务 | 100% | 已落地 | 无 | — | `rule.` 27/27、`debt.` 全部带导读三行（当时 75 册，波 7 后为 36 册）；顺手清掉一处遗留表情符号 |

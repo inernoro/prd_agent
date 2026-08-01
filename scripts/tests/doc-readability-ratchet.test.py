@@ -648,6 +648,15 @@ with tempfile.TemporaryDirectory() as tmp:
                  '产出一份可下载的表格；路径写成 C:\\q 这种 YAML 不认的转义。"\n---\n')
     check(any("不是合法 YAML" in p for p in checker.check_skill(wrong_name)),
           "引号标量里 YAML 不认的转义被抓出（判定得真接进 check_skill，不能只写个函数）")
+    # 宿主解析的是整份 frontmatter：别的键写坏了，技能同样加载不了
+    good_desc = "这是一段足够长的描述，说清了这个技能在什么场景下会被触发、以及它会产出什么东西。"
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write(f"---\nname: demo-skill\nallowed-tools: [Read, Write\ndescription: {good_desc}\n---\n")
+    check(any("allowed-tools" in p and "不是合法 YAML" in p for p in checker.check_skill(wrong_name)),
+          "name / description 之外的键写坏了也被抓出（宿主解析的是整份 frontmatter）")
+    with open(wrong_name, "w", encoding="utf-8") as fh:
+        fh.write(f"---\nname: demo-skill\nallowed-tools: [Read, Write]\ndescription: {good_desc}\n---\n")
+    check(not checker.check_skill(wrong_name), "写法正确的流式集合放行（没误伤 allowed-tools 的正常写法）")
 
 # 手写判据要跟真 YAML 解析器对答案，否则它只是「我以为的 YAML」
 YAML_CASES = [
@@ -862,8 +871,15 @@ FIXTURE_NAMES = {"x.md", "guide.md", "sample.md", "visible.md", "design.foo.md",
 # 不再列扩展名 —— 列举必然列漏（html 模板、生成的 json 里都真有 doc/ 面包屑）。
 # 改成「凡是能按 UTF-8 读出来的 git 跟踪文件都扫」，二进制自然被 decode 挡掉。
 SKIP_PREFIXES = ("scripts/tests/", "doc/", "changelogs/", "CHANGELOG.md")  # 已冻结的历史记录不改
-tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
-                         capture_output=True, text=True).stdout.split()
+# -z 不能省：中文名 / 带空格的路径会被 git 加引号转义，按空白切分喂给 open()
+# 只会静默失败 —— 32 个真实跟踪文件因此从没被扫过，而守卫照样报绿。
+tracked = [p for p in subprocess.run(["git", "ls-files", "-z"], cwd=REPO_ROOT,
+                                     capture_output=True, text=True).stdout.split("\0") if p]
+# 每条路径都必须真实存在：按空白切分时，中文名/带空格的路径会碎成不存在的
+# 片段，open() 静默失败，扫描少扫几十个文件却照样报绿。
+broken_paths = [p for p in tracked if not os.path.exists(os.path.join(REPO_ROOT, p))]
+check(not broken_paths, f"git 列出的每条路径都能直接打开（碎片：{broken_paths[:3]}）")
+
 dangling: dict[str, set[str]] = {}
 scanned = 0
 for rel in tracked:
