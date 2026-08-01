@@ -255,6 +255,7 @@ export type ProviderAttempt = {
   modelGroupName?: string | null;
   protocol?: string | null;
   transport?: string | null;
+  reachedProvider?: boolean | null;
   status: string;
   reason?: string | null;
   statusCode?: number | null;

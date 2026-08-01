@@ -459,6 +459,23 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         self.assertIn('href="#总缺口账本">查看完整缺口账本</a>', content)
         self.assertEqual([], archive_report._interactive_evidence_errors(content, self.manifest))
 
+    def test_failed_report_uses_numbered_canonical_defect_heading(self):
+        content = archive_report.build_interactive_html(
+            "Commit验收 · 编号缺陷章节",
+            "fail",
+            """
+## 8. 缺陷清单（P0-P3）
+
+| ID | 严重级 | 现象 |
+|---|---|---|
+| D-1 | P2 | 请求计数错误 |
+""",
+            [],
+            figure_srcs={},
+        )
+        self.assertIn('href="#8-缺陷清单-p0-p3">查看正文缺陷清单</a>', content)
+        self.assertEqual([], archive_report._interactive_evidence_errors(content, []))
+
     def test_any_unresolved_internal_link_is_rejected(self):
         content = self.build("覆盖缺口").replace(
             'href="#覆盖缺口">查看完整缺口账本</a>',

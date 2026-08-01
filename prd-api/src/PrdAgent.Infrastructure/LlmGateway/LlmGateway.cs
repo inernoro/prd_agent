@@ -390,6 +390,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 var attemptStartedAt = DateTime.UtcNow;
+                MarkLastSendAttemptReachedProvider(providerAttempts);
                 response = await httpClient.SendAsync(httpRequest, ct);
                 responseBody = await response.Content.ReadAsStringAsync(ct);
                 var attemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
@@ -632,6 +633,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 Exception? sendException = null;
                 var attemptStartedAt = DateTime.UtcNow;
+                MarkLastSendAttemptReachedProvider(providerAttempts);
                 try
                 {
                     rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -1763,6 +1765,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 request.IsMultipart);
 
             var submitStartedAt = DateTime.UtcNow;
+            MarkLastSendAttemptReachedProvider(rawProviderAttempts);
             var response = await httpClient.SendAsync(httpRequest, ct);
 
             // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）。
@@ -1890,6 +1893,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 submitStartedAt = DateTime.UtcNow;
+                MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                 response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
                 contentType = response.Content.Headers.ContentType?.MediaType ?? "";
                 rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
@@ -4016,6 +4020,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupName = resolution.ModelGroupName,
             Protocol = resolution.Protocol,
             Transport = transport,
+            ReachedProvider = false,
             Status = "sent",
             Reason = resolution.IsFallback ? resolution.FallbackReason : resolution.ResolutionReason,
         });
@@ -4031,6 +4036,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string? error)
     {
         var attempts = BuildProviderAttempts(resolution, requestTransport);
+        MarkLastSendAttemptReachedProvider(attempts);
         CompleteLastSendAttempt(attempts, statusCode, durationMs, error);
         return attempts;
     }
@@ -4060,6 +4066,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupName = resolution.ModelGroupName,
             Protocol = resolution.Protocol,
             Transport = transport,
+            ReachedProvider = string.Equals(stage, "poll", StringComparison.OrdinalIgnoreCase),
             Status = statusOverride
                      ?? (statusCode >= 200 && statusCode < 300 && string.IsNullOrWhiteSpace(error)
                          ? "succeeded"
@@ -4090,6 +4097,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupName = resolution.ModelGroupName,
             Protocol = resolution.Protocol,
             Transport = transport,
+            ReachedProvider = false,
             Status = "sent",
             Reason = reason,
         });
@@ -4132,6 +4140,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupName = resolution.ModelGroupName,
             Protocol = resolution.Protocol,
             Transport = transport,
+            ReachedProvider = false,
             Status = "sent",
             Reason = resolution.IsFallback ? resolution.FallbackReason : resolution.ResolutionReason,
         });
@@ -4157,6 +4166,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         attempt.Status = statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
         if (!string.IsNullOrWhiteSpace(error))
             attempt.Reason = error;
+    }
+
+    private static void MarkLastSendAttemptReachedProvider(List<LlmProviderAttempt> attempts)
+    {
+        var attempt = attempts.LastOrDefault(x => string.Equals(x.Stage, "send", StringComparison.OrdinalIgnoreCase));
+        if (attempt is not null)
+            attempt.ReachedProvider = true;
     }
 
     #endregion

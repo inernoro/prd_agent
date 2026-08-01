@@ -9544,8 +9544,9 @@ static bool IsBusinessOperation(string operation)
     => operation is "invoke" or "submit";
 
 static bool IsUpstreamProviderAttempt(ProviderAttemptDto attempt)
-    => string.Equals(attempt.Stage, "send", StringComparison.OrdinalIgnoreCase)
-       || IsProviderPollAttempt(attempt);
+    => (string.Equals(attempt.Stage, "send", StringComparison.OrdinalIgnoreCase)
+        || IsProviderPollAttempt(attempt))
+       && attempt.ReachedProvider != false;
 
 static bool IsProviderPollAttempt(ProviderAttemptDto attempt)
     => string.Equals(attempt.Stage, "poll", StringComparison.OrdinalIgnoreCase);
@@ -10030,6 +10031,7 @@ static List<ProviderAttemptDto> MapProviderAttempts(BsonDocument d)
                 ModelGroupName = doc.AsNullableString("ModelGroupName"),
                 Protocol = doc.AsNullableString("Protocol"),
                 Transport = doc.AsNullableString("Transport"),
+                ReachedProvider = doc.AsNullableBool("ReachedProvider"),
                 Status = doc.AsNullableString("Status") ?? "selected",
                 Reason = doc.AsNullableString("Reason"),
                 StatusCode = doc.AsNullableInt("StatusCode"),
@@ -10070,6 +10072,7 @@ static List<ProviderAttemptDto> BuildFallbackProviderAttempts(BsonDocument d)
             ModelGroupName = d.AsNullableString("ModelGroupName"),
             Protocol = d.AsNullableString("Protocol"),
             Transport = d.AsNullableString("GatewayTransport"),
+            ReachedProvider = true,
             Status = d.AsNullableString("Status") == "failed" ? "failed" : "sent",
             Reason = d.AsNullableString("FallbackReason") ?? d.AsNullableString("ResolutionReason"),
             StatusCode = d.AsNullableInt("StatusCode"),

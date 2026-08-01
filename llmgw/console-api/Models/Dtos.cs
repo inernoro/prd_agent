@@ -296,6 +296,7 @@ public sealed class ProviderAttemptDto
     public string? ModelGroupName { get; set; }
     public string? Protocol { get; set; }
     public string? Transport { get; set; }
+    public bool? ReachedProvider { get; set; }
     public string Status { get; set; } = "selected";
     public string? Reason { get; set; }
     public int? StatusCode { get; set; }

@@ -3273,6 +3273,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Include(\"ProviderAttempts\")", console);
         Assert.Contains(".SelectMany(MapProviderAttempts)", console);
         Assert.Contains("UpstreamCalls = physicalAttempts.Count", console);
+        Assert.Contains("attempt.ReachedProvider != false", console);
+        Assert.Contains("ReachedProvider = doc.AsNullableBool(\"ReachedProvider\")", console);
         Assert.Contains("StatusQueries = physicalDocs.LongCount(d => ResolveLogOperation(d) == \"status\") + internalStatusQueries", console);
         Assert.Contains("new BsonRegularExpression($\"(^|/){escapedProviderTaskId}(/|$)\")", console);
         Assert.Contains("detail.UpstreamCallCount = relatedAttempts.Count", console);

@@ -1360,9 +1360,11 @@ def _collect_problem_items(markdown, manifest):
     def section_table_rows(section_name):
         in_section = False
         table_rows = []
+        heading_suffix = r"(?:[（(]P0-P3[）)])?" if section_name == "缺陷清单" else ""
+        heading_pattern = rf"^##\s+(?:\d+\.\s*)?{re.escape(section_name)}{heading_suffix}\s*$"
         for line in (markdown or "").splitlines():
             stripped = line.strip()
-            if re.match(rf"^##\s+{re.escape(section_name)}(?:\s|$)", stripped):
+            if re.match(heading_pattern, stripped, re.I):
                 in_section = True
                 continue
             if in_section and stripped.startswith("## "):
@@ -1780,7 +1782,7 @@ def build_interactive_html(
         or section_anchor(r"^覆盖缺口(?:\s|$)")
         or section_anchor(r"缺口")
     )
-    defect_section_anchor = section_anchor(r"^缺陷清单(?:\s|$)")
+    defect_section_anchor = section_anchor(r"^(?:\d+\.\s*)?缺陷清单(?:[（(]P0-P3[）)])?(?:\s|$)")
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
         "conditional": ("有条件通过", "conditional"),
