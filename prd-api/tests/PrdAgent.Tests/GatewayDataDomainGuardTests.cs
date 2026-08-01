@@ -3266,12 +3266,22 @@ public class GatewayDataDomainGuardTests
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
         var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+        var videoClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/OpenRouterVideoClient.cs");
+        var logWriter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs");
 
         Assert.Contains("fb.Eq(\"Operation\", BsonNull.Value)", console);
         Assert.Contains(".Include(\"ProviderAttempts\")", console);
         Assert.Contains(".SelectMany(MapProviderAttempts)", console);
         Assert.Contains("UpstreamCalls = physicalAttempts.Count", console);
         Assert.Contains("StatusQueries = physicalDocs.LongCount(d => ResolveLogOperation(d) == \"status\") + internalStatusQueries", console);
+        Assert.Contains("new BsonRegularExpression($\"(^|/){escapedProviderTaskId}(/|$)\")", console);
+        Assert.Contains("detail.UpstreamCallCount = relatedAttempts.Count", console);
+        Assert.Contains("relatedAttempts.LongCount(IsProviderPollAttempt)", console);
+        Assert.Contains(".Include(\"ProviderAttempts\")", console);
+        Assert.Contains("_logWriter.BindProviderTaskAsync", videoClient);
+        Assert.Contains("fallbackLogicalRequestId: jobId", videoClient);
+        Assert.Contains("log => log.ProviderTaskId", logWriter);
+        Assert.Contains("log => log.LogicalRequestId", logWriter);
 
         const string sceneMethodSignature = "internal async Task ProcessSceneRenderAsync(";
         var sceneStart = worker.IndexOf(sceneMethodSignature, StringComparison.Ordinal);

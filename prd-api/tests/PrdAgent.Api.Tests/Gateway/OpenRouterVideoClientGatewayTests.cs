@@ -142,6 +142,37 @@ public class OpenRouterVideoClientGatewayTests
     }
 
     [Fact]
+    public async Task SubmitWithoutContext_ShouldBindProviderTaskAsLogicalFallback()
+    {
+        var gateway = new CapturingGateway();
+        var logWriter = new CapturingLogWriter();
+        var client = new OpenRouterVideoClient(
+            gateway,
+            new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            NullLogger<OpenRouterVideoClient>.Instance,
+            contextAccessor: null,
+            logWriter: logWriter);
+
+        var submit = await client.SubmitAsync(new OpenRouterVideoSubmitRequest
+        {
+            AppCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            Prompt = "直连视频任务",
+        });
+        var status = await client.GetStatusAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            submit.JobId!);
+
+        submit.Success.ShouldBeTrue(submit.ErrorMessage);
+        status.IsCompleted.ShouldBeTrue();
+        logWriter.BindCalls.ShouldBe(
+        [
+            ("submit-log-1", "job-123", "job-123")
+        ]);
+        gateway.RawCalls[0].Request.Context!.LogicalRequestId.ShouldBeNull();
+        gateway.RawCalls[1].Request.Context!.LogicalRequestId.ShouldBe("job-123");
+    }
+
+    [Fact]
     public async Task VolcengineVideoExchange_ShouldUseGatewayStatusAndDownloadSignedUrl()
     {
         var gateway = new CapturingGateway(new GatewayModelResolution
@@ -280,6 +311,7 @@ public class OpenRouterVideoClientGatewayTests
                     Success = true,
                     StatusCode = 200,
                     ContentType = "application/json",
+                    LogId = "submit-log-1",
                     Content = """
                               {"id":"job-123","usage":{"cost":0.12}}
                               """,
@@ -332,6 +364,36 @@ public class OpenRouterVideoClientGatewayTests
             string? pinnedPlatformId = null,
             string? pinnedModelId = null)
             => throw new NotSupportedException();
+    }
+
+    private sealed class CapturingLogWriter : ILlmRequestLogWriter
+    {
+        public List<(string LogId, string ProviderTaskId, string? FallbackLogicalRequestId)> BindCalls { get; } = [];
+
+        public Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default)
+            => Task.FromResult<string?>(null);
+
+        public Task BindProviderTaskAsync(
+            string logId,
+            string providerTaskId,
+            string? fallbackLogicalRequestId = null,
+            CancellationToken ct = default)
+        {
+            BindCalls.Add((logId, providerTaskId, fallbackLogicalRequestId));
+            return Task.CompletedTask;
+        }
+
+        public void MarkFirstByte(string logId, DateTime at)
+        {
+        }
+
+        public void MarkDone(string logId, LlmLogDone done)
+        {
+        }
+
+        public void MarkError(string logId, string error, int? statusCode = null)
+        {
+        }
     }
 
     private sealed class CapturingHandler : HttpMessageHandler

@@ -17,6 +17,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<OpenRouterVideoClient> _logger;
     private readonly ILLMRequestContextAccessor? _contextAccessor;
+    private readonly ILlmRequestLogWriter? _logWriter;
     // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
     private GatewayModelResolution? _submitResolution;
     private string? _submitAppCallerCode;
@@ -25,12 +26,14 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         ILlmGateway gateway,
         IHttpClientFactory httpClientFactory,
         ILogger<OpenRouterVideoClient> logger,
-        ILLMRequestContextAccessor? contextAccessor = null)
+        ILLMRequestContextAccessor? contextAccessor = null,
+        ILlmRequestLogWriter? logWriter = null)
     {
         _gateway = gateway;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _contextAccessor = contextAccessor;
+        _logWriter = logWriter;
     }
 
     public async Task<OpenRouterVideoSubmitResult> SubmitAsync(OpenRouterVideoSubmitRequest request, CancellationToken ct = default)
@@ -135,6 +138,15 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                 Success = false,
                 ErrorMessage = "OpenRouter 响应缺少 id 字段"
             };
+        }
+
+        if (!string.IsNullOrWhiteSpace(rawResp.LogId) && _logWriter is not null)
+        {
+            await _logWriter.BindProviderTaskAsync(
+                rawResp.LogId,
+                jobId,
+                fallbackLogicalRequestId: jobId,
+                ct: ct);
         }
 
         double? cost = ReadCost(doc);

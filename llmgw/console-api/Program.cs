@@ -2202,11 +2202,12 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
     }
     if (!string.IsNullOrWhiteSpace(detail.ProviderTaskId))
     {
+        var escapedProviderTaskId = System.Text.RegularExpressions.Regex.Escape(detail.ProviderTaskId);
         relatedFilters.Add(Builders<BsonDocument>.Filter.Or(
             Builders<BsonDocument>.Filter.Eq("ProviderTaskId", detail.ProviderTaskId),
             Builders<BsonDocument>.Filter.Regex(
                 "Path",
-                new BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(detail.ProviderTaskId)))));
+                new BsonRegularExpression($"(^|/){escapedProviderTaskId}(/|$)"))));
     }
     if (relatedFilters.Count > 0)
     {
@@ -2222,10 +2223,16 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
                 .Include("ProviderTaskId")
                 .Include("ProviderReportedCost")
                 .Include("ProviderCostCurrency")
-                .Include("IsHealthProbe"))
+                .Include("IsHealthProbe")
+                .Include("ProviderAttempts"))
             .ToListAsync();
-        detail.UpstreamCallCount = related.Count;
-        detail.StatusQueryCount = related.LongCount(item => ResolveLogOperation(item) == "status");
+        var relatedAttempts = related
+            .SelectMany(MapProviderAttempts)
+            .Where(IsUpstreamProviderAttempt)
+            .ToList();
+        detail.UpstreamCallCount = relatedAttempts.Count;
+        detail.StatusQueryCount = related.LongCount(item => ResolveLogOperation(item) == "status")
+            + relatedAttempts.LongCount(IsProviderPollAttempt);
         detail.ProviderTaskId ??= related
             .Select(item => item.AsNullableString("ProviderTaskId") ?? InferProviderTaskId(item))
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
