@@ -321,6 +321,12 @@ SOURCE_PATH = re.compile(
 # 仓库根上的入口文件没有目录前缀（exec_dep.sh / quick.ps1 / cds-compose.yml），
 # 上面那条要求「目录/」所以一个都认不出来。这里按形状认而不是列一张名单 ——
 # 列名单等于新加一个根脚本判据就瞎（判据比它该管的范围窄的老形状）。
+# 技能与规则的「实现」本身就是 markdown：`.claude/skills/x/SKILL.md` 指的是那个
+# 技能的实现，不是一篇讲它的文档。所以这几个根要额外认 .md —— 产品目录下的 .md
+# 多半是说明文档，不在此列。
+SKILL_RULE_SOURCE = re.compile(
+    r"(?<![\w./-])(?:\.claude/skills|\.claude/rules|\.agents/skills|\.Codex/rules)"
+    r"/[\w./-]+\.md\b")
 ROOT_ENTRYPOINT = re.compile(
     r"(?<![\w./-])(?:[\w][\w.-]*\.(?:sh|ps1|sln|csproj)|[\w.-]*compose[\w.-]*\.ya?ml)(?![\w/])")
 SOURCE_LINEREF = re.compile(r"\.(?:cs|ts|tsx|js|py|rs):\d+")
@@ -349,6 +355,7 @@ def _pointer_columns(header: str) -> set[int]:
 def count_source_refs(text: str) -> int:
     """一行（或一个单元格）里散落的源码引用数：带目录的路径 + 行号引用 + 根上的入口文件。"""
     spans = [m.span() for m in SOURCE_PATH.finditer(text)]
+    spans += [m.span() for m in SKILL_RULE_SOURCE.finditer(text)]
 
     def overlaps(m) -> bool:
         return any(m.start() < e and s < m.end() for s, e in spans)
@@ -577,8 +584,8 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
     fence_kind: tuple[str, int] | None = None
     in_list = False
     for raw in text.splitlines(keepends=True):
-        delim = fence_delim(raw)
-        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
+        delim = fence_delim(raw, in_list)
+        if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw, in_list))):
             in_fence = not in_fence
             fence_kind = delim if in_fence else None
             out.append(raw)

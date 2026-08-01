@@ -362,6 +362,9 @@ check(checker.count_source_refs("这句话里没有任何路径") == 0, "普通�
 check(checker.count_source_refs("见 prd-admin/src/a.ts:10 这一处") == 1,
       "带行号的路径只算一处（路径与行号引用不重复计数）")
 check(checker.count_source_refs("见 a.ts:10 光有行号") == 1, "光有行号的引用仍算一处")
+check(checker.count_source_refs("见 .claude/skills/x/SKILL.md 这个技能") == 1,
+      "技能的实现就是 markdown，这类路径算散落引用")
+check(checker.count_source_refs("见 .Codex/rules/y.md 这条规则") == 1, "规则根同理")
 
 # 改写端的跳过范围必须与检测端一致，否则批量改写会动判据故意放过的示例
 FIX_SCOPE = ("# t\n\n正文一段。\n\n    示例里提到 rule.doc.readability.md 这一处\n\n"
@@ -369,6 +372,11 @@ FIX_SCOPE = ("# t\n\n正文一段。\n\n    示例里提到 rule.doc.readability
 fixed_text, fixed_n = checker.fix_links(FIX_SCOPE, {"rule.doc.readability.md"})
 check(fixed_n == 1 and "    示例里提到 rule.doc.readability.md" in fixed_text,
       f"--fix-links 不动顶层缩进代码块，只改列表里的那处（实测改了 {fixed_n} 处）")
+# 列表续行里的围栏，改写端也得认出来 —— 检测端认了、改写端没认，就会去改示例
+LIST_FENCE_FIX = ("# t\n\n- 某条目\n\n    ```markdown\n    示例里提到 rule.doc.readability.md\n    ```\n")
+_, list_fence_n = checker.fix_links(LIST_FENCE_FIX, {"rule.doc.readability.md"})
+check(list_fence_n == 0,
+      f"--fix-links 认得出列表续行里的围栏，不改里面的示例（实测改了 {list_fence_n} 处）")
 
 # 顶层缩进代码块不是正文；列表里的缩进续行仍是正文（一刀切会把嵌套列表里的死链藏起来）
 TOP_INDENTED = "# t\n\n正文一段。\n\n    [示例](./does-not-exist.md)\n"
@@ -1017,8 +1025,10 @@ def settled_residuals(ledger: str) -> list[str]:
             hits.append(f"{entry.group(1)}（标题写着 open）")
     for row in re.finditer(r"^\|.+\|$", settled, re.M):
         cells = [c.strip() for c in row.group(0).strip("|").split("|")]
-        if any(re.fullmatch(r"open(\(.*\))?", c, re.I) for c in cells):
-            hits.append(f"{cells[0]}（行状态 open）")
+        # 状态列写 open 只是其中一种说法：偿还中 / 进行中 / 待办 同样是没做完
+        if any(re.fullmatch(r"\**(?:open(\(.*\))?|偿还中.*|进行中.*|待办.*|未完成.*)\**", c, re.I)
+               for c in cells):
+            hits.append(f"{cells[0]}（行状态未结清）")
         if any(("残留边界" in c or c.startswith(("残留：", "遗留："))) for c in cells):
             hits.append(f"{cells[0]}（还留着没做完的尾巴，应挪回活账区）")
     return hits
@@ -1074,6 +1084,8 @@ check(not settled_residuals(SETTLED_HEAD + "| 1 | done | ~~某事~~ | — |\n"),
       "干净的已结清区不误报")
 check(settled_residuals(SETTLED_HEAD + "| 1 | open | 某事 | — |\n"),
       "行状态写 open 的行被抓出")
+check(settled_residuals(SETTLED_HEAD + "| 1 | **偿还中(2026-07-27)** | 某事 | — |\n"),
+      "行状态写「偿还中」同样被抓出（open 只是其中一种说法）")
 check(settled_residuals("## 已结清（供回溯）\n\n### 某小节（open）\n\n正文\n"),
       "小节标题自己写着（open）被抓出")
 check(settled_residuals(SETTLED_HEAD + "| 1 | done | ~~某事~~ | 残留边界：还有一半没做 |\n"),
