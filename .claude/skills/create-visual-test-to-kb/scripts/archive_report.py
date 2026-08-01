@@ -45,6 +45,7 @@ REPORT_KINDS = (
 
 DAILY_REQUIRED_SECTIONS = (
     "结论分层",
+    "缺陷分级速览",
     "昨日工作总结",
     "改动规模与深度预算",
     "标记法则与验收标准",
@@ -62,6 +63,12 @@ DAILY_CONCLUSION_FIELDS = (
     "发布建议",
     "判定性质",
 )
+DAILY_SEVERITY_SUMMARY_FIELDS = (
+    "严重级",
+    "数量",
+    "问题概述",
+)
+DAILY_SEVERITY_LEVELS = ("P0", "P1", "P2", "P3")
 DAILY_ROOT_CAUSE_FIELDS = (
     "目标要求",
     "观察事实",
@@ -767,6 +774,63 @@ def _daily_fact_signals(values, body):
     }
 
 
+def _daily_severity_summary_errors(values, body):
+    """Require a glanceable P0-P3 breakdown with a short summary per level."""
+    errors = []
+    headers, rows = _section_table(body, "缺陷分级速览")
+    normalized_headers = [re.sub(r"[`*_\s]", "", cell) for cell in headers]
+    if normalized_headers != list(DAILY_SEVERITY_SUMMARY_FIELDS):
+        return [
+            "[缺陷分级] 每日验收必须包含「缺陷分级速览」表，表头严格为："
+            + "、".join(DAILY_SEVERITY_SUMMARY_FIELDS)
+        ]
+
+    parsed = {}
+    for index, row in enumerate(rows, start=1):
+        if len(row) != len(DAILY_SEVERITY_SUMMARY_FIELDS):
+            errors.append(f"[缺陷分级] 第 {index} 行必须完整填写三列")
+            continue
+        severity = re.sub(r"[`*_\s]", "", row[0]).upper()
+        if severity not in DAILY_SEVERITY_LEVELS:
+            errors.append(f"[缺陷分级] 第 {index} 行严重级无效：{row[0]}")
+            continue
+        if severity in parsed:
+            errors.append(f"[缺陷分级] 严重级 {severity} 重复")
+            continue
+        count_text = re.sub(r"[`*_\s]", "", row[1])
+        if not re.fullmatch(r"\d+", count_text):
+            errors.append(f"[缺陷分级] {severity} 数量必须是非负整数")
+            continue
+        overview = re.sub(r"\s+", " ", row[2]).strip()
+        count = int(count_text)
+        if not overview:
+            errors.append(f"[缺陷分级] {severity} 缺少问题概述")
+        elif count > 0 and (
+            len(overview) < 4
+            or re.fullmatch(r"(?:无|暂无|没有|未发现|略|见缺陷清单|详见报告|[-—])", overview)
+        ):
+            errors.append(
+                f"[缺陷分级] {severity} 数量为 {count} 时必须简述代表性问题，不能只给数量"
+            )
+        parsed[severity] = (count, overview)
+
+    missing = [severity for severity in DAILY_SEVERITY_LEVELS if severity not in parsed]
+    if missing:
+        errors.append("[缺陷分级] 缺少严重级行：" + "、".join(missing))
+
+    product_counts = _severity_counts_from_text(values.get("产品质量", ""))
+    if product_counts is None or set(product_counts) != set(DAILY_SEVERITY_LEVELS):
+        errors.append(
+            "[缺陷分级] 产品质量必须填写 P0/P1/P2/P3=数字/数字/数字/数字，便于通知直接复用"
+        )
+    elif not missing:
+        summary_counts = {severity: parsed[severity][0] for severity in DAILY_SEVERITY_LEVELS}
+        if product_counts != summary_counts:
+            errors.append("[缺陷分级] 产品质量中的 P0-P3 数量与「缺陷分级速览」不一致")
+
+    return errors
+
+
 def _daily_conclusion_contract_errors(verdict, body):
     """Keep product quality, acceptance completeness and delivery judgment distinct.
 
@@ -788,6 +852,8 @@ def _daily_conclusion_contract_errors(verdict, body):
     for field in DAILY_CONCLUSION_FIELDS:
         if not values.get(field):
             errors.append(f"[结论语义] 「结论分层」缺少「{field}」字段或结果")
+
+    errors.extend(_daily_severity_summary_errors(values, body))
 
     nature = re.sub(r"[`*_\s]", "", values.get("判定性质", ""))
     allowed = VERDICT_NATURES.get(verdict, set())
