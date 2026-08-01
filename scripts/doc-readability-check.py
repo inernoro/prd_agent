@@ -165,7 +165,21 @@ def doc_type(name: str) -> str:
 # 标题与导读之间允许的「元信息」：版本行、appKey、关联实现、表格、分隔线、注释、徽章。
 # 除此之外的任何一行正文（散文、列表）都意味着导读迟到了。
 GUIDE_FIELD = re.compile(r"\*\*(?:一句话|本周一句话|谁该读|读完能做什么|什么时候撞上)\*\*\s*[：:]")
-HEADER_META = re.compile(r"^(\*\*[^*]+\*\*\s*[：:]|\||[-*_]{3,}|!\[|<!--|<img)")
+# 「加粗标签 + 冒号」这个形状不足以判定是元信息：`**背景**：……` 是正文，
+# 认了它，导读排在一段背景后面也照样过。所以按标签白名单认，不按形状认。
+META_LABEL = re.compile(
+    r"^(?:版本|日期|状态|创建|更新|更新日期|作者|负责人|主文档|路由|分支|技能|appKey|定位|子类型|"
+    r"难度|读者|目标读者|预计阅读|阅读时间|前置要求|统计基线|整改计划|生产环境|当前发布提交|当前教程基准版本|"
+    r"关联[\w一-龥]*|适用[\w一-龥]*|[\w一-龥]*范围)$")
+HEADER_META = re.compile(r"^(\||[-*_]{3,}|!\[|<!--|<img)")
+
+
+def is_header_meta(core: str) -> bool:
+    """这一行算不算「标题与导读之间允许的元信息」。"""
+    if HEADER_META.match(core):
+        return True
+    m = re.match(r"\*\*([^*]+)\*\*\s*[：:]", core)
+    return bool(m and META_LABEL.match(m.group(1).strip()))
 
 
 def header_lines(text: str):
@@ -203,7 +217,7 @@ def header_lines(text: str):
         # 正文一开张导读就迟到了：小节标题算正文，散文和列表也算；
         # 标题与导读之间只允许版本行那类元信息。
         if not GUIDE_FIELD.match(core) and (re.match(r"^#{2,6} ", line)
-                                            or not HEADER_META.match(core)):
+                                            or not is_header_meta(core)):
             break
         yield core
 
