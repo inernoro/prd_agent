@@ -76,8 +76,9 @@ pm-starter.zip
 
 ```bash
 curl -sSLo pm.zip "https://<域名>/api/official-skills/pm-starter/download"
-unzip -o pm.zip -d ~/.claude/skills/
-# 打开 Claude Code，说：/sdd-init
+# 装到项目级技能目录（.claude / .cursor / .agents，存在几个装几个，不写用户主目录）
+# 一键命令见 .claude/rules/skill-install-contract.md
+# 打开你的 AI 编码工具，说：/sdd-init
 ```
 
 API key 只在「往市场上传技能」时才需要，不挡在门口。
