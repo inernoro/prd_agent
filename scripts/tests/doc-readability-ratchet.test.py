@@ -336,6 +336,16 @@ check(checker.count_source_refs("改 cds-compose.yml 就行") == 1, "根上的 c
 check(checker.count_source_refs("见 cds/scripts/run.sh 一处") == 1,
       "带目录的路径不会被根判据重复计数")
 check(checker.count_source_refs("这句话里没有任何路径") == 0, "普通句子不误报")
+check(checker.count_source_refs("见 prd-admin/src/a.ts:10 这一处") == 1,
+      "带行号的路径只算一处（路径与行号引用不重复计数）")
+check(checker.count_source_refs("见 a.ts:10 光有行号") == 1, "光有行号的引用仍算一处")
+
+# 改写端的跳过范围必须与检测端一致，否则批量改写会动判据故意放过的示例
+FIX_SCOPE = ("# t\n\n正文一段。\n\n    示例里提到 rule.doc.readability.md 这一处\n\n"
+             "- 列表\n  - 见 rule.doc.readability.md 这一处\n")
+fixed_text, fixed_n = checker.fix_links(FIX_SCOPE, {"rule.doc.readability.md"})
+check(fixed_n == 1 and "    示例里提到 rule.doc.readability.md" in fixed_text,
+      f"--fix-links 不动顶层缩进代码块，只改列表里的那处（实测改了 {fixed_n} 处）")
 
 # 顶层缩进代码块不是正文；列表里的缩进续行仍是正文（一刀切会把嵌套列表里的死链藏起来）
 TOP_INDENTED = "# t\n\n正文一段。\n\n    [示例](./does-not-exist.md)\n"

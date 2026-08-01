@@ -32,7 +32,7 @@
     "design": 107,
     "plan": 18,
     "rule": 27,
-    "guide": 89,
+    "guide": 88,
     "report": 42,
     "debt": 186
   },
@@ -427,7 +427,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 3
+      "src": 2
     },
     "guide.platform.agent-onboarding.md": {
       "missing": 0,

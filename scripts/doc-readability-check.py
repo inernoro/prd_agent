@@ -337,9 +337,15 @@ def _pointer_columns(header: str) -> set[int]:
 def count_source_refs(text: str) -> int:
     """一行（或一个单元格）里散落的源码引用数：带目录的路径 + 行号引用 + 根上的入口文件。"""
     spans = [m.span() for m in SOURCE_PATH.finditer(text)]
-    roots = [m for m in ROOT_ENTRYPOINT.finditer(text)
-             if not any(s <= m.start() and m.end() <= e for s, e in spans)]
-    return len(spans) + len(SOURCE_LINEREF.findall(text)) + len(roots)
+
+    def overlaps(m) -> bool:
+        return any(m.start() < e and s < m.end() for s, e in spans)
+
+    # `a.ts:10` 会同时被完整路径和行号引用各数一次 —— 同一处引用数成两处，
+    # 既把台账数字吹高，又让「加一条路径 + 从旧的那条去掉 :10」在棘轮里持平。
+    linerefs = [m for m in SOURCE_LINEREF.finditer(text) if not overlaps(m)]
+    roots = [m for m in ROOT_ENTRYPOINT.finditer(text) if not overlaps(m)]
+    return len(spans) + len(linerefs) + len(roots)
 
 
 def shell_script_lines(lang: str, block: list[str]) -> int:
@@ -548,6 +554,7 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
     changed = 0
     in_fence = False
     fence_kind: tuple[str, int] | None = None
+    in_list = False
     for raw in text.splitlines(keepends=True):
         delim = fence_delim(raw)
         if delim and (not in_fence or fence_closes(fence_kind, delim, fence_info(raw))):
@@ -558,6 +565,17 @@ def fix_links(text: str, known: set[str]) -> tuple[str, int]:
         if in_fence:
             out.append(raw)
             continue
+        # 跳过范围必须与检测端（body_lines）一致：检测端当代码不报的行，
+        # 改写端却动手改，等于批量改写偷偷动了判据故意放过的示例。
+        if raw.strip():
+            if INDENTED_CODE.match(raw):
+                if not in_list:
+                    out.append(raw)
+                    continue
+            elif LIST_MARKER.match(raw):
+                in_list = True
+            elif not raw.startswith((" ", "\t")):
+                in_list = False
 
         spans = link_spans(raw)
 
