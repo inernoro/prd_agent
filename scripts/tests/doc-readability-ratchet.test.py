@@ -288,6 +288,15 @@ INDENTED_FENCE = ("# 示例 · 指南\n\n"
 hidden = [line for _, line in checker.body_lines(INDENTED_FENCE) if "missing.md" in line]
 check(hidden, "四格缩进的 ``` 不算围栏，后面的死链藏不住")
 check(checker.fence_delim("    ```ts") is None, "四格缩进不是围栏")
+# 制表符同样构成缩进代码块（CommonMark 把 tab 展开成四格）
+TAB_HEADER = ("\t# 看起来像标题 · 指南\n"
+              "\t**一句话**：这三行用制表符缩进，渲染出来同样是一块代码。\n"
+              "\t**谁该读**：拿制表符糊弄闸门的人。\n"
+              "\t**读完能做什么**：知道 tab 缩进也不算数。\n")
+check(any("缺「一句话」" in p for p in problems_for("guide.demo.md", TAB_HEADER)),
+      "制表符缩进的假标题与假导读同样不算数")
+check(checker.INDENTED_CODE.match("\t示例") and not checker.INDENTED_CODE.match("  两格"),
+      "缩进代码块判据认制表符、不误伤两格缩进")
 check(checker.fence_delim("   ```ts") is not None, "三格以内仍是围栏（没误伤列表里的围栏）")
 
 # 缩进代码块里的假标题与假导读：渲染出来是代码，读者看不到标题也看不到导读
@@ -657,6 +666,11 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(wrong_name, "w", encoding="utf-8") as fh:
         fh.write(f"---\nname: demo-skill\nallowed-tools: [Read, Write]\ndescription: {good_desc}\n---\n")
     check(not checker.check_skill(wrong_name), "写法正确的流式集合放行（没误伤 allowed-tools 的正常写法）")
+    # 只数深度不行：[Read} 的深度也回到零，而 YAML 认的是同类闭合
+    check(checker.frontmatter_syntax_problem("[Read}") is not None,
+          "括号不配对的流式集合被抓出（只数深度会放过 [Read}）")
+    check(checker.frontmatter_syntax_problem("[a, {b: 1}]") is None,
+          "嵌套且配对正确的流式集合放行")
 
 # 手写判据要跟真 YAML 解析器对答案，否则它只是「我以为的 YAML」
 YAML_CASES = [

@@ -109,7 +109,8 @@ FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*(.*)$")
 # 容器前缀：引用块 `>` 与列表项标记 `- ` / `1. `。列表项第一块就是围栏时
 # （`- ```ts`），不剥这层前缀同样识别不出来。两种前缀可以叠加（`> - ```ts`）。
 CONTAINER_PREFIX = re.compile(r"^(?: {0,3}(?:>|[-*+] |\d{1,9}[.)] ))+")
-INDENTED_CODE = re.compile(r"^ {4,}\S")
+# 四个空格或一个制表符起都是缩进代码块（CommonMark 把 tab 展开成四格）
+INDENTED_CODE = re.compile(r"^(?: {4,}|\t)\S")
 # 列表项标记：列表里的缩进是续行不是代码块，两者必须分开判
 LIST_MARKER = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])\s")
 
@@ -726,15 +727,17 @@ def frontmatter_syntax_problem(raw: str) -> str | None:
     if not value or value[:1] in ("|", ">", "#"):
         return None                       # 折叠块与整行注释各有各的规则
     if value[:1] in ("[", "{"):
+        # 只数深度不行：[Read} 的深度也回到零，而 YAML 认的是「同类闭合」
         pairs = {"[": "]", "{": "}"}
-        depth = 0
+        stack: list[str] = []
         for ch in value:
-            if ch in "[{":
-                depth += 1
+            if ch in pairs:
+                stack.append(ch)
             elif ch in "]}":
-                depth -= 1
-        if depth != 0:
-            return f"流式集合没有闭合（缺 {pairs[value[0]]}）"
+                if not stack or pairs[stack.pop()] != ch:
+                    return f"流式集合的括号没有配对（出现了不匹配的「{ch}」）"
+        if stack:
+            return f"流式集合没有闭合（缺 {pairs[stack[-1]]}）"
         return None
     if value[:1] in ("\"", "'"):
         return quoted_scalar_problem(value)
