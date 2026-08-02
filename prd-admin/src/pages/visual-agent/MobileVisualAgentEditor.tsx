@@ -18,6 +18,7 @@ import { useSmartBack } from '@/hooks/useSmartBack';
 import { ArrowLeft, Download, Expand, ImagePlus, LayoutGrid, RefreshCw, Send, Wand2, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { GenSweepLoader } from '@/components/ui/GenSweepLoader';
 import {
   createWorkspaceImageGenRun,
   getImageGenRun,
@@ -516,8 +517,6 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
     toast.success('已设为参考图', '在下方输入修改指令，例如：背景换成白色');
   }, []);
 
-  const elapsedOf = (c: GenCard) => Math.max(0, Math.round((Date.now() - c.startedAt) / 1000));
-
   // 时间线 = 历史资产 + 本次会话卡片（历史资产里已包含本次已完成的图时按 sha 去重）
   const doneShas = useMemo(() => new Set(cards.filter((c) => c.sha256).map((c) => c.sha256)), [cards]);
   const timelineAssets = useMemo(
@@ -684,20 +683,12 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
               </div>
             );
           }
-          // 生成中：产物形状的骨架卡（按请求比例撑开）+ 计时
+          // 生成中：按产物比例占位；图生图用参考图做朦胧底稿，纯文生图使用环境渐变。
+          // GenSweepLoader 内部负责点阵、耗时与预估，完成后同 key 原位替换为清晰结果。
           return (
             <div key={c.key} className="shrink-0 rounded-2xl overflow-hidden" style={{ background: 'var(--bg-card, rgba(255,255,255,0.04))', border: '1px solid rgba(255,255,255,0.08)' }}>
               <div className="relative w-full" style={{ paddingBottom: `${cardRatio(c.size) * 100}%` }}>
-                <div
-                  className="absolute inset-0 animate-pulse"
-                  style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.06) 100%)' }}
-                />
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                  <MapSpinner size={20} />
-                  <div className="text-[12px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                    正在生成 · 已等待 {elapsedOf(c)}s
-                  </div>
-                </div>
+                <GenSweepLoader createdAt={c.startedAt} previewSrc={c.refUrl} />
               </div>
               <div className="px-3 py-2.5 text-[12px] leading-snug line-clamp-2" style={{ color: 'rgba(255,255,255,0.6)' }}>
                 {c.prompt}

@@ -5973,6 +5973,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             >
               {canvas.map((it) => {
                 const kind = it.kind ?? 'image';
+                const generationPreviewItem = it.refImageKey
+                  ? canvas.find((candidate) => candidate.key === it.refImageKey)
+                  : undefined;
+                const generationPreviewSrc = generationPreviewItem?.originalSrc || generationPreviewItem?.src || undefined;
                 // 错误态：仍需要渲染占位框（否则用户不知道尺寸，也无法直接选中/删除）
                 if (kind === 'image' && !it.src && it.status !== 'running' && it.status !== 'error') return null;
                 const x = it.x ?? 0;
@@ -6224,7 +6228,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         ) : null}
                         {it.status === 'running' ? (
-                          <GenSweepLoader createdAt={it.createdAt} />
+                          <GenSweepLoader createdAt={it.createdAt} previewSrc={generationPreviewSrc} />
                         ) : it.status === 'error' ? (
                           <div className="absolute inset-0">
                             {/* 灰色静止花瓣背景 */}
@@ -6289,7 +6293,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         >
                           预计 {Math.round(w)} × {Math.round(h)}
                         </div>
-                        <GenSweepLoader createdAt={it.createdAt} />
+                        <GenSweepLoader createdAt={it.createdAt} previewSrc={generationPreviewSrc} />
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">
