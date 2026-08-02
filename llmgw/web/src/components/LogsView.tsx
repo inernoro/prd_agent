@@ -36,6 +36,7 @@ import {
   userLabel,
   deriveLifecycle,
   getProtocolMeta,
+  getOperationMeta,
 } from '@/lib/logsHelpers';
 
 const PAGE_SIZE = 30;
@@ -77,18 +78,6 @@ const TRANSPORT_META: Record<string, { label: string; color: string; bg: string 
   direct: { label: 'direct', color: '#f85149', bg: 'rgba(248,81,73,0.14)' },
 };
 
-const OPERATION_META: Record<string, { label: string; color: string; bg: string }> = {
-  invoke: { label: '调用', color: 'var(--accent)', bg: 'var(--accent-soft)' },
-  submit: { label: '任务提交', color: 'var(--ok)', bg: 'var(--ok-bg)' },
-  status: { label: '状态查询', color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' },
-  download: { label: '结果下载', color: 'var(--info)', bg: 'var(--info-bg)' },
-  cancel: { label: '取消任务', color: 'var(--err)', bg: 'var(--err-bg)' },
-  probe: { label: '健康探测', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' },
-};
-function getOperationMeta(operation?: string | null) {
-  if (!operation) return { label: '调用', color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
-  return OPERATION_META[operation.toLowerCase()] ?? { label: operation, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
-}
 function getTransportMeta(t?: string | null) {
   if (!t) return null;
   return TRANSPORT_META[t.toLowerCase()] ?? { label: t, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
@@ -1006,6 +995,16 @@ export function LogsView() {
               </select>
               <input aria-label="发布提交" value={filterReleaseCommit} onChange={(event) => setFilterReleaseCommit(event.target.value)} placeholder="发布提交" spellCheck={false} />
               <input aria-label="运行 ID" value={filterRunId} onChange={(event) => setFilterRunId(event.target.value)} placeholder="运行 ID" spellCheck={false} />
+              {/* 填了运行 ID 就直接给出「排成一条链」的出口，省掉逐条点开对时间那一圈。 */}
+              {filterRunId.trim() ? (
+                <Link
+                  className="lg-log-clear"
+                  to={`/logs/runs/${encodeURIComponent(filterRunId.trim())}`}
+                  title="把该任务的全部上游调用按时间排成一条链"
+                >
+                  查看任务时间线
+                </Link>
+              ) : null}
               <input aria-label="会话 ID" value={filterSessionId} onChange={(event) => setFilterSessionId(event.target.value)} placeholder="会话 ID" spellCheck={false} />
               <input aria-label="模型池 ID" value={filterModelPoolId} onChange={(event) => setFilterModelPoolId(event.target.value)} placeholder="模型池 ID" spellCheck={false} />
               <select aria-label="应用" value={filterAppCaller} onChange={(event) => setFilterAppCaller(event.target.value)}>

@@ -38,6 +38,11 @@ jobs:
               # GatewayDataDomainGuardTests 直接读取 llmgw/web 源码并校验跨模块产品契约。
               - 'llmgw/web/**'
               - 'llmgw/serving/**'
+              # console-api 同样被 .NET 测试直接引用（PrdAgent.Api.Tests 引了它的 csproj，
+              # GatewayDataDomainGuardTests 还读它的源码做接线断言）。不登记的话，
+              # 「只改 console-api」的 PR 会整个跳过这道闸 —— 而删掉任务诊断时间线端点
+              # 恰好就是这种 PR（形状 7：守卫自己没接上线）。
+              - 'llmgw/console-api/**'
               # 官方技能目录新鲜度自测跑在 server-build 里，它的输入是这三处。
               # 不登记的话，「只改技能不改 prd-api」的 PR 会整个跳过这道闸 ——
               # 而那恰好就是这道闸要防的场景（改了技能忘重新生成，分发旧内容）。

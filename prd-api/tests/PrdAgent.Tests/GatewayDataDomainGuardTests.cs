@@ -4050,6 +4050,55 @@ public class GatewayDataDomainGuardTests
             "实时 ASR 必须先把已验证租户打开为请求上下文，再解析和访问该租户的模型供应商");
     }
 
+    /// <summary>
+    /// 任务诊断时间线的接线守卫。
+    ///
+    /// 时间线的判据逻辑在 RunTimelineTests 里已经脱库直测，但那些测试全部注入自己造的入参：
+    /// 它们证明「函数算得对」，证明不了「有没有人调用它」「用户点得到吗」。
+    /// 端点删掉、入口链接删掉，那批测试照样全绿——正是
+    /// .claude/rules/predicate-and-wiring-discipline.md 形状 2 说的「建了一半」。
+    /// 这条守卫钉住整条链：端点在 → 过滤器走共享判定源 → 前端路由在 → 两个入口都点得到。
+    /// </summary>
+    [Fact]
+    public void RunTimeline_IsReachableFromEndpointToBothConsoleEntryPoints()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var page = ReadRepoFile("llmgw/web/src/pages/RunTimelinePage.tsx");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
+
+        // 后端：端点存在，权限与列表同档，且过滤器只来自 RunTimeline（不自己再拼一套）。
+        Assert.Contains("app.MapGet(\"/gw/logs/runs/{runId}\"", console);
+        Assert.Contains("RunTimeline.BuildQueryFilter(taskKey, fromUtc, toUtc)", console);
+
+        var handlerStart = console.IndexOf("app.MapGet(\"/gw/logs/runs/{runId}\"", StringComparison.Ordinal);
+        var handlerEnd = console.IndexOf("app.MapGet(\"/gw/logs/{id}\"", handlerStart, StringComparison.Ordinal);
+        Assert.True(handlerStart >= 0 && handlerEnd > handlerStart, "找不到任务诊断时间线端点");
+        var handler = console[handlerStart..handlerEnd];
+        Assert.Contains("RequireAuthorization(\"LogsRead\")", handler);
+        // 时间线要看的恰恰是状态查询与结果下载，任何业务操作收窄都会把它们吃掉。
+        Assert.DoesNotContain("BuildBusinessOperationFilter", handler);
+        Assert.DoesNotContain("BuildOperationFilter", handler);
+        Assert.DoesNotContain("view: \"logical\"", handler);
+        // 返回体不许带提示词/回答正文：那些字段归 RequestBodyRead，不能顺着 LogsRead 漏出去。
+        Assert.DoesNotContain("MapDetail(", handler);
+
+        // 前端：路由 + 客户端 + 页面真的串起来。
+        Assert.Contains("path=\"/logs/runs/:runId\"", app);
+        Assert.Contains("<RunTimelinePage />", app);
+        Assert.Contains("/logs/runs/", api);
+        Assert.Contains("getRunTimeline", page);
+
+        // 入口：请求记录页的运行 ID 筛选框旁 + 请求详情的路由过程里，各有一个可点入口。
+        // 少一个，这一页就只能靠手拼地址栏进入，等于没做（形状 2）。
+        Assert.Contains("/logs/runs/", logsView);
+        Assert.Contains("查看任务时间线", logsView);
+        Assert.Contains("/logs/runs/", drawer);
+        Assert.Contains("查看任务时间线", drawer);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

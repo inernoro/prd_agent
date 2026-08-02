@@ -28,6 +28,7 @@ import type {
   ProtocolCoverageData,
   TimeseriesData,
   SessionsData,
+  RunTimelineData,
   LlmLogDetail,
   PoolsData,
   PoolTypesData,
@@ -552,6 +553,13 @@ export function getLogsSessions(params: LogsListParams): Promise<ApiResponse<Ses
 
 export function getLogDetail(id: string): Promise<ApiResponse<LlmLogDetail>> {
   return apiRequest<LlmLogDetail>(`/logs/${encodeURIComponent(id)}`);
+}
+
+/** 任务诊断时间线：按 RunId 或 LogicalRequestId 串起一次业务任务的全部上游调用。 */
+export function getRunTimeline(runId: string, params?: { from?: string; to?: string }): Promise<ApiResponse<RunTimelineData>> {
+  return apiRequest<RunTimelineData>(`/logs/runs/${encodeURIComponent(runId)}`, {
+    query: { from: params?.from, to: params?.to },
+  });
 }
 
 // ── 配置面（只读）──

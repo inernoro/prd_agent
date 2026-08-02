@@ -546,6 +546,60 @@ public sealed class SessionsData
     public int PageSize { get; set; }
 }
 
+// ── 任务诊断时间线（按 RunId / LogicalRequestId 串一次业务任务的全部上游调用）──
+// 只放定位用的字段：不含 prompt / 回答正文，故与列表一样归 LogsRead，不需要 RequestBodyRead。
+public sealed class RunTimelineStep
+{
+    public int Order { get; set; }
+    public string LogId { get; set; } = string.Empty;
+    public string RequestId { get; set; } = string.Empty;
+    public string? LogicalRequestId { get; set; }
+    public string Operation { get; set; } = string.Empty;
+    public string? RequestType { get; set; }
+    public string? StartedAt { get; set; }
+    public string? EndedAt { get; set; }
+    public long? DurationMs { get; set; }
+    /// <summary>与上一步之间的空档（毫秒）：轮询间隔、排队等待都落在这里。</summary>
+    public long? GapMsFromPrevious { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public int? StatusCode { get; set; }
+    public string? Model { get; set; }
+    public string? Provider { get; set; }
+    public string? Error { get; set; }
+    /// <summary>同一逻辑请求的第 2 次及以后的业务尝试。</summary>
+    public bool IsRetry { get; set; }
+}
+
+public sealed class RunTimelineOperationCount
+{
+    public string Operation { get; set; } = string.Empty;
+    public int Count { get; set; }
+}
+
+public sealed class RunTimelineData
+{
+    public string TaskKey { get; set; } = string.Empty;
+    /// <summary>empty / running / failed / recovered / succeeded。</summary>
+    public string Status { get; set; } = string.Empty;
+    public int StepCount { get; set; }
+    public string? StartedAt { get; set; }
+    public string? EndedAt { get; set; }
+    /// <summary>首步开始到末步结束的墙钟耗时——用户口径的「总共等了多久」。</summary>
+    public long? TotalDurationMs { get; set; }
+    /// <summary>各步耗时之和，与墙钟耗时的差额即空档（排队 / 轮询间隔）。</summary>
+    public long UpstreamDurationMs { get; set; }
+    public int RetryCount { get; set; }
+    public int FailedStepCount { get; set; }
+    public List<RunTimelineOperationCount> OperationCounts { get; set; } = new();
+    public List<string> Models { get; set; } = new();
+    public string? AppCallerCode { get; set; }
+    public string? SessionId { get; set; }
+    public int? StuckStepOrder { get; set; }
+    public string? StuckStepOperation { get; set; }
+    public string? FirstError { get; set; }
+    public List<RunTimelineStep> Steps { get; set; } = new();
+}
+
 // ── 配置写请求（网关配置面第二刀，可写）──
 // 字段用 nullable：缺字段/空 body 时为 null，处理器拒绝（避免默认 false 误关平台/模型/默认池）。
 public sealed class ToggleEnabledRequest { public bool? Enabled { get; set; } }

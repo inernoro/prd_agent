@@ -449,6 +449,52 @@ export type SessionsData = {
   pageSize: number;
 };
 
+// ── 任务诊断时间线（GET /logs/runs/{runId}）──
+export type RunTimelineStep = {
+  order: number;
+  logId: string;
+  requestId: string;
+  logicalRequestId?: string | null;
+  operation: string;
+  requestType?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  durationMs?: number | null;
+  /** 与上一步之间的空档：轮询间隔、排队等待都落在这里。 */
+  gapMsFromPrevious?: number | null;
+  status: string;
+  statusCode?: number | null;
+  model?: string | null;
+  provider?: string | null;
+  error?: string | null;
+  isRetry: boolean;
+};
+
+export type RunTimelineOperationCount = { operation: string; count: number };
+
+export type RunTimelineData = {
+  taskKey: string;
+  /** empty / running / failed / recovered / succeeded */
+  status: string;
+  stepCount: number;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  /** 首步开始到末步结束的墙钟耗时，即用户口径的「总共等了多久」。 */
+  totalDurationMs?: number | null;
+  /** 各步耗时之和；与墙钟耗时的差额即空档。 */
+  upstreamDurationMs: number;
+  retryCount: number;
+  failedStepCount: number;
+  operationCounts: RunTimelineOperationCount[];
+  models: string[];
+  appCallerCode?: string | null;
+  sessionId?: string | null;
+  stuckStepOrder?: number | null;
+  stuckStepOperation?: string | null;
+  firstError?: string | null;
+  steps: RunTimelineStep[];
+};
+
 // ── 模型池（只读配置面）──
 export type PoolModelInfo = {
   modelId: string; platformId: string; priority: number; protocol?: string | null;

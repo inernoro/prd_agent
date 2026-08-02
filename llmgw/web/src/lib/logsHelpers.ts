@@ -249,6 +249,24 @@ export function getProtocolMeta(protocol?: string | null): ProtocolMeta | null {
   return { ...PROTOCOL_FALLBACK, label: protocol.trim() };
 }
 
+// ── 操作类型注册表（中文标签 + 配色）──
+// 后端 GatewayOperations 的六个值：invoke / submit / status / download / cancel / probe。
+// 放在 helpers 而不是某个组件内：日志列表与任务诊断时间线都要用同一份中文标签，
+// 抄成两份迟早各自漂移（.claude/rules/predicate-and-wiring-discipline.md 形状 3）。
+export const OPERATION_META: Record<string, { label: string; color: string; bg: string }> = {
+  invoke: { label: '调用', color: 'var(--accent)', bg: 'var(--accent-soft)' },
+  submit: { label: '任务提交', color: 'var(--ok)', bg: 'var(--ok-bg)' },
+  status: { label: '状态查询', color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' },
+  download: { label: '结果下载', color: 'var(--info)', bg: 'var(--info-bg)' },
+  cancel: { label: '取消任务', color: 'var(--err)', bg: 'var(--err-bg)' },
+  probe: { label: '健康探测', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' },
+};
+
+export function getOperationMeta(operation?: string | null) {
+  if (!operation) return { label: '调用', color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
+  return OPERATION_META[operation.toLowerCase()] ?? { label: operation, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
+}
+
 // ── 请求生命周期派生（治"不知道没发送还是没收到"）──
 export interface LifecycleInfo {
   key: string;
