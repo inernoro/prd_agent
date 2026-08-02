@@ -103,6 +103,9 @@ public static class ErrorCodes
 
     // 生图相关
     public const string IMAGE_GEN_RUN_NOT_FOUND = "IMAGE_GEN_RUN_NOT_FOUND";
+    public const string IMAGE_GEN_UNAVAILABLE = "IMAGE_GEN_UNAVAILABLE";
+    public const string IMAGE_GEN_REQUEST_REJECTED = "IMAGE_GEN_REQUEST_REJECTED";
+    public const string IMAGE_GEN_TIMEOUT = "IMAGE_GEN_TIMEOUT";
 
     public const string PLAN_TITLE_DUPLICATE = "PLAN_TITLE_DUPLICATE";
 

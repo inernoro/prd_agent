@@ -1761,6 +1761,113 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenValidMultiImageRequestGetsFalseEmptyInput_ShouldTryNextOffering()
+    {
+        var googleCandidate = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-google",
+            OfferingTargetKind = "model",
+            ActualModel = "gemini-2.5-flash-image",
+            ActualPlatformId = "google-platform",
+            ActualPlatformName = "Google",
+            PlatformType = "google",
+            Protocol = "google",
+            ApiUrl = "https://generativelanguage.googleapis.com",
+            ApiKey = "google-key",
+        };
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-openrouter",
+            OfferingTargetKind = "model",
+            ActualModel = "openai/gpt-5.4-image-2",
+            ActualPlatformId = "openrouter-platform",
+            ActualPlatformName = "OpenRouter",
+            PlatformType = "openai",
+            Protocol = "openrouter",
+            ApiUrl = "https://openrouter.ai/api",
+            ApiKey = "openrouter-key",
+            RetryCandidates = [googleCandidate],
+        };
+        var http = new SequenceHttpClientFactory(
+            (400, "{\"error\":{\"message\":\"Input must have at least 1 token.\"}}"),
+            (200, "{\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"aW1hZ2U=\"}}]}}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+        var prompt = "use the second reference as the style seed";
+        var imageA = "data:image/png;base64,aW1hZ2UtYQ==";
+        var imageB = "data:image/png;base64,aW1hZ2UtYg==";
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            EndpointPath = "chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray(new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray(
+                        new JsonObject { ["type"] = "text", ["text"] = prompt },
+                        new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = imageA } },
+                        new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = imageB } })
+                }),
+                ["modalities"] = new JsonArray("image", "text"),
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = prompt,
+                Count = 1,
+                Images = [imageA, imageB],
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("offering-google", response.Resolution?.OfferingId);
+        Assert.Equal(2, http.RequestUris.Count);
+        Assert.Contains("chat/completions", http.RequestUris[0]);
+        Assert.Contains("gemini-2.5-flash-image:generateContent", http.RequestUris[1]);
+        Assert.Contains(prompt, http.RequestBodies[0]);
+        Assert.Equal(2, CountOccurrences(http.RequestBodies[0], "data:image/png;base64"));
+        Assert.Contains(prompt, http.RequestBodies[1]);
+        Assert.Equal(2, CountOccurrences(http.RequestBodies[1], "inline_data"));
+    }
+
+    [Fact]
+    public void ShouldRetryRawProviderResponse_WhenOrdinaryBadRequest_ShouldNotRetry()
+    {
+        var request = new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw an icon",
+                Images = ["data:image/png;base64,aW1hZ2U="],
+            },
+        };
+
+        Assert.False(LlmGateway.ShouldRetryRawProviderResponse(
+            400,
+            "{\"error\":{\"message\":\"invalid image size\"}}",
+            request));
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
     {
         var legacyResolution = new GatewayModelResolution

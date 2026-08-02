@@ -158,7 +158,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             candidates.AddRange(resolution.RetryCandidates.Where(c =>
                 c.Success
                 && !string.IsNullOrWhiteSpace(c.ActualModel)
-                && !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase)));
+                && (!string.Equals(c.ActualPlatformId, resolution.ActualPlatformId, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
 
         var maxAttempts = GetProviderRetryMaxAttempts();
@@ -187,7 +188,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             candidates.AddRange(resolution.RetryCandidates.Where(c =>
                 c.Success
                 && !string.IsNullOrWhiteSpace(c.ActualModel)
-                && !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase)));
+                && (!string.Equals(c.ActualPlatformId, resolution.ActualPlatformId, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
 
         var maxAttempts = GetProviderRetryMaxAttempts();
@@ -212,6 +214,35 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         => statusCode is >= 401 and <= 404
            || statusCode is 408 or 409 or 425 or 429
            || statusCode is >= 500 and <= 599;
+
+    /// <summary>
+    /// 图片请求已经通过 canonical IR 证明包含有效描述时，部分上游仍会把协议或能力不匹配
+    /// 错报成 400 输入错误。此类错误属于 Offering 故障，应切换同一逻辑模型的下一供给；
+    /// 普通参数错误仍保持终止，避免重复发送用户的无效请求。
+    /// </summary>
+    internal static bool ShouldRetryRawProviderResponse(
+        int statusCode,
+        string? responseBody,
+        GatewayRawRequest request)
+    {
+        if (ShouldRetryProviderStatus(statusCode))
+            return true;
+
+        var canonical = request.CanonicalImageRequest;
+        if (statusCode != 400
+            || canonical is null
+            || string.IsNullOrWhiteSpace(canonical.Prompt))
+        {
+            return false;
+        }
+
+        var message = TryExtractErrorMessage(responseBody ?? string.Empty) ?? responseBody ?? string.Empty;
+        return message.Contains("Input must have at least 1 token", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("no endpoints found that support image output", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("does not support image generation", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("unsupported output modality", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("unsupported modalities", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsAutoModelPolicy(GatewayRequest request)
         => string.Equals(request.Context?.ModelPolicy, "auto", StringComparison.OrdinalIgnoreCase);
@@ -1799,7 +1830,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             for (var attemptIndex = 1;
                  !response.IsSuccessStatusCode
                  && attemptIndex < retryResolutions.Count
-                 && ShouldRetryProviderStatus((int)response.StatusCode);
+                 && ShouldRetryRawProviderResponse((int)response.StatusCode, responseBody, request);
                  attemptIndex++)
             {
                 if (HasTrackedHealthRoute(resolution))

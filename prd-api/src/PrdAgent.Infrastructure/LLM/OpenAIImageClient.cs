@@ -168,17 +168,17 @@ public class OpenAIImageClient : IImageGenerationClient
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空");
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请输入图片描述。");
         }
         if (string.IsNullOrWhiteSpace(appCallerCode))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 不能为空");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         var appDef = AppCallerRegistrationService.FindByAppCode(appCallerCode);
         if (appDef == null || !appDef.ModelTypes.Contains(ModelTypes.ImageGen))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 未注册或不支持 imageGen");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         if (n <= 0) n = 1;
@@ -201,8 +201,8 @@ public class OpenAIImageClient : IImageGenerationClient
             : await requestGateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
-                resolution.ErrorMessage ?? "未配置可用的生图模型（请在模型管理中设置 生图）");
+            _logger.LogError("生图模型调度失败: {Error}", resolution.ErrorMessage);
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         var apiUrl = resolution.ApiUrl;
@@ -215,7 +215,7 @@ public class OpenAIImageClient : IImageGenerationClient
             (apiUrlUri.Scheme != Uri.UriSchemeHttp && apiUrlUri.Scheme != Uri.UriSchemeHttps))
         {
             _logger.LogError("生图模型 API URL 无效（非 HTTP(S) 协议）: {ApiUrl}", apiUrl);
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, $"生图模型 API URL 无效（必须是 http:// 或 https:// 开头）: {apiUrl}");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         // Anthropic 不支持 images endpoint；避免误配后 500
@@ -230,7 +230,8 @@ public class OpenAIImageClient : IImageGenerationClient
         if (wireProtocol is "anthropic" or "claude" ||
             apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型不支持 Anthropic 平台（请配置 OpenAI 兼容的 images API）");
+            _logger.LogError("生图模型协议不支持图片生成: {Protocol}", wireProtocol);
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         // 获取平台适配器（优先使用 Gateway 解析出的 wire 协议，避免同平台多协议时被 URL/模型名猜回旧适配器）。
@@ -251,7 +252,7 @@ public class OpenAIImageClient : IImageGenerationClient
             : platformAdapter.GetEditsEndpoint(apiUrl);
         if (string.IsNullOrWhiteSpace(endpoint))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型 API URL 无效");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         // 原始请求尺寸（用于缓存命中与 meta/日志展示）
@@ -800,7 +801,7 @@ public class OpenAIImageClient : IImageGenerationClient
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Image generate request failed");
-            return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+            return UserFailure(ImageGenerationUserError.FromException(ex));
         }
 
         // 处理响应（Gateway 已处理日志记录）
@@ -808,18 +809,7 @@ public class OpenAIImageClient : IImageGenerationClient
         if (!gatewayResp.Success)
         {
             _logger.LogWarning("Image generate failed: HTTP {Status} (body chars={Chars})", gatewayResp.StatusCode, body.Length);
-
-            // 对 400/422 等参数类错误尽量返回 INVALID_FORMAT，便于前端直接提示用户
-            if (gatewayResp.StatusCode >= 400 && gatewayResp.StatusCode < 500)
-            {
-                var msg = TryExtractUpstreamErrorMessage(body, out var em2) ? em2 : $"生图失败：HTTP {gatewayResp.StatusCode}";
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, msg);
-            }
-            // 5xx：优先透出上游错误（含 request id），便于定位"token/鉴权"类问题
-            var msg5xx = TryExtractUpstreamErrorMessage(body, out var em3)
-                ? $"生图失败：{em3}"
-                : $"生图失败：HTTP {gatewayResp.StatusCode}";
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, msg5xx);
+            return UserFailure(ImageGenerationUserError.FromGateway(gatewayResp));
         }
 
         try
@@ -834,7 +824,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 if (googleImages.Count == 0)
                 {
                     _logger.LogWarning("[Google] 响应中未找到图片数据。Body length={Len}", body.Length);
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "Google 生图响应中未包含图片数据");
+                    return UserFailure(ImageGenerationUserError.MissingImage());
                 }
 
                 var googleGenImages = new List<ImageGenImage>();
@@ -1040,7 +1030,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
             // OpenRouter 与标准 data[] 两条解析都没拿到图：统一在此判失败（替代原 OpenRouter 分支的早退，Bugbot review）
             if (images.Count == 0)
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "生图响应中未包含图片数据");
+                return UserFailure(ImageGenerationUserError.MissingImage());
 
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
             // 强约束：不把 base64 写入 Mongo；输出统一 re-host 到 COS（返回稳定 URL）
@@ -1193,22 +1183,22 @@ public class OpenAIImageClient : IImageGenerationClient
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空");
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请输入图片描述。");
         }
         if (string.IsNullOrWhiteSpace(appCallerCode))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 不能为空");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         var appDef = AppCallerRegistrationService.FindByAppCode(appCallerCode);
         if (appDef == null || !appDef.ModelTypes.Contains(ModelTypes.ImageGen))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 未注册或不支持 imageGen");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         if (imageRefs == null || imageRefs.Count == 0)
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "imageRefs 不能为空（Vision API 需要至少一张图片）");
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请至少添加一张参考图。");
         }
 
         // Vision API 限制：最多 6 张图片
@@ -1234,8 +1224,8 @@ public class OpenAIImageClient : IImageGenerationClient
             : await requestGateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
-                resolution.ErrorMessage ?? "未配置可用的 Vision 生图模型");
+            _logger.LogError("多图生图模型调度失败: {Error}", resolution.ErrorMessage);
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         var effectiveModelName = resolution.ActualModel!;
@@ -1314,10 +1304,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 var respBody = gatewayResp.Content ?? string.Empty;
                 if (!gatewayResp.Success)
                 {
-                    var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var em)
-                        ? $"Exchange 生图错误: {em}"
-                        : $"Exchange 生图请求失败: HTTP {gatewayResp.StatusCode}";
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+                    return UserFailure(ImageGenerationUserError.FromGateway(gatewayResp));
                 }
 
                 // 解析 OpenAI 图片响应格式 { "data": [{"url": "...", "b64_json": "..."}] }
@@ -1417,12 +1404,12 @@ public class OpenAIImageClient : IImageGenerationClient
             catch (HttpRequestException ex)
             {
                 _logger.LogError(ex, "[Exchange] 多图网络请求失败");
-                return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+                return UserFailure(ImageGenerationUserError.FromException(ex));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Exchange] 多图生成失败");
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message);
+                return UserFailure(ImageGenerationUserError.FromException(ex));
             }
         }
 
@@ -1484,10 +1471,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 var respBody = gatewayResp.Content ?? string.Empty;
                 if (!gatewayResp.Success)
                 {
-                    var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var em)
-                        ? $"Google 生图错误: {em}"
-                        : $"Google 生图请求失败: HTTP {gatewayResp.StatusCode}";
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+                    return UserFailure(ImageGenerationUserError.FromGateway(gatewayResp));
                 }
 
                 // 解析 Google candidates 响应
@@ -1495,7 +1479,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 if (googleImgResults.Count == 0)
                 {
                     _logger.LogWarning("[Google] 多图响应中未找到图片数据");
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "Google 生图响应中未包含图片数据");
+                    return UserFailure(ImageGenerationUserError.MissingImage());
                 }
 
                 var images = new List<ImageGenImage>();
@@ -1565,12 +1549,12 @@ public class OpenAIImageClient : IImageGenerationClient
             catch (HttpRequestException ex)
             {
                 _logger.LogError(ex, "[Google] 多图网络请求失败");
-                return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+                return UserFailure(ImageGenerationUserError.FromException(ex));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Google] 多图生成失败");
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message);
+                return UserFailure(ImageGenerationUserError.FromException(ex));
             }
         }
 
@@ -1700,10 +1684,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
             if (!gatewayResp.Success)
             {
-                var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var errMsg)
-                    ? $"Vision API 错误: {errMsg}"
-                    : $"Vision API 请求失败: {gatewayResp.StatusCode}";
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+                return UserFailure(ImageGenerationUserError.FromGateway(gatewayResp));
             }
 
             // 解析响应（VisionChatCompletionImageExtractor：兼容三种形态并按优先级提取
@@ -1714,18 +1695,13 @@ public class OpenAIImageClient : IImageGenerationClient
             if (!VisionChatCompletionImageExtractor.TryExtractImages(
                     respBody, out var extractedImages, out var visionTextFallback, out var extractDiagnostics))
             {
-                var textPreview = string.IsNullOrWhiteSpace(visionTextFallback)
-                    ? null
-                    : (visionTextFallback.Length > 100 ? visionTextFallback[..100] + "..." : visionTextFallback);
                 _logger.LogWarning("[Vision API] 响应未解析出图片: {Diagnostics}; Text: {Text}",
                     extractDiagnostics,
                     string.IsNullOrWhiteSpace(visionTextFallback)
                         ? "(无)"
                         : (visionTextFallback.Length > 200 ? visionTextFallback[..200] + "..." : visionTextFallback));
                 // Gateway 已处理日志
-                var errMsg = $"Vision API 响应格式不支持（未找到图片数据）: {extractDiagnostics}" +
-                             (textPreview == null ? string.Empty : $"; 文本内容: {textPreview}");
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
+                return UserFailure(ImageGenerationUserError.MissingImage());
             }
 
             var images = new List<ImageGenImage>();
@@ -1824,7 +1800,7 @@ public class OpenAIImageClient : IImageGenerationClient
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "[Vision API] 网络请求失败");
-            return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+            return UserFailure(ImageGenerationUserError.FromException(ex));
         }
         catch (TaskCanceledException ex) when (ex.CancellationToken == ct)
         {
@@ -1834,9 +1810,12 @@ public class OpenAIImageClient : IImageGenerationClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Vision API] 未知错误");
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INTERNAL_ERROR, ex.Message);
+            return UserFailure(ImageGenerationUserError.FromException(ex));
         }
     }
+
+    private static ApiResponse<ImageGenResult> UserFailure(ImageGenerationUserError.Result error)
+        => ApiResponse<ImageGenResult>.Fail(error.Code, error.Message);
 
     /// <summary>
     /// 构建 Vision API 的 content 数组（text + 多个 image_url）

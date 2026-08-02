@@ -33,6 +33,23 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ImageGeneration_UserFacingFailuresAlwaysUseTheNormalizationBoundary()
+    {
+        var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+        var normalizer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenerationUserError.cs");
+        var rule = ReadRepoFile(".Codex/rules/user-readable-errors.md");
+
+        Assert.Contains("ImageGenerationUserError.FromGateway", client);
+        Assert.Contains("ImageGenerationUserError.FromException", client);
+        Assert.DoesNotContain("ApiResponse<ImageGenResult>.Fail(\"NETWORK_ERROR\", ex.Message)", client);
+        Assert.DoesNotContain("ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message)", client);
+        Assert.DoesNotContain("Vision API 错误:", client);
+        Assert.DoesNotContain("请求失败: HTTP", client);
+        Assert.Contains("原始响应只允许进入服务端日志", normalizer);
+        Assert.Contains("禁止向普通用户透传上游响应原文", rule);
+    }
+
+    [Fact]
     public void WorkloadIdentity_IsServerDerivedFilterableAndNeverStoresKeyMaterialInRequestLog()
     {
         var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
