@@ -280,9 +280,14 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             Key = key,
             InputStream = new MemoryStream(bytes, writable: false),
             ContentType = (contentType ?? string.Empty).Trim(),
-            DisablePayloadSigning = true,
+            // R2 的 S3 兼容端点对真实录音大小的 UNSIGNED-PAYLOAD 请求会偶发返回
+            // SignatureDoesNotMatch。固定使用带 Content-Length 的完整 SigV4 payload
+            // 签名，并禁用 aws-chunked，避免小探针成功而实际音频归档失败。
+            DisablePayloadSigning = false,
             DisableDefaultChecksumValidation = true,
+            UseChunkEncoding = false,
         };
+        request.Headers.ContentLength = bytes.LongLength;
         var cc = (cacheControl ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(cc)) request.Headers.CacheControl = cc;
         return request;

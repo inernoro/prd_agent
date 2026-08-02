@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Text;
 using PrdAgent.Api.Json;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
@@ -13,7 +12,8 @@ namespace PrdAgent.Api.Services;
 public sealed class AssetStorageReadinessProbe
 {
     private const string ProbePrefix = "_it/asset-storage-readiness";
-    private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(2);
+    internal const int RepresentativePayloadBytes = 640 * 1024;
+    private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan DefaultFailureCacheTtl = TimeSpan.FromSeconds(15);
 
     private readonly IAssetStorage _storage;
@@ -116,8 +116,10 @@ public sealed class AssetStorageReadinessProbe
                 stopwatch);
         }
 
-        var key = $"{ProbePrefix}/{Guid.NewGuid():N}.txt";
-        var payload = Encoding.UTF8.GetBytes($"prd-agent-storage-readiness:{Guid.NewGuid():N}");
+        // 必须覆盖真实录音的请求形态。历史上的几十字节文本探针会通过，
+        // 但 646415 字节录音在同一 R2 PutObject 路径返回 SignatureDoesNotMatch。
+        var key = $"{ProbePrefix}/{Guid.NewGuid():N}.m4a";
+        var payload = CreateRepresentativeAudioPayload();
         var stage = "write";
         var uploaded = false;
         var writeVerified = false;
@@ -131,9 +133,8 @@ public sealed class AssetStorageReadinessProbe
             await _storage.UploadToKeyAsync(
                 key,
                 payload,
-                "text/plain; charset=utf-8",
-                cancellationToken,
-                "no-store");
+                "audio/mp4",
+                cancellationToken);
             uploaded = true;
             writeVerified = true;
 
@@ -213,6 +214,7 @@ public sealed class AssetStorageReadinessProbe
         if (result != null)
         {
             result.CleanupVerified = cleanupVerified;
+            result.ProbeBytes = payload.LongLength;
             result.DurationMs = stopwatch.ElapsedMilliseconds;
             return result;
         }
@@ -226,9 +228,20 @@ public sealed class AssetStorageReadinessProbe
             InternalReadVerified = internalReadVerified,
             PublicReadVerified = publicReadVerified,
             CleanupVerified = cleanupVerified,
+            ProbeBytes = payload.LongLength,
             CheckedAt = DateTime.UtcNow,
             DurationMs = stopwatch.ElapsedMilliseconds,
         };
+    }
+
+    internal static byte[] CreateRepresentativeAudioPayload()
+    {
+        var payload = new byte[RepresentativePayloadBytes];
+        for (var index = 0; index < payload.Length; index++)
+        {
+            payload[index] = (byte)((index * 31 + 17) & 0xff);
+        }
+        return payload;
     }
 
     internal static bool CanForceProbe(IPAddress? remoteAddress)
