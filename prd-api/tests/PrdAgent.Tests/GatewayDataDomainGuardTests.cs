@@ -36,6 +36,7 @@ public class GatewayDataDomainGuardTests
     public void ImageGeneration_UserFacingFailuresAlwaysUseTheNormalizationBoundary()
     {
         var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs");
         var normalizer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenerationUserError.cs");
         var rule = ReadRepoFile(".Codex/rules/user-readable-errors.md");
 
@@ -45,6 +46,8 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message)", client);
         Assert.DoesNotContain("Vision API 错误:", client);
         Assert.DoesNotContain("请求失败: HTTP", client);
+        Assert.DoesNotContain("errorMessage = ex.Message", controller);
+        Assert.Contains("errorCode = ErrorCodes.IMAGE_GEN_UNAVAILABLE", controller);
         Assert.Contains("原始响应只允许进入服务端日志", normalizer);
         Assert.Contains("禁止向普通用户透传上游响应原文", rule);
     }

@@ -1529,6 +1529,12 @@ public class ImageGenController : ControllerBase
                         }
                         catch (Exception ex)
                         {
+                            _logger.LogError(
+                                ex,
+                                "批量生图任务异常: RunId={RunId}, ItemIndex={ItemIndex}, ImageIndex={ImageIndex}",
+                                runId,
+                                currentItemIndex,
+                                imageIndex);
                             await writeLock.WaitAsync(cancellationToken);
                             try
                             {
@@ -1544,8 +1550,8 @@ public class ImageGenController : ControllerBase
                                     modelId,
                                     platformId,
                                     modelName,
-                                    errorCode = ErrorCodes.LLM_ERROR,
-                                    errorMessage = ex.Message
+                                    errorCode = ErrorCodes.IMAGE_GEN_UNAVAILABLE,
+                                    errorMessage = "当前生图服务暂时不可用，请稍后重试。若持续出现，请联系管理员。"
                                 }, cancellationToken);
                             }
                             finally
