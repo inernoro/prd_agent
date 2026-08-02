@@ -376,6 +376,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **scope-check** | `/scope-check` | 输入当前分支 → 逐文件分类为 owned/shared/foreign，检测越界修改和 append-only 违规，输出边界审计报告 |
 | **cds-deploy-pipeline** | `/cds-deploy` | 输入代码提交 → 自动推送到 CDS 灰度环境、等待容器就绪、执行冒烟测试，失败自动定位原因 |
 | **smoke-test** | `/smoke` | 输入模块名 → 扫描 Controller 端点，自动生成链式 curl 脚本（前一步输出 ID 传给后续请求） |
+| **stable-smoke** | `/稳测` | 每 48 小时对测试与正式环境执行关键用户旅程合成监控，按模块出报告；首次逃逸问题必须固化为永久回归用例 |
 | **preview-url** | `/preview` | 输入当前分支 → 读取 CDS API 实际返回的 `previewUrl` / `previewUrls`，多入口全部列出，禁止本地推算 |
 | **acceptance-checklist** | `/uat` | 输入功能场景 → 生成真人逐步打勾的 UAT 清单（Phase 0-7：前置 → 冷启 → 执行 → 验证 → 回归 → 回滚 → 负面），每步含预期结果 + 失败排查手册。CLI/Web 双通道支持 |
 | **acceptance-scenario-orchestrator** | `/验收场景` | 输入每日/PR/commit/未发布分支/缺陷复测等复杂验收目标 → 先做场景识别、PR/commit 到结果映射、指差法开测清单、证据链契约，再交给 `/验收` 取证归档 |
