@@ -21,6 +21,7 @@ using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
 using PrdAgent.LlmGw.Costs;
 using PrdAgent.LlmGw.Governance;
+using PrdAgent.LlmGw.Logs;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
@@ -2181,6 +2182,33 @@ app.MapGet("/gw/logs/sessions", async (
         PageSize = ps,
     };
     return Json(ApiEnvelope<SessionsData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// ───────────────────────────── 任务诊断时间线（需鉴权）─────────────────────────────
+// 客服/开发拿着一个 RunId 在日志页反复翻找的痛点：这里一次把该任务的全部上游调用
+// 按时间排成一条链，卡在哪一步、重试几次、总共等多久一眼可见。
+// 刻意不带 operation 过滤（不传 view=logical）：状态查询 / 结果下载正是要看的步骤，
+// 走 BuildBusinessOperationFilter 会把它们吃掉。
+// 返回字段只到定位层（无 prompt / 回答正文），故权限与列表同为 LogsRead。
+app.MapGet("/gw/logs/runs/{runId}", async (HttpContext http, string runId, string? from, string? to) =>
+{
+    var taskKey = RunTimeline.NormalizeTaskKey(runId);
+    if (taskKey is null)
+    {
+        return Json(ApiEnvelope<RunTimelineData>.Fail("INVALID_TASK_KEY", "任务 ID 不能为空"), jsonOptions, statusCode: 400);
+    }
+
+    // 默认时间窗放宽到 90 天：用户手上只有一个 RunId 时，不该被列表页的 7 天默认窗口截断。
+    var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 90);
+    var filter = TenantAccess.FilterTeamScope(http, RunTimeline.BuildQueryFilter(taskKey, fromUtc, toUtc));
+
+    var docs = await logs.Find(filter)
+        .Sort(Builders<BsonDocument>.Sort.Ascending("StartedAt"))
+        .Limit(RunTimeline.MaxSteps)
+        .ToListAsync();
+
+    var data = RunTimeline.Build(taskKey, docs.Select(MapListItem).ToList());
+    return Json(ApiEnvelope<RunTimelineData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
 // ───────────────────────────── 日志详情（需鉴权）─────────────────────────────
