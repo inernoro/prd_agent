@@ -14,6 +14,7 @@ import { OverviewPage } from '@/pages/HomePage';
 import { GovernancePage } from '@/pages/OverviewPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { LogDetailPage } from '@/pages/LogDetailPage';
+import { RunTimelinePage } from '@/pages/RunTimelinePage';
 import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { AppCallersPage } from '@/pages/AppCallersPage';
 import { PlatformsPage } from '@/pages/PlatformsPage';
@@ -112,6 +113,8 @@ export function App() {
           >
             <Route path="/" element={<RequirePageAccess page="home"><OverviewPage /></RequirePageAccess>} />
             <Route path="/logs" element={<RequirePageAccess page="logs"><LogsPage /></RequirePageAccess>} />
+            {/* 任务诊断时间线。放在 /logs/:id 之前只为阅读顺序——两条路由段数不同，不会互相吃掉。 */}
+            <Route path="/logs/runs/:runId" element={<RequirePageAccess page="logs"><RunTimelinePage /></RequirePageAccess>} />
             <Route path="/logs/:id" element={<RequirePageAccess page="logs"><LogDetailPage /></RequirePageAccess>} />
             <Route path="/app-callers" element={<RequirePageAccess page="appCallers"><AppCallersPage /></RequirePageAccess>} />
             <Route path="/app-callers/view" element={<RequirePageAccess page="appCallers"><AppCallerDetailsPage /></RequirePageAccess>} />

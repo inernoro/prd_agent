@@ -197,7 +197,19 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, marginBottom: 10 }}>
         <TraceMini label="来源" value={trace?.sourceSystem || detail.sourceSystem} />
         <TraceMini label="入口" value={trace?.ingressProtocol || detail.ingressProtocol} />
-        <TraceMini label="运行 ID" value={trace?.runId || detail.runId} mono />
+        {(() => {
+          // 任务诊断时间线的入口：优先用 RunId，退而用 LogicalRequestId（两者后端都认）。
+          const taskKey = trace?.runId || detail.runId || detail.logicalRequestId;
+          return (
+            <TraceMini
+              label="运行 ID"
+              value={trace?.runId || detail.runId}
+              mono
+              linkTo={taskKey ? `/logs/runs/${encodeURIComponent(taskKey)}` : undefined}
+              linkLabel="查看任务时间线"
+            />
+          );
+        })()}
         <TraceMini label="路由策略" value={trace?.modelPolicy || detail.modelPolicy || trace?.mode || detail.modelResolutionType} />
         <TraceMini label="期望模型" value={trace?.requestedModel || detail.expectedModel} mono />
         <TraceMini label="逻辑模型" value={trace?.logicalModelPublicId || detail.logicalModelPublicId || trace?.logicalModelId || detail.logicalModelId} mono />
@@ -300,7 +312,14 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
   );
 }
 
-function TraceMini({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+function TraceMini({ label, value, mono, linkTo, linkLabel }: {
+  label: string;
+  value?: string | null;
+  mono?: boolean;
+  /** 有值时在格子底部补一条出口链接（如「运行 ID」跳任务诊断时间线）。 */
+  linkTo?: string;
+  linkLabel?: string;
+}) {
   return (
     <div style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', padding: '7px 8px', minWidth: 0 }}>
       <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>{label}</div>
@@ -315,6 +334,15 @@ function TraceMini({ label, value, mono }: { label: string; value?: string | nul
       >
         {value || DASH}
       </div>
+      {linkTo ? (
+        <Link
+          to={linkTo}
+          style={{ marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 'var(--fs-micro)', color: 'var(--accent)' }}
+        >
+          {linkLabel}
+          <ArrowUpRight size={11} />
+        </Link>
+      ) : null}
     </div>
   );
 }
