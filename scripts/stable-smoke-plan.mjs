@@ -45,7 +45,7 @@ export function validateCatalog(catalog) {
     if (!Array.isArray(feature.requiredCaseIds) || feature.requiredCaseIds.length === 0) errors.push(`${feature.id} 缺少 requiredCaseIds`);
     if (!Array.isArray(feature.sourcePrefixes) || feature.sourcePrefixes.length === 0) errors.push(`${feature.id} 缺少 sourcePrefixes`);
     if (!['planned', 'entry', 'contract', 'contract-and-entry', 'journey'].includes(feature.automationStatus)) errors.push(`${feature.id} 的 automationStatus 不合法`);
-    if (!feature.testPolicy || !feature.productionPolicy) errors.push(`${feature.id} 缺少双环境策略`);
+    if (!feature.cdsPolicy || !feature.productionPolicy) errors.push(`${feature.id} 缺少双环境策略`);
     if (!feature.rollback) errors.push(`${feature.id} 缺少回滚策略`);
   }
   return errors;
@@ -117,9 +117,9 @@ export function renderPlanMarkdown(plan) {
     `- 生成功能线：${plan.featureLines.length}`,
     `- 必跑用例：${plan.requiredCaseIds.length}`,
     '',
-    '| 功能线 | 等级 | 面包屑 | 测试环境 | 正式环境 | 自动化现状 | 回滚 |',
+    '| 功能线 | 等级 | 面包屑 | CDS 环境 | 正式环境 | 自动化现状 | 回滚 |',
     '|---|---|---|---|---|---|---|',
-    ...plan.featureLines.map((feature) => `| ${feature.label} | ${feature.criticality} | ${feature.breadcrumb.join(' → ')} | ${feature.testPolicy} | ${feature.productionPolicy} | ${feature.automationStatus} | ${feature.rollback} |`),
+    ...plan.featureLines.map((feature) => `| ${feature.label} | ${feature.criticality} | ${feature.breadcrumb.join(' → ')} | ${feature.cdsPolicy} | ${feature.productionPolicy} | ${feature.automationStatus} | ${feature.rollback} |`),
     '',
     '## 自动纳入依据',
     '',

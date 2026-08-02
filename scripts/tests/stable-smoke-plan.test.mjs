@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlan, loadCatalog, parseActiveRegressions, selectFeatureLines, validateCatalog } from '../stable-smoke-plan.mjs';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +13,17 @@ const regressions = parseActiveRegressions(ledger);
 test('业务功能台账具备发布门禁所需字段', () => {
   assert.deepEqual(validateCatalog(catalog), []);
   assert.ok(catalog.featureLines.length >= 10);
+  assert.ok(catalog.featureLines.every((item) => item.cdsPolicy && !('testPolicy' in item)));
+});
+
+test('48 小时调度属于本地自动化而非 GitHub Actions', () => {
+  const promptPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/local-automation-prompt.md');
+  const workflowPath = resolve(repoRoot, '.github/workflows/stable-smoke-48h.yml');
+  const prompt = readFileSync(promptPath, 'utf8');
+  assert.match(prompt, /execution_environment.*local|执行环境：`local`/);
+  assert.match(prompt, /RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=2;BYMINUTE=17/);
+  assert.match(prompt, /正式环境固定为 `https:\/\/map\.ebcone\.net`/);
+  assert.equal(existsSync(workflowPath), false);
 });
 
 test('视觉代码变更自动纳入单图、多图和永久回归', () => {

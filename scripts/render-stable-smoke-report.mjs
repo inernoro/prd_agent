@@ -100,14 +100,14 @@ lines.push(
   '## 6. 失败与证据',
   '',
   failed.length > 0
-    ? failed.map((row) => `- ${row.title}：${row.status}。详细截图、trace、视频和错误上下文见同一 CI artifact。`).join('\n')
+    ? failed.map((row) => `- ${row.title}：${row.status}。详细截图、trace、视频和错误上下文见同一本地运行目录。`).join('\n')
     : report
-      ? '- 未发现入口级失败；截图与 Playwright 报告见同一 CI artifact。'
+      ? '- 未发现入口级失败；截图与 Playwright 报告见同一本地运行目录。'
       : '- Playwright JSON 报告缺失，本轮不得判定为通过。请检查环境密钥、部署状态和浏览器测试步骤后重跑。',
   '',
   '## 7. 双环境差异',
   '',
-  '本文件记录单一环境结果。测试与正式环境报告使用相同 case 和结构，整轮结论必须在汇总时比较两份报告；任一环境缺失时整轮最多为 conditional。',
+  '本文件记录单一环境结果。CDS 环境与正式环境报告使用相同 case 和结构，整轮结论必须在汇总时比较两份报告；任一环境缺失时整轮最多为 conditional。',
   '',
   '## 8. 清理结果',
   '',
