@@ -237,12 +237,44 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
 
         var message = TryExtractErrorMessage(responseBody ?? string.Empty) ?? responseBody ?? string.Empty;
-        return message.Contains("Input must have at least 1 token", StringComparison.OrdinalIgnoreCase)
-               || message.Contains("no endpoints found that support image output", StringComparison.OrdinalIgnoreCase)
-               || message.Contains("does not support image generation", StringComparison.OrdinalIgnoreCase)
-               || message.Contains("unsupported output modality", StringComparison.OrdinalIgnoreCase)
-               || message.Contains("unsupported modalities", StringComparison.OrdinalIgnoreCase);
+        return IsImageOfferingCapabilityMismatch(message);
     }
+
+    internal static bool ShouldQuarantineRawProviderResponse(
+        int statusCode,
+        string? responseBody,
+        GatewayRawRequest request)
+    {
+        var canonical = request.CanonicalImageRequest;
+        if (canonical is null || string.IsNullOrWhiteSpace(canonical.Prompt))
+            return false;
+
+        if (statusCode is >= 401 and <= 404)
+            return true;
+
+        if (statusCode != 400)
+            return false;
+
+        var message = TryExtractErrorMessage(responseBody ?? string.Empty) ?? responseBody ?? string.Empty;
+        return IsImageOfferingCapabilityMismatch(message);
+    }
+
+    private static bool IsImageOfferingCapabilityMismatch(string message)
+        => message.Contains("Input must have at least 1 token", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("no endpoints found that support image output", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("does not support image generation", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("unsupported output modality", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("unsupported modalities", StringComparison.OrdinalIgnoreCase);
+
+    private Task RecordRawProviderFailureAsync(
+        ModelResolutionResult resolution,
+        int statusCode,
+        string? responseBody,
+        GatewayRawRequest request,
+        CancellationToken ct)
+        => ShouldQuarantineRawProviderResponse(statusCode, responseBody, request)
+            ? _modelResolver.RecordUnavailableAsync(resolution, ct)
+            : _modelResolver.RecordFailureAsync(resolution, ct);
 
     private static bool IsAutoModelPolicy(GatewayRequest request)
         => string.Equals(request.Context?.ModelPolicy, "auto", StringComparison.OrdinalIgnoreCase);
@@ -1835,7 +1867,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 if (HasTrackedHealthRoute(resolution))
                 {
-                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                    await RecordRawProviderFailureAsync(
+                        resolution,
+                        (int)response.StatusCode,
+                        responseBody,
+                        request,
+                        ct);
                 }
 
                 var nextResolution = retryResolutions[attemptIndex];
@@ -2119,7 +2156,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
                 else
                 {
-                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                    await RecordRawProviderFailureAsync(
+                        resolution,
+                        (int)response.StatusCode,
+                        responseBody,
+                        request,
+                        ct);
                 }
             }
 

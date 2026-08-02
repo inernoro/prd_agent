@@ -747,6 +747,42 @@ public class ModelResolver : IModelResolver
         }
     }
 
+    /// <inheritdoc />
+    public async Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+        {
+            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            var offeringFilter = Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+            var offeringUpdate = Builders<GatewayModelOffering>.Update
+                .Inc(x => x.ConsecutiveFailures, 1)
+                .Set(x => x.ConsecutiveSuccesses, 0)
+                .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+            await offerings.UpdateOneAsync(offeringFilter, offeringUpdate, cancellationToken: ct);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
+            string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
+            string.IsNullOrWhiteSpace(resolution.ActualModel))
+            return;
+
+        var groupFilter = Builders<ModelGroup>.Filter.And(
+            Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
+            Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
+                m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
+        var groupUpdate = Builders<ModelGroup>.Update
+            .Inc("Models.$.ConsecutiveFailures", 1)
+            .Set("Models.$.ConsecutiveSuccesses", 0)
+            .Set("Models.$.HealthStatus", ModelHealthStatus.Unavailable)
+            .Set("Models.$.LastFailedAt", DateTime.UtcNow);
+        await GetHealthModelGroups(resolution).UpdateOneAsync(groupFilter, groupUpdate, cancellationToken: ct);
+    }
+
     #region Private Methods
 
     private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync(
@@ -2005,6 +2041,26 @@ public class InMemoryModelResolver : IModelResolver
             model.HealthStatus = model.ConsecutiveFailures >= 5 ? ModelHealthStatus.Unavailable :
                                  model.ConsecutiveFailures >= 3 ? ModelHealthStatus.Degraded :
                                  ModelHealthStatus.Healthy;
+            model.LastFailedAt = DateTime.UtcNow;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            return Task.CompletedTask;
+
+        var group = _modelGroups.FirstOrDefault(g => g.Id == resolution.ModelGroupId);
+        var model = group?.Models?.FirstOrDefault(m =>
+            m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel);
+
+        if (model != null)
+        {
+            model.ConsecutiveFailures++;
+            model.ConsecutiveSuccesses = 0;
+            model.HealthStatus = ModelHealthStatus.Unavailable;
             model.LastFailedAt = DateTime.UtcNow;
         }
 

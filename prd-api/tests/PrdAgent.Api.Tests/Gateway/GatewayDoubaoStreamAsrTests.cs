@@ -211,5 +211,8 @@ public class GatewayDoubaoStreamAsrTests
 
         public Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
             => Task.CompletedTask;
+
+        public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 }

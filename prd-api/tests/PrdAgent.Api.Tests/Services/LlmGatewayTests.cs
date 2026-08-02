@@ -1724,8 +1724,9 @@ public class LlmGatewayTests
         var http = new SequenceHttpClientFactory(
             (404, "{\"error\":{\"message\":\"model or endpoint not supported by this provider\"}}"),
             (200, "{\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"aW1hZ2U=\"}}]}}]}"));
+        var resolver = new TrackingModelResolver();
         var gateway = new LlmGateway(
-            new InMemoryModelResolver(),
+            resolver,
             http,
             new TestLogger<LlmGateway>(),
             new CapturingLogWriter());
@@ -1801,8 +1802,9 @@ public class LlmGatewayTests
         var http = new SequenceHttpClientFactory(
             (400, "{\"error\":{\"message\":\"Input must have at least 1 token.\"}}"),
             (200, "{\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"aW1hZ2U=\"}}]}}]}"));
+        var multiImageResolver = new TrackingModelResolver();
         var gateway = new LlmGateway(
-            new InMemoryModelResolver(),
+            multiImageResolver,
             http,
             new TestLogger<LlmGateway>(),
             new CapturingLogWriter());
@@ -1845,6 +1847,8 @@ public class LlmGatewayTests
         Assert.Equal(2, CountOccurrences(http.RequestBodies[0], "data:image/png;base64"));
         Assert.Contains(prompt, http.RequestBodies[1]);
         Assert.Equal(2, CountOccurrences(http.RequestBodies[1], "inline_data"));
+        Assert.Equal(["offering-openrouter"], multiImageResolver.UnavailableOfferingIds);
+        Assert.Equal(["offering-google"], multiImageResolver.SuccessfulOfferingIds);
     }
 
     [Fact]
@@ -1864,6 +1868,40 @@ public class LlmGatewayTests
         Assert.False(LlmGateway.ShouldRetryRawProviderResponse(
             400,
             "{\"error\":{\"message\":\"invalid image size\"}}",
+            request));
+        Assert.False(LlmGateway.ShouldQuarantineRawProviderResponse(
+            400,
+            "{\"error\":{\"message\":\"invalid image size\"}}",
+            request));
+        Assert.False(LlmGateway.ShouldQuarantineRawProviderResponse(
+            429,
+            "{\"error\":{\"message\":\"rate limited\"}}",
+            request));
+    }
+
+    [Theory]
+    [InlineData(400, "Input must have at least 1 token.")]
+    [InlineData(400, "No endpoints found that support image output")]
+    [InlineData(401, "invalid credentials")]
+    [InlineData(404, "model not found")]
+    public void ShouldQuarantineRawProviderResponse_WhenImageOfferingIsPermanentlyInvalid_ShouldReturnTrue(
+        int statusCode,
+        string message)
+    {
+        var request = new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "merge both references",
+                Images = ["data:image/png;base64,aW1hZ2U="],
+            },
+        };
+
+        Assert.True(LlmGateway.ShouldQuarantineRawProviderResponse(
+            statusCode,
+            $"{{\"error\":{{\"message\":\"{message}\"}}}}",
             request));
     }
 
@@ -2714,6 +2752,44 @@ internal sealed class SequenceHttpClientFactory : IHttpClientFactory
     }
 
     public HttpClient CreateClient(string name) => new(new SequenceHttpMessageHandler(_responses, RequestBodies, RequestUris, RequestHeaders));
+}
+
+internal sealed class TrackingModelResolver : IModelResolver
+{
+    public List<string> SuccessfulOfferingIds { get; } = [];
+    public List<string> UnavailableOfferingIds { get; } = [];
+
+    public Task<ModelResolutionResult> ResolveAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+        => Task.FromResult(ModelResolutionResult.NotFound(expectedModel, "测试不执行解析"));
+
+    public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
+        string appCallerCode,
+        string modelType,
+        CancellationToken ct = default)
+        => Task.FromResult(new List<AvailableModelPool>());
+
+    public Task RecordSuccessAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId))
+            SuccessfulOfferingIds.Add(resolution.OfferingId);
+        return Task.CompletedTask;
+    }
+
+    public Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId))
+            UnavailableOfferingIds.Add(resolution.OfferingId);
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class SequenceHttpMessageHandler(

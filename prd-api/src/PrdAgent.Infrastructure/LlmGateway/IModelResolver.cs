@@ -41,6 +41,12 @@ public interface IModelResolver
     /// 记录模型调用失败
     /// </summary>
     Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default);
+
+    /// <summary>
+    /// 记录确定性不可用故障。用于模型不存在、能力不匹配、凭据失效等重试不会自行恢复的配置问题，
+    /// 立即将对应上游移出调度，避免后续用户重复遇到同一错误。
+    /// </summary>
+    Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default);
 }
 
 /// <summary>
