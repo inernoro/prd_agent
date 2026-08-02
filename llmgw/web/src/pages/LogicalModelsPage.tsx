@@ -383,7 +383,7 @@ export function LogicalModelsPage() {
             模型池是另一件事：它只负责请求没有指定模型时的默认选择与兜底，指定了模型标识的请求一律走这里的
             Offering 列表。一个逻辑模型没有可用 Offering 时不会承接请求，也不会被模型池顶上。
           </Prose>
-          <TutorialLink chapter="chapter-18">查看教程：第 18 章 逻辑模型与 Offering</TutorialLink>
+          <TutorialLink chapter="practical-image-01">查看教程：如何给视觉创作增加图片模型</TutorialLink>
         </DetailsBlock>
       </PageBody>
     </PageShell>

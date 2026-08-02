@@ -1684,6 +1684,62 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenOpenRouterImageProtocol_ShouldUseDedicatedImageApi()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-openrouter-image",
+            OfferingTargetKind = "model",
+            ActualModel = "openai/gpt-image-2",
+            ActualPlatformId = "openrouter-platform",
+            ActualPlatformName = "OpenRouter",
+            PlatformType = "openai",
+            Protocol = "openrouter-image",
+            ApiUrl = "https://openrouter.ai/api/v1",
+            ApiKey = "openrouter-key",
+        };
+        var http = new SequenceHttpClientFactory(
+            (200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\",\"media_type\":\"image/png\"}]}"));
+        var gateway = new LlmGateway(
+            new TrackingModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+        var prompt = "merge both references into a poster";
+        var imageA = "data:image/png;base64,aW1hZ2UtYQ==";
+        var imageB = "data:image/png;base64,aW1hZ2UtYg==";
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = prompt,
+                Count = 1,
+                Size = "1024x1024",
+                Images = [imageA, imageB],
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal("https://openrouter.ai/api/v1/images", Assert.Single(http.RequestUris));
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal("openai/gpt-image-2", body["model"]?.GetValue<string>());
+        Assert.Equal(prompt, body["prompt"]?.GetValue<string>());
+        Assert.Equal("1024x1024", body["size"]?.GetValue<string>());
+        Assert.Equal(2, body["input_references"]?.AsArray().Count);
+        Assert.Null(body["messages"]);
+        Assert.Null(body["modalities"]);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenLogicalImageOfferingReturnsNotFound_ShouldTryNextOffering()
     {
         var googleCandidate = new ModelResolutionResult
@@ -1794,7 +1850,7 @@ public class LlmGatewayTests
             ActualPlatformId = "openrouter-platform",
             ActualPlatformName = "OpenRouter",
             PlatformType = "openai",
-            Protocol = "openrouter",
+            Protocol = "openrouter-image",
             ApiUrl = "https://openrouter.ai/api",
             ApiKey = "openrouter-key",
             RetryCandidates = [googleCandidate],
@@ -1817,18 +1873,14 @@ public class LlmGatewayTests
             AppCallerCode = "visual-agent.image.vision::generation",
             ModelType = "generation",
             ExpectedModel = "image2",
-            EndpointPath = "chat/completions",
+            EndpointPath = "images",
             RequestBody = new JsonObject
             {
-                ["messages"] = new JsonArray(new JsonObject
-                {
-                    ["role"] = "user",
-                    ["content"] = new JsonArray(
-                        new JsonObject { ["type"] = "text", ["text"] = prompt },
-                        new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = imageA } },
-                        new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = imageB } })
-                }),
-                ["modalities"] = new JsonArray("image", "text"),
+                ["model"] = "openai/gpt-5.4-image-2",
+                ["prompt"] = prompt,
+                ["input_references"] = new JsonArray(
+                    new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = imageA } },
+                    new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = imageB } }),
             },
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
@@ -1841,9 +1893,10 @@ public class LlmGatewayTests
         Assert.True(response.Success, response.ErrorMessage);
         Assert.Equal("offering-google", response.Resolution?.OfferingId);
         Assert.Equal(2, http.RequestUris.Count);
-        Assert.Contains("chat/completions", http.RequestUris[0]);
+        Assert.EndsWith("/images", http.RequestUris[0]);
         Assert.Contains("gemini-2.5-flash-image:generateContent", http.RequestUris[1]);
         Assert.Contains(prompt, http.RequestBodies[0]);
+        Assert.Contains("input_references", http.RequestBodies[0]);
         Assert.Equal(2, CountOccurrences(http.RequestBodies[0], "data:image/png;base64"));
         Assert.Contains(prompt, http.RequestBodies[1]);
         Assert.Equal(2, CountOccurrences(http.RequestBodies[1], "inline_data"));

@@ -2540,6 +2540,18 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
     if (body.Notes is not null) updates.Add(SetOrUnset("Notes", body.Notes));
     if (updates.Count == 0)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
+    var changedFieldCount = updates.Count;
+    var routingConfigurationChanged = body.UpstreamModelId is not null
+        || body.Protocol is not null
+        || body.EndpointPath is not null;
+    if (routingConfigurationChanged)
+    {
+        // 历史失败属于旧路由配置。修正协议、Endpoint 或上游模型后立即恢复待验证状态，
+        // 避免正确配置仍被旧的 unavailable 状态永久隔离。
+        updates.Add(Builders<BsonDocument>.Update.Set("HealthStatus", 0));
+        updates.Add(Builders<BsonDocument>.Update.Set("ConsecutiveFailures", 0));
+        updates.Add(Builders<BsonDocument>.Update.Set("ConsecutiveSuccesses", 0));
+    }
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
         Builders<BsonDocument>.Filter.Eq("_id", offeringId), Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
@@ -2548,7 +2560,7 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
     if (updated is null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
     await WriteOperationAuditAsync(operationAudits, http, "model-offering.update", "llmgw_model_offering", offeringId, updated.GetStringOrEmpty("TargetId"), true, null,
-        new BsonDocument { { "logicalModelId", logicalId }, { "fieldCount", updates.Count - 1 } });
+        new BsonDocument { { "logicalModelId", logicalId }, { "fieldCount", changedFieldCount }, { "healthReset", routingConfigurationChanged } });
     var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", logicalId))).FirstOrDefaultAsync();
     var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
     var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();

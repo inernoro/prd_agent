@@ -1477,6 +1477,30 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 resolution.ActualModel!, spec.Prompt, aspectRatio, imageSize, images, spec.MaskBase64);
             endpointPath = LLM.Adapters.GooglePlatformAdapter.BuildGoogleEndpointPath(resolution.ActualModel!);
         }
+        else if (normalizedProtocol is "openrouter-image" or "openrouter-images")
+        {
+            body = new JsonObject
+            {
+                ["model"] = resolution.ActualModel,
+                ["prompt"] = spec.Prompt,
+                ["n"] = Math.Clamp(spec.Count, 1, 10),
+            };
+            if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
+            if (images.Count > 0)
+            {
+                var references = new JsonArray();
+                foreach (var image in images)
+                {
+                    references.Add(new JsonObject
+                    {
+                        ["type"] = "image_url",
+                        ["image_url"] = new JsonObject { ["url"] = EnsureImageDataUri(image) }
+                    });
+                }
+                body["input_references"] = references;
+            }
+            endpointPath = "images";
+        }
         else if (normalizedProtocol == "openrouter"
                  || (resolution.ApiUrl?.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase) ?? false))
         {
@@ -1606,6 +1630,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
+            // 首次选中的 Offering 也必须从 canonical 图片请求重建。
+            // 旧实现只在回退时重建，导致 openrouter-image 配置正确仍先请求旧 Endpoint。
+            if (request.CanonicalImageRequest is not null)
+            {
+                request = RebuildCanonicalImageRequest(request, resolution);
+            }
+
             var gatewayResolution = resolution.ToGatewayResolution();
             var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
             if (!concurrency.Allowed)
