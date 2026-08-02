@@ -14,6 +14,7 @@ export const api = {
     login: () => '/api/v1/auth/login',
     ssoOptions: () => '/api/v1/auth/miduo-planet/options',
     miduoPlanetLogin: () => '/api/v1/auth/miduo-planet/login',
+    syntheticLoginExchange: () => '/api/v1/auth/synthetic/exchange',
     register: () => '/api/v1/auth/register',
     refresh: () => '/api/v1/auth/refresh',
     validatePassword: () => '/api/v1/auth/validate-password',

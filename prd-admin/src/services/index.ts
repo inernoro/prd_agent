@@ -4,6 +4,7 @@ import type {
   GetSsoOptionsContract,
   LoginContract,
   MiduoPlanetLoginContract,
+  SyntheticLoginContract,
   ResetPasswordContract,
 } from '@/services/contracts/auth';
 import type {
@@ -298,7 +299,13 @@ import type {
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
-import { getSsoOptionsReal, loginReal, loginWithMiduoPlanetTokenReal, resetPasswordReal } from '@/services/real/auth';
+import {
+  getSsoOptionsReal,
+  loginReal,
+  loginWithMiduoPlanetTokenReal,
+  loginWithSyntheticTicketReal,
+  resetPasswordReal,
+} from '@/services/real/auth';
 import { createLlmGatewaySsoTicketReal } from '@/services/real/llmGatewaySso';
 import type { CreateLlmGatewaySsoTicketContract } from '@/services/contracts/llmGatewaySso';
 import {
@@ -826,6 +833,7 @@ function withAuth<TArgs extends unknown[], TResult>(
 export const login: LoginContract = loginReal;
 export const getSsoOptions: GetSsoOptionsContract = getSsoOptionsReal;
 export const loginWithMiduoPlanetToken: MiduoPlanetLoginContract = loginWithMiduoPlanetTokenReal;
+export const loginWithSyntheticTicket: SyntheticLoginContract = loginWithSyntheticTicketReal;
 export const resetPassword: ResetPasswordContract = resetPasswordReal;
 export const createLlmGatewaySsoTicket: CreateLlmGatewaySsoTicketContract = withAuth(createLlmGatewaySsoTicketReal);
 

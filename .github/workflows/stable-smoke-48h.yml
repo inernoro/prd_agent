@@ -1,0 +1,171 @@
+name: 稳定冒烟测试
+
+on:
+  schedule:
+    - cron: '17 18 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '忽略 48 小时节拍并立即执行'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-smoke-48h
+  cancel-in-progress: false
+
+jobs:
+  cadence:
+    name: 校验 48 小时节拍
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.cadence.outputs.should_run }}
+    steps:
+      - name: 计算执行日
+        id: cadence
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          epoch_day=$(( $(date -u +%s) / 86400 ))
+          if (( epoch_day % 2 == 0 )); then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  contract-tests:
+    name: 协议与回归测试
+    needs: cadence
+    if: needs.cadence.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: 执行登录、多图与模型协议回归
+        run: >-
+          dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj
+          --filter "FullyQualifiedName~SyntheticLoginControllerTests|FullyQualifiedName~JwtServiceTests|FullyQualifiedName~MultiImageDomainServiceTests|FullyQualifiedName~ImageRefAndMessagePersistenceTests"
+          --configuration Release
+          --logger "console;verbosity=minimal"
+      - name: 执行多图视觉创作回归
+        run: >-
+          dotnet test prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj
+          --filter "FullyQualifiedName~GatewayAdapterProtocolAliasTests|FullyQualifiedName~ImageGenAdapterConfigTests|FullyQualifiedName~VisionResponseImageExtractionTests"
+          --configuration Release
+          --logger "console;verbosity=minimal"
+
+  environment-smoke:
+    name: ${{ matrix.label }}环境
+    needs: [cadence, contract-tests]
+    if: needs.cadence.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - label: 测试
+            base_url: ${{ vars.STABLE_SMOKE_TEST_BASE_URL }}
+          - label: 正式
+            base_url: ${{ vars.PRD_AGENT_PROD_BASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: e2e/pnpm-lock.yaml
+      - name: 安装浏览器测试依赖
+        working-directory: e2e
+        run: pnpm install --frozen-lockfile
+      - name: 安装 Chromium
+        working-directory: e2e
+        run: pnpm exec playwright install --with-deps chromium
+      - name: 检查环境密钥
+        env:
+          E2E_BASE_URL: ${{ matrix.base_url }}
+          STABLE_SMOKE_AI_ACCESS_KEY: ${{ secrets.AI_ACCESS_KEY }}
+          STABLE_SMOKE_USER: ${{ secrets.E2E_USER }}
+        run: |
+          test -n "$E2E_BASE_URL"
+          test -n "$STABLE_SMOKE_AI_ACCESS_KEY"
+          test -n "$STABLE_SMOKE_USER"
+      - name: 执行合成登录与模块入口冒烟
+        working-directory: e2e
+        env:
+          CI: 'true'
+          E2E_BASE_URL: ${{ matrix.base_url }}
+          STABLE_SMOKE_AI_ACCESS_KEY: ${{ secrets.AI_ACCESS_KEY }}
+          STABLE_SMOKE_USER: ${{ secrets.E2E_USER }}
+        run: pnpm exec playwright test specs/stable-smoke.spec.ts
+      - name: 生成模块验收报告
+        if: always()
+        env:
+          E2E_BASE_URL: ${{ matrix.base_url }}
+        run: |
+          node scripts/render-stable-smoke-report.mjs \
+            --input e2e/results.json \
+            --output e2e/stable-smoke-report.md \
+            --environment "${{ matrix.label }}" \
+            --run-id "stsmk-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --base-url-configured "$([[ -n "$E2E_BASE_URL" ]] && echo true || echo false)"
+          cat e2e/stable-smoke-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: 上传验收证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stable-smoke-${{ matrix.label }}-${{ github.run_id }}
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+            e2e/results.json
+            e2e/stable-smoke-report.md
+          if-no-files-found: warn
+          retention-days: 90
+
+  summary:
+    name: 汇总验收结论
+    needs: [cadence, contract-tests, environment-smoke]
+    if: always() && needs.cadence.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 生成整轮摘要
+        shell: bash
+        run: |
+          mkdir -p stable-smoke-summary
+          verdict=pass
+          if [[ "${{ needs.contract-tests.result }}" != "success" || "${{ needs.environment-smoke.result }}" != "success" ]]; then
+            verdict=fail
+          fi
+          cat > stable-smoke-summary/report.md <<EOF
+          # 稳定冒烟整轮摘要 · stsmk-${{ github.run_id }}-${{ github.run_attempt }}
+
+          Verdict: $verdict
+
+          | 阶段 | 结果 |
+          |---|---|
+          | 48 小时节拍 | ${{ needs.cadence.result }} |
+          | 登录与图像协议回归 | ${{ needs.contract-tests.result }} |
+          | 测试及正式环境入口冒烟 | ${{ needs.environment-smoke.result }} |
+
+          详细模块结果、截图、trace、视频和恢复动作位于同一轮的分环境 artifact。任一分环境未执行时，不得把整轮解释为完整通过。
+          EOF
+          cat stable-smoke-summary/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: 上传整轮摘要
+        uses: actions/upload-artifact@v4
+        with:
+          name: stable-smoke-summary-${{ github.run_id }}
+          path: stable-smoke-summary/report.md
+          retention-days: 90

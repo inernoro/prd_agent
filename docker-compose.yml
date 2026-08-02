@@ -64,6 +64,9 @@ services:
       - Jwt__Issuer=prdagent
       # AI 自动化超级访问密钥；认证处理器只读取容器内 AI_ACCESS_KEY。
       - AI_ACCESS_KEY=${AI_ACCESS_KEY:-}
+      # 稳定冒烟合成登录：默认关闭；启用时必须同时配置专用账号白名单。
+      - SYNTHETIC_LOGIN_ENABLED=${SYNTHETIC_LOGIN_ENABLED:-false}
+      - SYNTHETIC_LOGIN_ALLOWED_USERS=${SYNTHETIC_LOGIN_ALLOWED_USERS:-}
       # 项目数据加密密钥：用于模型平台 API key 等持久化密文，必须独立于 JWT_SECRET。
       # 生产必须显式配置；旧密文迁移期用 API_KEY_CRYPTO_LEGACY_SECRETS 注入历史 JWT/旧密钥。
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}

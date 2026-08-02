@@ -1,6 +1,6 @@
 ---
 name: stable-smoke
-version: 1.0.0
+version: 1.1.0
 description: Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".
 ---
 
@@ -12,7 +12,7 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 
 每 48 小时对测试环境和正式环境执行同一套关键用户旅程。测试环境负责完整写入、异常和恢复；正式环境只在专用合成账号与专用数据域内执行限额写入。任何线上或验收逃逸问题，首次修复时必须新增永久回归用例。
 
-详细用例见 [reference/test-matrix.md](reference/test-matrix.md)，问题沉淀格式见 [reference/regression-ledger.md](reference/regression-ledger.md)。
+详细用例见 [reference/test-matrix.md](reference/test-matrix.md)，问题沉淀格式见 [reference/regression-ledger.md](reference/regression-ledger.md)，合成登录和调度操作见 [reference/auth-and-schedule.md](reference/auth-and-schedule.md)。
 
 ## 适用场景
 
@@ -36,6 +36,7 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 /稳测 prod
 /稳测 module=recording,visual,multi-image
 /稳测 regressions-since=2026-08-01
+/稳测 login environment=test returnUrl=/visual-agent minutes=3
 ```
 
 无参数时等价于 `/稳测 all`，必须先测试环境、后正式环境。
@@ -52,6 +53,8 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 8. 原始 HTTP、Provider、模型协议、token 和异常堆栈只能进入脱敏管理员证据，用户界面必须说明结果与恢复动作。
 9. 所有写入用例必须幂等并自动清理。清理失败单独记 P1，不得污染下一轮。
 10. 任一必跑模块被跳过时，整轮最多为 `conditional`，不得报告完整通过。
+11. SSO 环境不得开启全局密码破窗供自动化使用。只能使用合成测试专用账号、一次性票据和不可续期短会话。
+12. 登录票据正文、AI 超级密钥和访问令牌不得写入报告、截图、日志、命令历史或 CI artifact。
 
 ## 每轮工作流
 
@@ -134,6 +137,8 @@ Stable Smoke Progress:
 - 超时：单模块 30 分钟，整轮 120 分钟；超时按失败处理，不继续播放进度文案。
 - 通知：成功只归档；conditional 或 fail 必须发送模块、caseId、环境、requestId、证据和恢复动作。
 - 保留：报告和截图至少 90 天；回归台账永久保留。
+- 实现：`.github/workflows/stable-smoke-48h.yml` 每日被调度一次，再按 Unix 日奇偶门控为严格 48 小时；手动触发不受门控限制。
+- 原因：CDS 命令任务在无仓库、无浏览器的隔离沙箱执行，不适合承载 Playwright 全套回归；CDS 仍负责部署状态和预览入口证据。
 
 ## 输出格式
 
