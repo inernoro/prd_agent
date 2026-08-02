@@ -28,12 +28,13 @@ public sealed class CloudflareR2StorageContractTests
     }
 
     [Fact]
-    public void CreatePutObjectRequest_ShouldUseR2CompatibleSigningAndChecksumSettings()
+    public void CreatePutObjectRequest_ShouldUseSignedFixedLengthR2Upload()
     {
+        var payload = new byte[640 * 1024];
         var request = CloudflareR2Storage.CreatePutObjectRequest(
             "recordings",
             "data/document-store/audio/test.m4a",
-            [1, 2, 3],
+            payload,
             "audio/mp4",
             "private, max-age=0");
         try
@@ -42,8 +43,10 @@ public sealed class CloudflareR2StorageContractTests
             request.Key.ShouldBe("data/document-store/audio/test.m4a");
             request.ContentType.ShouldBe("audio/mp4");
             request.Headers.CacheControl.ShouldBe("private, max-age=0");
-            request.DisablePayloadSigning.ShouldBe(true);
+            request.DisablePayloadSigning.ShouldBe(false);
             request.DisableDefaultChecksumValidation.ShouldBe(true);
+            request.UseChunkEncoding.ShouldBe(false);
+            request.Headers.ContentLength.ShouldBe(payload.LongLength);
         }
         finally
         {
