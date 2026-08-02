@@ -77,6 +77,15 @@ DAILY_ROOT_CAUSE_FIELDS = (
     "结论",
     "关闭动作",
 )
+
+# 「缺陷清单」表的列识别正则。**唯一来源**：交互式 HTML 的重点卡与上传给 CDS 的结构化
+# 证据行都按这张表取列，抄成两份必然各自漂移（.claude/rules/predicate-and-wiring-discipline.md
+# 形状 3）—— 一边认出了「页面/模块」列另一边没认出，简报的模块聚类就会静默变成
+# 「未标注模块」一大簇，而两边代码单看都没错。
+DEFECT_COL_SEVERITY = r"严重(?:级|程度)|severity"
+DEFECT_COL_ID = r"^(?:id|编号|缺陷号)$"
+DEFECT_COL_SYMPTOM = r"现象|问题|异常"
+DEFECT_COL_MODULE = r"页面|路径|模块|位置"
 VERDICT_NATURES = {
     "pass": {"完整通过"},
     "conditional": {"覆盖不足", "非阻断风险"},
@@ -1359,6 +1368,85 @@ def _plain_cell_text(value):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _column_index(headers, pattern):
+    """按正则找列下标；找不到返回 -1。表头列序不固定，不能按位置硬取。"""
+    for index, header in enumerate(headers or []):
+        if re.search(pattern, header or "", re.I):
+            return index
+    return -1
+
+
+def _cell(cells, index):
+    return _plain_cell_text(cells[index]) if 0 <= index < len(cells) else ""
+
+
+def extract_defect_evidence(body):
+    """从报告正文抽出结构化缺陷证据，供上传给 CDS 验收中心。
+
+    为什么必须上传：正文入 CDS 时是**渲染后的 HTML**，服务端再解析成本高且脆；
+    而这两张表在归档时本来就已经被解析过一次（交互式 HTML 的重点卡就靠它），
+    解析完就丢掉，等于把唯一一次结构化的机会浪费了。上传之后，
+    「哪个模块反复出问题」这类跨报告统计才有可能做（CDS 的缺陷归因简报），
+    否则服务端只有一个聚合数字，连「同一类缺陷」都判不出来。
+
+    返回 {"defectCounts": {...}, "defectRows": [...], "rootCauseRows": [...]}，
+    没有对应表时该键为空（调用方据此决定要不要放进 payload）。
+
+    严重度**原样保留报告里的写法**（`P1` / `p1` 都可能），归一化是消费端
+    （CDS services/acceptance-defect-digest.ts）的唯一职责，不在这里做第二份。
+    """
+    defect_headers, defect_raw_rows = _section_table(body, "缺陷清单")
+    severity_index = _column_index(defect_headers, DEFECT_COL_SEVERITY)
+    id_index = _column_index(defect_headers, DEFECT_COL_ID)
+    symptom_index = _column_index(defect_headers, DEFECT_COL_SYMPTOM)
+    module_index = _column_index(defect_headers, DEFECT_COL_MODULE)
+
+    defect_rows = []
+    counts = {}
+    for cells in defect_raw_rows:
+        severity = _cell(cells, severity_index)
+        # 表头没有「严重级」列，或该列填了别的内容时，退而在整行里找 P0-P3 单元格
+        # ——与交互式 HTML 重点卡同款兜底，两边对同一份表必须得出同样的行集合。
+        if not re.fullmatch(r"P[0-3]", severity, re.I):
+            severity = next(
+                (_plain_cell_text(c) for c in cells
+                 if re.fullmatch(r"P[0-3]", _plain_cell_text(c), re.I)),
+                "",
+            )
+        if not severity:
+            continue
+        row = {
+            "severity": severity,
+            "id": _cell(cells, id_index),
+            "symptom": _cell(cells, symptom_index),
+            "module": _cell(cells, module_index),
+        }
+        defect_rows.append({k: v for k, v in row.items() if v})
+        key = severity.upper()
+        counts[key] = counts.get(key, 0) + 1
+
+    root_headers, root_raw_rows = _section_table(body, "根因链条")
+    cause_index = _column_index(root_headers, r"系统原因|根因|原因")
+    conclusion_index = _column_index(root_headers, r"结论")
+    action_index = _column_index(root_headers, r"关闭动作|动作|措施")
+    root_cause_rows = []
+    for cells in root_raw_rows:
+        row = {
+            "cause": _cell(cells, cause_index),
+            "conclusion": _cell(cells, conclusion_index),
+            "action": _cell(cells, action_index),
+        }
+        row = {k: v for k, v in row.items() if v}
+        if row:
+            root_cause_rows.append(row)
+
+    return {
+        "defectCounts": counts,
+        "defectRows": defect_rows,
+        "rootCauseRows": root_cause_rows,
+    }
+
+
 def _collect_problem_items(markdown, manifest):
     items = []
     seen = set()
@@ -1416,10 +1504,10 @@ def _collect_problem_items(markdown, manifest):
     # 缺陷表允许 `严重级` 不在首列。每日验收常用 `ID | 严重级 | 页面/路径 | 现象...`，
     # 旧实现只读首列，导致 conditional 报告顶部显示 0 个风险且完全没有重点卡。
     defect_headers, defect_rows = section_table_rows("缺陷清单")
-    severity_index = column_index(defect_headers, r"严重(?:级|程度)|severity")
-    id_index = column_index(defect_headers, r"^(?:id|编号|缺陷号)$")
-    symptom_index = column_index(defect_headers, r"现象|问题|异常")
-    page_index = column_index(defect_headers, r"页面|路径|模块|位置")
+    severity_index = column_index(defect_headers, DEFECT_COL_SEVERITY)
+    id_index = column_index(defect_headers, DEFECT_COL_ID)
+    symptom_index = column_index(defect_headers, DEFECT_COL_SYMPTOM)
+    page_index = column_index(defect_headers, DEFECT_COL_MODULE)
     for cells in defect_rows:
         if len(cells) < 2:
             continue
@@ -2705,11 +2793,27 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
         "projectId": project_id,
         "verdict": a.verdict, "tier": a.tier,
     }
-    # P0-P3 计数随元数据上传：CDS 侧据此判定阻断级结论并推站内信 + 外发，
-    # 不传就等于把「昨天报出 2 个 P0」这件事留在正文里等人来翻。
-    defect_counts = _defect_counts_for_payload(body)
+    # 结构化缺陷证据随元数据一起上传（正文存的是渲染后 HTML，服务端重解析不现实）。
+    # 缺这一步，CDS 侧只拿得到一篇篇正文：既做不了「哪个模块反复出问题」的跨报告统计，
+    # 也判不出这份报告该不该推阻断告警。
+    #
+    # defectCounts 有两个可能的来源，**刻意优先声明值**：
+    #   1) 「结论分层 → 产品质量」的 P0/P1/P2/P3=n/n/n/n —— 归档闸校验过，
+    #      且与「缺陷分级速览」交叉核对过，是这份报告对外声明的权威数字；
+    #   2) 数「缺陷清单」表的行数 —— 逐行证据的副产品，可能与声明值不一致
+    #      （清单漏列、或一行覆盖多个问题）。
+    # 告警判据读的就是 defectCounts。若让行数覆盖声明值，「声明 P0=2 但清单没列」
+    # 这种最该被人看见的情况反而不会告警，且失败方向是静默的。所以声明值优先，
+    # 行数只在没有「结论分层」的非每日报告上兜底。
+    evidence = extract_defect_evidence(body)
+    declared_counts = _defect_counts_for_payload(body)
+    defect_counts = declared_counts or evidence["defectCounts"]
     if defect_counts:
         payload["defectCounts"] = defect_counts
+    if evidence["defectRows"]:
+        payload["defectRows"] = evidence["defectRows"]
+    if evidence["rootCauseRows"]:
+        payload["rootCauseRows"] = evidence["rootCauseRows"]
     if folder_path:
         payload["folderPath"] = folder_path
     if (a.branch or "").strip():

@@ -33,24 +33,56 @@ export type AcceptanceSeverityCounts = Partial<Record<AcceptanceSeverityLevel, n
 
 export type AcceptanceVerdict = 'pass' | 'conditional' | 'fail';
 
+/** 去掉 markdown 强调符与首尾空白（含全角空格），把单元格/键名压成纯文本。 */
+function plain(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .replace(/[`*_]/g, '')
+    .replace(/[　\s]+/g, ' ')
+    .trim();
+}
+
 /**
- * 把自由键的 defectCounts 归一成 P0-P3。
+ * 严重度记号归一化 —— **全 CDS 唯一一份**。
  *
- * 只认「p + 0..3」这一种形状（大小写、内外空白随意），其余键一律忽略——
- * 判据宽到能吞下任意键名反而会把 `p10`、`priority0` 这种误当 P0。
- * 非有限数、负数按 0 处理；小数四舍五入（生产者本该发整数，但**宁可保住告警信号
+ * 吃下同语义的不同写法：`P0` / `p0` / `**P1**` / ` p 2 ` / 全角空格包裹，
+ * 以及夹在长文本里的 `P3 视觉瑕疵`（缺陷表单元格常是这种）。认不出返回 null。
+ *
+ * 为什么必须只有一份（本仓库形状 3 的典型土壤）：告警判据（本文件）与缺陷归因简报
+ * （acceptance-defect-digest）都要把自由写法映射到 P0-P3。两份各自演化的后果是
+ * **简报说「这个模块有 2 个 P0」而告警从来没响过**——两边都不报错，只是对同一份
+ * 数据给出不同答案，而且没有任何一侧看得出自己错了。故简报侧从本文件 import，
+ * 不再自持一份。
+ */
+export function normalizeSeverity(raw: unknown): AcceptanceSeverityLevel | null {
+  const text = plain(raw);
+  if (!text) return null;
+  const exact = /^p\s*([0-3])$/i.exec(text);
+  if (exact) return `P${exact[1]}` as AcceptanceSeverityLevel;
+  const loose = /(?:^|[^a-z0-9])p\s*([0-3])(?![0-9])/i.exec(text);
+  return loose ? (`P${loose[1]}` as AcceptanceSeverityLevel) : null;
+}
+
+/**
+ * 把自由键的 defectCounts 归一成 P0-P3（**告警口径**）。
+ *
+ * 键名判定走上面的 normalizeSeverity（唯一一份），本函数只管计数语义。
+ * 非有限数跳过、负数按 0；小数四舍五入（生产者本该发整数，但**宁可保住告警信号
  * 也不要因为一个 1.5 把整条阻断判据静默抹掉**）。
  *
  * 返回 null 表示「一个可识别的档位都没有」，调用方据此区分「没报缺陷计数」
  * 与「报了但全是 0」——前者不能当作「没有缺陷」的证据。
+ *
+ * 与简报侧 `acceptance-defect-digest.normalizeDefectCounts` 的差别是**刻意的**，
+ * 不是漂移：那边为聚合统计服务，丢弃 0 并把重复键相加；本函数为告警判据服务，
+ * 必须保留「明确报了 0」这一事实——「自称通过却带 P1」正是靠它与缺席区分开。
  */
 export function normalizeDefectCounts(raw: unknown): AcceptanceSeverityCounts | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const out: AcceptanceSeverityCounts = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    const matched = /^\s*p\s*([0-3])\s*$/i.exec(key);
-    if (!matched) continue;
-    const level = `P${matched[1]}` as AcceptanceSeverityLevel;
+    const level = normalizeSeverity(key);
+    if (!level) continue;
     const n = typeof value === 'number' ? value : Number(value);
     if (!Number.isFinite(n)) continue;
     out[level] = Math.max(0, Math.round(n));

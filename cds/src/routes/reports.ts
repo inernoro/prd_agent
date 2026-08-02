@@ -37,8 +37,10 @@ import type { AcceptanceReportMeta } from '../types.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
+import type { AcceptanceDefectRow, AcceptanceRootCauseRow } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { classifyAcceptanceOutcome, formatSeveritySummary } from '../services/acceptance-severity.js';
+import { buildDefectDigest, type DigestReportInput } from '../services/acceptance-defect-digest.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -216,6 +218,8 @@ interface ParsedUpload {
   verdict?: string;
   tier?: string;
   defectCounts?: string;
+  defectRows?: string;
+  rootCauseRows?: string;
   commitSha?: string;
   branch?: string;
   prNumber?: string;
@@ -245,6 +249,72 @@ function normDefectCounts(v: unknown): Record<string, number> | null {
     if (Number.isFinite(n)) out[k] = n;
   }
   return Object.keys(out).length ? out : null;
+}
+
+/**
+ * 结构化证据行的体量上限。这些行随元数据进 state.json（不是磁盘正文文件），
+ * 无上限会让一次超长验收把整个 state 撑大并拖慢每次 save。
+ * 超出部分直接截断 —— 简报是统计用途，前 200 行足够定位高频模块。
+ */
+const MAX_EVIDENCE_ROWS = 200;
+const MAX_EVIDENCE_CELL = 300;
+
+/** 单元格规整：非字符串丢弃，trim 后空则 null，限长防滥用。 */
+function normEvidenceCell(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s ? s.slice(0, MAX_EVIDENCE_CELL) : null;
+}
+
+/** 把 body 里的行数组（或 JSON 字符串）解析成数组，非数组一律 null。 */
+function parseRowArray(v: unknown): unknown[] | null {
+  let arr: unknown = v;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (!s) return null;
+    try { arr = JSON.parse(s); } catch { return null; }
+  }
+  return Array.isArray(arr) ? arr : null;
+}
+
+/**
+ * 规整「缺陷清单」结构化行。整行四个字段都空的丢弃（空行不该占统计位）。
+ * 归一化严重度**不在这里做** —— 那是 acceptance-defect-digest 的 SSOT，
+ * 存储层原样保留报告写下的原文，避免同一判据分裂成两份（形状 3）。
+ */
+function normDefectRows(v: unknown): AcceptanceDefectRow[] | null {
+  const arr = parseRowArray(v);
+  if (!arr) return null;
+  const out: AcceptanceDefectRow[] = [];
+  for (const item of arr.slice(0, MAX_EVIDENCE_ROWS)) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const src = item as Record<string, unknown>;
+    const row: AcceptanceDefectRow = {
+      severity: normEvidenceCell(src.severity),
+      id: normEvidenceCell(src.id),
+      symptom: normEvidenceCell(src.symptom),
+      module: normEvidenceCell(src.module),
+    };
+    if (row.severity || row.id || row.symptom || row.module) out.push(row);
+  }
+  return out.length ? out : null;
+}
+
+/** 规整「根因链条」结构化行。 */
+function normRootCauseRows(v: unknown): AcceptanceRootCauseRow[] | null {
+  const arr = parseRowArray(v);
+  if (!arr) return null;
+  const out: AcceptanceRootCauseRow[] = [];
+  for (const item of arr.slice(0, MAX_EVIDENCE_ROWS)) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const src = item as Record<string, unknown>;
+    const row: AcceptanceRootCauseRow = {
+      cause: normEvidenceCell(src.cause),
+      conclusion: normEvidenceCell(src.conclusion),
+      action: normEvidenceCell(src.action),
+    };
+    if (row.cause || row.conclusion || row.action) out.push(row);
+  }
+  return out.length ? out : null;
 }
 
 /** 规整 prNumber：接受数字或数字字符串，否则 null。 */
@@ -345,6 +415,10 @@ function parseMultipart(buf: Buffer, contentType: string): ParsedUpload {
       out.tier = value;
     } else if (fieldName === 'defectCounts') {
       out.defectCounts = value;
+    } else if (fieldName === 'defectRows') {
+      out.defectRows = value;
+    } else if (fieldName === 'rootCauseRows') {
+      out.rootCauseRows = value;
     } else if (fieldName === 'commitSha') {
       out.commitSha = value;
     } else if (fieldName === 'branch') {
@@ -507,6 +581,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let rawVerdict: unknown;
     let rawTier: unknown;
     let rawDefectCounts: unknown;
+    let rawDefectRows: unknown;
+    let rawRootCauseRows: unknown;
     let rawCommitSha: unknown;
     let rawBranch: unknown;
     let rawPrNumber: unknown;
@@ -526,6 +602,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawVerdict = parsed.verdict;
       rawTier = parsed.tier;
       rawDefectCounts = parsed.defectCounts;
+      rawDefectRows = parsed.defectRows;
+      rawRootCauseRows = parsed.rootCauseRows;
       rawCommitSha = parsed.commitSha;
       rawBranch = parsed.branch;
       rawPrNumber = parsed.prNumber;
@@ -542,6 +620,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawVerdict = body.verdict;
       rawTier = body.tier;
       rawDefectCounts = body.defectCounts;
+      rawDefectRows = body.defectRows;
+      rawRootCauseRows = body.rootCauseRows;
       rawCommitSha = body.commitSha;
       rawBranch = body.branch;
       rawPrNumber = body.prNumber;
@@ -646,6 +726,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       verdict,
       tier,
       defectCounts: normDefectCounts(rawDefectCounts),
+      defectRows: normDefectRows(rawDefectRows),
+      rootCauseRows: normRootCauseRows(rawRootCauseRows),
       commitSha: resolvedCommitSha,
       branch: resolvedBranch,
       prNumber: normPrNumber(rawPrNumber),
@@ -659,19 +741,29 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     }
   });
 
-  // GET /api/reports?projectId= — list metadata (newest first).
-  router.get('/reports', (req: Request, res: Response) => {
+  /**
+   * 列表/简报共用的项目作用域解析。
+   *
+   * 抽成一个函数而不是在两个 handler 里各写一遍：cdscli / config 可能传 slug（如
+   * prd-agent），而存储层按真实 projectId 精确过滤，不规范化则 slug 永远命中空集；
+   * 项目级 key 还必须被强制收窄到自己的项目。两处判据一旦分裂，简报就会出现
+   * 「列表看得到、简报统计不到」的静默不一致（形状 3：判据分裂后各自漂移）。
+   */
+  function resolveScopedProjectId(req: Request): string | undefined {
     let projectId = typeof req.query.projectId === 'string' && req.query.projectId
       ? req.query.projectId
       : undefined;
-    // 把传入的 projectId 规范成真实项目 id：cdscli / config 可能传 slug(如 prd-agent)，
-    // 而列表按存储的 projectId 精确过滤；不规范化则 slug 永远命中空集，create(已 resolve
-    // slug)成功了 list 却空(Cursor Bugbot Medium)。
     if (projectId) projectId = stateService.getProject(projectId)?.id ?? projectId;
     // 项目级 key 只能看自己项目的报告（忽略其传入的 projectId 越权查询）；
     // cookie/bootstrap（人类 owner）不受限，照旧看全部。
     const key = projectKeyOf(req);
     if (key) projectId = key.projectId;
+    return projectId;
+  }
+
+  // GET /api/reports?projectId= — list metadata (newest first).
+  router.get('/reports', (req: Request, res: Response) => {
+    const projectId = resolveScopedProjectId(req);
     // folderId 过滤：'<id>' 仅该文件夹；'none' 仅未归类；缺省不过滤。
     let folderFilter: string | null | undefined;
     if (typeof req.query.folderId === 'string') {
@@ -687,6 +779,32 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       // 响应附带 projectSlug，便于跨系统（MAP）按项目归类展示，免二次查项目表。
       .map((r) => ({ ...r, projectSlug: r.projectId ? stateService.getProject(r.projectId)?.slug ?? null : null }));
     res.json({ reports });
+  });
+
+  /**
+   * GET /api/reports/defect-digest?projectId=&folderId=&days= — 缺陷归因简报。
+   *
+   * 回答「最近这些验收里，哪一类缺陷在反复出现、集中在哪个模块、根因结论是什么」。
+   * 每个数字都带 reportIds，点得回具体报告 —— 这是它区别于「拍脑袋总结」的地方。
+   *
+   * 必须注册在 `/reports/:id` **之前**：`defect-digest` 是单段路径，会被 `:id`
+   * 参数路由吞掉，变成「查一份 id 为 defect-digest 的报告」然后 404。
+   */
+  router.get('/reports/defect-digest', (req: Request, res: Response) => {
+    const projectId = resolveScopedProjectId(req);
+    let folderFilter: string | null | undefined;
+    if (typeof req.query.folderId === 'string') {
+      folderFilter = req.query.folderId === 'none' ? null : req.query.folderId;
+    }
+    // days：统计窗口。缺省 30 天；夹在 1..365 之间防止无意义的极端值。
+    const rawDays = typeof req.query.days === 'string' ? Number(req.query.days) : NaN;
+    const days = Number.isFinite(rawDays) ? Math.min(365, Math.max(1, Math.floor(rawDays))) : 30;
+    const now = new Date();
+    const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const reports = stateService.listAcceptanceReports(projectId ?? null, folderFilter);
+    const digest = buildDefectDigest(reports as DigestReportInput[], { since, now });
+    return res.json({ digest: { ...digest, windowDays: days } });
   });
 
   // GET /api/reports/assets/:name — 内容寻址的报告图片资源（PNG/JPG/...）。
@@ -918,6 +1036,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (Object.prototype.hasOwnProperty.call(body, 'verdict')) metaUpdates.verdict = normVerdict(body.verdict);
     if (Object.prototype.hasOwnProperty.call(body, 'tier')) metaUpdates.tier = normShort(body.tier, 80);
     if (Object.prototype.hasOwnProperty.call(body, 'defectCounts')) metaUpdates.defectCounts = normDefectCounts(body.defectCounts);
+    if (Object.prototype.hasOwnProperty.call(body, 'defectRows')) metaUpdates.defectRows = normDefectRows(body.defectRows);
+    if (Object.prototype.hasOwnProperty.call(body, 'rootCauseRows')) metaUpdates.rootCauseRows = normRootCauseRows(body.rootCauseRows);
     if (Object.prototype.hasOwnProperty.call(body, 'commitSha')) metaUpdates.commitSha = normShort(body.commitSha, 64);
     if (Object.prototype.hasOwnProperty.call(body, 'branch')) metaUpdates.branch = normShort(body.branch);
     if (Object.prototype.hasOwnProperty.call(body, 'prNumber')) metaUpdates.prNumber = normPrNumber(body.prNumber);

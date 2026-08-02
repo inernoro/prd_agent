@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, AcceptanceDefectRow, AcceptanceRootCauseRow, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -4592,6 +4592,8 @@ export class StateService {
     verdict?: 'pass' | 'conditional' | 'fail' | null;
     tier?: string | null;
     defectCounts?: Record<string, number> | null;
+    defectRows?: AcceptanceDefectRow[] | null;
+    rootCauseRows?: AcceptanceRootCauseRow[] | null;
     commitSha?: string | null;
     branch?: string | null;
     prNumber?: number | null;
@@ -4647,6 +4649,8 @@ export class StateService {
       verdict: input.verdict ?? null,
       tier: input.tier ?? null,
       defectCounts: input.defectCounts ?? null,
+      defectRows: input.defectRows ?? null,
+      rootCauseRows: input.rootCauseRows ?? null,
       commitSha: input.commitSha ?? null,
       branch: input.branch ?? null,
       prNumber: input.prNumber ?? null,
@@ -4675,6 +4679,8 @@ export class StateService {
       verdict?: 'pass' | 'conditional' | 'fail' | null;
       tier?: string | null;
       defectCounts?: Record<string, number> | null;
+      defectRows?: AcceptanceDefectRow[] | null;
+      rootCauseRows?: AcceptanceRootCauseRow[] | null;
       commitSha?: string | null;
       branch?: string | null;
       prNumber?: number | null;
@@ -4765,6 +4771,8 @@ export class StateService {
     if (updates.verdict !== undefined) meta.verdict = updates.verdict;
     if (updates.tier !== undefined) meta.tier = updates.tier;
     if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;
+    if (updates.defectRows !== undefined) meta.defectRows = updates.defectRows;
+    if (updates.rootCauseRows !== undefined) meta.rootCauseRows = updates.rootCauseRows;
     if (updates.commitSha !== undefined) meta.commitSha = updates.commitSha;
     if (updates.branch !== undefined) meta.branch = updates.branch;
     if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;

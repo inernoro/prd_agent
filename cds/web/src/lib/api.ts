@@ -193,6 +193,21 @@ export type ReportFormat = 'html' | 'md';
 
 export type ReportVerdict = 'pass' | 'conditional' | 'fail';
 
+/** 一行缺陷证据（服务端 types.ts 的 AcceptanceDefectRow 同构）。 */
+export interface AcceptanceDefectRow {
+  severity?: string | null;
+  id?: string | null;
+  symptom?: string | null;
+  module?: string | null;
+}
+
+/** 一行根因证据。 */
+export interface AcceptanceRootCauseRow {
+  cause?: string | null;
+  conclusion?: string | null;
+  action?: string | null;
+}
+
 export interface AcceptanceReport {
   id: string;
   title: string;
@@ -209,6 +224,10 @@ export interface AcceptanceReport {
   tier?: string | null;
   /** 缺陷计数（按严重度）。 */
   defectCounts?: Record<string, number> | null;
+  /** 逐行缺陷证据（正文「缺陷清单」表的结构化投影），缺陷归因简报的输入。 */
+  defectRows?: AcceptanceDefectRow[] | null;
+  /** 逐行根因证据（正文「根因链条」表的结构化投影）。 */
+  rootCauseRows?: AcceptanceRootCauseRow[] | null;
   /** E1 部署上下文：commit SHA。 */
   commitSha?: string | null;
   /** E1 部署上下文：分支名。 */
@@ -254,6 +273,51 @@ export async function listReports(projectId?: string, folderId?: string): Promis
   const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await apiRequest<{ reports: AcceptanceReport[] }>(`/api/reports${qs}`);
   return res.reports;
+}
+
+/** 缺陷归因简报：一簇按模块聚起来的缺陷。 */
+export interface DefectCluster {
+  key: string;
+  label: string;
+  defectCount: number;
+  severityTotals: Record<string, number>;
+  worstSeverity: string;
+  /** 命中该簇的报告 id —— 每个数字的追溯锚点。 */
+  reportIds: string[];
+  samples: Array<{ reportId: string; reportTitle: string; severity: string; symptom: string }>;
+}
+
+/** 缺陷归因简报（服务端 acceptance-defect-digest.ts 的 DefectDigest 同构 + windowDays）。 */
+export interface DefectDigest {
+  generatedAt: string;
+  since: string | null;
+  windowDays: number;
+  reportCount: number;
+  reportsWithDefectRows: number;
+  reportsWithCountsOnly: number;
+  severityTotals: Record<string, number>;
+  unclassifiedDefectCount: number;
+  verdictTotals: { pass: number; conditional: number; fail: number; unknown: number };
+  clusters: DefectCluster[];
+  rootCauses: Array<{ conclusion: string; count: number; reportIds: string[] }>;
+}
+
+/**
+ * 拉取缺陷归因简报。`days` 为统计窗口（服务端夹在 1..365，缺省 30）。
+ * `folderId` 传 'none' 表示只统计未归类报告。
+ */
+export async function fetchDefectDigest(
+  projectId?: string,
+  days?: number,
+  folderId?: string,
+): Promise<DefectDigest> {
+  const params = new URLSearchParams();
+  if (projectId) params.set('projectId', projectId);
+  if (days) params.set('days', String(days));
+  if (folderId) params.set('folderId', folderId);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await apiRequest<{ digest: DefectDigest }>(`/api/reports/defect-digest${qs}`);
+  return res.digest;
 }
 
 /** List report folders for a project scope (omit projectId for global/CDS-self). */

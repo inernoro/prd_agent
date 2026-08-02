@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   classifyAcceptanceOutcome,
   formatSeveritySummary,
   normalizeDefectCounts,
 } from '../../src/services/acceptance-severity.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * 判据守卫。两个失败方向都是**静默的**，所以必须逐条钉死：
@@ -97,6 +102,34 @@ describe('classifyAcceptanceOutcome —— 阻断判定', () => {
     const out = classifyAcceptanceOutcome('通过', { p1: 2 });
     expect(out.blocking).toBe(false);
     expect(out.conflict).toBe(false);
+  });
+});
+
+describe('严重度判定只有一份 —— 防判据分裂（形状 3）', () => {
+  it('缺陷简报用的就是告警判据这一份，不是自己另写的同名函数', async () => {
+    const digest = await import('../../src/services/acceptance-defect-digest.js');
+    const severity = await import('../../src/services/acceptance-severity.js');
+    // 同一个函数引用。两边各自演化的后果是「简报统计到 2 个 P0，而阻断告警从未响过」
+    // —— 两边都不报错，谁也看不出自己错了，所以只能靠身份相等钉住。
+    expect(digest.normalizeSeverity).toBe(severity.normalizeSeverity);
+  });
+
+  it('源码里 normalizeSeverity 的实现只出现一处', () => {
+    const root = path.resolve(__dirname, '../../src');
+    const hits: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!entry.name.endsWith('.ts')) continue;
+        // 只算「函数定义」，不算 import / re-export。
+        if (/export\s+function\s+normalizeSeverity\b/.test(fs.readFileSync(full, 'utf8'))) {
+          hits.push(path.relative(root, full).split(path.sep).join('/'));
+        }
+      }
+    };
+    walk(root);
+    expect(hits).toEqual(['services/acceptance-severity.ts']);
   });
 });
 
