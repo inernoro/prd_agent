@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, ArrowUpDown, Boxes, CalendarDays, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, Database, Download, FileCode2, FileText, FolderOpen,
-  GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
+  BarChart3, GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { marked } from 'marked';
@@ -46,6 +46,7 @@ import {
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { useTheme } from '@/lib/theme';
 import { buildMapReportImportUrl } from '@/lib/knowledge-base-sync';
+import { DefectDigestDialog } from '@/pages/reports/DefectDigestDialog';
 
 interface ProjectLite {
   id: string;
@@ -141,6 +142,7 @@ export function ReportsPage(): JSX.Element {
   const [pendingDeleteFolder, setPendingDeleteFolder] = useState<ReportFolder | null>(null);
   const [kbConnections, setKbConnections] = useState<KnowledgeBaseConnection[]>([]);
   const [knowledgeDialogReport, setKnowledgeDialogReport] = useState<AcceptanceReport | null>(null);
+  const [digestOpen, setDigestOpen] = useState(false);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -455,6 +457,7 @@ export function ReportsPage(): JSX.Element {
           right={(
             <>
               <PaletteHint />
+              <Button variant="outline" size="sm" onClick={() => setDigestOpen(true)}><BarChart3 />缺陷简报</Button>
               <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw />刷新</Button>
               <Button size="sm" onClick={() => setCreateOpen(true)}><Plus />新建报告</Button>
             </>
@@ -628,6 +631,17 @@ export function ReportsPage(): JSX.Element {
         onOpenChange={(open) => { if (!open) setKnowledgeDialogReport(null); }}
         onSync={openMapImport}
         onToast={setToast}
+      />
+      <DefectDigestDialog
+        open={digestOpen}
+        onClose={() => setDigestOpen(false)}
+        projectId={projectId || undefined}
+        onOpenReport={(reportId) => {
+          const target = allReports.find((r) => r.id === reportId);
+          if (!target) return;
+          setDigestOpen(false);
+          handleSelectReport(target);
+        }}
       />
     </AppShell>
   );

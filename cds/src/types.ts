@@ -2295,6 +2295,31 @@ export interface PeerPairingCode {
  * 这里只保留供列表/详情页展示的轻量字段。系统级（与具体 project 无关的
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
+/**
+ * 一行缺陷证据。字段是 AcceptanceDefectRow 在 services/acceptance-defect-digest.ts
+ * 里的同名结构 —— 那里是聚类算法的 SSOT，这里只是存储契约的复述，两边字段必须一致。
+ */
+export interface AcceptanceDefectRow {
+  /** 严重度原文（`P0`/`p0`/`**P1**` 都合法，归一化在 digest 层）。 */
+  severity?: string | null;
+  /** 缺陷编号。 */
+  id?: string | null;
+  /** 现象/问题描述。 */
+  symptom?: string | null;
+  /** 页面/路径/模块/位置 —— 聚类维度。 */
+  module?: string | null;
+}
+
+/** 一行根因证据（正文「根因链条」表）。 */
+export interface AcceptanceRootCauseRow {
+  /** 系统原因。 */
+  cause?: string | null;
+  /** 结论（`覆盖缺口` / `产品失败` / `非阻断风险` 等）。 */
+  conclusion?: string | null;
+  /** 关闭动作。 */
+  action?: string | null;
+}
+
 export interface AcceptanceReportMeta {
   /** 稳定 ID（用于磁盘文件名 `<id>.<ext>` 与路由 `:id`）。 */
   id: string;
@@ -2316,6 +2341,17 @@ export interface AcceptanceReportMeta {
   tier?: string | null;
   /** 缺陷计数（按严重度），如 { p0:0, p1:1, p2:3 }；可空。 */
   defectCounts?: Record<string, number> | null;
+  /**
+   * 逐行缺陷证据（验收报告正文「缺陷清单」表的结构化投影）；可空。
+   *
+   * 为什么要单独存：报告正文入库时是**渲染后的 HTML**，服务端再解析成本高且脆。
+   * 而归档脚本本来就已经把这张表解析出来过一次（archive_report.py 的 _section_table），
+   * 只是解析完就丢了。把它随元数据一起上传，「哪个模块反复出问题」这类跨报告统计
+   * 才有可能做（services/acceptance-defect-digest.ts），否则只剩一个聚合数字。
+   */
+  defectRows?: AcceptanceDefectRow[] | null;
+  /** 逐行根因证据（正文「根因链条」表的结构化投影）；可空。 */
+  rootCauseRows?: AcceptanceRootCauseRow[] | null;
   /** E1 部署上下文：被验收对象对应的 commit SHA（7+ 位）；可空。 */
   commitSha?: string | null;
   /** E1 部署上下文：被验收对象对应的分支名（与 branchId 互补，分支名更可读）；可空。 */
