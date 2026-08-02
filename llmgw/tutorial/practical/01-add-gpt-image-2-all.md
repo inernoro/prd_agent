@@ -24,7 +24,7 @@ PublicId 由本租户维护，应该稳定。上游标识可能升级或下线�
 1. 进入“路由 → Provider”和“路由 → 模型”，创建或复用真实上游。每条上游记录必须有准确协议、Base URL、真实模型标识和图片生成能力；密钥保存后只能显示已配置状态。
 2. 进入“路由 → 逻辑模型”，新增 `image2`，类型选“图片生成”，能力包含图片生成，并把 `visual-agent.image.text2img::generation` 加入可用 appCaller。
 3. 同样新增 `nanobanana-2` 和 `nanobanana-2-lite`。显示名可以面向用户，PublicId 保存后不要随供应商版本变化频繁改名。
-4. 展开每个逻辑模型，点击“新增 Offering”，选择已经配置好的上游模型。OpenRouter 专用图片 API 的协议填 `openrouter-image`，Endpoint path 填 `images`；其他供应商按其真实接口选择协议，不能只改模型名。
+4. 展开每个逻辑模型，点击“新增 Offering”，选择已经配置好的上游模型。OpenRouter 专用图片 API 的协议填 `openrouter-image`，Endpoint path 默认留空，由协议自动生成；其他供应商按其真实接口选择协议，不能只改模型名。
 5. 设置可用范围、启用状态、优先级和权重。关键模型可以绑定两条不同 Provider 的 Offering；只有一条可信上游时就保留一条，不用无效地址凑备用。
 6. 回到视觉创作刷新模型选择器，分别选择每个新模型完成一次文生图和一次带参考图生成，再到“观测 → 请求记录”核对实际 Provider、模型、Endpoint 与结果。
 7. 暂时不要把三个逻辑模型塞进同一个模型池。模型池只处理没有显式选择时的默认；视觉创作会直接读取逻辑模型目录。
@@ -51,7 +51,8 @@ Google 官方图片生成指南把 Gemini 3.1 Flash Image 称为 Nano Banana 2�
 - PublicId 保存冲突：同一租户内 PublicId 唯一，复用已有记录，不创建大小写不同的重复项。
 - 视觉创作看不到记录：检查模型类型、启用状态、appCaller 可见范围，以及下一篇实战中的 Offering。
 - 上游模型 id 找不到：这是 Provider 或模型配置问题，不要通过改 PublicId 掩盖。
-- OpenRouter 返回输入 token 或输出模态错误：专用图片模型误走了旧聊天协议，改为 `openrouter-image` 和 `images` 后重新验证。
+- OpenRouter 返回输入 token 或输出模态错误：专用图片模型误走了旧聊天协议，改为 `openrouter-image` 并保持 Endpoint path 为空后重新验证。
+- OpenRouter 返回 HTML 或“响应解析失败”：检查是否在 Base URL 为 `/api` 时又手填了 `images`，导致请求网页 `/api/images`；清空 Endpoint path 后重新验证。
 - 想为每款模型复制一个池：停止复制。逻辑模型是应用目录，Offering 才是多上游列表。
 
 ## 官方参考

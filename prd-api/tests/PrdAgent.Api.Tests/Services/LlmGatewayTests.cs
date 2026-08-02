@@ -1700,7 +1700,7 @@ public class LlmGatewayTests
             ActualPlatformName = "OpenRouter",
             PlatformType = "openai",
             Protocol = "openrouter-image",
-            ApiUrl = "https://openrouter.ai/api/v1",
+            ApiUrl = "https://openrouter.ai/api",
             ApiKey = "openrouter-key",
         };
         var http = new SequenceHttpClientFactory(

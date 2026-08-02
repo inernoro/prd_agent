@@ -51,7 +51,7 @@ PublicId 不含 Provider、Endpoint 或供应商版本，保存后不要随上�
 每个 Offering 只绑定一个上游模型或 Exchange。必须配置：
 
 - 精确协议。
-- 必要时填写上游模型覆盖和 Endpoint path。
+- Endpoint path 默认留空，由协议结合 Provider Base URL 生成；只有供应商明确要求特殊相对路径时才覆盖。
 - 优先级或权重。
 - 已知的最大并发和 RPM；未知时留空，不填猜测值。
 
@@ -60,12 +60,13 @@ PublicId 不含 Provider、Endpoint 或供应商版本，保存后不要随上�
 OpenRouter 当前专用图片 API 使用：
 
 - 协议：`openrouter-image`
-- Endpoint path：`images`
+- 实际 Endpoint：`/api/v1/images`；Offering 的 Endpoint path 默认留空
 - 文生图字段：`model`、`prompt`、`n`、`size`
 - 多图字段：`input_references`
 - 响应：`data[].b64_json`、`data[].media_type`
 
 旧的 `openrouter` 协议保留给仍使用 `chat/completions + modalities` 的兼容通道，不能和专用图片 API 混用。
+如果 Provider Base URL 是 `https://openrouter.ai/api`，手填 `images` 会错误请求网页 `/api/images`。协议默认路径会正确生成 `/api/v1/images`，不要重复配置。
 
 ### 4. appCaller 可见范围
 
