@@ -15,19 +15,31 @@
  * （GET /api/projects/:id 明确 404），改调服务端 dismiss 而不是删本地缓存——
  * 账本在服务端，本地删了下一次 refresh 又会回来。
  *
- * 两处如实告知（绝不假装通知过谁）：
+ * 处理状态机（2026-08-02）：阻断类通知不能只「看见」，还要能被接手。每条通知带
+ * 待处理 / 处理中 / 已解决三档，状态持久化在服务端账本（换台机器仍在，不是
+ * localStorage）；筛选条走服务端 `?status=`，计数由服务端给，避免前端第二份口径。
+ *
+ * 三处如实告知（绝不假装通知过谁、也绝不假装有人负责）：
  *   - 外发未配置时顶部显示「仅记录在 CDS 本地，未外发」；
- *   - 单条通知的外发失败原因原样展示。
+ *   - 单条通知的外发失败原因原样展示；
+ *   - 认领人取不到时明说「当前部署未启用账号身份，未记录责任人」（见 lib/noticeStatus）。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, ClipboardCheck, Database, ExternalLink, Rocket, Settings, ShieldAlert, TerminalSquare, Trash2, X } from 'lucide-react';
+import { Bell, CheckCircle2, ClipboardCheck, Database, ExternalLink, Rocket, Settings, ShieldAlert, TerminalSquare, Trash2, Undo2, UserCheck, X } from 'lucide-react';
 import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { apiRequest, ApiError } from '@/lib/api';
+import {
+  NOTICE_STATUS_META,
+  noticeHandlerText,
+  noticeStatusOf,
+  type NoticeHandling,
+  type NoticeStatus,
+} from '@/lib/noticeStatus';
 import { floatingPanelPosition, type FloatingPanelPosition } from '@/lib/floatingPanelPosition';
 import { useOverlayDock } from '@/lib/useOverlayDock';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
@@ -67,12 +79,23 @@ interface SiteNotice {
   readAt?: string;
   dismissedAt?: string;
   outbound?: { status: 'sent' | 'skipped' | 'failed'; at: string; reason?: string; reference?: string };
+  handling?: NoticeHandling;
 }
 
 interface NoticesResponse {
   notices: SiteNotice[];
+  counts?: Record<NoticeStatus, number>;
+  unread?: number;
   outbound: { configured: boolean; reason?: string };
 }
+
+/** 筛选条。null = 全部；其余透传给服务端 `?status=`，不在前端做第二份过滤。 */
+const STATUS_FILTERS: Array<{ value: NoticeStatus | null; label: string }> = [
+  { value: null, label: '全部' },
+  { value: 'open', label: NOTICE_STATUS_META.open.label },
+  { value: 'working', label: NOTICE_STATUS_META.working.label },
+  { value: 'resolved', label: NOTICE_STATUS_META.resolved.label },
+];
 
 function levelClass(level: NoticeLevel = 'info'): string {
   // 语义色走 token，暗/亮双主题各自成立（禁暗色字面量 fallback）。
@@ -106,6 +129,10 @@ export function SiteNoticeInbox(): JSX.Element {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [notices, setNotices] = useState<SiteNotice[]>([]);
   const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
+  // 计数与未读来自服务端全量作用域，与当前筛选无关（见后端 summary 的注释）。
+  const [counts, setCounts] = useState<Record<NoticeStatus, number>>({ open: 0, working: 0, resolved: 0 });
+  const [unread, setUnread] = useState(0);
+  const [statusFilter, setStatusFilter] = useState<NoticeStatus | null>(null);
   const [open, setOpen] = useState(false);
   const [expandedNoticeIds, setExpandedNoticeIds] = useState<Set<string>>(() => new Set());
   const [panelPosition, setPanelPosition] = useState<FloatingPanelPosition | null>(null);
@@ -149,13 +176,18 @@ export function SiteNoticeInbox(): JSX.Element {
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const res = await apiRequest<NoticesResponse>('/api/notices');
+      // 筛选走服务端而不是前端 filter：账本是服务端权威，前端再筛一遍就成了第二份口径，
+      // 「旧记录算不算待处理」这类判定迟早两边漂（本文件顶部那段历史就是这么来的）。
+      const query = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
+      const res = await apiRequest<NoticesResponse>(`/api/notices${query}`);
       setNotices(Array.isArray(res?.notices) ? res.notices : []);
+      if (res?.counts) setCounts(res.counts);
+      if (typeof res?.unread === 'number') setUnread(res.unread);
       if (res?.outbound) setOutbound(res.outbound);
     } catch {
       // 铃铛取不到账本不该炸掉整个 shell：保持上一次的展示，等下一次事件/打开时再拉。
     }
-  }, []);
+  }, [statusFilter]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -212,15 +244,17 @@ export function SiteNoticeInbox(): JSX.Element {
           href: detail.href,
           actionLabel: detail.actionLabel,
         },
-      }).catch(() => { /* 落库失败不回滚乐观插入：下一次 refresh 会以服务端为准 */ })
+      }).then(() => { void refresh(); }) // 拉一次把计数/未读对回服务端权威值
+        .catch(() => { /* 落库失败不回滚乐观插入：下一次 refresh 会以服务端为准 */ })
         .finally(() => { pendingRef.current.delete(detail.id); });
     };
     window.addEventListener('cds:notice:upsert', onUpsert);
     return () => window.removeEventListener('cds:notice:upsert', onUpsert);
-  }, []);
+  }, [refresh]);
 
   const activeNotices = useMemo(() => notices.filter((item) => !item.dismissedAt), [notices]);
-  const unreadCount = activeNotices.filter((item) => !item.readAt).length;
+  // 未读来自服务端全量摘要：列表可能正被筛选，用列表长度去数会让角标随筛选跳变。
+  const unreadCount = unread;
   const informationCount = unreadCount
     + sourceCounts.access
     + sourceCounts.commit
@@ -233,6 +267,43 @@ export function SiteNoticeInbox(): JSX.Element {
       item.id === id ? { ...item, readAt: item.readAt || now, dismissedAt: now } : item
     )));
     void apiRequest(`/api/notices/${encodeURIComponent(id)}/dismiss`, { method: 'POST' })
+      .then(() => { void refresh(); })
+      .catch(() => { void refresh(); });
+  }, [refresh]);
+
+  /**
+   * 推进处理状态机。状态存在服务端账本，换台机器/换个人打开都看得到——
+   * 这正是它不能像旧版那样落 localStorage 的原因。
+   *
+   * 乐观更新只为「点下去立刻有反应」；服务端返回的记录（含真实变更时间与身份）
+   * 立即覆盖回来，随后 refresh 把计数对齐。失败则整条拉回服务端值，不留假状态。
+   */
+  const setNoticeHandling = useCallback((id: string, status: NoticeStatus): void => {
+    setNotices((current) => current.map((item) => (
+      item.id === id
+        ? {
+          ...item,
+          readAt: item.readAt || new Date().toISOString(),
+          handling: {
+            status,
+            updatedAt: new Date().toISOString(),
+            // 身份由服务端判定：前端不知道自己是不是"有账号的会话"，
+            // 猜一个名字出来就是假责任人。先留空，等服务端返回覆盖。
+            actor: { channel: 'user', userId: null, userLabel: null, provider: null },
+          },
+        }
+        : item
+    )));
+    void apiRequest<{ notice?: SiteNotice }>(`/api/notices/${encodeURIComponent(id)}/handling`, {
+      method: 'POST',
+      body: { status },
+    })
+      .then((res) => {
+        if (res?.notice) {
+          setNotices((current) => current.map((item) => (item.id === id ? res.notice as SiteNotice : item)));
+        }
+        void refresh();
+      })
       .catch(() => { void refresh(); });
   }, [refresh]);
 
@@ -279,9 +350,11 @@ export function SiteNoticeInbox(): JSX.Element {
   const markAllRead = (): void => {
     const now = new Date().toISOString();
     const before = notices;
+    const beforeUnread = unread;
     setNotices(notices.map((item) => (item.dismissedAt || item.readAt ? item : { ...item, readAt: now })));
+    setUnread(0);
     void apiRequest('/api/notices/read-all', { method: 'POST' })
-      .catch(() => { setNotices(before); });
+      .catch(() => { setNotices(before); setUnread(beforeUnread); });
   };
 
   if (!host) return <></>;
@@ -346,16 +419,54 @@ export function SiteNoticeInbox(): JSX.Element {
             <GlobalUpdateBadge onCountChange={handleUpdateCount} />
             <CommitInbox onCountChange={handleCommitCount} />
 
-            {activeNotices.length === 0 && informationCount === 0 ? (
+            {activeNotices.length === 0 && informationCount === 0 && counts.open + counts.working + counts.resolved === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无提醒</div>
-            ) : activeNotices.length > 0 ? (
+            ) : counts.open + counts.working + counts.resolved > 0 ? (
               <section className="overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
-                <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs font-semibold text-foreground">
-                  站内提醒（服务端记录，关掉页面也不会漏）
+                <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
+                  <div className="text-xs font-semibold text-foreground">
+                    站内提醒（服务端记录，关掉页面也不会漏）
+                  </div>
+                  <div className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
+                    {counts.open > 0
+                      ? `还有 ${counts.open} 条没人处理`
+                      : '所有提醒都已有人接手'}
+                  </div>
+                  {/* 筛选条：待处理是这里最该被看见的一档，所以计数常驻显示。 */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {STATUS_FILTERS.map((chip) => {
+                      const active = statusFilter === chip.value;
+                      const count = chip.value ? counts[chip.value] : counts.open + counts.working + counts.resolved;
+                      return (
+                        <button
+                          key={chip.label}
+                          type="button"
+                          aria-pressed={active}
+                          data-testid={`cds-notice-filter-${chip.value ?? 'all'}`}
+                          className={`inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors ${
+                            active
+                              ? 'border-primary/45 bg-primary/10 text-primary'
+                              : 'border-[hsl(var(--hairline))] text-muted-foreground hover:bg-muted/30 hover:text-foreground'
+                          }`}
+                          onClick={() => setStatusFilter(chip.value)}
+                        >
+                          <span>{chip.label}</span>
+                          <span className="font-mono">{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+                {activeNotices.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                    该筛选下没有提醒
+                  </div>
+                ) : null}
                 {activeNotices.map((notice) => {
                   const bodyExpanded = expandedNoticeIds.has(notice.id);
                   const bodyCanExpand = notice.body.length > 180 || notice.body.includes('\n');
+                  const status = noticeStatusOf(notice);
+                  const handlerText = noticeHandlerText(notice.handling);
                   return (
                   <div key={notice.id} className="border-b border-[hsl(var(--hairline))] px-3 py-3 last:border-b-0">
                     <div className="flex items-start gap-3">
@@ -365,6 +476,12 @@ export function SiteNoticeInbox(): JSX.Element {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start gap-2">
                           <div className="min-w-0 flex-1 text-sm font-semibold leading-5">{notice.title}</div>
+                          <span
+                            data-testid={`cds-notice-status-${notice.id}`}
+                            className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-4 ${NOTICE_STATUS_META[status].badgeClass}`}
+                          >
+                            {NOTICE_STATUS_META[status].label}
+                          </span>
                           {notice.occurrences > 1 ? (
                             <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[10px] leading-4 text-muted-foreground">
                               {notice.occurrences} 次
@@ -403,7 +520,41 @@ export function SiteNoticeInbox(): JSX.Element {
                         {outboundHint(notice) ? (
                           <div className="mt-1 text-[11px] leading-4 text-muted-foreground/80">{outboundHint(notice)}</div>
                         ) : null}
+                        {handlerText ? (
+                          <div className="mt-1 text-[11px] leading-4 text-muted-foreground/80">{handlerText}</div>
+                        ) : null}
                         <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {status !== 'working' ? (
+                            <button
+                              type="button"
+                              data-testid={`cds-notice-claim-${notice.id}`}
+                              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-primary/35 bg-primary/10 px-2 text-xs font-medium text-primary hover:bg-primary/15"
+                              onClick={() => setNoticeHandling(notice.id, 'working')}
+                            >
+                              <UserCheck className="h-3 w-3" />
+                              我来处理
+                            </button>
+                          ) : null}
+                          {status !== 'resolved' ? (
+                            <button
+                              type="button"
+                              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/35 bg-emerald-500/10 px-2 text-xs font-medium text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+                              onClick={() => setNoticeHandling(notice.id, 'resolved')}
+                            >
+                              <CheckCircle2 className="h-3 w-3" />
+                              已解决
+                            </button>
+                          ) : null}
+                          {status !== 'open' ? (
+                            <button
+                              type="button"
+                              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                              onClick={() => setNoticeHandling(notice.id, 'open')}
+                            >
+                              <Undo2 className="h-3 w-3" />
+                              退回待处理
+                            </button>
+                          ) : null}
                           {notice.href ? (
                             <a
                               href={notice.href}
