@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, Database, ExternalLink, Rocket, Settings, ShieldAlert, TerminalSquare, Trash2, X } from 'lucide-react';
+import { Bell, ClipboardCheck, Database, ExternalLink, Rocket, Settings, ShieldAlert, TerminalSquare, Trash2, X } from 'lucide-react';
 import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -86,6 +86,7 @@ function NoticeIcon({ source }: { source?: string }): JSX.Element {
   if (source === 'env') return <TerminalSquare className="h-4 w-4" />;
   if (source === 'release' || source === 'drift') return <Rocket className="h-4 w-4" />;
   if (source === 'uptime' || source === 'system') return <ShieldAlert className="h-4 w-4" />;
+  if (source === 'acceptance') return <ClipboardCheck className="h-4 w-4" />;
   return <Settings className="h-4 w-4" />;
 }
 

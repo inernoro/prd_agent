@@ -610,6 +610,34 @@ def _severity_counts_from_text(text):
     return individual or None
 
 
+def _defect_counts_for_payload(body):
+    """Extract P0-P3 counts from the report body for the CDS archive payload.
+
+    Why this exists: CDS has carried a `defectCounts` field on every report since
+    E1, but **no producer ever filled it** — so the number was only ever readable
+    by a human opening the report. CDS now classifies blocking acceptance results
+    from that field and raises a site notice, which only works if the producer
+    actually sends it (a predicate reading a field nobody writes is wiring built
+    half-way; see .claude/rules/predicate-and-wiring-discipline.md shape 2).
+
+    Single extraction path on purpose: the exact same helper and the exact same
+    「产品质量」field the archive gate already validates. A second parser would
+    drift from the gate, and the drift is silent — the number the gate checked
+    and the number the alert fired on would quietly stop being the same number.
+
+    Returns None when the report has no structured counts (non-daily reports have
+    no 「结论分层」section). None means "not reported", never "zero defects".
+    """
+    rows = _section_table_rows(body, "结论分层")
+    if not rows:
+        return None
+    values = {}
+    for row in rows:
+        if len(row) >= 2:
+            values[re.sub(r"[`*_\s]", "", row[0])] = row[1].strip()
+    return _severity_counts_from_text(values.get("产品质量", ""))
+
+
 def _strip_severity_count_claims(text):
     """Remove parsed P0-P3 count declarations before free-text severity checks."""
     raw = text or ""
@@ -2677,6 +2705,11 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
         "projectId": project_id,
         "verdict": a.verdict, "tier": a.tier,
     }
+    # P0-P3 计数随元数据上传：CDS 侧据此判定阻断级结论并推站内信 + 外发，
+    # 不传就等于把「昨天报出 2 个 P0」这件事留在正文里等人来翻。
+    defect_counts = _defect_counts_for_payload(body)
+    if defect_counts:
+        payload["defectCounts"] = defect_counts
     if folder_path:
         payload["folderPath"] = folder_path
     if (a.branch or "").strip():

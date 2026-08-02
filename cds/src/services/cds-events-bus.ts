@@ -78,6 +78,10 @@ export type CdsEventType =
   // 生产掉线和没掉线在 CDS 这边是同一种沉默。上总线后它才和发布失败同一条通道。
   | 'uptime.target.down'
   | 'uptime.target.recovered'
+
+  // 验收报告归档后的阻断级结论。判据（哪份报告算阻断）在 acceptance-severity.ts，
+  // 这里只登记「它够格叫醒人」与「叫醒时说什么」。
+  | 'acceptance.report.blocking'
   // 2026-07-29:服务端通知账本记下一条新站内信。**必须 alert=false**,
   // 否则账本订阅到自己发的事件会无限递归记账。
   | 'notice.created'
@@ -148,6 +152,10 @@ const CDS_EVENT_ALERT_CLASS: Record<CdsEventType, boolean> = {
   'uptime.target.down': true,
   // 恢复是好消息,不叫醒人。
   'uptime.target.recovered': false,
+  // 验收报出 P0/判定不通过/结论与缺陷自相矛盾 —— 不叫醒人就只有主动翻报告中心的人知道,
+  // 而「没人翻」正是常态。判据刻意排除了「有条件通过 + 若干 P1」这种每日常态形状,
+  // 所以这条响起来时一定是真事(判据与取舍见 acceptance-severity.ts)。
+  'acceptance.report.blocking': true,
   // 账本自己发的事件绝不能是告警级 —— 否则订阅方记一条又发一条,无限递归。
   'notice.created': false,
   heartbeat: false,
@@ -177,8 +185,8 @@ export interface CdsEventNoticeCopy {
   /** 来源标签,前端据此选图标:release / uptime / drift / system */
   source: string;
   level: 'info' | 'warning' | 'danger';
-  /** 深链类别。release=发布中心;status=状态页;maintenance=系统维护;none=不给链接 */
-  link: 'release' | 'status' | 'maintenance' | 'none';
+  /** 深链类别。release=发布中心;status=状态页;maintenance=系统维护;report=报告中心;none=不给链接 */
+  link: 'release' | 'status' | 'maintenance' | 'report' | 'none';
   actionLabel?: string;
 }
 
@@ -223,6 +231,7 @@ const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
   'release.schedule.disabled': { title: '定时发布已自动停用', source: 'release', level: 'danger', link: 'release', actionLabel: '查看发布中心' },
   'uptime.target.down': { title: '生产服务健康掉线', source: 'uptime', level: 'danger', link: 'status', actionLabel: '查看状态页' },
   'uptime.target.recovered': null,
+  'acceptance.report.blocking': { title: '验收发现阻断级缺陷', source: 'acceptance', level: 'danger', link: 'report', actionLabel: '查看验收报告' },
   'notice.created': null,
   heartbeat: null,
 };

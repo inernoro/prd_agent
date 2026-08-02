@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import re
 import unittest
 
 
@@ -484,6 +485,41 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         )
         errors = archive_report._interactive_evidence_errors(content, self.manifest)
         self.assertTrue(any("无法唯一解析的内部链接" in error for error in errors))
+
+
+class DefectCountsPayloadTests(unittest.TestCase):
+    """守卫「归档时把 P0-P3 计数真的传上去」这条接线。
+
+    这条线以前是断的：CDS 的 defectCounts 字段自 E1 就存在，却没有任何生产者写它，
+    于是 CDS 侧读它做告警判定时会永远读到空 —— 编译过、测试绿、通读也挑不出，
+    只是铃永远不响（.claude/rules/predicate-and-wiring-discipline.md 形状 2）。
+    删掉 _defect_counts_for_payload 的调用不会让别的用例变红，所以必须有本套件。
+    """
+
+    def test_extracts_counts_the_gate_already_validated(self):
+        counts = archive_report._defect_counts_for_payload(report_body("产品失败", counts=(2, 1, 0, 0)))
+        self.assertEqual({"P0": 2, "P1": 1, "P2": 0, "P3": 0}, counts)
+
+    def test_clean_report_reports_zeros_rather_than_nothing(self):
+        # 「报了 0」与「没报」必须可区分：前者是缺陷为零的证据，后者什么也证明不了。
+        counts = archive_report._defect_counts_for_payload(report_body("完整通过"))
+        self.assertEqual({"P0": 0, "P1": 0, "P2": 0, "P3": 0}, counts)
+
+    def test_report_without_conclusion_section_reports_nothing(self):
+        self.assertIsNone(archive_report._defect_counts_for_payload("# 普通报告\n\n没有结论分层。"))
+
+    def test_extraction_matches_the_gate_source_field(self):
+        # 生产者与校验器必须读同一个字段：漂移方向是静默的（两边数字不一致没人会发现）。
+        body = report_body("产品失败", counts=(3, 0, 0, 0))
+        rows = archive_report._section_table_rows(body, "结论分层")
+        values = {}
+        for row in rows:
+            if len(row) >= 2:
+                values[re.sub(r"[`*_\s]", "", row[0])] = row[1].strip()
+        self.assertEqual(
+            archive_report._severity_counts_from_text(values.get("产品质量", "")),
+            archive_report._defect_counts_for_payload(body),
+        )
 
 
 if __name__ == "__main__":

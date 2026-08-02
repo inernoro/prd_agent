@@ -33,9 +33,12 @@ import { Router, type Request, type Response, json as expressJson, text as expre
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
+import type { AcceptanceReportMeta } from '../types.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
+import { cdsEventsBus } from '../services/cds-events-bus.js';
+import { classifyAcceptanceOutcome, formatSeveritySummary } from '../services/acceptance-severity.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -254,6 +257,43 @@ function normPrNumber(v: unknown): number | null {
 function normShort(v: unknown, max = 200): string | null {
   const s = typeof v === 'string' ? v.trim() : '';
   return s ? s.slice(0, max) : null;
+}
+
+/**
+ * 归档即播报：阻断级验收结论必须主动找人，而不是等人来翻报告中心。
+ *
+ * 两条边界：
+ *  1. **只发事件，不自己判「要不要叫醒人」**。是否入账、文案、深链类别全在
+ *     cds-events-bus.ts 那两张穷尽 Record 里；这里再判一遍就是「又长出一张告警
+ *     清单」那种形状（见 tests/services/release-event-source-guard.test.ts 的动机）。
+ *     本函数只回答「这份报告是不是阻断级」，而那个判据本身也在 acceptance-severity.ts。
+ *  2. **绝不拖累归档**。播报是旁路：报告已经落库了，通知这条线出任何问题都只能
+ *     吞掉并 warn，不能让调用方拿到 500 —— 否则「通知坏了」会表现成「报告存不进去」，
+ *     这与 notice-ledger 的「外发是旁路，绝不拖累记账」同源。
+ */
+function publishBlockingAcceptance(stateService: StateService, meta: AcceptanceReportMeta): void {
+  try {
+    const outcome = classifyAcceptanceOutcome(meta.verdict, meta.defectCounts);
+    if (!outcome.blocking) return;
+    const project = meta.projectId ? stateService.getProject(meta.projectId) : null;
+    const summary = formatSeveritySummary(outcome.counts);
+    cdsEventsBus.publish('acceptance.report.blocking', {
+      reportId: meta.id,
+      ...(meta.folderId ? { folderId: meta.folderId } : {}),
+      ...(meta.projectId ? { projectId: meta.projectId } : {}),
+      ...(project?.name ? { projectName: project.name } : {}),
+      ...(project?.slug ? { projectSlug: project.slug } : {}),
+      verdict: meta.verdict ?? null,
+      conflict: outcome.conflict,
+      // 正文给「哪份报告 + 为什么阻断 + 各档位计数」，读者不点进去也能判断急不急。
+      message: summary
+        ? `${meta.title}：${outcome.reason}（${summary}）`
+        : `${meta.title}：${outcome.reason}`,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[reports] 阻断级验收播报失败（报告已正常归档）:', (err as Error).message);
+  }
 }
 
 /**
@@ -612,6 +652,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       deployMode: resolvedDeployMode,
       createdBy: resolveActorFromRequest(req),
     });
+    publishBlockingAcceptance(stateService, meta);
     return res.status(201).json({ report: meta });
     } catch (err) {
       return res.status(500).json({ error: 'internal', message: (err as Error).message });

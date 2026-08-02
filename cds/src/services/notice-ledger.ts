@@ -405,14 +405,18 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     releaseId?: string;
     branchId?: string;
     commitSha?: string;
+    reportId?: string;
+    folderId?: string;
     message?: string;
     errorMessage?: string;
     failure?: { summary?: string; reason?: string };
   };
 
-  // 同一目标的同一类事件归成一条。targetId 优先（发布/存活都以目标为单位），
-  // 没有目标的系统级事件（infra 熔断 / 自更新）退到项目或全局。
-  const scopeKey = data.targetId || data.branchId || data.projectId || 'system';
+  // 同一目标的同一类事件归成一条。reportId 最特指（每份验收报告是一件独立的事，
+  // 两份报告十分钟内先后归档必须是两条通知，合并会让第二份**静默消失**）；
+  // 其次 targetId（发布/存活都以目标为单位）；没有目标的系统级事件（infra 熔断 /
+  // 自更新）退到项目或全局。
+  const scopeKey = data.reportId || data.targetId || data.branchId || data.projectId || 'system';
   const dedupeKey = `${envelope.type}:${scopeKey}`;
 
   // 结构化摘要优先于原始 stderr。原始发布日志可能有数百行，只能去发布记录展开。
@@ -437,6 +441,16 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     href = '/status';
   } else if (copy.link === 'maintenance') {
     href = '/cds-settings';
+  } else if (copy.link === 'report') {
+    // 最终地址，不是中间地址（CLAUDE.md §11）：project + folder + report 三个参数
+    // 齐了才能一步落到那份报告；少 folder 左侧文件夹不高亮，少 project 列表按
+    // projectId 过滤会命中空集、点开是白屏。
+    const params = new URLSearchParams();
+    if (data.projectId) params.set('project', data.projectId);
+    if (data.folderId) params.set('folder', data.folderId);
+    if (data.reportId) params.set('report', data.reportId);
+    const query = params.toString();
+    href = query ? `/reports?${query}` : '/reports';
   }
 
   return {
