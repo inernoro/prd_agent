@@ -1100,7 +1100,13 @@ export default function AppShell() {
         <MobileDrawer open={mobileDrawerOpen} onOpenChange={setMobileDrawerOpen}>
           {/* 用户信息 */}
           <div className="px-4 py-3 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10">
+            <button
+              type="button"
+              onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
+              className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+              aria-label="修改我的头像"
+              title="修改我的头像"
+            >
               <UserAvatar
                 src={resolveAvatarUrl({
                   username: user?.username,
@@ -1112,7 +1118,7 @@ export default function AppShell() {
                 alt="avatar"
                 className="h-full w-full object-cover"
               />
-            </div>
+            </button>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                 {user?.displayName || 'Admin'}
@@ -1178,15 +1184,6 @@ export default function AppShell() {
                 {gatewayOpening ? <MapSpinner size={16} className="ml-auto" /> : <ExternalLink size={16} className="ml-auto" />}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              <Settings size={18} />
-              <span className="text-sm">修改头像</span>
-            </button>
             <button
               type="button"
               onClick={() => {
@@ -1431,12 +1428,15 @@ export default function AppShell() {
               />
 
               <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
-                {/* 头像+用户名（触发下拉菜单） */}
+                {/* 头像直接打开编辑器，用户名保留用户菜单入口。 */}
                 <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <div
-                      className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
-                      title="用户菜单"
+                  <div className={cn('flex items-center', collapsed ? '' : 'gap-3 flex-1 min-w-0')}>
+                    <button
+                      type="button"
+                      onClick={() => setAvatarOpen(true)}
+                      className="shrink-0 cursor-pointer rounded-full transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                      aria-label="修改我的头像"
+                      title="修改我的头像"
                     >
                       {/* 头像外圈 = 教程掌握度进度环(诉求 12):已学会本页教程占比,满环加毕业角标 */}
                       <AvatarProgressRing size={30} stroke={2.5}>
@@ -1452,17 +1452,25 @@ export default function AppShell() {
                           className="h-full w-full object-cover"
                         />
                       </AvatarProgressRing>
+                    </button>
 
-                      {/* 用户信息（仅展开时显示） */}
-                      {!collapsed && (
+                    {/* 用户信息（仅展开时显示，点击后打开用户菜单） */}
+                    {!collapsed && (
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 cursor-pointer rounded-[8px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          title="用户菜单"
+                        >
                         <div className="min-w-0 flex-1">
                           <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
                             {user?.displayName || 'Admin'}
                           </div>
                         </div>
-                      )}
-                    </div>
-                  </DropdownMenu.Trigger>
+                        </button>
+                      </DropdownMenu.Trigger>
+                    )}
+                  </div>
 
             <DropdownMenu.Portal>
               <DropdownMenu.Content
@@ -1475,22 +1483,30 @@ export default function AppShell() {
                 {/* 用户信息区 */}
                 <div className="px-2 py-3">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="h-10 w-10 rounded-full overflow-hidden shrink-0"
-                      style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                    <DropdownMenu.Item
+                      asChild
+                      onSelect={() => setAvatarOpen(true)}
                     >
-                      <UserAvatar
-                        src={resolveAvatarUrl({
-                          username: user?.username,
-                          userType: user?.userType,
-                          botKind: user?.botKind,
-                          avatarFileName: user?.avatarFileName ?? null,
-                          avatarUrl: user?.avatarUrl,
-                        })}
-                        alt="avatar"
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
+                      <button
+                        type="button"
+                        className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                        style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                        aria-label="修改我的头像"
+                        title="修改我的头像"
+                      >
+                        <UserAvatar
+                          src={resolveAvatarUrl({
+                            username: user?.username,
+                            userType: user?.userType,
+                            botKind: user?.botKind,
+                            avatarFileName: user?.avatarFileName ?? null,
+                            avatarUrl: user?.avatarUrl,
+                          })}
+                          alt="avatar"
+                          className="h-full w-full object-cover"
+                        />
+                      </button>
+                    </DropdownMenu.Item>
                     <div className="min-w-0 flex-1">
                       <div className="text-[14px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                         {user?.displayName || 'Admin'}
@@ -1506,18 +1522,6 @@ export default function AppShell() {
                   className="h-px mx-2 my-1"
                   style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
-
-                <DropdownMenu.Item
-                  className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover-bg-soft focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => setAvatarOpen(true)}
-                >
-                  <Wand2 size={16} className="shrink-0" />
-                  <span className="text-[13px]">修改我的头像</span>
-                  <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    {canAiEditAvatar ? 'AI / 上传' : '上传'}
-                  </span>
-                </DropdownMenu.Item>
 
                 {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account。 */}
                 <DropdownMenu.Item

@@ -1,16 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, RefreshCw, Upload, Wand2 } from 'lucide-react';
+import { Check, ImagePlus, RefreshCw, Upload, Wand2 } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { resolveAvatarUrl } from '@/lib/avatar';
-import { AVATAR_AI_PROMPT_PRESETS } from '@/lib/avatarAi';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { applyGeneratedMyAvatar, generateMyAvatarPreview, uploadUserAvatar } from '@/services';
 import type { ApiResponse } from '@/types/api';
 import type { AdminUserAvatarUploadResponse } from '@/services/contracts/userAvatarUpload';
-
-type EditMode = 'ai' | 'upload';
 
 export function AvatarEditDialog(props: {
   open: boolean;
@@ -30,8 +27,7 @@ export function AvatarEditDialog(props: {
   currentAvatarUrl?: string | null;
 }) {
   const [avatarFileName, setAvatarFileName] = useState('');
-  const [mode, setMode] = useState<EditMode>('upload');
-  const [prompt, setPrompt] = useState<string>(AVATAR_AI_PROMPT_PRESETS[1]);
+  const [prompt, setPrompt] = useState('');
   const [generatedAssetSha256, setGeneratedAssetSha256] = useState<string | null>(null);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -55,10 +51,9 @@ export function AvatarEditDialog(props: {
     setElapsedSeconds(0);
     setError(null);
     setAvatarFileName((props.avatarFileName ?? '').trim());
-    setMode(aiEnabled ? 'ai' : 'upload');
-    setPrompt(AVATAR_AI_PROMPT_PRESETS[1]);
+    setPrompt('');
     releaseGeneratedPreview();
-  }, [aiEnabled, props.open, props.avatarFileName]);
+  }, [props.open, props.avatarFileName]);
 
   useEffect(() => {
     if (!generating) return;
@@ -70,15 +65,13 @@ export function AvatarEditDialog(props: {
   }, [generating]);
 
   const previewUrl = useMemo(() => {
-    const v = avatarFileName.trim();
+    const value = avatarFileName.trim();
     return props.currentAvatarUrl?.trim() || resolveAvatarUrl({
       username: props.username ?? undefined,
       userType: props.userType ?? undefined,
-      avatarFileName: v || null,
+      avatarFileName: value || null,
     });
   }, [avatarFileName, props.currentAvatarUrl, props.username, props.userType]);
-
-  const acceptHint = 'image/png,image/jpeg,image/gif,image/webp';
 
   const closeDialog = () => {
     generationIdRef.current += 1;
@@ -94,11 +87,11 @@ export function AvatarEditDialog(props: {
     setUploading(true);
     setError(null);
     try {
-      const res = props.onUpload
+      const response = props.onUpload
         ? await props.onUpload(file)
         : await uploadUserAvatar({ userId: props.userId!, file });
-      if (!res.success) throw new Error(res.error?.message || '上传失败');
-      const fileName = String(res.data?.avatarFileName || '').trim();
+      if (!response.success) throw new Error(response.error?.message || '上传失败');
+      const fileName = String(response.data?.avatarFileName || '').trim();
       if (!fileName) throw new Error('上传返回为空');
       setAvatarFileName(fileName);
       await props.onSave(fileName);
@@ -128,17 +121,17 @@ export function AvatarEditDialog(props: {
     setElapsedSeconds(0);
     setError(null);
 
-    const res = await generateMyAvatarPreview({ sourceImageUrl: previewUrl, prompt: trimmedPrompt });
+    const response = await generateMyAvatarPreview({ sourceImageUrl: previewUrl, prompt: trimmedPrompt });
     if (generationIdRef.current !== generationId) return;
     setGenerating(false);
 
-    if (!res.success) {
-      setError(res.error?.message || '头像生成失败，请重试');
+    if (!response.success) {
+      setError(response.error?.message || '头像生成失败，请重试');
       return;
     }
 
-    setGeneratedAssetSha256(res.data.assetSha256);
-    setGeneratedUrl(res.data.previewUrl);
+    setGeneratedAssetSha256(response.data.assetSha256);
+    setGeneratedUrl(response.data.previewUrl);
   };
 
   const onApplyGeneratedAvatar = async () => {
@@ -146,9 +139,9 @@ export function AvatarEditDialog(props: {
     setUploading(true);
     setError(null);
     try {
-      const res = await applyGeneratedMyAvatar(generatedAssetSha256);
-      if (!res.success) throw new Error(res.error?.message || '替换头像失败');
-      const fileName = String(res.data?.avatarFileName || '').trim();
+      const response = await applyGeneratedMyAvatar(generatedAssetSha256);
+      if (!response.success) throw new Error(response.error?.message || '替换头像失败');
+      const fileName = String(response.data?.avatarFileName || '').trim();
       if (!fileName) throw new Error('替换头像返回为空');
       setAvatarFileName(fileName);
       await props.onSave(fileName);
@@ -161,6 +154,7 @@ export function AvatarEditDialog(props: {
   };
 
   const progress = Math.min(92, 14 + elapsedSeconds * 2.6);
+  const stageUrl = generatedUrl || previewUrl;
 
   return (
     <Dialog
@@ -169,190 +163,190 @@ export function AvatarEditDialog(props: {
         if (!open) closeDialog();
         else props.onOpenChange(true);
       }}
-      title={props.title}
-      description={props.description}
-      maxWidth={560}
-      contentStyle={{ height: 'min(720px, calc(100vh - 48px))' }}
+      title={aiEnabled ? <span className="sr-only">{props.title}</span> : props.title}
+      description={aiEnabled ? undefined : props.description}
+      maxWidth={620}
+      closePlacement={aiEnabled ? 'left' : 'right'}
+      contentClassName="max-[640px]:!h-[100dvh] max-[640px]:!max-h-[100dvh] max-[640px]:w-full max-[640px]:rounded-none max-[640px]:border-0 max-[640px]:p-4"
+      contentStyle={{ height: 'min(820px, calc(100vh - 32px))' }}
       content={
-        <div className="flex h-full min-h-0 flex-col gap-4">
-          {aiEnabled && (
-            <div
-              className="grid shrink-0 grid-cols-2 rounded-[12px] p-1"
-              style={{ background: 'var(--nested-block-bg)' }}
-              aria-label="头像修改方式"
-            >
-              <button
-                type="button"
-                className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-[9px] px-3 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
-                style={mode === 'ai'
-                  ? { background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }
-                  : { color: 'var(--text-muted)', border: '1px solid transparent' }}
-                onClick={() => setMode('ai')}
-              >
-                <Wand2 size={16} />
-                AI 修改
-              </button>
-              <button
-                type="button"
-                className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-[9px] px-3 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
-                style={mode === 'upload'
-                  ? { background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }
-                  : { color: 'var(--text-muted)', border: '1px solid transparent' }}
-                onClick={() => setMode('upload')}
-              >
-                <Upload size={16} />
-                上传图片
-              </button>
-            </div>
-          )}
+        <div className="flex h-full min-h-0 flex-col">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.currentTarget.value = '';
+              void onChooseFile(file);
+            }}
+            disabled={uploading || generating}
+          />
 
-          <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-            {mode === 'ai' && aiEnabled ? (
-              <div className="space-y-4">
-                <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-4 max-[420px]:grid-cols-1">
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="surface-inset flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-[18px]">
-                      <UserAvatar src={previewUrl} alt="当前头像" className="h-full w-full object-cover" />
-                    </div>
-                    <span className="text-[11px] text-token-muted">当前头像</span>
-                  </div>
+          {aiEnabled ? (
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+              <div className="min-h-0 flex-1 overflow-y-auto pr-0.5" style={{ overscrollBehavior: 'contain' }}>
+                <div
+                  className="relative mx-auto aspect-square w-full max-w-[500px] overflow-hidden rounded-[22px]"
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                >
+                  <UserAvatar
+                    src={stageUrl}
+                    alt={generatedUrl ? '生成的头像预览' : '当前头像预览'}
+                    className={generating
+                      ? 'absolute inset-0 h-full w-full scale-110 object-cover opacity-55 blur-xl'
+                      : 'absolute inset-0 h-full w-full object-cover'}
+                  />
 
-                  <div className="min-w-0">
-                    <label htmlFor="avatar-ai-prompt" className="mb-2 block text-[12px] font-semibold text-token-primary">
-                      想怎么修改
-                    </label>
-                    <textarea
-                      id="avatar-ai-prompt"
-                      value={prompt}
-                      onChange={(event) => setPrompt(event.target.value.slice(0, 500))}
-                      disabled={generating || uploading}
-                      className="surface-inset w-full resize-none rounded-[12px] border border-transparent px-3 py-2.5 text-[14px] leading-6 text-token-primary outline-none transition-colors focus:border-[var(--border-focus)] disabled:opacity-60"
-                      style={{ height: 96 }}
-                      placeholder="例如：保留五官，改成简洁的手绘头像"
-                    />
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {AVATAR_AI_PROMPT_PRESETS.map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          disabled={generating || uploading}
-                          className="cursor-pointer rounded-full px-2.5 py-1 text-[11px] transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] disabled:cursor-not-allowed disabled:opacity-50"
-                          style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-                          onClick={() => setPrompt(preset)}
-                        >
-                          {preset.replace('保留五官特征，', '').replace('保留人物特征，', '').replace('保留人物和服装，只把', '')}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  {generating && (
+                    <>
+                      <div
+                        className="absolute inset-0 opacity-60"
+                        style={{
+                          backgroundImage: 'radial-gradient(circle, color-mix(in srgb, var(--text-primary) 72%, transparent) 1.4px, transparent 1.7px)',
+                          backgroundSize: '22px 22px',
+                        }}
+                      />
+                      <div
+                        className="absolute bottom-4 left-4 flex min-h-11 items-center gap-2 rounded-full px-4 text-[13px] font-semibold"
+                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <MapSpinner size={16} />
+                        正在生成 · {elapsedSeconds} 秒
+                      </div>
+                      <div className="absolute inset-x-0 bottom-0 h-1" style={{ background: 'var(--nested-block-bg)' }}>
+                        <div
+                          className="h-full transition-[width] duration-500 motion-reduce:transition-none"
+                          style={{ width: `${progress}%`, background: 'var(--accent-gold)' }}
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {generating && (
-                  <div
-                    className="relative overflow-hidden rounded-[18px]"
-                    style={{ height: 220, background: 'var(--nested-block-bg)' }}
-                    role="status"
-                    aria-live="polite"
+                <div className="mt-3 flex min-h-14 items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading || generating}
+                    className="group relative h-12 w-12 shrink-0 cursor-pointer overflow-hidden rounded-[10px] border transition-colors hover:border-[var(--border-focus)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] disabled:cursor-not-allowed disabled:opacity-60"
+                    style={{ borderColor: 'var(--border-subtle)', background: 'var(--nested-block-bg)' }}
+                    aria-label="点击当前头像上传图片"
+                    title="点击上传新头像"
                   >
-                    <UserAvatar
-                      src={previewUrl}
-                      alt="正在生成头像预览"
-                      className="absolute inset-0 h-full w-full scale-110 object-cover opacity-35 blur-xl"
-                    />
+                    <UserAvatar src={previewUrl} alt="当前头像" className="h-full w-full object-cover" />
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                      {uploading ? <MapSpinner size={16} /> : <Upload size={16} color="white" />}
+                    </span>
+                  </button>
+                  {generatedUrl && (
                     <div
-                      className="absolute inset-0 opacity-55"
-                      style={{
-                        backgroundImage: 'radial-gradient(circle, var(--text-muted) 1.2px, transparent 1.4px)',
-                        backgroundSize: '18px 18px',
-                      }}
-                    />
-                    <div className="absolute inset-x-4 bottom-4 rounded-[14px] p-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-                      <div className="flex items-center gap-2 text-[12px] font-semibold text-token-primary">
-                        <MapSpinner size={15} />
-                        正在根据当前头像生成预览 · {elapsedSeconds} 秒
-                      </div>
-                      <div className="mt-2 h-1 overflow-hidden rounded-full" style={{ background: 'var(--nested-block-bg)' }}>
-                        <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${progress}%`, background: 'var(--accent-gold)' }} />
-                      </div>
+                      className="h-12 w-12 shrink-0 overflow-hidden rounded-[10px] border"
+                      style={{ borderColor: 'var(--border-focus)', background: 'var(--nested-block-bg)' }}
+                      aria-label="生成头像缩略图"
+                    >
+                      <UserAvatar src={generatedUrl} alt="生成头像" className="h-full w-full object-cover" />
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
+              </div>
 
-                {!generating && generatedUrl && (
-                  <div className="flex flex-col items-center gap-3 rounded-[18px] p-4" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
-                    <div className="h-40 w-40 overflow-hidden rounded-[22px]" style={{ background: 'var(--bg-card)' }}>
-                      <UserAvatar src={generatedUrl} alt="AI 头像预览" className="h-full w-full object-cover" />
-                    </div>
-                    <div className="text-center">
-                      <div className="text-[13px] font-semibold text-token-primary">预览已生成，当前头像还没有变化</div>
-                      <div className="mt-1 text-[11px] text-token-muted">确认使用后才会替换你的头像</div>
-                    </div>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      <Button variant="secondary" size="sm" className="min-h-11" onClick={() => void onGeneratePreview()} disabled={uploading}>
-                        <RefreshCw size={14} />
-                        重新生成
-                      </Button>
-                      <Button variant="primary" size="sm" className="min-h-11" onClick={() => void onApplyGeneratedAvatar()} disabled={uploading || !generatedAssetSha256}>
-                        {uploading ? <MapSpinner size={14} /> : <Check size={14} />}
-                        {uploading ? '正在替换' : '使用此头像'}
-                      </Button>
-                    </div>
-                  </div>
-                )}
+              {error && (
+                <div className="surface-state-danger shrink-0 rounded-[12px] px-3 py-2 text-[12px]" role="alert">
+                  {error}
+                </div>
+              )}
 
-                {!generating && !generatedUrl && (
-                  <div className="flex justify-end">
-                    <Button variant="primary" className="min-h-11" onClick={() => void onGeneratePreview()} disabled={uploading || !prompt.trim()}>
-                      <Wand2 size={16} />
-                      生成头像预览
+              <div className="shrink-0">
+                <label htmlFor="avatar-ai-prompt" className="mb-2 block text-[12px] font-semibold text-token-secondary">
+                  描述你想要的头像
+                </label>
+                <div
+                  className="flex min-h-14 items-center gap-2 rounded-[18px] px-2"
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading || generating}
+                    className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[13px] text-token-muted transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label="上传头像图片"
+                    title="上传头像图片"
+                  >
+                    <ImagePlus size={20} />
+                  </button>
+                  <input
+                    id="avatar-ai-prompt"
+                    value={prompt}
+                    onChange={(event) => setPrompt(event.target.value.slice(0, 500))}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.nativeEvent.isComposing && prompt.trim() && !generating && !uploading) {
+                        event.preventDefault();
+                        void onGeneratePreview();
+                      }
+                    }}
+                    disabled={generating || uploading}
+                    className="h-12 min-w-0 flex-1 bg-transparent px-1 text-[16px] text-token-primary outline-none placeholder:text-token-muted disabled:opacity-60"
+                    placeholder="例如：改成细腻的手绘插画风格"
+                    autoComplete="off"
+                  />
+                  <Button
+                    variant="primary"
+                    className="min-h-11 shrink-0 rounded-[14px] px-4 max-[420px]:px-3"
+                    onClick={() => void onGeneratePreview()}
+                    disabled={generating || uploading || !prompt.trim()}
+                  >
+                    {generating ? <MapSpinner size={16} /> : <Wand2 size={16} />}
+                    <span className="max-[420px]:sr-only">{generatedUrl ? '重新生成' : '生成预览'}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {generatedUrl && !generating && (
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="text-[11px] text-token-muted">确认后才会替换当前头像</div>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" size="sm" className="min-h-11" onClick={() => void onGeneratePreview()} disabled={uploading}>
+                      <RefreshCw size={14} />
+                      重新生成
+                    </Button>
+                    <Button variant="primary" size="sm" className="min-h-11" onClick={() => void onApplyGeneratedAvatar()} disabled={uploading || !generatedAssetSha256}>
+                      {uploading ? <MapSpinner size={14} /> : <Check size={14} />}
+                      {uploading ? '正在替换' : '使用此头像'}
                     </Button>
                   </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-4 py-4">
-                <div className="surface-inset flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-[18px]">
-                  <UserAvatar src={previewUrl} alt="当前头像" className="h-full w-full object-cover" />
                 </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={acceptHint}
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.currentTarget.value = '';
-                    void onChooseFile(file);
-                  }}
-                  disabled={uploading}
-                />
-                <Button
-                  variant="secondary"
-                  className="min-h-11"
-                  disabled={uploading || (!props.onUpload && !props.userId)}
-                  onClick={() => fileInputRef.current?.click()}
-                >
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || (!props.onUpload && !props.userId)}
+                className="group relative h-36 w-36 cursor-pointer overflow-hidden rounded-[24px] border transition-colors hover:border-[var(--border-focus)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] disabled:cursor-not-allowed disabled:opacity-60"
+                style={{ borderColor: 'var(--border-subtle)', background: 'var(--nested-block-bg)' }}
+                aria-label="点击头像上传图片"
+              >
+                <UserAvatar src={previewUrl} alt="当前头像" className="h-full w-full object-cover" />
+                <span className="absolute inset-x-0 bottom-0 flex min-h-11 items-center justify-center gap-2 bg-black/65 px-2 text-[12px] font-semibold text-white">
                   {uploading ? <MapSpinner size={14} /> : <Upload size={15} />}
-                  {uploading ? '上传中' : '选择图片'}
-                </Button>
-                <div className="text-center text-[12px] leading-5 text-token-muted">
-                  支持 png、jpg、gif、webp，上传后自动保存
-                </div>
+                  {uploading ? '上传中' : '点击上传'}
+                </span>
+              </button>
+              <div className="text-center text-[12px] leading-5 text-token-muted">
+                支持 png、jpg、gif、webp，上传后自动保存
               </div>
-            )}
-          </div>
-
-          {error && (
-            <div className="surface-state-danger shrink-0 rounded-[12px] px-3 py-2 text-[12px]" role="alert">
-              {error}
+              {error && (
+                <div className="surface-state-danger rounded-[12px] px-3 py-2 text-[12px]" role="alert">
+                  {error}
+                </div>
+              )}
             </div>
           )}
-
-          <div className="flex shrink-0 items-center justify-end gap-2 pt-1">
-            <Button variant="ghost" className="min-h-11" onClick={closeDialog} disabled={uploading}>
-              关闭
-            </Button>
-          </div>
         </div>
       }
     />

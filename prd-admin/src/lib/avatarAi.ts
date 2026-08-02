@@ -2,12 +2,6 @@ import type { ImageGenImage } from '@/services/contracts/imageGen';
 
 const MAX_REFERENCE_BYTES = 10 * 1024 * 1024;
 
-export const AVATAR_AI_PROMPT_PRESETS = [
-  '保留五官特征，改成简洁的职业头像',
-  '保留人物特征，改成细腻的手绘插画风格',
-  '保留人物和服装，只把背景改成干净的浅色背景',
-] as const;
-
 function assertImageBlob(blob: Blob): void {
   if (!blob.type.toLowerCase().startsWith('image/')) {
     throw new Error('头像图片格式不受支持');
