@@ -8,8 +8,10 @@ import {
   NoticeLedgerService,
   compactNoticeText,
   mergeNotice,
+  noticeStatusOf,
   renderNoticeFromEvent,
   startNoticeLedger,
+  type CdsNoticeActor,
   type CdsNoticeRecord,
   type NoticeInput,
 } from '../../src/services/notice-ledger.js';
@@ -179,6 +181,140 @@ describe('NoticeLedgerService — 落盘与作用域', () => {
     noSource.upsert(input({ id: 'x', dedupeKey: 'x', projectId: 'whatever' }));
     expect(noSource.pruneDeletedProjects()).toBe(0);
     expect(noSource.list()).toHaveLength(1);
+  });
+});
+
+/**
+ * 处理状态机（认领闭环）。
+ *
+ * 事故值：这一组断言的每一条错了都**不会报错**，只会静默把界面变成谎话——
+ *   1. 旧记录不归 open → 存量告警从「待处理」筛选里整批消失，最该被看见的反而不见；
+ *   2. 状态不落盘 → 换台机器/重启 CDS 就回到「没人处理」，两个人重复干同一件事；
+ *   3. 超窗重燃不清 handling → 上个月标「已解决」的通知这次重新坏了还显示已解决，
+ *      把新故障伪装成旧结论；
+ *   4. 认领人在无身份部署上被回填成通道桶名 → 界面显示一个假责任人。
+ */
+describe('处理状态机 — 待处理/处理中/已解决', () => {
+  const anonymousActor: CdsNoticeActor = { channel: 'user', userId: null, userLabel: null, provider: null };
+  const namedActor: CdsNoticeActor = {
+    channel: 'user', userId: 'usr_1', userLabel: '张三', provider: 'github',
+  };
+
+  it('从没被处理过的（含旧账本无 handling 字段）一律算待处理', () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    ledger.upsert(input());
+    const [row] = ledger.list();
+    expect(row.handling).toBeUndefined();
+    expect(noticeStatusOf(row)).toBe('open');
+    expect(ledger.summary().counts).toEqual({ open: 1, working: 0, resolved: 0 });
+  });
+
+  it('认领 → 处理中：记录变更时间与变更者，并顺带标已读', () => {
+    const ledger = new NoticeLedgerService({ storePath: '', now: () => 5_000_000 });
+    ledger.upsert(input({ id: 'a', dedupeKey: 'a' }));
+    const updated = ledger.setHandling('a', 'working', namedActor);
+
+    expect(updated?.handling?.status).toBe('working');
+    expect(updated?.handling?.actor.userLabel).toBe('张三');
+    expect(Date.parse(updated!.handling!.updatedAt)).toBe(5_000_000);
+    expect(updated?.readAt).toBeDefined();
+    expect(ledger.summary().counts).toEqual({ open: 0, working: 1, resolved: 0 });
+    expect(ledger.summary().unread).toBe(0);
+  });
+
+  it('无身份部署（basic / 项目 Key）：状态照样推进，但责任人如实留空', () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    ledger.upsert(input({ id: 'a', dedupeKey: 'a' }));
+    const updated = ledger.setHandling('a', 'working', anonymousActor);
+
+    expect(updated?.handling?.status).toBe('working');
+    // 留空是刻意的：把 channel（'user'）填进 userLabel 会让所有人看到同一个「责任人」。
+    expect(updated?.handling?.actor.userId).toBeNull();
+    expect(updated?.handling?.actor.userLabel).toBeNull();
+    expect(updated?.handling?.actor.channel).toBe('user');
+  });
+
+  it('状态落盘：新实例读得回来（换台机器打开不该回到「没人处理」）', () => {
+    const storePath = tempStore();
+    const first = new NoticeLedgerService({ storePath });
+    first.upsert(input({ id: 'a', dedupeKey: 'a' }));
+    first.setHandling('a', 'working', namedActor);
+
+    const reloaded = new NoticeLedgerService({ storePath });
+    const [row] = reloaded.list();
+    expect(noticeStatusOf(row)).toBe('working');
+    expect(row.handling?.actor.userLabel).toBe('张三');
+  });
+
+  it('落盘文件里的非法状态 → 归一成待处理，不原样渲染', () => {
+    const storePath = tempStore();
+    fs.mkdirSync(path.dirname(storePath), { recursive: true });
+    fs.writeFileSync(storePath, JSON.stringify({
+      version: 1,
+      savedAt: Date.now(),
+      notices: [{
+        ...record({ id: 'a', dedupeKey: 'a' }),
+        handling: { status: 'resolvedd', updatedAt: 'x', actor: { channel: 42 } },
+      }],
+    }));
+
+    const ledger = new NoticeLedgerService({ storePath });
+    const [row] = ledger.list();
+    expect(noticeStatusOf(row)).toBe('open');
+    expect(row.handling?.actor.channel).toBe('unknown');
+  });
+
+  it('list 按状态筛选：能回答「还有几条没人处理」', () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    for (const id of ['a', 'b', 'c']) ledger.upsert(input({ id, dedupeKey: id }));
+    ledger.setHandling('b', 'working', anonymousActor);
+    ledger.setHandling('c', 'resolved', anonymousActor);
+
+    expect(ledger.list({ status: 'open' }).map((r) => r.id)).toEqual(['a']);
+    expect(ledger.list({ status: 'working' }).map((r) => r.id)).toEqual(['b']);
+    expect(ledger.summary().counts).toEqual({ open: 1, working: 1, resolved: 1 });
+  });
+
+  it('按 (id, 作用域) 一次查：A 项目认领不会命中 B 那条同 id 的通知', () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    // 刻意让 B 后写（排在前面），才能暴露「取第一条同 id」的写法。
+    for (const projectId of ['proj-a', 'proj-b']) {
+      ledger.upsert(input({ id: 'release-failed', dedupeKey: `api:${projectId}:release-failed`, projectId }));
+    }
+    expect(ledger.setHandling('release-failed', 'working', anonymousActor, 'proj-a')).not.toBeNull();
+
+    const a = ledger.list({ projectId: 'proj-a' })[0];
+    const b = ledger.list({ projectId: 'proj-b' })[0];
+    expect(noticeStatusOf(a)).toBe('working');
+    expect(noticeStatusOf(b)).toBe('open');
+    expect(ledger.setHandling('release-failed', 'working', anonymousActor, 'proj-c')).toBeNull();
+  });
+
+  it('已被「不再提醒」的不给推进（它已不在任何人视野里，改了只会让计数对不上）', () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    ledger.upsert(input({ id: 'a', dedupeKey: 'a' }));
+    ledger.dismiss('a');
+    expect(ledger.setHandling('a', 'working', anonymousActor)).toBeNull();
+  });
+
+  it('窗口内又抖一次：处理进展保留（不该让「已认领」在对方眼里凭空消失）', () => {
+    const existing = record({
+      handling: { status: 'working', updatedAt: new Date(1_000_100).toISOString(), actor: namedActor },
+    });
+    const merged = mergeNotice(existing, input(), 1_000_000 + NOTICE_MERGE_WINDOW_MS - 1);
+    expect(merged.action).toBe('merged');
+    expect(noticeStatusOf(merged.record)).toBe('working');
+    expect(merged.record.handling?.actor.userLabel).toBe('张三');
+  });
+
+  it('超窗重燃：handling 一起清掉（否则新故障会被伪装成上次的「已解决」）', () => {
+    const existing = record({
+      handling: { status: 'resolved', updatedAt: new Date(1_000_100).toISOString(), actor: namedActor },
+    });
+    const relit = mergeNotice(existing, input(), 1_000_000 + NOTICE_MERGE_WINDOW_MS + 1);
+    expect(relit.action).toBe('relit');
+    expect(relit.record.handling).toBeUndefined();
+    expect(noticeStatusOf(relit.record)).toBe('open');
   });
 });
 

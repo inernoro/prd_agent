@@ -771,6 +771,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /notices': '记录站内信',
     'POST /notices/read-all': '全部标已读',
     'POST /notices/:id/dismiss': '忽略站内信',
+    'POST /notices/:id/handling': '更新站内信处理状态',
     'GET /cds-system/integrations/bug-report': '查看缺陷转发接入',
     'PUT /cds-system/integrations/bug-report': '保存缺陷转发接入',
     'DELETE /cds-system/integrations/bug-report': '清除缺陷转发接入',
@@ -1028,6 +1029,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 站内信：read-all 是静态路径（上面 staticMap 已覆盖），这里只需 :id 那条。
     // segment-safe `[^/]+`，别用贪婪 `(.+)`（PR #522 的教训：会跨 `/` 截胡）。
     [/^POST \/notices\/[^/]+\/dismiss$/, '忽略站内信'],
+    [/^POST \/notices\/[^/]+\/handling$/, '更新站内信处理状态'],
     // 定时任务：staticMap 的 `:id` 条目只够 auditApiLabels 比对 express 路由原样，
     // 真实调用带的是具体 id，必须靠 pattern 才有 label。segment-safe `[^/]+`。
     [/^POST \/scheduled-jobs\/[^/]+\/run$/, '立即执行任务'],

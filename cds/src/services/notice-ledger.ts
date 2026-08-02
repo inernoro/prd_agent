@@ -50,6 +50,84 @@ export interface CdsNoticeOutbound {
 }
 
 /**
+ * 处理状态机：待处理 → 处理中 → 已解决（可回退到待处理）。
+ *
+ * 为什么主干是状态而不是「认领人」：CDS 的多用户只在 `CDS_AUTH_MODE=github`
+ * 与 ticket SSO 会话里成立，而 `exec_cds.sh init` 产出的标准部署是 basic 模式
+ * ——全实例一把共享口令，请求上根本没有 `req.cdsUser`。若把「谁认领的」当主干，
+ * 在开发机（github 模式，有真名字）测起来一切正常，一上默认部署就变成「每条
+ * 通知都被同一个身份认领」：界面看起来有责任人，实际一个责任人都没有，且不报错。
+ * 那是 predicate-and-wiring-discipline 形状 8（把不成立的证据当成已做到的证明）。
+ *
+ * 所以：**状态机在所有部署模式下都成立**，身份是可选快照——取不到就如实留空，
+ * 由前端明说「当前部署未启用账号身份」，绝不回填一个桶名冒充责任人。
+ */
+export type CdsNoticeStatus = 'open' | 'working' | 'resolved';
+
+export const NOTICE_STATUSES: readonly CdsNoticeStatus[] = ['open', 'working', 'resolved'];
+
+/**
+ * 状态变更者。三个字段刻意分开，因为它们的可信度完全不同：
+ *
+ * - `channel` 永远有值，来自 `resolveActorFromRequest`，但它标的是**调用通道**
+ *   （`user` / `ai` / `ai:<name>` / `system:<trigger>`），最后一档把所有 cookie
+ *   登录的真人合并成字面量 `user`。**它不是人**，不能当责任人展示。
+ * - `userId` / `userLabel` / `provider` 只有真实账号会话（github / 本地账号 / SSO）
+ *   才有；共享口令与项目级 Key 一律 null。
+ */
+export interface CdsNoticeActor {
+  channel: string;
+  userId: string | null;
+  userLabel: string | null;
+  provider: string | null;
+}
+
+/** 一条通知当前的处理进展。缺席 = 从未被处理过 = `open`（见 noticeStatusOf）。 */
+export interface CdsNoticeHandling {
+  status: CdsNoticeStatus;
+  /** ISO：最近一次状态变更时间 */
+  updatedAt: string;
+  actor: CdsNoticeActor;
+}
+
+/**
+ * 状态取值的唯一入口。
+ *
+ * 判据分裂是本仓库反复踩的坑（形状 3）：只要有第二处写 `record.handling?.status`
+ * 再各自兜底，两处的「旧记录算什么状态」迟早漂。列表过滤、计数、路由、前端
+ * 全部走这一个函数（前端另有一份同名实现，由守卫测试钉住口径一致）。
+ */
+export function noticeStatusOf(record: Pick<CdsNoticeRecord, 'handling'>): CdsNoticeStatus {
+  return normalizeNoticeStatus(record.handling?.status);
+}
+
+/** 未知/缺席一律归 open——旧账本没有这个字段，不能因此从列表里消失。 */
+export function normalizeNoticeStatus(value: unknown): CdsNoticeStatus {
+  return NOTICE_STATUSES.includes(value as CdsNoticeStatus) ? (value as CdsNoticeStatus) : 'open';
+}
+
+/**
+ * 落盘记录里的 handling 可能来自旧版本、手改的文件或损坏的写入。
+ * 归一时对身份字段一律「不认识就置 null」——宁可显示「未记录责任人」，
+ * 也不要把一段来路不明的字符串当成人名渲染出去。
+ */
+function normalizeHandling(value: unknown): CdsNoticeHandling | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Partial<CdsNoticeHandling> & { actor?: Partial<CdsNoticeActor> };
+  const actor: Partial<CdsNoticeActor> = raw.actor && typeof raw.actor === 'object' ? raw.actor : {};
+  return {
+    status: normalizeNoticeStatus(raw.status),
+    updatedAt: typeof raw.updatedAt === 'string' && raw.updatedAt ? raw.updatedAt : new Date(0).toISOString(),
+    actor: {
+      channel: typeof actor.channel === 'string' && actor.channel ? actor.channel : 'unknown',
+      userId: typeof actor.userId === 'string' && actor.userId ? actor.userId : null,
+      userLabel: typeof actor.userLabel === 'string' && actor.userLabel ? actor.userLabel : null,
+      provider: typeof actor.provider === 'string' && actor.provider ? actor.provider : null,
+    },
+  };
+}
+
+/**
  * 账本条目。字段刻意与前端既有 SiteNoticePayload 同名（id/title/body/href/
  * actionLabel/source/projectId/projectName/projectSlug），迁移时前端只需把
  * tone 改名成 level。
@@ -77,6 +155,11 @@ export interface CdsNoticeRecord {
   readAt?: string;
   dismissedAt?: string;
   outbound?: CdsNoticeOutbound;
+  /**
+   * 处理进展。缺席 = 待处理（`open`），旧账本免迁移。
+   * 读它一律走 `noticeStatusOf`，不要在别处再写一份 `?? 'open'`。
+   */
+  handling?: CdsNoticeHandling;
 }
 
 /** 写入一条通知所需的最小信息（渲染层产出，账本只管归并与落盘）。 */
@@ -169,10 +252,12 @@ export type MergeAction = 'created' | 'merged' | 'relit';
  * 但新增第四处前应先考虑合并。
  *
  * 三条口径：
- *  - 窗口内重复 → merged：occurrences+1、刷新 updatedAt、**保留 readAt**
- *    （已读的东西不该因为又抖了一次就重新标未读），且**不重新外发**；
- *  - 超窗 → relit：这是「隔了很久又坏了」，属于新事实，清 readAt/dismissedAt、
- *    occurrences 重置为 1、重新外发；
+ *  - 窗口内重复 → merged：occurrences+1、刷新 updatedAt、**保留 readAt 与 handling**
+ *    （已读的东西不该因为又抖了一次就重新标未读；正在处理的事又抖一次，处理进展
+ *    更不该被抹掉——那会让「已认领」在对方眼里凭空消失），且**不重新外发**；
+ *  - 超窗 → relit：这是「隔了很久又坏了」，属于新事实，清 readAt/dismissedAt/handling、
+ *    occurrences 重置为 1、重新外发。**handling 必须一起清**：不清的话，上个月被标成
+ *    「已解决」的通知这次重新坏了，界面照样显示「已解决」，等于把新故障伪装成旧结论；
  *  - 窗口内且已被「不再提醒」→ 仍算 merged，但不复活。与前端旧口径
  *    （`if (existing?.dismissedAt) return current`）一致：用户刚说过别烦我。
  */
@@ -219,11 +304,13 @@ export function mergeNotice(
         ...(existing.readAt ? { readAt: existing.readAt } : {}),
         ...(existing.dismissedAt ? { dismissedAt: existing.dismissedAt } : {}),
         ...(existing.outbound ? { outbound: existing.outbound } : {}),
+        ...(existing.handling ? { handling: existing.handling } : {}),
       },
     };
   }
 
-  // 超窗重燃：readAt / dismissedAt 一并清掉，让它重新变成一条要看的新事。
+  // 超窗重燃：readAt / dismissedAt / handling 一并清掉，让它重新变成一条要看的新事。
+  // base 本身不带这三个字段，所以「清掉」= 不从 existing 复制过来。
   return { action: 'relit', record: { ...base, id: existing.id, createdAt: existing.createdAt } };
 }
 
@@ -257,15 +344,73 @@ export class NoticeLedgerService {
   }
 
   /** 未被「不再提醒」的通知，按最近更新倒序。 */
-  list(options: { limit?: number; projectId?: string | null } = {}): CdsNoticeRecord[] {
+  list(options: { limit?: number; projectId?: string | null; status?: CdsNoticeStatus } = {}): CdsNoticeRecord[] {
     const scope = options.projectId ?? null;
     const rows = this.notices
       .filter((item) => !item.dismissedAt)
       // 项目级凭据只能看自己项目：系统级条目（无 projectId）也不给，否则一把项目
       // Key 就能读到别的项目名与故障原因。口径同 routes/uptime.ts 的 projectScopeOf。
       .filter((item) => (scope ? item.projectId === scope : true))
+      // 状态过滤走 noticeStatusOf：旧记录没有 handling，必须被算作 open 才筛得出来，
+      // 否则「还有几条没人处理」会漏掉全部存量告警——最该被看见的恰恰是它们。
+      .filter((item) => (options.status ? noticeStatusOf(item) === options.status : true))
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     return typeof options.limit === 'number' ? rows.slice(0, options.limit) : rows;
+  }
+
+  /**
+   * 本作用域的全量摘要：各状态条数 + 未读条数。
+   *
+   * 必须**不受列表的 status 过滤影响**——筛选条上的数字和铃铛角标要是随着当前选中项
+   * 跳变，用户就没法回答「还有几条没人处理」了。所以这里始终按整个作用域算一遍。
+   * 未读与状态是两条独立的轴（看过一眼 ≠ 有人接手），故分开返回、不互相推导。
+   */
+  summary(projectId?: string | null): { counts: Record<CdsNoticeStatus, number>; unread: number } {
+    const counts: Record<CdsNoticeStatus, number> = { open: 0, working: 0, resolved: 0 };
+    let unread = 0;
+    for (const item of this.list({ projectId })) {
+      counts[noticeStatusOf(item)] += 1;
+      if (!item.readAt) unread += 1;
+    }
+    return { counts, unread };
+  }
+
+  /**
+   * 推进处理状态机（认领 / 退回 / 标记已解决共用一条路径）。
+   *
+   * 三条设计约束：
+   *  1. **查找必须 (id, 作用域) 一次查**，不能「先取第一条同 id 的再校验 projectId」——
+   *     record.id 由调用方控制，两个项目完全可能各有一条同 id 的通知，取第一条会让
+   *     项目 A 认领自己的通知却命中 B 那条、校验不过返 404（dismiss 为此挨过 Codex P2）。
+   *  2. **身份取不到就落 null**，绝不回填 channel 桶名冒充责任人（见 CdsNoticeActor）。
+   *  3. 已被「不再提醒」的不给推进——它已经不在任何人的视野里，改它的状态没有意义，
+   *     还会让计数与列表对不上（列表过滤 dismissed，计数也过滤）。
+   */
+  setHandling(
+    id: string,
+    status: CdsNoticeStatus,
+    actor: CdsNoticeActor,
+    projectId?: string | null,
+  ): CdsNoticeRecord | null {
+    const target = projectId
+      ? this.notices.find((item) => item.id === id && item.projectId === projectId)
+      : this.notices.find((item) => item.id === id);
+    if (!target || target.dismissedAt) return null;
+    const nowIso = new Date(this.now()).toISOString();
+    target.handling = {
+      status,
+      updatedAt: nowIso,
+      actor: {
+        channel: actor.channel,
+        userId: actor.userId,
+        userLabel: actor.userLabel,
+        provider: actor.provider,
+      },
+    };
+    // 有人开始处理即视为已读：否则「处理中」的条目还在未读计数里，铃铛数字与实际不符。
+    target.readAt = target.readAt || nowIso;
+    this.persist();
+    return target;
   }
 
   getByDedupeKey(dedupeKey: string): CdsNoticeRecord | undefined {
@@ -361,6 +506,9 @@ export class NoticeLedgerService {
           occurrences: Number.isFinite(item.occurrences) ? item.occurrences : 1,
           createdAt: item.createdAt || new Date(this.now()).toISOString(),
           updatedAt: item.updatedAt || item.createdAt || new Date(this.now()).toISOString(),
+          // 旧账本没有 handling：保持 undefined 由 noticeStatusOf 判 open，不凭空造一条
+          // 「有人处理过」的记录。有 handling 的走归一，损坏字段一律降级而不是原样渲染。
+          ...(item.handling ? { handling: normalizeHandling(item.handling) } : {}),
         }))
         .slice(0, this.maxNotices);
     } catch (err) {

@@ -48,10 +48,15 @@ afterEach(async () => {
   server = null;
 });
 
-/** projectScope 为 null 时模拟人类 cookie / 全局 Key；否则模拟项目级 Key 的戳。 */
+/**
+ * projectScope 为 null 时模拟人类 cookie / 全局 Key；否则模拟项目级 Key 的戳。
+ * cdsUser 模拟「有真实账号身份的会话」——只有 CDS_AUTH_MODE=github 与 ticket SSO
+ * 会挂它；basic / disabled 模式（`exec_cds.sh init` 的默认产物）从不挂。
+ */
 async function boot(options: {
   ledger: NoticeLedgerService;
   projectScope?: string | null;
+  cdsUser?: Record<string, unknown>;
   outbound?: { configured: boolean; reason?: string };
 }): Promise<http.Server> {
   const app = express();
@@ -59,6 +64,9 @@ async function boot(options: {
   app.use('/api', (req, _res, next) => {
     if (options.projectScope) {
       (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey = { projectId: options.projectScope };
+    }
+    if (options.cdsUser) {
+      (req as { cdsUser?: Record<string, unknown> }).cdsUser = options.cdsUser;
     }
     next();
   });
@@ -101,6 +109,108 @@ describe('GET /api/notices 作用域', () => {
     const res = await request(srv, 'GET', '/api/notices');
     expect(res.body.outbound.configured).toBe(false);
     expect(String(res.body.outbound.reason).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * 处理状态机端点。
+ *
+ * 本组的核心是**在不同部署模式下的诚实性**：CDS 的账号身份只在 github 模式与
+ * ticket SSO 会话里存在，而标准 onboarding（`exec_cds.sh init`）产出的是 basic
+ * 共享口令模式。若按「加个 claimedBy 就完事」的直觉实现，在开发机（github 模式，
+ * 有真名字）测起来一切正常，一上默认部署就变成「每条通知都被同一个身份认领」——
+ * 界面看着有责任人、实际一个都没有，而且不会报任何错。所以三种调用者各来一条。
+ */
+describe('POST /api/notices/:id/handling 处理状态机', () => {
+  function oneNotice(): NoticeLedgerService {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    ledger.upsert({ id: 'a', dedupeKey: 'a', level: 'danger', title: '发布失败', body: '', source: 'release', projectId: 'proj-a' });
+    return ledger;
+  }
+
+  it('github / SSO 会话：记下具体是谁在什么时候改的', async () => {
+    const ledger = oneNotice();
+    const srv = await boot({
+      ledger,
+      cdsUser: { id: 'usr_1', name: '张三', githubLogin: 'zhangsan', authProvider: 'github' },
+    });
+    const res = await request(srv, 'POST', '/api/notices/a/handling', { status: 'working' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.notice.handling.status).toBe('working');
+    expect(res.body.notice.handling.actor.userId).toBe('usr_1');
+    expect(res.body.notice.handling.actor.userLabel).toBe('张三');
+    expect(res.body.notice.handling.actor.provider).toBe('github');
+    expect(Date.parse(res.body.notice.handling.updatedAt)).toBeGreaterThan(0);
+  });
+
+  it('basic 共享口令部署（无 req.cdsUser）：状态推进成功，但责任人如实留空', async () => {
+    const ledger = oneNotice();
+    const srv = await boot({ ledger });
+    const res = await request(srv, 'POST', '/api/notices/a/handling', { status: 'working' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.notice.handling.status).toBe('working');
+    expect(res.body.notice.handling.actor.userId).toBeNull();
+    expect(res.body.notice.handling.actor.userLabel).toBeNull();
+    // channel 仍然记下来（这是调用通道，不是人），排障时能分辨真人点的还是 AI 调的。
+    expect(res.body.notice.handling.actor.channel).toBe('user');
+  });
+
+  it('共享凭据造出来的伪身份（basic:xxx / anonymous）不算责任人', async () => {
+    for (const fakeId of ['basic:admin', 'anonymous']) {
+      const ledger = oneNotice();
+      const srv = await boot({ ledger, cdsUser: { id: fakeId, name: 'admin', authProvider: 'local' } });
+      const res = await request(srv, 'POST', '/api/notices/a/handling', { status: 'working' });
+      expect(res.body.notice.handling.actor.userId, `${fakeId} 被当成了真实身份`).toBeNull();
+      expect(res.body.notice.handling.actor.userLabel).toBeNull();
+      await new Promise((r) => server!.close(() => r(null)));
+      server = null;
+    }
+  });
+
+  it('项目级 Key（无身份）：能推进自己项目的，推不动别的项目', async () => {
+    const ledger = oneNotice();
+    ledger.upsert({ id: 'b', dedupeKey: 'b', level: 'danger', title: 'B 的发布失败', body: '', source: 'release', projectId: 'proj-b' });
+    const srv = await boot({ ledger, projectScope: 'proj-a' });
+
+    expect((await request(srv, 'POST', '/api/notices/a/handling', { status: 'resolved' })).status).toBe(200);
+    expect((await request(srv, 'POST', '/api/notices/b/handling', { status: 'resolved' })).status).toBe(404);
+    expect(ledger.list({ projectId: 'proj-b' })[0].handling).toBeUndefined();
+  });
+
+  it('非法状态一律 400，不静默归成待处理（否则调用方以为标记成功了，状态却反着走）', async () => {
+    const srv = await boot({ ledger: oneNotice() });
+    for (const status of ['resolvedd', '', 'OPEN', null]) {
+      const res = await request(srv, 'POST', '/api/notices/a/handling', { status });
+      expect(res.status, `status=${String(status)} 应当 400`).toBe(400);
+    }
+  });
+
+  it('GET 的计数与未读按整个作用域算，不受 status 筛选影响', async () => {
+    const ledger = oneNotice();
+    ledger.upsert({ id: 'b', dedupeKey: 'b', level: 'warning', title: '环境变量缺失', body: '', source: 'env', projectId: 'proj-a' });
+    const srv = await boot({ ledger, projectScope: 'proj-a' });
+    await request(srv, 'POST', '/api/notices/a/handling', { status: 'working' });
+
+    const all = await request(srv, 'GET', '/api/notices');
+    expect(all.body.counts).toEqual({ open: 1, working: 1, resolved: 0 });
+    expect(all.body.notices).toHaveLength(2);
+
+    const openOnly = await request(srv, 'GET', '/api/notices?status=open');
+    expect(openOnly.body.notices.map((n: { id: string }) => n.id)).toEqual(['b']);
+    expect(openOnly.body.statusFilter).toBe('open');
+    // 计数不跟着筛选走，否则「还有几条没人处理」会随当前选中项跳变。
+    expect(openOnly.body.counts).toEqual({ open: 1, working: 1, resolved: 0 });
+    // 认领顺带标已读：a 已读，剩 b 未读。
+    expect(openOnly.body.unread).toBe(1);
+  });
+
+  it('非法 status 查询参数按「不筛选」处理，不能把整张列表筛没', async () => {
+    const srv = await boot({ ledger: oneNotice() });
+    const res = await request(srv, 'GET', '/api/notices?status=wat');
+    expect(res.body.notices).toHaveLength(1);
+    expect(res.body.statusFilter).toBeUndefined();
   });
 });
 
