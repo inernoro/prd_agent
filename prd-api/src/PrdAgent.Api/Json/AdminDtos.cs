@@ -295,6 +295,7 @@ public class AssetStorageReadinessResponse
     public bool InternalReadVerified { get; set; }
     public bool PublicReadVerified { get; set; }
     public bool CleanupVerified { get; set; }
+    public long ProbeBytes { get; set; }
     public DateTime CheckedAt { get; set; }
     public long DurationMs { get; set; }
 }
