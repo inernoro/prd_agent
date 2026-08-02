@@ -31,14 +31,21 @@ scripts/stable-smoke-login.sh \
 
 命令只应在受控终端使用。不要把输出的登录地址粘贴到工单、报告或聊天记录；它虽然短时失效，仍属于临时凭据。
 
+## 账号与密钥持久化
+
+账号本体保存在测试环境和正式环境各自的用户数据库，固定使用不同的专用用户名。仓库的 `.env.template` 只登记变量名；开发者本机可把真实值放入被 git 忽略的 `.env`；48 小时任务使用 GitHub Secrets；CDS 和正式发布使用各自的部署密钥。禁止把真实密码、AI 密钥、一次性票据或 token 提交到仓库。
+
+每轮前置检查必须验证账号存在、未禁用、在合成登录白名单、权限符合矩阵。检查失败归类为 environment 并通知，不能把它解释成产品通过。
+
 ## CI 所需密钥
 
 | 环境 | 地址 | AI 密钥 | 专用账号 |
 |---|---|---|---|
-| 测试 | Actions variable `STABLE_SMOKE_TEST_BASE_URL` | Actions secret `AI_ACCESS_KEY` | Actions secret `E2E_USER` |
-| 正式 | Actions variable `PRD_AGENT_PROD_BASE` | Actions secret `AI_ACCESS_KEY` | Actions secret `E2E_USER` |
+| 测试 | Actions variable `STABLE_SMOKE_TEST_BASE_URL` | Actions secret `STABLE_SMOKE_TEST_AI_ACCESS_KEY` | Actions secret `STABLE_SMOKE_TEST_USER` |
+| 正式 | Actions variable `STABLE_SMOKE_PROD_BASE_URL` | Actions secret `STABLE_SMOKE_PROD_AI_ACCESS_KEY` | Actions secret `STABLE_SMOKE_PROD_USER` |
+| MAP 通知 | Actions variables `STABLE_SMOKE_NOTIFY_BASE_URL`、`STABLE_SMOKE_NOTIFY_SOURCE` | Actions secret `STABLE_SMOKE_NOTIFY_AI_ACCESS_KEY` | Actions variables `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID` |
 
-地址使用 Actions variables，账号和密钥只存 Actions secrets 或等价密钥系统，不提交到仓库。现有工作流兼容共用的 `AI_ACCESS_KEY` 与 `E2E_USER`；完成密钥拆分后应升级为正式和测试环境分别使用不同的 AI 密钥与不同账号。
+地址、用户名和目标用户 ID 使用 Actions variables；密码、AI 密钥和 token 只存 Actions secrets 或等价密钥系统，不提交到仓库。工作流在迁移期兼容共用的 `AI_ACCESS_KEY` 与 `E2E_USER`，但目标状态是正式和测试环境使用不同 AI 密钥与不同账号。目标用户 ID 必须配置，脚本拒绝降级成全局通知。生产 API 尚未发布 `stable-smoke` 来源前，`STABLE_SMOKE_NOTIFY_SOURCE` 使用 `system-alert`；发布后切为 `stable-smoke`。
 
 ## 48 小时调度
 
@@ -49,6 +56,7 @@ scripts/stable-smoke-login.sh \
 - `workflow_dispatch` 用于首次运行、缺陷复测和紧急人工触发，不受日期门控。
 - `concurrency` 禁止同一时刻出现两轮稳定冒烟。
 - 测试环境和正式环境独立出结果，不允许一边失败导致另一边证据丢失。
+- PR 只运行业务功能目录和变更映射门禁；合并到默认分支后，定时任务才会注册并按 48 小时执行。
 
 ## 每轮报告
 

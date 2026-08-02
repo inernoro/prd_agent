@@ -27,6 +27,7 @@ const ALLOW_LIST: Record<string, string> = {
   '/': '首页 IndexPage（站点根，固定栏顶不参与可定制）',
   '/home': '首页移动版别名',
   '/login': '登录页（未鉴权状态）',
+  '/synthetic-login': '稳定冒烟一次性票据消费页（内部系统路由，不允许出现在导航）',
   '/agent-launcher': '首页浮层入口',
 
   // ── 全屏非 nav ──

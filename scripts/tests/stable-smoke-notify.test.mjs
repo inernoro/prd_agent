@@ -1,0 +1,54 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildNotificationPayload, sendNotification, validateNotificationOptions } from '../stable-smoke-notify.mjs';
+
+const base = {
+  baseUrl: 'https://map.example.test',
+  accessKey: 'secret-value',
+  impersonateUser: 'stsmk_admin',
+  targetUserId: 'target-user-id',
+  verdict: 'fail',
+  runId: 'stsmk-123',
+  environment: '正式',
+  module: '多图视觉创作',
+  caseId: 'REG-multi-image-001',
+  recovery: '暂停异常模型并通过 CDS 回滚 previous 版本',
+  reportUrl: 'https://reports.example.test/stsmk-123',
+  isTest: false,
+};
+
+test('通知始终定向用户并包含证据和恢复动作', () => {
+  assert.deepEqual(validateNotificationOptions(base), []);
+  const payload = buildNotificationPayload(base);
+  assert.equal(payload.targetUserId, 'target-user-id');
+  assert.equal(payload.actionUrl, base.reportUrl);
+  assert.match(payload.message, /CDS 回滚/);
+  assert.equal(payload.source, 'stable-smoke');
+});
+
+test('缺少目标用户时拒绝全局通知', () => {
+  assert.ok(validateNotificationOptions({ ...base, targetUserId: '' }).some((item) => item.includes('拒绝发送全局通知')));
+});
+
+test('通过结果只归档，不发送通知', async () => {
+  const result = await sendNotification({ ...base, verdict: 'pass' }, () => {
+    throw new Error('不应发出请求');
+  });
+  assert.deepEqual(result, { sent: false, reason: 'pass-only-archive' });
+});
+
+test('失败结果调用 MAP 站内通知接口且不包含其他通知通道', async () => {
+  let captured;
+  const result = await sendNotification(base, async (url, init) => {
+    captured = { url: String(url), init, body: JSON.parse(init.body) };
+    return new Response(JSON.stringify({ success: true, data: { created: true, notification: { id: 'n-1' } } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  });
+  assert.equal(result.sent, true);
+  assert.match(captured.url, /\/api\/dashboard\/notifications\/events$/);
+  assert.equal(captured.init.headers['X-AI-Impersonate'], 'stsmk_admin');
+  assert.equal(captured.body.targetUserId, 'target-user-id');
+  assert.equal(JSON.stringify(captured).toLowerCase().includes('slack'), false);
+});

@@ -1,6 +1,6 @@
 ---
 name: stable-smoke
-version: 1.1.0
+version: 1.2.0
 description: Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".
 ---
 
@@ -12,7 +12,7 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 
 每 48 小时对测试环境和正式环境执行同一套关键用户旅程。测试环境负责完整写入、异常和恢复；正式环境只在专用合成账号与专用数据域内执行限额写入。任何线上或验收逃逸问题，首次修复时必须新增永久回归用例。
 
-详细用例见 [reference/test-matrix.md](reference/test-matrix.md)，问题沉淀格式见 [reference/regression-ledger.md](reference/regression-ledger.md)，合成登录和调度操作见 [reference/auth-and-schedule.md](reference/auth-and-schedule.md)。
+业务功能线和面包屑见 [reference/business-function-catalog.json](reference/business-function-catalog.json)，详细用例见 [reference/test-matrix.md](reference/test-matrix.md)，问题沉淀格式见 [reference/regression-ledger.md](reference/regression-ledger.md)，合成登录和调度操作见 [reference/auth-and-schedule.md](reference/auth-and-schedule.md)。
 
 ## 适用场景
 
@@ -55,6 +55,9 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 10. 任一必跑模块被跳过时，整轮最多为 `conditional`，不得报告完整通过。
 11. SSO 环境不得开启全局密码破窗供自动化使用。只能使用合成测试专用账号、一次性票据和不可续期短会话。
 12. 登录票据正文、AI 超级密钥和访问令牌不得写入报告、截图、日志、命令历史或 CI artifact。
+13. 业务功能台账是复测范围 SSOT。每条 P0/P1 功能线必须有稳定 id、业务面包屑、代码路径、双环境策略、caseId、产物断言、清理和 CDS 回滚动作。
+14. PR 代码变更按 `sourcePrefixes` 自动纳入功能线，同时追加所有 active 永久回归；未映射的核心代码变更必须阻断，不允许静默漏测。
+15. conditional 或 fail 只通过 MAP 站内通知定向发送给配置用户，禁止发全局通知，禁止发送到 Slack。
 
 ## 每轮工作流
 
@@ -136,6 +139,7 @@ Stable Smoke Progress:
 - 闸门：测试环境出现 P0、数据污染或清理失败时，正式环境只跑只读健康检查，跳过写入并把整轮判为 fail。
 - 超时：单模块 30 分钟，整轮 120 分钟；超时按失败处理，不继续播放进度文案。
 - 通知：成功只归档；conditional 或 fail 必须发送模块、caseId、环境、requestId、证据和恢复动作。
+- 通知实现：`scripts/stable-smoke-notify.mjs` 只调用 MAP `/api/dashboard/notifications/events`，缺少目标用户 ID 时拒绝发送，避免误发全员。
 - 保留：报告和截图至少 90 天；回归台账永久保留。
 - 实现：`.github/workflows/stable-smoke-48h.yml` 每日被调度一次，再按 Unix 日奇偶门控为严格 48 小时；手动触发不受门控限制。
 - 原因：CDS 命令任务在无仓库、无浏览器的隔离沙箱执行，不适合承载 Playwright 全套回归；CDS 仍负责部署状态和预览入口证据。
@@ -168,6 +172,16 @@ Verdict: pass | conditional | fail
 ```
 
 报告必须按模块列出，不得只给总通过率。视觉功能使用 `/验收` 归档截图；接口链路复用 `/smoke`；复杂范围先用 `/验收场景` 编排。
+
+## 业务功能台账与版本自动纳入
+
+`reference/business-function-catalog.json` 是机器可读 SSOT，`scripts/stable-smoke-plan.mjs` 负责三件事：
+
+1. 校验功能线的面包屑、双环境策略、caseId、清理和回滚字段完整。
+2. 48 小时任务固定纳入全量；PR 按代码路径纳入受影响功能线并追加 active 永久回归。
+3. 把 `catalogVersion`、commit、功能线和 caseId 固定成计划 artifact，报告必须引用同一版本。
+
+功能线的 `automationStatus` 只能是 `planned`、`entry`、`contract`、`contract-and-entry` 或 `journey`。只要必跑功能仍为 `planned`，整轮最多为 conditional，不能用入口可达冒充业务旅程通过。
 
 ## 端到端示例
 

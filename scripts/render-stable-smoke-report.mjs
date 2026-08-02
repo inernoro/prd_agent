@@ -6,6 +6,7 @@ function readArg(name, fallback = '') {
 }
 
 const input = readArg('--input', 'e2e/results.json');
+const planInput = readArg('--plan', 'stable-smoke-plan/plan.json');
 const output = readArg('--output', 'e2e/stable-smoke-report.md');
 const environment = readArg('--environment', 'unknown');
 const runId = readArg('--run-id', `stsmk-${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12)}`);
@@ -16,6 +17,13 @@ try {
   report = JSON.parse(readFileSync(input, 'utf8'));
 } catch {
   report = null;
+}
+
+let plan;
+try {
+  plan = JSON.parse(readFileSync(planInput, 'utf8'));
+} catch {
+  plan = null;
 }
 
 const rows = [];
@@ -35,7 +43,12 @@ function collectSuites(suites = []) {
 if (report) collectSuites(report.suites || []);
 
 const failed = rows.filter((row) => row.status !== 'passed');
-const verdict = !report || rows.length === 0 ? 'conditional' : failed.length > 0 ? 'fail' : 'pass';
+const executionVerdict = !report || rows.length === 0 ? 'conditional' : failed.length > 0 ? 'fail' : 'pass';
+const verdict = executionVerdict === 'fail' || plan?.verdict === 'fail'
+  ? 'fail'
+  : executionVerdict === 'conditional' || !plan || plan.verdict === 'conditional'
+    ? 'conditional'
+    : 'pass';
 const statusLabel = (status) => status === 'passed' ? 'pass' : status === 'skipped' ? 'conditional' : 'fail';
 const totalDuration = rows.reduce((sum, row) => sum + row.duration, 0);
 
@@ -58,6 +71,8 @@ const lines = [
   `- runId：${runId}`,
   `- 地址配置：${baseUrlConfigured ? '已注入' : '缺失'}`,
   `- 执行时间：${new Date().toISOString()}`,
+  `- 业务台账版本：${plan?.catalogVersion || '缺失'}`,
+  `- 固定 commit：${plan?.commit || '缺失'}`,
   '',
   '## 4. 身份与安全边界',
   '',
@@ -75,6 +90,12 @@ if (rows.length === 0) {
 }
 
 lines.push(
+  '',
+  '## 5.1 业务功能线覆盖',
+  '',
+  '| 功能线 | 等级 | 面包屑 | 自动化现状 |',
+  '|---|---|---|---|',
+  ...(plan?.featureLines || []).map((feature) => `| ${feature.label} | ${feature.criticality} | ${feature.breadcrumb.join(' → ')} | ${feature.automationStatus} |`),
   '',
   '## 6. 失败与证据',
   '',

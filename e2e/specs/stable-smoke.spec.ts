@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test';
+import catalog from '../../.claude/skills/stable-smoke/reference/business-function-catalog.json';
 
 type TicketResponse = {
   success: boolean;
@@ -6,14 +7,9 @@ type TicketResponse = {
   error?: { code?: string; message?: string };
 };
 
-const modules = [
-  { key: 'visual', label: '视觉创作', path: '/visual-agent' },
-  { key: 'literary', label: '文学创作', path: '/literary-agent' },
-  { key: 'video', label: '视频创作', path: '/video-agent' },
-  { key: 'transcript', label: '录音与上传解析', path: '/transcript-agent' },
-  { key: 'multi-image', label: '多图视觉创作', path: '/visual-agent' },
-  { key: 'llmgw', label: '模型网关配置', path: '/open-platform' },
-] as const;
+const modules = catalog.featureLines
+  .filter((feature) => feature.entrySmoke)
+  .map((feature) => ({ key: feature.id, label: feature.label, path: feature.entryPath }));
 
 function requiredEnv(name: string) {
   const value = process.env[name]?.trim();
@@ -39,7 +35,7 @@ async function issueTicket(request: APIRequestContext, returnUrl: string) {
 async function openModule(
   page: Page,
   request: APIRequestContext,
-  module: typeof modules[number],
+  module: (typeof modules)[number],
   testInfo: TestInfo,
 ) {
   const errors: string[] = [];
