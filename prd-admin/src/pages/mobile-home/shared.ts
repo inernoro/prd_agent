@@ -131,12 +131,8 @@ export function formatRelativeTime(value: string): string {
 }
 
 /** 大数字压缩显示：12480 → 1.2万；980 → 980 */
-export function formatCompactNumber(value: number): string {
-  if (!Number.isFinite(value)) return '0';
-  if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1).replace(/\.0$/, '')}亿`;
-  if (value >= 10_000) return `${(value / 10_000).toFixed(1).replace(/\.0$/, '')}万`;
-  return String(value);
-}
+// 紧凑计数的 SSOT 在 lib/homePulse（桌面首页同样消费），这里只做转出
+export { formatCompactNumber } from '@/lib/homePulse';
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 

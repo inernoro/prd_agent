@@ -2,7 +2,8 @@
  * 移动端首页（<768px）—— 「摘要」仪表盘（iOS 健康摘要风,2026-07-15 定稿）。
  *
  * 设计决策（用户拍板）:
- *  - 视觉语言 = Apple（iOS 系统色 / SF / 纯黑#000·白#f2f2f7 双皮肤 / 白卡 / squircle）
+ *  - 视觉语言 = Apple 版式骨架（SF / 双皮肤 / 白卡 / squircle）+ 米多墨系配色
+ *    （2026-08-02 起色板换成 lib/tileAccent 同源的八色墨带，紫/靛/品红退出）
  *  - 布局 = 工具的脸,不是商店的脸:无海报大卡、无页内大标题/日期（AppShell 已有顶栏,不重复 chrome）
  *  - 内容排序 = 你的工作优先:继续上次 → 常用应用 → 近7日 → 动态;智能体降级为底部紧凑货架
  * 全部真实数据（useMobileHomeData / BUILTIN_TOOLS）;近7日无按日序列,只展示聚合数,不编造迷你图。
@@ -50,13 +51,13 @@ import { transitionThemeMode } from '@/lib/themeTransition';
 type Grad = { from: string; to: string };
 
 const APP_GRID: Array<{ key: string; title: string; route: string; Icon: LucideIcon; accent: Grad }> = [
-  { key: 'document-store', title: '知识库', route: '/document-store', Icon: BookOpen, accent: { from: AS_COLOR.orange, to: '#FFB340' } },
+  { key: 'document-store', title: '知识库', route: '/document-store', Icon: BookOpen, accent: { from: AS_COLOR.orange, to: '#9BA85E' } },
   { key: 'report-agent', title: '周报', route: '/report-agent', Icon: FileText, accent: { from: AS_COLOR.blue, to: AS_COLOR.indigo } },
   { key: 'visual-agent', title: '生图', route: '/visual-agent', Icon: ImageIcon, accent: { from: AS_COLOR.purple, to: AS_COLOR.indigo } },
   { key: 'defect-agent', title: '缺陷', route: '/defect-agent', Icon: Bug, accent: { from: AS_COLOR.red, to: AS_COLOR.pink } },
   { key: 'literary-agent', title: '文学创作', route: '/literary-agent', Icon: Feather, accent: { from: AS_COLOR.green, to: AS_COLOR.teal } },
-  { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, accent: { from: '#32ADE6', to: AS_COLOR.teal } },
-  { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, accent: { from: '#C05B3C', to: AS_COLOR.orange } },
+  { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, accent: { from: '#3B7A75', to: AS_COLOR.teal } },
+  { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, accent: { from: '#C8623A', to: AS_COLOR.orange } },
   { key: 'changelog', title: '更新中心', route: '/changelog', Icon: Megaphone, accent: { from: AS_COLOR.indigo, to: AS_COLOR.purple } },
 ];
 
@@ -65,7 +66,7 @@ const ARCHIVE_ROWS: Array<{ key: string; title: string; desc: string; route: str
   { key: 'library', title: '智识殿堂', desc: '团队公开知识库与文章', route: '/library', Icon: Landmark, accent: { from: AS_COLOR.purple, to: AS_COLOR.indigo } },
   { key: 'learning-center', title: '学习中心', desc: '页面教程与掌握度', route: '/learning-center', Icon: GraduationCap, accent: { from: AS_COLOR.green, to: AS_COLOR.teal } },
   { key: 'my-assets', title: '我的资产', desc: '图片、文档与附件', route: '/my-assets', Icon: FolderOpen, accent: { from: AS_COLOR.blue, to: AS_COLOR.teal } },
-  { key: 'my-shares', title: '我的分享', desc: '发出的分享链接管理', route: '/my/shares', Icon: Share2, accent: { from: '#32ADE6', to: AS_COLOR.blue } },
+  { key: 'my-shares', title: '我的分享', desc: '发出的分享链接管理', route: '/my/shares', Icon: Share2, accent: { from: '#3B7A75', to: AS_COLOR.blue } },
 ];
 
 export default function MobileHomePage() {
@@ -112,7 +113,7 @@ export default function MobileHomePage() {
     { label: 'Token', value: data.stats?.totalTokens ?? 0, color: C.orange, series: daily.map((d) => d.tokens) },
   ];
 
-  const cardStyle = { background: C.card, border: `1px solid ${C.hairline}`, borderRadius: 16 } as const;
+  const cardStyle = { background: C.card, border: `1px solid ${C.hairline}`, borderRadius: 12 } as const;
 
   return (
     <div
@@ -300,9 +301,9 @@ export default function MobileHomePage() {
           <>
             <div
               className="flex items-end justify-between"
-              style={{ padding: `28px ${AS_SPACE.gutter}px 10px`, gap: 12 }}
+              style={{ padding: `20px ${AS_SPACE.gutter}px 8px`, gap: 12 }}
             >
-              <span style={{ ...AS_TYPE.itemTitle, color: C.labelSecondary }}>试试这些智能体</span>
+              <span style={{ ...AS_TYPE.itemTitle, fontSize: 15, color: C.labelSecondary }}>试试这些智能体</span>
               <button
                 type="button"
                 onClick={() => navigate('/ai-toolbox')}
@@ -337,7 +338,7 @@ export default function MobileHomePage() {
                           width: 196,
                           height: 126,
                           padding: 11,
-                          borderRadius: 16,
+                          borderRadius: 12,
                           border: '1px solid var(--media-card-border)',
                           background: 'var(--media-card-base)',
                         }
@@ -467,9 +468,9 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section style={{ padding: `0 ${AS_SPACE.gutter}px`, marginTop: 24 }}>
+    <section style={{ padding: `0 ${AS_SPACE.gutter}px`, marginTop: 18 }}>
       <div className="flex items-end justify-between" style={{ marginBottom: 10, gap: 12 }}>
-        <span style={{ ...AS_TYPE.groupTitle, color: C.label }}>{title}</span>
+        <span style={{ ...AS_TYPE.groupTitle, fontSize: 17, color: C.label }}>{title}</span>
         {action && (
           <button
             type="button"

@@ -1,103 +1,132 @@
 import type { CSSProperties } from 'react';
 
 /**
- * 桌面端智能体/工具卡片的统一配色与表面材质（SSOT）。
+ * 智能体/工具卡片的统一配色与表面材质（SSOT）。
  *
- * 色阶尺（tonal ladder）：品类色统一取同一饱和度/明度档位，只允许换色相 H。
- * 颜色只出现在图标芯片上；卡片底、描边、辉光一律中性——彩而不乱的关键
- * 是"档位一致 + 颜色不乱涂在装饰上"，不是砍成单色。
+ * 色带（2026-08-02 收窄）：米多的底色是**纸与墨**——暖石墨 + 暖纸 + 赭红身份色。
+ * 品类色因此只允许落在八个"墨系"色相上（陶土 / 焦糖 / 琥珀 / 橄榄 / 松绿 /
+ * 黛青 / 钢青 / 钢蓝），**紫、靛、品红、粉一律不在色带内**——它们和纸墨底不是
+ * 一家人，是过去"首页发紫"的根源。同一色带内只换色相，饱和度/明度档位固定，
+ * 保证一屏几十张卡"彩而不乱"。
  *
- * 消费方：首页启动器（AgentLauncherPage）+ 百宝箱（ToolCard），
- * 两处的卡片视觉语言必须一致（frontend-architecture：组件复用 / SSOT）。
- * 移动端另有一套 iOS 色系（lib/agentAccent.ts），互不混用。
+ * 消费方：首页启动器（AgentLauncherPage）+ 百宝箱（ToolCard）+ 移动首页，
+ * 三处共用同一份，改一处处处同步（frontend-architecture：SSOT）。
  */
+
+/** 允许的八个色相（度）。新增图标只能从这里挑，不许自己发明色相。 */
+export const INK_HUES = {
+  clay: 16,      // 陶土：视觉/影像/情感类
+  caramel: 32,   // 焦糖：缺陷/生产/工具类
+  amber: 44,     // 琥珀：市场/亮点/AI 点金类
+  olive: 92,     // 橄榄：阅读/文档/沉淀类
+  pine: 152,     // 松绿：写作/代码/接入类
+  celadon: 176,  // 黛青：流程/协作/连接类
+  steel: 196,    // 钢青：音视频/网络/实验类
+  slate: 214,    // 钢蓝：结构/管理/分析类
+} as const;
+
 export const ICON_HUE: Record<string, number> = {
-  AudioLines: 190,
-  Blocks: 239,
-  BookOpen: 142,
-  Clapperboard: 330,
-  Factory: 25,
-  FileText: 217,
-  Palette: 271,
-  PenTool: 160,
-  Bug: 25,
-  Video: 347,
-  Swords: 38,
-  Code2: 160,
-  Languages: 190,
-  FileSearch: 45,
-  BarChart3: 258,
-  Bot: 239,
-  FileBarChart: 239,
-  Workflow: 173,
-  Zap: 38,
-  Globe: 199,
-  ClipboardCheck: 239,
-  ScanSearch: 258,
-  Wand2: 258,
-  FlaskConical: 199,
-  ScrollText: 215,
-  Sparkle: 271,
-  ListTree: 142,
-  Sparkles: 43,
-  Library: 217,
-  Store: 38,
-  FolderHeart: 330,
-  Cpu: 239,
-  Users: 187,
-  Hammer: 215,
-  FolderKanban: 217,
-  GitPullRequest: 258,
-  GraduationCap: 217,
-  Link2: 173,
-  Mail: 347,
-  Mic: 190,
-  Plug: 160,
-  Route: 258,
-  Share2: 187,
-  Terminal: 215,
-  // 百宝箱自定义工具常用图标（对齐原 ACCENT_PALETTE 的色相）
-  Lightbulb: 38,
-  Target: 0,
-  Wrench: 30,
-  Rocket: 217,
-  MessageSquare: 173,
-  Brain: 292,
-  Database: 199,
-  Image: 330,
-  Music: 292,
-  Briefcase: 30,
-  Heart: 347,
-  Star: 43,
-  Shield: 217,
-  Lock: 215,
-  Search: 173,
-  Layers: 258,
-  Globe2: 199,
-  // 毒舌秘书：科幻深蓝，与 PaSecretaryHeroArt 内联插画呼应
-  PaSecretary: 224,
+  // 陶土：视觉、影像、人味
+  Palette: INK_HUES.clay,
+  Image: INK_HUES.clay,
+  Clapperboard: INK_HUES.clay,
+  Video: INK_HUES.clay,
+  FolderHeart: INK_HUES.clay,
+  Heart: INK_HUES.clay,
+  Mail: INK_HUES.clay,
+  Target: INK_HUES.clay,
+
+  // 焦糖：缺陷、产线、动手的活
+  Bug: INK_HUES.caramel,
+  Factory: INK_HUES.caramel,
+  Wrench: INK_HUES.caramel,
+  Briefcase: INK_HUES.caramel,
+  Hammer: INK_HUES.caramel,
+
+  // 琥珀：市场、亮点、AI 点金
+  Store: INK_HUES.amber,
+  Sparkles: INK_HUES.amber,
+  Sparkle: INK_HUES.amber,
+  Star: INK_HUES.amber,
+  Zap: INK_HUES.amber,
+  Swords: INK_HUES.amber,
+  Lightbulb: INK_HUES.amber,
+  Wand2: INK_HUES.amber,
+  Brain: INK_HUES.amber,
+  Music: INK_HUES.amber,
+
+  // 橄榄：阅读、文档、沉淀
+  BookOpen: INK_HUES.olive,
+  ListTree: INK_HUES.olive,
+  ScrollText: INK_HUES.olive,
+  FileSearch: INK_HUES.olive,
+
+  // 松绿：写作、代码、接入
+  PenTool: INK_HUES.pine,
+  Code2: INK_HUES.pine,
+  Plug: INK_HUES.pine,
+  Search: INK_HUES.pine,
+  MessageSquare: INK_HUES.pine,
+
+  // 黛青：流程、协作、连接
+  Workflow: INK_HUES.celadon,
+  Link2: INK_HUES.celadon,
+  Share2: INK_HUES.celadon,
+  Users: INK_HUES.celadon,
+  Route: INK_HUES.celadon,
+  Layers: INK_HUES.celadon,
+
+  // 钢青：音视频、网络、实验
+  AudioLines: INK_HUES.steel,
+  Languages: INK_HUES.steel,
+  Mic: INK_HUES.steel,
+  Globe: INK_HUES.steel,
+  Globe2: INK_HUES.steel,
+  Database: INK_HUES.steel,
+  FlaskConical: INK_HUES.steel,
+  Radar: INK_HUES.steel,
+
+  // 钢蓝：结构、管理、分析
+  FileText: INK_HUES.slate,
+  FileBarChart: INK_HUES.slate,
+  BarChart3: INK_HUES.slate,
+  ScanSearch: INK_HUES.slate,
+  Blocks: INK_HUES.slate,
+  Bot: INK_HUES.slate,
+  ClipboardCheck: INK_HUES.slate,
+  Cpu: INK_HUES.slate,
+  Library: INK_HUES.slate,
+  FolderKanban: INK_HUES.slate,
+  GitPullRequest: INK_HUES.slate,
+  GraduationCap: INK_HUES.slate,
+  Terminal: INK_HUES.slate,
+  Rocket: INK_HUES.slate,
+  Shield: INK_HUES.slate,
+  Lock: INK_HUES.slate,
+  // 毒舌秘书：与 PaSecretaryHeroArt 内联插画呼应
+  PaSecretary: INK_HUES.slate,
 };
 
 export type Accent = { color: string; text: string; soft: string; border: string; faint: string; glow: string };
 
 export function hueAccent(h: number): Accent {
   return {
-    color: `hsl(${h} 68% 64%)`,
+    color: `hsl(${h} 54% 62%)`,
     // 同色相的「文字档」：`color` 是为暗底调的芯片色，直接拿去当浅色纸面上的
     // 文字会糊成一片。明度交给主题持有（暗 65% / 浅 36%），前缀 workflow- 是
     // 历史命名，它是全站唯一的 accent 文字明度 SSOT，不再另起一个同义 token。
-    text: `hsl(${h} 58% var(--workflow-accent-text-lightness, 65%))`,
-    soft: `hsla(${h}, 68%, 60%, 0.14)`,
+    text: `hsl(${h} 48% var(--workflow-accent-text-lightness, 65%))`,
+    soft: `hsla(${h}, 54%, 58%, 0.16)`,
     // faint: 静息态渗色（远看近乎不可见）；glow: 悬停投影。
     // 纪律不变：静时安静、碰时呼吸——色彩只在交互瞬间参与。
-    border: `hsla(${h}, 68%, 60%, 0.26)`,
-    faint: `hsla(${h}, 68%, 60%, 0.07)`,
-    glow: `hsla(${h}, 68%, 60%, 0.3)`,
+    border: `hsla(${h}, 54%, 58%, 0.28)`,
+    faint: `hsla(${h}, 54%, 58%, 0.09)`,
+    glow: `hsla(${h}, 54%, 58%, 0.32)`,
   };
 }
 
 export function getAccent(icon: string): Accent {
-  return hueAccent(ICON_HUE[icon] ?? 239);
+  return hueAccent(ICON_HUE[icon] ?? INK_HUES.slate);
 }
 
 /**

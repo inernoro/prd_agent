@@ -72,46 +72,33 @@ import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { WeeklyPosterModal } from '@/components/weekly-poster/WeeklyPosterModal';
-import { Reveal } from '@/pages/home/components/Reveal';
 import { getAccent, glassTileStyle } from '@/lib/tileAccent';
 import { isoWeekNumber } from '@/lib/isoWeek';
+import { useHomePulse, formatCompactNumber } from '@/lib/homePulse';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
 import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 
 /**
- * 登录后首页 = 工位（Desk），不是应用商店货架。
+ * 登录后首页 = 工位（Desk）。
  *
- * 设计取向（2026-08-02 重做）：
- *  1. 门头只回答「今天几号、你是谁、从哪开始」——日期条（mono）+ 问候 + 一条
- *     贯通的命令条。命令条不再和问候语抢同一行栅格，它是门头唯一的主操作。
- *  2. 「手边的活儿」升格为首屏主产物：真实在办工作占据最大面积，收起时正好一行，
- *     展开才铺开（`content-fills-canvas` / `expectation-management`：先答"从哪继续"）。
- *  3. 目录从「三段各自堆叠 50 张卡」改成「一个分段筛选器 + 一片连续目录」：
- *     默认「全部」仍完整展示三组（导航登记不受影响），但用户可一键只看底座/工具，
- *     不必滚过 35 张智能体卡（`chief-designer-usability` 第四原则：能短就短）。
- *  4. 结构靠发丝线与留白建立，不靠层层套盒；颜色只出现在图标芯片、在办工作的
- *     色边与 hover 描边上，静时安静（沿用 `lib/tileAccent` 的色阶尺 SSOT）。
+ * 三条纪律（2026-08-02 用户当面拍板）：
+ *  1. **密度优先**：这是每天进出几十次的工作台，不是画册。同样一屏要装下
+ *     更多真实信息——在办工作、近 7 日用量、动态、以及全部能力目录。
+ *  2. **靠面分区，不靠线分区**：结构由实体面板与留白承担；发丝线只在卡片
+ *     边缘出现，不做贯通全宽的装饰横线（"全是线条"是明确被否掉的形态）。
+ *  3. **纸墨一家**：颜色只来自主题 token 与 lib/tileAccent 的墨系色带
+ *     （紫/靛/品红不在色带内），暗浅双主题共用同一支赭红身份色。
+ *
+ * 与移动首页、未登录官网共享同一套语言：紧凑标题行、实体卡、墨系类别色、
+ * 近 7 日同一份数据（lib/homePulse）。
  */
-
-/** 进场动效：区块级一次 fade，总时长半秒内，不做逐卡级联。 */
-const REVEAL_DURATION = 400;
-const REVEAL = {
-  masthead: 0,
-  command: 40,
-  quickLinks: 70,
-  continue: 100,
-  catalog: 140,
-  showcase: 180,
-};
 
 // ── Icon 映射（页面自持，不侵入 ToolCard） ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
   AudioLines, Blocks, BookOpen, Clapperboard, Factory, FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch, Wand2,
-  // 迁移自用户菜单的管理工具
   FlaskConical, ScrollText, Sparkle, Sparkles, Library, Store,
-  // 基础设施
   FolderHeart, Cpu, Users, Hammer, FolderKanban, GitPullRequest, GraduationCap, Link2, ListTree, Mail, Mic, Plug, Route, Share2, Terminal, Radar,
   PaSecretary,
 };
@@ -130,7 +117,7 @@ function getGreeting(hour: number): string {
 
 const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
-/** 每分钟对齐一次的「现在」：门头日期条要跟着走，但不做每秒重绘。 */
+/** 每分钟对齐一次的「现在」：日期条要跟着走，但不做每秒重绘。 */
 function useNowByMinute(): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -138,7 +125,6 @@ function useNowByMinute(): Date {
     const tick = () => {
       const current = new Date();
       setNow(current);
-      // 对齐到下一个整分，避免长时间运行后累积漂移
       timer = setTimeout(tick, 60_000 - (current.getSeconds() * 1000 + current.getMilliseconds()));
     };
     timer = setTimeout(tick, 60_000 - (Date.now() % 60_000));
@@ -148,7 +134,6 @@ function useNowByMinute(): Date {
 }
 
 type HomeQuickLink = {
-  /** 可选 id，配合页面内的徽章逻辑（如 updates 显示未读数） */
   id?: HomeQuickLinkId;
   icon: LucideIcon;
   label: string;
@@ -156,12 +141,7 @@ type HomeQuickLink = {
   path: string;
 };
 
-/**
- * 首页置顶入口（扁平导航坞）。
- * - 最多 MAX_HOME_QUICK_LINKS 个，用户可在偏好里定制
- * - 零封面零横幅：入口只承担导航，名称与说明共享同一栅格
- * - 「更新中心」带未读徽章，通过 `id==='updates'` 触发
- */
+/** 首页置顶入口（用户可在偏好里定制，最多 MAX_HOME_QUICK_LINKS 个） */
 const QUICK_LINKS_BASE: HomeQuickLink[] = [
   { id: 'marketplace', icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace' },
   { id: 'library', icon: Library, label: '智识殿堂', desc: '探索社区共享的知识库', path: '/library' },
@@ -202,23 +182,21 @@ function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
         : item.routePath?.trim()
           ? `route:${item.routePath}`
           : `id:${item.id}`;
-    if (seen.has(identity)) {
-      continue;
-    }
+    if (seen.has(identity)) continue;
     seen.add(identity);
     deduped.push(item);
   }
   return deduped;
 }
 
-// ── 目录分组（分段筛选器与区块标题共用同一份定义，避免两处漂移） ──
+// ── 目录分组（分段筛选器与组标签共用同一份定义） ──
 
 type CatalogGroupKey = 'agents' | 'tools' | 'infra';
 type CatalogFilter = 'all' | CatalogGroupKey;
 
 interface CatalogGroupMeta {
   key: CatalogGroupKey;
-  /** 分段筛选器上的短标签（寸土寸金，只给两三个字） */
+  /** 分段筛选器上的短标签 */
   chip: string;
   title: string;
   hint: string;
@@ -242,10 +220,11 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
     <button
       type="button"
       onClick={onClick}
-      className={`home-desk-tile group relative w-full h-full overflow-hidden text-left rounded-xl flex flex-col ${hasArtwork ? 'is-art' : 'justify-between gap-3 p-4'}`}
+      title={item.description}
+      className={`home-desk-tile group relative w-full h-full overflow-hidden text-left rounded-[10px] flex flex-col ${hasArtwork ? 'is-art' : 'justify-between gap-2 p-3'}`}
       style={{
         ...glassTileStyle(accent),
-        minHeight: hasArtwork ? 188 : undefined,
+        minHeight: hasArtwork ? 158 : undefined,
         background: hasArtwork ? 'var(--media-card-base)' : glassTileStyle(accent).background,
         border: hasArtwork ? 'none' : glassTileStyle(accent).border,
       }}
@@ -255,16 +234,16 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         <AgentCardFrame hoverBorder="var(--media-card-border-hover)" />
       ) : (
         <div
-          className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-          style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 12px 32px -16px ${accent.glow}` }}
+          className="absolute inset-0 rounded-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+          style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 10px 26px -16px ${accent.glow}` }}
         />
       )}
 
       {hasArtwork ? (
         <>
-          <div className="relative z-10 flex items-start justify-between gap-2 px-3 pt-3">
+          <div className="relative z-10 flex items-start justify-between gap-2 px-2.5 pt-2.5">
             <div
-              className="max-w-[58%] text-[17px] font-semibold leading-[1.2] tracking-[-0.02em]"
+              className="max-w-[60%] text-[14.5px] font-semibold leading-[1.22] tracking-[-0.01em]"
               style={{ color: 'var(--text-on-media)' }}
             >
               {item.name}
@@ -273,7 +252,7 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
           </div>
 
           <div
-            className="relative z-10 mt-auto px-2.5 pb-2.5 pt-2.5"
+            className="relative z-10 mt-auto px-2 pb-2 pt-2"
             style={{
               background: 'var(--media-card-panel-translucent)',
               backdropFilter: 'blur(12px)',
@@ -282,10 +261,10 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
           >
             <div className="flex min-w-0 items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-                {item.tags.slice(0, 3).map((tag) => (
+                {item.tags.slice(0, 2).map((tag) => (
                   <span
                     key={tag}
-                    className="shrink-0 rounded-full border px-2 py-1 text-[11px] font-medium leading-none"
+                    className="shrink-0 rounded-md border px-1.5 py-0.5 text-[10.5px] font-medium leading-none"
                     style={{
                       color: 'var(--media-card-tag-text)',
                       background: 'var(--media-card-tag-bg)',
@@ -297,7 +276,7 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
                 ))}
               </div>
               <ArrowRight
-                size={15}
+                size={14}
                 className="shrink-0 opacity-30 transition-[transform,opacity] duration-200 group-hover:translate-x-0.5 group-hover:opacity-[0.65]"
                 style={{ color: 'var(--media-card-tag-text)' }}
               />
@@ -306,24 +285,17 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         </>
       ) : (
         <>
-          <div className="relative z-10 flex items-start justify-between">
-            <div
-              className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
-              style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
-            >
-              <Icon size={19} style={{ color: accent.color }} />
-            </div>
-            <ArrowRight
-              size={15}
-              className="shrink-0 mt-1 opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 transition-all duration-200"
-              style={{ color: 'var(--text-muted)' }}
-            />
+          <div
+            className="relative z-10 shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+            style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
+          >
+            <Icon size={16} style={{ color: accent.color }} />
           </div>
           <div className="relative z-10 min-w-0">
-            <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+            <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
               {item.name}
             </div>
-            <p className="text-[12px] mt-1 leading-relaxed line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+            <p className="text-[11.5px] mt-0.5 leading-snug line-clamp-2" style={{ color: 'var(--text-muted)' }}>
               {item.description}
             </p>
           </div>
@@ -343,40 +315,35 @@ function ToolRow({ item, onClick }: { item: ToolboxItem; onClick: () => void }) 
     <button
       type="button"
       onClick={onClick}
-      className="home-desk-row group relative w-full cursor-pointer text-left rounded-xl overflow-hidden flex items-center gap-3.5 px-4 py-3.5"
+      title={item.description}
+      className="home-desk-row group relative w-full cursor-pointer text-left rounded-[10px] overflow-hidden flex items-center gap-2.5 px-2.5 py-2"
       style={glassTileStyle(accent)}
     >
       <div
-        className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
-        style={{ boxShadow: `inset 0 0 0 1px ${accent.border}, 0 10px 26px -14px ${accent.glow}` }}
+        className="absolute inset-0 rounded-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none"
+        style={{ boxShadow: `inset 0 0 0 1px ${accent.border}` }}
       />
-
       <div
-        className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+        className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center"
         style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
       >
-        <Icon size={18} style={{ color: accent.color }} />
+        <Icon size={14} style={{ color: accent.color }} />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+        <div className="text-[12.5px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
           {item.name}
         </div>
-        <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+        <div className="text-[10.5px] truncate" style={{ color: 'var(--text-muted)' }}>
           {item.description}
         </div>
       </div>
-      <ArrowRight
-        size={14}
-        className="shrink-0 opacity-0 group-hover:opacity-60 transition-all duration-200 group-hover:translate-x-0.5"
-        style={{ color: 'var(--text-muted)' }}
-      />
     </button>
   );
 }
 
-// ── 在办工作卡（首屏主产物：真实工作现场，不是导航标签） ──
+// ── 在办工作卡（首屏主产物：真实工作现场） ──
 
-/** 与后端 HomeRecentWorkController 的 agentKey 枚举一一对应（iconKey 走 ICON_HUE 色阶尺） */
+/** 与后端 HomeRecentWorkController 的 agentKey 枚举一一对应 */
 const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string; iconKey: string }> = {
   'visual-agent': { icon: Palette, label: '视觉创作', iconKey: 'Palette' },
   'literary-agent': { icon: PenTool, label: '文学创作', iconKey: 'PenTool' },
@@ -403,73 +370,74 @@ function WorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => v
       style={{
         '--work-accent': accent.color,
         '--work-accent-text': accent.text,
+        '--work-accent-soft': accent.soft,
         '--work-accent-faint': accent.faint,
         '--work-accent-border': accent.border,
-        '--work-accent-glow': accent.glow,
       } as CSSProperties}
     >
-      <span aria-hidden className="home-desk-work-edge" />
-
-      <span className="home-desk-work-head">
-        <span className="home-desk-work-agent">
-          <Icon size={13} className="shrink-0" />
-          <span className="truncate">{meta.label}</span>
-        </span>
-        <span className="home-desk-work-time">
-          <RelativeTime value={item.lastActiveAt} refreshIntervalMs={0} />
-        </span>
+      <span className="home-desk-work-icon" aria-hidden>
+        <Icon size={14} />
       </span>
-
-      <span className="home-desk-work-title">{item.title || '未命名工作'}</span>
-
-      <span className="home-desk-work-foot">
-        {progress != null ? (
+      <span className="home-desk-work-body">
+        <span className="home-desk-work-title">{item.title || '未命名工作'}</span>
+        <span className="home-desk-work-meta">
+          <span className="home-desk-work-agent">{meta.label}</span>
+          {item.progressLabel && <span className="home-desk-work-state">{item.progressLabel}</span>}
+          <span className="home-desk-work-time">
+            <RelativeTime value={item.lastActiveAt} refreshIntervalMs={0} />
+          </span>
+        </span>
+        {progress != null && (
           <span className="home-desk-work-track" aria-hidden>
             <span className="home-desk-work-fill" style={{ width: `${Math.round(progress * 100)}%` }} />
           </span>
-        ) : (
-          <span className="home-desk-work-divider" aria-hidden />
         )}
-        {item.progressLabel && <span className="home-desk-work-state">{item.progressLabel}</span>}
-        <span className="home-desk-work-cta">
-          继续
-          <ArrowRight size={12} className="transition-transform duration-200 group-hover:translate-x-0.5" />
-        </span>
       </span>
+      <ArrowRight size={13} className="home-desk-work-go" />
     </button>
   );
 }
 
-// ── 区块标题：eyebrow 压在一条贯通的发丝线上，右侧留给该区块自己的操作 ──
+// ── 紧凑区块标题（实心排版，不用贯通横线） ──
 
-function DeskSectionHead({
-  eyebrow,
+function SectionHead({
   title,
-  hint,
   count,
+  hint,
   action,
   headingId,
 }: {
-  eyebrow: string;
   title: string;
-  hint?: string;
   count?: number;
+  hint?: string;
   action?: ReactNode;
   headingId?: string;
 }) {
   return (
-    <div className="home-desk-head">
-      <div className="home-desk-head-rule">
-        <span className="home-desk-eyebrow">{eyebrow}</span>
-        <span className="home-desk-rule" aria-hidden />
-        {action}
-      </div>
-      <div className="home-desk-head-line">
-        <h2 id={headingId} className="home-desk-head-title">{title}</h2>
-        {typeof count === 'number' && <span className="home-desk-count">{count}</span>}
-        {hint && <span className="home-desk-head-hint">{hint}</span>}
-      </div>
+    <div className="home-desk-sec-head">
+      <h2 id={headingId} className="home-desk-sec-title">{title}</h2>
+      {typeof count === 'number' && <span className="home-desk-sec-count">{count}</span>}
+      {hint && <span className="home-desk-sec-hint">{hint}</span>}
+      <span className="home-desk-sec-gap" />
+      {action}
     </div>
+  );
+}
+
+/** 七日迷你柱：真实数据，0 日留空轨道，不造假。 */
+function MiniBars({ series }: { series: number[] }) {
+  const max = Math.max(...series, 0);
+  return (
+    <span aria-hidden className="home-desk-bars">
+      {series.map((value, i) => {
+        const fill = max > 0 && value > 0 ? Math.max(12, Math.round(Math.sqrt(value / max) * 100)) : 0;
+        return (
+          <span key={i} className="home-desk-bar">
+            {fill > 0 && <span className="home-desk-bar-fill" style={{ height: `${fill}%` }} />}
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -478,8 +446,6 @@ function DeskSectionHead({
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>('all');
-  // 「手边的活儿」默认收起为一行，展开后浏览全部足迹
-  const [workExpanded, setWorkExpanded] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -492,19 +458,17 @@ export default function AgentLauncherPage() {
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
   const canUsePrReview = permissions.includes('pr-review.use');
-  // 启动器静态入口的权限门（智能体/实用工具/基础设施），口径与移动端共用同一 SSOT
   const launcherPerms = useMemo(() => deriveLauncherPerms(permissions), [permissions]);
 
-  // 更新中心未读数（首页快捷入口的红点徽章）
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
-
-  // 周报海报（主页弹窗）
   const loadWeeklyPoster = useWeeklyPosterStore((s) => s.loadCurrent);
 
-  // 「手边的活儿」：跨智能体的真实工作现场（无数据时降级为一行引导）
   const loadRecentWork = useHomeRecentWorkStore((s) => s.load);
   const workItems = useHomeRecentWorkStore((s) => s.items);
+
+  // 近 7 日 + 我的动态：与移动首页同一份数据源
+  const pulse = useHomePulse(8);
 
   const quickLinkIds = useHomeLauncherPreferencesStore((s) => s.quickLinkIds);
   const loadHomeLauncherPreferences = useHomeLauncherPreferencesStore((s) => s.loadFromServer);
@@ -523,11 +487,9 @@ export default function AgentLauncherPage() {
       if (visibleIds.length >= MAX_HOME_QUICK_LINKS) break;
       if (!visibleIds.includes(id) && canUseQuickLink(id)) visibleIds.push(id);
     }
-
     return visibleIds.slice(0, MAX_HOME_QUICK_LINKS).flatMap((id) => {
-      const resolvedLink = QUICK_LINK_BY_ID[id];
-      if (!resolvedLink) return [];
-      return resolvedLink;
+      const resolved = QUICK_LINK_BY_ID[id];
+      return resolved ? [resolved] : [];
     });
   }, [launcherPerms.canManageOpenPlatform, launcherPerms.canReadModels, launcherPerms.canReadTeamActivity, launcherPerms.canReadUsers, quickLinkIds]);
 
@@ -536,12 +498,10 @@ export default function AgentLauncherPage() {
     void loadChangelogCurrentWeek({ daysLimit: 8 });
     void loadHomeLauncherPreferences();
     void loadWeeklyPoster();
-    // force：同一 SPA 会话内从工作区/缺陷等页面返回首页时，台账已更新，
-    // 不能吃 store 的 loaded 缓存（Codex P2）；端点轻量，挂载即重拉
+    // force：从工作区返回首页时台账已更新，不吃 store 缓存（Codex P2）
     void loadRecentWork({ force: true });
   }, [loadItems, loadChangelogCurrentWeek, loadHomeLauncherPreferences, loadWeeklyPoster, loadRecentWork]);
 
-  // 静态入口（智能体 / 实用工具 / 基础设施）—— SSOT 在 lib/homeLauncherItems（桌面+移动共用）
   const staticAgents: ToolboxItem[] = useMemo(() => buildStaticAgents(), []);
   const staticUtilities: ToolboxItem[] = useMemo(() => buildStaticUtilities(launcherPerms), [launcherPerms]);
   const staticInfra: ToolboxItem[] = useMemo(() => buildStaticInfra(launcherPerms), [launcherPerms]);
@@ -553,7 +513,6 @@ export default function AgentLauncherPage() {
     for (const item of dedupeToolboxItems(items)) {
       if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
       if (item.agentKey === 'pr-review' && !canUsePrReview) continue;
-      // kind === 'agent'（或默认带 routePath 的内置条目）进智能体；其余进工具
       if (item.kind === 'tool') tools.push(item);
       else if (item.kind === 'agent' || item.routePath) agents.push(item);
       else tools.push(item);
@@ -565,7 +524,7 @@ export default function AgentLauncherPage() {
 
   const query = searchQuery.trim().toLowerCase();
 
-  /** 搜索横跨全部三组（用户不关心一个入口被我们归到哪一类）。 */
+  /** 搜索横跨三组（用户不关心一个入口被我们归到哪一类）。 */
   const searchResults = useMemo<ToolboxItem[]>(() => {
     if (!query) return [];
     const all = dedupeToolboxItems([...groups.agents, ...groups.tools, ...groups.infra]);
@@ -590,7 +549,7 @@ export default function AgentLauncherPage() {
     }
   }, [navigate]);
 
-  // 斜杠聚焦：命令条是首页最快的入口，给它一个不与全局 ⌘K（智能体浮层）冲突的键位
+  // 斜杠聚焦：不与全局 ⌘K（智能体浮层）抢键位
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -608,8 +567,15 @@ export default function AgentLauncherPage() {
   const displayName = user?.displayName || '';
   const dateLine = `${now.getMonth() + 1} 月 ${now.getDate()} 日 · ${WEEKDAY_LABELS[now.getDay()]} · 第 ${isoWeekNumber(now)} 周`;
   const totalCount = groups.agents.length + groups.tools.length + groups.infra.length;
-
   const visibleGroups = CATALOG_GROUPS.filter((g) => (catalogFilter === 'all' || catalogFilter === g.key) && groups[g.key].length > 0);
+
+  const daily = pulse.stats?.daily ?? [];
+  const statCells = [
+    { label: 'AI 调用', value: pulse.stats?.aiCalls ?? 0, series: daily.map((d) => d.aiCalls ?? 0) },
+    { label: '生图', value: pulse.stats?.imageGenerations ?? 0, series: daily.map((d) => d.imageGenerations) },
+    { label: '缺陷', value: pulse.stats?.defects ?? 0, series: daily.map((d) => d.defects ?? 0) },
+    { label: 'Token', value: pulse.stats?.totalTokens ?? 0, series: daily.map((d) => d.tokens) },
+  ];
 
   const renderGroupBody = (meta: CatalogGroupMeta, list: ToolboxItem[]) =>
     meta.layout === 'tile' ? (
@@ -632,37 +598,35 @@ export default function AgentLauncherPage() {
         <div aria-hidden className="home-launcher-color-field" />
 
         <div className="home-desk-inner relative z-10">
-          {/* ── 门头：日期条 + 问候 + 教程承接卡 ── */}
-          <Reveal delay={REVEAL.masthead} duration={REVEAL_DURATION}>
-            <header className="home-launcher-masthead-grid">
-              <div className="home-launcher-intro min-w-0">
-                <div className="home-desk-dateline">
-                  <span className="home-desk-clock">
-                    {String(now.getHours()).padStart(2, '0')}:{String(now.getMinutes()).padStart(2, '0')}
-                  </span>
-                  <span className="home-desk-dateline-sep" aria-hidden />
-                  <span>{dateLine}</span>
-                </div>
-                <h1 className={`home-launcher-title font-semibold tracking-tight ${isMobile ? 'text-[26px]' : 'text-[38px]'}`}>
+          {/* ── 门头：日期条 + 问候 + 教程承接卡，三行压成两行 ── */}
+          <header className="home-desk-masthead">
+            <div className="home-desk-intro min-w-0">
+              <div className="home-desk-dateline">
+                <span className="home-desk-clock">
+                  {String(now.getHours()).padStart(2, '0')}:{String(now.getMinutes()).padStart(2, '0')}
+                </span>
+                <span>{dateLine}</span>
+              </div>
+              <div className="home-desk-greet-row">
+                <h1 className={`home-desk-greet ${isMobile ? 'is-compact' : ''}`}>
                   {greeting}
                   {displayName ? '，' : ''}
                   {displayName && <span className="home-launcher-display-name">{displayName}</span>}
                 </h1>
-                <div data-tour-id="home-subtitle" className={`home-launcher-subtitle mt-1.5 ${isMobile ? 'text-sm' : 'text-[14px]'}`}>
+                <div data-tour-id="home-subtitle" className="home-desk-tips">
                   <TipsRotator fallback="选一个智能体开始创作，或按下斜杠键直接搜索平台能力" />
                 </div>
               </div>
+            </div>
+            <div className="home-desk-learning min-w-0">
+              <LearningCenterTeaser />
+            </div>
+          </header>
 
-              <div className="home-launcher-learning min-w-0">
-                <LearningCenterTeaser />
-              </div>
-            </header>
-          </Reveal>
-
-          {/* ── 命令条：门头唯一的主操作，横贯整行 ── */}
-          <Reveal className="home-desk-command" delay={REVEAL.command} duration={REVEAL_DURATION}>
+          {/* ── 命令条 + 常去入口：同一带，密排 ── */}
+          <div className="home-desk-command">
             <div className="home-desk-command-field">
-              <Search size={18} className="home-desk-command-icon" aria-hidden />
+              <Search size={17} className="home-desk-command-icon" aria-hidden />
               <input
                 ref={searchRef}
                 data-tour-id="home-search"
@@ -675,9 +639,7 @@ export default function AgentLauncherPage() {
                     setSearchQuery('');
                     e.currentTarget.blur();
                   }
-                  if (e.key === 'Enter' && searchResults.length > 0) {
-                    handleClick(searchResults[0]);
-                  }
+                  if (e.key === 'Enter' && searchResults.length > 0) handleClick(searchResults[0]);
                 }}
                 aria-label="搜索智能体、工具或平台能力"
                 className="home-desk-command-input"
@@ -700,73 +662,44 @@ export default function AgentLauncherPage() {
                 <kbd className="home-desk-command-kbd" aria-hidden>/</kbd>
               )}
             </div>
-          </Reveal>
+          </div>
 
-          {/* ── 常去：扁平导航坞，靠分隔线建立秩序，不逐项套胶囊 ── */}
           {!query && quickLinks.length > 0 && (
-            <Reveal delay={REVEAL.quickLinks} duration={REVEAL_DURATION}>
-              <nav
-                aria-label="首页快捷入口"
-                className={`home-launcher-quick-nav home-launcher-quick-nav--${Math.min(quickLinks.length, MAX_HOME_QUICK_LINKS)}`}
-              >
-                {quickLinks.map((link) => {
-                  const Icon = link.icon;
-                  const showUnread = link.id === 'updates' && changelogUnread > 0;
-                  return (
-                    <button
-                      key={link.path}
-                      type="button"
-                      data-tour-id={`quicklink-${link.id}`}
-                      onClick={() => navigate(link.path)}
-                      title={link.desc}
-                      className="home-launcher-quick-link group flex min-w-0 cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors duration-200 focus-visible:outline-none"
-                    >
-                      <Icon size={16} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {link.label}
-                        </span>
-                        <span className="mt-0.5 block truncate text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
-                          {link.desc}
-                        </span>
-                      </span>
-                      {showUnread && (
-                        <span className="home-desk-badge">{changelogUnread > 9 ? '9+' : changelogUnread}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </nav>
-            </Reveal>
+            <nav aria-label="首页快捷入口" className="home-desk-quick">
+              {quickLinks.map((link) => {
+                const Icon = link.icon;
+                const showUnread = link.id === 'updates' && changelogUnread > 0;
+                return (
+                  <button
+                    key={link.path}
+                    type="button"
+                    data-tour-id={`quicklink-${link.id}`}
+                    onClick={() => navigate(link.path)}
+                    title={link.desc}
+                    className="home-desk-quick-item"
+                  >
+                    <Icon size={14} className="shrink-0" />
+                    <span className="truncate">{link.label}</span>
+                    {showUnread && <span className="home-desk-badge">{changelogUnread > 9 ? '9+' : changelogUnread}</span>}
+                  </button>
+                );
+              })}
+            </nav>
           )}
 
-          {/* ── 手边的活儿：首屏主产物。有活就铺开，没活给一行引导，不留空盒 ── */}
+          {/* ── 手边的活儿 + 近 7 日 + 动态：一条密排工作带 ── */}
           {!query && (
-            <Reveal delay={REVEAL.continue} duration={REVEAL_DURATION}>
-              <section className="home-desk-continue" aria-labelledby="home-continue-heading">
-                <DeskSectionHead
-                  eyebrow="CONTINUE"
+            <div className="home-desk-band">
+              <section className="home-desk-panel home-desk-panel--work" aria-labelledby="home-continue-heading">
+                <SectionHead
                   title="手边的活儿"
+                  count={workItems.length > 0 ? workItems.length : undefined}
                   hint="回到最近的工作现场"
                   headingId="home-continue-heading"
-                  count={workItems.length > 0 ? workItems.length : undefined}
-                  action={
-                    workItems.length > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => setWorkExpanded((v) => !v)}
-                        aria-expanded={workExpanded}
-                        className="home-desk-more"
-                      >
-                        {workExpanded ? '收起' : `全部 ${workItems.length} 条`}
-                        <ArrowRight size={12} className={workExpanded ? '-rotate-90 transition-transform' : 'transition-transform'} />
-                      </button>
-                    ) : undefined
-                  }
                 />
                 {workItems.length > 0 ? (
-                  <div className={`home-desk-work-grid ${workExpanded ? 'is-expanded' : ''}`}>
-                    {workItems.map((item) => (
+                  <div className="home-desk-work-list">
+                    {workItems.slice(0, 8).map((item) => (
                       <WorkCard
                         key={`${item.agentKey}:${item.route}`}
                         item={item}
@@ -776,33 +709,78 @@ export default function AgentLauncherPage() {
                   </div>
                 ) : (
                   <p className="home-desk-empty">
-                    还没有进行中的工作。从下面挑一个智能体开始，或按
+                    还没有进行中的工作。挑一个智能体开始，或按
                     <kbd className="home-desk-empty-kbd">/</kbd>
-                    直接搜索——做过的事会自动回到这里。
+                    搜索——做过的事会自动回到这里。
                   </p>
                 )}
               </section>
-            </Reveal>
+
+              <div className="home-desk-side">
+                <section className="home-desk-panel" aria-labelledby="home-pulse-heading">
+                  <SectionHead title="近 7 日" hint="你的真实用量" headingId="home-pulse-heading" />
+                  <div className="home-desk-stats">
+                    {statCells.map((cell) => (
+                      <div key={cell.label} className="home-desk-stat">
+                        <div className="home-desk-stat-label">{cell.label}</div>
+                        <div className="home-desk-stat-row">
+                          <span className={`home-desk-stat-value ${cell.value > 0 ? '' : 'is-zero'}`}>
+                            {pulse.loading ? '—' : formatCompactNumber(cell.value)}
+                          </span>
+                          {cell.series.length > 0 && <MiniBars series={cell.series} />}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="home-desk-panel home-desk-panel--feed" aria-labelledby="home-feed-heading">
+                  <SectionHead
+                    title="我的动态"
+                    headingId="home-feed-heading"
+                    action={
+                      <button type="button" className="home-desk-more" onClick={() => navigate('/visual-agent?tab=assets')}>
+                        我的资源<ArrowRight size={12} />
+                      </button>
+                    }
+                  />
+                  {pulse.feed.length === 0 ? (
+                    <p className="home-desk-empty">用过知识库、周报、生图或缺陷之后，动态会出现在这里。</p>
+                  ) : (
+                    <ul className="home-desk-feed">
+                      {pulse.feed.slice(0, 6).map((entry) => (
+                        <li key={entry.id}>
+                          <button type="button" className="home-desk-feed-row" onClick={() => navigate(entry.navigateTo)}>
+                            <span className={`home-desk-feed-dot is-${entry.type}`} aria-hidden />
+                            <span className="home-desk-feed-title">{entry.title}</span>
+                            <span className="home-desk-feed-time">
+                              <RelativeTime value={entry.updatedAt} refreshIntervalMs={0} />
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+            </div>
           )}
 
-          {/* ── 目录：一个分段筛选器 + 一片连续目录 ── */}
+          {/* ── 目录 ── */}
           {itemsLoading ? (
-            <div className="flex items-center justify-center h-48">
+            <div className="flex items-center justify-center h-40">
               <MapSpinner size={24} color="var(--accent-primary)" />
             </div>
           ) : query ? (
             <section className="home-desk-section" aria-labelledby="home-search-heading">
-              <DeskSectionHead
-                eyebrow="SEARCH"
+              <SectionHead
                 title="搜索结果"
-                headingId="home-search-heading"
                 count={searchResults.length}
                 hint={`关键词「${searchQuery.trim()}」`}
+                headingId="home-search-heading"
               />
               {searchResults.length === 0 ? (
-                <p className="home-desk-empty">
-                  没有匹配的能力。换个说法试试，或者清空搜索回到目录。
-                </p>
+                <p className="home-desk-empty">没有匹配的能力。换个说法试试，或者清空搜索回到目录。</p>
               ) : (
                 // 搜索结果一律用瓦片：混排行卡会被瓦片栅格拉成等高，反而更乱
                 <div className="home-desk-grid-tile">
@@ -814,38 +792,36 @@ export default function AgentLauncherPage() {
             </section>
           ) : (
             <>
-              <section className="home-desk-section home-desk-catalog" aria-labelledby="home-catalog-heading">
-                <Reveal delay={REVEAL.catalog} duration={REVEAL_DURATION}>
-                  <DeskSectionHead
-                    eyebrow="CATALOG"
-                    title="全部能力"
-                    hint="平台上所有能开工的入口"
-                    headingId="home-catalog-heading"
-                    action={
-                      <div className="home-desk-seg" role="group" aria-label="按类型筛选平台能力">
+              <section className="home-desk-section" aria-labelledby="home-catalog-heading">
+                <SectionHead
+                  title="全部能力"
+                  count={totalCount}
+                  hint="平台上所有能开工的入口"
+                  headingId="home-catalog-heading"
+                  action={
+                    <div className="home-desk-seg" role="group" aria-label="按类型筛选平台能力">
+                      <button
+                        type="button"
+                        className="home-desk-seg-btn"
+                        aria-pressed={catalogFilter === 'all'}
+                        onClick={() => setCatalogFilter('all')}
+                      >
+                        全部<span className="home-desk-seg-num">{totalCount}</span>
+                      </button>
+                      {CATALOG_GROUPS.map((g) => (
                         <button
+                          key={g.key}
                           type="button"
                           className="home-desk-seg-btn"
-                          aria-pressed={catalogFilter === 'all'}
-                          onClick={() => setCatalogFilter('all')}
+                          aria-pressed={catalogFilter === g.key}
+                          onClick={() => setCatalogFilter(g.key)}
                         >
-                          全部<span className="home-desk-seg-num">{totalCount}</span>
+                          {g.chip}<span className="home-desk-seg-num">{groups[g.key].length}</span>
                         </button>
-                        {CATALOG_GROUPS.map((g) => (
-                          <button
-                            key={g.key}
-                            type="button"
-                            className="home-desk-seg-btn"
-                            aria-pressed={catalogFilter === g.key}
-                            onClick={() => setCatalogFilter(g.key)}
-                          >
-                            {g.chip}<span className="home-desk-seg-num">{groups[g.key].length}</span>
-                          </button>
-                        ))}
-                      </div>
-                    }
-                  />
-                </Reveal>
+                      ))}
+                    </div>
+                  }
+                />
 
                 {visibleGroups.length === 0 && (
                   <p className="home-desk-empty">这一类当前没有可用入口，切回「全部」看看别的。</p>
@@ -856,7 +832,6 @@ export default function AgentLauncherPage() {
                     <div className="home-desk-group-label">
                       <span className="home-desk-group-name">{meta.title}</span>
                       <span className="home-desk-group-count">{groups[meta.key].length}</span>
-                      <span className="home-desk-rule" aria-hidden />
                       <span className="home-desk-group-hint">{meta.hint}</span>
                     </div>
                     {renderGroupBody(meta, groups[meta.key])}
@@ -865,14 +840,7 @@ export default function AgentLauncherPage() {
               </section>
 
               <section className="home-desk-section" aria-labelledby="home-showcase-heading">
-                <Reveal delay={REVEAL.showcase} duration={REVEAL_DURATION}>
-                  <DeskSectionHead
-                    eyebrow="SHOWCASE"
-                    title="作品广场"
-                    hint="社区 AI 创意作品流"
-                    headingId="home-showcase-heading"
-                  />
-                </Reveal>
+                <SectionHead title="作品广场" hint="社区 AI 创意作品流" headingId="home-showcase-heading" />
                 <ShowcaseGallery />
               </section>
             </>

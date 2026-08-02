@@ -42,13 +42,13 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="indigoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style={{ stopColor: '#5B8DEF', stopOpacity: 1 }} />
-          <stop offset="50%" style={{ stopColor: '#7C6CF0', stopOpacity: 1 }} />
-          <stop offset="100%" style={{ stopColor: '#A78BFA', stopOpacity: 1 }} />
+        <linearGradient id="brandGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style={{ stopColor: '#C8623A', stopOpacity: 1 }} />
+          <stop offset="50%" style={{ stopColor: '#D97757', stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: '#E0A06B', stopOpacity: 1 }} />
         </linearGradient>
       </defs>
-      <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#indigoGradient)" />
+      <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#brandGradient)" />
       <text
         x="256"
         y="268"
@@ -104,7 +104,7 @@ function LandingInner() {
 
   return (
     <div
-      className="min-h-screen bg-[#030306] text-token-primary overflow-x-hidden"
+      className="min-h-screen bg-[#0E0C0A] text-token-primary overflow-x-hidden"
       style={{ scrollBehavior: 'smooth', fontFamily: 'var(--font-body)' }}
       data-lang={lang}
     >
@@ -118,7 +118,7 @@ function LandingInner() {
           style={{
             // 素色材质下 blur 被全局清除：渐变主体加深，导航文字不再靠 blur 才能压住滚动内容
             background:
-              'linear-gradient(180deg, rgba(3,3,6,0.94) 0%, rgba(3,3,6,0.72) 70%, rgba(3,3,6,0) 100%)',
+              'linear-gradient(180deg, rgba(14,12,10,0.94) 0%, rgba(14,12,10,0.72) 70%, rgba(14,12,10,0) 100%)',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
           }}
@@ -160,7 +160,7 @@ function LandingInner() {
                 className="px-4 py-2 rounded-full text-[13px] font-medium text-token-primary transition-all duration-200 hover:scale-[1.02]"
                 style={{
                   background: HERO_GRADIENT,
-                  boxShadow: '0 0 20px rgba(124, 108, 240, 0.32)',
+                  boxShadow: '0 0 20px rgba(217, 119, 87, 0.32)',
                   fontFamily: 'var(--font-display)',
                   letterSpacing: '0.01em',
                 }}
@@ -186,7 +186,7 @@ function LandingInner() {
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-[100] md:hidden">
           <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={() => setMobileMenuOpen(false)} />
-          <div className="absolute inset-x-0 top-0 bg-[#0a0a12]/96 backdrop-blur-xl border-b border-token-subtle animate-[landingMenuIn_0.2s_ease-out]">
+          <div className="absolute inset-x-0 top-0 bg-[#141210]/96 backdrop-blur-xl border-b border-token-subtle animate-[landingMenuIn_0.2s_ease-out]">
             <style>{`@keyframes landingMenuIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}`}</style>
             <div className="flex items-center justify-between px-6 py-4">
               <div className="flex items-center gap-3">
@@ -233,7 +233,7 @@ function LandingInner() {
                   className="w-full py-3 rounded-full text-[15px] font-medium text-token-primary transition-all hover:opacity-90"
                   style={{
                     background: HERO_GRADIENT,
-                    boxShadow: '0 0 20px rgba(124, 108, 240, 0.32)',
+                    boxShadow: '0 0 20px rgba(217, 119, 87, 0.32)',
                     fontFamily: 'var(--font-display)',
                   }}
                 >

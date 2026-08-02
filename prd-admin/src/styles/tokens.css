@@ -42,7 +42,7 @@
   --border-default: rgba(255, 255, 255, 0.18);
   --border-hover: rgba(255, 255, 255, 0.24);
   /* 焦点色由主题覆盖；暗色沿用靛蓝，浅色使用暖赤陶。 */
-  --border-focus: rgba(99, 102, 241, 0.55);
+  --border-focus: rgba(217, 119, 87, 0.55);
 
   /* 历史命名兼容:周报 Agent 等组件大量使用 var(--bg-primary/secondary/tertiary)
      和 var(--border-primary/secondary),原本未定义时 fallback 到 unset/transparent
@@ -171,10 +171,10 @@
   --mobile-sheet-close-bg: var(--bg-card);
   --mobile-sheet-close-border: 1px solid var(--border-subtle);
   --mobile-sheet-close-icon: var(--text-secondary);
-  --mobile-fab-from: #5E5CE6;
-  --mobile-fab-to: #A5B4FC;
-  --mobile-fab-text: #0F172A;
-  --mobile-fab-shadow: rgba(94, 92, 230, 0.42);
+  --mobile-fab-from: #C8623A;
+  --mobile-fab-to: #E8A87C;
+  --mobile-fab-text: #241915;
+  --mobile-fab-shadow: rgba(200, 98, 58, 0.42);
   --hairline: rgba(255, 255, 255, 0.08);
   --hairline-strong: rgba(255, 255, 255, 0.14);
 
@@ -182,14 +182,16 @@
      这些 token 只负责跨主题可读的中性承载面。 */
   --launcher-tile-bg: rgba(255, 255, 255, 0.055);
   --launcher-tile-border: rgba(255, 255, 255, 0.10);
+  /* 首页工作带的实体面板：靠面分区，替代过去满屏的贯通发丝线 */
+  --home-panel-bg: rgba(255, 255, 255, 0.032);
   --launcher-control-bg: rgba(255, 255, 255, 0.045);
   --launcher-control-border: rgba(255, 255, 255, 0.09);
-  --launcher-theme-icon: #c4b5fd;
-  --launcher-theme-icon-bg: rgba(139, 92, 246, 0.16);
+  --launcher-theme-icon: #E8A87C;
+  --launcher-theme-icon-bg: rgba(217, 119, 87, 0.16);
   --home-ambient-background:
-    radial-gradient(52% 86% at 8% 0%, rgba(124, 58, 237, 0.28) 0%, transparent 68%),
-    radial-gradient(44% 72% at 88% 4%, rgba(14, 165, 233, 0.20) 0%, transparent 70%),
-    radial-gradient(32% 58% at 58% 18%, rgba(244, 114, 182, 0.10) 0%, transparent 72%);
+    radial-gradient(52% 86% at 8% 0%, rgba(200, 98, 58, 0.26) 0%, transparent 68%),
+    radial-gradient(44% 72% at 88% 4%, rgba(176, 124, 62, 0.18) 0%, transparent 70%),
+    radial-gradient(32% 58% at 58% 18%, rgba(93, 122, 116, 0.12) 0%, transparent 72%);
   --home-ambient-opacity: 0.9;
   --home-eyebrow-bg: rgba(247, 247, 251, 0.045);
   --home-eyebrow-border: rgba(247, 247, 251, 0.13);
@@ -287,17 +289,17 @@
   --media-art-wash-blend: normal;
 
   --accent-green: #7cfc00;
-  --accent-primary: #818cf8;
-  --accent-primary-rgb: 129, 140, 248;
-  --accent-gold: #818cf8;
-  --accent-gold-2: #a5b4fc;
-  --gold-gradient: linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%);
+  --accent-primary: #D97757;
+  --accent-primary-rgb: 217, 119, 87;
+  --accent-gold: #D97757;
+  --accent-gold-2: #E8A87C;
+  --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
 
   /* 选择/键盘游标是共享交互语义，不由页面各写一套蓝色。 */
-  --selection-bg: rgba(129, 140, 248, 0.16);
-  --selection-icon-bg: rgba(129, 140, 248, 0.22);
-  --selection-border: rgba(129, 140, 248, 0.38);
-  --selection-text: #c7d2fe;
+  --selection-bg: rgba(217, 119, 87, 0.16);
+  --selection-icon-bg: rgba(217, 119, 87, 0.22);
+  --selection-border: rgba(217, 119, 87, 0.38);
+  --selection-text: #F0C9A8;
   /* 复选框底色：过去是「盖住文件图标」的近黑遮罩，暗色下看着像一块黑疙瘩（2026-07-31 用户反馈）。
      现在复选框与图标互斥同槽显示，不需要遮罩，改为比行底稍亮一档的常规表面。 */
   --selection-checkbox-bg: rgba(255, 255, 255, 0.10);
@@ -313,10 +315,10 @@
   --tag-gray-solid: #475569;
 
   /* 共享按钮只消费语义 token，不在 React 中维护 LIGHT/DARK 两套样式。 */
-  --button-primary-bg: #4f46e5;
-  --button-primary-bg-hover: #4338ca;
-  --button-primary-fg: #ffffff;
-  --button-primary-shadow: 0 4px 16px -4px rgba(79, 70, 229, 0.42);
+  --button-primary-bg: #C8623A;
+  --button-primary-bg-hover: #B0522E;
+  --button-primary-fg: #FFF6F0;
+  --button-primary-shadow: 0 4px 16px -4px rgba(200, 98, 58, 0.42);
   --button-secondary-bg: rgba(255, 255, 255, 0.05);
   --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
   --button-secondary-border: rgba(255, 255, 255, 0.10);
@@ -325,7 +327,7 @@
   --button-danger-border: rgba(239, 68, 68, 0.25);
   --button-danger-fg: #fca5a5;
   --button-ghost-bg-hover: rgba(255, 255, 255, 0.06);
-  --section-label-text: #a5b4fc;
+  --section-label-text: #D9906E;
 
   /* 数据可视化只保留“数据色”例外；画布中性层与文字仍跟随主题。 */
   --viz-sticky-bg: rgba(24, 24, 30, 0.90);
@@ -351,7 +353,7 @@
 
   /* 模态弹窗蒙层:暗色 / 浅色统一变量,modal portal 直接消费即可主题感知 */
   --modal-overlay: rgba(0, 0, 0, 0.5);
-  --shadow-gold: 0 10px 22px rgba(99, 102, 241, 0.20);
+  --shadow-gold: 0 10px 22px rgba(200, 98, 58, 0.20);
 
   /* ── 首页品牌字体（与 index.html Google Fonts 对应） ── */
   --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
@@ -629,14 +631,15 @@
 
   --launcher-tile-bg: rgba(248, 245, 239, 0.94);
   --launcher-tile-border: rgba(15, 23, 42, 0.11);
+  --home-panel-bg: rgba(253, 251, 247, 0.78);
   --launcher-control-bg: rgba(241, 236, 228, 0.86);
   --launcher-control-border: rgba(15, 23, 42, 0.12);
   --launcher-theme-icon: #A64B35;
   --launcher-theme-icon-bg: rgba(166, 75, 53, 0.12);
   --home-ambient-background:
-    radial-gradient(54% 92% at 7% -8%, rgba(139, 92, 246, 0.22) 0%, transparent 70%),
-    radial-gradient(48% 82% at 92% 0%, rgba(14, 165, 233, 0.16) 0%, transparent 72%),
-    radial-gradient(36% 64% at 58% 6%, rgba(251, 146, 60, 0.14) 0%, transparent 72%);
+    radial-gradient(54% 92% at 7% -8%, rgba(200, 98, 58, 0.20) 0%, transparent 70%),
+    radial-gradient(48% 82% at 92% 0%, rgba(176, 124, 62, 0.16) 0%, transparent 72%),
+    radial-gradient(36% 64% at 58% 6%, rgba(93, 122, 116, 0.12) 0%, transparent 72%);
   --home-ambient-opacity: 1;
   --home-eyebrow-bg: var(--nested-block-bg);
   --home-eyebrow-border: var(--nested-block-border);

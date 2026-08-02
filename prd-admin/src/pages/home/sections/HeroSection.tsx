@@ -18,11 +18,11 @@ import { useLanguage } from '../contexts/LanguageContext';
  */
 /**
  * 品牌主渐变（SSOT）：登录 CTA / 落地页 CTA / Arena 主按钮共用。
- * 靛蓝-紫罗兰同族色（对齐应用内 --accent-primary #818CF8 与首页极光
- * #2E2A55/#6E56CF/#5B8DEF），取代早期青→紫→玫红三色霓虹——
+ * 靛蓝-紫罗兰同族色（对齐应用内 --accent-primary #D97757 与首页极光
+ * #332B22/#C8623A/#C8623A），取代早期青→紫→玫红三色霓虹——
  * 邻近色相保证"彩而不乱"，与登录后的工作台观感统一。
  */
-export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)';
+export const HERO_GRADIENT = 'linear-gradient(135deg, #C8623A 0%, #D97757 48%, #E0A06B 100%)';
 export const HERO_GRADIENT_TEXT = {
   background: HERO_GRADIENT,
   WebkitBackgroundClip: 'text' as const,
@@ -52,9 +52,9 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           top: '72vh',
           height: '2px',
           background:
-            'linear-gradient(90deg, transparent 0%, rgba(139, 92, 246, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(122, 140, 246, 0.55) 70%, transparent 100%)',
+            'linear-gradient(90deg, transparent 0%, rgba(200, 98, 58, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(224, 160, 107, 0.55) 70%, transparent 100%)',
           boxShadow:
-            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(139, 92, 246, 0.3)',
+            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(200, 98, 58, 0.3)',
         }}
       />
 
@@ -68,7 +68,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           width: 'clamp(360px, 34vw, 560px)',
           height: 'clamp(360px, 34vw, 560px)',
           background:
-            'radial-gradient(circle at center, rgba(139, 92, 246, 0.30) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(122, 140, 246, 0.06) 60%, transparent 75%)',
+            'radial-gradient(circle at center, rgba(200, 98, 58, 0.30) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(224, 160, 107, 0.06) 60%, transparent 75%)',
           filter: 'blur(6px)',
         }}
       />
@@ -98,8 +98,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 90deg,
                 transparent 0,
                 transparent 43px,
-                rgba(122, 140, 246, 0.38) 43px,
-                rgba(122, 140, 246, 0.38) 44px
+                rgba(217, 119, 87, 0.30) 43px,
+                rgba(217, 119, 87, 0.30) 44px
               )
             `,
             transform: 'rotateX(62deg)',
@@ -190,7 +190,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               // 改用 drop-shadow（按实际像素投影）。保持静态常量，禁止无限循环
               // 动画（绘制属性逐帧重绘是整页滚动卡顿的头号来源）。
               filter:
-                'drop-shadow(0 0 34px rgba(213, 221, 232, 0.28)) drop-shadow(0 0 90px rgba(122, 140, 246, 0.22))',
+                'drop-shadow(0 0 34px rgba(213, 221, 232, 0.28)) drop-shadow(0 0 90px rgba(224, 160, 107, 0.22))',
             }}
           >
             {t.hero.title}
@@ -223,7 +223,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               style={{
                 background: HERO_GRADIENT,
                 boxShadow:
-                  '0 0 48px rgba(124, 108, 240, 0.35), 0 0 100px rgba(122, 140, 246, 0.18), 0 10px 32px rgba(0, 0, 0, 0.5)',
+                  '0 0 48px rgba(217, 119, 87, 0.35), 0 0 100px rgba(224, 160, 107, 0.18), 0 10px 32px rgba(0, 0, 0, 0.5)',
                 letterSpacing: '0.01em',
                 fontFamily: 'var(--font-display)',
               }}
