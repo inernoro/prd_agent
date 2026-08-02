@@ -197,6 +197,7 @@ export default function AppShell() {
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const permissions = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
+  const canAiEditAvatar = isRoot || permissions.includes('super') || permissions.includes('visual-agent.use');
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
@@ -1506,7 +1507,19 @@ export default function AppShell() {
                   style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
 
-                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account，不再出现在此菜单 */}
+                <DropdownMenu.Item
+                  className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover-bg-soft focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => setAvatarOpen(true)}
+                >
+                  <Wand2 size={16} className="shrink-0" />
+                  <span className="text-[13px]">修改我的头像</span>
+                  <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {canAiEditAvatar ? 'AI / 上传' : '上传'}
+                  </span>
+                </DropdownMenu.Item>
+
+                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account。 */}
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
@@ -1724,6 +1737,14 @@ export default function AppShell() {
             username={user?.username}
             userType={user?.userType ?? null}
             avatarFileName={user?.avatarFileName ?? null}
+            currentAvatarUrl={resolveAvatarUrl({
+              username: user?.username,
+              userType: user?.userType,
+              botKind: user?.botKind,
+              avatarFileName: user?.avatarFileName ?? null,
+              avatarUrl: user?.avatarUrl,
+            })}
+            enableAiEdit={canAiEditAvatar}
             onUpload={async (file) => uploadMyAvatar({ file })}
             onSave={async (avatarFileName) => {
               if (!user?.userId) return;

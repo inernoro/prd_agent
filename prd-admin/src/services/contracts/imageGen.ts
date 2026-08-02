@@ -17,6 +17,8 @@ export type ImageGenImage = {
   index: number;
   base64?: string | null;
   url?: string | null;
+  originalUrl?: string | null;
+  originalSha256?: string | null;
   revisedPrompt?: string | null;
 };
 

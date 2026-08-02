@@ -1,10 +1,10 @@
-using System.Security.Claims;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -41,9 +41,7 @@ public class ProfileController : ControllerBase
         _assetStorage = assetStorage;
     }
 
-    private string? GetCurrentUserId()
-        => User.FindFirstValue(ClaimTypes.NameIdentifier)
-           ?? User.FindFirstValue("sub");
+    private string GetCurrentUserId() => this.GetRequiredUserId();
 
     private string? BuildAvatarUrl(User user)
         => AvatarUrlBuilder.Build(_cfg, user);
@@ -168,6 +166,80 @@ public class ProfileController : ControllerBase
     }
 
     /// <summary>
+    /// 将当前用户刚生成的视觉资产设为自己的头像。只接受本人创建的生图产物。
+    /// </summary>
+    [HttpPost("avatar/apply-generated")]
+    [ProducesResponseType(typeof(ApiResponse<UserAvatarUploadResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ApplyGeneratedAvatar([FromBody] ApplyGeneratedAvatarRequest request, CancellationToken ct)
+    {
+        var currentUserId = GetCurrentUserId();
+        var sha256 = (request?.AssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (sha256.Length != 64 || !Regex.IsMatch(sha256, "^[0-9a-f]{64}$"))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "assetSha256 格式不正确"));
+
+        var user = await _db.Users.Find(u => u.UserId == currentUserId).FirstOrDefaultAsync(ct);
+        if (user == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+
+        var artifact = await _db.UploadArtifacts
+            .Find(x => x.CreatedByAdminId == currentUserId && x.Kind == "output_image" && x.Sha256 == sha256)
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (artifact == null)
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权使用该生成图片"));
+
+        var found = await _assetStorage.TryReadByShaAsync(
+            sha256,
+            ct,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg);
+        if (found == null || found.Value.bytes.Length == 0)
+            return NotFound(ApiResponse<object>.Fail("ASSET_NOT_FOUND", "生成图片不存在或不可用"));
+        if (found.Value.bytes.Length > MaxAvatarUploadBytes)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge,
+                ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "生成图片过大，无法作为头像"));
+
+        var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? artifact.Mime : found.Value.mime;
+        var ext = GuessAvatarImageExtFromMime(mime);
+        if (ext == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "生成图片格式不受支持"));
+
+        var usernameLower = (user.Username ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(usernameLower))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "用户数据异常：username 为空"));
+
+        var avatarFileName = $"{usernameLower}.{ext}".ToLowerInvariant();
+        var (ok, err) = ValidateAvatarFileName(avatarFileName);
+        if (!ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "头像文件名不合法"));
+
+        var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
+        await _assetStorage.UploadToKeyAsync(objectKey, found.Value.bytes, mime, ct);
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == currentUserId,
+            Builders<User>.Update.Set(u => u.AvatarFileName, avatarFileName),
+            cancellationToken: ct);
+
+        user.AvatarFileName = avatarFileName;
+        var now = DateTime.UtcNow;
+        var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);
+        _logger.LogInformation(
+            "User applied generated avatar. userId={UserId} file={File} assetSha256={AssetSha256}",
+            currentUserId,
+            avatarFileName,
+            sha256);
+
+        return Ok(ApiResponse<UserAvatarUploadResponse>.Ok(new UserAvatarUploadResponse
+        {
+            UserId = currentUserId,
+            AvatarFileName = avatarFileName,
+            AvatarUrl = avatarUrl,
+            UpdatedAt = now
+        }));
+    }
+
+    /// <summary>
     /// 更新当前用户自己的头像文件名（仅更新数据库字段，不上传文件）
     /// </summary>
     [HttpPut("avatar")]
@@ -241,6 +313,11 @@ public class ProfileController : ControllerBase
 public class UpdateMyAvatarRequest
 {
     public string? AvatarFileName { get; set; }
+}
+
+public class ApplyGeneratedAvatarRequest
+{
+    public string AssetSha256 { get; set; } = string.Empty;
 }
 
 public class UpdatePublicPageRequest

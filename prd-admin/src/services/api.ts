@@ -333,6 +333,7 @@ export const api = {
   profile: {
     avatarUpload: () => '/api/profile/avatar/upload',
     avatar: () => '/api/profile/avatar',
+    avatarApplyGenerated: () => '/api/profile/avatar/apply-generated',
     publicPage: () => '/api/profile/public-page',
   },
 
