@@ -332,20 +332,37 @@ describe('主题系统契约', () => {
     expect(base).toContain('.text-token-muted-faint { color: var(--text-muted); }');
   });
 
-  it('首页门头使用平衡栅格与真实工作现场，不再复制胶囊式导航', () => {
+  it('首页工位：门头栅格 + 扁平导航坞 + 诚实的在办工作', () => {
     const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
     const styles = fs.readFileSync(HOME_LAUNCHER_STYLES_PATH, 'utf8');
 
     expect(launcher).toContain('home-launcher-masthead-grid');
     expect(launcher).toContain('aria-label="首页快捷入口"');
+    // 诚实进度：没有状态机的实体不画进度条，只画分隔线（不允许拿 0 或 100 顶替）
     expect(launcher).toContain('item.progress == null');
     expect(launcher).toContain('回到最近的工作现场');
-    expect(launcher).not.toMatch(/className="[^"]*home-launcher-(?:quick-link|recent)(?=\s)[^"]*\brounded-full\b/);
-    expect(styles).toContain("grid-template-areas: 'intro command learning'");
-    expect(styles).toContain('grid-template-columns: repeat(5, minmax(0, 1fr))');
+    // 快捷坞靠分隔线建立秩序，不逐项套胶囊
+    expect(launcher).not.toMatch(/className="[^"]*home-launcher-quick-link(?=\s)[^"]*\brounded-full\b/);
+    expect(styles).toContain("grid-template-areas: 'intro learning'");
     expect(styles).toContain('.home-launcher-quick-nav--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }');
     expect(styles).toContain('.home-launcher-quick-nav--5 .home-launcher-quick-link:nth-child(4)');
+    // 手机端横滑一屏一张，不做隐藏式收起
     expect(styles).toContain('scroll-snap-type: x proximity');
+    // 收起态必须真正移除节点（display:none 退出 tab 序列），不许用裁剪伪造收起
+    expect(styles).toContain('.home-desk-work-grid:not(.is-expanded) > :nth-child(n + 5) { display: none; }');
+  });
+
+  it('首页目录默认展示全部三组，分段筛选不得让任何入口从首页消失', () => {
+    const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
+
+    // 默认筛选必须是 all —— 否则「基础设施」这类入口会在首页隐身，
+    // 违反 navigation-registry「即使侧边栏隐藏了它们，首页仍稳定出现」。
+    expect(launcher).toContain("useState<CatalogFilter>('all')");
+    // 三组来自同一份定义，分段筛选器与区块标题不得各写一份
+    expect(launcher).toMatch(/const CATALOG_GROUPS: CatalogGroupMeta\[\]/);
+    expect(launcher).toContain("catalogFilter === 'all' || catalogFilter === g.key");
+    // 搜索横跨三组，不受当前分段影响
+    expect(launcher).toContain('[...groups.agents, ...groups.tools, ...groups.infra]');
   });
 
   it('浅色主题语义文字保持可读，并为固定暗色可视化提供单一表面契约', () => {

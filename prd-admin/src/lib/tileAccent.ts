@@ -78,11 +78,15 @@ export const ICON_HUE: Record<string, number> = {
   PaSecretary: 224,
 };
 
-export type Accent = { color: string; soft: string; border: string; faint: string; glow: string };
+export type Accent = { color: string; text: string; soft: string; border: string; faint: string; glow: string };
 
 export function hueAccent(h: number): Accent {
   return {
     color: `hsl(${h} 68% 64%)`,
+    // 同色相的「文字档」：`color` 是为暗底调的芯片色，直接拿去当浅色纸面上的
+    // 文字会糊成一片。明度交给主题持有（暗 65% / 浅 36%），前缀 workflow- 是
+    // 历史命名，它是全站唯一的 accent 文字明度 SSOT，不再另起一个同义 token。
+    text: `hsl(${h} 58% var(--workflow-accent-text-lightness, 65%))`,
     soft: `hsla(${h}, 68%, 60%, 0.14)`,
     // faint: 静息态渗色（远看近乎不可见）；glow: 悬停投影。
     // 纪律不变：静时安静、碰时呼吸——色彩只在交互瞬间参与。
