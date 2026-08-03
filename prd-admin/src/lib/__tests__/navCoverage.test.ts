@@ -15,8 +15,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { NAV_REGISTRY } from '@/app/navRegistry';
+import { NAV_REGISTRY, navIdFromPath } from '@/app/navRegistry';
+import { getLauncherCatalog, findLauncherItem } from '@/lib/launcherCatalog';
+import { QUICK_LINK_BY_ID } from '@/pages/AgentLauncherPage';
 import appTsxRaw from '../../app/App.tsx?raw';
+import launcherSource from '../../pages/AgentLauncherPage.tsx?raw';
 
 /**
  * 不通过 NAV_REGISTRY 注册、但在 App.tsx 直接写 <Route> 的路由白名单。
@@ -124,5 +127,45 @@ describe('App.tsx 路由覆盖', () => {
         `\n发现 ${missing.length} 个 App.tsx 中独立声明、但未登记的路由。\n\n${hint}\n`,
       );
     }
+  });
+
+  it('首页快捷入口按目录 id 记账，不许留下查无此项的幽灵 id', () => {
+    // 快捷入口的 key 是「偏好 id」（updates / voc / models / teams / my-assets），
+    // 而目录 id 由路由推导（changelog / team-activity / mds / users / visual-agent）。
+    // 拿偏好 id 去 addRecentVisit，记进去的就是一串谁也查不到的 id：
+    // Cmd+K 的最近使用、设置里的使用统计都会静默把它丢掉——不报错，只是永远不出现。
+    //
+    // 判据落在**消费方真正用的那本目录**上（getLauncherCatalog + findLauncherItem）。
+    // 按路由找条目：找得到就要求推导出的 id 与它一致；找不到（如 /showcase 这类
+    // 刻意不进目录的演示页）说明它本来就不该记账，由页面那道 catalogIds 闸拦住。
+    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
+    expect(catalog.length, '目录是空的，判据已经失效').toBeGreaterThan(0);
+
+    let checked = 0;
+    for (const [prefId, link] of Object.entries(QUICK_LINK_BY_ID)) {
+      if (!link) continue;
+      const byRoute = catalog.find((item) => item.route === link.path);
+      if (!byRoute) continue;
+      checked += 1;
+      const trackedId = navIdFromPath(link.path);
+      expect(
+        findLauncherItem(catalog, trackedId)?.id,
+        `快捷入口 ${prefId}（${link.path}）记账用的 id「${trackedId}」对不上目录里的「${byRoute.id}」`,
+      ).toBe(byRoute.id);
+    }
+    expect(checked, '一个快捷入口都没对上目录路由，判据已经失效').toBeGreaterThan(0);
+  });
+
+  it('页面确实按这条规则记账（上面那条只证明规则对，不证明页面在用）', () => {
+    // 上面的用例自己算 navIdFromPath(path)，页面改成别的写法它照样绿（实测）。
+    // 判据必须看页面真正传了什么：id 来自路由推导，且跳转前过 catalogIds 这道闸。
+    const quickLinkBlock = launcherSource.slice(
+      launcherSource.indexOf('首页快捷入口'),
+      launcherSource.indexOf('home-desk-badge'),
+    );
+    expect(quickLinkBlock, '找不到快捷入口那段渲染，判据已经失效').toBeTruthy();
+    expect(quickLinkBlock, '快捷入口的记账 id 不是从路由推导的').toMatch(/const trackedId = navIdFromPath\(link\.path\);/);
+    expect(quickLinkBlock, '快捷入口把偏好别名当记账 id 用了').not.toMatch(/\{ id: link\.id/);
+    expect(quickLinkBlock, '不在目录里的入口也记了账').toContain('catalogIds.has(trackedId)');
   });
 });
