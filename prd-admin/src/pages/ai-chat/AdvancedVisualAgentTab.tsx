@@ -6242,6 +6242,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         ) : it.src ? (
                           <div className="absolute inset-0 flex items-center justify-center">
                             <img
+                              data-testid="canvas-image"
                               src={it.src}
                               alt={it.prompt}
                               className="w-full h-full block"
@@ -6382,6 +6383,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </div>
                             ) : null}
                             <img
+                              data-testid="canvas-image"
                               src={it.src}
                               alt={it.prompt}
                               className="w-full h-full block"

@@ -183,9 +183,10 @@ function solidPngDataUrl(red: number, green: number, blue: number, size = 256) {
 }
 
 async function createVisualWorkspace(page: Page, token: string, suffix: string) {
+  const attemptId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const response = await page.request.post('/api/visual-agent/image-master/workspaces', {
-    headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}` },
-    data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}`, scenarioType: 'image-gen' },
+    headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-${attemptId}` },
+    data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-${attemptId}`, scenarioType: 'image-gen' },
   });
   return readEnvelope<{ workspace: { id: string } }>(response);
 }
@@ -607,7 +608,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(pool, '没有可用的文生图逻辑模型').toBeTruthy();
 
       const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-run` },
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-run` },
         data: {
           prompt: '一枚放在纯白背景上的蓝色陶瓷杯，产品摄影，柔和自然光，不要文字',
           userMessageContent: '生成一枚纯白背景上的蓝色陶瓷杯',
@@ -640,7 +641,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(completed.statuses.length).toBeGreaterThanOrEqual(2);
       await assertImageArtifact(page, completed.detail);
       await page.reload({ waitUntil: 'domcontentloaded' });
-      const generatedImage = page.locator('img[src*="/api/visual-agent/image-master/assets/file/"]').first();
+      const generatedImage = page.getByTestId('canvas-image').first();
       await expect(generatedImage, '任务完成并刷新后画布必须恢复真实图片').toBeVisible({ timeout: 30_000 });
       expect(await generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
@@ -656,7 +657,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }
       }
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-delete` },
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-delete` },
       });
       expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
       expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
@@ -674,7 +675,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     try {
       const uploadAsset = async (data: string, suffix: string) => {
         const response = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
-          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}` },
+          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}` },
           data: { data, width: 256, height: 256, prompt: suffix },
         });
         return readEnvelope<{ asset: { sha256: string; url: string } }>(response);
@@ -688,7 +689,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(pool, '没有可用的多图视觉逻辑模型').toBeTruthy();
 
       const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-multi-run` },
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-multi-run` },
         data: {
           prompt: '参考 @img1 的蓝色与 @img2 的黄色，生成一个左右双色的极简包装盒，纯白背景，不要文字',
           userMessageContent: '参考 @img1 和 @img2 生成一个蓝黄双色包装盒',
@@ -720,7 +721,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(messageText).toContain('@img2');
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      const generatedImage = page.locator('img[src*="/api/visual-agent/image-master/assets/file/"]').first();
+      const generatedImage = page.getByTestId('canvas-image').first();
       await expect(generatedImage, '多图生成完成后页面必须恢复真实图片').toBeVisible({ timeout: 30_000 });
       expect(await generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
       await expect(page.getByText('参考', { exact: false }).last()).toBeVisible({ timeout: 15_000 });
@@ -737,7 +738,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }
       }
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-multi-delete` },
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-multi-delete` },
       });
       expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
       if (runId) {
