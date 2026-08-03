@@ -468,8 +468,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("action: \"model.set_enabled\"", consoleProgram);
         Assert.Contains("action: \"pool.set_default\"", consoleProgram);
         Assert.Contains("WriteSystemOperationAuditAsync", consoleProgram);
-        Assert.Contains("action: \"admin.force_reset\"", consoleProgram);
-        Assert.Contains("action: \"admin.force_reset_bootstrap\"", consoleProgram);
+        Assert.Contains("\"admin.env_authority_reconcile\" : \"admin.force_reset\"", consoleProgram);
+        Assert.Contains("\"admin.env_authority_bootstrap\" : \"admin.force_reset_bootstrap\"", consoleProgram);
+        Assert.Contains("if (!passwordDrifted && !activeDrifted && !mustChangeDrifted && !ownershipDrifted)", consoleProgram);
+        Assert.Contains("var securityStateChanged = passwordDrifted || activeDrifted || mustChangeDrifted;", consoleProgram);
         Assert.Contains("action: \"admin.bootstrap\"", consoleProgram);
         Assert.Contains("action: \"admin.reactivate\"", consoleProgram);
         Assert.Contains("\"team.create\"", consoleProgram);
@@ -1041,7 +1043,8 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?", dockerCompose);
         Assert.DoesNotContain("LLMGW_ADMIN_USER", dockerCompose);
         Assert.Contains("LlmGateway__DatabaseName: llm_gateway", cdsCompose);
-        Assert.Contains("控制台账号长期权威是 llm_gateway.llmgw_console_users", cdsCompose);
+        Assert.Contains("默认由 llm_gateway.llmgw_console_users 托管账号", cdsCompose);
+        Assert.Contains("LLMGW_ADMIN_ENV_AUTHORITY: \"${LLMGW_ADMIN_ENV_AUTHORITY}\"", cdsCompose);
     }
 
     [Fact]

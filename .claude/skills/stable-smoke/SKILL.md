@@ -12,7 +12,7 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 
 每 48 小时对 CDS 环境和正式环境执行同一套关键用户旅程。CDS 环境是独立的验证环境，不称为“测试环境”；正式环境固定为 `https://map.ebcone.net`。CDS 环境负责完整写入、异常和恢复；正式环境只在专用合成账号与专用数据域内执行限额写入。任何线上或验收逃逸问题，首次修复时必须新增永久回归用例。
 
-业务功能线和面包屑见 [reference/business-function-catalog.json](reference/business-function-catalog.json)，详细用例见 [reference/test-matrix.md](reference/test-matrix.md)，问题沉淀格式见 [reference/regression-ledger.md](reference/regression-ledger.md)，合成登录和调度操作见 [reference/auth-and-schedule.md](reference/auth-and-schedule.md)。
+业务功能线和面包屑见 [reference/business-function-catalog.json](reference/business-function-catalog.json)，详细用例见 [reference/test-matrix.md](reference/test-matrix.md)，问题沉淀格式见 [reference/regression-ledger.md](reference/regression-ledger.md)，合成登录和调度操作见 [reference/auth-and-schedule.md](reference/auth-and-schedule.md)，非敏感身份状态与安全存储引用见 [reference/credential-registry.json](reference/credential-registry.json)。涉及登录、部署或自动化运行时必须先读取凭据登记表，禁止凭会话记忆猜测当前账号状态。
 
 ## 适用场景
 

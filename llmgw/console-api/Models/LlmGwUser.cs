@@ -29,13 +29,14 @@ public class LlmGwUser
     /// <summary>
     /// 首登强制改密标记。缺省弱口令（admin/admin）种子账号置 true，登录后前端强制跳「设置新口令」，
     /// 改密成功前 mcp=1 的 token 不放行 /gw/logs*（服务端策略门 + 前端守卫双保险）。
-    /// LLMGW_ADMIN_PASSWORD 只用于首次 bootstrap 或破玻璃重置，不作为长期口令权威。
+    /// 默认模式下 LLMGW_ADMIN_PASSWORD 只用于首次 bootstrap 或破玻璃重置；
+    /// LLMGW_ADMIN_ENV_AUTHORITY=1 时由环境变量长期托管。
     /// </summary>
     public bool MustChangePassword { get; set; }
 
     /// <summary>
     /// 口令是否已被真人主动改过（认领）。change-password 成功后置 true。
-    /// 认领后重启不再被 LLMGW_ADMIN_PASSWORD 覆盖；只有 LLMGW_ADMIN_FORCE_RESET 会破玻璃重置。
+    /// 认领后重启默认不再被 LLMGW_ADMIN_PASSWORD 覆盖；只有一次性破玻璃或 env authority 模式会校准。
     /// </summary>
     public bool PasswordChangedByUser { get; set; }
 

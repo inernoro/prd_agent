@@ -70,8 +70,10 @@ if (jwtTooShort)
 var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
 
 // 网关控制台登录账号：
-// - 长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不再被 env 覆盖。
-// - LLMGW_ADMIN_PASSWORD 仅用于“首次 bootstrap 创建账号”或 LLMGW_ADMIN_FORCE_RESET 破玻璃时的重置口令。
+// - 默认模式下，长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不被 env 覆盖。
+// - LLMGW_ADMIN_ENV_AUTHORITY=1 时，LLMGW_ADMIN_PASSWORD 是长期权威；启动只在检测到漂移时修复，
+//   密码和状态一致时不写库、不递增 SecurityVersion，避免每次重启让已有会话失效。
+// - LLMGW_ADMIN_FORCE_RESET 保留为兼容的一次性破玻璃开关，同样采用幂等修复。
 // - 未设 bootstrap 口令时，内置 admin/admin 引导 + 首登强制改密，避免新环境锁死。
 const string AdminUser = "admin";
 const string DefaultAdminPwd = "admin";
@@ -189,16 +191,32 @@ var app = builder.Build();
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
 
-// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 仅 bootstrap/破玻璃）──
-// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式重置 admin
+// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，可选 env 长期托管）──
+// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式校准 admin
 // 口令。用于「账号被认领但口令登不进」的死锁恢复。恢复后请把该 env 清掉。
 // **仅认真值**（Bugbot Medium）：只判「非空」会把 =0 / =false 误当开启，每次启动强制回 admin/admin 反而擦掉 env 口令。
-// 口令来源（2026-07-04 目标模式）：数据库是长期权威；LLMGW_ADMIN_PASSWORD 仅在首次创建或 force reset 时使用。
+// 永久在线模式：LLMGW_ADMIN_ENV_AUTHORITY=1 时，env 是 admin 口令权威。该模式要求显式配置非默认强口令。
 var forceResetRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET") ?? string.Empty).Trim();
 var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw, StringComparer.OrdinalIgnoreCase);
+var envAuthorityRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_ENV_AUTHORITY") ?? string.Empty).Trim();
+var envAuthorityAdmin = new[] { "1", "true", "yes", "on" }.Contains(envAuthorityRaw, StringComparer.OrdinalIgnoreCase);
 var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
+if (envAuthorityAdmin && (string.IsNullOrWhiteSpace(adminBootstrapPwd) || adminBootstrapPwd.Trim() == DefaultAdminPwd))
+{
+    throw new InvalidOperationException(
+        "LLMGW_ADMIN_ENV_AUTHORITY 已启用，但 LLMGW_ADMIN_PASSWORD 未配置或仍为默认弱口令。" +
+        "请先配置独立强口令；服务拒绝以不可用的破窗账户启动。");
+}
 var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
-await SeedAdminAsync(gatewayDatabase, operationAudits, AdminUser, DefaultAdminPwd, internalTenantId, forceResetAdmin, adminBootstrapPwd);
+await SeedAdminAsync(
+    gatewayDatabase,
+    operationAudits,
+    AdminUser,
+    DefaultAdminPwd,
+    internalTenantId,
+    forceResetAdmin,
+    envAuthorityAdmin,
+    adminBootstrapPwd);
 
 // GW 请求日志由 llmgw-serve 写入独立 llm_gateway 库；控制台和 runtime gates 必须读取同一权威来源。
 var logs = gatewayDatabase.GetCollection<BsonDocument>("llmrequestlogs");
@@ -8872,9 +8890,10 @@ static async Task EnsureInternalTenantAsync(
 }
 
 // 幂等播种管理员。优先级（从高到低）：
-//   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，显式重置 admin 口令 + 强制改密。
-//   2) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
-//   3) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
+//   1) envAuthority（LLMGW_ADMIN_ENV_AUTHORITY=1）：env 是长期权威，只在口令或账号状态漂移时修复。
+//   2) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：一次性破玻璃，同样只在漂移时修复。
+//   3) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
+//   4) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
 static async Task SeedAdminAsync(
     IMongoDatabase db,
     IMongoCollection<BsonDocument> operationAudits,
@@ -8882,32 +8901,51 @@ static async Task SeedAdminAsync(
     string defaultPwd,
     string tenantId,
     bool forceReset = false,
+    bool envAuthority = false,
     string? envPassword = null)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
 
     // 多租户账号由 membership 控制，不得在 bootstrap 时禁用其它租户用户。
 
-    // 破玻璃优先级最高：显式打开时才改库中口令，用于账号被认领但口令丢失的死锁恢复。
-    if (forceReset)
+    // 环境变量长期托管或一次性破玻璃：只修复漂移。PBKDF2 每次 Hash 都有新盐，禁止在口令已经
+    // 匹配时重复写 Hash，否则每次启动都会制造无意义变更并使所有现有会话失效。
+    if (envAuthority || forceReset)
     {
         var resetPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
-        var resetHash = PasswordHasher.Hash(resetPassword);
         var resetMustChange = resetPassword == defaultPwd;
         var existingForce = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
         if (existingForce is not null)
         {
-            await users.UpdateOneAsync(u => u.Username == username,
-                Builders<LlmGwUser>.Update
-                    .Set(u => u.PasswordHash, resetHash)
-                    .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, resetMustChange)
-                    .Set(u => u.PasswordChangedByUser, false)
-                    .Inc(u => u.SecurityVersion, 1)
-                    .Set(u => u.UpdatedAt, DateTime.UtcNow));
+            var passwordDrifted = !PasswordHasher.Verify(resetPassword, existingForce.PasswordHash);
+            var activeDrifted = !existingForce.IsActive;
+            var mustChangeDrifted = existingForce.MustChangePassword != resetMustChange;
+            var ownershipDrifted = existingForce.PasswordChangedByUser;
+
+            if (!passwordDrifted && !activeDrifted && !mustChangeDrifted && !ownershipDrifted)
+                return;
+
+            var updates = new List<UpdateDefinition<LlmGwUser>>();
+            if (passwordDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.PasswordHash, PasswordHasher.Hash(resetPassword)));
+            if (activeDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
+            if (mustChangeDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.MustChangePassword, resetMustChange));
+            if (ownershipDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.PasswordChangedByUser, false));
+
+            var securityStateChanged = passwordDrifted || activeDrifted || mustChangeDrifted;
+            if (securityStateChanged)
+                updates.Add(Builders<LlmGwUser>.Update.Inc(u => u.SecurityVersion, 1));
+            updates.Add(Builders<LlmGwUser>.Update.Set(u => u.UpdatedAt, DateTime.UtcNow));
+
+            await users.UpdateOneAsync(
+                u => u.Username == username,
+                Builders<LlmGwUser>.Update.Combine(updates));
             await WriteSystemOperationAuditAsync(
                 operationAudits,
-                action: "admin.force_reset",
+                action: envAuthority ? "admin.env_authority_reconcile" : "admin.force_reset",
                 targetType: "llmgw_console_user",
                 targetId: existingForce.Id,
                 targetName: username,
@@ -8915,7 +8953,9 @@ static async Task SeedAdminAsync(
                 reason: null,
                 changes: new BsonDocument
                 {
+                    { "mode", envAuthority ? "env_authority" : "force_reset" },
                     { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                    { "passwordDrifted", passwordDrifted },
                     { "mustChangePassword", new BsonDocument { { "from", existingForce.MustChangePassword }, { "to", resetMustChange } } },
                     { "passwordChangedByUser", new BsonDocument { { "from", existingForce.PasswordChangedByUser }, { "to", false } } },
                     { "wasActive", existingForce.IsActive },
@@ -8926,7 +8966,7 @@ static async Task SeedAdminAsync(
         {
             var resetUser = new LlmGwUser
             {
-                Username = username, PasswordHash = resetHash, DisplayName = username,
+                Username = username, PasswordHash = PasswordHasher.Hash(resetPassword), DisplayName = username,
                 IsActive = true, MustChangePassword = resetMustChange, PasswordChangedByUser = false,
                 Scopes = new[] { "logs:read" }, CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -8934,7 +8974,7 @@ static async Task SeedAdminAsync(
             await users.InsertOneAsync(resetUser);
             await WriteSystemOperationAuditAsync(
                 operationAudits,
-                action: "admin.force_reset_bootstrap",
+                action: envAuthority ? "admin.env_authority_bootstrap" : "admin.force_reset_bootstrap",
                 targetType: "llmgw_console_user",
                 targetId: resetUser.Id,
                 targetName: username,
@@ -8942,6 +8982,7 @@ static async Task SeedAdminAsync(
                 reason: null,
                 changes: new BsonDocument
                 {
+                    { "mode", envAuthority ? "env_authority" : "force_reset" },
                     { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
                     { "mustChangePassword", resetMustChange },
                 },

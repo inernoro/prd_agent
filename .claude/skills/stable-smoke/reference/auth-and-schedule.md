@@ -33,7 +33,19 @@ scripts/stable-smoke-login.sh \
 
 ## 账号与密钥持久化
 
-账号本体保存在 CDS 环境和正式环境各自的用户数据库，固定使用不同的专用用户名。仓库的 `.env.template` 只登记变量名；本地自动化把真实值放入项目主工作区中被 git 忽略的 `.env.stable-smoke.local`，也可由本机安全存储在启动时注入。禁止把真实密码、AI 密钥、一次性票据或 token 提交到仓库、验收报告或自动化配置正文。
+账号本体保存在 CDS 环境和正式环境各自的用户数据库。凭据分为三类，不得混成一套：
+
+| 身份 | 用途 | 可用性要求 | 自动化规则 |
+|---|---|---|---|
+| 环境管理员 `admin` | 永久破窗、权限恢复、专用账号失效时兜底 | 环境运行期间任何时候都必须可登录 | 可做登录预检和故障恢复，不作为日常业务数据归属人 |
+| 稳定冒烟专用账号 | 每 48 小时业务旅程 | 固定用户名、最低必要权限、可独立停用 | 正常测试必须优先使用，所有测试资源带 `stsmk-` 前缀 |
+| CDS 项目身份 | 部署、回滚、读取环境状态 | 项目范围、可审计、可单独轮换 | 只操作对应 CDS 项目，不替代产品登录账号 |
+
+网关 `admin` 采用环境变量长期托管：`LLMGW_ADMIN_ENV_AUTHORITY=1` 与 `LLMGW_ADMIN_PASSWORD` 共同构成权威。服务启动时验证数据库哈希；一致时不写库、不递增安全版本，只有口令或账号状态漂移时才修复。`LLMGW_ADMIN_FORCE_RESET` 只保留为一次性兼容恢复开关，不作为永久配置。这样固定的是口令和可用性，不是每次启动都执行一次“重置”。
+
+仓库只保存变量名、账号标识、Keychain service 名和状态，不保存真实值。本机 macOS 使用登录钥匙串；无人值守服务器使用部署平台 Secret Store。`.env.stable-smoke.local` 只作为被 git 忽略且权限为 `0600` 的兼容回退，不是首选。禁止把真实密码、AI 密钥、一次性票据或 token 提交到仓库、验收报告或自动化配置正文。
+
+非敏感凭据登记表见 `credential-registry.json`。每次创建、轮换、停用、恢复或验证后必须更新 `state`、`lastVerifiedAt` 和 `nextAction`；下一窗口先读登记表再操作。状态迁移固定为：`planned -> provisioned -> verified -> active -> rotating -> verified`，异常时进入 `degraded`，不得静默回到 `planned`。
 
 每轮前置检查必须验证账号存在、未禁用、在合成登录白名单、权限符合矩阵。检查失败归类为 environment 并通知，不能把它解释成产品通过。
 
@@ -45,7 +57,7 @@ scripts/stable-smoke-login.sh \
 | 正式 | `STABLE_SMOKE_PROD_BASE_URL=https://map.ebcone.net` | `STABLE_SMOKE_PROD_AI_ACCESS_KEY` | `STABLE_SMOKE_PROD_USER` |
 | MAP 通知 | `STABLE_SMOKE_NOTIFY_BASE_URL=https://map.ebcone.net`、`STABLE_SMOKE_NOTIFY_SOURCE` | `STABLE_SMOKE_NOTIFY_AI_ACCESS_KEY` | `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID` |
 
-本地文件必须是 `.env.stable-smoke.local`，该名称已被 `.env.*.local` 忽略规则覆盖。文件权限应为仅当前用户可读。CDS 环境和正式环境使用不同 AI 密钥与不同专用账号。目标用户 ID 必须配置，脚本拒绝降级成全局通知。生产 API 尚未发布 `stable-smoke` 来源前，`STABLE_SMOKE_NOTIFY_SOURCE` 使用 `system-alert`；发布后切为 `stable-smoke`。
+本地兼容文件必须是 `.env.stable-smoke.local`，该名称已被 `.env.*.local` 忽略规则覆盖。文件权限应为仅当前用户可读。CDS 环境和正式环境使用不同 AI 密钥与不同专用账号。目标用户 ID 必须配置，脚本拒绝降级成全局通知。生产 API 尚未发布 `stable-smoke` 来源前，`STABLE_SMOKE_NOTIFY_SOURCE` 使用 `system-alert`；发布后切为 `stable-smoke`。
 
 ## 48 小时调度
 
