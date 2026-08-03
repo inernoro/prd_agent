@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyCredentialRegistry, parseEnvFile, validateEnvironmentConfig } from '../stable-smoke-run.mjs';
+import {
+  applyCredentialRegistry,
+  evaluateCdsReadiness,
+  parseEnvFile,
+  validateEnvironmentConfig,
+} from '../stable-smoke-run.mjs';
 
 test('环境文件解析不执行 shell 内容', () => {
   const values = parseEnvFile(`
@@ -44,4 +49,33 @@ test('凭据登记表只在环境变量缺失时读取 Keychain', () => {
   assert.equal(values.STABLE_SMOKE_CDS_USER, 'explicit-user');
   assert.equal(values.STABLE_SMOKE_CDS_AI_ACCESS_KEY, 'secret-value');
   assert.deepEqual(calls, [['cds-key', 'stable-smoke']]);
+});
+
+test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移', () => {
+  const commit = 'abc123';
+  const branch = {
+    status: 'running',
+    commitSha: commit,
+    ciTargetSha: commit,
+    ciImageStatus: 'ready',
+    lastDeployDispatchCommitSha: commit,
+    currentVersionId: 'dv-test',
+    deployRuntime: { drift: { hasDrift: false } },
+    services: {
+      api: { profileId: 'api', status: 'running', deployedImage: `registry/api:sha-${commit}` },
+      admin: { profileId: 'admin', status: 'running', deployedImage: `registry/admin:sha-${commit}` },
+    },
+  };
+  assert.deepEqual(evaluateCdsReadiness(branch, commit), {
+    ready: true,
+    reasons: [],
+    versionId: 'dv-test',
+    commit,
+  });
+  branch.services.admin.status = 'stopped';
+  branch.deployRuntime.drift.hasDrift = true;
+  const blocked = evaluateCdsReadiness(branch, commit);
+  assert.equal(blocked.ready, false);
+  assert.ok(blocked.reasons.some((reason) => reason.includes('版本漂移')));
+  assert.ok(blocked.reasons.some((reason) => reason.includes('admin 未运行')));
 });

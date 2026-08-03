@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
   collectPlaywrightCases,
@@ -112,6 +113,53 @@ function readJson(path) {
   }
 }
 
+export function evaluateCdsReadiness(branch, expectedCommit) {
+  const reasons = [];
+  const services = Object.values(branch?.services || {});
+  if (branch?.status !== 'running') reasons.push(`分支状态为 ${branch?.status || 'unknown'}`);
+  if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到本地目标提交');
+  if (branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
+  if (branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
+  if (branch?.lastDeployDispatchCommitSha !== expectedCommit) reasons.push('CDS 尚未对目标提交完成部署调度');
+  if (branch?.deployRuntime?.drift?.hasDrift) reasons.push('CDS 服务存在版本漂移');
+  if (services.length === 0) reasons.push('CDS 未返回任何业务服务');
+  for (const service of services) {
+    const serviceName = service.profileId || service.containerName || '未知服务';
+    if (service.status !== 'running') reasons.push(`${serviceName} 未运行`);
+    if (!String(service.deployedImage || '').endsWith(`:sha-${expectedCommit}`)) {
+      reasons.push(`${serviceName} 尚未切换到目标镜像`);
+    }
+  }
+  return {
+    ready: reasons.length === 0,
+    reasons: [...new Set(reasons)],
+    versionId: branch?.currentVersionId || '',
+    commit: branch?.commitSha || '',
+  };
+}
+
+function readCdsBranchStatus() {
+  const branchIdResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id']);
+  const branchIdPayload = branchIdResult.status === 0 ? JSON.parse(String(branchIdResult.stdout || '{}')) : null;
+  const branchId = branchIdPayload?.data?.branchId;
+  if (!branchId) throw new Error('CDS 权威分支标识读取失败，拒绝在未知部署版本上开测');
+  const statusResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId]);
+  const statusPayload = statusResult.status === 0 ? JSON.parse(String(statusResult.stdout || '{}')) : null;
+  if (!statusPayload?.data) throw new Error('CDS 分支部署状态读取失败，拒绝在未知部署版本上开测');
+  return statusPayload.data;
+}
+
+async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) {
+  const startedAt = Date.now();
+  let readiness = { ready: false, reasons: ['尚未检查'], versionId: '', commit: '' };
+  while (Date.now() - startedAt < timeoutMs) {
+    readiness = evaluateCdsReadiness(readCdsBranchStatus(), expectedCommit);
+    if (readiness.ready) return { ...readiness, waitedMs: Date.now() - startedAt };
+    await delay(10_000);
+  }
+  throw new Error(`CDS 版本冻结等待超时：${readiness.reasons.join('；')}`);
+}
+
 function runPlaywright(environment, values, runDir, grep = '') {
   const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
   const resultPath = resolve(runDir, `${environment}-results.json`);
@@ -208,6 +256,23 @@ async function main() {
     values.STABLE_SMOKE_CDS_GW_BASE_URL = cdsUrls.gatewayUrl;
     values.STABLE_SMOKE_PROD_BASE_URL = values.STABLE_SMOKE_PROD_BASE_URL || productionBaseUrl;
 
+    const selected = argv.includes('--cds-only')
+      ? ['cds']
+      : argv.includes('--production-only')
+        ? ['production']
+        : ['cds', 'production'];
+    if (selected.includes('cds') && !argv.includes('--dry-run')) {
+      const commitResult = command('git', ['rev-parse', 'HEAD']);
+      const expectedCommit = String(commitResult.stdout || '').trim();
+      if (commitResult.status !== 0 || !expectedCommit) throw new Error('无法读取待验收提交，拒绝开测');
+      const readiness = await waitForCdsDeployment(expectedCommit);
+      writeFileSync(resolve(runDir, 'cds-readiness.json'), `${JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        expectedCommit,
+        ...readiness,
+      }, null, 2)}\n`, 'utf8');
+    }
+
     const planPath = resolve(runDir, 'plan.json');
     const planMarkdownPath = resolve(runDir, 'plan.md');
     const planResult = command('node', [
@@ -217,11 +282,6 @@ async function main() {
     if (planResult.status !== 0) throw new Error('稳定冒烟计划生成失败，请检查业务功能台账和未映射变更');
     const plan = readJson(planPath);
 
-    const selected = argv.includes('--cds-only')
-      ? ['cds']
-      : argv.includes('--production-only')
-        ? ['production']
-        : ['cds', 'production'];
     const executions = [];
     const grep = readArg(argv, '--grep');
     for (const environment of selected) {
