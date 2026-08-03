@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPlan, loadCatalog, parseActiveRegressions, selectFeatureLines, validateCatalog } from '../stable-smoke-plan.mjs';
+import { buildPlan, loadCatalog, parseActiveRegressions, parseMatrixCaseIds, selectFeatureLines, validateCatalog } from '../stable-smoke-plan.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,8 @@ const catalog = loadCatalog();
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ledger = readFileSync(resolve(repoRoot, '.claude/skills/stable-smoke/reference/regression-ledger.md'), 'utf8');
 const regressions = parseActiveRegressions(ledger);
+const matrix = readFileSync(resolve(repoRoot, '.claude/skills/stable-smoke/reference/test-matrix.md'), 'utf8');
+const matrixCaseIds = parseMatrixCaseIds(matrix);
 
 test('业务功能台账具备发布门禁所需字段', () => {
   assert.deepEqual(validateCatalog(catalog), []);
@@ -49,4 +51,27 @@ test('未登记的核心代码变更不能静默通过', () => {
 test('定时模式固定纳入全部功能线', () => {
   const result = selectFeatureLines(catalog, [], regressions, 'scheduled');
   assert.equal(result.selected.length, catalog.featureLines.length);
+});
+
+test('回归台账模板不会被当作 active 用例', () => {
+  assert.ok(!regressions.some((caseId) => caseId.includes('{')));
+  assert.deepEqual(regressions.sort(), [
+    'REG-llmgw-auth-001',
+    'REG-multi-image-001',
+    'REG-multi-image-002',
+    'REG-visual-error-001',
+  ]);
+});
+
+test('定时计划完整纳入矩阵与永久回归', () => {
+  const plan = buildPlan({
+    catalog,
+    changedFiles: [],
+    activeRegressions: regressions,
+    matrixCaseIds,
+    mode: 'scheduled',
+    commit: 'test-commit',
+  });
+  const expected = new Set([...matrixCaseIds, ...regressions]);
+  assert.deepEqual(new Set(plan.requiredCaseIds), expected);
 });

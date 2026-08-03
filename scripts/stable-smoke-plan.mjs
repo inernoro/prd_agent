@@ -7,6 +7,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 export const defaultCatalogPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/business-function-catalog.json');
 export const defaultLedgerPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/regression-ledger.md');
+export const defaultMatrixPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/test-matrix.md');
 
 function readArg(argv, name, fallback = '') {
   const index = argv.indexOf(name);
@@ -22,11 +23,17 @@ export function loadCatalog(path = defaultCatalogPath) {
 }
 
 export function parseActiveRegressions(markdown) {
-  const rows = markdown.split('\n').filter((line) => /^\| REG-[^|]+\|/.test(line));
+  const rows = markdown.split('\n').filter((line) => /^\| REG-[a-z0-9][a-z0-9-]*\s*\|/i.test(line));
   return rows.flatMap((line) => {
     const cells = line.split('|').map((cell) => cell.trim()).filter(Boolean);
     return cells.at(-1) === 'active' ? [cells[0]] : [];
   });
+}
+
+export function parseMatrixCaseIds(markdown) {
+  return [...new Set([...markdown.matchAll(
+    /^\|\s*((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW)-\d+)\s*\|/gm,
+  )].map((match) => match[1]))];
 }
 
 export function validateCatalog(catalog) {
@@ -80,7 +87,7 @@ function gitCommit() {
   return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-export function buildPlan({ catalog, changedFiles, activeRegressions, mode, commit }) {
+export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCaseIds = [], mode, commit }) {
   const catalogErrors = validateCatalog(catalog);
   const { selected, unmappedFiles } = selectFeatureLines(catalog, changedFiles, activeRegressions, mode);
   const incomplete = selected.filter((feature) => feature.automationStatus === 'planned');
@@ -89,7 +96,11 @@ export function buildPlan({ catalog, changedFiles, activeRegressions, mode, comm
     : incomplete.length > 0
       ? 'conditional'
       : 'pass';
-  const requiredCaseIds = [...new Set(selected.flatMap((feature) => [...feature.requiredCaseIds, ...(feature.regressionCaseIds || [])]))].sort();
+  const selectedCaseIds = selected.flatMap((feature) => [...feature.requiredCaseIds, ...(feature.regressionCaseIds || [])]);
+  const requiredCaseIds = [...new Set([
+    ...(mode === 'scheduled' ? matrixCaseIds : []),
+    ...selectedCaseIds,
+  ])].sort();
   return {
     schemaVersion: '1.0',
     generatedAt: new Date().toISOString(),
@@ -142,6 +153,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const catalogPath = resolve(readArg(argv, '--catalog', defaultCatalogPath));
   const ledgerPath = resolve(readArg(argv, '--ledger', defaultLedgerPath));
+  const matrixPath = resolve(readArg(argv, '--matrix', defaultMatrixPath));
   const mode = readArg(argv, '--mode', 'scheduled');
   const base = readArg(argv, '--base');
   const head = readArg(argv, '--head', 'HEAD');
@@ -149,7 +161,8 @@ async function main() {
   const changedFiles = explicitFiles.length > 0 ? explicitFiles : mode === 'changed' ? gitChangedFiles(base, head) : [];
   const catalog = loadCatalog(catalogPath);
   const activeRegressions = parseActiveRegressions(readFileSync(ledgerPath, 'utf8'));
-  const plan = buildPlan({ catalog, changedFiles, activeRegressions, mode, commit: gitCommit() });
+  const matrixCaseIds = parseMatrixCaseIds(readFileSync(matrixPath, 'utf8'));
+  const plan = buildPlan({ catalog, changedFiles, activeRegressions, matrixCaseIds, mode, commit: gitCommit() });
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
   if (outputJson) writeFileSync(outputJson, `${JSON.stringify(plan, null, 2)}\n`, 'utf8');

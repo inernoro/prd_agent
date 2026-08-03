@@ -1393,7 +1393,7 @@ public class ImageGenController : ControllerBase
 
         if (items.Count == 0)
         {
-            await WriteEventAsync("run", new { type = "error", errorCode = ErrorCodes.INVALID_FORMAT, errorMessage = "items 不能为空" }, cancellationToken);
+            await WriteEventAsync("run", new { type = "error", errorCode = ErrorCodes.INVALID_FORMAT, errorMessage = "没有可生成的图片描述，请至少添加一条有效描述后重试" }, cancellationToken);
             return;
         }
 
@@ -1640,7 +1640,7 @@ public class ImageGenController : ControllerBase
         var items = request?.Items ?? new List<ImageGenRunPlanItemInput>();
         if (items.Count == 0)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "items 不能为空"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有可生成的图片描述，请至少添加一条有效描述后重试"));
         }
         // 清洗与限制：单条最多 5 张，总计最多 20 张
         var plan = new List<ImageGenRunPlanItem>();
@@ -1658,7 +1658,7 @@ public class ImageGenController : ControllerBase
         }
         if (plan.Count == 0)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "items 不能为空（无有效 prompt）"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片描述为空，请填写有效描述后重试"));
         }
         if (total > 20)
         {
