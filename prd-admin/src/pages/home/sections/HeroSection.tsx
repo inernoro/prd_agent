@@ -18,11 +18,23 @@ import { useLanguage } from '../contexts/LanguageContext';
  */
 /**
  * 品牌主渐变（SSOT）：登录 CTA / 落地页 CTA / Arena 主按钮共用。
- * 靛蓝-紫罗兰同族色（对齐应用内 --accent-primary #D97757 与首页极光
- * #332B22/#C8623A/#C8623A），取代早期青→紫→玫红三色霓虹——
- * 邻近色相保证"彩而不乱"，与登录后的工作台观感统一。
+ * 陶土同族色（对齐应用内 --accent-primary #D97757），取代早期青→紫→玫红
+ * 三色霓虹——邻近色相保证"彩而不乱"，与登录后的工作台观感统一。
  */
-export const HERO_GRADIENT = 'linear-gradient(135deg, #C8623A 0%, #D97757 48%, #E0A06B 100%)';
+export const HERO_GRADIENT = 'linear-gradient(135deg, #CE6B41 0%, #D97757 48%, #E0A06B 100%)';
+/**
+ * 铺在 HERO_GRADIENT 上的文字色。
+ *
+ * 这条渐变对白字只有 2.23~3.62:1（越往右越亮越糟），13-15px 的主 CTA 标签一律不达标。
+ * 陶土底配深墨字才是这套配色的正解，三档分别 4.74 / 5.49 / 7.68:1；起点 #C8623A
+ * 抬到 #CE6B41 就是为了让最暗那档也过 4.5。
+ *
+ * 直接复用 --button-primary-fg（暗浅两主题同为深墨），而不是再写一个深色 hex：
+ * 主操作面的文字色只该有一个来源，多一个就多一处会各自漂移的判据。
+ * 守卫：themeSystem 逐档算「渐变色标 x 两主题的 button-primary-fg」是否过 4.5，
+ * inkPalette 拦「HERO_GRADIENT 当底再配浅色字」。
+ */
+export const HERO_GRADIENT_FG = 'var(--button-primary-fg)';
 export const HERO_GRADIENT_TEXT = {
   background: HERO_GRADIENT,
   WebkitBackgroundClip: 'text' as const,
@@ -219,9 +231,10 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             {/* 主 CTA */}
             <button
               onClick={onGetStarted}
-              className="group relative inline-flex items-center gap-2.5 h-12 px-8 rounded-full font-medium text-[14.5px] text-white transition-all duration-200 hover:scale-[1.03] active:scale-[0.98]"
+              className="group relative inline-flex items-center gap-2.5 h-12 px-8 rounded-full font-medium text-[14.5px] transition-all duration-200 hover:scale-[1.03] active:scale-[0.98]"
               style={{
                 background: HERO_GRADIENT,
+                color: HERO_GRADIENT_FG,
                 boxShadow:
                   '0 0 48px rgba(217, 119, 87, 0.35), 0 0 100px rgba(224, 160, 107, 0.18), 0 10px 32px rgba(0, 0, 0, 0.5)',
                 letterSpacing: '0.01em',

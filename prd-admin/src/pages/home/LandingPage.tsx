@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { HeroSection, HERO_GRADIENT } from './sections/HeroSection';
+import { HeroSection, HERO_GRADIENT, HERO_GRADIENT_FG } from './sections/HeroSection';
 import { StatsStrip } from './sections/StatsStrip';
 import { ThreePillars } from './sections/ThreePillars';
 import { FeatureDeepDive } from './sections/FeatureDeepDive';
@@ -157,9 +157,10 @@ function LandingInner() {
 
               <button
                 onClick={handleGetStarted}
-                className="px-4 py-2 rounded-full text-[13px] font-medium text-token-primary transition-all duration-200 hover:scale-[1.02]"
+                className="px-4 py-2 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.02]"
                 style={{
                   background: HERO_GRADIENT,
+                  color: HERO_GRADIENT_FG,
                   boxShadow: '0 0 20px rgba(217, 119, 87, 0.32)',
                   fontFamily: 'var(--font-display)',
                   letterSpacing: '0.01em',
@@ -230,9 +231,10 @@ function LandingInner() {
                     setMobileMenuOpen(false);
                     handleGetStarted();
                   }}
-                  className="w-full py-3 rounded-full text-[15px] font-medium text-token-primary transition-all hover:opacity-90"
+                  className="w-full py-3 rounded-full text-[15px] font-medium transition-all hover:opacity-90"
                   style={{
                     background: HERO_GRADIENT,
+                    color: HERO_GRADIENT_FG,
                     boxShadow: '0 0 20px rgba(217, 119, 87, 0.32)',
                     fontFamily: 'var(--font-display)',
                   }}

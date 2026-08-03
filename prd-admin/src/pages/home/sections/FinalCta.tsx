@@ -1,5 +1,5 @@
 import { ArrowRight, Sparkles, Star } from 'lucide-react';
-import { HERO_GRADIENT } from './HeroSection';
+import { HERO_GRADIENT, HERO_GRADIENT_FG } from './HeroSection';
 import { Reveal } from '../components/Reveal';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -81,9 +81,10 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
           <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
             <button
               onClick={onGetStarted}
-              className="group relative inline-flex items-center gap-2.5 h-14 px-10 rounded-full font-medium text-[15px] text-white transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
+              className="group relative inline-flex items-center gap-2.5 h-14 px-10 rounded-full font-medium text-[15px] transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
               style={{
                 background: HERO_GRADIENT,
+                color: HERO_GRADIENT_FG,
                 boxShadow:
                   '0 0 60px rgba(217, 119, 87, 0.42), 0 0 140px rgba(224, 160, 107, 0.2), 0 12px 36px rgba(0, 0, 0, 0.55)',
                 letterSpacing: '0.01em',

@@ -21,6 +21,9 @@ const SRC = path.resolve(TEST_DIR, '../..');
 const GUARDED: string[] = [
   'pages/home',
   'pages/MobileHomePage.tsx',
+  // 移动首页把配色外置在这里（RECENT_AGENT_META / 快捷入口的 accent），
+  // 只扫页面本体会漏掉整份色板——受管范围要跟着 import 走，不是跟着文件名走。
+  'pages/mobile-home',
   'pages/AgentLauncherPage.tsx',
   'styles/home-launcher.css',
   'lib/tileAccent.ts',
@@ -224,8 +227,10 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     /**
      * accent 被当成底色用。`[,)]` 是为了排掉 `var(--accent-primary-rgb)` ——
      * 那个几乎都是 `rgba(…, 0.14)` 的浅底，不是实心 accent 面。
+     * `HERO_GRADIENT` 是官网 / Arena 主 CTA 的同一块陶土面（对白字 2.23~3.62:1），
+     * 同判据管辖；它自己的文字色走 `HERO_GRADIENT_FG`，深墨不会命中 LIGHT_FG。
      */
-    const ACCENT_IN_VALUE = /var\(--accent-primary\s*[,)]/;
+    const ACCENT_IN_VALUE = /var\(--accent-primary\s*[,)]|\bHERO_GRADIENT\b/;
 
     /**
      * 读出 `background:` 后面那一整个值。

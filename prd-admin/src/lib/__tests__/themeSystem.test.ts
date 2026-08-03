@@ -362,6 +362,34 @@ describe('主题系统契约', () => {
     expect(launcher).toMatch(/const openRoute = useCallback\([\s\S]*?addRecentVisit\([\s\S]*?navigate\(route\)/);
   });
 
+  it('品牌主渐变的每一档都能撑住它自己的文字色', async () => {
+    // 取模块求值结果而不是扫源码：渐变值可能被改成模板字面量 / 拼接，
+    // 扫字面量会在那一刻静默失效（predicate-and-wiring 形状 6）。
+    const { HERO_GRADIENT, HERO_GRADIENT_FG } = await import('../../pages/home/sections/HeroSection');
+
+    const stops = [...HERO_GRADIENT.matchAll(/#[0-9a-f]{6}/gi)].map((m) => m[0]);
+    expect(stops.length, 'HERO_GRADIENT 里没解析到色标，判据已经失效').toBeGreaterThanOrEqual(2);
+
+    // 文字色是 token 引用，判据必须落到两个主题各自的真实值上：
+    // 只算暗色那份的话，改浅色 --button-primary-fg 能把 CTA 弄哑而守卫全绿。
+    const tokenName = HERO_GRADIENT_FG.match(/var\(--([a-z0-9-]+)/i)?.[1];
+    expect(tokenName, 'HERO_GRADIENT_FG 不再是 token 引用，判据取不到真实值').toBeTruthy();
+
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    const lightBlock = tokens.slice(tokens.indexOf('[data-theme="light"]'));
+
+    // CTA 标签是 13-15px 正文级，走 4.5:1。渐变最暗那档最吃紧——
+    // 起点从 #C8623A 抬到 #CE6B41 就是为了让它过线，别再改回去。
+    for (const [theme, block] of [['暗色', darkBlock], ['浅色', lightBlock]] as const) {
+      const foreground = tokenValue(block, tokenName!);
+      for (const stop of stops) {
+        const ratio = contrastRatio(foreground, stop);
+        expect(ratio, `${theme}主题：HERO_GRADIENT 色标 ${stop} 对 ${foreground} 只有 ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
   it('首页目录默认展示全部三组，分段筛选不得让任何入口从首页消失', () => {
     const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
 

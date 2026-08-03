@@ -39,12 +39,12 @@ export interface QuickEntry {
 export const QUICK_ENTRIES: QuickEntry[] = [
   { key: 'document-store', title: '知识库', desc: '文档沉淀与资料管理', route: '/document-store', Icon: BookOpen, accent: '#FFB340' },
   { key: 'report-agent', title: '周报', desc: '生成、整理与审阅周报', route: '/report-agent', Icon: FileText, accent: '#7DD3FC' },
-  { key: 'visual-agent', title: '生图', desc: '文生图、图生图与配图', route: '/visual-agent', Icon: ImageIcon, accent: '#A78BFA' },
+  { key: 'visual-agent', title: '生图', desc: '文生图、图生图与配图', route: '/visual-agent', Icon: ImageIcon, accent: '#D97757' },
   { key: 'defect-agent', title: '缺陷', desc: '提交、跟踪与复盘问题', route: '/defect-agent', Icon: Bug, accent: '#FB7185' },
   { key: 'literary-agent', title: '文学创作', desc: '长文写作与润色', route: '/literary-agent', Icon: Feather, accent: '#34D399' },
   { key: 'marketplace', title: '海鲜市场', desc: '技能与配置市场', route: '/marketplace', Icon: Store, accent: '#FBBF24' },
   { key: 'my-assets', title: '我的资产', desc: '图片、文档与附件', route: '/my-assets', Icon: FolderOpen, accent: '#60A5FA' },
-  { key: 'changelog', title: '更新中心', desc: '版本动态与周报', route: '/changelog', Icon: Newspaper, accent: '#F472B6' },
+  { key: 'changelog', title: '更新中心', desc: '版本动态与周报', route: '/changelog', Icon: Newspaper, accent: '#4FD1C5' },
 ];
 
 /** 「档案室 / 底蕴」入口：历史与沉淀类页面 */
@@ -58,7 +58,7 @@ export const ARCHIVE_ENTRIES: Array<{ key: string; title: string; desc: string; 
  * 后端 recent-work 实际会返回 document-store 等 key（真实预览取证发现），
  * 未覆盖的 key 由 recentAgentMetaFor 兜底成「智能体」而非裸英文。 */
 export const RECENT_AGENT_META: Record<string, { label: string; Icon: LucideIcon; accent: string }> = {
-  'visual-agent': { label: '视觉创作', Icon: ImageIcon, accent: '#A78BFA' },
+  'visual-agent': { label: '视觉创作', Icon: ImageIcon, accent: '#D97757' },
   'literary-agent': { label: '文学创作', Icon: Feather, accent: '#34D399' },
   'workflow-agent': { label: '工作流', Icon: FolderOpen, accent: '#7DD3FC' },
   'document-store': { label: '知识库', Icon: BookOpen, accent: '#FFB340' },
