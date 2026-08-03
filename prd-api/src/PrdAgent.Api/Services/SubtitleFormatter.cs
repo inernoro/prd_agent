@@ -77,6 +77,12 @@ public static class SubtitleFormatter
             foreach (var seg in segments)
             {
                 if (string.IsNullOrWhiteSpace(seg.Text)) continue;
+                if (!string.IsNullOrWhiteSpace(seg.SpeakerId))
+                {
+                    sb.Append("[说话人")
+                      .Append(NormalizeSpeakerLabel(seg.SpeakerId))
+                      .Append("] ");
+                }
                 sb.AppendLine(seg.Text);
                 sb.AppendLine();
             }

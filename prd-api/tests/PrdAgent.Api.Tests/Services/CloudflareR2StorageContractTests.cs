@@ -53,4 +53,29 @@ public sealed class CloudflareR2StorageContractTests
             request.InputStream.Dispose();
         }
     }
+
+    [Theory]
+    [InlineData("audio/mp4;codecs=mp4a.40.2", "audio/mp4")]
+    [InlineData(" Audio/WebM; codecs=opus ", "audio/webm")]
+    [InlineData("audio/x-m4a", "audio/x-m4a")]
+    [InlineData(null, "application/octet-stream")]
+    public void CreatePutObjectRequest_ShouldNormalizeBrowserCodecParameters(
+        string? contentType,
+        string expected)
+    {
+        var request = CloudflareR2Storage.CreatePutObjectRequest(
+            "recordings",
+            "data/prd-agent/doc/test.m4a",
+            [1, 2, 3],
+            contentType,
+            cacheControl: null);
+        try
+        {
+            request.ContentType.ShouldBe(expected);
+        }
+        finally
+        {
+            request.InputStream.Dispose();
+        }
+    }
 }
