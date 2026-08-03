@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Search,
   ArrowRight,
@@ -71,6 +70,7 @@ import type { ToolboxItem, RecentWorkItemDto } from '@/services';
 import { useHomeRecentWorkStore } from '@/stores/homeRecentWorkStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { migrateLegacyNavId } from '@/lib/launcherCatalog';
+import { useTrackedNavigate } from '@/lib/useTrackedNavigate';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
@@ -458,7 +458,6 @@ export default function AgentLauncherPage() {
 
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const isMobile = useIsMobile();
-  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const permissions = useAuthStore((s) => s.permissions ?? []);
   const now = useNowByMinute();
@@ -556,20 +555,8 @@ export default function AgentLauncherPage() {
    * 带 entry 的调用自动记账，纯内容跳转（动态流）显式不记。
    * 守卫见 themeSystem.test.ts 的「首页跳转只有一个出口」用例。
    */
-  const openRoute = useCallback((route: string, entry?: { id: string; agentKey?: string; name: string; icon?: string }) => {
-    if (entry) {
-      useAgentSwitcherStore.getState().addRecentVisit({
-        // 首页历史上用过 __xxx__ 形态，统一交给 migrateLegacyNavId 归一到命令面板同款 id
-        id: migrateLegacyNavId(entry.agentKey || entry.id),
-        agentKey: entry.agentKey ?? '',
-        agentName: entry.name,
-        title: entry.name,
-        path: route,
-        icon: entry.icon,
-      });
-    }
-    navigate(route);
-  }, [navigate]);
+  // 记账 + 跳转的唯一出口，与移动首页共用（lib/useTrackedNavigate）
+  const openRoute = useTrackedNavigate();
 
   const handleClick = useCallback((item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {

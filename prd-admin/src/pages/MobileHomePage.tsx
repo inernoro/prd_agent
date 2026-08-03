@@ -10,7 +10,7 @@
  */
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useTrackedNavigate } from '@/lib/useTrackedNavigate';
 import {
   BookOpen,
   Bug,
@@ -70,7 +70,8 @@ const ARCHIVE_ROWS: Array<{ key: string; title: string; desc: string; route: str
 ];
 
 export default function MobileHomePage() {
-  const navigate = useNavigate();
+  // 打开智能体一律走带记账的出口，否则手机上的启动不计入「你常用的」
+  const openRoute = useTrackedNavigate();
   const data = useMobileHomeData();
   const themeMode = useMobileThemeStore((st) => st.mode);
   const setThemeMode = useMobileThemeStore((st) => st.setMode);
@@ -96,7 +97,7 @@ export default function MobileHomePage() {
     accent: a.accent,
     label: a.title,
     badge: a.key === 'changelog' && data.changelogUnread > 0 ? data.changelogUnread : undefined,
-    onClick: () => navigate(a.route),
+    onClick: () => openRoute(a.route, { id: a.key, agentKey: a.key, name: a.title }),
   }));
 
   const feedTint = (type: string): string =>
@@ -184,7 +185,7 @@ export default function MobileHomePage() {
             <div style={{ ...cardStyle, padding: 14 }}>
               <button
                 type="button"
-                onClick={() => navigate(headline.route)}
+                onClick={() => openRoute(headline.route, { id: headline.agentKey, agentKey: headline.agentKey, name: recentAgentMetaFor(headline.agentKey).label })}
                 className="w-full flex items-center gap-3 text-left active:opacity-60 transition-opacity"
               >
                 <AppStoreAppIcon
@@ -228,7 +229,7 @@ export default function MobileHomePage() {
                   <button
                     key={`${item.route}-${item.lastActiveAt}`}
                     type="button"
-                    onClick={() => navigate(item.route)}
+                    onClick={() => openRoute(item.route, { id: item.agentKey, agentKey: item.agentKey, name: meta.label })}
                     className="w-full flex items-center gap-2.5 text-left active:opacity-60 transition-opacity"
                     style={{ padding: '10px 2px 0', marginTop: 10, borderTop: `1px solid ${C.separator}` }}
                   >
@@ -249,7 +250,7 @@ export default function MobileHomePage() {
         })()}
 
         {/* ── 常用应用 ── */}
-        <Section C={C} title="常用应用" action={{ label: '全部', onClick: () => navigate('/ai-toolbox') }}>
+        <Section C={C} title="常用应用" action={{ label: '全部', onClick: () => openRoute('/ai-toolbox') }}>
           <div style={{ ...cardStyle, padding: '16px 0' }}>
             <AppStoreGrid items={gridItems} columns={4} />
           </div>
@@ -298,7 +299,7 @@ export default function MobileHomePage() {
         </Section>
 
         {/* ── 我的动态 ── */}
-        <Section C={C} title="我的动态" action={{ label: '全部', onClick: () => navigate('/my-assets') }}>
+        <Section C={C} title="我的动态" action={{ label: '全部', onClick: () => openRoute('/my-assets') }}>
           <div style={{ ...cardStyle, padding: '4px 14px' }}>
             {data.feed.length === 0 && feedNotice ? (
               <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, padding: '12px 0' }}>
@@ -320,7 +321,7 @@ export default function MobileHomePage() {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => navigate(item.navigateTo)}
+                  onClick={() => openRoute(item.navigateTo)}
                   className="w-full flex items-center text-left active:opacity-60 transition-opacity"
                   style={{ gap: 10, padding: '12px 0', borderTop: idx > 0 ? `1px solid ${C.separator}` : undefined }}
                 >
@@ -361,7 +362,7 @@ export default function MobileHomePage() {
               <span style={{ ...AS_TYPE.itemTitle, fontSize: 15, color: C.labelSecondary }}>试试这些智能体</span>
               <button
                 type="button"
-                onClick={() => navigate('/ai-toolbox')}
+                onClick={() => openRoute('/ai-toolbox')}
                 className="active:opacity-60 transition-opacity"
                 style={{ ...AS_TYPE.itemSubtitle, color: C.blue }}
               >
@@ -386,7 +387,7 @@ export default function MobileHomePage() {
                   <button
                     key={t.id}
                     type="button"
-                    onClick={() => navigate(t.routePath ?? `/ai-toolbox?item=${t.id}`)}
+                    onClick={() => openRoute(t.routePath ?? `/ai-toolbox?item=${t.id}`, { id: t.id, agentKey: t.agentKey, name: t.name, icon: t.icon })}
                     className={`group relative shrink-0 overflow-hidden text-left active:opacity-60 transition-opacity ${hasArtwork ? 'flex flex-col justify-between' : 'flex items-center'}`}
                     style={hasArtwork
                       ? {
@@ -450,7 +451,7 @@ export default function MobileHomePage() {
               <button
                 key={row.key}
                 type="button"
-                onClick={() => navigate(row.route)}
+                onClick={() => openRoute(row.route)}
                 className="w-full flex items-center text-left active:opacity-60 transition-opacity"
                 style={{ gap: 12, padding: '10px 0', borderTop: idx > 0 ? `1px solid ${C.separator}` : undefined }}
               >

@@ -8,8 +8,9 @@
 | feat | prd-admin | 新增 `inkPalette` 守卫测试：受管首页、品牌 token（按 token 名圈定，语义色槽除外）出现紫/靛/品红色相（hex / rgb() / hsl() / Tailwind 紫系类）直接 CI 红；另有一条守卫禁止「accent 当底 + 白字」的 3.12:1 组合 |
 | refactor | prd-admin | `lib/tileAccent` 色带收敛为 `INK_HUES` 八色相并降饱和，新增 `Accent.text`（明度随主题 65%/36%）修类别色文字在浅色纸面发虚；`lib/agentAccent`、`lib/appStoreTokens` 的移动端色板同源换笔 |
 | refactor | prd-admin | `formatCompactNumber` 收敛到 `lib/homePulse` 单一实现，移动端改为转出 |
-| refactor | prd-admin | 首页跳转收成唯一出口 `openRoute`，带入口信息的调用自动记打开次数——记账点漏一个，那条路径的启动就永远不计入「你常用的」 |
+| refactor | prd-admin | 首页跳转收成唯一出口 `lib/useTrackedNavigate`，**桌面与移动首页共用**：带入口信息的调用自动记打开次数。记账点漏一个，那条路径的启动就永远不计入「你常用的」——桌面收敛后手机上点开的智能体仍不计数，于是桌面的「你常用的」漏掉了用户手机上最常用的那些 |
 | fix | prd-admin | 首页点击补记打开次数：此前只有命令面板（⌘K）记账，瓦片点击与在办工作条都不算数，「你常用的」对只用首页的人永远不出现 |
+| fix | prd-admin | 海鲜市场技能文件树的选中行是 accent 实心底配 `--text-primary`（暗 2.92:1 / 浅 3.13:1），迁到按钮 token 对；对比度判据同批改为读 `color:` 的整个值——真实写法是三元 `color: active ? ... : ...`，按"紧邻"判会整条漏掉 |
 | fix | prd-admin | 9 处主操作面从「`--accent-primary` 当底 + 硬编码白字」（暗色 3.12:1）迁到 `--button-primary-bg/fg` 这对已被守卫钉住的 token |
 | fix | prd-admin | 百宝箱两处用户气泡（基础能力 / 快速创建向导）此前是 accent 渐变底 + `--text-primary` 字，暗色只有 2.92:1，同迁到按钮 token 对；渐变里引用的 `--accent-secondary` 全仓从未定义，一并去掉 |
 | fix | prd-admin | 色带守卫补两个漏判口子：tokens.css 改按「完整声明」解析（逐行正则会整条跳过 `--home-ambient-background` 这种多行值，往首页氛围光塞紫色照样绿）；「accent 底 + 浅色字」判据改为按括号深度读值 + 按 JSX 开标签配对（原判据读到第一个逗号就断，渐变形态全漏；邻近窗口配对则会把兄弟元素的文字色误报 3 处） |

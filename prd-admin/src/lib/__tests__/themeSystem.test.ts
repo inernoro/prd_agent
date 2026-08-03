@@ -353,15 +353,19 @@ describe('主题系统契约', () => {
     expect(launcher).toContain("from '@/lib/homePulse'");
   });
 
-  it('首页跳转只有一个出口，打开次数不会漏记', () => {
-    const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
-
+  it('两端跳转都只有一个出口，打开次数不会漏记', () => {
     // 「你常用的」只认 agentSwitcherStore 的打开次数：漏一个记账点，那条路径
-    // 的启动就永远不计数（历史上先漏瓦片点击、再漏在办工作条，各被 review 抓一次）。
-    // 结构上焊死：本文件只允许有一个 navigate( 调用，且它在 openRoute 里。
-    const navigateCalls = launcher.match(/\bnavigate\(/g) ?? [];
-    expect(navigateCalls).toHaveLength(1);
-    expect(launcher).toMatch(/const openRoute = useCallback\([\s\S]*?addRecentVisit\([\s\S]*?navigate\(route\)/);
+    // 的启动就永远不计数（历史上先漏桌面瓦片、再漏在办工作条，最后漏掉整个
+    // 移动首页——桌面收敛成一个出口之后，手机上点开的智能体照旧不计数）。
+    // 结构上焊死：两个首页都不许出现裸 navigate(，一律走 useTrackedNavigate。
+    const tracker = fs.readFileSync(path.resolve(TEST_DIR, '../useTrackedNavigate.ts'), 'utf8');
+    expect(tracker).toMatch(/addRecentVisit\([\s\S]*?\}\);[\s\S]*?navigate\(route\)/);
+
+    for (const [name, file] of [['桌面首页', AGENT_LAUNCHER_PATH], ['移动首页', MOBILE_HOME_PATH]] as const) {
+      const source = fs.readFileSync(file, 'utf8');
+      expect(source, `${name}没走带记账的跳转出口`).toContain('useTrackedNavigate');
+      expect(source.match(/\bnavigate\(/g) ?? [], `${name}还有裸 navigate 调用，那条路径的启动不会计数`).toHaveLength(0);
+    }
   });
 
   it('首页取数失败不许渲染成「你什么都没干过」', () => {

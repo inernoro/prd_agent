@@ -266,9 +266,23 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
      * `color:` 后面也能命中，已用探针验过）。但它长得像"class 名嵌在 color: 分支里"，
      * review 时被误读过一次——判据被人读错和判据真的漏，代价一样大，所以拆成两条。
      */
-    const INLINE_LIGHT_FG = /color\s*:\s*['"`]?(?:#fff(?:fff)?|white|var\(--text-primary)/i;
+    const COLOR_KEY = /\bcolor\s*:\s*/gi;
+    const LIGHT_VALUE = /#fff(?:fff)?\b|['"`]white['"`]|var\(--text-primary/i;
     const CLASS_LIGHT_FG = /\btext-(?:white|token-primary)\b/i;
-    const LIGHT_FG = { test: (tag: string) => INLINE_LIGHT_FG.test(tag) || CLASS_LIGHT_FG.test(tag) };
+    /**
+     * 前景色判定读的是 `color:` 的**整个值**，不是紧跟其后的那几个字符。
+     * 真实写法常是三元：`color: active ? 'var(--text-primary)' : 'var(--text-secondary)'`——
+     * 按"紧邻"判会整条漏掉（SkillContentBrowser 的选中行就是这么溜过去的）。
+     */
+    const LIGHT_FG = {
+      test: (tag: string) => {
+        if (CLASS_LIGHT_FG.test(tag)) return true;
+        for (const match of tag.matchAll(COLOR_KEY)) {
+          if (LIGHT_VALUE.test(readValue(tag, (match.index ?? 0) + match[0].length))) return true;
+        }
+        return false;
+      },
+    };
 
     /**
      * 取 accent 底色所在那个 JSX 开标签的属性区。
@@ -319,7 +333,9 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     const SAFE_ALPHA_TINT = `<div className="text-token-primary" style={{ background: 'rgba(var(--accent-primary-rgb), 0.14)' }}>x</div>`;
     const SAFE_SIBLING = `<div style={{ color: 'var(--text-primary)' }}><span style={{ background: 'var(--accent-primary)' }} /></div>`;
 
-    for (const [name, snippet] of [['class 白字', CLASS_WHITE], ['class 主文字色', CLASS_TOKEN], ['inline 白字', INLINE_WHITE], ['渐变底 + class 主文字色', GRADIENT_CLASS]] as const) {
+    const TERNARY_FG = `<button style={{ background: active ? 'var(--accent-primary)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}>x</button>`;
+
+    for (const [name, snippet] of [['class 白字', CLASS_WHITE], ['class 主文字色', CLASS_TOKEN], ['inline 白字', INLINE_WHITE], ['渐变底 + class 主文字色', GRADIENT_CLASS], ['三元里的浅色字', TERNARY_FG]] as const) {
       expect(offendingLines(snippet), `判据漏了「${name}」这种写法`).toHaveLength(1);
     }
     for (const [name, snippet] of [['按钮 token 对', SAFE_TOKEN_PAIR], ['accent 底 + 深墨字', SAFE_DARK_FG], ['accent 透明底', SAFE_ALPHA_TINT], ['兄弟元素的文字色', SAFE_SIBLING]] as const) {
