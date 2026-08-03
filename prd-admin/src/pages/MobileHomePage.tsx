@@ -113,6 +113,15 @@ export default function MobileHomePage() {
     { label: 'Token', value: data.stats?.totalTokens ?? 0, color: C.orange, series: daily.map((d) => d.tokens) },
   ];
 
+  // 取不到 ≠ 为零。服务挂了还显示四个 0 + 「使用后动态会出现在这里」，
+  // 等于当着老用户面说他什么都没干过（同桌面首页，判据在 lib/homePulse）。
+  const statsUnavailable = data.statsFailed && !data.stats;
+  const statText = (value: number) => {
+    if (data.loading && !data.stats) return '—';
+    if (statsUnavailable) return '--';
+    return formatCompactNumber(value);
+  };
+
   const cardStyle = { background: C.card, border: `1px solid ${C.hairline}`, borderRadius: 12 } as const;
 
   return (
@@ -254,11 +263,12 @@ export default function MobileHomePage() {
                       letterSpacing: '-0.02em',
                       lineHeight: 1,
                       // 0 值不上鲜艳色——亮蓝色的"0"比灰色的"0"更扎眼
-                      color: s.value > 0 ? s.color : C.labelTertiary,
+                      color: statsUnavailable ? C.labelTertiary : s.value > 0 ? s.color : C.labelTertiary,
                       fontVariantNumeric: 'tabular-nums',
                     }}
+                    title={statsUnavailable ? '用量数据没取到，不代表用量为零' : undefined}
                   >
-                    {data.loading ? '—' : formatCompactNumber(s.value)}
+                    {statText(s.value)}
                   </span>
                   {s.series.length > 0 && <MiniBars series={s.series} color={s.color} trackColor={C.pillBg} />}
                 </div>
@@ -270,9 +280,20 @@ export default function MobileHomePage() {
         {/* ── 我的动态 ── */}
         <Section C={C} title="我的动态" action={{ label: '全部', onClick: () => navigate('/my-assets') }}>
           <div style={{ ...cardStyle, padding: '4px 14px' }}>
-            {data.feed.length === 0 ? (
+            {data.feedFailed && data.feed.length === 0 ? (
               <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, padding: '12px 0' }}>
-                使用知识库、周报、生图或缺陷后，动态会出现在这里
+                动态暂时取不到（网络或服务不可用）。
+                <button
+                  type="button"
+                  onClick={data.reload}
+                  style={{ marginLeft: 6, color: C.blue, fontWeight: 600, textDecoration: 'underline' }}
+                >
+                  重试
+                </button>
+              </div>
+            ) : data.feed.length === 0 ? (
+              <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, padding: '12px 0' }}>
+                {data.loading ? '正在读取你的动态…' : '使用知识库、周报、生图或缺陷后，动态会出现在这里'}
               </div>
             ) : (
               data.feed.slice(0, 6).map((item, idx) => (

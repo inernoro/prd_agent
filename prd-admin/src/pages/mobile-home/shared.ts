@@ -19,9 +19,10 @@ import {
   Store,
   type LucideIcon,
 } from 'lucide-react';
-import { getMobileFeed, getMobileStats, listRecentWork } from '@/services';
+import { listRecentWork } from '@/services';
 import type { RecentWorkItemDto } from '@/services';
 import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
+import { useHomePulse } from '@/lib/homePulse';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 
 /* ───────────── 快捷入口（首页与早报共用同一份注册，仅样式分叉） ───────────── */
@@ -78,13 +79,23 @@ export interface MobileHomeData {
   recentWork: RecentWorkItemDto[];
   changelogUnread: number;
   loading: boolean;
+  /** 用量没取到（网络 / 服务不可用），不是「用量为零」 */
+  statsFailed: boolean;
+  /** 动态没取到，不是「还没有动态」 */
+  feedFailed: boolean;
+  /** 重新拉一次「近 7 日 + 我的动态」 */
+  reload: () => void;
 }
 
+/**
+ * 移动首页数据。近 7 日与我的动态直接复用 `lib/homePulse`——
+ * 两端同一个 hook，数字对不上和「失败被渲染成空」这两类问题只需要修一处。
+ * 「继续上次」是移动端独有的，留在本地。
+ */
 export function useMobileHomeData(): MobileHomeData {
-  const [feed, setFeed] = useState<FeedItem[]>([]);
-  const [stats, setStats] = useState<MobileStats | null>(null);
+  const pulse = useHomePulse(8);
   const [recentWork, setRecentWork] = useState<RecentWorkItemDto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [recentLoading, setRecentLoading] = useState(true);
   const loadCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
   const changelogUnread = useChangelogStore(selectUnreadCount);
 
@@ -92,23 +103,26 @@ export function useMobileHomeData(): MobileHomeData {
     let alive = true;
     void loadCurrentWeek();
     (async () => {
-      const [feedRes, statsRes, recentRes] = await Promise.all([
-        getMobileFeed({ limit: 8 }),
-        getMobileStats({ days: 7 }),
-        listRecentWork({ limit: 8 }),
-      ]);
+      const recentRes = await listRecentWork({ limit: 8 });
       if (!alive) return;
-      if (feedRes.success) setFeed(feedRes.data.items ?? []);
-      if (statsRes.success) setStats(statsRes.data);
       if (recentRes.success) setRecentWork(recentRes.data.items ?? []);
-      setLoading(false);
+      setRecentLoading(false);
     })();
     return () => {
       alive = false;
     };
   }, [loadCurrentWeek]);
 
-  return { feed, stats, recentWork, changelogUnread, loading };
+  return {
+    feed: pulse.feed,
+    stats: pulse.stats,
+    recentWork,
+    changelogUnread,
+    loading: pulse.loading || recentLoading,
+    statsFailed: pulse.statsFailed,
+    feedFailed: pulse.feedFailed,
+    reload: pulse.reload,
+  };
 }
 
 /* ───────────── 格式化 ───────────── */

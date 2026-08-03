@@ -44,6 +44,8 @@ const MOBILE_TAB_BAR_PATH = path.resolve(TEST_DIR, '../../components/ui/MobileTa
 const MOBILE_FAB_PATH = path.resolve(TEST_DIR, '../../components/mobile/MobileFab.tsx');
 const APP_STORE_TOKENS_PATH = path.resolve(TEST_DIR, '../appStoreTokens.ts');
 const AGENT_LAUNCHER_PATH = path.resolve(TEST_DIR, '../../pages/AgentLauncherPage.tsx');
+const MOBILE_HOME_PATH = path.resolve(TEST_DIR, '../../pages/MobileHomePage.tsx');
+const MOBILE_HOME_SHARED_PATH = path.resolve(TEST_DIR, '../../pages/mobile-home/shared.ts');
 const HOME_LAUNCHER_STYLES_PATH = path.resolve(TEST_DIR, '../../styles/home-launcher.css');
 const ADAPTIVE_SHARED_CONTROL_PATHS = [
   '../../components/FeatureModuleSearchSelect.tsx',
@@ -373,6 +375,16 @@ describe('主题系统契约', () => {
     expect(launcher).toMatch(/statsUnavailable[\s\S]{0,200}?return '--'/);
     // 动态的失败态要给重试，不能只是换句话说
     expect(launcher).toMatch(/pulse\.feedFailed[\s\S]{0,400}?onClick=\{pulse\.reload\}/);
+
+    // 移动端必须走同一个 hook：各拉各的就会出现「桌面修好了、手机还在骗人」，
+    // 也会让「两端共用一份数据」这句话变成假话（changelog 曾据此写错）。
+    const mobileShared = fs.readFileSync(MOBILE_HOME_SHARED_PATH, 'utf8');
+    expect(mobileShared).toMatch(/import \{ useHomePulse \} from '@\/lib\/homePulse'/);
+    expect(mobileShared).not.toMatch(/getMobileStats\(|getMobileFeed\(/);
+
+    const mobileHome = fs.readFileSync(MOBILE_HOME_PATH, 'utf8');
+    expect(mobileHome).toContain('data.statsFailed');
+    expect(mobileHome).toMatch(/data\.feedFailed[\s\S]{0,500}?onClick=\{data\.reload\}/);
   });
 
   it('品牌主渐变的每一档都能撑住它自己的文字色', async () => {
