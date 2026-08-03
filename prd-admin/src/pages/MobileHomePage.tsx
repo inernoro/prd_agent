@@ -328,6 +328,20 @@ export default function MobileHomePage() {
                 </button>
               ))
             )}
+            {/* 留着上一轮的列表时也得说清它是旧的：默不作声地把过期数据当现状
+                展示，和显示 0 是同一类谎话，只是更难被发现。 */}
+            {data.feedFailed && data.feed.length > 0 && (
+              <div style={{ ...AS_TYPE.caption, color: C.labelSecondary, padding: '10px 0 12px' }}>
+                没能刷新，这份是上一次取到的。
+                <button
+                  type="button"
+                  onClick={data.reload}
+                  style={{ marginLeft: 6, color: C.blue, fontWeight: 600, textDecoration: 'underline' }}
+                >
+                  重试
+                </button>
+              </div>
+            )}
           </div>
         </Section>
 

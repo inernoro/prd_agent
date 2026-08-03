@@ -378,6 +378,9 @@ describe('主题系统契约', () => {
     // 两个端点各自成败：用量单独挂了也要有看得见的说明 + 重试。
     // 只挂 title 不算——触屏没有悬停，等于什么都没说。
     expect(launcher).toMatch(/pulse\.statsFailed && \([\s\S]{0,400}?onClick=\{pulse\.reload\}/);
+    // 留着旧列表时也要说清它是旧的：默不作声地把过期数据当现状展示，
+    // 和显示 0 是同一类谎话，只是更难被发现。
+    expect(launcher).toMatch(/pulse\.feedFailed && pulse\.feed\.length > 0 && \([\s\S]{0,400}?onClick=\{pulse\.reload\}/);
 
     // 移动端必须走同一个 hook：各拉各的就会出现「桌面修好了、手机还在骗人」，
     // 也会让「两端共用一份数据」这句话变成假话（changelog 曾据此写错）。
@@ -387,7 +390,8 @@ describe('主题系统契约', () => {
 
     const mobileHome = fs.readFileSync(MOBILE_HOME_PATH, 'utf8');
     expect(mobileHome).toMatch(/data\.statsFailed && \([\s\S]{0,500}?onClick=\{data\.reload\}/);
-    expect(mobileHome).toMatch(/data\.feedFailed[\s\S]{0,500}?onClick=\{data\.reload\}/);
+    expect(mobileHome).toMatch(/data\.feedFailed && data\.feed\.length === 0 \?[\s\S]{0,600}?onClick=\{data\.reload\}/);
+    expect(mobileHome).toMatch(/data\.feedFailed && data\.feed\.length > 0 && \([\s\S]{0,500}?onClick=\{data\.reload\}/);
   });
 
   it('品牌主渐变的每一档都能撑住它自己的文字色', async () => {

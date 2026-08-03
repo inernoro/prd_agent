@@ -879,6 +879,14 @@ export default function AgentLauncherPage() {
                       ))}
                     </ul>
                   )}
+                  {/* 留着上一轮的列表时也得说清它是旧的：默不作声地把过期数据
+                      当现状展示，和显示 0 是同一类谎话，只是更难被发现。 */}
+                  {pulse.feedFailed && pulse.feed.length > 0 && (
+                    <p className="home-desk-empty">
+                      没能刷新，这份是上一次取到的。
+                      <button type="button" className="home-desk-retry" onClick={pulse.reload}>重试</button>
+                    </p>
+                  )}
                 </section>
               </div>
             )}
