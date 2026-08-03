@@ -489,7 +489,13 @@ export function buildWidgetScript(
     return window.innerWidth<=640?88:12;
   }
 
-  var pos={x:12,y:defaultWidgetBottom()};
+  function defaultWidgetLeft(){
+    // Desktop previews commonly reserve a 64px fixed rail on the left. Keep the
+    // CDS badge outside that rail so it cannot intercept profile/navigation clicks.
+    return window.innerWidth<=640?12:76;
+  }
+
+  var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};
   var dragState=null;
 
   function onMouseDown(e){

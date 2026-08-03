@@ -1397,6 +1397,7 @@ export default function AppShell() {
 
           {/* ── 底部用户区域 ── */}
           <div
+            data-app-sidebar-account
             className={cn(
               'shrink-0',
               collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'

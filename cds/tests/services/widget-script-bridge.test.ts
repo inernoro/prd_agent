@@ -27,6 +27,12 @@ describe('widget bridge polling gate', () => {
     const script = buildWidgetScript('branch-a', 'branch/a');
     expect(script).toContain('function defaultWidgetBottom(){');
     expect(script).toContain('return window.innerWidth<=640?88:12;');
-    expect(script).toContain('var pos={x:12,y:defaultWidgetBottom()};');
+    expect(script).toContain('var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};');
+  });
+
+  it('keeps the preview widget outside the common desktop navigation rail', () => {
+    const script = buildWidgetScript('branch-a', 'branch/a');
+    expect(script).toContain('function defaultWidgetLeft(){');
+    expect(script).toContain('return window.innerWidth<=640?12:76;');
   });
 });
