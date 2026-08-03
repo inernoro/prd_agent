@@ -259,8 +259,16 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
       }
       return content.slice(from, limit);
     };
-    /** 与之配对的浅色前景：白字 / --text-primary 类 */
-    const LIGHT_FG = /(?:color\s*:\s*['"`]?(?:#fff(?:fff)?|white|var\(--text-primary)|text-white|text-token-primary)/i;
+    /**
+     * 与之配对的浅色前景，两种写法各判各的。
+     *
+     * 原来写成一条正则，顶层 `|` 让 class 名独立成支（`text-white` 不需要跟在
+     * `color:` 后面也能命中，已用探针验过）。但它长得像"class 名嵌在 color: 分支里"，
+     * review 时被误读过一次——判据被人读错和判据真的漏，代价一样大，所以拆成两条。
+     */
+    const INLINE_LIGHT_FG = /color\s*:\s*['"`]?(?:#fff(?:fff)?|white|var\(--text-primary)/i;
+    const CLASS_LIGHT_FG = /\btext-(?:white|token-primary)\b/i;
+    const LIGHT_FG = { test: (tag: string) => INLINE_LIGHT_FG.test(tag) || CLASS_LIGHT_FG.test(tag) };
 
     /**
      * 取 accent 底色所在那个 JSX 开标签的属性区。
@@ -287,17 +295,45 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
       return content.slice(start, end);
     };
 
+    /** 一段源码里所有「accent 当底 + 同一开标签上写着浅色字」的行号 */
+    const offendingLines = (content: string): number[] => {
+      const lines: number[] = [];
+      for (const match of content.matchAll(BG_KEY)) {
+        const at = (match.index ?? 0) + match[0].length;
+        if (!ACCENT_IN_VALUE.test(readValue(content, at))) continue;
+        if (!LIGHT_FG.test(openingTagAround(content, at))) continue;
+        lines.push(content.slice(0, at).split('\n').length);
+      }
+      return lines;
+    };
+
+    // 判据自查：两种前景写法都得抓到，别的写法不许误报。
+    // 这几条是把「我以为它能抓」变成「它确实抓得到」——review 里对这条判据
+    // 的能力有过分歧，与其解释，不如让判据自己作证。
+    const CLASS_WHITE = `<button className="px-2 text-white" style={{ background: 'var(--accent-primary)' }}>x</button>`;
+    const CLASS_TOKEN = `<button className="px-2 text-token-primary" style={{ background: 'var(--accent-primary)' }}>x</button>`;
+    const INLINE_WHITE = `<button style={{ background: 'var(--accent-primary)', color: '#fff' }}>x</button>`;
+    const GRADIENT_CLASS = `<div className="text-token-primary" style={{ background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-primary) 100%)' }}>x</div>`;
+    const SAFE_TOKEN_PAIR = `<button style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>x</button>`;
+    const SAFE_DARK_FG = `<button className="px-2" style={{ background: 'var(--accent-primary)', color: 'var(--button-primary-fg)' }}>x</button>`;
+    const SAFE_ALPHA_TINT = `<div className="text-token-primary" style={{ background: 'rgba(var(--accent-primary-rgb), 0.14)' }}>x</div>`;
+    const SAFE_SIBLING = `<div style={{ color: 'var(--text-primary)' }}><span style={{ background: 'var(--accent-primary)' }} /></div>`;
+
+    for (const [name, snippet] of [['class 白字', CLASS_WHITE], ['class 主文字色', CLASS_TOKEN], ['inline 白字', INLINE_WHITE], ['渐变底 + class 主文字色', GRADIENT_CLASS]] as const) {
+      expect(offendingLines(snippet), `判据漏了「${name}」这种写法`).toHaveLength(1);
+    }
+    for (const [name, snippet] of [['按钮 token 对', SAFE_TOKEN_PAIR], ['accent 底 + 深墨字', SAFE_DARK_FG], ['accent 透明底', SAFE_ALPHA_TINT], ['兄弟元素的文字色', SAFE_SIBLING]] as const) {
+      expect(offendingLines(snippet), `判据误报了「${name}」`).toEqual([]);
+    }
+
     const scan = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) { scan(full); continue; }
         if (!/\.tsx?$/.test(entry.name) || full.includes('__tests__')) continue;
         const content = fs.readFileSync(full, 'utf8');
-        for (const match of content.matchAll(BG_KEY)) {
-          const at = (match.index ?? 0) + match[0].length;
-          if (!ACCENT_IN_VALUE.test(readValue(content, at))) continue;
-          if (!LIGHT_FG.test(openingTagAround(content, at))) continue;
-          offenders.push(`${full.slice(SRC.length + 1)}:${content.slice(0, at).split('\n').length}`);
+        for (const line of offendingLines(content)) {
+          offenders.push(`${full.slice(SRC.length + 1)}:${line}`);
         }
       }
     };

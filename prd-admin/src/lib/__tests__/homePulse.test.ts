@@ -17,6 +17,9 @@ import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_PATH = path.resolve(TEST_DIR, '../../app/App.tsx');
+const FEED_CONTROLLER_PATH = path.resolve(TEST_DIR, '../../../../prd-api/src/PrdAgent.Api/Controllers/Api/MobileDashboardController.cs');
+const LAUNCHER_PATH = path.resolve(TEST_DIR, '../../pages/AgentLauncherPage.tsx');
+const MOBILE_HOME_PATH = path.resolve(TEST_DIR, '../../pages/MobileHomePage.tsx');
 
 const STATS = { aiCalls: 12, imageGenerations: 3, defects: 1, totalTokens: 45678 } as MobileStats;
 const ITEMS = [{ id: 'a', type: 'document', title: '一条动态', updatedAt: '2026-08-01T00:00:00Z', navigateTo: '/x' }] as unknown as FeedItem[];
@@ -156,6 +159,41 @@ describe('动态流不许出现点了没反应的死链', () => {
     expect(redirected.length, 'App.tsx 里没解析到重定向路由，判据已经失效').toBeGreaterThan(0);
     for (const route of new Set(redirected)) {
       expect(RETIRED_ROUTES, `App.tsx 把 ${route} 重定向回首页，但动态流还会把它当可点条目`).toContain(route);
+    }
+  });
+});
+
+describe('空态文案不许许下端点兑现不了的承诺', () => {
+  /** 后端真正会产出的动态类型 → 空态文案里对应的说法 */
+  const SOURCE_COPY: Record<string, string> = {
+    'visual-workspace': '配图',
+    defect: '缺陷',
+  };
+  /** 端点不产出、但历史文案点过名的来源——出现在文案里就是空头支票 */
+  const NOT_A_SOURCE = ['知识库', '周报'];
+
+  it('端点产出的类型与这里登记的一致', () => {
+    const controller = fs.readFileSync(FEED_CONTROLLER_PATH, 'utf8');
+    const feedBody = controller.slice(controller.indexOf('GetFeed'), controller.indexOf('GetStats'));
+    const emitted = new Set([...feedBody.matchAll(/type = "([a-z-]+)"/g)].map((m) => m[1]));
+    expect(emitted.size, 'GetFeed 里没解析到 type，判据已经失效').toBeGreaterThan(0);
+    // 端点加了新来源却没更新文案登记表，这条会先红，提醒去把空态文案一起改
+    expect([...emitted].sort()).toEqual(Object.keys(SOURCE_COPY).sort());
+  });
+
+  it('两端空态文案只承诺端点真的会返回的东西', () => {
+    // 「用过知识库、周报、生图或缺陷之后，动态会出现在这里」——用户照做两件，
+    // 动态照旧空着。空态文案是一句承诺，兑现不了就是骗人，和显示 0 同源。
+    for (const [name, file] of [['桌面首页', LAUNCHER_PATH], ['移动首页', MOBILE_HOME_PATH]] as const) {
+      const source = fs.readFileSync(file, 'utf8');
+      // 限定不跨行：否则会从某个早先的引号一路吃到注释里那句同名文案
+      const empty = source.match(/'[^'\n]*动态会出现在这里[^'\n]*'/)?.[0];
+      expect(empty, `${name}没找到空态文案，判据失效`).toBeTruthy();
+      for (const word of NOT_A_SOURCE) {
+        expect(empty, `${name}空态文案承诺了「${word}」，但 GetFeed 根本不查这个来源`).not.toContain(word);
+      }
+      // 至少点名一个真来源，别改成一句什么都没说的空话
+      expect(Object.values(SOURCE_COPY).some((word) => empty!.includes(word)), `${name}空态文案没告诉用户做什么才会有动态`).toBe(true);
     }
   });
 });

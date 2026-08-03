@@ -313,7 +313,7 @@ export default function MobileHomePage() {
               </div>
             ) : data.feed.length === 0 ? (
               <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, padding: '12px 0' }}>
-                {data.loading ? '正在读取你的动态…' : '使用知识库、周报、生图或缺陷后，动态会出现在这里'}
+                {data.loading ? '正在读取你的动态…' : '生成配图或提交缺陷后，动态会出现在这里'}
               </div>
             ) : (
               data.feed.slice(0, 6).map((item, idx) => (
