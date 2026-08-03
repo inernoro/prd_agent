@@ -224,6 +224,12 @@ public class SubtitleGenerationProcessorTests
             {
                 Success = true,
                 StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"米多有多年行业经验。当前报价合理。\"}}]}",
+            },
+            new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
                 Content = "{\"choices\":[{\"message\":{\"content\":\"[说话人1] 米多有多年行业经验。\\n[说话人2] 当前报价合理。\"}}]}",
             },
         ]);
@@ -252,12 +258,55 @@ public class SubtitleGenerationProcessorTests
         var segments = await task;
 
         segments.Select(segment => segment.SpeakerId).ShouldBe(["说话人1", "说话人2"]);
-        requests.Count.ShouldBe(2);
+        requests.Count.ShouldBe(3);
         requests[0].RequestBody!["temperature"]!.GetValue<int>().ShouldBe(0);
         requests[1].RequestBody!["messages"]![0]!["content"]![0]!["text"]!
             .GetValue<string>().ShouldContain("上一次识别可能误判为无人声");
-        requests[0].RequestBody!.ToJsonString().ShouldContain(Convert.ToBase64String(audioBytes));
-        requests[1].RequestBody!.ToJsonString().ShouldContain(Convert.ToBase64String(audioBytes));
+        requests[2].RequestBody!["messages"]![0]!["content"]![0]!["text"]!
+            .GetValue<string>().ShouldContain("粗转原文如下");
+        foreach (var request in requests)
+            request.RequestBody!.ToJsonString().ShouldContain(Convert.ToBase64String(audioBytes));
+    }
+
+    [Fact]
+    public async Task ChatAudio_ShouldKeepConfirmedTranscript_WhenDiarizationFails()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.SetupSequence(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"已经确认的完整原文\"}}]}",
+            })
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"无法区分\"}}]}",
+            });
+
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeViaChatAudioAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object[]
+            {
+                BuildRun(),
+                new byte[] { 1, 2, 3 },
+                new GatewayModelResolution { ActualModel = "openai/gpt-audio" },
+            })!;
+
+        var segments = await task;
+
+        segments.Count.ShouldBe(1);
+        segments[0].Text.ShouldBe("已经确认的完整原文");
+        segments[0].SpeakerId.ShouldBe("说话人1");
     }
 
     [Fact]

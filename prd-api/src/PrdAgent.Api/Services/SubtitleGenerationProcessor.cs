@@ -850,81 +850,21 @@ public class SubtitleGenerationProcessor
         byte[] audioBytes,
         GatewayModelResolution gwResolution)
     {
-        var base64 = Convert.ToBase64String(audioBytes);
+        GatewayRawResponse? lastResponse = null;
+        string? transcript = null;
         for (var attempt = 1; attempt <= 2; attempt++)
         {
-            var requestBody = new JsonObject
+            var result = await SendChatAudioTextAsync(
+                run,
+                audioBytes,
+                gwResolution,
+                BuildChatAudioPrompt(attempt));
+            lastResponse = result.Response;
+            if (!result.Text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
             {
-                ["model"] = gwResolution.ActualModel,
-                ["modalities"] = new JsonArray("text"),
-                ["temperature"] = 0,
-                ["messages"] = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["role"] = "user",
-                        ["content"] = new JsonArray
-                        {
-                            new JsonObject
-                            {
-                                ["type"] = "text",
-                                ["text"] = BuildChatAudioPrompt(attempt),
-                            },
-                            new JsonObject
-                            {
-                                ["type"] = "input_audio",
-                                ["input_audio"] = new JsonObject { ["data"] = base64, ["format"] = "wav" },
-                            },
-                        },
-                    },
-                },
-            };
-
-            var rawRequest = new GatewayRawRequest
-            {
-                AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
-                ModelType = ModelTypes.Asr,
-                EndpointPath = "/v1/chat/completions",
-                IsMultipart = false,
-                RequestBody = requestBody,
-                TimeoutSeconds = 600,
-                Context = new GatewayRequestContext { UserId = run.UserId },
-            };
-
-            using var _ = _llmCtx.BeginScope(new LlmRequestContext(
-                RequestId: run.Id,
-                GroupId: null,
-                SessionId: run.Id,
-                UserId: run.UserId,
-                ViewRole: null,
-                DocumentChars: null,
-                DocumentHash: null,
-                SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
-                RequestType: ModelTypes.Asr,
-                AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
-                ForceFullShadowSample: run.ForceFullShadowSample));
-
-            var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
-            if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
-            {
-                var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
-                throw new SubtitleAsrException(
-                    $"多模态 chat 音频转写调用失败: {detail}",
-                    BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["model"] = gwResolution.ActualModel ?? "" }));
+                transcript = result.Text.Trim();
+                break;
             }
-
-            var text = ExtractChatCompletionContent(rawResp.Content);
-            if (string.IsNullOrWhiteSpace(text))
-                throw new SubtitleAsrException(
-                    "多模态 chat 音频转写返回为空（模型可能拒答或响应格式异常）",
-                    BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
-                    {
-                        ["model"] = gwResolution.ActualModel ?? "",
-                        ["reason"] = "empty-content",
-                    }));
-
-            if (!text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
-                return ParseChatAudioSpeakerSegments(text);
 
             if (attempt == 1)
             {
@@ -933,17 +873,40 @@ public class SubtitleGenerationProcessor
                     run.Id);
                 continue;
             }
+        }
 
+        if (string.IsNullOrWhiteSpace(transcript))
             throw new SubtitleAsrException(
                 "未检测到有效语音内容：录音可能是静音、音量过低或没有人声。请靠近麦克风重新录制。",
-                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                BuildHttpDiagnostic(gwResolution, lastResponse, new Dictionary<string, object>
                 {
                     ["model"] = gwResolution.ActualModel ?? "",
                     ["reason"] = "no-speech",
                 }));
+
+        try
+        {
+            var diarized = await SendChatAudioTextAsync(
+                run,
+                audioBytes,
+                gwResolution,
+                BuildChatAudioDiarizationPrompt(transcript));
+            if (ContainsExplicitSpeakerLabel(diarized.Text))
+                return ParseChatAudioSpeakerSegments(diarized.Text);
+
+            _logger.LogWarning(
+                "[doc-store-agent] chat 音频角色增强未返回角色标签，保留已确认原文 run={RunId}",
+                run.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "[doc-store-agent] chat 音频角色增强失败，保留已确认原文 run={RunId}",
+                run.Id);
         }
 
-        throw new InvalidOperationException("音频转写复核未返回结果");
+        return new List<SubtitleSegment> { new(0, 0, transcript, "说话人1") };
     }
 
     internal static string BuildChatAudioPrompt(int attempt)
@@ -952,10 +915,101 @@ public class SubtitleGenerationProcessor
             ? "上一次识别可能误判为无人声。请从头到尾重新完整听取音频，确认所有可辨识的人声后再作答。"
             : string.Empty;
         return retryPrefix +
-               "请把这段音频逐字转写成文字，尽量一字不差保留原话，并根据不同声音区分说话人。" +
-               "每次说话必须单独一行，严格使用“[说话人1] 原话”“[说话人2] 原话”的格式；同一个声音始终使用同一个编号。" +
-               "即使只有一个说话人也必须标为[说话人1]。不要猜测真实姓名，不要任何解释、说明或前后缀。" +
+               "请把这段音频逐字转写成文字，尽量一字不差保留原话。只输出转写出的文字本身，不要任何解释、说明或前后缀。" +
                "只有完整音频从头到尾都没有任何可识别的人声（确为静音、空白或纯噪音）时，才只输出 NO_SPEECH。";
+    }
+
+    internal static string BuildChatAudioDiarizationPrompt(string transcript)
+    {
+        return "这段音频已经确认包含可识别的人声。请重新完整听取音频，根据不同声音把下面的粗转原文分成说话人段落。" +
+               "每次说话必须单独一行，严格使用“[说话人1] 原话”“[说话人2] 原话”的格式；同一个声音始终使用同一个编号。" +
+               "不要猜测真实姓名，不要总结、解释、增删或改写原话，也不要输出 NO_SPEECH。" +
+               "如果确实无法区分声音，使用[说话人1]标记全部原文。粗转原文如下：\n" + transcript;
+    }
+
+    internal static bool ContainsExplicitSpeakerLabel(string text)
+    {
+        return text.Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Any(line => TryParseSpeakerLine(line) != null);
+    }
+
+    private async Task<(string Text, GatewayRawResponse Response)> SendChatAudioTextAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        GatewayModelResolution gwResolution,
+        string prompt)
+    {
+        var requestBody = new JsonObject
+        {
+            ["model"] = gwResolution.ActualModel,
+            ["modalities"] = new JsonArray("text"),
+            ["temperature"] = 0,
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray
+                    {
+                        new JsonObject { ["type"] = "text", ["text"] = prompt },
+                        new JsonObject
+                        {
+                            ["type"] = "input_audio",
+                            ["input_audio"] = new JsonObject
+                            {
+                                ["data"] = Convert.ToBase64String(audioBytes),
+                                ["format"] = "wav",
+                            },
+                        },
+                    },
+                },
+            },
+        };
+        var rawRequest = new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelType = ModelTypes.Asr,
+            EndpointPath = "/v1/chat/completions",
+            IsMultipart = false,
+            RequestBody = requestBody,
+            TimeoutSeconds = 600,
+            Context = new GatewayRequestContext { UserId = run.UserId },
+        };
+
+        using var _ = _llmCtx.BeginScope(new LlmRequestContext(
+            RequestId: run.Id,
+            GroupId: null,
+            SessionId: run.Id,
+            UserId: run.UserId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
+            RequestType: ModelTypes.Asr,
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ForceFullShadowSample: run.ForceFullShadowSample));
+
+        var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
+        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+        {
+            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+            throw new SubtitleAsrException(
+                $"多模态 chat 音频转写调用失败: {detail}",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["model"] = gwResolution.ActualModel ?? "" }));
+        }
+
+        var text = ExtractChatCompletionContent(rawResp.Content);
+        if (string.IsNullOrWhiteSpace(text))
+            throw new SubtitleAsrException(
+                "多模态 chat 音频转写返回为空（模型可能拒答或响应格式异常）",
+                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                {
+                    ["model"] = gwResolution.ActualModel ?? "",
+                    ["reason"] = "empty-content",
+                }));
+        return (text, rawResp);
     }
 
     internal static List<SubtitleSegment> ParseChatAudioSpeakerSegments(string text)
