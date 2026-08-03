@@ -110,7 +110,7 @@ public class SubtitleGenerationProcessorTests
                           {
                             "text": "第一句字幕",
                             "segments": [
-                              { "start": 1.0, "end": 2.5, "text": "第一句字幕" }
+                              { "start": 1.0, "end": 2.5, "text": "第一句字幕", "speaker": "0" }
                             ]
                           }
                           """
@@ -175,6 +175,7 @@ public class SubtitleGenerationProcessorTests
         segments[0].StartSec.ShouldBe(1);
         segments[0].EndSec.ShouldBe(2.5);
         segments[0].Text.ShouldBe("第一句字幕");
+        segments[0].SpeakerId.ShouldBe("0");
     }
 
     [Fact]

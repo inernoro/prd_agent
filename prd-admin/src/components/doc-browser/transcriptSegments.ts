@@ -11,6 +11,8 @@ export type TranscriptSegment = {
   /** 结束秒；无时间戳为 -1 */
   end: number;
   text: string;
+  /** ASR 说话人标签；旧录音或单人录音为空。 */
+  speaker?: string;
 };
 
 export type SummaryModule = {
@@ -20,12 +22,31 @@ export type SummaryModule = {
   markdown: string;
 };
 
-const TS_LINE_RE = /^\*\*\[(\d{1,2}(?::\d{2}){1,2})\s*-\s*(\d{1,2}(?::\d{2}){1,2})\]\*\*\s*(.+)$/;
+export type RecordingAnswerPart =
+  | { kind: 'text'; text: string }
+  | { kind: 'citation'; label: string; start: number };
+
+const TS_LINE_RE = /^\*\*\[(\d{1,2}(?::\d{2}){1,2})\s*-\s*(\d{1,2}(?::\d{2}){1,2})\]\*\*\s*(?:\[([^\]]+)\]\s*)?(.+)$/;
 
 function toSeconds(t: string): number {
   const parts = t.split(':').map(Number);
   if (parts.some(Number.isNaN)) return -1;
   return parts.reduce((acc, p) => acc * 60 + p, 0);
+}
+
+/** 把智能问答中的 [00:12-00:18] 引用变为播放器可跳转的结构。 */
+export function parseRecordingAnswerParts(answer: string): RecordingAnswerPart[] {
+  const citation = /\[(\d{1,2}(?::\d{2}){1,2})(?:\s*-\s*(\d{1,2}(?::\d{2}){1,2}))?\]/g;
+  const parts: RecordingAnswerPart[] = [];
+  let cursor = 0;
+  for (const match of answer.matchAll(citation)) {
+    const index = match.index ?? 0;
+    if (index > cursor) parts.push({ kind: 'text', text: answer.slice(cursor, index) });
+    parts.push({ kind: 'citation', label: match[0], start: toSeconds(match[1]) });
+    cursor = index + match[0].length;
+  }
+  if (cursor < answer.length) parts.push({ kind: 'text', text: answer.slice(cursor) });
+  return parts;
 }
 
 /**
@@ -46,7 +67,12 @@ export function parseTranscriptSegments(md: string): TranscriptSegment[] {
     if (!line) continue;
     const m = TS_LINE_RE.exec(line);
     if (m) {
-      timed.push({ start: toSeconds(m[1]), end: toSeconds(m[2]), text: m[3].trim() });
+      timed.push({
+        start: toSeconds(m[1]),
+        end: toSeconds(m[2]),
+        speaker: m[3]?.trim() || undefined,
+        text: m[4].trim(),
+      });
       continue;
     }
     // 纯段落行（无时间戳路径）：跳过标题/引用/占位斜体
@@ -77,11 +103,59 @@ export function replaceTranscriptSegmentText(md: string, index: number, nextText
     if (!eligible) return raw;
     cursor += 1;
     if (cursor !== index) return raw;
-    if (timed) return `**[${timed[1]} - ${timed[2]}]** ${nextText.trim()}`;
+    if (timed) {
+      const speaker = timed[3] ? ` [${timed[3]}]` : '';
+      return `**[${timed[1]} - ${timed[2]}]**${speaker} ${nextText.trim()}`;
+    }
     const indent = raw.match(/^\s*/)?.[0] ?? '';
     return indent + nextText.trim();
   });
   return head + updated.join('\n');
+}
+
+/** 批量修改说话人显示名，保留时间戳和正文。 */
+export function renameTranscriptSpeaker(md: string, currentName: string, nextName: string): string {
+  const current = currentName.trim();
+  const next = nextName
+    .replaceAll('[', ' ')
+    .replaceAll(']', ' ')
+    .replace(/[\r\n]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 30);
+  if (!current || !next || current === next) return md;
+  return md.split('\n').map((raw) => {
+    const match = TS_LINE_RE.exec(raw.trim());
+    if (!match || match[3]?.trim() !== current) return raw;
+    return `**[${match[1]} - ${match[2]}]** [${next}] ${match[4].trim()}`;
+  }).join('\n');
+}
+
+const STOP_WORDS = new Set([
+  '我们', '你们', '他们', '这个', '那个', '然后', '就是', '因为', '所以', '如果', '可以',
+  '还是', '没有', '一个', '什么', '怎么', '现在', '觉得', '进行', '已经', '需要', '不是',
+  '原文', '录音', '实时', '刚刚', '这是', '下来', '来的', '的实', '时原',
+]);
+
+/** 整场录音的轻量词频；不依赖网络，打开结果页即可用。 */
+export function buildTranscriptWordCloud(segments: TranscriptSegment[], limit = 18): Array<{ word: string; count: number }> {
+  const source = segments.map(segment => segment.text).join(' ');
+  const englishTokens = source.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? [];
+  const chineseTokens = (source.match(/[\u3400-\u9fff]{2,}/g) ?? []).flatMap((sequence) => {
+    const chars = Array.from(sequence);
+    return chars.slice(0, -1).map((_, index) => chars.slice(index, index + 2).join(''));
+  });
+  const tokens = [...englishTokens, ...chineseTokens];
+  const counts = new Map<string, number>();
+  tokens.forEach((token) => {
+    const word = token.toLowerCase();
+    if (STOP_WORDS.has(word)) return;
+    counts.set(word, (counts.get(word) ?? 0) + 1);
+  });
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'))
+    .slice(0, limit)
+    .map(([word, count]) => ({ word, count }));
 }
 
 /**

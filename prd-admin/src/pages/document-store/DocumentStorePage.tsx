@@ -2323,6 +2323,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
           }}
+          onAskRecording={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (!entry) return;
+            setReprocessTarget({
+              id,
+              title: entry.title,
+              initialInput: '请基于整场录音回答我的问题。先给简明结论，再引用支持结论的原文时间段；有多处依据时分别列出，不要编造录音中没有的信息。我的问题是：',
+            });
+          }}
           onShareEntry={(id) => {
             const entry = entries.find(e => e.id === id);
             if (entry) setDocShareTarget({ id, title: entry.title });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, CloudUpload, FileText, Clock3 } from 'lucide-react';
+import { Check, CloudUpload, FileText, Clock3, RefreshCw } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
@@ -7,7 +7,8 @@ import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { extractTranscriptSummary } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from './MarkdownViewer';
-import { listTranscribeStyles } from '@/services';
+import { listTranscribeStyles, retryRecordingArchive } from '@/services';
+import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
@@ -23,16 +24,19 @@ function RecordingArchiveProgress({
   hasTranscript,
   startedAt,
   waitingForRetry,
+  entryId,
 }: {
   hasPlayback: boolean;
   hasTranscript: boolean;
   startedAt?: string;
   waitingForRetry: boolean;
+  entryId: string;
 }) {
   const startedMs = startedAt ? new Date(startedAt).getTime() : Date.now();
   const [elapsed, setElapsed] = useState(() => (
     Number.isFinite(startedMs) ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0
   ));
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setElapsed(value => value + 1), 1000);
@@ -123,6 +127,28 @@ function RecordingArchiveProgress({
         {waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'}
         {' · '}{waitingForRetry ? '已等待' : '已处理'} {formatBackgroundDuration(elapsed)}
       </p>
+      {waitingForRetry && (
+        <button
+          type="button"
+          disabled={retrying}
+          onClick={() => {
+            setRetrying(true);
+            void retryRecordingArchive(entryId)
+              .then((result) => {
+                if (!result.success) {
+                  toast.error('重试未启动', result.error?.message);
+                  return;
+                }
+                toast.success(result.data.completed ? '云端副本已完成' : '已立即重新尝试保存云端副本');
+              })
+              .finally(() => setRetrying(false));
+          }}
+          className="mx-auto mt-3 flex min-h-11 items-center gap-1.5 rounded-[9px] px-3 text-[12px] font-semibold disabled:opacity-50"
+          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)', color: 'var(--text-primary)' }}>
+          <RefreshCw size={13} className={retrying ? 'animate-spin motion-reduce:animate-none' : ''} />
+          {retrying ? '正在唤醒后台任务' : '立即重试'}
+        </button>
+      )}
     </section>
   );
 }
@@ -146,13 +172,15 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
   transcriptNoteMd?: string | null;
   /** 保存用户在原文句子上的直接校对。 */
   onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
+  /** 打开知识库智能体，并以当前录音原文作为上下文。 */
+  onAskRecording?: () => void;
 }) {
   if (!entry) {
     return (
@@ -224,6 +252,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             hasTranscript={Boolean(effectiveTranscript)}
             startedAt={entry.createdAt}
             waitingForRetry={archiveWaitingForRetry}
+            entryId={entry.id}
           />
         )}
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
@@ -233,6 +262,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             noteMd={effectiveTranscript}
             styleKey={entry.metadata?.transcribe_style_key}
             onSaveNote={onSaveTranscriptNote}
+            onAskRecording={onAskRecording}
           />
         ) : <AudioWavePlayer src={fileUrl} />}
       </div>
@@ -250,6 +280,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
           hasTranscript={Boolean(liveTranscript)}
           startedAt={entry.createdAt}
           waitingForRetry={archiveWaitingForRetry}
+          entryId={entry.id}
         />
         {liveTranscript ? (
           <section
@@ -540,11 +571,12 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   );
 }
 
-function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
+function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote, onAskRecording }: {
   src: string;
   noteMd: string;
   styleKey?: string;
   onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
+  onAskRecording?: () => void;
 }) {
   const summary = extractTranscriptSummary(noteMd);
   const [tab, setTab] = useState<'raw' | 'organized'>('raw');
@@ -591,6 +623,7 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
           noteMd={noteMd}
           documentMode
           onSaveNote={onSaveNote}
+          onAskRecording={onAskRecording}
         />
       )}
     </div>

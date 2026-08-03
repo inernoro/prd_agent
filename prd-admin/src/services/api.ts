@@ -1333,6 +1333,7 @@ export const api = {
       recordingUploadStatus: (sessionId: string) => `/api/document-store/recording-uploads/${sessionId}`,
       recordingUploadChunk: (sessionId: string, index: number) => `/api/document-store/recording-uploads/${sessionId}/chunks/${index}`,
       recordingUploadComplete: (sessionId: string) => `/api/document-store/recording-uploads/${sessionId}/complete`,
+      recordingArchiveRetry: (entryId: string) => `/api/document-store/entries/${entryId}/recording-archive/retry`,
       replace: (entryId: string) => `/api/document-store/entries/${entryId}/replace`,
       subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
