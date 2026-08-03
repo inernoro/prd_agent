@@ -72,14 +72,24 @@ function readKeychainSecret(service, account) {
   return result.status === 0 ? String(result.stdout || '').trim() : '';
 }
 
-export function resolveCdsPreviewUrl(explicitUrl = '') {
-  if (explicitUrl) return explicitUrl.replace(/\/+$/, '');
+export function resolveCdsPreviewUrls(explicitUrl = '', explicitGatewayUrl = '') {
+  if (explicitUrl && explicitGatewayUrl) {
+    return {
+      appUrl: explicitUrl.replace(/\/+$/, ''),
+      gatewayUrl: explicitGatewayUrl.replace(/\/+$/, ''),
+    };
+  }
   const result = command('python3', ['.claude/skills/cds/cli/cdscli.py', '--human', 'preview-url']);
   if (result.status !== 0) throw new Error('CDS 权威预览地址读取失败，请修复项目凭据或部署状态后重试');
   const urls = String(result.stdout || '').match(/https:\/\/[^\s]+/g) || [];
   const appUrl = urls.find((url) => !/llmgw/i.test(url));
+  const gatewayUrl = urls.find((url) => /llmgw/i.test(url));
   if (!appUrl) throw new Error('CDS 未返回主应用预览地址，拒绝本地推算');
-  return appUrl.replace(/\/+$/, '');
+  if (!gatewayUrl) throw new Error('CDS 未返回模型网关预览地址，拒绝本地推算');
+  return {
+    appUrl: (explicitUrl || appUrl).replace(/\/+$/, ''),
+    gatewayUrl: (explicitGatewayUrl || gatewayUrl).replace(/\/+$/, ''),
+  };
 }
 
 export function validateEnvironmentConfig(name, values) {
@@ -114,6 +124,9 @@ function runPlaywright(environment, values, runDir, grep = '') {
     STABLE_SMOKE_AI_ACCESS_KEY: values[`${prefix}_AI_ACCESS_KEY`],
     STABLE_SMOKE_USER: values[`${prefix}_USER`],
     STABLE_SMOKE_ENVIRONMENT: environment,
+    STABLE_SMOKE_GW_BASE_URL: values[`${prefix}_GW_BASE_URL`] || '',
+    STABLE_SMOKE_GW_USER: values[`${prefix}_GW_USER`] || '',
+    STABLE_SMOKE_GW_PASSWORD: values[`${prefix}_GW_PASSWORD`] || '',
     STABLE_SMOKE_RUN_ID: values.STABLE_SMOKE_RUN_ID,
     STABLE_SMOKE_RUN: '1',
     STABLE_SMOKE_JSON_OUTPUT: resultPath,
@@ -187,7 +200,12 @@ async function main() {
       registry,
       readKeychainSecret,
     );
-    values.STABLE_SMOKE_CDS_BASE_URL = resolveCdsPreviewUrl(values.STABLE_SMOKE_CDS_BASE_URL || '');
+    const cdsUrls = resolveCdsPreviewUrls(
+      values.STABLE_SMOKE_CDS_BASE_URL || '',
+      values.STABLE_SMOKE_CDS_GW_BASE_URL || '',
+    );
+    values.STABLE_SMOKE_CDS_BASE_URL = cdsUrls.appUrl;
+    values.STABLE_SMOKE_CDS_GW_BASE_URL = cdsUrls.gatewayUrl;
     values.STABLE_SMOKE_PROD_BASE_URL = values.STABLE_SMOKE_PROD_BASE_URL || productionBaseUrl;
 
     const planPath = resolve(runDir, 'plan.json');

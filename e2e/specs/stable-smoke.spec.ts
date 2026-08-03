@@ -182,6 +182,67 @@ function solidPngDataUrl(red: number, green: number, blue: number, size = 256) {
   return `data:image/png;base64,${png.toString('base64')}`;
 }
 
+function zipStore(entries: Array<{ name: string; content: string }>) {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8');
+    const data = Buffer.from(entry.content, 'utf8');
+    const checksum = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    localParts.push(local, name, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + data.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+function docxFixture(text: string) {
+  return zipStore([
+    { name: '[Content_Types].xml', content: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>' },
+    { name: '_rels/.rels', content: '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>' },
+    { name: 'word/document.xml', content: `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>` },
+  ]);
+}
+
+function pptxFixture(text: string) {
+  return zipStore([
+    { name: '[Content_Types].xml', content: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>' },
+    { name: '_rels/.rels', content: '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>' },
+    { name: 'ppt/presentation.xml', content: '<?xml version="1.0"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst><p:sldSz cx="9144000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>' },
+    { name: 'ppt/_rels/presentation.xml.rels', content: '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>' },
+    { name: 'ppt/slides/slide1.xml', content: `<?xml version="1.0"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="Text"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>` },
+  ]);
+}
+
 async function createVisualWorkspace(page: Page, token: string, suffix: string) {
   const attemptId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const response = await page.request.post('/api/visual-agent/image-master/workspaces', {
@@ -268,6 +329,15 @@ async function openModule(
   });
 }
 
+async function dismissVisualTutorial(page: Page) {
+  const learned = page.getByRole('button', { name: '我已学会' });
+  await learned.waitFor({ state: 'visible', timeout: 2_500 }).catch(() => undefined);
+  if (await learned.isVisible().catch(() => false)) {
+    await learned.click();
+    await expect(learned, '关闭教程后不应继续遮挡视觉创作结果').toBeHidden();
+  }
+}
+
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   test('[CORE-001] 首页与入口静态资源可用', async ({ page }) => {
     const resourceFailures: string[] = [];
@@ -333,10 +403,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-002] 中文文件名上传、解析回读与级联清理', async ({ page, request }) => {
+  test('[FILE-001][FILE-002][FILE-004][FILE-005][FILE-006][FILE-007][FILE-009][FILE-010] 文件格式、错误、下载、重复与清理', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/transcript-agent');
     const runKey = `stsmk-${Date.now()}`;
     let storeId = '';
+    const createdEntryIds: string[] = [];
     try {
       const createStore = await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -346,26 +417,66 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       storeId = store.id;
 
       const expectedText = `${runKey} 中文文件解析基准内容`;
-      const upload = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
-        headers: authHeaders(token),
-        multipart: {
-          file: {
-            name: `${runKey}-中文样本.txt`,
-            mimeType: 'text/plain',
-            buffer: Buffer.from(expectedText, 'utf8'),
+      const fixtures = [
+        { suffix: 'txt', mime: 'text/plain', buffer: Buffer.from(expectedText, 'utf8'), expected: expectedText },
+        { suffix: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: docxFixture(expectedText), expected: expectedText },
+        { suffix: 'pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', buffer: pptxFixture(expectedText), expected: expectedText },
+        { suffix: 'xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: readFileSync(resolve(specDir, '../../prd-admin/public/templates/product-agent-feature-catalog-test.xlsx')), expected: '' },
+        { suffix: 'pdf', mime: 'application/pdf', buffer: readFileSync(resolve(specDir, '../../doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.pdf')), expected: '' },
+      ];
+      for (const fixture of fixtures) {
+        const upload = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
+          headers: authHeaders(token),
+          multipart: {
+            file: {
+              name: `${runKey}-中文样本.${fixture.suffix}`,
+              mimeType: fixture.mime,
+              buffer: fixture.buffer,
+            },
           },
-        },
-      });
-      const uploaded = await readEnvelope<{ entry: { id: string; title: string }; fileUrl: string }>(upload);
-      expect(uploaded.entry.title).toContain('中文样本');
-      expect(uploaded.fileUrl).toBeTruthy();
+        });
+        const uploaded = await readEnvelope<{ entry: { id: string; title: string }; fileUrl: string }>(upload);
+        createdEntryIds.push(uploaded.entry.id);
+        expect(uploaded.entry.title).toContain('中文样本');
+        expect(uploaded.fileUrl).toBeTruthy();
 
-      const contentResponse = await page.request.get(`/api/document-store/entries/${uploaded.entry.id}/content`, {
+        const contentResponse = await page.request.get(`/api/document-store/entries/${uploaded.entry.id}/content`, {
+          headers: authHeaders(token),
+        });
+        const content = await readEnvelope<{ content?: string; hasContent: boolean }>(contentResponse);
+        expect(content.hasContent, `${fixture.suffix} 应提取出可读内容`).toBe(true);
+        expect((content.content || '').trim().length).toBeGreaterThan(5);
+        if (fixture.expected) expect(content.content).toContain(fixture.expected);
+
+        const original = await page.request.get(uploaded.fileUrl);
+        expect(original.ok()).toBe(true);
+        expect(original.headers()['content-type'] || '').toContain(fixture.mime.split(';')[0]);
+        expect((await original.body()).byteLength).toBe(fixture.buffer.byteLength);
+      }
+
+      const duplicate = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
         headers: authHeaders(token),
+        multipart: { file: { name: `${runKey}-中文样本.txt`, mimeType: 'text/plain', buffer: Buffer.from(expectedText, 'utf8') } },
       });
-      const content = await readEnvelope<{ content?: string; hasContent: boolean }>(contentResponse);
-      expect(content.hasContent).toBe(true);
-      expect(content.content).toContain(expectedText);
+      const duplicateData = await readEnvelope<{ entry: { id: string } }>(duplicate);
+      expect(createdEntryIds).not.toContain(duplicateData.entry.id);
+      createdEntryIds.push(duplicateData.entry.id);
+
+      const corrupt = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
+        headers: authHeaders(token),
+        multipart: { file: { name: `${runKey}-损坏.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from('not-a-docx') } },
+      });
+      const corruptBody = await corrupt.json() as ApiEnvelope<never>;
+      expect(corrupt.status()).toBe(400);
+      expectUserReadable(corruptBody.error?.message || '');
+
+      const empty = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
+        headers: authHeaders(token),
+        multipart: { file: { name: `${runKey}-空文件.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(0) } },
+      });
+      const emptyBody = await empty.json() as ApiEnvelope<never>;
+      expect(empty.status()).toBe(400);
+      expectUserReadable(emptyBody.error?.message || '');
     } finally {
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
@@ -377,6 +488,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           headers: authHeaders(token),
         });
         expect(missing.status()).toBe(404);
+        for (const entryId of createdEntryIds) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
       }
     }
   });
@@ -560,6 +674,58 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[GW-001][GW-002][GW-003][GW-004][GW-005][GW-008][GW-009] 网关配置、路由与日志可由专用身份审计', async ({ request }) => {
+    const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+    const login = await request.post(`${baseUrl}/gw/auth/login`, {
+      data: {
+        username: requiredEnv('STABLE_SMOKE_GW_USER'),
+        password: requiredEnv('STABLE_SMOKE_GW_PASSWORD'),
+      },
+    });
+    const loginBody = await login.json() as ApiEnvelope<{ token: string; mustChangePassword: boolean }>;
+    expect(login.ok(), loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
+    expect(loginBody.success, loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
+    expect(loginBody.data.token).toBeTruthy();
+    expect(loginBody.data.mustChangePassword).toBe(false);
+    const headers = { Authorization: `Bearer ${loginBody.data.token}` };
+
+    const [context, models, logicalModels, health, authority, logs] = await Promise.all([
+      request.get(`${baseUrl}/gw/auth/context`, { headers }),
+      request.get(`${baseUrl}/gw/models?enabled=true`, { headers }),
+      request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers }),
+      request.get(`${baseUrl}/gw/key-health`, { headers }),
+      request.get(`${baseUrl}/gw/config-authority/report`, { headers }),
+      request.get(`${baseUrl}/gw/logs?limit=20`, { headers }),
+    ]);
+    for (const response of [context, models, logicalModels, health, authority, logs]) {
+      expect(response.ok(), `网关审计接口 ${response.url()} 不可用`).toBe(true);
+    }
+
+    const modelsBody = await models.text();
+    const logicalBody = await logicalModels.text();
+    expect(modelsBody).not.toMatch(/(?:apiKey|password)"\s*:\s*"(?!\*{3,}|\[masked\]|null|undefined)/i);
+    expect(logicalBody).not.toMatch(/(?:apiKey|password)"\s*:\s*"(?!\*{3,}|\[masked\]|null|undefined)/i);
+    const logicalJson = JSON.parse(logicalBody) as ApiEnvelope<{ items: Array<{
+      publicId?: string;
+      modelType?: string;
+      enabled?: boolean;
+      offerings?: Array<{ protocol?: string; endpointPath?: string; priority?: number; weight?: number }>;
+    }> }>;
+    expect(logicalJson.success).toBe(true);
+    expect(logicalJson.data.items.length).toBeGreaterThan(0);
+    for (const logical of logicalJson.data.items) {
+      expect(logical.publicId).toBeTruthy();
+      expect(logical.modelType).toBeTruthy();
+      expect(logical.enabled).toBe(true);
+      for (const offering of logical.offerings || []) {
+        expect(offering.protocol || '').not.toMatch(/^https?:/i);
+        expect(offering.endpointPath || '').not.toMatch(/^https?:|\\/);
+        expect(offering.priority ?? 0).toBeGreaterThanOrEqual(0);
+        expect(offering.weight ?? 1).toBeGreaterThan(0);
+      }
+    }
+  });
+
   test('[CORE-005] 无效生图请求返回用户可读错误', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const response = await page.request.post('/api/visual-agent/image-gen/runs', {
@@ -627,8 +793,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       runId = created.runId;
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      const learned = page.getByRole('button', { name: '我已学会' });
-      if (await learned.isVisible().catch(() => false)) await learned.click();
+      await dismissVisualTutorial(page);
       const progress = page.getByTestId('generation-progress').first();
       await expect(progress, '真实生图开始后页面必须恢复生成中占位').toBeVisible({ timeout: 15_000 });
       const progressBox = await progress.boundingBox();
@@ -728,8 +893,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(messageText).toContain('@img2');
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      const learned = page.getByRole('button', { name: '我已学会' });
-      if (await learned.isVisible().catch(() => false)) await learned.click();
+      await dismissVisualTutorial(page);
       const generatedImage = page.getByTestId('canvas-image').first();
       await expect(generatedImage, '多图生成完成后页面必须恢复真实图片').toBeVisible({ timeout: 30_000 });
       await expect.poll(
