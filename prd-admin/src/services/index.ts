@@ -1960,6 +1960,7 @@ export {
   appendRecordingUploadChunk,
   completeRecordingUpload,
   getRecordingUpload,
+  retryRecordingArchive,
   cancelRecordingUpload,
   replaceDocumentFile,
   getDocumentContent,

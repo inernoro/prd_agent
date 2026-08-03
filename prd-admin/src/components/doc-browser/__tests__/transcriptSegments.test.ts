@@ -9,6 +9,9 @@ import {
   parseSummaryModules,
   activeSummaryModuleIndex,
   replaceTranscriptSegmentText,
+  renameTranscriptSpeaker,
+  buildTranscriptWordCloud,
+  parseRecordingAnswerParts,
 } from '../transcriptSegments';
 
 /**
@@ -47,6 +50,22 @@ const PLAIN_NOTE = `# 独白 · 转录笔记
 `;
 
 describe('parseTranscriptSegments', () => {
+  it('保留说话人并支持批量改名', () => {
+    const note = '## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 第一段。\n\n**[00:03 - 00:06]** [说话人2] 第二段。';
+    expect(parseTranscriptSegments(note)[0]).toEqual({ start: 0, end: 3, speaker: '说话人1', text: '第一段。' });
+    const renamed = renameTranscriptSpeaker(note, '说话人1', '小公爷');
+    expect(renamed).toContain('**[00:00 - 00:03]** [小公爷] 第一段。');
+    expect(renamed).toContain('[说话人2] 第二段。');
+  });
+
+  it('说话人改名会清理破坏时间轴格式的方括号和换行', () => {
+    const note = '## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 第一段。';
+    const renamed = renameTranscriptSpeaker(note, '说话人1', ' 小公爷[客户]\n主讲 ');
+
+    expect(renamed).toContain('[小公爷 客户 主讲] 第一段。');
+    expect(parseTranscriptSegments(renamed)[0].speaker).toBe('小公爷 客户 主讲');
+  });
+
   it('编辑单句时保留时间戳与摘要', () => {
     expect(replaceTranscriptSegmentText(TIMED_NOTE, 1, '用户修订后的第二句。')).toContain(
       '**[00:05 - 00:12]** 用户修订后的第二句。',
@@ -77,6 +96,29 @@ describe('parseTranscriptSegments', () => {
 
   it('空文本返回空数组', () => {
     expect(parseTranscriptSegments('')).toEqual([]);
+  });
+});
+
+describe('buildTranscriptWordCloud', () => {
+  it('汇总整场录音词频并过滤常见停用词', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 2, text: '报价合理，交付质量重要' },
+      { start: 2, end: 4, text: '报价需要匹配交付质量' },
+    ]);
+    expect(cloud.some(item => item.word.includes('报价'))).toBe(true);
+    expect(cloud.some(item => item.word === '需要')).toBe(false);
+  });
+});
+
+describe('parseRecordingAnswerParts', () => {
+  it('把单点和区间引用转换为可跳播秒数', () => {
+    expect(parseRecordingAnswerParts('结论一 [00:12-00:18]，补充 [01:02]。')).toEqual([
+      { kind: 'text', text: '结论一 ' },
+      { kind: 'citation', label: '[00:12-00:18]', start: 12 },
+      { kind: 'text', text: '，补充 ' },
+      { kind: 'citation', label: '[01:02]', start: 62 },
+      { kind: 'text', text: '。' },
+    ]);
   });
 });
 

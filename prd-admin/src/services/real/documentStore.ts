@@ -355,6 +355,14 @@ export async function getRecordingUpload(sessionId: string, timeoutMs = 15_000) 
   });
 }
 
+/** 立即唤醒后台录音归档；服务恢复后无需等待下一轮退避。 */
+export async function retryRecordingArchive(entryId: string) {
+  return await apiRequest<{ queued: boolean; completed: boolean }>(
+    api.documentStore.entries.recordingArchiveRetry(entryId),
+    { method: 'POST' },
+  );
+}
+
 /** 用户主动放弃时清理服务端临时录音分片。 */
 export async function cancelRecordingUpload(sessionId: string) {
   return await apiRequest<{ deleted: boolean }>(

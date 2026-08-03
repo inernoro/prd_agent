@@ -1034,8 +1034,11 @@ public class SubtitleGenerationProcessor
                     var start = segment.TryGetProperty("start", out var s) ? s.GetDouble() : 0;
                     var end = segment.TryGetProperty("end", out var e) ? e.GetDouble() : 0;
                     var text = (segment.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    var speaker = segment.TryGetProperty("speaker", out var speakerNode)
+                        ? speakerNode.GetString()
+                        : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim()));
+                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
                 }
             }
             if (segments.Count == 0 && root.TryGetProperty("text", out var normalizedText))
@@ -1053,8 +1056,11 @@ public class SubtitleGenerationProcessor
                     var startMs = u.TryGetProperty("start_time", out var s) ? s.GetDouble() : 0;
                     var endMs = u.TryGetProperty("end_time", out var e) ? e.GetDouble() : 0;
                     var text = (u.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    var speaker = u.TryGetProperty("speaker_id", out var speakerNode)
+                        ? speakerNode.ToString()
+                        : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim()));
+                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim(), speaker));
                 }
             }
             // 兜底：从 result.text 取整段文本（无时间戳）
@@ -1294,7 +1300,7 @@ public class SubtitleGenerationProcessor
     }
 }
 
-public record SubtitleSegment(double StartSec, double EndSec, string Text);
+public record SubtitleSegment(double StartSec, double EndSec, string Text, string? SpeakerId = null);
 
 /// <summary>
 /// 字幕生成 ASR 阶段失败时抛出的异常，携带可观测的 diagnostic 数据，

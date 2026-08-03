@@ -17,6 +17,7 @@ class MockWebSocket {
   static readonly CLOSED = 3;
 
   static latest: MockWebSocket | null = null;
+  static instances: MockWebSocket[] = [];
 
   readyState = MockWebSocket.CONNECTING;
   binaryType = '';
@@ -27,9 +28,12 @@ class MockWebSocket {
   private readonly openListeners: Array<() => void> = [];
   readonly sent: unknown[] = [];
   closeCalls = 0;
+  readonly url: string;
 
-  constructor(_url: string, _protocols: string[]) {
+  constructor(url: string, _protocols: string[]) {
+    this.url = url;
     MockWebSocket.latest = this;
+    MockWebSocket.instances.push(this);
   }
 
   addEventListener(type: string, listener: () => void): void {
@@ -67,6 +71,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   MockWebSocket.latest = null;
+  MockWebSocket.instances = [];
 });
 
 describe('实时转写 PCM 协议', () => {
@@ -221,22 +226,33 @@ describe('实时转写终态竞态', () => {
     return { socket, states, webSocket: MockWebSocket.latest! };
   };
 
-  it('等待建连期间收到错误终态时立即结束，不再空等收尾超时', async () => {
+  it('连接中断后自动建立新会话并继续发送后续音频', async () => {
     const { socket, webSocket } = createSocket();
-    let settled = false;
-    const finish = socket.finish().then(event => {
-      settled = true;
-      return event;
-    });
-
+    webSocket.open();
+    socket.send(new Int16Array([1, 2]));
     webSocket.failWhileConnecting();
-    await vi.advanceTimersByTimeAsync(1);
 
-    expect(settled).toBe(true);
-    await expect(finish).resolves.toMatchObject({
-      type: 'degraded',
-      message: '实时转写连接异常，录音结束后将自动转写',
-    });
+    await vi.advanceTimersByTimeAsync(800);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    const reconnected = MockWebSocket.latest!;
+    expect(reconnected.url).toContain('resumed=true');
+    reconnected.open();
+    socket.send(new Int16Array([3, 4]));
+
+    expect(reconnected.sent).toHaveLength(1);
+    expect(new DataView(reconnected.sent[0] as ArrayBuffer).getInt32(0, true)).toBe(1);
+  });
+
+  it('重连退避期间结束录音会取消定时重连并进入完整音频校准', async () => {
+    const { socket, webSocket, states } = createSocket();
+    webSocket.open();
+    webSocket.failWhileConnecting();
+
+    await expect(socket.finish()).resolves.toMatchObject({ type: 'degraded' });
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(states.at(-1)).toBe('degraded');
     expect(vi.getTimerCount()).toBe(0);
   });
 

@@ -1511,7 +1511,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     [Theory]
     [InlineData(0, 1)]
     [InlineData(3, 8)]
-    [InlineData(20, 256)]
+    [InlineData(20, 15)]
     public void ComputeBackoff_ShouldBeBounded(int attempts, int expectedMinutes)
     {
         DocumentRecordingArchiveWorker.ComputeBackoff(attempts)
