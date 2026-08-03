@@ -351,6 +351,17 @@ describe('主题系统契约', () => {
     expect(launcher).toContain("from '@/lib/homePulse'");
   });
 
+  it('首页跳转只有一个出口，打开次数不会漏记', () => {
+    const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
+
+    // 「你常用的」只认 agentSwitcherStore 的打开次数：漏一个记账点，那条路径
+    // 的启动就永远不计数（历史上先漏瓦片点击、再漏在办工作条，各被 review 抓一次）。
+    // 结构上焊死：本文件只允许有一个 navigate( 调用，且它在 openRoute 里。
+    const navigateCalls = launcher.match(/\bnavigate\(/g) ?? [];
+    expect(navigateCalls).toHaveLength(1);
+    expect(launcher).toMatch(/const openRoute = useCallback\([\s\S]*?addRecentVisit\([\s\S]*?navigate\(route\)/);
+  });
+
   it('首页目录默认展示全部三组，分段筛选不得让任何入口从首页消失', () => {
     const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
 

@@ -547,30 +547,45 @@ export default function AgentLauncherPage() {
     );
   }, [groups, query]);
 
+  /**
+   * 首页唯一的跳转出口。
+   *
+   * 「你常用的」那一档只认 agentSwitcherStore 的打开次数，而记账点漏一个，
+   * 那条路径的启动就永远不计数（先漏了瓦片点击，又漏了在办工作条）。
+   * 所以这里收成一个出口：**本文件不允许再出现第二个 navigate 调用**，
+   * 带 entry 的调用自动记账，纯内容跳转（动态流）显式不记。
+   * 守卫见 themeSystem.test.ts 的「首页跳转只有一个出口」用例。
+   */
+  const openRoute = useCallback((route: string, entry?: { id: string; agentKey?: string; name: string; icon?: string }) => {
+    if (entry) {
+      useAgentSwitcherStore.getState().addRecentVisit({
+        // 首页历史上用过 __xxx__ 形态，统一交给 migrateLegacyNavId 归一到命令面板同款 id
+        id: migrateLegacyNavId(entry.agentKey || entry.id),
+        agentKey: entry.agentKey ?? '',
+        agentName: entry.name,
+        title: entry.name,
+        path: route,
+        icon: entry.icon,
+      });
+    }
+    navigate(route);
+  }, [navigate]);
+
   const handleClick = useCallback((item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
       return;
     }
-    const route = item.routePath || '/ai-toolbox';
-    // 打开次数是「你常用的」那一档的唯一依据。此前只有命令面板（⌘K）会记账，
-    // 从首页点开的不算数 —— 于是常用档对"只用首页"的人永远不出现。
-    // 在这里补上生产端：id 交给 migrateLegacyNavId 归一（首页历史上用过 __xxx__ 形态）。
-    useAgentSwitcherStore.getState().addRecentVisit({
-      id: migrateLegacyNavId(item.agentKey || item.id),
-      agentKey: item.agentKey ?? '',
-      agentName: item.name,
-      title: item.name,
-      path: route,
+    if (!item.routePath) {
+      useToolboxStore.getState().selectItem(item);
+    }
+    openRoute(item.routePath || '/ai-toolbox', {
+      id: item.id,
+      agentKey: item.agentKey,
+      name: item.name,
       icon: item.icon,
     });
-    if (item.routePath) {
-      navigate(item.routePath);
-    } else {
-      useToolboxStore.getState().selectItem(item);
-      navigate('/ai-toolbox');
-    }
-  }, [navigate]);
+  }, [openRoute]);
 
   // 斜杠聚焦：不与全局 ⌘K（智能体浮层）抢键位
   useEffect(() => {
@@ -745,7 +760,7 @@ export default function AgentLauncherPage() {
                       key={link.path}
                       type="button"
                       data-tour-id={`quicklink-${link.id}`}
-                      onClick={() => navigate(link.path)}
+                      onClick={() => openRoute(link.path, { id: link.id ?? link.path, name: link.label })}
                       title={link.desc}
                       className="home-desk-quick-item"
                     >
@@ -772,7 +787,11 @@ export default function AgentLauncherPage() {
                         <WorkCard
                           key={`${item.agentKey}:${item.route}`}
                           item={item}
-                          onClick={() => navigate(item.route)}
+                          onClick={() => openRoute(item.route, {
+                            id: item.agentKey,
+                            agentKey: item.agentKey,
+                            name: RECENT_AGENT_META[item.agentKey]?.label ?? '智能体',
+                          })}
                         />
                       ))}
                     </div>
@@ -801,7 +820,7 @@ export default function AgentLauncherPage() {
                     title="我的动态"
                     headingId="home-feed-heading"
                     action={
-                      <button type="button" className="home-desk-more" onClick={() => navigate('/visual-agent?tab=assets')}>
+                      <button type="button" className="home-desk-more" onClick={() => openRoute('/visual-agent?tab=assets', { id: 'my-assets', name: '我的资源' })}>
                         我的资源<ArrowRight size={12} />
                       </button>
                     }
@@ -812,7 +831,7 @@ export default function AgentLauncherPage() {
                     <ul className="home-desk-feed">
                       {pulse.feed.slice(0, WORK_PREVIEW_COUNT).map((entry) => (
                         <li key={entry.id}>
-                          <button type="button" className="home-desk-feed-row" onClick={() => navigate(entry.navigateTo)}>
+                          <button type="button" className="home-desk-feed-row" onClick={() => openRoute(entry.navigateTo)}>
                             <span className={`home-desk-feed-dot is-${entry.type}`} aria-hidden />
                             <span className="home-desk-feed-title">{entry.title}</span>
                             <span className="home-desk-feed-time">
