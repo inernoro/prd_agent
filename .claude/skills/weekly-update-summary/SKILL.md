@@ -208,9 +208,23 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
   --title "周报-${ISO_YEAR}-W${WEEK_NUM}-本周纵深" \
   --daily-date "${MONDAY}" \
   --report-html /tmp/weekly-${ISO_YEAR}-W${WEEK_NUM}.html \
-  --store "周报知识库" --kind weekly-report --tags "周报,本周纵深"
+  --store "周报知识库" --kind weekly-report --tags "周报,本周纵深" \
+  --replace-same-date \
+  --last-commit "${BASELINE_SHA}"
+# --replace-same-date：同一周重跑（补数据 / 改结论 / 补水位线）时**原地更新**那条，
+#   不叠第二篇。缺了它，每重跑一次就在库里多一条同周周刊，读者不知道该信哪篇。
+#   匹配键是 dailyDate(=MONDAY) + kind(=weekly-report)，故只会命中同一周的周刊，不会误伤别周。
+# --last-commit：写水位线给下一期读；缺了它下期退回「按日历日采」并漏掉今天晚些时候的提交。
+#   传本次的统计基线 SHA（origin/main HEAD）即可。
 # 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地文件（仅自查，不算交付）
 ```
+
+> **为什么这两个开关必须写死在命令里**（2026-08-02 实测）：`publish.py` 的去重是 **opt-in**
+> （`--replace-same-date` 是 `store_true`），日报技能的命令传了、周报技能的没传 —— 同一条
+> 「重跑不叠篇」的规则在两处各写一遍然后漂移了（`predicate-and-wiring-discipline.md` 形状 3）。
+> 实测后果：W31 周刊发布后为补 `--last-commit` 重跑一次，库里立刻多出一条同周周刊，只能手工
+> `DELETE /entries/{id}` 收拾。**重跑是常态**（补水位线、改结论、修错字），所以两个开关都是
+> 默认必带，不是可选项。
 
 ### 纪律 9：必须关联本周的每日日报（逐日，一天都不能少）
 
@@ -505,7 +519,9 @@ v1 直接把 PR 按模块聚类就开写，产出的是工程视角。v2 必须�
 
 ### Phase 5.5: 发布 html 周刊版到知识库
 
-按纪律 8 的发布命令调 `daily-report-summary/reference/publish.py`（`--store 周报知识库 --kind weekly-report`）。发布成功后记录分享链，Phase 6 一并输出。无密钥/环境不可达时退化 `--local` 并在输出里明确说明「周刊版未发布，仅 md 底稿落盘」。
+按纪律 8 的发布命令调 `daily-report-summary/reference/publish.py`（`--store 周报知识库 --kind weekly-report`），**必带 `--replace-same-date` 与 `--last-commit`**（理由见纪律 8 的命令注释：前者防重跑叠篇，后者写水位线给下一期）。发布成功后记录分享链，Phase 6 一并输出。无密钥/环境不可达时退化 `--local` 并在输出里明确说明「周刊版未发布，仅 md 底稿落盘」。
+
+发布后自查一条：库里同一周的周刊**有且只有一条**。多于一条说明开关漏传，先删重复再交付——别把重复条目留给读者去猜哪篇是准的（这正是本周报自己在质量闸里点名的「重复归档」问题，技能自身不能犯）。
 
 ---
 
