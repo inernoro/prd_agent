@@ -43,7 +43,11 @@ public class MobileDashboardController : ControllerBase
     // ─────────────────────────────────────────
 
     /// <summary>
-    /// 聚合用户近期活动：PRD 会话、视觉创作工作区、缺陷报告，按时间倒序合并。
+    /// 聚合用户近期活动：视觉创作工作区、缺陷报告，按时间倒序合并。
+    ///
+    /// 不含 PRD 会话——PRD 解读智能体 Web 端已下线（前端把 /prd-agent 整条重定向回首页），
+    /// 列出来只会得到一条点了没反应的条目；更糟的是它会占掉 limit 名额，
+    /// 把真正能点的动态挤出这一页。
     /// </summary>
     [HttpGet("feed")]
     public async Task<IActionResult> GetFeed([FromQuery] int limit = 20)
@@ -53,31 +57,7 @@ public class MobileDashboardController : ControllerBase
 
         var feedItems = new List<object>();
 
-        // 1) PRD 会话 (sessions)
-        try
-        {
-            var sessions = await _db.Sessions
-                .Find(s => s.OwnerUserId == userId && s.DeletedAtUtc == null && s.ArchivedAtUtc == null)
-                .SortByDescending(s => s.LastActiveAt)
-                .Limit(limit)
-                .ToListAsync();
-
-            foreach (var s in sessions)
-            {
-                feedItems.Add(new
-                {
-                    id = s.SessionId,
-                    type = "prd-session",
-                    title = s.Title ?? "PRD 会话",
-                    subtitle = "PRD Agent",
-                    updatedAt = s.LastActiveAt,
-                    navigateTo = $"/prd-agent",
-                });
-            }
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "Feed: failed to load PRD sessions"); }
-
-        // 2) 视觉创作工作区
+        // 1) 视觉创作工作区
         try
         {
             var workspaces = await _db.ImageMasterWorkspaces
@@ -102,7 +82,7 @@ public class MobileDashboardController : ControllerBase
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Feed: failed to load visual workspaces"); }
 
-        // 3) 缺陷报告
+        // 2) 缺陷报告
         try
         {
             var defects = await _db.DefectReports

@@ -101,6 +101,32 @@ describe('动态流不许出现点了没反应的死链', () => {
     expect(feedOf([{ id: 'keep', navigateTo: '/prd-agent-archive' }]).map((i) => i.id)).toEqual(['keep']);
   });
 
+  it('先过滤再截断：死链不许占掉可见名额', () => {
+    // 服务端是「合并所有来源 → 排序 → Take(limit)」。若客户端先截断再过滤，
+    // 最新的几条恰好都是已下线入口时列表会被清空，页面转头去说"你还没用过"——
+    // 修死链反而制造了新的谎话。
+    const items = [
+      ...Array.from({ length: 8 }, (_, i) => ({ id: `dead-${i}`, navigateTo: '/prd-agent' })),
+      { id: 'live-1', navigateTo: '/defect-agent' },
+      { id: 'live-2', navigateTo: '/visual-agent/7' },
+    ];
+    const { feed } = resolveHomePulse(ok({} as MobileStats), ok({ items: items as unknown as FeedItem[] }), 8);
+    expect(feed.map((i) => i.id)).toEqual(['live-1', 'live-2']);
+  });
+
+  it('可见上限只截断存活条目', () => {
+    const items = Array.from({ length: 12 }, (_, i) => ({ id: `x-${i}`, navigateTo: '/defect-agent' }));
+    const { feed } = resolveHomePulse(ok({} as MobileStats), ok({ items: items as unknown as FeedItem[] }), 5);
+    expect(feed).toHaveLength(5);
+    expect(feed[0].id).toBe('x-0');
+  });
+
+  it('hook 真的多要了几条并把可见上限传下去（接线，不然纯函数白写）', () => {
+    const source = fs.readFileSync(path.resolve(TEST_DIR, '../homePulse.ts'), 'utf8');
+    expect(source).toMatch(/getMobileFeed\(\{ limit: Math\.min\(feedLimit \* FEED_OVERFETCH/);
+    expect(source).toMatch(/resolveHomePulse\(statsRes, feedRes, feedLimit\)/);
+  });
+
   it('清单与 App.tsx 的重定向路由对账（漏一条就会重新长出死链）', () => {
     // 两处各写各的必然漂移：App.tsx 下线第二个页面时，这里不跟就又有死链
     // （predicate-and-wiring 形状 3）。

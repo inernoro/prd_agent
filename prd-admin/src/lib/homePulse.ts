@@ -55,17 +55,35 @@ function isDeadLink(navigateTo: string | undefined): boolean {
 export function resolveHomePulse(
   statsRes: Settled<{ success: boolean; data?: MobileStats | null }>,
   feedRes: Settled<{ success: boolean; data?: { items?: FeedItem[] } | null }>,
+  visibleLimit?: number,
 ): Omit<HomePulse, 'loading' | 'reload'> {
   const statsOk = statsRes.status === 'fulfilled' && statsRes.value.success && !!statsRes.value.data;
   const feedOk = feedRes.status === 'fulfilled' && feedRes.value.success && !!feedRes.value.data;
+  // 死链条目在这一层就丢掉：两端共用这个 hook，过滤写在渲染层就会漏一端。
+  // 先过滤再截断——反过来的话，被服务端排在前面的死链会先占掉名额，
+  // 过滤完剩下一个空列表，页面又去说"你还没用过"。
+  const live = feedOk ? (feedRes.value.data!.items ?? []).filter((item) => !isDeadLink(item.navigateTo)) : [];
   return {
     stats: statsOk ? statsRes.value.data! : null,
-    // 死链条目在这一层就丢掉：两端共用这个 hook，过滤写在渲染层就会漏一端
-    feed: feedOk ? (feedRes.value.data!.items ?? []).filter((item) => !isDeadLink(item.navigateTo)) : [],
+    feed: visibleLimit == null ? live : live.slice(0, visibleLimit),
     statsFailed: !statsOk,
     feedFailed: !feedOk,
   };
 }
+
+/**
+ * 多要几条再过滤，给死链留出补位空间。
+ *
+ * 服务端是「合并所有来源 → 排序 → Take(limit)」，截断发生在它那边。
+ * 要 8 条就只拿 8 条的话，只要最新的 8 条恰好都是已下线入口，
+ * 客户端一过滤就全空，页面转头去说"你还没用过"——修死链反而制造了新的谎话。
+ * 服务端 limit 上限是 50，所以按 3 倍取、封顶 50。
+ *
+ * 这只是过渡期的补位：真正的解法是后端不再产出已下线入口的条目（本次同批已改）。
+ * 补位仍留着——旧构建的部署还在跑，且下一个页面下线时它是第一道垫子。
+ */
+const FEED_OVERFETCH = 3;
+const FEED_LIMIT_MAX = 50;
 
 export function useHomePulse(feedLimit = 8): HomePulse {
   const [stats, setStats] = useState<MobileStats | null>(null);
@@ -85,11 +103,11 @@ export function useHomePulse(feedLimit = 8): HomePulse {
       // 也不许让 loading 永远停在骨架上。
       const [statsRes, feedRes] = await Promise.allSettled([
         getMobileStats({ days: 7 }),
-        getMobileFeed({ limit: feedLimit }),
+        getMobileFeed({ limit: Math.min(feedLimit * FEED_OVERFETCH, FEED_LIMIT_MAX) }),
       ]);
       if (!alive) return;
 
-      const resolved = resolveHomePulse(statsRes, feedRes);
+      const resolved = resolveHomePulse(statsRes, feedRes, feedLimit);
       // 失败时保留上一轮拿到过的数据（重试期间不要把已显示的数字抹成空），
       // 但失败标记照打——渲染层据此说明"这份是旧的/取不到"。
       if (!resolved.statsFailed) setStats(resolved.stats);
