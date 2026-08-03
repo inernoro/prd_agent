@@ -388,6 +388,22 @@ describe('主题系统契约', () => {
     // 后端 200 但某来源查挂了（HTTP 成功 + 少一半数据）也必须有出口
     expect(launcher).toContain('pulse.feedDegraded');
 
+    // 「手边的活儿」同理：store 以前把失败吞成空列表（当时区块整块隐藏，尚可），
+    // 首页改版后空态会明说「还没有进行中的工作」，同一个吞法就变成了骗人。
+    const recentStore = fs.readFileSync(path.resolve(TEST_DIR, '../../stores/homeRecentWorkStore.ts'), 'utf8');
+    expect(recentStore, 'recent-work store 没有失败态，失败会被吞成空列表').toMatch(/failed:\s*true/);
+    // 只断言"出现过 workFailed"是不够的：把加载/失败分支整段删掉、只留下面那条
+    // 旧数据提示，这两个名字照样在文件里（实测这么改守卫仍绿）。要焊的是
+    // **空态引导被 loading/failed 挡在后面**这件事本身。
+    // 用位置关系判，不用"相隔多少字符"：中间隔着整个列表分支，距离窗口一调就
+    // 要么误报要么漏判。要焊的是**空态引导排在加载/失败判断之后**这个次序。
+    const guardAt = launcher.indexOf('workItems.length === 0 && (workLoading || workFailed)');
+    const emptyCopyAt = launcher.indexOf('还没有进行中的工作');
+    expect(guardAt, '「手边的活儿」没有先判加载中/取不到').toBeGreaterThan(-1);
+    expect(emptyCopyAt, '找不到空态引导文案，判据失效').toBeGreaterThan(-1);
+    expect(guardAt, '空态引导排在了加载/失败判断前面，加载中和故障都会被说成"没活干"').toBeLessThan(emptyCopyAt);
+    expect(launcher).toMatch(/workFailed[\s\S]{0,400}?onClick=\{\(\) => loadRecentWork\(\{ force: true \}\)\}/);
+
     // 移动端必须走同一个 hook：各拉各的就会出现「桌面修好了、手机还在骗人」，
     // 也会让「两端共用一份数据」这句话变成假话（changelog 曾据此写错）。
     const mobileShared = fs.readFileSync(MOBILE_HOME_SHARED_PATH, 'utf8');

@@ -472,6 +472,8 @@ export default function AgentLauncherPage() {
 
   const loadRecentWork = useHomeRecentWorkStore((s) => s.load);
   const workItems = useHomeRecentWorkStore((s) => s.items);
+  const workLoading = useHomeRecentWorkStore((s) => s.loading);
+  const workFailed = useHomeRecentWorkStore((s) => s.failed);
 
   // 近 7 日 + 我的动态：与移动首页同一份数据源
   const pulse = useHomePulse(8);
@@ -807,7 +809,17 @@ export default function AgentLauncherPage() {
                     count={workItems.length > 0 ? workItems.length : undefined}
                     headingId="home-continue-heading"
                   />
-                  {workItems.length > 0 ? (
+                  {workItems.length === 0 && (workLoading || workFailed) ? (
+                    // 加载中和取不到都不是"没活干"。空态那句引导只对真的空着的人说。
+                    <p className="home-desk-empty">
+                      {workLoading ? '正在读取你手边的活儿…' : (
+                        <>
+                          手边的活儿暂时取不到（网络或服务不可用）。
+                          <button type="button" className="home-desk-retry" onClick={() => loadRecentWork({ force: true })}>重试</button>
+                        </>
+                      )}
+                    </p>
+                  ) : workItems.length > 0 ? (
                     <div className="home-desk-work-list">
                       {(workExpanded ? workItems : workItems.slice(0, WORK_PREVIEW_COUNT)).map((item) => (
                         <WorkCard
@@ -826,6 +838,12 @@ export default function AgentLauncherPage() {
                       还没有进行中的工作。挑一个智能体开始，或按
                       <kbd className="home-desk-empty-kbd">/</kbd>
                       搜索——做过的事会自动回到这里。
+                    </p>
+                  )}
+                  {workFailed && workItems.length > 0 && (
+                    <p className="home-desk-empty">
+                      没能刷新，这份是上一次取到的。
+                      <button type="button" className="home-desk-retry" onClick={() => loadRecentWork({ force: true })}>重试</button>
                     </p>
                   )}
                   {workItems.length > WORK_PREVIEW_COUNT && (
