@@ -209,6 +209,58 @@ public class SubtitleGenerationProcessorTests
     }
 
     [Fact]
+    public async Task ChatAudio_ShouldRetryOneFalseNoSpeechResult_WithFullAudio()
+    {
+        var requests = new List<GatewayRawRequest>();
+        var responses = new Queue<GatewayRawResponse>(
+        [
+            new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"NO_SPEECH\"}}]}",
+            },
+            new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"[说话人1] 米多有多年行业经验。\\n[说话人2] 当前报价合理。\"}}]}",
+            },
+        ]);
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<GatewayRawRequest, GatewayModelResolution, CancellationToken>((request, _, _) => requests.Add(request))
+            .ReturnsAsync(() => responses.Dequeue());
+
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeViaChatAudioAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var audioBytes = new byte[] { 1, 2, 3, 4 };
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object[]
+            {
+                BuildRun(),
+                audioBytes,
+                new GatewayModelResolution { ActualModel = "openai/gpt-audio" },
+            })!;
+
+        var segments = await task;
+
+        segments.Select(segment => segment.SpeakerId).ShouldBe(["说话人1", "说话人2"]);
+        requests.Count.ShouldBe(2);
+        requests[0].RequestBody!["temperature"]!.GetValue<int>().ShouldBe(0);
+        requests[1].RequestBody!["messages"]![0]!["content"]![0]!["text"]!
+            .GetValue<string>().ShouldContain("上一次识别可能误判为无人声");
+        requests[0].RequestBody!.ToJsonString().ShouldContain(Convert.ToBase64String(audioBytes));
+        requests[1].RequestBody!.ToJsonString().ShouldContain(Convert.ToBase64String(audioBytes));
+    }
+
+    [Fact]
     public async Task DoubaoAsyncAsr_EmptyNormalizedResponse_ShouldKeepSpecificFailure()
     {
         var gateway = new Mock<ILlmGateway>();

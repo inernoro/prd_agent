@@ -851,82 +851,89 @@ public class SubtitleGenerationProcessor
         GatewayModelResolution gwResolution)
     {
         var base64 = Convert.ToBase64String(audioBytes);
-        var requestBody = new JsonObject
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
-            ["model"] = gwResolution.ActualModel,
-            ["modalities"] = new JsonArray("text"),
-            ["messages"] = new JsonArray
+            var requestBody = new JsonObject
             {
-                new JsonObject
+                ["model"] = gwResolution.ActualModel,
+                ["modalities"] = new JsonArray("text"),
+                ["temperature"] = 0,
+                ["messages"] = new JsonArray
                 {
-                    ["role"] = "user",
-                    ["content"] = new JsonArray
+                    new JsonObject
                     {
-                        new JsonObject
+                        ["role"] = "user",
+                        ["content"] = new JsonArray
                         {
-                            ["type"] = "text",
-                            ["text"] = "请把这段音频逐字转写成文字，尽量一字不差保留原话，并根据不同声音区分说话人。" +
-                                       "每次说话必须单独一行，严格使用“[说话人1] 原话”“[说话人2] 原话”的格式；同一个声音始终使用同一个编号。" +
-                                       "即使只有一个说话人也必须标为[说话人1]。不要猜测真实姓名，不要任何解释、说明或前后缀。" +
-                                       "如果音频中没有任何可识别的人声（静音、空白或纯噪音），只输出 NO_SPEECH 这一个词，不要输出其他任何文字。",
-                        },
-                        new JsonObject
-                        {
-                            ["type"] = "input_audio",
-                            ["input_audio"] = new JsonObject { ["data"] = base64, ["format"] = "wav" },
+                            new JsonObject
+                            {
+                                ["type"] = "text",
+                                ["text"] = BuildChatAudioPrompt(attempt),
+                            },
+                            new JsonObject
+                            {
+                                ["type"] = "input_audio",
+                                ["input_audio"] = new JsonObject { ["data"] = base64, ["format"] = "wav" },
+                            },
                         },
                     },
                 },
-            },
-        };
+            };
 
-        var rawRequest = new GatewayRawRequest
-        {
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
-            ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/chat/completions",
-            IsMultipart = false,
-            RequestBody = requestBody,
-            TimeoutSeconds = 600,
-            Context = new GatewayRequestContext { UserId = run.UserId },
-        };
+            var rawRequest = new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+                ModelType = ModelTypes.Asr,
+                EndpointPath = "/v1/chat/completions",
+                IsMultipart = false,
+                RequestBody = requestBody,
+                TimeoutSeconds = 600,
+                Context = new GatewayRequestContext { UserId = run.UserId },
+            };
 
-        using var _ = _llmCtx.BeginScope(new LlmRequestContext(
-            RequestId: run.Id,
-            GroupId: null,
-            SessionId: run.Id,
-            UserId: run.UserId,
-            ViewRole: null,
-            DocumentChars: null,
-            DocumentHash: null,
-            SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
-            RequestType: ModelTypes.Asr,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            using var _ = _llmCtx.BeginScope(new LlmRequestContext(
+                RequestId: run.Id,
+                GroupId: null,
+                SessionId: run.Id,
+                UserId: run.UserId,
+                ViewRole: null,
+                DocumentChars: null,
+                DocumentHash: null,
+                SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
+                RequestType: ModelTypes.Asr,
+                AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+                ForceFullShadowSample: run.ForceFullShadowSample));
 
-        var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
-        if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
-        {
-            var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
-            throw new SubtitleAsrException(
-                $"多模态 chat 音频转写调用失败: {detail}",
-                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["model"] = gwResolution.ActualModel ?? "" }));
-        }
+            var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
+            if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
+            {
+                var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
+                throw new SubtitleAsrException(
+                    $"多模态 chat 音频转写调用失败: {detail}",
+                    BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object> { ["model"] = gwResolution.ActualModel ?? "" }));
+            }
 
-        var text = ExtractChatCompletionContent(rawResp.Content);
-        // HTTP 成功但没解析出文字（模型拒答 / 响应结构异常 / 空内容）：必须当失败抛出，
-        // 否则字幕生成会拿空文本生成一个"无内容"占位文档，把失败伪装成成功（Bugbot Medium）。
-        if (string.IsNullOrWhiteSpace(text))
-            throw new SubtitleAsrException(
-                "多模态 chat 音频转写返回为空（模型可能拒答或响应格式异常）",
-                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
-                {
-                    ["model"] = gwResolution.ActualModel ?? "",
-                    ["reason"] = "empty-content",
-                }));
-        // 静音哨兵：提示词约定无人声时只输出 NO_SPEECH → 当"无有效语音"失败抛出，
-        // 不能让它流进后续摘要/落库（真实事故：静音音频产出对话式回复被存成笔记）。
-        if (text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+            var text = ExtractChatCompletionContent(rawResp.Content);
+            if (string.IsNullOrWhiteSpace(text))
+                throw new SubtitleAsrException(
+                    "多模态 chat 音频转写返回为空（模型可能拒答或响应格式异常）",
+                    BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
+                    {
+                        ["model"] = gwResolution.ActualModel ?? "",
+                        ["reason"] = "empty-content",
+                    }));
+
+            if (!text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+                return ParseChatAudioSpeakerSegments(text);
+
+            if (attempt == 1)
+            {
+                _logger.LogWarning(
+                    "[doc-store-agent] chat 音频首次返回 NO_SPEECH，使用同一完整音频复核 run={RunId}",
+                    run.Id);
+                continue;
+            }
+
             throw new SubtitleAsrException(
                 "未检测到有效语音内容：录音可能是静音、音量过低或没有人声。请靠近麦克风重新录制。",
                 BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
@@ -934,7 +941,21 @@ public class SubtitleGenerationProcessor
                     ["model"] = gwResolution.ActualModel ?? "",
                     ["reason"] = "no-speech",
                 }));
-        return ParseChatAudioSpeakerSegments(text);
+        }
+
+        throw new InvalidOperationException("音频转写复核未返回结果");
+    }
+
+    internal static string BuildChatAudioPrompt(int attempt)
+    {
+        var retryPrefix = attempt > 1
+            ? "上一次识别可能误判为无人声。请从头到尾重新完整听取音频，确认所有可辨识的人声后再作答。"
+            : string.Empty;
+        return retryPrefix +
+               "请把这段音频逐字转写成文字，尽量一字不差保留原话，并根据不同声音区分说话人。" +
+               "每次说话必须单独一行，严格使用“[说话人1] 原话”“[说话人2] 原话”的格式；同一个声音始终使用同一个编号。" +
+               "即使只有一个说话人也必须标为[说话人1]。不要猜测真实姓名，不要任何解释、说明或前后缀。" +
+               "只有完整音频从头到尾都没有任何可识别的人声（确为静音、空白或纯噪音）时，才只输出 NO_SPEECH。";
     }
 
     internal static List<SubtitleSegment> ParseChatAudioSpeakerSegments(string text)
