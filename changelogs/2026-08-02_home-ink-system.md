@@ -11,6 +11,9 @@
 | refactor | prd-admin | 首页跳转收成唯一出口 `openRoute`，带入口信息的调用自动记打开次数——记账点漏一个，那条路径的启动就永远不计入「你常用的」 |
 | fix | prd-admin | 首页点击补记打开次数：此前只有命令面板（⌘K）记账，瓦片点击与在办工作条都不算数，「你常用的」对只用首页的人永远不出现 |
 | fix | prd-admin | 9 处主操作面从「`--accent-primary` 当底 + 硬编码白字」（暗色 3.12:1）迁到 `--button-primary-bg/fg` 这对已被守卫钉住的 token |
+| fix | prd-admin | 百宝箱两处用户气泡（基础能力 / 快速创建向导）此前是 accent 渐变底 + `--text-primary` 字，暗色只有 2.92:1，同迁到按钮 token 对；渐变里引用的 `--accent-secondary` 全仓从未定义，一并去掉 |
+| fix | prd-admin | 色带守卫补两个漏判口子：tokens.css 改按「完整声明」解析（逐行正则会整条跳过 `--home-ambient-background` 这种多行值，往首页氛围光塞紫色照样绿）；「accent 底 + 浅色字」判据改为按括号深度读值 + 按 JSX 开标签配对（原判据读到第一个逗号就断，渐变形态全漏；邻近窗口配对则会把兄弟元素的文字色误报 3 处） |
+| chore | prd-admin | 清掉 `surface.css` / `ToolEditor` 里 6 处 `var(--accent-primary-rgb, 99, 102, 241)` 与 `var(--accent-primary, #818cf8)` 的靛色兜底字面量（token 恒有定义，兜底永不生效，但会把紫色抄回来） |
 | fix | prd-admin | 主按钮对比度：暗色改「亮一档陶土底 + 深墨字」5.49:1（原白字 3.74:1 不达标），浅色 hover 由压暗改提亮 5.98:1（原 4.18:1）；themeSystem 契约扩到暗浅双向 + hover 态 |
 | style | prd-admin | 主题 token 去靛：`--accent-primary`、按钮主色、选择态、聚焦环、门头氛围光、移动 FAB 全部换成赭红家族（暗浅双主题同一支笔） |
 | style | prd-admin | 未登录官网底色由冷黑 `#030306` 转为暖石墨 `#0E0C0A`，Logo、CTA、光晕、假素材缩略图同步转暖 |

@@ -516,11 +516,11 @@ function TestChatPanel({
               className={cn(
                 'max-w-[85%] p-3 rounded-xl text-[12px] leading-relaxed whitespace-pre-wrap',
                 msg.role === 'user'
-                  ? 'rounded-tr-sm text-token-primary'
+                  ? 'rounded-tr-sm'
                   : 'surface-inset rounded-tl-sm text-token-secondary'
               )}
               style={msg.role === 'user'
-                ? { background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)' }
+                ? { background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }
                 : undefined}
             >
               {msg.content}
