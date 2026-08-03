@@ -417,6 +417,39 @@ describe('主题系统契约', () => {
     expect(mobileHome).toContain('data.feedDegraded');
   });
 
+  it('类别色文字在两个主题下都撑得住 10px 正文', async () => {
+    // 「手边的活儿」的状态标是 10px、底色是 --nested-block-bg、前景是 lib/tileAccent
+    // 的 Accent.text（hsl(色相 48% var(--workflow-accent-text-lightness))）。
+    // 正文级要 4.5:1。逐色相真算，不记死一个数——将来加色相或调明度都会被这条挡住。
+    const { INK_HUES } = await import('../tileAccent');
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    const lightBlock = tokens.slice(tokens.indexOf('[data-theme="light"]'));
+
+    const hslToHex = (h: number, s: number, l: number): string => {
+      const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
+      const channel = (n: number) => {
+        const k = (n + h / 30) % 12;
+        return Math.round(255 * (l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+      };
+      return colorToHex({ r: channel(0), g: channel(8), b: channel(4), a: 1 });
+    };
+
+    for (const [theme, block] of [['暗色', darkBlock], ['浅色', lightBlock]] as const) {
+      const lightness = Number.parseFloat(tokenValue(block, 'workflow-accent-text-lightness'));
+      expect(Number.isFinite(lightness), `${theme}主题缺 --workflow-accent-text-lightness`).toBe(true);
+
+      const base = parseCssColor(tokenValue(block, 'bg-base'));
+      const card = composite(parseCssColor(tokenValue(block, 'bg-card')), base);
+      const surface = colorToHex(composite(parseCssColor(tokenValue(block, 'nested-block-bg')), card));
+
+      for (const [name, hue] of Object.entries(INK_HUES)) {
+        const ratio = contrastRatio(hslToHex(hue, 48, lightness), surface);
+        expect(ratio, `${theme}主题：${name}（色相 ${hue}）的类别色文字只有 ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
   it('品牌主渐变的每一档都能撑住它自己的文字色', async () => {
     // 取模块求值结果而不是扫源码：渐变值可能被改成模板字面量 / 拼接，
     // 扫字面量会在那一刻静默失效（predicate-and-wiring 形状 6）。
@@ -482,7 +515,9 @@ describe('主题系统契约', () => {
       expect(match?.[1]).toBeTruthy();
       expect(contrastRatio(match![1], '#F8F5EF')).toBeGreaterThanOrEqual(4.5);
     });
-    expect(lightBlock).toContain('--workflow-accent-text-lightness: 36%');
+    // 明度具体取多少由「类别色文字」那条按真实叠底算，这里只要求浅色主题**有**这个覆盖
+    // （记死一个百分比就是把判据写成了当时那个数——36% 实测五个色相不达标）
+    expect(lightBlock).toMatch(/--workflow-accent-text-lightness:\s*\d+%/);
     const selectionText = lightBlock.match(/--selection-text:\s*(#[0-9a-fA-F]{6})/)?.[1];
     expect(selectionText).toBeTruthy();
     expect(contrastRatio(selectionText!, '#F8F5EF')).toBeGreaterThanOrEqual(4.5);

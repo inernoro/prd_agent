@@ -542,7 +542,11 @@
   --semantic-cyan-border: rgba(21, 94, 117, 0.24);
   --semantic-indigo-soft: rgba(67, 56, 202, 0.12);
   --semantic-indigo-border: rgba(67, 56, 202, 0.24);
-  --workflow-accent-text-lightness: 36%;
+  /* 类别色文字在浅纸上的明度。36% 时橄榄 3.58 / 黛青 3.60 / 松绿 3.72 —— 
+     「手边的活儿」那枚 10px 状态标就吃这个色，正文级要 4.5:1，全线不达标。
+     压到 30% 后八色最低 4.83（判据见 themeSystem「类别色文字」用例，
+     它按真实叠底逐色算，不是记死一个数）。 */
+  --workflow-accent-text-lightness: 30%;
 
   /* 浅色品牌交互统一为暖赤陶；蓝色只保留给 semantic-info。 */
   --accent-primary: #A64B35;

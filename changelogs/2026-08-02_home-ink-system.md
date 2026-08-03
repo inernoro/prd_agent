@@ -6,7 +6,7 @@
 | feat | prd-admin | 桌面首页新增「近 7 日 + 我的动态」；移动首页的 `useMobileHomeData` 同时改为复用 `lib/homePulse`（此前它自己又拉了一遍 stats/feed），两端同一个 hook、同一份数据，数字不会打架，失败处理也只需修一处 |
 | feat | prd-admin | 新增 `lib/isoWeek.ts`（ISO 8601 周序 SSOT）供首页日期条使用，含跨年归属单测 |
 | feat | prd-admin | 新增 `inkPalette` 守卫测试：受管首页、品牌 token（按 token 名圈定，语义色槽除外）出现紫/靛/品红色相（hex / rgb() / hsl() / Tailwind 紫系类）直接 CI 红；另有一条守卫禁止「accent 当底 + 白字」的 3.12:1 组合 |
-| refactor | prd-admin | `lib/tileAccent` 色带收敛为 `INK_HUES` 八色相并降饱和，新增 `Accent.text`（明度随主题 65%/36%）修类别色文字在浅色纸面发虚；`lib/agentAccent`、`lib/appStoreTokens` 的移动端色板同源换笔 |
+| refactor | prd-admin | `lib/tileAccent` 色带收敛为 `INK_HUES` 八色相并降饱和，新增 `Accent.text`（明度随主题 65%/30%）修类别色文字在浅色纸面发虚——浅色 36% 时橄榄 3.58 / 黛青 3.60 / 松绿 3.72 / 琥珀 4.04 四色不达标（「手边的活儿」的 10px 状态标吃这个色），压到 30% 后八色最低 4.83；`lib/agentAccent`、`lib/appStoreTokens` 的移动端色板同源换笔 |
 | refactor | prd-admin | `formatCompactNumber` 收敛到 `lib/homePulse` 单一实现，移动端改为转出 |
 | refactor | prd-admin | 首页跳转收成唯一出口 `lib/useTrackedNavigate`，**桌面与移动首页共用**：带入口信息的调用自动记打开次数。记账点漏一个，那条路径的启动就永远不计入「你常用的」——桌面收敛后手机上点开的智能体仍不计数，于是桌面的「你常用的」漏掉了用户手机上最常用的那些 |
 | fix | prd-admin | 首页点击补记打开次数：此前只有命令面板（⌘K）记账，瓦片点击与在办工作条都不算数，「你常用的」对只用首页的人永远不出现 |
