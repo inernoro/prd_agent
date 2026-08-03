@@ -155,12 +155,19 @@ public class SubtitleGenerationProcessorTests
         method.ShouldNotBeNull();
         var task = (Task<List<SubtitleSegment>>)method.Invoke(
             processor,
-            new object[] { run, audioBytes, resolution })!;
+            new object[]
+            {
+                run,
+                audioBytes,
+                resolution,
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            })!;
 
         var segments = await task;
 
         capturedRequest.ShouldNotBeNull();
         capturedResolution.ShouldNotBeNull();
+        capturedRequest.AppCallerCode.ShouldBe(AppCallerRegistry.TranscriptAgent.Transcribe.Audio);
         capturedRequest.IsMultipart.ShouldBeFalse();
         capturedRequest.MultipartFiles.ShouldBeNull();
         capturedRequest.MultipartFields.ShouldBeNull();
@@ -253,6 +260,7 @@ public class SubtitleGenerationProcessorTests
                 BuildRun(),
                 audioBytes,
                 new GatewayModelResolution { ActualModel = "openai/gpt-audio" },
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
             })!;
 
         var segments = await task;
@@ -265,7 +273,10 @@ public class SubtitleGenerationProcessorTests
         requests[2].RequestBody!["messages"]![0]!["content"]![0]!["text"]!
             .GetValue<string>().ShouldContain("粗转原文如下");
         foreach (var request in requests)
+        {
+            request.AppCallerCode.ShouldBe(AppCallerRegistry.TranscriptAgent.Transcribe.Audio);
             request.RequestBody!.ToJsonString().ShouldContain(Convert.ToBase64String(audioBytes));
+        }
     }
 
     [Fact]
@@ -300,6 +311,7 @@ public class SubtitleGenerationProcessorTests
                 BuildRun(),
                 new byte[] { 1, 2, 3 },
                 new GatewayModelResolution { ActualModel = "openai/gpt-audio" },
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
             })!;
 
         var segments = await task;
@@ -330,7 +342,13 @@ public class SubtitleGenerationProcessorTests
 
         var task = (Task<List<SubtitleSegment>>)method!.Invoke(
             processor,
-            new object[] { BuildRun(), new byte[] { 1, 2, 3 }, BuildDoubaoResolution() })!;
+            new object[]
+            {
+                BuildRun(),
+                new byte[] { 1, 2, 3 },
+                BuildDoubaoResolution(),
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            })!;
 
         var exception = await Should.ThrowAsync<SubtitleAsrException>(() => task);
         exception.Message.ShouldContain("豆包异步 ASR 返回为空");
@@ -429,6 +447,16 @@ public class SubtitleGenerationProcessorTests
 
         ordered.Select(candidate => candidate.ActualModel)
             .ShouldBe(["doubao-asr-stream", "openai/gpt-audio", "whisper-large-v3"]);
+    }
+
+    [Fact]
+    public void RecordingAsrCallerChain_ShouldTryDedicatedTranscriptionBeforeGenericSubtitle()
+    {
+        SubtitleGenerationProcessor.RecordingAsrCallerChain.ShouldBe(
+        [
+            AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+        ]);
     }
 
     private static SubtitleGenerationProcessor BuildProcessor(ILlmGateway gateway)

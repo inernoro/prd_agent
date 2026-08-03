@@ -21,6 +21,16 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class SubtitleGenerationProcessor
 {
+    internal static readonly IReadOnlyList<string> RecordingAsrCallerChain =
+    [
+        AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+        AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+    ];
+
+    private sealed record RecordingAsrPlan(
+        string AppCallerCode,
+        ModelResolutionResult Resolution);
+
     private readonly IModelResolver _modelResolver;
     private readonly ILlmGateway _llmGateway;
     private readonly IDocumentService _documentService;
@@ -525,7 +535,7 @@ public class SubtitleGenerationProcessor
             "[doc-store-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes} isVideo={IsVideo}",
             sourceBytes, bytes.Length, isVideo);
 
-        // 解析 ASR 模型 —— 只解析一次完整候选计划，发送阶段复用已解析结果。
+        // 解析 ASR 模型 —— 每个受治理调用标识只解析一次完整候选计划，发送阶段复用已解析结果。
         //
         // 历史血泪 (2026-05-08)：
         //   c237e6d (跑通): 默认调度 → 模型池按你配的优先级选 → 命中 vveai/whisper → 14.9s 成功
@@ -534,26 +544,45 @@ public class SubtitleGenerationProcessor
         //     → 选中"另一个" whisper-large-v3 实例（baseUrl 不同 / 健康判定不同）→ 暂不支持该接口
         //   教训：用户在管理后台配的优先级已经是 source of truth，不要在代码里二次干预。
         //
-        // 谁来路由：用户 → 管理后台模型池配置（绑 AppCallerCode + 排优先级）。
-        // 录音产品另有一个明确能力约束：有原生说话人信息的健康候选必须优先于只能靠提示词
-        // 猜角色的通用音频模型；原生候选失败时再按模型池顺序降级，确保原文不会因角色增强失败而丢失。
-        var resolution = await _modelResolver.ResolveAsync(
-            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
+        // 谁来路由：用户 → 管理后台模型池配置（绑 AppCallerCode + 排优先级）。录音先走
+        // transcript-agent.transcribe::asr 专属池，以便单独绑定带原生 speaker 信息的模型；
+        // 专属池不可用或调用失败时再走 document-store.subtitle::asr 通用池，保证原文不丢。
+        var plans = new List<RecordingAsrPlan>();
+        var resolutionErrors = new List<string>();
+        foreach (var appCallerCode in RecordingAsrCallerChain)
+        {
+            var candidate = await _modelResolver.ResolveAsync(appCallerCode, ModelTypes.Asr);
+            if (candidate.Success)
+                plans.Add(new RecordingAsrPlan(appCallerCode, candidate));
+            else
+                resolutionErrors.Add($"{appCallerCode}: {candidate.ErrorMessage ?? "未找到可用模型"}");
+        }
 
-        if (!resolution.Success)
+        if (plans.Count == 0)
             throw new SubtitleAsrException(
-                $"ASR 模型调度失败: {resolution.ErrorMessage}",
-                BuildResolverDiagnostic(resolution, "调度失败"));
+                $"ASR 模型调度失败: {string.Join(" | ", resolutionErrors)}",
+                new Dictionary<string, object?>
+                {
+                    ["stage"] = "调度失败",
+                    ["appCallers"] = RecordingAsrCallerChain,
+                    ["errors"] = resolutionErrors,
+                });
 
-        _logger.LogInformation(
-            "[doc-store-agent] ASR 调度命中: model={Model} platform={Platform} isExchange={IsExchange} transformerType={Tt}",
-            resolution.ActualModel, resolution.ActualPlatformName,
-            resolution.IsExchange, resolution.ExchangeTransformerType);
+        foreach (var plan in plans)
+        {
+            _logger.LogInformation(
+                "[doc-store-agent] ASR 调度命中: appCaller={AppCaller} model={Model} platform={Platform} isExchange={IsExchange} transformerType={Tt}",
+                plan.AppCallerCode,
+                plan.Resolution.ActualModel,
+                plan.Resolution.ActualPlatformName,
+                plan.Resolution.IsExchange,
+                plan.Resolution.ExchangeTransformerType);
+        }
 
-        return await TranscribeWithFallbackAsync(
+        return await TranscribeWithCallerFallbackAsync(
             run,
             bytes,
-            resolution,
+            plans,
             (attempt, total) => UpdateProgressAsync(
                 db,
                 runStore,
@@ -592,13 +621,29 @@ public class SubtitleGenerationProcessor
         byte[] audioBytes,
         ModelResolutionResult primaryResolution,
         Func<int, int, Task>? onAttempt = null)
+        => await TranscribeWithCallerFallbackAsync(
+            run,
+            audioBytes,
+            [new RecordingAsrPlan(AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, primaryResolution)],
+            onAttempt);
+
+    private async Task<List<SubtitleSegment>> TranscribeWithCallerFallbackAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        IReadOnlyList<RecordingAsrPlan> plans,
+        Func<int, int, Task>? onAttempt = null)
     {
         const int maxAttempts = 3;
-        var candidates = OrderRecordingAsrCandidates(
-                new[] { primaryResolution }.Concat(primaryResolution.RetryCandidates ?? []))
-            .Where(candidate => candidate.Success && !string.IsNullOrWhiteSpace(candidate.ActualModel))
+        // 先保留每个调用标识的首选方案，再追加各池内部重试。这样即使专属池配置了多个
+        // provider，三次尝试上限内也一定留有通用调用标识的兜底位置。
+        var candidates = plans
+            .Concat(plans.SelectMany(plan => (plan.Resolution.RetryCandidates ?? [])
+                .Select(resolution => new RecordingAsrPlan(plan.AppCallerCode, resolution))))
+            .Where(candidate => candidate.Resolution.Success
+                                && !string.IsNullOrWhiteSpace(candidate.Resolution.ActualModel))
+            .OrderByDescending(candidate => IsNativeSpeakerAsr(candidate.Resolution))
             .GroupBy(
-                candidate => $"{candidate.ActualPlatformId}::{candidate.ActualModel}",
+                candidate => $"{candidate.Resolution.ActualPlatformId}::{candidate.Resolution.ActualModel}",
                 StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .Take(maxAttempts)
@@ -607,7 +652,8 @@ public class SubtitleGenerationProcessor
         var failures = new List<Dictionary<string, object?>>();
         for (var index = 0; index < candidates.Count; index++)
         {
-            var candidate = candidates[index];
+            var plan = candidates[index];
+            var candidate = plan.Resolution;
             // 语义降级由本处理器按候选协议重建请求。单次发送不能继续携带候选，
             // 否则 Gateway 可能拿豆包 JSON 请求去重试 Whisper multipart，协议形状会错位。
             candidate.RetryCandidates = null;
@@ -617,7 +663,11 @@ public class SubtitleGenerationProcessor
 
             try
             {
-                var segments = await TranscribeWithResolutionAsync(run, audioBytes, candidate);
+                var segments = await TranscribeWithResolutionAsync(
+                    run,
+                    audioBytes,
+                    candidate,
+                    plan.AppCallerCode);
                 if (segments.Count == 0)
                 {
                     throw new SubtitleAsrException(
@@ -641,6 +691,7 @@ public class SubtitleGenerationProcessor
                 failures.Add(new Dictionary<string, object?>
                 {
                     ["attempt"] = index + 1,
+                    ["appCallerCode"] = plan.AppCallerCode,
                     ["model"] = candidate.ActualModel,
                     ["platformId"] = candidate.ActualPlatformId,
                     ["platformName"] = candidate.ActualPlatformName,
@@ -668,24 +719,34 @@ public class SubtitleGenerationProcessor
                     index + 1,
                     candidates.Count,
                     candidate.ActualModel,
-                    candidates[index + 1].ActualModel);
+                    candidates[index + 1].Resolution.ActualModel);
             }
         }
 
         throw new SubtitleAsrException(
             "ASR 模型池没有可执行的识别方案",
-            BuildResolverDiagnostic(primaryResolution, "no-candidates"));
+            BuildResolverDiagnostic(
+                plans.FirstOrDefault()?.Resolution ?? new ModelResolutionResult
+                {
+                    Success = false,
+                    ErrorMessage = "没有成功解析的 ASR 候选",
+                },
+                "no-candidates"));
     }
 
     internal static IEnumerable<ModelResolutionResult> OrderRecordingAsrCandidates(
         IEnumerable<ModelResolutionResult> candidates)
-        => candidates.OrderByDescending(candidate => candidate.IsExchange
-            && candidate.ExchangeTransformerType is "doubao-asr" or "doubao-asr-stream");
+        => candidates.OrderByDescending(IsNativeSpeakerAsr);
+
+    private static bool IsNativeSpeakerAsr(ModelResolutionResult candidate)
+        => candidate.IsExchange
+           && candidate.ExchangeTransformerType is "doubao-asr" or "doubao-asr-stream";
 
     private async Task<List<SubtitleSegment>> TranscribeWithResolutionAsync(
         DocumentStoreAgentRun run,
         byte[] audioBytes,
-        ModelResolutionResult resolution)
+        ModelResolutionResult resolution,
+        string appCallerCode)
     {
         // 三路分发（参考 TranscriptRunWorker.cs:159-192）
         if (resolution.IsExchange)
@@ -694,7 +755,7 @@ public class SubtitleGenerationProcessor
             {
                 case "doubao-asr-stream":
                     // WebSocket 协议由 LlmGateway/llmgw-serve 执行；本处理器仍只提交 GatewayRawRequest。
-                    return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(),
+                    return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode,
                         new Dictionary<string, object>
                         {
                             ["model"] = resolution.ActualModel ?? "doubao-asr-stream",
@@ -708,7 +769,7 @@ public class SubtitleGenerationProcessor
                     // Gateway.ConsolidateMultipartToJson 会把 multipart 文件转成 image_urls，
                     // 路径不通。必须把音频以 base64 audio_data 形式塞进 RequestBody。
                     // 参考：Bugbot + Codex 双 P1 review on PR #542 commit 9253b0f
-                    return await TranscribeViaDoubaoAsyncJsonAsync(run, audioBytes, resolution);
+                    return await TranscribeViaDoubaoAsyncJsonAsync(run, audioBytes, resolution, appCallerCode);
 
                 default:
                     throw new SubtitleAsrException(
@@ -728,7 +789,7 @@ public class SubtitleGenerationProcessor
                 "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
                 resolution.ActualModel, resolution.ActualPlatformName);
             // 上面已统一转成 WAV，chat-audio 只接收规范化后的字节，避免重复转码。
-            return await TranscribeViaChatAudioAsync(run, audioBytes, resolution.ToGatewayResolution());
+            return await TranscribeViaChatAudioAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode);
         }
 
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
@@ -739,7 +800,7 @@ public class SubtitleGenerationProcessor
         _logger.LogInformation(
             "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
             resolution.ActualModel, resolution.ActualPlatformName);
-        return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(),
+        return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode,
             new Dictionary<string, object>
             {
                 ["model"] = resolution.ActualModel ?? "whisper-1",
@@ -757,6 +818,7 @@ public class SubtitleGenerationProcessor
         DocumentStoreAgentRun run,
         byte[] audioBytes,
         GatewayModelResolution gwResolution,
+        string appCallerCode,
         Dictionary<string, object> multipartFields)
     {
         // 不要在 multipart 里暴露空 model/language（OpenAI 严格模式会拒）
@@ -770,7 +832,7 @@ public class SubtitleGenerationProcessor
         // 平台依赖 magic bytes 解码（你传 m4a 字节 + audio/wav 标签也能转录），mime 字段等同身份证不等同实际内容。
         var rawRequest = new GatewayRawRequest
         {
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             EndpointPath = "/v1/audio/transcriptions",
             IsMultipart = true,
@@ -793,7 +855,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode: appCallerCode,
             ForceFullShadowSample: run.ForceFullShadowSample));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
@@ -858,7 +920,8 @@ public class SubtitleGenerationProcessor
     private async Task<List<SubtitleSegment>> TranscribeViaChatAudioAsync(
         DocumentStoreAgentRun run,
         byte[] audioBytes,
-        GatewayModelResolution gwResolution)
+        GatewayModelResolution gwResolution,
+        string appCallerCode)
     {
         GatewayRawResponse? lastResponse = null;
         string? transcript = null;
@@ -868,6 +931,7 @@ public class SubtitleGenerationProcessor
                 run,
                 audioBytes,
                 gwResolution,
+                appCallerCode,
                 BuildChatAudioPrompt(attempt));
             lastResponse = result.Response;
             if (!result.Text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
@@ -900,6 +964,7 @@ public class SubtitleGenerationProcessor
                 run,
                 audioBytes,
                 gwResolution,
+                appCallerCode,
                 BuildChatAudioDiarizationPrompt(transcript));
             if (ContainsExplicitSpeakerLabel(diarized.Text))
                 return ParseChatAudioSpeakerSegments(diarized.Text);
@@ -949,6 +1014,7 @@ public class SubtitleGenerationProcessor
         DocumentStoreAgentRun run,
         byte[] audioBytes,
         GatewayModelResolution gwResolution,
+        string appCallerCode,
         string prompt)
     {
         var requestBody = new JsonObject
@@ -979,7 +1045,7 @@ public class SubtitleGenerationProcessor
         };
         var rawRequest = new GatewayRawRequest
         {
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             EndpointPath = "/v1/chat/completions",
             IsMultipart = false,
@@ -998,7 +1064,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode: appCallerCode,
             ForceFullShadowSample: run.ForceFullShadowSample));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
@@ -1120,7 +1186,8 @@ public class SubtitleGenerationProcessor
     private async Task<List<SubtitleSegment>> TranscribeViaDoubaoAsyncJsonAsync(
         DocumentStoreAgentRun run,
         byte[] audioBytes,
-        ModelResolutionResult resolution)
+        ModelResolutionResult resolution,
+        string appCallerCode)
     {
         var gwResolution = resolution.ToGatewayResolution();
         // 豆包异步 ASR 接受 base64 音频。模型字段 Gateway 会自动注入。
@@ -1131,7 +1198,7 @@ public class SubtitleGenerationProcessor
 
         var rawRequest = new GatewayRawRequest
         {
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             RequestBody = requestBody,
             IsMultipart = false,
@@ -1153,7 +1220,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR_JSON]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode: appCallerCode,
             ForceFullShadowSample: run.ForceFullShadowSample));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
