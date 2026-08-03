@@ -179,6 +179,36 @@ public class SubtitleGenerationProcessorTests
     }
 
     [Fact]
+    public void ChatAudioSpeakerSegments_ShouldPreserveStableSpeakersAndUnlabeledContinuation()
+    {
+        var segments = SubtitleGenerationProcessor.ParseChatAudioSpeakerSegments("""
+            [说话人1] 我们有多年行业经验。
+            并且有丰富的营销策略。
+            说话人2：只要交付质量达标，价格合理。
+            [说话人1] 周五前提供实施计划。
+            """);
+
+        segments.Count.ShouldBe(3);
+        segments[0].SpeakerId.ShouldBe("说话人1");
+        segments[0].Text.ShouldBe("我们有多年行业经验。 并且有丰富的营销策略。");
+        segments[1].SpeakerId.ShouldBe("说话人2");
+        segments[2].SpeakerId.ShouldBe("说话人1");
+
+        var note = SubtitleFormatter.FormatTranscriptNote("meeting.m4a", string.Empty, segments);
+        note.ShouldContain("[说话人1] 我们有多年行业经验。");
+        note.ShouldContain("[说话人2] 只要交付质量达标，价格合理。");
+    }
+
+    [Fact]
+    public void ChatAudioSpeakerSegments_ShouldLabelProviderFallbackAsSpeakerOne()
+    {
+        var segments = SubtitleGenerationProcessor.ParseChatAudioSpeakerSegments("只有一位说话人的原文");
+
+        segments.Count.ShouldBe(1);
+        segments[0].SpeakerId.ShouldBe("说话人1");
+    }
+
+    [Fact]
     public async Task DoubaoAsyncAsr_EmptyNormalizedResponse_ShouldKeepSpecificFailure()
     {
         var gateway = new Mock<ILlmGateway>();

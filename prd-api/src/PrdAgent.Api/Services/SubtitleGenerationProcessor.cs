@@ -865,7 +865,9 @@ public class SubtitleGenerationProcessor
                         new JsonObject
                         {
                             ["type"] = "text",
-                            ["text"] = "请把这段音频逐字转写成文字，尽量一字不差保留原话。只输出转写出的文字本身，不要任何解释、说明或前后缀。" +
+                            ["text"] = "请把这段音频逐字转写成文字，尽量一字不差保留原话，并根据不同声音区分说话人。" +
+                                       "每次说话必须单独一行，严格使用“[说话人1] 原话”“[说话人2] 原话”的格式；同一个声音始终使用同一个编号。" +
+                                       "即使只有一个说话人也必须标为[说话人1]。不要猜测真实姓名，不要任何解释、说明或前后缀。" +
                                        "如果音频中没有任何可识别的人声（静音、空白或纯噪音），只输出 NO_SPEECH 这一个词，不要输出其他任何文字。",
                         },
                         new JsonObject
@@ -932,7 +934,69 @@ public class SubtitleGenerationProcessor
                     ["model"] = gwResolution.ActualModel ?? "",
                     ["reason"] = "no-speech",
                 }));
-        return new List<SubtitleSegment> { new(0, 0, text.Trim()) };
+        return ParseChatAudioSpeakerSegments(text);
+    }
+
+    internal static List<SubtitleSegment> ParseChatAudioSpeakerSegments(string text)
+    {
+        var segments = new List<SubtitleSegment>();
+        string? activeSpeaker = null;
+        var activeText = new StringBuilder();
+
+        void Flush()
+        {
+            var content = activeText.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(content))
+                segments.Add(new SubtitleSegment(0, 0, content, activeSpeaker));
+            activeText.Clear();
+        }
+
+        foreach (var rawLine in text.Replace("\r", string.Empty, StringComparison.Ordinal).Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var parsed = TryParseSpeakerLine(line);
+            if (parsed != null)
+            {
+                Flush();
+                activeSpeaker = parsed.Value.Speaker;
+                activeText.Append(parsed.Value.Text);
+                continue;
+            }
+
+            if (activeText.Length > 0) activeText.Append(' ');
+            activeText.Append(line);
+        }
+        Flush();
+
+        if (segments.Count > 0 && segments.All(segment => string.IsNullOrWhiteSpace(segment.SpeakerId)))
+            return new List<SubtitleSegment> { new(0, 0, text.Trim(), "说话人1") };
+        return segments.Count > 0
+            ? segments
+            : new List<SubtitleSegment> { new(0, 0, text.Trim(), "说话人1") };
+    }
+
+    private static (string Speaker, string Text)? TryParseSpeakerLine(string line)
+    {
+        if (line.StartsWith("[", StringComparison.Ordinal))
+        {
+            var close = line.IndexOf(']');
+            if (close > 1)
+            {
+                var label = line[1..close].Trim();
+                if (label.StartsWith("说话人", StringComparison.Ordinal))
+                    return (label, line[(close + 1)..].TrimStart(' ', ':', '：'));
+            }
+        }
+
+        if (line.StartsWith("说话人", StringComparison.Ordinal))
+        {
+            var separator = line.IndexOfAny([':', '：']);
+            if (separator > 3)
+                return (line[..separator].Trim(), line[(separator + 1)..].Trim());
+        }
+        return null;
     }
 
     private static string ExtractChatCompletionContent(string json)

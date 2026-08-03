@@ -279,7 +279,10 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             BucketName = bucket,
             Key = key,
             InputStream = new MemoryStream(bytes, writable: false),
-            ContentType = (contentType ?? string.Empty).Trim(),
+            // MediaRecorder 会产出 audio/mp4;codecs=mp4a.40.2。R2 的 S3 兼容端点
+            // 会重写这类带参数的 Content-Type，导致服务端验签所见 header 与 SDK
+            // 签名输入不一致。对象类型只需要规范 media type；编码信息由容器自身携带。
+            ContentType = NormalizeSignedContentType(contentType),
             // R2 的 S3 兼容端点对真实录音大小的 UNSIGNED-PAYLOAD 请求会偶发返回
             // SignatureDoesNotMatch。固定使用带 Content-Length 的完整 SigV4 payload
             // 签名，并禁用 aws-chunked，避免小探针成功而实际音频归档失败。
@@ -291,6 +294,15 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var cc = (cacheControl ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(cc)) request.Headers.CacheControl = cc;
         return request;
+    }
+
+    internal static string NormalizeSignedContentType(string? contentType)
+    {
+        var trimmed = (contentType ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return "application/octet-stream";
+        var parameterIndex = trimmed.IndexOf(';');
+        return (parameterIndex >= 0 ? trimmed[..parameterIndex] : trimmed).Trim().ToLowerInvariant();
     }
 
     private string BuildPublicUrl(string key)
