@@ -109,7 +109,7 @@
       "entrySmoke": true,
       "automationStatus": "entry",
       "requiredCaseIds": ["VIDEO-001", "VIDEO-002", "VIDEO-003", "VIDEO-004", "VIDEO-005", "VIDEO-006", "VIDEO-007", "VIDEO-008", "VIDEO-009", "VIDEO-010"],
-      "regressionCaseIds": [],
+      "regressionCaseIds": ["REG-video-001"],
       "sourcePrefixes": ["prd-admin/src/pages/video-agent/", "prd-api/src/PrdAgent.Api/Controllers/Api/Video", "prd-api/src/PrdAgent.Api/Services/Video", "prd-video/"],
       "cdsPolicy": "脚本、分镜、关键帧、最短成片、部分失败、恢复与清理",
       "productionPolicy": "最低成本两镜头真实成片并清理",
