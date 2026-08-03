@@ -19,6 +19,14 @@ function formatBackgroundDuration(totalSeconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+const RECORDING_ARCHIVE_STALE_MS = 10 * 60 * 1000;
+
+export function isStaleRecordingArchive(startedAt?: string, now = Date.now()): boolean {
+  if (!startedAt) return false;
+  const startedMs = new Date(startedAt).getTime();
+  return Number.isFinite(startedMs) && now - startedMs >= RECORDING_ARCHIVE_STALE_MS;
+}
+
 function RecordingArchiveProgress({
   hasPlayback,
   hasTranscript,
@@ -240,7 +248,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   const liveTranscript = entry.metadata?.liveTranscript?.trim() || null;
   const effectiveTranscript = transcriptNoteMd?.trim() || liveTranscript;
   const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
-  const archiveWaitingForRetry = entry.metadata?.audioArchiveNeedsRetry === 'true';
+  const archiveWaitingForRetry = entry.metadata?.audioArchiveNeedsRetry === 'true'
+    || isStaleRecordingArchive(entry.createdAt);
   if (isAudio && fileUrl) {
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）

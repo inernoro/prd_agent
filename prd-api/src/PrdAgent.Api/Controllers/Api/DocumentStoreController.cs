@@ -1888,15 +1888,13 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音条目不存在"));
 
         var now = DateTime.UtcNow;
-        var result = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
-            session => session.EntryId == entryId
-                       && session.UserId == userId
-                       && session.ArchiveStatus == DocumentRecordingArchiveStatus.Pending,
-            Builders<DocumentRecordingUploadSession>.Update
-                .Set(session => session.ArchiveNextAttemptAt, now)
-                .Set(session => session.ArchiveError, null)
-                .Set(session => session.UpdatedAt, now),
-            cancellationToken: CancellationToken.None);
+        var result = await QueueRecordingArchiveRetryAsync(
+            _db.DocumentRecordingUploadSessions,
+            entryId,
+            userId,
+            InstanceIdentity.Get(_config),
+            now,
+            CancellationToken.None);
         if (result.MatchedCount == 0)
         {
             var completed = entry.Metadata?.GetValueOrDefault("audioArchiveStatus")
@@ -1907,6 +1905,32 @@ public class DocumentStoreController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(new { queued = true, completed = false }));
+    }
+
+    internal static async Task<UpdateResult> QueueRecordingArchiveRetryAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string entryId,
+        string userId,
+        string instanceId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var recoverableStatus = Builders<DocumentRecordingUploadSession>.Filter.In(
+            session => session.ArchiveStatus,
+            [DocumentRecordingArchiveStatus.Pending, DocumentRecordingArchiveStatus.Archiving]);
+        return await sessions.UpdateOneAsync(
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(session => session.EntryId, entryId),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(session => session.UserId, userId),
+                recoverableStatus),
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(session => session.OwnerInstanceId, instanceId)
+                .Set(session => session.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
+                .Unset(session => session.ArchiveLeaseId)
+                .Set(session => session.ArchiveNextAttemptAt, now)
+                .Set(session => session.ArchiveError, null)
+                .Set(session => session.UpdatedAt, now),
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>按顺序接收一个录音二进制分片。重复发送已确认的 index 会幂等返回。</summary>
