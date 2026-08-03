@@ -327,6 +327,21 @@
   font-size: 11px;
 }
 
+/* 取数失败时的重试：文字链，不做成按钮块——它是"顺手补一下"，不是主操作 */
+.home-desk-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.home-desk-retry:hover { color: var(--text-primary); }
+
 /* ── 在办工作：单行条目（收件箱节奏），类别色只出现在图标芯片上 ── */
 
 .home-desk-work-list { display: flex; flex-direction: column; }

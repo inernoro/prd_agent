@@ -362,6 +362,19 @@ describe('主题系统契约', () => {
     expect(launcher).toMatch(/const openRoute = useCallback\([\s\S]*?addRecentVisit\([\s\S]*?navigate\(route\)/);
   });
 
+  it('首页取数失败不许渲染成「你什么都没干过」', () => {
+    const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
+
+    // 纯函数那侧的判据在 homePulse.test.ts；这里管接线——
+    // 失败标记算出来了却没人渲染，等于没修（predicate-and-wiring 形状 2）。
+    expect(launcher).toContain('pulse.statsFailed');
+    expect(launcher).toContain('pulse.feedFailed');
+    // 失败且手上无数据时显示占位而不是 0
+    expect(launcher).toMatch(/statsUnavailable[\s\S]{0,200}?return '--'/);
+    // 动态的失败态要给重试，不能只是换句话说
+    expect(launcher).toMatch(/pulse\.feedFailed[\s\S]{0,400}?onClick=\{pulse\.reload\}/);
+  });
+
   it('品牌主渐变的每一档都能撑住它自己的文字色', async () => {
     // 取模块求值结果而不是扫源码：渐变值可能被改成模板字面量 / 拼接，
     // 扫字面量会在那一刻静默失效（predicate-and-wiring 形状 6）。

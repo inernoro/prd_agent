@@ -613,6 +613,18 @@ export default function AgentLauncherPage() {
     { label: '缺陷', value: pulse.stats?.defects ?? 0 },
     { label: 'Token', value: pulse.stats?.totalTokens ?? 0 },
   ];
+  /**
+   * 取数失败且手上一份数据都没有时显示「--」，绝不显示 0——
+   * 把「没取到」说成「你这周没干活」是在骗人。
+   * 手上有上一轮的数据就继续显示（标题里说明可能不是最新），
+   * 数字凭空变空比数字略旧更让人慌。加载中是「—」，与失败态不同形。
+   */
+  const statsUnavailable = pulse.statsFailed && !pulse.stats;
+  const statText = (value: number) => {
+    if (pulse.loading && !pulse.stats) return '—';
+    if (statsUnavailable) return '--';
+    return formatCompactNumber(value);
+  };
 
   /**
    * 智能体分三档，回答"我该点哪个"：
@@ -738,12 +750,20 @@ export default function AgentLauncherPage() {
               </div>
 
               {/* 近 7 日：从独立面板降级为命令条右侧的一条数字，不再自成一块 */}
-              <dl className="home-desk-kpis" aria-label="近 7 日真实用量">
+              <dl
+                className="home-desk-kpis"
+                aria-label={pulse.statsFailed ? '近 7 日真实用量（暂时取不到）' : '近 7 日真实用量'}
+                title={
+                  statsUnavailable ? '用量数据没取到，不代表用量为零'
+                    : pulse.statsFailed ? '这份是上一次取到的数据，可能不是最新'
+                      : undefined
+                }
+              >
                 {statCells.map((cell) => (
                   <div key={cell.label} className="home-desk-kpi">
                     <dt className="home-desk-kpi-label">{cell.label}</dt>
-                    <dd className={`home-desk-kpi-value ${cell.value > 0 ? '' : 'is-zero'}`}>
-                      {pulse.loading ? '—' : formatCompactNumber(cell.value)}
+                    <dd className={`home-desk-kpi-value ${statsUnavailable || cell.value > 0 ? '' : 'is-zero'}`}>
+                      {statText(cell.value)}
                     </dd>
                   </div>
                 ))}
@@ -825,8 +845,17 @@ export default function AgentLauncherPage() {
                       </button>
                     }
                   />
-                  {pulse.feed.length === 0 ? (
-                    <p className="home-desk-empty">用过知识库、周报、生图或缺陷之后，动态会出现在这里。</p>
+                  {pulse.feedFailed && pulse.feed.length === 0 ? (
+                    // 取不到 ≠ 没有。对老用户说"你还没用过"比直接认错更伤，
+                    // 所以如实说没取到，并给一条能自己解决的路（重试）。
+                    <p className="home-desk-empty">
+                      动态暂时取不到（网络或服务不可用）。
+                      <button type="button" className="home-desk-retry" onClick={pulse.reload}>重试</button>
+                    </p>
+                  ) : pulse.feed.length === 0 ? (
+                    <p className="home-desk-empty">
+                      {pulse.loading ? '正在读取你的动态…' : '用过知识库、周报、生图或缺陷之后，动态会出现在这里。'}
+                    </p>
                   ) : (
                     <ul className="home-desk-feed">
                       {pulse.feed.slice(0, WORK_PREVIEW_COUNT).map((entry) => (

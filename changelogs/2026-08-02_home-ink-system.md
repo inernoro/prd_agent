@@ -13,6 +13,7 @@
 | fix | prd-admin | 9 处主操作面从「`--accent-primary` 当底 + 硬编码白字」（暗色 3.12:1）迁到 `--button-primary-bg/fg` 这对已被守卫钉住的 token |
 | fix | prd-admin | 百宝箱两处用户气泡（基础能力 / 快速创建向导）此前是 accent 渐变底 + `--text-primary` 字，暗色只有 2.92:1，同迁到按钮 token 对；渐变里引用的 `--accent-secondary` 全仓从未定义，一并去掉 |
 | fix | prd-admin | 色带守卫补两个漏判口子：tokens.css 改按「完整声明」解析（逐行正则会整条跳过 `--home-ambient-background` 这种多行值，往首页氛围光塞紫色照样绿）；「accent 底 + 浅色字」判据改为按括号深度读值 + 按 JSX 开标签配对（原判据读到第一个逗号就断，渐变形态全漏；邻近窗口配对则会把兄弟元素的文字色误报 3 处） |
+| fix | prd-admin | 首页「近 7 日 / 我的动态」取数失败此前会渲染成「全零 + 你还没用过」——等于当着老用户面说他什么都没干过。两路各记成败（`resolveHomePulse` 纯函数，reject / `success:false` / `data` 缺失一律算没取到），无数据时显示 `--` 而非 0，动态给「取不到 + 重试」，有旧数据则保留并标注可能不是最新 |
 | fix | prd-admin | 移动首页色板（`pages/mobile-home/shared.ts`）漏在守卫外：视觉创作 `#A78BFA`、更新中心 `#F472B6` 一直在移动首页显示，换成陶土 / 黛青，受管范围补上该模块 |
 | fix | prd-admin | 官网与 Arena 主 CTA 的品牌渐变对白字只有 2.23~3.62:1，7 处 13-15px 标签迁到深墨字（复用 `--button-primary-fg`，暗浅同值），渐变起点 `#C8623A` 抬到 `#CE6B41` 让最暗那档也过 4.5；守卫逐档算「色标 x 两主题文字色」 |
 | chore | prd-admin | 清掉 `surface.css` / `ToolEditor` 里 6 处 `var(--accent-primary-rgb, 99, 102, 241)` 与 `var(--accent-primary, #818cf8)` 的靛色兜底字面量（token 恒有定义，兜底永不生效，但会把紫色抄回来） |
