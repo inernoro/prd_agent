@@ -400,6 +400,37 @@ public class SubtitleGenerationProcessorTests
             It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    [Fact]
+    public void RecordingAsrCandidates_ShouldPreferNativeSpeakerInformation_AndKeepPoolFallbackOrder()
+    {
+        var chatAudio = new ModelResolutionResult
+        {
+            Success = true,
+            ActualModel = "openai/gpt-audio",
+            ActualPlatformId = "openrouter",
+        };
+        var doubaoStream = new ModelResolutionResult
+        {
+            Success = true,
+            ActualModel = "doubao-asr-stream",
+            ActualPlatformId = "doubao-stream",
+            IsExchange = true,
+            ExchangeTransformerType = "doubao-asr-stream",
+        };
+        var whisper = new ModelResolutionResult
+        {
+            Success = true,
+            ActualModel = "whisper-large-v3",
+            ActualPlatformId = "whisper",
+        };
+
+        var ordered = SubtitleGenerationProcessor.OrderRecordingAsrCandidates(
+            [chatAudio, doubaoStream, whisper]).ToList();
+
+        ordered.Select(candidate => candidate.ActualModel)
+            .ShouldBe(["doubao-asr-stream", "openai/gpt-audio", "whisper-large-v3"]);
+    }
+
     private static SubtitleGenerationProcessor BuildProcessor(ILlmGateway gateway)
         => new(
             modelResolver: Mock.Of<IModelResolver>(),
