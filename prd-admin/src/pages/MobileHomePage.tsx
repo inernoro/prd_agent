@@ -274,6 +274,20 @@ export default function MobileHomePage() {
                 </div>
               </div>
             ))}
+            {/* 说明和重试必须看得见：title 只在悬停时出现，手机上等于没有。
+                两个端点各自成败，用量单独挂了也要能自己救回来。 */}
+            {data.statsFailed && (
+              <div style={{ ...AS_TYPE.caption, gridColumn: '1 / -1', color: C.labelSecondary }}>
+                {statsUnavailable ? '用量暂时取不到（网络或服务不可用）。' : '这份用量可能不是最新。'}
+                <button
+                  type="button"
+                  onClick={data.reload}
+                  style={{ marginLeft: 6, color: C.blue, fontWeight: 600, textDecoration: 'underline' }}
+                >
+                  重试
+                </button>
+              </div>
+            )}
           </div>
         </Section>
 

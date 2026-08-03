@@ -767,6 +767,14 @@ export default function AgentLauncherPage() {
                     </dd>
                   </div>
                 ))}
+                {/* 说明和重试必须看得见：title 只在悬停时出现，触屏上等于没有。
+                    两个端点各自成败，用量单独挂了也要能自己救回来。 */}
+                {pulse.statsFailed && (
+                  <p className="home-desk-kpi-note">
+                    {statsUnavailable ? '用量没取到' : '用量可能不是最新'}
+                    <button type="button" className="home-desk-retry" onClick={pulse.reload}>重试</button>
+                  </p>
+                )}
               </dl>
             </div>
 

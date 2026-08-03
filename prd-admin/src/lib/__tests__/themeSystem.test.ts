@@ -375,6 +375,9 @@ describe('主题系统契约', () => {
     expect(launcher).toMatch(/statsUnavailable[\s\S]{0,200}?return '--'/);
     // 动态的失败态要给重试，不能只是换句话说
     expect(launcher).toMatch(/pulse\.feedFailed[\s\S]{0,400}?onClick=\{pulse\.reload\}/);
+    // 两个端点各自成败：用量单独挂了也要有看得见的说明 + 重试。
+    // 只挂 title 不算——触屏没有悬停，等于什么都没说。
+    expect(launcher).toMatch(/pulse\.statsFailed && \([\s\S]{0,400}?onClick=\{pulse\.reload\}/);
 
     // 移动端必须走同一个 hook：各拉各的就会出现「桌面修好了、手机还在骗人」，
     // 也会让「两端共用一份数据」这句话变成假话（changelog 曾据此写错）。
@@ -383,7 +386,7 @@ describe('主题系统契约', () => {
     expect(mobileShared).not.toMatch(/getMobileStats\(|getMobileFeed\(/);
 
     const mobileHome = fs.readFileSync(MOBILE_HOME_PATH, 'utf8');
-    expect(mobileHome).toContain('data.statsFailed');
+    expect(mobileHome).toMatch(/data\.statsFailed && \([\s\S]{0,500}?onClick=\{data\.reload\}/);
     expect(mobileHome).toMatch(/data\.feedFailed[\s\S]{0,500}?onClick=\{data\.reload\}/);
   });
 

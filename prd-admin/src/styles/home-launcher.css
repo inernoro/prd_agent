@@ -192,6 +192,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 用量取不到时的说明 + 重试：要看得见，不能只挂 title（触屏没有悬停） */
+.home-desk-kpi-note {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .home-desk-kpi-value.is-zero { color: var(--text-muted); font-weight: 600; }
 
 /* ── 常去入口：台面内的一行无框文字链 ── */
