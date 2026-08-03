@@ -51,6 +51,29 @@ public class LocalSpeakerDiarizerTests
     }
 
     [Fact]
+    public void UnusedAcousticCluster_ShouldNotLeaveGapInVisibleSpeakerNumbers()
+    {
+        var wav = BuildWav(
+            (0.30, 0, 0),
+            (1.5, 110, 0.72),
+            (0.55, 0, 0),
+            (1.5, 205, 0.68),
+            (0.55, 0, 0),
+            (1.5, 330, 0.64),
+            (0.30, 0, 0));
+
+        var result = LocalSpeakerDiarizer.TryDiarize(
+            wav,
+            "第一位发言人的完整观点。第三段声纹对应另一位发言人的观点。");
+
+        result.ShouldNotBeNull();
+        result.SpeakerCount.ShouldBe(2);
+        result.Segments.Select(segment => segment.SpeakerId)
+            .Distinct()
+            .ShouldBe(["说话人1", "说话人2"]);
+    }
+
+    [Fact]
     public void InvalidAudio_ShouldDeclineDiarization()
     {
         LocalSpeakerDiarizer.TryDiarize([1, 2, 3, 4], "存在原文").ShouldBeNull();

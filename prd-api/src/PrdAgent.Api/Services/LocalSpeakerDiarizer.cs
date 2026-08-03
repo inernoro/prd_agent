@@ -53,7 +53,8 @@ internal static class LocalSpeakerDiarizer
         if (clauses.Count == 0)
             return null;
 
-        var aligned = AlignClausesToTurns(clauses, turns, clustering.Labels, audio!.SampleRate);
+        var aligned = RenumberSegmentsByFirstAppearance(
+            AlignClausesToTurns(clauses, turns, clustering.Labels, audio!.SampleRate));
         var distinct = aligned
             .Select(segment => segment.SpeakerId)
             .Where(speaker => !string.IsNullOrWhiteSpace(speaker))
@@ -416,6 +417,25 @@ internal static class LocalSpeakerDiarizer
             }
             return normalized;
         }).ToArray();
+    }
+
+    private static List<SubtitleSegment> RenumberSegmentsByFirstAppearance(
+        IReadOnlyList<SubtitleSegment> segments)
+    {
+        var speakerMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var next = 1;
+        return segments.Select(segment =>
+        {
+            var source = string.IsNullOrWhiteSpace(segment.SpeakerId)
+                ? "说话人1"
+                : segment.SpeakerId;
+            if (!speakerMap.TryGetValue(source, out var normalized))
+            {
+                normalized = $"说话人{next++}";
+                speakerMap[source] = normalized;
+            }
+            return segment with { SpeakerId = normalized };
+        }).ToList();
     }
 
     private static List<string> SplitClauses(string transcript)
