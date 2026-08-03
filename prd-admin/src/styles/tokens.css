@@ -315,10 +315,12 @@
   --tag-gray-solid: #475569;
 
   /* 共享按钮只消费语义 token，不在 React 中维护 LIGHT/DARK 两套样式。 */
-  --button-primary-bg: #C8623A;
-  --button-primary-bg-hover: #B0522E;
-  --button-primary-fg: #FFF6F0;
-  --button-primary-shadow: 0 4px 16px -4px rgba(200, 98, 58, 0.42);
+  /* 赭红上放白字只有 3.74:1（不达 4.5）。改走与浅色主题同一套解法：
+     亮一档的陶土底 + 深墨字，暗色下 5.5:1，hover 更亮 6.6:1。 */
+  --button-primary-bg: #D97757;
+  --button-primary-bg-hover: #E08A6B;
+  --button-primary-fg: #241915;
+  --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
   --button-secondary-bg: rgba(255, 255, 255, 0.05);
   --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
   --button-secondary-border: rgba(255, 255, 255, 0.10);
@@ -555,7 +557,9 @@
   --selection-checkbox-bg: var(--bg-card);
 
   --button-primary-bg: #CC785C;
-  --button-primary-bg-hover: #B8684C;
+  /* hover 往亮走而不是往暗走：主按钮是「陶土底 + 深墨字」，压暗会把字压进 4.18:1
+     （新加的暗浅双向对比守卫抓到的存量问题），提亮反而对比更高。 */
+  --button-primary-bg-hover: #D4855F;
   --button-primary-fg: #241915;
   --button-primary-shadow: 0 2px 6px rgba(204, 120, 92, 0.22), 0 1px 2px rgba(89, 65, 50, 0.06);
   --button-secondary-bg: var(--bg-card);

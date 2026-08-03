@@ -50,12 +50,17 @@ function toHsl(r: number, g: number, b: number): { h: number; s: number; l: numb
   return { h, s, l };
 }
 
-function isBanned(r: number, g: number, b: number): boolean {
-  const { h, s, l } = toHsl(r, g, b);
+/** 判定只认 HSL 三件套，RGB 与 HSL 两种写法共用同一条判据，不许各判各的。 */
+function isBannedHsl(h: number, s: number, l: number): boolean {
   if (s < MIN_SATURATION) return false;
   // 极暗/极亮的角落色（近黑近白）不参与判定：它们对观感的贡献是明度不是色相
   if (l < 0.12 || l > 0.92) return false;
   return h >= BANNED_HUE_START && h <= BANNED_HUE_END;
+}
+
+function isBanned(r: number, g: number, b: number): boolean {
+  const { h, s, l } = toHsl(r, g, b);
+  return isBannedHsl(h, s, l);
 }
 
 function walk(target: string, out: string[] = []): string[] {
@@ -72,6 +77,10 @@ function walk(target: string, out: string[] = []): string[] {
 
 const HEX_RE = /#([0-9a-fA-F]{6})\b/g;
 const RGB_RE = /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/g;
+/** `hsl(270 60% 50%)` / `hsla(270, 60%, 50%, .4)` —— 两种分隔写法都要认，
+ *  否则"改用 hsl 写紫色"就能绕过整条守卫（模板字面量里的 ${h} 不匹配，
+ *  那部分由下面「色带只在 INK_HUES 内」的用例覆盖）。 */
+const HSL_RE = /hsla?\(\s*(\d{1,3})(?:deg)?\s*[, ]\s*(\d{1,3})%\s*[, ]\s*(\d{1,3})%/g;
 /** Tailwind 的紫系工具类（bg-purple-400 / text-violet-300 / from-indigo-500 …） */
 const TW_RE = /\b(?:bg|text|from|via|to|border|ring|shadow)-(?:purple|violet|fuchsia|indigo)-\d{2,3}\b/g;
 
@@ -92,6 +101,10 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
         for (const match of content.matchAll(RGB_RE)) {
           const [r, g, b] = [1, 2, 3].map((i) => Number.parseInt(match[i], 10));
           if (isBanned(r, g, b)) violations.push(`${rel}: rgb(${r},${g},${b})`);
+        }
+        for (const match of content.matchAll(HSL_RE)) {
+          const [h, s, l] = [1, 2, 3].map((i) => Number.parseInt(match[i], 10));
+          if (isBannedHsl(h, s / 100, l / 100)) violations.push(`${rel}: hsl(${h} ${s}% ${l}%)`);
         }
         for (const match of content.matchAll(TW_RE)) {
           violations.push(`${rel}: ${match[0]}`);

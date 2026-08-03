@@ -397,6 +397,18 @@ describe('主题系统契约', () => {
     expect(buttonBackground).toBeTruthy();
     expect(buttonForeground).toBeTruthy();
     expect(contrastRatio(buttonForeground!, buttonBackground!)).toBeGreaterThanOrEqual(4.5);
+
+    // 暗色块同样要过：只查浅色是判据太窄——2026-08-03 换赭红身份色时，
+    // 暗色主按钮曾掉到 3.74:1 而测试全绿（Codex review 抓到）。
+    const darkOnlyBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    for (const block of [darkOnlyBlock, lightBlock]) {
+      const bg = block.match(/--button-primary-bg:\s*(#[0-9a-fA-F]{6})/)?.[1];
+      const fg = block.match(/--button-primary-fg:\s*(#[0-9a-fA-F]{6})/)?.[1];
+      const bgHover = block.match(/--button-primary-bg-hover:\s*(#[0-9a-fA-F]{6})/)?.[1];
+      expect(bg && fg && bgHover).toBeTruthy();
+      expect(contrastRatio(fg!, bg!)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(fg!, bgHover!)).toBeGreaterThanOrEqual(4.5);
+    }
     expect(tokens).toContain('.surface-tone-dark');
     expect(tokens).toContain('--workflow-accent-text-lightness: 65%');
   });

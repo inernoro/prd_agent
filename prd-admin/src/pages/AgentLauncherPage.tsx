@@ -70,6 +70,7 @@ import { useIsMobile } from '@/hooks/useBreakpoint';
 import type { ToolboxItem, RecentWorkItemDto } from '@/services';
 import { useHomeRecentWorkStore } from '@/stores/homeRecentWorkStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
+import { migrateLegacyNavId } from '@/lib/launcherCatalog';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
@@ -551,6 +552,18 @@ export default function AgentLauncherPage() {
       setDownloadDialogOpen(true);
       return;
     }
+    const route = item.routePath || '/ai-toolbox';
+    // 打开次数是「你常用的」那一档的唯一依据。此前只有命令面板（⌘K）会记账，
+    // 从首页点开的不算数 —— 于是常用档对"只用首页"的人永远不出现。
+    // 在这里补上生产端：id 交给 migrateLegacyNavId 归一（首页历史上用过 __xxx__ 形态）。
+    useAgentSwitcherStore.getState().addRecentVisit({
+      id: migrateLegacyNavId(item.agentKey || item.id),
+      agentKey: item.agentKey ?? '',
+      agentName: item.name,
+      title: item.name,
+      path: route,
+      icon: item.icon,
+    });
     if (item.routePath) {
       navigate(item.routePath);
     } else {
@@ -596,9 +609,10 @@ export default function AgentLauncherPage() {
   const agentShelves = useMemo(() => {
     const all = groups.agents;
     const usageOf = (item: ToolboxItem) => {
+      // 首页与命令面板写的是同一个归一化 id；路径匹配作为老数据的兜底
+      const canonical = migrateLegacyNavId(item.agentKey || item.id);
       const byRoute = recentVisits.find((v) => v.path && item.routePath && v.path === item.routePath);
-      const id = byRoute?.id ?? item.agentKey ?? item.id;
-      return usageCounts[id] ?? 0;
+      return usageCounts[canonical] ?? (byRoute ? usageCounts[byRoute.id] ?? 0 : 0);
     };
 
     const frequent = all
