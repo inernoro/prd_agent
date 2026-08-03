@@ -28,6 +28,24 @@ export interface HomePulse {
 type Settled<T> = { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown };
 
 /**
+ * Web 端已下线、路由被重定向回首页的入口。
+ *
+ * 后端的动态流仍会吐 PRD 会话（`navigateTo: '/prd-agent'`），但 App.tsx 把这条路由
+ * 整条重定向到 `/`——点一下等于把首页重刷一遍，用户不会以为"这条坏了"，
+ * 只会以为"这个系统点了没反应"。与其给一条死链，不如不列。
+ *
+ * 这份清单必须与 App.tsx 里 `<Route … element={<Navigate to="/" replace />} />`
+ * 的路径一致，守卫会对账（homePulse.test.ts），漏一条就会重新长出死链。
+ */
+export const RETIRED_ROUTES = ['/prd-agent', '/stats'];
+
+function isDeadLink(navigateTo: string | undefined): boolean {
+  if (!navigateTo) return true;
+  const path = navigateTo.split(/[?#]/)[0].replace(/\/+$/, '') || '/';
+  return RETIRED_ROUTES.some((route) => path === route || path.startsWith(`${route}/`));
+}
+
+/**
  * 两路响应 → 页面要渲染的状态（纯函数，好让「失败 vs 空」这件事真的能被断言）。
  *
  * 判据只有一条：**只有确认成功才允许把数据当真**。请求 reject、`success:false`、
@@ -42,7 +60,8 @@ export function resolveHomePulse(
   const feedOk = feedRes.status === 'fulfilled' && feedRes.value.success && !!feedRes.value.data;
   return {
     stats: statsOk ? statsRes.value.data! : null,
-    feed: feedOk ? feedRes.value.data!.items ?? [] : [],
+    // 死链条目在这一层就丢掉：两端共用这个 hook，过滤写在渲染层就会漏一端
+    feed: feedOk ? (feedRes.value.data!.items ?? []).filter((item) => !isDeadLink(item.navigateTo)) : [],
     statsFailed: !statsOk,
     feedFailed: !feedOk,
   };

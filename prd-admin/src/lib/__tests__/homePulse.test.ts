@@ -8,9 +8,15 @@
  * 判据放在纯函数上（而不是靠渲染层的 if），这样它能被真的断言，
  * 而不是靠通读代码相信它成立。
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { formatCompactNumber, resolveHomePulse } from '../homePulse';
+import { RETIRED_ROUTES, formatCompactNumber, resolveHomePulse } from '../homePulse';
 import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const APP_PATH = path.resolve(TEST_DIR, '../../app/App.tsx');
 
 const STATS = { aiCalls: 12, imageGenerations: 3, defects: 1, totalTokens: 45678 } as MobileStats;
 const ITEMS = [{ id: 'a', type: 'document', title: '一条动态', updatedAt: '2026-08-01T00:00:00Z', navigateTo: '/x' }] as unknown as FeedItem[];
@@ -65,6 +71,46 @@ describe('首页脉搏：失败态不许伪装成空态', () => {
     // feed 的 data 在、items 缺 → 属于成功但为空，走空态
     expect(r.feedFailed).toBe(false);
     expect(r.feed).toEqual([]);
+  });
+});
+
+describe('动态流不许出现点了没反应的死链', () => {
+  const feedOf = (items: unknown[]) => resolveHomePulse(ok({} as MobileStats), ok({ items: items as FeedItem[] })).feed;
+
+  it('指向已下线路由的条目直接不列', () => {
+    // 后端仍会吐 PRD 会话（那个 Web 端已下线），navigateTo 是 /prd-agent，
+    // 而 App.tsx 把它整条重定向回 /：点一下只是把首页重刷一遍。
+    const items = [
+      { id: 'prd', type: 'prd-session', title: 'PRD 会话', updatedAt: '2026-08-01T00:00:00Z', navigateTo: '/prd-agent' },
+      { id: 'ok', type: 'defect', title: '缺陷', updatedAt: '2026-08-01T00:00:00Z', navigateTo: '/defect-agent' },
+    ];
+    expect(feedOf(items).map((i) => i.id)).toEqual(['ok']);
+  });
+
+  it('子路由 / 带 query 的变体同样算死链', () => {
+    const items = [
+      { id: 'a', navigateTo: '/prd-agent/123' },
+      { id: 'b', navigateTo: '/prd-agent?tab=x' },
+      { id: 'c', navigateTo: '/prd-agent/' },
+      { id: 'd', navigateTo: '/visual-agent/9' },
+    ];
+    expect(feedOf(items).map((i) => i.id)).toEqual(['d']);
+  });
+
+  it('前缀相同但不是同一条路由的，不许误杀', () => {
+    expect(feedOf([{ id: 'keep', navigateTo: '/prd-agent-archive' }]).map((i) => i.id)).toEqual(['keep']);
+  });
+
+  it('清单与 App.tsx 的重定向路由对账（漏一条就会重新长出死链）', () => {
+    // 两处各写各的必然漂移：App.tsx 下线第二个页面时，这里不跟就又有死链
+    // （predicate-and-wiring 形状 3）。
+    const app = fs.readFileSync(APP_PATH, 'utf8');
+    const redirected = [...app.matchAll(/<Route\s+path="([^"*]+)"\s+element=\{<Navigate to="\/" replace \/>\}/g)]
+      .map((m) => `/${m[1].replace(/^\//, '')}`);
+    expect(redirected.length, 'App.tsx 里没解析到重定向路由，判据已经失效').toBeGreaterThan(0);
+    for (const route of new Set(redirected)) {
+      expect(RETIRED_ROUTES, `App.tsx 把 ${route} 重定向回首页，但动态流还会把它当可点条目`).toContain(route);
+    }
   });
 });
 

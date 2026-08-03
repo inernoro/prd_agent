@@ -53,8 +53,15 @@ const GUARDED_TOKEN_PREFIXES = [
   'shadow-gold',
 ];
 
-/** 紫 / 靛 / 品红区间（色相角度）。低饱和的近灰紫不算——那是中性色的正常抖动。 */
-const BANNED_HUE_START = 244;
+/**
+ * 紫 / 靛 / 品红区间（色相角度）。低饱和的近灰紫不算——那是中性色的正常抖动。
+ *
+ * 起点是 225 而不是「紫」的常见起点 244：本次要挡回去的那批靛色恰好落在
+ * 234-241（#818cf8 234.5 / #6366f1 238.7 / #5e5ce6 240.9 —— 全是这个 PR 换掉的
+ * 老 token 值）。判据画在 244 的话，把它们原样贴回来照样全绿，等于守了个寂寞。
+ * 下限压到 225 仍给蓝色留足空间：墨带最蓝的钢蓝 214、Tailwind blue-500 是 217。
+ */
+const BANNED_HUE_START = 225;
 const BANNED_HUE_END = 340;
 const MIN_SATURATION = 0.3;
 

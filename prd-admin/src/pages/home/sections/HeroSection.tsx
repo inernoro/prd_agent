@@ -193,8 +193,11 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               lineHeight: 1.08,
               letterSpacing: '-0.035em',
               maxWidth: '16ch',
-              // 白 → 长春花蓝的纵向渐隐（Linear 式标题处理）：比纯白平涂多一层精致感
-              background: 'linear-gradient(180deg, #FFFFFF 0%, #EDEFFE 55%, #B9C0F5 100%)',
+              // 白 → 暖砂的纵向渐隐（Linear 式标题处理）：比纯白平涂多一层精致感。
+              // 原来收在一支色相 233 的长春花蓝（靛色区）——那是换笔前留下的尾巴，
+              // 门头最大的一块字反倒还是冷的，与整页暖石墨打架。
+              // 色值不写进注释：守卫连注释一起扫，把禁色写在这儿等于给下一个人留种子。
+              background: 'linear-gradient(180deg, #FFFFFF 0%, #FBF0E7 55%, #E7C3A8 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text',
@@ -202,7 +205,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               // 改用 drop-shadow（按实际像素投影）。保持静态常量，禁止无限循环
               // 动画（绘制属性逐帧重绘是整页滚动卡顿的头号来源）。
               filter:
-                'drop-shadow(0 0 34px rgba(213, 221, 232, 0.28)) drop-shadow(0 0 90px rgba(224, 160, 107, 0.22))',
+                'drop-shadow(0 0 34px rgba(232, 221, 213, 0.28)) drop-shadow(0 0 90px rgba(224, 160, 107, 0.22))',
             }}
           >
             {t.hero.title}
