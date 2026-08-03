@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext, type Page, type TestInfo } from '
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
 
 type BusinessCatalog = {
   featureLines: Array<{
@@ -110,6 +111,112 @@ async function readEnvelope<T>(response: Awaited<ReturnType<APIRequestContext['g
 function expectUserReadable(message: string) {
   expect(message).not.toMatch(/\b(?:HTTP\s*\d{3}|token|provider|stack trace|at\s+\w+\.\w+\()/i);
   expect(message).toMatch(/请|重试|检查|选择|重新|稍后/);
+}
+
+type ImageModelPool = {
+  id: string;
+  code: string;
+  models: Array<{ healthStatus?: string }>;
+};
+
+type ImageRunDetail = {
+  run: {
+    status: string;
+    total: number;
+    done: number;
+    failed: number;
+  };
+  items: Array<{
+    status: string;
+    requestedSize?: string;
+    effectiveSize?: string;
+    base64?: string;
+    url?: string;
+    errorMessage?: string;
+  }>;
+};
+
+function crc32(input: Buffer) {
+  let crc = 0xffffffff;
+  for (const byte of input) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer) {
+  const name = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([name, data])));
+  return Buffer.concat([length, name, data, checksum]);
+}
+
+function solidPngDataUrl(red: number, green: number, blue: number, size = 256) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header[8] = 8;
+  header[9] = 2;
+  const row = Buffer.alloc(1 + size * 3);
+  for (let x = 0; x < size; x += 1) {
+    row[1 + x * 3] = red;
+    row[2 + x * 3] = green;
+    row[3 + x * 3] = blue;
+  }
+  const pixels = Buffer.concat(Array.from({ length: size }, () => row));
+  const png = Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(pixels)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+async function createVisualWorkspace(page: Page, token: string, suffix: string) {
+  const response = await page.request.post('/api/visual-agent/image-master/workspaces', {
+    headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}` },
+    data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}`, scenarioType: 'image-gen' },
+  });
+  return readEnvelope<{ workspace: { id: string } }>(response);
+}
+
+async function waitForImageRun(page: Page, token: string, runId: string, timeoutMs = 180_000) {
+  const statuses: string[] = [];
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}?includeItems=true&includeImages=false`, {
+      headers: authHeaders(token),
+    });
+    const detail = await readEnvelope<ImageRunDetail>(response);
+    if (!statuses.includes(detail.run.status)) statuses.push(detail.run.status);
+    if (/Completed|Failed|Cancelled/i.test(detail.run.status)) return { detail, statuses };
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1_500));
+  }
+  throw new Error(`图片生成等待超时，请检查任务 ${runId} 的运行状态`);
+}
+
+async function assertImageArtifact(page: Page, detail: ImageRunDetail) {
+  expect(detail.run.status).toBe('Completed');
+  expect(detail.run.done).toBe(detail.run.total);
+  expect(detail.run.failed).toBe(0);
+  expect(detail.items.length).toBeGreaterThan(0);
+  const item = detail.items[0];
+  expect(item.errorMessage || '').toBe('');
+  expect(item.effectiveSize || item.requestedSize).toMatch(/^\d+x\d+$/);
+  if (item.url) {
+    const image = await page.request.get(item.url);
+    expect(image.ok()).toBe(true);
+    expect(image.headers()['content-type'] || '').toMatch(/^image\//);
+    expect((await image.body()).byteLength).toBeGreaterThan(512);
+  } else {
+    expect(Buffer.from(item.base64 || '', 'base64').byteLength).toBeGreaterThan(512);
+  }
 }
 
 async function openModule(
@@ -341,5 +448,150 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(overflow).toBeLessThanOrEqual(1);
     const interactive = page.locator('textarea:visible, input:visible, button:visible');
     expect(await interactive.count()).toBeGreaterThan(0);
+  });
+
+  test('[VIS-002][VIS-004][VIS-005][VIS-007][VIS-010] 文生图真实产物、进度布局与清理', async ({ page, request }, testInfo) => {
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'single-image');
+    let runId = '';
+    try {
+      const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) });
+      const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
+      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
+      expect(pool, '没有可用的文生图逻辑模型').toBeTruthy();
+
+      const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-run` },
+        data: {
+          prompt: '一枚放在纯白背景上的蓝色陶瓷杯，产品摄影，柔和自然光，不要文字',
+          userMessageContent: '生成一枚纯白背景上的蓝色陶瓷杯',
+          targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-target`,
+          platformId: 'logical-model',
+          modelId: pool!.code,
+          size: '1024x1024',
+          responseFormat: 'url',
+          x: 0,
+          y: 0,
+          w: 1001,
+          h: 1001,
+        },
+      });
+      const created = await readEnvelope<{ runId: string }>(create);
+      runId = created.runId;
+
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      const progress = page.getByTestId('generation-progress').first();
+      if (await progress.isVisible({ timeout: 15_000 }).catch(() => false)) {
+        const progressBox = await progress.boundingBox();
+        const barBox = await progress.locator('.gen-sweep__bar').boundingBox();
+        expect(progressBox).not.toBeNull();
+        expect(barBox).not.toBeNull();
+        expect(barBox!.x).toBeGreaterThanOrEqual(progressBox!.x - 1);
+        expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(progressBox!.x + progressBox!.width + 1);
+        await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
+      }
+
+      const completed = await waitForImageRun(page, token, runId);
+      expect(completed.statuses.length).toBeGreaterThanOrEqual(2);
+      await assertImageArtifact(page, completed.detail);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      if (runId) {
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        if (current.ok()) {
+          const state = await current.json() as ApiEnvelope<ImageRunDetail>;
+          if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
+          }
+        }
+      }
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
+      if (runId) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010] 多图引用真实生成、恢复与清理', async ({ page, request }, testInfo) => {
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
+    let runId = '';
+    try {
+      const uploadAsset = async (data: string, suffix: string) => {
+        const response = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
+          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}` },
+          data: { data, width: 256, height: 256, prompt: suffix },
+        });
+        return readEnvelope<{ asset: { sha256: string; url: string } }>(response);
+      };
+      const first = await uploadAsset(solidPngDataUrl(35, 90, 190), 'blue-reference');
+      const second = await uploadAsset(solidPngDataUrl(235, 190, 55), 'yellow-reference');
+
+      const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) });
+      const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
+      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
+      expect(pool, '没有可用的多图视觉逻辑模型').toBeTruthy();
+
+      const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-multi-run` },
+        data: {
+          prompt: '参考 @img1 的蓝色与 @img2 的黄色，生成一个左右双色的极简包装盒，纯白背景，不要文字',
+          userMessageContent: '参考 @img1 和 @img2 生成一个蓝黄双色包装盒',
+          targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-multi-target`,
+          platformId: 'logical-model',
+          modelId: pool!.code,
+          size: '1024x1024',
+          responseFormat: 'url',
+          imageRefs: [
+            { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
+            { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
+          ],
+          x: 0,
+          y: 0,
+          w: 1001,
+          h: 1001,
+        },
+      });
+      runId = (await readEnvelope<{ runId: string }>(create)).runId;
+
+      const completed = await waitForImageRun(page, token, runId);
+      await assertImageArtifact(page, completed.detail);
+      const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}?includeItems=true`, { headers: authHeaders(token) });
+      expect((await readEnvelope<ImageRunDetail>(afterRefresh)).run.status).toBe('Completed');
+
+      const messages = await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/messages`, { headers: authHeaders(token) });
+      const messageText = JSON.stringify((await messages.json() as ApiEnvelope<unknown>).data);
+      expect(messageText).toContain('@img1');
+      expect(messageText).toContain('@img2');
+
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await testInfo.attach('multi-image-result', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      if (runId) {
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        if (current.ok()) {
+          const state = await current.json() as ApiEnvelope<ImageRunDetail>;
+          if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
+          }
+        }
+      }
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-multi-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      if (runId) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
   });
 });

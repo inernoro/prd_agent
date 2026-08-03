@@ -512,6 +512,20 @@ public class ImageMasterController : ControllerBase
             }
         }
 
+        var imageRuns = await _db.ImageGenRuns
+            .Find(x => x.WorkspaceId == wid && x.OwnerAdminId == adminId)
+            .Project(x => new { x.Id, x.Status })
+            .ToListAsync(ct);
+        if (imageRuns.Any(x => x.Status is ImageGenRunStatus.Queued
+                or ImageGenRunStatus.ScopedQueued
+                or ImageGenRunStatus.Running))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除"));
+        }
+        var imageRunIds = imageRuns.Select(x => x.Id).ToArray();
+
         // 1) 删除画布
         await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
         // 2) 删除消息（workspace 维度）
@@ -535,7 +549,16 @@ public class ImageMasterController : ControllerBase
             }
         }
 
-        // 4) 删除 workspace
+        // 4) 删除该工作区的已结束生图任务及其明细和持久化事件，避免测试工作区或普通
+        // 用户工作区删除后留下无法访问的孤儿任务。运行中的任务已在上方阻止删除。
+        if (imageRunIds.Length > 0)
+        {
+            await _db.ImageGenRunItems.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
+            await _db.ImageGenRunEvents.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
+            await _db.ImageGenRuns.DeleteManyAsync(x => imageRunIds.Contains(x.Id), ct);
+        }
+
+        // 5) 删除 workspace
         await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == wid, ct);
 
         var payload = new { deleted = true };

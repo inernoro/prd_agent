@@ -1,4 +1,4 @@
-const CASE_ID_PATTERN = /\[((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|REG-[a-z0-9-]+)-\d+)\]/i;
+const CASE_ID_PATTERN = /\[((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|REG-[a-z0-9-]+)-\d+)\]/gi;
 
 export function collectPlaywrightCases(report, environment) {
   const rows = [];
@@ -6,8 +6,8 @@ export function collectPlaywrightCases(report, environment) {
   function collectSuites(suites = []) {
     for (const suite of suites) {
       for (const spec of suite.specs || []) {
-        const match = spec.title.match(CASE_ID_PATTERN);
-        if (!match) continue;
+        const matches = [...spec.title.matchAll(CASE_ID_PATTERN)];
+        if (matches.length === 0) continue;
         const results = (spec.tests || []).flatMap((item) => item.results || []);
         const finalResult = results.at(-1);
         const rawStatus = finalResult?.status || 'not-run';
@@ -16,15 +16,17 @@ export function collectPlaywrightCases(report, environment) {
           : rawStatus === 'skipped' || rawStatus === 'not-run'
             ? 'not-run'
             : 'fail';
-        rows.push({
-          caseId: match[1].toUpperCase(),
-          environment,
-          title: spec.title,
-          status,
-          durationMs: results.reduce((sum, item) => sum + (item.duration || 0), 0),
-          error: finalResult?.error?.message || '',
-          retryCount: Math.max(0, results.length - 1),
-        });
+        for (const match of matches) {
+          rows.push({
+            caseId: match[1].toUpperCase(),
+            environment,
+            title: spec.title,
+            status,
+            durationMs: results.reduce((sum, item) => sum + (item.duration || 0), 0),
+            error: finalResult?.error?.message || '',
+            retryCount: Math.max(0, results.length - 1),
+          });
+        }
       }
       collectSuites(suite.suites || []);
     }

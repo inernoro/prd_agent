@@ -27,6 +27,21 @@ test('从 Playwright 报告提取 caseId 和最终结果', () => {
   }]);
 });
 
+test('同一条真实旅程可为多个相关 caseId 提供共同证据', () => {
+  const report = {
+    suites: [{
+      specs: [{
+        title: '[VIS-002][VIS-005][VIS-007] 文生图产物与进度',
+        tests: [{ results: [{ status: 'passed', duration: 30 }] }],
+      }],
+    }],
+  };
+  assert.deepEqual(
+    collectPlaywrightCases(report, 'cds').map((row) => row.caseId),
+    ['VIS-002', 'VIS-005', 'VIS-007'],
+  );
+});
+
 test('计划要求但没有证据的用例必须标记 not-run', () => {
   const rows = reconcileCaseCoverage(['CORE-001', 'VIS-001'], [{
     caseId: 'CORE-001', environment: 'cds', title: 'ok', status: 'pass', durationMs: 1, error: '', retryCount: 0,
