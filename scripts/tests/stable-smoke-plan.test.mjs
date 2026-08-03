@@ -56,6 +56,7 @@ test('定时模式固定纳入全部功能线', () => {
 test('回归台账模板不会被当作 active 用例', () => {
   assert.ok(!regressions.some((caseId) => caseId.includes('{')));
   assert.deepEqual(regressions.sort(), [
+    'REG-file-001',
     'REG-llmgw-auth-001',
     'REG-multi-image-001',
     'REG-multi-image-002',

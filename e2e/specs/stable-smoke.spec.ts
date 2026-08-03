@@ -371,6 +371,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(secondBody.error?.message || '');
   });
 
+  test('[CORE-002][CORE-003] 合成会话刷新恢复且匿名请求被隔离', async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/');
+    const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(token) });
+    expect(allowed.ok()).toBe(true);
+
+    const anonymous = await request.get('/api/authz/me');
+    expect([401, 403]).toContain(anonymous.status());
+
+    const beforeReload = await page.evaluate(() => window.localStorage.getItem('prd-admin-auth'));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.locator('body')).not.toContainText('请重新登录');
+    const afterReload = await page.evaluate(() => window.localStorage.getItem('prd-admin-auth'));
+    expect(afterReload).toBe(beforeReload);
+  });
+
   test('[COMMON-001] 专用前缀资源可创建、回读并清理', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request);
     const title = `stsmk-${Date.now()}-common`;
@@ -533,6 +548,143 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(missing.status()).toBe(404);
       }
     }
+  });
+
+  test('[LIT-002][LIT-005][LIT-008][LIT-010] 文学配图标记流式生成、保存恢复与清理', async ({ page, request }) => {
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const title = `stsmk-${Date.now()}-文学流式创作`;
+    const article = '清晨，城市公园里的蓝色长椅刚被阳光照亮。\n\n一位读者翻开书本，远处的树叶在微风中轻轻摇动。';
+    let workspaceId = '';
+    try {
+      const created = await readEnvelope<{ workspace: { id: string } }>(
+        await page.request.post('/api/literary-agent/workspaces', {
+          headers: authHeaders(token),
+          data: { title, scenarioType: 'article-illustration', articleContent: article },
+        }),
+      );
+      workspaceId = created.workspace.id;
+      await readEnvelope<{ workspace: { id: string } }>(await page.request.put(`/api/literary-agent/workspaces/${workspaceId}`, {
+        headers: authHeaders(token),
+        data: { title, articleContent: article },
+      }));
+      const streamed = await page.evaluate(async ({ id, accessToken, content }) => {
+        const startedAt = performance.now();
+        const response = await fetch(`/api/visual-agent/image-master/workspaces/${id}/article/generate-markers`, {
+          method: 'POST',
+          headers: {
+            Accept: 'text/event-stream',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+            'Idempotency-Key': `stable-literary-${id}`,
+          },
+          body: JSON.stringify({
+            articleContent: content,
+            userInstruction: '只插入一处配图标记，保持原文不变',
+            insertionMode: 'anchor',
+          }),
+        });
+        if (!response.ok || !response.body) return { ok: false, firstChunkMs: -1, chunkCount: 0, text: await response.text() };
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let firstChunkMs = -1;
+        let chunkCount = 0;
+        let text = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (firstChunkMs < 0) firstChunkMs = performance.now() - startedAt;
+          chunkCount += 1;
+          text += decoder.decode(value, { stream: true });
+        }
+        return { ok: true, firstChunkMs, chunkCount, text };
+      }, { id: workspaceId, accessToken: token, content: article });
+      expect(streamed.ok, streamed.text).toBe(true);
+      expect(streamed.firstChunkMs).toBeGreaterThanOrEqual(0);
+      expect(streamed.firstChunkMs).toBeLessThan(30_000);
+      expect(streamed.chunkCount).toBeGreaterThan(1);
+      expect(streamed.text).toMatch(/(?:delta|done|complete|marker)/i);
+
+      const detail = await readEnvelope<{ workspace: { articleContent?: string; articleContentWithMarkers?: string } }>(
+        await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }),
+      );
+      expect(detail.workspace.articleContent).toContain('蓝色长椅');
+      expect((detail.workspace.articleContentWithMarkers || '').length).toBeGreaterThan(article.length);
+    } finally {
+      if (workspaceId) {
+        const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) });
+        expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      }
+    }
+  });
+
+  test('[VIDEO-004][VIDEO-007][VIDEO-008] 最短视频真实生成、播放文件校验与下载', async ({ page, request }) => {
+    test.setTimeout(420_000);
+    const token = await loginAndReadToken(page, request, '/video-agent');
+    const models = await readEnvelope<Array<{
+      id: string;
+      healthStatus?: string;
+      durations?: number[];
+      resolutions?: string[];
+      aspectRatios?: string[];
+      pricePerCall?: number;
+    }>>(await page.request.get('/api/video-agent/models', { headers: authHeaders(token) }));
+    const available = models
+      .filter((model) => !/unhealthy|disabled|unavailable/i.test(model.healthStatus || ''))
+      .sort((left, right) => (left.pricePerCall ?? Number.MAX_SAFE_INTEGER) - (right.pricePerCall ?? Number.MAX_SAFE_INTEGER));
+    expect(available.length, '没有可用的视频生成模型').toBeGreaterThan(0);
+    const model = available[0];
+    const submit = await page.request.post('/api/video-agent/videogen-direct', {
+      headers: authHeaders(token),
+      data: {
+        model: model.id,
+        prompt: '固定镜头，一只蓝色陶瓷杯放在纯白桌面上，柔和自然光，不要文字，不要人物',
+        aspectRatio: model.aspectRatios?.includes('16:9') ? '16:9' : model.aspectRatios?.[0],
+        resolution: model.resolutions?.includes('720p') ? '720p' : model.resolutions?.[0],
+        durationSeconds: Math.min(...(model.durations?.length ? model.durations : [5])),
+        generateAudio: false,
+      },
+    });
+    const submitted = await readEnvelope<{
+      success: boolean;
+      jobId?: string;
+      actualModel?: string;
+      errorMessage?: string;
+    }>(submit);
+    expect(submitted.success, submitted.errorMessage || '视频任务提交失败').toBe(true);
+    expect(submitted.jobId).toBeTruthy();
+
+    const startedAt = Date.now();
+    let videoUrl = '';
+    while (Date.now() - startedAt < 360_000) {
+      const status = await readEnvelope<{
+        status: string;
+        videoUrl?: string;
+        errorMessage?: string;
+        isCompleted: boolean;
+        isFailed: boolean;
+      }>(await page.request.get(`/api/video-agent/videogen-direct/status/${encodeURIComponent(submitted.jobId!)}`, {
+        headers: authHeaders(token),
+      }));
+      if (status.isFailed) {
+        expectUserReadable(status.errorMessage || '视频生成失败，请稍后重试或切换模型');
+        throw new Error(status.errorMessage || '视频生成失败，请稍后重试或切换模型');
+      }
+      if (status.isCompleted) {
+        videoUrl = status.videoUrl || '';
+        break;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
+    }
+    expect(videoUrl, '视频任务完成后必须返回成片标识').toBeTruthy();
+    const modelQuery = submitted.actualModel ? `?model=${encodeURIComponent(submitted.actualModel)}` : '';
+    const video = await page.request.get(`/api/video-agent/videogen-direct/content/${encodeURIComponent(submitted.jobId!)}${modelQuery}`, {
+      headers: authHeaders(token),
+      timeout: 180_000,
+    });
+    expect(video.ok()).toBe(true);
+    expect(video.headers()['content-type'] || '').toMatch(/^video\//);
+    expect((await video.body()).byteLength).toBeGreaterThan(1024);
   });
 
   test('[REC-003][REC-007][REC-012] 音频上传、真实转写、回读与清理', async ({ page, request }) => {
@@ -762,7 +914,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(await interactive.count()).toBeGreaterThan(0);
   });
 
-  test('[VIS-002][VIS-004][VIS-005][VIS-007][VIS-010] 文生图真实产物、进度布局与清理', async ({ page, request }, testInfo) => {
+  test('[CORE-004][VIS-002][VIS-004][VIS-005][VIS-007][VIS-010] 文生图真实产物、SSE 恢复、进度布局与清理', async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
@@ -792,6 +944,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const created = await readEnvelope<{ runId: string }>(create);
       runId = created.runId;
 
+      const streamPromise = page.request.get(`/api/visual-agent/image-gen/runs/${runId}/stream`, {
+        headers: authHeaders(token),
+        timeout: 180_000,
+      });
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissVisualTutorial(page);
       const progress = page.getByTestId('generation-progress').first();
@@ -806,6 +962,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const completed = await waitForImageRun(page, token, runId);
       expect(completed.statuses.length).toBeGreaterThanOrEqual(2);
+      const stream = await streamPromise;
+      expect(stream.ok()).toBe(true);
+      expect(stream.headers()['content-type'] || '').toContain('text/event-stream');
+      expect(await stream.text()).toMatch(/(?:keepalive|progress|completed|done)/i);
       await assertImageArtifact(page, completed.detail);
       await page.reload({ waitUntil: 'domcontentloaded' });
       const generatedImage = page.getByTestId('canvas-image').first();

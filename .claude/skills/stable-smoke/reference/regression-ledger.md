@@ -16,7 +16,8 @@
 | REG-multi-image-002 | 多图视觉创作 | 2026-08-02 | Offering 覆盖 Endpoint 后与 Provider base path 组合成错误地址，HTML 200 被当作模型响应 | Provider base 含 `/api`，Offering Endpoint 留空与错误覆盖对照 | 默认 Endpoint 命中 `/api/v1/images` | 正式配置只读加最小真实请求 | GW-004、GW-005 | 0 | active |
 | REG-visual-error-001 | 视觉创作 | 2026-08-02 | 原始上游错误直接进入用户界面，用户无法判断恢复动作 | 空输入、模型不可用、协议响应异常 | 用户文案不含 HTTP、token、Provider、协议原文 | 自然失败时检查文案和 requestId | CORE-005、CORE-006、VIS-008、MVIS-010 | 0 | active |
 | REG-llmgw-auth-001 | LLMGW 身份可用性 | 2026-08-03 | 仓库 Compose 新增环境变量后，CDS 平台配置快照未自动同步，导致新代码已部署但容器未收到长期托管开关 | 固定 admin 凭据、连续两次同版本部署、部署运行的 `profileEnvKeys` | 受审导入后运行 `dr_165055155f07444a60d2d56f` 与 `dr_8a6269a009134193806decf2` 均通过；容器 authority=1、force-reset=0，旧令牌跨重启仍返回 200 | 正式发布后只验证注入键名、两次重启和登录，不输出秘密 | GW-009 | 0 | active |
-| REG-file-001 | 文件上传与解析 | 2026-08-04 | 支持的文档格式解析失败后仍保存为无正文条目，形成静默假成功 | 损坏 DOCX 与零字节 TXT | CDS 格式矩阵必须返回用户可读错误，且不产生条目 | 正式环境只运行零字节前置拦截，不主动上传损坏文件 | FILE-004、FILE-005、FILE-010、CORE-005 | 0 | candidate |
+| REG-file-001 | 文件上传与解析 | 2026-08-04 | 支持的文档格式解析失败后仍保存为无正文条目，形成静默假成功 | 损坏 DOCX 与零字节 TXT | CDS `stsmk-202608032054-mwv5mq` 五格式矩阵通过；损坏与空文件返回可恢复文案且清理无残留 | 正式环境只运行零字节前置拦截，不主动上传损坏文件 | FILE-004、FILE-005、FILE-010、CORE-005 | 0 | active |
+| REG-video-001 | 视频创作 | 2026-08-04 | 直出任务完成后把需要上游鉴权的地址交给浏览器，导致成片存在但用户下载收到 401 | 最短 720p、无音频视频 | CDS `stsmk-202608032056-dr7pmm` 两次稳定复现；修复后必须经后端鉴权下载并返回视频字节 | 正式环境最低成本成片只走同源下载端点 | VIDEO-004、VIDEO-007、VIDEO-008、CORE-005 | 0 | candidate |
 
 ## 新增模板
 

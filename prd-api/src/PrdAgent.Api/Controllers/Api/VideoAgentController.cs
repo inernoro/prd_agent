@@ -203,6 +203,35 @@ public class VideoAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { status.Status, status.VideoUrl, status.Cost, status.ErrorMessage, status.IsCompleted, status.IsFailed }));
     }
 
+    [HttpGet("videogen-direct/content/{jobId}")]
+    public async Task<IActionResult> DownloadDirectVideo(
+        string jobId,
+        [FromQuery] string? model,
+        CancellationToken ct)
+    {
+        var downloaded = await _videoClient.DownloadVideoBytesAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            jobId,
+            expectedModel: model,
+            ct: ct);
+        if (!downloaded.Success || downloaded.Bytes == null || downloaded.Bytes.Length == 0)
+        {
+            _logger.LogWarning(
+                "直出视频下载失败 jobId={JobId} model={Model} reason={Reason}",
+                jobId,
+                model,
+                downloaded.ErrorMessage);
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.LLM_ERROR,
+                "视频已经生成，但暂时无法下载，请稍后重试或切换模型"));
+        }
+
+        return File(
+            downloaded.Bytes,
+            downloaded.ContentType ?? "video/mp4",
+            $"video-{jobId}.mp4");
+    }
+
     /// <summary>
     /// 创建视频生成任务（仅保存输入，Worker 自动开始分镜生成）
     /// </summary>

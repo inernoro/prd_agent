@@ -73,7 +73,7 @@
       "entrySmoke": false,
       "automationStatus": "entry",
       "requiredCaseIds": ["FILE-001", "FILE-002", "FILE-003", "FILE-004", "FILE-005", "FILE-006", "FILE-007", "FILE-008", "FILE-009", "FILE-010"],
-      "regressionCaseIds": [],
+      "regressionCaseIds": ["REG-file-001"],
       "sourcePrefixes": ["prd-admin/src/pages/transcript-agent/", "prd-api/src/PrdAgent.Api/Controllers/Api/Document", "prd-api/src/PrdAgent.Api/Services/Document", "prd-api/src/PrdAgent.Infrastructure/Services/Document"],
       "cdsPolicy": "格式矩阵、损坏和空文件、重复上传、取消、下载与清理",
       "productionPolicy": "每轮轮换两个最小文件格式，验证产物后清理",
