@@ -18,6 +18,10 @@ const catalog = JSON.parse(readFileSync(
   resolve(specDir, '../../.claude/skills/stable-smoke/reference/business-function-catalog.json'),
   'utf8',
 )) as BusinessCatalog;
+const speechFixture = Buffer.from(readFileSync(
+  resolve(specDir, '../fixtures/stable-smoke-speech.m4a.b64'),
+  'utf8',
+).trim(), 'base64');
 
 type TicketResponse = {
   success: boolean;
@@ -219,6 +223,21 @@ async function assertImageArtifact(page: Page, detail: ImageRunDetail) {
   }
 }
 
+async function waitForTranscriptRun(page: Page, token: string, runId: string, timeoutMs = 180_000) {
+  const statuses: string[] = [];
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await page.request.get(`/api/transcript-agent/runs/${runId}`, { headers: authHeaders(token) });
+    expect(response.ok()).toBe(true);
+    const run = await response.json() as { status: string; progress: number; error?: string };
+    if (!statuses.includes(run.status)) statuses.push(run.status);
+    if (run.status === 'completed') return { run, statuses };
+    if (run.status === 'failed') throw new Error(run.error || '录音转写失败，请检查 ASR 服务状态后重试');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1_500));
+  }
+  throw new Error('录音转写等待超时，请检查任务状态后重试');
+}
+
 async function openModule(
   page: Page,
   request: APIRequestContext,
@@ -401,6 +420,132 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[REC-003][REC-007][REC-012] 音频上传、真实转写、回读与清理', async ({ page, request }) => {
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/transcript-agent');
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-audio`;
+    let workspaceId = '';
+    let itemId = '';
+    let runId = '';
+    try {
+      const created = await page.request.post('/api/transcript-agent/workspaces', {
+        headers: authHeaders(token),
+        data: { title },
+      });
+      expect(created.ok()).toBe(true);
+      workspaceId = ((await created.json()) as { id: string }).id;
+
+      const uploaded = await page.request.post(`/api/transcript-agent/workspaces/${workspaceId}/items/upload`, {
+        headers: authHeaders(token),
+        multipart: {
+          file: {
+            name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-speech.m4a`,
+            mimeType: 'audio/mp4',
+            buffer: speechFixture,
+          },
+        },
+      });
+      expect(uploaded.ok(), await uploaded.text()).toBe(true);
+      const uploadBody = await uploaded.json() as { item: { id: string; fileName: string }; runId: string };
+      itemId = uploadBody.item.id;
+      runId = uploadBody.runId;
+      expect(uploadBody.item.fileName).toContain('speech.m4a');
+
+      const completed = await waitForTranscriptRun(page, token, runId);
+      expect(completed.statuses.length).toBeGreaterThanOrEqual(2);
+      expect(completed.run.progress).toBeGreaterThanOrEqual(90);
+
+      const items = await page.request.get(`/api/transcript-agent/workspaces/${workspaceId}/items`, {
+        headers: authHeaders(token),
+      });
+      const item = ((await items.json()) as Array<{
+        id: string;
+        transcribeStatus: string;
+        segments?: Array<{ text: string }>;
+      }>).find((candidate) => candidate.id === itemId);
+      expect(item?.transcribeStatus).toBe('completed');
+      expect((item?.segments || []).map((segment) => segment.text).join(' ').trim().length).toBeGreaterThan(10);
+    } finally {
+      if (itemId) await page.request.delete(`/api/transcript-agent/items/${itemId}`, { headers: authHeaders(token) });
+      if (workspaceId) {
+        const deleted = await page.request.delete(`/api/transcript-agent/workspaces/${workspaceId}`, {
+          headers: authHeaders(token),
+        });
+        expect(deleted.status()).toBe(204);
+        expect((await page.request.get(`/api/transcript-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+  test('[REC-004][REC-005][REC-010] 录音分片可恢复、重复完成幂等且无重复条目', async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const token = await loginAndReadToken(page, request, '/document-store');
+    let storeId = '';
+    let sessionId = '';
+    try {
+      const createStore = await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: {
+          name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-recording`,
+          description: '稳定冒烟录音保险箱，执行后自动清理',
+          isPublic: false,
+        },
+      });
+      storeId = (await readEnvelope<{ id: string }>(createStore)).id;
+      const started = await page.request.post(`/api/document-store/stores/${storeId}/recording-uploads`, {
+        headers: authHeaders(token),
+        data: { fileName: `${requiredEnv('STABLE_SMOKE_RUN_ID')}.m4a`, mimeType: 'audio/mp4' },
+      });
+      sessionId = (await readEnvelope<{ sessionId: string }>(started)).sessionId;
+
+      const midpoint = Math.ceil(speechFixture.length / 2);
+      const chunks = [speechFixture.subarray(0, midpoint), speechFixture.subarray(midpoint)];
+      for (let index = 0; index < chunks.length; index += 1) {
+        const appended = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/chunks/${index}`, {
+          headers: { ...authHeaders(token), 'Content-Type': 'application/octet-stream' },
+          data: chunks[index],
+        });
+        const data = await readEnvelope<{ nextChunkIndex: number; uploadedBytes: number }>(appended);
+        expect(data.nextChunkIndex).toBe(index + 1);
+        expect(data.uploadedBytes).toBeGreaterThan(0);
+
+        const restored = await page.request.get(`/api/document-store/recording-uploads/${sessionId}`, {
+          headers: authHeaders(token),
+        });
+        expect((await readEnvelope<{ nextChunkIndex: number }>(restored)).nextChunkIndex).toBe(index + 1);
+      }
+
+      const duplicate = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/chunks/0`, {
+        headers: { ...authHeaders(token), 'Content-Type': 'application/octet-stream' },
+        data: chunks[0],
+      });
+      expect((await readEnvelope<{ duplicate: boolean }>(duplicate)).duplicate).toBe(true);
+
+      const firstComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
+        headers: authHeaders(token),
+      });
+      const first = await readEnvelope<{ entry: { id: string }; sessionId: string }>(firstComplete);
+      const secondComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
+        headers: authHeaders(token),
+      });
+      const second = await readEnvelope<{ entry: { id: string }; reused: boolean }>(secondComplete);
+      expect(second.entry.id).toBe(first.entry.id);
+      expect(second.reused).toBe(true);
+    } finally {
+      if (sessionId) {
+        await page.request.delete(`/api/document-store/recording-uploads/${sessionId}`, {
+          headers: authHeaders(token),
+        }).catch(() => undefined);
+      }
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
+          headers: authHeaders(token),
+        });
+        expect([200, 204]).toContain(deleted.status());
+      }
+    }
+  });
+
   test('[VIS-001] 单图模型目录只返回可用逻辑模型', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const response = await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) });
@@ -482,20 +627,22 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       const progress = page.getByTestId('generation-progress').first();
-      if (await progress.isVisible({ timeout: 15_000 }).catch(() => false)) {
-        const progressBox = await progress.boundingBox();
-        const barBox = await progress.locator('.gen-sweep__bar').boundingBox();
-        expect(progressBox).not.toBeNull();
-        expect(barBox).not.toBeNull();
-        expect(barBox!.x).toBeGreaterThanOrEqual(progressBox!.x - 1);
-        expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(progressBox!.x + progressBox!.width + 1);
-        await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
-      }
+      await expect(progress, '真实生图开始后页面必须恢复生成中占位').toBeVisible({ timeout: 15_000 });
+      const progressBox = await progress.boundingBox();
+      const barBox = await progress.locator('.gen-sweep__bar').boundingBox();
+      expect(progressBox).not.toBeNull();
+      expect(barBox).not.toBeNull();
+      expect(barBox!.x).toBeGreaterThanOrEqual(progressBox!.x - 1);
+      expect(barBox!.x + barBox!.width).toBeLessThanOrEqual(progressBox!.x + progressBox!.width + 1);
+      await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
 
       const completed = await waitForImageRun(page, token, runId);
       expect(completed.statuses.length).toBeGreaterThanOrEqual(2);
       await assertImageArtifact(page, completed.detail);
       await page.reload({ waitUntil: 'domcontentloaded' });
+      const generatedImage = page.locator('img[src*="/api/visual-agent/image-master/assets/file/"]').first();
+      await expect(generatedImage, '任务完成并刷新后画布必须恢复真实图片').toBeVisible({ timeout: 30_000 });
+      expect(await generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       if (runId) {
@@ -573,6 +720,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(messageText).toContain('@img2');
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      const generatedImage = page.locator('img[src*="/api/visual-agent/image-master/assets/file/"]').first();
+      await expect(generatedImage, '多图生成完成后页面必须恢复真实图片').toBeVisible({ timeout: 30_000 });
+      expect(await generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+      await expect(page.getByText('参考', { exact: false }).last()).toBeVisible({ timeout: 15_000 });
       await testInfo.attach('multi-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       if (runId) {

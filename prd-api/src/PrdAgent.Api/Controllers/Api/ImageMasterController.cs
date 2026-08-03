@@ -1871,7 +1871,9 @@ public class ImageMasterController : ControllerBase
         {
             var o = n as JsonObject;
             if (o == null) continue;
-            var k = (o["key"]?.GetValue<string>() ?? string.Empty).Trim();
+            // 前端持久化契约使用 id；历史服务端占位曾使用 key。两者都识别，
+            // 避免刷新时生成一个前端无法恢复的 key-only 重复节点。
+            var k = (o["id"]?.GetValue<string>() ?? o["key"]?.GetValue<string>() ?? string.Empty).Trim();
             if (string.Equals(k, targetKey, StringComparison.Ordinal))
             {
                 target = o;
@@ -1880,13 +1882,15 @@ public class ImageMasterController : ControllerBase
         }
         if (target == null)
         {
-            target = new JsonObject { ["key"] = targetKey };
+            target = new JsonObject { ["id"] = targetKey };
             elements.Add(target);
         }
 
-        target["kind"] = "generator";
+        // running 占位必须使用前端可恢复的 image 形状；generator 是画布工具节点，
+        // 其恢复逻辑会被视为静态节点，不能展示生成进度。
+        target["kind"] = "image";
         target["status"] = "running";
-        target["prompt"] = prompt ?? "";
+        target["name"] = prompt ?? "";
         if (x.HasValue) target["x"] = x.Value;
         if (y.HasValue) target["y"] = y.Value;
         if (w.HasValue) target["w"] = w.Value;

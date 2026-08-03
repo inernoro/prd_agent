@@ -134,12 +134,15 @@ public class TranscriptRunWorker : BackgroundService
         {
             _currentRunId = null;
             _logger.LogError(ex, "[transcript-agent] Run {RunId} failed", run.Id);
+            var userError = run.Type == "asr"
+                ? ToUserReadableAsrError(ex)
+                : "文案生成暂时失败，请稍后重试；已完成的转写内容不会丢失。";
 
             await db.TranscriptRuns.UpdateOneAsync(
                 Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
                 Builders<TranscriptRun>.Update
                     .Set(r => r.Status, "failed")
-                    .Set(r => r.Error, ex.Message)
+                    .Set(r => r.Error, userError)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow));
 
             // ASR 失败时同步更新 Item 状态
@@ -149,7 +152,7 @@ public class TranscriptRunWorker : BackgroundService
                     Builders<TranscriptItem>.Filter.Eq(i => i.Id, run.ItemId),
                     Builders<TranscriptItem>.Update
                         .Set(i => i.TranscribeStatus, "failed")
-                        .Set(i => i.TranscribeError, ex.Message));
+                        .Set(i => i.TranscribeError, userError));
             }
         }
     }
@@ -187,13 +190,13 @@ public class TranscriptRunWorker : BackgroundService
             {
                 // WebSocket 协议已迁入 LlmGateway raw 发送路径；MAP 仍只经 ILlmGateway 调用。
                 _logger.LogInformation("[transcript-agent] 使用豆包 WebSocket ASR 网关路径: Exchange={ExchangeName}", resolution.ExchangeName);
-                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution);
             }
             else if (resolution.ExchangeTransformerType == "doubao-asr")
             {
                 // 异步 submit+query ASR：Gateway 的 SendRawWithResolutionAsync 支持 IAsyncExchangeTransformer 轮询
                 _logger.LogInformation("[transcript-agent] 使用异步 ASR 路径: Exchange={ExchangeName}", resolution.ExchangeName);
-                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution);
             }
             else
             {
@@ -206,7 +209,7 @@ public class TranscriptRunWorker : BackgroundService
         else
         {
             // 非 Exchange 模型（Whisper 等）：走 Gateway HTTP 路径
-            await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
+            await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution);
         }
     }
 
@@ -215,39 +218,108 @@ public class TranscriptRunWorker : BackgroundService
     /// </summary>
     private async Task ProcessAsrViaGatewayAsync(
         MongoDbContext db, ILlmGateway gateway, TranscriptRun run, TranscriptItem item,
-        GatewayModelResolution resolution)
+        ModelResolutionResult resolution)
     {
         // 下载音频文件
         using var httpClient = new HttpClient();
-        var audioBytes = await httpClient.GetByteArrayAsync(item.FileUrl);
+        var sourceBytes = await httpClient.GetByteArrayAsync(item.FileUrl);
+        var audioBytes = await NormalizeAudioAsync(sourceBytes);
+        _logger.LogInformation(
+            "[transcript-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes}",
+            sourceBytes.Length,
+            audioBytes.Length);
 
         await UpdateProgress(db, run.Id, 30);
 
-        // 调用 ASR 模型池（使用已解析的 resolution，遵循 compute-then-send 原则）
-        var rawRequest = new GatewayRawRequest
+        // 请求形状必须随模型协议构建：豆包异步只接受 JSON base64，多模态音频走
+        // chat input_audio，Whisper 与豆包流式走标准 WAV multipart。
+        GatewayRawRequest rawRequest;
+        if (resolution.IsExchange
+            && string.Equals(resolution.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
         {
-            AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
-            ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/audio/transcriptions",
-            IsMultipart = true,
-            MultipartFields = new Dictionary<string, object>
+            rawRequest = new GatewayRawRequest
             {
-                ["model"] = "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = ""
-            },
-            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+                ModelType = ModelTypes.Asr,
+                RequestBody = new JsonObject { ["audio_data"] = Convert.ToBase64String(audioBytes) },
+                IsMultipart = false,
+                TimeoutSeconds = 600,
+                Context = new GatewayRequestContext { UserId = run.OwnerUserId }
+            };
+        }
+        else if (AsrAudioRoutePolicy.ShouldUseChatAudio(
+                     resolution.ActualModel,
+                     resolution.Protocol,
+                     resolution.PlatformType))
+        {
+            rawRequest = new GatewayRawRequest
             {
-                ["file"] = (item.FileName, audioBytes, item.MimeType)
-            },
-            TimeoutSeconds = 600,
-            Context = new GatewayRequestContext { UserId = run.OwnerUserId }
-        };
+                AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+                ModelType = ModelTypes.Asr,
+                EndpointPath = "/v1/chat/completions",
+                RequestBody = new JsonObject
+                {
+                    ["model"] = resolution.ActualModel,
+                    ["modalities"] = new JsonArray("text"),
+                    ["temperature"] = 0,
+                    ["messages"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["role"] = "user",
+                            ["content"] = new JsonArray
+                            {
+                                new JsonObject
+                                {
+                                    ["type"] = "text",
+                                    ["text"] = "请逐字转写音频，只输出真实说出的话；没有人声时只输出 NO_SPEECH。"
+                                },
+                                new JsonObject
+                                {
+                                    ["type"] = "input_audio",
+                                    ["input_audio"] = new JsonObject
+                                    {
+                                        ["data"] = Convert.ToBase64String(audioBytes),
+                                        ["format"] = "wav"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                TimeoutSeconds = 600,
+                Context = new GatewayRequestContext { UserId = run.OwnerUserId }
+            };
+        }
+        else
+        {
+            rawRequest = new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+                ModelType = ModelTypes.Asr,
+                EndpointPath = "/v1/audio/transcriptions",
+                IsMultipart = true,
+                MultipartFields = new Dictionary<string, object>
+                {
+                    ["model"] = resolution.ActualModel ?? "whisper-1",
+                    ["response_format"] = "verbose_json",
+                    ["timestamp_granularities[]"] = "segment"
+                },
+                MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                {
+                    ["file"] = ("audio.wav", audioBytes, "audio/wav")
+                },
+                TimeoutSeconds = 600,
+                Context = new GatewayRequestContext { UserId = run.OwnerUserId }
+            };
+        }
 
         await UpdateProgress(db, run.Id, 50);
 
-        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        var rawResp = await gateway.SendRawWithResolutionAsync(
+            rawRequest,
+            resolution.ToGatewayResolution(),
+            CancellationToken.None);
 
         if (rawResp?.Success != true || rawResp.Content == null)
         {
@@ -261,6 +333,17 @@ public class TranscriptRunWorker : BackgroundService
 
         // 解析 Whisper 响应
         var segments = ParseWhisperSegments(rawResp.Content);
+        if (segments.Count == 0)
+        {
+            var text = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
+            if (!string.IsNullOrWhiteSpace(text)
+                && !text.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+            {
+                segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = text.Trim() });
+            }
+        }
+        if (segments.Count == 0)
+            throw new InvalidOperationException("ASR 没有识别到有效语音");
 
         // 保存转写结果到 Item
         await db.TranscriptItems.UpdateOneAsync(
@@ -374,5 +457,50 @@ public class TranscriptRunWorker : BackgroundService
             Builders<TranscriptRun>.Update
                 .Set(r => r.Progress, progress)
                 .Set(r => r.UpdatedAt, DateTime.UtcNow));
+    }
+
+    private static string ToUserReadableAsrError(Exception ex)
+    {
+        var message = ex.Message ?? string.Empty;
+        if (message.Contains("没有识别到有效语音", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+        {
+            return "没有识别到有效语音。请确认录音中有人声且音量清晰，然后重新上传；原始音频已保留。";
+        }
+
+        return "语音转写暂时失败。请稍后重试或换一段清晰音频；原始音频已保留，不需要重新录制。";
+    }
+
+    private static async Task<byte[]> NormalizeAudioAsync(byte[] sourceBytes)
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"transcript-in-{Guid.NewGuid():N}");
+        var outputPath = Path.Combine(Path.GetTempPath(), $"transcript-out-{Guid.NewGuid():N}.wav");
+        await File.WriteAllBytesAsync(inputPath, sourceBytes, CancellationToken.None);
+        try
+        {
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(startInfo.ArgumentList, inputPath, outputPath);
+            using var process = System.Diagnostics.Process.Start(startInfo)
+                ?? throw new InvalidOperationException("音频处理服务启动失败");
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync(CancellationToken.None);
+            var stderr = await stderrTask;
+            await stdoutTask;
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException($"音频格式转换失败，退出码 {process.ExitCode}: {stderr}");
+            return await File.ReadAllBytesAsync(outputPath, CancellationToken.None);
+        }
+        finally
+        {
+            try { if (File.Exists(inputPath)) File.Delete(inputPath); } catch { }
+            try { if (File.Exists(outputPath)) File.Delete(outputPath); } catch { }
+        }
     }
 }
