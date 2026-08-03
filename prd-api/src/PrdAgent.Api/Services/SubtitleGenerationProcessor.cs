@@ -525,7 +525,7 @@ public class SubtitleGenerationProcessor
             "[doc-store-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes} isVideo={IsVideo}",
             sourceBytes, bytes.Length, isVideo);
 
-        // 解析 ASR 模型 —— 直接走默认调度，尊重模型池优先级
+        // 解析 ASR 模型 —— 只解析一次完整候选计划，发送阶段复用已解析结果。
         //
         // 历史血泪 (2026-05-08)：
         //   c237e6d (跑通): 默认调度 → 模型池按你配的优先级选 → 命中 vveai/whisper → 14.9s 成功
@@ -534,9 +534,9 @@ public class SubtitleGenerationProcessor
         //     → 选中"另一个" whisper-large-v3 实例（baseUrl 不同 / 健康判定不同）→ 暂不支持该接口
         //   教训：用户在管理后台配的优先级已经是 source of truth，不要在代码里二次干预。
         //
-        // 谁来路由：用户 → 管理后台模型池配置（绑 AppCallerCode + 排优先级）
-        // 谁来执行：ResolveAsync 的默认排序（HealthStatus → ModelGroup.Priority → Model.Priority）
-        // 代码层只做：拿到结果 → 按 IsExchange / ExchangeTransformerType 分发到豆包流式 / Whisper HTTP
+        // 谁来路由：用户 → 管理后台模型池配置（绑 AppCallerCode + 排优先级）。
+        // 录音产品另有一个明确能力约束：有原生说话人信息的健康候选必须优先于只能靠提示词
+        // 猜角色的通用音频模型；原生候选失败时再按模型池顺序降级，确保原文不会因角色增强失败而丢失。
         var resolution = await _modelResolver.ResolveAsync(
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
 
@@ -594,8 +594,8 @@ public class SubtitleGenerationProcessor
         Func<int, int, Task>? onAttempt = null)
     {
         const int maxAttempts = 3;
-        var candidates = new[] { primaryResolution }
-            .Concat(primaryResolution.RetryCandidates ?? [])
+        var candidates = OrderRecordingAsrCandidates(
+                new[] { primaryResolution }.Concat(primaryResolution.RetryCandidates ?? []))
             .Where(candidate => candidate.Success && !string.IsNullOrWhiteSpace(candidate.ActualModel))
             .GroupBy(
                 candidate => $"{candidate.ActualPlatformId}::{candidate.ActualModel}",
@@ -676,6 +676,11 @@ public class SubtitleGenerationProcessor
             "ASR 模型池没有可执行的识别方案",
             BuildResolverDiagnostic(primaryResolution, "no-candidates"));
     }
+
+    internal static IEnumerable<ModelResolutionResult> OrderRecordingAsrCandidates(
+        IEnumerable<ModelResolutionResult> candidates)
+        => candidates.OrderByDescending(candidate => candidate.IsExchange
+            && candidate.ExchangeTransformerType is "doubao-asr" or "doubao-asr-stream");
 
     private async Task<List<SubtitleSegment>> TranscribeWithResolutionAsync(
         DocumentStoreAgentRun run,
@@ -819,8 +824,13 @@ public class SubtitleGenerationProcessor
                     var start = seg.TryGetProperty("start", out var st) ? st.GetDouble() : 0;
                     var end = seg.TryGetProperty("end", out var et) ? et.GetDouble() : 0;
                     var text = (seg.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    var speaker = seg.TryGetProperty("speaker", out var speakerNode)
+                        ? speakerNode.ValueKind == JsonValueKind.String
+                            ? speakerNode.GetString()
+                            : speakerNode.GetRawText()
+                        : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim()));
+                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
                 }
             }
             // 没有 segments 数组就用 text 兜底
