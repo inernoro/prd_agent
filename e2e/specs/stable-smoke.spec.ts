@@ -627,6 +627,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       runId = created.runId;
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      const learned = page.getByRole('button', { name: '我已学会' });
+      if (await learned.isVisible().catch(() => false)) await learned.click();
       const progress = page.getByTestId('generation-progress').first();
       await expect(progress, '真实生图开始后页面必须恢复生成中占位').toBeVisible({ timeout: 15_000 });
       const progressBox = await progress.boundingBox();
@@ -643,7 +645,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.reload({ waitUntil: 'domcontentloaded' });
       const generatedImage = page.getByTestId('canvas-image').first();
       await expect(generatedImage, '任务完成并刷新后画布必须恢复真实图片').toBeVisible({ timeout: 30_000 });
-      expect(await generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+      await expect.poll(
+        () => generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+        { message: '画布图片必须完成浏览器解码', timeout: 30_000 },
+      ).toBeGreaterThan(0);
+      await generatedImage.evaluate((image) => (image as HTMLImageElement).decode());
+      await page.waitForTimeout(500);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       if (runId) {
@@ -721,9 +728,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(messageText).toContain('@img2');
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      const learned = page.getByRole('button', { name: '我已学会' });
+      if (await learned.isVisible().catch(() => false)) await learned.click();
       const generatedImage = page.getByTestId('canvas-image').first();
       await expect(generatedImage, '多图生成完成后页面必须恢复真实图片').toBeVisible({ timeout: 30_000 });
-      expect(await generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+      await expect.poll(
+        () => generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+        { message: '多图结果必须完成浏览器解码', timeout: 30_000 },
+      ).toBeGreaterThan(0);
+      await generatedImage.evaluate((image) => (image as HTMLImageElement).decode());
+      await page.waitForTimeout(500);
       await expect(page.getByText('参考', { exact: false }).last()).toBeVisible({ timeout: 15_000 });
       await testInfo.attach('multi-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {

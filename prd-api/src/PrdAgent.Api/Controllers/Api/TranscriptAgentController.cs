@@ -160,7 +160,7 @@ public class TranscriptAgentController : ControllerBase
             OwnerUserId = userId,
             OwnerInstanceId = InstanceIdentity.Get(_config),
             Type = "asr",
-            Status = "queued",
+            Status = TranscriptRunStatuses.ScopedQueued,
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true
         };
         await _db.TranscriptRuns.InsertOneAsync(run);
@@ -269,7 +269,7 @@ public class TranscriptAgentController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config),
             Type = "copywrite",
             TemplateId = dto.TemplateId,
-            Status = "queued",
+            Status = TranscriptRunStatuses.ScopedQueued,
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true
         };
         await _db.TranscriptRuns.InsertOneAsync(run);

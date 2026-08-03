@@ -22,8 +22,8 @@ public class TranscriptRun
     /// <summary>任务类型: asr / copywrite</summary>
     public string Type { get; set; } = null!;
 
-    /// <summary>状态: queued / processing / completed / failed</summary>
-    public string Status { get; set; } = "queued";
+    /// <summary>状态: scoped_queued / processing / completed / failed</summary>
+    public string Status { get; set; } = TranscriptRunStatuses.ScopedQueued;
 
     /// <summary>copywrite 类型时使用的模板 ID</summary>
     public string? TemplateId { get; set; }
@@ -44,4 +44,17 @@ public class TranscriptRun
     /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
     /// </summary>
     public bool ForceFullShadowSample { get; set; }
+}
+
+public static class TranscriptRunStatuses
+{
+    /// <summary>
+    /// 带部署实例归属的新队列状态。旧版本 Worker 只领取 queued，因此无法抢走
+    /// 新版本创建的任务；当前 Worker 再按 OwnerInstanceId 做第二层隔离。
+    /// </summary>
+    public const string ScopedQueued = "scoped_queued";
+
+    public const string Processing = "processing";
+    public const string Completed = "completed";
+    public const string Failed = "failed";
 }

@@ -85,7 +85,7 @@ public class TranscriptRunWorker : BackgroundService
         // CDS 的所有预览分支共用 MongoDB。只领取当前部署创建的任务，禁止其他分支
         // 或主干旧版本抢走后按不同模型协议执行。
         var filter = Builders<TranscriptRun>.Filter.And(
-            Builders<TranscriptRun>.Filter.Eq(r => r.Status, "queued"),
+            Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued),
             Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId));
         var update = Builders<TranscriptRun>.Update
             .Set(r => r.Status, "processing")
@@ -238,67 +238,68 @@ public class TranscriptRunWorker : BackgroundService
 
         // 请求形状必须随模型协议构建：豆包异步只接受 JSON base64，多模态音频走
         // chat input_audio，Whisper 与豆包流式走标准 WAV multipart。
-        GatewayRawRequest rawRequest;
-        if (resolution.IsExchange
-            && string.Equals(resolution.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
+        var isChatAudio = AsrAudioRoutePolicy.ShouldUseChatAudio(
+            resolution.ActualModel,
+            resolution.Protocol,
+            resolution.PlatformType);
+        GatewayRawRequest BuildRawRequest(int validationAttempt)
         {
-            rawRequest = new GatewayRawRequest
+            if (resolution.IsExchange
+                && string.Equals(resolution.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
             {
-                AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
-                ModelType = ModelTypes.Asr,
-                RequestBody = new JsonObject { ["audio_data"] = Convert.ToBase64String(audioBytes) },
-                IsMultipart = false,
-                TimeoutSeconds = 600,
-                Context = new GatewayRequestContext { UserId = run.OwnerUserId }
-            };
-        }
-        else if (AsrAudioRoutePolicy.ShouldUseChatAudio(
-                     resolution.ActualModel,
-                     resolution.Protocol,
-                     resolution.PlatformType))
-        {
-            rawRequest = new GatewayRawRequest
-            {
-                AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
-                ModelType = ModelTypes.Asr,
-                EndpointPath = "/v1/chat/completions",
-                RequestBody = new JsonObject
+                return new GatewayRawRequest
                 {
-                    ["model"] = resolution.ActualModel,
-                    ["modalities"] = new JsonArray("text"),
-                    ["temperature"] = 0,
-                    ["messages"] = new JsonArray
+                    AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+                    ModelType = ModelTypes.Asr,
+                    RequestBody = new JsonObject { ["audio_data"] = Convert.ToBase64String(audioBytes) },
+                    IsMultipart = false,
+                    TimeoutSeconds = 600,
+                    Context = new GatewayRequestContext { UserId = run.OwnerUserId }
+                };
+            }
+
+            if (isChatAudio)
+            {
+                var prompt = validationAttempt == 1
+                    ? "音频已附在本消息的 input_audio 中。请逐字转写，只输出音频里真实说出的话，不要解释、确认或要求播放音频；没有人声时只输出 NO_SPEECH。"
+                    : $"这是第 {validationAttempt - 1} 次结果校验。必须读取本消息 input_audio 里的 WAV 音频，只输出真实人声原文；禁止要求用户再次提供、上传或播放音频。没有人声时只输出 NO_SPEECH。";
+                return new GatewayRawRequest
+                {
+                    AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+                    ModelType = ModelTypes.Asr,
+                    EndpointPath = "/v1/chat/completions",
+                    RequestBody = new JsonObject
                     {
-                        new JsonObject
+                        ["model"] = resolution.ActualModel,
+                        ["modalities"] = new JsonArray("text"),
+                        ["temperature"] = 0,
+                        ["messages"] = new JsonArray
                         {
-                            ["role"] = "user",
-                            ["content"] = new JsonArray
+                            new JsonObject
                             {
-                                new JsonObject
+                                ["role"] = "user",
+                                ["content"] = new JsonArray
                                 {
-                                    ["type"] = "text",
-                                    ["text"] = "请逐字转写音频，只输出真实说出的话；没有人声时只输出 NO_SPEECH。"
-                                },
-                                new JsonObject
-                                {
-                                    ["type"] = "input_audio",
-                                    ["input_audio"] = new JsonObject
+                                    new JsonObject { ["type"] = "text", ["text"] = prompt },
+                                    new JsonObject
                                     {
-                                        ["data"] = Convert.ToBase64String(audioBytes),
-                                        ["format"] = "wav"
+                                        ["type"] = "input_audio",
+                                        ["input_audio"] = new JsonObject
+                                        {
+                                            ["data"] = Convert.ToBase64String(audioBytes),
+                                            ["format"] = "wav"
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                },
-                TimeoutSeconds = 600,
-                Context = new GatewayRequestContext { UserId = run.OwnerUserId }
-            };
-        }
-        else
-        {
-            rawRequest = new GatewayRawRequest
+                    },
+                    TimeoutSeconds = 600,
+                    Context = new GatewayRequestContext { UserId = run.OwnerUserId }
+                };
+            }
+
+            return new GatewayRawRequest
             {
                 AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
                 ModelType = ModelTypes.Asr,
@@ -319,12 +320,42 @@ public class TranscriptRunWorker : BackgroundService
             };
         }
 
-        await UpdateProgress(db, run.Id, 50);
+        var maxValidationAttempts = isChatAudio ? 4 : 1;
+        GatewayRawResponse? rawResp = null;
+        string? validatedChatText = null;
+        for (var validationAttempt = 1; validationAttempt <= maxValidationAttempts; validationAttempt++)
+        {
+            var rawRequest = BuildRawRequest(validationAttempt);
+            rawResp = await gateway.SendRawWithResolutionAsync(
+                rawRequest,
+                resolution.ToGatewayResolution(),
+                CancellationToken.None);
 
-        var rawResp = await gateway.SendRawWithResolutionAsync(
-            rawRequest,
-            resolution.ToGatewayResolution(),
-            CancellationToken.None);
+            if (rawResp?.Success != true || rawResp.Content == null)
+                break;
+
+            if (!isChatAudio)
+                break;
+
+            var candidateText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
+            var isNoSpeech = candidateText?.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase) == true;
+            var isAssistantReply = !string.IsNullOrWhiteSpace(candidateText)
+                && PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.LooksLikeAssistantReply(candidateText);
+            if (!string.IsNullOrWhiteSpace(candidateText) && !isNoSpeech && !isAssistantReply)
+            {
+                validatedChatText = candidateText.Trim();
+                break;
+            }
+
+            _logger.LogWarning(
+                "[transcript-agent] 音频模型返回无效文本，已拒绝写入并继续校验: RunId={RunId}, Attempt={Attempt}, IsNoSpeech={IsNoSpeech}, IsAssistantReply={IsAssistantReply}",
+                run.Id,
+                validationAttempt,
+                isNoSpeech,
+                isAssistantReply);
+        }
+
+        await UpdateProgress(db, run.Id, 50);
 
         if (rawResp?.Success != true || rawResp.Content == null)
         {
@@ -336,9 +367,13 @@ public class TranscriptRunWorker : BackgroundService
 
         await UpdateProgress(db, run.Id, 80);
 
-        // 解析 Whisper 响应
         var segments = ParseWhisperSegments(rawResp.Content);
-        if (segments.Count == 0)
+        if (!string.IsNullOrWhiteSpace(validatedChatText))
+        {
+            segments.Clear();
+            segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = validatedChatText });
+        }
+        else if (segments.Count == 0 && !isChatAudio)
         {
             var text = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
             if (!string.IsNullOrWhiteSpace(text)

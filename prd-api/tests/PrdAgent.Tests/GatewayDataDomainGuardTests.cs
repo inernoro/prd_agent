@@ -1096,8 +1096,11 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("public string OwnerInstanceId { get; set; }", model);
         Assert.Contains("OwnerInstanceId = InstanceIdentity.Get(_config)", controller);
+        Assert.Contains("Status = TranscriptRunStatuses.ScopedQueued", controller);
+        Assert.Contains("Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued)", worker);
         Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, instanceId)", worker);
         Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, _instanceId)", watchdog);
+        Assert.DoesNotContain("Filter.Eq(r => r.Status, \"queued\")", worker);
     }
 
     [Fact]
