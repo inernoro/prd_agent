@@ -48,6 +48,7 @@ import {
   Users,
   Hammer,
   Radar,
+  ChevronDown,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -68,6 +69,7 @@ import {
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import type { ToolboxItem, RecentWorkItemDto } from '@/services';
 import { useHomeRecentWorkStore } from '@/stores/homeRecentWorkStore';
+import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
@@ -203,8 +205,28 @@ interface CatalogGroupMeta {
   layout: 'tile' | 'row';
 }
 
-/** 「手边的活儿」与「我的动态」收起态条数：两栏等高，台面底边齐平 */
-const WORK_PREVIEW_COUNT = 12;
+/**
+ * 「手边的活儿」与「我的动态」收起态条数：默认只露一半，台面不吃掉整屏；
+ * 想看更多走列底部居中的「更多」就地展开，不跳页。
+ */
+const WORK_PREVIEW_COUNT = 6;
+
+/**
+ * 官方精选：编辑部口径的旗舰智能体，**不是**算法排名，所以标签就叫「官方精选」。
+ * 想改推荐位改这里一处；顺序即展示顺序。
+ */
+const FEATURED_AGENT_KEYS = [
+  'visual-agent',
+  'literary-agent',
+  'defect-agent',
+  'report-agent',
+  'md-to-ppt-agent',
+  'pr-review',
+];
+
+/** 「你常用的」进榜门槛：打开过 2 次以上才算习惯，避免一次误点就占推荐位 */
+const FREQUENT_MIN_USAGE = 2;
+const FREQUENT_MAX = 6;
 
 const CATALOG_GROUPS: CatalogGroupMeta[] = [
   { key: 'agents', chip: '智能体', title: '智能体', hint: 'AI 参与、生命周期完整、产物可留存', layout: 'tile' },
@@ -246,7 +268,7 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         <>
           <div className="relative z-10 flex items-start justify-between gap-2 px-2.5 pt-2.5">
             <div
-              className="max-w-[60%] text-[14.5px] font-semibold leading-[1.22] tracking-[-0.01em]"
+              className="max-w-[60%] text-[15px] font-semibold leading-[1.22] tracking-[-0.01em]"
               style={{ color: 'var(--text-on-media)' }}
             >
               {item.name}
@@ -267,7 +289,7 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
                 {item.tags.slice(0, 2).map((tag) => (
                   <span
                     key={tag}
-                    className="shrink-0 rounded-md border px-1.5 py-0.5 text-[10.5px] font-medium leading-none"
+                    className="shrink-0 rounded-md border px-1.5 py-0.5 text-[11px] font-medium leading-none"
                     style={{
                       color: 'var(--media-card-tag-text)',
                       background: 'var(--media-card-tag-bg)',
@@ -298,7 +320,7 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
             <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
               {item.name}
             </div>
-            <p className="text-[11.5px] mt-0.5 leading-snug line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+            <p className="text-[12px] mt-0.5 leading-snug line-clamp-2" style={{ color: 'var(--text-muted)' }}>
               {item.description}
             </p>
           </div>
@@ -333,10 +355,10 @@ function ToolRow({ item, onClick }: { item: ToolboxItem; onClick: () => void }) 
         <Icon size={14} style={{ color: accent.color }} />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[12.5px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+        <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
           {item.name}
         </div>
-        <div className="text-[10.5px] truncate" style={{ color: 'var(--text-muted)' }}>
+        <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
           {item.description}
         </div>
       </div>
@@ -454,6 +476,10 @@ export default function AgentLauncherPage() {
   // 近 7 日 + 我的动态：与移动首页同一份数据源
   const pulse = useHomePulse(8);
 
+  // 真实打开次数（agentSwitcherStore 已把 usageCounts / recentVisits 同步到服务端）
+  const usageCounts = useAgentSwitcherStore((s) => s.usageCounts);
+  const recentVisits = useAgentSwitcherStore((s) => s.recentVisits);
+
   const quickLinkIds = useHomeLauncherPreferencesStore((s) => s.quickLinkIds);
   const loadHomeLauncherPreferences = useHomeLauncherPreferencesStore((s) => s.loadFromServer);
 
@@ -559,6 +585,43 @@ export default function AgentLauncherPage() {
     { label: '缺陷', value: pulse.stats?.defects ?? 0 },
     { label: 'Token', value: pulse.stats?.totalTokens ?? 0 },
   ];
+
+  /**
+   * 智能体分三档，回答"我该点哪个"：
+   *  - 你常用的：来自 agentSwitcherStore 的真实打开次数（服务端持久化），
+   *    没到门槛就整档不出现——不编造"猜你喜欢"
+   *  - 官方精选：编辑部口径的旗舰位，如实标注是"官方"选的
+   *  - 更多智能体：其余全部，一个都不藏
+   */
+  const agentShelves = useMemo(() => {
+    const all = groups.agents;
+    const usageOf = (item: ToolboxItem) => {
+      const byRoute = recentVisits.find((v) => v.path && item.routePath && v.path === item.routePath);
+      const id = byRoute?.id ?? item.agentKey ?? item.id;
+      return usageCounts[id] ?? 0;
+    };
+
+    const frequent = all
+      .map((item) => ({ item, count: usageOf(item) }))
+      .filter((entry) => entry.count >= FREQUENT_MIN_USAGE)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, FREQUENT_MAX)
+      .map((entry) => entry.item);
+
+    const frequentIds = new Set(frequent.map((item) => item.id));
+    const featured = FEATURED_AGENT_KEYS
+      .flatMap((key) => all.filter((item) => item.agentKey === key))
+      .filter((item) => !frequentIds.has(item.id));
+
+    const shownIds = new Set([...frequentIds, ...featured.map((item) => item.id)]);
+    const rest = all.filter((item) => !shownIds.has(item.id));
+
+    return [
+      { key: 'frequent', title: '你常用的', hint: '按你的真实打开次数排', items: frequent },
+      { key: 'featured', title: '官方精选', hint: '编辑部挑的旗舰位，不是算法排名', items: featured },
+      { key: 'rest', title: '更多智能体', hint: '其余全部，一个都不藏', items: rest },
+    ].filter((shelf) => shelf.items.length > 0);
+  }, [groups.agents, recentVisits, usageCounts]);
 
   const renderGroupBody = (meta: CatalogGroupMeta, list: ToolboxItem[]) =>
     meta.layout === 'tile' ? (
@@ -688,19 +751,6 @@ export default function AgentLauncherPage() {
                     title="手边的活儿"
                     count={workItems.length > 0 ? workItems.length : undefined}
                     headingId="home-continue-heading"
-                    action={
-                      workItems.length > WORK_PREVIEW_COUNT ? (
-                        <button
-                          type="button"
-                          className="home-desk-more"
-                          aria-expanded={workExpanded}
-                          onClick={() => setWorkExpanded((v) => !v)}
-                        >
-                          {workExpanded ? '收起' : `全部 ${workItems.length}`}
-                          <ArrowRight size={12} className={workExpanded ? '-rotate-90' : ''} />
-                        </button>
-                      ) : undefined
-                    }
                   />
                   {workItems.length > 0 ? (
                     <div className="home-desk-work-list">
@@ -718,6 +768,17 @@ export default function AgentLauncherPage() {
                       <kbd className="home-desk-empty-kbd">/</kbd>
                       搜索——做过的事会自动回到这里。
                     </p>
+                  )}
+                  {workItems.length > WORK_PREVIEW_COUNT && (
+                    <button
+                      type="button"
+                      className="home-desk-expand"
+                      aria-expanded={workExpanded}
+                      onClick={() => setWorkExpanded((v) => !v)}
+                    >
+                      <ChevronDown size={13} className={workExpanded ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                      {workExpanded ? '收起' : `更多 ${workItems.length - WORK_PREVIEW_COUNT} 条`}
+                    </button>
                   )}
                 </section>
 
@@ -816,12 +877,27 @@ export default function AgentLauncherPage() {
 
                 {visibleGroups.map((meta) => (
                   <div key={meta.key} className="home-desk-group">
-                    <div className="home-desk-group-label">
-                      <span className="home-desk-group-name">{meta.title}</span>
-                      <span className="home-desk-group-count">{groups[meta.key].length}</span>
-                      <span className="home-desk-group-hint">{meta.hint}</span>
-                    </div>
-                    {renderGroupBody(meta, groups[meta.key])}
+                    {meta.key === 'agents' ? (
+                      agentShelves.map((shelf) => (
+                        <div key={shelf.key} className="home-desk-shelf">
+                          <div className="home-desk-group-label">
+                            <span className="home-desk-group-name">{shelf.title}</span>
+                            <span className="home-desk-group-count">{shelf.items.length}</span>
+                            <span className="home-desk-group-hint">{shelf.hint}</span>
+                          </div>
+                          {renderGroupBody(meta, shelf.items)}
+                        </div>
+                      ))
+                    ) : (
+                      <>
+                        <div className="home-desk-group-label">
+                          <span className="home-desk-group-name">{meta.title}</span>
+                          <span className="home-desk-group-count">{groups[meta.key].length}</span>
+                          <span className="home-desk-group-hint">{meta.hint}</span>
+                        </div>
+                        {renderGroupBody(meta, groups[meta.key])}
+                      </>
+                    )}
                   </div>
                 ))}
               </section>

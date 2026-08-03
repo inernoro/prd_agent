@@ -16,7 +16,7 @@
   pointer-events: none;
   background: var(--home-ambient-background);
   mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.7) 52%, transparent 100%);
-  opacity: calc(var(--home-ambient-opacity) * 0.7);
+  opacity: calc(var(--home-ambient-opacity) * 0.5);
   filter: saturate(0.8);
 }
 
@@ -28,7 +28,7 @@
   gap: 10px;
   min-height: 26px;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
-  font-size: 10.5px;
+  font-size: 10px;
   letter-spacing: 0.07em;
   color: var(--text-muted);
 }
@@ -74,7 +74,6 @@
   letter-spacing: -0.02em;
   line-height: 1.2;
   color: var(--text-primary);
-  text-shadow: var(--home-title-shadow);
 }
 
 .home-desk-greet.is-compact { font-size: 21px; }
@@ -91,9 +90,8 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--home-subtitle-text);
-  text-shadow: var(--home-subtitle-shadow);
 }
 
 /* ── 台面：上层唯一的容器 ── */
@@ -102,7 +100,7 @@
   margin-top: 12px;
   border-radius: 14px;
   background: var(--home-panel-bg);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-default);
   overflow: hidden;
 }
 
@@ -151,7 +149,7 @@
 .home-desk-command-input::-webkit-search-cancel-button { display: none; }
 
 .home-desk-command-meta { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.home-desk-command-hint { font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.home-desk-command-hint { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 .home-desk-command-clear,
 .home-desk-command-kbd {
@@ -183,7 +181,7 @@
 }
 
 .home-desk-kpi { display: flex; align-items: baseline; gap: 6px; }
-.home-desk-kpi-label { font-size: 11px; color: var(--text-muted); }
+.home-desk-kpi-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
 
 .home-desk-kpi-value {
   margin: 0;
@@ -211,12 +209,12 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 26px;
+  height: 27px;
   padding: 0 8px;
   border-radius: 7px;
   cursor: pointer;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
   transition: color 0.16s, background-color 0.16s;
@@ -263,7 +261,7 @@
 
 .home-desk-sec-title {
   flex-shrink: 0;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-primary);
@@ -285,7 +283,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -297,7 +295,7 @@
   gap: 4px;
   flex-shrink: 0;
   cursor: pointer;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
   transition: color 0.2s;
@@ -311,7 +309,7 @@
   flex-wrap: wrap;
   gap: 5px;
   padding: 8px 0 2px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -376,7 +374,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-primary);
 }
@@ -384,7 +382,8 @@
 /* 智能体名 / 状态 / 时间三列右对齐成栏，避免中间参差 */
 .home-desk-work-agent {
   flex-shrink: 0;
-  width: 62px;
+  width: 66px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -401,7 +400,7 @@
   border-radius: 5px;
   background: var(--nested-block-bg);
   color: var(--work-accent-text);
-  font-size: 10.5px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -409,8 +408,33 @@
   flex-shrink: 0;
   width: 62px;
   text-align: right;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-muted);
+}
+
+/* 列底部居中的就地展开：不跳页、不换视图，只是把剩下的放出来 */
+.home-desk-expand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  height: 28px;
+  margin-top: 4px;
+  border-radius: 7px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: color 0.16s, background-color 0.16s;
+}
+
+.home-desk-expand:hover { color: var(--text-primary); background: var(--bg-card-hover); }
+
+.home-desk-expand:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--selection-bg);
 }
 
 /* ── 我的动态 ── */
@@ -451,11 +475,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text-secondary);
 }
 
-.home-desk-feed-time { flex-shrink: 0; font-size: 10.5px; color: var(--text-muted); }
+.home-desk-feed-time { flex-shrink: 0; font-size: 10px; color: var(--text-muted); }
 
 /* ── 目录 ── */
 
@@ -490,6 +515,7 @@
 .home-desk-seg-num { font-size: 10px; font-variant-numeric: tabular-nums; opacity: 0.62; }
 
 .home-desk-group + .home-desk-group { margin-top: 18px; }
+.home-desk-shelf + .home-desk-shelf { margin-top: 16px; }
 
 .home-desk-group-label {
   display: flex;
@@ -499,8 +525,8 @@
   margin-bottom: 8px;
 }
 
-.home-desk-group-name { flex-shrink: 0; font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
-.home-desk-group-count { flex-shrink: 0; font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.home-desk-group-name { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.home-desk-group-count { flex-shrink: 0; font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 .home-desk-group-hint {
   min-width: 0;

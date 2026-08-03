@@ -183,7 +183,7 @@
   --launcher-tile-bg: rgba(255, 255, 255, 0.055);
   --launcher-tile-border: rgba(255, 255, 255, 0.10);
   /* 首页工作带的实体面板：靠面分区，替代过去满屏的贯通发丝线 */
-  --home-panel-bg: rgba(255, 255, 255, 0.032);
+  --home-panel-bg: rgba(255, 255, 255, 0.045);
   --launcher-control-bg: rgba(255, 255, 255, 0.045);
   --launcher-control-border: rgba(255, 255, 255, 0.09);
   --launcher-theme-icon: #E8A87C;
@@ -196,9 +196,9 @@
   --home-eyebrow-bg: rgba(247, 247, 251, 0.045);
   --home-eyebrow-border: rgba(247, 247, 251, 0.13);
   --home-eyebrow-text: rgba(214, 216, 212, 0.78);
-  --home-title-shadow: 0 1px 12px rgba(0, 0, 0, 0.35);
+  --home-title-shadow: none;
   --home-subtitle-text: rgba(247, 247, 251, 0.72);
-  --home-subtitle-shadow: 0 1px 4px rgba(0, 0, 0, 0.20);
+  --home-subtitle-shadow: none;
   --home-name-background: linear-gradient(100deg, #f7f7fb 0%, #c8c5be 100%);
   --home-name-fill: transparent;
 
@@ -279,9 +279,9 @@
   --text-on-media: #f7f7fb;
   --text-on-media-muted: rgba(247, 247, 251, 0.66);
   --media-card-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.60);
-  --media-art-filter: saturate(0.92) contrast(1.05) brightness(0.90);
-  --media-art-opacity: 0.88;
-  --media-art-opacity-hover: 0.94;
+  --media-art-filter: saturate(0.96) contrast(1.18) brightness(0.96);
+  --media-art-opacity: 0.96;
+  --media-art-opacity-hover: 1;
   --media-art-tint-opacity: 0.68;
   --media-art-tint-opacity-hover: 0.82;
   --media-art-tint-blend: color;
@@ -631,7 +631,7 @@
 
   --launcher-tile-bg: rgba(248, 245, 239, 0.94);
   --launcher-tile-border: rgba(15, 23, 42, 0.11);
-  --home-panel-bg: rgba(253, 251, 247, 0.78);
+  --home-panel-bg: #FDFBF7;
   --launcher-control-bg: rgba(241, 236, 228, 0.86);
   --launcher-control-border: rgba(15, 23, 42, 0.12);
   --launcher-theme-icon: #A64B35;
@@ -652,7 +652,7 @@
 
   /* 浅色原图保持自然材质，只做轻微色彩校正与类别提示。 */
   --media-card-shadow: 0 8px 22px -12px rgba(74, 62, 48, 0.28);
-  --media-art-filter: saturate(1) contrast(1.10) brightness(0.94);
+  --media-art-filter: saturate(1.04) contrast(1.20) brightness(0.98);
   --media-art-opacity: 1;
   --media-art-opacity-hover: 1;
   --media-art-tint-opacity: 0.06;
