@@ -339,8 +339,11 @@ describe('主题系统契约', () => {
     expect(launcher).toContain('aria-label="首页快捷入口"');
     // 诚实进度：没有状态机的实体不画进度条（不允许拿 0 或 100 顶替）
     expect(launcher).toContain('item.progress == null');
-    expect(launcher).toContain('回到最近的工作现场');
-    // 工作带靠实体面板分区
+    // 空态给引导，不给空盒（guided-exploration）
+    expect(launcher).toContain('还没有进行中的工作');
+    // 上层只有一个容器：台面。命令条 / 用量 / 常去 / 在办 / 动态都在它里面
+    expect(launcher).toContain('home-desk-deck');
+    expect(styles).toContain('.home-desk-deck {');
     expect(styles).toContain('background: var(--home-panel-bg)');
     // 「全是线条」被明确否掉：不得再出现贯通全宽的装饰横线（flex:1 的 1px 高元素）
     expect(styles).not.toMatch(/\.home-desk-rule\b/);

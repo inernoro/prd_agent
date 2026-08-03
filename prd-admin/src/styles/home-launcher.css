@@ -20,19 +20,13 @@
   filter: saturate(0.8);
 }
 
-/* ── 门头 ── */
+/* ── 状态栏：无框，纯文字。它报"此刻 + 你是谁"，不参与容器竞争 ── */
 
-.home-desk-masthead {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(228px, 268px);
-  align-items: center;
-  gap: 20px;
-}
-
-.home-desk-dateline {
+.home-desk-statusbar {
   display: flex;
-  align-items: baseline;
-  gap: 9px;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
   font-size: 10.5px;
   letter-spacing: 0.07em;
@@ -46,17 +40,36 @@
   font-variant-numeric: tabular-nums;
 }
 
+.home-desk-status-gap { flex: 1; min-width: 12px; }
+
+/* 教程承接卡在状态栏里脱掉外壳：只留进度环与文字，不再是第四种容器 */
+.home-desk-status-learning { flex-shrink: 0; }
+
+.home-desk-status-learning .home-learning-center {
+  width: auto;
+  padding: 0 !important;
+  gap: 8px;
+  background: none;
+  border: 0;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.home-desk-status-learning .home-learning-center:hover { background: none; border: 0; }
+.home-desk-status-learning .home-learning-center > div:first-child { width: 30px; height: 30px; }
+.home-desk-status-learning .home-learning-center svg { width: 30px; height: 30px; }
+
 .home-desk-greet-row {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  margin-top: 3px;
+  margin-top: 2px;
   min-width: 0;
 }
 
 .home-desk-greet {
   flex-shrink: 0;
-  font-size: 27px;
+  font-size: 26px;
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.2;
@@ -83,28 +96,40 @@
   text-shadow: var(--home-subtitle-shadow);
 }
 
-/* ── 命令条 ── */
+/* ── 台面：上层唯一的容器 ── */
 
-.home-desk-command { margin-top: 12px; }
+.home-desk-deck {
+  margin-top: 12px;
+  border-radius: 14px;
+  background: var(--home-panel-bg);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.home-desk-deck-top {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 12px;
+}
 
 .home-desk-command-field {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 44px;
-  padding: 0 10px 0 13px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-input) 88%, transparent);
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0 9px 0 12px;
+  border-radius: 9px;
+  background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .home-desk-command-field:hover { border-color: var(--border-default); }
 
 .home-desk-command-field:focus-within {
-  background: var(--bg-input);
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px var(--selection-bg);
 }
@@ -118,7 +143,7 @@
   background: transparent;
   border: 0;
   outline: none;
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--text-primary);
 }
 
@@ -134,78 +159,97 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  height: 24px;
-  min-width: 24px;
+  height: 22px;
+  min-width: 22px;
   border-radius: 6px;
   background: var(--nested-block-bg);
   border: 1px solid var(--nested-block-border);
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 11px;
 }
 
 .home-desk-command-clear { cursor: pointer; transition: color 0.2s, background-color 0.2s; }
 .home-desk-command-clear:hover { color: var(--text-primary); background: var(--bg-card-hover); }
 
-/* ── 常去入口：实体小瓦片，一行装下六个 ── */
+/* 近 7 日：命令条右侧的一条数字，不再自成一块面板 */
+.home-desk-kpis {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  flex-shrink: 0;
+  margin: 0;
+  padding-right: 4px;
+}
+
+.home-desk-kpi { display: flex; align-items: baseline; gap: 6px; }
+.home-desk-kpi-label { font-size: 11px; color: var(--text-muted); }
+
+.home-desk-kpi-value {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-desk-kpi-value.is-zero { color: var(--text-muted); font-weight: 600; }
+
+/* ── 常去入口：台面内的一行无框文字链 ── */
 
 .home-desk-quick {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 7px;
-  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 8px 8px;
 }
 
 .home-desk-quick-item {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
-  height: 36px;
-  padding: 0 11px;
-  border-radius: 9px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
   cursor: pointer;
-  background: var(--launcher-tile-bg);
-  border: 1px solid var(--launcher-tile-border);
-  color: var(--text-secondary);
-  font-size: 12.5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
   font-weight: 500;
-  transition: color 0.18s, background-color 0.18s, border-color 0.18s;
+  transition: color 0.16s, background-color 0.16s;
 }
 
-.home-desk-quick-item:hover {
-  color: var(--text-primary);
-  background: var(--bg-card-hover);
-  border-color: var(--border-default);
-}
+.home-desk-quick-item:hover { color: var(--text-primary); background: var(--bg-card-hover); }
 
 .home-desk-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  margin-left: auto;
-  height: 16px;
-  min-width: 16px;
+  height: 15px;
+  min-width: 15px;
   padding: 0 4px;
   border-radius: 999px;
   background: var(--accent-primary);
   color: var(--bg-base);
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 700;
 }
 
-/* ── 教程承接卡（组件自带结构，这里只给表面） ── */
+/* ── 台面主体：左右两栏都是"行"的节奏，中间一条内部分隔线 ── */
 
-.home-learning-center {
-  background: color-mix(in srgb, var(--bg-card) 78%, transparent);
-  border: 1px solid var(--border-subtle);
+.home-desk-deck-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  align-items: start;
+  border-top: 1px solid var(--border-subtle);
 }
 
-.home-learning-center:hover {
-  background: var(--bg-card);
-  border-color: var(--accent-primary);
-}
+.home-desk-col { padding: 11px 12px 12px; min-width: 0; }
+.home-desk-col--feed { border-left: 1px solid var(--border-subtle); }
 
 /* ── 紧凑区块标题：一行排完，不用贯通横线 ── */
 
@@ -214,12 +258,12 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  margin-bottom: 9px;
+  margin-bottom: 7px;
 }
 
 .home-desk-sec-title {
   flex-shrink: 0;
-  font-size: 14.5px;
+  font-size: 13.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-primary);
@@ -266,7 +310,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 5px;
-  padding: 10px 0 2px;
+  padding: 8px 0 2px;
   font-size: 12.5px;
   color: var(--text-muted);
 }
@@ -285,54 +329,25 @@
   font-size: 11px;
 }
 
-/* ── 工作带：左「手边的活儿」+ 右「近 7 日 / 我的动态」 ── */
+/* ── 在办工作：单行条目（收件箱节奏），类别色只出现在图标芯片上 ── */
 
-.home-desk-band {
-  display: grid;
-  grid-template-columns: minmax(0, 1.42fr) minmax(300px, 0.58fr);
-  align-items: start;
-  gap: 12px;
-  margin-top: 18px;
-}
-
-.home-desk-panel {
-  padding: 12px 13px 13px;
-  border-radius: 12px;
-  background: var(--home-panel-bg);
-  border: 1px solid var(--border-subtle);
-}
-
-.home-desk-side {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
-  min-width: 0;
-}
-
-.home-desk-work-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
+.home-desk-work-list { display: flex; flex-direction: column; }
 
 .home-desk-work {
   display: flex;
   align-items: center;
   gap: 9px;
+  width: 100%;
   min-width: 0;
-  padding: 8px 9px;
-  border-radius: 9px;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: 7px;
   text-align: left;
   cursor: pointer;
-  background: var(--work-accent-faint);
-  border: 1px solid transparent;
-  transition: background-color 0.18s, border-color 0.18s;
+  transition: background-color 0.16s;
 }
 
-.home-desk-work:hover {
-  background: var(--work-accent-soft);
-  border-color: var(--work-accent-border);
-}
+.home-desk-work:hover { background: var(--bg-card-hover); }
 
 .home-desk-work:focus-visible,
 .home-desk-quick-item:focus-visible,
@@ -348,122 +363,54 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 21px;
+  height: 21px;
+  border-radius: 6px;
   background: var(--work-accent-soft);
   color: var(--work-accent-text);
 }
 
-.home-desk-work-body { min-width: 0; flex: 1; }
-
 .home-desk-work-title {
-  display: block;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
 }
 
-.home-desk-work-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  margin-top: 1px;
-  font-size: 10.5px;
+/* 智能体名 / 状态 / 时间三列右对齐成栏，避免中间参差 */
+.home-desk-work-agent {
+  flex-shrink: 0;
+  width: 62px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 11px;
   color: var(--text-muted);
 }
 
-.home-desk-work-agent { flex-shrink: 0; color: var(--work-accent-text); font-weight: 500; }
+.home-desk-work-state-slot { flex-shrink: 0; width: 74px; display: flex; justify-content: flex-end; }
 
 .home-desk-work-state {
   flex-shrink: 0;
-  padding: 0 4px;
-  border-radius: 4px;
+  padding: 1px 5px;
+  border-radius: 5px;
   background: var(--nested-block-bg);
-}
-
-.home-desk-work-time { flex-shrink: 0; margin-left: auto; }
-
-.home-desk-work-track {
-  display: block;
-  height: 3px;
-  margin-top: 5px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: var(--border-subtle);
-}
-
-.home-desk-work-fill { display: block; height: 100%; border-radius: 999px; background: var(--work-accent); }
-
-.home-desk-work-go {
-  flex-shrink: 0;
-  opacity: 0;
-  color: var(--text-muted);
-  transition: opacity 0.18s, transform 0.18s;
-}
-
-.home-desk-work:hover .home-desk-work-go { opacity: 0.7; transform: translateX(2px); }
-
-/* ── 近 7 日 ── */
-
-.home-desk-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
-}
-
-.home-desk-stat-label { font-size: 11px; color: var(--text-muted); }
-
-.home-desk-stat-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 2px;
-}
-
-.home-desk-stat-value {
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  color: var(--text-primary);
+  color: var(--work-accent-text);
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
 }
 
-.home-desk-stat-value.is-zero { color: var(--text-muted); }
-
-.home-desk-bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
+.home-desk-work-time {
   flex-shrink: 0;
-  height: 20px;
-}
-
-.home-desk-bar {
-  position: relative;
-  display: block;
-  width: 4px;
-  height: 100%;
-  border-radius: 2px;
-  overflow: hidden;
-  background: var(--nested-block-bg);
-}
-
-.home-desk-bar-fill {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: block;
-  border-radius: 2px;
-  background: var(--accent-primary);
-  opacity: 0.85;
+  width: 62px;
+  text-align: right;
+  font-size: 10.5px;
+  color: var(--text-muted);
 }
 
 /* ── 我的动态 ── */
@@ -476,19 +423,20 @@
   gap: 8px;
   width: 100%;
   min-width: 0;
-  padding: 5px 4px;
+  height: 32px;
+  padding: 0 6px;
   border-radius: 7px;
   cursor: pointer;
   text-align: left;
-  transition: background-color 0.18s;
+  transition: background-color 0.16s;
 }
 
 .home-desk-feed-row:hover { background: var(--bg-card-hover); }
 
 .home-desk-feed-dot {
   flex-shrink: 0;
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 999px;
   background: var(--text-muted);
 }
@@ -590,27 +538,25 @@
 
 /* ── 断点 ── */
 
-@media (max-width: 1439px) {
-  .home-desk-band { grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr); }
-  .home-desk-work-list { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1279px) {
+  .home-desk-deck-top { flex-wrap: wrap; gap: 10px; }
+  .home-desk-kpis { width: 100%; justify-content: space-between; gap: 12px; padding-right: 0; }
 }
 
-@media (max-width: 1099px) {
-  .home-desk-masthead { grid-template-columns: minmax(0, 1fr); }
-  .home-desk-learning { display: none; }
-  .home-desk-band { grid-template-columns: minmax(0, 1fr); }
-  .home-desk-work-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 1023px) {
+  .home-desk-deck-body { grid-template-columns: minmax(0, 1fr); }
+  .home-desk-col--feed { border-left: 0; border-top: 1px solid var(--border-subtle); }
+  .home-desk-status-learning { display: none; }
 }
 
 @media (max-width: 767px) {
-  .home-desk-inner { padding: 14px 12px 40px; }
-  .home-launcher-color-field { height: 220px; }
+  .home-desk-inner { padding: 12px 12px 40px; }
+  .home-launcher-color-field { height: 200px; }
   .home-desk-greet-row { flex-direction: column; align-items: flex-start; gap: 2px; }
   .home-desk-tips { width: 100%; }
-  .home-desk-command-field { height: 42px; }
-  .home-desk-quick { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
-  .home-desk-work-list { grid-template-columns: minmax(0, 1fr); }
-  .home-desk-stats { gap: 8px 10px; }
+  .home-desk-kpis { gap: 8px; }
+  .home-desk-kpi { flex-direction: column; gap: 0; }
+  .home-desk-work-agent { display: none; }
   .home-desk-sec-hint { display: none; }
 }
 
@@ -618,6 +564,7 @@
   .home-desk-command-field,
   .home-desk-quick-item,
   .home-desk-work,
+  .home-desk-feed-row,
   .home-desk-tile,
   .home-desk-row { transition: none; }
 

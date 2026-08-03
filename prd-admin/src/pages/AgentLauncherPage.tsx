@@ -203,6 +203,9 @@ interface CatalogGroupMeta {
   layout: 'tile' | 'row';
 }
 
+/** 「手边的活儿」与「我的动态」收起态条数：两栏等高，台面底边齐平 */
+const WORK_PREVIEW_COUNT = 12;
+
 const CATALOG_GROUPS: CatalogGroupMeta[] = [
   { key: 'agents', chip: '智能体', title: '智能体', hint: 'AI 参与、生命周期完整、产物可留存', layout: 'tile' },
   { key: 'tools', chip: '工具', title: '实用工具', hint: '单点能力，打开即用', layout: 'row' },
@@ -358,7 +361,7 @@ function WorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => v
   const meta = RECENT_AGENT_META[item.agentKey] ?? { icon: Bot, label: '智能体', iconKey: 'Bot' };
   const accent = getAccent(meta.iconKey);
   const Icon = meta.icon;
-  const progress = item.progress == null ? null : Math.max(0, Math.min(1, item.progress));
+  const progress = item.progress == null ? null : Math.round(Math.max(0, Math.min(1, item.progress)) * 100);
 
   return (
     <button
@@ -371,29 +374,24 @@ function WorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => v
         '--work-accent': accent.color,
         '--work-accent-text': accent.text,
         '--work-accent-soft': accent.soft,
-        '--work-accent-faint': accent.faint,
-        '--work-accent-border': accent.border,
       } as CSSProperties}
     >
       <span className="home-desk-work-icon" aria-hidden>
-        <Icon size={14} />
+        <Icon size={13} />
       </span>
-      <span className="home-desk-work-body">
-        <span className="home-desk-work-title">{item.title || '未命名工作'}</span>
-        <span className="home-desk-work-meta">
-          <span className="home-desk-work-agent">{meta.label}</span>
-          {item.progressLabel && <span className="home-desk-work-state">{item.progressLabel}</span>}
-          <span className="home-desk-work-time">
-            <RelativeTime value={item.lastActiveAt} refreshIntervalMs={0} />
-          </span>
-        </span>
-        {progress != null && (
-          <span className="home-desk-work-track" aria-hidden>
-            <span className="home-desk-work-fill" style={{ width: `${Math.round(progress * 100)}%` }} />
+      <span className="home-desk-work-title">{item.title || '未命名工作'}</span>
+      <span className="home-desk-work-agent">{meta.label}</span>
+      <span className="home-desk-work-state-slot">
+        {item.progressLabel && (
+          <span className="home-desk-work-state">
+            {item.progressLabel}
+            {progress != null ? ` ${progress}%` : ''}
           </span>
         )}
       </span>
-      <ArrowRight size={13} className="home-desk-work-go" />
+      <span className="home-desk-work-time">
+        <RelativeTime value={item.lastActiveAt} refreshIntervalMs={0} />
+      </span>
     </button>
   );
 }
@@ -424,28 +422,14 @@ function SectionHead({
   );
 }
 
-/** 七日迷你柱：真实数据，0 日留空轨道，不造假。 */
-function MiniBars({ series }: { series: number[] }) {
-  const max = Math.max(...series, 0);
-  return (
-    <span aria-hidden className="home-desk-bars">
-      {series.map((value, i) => {
-        const fill = max > 0 && value > 0 ? Math.max(12, Math.round(Math.sqrt(value / max) * 100)) : 0;
-        return (
-          <span key={i} className="home-desk-bar">
-            {fill > 0 && <span className="home-desk-bar-fill" style={{ height: `${fill}%` }} />}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
 // ── 页面 ──
 
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>('all');
+  // 收起时铺满左栏（两列六行），与右侧「近 7 日 + 我的动态」大致等高，
+  // 不在工作带里留一块空白；有更多脚印时由「全部 N」展开。
+  const [workExpanded, setWorkExpanded] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -569,12 +553,11 @@ export default function AgentLauncherPage() {
   const totalCount = groups.agents.length + groups.tools.length + groups.infra.length;
   const visibleGroups = CATALOG_GROUPS.filter((g) => (catalogFilter === 'all' || catalogFilter === g.key) && groups[g.key].length > 0);
 
-  const daily = pulse.stats?.daily ?? [];
   const statCells = [
-    { label: 'AI 调用', value: pulse.stats?.aiCalls ?? 0, series: daily.map((d) => d.aiCalls ?? 0) },
-    { label: '生图', value: pulse.stats?.imageGenerations ?? 0, series: daily.map((d) => d.imageGenerations) },
-    { label: '缺陷', value: pulse.stats?.defects ?? 0, series: daily.map((d) => d.defects ?? 0) },
-    { label: 'Token', value: pulse.stats?.totalTokens ?? 0, series: daily.map((d) => d.tokens) },
+    { label: 'AI 调用', value: pulse.stats?.aiCalls ?? 0 },
+    { label: '生图', value: pulse.stats?.imageGenerations ?? 0 },
+    { label: '缺陷', value: pulse.stats?.defects ?? 0 },
+    { label: 'Token', value: pulse.stats?.totalTokens ?? 0 },
   ];
 
   const renderGroupBody = (meta: CatalogGroupMeta, list: ToolboxItem[]) =>
@@ -598,143 +581,147 @@ export default function AgentLauncherPage() {
         <div aria-hidden className="home-launcher-color-field" />
 
         <div className="home-desk-inner relative z-10">
-          {/* ── 门头：日期条 + 问候 + 教程承接卡，三行压成两行 ── */}
-          <header className="home-desk-masthead">
-            <div className="home-desk-intro min-w-0">
-              <div className="home-desk-dateline">
-                <span className="home-desk-clock">
-                  {String(now.getHours()).padStart(2, '0')}:{String(now.getMinutes()).padStart(2, '0')}
-                </span>
-                <span>{dateLine}</span>
-              </div>
-              <div className="home-desk-greet-row">
-                <h1 className={`home-desk-greet ${isMobile ? 'is-compact' : ''}`}>
-                  {greeting}
-                  {displayName ? '，' : ''}
-                  {displayName && <span className="home-launcher-display-name">{displayName}</span>}
-                </h1>
-                <div data-tour-id="home-subtitle" className="home-desk-tips">
-                  <TipsRotator fallback="选一个智能体开始创作，或按下斜杠键直接搜索平台能力" />
-                </div>
-              </div>
-            </div>
-            <div className="home-desk-learning min-w-0">
+          {/* ── 状态栏：无框、纯文字，只报"此刻 + 你是谁"，不参与容器竞争 ── */}
+          <header className="home-desk-statusbar">
+            <span className="home-desk-clock">
+              {String(now.getHours()).padStart(2, '0')}:{String(now.getMinutes()).padStart(2, '0')}
+            </span>
+            <span className="home-desk-dateline">{dateLine}</span>
+            <span className="home-desk-status-gap" />
+            <span className="home-desk-status-learning">
               <LearningCenterTeaser />
-            </div>
+            </span>
           </header>
 
-          {/* ── 命令条 + 常去入口：同一带，密排 ── */}
-          <div className="home-desk-command">
-            <div className="home-desk-command-field">
-              <Search size={17} className="home-desk-command-icon" aria-hidden />
-              <input
-                ref={searchRef}
-                data-tour-id="home-search"
-                type="search"
-                placeholder="搜索智能体、工具或平台能力"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    setSearchQuery('');
-                    e.currentTarget.blur();
-                  }
-                  if (e.key === 'Enter' && searchResults.length > 0) handleClick(searchResults[0]);
-                }}
-                aria-label="搜索智能体、工具或平台能力"
-                className="home-desk-command-input"
-              />
-              {query ? (
-                <span className="home-desk-command-meta">
-                  <span className="home-desk-command-hint">
-                    {searchResults.length > 0 ? `${searchResults.length} 项 · 回车打开第一项` : '无匹配'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setSearchQuery(''); searchRef.current?.focus(); }}
-                    aria-label="清空搜索"
-                    className="home-desk-command-clear"
-                  >
-                    <X size={13} />
-                  </button>
-                </span>
-              ) : (
-                <kbd className="home-desk-command-kbd" aria-hidden>/</kbd>
-              )}
+          <div className="home-desk-greet-row">
+            <h1 className={`home-desk-greet ${isMobile ? 'is-compact' : ''}`}>
+              {greeting}
+              {displayName ? '，' : ''}
+              {displayName && <span className="home-launcher-display-name">{displayName}</span>}
+            </h1>
+            <div data-tour-id="home-subtitle" className="home-desk-tips">
+              <TipsRotator fallback="选一个智能体开始创作，或按下斜杠键直接搜索平台能力" />
             </div>
           </div>
 
-          {!query && quickLinks.length > 0 && (
-            <nav aria-label="首页快捷入口" className="home-desk-quick">
-              {quickLinks.map((link) => {
-                const Icon = link.icon;
-                const showUnread = link.id === 'updates' && changelogUnread > 0;
-                return (
-                  <button
-                    key={link.path}
-                    type="button"
-                    data-tour-id={`quicklink-${link.id}`}
-                    onClick={() => navigate(link.path)}
-                    title={link.desc}
-                    className="home-desk-quick-item"
-                  >
-                    <Icon size={14} className="shrink-0" />
-                    <span className="truncate">{link.label}</span>
-                    {showUnread && <span className="home-desk-badge">{changelogUnread > 9 ? '9+' : changelogUnread}</span>}
-                  </button>
-                );
-              })}
-            </nav>
-          )}
-
-          {/* ── 手边的活儿 + 近 7 日 + 动态：一条密排工作带 ── */}
-          {!query && (
-            <div className="home-desk-band">
-              <section className="home-desk-panel home-desk-panel--work" aria-labelledby="home-continue-heading">
-                <SectionHead
-                  title="手边的活儿"
-                  count={workItems.length > 0 ? workItems.length : undefined}
-                  hint="回到最近的工作现场"
-                  headingId="home-continue-heading"
+          {/* ── 台面：上层唯一的容器。命令条 + 用量 + 常去 + 在办 + 动态全在里面 ── */}
+          <div className="home-desk-deck">
+            <div className="home-desk-deck-top">
+              <div className="home-desk-command-field">
+                <Search size={16} className="home-desk-command-icon" aria-hidden />
+                <input
+                  ref={searchRef}
+                  data-tour-id="home-search"
+                  type="search"
+                  placeholder="搜索智能体、工具或平台能力"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setSearchQuery('');
+                      e.currentTarget.blur();
+                    }
+                    if (e.key === 'Enter' && searchResults.length > 0) handleClick(searchResults[0]);
+                  }}
+                  aria-label="搜索智能体、工具或平台能力"
+                  className="home-desk-command-input"
                 />
-                {workItems.length > 0 ? (
-                  <div className="home-desk-work-list">
-                    {workItems.slice(0, 8).map((item) => (
-                      <WorkCard
-                        key={`${item.agentKey}:${item.route}`}
-                        item={item}
-                        onClick={() => navigate(item.route)}
-                      />
-                    ))}
-                  </div>
+                {query ? (
+                  <span className="home-desk-command-meta">
+                    <span className="home-desk-command-hint">
+                      {searchResults.length > 0 ? `${searchResults.length} 项 · 回车打开第一项` : '无匹配'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => { setSearchQuery(''); searchRef.current?.focus(); }}
+                      aria-label="清空搜索"
+                      className="home-desk-command-clear"
+                    >
+                      <X size={13} />
+                    </button>
+                  </span>
                 ) : (
-                  <p className="home-desk-empty">
-                    还没有进行中的工作。挑一个智能体开始，或按
-                    <kbd className="home-desk-empty-kbd">/</kbd>
-                    搜索——做过的事会自动回到这里。
-                  </p>
+                  <kbd className="home-desk-command-kbd" aria-hidden>/</kbd>
                 )}
-              </section>
+              </div>
 
-              <div className="home-desk-side">
-                <section className="home-desk-panel" aria-labelledby="home-pulse-heading">
-                  <SectionHead title="近 7 日" hint="你的真实用量" headingId="home-pulse-heading" />
-                  <div className="home-desk-stats">
-                    {statCells.map((cell) => (
-                      <div key={cell.label} className="home-desk-stat">
-                        <div className="home-desk-stat-label">{cell.label}</div>
-                        <div className="home-desk-stat-row">
-                          <span className={`home-desk-stat-value ${cell.value > 0 ? '' : 'is-zero'}`}>
-                            {pulse.loading ? '—' : formatCompactNumber(cell.value)}
-                          </span>
-                          {cell.series.length > 0 && <MiniBars series={cell.series} />}
-                        </div>
-                      </div>
-                    ))}
+              {/* 近 7 日：从独立面板降级为命令条右侧的一条数字，不再自成一块 */}
+              <dl className="home-desk-kpis" aria-label="近 7 日真实用量">
+                {statCells.map((cell) => (
+                  <div key={cell.label} className="home-desk-kpi">
+                    <dt className="home-desk-kpi-label">{cell.label}</dt>
+                    <dd className={`home-desk-kpi-value ${cell.value > 0 ? '' : 'is-zero'}`}>
+                      {pulse.loading ? '—' : formatCompactNumber(cell.value)}
+                    </dd>
                   </div>
+                ))}
+              </dl>
+            </div>
+
+            {!query && quickLinks.length > 0 && (
+              <nav aria-label="首页快捷入口" className="home-desk-quick">
+                {quickLinks.map((link) => {
+                  const Icon = link.icon;
+                  const showUnread = link.id === 'updates' && changelogUnread > 0;
+                  return (
+                    <button
+                      key={link.path}
+                      type="button"
+                      data-tour-id={`quicklink-${link.id}`}
+                      onClick={() => navigate(link.path)}
+                      title={link.desc}
+                      className="home-desk-quick-item"
+                    >
+                      <Icon size={13} className="shrink-0" />
+                      <span className="truncate">{link.label}</span>
+                      {showUnread && <span className="home-desk-badge">{changelogUnread > 9 ? '9+' : changelogUnread}</span>}
+                    </button>
+                  );
+                })}
+              </nav>
+            )}
+
+            {!query && (
+              <div className="home-desk-deck-body">
+                <section className="home-desk-col" aria-labelledby="home-continue-heading">
+                  <SectionHead
+                    title="手边的活儿"
+                    count={workItems.length > 0 ? workItems.length : undefined}
+                    headingId="home-continue-heading"
+                    action={
+                      workItems.length > WORK_PREVIEW_COUNT ? (
+                        <button
+                          type="button"
+                          className="home-desk-more"
+                          aria-expanded={workExpanded}
+                          onClick={() => setWorkExpanded((v) => !v)}
+                        >
+                          {workExpanded ? '收起' : `全部 ${workItems.length}`}
+                          <ArrowRight size={12} className={workExpanded ? '-rotate-90' : ''} />
+                        </button>
+                      ) : undefined
+                    }
+                  />
+                  {workItems.length > 0 ? (
+                    <div className="home-desk-work-list">
+                      {(workExpanded ? workItems : workItems.slice(0, WORK_PREVIEW_COUNT)).map((item) => (
+                        <WorkCard
+                          key={`${item.agentKey}:${item.route}`}
+                          item={item}
+                          onClick={() => navigate(item.route)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="home-desk-empty">
+                      还没有进行中的工作。挑一个智能体开始，或按
+                      <kbd className="home-desk-empty-kbd">/</kbd>
+                      搜索——做过的事会自动回到这里。
+                    </p>
+                  )}
                 </section>
 
-                <section className="home-desk-panel home-desk-panel--feed" aria-labelledby="home-feed-heading">
+                <section className="home-desk-col home-desk-col--feed" aria-labelledby="home-feed-heading">
                   <SectionHead
                     title="我的动态"
                     headingId="home-feed-heading"
@@ -748,7 +735,7 @@ export default function AgentLauncherPage() {
                     <p className="home-desk-empty">用过知识库、周报、生图或缺陷之后，动态会出现在这里。</p>
                   ) : (
                     <ul className="home-desk-feed">
-                      {pulse.feed.slice(0, 6).map((entry) => (
+                      {pulse.feed.slice(0, WORK_PREVIEW_COUNT).map((entry) => (
                         <li key={entry.id}>
                           <button type="button" className="home-desk-feed-row" onClick={() => navigate(entry.navigateTo)}>
                             <span className={`home-desk-feed-dot is-${entry.type}`} aria-hidden />
@@ -763,8 +750,8 @@ export default function AgentLauncherPage() {
                   )}
                 </section>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* ── 目录 ── */}
           {itemsLoading ? (
