@@ -259,7 +259,7 @@ export function ViewersDrawer(props: ViewersDrawerProps) {
                   onClick={() => setDays(opt.days)}
                   className="cursor-pointer rounded-[6px] px-2.5 py-1 text-[11px] font-medium transition-colors"
                   style={days === opt.days
-                    ? { background: 'var(--accent-primary, #818cf8)', color: '#fff' }
+                    ? { background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }
                     : { color: 'var(--text-muted)' }}>
                   {opt.label}
                 </button>

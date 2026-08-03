@@ -28,6 +28,28 @@ const GUARDED: string[] = [
   'lib/appStoreTokens.ts',
 ];
 
+
+/**
+ * 品牌 / 首页 token：这些是三端共用的"那支笔"，不许发紫。
+ *
+ * tokens.css 不能整份扫——`--semantic-purple-*` / `--tag-purple-solid` 是语义色槽，
+ * 紫色正是它们的语义，扫进来就是误报。所以按 token 名精确圈定管辖范围：
+ * 只要一个 token 会被首页或全局品牌面消费，就必须在这张表里。
+ */
+const GUARDED_TOKEN_PREFIXES = [
+  'accent-primary',
+  'accent-gold',
+  'gold-gradient',
+  'button-primary',
+  'selection-',
+  'border-focus',
+  'section-label-text',
+  'home-',
+  'launcher-',
+  'mobile-fab-',
+  'shadow-gold',
+];
+
 /** 紫 / 靛 / 品红区间（色相角度）。低饱和的近灰紫不算——那是中性色的正常抖动。 */
 const BANNED_HUE_START = 244;
 const BANNED_HUE_END = 340;
@@ -120,6 +142,63 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
         '改用 lib/tileAccent 的 INK_HUES 八色墨带，或主题 token（--accent-primary 等）。',
         ...violations,
       ].join('\n'),
+    ).toEqual([]);
+  });
+
+
+  it('品牌 / 首页 token 也在管辖内（语义色槽除外）', () => {
+    const tokensPath = path.resolve(SRC, 'styles/tokens.css');
+    const lines = fs.readFileSync(tokensPath, 'utf8').split('\n');
+    const violations: string[] = [];
+
+    for (const [index, line] of lines.entries()) {
+      const declaration = line.match(/^\s*--([a-z0-9-]+)\s*:\s*(.+?);?\s*$/i);
+      if (!declaration) continue;
+      const [, name, value] = declaration;
+      if (!GUARDED_TOKEN_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
+
+      for (const match of value.matchAll(HEX_RE)) {
+        const hex = match[1];
+        const [r, g, b] = [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+        if (isBanned(r, g, b)) violations.push(`tokens.css:${index + 1} --${name}: #${hex}`);
+      }
+      for (const match of value.matchAll(RGB_RE)) {
+        const [r, g, b] = [1, 2, 3].map((i) => Number.parseInt(match[i], 10));
+        if (isBanned(r, g, b)) violations.push(`tokens.css:${index + 1} --${name}: rgb(${r},${g},${b})`);
+      }
+      for (const match of value.matchAll(HSL_RE)) {
+        const [h, s, l] = [1, 2, 3].map((i) => Number.parseInt(match[i], 10));
+        if (isBannedHsl(h, s / 100, l / 100)) violations.push(`tokens.css:${index + 1} --${name}: hsl(${h} ${s}% ${l}%)`);
+      }
+    }
+
+    expect(
+      violations,
+      ['', '品牌 / 首页 token 出现紫 / 靛 / 品红——三端共用的那支笔被改回去了。', ...violations].join('\n'),
+    ).toEqual([]);
+  });
+
+  it('主操作面不许拿 accent 当底再硬凑白字', () => {
+    // --accent-primary 同时被当"底色"和"前景色"用，两个方向对明度的要求相反：
+    // 它作为底色配白字只有 3.12:1。主操作面一律走 --button-primary-bg/fg 这对
+    // 已被对比度守卫钉住的 token，而不是各写各的白字。
+    const offenders: string[] = [];
+    const pattern = /var\(--accent-primary[^)]*\)[^;}]{0,120}?(?:color:\s*['"]?(?:#fff(?:fff)?|white)|text-white)/i;
+
+    const scan = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) { scan(full); continue; }
+        if (!/\.tsx?$/.test(entry.name) || full.includes('__tests__')) continue;
+        const content = fs.readFileSync(full, 'utf8');
+        if (pattern.test(content)) offenders.push(full.slice(SRC.length + 1));
+      }
+    };
+    scan(SRC);
+
+    expect(
+      offenders,
+      ['', 'accent 底 + 白字 = 3.12:1。改用 var(--button-primary-bg) / var(--button-primary-fg)。', ...offenders].join('\n'),
     ).toEqual([]);
   });
 
