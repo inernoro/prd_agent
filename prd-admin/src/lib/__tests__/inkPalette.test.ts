@@ -239,6 +239,30 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
      */
     const ACCENT_IN_VALUE = /var\(--accent-primary\s*[,)]|\bHERO_GRADIENT\b/;
 
+    /** sRGB 相对亮度（判"这块底配浅色字够不够"用） */
+    const luminance = (hex: string): number => {
+      const channels = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+      const linear = channels.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+    };
+    /** --text-primary 的实际值：浅色前景真正长这样，别拿纯白近似 */
+    const TEXT_PRIMARY_LUMINANCE = luminance('#f7f7fb');
+    /**
+     * 底色写成字面色（含手抄的品牌渐变）时，逐个色标真算一遍。
+     *
+     * 只认 `var(--accent-primary)` / `HERO_GRADIENT` 这两个名字是不够的：
+     * 页脚那枚 MAP 徽标就是 HERO_GRADIENT 的**手抄副本**——名字对不上，判据看不见，
+     * 而且抄过去之后还各自漂移（起点停在换笔前的旧值）。
+     */
+    const literalStopFails = (value: string): boolean => {
+      const stops = [...value.matchAll(/#([0-9a-fA-F]{6})\b/g)].map((m) => `#${m[1]}`);
+      if (stops.length === 0) return false;
+      return stops.some((stop) => {
+        const [hi, lo] = [TEXT_PRIMARY_LUMINANCE, luminance(stop)].sort((a, b) => b - a);
+        return (hi + 0.05) / (lo + 0.05) < 4.5;
+      });
+    };
+
     /**
      * 读出 `background:` 后面那一整个值。
      *
@@ -309,12 +333,19 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
       return content.slice(start, end);
     };
 
-    /** 一段源码里所有「accent 当底 + 同一开标签上写着浅色字」的行号 */
-    const offendingLines = (content: string): number[] => {
+    /**
+     * 一段源码里所有「accent 当底 + 同一开标签上写着浅色字」的行号。
+     *
+     * `checkLiterals` 只对受管表面开：字面色标那一路会连带扫出一批与本次改动
+     * 无关的存量（`var(--accent, #6366f1)` 之类别处的老坑）。这个 PR 只对三个
+     * 首页的颜色负责，全仓字面扫描留作后续（已在 PR 里记账），不在这里顺手扩面。
+     */
+    const offendingLines = (content: string, checkLiterals = false): number[] => {
       const lines: number[] = [];
       for (const match of content.matchAll(BG_KEY)) {
         const at = (match.index ?? 0) + match[0].length;
-        if (!ACCENT_IN_VALUE.test(readValue(content, at))) continue;
+        const value = readValue(content, at);
+        if (!ACCENT_IN_VALUE.test(value) && !(checkLiterals && literalStopFails(value))) continue;
         if (!LIGHT_FG.test(openingTagAround(content, at))) continue;
         lines.push(content.slice(0, at).split('\n').length);
       }
@@ -334,12 +365,14 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     const SAFE_SIBLING = `<div style={{ color: 'var(--text-primary)' }}><span style={{ background: 'var(--accent-primary)' }} /></div>`;
 
     const TERNARY_FG = `<button style={{ background: active ? 'var(--accent-primary)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}>x</button>`;
+    const COPIED_GRADIENT = `<div className="text-token-primary" style={{ background: 'linear-gradient(135deg, #C8623A 0%, #D97757 48%, #E0A06B 100%)' }}>x</div>`;
+    const SAFE_PALE_LITERAL = `<div className="text-token-primary" style={{ background: '#141418' }}>x</div>`;
 
-    for (const [name, snippet] of [['class 白字', CLASS_WHITE], ['class 主文字色', CLASS_TOKEN], ['inline 白字', INLINE_WHITE], ['渐变底 + class 主文字色', GRADIENT_CLASS], ['三元里的浅色字', TERNARY_FG]] as const) {
-      expect(offendingLines(snippet), `判据漏了「${name}」这种写法`).toHaveLength(1);
+    for (const [name, snippet] of [['class 白字', CLASS_WHITE], ['class 主文字色', CLASS_TOKEN], ['inline 白字', INLINE_WHITE], ['渐变底 + class 主文字色', GRADIENT_CLASS], ['三元里的浅色字', TERNARY_FG], ['手抄的品牌渐变', COPIED_GRADIENT]] as const) {
+      expect(offendingLines(snippet, true), `判据漏了「${name}」这种写法`).toHaveLength(1);
     }
-    for (const [name, snippet] of [['按钮 token 对', SAFE_TOKEN_PAIR], ['accent 底 + 深墨字', SAFE_DARK_FG], ['accent 透明底', SAFE_ALPHA_TINT], ['兄弟元素的文字色', SAFE_SIBLING]] as const) {
-      expect(offendingLines(snippet), `判据误报了「${name}」`).toEqual([]);
+    for (const [name, snippet] of [['按钮 token 对', SAFE_TOKEN_PAIR], ['accent 底 + 深墨字', SAFE_DARK_FG], ['accent 透明底', SAFE_ALPHA_TINT], ['兄弟元素的文字色', SAFE_SIBLING], ['深底配浅字（本来就该这样）', SAFE_PALE_LITERAL]] as const) {
+      expect(offendingLines(snippet, true), `判据误报了「${name}」`).toEqual([]);
     }
 
     const scan = (dir: string) => {
@@ -347,9 +380,11 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) { scan(full); continue; }
         if (!/\.tsx?$/.test(entry.name) || full.includes('__tests__')) continue;
+        const rel = full.slice(SRC.length + 1);
+        const guardedSurface = GUARDED.some((entry) => rel === entry || rel.startsWith(`${entry}/`));
         const content = fs.readFileSync(full, 'utf8');
-        for (const line of offendingLines(content)) {
-          offenders.push(`${full.slice(SRC.length + 1)}:${line}`);
+        for (const line of offendingLines(content, guardedSurface)) {
+          offenders.push(`${rel}:${line}`);
         }
       }
     };

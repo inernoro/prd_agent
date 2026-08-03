@@ -1,5 +1,6 @@
 import { Github } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
+import { HERO_GRADIENT, HERO_GRADIENT_FG } from './HeroSection';
 
 /**
  * MinimalFooter — 幕 · 极简页脚
@@ -15,9 +16,12 @@ export function MinimalFooter() {
         {/* Brand */}
         <div className="flex items-center gap-3">
           <div
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-[9px] font-bold text-token-primary"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[9px] font-bold"
             style={{
-              background: 'linear-gradient(135deg, #C8623A 0%, #D97757 48%, #E0A06B 100%)',
+              // 用品牌渐变的 SSOT，别再抄一份：这里原本是 HERO_GRADIENT 的手抄副本，
+              // 起点已经跟着漂成旧值，配的还是浅色字（9px 下最低 2.09:1）。
+              background: HERO_GRADIENT,
+              color: HERO_GRADIENT_FG,
               fontFamily: 'var(--font-display)',
               letterSpacing: '-0.02em',
             }}

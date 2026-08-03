@@ -11,6 +11,7 @@ import {
   ArrowUp,
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
+import { HERO_GRADIENT, HERO_GRADIENT_FG } from '../sections/HeroSection';
 
 /**
  * ProductMockup — Linear 风格的"真实产品壳"
@@ -205,9 +206,12 @@ export function ProductMockup() {
                   <Paperclip className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  className="w-7 h-7 rounded-md flex items-center justify-center text-white"
+                  className="w-7 h-7 rounded-md flex items-center justify-center"
                   style={{
-                    background: 'linear-gradient(135deg, #C8623A 0%, #D97757 48%, #E0A06B 100%)',
+                    // 同页脚徽标：这里原是 HERO_GRADIENT 的手抄副本（起点已漂成旧值），
+                    // 白色箭头在最亮那档只有 2.23:1，连图标的 3:1 都不够。
+                    background: HERO_GRADIENT,
+                    color: HERO_GRADIENT_FG,
                     boxShadow: '0 0 12px rgba(217, 119, 87, 0.5)',
                   }}
                 >
