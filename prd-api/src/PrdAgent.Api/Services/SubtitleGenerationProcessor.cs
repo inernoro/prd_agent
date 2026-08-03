@@ -675,6 +675,30 @@ public class SubtitleGenerationProcessor
                         BuildResolverDiagnostic(candidate, "empty-content"));
                 }
 
+                if (CountSpeakers(segments) <= 1)
+                {
+                    var transcript = string.Join(string.Empty, segments.Select(segment => segment.Text));
+                    var localDiarization = LocalSpeakerDiarizer.TryDiarize(audioBytes, transcript);
+                    if (localDiarization is { SpeakerCount: > 1 })
+                    {
+                        _logger.LogInformation(
+                            "[doc-store-agent] 本地声纹兜底完成: run={RunId} speakers={Speakers} turns={Turns} confidence={Confidence:F2}",
+                            run.Id,
+                            localDiarization.SpeakerCount,
+                            localDiarization.VoiceTurnCount,
+                            localDiarization.Confidence);
+                        segments = localDiarization.Segments.ToList();
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "[doc-store-agent] 未检测到可靠的多说话人声纹，保留单角色原文 run={RunId} turns={Turns} confidence={Confidence:F2}",
+                            run.Id,
+                            localDiarization?.VoiceTurnCount ?? 0,
+                            localDiarization?.Confidence ?? 0);
+                    }
+                }
+
                 if (index > 0)
                 {
                     _logger.LogInformation(
@@ -967,7 +991,11 @@ public class SubtitleGenerationProcessor
                 appCallerCode,
                 BuildChatAudioDiarizationPrompt(transcript));
             if (ContainsExplicitSpeakerLabel(diarized.Text))
-                return ParseChatAudioSpeakerSegments(diarized.Text);
+            {
+                var parsed = ParseChatAudioSpeakerSegments(diarized.Text);
+                if (CountSpeakers(parsed) > 1)
+                    return parsed;
+            }
 
             _logger.LogWarning(
                 "[doc-store-agent] chat 音频角色增强未返回角色标签，保留已确认原文 run={RunId}",
@@ -983,6 +1011,13 @@ public class SubtitleGenerationProcessor
 
         return new List<SubtitleSegment> { new(0, 0, transcript, "说话人1") };
     }
+
+    private static int CountSpeakers(IEnumerable<SubtitleSegment> segments)
+        => segments
+            .Select(segment => segment.SpeakerId)
+            .Where(speaker => !string.IsNullOrWhiteSpace(speaker))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
 
     internal static string BuildChatAudioPrompt(int attempt)
     {
