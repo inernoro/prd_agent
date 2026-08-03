@@ -37,7 +37,7 @@
       "entrySmoke": false,
       "automationStatus": "entry",
       "requiredCaseIds": ["CORE-001", "CORE-003"],
-      "regressionCaseIds": [],
+      "regressionCaseIds": ["REG-user-error-001"],
       "sourcePrefixes": ["prd-admin/src/app/", "prd-admin/src/components/AppShell", "prd-admin/src/stores/", "prd-desktop/src/"],
       "cdsPolicy": "桌面与移动端导航、权限可见性、深链恢复和无横向溢出",
       "productionPolicy": "只读打开核心入口和一条移动端路径",

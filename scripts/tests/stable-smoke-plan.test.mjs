@@ -60,6 +60,7 @@ test('回归台账模板不会被当作 active 用例', () => {
     'REG-llmgw-auth-001',
     'REG-multi-image-001',
     'REG-multi-image-002',
+    'REG-user-error-001',
     'REG-video-001',
     'REG-visual-error-001',
   ]);

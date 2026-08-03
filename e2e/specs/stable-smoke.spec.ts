@@ -351,6 +351,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(resourceFailures).toEqual([]);
   });
 
+  test('[CORE-006][REG-user-error-001] 首页告警不泄漏上游技术细节', async ({ page, request }) => {
+    await loginAndReadToken(page, request, '/');
+    const body = page.locator('body');
+    await expect(body).not.toContainText(/上游信息|Key limit exceeded|openrouter|\/keys\//i);
+  });
+
   test('[CORE-007] 一次性票据只能消费一次且会话不可续期', async ({ request }) => {
     const ticket = await issueTicketDetails(request, '/');
     const code = new URL(ticket.loginUrl!, 'https://stable-smoke.invalid').searchParams.get('code');

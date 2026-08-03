@@ -136,7 +136,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
     public Task NotifyQuotaExceededAsync(string platformName, string message, CancellationToken ct = default)
         => UpsertNotificationAsync(
             key: "llm-quota-exceeded",
-            title: $"大模型平台额度已用尽 / 限额（{platformName}）",
+            title: "AI 服务额度不足",
             message: message,
             level: "error",
             source: "llm-gateway-quota",

@@ -2760,7 +2760,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private async Task<(string Code, string Message)> HandleQuotaExceededAsync(string? platformName, string rawMessage)
     {
         var raw = rawMessage.Length > 220 ? rawMessage.Substring(0, 220) + "…" : rawMessage;
-        var friendly = $"大模型平台额度已用尽或被限额，请充值或更换 API Key。上游信息：{raw}";
+        const string friendly = "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。";
         try
         {
             if (_failoverNotifier != null)

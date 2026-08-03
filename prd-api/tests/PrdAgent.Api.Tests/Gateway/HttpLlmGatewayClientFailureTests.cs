@@ -175,7 +175,11 @@ public class HttpLlmGatewayClientFailureTests
         raw.ErrorCode.ShouldBe("LLM_QUOTA_EXCEEDED");
         notifier.Verify(x => x.NotifyQuotaExceededAsync(
                 "openrouter.ai",
-                It.Is<string>(message => message.Contains("额度已用尽")),
+                It.Is<string>(message =>
+                    message.Contains("请稍后重试")
+                    && message.Contains("诊断信息已保留")
+                    && !message.Contains("openrouter", StringComparison.OrdinalIgnoreCase)
+                    && !message.Contains("API Key", StringComparison.OrdinalIgnoreCase)),
                 CancellationToken.None),
             Times.Once);
     }
@@ -197,7 +201,10 @@ public class HttpLlmGatewayClientFailureTests
         chunks[0].Type.ShouldBe("error");
         notifier.Verify(x => x.NotifyQuotaExceededAsync(
                 "独立 LLM 网关",
-                It.Is<string>(message => message.Contains("Key limit exceeded")),
+                It.Is<string>(message =>
+                    message.Contains("请稍后重试")
+                    && message.Contains("诊断信息已保留")
+                    && !message.Contains("Key limit exceeded", StringComparison.OrdinalIgnoreCase)),
                 CancellationToken.None),
             Times.Once);
     }
