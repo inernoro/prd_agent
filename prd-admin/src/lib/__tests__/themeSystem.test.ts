@@ -388,6 +388,17 @@ describe('主题系统契约', () => {
     // 后端 200 但某来源查挂了（HTTP 成功 + 少一半数据）也必须有出口
     expect(launcher).toContain('pulse.feedDegraded');
 
+    // 打开次数是服务端持久化的，必须有人在登录后把它拉下来。少了这一步：
+    // 换设备 / 开新标签页时「你常用的」从零开始，而且 scheduleSync 在
+    // serverLoaded 为 false 时不回写（防空态覆盖云端），新会话的启动全留在本地。
+    // 当前由 AppShell 一个 useEffect 承担——它删掉不会有任何测试变红，故焊在这里。
+    const shell = fs.readFileSync(path.resolve(TEST_DIR, '../../layouts/AppShell.tsx'), 'utf8');
+    const bound = shell.match(/const (\w+) = useAgentSwitcherStore\(\(s\) => s\.loadFromServer\)/)?.[1];
+    expect(bound, 'AppShell 没有取 agentSwitcherStore.loadFromServer').toBeTruthy();
+    expect(shell, `AppShell 取了 ${bound} 却没调用它——打开次数不会从服务端水合`).toMatch(
+      new RegExp(`${bound}\\(\\)`),
+    );
+
     // 「手边的活儿」同理：store 以前把失败吞成空列表（当时区块整块隐藏，尚可），
     // 首页改版后空态会明说「还没有进行中的工作」，同一个吞法就变成了骗人。
     const recentStore = fs.readFileSync(path.resolve(TEST_DIR, '../../stores/homeRecentWorkStore.ts'), 'utf8');
