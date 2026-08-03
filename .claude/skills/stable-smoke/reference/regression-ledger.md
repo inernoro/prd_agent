@@ -15,6 +15,7 @@
 | REG-multi-image-001 | 多图视觉创作 | 2026-08-02 | 专用图片模型误走聊天协议，且首次请求未重建协议请求体 | 两张几何参考图 | Image 2 两图生成完成 1/1 | 专用合成工作区最小两图任务 | MVIS-001、MVIS-008、GW-005 | 0 | active |
 | REG-multi-image-002 | 多图视觉创作 | 2026-08-02 | Offering 覆盖 Endpoint 后与 Provider base path 组合成错误地址，HTML 200 被当作模型响应 | Provider base 含 `/api`，Offering Endpoint 留空与错误覆盖对照 | 默认 Endpoint 命中 `/api/v1/images` | 正式配置只读加最小真实请求 | GW-004、GW-005 | 0 | active |
 | REG-visual-error-001 | 视觉创作 | 2026-08-02 | 原始上游错误直接进入用户界面，用户无法判断恢复动作 | 空输入、模型不可用、协议响应异常 | 用户文案不含 HTTP、token、Provider、协议原文 | 自然失败时检查文案和 requestId | CORE-005、CORE-006、VIS-008、MVIS-010 | 0 | active |
+| REG-llmgw-auth-001 | LLMGW 身份可用性 | 2026-08-03 | 仓库 Compose 新增环境变量后，CDS 平台配置快照未自动同步，导致新代码已部署但容器未收到长期托管开关 | 固定 admin 凭据、连续两次同版本部署、部署运行的 `profileEnvKeys` | 首轮部署后登录成功，但运行证据缺少 `LLMGW_ADMIN_ENV_AUTHORITY`，待受审 Compose 导入后补齐通过证据 | 正式发布后只验证注入键名、两次重启和登录，不输出秘密 | GW-009 | 0 | candidate |
 
 ## 新增模板
 
