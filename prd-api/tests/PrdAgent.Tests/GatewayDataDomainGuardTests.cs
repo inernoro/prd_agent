@@ -1087,6 +1087,20 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void TranscriptRuns_AreConsumedOnlyByTheirCreatingDeployment()
+    {
+        var model = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/TranscriptRun.cs");
+        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/TranscriptAgentController.cs");
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs");
+        var watchdog = ReadRepoFile("prd-api/src/PrdAgent.Api/Middleware/TranscriptRunWatchdog.cs");
+
+        Assert.Contains("public string OwnerInstanceId { get; set; }", model);
+        Assert.Contains("OwnerInstanceId = InstanceIdentity.Get(_config)", controller);
+        Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, instanceId)", worker);
+        Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, _instanceId)", watchdog);
+    }
+
+    [Fact]
     public void VideoSceneWorker_SynchronizesProjectStatusAfterSceneTerminalStates()
     {
         var videoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");

@@ -80,11 +80,16 @@ public class TranscriptRunWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
+        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
 
-        // 原子认领一个 queued 任务
-        var filter = Builders<TranscriptRun>.Filter.Eq(r => r.Status, "queued");
+        // CDS 的所有预览分支共用 MongoDB。只领取当前部署创建的任务，禁止其他分支
+        // 或主干旧版本抢走后按不同模型协议执行。
+        var filter = Builders<TranscriptRun>.Filter.And(
+            Builders<TranscriptRun>.Filter.Eq(r => r.Status, "queued"),
+            Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId));
         var update = Builders<TranscriptRun>.Update
             .Set(r => r.Status, "processing")
+            .Set(r => r.OwnerInstanceId, instanceId)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
         var options = new FindOneAndUpdateOptions<TranscriptRun, TranscriptRun>
         {

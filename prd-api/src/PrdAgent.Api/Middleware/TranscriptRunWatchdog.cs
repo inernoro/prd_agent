@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Middleware;
 
@@ -18,6 +19,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
     private readonly ILogger<TranscriptRunWatchdog> _logger;
     private readonly TimeSpan _interval;
     private readonly TimeSpan _timeout;
+    private readonly string _instanceId;
 
     public TranscriptRunWatchdog(
         IServiceScopeFactory scopeFactory,
@@ -31,6 +33,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
         var timeoutSec = config.GetValue<int?>("TRANSCRIPT_WATCHDOG_TIMEOUT_SECONDS") ?? 1800;
         _interval = TimeSpan.FromSeconds(Math.Clamp(intervalSec, 30, 600));
         _timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec, 300, 7200));
+        _instanceId = InstanceIdentity.Get(config);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -63,6 +66,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
         // 查找卡在 "processing" 且更新时间超过阈值的 run
         var filter =
             Builders<TranscriptRun>.Filter.Eq(r => r.Status, "processing") &
+            Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, _instanceId) &
             Builders<TranscriptRun>.Filter.Lt(r => r.UpdatedAt, deadline);
 
         var update = Builders<TranscriptRun>.Update
@@ -82,6 +86,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
             var stuckRuns = await db.TranscriptRuns
                 .Find(Builders<TranscriptRun>.Filter.Eq(r => r.Status, "failed") &
                       Builders<TranscriptRun>.Filter.Eq(r => r.Error, $"任务超时（超过 {(int)_timeout.TotalMinutes} 分钟未完成）") &
+                      Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, _instanceId) &
                       Builders<TranscriptRun>.Filter.Eq(r => r.Type, "asr"))
                 .Project(r => r.ItemId)
                 .ToListAsync();

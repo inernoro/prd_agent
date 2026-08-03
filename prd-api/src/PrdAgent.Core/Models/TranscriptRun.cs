@@ -13,6 +13,12 @@ public class TranscriptRun
 
     public string OwnerUserId { get; set; } = null!;
 
+    /// <summary>
+    /// 创建任务的部署实例。CDS 预览分支共用 MongoDB，Worker 必须按该字段定向消费，
+    /// 避免任务被其他分支或主干的旧版本抢走。
+    /// </summary>
+    public string OwnerInstanceId { get; set; } = null!;
+
     /// <summary>任务类型: asr / copywrite</summary>
     public string Type { get; set; } = null!;
 
