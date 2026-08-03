@@ -21,6 +21,8 @@ export interface HomePulse {
   statsFailed: boolean;
   /** 动态没取到，不是「还没有动态」 */
   feedFailed: boolean;
+  /** 请求成功但后端有来源查挂了：列表不完整，空列表也不代表「还没有动态」 */
+  feedDegraded: boolean;
   /** 重新拉一次，供失败态的「重试」用 */
   reload: () => void;
 }
@@ -54,7 +56,7 @@ function isDeadLink(navigateTo: string | undefined): boolean {
  */
 export function resolveHomePulse(
   statsRes: Settled<{ success: boolean; data?: MobileStats | null }>,
-  feedRes: Settled<{ success: boolean; data?: { items?: FeedItem[] } | null }>,
+  feedRes: Settled<{ success: boolean; data?: { items?: FeedItem[]; degradedSources?: string[] } | null }>,
   visibleLimit?: number,
 ): Omit<HomePulse, 'loading' | 'reload'> {
   const statsOk = statsRes.status === 'fulfilled' && statsRes.value.success && !!statsRes.value.data;
@@ -63,11 +65,15 @@ export function resolveHomePulse(
   // 先过滤再截断——反过来的话，被服务端排在前面的死链会先占掉名额，
   // 过滤完剩下一个空列表，页面又去说"你还没用过"。
   const live = feedOk ? (feedRes.value.data!.items ?? []).filter((item) => !isDeadLink(item.navigateTo)) : [];
+  // 后端逐来源查库、单个失败不整体 500。只看 HTTP 成不成功的话，
+  // 「两个来源都查挂了」会以 200 + 空列表的形式回来，被读成「你还没用过」。
+  const degradedSources = feedOk ? feedRes.value.data!.degradedSources ?? [] : [];
   return {
     stats: statsOk ? statsRes.value.data! : null,
     feed: visibleLimit == null ? live : live.slice(0, visibleLimit),
     statsFailed: !statsOk,
     feedFailed: !feedOk,
+    feedDegraded: degradedSources.length > 0,
   };
 }
 
@@ -91,6 +97,7 @@ export function useHomePulse(feedLimit = 8): HomePulse {
   const [loading, setLoading] = useState(true);
   const [statsFailed, setStatsFailed] = useState(false);
   const [feedFailed, setFeedFailed] = useState(false);
+  const [feedDegraded, setFeedDegraded] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   const reload = useCallback(() => setAttempt((value) => value + 1), []);
@@ -114,6 +121,7 @@ export function useHomePulse(feedLimit = 8): HomePulse {
       if (!resolved.feedFailed) setFeed(resolved.feed);
       setStatsFailed(resolved.statsFailed);
       setFeedFailed(resolved.feedFailed);
+      setFeedDegraded(resolved.feedDegraded);
       setLoading(false);
     })();
     return () => {
@@ -121,7 +129,7 @@ export function useHomePulse(feedLimit = 8): HomePulse {
     };
   }, [feedLimit, attempt]);
 
-  return { stats, feed, loading, statsFailed, feedFailed, reload };
+  return { stats, feed, loading, statsFailed, feedFailed, feedDegraded, reload };
 }
 
 /** 万 / 亿 紧凑计数（两端同一口径，移动首页从这里再导出，别再写第二份） */

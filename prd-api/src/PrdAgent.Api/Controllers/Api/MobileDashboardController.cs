@@ -48,6 +48,10 @@ public class MobileDashboardController : ControllerBase
     /// 不含 PRD 会话——PRD 解读智能体 Web 端已下线（前端把 /prd-agent 整条重定向回首页），
     /// 列出来只会得到一条点了没反应的条目；更糟的是它会占掉 limit 名额，
     /// 把真正能点的动态挤出这一页。
+    ///
+    /// 单个来源查询失败时不整体 500（另一个来源的动态照常可用），但**必须把失败如实
+    /// 报出去**：`degradedSources` 列出没取到的来源。全都失败时结果是空列表，
+    /// 前端若只看 HTTP 成不成功，就会把"服务挂了"渲染成"你还没用过"。
     /// </summary>
     [HttpGet("feed")]
     public async Task<IActionResult> GetFeed([FromQuery] int limit = 20)
@@ -56,6 +60,8 @@ public class MobileDashboardController : ControllerBase
         limit = Math.Clamp(limit, 1, 50);
 
         var feedItems = new List<object>();
+        // 哪些来源没取到——空列表到底是"真的没有"还是"查挂了"，只有这里知道
+        var degradedSources = new List<string>();
 
         // 1) 视觉创作工作区
         try
@@ -80,7 +86,11 @@ public class MobileDashboardController : ControllerBase
                 });
             }
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "Feed: failed to load visual workspaces"); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Feed: failed to load visual workspaces");
+            degradedSources.Add("visual-workspace");
+        }
 
         // 2) 缺陷报告
         try
@@ -104,7 +114,11 @@ public class MobileDashboardController : ControllerBase
                 });
             }
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "Feed: failed to load defect reports"); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Feed: failed to load defect reports");
+            degradedSources.Add("defect");
+        }
 
         // 按时间倒序排列并截取
         var sorted = feedItems
@@ -116,7 +130,7 @@ public class MobileDashboardController : ControllerBase
             .Take(limit)
             .ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { items = sorted }));
+        return Ok(ApiResponse<object>.Ok(new { items = sorted, degradedSources }));
     }
 
     // ─────────────────────────────────────────

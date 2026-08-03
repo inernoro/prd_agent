@@ -116,6 +116,12 @@ export default function MobileHomePage() {
   // 取不到 ≠ 为零。服务挂了还显示四个 0 + 「使用后动态会出现在这里」，
   // 等于当着老用户面说他什么都没干过（同桌面首页，判据在 lib/homePulse）。
   const statsUnavailable = data.statsFailed && !data.stats;
+  // 三种"不正常"各有出口，且都不能被说成空态（同桌面首页，判据在 lib/homePulse）
+  const feedNotice = data.feedFailed
+    ? (data.feed.length === 0 ? '动态暂时取不到（网络或服务不可用）。' : '没能刷新，这份是上一次取到的。')
+    : data.feedDegraded
+      ? (data.feed.length === 0 ? '动态暂时取不到（部分来源不可用）。' : '有来源没取到，这份可能不全。')
+      : null;
   const statText = (value: number) => {
     if (data.loading && !data.stats) return '—';
     if (statsUnavailable) return '--';
@@ -294,9 +300,9 @@ export default function MobileHomePage() {
         {/* ── 我的动态 ── */}
         <Section C={C} title="我的动态" action={{ label: '全部', onClick: () => navigate('/my-assets') }}>
           <div style={{ ...cardStyle, padding: '4px 14px' }}>
-            {data.feedFailed && data.feed.length === 0 ? (
+            {data.feed.length === 0 && feedNotice ? (
               <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, padding: '12px 0' }}>
-                动态暂时取不到（网络或服务不可用）。
+                {feedNotice}
                 <button
                   type="button"
                   onClick={data.reload}
@@ -330,9 +336,9 @@ export default function MobileHomePage() {
             )}
             {/* 留着上一轮的列表时也得说清它是旧的：默不作声地把过期数据当现状
                 展示，和显示 0 是同一类谎话，只是更难被发现。 */}
-            {data.feedFailed && data.feed.length > 0 && (
+            {feedNotice && data.feed.length > 0 && (
               <div style={{ ...AS_TYPE.caption, color: C.labelSecondary, padding: '10px 0 12px' }}>
-                没能刷新，这份是上一次取到的。
+                {feedNotice}
                 <button
                   type="button"
                   onClick={data.reload}

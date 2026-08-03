@@ -83,6 +83,8 @@ export interface MobileHomeData {
   statsFailed: boolean;
   /** 动态没取到，不是「还没有动态」 */
   feedFailed: boolean;
+  /** 请求成功但后端有来源查挂了：列表不完整 */
+  feedDegraded: boolean;
   /** 重新拉一次「近 7 日 + 我的动态」 */
   reload: () => void;
 }
@@ -121,6 +123,7 @@ export function useMobileHomeData(): MobileHomeData {
     loading: pulse.loading || recentLoading,
     statsFailed: pulse.statsFailed,
     feedFailed: pulse.feedFailed,
+    feedDegraded: pulse.feedDegraded,
     reload: pulse.reload,
   };
 }

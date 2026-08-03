@@ -620,6 +620,17 @@ export default function AgentLauncherPage() {
    * 数字凭空变空比数字略旧更让人慌。加载中是「—」，与失败态不同形。
    */
   const statsUnavailable = pulse.statsFailed && !pulse.stats;
+  /**
+   * 动态区要说的那句话。三种"不正常"都得有出口，且都不能被说成空态：
+   *  - 整个请求挂了
+   *  - 请求成了但后端某个来源查库挂了（HTTP 200 + 少一半数据，最阴的一种）
+   * 手上有旧列表就照常展示，只是明说它是旧的/不全的。
+   */
+  const feedNotice = pulse.feedFailed
+    ? (pulse.feed.length === 0 ? '动态暂时取不到（网络或服务不可用）。' : '没能刷新，这份是上一次取到的。')
+    : pulse.feedDegraded
+      ? (pulse.feed.length === 0 ? '动态暂时取不到（部分来源不可用）。' : '有来源没取到，这份可能不全。')
+      : null;
   const statText = (value: number) => {
     if (pulse.loading && !pulse.stats) return '—';
     if (statsUnavailable) return '--';
@@ -853,16 +864,16 @@ export default function AgentLauncherPage() {
                       </button>
                     }
                   />
-                  {pulse.feedFailed && pulse.feed.length === 0 ? (
+                  {pulse.feed.length === 0 && !feedNotice ? (
+                    <p className="home-desk-empty">
+                      {pulse.loading ? '正在读取你的动态…' : '用过知识库、周报、生图或缺陷之后，动态会出现在这里。'}
+                    </p>
+                  ) : pulse.feed.length === 0 ? (
                     // 取不到 ≠ 没有。对老用户说"你还没用过"比直接认错更伤，
                     // 所以如实说没取到，并给一条能自己解决的路（重试）。
                     <p className="home-desk-empty">
-                      动态暂时取不到（网络或服务不可用）。
+                      {feedNotice}
                       <button type="button" className="home-desk-retry" onClick={pulse.reload}>重试</button>
-                    </p>
-                  ) : pulse.feed.length === 0 ? (
-                    <p className="home-desk-empty">
-                      {pulse.loading ? '正在读取你的动态…' : '用过知识库、周报、生图或缺陷之后，动态会出现在这里。'}
                     </p>
                   ) : (
                     <ul className="home-desk-feed">
@@ -881,9 +892,9 @@ export default function AgentLauncherPage() {
                   )}
                   {/* 留着上一轮的列表时也得说清它是旧的：默不作声地把过期数据
                       当现状展示，和显示 0 是同一类谎话，只是更难被发现。 */}
-                  {pulse.feedFailed && pulse.feed.length > 0 && (
+                  {feedNotice && pulse.feed.length > 0 && (
                     <p className="home-desk-empty">
-                      没能刷新，这份是上一次取到的。
+                      {feedNotice}
                       <button type="button" className="home-desk-retry" onClick={pulse.reload}>重试</button>
                     </p>
                   )}

@@ -63,6 +63,26 @@ describe('首页脉搏：失败态不许伪装成空态', () => {
     expect(r.feed).toEqual(ITEMS);
   });
 
+  it('后端 200 但某个来源查挂了：算降级，不算完整', () => {
+    // GetFeed 逐来源 try/catch，单个来源挂掉不整体 500。只看 HTTP 成不成功的话，
+    // 「两个来源都查挂了」会以 200 + 空列表回来，被读成「你还没用过」。
+    const r = resolveHomePulse(ok(STATS), ok({ items: [], degradedSources: ['visual-workspace', 'defect'] }));
+    expect(r.feedFailed).toBe(false);
+    expect(r.feedDegraded).toBe(true);
+  });
+
+  it('部分来源挂掉时，拿到的那部分照常给，但标记不完整', () => {
+    const r = resolveHomePulse(ok(STATS), ok({ items: ITEMS, degradedSources: ['defect'] }));
+    expect(r.feed).toEqual(ITEMS);
+    expect(r.feedDegraded).toBe(true);
+  });
+
+  it('没有降级来源时不误报', () => {
+    expect(resolveHomePulse(ok(STATS), ok({ items: ITEMS, degradedSources: [] })).feedDegraded).toBe(false);
+    // 旧构建的后端不带这个字段，不能因为字段缺失就报降级
+    expect(resolveHomePulse(ok(STATS), ok({ items: ITEMS })).feedDegraded).toBe(false);
+  });
+
   it('success:true 但 data 缺失，同样按没取到处理', () => {
     // 契约破了的时候宁可说"取不到"，也不要把 undefined 读成零。
     const r = resolveHomePulse({ status: 'fulfilled', value: { success: true, data: undefined } }, ok({ items: undefined }));
