@@ -1,5 +1,7 @@
 ---
-globs: ["prd-api/src/**/Models/**/*.cs", "prd-api/src/**/Controllers/**/*.cs"]
+paths:
+  - "prd-api/src/**/Models/**/*.cs"
+  - "prd-api/src/**/Controllers/**/*.cs"
 ---
 
 # 数据关系审计原则

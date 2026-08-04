@@ -1,5 +1,6 @@
 ---
-globs: ["prd-api/src/**/*.cs"]
+paths:
+  - "prd-api/src/**/*.cs"
 ---
 
 # 服务器权威性设计
