@@ -222,6 +222,18 @@
 
 ---
 
+## 首页与登录页视觉语言规则待重写（2026-08-04）
+
+[doc/rule.frontend.landing-visual-style.md](./rule.frontend.landing-visual-style.md) 仍以「靛蓝-紫罗兰同族色」（`HERO_GRADIENT = #5B8DEF → #7C6CF0 → #A78BFA`，对齐 `--accent-primary #818CF8`）为强制品牌色规则，但 `changelogs/2026-08-02_home-ink-system.md`（米多墨系改版）已把紫 / 靛 / 品红全面退出，`--accent-primary` 等 token 换成赭红家族，官网底色由冷黑转暖石墨，渐变起点改为 `#CE6B41` 一族。该规则文档尚未同步重写，目前仅在文档顶部加了过期提示（防止误读旧色值），未做全文替换。
+
+| 状态 | 项 | 说明 | 优先级 |
+|---|---|---|---|
+| open | 规则文档色值全文过期 | [doc/rule.frontend.landing-visual-style.md](./rule.frontend.landing-visual-style.md) 的 R1/R8 及色板表仍写着旧靛紫色值与 `HERO_GRADIENT` 起止色，需按当前色板常量（该文档「实现来源」已补一行指向米多墨系色板文件）全文重写，非本次熵清理范围（design/rule 类文档重写需要设计权威，不由自动化流程猜写） | P2 |
+
+关闭条件：[doc/rule.frontend.landing-visual-style.md](./rule.frontend.landing-visual-style.md) 完成全文替换（对齐 `doc-types.md` 「design.* 永远替换，不留历史」的同一原则），色板表、`HERO_GRADIENT` 描述、检查清单均改为米多墨系当前值，移除过期提示后可关闭本条。
+
+---
+
 ## 已结清（供回溯）
 
 下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
