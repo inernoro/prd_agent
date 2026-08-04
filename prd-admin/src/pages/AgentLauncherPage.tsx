@@ -163,9 +163,12 @@ const VOC_QUICK_LINK: HomeQuickLink = {
 
 /**
  * 首页快捷入口注册表。key 是「偏好 id」（用户排序用），与目录 id 不是一回事：
- * updates→changelog、voc→team-activity、models→mds、teams→users、
- * my-assets→visual-agent。记账必须用后者，判据见 navCoverage 的
- * 「首页快捷入口的路由都在导航注册表里」。
+ * updates→changelog、voc→team-activity、models→mds、teams→users。
+ * 记账必须用后者，判据见 navCoverage 的「首页快捷入口按目录 id 记账」。
+ *
+ * path 必须是目录里**原样存在**的路由：`/visual-agent?tab=assets` 那种
+ * 「带个 query 假装能落到子页」的写法，目标页根本不读 tab，用户点了只会
+ * 落到视觉创作列表——标签写着「我的资源」，去处却是别处。
  */
 export const QUICK_LINK_BY_ID: Partial<Record<HomeQuickLinkId, HomeQuickLink>> = {
   marketplace: QUICK_LINKS_BASE[0],
@@ -738,6 +741,9 @@ export default function AgentLauncherPage() {
                       setSearchQuery('');
                       e.currentTarget.blur();
                     }
+                    // 输入法选词时的回车不算「打开第一项」：中文用户敲「视觉」按回车
+                    // 本意是上屏候选词，结果直接把页面跳走了。isComposing 期间一律放过。
+                    if (e.nativeEvent.isComposing) return;
                     if (e.key === 'Enter' && searchResults.length > 0) handleClick(searchResults[0]);
                   }}
                   aria-label="搜索智能体、工具或平台能力"

@@ -461,6 +461,23 @@ describe('主题系统契约', () => {
     }
   });
 
+  it('回车快捷键必须放过输入法选词', () => {
+    // 中文用户敲「视觉」按回车本意是上屏候选词，若不判 isComposing，
+    // 那一下会被当成「打开第一项」直接把页面跳走。中文是这个系统的主力输入方式，
+    // 所以两个首页里任何 Enter 快捷键都必须先放过组字中的回车。
+    // 扫之前先剥注释：第一版直接 toContain('isComposing')，而我自己写的那行
+    // 中文注释里就有这个词——把判断整行删掉，守卫照样绿（实测）。
+    const stripComments = (source: string) => source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
+
+    for (const [name, file] of [['桌面首页', AGENT_LAUNCHER_PATH], ['移动首页', MOBILE_HOME_PATH]] as const) {
+      const code = stripComments(fs.readFileSync(file, 'utf8'));
+      if (!code.includes("e.key === 'Enter'")) continue;
+      expect(code, `${name}有 Enter 快捷键却没判 isComposing，输入法选词会误触发`).toMatch(/isComposing/);
+    }
+  });
+
   it('品牌主渐变的每一档都能撑住它自己的文字色', async () => {
     // 取模块求值结果而不是扫源码：渐变值可能被改成模板字面量 / 拼接，
     // 扫字面量会在那一刻静默失效（predicate-and-wiring 形状 6）。
