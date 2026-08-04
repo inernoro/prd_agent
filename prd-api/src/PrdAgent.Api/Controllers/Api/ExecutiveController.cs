@@ -698,15 +698,6 @@ public class ExecutiveController : ControllerBase
         string Severity, string Key, string Title, string Evidence,
         string Suggestion, string LinkLabel, string LinkTo);
 
-    /// <summary>价值流「环节」分组：appKey → 环节名</summary>
-    private static string ResolveFlowStage(string appKey) => appKey switch
-    {
-        "prd-agent" => "需求梳理",
-        "visual-agent" or "literary-agent" or "video-agent" => "内容生成",
-        "report-agent" or "ai-toolbox" => "汇报与工具",
-        "defect-agent" => "缺陷处理",
-        _ => "其他",
-    };
 
     /// <summary>把小时数按量级说人话：不足 1 小时给分钟，不足 1 天给小时，否则给天。</summary>
     private static string FormatDuration(double hours)
@@ -928,14 +919,17 @@ public class ExecutiveController : ControllerBase
             else if (output >= outputThreshold && quality < medQuality) quadrant = "高量低果";
             else quadrant = "低活跃";
 
+            // 要点只说进度条没画过的事 —— 上面已经有「知识库文档 1106」，
+            // 下面再挂一个「知识库文档 1106 篇」的标签是纯占位。
             var highlights = new List<string>();
-            if (a.Docs > 0) highlights.Add($"知识库文档 {a.Docs} 篇");
-            if (a.Sites > 0) highlights.Add($"网页站点 {a.Sites} 个");
-            if (a.RunsCompleted > 0) highlights.Add($"生图任务完成 {a.RunsCompleted} 次（出图 {a.RunsDone} 张）");
-            if (a.Reports > 0) highlights.Add($"周报已提交 {a.Reports} 篇");
-            if (a.DefectsResolved > 0) highlights.Add($"缺陷已解决 {a.DefectsResolved} 个");
             if (a.DefectsBacklog > 0) highlights.Add($"名下 {a.DefectsBacklog} 个缺陷停留超 7 天");
-            if (highlights.Count == 0) highlights.Add($"本窗仅有 {a.LlmCalls} 次模型调用，未产生可统计产出");
+            if (a.RunsDone > 0) highlights.Add($"累计出图 {a.RunsDone} 张");
+            if (a.RunsFailed > 0) highlights.Add($"出图失败 {a.RunsFailed} 张");
+            if (a.DefectsReported > 0) highlights.Add($"提交缺陷 {a.DefectsReported} 个");
+            if (a.LlmErrors > 0) highlights.Add($"调用失败 {a.LlmErrors} 次");
+            if (a.OutputDays.Count > 0) highlights.Add($"有产出的天数 {a.OutputDays.Count} 天");
+            if (highlights.Count == 0)
+                highlights.Add(output > 0 ? "本窗没有额外的风险或损耗信号" : $"本窗仅有 {a.LlmCalls} 次模型调用，未产生可统计产出");
 
             return new
             {
@@ -1222,12 +1216,21 @@ public class ExecutiveController : ControllerBase
             .ToList();
 
         // ── D. 价值流 ──
-        var stageCounts = new Dictionary<string, int>();
+        // 中间列按真实 appKey 前缀分组，取前 6 大，其余合并为「其他」。
+        // 先前是「归一到 8 个已知 appKey → 未知全兜进 admin → 再映射成四个环节」，
+        // 结果最大的一档是「其他 64%」——占了最多的位置却什么都没告诉人。
+        var appKeyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in llmByCaller)
         {
-            var stage = ResolveFlowStage(NormalizeAppKey(row.K ?? ""));
-            stageCounts[stage] = stageCounts.GetValueOrDefault(stage) + row.C;
+            var raw = NormalizeAppKey(row.K ?? "", fallbackToAdmin: false);
+            if (string.IsNullOrWhiteSpace(raw)) raw = "unknown";
+            appKeyCounts[raw] = appKeyCounts.GetValueOrDefault(raw) + row.C;
         }
+        var topApps = appKeyCounts.OrderByDescending(kv => kv.Value).Take(6).ToList();
+        var restCount = appKeyCounts.Where(kv => !topApps.Any(t => t.Key == kv.Key)).Sum(kv => kv.Value);
+        var stageCounts = topApps.ToDictionary(kv => ResolveAgentName(kv.Key), kv => kv.Value);
+        if (restCount > 0)
+            stageCounts[$"其余 {appKeyCounts.Count - topApps.Count} 个来源"] = restCount;
         var totalOutputDays = memberRows.Sum(r => r.A.OutputDays.Count);
         var unresolvedInWindow = openDefects.Count(d => d.CreatedAt >= start);
 

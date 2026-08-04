@@ -274,11 +274,25 @@ function Quadrant({
   onPick: (id: string) => void;
   reliable: boolean;
 }) {
-  const maxOutput = Math.max(1, ...members.map(m => m.output));
-  // 产出是长尾分布（个位数与上千并存），线性刻度会把大多数人挤在左边缘互相盖住，改用对数刻度
-  const logX = (v: number) => (Math.log10(Math.max(0, v) + 1) / Math.log10(maxOutput + 1)) * 88 + 6;
   const plotted = members.filter(m => m.quality !== null);
   const noQuality = members.length - plotted.length;
+
+  // X：产出是长尾分布（个位数与上千并存），线性刻度会把大多数人挤在左边缘互相盖住 → 对数刻度
+  const maxOutput = Math.max(1, ...members.map(m => m.output));
+  const logX = (v: number) => (Math.log10(Math.max(0, v) + 1) / Math.log10(maxOutput + 1)) * 88 + 6;
+
+  // Y：质量固定按 0-100 铺满画布时，真实数据只落在中间一条带上，上下两头永远空着。
+  // 改为按实际数据范围（含阈值、留 12% 余量）映射，画布才被真正用满；分界线走同一个
+  // 映射函数，所以画出来的四象限仍与后端判定同口径。
+  const qs = plotted.map(m => m.quality!).concat([medians.quality]);
+  const qMin = Math.min(...qs, 100);
+  const qMax = Math.max(...qs, 0);
+  const pad = Math.max(4, (qMax - qMin) * 0.12);
+  const qLo = Math.max(0, qMin - pad);
+  const qHi = Math.min(100, qMax + pad);
+  const span = Math.max(1, qHi - qLo);
+  // 返回 top 百分比：质量越高越靠上
+  const posY = (q: number) => 100 - (((q - qLo) / span) * 84 + 8);
 
   return (
     <div className="ti-card relative rounded-xl overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -291,7 +305,7 @@ function Quadrant({
         />
         <div
           className="absolute"
-          style={{ left: 0, top: `${100 - (medians.quality * 0.88 + 6)}%`, width: '100%', height: 1, background: 'var(--border-default)' }}
+          style={{ left: 0, top: `${posY(medians.quality)}%`, width: '100%', height: 1, background: 'var(--border-default)' }}
         />
 
         {([
@@ -310,15 +324,15 @@ function Quadrant({
 
         <div
           className="absolute text-[10px] whitespace-nowrap"
-          style={{ left: -24, top: '50%', transform: 'rotate(-90deg) translateX(50%)', transformOrigin: 'left center', color: 'var(--text-muted)' }}
+          style={{ left: -30, top: '50%', transform: 'rotate(-90deg) translateX(50%)', transformOrigin: 'left center', color: 'var(--text-secondary)' }}
         >
-          结果质量
+          结果质量 {Math.round(qLo)}–{Math.round(qHi)}
         </div>
-        <div className="absolute text-[10px]" style={{ left: 0, bottom: -18, color: 'var(--text-muted)' }}>产出量</div>
+        <div className="absolute text-[10px]" style={{ left: 0, bottom: -18, color: 'var(--text-secondary)' }}>产出量（对数刻度）</div>
 
         {plotted.map(m => {
           const x = logX(m.output);
-          const y = 100 - (m.quality! * 0.88 + 6);
+          const y = posY(m.quality!);
           const size = 22 + Math.min(m.outputDays, 10) * 2.6;
           const color = getRoleMeta(m.role).color;
           const active = pickedId === m.userId;
@@ -722,7 +736,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
             <table className="ti-table w-full text-[12px] whitespace-nowrap">
               <thead>
                 <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-subtle)' }}>
-                  {['成员', '产出', '质量', '产出天', '文档', '站点', '生图', '周报', '缺陷解决/指派', '积压', '调用', '失败', 'AI 成本'].map((h, i) => (
+                  {['成员', '产出', '质量', '产出天', '文档', '站点', '生图', '周报', '缺陷解决/指派', '积压', '调用', '失败', ...(meta.costAvailable ? ['AI 成本'] : [])].map((h, i) => (
                     <th key={h} className={`px-3 py-2 font-medium ${i === 0 ? 'text-left' : 'text-right'}`} style={{ color: 'var(--text-muted)' }}>{h}</th>
                   ))}
                 </tr>
@@ -742,7 +756,9 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
                     <td className="px-3 py-2 text-right tabular-nums" style={{ color: m.breakdown.defectsBacklog > 0 ? 'var(--semantic-warning-text)' : 'var(--text-secondary)' }}>{m.breakdown.defectsBacklog}</td>
                     <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{m.llmCalls.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right tabular-nums" style={{ color: m.llmErrors > 0 ? 'var(--semantic-warning-text)' : 'var(--text-secondary)' }}>{m.llmErrors}</td>
-                    <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{meta.costAvailable ? m.cost : '—'}</td>
+                    {meta.costAvailable && (
+                      <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{m.cost}</td>
+                    )}
                   </tr>
                 ))}
               </tbody>
