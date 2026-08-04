@@ -5,8 +5,24 @@ import {
   buildExecutionRecord,
   evaluateCdsReadiness,
   parseEnvFile,
+  parseRunnerArgs,
+  runnerHelpText,
   validateEnvironmentConfig,
 } from '../stable-smoke-run.mjs';
+
+test('运行器帮助和预检参数不会误启动正式测试', () => {
+  const parsed = parseRunnerArgs(['--preflight', '--cds-only', '--grep', '\\[REC-003\\]']);
+  assert.equal(parsed.has('--preflight'), true);
+  assert.equal(parsed.has('--cds-only'), true);
+  assert.equal(parsed.read('--grep'), '\\[REC-003\\]');
+  assert.match(runnerHelpText, /只检查双环境地址、身份和 CDS 部署状态，不启动测试/);
+});
+
+test('运行器拒绝未知参数、缺值和冲突环境', () => {
+  assert.throws(() => parseRunnerArgs(['--unknown']), /不支持的参数/);
+  assert.throws(() => parseRunnerArgs(['--grep']), /必须提供值/);
+  assert.throws(() => parseRunnerArgs(['--cds-only', '--production-only']), /不能同时使用/);
+});
 
 test('执行结果使用审核人可读状态且不被进程退出码覆盖', () => {
   assert.deepEqual(buildExecutionRecord('cds', {

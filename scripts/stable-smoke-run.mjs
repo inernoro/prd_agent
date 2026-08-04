@@ -16,9 +16,52 @@ const defaultOutputRoot = '/tmp/prd-agent-stable-smoke';
 const productionBaseUrl = 'https://map.ebcone.net';
 const credentialRegistryPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/credential-registry.json');
 
-function readArg(argv, name, fallback = '') {
-  const index = argv.indexOf(name);
-  return index >= 0 ? argv[index + 1] || fallback : fallback;
+const valueOptions = new Set(['--run-id', '--output-root', '--env-file', '--grep']);
+const flagOptions = new Set(['--force-unlock', '--cds-only', '--production-only', '--dry-run', '--preflight', '--help']);
+
+export const runnerHelpText = `稳定冒烟本地运行器
+
+用法：
+  node scripts/stable-smoke-run.mjs [选项]
+
+选项：
+  --preflight          只检查双环境地址、身份和 CDS 部署状态，不启动测试
+  --cds-only           只运行 CDS 环境
+  --production-only    只运行正式环境
+  --dry-run            生成计划并检查凭据，不执行业务旅程
+  --run-id <值>        指定本轮稳定冒烟标识
+  --output-root <路径> 指定本地产物目录
+  --env-file <路径>    指定本地凭据兼容文件
+  --grep <表达式>      只运行匹配的 Playwright 用例
+  --force-unlock       清理遗留互斥锁后运行
+  --help               显示本说明
+`;
+
+export function parseRunnerArgs(argv) {
+  const values = {};
+  const flags = new Set();
+  for (let index = 0; index < argv.length; index += 1) {
+    const option = argv[index];
+    if (valueOptions.has(option)) {
+      const value = argv[index + 1];
+      if (!value || value.startsWith('--')) throw new Error(`${option} 必须提供值`);
+      values[option] = value;
+      index += 1;
+      continue;
+    }
+    if (flagOptions.has(option)) {
+      flags.add(option);
+      continue;
+    }
+    throw new Error(`不支持的参数 ${option}，请运行 --help 查看可用选项`);
+  }
+  if (flags.has('--cds-only') && flags.has('--production-only')) {
+    throw new Error('--cds-only 与 --production-only 不能同时使用');
+  }
+  return {
+    has: (name) => flags.has(name),
+    read: (name, fallback = '') => values[name] || fallback,
+  };
 }
 
 export function parseEnvFile(text) {
@@ -235,14 +278,76 @@ function acquireLock(lockPath) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const runId = readArg(argv, '--run-id', buildRunId());
-  const outputRoot = resolve(readArg(argv, '--output-root', defaultOutputRoot));
+  const options = parseRunnerArgs(argv);
+  if (options.has('--help')) {
+    process.stdout.write(runnerHelpText);
+    return;
+  }
+  const runId = options.read('--run-id', buildRunId());
+  const outputRoot = resolve(options.read('--output-root', defaultOutputRoot));
   const runDir = resolve(outputRoot, runId);
-  const envPath = resolve(readArg(argv, '--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
+  const envPath = resolve(options.read('--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
   const lockPath = resolve(outputRoot, '.stable-smoke.lock');
+  const selected = options.has('--cds-only')
+    ? ['cds']
+    : options.has('--production-only')
+      ? ['production']
+      : ['cds', 'production'];
+
+  const local = loadLocalEnvironment(envPath);
+  const registry = readJson(credentialRegistryPath) || {};
+  const values = applyCredentialRegistry(
+    { ...local.values, ...process.env, STABLE_SMOKE_RUN_ID: runId },
+    registry,
+    readKeychainSecret,
+  );
+  const preflightBlockers = [];
+  const cdsAddressBlockers = [];
+  if (selected.includes('cds')) {
+    try {
+      const cdsUrls = resolveCdsPreviewUrls(
+        values.STABLE_SMOKE_CDS_BASE_URL || '',
+        values.STABLE_SMOKE_CDS_GW_BASE_URL || '',
+      );
+      values.STABLE_SMOKE_CDS_BASE_URL = cdsUrls.appUrl;
+      values.STABLE_SMOKE_CDS_GW_BASE_URL = cdsUrls.gatewayUrl;
+    } catch (error) {
+      cdsAddressBlockers.push(error instanceof Error ? error.message : 'CDS 预览地址读取失败');
+      preflightBlockers.push(...cdsAddressBlockers);
+    }
+  }
+  values.STABLE_SMOKE_PROD_BASE_URL = values.STABLE_SMOKE_PROD_BASE_URL || productionBaseUrl;
+  for (const environment of selected) {
+    const missing = validateEnvironmentConfig(environment, values);
+    if (missing.length > 0) preflightBlockers.push(`${environment === 'cds' ? 'CDS 环境' : '正式环境'}缺少：${missing.join('、')}`);
+  }
+  if (options.has('--preflight')) {
+    if (selected.includes('cds')
+      && cdsAddressBlockers.length === 0
+      && validateEnvironmentConfig('cds', values).length === 0) {
+      const commitResult = command('git', ['rev-parse', 'HEAD']);
+      const expectedCommit = String(commitResult.stdout || '').trim();
+      if (commitResult.status !== 0 || !expectedCommit) {
+        preflightBlockers.push('无法读取待验收提交');
+      } else {
+        try {
+          const readiness = evaluateCdsReadiness(readCdsBranchStatus(), expectedCommit);
+          preflightBlockers.push(...readiness.reasons);
+        } catch (error) {
+          preflightBlockers.push(error instanceof Error ? error.message : 'CDS 部署状态读取失败');
+        }
+      }
+    }
+    process.stdout.write(preflightBlockers.length === 0
+      ? `预检通过：${selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、')}可以开始稳定冒烟。\n`
+      : `预检未通过，测试尚未启动：\n${preflightBlockers.map((item) => `- ${item}`).join('\n')}\n`);
+    if (preflightBlockers.length > 0) process.exitCode = 2;
+    return;
+  }
+
   mkdirSync(outputRoot, { recursive: true });
   mkdirSync(runDir, { recursive: true });
-  if (argv.includes('--force-unlock') && existsSync(lockPath)) unlinkSync(lockPath);
+  if (options.has('--force-unlock') && existsSync(lockPath)) unlinkSync(lockPath);
   if (!acquireLock(lockPath)) {
     writeFileSync(resolve(runDir, 'blocked.json'), `${JSON.stringify({ verdict: 'conditional', reason: '已有稳定冒烟正在运行' }, null, 2)}\n`);
     process.exitCode = 2;
@@ -250,27 +355,10 @@ async function main() {
   }
 
   try {
-    const local = loadLocalEnvironment(envPath);
-    const registry = readJson(credentialRegistryPath) || {};
-    const values = applyCredentialRegistry(
-      { ...local.values, ...process.env, STABLE_SMOKE_RUN_ID: runId },
-      registry,
-      readKeychainSecret,
-    );
-    const cdsUrls = resolveCdsPreviewUrls(
-      values.STABLE_SMOKE_CDS_BASE_URL || '',
-      values.STABLE_SMOKE_CDS_GW_BASE_URL || '',
-    );
-    values.STABLE_SMOKE_CDS_BASE_URL = cdsUrls.appUrl;
-    values.STABLE_SMOKE_CDS_GW_BASE_URL = cdsUrls.gatewayUrl;
-    values.STABLE_SMOKE_PROD_BASE_URL = values.STABLE_SMOKE_PROD_BASE_URL || productionBaseUrl;
-
-    const selected = argv.includes('--cds-only')
-      ? ['cds']
-      : argv.includes('--production-only')
-        ? ['production']
-        : ['cds', 'production'];
-    if (selected.includes('cds') && !argv.includes('--dry-run')) {
+    if (selected.includes('cds')
+      && !options.has('--dry-run')
+      && cdsAddressBlockers.length === 0
+      && validateEnvironmentConfig('cds', values).length === 0) {
       const commitResult = command('git', ['rev-parse', 'HEAD']);
       const expectedCommit = String(commitResult.stdout || '').trim();
       if (commitResult.status !== 0 || !expectedCommit) throw new Error('无法读取待验收提交，拒绝开测');
@@ -292,14 +380,14 @@ async function main() {
     const plan = readJson(planPath);
 
     const executions = [];
-    const grep = readArg(argv, '--grep');
+    const grep = options.read('--grep');
     for (const environment of selected) {
       const errors = validateEnvironmentConfig(environment, values);
       if (errors.length > 0) {
         executions.push({ environment, status: 'blocked', missing: errors, resultPath: '' });
         continue;
       }
-      if (argv.includes('--dry-run')) {
+      if (options.has('--dry-run')) {
         executions.push({ environment, status: 'dry-run', missing: [], resultPath: '' });
         continue;
       }
@@ -346,5 +434,10 @@ async function main() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await main();
+  try {
+    await main();
+  } catch (error) {
+    process.stderr.write(`稳定冒烟未启动：${error instanceof Error ? error.message : '未知错误'}\n`);
+    process.exitCode = 2;
+  }
 }

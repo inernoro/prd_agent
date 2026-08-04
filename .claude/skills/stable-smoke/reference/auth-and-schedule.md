@@ -71,6 +71,14 @@ Codex 桌面端创建本地自动化 `stable-smoke-48h`：
 - 任务先读取项目主工作区最新代码和功能台账，再执行 `/稳测 all`。GitHub Actions 与本调度无关。
 - 首次创建后必须立即手动运行一次；之后每 48 小时由本机 Codex 自动化唤醒。
 
+人工执行或排查前先运行只读预检：
+
+```bash
+node scripts/stable-smoke-run.mjs --preflight
+```
+
+只检查 CDS 环境与正式环境的权威地址、身份和部署版本，不创建测试资源、不调用创作模型。只查 CDS 环境时增加 `--cds-only`，只查正式环境时增加 `--production-only`。预检失败必须输出审核者可执行的阻塞项，禁止展示代码堆栈；参数不确定时运行 `node scripts/stable-smoke-run.mjs --help`。
+
 ## 每轮报告
 
 本地运行产物写入 `/tmp/prd-agent-stable-smoke/<runId>`，包含 Playwright HTML、JSON、截图、trace 和视频；完成后归档到 CDS 验收中心。知识库报告按稳定冒烟九段式归档，至少包含：目标、范围、环境、身份方式、模块结果、失败证据、双环境差异、清理结果、下一步动作。
