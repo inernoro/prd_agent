@@ -246,7 +246,9 @@ git diff --stat
 ```bash
 # 1. 生成本次 changelog 碎片（用实际数字替换 N）
 cat > "changelogs/$(date +%Y-%m-%d)_entropy-cleanup.md" << 'EOF'
-| chore | doc | 熵清理：D1 N 个，D2 +N/-N，D3 +N/-N，D4 +N，D6 N 条 |
+| chore | doc | 熵清理：D1 N 个，D2 +N/-N，D3 +N/-N，D6 N 条 |
+# D4 修了技能就再加一行（模块列写 claude-md，不要混进 doc 那行）：
+# | chore | claude-md | 熵清理：D4 补 N 个技能的 frontmatter name |
 EOF
 
 # 2. Stage 并提交
@@ -294,10 +296,17 @@ PR body 模板（从 Step 2 报告提取数字）：
 - D6 changelog→doc：本次处理 N 条，manifest 累计 M 条
 
 ## 改动 diff
+（**按本轮真实改动的文件列，没动的行删掉；D4 修了技能就必须列出来**——这些 PR 会被自动审阅合并，
+摘要漏了文件等于审阅者看不到那处改动，也违反共用规则 §5.4「改动 diff 逐条列文件或模块」）
 - `doc/index.yml`：补缺/删幽灵条目
 - `doc/guide.list.directory.md`：补缺/删幽灵条目
+- `.claude/skills/<name>/SKILL.md`：D4 补 frontmatter 的 name（仅当本轮 FIXED_SKILL_NAME 非空）
+- `.agents/skills/<name>/SKILL.md`：同上，Codex 侧技能根（仅当本轮有修复）
 - `changelogs/.entropy-manifest.yml`：新增已处理 changelog 记录
 - `changelogs/YYYY-MM-DD_entropy-cleanup.md`：本次 changelog 碎片
+
+## 需人工处理（本轮若有 MISSING_SKILL_MD / MISSING_SKILL_DESC 则必填，否则删除本节）
+- `<技能根>/<name>`：缺 <什么>，无法安全重建，原因见 D4 说明
 
 ## 测试
 - [x] 双向扫描完成，diff 核验通过
