@@ -226,16 +226,23 @@ echo "  - $changelog_name" >> "$MANIFEST"
 ### Step 4 — 提交前 diff 核验（强制）
 
 ```bash
-git diff doc/ .claude/skills/ .agents/skills/
+git diff doc/ .claude/skills/ .agents/skills/ prd-api/src/PrdAgent.Api/OfficialSkills/
 
 # 核验规则：
 # + 行（追加）：无需额外验证，追加前已做 grep -q
 # - 行（删除）：必须逐行确认对应文件/目录确实不存在
 #   反例：发现 "- design.foo:" 被删，立刻 [ -f doc/design.foo.md ] 确认
 #   如果文件存在却出现删除行 → 立即停止，说明逻辑错误
+#   例外：official-skills.generated.json —— 重新打包是整段重新序列化，
+#   同一处必然同时出现 - 和 + 两行，那是覆盖写不是删条目，不适用幽灵判据
+#   （与 6.4 的白名单同一口径，两处必须一起改，别只改一边）
 
-git diff --stat
+# 幽灵计数只看文档/索引那部分，不能把生成物的覆盖写算进来
+git diff --stat -- doc/ .claude/skills/ .agents/skills/
 # 期望：删除行数 = 幽灵条目数（精确匹配，不多不少）
+
+git diff --stat -- prd-api/src/PrdAgent.Api/OfficialSkills/
+# 期望：本轮改了技能才有输出；没改技能却有 diff → 停止，它不是本轮的产物
 ```
 
 ### Step 4.5 — 未偿 D4 债务的硬闸（必须在提交前判定）
