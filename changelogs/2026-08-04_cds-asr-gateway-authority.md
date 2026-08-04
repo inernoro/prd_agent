@@ -2,3 +2,5 @@
 | test | prd-api | 增加 CDS Compose 网关白名单透传守卫，防止部署配置回退 |
 | test | stable-smoke | 增加 ASR 默认池主备、健康和网关配置权威永久回归 |
 | ops | stable-smoke | 登记 prd-agent 项目级 CDS 自动化身份，统一正式预检、发布、回滚和报告归档的钥匙串入口 |
+| test | stable-smoke | 完成十个核心模块 124 张唯一截图的视觉证据预算，并归档审核者优先的验收报告 |
+| rule | stable-smoke | 将知识库首操作入口不稳定登记为候选回归，防止未定位问题被误报为通过 |
