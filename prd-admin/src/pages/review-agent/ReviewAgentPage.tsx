@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Users, Settings2, Bell } from 'lucide-react';
+import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Users, Settings2, Bell, ListOrdered } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getMyReviewSubmissions } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
@@ -85,6 +85,14 @@ export function ReviewAgentPage() {
         </div>
         <div className="flex items-center gap-2">
           <TipsEntryButton compact />
+          <button
+            onClick={() => navigate('/review-agent/assessments')}
+            className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+            title="上传 Excel 需求表，按八因子规则评估并输出优先级排序"
+          >
+            <ListOrdered className="w-3.5 h-3.5" />
+            需求评估
+          </button>
           {canManage && (
             <>
               <button
