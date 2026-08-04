@@ -7,3 +7,6 @@
 | fix | claude-md | llmgw 模块只有 AGENTS.md 没有 CLAUDE.md，Claude Code 读不到它的必跑校验命令；按规范补 llmgw/CLAUDE.md 走 @AGENTS.md 导入 |
 | fix | claude-md | 根 CLAUDE.md 补上此前完全缺失的 llmgw 模块（模块列表 / pnpm 范围 / changelog 范围三处） |
 | test | claude-md | 守卫增加模块覆盖三项断言：有 AGENTS.md 必须有 CLAUDE.md、必须走 @import 而非复制、模块必须在根 CLAUDE.md 露出 |
+| refactor | claude-md | 根 AGENTS.md 与 CLAUDE.md 合二为一：AGENTS.md 改为工具中立的共用 SSOT（483 行压到 205 行），CLAUDE.md 改为 @AGENTS.md 导入 + 宿主专属差异（9 行），消灭两份 95% 相同的手工副本 |
+| fix | claude-md | 守卫的行数预算改为解析 @import 后再计量，否则导入模式会让预算检查变成假绿灯 |
+| test | claude-md | 守卫新增断言：根有 AGENTS.md 时 CLAUDE.md 必须 @import 而非复制；模块覆盖与索引检查改看解析后文本 |

@@ -133,20 +133,50 @@ def check_intro_lines() -> None:
                 fail(f"{f.relative_to(REPO)}: missing `{marker}` in its first 8 lines (导读两行).")
 
 
+def resolve_imports(md: pathlib.Path, depth: int = 0, seen: set | None = None) -> str:
+    """Inline `@path` imports the way Claude Code does before measuring size.
+
+    Imported files are expanded into context at launch, so a CLAUDE.md that is
+    three lines of `@AGENTS.md` still costs whatever AGENTS.md costs. Measuring
+    the raw file would turn this budget check into a false pass the moment
+    anyone adopts the import pattern.
+
+    Import parsing skips code spans and fenced blocks, and stops at 4 hops.
+    """
+    seen = seen if seen is not None else set()
+    if depth > 4 or md in seen or not md.exists():
+        return ""
+    seen.add(md)
+
+    out, fenced = [], False
+    for line in strip_html_comments(md.read_text(encoding="utf-8")).splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            out.append(line)
+            continue
+        m = re.match(r"^\s*@([^\s`]+)\s*$", line) if not fenced else None
+        if m:
+            out.append(resolve_imports((md.parent / m.group(1)).resolve(), depth + 1, seen))
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def check_claude_md_size() -> None:
     for md in [REPO / "CLAUDE.md", *sorted(REPO.glob("*/CLAUDE.md"))]:
         if not md.exists():
             continue
-        injected = strip_html_comments(md.read_text(encoding="utf-8"))
-        lines = len(injected.splitlines())
+        lines = len(resolve_imports(md).splitlines())
         rel = md.relative_to(REPO)
+        own = len(strip_html_comments(md.read_text(encoding="utf-8")).splitlines())
+        note = f"{lines} injected lines" + (f" (own {own} + imports)" if lines != own else "")
         if lines > MAX_INJECTED_LINES:
             fail(
-                f"{rel}: {lines} injected lines exceeds the {MAX_INJECTED_LINES}-line target. "
+                f"{rel}: {note} exceeds the {MAX_INJECTED_LINES}-line target. "
                 "Move detail into a path-scoped rule, a skill, or an HTML comment."
             )
         else:
-            print(f"  {rel}: {lines} injected lines")
+            print(f"  {rel}: {note}")
 
 
 def check_no_stale_index() -> None:
@@ -156,7 +186,8 @@ def check_no_stale_index() -> None:
     means re-adding a third copy that nobody updates. If someone wants it back,
     it has to come with its own coverage assertion.
     """
-    text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    # Read through imports: the table could live in an imported AGENTS.md.
+    text = resolve_imports(REPO / "CLAUDE.md")
     listed = set(re.findall(r"`([a-z0-9-]+\.md)`\s*\|", text))
     on_disk = {p.name for p in RULES_DIR.glob("*.md")}
     tabled = listed & on_disk
@@ -183,7 +214,20 @@ def check_module_coverage() -> None:
     the AGENTS.md body instead of importing it.
     """
     skip = {"node_modules", "dist", "bin", "obj", "build", ".git", ".claude", ".Codex", ".cursor"}
-    root_text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    # What matters is the text that actually reaches Claude, so read through imports:
+    # a root CLAUDE.md of `@AGENTS.md` still "mentions" whatever AGENTS.md mentions.
+    root_text = resolve_imports(REPO / "CLAUDE.md")
+
+    root_agents, root_claude = REPO / "AGENTS.md", REPO / "CLAUDE.md"
+    if root_agents.exists():
+        if not root_claude.exists():
+            fail("root: has AGENTS.md but no CLAUDE.md. Claude Code never reads AGENTS.md.")
+        elif "@AGENTS.md" not in root_claude.read_text(encoding="utf-8"):
+            fail(
+                "root CLAUDE.md does not `@AGENTS.md` import it. These two were 95% identical "
+                "hand-maintained copies with no sync script, and they had already drifted "
+                "(AGENTS.md knew about llmgw, CLAUDE.md did not). Import, do not duplicate."
+            )
 
     for d in sorted(p for p in REPO.iterdir() if p.is_dir() and p.name not in skip):
         agents = d / "AGENTS.md"
