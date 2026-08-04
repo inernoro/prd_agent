@@ -1334,6 +1334,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await picker.setInputFiles([file('a.png'), file('b.png'), file('c.png')]);
       await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
 
+      await page.locator('[data-tour-id="visual-editor-canvas"]').click({ position: { x: 180, y: 180 } });
       await page.locator('[title="b.png"]').click();
       await page.locator('[title="a.png"]').click({ modifiers: ['Shift'] });
       const chips = page.locator('.image-chip-node');
@@ -1352,13 +1353,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await picker.setInputFiles([file('dup1.png'), file('dup2.png')]);
       await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
       await expect(page.getByText('已把 2 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。')).toBeVisible();
-      await expect(page.locator('[title="dup1.png"]')).toHaveCount(1);
-      await expect(page.locator('[title="dup2.png"]')).toHaveCount(1);
+      await expect(page.locator('[data-testid="canvas-image"][alt="dup1.png"]')).toHaveCount(1);
+      await expect(page.locator('[data-testid="canvas-image"][alt="dup2.png"]')).toHaveCount(1);
 
       await picker.setInputFiles(Array.from({ length: 21 }, (_, index) => file(`limit-${String(index + 1).padStart(2, '0')}.png`)));
       await expect(page.getByText('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加')).toBeVisible();
       await expect(page.getByTestId('canvas-image')).toHaveCount(23, { timeout: 60_000 });
-      await expect(page.locator('[title="limit-21.png"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="canvas-image"][alt="limit-21.png"]')).toHaveCount(0);
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await testInfo.attach('multi-image-boundaries', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
@@ -1415,10 +1416,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expectUserReadable(errorMessage);
 
       const messages = await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/messages`, { headers: authHeaders(token) });
-      const messageText = JSON.stringify((await messages.json() as ApiEnvelope<unknown>).data);
-      expect(messageText).toContain(prompt);
-      expect(messageText).toContain('@img2');
-      expect(messageText).toContain('其他输入已保留');
+      const messageData = (await messages.json() as ApiEnvelope<{
+        messages: Array<{ role: string; content: string }>;
+      }>).data;
+      expect(messageData.messages.some((message) => message.role === 'User' && message.content === prompt)).toBe(true);
+      const storedError = messageData.messages.find((message) => message.role === 'Assistant' && message.content.startsWith('[GEN_ERROR]'));
+      expect(storedError, '损坏引用失败消息必须持久化').toBeTruthy();
+      const storedErrorPayload = JSON.parse(storedError!.content.slice('[GEN_ERROR]'.length)) as { msg: string; prompt: string };
+      expect(storedErrorPayload.prompt).toBe(prompt);
+      expect(storedErrorPayload.msg).toContain('@img2');
+      expect(storedErrorPayload.msg).toContain('其他输入已保留');
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissVisualTutorial(page);
