@@ -809,8 +809,8 @@ export default function AgentLauncherPage() {
                       data-tour-id={`quicklink-${link.id}`}
                       onClick={() => {
                         // 记账用目录 id（由路由推导），不能用 link.id ——后者是「首页快捷入口
-                        // 偏好」的别名（updates / voc / models / teams / my-assets），与目录 id
-                        // （changelog / team-activity / mds / users / visual-agent）对不上。
+                        // 偏好」的别名（updates / voc / models / teams），与目录 id
+                        // （changelog / team-activity / mds / users）对不上。
                         const trackedId = navIdFromPath(link.path);
                         openRoute(link.path, { id: trackedId, name: link.label });
                       }}
