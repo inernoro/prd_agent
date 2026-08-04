@@ -1,3 +1,9 @@
+---
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-admin/src/**/*.css"
+---
+
 # prd-admin 系统级双皮肤（Dual Theme）
 
 **一句话**：prd-admin 的颜色只能来自主题 token 或双皮肤分支，裸写的白透明与深色 hex 会被棘轮测试拦下。

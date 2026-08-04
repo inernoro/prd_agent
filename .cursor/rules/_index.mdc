@@ -9,7 +9,7 @@ description: Cursor 规则入口 —— 事实源在 .claude/rules/，按需加�
 
 事实源：`.claude/rules/*.md` + 项目根 `CLAUDE.md`
 同步方式：`bash scripts/sync-cursor-rules.sh`（Cursor 侧只读）
-完整索引：见 `CLAUDE.md` 的「架构规则索引」表格
+完整索引：直接列 `.claude/rules/`，每条开头两行导读说明它管什么、什么时候撞上
 
 ## 禁止再引用的废弃概念
 

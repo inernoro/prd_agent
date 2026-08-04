@@ -296,6 +296,7 @@
 - [缺陷管理手机截图分享提交 · 债务台账](./debt.defect-agent.mobile-share.md) `debt.defect-agent.mobile-share`
 - [文档可读性 · 债务台账](./debt.doc.readability.md) `debt.doc.readability`
 - [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
+- [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
 - [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
 - [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`

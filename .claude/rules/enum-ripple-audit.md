@@ -1,5 +1,11 @@
 ---
-globs: ["prd-api/src/**/Enums/**/*.cs", "prd-api/src/**/Models/**/*.cs", "prd-admin/src/types/**/*.ts", "prd-desktop/src/types/**/*.ts"]
+paths:
+  - "prd-api/src/**/Enums.cs"
+  - "prd-api/src/**/Models/**/*.cs"
+  - "prd-admin/src/types/**/*.ts"
+  - "prd-admin/src/lib/**/*.ts"
+  - "prd-admin/src/pages/**/*.tsx"
+  - "prd-desktop/src/types/**/*.ts"
 ---
 
 # 枚举/常量扩展涟漪审计

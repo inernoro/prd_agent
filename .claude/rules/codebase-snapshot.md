@@ -1,3 +1,10 @@
+---
+paths:
+  - "prd-api/src/**/Models/**/*.cs"
+  - "prd-api/src/**/MongoDbContext.cs"
+  - "doc/**/*.md"
+---
+
 # Codebase Skill（代码库快照）
 
 **一句话**：项目现状速查表：架构模式、功能状态、已废弃概念、上百个 Mongo 集合，读它可以跳过全盘扫描。

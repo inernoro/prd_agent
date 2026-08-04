@@ -1,11 +1,12 @@
 ---
-globs: prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx}
+globs: prd-admin/src/**/*.tsx,prd-desktop/src/**/*.tsx
 description: 输入零摩擦：能上传不让用户手输，不确定就两个都给
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/zero-friction-input.md
-     生成时间: 2026-08-04T11:04:22Z -->
+     生成时间: 2026-08-04T11:22:36Z -->
+
 
 # 输入零摩擦原则
 

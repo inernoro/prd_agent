@@ -1,3 +1,8 @@
+---
+paths:
+  - "prd-api/src/**/*.cs"
+---
+
 # AppCallerCode 注册规则
 
 **一句话**：调网关必须传 AppCallerCode，且只能引用注册表常量、写成 kebab-case，裸字符串会被 CI 扫出来。
