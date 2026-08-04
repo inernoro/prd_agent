@@ -1226,6 +1226,7 @@ public class ExecutiveController : ControllerBase
             if (string.IsNullOrWhiteSpace(raw)) raw = "unknown";
             appKeyCounts[raw] = appKeyCounts.GetValueOrDefault(raw) + row.C;
         }
+        var callerTotal = appKeyCounts.Values.Sum();
         var topApps = appKeyCounts.OrderByDescending(kv => kv.Value).Take(6).ToList();
         var restCount = appKeyCounts.Where(kv => !topApps.Any(t => t.Key == kv.Key)).Sum(kv => kv.Value);
         var stageCounts = topApps.ToDictionary(kv => ResolveAgentName(kv.Key), kv => kv.Value);
@@ -1248,7 +1249,10 @@ public class ExecutiveController : ControllerBase
             mid = stageCounts.Where(kv => kv.Value > 0)
                 .OrderByDescending(kv => kv.Value)
                 .Select(kv => new { name = kv.Key, value = kv.Value, unit = "次",
-                    hint = totalCalls > 0 ? $"占 {Math.Round((double)kv.Value / totalCalls * 100, 0)}%" : (string?)null })
+                    // 分母用本列自己的合计（callerTotal），不能借用 totalCalls ——
+                    // 那个数来自 {用户,模型} 聚合、要求两者非空，与本列不是同一批数据，
+                    // 借用会让各档占比加起来超过 100%。
+                    hint = callerTotal > 0 ? $"占 {Math.Round((double)kv.Value / callerTotal * 100, 0)}%" : (string?)null })
                 .ToArray(),
             right = new object[]
             {
@@ -1423,6 +1427,14 @@ public class ExecutiveController : ControllerBase
         "video-agent" => "视频 Agent",
         "open-platform" => "开放平台",
         "admin" => "管理操作",
+        "system" => "系统内部任务",
+        "unknown" => "未标注来源",
+        "marketplace-skill" => "海鲜市场",
+        "page-agent" => "页面智能体",
+        "document-store" => "知识库",
+        "prd-agent-web" or "prd-agent-desktop" => "PRD Agent",
+        "tutorial-email" => "教程邮件",
+        "workflow-agent" => "工作流",
         _ => appKey,
     };
 }
