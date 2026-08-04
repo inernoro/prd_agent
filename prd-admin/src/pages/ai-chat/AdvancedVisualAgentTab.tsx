@@ -1169,11 +1169,13 @@ function buildTemplate(name: string) {
 
 function StageClampedQuickActionBar({
   stageRef,
+  obstacleRef,
   zoom,
   positionKey,
   children,
 }: {
   stageRef: RefObject<HTMLDivElement | null>;
+  obstacleRef?: RefObject<HTMLDivElement | null>;
   zoom: number;
   positionKey: string;
   children: ReactNode;
@@ -1187,11 +1189,14 @@ function StageClampedQuickActionBar({
       const bar = barRef.current;
       if (!stage || !bar) return;
       const stageRect = stage.getBoundingClientRect();
+      const obstacleRect = obstacleRef?.current?.getBoundingClientRect();
       const barRect = bar.getBoundingClientRect();
       const currentShift = shiftWorldX * Math.max(zoom, 0.01);
       const nextShiftScreen = computeHorizontalClampShift({
         stageLeft: stageRect.left,
-        stageRight: stageRect.right,
+        stageRight: obstacleRect && obstacleRect.width > 0
+          ? Math.min(stageRect.right, obstacleRect.left)
+          : stageRect.right,
         elementLeft: barRect.left,
         elementRight: barRect.right,
         currentShift,
@@ -1200,7 +1205,7 @@ function StageClampedQuickActionBar({
       setShiftWorldX((current) => Math.abs(current - nextShiftWorld) < 0.25 ? current : nextShiftWorld);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [positionKey, shiftWorldX, stageRef, zoom]);
+  }, [obstacleRef, positionKey, shiftWorldX, stageRef, zoom]);
 
   return (
     <div
@@ -1713,6 +1718,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const rafTransformRef = useRef<number | null>(null);
   const lastUiSyncRef = useRef(0);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const chatPanelRef = useRef<HTMLDivElement | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
   const worldUiRef = useRef<HTMLDivElement | null>(null);
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -7233,6 +7239,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             {/* 快捷操作栏：选区上方居中 */}
                             <StageClampedQuickActionBar
                               stageRef={stageRef}
+                              obstacleRef={chatPanelRef}
                               zoom={zoom}
                               positionKey={`${it.key}:${ix}:${iy}:${sW}:${camera.x}:${stageSize.w}`}
                             >
@@ -8200,6 +8207,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
+            ref={chatPanelRef}
             className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-3'} z-30 flex flex-col`}
             style={{
               width: isMobile ? '100%' : 420,
