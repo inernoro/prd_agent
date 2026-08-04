@@ -68,6 +68,12 @@ import {
 } from '@/lib/visualAgentPromptUtils';
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import {
+  createLayeredPsdBlob,
+  decomposeImageToLayers,
+  downloadLayeredPsd,
+  findLayeredImageModel,
+} from '@/lib/layeredPsd';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
@@ -89,6 +95,7 @@ import {
   Grid3X3,
   Hand,
   ImagePlus,
+  Layers,
   MapPin,
   Maximize2,
   MessageSquare,
@@ -2337,6 +2344,72 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     prompt: string;
     key: string; // 右键点击的元素 key，用于图层操作
   }>({ open: false, x: 0, y: 0, src: '', prompt: '', key: '' });
+
+  const exportAiLayeredPsd = useCallback(async (input: {
+    key: string;
+    src: string;
+    prompt: string;
+  }) => {
+    const model = findLayeredImageModel(allImageGenModels);
+    if (!model) {
+      toast.warning(
+        '尚未配置图片分层模型',
+        '请先在模型网关添加 fal.ai Qwen Image Layered，并分配给视觉创作。',
+        6000,
+      );
+      return;
+    }
+
+    const item = canvasRef.current.find((candidate) => candidate.key === input.key);
+    const source = String(item?.originalSrc || input.src || '').trim();
+    if (!source) {
+      toast.error('PSD 导出失败', '当前图片没有可读取的原图');
+      return;
+    }
+
+    // OriginalUrl 对应的 SHA 不一定是 ImageAsset.Sha256；此时直接读取原图，避免误分解水印展示图。
+    const sourceSha256 = item?.originalSrc ? null : (item?.sha256 ?? null);
+    const loadingId = toast.loading(
+      '正在拆分图片图层',
+      '预计需要 15–30 秒。完成后会在本机生成 PSD，期间可以继续使用画布。',
+    );
+
+    try {
+      const result = await decomposeImageToLayers({
+        source,
+        sourceSha256,
+        model,
+        layerCount: 4,
+      });
+      if (!result.success) {
+        throw new Error(result.error?.message || '图片分层请求失败');
+      }
+
+      const layerSources = (result.data?.images ?? [])
+        .map((image, index) => ({
+          name: `AI 图层 ${String(index + 1).padStart(2, '0')}`,
+          source: String(image.originalUrl || image.url || '').trim(),
+        }))
+        .filter((layer) => !!layer.source);
+      if (layerSources.length === 0) throw new Error('分层模型未返回可用图层');
+
+      const blob = await createLayeredPsdBlob({ source, layerSources });
+      downloadLayeredPsd(blob, input.prompt || 'visual-agent-layered');
+      toast.success(
+        'PSD 已生成',
+        `包含 1 个原图基准层和 ${layerSources.length} 个 AI 可编辑图层。AI 图层默认隐藏，避免把生成式分层误认为逐像素无损。`,
+        6000,
+      );
+    } catch (error) {
+      toast.error(
+        'PSD 导出失败',
+        error instanceof Error ? error.message : '图片分层或 PSD 写入失败',
+        6000,
+      );
+    } finally {
+      toast.dismiss(loadingId);
+    }
+  }, [allImageGenModels]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const msgContentRef = useRef<HTMLDivElement | null>(null);
@@ -8697,7 +8770,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <ChevronRight size={14} className="ml-auto opacity-50" />
                   </button>
                   <div
-                    className="absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[120px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
+                    className="absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[160px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
                     style={{
                       ...glassTooltip,
                       background: 'rgba(32,32,38,0.96)',
@@ -8760,6 +8833,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     >
                       <FileImage size={14} />
                       SVG
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover-bg-soft transition-colors"
+                      style={{ color: 'var(--text-primary)' }}
+                      onClick={() => {
+                        void exportAiLayeredPsd({
+                          key: imgContextMenu.key,
+                          src: imgContextMenu.src,
+                          prompt: imgContextMenu.prompt || 'image',
+                        });
+                        setImgContextMenu((p) => ({ ...p, open: false }));
+                      }}
+                    >
+                      <Layers size={14} />
+                      PSD（AI 分层）
                     </button>
                   </div>
                 </div>
