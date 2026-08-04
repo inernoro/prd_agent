@@ -114,8 +114,8 @@ export default function MySharesPage() {
             onClick={() => setFilter('')}
             className="shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-medium transition"
             style={{
-              background: filter === '' ? 'var(--accent-primary)' : 'var(--bg-card)',
-              color: filter === '' ? '#fff' : 'var(--text-primary)',
+              background: filter === '' ? 'var(--button-primary-bg)' : 'var(--bg-card)',
+              color: filter === '' ? 'var(--button-primary-fg)' : 'var(--text-primary)',
               border: '1px solid var(--border-default)',
             }}
           >

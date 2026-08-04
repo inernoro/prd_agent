@@ -130,7 +130,7 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
       description: '图片、附件、素材等个人资源统一管理',
       icon: 'FolderHeart',
       tags: ['资源', '素材', '附件'],
-      routePath: '/visual-agent?tab=assets',
+      routePath: '/my-assets',
     } as ToolboxItem,
     {
       id: '__marketplace__',

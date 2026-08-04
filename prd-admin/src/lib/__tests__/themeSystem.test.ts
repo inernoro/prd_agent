@@ -44,6 +44,8 @@ const MOBILE_TAB_BAR_PATH = path.resolve(TEST_DIR, '../../components/ui/MobileTa
 const MOBILE_FAB_PATH = path.resolve(TEST_DIR, '../../components/mobile/MobileFab.tsx');
 const APP_STORE_TOKENS_PATH = path.resolve(TEST_DIR, '../appStoreTokens.ts');
 const AGENT_LAUNCHER_PATH = path.resolve(TEST_DIR, '../../pages/AgentLauncherPage.tsx');
+const MOBILE_HOME_PATH = path.resolve(TEST_DIR, '../../pages/MobileHomePage.tsx');
+const MOBILE_HOME_SHARED_PATH = path.resolve(TEST_DIR, '../../pages/mobile-home/shared.ts');
 const HOME_LAUNCHER_STYLES_PATH = path.resolve(TEST_DIR, '../../styles/home-launcher.css');
 const ADAPTIVE_SHARED_CONTROL_PATHS = [
   '../../components/FeatureModuleSearchSelect.tsx',
@@ -332,20 +334,189 @@ describe('主题系统契约', () => {
     expect(base).toContain('.text-token-muted-faint { color: var(--text-muted); }');
   });
 
-  it('首页门头使用平衡栅格与真实工作现场，不再复制胶囊式导航', () => {
+  it('首页工位：密度优先、靠面分区、在办工作诚实', () => {
     const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
     const styles = fs.readFileSync(HOME_LAUNCHER_STYLES_PATH, 'utf8');
 
-    expect(launcher).toContain('home-launcher-masthead-grid');
     expect(launcher).toContain('aria-label="首页快捷入口"');
+    // 诚实进度：没有状态机的实体不画进度条（不允许拿 0 或 100 顶替）
     expect(launcher).toContain('item.progress == null');
-    expect(launcher).toContain('回到最近的工作现场');
-    expect(launcher).not.toMatch(/className="[^"]*home-launcher-(?:quick-link|recent)(?=\s)[^"]*\brounded-full\b/);
-    expect(styles).toContain("grid-template-areas: 'intro command learning'");
-    expect(styles).toContain('grid-template-columns: repeat(5, minmax(0, 1fr))');
-    expect(styles).toContain('.home-launcher-quick-nav--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }');
-    expect(styles).toContain('.home-launcher-quick-nav--5 .home-launcher-quick-link:nth-child(4)');
-    expect(styles).toContain('scroll-snap-type: x proximity');
+    // 空态给引导，不给空盒（guided-exploration）
+    expect(launcher).toContain('还没有进行中的工作');
+    // 上层只有一个容器：台面。命令条 / 用量 / 常去 / 在办 / 动态都在它里面
+    expect(launcher).toContain('home-desk-deck');
+    expect(styles).toContain('.home-desk-deck {');
+    expect(styles).toContain('background: var(--home-panel-bg)');
+    // 「全是线条」被明确否掉：不得再出现贯通全宽的装饰横线（flex:1 的 1px 高元素）
+    expect(styles).not.toMatch(/\.home-desk-rule\b/);
+    // 近 7 日与移动首页同一份数据源，不许各拉各的
+    expect(launcher).toContain("from '@/lib/homePulse'");
+  });
+
+  it('两端跳转都只有一个出口，打开次数不会漏记', () => {
+    // 「你常用的」只认 agentSwitcherStore 的打开次数：漏一个记账点，那条路径
+    // 的启动就永远不计数（历史上先漏桌面瓦片、再漏在办工作条，最后漏掉整个
+    // 移动首页——桌面收敛成一个出口之后，手机上点开的智能体照旧不计数）。
+    // 结构上焊死：两个首页都不许出现裸 navigate(，一律走 useTrackedNavigate。
+    const tracker = fs.readFileSync(path.resolve(TEST_DIR, '../useTrackedNavigate.ts'), 'utf8');
+    expect(tracker).toMatch(/addRecentVisit\([\s\S]*?\}\);[\s\S]*?navigate\(route\)/);
+
+    for (const [name, file] of [['桌面首页', AGENT_LAUNCHER_PATH], ['移动首页', MOBILE_HOME_PATH]] as const) {
+      const source = fs.readFileSync(file, 'utf8');
+      expect(source, `${name}没走带记账的跳转出口`).toContain('useTrackedNavigate');
+      expect(source.match(/\bnavigate\(/g) ?? [], `${name}还有裸 navigate 调用，那条路径的启动不会计数`).toHaveLength(0);
+    }
+  });
+
+  it('首页取数失败不许渲染成「你什么都没干过」', () => {
+    const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
+
+    // 纯函数那侧的判据在 homePulse.test.ts；这里管接线——
+    // 失败标记算出来了却没人渲染，等于没修（predicate-and-wiring 形状 2）。
+    expect(launcher).toContain('pulse.statsFailed');
+    expect(launcher).toContain('pulse.feedFailed');
+    // 失败且手上无数据时显示占位而不是 0
+    expect(launcher).toMatch(/statsUnavailable[\s\S]{0,200}?return '--'/);
+    // 动态的失败态要给重试，不能只是换句话说
+    expect(launcher).toMatch(/pulse\.feed\.length === 0 \?[\s\S]{0,400}?\{feedNotice\}[\s\S]{0,200}?onClick=\{pulse\.reload\}/);
+    // 两个端点各自成败：用量单独挂了也要有看得见的说明 + 重试。
+    // 只挂 title 不算——触屏没有悬停，等于什么都没说。
+    expect(launcher).toMatch(/pulse\.statsFailed && \([\s\S]{0,400}?onClick=\{pulse\.reload\}/);
+    // 留着旧列表时也要说清它是旧的：默不作声地把过期数据当现状展示，
+    // 和显示 0 是同一类谎话，只是更难被发现。
+    expect(launcher).toMatch(/feedNotice && pulse\.feed\.length > 0 && \([\s\S]{0,400}?onClick=\{pulse\.reload\}/);
+    // 后端 200 但某来源查挂了（HTTP 成功 + 少一半数据）也必须有出口
+    expect(launcher).toContain('pulse.feedDegraded');
+
+    // 打开次数是服务端持久化的，必须有人在登录后把它拉下来。少了这一步：
+    // 换设备 / 开新标签页时「你常用的」从零开始，而且 scheduleSync 在
+    // serverLoaded 为 false 时不回写（防空态覆盖云端），新会话的启动全留在本地。
+    // 当前由 AppShell 一个 useEffect 承担——它删掉不会有任何测试变红，故焊在这里。
+    const shell = fs.readFileSync(path.resolve(TEST_DIR, '../../layouts/AppShell.tsx'), 'utf8');
+    const bound = shell.match(/const (\w+) = useAgentSwitcherStore\(\(s\) => s\.loadFromServer\)/)?.[1];
+    expect(bound, 'AppShell 没有取 agentSwitcherStore.loadFromServer').toBeTruthy();
+    expect(shell, `AppShell 取了 ${bound} 却没调用它——打开次数不会从服务端水合`).toMatch(
+      new RegExp(`${bound}\\(\\)`),
+    );
+
+    // 「手边的活儿」同理：store 以前把失败吞成空列表（当时区块整块隐藏，尚可），
+    // 首页改版后空态会明说「还没有进行中的工作」，同一个吞法就变成了骗人。
+    const recentStore = fs.readFileSync(path.resolve(TEST_DIR, '../../stores/homeRecentWorkStore.ts'), 'utf8');
+    expect(recentStore, 'recent-work store 没有失败态，失败会被吞成空列表').toMatch(/failed:\s*true/);
+    // 只断言"出现过 workFailed"是不够的：把加载/失败分支整段删掉、只留下面那条
+    // 旧数据提示，这两个名字照样在文件里（实测这么改守卫仍绿）。要焊的是
+    // **空态引导被 loading/failed 挡在后面**这件事本身。
+    // 用位置关系判，不用"相隔多少字符"：中间隔着整个列表分支，距离窗口一调就
+    // 要么误报要么漏判。要焊的是**空态引导排在加载/失败判断之后**这个次序。
+    const guardAt = launcher.indexOf('workItems.length === 0 && (workLoading || workFailed)');
+    const emptyCopyAt = launcher.indexOf('还没有进行中的工作');
+    expect(guardAt, '「手边的活儿」没有先判加载中/取不到').toBeGreaterThan(-1);
+    expect(emptyCopyAt, '找不到空态引导文案，判据失效').toBeGreaterThan(-1);
+    expect(guardAt, '空态引导排在了加载/失败判断前面，加载中和故障都会被说成"没活干"').toBeLessThan(emptyCopyAt);
+    expect(launcher).toMatch(/workFailed[\s\S]{0,400}?onClick=\{\(\) => loadRecentWork\(\{ force: true \}\)\}/);
+
+    // 移动端必须走同一个 hook：各拉各的就会出现「桌面修好了、手机还在骗人」，
+    // 也会让「两端共用一份数据」这句话变成假话（changelog 曾据此写错）。
+    const mobileShared = fs.readFileSync(MOBILE_HOME_SHARED_PATH, 'utf8');
+    expect(mobileShared).toMatch(/import \{ useHomePulse \} from '@\/lib\/homePulse'/);
+    expect(mobileShared).not.toMatch(/getMobileStats\(|getMobileFeed\(/);
+
+    const mobileHome = fs.readFileSync(MOBILE_HOME_PATH, 'utf8');
+    expect(mobileHome).toMatch(/data\.statsFailed && \([\s\S]{0,500}?onClick=\{data\.reload\}/);
+    expect(mobileHome).toMatch(/data\.feed\.length === 0 && feedNotice \?[\s\S]{0,600}?onClick=\{data\.reload\}/);
+    expect(mobileHome).toMatch(/feedNotice && data\.feed\.length > 0 && \([\s\S]{0,500}?onClick=\{data\.reload\}/);
+    expect(mobileHome).toContain('data.feedDegraded');
+  });
+
+  it('类别色文字在两个主题下都撑得住 10px 正文', async () => {
+    // 「手边的活儿」的状态标是 10px、底色是 --nested-block-bg、前景是 lib/tileAccent
+    // 的 Accent.text（hsl(色相 48% var(--workflow-accent-text-lightness))）。
+    // 正文级要 4.5:1。逐色相真算，不记死一个数——将来加色相或调明度都会被这条挡住。
+    const { INK_HUES } = await import('../tileAccent');
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    const lightBlock = tokens.slice(tokens.indexOf('[data-theme="light"]'));
+
+    const hslToHex = (h: number, s: number, l: number): string => {
+      const a = (s / 100) * Math.min(l / 100, 1 - l / 100);
+      const channel = (n: number) => {
+        const k = (n + h / 30) % 12;
+        return Math.round(255 * (l / 100 - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+      };
+      return colorToHex({ r: channel(0), g: channel(8), b: channel(4), a: 1 });
+    };
+
+    for (const [theme, block] of [['暗色', darkBlock], ['浅色', lightBlock]] as const) {
+      const lightness = Number.parseFloat(tokenValue(block, 'workflow-accent-text-lightness'));
+      expect(Number.isFinite(lightness), `${theme}主题缺 --workflow-accent-text-lightness`).toBe(true);
+
+      const base = parseCssColor(tokenValue(block, 'bg-base'));
+      const card = composite(parseCssColor(tokenValue(block, 'bg-card')), base);
+      const surface = colorToHex(composite(parseCssColor(tokenValue(block, 'nested-block-bg')), card));
+
+      for (const [name, hue] of Object.entries(INK_HUES)) {
+        const ratio = contrastRatio(hslToHex(hue, 48, lightness), surface);
+        expect(ratio, `${theme}主题：${name}（色相 ${hue}）的类别色文字只有 ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('回车快捷键必须放过输入法选词', () => {
+    // 中文用户敲「视觉」按回车本意是上屏候选词，若不判 isComposing，
+    // 那一下会被当成「打开第一项」直接把页面跳走。中文是这个系统的主力输入方式，
+    // 所以两个首页里任何 Enter 快捷键都必须先放过组字中的回车。
+    // 扫之前先剥注释：第一版直接 toContain('isComposing')，而我自己写的那行
+    // 中文注释里就有这个词——把判断整行删掉，守卫照样绿（实测）。
+    const stripComments = (source: string) => source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
+
+    for (const [name, file] of [['桌面首页', AGENT_LAUNCHER_PATH], ['移动首页', MOBILE_HOME_PATH]] as const) {
+      const code = stripComments(fs.readFileSync(file, 'utf8'));
+      if (!code.includes("e.key === 'Enter'")) continue;
+      expect(code, `${name}有 Enter 快捷键却没判 isComposing，输入法选词会误触发`).toMatch(/isComposing/);
+    }
+  });
+
+  it('品牌主渐变的每一档都能撑住它自己的文字色', async () => {
+    // 取模块求值结果而不是扫源码：渐变值可能被改成模板字面量 / 拼接，
+    // 扫字面量会在那一刻静默失效（predicate-and-wiring 形状 6）。
+    const { HERO_GRADIENT, HERO_GRADIENT_FG } = await import('../../pages/home/sections/HeroSection');
+
+    const stops = [...HERO_GRADIENT.matchAll(/#[0-9a-f]{6}/gi)].map((m) => m[0]);
+    expect(stops.length, 'HERO_GRADIENT 里没解析到色标，判据已经失效').toBeGreaterThanOrEqual(2);
+
+    // 文字色是 token 引用，判据必须落到两个主题各自的真实值上：
+    // 只算暗色那份的话，改浅色 --button-primary-fg 能把 CTA 弄哑而守卫全绿。
+    const tokenName = HERO_GRADIENT_FG.match(/var\(--([a-z0-9-]+)/i)?.[1];
+    expect(tokenName, 'HERO_GRADIENT_FG 不再是 token 引用，判据取不到真实值').toBeTruthy();
+
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    const lightBlock = tokens.slice(tokens.indexOf('[data-theme="light"]'));
+
+    // CTA 标签是 13-15px 正文级，走 4.5:1。渐变最暗那档最吃紧——
+    // 起点从 #C8623A 抬到 #CE6B41 就是为了让它过线，别再改回去。
+    for (const [theme, block] of [['暗色', darkBlock], ['浅色', lightBlock]] as const) {
+      const foreground = tokenValue(block, tokenName!);
+      for (const stop of stops) {
+        const ratio = contrastRatio(foreground, stop);
+        expect(ratio, `${theme}主题：HERO_GRADIENT 色标 ${stop} 对 ${foreground} 只有 ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('首页目录默认展示全部三组，分段筛选不得让任何入口从首页消失', () => {
+    const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
+
+    // 默认筛选必须是 all —— 否则「基础设施」这类入口会在首页隐身，
+    // 违反 navigation-registry「即使侧边栏隐藏了它们，首页仍稳定出现」。
+    expect(launcher).toContain("useState<CatalogFilter>('all')");
+    // 三组来自同一份定义，分段筛选器与组标签不得各写一份
+    expect(launcher).toMatch(/const CATALOG_GROUPS: CatalogGroupMeta\[\]/);
+    expect(launcher).toContain("catalogFilter === 'all' || catalogFilter === g.key");
+    // 搜索横跨三组，不受当前分段影响
+    expect(launcher).toContain('[...groups.agents, ...groups.tools, ...groups.infra]');
   });
 
   it('浅色主题语义文字保持可读，并为固定暗色可视化提供单一表面契约', () => {
@@ -372,7 +543,9 @@ describe('主题系统契约', () => {
       expect(match?.[1]).toBeTruthy();
       expect(contrastRatio(match![1], '#F8F5EF')).toBeGreaterThanOrEqual(4.5);
     });
-    expect(lightBlock).toContain('--workflow-accent-text-lightness: 36%');
+    // 明度具体取多少由「类别色文字」那条按真实叠底算，这里只要求浅色主题**有**这个覆盖
+    // （记死一个百分比就是把判据写成了当时那个数——36% 实测五个色相不达标）
+    expect(lightBlock).toMatch(/--workflow-accent-text-lightness:\s*\d+%/);
     const selectionText = lightBlock.match(/--selection-text:\s*(#[0-9a-fA-F]{6})/)?.[1];
     expect(selectionText).toBeTruthy();
     expect(contrastRatio(selectionText!, '#F8F5EF')).toBeGreaterThanOrEqual(4.5);
@@ -381,6 +554,18 @@ describe('主题系统契约', () => {
     expect(buttonBackground).toBeTruthy();
     expect(buttonForeground).toBeTruthy();
     expect(contrastRatio(buttonForeground!, buttonBackground!)).toBeGreaterThanOrEqual(4.5);
+
+    // 暗色块同样要过：只查浅色是判据太窄——2026-08-03 换赭红身份色时，
+    // 暗色主按钮曾掉到 3.74:1 而测试全绿（Codex review 抓到）。
+    const darkOnlyBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
+    for (const block of [darkOnlyBlock, lightBlock]) {
+      const bg = block.match(/--button-primary-bg:\s*(#[0-9a-fA-F]{6})/)?.[1];
+      const fg = block.match(/--button-primary-fg:\s*(#[0-9a-fA-F]{6})/)?.[1];
+      const bgHover = block.match(/--button-primary-bg-hover:\s*(#[0-9a-fA-F]{6})/)?.[1];
+      expect(bg && fg && bgHover).toBeTruthy();
+      expect(contrastRatio(fg!, bg!)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(fg!, bgHover!)).toBeGreaterThanOrEqual(4.5);
+    }
     expect(tokens).toContain('.surface-tone-dark');
     expect(tokens).toContain('--workflow-accent-text-lightness: 65%');
   });
