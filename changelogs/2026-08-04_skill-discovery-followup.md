@@ -34,3 +34,5 @@
 | fix | doc-tooling | 上一轮用 PyYAML 验 frontmatter，而本脚本刻意只用标准库（同 job 的 ratchet 测试明写「判据本身不依赖它」），无 PyYAML 环境下 60 个合法技能全被判 BLOCK、熵减自动合并被永久关死；改为标准库判据：只在「缺 name」这一类上追问「结构是否超出行判据的理解范围」，超出就不自动补 |
 | fix | claude-md | create-skill-file 标着「任何仓库都能跑」的自查块把技能根写死成 .claude/skills，而该技能会被分发给只有 .agents/skills 的宿主，照抄即读到不存在的路径；改为不写死根、默认取当前目录，并同步修正正文里同样写死的扫描路径 |
 | docs | claude-md | 把「frontmatter 嵌套结构写坏（name 正确）判据看不出来」记入 debt 台账（B 类）：彻底堵需要 YAML 解析器而本脚本刻意只用标准库，纯启发式会误伤 6 个合法技能，偿还前需先决定是否引入 PyYAML 依赖 |
+| test | doc-tooling | 新增 scripts/tests/test_skills_audit_contract.py：--skills-audit 此前零测试覆盖，输出前缀/退出码/各类坏清单判定全靠手工验，改坏了全仓测试照样绿；10 项断言覆盖干净、可自动修、六类阻塞、判据不依赖第三方库、判定行顶格 |
+| ci | doc-tooling | 输出契约守卫接入 docs-readability job（filter 含 '**'，每个 PR 必开），并把守卫文件登记进 filter 清单 |

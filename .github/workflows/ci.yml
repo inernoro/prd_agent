@@ -77,6 +77,8 @@ jobs:
               - 'scripts/doc-readability-check.py'
               - 'scripts/fixtures/doc-readability-baseline.json'
               - 'scripts/tests/doc-readability-ratchet.test.py'
+              # --skills-audit 的输出契约守卫（entropy-cleanup 的 D4 靠那些前缀决策）
+              - 'scripts/tests/test_skills_audit_contract.py'
               - '.github/workflows/ci.yml'
             release_scripts:
               - 'exec_dep.sh'
@@ -154,6 +156,14 @@ jobs:
         # 它的 filter 已含 '**' 与 '.claude/rules/**'，每个 PR 都开——被测文件在哪
         # 一棵树里改动都跑得到（predicate-and-wiring-discipline 形状 7）。
         run: python3 scripts/tests/test_claude_memory_contract.py
+
+      - name: Skills audit output contract
+        # entropy-cleanup 的 D4 完全靠 --skills-audit 的输出前缀决策：
+        # `AUTOFIX_NAME: ` 触发自动补 name，`BLOCK: ` 触发硬闸拦住自动合并。
+        # 前缀改一个字、某种坏清单漏判、或退出码不对，熵减就会静默地要么不修、
+        # 要么把不可发现的技能合进去，而全仓测试照样全绿——正是「删掉不会红」
+        # 的那类接线，所以必须有守卫。同样挂在 docs 这道闸（filter 含 '**'）。
+        run: python3 scripts/tests/test_skills_audit_contract.py
 
   release-script-test:
     name: Production Release Script Test
