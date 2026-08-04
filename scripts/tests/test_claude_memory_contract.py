@@ -19,9 +19,12 @@ Run: python3 scripts/tests/test_claude_memory_contract.py
 from __future__ import annotations
 
 import glob
+import os
 import pathlib
 import re
+import subprocess
 import sys
+import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 RULES_DIR = REPO / ".claude" / "rules"
@@ -306,10 +309,56 @@ def check_cursor_scopes_are_derived() -> None:
             )
 
 
+def check_cursor_mirror_is_current() -> None:
+    """Regenerate the Cursor mirror and compare, instead of trusting the mapping.
+
+    Checking only that the mapping says `globs:auto` proves the generator *would*
+    derive the right scope - not that anyone ran it. Editing a source rule and
+    forgetting `sync-cursor-rules.sh` left the tracked `.cursor/rules/*.mdc`
+    stale while this file stayed green, which is the very drift it claims to
+    prevent. So: regenerate into a temp dir and diff every tracked mirror.
+
+    The generated header carries a timestamp, so that line is excluded from the
+    comparison - it changes on every run and says nothing about drift.
+    """
+    script = REPO / "scripts" / "sync-cursor-rules.sh"
+    tracked = REPO / ".cursor" / "rules"
+    if not script.exists() or not tracked.is_dir():
+        return
+
+    def strip_stamp(text: str) -> str:
+        return "\n".join(l for l in text.splitlines() if "生成时间:" not in l)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = subprocess.run(
+            ["bash", str(script)],
+            env={**os.environ, "CURSOR_RULES_DST": tmp},
+            capture_output=True, text=True, cwd=str(REPO),
+        )
+        if proc.returncode != 0:
+            fail(f"sync-cursor-rules.sh failed (exit {proc.returncode}): {proc.stderr.strip()[:300]}")
+            return
+
+        fresh = {p.name: p.read_text(encoding="utf-8") for p in pathlib.Path(tmp).glob("*.mdc")}
+        have = {p.name: p.read_text(encoding="utf-8") for p in tracked.glob("*.mdc")}
+
+        for name in sorted(set(fresh) | set(have)):
+            if name not in have:
+                fail(f".cursor/rules/{name} is missing. Run: bash scripts/sync-cursor-rules.sh")
+            elif name not in fresh:
+                fail(f".cursor/rules/{name} is stale - the generator no longer emits it. "
+                     "Run: bash scripts/sync-cursor-rules.sh")
+            elif strip_stamp(fresh[name]) != strip_stamp(have[name]):
+                fail(f".cursor/rules/{name} does not match what the generator produces from "
+                     ".claude/rules/. Run: bash scripts/sync-cursor-rules.sh and commit the result.")
+        print(f"  cursor mirror: {len(have)} generated files match their source rules")
+
+
 def main() -> int:
     print("Claude memory contract:")
     check_host_specific_rules_are_announced()
     check_cursor_scopes_are_derived()
+    check_cursor_mirror_is_current()
     check_rules()
     check_intro_lines()
     check_claude_md_size()

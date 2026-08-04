@@ -293,6 +293,7 @@ docs:
   debt.frontend: "前端 · 债务台账"
   debt.knowledge-base: "知识库 · 债务台账"
   debt.md-to-ppt: "MD 转网页 PPT · 债务台账"
+  debt.platform.agent-rule-scope: "Agent 规则作用域 · 债务台账"
   debt.open-platform.open-api: "开放平台 Open API · 债务台账"
   debt.platform: "平台基础设施杂项 · 债务台账"
   debt.platform.llm-gateway: "LLM 网关与模型池 · 债务台账"

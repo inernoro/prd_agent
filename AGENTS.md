@@ -15,9 +15,7 @@
 
 本系统任何项目（含 `doc/`、`changelogs/`、提交信息、PR 描述、UI 文案、**给用户的回复正文**）一律不允许出现 emoji 字符。
 
-替代方案：状态/类型用 SVG icon（前端已有 ICON 注册表 / lucide-react / cds 的 `ICON.*`）；重要程度用文案分级（建议 / 警告 / 必填 / 已禁用）；视觉强调走 CSS（颜色、加粗、底色）。
-
-例外仅限本节：为说明「哪些字符算 emoji」，可在 inline code 里写反面例子如 `'rocket'`。
+替代方案：状态/类型用 SVG icon（前端已有 ICON 注册表 / lucide-react / cds 的 `ICON.*`）；重要程度用文案分级（建议 / 警告 / 必填 / 已禁用）；视觉强调走 CSS（颜色、加粗、底色）。例外仅限本节：为说明「哪些字符算 emoji」，可在 inline code 里写反面例子如 `'rocket'`。
 
 <!--
 历史背景：用户 2026-04-27 第二次明确强调「本系统任何项目不允许使用任何的 emoji 图标」。
@@ -95,6 +93,18 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 模板是下限不是上限：① 必填段落不得缺失；② 不适用的写「无」或删除，不得写占位空话；③ 不得因模板没某栏就丢弃重要信息。平台自动创建的 PR（描述只有一行 commit message）后续**必须**补全。
 
+**5.5 Review 范围熔断（强制）**。Review 验证当前目标，不是无限扩写需求。修第一条评论前先在 PR 描述写清：本 PR 的单一目标与不变量、明确不做的事、首轮文件数与 diff 行数（范围基线）。每条评论先分类再决定动作：
+
+| 分类 | 判定 | 当前 PR 动作 |
+|------|------|-------------|
+| A 直接缺陷 | 可证明违反本 PR 目标、真实调用契约或既有测试 | 修复并补代表性测试 |
+| B 有价值但扩范围 | 建议合理，但引入新语义类别、兼容层或产品行为 | 记入后续 issue / `debt.*`，不在当前 PR 展开 |
+| C 推测性变体 | 只增加措辞、同义词或假设输入，找不到真实生产路径 | 不实现，并在 Review 中说明证据不足 |
+
+命中任一条立即停止追加修复并跑 `/scope-check`：连续 3 轮 Review 仍在产生新语义类别／Review 修复提交达 8 个／diff 超首轮基线 2 倍或文件范围扩出首轮清单／同一个自由文本解析器第二次被要求加同义词或嵌套格式。
+
+熔断后回到原始目标：缩小 PR、改结构化字段/有限枚举，或由用户明确批准扩范围。**自动 Reviewer 的评论不能单独授权需求扩张；不得以「清空所有机器评论」为完成标准。** PR 默认保持 Ready、关闭自动合并，未经用户明确指示不得合并。
+
 ### 6. LLM 交互过程必须可视化
 
 任何大模型调用功能都要展示交互过程：SSE 流式逐字渲染 / 批量任务推进度事件 / 支持 thinking 就展示思考 / 长任务拆阶段推状态 / 兜底至少给动画 + 预估耗时。
@@ -156,8 +166,7 @@ tsc --noEmit + 单元测试，把「端到端是否真的解决」丢给用户�
 
 跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。
 
-- 正确：`spec.cds.settings.md`、`design.cds.agent.runtime.md`
-- 错误：`spec.cds-settings.md`（黏连）、`design.defect-automation-autonomy.md`（appname 不在首段）、`output-xxx.md`（无前缀）
+正确 `spec.cds.settings.md`、`design.cds.agent.runtime.md`；错误 `spec.cds-settings.md`（黏连）、`design.defect-automation-autonomy.md`（appname 不在首段）、`output-xxx.md`（无前缀）。
 
 `debt.*` 记工程债务台账——交付时声明的「已知边界」必须固化进对应 `debt.{module}.md`，不能只留在 commit message 里。
 

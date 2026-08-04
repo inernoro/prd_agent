@@ -12,7 +12,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO_ROOT/.claude/rules"
-DST="$REPO_ROOT/.cursor/rules"
+# 允许覆盖输出目录：守卫测试重新生成到临时目录后与仓库里的镜像逐字比对，
+# 以此证明 .cursor/rules/ 确实是当前源规则的产物，而不是某次忘了跑本脚本的旧快照。
+DST="${CURSOR_RULES_DST:-$REPO_ROOT/.cursor/rules}"
 
 if [ ! -d "$SRC" ]; then
   echo "[ERROR] 源目录不存在: $SRC" >&2

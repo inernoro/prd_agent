@@ -18,3 +18,6 @@
 | test | claude-md | 守卫新增断言：cursor 同步表禁止硬编码 glob，必须走 globs:auto |
 | fix | claude-md | Codex 第三轮：snapshot-fallback 补 Models（快照实体本体就在那）、codebase-snapshot 补 doc/、report-design-system 补报告发布器 py |
 | refactor | claude-md | predicate-and-wiring-discipline 由路径作用域改回无条件常驻——它的触发是「任何新增判定/模块/测试」，枚举下去等于全仓，常驻更诚实（常驻预算 60KB→74KB） |
+| fix | claude-md | 恢复被重写误删的 AGENTS.md §5.5「Review 范围熔断」——CHANGELOG 记录它是生效规则，删掉等于重新放开机器评论驱动的无界扩张 |
+| fix | claude-md | 守卫的 cursor 检查名不副实：只验映射写了 globs:auto，不验镜像是否真的重新生成过；改为重新生成到临时目录逐字比对 |
+| docs | claude-md | 新增 doc/debt.platform.agent-rule-scope.md 记录三条 B 类作用域缺口，按 §5.5 分类不在本 PR 展开 |
