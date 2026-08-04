@@ -4,32 +4,6 @@ import { apiRequest } from '@/services/real/apiClient';
 import type { ImageGenGenerateResponse } from '@/services/contracts/imageGen';
 import type { ApiResponse } from '@/types/api';
 
-export type LayeredImageModel = {
-  modelId: string;
-  platformId: string;
-};
-
-export type LayeredImageModelCandidate = {
-  modelName?: string | null;
-  actualModelId?: string | null;
-  platformId?: string | null;
-  enabled?: boolean;
-};
-
-export function findLayeredImageModel(
-  candidates: LayeredImageModelCandidate[],
-): LayeredImageModel | null {
-  const match = candidates.find((candidate) => {
-    if (candidate.enabled === false) return false;
-    const id = String(candidate.actualModelId ?? candidate.modelName ?? '').trim().toLowerCase();
-    return id.includes('qwen-image-layered');
-  });
-
-  const modelId = String(match?.actualModelId ?? match?.modelName ?? '').trim();
-  const platformId = String(match?.platformId ?? '').trim();
-  return modelId && platformId ? { modelId, platformId } : null;
-}
-
 async function sourceToDataUri(source: string): Promise<string> {
   if (source.startsWith('data:')) return source;
 
@@ -47,7 +21,6 @@ async function sourceToDataUri(source: string): Promise<string> {
 export async function decomposeImageToLayers(input: {
   source: string;
   sourceSha256?: string | null;
-  model: LayeredImageModel;
   layerCount?: number;
 }): Promise<ApiResponse<ImageGenGenerateResponse>> {
   const layerCount = Math.max(1, Math.min(10, Math.round(input.layerCount ?? 4)));
@@ -58,10 +31,8 @@ export async function decomposeImageToLayers(input: {
   return await apiRequest<ImageGenGenerateResponse>(api.visualAgent.imageGen.generate(), {
     method: 'POST',
     body: {
+      operation: 'layering',
       prompt: 'Decompose this image into semantically distinct editable RGBA layers. Preserve composition and transparent edges.',
-      modelId: input.model.modelId,
-      modelName: input.model.modelId,
-      platformId: input.model.platformId,
       n: layerCount,
       responseFormat: 'url',
       initImageAssetSha256: sourceSha256 || undefined,
@@ -79,6 +50,30 @@ function clonePixelData(image: PixelData): PixelData {
   };
 }
 
+export function compositePixelLayers(layers: PixelData[], width: number, height: number): PixelData {
+  const output = new Uint8ClampedArray(width * height * 4);
+  for (const layer of layers) {
+    if (layer.width !== width || layer.height !== height) {
+      throw new Error('图层尺寸必须与 PSD 画布一致');
+    }
+    for (let offset = 0; offset < output.length; offset += 4) {
+      const sourceAlpha = layer.data[offset + 3]! / 255;
+      if (sourceAlpha <= 0) continue;
+      const destinationAlpha = output[offset + 3]! / 255;
+      const outputAlpha = sourceAlpha + destinationAlpha * (1 - sourceAlpha);
+      if (outputAlpha <= 0) continue;
+      for (let channel = 0; channel < 3; channel += 1) {
+        output[offset + channel] = Math.round((
+          layer.data[offset + channel]! * sourceAlpha
+          + output[offset + channel]! * destinationAlpha * (1 - sourceAlpha)
+        ) / outputAlpha);
+      }
+      output[offset + 3] = Math.round(outputAlpha * 255);
+    }
+  }
+  return { width, height, data: output };
+}
+
 export function buildLayeredPsdDocument(input: {
   source: PixelData;
   layers: Array<{ name: string; image: PixelData }>;
@@ -87,21 +82,26 @@ export function buildLayeredPsdDocument(input: {
     name: layer.name,
     imageData: clonePixelData(layer.image),
   }));
+  const composite = compositePixelLayers(
+    input.layers.map((layer) => layer.image),
+    input.source.width,
+    input.source.height,
+  );
 
   return {
     width: input.source.width,
     height: input.source.height,
-    imageData: clonePixelData(input.source),
+    imageData: composite,
     children: [
       {
-        name: '原图基准（保持显示以获得像素一致预览）',
-        imageData: clonePixelData(input.source),
-      },
-      {
-        name: 'AI 可编辑图层（生成式分层，非逐像素无损）',
-        hidden: true,
+        name: 'AI 可编辑图层',
         opened: true,
         children: semanticLayers,
+      },
+      {
+        name: '原图参考（隐藏，不参与合成）',
+        hidden: true,
+        imageData: clonePixelData(input.source),
       },
     ],
   };

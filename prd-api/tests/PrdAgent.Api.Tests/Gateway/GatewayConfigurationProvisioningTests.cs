@@ -281,4 +281,24 @@ public sealed class GatewayConfigurationProvisioningTests
         model["SourceCollection"].AsString.ShouldBe("llmgw_model_exchanges");
         GatewayModelPoolTypeRegistry.IsCompatible(model, modelType).ShouldBeTrue();
     }
+
+    [Fact]
+    public void FalImageLayeringBlueprint_BuildsDedicatedMapRouteWithoutOpenAiProvider()
+    {
+        var draft = FalImageLayeringProvisioning.CreateExchangeDraft("fal-secret");
+        var pool = FalImageLayeringProvisioning.BuildPoolDocument(
+            "tenant-a", "pool-a", "exchange-a", DateTime.UnixEpoch);
+        var appCaller = FalImageLayeringProvisioning.BuildAppCallerDocument(
+            "tenant-a", "team-a", "caller-a", "pool-a", DateTime.UnixEpoch);
+
+        draft.TargetAuthScheme.ShouldBe("Key");
+        draft.TransformerType.ShouldBe("fal-image-layered");
+        draft.Models.Single().ModelId.ShouldBe("fal-qwen-image-layered");
+        pool["Models"].AsBsonArray.Single().AsBsonDocument["PlatformId"].AsString.ShouldBe("exchange-a");
+        pool["AllowedAppCallerCodes"].AsBsonArray.Single().AsString
+            .ShouldBe("visual-agent.image.layering::generation");
+        appCaller["ModelPoolId"].AsString.ShouldBe("pool-a");
+        appCaller["AppCallerCode"].AsString.ShouldBe("visual-agent.image.layering::generation");
+        appCaller.Contains("ApiKey").ShouldBeFalse();
+    }
 }

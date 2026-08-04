@@ -900,6 +900,12 @@
     ]
   },
   {
+    "code": "visual-agent.image.layering::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
     "code": "visual-agent.image.text2img::generation",
     "modelTypes": [
       "generation"

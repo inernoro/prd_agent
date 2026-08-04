@@ -72,7 +72,6 @@ import {
   createLayeredPsdBlob,
   decomposeImageToLayers,
   downloadLayeredPsd,
-  findLayeredImageModel,
 } from '@/lib/layeredPsd';
 import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame } from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
@@ -2439,16 +2438,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return;
     }
 
-    const model = findLayeredImageModel(allImageGenModels);
-    if (!model) {
-      toast.warning(
-        '尚未配置图片分层模型',
-        '请先在模型网关添加 fal.ai Qwen Image Layered，并分配给视觉创作。OpenRouter 与 OpenAI 图片模型不能替代该能力。',
-        7000,
-      );
-      return;
-    }
-
     const sourceItem = canvasRef.current.find((candidate) => candidate.key === input.key);
     if (!sourceItem) {
       toast.error('AI 分层失败', '画布中找不到当前图片');
@@ -2481,7 +2470,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const result = await decomposeImageToLayers({
         source,
         sourceSha256: sourceItem.originalSrc ? null : (sourceItem.sha256 ?? null),
-        model,
         layerCount: 4,
       });
       if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
@@ -2581,7 +2569,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       toast.dismiss(loadingId);
       setLayeringProgress(null);
     }
-  }, [allImageGenModels, layeringProgress, setSelectionWithoutChip, workspaceId]);
+  }, [layeringProgress, setSelectionWithoutChip, workspaceId]);
 
   const exportAiLayeredPsd = useCallback(async (input: {
     key: string;
@@ -2618,14 +2606,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }));
 
       if (layerSources.length === 0) {
-        const model = findLayeredImageModel(allImageGenModels);
-        if (!model) {
-          throw new Error('尚未配置 fal.ai Qwen Image Layered，OpenRouter 与 OpenAI 图片模型不提供可替代的分层输出');
-        }
         const result = await decomposeImageToLayers({
           source,
           sourceSha256: cachedSource?.originalSrc ? null : (cachedSource?.sha256 ?? null),
-          model,
           layerCount: 4,
         });
         if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
@@ -2642,7 +2625,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       downloadLayeredPsd(blob, input.prompt || 'visual-agent-layered');
       toast.success(
         'PSD 已生成',
-        `包含 1 个原图基准层和 ${layerSources.length} 个 AI 可编辑图层。AI 图层默认隐藏，避免把生成式分层误认为逐像素无损。`,
+        `包含 ${layerSources.length} 个默认可见的 AI 图层和 1 个隐藏原图参考层。`,
         6000,
       );
     } catch (error) {
@@ -2654,7 +2637,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } finally {
       toast.dismiss(loadingId);
     }
-  }, [allImageGenModels]);
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const msgContentRef = useRef<HTMLDivElement | null>(null);

@@ -789,6 +789,19 @@ export type CreateExchangeRequest = {
   description?: string | null;
 };
 export type UpdateExchangeRequest = Omit<CreateExchangeRequest, 'apiKey'> & { version: number };
+export type ImageLayeringCapabilityStatus = {
+  capabilityId: 'image-layering';
+  state: 'not-installed' | 'incomplete' | 'installed' | 'verified';
+  installed: boolean;
+  verified: boolean;
+  hasKey: boolean;
+  exchangeId?: string | null;
+  poolId?: string | null;
+  appCallerId?: string | null;
+  modelId: string;
+  appCallerCode: string;
+  lastVerifiedAt?: string | null;
+};
 
 // ── GW-owned API key 健康自检 ──
 export type KeyHealthSummary = {

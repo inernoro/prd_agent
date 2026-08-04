@@ -14,7 +14,7 @@
 //   - 本路由被 e2e/llmgw-layout-drift.mjs 监测：表单一律内联、DOM 保持扁平，
 //     不许把创建/编辑改成抽屉或对话框（EntityPreviewDrawer 是只读预览，另论）。
 import { useEffect, useState } from 'react';
-import { ArrowRight, CheckCircle2, KeyRound, Pencil, Plus, Route, Trash2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, KeyRound, Layers3, Pencil, Plus, Route, Trash2 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   bulkRotateApiKeys,
@@ -23,6 +23,8 @@ import {
   deleteExchangeApiKey,
   getExchangeMeta,
   getExchanges,
+  getImageLayeringCapability,
+  installImageLayeringCapability,
   rotateExchangeApiKey,
   updateExchange,
 } from '@/lib/api';
@@ -31,6 +33,7 @@ import type {
   ExchangeItem,
   ExchangeMetaData,
   ExchangeModelWriteRequest,
+  ImageLayeringCapabilityStatus,
   UpdateExchangeRequest,
 } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
@@ -109,6 +112,8 @@ export function ExchangesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ExchangeFormState>(emptyForm);
   const [savedItem, setSavedItem] = useState<ExchangeItem | null>(null);
+  const [layeringCapability, setLayeringCapability] = useState<ImageLayeringCapabilityStatus | null>(null);
+  const [layeringApiKey, setLayeringApiKey] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -128,6 +133,16 @@ export function ExchangesPage() {
       if (!alive) return;
       if (res.success) setMeta(res.data);
       else setError(res.error?.message || 'Exchange 配置选项加载失败');
+    });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    getImageLayeringCapability().then((res) => {
+      if (!alive) return;
+      if (res.success) setLayeringCapability(res.data);
+      else setError(res.error?.message || '图片分层能力状态加载失败');
     });
     return () => { alive = false; };
   }, []);
@@ -325,6 +340,29 @@ export function ExchangesPage() {
     }
   }
 
+  async function installLayeringCapability() {
+    const apiKey = layeringApiKey.trim();
+    if (!apiKey) {
+      setNotice('请填写 fal.ai API Key');
+      return;
+    }
+    setBusyId('install-image-layering');
+    setNotice(null);
+    const res = await installImageLayeringCapability(apiKey);
+    setBusyId(null);
+    if (!res.success) {
+      setNotice(res.error?.message || '图片分层能力安装失败');
+      return;
+    }
+    setLayeringCapability(res.data);
+    setLayeringApiKey('');
+    setNotice(res.data.verified
+      ? '图片分层能力已修复并保留真实调用验证状态'
+      : '图片分层能力已接入。请到 MAP 视觉创作执行一次真实分层，成功后这里会显示已验证。');
+    const exchanges = await getExchanges({ enabled: enabledOnly ? true : undefined });
+    if (exchanges.success) setItems(exchanges.data.items);
+  }
+
   return (
     <PageShell>
       <PageHeader
@@ -344,6 +382,72 @@ export function ExchangesPage() {
         {notice ? <InlineAlert tone="info">{notice}</InlineAlert> : null}
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
+
+        <div id="image-layering">
+        <Card style={{ ...CARD_BODY, borderColor: 'color-mix(in srgb, var(--accent) 55%, var(--border-subtle))' }}>
+          <div style={rowStyle}>
+            <Layers3 size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+              <span style={rowStyle}>
+                <strong style={SECTION_TITLE}>图片分层</strong>
+                <HelpPopover label="自动接入说明">
+                  输入一次 fal.ai Key，LLMGW 会自动完成原生协议适配、模型注册、专用模型池和 MAP 视觉创作绑定。保存不调用模型，首次在 MAP 点击“AI 分层”才产生费用并记录验证状态。
+                </HelpPopover>
+              </span>
+            </div>
+            <span style={{ marginLeft: 'auto' }}>
+              <Chip
+                label={layeringCapability?.verified
+                  ? '调用已验证'
+                  : layeringCapability?.installed
+                    ? '已接入，等待真实调用'
+                    : layeringCapability?.state === 'incomplete'
+                      ? '配置不完整'
+                      : '未接入'}
+                color={layeringCapability?.verified ? 'var(--ok)' : layeringCapability?.installed ? 'var(--warn)' : 'var(--text-secondary)'}
+                bg={layeringCapability?.verified ? 'var(--ok-bg)' : layeringCapability?.installed ? 'var(--warn-bg)' : 'var(--bg-elevated)'}
+              />
+            </span>
+          </div>
+
+          <div style={{ ...INSET_BLOCK, marginTop: GAP.section, display: 'grid', gap: GAP.normal }}>
+            <div style={rowStyle}>
+              <span style={HINT_TEXT}>模型</span>
+              <code style={MONO_META}>{layeringCapability?.modelId || 'fal-qwen-image-layered'}</code>
+              <span style={HINT_TEXT}>调用方</span>
+              <code style={MONO_META}>{layeringCapability?.appCallerCode || 'visual-agent.image.layering::generation'}</code>
+              {layeringCapability?.lastVerifiedAt ? <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>最近验证 {new Date(layeringCapability.lastVerifiedAt).toLocaleString()}</span> : null}
+            </div>
+            {canWrite ? (
+              <div style={rowStyle}>
+                <label style={{ ...FIELD_LABEL, flex: '1 1 320px', maxWidth: 520 }}>
+                  <span>fal.ai API Key</span>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={layeringApiKey}
+                    onChange={(event) => setLayeringApiKey(event.target.value)}
+                    placeholder={layeringCapability?.hasKey ? '输入新 Key 可轮换并自动修复全部绑定' : '只加密保存，不会回显'}
+                    style={FIELD_INPUT}
+                  />
+                </label>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={busyId === 'install-image-layering'}
+                  onClick={() => void installLayeringCapability()}
+                >
+                  {busyId === 'install-image-layering'
+                    ? '正在接入'
+                    : layeringCapability?.installed
+                      ? '更新并修复'
+                      : '一键接入 MAP'}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </Card>
+        </div>
 
         {savedItem ? (
           <Card style={{ ...CARD_BODY, borderColor: 'color-mix(in srgb, var(--ok) 45%, var(--border-subtle))', background: 'var(--ok-bg)' }}>
