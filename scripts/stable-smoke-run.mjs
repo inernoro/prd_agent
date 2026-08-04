@@ -189,6 +189,15 @@ function runPlaywright(environment, values, runDir, grep = '') {
   return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
 }
 
+export function buildExecutionRecord(environment, execution) {
+  return {
+    ...execution,
+    environment,
+    status: execution.status === 0 ? 'executed' : 'failed',
+    missing: [],
+  };
+}
+
 function buildRunId() {
   const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12);
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -295,7 +304,7 @@ async function main() {
         continue;
       }
       const execution = runPlaywright(environment, values, runDir, grep);
-      executions.push({ environment, status: execution.status === 0 ? 'executed' : 'failed', missing: [], ...execution });
+      executions.push(buildExecutionRecord(environment, execution));
     }
 
     const environmentRows = executions.flatMap((execution) => {

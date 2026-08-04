@@ -2,10 +2,26 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   applyCredentialRegistry,
+  buildExecutionRecord,
   evaluateCdsReadiness,
   parseEnvFile,
   validateEnvironmentConfig,
 } from '../stable-smoke-run.mjs';
+
+test('执行结果使用审核人可读状态且不被进程退出码覆盖', () => {
+  assert.deepEqual(buildExecutionRecord('cds', {
+    status: 1,
+    resultPath: '/tmp/results.json',
+    htmlPath: '/tmp/report',
+  }), {
+    status: 'failed',
+    resultPath: '/tmp/results.json',
+    htmlPath: '/tmp/report',
+    environment: 'cds',
+    missing: [],
+  });
+  assert.equal(buildExecutionRecord('production', { status: 0 }).status, 'executed');
+});
 
 test('环境文件解析不执行 shell 内容', () => {
   const values = parseEnvFile(`
