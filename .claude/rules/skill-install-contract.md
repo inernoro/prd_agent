@@ -1,3 +1,10 @@
+---
+paths:
+  - ".claude/skills/findmapskills/**/*.md"
+  - "cds/src/routes/bootstrap.ts"
+  - "prd-api/src/**/SkillInstallContract.cs"
+---
+
 # 技能分发与安装约定（Skill Install Contract）
 
 **一句话**：技能装项目级、按存在的宿主目录全装一遍，不写用户主目录；读技能免凭据，上传与订阅才要 key；三处实现由守卫测试钉在一起。

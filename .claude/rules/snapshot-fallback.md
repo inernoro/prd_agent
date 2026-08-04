@@ -1,5 +1,8 @@
 ---
-globs: ["prd-api/src/**/Controllers/**/*.cs", "prd-api/src/**/Services/**/*.cs"]
+paths:
+  - "prd-api/src/**/Controllers/**/*.cs"
+  - "prd-api/src/**/Services/**/*.cs"
+  - "prd-api/src/**/Models/**/*.cs"
 ---
 
 # 快照反规范化兜底规则

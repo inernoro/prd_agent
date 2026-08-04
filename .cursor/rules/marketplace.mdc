@@ -4,10 +4,13 @@ description: 发布配置到海鲜市场时阅读（CONFIG_TYPE_REGISTRY + IFork
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/marketplace.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-08-04T08:32:46Z -->
 
 
 # 海鲜市场 (Configuration Marketplace) 扩展指南
+
+**一句话**：往海鲜市场加新配置类型时，前端在注册表登记并实现预览渲染器，后端实现可复制接口并用白名单字段复制。
+**什么时候撞上**：要把一种新配置发布到海鲜市场。
 
 当需要将新的配置类型发布到海鲜市场时参考。
 

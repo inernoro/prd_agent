@@ -1,3 +1,10 @@
+---
+paths:
+  - "prd-admin/src/pages/**/*.tsx"
+  - "prd-admin/src/components/daily-tips/**/*.tsx"
+  - "prd-api/src/**/DailyTipsController.cs"
+---
+
 # 页面新手指引（小技巧）维护规则
 
 **一句话**：页面 UI 一改，本页新手教程的锚点和步骤必须同一个 PR 同步改；入口是右上角常驻 pill，自动开讲每台设备一生只一次。
