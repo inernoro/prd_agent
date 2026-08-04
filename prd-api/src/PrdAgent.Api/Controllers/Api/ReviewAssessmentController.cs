@@ -29,6 +29,9 @@ public class ReviewAssessmentController : ControllerBase
     private const long MaxExcelBytes = 10 * 1024 * 1024;
     private const int ScoreBatchSize = 5;
 
+    /// <summary>并发评分批次数：3 路同跑约把总耗时压到串行的 1/3</summary>
+    private const int MaxConcurrentBatches = 3;
+
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".xls", ".xlsx" };
 
     private readonly MongoDbContext _db;
@@ -120,17 +123,8 @@ public class ReviewAssessmentController : ControllerBase
 
         var userId = GetUserId();
 
-        // 列映射：先关键词启发式，再用 LLM 精化（LLM 失败不阻塞，保留启发式结果）
+        // 上传阶段只做关键词启发式映射，保证秒级返回；LLM 精化挪到评估流第一阶段执行
         var mapping = BuildHeuristicMapping(table.Headers);
-        try
-        {
-            using var _ = BeginLlmScope(userId, AppCallerRegistry.ReviewAgent.RequirementAssessment.ColumnMapping);
-            mapping = await RefineMappingWithLlmAsync(table, mapping);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "需求评估列映射 LLM 精化失败，使用启发式映射");
-        }
 
         var run = new RequirementAssessmentRun
         {
@@ -148,17 +142,17 @@ public class ReviewAssessmentController : ControllerBase
             NameColumnIndex = mapping.NameColumnIndex ?? 0,
             DescColumnIndex = mapping.DescColumnIndex,
             FactorColumnMapping = mapping.FactorColumns,
+            MappingRefined = false,
             WeightsSnapshot = RequirementFactorCatalog.BuildWeightsSnapshot(),
             Status = RequirementAssessmentStatuses.Queued,
         };
 
-        var items = MaterializeItems(run);
-        if (items.Count == 0)
+        if (run.Rows.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "需求表中没有可评估的数据行"));
 
-        run.ItemCount = items.Count;
+        // 条目在评估流内经 LLM 精化列映射后再物化（保证名称列识别更准），此处仅记条数
+        run.ItemCount = run.Rows.Count;
         await _db.RequirementAssessmentRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
-        await _db.RequirementAssessmentItems.InsertManyAsync(items, cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { run = ToRunView(run) }));
     }
@@ -344,27 +338,7 @@ public class ReviewAssessmentController : ControllerBase
             return;
         }
 
-        if (run.Status == RequirementAssessmentStatuses.Draft)
-        {
-            // 兼容旧版「待确认映射」任务：映射已改全自动，直接补齐条目进入评估
-            var existingCount = await _db.RequirementAssessmentItems
-                .CountDocumentsAsync(x => x.RunId == id, cancellationToken: CancellationToken.None);
-            if (existingCount == 0)
-            {
-                var legacyItems = MaterializeItems(run);
-                if (legacyItems.Count == 0)
-                {
-                    await WriteSseEventAsync("error", new { message = "需求表中没有可评估的数据行" });
-                    return;
-                }
-                await _db.RequirementAssessmentItems.InsertManyAsync(legacyItems, cancellationToken: CancellationToken.None);
-                await _db.RequirementAssessmentRuns.UpdateOneAsync(
-                    x => x.Id == id,
-                    Builders<RequirementAssessmentRun>.Update.Set(x => x.ItemCount, legacyItems.Count),
-                    cancellationToken: CancellationToken.None);
-            }
-        }
-
+        // 剩余状态为 Queued 或旧版 Draft，两者统一进入评估（映射精化 + 条目物化在 RunAssessmentAsync 内完成）
         await _db.RequirementAssessmentRuns.UpdateOneAsync(
             x => x.Id == id,
             Builders<RequirementAssessmentRun>.Update
@@ -396,85 +370,145 @@ public class ReviewAssessmentController : ControllerBase
     private async Task RunAssessmentAsync(RequirementAssessmentRun run)
     {
         var userId = run.OwnerUserId;
+
+        // 1) 列映射 LLM 精化（仅首次；失败保留启发式结果，不阻塞评估）
+        if (!run.MappingRefined)
+        {
+            await WriteSseEventAsync("phase", new { phase = "mapping", message = "正在识别表格结构与关键列..." });
+            try
+            {
+                using var _ = BeginLlmScope(userId, AppCallerRegistry.ReviewAgent.RequirementAssessment.ColumnMapping);
+                var table = new ParsedRequirementTable
+                {
+                    SheetName = run.SheetName,
+                    Headers = run.Headers,
+                    Rows = run.Rows,
+                    TotalRowCount = run.TotalRowCount,
+                    Truncated = run.Truncated,
+                };
+                var heuristic = new ColumnMappingResult
+                {
+                    NameColumnIndex = run.NameColumnIndex,
+                    DescColumnIndex = run.DescColumnIndex,
+                    FactorColumns = run.FactorColumnMapping,
+                };
+                var refined = await RefineMappingWithLlmAsync(table, heuristic);
+                run.NameColumnIndex = refined.NameColumnIndex ?? run.NameColumnIndex ?? 0;
+                run.DescColumnIndex = refined.DescColumnIndex;
+                run.FactorColumnMapping = refined.FactorColumns;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "需求评估列映射 LLM 精化失败，使用启发式映射: {RunId}", run.Id);
+            }
+
+            run.MappingRefined = true;
+            await _db.RequirementAssessmentRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<RequirementAssessmentRun>.Update
+                    .Set(x => x.NameColumnIndex, run.NameColumnIndex)
+                    .Set(x => x.DescColumnIndex, run.DescColumnIndex)
+                    .Set(x => x.FactorColumnMapping, run.FactorColumnMapping)
+                    .Set(x => x.MappingRefined, true),
+                cancellationToken: CancellationToken.None);
+        }
+
+        // 2) 物化条目（首次；重试/断点续评时已存在则跳过）
         var allItems = await _db.RequirementAssessmentItems
             .Find(x => x.RunId == run.Id)
             .SortBy(x => x.RowIndex)
             .ToListAsync(CancellationToken.None);
 
         if (allItems.Count == 0)
-            throw new InvalidOperationException("评估任务没有待评估条目");
+        {
+            allItems = MaterializeItems(run);
+            if (allItems.Count == 0)
+                throw new InvalidOperationException("需求表中没有可评估的数据行");
+            await _db.RequirementAssessmentItems.InsertManyAsync(allItems, cancellationToken: CancellationToken.None);
+            await _db.RequirementAssessmentRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<RequirementAssessmentRun>.Update.Set(x => x.ItemCount, allItems.Count),
+                cancellationToken: CancellationToken.None);
+        }
 
         var pending = allItems.Where(x => x.Status != RequirementItemStatuses.Scored).ToList();
-        var scoredCount = allItems.Count - pending.Count;
+        int scoredCount = allItems.Count - pending.Count;
 
-        await WriteSseEventAsync("phase", new { phase = "preparing", message = $"共 {allItems.Count} 条需求，开始评估..." });
+        await WriteSseEventAsync("phase", new { phase = "preparing", message = $"共 {allItems.Count} 条需求，开始并行评估..." });
+        await WriteSseEventAsync("progress", new { done = scoredCount, total = allItems.Count });
 
         var systemPrompt = BuildScoringSystemPrompt(run);
         var baseSeed = DeriveSeed(run.Id);
-        int batchNo = 0;
 
         // 模型可见性：首个 Start chunk 的解析结果推给前端展示（ai-model-visibility 规则）
-        bool modelAnnounced = false;
+        int modelAnnounced = 0;
         Func<string, string?, Task> onModel = async (model, platform) =>
         {
-            if (modelAnnounced) return;
-            modelAnnounced = true;
-            try { await WriteSseEventAsync("model", new { model, platform }); }
-            catch { /* 客户端断开不影响评估 */ }
+            if (Interlocked.Exchange(ref modelAnnounced, 1) == 1) return;
+            await WriteSseEventAsync("model", new { model, platform });
         };
 
-        foreach (var batch in pending.Chunk(ScoreBatchSize))
+        // 3) 分批并发评分：批间最多 MaxConcurrentBatches 路同跑，缩短总耗时
+        var batches = pending.Chunk(ScoreBatchSize).ToList();
+        var throttle = new SemaphoreSlim(MaxConcurrentBatches);
+        string? fatalError = null;
+
+        var batchTasks = batches.Select(async (batch, batchIdx) =>
         {
-            batchNo++;
-            var firstName = batch[0].Name;
-            await WriteSseEventAsync("progress", new
+            await throttle.WaitAsync();
+            try
             {
-                done = scoredCount,
-                total = allItems.Count,
-                message = $"正在评估第 {scoredCount + 1}-{Math.Min(scoredCount + batch.Length, allItems.Count)}/{allItems.Count} 条：{firstName} 等",
-            });
+                // 网关级错误已发生时不再发起新批次，条目保持 Pending 供重试续评
+                if (Volatile.Read(ref fatalError) != null) return;
 
-            var (scored, batchError) = await ScoreBatchAsync(run, batch, systemPrompt, baseSeed + batchNo, userId, onModel);
+                var (scored, batchError) = await ScoreBatchAsync(run, batch, systemPrompt, baseSeed + batchIdx + 1, userId, onModel);
 
-            if (batchError != null)
-            {
-                // 单批失败不终止整个任务：标记该批条目失败，继续后续批次
-                var batchIds = batch.Select(b => b.Id).ToList();
-                await _db.RequirementAssessmentItems.UpdateManyAsync(
-                    x => batchIds.Contains(x.Id),
-                    Builders<RequirementAssessmentItem>.Update
-                        .Set(x => x.Status, RequirementItemStatuses.Error)
-                        .Set(x => x.ErrorMessage, batchError),
-                    cancellationToken: CancellationToken.None);
-
-                // 网关级错误（配额/上游）继续跑下一批大概率还是失败，直接中断
-                if (batchError.StartsWith("LLM 网关错误"))
-                    throw new InvalidOperationException(batchError);
-                continue;
-            }
-
-            foreach (var item in scored)
-            {
-                RequirementScoringEngine.NormalizeAndScore(item);
-                item.Status = RequirementItemStatuses.Scored;
-                item.ScoredAt = DateTime.UtcNow;
-                await _db.RequirementAssessmentItems.ReplaceOneAsync(
-                    x => x.Id == item.Id, item, cancellationToken: CancellationToken.None);
-
-                scoredCount++;
-                try
+                if (batchError != null)
                 {
-                    await WriteSseEventAsync("item_scored", new { item, done = scoredCount, total = allItems.Count });
-                }
-                catch (ObjectDisposedException) { /* 客户端断开，继续后台评估 */ }
-                catch (OperationCanceledException) { /* 同上 */ }
-            }
+                    // 网关级错误（配额/上游）：置全局熔断，本批条目保持 Pending 待重试
+                    if (batchError.StartsWith("LLM 网关错误"))
+                    {
+                        Interlocked.CompareExchange(ref fatalError, batchError, null);
+                        return;
+                    }
 
-            await _db.RequirementAssessmentRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
-                Builders<RequirementAssessmentRun>.Update.Set(x => x.ScoredCount, scoredCount),
-                cancellationToken: CancellationToken.None);
-        }
+                    // 解析类失败：仅标记本批条目失败，其余批次继续
+                    var batchIds = batch.Select(b => b.Id).ToList();
+                    await _db.RequirementAssessmentItems.UpdateManyAsync(
+                        x => batchIds.Contains(x.Id),
+                        Builders<RequirementAssessmentItem>.Update
+                            .Set(x => x.Status, RequirementItemStatuses.Error)
+                            .Set(x => x.ErrorMessage, batchError),
+                        cancellationToken: CancellationToken.None);
+                    return;
+                }
+
+                foreach (var item in scored)
+                {
+                    RequirementScoringEngine.NormalizeAndScore(item);
+                    item.Status = RequirementItemStatuses.Scored;
+                    item.ScoredAt = DateTime.UtcNow;
+                    await _db.RequirementAssessmentItems.ReplaceOneAsync(
+                        x => x.Id == item.Id, item, cancellationToken: CancellationToken.None);
+
+                    var done = Interlocked.Increment(ref scoredCount);
+                    await WriteSseEventAsync("item_scored", new { item, done, total = allItems.Count });
+                    await _db.RequirementAssessmentRuns.UpdateOneAsync(
+                        x => x.Id == run.Id,
+                        Builders<RequirementAssessmentRun>.Update.Set(x => x.ScoredCount, done),
+                        cancellationToken: CancellationToken.None);
+                }
+            }
+            finally
+            {
+                throttle.Release();
+            }
+        }).ToList();
+
+        await Task.WhenAll(batchTasks);
+
+        if (fatalError != null)
+            throw new InvalidOperationException(fatalError);
 
         // 全量重新加载，计算全局排序（含历史已评分条目）
         var finalItems = await _db.RequirementAssessmentItems
@@ -1052,15 +1086,35 @@ public class ReviewAssessmentController : ControllerBase
         return raw & 0x7FFFFFFF;
     }
 
+    private readonly SemaphoreSlim _sseWriteLock = new(1, 1);
+    private bool _sseClientGone;
+
+    /// <summary>
+    /// SSE 写出：串行化并发批次的写入；客户端断开后静默跳过后续写入
+    /// （服务器权威：断开不取消评估，结果照常落库，前端重进页面轮询兜底）。
+    /// </summary>
     private async Task WriteSseEventAsync(string eventType, object data)
     {
-        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
+        if (_sseClientGone) return;
+        await _sseWriteLock.WaitAsync();
+        try
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        });
-        await Response.WriteAsync($"event: {eventType}\n");
-        await Response.WriteAsync($"data: {json}\n\n");
-        await Response.Body.FlushAsync();
+            if (_sseClientGone) return;
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            });
+            await Response.WriteAsync($"event: {eventType}\n");
+            await Response.WriteAsync($"data: {json}\n\n");
+            await Response.Body.FlushAsync();
+        }
+        catch (ObjectDisposedException) { _sseClientGone = true; }
+        catch (OperationCanceledException) { _sseClientGone = true; }
+        catch (IOException) { _sseClientGone = true; }
+        finally
+        {
+            _sseWriteLock.Release();
+        }
     }
 
 }

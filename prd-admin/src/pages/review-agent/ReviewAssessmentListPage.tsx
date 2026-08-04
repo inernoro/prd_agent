@@ -34,17 +34,25 @@ export function ReviewAssessmentListPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     const res = await listAssessments(page, PAGE_SIZE);
     if (res.success && res.data) {
       setItems(res.data.items);
       setTotal(res.data.total);
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [page]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // 有进行中的任务时静默自动刷新列表，状态变化无需手动刷新
+  const hasActive = items.some(i => i.status === 'Queued' || i.status === 'Running' || i.status === 'Draft');
+  useEffect(() => {
+    if (!hasActive) return;
+    const timer = setInterval(() => { void loadData(true); }, 8000);
+    return () => clearInterval(timer);
+  }, [hasActive, loadData]);
 
   const handleFile = async (file: File | undefined) => {
     if (!file || uploading) return;

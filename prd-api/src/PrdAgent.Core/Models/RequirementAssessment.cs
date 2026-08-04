@@ -40,8 +40,11 @@ public class RequirementAssessmentRun
     /// <summary>需求描述列索引（可空）</summary>
     public int? DescColumnIndex { get; set; }
 
-    /// <summary>因子 → 证据来源列索引（AI 建议 + 用户确认后的最终映射）</summary>
+    /// <summary>因子 → 证据来源列索引（启发式 + LLM 自动综合）</summary>
     public Dictionary<string, List<int>> FactorColumnMapping { get; set; } = new();
+
+    /// <summary>列映射是否已经过 LLM 精化（评估流开始时执行一次，避免重试时重复调用）</summary>
+    public bool MappingRefined { get; set; }
 
     /// <summary>评估时使用的因子权重快照（防后续规则调整影响历史报告复算）</summary>
     public List<RequirementFactorWeightSnapshot> WeightsSnapshot { get; set; } = new();

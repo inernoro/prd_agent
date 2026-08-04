@@ -126,6 +126,15 @@ export function ReviewAssessmentDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // Running 但本页没有持有评估流（中途刷新页面 / 评估在另一个连接上执行）时，
+  // 轮询兜底直到出结果，用户无需手动刷新
+  const runStatus = run?.status;
+  useEffect(() => {
+    if (streaming || runStatus !== 'Running') return;
+    const timer = setInterval(() => { void load(); }, 4000);
+    return () => clearInterval(timer);
+  }, [runStatus, streaming, load]);
+
   const handleRerun = async () => {
     const res = await rerunAssessment(id);
     if (res.success) {
@@ -223,21 +232,30 @@ export function ReviewAssessmentDetailPage() {
         <div className="mb-5 bg-token-nested border border-token-subtle rounded-xl p-5">
           <div className="flex items-center gap-3 mb-3">
             <MapSpinner size={16} />
-            <span className="text-sm text-token-primary">{phaseMessage || '评估准备中...'}</span>
+            <span className="text-sm text-token-primary">
+              {phaseMessage || (run.status === 'Running' && !streaming
+                ? '评估正在后台执行，本页每 4 秒自动刷新进度...'
+                : '评估准备中...')}
+            </span>
           </div>
-          {progress && progress.total > 0 && (
-            <>
-              <div className="h-1.5 rounded-full bg-token-input overflow-hidden">
-                <div
-                  className="h-full bg-indigo-500 rounded-full transition-all duration-700"
-                  style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
-                />
-              </div>
-              <div className="text-xs text-token-muted mt-2">
-                已评估 {progress.done} / {progress.total} 条
-              </div>
-            </>
-          )}
+          {(() => {
+            // SSE 进度优先；轮询兜底时退化用 run 上持久化的进度
+            const p = progress ?? (run.itemCount > 0 ? { done: run.scoredCount, total: run.itemCount } : null);
+            if (!p || p.total <= 0) return null;
+            return (
+              <>
+                <div className="h-1.5 rounded-full bg-token-input overflow-hidden">
+                  <div
+                    className="h-full bg-indigo-500 rounded-full transition-all duration-700"
+                    style={{ width: `${Math.round((p.done / p.total) * 100)}%` }}
+                  />
+                </div>
+                <div className="text-xs text-token-muted mt-2">
+                  已评估 {p.done} / {p.total} 条
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
