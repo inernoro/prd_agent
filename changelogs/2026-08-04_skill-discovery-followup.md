@@ -15,3 +15,4 @@
 | feat | doc-tooling | doc-readability-check.py 新增 --skills-audit 模式，复用 check_skill 输出可发现性判定，并补上「目录没有 SKILL.md」这个既有缺口 |
 | refactor | claude-md | entropy-cleanup 的 D4 扫描/修复/合并闸三处不再自己写 frontmatter 判据，统一调用 --skills-audit；判据两处实现是前七轮偏差的共同根因 |
 | fix | claude-md | Step 6.2 无条件合并同名旧 PR，会把被硬闸挡下的 [需人工] PR 一并合掉，使硬闸只延迟一轮；改为跳过并对其余 PR 合并前复跑审计 |
+| fix | claude-md | Step 6.2 的「合并前复跑审计」跑在当前 checkout 上，而要合的是另一个 PR 的 head，等于用不相干的证据放行；移除该步的旧 PR 自动合并，恢复条件记入 debt |

@@ -50,7 +50,7 @@ description: 日常熵清理技能。扫描七个维度的一致性债务并双�
 | D1 doc/ 命名规范 | — | — | git mv 改名（文件确实存在才 mv） |
 | D2 index.yml | doc/*.md 无对应 index 条目 → 追加 | index 有条目但 `doc/${key}.md` 不存在 → 删行 | `[ -f doc/${key}.md ]` |
 | D3 guide.list | doc/*.md 无 backtick 条目 → 追加 | guide.list 有 backtick 条目但文件不存在 → 删行 | `[ -f doc/${key}.md ]` |
-| D4 技能可发现性 | 两个技能根下任一目录缺 `SKILL.md` 或 frontmatter 缺 name/description → 补 | — | 本维自带脚本（棘轮只兜 frontmatter 内容，不兜文件缺失） |
+| D4 技能可发现性 | 审计判为 `AUTOFIX_NAME` 的补 name；`BLOCK` 类升级人工 | — | `python3 scripts/doc-readability-check.py --skills-audit`（唯一判据，勿在本技能里重写） |
 | D5 codebase-snapshot | — | — | 人工确认后更新 |
 | D6 changelog→doc | changelog 未处理 → 追加章节 | — | manifest 记录，已处理跳过 |
 | D7 文档可读性 | 缺导读三行 → 补；规则缺「一句话 + 什么时候撞上」两行 → 补；技能 frontmatter 的 description 说不清触发时机 → 补；裸引用 → 转可点链接 | 死链（引用的文档不存在）→ 修或删 | `python3 scripts/doc-readability-check.py --ratchet`；批量改写用 `--fix-links` |
@@ -285,9 +285,15 @@ git push -u origin $(git branch --show-current)
   - **标题以 `[需人工] ` 开头的一律跳过**，不得合并。那是上一轮被 D4 硬闸挡下的 PR，
     里面带着未修复的可发现性缺陷；无条件合并它等于把硬闸的作用推迟一轮就作废
     （这正是硬闸要防的事）。留给人处理，本轮继续创建新 PR。
-  - 其余的先重跑一次 `python3 scripts/doc-readability-check.py --skills-audit`，
-    确认无 `BLOCK:` 行，再用 `mcp__github__merge_pull_request`（squash）合并；
-    合并失败则记录并继续创建新 PR。
+  - **其余的也不在本步合并**，只记录 PR 号并继续创建新 PR。
+
+    原因：本步能跑的审计只覆盖调度器**当前 checkout**，而要合的是**另一个 PR 的 head**。
+    当前分支干净不代表那个 PR 干净——拿此处的绿灯去批准彼处的合并，是在用一份不相干的
+    证据放行。旧版这里是完全无校验的直接合并，本次不再补一个「看起来像校验」的动作，
+    而是把这个不安全的自动合并去掉。
+
+    旧 PR 由人处理，或等它自己那轮的 Step 6 流程走完。要恢复自动合并，必须先实现
+    「在被合并 PR 的 head 上跑审计」，而不是在当前分支上跑（见 `doc/debt.platform.agent-rule-scope.md`）。
 
 #### 6.3 创建 PR
 
