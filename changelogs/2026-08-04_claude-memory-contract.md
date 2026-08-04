@@ -27,3 +27,4 @@
 | docs | claude-md | Codex 第七轮 B 类记账：server-authority 漏网关 C# 表面；台账补记「网关剥离后没人回头拓宽既有规则作用域」这条跨条目规律 |
 | docs | claude-md | Codex 第八轮两条 B 类记账（concurrency-gate-discipline 与 marketplace 漏网关/后端实现面） |
 | feat | claude-md | 新增 scripts/audit-rule-scope-gaps.py 诊断脚本：枚举「规则正文点名却不在自身作用域内」的文件，把作用域债从评审逐条捡变成可复跑的有界清单（当前 9/38） |
+| fix | claude-md | 守卫的注入预算逐个文件独立计量，低估了真实注入量——模块下工作拿到的是根记忆+模块记忆；改为按模块计累计值并钉成只降不升的上限 |

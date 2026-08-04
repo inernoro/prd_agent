@@ -165,21 +165,62 @@ def resolve_imports(md: pathlib.Path, depth: int = 0, seen: set | None = None) -
     return "\n".join(out)
 
 
+# Working inside a module, Claude gets the root memory *plus* that module's
+# CLAUDE.md - they concatenate, they do not override. Measuring each file alone
+# understates what actually reaches the model, so these ceilings pin the effective
+# total per module and stop it growing. They are today's values, not an ideal:
+# cds/ is already at 394 and trimming it is another module's work, tracked in
+# doc/debt.platform.agent-rule-scope.md. Raising a number here must be deliberate.
+CUMULATIVE_CEILINGS = {
+    "cds": 394,
+    "llmgw": 217,
+    "prd-admin": 223,
+    "prd-api": 222,
+    "prd-desktop": 219,
+}
+
+
 def check_claude_md_size() -> None:
-    for md in [REPO / "CLAUDE.md", *sorted(REPO.glob("*/CLAUDE.md"))]:
+    root = REPO / "CLAUDE.md"
+    root_lines = len(resolve_imports(root).splitlines()) if root.exists() else 0
+
+    for md in [root, *sorted(REPO.glob("*/CLAUDE.md"))]:
         if not md.exists():
             continue
         lines = len(resolve_imports(md).splitlines())
         rel = md.relative_to(REPO)
         own = len(strip_html_comments(md.read_text(encoding="utf-8")).splitlines())
         note = f"{lines} injected lines" + (f" (own {own} + imports)" if lines != own else "")
+
+        # The spec's target is per file; keep asserting it.
         if lines > MAX_INJECTED_LINES:
             fail(
                 f"{rel}: {note} exceeds the {MAX_INJECTED_LINES}-line target. "
                 "Move detail into a path-scoped rule, a skill, or an HTML comment."
             )
-        else:
+            continue
+
+        if md == root:
             print(f"  {rel}: {note}")
+            continue
+
+        # Module files: what the model actually sees is root + this file.
+        module = md.parent.name
+        effective = root_lines + lines
+        ceiling = CUMULATIVE_CEILINGS.get(module)
+        if ceiling is None:
+            fail(
+                f"{rel}: no cumulative ceiling recorded for module {module!r}. Add one to "
+                f"CUMULATIVE_CEILINGS (effective is {effective} = root {root_lines} + {lines})."
+            )
+        elif effective > ceiling:
+            fail(
+                f"{rel}: effective memory is {effective} lines (root {root_lines} + own {lines}), "
+                f"over the recorded ceiling of {ceiling}. Trim this file or the root - do not "
+                "raise the ceiling to make the check pass."
+            )
+        else:
+            print(f"  {rel}: {note}, effective {effective} (ceiling {ceiling})")
 
 
 def check_no_stale_index() -> None:
