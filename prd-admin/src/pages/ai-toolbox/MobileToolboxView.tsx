@@ -243,7 +243,7 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         boxShadow: 'var(--media-card-shadow)',
       }}
     >
-      <AgentCardArtwork agentKey={item.agentKey} compact tint={accent.from} />
+      <AgentCardArtwork agentKey={item.agentKey} compact accentColor={accent.from} />
       {pcOnly && (
         <span
           className="absolute z-10"

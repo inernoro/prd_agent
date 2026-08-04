@@ -7,10 +7,10 @@ import {
   AgentCardArtwork,
   AgentCardFrame,
   AgentCardTask,
-  getAgentCardArtworkToken,
   getAgentCardTask,
   hasAgentCardArtwork,
 } from './AgentCardArtwork';
+import { AGENT_CARD_ART, buildAgentCardArtSvg } from './agentCardArtSource';
 
 describe('AgentCardArtwork', () => {
   const builtinAgents = Array.from(
@@ -37,12 +37,45 @@ describe('AgentCardArtwork', () => {
     expect(missingTasks).toEqual([]);
   });
 
-  it('为每个内置百宝箱条目提供唯一的主题素材 token', () => {
-    const artworkTokens = builtinAgents.map((item) => getAgentCardArtworkToken(item.agentKey));
+  it('每个内置条目都有一张自己的画，没有两个 key 共用同一份', () => {
+    const drawings = builtinAgents.map((item) => AGENT_CARD_ART[item.agentKey!]);
 
-    expect(artworkTokens.every(Boolean)).toBe(true);
-    expect(new Set(artworkTokens).size).toBe(builtinAgents.length);
-    expect(getAgentCardArtworkToken('visual-agent')).toBe('--agent-card-artwork-visual-agent');
+    expect(drawings.every(Boolean)).toBe(true);
+    expect(new Set(drawings).size).toBe(builtinAgents.length);
+  });
+
+  it('pattern id 按 key 隔离，同页多张卡片不会互相串纹理', () => {
+    // `url(#ink-hatch)` 是文档级查找，只认整篇里第一个同名 id；而 pattern 里的
+    // currentColor 解析的是定义处的颜色，不是使用处的。首页一屏十几张卡片，
+    // id 不隔离就会整片跟着第一张走——不报错，只是悄悄画错。
+    const a = buildAgentCardArtSvg('visual-agent')!;
+    const b = buildAgentCardArtSvg('defect-agent')!;
+
+    expect(a).toContain('id="ink-hatch-visual-agent"');
+    expect(a).toContain('url(#ink-hatch-visual-agent)');
+    expect(b).toContain('id="ink-hatch-defect-agent"');
+    // 两张图的 id 集合必须完全不相交
+    const ids = (svg: string) => new Set([...svg.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
+    const [idsA, idsB] = [ids(a), ids(b)];
+    expect(idsA.size).toBeGreaterThan(0);
+    expect([...idsA].filter((id) => idsB.has(id))).toEqual([]);
+    // 加后缀不能漏掉 dense 那一支（`#ink-hatch-dense` 以 `#ink-hatch` 开头，替换有先后坑）
+    expect(a).not.toMatch(/url\(#ink-hatch(-dense)?\)/);
+  });
+
+  it('一张画同时成立于双主题：只用 currentColor 与 accent 变量，不写死颜色', () => {
+    // 写死一个 hex 就意味着它在另一个主题下失效，也就重新需要 -light 副本——
+    // 那正是这次要根除的东西。顺带把紫色挡在门外（首页三端不许发紫）。
+    const offenders: string[] = [];
+    for (const [key, art] of Object.entries(AGENT_CARD_ART)) {
+      for (const m of art.matchAll(/#[0-9a-fA-F]{3,8}\b/g)) {
+        // `#ink-hatch` 这类 id 引用不是颜色，正则已限定十六进制字符，这里只会命中真色值
+        offenders.push(`${key}: ${m[0]}`);
+      }
+      for (const m of art.matchAll(/\brgba?\(/g)) offenders.push(`${key}: ${m[0]}`);
+    }
+
+    expect(offenders, ['插画里出现了写死的颜色，双主题会失效：', ...offenders].join('\n')).toEqual([]);
   });
 
   it('支持限制图片高度，为下部信息面板留出空间', () => {
@@ -53,13 +86,14 @@ describe('AgentCardArtwork', () => {
     expect(html).toContain('clip-path:inset(0 0 calc(100% - 57%) 0)');
   });
 
-  it('支持按智能体类别给灰阶插画注入色彩层', () => {
+  it('类别色只染动作那一笔，不整片铺在墨线上', () => {
     const html = renderToStaticMarkup(
-      createElement(AgentCardArtwork, { agentKey: 'visual-agent', tint: 'hsl(271 68% 64%)' }),
+      createElement(AgentCardArtwork, { agentKey: 'visual-agent', accentColor: 'hsl(16 54% 60%)' }),
     );
 
-    expect(html).toContain('agent-card-artwork-tint');
-    expect(html).toContain('--agent-card-tint:hsl(271 68% 64%)');
+    expect(html).toContain('--agent-art-accent:hsl(16 54% 60%)');
+    // 旧的整片铺色图层必须不存在：它会把墨线一起染成类别色，重点就没了
+    expect(html).not.toContain('agent-card-artwork-tint');
     expect(html).toContain('agent-card-artwork-wash');
     expect(html).toContain('agent-card-artwork-overlay');
   });
@@ -71,7 +105,10 @@ describe('AgentCardArtwork', () => {
 
     expect(html).toContain('data-compact="true"');
     expect(html).toContain('agent-card-artwork-image');
-    expect(html).toContain('background-image:var(--agent-card-artwork-visual-agent)');
+    expect(html).toContain('<svg viewBox="0 0 320 200"');
+    // 位图那条路必须彻底断掉，不是"暂时没人用"
+    expect(html).not.toContain('background-image');
+    expect(html).not.toContain('.webp');
     expect(html).not.toContain('data-theme');
   });
 

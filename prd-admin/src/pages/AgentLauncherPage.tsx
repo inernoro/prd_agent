@@ -265,7 +265,7 @@ function AgentTile({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         border: hasArtwork ? 'none' : glassTileStyle(accent).border,
       }}
     >
-      <AgentCardArtwork agentKey={item.agentKey} compact tint={accent.color} />
+      <AgentCardArtwork agentKey={item.agentKey} compact accentColor={accent.color} />
       {hasArtwork ? (
         <AgentCardFrame hoverBorder="var(--media-card-border-hover)" />
       ) : (

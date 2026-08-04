@@ -4,30 +4,26 @@
  * 明暗主题的差异只允许写进 tokens.css；首页、百宝箱与移动端统一复用
  * AgentCardArtwork，不再各自维护图片亮度、色彩、遮罩和阴影分支。
  */
+/*
+ * 插图是矢量墨线，不是灰阶照片，所以这里不再有 filter（对比 / 饱和 / 亮度补偿）
+ * 和整片铺色的 tint 图层——前者是给位图提对比用的，套在线稿上只会把墨压灰；
+ * 后者会把墨线一起染成类别色，重点就没了。类别色改为只染「动作那一笔」，
+ * 由 AgentCardArtwork 的 accentColor 经 --agent-art-accent 注入。
+ */
 .agent-card-artwork-image {
-  filter: var(--media-art-filter);
   opacity: var(--media-art-opacity);
-  transition: filter 260ms ease, opacity 260ms ease, transform 500ms ease;
+  transition: opacity 260ms ease, transform 500ms ease;
+}
+
+.agent-card-artwork-image svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .group:hover .agent-card-artwork-image {
   opacity: var(--media-art-opacity-hover);
   transform: scale(1.015);
-}
-
-.agent-card-artwork-tint {
-  background: linear-gradient(
-    128deg,
-    color-mix(in srgb, var(--agent-card-tint) 88%, transparent) 0%,
-    transparent 72%
-  );
-  mix-blend-mode: var(--media-art-tint-blend);
-  opacity: var(--media-art-tint-opacity);
-  transition: opacity 220ms ease;
-}
-
-.group:hover .agent-card-artwork-tint {
-  opacity: var(--media-art-tint-opacity-hover);
 }
 
 .agent-card-artwork-wash {
@@ -44,8 +40,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-card-artwork-image,
-  .agent-card-artwork-tint {
+  .agent-card-artwork-image {
     transition: none;
   }
 }

@@ -225,41 +225,6 @@
   --login-cta-shadow: 0 0 32px rgba(214, 216, 212, 0.08), 0 10px 32px rgba(0, 0, 0, 0.50);
 
   /* 智能体图片卡契约：组件只消费这些 token，不直接判断 light / dark。 */
-  --agent-card-artwork-arena: url('../assets/agent-card-art/arena.webp');
-  --agent-card-artwork-ccas-agent: url('../assets/agent-card-art/ccas-agent.webp');
-  --agent-card-artwork-cds-agent: url('../assets/agent-card-art/cds-agent.webp');
-  --agent-card-artwork-defect-agent: url('../assets/agent-card-art/defect-agent.webp');
-  --agent-card-artwork-email-agent: url('../assets/agent-card-art/email-agent.webp');
-  --agent-card-artwork-emergence-agent: url('../assets/agent-card-art/emergence-agent.webp');
-  --agent-card-artwork-front-end-agent: url('../assets/agent-card-art/front-end-agent.webp');
-  --agent-card-artwork-literary-agent: url('../assets/agent-card-art/literary-agent.webp');
-  --agent-card-artwork-md-to-ppt-agent: url('../assets/agent-card-art/md-to-ppt-agent.webp');
-  --agent-card-artwork-pa-agent: url('../assets/agent-card-art/pa-agent.webp');
-  --agent-card-artwork-pm-agent: url('../assets/agent-card-art/pm-agent.webp');
-  --agent-card-artwork-pr-review: url('../assets/agent-card-art/pr-review.webp');
-  --agent-card-artwork-product-agent: url('../assets/agent-card-art/product-agent.webp');
-  --agent-card-artwork-project-route-agent: url('../assets/agent-card-art/project-route-agent.webp');
-  --agent-card-artwork-report-agent: url('../assets/agent-card-art/report-agent.webp');
-  --agent-card-artwork-review-agent: url('../assets/agent-card-art/review-agent.webp');
-  --agent-card-artwork-shitu-agent: url('../assets/agent-card-art/shitu-agent.webp');
-  --agent-card-artwork-speech-agent: url('../assets/agent-card-art/speech-agent.webp');
-  --agent-card-artwork-task-tree-agent: url('../assets/agent-card-art/task-tree-agent.webp');
-  --agent-card-artwork-tech-doc-format-agent: url('../assets/agent-card-art/tech-doc-format-agent.webp');
-  --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent.webp');
-  --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent.webp');
-  --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard.webp');
-  --agent-card-artwork-tapd-bug-agent: url('../assets/agent-card-art/tapd-bug-agent.webp');
-  --agent-card-artwork-marketplace-openapi: url('../assets/agent-card-art/marketplace-openapi.webp');
-  --agent-card-artwork-shortcuts-agent: url('../assets/agent-card-art/shortcuts-agent.webp');
-  --agent-card-artwork-my-shares: url('../assets/agent-card-art/my-shares.webp');
-  --agent-card-artwork-learning-center: url('../assets/agent-card-art/learning-center.webp');
-  --agent-card-artwork-share-link-tester: url('../assets/agent-card-art/share-link-tester.webp');
-  --agent-card-artwork-transcript-agent: url('../assets/agent-card-art/transcript-agent.webp');
-  --agent-card-artwork-short-video-parser: url('../assets/agent-card-art/short-video-parser.webp');
-  --agent-card-artwork-code-reviewer: url('../assets/agent-card-art/code-reviewer.webp');
-  --agent-card-artwork-translator: url('../assets/agent-card-art/translator.webp');
-  --agent-card-artwork-summarizer: url('../assets/agent-card-art/summarizer.webp');
-  --agent-card-artwork-data-analyst: url('../assets/agent-card-art/data-analyst.webp');
   --media-card-base: #141418;
   --media-card-panel: rgba(20, 20, 24, 0.92);
   --media-card-panel-strong: rgba(20, 20, 24, 0.97);
@@ -279,12 +244,8 @@
   --text-on-media: #f7f7fb;
   --text-on-media-muted: rgba(247, 247, 251, 0.66);
   --media-card-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.60);
-  --media-art-filter: saturate(0.96) contrast(1.18) brightness(0.96);
   --media-art-opacity: 0.96;
   --media-art-opacity-hover: 1;
-  --media-art-tint-opacity: 0.68;
-  --media-art-tint-opacity-hover: 0.82;
-  --media-art-tint-blend: color;
   --media-art-wash: linear-gradient(135deg, transparent, transparent);
   --media-art-wash-blend: normal;
 
@@ -583,41 +544,6 @@
   --viz-label-halo: rgba(248, 245, 239, 0.88);
 
   /* 浅色图片卡消费独立浅色插画，不再把暗图用滤镜与白色蒙层洗亮。 */
-  --agent-card-artwork-arena: url('../assets/agent-card-art/arena-light.webp');
-  --agent-card-artwork-ccas-agent: url('../assets/agent-card-art/ccas-agent-light.webp');
-  --agent-card-artwork-cds-agent: url('../assets/agent-card-art/cds-agent-light.webp');
-  --agent-card-artwork-defect-agent: url('../assets/agent-card-art/defect-agent-light.webp');
-  --agent-card-artwork-email-agent: url('../assets/agent-card-art/email-agent-light.webp');
-  --agent-card-artwork-emergence-agent: url('../assets/agent-card-art/emergence-agent-light.webp');
-  --agent-card-artwork-front-end-agent: url('../assets/agent-card-art/front-end-agent-light.webp');
-  --agent-card-artwork-literary-agent: url('../assets/agent-card-art/literary-agent-light.webp');
-  --agent-card-artwork-md-to-ppt-agent: url('../assets/agent-card-art/md-to-ppt-agent-light.webp');
-  --agent-card-artwork-pa-agent: url('../assets/agent-card-art/pa-agent-light.webp');
-  --agent-card-artwork-pm-agent: url('../assets/agent-card-art/pm-agent-light.webp');
-  --agent-card-artwork-pr-review: url('../assets/agent-card-art/pr-review-light.webp');
-  --agent-card-artwork-product-agent: url('../assets/agent-card-art/product-agent-light.webp');
-  --agent-card-artwork-project-route-agent: url('../assets/agent-card-art/project-route-agent-light.webp');
-  --agent-card-artwork-report-agent: url('../assets/agent-card-art/report-agent-light.webp');
-  --agent-card-artwork-review-agent: url('../assets/agent-card-art/review-agent-light.webp');
-  --agent-card-artwork-shitu-agent: url('../assets/agent-card-art/shitu-agent-light.webp');
-  --agent-card-artwork-speech-agent: url('../assets/agent-card-art/speech-agent-light.webp');
-  --agent-card-artwork-task-tree-agent: url('../assets/agent-card-art/task-tree-agent-light.webp');
-  --agent-card-artwork-tech-doc-format-agent: url('../assets/agent-card-art/tech-doc-format-agent-light.webp');
-  --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent-light.webp');
-  --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent-light.webp');
-  --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard-light.webp');
-  --agent-card-artwork-tapd-bug-agent: url('../assets/agent-card-art/tapd-bug-agent-light.webp');
-  --agent-card-artwork-marketplace-openapi: url('../assets/agent-card-art/marketplace-openapi-light.webp');
-  --agent-card-artwork-shortcuts-agent: url('../assets/agent-card-art/shortcuts-agent-light.webp');
-  --agent-card-artwork-my-shares: url('../assets/agent-card-art/my-shares-light.webp');
-  --agent-card-artwork-learning-center: url('../assets/agent-card-art/learning-center-light.webp');
-  --agent-card-artwork-share-link-tester: url('../assets/agent-card-art/share-link-tester-light.webp');
-  --agent-card-artwork-transcript-agent: url('../assets/agent-card-art/transcript-agent-light.webp');
-  --agent-card-artwork-short-video-parser: url('../assets/agent-card-art/short-video-parser-light.webp');
-  --agent-card-artwork-code-reviewer: url('../assets/agent-card-art/code-reviewer-light.webp');
-  --agent-card-artwork-translator: url('../assets/agent-card-art/translator-light.webp');
-  --agent-card-artwork-summarizer: url('../assets/agent-card-art/summarizer-light.webp');
-  --agent-card-artwork-data-analyst: url('../assets/agent-card-art/data-analyst-light.webp');
   --media-card-base: #E6E0D7;
   --media-card-panel: rgba(241, 236, 228, 0.94);
   --media-card-panel-strong: rgba(245, 241, 234, 0.98);
@@ -660,12 +586,8 @@
 
   /* 浅色原图保持自然材质，只做轻微色彩校正与类别提示。 */
   --media-card-shadow: 0 8px 22px -12px rgba(74, 62, 48, 0.28);
-  --media-art-filter: saturate(1.04) contrast(1.20) brightness(0.98);
   --media-art-opacity: 1;
   --media-art-opacity-hover: 1;
-  --media-art-tint-opacity: 0.06;
-  --media-art-tint-opacity-hover: 0.10;
-  --media-art-tint-blend: soft-light;
   --media-art-wash: linear-gradient(135deg, transparent, transparent);
   --media-art-wash-blend: normal;
 

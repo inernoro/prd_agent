@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { AGENT_CARD_ART, buildAgentCardArtSvg } from './agentCardArtSource';
 
 interface AgentCardPresentation {
   task: string;
@@ -43,17 +44,11 @@ const AGENT_CARD_PRESENTATION: Readonly<Record<string, AgentCardPresentation>> =
 };
 
 export function hasAgentCardArtwork(agentKey?: string): boolean {
-  return !!agentKey && !!AGENT_CARD_PRESENTATION[agentKey];
+  return !!agentKey && !!AGENT_CARD_PRESENTATION[agentKey] && !!AGENT_CARD_ART[agentKey];
 }
 
 export function getAgentCardTask(agentKey?: string): string | null {
   return agentKey ? AGENT_CARD_PRESENTATION[agentKey]?.task ?? null : null;
-}
-
-export function getAgentCardArtworkToken(agentKey?: string): string | null {
-  return agentKey && AGENT_CARD_PRESENTATION[agentKey]
-    ? `--agent-card-artwork-${agentKey}`
-    : null;
 }
 
 interface AgentCardArtworkProps {
@@ -62,19 +57,28 @@ interface AgentCardArtworkProps {
   compact?: boolean;
   /** 编辑型卡片只让图片占据上部，给下方信息面板留出稳定空间。 */
   imageHeight?: string;
-  /** 首页按智能体类别注入的轻量色彩提示，不承担主题转换。 */
-  tint?: string;
+  /**
+   * 这张图里「动作那一笔」的颜色，默认赭红。
+   *
+   * 传该智能体所属类别的墨带色（`lib/tileAccent`），35 张图就仍然彼此可辨。
+   * 注意它**不是**旧的 tint 图层：那是往灰阶照片上整片铺一层类别色，
+   * 会把墨线一起染掉；这里只染动作那一笔，墨线永远是墨线。
+   */
+  accentColor?: string;
 }
 
 /**
  * 智能体卡片背景的统一渲染层。
  *
- * 图片只负责表达智能体职责；名称、说明、状态与操作仍由真实 HTML 渲染，
- * 保持可访问性和跨端清晰度。下半部遮罩对应图片自带柔焦区，为文字保留安静背景。
+ * 插图只负责表达智能体职责；名称、说明、状态与操作仍由真实 HTML 渲染，
+ * 保持可访问性和跨端清晰度。下半部遮罩为文字保留安静背景。
+ *
+ * 画的内容走内联 SVG（`agentCardArtSource`），不是位图：一张图靠 currentColor
+ * 同时成立于暗浅双主题，缩到 200px 缩略图也还是线。
  */
-export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint }: AgentCardArtworkProps) {
-  const artworkToken = getAgentCardArtworkToken(agentKey);
-  if (!artworkToken) return null;
+export function AgentCardArtwork({ agentKey, compact = false, imageHeight, accentColor }: AgentCardArtworkProps) {
+  const svg = agentKey ? buildAgentCardArtSvg(agentKey) : null;
+  if (!svg) return null;
 
   return (
     <div
@@ -84,15 +88,10 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint 
       style={imageHeight ? { clipPath: `inset(0 0 calc(100% - ${imageHeight}) 0)` } : undefined}
     >
       <div
-        className="agent-card-artwork-image absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: `var(${artworkToken})` }}
+        className="agent-card-artwork-image absolute inset-0"
+        style={accentColor ? ({ '--agent-art-accent': accentColor } as CSSProperties) : undefined}
+        dangerouslySetInnerHTML={{ __html: svg }}
       />
-      {tint && (
-        <div
-          className="agent-card-artwork-tint absolute inset-0"
-          style={{ '--agent-card-tint': tint } as CSSProperties}
-        />
-      )}
       <div className="agent-card-artwork-wash absolute inset-0" />
       <div className="agent-card-artwork-overlay absolute inset-0" />
       <div

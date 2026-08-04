@@ -4,8 +4,6 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { normalizeThemeConfig } from '../themeApplier';
 import { THEME_ACCEPTANCE_TARGETS } from '../themeAcceptanceTargets';
-import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
-import { buildStaticAgents } from '@/lib/homeLauncherItems';
 import {
   ACCENT_STYLES,
   DEFAULT_THEME_CONFIG,
@@ -172,23 +170,22 @@ describe('主题系统契约', () => {
 
   it('tokens.css 是明暗主题与材质视觉值的唯一契约', () => {
     const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
-    const darkBlock = tokens.slice(0, tokens.indexOf('[data-theme="light"]'));
     const lightBlock = tokens.slice(
       tokens.indexOf('[data-theme="light"]'),
       tokens.indexOf('/* 固定暗色可视化表面'),
     );
-    const artworkTokenPattern = /--agent-card-artwork-[^:]+:\s*url\('\.\.\/assets\/agent-card-art\/[^']+\.webp'\);/g;
-
     expect(tokens).toContain('[data-material="solid"]');
     expect(lightBlock).toContain('--bg-base:');
-    const expectedArtworkCount = new Set([
-      ...BUILTIN_TOOLS.map((item) => item.agentKey),
-      ...buildStaticAgents().map((item) => item.agentKey),
-    ]).size;
-    expect(darkBlock.match(artworkTokenPattern)).toHaveLength(expectedArtworkCount);
-    expect(lightBlock.match(artworkTokenPattern)).toHaveLength(expectedArtworkCount);
-    expect(lightBlock.match(/agent-card-art\/[a-z-]+-light\.webp/g)).toHaveLength(expectedArtworkCount);
-    expect(lightBlock).toContain('--media-art-filter:');
+
+    // 卡片插画改成内联 SVG 之后，tokens.css 里不该再有任何位图指针。
+    // 这条不是"清理残留"的洁癖：只要还剩一条 `--agent-card-artwork-*: url(...webp)`，
+    // 下一个人照着它加新智能体就会又走回「一个智能体存暗浅两张图」的老路，
+    // 而那条路正是本次换掉的东西（2.0 MB 二进制 + 每次换皮肤重出一套）。
+    expect(tokens).not.toContain('--agent-card-artwork-');
+    expect(tokens).not.toContain('agent-card-art/');
+    expect(tokens).not.toContain('--media-art-filter');
+    expect(tokens).not.toContain('--media-art-tint');
+
     expect(lightBlock).toContain('--media-art-wash: linear-gradient(135deg, transparent, transparent)');
     expect(lightBlock).toContain('--text-on-media:');
     expect(lightBlock).not.toContain('brightness(1.48)');
@@ -700,21 +697,18 @@ describe('主题系统契约', () => {
     });
   });
 
-  it('测试与正式镜像共用同一构建入口，并完整复制浅色插画产物', () => {
+  it('测试与正式镜像共用同一构建入口', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(ADMIN_ROOT, 'package.json'), 'utf8')) as {
       scripts: Record<string, string>;
     };
     const dockerfile = fs.readFileSync(path.join(ADMIN_ROOT, 'Dockerfile'), 'utf8');
-    const artworkDir = path.join(ADMIN_ROOT, 'src/assets/agent-card-art');
-    const lightArtwork = fs.readdirSync(artworkDir).filter((name) => name.endsWith('-light.webp'));
 
     expect(packageJson.scripts.build).toBe('tsc && vite build');
     expect(dockerfile).toContain('pnpm run build');
     expect(dockerfile).toContain('COPY --from=builder /app/dist ./dist');
-    expect(lightArtwork).toHaveLength(new Set([
-      ...BUILTIN_TOOLS.map((item) => item.agentKey),
-      ...buildStaticAgents().map((item) => item.agentKey),
-    ]).size);
+    // 原先这里还断言「浅色插画产物齐全」——插画改内联 SVG 后没有产物可复制了，
+    // 覆盖度改由 AgentCardArtwork.test.ts 直接盯 AGENT_CARD_ART 的 key 集合。
+    expect(fs.existsSync(path.join(ADMIN_ROOT, 'src/assets/agent-card-art'))).toBe(false);
   });
 
   it('移动端兼容提示复用跨主题语义色与固定暗色表面契约', () => {

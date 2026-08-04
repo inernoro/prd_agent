@@ -402,7 +402,7 @@ export default function MobileHomePage() {
                   >
                     {hasArtwork ? (
                       <>
-                        <AgentCardArtwork agentKey={t.agentKey} compact tint={agentAccent.from} />
+                        <AgentCardArtwork agentKey={t.agentKey} compact accentColor={agentAccent.from} />
                         <span className="relative z-10 flex w-full items-start justify-between gap-2">
                           <span
                             className="line-clamp-2"
