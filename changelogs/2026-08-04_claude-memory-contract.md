@@ -10,3 +10,6 @@
 | refactor | claude-md | 根 AGENTS.md 与 CLAUDE.md 合二为一：AGENTS.md 改为工具中立的共用 SSOT（483 行压到 205 行），CLAUDE.md 改为 @AGENTS.md 导入 + 宿主专属差异（9 行），消灭两份 95% 相同的手工副本 |
 | fix | claude-md | 守卫的行数预算改为解析 @import 后再计量，否则导入模式会让预算检查变成假绿灯 |
 | test | claude-md | 守卫新增断言：根有 AGENTS.md 时 CLAUDE.md 必须 @import 而非复制；模块覆盖与索引检查改看解析后文本 |
+| fix | claude-md | 修复裁剪 AGENTS.md 索引表打断 Codex 规则发现路径导致 GatewayDataDomainGuardTests 变红；改为显式点名 .Codex/rules 两条并说明触发范围 |
+| fix | claude-md | 按 Codex 评审补齐 4 条过窄的 paths：production-release-safety 补 fast.sh 与整个 deploy/nginx、config-runtime-drift 补 appsettings 与 .env、enum-ripple-audit 补 pages/lib 下的常量注册表、onboarding-tips 补带教程的产品页 |
+| test | claude-md | 守卫新增断言：.Codex/rules 每条必须在 AGENTS.md 被点名，且更长的同名路径不算数（Codex 无按需加载，未点名等于永不加载） |

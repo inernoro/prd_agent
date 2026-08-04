@@ -3,6 +3,8 @@ paths:
   - "prd-api/src/**/Enums.cs"
   - "prd-api/src/**/Models/**/*.cs"
   - "prd-admin/src/types/**/*.ts"
+  - "prd-admin/src/lib/**/*.ts"
+  - "prd-admin/src/pages/**/*.tsx"
   - "prd-desktop/src/types/**/*.ts"
 ---
 

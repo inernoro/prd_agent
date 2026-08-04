@@ -190,7 +190,10 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 ## 规则与技能
 
-- **架构规则** `.claude/rules/`：52 条，全体 Agent 共用，每条开头两行导读（`**一句话**` / `**什么时候撞上**`）。Codex 另有 `.Codex/rules/` 放宿主专属补充（本地连调纪律等），不与共用规则重复。
+- **架构规则** `.claude/rules/`：52 条，全体 Agent 共用，每条开头两行导读（`**一句话**` / `**什么时候撞上**`）。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载；**不支持的宿主必须自己按下面这份清单主动去读**。
+- **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制，所以在此点名——
+  - `local-debugging.md`：本地连调、视觉修复、接口排查、CDS 部署验证的工作方式。
+  - `production-release-safety.md`：碰发布链路（`exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow）前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`。公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数。
 - **技能**：57 个，位于宿主的项目级技能根（`.claude/skills/`；部分通用宿主用 `.agents/skills/`）。名称与描述通常由宿主自动注入，此处不重复维护清单。
 
 生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。

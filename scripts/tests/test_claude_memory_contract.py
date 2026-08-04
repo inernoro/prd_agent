@@ -252,8 +252,41 @@ def check_module_coverage() -> None:
             )
 
 
+def check_host_specific_rules_are_announced() -> None:
+    """Rules a host cannot auto-load must be named in the shared entry point.
+
+    `.claude/rules/` scopes itself with `paths`, so Claude Code loads a rule the
+    moment it touches a matching file. Codex has no equivalent, so the only way
+    it discovers `.Codex/rules/*` is AGENTS.md naming them. Trimming the rule
+    index out of AGENTS.md silently cut that discovery path and broke
+    GatewayDataDomainGuardTests, which asserts production-release-safety.md is
+    named there - a contract this file did not know about until it went red.
+    """
+    codex_rules = REPO / ".Codex" / "rules"
+    agents = REPO / "AGENTS.md"
+    if not codex_rules.is_dir() or not agents.exists():
+        return
+    text = agents.read_text(encoding="utf-8")
+    for rule in sorted(codex_rules.glob("*.md")):
+        # A bare mention counts; so does `.Codex/rules/<name>`. A longer unrelated
+        # path that merely ends in the same filename does not - `doc/rule.platform.
+        # production-release-safety.md` would otherwise satisfy this check by
+        # coincidence, leaving the rule itself unannounced.
+        announced = any(
+            m.group(1) in ("", ".Codex/rules/")
+            for m in re.finditer(rf"([\w./-]*?){re.escape(rule.name)}", text)
+        )
+        if not announced:
+            fail(
+                f".Codex/rules/{rule.name} is not named in AGENTS.md (a longer path "
+                "ending in the same filename does not count). Codex has no path-scoped "
+                "loading, so an unannounced rule is one it never reads."
+            )
+
+
 def main() -> int:
     print("Claude memory contract:")
+    check_host_specific_rules_are_announced()
     check_rules()
     check_intro_lines()
     check_claude_md_size()

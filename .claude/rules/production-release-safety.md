@@ -1,7 +1,8 @@
 ---
 paths:
   - "exec_dep.sh"
-  - "deploy/**/*.conf"
+  - "fast.sh"
+  - "deploy/nginx/**/*"
   - "docker-compose*.yml"
   - ".github/workflows/*.yml"
 ---

@@ -1,7 +1,7 @@
 ---
 paths:
+  - "prd-admin/src/pages/**/*.tsx"
   - "prd-admin/src/components/daily-tips/**/*.tsx"
-  - "prd-admin/src/pages/learning-center/**/*.tsx"
   - "prd-api/src/**/DailyTipsController.cs"
 ---
 

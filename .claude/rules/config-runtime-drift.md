@@ -1,7 +1,9 @@
 ---
 paths:
   - "docker-compose*.yml"
-  - "deploy/**/*.conf"
+  - "**/appsettings*.json"
+  - ".env*"
+  - "deploy/nginx/**/*"
   - "scripts/**/*.sh"
   - "scripts/**/*.py"
 ---
