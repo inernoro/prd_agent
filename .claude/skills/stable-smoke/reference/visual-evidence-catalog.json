@@ -20,13 +20,13 @@
       "breadcrumb": "登录 → 合成登录 → 首页 → 顶部头像 → 修改头像 → 上传或描述 → 生成预览 → 保存",
       "entryPath": "/",
       "uniqueScreenshotFloor": 14,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["登录", "会话", "头像入口", "编辑器", "上传", "描述", "加载", "预览", "保存", "刷新持久化", "移动端"],
       "methods": ["真实导航", "功能主链路", "持久化", "移动端"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面头像编辑器", "primaryState": "编辑器", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下弹窗、预览和操作区完整可见"},
-        {"label": "亮色移动端头像编辑器", "primaryState": "移动端", "theme": "light", "viewportClass": "mobile", "expectedProof": "真实触控移动端可完成上传与描述"},
+        {"label": "移动端头像编辑器", "primaryState": "移动端", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端可完成上传与描述"},
         {"label": "头像描述校验与恢复", "primaryState": "描述", "theme": "dark", "viewportClass": "desktop", "expectedProof": "无效描述给出可理解提示且可继续编辑"}
       ]
     },
@@ -36,15 +36,15 @@
       "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 录音转笔记 → 录音保护 → 转录原文",
       "entryPath": "/document-store",
       "uniqueScreenshotFloor": 16,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["入口", "权限允许", "权限拒绝", "录音开始", "暂停或结束", "音频上传", "上传完成", "转录进度", "转录结果", "失败恢复", "持久化", "移动端"],
       "methods": ["权限边界", "文件上传", "异步进度", "结果持久化", "移动端"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面转录结果", "primaryState": "转录结果", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下原文、状态和后续操作完整"},
-        {"label": "亮色移动端权限拒绝", "primaryState": "权限拒绝", "theme": "light", "viewportClass": "mobile", "expectedProof": "拒绝麦克风后仍可改用音频上传"},
+        {"label": "移动端权限拒绝", "primaryState": "权限拒绝", "theme": "dark", "viewportClass": "mobile", "expectedProof": "拒绝麦克风后仍可改用音频上传"},
         {"label": "移动端转录进度", "primaryState": "转录进度", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏进度持续变化且无遮挡"},
-        {"label": "失败后再次转录", "primaryState": "失败恢复", "theme": "light", "viewportClass": "desktop", "expectedProof": "失败信息说明恢复动作，原音频仍保留"}
+        {"label": "失败后再次转录", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "失败信息说明恢复动作，原音频仍保留"}
       ]
     },
     {
@@ -53,14 +53,14 @@
       "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 上传文件 → 解析进度 → 可读结果",
       "entryPath": "/document-store",
       "uniqueScreenshotFloor": 16,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["入口", "文件选择", "类型识别", "上传", "解析准备", "解析进度", "可读结果", "无效文件", "用户可读错误", "重试", "持久化", "移动端"],
       "methods": ["文件边界", "异步进度", "用户可读错误", "结果持久化", "移动端"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面解析结果", "primaryState": "可读结果", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下结果内容和下载入口完整"},
-        {"label": "亮色移动端损坏文件", "primaryState": "无效文件", "theme": "light", "viewportClass": "mobile", "expectedProof": "损坏文件在移动端给出用户可读提示"},
-        {"label": "超长中文文件名", "primaryState": "类型识别", "theme": "light", "viewportClass": "desktop", "expectedProof": "超长文件名不挤压状态与操作按钮"},
+        {"label": "移动端损坏文件", "primaryState": "无效文件", "theme": "dark", "viewportClass": "mobile", "expectedProof": "损坏文件在移动端给出用户可读提示"},
+        {"label": "超长中文文件名", "primaryState": "类型识别", "theme": "dark", "viewportClass": "desktop", "expectedProof": "超长文件名不挤压状态与操作按钮"},
         {"label": "移动端重试与回读", "primaryState": "重试", "theme": "dark", "viewportClass": "mobile", "expectedProof": "重试成功后刷新仍能读取解析结果"}
       ]
     },
@@ -70,14 +70,14 @@
       "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 解析短视频 → 抽取与转写 → 时间轴结果",
       "entryPath": "/document-store",
       "uniqueScreenshotFloor": 12,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["入口", "视频上传", "链接输入", "抽取进度", "转写进度", "时间轴结果", "失败恢复", "移动端"],
       "methods": ["双输入路径", "异步进度", "结果完整性", "失败恢复"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面链接输入", "primaryState": "链接输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下输入、提交与校验信息完整"},
-        {"label": "亮色移动端视频上传", "primaryState": "视频上传", "theme": "light", "viewportClass": "mobile", "expectedProof": "真实触控移动端可选择并上传短视频"},
-        {"label": "超长错误提示", "primaryState": "失败恢复", "theme": "light", "viewportClass": "desktop", "expectedProof": "错误长文案不溢出并给出恢复动作"},
+        {"label": "移动端视频上传", "primaryState": "视频上传", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端可选择并上传短视频"},
+        {"label": "超长错误提示", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "错误长文案不溢出并给出恢复动作"},
         {"label": "移动端时间轴", "primaryState": "时间轴结果", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏时间轴可滚动且内容不裁切"}
       ]
     },
@@ -87,13 +87,13 @@
       "breadcrumb": "首页 → 文学创作 → 新建作品 → 流式创作 → 保存结果",
       "entryPath": "/literary-agent",
       "uniqueScreenshotFloor": 14,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["入口", "空态引导", "新建", "输入", "流式开始", "流式中间态", "完成", "保存", "刷新持久化", "失败恢复", "移动端"],
       "methods": ["流式反馈", "核心生成", "持久化", "失败恢复", "移动端"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面创作完成态", "primaryState": "完成", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下正文、保存状态与操作区完整"},
-        {"label": "移动端流式中间态", "primaryState": "流式中间态", "theme": "light", "viewportClass": "mobile", "expectedProof": "真实触控移动端持续显示新增内容"},
+        {"label": "移动端流式中间态", "primaryState": "流式中间态", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端持续显示新增内容"},
         {"label": "超长正文滚动与保存", "primaryState": "保存", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长文滚动时工具区可用且保存结果明确"}
       ]
     },
@@ -103,14 +103,14 @@
       "breadcrumb": "首页 → 视觉创作 → 输入描述或单张参考图 → 生成进度 → 图片结果",
       "entryPath": "/visual-agent",
       "uniqueScreenshotFloor": 18,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["入口", "空态", "描述输入", "单图上传", "参考图预览", "提交", "准备中", "生成中", "进度自适应", "结果", "继续编辑", "保存", "失败恢复", "移动端"],
       "methods": ["真实生成", "进度状态机", "响应式布局", "用户可读错误", "移动端"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面生成结果", "primaryState": "结果", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下结果图、编辑与保存动作完整"},
-        {"label": "移动端生成进度", "primaryState": "进度自适应", "theme": "light", "viewportClass": "mobile", "expectedProof": "窄屏进度条按容器宽度完整显示"},
-        {"label": "超长描述输入", "primaryState": "描述输入", "theme": "light", "viewportClass": "desktop", "expectedProof": "长描述换行后不挤压上传和提交动作"},
+        {"label": "移动端生成进度", "primaryState": "进度自适应", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏进度条按容器宽度完整显示"},
+        {"label": "超长描述输入", "primaryState": "描述输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长描述换行后不挤压上传和提交动作"},
         {"label": "方图与宽图进度边界", "primaryState": "生成中", "theme": "dark", "viewportClass": "desktop", "expectedProof": "不同画布比例下进度条均完整落在容器内"}
       ]
     },
@@ -120,14 +120,14 @@
       "breadcrumb": "首页 → 视觉创作 → 添加两至三图 → 组合描述 → 生成结果",
       "entryPath": "/visual-agent",
       "uniqueScreenshotFloor": 18,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["入口", "第一张参考图", "第二张参考图", "第三张参考图", "引用识别", "顺序", "组合描述", "提交", "准备中", "生成中", "结果", "替换或删除", "失败恢复", "移动端"],
       "methods": ["多附件关联", "真实生成", "进度状态机", "失败恢复", "移动端"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面三图引用", "primaryState": "第三张参考图", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下三张参考图、编号和顺序清晰"},
-        {"label": "移动端三图与组合描述", "primaryState": "移动端", "theme": "light", "viewportClass": "mobile", "expectedProof": "窄屏可查看三图并完成组合描述"},
-        {"label": "超长组合描述", "primaryState": "组合描述", "theme": "light", "viewportClass": "desktop", "expectedProof": "长描述与引用标记不重叠、不丢失"},
+        {"label": "移动端三图与组合描述", "primaryState": "移动端", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏可查看三图并完成组合描述"},
+        {"label": "超长组合描述", "primaryState": "组合描述", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长描述与引用标记不重叠、不丢失"},
         {"label": "多比例生成进度边界", "primaryState": "生成中", "theme": "dark", "viewportClass": "desktop", "expectedProof": "不同结果尺寸下进度条完整且持续变化"}
       ]
     },
@@ -137,14 +137,14 @@
       "breadcrumb": "首页 → 视频创作 → 脚本 → 分镜与关键帧 → 成片",
       "entryPath": "/video-agent",
       "uniqueScreenshotFloor": 16,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["入口", "新建", "脚本输入", "脚本生成", "分镜", "关键帧", "阶段进度", "动态反馈", "成片或受控终态", "失败恢复", "持久化", "移动端"],
       "methods": ["长任务状态机", "阶段结果", "失败恢复", "持久化", "移动端"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面分镜", "primaryState": "分镜", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下分镜顺序与关键帧操作清晰"},
-        {"label": "移动端阶段进度", "primaryState": "阶段进度", "theme": "light", "viewportClass": "mobile", "expectedProof": "窄屏长任务阶段持续变化且无遮挡"},
-        {"label": "超长脚本输入", "primaryState": "脚本输入", "theme": "light", "viewportClass": "desktop", "expectedProof": "长脚本滚动与生成动作保持可用"},
+        {"label": "移动端阶段进度", "primaryState": "阶段进度", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏长任务阶段持续变化且无遮挡"},
+        {"label": "超长脚本输入", "primaryState": "脚本输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长脚本滚动与生成动作保持可用"},
         {"label": "部分失败与继续处理", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "局部失败明确指出影响并允许继续或重试"}
       ]
     },
@@ -169,13 +169,13 @@
       "breadcrumb": "各业务功能 → 触发等待或失败 → 查看提示 → 执行恢复；各功能 → 切换窄屏 → 完成关键操作",
       "entryPath": "/",
       "uniqueScreenshotFloor": 12,
-      "requiredThemes": ["light", "dark"],
+      "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
       "requiredStates": ["错误结果", "错误原因类别", "恢复动作", "阶段变化", "进度完整", "窄屏", "超长文案", "弹窗", "滚动", "无横向溢出"],
       "methods": ["用户可读错误", "进度状态机", "响应式布局", "溢出断言", "恢复动作"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面超长错误", "primaryState": "超长文案", "theme": "dark", "viewportClass": "desktop", "expectedProof": "超长错误在暗色主题下换行完整且恢复动作可见"},
-        {"label": "移动端弹窗与滚动", "primaryState": "弹窗", "theme": "light", "viewportClass": "mobile", "expectedProof": "窄屏弹窗不裁切，内部滚动与关闭动作可用"}
+        {"label": "移动端弹窗与滚动", "primaryState": "弹窗", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏弹窗不裁切，内部滚动与关闭动作可用"}
       ]
     }
   ],

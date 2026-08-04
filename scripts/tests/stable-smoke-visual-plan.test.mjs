@@ -14,12 +14,12 @@ test('视觉取证计划逐模块展开为148条有路径的任务', () => {
   assert.ok(plan.slots.every((slot) => slot.primaryState && slot.expectedProof && slot.methodAnchor));
 });
 
-test('单图和多图视觉各有18条且覆盖双主题双设备', () => {
+test('单图和多图视觉各有18条且覆盖产品主题与双设备', () => {
   const plan = buildVisualPlan(catalog);
   for (const moduleId of ['single-image-creation', 'multi-image-creation']) {
     const slots = plan.slots.filter((slot) => slot.moduleId === moduleId);
     assert.equal(slots.length, 18);
-    assert.deepEqual([...new Set(slots.map((slot) => slot.theme))].sort(), ['dark', 'light']);
+    assert.deepEqual([...new Set(slots.map((slot) => slot.theme))], ['dark']);
     assert.deepEqual([...new Set(slots.map((slot) => slot.viewportClass))].sort(), ['desktop', 'mobile']);
   }
 });

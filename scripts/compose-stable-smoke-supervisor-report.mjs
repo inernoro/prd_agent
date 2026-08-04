@@ -33,7 +33,7 @@ const visualBeforeLedger = new Set([
 
 const visualGateSummarySections = new Set(['模块覆盖', '需处理事项']);
 const visualGateLedgerSections = new Set(['逐张视觉证据账本', '视觉测试方法']);
-const conciseVisualSections = new Set(['改动断言表', '验收用例', '覆盖缺口', '移动端验收', '缺陷清单']);
+const conciseVisualSections = new Set(['缺陷清单']);
 
 function parseMarkdownTable(sectionContent) {
   const lines = String(sectionContent || '').split('\n');

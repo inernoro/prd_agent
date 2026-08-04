@@ -14,8 +14,9 @@ function stateViewport(module, state) {
   return /移动端|窄屏/.test(state) ? 'mobile' : 'desktop';
 }
 
-function stateTheme(index) {
-  return index % 2 === 0 ? 'light' : 'dark';
+function stateTheme(module, index) {
+  const themes = module.requiredThemes || ['dark'];
+  return themes[index % themes.length];
 }
 
 function slotId(moduleId, sequence) {
@@ -36,7 +37,7 @@ export function buildVisualPlan(catalog) {
         primaryState: state,
         coverageStates: [state],
         testType: index === 0 ? '冒烟' : '视觉',
-        theme: stateTheme(index),
+        theme: stateTheme(module, index),
         viewportClass,
         breadcrumb: `${module.breadcrumb} → ${state}`,
         expectedProof: `页面处于“${state}”状态，关键内容和操作完整可见`,

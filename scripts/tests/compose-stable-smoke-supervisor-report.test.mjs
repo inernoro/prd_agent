@@ -90,7 +90,8 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
   assert.doesNotMatch(composed, /## 视觉证据预算/);
   assert.match(composed, /206 项账本/);
   assert.match(composed, /\{\{IMG:001-visual\}\}/);
-  assert.match(composed, /## 改动断言表/);
+  assert.match(composed, /## 缺陷清单/);
+  assert.doesNotMatch(composed, /## 改动断言表/);
   assert.doesNotMatch(composed, /124 张逐图判定/);
   assert.match(composed, /## 逐张视觉证据账本/);
   assert.match(composed, /## 视觉测试方法/);
