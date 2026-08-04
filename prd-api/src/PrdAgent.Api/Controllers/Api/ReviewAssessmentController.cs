@@ -285,6 +285,8 @@ public class ReviewAssessmentController : ControllerBase
             run = ToRunView(run),
             reportMarkdown = run.ReportMarkdown,
             items = ordered,
+            // Draft 态附带预览行，供前端列映射确认界面展示样例数据
+            previewRows = run.Status == RequirementAssessmentStatuses.Draft ? run.Rows.Take(5).ToList() : null,
             factors = RequirementFactorCatalog.All.Select(f => new { f.Key, f.Name, f.Weight, f.RuleRef, f.AnchorGuide }),
         }));
     }
@@ -443,6 +445,16 @@ public class ReviewAssessmentController : ControllerBase
         var baseSeed = DeriveSeed(run.Id);
         int batchNo = 0;
 
+        // 模型可见性：首个 Start chunk 的解析结果推给前端展示（ai-model-visibility 规则）
+        bool modelAnnounced = false;
+        Func<string, string?, Task> onModel = async (model, platform) =>
+        {
+            if (modelAnnounced) return;
+            modelAnnounced = true;
+            try { await WriteSseEventAsync("model", new { model, platform }); }
+            catch { /* 客户端断开不影响评估 */ }
+        };
+
         foreach (var batch in pending.Chunk(ScoreBatchSize))
         {
             batchNo++;
@@ -454,7 +466,7 @@ public class ReviewAssessmentController : ControllerBase
                 message = $"正在评估第 {scoredCount + 1}-{Math.Min(scoredCount + batch.Length, allItems.Count)}/{allItems.Count} 条：{firstName} 等",
             });
 
-            var (scored, batchError) = await ScoreBatchAsync(run, batch, systemPrompt, baseSeed + batchNo, userId);
+            var (scored, batchError) = await ScoreBatchAsync(run, batch, systemPrompt, baseSeed + batchNo, userId, onModel);
 
             if (batchError != null)
             {
@@ -552,7 +564,8 @@ public class ReviewAssessmentController : ControllerBase
         RequirementAssessmentItem[] batch,
         string systemPrompt,
         int seed,
-        string userId)
+        string userId,
+        Func<string, string?, Task>? onModel = null)
     {
         var userPromptBase = BuildScoringUserPrompt(batch);
         const int MaxAttempts = 2;
@@ -591,6 +604,10 @@ public class ReviewAssessmentController : ControllerBase
                     if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                     {
                         fullContent.Append(chunk.Content);
+                    }
+                    else if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null && onModel != null)
+                    {
+                        await onModel(chunk.Resolution.ActualModel, chunk.Resolution.ActualPlatformName);
                     }
                     else if (chunk.Type == GatewayChunkType.Error)
                     {
