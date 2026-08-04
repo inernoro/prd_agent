@@ -39,6 +39,54 @@ const visualGateSections = new Set([
   '视觉测试方法',
 ]);
 
+function parseMarkdownTable(sectionContent) {
+  const lines = String(sectionContent || '').split('\n');
+  const tableLines = lines.filter((line) => /^\|.*\|$/.test(line.trim()));
+  if (tableLines.length < 3) return null;
+  const cells = (line) => line.trim().slice(1, -1).split('|').map((cell) => cell.trim());
+  return {
+    headers: cells(tableLines[0]),
+    rows: tableLines.slice(2).map(cells),
+  };
+}
+
+export function synchronizeVisualOverview(overviewContent, gateModuleContent) {
+  const overviewTable = parseMarkdownTable(overviewContent);
+  const gateTable = parseMarkdownTable(gateModuleContent);
+  if (!overviewTable || !gateTable) return overviewContent;
+
+  const gateModuleIndex = gateTable.headers.indexOf('模块');
+  const gateStatusIndex = gateTable.headers.indexOf('视觉结论');
+  const overviewModuleIndex = overviewTable.headers.indexOf('模块');
+  const overviewStatusIndex = overviewTable.headers.indexOf('视觉');
+  const overviewSeverityIndex = overviewTable.headers.indexOf('最高问题');
+  const overviewInterventionIndex = overviewTable.headers.indexOf('是否需干预');
+  if ([gateModuleIndex, gateStatusIndex, overviewModuleIndex, overviewStatusIndex].some((index) => index < 0)) {
+    return overviewContent;
+  }
+
+  const gateStatusByModule = new Map(gateTable.rows.map((row) => [row[gateModuleIndex], row[gateStatusIndex]]));
+  const rewrittenRows = overviewTable.rows.map((row) => {
+    const status = gateStatusByModule.get(row[overviewModuleIndex]);
+    if (!status) return row;
+    const next = [...row];
+    next[overviewStatusIndex] = status;
+    if (status !== '通过') {
+      if (overviewSeverityIndex >= 0 && (!next[overviewSeverityIndex] || next[overviewSeverityIndex] === '无')) {
+        next[overviewSeverityIndex] = 'P2';
+      }
+      if (overviewInterventionIndex >= 0) next[overviewInterventionIndex] = '是';
+    }
+    return next;
+  });
+  const tableLines = [
+    `| ${overviewTable.headers.join(' | ')} |`,
+    `|${overviewTable.headers.map(() => '---').join('|')}|`,
+    ...rewrittenRows.map((row) => `| ${row.join(' | ')} |`),
+  ];
+  return String(overviewContent).replace(/(?:^\|.*\|$\n?){3,}/m, `${tableLines.join('\n')}\n`);
+}
+
 export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visualGateMarkdown = '') {
   const functional = parseReportSections(functionalMarkdown);
   const visual = parseReportSections(visualMarkdown);
@@ -47,6 +95,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   const visualGateDetail = visualGate.sections.filter((section) => visualGateSections.has(section.title));
   const visualSteps = visual.sections.filter((section) => /^步骤\s+\d+/.test(section.title));
   const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
+  const visualGateModules = visualGate.sections.find((section) => section.title === '模块覆盖');
   const inferredVerdict = /不通过/.test(functional.lead)
     ? 'fail'
     : /部分通过/.test(functional.lead)
@@ -57,7 +106,9 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   for (const section of functional.sections) {
     if (section.title === '主管验收总览') {
       output.push(section.content.replace(/^## 主管验收总览/m, '## 主管先看'), '');
-      if (visualOverview) output.push(visualOverview.content, '');
+      if (visualOverview) {
+        output.push(synchronizeVisualOverview(visualOverview.content, visualGateModules?.content), '');
+      }
       continue;
     }
     if (!visualInserted && section.title === '未通过与未执行逐项清单') {
