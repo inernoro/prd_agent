@@ -12,3 +12,6 @@
 | fix | claude-md | D4 的字段判据未限定在 frontmatter 块内，正文出现 name: 示例行会把缺字段的技能误判成合规；改用 awk 取 frontmatter 块 |
 | fix | claude-md | 新增 Step 4.5 硬闸：D4 里无法自动修复的三类条目命中时跳过自动 squash 合并，只写进 PR 正文等于随 PR 一起被合并掉 |
 | fix | claude-md | 上一轮加的 D4 合并硬闸读 $D4_SCAN_OUTPUT，而该变量从未被赋值，真实运行时恒为空、闸门永不触发；改为闸门自己重跑判据，不依赖任何外部变量 |
+| feat | doc-tooling | doc-readability-check.py 新增 --skills-audit 模式，复用 check_skill 输出可发现性判定，并补上「目录没有 SKILL.md」这个既有缺口 |
+| refactor | claude-md | entropy-cleanup 的 D4 扫描/修复/合并闸三处不再自己写 frontmatter 判据，统一调用 --skills-audit；判据两处实现是前七轮偏差的共同根因 |
+| fix | claude-md | Step 6.2 无条件合并同名旧 PR，会把被硬闸挡下的 [需人工] PR 一并合掉，使硬闸只延迟一轮；改为跳过并对其余 PR 合并前复跑审计 |

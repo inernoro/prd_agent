@@ -98,33 +98,17 @@ grep -oE '\`[a-z][a-z0-9._-]+\`' doc/guide.list.directory.md | tr -d '`' | while
   [ -f "doc/${key}.md" ] || echo "GHOST_GUIDE: $key"
 done
 
-# D4. 技能可发现性（2026-08-04 起不再查 CLAUDE.md 技能表——那张表已删除）
+# D4. 技能可发现性 —— 判据只有一处，不要在这里重写
 #
-# 旧逻辑是 `grep "| **$skill**" CLAUDE.md`，表删掉之后会把 57 个技能全判成缺失，
-# 而它的修复动作是往 CLAUDE.md 追加表格行——正好会把已经精简掉的表重新写回去。
-# 技能的发现机制现在是 SKILL.md frontmatter（宿主自动注入用它，人工扫描也用它），
-# 所以这一维改查 frontmatter 完整性。
+# 2026-08-04：这里曾经用 grep 自己判 frontmatter，连续多轮被评审挑出偏差
+# （只查键不查值、不限定 frontmatter 块、空值算合规、name 与目录不一致查不出）。
+# 同一件事两处实现，弱的那处就是漏洞。判据现在只在
+# scripts/doc-readability-check.py::check_skill 里，本维只消费它的输出。
 #
-# 必须扫**两个**技能根：Claude 读 .claude/skills，Codex 读 .agents/skills。
-# 也必须自己查「目录缺 SKILL.md」——doc-readability-check 的 scan_skills() 遇到
-# 没有 SKILL.md 的目录是 `continue` 跳过的，那条棘轮只兜 frontmatter 内容，
-# 不兜文件缺失，所以它不是这一项的 fallback。
-# 字段必须只在 frontmatter 块里取：正文中出现 `name: demo` 这类示例行时，
-# 不限定范围的 grep 会把缺字段的技能误判成合规，修复也就永远不触发。
-fm() { awk 'NR==1 && $0=="---" {f=1; next} f && $0=="---" {exit} f {print}' "$1"; }
-
-for root in .claude/skills .agents/skills; do
-  [ -d "$root" ] || continue
-  for d in "$root"/*/; do
-    [ -d "$d" ] || continue
-    skill="$root/$(basename "$d")"
-    [ -f "$d/SKILL.md" ] || { echo "MISSING_SKILL_MD: $skill"; continue; }
-    block=$(fm "$d/SKILL.md")
-    [ -n "$block" ] || { echo "MISSING_SKILL_FRONTMATTER: $skill"; continue; }
-    echo "$block" | grep -q '^name:' || echo "MISSING_SKILL_NAME: $skill"
-    echo "$block" | grep -q '^description:' || echo "MISSING_SKILL_DESC: $skill"
-  done
-done
+# 输出契约：AUTOFIX_NAME: <dir>  → 可由目录名确定性补全
+#           BLOCK: <dir> — <原因> → 不可安全自动修，必须挡住自动合并
+D4_AUDIT=$(python3 scripts/doc-readability-check.py --skills-audit || true)
+printf '%s\n' "$D4_AUDIT"
 
 # D6. 未处理的 changelog（限量：最多 5 条）
 MANIFEST="changelogs/.entropy-manifest.yml"
@@ -194,35 +178,24 @@ grep -q "\`$key\`" doc/guide.list.directory.md || {
 }
 ```
 
-**D4 技能可发现性修复（分两类，不许一刀切）**：
+**D4 技能可发现性修复（只修审计判为可自动修的那一类）**：
 
-`name` 能安全推导——它按定义就等于目录名，补它是确定性操作。`description` 与整份
-`SKILL.md` 不能：description 决定这个技能什么时候被触发，编一个占位符比缺着更糟
-（技能会在错误的场景被拉起，或永远不被拉起），这属于 `no-rootless-tree` 说的「不许
-凭空造」。所以：
+`name` 键整个缺失时能安全推导——它按定义就等于目录名。其余一切（空值、与目录不一致、
+description 缺失或说不清触发时机、frontmatter 语法坏、整份 SKILL.md 缺失）都不可
+自动重建：description 决定这个技能什么时候被触发，编一个占位符比缺着更糟，属于
+`no-rootless-tree` 说的「不许凭空造」。
 
 ```bash
-# 可自动修：name 缺失 → 用目录名补（两个技能根都处理）
-for root in .claude/skills .agents/skills; do
-  [ -d "$root" ] || continue
-  for d in "$root"/*/; do
-    f="$d/SKILL.md"; [ -f "$f" ] || continue
-    skill=$(basename "$d")
-    head -1 "$f" | grep -q '^---$' || continue   # 没有 frontmatter 块，交给人工
-    awk 'NR==1 && $0=="---" {f=1; next} f && $0=="---" {exit} f {print}' "$f" \
-      | grep -q '^name:' && continue             # 只认 frontmatter 里的 name
-    sed -i "1a name: $skill" "$f"
-    echo "FIXED_SKILL_NAME: $root/$skill"
-  done
-done
+python3 scripts/doc-readability-check.py --skills-audit \
+  | grep '^AUTOFIX_NAME: ' | sed 's/^AUTOFIX_NAME: //' | while read -r dir; do
+      sed -i "1a name: $(basename "$dir")" "$dir/SKILL.md"
+      echo "FIXED_SKILL_NAME: $dir"
+    done
 
-# 不可自动修：description 缺失 / 整份 SKILL.md 缺失 → 停下来升级，不猜不编
+# 修完复跑一次确认这一类已清零（BLOCK 那类留给 Step 4.5 判定）
+python3 scripts/doc-readability-check.py --skills-audit | grep '^AUTOFIX_NAME: ' && \
+  echo "[WARN] 仍有可自动修条目未处理" || true
 ```
-
-**升级而非静默通过**：本轮若有任何 `MISSING_SKILL_MD` 或 `MISSING_SKILL_DESC`，
-在报告里单列一节「需人工处理」，写清是哪个技能根下的哪个目录、缺什么、为什么不能自动补，
-并且**不得因为「其它维度都清干净了」就当作本轮无欠债**。这类条目会让第二次运行仍报同一笔债
-——这是有意的，不是幂等性被破坏（见幂等性保证第 5 条）。
 
 **D6 changelog→doc 内容覆盖**：
 1. 读取 changelog 文件，提取涉及模块（第 2 列：prd-api/prd-admin 等）
@@ -256,43 +229,18 @@ D4 里 `MISSING_SKILL_MD` / `MISSING_SKILL_DESC` / `MISSING_SKILL_FRONTMATTER` �
 
 所以在提交之前判定：
 
-闸门**自己重跑一遍判据**，不读任何来自前面步骤的变量。理由：Step 1 的扫描是直接打到
-stdout 的，如果这里去读一个约定好的变量名，那个变量在真实运行里根本不存在，闸门会恒为
-「无阻塞」而静默放行——一个永不触发的闸门比没有闸门更糟，因为它让人以为这里被守住了。
-重跑一次只花毫秒级，换来的是这段判定不依赖任何外部约定。
+闸门**自己重跑一遍审计**，不读任何来自前面步骤的变量——上一版读的 `$D4_SCAN_OUTPUT`
+从来没有被赋值过，真实运行时恒为空，闸门永不触发。**一个永不触发的闸门比没有闸门更糟**，
+因为它让人以为这里被守住了。重跑只花毫秒级。
 
 ```bash
-fm() { awk 'NR==1 && $0=="---" {f=1; next} f && $0=="---" {exit} f {print}' "$1"; }
-
-BLOCKERS=""
-for root in .claude/skills .agents/skills; do
-  [ -d "$root" ] || continue
-  for d in "$root"/*/; do
-    [ -d "$d" ] || continue
-    skill="$root/$(basename "$d")"
-    if [ ! -f "$d/SKILL.md" ]; then
-      BLOCKERS="$BLOCKERS
-MISSING_SKILL_MD: $skill"; continue
-    fi
-    block=$(fm "$d/SKILL.md")
-    if [ -z "$block" ]; then
-      BLOCKERS="$BLOCKERS
-MISSING_SKILL_FRONTMATTER: $skill"; continue
-    fi
-    echo "$block" | grep -q '^description:' || BLOCKERS="$BLOCKERS
-MISSING_SKILL_DESC: $skill"
-  done
-done
-BLOCKERS=$(printf '%s' "$BLOCKERS" | sed '/^$/d')
+BLOCKERS=$(python3 scripts/doc-readability-check.py --skills-audit | grep '^BLOCK: ' || true)
 
 if [ -n "$BLOCKERS" ]; then
   echo "[BLOCKED] D4 有无法自动修复的条目，本轮不自动合并："
   printf '%s\n' "$BLOCKERS"
 fi
 ```
-
-注意这里**只查不可自动修复的三类**：`name` 缺失不进 BLOCKERS，因为 Step 3 已经把它补掉了；
-把已修好的东西也算作阻塞，会让每一轮都卡住。
 
 命中时的强制动作：
 
@@ -333,7 +281,13 @@ git push -u origin $(git branch --show-current)
 #### 6.2 检查是否已有未合并的熵减 PR
 
 使用 `mcp__github__list_pull_requests`（state=open, base=main）查询 `inernoro/prd_agent`。
-- 若已有标题含「熵减计划」的 open PR，先尝试用 `mcp__github__merge_pull_request`（squash）合并旧 PR；合并失败则记录并继续创建新 PR。
+- 若已有标题含「熵减计划」的 open PR：
+  - **标题以 `[需人工] ` 开头的一律跳过**，不得合并。那是上一轮被 D4 硬闸挡下的 PR，
+    里面带着未修复的可发现性缺陷；无条件合并它等于把硬闸的作用推迟一轮就作废
+    （这正是硬闸要防的事）。留给人处理，本轮继续创建新 PR。
+  - 其余的先重跑一次 `python3 scripts/doc-readability-check.py --skills-audit`，
+    确认无 `BLOCK:` 行，再用 `mcp__github__merge_pull_request`（squash）合并；
+    合并失败则记录并继续创建新 PR。
 
 #### 6.3 创建 PR
 

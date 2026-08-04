@@ -1140,6 +1140,8 @@ def main() -> int:
     ap.add_argument("--ratchet", action="store_true", help="与基线比对，欠账上升即失败（CI 用）")
     ap.add_argument("--update-baseline", action="store_true", help="把当前欠账写回基线")
     ap.add_argument("--list-missing", action="store_true", help="逐条列出欠账文件")
+    ap.add_argument("--skills-audit", action="store_true",
+                    help="按技能逐个输出可发现性判定（entropy-cleanup D4 用），含缺 SKILL.md 的目录")
     ap.add_argument("--baseline-ref", default="",
                     help="拿这个 git ref 上的基线当上限，防止本分支自己把基线放宽（CI 传 origin/main）")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
@@ -1163,6 +1165,41 @@ def main() -> int:
                 rewritten += n
         print(f"已把 {rewritten} 处裸引用改写为可点链接，涉及 {touched} 篇")
         return 0
+
+    if args.skills_audit:
+        # entropy-cleanup 的 D4 唯一判据入口。以前 D4 在 bash 里另写了一套 grep 判据，
+        # 连续多轮出现「只查键不查值」「不限定 frontmatter 块」「空值算合规」这类偏差——
+        # 同一件事两处实现，弱的那处就是漏洞。这里复用 check_skill()，D4 只消费输出。
+        #
+        # 输出契约（每行一条，前缀决定 D4 怎么处理）：
+        #   AUTOFIX_NAME: <dir>   frontmatter 在、name 键整个缺失 —— 可由目录名确定性补全
+        #   BLOCK: <dir> — <原因> 其余一切 —— 不可安全自动修，必须挡住自动合并
+        rc = 0
+        for rel_dir in SKILL_DIRS:
+            abs_dir = os.path.join(REPO_ROOT, rel_dir)
+            if not os.path.isdir(abs_dir):
+                continue
+            for name in sorted(os.listdir(abs_dir)):
+                skill_dir = os.path.join(abs_dir, name)
+                if not os.path.isdir(skill_dir):
+                    continue
+                path = os.path.join(skill_dir, "SKILL.md")
+                shown = f"{rel_dir.replace(os.sep, '/')}/{name}"
+                # scan_skills() 对没有 SKILL.md 的目录是 continue 跳过的（它只统计
+                # frontmatter 欠账）。那种技能装不上也发现不了，这里必须报出来。
+                if not os.path.isfile(path):
+                    print(f"BLOCK: {shown} — 目录下没有 SKILL.md")
+                    rc = 1
+                    continue
+                problems = check_skill(path)
+                if not problems:
+                    continue
+                rc = 1
+                if problems == ["frontmatter 缺 name"]:
+                    print(f"AUTOFIX_NAME: {shown}")
+                else:
+                    print(f"BLOCK: {shown} — {'；'.join(problems)}")
+        return rc
 
     stats, missing, bad_prefix = scan()
     bare_per_type, bare_detail, dead_detail = scan_links()
