@@ -646,6 +646,11 @@ public sealed class ShortVideoMaterialProcessor
         return match.Success ? match.Value.TrimEnd('。', '，', ',', '.', ')', ']') : input.Trim();
     }
 
+    public static bool IsHttpUrl(string? value)
+        => Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+           && !string.IsNullOrWhiteSpace(uri.Host);
+
     public static string DetectPlatform(string url)
     {
         var lower = url.ToLowerInvariant();

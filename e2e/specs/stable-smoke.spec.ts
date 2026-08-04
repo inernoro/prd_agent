@@ -554,6 +554,45 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[FILE-003] 大文件上传期间持续显示文件名和百分比', async ({ page, request }) => {
+    test.setTimeout(90_000);
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
+    let storeId = '';
+    try {
+      const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: runKey, description: '上传进度稳定冒烟，执行后自动清理', isPublic: false },
+      }));
+      storeId = store.id;
+      await page.evaluate((id) => sessionStorage.setItem('doc-store-selected-id', id), storeId);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(page.getByText(runKey, { exact: true })).toBeVisible({ timeout: 15_000 });
+
+      let releaseUpload!: () => void;
+      const release = new Promise<void>((resolveRelease) => { releaseUpload = resolveRelease; });
+      await page.route(`**/api/document-store/stores/${storeId}/upload`, async (route) => {
+        await release;
+        await route.continue();
+      });
+      const name = `${runKey}.txt`;
+      await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({
+        name,
+        mimeType: 'text/plain',
+        buffer: Buffer.alloc(2 * 1024 * 1024, 65),
+      });
+      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/^\d+%$/)).toBeVisible();
+      releaseUpload();
+      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
+    } finally {
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deleted.status());
+      }
+    }
+  });
+
   test('[LIT-001] 文学作品可新建、保存、刷新回读并清理', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `stsmk-${Date.now()}-文学作品`;
@@ -660,6 +699,47 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
       }
     }
+  });
+
+  test('[LIT-009] 移动端可输入标题、创建作品并进入编辑页', async ({ page, request }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-移动文学`;
+    let workspaceId = '';
+    try {
+      await page.locator('[data-tour-id="literary-create"]').click();
+      const input = page.getByPlaceholder('未命名');
+      await expect(input).toBeVisible();
+      await input.fill(title);
+      await page.getByRole('button', { name: '创建', exact: true }).click();
+      await page.waitForURL(/\/literary-agent\/[^/?#]+/, { timeout: 20_000 });
+      workspaceId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1) || '';
+      expect(workspaceId).toBeTruthy();
+      await expect(page.locator('body')).toContainText(title);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, '移动端文学创作页面不得横向裁切').toBeLessThanOrEqual(1);
+      expect(await page.locator('button:visible, textarea:visible, [contenteditable="true"]:visible').count()).toBeGreaterThan(0);
+    } finally {
+      if (workspaceId) {
+        const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, {
+          headers: authHeaders(token),
+        });
+        expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      }
+    }
+  });
+
+  test('[PARSE-003] 非法短视频链接在入口被拒绝并说明恢复动作', async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const response = await page.request.post('/api/short-video-materials/runs', {
+      headers: authHeaders(token),
+      data: { videoUrl: '这不是链接', title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-invalid-video` },
+    });
+    const body = await response.json() as ApiEnvelope<never>;
+    expect(response.status()).toBe(400);
+    expect(body.success).toBe(false);
+    expect(body.error?.message || '').toContain('完整的公开视频链接');
+    expectUserReadable(body.error?.message || '');
   });
 
   test('[VIDEO-004][VIDEO-007][VIDEO-008][REG-video-001] 最短视频真实生成、播放文件校验与下载', async ({ page, request }) => {
@@ -857,6 +937,52 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[REC-001][REC-002][REC-006] 现场录音自动开始、暂停继续且静音会在上传前拦截', async ({ page, request, context }) => {
+    test.setTimeout(90_000);
+    await context.grantPermissions(['microphone']);
+    await page.addInitScript(() => {
+      const analyser = window.AnalyserNode?.prototype;
+      if (!analyser) return;
+      analyser.getByteTimeDomainData = function getSilentTimeDomainData(target: Uint8Array) {
+        target.fill(128);
+      };
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await loginAndReadToken(page, request, '/document-store?quickRecord=1');
+
+    await expect(page.getByText('录音中', { exact: true }), '进入快捷录音后必须自动开始').toBeVisible({ timeout: 20_000 });
+    const timer = page.getByText(/^\d{2}:\d{2}$/).first();
+    await expect(timer).toBeVisible();
+    await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe('00:00');
+
+    await page.getByRole('button', { name: '暂停录音' }).click();
+    await expect(page.getByText('已暂停', { exact: true })).toBeVisible();
+    const pausedAt = await timer.textContent();
+    await page.waitForTimeout(1_200);
+    expect(await timer.textContent(), '暂停期间计时不得继续增长').toBe(pausedAt);
+
+    await page.getByRole('button', { name: '继续录音' }).click();
+    await expect(page.getByText('录音中', { exact: true })).toBeVisible();
+    await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe(pausedAt);
+
+    await page.getByRole('button', { name: '结束录音并转成文字' }).click();
+    await expect(page.getByText('整段录音几乎没有检测到声音，转录很可能失败。请确认麦克风没有静音。')).toBeVisible();
+    await page.getByRole('button', { name: '放弃本次录音' }).click();
+    await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
+  });
+
+  test('[REC-008] 浏览器不支持录音时直接提供上传音频兜底', async ({ page, request }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: undefined });
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await loginAndReadToken(page, request, '/document-store?quickRecord=1');
+    await expect(page.getByText('当前浏览器不支持录音', { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('button', { name: /上传音频文件/ })).toBeVisible();
+    await page.getByRole('button', { name: '取消录音' }).click();
+    await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
+  });
+
   test('[VIS-001] 单图模型目录只返回可用逻辑模型', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const response = await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) });
@@ -955,7 +1081,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-005][REG-visual-error-001] 无效生图请求返回用户可读错误', async ({ page, request }) => {
+  test('[CORE-005][VIS-008][REG-visual-error-001] 无效生图请求返回用户可读错误', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const response = await page.request.post('/api/visual-agent/image-gen/runs', {
       headers: authHeaders(token),
@@ -989,6 +1115,36 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(overflow).toBeLessThanOrEqual(1);
     const interactive = page.locator('textarea:visible, input:visible, button:visible');
     expect(await interactive.count()).toBeGreaterThan(0);
+  });
+
+  test('[MVIS-012] 移动端参考图、尺寸、输入和移除操作均可触达', async ({ page, request }, testInfo) => {
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'multi-image-mobile-layout');
+    try {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissVisualTutorial(page);
+      const reference = solidPngDataUrl(35, 90, 190, 128);
+      await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
+        name: 'mobile-reference.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from(reference.split(',')[1], 'base64'),
+      });
+      await expect(page.getByAltText('参考图')).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByPlaceholder('描述要怎么改这张图…')).toBeVisible();
+      await expect(page.getByRole('button', { name: '生成', exact: true })).toBeVisible();
+      await expect(page.getByText('方形 1:1', { exact: true })).toBeVisible();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow).toBeLessThanOrEqual(1);
+      await testInfo.attach('multi-image-mobile-input', { body: await page.screenshot(), contentType: 'image/png' });
+      await page.getByRole('button', { name: '移除参考图' }).click();
+      await expect(page.getByAltText('参考图')).toBeHidden();
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+    }
   });
 
   test('[CORE-004][VIS-002][VIS-004][VIS-005][VIS-007][VIS-010] 文生图真实产物、SSE 恢复、进度布局与清理', async ({ page, request }, testInfo) => {
@@ -1076,7 +1232,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010][REG-multi-image-001][REG-multi-image-002] 多图引用真实生成、恢复与清理', async ({ page, request }, testInfo) => {
+  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图引用真实生成、恢复与清理', async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
@@ -1140,6 +1296,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await generatedImage.evaluate((image) => (image as HTMLImageElement).decode());
       await page.waitForTimeout(500);
       await expect(page.getByText('参考', { exact: false }).last()).toBeVisible({ timeout: 15_000 });
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, '桌面端多图引用、结果和输入区不得造成页面横向裁切').toBeLessThanOrEqual(1);
+      expect(await page.locator('textarea:visible, [contenteditable="true"]:visible').count()).toBeGreaterThan(0);
       await testInfo.attach('multi-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       if (runId) {

@@ -61,7 +61,17 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: process.env.STABLE_SMOKE_RUN
+          ? {
+              args: [
+                '--use-fake-device-for-media-stream',
+                '--use-fake-ui-for-media-stream',
+              ],
+            }
+          : undefined,
+      },
     },
     // Add firefox / webkit projects later when core chromium paths
     // are stable. Cross-browser coverage isn't worth the 3x CI time
