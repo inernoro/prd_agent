@@ -25,12 +25,30 @@ import type {
 const MASK_KEY = 'exec.teamInsights.masked';
 
 /** 区块标题：mono 眉标建立节奏，标题与说明拉开字重差 */
+/** 卡片内表头：让每张卡都有自己的标题带，而不是内容直接怼在边框上 */
+function CardHead({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div
+      className="flex items-baseline gap-2 px-4 py-2.5 flex-wrap"
+      style={{ borderBottom: '1px solid var(--border-subtle)' }}
+    >
+      <span className="text-[10px] tracking-[0.14em] uppercase font-medium" style={{ color: 'var(--text-secondary)' }}>{title}</span>
+      {hint && <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{hint}</span>}
+    </div>
+  );
+}
+
 function SectionHead({ index, title, hint, right }: { index: string; title: string; hint: string; right?: React.ReactNode }) {
   return (
     <div className="flex items-baseline gap-2.5 mb-2.5 flex-wrap">
       <span
-        className="text-[10px] tabular-nums tracking-[0.18em]"
-        style={{ color: 'var(--text-muted)', opacity: 0.7, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+        className="text-[10px] tabular-nums font-semibold rounded px-1.5 py-[3px] leading-none"
+        style={{
+          color: 'var(--text-secondary)',
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-subtle)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        }}
       >
         {index}
       </span>
@@ -263,8 +281,9 @@ function Quadrant({
   const noQuality = members.length - plotted.length;
 
   return (
-    <div className="ti-card relative rounded-xl px-4 pt-4 pb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <div className="relative ml-7 mt-4" style={{ height: 360 }}>
+    <div className="ti-card relative rounded-xl overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <CardHead title="分型散点" hint={`气泡大小 = 有产出的天数 · 十字线 = 分型阈值（产出 ${medians.output} 件 / 质量 ${medians.quality}）`} />
+      <div className="relative ml-11 mr-5 mt-7" style={{ height: 360 }}>
         {/* 中位线 —— 阈值来自后端真实中位数，不是拍的常数 */}
         <div
           className="absolute"
@@ -342,10 +361,9 @@ function Quadrant({
           );
         })}
       </div>
-      <div className="mt-6 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-        气泡大小 = 有产出的天数 · 十字线 = 分型阈值（产出 {medians.output} 件 / 质量 {medians.quality}）
-        {noQuality > 0 && ` · ${noQuality} 人本窗无结果型信号（缺陷或生图），未入图`}
-        {!reliable && <span style={{ color: 'var(--semantic-warning-text)' }}> · 入图样本不足 3 人，暂不做分型</span>}
+      <div className="mt-7 mb-3.5 px-4 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+        {noQuality > 0 && `${noQuality} 人本窗无结果型信号（缺陷或生图），未入图`}
+        {!reliable && <span style={{ color: 'var(--semantic-warning-text)' }}>{noQuality > 0 ? ' · ' : ''}入图样本不足 3 人，暂不做分型</span>}
       </div>
     </div>
   );
@@ -372,7 +390,9 @@ function MemberDetail({ member, masked, costAvailable, bench }: { member: TeamIn
   const barMax = Math.max(1, ...bars.map(x => Math.max(x.val, x.med)));
 
   return (
-    <div className="ti-card relative rounded-xl p-4 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+    <div className="ti-card relative rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <CardHead title="单人画像" />
+      <div className="p-4 flex flex-col gap-3">
       <div className="flex items-center gap-2.5">
         {member.avatarFileName ? (
           <UserAvatar src={resolveAvatarUrl({ avatarFileName: member.avatarFileName })} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
@@ -461,6 +481,7 @@ function MemberDetail({ member, masked, costAvailable, bench }: { member: TeamIn
           ))}
         </div>
       </div>
+      </div>
     </div>
   );
 }
@@ -517,6 +538,14 @@ const PANEL_CSS = `
   opacity: .55;
 }
 .ti-card:hover { border-color: var(--border-default) !important; transform: translateY(-1px); }
+.ti-attn::before { display: none; }
+.ti-attn:hover { border-top-color: currentColor; }
+.ti-link { transition: background .16s ease, border-color .16s ease; }
+.ti-link:hover { background: var(--bg-card-hover); border-color: var(--border-default) !important; }
+.ti-table tbody tr { transition: background .14s ease; }
+.ti-table tbody tr:hover { background: var(--bg-secondary); }
+.ti-root details > summary { transition: background .14s ease; }
+.ti-root details > summary:hover { background: var(--bg-secondary); }
 @media (prefers-reduced-motion: reduce) {
   .ti-root section { animation: none }
   .ti-card:hover { transform: none }
@@ -591,32 +620,56 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
             {attention.map(a => {
               const s = SEV[a.severity] ?? SEV.watch;
+              const isCritical = a.severity === 'critical';
               return (
                 <div
                   key={a.key}
-                  className="ti-card relative rounded-xl overflow-hidden grid"
-                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', gridTemplateColumns: '3px 1fr' }}
+                  className="ti-card ti-attn relative rounded-xl overflow-hidden flex flex-col"
+                  style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border-subtle)',
+                    // 严重项用一道顶边定调，而不是贴在左侧的硬色条（那道条读起来像没擦掉的痕迹）
+                    borderTop: `2px solid ${isCritical ? s.color : 'var(--border-subtle)'}`,
+                  }}
                 >
-                  <div style={{ background: s.color }} />
-                  <div className="px-4 py-3">
-                    <span
-                      className="inline-block text-[9.5px] tracking-widest uppercase px-2 py-0.5 rounded"
-                      style={{ color: s.color, background: s.soft, border: `1px solid ${s.border}` }}
-                    >
-                      {s.label}
-                    </span>
-                    <h3 className="text-[13.5px] font-semibold mt-2 mb-1.5" style={{ color: 'var(--text-primary)' }}>{a.title}</h3>
-                    <p className="text-[12.5px] leading-relaxed m-0 mb-2.5" style={{ color: 'var(--text-secondary)' }}>{a.evidence}</p>
-                    <div className="flex items-center gap-2 flex-wrap pt-2" style={{ borderTop: '1px dashed var(--border-subtle)' }}>
-                      <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>建议：{a.suggestion}</span>
-                      <a
-                        href={a.linkTo}
-                        className="ml-auto inline-flex items-center gap-0.5 text-[11.5px] whitespace-nowrap"
-                        style={{ color: '#5B8CFF' }}
+                  <div className="px-4 pt-3.5 pb-3 flex flex-col gap-2 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full" style={{ width: 6, height: 6, background: s.color }} />
+                      <span
+                        className="text-[10px] tracking-[0.14em] uppercase font-medium"
+                        style={{ color: s.color }}
                       >
-                        {a.linkLabel}<ChevronRight size={12} />
-                      </a>
+                        {s.label}
+                      </span>
                     </div>
+                    <h3 className="text-[14.5px] font-semibold leading-snug m-0 tracking-[-0.01em]" style={{ color: 'var(--text-primary)' }}>
+                      {a.title}
+                    </h3>
+                    <p className="text-[12.5px] leading-[1.7] m-0" style={{ color: 'var(--text-secondary)' }}>
+                      {a.evidence}
+                    </p>
+                  </div>
+                  {/* 建议与入口独立成一条动作区：和证据区分开，读者一眼知道「这里是要我做的事」 */}
+                  <div
+                    className="px-4 py-2.5 flex items-center gap-3 flex-wrap"
+                    style={{ background: 'var(--bg-secondary)', borderTop: '1px solid var(--border-subtle)' }}
+                  >
+                    <span className="text-[12px] leading-snug flex-1 min-w-0" style={{ color: 'var(--text-secondary)' }}>
+                      <span
+                        className="text-[10px] tracking-[0.12em] uppercase mr-1.5"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        建议
+                      </span>
+                      {a.suggestion}
+                    </span>
+                    <a
+                      href={a.linkTo}
+                      className="ti-link inline-flex items-center gap-0.5 text-[11.5px] whitespace-nowrap px-2 py-1 rounded-md"
+                      style={{ color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+                    >
+                      {a.linkLabel}<ChevronRight size={12} />
+                    </a>
                   </div>
                 </div>
               );
@@ -627,7 +680,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
 
       {/* C. 成员画像 */}
       <section>
-        <SectionHead index="03" title="成员画像" hint="产出量 × 结果质量，按团队中位分型，不排名" />
+        <SectionHead index="03" title="成员画像" hint="不排名，按团队中位分型" />
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-2.5">
           <Quadrant
             members={members}
@@ -644,14 +697,17 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
 
       {/* D. 价值流 */}
       <section>
-        <SectionHead index="04" title="价值流" hint="三列各按自己的口径计量，条宽只表示同列内占比" />
+        <SectionHead index="04" title="价值流" hint="投入变成了什么，损耗在哪" />
         <div
-          className="ti-card relative rounded-xl px-4 py-4 grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5"
+          className="ti-card relative rounded-xl overflow-hidden"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
         >
+          <CardHead title="投入 → 环节 → 产出" hint="三列各按自己的口径计量，条宽只表示同列内占比" />
+          <div className="px-4 py-4 grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5">
           <FlowColumn title="投入" nodes={flow.left} />
           <FlowColumn title="环节（模型调用分布）" nodes={flow.mid} />
           <FlowColumn title="产出与损耗" nodes={flow.right} />
+          </div>
         </div>
       </section>
 
@@ -663,9 +719,9 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
             <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>{members.length} 人 · 默认折叠</span>
           </summary>
           <div className="overflow-x-auto" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-            <table className="w-full text-[12px] whitespace-nowrap">
+            <table className="ti-table w-full text-[12px] whitespace-nowrap">
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-subtle)' }}>
                   {['成员', '产出', '质量', '产出天', '文档', '站点', '生图', '周报', '缺陷解决/指派', '积压', '调用', '失败', 'AI 成本'].map((h, i) => (
                     <th key={h} className={`px-3 py-2 font-medium ${i === 0 ? 'text-left' : 'text-right'}`} style={{ color: 'var(--text-muted)' }}>{h}</th>
                   ))}
