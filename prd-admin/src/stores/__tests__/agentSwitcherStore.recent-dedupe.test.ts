@@ -115,3 +115,66 @@ describe('agentSwitcherStore: 最近使用去重', () => {
     expect(usageCounts['visual-agent']).toBe(7);
   });
 });
+
+describe('agentSwitcherStore: 水合竞态', () => {
+  beforeEach(() => {
+    useAgentSwitcherStore.setState({
+      recentVisits: [],
+      pinnedIds: [],
+      usageCounts: {},
+      serverLoaded: false,
+      serverLoading: false,
+    });
+    vi.clearAllMocks();
+  });
+
+  it('水合期间的点击不会被远端数据抹掉', async () => {
+    // AppShell 一进页就异步 loadFromServer；用户手快先点了一个智能体。
+    // 那一刻 serverLoaded 还是 false，scheduleSync 直接 return（防空态覆盖云端），
+    // 紧接着远端数据整体替换 recentVisits/usageCounts——点击连同计数一起消失。
+    type PrefsResponse = Awaited<ReturnType<typeof getUserPreferences>>;
+    let resolveLoad: (value: PrefsResponse) => void = () => {};
+    vi.mocked(getUserPreferences).mockReturnValue(
+      new Promise<PrefsResponse>((resolve) => { resolveLoad = resolve; }),
+    );
+
+    const loading = useAgentSwitcherStore.getState().loadFromServer();
+
+    // 水合还在飞的时候点开视觉创作
+    useAgentSwitcherStore.getState().addRecentVisit({ ...baseVisit, id: 'visual-agent', path: '/visual-agent' });
+
+    resolveLoad({
+      success: true,
+      data: {
+        agentSwitcherPreferences: {
+          pinnedIds: [],
+          recentVisits: [{ id: 'literary-agent', agentKey: '', agentName: '文学创作', title: '文学创作', path: '/literary-agent', icon: 'Feather', timestamp: 1 }],
+          usageCounts: { 'literary-agent': 5 },
+        },
+      },
+    } as unknown as PrefsResponse);
+    await loading;
+
+    const { recentVisits, usageCounts } = useAgentSwitcherStore.getState();
+    expect(usageCounts['visual-agent'], '水合期间那次点击的计数被抹掉了').toBe(1);
+    expect(usageCounts['literary-agent'], '远端计数没保住').toBe(5);
+    expect(recentVisits[0]?.id, '水合期间那次点击应排在最近使用第一位').toBe('visual-agent');
+    expect(recentVisits.some((v) => v.id === 'literary-agent'), '远端记录被挤掉了').toBe(true);
+  });
+
+  it('水合完成后队列清空，不会重复重放', async () => {
+    vi.mocked(getUserPreferences).mockResolvedValue({
+      success: true,
+      data: { agentSwitcherPreferences: { pinnedIds: [], recentVisits: [], usageCounts: { 'visual-agent': 3 } } },
+    } as unknown as Awaited<ReturnType<typeof getUserPreferences>>);
+
+    useAgentSwitcherStore.getState().addRecentVisit({ ...baseVisit, id: 'visual-agent', path: '/visual-agent' });
+    await useAgentSwitcherStore.getState().loadFromServer();
+    expect(useAgentSwitcherStore.getState().usageCounts['visual-agent']).toBe(4);
+
+    // 第二次水合（换号 / 手动刷新）不该把同一次点击再加一遍
+    useAgentSwitcherStore.setState({ serverLoaded: false, serverLoading: false });
+    await useAgentSwitcherStore.getState().loadFromServer();
+    expect(useAgentSwitcherStore.getState().usageCounts['visual-agent']).toBe(3);
+  });
+});
