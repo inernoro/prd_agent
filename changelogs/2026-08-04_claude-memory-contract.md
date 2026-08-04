@@ -16,3 +16,5 @@
 | fix | claude-md | Codex 第二轮评审：quickstart-zero-friction 补 quick*.sh、ai-model-visibility 补 prd-desktop、full-height-layout 补 prd-admin/src/layouts |
 | refactor | claude-md | sync-cursor-rules.sh 的 glob 改为 globs:auto 从源规则 paths 派生，消灭「同一份作用域信息手工维护两份」的漂移类；派生时当场暴露并修正 cds-first-verification 两侧定性不一致 |
 | test | claude-md | 守卫新增断言：cursor 同步表禁止硬编码 glob，必须走 globs:auto |
+| fix | claude-md | Codex 第三轮：snapshot-fallback 补 Models（快照实体本体就在那）、codebase-snapshot 补 doc/、report-design-system 补报告发布器 py |
+| refactor | claude-md | predicate-and-wiring-discipline 由路径作用域改回无条件常驻——它的触发是「任何新增判定/模块/测试」，枚举下去等于全仓，常驻更诚实（常驻预算 60KB→74KB） |

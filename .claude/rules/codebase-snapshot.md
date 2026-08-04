@@ -2,6 +2,7 @@
 paths:
   - "prd-api/src/**/Models/**/*.cs"
   - "prd-api/src/**/MongoDbContext.cs"
+  - "doc/**/*.md"
 ---
 
 # Codebase Skill（代码库快照）

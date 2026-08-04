@@ -1,7 +1,9 @@
 ---
 paths:
   - ".claude/skills/daily-report-summary/**/*.html"
+  - ".claude/skills/daily-report-summary/**/*.py"
   - ".claude/skills/weekly-update-summary/**/*.html"
+  - ".claude/skills/weekly-update-summary/**/*.py"
   - ".claude/skills/create-visual-test-to-kb/**/*.py"
   - "scripts/tests/test_report_emblems*.py"
 ---

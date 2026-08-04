@@ -1,12 +1,3 @@
----
-paths:
-  - "prd-api/src/**/*.cs"
-  - "prd-admin/src/**/*.ts"
-  - "prd-admin/src/**/*.tsx"
-  - "cds/src/**/*.ts"
-  - "scripts/tests/**/*.py"
----
-
 # 判据与接线纪律（Predicate & Wiring Discipline）
 
 **一句话**：五种编译过、测试绿、通读也挑不出的形状：判据太窄、链路只建一半、判据分裂漂移、测试反向锁死 bug、用变更前状态去 gate 那个会改变它的变更。判据是「改动删掉后测试仍全绿就需要一条守卫」。
