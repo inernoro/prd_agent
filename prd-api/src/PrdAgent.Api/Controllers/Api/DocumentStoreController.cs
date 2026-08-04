@@ -1834,7 +1834,10 @@ public class DocumentStoreController : ControllerBase
             cancellationToken: CancellationToken.None);
 
         var result = await _liveTranscriptionRelay.RelayAsync(browser, userId, sessionId);
-        var status = result.Completed
+        // 重连后的流只包含断线后的音频。它可以继续给用户实时反馈，但不能被当作
+        // 整场录音的完整原文；持久化为 degraded，完成链路会自动用完整音频校准。
+        var resumed = string.Equals(Request.Query["resumed"], "true", StringComparison.OrdinalIgnoreCase);
+        var status = result.Completed && !resumed
             ? DocumentLiveTranscriptStatus.Completed
             : DocumentLiveTranscriptStatus.Degraded;
         await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -1844,7 +1847,9 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.LiveTranscript, result.Transcript)
                 .Set(s => s.LiveTranscriptProvider, result.Provider)
                 .Set(s => s.LiveTranscriptModel, result.Model)
-                .Set(s => s.LiveTranscriptError, result.Error)
+                .Set(s => s.LiveTranscriptError, resumed && result.Completed
+                    ? "实时转写发生过重连，结束后将使用完整录音校准"
+                    : result.Error)
                 .Set(s => s.LiveTranscriptUpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         if (result.Completed && !string.IsNullOrWhiteSpace(result.Transcript))
@@ -1870,6 +1875,62 @@ public class DocumentStoreController : ControllerBase
                 }
             }
         }
+    }
+
+    /// <summary>用户主动唤醒卡住的录音云端归档；不会重复创建条目。</summary>
+    [HttpPost("entries/{entryId}/recording-archive/retry")]
+    public async Task<IActionResult> RetryRecordingArchive(string entryId)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音条目不存在"));
+
+        var now = DateTime.UtcNow;
+        var result = await QueueRecordingArchiveRetryAsync(
+            _db.DocumentRecordingUploadSessions,
+            entryId,
+            userId,
+            InstanceIdentity.Get(_config),
+            now,
+            CancellationToken.None);
+        if (result.MatchedCount == 0)
+        {
+            var completed = entry.Metadata?.GetValueOrDefault("audioArchiveStatus")
+                == DocumentRecordingArchiveStatus.Completed;
+            return completed
+                ? Ok(ApiResponse<object>.Ok(new { queued = false, completed = true }))
+                : Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "当前录音不在可重试状态"));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { queued = true, completed = false }));
+    }
+
+    internal static async Task<UpdateResult> QueueRecordingArchiveRetryAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string entryId,
+        string userId,
+        string instanceId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var recoverableStatus = Builders<DocumentRecordingUploadSession>.Filter.In(
+            session => session.ArchiveStatus,
+            [DocumentRecordingArchiveStatus.Pending, DocumentRecordingArchiveStatus.Archiving]);
+        return await sessions.UpdateOneAsync(
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(session => session.EntryId, entryId),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(session => session.UserId, userId),
+                recoverableStatus),
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(session => session.OwnerInstanceId, instanceId)
+                .Set(session => session.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
+                .Unset(session => session.ArchiveLeaseId)
+                .Set(session => session.ArchiveNextAttemptAt, now)
+                .Set(session => session.ArchiveError, null)
+                .Set(session => session.UpdatedAt, now),
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>按顺序接收一个录音二进制分片。重复发送已确认的 index 会幂等返回。</summary>

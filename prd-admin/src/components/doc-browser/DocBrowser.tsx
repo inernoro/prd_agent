@@ -362,6 +362,8 @@ export type DocBrowserProps = {
   onRestyleTranscribe?: (entryId: string) => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
+  /** 音频原文页的问答入口；可预置带时间引用约束的提问。 */
+  onAskRecording?: (entryId: string) => void;
   /** 点击"分享"时触发（仅文档条目显示），分享单篇文档 */
   onShareEntry?: (entryId: string) => void;
   /** 指定后：当该 entry 被选中且内容加载完成时自动进入编辑态（新建文档免再点一次「编辑」） */
@@ -1675,6 +1677,7 @@ export function DocBrowser({
   onQuickRecord,
   onRestyleTranscribe,
   onReprocess,
+  onAskRecording,
   onShareEntry,
   autoEditEntryId,
   onAutoEditConsumed,
@@ -3725,6 +3728,9 @@ export function DocBrowser({
                       if (saved) setTranscriptNoteMd(nextNoteMd);
                       return saved;
                     } : undefined}
+                    onAskRecording={selectedEntryData && onAskRecording
+                      ? () => onAskRecording(selectedEntryData.id)
+                      : undefined}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">

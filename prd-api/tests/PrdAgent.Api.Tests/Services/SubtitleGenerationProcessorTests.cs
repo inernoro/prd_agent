@@ -110,7 +110,7 @@ public class SubtitleGenerationProcessorTests
                           {
                             "text": "第一句字幕",
                             "segments": [
-                              { "start": 1.0, "end": 2.5, "text": "第一句字幕" }
+                              { "start": 1.0, "end": 2.5, "text": "第一句字幕", "speaker": "0" }
                             ]
                           }
                           """
@@ -155,12 +155,19 @@ public class SubtitleGenerationProcessorTests
         method.ShouldNotBeNull();
         var task = (Task<List<SubtitleSegment>>)method.Invoke(
             processor,
-            new object[] { run, audioBytes, resolution })!;
+            new object[]
+            {
+                run,
+                audioBytes,
+                resolution,
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            })!;
 
         var segments = await task;
 
         capturedRequest.ShouldNotBeNull();
         capturedResolution.ShouldNotBeNull();
+        capturedRequest.AppCallerCode.ShouldBe(AppCallerRegistry.TranscriptAgent.Transcribe.Audio);
         capturedRequest.IsMultipart.ShouldBeFalse();
         capturedRequest.MultipartFiles.ShouldBeNull();
         capturedRequest.MultipartFields.ShouldBeNull();
@@ -175,6 +182,143 @@ public class SubtitleGenerationProcessorTests
         segments[0].StartSec.ShouldBe(1);
         segments[0].EndSec.ShouldBe(2.5);
         segments[0].Text.ShouldBe("第一句字幕");
+        segments[0].SpeakerId.ShouldBe("0");
+    }
+
+    [Fact]
+    public void ChatAudioSpeakerSegments_ShouldPreserveStableSpeakersAndUnlabeledContinuation()
+    {
+        var segments = SubtitleGenerationProcessor.ParseChatAudioSpeakerSegments("""
+            [说话人1] 我们有多年行业经验。
+            并且有丰富的营销策略。
+            说话人2：只要交付质量达标，价格合理。
+            [说话人1] 周五前提供实施计划。
+            """);
+
+        segments.Count.ShouldBe(3);
+        segments[0].SpeakerId.ShouldBe("说话人1");
+        segments[0].Text.ShouldBe("我们有多年行业经验。 并且有丰富的营销策略。");
+        segments[1].SpeakerId.ShouldBe("说话人2");
+        segments[2].SpeakerId.ShouldBe("说话人1");
+
+        var note = SubtitleFormatter.FormatTranscriptNote("meeting.m4a", string.Empty, segments);
+        note.ShouldContain("[说话人1] 我们有多年行业经验。");
+        note.ShouldContain("[说话人2] 只要交付质量达标，价格合理。");
+    }
+
+    [Fact]
+    public void ChatAudioSpeakerSegments_ShouldLabelProviderFallbackAsSpeakerOne()
+    {
+        var segments = SubtitleGenerationProcessor.ParseChatAudioSpeakerSegments("只有一位说话人的原文");
+
+        segments.Count.ShouldBe(1);
+        segments[0].SpeakerId.ShouldBe("说话人1");
+    }
+
+    [Fact]
+    public async Task ChatAudio_ShouldRetryOneFalseNoSpeechResult_WithFullAudio()
+    {
+        var requests = new List<GatewayRawRequest>();
+        var responses = new Queue<GatewayRawResponse>(
+        [
+            new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"NO_SPEECH\"}}]}",
+            },
+            new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"米多有多年行业经验。当前报价合理。\"}}]}",
+            },
+            new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"[说话人1] 米多有多年行业经验。\\n[说话人2] 当前报价合理。\"}}]}",
+            },
+        ]);
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<GatewayRawRequest, GatewayModelResolution, CancellationToken>((request, _, _) => requests.Add(request))
+            .ReturnsAsync(() => responses.Dequeue());
+
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeViaChatAudioAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var audioBytes = new byte[] { 1, 2, 3, 4 };
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object[]
+            {
+                BuildRun(),
+                audioBytes,
+                new GatewayModelResolution { ActualModel = "openai/gpt-audio" },
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            })!;
+
+        var segments = await task;
+
+        segments.Select(segment => segment.SpeakerId).ShouldBe(["说话人1", "说话人2"]);
+        requests.Count.ShouldBe(3);
+        requests[0].RequestBody!["temperature"]!.GetValue<int>().ShouldBe(0);
+        requests[1].RequestBody!["messages"]![0]!["content"]![0]!["text"]!
+            .GetValue<string>().ShouldContain("上一次识别可能误判为无人声");
+        requests[2].RequestBody!["messages"]![0]!["content"]![0]!["text"]!
+            .GetValue<string>().ShouldContain("粗转原文如下");
+        foreach (var request in requests)
+        {
+            request.AppCallerCode.ShouldBe(AppCallerRegistry.TranscriptAgent.Transcribe.Audio);
+            request.RequestBody!.ToJsonString().ShouldContain(Convert.ToBase64String(audioBytes));
+        }
+    }
+
+    [Fact]
+    public async Task ChatAudio_ShouldKeepConfirmedTranscript_WhenDiarizationFails()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.SetupSequence(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"已经确认的完整原文\"}}]}",
+            })
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"无法区分\"}}]}",
+            });
+
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeViaChatAudioAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object[]
+            {
+                BuildRun(),
+                new byte[] { 1, 2, 3 },
+                new GatewayModelResolution { ActualModel = "openai/gpt-audio" },
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            })!;
+
+        var segments = await task;
+
+        segments.Count.ShouldBe(1);
+        segments[0].Text.ShouldBe("已经确认的完整原文");
+        segments[0].SpeakerId.ShouldBe("说话人1");
     }
 
     [Fact]
@@ -198,7 +342,13 @@ public class SubtitleGenerationProcessorTests
 
         var task = (Task<List<SubtitleSegment>>)method!.Invoke(
             processor,
-            new object[] { BuildRun(), new byte[] { 1, 2, 3 }, BuildDoubaoResolution() })!;
+            new object[]
+            {
+                BuildRun(),
+                new byte[] { 1, 2, 3 },
+                BuildDoubaoResolution(),
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            })!;
 
         var exception = await Should.ThrowAsync<SubtitleAsrException>(() => task);
         exception.Message.ShouldContain("豆包异步 ASR 返回为空");
@@ -266,6 +416,126 @@ public class SubtitleGenerationProcessorTests
             It.IsAny<GatewayRawRequest>(),
             It.IsAny<GatewayModelResolution>(),
             It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task AsrFallback_ShouldSwitchToNextCandidate_WhenPrimaryReturnsNoSpeechRefusal()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((
+                GatewayRawRequest _,
+                GatewayModelResolution resolution,
+                CancellationToken _) => new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = resolution.ActualModel == "openai/gpt-audio"
+                    ? "{\"choices\":[{\"message\":{\"content\":\"没有检测到有效语音内容\"}}]}"
+                    : "{\"text\":\"备用 Whisper 识别成功\"}",
+            });
+
+        var primary = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "DedicatedPool",
+            ActualModel = "openai/gpt-audio",
+            ActualPlatformId = "openrouter",
+            ActualPlatformName = "OpenRouter",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://example.test/v1",
+            ApiKey = "test-key",
+            RetryCandidates =
+            [
+                new ModelResolutionResult
+                {
+                    Success = true,
+                    ResolutionType = "DedicatedPool",
+                    ActualModel = "whisper-large-v3",
+                    ActualPlatformId = "whisper-provider",
+                    ActualPlatformName = "Whisper Provider",
+                    PlatformType = "openai",
+                    Protocol = "openai",
+                    ApiUrl = "https://example.test/v1",
+                    ApiKey = "test-key",
+                },
+            ],
+        };
+
+        var attempts = new List<(int Attempt, int Total)>();
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeWithFallbackAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object?[]
+            {
+                BuildRun(),
+                new byte[] { 1, 2, 3 },
+                primary,
+                new Func<int, int, Task>((attempt, total) =>
+                {
+                    attempts.Add((attempt, total));
+                    return Task.CompletedTask;
+                }),
+            })!;
+
+        var segments = await task;
+
+        segments.Count.ShouldBe(1);
+        segments[0].Text.ShouldBe("备用 Whisper 识别成功");
+        attempts.ShouldBe([(1, 2), (2, 2)]);
+        gateway.Verify(g => g.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public void RecordingAsrCandidates_ShouldPreferNativeSpeakerInformation_AndKeepPoolFallbackOrder()
+    {
+        var chatAudio = new ModelResolutionResult
+        {
+            Success = true,
+            ActualModel = "openai/gpt-audio",
+            ActualPlatformId = "openrouter",
+        };
+        var doubaoStream = new ModelResolutionResult
+        {
+            Success = true,
+            ActualModel = "doubao-asr-stream",
+            ActualPlatformId = "doubao-stream",
+            IsExchange = true,
+            ExchangeTransformerType = "doubao-asr-stream",
+        };
+        var whisper = new ModelResolutionResult
+        {
+            Success = true,
+            ActualModel = "whisper-large-v3",
+            ActualPlatformId = "whisper",
+        };
+
+        var ordered = SubtitleGenerationProcessor.OrderRecordingAsrCandidates(
+            [chatAudio, doubaoStream, whisper]).ToList();
+
+        ordered.Select(candidate => candidate.ActualModel)
+            .ShouldBe(["doubao-asr-stream", "openai/gpt-audio", "whisper-large-v3"]);
+    }
+
+    [Fact]
+    public void RecordingAsrCallerChain_ShouldTryDedicatedTranscriptionBeforeGenericSubtitle()
+    {
+        SubtitleGenerationProcessor.RecordingAsrCallerChain.ShouldBe(
+        [
+            AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+        ]);
     }
 
     private static SubtitleGenerationProcessor BuildProcessor(ILlmGateway gateway)

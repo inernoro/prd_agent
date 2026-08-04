@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { DocBrowserEntry } from '@/components/doc-browser/DocBrowser';
-import { FilePreview } from './FilePreview';
+import { FilePreview, isStaleRecordingArchive } from './FilePreview';
 
 function pendingAudioEntry(metadata: Record<string, string> = {}): DocBrowserEntry {
   return {
@@ -17,6 +17,14 @@ function pendingAudioEntry(metadata: Record<string, string> = {}): DocBrowserEnt
 }
 
 describe('FilePreview pending recording', () => {
+  it('marks a pending archive stale after ten minutes so it can be retried manually', () => {
+    const now = Date.parse('2026-08-04T03:00:00.000Z');
+
+    expect(isStaleRecordingArchive('2026-08-04T02:49:59.000Z', now)).toBe(true);
+    expect(isStaleRecordingArchive('2026-08-04T02:50:01.000Z', now)).toBe(false);
+    expect(isStaleRecordingArchive(undefined, now)).toBe(false);
+  });
+
   it('shows a stable archive status instead of an empty preview', () => {
     const html = renderToStaticMarkup(
       <FilePreview entry={pendingAudioEntry()} preview={null} />,
@@ -58,5 +66,17 @@ describe('FilePreview pending recording', () => {
     expect(html).toContain('不需要停在本页等待');
     expect(html).toContain('等待自动重试');
     expect(html).not.toContain('正在保存云端副本');
+  });
+
+  it('offers manual recovery for a historical archive that never reached a terminal state', () => {
+    const html = renderToStaticMarkup(
+      <FilePreview
+        entry={{ ...pendingAudioEntry(), createdAt: '2026-07-31T03:17:00.000Z' }}
+        preview={null}
+      />,
+    );
+
+    expect(html).toContain('云端服务暂时不可用，已排队重试');
+    expect(html).toContain('立即重试');
   });
 });
