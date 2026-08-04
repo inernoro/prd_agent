@@ -36,7 +36,7 @@ description: 日常熵清理技能。扫描七个维度的一致性债务并双�
 
 ### 增量历史覆盖
 
-结构性欠债（D1-D4）：每次全量双向扫描，自然覆盖所有历史欠债。
+结构性欠债（D1-D4）：每次全量扫描，自然覆盖所有历史欠债（D2/D3 双向，D4 仅补缺）。
 
 内容性欠债（D6）：通过 manifest 每次处理 **最多 5 条** 未处理的 changelog 片段。
 
@@ -49,7 +49,7 @@ description: 日常熵清理技能。扫描七个维度的一致性债务并双�
 | D1 doc/ 命名规范 | — | — | git mv 改名（文件确实存在才 mv） |
 | D2 index.yml | doc/*.md 无对应 index 条目 → 追加 | index 有条目但 `doc/${key}.md` 不存在 → 删行 | `[ -f doc/${key}.md ]` |
 | D3 guide.list | doc/*.md 无 backtick 条目 → 追加 | guide.list 有 backtick 条目但文件不存在 → 删行 | `[ -f doc/${key}.md ]` |
-| D4 技能可发现性 | 技能目录缺 `SKILL.md` 或 frontmatter 缺 name/description → 补 | — | `python3 scripts/doc-readability-check.py --ratchet` 的「技能 frontmatter 欠账」一项 |
+| D4 技能可发现性 | 两个技能根下任一目录缺 `SKILL.md` 或 frontmatter 缺 name/description → 补 | — | 本维自带脚本（棘轮只兜 frontmatter 内容，不兜文件缺失） |
 | D5 codebase-snapshot | — | — | 人工确认后更新 |
 | D6 changelog→doc | changelog 未处理 → 追加章节 | — | manifest 记录，已处理跳过 |
 | D7 文档可读性 | 缺导读三行 → 补；规则缺「一句话 + 什么时候撞上」两行 → 补；技能 frontmatter 的 description 说不清触发时机 → 补；裸引用 → 转可点链接 | 死链（引用的文档不存在）→ 修或删 | `python3 scripts/doc-readability-check.py --ratchet`；批量改写用 `--fix-links` |
@@ -102,12 +102,21 @@ done
 # 旧逻辑是 `grep "| **$skill**" CLAUDE.md`，表删掉之后会把 57 个技能全判成缺失，
 # 而它的修复动作是往 CLAUDE.md 追加表格行——正好会把已经精简掉的表重新写回去。
 # 技能的发现机制现在是 SKILL.md frontmatter（宿主自动注入用它，人工扫描也用它），
-# 所以这一维改查 frontmatter 完整性，判据复用既有闸门，不另起一份。
-for d in .claude/skills/*/; do
-  skill=$(basename "$d")
-  [ -f "$d/SKILL.md" ] || { echo "MISSING_SKILL_MD: $skill"; continue; }
-  head -20 "$d/SKILL.md" | grep -q '^name:' || echo "MISSING_SKILL_NAME: $skill"
-  head -20 "$d/SKILL.md" | grep -q '^description:' || echo "MISSING_SKILL_DESC: $skill"
+# 所以这一维改查 frontmatter 完整性。
+#
+# 必须扫**两个**技能根：Claude 读 .claude/skills，Codex 读 .agents/skills。
+# 也必须自己查「目录缺 SKILL.md」——doc-readability-check 的 scan_skills() 遇到
+# 没有 SKILL.md 的目录是 `continue` 跳过的，那条棘轮只兜 frontmatter 内容，
+# 不兜文件缺失，所以它不是这一项的 fallback。
+for root in .claude/skills .agents/skills; do
+  [ -d "$root" ] || continue
+  for d in "$root"/*/; do
+    [ -d "$d" ] || continue
+    skill="$root/$(basename "$d")"
+    [ -f "$d/SKILL.md" ] || { echo "MISSING_SKILL_MD: $skill"; continue; }
+    head -20 "$d/SKILL.md" | grep -q '^name:' || echo "MISSING_SKILL_NAME: $skill"
+    head -20 "$d/SKILL.md" | grep -q '^description:' || echo "MISSING_SKILL_DESC: $skill"
+  done
 done
 
 # D6. 未处理的 changelog（限量：最多 5 条）
@@ -253,7 +262,7 @@ PR body 模板（从 Step 2 报告提取数字）：
 
 - D2 index.yml：+N/-N 条
 - D3 guide.list：+N/-N 条
-- D4 技能表：+N/-N 条
+- D4 技能可发现性：补缺 N 条
 - D6 changelog→doc：本次处理 N 条，manifest 累计 M 条
 
 ## 改动 diff
@@ -331,7 +340,7 @@ processed:
 ## 幂等性自检清单
 
 - [ ] D2/D3/D4 补缺：写入前 `grep -q` 确认不存在
-- [ ] D2/D3/D4 删幽灵：删除前 `[ -f ]`/`[ -d ]` 确认文件/目录真实不存在
+- [ ] D2/D3 删幽灵：删除前 `[ -f ]`/`[ -d ]` 确认文件/目录真实不存在（D4 无删幽灵方向）
 - [ ] `git diff` 中每一行 `-` 行都有对应的"文件不存在"证据
 - [ ] 运行两次期望第二次净变更为 0
 
