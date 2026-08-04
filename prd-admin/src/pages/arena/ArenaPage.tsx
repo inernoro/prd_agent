@@ -40,7 +40,7 @@ import {
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
-import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
+import { HERO_GRADIENT, HERO_GRADIENT_FG } from '@/pages/home/sections/HeroSection';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1280,9 +1280,10 @@ export function ArenaPage() {
           <button
             type="button"
             onClick={handleNewBattle}
-            className="group relative inline-flex w-full items-center justify-center gap-2 h-10 px-4 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.01] active:scale-[0.98]"
+            className="group relative inline-flex w-full items-center justify-center gap-2 h-10 px-4 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.01] active:scale-[0.98]"
             style={{
               background: HERO_GRADIENT,
+              color: HERO_GRADIENT_FG,
               boxShadow:
                 '0 0 28px rgba(124, 58, 237, 0.32), 0 0 64px rgba(0, 240, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.45)',
               fontFamily: 'var(--font-display)',
@@ -1886,9 +1887,10 @@ export function ArenaPage() {
                           type="button"
                           onClick={handleSend}
                           disabled={isStreaming || !prompt.trim() || slots.length === 0}
-                          className="group inline-flex items-center gap-1.5 h-9 px-5 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                          className="group inline-flex items-center gap-1.5 h-9 px-5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                           style={{
                             background: HERO_GRADIENT,
+                            color: HERO_GRADIENT_FG,
                             boxShadow:
                               '0 0 24px rgba(124, 58, 237, 0.32), 0 0 54px rgba(0, 240, 255, 0.18), 0 4px 16px rgba(0, 0, 0, 0.45)',
                             fontFamily: 'var(--font-display)',
@@ -2391,9 +2393,10 @@ export function ArenaPage() {
                       type="button"
                       onClick={handleSend}
                       disabled={isStreaming || !prompt.trim() || slots.length === 0}
-                      className="inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-4 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                      className="inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-4 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                       style={{
                         background: HERO_GRADIENT,
+                        color: HERO_GRADIENT_FG,
                         boxShadow:
                           '0 0 22px rgba(124, 58, 237, 0.3), 0 0 48px rgba(0, 240, 255, 0.16), 0 4px 14px rgba(0, 0, 0, 0.45)',
                         fontFamily: 'var(--font-display)',

@@ -2485,10 +2485,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             className={cn(
               "flex-1 px-4 py-2 text-sm font-medium transition-colors",
               mobileTab === 'article'
-                ? "text-white"
+                ? ""
                 : "text-[var(--text-muted)]"
             )}
-            style={mobileTab === 'article' ? { background: 'var(--accent-primary)' } : { background: 'var(--panel)' }}
+            style={mobileTab === 'article'
+              ? { background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }
+              : { background: 'var(--panel)' }}
             onClick={() => setMobileTab('article')}
           >
             文章预览
@@ -2497,10 +2499,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             className={cn(
               "flex-1 px-4 py-2 text-sm font-medium transition-colors",
               mobileTab === 'markers'
-                ? "text-white"
+                ? ""
                 : "text-[var(--text-muted)]"
             )}
-            style={mobileTab === 'markers' ? { background: 'var(--accent-primary)' } : { background: 'var(--panel)' }}
+            style={mobileTab === 'markers'
+              ? { background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }
+              : { background: 'var(--panel)' }}
             onClick={() => setMobileTab('markers')}
           >
             配图工作台

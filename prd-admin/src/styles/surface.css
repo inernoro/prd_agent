@@ -1981,9 +1981,9 @@
 
 .toolbox-card-tag-active {
   cursor: pointer;
-  background: rgba(var(--accent-primary-rgb, 99, 102, 241), 0.22) !important;
-  border-color: rgba(var(--accent-primary-rgb, 99, 102, 241), 0.55) !important;
-  color: var(--accent-primary, #818cf8) !important;
+  background: rgba(var(--accent-primary-rgb), 0.22) !important;
+  border-color: rgba(var(--accent-primary-rgb), 0.55) !important;
+  color: var(--accent-primary) !important;
   font-weight: 600;
 }
 
@@ -1996,9 +1996,9 @@
   height: 24px;
   padding: 0 8px 0 10px;
   border-radius: 999px;
-  border: 1px solid rgba(var(--accent-primary-rgb, 99, 102, 241), 0.55);
-  background: rgba(var(--accent-primary-rgb, 99, 102, 241), 0.15);
-  color: var(--accent-primary, #818cf8);
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.55);
+  background: rgba(var(--accent-primary-rgb), 0.15);
+  color: var(--accent-primary);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
@@ -2008,7 +2008,7 @@
 }
 
 .toolbox-active-tag-chip:hover {
-  background: rgba(var(--accent-primary-rgb, 99, 102, 241), 0.25);
+  background: rgba(var(--accent-primary-rgb), 0.25);
   opacity: 0.9;
 }
 
