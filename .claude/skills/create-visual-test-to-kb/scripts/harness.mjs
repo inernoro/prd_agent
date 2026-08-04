@@ -429,7 +429,7 @@ export async function waitForReady(page, { timeout = 12000, minTextLen = 100, cu
  * 截图后内容校验。命中失败词 / 太空 / 文件过小都记录 warning 到返回值。
  * expectText: 字符串或正则，断言截图时页面 body 文本中应包含此内容。
  */
-async function validateShot(page, path, expectText) {
+async function validateShot(page, path, expectText, allowBlockingOverlay = false) {
   const warnings = [];
   const fs = require('fs');
   try {
@@ -449,6 +449,27 @@ async function validateShot(page, path, expectText) {
   if (expectText) {
     const ok = expectText instanceof RegExp ? expectText.test(bodyText) : bodyText.includes(expectText);
     if (!ok) warnings.push(`expectText 未命中: ${expectText}`);
+  }
+
+  if (!allowBlockingOverlay) {
+    try {
+      const blocker = await page.evaluate(() => {
+        const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+        const candidates = [...document.querySelectorAll('div')].filter((element) => {
+          if (!(element instanceof HTMLElement) || element.classList.contains('__acc_box')) return false;
+          const style = getComputedStyle(element);
+          if (style.position !== 'fixed' || style.pointerEvents === 'none' || Number(style.zIndex || 0) < 9000) return false;
+          const rect = element.getBoundingClientRect();
+          const visibleWidth = Math.max(0, Math.min(rect.right, innerWidth) - Math.max(rect.left, 0));
+          const visibleHeight = Math.max(0, Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0));
+          return visibleWidth * visibleHeight / viewportArea >= 0.45;
+        });
+        const top = candidates.at(-1);
+        if (!(top instanceof HTMLElement)) return null;
+        return (top.getAttribute('aria-label') || top.getAttribute('title') || top.innerText || '未命名遮罩').trim().slice(0, 80);
+      });
+      if (blocker) warnings.push(`存在覆盖主要内容的高层弹窗/遮罩：${blocker}；若本图就是验收该弹窗，需显式 allowBlockingOverlay=true`);
+    } catch { /* 遮罩检测失败不阻断其他校验 */ }
   }
 
   // 版式健康自动护栏（2026-06-02 反哺）：检测开启的 modal/弹窗是否「撑破」视口。
@@ -496,6 +517,11 @@ async function validateShot(page, path, expectText) {
  *   - expectText: 断言页面含此文本（强烈推荐：让 caption 不只是描述、更是断言）
  *   - skipReady: 跳过就绪等待（仅极少数确知场景，如登录页输入框未就绪）
  *   - customLoaderSelectors: 项目特有的 loader 选择器
+ *   - module: 全面视觉验收时的主业务模块名称，供模块预算门禁计数
+ *   - evidenceState: 当前截图证明的状态，例如入口、输入、加载、结果或失败恢复
+ *   - failureEvidence: 当前图是否专门证明一个真实失败；只能用于 conditional/fail 报告
+ *   - failureReason: failureEvidence=true 时必须说明失败事实，归档门禁会核对
+ *   - allowBlockingOverlay: 当前截图本来就在验收全屏弹窗或教程遮罩；默认 false
  */
 export async function shot(page, outDir, name, caption, opts = {}) {
   const {
@@ -506,6 +532,11 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     overview = false,
     mobilePathId,
     mobileStage,
+    module,
+    evidenceState,
+    failureEvidence = false,
+    failureReason,
+    allowBlockingOverlay = false,
   } = opts;
   assertOutsideRepo(outDir, '截图输出目录');
   require('fs').mkdirSync(outDir, { recursive: true });
@@ -518,7 +549,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
   await page.screenshot({ path, fullPage });
 
   // 3) 校验
-  let warnings = await validateShot(page, path, expectText);
+  let warnings = await validateShot(page, path, expectText, allowBlockingOverlay);
 
   // 4) 有 warning 时再等 2s 重试一次（覆盖"刚好慢一拍"的情况）
   if (warnings.length > 0) {
@@ -526,7 +557,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     await page.waitForTimeout(2500);
     if (!skipReady) await waitForReady(page, { timeout: 8000, customLoaderSelectors });
     await page.screenshot({ path, fullPage });
-    warnings = await validateShot(page, path, expectText);
+    warnings = await validateShot(page, path, expectText, allowBlockingOverlay);
   }
 
   // 5) v1.0：把"截这张图之前自动捕获到的 ≥blockSeverity 错误"折叠进本图 warnings。
@@ -565,6 +596,11 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     deviceName: environment.deviceName || null,
     mobilePathId: mobilePathId || environment.mobilePathId || null,
     mobileStage: mobileStage || null,
+    module: module || null,
+    evidenceState: evidenceState || null,
+    failureEvidence: Boolean(failureEvidence),
+    failureReason: failureReason || null,
+    allowBlockingOverlay: Boolean(allowBlockingOverlay),
     warnings: warnings.length ? warnings : undefined,
   };
   shots.push(rec);

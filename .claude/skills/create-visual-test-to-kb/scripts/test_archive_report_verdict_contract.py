@@ -250,6 +250,111 @@ not-run
         errors = archive_report._coverage_ledger_errors(body)
         self.assertTrue(any("关闭条件" in error for error in errors))
 
+    def test_reviewer_summary_separates_pass_fail_not_run_and_intervention(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+| 多图 | 首页 → 视觉创作 → 结果 | 通过 | 不通过 | 不通过 | P1 | 是 | [步骤](#e) | [截图](#f) | [缺陷](#g) | [方法](#h) |
+| 视频 | 首页 → 视频创作 → 成片 | 通过 | 未执行 | 未执行 | 无 | 需干预 | [步骤](#i) | [截图](#j) | [缺陷](#k) | [方法](#l) |
+"""
+        summary = archive_report._reviewer_summary(body)
+        self.assertIsNotNone(summary)
+        self.assertEqual(
+            {"pass": 1, "partial": 0, "fail": 1, "not_run": 1, "intervention": 2},
+            summary["counts"],
+        )
+
+    def test_supervisor_gate_rejects_pass_when_module_budget_is_short(self):
+        body = """
+验收场景：全面视觉回归
+
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 多图视觉创作 | 首页 → 视觉创作 → 生成结果 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 多图视觉创作 | 3 | 2 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        manifest = [
+            {"name": "01-a", "module": "多图视觉创作"},
+            {"name": "02-b", "module": "多图视觉创作"},
+        ]
+        errors = archive_report._supervisor_report_errors("全面视觉回归", body, manifest)
+        self.assertTrue(any("实际 2 < 计划 3" in error for error in errors))
+
+    def test_supervisor_gate_requires_clickable_reviewer_links(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | 见正文 | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 登录 | 1 | 1 | 通过 | 通过 | 不适用 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertTrue(any("查看步骤" in error and "可点击" in error for error in errors))
+
+    def test_supervisor_gate_accepts_complete_budget_and_manifest(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 登录 | 1 | 1 | 通过 | 通过 | 不适用 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertEqual([], errors)
+
+    def test_failure_report_can_archive_explicit_runtime_failure_evidence(self):
+        errors = archive_report._warning_evidence_errors("fail", {
+            "name": "01-real-failure",
+            "warnings": ["自动捕获(P0,network): HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "保存动作真实返回 500，页面显示失败恢复提示",
+        })
+        self.assertEqual([], errors)
+
+    def test_pass_report_cannot_hide_runtime_failure_as_evidence(self):
+        errors = archive_report._warning_evidence_errors("pass", {
+            "name": "01-real-failure",
+            "warnings": ["自动捕获(P0,network): HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "保存动作真实返回 500，页面显示失败恢复提示",
+        })
+        self.assertTrue(any("pass 报告不能包含失败证据" in error for error in errors))
+
+    def test_failure_evidence_requires_a_specific_reason(self):
+        errors = archive_report._warning_evidence_errors("fail", {
+            "name": "01-real-failure",
+            "warnings": ["HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "失败",
+        })
+        self.assertTrue(any("failureReason" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

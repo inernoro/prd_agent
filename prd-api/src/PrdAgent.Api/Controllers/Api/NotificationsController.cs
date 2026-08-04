@@ -244,12 +244,13 @@ public sealed class NotificationsController : ControllerBase
     private static object ToNotificationDto(AdminNotification n)
     {
         var section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section);
+        var presentation = ToUserReadablePresentation(n);
         return new
         {
             n.Id,
             n.Key,
-            n.Title,
-            n.Message,
+            presentation.Title,
+            presentation.Message,
             n.Level,
             n.Status,
             n.ActionLabel,
@@ -265,5 +266,17 @@ public sealed class NotificationsController : ControllerBase
             n.HandledAt,
             n.ExpiresAt
         };
+    }
+
+    internal static (string Title, string? Message) ToUserReadablePresentation(AdminNotification notification)
+    {
+        if (string.Equals(notification.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase))
+        {
+            return (
+                "AI 创作服务需要管理员处理",
+                "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。");
+        }
+
+        return (notification.Title, notification.Message);
     }
 }

@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "1.0",
+  "name": "核心业务全面视觉验收目录",
+  "purpose": "为每48小时稳定复测、发布前验收和缺陷回归提供模块级视觉证据预算，防止少量入口截图冒充全面通过。",
+  "statusVocabulary": ["通过", "不通过", "部分通过", "未执行", "需干预"],
+  "requiredReportLinks": ["查看步骤", "查看截图", "查看缺陷", "关联测试方法"],
+  "modules": [
+    {
+      "id": "identity-profile",
+      "name": "登录、权限与头像",
+      "breadcrumb": "登录 → 合成登录 → 首页 → 顶部头像 → 修改头像 → 上传或描述 → 生成预览 → 保存",
+      "entryPath": "/",
+      "uniqueScreenshotFloor": 10,
+      "requiredStates": ["登录", "会话", "头像入口", "编辑器", "上传", "描述", "加载", "预览", "保存", "刷新持久化", "移动端"],
+      "methods": ["真实导航", "功能主链路", "持久化", "移动端"]
+    },
+    {
+      "id": "recording-audio",
+      "name": "录音和音频上传",
+      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 录音转笔记 → 录音保护 → 转录原文",
+      "entryPath": "/document-store",
+      "uniqueScreenshotFloor": 12,
+      "requiredStates": ["入口", "权限允许", "权限拒绝", "录音开始", "暂停或结束", "音频上传", "上传完成", "转录进度", "转录结果", "失败恢复", "持久化", "移动端"],
+      "methods": ["权限边界", "文件上传", "异步进度", "结果持久化", "移动端"]
+    },
+    {
+      "id": "file-parsing",
+      "name": "文件上传与解析",
+      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 上传文件 → 解析进度 → 可读结果",
+      "entryPath": "/document-store",
+      "uniqueScreenshotFloor": 12,
+      "requiredStates": ["入口", "文件选择", "类型识别", "上传", "解析准备", "解析进度", "可读结果", "无效文件", "用户可读错误", "重试", "持久化", "移动端"],
+      "methods": ["文件边界", "异步进度", "用户可读错误", "结果持久化", "移动端"]
+    },
+    {
+      "id": "short-video-parsing",
+      "name": "短视频上传与链接解析",
+      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 解析短视频 → 抽取与转写 → 时间轴结果",
+      "entryPath": "/document-store",
+      "uniqueScreenshotFloor": 8,
+      "requiredStates": ["入口", "视频上传", "链接输入", "抽取进度", "转写进度", "时间轴结果", "失败恢复", "移动端"],
+      "methods": ["双输入路径", "异步进度", "结果完整性", "失败恢复"]
+    },
+    {
+      "id": "literary-creation",
+      "name": "文学创作",
+      "breadcrumb": "首页 → 文学创作 → 新建作品 → 流式创作 → 保存结果",
+      "entryPath": "/literary-agent",
+      "uniqueScreenshotFloor": 10,
+      "requiredStates": ["入口", "空态引导", "新建", "输入", "流式开始", "流式中间态", "完成", "保存", "刷新持久化", "失败恢复", "移动端"],
+      "methods": ["流式反馈", "核心生成", "持久化", "失败恢复", "移动端"]
+    },
+    {
+      "id": "single-image-creation",
+      "name": "单图视觉创作",
+      "breadcrumb": "首页 → 视觉创作 → 输入描述或单张参考图 → 生成进度 → 图片结果",
+      "entryPath": "/visual-agent",
+      "uniqueScreenshotFloor": 14,
+      "requiredStates": ["入口", "空态", "描述输入", "单图上传", "参考图预览", "提交", "准备中", "生成中", "进度自适应", "结果", "继续编辑", "保存", "失败恢复", "移动端"],
+      "methods": ["真实生成", "进度状态机", "响应式布局", "用户可读错误", "移动端"]
+    },
+    {
+      "id": "multi-image-creation",
+      "name": "多图视觉创作",
+      "breadcrumb": "首页 → 视觉创作 → 添加两至三图 → 组合描述 → 生成结果",
+      "entryPath": "/visual-agent",
+      "uniqueScreenshotFloor": 14,
+      "requiredStates": ["入口", "第一张参考图", "第二张参考图", "第三张参考图", "引用识别", "顺序", "组合描述", "提交", "准备中", "生成中", "结果", "替换或删除", "失败恢复", "移动端"],
+      "methods": ["多附件关联", "真实生成", "进度状态机", "失败恢复", "移动端"]
+    },
+    {
+      "id": "video-creation",
+      "name": "视频创作",
+      "breadcrumb": "首页 → 视频创作 → 脚本 → 分镜与关键帧 → 成片",
+      "entryPath": "/video-agent",
+      "uniqueScreenshotFloor": 12,
+      "requiredStates": ["入口", "新建", "脚本输入", "脚本生成", "分镜", "关键帧", "阶段进度", "动态反馈", "成片或受控终态", "失败恢复", "持久化", "移动端"],
+      "methods": ["长任务状态机", "阶段结果", "失败恢复", "持久化", "移动端"]
+    },
+    {
+      "id": "image-model-routing",
+      "name": "图片模型路由与切换",
+      "breadcrumb": "LLMGW 登录 → 逻辑模型 → Offering → 路由配置 → 前台选择 → 调用日志",
+      "entryPath": "/",
+      "uniqueScreenshotFloor": 10,
+      "requiredStates": ["登录", "逻辑模型列表", "模型详情", "添加或编辑", "Offering", "路由启用", "前台选择", "真实调用", "调用日志对应", "失败提示"],
+      "methods": ["配置生效", "前后端一致性", "真实调用", "日志追踪", "失败恢复"]
+    },
+    {
+      "id": "errors-progress-responsive",
+      "name": "用户可读错误、生成进度与响应式布局",
+      "breadcrumb": "各业务功能 → 触发等待或失败 → 查看提示 → 执行恢复；各功能 → 切换窄屏 → 完成关键操作",
+      "entryPath": "/",
+      "uniqueScreenshotFloor": 10,
+      "requiredStates": ["错误结果", "错误原因类别", "恢复动作", "阶段变化", "进度完整", "窄屏", "超长文案", "弹窗", "滚动", "无横向溢出"],
+      "methods": ["用户可读错误", "进度状态机", "响应式布局", "溢出断言", "恢复动作"]
+    }
+  ],
+  "uniqueScreenshotFloor": 112,
+  "countingRules": [
+    "每张截图文件只计一次，禁止复制同一图片补数量。",
+    "每张截图必须归属一个主模块，并可关联多个相邻断言。",
+    "入口截图只支持冒烟结论，不能单独支持功能或视觉通过。",
+    "模块实际截图少于预算或关键状态未覆盖时，视觉状态不得为通过。",
+    "主管总报告只汇总结论；选择器、命令、接口和日志进入模块技术附录。"
+  ]
+}

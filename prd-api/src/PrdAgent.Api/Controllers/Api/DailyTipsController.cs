@@ -358,6 +358,14 @@ public sealed class DailyTipsController : ControllerBase
         // - advanced: 写入真实 Version，管理员升 Version 后 learnedVer < t.Version → 再次弹出。
         var learnedVersion = tier == "advanced" ? version : int.MaxValue;
 
+        // 历史用户可能把 LearnedTips 保存为 null。直接 $push 到 null 会让 Mongo 返回 500，
+        // 表面上按钮已经乐观变成“已学会”，刷新后教程却再次出现。先幂等初始化为空数组，
+        // 再执行 pull + push，保证新老用户都能稳定完成教程。
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId && u.LearnedTips == null,
+            Builders<User>.Update.Set(u => u.LearnedTips, new List<UserLearnedTip>()),
+            cancellationToken: ct);
+
         // 幂等写入:先剔除同 SourceId 的旧记录,再 push 新的 (SourceId, Version)。
         // Mongo 的 $pull 和 $push 不能在同一次 update 里作用于同一字段(冲突),
         // 拆两次调用即可,本端点不是热路径。

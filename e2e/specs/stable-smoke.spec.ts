@@ -101,6 +101,19 @@ async function loginAndReadToken(page: Page, request: APIRequestContext, returnU
   return storedToken;
 }
 
+async function readStableAuthSnapshot(page: Page) {
+  let snapshot = '';
+  await expect.poll(async () => {
+    snapshot = await page.evaluate(() => window.localStorage.getItem('prd-admin-auth') || '').catch(() => '');
+    return snapshot;
+  }, {
+    message: '等待页面导航稳定并读取认证快照',
+    timeout: 10_000,
+    intervals: [100, 200, 400, 800],
+  }).not.toBe('');
+  return snapshot;
+}
+
 function authHeaders(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
@@ -352,7 +365,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[CORE-006][REG-user-error-001] 首页告警不泄漏上游技术细节', async ({ page, request }) => {
+    const notificationsLoaded = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/api/dashboard/notifications',
+      { timeout: 15_000 },
+    );
     await loginAndReadToken(page, request, '/');
+    const notificationResponse = await notificationsLoaded;
+    expect(notificationResponse.ok(), '首页通知列表加载失败').toBe(true);
     const body = page.locator('body');
     await expect(body).not.toContainText(/上游信息|Key limit exceeded|openrouter|\/keys\//i);
   });
@@ -377,6 +396,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(secondBody.error?.message || '');
   });
 
+  test('[CORE-008][REG-tutorial-progress-001] 历史空进度用户可完成教程且重复提交幂等', async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/document-store');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await page.request.post('/api/daily-tips/seed-document-store-page-guide/mark-learned', {
+        headers: authHeaders(token),
+      });
+      const body = await response.json() as ApiEnvelope<{
+        learned: { sourceId: string; version: number; tier: string };
+      }>;
+      expect(response.status(), body.error?.message || '教程完成状态保存失败').toBe(200);
+      expect(body.success, body.error?.message || '教程完成状态保存失败').toBe(true);
+      expect(body.data.learned.sourceId).toBe('document-store-page-guide');
+    }
+    const progress = await readEnvelope<{
+      items: Array<{ sourceId: string; learned: boolean }>;
+    }>(await page.request.get('/api/daily-tips/progress', { headers: authHeaders(token) }));
+    expect(progress.items.find((item) => item.sourceId === 'document-store-page-guide')?.learned).toBe(true);
+  });
+
   test('[CORE-002][CORE-003] 合成会话刷新恢复且匿名请求被隔离', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/');
     const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(token) });
@@ -385,10 +423,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const anonymous = await request.get('/api/authz/me');
     expect([401, 403]).toContain(anonymous.status());
 
-    const beforeReload = await page.evaluate(() => window.localStorage.getItem('prd-admin-auth'));
+    const beforeReload = await readStableAuthSnapshot(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.locator('body')).not.toContainText('请重新登录');
-    const afterReload = await page.evaluate(() => window.localStorage.getItem('prd-admin-auth'));
+    const afterReload = await readStableAuthSnapshot(page);
     expect(afterReload).toBe(beforeReload);
   });
 

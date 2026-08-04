@@ -776,6 +776,24 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public void NotificationsController_QuotaHistory_ShouldHideProviderDiagnostics()
+    {
+        var presentation = NotificationsController.ToUserReadablePresentation(new AdminNotification
+        {
+            Title = "上游信息",
+            Message = "Key limit exceeded at openrouter.ai/keys/abc",
+            Source = "llm-gateway-quota",
+        });
+
+        Assert.Equal("AI 创作服务需要管理员处理", presentation.Title);
+        Assert.Contains("请稍后重试", presentation.Message);
+        Assert.Contains("管理员需要检查", presentation.Message);
+        Assert.DoesNotContain("Key limit exceeded", presentation.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("openrouter", presentation.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/keys/", presentation.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task RealBarkSmoke_CreatesDefectsForInernoroAndSendsDifferentImages_WhenKeyIsConfigured()
     {
         var key = Environment.GetEnvironmentVariable("REAL_BARK_KEY");
