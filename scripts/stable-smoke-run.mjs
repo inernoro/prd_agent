@@ -417,6 +417,10 @@ async function main() {
       '--cds-input', resolve(runDir, 'cds-results.json'),
       '--production-input', resolve(runDir, 'production-results.json'),
       '--output', resolve(runDir, 'report.md'),
+      '--supervisor-output', resolve(runDir, 'supervisor-report.md'),
+      '--technical-url', './report.md',
+      '--cds-url', values.STABLE_SMOKE_CDS_BASE_URL || '',
+      '--production-url', productionBaseUrl,
       '--run-id', runId,
       '--base-url-configured', 'true',
     ]);

@@ -9,6 +9,8 @@ const SUPERVISOR_SECTIONS = [
   /^视觉证据预算$/,
   /^业务功能线与面包屑$/,
   /^执行覆盖账本$/,
+  /^未通过与未执行逐项清单$/,
+  /^逐项验收账本$/,
   /^关联测试方法$/,
   /^需求一一对应表$/,
   /^验收用例$/,
@@ -76,6 +78,8 @@ export function supervisorReportErrors(markdown) {
   if (!markdown.includes('## 业务功能线与面包屑')) errors.push('缺少业务功能线与面包屑');
   if (!markdown.includes('## 需干预事项')) errors.push('缺少需干预事项');
   if (!markdown.includes('## 关联测试方法')) errors.push('缺少关联测试方法');
+  if (!markdown.includes('## 未通过与未执行逐项清单')) errors.push('缺少未通过与未执行逐项清单');
+  if (!markdown.includes('## 逐项验收账本')) errors.push('缺少逐项验收账本');
   if (!markdown.includes('## 需求一一对应表')) errors.push('缺少需求一一对应表');
   if (!markdown.includes('## 验收地址')) errors.push('缺少验收地址');
   for (const pattern of forbidden) {

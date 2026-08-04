@@ -11,3 +11,4 @@
 | rule | stable-smoke | 将主管报告与技术附录拆分，并增加视觉关键状态与证据元数据强制门禁 |
 | fix | stable-smoke | 所有 active 永久回归自动进入每轮计划，避免新增回归因未关联功能线而漏跑 |
 | fix | cds | 将 ASR 调用方白名单和回退开关改为 CDS 可直接消费的确定值，禁止 Docker Compose 默认语法以字面量进入容器 |
+| feat | stable-smoke | 自动生成主管逐项验收账本，异常项前置并关联详细面包屑、责任人和可点击测试方法 |

@@ -19,6 +19,18 @@ const source = `
 
 恢复模型服务。
 
+## 未通过与未执行逐项清单
+
+| caseId | 结果 |
+|---|---|
+| VIS-003 | 未执行 |
+
+## 逐项验收账本
+
+| caseId | 结果 |
+|---|---|
+| VIS-003 | 未执行 |
+
 ## 业务功能线与面包屑
 
 首页 → 视觉创作 → 生成进度 → 图片结果
@@ -50,6 +62,8 @@ test('主管报告与技术附录分离', () => {
   const result = splitStableSmokeReport(source, { technicalUrl: 'https://example.test/technical' });
   assert.match(result.supervisor, /主管验收总览/);
   assert.match(result.supervisor, /首页 → 视觉创作 → 生成进度 → 图片结果/);
+  assert.match(result.supervisor, /未通过与未执行逐项清单/);
+  assert.match(result.supervisor, /逐项验收账本/);
   assert.doesNotMatch(result.supervisor, /node scripts/);
   assert.match(result.technical, /node scripts/);
   assert.match(result.supervisor, /https:\/\/example\.test\/technical/);

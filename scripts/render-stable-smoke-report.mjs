@@ -6,6 +6,8 @@ import {
   summarizeCoverage,
   userReadableError,
 } from './stable-smoke-results.mjs';
+import { renderSupervisorReport } from './stable-smoke-supervisor-report.mjs';
+import { dirname, resolve } from 'node:path';
 
 function readArg(name, fallback = '') {
   const index = process.argv.indexOf(name);
@@ -17,6 +19,11 @@ const cdsInput = readArg('--cds-input', input);
 const productionInput = readArg('--production-input', '');
 const planInput = readArg('--plan', 'stable-smoke-plan/plan.json');
 const output = readArg('--output', 'e2e/stable-smoke-report.md');
+const supervisorOutput = readArg('--supervisor-output', resolve(dirname(output), 'supervisor-report.md'));
+const technicalUrl = readArg('--technical-url', './report.md');
+const cdsUrl = readArg('--cds-url');
+const productionUrl = readArg('--production-url', 'https://map.ebcone.net');
+const matrixInput = readArg('--matrix', '.claude/skills/stable-smoke/reference/test-matrix.md');
 const environment = readArg('--environment', 'unknown');
 const runId = readArg('--run-id', `stsmk-${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12)}`);
 const baseUrlConfigured = readArg('--base-url-configured', 'false') === 'true';
@@ -170,3 +177,13 @@ lines.push(
 );
 
 writeFileSync(output, lines.join('\n'), 'utf8');
+writeFileSync(supervisorOutput, renderSupervisorReport({
+  plan,
+  rows,
+  notRunLedger,
+  matrixMarkdown: readFileSync(matrixInput, 'utf8'),
+  runId,
+  technicalUrl,
+  cdsUrl,
+  productionUrl,
+}), 'utf8');
