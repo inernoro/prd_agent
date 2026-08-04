@@ -18,12 +18,22 @@ SPEC.loader.exec_module(MODULE)
 
 
 BASE = "https://example.test/"
+COMMIT_A = "a" * 40
 HEALTH = json.dumps({"status": "healthy", "commit": "a" * 40}).encode()
 VERSION = json.dumps({"service": "prd-api", "commit": "a" * 40}).encode()
 RESPONSES = {
-    "https://example.test/": MODULE.HttpResult("https://example.test/", 200, "text/html", b'<script src="/assets/app.js"></script><link rel="stylesheet" href="/assets/app.css">'),
-    "https://example.test/assets/app.js": MODULE.HttpResult("https://example.test/assets/app.js", 200, "application/javascript", b"console.log('ok')"),
-    "https://example.test/assets/app.css": MODULE.HttpResult("https://example.test/assets/app.css", 200, "text/css", b"body{}"),
+    "https://example.test/": MODULE.HttpResult(
+        "https://example.test/",
+        200,
+        "text/html",
+        f'<script src="/assets/app-{COMMIT_A}.js"></script><link rel="stylesheet" href="/assets/app-{COMMIT_A}.css">'.encode(),
+    ),
+    f"https://example.test/assets/app-{COMMIT_A}.js": MODULE.HttpResult(
+        f"https://example.test/assets/app-{COMMIT_A}.js", 200, "application/javascript", b"console.log('ok')"
+    ),
+    f"https://example.test/assets/app-{COMMIT_A}.css": MODULE.HttpResult(
+        f"https://example.test/assets/app-{COMMIT_A}.css", 200, "text/css", b"body{}"
+    ),
     "https://example.test/api/version": MODULE.HttpResult("https://example.test/api/version", 200, "application/json", VERSION),
     "https://example.test/health": MODULE.HttpResult("https://example.test/health", 200, "application/json", HEALTH),
     "https://example.test/llmgw/": MODULE.HttpResult("https://example.test/llmgw/", 200, "text/html", b"gateway"),
@@ -91,7 +101,9 @@ assert passed["verdict"] == "pass", passed
 assert len(passed["checks"]) == 8, passed
 
 broken = dict(RESPONSES)
-broken["https://example.test/assets/app.js"] = MODULE.HttpResult("https://example.test/assets/app.js", 404, "text/html", b"missing")
+broken[f"https://example.test/assets/app-{COMMIT_A}.js"] = MODULE.HttpResult(
+    f"https://example.test/assets/app-{COMMIT_A}.js", 404, "text/html", b"missing"
+)
 failed = MODULE.probe_once(
     BASE,
     "/api/version",
@@ -118,6 +130,7 @@ wrong_commit = MODULE.probe_once(
 )
 assert wrong_commit["verdict"] == "fail", wrong_commit
 assert any("commit mismatch" in item for item in wrong_commit["failures"]), wrong_commit
+assert any("main-page commit mismatch" in item for item in wrong_commit["failures"]), wrong_commit
 
 
 def fake_gateway_request(method: str, url: str, _timeout: float, _body: bytes | None):

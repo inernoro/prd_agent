@@ -154,6 +154,7 @@ def probe_once(
 ) -> dict[str, object]:
     checks: list[dict[str, object]] = []
     failures: list[str] = []
+    expected_commit = (expected_commit or "").removeprefix("sha-").strip().lower()
 
     def fetch_check(name: str, url: str, expected_type: str | None = None) -> HttpResult:
         result = fetcher(url, timeout)
@@ -188,6 +189,10 @@ def probe_once(
         failures.append("main-page does not reference a same-origin JavaScript entry asset")
     if not styles:
         failures.append("main-page does not reference a same-origin CSS entry asset")
+    if expected_commit and expected_commit not in root.body.decode("utf-8", errors="replace").lower():
+        failures.append(
+            f"main-page commit mismatch: expected={expected_commit} actual=entry-assets-do-not-contain-commit"
+        )
 
     for index, asset_url in enumerate(scripts, start=1):
         result = fetch_check(f"entry-js-{index}", asset_url)
@@ -208,7 +213,6 @@ def probe_once(
     api_state = health_state(api.body)
     if api.status == 200 and api_state not in {"healthy", "ok", "ready", "success"} and not api_identity_is_healthy(api.body):
         failures.append(f"api-version identity is not healthy: {api_state or 'missing'}")
-    expected_commit = (expected_commit or "").removeprefix("sha-").strip().lower()
     if expected_commit and api.status == 200:
         api_commit = (json_text_field(api.body, "commit") or "").lower()
         if api_commit != expected_commit:

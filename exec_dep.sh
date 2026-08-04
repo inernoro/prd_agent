@@ -624,7 +624,11 @@ else
 fi
 
 compose_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+compose_project_directory="${PRD_AGENT_COMPOSE_PROJECT_DIRECTORY:-}"
 compose_run() {
+  if [ -n "$compose_project_directory" ]; then
+    set -- --project-directory "$compose_project_directory" "$@"
+  fi
   if [ -f "$compose_dotenv_file" ]; then
     if [ "$COMPOSE" = "docker-compose" ]; then
       docker-compose --env-file "$compose_dotenv_file" "$@"
@@ -665,6 +669,12 @@ if [ ! -f scripts/lib/static-release.sh ]; then
 fi
 # shellcheck source=scripts/lib/static-release.sh
 . scripts/lib/static-release.sh
+if [ ! -f scripts/lib/gateway-bind-mount.sh ]; then
+  echo "ERROR: missing scripts/lib/gateway-bind-mount.sh" >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/gateway-bind-mount.sh
+. scripts/lib/gateway-bind-mount.sh
 
 tmp_dir="$(mktemp -d)"
 release_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -1677,6 +1687,22 @@ refresh_gateway_after_compose() {
     if [ "$gateway_running" = "true" ]; then
       echo "Synchronizing active gateway config and reloading in place without changing its container IP..."
       sync_active_gateway_nginx_config
+      if ! gateway_bind_mounts_are_coherent "$gateway_container_id" "$active_static_root" "$active_nginx_conf_root"; then
+        if [ -z "$compose_project_directory" ]; then
+          echo "ERROR: gateway bind mount is stale, but PRD_AGENT_COMPOSE_PROJECT_DIRECTORY is not set" >&2
+          echo "RECOVERY: set it to the stable production Compose project directory, then retry this release" >&2
+          return 1
+        fi
+        echo "Gateway bind mount drift detected; recreating only the gateway from the stable production project directory..."
+        compose_run up -d --no-deps --force-recreate "$gateway_service"
+        gateway_container_id="$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)"
+        reload_active_gateway
+        if ! gateway_bind_mounts_are_coherent "$gateway_container_id" "$active_static_root" "$active_nginx_conf_root"; then
+          echo "ERROR: gateway bind mount drift remains after targeted recreation" >&2
+          return 1
+        fi
+        echo "Gateway bind mount drift repaired: static and nginx configuration now match the host release roots"
+      fi
     else
       echo "Starting gateway service for the first time..."
       compose_run up -d --no-deps "$gateway_service"
