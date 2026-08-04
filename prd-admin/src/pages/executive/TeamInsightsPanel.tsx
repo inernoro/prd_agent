@@ -109,7 +109,17 @@ const TONE: Record<string, { c: string; soft: string; label: string }> = {
   neutral: { c: 'var(--text-muted)', soft: 'var(--bg-secondary)', label: '' },
 };
 
-function Headline({ h, windowLabel }: { h: TeamInsightHeadline; windowLabel: string }) {
+const QUADRANT_ORDER = ['主力产出', '精工型', '高量低果', '低活跃', '样本不足', '数据不足'] as const;
+
+function Headline({
+  h, windowLabel, counts, totalMembers, activeMembers,
+}: {
+  h: TeamInsightHeadline;
+  windowLabel: string;
+  counts: Record<string, number>;
+  totalMembers: number;
+  activeMembers: number;
+}) {
   const t = TONE[h.tone] ?? TONE.neutral;
   return (
     <div
@@ -117,7 +127,8 @@ function Headline({ h, windowLabel }: { h: TeamInsightHeadline; windowLabel: str
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
     >
       <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.c }} />
-      <div className="pl-5 pr-5 py-4 flex flex-col gap-3">
+      <div className="pl-5 pr-5 py-4 flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-8">
+      <div className="flex flex-col gap-3 flex-1 min-w-0">
         <div className="flex items-center gap-2.5 flex-wrap">
           <span
             className="text-[10px] tracking-[0.16em] uppercase px-2 py-[3px] rounded"
@@ -162,6 +173,66 @@ function Headline({ h, windowLabel }: { h: TeamInsightHeadline; windowLabel: str
             })}
           </div>
         )}
+      </div>
+
+      {/* 右侧：团队构成 —— 头条讲「发生了什么」，这里讲「这个团队长什么样」，
+          两边都不重复下方的 KPI。点击滚到成员画像继续下钻。 */}
+      <TeamShape counts={counts} totalMembers={totalMembers} activeMembers={activeMembers} windowLabel={windowLabel} />
+      </div>
+    </div>
+  );
+}
+
+function TeamShape({
+  counts, totalMembers, activeMembers, windowLabel,
+}: {
+  counts: Record<string, number>;
+  totalMembers: number;
+  activeMembers: number;
+  windowLabel: string;
+}) {
+  const rows = QUADRANT_ORDER
+    .map(k => ({ key: k, value: counts[k] ?? 0 }))
+    .filter(r => r.value > 0);
+  const total = rows.reduce((s2, r) => s2 + r.value, 0);
+  if (total === 0) return null;
+
+  return (
+    <div className="lg:w-[268px] lg:shrink-0 lg:border-l lg:pl-6 flex flex-col gap-2.5" style={{ borderColor: 'var(--border-subtle)' }}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[10px] tracking-[0.16em] uppercase" style={{ color: 'var(--text-muted)' }}>团队构成</span>
+        <a
+          href="#ti-members"
+          className="text-[11px] inline-flex items-center gap-0.5"
+          style={{ color: 'var(--text-secondary)' }}
+        >
+          看画像<ChevronRight size={11} />
+        </a>
+      </div>
+
+      <div className="flex h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+        {rows.map(r => (
+          <Tooltip key={r.key} content={`${r.key} ${r.value} 人`} side="top">
+            <div style={{ width: `${(r.value / total) * 100}%`, background: QUADRANT_COLOR[r.key], opacity: 0.85 }} />
+          </Tooltip>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-[3px]">
+        {rows.map(r => (
+          <div key={r.key} className="flex items-center gap-2 text-[11.5px]">
+            <span className="rounded-full flex-shrink-0" style={{ width: 6, height: 6, background: QUADRANT_COLOR[r.key] }} />
+            <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{r.key}</span>
+            <span className="ml-auto tabular-nums font-semibold" style={{ color: 'var(--text-primary)' }}>{r.value}</span>
+            <span className="tabular-nums w-9 text-right" style={{ color: 'var(--text-muted)' }}>
+              {Math.round((r.value / total) * 100)}%
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="text-[10.5px] leading-relaxed pt-1.5" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+        {windowLabel}窗口 · 团队 {totalMembers} 人，其中 {activeMembers} 人有痕迹
       </div>
     </div>
   );
@@ -597,7 +668,13 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
   return (
     <div className="ti-root flex flex-col gap-6">
       <style>{PANEL_CSS}</style>
-      <Headline h={headline} windowLabel={windowLabel} />
+      <Headline
+        h={headline}
+        windowLabel={windowLabel}
+        counts={meta.quadrantCounts}
+        totalMembers={meta.totalMembers}
+        activeMembers={members.length}
+      />
       {/* A. 团队状态 */}
       <section>
         <SectionHead
@@ -693,7 +770,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
       </section>
 
       {/* C. 成员画像 */}
-      <section>
+      <section id="ti-members" style={{ scrollMarginTop: 72 }}>
         <SectionHead index="03" title="成员画像" hint="不排名，按团队中位分型" />
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-2.5">
           <Quadrant
