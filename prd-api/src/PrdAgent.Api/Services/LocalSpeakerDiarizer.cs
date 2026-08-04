@@ -13,13 +13,16 @@ internal static class LocalSpeakerDiarizer
     private const int FrameMilliseconds = 20;
     private const int MinimumSpeechMilliseconds = 260;
     private const int SplitSilenceMilliseconds = 220;
+    private const int LongTurnBoundaryMilliseconds = 800;
     private const double MinimumSpeakerDistance = 0.34;
+    private const double MinimumLongTurnSpeakerDistance = 0.18;
 
     internal sealed record Result(
         IReadOnlyList<SubtitleSegment> Segments,
         int SpeakerCount,
         double Confidence,
-        int VoiceTurnCount);
+        int VoiceTurnCount,
+        bool HasDistinctLongTurnEvidence);
 
     private sealed record WavAudio(short[] Samples, int SampleRate);
     private sealed record VoiceTurn(int StartSample, int EndSample, double[] Features)
@@ -37,6 +40,19 @@ internal static class LocalSpeakerDiarizer
             return null;
 
         var clustering = ClusterSpeakers(turns, audio!.SampleRate);
+        var longTurns = CoalesceLongVoiceTurns(turns, audio);
+        var longClustering = ClusterSpeakers(
+            longTurns,
+            audio.SampleRate,
+            MinimumLongTurnSpeakerDistance);
+        var hasDistinctLongTurnEvidence = longTurns.Count is >= 2 and <= 4
+            && longClustering.SpeakerCount == longTurns.Count
+            && longClustering.Confidence >= MinimumLongTurnSpeakerDistance;
+        if (hasDistinctLongTurnEvidence)
+        {
+            turns = longTurns;
+            clustering = longClustering;
+        }
         if (clustering.SpeakerCount < 2)
             return new Result(
                 [new SubtitleSegment(
@@ -46,7 +62,8 @@ internal static class LocalSpeakerDiarizer
                     "说话人1")],
                 1,
                 clustering.Confidence,
-                turns.Count);
+                turns.Count,
+                hasDistinctLongTurnEvidence);
 
         var clauses = SplitClauses(transcript);
         if (clauses.Count == 0)
@@ -62,7 +79,12 @@ internal static class LocalSpeakerDiarizer
         if (distinct < 2)
             return null;
 
-        return new Result(aligned, distinct, clustering.Confidence, turns.Count);
+        return new Result(
+            aligned,
+            distinct,
+            clustering.Confidence,
+            turns.Count,
+            hasDistinctLongTurnEvidence);
     }
 
     private static bool TryReadPcm16Mono(byte[] bytes, out WavAudio? audio)
@@ -181,9 +203,44 @@ internal static class LocalSpeakerDiarizer
         return turns;
     }
 
+    private static List<VoiceTurn> CoalesceLongVoiceTurns(
+        IReadOnlyList<VoiceTurn> turns,
+        WavAudio audio)
+    {
+        if (turns.Count < 2)
+            return turns.ToList();
+
+        var maximumGapSamples = audio.SampleRate * LongTurnBoundaryMilliseconds / 1000;
+        var result = new List<VoiceTurn>();
+        var groupStart = turns[0].StartSample;
+        var groupEnd = turns[0].EndSample;
+        for (var index = 1; index < turns.Count; index++)
+        {
+            var turn = turns[index];
+            if (turn.StartSample - groupEnd <= maximumGapSamples)
+            {
+                groupEnd = turn.EndSample;
+                continue;
+            }
+
+            result.Add(new VoiceTurn(
+                groupStart,
+                groupEnd,
+                ExtractFeatures(audio.Samples, groupStart, groupEnd, audio.SampleRate)));
+            groupStart = turn.StartSample;
+            groupEnd = turn.EndSample;
+        }
+        result.Add(new VoiceTurn(
+            groupStart,
+            groupEnd,
+            ExtractFeatures(audio.Samples, groupStart, groupEnd, audio.SampleRate)));
+        return result;
+    }
+
     private static (int[] Labels, int SpeakerCount, double Confidence) ClusterSpeakers(
         IReadOnlyList<VoiceTurn> turns,
-        int sampleRate)
+        int sampleRate,
+        double minimumDistance = MinimumSpeakerDistance)
     {
         if (turns.Count < 2)
             return ([0], 1, 0);
@@ -199,7 +256,7 @@ internal static class LocalSpeakerDiarizer
         while (clusters.Count > 1)
         {
             var closest = FindClosestClusters(clusters, turns);
-            if (closest.Distance >= MinimumSpeakerDistance && clusters.Count <= 4)
+            if (closest.Distance >= minimumDistance && clusters.Count <= 4)
                 break;
 
             clusters[closest.Left].AddRange(clusters[closest.Right]);

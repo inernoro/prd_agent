@@ -689,14 +689,20 @@ public class SubtitleGenerationProcessor
                         BuildResolverDiagnostic(candidate, "no-speech-content"));
                 }
 
-                if (CountSpeakers(segments) <= 1)
+                var providerSpeakerCount = CountSpeakers(segments);
+                if (providerSpeakerCount < 4)
                 {
                     var localDiarization = LocalSpeakerDiarizer.TryDiarize(audioBytes, candidateTranscript);
-                    if (localDiarization is { SpeakerCount: > 1 })
+                    if (localDiarization is not null
+                        && ShouldUseLocalSpeakerDiarization(
+                            segments,
+                            localDiarization,
+                            candidateTranscript))
                     {
                         _logger.LogInformation(
-                            "[doc-store-agent] 本地声纹兜底完成: run={RunId} speakers={Speakers} turns={Turns} confidence={Confidence:F2}",
+                            "[doc-store-agent] 本地声纹补足上游角色: run={RunId} providerSpeakers={ProviderSpeakers} speakers={Speakers} turns={Turns} confidence={Confidence:F2}",
                             run.Id,
+                            providerSpeakerCount,
                             localDiarization.SpeakerCount,
                             localDiarization.VoiceTurnCount,
                             localDiarization.Confidence);
@@ -705,8 +711,10 @@ public class SubtitleGenerationProcessor
                     else
                     {
                         _logger.LogInformation(
-                            "[doc-store-agent] 未检测到可靠的多说话人声纹，保留单角色原文 run={RunId} turns={Turns} confidence={Confidence:F2}",
+                            "[doc-store-agent] 本地声纹未证明更多角色，保留上游分段 run={RunId} providerSpeakers={ProviderSpeakers} localSpeakers={LocalSpeakers} turns={Turns} confidence={Confidence:F2}",
                             run.Id,
+                            providerSpeakerCount,
+                            localDiarization?.SpeakerCount ?? 0,
                             localDiarization?.VoiceTurnCount ?? 0,
                             localDiarization?.Confidence ?? 0);
                     }
@@ -1031,6 +1039,65 @@ public class SubtitleGenerationProcessor
             .Where(speaker => !string.IsNullOrWhiteSpace(speaker))
             .Distinct(StringComparer.Ordinal)
             .Count();
+
+    internal static bool ShouldUseLocalSpeakerDiarization(
+        IReadOnlyList<SubtitleSegment> providerSegments,
+        LocalSpeakerDiarizer.Result localDiarization,
+        string transcript)
+    {
+        var providerSpeakerCount = CountSpeakers(providerSegments);
+        if (providerSpeakerCount >= 4
+            || localDiarization.SpeakerCount <= Math.Max(1, providerSpeakerCount)
+            || !HasValidLocalDiarization(localDiarization, transcript))
+            return false;
+
+        // 上游已经给出多个角色时，只允许声学证据补足一个遗漏角色。
+        // 必须是长发言块逐块对应不同声纹，避免把上游可靠的两人结果
+        // 因为本地短暂停顿或音高波动而整体覆盖成三人。
+        // 上游没有可靠的多人标签时，本地承担兜底职责，使用通用 0.18
+        // 声学门槛；一旦上游已有多人标签，则进入上面的严格补足路径。
+        return providerSpeakerCount < 2
+               || (localDiarization.SpeakerCount == providerSpeakerCount + 1
+                   && localDiarization.HasDistinctLongTurnEvidence
+                   && localDiarization.Confidence >= 0.20
+                   && localDiarization.Segments.Count == localDiarization.SpeakerCount);
+    }
+
+    private static bool HasValidLocalDiarization(
+        LocalSpeakerDiarizer.Result result,
+        string transcript)
+    {
+        if (result.SpeakerCount is < 2 or > 4
+            || result.Segments.Count < result.SpeakerCount
+            || result.Confidence < 0.18
+            || result.VoiceTurnCount < result.SpeakerCount)
+            return false;
+
+        var previousEnd = -1d;
+        foreach (var segment in result.Segments)
+        {
+            if (!double.IsFinite(segment.StartSec)
+                || !double.IsFinite(segment.EndSec)
+                || segment.StartSec < 0
+                || segment.EndSec <= segment.StartSec
+                || segment.StartSec < previousEnd
+                || string.IsNullOrWhiteSpace(segment.Text)
+                || string.IsNullOrWhiteSpace(segment.SpeakerId))
+                return false;
+            previousEnd = segment.EndSec;
+        }
+
+        if (CountSpeakers(result.Segments) != result.SpeakerCount)
+            return false;
+
+        static string Compact(string value)
+            => string.Concat(value.Where(character => !char.IsWhiteSpace(character)));
+
+        return string.Equals(
+            Compact(string.Concat(result.Segments.Select(segment => segment.Text))),
+            Compact(transcript.Trim()),
+            StringComparison.Ordinal);
+    }
 
     internal static string BuildChatAudioPrompt(int attempt)
     {

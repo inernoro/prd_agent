@@ -448,6 +448,9 @@ export function TranscribeFlowDrawer({
             <div className="min-w-0">
               <p className="text-[13px] font-semibold text-token-primary">正在整理已保存的原文</p>
               <p className="mt-1 text-[11px] leading-relaxed text-token-muted">不会重新上传或转录音频，结果会更新在当前录音中。</p>
+              <p className="mt-1 text-[10px] tabular-nums text-token-muted">
+                已进行 {formatProcessDuration(runningSeconds)} · 通常需要 30–90 秒，可后台运行
+              </p>
             </div>
           </div>
         ) : (

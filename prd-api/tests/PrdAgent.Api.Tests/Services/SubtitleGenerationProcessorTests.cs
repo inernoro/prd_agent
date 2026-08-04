@@ -529,6 +529,123 @@ public class SubtitleGenerationProcessorTests
     }
 
     [Fact]
+    public void LocalDiarization_ShouldReplaceProvider_WhenThreeLongTurnsProveOneMissingSpeaker()
+    {
+        var provider = new List<SubtitleSegment>
+        {
+            new(0.5, 20, "甲方观点。乙方观点。", "说话人1"),
+            new(21, 30, "丙方观点。", "说话人2"),
+        };
+        var local = new LocalSpeakerDiarizer.Result(
+            [
+                new(0.5, 9, "甲方观点。", "说话人1"),
+                new(10, 20, "乙方观点。", "说话人2"),
+                new(21, 30, "丙方观点。", "说话人3"),
+            ],
+            3,
+            0.21,
+            3,
+            true);
+
+        SubtitleGenerationProcessor.ShouldUseLocalSpeakerDiarization(
+            provider,
+            local,
+            "甲方观点。乙方观点。丙方观点。").ShouldBeTrue();
+
+        string.Concat(local.Segments.Select(segment => segment.Text))
+            .ShouldBe("甲方观点。乙方观点。丙方观点。");
+        local.Segments.Zip(local.Segments.Skip(1), (left, right) => left.EndSec <= right.StartSec)
+            .ShouldAllBe(value => value);
+        foreach (var segment in local.Segments)
+        {
+            segment.StartSec.ShouldBeGreaterThanOrEqualTo(0);
+            segment.EndSec.ShouldBeLessThanOrEqualTo(30);
+        }
+    }
+
+    [Theory]
+    [InlineData(0.19, true, false)]
+    [InlineData(0.21, false, false)]
+    public void LocalDiarization_ShouldKeepTwoSpeakerProvider_WhenLocalThirdSpeakerEvidenceIsWeak(
+        double confidence,
+        bool hasDistinctLongTurnEvidence,
+        bool expected)
+    {
+        var provider = new List<SubtitleSegment>
+        {
+            new(0, 10, "第一段。", "说话人1"),
+            new(11, 20, "第二段。第三段。", "说话人2"),
+        };
+        var local = new LocalSpeakerDiarizer.Result(
+            [
+                new(0, 6, "第一段。", "说话人1"),
+                new(7, 13, "第二段。", "说话人2"),
+                new(14, 20, "第三段。", "说话人3"),
+            ],
+            3,
+            confidence,
+            3,
+            hasDistinctLongTurnEvidence);
+
+        SubtitleGenerationProcessor.ShouldUseLocalSpeakerDiarization(
+            provider,
+            local,
+            "第一段。第二段。第三段。").ShouldBe(expected);
+    }
+
+    [Fact]
+    public void LocalDiarization_ShouldKeepProvider_WhenReplacementBreaksTextOrTimeline()
+    {
+        var provider = new List<SubtitleSegment>
+        {
+            new(0, 10, "第一段。", "说话人1"),
+            new(11, 20, "第二段。第三段。", "说话人2"),
+        };
+        var invalid = new LocalSpeakerDiarizer.Result(
+            [
+                new(0, 8, "第一段。", "说话人1"),
+                new(7, 14, "第二段。", "说话人2"),
+                new(15, 20, "遗漏内容。", "说话人3"),
+            ],
+            3,
+            0.30,
+            3,
+            true);
+
+        SubtitleGenerationProcessor.ShouldUseLocalSpeakerDiarization(
+            provider,
+            invalid,
+            "第一段。第二段。第三段。").ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(0.18, true)]
+    [InlineData(0.17, false)]
+    public void LocalDiarization_ShouldUseGeneralConfidenceThreshold_WhenProviderHasOneSpeaker(
+        double confidence,
+        bool expected)
+    {
+        var provider = new List<SubtitleSegment>
+        {
+            new(0, 20, "第一段。第二段。", "说话人1"),
+        };
+        var local = new LocalSpeakerDiarizer.Result(
+            [
+                new(0, 9, "第一段。", "说话人1"),
+                new(10, 20, "第二段。", "说话人2"),
+            ],
+            2,
+            confidence,
+            2,
+            false);
+
+        SubtitleGenerationProcessor.ShouldUseLocalSpeakerDiarization(
+            provider,
+            local,
+            "第一段。第二段。").ShouldBe(expected);
+    }
+
+    [Fact]
     public void RecordingAsrCallerChain_ShouldTryDedicatedTranscriptionBeforeGenericSubtitle()
     {
         SubtitleGenerationProcessor.RecordingAsrCallerChain.ShouldBe(

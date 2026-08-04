@@ -123,6 +123,51 @@ public class LocalSpeakerDiarizerTests
     }
 
     [Fact]
+    public void ThreeLongSpeakerBlocks_WithNaturalPhrasePauses_ShouldKeepThreeBoundaries()
+    {
+        var wav = BuildWav(
+            (0.30, 0, 0),
+            (0.85, 105, 0.70), (0.30, 0, 0), (0.90, 118, 0.66), (0.30, 0, 0), (0.95, 110, 0.72),
+            (1.20, 0, 0),
+            (0.85, 205, 0.68), (0.30, 0, 0), (0.90, 218, 0.64), (0.30, 0, 0), (0.95, 210, 0.70),
+            (1.20, 0, 0),
+            (0.85, 335, 0.66), (0.30, 0, 0), (0.90, 348, 0.62), (0.30, 0, 0), (0.95, 340, 0.68),
+            (0.30, 0, 0));
+
+        var result = LocalSpeakerDiarizer.TryDiarize(
+            wav,
+            "第一位说明行业经验。第一位补充营销策略。第一位确认医药需求。第二位说明报价态度。第二位确认交付标准。第二位要求常规优化。第三位确认会议待办。第三位安排方案提交。第三位安排报价复核。");
+
+        result.ShouldNotBeNull();
+        result.SpeakerCount.ShouldBe(3, $"confidence={result.Confidence:F3}, turns={result.VoiceTurnCount}");
+        result.VoiceTurnCount.ShouldBe(3);
+        result.Segments.Select(segment => segment.SpeakerId)
+            .Distinct()
+            .ShouldBe(["说话人1", "说话人2", "说话人3"]);
+    }
+
+    [Fact]
+    public void SameVoiceAcrossLongPauses_WithNaturalPitchVariation_ShouldRemainOneSpeaker()
+    {
+        var wav = BuildWav(
+            (0.30, 0, 0),
+            (1.10, 160, 0.70), (0.30, 0, 0), (1.10, 168, 0.66),
+            (1.20, 0, 0),
+            (1.10, 172, 0.68), (0.30, 0, 0), (1.10, 164, 0.64),
+            (1.20, 0, 0),
+            (1.10, 158, 0.72), (0.30, 0, 0), (1.10, 166, 0.68),
+            (0.30, 0, 0));
+
+        var result = LocalSpeakerDiarizer.TryDiarize(
+            wav,
+            "同一位发言人说明行业经验。同一位发言人补充营销策略。同一位发言人确认后续待办。");
+
+        result.ShouldNotBeNull();
+        result.SpeakerCount.ShouldBe(1, $"confidence={result.Confidence:F3}, turns={result.VoiceTurnCount}");
+        result.Segments.Select(segment => segment.SpeakerId).Distinct().ShouldBe(["说话人1"]);
+    }
+
+    [Fact]
     public void UnusedAcousticCluster_ShouldNotLeaveGapInVisibleSpeakerNumbers()
     {
         var wav = BuildWav(
