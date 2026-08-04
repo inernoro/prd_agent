@@ -174,8 +174,9 @@ function Quadrant({
               type="button"
               onClick={() => onPick(m.userId)}
               aria-pressed={active}
-              aria-label={m.displayName}
-              className="absolute rounded-full grid place-items-center transition-transform hover:scale-110"
+              aria-label={maskName(m.displayName, masked)}
+              title={`${maskName(m.displayName, masked)} · 产出 ${m.output} · 质量 ${m.quality}`}
+              className="absolute rounded-full grid place-items-center transition-transform hover:scale-110 hover:z-10 [&:hover>span:last-child]:opacity-100"
               style={{
                 left: `${x}%`,
                 top: `${y}%`,
@@ -190,9 +191,15 @@ function Quadrant({
               }}
             >
               <span className="text-[10px] font-bold">{maskName(m.displayName, masked)[0]}</span>
+              {/* 密集区名字会叠成一片，只有选中的那个常驻显示全名，其余交给 hover 与 title */}
               <span
-                className="absolute whitespace-nowrap text-[10.5px] pointer-events-none"
-                style={{ top: 'calc(100% + 4px)', left: '50%', transform: 'translateX(-50%)', color: 'var(--text-secondary)' }}
+                className="absolute whitespace-nowrap text-[10.5px] pointer-events-none transition-opacity"
+                style={{
+                  top: 'calc(100% + 4px)', left: '50%', transform: 'translateX(-50%)',
+                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  opacity: active ? 1 : 0,
+                  fontWeight: active ? 600 : 400,
+                }}
               >
                 {maskName(m.displayName, masked)}
               </span>
