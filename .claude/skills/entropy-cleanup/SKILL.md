@@ -197,6 +197,23 @@ python3 scripts/doc-readability-check.py --skills-audit | grep '^AUTOFIX_NAME: '
   echo "[WARN] 仍有可自动修条目未处理" || true
 ```
 
+**改了技能就必须重新生成分发包**（否则市场下载到的还是旧内容，Server Build & Test 的
+新鲜度自测会红）。这一步不能省——`.claude/skills` 下有 24 个技能进了官方套装，
+D4 的自动修复随时可能命中其中之一：
+
+```bash
+if git diff --quiet -- .claude/skills/ .agents/skills/; then
+  :   # 本轮没动技能，跳过
+else
+  node scripts/bundle-official-skills.mjs
+  node scripts/test-official-skill-bundles.mjs   # 必须通过才继续
+fi
+```
+
+生成物 `prd-api/src/PrdAgent.Api/OfficialSkills/official-skills.generated.json` 要一并
+提交（Step 5 的 git add 已含该路径）。注意该测试每次跑都会重写生成物里的时间戳，
+若 diff **只有** `generatedAt` 一行变化，丢弃它，别提交无意义 churn。
+
 **D6 changelog→doc 内容覆盖**：
 1. 读取 changelog 文件，提取涉及模块（第 2 列：prd-api/prd-admin 等）
 2. 定位对应 `design.*.md` 文件
@@ -262,7 +279,7 @@ cat > "changelogs/$(date +%Y-%m-%d)_entropy-cleanup.md" << 'EOF'
 EOF
 
 # 2. Stage 并提交
-git add doc/ changelogs/ .claude/ .agents/skills/
+git add doc/ changelogs/ .claude/ .agents/skills/ prd-api/src/PrdAgent.Api/OfficialSkills/
 git commit -m "chore: 日常熵清理 $(date +%Y-%m-%d)"
 
 # 3. 推送（当前分支即目标分支，scheduled run 自带隔离分支）
@@ -391,7 +408,7 @@ processed:
 - **自动创建**：Step 6 在推送后必须自动调用 `mcp__github__create_pull_request` 创建，不需要人工触发
 - **合并前核查**：合并前必须走 6.4 内容核查（diff 通读 + 删除行幽灵验证 + 无代码混入），核查通过才合并
 - **手动 squash 合并**：由 Agent 调 `mcp__github__merge_pull_request`（squash）直接合并，**不依赖仓库 auto-merge 开关**，也不调 `enable_pr_auto_merge`——合并必须过技能内容核查这道闸
-- **去重保护**：创建前先查 open PR，有同类 PR 先合并再创建
+- **去重保护**：创建前先查 open PR，有同类 PR **不合并**，只记录 PR 号后继续创建新 PR（旧 PR 的 head 无法在本地审计，见 6.2）
 - **无净变更跳过**：当前分支没有超过 main 的 commit 时，不创建 PR（幂等运行不产生空 PR）
 
 ---

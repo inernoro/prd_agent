@@ -1177,7 +1177,13 @@ def main() -> int:
         rc = 0
         for rel_dir in SKILL_DIRS:
             abs_dir = os.path.join(REPO_ROOT, rel_dir)
+            shown_root = rel_dir.replace(os.sep, "/")
             if not os.path.isdir(abs_dir):
+                # 整个技能根消失（删掉 / 改名）= 那个宿主的全部技能一次性不可发现，
+                # 比单个技能坏掉严重得多。这里跳过就等于「删光了也算干净」——
+                # 正是上面刚修掉的 scan_skills() 那个 continue 的同款，别在这里重犯。
+                print(f"BLOCK: {shown_root} — 声明的技能根不存在（该宿主的技能全部不可发现）")
+                rc = 1
                 continue
             for name in sorted(os.listdir(abs_dir)):
                 skill_dir = os.path.join(abs_dir, name)

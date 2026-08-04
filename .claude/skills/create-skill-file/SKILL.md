@@ -106,8 +106,10 @@ skill-name/
 自查（任何仓库都能跑，不依赖本项目脚本）：
 
 ```bash
-head -5 <skill-dir>/SKILL.md          # 应看到 name 与 description 两行
-basename <skill-dir>                  # 应与 name 完全一致
+skill_dir=".claude/skills/my-skill-name"   # 换成你的技能目录
+
+head -5 "$skill_dir/SKILL.md"              # 应看到 name 与 description 两行
+basename "$skill_dir"                      # 应与 frontmatter 里的 name 完全一致
 ```
 
 `description` 自问三条：说清了**什么时候**该用它吗？包含用户会说的触发词吗？第三人称、无 XML 标签、
