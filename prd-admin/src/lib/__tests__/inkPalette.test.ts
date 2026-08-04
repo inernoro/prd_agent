@@ -334,7 +334,25 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     };
 
     /**
+     * class 里写的底色：Tailwind 任意值 `bg-[…]`（可带 `hover:` 之类的变体前缀）。
+     *
+     * 前景色早先补过 class 写法（`text-white` / `text-token-primary`），底色却还只从
+     * `background:` 声明起判——于是 `className="bg-[var(--accent-primary)] text-token-primary"`
+     * 这种两边都写在 class 里的形态原样重建了 2.92:1，判据全程绿灯。
+     * 这个写法在本仓库真实存在（QuickCreateWizard 的步骤条、ToolEditor 的圆点），
+     * 不是假想形态，只是那两处底上没字才没出事。
+     *
+     * 下划线是 Tailwind 任意值里的空格转义，还原成空格再判，
+     * 否则 `bg-[linear-gradient(135deg,_var(--accent-primary))]` 的色值读起来是粘连的。
+     */
+    const CLASS_BG = /(?:^|[\s"'`{])(?:[a-z-]+:)*bg-\[([^\]]+)\]/g;
+
+    /**
      * 一段源码里所有「accent 当底 + 同一开标签上写着浅色字」的行号。
+     *
+     * 底色两种写法（style 里的 `background:` / class 里的 `bg-[…]`）走同一套判据：
+     * 取值 → 判是不是 accent 面 → 同一个开标签上有没有浅色字。分开写两套判据
+     * 就是又一处会各自漂移的副本，这个 PR 已经因此栽过一次。
      *
      * `checkLiterals` 只对受管表面开：字面色标那一路会连带扫出一批与本次改动
      * 无关的存量（`var(--accent, #6366f1)` 之类别处的老坑）。这个 PR 只对三个
@@ -342,14 +360,21 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
      */
     const offendingLines = (content: string, checkLiterals = false): number[] => {
       const lines: number[] = [];
+      /** (值, 位置) 两路底色的统一入口 */
+      const backgrounds: Array<[string, number]> = [];
       for (const match of content.matchAll(BG_KEY)) {
         const at = (match.index ?? 0) + match[0].length;
-        const value = readValue(content, at);
+        backgrounds.push([readValue(content, at), at]);
+      }
+      for (const match of content.matchAll(CLASS_BG)) {
+        backgrounds.push([match[1].replace(/_/g, ' '), match.index ?? 0]);
+      }
+      for (const [value, at] of backgrounds) {
         if (!ACCENT_IN_VALUE.test(value) && !(checkLiterals && literalStopFails(value))) continue;
         if (!LIGHT_FG.test(openingTagAround(content, at))) continue;
         lines.push(content.slice(0, at).split('\n').length);
       }
-      return lines;
+      return lines.sort((a, b) => a - b);
     };
 
     // 判据自查：两种前景写法都得抓到，别的写法不许误报。
@@ -368,10 +393,27 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     const COPIED_GRADIENT = `<div className="text-token-primary" style={{ background: 'linear-gradient(135deg, #C8623A 0%, #D97757 48%, #E0A06B 100%)' }}>x</div>`;
     const SAFE_PALE_LITERAL = `<div className="text-token-primary" style={{ background: '#141418' }}>x</div>`;
 
-    for (const [name, snippet] of [['class 白字', CLASS_WHITE], ['class 主文字色', CLASS_TOKEN], ['inline 白字', INLINE_WHITE], ['渐变底 + class 主文字色', GRADIENT_CLASS], ['三元里的浅色字', TERNARY_FG], ['手抄的品牌渐变', COPIED_GRADIENT]] as const) {
+    // 底色也写在 class 里的形态：前景补过 class 写法，底色没补，两边都用 class 就整条漏。
+    const CLASS_BG_TOKEN = `<button className="px-2 bg-[var(--accent-primary)] text-token-primary">x</button>`;
+    const CLASS_BG_WHITE = `<button className={cn('bg-[var(--accent-primary)]', 'text-white')}>x</button>`;
+    const CLASS_BG_VARIANT = `<button className="hover:bg-[var(--accent-primary)] text-white">x</button>`;
+    const CLASS_BG_GRADIENT = `<div className="bg-[linear-gradient(135deg,_#C8623A_0%,_#D97757_100%)] text-token-primary">x</div>`;
+    const SAFE_CLASS_BG_DARK_FG = `<button className="bg-[var(--accent-primary)]" style={{ color: 'var(--button-primary-fg)' }}>x</button>`;
+    const SAFE_CLASS_BG_TOKEN = `<button className="bg-[var(--bg-tertiary)] text-token-primary">x</button>`;
+
+    for (const [name, snippet] of [
+      ['class 白字', CLASS_WHITE], ['class 主文字色', CLASS_TOKEN], ['inline 白字', INLINE_WHITE],
+      ['渐变底 + class 主文字色', GRADIENT_CLASS], ['三元里的浅色字', TERNARY_FG], ['手抄的品牌渐变', COPIED_GRADIENT],
+      ['class 底 + class 主文字色', CLASS_BG_TOKEN], ['cn() 里的 class 底 + 白字', CLASS_BG_WHITE],
+      ['带变体前缀的 class 底', CLASS_BG_VARIANT], ['class 里的手抄渐变（下划线转义）', CLASS_BG_GRADIENT],
+    ] as const) {
       expect(offendingLines(snippet, true), `判据漏了「${name}」这种写法`).toHaveLength(1);
     }
-    for (const [name, snippet] of [['按钮 token 对', SAFE_TOKEN_PAIR], ['accent 底 + 深墨字', SAFE_DARK_FG], ['accent 透明底', SAFE_ALPHA_TINT], ['兄弟元素的文字色', SAFE_SIBLING], ['深底配浅字（本来就该这样）', SAFE_PALE_LITERAL]] as const) {
+    for (const [name, snippet] of [
+      ['按钮 token 对', SAFE_TOKEN_PAIR], ['accent 底 + 深墨字', SAFE_DARK_FG], ['accent 透明底', SAFE_ALPHA_TINT],
+      ['兄弟元素的文字色', SAFE_SIBLING], ['深底配浅字（本来就该这样）', SAFE_PALE_LITERAL],
+      ['class 底 + 深墨字', SAFE_CLASS_BG_DARK_FG], ['非 accent 的 class 底', SAFE_CLASS_BG_TOKEN],
+    ] as const) {
       expect(offendingLines(snippet, true), `判据误报了「${name}」`).toEqual([]);
     }
 
