@@ -277,10 +277,15 @@ fi
 
 ```bash
 # 1. 生成本次 changelog 碎片（用实际数字替换 N）
+#
+# 说明只能写在 heredoc 外面。碎片内容必须是纯表格行（共用规则 §4），
+# assemble-changelog.sh 发版时原样拼进 CHANGELOG——写进 heredoc 的注释行
+# 会照字面进碎片，最后变成正式变更日志表格里的垃圾行。
+#
+# D4 修了技能就在下面多加一行，模块列写 claude-md，别混进 doc 那行：
+#   | chore | claude-md | 熵清理：D4 补 N 个技能的 frontmatter name |
 cat > "changelogs/$(date +%Y-%m-%d)_entropy-cleanup.md" << 'EOF'
 | chore | doc | 熵清理：D1 N 个，D2 +N/-N，D3 +N/-N，D6 N 条 |
-# D4 修了技能就再加一行（模块列写 claude-md，不要混进 doc 那行）：
-# | chore | claude-md | 熵清理：D4 补 N 个技能的 frontmatter name |
 EOF
 
 # 2. Stage 并提交
@@ -369,7 +374,7 @@ PR body 模板（从 Step 2 报告提取数字）：
    - `dirty`（有冲突）→ 本地拉取 + 解决冲突 + force-push（manifest 冲突一律 `--ours`，guide.list/doc 内容冲突手动合并两边精华），不得盲目合并
    - `clean` / `unstable` → 可继续
 2. 调用 `mcp__github__pull_request_read`（method=`get_diff`）通读 diff，逐条核对：
-   - 所有 `-`（删除）行：必须是真实「幽灵条目」（对应 `doc/${key}.md` / `.claude/skills/${name}/` 确实不存在）。**发现删除了仍存在的文件对应条目 → 立即停止，不合并，通知用户**
+   - 所有 `-`（删除）行：必须是真实「幽灵条目」（对应 `doc/${key}.md` / `.claude/skills/${name}/` 确实不存在）。**发现删除了仍存在的文件对应条目 → 立即停止，不合并，通知用户**。**唯一例外是下面那个生成物**——重新打包会把技能内容整段重新序列化，同一处必然同时产生 `-` 与 `+` 两行，那是覆盖写不是删条目，套「幽灵」判据会把合法的重生成一律判死
    - 所有 `+`（追加）行：仅限 `doc/index.yml` / `doc/guide.list.directory.md` / 技能的 `SKILL.md` frontmatter / `changelogs/` / manifest，外加下面这一个生成物，不得有代码文件（`.cs`/`.ts`/`.tsx` 等）混入
    - `prd-api/src/PrdAgent.Api/OfficialSkills/official-skills.generated.json` 是**唯一允许出现的生成物**，且只在本轮真的改了技能时才允许——它是 Step 3 重新生成、Step 5 一并提交的分发包。**本轮没有 `SKILL.md` 改动却出现它 → 按越界处理，不合并**（那说明它来自别处，不是本轮熵减的产物）
    - `changed_files` 应全部落在文档/索引/changelog/技能元数据、以及上面那个生成物的范围内
