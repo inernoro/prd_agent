@@ -263,8 +263,10 @@ services:
       MongoDB__DatabaseName: prdagent
       LlmGateway__DatabaseName: llm_gateway
       # CDS 预览虽使用 ASPNETCORE_ENVIRONMENT=Production，但不是正式生产；显式钉 inproc，
-      # 避免依赖代码缺省值。需要验证 HTTP 时由对应 CDS profile 明确改成 http/shadow。
+      # 避免依赖代码缺省值。单个业务调用方通过项目级白名单渐进切到 HTTP 权威，
+      # 不需要把整个 CDS 环境一次性切成 http/shadow。
       LlmGateway__Mode: "inproc"
+      LlmGateway__HttpAppCallerAllowlist: "${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
