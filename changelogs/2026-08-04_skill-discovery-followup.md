@@ -7,3 +7,4 @@
 | fix | claude-md | entropy-cleanup 的 PR 正文模板与自查清单仍按旧的双向 D4 写，与改后的单向指标不一致 |
 | fix | claude-md | entropy-cleanup 的 D4 扫了 .agents/skills 却没把该根加进 diff 核验与 git add，修了也提交不出去 |
 | fix | claude-md | create-skill-file 的自查指向 prd_agent 专属脚本，而该技能会被分发到其它仓库；改为可移植自查，仓库专属闸门降为注释里的补充 |
+| fix | claude-md | 上一轮把 D4 的修复动作删成了两行注释，导致只检测不修复、第二次运行仍报同笔债；补真实修复路径：name 可由目录名确定性推导故自动补，description 与整份 SKILL.md 不可安全重建故升级人工 |

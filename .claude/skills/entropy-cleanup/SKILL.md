@@ -31,8 +31,9 @@ description: 日常熵清理技能。扫描七个维度的一致性债务并双�
 2. **验证后删除**：删除前 `[ -f ]` / `[ -d ]` 确认文件确实不存在
 3. **提交前 diff 核验**：`git diff` 中的删除行（`-`）必须全部有对应的"文件不存在"证据，否则停止提交
 4. **manifest 防重复**：D6 通过 `changelogs/.entropy-manifest.yml` 记录已处理条目
+5. **不猜就不写**：D4 里 `description` 缺失、整份 `SKILL.md` 缺失这两类无法安全重建，一律升级人工，禁止写占位符糊弄收敛
 
-运行两次的期望结果：第一次增删 N 项，第二次增删 0 项。
+运行两次的期望结果：第一次增删 N 项，第二次增删 0 项。**例外**：第 5 条那类「需人工处理」条目在人处理之前会持续被报出来，这是有意保留的信号，不算幂等性被破坏。
 
 ### 增量历史覆盖
 
@@ -185,9 +186,36 @@ grep -q "^  $key:" doc/index.yml || {
 grep -q "\`$key\`" doc/guide.list.directory.md || {
   printf "- \`%s\`\n  > %s\n" "$key" "$desc" >> doc/guide.list.directory.md
 }
-# D4 修复：补 frontmatter，不再往 CLAUDE.md 追加表格行
-# （那张表已删除；技能发现走 SKILL.md frontmatter，见 D4 说明）
 ```
+
+**D4 技能可发现性修复（分两类，不许一刀切）**：
+
+`name` 能安全推导——它按定义就等于目录名，补它是确定性操作。`description` 与整份
+`SKILL.md` 不能：description 决定这个技能什么时候被触发，编一个占位符比缺着更糟
+（技能会在错误的场景被拉起，或永远不被拉起），这属于 `no-rootless-tree` 说的「不许
+凭空造」。所以：
+
+```bash
+# 可自动修：name 缺失 → 用目录名补（两个技能根都处理）
+for root in .claude/skills .agents/skills; do
+  [ -d "$root" ] || continue
+  for d in "$root"/*/; do
+    f="$d/SKILL.md"; [ -f "$f" ] || continue
+    skill=$(basename "$d")
+    head -20 "$f" | grep -q '^name:' && continue
+    head -1 "$f" | grep -q '^---$' || continue   # 没有 frontmatter 块，交给人工
+    sed -i "1a name: $skill" "$f"
+    echo "FIXED_SKILL_NAME: $root/$skill"
+  done
+done
+
+# 不可自动修：description 缺失 / 整份 SKILL.md 缺失 → 停下来升级，不猜不编
+```
+
+**升级而非静默通过**：本轮若有任何 `MISSING_SKILL_MD` 或 `MISSING_SKILL_DESC`，
+在报告里单列一节「需人工处理」，写清是哪个技能根下的哪个目录、缺什么、为什么不能自动补，
+并且**不得因为「其它维度都清干净了」就当作本轮无欠债**。这类条目会让第二次运行仍报同一笔债
+——这是有意的，不是幂等性被破坏（见幂等性保证第 5 条）。
 
 **D6 changelog→doc 内容覆盖**：
 1. 读取 changelog 文件，提取涉及模块（第 2 列：prd-api/prd-admin 等）
