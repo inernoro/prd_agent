@@ -1010,9 +1010,12 @@ public class ExecutiveController : ControllerBase
 
         // 日序列：只用小集合真实计数，取不到就给空数组，不做插值
         List<double> outputSeries = new();
-        if (wantSeries)
+        // 全部时间窗原先直接不给序列，卡片右下角永远空着；改为退化成「最近 30 天」——
+        // 窗口本身仍是全量，序列只是让读数有个走势参照，note 里会说明。
+        var seriesStart = wantSeries ? start : today.AddDays(-29);
+        if (wantSeries || days == 0)
         {
-            for (var d = start; d < today.AddDays(1); d = d.AddDays(1))
+            for (var d = seriesStart; d < today.AddDays(1); d = d.AddDays(1))
             {
                 var day = d.Date;
                 var c = docRows.Count(x => x.CreatedAt.Date == day)
@@ -1025,7 +1028,8 @@ public class ExecutiveController : ControllerBase
         }
 
         object Kpi(string key, string label, double? value, string unit, double? prev,
-                   bool higherIsBetter, List<double> series, string note) => new
+                   bool higherIsBetter, List<double> series, string note,
+                   List<object>? parts = null, string? secondary = null) => new
         {
             key,
             label,
@@ -1038,12 +1042,30 @@ public class ExecutiveController : ControllerBase
             higherIsBetter,
             series,
             note,
+            // 构成：让「4505 件」能被拆成看得见的几段，而不是一个没有来路的大数
+            parts = parts ?? new List<object>(),
+            // 副指标：环比拿不到时也该有第二个可读的量（日均、分位数、占比）
+            secondary,
         };
+
+        static List<object> Parts(params (string Label, double Value)[] items) =>
+            items.Where(i => i.Value > 0)
+                 .Select(i => (object)new { label = i.Label, value = i.Value })
+                 .ToList();
+
+        var windowDays = days > 0 ? days : Math.Max(1, outputSeries.Count);
+        var p90Resolve = resolveHours.Count >= 5
+            ? resolveHours.OrderBy(v => v).ElementAt((int)Math.Floor(resolveHours.Count * 0.9) is var i && i >= resolveHours.Count ? resolveHours.Count - 1 : i)
+            : (double?)null;
 
         var pulse = new List<object>
         {
             Kpi("output", "本期产出", curOutput, "件", hasPrev ? (double?)prevOutput : null, true, outputSeries,
-                "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷"),
+                days > 0
+                    ? "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷"
+                    : "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷；窗口为全部时间，走势图取最近 30 天",
+                Parts(("文档", curDocs), ("出图", curRuns), ("缺陷", resolvedDefects.Count), ("站点", curSites), ("周报", curReports)),
+                curOutput > 0 ? $"日均 {Math.Round((double)curOutput / windowDays, 1)} 件" : null),
             // 中位不足 1 小时的时候用「小时」表述会四舍五入成 0，读起来像坏了；按量级换单位
             Kpi("resolveHours", "缺陷中位解决时长",
                 medianResolve != null ? (double?)Math.Round(medianResolve.Value < 1 ? medianResolve.Value * 60 : medianResolve.Value, 1) : null,
@@ -1052,16 +1074,28 @@ public class ExecutiveController : ControllerBase
                     ? (double?)Math.Round(medianResolve.Value < 1 ? prevMedianResolve.Value * 60 : prevMedianResolve.Value, 1)
                     : null,
                 false, new List<double>(),
-                "窗口内被标记已解决的缺陷，从创建到解决耗时的中位数"),
+                "窗口内被标记已解决的缺陷，从创建到解决耗时的中位数",
+                null,
+                p90Resolve != null ? $"P90 {FormatDuration(p90Resolve.Value)} · 样本 {resolveHours.Count} 个" : (resolveHours.Count > 0 ? $"样本 {resolveHours.Count} 个" : null)),
             Kpi("successRate", "模型调用成功率", successRate, "%", null, true, new List<double>(),
-                "LLM 网关日志中 HTTP 状态码 < 400 的比例"),
+                "LLM 网关日志中 HTTP 状态码 < 400 的比例",
+                Parts(("成功", totalCalls - totalErrors), ("失败", totalErrors)),
+                totalCalls > 0 ? $"{totalCalls:N0} 次调用中 {totalErrors:N0} 次失败" : null),
             // 没有任何一次调用能套上单价时，成本是算不出来而不是零 —— 一律给 null
             Kpi("costPerActive", "人均 AI 成本", pricedCalls > 0 ? (double)costPerActive : null, "元", null, true, new List<double>(),
                 pricedCalls > 0
                     ? $"按模型组已配置单价折算；{totalCalls} 次调用中 {pricedCalls} 次有定价"
-                    : "模型组尚未配置单价，成本无法折算"),
+                    : "模型组尚未配置单价，成本无法折算",
+                null,
+                pricedCalls > 0
+                    ? $"合计 {Math.Round(totalCost, 2)} 元 · {activeMembers} 人分摊"
+                    : $"{totalCalls:N0} 次调用全部无定价，先去模型组配单价"),
             Kpi("activeMembers", "有痕迹成员", activeMembers, "人", null, true, new List<double>(),
-                $"窗口内有产出或模型调用的成员数，团队共 {humanUsers.Count} 人"),
+                $"窗口内有产出或模型调用的成员数，团队共 {humanUsers.Count} 人",
+                Parts(("有痕迹", activeMembers), ("无痕迹", Math.Max(0, humanUsers.Count - activeMembers))),
+                humanUsers.Count > 0
+                    ? $"占全员 {Math.Round((double)activeMembers / humanUsers.Count * 100, 0)}% · 其中 {plotted.Count} 人有结果型信号"
+                    : null),
         };
 
         // ── B. 需要关注（规则触发；没有触发就返回空，不凑数） ──
@@ -1092,8 +1126,11 @@ public class ExecutiveController : ControllerBase
                 "/defect-agent"));
         }
 
-        var imgTotal = runRows.Sum(r => r.Done) + runRows.Sum(r => r.Failed);
+        var imgDone = runRows.Sum(r => r.Done);
         var imgFailed = runRows.Sum(r => r.Failed);
+        var imgTotal = imgDone + imgFailed;
+        var staleBacklog = openDefects.Count(d => d.AssigneeId != null && userIds.Contains(d.AssigneeId)
+                                                  && (today - d.CreatedAt.Date).TotalDays >= 7);
         if (imgTotal >= 20 && (double)imgFailed / imgTotal >= 0.10)
         {
             attention.Add(new AttentionItem(
@@ -1174,23 +1211,31 @@ public class ExecutiveController : ControllerBase
         {
             left = new object[]
             {
-                new { name = "有产出的人天", value = totalOutputDays, unit = "人天" },
-                new { name = "模型调用", value = totalCalls, unit = "次" },
-                new { name = "Token 消耗", value = totalIn + totalOut, unit = "tokens" },
+                new { name = "有产出的人天", value = totalOutputDays, unit = "人天",
+                      hint = activeMembers > 0 ? $"人均 {Math.Round((double)totalOutputDays / activeMembers, 1)} 天" : (string?)null },
+                new { name = "模型调用", value = totalCalls, unit = "次",
+                      hint = activeMembers > 0 ? $"人均 {Math.Round((double)totalCalls / activeMembers, 0)} 次" : (string?)null },
+                new { name = "Token 消耗", value = totalIn + totalOut, unit = "tokens",
+                      hint = totalCalls > 0 ? $"单次均值 {Math.Round((double)(totalIn + totalOut) / totalCalls, 0):N0}" : (string?)null },
             },
             mid = stageCounts.Where(kv => kv.Value > 0)
                 .OrderByDescending(kv => kv.Value)
-                .Select(kv => new { name = kv.Key, value = kv.Value, unit = "次" })
+                .Select(kv => new { name = kv.Key, value = kv.Value, unit = "次",
+                    hint = totalCalls > 0 ? $"占 {Math.Round((double)kv.Value / totalCalls * 100, 0)}%" : (string?)null })
                 .ToArray(),
             right = new object[]
             {
-                new { name = "已发布文档", value = curDocs, unit = "篇", loss = false },
-                new { name = "已上线站点", value = curSites, unit = "个", loss = false },
-                new { name = "已出图", value = runRows.Sum(r => r.Done), unit = "张", loss = false },
-                new { name = "已提交周报", value = curReports, unit = "篇", loss = false },
-                new { name = "已解决缺陷", value = resolvedDefects.Count, unit = "个", loss = false },
-                new { name = "出图失败", value = imgFailed, unit = "张", loss = true },
-                new { name = "缺陷未闭环", value = unresolvedInWindow, unit = "个", loss = true },
+                new { name = "已发布文档", value = curDocs, unit = "篇", loss = false, hint = (string?)null },
+                new { name = "已上线站点", value = curSites, unit = "个", loss = false, hint = (string?)null },
+                new { name = "已出图", value = imgDone, unit = "张", loss = false,
+                      hint = imgTotal > 0 ? $"成功率 {Math.Round((double)imgDone / imgTotal * 100, 1)}%" : (string?)null },
+                new { name = "已提交周报", value = curReports, unit = "篇", loss = false, hint = (string?)null },
+                new { name = "已解决缺陷", value = resolvedDefects.Count, unit = "个", loss = false,
+                      hint = medianResolve != null ? $"中位 {FormatDuration(medianResolve.Value)}" : (string?)null },
+                new { name = "出图失败", value = imgFailed, unit = "张", loss = true,
+                      hint = imgTotal > 0 ? $"占请求 {Math.Round((double)imgFailed / imgTotal * 100, 1)}%" : (string?)null },
+                new { name = "缺陷未闭环", value = unresolvedInWindow, unit = "个", loss = true,
+                      hint = staleBacklog > 0 ? $"其中 {staleBacklog} 个超 7 天" : (string?)null },
             },
         };
 
@@ -1203,6 +1248,18 @@ public class ExecutiveController : ControllerBase
             totalMembers = humanUsers.Count,
             // 前端十字线直接用这两个阈值，保证画出来的分界与后端判定同一口径
             medians = new { output = Math.Round(outputThreshold, 1), quality = Math.Round(medQuality, 1) },
+            // 单人卡拿它做参照系：只给绝对值看不出「这算多还是少」
+            benchmarks = new
+            {
+                docs = Math.Round(Median(plotted.Select(r => (double)r.A.Docs).ToList()) ?? 0, 1),
+                sites = Math.Round(Median(plotted.Select(r => (double)r.A.Sites).ToList()) ?? 0, 1),
+                imageRuns = Math.Round(Median(plotted.Select(r => (double)r.A.RunsCompleted).ToList()) ?? 0, 1),
+                reports = Math.Round(Median(plotted.Select(r => (double)r.A.Reports).ToList()) ?? 0, 1),
+                defectsResolved = Math.Round(Median(plotted.Select(r => (double)r.A.DefectsResolved).ToList()) ?? 0, 1),
+                llmCalls = Math.Round(medCalls, 0),
+            },
+            // 四象限各有多少人：角标直接显示，不用读者自己数点
+            quadrantCounts = members.GroupBy(m => m.quadrant).ToDictionary(g => g.Key, g => g.Count()),
             plottedMembers = plotted.Count,
             quadrantReliable,
             costAvailable = pricedCalls > 0,

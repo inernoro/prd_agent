@@ -109,6 +109,10 @@ export type TeamInsightKpi = {
   series: number[];
   /** 口径说明，后端 SSOT */
   note: string;
+  /** 构成拆解：让一个大数看得见来路 */
+  parts: { label: string; value: number }[];
+  /** 副指标：环比拿不到时的第二个可读量（日均 / 分位数 / 占比） */
+  secondary: string | null;
 };
 
 export type TeamInsightAttention = {
@@ -145,7 +149,7 @@ export type TeamInsightMember = {
   highlights: string[];
 };
 
-export type TeamInsightFlowNode = { name: string; value: number; unit: string; loss?: boolean };
+export type TeamInsightFlowNode = { name: string; value: number; unit: string; loss?: boolean; hint?: string | null };
 
 export type TeamInsights = {
   pulse: TeamInsightKpi[];
@@ -160,6 +164,10 @@ export type TeamInsights = {
     totalMembers: number;
     /** 四象限分界阈值（产出阈值 / 质量中位），与后端判定同口径 */
     medians: { output: number; quality: number };
+    /** 单人卡的参照系：各项在入图成员里的中位 */
+    benchmarks: { docs: number; sites: number; imageRuns: number; reports: number; defectsResolved: number; llmCalls: number };
+    /** 各象限人数，直接标在角上 */
+    quadrantCounts: Record<string, number>;
     /** 有结果型信号、进得了画像的人数 */
     plottedMembers: number;
     /** 入图样本 >= 3 才做四象限分型；否则象限一律为「样本不足」 */

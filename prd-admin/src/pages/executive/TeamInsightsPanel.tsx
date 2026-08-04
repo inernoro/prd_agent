@@ -66,34 +66,35 @@ function sparkPath(vals: number[], w: number, h: number) {
 
 /* ── A. 团队状态 ─────────────────────────────────────────── */
 
+const PART_TINTS = ['#5B8CFF', '#7BA6FF', '#9ABDFF', '#B9D2FF', '#D5E3FF'];
+
 function KpiCard({ kpi }: { kpi: TeamInsightKpi }) {
   const hasDelta = kpi.deltaPct !== null;
   const improving = hasDelta ? (kpi.higherIsBetter ? kpi.deltaPct! >= 0 : kpi.deltaPct! <= 0) : false;
-  const deltaColor = !hasDelta
-    ? 'var(--text-muted)'
-    : improving
-      ? 'var(--semantic-success-text)'
-      : 'var(--semantic-warning-text)';
-  const deltaBg = !hasDelta
-    ? 'var(--bg-secondary)'
-    : improving
-      ? 'var(--semantic-success-soft)'
-      : 'var(--semantic-warning-soft)';
+  const deltaColor = improving ? 'var(--semantic-success-text)' : 'var(--semantic-warning-text)';
+  const partsTotal = kpi.parts.reduce((s2, p) => s2 + p.value, 0);
+  const isLoss = (label: string) => label === '失败' || label === '无痕迹';
 
   return (
     <div
-      className="relative overflow-hidden rounded-xl px-4 pt-3.5 pb-3"
+      className="relative overflow-hidden rounded-xl px-3.5 pt-3 pb-2.5 flex flex-col gap-1.5"
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
     >
-      <div className="flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-        {kpi.label}
+      <div className="flex items-center gap-1.5 text-[11.5px] leading-none" style={{ color: 'var(--text-secondary)' }}>
+        <span className="truncate">{kpi.label}</span>
         <Tooltip content={<span style={{ fontWeight: 400 }}>{kpi.note}</span>} side="top">
-          <Info size={11} style={{ color: 'var(--text-muted)', opacity: 0.6, flexShrink: 0 }} />
+          <Info size={10.5} style={{ color: 'var(--text-muted)', opacity: 0.55, flexShrink: 0 }} />
         </Tooltip>
+        {hasDelta && (
+          <span className="ml-auto tabular-nums text-[10.5px] font-semibold" style={{ color: deltaColor }}>
+            {kpi.deltaPct! > 0 ? '+' : ''}{kpi.deltaPct}%
+          </span>
+        )}
       </div>
-      <div className="flex items-baseline gap-1 mt-1.5">
+
+      <div className="flex items-baseline gap-1">
         <span
-          className="text-[26px] font-bold tabular-nums leading-none"
+          className="text-[27px] font-bold tabular-nums leading-none tracking-[-0.02em]"
           style={{ color: kpi.value === null ? 'var(--text-muted)' : 'var(--text-primary)' }}
         >
           {kpi.value === null ? '数据不足' : fmt(kpi.value, kpi.unit)}
@@ -102,16 +103,55 @@ function KpiCard({ kpi }: { kpi: TeamInsightKpi }) {
           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{kpi.unit}</span>
         )}
       </div>
-      <div
-        className="inline-flex items-center mt-1.5 px-2 py-0.5 rounded-full text-[10.5px] tabular-nums"
-        style={{ color: deltaColor, background: deltaBg }}
-      >
-        {hasDelta ? `${kpi.deltaPct! > 0 ? '+' : ''}${kpi.deltaPct}% vs 上一窗` : '无环比'}
-      </div>
+
+      {/* 构成微条：把一个孤零零的大数拆成看得见的几段 */}
+      {partsTotal > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="flex h-[5px] rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+            {kpi.parts.map((p, i) => (
+              <Tooltip key={p.label} content={`${p.label} ${p.value.toLocaleString()}`} side="top">
+                <div
+                  style={{
+                    width: `${(p.value / partsTotal) * 100}%`,
+                    background: isLoss(p.label) ? 'var(--semantic-danger-text)' : PART_TINTS[i % PART_TINTS.length],
+                    opacity: isLoss(p.label) ? 0.55 : 0.85,
+                  }}
+                />
+              </Tooltip>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+            {kpi.parts.slice(0, 4).map((p, i) => (
+              <span key={p.label} className="inline-flex items-center gap-1 tabular-nums">
+                <i
+                  className="inline-block w-1.5 h-1.5 rounded-full"
+                  style={{ background: isLoss(p.label) ? 'var(--semantic-danger-text)' : PART_TINTS[i % PART_TINTS.length] }}
+                />
+                {p.label} {p.value.toLocaleString()}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 副指标：环比拿不到时也不该留空 */}
+      {kpi.secondary && (
+        <div className="text-[10.5px] tabular-nums leading-tight" style={{ color: 'var(--text-muted)' }}>
+          {kpi.secondary}
+        </div>
+      )}
+      {!kpi.secondary && partsTotal === 0 && hasDelta && (
+        <div className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>对比上一等长窗口</div>
+      )}
+
       {kpi.series.length > 1 && (
-        <svg className="absolute right-0 bottom-0 opacity-80" width="104" height="38" viewBox="0 0 104 38" aria-hidden="true">
-          <path d={`${sparkPath(kpi.series, 104, 38)} L104 38 L0 38 Z`} fill="var(--semantic-info-text, #5B8CFF)" opacity="0.07" />
-          <path d={sparkPath(kpi.series, 104, 38)} fill="none" stroke="#5B8CFF" strokeWidth="1.5" opacity="0.5" strokeLinejoin="round" />
+        <svg
+          className="absolute right-0 bottom-0 pointer-events-none"
+          width="96" height="32" viewBox="0 0 96 32" aria-hidden="true"
+          style={{ opacity: 0.5 }}
+        >
+          <path d={`${sparkPath(kpi.series, 96, 32)} L96 32 L0 32 Z`} fill="#5B8CFF" opacity="0.10" />
+          <path d={sparkPath(kpi.series, 96, 32)} fill="none" stroke="#5B8CFF" strokeWidth="1.4" strokeLinejoin="round" />
         </svg>
       )}
     </div>
@@ -121,10 +161,11 @@ function KpiCard({ kpi }: { kpi: TeamInsightKpi }) {
 /* ── C. 成员画像散点 ─────────────────────────────────────── */
 
 function Quadrant({
-  members, medians, masked, pickedId, onPick, reliable,
+  members, medians, masked, pickedId, onPick, reliable, counts,
 }: {
   members: TeamInsightMember[];
   medians: { output: number; quality: number };
+  counts: Record<string, number>;
   masked: boolean;
   pickedId: string | null;
   onPick: (id: string) => void;
@@ -149,10 +190,19 @@ function Quadrant({
           style={{ left: 0, top: `${100 - (medians.quality * 0.88 + 6)}%`, width: '100%', height: 1, background: 'var(--border-default)' }}
         />
 
-        <div className="absolute top-1 left-1 text-[9.5px] tracking-widest uppercase" style={{ color: 'var(--text-muted)' }}>精工型</div>
-        <div className="absolute top-1 right-1 text-[9.5px] tracking-widest uppercase" style={{ color: 'var(--semantic-success-text)' }}>主力产出</div>
-        <div className="absolute bottom-1 left-1 text-[9.5px] tracking-widest uppercase" style={{ color: 'var(--text-muted)' }}>低活跃</div>
-        <div className="absolute bottom-1 right-1 text-[9.5px] tracking-widest uppercase" style={{ color: 'var(--semantic-danger-text)' }}>高量低果</div>
+        {([
+          ['精工型', 'top-1 left-1', 'var(--semantic-warning-text)'],
+          ['主力产出', 'top-1 right-1', 'var(--semantic-success-text)'],
+          ['低活跃', 'bottom-1 left-1', 'var(--text-muted)'],
+          ['高量低果', 'bottom-1 right-1', 'var(--semantic-danger-text)'],
+        ] as const).map(([name, pos, color]) => (
+          <div key={name} className={`absolute ${pos} text-[9.5px] tracking-widest uppercase flex items-baseline gap-1`} style={{ color }}>
+            {name}
+            {(counts[name] ?? 0) > 0 && (
+              <span className="tabular-nums font-semibold" style={{ fontSize: 11 }}>{counts[name]}</span>
+            )}
+          </div>
+        ))}
 
         <div
           className="absolute text-[10px] whitespace-nowrap"
@@ -216,7 +266,7 @@ function Quadrant({
   );
 }
 
-function MemberDetail({ member, masked, costAvailable }: { member: TeamInsightMember | null; masked: boolean; costAvailable: boolean }) {
+function MemberDetail({ member, masked, costAvailable, bench }: { member: TeamInsightMember | null; masked: boolean; costAvailable: boolean; bench: TeamInsights['meta']['benchmarks'] }) {
   if (!member) {
     return (
       <div className="rounded-xl p-4 text-[12px]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
@@ -226,14 +276,15 @@ function MemberDetail({ member, masked, costAvailable }: { member: TeamInsightMe
   }
   const b = member.breakdown;
   const color = getRoleMeta(member.role).color;
-  const bars: [string, number, number][] = [
-    ['知识库文档', b.docs, Math.max(1, b.docs)],
-    ['网页站点', b.sites, Math.max(1, b.sites)],
-    ['生图完成', b.imageRuns, Math.max(1, b.imageRuns)],
-    ['周报提交', b.reports, Math.max(1, b.reports)],
-    ['缺陷解决', b.defectsResolved, Math.max(1, b.defectsAssigned || b.defectsResolved)],
+  // 每项都带团队中位，绝对值才有参照系 —— 只给「12 篇」看不出这算多还是少
+  const bars: { label: string; val: number; med: number }[] = [
+    { label: '知识库文档', val: b.docs, med: bench.docs },
+    { label: '网页站点', val: b.sites, med: bench.sites },
+    { label: '生图完成', val: b.imageRuns, med: bench.imageRuns },
+    { label: '周报提交', val: b.reports, med: bench.reports },
+    { label: '缺陷解决', val: b.defectsResolved, med: bench.defectsResolved },
   ];
-  const barMax = Math.max(1, ...bars.map(x => x[1]));
+  const barMax = Math.max(1, ...bars.map(x => Math.max(x.val, x.med)));
 
   return (
     <div className="rounded-xl p-4 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -269,21 +320,44 @@ function MemberDetail({ member, masked, costAvailable }: { member: TeamInsightMe
       </div>
 
       <div className="flex flex-col gap-2">
-        {bars.map(([label, val]) => (
-          <div key={label}>
-            <div className="flex justify-between text-[11.5px] mb-1" style={{ color: 'var(--text-secondary)' }}>
-              <span>{label}</span>
-              <span className="tabular-nums" style={{ color: 'var(--text-primary)' }}>{val}</span>
+        {bars.map(({ label, val, med }) => {
+          const diff = med > 0 ? Math.round(((val - med) / med) * 100) : null;
+          return (
+            <div key={label}>
+              <div className="flex items-baseline justify-between text-[11.5px] mb-1" style={{ color: 'var(--text-secondary)' }}>
+                <span>{label}</span>
+                <span className="tabular-nums flex items-baseline gap-1.5">
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{val}</span>
+                  {diff !== null && val !== med && (
+                    <span
+                      className="text-[10px]"
+                      style={{ color: diff > 0 ? 'var(--semantic-success-text)' : 'var(--text-muted)' }}
+                    >
+                      {diff > 0 ? '+' : ''}{diff}%
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="relative h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                <div className="h-full rounded-full" style={{ width: `${(val / barMax) * 100}%`, background: color, opacity: 0.7 }} />
+                {/* 团队中位刻度线 */}
+                {med > 0 && (
+                  <div
+                    className="absolute top-0 bottom-0"
+                    style={{ left: `${Math.min((med / barMax) * 100, 100)}%`, width: 1.5, background: 'var(--text-muted)', opacity: 0.75 }}
+                  />
+                )}
+              </div>
             </div>
-            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
-              <div className="h-full rounded-full" style={{ width: `${(val / barMax) * 100}%`, background: color, opacity: 0.65 }} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div>
-        <div className="text-[10px] tracking-widest uppercase mb-1.5" style={{ color: 'var(--text-muted)' }}>本窗要点</div>
+        <div className="text-[10px] tracking-widest uppercase mb-1.5 flex items-baseline gap-2" style={{ color: 'var(--text-muted)' }}>
+          <span>本窗要点</span>
+          <span className="normal-case tracking-normal" style={{ opacity: 0.75 }}>竖线 = 团队中位</span>
+        </div>
         <div className="flex flex-wrap gap-1.5">
           {member.highlights.map(h => (
             <span
@@ -313,7 +387,10 @@ function FlowColumn({ title, nodes }: { title: string; nodes: TeamInsightFlowNod
         return (
           <div key={n.name} className="min-w-0">
             <div className="flex items-baseline justify-between gap-2 text-[12px]">
-              <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{n.name}</span>
+              <span className="truncate flex items-baseline gap-1.5" style={{ color: 'var(--text-secondary)' }}>
+                {n.name}
+                {n.hint && <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{n.hint}</span>}
+              </span>
               <span className="tabular-nums font-semibold whitespace-nowrap" style={{ color: c }}>
                 {fmt(n.value, n.unit)}<span className="text-[10px] font-normal ml-0.5" style={{ color: 'var(--text-muted)' }}>{n.unit}</span>
               </span>
@@ -449,8 +526,9 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
             pickedId={picked?.userId ?? null}
             onPick={setPickedId}
             reliable={meta.quadrantReliable}
+            counts={meta.quadrantCounts}
           />
-          <MemberDetail member={picked} masked={masked} costAvailable={meta.costAvailable} />
+          <MemberDetail member={picked} masked={masked} costAvailable={meta.costAvailable} bench={meta.benchmarks} />
         </div>
       </section>
 
