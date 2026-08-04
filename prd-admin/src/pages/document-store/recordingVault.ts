@@ -134,6 +134,19 @@ export function enqueueBackgroundTranscriptionRun(
   return [...current, normalized];
 }
 
+/**
+ * 刷新或重新进入录音结果页时，根据服务端最近一次 run 恢复后台看护。
+ * 只接管真正处于在途状态的任务，终态 run 不应让页面永久显示“处理中”。
+ */
+export function recoverableBackgroundTranscriptionRunId(
+  run: { id?: string | null; status?: string | null } | null | undefined,
+): string | null {
+  const runId = run?.id?.trim();
+  const status = run?.status?.trim().toLowerCase();
+  if (!runId || (status !== 'queued' && status !== 'running')) return null;
+  return runId;
+}
+
 function openDb(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
     try {
