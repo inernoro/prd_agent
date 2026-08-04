@@ -79,16 +79,17 @@ public class ReviewAssessmentController : ControllerBase
             AppCallerCode: appCallerCode));
 
     // ──────────────────────────────────────────────
-    // 上传解析 + 列映射建议
+    // 上传即建任务（列映射全自动，无需用户确认）
     // ──────────────────────────────────────────────
 
     /// <summary>
-    /// 上传需求表（.xls / .xlsx），解析为结构化行并给出「表头 → 八因子」的列映射建议。
-    /// 创建 Draft 状态的评估任务，用户确认映射后调用 start 开始评估。
+    /// 上传需求表（.xls / .xlsx）并直接创建评估任务。
+    /// 列映射由启发式 + LLM 自动综合完成（核心证据源是需求详细描述，评论等其他字段辅助参考），
+    /// 不需要用户逐列确认；任务创建后即 Queued，前端连接 stream 开始评估。
     /// </summary>
-    [HttpPost("parse")]
+    [HttpPost("")]
     [RequestSizeLimit(MaxExcelBytes + 1024 * 1024)]
-    public async Task<IActionResult> ParseExcel([FromForm] IFormFile file, [FromForm] string? title, CancellationToken ct)
+    public async Task<IActionResult> CreateAssessment([FromForm] IFormFile file, [FromForm] string? title, CancellationToken ct)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传需求表文件"));
@@ -144,60 +145,33 @@ public class ReviewAssessmentController : ControllerBase
             Rows = table.Rows,
             TotalRowCount = table.TotalRowCount,
             Truncated = table.Truncated,
-            NameColumnIndex = mapping.NameColumnIndex,
+            NameColumnIndex = mapping.NameColumnIndex ?? 0,
             DescColumnIndex = mapping.DescColumnIndex,
             FactorColumnMapping = mapping.FactorColumns,
             WeightsSnapshot = RequirementFactorCatalog.BuildWeightsSnapshot(),
-            Status = RequirementAssessmentStatuses.Draft,
+            Status = RequirementAssessmentStatuses.Queued,
         };
 
-        await _db.RequirementAssessmentRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        var items = MaterializeItems(run);
+        if (items.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "需求表中没有可评估的数据行"));
 
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            run = ToRunView(run),
-            headers = table.Headers,
-            previewRows = table.Rows.Take(5).ToList(),
-            rowCount = table.Rows.Count,
-            truncated = table.Truncated,
-            totalRowCount = table.TotalRowCount,
-            suggestedMapping = new
-            {
-                nameColumnIndex = mapping.NameColumnIndex,
-                descColumnIndex = mapping.DescColumnIndex,
-                factorColumns = mapping.FactorColumns,
-            },
-            factors = RequirementFactorCatalog.All.Select(f => new { f.Key, f.Name, f.Weight, f.RuleRef, f.AnchorGuide }),
-        }));
+        run.ItemCount = items.Count;
+        await _db.RequirementAssessmentRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        await _db.RequirementAssessmentItems.InsertManyAsync(items, cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { run = ToRunView(run) }));
     }
 
-    /// <summary>
-    /// 确认列映射并启动评估：按行生成待评估条目，任务进入 Queued，随后由 stream 接口驱动执行。
-    /// </summary>
-    [HttpPost("{id}/start")]
-    public async Task<IActionResult> StartAssessment(string id, [FromBody] StartAssessmentRequest req, CancellationToken ct)
+    /// <summary>按名称列把数据行物化为待评估条目</summary>
+    private static List<RequirementAssessmentItem> MaterializeItems(RequirementAssessmentRun run)
     {
-        var run = await _db.RequirementAssessmentRuns.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
-        if (run == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "评估任务不存在"));
-
-        if (run.OwnerUserId != GetUserId())
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有发起人可以启动评估"));
-
-        if (run.Status != RequirementAssessmentStatuses.Draft)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该任务已启动，不能重复配置"));
-
-        if (req.NameColumnIndex is null || req.NameColumnIndex < 0 || req.NameColumnIndex >= run.Headers.Count)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请指定有效的需求名称列"));
-
-        var factorColumns = SanitizeFactorColumns(req.FactorColumns, run.Headers.Count);
-
-        // 生成条目
+        var nameCol = run.NameColumnIndex is int n && n >= 0 && n < run.Headers.Count ? n : 0;
         var items = new List<RequirementAssessmentItem>();
         for (int r = 0; r < run.Rows.Count; r++)
         {
             var row = run.Rows[r];
-            var name = req.NameColumnIndex.Value < row.Count ? row[req.NameColumnIndex.Value].Trim() : string.Empty;
+            var name = nameCol < row.Count ? row[nameCol].Trim() : string.Empty;
             if (string.IsNullOrEmpty(name)) name = $"第 {r + 1} 行需求";
 
             var rawFields = new Dictionary<string, string>();
@@ -215,26 +189,7 @@ public class ReviewAssessmentController : ControllerBase
                 RawFields = rawFields,
             });
         }
-
-        if (items.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "需求表中没有可评估的数据行"));
-
-        await _db.RequirementAssessmentItems.InsertManyAsync(items, cancellationToken: CancellationToken.None);
-
-        var update = Builders<RequirementAssessmentRun>.Update
-            .Set(x => x.NameColumnIndex, req.NameColumnIndex)
-            .Set(x => x.DescColumnIndex, req.DescColumnIndex)
-            .Set(x => x.FactorColumnMapping, factorColumns)
-            .Set(x => x.ItemCount, items.Count)
-            .Set(x => x.Status, RequirementAssessmentStatuses.Queued);
-
-        if (!string.IsNullOrWhiteSpace(req.Title))
-            update = update.Set(x => x.Title, req.Title.Trim());
-
-        await _db.RequirementAssessmentRuns.UpdateOneAsync(x => x.Id == id, update, cancellationToken: CancellationToken.None);
-
-        run = await _db.RequirementAssessmentRuns.Find(x => x.Id == id).FirstOrDefaultAsync(CancellationToken.None);
-        return Ok(ApiResponse<object>.Ok(new { run = ToRunView(run!) }));
+        return items;
     }
 
     // ──────────────────────────────────────────────
@@ -285,8 +240,6 @@ public class ReviewAssessmentController : ControllerBase
             run = ToRunView(run),
             reportMarkdown = run.ReportMarkdown,
             items = ordered,
-            // Draft 态附带预览行，供前端列映射确认界面展示样例数据
-            previewRows = run.Status == RequirementAssessmentStatuses.Draft ? run.Rows.Take(5).ToList() : null,
             factors = RequirementFactorCatalog.All.Select(f => new { f.Key, f.Name, f.Weight, f.RuleRef, f.AnchorGuide }),
         }));
     }
@@ -393,8 +346,23 @@ public class ReviewAssessmentController : ControllerBase
 
         if (run.Status == RequirementAssessmentStatuses.Draft)
         {
-            await WriteSseEventAsync("error", new { message = "请先确认列映射并启动评估" });
-            return;
+            // 兼容旧版「待确认映射」任务：映射已改全自动，直接补齐条目进入评估
+            var existingCount = await _db.RequirementAssessmentItems
+                .CountDocumentsAsync(x => x.RunId == id, cancellationToken: CancellationToken.None);
+            if (existingCount == 0)
+            {
+                var legacyItems = MaterializeItems(run);
+                if (legacyItems.Count == 0)
+                {
+                    await WriteSseEventAsync("error", new { message = "需求表中没有可评估的数据行" });
+                    return;
+                }
+                await _db.RequirementAssessmentItems.InsertManyAsync(legacyItems, cancellationToken: CancellationToken.None);
+                await _db.RequirementAssessmentRuns.UpdateOneAsync(
+                    x => x.Id == id,
+                    Builders<RequirementAssessmentRun>.Update.Set(x => x.ItemCount, legacyItems.Count),
+                    cancellationToken: CancellationToken.None);
+            }
         }
 
         await _db.RequirementAssessmentRuns.UpdateOneAsync(
@@ -729,18 +697,24 @@ public class ReviewAssessmentController : ControllerBase
             sb.AppendLine($"| {f.Key} | {f.Name} | {f.Weight} | 第({f.RuleRef})条 | {f.AnchorGuide} |");
         sb.AppendLine();
 
+        sb.AppendLine("## 证据来源优先级（自动综合，无需用户指定）");
+        if (run.DescColumnIndex is int dc && dc >= 0 && dc < run.Headers.Count)
+            sb.AppendLine($"1. 核心证据源：需求详细描述（列「{run.Headers[dc]}」）与需求名称，逐条通读理解需求本质后再打分。");
+        else
+            sb.AppendLine("1. 核心证据源：需求描述/名称类字段，逐条通读理解需求本质后再打分。");
+        sb.AppendLine("2. 辅助参考：评论、客户名称、需求来源、需求类型、关联缺陷数、时间等其余全部字段，任何字段中的线索都可作为证据。");
         if (run.FactorColumnMapping.Count > 0)
         {
-            sb.AppendLine("## 因子证据来源列（用户确认的列映射，优先从这些字段找证据）");
-            foreach (var (key, cols) in run.FactorColumnMapping)
-            {
-                var def = RequirementFactorCatalog.Find(key);
-                if (def == null || cols.Count == 0) continue;
-                var headers = cols.Where(c => c >= 0 && c < run.Headers.Count).Select(c => run.Headers[c]);
-                sb.AppendLine($"- {def.Name}（{key}）: {string.Join("、", headers)}");
-            }
-            sb.AppendLine();
+            var hints = run.FactorColumnMapping
+                .Select(kv => (def: RequirementFactorCatalog.Find(kv.Key), cols: kv.Value))
+                .Where(x => x.def != null && x.cols.Count > 0)
+                .Select(x => $"{x.def!.Name} → {string.Join("、", x.cols.Where(c => c >= 0 && c < run.Headers.Count).Select(c => run.Headers[c]))}")
+                .ToList();
+            if (hints.Count > 0)
+                sb.AppendLine($"3. 系统自动识别的因子相关列（仅提示，不限制）：{string.Join("；", hints)}。");
         }
+        sb.AppendLine("4. 结合行业通用优先级实践（WSJF 延迟成本思想、RICE 触达/影响/置信度）辅助判断锚点档位，但每个因子的打分依据必须落到表格字段原文，禁止脱离表格凭空判断。");
+        sb.AppendLine();
 
         sb.AppendLine("## 打分要求（硬约束）");
         sb.AppendLine("1. 每个因子输出 score（1-5 整数）、hasEvidence（布尔）、evidence（不超过 60 字）。");
@@ -900,19 +874,6 @@ public class ReviewAssessmentController : ControllerBase
         {
             return heuristic;
         }
-    }
-
-    private static Dictionary<string, List<int>> SanitizeFactorColumns(Dictionary<string, List<int>>? input, int headerCount)
-    {
-        var result = new Dictionary<string, List<int>>();
-        if (input == null) return result;
-        foreach (var (key, cols) in input)
-        {
-            if (RequirementFactorCatalog.Find(key) == null || cols == null) continue;
-            var valid = cols.Where(c => c >= 0 && c < headerCount).Distinct().ToList();
-            if (valid.Count > 0) result[key] = valid;
-        }
-        return result;
     }
 
     // ──────────────────────────────────────────────
@@ -1102,11 +1063,4 @@ public class ReviewAssessmentController : ControllerBase
         await Response.Body.FlushAsync();
     }
 
-    public class StartAssessmentRequest
-    {
-        public string? Title { get; set; }
-        public int? NameColumnIndex { get; set; }
-        public int? DescColumnIndex { get; set; }
-        public Dictionary<string, List<int>>? FactorColumns { get; set; }
-    }
 }

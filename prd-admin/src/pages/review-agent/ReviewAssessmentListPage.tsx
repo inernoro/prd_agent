@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ListOrdered, Upload, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, FileSpreadsheet } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
-import { listAssessments, parseAssessmentExcel } from '@/services';
+import { listAssessments, createAssessment } from '@/services';
 import type { RequirementAssessmentRun } from '@/services';
 
 const PAGE_SIZE = 20;
@@ -18,7 +18,7 @@ function getStatusDisplay(run: RequirementAssessmentRun): { label: string; color
     case 'Queued':
       return { label: '等待评估', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> };
     default:
-      return { label: '待确认映射', color: 'text-indigo-400/80', icon: <FileSpreadsheet className="w-3.5 h-3.5" /> };
+      return { label: '待评估', color: 'text-indigo-400/80', icon: <FileSpreadsheet className="w-3.5 h-3.5" /> };
   }
 }
 
@@ -55,7 +55,7 @@ export function ReviewAssessmentListPage() {
     }
     setUploading(true);
     setUploadError(null);
-    const res = await parseAssessmentExcel(file);
+    const res = await createAssessment(file);
     setUploading(false);
     if (res.success && res.data) {
       navigate(`/review-agent/assessments/${res.data.run.id}`);
@@ -125,8 +125,8 @@ export function ReviewAssessmentListPage() {
           </div>
           <p className="text-sm text-token-primary font-medium">点击或拖拽上传需求表（.xls / .xlsx）</p>
           <p className="text-xs text-token-muted mt-2 max-w-md mx-auto">
-            表格建议包含：需求名称、需求描述、反馈客户/次数、客户等级、是否签约、期望时间等列，
-            信息越全评估依据越充分；上传后可确认各列与评估因子的对应关系
+            上传即自动评估，无需任何配置。表格建议包含需求名称与详细描述，
+            反馈客户/次数、客户等级、是否签约、期望时间等信息越全，评估依据越充分
           </p>
         </div>
       )}

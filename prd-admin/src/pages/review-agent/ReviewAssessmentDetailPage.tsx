@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ListOrdered, Download, RefreshCw, ChevronDown, ChevronRight, Play, AlertTriangle, FileSpreadsheet } from 'lucide-react';
+import { ArrowLeft, ListOrdered, Download, RefreshCw, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { connectSse } from '@/lib/useSseStream';
 import {
   getAssessment,
-  startAssessment,
   rerunAssessment,
   getAssessmentStreamUrl,
   downloadAssessmentReport,
@@ -13,7 +12,6 @@ import {
 import type {
   RequirementAssessmentRun,
   RequirementAssessmentItem,
-  RequirementFactorDefinition,
 } from '@/services';
 
 const TIER_STYLES: Record<string, string> = {
@@ -38,21 +36,13 @@ export function ReviewAssessmentDetailPage() {
 
   const [run, setRun] = useState<RequirementAssessmentRun | null>(null);
   const [items, setItems] = useState<RequirementAssessmentItem[]>([]);
-  const [factors, setFactors] = useState<RequirementFactorDefinition[]>([]);
-  const [previewRows, setPreviewRows] = useState<string[][]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // 列映射编辑态（Draft）
-  const [nameCol, setNameCol] = useState<number | ''>('');
-  const [descCol, setDescCol] = useState<number | ''>('');
-  const [factorCols, setFactorCols] = useState<Record<string, number[]>>({});
-  const [starting, setStarting] = useState(false);
 
   // 评估流态
   const [streaming, setStreaming] = useState(false);
   const [phaseMessage, setPhaseMessage] = useState('');
-  const [progress, setProgress] = useState<{ done: number; total: number; message?: string } | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [modelInfo, setModelInfo] = useState<{ model: string; platform?: string | null } | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -62,13 +52,6 @@ export function ReviewAssessmentDetailPage() {
     if (res.success && res.data) {
       setRun(res.data.run);
       setItems(res.data.items);
-      setFactors(res.data.factors);
-      setPreviewRows(res.data.previewRows ?? []);
-      if (res.data.run.status === 'Draft') {
-        setNameCol(res.data.run.nameColumnIndex ?? '');
-        setDescCol(res.data.run.descColumnIndex ?? '');
-        setFactorCols(res.data.run.factorColumnMapping ?? {});
-      }
     }
     setLoading(false);
     return res.success ? res.data : null;
@@ -97,7 +80,7 @@ export function ReviewAssessmentDetailPage() {
               if (data.model) setModelInfo({ model: data.model, platform: data.platform });
               break;
             case 'progress':
-              setProgress({ done: data.done ?? 0, total: data.total ?? 0, message: data.message });
+              setProgress({ done: data.done ?? 0, total: data.total ?? 0 });
               if (data.message) setPhaseMessage(data.message);
               break;
             case 'item_scored':
@@ -133,8 +116,8 @@ export function ReviewAssessmentDetailPage() {
     let cancelled = false;
     (async () => {
       const data = await load();
-      // Queued 任务进入页面即自动开始评估（断点续评同样走这里）
-      if (!cancelled && data && data.run.status === 'Queued') startStream();
+      // 待评估任务进入页面即自动开始（Draft 为旧版遗留态，后端会自动补齐条目继续）
+      if (!cancelled && data && (data.run.status === 'Queued' || data.run.status === 'Draft')) startStream();
     })();
     return () => {
       cancelled = true;
@@ -142,31 +125,6 @@ export function ReviewAssessmentDetailPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
-
-  const toggleFactorCol = (factorKey: string, colIndex: number) => {
-    setFactorCols(prev => {
-      const cols = prev[factorKey] ?? [];
-      const next = cols.includes(colIndex) ? cols.filter(c => c !== colIndex) : [...cols, colIndex];
-      return { ...prev, [factorKey]: next };
-    });
-  };
-
-  const handleStart = async () => {
-    if (nameCol === '' || starting) return;
-    setStarting(true);
-    const res = await startAssessment(id, {
-      nameColumnIndex: nameCol,
-      descColumnIndex: descCol === '' ? null : descCol,
-      factorColumns: factorCols,
-    });
-    setStarting(false);
-    if (res.success && res.data) {
-      setRun(res.data.run);
-      startStream();
-    } else {
-      setStreamError(res.error?.message ?? '启动评估失败');
-    }
-  };
 
   const handleRerun = async () => {
     const res = await rerunAssessment(id);
@@ -188,10 +146,9 @@ export function ReviewAssessmentDetailPage() {
     );
   }
 
-  const isDraft = run.status === 'Draft';
   const isDone = run.status === 'Done';
   const isError = run.status === 'Error' || (!!streamError && !streaming);
-  const inProgress = streaming || run.status === 'Running' || run.status === 'Queued';
+  const inProgress = !isError && (streaming || run.status === 'Running' || run.status === 'Queued' || run.status === 'Draft');
   const scoredItems = items.filter(x => x.status === 'Scored');
   const failedItems = items.filter(x => x.status === 'Error');
   const orderedItems = isDone
@@ -229,7 +186,7 @@ export function ReviewAssessmentDetailPage() {
             <p className="text-sm text-token-muted mt-0.5 truncate">
               {run.fileName} · 工作表 {run.sheetName}
               {run.itemCount > 0 ? ` · ${run.itemCount} 条需求` : ` · ${run.totalRowCount} 行数据`}
-              {run.truncated && `（超出上限已截取前 ${run.headers.length > 0 ? '300' : ''} 条）`}
+              {run.truncated && `（原表 ${run.totalRowCount} 行，超出单次上限已截取）`}
             </p>
           </div>
         </div>
@@ -261,126 +218,8 @@ export function ReviewAssessmentDetailPage() {
         </div>
       )}
 
-      {/* Draft：列映射确认 */}
-      {isDraft && (
-        <div className="space-y-5">
-          <div className="bg-token-nested border border-token-subtle rounded-xl p-5">
-            <h2 className="text-sm font-medium text-token-primary mb-1">第一步：确认列映射</h2>
-            <p className="text-xs text-token-muted mb-4">
-              AI 已给出建议映射，请核对需求名称列与各评估因子的证据来源列。映射越准确，评估依据越充分。
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-              <div>
-                <label className="block text-xs text-token-secondary mb-1.5">需求名称列（必选）</label>
-                <select
-                  value={nameCol}
-                  onChange={e => setNameCol(e.target.value === '' ? '' : Number(e.target.value))}
-                  className="w-full bg-token-input border border-token-subtle rounded-lg px-3 py-2 text-sm text-token-primary focus:outline-none focus:border-indigo-500/50"
-                >
-                  <option value="">请选择...</option>
-                  {run.headers.map((h, i) => (
-                    <option key={i} value={i}>{h}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-token-secondary mb-1.5">需求描述列（可选）</label>
-                <select
-                  value={descCol}
-                  onChange={e => setDescCol(e.target.value === '' ? '' : Number(e.target.value))}
-                  className="w-full bg-token-input border border-token-subtle rounded-lg px-3 py-2 text-sm text-token-primary focus:outline-none focus:border-indigo-500/50"
-                >
-                  <option value="">不指定</option>
-                  {run.headers.map((h, i) => (
-                    <option key={i} value={i}>{h}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {factors.map(f => (
-                <div key={f.key} className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <div className="w-44 flex-shrink-0">
-                    <span className="text-xs text-token-primary">{f.name}</span>
-                    <span className="text-[11px] text-token-muted ml-1.5">权重 {f.weight}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {run.headers.map((h, i) => {
-                      const active = (factorCols[f.key] ?? []).includes(i);
-                      return (
-                        <button
-                          key={i}
-                          onClick={() => toggleFactorCol(f.key, i)}
-                          className={`text-[11px] px-2 py-1 rounded-md border transition-colors ${
-                            active
-                              ? 'bg-indigo-600 text-white border-indigo-500'
-                              : 'bg-token-input text-token-muted border-token-subtle hover-text-primary'
-                          }`}
-                        >
-                          {h}
-                        </button>
-                      );
-                    })}
-                    {(factorCols[f.key] ?? []).length === 0 && (
-                      <span className="text-[11px] text-token-muted self-center">未映射（将从需求描述中找证据，找不到按保守值计）</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 数据预览 */}
-          {previewRows.length > 0 && (
-            <div className="bg-token-nested border border-token-subtle rounded-xl p-5">
-              <h2 className="text-sm font-medium text-token-primary mb-3 flex items-center gap-2">
-                <FileSpreadsheet className="w-4 h-4 text-token-muted" />
-                数据预览（前 {previewRows.length} 行 / 共 {run.totalRowCount} 行）
-              </h2>
-              <div className="overflow-x-auto">
-                <table className="text-xs w-full">
-                  <thead>
-                    <tr>
-                      {run.headers.map((h, i) => (
-                        <th key={i} className="text-left px-2 py-1.5 text-token-secondary font-medium whitespace-nowrap border-b border-token-subtle">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewRows.map((row, r) => (
-                      <tr key={r}>
-                        {run.headers.map((_, c) => (
-                          <td key={c} className="px-2 py-1.5 text-token-muted whitespace-nowrap max-w-[200px] truncate border-b border-token-subtle/50">
-                            {row[c] ?? ''}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          <div className="flex justify-end">
-            <button
-              onClick={handleStart}
-              disabled={nameCol === '' || starting}
-              className="flex items-center gap-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg px-5 py-2.5 transition-colors"
-            >
-              {starting ? <MapSpinner size={14} /> : <Play className="w-4 h-4" />}
-              开始评估（{run.totalRowCount > 300 ? 300 : run.totalRowCount} 条需求）
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 进行中：进度 + 实时结果 */}
-      {!isDraft && inProgress && !isError && (
+      {/* 进行中：进度 */}
+      {inProgress && (
         <div className="mb-5 bg-token-nested border border-token-subtle rounded-xl p-5">
           <div className="flex items-center gap-3 mb-3">
             <MapSpinner size={16} />
@@ -428,7 +267,7 @@ export function ReviewAssessmentDetailPage() {
       )}
 
       {/* 结果表（进行中实时增长 / 完成后按优先级排序） */}
-      {!isDraft && (orderedItems.length > 0 || failedItems.length > 0) && (
+      {(orderedItems.length > 0 || failedItems.length > 0) && (
         <div className="bg-token-nested border border-token-subtle rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -459,7 +298,7 @@ export function ReviewAssessmentDetailPage() {
             <div className="px-4 py-3 border-t border-token-subtle text-xs text-red-400/90">
               {failedItems.length} 条需求评估失败未纳入排序：
               {failedItems.map(x => `第 ${x.rowIndex} 行「${x.name}」`).join('、')}
-              {isDone && '，可点击右上角重试补评'}
+              {isDone && '，可点击上方重试补评'}
             </div>
           )}
         </div>

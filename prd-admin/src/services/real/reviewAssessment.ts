@@ -76,31 +76,15 @@ export interface RequirementAssessmentRun {
   completedAt?: string | null;
 }
 
-export interface SuggestedColumnMapping {
-  nameColumnIndex?: number | null;
-  descColumnIndex?: number | null;
-  factorColumns: Record<string, number[]>;
-}
-
-export interface ParseAssessmentResponse {
-  run: RequirementAssessmentRun;
-  headers: string[];
-  previewRows: string[][];
-  rowCount: number;
-  truncated: boolean;
-  totalRowCount: number;
-  suggestedMapping: SuggestedColumnMapping;
-  factors: RequirementFactorDefinition[];
-}
-
 /**
- * 上传需求表并解析（.xls / .xlsx）。
+ * 上传需求表（.xls / .xlsx）并直接创建评估任务。
+ * 列映射由后端自动综合（详细描述为核心证据源），创建后任务即 Queued。
  * FormData 上传不能走 apiRequest（会被 JSON 序列化），直接 fetch + Authorization。
  */
-export async function parseAssessmentExcel(
+export async function createAssessment(
   file: File,
   title?: string
-): Promise<ApiResponse<ParseAssessmentResponse>> {
+): Promise<ApiResponse<{ run: RequirementAssessmentRun }>> {
   const { useAuthStore } = await import('@/stores/authStore');
   const token = useAuthStore.getState().token;
   const fd = new FormData();
@@ -109,7 +93,7 @@ export async function parseAssessmentExcel(
   try {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch('/api/review-agent/assessments/parse', {
+    const res = await fetch('/api/review-agent/assessments', {
       method: 'POST',
       headers,
       body: fd,
@@ -117,7 +101,7 @@ export async function parseAssessmentExcel(
     });
     const text = await res.text();
     try {
-      return JSON.parse(text) as ApiResponse<ParseAssessmentResponse>;
+      return JSON.parse(text) as ApiResponse<{ run: RequirementAssessmentRun }>;
     } catch {
       return {
         success: false,
@@ -132,21 +116,6 @@ export async function parseAssessmentExcel(
       error: { code: 'NETWORK_ERROR', message: (e as Error).message },
     };
   }
-}
-
-export async function startAssessment(
-  id: string,
-  body: {
-    title?: string;
-    nameColumnIndex: number;
-    descColumnIndex?: number | null;
-    factorColumns: Record<string, number[]>;
-  }
-): Promise<ApiResponse<{ run: RequirementAssessmentRun }>> {
-  return apiRequest(`/api/review-agent/assessments/${encodeURIComponent(id)}/start`, {
-    method: 'POST',
-    body,
-  });
 }
 
 export async function listAssessments(
@@ -165,8 +134,6 @@ export async function getAssessment(
   run: RequirementAssessmentRun;
   reportMarkdown?: string | null;
   items: RequirementAssessmentItem[];
-  /** Draft 态附带的样例数据行（列映射确认界面用） */
-  previewRows?: string[][] | null;
   factors: RequirementFactorDefinition[];
 }>> {
   return apiRequest(`/api/review-agent/assessments/${encodeURIComponent(id)}`);
