@@ -43,11 +43,12 @@ test('主管报告把异常提前并保留全量逐项账本', () => {
   assert.match(report, /主管结论：不通过/);
   assert.match(report, /## 未通过与未执行逐项清单/);
   assert.match(report, /首页 → 视觉创作 → 参考图 → 结果 → 单图参考/);
-  assert.match(report, /VIS-003 \| 功能/);
+  assert.match(report, /单图参考 \| 功能/);
   assert.match(report, /正式合成身份未就绪/);
   assert.match(report, /正式环境 \| 全部计划模块 \| 2 项/);
   assert.equal((report.match(/正式合成身份未就绪/g) || []).length, 1);
   assert.match(report, /## 逐项验收账本/);
   assert.match(report, /#method-vis-003/);
+  assert.doesNotMatch(report, /\| VIS-003 \|/);
   assert.doesNotMatch(report, /node scripts|e2e\/|curl /);
 });

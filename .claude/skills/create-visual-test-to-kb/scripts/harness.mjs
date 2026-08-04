@@ -519,9 +519,11 @@ async function validateShot(page, path, expectText, allowBlockingOverlay = false
  *   - customLoaderSelectors: 项目特有的 loader 选择器
  *   - module: 全面视觉验收时的主业务模块名称，供模块预算门禁计数
  *   - evidenceState: 当前截图证明的状态，例如入口、输入、加载、结果或失败恢复
+ *   - primaryState: 当前截图唯一负责证明的标准状态；全面视觉门禁按它逐项核销
  *   - coverageStates: 当前截图证明的标准状态数组，供全面视觉覆盖门禁逐项核对
  *   - testType: 冒烟、功能、视觉或回归
  *   - status: 通过、不通过、部分通过、未执行或需干预
+ *   - theme: light 或 dark；不传时从页面主题自动识别
  *   - methodAnchor: 报告内关联测试方法锚点
  *   - breadcrumb: 从入口到当前状态的真实页面操作路径
  *   - failureEvidence: 当前图是否专门证明一个真实失败；只能用于 conditional/fail 报告
@@ -539,9 +541,11 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     mobileStage,
     module,
     evidenceState,
+    primaryState,
     coverageStates,
     testType,
     status,
+    theme,
     methodAnchor,
     breadcrumb,
     failureEvidence = false,
@@ -594,6 +598,14 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     && viewport.width <= 480
     && touchPoints >= 1,
   );
+  const resolvedTheme = theme || await page.evaluate(() => {
+    const root = document.documentElement;
+    const declared = root.getAttribute('data-theme') || document.body?.getAttribute('data-theme');
+    if (declared === 'light' || declared === 'dark') return declared;
+    if (root.classList.contains('dark') || document.body?.classList.contains('dark')) return 'dark';
+    if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }).catch(() => null);
   const rec = {
     name,
     caption,
@@ -608,9 +620,12 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     mobileStage: mobileStage || null,
     module: module || null,
     evidenceState: evidenceState || null,
+    primaryState: primaryState || null,
     coverageStates: Array.isArray(coverageStates) ? coverageStates : undefined,
     testType: testType || undefined,
     status: status || undefined,
+    theme: resolvedTheme || undefined,
+    viewportClass: isMobile ? 'mobile' : 'desktop',
     methodAnchor: methodAnchor || undefined,
     breadcrumb: breadcrumb || undefined,
     failureEvidence: Boolean(failureEvidence),

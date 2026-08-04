@@ -11,6 +11,10 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
 
 新结论
 
+## 需干预事项
+
+需先处理
+
 ## 未通过与未执行逐项清单
 
 31 项缺口
@@ -83,14 +87,15 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
   assert.match(composed, /新结论/);
   assert.equal((composed.match(/## 主管验收总览/g) || []).length, 1);
   assert.match(composed, /Verdict: fail/);
-  assert.match(composed, /124 张/);
+  assert.doesNotMatch(composed, /## 视觉证据预算/);
   assert.match(composed, /206 项账本/);
   assert.match(composed, /\{\{IMG:001-visual\}\}/);
-  assert.match(composed, /## 改动断言到证据表/);
-  assert.match(composed, /124 张逐图判定/);
+  assert.match(composed, /## 改动断言表/);
+  assert.doesNotMatch(composed, /124 张逐图判定/);
   assert.match(composed, /## 逐张视觉证据账本/);
   assert.match(composed, /## 视觉测试方法/);
   assert.match(composed, /\| 视觉创作 \| 首页 → 视觉创作 → 结果 \| 通过 \| 通过 \| 不通过 \| P2 \| 是 \|/);
   assert.doesNotMatch(composed, /\| 视觉创作 \| 首页 → 视觉创作 → 结果 \| 通过 \| 通过 \| 部分通过 \| P2 \| 是 \|/);
-  assert.ok(composed.indexOf('视觉证据预算') < composed.indexOf('未通过与未执行逐项清单'));
+  assert.ok(composed.indexOf('模块覆盖') < composed.indexOf('未通过与未执行逐项清单'));
+  assert.ok(composed.indexOf('逐项验收账本') < composed.indexOf('逐张视觉证据账本'));
 });

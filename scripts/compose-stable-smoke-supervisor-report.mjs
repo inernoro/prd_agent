@@ -31,13 +31,9 @@ const visualBeforeLedger = new Set([
   '缺陷清单',
 ]);
 
-const visualGateSections = new Set([
-  '模块覆盖',
-  '需处理事项',
-  '视觉异常证据',
-  '逐张视觉证据账本',
-  '视觉测试方法',
-]);
+const visualGateSummarySections = new Set(['模块覆盖', '需处理事项']);
+const visualGateLedgerSections = new Set(['逐张视觉证据账本', '视觉测试方法']);
+const conciseVisualSections = new Set(['改动断言表', '验收用例', '覆盖缺口', '移动端验收', '缺陷清单']);
 
 function parseMarkdownTable(sectionContent) {
   const lines = String(sectionContent || '').split('\n');
@@ -91,8 +87,11 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   const functional = parseReportSections(functionalMarkdown);
   const visual = parseReportSections(visualMarkdown);
   const visualGate = parseReportSections(visualGateMarkdown);
-  const visualSummary = visual.sections.filter((section) => visualBeforeLedger.has(section.title));
-  const visualGateDetail = visualGate.sections.filter((section) => visualGateSections.has(section.title));
+  const visualSummary = visual.sections.filter((section) => (
+    visualGateMarkdown ? conciseVisualSections.has(section.title) : visualBeforeLedger.has(section.title)
+  ));
+  const visualGateSummary = visualGate.sections.filter((section) => visualGateSummarySections.has(section.title));
+  const visualGateLedger = visualGate.sections.filter((section) => visualGateLedgerSections.has(section.title));
   const visualSteps = visual.sections.filter((section) => /^步骤\s+\d+/.test(section.title));
   const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
   const visualGateModules = visualGate.sections.find((section) => section.title === '模块覆盖');
@@ -102,7 +101,8 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
       ? 'conditional'
       : 'pass';
   const output = [functional.lead, '', `Verdict: ${inferredVerdict}`, ''];
-  let visualInserted = false;
+  let visualSummaryInserted = false;
+  let visualLedgerInserted = false;
   for (const section of functional.sections) {
     if (section.title === '主管验收总览') {
       output.push(section.content.replace(/^## 主管验收总览/m, '## 主管先看'), '');
@@ -111,17 +111,23 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
       }
       continue;
     }
-    if (!visualInserted && section.title === '未通过与未执行逐项清单') {
-      output.push(...visualSummary.flatMap((item) => [item.content, '']));
-      output.push(...visualGateDetail.flatMap((item) => [item.content, '']));
-      visualInserted = true;
-    }
     output.push(section.content, '');
+    if (!visualSummaryInserted && section.title === '需干预事项') {
+      output.push(...visualGateSummary.flatMap((item) => [item.content, '']));
+      visualSummaryInserted = true;
+    }
+    if (section.title === '未通过与未执行逐项清单') {
+      output.push(...visualSummary.flatMap((item) => [item.content, '']));
+    }
+    if (!visualLedgerInserted && section.title === '逐项验收账本') {
+      output.push(...visualGateLedger.flatMap((item) => [item.content, '']));
+      visualLedgerInserted = true;
+    }
   }
-  if (!visualInserted) {
-    output.push(...visualSummary.flatMap((item) => [item.content, '']));
-    output.push(...visualGateDetail.flatMap((item) => [item.content, '']));
+  if (!visualSummaryInserted) {
+    output.push(...visualGateSummary.flatMap((item) => [item.content, '']));
   }
+  if (!visualLedgerInserted) output.push(...visualGateLedger.flatMap((item) => [item.content, '']));
   output.push(...visualSteps.flatMap((item) => [item.content, '']));
   return output.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }

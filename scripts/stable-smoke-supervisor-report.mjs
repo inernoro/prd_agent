@@ -101,7 +101,7 @@ function buildMetadata(plan, matrix, row) {
     environmentPolicy: row.environment === 'cds' ? method?.cdsPolicy : method?.productionPolicy,
     testType: testType(row.caseId),
     statusLabel: statusLabel(row.status),
-    intervention: row.status === 'pass' ? '否' : '是',
+    intervention: row.status === 'pass' ? '无需' : row.status === 'fail' ? '团队修复并复测' : row.environment === 'production' ? '准备正式验收身份后补测' : '团队补齐自动化并补测',
     owner: OWNER_BY_FEATURE[feature?.id] || '质量负责人',
     methodAnchor: `method-${row.caseId.toLowerCase()}`,
   };
@@ -150,6 +150,7 @@ export function renderSupervisorReport({
     notRun: metadata.filter((row) => row.status === 'not-run').length,
   };
   const verdict = counts.fail > 0 ? '不通过' : counts.notRun > 0 ? '部分通过' : '通过';
+  const managerIntervention = productionNotRun.length > 0 ? '需要：确认正式验收身份可用' : '不需要：由团队闭环剩余项';
   const methods = [...new Map(metadata.map((row) => [row.caseId, row])).values()];
 
   const lines = [
@@ -162,6 +163,8 @@ export function renderSupervisorReport({
     '| 项目 | 结果 | 主管动作 |',
     '|---|---|---|',
     `| 总体结论 | ${verdict} | ${verdict === '通过' ? '无需干预' : '先处理下方“需干预事项”，关闭前不得对外宣称全面通过'} |`,
+    `| 发布建议 | ${verdict === '通过' ? '可以发布' : '暂缓全面放行'} | 关键项全部通过且未执行清零后再变更结论 |`,
+    `| 是否需要主管介入 | ${managerIntervention} | 技术修复和自动化补跑由对应负责人处理 |`,
     `| 通过 | ${counts.pass}/${counts.total} | 可抽查逐项账本中的证据与方法 |`,
     `| 不通过 | ${counts.fail}/${counts.total} | 必须修复并在 CDS 与正式环境复测 |`,
     `| 未执行 | ${counts.notRun}/${counts.total} | 必须补齐身份或自动化步骤，不能用入口截图代替 |`,
@@ -170,9 +173,9 @@ export function renderSupervisorReport({
     '',
     '| 优先级 | 环境 | 影响项 | 当前结果 | 负责人 | 关闭条件 |',
     '|---|---|---:|---|---|---|',
-    ...(counts.fail > 0 ? [`| P1 | CDS | ${counts.fail} 项 | 真实业务失败 | 相关业务负责人 | 修复后相同 caseId 通过，永久回归入账 |`] : []),
+    ...(counts.fail > 0 ? [`| P1 | CDS | ${counts.fail} 项 | 真实业务失败 | 相关业务负责人 | 修复后相同验收项通过，并加入永久回归 |`] : []),
     ...(immediate.filter((row) => row.status === 'not-run').length > 0 ? [`| P1 | CDS | ${immediate.filter((row) => row.status === 'not-run').length} 项 | 自动化步骤未执行 | 质量负责人和相关业务负责人 | 下方每项均获得真实通过或失败证据 |`] : []),
-    ...(productionNotRun.length > 0 ? [`| P1 | 正式环境 | ${productionNotRun.length} 项 | 正式合成身份未就绪 | 身份与权限负责人 | 正式身份预检通过并完成同一套 caseId |`] : []),
+    ...(productionNotRun.length > 0 ? [`| P1 | 正式环境 | ${productionNotRun.length} 项 | 正式合成身份未就绪 | 身份与权限负责人 | 正式身份预检通过并完成同一套验收项 |`] : []),
     ...(abnormal.length === 0 ? ['| 无 | 双环境 | 0 项 | 全部通过 | 无需干预 | 保持每 48 小时复测 |'] : []),
     '',
     '## 业务功能线与面包屑',
@@ -188,21 +191,23 @@ export function renderSupervisorReport({
     '',
     '本节只提前列异常项；完整通过项仍保留在“逐项验收账本”。',
     '',
-    '| 环境 | 模块 | caseId | 类型 | 详细测试路径 | 结果 | 原因或断言 | 负责人 | 测试方法 |',
+    '| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 问题或关闭条件 | 负责人 | 查看方法 |',
     '|---|---|---|---|---|---|---|---|---|',
     ...frontAbnormal.map((row) => {
       const gap = gapByKey.get(`${row.environment}:${row.caseId}`);
-      const reason = row.status === 'not-run' ? gap?.reason || '没有获得真实执行证据' : readableReason(row.error || row.assertion);
-      return `| ${environmentLabel(row.environment)} | ${escapeCell(row.featureLabel)} | ${row.caseId} | ${row.testType} | ${escapeCell(row.breadcrumb)} | ${row.statusLabel} | ${escapeCell(reason)} | ${row.owner} | [查看](#${row.methodAnchor}) |`;
+      const reason = row.status === 'not-run'
+        ? String(gap?.reason || '没有获得真实执行证据').replace(/该 caseId/g, '该验收项').replace(/caseId/g, '验收项')
+        : readableReason(row.error || row.assertion);
+      return `| ${environmentLabel(row.environment)} | ${escapeCell(row.featureLabel)} | ${escapeCell(row.scenario)} | ${row.testType} | ${escapeCell(row.breadcrumb)} | ${row.statusLabel} | ${escapeCell(reason)} | ${row.owner} | [查看](#${row.methodAnchor}) |`;
     }),
-    ...(productionNotRun.length > 0 ? [`| 正式环境 | 全部计划模块 | ${productionNotRun.length} 项 | 冒烟、功能与回归 | 正式合成身份 → 同一 caseId 账本 → 真实业务路径 | 未执行 | 共用身份前置未完成；每项明细保留在下方完整账本 | 身份与权限负责人 | [查看正式环境方法](#正式环境统一执行方法) |`] : []),
+    ...(productionNotRun.length > 0 ? [`| 正式环境 | 全部计划模块 | ${productionNotRun.length} 项 | 冒烟、功能与回归 | 正式合成身份 → 同一验收账本 → 真实业务路径 | 未执行 | 共用身份前置未完成；每项明细保留在下方完整账本 | 身份与权限负责人 | [查看正式环境方法](#正式环境统一执行方法) |`] : []),
     ...(abnormal.length === 0 ? ['| 双环境 | 全部模块 | 无 | 无 | 全部业务路径 | 通过 | 无异常项 | 无需干预 | [查看完整方法](#关联测试方法) |'] : []),
     '',
     '## 逐项验收账本',
     '',
-    '| 环境 | 模块 | caseId | 类型 | 详细测试路径 | 结果 | 是否需干预 | 测试方法 |',
+    '| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 干预动作 | 查看方法 |',
     '|---|---|---|---|---|---|---|---|',
-    ...metadata.map((row) => `| ${environmentLabel(row.environment)} | ${escapeCell(row.featureLabel)} | ${row.caseId} | ${row.testType} | ${escapeCell(row.breadcrumb)} | ${row.statusLabel} | ${row.intervention} | [查看](#${row.methodAnchor}) |`),
+    ...metadata.map((row) => `| ${environmentLabel(row.environment)} | ${escapeCell(row.featureLabel)} | ${escapeCell(row.scenario)} | ${row.testType} | ${escapeCell(row.breadcrumb)} | ${row.statusLabel} | ${row.intervention} | [查看](#${row.methodAnchor}) |`),
     '',
     '## 关联测试方法',
     '',
@@ -210,18 +215,18 @@ export function renderSupervisorReport({
     '### 正式环境统一执行方法',
     '',
     '- 使用独立、最低权限的正式合成身份完成预检。',
-    '- 使用与 CDS 完全相同的 caseId 账本，按每项正式环境策略执行。',
+    '- 使用与 CDS 完全相同的验收账本，按每项正式环境策略执行。',
     '- 每项必须得到通过或不通过的真实证据，身份缺失和未执行均不能算通过。',
     '',
     ...methods.flatMap((row) => [
       `<a id="${row.methodAnchor}"></a>`,
-      `### ${row.caseId} · ${row.scenario}`,
+      `### ${row.scenario}`,
       '',
       `- 类型：${row.testType}`,
       `- 面包屑：${row.breadcrumb}`,
       `- 验收断言：${row.assertion}`,
-      `- CDS 策略：${matrix.get(row.caseId)?.cdsPolicy || '按永久回归账本执行'}`,
-      `- 正式环境策略：${matrix.get(row.caseId)?.productionPolicy || '按永久回归账本执行'}`,
+      `- CDS 环境：${matrix.get(row.caseId)?.cdsPolicy || '按永久回归账本执行'}`,
+      `- 正式环境：${matrix.get(row.caseId)?.productionPolicy || '按永久回归账本执行'}`,
       '',
     ]),
     '## 验收地址',
@@ -235,7 +240,7 @@ export function renderSupervisorReport({
     '| 需求 | 落地结果 |',
     '|---|---|',
     '| 审核人员先看结论和干预项 | 已在首屏给出总体结论、失败、未执行和责任人 |',
-    '| 每项能判断是否通过 | 逐项验收账本覆盖双环境全部 caseId |',
+    '| 每项能判断是否通过 | 逐项验收账本覆盖双环境全部计划项 |',
     '| 区分冒烟、功能、视觉和回归 | 稳定冒烟账本标记冒烟、功能、回归；视觉证据由独立视觉报告和截图门禁判定 |',
     '| 测试路径足够翔实 | 每项包含模块面包屑和具体场景 |',
     '| 关联方法可点击 | 每个 caseId 跳转到对应验收断言和双环境策略 |',
