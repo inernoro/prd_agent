@@ -97,8 +97,9 @@ skill-name/
 
 ### Step 6: 确认可被发现（frontmatter 完整）
 
-技能的发现机制是 `SKILL.md` 的 frontmatter：宿主靠它自动注入，人工扫描 `.claude/skills/`
-时也是读它来判断该不该用。所以「注册」这一步不是往某张表里加一行，而是确认这两个字段到位：
+技能的发现机制是 `SKILL.md` 的 frontmatter：宿主靠它自动注入，人工扫描技能根
+（`.claude/skills/`、`.agents/skills/`，具体看宿主）时也是读它来判断该不该用。
+所以「注册」这一步不是往某张表里加一行，而是确认这两个字段到位：
 
 - `name`：与目录名一致
 - `description`：写清**什么时候该用它**（触发场景 + 触发词），不是只写它是什么
@@ -106,10 +107,12 @@ skill-name/
 自查（任何仓库都能跑，不依赖本项目脚本）：
 
 ```bash
-skill_dir=".claude/skills/my-skill-name"   # 换成你的技能目录
+# 不写死技能根：不同宿主的根不一样（.claude/skills、.agents/skills 等），
+# 写死一个就只在那个宿主下能跑。默认取当前目录，即「在你的技能目录里跑这段」。
+skill_dir="${1:-.}"                            # 或直接填该技能目录的路径
 
-head -5 "$skill_dir/SKILL.md"              # 应看到 name 与 description 两行
-basename "$skill_dir"                      # 应与 frontmatter 里的 name 完全一致
+head -5 "$skill_dir/SKILL.md"                  # 应看到 name 与 description 两行
+basename "$(cd "$skill_dir" && pwd)"           # 应与 frontmatter 里的 name 完全一致
 ```
 
 `description` 自问三条：说清了**什么时候**该用它吗？包含用户会说的触发词吗？第三人称、无 XML 标签、

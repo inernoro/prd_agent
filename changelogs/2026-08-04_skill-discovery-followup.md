@@ -32,3 +32,5 @@
 | docs | claude-md | 把「可发现性审计不校验 name/description 尺寸限制」记入 debt 台账（B 类）：实测零违反、且该判据同时喂棘轮，加判定会改全仓欠账口径；附偿还时的语义分界提醒 |
 | fix | doc-tooling | AUTOFIX_NAME 分类会把「嵌套字段写坏但缺 name」的清单判为可自动修，补完 name 后再审全绿，而宿主实际 load 不了——修复动作把坏清单洗成假绿灯；分类前先用真正的 YAML 解析器验结构，解析不了一律 BLOCK（只加在 --skills-audit，不进 check_skill 以免改动棘轮口径） |
 | fix | doc-tooling | 上一轮用 PyYAML 验 frontmatter，而本脚本刻意只用标准库（同 job 的 ratchet 测试明写「判据本身不依赖它」），无 PyYAML 环境下 60 个合法技能全被判 BLOCK、熵减自动合并被永久关死；改为标准库判据：只在「缺 name」这一类上追问「结构是否超出行判据的理解范围」，超出就不自动补 |
+| fix | claude-md | create-skill-file 标着「任何仓库都能跑」的自查块把技能根写死成 .claude/skills，而该技能会被分发给只有 .agents/skills 的宿主，照抄即读到不存在的路径；改为不写死根、默认取当前目录，并同步修正正文里同样写死的扫描路径 |
+| docs | claude-md | 把「frontmatter 嵌套结构写坏（name 正确）判据看不出来」记入 debt 台账（B 类）：彻底堵需要 YAML 解析器而本脚本刻意只用标准库，纯启发式会误伤 6 个合法技能，偿还前需先决定是否引入 PyYAML 依赖 |
