@@ -4925,11 +4925,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
+    const imageFiles = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
+    if (imageFiles.length > 20) {
+      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
+    }
     // 先按「新增路径」的上限（下方 list.slice(0, 20)）截断，再压缩——否则一次拖入 50 张时
     // 会把 30 张注定被丢弃的图也解码 + 画到 canvas，反而在上传前先卡死/爆内存。
-    const rawList = (files ?? [])
-      .filter((f) => f && f.type && f.type.startsWith('image/'))
-      .slice(0, 20);
+    const rawList = imageFiles.slice(0, 20);
     if (rawList.length === 0) return;
 
     // 关键：上传/放置必须串行化，否则两次快速上传会并发读文件，导致“空位算法看不到对方”=> 100% 覆盖

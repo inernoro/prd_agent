@@ -1320,4 +1320,119 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }
     }
   });
+
+  test('[MVIS-003][MVIS-004][MVIS-005][MVIS-006] 多图重排、删除、重复与超限行为明确', async ({ page, request }, testInfo) => {
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'multi-image-boundaries');
+    const png = Buffer.from(solidPngDataUrl(45, 120, 210, 32).split(',')[1]!, 'base64');
+    const file = (name: string) => ({ name, mimeType: 'image/png', buffer: png });
+    try {
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissVisualTutorial(page);
+      const picker = page.locator('input[type="file"][accept="image/*"]');
+      await picker.setInputFiles([file('a.png'), file('b.png'), file('c.png')]);
+      await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
+
+      await page.locator('[title="b.png"]').click();
+      await page.locator('[title="a.png"]').click({ modifiers: ['Shift'] });
+      const chips = page.locator('.image-chip-node');
+      await expect(chips).toHaveCount(2);
+      const chipLabels = await chips.allTextContents();
+      expect(chipLabels[0]).toContain('b.png');
+      expect(chipLabels[1]).toContain('a.png');
+
+      await page.getByRole('button', { name: '删除选中' }).click();
+      await expect(page.getByText('确认删除选中的 2 项？')).toBeVisible();
+      await page.getByRole('button', { name: '删除', exact: true }).click();
+      await expect(page.getByTestId('canvas-image')).toHaveCount(1);
+      await expect(chips).toHaveCount(0);
+      await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
+
+      await picker.setInputFiles([file('dup1.png'), file('dup2.png')]);
+      await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
+      await expect(page.getByText('已把 2 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。')).toBeVisible();
+      await expect(page.locator('[title="dup1.png"]')).toHaveCount(1);
+      await expect(page.locator('[title="dup2.png"]')).toHaveCount(1);
+
+      await picker.setInputFiles(Array.from({ length: 21 }, (_, index) => file(`limit-${String(index + 1).padStart(2, '0')}.png`)));
+      await expect(page.getByText('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加')).toBeVisible();
+      await expect(page.getByTestId('canvas-image')).toHaveCount(23, { timeout: 60_000 });
+      await expect(page.locator('[title="limit-21.png"]')).toHaveCount(0);
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      await testInfo.attach('multi-image-boundaries', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-boundaries-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+    }
+  });
+
+  test('[MVIS-007] 损坏引用指出具体图片并保留其他输入', async ({ page, request }, testInfo) => {
+    test.setTimeout(180_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'multi-image-broken-reference');
+    let runId = '';
+    try {
+      const assetResponse = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-valid-ref` },
+        data: { data: solidPngDataUrl(35, 90, 190), width: 256, height: 256, prompt: '有效参考图' },
+      });
+      const valid = await readEnvelope<{ asset: { sha256: string; url: string } }>(assetResponse);
+      const pools = await readEnvelope<ImageModelPool[]>(
+        await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) }),
+      );
+      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
+      expect(pool, '没有可用的多图视觉逻辑模型').toBeTruthy();
+      const prompt = '参考 @img1 和 @img2 生成一张构图测试图';
+      const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-broken-ref-run` },
+        data: {
+          prompt,
+          userMessageContent: prompt,
+          targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-broken-ref-target`,
+          platformId: 'logical-model',
+          modelId: pool!.code,
+          size: '1024x1024',
+          responseFormat: 'url',
+          imageRefs: [
+            { refId: 1, assetSha256: valid.asset.sha256, url: valid.asset.url, label: '有效参考图', role: 'target' },
+            { refId: 2, assetSha256: 'f'.repeat(64), url: '', label: '已损坏参考图', role: 'style' },
+          ],
+          x: 0,
+          y: 0,
+          w: 1001,
+          h: 1001,
+        },
+      });
+      runId = (await readEnvelope<{ runId: string }>(create)).runId;
+      const terminal = await waitForImageRun(page, token, runId);
+      expect(terminal.detail.run.status).toBe('Failed');
+      const errorMessage = terminal.detail.items[0]?.errorMessage || '';
+      expect(errorMessage).toContain('@img2');
+      expect(errorMessage).toContain('其他输入已保留');
+      expectUserReadable(errorMessage);
+
+      const messages = await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/messages`, { headers: authHeaders(token) });
+      const messageText = JSON.stringify((await messages.json() as ApiEnvelope<unknown>).data);
+      expect(messageText).toContain(prompt);
+      expect(messageText).toContain('@img2');
+      expect(messageText).toContain('其他输入已保留');
+
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissVisualTutorial(page);
+      await expect(page.getByText(/参考图 @img2 无法使用/)).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(/其他输入已保留/)).toBeVisible();
+      await testInfo.attach('multi-image-broken-reference', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-broken-ref-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      if (runId) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
 });

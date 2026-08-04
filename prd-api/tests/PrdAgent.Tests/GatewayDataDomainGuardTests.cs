@@ -3182,7 +3182,8 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("expectedReferenceCount", worker);
         Assert.Contains("IMAGE_REF_UNAVAILABLE", worker);
-        Assert.Contains("参考图加载不完整", worker);
+        Assert.Contains("其他输入已保留", worker);
+        Assert.Contains("missingTags", worker);
         Assert.Contains("loadedImageRefs.Count < expectedReferenceCount", worker);
         Assert.Contains("Builders<ImageGenRun>.Update.Set(x => x.AppCallerCode, appCallerCode)", worker);
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.Img2Img", worker);

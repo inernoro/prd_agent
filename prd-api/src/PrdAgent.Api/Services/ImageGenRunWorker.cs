@@ -544,7 +544,22 @@ public class ImageGenRunWorker : BackgroundService
                             var loadedRefs = loadedImageRefs.Count == 0
                                 ? "(none)"
                                 : string.Join(", ", loadedImageRefs.Select(r => $"@img{r.RefId}:{r.Sha256}"));
-                            var missingMsg = $"参考图加载不完整：期望 {expectedReferenceCount} 张，实际 {loadedImageRefs.Count} 张。请重新选择图片后再试";
+                            var loadedRefIds = loadedImageRefs.Select(r => r.RefId).ToHashSet();
+                            var mentionedRefIds = Regex.Matches(curPrompt, @"@img(?<id>\d+)")
+                                .Select(match => int.TryParse(match.Groups["id"].Value, out var refId) ? refId : 0)
+                                .Where(refId => refId > 0)
+                                .ToHashSet();
+                            var expectedRefs = (run.ImageRefs ?? new List<ImageRefInput>())
+                                .Where(imageRef => mentionedRefIds.Count == 0 || mentionedRefIds.Contains(imageRef.RefId));
+                            var missingTags = expectedRefs
+                                .Where(imageRef => !loadedRefIds.Contains(imageRef.RefId))
+                                .Select(imageRef => $"@img{imageRef.RefId}")
+                                .Distinct()
+                                .ToList();
+                            var missingSummary = missingTags.Count > 0
+                                ? string.Join("、", missingTags)
+                                : "所选参考图";
+                            var missingMsg = $"参考图 {missingSummary} 无法使用：图片数据缺失或已过期。其他输入已保留，请重新选择{(missingTags.Count == 1 ? "这张图片" : "这些图片")}后再试";
                             _logger.LogWarning(
                                 "[ImageGenRunWorker] 参考图加载不完整。RunId={RunId}, Expected={Expected}, Loaded={Loaded}, LoadedRefs={LoadedRefs}",
                                 run.Id,
