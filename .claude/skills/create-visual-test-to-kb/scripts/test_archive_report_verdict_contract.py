@@ -217,6 +217,39 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("表头必须严格为" in error for error in errors))
 
+    def test_not_run_report_requires_execution_coverage_ledger(self):
+        errors = archive_report._coverage_ledger_errors("未执行：12\nVerdict: conditional")
+        self.assertTrue(any("执行覆盖账本" in error for error in errors))
+
+    def test_execution_coverage_ledger_requires_actionable_fields(self):
+        body = """
+未执行：1
+
+## 执行覆盖账本
+
+| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |
+|---|---:|---:|---:|---:|---:|---|---|
+| CDS 环境 | 2 | 1 | 1 | 0 | 1 | 自动化缺口 | run command |
+
+| caseId | 为什么未执行 | 关闭条件 |
+|---|---|---|
+| REC-001 | 缺真实步骤 | 出现执行证据 |
+"""
+        self.assertEqual([], archive_report._coverage_ledger_errors(body))
+
+    def test_execution_coverage_ledger_rejects_missing_close_condition(self):
+        body = """
+not-run
+
+## 执行覆盖账本
+
+| 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |
+|---|---|---|---|---|---|---|
+| 2 | 1 | 1 | 0 | 1 | 自动化缺口 | run command |
+"""
+        errors = archive_report._coverage_ledger_errors(body)
+        self.assertTrue(any("关闭条件" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

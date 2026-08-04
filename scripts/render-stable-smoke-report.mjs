@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
+  buildNotRunLedger,
   collectPlaywrightCases,
   reconcileCaseCoverage,
   summarizeCoverage,
@@ -45,6 +46,10 @@ const evidenceRows = [
 ];
 const rows = reconcileCaseCoverage(plan?.requiredCaseIds || [], evidenceRows);
 const summary = summarizeCoverage(rows, plan?.verdict || 'conditional');
+const notRunLedger = buildNotRunLedger(rows, {
+  cds: Boolean(cdsReport),
+  production: Boolean(productionReport),
+});
 const verdict = summary.verdict;
 const totalDuration = rows.reduce((sum, row) => sum + row.durationMs, 0);
 const grouped = new Map();
@@ -86,6 +91,35 @@ const lines = [
   `- 计划环境用例：${rows.length} 条`,
   `- 通过：${summary.passed}；失败：${summary.failed}；未执行：${summary.notRun}；重试后通过：${summary.flaky}`,
   '',
+  '## 4.1 执行覆盖账本',
+  '',
+  '| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |',
+  '|---|---:|---:|---:|---:|---:|---|---|',
+  ...['cds', 'production'].map((targetEnvironment) => {
+    const environmentRows = rows.filter((row) => row.environment === targetEnvironment);
+    const environmentNotRun = environmentRows.filter((row) => row.status === 'not-run');
+    const reportAvailable = targetEnvironment === 'cds' ? Boolean(cdsReport) : Boolean(productionReport);
+    const blocker = environmentNotRun.length === 0
+      ? '无'
+      : reportAvailable
+        ? '自动化步骤缺失'
+        : targetEnvironment === 'production'
+          ? '正式环境专用身份缺失'
+          : '环境执行报告缺失';
+    const command = targetEnvironment === 'cds'
+      ? 'node scripts/stable-smoke-run.mjs --cds-only'
+      : 'node scripts/stable-smoke-run.mjs --production-only';
+    return `| ${targetEnvironment === 'cds' ? 'CDS 环境' : '正式环境'} | ${environmentRows.length} | ${environmentRows.length - environmentNotRun.length} | ${environmentRows.filter((row) => row.status === 'pass').length} | ${environmentRows.filter((row) => row.status === 'fail').length} | ${environmentNotRun.length} | ${blocker} | \`${command}\` |`;
+  }),
+  '',
+  '识别规则：`pass` 或 `fail` 表示真实执行过；`not-run` 只表示没有执行证据，不能按通过计算。每个未执行项必须在下表给出阻塞原因、代码入口、补跑命令和关闭条件。',
+  '',
+  '## 4.2 未执行明细与补跑路径',
+  '',
+  '| caseId | 环境 | 阻塞代码 | 为什么未执行 | 代码入口 | 补跑命令 | 关闭条件 |',
+  '|---|---|---|---|---|---|---|',
+  ...notRunLedger.map((row) => `| ${row.caseId} | ${row.environment === 'cds' ? 'CDS 环境' : '正式环境'} | ${row.reasonCode} | ${row.reason} | \`${row.sourcePath}\` | \`${row.command.replaceAll('|', '\\|')}\` | ${row.closeCondition} |`),
+  '',
   '## 5. 模块结果',
   '',
   '| 模块 | CDS 环境 | 正式环境 | 计划用例 | 失败 | 未执行 | 耗时 |',
@@ -112,9 +146,14 @@ lines.push(
   '',
   '## 6. caseId 结果与证据',
   '',
-  '| caseId | 环境 | 结果 | 断言或阻塞原因 | 耗时 |',
-  '|---|---|---|---|---:|',
-  ...rows.map((row) => `| ${row.caseId} | ${row.environment === 'cds' ? 'CDS 环境' : '正式环境'} | ${row.status} | ${userReadableError(row.error || row.title).replaceAll('|', '\\|')} | ${(row.durationMs / 1000).toFixed(2)}s |`),
+  '| caseId | 环境 | 结果 | 断言或阻塞原因 | 直接路径 | 耗时 |',
+  '|---|---|---|---|---|---:|',
+  ...rows.map((row) => {
+    const gap = notRunLedger.find((item) => item.caseId === row.caseId && item.environment === row.environment);
+    const detail = gap?.reason || userReadableError(row.error || row.title);
+    const directPath = gap ? gap.command : '见 Playwright 执行证据';
+    return `| ${row.caseId} | ${row.environment === 'cds' ? 'CDS 环境' : '正式环境'} | ${row.status} | ${detail.replaceAll('|', '\\|')} | ${directPath.replaceAll('|', '\\|')} | ${(row.durationMs / 1000).toFixed(2)}s |`;
+  }),
   '',
   '## 7. 双环境差异',
   '',

@@ -424,7 +424,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-001][FILE-002][FILE-004][FILE-005][FILE-006][FILE-007][FILE-009][FILE-010] 文件格式、错误、下载、重复与清理', async ({ page, request }) => {
+  test('[FILE-001][FILE-002][FILE-004][FILE-005][FILE-006][FILE-007][FILE-009][FILE-010][REG-file-001] 文件格式、错误、下载、重复与清理', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/transcript-agent');
     const runKey = `stsmk-${Date.now()}`;
     let storeId = '';
@@ -624,7 +624,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIDEO-004][VIDEO-007][VIDEO-008] 最短视频真实生成、播放文件校验与下载', async ({ page, request }) => {
+  test('[VIDEO-004][VIDEO-007][VIDEO-008][REG-video-001] 最短视频真实生成、播放文件校验与下载', async ({ page, request }) => {
     test.setTimeout(420_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const models = await readEnvelope<Array<{
@@ -832,7 +832,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[GW-001][GW-002][GW-003][GW-004][GW-005][GW-008][GW-009] 网关配置、路由与日志可由专用身份审计', async ({ request }) => {
+  test('[GW-001][GW-002][GW-003][GW-004][GW-005][GW-008][GW-009][REG-llmgw-auth-001] 网关配置、路由与日志可由专用身份审计', async ({ request }) => {
     const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
     const login = await request.post(`${baseUrl}/gw/auth/login`, {
       data: {
@@ -884,7 +884,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-005] 无效生图请求返回用户可读错误', async ({ page, request }) => {
+  test('[CORE-005][REG-visual-error-001] 无效生图请求返回用户可读错误', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const response = await page.request.post('/api/visual-agent/image-gen/runs', {
       headers: authHeaders(token),
@@ -1005,7 +1005,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010] 多图引用真实生成、恢复与清理', async ({ page, request }, testInfo) => {
+  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010][REG-multi-image-001][REG-multi-image-002] 多图引用真实生成、恢复与清理', async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image');

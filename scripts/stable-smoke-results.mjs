@@ -37,13 +37,17 @@ export function collectPlaywrightCases(report, environment) {
 }
 
 export function reconcileCaseCoverage(requiredCaseIds, environmentRows) {
-  const rowsByKey = new Map(environmentRows.map((row) => [`${row.environment}:${row.caseId}`, row]));
+  const rowsByKey = new Map(environmentRows.map((row) => [
+    `${row.environment}:${String(row.caseId).toUpperCase()}`,
+    row,
+  ]));
   const environments = ['cds', 'production'];
   const reconciled = [];
 
   for (const caseId of requiredCaseIds) {
     for (const environment of environments) {
-      reconciled.push(rowsByKey.get(`${environment}:${caseId}`) || {
+      const evidence = rowsByKey.get(`${environment}:${String(caseId).toUpperCase()}`);
+      reconciled.push(evidence ? { ...evidence, caseId } : {
         caseId,
         environment,
         title: `${caseId} 未获得执行证据`,
@@ -56,6 +60,35 @@ export function reconcileCaseCoverage(requiredCaseIds, environmentRows) {
   }
 
   return reconciled;
+}
+
+export function buildNotRunLedger(rows, reportAvailability = {}) {
+  return rows
+    .filter((row) => row.status === 'not-run')
+    .map((row) => {
+      const reportAvailable = reportAvailability[row.environment] === true;
+      const isProduction = row.environment === 'production';
+      const reasonCode = reportAvailable ? 'automation-case-missing' : 'environment-report-missing';
+      const reason = reportAvailable
+        ? '本环境已有执行报告，但没有该 caseId 的真实步骤或执行证据。'
+        : isProduction
+          ? '正式环境专用合成身份未通过预检，因此没有生成正式环境执行报告。'
+          : 'CDS 环境执行报告缺失，无法判断该 caseId 是否实际运行。';
+      const environmentFlag = isProduction ? '--production-only' : '--cds-only';
+      const command = reportAvailable
+        ? `先在 e2e/specs/stable-smoke.spec.ts 实现 [${row.caseId}]，再运行 node scripts/stable-smoke-run.mjs ${environmentFlag} --grep "\\[${row.caseId}\\]"`
+        : isProduction
+          ? '在 Keychain 配齐 STABLE_SMOKE_PROD_* 后运行 node scripts/stable-smoke-run.mjs --production-only'
+          : '修复 CDS 身份或部署预检后运行 node scripts/stable-smoke-run.mjs --cds-only';
+      return {
+        ...row,
+        reasonCode,
+        reason,
+        sourcePath: 'e2e/specs/stable-smoke.spec.ts',
+        command,
+        closeCondition: `报告中 ${row.environment}:${row.caseId} 出现 pass 或 fail 的真实执行证据`,
+      };
+    });
 }
 
 export function summarizeCoverage(rows, planVerdict = 'pass') {

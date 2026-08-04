@@ -3214,6 +3214,27 @@ def _cds_agent_substitution_hits(body):
     return hits
 
 
+def _coverage_ledger_errors(body):
+    has_not_run = bool(
+        re.search(r"\bnot-run\b", body, re.I)
+        or re.search(r"未执行\s*(?:[:：为共计]?\s*)[1-9]\d*", body)
+        or re.search(r"判定性质\s*\|\s*覆盖不足", body)
+    )
+    if not has_not_run:
+        return []
+    ledger = _section_text(body, "执行覆盖账本")
+    if not ledger:
+        return [
+            "[覆盖透明度] 报告存在未执行项或判定为覆盖不足，但缺「执行覆盖账本」；"
+            "必须逐环境列计划/已执行/通过/失败/未执行，并给每项补跑路径"
+        ]
+    errors = []
+    for field in ("计划", "已执行", "通过", "失败", "未执行", "阻塞类别", "直接执行路径", "关闭条件"):
+        if field not in ledger:
+            errors.append(f"[覆盖透明度] 「执行覆盖账本」缺「{field}」字段")
+    return errors
+
+
 def validate_inputs(a, body, manifest, cfg=None):
     """返回拒收原因列表（空 = 通过准入）。结构层校验，语义层(Verdict 一致性)由人/工具把关。"""
     errs = []
@@ -3290,6 +3311,7 @@ def validate_inputs(a, body, manifest, cfg=None):
         for section in ("改动断言表", "影响面矩阵", "融合测试设计", "证明力矩阵", "覆盖缺口"):
             if section not in body:
                 errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
+    errs.extend(_coverage_ledger_errors(body))
     if daily_acceptance_claim:
         errs.extend(_daily_conclusion_contract_errors(a.verdict, body))
         for section in DAILY_REQUIRED_SECTIONS:
