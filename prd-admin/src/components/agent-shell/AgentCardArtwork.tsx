@@ -57,15 +57,17 @@ interface AgentCardArtworkProps {
   compact?: boolean;
   /** 编辑型卡片只让图片占据上部，给下方信息面板留出稳定空间。 */
   imageHeight?: string;
-  /**
-   * 这张图里「动作那一笔」的颜色，默认赭红。
-   *
-   * 传该智能体所属类别的墨带色（`lib/tileAccent`），35 张图就仍然彼此可辨。
-   * 注意它**不是**旧的 tint 图层：那是往灰阶照片上整片铺一层类别色，
-   * 会把墨线一起染掉；这里只染动作那一笔，墨线永远是墨线。
-   */
-  accentColor?: string;
 }
+
+/**
+ * 标题压在卡片顶部（`AgentTile` 的 `px-2.5 pt-2.5` 那一行），所以画不能从顶边开始，
+ * 否则地平线会从标题文字中间穿过去——真机上就是这个样子。
+ * 给顶部留一条安全区，画在它下面铺满。
+ */
+const TITLE_SAFE_ZONE = 34;
+
+/** 底部标签条（半透明 + 模糊）会盖住画的下沿，画到它上面为止，地平线才看得见。 */
+const TAG_BAND = 30;
 
 /**
  * 智能体卡片背景的统一渲染层。
@@ -76,7 +78,7 @@ interface AgentCardArtworkProps {
  * 画的内容走内联 SVG（`agentCardArtSource`），不是位图：一张图靠 currentColor
  * 同时成立于暗浅双主题，缩到 200px 缩略图也还是线。
  */
-export function AgentCardArtwork({ agentKey, compact = false, imageHeight, accentColor }: AgentCardArtworkProps) {
+export function AgentCardArtwork({ agentKey, compact = false, imageHeight }: AgentCardArtworkProps) {
   const svg = agentKey ? buildAgentCardArtSvg(agentKey) : null;
   if (!svg) return null;
 
@@ -88,8 +90,8 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight, accen
       style={imageHeight ? { clipPath: `inset(0 0 calc(100% - ${imageHeight}) 0)` } : undefined}
     >
       <div
-        className="agent-card-artwork-image absolute inset-0"
-        style={accentColor ? ({ '--agent-art-accent': accentColor } as CSSProperties) : undefined}
+        className="agent-card-artwork-image absolute"
+        style={{ left: 0, right: 0, bottom: TAG_BAND, top: TITLE_SAFE_ZONE } as CSSProperties}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
       <div className="agent-card-artwork-wash absolute inset-0" />

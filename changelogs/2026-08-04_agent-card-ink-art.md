@@ -2,3 +2,4 @@
 | refactor | prd-admin | 卡片插画从位图切到矢量：删除 `src/assets/agent-card-art/` 70 个 webp（2.0 MB）与 tokens.css 里 70 条 `--agent-card-artwork-*: url(...)`。颜色走 `currentColor` + `--agent-art-accent`，**一张图同时成立于暗浅双主题**，不再需要 `-light` 副本；200px 缩略图下不再糊（原 3D 白模的老问题，PR #1321 已记账） |
 | refactor | prd-admin | 类别色的用法从「整片铺一层 tint」改为「只染动作那一笔」：旧 tint 图层是给灰阶照片补色的，套在墨线上会把线一起染掉、重点就没了。`AgentCardArtwork` 的 `tint` prop 更名 `accentColor`，经 `--agent-art-accent` 注入；连带删掉只服务位图的 `--media-art-filter` / `--media-art-tint-*` token 与 `.agent-card-artwork-tint` 图层 |
 | fix | prd-admin | SVG pattern id 按 agentKey 加后缀：`url(#ink-hatch)` 是文档级查找只认第一个同名 id，而 pattern 内的 `currentColor` 解析的是定义处颜色——首页一屏十几张卡片时会整片跟着第一张走，不报错只是悄悄画错。已配守卫（两张图 id 集合必须不相交） |
+| fix | prd-admin | 真机验收发现三处不合格并修复：① 类别色接到「动作那一笔」上导致 35 张画 35 种颜色、整片发散（正是「去紫、统一」要治的毛病降级版），改为恒定赭红，区分靠画本身；② 线稿被 `--media-art-opacity` 压暗成灰色，像没吃上墨的复印件，改为不压暗（文字可读性交给 wash/overlay 两层）；③ 标题压在画上、地平线从文字中间穿过去，改为顶部留标题安全区、底部避开标签条，画在中间那条带里铺满（cover，上下均摊裁切） |

@@ -86,16 +86,26 @@ describe('AgentCardArtwork', () => {
     expect(html).toContain('clip-path:inset(0 0 calc(100% - 57%) 0)');
   });
 
-  it('类别色只染动作那一笔，不整片铺在墨线上', () => {
-    const html = renderToStaticMarkup(
-      createElement(AgentCardArtwork, { agentKey: 'visual-agent', accentColor: 'hsl(16 54% 60%)' }),
-    );
-
-    expect(html).toContain('--agent-art-accent:hsl(16 54% 60%)');
-    // 旧的整片铺色图层必须不存在：它会把墨线一起染成类别色，重点就没了
+  it('动作那一笔恒为赭红，不吃外部类别色', () => {
+    // 真机教训：把 INK_HUES 八色接到这一笔上，35 张画各响各的，整片就散了。
+    // 判据盯两头——画里只引用 --accent-primary，组件也不再暴露注入口。
+    for (const [key, art] of Object.entries(AGENT_CARD_ART)) {
+      expect(art.includes('--agent-art-accent'), `${key} 又把类别色接进画里了`).toBe(false);
+    }
+    const html = renderToStaticMarkup(createElement(AgentCardArtwork, { agentKey: 'visual-agent' }));
+    expect(html).not.toContain('--agent-art-accent');
     expect(html).not.toContain('agent-card-artwork-tint');
     expect(html).toContain('agent-card-artwork-wash');
     expect(html).toContain('agent-card-artwork-overlay');
+  });
+
+  it('画避开标题与标签条，不再让地平线从文字中间穿过去', () => {
+    const html = renderToStaticMarkup(createElement(AgentCardArtwork, { agentKey: 'visual-agent' }));
+
+    // 顶部安全区留给标题、底部留给标签条；两者都为 0 就是真机上那个「标题压在画上」的样子
+    expect(html).toMatch(/top:34px/);
+    expect(html).toMatch(/bottom:30px/);
+    expect(html).not.toContain('agent-card-artwork-image absolute inset-0');
   });
 
   it('用共享契约区分紧凑遮罩，不在组件里判断明暗主题', () => {

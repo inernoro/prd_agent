@@ -35,16 +35,18 @@ const DEFS = `
 </defs>`;
 
 /** 地平线：每张图都有，替代 3D 渲染的地面投影，也是刊系那条墨线的延续。 */
-const GROUND = `<line x1="18" y1="170" x2="302" y2="170" stroke="currentColor" stroke-width="2" opacity="0.55"/>`;
+const GROUND = `<line x1="10" y1="158" x2="310" y2="158" stroke="currentColor" stroke-width="2" opacity="0.55"/>`;
 
 /**
- * 「动作发生的那一处」用什么颜色。
+ * 「动作发生的那一处」永远是赭红，**不随类别变色**。
  *
- * 默认赭红（品牌身份色）；卡片可以通过 `--agent-art-accent` 换成该智能体所属类别的
- * 墨带色（`lib/tileAccent` 的 INK_HUES 八色）——这样 35 张图仍然彼此可辨，
- * 又不会退回「整图铺一层类别色」的老做法（那会把墨线一起染掉，重点就没了）。
+ * 曾经把类别色（INK_HUES 八色）接到这一笔上，真机效果是灾难：一张只有黑白墨线的
+ * 画上，那唯一一块色就是全卡最响的东西；35 张排在一起各响各的，整片就散了——
+ * 正是「去紫、统一」要治的毛病，只是从满图彩色降级成了一点彩色。
+ * 区分靠画本身（虫子 / 胶片 / 擂台 / 地图 一眼分得开），不靠颜色再区分一遍；
+ * 类别色留在 hover 描边和标签上，不进画。
  */
-const ACCENT = 'var(--agent-art-accent, var(--accent-primary))';
+const ACCENT = 'var(--accent-primary)';
 
 /**
  * 视觉创作：画框立在架上，框里刻出山与日，右下角是刚落下的裁切角标。
@@ -660,5 +662,5 @@ export function buildAgentCardArtSvg(agentKey: string): string | null {
   const art = AGENT_CARD_ART[agentKey];
   if (!art) return null;
   const scope = (svg: string) => svg.replace(/ink-hatch(-dense)?/g, (_m, dense = '') => `ink-hatch${dense}-${agentKey}`);
-  return `<svg viewBox="${ART_VIEWBOX}" xmlns="http://www.w3.org/2000/svg" fill="none" aria-hidden="true">${scope(DEFS)}${scope(art)}</svg>`;
+  return `<svg viewBox="${ART_VIEWBOX}" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" fill="none" aria-hidden="true">${scope(DEFS)}${scope(art)}</svg>`;
 }

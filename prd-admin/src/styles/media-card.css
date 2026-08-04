@@ -7,12 +7,14 @@
 /*
  * 插图是矢量墨线，不是灰阶照片，所以这里不再有 filter（对比 / 饱和 / 亮度补偿）
  * 和整片铺色的 tint 图层——前者是给位图提对比用的，套在线稿上只会把墨压灰；
- * 后者会把墨线一起染成类别色，重点就没了。类别色改为只染「动作那一笔」，
- * 由 AgentCardArtwork 的 accentColor 经 --agent-art-accent 注入。
+ * 后者会把墨线一起染成类别色，重点就没了。类别色也不进画：动作那一笔恒为赭红，
+ * 区分靠画本身，理由见 agentCardArtSource 的 ACCENT 注释。
  */
 .agent-card-artwork-image {
-  opacity: var(--media-art-opacity);
-  transition: opacity 260ms ease, transform 500ms ease;
+  /* 线稿不压暗：位图时代靠降透明度让照片退到文字后面，套在墨线上只会让线变灰、
+     像没吃上墨的复印件。文字的可读性由下面的 wash / overlay 两层负责。 */
+  opacity: 1;
+  transition: transform 500ms ease;
 }
 
 .agent-card-artwork-image svg {
