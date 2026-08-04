@@ -870,7 +870,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[GW-001][GW-002][GW-003][GW-004][GW-005][GW-008][GW-009][REG-llmgw-auth-001] 网关配置、路由与日志可由专用身份审计', async ({ request }) => {
+  test('[GW-001][GW-002][GW-003][GW-004][GW-005][GW-006][GW-007][GW-008][GW-009][REG-llmgw-auth-001][REG-asr-routing-001] 网关配置、路由与日志可由专用身份审计', async ({ request }) => {
     const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
     const login = await request.post(`${baseUrl}/gw/auth/login`, {
       data: {
@@ -885,15 +885,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(loginBody.data.mustChangePassword).toBe(false);
     const headers = { Authorization: `Bearer ${loginBody.data.token}` };
 
-    const [context, models, logicalModels, health, authority, logs] = await Promise.all([
+    const [context, models, logicalModels, health, authority, logs, poolTypes, asrPools] = await Promise.all([
       request.get(`${baseUrl}/gw/auth/context`, { headers }),
       request.get(`${baseUrl}/gw/models?enabled=true`, { headers }),
       request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers }),
       request.get(`${baseUrl}/gw/key-health`, { headers }),
       request.get(`${baseUrl}/gw/config-authority/report`, { headers }),
       request.get(`${baseUrl}/gw/logs?limit=20`, { headers }),
+      request.get(`${baseUrl}/gw/pool-types`, { headers }),
+      request.get(`${baseUrl}/gw/pools?modelType=asr&sinceHours=168`, { headers }),
     ]);
-    for (const response of [context, models, logicalModels, health, authority, logs]) {
+    for (const response of [context, models, logicalModels, health, authority, logs, poolTypes, asrPools]) {
       expect(response.ok(), `网关审计接口 ${response.url()} 不可用`).toBe(true);
     }
 
@@ -919,6 +921,37 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(offering.priority ?? 0).toBeGreaterThanOrEqual(0);
         expect(offering.weight ?? 1).toBeGreaterThan(0);
       }
+    }
+
+    const poolTypesJson = await poolTypes.json() as ApiEnvelope<{ items: Array<{
+      code: string;
+      defaultPoolId: string;
+      modelCount: number;
+      ready: boolean;
+    }> }>;
+    const asrType = poolTypesJson.data.items.find((item) => item.code === 'asr');
+    expect(asrType, '网关必须注册 ASR 类型和默认池').toBeTruthy();
+    expect(asrType?.ready, 'ASR 默认池必须处于就绪状态').toBe(true);
+    expect(asrType?.modelCount, 'ASR 默认池必须至少有主备两个成员').toBeGreaterThanOrEqual(2);
+
+    const asrPoolsJson = await asrPools.json() as ApiEnvelope<{ items: Array<{
+      id: string;
+      isDefaultForType: boolean;
+      health: string;
+      healthyMembers: number;
+      models: Array<{ modelId: string; platformId: string; priority: number; healthStatus: number }>;
+    }> }>;
+    const defaultAsrPool = asrPoolsJson.data.items.find((pool) => pool.id === asrType?.defaultPoolId);
+    expect(defaultAsrPool, 'ASR 类型指针必须命中可读取的默认池').toBeTruthy();
+    expect(defaultAsrPool?.isDefaultForType).toBe(true);
+    expect(defaultAsrPool?.health).not.toBe('unavailable');
+    expect(defaultAsrPool?.healthyMembers || 0).toBeGreaterThan(0);
+    expect(defaultAsrPool?.models.length || 0).toBeGreaterThanOrEqual(2);
+    expect(new Set((defaultAsrPool?.models || []).map((model) => model.modelId)).size).toBeGreaterThanOrEqual(2);
+    for (const model of defaultAsrPool?.models || []) {
+      expect(model.modelId).toBeTruthy();
+      expect(model.platformId).toBeTruthy();
+      expect(model.priority).toBeGreaterThan(0);
     }
   });
 

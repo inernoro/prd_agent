@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "2026.08.04.2",
+  "catalogVersion": "2026.08.04.3",
   "name": "MAP 核心业务功能台账",
   "autoEnrollment": {
     "scheduledMode": "all",
@@ -55,7 +55,7 @@
       "entrySmoke": true,
       "automationStatus": "entry",
       "requiredCaseIds": ["REC-001", "REC-002", "REC-003", "REC-004", "REC-005", "REC-006", "REC-007", "REC-008", "REC-009", "REC-010", "REC-011", "REC-012"],
-      "regressionCaseIds": [],
+      "regressionCaseIds": ["REG-asr-routing-001"],
       "sourcePrefixes": ["prd-admin/src/pages/document-store/", "prd-admin/src/pages/transcript-agent/", "prd-api/src/PrdAgent.Api/Controllers/Api/Transcript", "prd-api/src/PrdAgent.Api/Services/Transcription", "prd-api/src/PrdAgent.Infrastructure/Services/Transcription"],
       "cdsPolicy": "模拟设备录音、静音、断网、刷新恢复、保存与清理",
       "productionPolicy": "专用账号录制最短样本并清理",
@@ -181,7 +181,7 @@
       "entrySmoke": true,
       "automationStatus": "contract-and-entry",
       "requiredCaseIds": ["GW-001", "GW-002", "GW-003", "GW-004", "GW-005", "GW-006", "GW-007", "GW-008", "GW-009"],
-      "regressionCaseIds": ["REG-multi-image-001", "REG-multi-image-002", "REG-llmgw-auth-001"],
+      "regressionCaseIds": ["REG-multi-image-001", "REG-multi-image-002", "REG-llmgw-auth-001", "REG-asr-routing-001"],
       "sourcePrefixes": ["llmgw/", "prd-api/src/PrdAgent.Infrastructure/Services/LlmGateway", "prd-api/src/PrdAgent.Api/Controllers/Api/Llm", "prd-admin/src/pages/open-platform/"],
       "cdsPolicy": "协议别名、模型能力、路由、主备、图片结构、日志脱敏和真实调用",
       "productionPolicy": "只读配置核对加最小真实调用，不主动破坏 Provider",
