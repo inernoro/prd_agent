@@ -843,39 +843,39 @@ TRIGGER_CUE = re.compile(
     r"[Ii]nvoke|Actions?:|/[a-z][a-z0-9-]{3,}")
 
 
-def frontmatter_yaml_error(path: str) -> str | None:
-    """frontmatter 能不能被真正的 YAML 解析器读出来（只管结构，不重复字段判定）。
+def autofix_name_unsafe_reason(path: str) -> str | None:
+    """这份 frontmatter 的结构，简单到可以放心自动补 name 吗？不能就说明理由。
 
-    check_skill() 是按行找键的，缩进的续行它当结构的一部分跳过——所以嵌套字段写坏
-    （`metadata:` 下面跟一行 `  tags: [unclosed`）它看不见，只会报「缺 name」。
-    而「缺 name」恰好是唯一判为可自动修的那类：补完 name 再审就全绿了，可宿主
-    load 的是整份 YAML，依然读不到这个技能。修复动作把坏清单洗成假绿灯，比不修更糟。
+    check_skill() 是按行找顶格键的，缩进的续行它跳过。所以嵌套字段写坏
+    （`metadata:` 下面跟一行 `  tags: [unclosed`）它看不见，只会报「缺 name」——
+    而那恰好是唯一判为可自动修的一类。补完 name 再审就全绿，可宿主 load 的是整份
+    YAML，依然读不到这个技能：**修复动作把坏清单洗成了假绿灯**，比不修更糟，
+    因为从此再没人会看它。
 
-    只在 --skills-audit 用，不进 check_skill()——那个判据同时喂着可读性棘轮，
-    往里加判定类别会改变全仓欠账口径。
+    所以这里不问「YAML 合不合法」（那需要 PyYAML，而本脚本是刻意只用标准库的——
+    同一 CI job 的 doc-readability-ratchet.test.py 明写「判据本身不依赖它」），
+    只问一个更窄、标准库答得了的问题：**这份 frontmatter 有没有超出行判据能理解的
+    结构**。有嵌套/续行就说明判据没完全看懂它，那就不该在没看懂的东西上动自动修复，
+    交给人。
+
+    只作用于「可不可以自动修」这一个判定，不改变技能是红是绿——原本要 BLOCK 的照样
+    BLOCK。也刻意不进 check_skill()：那个判据同时喂着可读性棘轮，加判定类别会改变
+    全仓欠账口径。
     """
     try:
-        import yaml
-    except ImportError:
-        # 验不了就不能说它是好的。宁可挡住，也不放行一个没验过的清单。
-        return "缺少 PyYAML，无法验证 frontmatter 能否被解析（验不了不等于没问题）"
-    try:
         with open(path, encoding="utf-8") as fh:
-            text = fh.read()
+            lines = fh.read().splitlines()
     except (OSError, UnicodeDecodeError) as exc:
         return f"SKILL.md 读取或解码失败（{exc.__class__.__name__}）"
-    lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return None   # 「缺 frontmatter」由 check_skill 报，这里不重复
     close = next((i for i, ln in enumerate(lines[1:], start=1) if ln.strip() == "---"), None)
     if close is None:
         return None   # 「没有闭合定界行」同上
-    try:
-        loaded = yaml.safe_load("\n".join(lines[1:close]))
-    except yaml.YAMLError as exc:
-        return f"frontmatter 不是合法 YAML（{exc.__class__.__name__}），宿主 load 不了这个技能"
-    if loaded is not None and not isinstance(loaded, dict):
-        return "frontmatter 解析出来不是键值映射，宿主读不到 name / description"
+    for ln in lines[1:close]:
+        if ln.strip() and ln.startswith((" ", "\t")):
+            return ("frontmatter 有行判据看不懂的嵌套或续行结构，缺 name 可能只是表象，"
+                    "不自动补——补上去会让下一轮审计误判为干净")
     return None
 
 
@@ -1244,23 +1244,17 @@ def main() -> int:
                     print(f"BLOCK: {shown} — SKILL.md 读取或解码失败（{exc.__class__.__name__}）")
                     rc = 1
                     continue
-                # frontmatter 必须真的能被 YAML 解析。check_skill() 是按行找键的，
-                # 嵌套字段写坏（`metadata:` 下面跟一行 `  tags: [unclosed`）它看不见，
-                # 只会报「缺 name」——而缺 name 恰好是唯一可自动修的那类。于是自动补完
-                # name 之后再审，判据全绿，实际清单宿主根本 load 不了：修复动作把一个
-                # 坏清单洗成了假绿灯。所以分类之前先验能不能解析，解析不了一律 BLOCK。
-                yaml_problem = frontmatter_yaml_error(path)
-                if yaml_problem:
-                    print(f"BLOCK: {shown} — {yaml_problem}")
-                    rc = 1
-                    continue
                 if not problems:
                     continue
                 rc = 1
-                if problems == ["frontmatter 缺 name"]:
+                # 只有「缺 name」这一类可自动修（name 按定义等于目录名）。但在判为
+                # 可自动修之前，还要确认这份 frontmatter 的结构行判据是完全看懂了的——
+                # 看不懂就说明「缺 name」可能只是表象，自动补完会把坏清单洗成假绿灯。
+                unsafe = autofix_name_unsafe_reason(path) if problems == ["frontmatter 缺 name"] else None
+                if problems == ["frontmatter 缺 name"] and not unsafe:
                     print(f"AUTOFIX_NAME: {shown}")
                 else:
-                    print(f"BLOCK: {shown} — {'；'.join(problems)}")
+                    print(f"BLOCK: {shown} — {'；'.join(problems + ([unsafe] if unsafe else []))}")
         return rc
 
     stats, missing, bad_prefix = scan()
