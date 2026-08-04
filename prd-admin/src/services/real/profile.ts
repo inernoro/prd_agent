@@ -3,8 +3,46 @@ import { api } from '@/services/api';
 import { apiRequest } from '@/services/real/apiClient';
 import type { ApiResponse } from '@/types/api';
 import type { AdminUserAvatarUploadResponse } from '@/services/contracts/userAvatarUpload';
-import type { ImageGenGenerateResponse } from '@/services/contracts/imageGen';
-import { avatarSourceToDataUrl, resolveGeneratedAvatarAsset } from '@/lib/avatarAi';
+
+type AvatarGenerationRun = {
+  runId?: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  stage: string;
+  previewUrl?: string | null;
+  assetSha256?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+};
+
+const AVATAR_GENERATION_POLL_INTERVAL_MS = 800;
+const AVATAR_GENERATION_MAX_POLLS = 750;
+
+function waitForNextPoll(): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, AVATAR_GENERATION_POLL_INTERVAL_MS));
+}
+
+function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl: string; assetSha256: string }> {
+  const normalized = String(code ?? '').trim().toUpperCase();
+  if (normalized === 'CONTENT_EMPTY' || normalized === 'INVALID_FORMAT' || normalized === 'AVATAR_SOURCE_UNAVAILABLE') {
+    return {
+      success: false,
+      data: null,
+      error: { code: normalized || 'AVATAR_SOURCE_UNAVAILABLE', message: '当前头像无法用于生成，请重新上传一张清晰图片后重试。' },
+    };
+  }
+  if (normalized === 'UNAUTHORIZED' || normalized === 'PERMISSION_DENIED') {
+    return {
+      success: false,
+      data: null,
+      error: { code: normalized, message: '当前登录状态无法修改头像，请重新登录后重试。' },
+    };
+  }
+  return {
+    success: false,
+    data: null,
+    error: { code: normalized || 'AVATAR_GENERATION_FAILED', message: '头像生成服务暂时不可用，请稍后重试。' },
+  };
+}
 
 /**
  * 自服务：上传当前用户自己的头像（仅需 access 权限）
@@ -54,44 +92,55 @@ export async function updateMyAvatar(
  * 基于当前头像生成一张替换预览。生成结果仅返回给前端，用户确认后才会上传并替换头像。
  */
 export async function generateMyAvatarPreview(input: {
-  sourceImageUrl: string;
   prompt: string;
+  onProgress?: (stage: string) => void;
 }): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }>> {
   const prompt = input.prompt.trim();
   if (!prompt) {
     return { success: false, data: null, error: { code: 'CONTENT_EMPTY', message: '请描述想怎么修改头像' } };
   }
 
-  try {
-    const sourceImageUrl = input.sourceImageUrl.trim();
-    if (!sourceImageUrl) throw new Error('当前头像不可用，请先上传一张头像');
-    const isPublicImageUrl = sourceImageUrl.startsWith('https://');
-    const sourceImage = isPublicImageUrl ? null : await avatarSourceToDataUrl(sourceImageUrl);
-    const res = await apiRequest<ImageGenGenerateResponse>(api.visualAgent.imageGen.generate(), {
-      method: 'POST',
-      body: {
-        prompt: `基于参考头像进行编辑，保持人物身份和主要五官特征，输出适合作为账号头像的正方形构图。用户要求：${prompt}`,
-        images: sourceImage ? [sourceImage] : undefined,
-        initImageUrl: isPublicImageUrl ? sourceImageUrl : undefined,
-        n: 1,
-        size: '1024x1024',
-        responseFormat: 'b64_json',
-      },
-    });
-    if (!res.success) return res as ApiResponse<{ previewUrl: string; assetSha256: string }>;
+  const created = await apiRequest<AvatarGenerationRun>(api.profile.avatarGenerationRuns(), {
+    method: 'POST',
+    body: { prompt },
+    timeoutMs: 20_000,
+  });
+  if (!created.success) return avatarGenerationFailure(created.error?.code);
 
-    const asset = resolveGeneratedAvatarAsset(res.data.images?.[0]);
-    return { success: true, data: asset, error: null };
-  } catch (error) {
-    return {
-      success: false,
-      data: null,
-      error: {
-        code: 'AVATAR_GENERATION_FAILED',
-        message: error instanceof Error ? error.message : '头像生成失败，请重试',
-      },
-    };
+  const runId = String(created.data.runId ?? '').trim();
+  if (!runId) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
+  input.onProgress?.(created.data.stage || '正在排队');
+
+  for (let poll = 0; poll < AVATAR_GENERATION_MAX_POLLS; poll += 1) {
+    await waitForNextPoll();
+    const current = await apiRequest<AvatarGenerationRun>(
+      api.profile.avatarGenerationRun(encodeURIComponent(runId)),
+      { method: 'GET', timeoutMs: 15_000 },
+    );
+    if (!current.success) return avatarGenerationFailure(current.error?.code);
+
+    input.onProgress?.(current.data.stage || '正在生成头像');
+    if (current.data.status === 'completed') {
+      const previewUrl = String(current.data.previewUrl ?? '').trim();
+      const assetSha256 = String(current.data.assetSha256 ?? '').trim().toLowerCase();
+      if (previewUrl && /^[a-f0-9]{64}$/.test(assetSha256)) {
+        return { success: true, data: { previewUrl, assetSha256 }, error: null };
+      }
+      return avatarGenerationFailure('AVATAR_RESULT_UNAVAILABLE');
+    }
+    if (current.data.status === 'failed' || current.data.status === 'cancelled') {
+      return avatarGenerationFailure(current.data.errorCode);
+    }
   }
+
+  return {
+    success: false,
+    data: null,
+    error: {
+      code: 'AVATAR_GENERATION_WAITING',
+      message: '头像生成仍在继续，请稍后重新打开头像编辑器查看或重试。',
+    },
+  };
 }
 
 /** 将本人刚生成的视觉资产设为头像。服务端会再次校验资产归属。 */

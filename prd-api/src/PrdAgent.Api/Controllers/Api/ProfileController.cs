@@ -22,6 +22,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("dashboard", AdminPermissionCatalog.Access)]
 public class ProfileController : ControllerBase
 {
+    private const string ProfileAvatarRunAppKey = "profile-avatar";
     private readonly MongoDbContext _db;
     private readonly ILogger<ProfileController> _logger;
     private readonly IConfiguration _cfg;
@@ -89,6 +90,28 @@ public class ProfileController : ControllerBase
         if (t.Contains("..")) return (false, "头像文件名不合法");
         if (!Regex.IsMatch(t, @"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")) return (false, "头像文件名不合法（仅允许字母数字及 . _ -）");
         return (true, null);
+    }
+
+    private static object BuildAvatarGenerationFailure(ImageGenRunStatus status)
+    {
+        if (status == ImageGenRunStatus.Cancelled)
+        {
+            return new
+            {
+                status = "cancelled",
+                stage = "生成已取消",
+                errorCode = "AVATAR_GENERATION_CANCELLED",
+                errorMessage = "头像生成已取消，可以修改描述后重新生成。"
+            };
+        }
+
+        return new
+        {
+            status = "failed",
+            stage = "生成未完成",
+            errorCode = "AVATAR_GENERATION_FAILED",
+            errorMessage = "头像生成暂时未完成，请稍后重试；如持续出现，请重新上传一张清晰头像。"
+        };
     }
 
     /// <summary>
@@ -162,6 +185,187 @@ public class ProfileController : ControllerBase
             AvatarFileName = avatarFileName,
             AvatarUrl = avatarUrl,
             UpdatedAt = now
+        }));
+    }
+
+    /// <summary>
+    /// 创建本人头像 AI 编辑任务。任务由后台 Worker 执行，不受本次 HTTP 请求断开影响。
+    /// </summary>
+    [HttpPost("avatar/generation-runs")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CreateAvatarGenerationRun(
+        [FromBody] CreateAvatarGenerationRunRequest request,
+        CancellationToken ct)
+    {
+        var currentUserId = GetCurrentUserId();
+        var prompt = (request?.Prompt ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(prompt))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "请描述想怎么修改头像"));
+        if (prompt.Length > 500)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "头像修改描述不能超过 500 字"));
+
+        var user = await _db.Users.Find(u => u.UserId == currentUserId).FirstOrDefaultAsync(ct);
+        if (user == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+
+        var avatarFileName = (user.AvatarFileName ?? string.Empty).Trim().ToLowerInvariant();
+        var (validFileName, fileNameError) = ValidateAvatarFileName(avatarFileName);
+        if (!validFileName)
+        {
+            _logger.LogWarning(
+                "Current avatar file name is invalid. userId={UserId} reason={Reason}",
+                currentUserId,
+                fileNameError);
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "当前头像不可编辑，请先上传一张新的头像。"));
+        }
+        if (string.IsNullOrWhiteSpace(avatarFileName))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.CONTENT_EMPTY,
+                "当前没有可编辑的头像，请先上传一张图片。"));
+        }
+
+        var avatarKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
+        var avatarBytes = await _assetStorage.TryDownloadBytesAsync(avatarKey, CancellationToken.None);
+        if (avatarBytes == null || avatarBytes.Length == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "AVATAR_SOURCE_UNAVAILABLE",
+                "当前头像暂时无法读取，请重新上传一张图片后再生成。"));
+        }
+        if (avatarBytes.Length > MaxAvatarUploadBytes)
+        {
+            return StatusCode(
+                StatusCodes.Status413PayloadTooLarge,
+                ApiResponse<object>.Fail(
+                    ErrorCodes.DOCUMENT_TOO_LARGE,
+                    "当前头像文件过大，请上传一张不超过 5MB 的图片。"));
+        }
+
+        var ext = NormalizeAvatarImageExt(Path.GetExtension(avatarFileName));
+        if (ext == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "当前头像格式不受支持，请重新上传 png、jpg、gif 或 webp 图片。"));
+        }
+
+        var sourceAsset = await _assetStorage.SaveAsync(
+            avatarBytes,
+            GuessAvatarMimeFromExt(ext),
+            CancellationToken.None,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg,
+            fileName: avatarFileName,
+            extensionHint: $".{ext}");
+
+        var run = new ImageGenRun
+        {
+            OwnerAdminId = currentUserId,
+            Status = ImageGenRunStatus.ScopedQueued,
+            DeploymentSlug = DeploymentScope.Current,
+            ModelResolutionType = null,
+            Size = "1024x1024",
+            ResponseFormat = "b64_json",
+            MaxConcurrency = 1,
+            Items = new List<ImageGenRunPlanItem>
+            {
+                new()
+                {
+                    Prompt = $"基于参考头像进行编辑，保持人物身份和主要五官特征，输出适合作为账号头像的正方形构图。用户要求：{prompt}",
+                    DisplayPrompt = prompt,
+                    Count = 1,
+                    Size = "1024x1024"
+                }
+            },
+            Total = 1,
+            AppKey = ProfileAvatarRunAppKey,
+            AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img,
+            InitImageAssetSha256 = sourceAsset.Sha256,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        _logger.LogInformation(
+            "Profile avatar generation run created. userId={UserId} runId={RunId}",
+            currentUserId,
+            run.Id);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            runId = run.Id,
+            status = "queued",
+            stage = "正在排队"
+        }));
+    }
+
+    /// <summary>
+    /// 查询本人头像 AI 编辑任务。只返回用户可理解状态，不透传模型或上游诊断。
+    /// </summary>
+    [HttpGet("avatar/generation-runs/{runId}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAvatarGenerationRun(string runId, CancellationToken ct)
+    {
+        var currentUserId = GetCurrentUserId();
+        var normalizedRunId = (runId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalizedRunId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务编号不能为空"));
+
+        var run = await _db.ImageGenRuns
+            .Find(x => x.Id == normalizedRunId
+                       && x.OwnerAdminId == currentUserId
+                       && x.AppKey == ProfileAvatarRunAppKey)
+            .FirstOrDefaultAsync(ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail("AVATAR_GENERATION_NOT_FOUND", "没有找到这次头像生成任务，请重新生成。"));
+
+        if (run.Status is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
+            return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationFailure(run.Status)));
+
+        if (run.Status != ImageGenRunStatus.Completed)
+        {
+            var stage = run.Status == ImageGenRunStatus.Running ? "正在生成头像" : "正在排队";
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                status = run.Status == ImageGenRunStatus.Running ? "running" : "queued",
+                stage,
+                done = run.Done,
+                total = Math.Max(1, run.Total)
+            }));
+        }
+
+        var requestId = $"{run.Id}-0-0";
+        var artifact = await _db.UploadArtifacts
+            .Find(x => x.CreatedByAdminId == currentUserId
+                       && x.Kind == "output_image"
+                       && x.RequestId == requestId)
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (artifact == null
+            || string.IsNullOrWhiteSpace(artifact.CosUrl)
+            || artifact.Sha256.Length != 64)
+        {
+            _logger.LogWarning(
+                "Profile avatar run completed without usable artifact. userId={UserId} runId={RunId}",
+                currentUserId,
+                run.Id);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                status = "failed",
+                stage = "生成未完成",
+                errorCode = "AVATAR_RESULT_UNAVAILABLE",
+                errorMessage = "头像已经生成，但预览暂时无法读取，请稍后重新生成。"
+            }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            status = "completed",
+            stage = "生成完成",
+            previewUrl = artifact.CosUrl,
+            assetSha256 = artifact.Sha256
         }));
     }
 
@@ -318,6 +522,11 @@ public class UpdateMyAvatarRequest
 public class ApplyGeneratedAvatarRequest
 {
     public string AssetSha256 { get; set; } = string.Empty;
+}
+
+public class CreateAvatarGenerationRunRequest
+{
+    public string Prompt { get; set; } = string.Empty;
 }
 
 public class UpdatePublicPageRequest

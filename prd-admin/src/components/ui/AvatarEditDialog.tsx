@@ -31,6 +31,7 @@ export function AvatarEditDialog(props: {
   const [generatedAssetSha256, setGeneratedAssetSha256] = useState<string | null>(null);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [generationStage, setGenerationStage] = useState('');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export function AvatarEditDialog(props: {
     if (!props.open) return;
     generationIdRef.current += 1;
     setGenerating(false);
+    setGenerationStage('');
     setElapsedSeconds(0);
     setError(null);
     setAvatarFileName((props.avatarFileName ?? '').trim());
@@ -76,6 +78,7 @@ export function AvatarEditDialog(props: {
   const closeDialog = () => {
     generationIdRef.current += 1;
     setGenerating(false);
+    setGenerationStage('');
     props.onOpenChange(false);
   };
 
@@ -118,12 +121,19 @@ export function AvatarEditDialog(props: {
     const generationId = ++generationIdRef.current;
     releaseGeneratedPreview();
     setGenerating(true);
+    setGenerationStage('正在排队');
     setElapsedSeconds(0);
     setError(null);
 
-    const response = await generateMyAvatarPreview({ sourceImageUrl: previewUrl, prompt: trimmedPrompt });
+    const response = await generateMyAvatarPreview({
+      prompt: trimmedPrompt,
+      onProgress: (stage) => {
+        if (generationIdRef.current === generationId) setGenerationStage(stage);
+      },
+    });
     if (generationIdRef.current !== generationId) return;
     setGenerating(false);
+    setGenerationStage('');
 
     if (!response.success) {
       setError(response.error?.message || '头像生成失败，请重试');
@@ -215,7 +225,7 @@ export function AvatarEditDialog(props: {
                         aria-live="polite"
                       >
                         <MapSpinner size={16} />
-                        正在生成 · {elapsedSeconds} 秒
+                        {generationStage || '正在生成头像'} · {elapsedSeconds} 秒
                       </div>
                       <div className="absolute inset-x-0 bottom-0 h-1" style={{ background: 'var(--nested-block-bg)' }}>
                         <div
