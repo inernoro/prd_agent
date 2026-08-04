@@ -164,6 +164,8 @@ export type TeamInsights = {
     plottedMembers: number;
     /** 入图样本 >= 3 才做四象限分型；否则象限一律为「样本不足」 */
     quadrantReliable: boolean;
+    /** 模型组是否配了单价；否则成本一律算不出来，显示数据不足而非 0 */
+    costAvailable: boolean;
     seriesAvailable: boolean;
     /** 明确拿不到的指标 —— 面板照实说明，不编数字 */
     unavailable: { metric: string; reason: string }[];

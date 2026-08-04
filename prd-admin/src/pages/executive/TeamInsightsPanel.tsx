@@ -131,6 +131,8 @@ function Quadrant({
   reliable: boolean;
 }) {
   const maxOutput = Math.max(1, ...members.map(m => m.output));
+  // 产出是长尾分布（个位数与上千并存），线性刻度会把大多数人挤在左边缘互相盖住，改用对数刻度
+  const logX = (v: number) => (Math.log10(Math.max(0, v) + 1) / Math.log10(maxOutput + 1)) * 88 + 6;
   const plotted = members.filter(m => m.quality !== null);
   const noQuality = members.length - plotted.length;
 
@@ -140,7 +142,7 @@ function Quadrant({
         {/* 中位线 —— 阈值来自后端真实中位数，不是拍的常数 */}
         <div
           className="absolute"
-          style={{ left: `${(medians.output / maxOutput) * 92 + 4}%`, top: 0, width: 1, height: '100%', background: 'var(--border-default)' }}
+          style={{ left: `${logX(medians.output)}%`, top: 0, width: 1, height: '100%', background: 'var(--border-default)' }}
         />
         <div
           className="absolute"
@@ -161,7 +163,7 @@ function Quadrant({
         <div className="absolute text-[10px]" style={{ left: 0, bottom: -18, color: 'var(--text-muted)' }}>产出量</div>
 
         {plotted.map(m => {
-          const x = (m.output / maxOutput) * 92 + 4;
+          const x = logX(m.output);
           const y = 100 - (m.quality! * 0.88 + 6);
           const size = 22 + Math.min(m.outputDays, 10) * 2.6;
           const color = getRoleMeta(m.role).color;
@@ -207,7 +209,7 @@ function Quadrant({
   );
 }
 
-function MemberDetail({ member, masked }: { member: TeamInsightMember | null; masked: boolean }) {
+function MemberDetail({ member, masked, costAvailable }: { member: TeamInsightMember | null; masked: boolean; costAvailable: boolean }) {
   if (!member) {
     return (
       <div className="rounded-xl p-4 text-[12px]" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
@@ -256,7 +258,7 @@ function MemberDetail({ member, masked }: { member: TeamInsightMember | null; ma
         {member.quality !== null && ' / 100'}。
         模型调用 <b className="tabular-nums" style={{ color: 'var(--text-primary)' }}>{member.llmCalls}</b> 次
         {member.llmErrors > 0 && <>（失败 <b className="tabular-nums" style={{ color: 'var(--semantic-warning-text)' }}>{member.llmErrors}</b> 次）</>}，
-        AI 成本 <b className="tabular-nums" style={{ color: 'var(--text-primary)' }}>{member.cost}</b> 元。
+        AI 成本 <b className="tabular-nums" style={{ color: 'var(--text-primary)' }}>{costAvailable ? `${member.cost} 元` : '数据不足'}</b>。
       </div>
 
       <div className="flex flex-col gap-2">
@@ -441,7 +443,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
             onPick={setPickedId}
             reliable={meta.quadrantReliable}
           />
-          <MemberDetail member={picked} masked={masked} />
+          <MemberDetail member={picked} masked={masked} costAvailable={meta.costAvailable} />
         </div>
       </section>
 
@@ -492,7 +494,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
                     <td className="px-3 py-2 text-right tabular-nums" style={{ color: m.breakdown.defectsBacklog > 0 ? 'var(--semantic-warning-text)' : 'var(--text-secondary)' }}>{m.breakdown.defectsBacklog}</td>
                     <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{m.llmCalls.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right tabular-nums" style={{ color: m.llmErrors > 0 ? 'var(--semantic-warning-text)' : 'var(--text-secondary)' }}>{m.llmErrors}</td>
-                    <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{m.cost}</td>
+                    <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>{meta.costAvailable ? m.cost : '—'}</td>
                   </tr>
                 ))}
               </tbody>

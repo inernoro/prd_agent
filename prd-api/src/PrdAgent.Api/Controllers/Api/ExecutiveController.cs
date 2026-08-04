@@ -708,6 +708,14 @@ public class ExecutiveController : ControllerBase
         _ => "其他",
     };
 
+    /// <summary>把小时数按量级说人话：不足 1 小时给分钟，不足 1 天给小时，否则给天。</summary>
+    private static string FormatDuration(double hours)
+    {
+        if (hours < 1) return $"{Math.Round(hours * 60, 0)} 分钟";
+        if (hours < 24) return $"{Math.Round(hours, 1)} 小时";
+        return $"{Math.Round(hours / 24, 1)} 天";
+    }
+
     private static double? Median(List<double> values)
     {
         if (values.Count == 0) return null;
@@ -1036,9 +1044,14 @@ public class ExecutiveController : ControllerBase
         {
             Kpi("output", "本期产出", curOutput, "件", hasPrev ? (double?)prevOutput : null, true, outputSeries,
                 "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷"),
+            // 中位不足 1 小时的时候用「小时」表述会四舍五入成 0，读起来像坏了；按量级换单位
             Kpi("resolveHours", "缺陷中位解决时长",
-                medianResolve != null ? (double?)Math.Round(medianResolve.Value, 1) : null, "小时",
-                prevMedianResolve != null ? (double?)Math.Round(prevMedianResolve.Value, 1) : null, false, new List<double>(),
+                medianResolve != null ? (double?)Math.Round(medianResolve.Value < 1 ? medianResolve.Value * 60 : medianResolve.Value, 1) : null,
+                medianResolve != null && medianResolve.Value < 1 ? "分钟" : "小时",
+                prevMedianResolve != null && medianResolve != null
+                    ? (double?)Math.Round(medianResolve.Value < 1 ? prevMedianResolve.Value * 60 : prevMedianResolve.Value, 1)
+                    : null,
+                false, new List<double>(),
                 "窗口内被标记已解决的缺陷，从创建到解决耗时的中位数"),
             Kpi("successRate", "模型调用成功率", successRate, "%", null, true, new List<double>(),
                 "LLM 网关日志中 HTTP 状态码 < 400 的比例"),
@@ -1072,7 +1085,7 @@ public class ExecutiveController : ControllerBase
                 $"backlog:{b.Uid}",
                 $"{name} 名下 {b.Count} 个缺陷停留超 7 天",
                 medianResolve != null
-                    ? $"最久一个已 {b.OldestDays} 天未流转，团队中位解决时长是 {Math.Round(medianResolve.Value / 24, 1)} 天。"
+                    ? $"最久一个已 {b.OldestDays} 天未流转，团队中位解决时长是 {FormatDuration(medianResolve.Value)}。"
                     : $"最久一个已 {b.OldestDays} 天未流转。",
                 "确认是缺处理人力、缺复现环境，还是卡在验收环节",
                 "打开这些缺陷",
@@ -1192,6 +1205,7 @@ public class ExecutiveController : ControllerBase
             medians = new { output = Math.Round(outputThreshold, 1), quality = Math.Round(medQuality, 1) },
             plottedMembers = plotted.Count,
             quadrantReliable,
+            costAvailable = pricedCalls > 0,
             seriesAvailable = wantSeries,
             // 显式声明拿不到的指标，避免面板上出现无根数字
             unavailable = new object[]
