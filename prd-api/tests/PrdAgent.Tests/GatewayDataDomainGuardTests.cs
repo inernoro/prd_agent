@@ -1020,7 +1020,7 @@ public class GatewayDataDomainGuardTests
         Assert.True(
             dockerCompose.Split("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=", StringSplitOptions.None).Length - 1 >= 3,
             "api、llmgw-serve、llmgw 必须同时收到 registered appCaller 配置权威退场开关");
-        Assert.Contains("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}\"", cdsCompose);
+        Assert.Contains("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"false\"", cdsCompose);
         Assert.True(
             cdsCompose.Split("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers:", StringSplitOptions.None).Length - 1 >= 2,
             "CDS api 与 llmgw-serve 必须同时收到 registered appCaller 配置权威退场开关");
@@ -1034,7 +1034,10 @@ public class GatewayDataDomainGuardTests
             "重复 appCaller 必须先完整归档再删除");
         Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
 
-        Assert.Contains("LlmGateway__HttpAppCallerAllowlist: \"${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}\"", cdsCompose);
+        Assert.Contains("LlmGateway__HttpAppCallerAllowlist: \"transcript-agent.transcribe::asr\"", cdsCompose);
+        Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist: \"${", cdsCompose);
+        Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${", cdsCompose);
+        Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${", cdsCompose);
         Assert.Contains("LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}", dockerCompose);
         Assert.Contains("LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}", dockerCompose);
         Assert.Contains("LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}", dockerCompose);

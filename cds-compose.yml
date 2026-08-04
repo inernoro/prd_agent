@@ -266,7 +266,9 @@ services:
       # 避免依赖代码缺省值。单个业务调用方通过项目级白名单渐进切到 HTTP 权威，
       # 不需要把整个 CDS 环境一次性切成 http/shadow。
       LlmGateway__Mode: "inproc"
-      LlmGateway__HttpAppCallerAllowlist: "${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}"
+      # CDS 将 profile env 原样写入容器，不展开 Docker Compose 的 `${KEY:-default}` 语法。
+      # 录音转写调用方固定走独立 serving 权威；如需扩展灰度范围，必须通过受审 compose 导入修改。
+      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
@@ -275,8 +277,8 @@ services:
       # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
       LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
-      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
-      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
+      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
+      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       LlmGateway__Readiness__RequireAssetProbe: "false"
       LlmGateway__Retention__ApplyChanges: "false"
       LlmGateway__Retention__EnableTtlIndexes: "false"
@@ -392,8 +394,8 @@ services:
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
-      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
-      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
+      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
+      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       # CDS 源码 profile 同样没有稳定对象存储探针；不能只在 express profile 关闭。
       LlmGateway__Readiness__RequireAssetProbe: "false"
       # CDS 只验证 lifecycle dry-run；破坏性清理由正式 compose 显式启用。
