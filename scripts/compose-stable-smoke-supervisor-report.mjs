@@ -46,6 +46,86 @@ function parseMarkdownTable(sectionContent) {
   };
 }
 
+function visualCoverageRows(sectionContent) {
+  const table = parseMarkdownTable(sectionContent);
+  if (!table) return [];
+  return table.rows.map((row) => Object.fromEntries(table.headers.map((header, index) => [header, row[index] || ''])));
+}
+
+export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
+  const rows = visualCoverageRows(gateModuleContent).map((row) => ({
+    ...row,
+    '视觉结论': row['视觉结论'] || '未执行',
+    '采集文件': row['采集文件'] || '0',
+    '合格证据': row['合格证据'] || '0/待定',
+    '缺口': row['缺口'] || '待补齐逐项证据',
+    '查看全部截图': row['查看全部截图'] || '',
+  }));
+  if (rows.length === 0) return '';
+  const lines = [
+    '## 改动断言表',
+    '',
+    '| 改动断言 | 必要证明 | 当前结果 |',
+    '|---|---|---|',
+    ...rows.map((row) => `| ${row['模块']}的关键用户旅程可用 | 冒烟或功能结果，加 ${String(row['合格证据']).split('/')[1] || row['合格证据']} 张逐项视觉证据，且关键状态无缺口 | ${row['视觉结论']}；视觉部分按未完成处理 |`),
+    '',
+    '## 影响面矩阵',
+    '',
+    '| 模块 | 用户可见范围 | 完整用户路径 | 当前风险 |',
+    '|---|---|---|---|',
+    ...rows.map((row) => `| ${row['模块']} | 入口、操作、等待、结果、失败恢复和适用设备 | ${row['真实面包屑']} | ${row['缺口']} |`),
+    '',
+    '## 融合测试设计',
+    '',
+    '| 用户旅程 | 融合范围 | 关键断点 | 当前判定 |',
+    '|---|---|---|---|',
+    '| 登录后修改本人头像 | 登录、权限、头像、图片上传、生成进度、保存与移动端 | 入口、权限、上传、生成、持久化 | 视觉未执行，必须按逐项清单补跑 |',
+    '| 使用单图或多图完成视觉创作 | 上传、引用、模型路由、生成进度、结果和失败恢复 | 图片顺序、请求提交、动态进度、结果 | 功能账本与视觉账本分别判定，不能互相替代 |',
+    '| 内容上传后得到可读结果 | 文件、音频、短视频、解析进度、结果与恢复 | 类型识别、上传、解析、转录、持久化 | 录音存在失败，其余未执行项必须补齐 |',
+    '| 从文稿到视频终态 | 文学创作、脚本、分镜、关键帧、成片与长任务反馈 | 流式生成、阶段进度、失败恢复、刷新回读 | 视觉未执行，正式环境功能未执行 |',
+    '',
+    '## 证明力矩阵',
+    '',
+    '| 结论 | 用户可见页面 | 交互动作 | 内部佐证 | 失败条件 | 证明力 |',
+    '|---|---|---|---|---|---|',
+    '| 功能通过 | 真实入口、输入、进度和结果页 | 按面包屑完成点击、输入、上传与回读 | 接口结果和持久化只作补充 | 任一步未执行、失败或无法回读 | 仅对已执行功能项有效 |',
+    '| 视觉通过 | 每个计划状态各有唯一截图 | 使用真实鼠标或触控完成用户操作 | 截图元数据和运行记录只作补充 | 数量不足、状态缺失、重复图或无方法链接 | 当前不成立，0/148 合格 |',
+    '| 全面通过 | CDS 与正式环境同一套关键旅程均通过 | 两环境独立登录并完成全套 | 版本、回滚和报告记录 | 任一失败或未执行 | 当前不成立 |',
+    '',
+    '## 页面优先证据分层',
+    '',
+    '| 层级 | 用户可见页面 | 页面证据 | 内部佐证 | 使用原则 |',
+    '|---|---|---|---|---|',
+    '| 第一层 | 用户实际看到的入口、操作、进度、结果与错误 | 唯一截图和完整面包屑 | 无 | 先回答用户能否完成任务 |',
+    '| 第二层 | 同一页面刷新后的持久化结果 | 前后状态截图 | 数据回读 | 证明结果不是临时假象 |',
+    '| 第三层 | 页面无法解释的失败原因 | 用户可读错误截图 | 脱敏运行记录 | 只用于定位，不替代页面证据 |',
+    '',
+    '## 改动断言到证据表',
+    '',
+    '| 改动断言 | 必要证明 | 实际证据 | 关联性 |',
+    '|---|---|---|---|',
+    ...rows.map((row) => `| ${row['模块']}关键旅程可用 | ${row['合格证据']} 张唯一证据、关键状态完整、结果无失败 | 已采集 ${row['采集文件']} 张旧文件，但合格证据为 ${row['合格证据']}；[查看逐项任务](#visual-plan-${String(row['查看全部截图'] || '').match(/visual-ledger-([^)]+)/)?.[1] || ''}) | 旧文件缺逐项元数据，不能证明该断言 |`),
+    '',
+    '## 覆盖缺口',
+    '',
+    '| 模块 | 覆盖缺口 | 影响 | 补跑路径 | 当前状态 | 是否需干预 |',
+    '|---|---|---|---|---|---|',
+    ...rows.map((row) => `| ${row['模块']} | ${row['缺口']} | 不得判定全面视觉通过 | ${row['真实面包屑']} | ${row['视觉结论']} | 是 |`),
+    '',
+    '## 移动端验收',
+    '',
+    '- 视口：计划使用真实触控移动端视口逐模块执行，桌面浏览器仅改变宽度不能代替移动端证据。',
+    '- 触控与入口路径：从登录或首页开始，以触控方式打开导航并沿每项完整面包屑进入目标状态。',
+    '- 结果状态：入口、操作、等待、成功、失败恢复和持久化必须分别记录；当前新口径证据未执行。',
+    '- 滚动：逐页检查纵向滚动是否可达全部操作，弹窗和长内容不得形成滚动死区。',
+    '- 横向溢出：检查页面、画布、进度条和弹窗，不允许内容超出视口后无法操作。',
+    '- 遮挡裁切：检查底部按钮、输入框、进度信息和结果区域，任何遮挡或裁切均标记不通过。',
+    '- 当前结论：旧移动端截图属于已采集文件，但缺少新口径逐项元数据，不能作为合格视觉证据。',
+    '',
+  ];
+  return lines.join('\n');
+}
+
 export function synchronizeVisualOverview(overviewContent, gateModuleContent) {
   const overviewTable = parseMarkdownTable(overviewContent);
   const gateTable = parseMarkdownTable(gateModuleContent);
@@ -97,6 +177,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   const visualPlanSections = visualPlan.sections.filter((section) => section.title === '逐模块视觉取证任务');
   const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
   const visualGateModules = visualGate.sections.find((section) => section.title === '模块覆盖');
+  const acceptanceDesign = renderHumanReadableAcceptanceDesign(visualGateModules?.content || '');
   const inferredVerdict = /不通过/.test(functional.lead)
     ? 'fail'
     : /部分通过/.test(functional.lead)
@@ -117,6 +198,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     if (!visualSummaryInserted && section.title === '需干预事项') {
       output.push(...visualGateSummary.flatMap((item) => [item.content, '']));
       output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
+      if (acceptanceDesign) output.push(acceptanceDesign, '');
       visualSummaryInserted = true;
     }
     if (section.title === '未通过与未执行逐项清单') {

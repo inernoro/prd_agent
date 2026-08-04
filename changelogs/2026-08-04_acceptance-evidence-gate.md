@@ -11,3 +11,4 @@
 | test | create-visual-test-to-kb | 区分采集文件与合格视觉证据并按148张逐状态、产品主题和设备门禁核销 |
 | test | create-visual-test-to-kb | 知识库归档拒绝缺少逐图状态、路径、方法与设备信息的虚假视觉通过报告 |
 | test | stable-smoke | 主管报告展开148项逐模块视觉任务并逐项标明结果、干预、面包屑与测试方法 |
+| test | stable-smoke | 主管报告补齐人话版断言、影响面、证据关联、覆盖缺口与移动端验收设计 |
