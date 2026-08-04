@@ -15,9 +15,10 @@
 
 ### 1. 双出口必须是两个独立 HTTPS，禁止 http 混入
 
-- 主应用与网关（或任意两个对外部件）各自拥有**独立命名子域**，走 CDS v3 子域路由：`<slug>-<sub>.miduo.org`（`BuildProfile.subdomain` + forwarder 命名 host 路由）。网关入口是独立子域，**不是**埋在主应用域名下的 `/gw/v1` path-prefix。
+- 主应用走分支主域名；其它用户页面可用独立命名子域，走 `BuildProfile.subdomain` + forwarder 命名 host 路由。主应用服务即使也有命名子域，入口列表只能显示一次，禁止把同一页面伪装成两个入口。
 - 两个出口**全部 HTTPS**。任一出口出现 `http://`（含内部转发对外暴露、混合内容）即违规，必须修到全 HTTPS。
 - 交付时给出**每个出口的最终深链**（落到该出口用户会看的那一屏，见 `CLAUDE.md §11`），不是只给根域名。
+- 入口名称与页面路径必须由 `cds.web-entry-name` / `cds.web-entry-path` 声明。`cds.readiness-path` 是机器探针，禁止展示成用户入口；API-only 服务可以有 `cds.subdomain`，但不应声明 Web 入口。
 
 ### 2. 每个容器职责必须在面板/文档显式标注
 

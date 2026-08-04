@@ -1774,17 +1774,22 @@ def _warn_quiet_call_error(body: Any, label: str) -> bool:
 
 
 def _preview_urls_from_branch(branch: dict[str, Any]) -> list[str]:
-    """只接受 CDS API 已发布的预览地址，不根据 slug / host 推算。
+    """只接受 CDS API 已发布的用户 Web 入口，不根据 slug / host 推算。
 
-    新版 API 用 previewUrls 表达多入口，previewUrl 保留为主入口兼容
-    字段。输出顺序完全遵循 CDS，只做去重；纯根域补 `/`，带路径的
-    命名入口必须原样保留，避免把 `/gw/healthz` 篡改成另一个地址。
+    新版 API 用 previewEntries 携带用户定义的名称与页面地址；旧版
+    previewUrls / previewUrl 仅作兼容。探活地址不是页面入口，即使旧
+    API 混入也会被过滤，而不是继续交付给用户。
     """
-    raw_urls = branch.get("previewUrls")
-    candidates: list[Any] = list(raw_urls) if isinstance(raw_urls, list) else []
-    primary = branch.get("previewUrl")
-    if isinstance(primary, str) and primary.strip():
-        candidates.insert(0, primary)
+    raw_entries = branch.get("previewEntries")
+    candidates: list[Any] = []
+    if isinstance(raw_entries, list) and raw_entries:
+        candidates = [entry.get("url") for entry in raw_entries if isinstance(entry, dict)]
+    else:
+        raw_urls = branch.get("previewUrls")
+        candidates = list(raw_urls) if isinstance(raw_urls, list) else []
+        primary = branch.get("previewUrl")
+        if isinstance(primary, str) and primary.strip():
+            candidates.insert(0, primary)
 
     urls: list[str] = []
     seen: set[str] = set()
@@ -1794,6 +1799,12 @@ def _preview_urls_from_branch(branch: dict[str, Any]) -> list[str]:
         value = candidate.strip()
         parsed = urllib.parse.urlparse(value)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        if re.search(
+            r"(?:^|/)(?:health|healthz|health-check|ready|readyz|readiness|live|livez|liveness)(?:/|$)",
+            parsed.path,
+            re.IGNORECASE,
+        ):
             continue
         normalized = value.rstrip("/") + "/" if parsed.path in {"", "/"} else value
         if normalized in seen:
@@ -3963,6 +3974,32 @@ def _parse_compose_services_regex(text: str) -> dict:
                     p.strip().lstrip("- ").strip().strip('"\'')
                     for p in env_list_block.group(1).strip().split("\n") if p.strip()
                 ]
+        # CDS labels 在无 PyYAML 的降级路径也必须保留。入口名称、页面路径和
+        # 主入口识别都以这些 label 为 SSOT，静默丢弃会重新制造错误入口。
+        labels_dict_block = re.search(
+            r"^ {4}labels:\s*\n((?: {6}[\w.-]+:\s*.+(?:\n|$))+)",
+            content,
+            re.MULTILINE,
+        )
+        if labels_dict_block:
+            labels: dict[str, str] = {}
+            for line in labels_dict_block.group(1).split("\n"):
+                label_match = re.match(r"^\s{6}([\w.-]+):\s*(.+)$", line)
+                if label_match:
+                    labels[label_match.group(1)] = label_match.group(2).strip().strip('"\'')
+            if labels:
+                svc["labels"] = labels
+        else:
+            labels_list_block = re.search(
+                r"^ {4}labels:\s*\n((?: {6}-\s+.+(?:\n|$))+)",
+                content,
+                re.MULTILINE,
+            )
+            if labels_list_block:
+                svc["labels"] = [
+                    item.strip().lstrip("- ").strip().strip('"\'')
+                    for item in labels_list_block.group(1).strip().split("\n") if item.strip()
+                ]
         # Phase 3:解析 working_dir / command / depends_on(carry-over 用)
         wd = re.search(r"^\s{4}working_dir:\s*(.+)$", content, re.MULTILINE)
         if wd:
@@ -4782,6 +4819,30 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
         else:
             app_names.append(name)
 
+    def _service_labels(svc: dict) -> dict[str, str]:
+        raw = svc.get("labels") or {}
+        if isinstance(raw, dict):
+            return {str(k): str(v) for k, v in raw.items()}
+        parsed: dict[str, str] = {}
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str) and "=" in item:
+                    key, value = item.split("=", 1)
+                    parsed[key.strip()] = value.strip()
+        return parsed
+
+    # 主入口优先尊重原 compose 的根路由，其次按常见 Web service 名识别，最后
+    # 才退回首个应用。避免把第一个后端误当成用户首页。
+    root_routed = [
+        name for name in app_names
+        if _service_labels(services[name]).get("cds.path-prefix", "").strip() == "/"
+    ]
+    web_named = [
+        name for name in app_names
+        if any(token in name.lower() for token in ("web", "admin", "front", "ui", "client"))
+    ]
+    primary_app_name = (root_routed or web_named or app_names or [None])[0]
+
     # 收集 x-cds-env 顶层键(去重,后到的覆盖)
     global_env_decls: dict[str, tuple] = {}  # key → (value, is_password, comment)
     env_meta: dict[str, dict] = {}  # Phase 8:key → {kind, hint}
@@ -5147,14 +5208,26 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
             for d in deps:
                 lines.append(f"      - {d}")
 
-        # 第一个 app 服务挂 / 路径,其它给 TODO
-        if name == app_names[0]:
+        original_labels = _service_labels(svc)
+        # 自动识别的 Web app 挂 / 路径；其它服务保留独立路由与用户入口声明。
+        if name == primary_app_name:
             lines.append(f"    labels:")
             lines.append(f"      cds.path-prefix: \"/\"")
+            entry_name = original_labels.get("cds.web-entry-name") or project_name
+            safe_entry_name = entry_name.replace("\\", "\\\\").replace("\"", "\\\"")
+            lines.append(f"      cds.web-entry-name: \"{safe_entry_name}\"")
+            entry_path = original_labels.get("cds.web-entry-path") or "/"
+            lines.append(f"      cds.web-entry-path: \"{entry_path}\"")
+            if original_labels.get("cds.subdomain"):
+                lines.append(f"      cds.subdomain: \"{original_labels['cds.subdomain']}\"")
         else:
             lines.append(f"    labels:")
             lines.append(f"      # TODO: 调整为实际路径前缀")
             lines.append(f"      cds.path-prefix: \"/{name}/\"")
+            for key in ("cds.subdomain", "cds.web-entry-name", "cds.web-entry-path", "cds.web-entry-primary"):
+                if original_labels.get(key):
+                    safe_value = original_labels[key].replace("\\", "\\\\").replace("\"", "\\\"")
+                    lines.append(f"      {key}: \"{safe_value}\"")
 
     # Phase 4.3:渲染 x-cds-deploy-modes,给有 seed 能力的 ORM 暴露 dev mode 选项
     # 默认 base command 是 prod 友好(无 seed),用户在 CDS UI 切到 dev mode 才跑 seed
@@ -6311,9 +6384,17 @@ def _verify_load_compose(root: str, explicit_file: str | None = None) -> tuple[s
 
 
 def _verify_collect_env_keys(doc: dict) -> set[str]:
-    """收集所有 x-cds-env 顶层 key,用于解析 ${VAR}。"""
+    """收集仓库声明的 env key。
+
+    值可来自 x-cds-env 的非密钥默认值，也可只在 x-cds-env-meta 声明后由
+    CDS 项目 env scope 托管。后者避免为了通过校验把密钥占位符写回仓库。
+    """
     env = doc.get("x-cds-env") or {}
-    return set(env.keys()) if isinstance(env, dict) else set()
+    meta = doc.get("x-cds-env-meta") or {}
+    keys = set(env.keys()) if isinstance(env, dict) else set()
+    if isinstance(meta, dict):
+        keys.update(meta.keys())
+    return keys
 
 
 def _verify_extract_var_refs(value: str) -> list[str]:
@@ -6451,6 +6532,79 @@ def _verify_app_ports(svc_name: str, svc: dict) -> list[dict]:
             "fix": "ports 段加一项,如 ['3000'],数字必须等于应用代码真实监听端口",
         }]
     return []
+
+
+def _verify_web_entries(app_services: dict) -> list[dict]:
+    """校验用户可见 Web 入口，禁止从 readiness/healthcheck 反推。"""
+    import re
+    issues: list[dict] = []
+    declared: list[tuple[str, dict, dict]] = []
+    probe_re = re.compile(
+        r"(?:^|/)(?:health|healthz|health-check|ready|readyz|readiness|live|livez|liveness)(?:/|$)",
+        re.IGNORECASE,
+    )
+
+    for name, svc in app_services.items():
+        labels = svc.get("labels") or {}
+        if isinstance(labels, list):
+            parsed: dict[str, str] = {}
+            for item in labels:
+                if isinstance(item, str) and "=" in item:
+                    key, value = item.split("=", 1)
+                    parsed[key.strip()] = value.strip()
+            labels = parsed
+        if not isinstance(labels, dict):
+            labels = {}
+        entry_keys = [k for k in labels if str(k).startswith("cds.web-entry-")]
+        entry_name = str(labels.get("cds.web-entry-name") or "").strip()
+        entry_path = str(labels.get("cds.web-entry-path") or "/").strip()
+        if entry_keys and not entry_name:
+            issues.append({
+                "severity": "ERROR",
+                "service": name,
+                "rule": "web-entry-name-missing",
+                "message": f"应用 {name} 声明了 cds.web-entry-*，但缺少用户定义的 cds.web-entry-name",
+                "fix": f"为 {name} 添加 cds.web-entry-name，例如产品或页面名称",
+            })
+            continue
+        if not entry_name:
+            continue
+        if not entry_path.startswith("/") or entry_path.startswith("//") or probe_re.search(entry_path.split("?", 1)[0].split("#", 1)[0]):
+            issues.append({
+                "severity": "ERROR",
+                "service": name,
+                "rule": "web-entry-path-not-page",
+                "message": f"应用 {name} 的 Web 入口 {entry_path!r} 不是站内页面，或是机器探活地址",
+                "fix": "把 cds.web-entry-path 改为用户可操作页面；探活继续只写 cds.readiness-path",
+            })
+            continue
+        declared.append((name, svc, labels))
+
+    explicit_primary = [
+        name for name, _svc, labels in declared
+        if str(labels.get("cds.web-entry-primary") or "").strip().lower() in {"true", "1"}
+    ]
+    inferred_primary = [
+        name for name, _svc, labels in declared
+        if str(labels.get("cds.path-prefix") or "").strip() == "/"
+    ]
+    if len(explicit_primary) > 1:
+        issues.append({
+            "severity": "ERROR",
+            "service": ",".join(explicit_primary),
+            "rule": "web-entry-primary-duplicate",
+            "message": f"多个服务同时声明主入口: {', '.join(explicit_primary)}",
+            "fix": "只保留一个 cds.web-entry-primary；通常 path-prefix=/ 的 Web 服务会被自动识别",
+        })
+    if declared and not explicit_primary and not inferred_primary:
+        issues.append({
+            "severity": "WARNING",
+            "service": "(web-entries)",
+            "rule": "web-entry-primary-missing",
+            "message": "已声明 Web 入口，但没有任何入口能被识别为主页面",
+            "fix": "给主 Web 服务设置 cds.path-prefix: /，歧义场景再加 cds.web-entry-primary: true",
+        })
+    return issues
 
 
 def _verify_infra_image(svc_name: str, svc: dict) -> list[dict]:
@@ -6803,6 +6957,7 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
     # WARNING
     issues += _verify_schemaful_db_migration(infra_services, app_services)
     issues += _verify_scan_signals(doc)
+    issues += _verify_web_entries(app_services)
     # INFO
     issues += _verify_init_script_ack(infra_services)
     issues += _verify_password_url_safety(env_decls)
