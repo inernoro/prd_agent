@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildVisualPlan } from './stable-smoke-visual-plan.mjs';
@@ -24,6 +25,14 @@ function escapeCell(value) {
   return String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', '<br>');
 }
 
+function evidenceHash(row) {
+  const declared = String(row.sha256 || '').trim();
+  if (declared) return declared;
+  const path = String(row.path || '').trim();
+  if (!path || !existsSync(path)) return '';
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
 export function validateVisualEvidence(catalog, manifest) {
   const requiredFields = catalog.evidenceItemRequiredFields || [
     'coverageStates',
@@ -43,7 +52,7 @@ export function validateVisualEvidence(catalog, manifest) {
   const plan = buildVisualPlan(catalog);
 
   for (const row of rows) {
-    const hash = String(row.sha256 || '').trim();
+    const hash = evidenceHash(row);
     if (hash && seenHashes.has(hash)) {
       duplicateNames.push(String(row.name || '未命名截图'));
       continue;

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { renderVisualGateReport, validateVisualEvidence } from '../stable-smoke-visual-gate.mjs';
 
 const catalog = {
@@ -56,6 +59,24 @@ test('重复图片不计入视觉证据数量', () => {
   ]);
   assert.equal(result.screenshotCount, 1);
   assert.deepEqual(result.duplicateNames, ['结果图']);
+});
+
+test('未声明哈希时从截图文件计算并拒绝重复证据', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'visual-gate-'));
+  const first = join(dir, 'first.png');
+  const second = join(dir, 'second.png');
+  writeFileSync(first, 'same-image');
+  writeFileSync(second, 'same-image');
+  try {
+    const result = validateVisualEvidence(catalog, [
+      evidence({ name: '入口图', sha256: '', path: first }),
+      evidence({ name: '结果图', sha256: '', path: second, slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+    ]);
+    assert.equal(result.screenshotCount, 1);
+    assert.deepEqual(result.duplicateNames, ['结果图']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('数量、状态、路径和方法全部绑定后才通过', () => {

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -81,6 +83,16 @@ public class ProfileController : ControllerBase
         };
     }
 
+    private static string BuildVersionedAvatarFileName(string userId, string ext, ReadOnlySpan<byte> bytes)
+    {
+        var ownerHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes((userId ?? string.Empty).Trim())))
+            .ToLowerInvariant()[..12];
+        var contentHash = Convert.ToHexString(SHA256.HashData(bytes))
+            .ToLowerInvariant()[..24];
+        return $"u-{ownerHash}-{contentHash}.{ext}";
+    }
+
     private static (bool ok, string? error) ValidateAvatarFileName(string? avatarFileName)
     {
         if (string.IsNullOrWhiteSpace(avatarFileName)) return (true, null);
@@ -147,15 +159,6 @@ public class ProfileController : ControllerBase
         if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片上传"));
 
-        var usernameLower = (user.Username ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(usernameLower))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "用户数据异常：username 为空"));
-
-        var avatarFileName = $"{usernameLower}.{ext}".ToLowerInvariant();
-        var (ok, err) = ValidateAvatarFileName(avatarFileName);
-        if (!ok)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "头像文件名不合法"));
-
         byte[] bytes;
         await using (var ms = new MemoryStream())
         {
@@ -164,6 +167,8 @@ public class ProfileController : ControllerBase
         }
         if (bytes.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 内容为空"));
+
+        var avatarFileName = BuildVersionedAvatarFileName(currentUserId, ext, bytes);
 
         var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
 
@@ -409,11 +414,7 @@ public class ProfileController : ControllerBase
         if (ext == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "生成图片格式不受支持"));
 
-        var usernameLower = (user.Username ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(usernameLower))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "用户数据异常：username 为空"));
-
-        var avatarFileName = $"{usernameLower}.{ext}".ToLowerInvariant();
+        var avatarFileName = BuildVersionedAvatarFileName(currentUserId, ext, found.Value.bytes);
         var (ok, err) = ValidateAvatarFileName(avatarFileName);
         if (!ok)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "头像文件名不合法"));

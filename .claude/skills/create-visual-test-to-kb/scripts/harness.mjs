@@ -518,6 +518,7 @@ async function validateShot(page, path, expectText, allowBlockingOverlay = false
  *   - skipReady: 跳过就绪等待（仅极少数确知场景，如登录页输入框未就绪）
  *   - customLoaderSelectors: 项目特有的 loader 选择器
  *   - module: 全面视觉验收时的主业务模块名称，供模块预算门禁计数
+ *   - slotId: 全面视觉验收计划中的唯一验收位，供门禁防重复占位和漏测
  *   - evidenceState: 当前截图证明的状态，例如入口、输入、加载、结果或失败恢复
  *   - primaryState: 当前截图唯一负责证明的标准状态；全面视觉门禁按它逐项核销
  *   - coverageStates: 当前截图证明的标准状态数组，供全面视觉覆盖门禁逐项核对
@@ -540,6 +541,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     mobilePathId,
     mobileStage,
     module,
+    slotId,
     evidenceState,
     primaryState,
     coverageStates,
@@ -619,6 +621,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     mobilePathId: mobilePathId || environment.mobilePathId || null,
     mobileStage: mobileStage || null,
     module: module || null,
+    slotId: slotId || null,
     evidenceState: evidenceState || null,
     primaryState: primaryState || null,
     coverageStates: Array.isArray(coverageStates) ? coverageStates : undefined,

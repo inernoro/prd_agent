@@ -29,6 +29,18 @@ public class ProfileAvatarGenerationContractTests
         Assert.DoesNotContain("item.ErrorMessage", source);
     }
 
+    [Fact]
+    public void ProfileAvatarPersistence_MustChangePublicObjectKeyWhenContentChanges()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
+
+        Assert.Contains("BuildVersionedAvatarFileName(currentUserId, ext, bytes)", source);
+        Assert.Contains("BuildVersionedAvatarFileName(currentUserId, ext, found.Value.bytes)", source);
+        Assert.Contains("SHA256.HashData(bytes)", source);
+        Assert.DoesNotContain("$\"{usernameLower}.{ext}\"", source);
+    }
+
     private static string LocateRepoFile(string relativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
