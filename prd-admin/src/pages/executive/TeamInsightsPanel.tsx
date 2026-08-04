@@ -321,19 +321,25 @@ function MemberDetail({ member, masked, costAvailable, bench }: { member: TeamIn
 
       <div className="flex flex-col gap-2">
         {bars.map(({ label, val, med }) => {
-          const diff = med > 0 ? Math.round(((val - med) / med) * 100) : null;
+          // 与中位的差距：百分比在极端值下会退化成 +6864% 这种噪音，超过两倍改用「×N」
+          const ratio = med > 0 ? val / med : null;
+          const diff = ratio === null || val === med
+            ? null
+            : ratio >= 3 || ratio <= 1 / 3
+              ? `×${ratio >= 1 ? ratio.toFixed(ratio >= 10 ? 0 : 1) : (1 / ratio).toFixed(1)}${ratio >= 1 ? '' : ' 以下'}`
+              : `${val > med ? '+' : ''}${Math.round(((val - med) / med) * 100)}%`;
           return (
             <div key={label}>
               <div className="flex items-baseline justify-between text-[11.5px] mb-1" style={{ color: 'var(--text-secondary)' }}>
                 <span>{label}</span>
                 <span className="tabular-nums flex items-baseline gap-1.5">
                   <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{val}</span>
-                  {diff !== null && val !== med && (
+                  {diff && (
                     <span
-                      className="text-[10px]"
-                      style={{ color: diff > 0 ? 'var(--semantic-success-text)' : 'var(--text-muted)' }}
+                      className="text-[10px] tabular-nums"
+                      style={{ color: val > med ? 'var(--semantic-success-text)' : 'var(--text-muted)' }}
                     >
-                      {diff > 0 ? '+' : ''}{diff}%
+                      {diff}
                     </span>
                   )}
                 </span>

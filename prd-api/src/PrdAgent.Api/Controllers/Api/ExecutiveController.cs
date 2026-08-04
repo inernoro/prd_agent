@@ -1108,22 +1108,46 @@ public class ExecutiveController : ControllerBase
             .Select(g => new { Uid = g.Key, Count = g.Count(), OldestDays = g.Max(x => (int)(today - x.CreatedAt.Date).TotalDays) })
             .Where(g => g.Count >= 3 || g.OldestDays >= 14)
             .OrderByDescending(g => g.Count)
-            .Take(3)
+            .Take(5)
             .ToList();
-        foreach (var b in backlogOwners)
+        // 多个人同时缺陷积压时合并成一张卡：三张只有人名不同、建议一字不差的卡片
+        // 占掉半屏却只说了一件事，读者的注意力预算不该这么花。
+        if (backlogOwners.Count > 0)
         {
-            var name = userMap.TryGetValue(b.Uid, out var bu)
-                ? (string.IsNullOrEmpty(bu.DisplayName) ? bu.Username : bu.DisplayName) : b.Uid;
-            attention.Add(new AttentionItem(
-                b.Count >= 5 || b.OldestDays >= 21 ? "critical" : "watch",
-                $"backlog:{b.Uid}",
-                $"{name} 名下 {b.Count} 个缺陷停留超 7 天",
-                medianResolve != null
-                    ? $"最久一个已 {b.OldestDays} 天未流转，团队中位解决时长是 {FormatDuration(medianResolve.Value)}。"
-                    : $"最久一个已 {b.OldestDays} 天未流转。",
-                "确认是缺处理人力、缺复现环境，还是卡在验收环节",
-                "打开这些缺陷",
-                "/defect-agent"));
+            string NameOf(string uid) => userMap.TryGetValue(uid, out var u)
+                ? (string.IsNullOrEmpty(u.DisplayName) ? u.Username : u.DisplayName) : uid;
+            var worst = backlogOwners.Max(b => b.OldestDays);
+            var totalStale = backlogOwners.Sum(b => b.Count);
+            var severity = backlogOwners.Any(b => b.Count >= 5 || b.OldestDays >= 21) ? "critical" : "watch";
+
+            if (backlogOwners.Count == 1)
+            {
+                var b = backlogOwners[0];
+                attention.Add(new AttentionItem(
+                    severity,
+                    $"backlog:{b.Uid}",
+                    $"{NameOf(b.Uid)} 名下 {b.Count} 个缺陷停留超 7 天",
+                    medianResolve != null
+                        ? $"最久一个已 {b.OldestDays} 天未流转，而团队中位解决时长只有 {FormatDuration(medianResolve.Value)}。"
+                        : $"最久一个已 {b.OldestDays} 天未流转。",
+                    "确认是缺处理人力、缺复现环境，还是卡在验收环节",
+                    "打开这些缺陷",
+                    "/defect-agent"));
+            }
+            else
+            {
+                var breakdown = string.Join("、", backlogOwners.Select(b => $"{NameOf(b.Uid)} {b.Count} 个（最久 {b.OldestDays} 天）"));
+                attention.Add(new AttentionItem(
+                    severity,
+                    "backlog:multi",
+                    $"{backlogOwners.Count} 人合计 {totalStale} 个缺陷停留超 7 天",
+                    medianResolve != null
+                        ? $"{breakdown}。最久的一个已 {worst} 天未流转，而团队中位解决时长只有 {FormatDuration(medianResolve.Value)}——积压和解决速度不是同一个问题。"
+                        : $"{breakdown}。最久的一个已 {worst} 天未流转。",
+                    "先看这些缺陷是否都卡在同一个环节（验收 / 复现 / 无人认领），再决定是加人还是改流程",
+                    "打开积压清单",
+                    "/defect-agent"));
+            }
         }
 
         var imgDone = runRows.Sum(r => r.Done);
