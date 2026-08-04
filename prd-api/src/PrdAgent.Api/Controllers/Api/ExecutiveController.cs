@@ -906,12 +906,15 @@ public class ExecutiveController : ControllerBase
         var medCalls = Median(memberRows.Select(r => (double)r.A.LlmCalls).ToList()) ?? 0;
         // 产出阈值至少为 1：零产出不该被算作「达到中位」
         var outputThreshold = Math.Max(1, medOutput);
+        // 样本少于 3 人时中位数几乎等于当事人自己，四象限没有判别力，整体降级为「样本不足」
+        var quadrantReliable = plotted.Count >= 3;
 
         var members = memberRows.Select(r =>
         {
             var (u, a, output, quality) = r;
             string quadrant;
             if (quality == null) quadrant = "数据不足";
+            else if (!quadrantReliable) quadrant = "样本不足";
             else if (output >= outputThreshold && quality >= medQuality) quadrant = "主力产出";
             else if (output < outputThreshold && quality >= medQuality) quadrant = "精工型";
             else if (output >= outputThreshold && quality < medQuality) quadrant = "高量低果";
@@ -1090,9 +1093,12 @@ public class ExecutiveController : ControllerBase
                 "/models"));
         }
 
-        // 团队产出中位为 0 时「产出低」没有比较基准，这条规则整体不触发，避免对所有人开火
-        var lowYield = medOutput < 1 ? new List<(User U, MemberAgg A, int Output, double? Quality)>() : memberRows
-            .Where(r => r.A.LlmCalls >= Math.Max(30, medCalls * 2) && r.Output <= medOutput)
+        // 需要一个成立的比较基准：产出中位为 0、或样本不足 3 人时，「产出低」无从谈起，整条规则不触发。
+        // 比较必须用严格小于 —— 否则恰好等于中位的人（样本少时往往就是产出最高的那个）会被自己的中位反咬。
+        var lowYield = (!quadrantReliable || medOutput < 1)
+            ? new List<(User U, MemberAgg A, int Output, double? Quality)>()
+            : memberRows
+            .Where(r => r.A.LlmCalls >= Math.Max(30, medCalls * 2) && r.Output < medOutput)
             .OrderByDescending(r => r.A.LlmCalls)
             .Take(2)
             .ToList();
@@ -1185,6 +1191,7 @@ public class ExecutiveController : ControllerBase
             // 前端十字线直接用这两个阈值，保证画出来的分界与后端判定同一口径
             medians = new { output = Math.Round(outputThreshold, 1), quality = Math.Round(medQuality, 1) },
             plottedMembers = plotted.Count,
+            quadrantReliable,
             seriesAvailable = wantSeries,
             // 显式声明拿不到的指标，避免面板上出现无根数字
             unavailable = new object[]

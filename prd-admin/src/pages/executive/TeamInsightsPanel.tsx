@@ -34,6 +34,7 @@ const QUADRANT_COLOR: Record<string, string> = {
   '高量低果': 'var(--semantic-danger-text)',
   '低活跃': 'var(--text-muted)',
   '数据不足': 'var(--text-muted)',
+  '样本不足': 'var(--text-muted)',
 };
 
 export function maskName(name: string, masked: boolean) {
@@ -120,13 +121,14 @@ function KpiCard({ kpi }: { kpi: TeamInsightKpi }) {
 /* ── C. 成员画像散点 ─────────────────────────────────────── */
 
 function Quadrant({
-  members, medians, masked, pickedId, onPick,
+  members, medians, masked, pickedId, onPick, reliable,
 }: {
   members: TeamInsightMember[];
   medians: { output: number; quality: number };
   masked: boolean;
   pickedId: string | null;
   onPick: (id: string) => void;
+  reliable: boolean;
 }) {
   const maxOutput = Math.max(1, ...members.map(m => m.output));
   const plotted = members.filter(m => m.quality !== null);
@@ -199,6 +201,7 @@ function Quadrant({
       <div className="mt-6 text-[11px]" style={{ color: 'var(--text-muted)' }}>
         气泡大小 = 有产出的天数 · 十字线 = 分型阈值（产出 {medians.output} 件 / 质量 {medians.quality}）
         {noQuality > 0 && ` · ${noQuality} 人本窗无结果型信号（缺陷或生图），未入图`}
+        {!reliable && <span style={{ color: 'var(--semantic-warning-text)' }}> · 入图样本不足 3 人，暂不做分型</span>}
       </div>
     </div>
   );
@@ -436,6 +439,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
             masked={masked}
             pickedId={picked?.userId ?? null}
             onPick={setPickedId}
+            reliable={meta.quadrantReliable}
           />
           <MemberDetail member={picked} masked={masked} />
         </div>

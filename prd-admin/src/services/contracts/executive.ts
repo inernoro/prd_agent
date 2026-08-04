@@ -130,7 +130,7 @@ export type TeamInsightMember = {
   /** 结果质量 0-100；必须有结果型信号（缺陷解决率 / 生图成功率）才计算，
    *  调用成功率只作附加项。本窗无结果型信号时为 null，不折算成 100。 */
   quality: number | null;
-  quadrant: '主力产出' | '精工型' | '高量低果' | '低活跃' | '数据不足';
+  quadrant: '主力产出' | '精工型' | '高量低果' | '低活跃' | '数据不足' | '样本不足';
   outputDays: number;
   llmCalls: number;
   llmErrors: number;
@@ -162,6 +162,8 @@ export type TeamInsights = {
     medians: { output: number; quality: number };
     /** 有结果型信号、进得了画像的人数 */
     plottedMembers: number;
+    /** 入图样本 >= 3 才做四象限分型；否则象限一律为「样本不足」 */
+    quadrantReliable: boolean;
     seriesAvailable: boolean;
     /** 明确拿不到的指标 —— 面板照实说明，不编数字 */
     unavailable: { metric: string; reason: string }[];
