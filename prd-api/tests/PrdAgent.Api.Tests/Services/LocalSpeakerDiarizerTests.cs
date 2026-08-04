@@ -51,6 +51,78 @@ public class LocalSpeakerDiarizerTests
     }
 
     [Fact]
+    public void ThreeDistinctVoices_ShouldProduceThreeEditableSpeakerSegments()
+    {
+        var wav = BuildWav(
+            (0.30, 0, 0),
+            (1.8, 105, 0.72),
+            (0.60, 0, 0),
+            (2.0, 205, 0.68),
+            (0.60, 0, 0),
+            (2.2, 335, 0.64),
+            (0.30, 0, 0));
+
+        var result = LocalSpeakerDiarizer.TryDiarize(
+            wav,
+            "第一位说明行业经验。第二位确认报价合理。第三位要求常规优化不要额外收费。");
+
+        result.ShouldNotBeNull();
+        result.SpeakerCount.ShouldBe(3, $"confidence={result.Confidence:F3}, turns={result.VoiceTurnCount}");
+        result.Segments.Select(segment => segment.SpeakerId)
+            .Distinct()
+            .ShouldBe(["说话人1", "说话人2", "说话人3"]);
+    }
+
+    [Fact]
+    public void SameVoiceAcrossThreePauses_ShouldNotInventThreeSpeakers()
+    {
+        var wav = BuildWav(
+            (0.30, 0, 0),
+            (1.6, 165, 0.72),
+            (0.55, 0, 0),
+            (1.8, 165, 0.64),
+            (0.55, 0, 0),
+            (2.0, 165, 0.68),
+            (0.30, 0, 0));
+
+        var result = LocalSpeakerDiarizer.TryDiarize(
+            wav,
+            "第一段发言。第二段仍是同一个人。第三段还是同一个人。");
+
+        result.ShouldNotBeNull();
+        result.SpeakerCount.ShouldBe(1);
+        result.Segments.Select(segment => segment.SpeakerId).Distinct().ShouldBe(["说话人1"]);
+    }
+
+    [Fact]
+    public void ThreeVoicesAcrossRepeatedTurns_ShouldReuseTheSameThreeSpeakerLabels()
+    {
+        var wav = BuildWav(
+            (0.30, 0, 0),
+            (1.0, 105, 0.72),
+            (0.50, 0, 0),
+            (1.0, 205, 0.68),
+            (0.50, 0, 0),
+            (1.0, 335, 0.64),
+            (0.50, 0, 0),
+            (1.0, 105, 0.66),
+            (0.50, 0, 0),
+            (1.0, 205, 0.74),
+            (0.50, 0, 0),
+            (1.0, 335, 0.60),
+            (0.30, 0, 0));
+
+        var result = LocalSpeakerDiarizer.TryDiarize(
+            wav,
+            "甲第一次发言。乙第一次发言。丙第一次发言。甲再次发言。乙再次发言。丙再次发言。");
+
+        result.ShouldNotBeNull();
+        result.SpeakerCount.ShouldBe(3, $"confidence={result.Confidence:F3}, turns={result.VoiceTurnCount}");
+        result.Segments.Select(segment => segment.SpeakerId)
+            .ShouldBe(["说话人1", "说话人2", "说话人3", "说话人1", "说话人2", "说话人3"]);
+    }
+
+    [Fact]
     public void UnusedAcousticCluster_ShouldNotLeaveGapInVisibleSpeakerNumbers()
     {
         var wav = BuildWav(

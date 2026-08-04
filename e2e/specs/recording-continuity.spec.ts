@@ -8,7 +8,14 @@ const LONG_TRANSCRIPT = Array.from(
   (_, index) => `验收注入第 ${index + 1} 段：录音文字增加时，波形与结束按钮必须始终可见。`,
 ).join('');
 
-const now = '2026-07-31T03:45:00.000Z';
+// 归档状态会按条目创建时间判断是否停滞。夹具必须相对测试启动时间生成，
+// 否则固定历史日期会随着时间推移自动落入“等待重试”，让发布门禁自然腐烂。
+const fixtureStartedAtMs = Date.now();
+const now = new Date(fixtureStartedAtMs).toISOString();
+const transcriptUpdatedAt = new Date(fixtureStartedAtMs + 1).toISOString();
+const archiveUpdatedAt = new Date(fixtureStartedAtMs + 2).toISOString();
+const uploadExpiresAt = new Date(fixtureStartedAtMs + 24 * 60 * 60 * 1000).toISOString();
+const fixtureDate = now.slice(0, 10);
 
 const store = {
   id: STORE_ID,
@@ -212,10 +219,10 @@ async function installApiFixture(page: Page, requests: string[]) {
     ? {
         ...pendingEntry,
         metadata: { ...pendingEntry.metadata, audioArchiveStatus: 'completed' },
-        updatedAt: '2026-07-31T03:46:00.000Z',
+        updatedAt: archiveUpdatedAt,
       }
     : transcriptReady()
-      ? { ...pendingEntry, updatedAt: '2026-07-31T03:45:30.000Z' }
+      ? { ...pendingEntry, updatedAt: transcriptUpdatedAt }
       : pendingEntry;
   await page.route('**/api/**', async (route) => {
     const request = route.request();
@@ -233,8 +240,8 @@ async function installApiFixture(page: Page, requests: string[]) {
     }
     if (path === '/api/changelog/current-week') {
       return json(route, {
-        weekStart: '2026-07-31',
-        weekEnd: '2026-07-31',
+        weekStart: fixtureDate,
+        weekEnd: fixtureDate,
         dataSourceAvailable: true,
         source: 'local',
         fetchedAt: now,
@@ -279,7 +286,7 @@ async function installApiFixture(page: Page, requests: string[]) {
         sessionId: SESSION_ID,
         nextChunkIndex: 0,
         uploadedBytes: 0,
-        expiresAt: '2026-08-01T03:45:00.000Z',
+        expiresAt: uploadExpiresAt,
       });
     }
     if (path.startsWith(`/api/document-store/recording-uploads/${SESSION_ID}/chunks/`) && method === 'POST') {
@@ -321,7 +328,7 @@ async function installApiFixture(page: Page, requests: string[]) {
           : null,
         liveTranscriptStatus: 'completed',
         liveTranscript: LONG_TRANSCRIPT,
-        expiresAt: '2026-08-01T03:45:00.000Z',
+        expiresAt: uploadExpiresAt,
       });
     }
     if (path === `/api/document-store/entries/${ENTRY_ID}/content` && method === 'GET') {

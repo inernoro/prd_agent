@@ -14,7 +14,6 @@ internal static class LocalSpeakerDiarizer
     private const int MinimumSpeechMilliseconds = 260;
     private const int SplitSilenceMilliseconds = 220;
     private const double MinimumSpeakerDistance = 0.34;
-    private const double MinimumClusterSilhouette = 0.18;
 
     internal sealed record Result(
         IReadOnlyList<SubtitleSegment> Segments,
@@ -189,43 +188,89 @@ internal static class LocalSpeakerDiarizer
         if (turns.Count < 2)
             return ([0], 1, 0);
 
-        if (turns.Count == 2)
+        // 按原始声学距离做平均链接聚类。这里刻意不把音量作为说话人特征：
+        // 同一个人在会议中离麦克风远近变化很常见，按每个维度标准化后再做
+        // KMeans 会把音量差放大成新角色，并且三段发言时天然偏向 k=2。
+        // 平均链接同时利用同一声线的多段证据，只有簇间音高、频谱和过零率
+        // 的平均差异达到阈值时才保留为不同角色。
+        var clusters = turns
+            .Select((_, index) => new List<int> { index })
+            .ToList();
+        while (clusters.Count > 1)
         {
-            var rawDistance = AcousticDistance(turns[0].Features, turns[1].Features);
-            return rawDistance >= MinimumSpeakerDistance
-                ? ([0, 1], 2, Math.Min(0.9, rawDistance))
-                : ([0, 0], 1, Math.Max(0, rawDistance));
+            var closest = FindClosestClusters(clusters, turns);
+            if (closest.Distance >= MinimumSpeakerDistance && clusters.Count <= 4)
+                break;
+
+            clusters[closest.Left].AddRange(clusters[closest.Right]);
+            clusters.RemoveAt(closest.Right);
         }
 
-        var normalized = Normalize(turns.Select(turn => turn.Features).ToArray());
-        var maxK = Math.Min(4, turns.Count);
-        (int[] Labels, int K, double Score)? best = null;
-        for (var k = 2; k <= maxK; k++)
+        // 极短噪声片段不能单独成为角色；并回最近的稳定声纹簇。
+        while (clusters.Count > 1)
         {
-            var labels = KMeans(normalized, k);
-            if (labels.Distinct().Count() != k)
-                continue;
-            var score = Silhouette(normalized, labels, k);
-            var minimumDuration = Enumerable.Range(0, k)
-                .Min(cluster => turns.Where((_, index) => labels[index] == cluster)
-                    .Sum(turn => turn.DurationSeconds(sampleRate)));
-            if (minimumDuration < 0.35)
-                continue;
-            if (best is null || score > best.Value.Score + 0.08)
-                best = (labels, k, score);
+            var shortCluster = clusters.FindIndex(cluster => cluster
+                .Sum(index => turns[index].DurationSeconds(sampleRate)) < 0.35);
+            if (shortCluster < 0)
+                break;
+
+            var nearest = Enumerable.Range(0, clusters.Count)
+                .Where(index => index != shortCluster)
+                .OrderBy(index => AverageClusterDistance(
+                    clusters[shortCluster],
+                    clusters[index],
+                    turns))
+                .First();
+            var keep = Math.Min(shortCluster, nearest);
+            var remove = Math.Max(shortCluster, nearest);
+            clusters[keep].AddRange(clusters[remove]);
+            clusters.RemoveAt(remove);
         }
 
-        if (best is null)
-        {
-            var rawDistance = AcousticDistance(turns[0].Features, turns[1].Features);
-            return (new int[turns.Count], 1, Math.Max(0, rawDistance));
-        }
+        var labels = new int[turns.Count];
+        for (var cluster = 0; cluster < clusters.Count; cluster++)
+        foreach (var index in clusters[cluster])
+            labels[index] = cluster;
 
-        if (best.Value.Score < MinimumClusterSilhouette)
-            return (new int[turns.Count], 1, Math.Max(0, best.Value.Score));
-
-        return (RenumberByFirstAppearance(best.Value.Labels), best.Value.K, Math.Min(0.95, best.Value.Score));
+        var confidence = clusters.Count == 1
+            ? turns.SelectMany((turn, left) => turns
+                    .Skip(left + 1)
+                    .Select(right => AcousticDistance(turn.Features, right.Features)))
+                .DefaultIfEmpty(0)
+                .Max()
+            : Enumerable.Range(0, clusters.Count)
+                .SelectMany(left => Enumerable.Range(left + 1, clusters.Count - left - 1)
+                    .Select(right => AverageClusterDistance(clusters[left], clusters[right], turns)))
+                .Min();
+        return (
+            RenumberByFirstAppearance(labels),
+            clusters.Count,
+            Math.Min(0.95, Math.Max(0, confidence)));
     }
+
+    private static (int Left, int Right, double Distance) FindClosestClusters(
+        IReadOnlyList<List<int>> clusters,
+        IReadOnlyList<VoiceTurn> turns)
+    {
+        var best = (Left: 0, Right: 1, Distance: double.MaxValue);
+        for (var left = 0; left < clusters.Count - 1; left++)
+        for (var right = left + 1; right < clusters.Count; right++)
+        {
+            var distance = AverageClusterDistance(clusters[left], clusters[right], turns);
+            if (distance < best.Distance)
+                best = (left, right, distance);
+        }
+        return best;
+    }
+
+    private static double AverageClusterDistance(
+        IReadOnlyList<int> left,
+        IReadOnlyList<int> right,
+        IReadOnlyList<VoiceTurn> turns)
+        => left.SelectMany(leftIndex => right.Select(rightIndex => AcousticDistance(
+                turns[leftIndex].Features,
+                turns[rightIndex].Features)))
+            .Average();
 
     private static double[] ExtractFeatures(short[] samples, int start, int end, int sampleRate)
     {
@@ -318,81 +363,6 @@ internal static class LocalSpeakerDiarizer
         return Math.Max(0, previous2 * previous2 + previous * previous - coefficient * previous * previous2);
     }
 
-    private static double[][] Normalize(double[][] values)
-    {
-        var dimensions = values[0].Length;
-        var means = new double[dimensions];
-        var scales = new double[dimensions];
-        for (var d = 0; d < dimensions; d++)
-        {
-            means[d] = values.Average(value => value[d]);
-            scales[d] = Math.Sqrt(values.Average(value => Math.Pow(value[d] - means[d], 2)));
-            if (scales[d] < 1e-6) scales[d] = 1;
-        }
-        return values.Select(value => value.Select((item, d) => (item - means[d]) / scales[d]).ToArray()).ToArray();
-    }
-
-    private static int[] KMeans(double[][] values, int k)
-    {
-        var centroids = new List<double[]> { values[0].ToArray() };
-        while (centroids.Count < k)
-        {
-            var next = values
-                .Select((value, index) => new { index, distance = centroids.Min(center => Distance(value, center)) })
-                .OrderByDescending(item => item.distance)
-                .ThenBy(item => item.index)
-                .First();
-            centroids.Add(values[next.index].ToArray());
-        }
-
-        var labels = new int[values.Length];
-        for (var iteration = 0; iteration < 30; iteration++)
-        {
-            var changed = false;
-            for (var i = 0; i < values.Length; i++)
-            {
-                var label = Enumerable.Range(0, k)
-                    .OrderBy(cluster => Distance(values[i], centroids[cluster]))
-                    .First();
-                if (label != labels[i])
-                {
-                    labels[i] = label;
-                    changed = true;
-                }
-            }
-            for (var cluster = 0; cluster < k; cluster++)
-            {
-                var members = values.Where((_, index) => labels[index] == cluster).ToArray();
-                if (members.Length == 0) continue;
-                centroids[cluster] = Enumerable.Range(0, values[0].Length)
-                    .Select(d => members.Average(member => member[d]))
-                    .ToArray();
-            }
-            if (!changed) break;
-        }
-        return labels;
-    }
-
-    private static double Silhouette(double[][] values, int[] labels, int k)
-    {
-        if (values.Length <= k)
-            return 0;
-        var scores = new List<double>();
-        for (var i = 0; i < values.Length; i++)
-        {
-            var own = values.Where((_, index) => index != i && labels[index] == labels[i]).ToArray();
-            if (own.Length == 0)
-                continue;
-            var a = own.Average(value => Distance(values[i], value));
-            var b = Enumerable.Range(0, k)
-                .Where(cluster => cluster != labels[i] && labels.Contains(cluster))
-                .Min(cluster => values.Where((_, index) => labels[index] == cluster)
-                    .Average(value => Distance(values[i], value)));
-            scores.Add((b - a) / Math.Max(a, b));
-        }
-        return scores.Count == 0 ? 0 : scores.Average();
-    }
-
     private static double AcousticDistance(double[] left, double[] right)
     {
         var pitch = Math.Min(1, Math.Abs(left[0] - right[0]) * 2.5);
@@ -400,9 +370,6 @@ internal static class LocalSpeakerDiarizer
         var zeroCrossing = Math.Min(1, Math.Abs(left[1] - right[1]) * 8);
         return pitch * 0.55 + spectral * 0.35 + zeroCrossing * 0.10;
     }
-
-    private static double Distance(double[] left, double[] right)
-        => Math.Sqrt(left.Zip(right, (a, b) => Math.Pow(a - b, 2)).Sum());
 
     private static int[] RenumberByFirstAppearance(int[] labels)
     {

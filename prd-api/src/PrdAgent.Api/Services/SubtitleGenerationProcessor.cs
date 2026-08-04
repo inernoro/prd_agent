@@ -675,10 +675,23 @@ public class SubtitleGenerationProcessor
                         BuildResolverDiagnostic(candidate, "empty-content"));
                 }
 
+                // 有些多模态音频模型不会返回 NO_SPEECH，而是用自然语言回答
+                // “没有检测到有效语音”。这仍是无效转录，必须在候选循环内失败，
+                // 让后续 Whisper / 豆包等方案接管；若等到 ProcessTranscribeAsync
+                // 最外层才判断，就会把第一个拒答响应误当成功并提前结束降级链。
+                var candidateTranscript = string.Join("\n", segments
+                    .Where(segment => !string.IsNullOrWhiteSpace(segment.Text))
+                    .Select(segment => segment.Text.Trim()));
+                if (TranscribeNoteText.LooksLikeNoSpeech(candidateTranscript))
+                {
+                    throw new SubtitleAsrException(
+                        "ASR 返回无有效语音（上游返回了静音哨兵或拒答文本）",
+                        BuildResolverDiagnostic(candidate, "no-speech-content"));
+                }
+
                 if (CountSpeakers(segments) <= 1)
                 {
-                    var transcript = string.Join(string.Empty, segments.Select(segment => segment.Text));
-                    var localDiarization = LocalSpeakerDiarizer.TryDiarize(audioBytes, transcript);
+                    var localDiarization = LocalSpeakerDiarizer.TryDiarize(audioBytes, candidateTranscript);
                     if (localDiarization is { SpeakerCount: > 1 })
                     {
                         _logger.LogInformation(
