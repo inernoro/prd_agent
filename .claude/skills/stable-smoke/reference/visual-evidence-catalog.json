@@ -4,7 +4,7 @@
   "purpose": "为每48小时稳定复测、发布前验收和缺陷回归提供模块级视觉证据预算，防止少量入口截图冒充全面通过。",
   "statusVocabulary": ["通过", "不通过", "部分通过", "未执行", "需干预"],
   "allowedTestTypes": ["冒烟", "功能", "视觉", "回归"],
-  "evidenceItemRequiredFields": ["primaryState", "coverageStates", "testType", "status", "theme", "viewportClass", "methodAnchor", "breadcrumb"],
+  "evidenceItemRequiredFields": ["slotId", "primaryState", "coverageStates", "testType", "status", "theme", "viewportClass", "methodAnchor", "breadcrumb"],
   "allowedThemes": ["light", "dark"],
   "allowedViewportClasses": ["desktop", "mobile"],
   "plannedScreenshotTarget": 148,
@@ -186,9 +186,10 @@
     "入口截图只支持冒烟结论，不能单独支持功能或视觉通过。",
     "模块实际截图少于预算或关键状态未覆盖时，视觉状态不得为通过。",
     "主管总报告与技术附录必须拆成两个独立产物；选择器、命令、接口和日志不得进入主管正文。",
-    "每张截图必须声明 primaryState、coverageStates、testType、status、theme、viewportClass、methodAnchor 和 breadcrumb；缺任一字段不得判定视觉通过。",
+    "每张截图必须声明 slotId、primaryState、coverageStates、testType、status、theme、viewportClass、methodAnchor 和 breadcrumb；缺任一字段不得判定视觉通过。",
+    "每个计划 slotId 必须由且只能由一张合格截图核销；缺位、重复占位或使用目录外 slotId 时不得判定视觉通过。",
     "每张截图必须声明唯一 primaryState；标准状态只按 primaryState 核销，一张图不得替多个状态完成验收。",
-    "每个模块必须同时具有明暗主题证据，并按目录覆盖桌面端与真实触控移动端。",
+    "先探测页面真实主题能力；支持明暗主题的模块必须双主题取证，仅支持单主题的模块按目录注明后取证，并按目录覆盖桌面端与真实触控移动端。",
     "采集文件与合格证据分开统计；缺元数据、状态越界或主题与设备未绑定的图片不得计入有效截图。",
     "数量、关键状态、证据元数据和页面判定四道门同时通过，模块视觉结论才可为通过。"
   ]

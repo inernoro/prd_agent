@@ -52,6 +52,35 @@ function visualCoverageRows(sectionContent) {
   return table.rows.map((row) => Object.fromEntries(table.headers.map((header, index) => [header, row[index] || ''])));
 }
 
+function synchronizeExecutiveSummary(executiveContent, visualGateLeadContent) {
+  const gateTable = parseMarkdownTable(visualGateLeadContent);
+  if (!gateTable) return executiveContent;
+  const projectIndex = gateTable.headers.indexOf('项目');
+  const resultIndex = gateTable.headers.indexOf('结果');
+  const evidenceRow = gateTable.rows.find((row) => row[projectIndex] === '合格证据');
+  const moduleRow = gateTable.rows.find((row) => row[projectIndex] === '模块通过');
+  if (!evidenceRow || !moduleRow) return executiveContent;
+  const replacement = `| 视觉验收 | ${evidenceRow[resultIndex]} 张合格证据，${moduleRow[resultIndex]} 个模块通过 | 未逐项核销的截图不能计为通过；从模块总览进入缺口或证据 |`;
+  if (/^\|\s*视觉证据\s*\|.*$/m.test(executiveContent)) {
+    return executiveContent.replace(/^\|\s*视觉证据\s*\|.*$/m, replacement);
+  }
+  return executiveContent;
+}
+
+function synchronizeMethodSummary(methodContent, visualGateLeadContent) {
+  const gateTable = parseMarkdownTable(visualGateLeadContent);
+  if (!gateTable) return methodContent;
+  const projectIndex = gateTable.headers.indexOf('项目');
+  const resultIndex = gateTable.headers.indexOf('结果');
+  const evidenceRow = gateTable.rows.find((row) => row[projectIndex] === '合格证据');
+  if (!evidenceRow) return methodContent;
+  const replacement = `| 视觉测试 | 每个关键页面状态是否完整、可操作、可理解 | ${evidenceRow[resultIndex]} 张合格证据，未核销项均为未执行 | [查看逐项视觉方法](#视觉测试方法) |`;
+  if (/^\|\s*视觉测试\s*\|.*$/m.test(methodContent)) {
+    return methodContent.replace(/^\|\s*视觉测试\s*\|.*$/m, replacement);
+  }
+  return methodContent;
+}
+
 export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
   const rows = visualCoverageRows(gateModuleContent).map((row) => ({
     ...row,
@@ -173,11 +202,11 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   ));
   const visualGateSummary = visualGate.sections.filter((section) => visualGateSummarySections.has(section.title));
   const visualGateLedger = visualGate.sections.filter((section) => visualGateLedgerSections.has(section.title));
+  const visualGateLead = visualGate.sections.find((section) => section.title === '主管先看');
   const visualSteps = visual.sections.filter((section) => /^步骤\s+\d+/.test(section.title));
   const visualPlanSections = visualPlan.sections.filter((section) => section.title === '逐模块视觉取证任务');
   const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
   const visualGateModules = visualGate.sections.find((section) => section.title === '模块覆盖');
-  const acceptanceDesign = renderHumanReadableAcceptanceDesign(visualGateModules?.content || '');
   const inferredVerdict = /不通过/.test(functional.lead)
     ? 'fail'
     : /部分通过/.test(functional.lead)
@@ -187,18 +216,28 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   let visualSummaryInserted = false;
   let visualLedgerInserted = false;
   for (const section of functional.sections) {
+    if (section.title === '视觉证据预算' || section.title === '业务功能线与面包屑' || /^步骤\s+\d+/.test(section.title)) {
+      continue;
+    }
+    if (section.title === '主管先看') {
+      output.push(synchronizeExecutiveSummary(section.content, visualGateLead?.content || ''), '');
+      continue;
+    }
     if (section.title === '主管验收总览') {
-      output.push(section.content.replace(/^## 主管验收总览/m, '## 主管先看'), '');
       if (visualOverview) {
         output.push(synchronizeVisualOverview(visualOverview.content, visualGateModules?.content), '');
+      } else {
+        output.push(section.content, '');
       }
+      continue;
+    }
+    if (section.title === '关联测试方法') {
+      output.push(synchronizeMethodSummary(section.content, visualGateLead?.content || ''), '');
       continue;
     }
     output.push(section.content, '');
     if (!visualSummaryInserted && section.title === '需干预事项') {
       output.push(...visualGateSummary.flatMap((item) => [item.content, '']));
-      output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
-      if (acceptanceDesign) output.push(acceptanceDesign, '');
       visualSummaryInserted = true;
     }
     if (section.title === '未通过与未执行逐项清单') {
@@ -212,9 +251,17 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   if (!visualSummaryInserted) {
     output.push(...visualGateSummary.flatMap((item) => [item.content, '']));
   }
+  output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
   if (!visualLedgerInserted) output.push(...visualGateLedger.flatMap((item) => [item.content, '']));
   output.push(...visualSteps.flatMap((item) => [item.content, '']));
-  return output.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+  return output.join('\n')
+    .replace(/\bcaseId\b/g, '验收项')
+    .replace(/\b(?:CORE|COMMON|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW)-\d+\b/g, '对应验收项')
+    .replace(/\bflaky\b/gi, '重试后通过')
+    .replace(/\b5xx\b/gi, '服务异常')
+    .replace(/Keychain/g, '本机安全凭据库')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim() + '\n';
 }
 
 async function main() {

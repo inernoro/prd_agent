@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { buildVisualPlan } from './stable-smoke-visual-plan.mjs';
 
 const DEFAULT_CATALOG = '.claude/skills/stable-smoke/reference/visual-evidence-catalog.json';
 
@@ -39,6 +40,7 @@ export function validateVisualEvidence(catalog, manifest) {
   const seenHashes = new Set();
   const uniqueRows = [];
   const duplicateNames = [];
+  const plan = buildVisualPlan(catalog);
 
   for (const row of rows) {
     const hash = String(row.sha256 || '').trim();
@@ -52,6 +54,9 @@ export function validateVisualEvidence(catalog, manifest) {
 
   const modules = (catalog.modules || []).map((module) => {
     const evidence = uniqueRows.filter((row) => row.module === module.name || row.module === module.id);
+    const plannedSlots = plan.slots.filter((slot) => slot.moduleId === module.id);
+    const plannedSlotById = new Map(plannedSlots.map((slot) => [slot.slotId, slot]));
+    const evidenceBySlot = new Map();
     const fieldErrors = [];
     const stateEvidence = new Map(module.requiredStates.map((state) => [state, []]));
 
@@ -68,6 +73,38 @@ export function validateVisualEvidence(catalog, manifest) {
       }
       const states = normalizeStates(item.coverageStates);
       const primaryState = String(item.primaryState || '').trim();
+      const evidenceSlotId = String(item.slotId || '').trim();
+      const plannedSlot = plannedSlotById.get(evidenceSlotId);
+      if (evidenceSlotId && !plannedSlot) {
+        const message = `${item.name || '未命名截图'} 使用了目录外验收位“${evidenceSlotId}”`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      }
+      if (plannedSlot && evidenceBySlot.has(evidenceSlotId)) {
+        const message = `${item.name || '未命名截图'} 与 ${evidenceBySlot.get(evidenceSlotId)} 重复占用验收位“${evidenceSlotId}”`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      }
+      if (plannedSlot && !evidenceBySlot.has(evidenceSlotId)) {
+        evidenceBySlot.set(evidenceSlotId, item.name || '未命名截图');
+      }
+      if (plannedSlot) {
+        const expectedBindings = [
+          ['primaryState', primaryState, plannedSlot.primaryState],
+          ['testType', String(item.testType || ''), plannedSlot.testType],
+          ['theme', String(item.theme || ''), plannedSlot.theme],
+          ['viewportClass', String(item.viewportClass || ''), plannedSlot.viewportClass],
+          ['methodAnchor', String(item.methodAnchor || ''), plannedSlot.methodAnchor],
+          ['breadcrumb', String(item.breadcrumb || ''), plannedSlot.breadcrumb],
+        ];
+        for (const [field, actual, expected] of expectedBindings) {
+          if (actual && actual !== expected) {
+            const message = `${item.name || '未命名截图'} 的 ${field} 与验收位“${evidenceSlotId}”不一致`;
+            fieldErrors.push(message);
+            itemErrors.push(message);
+          }
+        }
+      }
       if (primaryState && !stateEvidence.has(primaryState)) {
         const message = `${item.name || '未命名截图'} 的主状态“${primaryState}”不在模块目录中`;
         fieldErrors.push(message);
@@ -110,6 +147,8 @@ export function validateVisualEvidence(catalog, manifest) {
         stateEvidence.get(primaryState).push(item.name || '未命名截图');
       }
       evidenceRows.push({
+        slotId: evidenceSlotId || '未绑定',
+        scenario: plannedSlot?.scenario || '未绑定',
         name: item.name || '未命名截图',
         caption: item.caption || '未说明证明内容',
         coverageStates: states,
@@ -129,6 +168,9 @@ export function validateVisualEvidence(catalog, manifest) {
     const missingStates = [...stateEvidence.entries()]
       .filter(([, names]) => names.length === 0)
       .map(([state]) => state);
+    const missingSlots = plannedSlots
+      .filter((slot) => !evidenceBySlot.has(slot.slotId))
+      .map((slot) => ({ slotId: slot.slotId, scenario: slot.scenario, breadcrumb: slot.breadcrumb }));
     const failedEvidence = evidence.filter((item) => item.status === '不通过');
     const interventionEvidence = evidence.filter((item) => item.status === '需干预');
     const qualifiedEvidence = evidenceRows.filter((item) => item.errors.length === 0);
@@ -138,7 +180,7 @@ export function validateVisualEvidence(catalog, manifest) {
     const missingViewportClasses = (module.requiredViewportClasses || []).filter((viewport) => !qualifiedViewportClasses.has(viewport));
     const floorPassed = qualifiedEvidence.length >= module.uniqueScreenshotFloor;
     const metadataPassed = fieldErrors.length === 0;
-    const statePassed = missingStates.length === 0 && missingThemes.length === 0 && missingViewportClasses.length === 0;
+    const statePassed = missingStates.length === 0 && missingSlots.length === 0 && missingThemes.length === 0 && missingViewportClasses.length === 0;
     const verdict = qualifiedEvidence.length === 0
       ? '未执行'
       : failedEvidence.length > 0
@@ -161,6 +203,7 @@ export function validateVisualEvidence(catalog, manifest) {
       requiredStateCount: module.requiredStates.length,
       coveredStateCount: module.requiredStates.length - missingStates.length,
       missingStates,
+      missingSlots,
       missingThemes,
       missingViewportClasses,
       fieldErrors,
@@ -216,6 +259,7 @@ export function renderVisualGateReport(result) {
     '|---|---|---|---:|---:|---:|---|---|---|',
     ...result.modules.map((module) => {
       const gaps = [
+        module.missingSlots.length ? `验收位：${module.missingSlots.map((slot) => slot.scenario).join('、')}` : '',
         module.missingStates.length ? `状态：${module.missingStates.join('、')}` : '',
         module.missingThemes.length ? `主题：${module.missingThemes.join('、')}` : '',
         module.missingViewportClasses.length ? `设备：${module.missingViewportClasses.join('、')}` : '',
@@ -230,6 +274,7 @@ export function renderVisualGateReport(result) {
     ...result.modules.filter((module) => module.verdict !== '通过').map((module) => {
       const issues = [
         !module.floorPassed ? `合格证据不足 ${module.screenshotCount}/${module.screenshotFloor}` : '',
+        module.missingSlots.length > 0 ? `缺少验收位：${module.missingSlots.map((slot) => slot.scenario).join('、')}` : '',
         module.missingStates.length > 0 ? `缺少状态：${module.missingStates.join('、')}` : '',
         module.missingThemes.length > 0 ? `缺少主题：${module.missingThemes.join('、')}` : '',
         module.missingViewportClasses.length > 0 ? `缺少设备：${module.missingViewportClasses.join('、')}` : '',
@@ -252,10 +297,10 @@ export function renderVisualGateReport(result) {
       `<a id="visual-ledger-${module.id}"></a>`,
       `### ${module.name} · ${module.screenshotCount}/${module.screenshotFloor} 张合格`,
       '',
-      '| 序号 | 截图 | 主验收状态 | 类型 | 结果 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
-      '|---:|---|---|---|---|---|---|---|---|---|---|',
-      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${escapeCell(item.name)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.status)} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
-      ...(module.evidenceRows.length === 0 ? ['| 0 | 无 | 未执行 | 未执行 | 未执行 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
+      '| 序号 | 验收场景 | 截图 | 主验收状态 | 类型 | 结果 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
+      '|---:|---|---|---|---|---|---|---|---|---|---|---|',
+      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${escapeCell(item.scenario)} | ${escapeCell(item.name)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.status)} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+      ...(module.evidenceRows.length === 0 ? ['| 0 | 无 | 无 | 未执行 | 未执行 | 未执行 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
       '',
     ]),
     '',
@@ -266,11 +311,11 @@ export function renderVisualGateReport(result) {
       `### ${module.name}`,
       '',
       `- 面包屑：${module.breadcrumb}`,
-      `- 判定方法：合格证据不少于 ${module.screenshotFloor} 张；${module.requiredStateCount} 个关键状态逐项有唯一主证据；同时覆盖 ${module.missingThemes.length === 0 ? '明暗主题' : '规定主题'} 和规定设备；每张证据绑定测试类型、结果、页面路径和测试方法；存在失败或需干预证据时不得判通过。`,
+      `- 判定方法：${module.screenshotFloor} 个计划验收位逐一由唯一截图核销；${module.requiredStateCount} 个关键状态逐项有唯一主证据；覆盖目录规定主题和设备；每张证据绑定测试类型、结果、页面路径和测试方法；存在缺位、重复占位、失败或需干预证据时不得判通过。`,
       `- 当前结果：${module.verdict}；已覆盖 ${module.coveredStateCount}/${module.requiredStateCount} 个关键状态。`,
       '',
     ]),
-    '判定原则：采集文件数量不能直接形成结论；入口、输入、进度、结果、失败恢复、持久化和移动端等关键状态必须逐项绑定唯一主证据。复制图片、只有入口图、缺主题设备信息或未标注测试方法，均不能形成“通过”结论。',
+    '判定原则：采集文件数量不能直接形成结论；每个计划验收位必须由唯一截图核销，入口、输入、进度、结果、失败恢复、持久化和移动端等关键状态必须逐项绑定唯一主证据。复制图片、重复占位、缺少验收位、只有入口图、缺主题设备信息或未标注测试方法，均不能形成“通过”结论。',
     '',
   ];
   return lines.join('\n');
