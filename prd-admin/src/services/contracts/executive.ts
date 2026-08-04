@@ -93,6 +93,80 @@ export type ExecutiveLeaderboard = {
   totalDays: number;
 };
 
+/* ── 团队洞察（结论优先四段式） ────────────────────────────── */
+
+export type TeamInsightKpi = {
+  key: string;
+  label: string;
+  /** 后端算不出来时为 null —— 前端必须显示「数据不足」而不是补 0 */
+  value: number | null;
+  unit: string;
+  prev: number | null;
+  deltaPct: number | null;
+  /** 该指标是越大越好还是越小越好，决定环比染色 */
+  higherIsBetter: boolean;
+  /** 日序列；窗口无界或过长时为空数组，前端不画 sparkline */
+  series: number[];
+  /** 口径说明，后端 SSOT */
+  note: string;
+};
+
+export type TeamInsightAttention = {
+  severity: 'critical' | 'watch';
+  key: string;
+  title: string;
+  evidence: string;
+  suggestion: string;
+  linkLabel: string;
+  linkTo: string;
+};
+
+export type TeamInsightMember = {
+  userId: string;
+  displayName: string;
+  role: string;
+  avatarFileName: string | null;
+  output: number;
+  /** 结果质量 0-100；三项真实成功率按可用性取平均，全无信号时为 null */
+  quality: number | null;
+  quadrant: '主力产出' | '精工型' | '高量低果' | '低活跃' | '数据不足';
+  outputDays: number;
+  llmCalls: number;
+  llmErrors: number;
+  cost: number;
+  tokens: number;
+  breakdown: {
+    docs: number; sites: number; reports: number;
+    imageRuns: number; imagesDone: number; imagesFailed: number;
+    defectsReported: number; defectsAssigned: number;
+    defectsResolved: number; defectsBacklog: number;
+  };
+  highlights: string[];
+};
+
+export type TeamInsightFlowNode = { name: string; value: number; unit: string; loss?: boolean };
+
+export type TeamInsights = {
+  pulse: TeamInsightKpi[];
+  attention: TeamInsightAttention[];
+  members: TeamInsightMember[];
+  flow: { left: TeamInsightFlowNode[]; mid: TeamInsightFlowNode[]; right: TeamInsightFlowNode[] };
+  meta: {
+    days: number;
+    from: string | null;
+    to: string;
+    prevFrom: string | null;
+    totalMembers: number;
+    medians: { output: number; quality: number };
+    seriesAvailable: boolean;
+    /** 明确拿不到的指标 —— 面板照实说明，不编数字 */
+    unavailable: { metric: string; reason: string }[];
+    sources: { metric: string; source: string }[];
+  };
+};
+
+export type GetTeamInsightsContract = (days?: number) => Promise<ApiResponse<TeamInsights>>;
+
 export type GetExecutiveOverviewContract = (days?: number) => Promise<ApiResponse<ExecutiveOverview>>;
 export type GetExecutiveTrendsContract = (days?: number) => Promise<ApiResponse<ExecutiveTrendItem[]>>;
 export type GetExecutiveTeamContract = (days?: number) => Promise<ApiResponse<ExecutiveTeamMember[]>>;

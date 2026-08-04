@@ -674,6 +674,517 @@ public class ExecutiveController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { users = userList, dimensions, totalDays }));
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // 团队洞察（结论优先四段式）
+    //   A 团队状态 / B 需要关注 / C 成员画像 / D 价值流
+    // 全部字段来自真实集合聚合；无法从 MAP 取到的指标（如 CDS 验收通过率）
+    // 一律不出现在返回体，改在 meta.unavailable 中显式声明缺什么、为什么。
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>单个成员在统计窗口内的原始聚合量（内部中间态，不直接出参）</summary>
+    private sealed class MemberAgg
+    {
+        public int Docs, Sites, Reports, RunsCompleted;
+        public int RunsDone, RunsFailed;
+        public int DefectsReported, DefectsAssigned, DefectsResolved, DefectsBacklog;
+        public int LlmCalls, LlmErrors;
+        public long InputTokens, OutputTokens;
+        public decimal Cost;
+        public readonly HashSet<DateTime> OutputDays = new();
+    }
+
+    /// <summary>需要关注卡片：现象 + 证据 + 建议 + 下钻入口</summary>
+    private sealed record AttentionItem(
+        string Severity, string Key, string Title, string Evidence,
+        string Suggestion, string LinkLabel, string LinkTo);
+
+    /// <summary>价值流「环节」分组：appKey → 环节名</summary>
+    private static string ResolveFlowStage(string appKey) => appKey switch
+    {
+        "prd-agent" => "需求梳理",
+        "visual-agent" or "literary-agent" or "video-agent" => "内容生成",
+        "report-agent" or "ai-toolbox" => "汇报与工具",
+        "defect-agent" => "缺陷处理",
+        _ => "其他",
+    };
+
+    private static double? Median(List<double> values)
+    {
+        if (values.Count == 0) return null;
+        var sorted = values.OrderBy(v => v).ToList();
+        var mid = sorted.Count / 2;
+        return sorted.Count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0;
+    }
+
+    /// <summary>
+    /// 团队洞察面板 — 结论优先的四段式聚合。
+    /// days=0 表示全部时间（无环比、无日序列）；days>0 时同时算出等长上一窗用于环比。
+    /// </summary>
+    [HttpGet("team-insights")]
+    public async Task<IActionResult> GetTeamInsights([FromQuery] int days = 0)
+    {
+        if (days < 0) days = 0;
+        var now = DateTime.UtcNow;
+        var today = now.Date;
+        var start = days > 0 ? today.AddDays(-days + 1) : DateTime.MinValue;
+        var prevStart = days > 0 ? start.AddDays(-days) : DateTime.MinValue;
+        var hasPrev = days > 0;
+        // 日序列只在窗口有界且不太长时给；超长窗口返回空数组而不是编造
+        var wantSeries = days > 0 && days <= 45;
+
+        var allUsers = await _db.Users.Find(_ => true).ToListAsync();
+        var humanUsers = allUsers.Where(u => u.UserType != UserType.Bot).ToList();
+        var userIds = humanUsers.Select(u => u.UserId).ToHashSet();
+        var agg = new Dictionary<string, MemberAgg>();
+        MemberAgg Bucket(string uid)
+        {
+            if (!agg.TryGetValue(uid, out var m)) agg[uid] = m = new MemberAgg();
+            return m;
+        }
+
+        // ── 产出侧：四类小集合，逐条取时间戳（同时供日序列与产出天数使用） ──
+        var docRows = await _db.DocumentEntries
+            .Find(d => d.CreatedAt >= start)
+            .Project(d => new { d.CreatedBy, d.CreatedAt })
+            .ToListAsync();
+        var siteRows = await _db.HostedSites
+            .Find(s => s.CreatedAt >= start)
+            .Project(s => new { s.OwnerUserId, s.CreatedAt })
+            .ToListAsync();
+        var reportRows = await _db.WeeklyReports
+            .Find(r => r.SubmittedAt != null && r.SubmittedAt >= start)
+            .Project(r => new { r.UserId, r.SubmittedAt })
+            .ToListAsync();
+        var runRows = await _db.ImageGenRuns
+            .Find(r => r.CreatedAt >= start)
+            .Project(r => new { r.OwnerAdminId, r.CreatedAt, r.Status, r.Done, r.Failed })
+            .ToListAsync();
+
+        foreach (var r in docRows)
+        {
+            if (r.CreatedBy == null || !userIds.Contains(r.CreatedBy)) continue;
+            var m = Bucket(r.CreatedBy); m.Docs++; m.OutputDays.Add(r.CreatedAt.Date);
+        }
+        foreach (var r in siteRows)
+        {
+            if (r.OwnerUserId == null || !userIds.Contains(r.OwnerUserId)) continue;
+            var m = Bucket(r.OwnerUserId); m.Sites++; m.OutputDays.Add(r.CreatedAt.Date);
+        }
+        foreach (var r in reportRows)
+        {
+            if (r.UserId == null || !userIds.Contains(r.UserId) || r.SubmittedAt == null) continue;
+            var m = Bucket(r.UserId); m.Reports++; m.OutputDays.Add(r.SubmittedAt.Value.Date);
+        }
+        foreach (var r in runRows)
+        {
+            if (r.OwnerAdminId == null || !userIds.Contains(r.OwnerAdminId)) continue;
+            var m = Bucket(r.OwnerAdminId);
+            m.RunsDone += r.Done; m.RunsFailed += r.Failed;
+            if (r.Status == ImageGenRunStatus.Completed) { m.RunsCompleted++; m.OutputDays.Add(r.CreatedAt.Date); }
+        }
+
+        // ── 缺陷：解决时长 / 积压 / 提交与解决归属 ──
+        var resolvedDefects = await _db.DefectReports
+            .Find(d => d.ResolvedAt != null && d.ResolvedAt >= start)
+            .Project(d => new { d.AssigneeId, d.ReporterId, d.CreatedAt, d.ResolvedAt })
+            .ToListAsync();
+        var openStatuses = new[] { DefectStatus.Assigned, DefectStatus.Processing, DefectStatus.Verifying, DefectStatus.Submitted };
+        var openDefects = await _db.DefectReports
+            .Find(d => openStatuses.Contains(d.Status))
+            .Project(d => new { d.AssigneeId, d.CreatedAt })
+            .ToListAsync();
+        var reportedDefects = await CountByUserAsync(_db.DefectReports,
+            d => d.CreatedAt >= start, d => d.ReporterId, userIds);
+        var assignedDefects = await CountByUserAsync(_db.DefectReports,
+            d => d.CreatedAt >= start && d.AssigneeId != null, d => d.AssigneeId, userIds);
+
+        foreach (var kv in reportedDefects) Bucket(kv.Key).DefectsReported = kv.Value;
+        foreach (var kv in assignedDefects) Bucket(kv.Key).DefectsAssigned = kv.Value;
+        foreach (var d in resolvedDefects)
+        {
+            var owner = d.AssigneeId ?? d.ReporterId;
+            if (owner == null || !userIds.Contains(owner)) continue;
+            var m = Bucket(owner); m.DefectsResolved++;
+            if (d.ResolvedAt != null) m.OutputDays.Add(d.ResolvedAt.Value.Date);
+        }
+        foreach (var d in openDefects)
+        {
+            if (d.AssigneeId == null || !userIds.Contains(d.AssigneeId)) continue;
+            if ((today - d.CreatedAt.Date).TotalDays >= 7) Bucket(d.AssigneeId).DefectsBacklog++;
+        }
+
+        // ── LLM：调用量 / 失败率 / Token 与成本（按 {用户,模型} 分组后在内存套价） ──
+        var aggOpts2 = new AggregateOptions { AllowDiskUse = true };
+        var llmByUserModel = await _db.LlmRequestLogs.Aggregate(aggOpts2)
+            .Match(l => l.StartedAt >= start && l.UserId != null && l.Model != null)
+            .Group(l => new { l.UserId, l.Model },
+                   g => new { g.Key.UserId, g.Key.Model, C = g.Count(), In = g.Sum(x => x.InputTokens ?? 0), Out = g.Sum(x => x.OutputTokens ?? 0) })
+            .ToListAsync();
+        var llmErrByUser = await _db.LlmRequestLogs.Aggregate(aggOpts2)
+            .Match(l => l.StartedAt >= start && l.UserId != null && l.StatusCode >= 400)
+            .Group(l => l.UserId, g => new { Uid = g.Key, C = g.Count() })
+            .ToListAsync();
+        var llmByCaller = await _db.LlmRequestLogs.Aggregate(aggOpts2)
+            .Match(l => l.StartedAt >= start && l.AppCallerCode != null)
+            .Group(l => l.AppCallerCode, g => new { K = g.Key, C = g.Count() })
+            .ToListAsync();
+
+        var pricingLookup = new Dictionary<string, (decimal? In, decimal? Out, decimal? PerCall)>();
+        foreach (var mg in await _db.ModelGroups.Find(_ => true).ToListAsync())
+        {
+            foreach (var item in mg.Models)
+            {
+                if (string.IsNullOrEmpty(item.ModelId) || pricingLookup.ContainsKey(item.ModelId)) continue;
+                if (item.InputPricePerMillion.HasValue || item.OutputPricePerMillion.HasValue || item.PricePerCall.HasValue)
+                    pricingLookup[item.ModelId] = (item.InputPricePerMillion, item.OutputPricePerMillion, item.PricePerCall);
+            }
+        }
+        decimal CostOf(string? model, long inTok, long outTok, int calls)
+        {
+            if (model == null || !pricingLookup.TryGetValue(model, out var p)) return 0m;
+            decimal c = 0m;
+            if (p.In.HasValue) c += (decimal)inTok / 1_000_000m * p.In.Value;
+            if (p.Out.HasValue) c += (decimal)outTok / 1_000_000m * p.Out.Value;
+            if (p.PerCall.HasValue) c += calls * p.PerCall.Value;
+            return c;
+        }
+
+        long totalIn = 0, totalOut = 0;
+        int totalCalls = 0;
+        decimal totalCost = 0m;
+        int pricedCalls = 0;
+        foreach (var row in llmByUserModel)
+        {
+            long inTok = row.In; long outTok = row.Out;
+            totalIn += inTok; totalOut += outTok; totalCalls += row.C;
+            var cost = CostOf(row.Model, inTok, outTok, row.C);
+            totalCost += cost;
+            if (row.Model != null && pricingLookup.ContainsKey(row.Model)) pricedCalls += row.C;
+            if (row.UserId == null || !userIds.Contains(row.UserId)) continue;
+            var m = Bucket(row.UserId);
+            m.LlmCalls += row.C; m.InputTokens += inTok; m.OutputTokens += outTok; m.Cost += cost;
+        }
+        foreach (var row in llmErrByUser)
+        {
+            if (row.Uid == null || !userIds.Contains(row.Uid)) continue;
+            Bucket(row.Uid).LlmErrors = row.C;
+        }
+        var totalErrors = llmErrByUser.Sum(r => r.C);
+
+        // ── 成员画像 ──
+        var userMap = humanUsers.ToDictionary(u => u.UserId);
+        var memberRows = new List<(User U, MemberAgg A, int Output, double? Quality)>();
+        foreach (var u in humanUsers)
+        {
+            agg.TryGetValue(u.UserId, out var a);
+            a ??= new MemberAgg();
+            var output = a.Docs + a.Sites + a.Reports + a.RunsCompleted + a.DefectsResolved;
+            var signals = new List<double>();
+            if (a.DefectsAssigned > 0) signals.Add((double)a.DefectsResolved / a.DefectsAssigned);
+            if (a.RunsDone + a.RunsFailed > 0) signals.Add((double)a.RunsDone / (a.RunsDone + a.RunsFailed));
+            if (a.LlmCalls > 0) signals.Add(1.0 - (double)a.LlmErrors / a.LlmCalls);
+            double? quality = signals.Count > 0 ? Math.Round(signals.Average() * 100, 0) : null;
+            if (output == 0 && a.LlmCalls == 0) continue; // 本窗完全无痕迹的用户不进画像
+            memberRows.Add((u, a, output, quality));
+        }
+
+        var medOutput = Median(memberRows.Select(r => (double)r.Output).ToList()) ?? 0;
+        var medQuality = Median(memberRows.Where(r => r.Quality != null).Select(r => r.Quality!.Value).ToList()) ?? 0;
+        var medCost = Median(memberRows.Select(r => (double)r.A.Cost).ToList()) ?? 0;
+        var medCalls = Median(memberRows.Select(r => (double)r.A.LlmCalls).ToList()) ?? 0;
+
+        var members = memberRows.Select(r =>
+        {
+            var (u, a, output, quality) = r;
+            string quadrant;
+            if (quality == null) quadrant = "数据不足";
+            else if (output >= medOutput && quality >= medQuality) quadrant = "主力产出";
+            else if (output < medOutput && quality >= medQuality) quadrant = "精工型";
+            else if (output >= medOutput && quality < medQuality) quadrant = "高量低果";
+            else quadrant = "低活跃";
+
+            var highlights = new List<string>();
+            if (a.Docs > 0) highlights.Add($"知识库文档 {a.Docs} 篇");
+            if (a.Sites > 0) highlights.Add($"网页站点 {a.Sites} 个");
+            if (a.RunsCompleted > 0) highlights.Add($"生图任务完成 {a.RunsCompleted} 次（出图 {a.RunsDone} 张）");
+            if (a.Reports > 0) highlights.Add($"周报已提交 {a.Reports} 篇");
+            if (a.DefectsResolved > 0) highlights.Add($"缺陷已解决 {a.DefectsResolved} 个");
+            if (a.DefectsBacklog > 0) highlights.Add($"名下 {a.DefectsBacklog} 个缺陷停留超 7 天");
+            if (highlights.Count == 0) highlights.Add($"本窗仅有 {a.LlmCalls} 次模型调用，未产生可统计产出");
+
+            return new
+            {
+                userId = u.UserId,
+                displayName = string.IsNullOrEmpty(u.DisplayName) ? u.Username : u.DisplayName,
+                role = u.Role.ToString(),
+                avatarFileName = u.AvatarFileName,
+                output,
+                quality,
+                quadrant,
+                outputDays = a.OutputDays.Count,
+                llmCalls = a.LlmCalls,
+                llmErrors = a.LlmErrors,
+                cost = Math.Round(a.Cost, 2),
+                tokens = a.InputTokens + a.OutputTokens,
+                breakdown = new
+                {
+                    docs = a.Docs,
+                    sites = a.Sites,
+                    reports = a.Reports,
+                    imageRuns = a.RunsCompleted,
+                    imagesDone = a.RunsDone,
+                    imagesFailed = a.RunsFailed,
+                    defectsReported = a.DefectsReported,
+                    defectsAssigned = a.DefectsAssigned,
+                    defectsResolved = a.DefectsResolved,
+                    defectsBacklog = a.DefectsBacklog,
+                },
+                highlights,
+            };
+        }).OrderByDescending(m => m.output).ToList();
+
+        // ── A. 团队状态（含等长上一窗环比） ──
+        int prevDocs = 0, prevSites = 0, prevReports = 0, prevRuns = 0, prevResolved = 0;
+        if (hasPrev)
+        {
+            prevDocs = (int)await _db.DocumentEntries.CountDocumentsAsync(d => d.CreatedAt >= prevStart && d.CreatedAt < start);
+            prevSites = (int)await _db.HostedSites.CountDocumentsAsync(s => s.CreatedAt >= prevStart && s.CreatedAt < start);
+            prevReports = (int)await _db.WeeklyReports.CountDocumentsAsync(r => r.SubmittedAt != null && r.SubmittedAt >= prevStart && r.SubmittedAt < start);
+            prevRuns = (int)await _db.ImageGenRuns.CountDocumentsAsync(r => r.CreatedAt >= prevStart && r.CreatedAt < start && r.Status == ImageGenRunStatus.Completed);
+            prevResolved = (int)await _db.DefectReports.CountDocumentsAsync(d => d.ResolvedAt != null && d.ResolvedAt >= prevStart && d.ResolvedAt < start);
+        }
+
+        var curDocs = docRows.Count;
+        var curSites = siteRows.Count;
+        var curReports = reportRows.Count;
+        var curRuns = runRows.Count(r => r.Status == ImageGenRunStatus.Completed);
+        var curOutput = curDocs + curSites + curReports + curRuns + resolvedDefects.Count;
+        var prevOutput = prevDocs + prevSites + prevReports + prevRuns + prevResolved;
+
+        var resolveHours = resolvedDefects
+            .Where(d => d.ResolvedAt != null && d.ResolvedAt > d.CreatedAt)
+            .Select(d => (d.ResolvedAt!.Value - d.CreatedAt).TotalHours)
+            .ToList();
+        var medianResolve = Median(resolveHours);
+
+        double? prevMedianResolve = null;
+        if (hasPrev)
+        {
+            var prevResolvedRows = await _db.DefectReports
+                .Find(d => d.ResolvedAt != null && d.ResolvedAt >= prevStart && d.ResolvedAt < start)
+                .Project(d => new { d.CreatedAt, d.ResolvedAt })
+                .ToListAsync();
+            prevMedianResolve = Median(prevResolvedRows
+                .Where(d => d.ResolvedAt != null && d.ResolvedAt > d.CreatedAt)
+                .Select(d => (d.ResolvedAt!.Value - d.CreatedAt).TotalHours).ToList());
+        }
+
+        var activeMembers = memberRows.Count;
+        var successRate = totalCalls > 0 ? Math.Round((1.0 - (double)totalErrors / totalCalls) * 100, 1) : (double?)null;
+        var costPerActive = activeMembers > 0 ? Math.Round(totalCost / activeMembers, 2) : 0m;
+
+        // 日序列：只用小集合真实计数，取不到就给空数组，不做插值
+        List<double> outputSeries = new();
+        if (wantSeries)
+        {
+            for (var d = start; d < today.AddDays(1); d = d.AddDays(1))
+            {
+                var day = d.Date;
+                var c = docRows.Count(x => x.CreatedAt.Date == day)
+                      + siteRows.Count(x => x.CreatedAt.Date == day)
+                      + reportRows.Count(x => x.SubmittedAt != null && x.SubmittedAt.Value.Date == day)
+                      + runRows.Count(x => x.Status == ImageGenRunStatus.Completed && x.CreatedAt.Date == day)
+                      + resolvedDefects.Count(x => x.ResolvedAt != null && x.ResolvedAt.Value.Date == day);
+                outputSeries.Add(c);
+            }
+        }
+
+        object Kpi(string key, string label, double? value, string unit, double? prev,
+                   bool higherIsBetter, List<double> series, string note) => new
+        {
+            key,
+            label,
+            value,
+            unit,
+            prev,
+            deltaPct = (prev != null && prev.Value != 0 && value != null)
+                ? Math.Round((value.Value - prev.Value) / Math.Abs(prev.Value) * 100, 1)
+                : (double?)null,
+            higherIsBetter,
+            series,
+            note,
+        };
+
+        var pulse = new List<object>
+        {
+            Kpi("output", "本期产出", curOutput, "件", hasPrev ? (double?)prevOutput : null, true, outputSeries,
+                "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷"),
+            Kpi("resolveHours", "缺陷中位解决时长",
+                medianResolve != null ? (double?)Math.Round(medianResolve.Value, 1) : null, "小时",
+                prevMedianResolve != null ? (double?)Math.Round(prevMedianResolve.Value, 1) : null, false, new List<double>(),
+                "窗口内被标记已解决的缺陷，从创建到解决耗时的中位数"),
+            Kpi("successRate", "模型调用成功率", successRate, "%", null, true, new List<double>(),
+                "LLM 网关日志中 HTTP 状态码 < 400 的比例"),
+            Kpi("costPerActive", "人均 AI 成本", (double)costPerActive, "元", null, true, new List<double>(),
+                pricedCalls > 0
+                    ? $"按模型组已配置单价折算；{totalCalls} 次调用中 {pricedCalls} 次有定价"
+                    : "模型组尚未配置单价，成本无法折算"),
+            Kpi("activeMembers", "有痕迹成员", activeMembers, "人", null, true, new List<double>(),
+                $"窗口内有产出或模型调用的成员数，团队共 {humanUsers.Count} 人"),
+        };
+
+        // ── B. 需要关注（规则触发；没有触发就返回空，不凑数） ──
+        var attention = new List<AttentionItem>();
+
+        var backlogOwners = openDefects
+            .Where(d => d.AssigneeId != null && userIds.Contains(d.AssigneeId)
+                        && (today - d.CreatedAt.Date).TotalDays >= 7)
+            .GroupBy(d => d.AssigneeId!)
+            .Select(g => new { Uid = g.Key, Count = g.Count(), OldestDays = g.Max(x => (int)(today - x.CreatedAt.Date).TotalDays) })
+            .Where(g => g.Count >= 3 || g.OldestDays >= 14)
+            .OrderByDescending(g => g.Count)
+            .Take(3)
+            .ToList();
+        foreach (var b in backlogOwners)
+        {
+            var name = userMap.TryGetValue(b.Uid, out var bu)
+                ? (string.IsNullOrEmpty(bu.DisplayName) ? bu.Username : bu.DisplayName) : b.Uid;
+            attention.Add(new AttentionItem(
+                b.Count >= 5 || b.OldestDays >= 21 ? "critical" : "watch",
+                $"backlog:{b.Uid}",
+                $"{name} 名下 {b.Count} 个缺陷停留超 7 天",
+                medianResolve != null
+                    ? $"最久一个已 {b.OldestDays} 天未流转，团队中位解决时长是 {Math.Round(medianResolve.Value / 24, 1)} 天。"
+                    : $"最久一个已 {b.OldestDays} 天未流转。",
+                "确认是缺处理人力、缺复现环境，还是卡在验收环节",
+                "打开这些缺陷",
+                "/defect-agent"));
+        }
+
+        var imgTotal = runRows.Sum(r => r.Done) + runRows.Sum(r => r.Failed);
+        var imgFailed = runRows.Sum(r => r.Failed);
+        if (imgTotal >= 20 && (double)imgFailed / imgTotal >= 0.10)
+        {
+            attention.Add(new AttentionItem(
+                (double)imgFailed / imgTotal >= 0.25 ? "critical" : "watch",
+                "image-failure",
+                $"生图失败率 {Math.Round((double)imgFailed / imgTotal * 100, 1)}%",
+                $"窗口内共 {imgTotal} 张出图请求，其中 {imgFailed} 张失败。",
+                "到模型池按模型看失败分布，把不稳定的模型移出默认池",
+                "查看模型池",
+                "/models"));
+        }
+
+        var lowYield = memberRows
+            .Where(r => r.A.LlmCalls >= Math.Max(30, medCalls * 2) && r.Output <= medOutput)
+            .OrderByDescending(r => r.A.LlmCalls)
+            .Take(2)
+            .ToList();
+        foreach (var r in lowYield)
+        {
+            var name = string.IsNullOrEmpty(r.U.DisplayName) ? r.U.Username : r.U.DisplayName;
+            attention.Add(new AttentionItem(
+                "watch",
+                $"low-yield:{r.U.UserId}",
+                $"{name} 调用量高但产出低",
+                $"模型调用 {r.A.LlmCalls} 次（团队中位 {Math.Round(medCalls)} 次），最终可统计产出 {r.Output} 件（团队中位 {Math.Round(medOutput)} 件）。",
+                "看看是不是在反复试参数——可以补一组预设或换模型",
+                "查看调用明细",
+                "/llm-logs"));
+        }
+
+        var costOutliers = memberRows
+            .Where(r => medCost > 0 && (double)r.A.Cost >= medCost * 3 && r.A.Cost >= 1m)
+            .OrderByDescending(r => r.A.Cost)
+            .Take(2)
+            .ToList();
+        foreach (var r in costOutliers)
+        {
+            var name = string.IsNullOrEmpty(r.U.DisplayName) ? r.U.Username : r.U.DisplayName;
+            attention.Add(new AttentionItem(
+                "watch",
+                $"cost:{r.U.UserId}",
+                $"{name} 的 AI 成本是团队中位的 {Math.Round((double)r.A.Cost / medCost, 1)} 倍",
+                $"本窗 {Math.Round(r.A.Cost, 2)} 元，团队中位 {Math.Round(medCost, 2)} 元，共 {r.A.LlmCalls} 次调用。",
+                "核对是否用了高价模型跑了低价值任务",
+                "查看成本中心",
+                "/executive"));
+        }
+
+        var attentionOut = attention
+            .OrderBy(a => a.Severity == "critical" ? 0 : 1)
+            .Select(a => new
+            {
+                severity = a.Severity,
+                key = a.Key,
+                title = a.Title,
+                evidence = a.Evidence,
+                suggestion = a.Suggestion,
+                linkLabel = a.LinkLabel,
+                linkTo = a.LinkTo,
+            })
+            .ToList();
+
+        // ── D. 价值流 ──
+        var stageCounts = new Dictionary<string, int>();
+        foreach (var row in llmByCaller)
+        {
+            var stage = ResolveFlowStage(NormalizeAppKey(row.K ?? ""));
+            stageCounts[stage] = stageCounts.GetValueOrDefault(stage) + row.C;
+        }
+        var totalOutputDays = memberRows.Sum(r => r.A.OutputDays.Count);
+        var unresolvedInWindow = openDefects.Count(d => d.CreatedAt >= start);
+
+        var flow = new
+        {
+            left = new object[]
+            {
+                new { name = "有产出的人天", value = totalOutputDays, unit = "人天" },
+                new { name = "模型调用", value = totalCalls, unit = "次" },
+                new { name = "Token 消耗", value = totalIn + totalOut, unit = "tokens" },
+            },
+            mid = stageCounts.Where(kv => kv.Value > 0)
+                .OrderByDescending(kv => kv.Value)
+                .Select(kv => new { name = kv.Key, value = kv.Value, unit = "次" })
+                .ToArray(),
+            right = new object[]
+            {
+                new { name = "已发布文档", value = curDocs, unit = "篇", loss = false },
+                new { name = "已上线站点", value = curSites, unit = "个", loss = false },
+                new { name = "已出图", value = runRows.Sum(r => r.Done), unit = "张", loss = false },
+                new { name = "已提交周报", value = curReports, unit = "篇", loss = false },
+                new { name = "已解决缺陷", value = resolvedDefects.Count, unit = "个", loss = false },
+                new { name = "出图失败", value = imgFailed, unit = "张", loss = true },
+                new { name = "缺陷未闭环", value = unresolvedInWindow, unit = "个", loss = true },
+            },
+        };
+
+        var meta = new
+        {
+            days,
+            from = days > 0 ? start : (DateTime?)null,
+            to = now,
+            prevFrom = hasPrev ? prevStart : (DateTime?)null,
+            totalMembers = humanUsers.Count,
+            medians = new { output = Math.Round(medOutput, 1), quality = Math.Round(medQuality, 1) },
+            seriesAvailable = wantSeries,
+            // 显式声明拿不到的指标，避免面板上出现无根数字
+            unavailable = new object[]
+            {
+                new { metric = "验收通过率", reason = "验收结论保存在 CDS 验收中心，MAP 侧没有该事实，需要接 CDS 只读接口后才能上榜" },
+                new { metric = "产物采用率", reason = "系统尚未记录「产物是否被采用」信号（投稿/下载/引用），需要先补埋点" },
+            },
+            sources = new object[]
+            {
+                new { metric = "产出", source = "document_entries / hosted_sites / report_weekly_reports / image_gen_runs / defect_reports" },
+                new { metric = "结果质量", source = "缺陷解决率、生图成功率、模型调用成功率三项按可用性取平均" },
+                new { metric = "成本", source = "llmrequestlogs 的 token 用量 × 模型组已配置单价" },
+            },
+        };
+
+        return Ok(ApiResponse<object>.Ok(new { pulse, attention = attentionOut, members, flow, meta }));
+    }
+
     private static string ResolveAgentName(string appKey) => appKey switch
     {
         "prd-agent" => "PRD Agent",
