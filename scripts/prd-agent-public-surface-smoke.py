@@ -189,10 +189,13 @@ def probe_once(
         failures.append("main-page does not reference a same-origin JavaScript entry asset")
     if not styles:
         failures.append("main-page does not reference a same-origin CSS entry asset")
-    if expected_commit and expected_commit not in root.body.decode("utf-8", errors="replace").lower():
-        failures.append(
-            f"main-page commit mismatch: expected={expected_commit} actual=entry-assets-do-not-contain-commit"
-        )
+    if expected_commit:
+        stale_entry_assets = [url for url in [*scripts, *styles] if expected_commit not in url.lower()]
+        if stale_entry_assets:
+            failures.append(
+                "main-page entry asset commit mismatch: "
+                f"expected={expected_commit} assets={','.join(stale_entry_assets)}"
+            )
 
     for index, asset_url in enumerate(scripts, start=1):
         result = fetch_check(f"entry-js-{index}", asset_url)

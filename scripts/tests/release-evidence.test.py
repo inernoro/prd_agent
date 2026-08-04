@@ -70,6 +70,42 @@ with tempfile.TemporaryDirectory() as temporary:
         str(smoke),
         "--asset-storage-readiness-json",
         str(storage_readiness),
+        "--gateway-bind-state",
+        "coherent",
+        "--gateway-bind-initial-state",
+        "confirmed-drift",
+        "--gateway-bind-initial-reason",
+        "host-container-values-differ",
+        "--gateway-bind-recreated",
+        "1",
+        "--gateway-container-before",
+        "container-old",
+        "--gateway-container-after",
+        "container-new",
+        "--gateway-host-static-target",
+        "releases/sha-test",
+        "--gateway-container-static-target",
+        "releases/sha-test",
+        "--gateway-host-static-sha256",
+        "a" * 64,
+        "--gateway-container-static-sha256",
+        "a" * 64,
+        "--gateway-host-nginx-sha256",
+        "b" * 64,
+        "--gateway-container-nginx-sha256",
+        "b" * 64,
+        "--gateway-bind-initial-host-static-target",
+        "releases/sha-test",
+        "--gateway-bind-initial-container-static-target",
+        "releases/sha-old",
+        "--gateway-bind-initial-host-static-sha256",
+        "a" * 64,
+        "--gateway-bind-initial-container-static-sha256",
+        "c" * 64,
+        "--gateway-bind-initial-host-nginx-sha256",
+        "b" * 64,
+        "--gateway-bind-initial-container-nginx-sha256",
+        "d" * 64,
     ]
     subprocess.run(command, check=True, capture_output=True, text=True)
     payload = json.loads(output.read_text(encoding="utf-8"))
@@ -81,6 +117,31 @@ with tempfile.TemporaryDirectory() as temporary:
     assert payload["publicSurface"]["verdict"] == "pass"
     assert payload["assetStorageReadiness"]["provider"] == "tencentCos"
     assert payload["assetStorageReadiness"]["cleanupVerified"] is True
+    assert payload["gatewayBindMount"] == {
+        "recreated": True,
+        "containerIdBefore": "container-old",
+        "containerIdAfter": "container-new",
+        "initial": {
+            "state": "confirmed-drift",
+            "reason": "host-container-values-differ",
+            "hostStaticTarget": "releases/sha-test",
+            "containerStaticTarget": "releases/sha-old",
+            "hostStaticSha256Prefix": "a" * 12,
+            "containerStaticSha256Prefix": "c" * 12,
+            "hostNginxSha256Prefix": "b" * 12,
+            "containerNginxSha256Prefix": "d" * 12,
+        },
+        "final": {
+            "state": "coherent",
+            "reason": None,
+            "hostStaticTarget": "releases/sha-test",
+            "containerStaticTarget": "releases/sha-test",
+            "hostStaticSha256Prefix": "a" * 12,
+            "containerStaticSha256Prefix": "a" * 12,
+            "hostNginxSha256Prefix": "b" * 12,
+            "containerNginxSha256Prefix": "b" * 12,
+        },
+    }
 
     duplicate = subprocess.run(command, capture_output=True, text=True)
     assert duplicate.returncode != 0

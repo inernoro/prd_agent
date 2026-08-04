@@ -748,6 +748,25 @@ write_release_evidence() {
     --static-before-previous "$static_before_previous" \
     --smoke-json "$public_smoke_json" \
     --asset-storage-readiness-json "$asset_storage_readiness_json" \
+    --gateway-bind-state "$GATEWAY_BIND_STATE" \
+    --gateway-bind-reason "$GATEWAY_BIND_REASON" \
+    --gateway-bind-initial-state "$GATEWAY_BIND_INITIAL_STATE" \
+    --gateway-bind-initial-reason "$GATEWAY_BIND_INITIAL_REASON" \
+    --gateway-bind-recreated "$GATEWAY_BIND_RECREATED" \
+    --gateway-container-before "$GATEWAY_BIND_CONTAINER_BEFORE" \
+    --gateway-container-after "$GATEWAY_BIND_CONTAINER_AFTER" \
+    --gateway-host-static-target "$GATEWAY_BIND_HOST_STATIC_TARGET" \
+    --gateway-container-static-target "$GATEWAY_BIND_CONTAINER_STATIC_TARGET" \
+    --gateway-host-static-sha256 "$GATEWAY_BIND_HOST_STATIC_SHA" \
+    --gateway-container-static-sha256 "$GATEWAY_BIND_CONTAINER_STATIC_SHA" \
+    --gateway-host-nginx-sha256 "$GATEWAY_BIND_HOST_NGINX_SHA" \
+    --gateway-container-nginx-sha256 "$GATEWAY_BIND_CONTAINER_NGINX_SHA" \
+    --gateway-bind-initial-host-static-target "$GATEWAY_BIND_INITIAL_HOST_STATIC_TARGET" \
+    --gateway-bind-initial-container-static-target "$GATEWAY_BIND_INITIAL_CONTAINER_STATIC_TARGET" \
+    --gateway-bind-initial-host-static-sha256 "$GATEWAY_BIND_INITIAL_HOST_STATIC_SHA" \
+    --gateway-bind-initial-container-static-sha256 "$GATEWAY_BIND_INITIAL_CONTAINER_STATIC_SHA" \
+    --gateway-bind-initial-host-nginx-sha256 "$GATEWAY_BIND_INITIAL_HOST_NGINX_SHA" \
+    --gateway-bind-initial-container-nginx-sha256 "$GATEWAY_BIND_INITIAL_CONTAINER_NGINX_SHA" \
     --failure-stage "$evidence_failure_stage" \
     --rollback-result "$evidence_rollback_result"
 }
@@ -1687,22 +1706,12 @@ refresh_gateway_after_compose() {
     if [ "$gateway_running" = "true" ]; then
       echo "Synchronizing active gateway config and reloading in place without changing its container IP..."
       sync_active_gateway_nginx_config
-      if ! gateway_bind_mounts_are_coherent "$gateway_container_id" "$active_static_root" "$active_nginx_conf_root"; then
-        if [ -z "$compose_project_directory" ]; then
-          echo "ERROR: gateway bind mount is stale, but PRD_AGENT_COMPOSE_PROJECT_DIRECTORY is not set" >&2
-          echo "RECOVERY: set it to the stable production Compose project directory, then retry this release" >&2
-          return 1
-        fi
-        echo "Gateway bind mount drift detected; recreating only the gateway from the stable production project directory..."
-        compose_run up -d --no-deps --force-recreate "$gateway_service"
-        gateway_container_id="$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)"
-        reload_active_gateway
-        if ! gateway_bind_mounts_are_coherent "$gateway_container_id" "$active_static_root" "$active_nginx_conf_root"; then
-          echo "ERROR: gateway bind mount drift remains after targeted recreation" >&2
-          return 1
-        fi
-        echo "Gateway bind mount drift repaired: static and nginx configuration now match the host release roots"
-      fi
+      gateway_reconcile_bind_mounts \
+        "$gateway_container_id" \
+        "$active_static_root" \
+        "$active_nginx_conf_root" \
+        "$compose_project_directory" \
+        "$gateway_service"
     else
       echo "Starting gateway service for the first time..."
       compose_run up -d --no-deps "$gateway_service"

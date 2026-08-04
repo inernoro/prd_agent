@@ -130,7 +130,37 @@ wrong_commit = MODULE.probe_once(
 )
 assert wrong_commit["verdict"] == "fail", wrong_commit
 assert any("commit mismatch" in item for item in wrong_commit["failures"]), wrong_commit
-assert any("main-page commit mismatch" in item for item in wrong_commit["failures"]), wrong_commit
+assert any("entry asset commit mismatch" in item for item in wrong_commit["failures"]), wrong_commit
+
+metadata_only_commit = dict(RESPONSES)
+metadata_only_commit["https://example.test/"] = MODULE.HttpResult(
+    "https://example.test/",
+    200,
+    "text/html",
+    (
+        f'<meta name="release-commit" content="{COMMIT_A}">'
+        '<script src="/assets/old.js"></script><link rel="stylesheet" href="/assets/old.css">'
+    ).encode(),
+)
+metadata_only_commit["https://example.test/assets/old.js"] = MODULE.HttpResult(
+    "https://example.test/assets/old.js", 200, "application/javascript", b"console.log('old')"
+)
+metadata_only_commit["https://example.test/assets/old.css"] = MODULE.HttpResult(
+    "https://example.test/assets/old.css", 200, "text/css", b"body{}"
+)
+metadata_only_result = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    lambda url, _timeout: metadata_only_commit[url],
+    COMMIT_A,
+)
+assert metadata_only_result["verdict"] == "fail", metadata_only_result
+assert any("entry asset commit mismatch" in item for item in metadata_only_result["failures"]), metadata_only_result
 
 
 def fake_gateway_request(method: str, url: str, _timeout: float, _body: bytes | None):
