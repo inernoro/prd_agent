@@ -23,3 +23,4 @@
 | docs | claude-md | 新增 doc/debt.platform.agent-rule-scope.md 记录三条 B 类作用域缺口，按 §5.5 分类不在本 PR 展开 |
 | test | claude-md | 守卫新增条款完整性断言：AGENTS.md 的 17 条编号条款不得在重写中静默消失，删除必须显式改 REQUIRED_CLAUSES 并说明理由 |
 | docs | claude-md | Codex 第五轮三条 B 类作用域缺口（导航登记漏后端菜单目录、移动端密度漏样式 token、CDS 主题漏 Tailwind 配置）记入 debt 台账 |
+| fix | claude-md | AGENTS.md 规则发现指令指向一个被同次重写删掉的清单；改为写清扫描步骤（ls 规则目录 + 读导读两行选取），不再维护会漂移的第二份索引 |
