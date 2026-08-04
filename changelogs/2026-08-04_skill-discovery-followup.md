@@ -11,3 +11,4 @@
 | fix | claude-md | entropy-cleanup 的 PR 正文模板「改动 diff」只列文档索引与 changelog，漏掉 D4 会修改的 SKILL.md；补两个技能根的条件条目、「需人工处理」小节，并修正 changelog 碎片的模块列 |
 | fix | claude-md | D4 的字段判据未限定在 frontmatter 块内，正文出现 name: 示例行会把缺字段的技能误判成合规；改用 awk 取 frontmatter 块 |
 | fix | claude-md | 新增 Step 4.5 硬闸：D4 里无法自动修复的三类条目命中时跳过自动 squash 合并，只写进 PR 正文等于随 PR 一起被合并掉 |
+| fix | claude-md | 上一轮加的 D4 合并硬闸读 $D4_SCAN_OUTPUT，而该变量从未被赋值，真实运行时恒为空、闸门永不触发；改为闸门自己重跑判据，不依赖任何外部变量 |

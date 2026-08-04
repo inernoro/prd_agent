@@ -256,15 +256,43 @@ D4 里 `MISSING_SKILL_MD` / `MISSING_SKILL_DESC` / `MISSING_SKILL_FRONTMATTER` �
 
 所以在提交之前判定：
 
+闸门**自己重跑一遍判据**，不读任何来自前面步骤的变量。理由：Step 1 的扫描是直接打到
+stdout 的，如果这里去读一个约定好的变量名，那个变量在真实运行里根本不存在，闸门会恒为
+「无阻塞」而静默放行——一个永不触发的闸门比没有闸门更糟，因为它让人以为这里被守住了。
+重跑一次只花毫秒级，换来的是这段判定不依赖任何外部约定。
+
 ```bash
-BLOCKERS=$(printf '%s\n' "$D4_SCAN_OUTPUT" \
-  | grep -E '^(MISSING_SKILL_MD|MISSING_SKILL_DESC|MISSING_SKILL_FRONTMATTER):' || true)
+fm() { awk 'NR==1 && $0=="---" {f=1; next} f && $0=="---" {exit} f {print}' "$1"; }
+
+BLOCKERS=""
+for root in .claude/skills .agents/skills; do
+  [ -d "$root" ] || continue
+  for d in "$root"/*/; do
+    [ -d "$d" ] || continue
+    skill="$root/$(basename "$d")"
+    if [ ! -f "$d/SKILL.md" ]; then
+      BLOCKERS="$BLOCKERS
+MISSING_SKILL_MD: $skill"; continue
+    fi
+    block=$(fm "$d/SKILL.md")
+    if [ -z "$block" ]; then
+      BLOCKERS="$BLOCKERS
+MISSING_SKILL_FRONTMATTER: $skill"; continue
+    fi
+    echo "$block" | grep -q '^description:' || BLOCKERS="$BLOCKERS
+MISSING_SKILL_DESC: $skill"
+  done
+done
+BLOCKERS=$(printf '%s' "$BLOCKERS" | sed '/^$/d')
 
 if [ -n "$BLOCKERS" ]; then
   echo "[BLOCKED] D4 有无法自动修复的条目，本轮不自动合并："
   printf '%s\n' "$BLOCKERS"
 fi
 ```
+
+注意这里**只查不可自动修复的三类**：`name` 缺失不进 BLOCKERS，因为 Step 3 已经把它补掉了；
+把已修好的东西也算作阻塞，会让每一轮都卡住。
 
 命中时的强制动作：
 
