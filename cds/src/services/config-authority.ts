@@ -138,7 +138,7 @@ export function classifyComposeField(path: string): FieldAuthorityEntry & { know
  * - `cds-env-scope`    密钥/凭据/占位符,值只应存在于 CDS env scope
  *                      (`cdscli env get --scope <project>`)。repo **不得**携带
  *                      实际值或 TODO 占位——携带即视为「应剥离」违规(直接偿还
- *                      debt.cds.compose-secrets D1:TODO 占位卡死全量 import)。
+ *                      doc/debt.cds.md「CDS compose 模板 TODO secrets」 D1:TODO 占位卡死全量 import)。
  *
  * 判定只看 key 语义 + value 形态,不做任何网络/DB 查询,纯函数可测。
  */

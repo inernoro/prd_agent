@@ -11,6 +11,7 @@ import {
   ArrowUp,
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
+import { HERO_GRADIENT, HERO_GRADIENT_FG } from '../sections/HeroSection';
 
 /**
  * ProductMockup — Linear 风格的"真实产品壳"
@@ -34,7 +35,7 @@ export function ProductMockup() {
         className="absolute -inset-x-20 -bottom-20 top-20 pointer-events-none"
         style={{
           background:
-            'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(124, 108, 240, 0.22) 0%, rgba(122, 140, 246, 0.12) 35%, transparent 70%)',
+            'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(217, 119, 87, 0.22) 0%, rgba(224, 160, 107, 0.12) 35%, transparent 70%)',
           filter: 'blur(60px)',
         }}
       />
@@ -43,13 +44,13 @@ export function ProductMockup() {
       <div
         className="relative rounded-2xl overflow-hidden border border-token-subtle"
         style={{
-          background: '#0A0D14',
+          background: '#12100E',
           boxShadow:
-            '0 50px 120px -30px rgba(124, 108, 240, 0.35), 0 30px 80px -20px rgba(122, 140, 246, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+            '0 50px 120px -30px rgba(217, 119, 87, 0.35), 0 30px 80px -20px rgba(224, 160, 107, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
         }}
       >
         {/* 浏览器 chrome */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-token-subtle/[0.06] bg-[#080A10]">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-token-subtle/[0.06] bg-[#100E0C]">
           <div className="flex gap-1.5">
             <span className="w-3 h-3 rounded-full bg-token-nested" />
             <span className="w-3 h-3 rounded-full bg-token-nested" />
@@ -69,8 +70,8 @@ export function ProductMockup() {
         {/* 应用主体 */}
         <div className="flex h-[480px]">
           {/* 左侧 icon 导航 */}
-          <aside className="w-14 border-r border-token-subtle/[0.06] py-4 flex flex-col items-center gap-2 bg-[#080A10]">
-            <NavIcon Icon={MessageSquare} active tint="#a855f7" />
+          <aside className="w-14 border-r border-token-subtle/[0.06] py-4 flex flex-col items-center gap-2 bg-[#100E0C]">
+            <NavIcon Icon={MessageSquare} active tint="#C8623A" />
             <NavIcon Icon={ImageIcon} />
             <NavIcon Icon={PenLine} />
             <NavIcon Icon={FileText} />
@@ -108,11 +109,11 @@ export function ProductMockup() {
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                   style={{
-                    background: 'linear-gradient(135deg, rgba(168,85,247,0.25), rgba(124,58,237,0.15))',
-                    border: '1px solid rgba(168,85,247,0.4)',
+                    background: 'linear-gradient(135deg, rgba(200, 98, 58,0.25), rgba(176, 82, 46,0.15))',
+                    border: '1px solid rgba(200, 98, 58,0.4)',
                   }}
                 >
-                  <Sparkles className="w-4 h-4 text-purple-300" />
+                  <Sparkles className="w-4 h-4 text-[#E0A06B]" />
                 </div>
                 <div className="min-w-0">
                   <div className="text-[13px] text-white/90 font-medium truncate" style={{ fontFamily: 'var(--font-display)' }}>
@@ -128,8 +129,8 @@ export function ProductMockup() {
                 <button
                   className="px-3 py-1.5 rounded-md text-[11px] text-white/90"
                   style={{
-                    background: 'linear-gradient(135deg, rgba(168,85,247,0.3), rgba(124,58,237,0.2))',
-                    border: '1px solid rgba(168,85,247,0.4)',
+                    background: 'linear-gradient(135deg, rgba(200, 98, 58,0.3), rgba(176, 82, 46,0.2))',
+                    border: '1px solid rgba(200, 98, 58,0.4)',
                   }}
                 >
                   {mock.actions.continue}
@@ -158,8 +159,8 @@ export function ProductMockup() {
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                   style={{
-                    background: 'linear-gradient(135deg, #a855f7, #7c3aed)',
-                    boxShadow: '0 0 20px rgba(168, 85, 247, 0.4)',
+                    background: 'linear-gradient(135deg, #C8623A, #B0522E)',
+                    boxShadow: '0 0 20px rgba(200, 98, 58, 0.4)',
                   }}
                 >
                   <Sparkles className="w-4 h-4 text-white" />
@@ -181,10 +182,10 @@ export function ProductMockup() {
                   <div className="flex items-center gap-2 mt-3 text-[11px] text-white/45">
                     <span
                       className="relative flex h-2 w-2"
-                      style={{ filter: 'drop-shadow(0 0 4px #a855f7)' }}
+                      style={{ filter: 'drop-shadow(0 0 4px #C8623A)' }}
                     >
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-purple-400" />
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#D97757] opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-[#D97757]" />
                     </span>
                     {mock.chat.progress}
                   </div>
@@ -205,10 +206,13 @@ export function ProductMockup() {
                   <Paperclip className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  className="w-7 h-7 rounded-md flex items-center justify-center text-white"
+                  className="w-7 h-7 rounded-md flex items-center justify-center"
                   style={{
-                    background: 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)',
-                    boxShadow: '0 0 12px rgba(124, 108, 240, 0.5)',
+                    // 同页脚徽标：这里原是 HERO_GRADIENT 的手抄副本（起点已漂成旧值），
+                    // 白色箭头在最亮那档只有 2.23:1，连图标的 3:1 都不够。
+                    background: HERO_GRADIENT,
+                    color: HERO_GRADIENT_FG,
+                    boxShadow: '0 0 12px rgba(217, 119, 87, 0.5)',
                   }}
                 >
                   <ArrowUp className="w-3.5 h-3.5" />
@@ -259,8 +263,8 @@ function ConversationItem({
     <button
       className="w-full text-left px-3 py-2 rounded-lg transition-colors"
       style={{
-        background: active ? 'rgba(168, 85, 247, 0.10)' : 'transparent',
-        border: active ? '1px solid rgba(168, 85, 247, 0.25)' : '1px solid transparent',
+        background: active ? 'rgba(200, 98, 58, 0.10)' : 'transparent',
+        border: active ? '1px solid rgba(200, 98, 58, 0.25)' : '1px solid transparent',
       }}
     >
       <div
@@ -285,10 +289,10 @@ function MockImage({
 }) {
   // 4 种不同的"合成图"渐变模式，模拟不同方向的生成结果
   const gradients = [
-    'radial-gradient(circle at 30% 70%, #00d4ff 0%, transparent 45%), radial-gradient(circle at 70% 30%, #7c3aed 0%, transparent 45%), linear-gradient(135deg, #0a0a1e 0%, #1a0a2e 100%)',
-    'radial-gradient(circle at 50% 80%, #f43f5e 0%, transparent 50%), radial-gradient(circle at 20% 30%, #3b82f6 0%, transparent 45%), linear-gradient(135deg, #0b0510 0%, #1a0a20 100%)',
-    'radial-gradient(circle at 40% 50%, #00f0ff 0%, transparent 50%), linear-gradient(135deg, #050a15 0%, #0a1025 100%)',
-    'radial-gradient(circle at 60% 40%, #a855f7 0%, transparent 45%), radial-gradient(circle at 30% 80%, #ec4899 0%, transparent 45%), linear-gradient(135deg, #100515 0%, #200a25 100%)',
+    'radial-gradient(circle at 30% 70%, #6BA9A2 0%, transparent 45%), radial-gradient(circle at 70% 30%, #B0522E 0%, transparent 45%), linear-gradient(135deg, #14100C 0%, #241A12 100%)',
+    'radial-gradient(circle at 50% 80%, #C8623A 0%, transparent 50%), radial-gradient(circle at 20% 30%, #3B7A75 0%, transparent 45%), linear-gradient(135deg, #120F0C 0%, #221A14 100%)',
+    'radial-gradient(circle at 40% 50%, #6BA3B8 0%, transparent 50%), linear-gradient(135deg, #100E0C 0%, #151210 100%)',
+    'radial-gradient(circle at 60% 40%, #C8623A 0%, transparent 45%), radial-gradient(circle at 30% 80%, #D9A05E 0%, transparent 45%), linear-gradient(135deg, #161210 0%, #2A1F18 100%)',
   ];
 
   return (

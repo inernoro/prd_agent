@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：跟踪不属于大里程碑但仍要裁决的横向事项，每条必须有编号、优先级、完成条件与归属。
+**谁该读**：做排期与裁决的人。
+**读完能做什么**：挑出下一项该做的横向事项。
+
+---
+
 ## 定位
 
 本文只跟踪不属于大期里程碑、但仍需要实施或裁决的 CDS 横向事项。已完成的 UF、GAP、L10N、FU 和 TEST 历史不再保留在计划中，可从 Git 历史和周报查询；长期风险应进入对应 `debt.cds.*` 台账。
@@ -26,10 +32,10 @@
 
 下列旧矩阵内容不再作为计划项：
 
-- Mongo 单文档与 `state.json` 退场：`debt.cds.state-json.md`。
-- 分支网络、共享别名和队列隔离：`debt.cds.branch-isolation.md`。
-- 项目迁移和跨节点复制：`debt.cds.project-migration.md`。
-- UI 视觉与响应性能：`debt.cds.performance.md`。
+- Mongo 单文档与 `state.json` 退场：[debt.cds.state-json.md](./debt.cds.state-json.md)。
+- 分支网络、共享别名和队列隔离：[debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md)。
+- 项目迁移和跨节点复制：[debt.cds.md](./debt.cds.md)。
+- UI 视觉与响应性能：[debt.cds.performance.md](./debt.cds.performance.md)。
 
 ## 执行顺序
 
@@ -47,8 +53,8 @@
 
 ## 关联文档
 
-- `doc/plan.cds.status.md`
-- `doc/plan.cds.multi-project-phases.md`
-- `doc/plan.cds.web-migration.md`
-- `doc/design.cds.md`
-- `doc/guide.cds.view-parity.md`
+- [doc/plan.cds.status.md](./plan.cds.status.md)
+- [doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md)
+- [doc/plan.cds.web-migration.md](./plan.cds.web-migration.md)
+- [doc/design.cds.md](./design.cds.md)
+- [doc/guide.cds.view-parity.md](./guide.cds.view-parity.md)

@@ -26,7 +26,7 @@
  *    端口的服务），命中者标「未纳入监控」而不是「故障」。此外，端口开着但
  *    不说 HTTP 的目标会在连续拿到协议层错误后**自动降级**为容器状态判定，
  *    不再永久标红。两条合起来治「非 HTTP 服务被永久误报」，
- *    见 doc/debt.cds.uptime-monitor.md。
+ *    见 doc/debt.cds.md「CDS 存活监控（uptime-monitor）」。
  *
  * 纯计算（可用率 / 去抖 / 降采样 / 事件合成）全在 services/uptime-metrics.ts，
  * 本文件只做「发探测 + 编排 + 落盘」。

@@ -6,7 +6,7 @@
 # `cds/.cds/forwarder-routes.json`。
 #
 # 核心承诺:cds-master 自更新 / 重启时,本进程不动,*.miduo.org 业务流量
-# 永远 200。详见 doc/design.cds-control-data-split.md 4.1 节。
+# 永远 200。详见 doc/design.cds.control-data-split.md 4.1 节。
 #
 # 安装(推荐):
 #   cd cds && sudo ./exec_cds.sh install-forwarder
@@ -23,7 +23,7 @@
 #   curl -s http://127.0.0.1:9090/__forwarder/healthz | python3 -m json.tool
 
 Description=CDS Forwarder (data-plane reverse proxy)
-Documentation=file:///home/user/prd_agent/doc/design.cds-control-data-split.md
+Documentation=file:///home/user/prd_agent/doc/design.cds.control-data-split.md
 After=network-online.target
 Wants=network-online.target
 

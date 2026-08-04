@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
 
+**一句话**：验收规范只有一处正本，技能、平台文档与自动化提示词一律引用不复制，并有漂移校验兜底。
+**谁该读**：维护验收规范或写相关技能的人。
+**读完能做什么**：知道该改哪一份，以及引用时怎么写才不会漂移。
+
+---
+
 ## 1. 目标
 
 本规则定义 MAP 自动化验收规范的单一事实源、技能引用方式、海鲜市场分发 fallback、CDS 发布视图和漂移校验。目标是避免三类长期问题:
@@ -14,7 +20,7 @@
 
 | 层级 | 位置 | 角色 | 是否可人工编辑 | 说明 |
 |---|---|---|---|---|
-| 主源 | `doc/rule.acceptance.map-enterprise.md` 等仓库 Markdown | 规范 SSOT | 是 | 评审、PR、版本控制、代码审查都以这里为准 |
+| 主源 | [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) 等仓库 Markdown | 规范 SSOT | 是 | 评审、PR、版本控制、代码审查都以这里为准 |
 | 技能快照 | `.claude/skills/*/references/rules/*.md` | 离线 fallback | 否 | 从 `doc/` 生成，供海鲜市场下载包在无仓库 `doc/` 时读取 |
 | CDS 发布副本 | CDS `/reports` 中 `MAP自动化测试规范` 文件夹 | 在线阅读视图 | 否 | 由脚本从仓库 Markdown 发布，格式为 Markdown，不手写 HTML |
 | 执行报告 | CDS `/reports` 验收报告 | 单次执行结果 | 是，由验收流水线生成 | 引用规范，但不反向成为规范；HTML 必须来自标准模板 |
@@ -26,16 +32,16 @@
 
 | sourceId | path | 责任 |
 |---|---|---|
-| `acceptance.rule.enterprise` | `doc/rule.acceptance.map-enterprise.md` | 企业级验收主契约、场景、证明力、门禁、比例原则 |
-| `acceptance.rule.ssot` | `doc/rule.acceptance.ssot.md` | 本文件，定义规范同步和引用治理 |
-| `acceptance.guide.daily-sop` | `doc/guide.acceptance.daily-sop.md` | 每日自动化验收生命周期和通知契约 |
-| `acceptance.guide.report-evidence` | `doc/guide.acceptance.report-evidence.md` | 报告交互、截图、链接、失败红标和证据对象 |
-| `acceptance.design.knowledge-governance` | `doc/design.acceptance.knowledge-governance.md` | 规范、报告、知识库和引用关系治理 |
+| `acceptance.rule.enterprise` | [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) | 企业级验收主契约、场景、证明力、门禁、比例原则 |
+| `acceptance.rule.ssot` | [doc/rule.acceptance.ssot.md](./rule.acceptance.ssot.md) | 本文件，定义规范同步和引用治理 |
+| `acceptance.guide.daily-sop` | [doc/guide.acceptance.daily-sop.md](./guide.acceptance.daily-sop.md) | 每日自动化验收生命周期和通知契约 |
+| `acceptance.guide.report-evidence` | [doc/guide.acceptance.report-evidence.md](./guide.acceptance.report-evidence.md) | 报告交互、截图、链接、失败红标和证据对象 |
+| `acceptance.design.knowledge-governance` | [doc/design.acceptance.knowledge-governance.md](./design.acceptance.knowledge-governance.md) | 规范、报告、知识库和引用关系治理 |
 
 新增验收规范文件必须同时更新:
 
 1. 本文件的主源表。
-2. `doc/index.yml` 和 `doc/guide.list.directory.md`。
+2. `doc/index.yml` 和 [doc/guide.list.directory.md](./guide.list.directory.md)。
 3. 规则快照同步脚本的源清单。
 4. CDS 发布脚本的源清单。
 5. 相关技能的 `references/rules/manifest.json`。
@@ -68,7 +74,7 @@
 - 比例原则和停止条件。
 - P0/P1/P2 视觉问题定位规则。
 
-技能可以写“本技能在链路中的职责”，但不能重新解释三条链路的样式差异。凡涉及“单个验收直接用 `create-visual-test-to-kb`、每日验收走三技能链、日报走 `daily-report-summary` 且只借用取证环节”的说明，必须指向 `doc/rule.acceptance.map-enterprise.md` 的“验收链路总控矩阵”。
+技能可以写“本技能在链路中的职责”，但不能重新解释三条链路的样式差异。凡涉及“单个验收直接用 `create-visual-test-to-kb`、每日验收走三技能链、日报走 `daily-report-summary` 且只借用取证环节”的说明，必须指向 [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) 的“验收链路总控矩阵”。
 
 ## 5. 海鲜市场分发 fallback
 

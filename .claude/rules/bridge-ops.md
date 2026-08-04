@@ -1,4 +1,12 @@
+---
+paths:
+  - "cds/src/**/*.ts"
+---
+
 # Page Agent Bridge 操作规范
+
+**一句话**：用 CDS Bridge 操作预览页面时：分支 id 放 URL、每条命令必须带中文 description、页面内跳转只能用 spa-navigate（否则登录态会丢）。
+**什么时候撞上**：要用 Bridge 驱动页面做验收或排障时（该能力目前默认关闭，主要作历史兼容参考）。
 
 > 暂停状态（2026-05-28）：Bridge HTTP 轮询已默认关闭，`CDS_BRIDGE_ENABLED=1` 才会恢复。Agent 不应再把 Bridge 作为默认页面验收/操作手段；本规则只作为历史兼容和故障定位参考。
 
@@ -30,16 +38,16 @@ Agent 通过 CDS Bridge 操作预览页面时的强制规则。
 每条 `POST /api/bridge/command/:branchId` 必须包含 `description` 字段，用中文描述操作意图。用户在 Widget 操作面板中看到的就是这个文字。
 
 ```bash
-# ✅ 正确 (branchId 在 URL, description 在 body)
+# 正确 (branchId 在 URL, description 在 body)
 curl -X POST "$CDS/api/bridge/command/$BRANCH_ID" \
   -H "Content-Type: application/json" \
   -d '{"action":"click","params":{"index":6},"description":"点击「登录」按钮"}'
 
-# ❌ 会 404 (branchId 漏了 URL)
+# 错误：会 404 (branchId 漏了 URL)
 curl -X POST "$CDS/api/bridge/command" \
   -d '{"branchId":"xxx","action":"click","params":{"index":6}}'
 
-# ❌ 缺 description,用户看不懂 AI 要干啥
+# 错误：缺 description,用户看不懂 AI 要干啥
 curl -X POST "$CDS/api/bridge/command/$BRANCH_ID" \
   -d '{"action":"click","params":{"index":6}}'
 ```
@@ -49,9 +57,9 @@ curl -X POST "$CDS/api/bridge/command/$BRANCH_ID" \
 `navigate` 会全页面刷新，导致 `sessionStorage` 中的登录 token 丢失。登录后的所有页面跳转必须使用 `spa-navigate`。
 
 ```json
-// ✅ 登录后跳转
+// 正确：登录后跳转
 {"action":"spa-navigate","params":{"url":"/literary"},"description":"跳转到文学创作页面"}
-// ❌ 会丢 session
+// 错误：会丢 session
 {"action":"navigate","params":{"url":"/literary"}}
 ```
 

@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：历史提示词与技能双轨维护导致概念不一致，本文把账户技能统一到一处并明确交换格式。
+**谁该读**：接手技能系统的工程师。
+**读完能做什么**：说清技能存在哪、被谁消费、怎么跨平台交换。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：历史提示词与技能双轨维护，管理入口、执行读取和用户概念不一致。
@@ -117,7 +123,7 @@
 
 ## 关联文档
 
-- `doc/rule.skill.system.md`
-- `doc/rule.skill.header.md`
-- `doc/design.skill.marketplace-open-api.md`
-- `doc/guide.skill.workflow.md`
+- [doc/rule.skill.system.md](./rule.skill.system.md)
+- [doc/rule.skill.header.md](./rule.skill.header.md)
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md)
+- [doc/guide.skill.workflow.md](./guide.skill.workflow.md)

@@ -2,11 +2,17 @@
 
 > **版本**：v1.0 | **日期**：2026-06-02 | **状态**：草案
 
+**一句话**：把产品、版本、需求、功能、缺陷、客户、知识库串成一张关系网，做版本化管理与分级追溯。
+**谁该读**：该智能体的产品与工程师。
+**读完能做什么**：说清它与项目管理智能体的分工。
+
+---
+
 ## 一、管理摘要
 
 产品管理智能体把研发的核心对象——产品、版本、需求、功能、缺陷、客户、知识库——用一张关系网串起来，能像 TAPD 一样做版本化管理、分级追溯与流程流转，并能把这些关系可视化成知识图谱。它解决的是"需求从哪来（客户）、归到哪个版本、落成哪些功能、被哪些缺陷追溯、沉淀进哪个知识库"这条研发主线在系统里没有载体的问题。
 
-定位上它与已有的项目管理智能体（pm-agent）是两条不同的轴：pm-agent 管"临时性项目 + PMO 奖金评价"，product-agent 管"持续演进的产品 + 版本迭代"。缺陷不重建，复用缺陷管理智能体（defect-agent）只做追溯引用；知识库不重建，复用文档空间（DocumentStore）挂载。本质上它是把 `spec.srs.md` 附录D 的需求可追溯矩阵（RTM）从文档方法论做成可操作产品。
+定位上它与已有的项目管理智能体（pm-agent）是两条不同的轴：pm-agent 管"临时性项目 + PMO 奖金评价"，product-agent 管"持续演进的产品 + 版本迭代"。缺陷不重建，复用缺陷管理智能体（defect-agent）只做追溯引用；知识库不重建，复用文档空间（DocumentStore）挂载。本质上它是把 [spec.srs.md](./spec.srs.md) 附录D 的需求可追溯矩阵（RTM）从文档方法论做成可操作产品。
 
 ## 二、产品定位与边界
 
@@ -59,17 +65,17 @@
 
 ## 八、关联文档
 
-- `doc/spec.srs.md` 附录D：需求可追溯矩阵 RTM（方法论来源）
-- `doc/design.defect-agent.md`：缺陷管理（追溯引用对接）
+- [doc/spec.srs.md](./spec.srs.md) 附录D：需求可追溯矩阵 RTM（方法论来源）
+- [doc/design.defect-agent.md](./design.defect-agent.md)：缺陷管理（追溯引用对接）
 - `.claude/rules/app-identity.md`：appKey 隔离
-- `doc/debt.product-agent.md`：已知边界与后续债务
+- [doc/debt.product-agent.md](./debt.product-agent.md)：已知边界与后续债务
 
 ## 九、风险
 
 - 通用引擎易过度设计：P0 只给够六类对象用的最小 schema。
 - 与 defect-agent 边界：缺陷只追溯引用、不双写。
 - 知识图谱性能：大产品节点多，P2 按版本/层级懒加载。
-- MongoDB 索引：新集合索引需求登记到 `doc/guide.platform.mongodb-indexes.md` 交 DBA（禁止应用自动建索引）。
+- MongoDB 索引：新集合索引需求登记到 [doc/guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md) 交 DBA（禁止应用自动建索引）。
 
 ## 十、已落地能力更新（2026-06-08）
 

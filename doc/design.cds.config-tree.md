@@ -2,8 +2,14 @@
 
 > **版本**：v1.0 | **日期**：2026-07-06 | **状态**：已落地
 
+**一句话**：配置分全局、项目、分支、分支快照四层，每个值都能解释来源与被谁覆盖。
+**谁该读**：改配置体系的工程师；排查配置不生效的人。
+**读完能做什么**：定位一个值最终由哪一层决定。
+
+---
+
 > **更新**:2026-07-06
-> 对应工程看板:`doc/plan.cds.status.md` §〇「配置体系三波演进」。
+> 对应工程看板:[doc/plan.cds.status.md](./plan.cds.status.md) §〇「配置体系三波演进」。
 
 
 ## 一、管理摘要
@@ -51,6 +57,10 @@ CDS 全局默认(_global 变量层)
 
 合并中枢不变:`resolveEffectiveProfile`(baseline → 分支覆盖 → 部署模式)与 `mergeBranchProfiles`(项目底座 + 分支追加,撞 id 底座赢)。字段权威边界由 `config-authority.ts` 三级(repo/platform/user)把守。
 
+### 全局默认层的显式开关
+
+`_global` scope 的 CDS 全局变量默认**不**对项目生效——只有项目显式打开 `Project.inheritGlobalEnv` 才继承。这是有意设计(全局变量改动不应静默打穿所有项目,呼应本文「八、关联文档」列出的跨项目隔离规则通道 3),但要求配置可观测性检查器(§四)与合并中枢对这个开关读同一份真相:曾出现过检查器在未开启继承时仍把全局变量显示为「已生效」的展示层 bug(检查器与实际合并逻辑各判了一遍)。
+
 ### 派生的三层判定策略(W3a)
 
 | 场景 | 行为 | 理由 |
@@ -75,7 +85,7 @@ CDS 全局默认(_global 变量层)
 - 段A 分支 customEnv:`cds-builtin → mirror → global → project → branch → cds-derived(保留 key)`
 - 段B 单容器运行时:`customEnv → JWT 兜底 → node PATH → profile 层(底座/分支覆盖/部署模式) → 版本元数据 → per-branch DB 改写 → ${VAR} 模板展开`
 
-实现原则:**单一代码路径**。段B抽为纯函数 `resolveProfileRuntimeEnvWithProvenance`(`cds/src/services/env-provenance.ts`),输入「带来源标注的层数组」,输出 `{env, provenance}`;部署路径退化为单层包装只取 `.env`,行为与旧实现逐字节一致(container.test.ts 43 例护栏)。检查器端点把两段按真实来源拆层传入,免费获得溯源——不存在第二份合并逻辑,永不漂移。
+实现原则:**单一代码路径**。段B抽为纯函数 `resolveProfileRuntimeEnvWithProvenance`,输入「带来源标注的层数组」,输出 `{env, provenance}`;部署路径退化为单层包装只取 `.env`,行为与旧实现逐字节一致(container.test.ts 43 例护栏)。检查器端点把两段按真实来源拆层传入,免费获得溯源——不存在第二份合并逻辑,永不漂移。
 
 `EnvSource` 12 值枚举 + `EnvKeyProvenance`(value/source/detail/shadowed/templated)是公开契约,定义在 `cds/src/types.ts`。
 
@@ -125,7 +135,7 @@ CDS 全局默认(_global 变量层)
 
 - **已落地**:仓库 `cds-compose.yml` 的 `x-cds-env` 已剥离全部密钥/占位符键(仅留
   `ASSETS_PROVIDER` / `TENCENT_COS_PREFIX` 结构默认),密钥统一走 CDS env scope →
-  消除 `debt.cds.compose-secrets.md` D1 的 import-reject 根因(占位覆盖真实密钥);
+  消除 [debt.cds.md](./debt.cds.md) D1 的 import-reject 根因(占位覆盖真实密钥);
 - **已落地**:`config-authority.classifyEnvSeed(key,value)` = seed 级判定(`repo-structural`
   vs `cds-env-scope`);`compose-drift.computeComposeDrift(repo, live)` 纯函数按权威分级
   产出漂移报告(密钥应剥离 / 结构漂移同步建议 / CDS 运行时独占不回写);
@@ -158,12 +168,12 @@ CDS 全局默认(_global 变量层)
 
 ## 八、关联文档
 
-- `doc/plan.cds.status.md` §〇 —— 工程看板(进度/blocker/证据)
-- `doc/design.cds.branch-local-extra-services.md` —— 分支临时服务的底层设计
-- `doc/design.cds.branch-network-isolation.md` —— 分支专属网(cds-br-*)
-- `doc/spec.cds.compose-contract.md` —— compose 契约(波4 的改造对象)
-- `doc/debt.cds.compose-secrets.md` —— D1 债务(波4 偿还)
-- `doc/guide.cds.multi-branch-db.md` —— per-branch DB 用法
+- [doc/plan.cds.status.md](./plan.cds.status.md) §〇 —— 工程看板(进度/blocker/证据)
+- [doc/design.cds.branch-local-extra-services.md](./design.cds.branch-local-extra-services.md) —— 分支临时服务的底层设计
+- [doc/design.cds.branch-network-isolation.md](./design.cds.branch-network-isolation.md) —— 分支专属网(cds-br-*)
+- [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md) —— compose 契约(波4 的改造对象)
+- [doc/debt.cds.md](./debt.cds.md) —— D1 债务(波4 偿还)
+- [doc/guide.cds.multi-branch-db.md](./guide.cds.multi-branch-db.md) —— per-branch DB 用法
 - `.claude/rules/cross-project-isolation.md` —— 隔离穿透审计(派生拷贝的风险对照)
 
 ## 九、风险
@@ -174,3 +184,13 @@ CDS 全局默认(_global 变量层)
 | 溯源端点泄密 | 高 | maskSecrets SSOT + 不提供 reveal + vitest 脱敏断言 |
 | 派生拷贝隔离穿透(硬编码连接串) | 中 | 检查器来源可辨 + 后续警示徽标;跨项目派生直接拒绝 |
 | 快照回滚不重建容器 | 中 | 响应 hint 明示「重新部署后生效」 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 四、配置可观测性(生效配置检查器,波2) | `cds/src/services/env-provenance.ts` |

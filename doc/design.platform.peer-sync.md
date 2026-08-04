@@ -2,8 +2,14 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：草案
 
+**一句话**：两套独立部署的系统之间互传内容：一边导出打包，另一边按用户名对齐落地，知识库支持双向。
+**谁该读**：要新增可同步资源类型的工程师；做跨环境内容搬运的运维。
+**读完能做什么**：说清一次互传经过哪些步骤，以及新资源类型要实现哪五样能力。
+
+---
+
 > 负责模块：prd-api（PeerNode + PeerSync）、prd-admin（系统互联设置 + 发送到对端）
-> 关联：`design.platform.server-authority.md`、`rule.platform.app-identity.md`、知识库现有 `DocumentStoreSyncController`
+> 关联：[design.platform.server-authority.md](./design.platform.server-authority.md)、[rule.platform.app-identity.md](./rule.platform.app-identity.md)、知识库现有 `DocumentStoreSyncController`
 
 
 ## 1. 管理摘要（30 秒看懂）
@@ -104,24 +110,19 @@ X-Peer-Sign: HMAC_SHA256(sharedSecret, "{METHOD}\n{path}\n{ts}\n{sha256(body)}")
 
 ### 5.2 通用资源框架（ISyncableResource）
 
-```csharp
-public interface ISyncableResource
-{
-    string ResourceType { get; }              // "document-store"
-    string DisplayName { get; }               // "知识库"
-    bool SupportsBidirectional { get; }       // 知识库 true，其它 false
+每种可同步的资源要提供五样能力：
 
-    // 发起方：列出本节点当前用户可发送的条目
-    Task<IReadOnlyList<SyncItemSummary>> ListItemsAsync(SyncActor actor, CancellationToken ct);
+| 能力 | 说明 |
+|---|---|
+| 自报家门 | 资源类型标识与中文显示名，界面直接用它做分组 |
+| 声明方向 | 是否支持双向同步。知识库支持，其余目前只支持单向推送 |
+| 列条目 | 按当前操作者的权限，列出本节点可发送的条目 |
+| 导出 | 把一个条目打包成可传输的包，并给出内容签名 |
+| 落地 | 把收到的包写进本节点，**按用户名对齐归属**，并回报落地结果 |
 
-    // 计算/发送两阶段（compute-then-send）：导出一个条目为 bundle
-    Task<SyncResourceBundle> ExportAsync(string itemId, SyncActor actor, CancellationToken ct);
-    Task<string> ComputeSignatureAsync(string itemId, CancellationToken ct);
+两条约束：**导出与发送分两步**（先算出要发什么、再发，中途不许重新解析，避免「选了 A 发了 B」）；
+**签名用于去重与幂等**——同一份内容重复推送不产生第二份副本。
 
-    // 接收方：把 bundle 落到本节点，按用户名对齐归属
-    Task<SyncApplyOutcome> ApplyAsync(SyncResourceBundle bundle, SyncActor actor, SyncApplyMode mode, CancellationToken ct);
-}
-```
 
 `SyncResourceRegistry` 反射收集所有实现，按 `ResourceType` 索引。新增资源 = 加一个实现类 + DI 注册，端点零改动。
 
@@ -235,11 +236,11 @@ bundle 里每个"作者/拥有者"字段带**用户名 + 邮箱**（不带 userI
 ---
 
 ## 9. 关联设计文档
-- `design.platform.server-authority.md`：长任务 / CancellationToken.None
+- [design.platform.server-authority.md](./design.platform.server-authority.md)：长任务 / CancellationToken.None
 - 知识库现有同步：`DocumentStoreSyncController`（保留 token 路径）
 
 ## 10. 风险与债务
-- **二进制附件跨节点**：v1 只传正文 + 引用元数据，对端无对应附件时图片可能断链 → 列入 `debt.platform.peer-sync.md`。
+- **二进制附件跨节点**：v1 只传正文 + 引用元数据，对端无对应附件时图片可能断链 → 列入 [debt.platform.md](./debt.platform.md)。
 - **影子用户**：v1 不创建，未对齐作者归到操作者 → 后续可加"按邮箱建影子账户"开关。
 - **解除配对的对端清理**：v1 仅本端删除，对端残留 PeerNode 需对端管理员手动删 → 后续加 revoke 通知。
 - **SSRF**：对端 baseUrl 必须过 `ISafeOutboundUrlValidator`（沿用知识库同步）。

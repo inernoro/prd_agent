@@ -56,7 +56,7 @@ export function UsagePage() {
     const to = new Date();
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
     const params = { from: from.toISOString(), to: to.toISOString() };
-    getLogsSummary(params).then((res) => {
+    getLogsSummary({ ...params, view: 'logical' }).then((res) => {
       if (res.success) setSummary(res.data);
       else setError(res.error.message);
     });

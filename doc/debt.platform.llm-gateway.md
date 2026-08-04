@@ -1,26 +1,30 @@
 # LLM 网关与模型池 · 债务台账
 
 > **版本**：v2.7 | **日期**：2026-07-18 | **状态**：开发中
-> **关联设计**：`design.platform.llm-gateway.unification.md`（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
-> **整改计划**：`plan.platform.llm-gateway.full-cutover.md`
+
+**一句话**：网关与模型池的债务总表，含协议路由收口与多次生产取证记录。
+**谁该读**：接手网关的工程师；做发布判断的人。
+**读完能做什么**：查清某条债务的状态与对应证据。
+
+---
+> **关联设计**：[design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
+> **整改计划**：[plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)
 
 ## 总览
 
 当前 open: 21 / in-progress: 4 / paid: 22 / 总计: 47
 
-本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 `design.platform.llm-gateway.unification.md`。
+本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
 ## 债务列表
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
-| 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | paid | PR #1085、#1086 已落地 tenant/team/user/membership/RBAC、服务端租户解析、租户数据隔离、tenant-scoped key 和自助接入；请求自报 tenantId 不进入权威上下文 |
 | 2026-07-16-tenant-aggregate-hard-limit | medium | 2026-07-16 | 当前请求硬限制位于 appCaller 月预算、appCaller RPM 与 service key RPM；用量页能按 TenantId 汇总，但 `LlmGwTenant` 没有跨 appCaller 的月预算或速率字段，因此不存在单独的租户总硬上限 | 外部客户合同要求整个租户共享一个强制总预算或总速率，且不能只靠覆盖全部 appCaller 达成时 | paid | 已新增租户总月预算、单次原子预占和总 RPM；serving 以租户账本与分钟窗口跨 appCaller 原子执行，并与 appCaller 层同时返回限流头；控制台、并发/跨租户测试和权威教程同步更新。 |
 | 2026-07-14-tenant-provision-crash-consistency | high | 2026-07-14 | 租户和成员创建已对可捕获写异常执行补偿，并按 slug 或成员目标支持幂等重放；成员关键变更也会先写入包含 TenantId 的 pending 审计意图，再执行业务写入并完成审计。但 standalone Mongo 无多文档事务，进程在多次写入之间硬退出时仍可能留下半成品引用，或留下已完成业务但尚未收口的 pending 审计 | 开放匿名租户注册、控制台改为多副本，出现 provisioning 残留或 pending 审计告警前 | paid | 租户、成员和 owner 边界写入先登记带精确对象 ID、租约和 generation 的恢复操作；启动与 30 秒循环会 fencing 接管过期 pending/repairing 操作，回滚半成品或完成已提交的 owner 变更。Mongo 故障注入测试覆盖租户/成员硬退出和修复器二次退出接管 |
 | 2026-07-14-owner-mutation-lease-fencing | high | 2026-07-14 | 最后一个 owner 保护已使用租户级 30 秒租约和 membership version CAS 串行化常规并发；若一次 owner 变更停顿超过租约且另一实例接管，旧持有者仍可能在过期后继续提交不同 membership 的写入，租约 token 尚未形成跨文档 fencing | 控制台多副本运行、owner 变更可能超过 30 秒，或开放外部组织自主管理前 | paid | 移除可过期的进程锁；租户文档现在保存 active owner membership 权威集合和递增 fencing generation，移除 owner 使用单文档原子条件要求集合长度大于 1。并发移除测试证明两名 owner 只会成功移除一名；硬退出时 owner 权限按权威集合 fail-closed，并由恢复操作收口 membership |
 | 2026-07-15-cross-tenant-membership-invitation | high | 2026-07-15 | 为阻止用户名枚举和未经本人确认的跨租户挂载，成员自助页首版只允许创建租户专属新账号；同一既有用户加入第二个租户尚缺少一次性邀请、本人接受、过期和撤销流程 | 需要让已有 Gateway 用户加入另一个外部租户时 | open | 新增 tenant-scoped invitation，邀请明文只展示一次，落库只存 hash；接受者必须以自己的服务端会话确认，创建 membership 时再次校验 TenantId、角色、团队、过期时间和撤销状态；完成前教程不得宣称可直接添加已有其他租户账号 |
 | 2026-07-15-external-exchange-websocket | medium | 2026-07-15 | 外部租户自助 Exchange 的 HTTP 上游已使用固定 DNS 解析结果的安全出站连接；WebSocket 客户端尚不能固定已验证地址，直接放开会留下 DNS 重绑定进入内网的风险，因此首版明确拒绝外部 WebSocket Exchange | 外部租户需要接入 WebSocket ASR 或其他长连接上游时 | paid | 外部 Exchange 只开放 WSS；保存和执行均拒绝 userinfo、localhost、私网及保留地址，运行时重新解析并固定全部已验证公网 IP，以原始主机名校验证书且禁用代理和跳转。内部租户既有私网 WebSocket 路径保持不变，定向安全测试和每日教程漂移巡检防止边界回退 |
-| 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
 | 2026-07-12-cost-chart-truthfulness | high | 2026-07-12 | 金额依赖模型池价格快照；缺价格、币种或汇率时 `Estimated USD` 可能显示 0 或不可比较，时间图表也存在比例和渲染可读性问题 | 将控制台金额用于预算、账单或团队决策前 | paid | PR #1088 已区分 estimated/unknown、按币种汇总并展示价格覆盖率；unknown cost 不再显示为 0，CNY/USD 不再无汇率相加 |
 | 2026-06-24-protocol-on-platform | high | 2026-06-24 | 接口模式（adapter/transformer 选择）历史上绑在平台 `PlatformType`；当前文本模型解析链已支持 `池条目 Protocol > 模型 Protocol > 平台 PlatformType`，并按解析出的 Protocol 选 adapter；Gateway adapter 选择已识别 `anthropic/openai-compatible/claude-compatible/openrouter/gemini-compatible` 协议别名；生图 adapter 选择也已改为 Gateway `Protocol` 优先，`apiUrl/modelName` 只做后备；Agent runtime profile 从模型池物化时也已优先使用模型 `Protocol`；ASR chat-audio 分支已按解析 `Protocol` 优先判断，`PlatformType` 只做旧数据后备；raw 发送阶段已修复 `GatewayModelResolution -> ModelResolutionResult` 漏传 `Protocol`，避免 raw 重新按 `PlatformType` 选 adapter；Exchange transformer/WebSocket 专用分支按 `ExchangeTransformerType` 路由，剩余风险主要是生产证据与重放边界 | 任何"同平台多协议"或"某模型换格式"需求 | in-progress | 已补 `ModelResolverTests.PoolProtocolPriority_ShouldPreferPoolItemThenModelThenPlatform`、`GatewayAdapterProtocolAliasTests`、`ImageGenPlatformAdapterTests.GetAdapter_ByExplicitProtocol_OverridesModelAndUrlDetection`、`InfraAgentRuntimeProfileProtocolTests`、`AsrAudioRoutePolicyTests`、`LlmGatewayTests.SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter` 防退化；剩余解法=补齐生产 shadow/canary 证据并明确 Exchange async poll、二进制下载、WebSocket ASR 不跨 provider 重放的发布边界 |
 | 2026-07-09-gw-config-authority-not-migrated | high | 2026-07-09 | GW-owned appCaller、模型池、平台、模型、Exchange、key 和控制台治理能力已经落地，生产也已开启 active caller MAP fallback 退场门；但 `2026-07-10` 快照只有 `active=3`、`configured=15`、`disabled=1`，resolver 对 configured/discovered caller 仍可能读取 MAP 路由配置。执行经过 GW HTTP 不等于全部模型池权威已经迁移 | 宣称“GW 已成为全部 AI 请求的唯一配置权威”或准备让外部系统长期接入 GW 时 | paid | 生产 config-authority 为 ready，MAP fallback 0，configured/active caller 均由 GW-owned 池解析；静态和运行时守卫持续防漂移 |
@@ -30,7 +34,6 @@
 | 2026-07-11-appcaller-static-runtime-authority | high | 2026-07-11 | serving 会把首次请求写入 `llm_gateway.llmgw_app_callers`，但 `LlmGateway.TryValidateAppCaller` 曾要求命中 MAP `AppCallerRegistry` 静态常量 | 外部系统或新 MAP 功能只按目标协议携带 appCallerCode、未先修改 MAP 代码常量时 | paid | PR #1070 已把运行时准入改为 canonical 格式和 modelType 后缀；生产动态 caller、预算、并发、scoped key、failover 与清理验收全部通过 |
 | 2026-07-11-release-probe-transport-label | medium | 2026-07-11 | 当前提交 19 条日志中有 1 条发布探针记录标为 `inproc`，且 `SourceSystem/IngressProtocol` 为空；其余 18 条为 `http` | 操作者按 transport 过滤判断 MAP 是否回退时 | paid | PR #1076 已统一注入 `release-probe / gw-native / http / IsHealthProbe=true`；最终生产 commit 的 25 条发布门日志均为 `transport=http` |
 | 2026-07-11-appcaller-mixed-route-policy-drift | medium | 2026-07-11 | registry 仅保存单值 `LastObservedModelPolicy`；同一 appCaller 合法混用 auto 与 pinned 时，后一次请求会覆盖观测值并让 runtime gate 反复报告 route drift | 生产 preflight 使用 auto，但验收或实验请求使用 pinned 时 | paid | PR #1076 改为累计 observed policy/pool/parameter 集合，配置值命中集合即无漂移；最终视频 pinned 治理后 runtime gate `blocked=0` |
-| 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | paid | PR #1076、#1079、#1080 已完成 `--maintenance-from-commit`、基线审计和部署层证据交接；最终 commit 的 `http-full success` 台账已验证该路径 |
 | 2026-07-13-maintenance-rollout-ledger-runtime-gate | high | 2026-07-13 | `exec_dep.sh` 已能在审计过的 full-http 维护发布中跳过首次切换 runtime gate，但 `llmgw-rollout-ledger.py` 最终追加阶段仍要求 `runtimeGates.required+ok+ready`，导致容器、health、serving probe 与生产 preflight 全部通过后仍把维护发布记为失败 | full-http 后通过 `--maintenance-from-commit` 发布维护版本 | paid | PR #1103 修复部署执行层；PR #1109（`changelogs/2026-07-13_llmgw-maintenance-ledger-runtime-skip.md`）已让 `llmgw-rollout-ledger.py` 明确区分首次切换与维护发布，并在 `GatewayDataDomainGuardTests.cs` 新增维护发布严格放行、普通发布拒绝跳过 Gate 的回归测试；2026-07-13 生产使用 CDS 精确 SHA 只读验证 Run `rel_51f99e083b7d6b4d` 完成台账收口。后续 2026-07-14 `llmgw-maintenance-ledger-gate` 修复的"重复要求配置权威与运行门"为独立衍生问题，不影响本行结论 |
 | 2026-07-13-release-static-artifact-worktree-drift | high | 2026-07-13 | CDS 生产 release worktree 能绑定后端不可变镜像，但 `prd-admin` 静态包没有随目标 commit 形成同等级的可复用产物；首次 v2 发布因 release worktree 缺少 dist 中止，需要从当前生产 dist 复制后才能继续 | 从非最新 main 的精确提交发布同时包含控制台改动时 | open | 应让 CDS release artifact 同时携带 commit 级后端镜像、LLMGW web 和 `prd-admin` dist 及 SHA256 manifest；发布脚本必须验证三者 revision 一致，禁止依赖生产工作树或 latest 静态包 |
 | 2026-07-10-gw-log-index-retention | high | 2026-07-10 | `llm_gateway` 请求日志、shadow、审计集合基本只有 `_id` 索引，且日志保留请求/响应/thinking 等内容时没有分层保留期 | 日志增长、summary/预算查询或隐私审计时 | paid | PR #1078 已实现查询索引、敏感正文清理、分层 TTL、dry-run 与 lifecycle 状态；生产最近一次 lifecycle 为 `applied` 且全部索引 ready |
@@ -51,12 +54,10 @@
 | 2026-06-24-stats-continuity | medium | 2026-06-24 | appCallerCode 还是计费/统计维度，StatsController 靠 `chat.*` 前缀摘非 chat token；降级若改名/合并会错乱历史分段 | code 降级时 | open | 降级=绑定变可选，绝不改 code 字符串；测试 `Stats_AfterCodeDowngrade_SegmentationUnchanged` |
 | 2026-06-24-image-size-cap-orphan | low | 2026-06-24 | image_gen_size_caps 按 modelId/platformId 做键缓存上游允许尺寸；协议/模型身份变更后缓存键孤儿，首发请求重吃 400 再学 | P2 图片并网关迁移时 | open | 迁移期图片短暂报错；测试 `ImageSizeCap_OnUpstream400_RelearnsWithoutUserError` |
 | 2026-06-24-exchange-sentinel-dual | low | 2026-06-24 | 池 item 的 PlatformId 有 `__exchange__` 旧 sentinel 与真 exchange id 两种格式，迁移需双格式兼容 | Exchange 路由归一进协议层时 | open | 测试 `Exchange_BothSentinelAndRealId_Resolve` |
-
 | 2026-06-25-dead-pools-masked-by-legacy | high | 2026-06-25 | 3 个池 Unavailable。**已止血(2026-06-25)**：deepseek-v4-flash(chat默认,53码受影响) test 200 实为陈旧健康标记，已 reset-model-health→Healthy；whisper(asr) 与 gpt-5.4-image-2(gen,HTTP404) 经底片确认**0 活跃调用方**，降级为 P4 清理 | 删 legacy 前 / P4 清理 | in-progress | 主出血已止；剩 2 个零调用死池待删/修（whisper 平台级损坏 totalCount=0、gpt-5.4-image-2 openrouter 无此模型名） |
 | 2026-06-25-silent-fallback-no-alert | high | 2026-06-25 | 45%(69/153) code 在跑 fallback，拿到的不是配置模型，且无任何告警 | 新面板上线 / 死池修复 | open | 可视化面板必须把 Unavailable 池 + fallback 热度做成一级红色信息 |
 | 2026-06-25-imagegen-default-stub | high | 2026-06-25 | 16 个 generation code 默认解析到 stub-image；text2img 近 7 天 failed 10 次；真实生图全靠 expectedModel 兜，忘传即 stub/报错 | P2 图片并网关 | open | 默认生图池应是真实模型，不是 dev 桩 |
 | 2026-06-25-pool-orphans-sprawl | medium | 2026-06-25 | 5 孤儿模型 + auto-* 自动建池泛滥（含 1 个 0 模型空池 auto-marking-line-agent）+ 池 item 悬空引用（claude 混入 qwen 池） | P4 清理 | open | 池版的 code 泛滥；空池/脏引用待清 |
-
 | 2026-06-25-retire-openplatformapp | medium | 2026-06-25 | 原 apigateway = OpenPlatformApp(`sk-*`，绑死 PRD-chat、无 scope) 与现代 OpenApiController+AgentApiKey(`sk-ak-*`) 并存；目标统一到后者 | P6 平台收口 | open | 退役 sk- 老平台 + 清 open-platform-agent.proxy 悬挂 code；迁移现有 sk- 客户 |
 | 2026-06-25-openapi-quota-stub | medium | 2026-06-25 | per-key 配额/限流字段已声明未执行（`PassUsageGateAsync` 仍 stub），scope→模型门、动态模型列表、用量聚合面板缺失 | 对外开放前（内部用可暂缓但留 seam） | open | 平台 Phase2；内部为主可延后硬执行，架构留好闸口 |
 | 2026-06-25-model-name-public-contract | high | 2026-06-25 | 模型名/池 code 对外即成公开 API 契约；auto-* 脏池/空池/stub 默认对外=事故 | 开放对外入口前 | open | H3/H5 清理升级为对外稳定性前置；模型命名需定稳定公开方案 |
@@ -133,7 +134,7 @@
 - ASR HTTP multipart canary 已 PASS：`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`、`video-agent.v2d.transcribe::asr`、`video-agent.video-to-text::asr` 均通过 BigModel raw 路径，返回 `StatusCode=200`。
 - Seedance submit / status / download 证据已补齐：两个视频入口 submit 均 200；初次 24 次轮询仍为 `in_progress`，后续复查均 `completed` 且有结果 URL；下载探测返回 `206`、`Content-Type=video/mp4`、采样 1 MiB 成功。证据文件：`.llmgw-release-evidence/20260707T111308Z_video-exchange-canary-after-seedance-open.json`、`.llmgw-release-evidence/20260707T111759Z_video-download-followup-after-seedance-open.json`。
 - 已在短时 100% shadow 采样窗口跑 MAP 真实入口 seed，并自动恢复到 `LlmGateway__Mode=shadow`、allowlist 空、`ShadowFullSamplePercent=1`。同 commit `80bf92566328f67830c530bbfe07cdc815a1d72c` 当前 raw shadow 汇总：`raw=55`、`allMatch=55`、`critical=0`、`httpFail=0`。raw 样本覆盖 `video-agent.videogen::video-gen`、`visual-agent.videogen::video-gen`、`transcript-agent.transcribe::asr`、`document-store.subtitle::asr`。证据文件：`.llmgw-release-evidence/20260707T112155Z_map-shadow-seed-video-asr-after-seedance-open.json`、`.llmgw-release-evidence/20260707T112632Z_map-shadow-seed-visual-video-after-seedance-open.json`。
-- 代码侧已扩展 `scripts/llmgw-map-shadow-seed.py`，新增 `--include-visual-video-direct`，通过 `/api/visual-agent/video-gen/runs` 创建 direct run 并等待后台 worker 完成，用于补齐 `visual-agent.videogen::video-gen:raw` 的 MAP 真实入口 shadow 样本；`doc/plan.platform.llm-gateway.full-cutover.md` 与 `GatewayDataDomainGuardTests` 已同步守卫该参数。
+- 代码侧已扩展 `scripts/llmgw-map-shadow-seed.py`，新增 `--include-visual-video-direct`，通过 `/api/visual-agent/video-gen/runs` 创建 direct run 并等待后台 worker 完成，用于补齐 `visual-agent.videogen::video-gen:raw` 的 MAP 真实入口 shadow 样本；[doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md) 与 `GatewayDataDomainGuardTests` 已同步守卫该参数。
 - 结论更新：Seedance 与 ASR 不再是“不可调用”阻塞，视频/ASR raw 真实 MAP 样本已闭合到 allMatch/httpFail=0；当前剩余发布 gate 是图片 raw 样本、核心 appCaller 每格 30 条、以及 24 小时覆盖观察窗口。因此继续禁止全量 `LLMGW_MODE=http`，只能按 allowlist 小批灰度。
 
 ## 最新生产取证（2026-07-07 19:50 CST）
@@ -608,6 +609,25 @@
 
 | ID | 修复 PR | 修复日期 | 备注 |
 |----|---------|---------|------|
+| 2026-07-06-multipart-http-rehydrate | 待 PR | 2026-07-06 | 已实现 MAP 侧 inline multipart 上传为 `MultipartFileRefs`、serving `/gw/v1/raw` 侧按 ref 下载并校验 size/hash 后 rehydrate 为 `MultipartFiles`；新增 `GatewayMultipartHttpTests` 覆盖上传过线、rehydrate、hash mismatch 拦截。生产 shadow 样本与 allowlist 灰度仍是发布 gate。 |
+
+---
+
+## 已结清（供回溯）
+
+下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
+
+### 债务列表
+
+| ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
+|----|--------|---------|------|---------|------|------|
+| 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | paid | PR #1085、#1086 已落地 tenant/team/user/membership/RBAC、服务端租户解析、租户数据隔离、tenant-scoped key 和自助接入；请求自报 tenantId 不进入权威上下文 |
+| 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
+| 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | paid | PR #1076、#1079、#1080 已完成 `--maintenance-from-commit`、基线审计和部署层证据交接；最终 commit 的 `http-full success` 台账已验证该路径 |
+
+### 已还的债务（归档）
+
+| ID | 修复 PR | 修复日期 | 备注 |
+|----|---------|---------|------|
 | 2026-07-12-external-developer-onboarding | PR #1086 | 2026-07-12 | 已落地 tenant-scoped key 自助管理、四协议 Quickstart、错误排查与 requestId 定位。 |
 | 2026-07-12-appcaller-prompt-policy | PR #1087 | 2026-07-12 | 已落地不可变版本、预览、冲突、禁用、回滚、审计、chat/vision 注入与日志正文脱敏。 |
-| 2026-07-06-multipart-http-rehydrate | 待 PR | 2026-07-06 | 已实现 MAP 侧 inline multipart 上传为 `MultipartFileRefs`、serving `/gw/v1/raw` 侧按 ref 下载并校验 size/hash 后 rehydrate 为 `MultipartFiles`；新增 `GatewayMultipartHttpTests` 覆盖上传过线、rehydrate、hash mismatch 拦截。生产 shadow 样本与 allowlist 灰度仍是发布 gate。 |

@@ -5,6 +5,7 @@ import {
   activeSegmentIndex,
   extractTranscriptSummary,
   estimateTranscriptSegments,
+  replaceEstimatedTranscriptSentenceText,
   parseSummaryModules,
   activeSummaryModuleIndex,
   replaceTranscriptSegmentText,
@@ -131,6 +132,12 @@ describe('estimateTranscriptSegments', () => {
 
   it('时长未知时不生成伪时间轴', () => {
     expect(estimateTranscriptSegments(parseTranscriptSegments(PLAIN_NOTE), 0)).toEqual([]);
+  });
+
+  it('估算跟随拆出的句子仍可逐句校对', () => {
+    const note = '## 转录全文\n\n第一句。第二句更长。第三句。';
+    expect(replaceEstimatedTranscriptSentenceText(note, 1, '修改后的第二句。'))
+      .toContain('第一句。修改后的第二句。第三句。');
   });
 });
 

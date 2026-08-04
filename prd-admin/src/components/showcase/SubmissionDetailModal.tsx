@@ -171,10 +171,10 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                         width: 94,
                         height: 94,
                         border: i === selectedAssetIndex
-                          ? '2.5px solid var(--accent-primary, #818CF8)'
+                          ? '2.5px solid var(--accent-primary, #D97757)'
                           : '2px solid var(--border-subtle)',
                         opacity: i === selectedAssetIndex ? 1 : 0.55,
-                        boxShadow: i === selectedAssetIndex ? '0 0 16px rgba(99,102,241,0.35)' : 'none',
+                        boxShadow: i === selectedAssetIndex ? '0 0 16px rgba(200, 98, 58,0.35)' : 'none',
                         transform: i === selectedAssetIndex ? 'scale(1.04)' : 'scale(1)',
                       }}
                     >
@@ -346,8 +346,8 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                             className="text-sm leading-relaxed rounded-xl p-3.5"
                             style={{
                               color: 'var(--text-secondary, rgba(255,255,255,0.7))',
-                              background: 'rgba(99,102,241,0.06)',
-                              border: '1px solid rgba(99,102,241,0.15)',
+                              background: 'rgba(200, 98, 58,0.06)',
+                              border: '1px solid rgba(200, 98, 58,0.15)',
                             }}
                           >
                             {genInfo.stylePrompt}
@@ -408,8 +408,8 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                                 key={asset.id}
                                 className="rounded-xl p-3 cursor-pointer transition-all duration-200"
                                 style={{
-                                  background: i === selectedAssetIndex ? 'rgba(99,102,241,0.1)' : 'var(--nested-block-bg)',
-                                  border: i === selectedAssetIndex ? '1px solid rgba(99,102,241,0.3)' : '1px solid var(--border-subtle)',
+                                  background: i === selectedAssetIndex ? 'rgba(200, 98, 58,0.1)' : 'var(--nested-block-bg)',
+                                  border: i === selectedAssetIndex ? '1px solid rgba(200, 98, 58,0.3)' : '1px solid var(--border-subtle)',
                                 }}
                                 onClick={() => setSelectedAssetIndex(i)}
                               >
@@ -562,7 +562,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                               width: 48,
                               height: 48,
                               border: i === selectedAssetIndex
-                                ? '2px solid var(--accent-primary, #818CF8)'
+                                ? '2px solid var(--accent-primary, #D97757)'
                                 : '2px solid transparent',
                               opacity: i === selectedAssetIndex ? 1 : 0.6,
                               transform: i === selectedAssetIndex ? 'translateY(-2px)' : 'none',
@@ -594,9 +594,9 @@ function InfoBadge({ icon, label, accent }: { icon: React.ReactNode; label: stri
     <span
       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
       style={{
-        background: accent ? 'rgba(99,102,241,0.12)' : 'var(--nested-block-bg)',
-        border: accent ? '1px solid rgba(99,102,241,0.25)' : '1px solid var(--border-subtle)',
-        color: accent ? 'var(--accent-primary, #818CF8)' : 'var(--text-secondary, var(--text-secondary))',
+        background: accent ? 'rgba(200, 98, 58,0.12)' : 'var(--nested-block-bg)',
+        border: accent ? '1px solid rgba(200, 98, 58,0.25)' : '1px solid var(--border-subtle)',
+        color: accent ? 'var(--accent-primary, #D97757)' : 'var(--text-secondary, var(--text-secondary))',
       }}
     >
       {icon}

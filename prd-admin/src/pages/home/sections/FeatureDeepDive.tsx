@@ -22,7 +22,7 @@ import type { FeatureItem } from '../i18n/landing';
 
 // 六段 mockup accent 配色
 const MOCKUPS = {
-  visual: { accent: '#a855f7' },
+  visual: { accent: '#C8623A' },
   literary: { accent: '#fb923c' },
   prd: { accent: '#3b82f6' },
   video: { accent: '#f43f5e' },
@@ -262,14 +262,14 @@ function MockupFrame({
 }
 
 function VisualMockup() {
-  const accent = '#a855f7';
+  const accent = '#C8623A';
   const { t } = useLanguage();
   // 独立的 useInView，让内部 4 格走自己的 stagger 时序，叠加在外层 Reveal 之上
   const [gridRef, inView] = useInView<HTMLDivElement>();
   const grads = [
-    'radial-gradient(circle at 30% 70%, #00d4ff 0%, transparent 50%), linear-gradient(135deg, #0a0a1e 0%, #2a0a3e 100%)',
+    'radial-gradient(circle at 30% 70%, #00d4ff 0%, transparent 50%), linear-gradient(135deg, #0a0a1e 0%, #241A12 100%)',
     'radial-gradient(circle at 70% 30%, #f43f5e 0%, transparent 50%), linear-gradient(135deg, #1a0515 0%, #0a1a25 100%)',
-    'radial-gradient(circle at 50% 50%, #a855f7 0%, transparent 50%), linear-gradient(135deg, #050a15 0%, #200a30 100%)',
+    'radial-gradient(circle at 50% 50%, #C8623A 0%, transparent 50%), linear-gradient(135deg, #050a15 0%, #200a30 100%)',
     'radial-gradient(circle at 40% 60%, #06b6d4 0%, transparent 50%), linear-gradient(135deg, #0a0515 0%, #0a1a30 100%)',
   ];
   return (
@@ -537,7 +537,7 @@ function VideoMockup() {
             key={i}
             className="aspect-[16/9] rounded-sm relative overflow-hidden"
             style={{
-              background: `linear-gradient(${135 + i * 20}deg, rgba(244, 63, 94, ${0.15 + i * 0.05}), rgba(124, 58, 237, ${0.1 + i * 0.05}))`,
+              background: `linear-gradient(${135 + i * 20}deg, rgba(200, 98, 58, ${0.15 + i * 0.05}), rgba(176, 82, 46, ${0.1 + i * 0.05}))`,
               border: i === 3 ? `1px solid ${accent}` : '1px solid rgba(255,255,255,0.06)',
             }}
           >

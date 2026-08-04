@@ -31,9 +31,9 @@ export function DesktopDownload() {
                 className="inline-flex items-center gap-2 px-3.5 py-1.5 mb-7 rounded-md"
                 style={{
                   fontFamily: 'var(--font-terminal)',
-                  background: 'rgba(0, 240, 255, 0.06)',
-                  border: '1px solid rgba(0, 240, 255, 0.3)',
-                  boxShadow: '0 0 20px rgba(0, 240, 255, 0.22)',
+                  background: 'rgba(107, 169, 162, 0.06)',
+                  border: '1px solid rgba(107, 169, 162, 0.3)',
+                  boxShadow: '0 0 20px rgba(107, 169, 162, 0.22)',
                 }}
               >
                 <Download className="w-3.5 h-3.5 text-cyan-300" />
@@ -41,7 +41,7 @@ export function DesktopDownload() {
                   className="text-[12.5px] text-cyan-300 uppercase"
                   style={{
                     letterSpacing: '0.2em',
-                    textShadow: '0 0 10px rgba(0, 240, 255, 0.6)',
+                    textShadow: '0 0 10px rgba(107, 169, 162, 0.6)',
                   }}
                 >
                   {t.download.eyebrow}
@@ -57,7 +57,7 @@ export function DesktopDownload() {
                   fontSize: 'clamp(2rem, 4.8vw, 3.5rem)',
                   lineHeight: 1.08,
                   letterSpacing: '-0.03em',
-                  textShadow: '0 0 32px rgba(0, 240, 255, 0.22)',
+                  textShadow: '0 0 32px rgba(107, 169, 162, 0.22)',
                 }}
               >
                 {titleParts[0]}
@@ -124,7 +124,7 @@ const PLATFORM_VISUALS: Record<string, PlatformVisual> = {
     Icon: Apple,
     version: 'v2.6.0',
     size: '42 MB',
-    accent: '#a855f7',
+    accent: '#C8623A',
     href: 'https://github.com/inernoro/prd_agent/releases',
   },
   windows: {

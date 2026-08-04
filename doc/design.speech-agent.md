@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：把长文或知识库文档转成可编辑、可演讲、可发布的结构化演讲材料。
+**谁该读**：演讲智能体的产品与工程师。
+**读完能做什么**：说清从长文到演讲稿经过哪些加工。
+
+---
+
 > **appKey**：`speech-agent`
 
 ## 一、管理摘要
@@ -110,7 +116,7 @@ Deck 是聚合根。节点必须同时按 deck ID 与节点 ID 查询，所有 d
 
 ## 关联文档
 
-- `doc/spec.speech-agent.md`
-- `doc/debt.speech-agent.md`
-- `doc/rule.platform.llm-gateway.md`
+- [doc/spec.speech-agent.md](./spec.speech-agent.md)
+- [doc/debt.speech-agent.md](./debt.speech-agent.md)
+- [doc/rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)
 - `doc/rule.platform.server-authority.md`

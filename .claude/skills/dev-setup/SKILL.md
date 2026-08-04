@@ -1,6 +1,6 @@
 ---
 name: dev-setup
-description: Sets up the development environment and performs local debugging. Handles two phases - Phase A installs and verifies SDKs (.NET, Node.js, Rust, pnpm) with auto-detection of local CLI vs cloud sandbox mode, and Phase B runs automated API testing and iterative debugging with log analysis. Trigger words: "装环境", "环境搭建", "setup env", "dev env", "还原环境", "restore env", "本地验证", "local verify", "E2E 测试".
+description: 'Sets up the development environment and performs local debugging. Handles two phases - Phase A installs and verifies SDKs (.NET, Node.js, Rust, pnpm) with auto-detection of local CLI vs cloud sandbox mode, and Phase B runs automated API testing and iterative debugging with log analysis. Trigger words: "装环境", "环境搭建", "setup env", "dev env", "还原环境", "restore env", "本地验证", "local verify", "E2E 测试".'
 ---
 
 # 开发环境搭建与本地调试

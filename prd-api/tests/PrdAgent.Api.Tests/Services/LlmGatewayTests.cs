@@ -1171,8 +1171,10 @@ public class LlmGatewayTests
         Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
         Assert.Equal("failed", attempts[0].Status);
         Assert.Equal(503, attempts[0].StatusCode);
+        Assert.True(attempts[0].ReachedProvider);
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
+        Assert.True(attempts[1].ReachedProvider);
     }
 
     [Fact]
@@ -1457,8 +1459,10 @@ public class LlmGatewayTests
         Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
         Assert.Equal("failed", attempts[0].Status);
         Assert.Equal(503, attempts[0].StatusCode);
+        Assert.True(attempts[0].ReachedProvider);
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
+        Assert.True(attempts[1].ReachedProvider);
     }
 
     [Fact]
@@ -1599,8 +1603,102 @@ public class LlmGatewayTests
         Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
         Assert.Equal("failed", attempts[0].Status);
         Assert.Equal(503, attempts[0].StatusCode);
+        Assert.True(attempts[0].ReachedProvider);
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
+        Assert.True(attempts[1].ReachedProvider);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenRetryBuildFails_ShouldNotMarkCandidateAsReachedProvider()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DefaultPool",
+            ActualModel = "image-model-a",
+            ActualPlatformId = "platform-a",
+            ActualPlatformName = "Provider A",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-a.example.com",
+            ApiKey = "sk-a",
+            RetryCandidates =
+            [
+                new ModelResolutionResult
+                {
+                    Success = true,
+                    ResolutionType = "DefaultPool",
+                    ActualModel = "image-model-b",
+                    ActualPlatformId = "platform-b",
+                    ActualPlatformName = "Provider B",
+                    ApiUrl = "https://provider-b.example.com",
+                    ApiKey = "sk-b",
+                    IsExchange = true,
+                    ExchangeTransformerType = "missing-transformer"
+                }
+            ]
+        };
+        var http = new SequenceHttpClientFactory(
+            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"));
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "/images/generations",
+            RequestBody = new JsonObject
+            {
+                ["prompt"] = "draw a clean icon"
+            }
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal("EXCHANGE_TRANSFORMER_NOT_FOUND", response.ErrorCode);
+        Assert.Single(http.RequestBodies);
+        Assert.NotNull(logWriter.Done);
+        var attempts = logWriter.Done!.ProviderAttempts!.Where(a => a.Stage == "send").ToList();
+        Assert.Equal(2, attempts.Count);
+        Assert.True(attempts[0].ReachedProvider);
+        Assert.False(attempts[1].ReachedProvider);
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenTransportThrows_ShouldPersistReachedProviderAttempt()
+    {
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            new ThrowingHttpClientFactory(),
+            new TestLogger<LlmGateway>(),
+            logWriter);
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "/images/generations",
+            RequestBody = new JsonObject { ["prompt"] = "draw a clean icon" }
+        }, new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DirectModel",
+            ActualModel = "image-model-a",
+            ActualPlatformId = "platform-a",
+            ActualPlatformName = "Provider A",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-a.example.com",
+            ApiKey = "sk-a"
+        });
+
+        Assert.False(response.Success);
+        Assert.NotNull(logWriter.Done);
+        var attempt = Assert.Single(logWriter.Done!.ProviderAttempts!, a => a.Stage == "send");
+        Assert.True(attempt.ReachedProvider);
+        Assert.Equal("failed", attempt.Status);
     }
 
     [Fact]
@@ -2649,6 +2747,17 @@ internal sealed class TerminalThenBlockingHttpMessageHandler(string body) : Http
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
         return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
     }
+}
+
+internal sealed class ThrowingHttpClientFactory : IHttpClientFactory
+{
+    public HttpClient CreateClient(string name) => new(new ThrowingHttpMessageHandler());
+}
+
+internal sealed class ThrowingHttpMessageHandler : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        => throw new HttpRequestException("provider connection reset");
 }
 
 internal sealed class TerminalThenBlockingStream(string body) : Stream

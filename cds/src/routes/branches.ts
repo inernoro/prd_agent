@@ -11278,7 +11278,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 墓碑持续重试 rm -f -v（removeVolumes 标记，连匿名数据卷一并删——
           // 卷里装的是生产派生克隆，只删容器会让它永久失去追踪，Codex 第三十二轮 P1）。
           // 共享库里的 _rs_ 隔离库无容器可墓碑，仅数据残留在活着的共享 infra 里，
-          // 记事件供人工收口（残留台账见 debt.cds.replica-set #19）。
+          // 记事件供人工收口（残留台账见 doc/debt.cds.md「CDS 复制集模式工程债务」 #19）。
           if (snapshot.dedicatedContainer) {
             try {
               stateService.addContainerTeardownTombstones([{

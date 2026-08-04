@@ -6445,7 +6445,9 @@ public class DocumentStoreController : ControllerBase
             reusable.Title = title;
             reusable.Description = description;
             reusable.ExpiresAt = expiresAt;
-            await TryAllocateDocumentStoreShortSeqAsync(reusable);
+            // 复用旧分享时，只有本次显式要数字短链才补分配（AllocateAsync 幂等，不会重复占号）
+            if (request.AllocateShortLink && reusable.ShortSeq <= 0)
+                await TryAllocateDocumentStoreShortSeqAsync(reusable);
             return Ok(ApiResponse<DocumentStoreShareLink>.Ok(reusable));
         }
 
@@ -6463,11 +6465,35 @@ public class DocumentStoreController : ControllerBase
             ExpiresAt = expiresAt,
         };
         await _db.DocumentStoreShareLinks.InsertOneAsync(link, cancellationToken: CancellationToken.None);
-        await TryAllocateDocumentStoreShortSeqAsync(link);
+        // 数字短链 /s/{seq} 按需懒分配（与网页托管 2026-06-11 同口径）：默认 ShortSeq=0，
+        // 对外只给不可枚举的 /s/lib/{token}。无条件分配会让 short_links 集合被每条分享污染，
+        // 且把「全局自增、可从 1 枚举」的地址当成常态发出去（见 doc/debt.platform.md「分享链接安全」）。
+        if (request.AllocateShortLink)
+            await TryAllocateDocumentStoreShortSeqAsync(link);
 
         // 返回完整 DocumentStoreShareLink，保持前端 DocumentStoreShareLink 类型契约不变。
         // 统一短链只登记 token，不区分阅读/星球/双链图；不同展示方式是同一公开页的 view 参数。
         return Ok(ApiResponse<DocumentStoreShareLink>.Ok(link));
+    }
+
+    /// <summary>为已有分享按需生成数字短链 /s/{seq}（用户在面板里主动点「生成数字短链」）</summary>
+    [HttpPost("share-links/{linkId}/short-link")]
+    public async Task<IActionResult> EnsureShareLinkShortSeq(string linkId)
+    {
+        var userId = GetUserId();
+        var link = await _db.DocumentStoreShareLinks.Find(l => l.Id == linkId).FirstOrDefaultAsync();
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
+        if (link.CreatedBy != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权修改此分享"));
+        if (link.IsRevoked)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已撤销的分享不能生成短链"));
+
+        await TryAllocateDocumentStoreShortSeqAsync(link);
+        if (link.ShortSeq <= 0)
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "生成数字短链失败，请稍后重试"));
+
+        return Ok(ApiResponse<object>.Ok(new { shortSeq = link.ShortSeq }));
     }
 
     private async Task TryAllocateDocumentStoreShortSeqAsync(DocumentStoreShareLink link)
@@ -8009,6 +8035,13 @@ public class CreateShareLinkRequest
 
     /// <summary>单篇文档分享：DocumentEntry.Id；不传 = 分享整个知识库</summary>
     public string? EntryId { get; set; }
+
+    /// <summary>
+    /// 是否同时分配数字短链 /s/{seq}。默认 false —— 数字短链全局自增、可被从 1 逐个枚举，
+    /// 只有用户主动要才给（与网页托管 2026-06-11 的按需懒分配同口径）。
+    /// 对外访问用不可枚举的 /s/lib/{token} 长链即可，不依赖 short_links。
+    /// </summary>
+    public bool AllocateShortLink { get; set; }
 }
 
 public class LogViewRequest

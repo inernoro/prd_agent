@@ -108,7 +108,7 @@ export function statusBadgeStyle(
 // ── 仅注册后端有真实数据来源的视图 ──
 export type LogsSubTab = 'generations' | 'upstream' | 'sessions';
 export const LOGS_SUBTABS: { key: LogsSubTab; label: string }[] = [
-  { key: 'generations', label: '请求' },
+  { key: 'generations', label: '业务请求' },
   { key: 'upstream', label: '上游调用' },
   { key: 'sessions', label: '会话' },
 ];
@@ -147,6 +147,7 @@ export const GENERATIONS_COLUMNS: ColumnDef[] = [
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [
   { key: 'date', label: '时间', width: '1.4fr', required: true },
+  { key: 'operation', label: '操作', width: '1fr', required: true, tip: '区分业务提交、状态查询、下载、取消与探活' },
   { key: 'model', label: '模型', width: '1.6fr' },
   { key: 'provider', label: '最终 Provider', width: '1.3fr' },
   { key: 'genId', label: '请求 ID', width: '1.8fr' },

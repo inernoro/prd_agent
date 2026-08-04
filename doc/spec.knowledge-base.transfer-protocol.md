@@ -2,8 +2,14 @@
 
 > **版本**：v1.1 | **日期**：2026-06-22 | **状态**：已落地
 
+**一句话**：两个节点之间传知识库内容的协议：分层、数据契约、方向语义与去重规则。
+**谁该读**：要实现或对接同步的工程师；排查「显示跳过却转很久」的人。
+**读完能做什么**：按协议实现一端，并说清同步的方向与去重是怎么判的。
+
+---
+
 > 负责模块：prd-api（PeerSync + DocumentStoreSyncResource）、prd-admin（同步中心）
-> 关联：`design.platform.peer-sync.md`（节点配对设计）、`spec.cds.compose-contract.md`（同类对外契约写法）
+> 关联：[design.platform.peer-sync.md](./design.platform.peer-sync.md)（节点配对设计）、[spec.cds.compose-contract.md](./spec.cds.compose-contract.md)（同类对外契约写法）
 
 
 ## 1. 管理摘要（30 秒看懂）
@@ -89,7 +95,7 @@
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/api/peer-sync/handshake` | 配对握手（校验配对码，建互信），见 design.platform.peer-sync.md |
+| POST | `/api/peer-sync/handshake` | 配对握手（校验配对码，建互信），见 [design.platform.peer-sync.md](./design.platform.peer-sync.md) |
 | GET  | `/api/peer-sync/ping` | 连通 + 验签自检 |
 | GET  | `/api/peer-sync/capabilities` | 本节点支持的资源类型 + schema 版本 |
 | POST | `/api/peer-sync/resources/{type}/signature` | 取条目内容签名（廉价变更检测，不传正文） |
@@ -194,4 +200,4 @@ MAP 侧的参考实现就是 `DocumentStoreSyncResource` + `PeerSyncController`�
 - **图片大文件**：单图上限 25MB，超限计 failed（不阻塞其余）。
 - **mirror 误删**：强制对齐有数据破坏性，前端必须二次确认（列出将删条目数）；建议先 `both` 同时对准再视情况 mirror。
 - **三方实现差异**：`signature` 算法若两端不一致会导致永远「不同步」；接入方需对齐 §6 哈希口径。
-- 详见 `debt.knowledge-base.md`。
+- 详见 [debt.knowledge-base.md](./debt.knowledge-base.md)。

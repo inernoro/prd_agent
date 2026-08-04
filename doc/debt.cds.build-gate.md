@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-16 | **状态**：开发中
 
+**一句话**：记录构建排队机制那次大修里故意先不做的六件事，以及各自什么时候必须补。
+**谁该读**：接手构建队列的工程师；构建又开始排长队时、想先确认「是不是已知问题」的排障值班。
+**读完能做什么**：判断眼前的现象属于已知边界还是新故障，并知道该改哪一处。
+
+---
+
 ## 总览
 
 2026-07-16 CDS 构建队列堵死事故（线上 `active=3 / queued=54`，agent 部署排队 50 分钟以上）的系统性修复
@@ -12,9 +18,6 @@
 教训已固化为规则：`.claude/rules/concurrency-gate-discipline.md`（并发闸五件套设计纪律）。
 本台账记录修复中**有意延期**的边界项，防止下一次 session 无人记得。
 
-模块范围：`cds/src/services/build-gate.ts`、`build-gate-health.ts`、`deploy-layer-runner.ts`、
-`branch-operation-coordinator.ts`、`deployment-run.ts`、`cds/src/routes/branches.ts`、`cluster.ts`、
-`cds/src/index.ts`、`cds/src/services/proxy.ts`。
 
 ## 已知边界 / 待补（open）
 
@@ -42,3 +45,13 @@ CDS 定时任务「构建队列健康回归」（30 分钟探测 `GET /api/clust
 - 规则：`.claude/rules/concurrency-gate-discipline.md`
 - PR：#1160（含 Codex 四轮 8 条审查意见的逐条修复）
 - changelog：`changelogs/2026-07-16_cds-build-gate-overhaul.md`
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `cds/src/services/build-gate.ts`、`build-gate-health.ts`、`deploy-layer-runner.ts`、`branch-operation-coordinator.ts`、`deployment-run.ts`、`cds/src/routes/branches.ts`、`cluster.ts`、`cds/src/index.ts`、`cds/src/services/proxy.ts` |

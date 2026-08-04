@@ -1,4 +1,15 @@
+---
+paths:
+  - "prd-admin/src/**/*.ts"
+  - "prd-admin/src/**/*.tsx"
+  - "prd-desktop/src/**/*.ts"
+  - "prd-desktop/src/**/*.tsx"
+---
+
 # 客户端存储选型（默认 sessionStorage，localStorage 限定场景）
+
+**一句话**：客户端存储默认 sessionStorage；服务器权威数据（菜单、权限、开关）禁止进 localStorage，只有纯 UI 偏好与登录会话才允许。
+**什么时候撞上**：给前端加任何持久化状态。
 
 前端项目（`prd-admin`、`prd-desktop`）**默认**使用 `sessionStorage`。`localStorage` 不是无条件禁止，而是**仅限**下面「允许」清单里的场景，且默认情况下不要用。
 

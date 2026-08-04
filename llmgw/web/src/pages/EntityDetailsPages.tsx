@@ -190,7 +190,7 @@ export function ModelDetailsPage() {
       getLogicalModels(),
       getModels(),
       getPlatforms(),
-      requestedModel ? getLogs({ ...range, model: requestedModel, page: 1, pageSize: 8 }) : Promise.resolve(null),
+      requestedModel ? getLogs({ ...range, model: requestedModel, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([logicalResult, modelResult, platformResult, logResult]) => {
       if (!alive) return;
       if (!logicalResult.success || !modelResult.success || !platformResult.success) {
@@ -338,7 +338,7 @@ export function ProviderDetailsPage() {
     Promise.all([
       getPlatforms(),
       getModels(requestedId ? { platformId: requestedId } : undefined),
-      requestedName ? getLogs({ ...range, provider: requestedName, page: 1, pageSize: 8 }) : Promise.resolve(null),
+      requestedName ? getLogs({ ...range, provider: requestedName, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([platformResult, modelResult, logResult]) => {
       if (!alive) return;
       if (!platformResult.success || !modelResult.success) {
@@ -536,7 +536,7 @@ export function AppCallerDetailsPage() {
     Promise.all([
       getGatewayAppCallers({ page: 1, pageSize: 50, search: requestedCode || requestedId }),
       getPools(),
-      requestedCode ? getLogs({ ...range, appCallerCode: requestedCode, page: 1, pageSize: 8 }) : Promise.resolve(null),
+      requestedCode ? getLogs({ ...range, appCallerCode: requestedCode, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([appResult, poolResult, logResult]) => {
       if (!alive) return;
       if (!appResult.success || !poolResult.success) {

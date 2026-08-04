@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-04-22 | **状态**：开发中
 
+**一句话**：三次跨项目串数据事故的复盘与防线：所有「找文件、找容器、找配置」都必须先经过项目级隔离。
+**谁该读**：改动多项目共享逻辑的工程师；做隔离审计的评审人。
+**读完能做什么**：按审计清单逐条核对自己的改动会不会跨项目污染。
+
+---
+
 > 作者: Claude Code | 创建: 2026-04-22
 > 根因: 三次跨项目数据污染事件暴露了 MECE 矩阵的系统性盲区
 
@@ -115,14 +121,9 @@ curl "$CDS/api/build-profiles?project=<id>" | jq '.profiles[] | {id, env, depend
 
 ### 规则 1：discoverComposeFiles 只允许项目 repo root
 
-```typescript
-// 是 正确
-const scanRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
-const files = discoverComposeFiles(scanRoot);
+**扫描根必须按项目取**，不能直接用全局仓库根目录：后者会把所有项目的编排文件一起扫进来，
+造成跨项目串数据。任何「找文件」的入口都要先经过项目级根目录解析这一步。
 
-// 否 禁止 — 会扫描到所有项目的 compose 文件
-const files = discoverComposeFiles(config.repoRoot);
-```
 
 ### 规则 2：全局 env 禁止框架专用键
 

@@ -2,11 +2,12 @@
  * notice-outbound-map — 把 CDS 站内信外发到 MAP 站内通知的适配器。
  *
  * 形状完全照 routes/bug-reports.ts 的三段式（resolve 配置 → build body → forward），
- * 理由也一样：**凭据只在服务端 env 里读，前端永远拿不到**；缺凭据必须如实降级，
+ * 理由也一样：**凭据只在服务端读取，前端永远拿不到**；缺凭据必须如实降级，
  * 绝不假装发送成功。
  *
- * 凭据落点是 env-only，刻意不放 CDS 全局变量 `_global.customEnv`、也不放项目设置——
- * 那两处会被注入到**被部署项目的容器**里，等于把 MAP 管理员 token 泄给业务容器。
+ * 凭据只允许来自 CDS 服务端进程环境，或 CDS 系统设置中已加密保存的 MAP 接入；
+ * 刻意不放 CDS 全局变量 `_global.customEnv`、也不放项目设置——那两处会被注入到
+ * **被部署项目的容器**里，等于把 MAP 管理员 token 泄给业务容器。
  *
  * 三个必须逐字对齐的坑（错了都不报错，只会静默走歪）：
  *  1. 字段名是 `dedupKey`，不是 dedupeKey。MAP 的 AdminNotificationEventRequest.DedupKey
@@ -16,7 +17,7 @@
  *  3. source 必须命中 MAP 的 AllowedEventSources（AdminNotificationSourceCatalog），
  *     而那张白名单里**没有任何 CDS 专属来源**。本轮不改 prd-api，故默认借
  *     'system-alert'（系统预警）。代价是 MAP 站内信里 CDS 告警与模型池/密钥告警
- *     混在一起、无法按来源筛，已登记进 doc/debt.cds.uptime-monitor.md。
+ *     混在一起、无法按来源筛，已登记进 doc/debt.cds.md「CDS 存活监控（uptime-monitor）」。
  */
 
 import type { CdsNoticeRecord } from './notice-ledger.js';
@@ -37,6 +38,12 @@ export interface NoticeOutboundConfig {
    * 解析不出 origin 时宁可不带动作，也不给一个必然点错的链接。
    */
   publicOrigin?: string;
+}
+
+/** CDS 系统设置中已有的 MAP 服务端接入。密钥只在服务端内存里解密。 */
+export interface NoticeOutboundFallback {
+  baseUrl: string;
+  token: string;
 }
 
 /** 裸域名补 https；已带 scheme 的原样收下。空值返回空串。 */
@@ -85,13 +92,20 @@ const DEFAULT_MAP_SOURCE = 'system-alert';
  */
 export function resolveNoticeOutboundConfig(
   env: NodeJS.ProcessEnv = process.env,
+  fallback?: NoticeOutboundFallback | null,
 ): NoticeOutboundConfig | null {
   // 逃生阀：外发常态对 MAP 发外呼，被限流 / MAP 维护时必须能一刀关掉。
   const enabled = (env.CDS_NOTICE_OUTBOUND_ENABLED ?? '1').trim();
   if (enabled === '0' || enabled.toLowerCase() === 'false') return null;
 
-  const baseUrl = (env.CDS_NOTICE_MAP_BASE_URL || '').trim().replace(/\/+$/, '');
-  const token = (env.CDS_NOTICE_MAP_TOKEN || '').trim();
+  const dedicatedBaseUrl = (env.CDS_NOTICE_MAP_BASE_URL || '').trim().replace(/\/+$/, '');
+  const dedicatedToken = (env.CDS_NOTICE_MAP_TOKEN || '').trim();
+  const fallbackBaseUrl = (fallback?.baseUrl || '').trim().replace(/\/+$/, '');
+  const fallbackToken = (fallback?.token || '').trim();
+  // 专用配置必须成对出现，绝不把一边的 URL 与另一边的 Token 混用。
+  const useDedicated = Boolean(dedicatedBaseUrl && dedicatedToken);
+  const baseUrl = useDedicated ? dedicatedBaseUrl : fallbackBaseUrl;
+  const token = useDedicated ? dedicatedToken : fallbackToken;
   if (!baseUrl || !token) return null;
 
   const source = (env.CDS_NOTICE_MAP_SOURCE || '').trim() || DEFAULT_MAP_SOURCE;

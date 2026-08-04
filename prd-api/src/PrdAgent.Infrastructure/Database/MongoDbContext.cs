@@ -169,6 +169,8 @@ public class MongoDbContext
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
     public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
     public IMongoCollection<ReviewAppeal> ReviewAppeals => _database.GetCollection<ReviewAppeal>("review_appeals");
+    public IMongoCollection<RequirementAssessmentRun> RequirementAssessmentRuns => _database.GetCollection<RequirementAssessmentRun>("requirement_assessment_runs");
+    public IMongoCollection<RequirementAssessmentItem> RequirementAssessmentItems => _database.GetCollection<RequirementAssessmentItem>("requirement_assessment_items");
 
     // PR Review V2（pr-review）：用户级 GitHub OAuth 连接 + 审查记录
     public IMongoCollection<GitHubUserConnection> GitHubUserConnections => _database.GetCollection<GitHubUserConnection>("github_user_connections");
@@ -682,6 +684,8 @@ public class MongoDbContext
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.GroupId)));
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.SessionId)));
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.LogicalRequestId).Ascending(l => l.StartedAt)));
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.Provider).Ascending(l => l.Model)));
 

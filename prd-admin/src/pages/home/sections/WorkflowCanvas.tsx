@@ -26,7 +26,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 const NODE_VISUALS: Array<{ Icon: LucideIcon; accent: string }> = [
   { Icon: Clock, accent: '#94a3b8' },      // 触发器
   { Icon: FileText, accent: '#3b82f6' },   // PRD
-  { Icon: Palette, accent: '#a855f7' },    // 视觉
+  { Icon: Palette, accent: '#C8623A' },    // 视觉
   { Icon: PenTool, accent: '#fb923c' },    // 文学
   { Icon: Send, accent: '#10b981' },       // 发布
 ];

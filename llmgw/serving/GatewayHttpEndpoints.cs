@@ -4839,7 +4839,9 @@ public static class GatewayHttpEndpoints
             ServiceKeyId: ctx?.ServiceKeyId,
             ClientCode: ctx?.ClientCode,
             Environment: ctx?.Environment,
-            ServiceKeyPrefix: ctx?.ServiceKeyPrefix));
+            ServiceKeyPrefix: ctx?.ServiceKeyPrefix,
+            LogicalRequestId: ctx?.LogicalRequestId,
+            ProviderTaskId: ctx?.ProviderTaskId));
     }
 
     private static GatewayIngressRequest ToIngress(GatewayRequest request, string ingressProtocol, string sourceSystem)
@@ -4898,6 +4900,8 @@ public static class GatewayHttpEndpoints
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
                 RunId = source?.RunId,
+                LogicalRequestId = source?.LogicalRequestId,
+                ProviderTaskId = source?.ProviderTaskId,
                 GroupId = source?.GroupId,
                 UserId = source?.UserId,
                 ViewRole = source?.ViewRole,
@@ -4956,6 +4960,8 @@ public static class GatewayHttpEndpoints
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
                 RunId = source?.RunId,
+                LogicalRequestId = source?.LogicalRequestId,
+                ProviderTaskId = source?.ProviderTaskId,
                 GroupId = source?.GroupId,
                 UserId = source?.UserId,
                 ViewRole = source?.ViewRole,

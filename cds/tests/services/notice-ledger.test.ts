@@ -3,8 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  NOTICE_BODY_MAX_CHARS,
   NOTICE_MERGE_WINDOW_MS,
   NoticeLedgerService,
+  compactNoticeText,
   mergeNotice,
   renderNoticeFromEvent,
   startNoticeLedger,
@@ -17,7 +19,7 @@ import type { NoticeOutboundConfig } from '../../src/services/notice-outbound-ma
 /**
  * 通知账本的行为用例。
  *
- * 事故值：CDS 至今没有任何服务端告警外发（doc/debt.cds.uptime-monitor.md 债务 2-1），
+ * 事故值：CDS 至今没有任何服务端告警外发（doc/debt.cds.md「CDS 存活监控（uptime-monitor）」 债务 2-1），
  * 而「告警缺失」是最难被发现的缺陷——没人会注意到一个从没响过的铃。所以这里断言的
  * 三件事都刻意选了「错了也不会报错、只会静默走歪」的形状：
  *   1. 降噪窗口内不该重复外发（错了 = 刷屏，人学会忽略告警）；
@@ -200,6 +202,27 @@ describe('renderNoticeFromEvent — 只读结构化字段，不认事件名', ()
     expect(rendered!.body).toContain('生产 / 官网');
     expect(rendered!.body).toContain('gateway_route_self_test');
     expect(rendered!.dedupeKey).toContain('tgt-1');
+  });
+
+  it('优先展示结构化失败摘要，并把原始多行日志压缩到通知正文上限', () => {
+    const structured = renderNoticeFromEvent({
+      type: 'release.failed',
+      ts: new Date().toISOString(),
+      data: {
+        projectId: 'prd-agent',
+        targetId: 'tgt-1',
+        targetName: '生产 / 官网',
+        errorMessage: 'raw stderr '.repeat(100),
+        failure: { summary: '镜像拉取失败，请检查不可变版本是否存在' },
+      },
+    });
+    expect(structured?.body).toContain('镜像拉取失败');
+    expect(structured?.body).not.toContain('raw stderr');
+
+    const compact = compactNoticeText(`第一行\n${'下载日志 '.repeat(100)}`);
+    expect(compact).not.toContain('\n');
+    expect(compact.length).toBeLessThanOrEqual(NOTICE_BODY_MAX_CHARS);
+    expect(compact.endsWith('…')).toBe(true);
   });
 
   it('存活掉线 → 落到状态页；不入账的事件返回 null', () => {

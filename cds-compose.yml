@@ -17,7 +17,7 @@ x-cds-project:
 #
 # 为什么剥离：仓库携带 `TODO: 请填写实际值` 占位符会让全量 `cdscli import`
 # 被审核拒绝（占位值覆盖线上真实密钥），结构变更无法落地（见
-# doc/debt.cds.compose-secrets.md D1）。剥离占位后 import 不再覆盖密钥即可通过。
+# doc/debt.cds.md「CDS compose 模板 TODO secrets」 D1）。剥离占位后 import 不再覆盖密钥即可通过。
 #
 # 应用所需的密钥清单（去 CDS env scope 配，勿写回本文件）：
 #   ASSETS_PROVIDER=cloudflareR2 时：R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /

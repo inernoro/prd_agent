@@ -1644,8 +1644,19 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS_EVENT_ALERT_CLASS 早就把「哪些事件够格叫醒人」收敛好了，但至今没有任何
   // 生产代码订阅它——铃装好了、线没接，于是发布失败在没人开着页面时彻底沉默。
   // 这段就是那根线：订阅总线 → 记进 .cds/notice-ledger.json → 可选外发到 MAP。
-  // 外发凭据只从服务端 env 读；没配就如实记「未外发」，绝不假装发送成功。
-  const noticeOutbound = resolveNoticeOutboundConfig(process.env);
+  // 专用通知 env 优先；没有时复用 CDS 系统设置里已经加密保存的 MAP 服务端接入，
+  // 避免同一个 MAP 重复配两套 Token。两条都没有才如实记「未外发」。
+  let storedMapForwarding: { baseUrl: string; token: string } | undefined;
+  try {
+    storedMapForwarding = deps.stateService.getBugReportForwardingConfig();
+  } catch (err) {
+    console.warn(`[notice] CDS 系统设置中的 MAP Token 无法读取: ${(err as Error).message}`);
+    storedMapForwarding = undefined;
+  }
+  const noticeOutbound = resolveNoticeOutboundConfig(
+    process.env,
+    storedMapForwarding ?? resolveForwardConfig(process.env),
+  );
   const noticeLedger = new NoticeLedgerService({
     storePath: path.join(deps.config.repoRoot, '.cds', 'notice-ledger.json'),
     logger: { warn: (m) => console.warn(m) },
@@ -4314,7 +4325,7 @@ export function createServer(deps: ServerDeps): express.Express {
       ? { configured: true }
       : {
         configured: false,
-        reason: '未配置 MAP 通知外发凭据（CDS_NOTICE_MAP_BASE_URL / CDS_NOTICE_MAP_TOKEN），通知仅记录在 CDS 本地',
+        reason: '未连接 MAP，通知仅保存在 CDS',
       }),
   }));
 

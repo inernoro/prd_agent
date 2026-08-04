@@ -42,7 +42,7 @@
   --border-default: rgba(255, 255, 255, 0.18);
   --border-hover: rgba(255, 255, 255, 0.24);
   /* 焦点色由主题覆盖；暗色沿用靛蓝，浅色使用暖赤陶。 */
-  --border-focus: rgba(99, 102, 241, 0.55);
+  --border-focus: rgba(217, 119, 87, 0.55);
 
   /* 历史命名兼容:周报 Agent 等组件大量使用 var(--bg-primary/secondary/tertiary)
      和 var(--border-primary/secondary),原本未定义时 fallback 到 unset/transparent
@@ -75,6 +75,14 @@
   --text-primary: #f7f7fb;
   --text-secondary: rgba(247, 247, 251, 0.80);
   --text-muted: rgba(247, 247, 251, 0.68);
+
+  /* Markdown 代码块 / 行内代码：正文阅读区唯一的等宽块，必须跟着主题翻面。
+     浅色纸面上摆黑底白字的代码框曾是「文档样式混乱」的头号来源（2026-07-31）。 */
+  --code-block-bg: rgba(0, 0, 0, 0.30);
+  --code-block-border: rgba(255, 255, 255, 0.12);
+  --code-block-text: rgba(255, 255, 255, 0.85);
+  --code-inline-bg: rgba(255, 255, 255, 0.05);
+  --code-inline-text: rgba(248, 113, 113, 0.90);
 
   /* 跨主题状态文字：组件只表达语义，不再各自维护明暗两套前景色。 */
   --semantic-success-text: #86efac;
@@ -163,10 +171,10 @@
   --mobile-sheet-close-bg: var(--bg-card);
   --mobile-sheet-close-border: 1px solid var(--border-subtle);
   --mobile-sheet-close-icon: var(--text-secondary);
-  --mobile-fab-from: #5E5CE6;
-  --mobile-fab-to: #A5B4FC;
-  --mobile-fab-text: #0F172A;
-  --mobile-fab-shadow: rgba(94, 92, 230, 0.42);
+  --mobile-fab-from: #C8623A;
+  --mobile-fab-to: #E8A87C;
+  --mobile-fab-text: #241915;
+  --mobile-fab-shadow: rgba(200, 98, 58, 0.42);
   --hairline: rgba(255, 255, 255, 0.08);
   --hairline-strong: rgba(255, 255, 255, 0.14);
 
@@ -174,21 +182,23 @@
      这些 token 只负责跨主题可读的中性承载面。 */
   --launcher-tile-bg: rgba(255, 255, 255, 0.055);
   --launcher-tile-border: rgba(255, 255, 255, 0.10);
+  /* 首页工作带的实体面板：靠面分区，替代过去满屏的贯通发丝线 */
+  --home-panel-bg: rgba(255, 255, 255, 0.045);
   --launcher-control-bg: rgba(255, 255, 255, 0.045);
   --launcher-control-border: rgba(255, 255, 255, 0.09);
-  --launcher-theme-icon: #c4b5fd;
-  --launcher-theme-icon-bg: rgba(139, 92, 246, 0.16);
+  --launcher-theme-icon: #E8A87C;
+  --launcher-theme-icon-bg: rgba(217, 119, 87, 0.16);
   --home-ambient-background:
-    radial-gradient(52% 86% at 8% 0%, rgba(124, 58, 237, 0.28) 0%, transparent 68%),
-    radial-gradient(44% 72% at 88% 4%, rgba(14, 165, 233, 0.20) 0%, transparent 70%),
-    radial-gradient(32% 58% at 58% 18%, rgba(244, 114, 182, 0.10) 0%, transparent 72%);
+    radial-gradient(52% 86% at 8% 0%, rgba(200, 98, 58, 0.26) 0%, transparent 68%),
+    radial-gradient(44% 72% at 88% 4%, rgba(176, 124, 62, 0.18) 0%, transparent 70%),
+    radial-gradient(32% 58% at 58% 18%, rgba(93, 122, 116, 0.12) 0%, transparent 72%);
   --home-ambient-opacity: 0.9;
   --home-eyebrow-bg: rgba(247, 247, 251, 0.045);
   --home-eyebrow-border: rgba(247, 247, 251, 0.13);
   --home-eyebrow-text: rgba(214, 216, 212, 0.78);
-  --home-title-shadow: 0 1px 12px rgba(0, 0, 0, 0.35);
+  --home-title-shadow: none;
   --home-subtitle-text: rgba(247, 247, 251, 0.72);
-  --home-subtitle-shadow: 0 1px 4px rgba(0, 0, 0, 0.20);
+  --home-subtitle-shadow: none;
   --home-name-background: linear-gradient(100deg, #f7f7fb 0%, #c8c5be 100%);
   --home-name-fill: transparent;
 
@@ -269,9 +279,9 @@
   --text-on-media: #f7f7fb;
   --text-on-media-muted: rgba(247, 247, 251, 0.66);
   --media-card-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.60);
-  --media-art-filter: saturate(0.92) contrast(1.05) brightness(0.90);
-  --media-art-opacity: 0.88;
-  --media-art-opacity-hover: 0.94;
+  --media-art-filter: saturate(0.96) contrast(1.18) brightness(0.96);
+  --media-art-opacity: 0.96;
+  --media-art-opacity-hover: 1;
   --media-art-tint-opacity: 0.68;
   --media-art-tint-opacity-hover: 0.82;
   --media-art-tint-blend: color;
@@ -279,19 +289,20 @@
   --media-art-wash-blend: normal;
 
   --accent-green: #7cfc00;
-  --accent-primary: #818cf8;
-  --accent-primary-rgb: 129, 140, 248;
-  --accent-gold: #818cf8;
-  --accent-gold-2: #a5b4fc;
-  --gold-gradient: linear-gradient(135deg, #c7d2fe 0%, #6366f1 45%, #a5b4fc 100%);
+  --accent-primary: #D97757;
+  --accent-primary-rgb: 217, 119, 87;
+  --accent-gold: #D97757;
+  --accent-gold-2: #E8A87C;
+  --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
 
   /* 选择/键盘游标是共享交互语义，不由页面各写一套蓝色。 */
-  --selection-bg: rgba(129, 140, 248, 0.16);
-  --selection-icon-bg: rgba(129, 140, 248, 0.22);
-  --selection-border: rgba(129, 140, 248, 0.38);
-  --selection-text: #c7d2fe;
-  --selection-checkbox-bg: rgba(20, 20, 24, 0.92);
-  --selection-checkbox-ring: rgba(20, 20, 24, 0.72);
+  --selection-bg: rgba(217, 119, 87, 0.16);
+  --selection-icon-bg: rgba(217, 119, 87, 0.22);
+  --selection-border: rgba(217, 119, 87, 0.38);
+  --selection-text: #F0C9A8;
+  /* 复选框底色：过去是「盖住文件图标」的近黑遮罩，暗色下看着像一块黑疙瘩（2026-07-31 用户反馈）。
+     现在复选框与图标互斥同槽显示，不需要遮罩，改为比行底稍亮一档的常规表面。 */
+  --selection-checkbox-bg: rgba(255, 255, 255, 0.10);
 
   /* Finder 风格标签。solid 保证白字小字号也达到可读对比度。 */
   --tag-red-solid: #b91c1c;
@@ -304,10 +315,12 @@
   --tag-gray-solid: #475569;
 
   /* 共享按钮只消费语义 token，不在 React 中维护 LIGHT/DARK 两套样式。 */
-  --button-primary-bg: #4f46e5;
-  --button-primary-bg-hover: #4338ca;
-  --button-primary-fg: #ffffff;
-  --button-primary-shadow: 0 4px 16px -4px rgba(79, 70, 229, 0.42);
+  /* 赭红上放白字只有 3.74:1（不达 4.5）。改走与浅色主题同一套解法：
+     亮一档的陶土底 + 深墨字，暗色下 5.5:1，hover 更亮 6.6:1。 */
+  --button-primary-bg: #D97757;
+  --button-primary-bg-hover: #E08A6B;
+  --button-primary-fg: #241915;
+  --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
   --button-secondary-bg: rgba(255, 255, 255, 0.05);
   --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
   --button-secondary-border: rgba(255, 255, 255, 0.10);
@@ -316,7 +329,7 @@
   --button-danger-border: rgba(239, 68, 68, 0.25);
   --button-danger-fg: #fca5a5;
   --button-ghost-bg-hover: rgba(255, 255, 255, 0.06);
-  --section-label-text: #a5b4fc;
+  --section-label-text: #D9906E;
 
   /* 数据可视化只保留“数据色”例外；画布中性层与文字仍跟随主题。 */
   --viz-sticky-bg: rgba(24, 24, 30, 0.90);
@@ -342,7 +355,7 @@
 
   /* 模态弹窗蒙层:暗色 / 浅色统一变量,modal portal 直接消费即可主题感知 */
   --modal-overlay: rgba(0, 0, 0, 0.5);
-  --shadow-gold: 0 10px 22px rgba(99, 102, 241, 0.20);
+  --shadow-gold: 0 10px 22px rgba(200, 98, 58, 0.20);
 
   /* ── 首页品牌字体（与 index.html Google Fonts 对应） ── */
   --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
@@ -492,6 +505,13 @@
   --text-secondary: rgba(15, 23, 42, 0.78);
   --text-muted: rgba(15, 23, 42, 0.68);          /* 暖灰底上保持 WCAG AA 对比度。 */
 
+  /* 浅色下代码块走「比纸面深一档的暖灰 + 石墨字」，与正文同源，不再是纸上的黑洞。 */
+  --code-block-bg: #F1ECE3;
+  --code-block-border: rgba(89, 65, 50, 0.18);
+  --code-block-text: #23303F;
+  --code-inline-bg: rgba(26, 26, 31, 0.06);
+  --code-inline-text: #B3261E;
+
   --semantic-success-text: #166534;
   --semantic-warning-text: #854d0e;
   --semantic-danger-text: #b91c1c;
@@ -522,7 +542,11 @@
   --semantic-cyan-border: rgba(21, 94, 117, 0.24);
   --semantic-indigo-soft: rgba(67, 56, 202, 0.12);
   --semantic-indigo-border: rgba(67, 56, 202, 0.24);
-  --workflow-accent-text-lightness: 36%;
+  /* 类别色文字在浅纸上的明度。36% 时橄榄 3.58 / 黛青 3.60 / 松绿 3.72 —— 
+     「手边的活儿」那枚 10px 状态标就吃这个色，正文级要 4.5:1，全线不达标。
+     压到 30% 后八色最低 4.83（判据见 themeSystem「类别色文字」用例，
+     它按真实叠底逐色算，不是记死一个数）。 */
+  --workflow-accent-text-lightness: 30%;
 
   /* 浅色品牌交互统一为暖赤陶；蓝色只保留给 semantic-info。 */
   --accent-primary: #A64B35;
@@ -535,10 +559,11 @@
   --selection-border: rgba(166, 75, 53, 0.34);
   --selection-text: #8F3F2B;
   --selection-checkbox-bg: var(--bg-card);
-  --selection-checkbox-ring: rgba(248, 245, 239, 0.82);
 
   --button-primary-bg: #CC785C;
-  --button-primary-bg-hover: #B8684C;
+  /* hover 往亮走而不是往暗走：主按钮是「陶土底 + 深墨字」，压暗会把字压进 4.18:1
+     （新加的暗浅双向对比守卫抓到的存量问题），提亮反而对比更高。 */
+  --button-primary-bg-hover: #D4855F;
   --button-primary-fg: #241915;
   --button-primary-shadow: 0 2px 6px rgba(204, 120, 92, 0.22), 0 1px 2px rgba(89, 65, 50, 0.06);
   --button-secondary-bg: var(--bg-card);
@@ -614,14 +639,15 @@
 
   --launcher-tile-bg: rgba(248, 245, 239, 0.94);
   --launcher-tile-border: rgba(15, 23, 42, 0.11);
+  --home-panel-bg: #FDFBF7;
   --launcher-control-bg: rgba(241, 236, 228, 0.86);
   --launcher-control-border: rgba(15, 23, 42, 0.12);
   --launcher-theme-icon: #A64B35;
   --launcher-theme-icon-bg: rgba(166, 75, 53, 0.12);
   --home-ambient-background:
-    radial-gradient(54% 92% at 7% -8%, rgba(139, 92, 246, 0.22) 0%, transparent 70%),
-    radial-gradient(48% 82% at 92% 0%, rgba(14, 165, 233, 0.16) 0%, transparent 72%),
-    radial-gradient(36% 64% at 58% 6%, rgba(251, 146, 60, 0.14) 0%, transparent 72%);
+    radial-gradient(54% 92% at 7% -8%, rgba(200, 98, 58, 0.20) 0%, transparent 70%),
+    radial-gradient(48% 82% at 92% 0%, rgba(176, 124, 62, 0.16) 0%, transparent 72%),
+    radial-gradient(36% 64% at 58% 6%, rgba(93, 122, 116, 0.12) 0%, transparent 72%);
   --home-ambient-opacity: 1;
   --home-eyebrow-bg: var(--nested-block-bg);
   --home-eyebrow-border: var(--nested-block-border);
@@ -634,7 +660,7 @@
 
   /* 浅色原图保持自然材质，只做轻微色彩校正与类别提示。 */
   --media-card-shadow: 0 8px 22px -12px rgba(74, 62, 48, 0.28);
-  --media-art-filter: saturate(1) contrast(1.10) brightness(0.94);
+  --media-art-filter: saturate(1.04) contrast(1.20) brightness(0.98);
   --media-art-opacity: 1;
   --media-art-opacity-hover: 1;
   --media-art-tint-opacity: 0.06;

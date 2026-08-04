@@ -2,6 +2,12 @@
 
 > **版本**：v3.1 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：管理层面板只消费已聚合、可解释的数据快照，不复制周报生成与团队管理逻辑。
+**谁该读**：做管理面板的产品与工程师。
+**读完能做什么**：说清面板与周报各自负责什么。
+
+---
+
 ## 管理摘要
 
 - **问题**：管理层需要快速理解团队协作、AI 使用、成本与风险，但原始运行日志和周报数据分散且短期数据会过期。
@@ -48,8 +54,8 @@
 
 - 服务端：`prd-api/src/PrdAgent.Api/Controllers/Api/ExecutiveController.cs`。
 - 前端：`prd-admin/src/pages/ExecutiveDashboardPage.tsx`、`prd-admin/src/services/contracts/executive.ts`、`prd-admin/src/services/real/executive.ts`。
-- 周报主设计：`design.report-agent.md`、`spec.report-agent.md`。
-- 工作流能力：`design.workflow-agent.engine.md`。
+- 周报主设计：[design.report-agent.md](./design.report-agent.md)、[spec.report-agent.md](./spec.report-agent.md)。
+- 工作流能力：[design.workflow-agent.engine.md](./design.workflow-agent.engine.md)。
 
 ## 风险与验收
 

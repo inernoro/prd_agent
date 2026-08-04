@@ -54,7 +54,7 @@ metadata:
 6. **比例原则**:严格不等于吹毛求疵。测试深度必须由风险、用户影响和证明力决定;低风险、非运行态、观察型问题不得被包装成 P0/P1。报告必须说明为什么当前深度足够,也必须说明继续加测不会改变 Verdict 的边界。
 7. **问题可定位**:凡报告写 P0/P1/P2 视觉问题,读者必须能从图里 3 秒定位。缺陷行要写清`位置 + 阻挡物/异常物 + 被影响对象 + 用户影响`,证据图必须有红/橙框或圈和短标签。只写"遮挡""异常""看这里"不合格。
 8. **移动端是独立硬门禁**:存在用户可见 Web 页面的 L1 至少 1 张、L2 至少 2 张真实触控移动端证据。必须使用独立 `isMobile:true,hasTouch:true` context，从登录或首页点击进入；桌面 context 仅缩窄视口不算。完整规则见 `doc/rule.acceptance.map-enterprise.md` §11.2、`reference/standard-v2.md` §5.0 和 `doc/rule.frontend.mobile-visual-check-matrix.md`。
-9. **结论必须语义分层**:每日/昨日验收首屏必须分别写 `产品质量`、`验收完整性`、`综合结论`、`发布建议`、`判定性质`，并为 conditional/fail 提供 `目标要求 -> 观察事实 -> 系统原因 -> 证据影响 -> 结论 -> 关闭动作` 根因链。缺陷为 0 且唯一问题是覆盖不足、目标版本无法复现或非阻断风险时用 `conditional`，不得用笼统 `fail` 暗示产品失败。
+9. **结论必须语义分层**:每日/昨日验收首屏必须分别写 `产品质量`、`验收完整性`、`综合结论`、`发布建议`、`判定性质`；`产品质量` 必须包含唯一结构化事实 `核心用例=通过/失败/未执行`，不得靠自然语言猜测核心用例状态。`核心用例=未执行` 或根因链存在 `覆盖缺口` 时不能同时声称验收完整。conditional/fail 还必须提供 `目标要求 -> 观察事实 -> 系统原因 -> 证据影响 -> 结论 -> 关闭动作` 根因链。根因链的 `结论` 只允许 `通过`、`覆盖缺口`、`非阻断风险`、`产品失败`、`核心用例失败`、`验收链路失败`、`硬门禁失败`；前四列是人类可读证据，不参与 Verdict 文本猜测。缺陷为 0 且唯一问题是覆盖不足、目标版本无法复现或非阻断风险时用 `conditional`，不得用笼统 `fail` 暗示产品失败。
 
 ## 复杂验收前置（每日/PR/commit/未发布分支/缺陷复测/视觉回归/发布前必用）
 
@@ -153,9 +153,9 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 - Slack 禁止发送 `/tmp`、`file://` 或本机 HTML 作为报告入口。报告 HTML/Markdown 必须发布到 CDS 验收报告页或 MAP 知识库分享链;优先 CDS 自托管报告,失败再回退 MAP 知识库。
 - 通知里出现的报告链接、raw 链接和页面链接必须同源且可由接收者打开。raw 内容验证通过不等于页面验证通过。
-- 归档后必须跑 `scripts/verify-open.mjs`,默认 3 次重试,同时等待标题、正文和图片。三次都失败时判验收链路失败;若第 2/3 次通过,报告必须记录首试失败和最终通过次数。
+- 归档后必须跑 `scripts/verify-open.mjs`,默认 3 次重试,同时等待标题、正文和图片，并全量校验交互报告内部链接、真实点击当前视口可见链接后目标是否进入可视区。三次都失败时判验收链路失败;若第 2/3 次通过,报告必须记录首试失败和最终通过次数。
 - 如果所有线上归档路径都失败,仍要把本地报告路径写入失败报告摘要,但 Slack 结论必须写「线上归档失败」,不能伪装为已完成。
-- Slack 摘要保持短格式:总 Verdict、线上报告链接、测试 commit、origin/main commit、缺陷数量、未覆盖数量、归档结果、打开验证结果。详细证据放报告,不要塞进 automation prompt。
+- Slack 摘要保持短格式:总 Verdict、线上报告链接、测试 commit、origin/main commit、P0/P1/P2/P3 数量、非零严重级的一句话问题概述、未覆盖数量、归档结果、打开验证结果。不能只给缺陷总数；详细证据放报告,不要塞进 automation prompt。
 - Slack 必须增加一句 Verdict 性质说明。例如：`综合结论 conditional：已测范围未发现缺陷，但目标日冻结版本有 4 项无法确认`。禁止发送 `FAIL + 缺陷 0 + 未覆盖 N` 而不解释失败对象。
 
 ## 证据关联性门禁（2026-06-20 反哺）
@@ -275,7 +275,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **v1.0 双主题**:先 `detectThemeSupport(page,cfg)` 探测本页是否真支持 light(标准 §5.4);`supportsLight=true` 才双主题各一张,dark-only 页单图 + 注明不计 fail。别交两张一模一样的暗图。
    - **v1.0 机读产物**:`writeManifest` 同时写 `result.json`(verdict/autoFindings/themeSupport/timing),供下游 Agent 直接消费。
    - **v2.14 移动端元数据**:`shot()` 自动记录 `viewport`、`touchPoints`、`isMobile`;归档脚本只把宽度不大于 480、触控点不少于 1 且 `isMobile=true` 的截图计为真实移动端证据。报告必须有「移动端验收」章节，写清视口、路径、触控、滚动、溢出、遮挡/裁切和结果。
-   - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 `debt.visual-agent.acceptance-skill.md`)。
+   - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 `debt.visual-agent.md「Visual Agent 验收技能」`)。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
 3. **读图核对（全量,不许抽查)**:manifest 里**每一张**截图都用 Read 工具读回,肉眼级核对 caption 与图内容一致(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。图文不符 → 修 driver 重拍,**禁止改 caption 迁就错图**。pass 用例必须连图、图必须独立可证 claim(反例:声称"下拉含 8 选项"但图里下拉收起——先 `select.size=N` 展开再截)、关键词断言不得同义反复(排除自己输入的消息,锚定产物区域)。详见 standard §3.6 证据链连线,准入第 8 项机检兜底。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
    - **每日验收报告结构(2026-06-18 固化,2026-06-20 修订)**:每日/昨日验收类报告必须先给类似周报的「昨日工作总结」,说明昨天做了什么、按模块覆盖了哪些内容、哪些没覆盖;紧接「PR/commit 到结果映射」「改动断言到证据表」「改动断言表」「影响面矩阵」「融合测试设计」「证明力矩阵」「覆盖缺口」和「覆盖矩阵」,再按大章节逐页验收。正文**不放目录**,避免目录占位替代证据链。页面章节顺序建议:总结 → PR/commit 到结果映射 → 改动断言到证据表 → 改动断言表 → 影响面矩阵 → 融合测试设计 → 证明力矩阵 → 覆盖缺口 → 覆盖矩阵 → 验收地址 → DoD/自测 → 需求一一对应 → 用例表 → 截图回读检查 → 页面验收章节 → 重试记录 → 缺陷清单 → 总结论。不得直接堆截图。
@@ -294,7 +294,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **按项目 + 文件夹归类(文件夹归类是默认行为,不是可选项)**:报告永远带 projectId(config.report.cdsProjectId > env CDS_PROJECT_ID > config.project);文件夹三级解析 `--folder-path`('/'分隔可嵌套,如 `每日验收/2026-07`) > `config.report.cdsFolder` > `--module` 自动归类——三者都空才落项目根,所以只要按规范传了 `--module`,报告就不会散在根上(2026-07-10 用户反馈 54 份报告大半未归类,由此固化)。服务端在项目作用域内按名 find-or-create,不会跨项目串文件夹。`--verdict/--tier/--branch/--commit/--pr` 作为元数据 + E1 部署上下文 stamp 进报告(看板/跨系统/PR 回写都靠这些)。
    - **命名固定结构**(用户定 2026-07-23):标题 = `{验收前缀} · {重点对象} · {目标日期}`。前缀只允许 `功能验收`、`每日验收`、`PR验收`、`Commit验收`、`分支验收`、`缺陷复测`、`视觉回归`、`发布验收`、`规范演练`。复杂验收必须显式传 `--report-kind/--title-focus/--report-date`；每日验收的日期是被验收自然日。项目和状态等信息走 CDS 元数据，不靠标题表达。
    - **必给地址**:收尾必打印「验收归档完成 · CDS 验收中心」块 + `/reports?project=&folder=&report=` 直达深链——每次归档都有一个可达地址交付,绝不静默。
-5. **归档后自查能否打开(强制,创建≠能看)**:拿到可达链接后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <url> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图);默认**最多尝试 3 次**(首试 + 2 次重试),吸收 CDS/Cloudflare/预览网关的偶发抖动和图片慢加载。CDS 直达深链是登录态(headless 需带 CDS 会话或用 `cds/cli/acceptance` proxyroute harness 打开);**匿名分享链 `/r/<token>`(E6)无需登录,headless 可直接断言——首选**。**重试不能抹掉首试失败**:若第 1 次失败、第 2/3 次通过,报告必须记录「第一次结果 / 重试动作 / 最终通过次数 / 最终判定」,并标为链路风险;**exit 0 = 真能看**才算交付完成,**exit 2 = 空白/打不开/截图缺失 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白"流到用户手里。
+5. **归档后自查能否打开(强制,创建≠能看)**:拿到可达链接后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <url> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图)，并扫描全部 `href="#..."` 是否唯一对应正文目标，再以真实点击核对当前视口可见链接的章节滚动;默认**最多尝试 3 次**(首试 + 2 次重试),吸收 CDS/Cloudflare/预览网关的偶发抖动和图片慢加载。CDS 直达深链是登录态(headless 需带 CDS 会话或用 `cds/cli/acceptance` proxyroute harness 打开);**匿名分享链 `/r/<token>`(E6)无需登录,headless 可直接断言——首选**。**重试不能抹掉首试失败**:若第 1 次失败、第 2/3 次通过,报告必须记录「第一次结果 / 重试动作 / 最终通过次数 / 最终判定」,并标为链路风险;**exit 0 = 真能看且内部链接能跳转**才算交付完成,**exit 2 = 空白/打不开/截图缺失/内部链接不可用 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白或能看不能点"流到用户手里。
 
 ## 端到端示例(照抄即可)
 
@@ -350,7 +350,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
 | `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
 | `scripts/archive_report.py` | 配置驱动归档(默认 cds:Markdown 写作源 → 交互 HTML → POST /api/reports,按项目+文件夹归类,带 verdict/部署上下文;local 离线兜底;doc-store 向后兼容) | 归档时 |
-| `scripts/verify-open.mjs` | 归档后自查:headless 打开可达链接断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
+| `scripts/verify-open.mjs` | 归档后自查:headless 断言标题、正文、截图和全部内部锚点，真实点击可见链接核对滚动结果；任一失败 exit 2 | 归档后(强制) |
 | `../cds/reference/acceptance-reports.md` | CDS 验收中心:报告/文件夹 API、cdscli report 命令、取证管线、深链格式、10MB/份压图注意 | 归档到 CDS 时 |
 | `acceptance.config.json` | 项目配置(预览域名/登录/CDS 项目与文件夹/截图);跨仓库改这个 | 接新仓库时 |
 

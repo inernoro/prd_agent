@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-04-18 | **状态**：已落地
 
+**一句话**：第一次在平台上开发一个智能体的完整旅程：从理解架构到七条铁律与该用哪个技能。
+**谁该读**：产品经理、业务负责人、首次开发智能体的任何人；约三十分钟。
+**读完能做什么**：独立走完一个智能体从想法到上线的全过程。
+
+---
+
 > **适用对象**：产品经理、业务负责人、首次在 PRD Agent 平台开发 Agent 的任何人
 > **阅读时间**：约 30 分钟
 > **前置要求**：能打开终端、能与 AI 对话即可
@@ -13,7 +19,7 @@
 | **"我要亲手做一个 Agent"**（推荐起点） | 本文 ↓，或直接在终端敲 `/help` 启动陪伴式引导 |
 | 只想把代码跑起来、不涉及 Agent 开发 | [`README.md`](../README.md) → "Quick Start" |
 | 想 30 秒扫完"项目在讲什么" | [`README.md`](../README.md) 顶部 + [`.cursorrules`](../.cursorrules) |
-| 想知道产品愿景和方法论由来 | [`doc/spec.project-vision.md`](spec.project-vision.md)（"四味药" 故事） |
+| 想知道产品愿景和方法论由来 | [doc/spec.project-vision.md](./spec.project-vision.md)（"四味药" 故事） |
 | 想查当前平台有什么功能/集合/模式 | [`.claude/rules/codebase-snapshot.md`](../.claude/rules/codebase-snapshot.md) |
 | 想查 8 个 appKey 的权威清单 | [`.claude/rules/app-identity.md`](../.claude/rules/app-identity.md) |
 

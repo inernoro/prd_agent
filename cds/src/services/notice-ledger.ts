@@ -139,6 +139,15 @@ export function sanitizeNoticeHref(raw: unknown): string | undefined {
 /** 同一件事在这个窗口内重复发生只累加次数，不重新外发。 */
 export const NOTICE_MERGE_WINDOW_MS = 10 * 60_000;
 
+/** 信息中心首屏只承载摘要；完整失败证据留在通知深链指向的发布记录。 */
+export const NOTICE_BODY_MAX_CHARS = 240;
+
+export function compactNoticeText(value: string, maxChars: number = NOTICE_BODY_MAX_CHARS): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
 /** 账本上限：与 uptime 的环形缓冲同理，内存/磁盘都必须有上界。 */
 const DEFAULT_MAX_NOTICES = 200;
 
@@ -406,10 +415,11 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
   const scopeKey = data.targetId || data.branchId || data.projectId || 'system';
   const dedupeKey = `${envelope.type}:${scopeKey}`;
 
-  const detail = [data.message, data.errorMessage, data.failure?.summary, data.failure?.reason]
+  // 结构化摘要优先于原始 stderr。原始发布日志可能有数百行，只能去发布记录展开。
+  const detail = [data.message, data.failure?.summary, data.failure?.reason, data.errorMessage]
     .find((text) => typeof text === 'string' && text.trim().length > 0);
   const subject = data.targetName || data.projectName || data.projectSlug || data.branchId || '';
-  const body = [subject, detail].filter(Boolean).join(' — ') || copy.title;
+  const body = compactNoticeText([subject, detail].filter(Boolean).join(' — ') || copy.title);
 
   let href: string | undefined;
   if (copy.link === 'release') {

@@ -2,10 +2,14 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：网关测试矩阵的全量执行结果，每一行都是 CI 真跑过的一个用例格，不是只列不跑的清单。
+**谁该读**：要确认网关某条协议或传输路径有没有被测到的人。
+**读完能做什么**：查到某个协议/传输组合是否被覆盖、由哪一层用例执行。
+
 > 自动生成（`scripts/gen-gw-matrix-report.py`），勿手改。一处定义三处消费：本报告 +
 > `protocol-cells.json`(B 层 [Theory]) + `transport-cells.json`(C 层 [Theory])。
 > 报告里 B/C 的每一行都是 CI 真执行的一个 cell（非只列不跑）。矩阵设计 SSOT：
-> `doc/spec.platform.llm-gateway.test-matrix.md`；债务台账：`doc/debt.platform.llm-gateway.isolation.md`。
+> [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)；债务台账：[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)。
 
 全枚举、不压缩：
 - **A 层解析全量**：153 个 appCallerCode 真实解析结果（golden SSOT，第 2 节）。

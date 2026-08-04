@@ -19,9 +19,10 @@ import {
   Store,
   type LucideIcon,
 } from 'lucide-react';
-import { getMobileFeed, getMobileStats, listRecentWork } from '@/services';
+import { listRecentWork } from '@/services';
 import type { RecentWorkItemDto } from '@/services';
 import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
+import { useHomePulse } from '@/lib/homePulse';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 
 /* ───────────── 快捷入口（首页与早报共用同一份注册，仅样式分叉） ───────────── */
@@ -39,12 +40,12 @@ export interface QuickEntry {
 export const QUICK_ENTRIES: QuickEntry[] = [
   { key: 'document-store', title: '知识库', desc: '文档沉淀与资料管理', route: '/document-store', Icon: BookOpen, accent: '#FFB340' },
   { key: 'report-agent', title: '周报', desc: '生成、整理与审阅周报', route: '/report-agent', Icon: FileText, accent: '#7DD3FC' },
-  { key: 'visual-agent', title: '生图', desc: '文生图、图生图与配图', route: '/visual-agent', Icon: ImageIcon, accent: '#A78BFA' },
+  { key: 'visual-agent', title: '生图', desc: '文生图、图生图与配图', route: '/visual-agent', Icon: ImageIcon, accent: '#D97757' },
   { key: 'defect-agent', title: '缺陷', desc: '提交、跟踪与复盘问题', route: '/defect-agent', Icon: Bug, accent: '#FB7185' },
   { key: 'literary-agent', title: '文学创作', desc: '长文写作与润色', route: '/literary-agent', Icon: Feather, accent: '#34D399' },
   { key: 'marketplace', title: '海鲜市场', desc: '技能与配置市场', route: '/marketplace', Icon: Store, accent: '#FBBF24' },
   { key: 'my-assets', title: '我的资产', desc: '图片、文档与附件', route: '/my-assets', Icon: FolderOpen, accent: '#60A5FA' },
-  { key: 'changelog', title: '更新中心', desc: '版本动态与周报', route: '/changelog', Icon: Newspaper, accent: '#F472B6' },
+  { key: 'changelog', title: '更新中心', desc: '版本动态与周报', route: '/changelog', Icon: Newspaper, accent: '#4FD1C5' },
 ];
 
 /** 「档案室 / 底蕴」入口：历史与沉淀类页面 */
@@ -58,7 +59,7 @@ export const ARCHIVE_ENTRIES: Array<{ key: string; title: string; desc: string; 
  * 后端 recent-work 实际会返回 document-store 等 key（真实预览取证发现），
  * 未覆盖的 key 由 recentAgentMetaFor 兜底成「智能体」而非裸英文。 */
 export const RECENT_AGENT_META: Record<string, { label: string; Icon: LucideIcon; accent: string }> = {
-  'visual-agent': { label: '视觉创作', Icon: ImageIcon, accent: '#A78BFA' },
+  'visual-agent': { label: '视觉创作', Icon: ImageIcon, accent: '#D97757' },
   'literary-agent': { label: '文学创作', Icon: Feather, accent: '#34D399' },
   'workflow-agent': { label: '工作流', Icon: FolderOpen, accent: '#7DD3FC' },
   'document-store': { label: '知识库', Icon: BookOpen, accent: '#FFB340' },
@@ -78,13 +79,25 @@ export interface MobileHomeData {
   recentWork: RecentWorkItemDto[];
   changelogUnread: number;
   loading: boolean;
+  /** 用量没取到（网络 / 服务不可用），不是「用量为零」 */
+  statsFailed: boolean;
+  /** 动态没取到，不是「还没有动态」 */
+  feedFailed: boolean;
+  /** 请求成功但后端有来源查挂了：列表不完整 */
+  feedDegraded: boolean;
+  /** 重新拉一次「近 7 日 + 我的动态」 */
+  reload: () => void;
 }
 
+/**
+ * 移动首页数据。近 7 日与我的动态直接复用 `lib/homePulse`——
+ * 两端同一个 hook，数字对不上和「失败被渲染成空」这两类问题只需要修一处。
+ * 「继续上次」是移动端独有的，留在本地。
+ */
 export function useMobileHomeData(): MobileHomeData {
-  const [feed, setFeed] = useState<FeedItem[]>([]);
-  const [stats, setStats] = useState<MobileStats | null>(null);
+  const pulse = useHomePulse(8);
   const [recentWork, setRecentWork] = useState<RecentWorkItemDto[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [recentLoading, setRecentLoading] = useState(true);
   const loadCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
   const changelogUnread = useChangelogStore(selectUnreadCount);
 
@@ -92,23 +105,27 @@ export function useMobileHomeData(): MobileHomeData {
     let alive = true;
     void loadCurrentWeek();
     (async () => {
-      const [feedRes, statsRes, recentRes] = await Promise.all([
-        getMobileFeed({ limit: 8 }),
-        getMobileStats({ days: 7 }),
-        listRecentWork({ limit: 8 }),
-      ]);
+      const recentRes = await listRecentWork({ limit: 8 });
       if (!alive) return;
-      if (feedRes.success) setFeed(feedRes.data.items ?? []);
-      if (statsRes.success) setStats(statsRes.data);
       if (recentRes.success) setRecentWork(recentRes.data.items ?? []);
-      setLoading(false);
+      setRecentLoading(false);
     })();
     return () => {
       alive = false;
     };
   }, [loadCurrentWeek]);
 
-  return { feed, stats, recentWork, changelogUnread, loading };
+  return {
+    feed: pulse.feed,
+    stats: pulse.stats,
+    recentWork,
+    changelogUnread,
+    loading: pulse.loading || recentLoading,
+    statsFailed: pulse.statsFailed,
+    feedFailed: pulse.feedFailed,
+    feedDegraded: pulse.feedDegraded,
+    reload: pulse.reload,
+  };
 }
 
 /* ───────────── 格式化 ───────────── */
@@ -131,12 +148,8 @@ export function formatRelativeTime(value: string): string {
 }
 
 /** 大数字压缩显示：12480 → 1.2万；980 → 980 */
-export function formatCompactNumber(value: number): string {
-  if (!Number.isFinite(value)) return '0';
-  if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1).replace(/\.0$/, '')}亿`;
-  if (value >= 10_000) return `${(value / 10_000).toFixed(1).replace(/\.0$/, '')}万`;
-  return String(value);
-}
+// 紧凑计数的 SSOT 在 lib/homePulse（桌面首页同样消费），这里只做转出
+export { formatCompactNumber } from '@/lib/homePulse';
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 

@@ -18,11 +18,31 @@ import { useLanguage } from '../contexts/LanguageContext';
  */
 /**
  * 品牌主渐变（SSOT）：登录 CTA / 落地页 CTA / Arena 主按钮共用。
- * 靛蓝-紫罗兰同族色（对齐应用内 --accent-primary #818CF8 与首页极光
- * #2E2A55/#6E56CF/#5B8DEF），取代早期青→紫→玫红三色霓虹——
- * 邻近色相保证"彩而不乱"，与登录后的工作台观感统一。
+ * 陶土同族色（对齐应用内 --accent-primary #D97757），取代早期青→紫→玫红
+ * 三色霓虹——邻近色相保证"彩而不乱"，与登录后的工作台观感统一。
  */
-export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)';
+/**
+ * 品牌渐变的三档色标（SSOT 的 SSOT）。
+ *
+ * CSS 渐变、SVG `<stop>` 都从这里取——这条渐变已经被手抄过三份（页脚徽标、
+ * 产品预览发送键、导航 Logo），每一份都各自漂移、各自配错前景色。
+ * 想用它就 import，不要再抄一遍色值。
+ */
+export const HERO_GRADIENT_STOPS = ['#CE6B41', '#D97757', '#E0A06B'] as const;
+export const HERO_GRADIENT = `linear-gradient(135deg, ${HERO_GRADIENT_STOPS[0]} 0%, ${HERO_GRADIENT_STOPS[1]} 48%, ${HERO_GRADIENT_STOPS[2]} 100%)`;
+/**
+ * 铺在 HERO_GRADIENT 上的文字色。
+ *
+ * 这条渐变对白字只有 2.23~3.62:1（越往右越亮越糟），13-15px 的主 CTA 标签一律不达标。
+ * 陶土底配深墨字才是这套配色的正解，三档分别 4.74 / 5.49 / 7.68:1；起点 #C8623A
+ * 抬到 #CE6B41 就是为了让最暗那档也过 4.5。
+ *
+ * 直接复用 --button-primary-fg（暗浅两主题同为深墨），而不是再写一个深色 hex：
+ * 主操作面的文字色只该有一个来源，多一个就多一处会各自漂移的判据。
+ * 守卫：themeSystem 逐档算「渐变色标 x 两主题的 button-primary-fg」是否过 4.5，
+ * inkPalette 拦「HERO_GRADIENT 当底再配浅色字」。
+ */
+export const HERO_GRADIENT_FG = 'var(--button-primary-fg)';
 export const HERO_GRADIENT_TEXT = {
   background: HERO_GRADIENT,
   WebkitBackgroundClip: 'text' as const,
@@ -52,9 +72,9 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           top: '72vh',
           height: '2px',
           background:
-            'linear-gradient(90deg, transparent 0%, rgba(139, 92, 246, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(122, 140, 246, 0.55) 70%, transparent 100%)',
+            'linear-gradient(90deg, transparent 0%, rgba(200, 98, 58, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(224, 160, 107, 0.55) 70%, transparent 100%)',
           boxShadow:
-            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(139, 92, 246, 0.3)',
+            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(200, 98, 58, 0.3)',
         }}
       />
 
@@ -68,7 +88,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           width: 'clamp(360px, 34vw, 560px)',
           height: 'clamp(360px, 34vw, 560px)',
           background:
-            'radial-gradient(circle at center, rgba(139, 92, 246, 0.30) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(122, 140, 246, 0.06) 60%, transparent 75%)',
+            'radial-gradient(circle at center, rgba(200, 98, 58, 0.30) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(224, 160, 107, 0.06) 60%, transparent 75%)',
           filter: 'blur(6px)',
         }}
       />
@@ -98,8 +118,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 90deg,
                 transparent 0,
                 transparent 43px,
-                rgba(122, 140, 246, 0.38) 43px,
-                rgba(122, 140, 246, 0.38) 44px
+                rgba(217, 119, 87, 0.30) 43px,
+                rgba(217, 119, 87, 0.30) 44px
               )
             `,
             transform: 'rotateX(62deg)',
@@ -181,8 +201,11 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               lineHeight: 1.08,
               letterSpacing: '-0.035em',
               maxWidth: '16ch',
-              // 白 → 长春花蓝的纵向渐隐（Linear 式标题处理）：比纯白平涂多一层精致感
-              background: 'linear-gradient(180deg, #FFFFFF 0%, #EDEFFE 55%, #B9C0F5 100%)',
+              // 白 → 暖砂的纵向渐隐（Linear 式标题处理）：比纯白平涂多一层精致感。
+              // 原来收在一支色相 233 的长春花蓝（靛色区）——那是换笔前留下的尾巴，
+              // 门头最大的一块字反倒还是冷的，与整页暖石墨打架。
+              // 色值不写进注释：守卫连注释一起扫，把禁色写在这儿等于给下一个人留种子。
+              background: 'linear-gradient(180deg, #FFFFFF 0%, #FBF0E7 55%, #E7C3A8 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text',
@@ -190,7 +213,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               // 改用 drop-shadow（按实际像素投影）。保持静态常量，禁止无限循环
               // 动画（绘制属性逐帧重绘是整页滚动卡顿的头号来源）。
               filter:
-                'drop-shadow(0 0 34px rgba(213, 221, 232, 0.28)) drop-shadow(0 0 90px rgba(122, 140, 246, 0.22))',
+                'drop-shadow(0 0 34px rgba(232, 221, 213, 0.28)) drop-shadow(0 0 90px rgba(224, 160, 107, 0.22))',
             }}
           >
             {t.hero.title}
@@ -219,11 +242,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             {/* 主 CTA */}
             <button
               onClick={onGetStarted}
-              className="group relative inline-flex items-center gap-2.5 h-12 px-8 rounded-full font-medium text-[14.5px] text-white transition-all duration-200 hover:scale-[1.03] active:scale-[0.98]"
+              className="group relative inline-flex items-center gap-2.5 h-12 px-8 rounded-full font-medium text-[14.5px] transition-all duration-200 hover:scale-[1.03] active:scale-[0.98]"
               style={{
                 background: HERO_GRADIENT,
+                color: HERO_GRADIENT_FG,
                 boxShadow:
-                  '0 0 48px rgba(124, 108, 240, 0.35), 0 0 100px rgba(122, 140, 246, 0.18), 0 10px 32px rgba(0, 0, 0, 0.5)',
+                  '0 0 48px rgba(217, 119, 87, 0.35), 0 0 100px rgba(224, 160, 107, 0.18), 0 10px 32px rgba(0, 0, 0, 0.5)',
                 letterSpacing: '0.01em',
                 fontFamily: 'var(--font-display)',
               }}

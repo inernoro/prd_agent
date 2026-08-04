@@ -4,6 +4,10 @@
 
 > **appKey**：`visual-agent`
 
+**一句话**：AI 驱动的一站式视觉创作工作台——从灵感到成品，全流程 AI 协同。
+**谁该读**：视觉创作的产品与工程师。
+**读完能做什么**：说清工作空间、画布、资产三者的关系。
+
 ## 一、管理摘要
 
 - **解决什么问题**：创意工作者需要 AI 辅助生成和编辑图片，但生图能力分散在多个工具中，缺乏统一的工作空间和资产管理
@@ -13,8 +17,6 @@
 - **当前状态**：核心功能已实现，持续迭代中
 
 ## 二、产品定位
-
-**一句话**：AI 驱动的一站式视觉创作工作台——从灵感到成品，全流程 AI 协同。
 
 **目标用户**：
 
@@ -227,11 +229,11 @@
 
 | 文档 | 聚焦领域 | 关系 |
 |------|----------|------|
-| `design.platform.image-ref-and-persistence.md` | 图片引用日志 + 消息持久化 | 解决 LLM 请求中参考图 base64 截断和消息丢失问题 |
-| `design.visual-agent.inline-image-chat.md` | 内联图片聊天分析 | RichComposer 中图片引用的统一处理方案 |
-| `design.visual-agent.multi-image-compose.md` | 多图组合生成 | 两阶段架构：预提取描述 + 实时组合 |
-| `design.visual-agent.multi-image-vision-api.md` | Vision API 多图支持 | 解决 img2img 端点只支持单张参考图的限制 |
-| `design.video-agent.remotion-gap.md` | Remotion 质量分析 | 视频场景生成中的视觉质量差距分析（与 VideoAgent 交叉） |
+| [design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md) | 图片引用日志 + 消息持久化 | 解决 LLM 请求中参考图 base64 截断和消息丢失问题 |
+| [design.visual-agent.inline-image-chat.md](./design.visual-agent.inline-image-chat.md) | 内联图片聊天分析 | RichComposer 中图片引用的统一处理方案 |
+| [design.visual-agent.multi-image-compose.md](./design.visual-agent.multi-image-compose.md) | 多图组合生成 | 两阶段架构：预提取描述 + 实时组合 |
+| [design.visual-agent.multi-image-vision-api.md](./design.visual-agent.multi-image-vision-api.md) | Vision API 多图支持 | 解决 img2img 端点只支持单张参考图的限制 |
+| [design.video-agent.remotion-gap.md](./design.video-agent.remotion-gap.md) | Remotion 质量分析 | 视频场景生成中的视觉质量差距分析（与 VideoAgent 交叉） |
 
 ## 十、影响范围与风险
 
@@ -251,11 +253,10 @@
 
 | 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|----------|
-| 生图模型服务不稳定 | 中 | 高 | 模型池故障转移（design.platform.model-pool.md） |
+| 生图模型服务不稳定 | 中 | 高 | 模型池故障转移（[design.platform.model-pool.md](./design.platform.model-pool.md)） |
 | 大量并发生图消耗 API 额度 | 中 | 中 | Run 队列 + 速率限制 |
 | COS 存储成本随资产增长 | 低 | 中 | 定期清理孤立资产 + 用户配额 |
 | 多图组合语义理解偏差 | 中 | 低 | Clarify API 反问澄清 + Plan API 优化 prompt |
-
 
 ## 视觉分镜台（Storyboard，2026-06-14）
 

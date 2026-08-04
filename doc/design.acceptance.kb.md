@@ -3,8 +3,10 @@
 > **版本**：v1.0 | **日期**：2026-05-30 | **状态**：已落地
 
 > **关联实现**：`prd-api/.../DocumentStoreController.cs`、`prd-admin/.../DocBrowser.tsx`、`.claude/skills/create-visual-test-to-kb/`
-> **关联设计**：`design.acceptance.system.md`（验收体系主文档）、`debt.knowledge-base.md`、`debt.acceptance.system.md`
+> **关联设计**：[design.acceptance.system.md](./design.acceptance.system.md)（验收体系主文档）、[debt.knowledge-base.md](./debt.knowledge-base.md)、[debt.acceptance.system.md](./debt.acceptance.system.md)
 > **一句话**：把"验收报告堆进一个平铺知识库、看不出新旧也看不出通过没通过"升级为"最新在前、结论可视、结构受模板约束、可跨环境同步"的质量资产库。
+> **谁该读**：接手验收归档的工程师。
+> **读完能做什么**：说清一份报告从生成到可分享经过哪些环节。
 
 
 ## 1. 管理摘要
@@ -93,7 +95,7 @@
 
 ### 5.C 跨环境同步
 
-> 本节是验收报告库最初的"运维一次性搬运"（export/import + CLI）。已被泛化为**用户自助的持续配对同步**（界面入口 + per-store 永久令牌 + 单/双向 + 血缘 ID 幂等，适用于任意知识库），详见 `design.knowledge-base.store-sync.md`。下表端点仍是同步引擎复用的底层数据形态。
+> 本节是验收报告库最初的"运维一次性搬运"（export/import + CLI）。已被泛化为**用户自助的持续配对同步**（界面入口 + per-store 永久令牌 + 单/双向 + 血缘 ID 幂等，适用于任意知识库），详见 [design.knowledge-base.store-sync.md](./design.knowledge-base.store-sync.md)。下表端点仍是同步引擎复用的底层数据形态。
 
 | 端点 | 方法 | 说明 |
 |------|------|------|

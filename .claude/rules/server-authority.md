@@ -1,8 +1,12 @@
 ---
-globs: ["prd-api/src/**/*.cs"]
+paths:
+  - "prd-api/src/**/*.cs"
 ---
 
 # 服务器权威性设计
+
+**一句话**：客户端断开不许取消服务器任务：LLM 与写库一律传 CancellationToken.None，长任务走 Run/Worker，SSE 要心跳与断线续传。
+**什么时候撞上**：写后端长任务、SSE 推送、模型调用。
 
 客户端被动断开不得取消服务器任务。只有用户主动调用取消 API 才允许中断。
 

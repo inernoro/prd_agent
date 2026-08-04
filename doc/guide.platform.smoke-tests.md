@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：部署后用真实请求打预览域名的分层冒烟脚本，几十秒暴露「容器起来了但接口 401、数据库连不上」。
+**谁该读**：每次部署到灰度环境后要确认没坏的人；给流水线配自动检查的工程师。
+**读完能做什么**：跑通一次冒烟测试、看懂结果，并把它接进自己的部署流程。
+
+---
+
 > Phase 2 交付物 —— 部署后快速验证关键链路是否跑通。
 
 
@@ -40,7 +46,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 ## 快速上手
 
 如果目标是“用 CDS Agent 审查当前仓库或其他仓库”，先看
-`doc/guide.cds.agent.code-review-quickstart.md`。本文件只解释 smoke 怎么跑、
+[doc/guide.cds.agent.code-review-quickstart.md](./guide.cds.agent.code-review-quickstart.md)。本文件只解释 smoke 怎么跑、
 证据怎么读、何时不该把 readiness/skip 当作商业级通过。
 
 ### 1. 本地跑
@@ -539,4 +545,4 @@ smoke_done
 - `.claude/skills/smoke-test/SKILL.md` —— `/smoke` 技能定义
 - `.claude/rules/cds-first-verification.md` —— CDS 优先验证原则
 - `.claude/rules/e2e-verification.md` —— 端到端验收原则
-- `doc/plan.cds.status.md` —— CDS 当前状态看板(Phase 2 已并入主进度)
+- [doc/plan.cds.status.md](./plan.cds.status.md) —— CDS 当前状态看板(Phase 2 已并入主进度)

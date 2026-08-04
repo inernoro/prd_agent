@@ -1,6 +1,6 @@
 ---
 name: weekly-update-summary
-description: Generates business-facing weekly project reports for executives, product managers and business owners. Aggregates git history with this week's daily reports, CDS acceptance verdicts, defect ledger and production releases, then produces a structured Chinese-language weekly report (business value, quality gate, daily trail, evidence links, next-week priorities) saved to doc/report.YYYY-WXX.md and published as a weekly magazine edition. Trigger words: "生成周报", "写周报", "weekly report", "本周总结".
+description: 'Generates business-facing weekly project reports for executives, product managers and business owners. Aggregates git history with this week''s daily reports, CDS acceptance verdicts, defect ledger and production releases, then produces a structured Chinese-language weekly report (business value, quality gate, daily trail, evidence links, next-week priorities) saved to doc/report.YYYY-WXX.md and published as a weekly magazine edition. Trigger words: "生成周报", "写周报", "weekly report", "本周总结".'
 ---
 
 # 自动化周报生成
@@ -202,15 +202,40 @@ html 周刊版硬约束（publish.py `--report-html` 发布前校验，与日报
 - 发布命令（复用日报发布脚本的刊系参数）：
 
 ```bash
+# BASELINE_SHA 必须在这里先取值 —— 它就是报告头部「统计基线」那个 SHA，同一个值两处用。
+# 不先赋值直接引用，shell 会展开成空串，而 publish.py 对 weekly-report 允许空 --last-commit
+# 且只打一行告警，于是「发布成功但元数据没写上」，看不出问题（Codex #1319 P1）。
+BASELINE_SHA=$(git rev-parse "origin/${DEFAULT_BRANCH}")
+
 python3 .claude/skills/daily-report-summary/reference/publish.py \
   --base https://main-prd-agent.miduo.org \
   --impersonate inernoro \
   --title "周报-${ISO_YEAR}-W${WEEK_NUM}-本周纵深" \
   --daily-date "${MONDAY}" \
   --report-html /tmp/weekly-${ISO_YEAR}-W${WEEK_NUM}.html \
-  --store "周报知识库" --kind weekly-report --tags "周报,本周纵深"
+  --store "周报知识库" --kind weekly-report --tags "周报,本周纵深" \
+  --replace-same-date \
+  --last-commit "${BASELINE_SHA}"
+# --replace-same-date：同一周重跑（补数据 / 改结论 / 修错字）时**原地更新**那条，
+#   不叠第二篇。缺了它，每重跑一次就在库里多一条同周周刊，读者不知道该信哪篇。
+#   匹配键是 dailyDate(=MONDAY) + kind(=weekly-report)，故只会命中同一周的周刊，不会误伤别周。
+#   这是本命令里**唯一有实际保护作用**的开关。
+# --last-commit：**只是出处记录（provenance），不是水位线**。周报侧目前没有任何消费方读它——
+#   `collect_week_context.py` 的 collect_prev_weekly 只返回上期标题与 entryId，
+#   唯一的水位线读取方 coverage_window.py 跑在**日报**的 store + kind 上。所以它今天的作用
+#   仅是「把这期基于哪个 SHA 算的」写进条目元数据备查，**不能**指望它让下期自动续采
+#   （Codex #1319 P2）。要真有续采能力，得先给周报侧接一个消费方，见 doc/debt.acceptance-center-cds.md。
 # 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地文件（仅自查，不算交付）
 ```
+
+> **为什么 `--replace-same-date` 必须写死在命令里**（2026-08-02 实测）：`publish.py` 的去重是
+> **opt-in**（`--replace-same-date` 是 `store_true`），日报技能的命令传了、周报技能的没传 ——
+> 同一条「重跑不叠篇」的规则在两处各写一遍然后漂移了（`predicate-and-wiring-discipline.md` 形状 3）。
+> 实测后果：W31 周刊发布后重跑一次，库里立刻多出一条同周周刊，只能手工 `DELETE /entries/{id}` 收拾。
+> **重跑是常态**（改结论、修错字、补元数据），所以它是默认必带，不是可选项。
+>
+> **`--last-commit` 则不要夸大**：它今天只是出处记录，周报侧无人消费（见上方注释）。写它是为了
+> 日后接续采能力时有数据可用，以及排查「这期基于哪个 SHA 算的」；把它说成「防漏采」是无根之木。
 
 ### 纪律 9：必须关联本周的每日日报（逐日，一天都不能少）
 
@@ -505,7 +530,9 @@ v1 直接把 PR 按模块聚类就开写，产出的是工程视角。v2 必须�
 
 ### Phase 5.5: 发布 html 周刊版到知识库
 
-按纪律 8 的发布命令调 `daily-report-summary/reference/publish.py`（`--store 周报知识库 --kind weekly-report`）。发布成功后记录分享链，Phase 6 一并输出。无密钥/环境不可达时退化 `--local` 并在输出里明确说明「周刊版未发布，仅 md 底稿落盘」。
+按纪律 8 的发布命令调 `daily-report-summary/reference/publish.py`（`--store 周报知识库 --kind weekly-report`），**必带 `--replace-same-date` 与 `--last-commit`**（理由见纪律 8 的命令注释：前者防重跑叠篇，后者写水位线给下一期）。发布成功后记录分享链，Phase 6 一并输出。无密钥/环境不可达时退化 `--local` 并在输出里明确说明「周刊版未发布，仅 md 底稿落盘」。
+
+发布后自查一条：库里同一周的周刊**有且只有一条**。多于一条说明开关漏传，先删重复再交付——别把重复条目留给读者去猜哪篇是准的（这正是本周报自己在质量闸里点名的「重复归档」问题，技能自身不能犯）。
 
 ---
 

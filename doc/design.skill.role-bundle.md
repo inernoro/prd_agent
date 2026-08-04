@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-28 | **状态**：已落地
 
+**一句话**：外部用户搜岗位搜不到技能、装完二十个也不知道从哪开始，本文用角色套装解决这两层问题。
+**谁该读**：做技能对外分发的产品与工程师。
+**读完能做什么**：说清套装怎么按角色打包与引导。
+
+---
+
 ## 一、管理摘要
 
 **解决什么问题**：海鲜市场已经能把本仓库的优质技能虚拟上架、匿名下载，但外部用户（尤其非技术角色）拿到的是「一堆按功能分类的散装技能」——搜「产品经理」搜不到东西，装完二十个技能之后面对空仓库不知从哪开始。技能是零件，缺的是把零件串成工作方法的机床。
@@ -9,9 +15,9 @@
 **当前决策**：加两层——
 
 1. **角色套装（bundle）**：声明式清单，一条 curl 装齐一个角色需要的全部技能，与技能共用 `official-{key}` 匿名下载通道。
-2. **`sdd-init` 入口技能**：装完套装后跑一次，把 CLAUDE.md 规则骨架、`doc/` 七类文档骨架和角色路线图落到用户自己的项目里。
+2. **`sdd-init` 入口技能**：装完套装后跑一次，把规则骨架（按宿主生成 `CLAUDE.md` 或 `AGENTS.md`，多宿主两个都生成）、`doc/` 七类文档骨架和角色路线图落到用户自己的项目里。
 
-**代价与边界**：套装内容是提交期静态声明，不支持用户自定义组合；首批只做 `pm-starter`（产品经理），dev/qa 只有角色标签、没有套装。
+**代价与边界**：套装内容是提交期静态声明，不支持用户自定义组合；首批落地 `pm-starter`（产品经理），`dev-starter`（开发）与 `qa-starter`（测试/验收）已于 2026-07-28 补齐，三者均含 `sdd-init` 与角色专属技能清单，不再是仅有角色标签、没有套装。
 
 **为什么不新增数据库集合**：套装复用既有的虚拟注入机制（不入库、部署即更新），新增一个集合会带来迁移、seeder、上传对象存储一整套维护成本，而套装内容本就该随代码版本走。
 
@@ -68,11 +74,13 @@ pm-starter.zip
 
 外部用户三步，全程不需要注册账号、不需要 API key：
 
-```bash
-curl -sSLo pm.zip "https://<域名>/api/official-skills/pm-starter/download"
-unzip -o pm.zip -d ~/.claude/skills/
-# 打开 Claude Code，说：/sdd-init
 ```
+curl -sSLo pm.zip "https://<域名>/api/official-skills/pm-starter/download"
+SKILLS_DIRS=$(for h in .claude .cursor .agents; do [ -d "$h" ] && printf '%s/skills ' "$h"; done); [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=.agents/skills
+for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o pm.zip -d "$d"; done
+```
+
+打开你的 AI 编码工具，说：`/sdd-init`。上面第二、三行是项目级多宿主安装的标准写法（`.claude` / `.cursor` / `.agents` 存在几个装几个，不写用户主目录），与全仓统一的技能安装位置约定同源。
 
 API key 只在「往市场上传技能」时才需要，不挡在门口。
 
@@ -82,7 +90,7 @@ API key 只在「往市场上传技能」时才需要，不挡在门口。
 |---|---|
 | 探测 | 项目根、是否 git、已有骨架、已装技能、项目类型；能推断的一律不问 |
 | 提问 | 最多 2 个（项目一句话简介、文档目录），其余用默认值 |
-| 生成 | `CLAUDE.md`（八条核心规则）、`doc/rule.doc.naming.md`、第一份 `spec.*`、`changelogs/` |
+| 生成 | 规则文件（按宿主生成 `CLAUDE.md` 或 `AGENTS.md`，多宿主两个都生成，八条核心规则）、[doc/rule.doc.naming.md](./rule.doc.naming.md)、第一份 `spec.*`、`changelogs/` |
 | 报告 | 已生成 / 已跳过 / 已装技能 / 缺什么 / 下一步做什么（具体到敲哪个命令） |
 
 硬约束：不覆盖已有文件、探测不到就写「待补」不编造、生成内容禁 emoji。
@@ -99,12 +107,12 @@ API key 只在「往市场上传技能」时才需要，不挡在门口。
 
 ## 七、已知边界
 
-见 `doc/debt.skill.role-bundle.md`。
+见 [doc/debt.skill.role-bundle.md](./debt.skill.role-bundle.md)。
 
 ## 八、关联
 
-- `doc/design.skill.marketplace-open-api.md` —— 海鲜市场开放接口
-- `doc/design.skill.unified-skill-system.md` —— 技能系统领域边界
-- `doc/debt.platform.emoji-corpus.md` —— 对外产物 de-emoji（本次落了第一步）
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— 海鲜市场开放接口
+- [doc/design.skill.unified-skill-system.md](./design.skill.unified-skill-system.md) —— 技能系统领域边界
+- [doc/debt.platform.md](./debt.platform.md) —— 对外产物 de-emoji（本次落了第一步）
 - `.claude/skills/sdd-init/SKILL.md` —— 入口技能
 - `scripts/skill-bundles.json` —— 角色与套装事实源

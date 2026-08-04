@@ -815,7 +815,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(overviewSignature, overview);
         Assert.Contains("TenantAccess.FilterTeamScope(http, fb.And(", overview);
         Assert.Contains("serviceKeys.Find(TenantAccess.FilterTeamScope(http, fb.Empty))", overview);
-        Assert.Contains("fb.Ne(\"IsHealthProbe\", true)", overview);
+        Assert.Contains("BuildBusinessOperationFilter()", overview);
+        Assert.Contains("fb.Ne(\"IsHealthProbe\", true)", console);
         Assert.Contains("from/to 必须是有效的 UTC 日期时间", overview);
         Assert.Contains("TenantAccess.HasPermission(http.User, LlmGwPermissions.LogsRead)", overview);
         Assert.Contains("RequireAuthorization(\"UsageRead\")", overview);
@@ -3257,6 +3258,58 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("value={filterModelPolicy}", logsView);
         Assert.Contains("aria-label=\"来源系统\"", logsView);
         Assert.Contains("value={filterSourceSystem}", logsView);
+    }
+
+    [Fact]
+    public void AsyncVideoLogViews_PreserveLogicalChainsAndPhysicalAttemptCounts()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+        var videoClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/OpenRouterVideoClient.cs");
+        var logWriter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogWriter.cs");
+
+        Assert.Contains("fb.Eq(\"Operation\", BsonNull.Value)", console);
+        Assert.Contains(".Include(\"ProviderAttempts\")", console);
+        Assert.Contains(".SelectMany(MapProviderAttempts)", console);
+        Assert.Contains("UpstreamCalls = physicalAttempts.Count", console);
+        Assert.Contains("attempt.ReachedProvider != false", console);
+        Assert.Contains("ReachedProvider = doc.AsNullableBool(\"ReachedProvider\")", console);
+        Assert.Contains("CompletePendingSendAttempt(rawProviderAttempts", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
+        Assert.Contains("StatusQueries = physicalDocs.LongCount(d => ResolveLogOperation(d) == \"status\") + internalStatusQueries", console);
+        Assert.Contains("new BsonRegularExpression($\"(^|/){escapedProviderTaskId}(/|$)\")", console);
+        Assert.Contains("detail.UpstreamCallCount = relatedAttempts.Count", console);
+        Assert.Contains("relatedAttempts.LongCount(IsProviderPollAttempt)", console);
+        Assert.Contains(".Include(\"ProviderAttempts\")", console);
+        Assert.Contains(".Include(\"Model\")", console);
+        Assert.Contains(".Include(\"Provider\")", console);
+        Assert.Contains("var logicalRequestId = detail.LogicalRequestId;", console);
+        Assert.DoesNotContain("detail.LogicalRequestId ?? detail.RunId", console);
+        Assert.DoesNotContain("Filter.Eq(\"RunId\", logicalRequestId)", console);
+        Assert.Contains("idx_llmgw_logs_tenant_provider_task", console);
+        Assert.Contains("Builders<BsonDocument>.Filter.Eq(\"ProviderTaskId\", detail.ProviderTaskId)", console);
+        Assert.Contains("related.Count == 1", console);
+        Assert.Contains("var legacyPathFilter", console);
+        Assert.Contains("_logWriter.BindProviderTaskAsync", videoClient);
+        Assert.Contains("fallbackLogicalRequestId: jobId", videoClient);
+        Assert.Contains("log => log.ProviderTaskId", logWriter);
+        Assert.Contains("log => log.LogicalRequestId", logWriter);
+        Assert.DoesNotContain("?? request.Context?.RunId\n                        ?? request.Context?.RequestId", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
+
+        const string sceneMethodSignature = "internal async Task ProcessSceneRenderAsync(";
+        var sceneStart = worker.IndexOf(sceneMethodSignature, StringComparison.Ordinal);
+        var sceneEnd = worker.IndexOf("private async Task<bool> RenewSceneRenderLeaseAsync", sceneStart, StringComparison.Ordinal);
+        Assert.True(sceneStart >= 0 && sceneEnd > sceneStart, "找不到单镜渲染方法");
+        var sceneMethod = worker[sceneStart..sceneEnd];
+        var contextScope = sceneMethod.IndexOf("using var sceneContextScope = ctxAccessor.BeginScope", StringComparison.Ordinal);
+        var submitBranch = sceneMethod.IndexOf("if (!resumeExistingJob)", StringComparison.Ordinal);
+        var pollingLoop = sceneMethod.IndexOf("while (DateTime.UtcNow < deadline)", StringComparison.Ordinal);
+        Assert.True(contextScope >= 0 && contextScope < submitBranch && contextScope < pollingLoop,
+            "场景逻辑请求上下文必须覆盖提交、恢复轮询和下载全链路");
+
+        Assert.Contains("operation: subtab === 'upstream' ? filterOperation || undefined : undefined", logsView);
+        Assert.Contains("subtab === 'upstream' ? filterOperation : ''", logsView);
+        Assert.Contains("{subtab === 'upstream' ? (", logsView);
     }
 
     [Fact]

@@ -86,7 +86,7 @@ export default function ConsoleSsoAuthorizePage() {
           <button
             type="button"
             className="mt-5 rounded-lg px-4 py-2 text-sm font-medium"
-            style={{ background: 'var(--accent-primary)', color: '#fff' }}
+            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
             onClick={() => setAttempt((value) => value + 1)}
           >
             重新授权

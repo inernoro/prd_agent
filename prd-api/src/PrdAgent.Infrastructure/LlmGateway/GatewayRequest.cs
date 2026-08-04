@@ -190,6 +190,16 @@ public class GatewayRequestContext
     public string? RunId { get; init; }
 
     /// <summary>
+    /// 一次用户动作或异步任务的稳定关联 ID。同一任务的 submit/status/download 必须共用。
+    /// </summary>
+    public string? LogicalRequestId { get; init; }
+
+    /// <summary>
+    /// 供应商异步任务 ID。不得与每次 HTTP 往返的 RequestId 混用。
+    /// </summary>
+    public string? ProviderTaskId { get; init; }
+
+    /// <summary>
     /// 用户组 ID
     /// </summary>
     public string? GroupId { get; init; }
@@ -311,6 +321,8 @@ public class GatewayRequestContext
             RequestId = requestId,
             SessionId = source?.SessionId,
             RunId = source?.RunId,
+            LogicalRequestId = source?.LogicalRequestId,
+            ProviderTaskId = source?.ProviderTaskId,
             GroupId = source?.GroupId,
             UserId = source?.UserId,
             ViewRole = source?.ViewRole,
@@ -384,6 +396,8 @@ public sealed class GatewayIngressRequest
                 RequestId = Context?.RequestId ?? RequestId,
                 SessionId = Context?.SessionId,
                 RunId = Context?.RunId,
+                LogicalRequestId = Context?.LogicalRequestId,
+                ProviderTaskId = Context?.ProviderTaskId,
                 GroupId = Context?.GroupId,
                 UserId = Context?.UserId,
                 ViewRole = Context?.ViewRole,

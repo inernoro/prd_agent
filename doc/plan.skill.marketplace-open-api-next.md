@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：开放接口的后端能力已就绪，本计划补管理端、市场展示、自助授权与真实外部复测。
+**谁该读**：做开放接口产品化的人。
+**读完能做什么**：知道还差哪几块才算可自助使用。
+
+---
+
 ## 目标
 
 完成 `AgentOpenEndpoint` 已有后端能力的管理端、市场展示、自助权限和真实 Agent 复测，使开放接口不再只能通过数据库或 API 手工维护。
@@ -51,6 +57,6 @@
 
 ## 关联文档
 
-- `doc/design.skill.marketplace-open-api.md`
-- `doc/rule.platform.data-dictionary.md`
+- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md)
+- [doc/rule.platform.data-dictionary.md](./rule.platform.data-dictionary.md)
 - `doc/rule.platform.app-caller-registry.md`

@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, Clock3, Coins, Copy, Gauge, Image as ImageIcon, RotateCcw, Timer, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, Clock3, Coins, Copy, Gauge, Image as ImageIcon, RefreshCw, RotateCcw, Timer, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
@@ -108,6 +108,17 @@ function generationSpeed(detail: LlmLogDetail): string {
   const tps = computeTokPerSec(detail.outputTokens, detail.durationMs);
   if (tps != null) return `${tps} tok/s`;
   return DASH;
+}
+
+function operationLabel(operation?: string | null): string {
+  return ({
+    invoke: '同步调用',
+    submit: '异步任务提交',
+    status: '状态查询',
+    download: '结果下载',
+    cancel: '取消任务',
+    probe: '健康探测',
+  } as Record<string, string>)[operation ?? ''] ?? operation ?? DASH;
 }
 
 function ImageResponseGallery({ detail }: { detail: LlmLogDetail }) {
@@ -595,6 +606,14 @@ export function GenerationDetailsDrawer({
                       note={detail.isFallback ? detail.fallbackReason ?? undefined : undefined}
                       icon={<RotateCcw size={15} aria-hidden="true" />}
                     />
+                    {detail.upstreamCallCount > 1 || detail.operation !== 'invoke' ? (
+                      <MetricCard
+                        title="异步调用链"
+                        value={`${detail.upstreamCallCount || 1} 次上游调用`}
+                        note={`${detail.statusQueryCount || 0} 次状态查询`}
+                        icon={<RefreshCw size={15} aria-hidden="true" />}
+                      />
+                    ) : null}
                   </div>
                   <section>
                     <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>本次生成</div>
@@ -602,6 +621,7 @@ export function GenerationDetailsDrawer({
                     <Row k="期望模型" v={detail.expectedModel} mono />
                     <Row k="Provider" v={detail.platformName || detail.provider} />
                     <Row k="应用" v={generationAppName(detail)} />
+                    <Row k="操作类型" v={operationLabel(detail.operation)} />
                     <Row k="协议" v={detail.protocol || detail.ingressProtocol} />
                     <Row k="状态" v={detail.statusCode == null ? detail.status : `${detail.status} · HTTP ${detail.statusCode}`} />
                     <Row k="结束原因" v={detail.finishReason} />
@@ -623,6 +643,8 @@ export function GenerationDetailsDrawer({
                     <Row k="应用" v={generationAppName(detail)} />
                     <Row k="接入密钥" v={detail.serviceKeyPrefix || detail.serviceKeyId} mono copy />
                     <Row k="Request ID" v={detail.requestId} mono copy />
+                    <Row k="逻辑请求 ID" v={detail.logicalRequestId} mono copy />
+                    <Row k="Provider 任务 ID" v={detail.providerTaskId} mono copy />
                     <Row k="Generation ID" v={detail.id} mono copy />
                     <Row k="流式响应" v={streaming} />
                   </section>

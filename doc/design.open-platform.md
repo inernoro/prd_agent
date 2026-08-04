@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：对外能力分两条接入面：应用型问答代理与通用开放接口，共用密钥鉴权和统一模型网关。
+**谁该读**：做对外接入的产品与工程师。
+**读完能做什么**：说清两条接入面各自面向谁。
+
+---
+
 ## 管理摘要
 
 - **解决的问题**：外部系统需要以稳定协议调用 PRD 问答、通用聊天和图片生成能力，同时受到身份、模型、配额与审计约束。
@@ -114,7 +120,7 @@ Scope 只代表调用某类接口的资格，不自动授予任意数据访问�
 
 ## 关联文档
 
-- `design.open-platform.open-api.md`：通用 OpenAI 兼容网关详细设计。
-- `guide.open-platform.open-api.md`：外部调用指南。
-- `design.platform.external-authorization.md`：外部身份与资源授权。
-- `design.skill.marketplace-open-api.md`：海鲜市场开放接口。
+- [design.open-platform.open-api.md](./design.open-platform.open-api.md)：通用 OpenAI 兼容网关详细设计。
+- [guide.open-platform.open-api.md](./guide.open-platform.open-api.md)：外部调用指南。
+- [design.platform.external-authorization.md](./design.platform.external-authorization.md)：外部身份与资源授权。
+- [design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md)：海鲜市场开放接口。

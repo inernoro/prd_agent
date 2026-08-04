@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-05-14 | **状态**：已落地
 
+**一句话**：三个议题类技能怎么分工：标签体系是全局唯一权威，谁开单、谁修复、谁做视觉验收各有领地。
+**谁该读**：维护议题自动化的人；写相关技能的 AI。
+**读完能做什么**：判断一个议题该由哪个技能处理，并按标签体系流转。
+
+---
+
 - **维护入口**：协议演化讨论在 [#605](https://github.com/inernoro/prd_agent/issues/605)
 - **配套技能**：`/issues-autofix`、`/issues-visual-create`、`/issues-visual-run`
 
@@ -319,7 +325,7 @@ v0.1 → v1.0 收敛的执行侧共识（实现见 `create-visual-test-to-kb/scr
 | `.claude/skills/issues-autofix/SKILL.md` | 日常 Agent 执行逻辑 |
 | `.claude/skills/issues-visual-create/SKILL.md` | 开单技能 |
 | `.claude/skills/issues-visual-run/SKILL.md` | 执行者技能 |
-| `doc/rule.doc.naming.md` | doc/ 文件命名规则（本文件本身遵守） |
+| [doc/rule.doc.naming.md](./rule.doc.naming.md) | doc/ 文件命名规则（本文件本身遵守） |
 | `.claude/rules/cds-theme-tokens.md` | 双主题硬规则（§5.1 第 2 条） |
 | `.claude/rules/frontend-modal.md` | Modal 三约束（§5.1 第 3 条） |
 | `.claude/rules/full-height-layout.md` | 撑满视口（§5.1 第 4 条） |

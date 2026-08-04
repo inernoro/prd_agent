@@ -12,7 +12,7 @@ type ConsoleLocation = Pick<Location, 'hostname' | 'protocol'>;
  * 点「返回 MAP」时落到控制台自己的根路径。
  *
  * 已知债务：这仍是一份「按 hostname 反推兄弟服务地址」的实现，与 MAP 侧刚刚拆掉的
- * 那份同源（doc/debt.platform.preview-entrypoints.md 的 PE-consumer-sweep）。
+ * 那份同源（doc/debt.platform.md「预览入口下发（Preview Entrypoints）· 债务台账」 的 PE-consumer-sweep）。
  * 正解是 console-api 把平台注入的 CDS_PREVIEW_URL 下发给 SPA，本文件只消费。
  * 在那之前，至少把「认哪些后缀」收敛成这一处，不再散落。
  */

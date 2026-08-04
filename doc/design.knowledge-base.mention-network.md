@@ -2,7 +2,13 @@
 
 > **版本**：v1.0 | **日期**：2026-06-11 | **状态**：已落地
 
-> **关联文档**：`design.knowledge-base.store.md`（知识库整体架构，本设计是其扩展层）·  `debt.knowledge-base.mention-network.md`（已知边界与遗留事项）· `rule.frontend-architecture.md`（注册表模式 + SSOT 原则） | `rule.data-audit.md`（实体引用涟漪审计原则）
+**一句话**：让知识库文档能互相引用：写双方括号即成链接，系统维护一张引用账本，反查就是「谁引用了我」。
+**谁该读**：知识库的产品与工程师；想知道关系图数据从哪来的人。
+**读完能做什么**：说清引用如何产生、存了什么、反向链接与关系图各取哪一段。
+
+---
+
+> **关联文档**：[design.knowledge-base.store.md](./design.knowledge-base.store.md)（知识库整体架构，本设计是其扩展层）·  [debt.knowledge-base.md](./debt.knowledge-base.md)（已知边界与遗留事项）· `rule.frontend-architecture.md`（注册表模式 + SSOT 原则） | `rule.data-audit.md`（实体引用涟漪审计原则）
 
 ## 一、管理摘要（30 秒看懂）
 
@@ -127,20 +133,20 @@ flowchart LR
 
 ### 6.1 `mentions` 集合
 
-```typescript
-{
-  _id: string,               // GUID(N)
-  fromType: "document",      // MVP 仅 document；预留 "defect" / "pr" / ...
-  fromId: string,            // DocumentEntry.Id
-  toType: "document",
-  toId: string,              // DocumentEntry.Id
-  anchorText: string,        // [[xxx]] 中的 xxx
-  context: string,           // 前后约 60 字符上下文（反向链接展示用）
-  scopeId: string?,          // 作用域 ID（MVP = StoreId，用于查全图）
-  isAutoDetected: boolean,   // false = 用户 [[]] 显式；true = AI 自动补
-  createdAt: ISODate,
-}
-```
+一条引用记录存这些：
+
+| 字段组 | 存什么 | 为什么 |
+|---|---|---|
+| 两端 | 引用方的类型与标识、被引用方的类型与标识 | 目前两端都是文档，类型字段是给日后接入缺陷、合并请求预留的 |
+| 锚文本 | 用户实际写在双方括号里的那串字 | 标题改名后靠它做模糊追溯 |
+| 上下文 | 引用处前后各约 60 字 | 反向链接面板要展示「在什么语境下被提到」 |
+| 作用域 | 当前只到知识库一级 | 画关系图时按作用域取子图，避免全库一次性拉出来 |
+| 来源 | 用户手写还是 AI 自动补的 | 自动补的要能一键撤销，不能和手写的混为一谈 |
+| 时间 | 创建时间 | 时间轴回放的基础 |
+
+**保存即重算**：文档一保存就重建它发出的全部引用，不做增量 diff——增量在标题改名、
+段落整体删除这些场景下极易漏，重算的代价可以接受。
+
 
 **索引建议**（后续 DBA 手动建，遵循 `no-auto-index` 规则）：
 - `{ scopeId: 1 }`（宇宙图全图查询）

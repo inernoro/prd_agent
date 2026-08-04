@@ -2,9 +2,14 @@
 
 > **版本**：v1.0 | **日期**：2026-05-01 | **状态**：已落地
 
-> **依赖**:`cds/src/services/compose-parser.ts`(解析实现)、`cdscli scan/verify`(CLI 端校验)
-> **替换**:废弃 README 里零散的"compose 怎么写"段落,本文为 SSOT
+**一句话**：项目编排文件该怎么写的唯一权威：字段契约、优先级、最容易踩的七个坑与校验规则。
+**谁该读**：要给项目写或改编排文件的人和 AI；排查扫描结果不对的人。
+**读完能做什么**：写出一份能通过校验的编排文件，并看懂校验器为什么报错。
 
+---
+
+> **依赖**:CDS 侧的 compose 解析实现，以及 `cdscli scan/verify` 两条 CLI 端校验命令
+> **替换**:废弃 README 里零散的"compose 怎么写"段落,本文为 SSOT
 
 ## 0. 30 秒读懂
 
@@ -31,7 +36,7 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 8. compose.yaml
 ```
 
-实现位置:`cds/src/services/compose-parser.ts:discoverComposeFiles`。
+实现位置见文末「实现来源」。
 
 **cdscli scan** 还会做反向选择(用户尚未写 cds-compose.yml 时):
 
@@ -41,7 +46,7 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 3. 都没有 → monorepo 子目录扫描兜底
 ```
 
-实现位置:`.claude/skills/cds/cli/cdscli.py:cmd_scan`。
+实现位置见文末「实现来源」。
 
 ---
 
@@ -101,7 +106,7 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 | `prebuilt:` | bool | **极速版**：true → 跳过 source mount，直接 `docker pull image` + run 镜像里的编译产物（CI 已编译，CDS 不本机编译）。对齐 `BuildProfile.prebuiltImage` |
 | `containerPort:` | int | 覆盖容器端口（预构建镜像监听端口常与源码模式不同，如 prd-api 源码 5000 / 生产镜像 8080） |
 
-极速版（CI 预构建）整体链路：push → GitHub Actions（`.github/workflows/branch-image.yml`）按 `sha-<github.sha>` 推 ghcr 镜像 → CDS 收 `workflow_run.completed` 后按 commit SHA `docker pull` + run。镜像 tag 公式与 CDS `slugifyBranchForImage` / `resolveImageTemplate` 保持 SSOT。详见 `doc/debt.cds.ci-prebuilt.md`。
+极速版（CI 预构建）整体链路：push → GitHub Actions 的分支镜像工作流按 `sha-<github.sha>` 推 ghcr 镜像 → CDS 收 `workflow_run.completed` 后按 commit SHA `docker pull` + run。镜像 tag 公式与 CDS `slugifyBranchForImage` / `resolveImageTemplate` 保持 SSOT。详见 [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md)。
 
 ### 2.3 基础设施 service(无相对路径,纯下载镜像)
 
@@ -156,7 +161,7 @@ services:
 
 **根因**:旧版 deploy 路由只起 `dependsOn` 列表里的 infra,漏写就不起。
 
-**修复**:Phase 2 在 deploy 兜底起项目下 *所有* 未运行 infra(以 docker 实际状态为准,不信 stale state)。详见 `cds/src/routes/branches.ts:1546+`。
+**修复**:Phase 2 在 deploy 兜底起项目下 *所有* 未运行 infra(以 docker 实际状态为准,不信 stale state)。
 
 **怎么写不出错**:
 - 推荐显式写 `depends_on`(自文档化好)
@@ -171,7 +176,7 @@ services:
 
 **根因**:`discoverInfraContainers` 旧版用 `cds.service.id` 当 Map key,跨项目同名时 `Map.set` 互相覆盖,A 的查询拿到 B 的容器状态。
 
-**修复**:Phase 2 改用 `containerName`(全局唯一)当 Map key。详见 `container.ts:813`。
+**修复**:Phase 2 改用容器名(全局唯一)当 Map key。
 
 **怎么写不出错**:
 - 多项目同名 infra 是允许且常见的
@@ -232,7 +237,7 @@ services:
 否 geo-master.miduo.org   (项目在前,违反 v3 SSOT)
 ```
 
-**根因**:AI 凭直觉拼 URL,SSOT 在 `cds/src/services/preview-slug.ts:computePreviewSlug`,但人记不住公式。
+**根因**:AI 凭直觉拼 URL——slug 计算在 CDS 内部有唯一实现,但人记不住公式。
 
 **修复**:`/preview-url` 技能 + SKILL.md 顶部固化公式 + `preview-slug.test.ts` 12 个 case 锁住实现。
 
@@ -293,7 +298,7 @@ EXTRA_FLAG: ${EXTRA_FLAG:+on}    # :+ 有值则替换为固定串,否则空串
 | **dependsOn 缺失** | 应用 service env 引用了 ${MONGODB_URL} 但 dependsOn 里不含 mongodb |
 | **密码含转义不安全字符** | env 里见 `mongodb://...` 含 `!` `@` `#` 等需 URL 编码字符 |
 
-实现位置:`.claude/skills/cds/cli/cdscli.py:cmd_verify`。
+实现位置见文末「实现来源」。
 
 ### 4.4 评分(Score / Grade)
 
@@ -323,7 +328,7 @@ EXTRA_FLAG: ${EXTRA_FLAG:+on}    # :+ 有值则替换为固定串,否则空串
 
 实现位置:`_AUTOFIX_RULES`(rule → fixer 注册表)+ `_verify_autofix`。新增可自愈规则 = 写一个 `_autofix_<rule>(doc, issue)` fixer 并注册到 `_AUTOFIX_RULES`。需自动修的 issue 必须在生产端带结构化 `meta`(如 `{"var": ...}` / `{"service":..., "infra":...}`),fixer 不靠解析 message。
 
-> 限制:`--write` 用 PyYAML 重序列化整文件,注释会丢、缩进风格会变。务必先看 diff 再 write。详见 `doc/debt.cds.tutorial.md`。
+> 限制:`--write` 用 PyYAML 重序列化整文件,注释会丢、缩进风格会变。务必先看 diff 再 write。详见 [doc/debt.cds.md](./debt.cds.md)。
 
 ---
 
@@ -337,20 +342,14 @@ EXTRA_FLAG: ${EXTRA_FLAG:+on}    # :+ 有值则替换为固定串,否则空串
 | infra 容器发现 | 同上 | `discoverInfraContainers` (Map key = containerName) |
 | deploy 自动起 infra | `cds/src/routes/branches.ts:1546+` | Phase 2 兜底 + 不信 stale state |
 | 预览域名公式 | `cds/src/services/preview-slug.ts` | `computePreviewSlug(branch, projectSlug)` |
+| 分支镜像工作流 | `.github/workflows/branch-image.yml` |
 | cdscli scan | `.claude/skills/cds/cli/cdscli.py` | `cmd_scan` / `_parse_compose_services` / `_yaml_from_compose_services` |
 | cdscli verify | 同上 | `cmd_verify`(Phase 2.5 新增) |
 | cdscli verify 评分 | 同上 | `_verify_score` / `_verify_grade`(§4.4) |
 | cdscli verify 自愈 | 同上 | `_AUTOFIX_RULES` / `_verify_autofix`(§4.5) |
 
 每次改这些文件之前,**必须**通读对应函数注释 + 跑配套测试:
-- `.claude/skills/cds/tests/test_verify_score.py` — 评分聚合 / 分档(§4.4)
-- `.claude/skills/cds/tests/test_verify_selfheal.py` — 自愈修补 / 建议降级(§4.5)
-- `cds/tests/services/compose-parser.test.ts` — env 展开、resource limits
-- `cds/tests/services/container-network-isolation.test.ts` — 多项目网络隔离
-- `cds/tests/services/discover-infra-cross-project.test.ts` — 跨项目同名 infra(Phase 2.5)
-- `cds/tests/services/state-vs-docker-sync.test.ts` — state vs docker 实际状态(Phase 2.5)
-- `cds/tests/routes/deploy-auto-infra.test.ts` — deploy 自动起 infra(Phase 2.5)
-- `cds/tests/services/preview-slug.test.ts` — URL 公式
+- 评分聚合 / 分档(§4.4)与自愈修补 / 建议降级(§4.5)各有一套 pytest 用例(文件见文末「实现来源」)
 
 ---
 
@@ -368,7 +367,7 @@ EXTRA_FLAG: ${EXTRA_FLAG:+on}    # :+ 有值则替换为固定串,否则空串
 
 ## 7. 历史 / 关联文档
 
-- `doc/plan.cds.status.md` — CDS 当前状态看板(本文是 mysql 接入 Phase 2.5 产出,完整里程碑见 §二)
+- [doc/plan.cds.status.md](./plan.cds.status.md) — CDS 当前状态看板(本文是 mysql 接入 Phase 2.5 产出,完整里程碑见 §二)
 - `cds/CLAUDE.md` — CDS 模块约束
 - `cds/.claude/rules/scope-naming.md` — 系统级 vs 项目级命名
 - `.claude/rules/cds-auto-deploy.md` — push 即部署原则
@@ -378,3 +377,32 @@ EXTRA_FLAG: ${EXTRA_FLAG:+on}    # :+ 有值则替换为固定串,否则空串
 ## 8. 给接力 AI 的最后一句
 
 **改 yaml 前先扫 § 3 的 7 个坑;改 compose-parser.ts 前先跑 § 5 的所有测试**;改完添加新坑请追加到 § 3,不要让下一个 agent 重新踩。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 5. 实现 SSOT 索引 | `cds/tests/services/compose-parser.test.ts` | env 展开、resource limits |
+| 5. 实现 SSOT 索引 | `cds/tests/services/container-network-isolation.test.ts` | 多项目网络隔离 |
+| 5. 实现 SSOT 索引 | `cds/tests/services/discover-infra-cross-project.test.ts` | 跨项目同名 infra(Phase 2.5) |
+| 5. 实现 SSOT 索引 | `cds/tests/services/state-vs-docker-sync.test.ts` | state vs docker 实际状态(Phase 2.5) |
+| 5. 实现 SSOT 索引 | `cds/tests/routes/deploy-auto-infra.test.ts` | deploy 自动起 infra(Phase 2.5) |
+| 5. 实现 SSOT 索引 | `cds/tests/services/preview-slug.test.ts` | URL 公式 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 职责 | 文件 |
+|------|------|
+| compose 发现与解析 | `cds/src/services/compose-parser.ts` |
+| CLI 扫描 / 校验 | `.claude/skills/cds/cli/cdscli.py` |
+| infra 兜底启动、容器名去重 | `cds/src/routes/branches.ts`、`cds/src/services/container.ts` |
+| 预览 slug 计算 SSOT | `cds/src/services/preview-slug.ts` |
+| 校验回归用例 | `.claude/skills/cds/tests/test_verify_score.py`、`.claude/skills/cds/tests/test_verify_selfheal.py` |

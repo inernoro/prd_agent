@@ -1,8 +1,14 @@
 ---
-globs: ["prd-api/src/**/Controllers/**/*.cs", "prd-api/src/**/Services/**/*.cs"]
+paths:
+  - "prd-api/src/**/Controllers/**/*.cs"
+  - "prd-api/src/**/Services/**/*.cs"
+  - "prd-api/src/**/Models/**/*.cs"
 ---
 
 # 快照反规范化兜底规则
+
+**一句话**：加快照字段就要同步维护一条等价覆盖的兜底查询：字段要对齐、入口条件要够宽，否则老数据展示会缺东西。
+**什么时候撞上**：新增或修改快照（反规范化）字段。
 
 为性能或离线展示而引入快照（Snapshot / Denormalization）字段时，必须同步维护一条**等价覆盖**的兜底（Fallback）查询路径，供无快照的历史数据使用。
 

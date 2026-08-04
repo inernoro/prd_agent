@@ -1,5 +1,8 @@
 # CDS 自动部署原则（push → preview 免手动）
 
+**一句话**：已连 GitHub 的项目是 push 即部署，交付话术里不要再让用户手动跑部署命令，直接给预览地址。
+**什么时候撞上**：给已经 link 了 GitHub 的项目写交付收尾说明时。
+
 > 2026-04-19 起生效 —— PR #450 落地了 GitHub App webhook 集成后,CDS 对已链接的仓库是 **push 即部署**:推分支/推 commit → GitHub webhook → CDS dispatcher 自动 `branch-created` + `deploy` → 几分钟内预览域名就位。中间**不需要任何人为动作**。
 
 ---
@@ -28,13 +31,13 @@ AI Agent 不应再在交付消息里写"请跑 /cds-deploy 推到灰度"这类�
 Agent 交付完成时,"验证状态"段落的措辞从:
 
 ```
-❌ 旧: 需要真人在预览域名验收;请你跑 /cds-deploy-pipeline 推到灰度
+[缺] 旧: 需要真人在预览域名验收;请你跑 /cds-deploy-pipeline 推到灰度
 ```
 
 改为:
 
 ```
-✅ 新: push 后 CDS 自动建分支 + 构建,2-5 分钟后访问
+[有] 新: push 后 CDS 自动建分支 + 构建,2-5 分钟后访问
 https://<branch>.<preview-domain> 验收;失败日志见 PR Checks 面板
 ```
 
@@ -66,7 +69,7 @@ AI Agent 写"完成"报告时,逐条核对:
 
 | 项目 | GitHub repo | autoDeploy |
 |------|-------------|------------|
-| default (prd-agent) | inernoro/prd_agent | ✅ on |
+| default (prd-agent) | inernoro/prd_agent | on |
 
 上面这张表需要在主仓库状态发生变化时更新。AI 发现 UI 上项目卡有 GitHub chip 即可认定已 link,不需要额外查 state.json。
 

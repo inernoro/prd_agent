@@ -1,8 +1,12 @@
 ---
-globs: ["prd-api/src/**/*.cs"]
+paths:
+  - "prd-api/src/**/*.cs"
 ---
 
 # 外部调用必须分"算/发"两阶段（Compute-then-Send）
+
+**一句话**：外部调用必须拆成「算」和「发」两步，发送阶段只接收已解析结果、不许再解析一次，更不许用 DI 装饰器或 AsyncLocal 在兄弟调用间传状态。
+**什么时候撞上**：写或改任何 LLM、生图、第三方 API 的调用类。
 
 外部调用（LLM / 图片生成 / 视频生成 / 第三方 API）必须把**计算阶段**（决定用哪个模型、哪个平台、哪条 URL）和**发送阶段**（真正发 HTTP 并处理响应）拆成两个独立步骤。**发送阶段不得在内部"再算一次"**。
 
@@ -19,9 +23,9 @@ globs: ["prd-api/src/**/*.cs"]
 │      ↓                                                           │
 │ Worker → OpenAIImageClient.GenerateAsync                         │
 │   第1次: gateway.ResolveModelAsync(..., modelName="stub-image")  │
-│          → 返回 stub-image ✓                                     │
+│          → 返回 stub-image OK                                    │
 │          effectiveModelName = "stub-image"                       │
-│          reqBody.model = "stub-image" ✓                          │
+│          reqBody.model = "stub-image" OK                         │
 │      ↓                                                           │
 │   调 gateway.SendRawAsync(req)                                   │
 │      ↓                                                           │
@@ -30,7 +34,7 @@ globs: ["prd-api/src/**/*.cs"]
 │          → 返回第一个池的模型 = "gpt-image-2-all"                │
 │      ↓                                                           │
 │     requestBody["model"] = resolution.ActualModel  ← 覆盖！       │
-│          实际上游 body.model = "gpt-image-2-all" ✗               │
+│          实际上游 body.model = "gpt-image-2-all" NG              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,12 +48,12 @@ globs: ["prd-api/src/**/*.cs"]
 
 ### 1. 发送阶段接收"已解析结果"，不得再调 resolver
 
-**❌ 错误写法**（当前 `LlmGateway.SendRawAsync`）
+**错误写法**（当前 `LlmGateway.SendRawAsync`）
 
 ```csharp
 public async Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct)
 {
-    // ⚠ 违反分层：在发送阶段又调了一次 resolve
+    // 违反分层：在发送阶段又调了一次 resolve
     var resolution = await _modelResolver.ResolveAsync(
         request.AppCallerCode, request.ModelType, null, ct);
 
@@ -58,7 +62,7 @@ public async Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, Ca
 }
 ```
 
-**✅ 正确写法**
+**正确写法**
 
 ```csharp
 // 计算阶段：独立，纯函数，可测
@@ -133,18 +137,18 @@ var resp = await sender.SendAsync(resolved, body, ct);
 
 ---
 
-## 当前仓库的债务（✅ 全部偿还，2026-04-23）
+## 当前仓库的债务（全部偿还，2026-04-23）
 
 | 文件 | 债务 | 状态 |
 |------|------|------|
-| `LlmGateway.cs` SendRawAsync | 内部二次 `ResolveAsync(..., null)` 覆盖 body.model | ✅ 已删除旧方法，新增 `SendRawWithResolutionAsync` |
-| `OpenAIImageClient.cs` GenerateAsync | 先 resolve 再调 SendRawAsync 被二次 resolve | ✅ 改用 `SendRawWithResolutionAsync`，单次 resolve |
-| `ExpectedModelRespectingResolver.cs` | 整个文件是二次 resolve 反模式的补丁 | ✅ 文件已删除 |
-| `ResolverDebugController.cs` test-chain / simulate-worker | 这两个端点因反模式而存在 | ✅ 端点已删除，仅保留 inspect / test |
+| `LlmGateway.cs` SendRawAsync | 内部二次 `ResolveAsync(..., null)` 覆盖 body.model | 已删除旧方法，新增 `SendRawWithResolutionAsync` |
+| `OpenAIImageClient.cs` GenerateAsync | 先 resolve 再调 SendRawAsync 被二次 resolve | 改用 `SendRawWithResolutionAsync`，单次 resolve |
+| `ExpectedModelRespectingResolver.cs` | 整个文件是二次 resolve 反模式的补丁 | 文件已删除 |
+| `ResolverDebugController.cs` test-chain / simulate-worker | 这两个端点因反模式而存在 | 端点已删除，仅保留 inspect / test |
 
 ---
 
 ## 相关
 
 - `.claude/skills/llm-call-trace/SKILL.md` — 大模型调用链路排查 skill（从这次的血泪经验总结）
-- 对应详细设计：`doc/design.compute-then-send.md`（待补）
+- 对应详细设计尚未成文；判据与反面案例以本规则为准

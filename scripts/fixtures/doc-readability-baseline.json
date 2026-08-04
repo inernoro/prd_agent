@@ -1,0 +1,1009 @@
+{
+  "_comment": "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数；impl_code = 正文里实现语言代码块的行数；source_refs = 正文里散落的源码路径引用数（集中列在「实现来源」小节里的不计）；rules_missing = .claude/rules 里缺导读两行的条数；skills_missing = 技能 frontmatter 缺 name/description 的个数。files = 逐篇欠账明细（missing/bare/impl/src），用来拦住「修好一篇旧的、同时新增一篇新的」这种总数不变的偷换：不在这张表里的文件一旦欠账即判红。数值只许下降：修好存量就跑 --update-baseline 把它压低；上调必须在 PR 里说明原因，否则一律 reject。死链不进棘轮，零容忍。",
+  "missing": {
+    "spec": 0,
+    "design": 0,
+    "plan": 0,
+    "rule": 0,
+    "guide": 0,
+    "report": 32,
+    "debt": 0
+  },
+  "bare_refs": {
+    "spec": 0,
+    "design": 0,
+    "plan": 0,
+    "rule": 0,
+    "guide": 0,
+    "report": 0,
+    "debt": 0
+  },
+  "impl_code": {
+    "spec": 0,
+    "design": 0,
+    "plan": 0,
+    "rule": 37,
+    "guide": 65,
+    "report": 5,
+    "debt": 0
+  },
+  "source_refs": {
+    "spec": 15,
+    "design": 180,
+    "plan": 24,
+    "rule": 41,
+    "guide": 105,
+    "report": 52,
+    "debt": 213
+  },
+  "rules_missing": 0,
+  "skills_missing": 0,
+  "files": {
+    "debt.acceptance-center-cds.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "debt.cds.agent.acceptance-smoke-drift.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 9
+    },
+    "debt.cds.branch-isolation.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "debt.cds.build-gate.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "debt.cds.ci-prebuilt.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "debt.cds.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 18
+    },
+    "debt.cds.performance.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "debt.cds.release-system.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "debt.cds.selfupdate-prebuilt.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "debt.cds.state-json.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "debt.doc.readability.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "debt.frontend.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 7
+    },
+    "debt.knowledge-base.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "debt.md-to-ppt.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "debt.platform.llm-gateway.isolation.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 11
+    },
+    "debt.platform.llm-gateway.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 107
+    },
+    "debt.platform.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 7
+    },
+    "debt.product-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "debt.report-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "debt.shortcuts-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "debt.skill.role-bundle.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "debt.visual-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "debt.workflow-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 8
+    },
+    "design.acceptance.kb.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "design.acceptance.system.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.agent-universe.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 9
+    },
+    "design.ccas-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "design.cds.agent.commercial-architecture-and-roadmap.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 13
+    },
+    "design.cds.agent.managed-runtime-fact-source.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "design.cds.agent.official-sdk-adapter.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "design.cds.ai-compose.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 11
+    },
+    "design.cds.branch-local-extra-services.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.cds.branch-network-isolation.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "design.cds.build-time.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 8
+    },
+    "design.cds.cluster-bootstrap.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.cds.config-tree.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "design.cds.control-data-split.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.cds.fu-02-auth-store-mongo.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.cds.lifecycle-atomicity.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "design.cds.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.cds.multi-project.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "design.cds.project-bootstrap.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "design.cds.railway-onboarding-flow.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "design.cds.replica-loadtest.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "design.cds.self-hosting.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 8
+    },
+    "design.cds.skill-version-update.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "design.cds.visual-deploy.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "design.daily-tips.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "design.defect-agent.automation-autonomy.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "design.emergence.explorer.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.frontend.mobile-refactor.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "design.frontend.toast.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.knowledge-base.agent-architecture.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "design.knowledge-base.mention-network.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "design.knowledge-base.store-sync.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "design.marketplace.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.open-platform.open-api.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.platform.exec-bt-deployment.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 10
+    },
+    "design.platform.external-authorization.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "design.platform.llm-gateway.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "design.platform.llm-gateway.refactor.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.platform.llm-gateway.unification.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 9
+    },
+    "design.platform.map-mcp-connector.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "design.platform.ops-auth.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "design.product-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.skill.marketplace-open-api.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 7
+    },
+    "design.skill.role-bundle.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "design.team-activity.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "design.team-activity.voc.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "design.visual-agent.canvas-composer.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "design.workflow-agent.auto-config.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "design.workflow-agent.engine.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.agent.code-review-quickstart.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 9
+    },
+    "guide.cds.agent.runbook.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 8
+    },
+    "guide.cds.agent.runtime-pool-recovery.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.agent.workbench.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.blue-green-handoff.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "guide.cds.cli-swarm.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.cloud-dev-tutorial.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 8,
+      "src": 1
+    },
+    "guide.cds.deploy-three-paths.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "guide.cds.env.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.fullstack-infra-smoke.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.github-app.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "guide.cds.github-webhook-events.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "guide.cds.host-migration.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.multi-branch-db.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.cds.view-parity.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 19,
+      "src": 4
+    },
+    "guide.cds.web-migration-runbook.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "guide.doc.reading-map.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "guide.infra-sandbox-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "guide.platform.agent-onboarding.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "guide.platform.llm-gateway.acceptance-breadcrumbs.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 10
+    },
+    "guide.platform.mcp-connector.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.platform.mongodb-indexes.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "guide.platform.quickstart.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "guide.platform.smoke-tests.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 38,
+      "src": 22
+    },
+    "guide.skill.removal-checklist.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 8
+    },
+    "guide.submission-gallery.poster-feed-card.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "guide.visual-agent.acceptance-skill.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "plan.cds.agent.official-sdk-migration.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "plan.cds.release-system.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "plan.daily-tips.scenarios-and-staleness.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "plan.doc.readability.rollout.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "plan.frontend.apple-design-migration.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "plan.frontend.mobile-adaptation.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "plan.platform.llm-gateway.authoritative-tutorial.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "plan.platform.llm-gateway.full-cutover.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "plan.visual-agent.optimization-backlog.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "report.2026-W06.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W07.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "report.2026-W09.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "report.2026-W10.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W11.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "report.2026-W12.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W13.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W14.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W15.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "report.2026-W16.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W17.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "report.2026-W18.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "report.2026-W19.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W20.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W21.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W22.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W23.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "report.2026-W24.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "report.2026-W25.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "report.2026-W26.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W27.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W28.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.2026-W29.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.cds.agent.p4-1-remote-preflight.2026-05-19.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.cds.agent.p4-2-provider-closure.2026-05-19.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.cds.agent.p4-3-remote-trial-acceptance.2026-05-19.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "report.cds.agent.p4-4-release-merge-strategy.2026-05-19.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 7
+    },
+    "report.cds.agent.p4-5-writable-trial-plan.2026-05-19.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 7
+    },
+    "report.cds.agent.phase1-acceptance.2026-05-19.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.cds.agent.phase2-acceptance.2026-05-19.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.cds.agent.runtime-pool-contamination.2026-05-18.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 4
+    },
+    "report.cds.agent.workbench.2026-05-15.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.cds.forwarder-success.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 5,
+      "src": 0
+    },
+    "report.cds.self-update-timing-audit.md": {
+      "missing": 1,
+      "bare": 0,
+      "impl": 0,
+      "src": 0
+    },
+    "report.gw-test-matrix.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "rule.cds.mongo-migration.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 6
+    },
+    "rule.cds.project-isolation-audit.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 8,
+      "src": 2
+    },
+    "rule.doc.readability.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 13
+    },
+    "rule.frontend.frontend-modal.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "rule.frontend.landing-visual-style.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "rule.platform.ai-model-visibility.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "rule.platform.llm-gateway.console-design-tonality.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "rule.platform.llm-gateway.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "rule.platform.production-release-safety.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 10
+    },
+    "rule.skill.issues-system.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 29,
+      "src": 0
+    },
+    "rule.skill.trigger-disambiguation.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "spec.cds.compose-contract.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 5
+    },
+    "spec.cds.project-model.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "spec.defect-agent.automation-protocol.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "spec.platform.llm-gateway.test-matrix.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 3
+    },
+    "spec.platform.short-links.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 2
+    },
+    "spec.prd.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    },
+    "spec.speech-agent.md": {
+      "missing": 0,
+      "bare": 0,
+      "impl": 0,
+      "src": 1
+    }
+  }
+}

@@ -2,11 +2,17 @@
 
 > **版本**：v0.1 | **日期**：2026-04-12 | **状态**：已落地
 
-> 本文档是 CDS v4 数据迁移的**操作规范**。涉及 P3 阶段（详见 `doc/plan.cds.multi-project-phases.md` P3 节）的所有代码必须遵守本规则，违反规则直接拒绝合并。
+**一句话**：把状态从单文件切到数据库的操作规范：三阶段流程、一致性校验与故障应急，违反硬规则即拒绝合并。
+**谁该读**：执行这次迁移的工程师与评审人。
+**读完能做什么**：按三阶段安全迁移，并在出事时按应急手册回退。
+
+---
+
+> 本文档是 CDS v4 数据迁移的**操作规范**。涉及 P3 阶段（详见 [doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md) P3 节）的所有代码必须遵守本规则，违反规则直接拒绝合并。
 > **文档导航**：
-> - 主设计稿：`doc/design.cds.multi-project.md`
-> - 数据字典：`doc/spec.cds.project-model.md`
-> - 交付计划：`doc/plan.cds.multi-project-phases.md`
+> - 主设计稿：[doc/design.cds.multi-project.md](./design.cds.multi-project.md)
+> - 数据字典：[doc/spec.cds.project-model.md](./spec.cds.project-model.md)
+> - 交付计划：[doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md)
 
 
 ## 1. 背景
@@ -308,8 +314,8 @@ P3c 阶段把 state.json 重命名为 `state.json.legacy-YYYYMMDD`，但**禁止
 
 ## 8. 关联文档
 
-- `doc/design.cds.multi-project.md` — 主设计稿，了解迁移在整个 v4 里的位置
-- `doc/spec.cds.project-model.md` — 迁移目标的 schema
-- `doc/plan.cds.multi-project-phases.md` — P3 的交付清单和验收标准
-- `doc/design.cds.data-migration.md` — CDS 更早版本的数据迁移思路（参考）
+- [doc/design.cds.multi-project.md](./design.cds.multi-project.md) — 主设计稿，了解迁移在整个 v4 里的位置
+- [doc/spec.cds.project-model.md](./spec.cds.project-model.md) — 迁移目标的 schema
+- [doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md) — P3 的交付清单和验收标准
+- [doc/design.cds.data-migration.md](./design.cds.data-migration.md) — CDS 更早版本的数据迁移思路（参考）
 - `.claude/rules/no-auto-index.md` — 应用启动时不自动建索引（与本规则配套）

@@ -3309,6 +3309,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         die(f"发起授权失败: HTTP {status} {body}", code=2)
     request_id = str(body.get("requestId") or "")
     poll_token = str(body.get("pollToken") or "")
+    resolved_project_id = str(body.get("projectId") or project_id).strip()
     if not request_id or not poll_token:
         _restore_auth_env(previous)
         die("授权响应缺少 requestId 或 pollToken", code=3)
@@ -3377,13 +3378,13 @@ def cmd_connect(args: argparse.Namespace) -> None:
     else:
         credentials_path = _save_local_credentials(
             host=host,
-            project_id=project_id,
+            project_id=resolved_project_id,
             project_key=authorization_key,
         )
-        os.environ["CDS_PROJECT_ID"] = project_id
+        os.environ["CDS_PROJECT_ID"] = resolved_project_id
         os.environ["CDS_PROJECT_KEY"] = authorization_key
         os.environ.pop("AI_ACCESS_KEY", None)
-        verification_path = f"/api/projects/{urllib.parse.quote(project_id)}"
+        verification_path = f"/api/projects/{urllib.parse.quote(resolved_project_id)}"
         auth_scope = "project"
 
     verify_status, _verify_body, _ = _request("GET", verification_path, timeout=10)
@@ -3391,7 +3392,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         die(f"授权已保存，但验证失败: HTTP {verify_status}", code=2)
     ok({
         "host": host,
-        "projectId": project_id or None,
+        "projectId": resolved_project_id or None,
         "scope": auth_scope,
         "credentialsPath": credentials_path,
         "approvalUrl": approval_url,
