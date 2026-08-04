@@ -20,3 +20,5 @@
 | fix | claude-md | 可移植自查块用 <skill-dir> 占位，bash 当成重定向导致语法错误，外部用户复制即报错；改为 skill_dir 变量并加引号 |
 | fix | doc-tooling | --skills-audit 对「声明的技能根整个不存在」是 continue 跳过，删光一个宿主的技能仍判干净；改为 BLOCK + 非零退出 |
 | fix | claude-md | PR 工作流摘要仍写「有同类 PR 先合并再创建」，与 6.2 新规矛盾，照摘要执行会绕过刚移除的不安全合并 |
+| fix | claude-md | D4 判据收敛到 --skills-audit 后输出词表变成 AUTOFIX_NAME / BLOCK，但硬闸说明与 PR 模板仍匹配自造的 MISSING_SKILL_*，导致缺技能根、坏 YAML 等多数阻塞情形下「需人工处理」小节被判为不需要而删掉，留下无线索的 [需人工] PR；改为按 BLOCK 判定并逐条照抄审计原因 |
+| fix | claude-md | 6.4 合并前的追加行白名单漏了 official-skills.generated.json，而 Step 3 会重新生成、Step 5 会提交它，等于自动审计必然拒绝自己产出的合法 PR；补进白名单与 PR 模板，并限定「本轮没改技能却出现它按越界处理」 |

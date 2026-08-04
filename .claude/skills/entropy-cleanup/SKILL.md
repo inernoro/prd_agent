@@ -240,9 +240,14 @@ git diff --stat
 
 ### Step 4.5 — 未偿 D4 债务的硬闸（必须在提交前判定）
 
-D4 里 `MISSING_SKILL_MD` / `MISSING_SKILL_DESC` / `MISSING_SKILL_FRONTMATTER` 三类
-无法安全自动修复。**只把它们写进 PR 正文不算处理**——本技能后面的 Step 6.5 会自己 squash
-合并，写在正文里的债务会连同 PR 一起被合并掉，等于走了个过场。
+审计输出里 `BLOCK:` 那一类无法安全自动修复（整份 SKILL.md 缺失、description 缺失、
+frontmatter 语法坏、name 空值或与目录不一致、技能根整个不存在）。**只把它们写进 PR 正文
+不算处理**——本技能后面的 Step 6.5 会自己 squash 合并，写在正文里的债务会连同 PR 一起被
+合并掉，等于走了个过场。
+
+判据只认审计的输出契约（`AUTOFIX_NAME:` / `BLOCK:` 两种前缀，见 Step 1）。**不要在这里
+另起一套自己的标记名**——本技能此前用过 `MISSING_SKILL_MD` 之类的自造名，审计从来不输出
+它们，于是闸门和模板都在匹配一个不存在的字符串。
 
 所以在提交之前判定：
 
@@ -341,11 +346,14 @@ PR body 模板（从 Step 2 报告提取数字）：
 - `doc/guide.list.directory.md`：补缺/删幽灵条目
 - `.claude/skills/<name>/SKILL.md`：D4 补 frontmatter 的 name（仅当本轮 FIXED_SKILL_NAME 非空）
 - `.agents/skills/<name>/SKILL.md`：同上，Codex 侧技能根（仅当本轮有修复）
+- `prd-api/src/PrdAgent.Api/OfficialSkills/official-skills.generated.json`：D4 修的技能进了官方套装，随之重新生成（仅当本轮真有技能改动）
 - `changelogs/.entropy-manifest.yml`：新增已处理 changelog 记录
 - `changelogs/YYYY-MM-DD_entropy-cleanup.md`：本次 changelog 碎片
 
-## 需人工处理（本轮若有 MISSING_SKILL_MD / MISSING_SKILL_DESC 则必填，否则删除本节）
-- `<技能根>/<name>`：缺 <什么>，无法安全重建，原因见 D4 说明
+## 需人工处理（Step 4.5 的 $BLOCKERS 非空则必填，否则删除本节）
+（**逐条照抄审计输出的原因**，别改写成「见 D4 说明」——PR 会被留下等人处理，
+读它的人手上只有这段正文，原因丢了他就得自己重跑一遍审计才知道缺什么）
+- `<审计给出的技能根/name>`：<审计给出的原因原文>
 
 ## 测试
 - [x] 双向扫描完成，diff 核验通过
@@ -362,8 +370,9 @@ PR body 模板（从 Step 2 报告提取数字）：
    - `clean` / `unstable` → 可继续
 2. 调用 `mcp__github__pull_request_read`（method=`get_diff`）通读 diff，逐条核对：
    - 所有 `-`（删除）行：必须是真实「幽灵条目」（对应 `doc/${key}.md` / `.claude/skills/${name}/` 确实不存在）。**发现删除了仍存在的文件对应条目 → 立即停止，不合并，通知用户**
-   - 所有 `+`（追加）行：仅限 `doc/index.yml` / `doc/guide.list.directory.md` / 技能的 `SKILL.md` frontmatter / `changelogs/` / manifest，不得有代码文件（`.cs`/`.ts`/`.tsx` 等）混入
-   - `changed_files` 应全部落在文档/索引/changelog/技能元数据范围内
+   - 所有 `+`（追加）行：仅限 `doc/index.yml` / `doc/guide.list.directory.md` / 技能的 `SKILL.md` frontmatter / `changelogs/` / manifest，外加下面这一个生成物，不得有代码文件（`.cs`/`.ts`/`.tsx` 等）混入
+   - `prd-api/src/PrdAgent.Api/OfficialSkills/official-skills.generated.json` 是**唯一允许出现的生成物**，且只在本轮真的改了技能时才允许——它是 Step 3 重新生成、Step 5 一并提交的分发包。**本轮没有 `SKILL.md` 改动却出现它 → 按越界处理，不合并**（那说明它来自别处，不是本轮熵减的产物）
+   - `changed_files` 应全部落在文档/索引/changelog/技能元数据、以及上面那个生成物的范围内
 3. 任一核查不通过 → **不合并**，发通知说明问题，等用户裁决。
 
 #### 6.5 手动 squash 合并（核查通过后）
