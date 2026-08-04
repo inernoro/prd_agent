@@ -357,8 +357,8 @@ export function ExchangesPage() {
     setLayeringCapability(res.data);
     setLayeringApiKey('');
     setNotice(res.data.verified
-      ? '图片分层能力已修复并保留真实调用验证状态'
-      : '图片分层能力已接入。请到 MAP 视觉创作执行一次真实分层，成功后这里会显示已验证。');
+      ? '图片分层能力已更新，并保留真实调用验证状态'
+      : '图片分层能力已安装。调用方通过 image-layering 发起首次真实请求后，这里会显示已验证。');
     const exchanges = await getExchanges({ enabled: enabledOnly ? true : undefined });
     if (exchanges.success) setItems(exchanges.data.items);
   }
@@ -383,51 +383,47 @@ export function ExchangesPage() {
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
 
-        <div id="image-layering">
-        <Card style={{ ...CARD_BODY, borderColor: 'color-mix(in srgb, var(--accent) 55%, var(--border-subtle))' }}>
-          <div style={rowStyle}>
-            <Layers3 size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-              <span style={rowStyle}>
-                <strong style={SECTION_TITLE}>图片分层</strong>
-                <HelpPopover label="自动接入说明">
-                  输入一次 fal.ai Key，LLMGW 会自动完成原生协议适配、模型注册、专用模型池和 MAP 视觉创作绑定。保存不调用模型，首次在 MAP 点击“AI 分层”才产生费用并记录验证状态。
-                </HelpPopover>
-              </span>
-            </div>
-            <span style={{ marginLeft: 'auto' }}>
+        <section id="image-layering" aria-labelledby="image-layering-title" style={capabilitySectionStyle}>
+          <div style={sectionHeaderStyle}>
+            <span style={sectionIconStyle}><Layers3 size={16} /></span>
+            <strong id="image-layering-title" style={SECTION_TITLE}>fal.ai 图片分层</strong>
+            <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
               <Chip
                 label={layeringCapability?.verified
                   ? '调用已验证'
                   : layeringCapability?.installed
-                    ? '已接入，等待真实调用'
+                    ? '已安装，等待验证'
                     : layeringCapability?.state === 'incomplete'
                       ? '配置不完整'
-                      : '未接入'}
+                      : '未安装'}
                 color={layeringCapability?.verified ? 'var(--ok)' : layeringCapability?.installed ? 'var(--warn)' : 'var(--text-secondary)'}
                 bg={layeringCapability?.verified ? 'var(--ok-bg)' : layeringCapability?.installed ? 'var(--warn-bg)' : 'var(--bg-elevated)'}
               />
             </span>
           </div>
 
-          <div style={{ ...INSET_BLOCK, marginTop: GAP.section, display: 'grid', gap: GAP.normal }}>
-            <div style={rowStyle}>
-              <span style={HINT_TEXT}>模型</span>
-              <code style={MONO_META}>{layeringCapability?.modelId || 'fal-qwen-image-layered'}</code>
-              <span style={HINT_TEXT}>调用方</span>
-              <code style={MONO_META}>{layeringCapability?.appCallerCode || 'visual-agent.image.layering::generation'}</code>
+          <Card style={{ ...CARD_BODY, maxWidth: 840 }}>
+            <div style={capabilityMetaStyle}>
+              <span style={metaPairStyle}><span style={HINT_TEXT}>能力</span><code style={MONO_META}>{layeringCapability?.publicId || 'image-layering'}</code></span>
+              <span style={metaPairStyle}><span style={HINT_TEXT}>模型</span><code style={MONO_META}>{layeringCapability?.modelId || 'fal-qwen-image-layered'}</code></span>
               {layeringCapability?.lastVerifiedAt ? <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>最近验证 {new Date(layeringCapability.lastVerifiedAt).toLocaleString()}</span> : null}
             </div>
             {canWrite ? (
-              <div style={rowStyle}>
-                <label style={{ ...FIELD_LABEL, flex: '1 1 320px', maxWidth: 520 }}>
-                  <span>fal.ai API Key</span>
+              <div style={capabilityFormStyle}>
+                <label htmlFor="fal-image-layering-key" style={{ ...FIELD_LABEL, flex: '1 1 360px' }}>
+                  <span style={rowStyle}>
+                    fal.ai API Key
+                    <HelpPopover label="安装说明">
+                      LLMGW 会创建原生 Exchange、公开逻辑能力和上游供给。它不绑定任何业务系统；保存不调用模型，首次真实请求才产生费用。
+                    </HelpPopover>
+                  </span>
                   <input
+                    id="fal-image-layering-key"
                     type="password"
                     autoComplete="new-password"
                     value={layeringApiKey}
                     onChange={(event) => setLayeringApiKey(event.target.value)}
-                    placeholder={layeringCapability?.hasKey ? '输入新 Key 可轮换并自动修复全部绑定' : '只加密保存，不会回显'}
+                    placeholder={layeringCapability?.hasKey ? '输入新 Key 可更新凭据并修复能力配置' : '输入后加密保存，不会回显'}
                     style={FIELD_INPUT}
                   />
                 </label>
@@ -438,16 +434,15 @@ export function ExchangesPage() {
                   onClick={() => void installLayeringCapability()}
                 >
                   {busyId === 'install-image-layering'
-                    ? '正在接入'
+                    ? '安装中'
                     : layeringCapability?.installed
-                      ? '更新并修复'
-                      : '一键接入 MAP'}
+                      ? '更新凭据'
+                      : '安装能力'}
                 </Button>
               </div>
             ) : null}
-          </div>
-        </Card>
-        </div>
+          </Card>
+        </section>
 
         {savedItem ? (
           <Card style={{ ...CARD_BODY, borderColor: 'color-mix(in srgb, var(--ok) 45%, var(--border-subtle))', background: 'var(--ok-bg)' }}>
@@ -478,6 +473,11 @@ export function ExchangesPage() {
             onCancel={closeForm}
           />
         ) : null}
+
+        <div style={sectionHeaderStyle}>
+          <span style={sectionIconStyle}><Route size={16} /></span>
+          <strong style={SECTION_TITLE}>Exchange</strong>
+        </div>
 
         <div style={toolbarStyle}>
           <label style={checkStyle}>
@@ -521,7 +521,7 @@ export function ExchangesPage() {
             </div>
           </Card>
         ) : (
-          <div style={listStyle}>
+          <div data-testid="exchange-list" style={listStyle}>
             {items.map((item) => {
               const enabled = boolChip(item.enabled, '已启用', '已停用');
               const key = boolChip(item.hasKey, '密钥已配置', '密钥缺失');
@@ -785,8 +785,58 @@ const rowStyle: React.CSSProperties = {
 
 const listStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 540px), 1fr))',
+  gridTemplateColumns: 'minmax(0, 1fr)',
   gap: GAP.section,
+};
+
+const capabilitySectionStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: GAP.normal,
+  width: '100%',
+  maxWidth: 840,
+};
+
+const sectionHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.normal,
+  minWidth: 0,
+};
+
+const sectionIconStyle: React.CSSProperties = {
+  width: 30,
+  height: 30,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+  borderRadius: 'var(--radius-sm)',
+  color: 'var(--accent)',
+  background: 'var(--accent-soft)',
+};
+
+const capabilityMetaStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: GAP.section,
+  paddingBottom: GAP.section,
+  borderBottom: '1px solid var(--border-subtle)',
+};
+
+const metaPairStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: GAP.tight,
+  minWidth: 0,
+};
+
+const capabilityFormStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-end',
+  flexWrap: 'wrap',
+  gap: GAP.normal,
+  marginTop: GAP.section,
 };
 
 const toolbarStyle: React.CSSProperties = {

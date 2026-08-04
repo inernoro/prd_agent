@@ -1141,10 +1141,10 @@ public sealed class ImageLayeringCapabilityStatus
     public bool Verified { get; set; }
     public bool HasKey { get; set; }
     public string? ExchangeId { get; set; }
-    public string? PoolId { get; set; }
-    public string? AppCallerId { get; set; }
+    public string? LogicalModelId { get; set; }
+    public string? OfferingId { get; set; }
     public string ModelId { get; set; } = "fal-qwen-image-layered";
-    public string AppCallerCode { get; set; } = "visual-agent.image.layering::generation";
+    public string PublicId { get; set; } = "image-layering";
     public string? LastVerifiedAt { get; set; }
 }
 

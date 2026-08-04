@@ -2750,13 +2750,13 @@ app.MapGet("/gw/exchanges/meta", () =>
     return Json(ApiEnvelope<ExchangeMetaData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
-// 图片分层能力：管理员只提交一次 fal.ai Key，LLMGW 幂等完成 Exchange、专用池和 MAP appCaller 绑定。
+// 图片分层能力：管理员只提交一次 fal.ai Key，LLMGW 幂等完成 Exchange 与通用逻辑能力发布。
 app.MapGet("/gw/capabilities/image-layering", async (HttpContext http) =>
 {
     var status = await BuildImageLayeringCapabilityStatusAsync(
         gwModelExchanges,
-        gwModelPools,
-        gwAppCallers,
+        gwLogicalModels,
+        gwModelOfferings,
         logs,
         TenantAccess.GetRequired(http).TenantId,
         http.RequestAborted);
@@ -2828,65 +2828,69 @@ app.MapPost("/gw/capabilities/image-layering/install", async (
             cancellationToken: http.RequestAborted);
     }
 
-    var poolFilter = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("Code", FalImageLayeringProvisioning.PoolCode));
-    var existingPool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync(http.RequestAborted);
-    var poolId = existingPool?.GetStringOrEmpty("_id") is { Length: > 0 } existingPoolId
-        ? existingPoolId
-        : $"gw-pool-{Guid.NewGuid():N}";
-    if (existingPool is null)
+    var logicalModelFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("PublicIdNormalized", FalImageLayeringProvisioning.CapabilityId));
+    var existingLogicalModel = await gwLogicalModels.Find(logicalModelFilter).FirstOrDefaultAsync(http.RequestAborted);
+    var logicalModelId = existingLogicalModel?.GetStringOrEmpty("_id") is { Length: > 0 } existingLogicalModelId
+        ? existingLogicalModelId
+        : $"gw-logical-{Guid.NewGuid():N}";
+    if (existingLogicalModel is null)
     {
-        await gwModelPools.InsertOneAsync(
-            FalImageLayeringProvisioning.BuildPoolDocument(tenantId, poolId, exchangeId, now),
+        await gwLogicalModels.InsertOneAsync(
+            FalImageLayeringProvisioning.BuildLogicalModelDocument(tenantId, logicalModelId, now),
             cancellationToken: http.RequestAborted);
     }
     else
     {
-        await gwModelPools.UpdateOneAsync(
-            poolFilter,
+        await gwLogicalModels.UpdateOneAsync(
+            logicalModelFilter,
             Builders<BsonDocument>.Update
-                .Set("Name", FalImageLayeringProvisioning.PoolName)
+                .Set("PublicId", FalImageLayeringProvisioning.CapabilityId)
+                .Set("PublicIdNormalized", FalImageLayeringProvisioning.CapabilityId)
+                .Set("Name", FalImageLayeringProvisioning.LogicalModelName)
                 .Set("ModelType", FalImageLayeringProvisioning.RequestType)
-                .Set("Models", new BsonArray { FalImageLayeringProvisioning.BuildPoolMember(exchangeId) })
-                .Set("AllowedAppCallerCodes", new BsonArray { FalImageLayeringProvisioning.AppCallerCode })
-                .Set("Description", "仅供视觉创作图片分层使用，不进入普通文生图或图生图模型选择")
-                .Set("Authority", "llm_gateway")
-                .Set("SourceCollection", "llmgw_model_pools")
-                .Set("UpdatedAt", now)
-                .Inc("Version", 1),
+                .Set("Capabilities", new BsonArray { "image_generation", "image_layering" })
+                .Set("AllowedAppCallerCodes", new BsonArray())
+                .Set("RoutingStrategy", "priority")
+                .Set("Enabled", true)
+                .Set("DisplayOrder", 20)
+                .Set("Description", "通用图片分层能力。调用方只依赖公开标识 image-layering，不感知 fal.ai、Endpoint 或凭据。")
+                .Set("UpdatedAt", now),
             cancellationToken: http.RequestAborted);
     }
 
-    var teamId = access.TeamIds.OrderBy(value => value, StringComparer.Ordinal).FirstOrDefault();
-    if (string.IsNullOrWhiteSpace(teamId))
-    {
-        teamId = (await teams.Find(team => team.TenantId == tenantId && team.Status == "active")
-                .SortBy(team => team.Name)
-                .FirstOrDefaultAsync(http.RequestAborted))?.Id;
-    }
-    var appCallerFilter = fb.And(
+    var offeringFilter = fb.And(
         fb.Eq("TenantId", tenantId),
-        fb.Eq("AppCallerCode", FalImageLayeringProvisioning.AppCallerCode),
-        fb.Eq("RequestType", FalImageLayeringProvisioning.RequestType));
-    var existingAppCaller = await gwAppCallers.Find(appCallerFilter).FirstOrDefaultAsync(http.RequestAborted);
-    var appCallerId = existingAppCaller?.GetStringOrEmpty("_id") is { Length: > 0 } existingAppCallerId
-        ? existingAppCallerId
-        : $"gw-appcaller-{Guid.NewGuid():N}";
-    if (existingAppCaller is null)
+        fb.Eq("LogicalModelId", logicalModelId),
+        fb.Eq("TargetKind", "exchange"));
+    var existingOffering = await gwModelOfferings.Find(offeringFilter).FirstOrDefaultAsync(http.RequestAborted);
+    var offeringId = existingOffering?.GetStringOrEmpty("_id") is { Length: > 0 } existingOfferingId
+        ? existingOfferingId
+        : $"gw-offering-{Guid.NewGuid():N}";
+    if (existingOffering is null)
     {
-        await gwAppCallers.InsertOneAsync(
-            FalImageLayeringProvisioning.BuildAppCallerDocument(tenantId, teamId, appCallerId, poolId, now),
+        await gwModelOfferings.InsertOneAsync(
+            FalImageLayeringProvisioning.BuildOfferingDocument(
+                tenantId,
+                offeringId,
+                logicalModelId,
+                exchangeId,
+                now),
             cancellationToken: http.RequestAborted);
     }
     else
     {
-        await gwAppCallers.UpdateOneAsync(
-            appCallerFilter,
+        await gwModelOfferings.UpdateOneAsync(
+            offeringFilter,
             Builders<BsonDocument>.Update
-                .Set("Title", "视觉创作图片分层")
-                .Set("Status", "configured")
-                .Set("ModelPoolId", poolId)
-                .Set("ModelPolicy", "auto")
-                .Set("ParameterPolicy", "default-drop")
+                .Set("TargetId", exchangeId)
+                .Set("UpstreamModelId", FalImageLayeringProvisioning.ModelId)
+                .Set("Protocol", FalImageLayeringProvisioning.TransformerType)
+                .Set("Priority", 10)
+                .Set("Weight", 100)
+                .Set("Enabled", true)
+                .Set("Notes", "fal.ai Qwen Image Layered 原生供给")
                 .Set("UpdatedAt", now),
             cancellationToken: http.RequestAborted);
     }
@@ -2903,17 +2907,17 @@ app.MapPost("/gw/capabilities/image-layering/install", async (
         changes: new BsonDocument
         {
             { "exchangeId", exchangeId },
-            { "poolId", poolId },
-            { "appCallerId", appCallerId },
+            { "logicalModelId", logicalModelId },
+            { "offeringId", offeringId },
             { "modelId", FalImageLayeringProvisioning.ModelId },
             { "hasKey", true },
-            { "idempotentRepair", existingExchange is not null || existingPool is not null || existingAppCaller is not null },
+            { "idempotentRepair", existingExchange is not null || existingLogicalModel is not null || existingOffering is not null },
         });
 
     var status = await BuildImageLayeringCapabilityStatusAsync(
         gwModelExchanges,
-        gwModelPools,
-        gwAppCallers,
+        gwLogicalModels,
+        gwModelOfferings,
         logs,
         tenantId,
         http.RequestAborted);
@@ -10904,8 +10908,8 @@ static LogicalModelItem MapLogicalModel(
 
 static async Task<ImageLayeringCapabilityStatus> BuildImageLayeringCapabilityStatusAsync(
     IMongoCollection<BsonDocument> exchanges,
-    IMongoCollection<BsonDocument> pools,
-    IMongoCollection<BsonDocument> appCallers,
+    IMongoCollection<BsonDocument> logicalModels,
+    IMongoCollection<BsonDocument> offerings,
     IMongoCollection<BsonDocument> requestLogs,
     string tenantId,
     CancellationToken ct)
@@ -10916,37 +10920,36 @@ static async Task<ImageLayeringCapabilityStatus> BuildImageLayeringCapabilitySta
             fb.Eq("TransformerType", FalImageLayeringProvisioning.TransformerType),
             fb.Eq("Models.ModelId", FalImageLayeringProvisioning.ModelId)))
         .FirstOrDefaultAsync(ct);
-    var pool = await pools.Find(fb.And(
+    var logicalModel = await logicalModels.Find(fb.And(
             fb.Eq("TenantId", tenantId),
-            fb.Eq("Code", FalImageLayeringProvisioning.PoolCode)))
-        .FirstOrDefaultAsync(ct);
-    var appCaller = await appCallers.Find(fb.And(
-            fb.Eq("TenantId", tenantId),
-            fb.Eq("AppCallerCode", FalImageLayeringProvisioning.AppCallerCode),
-            fb.Eq("RequestType", FalImageLayeringProvisioning.RequestType)))
+            fb.Eq("PublicIdNormalized", FalImageLayeringProvisioning.CapabilityId)))
         .FirstOrDefaultAsync(ct);
 
     var hasKey = exchange?.AsNullableString("TargetApiKeyEncrypted") is { Length: > 0 };
     var exchangeId = exchange?.GetStringOrEmpty("_id");
-    var poolId = pool?.GetStringOrEmpty("_id");
-    var appCallerId = appCaller?.GetStringOrEmpty("_id");
-    var poolBound = !string.IsNullOrWhiteSpace(poolId)
-                    && string.Equals(appCaller?.AsNullableString("ModelPoolId"), poolId, StringComparison.Ordinal);
-    var modelBound = !string.IsNullOrWhiteSpace(exchangeId)
-                     && pool is not null
-                     && pool.TryGetValue("Models", out var modelsValue)
-                     && modelsValue.IsBsonArray
-                     && modelsValue.AsBsonArray.Any(value => value.IsBsonDocument
-                         && string.Equals(value.AsBsonDocument.AsNullableString("ModelId"), FalImageLayeringProvisioning.ModelId, StringComparison.Ordinal)
-                         && string.Equals(value.AsBsonDocument.AsNullableString("PlatformId"), exchangeId, StringComparison.Ordinal));
-    var installed = hasKey && exchange is not null && poolBound && modelBound;
+    var logicalModelId = logicalModel?.GetStringOrEmpty("_id");
+    var offering = string.IsNullOrWhiteSpace(logicalModelId)
+        ? null
+        : await offerings.Find(fb.And(
+                fb.Eq("TenantId", tenantId),
+                fb.Eq("LogicalModelId", logicalModelId),
+                fb.Eq("TargetKind", "exchange"),
+                fb.Eq("TargetId", exchangeId),
+                fb.Eq("UpstreamModelId", FalImageLayeringProvisioning.ModelId),
+                fb.Ne("Enabled", false)))
+            .FirstOrDefaultAsync(ct);
+    var offeringId = offering?.GetStringOrEmpty("_id");
+    var installed = hasKey
+                    && exchange is not null
+                    && logicalModel?.AsNullableBool("Enabled") != false
+                    && offering is not null;
 
     BsonDocument? verifiedLog = null;
     if (installed)
     {
         var successFilter = fb.And(
             fb.Eq("TenantId", tenantId),
-            fb.Eq("AppCallerCode", FalImageLayeringProvisioning.AppCallerCode),
+            fb.Eq("LogicalModelPublicId", FalImageLayeringProvisioning.CapabilityId),
             fb.Gte("StatusCode", 200),
             fb.Lt("StatusCode", 300),
             fb.Eq("ActualModel", FalImageLayeringProvisioning.ModelId),
@@ -10958,7 +10961,7 @@ static async Task<ImageLayeringCapabilityStatus> BuildImageLayeringCapabilitySta
     var verifiedAt = verifiedLog?.AsNullableUtcDateTime("EndedAt")
                      ?? verifiedLog?.AsNullableUtcDateTime("CreatedAt");
     var verified = verifiedLog is not null;
-    var anyPieceExists = exchange is not null || pool is not null || appCaller is not null;
+    var anyPieceExists = exchange is not null || logicalModel is not null || offering is not null;
 
     return new ImageLayeringCapabilityStatus
     {
@@ -10967,8 +10970,8 @@ static async Task<ImageLayeringCapabilityStatus> BuildImageLayeringCapabilitySta
         Verified = verified,
         HasKey = hasKey,
         ExchangeId = string.IsNullOrWhiteSpace(exchangeId) ? null : exchangeId,
-        PoolId = string.IsNullOrWhiteSpace(poolId) ? null : poolId,
-        AppCallerId = string.IsNullOrWhiteSpace(appCallerId) ? null : appCallerId,
+        LogicalModelId = string.IsNullOrWhiteSpace(logicalModelId) ? null : logicalModelId,
+        OfferingId = string.IsNullOrWhiteSpace(offeringId) ? null : offeringId,
         LastVerifiedAt = verifiedAt.HasValue ? verifiedAt.Value.ToUniversalTime().ToString("O") : null,
     };
 }

@@ -31,6 +31,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class ImageGenController : ControllerBase
 {
+    private const string ImageLayeringCapabilityId = "image-layering";
+
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
     private readonly IImageGenerationClient _imageClient;
@@ -874,8 +876,16 @@ public class ImageGenController : ControllerBase
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
         var appCallerCode = isLayering ? VisualAgent.Image.Layering : VisualAgent.ImageGen.Generate;
+        var requiredLogicalModelPublicId = isLayering ? ImageLayeringCapabilityId : null;
         GatewayModelResolution? resolved = null;
-        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
+        if (isLayering)
+        {
+            // MAP 只依赖 LLMGW 发布的通用能力标识，不感知 fal.ai、Exchange 或具体模型。
+            modelId = null;
+            platformId = null;
+            modelName = null;
+        }
+        else if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
             resolved = await _gateway.ResolveModelAsync(appCallerCode, "generation", ct: ct);
             if (resolved != null)
@@ -1011,7 +1021,12 @@ public class ImageGenController : ControllerBase
         }
         var maskB64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim();
         var res = await _imageClient.GenerateUnifiedAsync(prompt, n, size, responseFormat, ct, appCallerCode,
-            images: images.Count > 0 ? images : null, modelId, platformId, modelName, maskBase64: maskB64);
+            images: images.Count > 0 ? images : null,
+            modelId,
+            platformId,
+            modelName,
+            maskBase64: maskB64,
+            requiredLogicalModelPublicId: requiredLogicalModelPublicId);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400

@@ -283,22 +283,23 @@ public sealed class GatewayConfigurationProvisioningTests
     }
 
     [Fact]
-    public void FalImageLayeringBlueprint_BuildsDedicatedMapRouteWithoutOpenAiProvider()
+    public void FalImageLayeringBlueprint_PublishesGenericLogicalCapabilityWithoutBusinessBinding()
     {
         var draft = FalImageLayeringProvisioning.CreateExchangeDraft("fal-secret");
-        var pool = FalImageLayeringProvisioning.BuildPoolDocument(
-            "tenant-a", "pool-a", "exchange-a", DateTime.UnixEpoch);
-        var appCaller = FalImageLayeringProvisioning.BuildAppCallerDocument(
-            "tenant-a", "team-a", "caller-a", "pool-a", DateTime.UnixEpoch);
+        var logicalModel = FalImageLayeringProvisioning.BuildLogicalModelDocument(
+            "tenant-a", "logical-a", DateTime.UnixEpoch);
+        var offering = FalImageLayeringProvisioning.BuildOfferingDocument(
+            "tenant-a", "offering-a", "logical-a", "exchange-a", DateTime.UnixEpoch);
 
         draft.TargetAuthScheme.ShouldBe("Key");
         draft.TransformerType.ShouldBe("fal-image-layered");
         draft.Models.Single().ModelId.ShouldBe("fal-qwen-image-layered");
-        pool["Models"].AsBsonArray.Single().AsBsonDocument["PlatformId"].AsString.ShouldBe("exchange-a");
-        pool["AllowedAppCallerCodes"].AsBsonArray.Single().AsString
-            .ShouldBe("visual-agent.image.layering::generation");
-        appCaller["ModelPoolId"].AsString.ShouldBe("pool-a");
-        appCaller["AppCallerCode"].AsString.ShouldBe("visual-agent.image.layering::generation");
-        appCaller.Contains("ApiKey").ShouldBeFalse();
+        logicalModel["PublicId"].AsString.ShouldBe("image-layering");
+        logicalModel["AllowedAppCallerCodes"].AsBsonArray.ShouldBeEmpty();
+        logicalModel.ToJson().ShouldNotContain("visual-agent");
+        offering["LogicalModelId"].AsString.ShouldBe("logical-a");
+        offering["TargetId"].AsString.ShouldBe("exchange-a");
+        offering["UpstreamModelId"].AsString.ShouldBe("fal-qwen-image-layered");
+        offering.Contains("AppCallerCode").ShouldBeFalse();
     }
 }

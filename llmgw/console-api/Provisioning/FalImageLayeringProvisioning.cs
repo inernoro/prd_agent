@@ -3,8 +3,8 @@ using MongoDB.Bson;
 namespace PrdAgent.LlmGw.Provisioning;
 
 /// <summary>
-/// fal.ai 图片分层能力的一键接入蓝图。
-/// LLMGW 持有上游密钥、Exchange、专用模型池和 appCaller 绑定；MAP 业务侧只消费统一模型能力。
+/// fal.ai 图片分层能力的一键安装蓝图。
+/// LLMGW 只发布通用逻辑能力，不创建或绑定任何业务系统的 appCaller。
 /// </summary>
 public static class FalImageLayeringProvisioning
 {
@@ -14,10 +14,8 @@ public static class FalImageLayeringProvisioning
     public const string ModelId = "fal-qwen-image-layered";
     public const string TargetUrl = "https://fal.run/fal-ai/qwen-image-layered";
     public const string TransformerType = "fal-image-layered";
-    public const string PoolName = "视觉创作图片分层";
-    public const string PoolCode = "visual-agent-image-layering";
-    public const string AppCallerCode = "visual-agent.image.layering::generation";
     public const string RequestType = "generation";
+    public const string LogicalModelName = "图片分层";
 
     public static NormalizedExchangeDraft CreateExchangeDraft(string apiKey) => new(
         ExchangeName,
@@ -35,84 +33,52 @@ public static class FalImageLayeringProvisioning
         "Key",
         TransformerType,
         true,
-        "fal.ai 原生图片语义分层能力，由 LLMGW 统一适配并提供给 MAP 视觉创作",
+        "fal.ai 原生图片语义分层上游，由 LLMGW 统一适配",
         null);
 
-    public static BsonDocument BuildPoolDocument(
+    public static BsonDocument BuildLogicalModelDocument(
         string tenantId,
-        string poolId,
+        string logicalModelId,
+        DateTime now) => new()
+    {
+        ["_id"] = logicalModelId,
+        ["TenantId"] = tenantId,
+        ["PublicId"] = CapabilityId,
+        ["PublicIdNormalized"] = CapabilityId,
+        ["Name"] = LogicalModelName,
+        ["ModelType"] = RequestType,
+        ["Capabilities"] = new BsonArray { "image_generation", "image_layering" },
+        ["AllowedAppCallerCodes"] = new BsonArray(),
+        ["RoutingStrategy"] = "priority",
+        ["Enabled"] = true,
+        ["DisplayOrder"] = 20,
+        ["Description"] = "通用图片分层能力。调用方只依赖公开标识 image-layering，不感知 fal.ai、Endpoint 或凭据。",
+        ["CreatedAt"] = now,
+        ["UpdatedAt"] = now,
+    };
+
+    public static BsonDocument BuildOfferingDocument(
+        string tenantId,
+        string offeringId,
+        string logicalModelId,
         string exchangeId,
         DateTime now) => new()
     {
-        ["_id"] = poolId,
+        ["_id"] = offeringId,
         ["TenantId"] = tenantId,
-        ["Name"] = PoolName,
-        ["Code"] = PoolCode,
+        ["LogicalModelId"] = logicalModelId,
+        ["TargetKind"] = "exchange",
+        ["TargetId"] = exchangeId,
+        ["UpstreamModelId"] = ModelId,
+        ["Protocol"] = TransformerType,
         ["Priority"] = 10,
-        ["ModelType"] = RequestType,
-        ["IsDefaultForType"] = false,
-        ["StrategyType"] = 0,
-        ["Models"] = new BsonArray([BuildPoolMember(exchangeId)]),
-        ["AllowedAppCallerCodes"] = new BsonArray { AppCallerCode },
-        ["Description"] = "仅供视觉创作图片分层使用，不进入普通文生图或图生图模型选择",
-        ["SourceCollection"] = "llmgw_model_pools",
-        ["Authority"] = "llm_gateway",
-        ["ClaimedAt"] = now,
-        ["CreatedAt"] = now,
-        ["UpdatedAt"] = now,
-        ["Version"] = 1L,
-    };
-
-    public static BsonDocument BuildPoolMember(string exchangeId) => new()
-    {
-        ["ModelId"] = ModelId,
-        ["PlatformId"] = exchangeId,
-        ["Priority"] = 1,
+        ["Weight"] = 100,
+        ["Enabled"] = true,
         ["HealthStatus"] = 0,
         ["ConsecutiveFailures"] = 0,
         ["ConsecutiveSuccesses"] = 0,
-        ["IsMain"] = false,
-        ["IsIntent"] = false,
-        ["IsVision"] = false,
-        ["IsImageGen"] = true,
-        ["Capabilities"] = new BsonArray
-        {
-            new BsonDocument { ["Type"] = "image_generation", ["Source"] = "system", ["Value"] = true },
-            new BsonDocument { ["Type"] = "image_layering", ["Source"] = "system", ["Value"] = true },
-        },
+        ["Notes"] = "fal.ai Qwen Image Layered 原生供给",
+        ["CreatedAt"] = now,
+        ["UpdatedAt"] = now,
     };
-
-    public static BsonDocument BuildAppCallerDocument(
-        string tenantId,
-        string? teamId,
-        string appCallerId,
-        string poolId,
-        DateTime now)
-    {
-        var document = new BsonDocument
-        {
-            ["_id"] = appCallerId,
-            ["TenantId"] = tenantId,
-            ["AppCallerCode"] = AppCallerCode,
-            ["RequestType"] = RequestType,
-            ["SourceSystem"] = "map",
-            ["IngressProtocol"] = "gw-native",
-            ["ObservedIngressProtocols"] = new BsonArray(),
-            ["Title"] = "视觉创作图片分层",
-            ["Status"] = "configured",
-            ["ModelPoolId"] = poolId,
-            ["ModelPolicy"] = "auto",
-            ["ParameterPolicy"] = "default-drop",
-            ["ObservedModelPoolIds"] = new BsonArray(),
-            ["ObservedModelPolicies"] = new BsonArray(),
-            ["ObservedParameterPolicies"] = new BsonArray(),
-            ["TotalSeen"] = 0L,
-            ["FirstSeenAt"] = now,
-            ["LastSeenAt"] = now,
-            ["CreatedAt"] = now,
-            ["UpdatedAt"] = now,
-        };
-        if (!string.IsNullOrWhiteSpace(teamId)) document["TeamId"] = teamId;
-        return document;
-    }
 }

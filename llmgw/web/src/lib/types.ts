@@ -796,10 +796,10 @@ export type ImageLayeringCapabilityStatus = {
   verified: boolean;
   hasKey: boolean;
   exchangeId?: string | null;
-  poolId?: string | null;
-  appCallerId?: string | null;
+  logicalModelId?: string | null;
+  offeringId?: string | null;
   modelId: string;
-  appCallerCode: string;
+  publicId: string;
   lastVerifiedAt?: string | null;
 };
 
