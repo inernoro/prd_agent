@@ -11,7 +11,7 @@
  *   3. loadFromServer 拉到含脏数据的远程偏好后，写入 store 前去重
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/services', () => ({
   getUserPreferences: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock('@/stores/authStore', () => ({
   registerLogoutReset: vi.fn(),
 }));
 
-import { getUserPreferences } from '@/services';
+import { getUserPreferences, updateAgentSwitcherPreferences } from '@/services';
 import { useAgentSwitcherStore } from '../agentSwitcherStore';
 
 const baseVisit = {
@@ -176,5 +176,91 @@ describe('agentSwitcherStore: 水合竞态', () => {
     useAgentSwitcherStore.setState({ serverLoaded: false, serverLoading: false });
     await useAgentSwitcherStore.getState().loadFromServer();
     expect(useAgentSwitcherStore.getState().usageCounts['visual-agent']).toBe(3);
+  });
+});
+
+/**
+ * 拉取失败的两条路必须同样收尾。
+ *
+ * `getUserPreferences` 失败有两种形态：请求本身抛错（网络断了），以及请求通了但
+ * 返回 `success:false`（后端拒绝 / 业务错误）。对本地状态来说两者后果完全一样——
+ * 远端数据没拿到，本地就是唯一真相。所以收尾也必须一样：把水合期间攒下的点击
+ * 推回服务端。曾经只有 catch 那条做了，`success:false` 那条静默留在本地，
+ * 用户换台设备打开就发现刚才点的那个智能体没进「你常用的」。
+ */
+describe('agentSwitcherStore: 水合失败的两条路', () => {
+  beforeEach(() => {
+    useAgentSwitcherStore.setState({
+      recentVisits: [],
+      pinnedIds: [],
+      usageCounts: {},
+      serverLoaded: false,
+      serverLoading: false,
+    });
+    useAgentSwitcherStore.getState().resetServerSync();
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  type PrefsResponse = Awaited<ReturnType<typeof getUserPreferences>>;
+
+  /** 水合飞行途中点一下，然后让这次水合以 `settle` 的方式失败 */
+  async function clickDuringHydrationThenFail(settle: (fail: (r: PrefsResponse) => void, reject: (e: Error) => void) => void) {
+    let resolveLoad: (value: PrefsResponse) => void = () => {};
+    let rejectLoad: (err: Error) => void = () => {};
+    vi.mocked(getUserPreferences).mockReturnValue(
+      new Promise<PrefsResponse>((resolve, reject) => { resolveLoad = resolve; rejectLoad = reject; }),
+    );
+
+    const loading = useAgentSwitcherStore.getState().loadFromServer();
+    useAgentSwitcherStore.getState().addRecentVisit({ ...baseVisit, id: 'visual-agent', path: '/visual-agent' });
+    settle(resolveLoad, rejectLoad);
+    await loading;
+
+    // 越过 scheduleSync 的 debounce，让回写真的发生
+    await vi.advanceTimersByTimeAsync(1000);
+  }
+
+  it('success:false 也要把水合期间的点击推回服务端', async () => {
+    await clickDuringHydrationThenFail((fail) => {
+      fail({ success: false, error: { message: '后端拒绝' }, data: null } as unknown as PrefsResponse);
+    });
+
+    expect(
+      vi.mocked(updateAgentSwitcherPreferences),
+      'success:false 分支没回写：那次点击只活在本设备，换台机器就没了',
+    ).toHaveBeenCalled();
+    const pushed = vi.mocked(updateAgentSwitcherPreferences).mock.calls[0][0];
+    expect(pushed.recentVisits?.some((v) => v.id === 'visual-agent')).toBe(true);
+    expect(pushed.usageCounts?.['visual-agent']).toBe(1);
+  });
+
+  it('请求抛错走同样的收尾', async () => {
+    await clickDuringHydrationThenFail((_fail, reject) => { reject(new Error('network down')); });
+
+    expect(vi.mocked(updateAgentSwitcherPreferences)).toHaveBeenCalled();
+    const pushed = vi.mocked(updateAgentSwitcherPreferences).mock.calls[0][0];
+    expect(pushed.usageCounts?.['visual-agent']).toBe(1);
+  });
+
+  it('两条失败路都清空水合队列，下一次水合不会重放旧点击', async () => {
+    await clickDuringHydrationThenFail((fail) => {
+      fail({ success: false, error: { message: '后端拒绝' }, data: null } as unknown as PrefsResponse);
+    });
+    expect(useAgentSwitcherStore.getState().usageCounts['visual-agent']).toBe(1);
+
+    // 队列没清的话，下一次水合会把这次点击再叠一遍到远端计数上
+    vi.mocked(getUserPreferences).mockResolvedValue({
+      success: true,
+      data: { agentSwitcherPreferences: { pinnedIds: [], recentVisits: [], usageCounts: { 'visual-agent': 9 } } },
+    } as unknown as PrefsResponse);
+    useAgentSwitcherStore.setState({ serverLoaded: false, serverLoading: false });
+    await useAgentSwitcherStore.getState().loadFromServer();
+
+    expect(useAgentSwitcherStore.getState().usageCounts['visual-agent'], '旧点击被重放了第二遍').toBe(9);
   });
 });

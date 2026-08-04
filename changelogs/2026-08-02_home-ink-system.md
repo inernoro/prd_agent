@@ -10,6 +10,7 @@
 | refactor | prd-admin | `formatCompactNumber` 收敛到 `lib/homePulse` 单一实现，移动端改为转出 |
 | refactor | prd-admin | 首页跳转收成唯一出口 `lib/useTrackedNavigate`，**桌面与移动首页共用**：带入口信息的调用自动记打开次数。记账点漏一个，那条路径的启动就永远不计入「你常用的」——桌面收敛后手机上点开的智能体仍不计数，于是桌面的「你常用的」漏掉了用户手机上最常用的那些 |
 | fix | prd-admin | 首屏水合竞态：进页即异步拉云端偏好，此间用户手快点开的智能体会先写本地、但 `scheduleSync` 因 `serverLoaded=false` 不回写，紧接着远端数据整体覆盖，那次点击连同计数一并消失。改为把水合期间的访问攒进队列、水合落地后按同规则重放并回写；只重放本地仍在册的条目，登出与重置一并清空 |
+| fix | prd-admin | 拉云端偏好失败的两条路（请求抛错 / 返回 `success:false`）此前收尾不一致：抛错那条会清队列并把本地推回服务端，`success:false` 那条只标了个「尝试过」就返回——水合期间那次点击于是只活在本设备，换台机器打开就不在「你常用的」里，且队列一直留着，下次水合会把它重放第二遍。两条合并到同一个收尾函数 |
 | fix | prd-admin | 记账的规范 id 收敛到 `resolveCatalogId`（目录 id 由路由推导，appKey 与它故意不同名的有 `task-tree-agent` / `emergence-agent` 等）——只按 agentKey 查会解析失败，加了目录闸之后失败的后果是整条记录被丢掉，个人任务树与涌现探索器从首页启动将完全不计入「你常用的」。记账侧与排序侧现在走同一个解析器 |
 | fix | prd-admin | 「我的资源」三处入口（首页动态区、快捷入口、静态启动项）都指向 `/visual-agent?tab=assets`，而视觉创作页只读 `workspaceId`、根本不认这个 query——点进去落在工作区列表。改指注册在案的 `/my-assets`，并加守卫禁止「带 query 假装能落到子页」 |
 | fix | prd-admin | 首页快捷入口记账用的是「偏好别名」（updates / voc / models / teams），与目录 id（changelog / team-activity / mds / users）对不上，记进去是一串查无此项的幽灵 id，Cmd+K 最近使用与设置统计都会静默丢掉。改为按路由推导目录 id；「不在目录里就不记账」这道闸收进 `useTrackedNavigate` 出口本身——原先写在桌面调用处，移动端的「米多早报」照样记了个目录里没有的 id |

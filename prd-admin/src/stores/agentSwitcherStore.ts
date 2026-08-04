@@ -202,6 +202,22 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
         }, SYNC_DEBOUNCE_MS);
       };
 
+      /**
+       * 拉取失败的统一收尾（HTTP 抛错 与 `success:false` 走同一条）。
+       *
+       * 失败时本地状态就是唯一的真相，所以三件事都得做：标记「尝试过」让后续
+       * mutation 能回写、清掉水合队列（它只在水合窗口内有意义）、本地非空就立刻
+       * 推一次——否则水合期间那次点击只活在本设备上，换台机器就没了。
+       *
+       * 两条失败路径以前各写各的，`success:false` 那条漏了后两件事。语义相同的
+       * 收尾必须共用一份，分开写迟早再漂一次。
+       */
+      const settleFailedLoad = () => {
+        pendingVisits = [];
+        set({ serverLoading: false, serverLoaded: true });
+        if (get().recentVisits.length > 0) scheduleSync();
+      };
+
       return {
         // Initial state
         isOpen: false,
@@ -303,7 +319,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
             const res = await getUserPreferences();
             if (!res.success) {
               // 拉取失败保持本地缓存，标记为已尝试（避免无限重试打后端）
-              set({ serverLoading: false, serverLoaded: true });
+              settleFailedLoad();
               return;
             }
             const remote = res.data?.agentSwitcherPreferences;
@@ -380,11 +396,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
               }
             }
           } catch {
-            // 失败也算"尝试过"：本地状态已含这些访问，标记 serverLoaded 后
-            // 下一次 mutation 的 scheduleSync 就能把它们推上去
-            pendingVisits = [];
-            set({ serverLoading: false, serverLoaded: true });
-            if (get().recentVisits.length > 0) scheduleSync();
+            settleFailedLoad();
           }
         },
 
