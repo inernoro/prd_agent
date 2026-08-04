@@ -879,28 +879,42 @@ public class ExecutiveController : ControllerBase
             agg.TryGetValue(u.UserId, out var a);
             a ??= new MemberAgg();
             var output = a.Docs + a.Sites + a.Reports + a.RunsCompleted + a.DefectsResolved;
-            var signals = new List<double>();
-            if (a.DefectsAssigned > 0) signals.Add((double)a.DefectsResolved / a.DefectsAssigned);
-            if (a.RunsDone + a.RunsFailed > 0) signals.Add((double)a.RunsDone / (a.RunsDone + a.RunsFailed));
-            if (a.LlmCalls > 0) signals.Add(1.0 - (double)a.LlmErrors / a.LlmCalls);
-            double? quality = signals.Count > 0 ? Math.Round(signals.Average() * 100, 0) : null;
+
+            // 结果质量只由「结果型」信号构成：缺陷是否真的解决、生图是否真的成功。
+            // 模型调用成功率几乎恒为 100%，区分度接近零，单独存在时不足以支撑一个质量分——
+            // 只有已经有结果型信号时才作为附加项参与平均，否则本窗判为数据不足。
+            var outcomeSignals = new List<double>();
+            if (a.DefectsAssigned > 0) outcomeSignals.Add((double)a.DefectsResolved / a.DefectsAssigned);
+            if (a.RunsDone + a.RunsFailed > 0) outcomeSignals.Add((double)a.RunsDone / (a.RunsDone + a.RunsFailed));
+            double? quality = null;
+            if (outcomeSignals.Count > 0)
+            {
+                var signals = new List<double>(outcomeSignals);
+                if (a.LlmCalls > 0) signals.Add(1.0 - (double)a.LlmErrors / a.LlmCalls);
+                quality = Math.Round(signals.Average() * 100, 0);
+            }
             if (output == 0 && a.LlmCalls == 0) continue; // 本窗完全无痕迹的用户不进画像
             memberRows.Add((u, a, output, quality));
         }
 
-        var medOutput = Median(memberRows.Select(r => (double)r.Output).ToList()) ?? 0;
-        var medQuality = Median(memberRows.Where(r => r.Quality != null).Select(r => r.Quality!.Value).ToList()) ?? 0;
+        // 中位数只在「进得了画像的人」里取：把大量本窗零产出的旁观者算进来会让中位塌到 0，
+        // 「产出 ≥ 中位」变成恒真，四象限随之失效。
+        var plotted = memberRows.Where(r => r.Quality != null).ToList();
+        var medOutput = Median(plotted.Select(r => (double)r.Output).ToList()) ?? 0;
+        var medQuality = Median(plotted.Select(r => r.Quality!.Value).ToList()) ?? 0;
         var medCost = Median(memberRows.Select(r => (double)r.A.Cost).ToList()) ?? 0;
         var medCalls = Median(memberRows.Select(r => (double)r.A.LlmCalls).ToList()) ?? 0;
+        // 产出阈值至少为 1：零产出不该被算作「达到中位」
+        var outputThreshold = Math.Max(1, medOutput);
 
         var members = memberRows.Select(r =>
         {
             var (u, a, output, quality) = r;
             string quadrant;
             if (quality == null) quadrant = "数据不足";
-            else if (output >= medOutput && quality >= medQuality) quadrant = "主力产出";
-            else if (output < medOutput && quality >= medQuality) quadrant = "精工型";
-            else if (output >= medOutput && quality < medQuality) quadrant = "高量低果";
+            else if (output >= outputThreshold && quality >= medQuality) quadrant = "主力产出";
+            else if (output < outputThreshold && quality >= medQuality) quadrant = "精工型";
+            else if (output >= outputThreshold && quality < medQuality) quadrant = "高量低果";
             else quadrant = "低活跃";
 
             var highlights = new List<string>();
@@ -1025,7 +1039,8 @@ public class ExecutiveController : ControllerBase
                 "窗口内被标记已解决的缺陷，从创建到解决耗时的中位数"),
             Kpi("successRate", "模型调用成功率", successRate, "%", null, true, new List<double>(),
                 "LLM 网关日志中 HTTP 状态码 < 400 的比例"),
-            Kpi("costPerActive", "人均 AI 成本", (double)costPerActive, "元", null, true, new List<double>(),
+            // 没有任何一次调用能套上单价时，成本是算不出来而不是零 —— 一律给 null
+            Kpi("costPerActive", "人均 AI 成本", pricedCalls > 0 ? (double)costPerActive : null, "元", null, true, new List<double>(),
                 pricedCalls > 0
                     ? $"按模型组已配置单价折算；{totalCalls} 次调用中 {pricedCalls} 次有定价"
                     : "模型组尚未配置单价，成本无法折算"),
@@ -1075,7 +1090,8 @@ public class ExecutiveController : ControllerBase
                 "/models"));
         }
 
-        var lowYield = memberRows
+        // 团队产出中位为 0 时「产出低」没有比较基准，这条规则整体不触发，避免对所有人开火
+        var lowYield = medOutput < 1 ? new List<(User U, MemberAgg A, int Output, double? Quality)>() : memberRows
             .Where(r => r.A.LlmCalls >= Math.Max(30, medCalls * 2) && r.Output <= medOutput)
             .OrderByDescending(r => r.A.LlmCalls)
             .Take(2)
@@ -1166,7 +1182,9 @@ public class ExecutiveController : ControllerBase
             to = now,
             prevFrom = hasPrev ? prevStart : (DateTime?)null,
             totalMembers = humanUsers.Count,
-            medians = new { output = Math.Round(medOutput, 1), quality = Math.Round(medQuality, 1) },
+            // 前端十字线直接用这两个阈值，保证画出来的分界与后端判定同一口径
+            medians = new { output = Math.Round(outputThreshold, 1), quality = Math.Round(medQuality, 1) },
+            plottedMembers = plotted.Count,
             seriesAvailable = wantSeries,
             // 显式声明拿不到的指标，避免面板上出现无根数字
             unavailable = new object[]

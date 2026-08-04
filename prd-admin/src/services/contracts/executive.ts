@@ -127,7 +127,8 @@ export type TeamInsightMember = {
   role: string;
   avatarFileName: string | null;
   output: number;
-  /** 结果质量 0-100；三项真实成功率按可用性取平均，全无信号时为 null */
+  /** 结果质量 0-100；必须有结果型信号（缺陷解决率 / 生图成功率）才计算，
+   *  调用成功率只作附加项。本窗无结果型信号时为 null，不折算成 100。 */
   quality: number | null;
   quadrant: '主力产出' | '精工型' | '高量低果' | '低活跃' | '数据不足';
   outputDays: number;
@@ -157,7 +158,10 @@ export type TeamInsights = {
     to: string;
     prevFrom: string | null;
     totalMembers: number;
+    /** 四象限分界阈值（产出阈值 / 质量中位），与后端判定同口径 */
     medians: { output: number; quality: number };
+    /** 有结果型信号、进得了画像的人数 */
+    plottedMembers: number;
     seriesAvailable: boolean;
     /** 明确拿不到的指标 —— 面板照实说明，不编数字 */
     unavailable: { metric: string; reason: string }[];

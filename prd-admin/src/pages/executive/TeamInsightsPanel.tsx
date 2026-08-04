@@ -197,8 +197,8 @@ function Quadrant({
         })}
       </div>
       <div className="mt-6 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-        气泡大小 = 有产出的天数 · 十字线 = 团队中位（产出 {medians.output} 件 / 质量 {medians.quality}）
-        {noQuality > 0 && ` · ${noQuality} 人因无成功率信号未入图`}
+        气泡大小 = 有产出的天数 · 十字线 = 分型阈值（产出 {medians.output} 件 / 质量 {medians.quality}）
+        {noQuality > 0 && ` · ${noQuality} 人本窗无结果型信号（缺陷或生图），未入图`}
       </div>
     </div>
   );
