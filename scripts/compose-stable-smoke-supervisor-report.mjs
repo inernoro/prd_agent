@@ -31,10 +31,20 @@ const visualBeforeLedger = new Set([
   '缺陷清单',
 ]);
 
-export function composeSupervisorReport(functionalMarkdown, visualMarkdown) {
+const visualGateSections = new Set([
+  '模块覆盖',
+  '需处理事项',
+  '视觉异常证据',
+  '逐张视觉证据账本',
+  '视觉测试方法',
+]);
+
+export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visualGateMarkdown = '') {
   const functional = parseReportSections(functionalMarkdown);
   const visual = parseReportSections(visualMarkdown);
+  const visualGate = parseReportSections(visualGateMarkdown);
   const visualSummary = visual.sections.filter((section) => visualBeforeLedger.has(section.title));
+  const visualGateDetail = visualGate.sections.filter((section) => visualGateSections.has(section.title));
   const visualSteps = visual.sections.filter((section) => /^步骤\s+\d+/.test(section.title));
   const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
   const inferredVerdict = /不通过/.test(functional.lead)
@@ -52,11 +62,15 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown) {
     }
     if (!visualInserted && section.title === '未通过与未执行逐项清单') {
       output.push(...visualSummary.flatMap((item) => [item.content, '']));
+      output.push(...visualGateDetail.flatMap((item) => [item.content, '']));
       visualInserted = true;
     }
     output.push(section.content, '');
   }
-  if (!visualInserted) output.push(...visualSummary.flatMap((item) => [item.content, '']));
+  if (!visualInserted) {
+    output.push(...visualSummary.flatMap((item) => [item.content, '']));
+    output.push(...visualGateDetail.flatMap((item) => [item.content, '']));
+  }
   output.push(...visualSteps.flatMap((item) => [item.content, '']));
   return output.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
@@ -65,6 +79,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const functional = readArg(argv, '--functional');
   const visual = readArg(argv, '--visual');
+  const visualGate = readArg(argv, '--visual-gate');
   const output = readArg(argv, '--output');
   if (!functional || !visual || !output) {
     throw new Error('必须提供 --functional、--visual 和 --output');
@@ -72,6 +87,7 @@ async function main() {
   writeFileSync(resolve(output), composeSupervisorReport(
     readFileSync(resolve(functional), 'utf8'),
     readFileSync(resolve(visual), 'utf8'),
+    visualGate ? readFileSync(resolve(visualGate), 'utf8') : '',
   ), 'utf8');
 }
 

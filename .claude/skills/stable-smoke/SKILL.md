@@ -1,6 +1,6 @@
 ---
 name: stable-smoke
-version: 1.6.0
+version: 1.7.0
 description: Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".
 ---
 
@@ -61,6 +61,7 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 16. 报告必须拆成主管报告与技术附录两个独立产物。主管报告不得出现命令、选择器、接口字段、日志原文和源代码路径；这些内容只能从“技术附录”链接按需打开。
 17. 视觉验收必须运行 `scripts/stable-smoke-visual-gate.mjs`。截图总量、模块下限、关键状态、证据元数据和页面判定必须同时通过；只满足截图数量时最多为部分通过。
 18. 主管报告必须自动生成双环境逐项验收账本。异常项置顶，逐项显示 caseId、测试类型、完整面包屑、结论、责任人和可点击测试方法；正式环境共用身份阻塞可在异常区合并为一条，但完整账本不得省略任何受影响项。
+19. 视觉报告必须生成逐张证据账本。每张图都要显示所属模块、冒烟/功能/视觉/回归类型、通过状态、证明的标准状态、真实面包屑、证明内容、截图跳转和测试方法跳转；任一字段缺失时该图自动标为需干预，模块不得判通过。
 
 ## 每轮工作流
 
@@ -151,7 +152,7 @@ Stable Smoke Progress:
 
 固定输出两份报告：
 
-1. `supervisor-report.md`：给主管和产品审核者，首屏先列能否发布、通过数、失败数、未执行数和需干预项；异常项提前，随后保留双环境全部 caseId 的逐项验收账本，显示冒烟、功能、视觉或回归类型、完整面包屑、结论、责任人和可点击测试方法。
+1. `supervisor-report.md`：给主管和产品审核者，首屏先列能否发布、通过数、失败数、未执行数和需干预项；异常项提前，随后保留双环境全部 caseId 的逐项验收账本，并包含逐张视觉证据账本。每条功能和视觉证据都显示测试类型、完整面包屑、结论、责任人或干预原因，以及可点击截图和测试方法。
 2. `technical-appendix.md`：给开发与测试维护者，包含补跑命令、选择器、接口、requestId、日志、源代码入口和清理细节。主管报告只保留一个“查看技术附录”链接。
 
 视觉证据归档前必须执行：
@@ -160,7 +161,7 @@ Stable Smoke Progress:
 node scripts/stable-smoke-visual-gate.mjs --manifest <manifest.json> --output-json <visual-gate.json> --output-md <visual-gate.md>
 ```
 
-门禁非零退出时，主管报告必须把对应模块标为“不通过 / 部分通过 / 需干预”，不得用截图总量覆盖关键状态缺口。
+门禁非零退出时，主管报告必须把对应模块标为“不通过 / 部分通过 / 需干预”，不得用截图总量覆盖关键状态缺口。合并报告时必须把 `visual-gate.md` 的模块覆盖、异常证据、逐张视觉证据账本和视觉测试方法一并写入主管报告。
 
 ```markdown
 # 稳定冒烟报告 · {runId}

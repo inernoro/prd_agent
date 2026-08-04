@@ -57,7 +57,27 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
 
 {{IMG:001-visual}}
 `;
-  const composed = composeSupervisorReport(functional, visual);
+  const visualGate = `# 视觉门禁
+
+## 模块覆盖
+
+10 个模块
+
+## 视觉异常证据
+
+124 张逐图判定
+
+## 逐张视觉证据账本
+
+| 序号 | 测试结果 |
+|---:|---|
+| 1 | 需干预 |
+
+## 视觉测试方法
+
+逐状态核对
+`;
+  const composed = composeSupervisorReport(functional, visual, visualGate);
   assert.match(composed, /新结论/);
   assert.equal((composed.match(/## 主管验收总览/g) || []).length, 1);
   assert.match(composed, /Verdict: fail/);
@@ -65,5 +85,8 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
   assert.match(composed, /206 项账本/);
   assert.match(composed, /\{\{IMG:001-visual\}\}/);
   assert.match(composed, /## 改动断言到证据表/);
+  assert.match(composed, /124 张逐图判定/);
+  assert.match(composed, /## 逐张视觉证据账本/);
+  assert.match(composed, /## 视觉测试方法/);
   assert.ok(composed.indexOf('视觉证据预算') < composed.indexOf('未通过与未执行逐项清单'));
 });

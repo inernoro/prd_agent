@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { validateVisualEvidence } from '../stable-smoke-visual-gate.mjs';
+import { renderVisualGateReport, validateVisualEvidence } from '../stable-smoke-visual-gate.mjs';
 
 const catalog = {
   statusVocabulary: ['通过', '不通过', '部分通过', '未执行', '需干预'],
@@ -64,4 +64,37 @@ test('缺少测试方法与面包屑时不能通过', () => {
   ]);
   assert.equal(result.verdict, '不通过');
   assert.equal(result.modules[0].metadataPassed, false);
+});
+
+test('主管报告逐张列出结果、面包屑、截图和测试方法', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({ name: '入口图', sha256: 'hash-a' }),
+    evidence({ name: '结果图', sha256: 'hash-b', coverageStates: ['结果'] }),
+  ]);
+  const report = renderVisualGateReport(result);
+  assert.match(report, /## 逐张视觉证据账本/);
+  assert.match(report, /首页 → 视觉创作/);
+  assert.match(report, /\[查看\]\(#fig-结果图\)/);
+  assert.match(report, /\[查看\]\(#视觉测试方法\)/);
+  assert.match(report, /## 视觉测试方法/);
+});
+
+test('缺少元数据的单张证据在异常区明确标为需干预', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({ name: '入口图', sha256: 'hash-a', methodAnchor: '' }),
+    evidence({ name: '结果图', sha256: 'hash-b', coverageStates: ['结果'] }),
+  ]);
+  const report = renderVisualGateReport(result);
+  assert.match(report, /## 视觉异常证据/);
+  assert.match(report, /入口图 \| 需干预 \| 入口图 缺少 methodAnchor/);
+});
+
+test('带序号的中文截图名使用唯一图号锚点', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({ name: '104-gateway-nav-逻辑模型', sha256: 'hash-a' }),
+    evidence({ name: '105-result', sha256: 'hash-b', coverageStates: ['结果'] }),
+  ]);
+  const report = renderVisualGateReport(result);
+  assert.match(report, /\[查看\]\(#fig-104\)/);
+  assert.doesNotMatch(report, /#fig-104-gateway-nav-逻辑模型/);
 });

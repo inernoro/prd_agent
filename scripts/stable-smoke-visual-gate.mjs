@@ -14,7 +14,13 @@ function normalizeStates(value) {
 }
 
 function evidenceAnchor(name) {
+  const sequence = String(name).match(/^(\d{3})-/)?.[1];
+  if (sequence) return `#fig-${sequence}`;
   return `#fig-${String(name).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')}`;
+}
+
+function escapeCell(value) {
+  return String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', '<br>');
 }
 
 export function validateVisualEvidence(catalog, manifest) {
@@ -47,27 +53,49 @@ export function validateVisualEvidence(catalog, manifest) {
     const fieldErrors = [];
     const stateEvidence = new Map(module.requiredStates.map((state) => [state, []]));
 
+    const evidenceRows = [];
     for (const item of evidence) {
+      const itemErrors = [];
       for (const field of requiredFields) {
         const value = item[field];
         if (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)) {
-          fieldErrors.push(`${item.name || '未命名截图'} 缺少 ${field}`);
+          const message = `${item.name || '未命名截图'} 缺少 ${field}`;
+          fieldErrors.push(message);
+          itemErrors.push(message);
         }
       }
       const states = normalizeStates(item.coverageStates);
       for (const state of states) {
         if (!stateEvidence.has(state)) {
-          fieldErrors.push(`${item.name || '未命名截图'} 使用了目录外状态“${state}”`);
+          const message = `${item.name || '未命名截图'} 使用了目录外状态“${state}”`;
+          fieldErrors.push(message);
+          itemErrors.push(message);
           continue;
         }
         stateEvidence.get(state).push(item.name || '未命名截图');
       }
       if (item.testType && !allowedTypes.has(item.testType)) {
-        fieldErrors.push(`${item.name || '未命名截图'} 的 testType 不合法`);
+        const message = `${item.name || '未命名截图'} 的 testType 不合法`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
       }
       if (item.status && !allowedStatuses.has(item.status)) {
-        fieldErrors.push(`${item.name || '未命名截图'} 的 status 不合法`);
+        const message = `${item.name || '未命名截图'} 的 status 不合法`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
       }
+      evidenceRows.push({
+        name: item.name || '未命名截图',
+        caption: item.caption || '未说明证明内容',
+        coverageStates: states,
+        testType: item.testType || '未绑定',
+        declaredStatus: item.status || '未绑定',
+        status: itemErrors.length > 0 ? '需干预' : item.status,
+        breadcrumb: item.breadcrumb || '未绑定',
+        methodAnchor: item.methodAnchor || '',
+        evidenceAnchor: evidenceAnchor(item.name || '未命名截图'),
+        errors: itemErrors,
+      });
     }
 
     const missingStates = [...stateEvidence.entries()]
@@ -103,6 +131,7 @@ export function validateVisualEvidence(catalog, manifest) {
       verdict,
       evidenceAnchor: firstEvidence ? evidenceAnchor(firstEvidence) : '',
       methodAnchor: evidence.find((item) => item.methodAnchor)?.methodAnchor || '',
+      evidenceRows,
     };
   });
 
@@ -121,6 +150,12 @@ export function validateVisualEvidence(catalog, manifest) {
 }
 
 export function renderVisualGateReport(result) {
+  const allEvidence = result.modules.flatMap((module) => module.evidenceRows.map((item) => ({
+    ...item,
+    moduleId: module.id,
+    moduleName: module.name,
+  })));
+  const interventionEvidence = allEvidence.filter((item) => item.status !== '通过');
   const lines = [
     '# 视觉验收覆盖门禁',
     '',
@@ -154,6 +189,30 @@ export function renderVisualGateReport(result) {
     }),
     ...(result.blockingModules === 0 ? ['| 无 | 无 | 已关闭 |'] : []),
     '',
+    '## 视觉异常证据',
+    '',
+    '| 模块 | 截图 | 当前结果 | 需处理原因 | 查看截图 | 关联测试方法 |',
+    '|---|---|---|---|---|---|',
+    ...interventionEvidence.map((item) => `| ${escapeCell(item.moduleName)} | ${escapeCell(item.name)} | ${escapeCell(item.status)} | ${escapeCell(item.errors.join('；') || item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+    ...(interventionEvidence.length === 0 ? ['| 无 | 无 | 通过 | 无 | 已完成 | 已完成 |'] : []),
+    '',
+    '## 逐张视觉证据账本',
+    '',
+    '| 序号 | 模块 | 截图 | 测试类型 | 测试结果 | 证明状态 | 真实面包屑 | 证明内容 | 查看截图 | 关联测试方法 |',
+    '|---:|---|---|---|---|---|---|---|---|---|',
+    ...allEvidence.map((item, index) => `| ${index + 1} | ${escapeCell(item.moduleName)} | ${escapeCell(item.name)} | ${escapeCell(item.testType)} | ${escapeCell(item.status)} | ${escapeCell(item.coverageStates.join('、') || '未绑定')} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+    '',
+    '## 视觉测试方法',
+    '',
+    ...result.modules.flatMap((module) => [
+      `<a id="visual-method-${module.id}"></a>`,
+      `### ${module.name}`,
+      '',
+      `- 面包屑：${module.breadcrumb}`,
+      `- 判定方法：截图数量不少于 ${module.screenshotFloor} 张；${module.requiredStateCount} 个关键状态逐项有唯一证据；每张证据绑定测试类型、结果、页面路径和测试方法；存在失败或需干预证据时不得判通过。`,
+      `- 当前结果：${module.verdict}；已覆盖 ${module.coveredStateCount}/${module.requiredStateCount} 个关键状态。`,
+      '',
+    ]),
     '判定原则：截图数量只是一道门槛；入口、输入、进度、结果、失败恢复、持久化和移动端等关键状态必须逐项绑定唯一证据。复制图片、只有入口图或未标注测试方法，均不能形成“通过”结论。',
     '',
   ];
