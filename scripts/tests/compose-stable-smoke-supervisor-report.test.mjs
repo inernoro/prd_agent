@@ -83,7 +83,13 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
 
 逐状态核对
 `;
-  const composed = composeSupervisorReport(functional, visual, visualGate);
+  const visualPlan = `# 视觉取证执行清单
+
+## 逐模块视觉取证任务
+
+148 项逐项清单
+`;
+  const composed = composeSupervisorReport(functional, visual, visualGate, visualPlan);
   assert.match(composed, /新结论/);
   assert.equal((composed.match(/## 主管验收总览/g) || []).length, 1);
   assert.match(composed, /Verdict: fail/);
@@ -95,8 +101,10 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
   assert.doesNotMatch(composed, /124 张逐图判定/);
   assert.match(composed, /## 逐张视觉证据账本/);
   assert.match(composed, /## 视觉测试方法/);
+  assert.match(composed, /148 项逐项清单/);
   assert.match(composed, /\| 视觉创作 \| 首页 → 视觉创作 → 结果 \| 通过 \| 通过 \| 不通过 \| P2 \| 是 \|/);
   assert.doesNotMatch(composed, /\| 视觉创作 \| 首页 → 视觉创作 → 结果 \| 通过 \| 通过 \| 部分通过 \| P2 \| 是 \|/);
   assert.ok(composed.indexOf('模块覆盖') < composed.indexOf('未通过与未执行逐项清单'));
+  assert.ok(composed.indexOf('148 项逐项清单') < composed.indexOf('未通过与未执行逐项清单'));
   assert.ok(composed.indexOf('逐项验收账本') < composed.indexOf('逐张视觉证据账本'));
 });

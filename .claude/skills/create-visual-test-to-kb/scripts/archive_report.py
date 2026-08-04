@@ -592,6 +592,27 @@ EVIDENCE_BUDGET_REQUIRED_HEADERS = (
     "结论",
     "证据",
 )
+VISUAL_COVERAGE_REQUIRED_HEADERS = (
+    "模块",
+    "视觉结论",
+    "真实面包屑",
+    "采集文件",
+    "合格证据",
+    "关键状态",
+    "缺口",
+    "查看全部截图",
+    "测试方法",
+)
+VISUAL_EVIDENCE_REQUIRED_FIELDS = (
+    "primaryState",
+    "coverageStates",
+    "testType",
+    "status",
+    "theme",
+    "viewportClass",
+    "methodAnchor",
+    "breadcrumb",
+)
 REVIEWER_STATUSES = {"通过", "不通过", "部分通过", "未执行", "需干预"}
 
 
@@ -644,6 +665,14 @@ def _has_report_link(value):
     return bool(re.search(r"\[[^\]]+\]\((?:https?://|#)[^)]+\)", value or ""))
 
 
+def _is_qualified_visual_evidence(shot):
+    for field in VISUAL_EVIDENCE_REQUIRED_FIELDS:
+        value = shot.get(field)
+        if value is None or value == "" or (isinstance(value, list) and not value):
+            return False
+    return True
+
+
 def _supervisor_report_errors(target, body, manifest):
     """Reject broad visual reports that hide status, paths or thin evidence budgets."""
     if not _declares_supervisor_acceptance(target, body):
@@ -671,6 +700,59 @@ def _supervisor_report_errors(target, body, manifest):
         for link_field in ("查看步骤", "查看截图", "查看缺陷", "关联测试方法"):
             if not _has_report_link(row.get(link_field, "")):
                 errors.append(f"[主管总览] {module} 的「{link_field}」不是可点击链接")
+
+    coverage_headers, coverage_rows = _table_records(body, "模块覆盖")
+    if coverage_rows:
+        missing_coverage_headers = [field for field in VISUAL_COVERAGE_REQUIRED_HEADERS if field not in coverage_headers]
+        if missing_coverage_headers:
+            errors.append("[视觉覆盖] 缺字段：" + "、".join(missing_coverage_headers))
+
+        manifest_counts = {}
+        qualified_counts = {}
+        for shot in manifest or []:
+            module = _plain_cell(str(shot.get("module") or ""))
+            if not module:
+                errors.append(f"[视觉覆盖] 截图 {shot.get('name', '未命名')} 缺 module，无法归属业务模块")
+                continue
+            manifest_counts[module] = manifest_counts.get(module, 0) + 1
+            if _is_qualified_visual_evidence(shot):
+                qualified_counts[module] = qualified_counts.get(module, 0) + 1
+
+        coverage_modules = set()
+        for index, row in enumerate(coverage_rows, start=1):
+            module = _plain_cell(row.get("模块", "")) or f"第{index}行"
+            coverage_modules.add(module)
+            breadcrumb = _plain_cell(row.get("真实面包屑", ""))
+            if "→" not in breadcrumb or len([part for part in breadcrumb.split("→") if part.strip()]) < 3:
+                errors.append(f"[视觉覆盖] {module} 缺至少三级真实面包屑")
+            try:
+                collected = int(_plain_cell(row.get("采集文件", "")))
+            except ValueError:
+                errors.append(f"[视觉覆盖] {module} 的采集文件不是整数")
+                continue
+            qualified_match = re.fullmatch(r"(\d+)/(\d+)", _plain_cell(row.get("合格证据", "")))
+            if not qualified_match:
+                errors.append(f"[视觉覆盖] {module} 的合格证据必须为 已完成/计划 格式")
+                continue
+            qualified, planned = map(int, qualified_match.groups())
+            if collected != manifest_counts.get(module, 0):
+                errors.append(f"[视觉覆盖] {module} 报告采集 {collected}，manifest 归属 {manifest_counts.get(module, 0)}，数量不一致")
+            if qualified != qualified_counts.get(module, 0):
+                errors.append(f"[视觉覆盖] {module} 报告合格 {qualified}，manifest 合格 {qualified_counts.get(module, 0)}，数量不一致")
+            if qualified > collected or qualified > planned:
+                errors.append(f"[视觉覆盖] {module} 的合格证据数量越界")
+            conclusion = _plain_cell(row.get("视觉结论", ""))
+            if conclusion not in REVIEWER_STATUSES:
+                errors.append(f"[视觉覆盖] {module} 的视觉结论非法：{conclusion or '空'}")
+            if conclusion == "通过" and qualified < planned:
+                errors.append(f"[视觉覆盖] {module} 合格 {qualified} < 计划 {planned}，不得标记通过")
+            for link_field in ("查看全部截图", "测试方法"):
+                if not _has_report_link(row.get(link_field, "")):
+                    errors.append(f"[视觉覆盖] {module} 的「{link_field}」不是可点击链接")
+        extra_modules = sorted(set(manifest_counts) - coverage_modules)
+        if extra_modules:
+            errors.append("[视觉覆盖] manifest 存在未列入模块覆盖的模块：" + "、".join(extra_modules))
+        return errors
 
     budget_headers, budget_rows = _table_records(body, "视觉证据预算")
     missing_budget_headers = [field for field in EVIDENCE_BUDGET_REQUIRED_HEADERS if field not in budget_headers]

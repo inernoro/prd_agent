@@ -328,6 +328,44 @@ not-run
         )
         self.assertEqual([], errors)
 
+    def test_supervisor_gate_accepts_new_collected_and_qualified_coverage(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 未执行 | P2 | 是 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 合格证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 登录 | 未执行 | 登录 → 首页 → 头像 | 1 | 0/2 | 0/2 | 缺逐项元数据 | [查看](#visual-ledger-login) | [查看](#visual-method-login) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertEqual([], errors)
+
+    def test_supervisor_gate_rejects_false_qualified_count(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 合格证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 登录 | 通过 | 登录 → 首页 → 头像 | 1 | 1/1 | 1/1 | 无 | [查看](#visual-ledger-login) | [查看](#visual-method-login) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertTrue(any("报告合格 1，manifest 合格 0" in error for error in errors))
+
     def test_failure_report_can_archive_explicit_runtime_failure_evidence(self):
         errors = archive_report._warning_evidence_errors("fail", {
             "name": "01-real-failure",

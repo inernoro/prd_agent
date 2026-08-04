@@ -92,15 +92,25 @@ export function renderVisualPlan(plan) {
     '',
     '## 主管覆盖摘要',
     '',
-    '| 模块 | 计划截图 | 完整面包屑 |',
-    '|---|---:|---|',
-    ...plan.modules.map((module) => `| ${module.name} | ${module.planned} | ${module.breadcrumb} |`),
+    '| 模块 | 计划截图 | 当前状态 | 是否需干预 | 完整面包屑 | 查看逐项清单 |',
+    '|---|---:|---|---|---|---|',
+    ...plan.modules.map((module) => `| ${module.name} | ${module.planned} | 未执行 | 是 | ${module.breadcrumb} | [查看](#visual-plan-${module.id}) |`),
     '',
-    '## 逐项取证任务',
+    '## 逐模块视觉取证任务',
     '',
-    '| 序号 | 模块 | 验收场景 | 类型 | 主题 | 设备 | 完整测试路径 | 预期证明 | 当前状态 |',
-    '|---:|---|---|---|---|---|---|---|---|',
-    ...plan.slots.map((slot, index) => `| ${index + 1} | ${slot.module} | ${slot.scenario} | ${slot.testType} | ${slot.theme === 'dark' ? '暗色' : '亮色'} | ${slot.viewportClass === 'mobile' ? '真实触控移动端' : '桌面端'} | ${slot.breadcrumb} | ${slot.expectedProof} | ${slot.status} |`),
+    ...plan.modules.flatMap((module) => {
+      const moduleSlots = plan.slots.filter((slot) => slot.moduleId === module.id);
+      return [
+        `<a id="visual-plan-${module.id}"></a>`,
+        `### ${module.name} · 0/${module.planned} 项完成`,
+        '',
+        '| 序号 | 验收场景 | 类型 | 主题 | 设备 | 完整测试路径 | 预期证明 | 当前状态 | 是否需干预 | 测试方法 |',
+        '|---:|---|---|---|---|---|---|---|---|---|',
+        ...moduleSlots.map((slot, index) => `| ${index + 1} | ${slot.scenario} | ${slot.testType} | ${slot.theme === 'dark' ? '暗色' : '亮色'} | ${slot.viewportClass === 'mobile' ? '真实触控移动端' : '桌面端'} | ${slot.breadcrumb} | ${slot.expectedProof} | ${slot.status} | 是，需要执行并取证 | [查看](${slot.methodAnchor}) |`),
+        '',
+      ];
+    }),
+    '判定原则：每一行必须得到一张唯一截图，并明确写为通过、不通过或需干预；未执行不能按通过计算。一张截图不能替代多项状态。',
     '',
   ];
   return lines.join('\n');

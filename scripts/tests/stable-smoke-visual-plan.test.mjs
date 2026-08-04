@@ -28,5 +28,9 @@ test('主管清单不展示内部源码路径或执行命令', () => {
   const report = renderVisualPlan(buildVisualPlan(catalog));
   assert.match(report, /完整测试路径/);
   assert.match(report, /方图与宽图进度边界/);
+  assert.match(report, /是否需干预/);
+  assert.match(report, /逐模块视觉取证任务/);
+  assert.match(report, /登录、权限与头像 · 0\/14 项完成/);
+  assert.equal((report.match(/需要执行并取证/g) || []).length, 148);
   assert.doesNotMatch(report, /node scripts|prd-admin\/|e2e\//);
 });
