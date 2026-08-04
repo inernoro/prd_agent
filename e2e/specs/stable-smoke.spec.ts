@@ -729,7 +729,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[PARSE-003] 非法短视频链接在入口被拒绝并说明恢复动作', async ({ page, request }) => {
+  test('[PARSE-003][REG-short-video-input-001] 非法短视频链接在入口被拒绝并说明恢复动作', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/document-store');
     const response = await page.request.post('/api/short-video-materials/runs', {
       headers: authHeaders(token),

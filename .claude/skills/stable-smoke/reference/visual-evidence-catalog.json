@@ -3,7 +3,13 @@
   "name": "核心业务全面视觉验收目录",
   "purpose": "为每48小时稳定复测、发布前验收和缺陷回归提供模块级视觉证据预算，防止少量入口截图冒充全面通过。",
   "statusVocabulary": ["通过", "不通过", "部分通过", "未执行", "需干预"],
+  "allowedTestTypes": ["冒烟", "功能", "视觉", "回归"],
+  "evidenceItemRequiredFields": ["coverageStates", "testType", "status", "methodAnchor", "breadcrumb"],
   "requiredReportLinks": ["查看步骤", "查看截图", "查看缺陷", "关联测试方法"],
+  "reportLayers": {
+    "supervisor": "只包含主管结论、逐模块状态、完整面包屑、干预项、证据与测试方法链接，不出现命令、选择器、接口字段和源代码路径。",
+    "technicalAppendix": "单独归档命令、选择器、接口、requestId、日志和源代码入口，通过主管报告链接按需查看。"
+  },
   "modules": [
     {
       "id": "identity-profile",
@@ -102,6 +108,8 @@
     "每张截图必须归属一个主模块，并可关联多个相邻断言。",
     "入口截图只支持冒烟结论，不能单独支持功能或视觉通过。",
     "模块实际截图少于预算或关键状态未覆盖时，视觉状态不得为通过。",
-    "主管总报告只汇总结论；选择器、命令、接口和日志进入模块技术附录。"
+    "主管总报告与技术附录必须拆成两个独立产物；选择器、命令、接口和日志不得进入主管正文。",
+    "每张截图必须声明 coverageStates、testType、status、methodAnchor 和 breadcrumb；缺任一字段不得判定视觉通过。",
+    "数量、关键状态、证据元数据和页面判定四道门同时通过，模块视觉结论才可为通过。"
   ]
 }

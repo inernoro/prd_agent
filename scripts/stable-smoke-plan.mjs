@@ -100,6 +100,7 @@ export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCase
   const requiredCaseIds = [...new Set([
     ...(mode === 'scheduled' ? matrixCaseIds : []),
     ...selectedCaseIds,
+    ...activeRegressions,
   ])].sort();
   return {
     schemaVersion: '1.0',

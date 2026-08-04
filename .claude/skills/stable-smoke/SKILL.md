@@ -1,6 +1,6 @@
 ---
 name: stable-smoke
-version: 1.4.0
+version: 1.5.0
 description: Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".
 ---
 
@@ -58,6 +58,8 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 13. 业务功能台账是复测范围 SSOT。每条 P0/P1 功能线必须有稳定 id、业务面包屑、代码路径、双环境策略、caseId、产物断言、清理和 CDS 回滚动作。
 14. PR 代码变更按 `sourcePrefixes` 自动纳入功能线，同时追加所有 active 永久回归；未映射的核心代码变更必须阻断，不允许静默漏测。
 15. conditional 或 fail 只通过 MAP 站内通知定向发送给配置用户，禁止发全局通知，禁止发送到 Slack。
+16. 报告必须拆成主管报告与技术附录两个独立产物。主管报告不得出现命令、选择器、接口字段、日志原文和源代码路径；这些内容只能从“技术附录”链接按需打开。
+17. 视觉验收必须运行 `scripts/stable-smoke-visual-gate.mjs`。截图总量、模块下限、关键状态、证据元数据和页面判定必须同时通过；只满足截图数量时最多为部分通过。
 
 ## 每轮工作流
 
@@ -146,17 +148,40 @@ Stable Smoke Progress:
 
 ## 输出格式
 
+固定输出两份报告：
+
+1. `supervisor-report.md`：给主管和产品审核者，首屏先列能否发布、通过数、失败数、未执行数和需干预项；逐模块给出冒烟、功能、视觉三类结论、完整面包屑及“查看步骤 / 查看截图 / 查看缺陷 / 关联测试方法”。
+2. `technical-appendix.md`：给开发与测试维护者，包含补跑命令、选择器、接口、requestId、日志、源代码入口和清理细节。主管报告只保留一个“查看技术附录”链接。
+
+视觉证据归档前必须执行：
+
+```text
+node scripts/stable-smoke-visual-gate.mjs --manifest <manifest.json> --output-json <visual-gate.json> --output-md <visual-gate.md>
+```
+
+门禁非零退出时，主管报告必须把对应模块标为“不通过 / 部分通过 / 需干预”，不得用截图总量覆盖关键状态缺口。
+
 ```markdown
 # 稳定冒烟报告 · {runId}
 
 Verdict: pass | conditional | fail
 
+## 主管先看
+
+| 能否发布 | 通过 | 失败 | 未执行 | 需干预 |
+|---|---:|---:|---:|---:|
+
+## 主管验收总览
+
+| 模块 | 完整面包屑 | 冒烟 | 功能 | 视觉 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|
+
 ## 执行覆盖账本
 
-| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |
+| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 主管动作 |
 |---|---:|---:|---:|---:|---:|---|---|
 
-| caseId | 环境 | 为什么未执行 | 代码入口 | 补跑命令 | 关闭条件 |
+| caseId | 环境 | 为什么未执行 | 是否需干预 | 关闭条件 | 详细步骤 |
 |---|---|---|---|---|---|
 
 | 模块 | CDS 环境 | 正式环境 | 用例数 | 失败 | flaky | 产物 | 耗时 |
@@ -177,9 +202,13 @@ Verdict: pass | conditional | fail
 
 | 环境 | 创建数 | 清理数 | 残留数 | 结论 |
 |---|---:|---:|---:|---|
+
+## 技术附录
+
+[按需查看独立技术附录]({technical-report-url})
 ```
 
-报告必须按模块列出，不得只给总通过率。任何 `not-run` 都必须进入首屏后的「执行覆盖账本」，逐项给出身份阻塞、环境阻塞或自动化缺口等原因，并提供代码或页面入口、无密钥补跑命令和关闭条件。视觉功能使用 `/验收` 归档截图；接口链路复用 `/smoke`；复杂范围先用 `/验收场景` 编排。
+报告必须按模块列出，不得只给总通过率。任何 `not-run` 都必须进入首屏后的「执行覆盖账本」，逐项给出身份阻塞、环境阻塞或自动化缺口等原因、责任类型和关闭条件。补跑命令与代码入口只进入独立技术附录。视觉功能使用 `/验收` 归档截图；接口链路复用 `/smoke`；复杂范围先用 `/验收场景` 编排。
 
 ## 业务功能台账与版本自动纳入
 

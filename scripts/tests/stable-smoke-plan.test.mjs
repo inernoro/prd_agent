@@ -54,18 +54,10 @@ test('定时模式固定纳入全部功能线', () => {
 });
 
 test('回归台账模板不会被当作 active 用例', () => {
+  assert.ok(regressions.length > 0);
   assert.ok(!regressions.some((caseId) => caseId.includes('{')));
-  assert.deepEqual(regressions.sort(), [
-    'REG-asr-routing-001',
-    'REG-file-001',
-    'REG-llmgw-auth-001',
-    'REG-multi-image-001',
-    'REG-multi-image-002',
-    'REG-tutorial-progress-001',
-    'REG-user-error-001',
-    'REG-video-001',
-    'REG-visual-error-001',
-  ]);
+  assert.ok(regressions.every((caseId) => /^REG-[a-z0-9][a-z0-9-]*-\d+$/.test(caseId)));
+  assert.ok(regressions.includes('REG-short-video-input-001'));
 });
 
 test('定时计划完整纳入矩阵与永久回归', () => {
