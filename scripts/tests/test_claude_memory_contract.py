@@ -354,8 +354,42 @@ def check_cursor_mirror_is_current() -> None:
         print(f"  cursor mirror: {len(have)} generated files match their source rules")
 
 
+# Numbered clauses AGENTS.md must carry. Deleting one has to be a deliberate act:
+# edit this list and say why. It exists because a bulk rewrite of AGENTS.md silently
+# dropped §5.5 (Review 范围熔断) along with a genuinely obsolete index table - the
+# clause that caps review-driven scope creep, removed during exactly the kind of
+# refactor it governs. Nothing went red; a reviewer caught it three rounds later.
+REQUIRED_CLAUSES = [
+    "1", "2", "3", "4", "5", "5.1", "5.2", "5.3", "5.4", "5.5",
+    "6", "7", "8", "8.1", "9", "10", "11",
+]
+
+
+def check_agents_md_clauses_intact() -> None:
+    agents = REPO / "AGENTS.md"
+    if not agents.exists():
+        return
+    text = agents.read_text(encoding="utf-8")
+    absent = [
+        c for c in REQUIRED_CLAUSES
+        # A clause counts as present as a heading (### 5.5 / #### 5.5) or a bold
+        # lead-in (**5.5 ...**), which is how the compressed form writes them.
+        if not re.search(rf"^#{{2,4}}\s*{re.escape(c)}[.\s]|^\*\*{re.escape(c)}\s",
+                         text, re.MULTILINE)
+    ]
+    for clause in absent:
+        fail(
+            f"AGENTS.md is missing clause {clause}. If the removal is intended, drop it "
+            "from REQUIRED_CLAUSES in this file and explain why in the commit message - "
+            "do not let a contract disappear as a side effect of a rewrite."
+        )
+    if not absent:
+        print(f"  AGENTS.md: {len(REQUIRED_CLAUSES)} numbered clauses intact")
+
+
 def main() -> int:
     print("Claude memory contract:")
+    check_agents_md_clauses_intact()
     check_host_specific_rules_are_announced()
     check_cursor_scopes_are_derived()
     check_cursor_mirror_is_current()

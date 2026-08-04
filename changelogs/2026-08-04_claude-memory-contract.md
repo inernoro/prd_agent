@@ -21,3 +21,5 @@
 | fix | claude-md | 恢复被重写误删的 AGENTS.md §5.5「Review 范围熔断」——CHANGELOG 记录它是生效规则，删掉等于重新放开机器评论驱动的无界扩张 |
 | fix | claude-md | 守卫的 cursor 检查名不副实：只验映射写了 globs:auto，不验镜像是否真的重新生成过；改为重新生成到临时目录逐字比对 |
 | docs | claude-md | 新增 doc/debt.platform.agent-rule-scope.md 记录三条 B 类作用域缺口，按 §5.5 分类不在本 PR 展开 |
+| test | claude-md | 守卫新增条款完整性断言：AGENTS.md 的 17 条编号条款不得在重写中静默消失，删除必须显式改 REQUIRED_CLAUSES 并说明理由 |
+| docs | claude-md | Codex 第五轮三条 B 类作用域缺口（导航登记漏后端菜单目录、移动端密度漏样式 token、CDS 主题漏 Tailwind 配置）记入 debt 台账 |
