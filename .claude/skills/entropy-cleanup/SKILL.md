@@ -109,14 +109,20 @@ done
 # 也必须自己查「目录缺 SKILL.md」——doc-readability-check 的 scan_skills() 遇到
 # 没有 SKILL.md 的目录是 `continue` 跳过的，那条棘轮只兜 frontmatter 内容，
 # 不兜文件缺失，所以它不是这一项的 fallback。
+# 字段必须只在 frontmatter 块里取：正文中出现 `name: demo` 这类示例行时，
+# 不限定范围的 grep 会把缺字段的技能误判成合规，修复也就永远不触发。
+fm() { awk 'NR==1 && $0=="---" {f=1; next} f && $0=="---" {exit} f {print}' "$1"; }
+
 for root in .claude/skills .agents/skills; do
   [ -d "$root" ] || continue
   for d in "$root"/*/; do
     [ -d "$d" ] || continue
     skill="$root/$(basename "$d")"
     [ -f "$d/SKILL.md" ] || { echo "MISSING_SKILL_MD: $skill"; continue; }
-    head -20 "$d/SKILL.md" | grep -q '^name:' || echo "MISSING_SKILL_NAME: $skill"
-    head -20 "$d/SKILL.md" | grep -q '^description:' || echo "MISSING_SKILL_DESC: $skill"
+    block=$(fm "$d/SKILL.md")
+    [ -n "$block" ] || { echo "MISSING_SKILL_FRONTMATTER: $skill"; continue; }
+    echo "$block" | grep -q '^name:' || echo "MISSING_SKILL_NAME: $skill"
+    echo "$block" | grep -q '^description:' || echo "MISSING_SKILL_DESC: $skill"
   done
 done
 
@@ -202,8 +208,9 @@ for root in .claude/skills .agents/skills; do
   for d in "$root"/*/; do
     f="$d/SKILL.md"; [ -f "$f" ] || continue
     skill=$(basename "$d")
-    head -20 "$f" | grep -q '^name:' && continue
     head -1 "$f" | grep -q '^---$' || continue   # 没有 frontmatter 块，交给人工
+    awk 'NR==1 && $0=="---" {f=1; next} f && $0=="---" {exit} f {print}' "$f" \
+      | grep -q '^name:' && continue             # 只认 frontmatter 里的 name
     sed -i "1a name: $skill" "$f"
     echo "FIXED_SKILL_NAME: $root/$skill"
   done
@@ -240,6 +247,33 @@ git diff doc/ .claude/skills/ .agents/skills/
 git diff --stat
 # 期望：删除行数 = 幽灵条目数（精确匹配，不多不少）
 ```
+
+### Step 4.5 — 未偿 D4 债务的硬闸（必须在提交前判定）
+
+D4 里 `MISSING_SKILL_MD` / `MISSING_SKILL_DESC` / `MISSING_SKILL_FRONTMATTER` 三类
+无法安全自动修复。**只把它们写进 PR 正文不算处理**——本技能后面的 Step 6.5 会自己 squash
+合并，写在正文里的债务会连同 PR 一起被合并掉，等于走了个过场。
+
+所以在提交之前判定：
+
+```bash
+BLOCKERS=$(printf '%s\n' "$D4_SCAN_OUTPUT" \
+  | grep -E '^(MISSING_SKILL_MD|MISSING_SKILL_DESC|MISSING_SKILL_FRONTMATTER):' || true)
+
+if [ -n "$BLOCKERS" ]; then
+  echo "[BLOCKED] D4 有无法自动修复的条目，本轮不自动合并："
+  printf '%s\n' "$BLOCKERS"
+fi
+```
+
+命中时的强制动作：
+
+- 其余维度（D1/D2/D3/D6）已修好的照常提交推送，**不要丢弃已完成的工作**
+- PR 正文必须填「需人工处理」小节，标题加前缀 `[需人工] `
+- **跳过 Step 6.5 的自动合并**，改为在 PR 里留一条说明：缺什么、为什么不能自动补、需要人做什么
+- 不得因为「其它维度都干净了」就判本轮无欠债，也不得写占位 description 来凑合并条件
+
+判据口诀：**能自动修的修掉，修不了的就别让它悄悄合并进去。**
 
 ### Step 5 — 收尾与推送
 
@@ -329,7 +363,7 @@ PR body 模板（从 Step 2 报告提取数字）：
 
 #### 6.5 手动 squash 合并（核查通过后）
 
-内容核查全部通过后，由 Agent 直接调用 `mcp__github__merge_pull_request` 完成合并（**不依赖仓库 auto-merge 开关**）：
+内容核查全部通过、**且 Step 4.5 未命中 D4 硬闸**时，由 Agent 直接调用 `mcp__github__merge_pull_request` 完成合并（**不依赖仓库 auto-merge 开关**）。命中硬闸时跳过本步，PR 留待人工处理：
 ```
 owner:         inernoro
 repo:          prd_agent

@@ -9,3 +9,5 @@
 | fix | claude-md | create-skill-file 的自查指向 prd_agent 专属脚本，而该技能会被分发到其它仓库；改为可移植自查，仓库专属闸门降为注释里的补充 |
 | fix | claude-md | 上一轮把 D4 的修复动作删成了两行注释，导致只检测不修复、第二次运行仍报同笔债；补真实修复路径：name 可由目录名确定性推导故自动补，description 与整份 SKILL.md 不可安全重建故升级人工 |
 | fix | claude-md | entropy-cleanup 的 PR 正文模板「改动 diff」只列文档索引与 changelog，漏掉 D4 会修改的 SKILL.md；补两个技能根的条件条目、「需人工处理」小节，并修正 changelog 碎片的模块列 |
+| fix | claude-md | D4 的字段判据未限定在 frontmatter 块内，正文出现 name: 示例行会把缺字段的技能误判成合规；改用 awk 取 frontmatter 块 |
+| fix | claude-md | 新增 Step 4.5 硬闸：D4 里无法自动修复的三类条目命中时跳过自动 squash 合并，只写进 PR 正文等于随 PR 一起被合并掉 |
