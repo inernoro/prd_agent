@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { renderVisualGateReport, validateVisualEvidence } from '../stable-smoke-visual-gate.mjs';
+import { renderVisualGateReport, renderVisualTechnicalAppendix, validateVisualEvidence } from '../stable-smoke-visual-gate.mjs';
 
 const catalog = {
   statusVocabulary: ['通过', '不通过', '部分通过', '未执行', '需干预'],
@@ -107,14 +107,41 @@ test('主管报告逐张列出结果、面包屑、截图和测试方法', () =>
   ]);
   const report = renderVisualGateReport(result);
   assert.match(report, /## 逐张视觉证据账本/);
-  assert.match(report, /自动检查 \| 人工视觉 \| 严格结论/);
+  assert.match(report, /自动检查 \| 人工视觉 \| 严格结论 \| 是否需干预/);
   assert.match(report, /通过 \| 通过 \| 通过/);
+  assert.match(report, /能否发布 \| 可以/);
   assert.match(report, /首页 → 视觉创作/);
   assert.match(report, /\[查看\]\(#fig-结果图\)/);
   assert.match(report, /\[查看\]\(#visual-method-visual\)/);
   assert.match(report, /## 视觉证据图片/);
   assert.match(report, /!\[视觉创作-结果\]\(<\/tmp\/visual-evidence.png>\)/);
   assert.match(report, /## 视觉测试方法/);
+});
+
+test('异常项在模块总览前提前展示并给出干预动作', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({ name: '入口失败', sha256: 'hash-a', status: '不通过', manualStatus: '不通过' }),
+    evidence({ name: '结果图', sha256: 'hash-b', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+  const report = renderVisualGateReport(result);
+  assert.match(report, /能否发布 \| 不可以/);
+  assert.match(report, /## 需处理的 1 项异常/);
+  assert.ok(report.indexOf('## 需处理的 1 项异常') < report.indexOf('## 模块覆盖'));
+  assert.match(report, /是：模块负责人修复后复测/);
+});
+
+test('技术路径只进入独立附录', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({ name: '入口图', sha256: 'hash-a' }),
+    evidence({ name: '结果图', sha256: 'hash-b', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+  const appendix = renderVisualTechnicalAppendix(result, {
+    manifestPath: '/tmp/run/manifest.json',
+    catalogPath: '/workspace/visual-evidence-catalog.json',
+  });
+  assert.match(appendix, /# 视觉验收技术附录/);
+  assert.match(appendix, /\/tmp\/run\/manifest\.json/);
+  assert.match(appendix, /VISUAL-VISUAL-01/);
 });
 
 test('缺少元数据的单张证据在异常区明确标为需干预', () => {

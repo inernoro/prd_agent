@@ -82,7 +82,13 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
 |---|---|---|
 | 视觉创作 | 不通过 | 首页 → 视觉创作 → 结果 |
 
-## 视觉异常证据
+## 需处理的 1 项异常
+
+| 模块 | 结果 |
+|---|---|
+| 视觉创作 | 不通过 |
+
+## 视觉异常证据索引
 
 124 张逐图判定
 
@@ -91,6 +97,10 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
 | 序号 | 测试结果 |
 |---:|---|
 | 1 | 需干预 |
+
+## 视觉证据图片
+
+![视觉证据](/tmp/visual-evidence.png)
 
 ## 视觉测试方法
 
@@ -111,11 +121,14 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
   assert.match(composed, /Verdict: fail/);
   assert.doesNotMatch(composed, /## 视觉证据预算/);
   assert.match(composed, /206 项账本/);
-  assert.match(composed, /\{\{IMG:001-visual\}\}/);
+  assert.doesNotMatch(composed, /\{\{IMG:001-visual\}\}/);
   assert.match(composed, /## 缺陷清单/);
-  assert.equal((composed.match(/## 改动断言表/g) || []).length, 0);
-  assert.doesNotMatch(composed, /124 张逐图判定/);
+  assert.equal((composed.match(/## 改动断言表/g) || []).length, 1);
+  assert.match(composed, /124 张逐图判定/);
   assert.match(composed, /## 逐张视觉证据账本/);
+  assert.match(composed, /## 需处理的 1 项异常/);
+  assert.match(composed, /## 视觉证据图片/);
+  assert.match(composed, /!\[视觉证据\]\(\/tmp\/visual-evidence\.png\)/);
   assert.match(composed, /## 视觉测试方法/);
   assert.match(composed, /148 项逐项清单/);
   assert.match(composed, /\| 视觉创作 \| 首页 → 视觉创作 → 结果 \| 通过 \| 通过 \| 不通过 \| P2 \| 是 \|/);
@@ -123,4 +136,31 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
   assert.ok(composed.indexOf('模块覆盖') < composed.indexOf('未通过与未执行逐项清单'));
   assert.ok(composed.indexOf('148 项逐项清单') > composed.indexOf('未通过与未执行逐项清单'));
   assert.ok(composed.indexOf('逐项验收账本') < composed.indexOf('逐张视觉证据账本'));
+});
+
+test('功能报告缺少主管先看时自动生成双账本首屏', () => {
+  const functional = '# 功能报告\n\n> 主管结论：不通过。共 20 项，12 项通过、2 项不通过、6 项未执行。\n\n## 主管验收总览\n\n模块总览';
+  const visual = '# 视觉报告';
+  const gate = `# 门禁\n\n## 主管先看\n\n| 项目 | 结果 | 说明 |\n|---|---|---|\n| 能否发布 | 不可以 | 有异常 |\n| 状态结果 | 通过 125，不通过 9，需补证 7，需干预 7 | 严格结论 |\n| 可审核证据 | 148/148 | 已核销 |`;
+  const report = composeSupervisorReport(functional, visual, gate);
+  assert.match(report, /## 主管先看/);
+  assert.match(report, /功能验收 \| 12\/20 通过，2 不通过，6 未执行/);
+  assert.match(report, /视觉验收 \| 148\/148；通过 125，不通过 9，需补证 7，需干预 7/);
+  assert.ok(report.indexOf('## 主管先看') < report.indexOf('## 主管验收总览'));
+});
+
+test('主管报告把技术术语翻译为审核人可读文案', () => {
+  const functional = `# 报告\n\n共 1 项，1 项通过、0 项不通过、0 项未执行。\n\n## 逐项验收账本\n\n| 路径 | 断言 |\n|---|---|\n| SSE → Offering → Provider → Endpoint | requestId 可追踪，token 有效，未出现 HTTP2 协议错误 |`;
+  const visual = '# 视觉\n';
+  const report = composeSupervisorReport(functional, visual);
+  assert.doesNotMatch(report, /requestId|Provider|Offering|Endpoint|HTTP2|\bSSE\b|\btoken\b/);
+  assert.match(report, /实时连接 → 可用模型通道 → 上游服务 → 服务入口/);
+  assert.match(report, /诊断编号可追踪，登录凭据有效，未出现实时活动辅助链路偶发中断/);
+});
+
+test('主管报告使用真实技术附录链接替换占位地址', () => {
+  const functional = '# 报告\n\n## 关联测试方法\n\n- 技术附录：[查看](https://example.invalid/technical)';
+  const report = composeSupervisorReport(functional, '# 视觉\n', '', '', 'https://cds.example/reports?id=1');
+  assert.doesNotMatch(report, /example\.invalid/);
+  assert.match(report, /https:\/\/cds\.example\/reports\?id=1/);
 });

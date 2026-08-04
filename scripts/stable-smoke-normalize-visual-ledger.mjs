@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
-import { basename, extname, resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname, extname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 function readArg(argv, name) {
@@ -16,6 +16,18 @@ function screenshotName(row, index) {
 export function normalizeVisualLedger(rows) {
   if (!Array.isArray(rows)) throw new Error('视觉台账必须是数组');
   return rows.map((row, index) => {
+    const sourcePath = String(row.sourceScreenshot || row.screenshot || row.path || '').trim();
+    const sourceManifestPath = sourcePath ? resolve(dirname(sourcePath), 'manifest.json') : '';
+    let sourceEvidence = {};
+    if (sourceManifestPath && existsSync(sourceManifestPath)) {
+      try {
+        const sourceManifest = JSON.parse(readFileSync(sourceManifestPath, 'utf8'));
+        const sourceName = basename(sourcePath, extname(sourcePath));
+        sourceEvidence = sourceManifest.find((item) => item.name === sourceName || resolve(item.path || '') === resolve(sourcePath)) || {};
+      } catch {
+        sourceEvidence = {};
+      }
+    }
     const primaryState = String(row.primaryState || '').trim();
     const finalStatus = String(row.finalStatus || row.status || '').trim();
     return {
@@ -35,6 +47,19 @@ export function normalizeVisualLedger(rows) {
       caption: row.manualReason || '按当前主验收状态核对页面完整性与可操作性',
       path: row.screenshot || row.path,
       sha256: row.sha256,
+      annotated: sourceEvidence.annotated,
+      overview: sourceEvidence.overview,
+      viewport: sourceEvidence.viewport,
+      touchPoints: sourceEvidence.touchPoints,
+      isMobile: sourceEvidence.isMobile,
+      deviceName: sourceEvidence.deviceName,
+      mobilePathId: sourceEvidence.mobilePathId,
+      mobileStage: sourceEvidence.mobileStage,
+      failureEvidence: finalStatus === '不通过' ? true : sourceEvidence.failureEvidence,
+      failureReason: finalStatus === '不通过'
+        ? row.manualReason || sourceEvidence.failureReason || '人工视觉复核判定该状态不通过'
+        : sourceEvidence.failureReason,
+      warnings: sourceEvidence.warnings,
     };
   });
 }

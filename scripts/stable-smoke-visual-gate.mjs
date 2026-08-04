@@ -25,6 +25,13 @@ function escapeCell(value) {
   return String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', '<br>');
 }
 
+function interventionLabel(status) {
+  if (status === '通过') return '否';
+  if (status === '需补证' || status === '未执行') return '是：质量负责人补齐证据';
+  if (status === '需干预') return '是：模块负责人确认产品能力或补齐入口';
+  return '是：模块负责人修复后复测';
+}
+
 function evidenceHash(row) {
   const declared = String(row.sha256 || '').trim();
   if (declared) return declared;
@@ -266,6 +273,9 @@ export function renderVisualGateReport(result) {
   })));
   const interventionEvidence = allEvidence.filter((item) => item.status !== '通过');
   const abnormalStateCount = allEvidence.filter((item) => item.status !== '通过').length;
+  const failedStateCount = result.statusCounts?.['不通过'] || 0;
+  const missingEvidenceCount = (result.statusCounts?.['需补证'] || 0) + (result.statusCounts?.['未执行'] || 0);
+  const interventionStateCount = result.statusCounts?.['需干预'] || 0;
   const lines = [
     '# 视觉验收覆盖门禁',
     '',
@@ -275,11 +285,21 @@ export function renderVisualGateReport(result) {
     '',
     '| 项目 | 结果 | 说明 |',
     '|---|---|---|',
+    `| 能否发布 | ${result.verdict === '通过' ? '可以' : '不可以'} | ${result.verdict === '通过' ? '全部视觉状态均已严格通过' : '存在失败、缺证据或需干预项，关闭前不得对外宣称全面通过'} |`,
+    `| 严格结论 | ${result.verdict} | 自动检查与人工视觉采用更严格的一方作为最终结论 |`,
+    `| 状态结果 | 通过 ${result.statusCounts?.['通过'] || 0}，不通过 ${failedStateCount}，需补证 ${missingEvidenceCount}，需干预 ${interventionStateCount} | 审核者优先处理下方 ${abnormalStateCount} 项异常，其余通过项可按模块抽查 |`,
     `| 采集文件 | ${result.collectedScreenshotCount} | 原始 ${result.rawScreenshotCount} 张，重复 ${result.duplicateNames.length} 张；采集文件不等于可审核证据，更不等于通过 |`,
     `| 可审核证据 | ${result.screenshotCount}/${result.screenshotFloor} | 只有逐张绑定主状态、类型、结果、主题、设备、路径和方法后才计入；可审核不等于通过 |`,
     `| 通过状态 | ${result.statusCounts?.['通过'] || 0}/${result.screenshotCount} | 其余 ${abnormalStateCount} 项分别列为不通过、需补证或需干预 |`,
     `| 模块通过 | ${result.passedModules}/${result.modules.length} | 数量、关键状态、元数据和页面判定必须同时满足 |`,
     `| 需处理模块 | ${result.blockingModules} | 任一模块未通过时，全面视觉验收不得判通过 |`,
+    '',
+    `## 需处理的 ${abnormalStateCount} 项异常`,
+    '',
+    '| 优先级 | 模块 | 验收状态 | 测试类型 | 详细测试路径 | 严格结论 | 需要什么干预 | 查看截图 | 测试方法 |',
+    '|---|---|---|---|---|---|---|---|---|',
+    ...interventionEvidence.map((item) => `| ${item.status === '不通过' ? 'P1' : 'P2'} | ${escapeCell(item.moduleName)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.status)} | ${escapeCell(item.errors.join('；') || item.caption)}；${escapeCell(interventionLabel(item.status))} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+    ...(interventionEvidence.length === 0 ? ['| 无 | 全部模块 | 全部状态 | 视觉 | 全部路径 | 通过 | 无需干预 | 已完成 | 已完成 |'] : []),
     '',
     '## 模块覆盖',
     '',
@@ -313,7 +333,7 @@ export function renderVisualGateReport(result) {
     }),
     ...(result.blockingModules === 0 ? ['| 无 | 无 | 已关闭 |'] : []),
     '',
-    '## 视觉异常证据',
+    '## 视觉异常证据索引',
     '',
     '| 模块 | 截图 | 当前结果 | 需处理原因 | 查看截图 | 关联测试方法 |',
     '|---|---|---|---|---|---|',
@@ -326,10 +346,10 @@ export function renderVisualGateReport(result) {
       `<a id="visual-ledger-${module.id}"></a>`,
       `### ${module.name} · ${module.screenshotCount}/${module.screenshotFloor} 张可审核`,
       '',
-      '| 序号 | 验收场景 | 主验收状态 | 类型 | 自动检查 | 人工视觉 | 严格结论 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
-      '|---:|---|---|---|---|---|---|---|---|---|---|---|---|',
-      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${escapeCell(item.scenario)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.automatedStatus)} | ${escapeCell(item.manualStatus)} | ${escapeCell(item.status)} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
-      ...(module.evidenceRows.length === 0 ? ['| 0 | 无 | 未执行 | 未执行 | 未记录 | 未记录 | 未执行 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
+      '| 序号 | 验收场景 | 主验收状态 | 类型 | 自动检查 | 人工视觉 | 严格结论 | 是否需干预 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
+      '|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${escapeCell(item.scenario)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.automatedStatus)} | ${escapeCell(item.manualStatus)} | ${escapeCell(item.status)} | ${escapeCell(interventionLabel(item.status))} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+      ...(module.evidenceRows.length === 0 ? ['| 0 | 无 | 未执行 | 未执行 | 未记录 | 未记录 | 未执行 | 是：质量负责人补齐证据 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
       '',
     ]),
     '## 视觉证据图片',
@@ -363,6 +383,44 @@ export function renderVisualGateReport(result) {
   return lines.join('\n');
 }
 
+export function renderVisualTechnicalAppendix(result, { manifestPath = '', catalogPath = '' } = {}) {
+  const lines = [
+    '# 视觉验收技术附录',
+    '',
+    '本附录供开发与测试维护者定位使用；主管只需阅读独立主管报告。',
+    '',
+    '## 本轮输入与门禁',
+    '',
+    `- 视觉清单：${manifestPath || '未记录'}`,
+    `- 状态目录：${catalogPath || '未记录'}`,
+    `- 原始文件：${result.rawScreenshotCount}`,
+    `- 去重后文件：${result.collectedScreenshotCount}`,
+    `- 可审核证据：${result.screenshotCount}/${result.screenshotFloor}`,
+    `- 严格结论：${result.verdict}`,
+    '',
+    '## 模块诊断',
+    '',
+    '| 模块 | 结论 | 无效证据 | 缺少验收位 | 缺少主题 | 缺少设备 | 元数据问题 |',
+    '|---|---|---:|---|---|---|---|',
+    ...result.modules.map((module) => `| ${escapeCell(module.name)} | ${module.verdict} | ${module.invalidEvidenceCount} | ${escapeCell(module.missingSlots.map((slot) => slot.slotId).join('、') || '无')} | ${escapeCell(module.missingThemes.join('、') || '无')} | ${escapeCell(module.missingViewportClasses.join('、') || '无')} | ${escapeCell(module.fieldErrors.join('；') || '无')} |`),
+    '',
+    '## 逐证据定位信息',
+    '',
+    '| 模块 | 验收位 | 主状态 | 严格结论 | 图片文件 | 元数据错误 |',
+    '|---|---|---|---|---|---|',
+    ...result.modules.flatMap((module) => module.evidenceRows.map((item) => `| ${escapeCell(module.name)} | ${escapeCell(item.slotId)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.status)} | ${escapeCell(item.path || '未绑定')} | ${escapeCell(item.errors.join('；') || '无')} |`)),
+    '',
+    '## 补跑方式',
+    '',
+    '1. 先按视觉计划逐验收位运行真实浏览器取证，禁止地址栏直达业务页。',
+    '2. 每张图绑定唯一主状态、测试类型、主题、设备、完整面包屑与测试方法。',
+    '3. 人工逐张回读后写入人工结论，自动检查与人工结论取更严格的一方。',
+    '4. 重新执行标准化与视觉门禁；退出码非零时保持主管结论为不通过。',
+    '',
+  ];
+  return lines.join('\n');
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const catalogPath = resolve(readArg(argv, '--catalog', DEFAULT_CATALOG));
@@ -373,8 +431,15 @@ async function main() {
   const result = validateVisualEvidence(catalog, manifest);
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
+  const outputTechnicalMd = readArg(argv, '--output-technical-md');
   if (outputJson) writeFileSync(resolve(outputJson), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
   if (outputMd) writeFileSync(resolve(outputMd), renderVisualGateReport(result), 'utf8');
+  if (outputTechnicalMd) {
+    writeFileSync(resolve(outputTechnicalMd), renderVisualTechnicalAppendix(result, {
+      manifestPath: resolve(manifestPath),
+      catalogPath,
+    }), 'utf8');
+  }
   process.stdout.write(`${JSON.stringify({ verdict: result.verdict, screenshots: result.screenshotCount, floor: result.screenshotFloor, passedModules: result.passedModules, modules: result.modules.length })}\n`);
   if (result.verdict !== '通过') process.exitCode = 2;
 }

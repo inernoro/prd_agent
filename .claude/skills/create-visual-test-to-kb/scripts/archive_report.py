@@ -597,7 +597,6 @@ VISUAL_COVERAGE_REQUIRED_HEADERS = (
     "视觉结论",
     "真实面包屑",
     "采集文件",
-    "合格证据",
     "关键状态",
     "缺口",
     "查看全部截图",
@@ -704,6 +703,8 @@ def _supervisor_report_errors(target, body, manifest):
     coverage_headers, coverage_rows = _table_records(body, "模块覆盖")
     if coverage_rows:
         missing_coverage_headers = [field for field in VISUAL_COVERAGE_REQUIRED_HEADERS if field not in coverage_headers]
+        if "可审核证据" not in coverage_headers and "合格证据" not in coverage_headers:
+            missing_coverage_headers.append("可审核证据")
         if missing_coverage_headers:
             errors.append("[视觉覆盖] 缺字段：" + "、".join(missing_coverage_headers))
 
@@ -730,22 +731,23 @@ def _supervisor_report_errors(target, body, manifest):
             except ValueError:
                 errors.append(f"[视觉覆盖] {module} 的采集文件不是整数")
                 continue
-            qualified_match = re.fullmatch(r"(\d+)/(\d+)", _plain_cell(row.get("合格证据", "")))
+            qualified_value = row.get("可审核证据", "") or row.get("合格证据", "")
+            qualified_match = re.fullmatch(r"(\d+)/(\d+)", _plain_cell(qualified_value))
             if not qualified_match:
-                errors.append(f"[视觉覆盖] {module} 的合格证据必须为 已完成/计划 格式")
+                errors.append(f"[视觉覆盖] {module} 的可审核证据必须为 已完成/计划 格式")
                 continue
             qualified, planned = map(int, qualified_match.groups())
             if collected != manifest_counts.get(module, 0):
                 errors.append(f"[视觉覆盖] {module} 报告采集 {collected}，manifest 归属 {manifest_counts.get(module, 0)}，数量不一致")
             if qualified != qualified_counts.get(module, 0):
-                errors.append(f"[视觉覆盖] {module} 报告合格 {qualified}，manifest 合格 {qualified_counts.get(module, 0)}，数量不一致")
+                errors.append(f"[视觉覆盖] {module} 报告可审核 {qualified}，manifest 可审核 {qualified_counts.get(module, 0)}，数量不一致")
             if qualified > collected or qualified > planned:
-                errors.append(f"[视觉覆盖] {module} 的合格证据数量越界")
+                errors.append(f"[视觉覆盖] {module} 的可审核证据数量越界")
             conclusion = _plain_cell(row.get("视觉结论", ""))
             if conclusion not in REVIEWER_STATUSES:
                 errors.append(f"[视觉覆盖] {module} 的视觉结论非法：{conclusion or '空'}")
             if conclusion == "通过" and qualified < planned:
-                errors.append(f"[视觉覆盖] {module} 合格 {qualified} < 计划 {planned}，不得标记通过")
+                errors.append(f"[视觉覆盖] {module} 可审核 {qualified} < 计划 {planned}，不得标记通过")
             for link_field in ("查看全部截图", "测试方法"):
                 if not _has_report_link(row.get(link_field, "")):
                     errors.append(f"[视觉覆盖] {module} 的「{link_field}」不是可点击链接")

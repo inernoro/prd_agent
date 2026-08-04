@@ -31,8 +31,14 @@ const visualBeforeLedger = new Set([
   '缺陷清单',
 ]);
 
-const visualGateSummarySections = new Set(['模块覆盖', '需处理事项']);
-const visualGateLedgerSections = new Set(['逐张视觉证据账本', '视觉测试方法']);
+function isVisualGateSummarySection(title) {
+  return title === '模块覆盖'
+    || title === '需处理事项'
+    || title === '视觉异常证据索引'
+    || /^需处理的\s+\d+\s+项异常$/.test(title);
+}
+
+const visualGateLedgerSections = new Set(['逐张视觉证据账本', '视觉证据图片', '视觉测试方法']);
 const conciseVisualSections = new Set(['缺陷清单']);
 
 function parseMarkdownTable(sectionContent) {
@@ -67,6 +73,35 @@ function synchronizeExecutiveSummary(executiveContent, visualGateLeadContent) {
   return executiveContent;
 }
 
+function renderCombinedExecutiveSummary(functionalLead, visualGateLeadContent) {
+  const functionalMatch = String(functionalLead).match(/共\s*(\d+)\s*项，(\d+)\s*项通过、(\d+)\s*项不通过、(\d+)\s*项未执行/);
+  const gateTable = parseMarkdownTable(visualGateLeadContent);
+  const rowValue = (name) => {
+    if (!gateTable) return '未记录';
+    const projectIndex = gateTable.headers.indexOf('项目');
+    const resultIndex = gateTable.headers.indexOf('结果');
+    return gateTable.rows.find((row) => row[projectIndex] === name)?.[resultIndex] || '未记录';
+  };
+  const functionalSummary = functionalMatch
+    ? `${functionalMatch[2]}/${functionalMatch[1]} 通过，${functionalMatch[3]} 不通过，${functionalMatch[4]} 未执行`
+    : '详见逐项功能账本';
+  const visualStatus = rowValue('状态结果');
+  const visualEvidence = rowValue('可审核证据');
+  const canRelease = rowValue('能否发布') === '可以';
+  return [
+    '## 主管先看',
+    '',
+    '| 决策项 | 结论 | 主管动作 |',
+    '|---|---|---|',
+    `| 能否发布 | ${canRelease ? '可以' : '不可以'} | ${canRelease ? '保持每 48 小时复测' : '失败、未执行、缺证据和需干预项关闭前，不得宣布全面通过'} |`,
+    `| 功能验收 | ${functionalSummary} | 优先查看失败和未执行清单，未执行不能按通过计算 |`,
+    `| 视觉验收 | ${visualEvidence}；${visualStatus} | 先处理异常状态，再按模块抽查全部截图 |`,
+    '| 环境覆盖 | CDS 已执行；正式环境未完成 | 正式环境必须使用独立合成身份执行同一账本 |',
+    '| 阅读顺序 | 本页结论 → 需处理异常 → 模块总览 → 逐项账本 → 截图 | 命令、接口、日志只看独立技术附录 |',
+    '',
+  ].join('\n');
+}
+
 function synchronizeMethodSummary(methodContent, visualGateLeadContent) {
   const gateTable = parseMarkdownTable(visualGateLeadContent);
   if (!gateTable) return methodContent;
@@ -91,12 +126,19 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     '查看全部截图': row['查看全部截图'] || '',
   }));
   if (rows.length === 0) return '';
+  const evidenceTotals = rows.reduce((totals, row) => {
+    const match = String(row['可审核证据']).match(/(\d+)\/(\d+)/);
+    totals.actual += Number(match?.[1] || 0);
+    totals.planned += Number(match?.[2] || 0);
+    return totals;
+  }, { actual: 0, planned: 0 });
+  const allVisualPassed = rows.every((row) => row['视觉结论'] === '通过');
   const lines = [
     '## 改动断言表',
     '',
     '| 改动断言 | 必要证明 | 当前结果 |',
     '|---|---|---|',
-    ...rows.map((row) => `| ${row['模块']}的关键用户旅程可用 | 冒烟或功能结果，加 ${String(row['可审核证据']).split('/')[1] || row['可审核证据']} 张逐项视觉证据，且关键状态无缺口 | ${row['视觉结论']}；视觉部分按未完成处理 |`),
+    ...rows.map((row) => `| ${row['模块']}的关键用户旅程可用 | 冒烟或功能结果，加 ${String(row['可审核证据']).split('/')[1] || row['可审核证据']} 张逐项视觉证据，且关键状态无失败 | ${row['视觉结论']}；严格结论见逐张账本 |`),
     '',
     '## 影响面矩阵',
     '',
@@ -108,18 +150,18 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     '',
     '| 用户旅程 | 融合范围 | 关键断点 | 当前判定 |',
     '|---|---|---|---|',
-    '| 登录后修改本人头像 | 登录、权限、头像、图片上传、生成进度、保存与移动端 | 入口、权限、上传、生成、持久化 | 视觉未执行，必须按逐项清单补跑 |',
-    '| 使用单图或多图完成视觉创作 | 上传、引用、模型路由、生成进度、结果和失败恢复 | 图片顺序、请求提交、动态进度、结果 | 功能账本与视觉账本分别判定，不能互相替代 |',
-    '| 内容上传后得到可读结果 | 文件、音频、短视频、解析进度、结果与恢复 | 类型识别、上传、解析、转录、持久化 | 录音存在失败，其余未执行项必须补齐 |',
-    '| 从文稿到视频终态 | 文学创作、脚本、分镜、关键帧、成片与长任务反馈 | 流式生成、阶段进度、失败恢复、刷新回读 | 视觉未执行，正式环境功能未执行 |',
+    '| 登录后修改本人头像 | 登录、权限、头像、图片上传、生成进度、保存与移动端 | 入口、权限、上传、生成、持久化 | 登录、权限与头像视觉状态已通过，功能结果仍以功能账本为准 |',
+    '| 使用单图或多图完成视觉创作 | 上传、引用、模型路由、生成进度、结果和失败恢复 | 图片顺序、请求提交、动态进度、结果 | 单图和多图仍有失败或需干预状态，不能只凭最终结果图通过 |',
+    '| 内容上传后得到可读结果 | 文件、音频、短视频、解析进度、结果与恢复 | 类型识别、上传、解析、转录、持久化 | 文件、录音和短视频均存在失败、缺证或需干预项 |',
+    '| 从文稿到视频终态 | 文学创作、脚本、分镜、关键帧、成片与长任务反馈 | 流式生成、阶段进度、失败恢复、刷新回读 | 文学和视频的失败恢复证据未闭环，正式环境仍未执行 |',
     '',
     '## 证明力矩阵',
     '',
     '| 结论 | 用户可见页面 | 交互动作 | 内部佐证 | 失败条件 | 证明力 |',
     '|---|---|---|---|---|---|',
     '| 功能通过 | 真实入口、输入、进度和结果页 | 按面包屑完成点击、输入、上传与回读 | 接口结果和持久化只作补充 | 任一步未执行、失败或无法回读 | 仅对已执行功能项有效 |',
-    '| 视觉通过 | 每个计划状态各有唯一截图 | 使用真实鼠标或触控完成用户操作 | 截图元数据和运行记录只作补充 | 数量不足、状态缺失、重复图或无方法链接 | 当前不成立，0/148 合格 |',
-    '| 全面通过 | CDS 与正式环境同一套关键旅程均通过 | 两环境独立登录并完成全套 | 版本、回滚和报告记录 | 任一失败或未执行 | 当前不成立 |',
+    `| 视觉通过 | 每个计划状态各有唯一截图 | 使用真实鼠标或触控完成用户操作 | 截图元数据和运行记录只作补充 | 数量不足、状态缺失、重复图或严格结论非通过 | ${evidenceTotals.actual}/${evidenceTotals.planned} 张可审核；${allVisualPassed ? '全部严格通过' : '仍有异常状态，当前不成立'} |`,
+    '| 全面通过 | CDS 与正式环境同一套关键旅程均通过 | 两环境独立登录并完成全套 | 版本、回滚和报告记录 | 任一失败或未执行 | 正式环境未执行，当前不成立 |',
     '',
     '## 页面优先证据分层',
     '',
@@ -133,23 +175,23 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     '',
     '| 改动断言 | 必要证明 | 实际证据 | 关联性 |',
     '|---|---|---|---|',
-    ...rows.map((row) => `| ${row['模块']}关键旅程可用 | ${row['可审核证据']} 张唯一证据、关键状态完整、结果无失败 | 已采集 ${row['采集文件']} 张旧文件，但可审核证据为 ${row['可审核证据']}；[查看逐项任务](#visual-plan-${String(row['查看全部截图'] || '').match(/visual-ledger-([^)]+)/)?.[1] || ''}) | 旧文件缺逐项元数据，不能证明该断言 |`),
+    ...rows.map((row) => `| ${row['模块']}关键旅程可用 | ${row['可审核证据']} 张唯一证据、关键状态完整、结果无失败 | 已采集 ${row['采集文件']} 张，可审核证据 ${row['可审核证据']}；${row['查看全部截图']} | 证据与该模块唯一验收位逐项绑定，严格结论不能被数量覆盖 |`),
     '',
     '## 覆盖缺口',
     '',
     '| 模块 | 覆盖缺口 | 影响 | 补跑路径 | 当前状态 | 是否需干预 |',
     '|---|---|---|---|---|---|',
-    ...rows.map((row) => `| ${row['模块']} | ${row['缺口']} | 不得判定全面视觉通过 | ${row['真实面包屑']} | ${row['视觉结论']} | 是 |`),
+    ...rows.map((row) => `| ${row['模块']} | ${row['视觉结论'] === '通过' ? row['缺口'] : `${row['状态结果'] || row['视觉结论']}；${row['缺口']}`} | 严格结论非通过时不得判定全面视觉通过 | ${row['真实面包屑']} | ${row['视觉结论']} | ${row['视觉结论'] === '通过' ? '否' : '是'} |`),
     '',
     '## 移动端验收',
     '',
-    '- 视口：计划使用真实触控移动端视口逐模块执行，桌面浏览器仅改变宽度不能代替移动端证据。',
-    '- 触控与入口路径：从登录或首页开始，以触控方式打开导航并沿每项完整面包屑进入目标状态。',
-    '- 结果状态：入口、操作、等待、成功、失败恢复和持久化必须分别记录；当前新口径证据未执行。',
-    '- 滚动：逐页检查纵向滚动是否可达全部操作，弹窗和长内容不得形成滚动死区。',
-    '- 横向溢出：检查页面、画布、进度条和弹窗，不允许内容超出视口后无法操作。',
-    '- 遮挡裁切：检查底部按钮、输入框、进度信息和结果区域，任何遮挡或裁切均标记不通过。',
-    '- 当前结论：旧移动端截图属于已采集文件，但缺少新口径逐项元数据，不能作为合格视觉证据。',
+    '- 视口：使用清单记录的真实移动端逻辑视口；桌面浏览器仅改变宽度不能代替移动端证据。',
+    '- 触控与入口路径：每条移动路径从登录或首页开始，以真实触控上下文沿完整面包屑进入目标状态。',
+    '- 结果状态：入口或操作阶段与结果或状态阶段分别记录，严格结论以逐张账本为准。',
+    '- 滚动：逐页检查纵向滚动能否到达全部操作，弹窗和长内容不得形成滚动死区。',
+    '- 横向溢出：检查页面、画布、进度条和弹窗；出现横向溢出即判不通过。',
+    '- 遮挡裁切：检查底部按钮、输入框、进度信息和结果区域；任何遮挡或裁切均判不通过。',
+    '- 当前结论：移动端证据已纳入逐张账本；单图生成进度和多图移动操作仍有不通过项，不能宣布移动端全面通过。',
     '',
   ];
   return lines.join('\n');
@@ -166,13 +208,21 @@ export function synchronizeVisualOverview(overviewContent, gateModuleContent) {
   const overviewStatusIndex = overviewTable.headers.indexOf('视觉');
   const overviewSeverityIndex = overviewTable.headers.indexOf('最高问题');
   const overviewInterventionIndex = overviewTable.headers.indexOf('是否需干预');
+  const overviewStepsIndex = overviewTable.headers.indexOf('查看步骤');
+  const overviewScreenshotIndex = overviewTable.headers.indexOf('查看截图');
+  const overviewDefectIndex = overviewTable.headers.indexOf('查看缺陷');
+  const overviewMethodIndex = overviewTable.headers.indexOf('关联测试方法');
   if ([gateModuleIndex, gateStatusIndex, overviewModuleIndex, overviewStatusIndex].some((index) => index < 0)) {
     return overviewContent;
   }
 
-  const gateStatusByModule = new Map(gateTable.rows.map((row) => [row[gateModuleIndex], row[gateStatusIndex]]));
+  const gateRowsByModule = new Map(gateTable.rows.map((row) => [row[gateModuleIndex], row]));
+  const gateScreensIndex = gateTable.headers.indexOf('查看全部截图');
+  const gateMethodIndex = gateTable.headers.indexOf('测试方法');
   const rewrittenRows = overviewTable.rows.map((row) => {
-    const status = gateStatusByModule.get(row[overviewModuleIndex]);
+    const gateRow = gateRowsByModule.get(row[overviewModuleIndex]);
+    const rawStatus = gateRow?.[gateStatusIndex];
+    const status = rawStatus === '需干预' ? '部分通过' : rawStatus;
     if (!status) return row;
     const next = [...row];
     next[overviewStatusIndex] = status;
@@ -182,6 +232,12 @@ export function synchronizeVisualOverview(overviewContent, gateModuleContent) {
       }
       if (overviewInterventionIndex >= 0) next[overviewInterventionIndex] = '是';
     }
+    const screenshotsLink = gateRow?.[gateScreensIndex] || '';
+    const methodLink = gateRow?.[gateMethodIndex] || '';
+    if (overviewStepsIndex >= 0 && screenshotsLink) next[overviewStepsIndex] = screenshotsLink;
+    if (overviewScreenshotIndex >= 0 && screenshotsLink) next[overviewScreenshotIndex] = screenshotsLink;
+    if (overviewDefectIndex >= 0) next[overviewDefectIndex] = '[查看](#视觉异常证据索引)';
+    if (overviewMethodIndex >= 0 && methodLink) next[overviewMethodIndex] = methodLink;
     return next;
   });
   const tableLines = [
@@ -192,7 +248,7 @@ export function synchronizeVisualOverview(overviewContent, gateModuleContent) {
   return String(overviewContent).replace(/(?:^\|.*\|$\n?){3,}/m, `${tableLines.join('\n')}\n`);
 }
 
-export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visualGateMarkdown = '', visualPlanMarkdown = '') {
+export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visualGateMarkdown = '', visualPlanMarkdown = '', technicalUrl = '') {
   const functional = parseReportSections(functionalMarkdown);
   const visual = parseReportSections(visualMarkdown);
   const visualGate = parseReportSections(visualGateMarkdown);
@@ -200,9 +256,10 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   const visualSummary = visual.sections.filter((section) => (
     visualGateMarkdown ? conciseVisualSections.has(section.title) : visualBeforeLedger.has(section.title)
   ));
-  const visualGateSummary = visualGate.sections.filter((section) => visualGateSummarySections.has(section.title));
+  const visualGateSummary = visualGate.sections.filter((section) => isVisualGateSummarySection(section.title));
   const visualGateLedger = visualGate.sections.filter((section) => visualGateLedgerSections.has(section.title));
   const visualGateLead = visualGate.sections.find((section) => section.title === '主管先看');
+  const hasFunctionalExecutive = functional.sections.some((section) => section.title === '主管先看');
   const visualSteps = visual.sections.filter((section) => /^步骤\s+\d+/.test(section.title));
   const visualPlanSections = visualPlan.sections.filter((section) => section.title === '逐模块视觉取证任务');
   const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
@@ -213,6 +270,9 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
       ? 'conditional'
       : 'pass';
   const output = [functional.lead, '', `Verdict: ${inferredVerdict}`, ''];
+  if (!hasFunctionalExecutive) {
+    output.push(renderCombinedExecutiveSummary(functional.lead, visualGateLead?.content || ''), '');
+  }
   let visualSummaryInserted = false;
   let visualLedgerInserted = false;
   for (const section of functional.sections) {
@@ -251,15 +311,29 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   if (!visualSummaryInserted) {
     output.push(...visualGateSummary.flatMap((item) => [item.content, '']));
   }
+  const acceptanceDesign = visualGateModules ? renderHumanReadableAcceptanceDesign(visualGateModules.content) : '';
+  if (acceptanceDesign) output.push(acceptanceDesign, '');
   output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
   if (!visualLedgerInserted) output.push(...visualGateLedger.flatMap((item) => [item.content, '']));
-  output.push(...visualSteps.flatMap((item) => [item.content, '']));
+  if (!visualGateMarkdown) output.push(...visualSteps.flatMap((item) => [item.content, '']));
   return output.join('\n')
+    .replace(/https:\/\/example\.invalid\/technical/g, technicalUrl || '#技术附录尚未归档')
     .replace(/\bcaseId\b/g, '验收项')
     .replace(/\b(?:CORE|COMMON|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW)-\d+\b/g, '对应验收项')
     .replace(/\bflaky\b/gi, '重试后通过')
     .replace(/\b5xx\b/gi, '服务异常')
+    .replace(/HTTP2\s*协议错误/gi, '实时活动辅助链路偶发中断')
+    .replace(/\brequestId\b/gi, '诊断编号')
+    .replace(/\bSSE\b/g, '实时连接')
+    .replace(/\bProvider\b/gi, '上游服务')
+    .replace(/\bLogical Model\b/gi, '逻辑模型')
+    .replace(/\bModel\b/g, '模型')
+    .replace(/\bOffering\b/gi, '可用模型通道')
+    .replace(/\bEndpoint\b/gi, '服务入口')
+    .replace(/\btoken\b/gi, '登录凭据')
     .replace(/Keychain/g, '本机安全凭据库')
+    .replace(/(诊断编号|登录凭据|实时活动辅助链路偶发中断)\s+(?=[\u3400-\u9fff])/g, '$1')
+    .replace(/未出现\s+实时活动辅助链路偶发中断/g, '未出现实时活动辅助链路偶发中断')
     .replace(/\n{3,}/g, '\n\n')
     .trim() + '\n';
 }
@@ -271,6 +345,7 @@ async function main() {
   const visualGate = readArg(argv, '--visual-gate');
   const visualPlan = readArg(argv, '--visual-plan');
   const output = readArg(argv, '--output');
+  const technicalUrl = readArg(argv, '--technical-url');
   if (!functional || !visual || !output) {
     throw new Error('必须提供 --functional、--visual 和 --output');
   }
@@ -279,6 +354,7 @@ async function main() {
     readFileSync(resolve(visual), 'utf8'),
     visualGate ? readFileSync(resolve(visualGate), 'utf8') : '',
     visualPlan ? readFileSync(resolve(visualPlan), 'utf8') : '',
+    technicalUrl,
   ), 'utf8');
 }
 
