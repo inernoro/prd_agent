@@ -1,5 +1,6 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import type {
   CreateDocumentStoreContract,
   ListDocumentStoresContract,
@@ -11,6 +12,13 @@ import type {
   UpdateDocumentEntryContract,
   DeleteDocumentEntryContract,
 } from '@/services/contracts/documentStore';
+
+function documentUploadFailureMessage(value: unknown): string {
+  return toUserReadableErrorMessage(value, {
+    fallbackMessage: '文件上传未完成',
+    recoveryMessage: '请检查文件是否完整后重新上传。',
+  });
+}
 
 export const createDocumentStoreReal: CreateDocumentStoreContract = async (input) => {
   return await apiRequest(api.documentStore.stores.create(), {
@@ -219,7 +227,7 @@ export async function uploadDocumentFile(storeId: string, file: File): Promise<i
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    return { success: false, data: null as never, error: { code: 'UPLOAD_FAILED', message: text || `HTTP ${res.status}` } };
+    return { success: false, data: null as never, error: { code: 'UPLOAD_FAILED', message: documentUploadFailureMessage(text) } };
   }
   return await res.json();
 }
@@ -261,7 +269,7 @@ export async function uploadDocumentFileWithProgress(
       resolve({
         success: false,
         data: null as never,
-        error: { code: 'UPLOAD_FAILED', message: xhr.responseText || `HTTP ${xhr.status}` },
+        error: { code: 'UPLOAD_FAILED', message: documentUploadFailureMessage(xhr.responseText) },
       });
     };
     xhr.onerror = () => resolve({
@@ -302,7 +310,7 @@ export async function appendRecordingUploadChunk(sessionId: string, index: numbe
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    return { success: false, data: null as never, error: { code: 'CHUNK_UPLOAD_FAILED', message: text || `HTTP ${res.status}` } } as import('@/types/api').ApiResponse<{
+    return { success: false, data: null as never, error: { code: 'CHUNK_UPLOAD_FAILED', message: documentUploadFailureMessage(text) } } as import('@/types/api').ApiResponse<{
       accepted: boolean;
       duplicate: boolean;
       nextChunkIndex: number;
@@ -388,7 +396,7 @@ export async function replaceDocumentFile(entryId: string, file: File): Promise<
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    return { success: false, data: null as never, error: { code: 'REPLACE_FAILED', message: text || `HTTP ${res.status}` } };
+    return { success: false, data: null as never, error: { code: 'REPLACE_FAILED', message: documentUploadFailureMessage(text) } };
   }
   return await res.json();
 }

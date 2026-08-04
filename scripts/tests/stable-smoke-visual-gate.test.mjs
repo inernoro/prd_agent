@@ -8,7 +8,7 @@ import { renderVisualGateReport, validateVisualEvidence } from '../stable-smoke-
 const catalog = {
   statusVocabulary: ['通过', '不通过', '部分通过', '未执行', '需干预'],
   allowedTestTypes: ['冒烟', '功能', '视觉', '回归'],
-  evidenceItemRequiredFields: ['slotId', 'primaryState', 'coverageStates', 'testType', 'status', 'theme', 'viewportClass', 'methodAnchor', 'breadcrumb'],
+  evidenceItemRequiredFields: ['slotId', 'primaryState', 'coverageStates', 'testType', 'status', 'theme', 'viewportClass', 'methodAnchor', 'breadcrumb', 'path'],
   allowedThemes: ['light', 'dark'],
   allowedViewportClasses: ['desktop', 'mobile'],
   uniqueScreenshotFloor: 2,
@@ -35,8 +35,11 @@ function evidence(overrides) {
     coverageStates: ['入口'],
     testType: '冒烟',
     status: '通过',
+    automatedStatus: '通过',
+    manualStatus: '通过',
     methodAnchor: '#visual-method-visual',
     breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 入口',
+    path: '/tmp/visual-evidence.png',
     theme: 'light',
     viewportClass: 'desktop',
     ...overrides,
@@ -104,9 +107,13 @@ test('主管报告逐张列出结果、面包屑、截图和测试方法', () =>
   ]);
   const report = renderVisualGateReport(result);
   assert.match(report, /## 逐张视觉证据账本/);
+  assert.match(report, /自动检查 \| 人工视觉 \| 严格结论/);
+  assert.match(report, /通过 \| 通过 \| 通过/);
   assert.match(report, /首页 → 视觉创作/);
   assert.match(report, /\[查看\]\(#fig-结果图\)/);
   assert.match(report, /\[查看\]\(#visual-method-visual\)/);
+  assert.match(report, /## 视觉证据图片/);
+  assert.match(report, /!\[视觉创作-结果\]\(<\/tmp\/visual-evidence.png>\)/);
   assert.match(report, /## 视觉测试方法/);
 });
 
@@ -141,7 +148,7 @@ test('旧截图缺少逐项元数据时只算采集文件，不算合格证据',
   assert.equal(result.verdict, '不通过');
   const report = renderVisualGateReport(result);
   assert.match(report, /采集文件 \| 2/);
-  assert.match(report, /合格证据 \| 0\/2/);
+  assert.match(report, /可审核证据 \| 0\/2/);
 });
 
 test('一张截图不能用 coverageStates 替多个主状态核销', () => {
@@ -161,4 +168,27 @@ test('重复占用验收位或缺少验收位时不能通过', () => {
   assert.equal(result.verdict, '不通过');
   assert.equal(result.modules[0].missingSlots.length, 1);
   assert.match(result.modules[0].fieldErrors.join('；'), /重复占用验收位/);
+});
+
+test('证据需要补证时模块不得判为通过', () => {
+  const result = validateVisualEvidence({
+    ...catalog,
+    statusVocabulary: [...catalog.statusVocabulary, '需补证'],
+  }, [
+    evidence({ name: '入口图', sha256: 'hash-a' }),
+    evidence({
+      name: '结果图',
+      sha256: 'hash-b',
+      slotId: 'VISUAL-VISUAL-02',
+      primaryState: '结果',
+      coverageStates: ['结果'],
+      testType: '视觉',
+      status: '需补证',
+      theme: 'dark',
+      viewportClass: 'desktop',
+      breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果',
+    }),
+  ]);
+  assert.equal(result.modules[0].verdict, '部分通过');
+  assert.equal(result.verdict, '不通过');
 });

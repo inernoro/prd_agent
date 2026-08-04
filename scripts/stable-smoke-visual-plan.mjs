@@ -88,7 +88,7 @@ export function renderVisualPlan(plan) {
   const lines = [
     '# 核心业务视觉取证执行清单',
     '',
-    `计划：${plan.plannedScreenshotTarget} 张合格证据。每一行必须得到一张唯一截图或明确标为不通过、未执行；不得合并核销。`,
+    `计划：${plan.plannedScreenshotTarget} 张可审核证据。每一行必须得到一张唯一截图或明确标为不通过、未执行；不得合并核销。`,
     '',
     '## 主管覆盖摘要',
     '',

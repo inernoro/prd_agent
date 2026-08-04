@@ -42,7 +42,7 @@ export function validateVisualEvidence(catalog, manifest) {
     'breadcrumb',
   ];
   const allowedTypes = new Set(catalog.allowedTestTypes || ['冒烟', '功能', '视觉', '回归']);
-  const allowedStatuses = new Set(catalog.statusVocabulary || ['通过', '不通过', '部分通过', '未执行', '需干预']);
+  const allowedStatuses = new Set(catalog.statusVocabulary || ['通过', '不通过', '部分通过', '未执行', '需补证', '需干预']);
   const allowedThemes = new Set(catalog.allowedThemes || ['light', 'dark']);
   const allowedViewportClasses = new Set(catalog.allowedViewportClasses || ['desktop', 'mobile']);
   const rows = Array.isArray(manifest) ? manifest : [];
@@ -165,11 +165,14 @@ export function validateVisualEvidence(catalog, manifest) {
         testType: item.testType || '未绑定',
         declaredStatus: item.status || '未绑定',
         status: itemErrors.length > 0 ? '需干预' : item.status,
+        automatedStatus: item.automatedStatus || '未记录',
+        manualStatus: item.manualStatus || '未记录',
         breadcrumb: item.breadcrumb || '未绑定',
         theme: item.theme || '未绑定',
         viewportClass: item.viewportClass || '未绑定',
         methodAnchor: item.methodAnchor || '',
         evidenceAnchor: evidenceAnchor(item.name || '未命名截图'),
+        path: item.path || '',
         errors: itemErrors,
       });
     }
@@ -182,7 +185,12 @@ export function validateVisualEvidence(catalog, manifest) {
       .map((slot) => ({ slotId: slot.slotId, scenario: slot.scenario, breadcrumb: slot.breadcrumb }));
     const failedEvidence = evidence.filter((item) => item.status === '不通过');
     const interventionEvidence = evidence.filter((item) => item.status === '需干预');
+    const incompleteEvidence = evidence.filter((item) => item.status !== '通过');
     const qualifiedEvidence = evidenceRows.filter((item) => item.errors.length === 0);
+    const statusCounts = Object.fromEntries(
+      [...new Set(qualifiedEvidence.map((item) => item.status))]
+        .map((status) => [status, qualifiedEvidence.filter((item) => item.status === status).length]),
+    );
     const qualifiedThemes = new Set(qualifiedEvidence.map((item) => item.theme));
     const qualifiedViewportClasses = new Set(qualifiedEvidence.map((item) => item.viewportClass));
     const missingThemes = (module.requiredThemes || []).filter((theme) => !qualifiedThemes.has(theme));
@@ -196,6 +204,8 @@ export function validateVisualEvidence(catalog, manifest) {
       ? '不通过'
       : interventionEvidence.length > 0
         ? '需干预'
+        : incompleteEvidence.length > 0
+          ? '部分通过'
         : floorPassed && metadataPassed && statePassed
           ? '通过'
           : '部分通过';
@@ -222,11 +232,17 @@ export function validateVisualEvidence(catalog, manifest) {
       verdict,
       evidenceAnchor: firstEvidence ? evidenceAnchor(firstEvidence) : '',
       methodAnchor: evidence.find((item) => item.methodAnchor)?.methodAnchor || '',
+      statusCounts,
       evidenceRows,
     };
   });
 
   const blockingModules = modules.filter((module) => module.verdict !== '通过');
+  const allQualifiedEvidence = modules.flatMap((module) => module.evidenceRows.filter((item) => item.errors.length === 0));
+  const statusCounts = Object.fromEntries(
+    [...new Set(allQualifiedEvidence.map((item) => item.status))]
+      .map((status) => [status, allQualifiedEvidence.filter((item) => item.status === status).length]),
+  );
   return {
     schemaVersion: '1.0',
     verdict: blockingModules.length === 0 && duplicateNames.length === 0 ? '通过' : '不通过',
@@ -235,6 +251,7 @@ export function validateVisualEvidence(catalog, manifest) {
     collectedScreenshotCount: uniqueRows.length,
     rawScreenshotCount: rows.length,
     duplicateNames,
+    statusCounts,
     passedModules: modules.filter((module) => module.verdict === '通过').length,
     blockingModules: blockingModules.length,
     modules,
@@ -248,6 +265,7 @@ export function renderVisualGateReport(result) {
     moduleName: module.name,
   })));
   const interventionEvidence = allEvidence.filter((item) => item.status !== '通过');
+  const abnormalStateCount = allEvidence.filter((item) => item.status !== '通过').length;
   const lines = [
     '# 视觉验收覆盖门禁',
     '',
@@ -257,14 +275,15 @@ export function renderVisualGateReport(result) {
     '',
     '| 项目 | 结果 | 说明 |',
     '|---|---|---|',
-    `| 采集文件 | ${result.collectedScreenshotCount} | 原始 ${result.rawScreenshotCount} 张，重复 ${result.duplicateNames.length} 张；采集文件不等于合格证据 |`,
-    `| 合格证据 | ${result.screenshotCount}/${result.screenshotFloor} | 只有逐张绑定主状态、类型、结果、主题、设备、路径和方法后才计入 |`,
+    `| 采集文件 | ${result.collectedScreenshotCount} | 原始 ${result.rawScreenshotCount} 张，重复 ${result.duplicateNames.length} 张；采集文件不等于可审核证据，更不等于通过 |`,
+    `| 可审核证据 | ${result.screenshotCount}/${result.screenshotFloor} | 只有逐张绑定主状态、类型、结果、主题、设备、路径和方法后才计入；可审核不等于通过 |`,
+    `| 通过状态 | ${result.statusCounts?.['通过'] || 0}/${result.screenshotCount} | 其余 ${abnormalStateCount} 项分别列为不通过、需补证或需干预 |`,
     `| 模块通过 | ${result.passedModules}/${result.modules.length} | 数量、关键状态、元数据和页面判定必须同时满足 |`,
     `| 需处理模块 | ${result.blockingModules} | 任一模块未通过时，全面视觉验收不得判通过 |`,
     '',
     '## 模块覆盖',
     '',
-    '| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 合格证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |',
+    '| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 可审核证据 | 状态结果 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |',
     '|---|---|---|---:|---:|---:|---|---|---|',
     ...result.modules.map((module) => {
       const gaps = [
@@ -273,7 +292,8 @@ export function renderVisualGateReport(result) {
         module.missingThemes.length ? `主题：${module.missingThemes.join('、')}` : '',
         module.missingViewportClasses.length ? `设备：${module.missingViewportClasses.join('、')}` : '',
       ].filter(Boolean).join('；') || '无';
-      return `| ${module.name} | ${module.verdict} | ${module.breadcrumb} | ${module.collectedScreenshotCount} | ${module.screenshotCount}/${module.screenshotFloor} | ${module.coveredStateCount}/${module.requiredStateCount} | ${gaps} | [查看](#visual-ledger-${module.id}) | [查看](#visual-method-${module.id}) |`;
+      const statusSummary = Object.entries(module.statusCounts).map(([status, count]) => `${status} ${count}`).join('，');
+      return `| ${module.name} | ${module.verdict} | ${module.breadcrumb} | ${module.collectedScreenshotCount} | ${module.screenshotCount}/${module.screenshotFloor} | ${statusSummary} | ${module.coveredStateCount}/${module.requiredStateCount} | ${gaps} | [查看](#visual-ledger-${module.id}) | [查看](#visual-method-${module.id}) |`;
     }),
     '',
     '## 需处理事项',
@@ -282,12 +302,12 @@ export function renderVisualGateReport(result) {
     '|---|---|---|',
     ...result.modules.filter((module) => module.verdict !== '通过').map((module) => {
       const issues = [
-        !module.floorPassed ? `合格证据不足 ${module.screenshotCount}/${module.screenshotFloor}` : '',
+        !module.floorPassed ? `可审核证据不足 ${module.screenshotCount}/${module.screenshotFloor}` : '',
         module.missingSlots.length > 0 ? `缺少验收位：${module.missingSlots.map((slot) => slot.scenario).join('、')}` : '',
         module.missingStates.length > 0 ? `缺少状态：${module.missingStates.join('、')}` : '',
         module.missingThemes.length > 0 ? `缺少主题：${module.missingThemes.join('、')}` : '',
         module.missingViewportClasses.length > 0 ? `缺少设备：${module.missingViewportClasses.join('、')}` : '',
-        module.invalidEvidenceCount > 0 ? `有 ${module.invalidEvidenceCount} 张采集文件未形成合格证据` : '',
+        module.invalidEvidenceCount > 0 ? `有 ${module.invalidEvidenceCount} 张采集文件未形成可审核证据` : '',
       ].filter(Boolean).join('；');
       return `| ${module.name} | ${issues || module.verdict} | 截图数量达标、全部关键状态有唯一证据、每张图绑定路径与方法且无失败 |`;
     }),
@@ -304,14 +324,27 @@ export function renderVisualGateReport(result) {
     '',
     ...result.modules.flatMap((module) => [
       `<a id="visual-ledger-${module.id}"></a>`,
-      `### ${module.name} · ${module.screenshotCount}/${module.screenshotFloor} 张合格`,
+      `### ${module.name} · ${module.screenshotCount}/${module.screenshotFloor} 张可审核`,
       '',
-      '| 序号 | 验收场景 | 截图 | 主验收状态 | 类型 | 结果 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
-      '|---:|---|---|---|---|---|---|---|---|---|---|---|',
-      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${escapeCell(item.scenario)} | ${escapeCell(item.name)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.status)} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
-      ...(module.evidenceRows.length === 0 ? ['| 0 | 无 | 无 | 未执行 | 未执行 | 未执行 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
+      '| 序号 | 验收场景 | 主验收状态 | 类型 | 自动检查 | 人工视觉 | 严格结论 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
+      '|---:|---|---|---|---|---|---|---|---|---|---|---|---|',
+      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${escapeCell(item.scenario)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.automatedStatus)} | ${escapeCell(item.manualStatus)} | ${escapeCell(item.status)} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+      ...(module.evidenceRows.length === 0 ? ['| 0 | 无 | 未执行 | 未执行 | 未记录 | 未记录 | 未执行 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
       '',
     ]),
+    '## 视觉证据图片',
+    '',
+    ...result.modules.flatMap((module) => module.evidenceRows.flatMap((item) => [
+      `<a id="${item.evidenceAnchor.replace(/^#/, '')}"></a>`,
+      `### ${module.name} · ${item.primaryState}`,
+      '',
+      `${item.caption}。严格结论：${item.status}。`,
+      '',
+      item.path ? `![${escapeCell(`${module.name}-${item.primaryState}`)}](<${item.path}>)` : '截图文件未绑定，需干预。',
+      '',
+      `[返回本模块逐项账本](#visual-ledger-${module.id})`,
+      '',
+    ])),
     '',
     '## 视觉测试方法',
     '',

@@ -54,7 +54,7 @@ public sealed class LiveAsrBatchFallbackService
             // 首个成功窗口开始写入 partial/final 与会话结果。
             Provider = null,
             Model = null,
-            Message = "流式供应商不可用，已切换到滚动窗口实时转写",
+            Message = "实时转写暂时不可用，录音仍会安全保存；结束录音后可重试完整转写。",
         });
 
         // 候选状态属于整个录音会话，不属于单个五秒窗口。某候选完整失败后从

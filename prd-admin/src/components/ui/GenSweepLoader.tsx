@@ -25,11 +25,11 @@ const GLOBAL_CSS = `
   will-change:background-position;
   animation:gen-sweep-move 1.5s linear infinite;}
 @keyframes gen-sweep-move{to{background-position:-220% 0, 0 0}}
-.gen-sweep__bar{position:absolute;left:50%;bottom:10%;
+.gen-sweep__bar{position:absolute;left:50%;bottom:max(8px,10%);
   transform:translateX(-50%);transform-origin:center bottom;
-  box-sizing:border-box;width:min(78%, 340px);min-width:0;display:flex;flex-direction:column;gap:6px;
+  box-sizing:border-box;width:min(78%,340px);max-width:calc(100% - 16px);min-width:0;display:flex;flex-direction:column;gap:6px;
   background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);
-  border-radius:14px;padding:8px 11px;backdrop-filter:blur(4px)}
+  border-radius:14px;padding:8px 11px;overflow:hidden;backdrop-filter:blur(4px)}
 .gen-sweep__row{min-width:0;display:flex;justify-content:space-between;gap:6px;font-size:clamp(8px,2.8cqw,11px);font-weight:800;line-height:1;color:rgba(255,255,255,0.86)}
 .gen-sweep__row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gen-sweep__est{color:rgba(255,255,255,0.55)}
@@ -69,7 +69,19 @@ export function GenSweepLoader({ createdAt, className }: { createdAt?: number; c
   return (
     <div className={`gen-sweep${className ? ` ${className}` : ''}`} data-testid="generation-progress">
       <div className="gen-sweep__fill" />
-      <div className="gen-sweep__bar">
+      <div
+        className="gen-sweep__bar"
+        data-testid="generation-progress-bar"
+        style={{
+          left: '50%',
+          bottom: 'max(8px, 10%)',
+          width: 'min(78%, 340px)',
+          maxWidth: 'calc(100% - 16px)',
+          minWidth: 0,
+          transform: 'translateX(-50%)',
+          overflow: 'hidden',
+        }}
+      >
         <div className="gen-sweep__row">
           <span>已耗时 {elapsedS}s</span>
           <span className={`gen-sweep__est${overtime ? ' gen-sweep__est--over' : ''}`}>

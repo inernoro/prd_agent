@@ -1,6 +1,7 @@
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 import { fail, ok, type ApiResponse } from '@/types/api';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 
 function joinUrl(base: string, path: string) {
   const b = base.replace(/\/+$/, '');
@@ -102,33 +103,29 @@ function classifyNonContractHttpError(args: {
   contentType: string;
 }): { code: string; message: string } {
   const status = args.status;
-  const st = (args.statusText || '').trim();
-  const path = args.path;
-  const isHtml = args.maybeHtml || args.contentType.includes('text/html');
 
   // 仅当后端按契约返回 PERMISSION_DENIED 时才算“权限不足”
   // 非契约响应（尤其 HTML）上的 403 很可能是网关/反代/静态服务器拦截，属于“服务不可用/地址错误”
   if (status === 401) {
-    return { code: 'UNAUTHORIZED', message: '未登录或登录已过期（HTTP 401）' };
+    return { code: 'UNAUTHORIZED', message: '登录状态已过期，请重新登录后重试。' };
   }
 
   // 经验：在“后端挂了/端口停了/反代未就绪”时，一些网关仍可能返回 403（甚至非 HTML）
   // 为避免把断线误导成“请求被拒绝”，非契约的 403 一律归类为 SERVER_UNAVAILABLE。
   if (status === 403) {
-    const suffix = isHtml ? '或被网关拦截' : '或服务不可达';
-    return { code: 'SERVER_UNAVAILABLE', message: `服务器不可用${suffix}（HTTP 403）（${path}）` };
+    return { code: 'SERVER_UNAVAILABLE', message: '服务暂时不可用，请稍后重试。' };
   }
 
-  if ((status === 502 || status === 503 || status === 504) && isHtml) {
-    return { code: 'SERVER_UNAVAILABLE', message: `服务器暂不可用（HTTP ${status}）（${path}）` };
+  if (status === 502 || status === 503 || status === 504) {
+    return { code: 'SERVER_UNAVAILABLE', message: '服务暂时不可用，请稍后重试。' };
   }
 
   if (status >= 500) {
-    return { code: 'SERVER_ERROR', message: `服务器错误（HTTP ${status}${st ? ` ${st}` : ''}）（${path}）` };
+    return { code: 'SERVER_ERROR', message: '服务处理未完成，请稍后重试。' };
   }
 
   // 其它 4xx：默认按“请求被拒绝/不被接受”，但不冒充权限不足
-  return { code: 'REQUEST_REJECTED', message: `请求被拒绝（HTTP ${status}${st ? ` ${st}` : ''}）（${path}）` };
+  return { code: 'REQUEST_REJECTED', message: '当前请求未被接受，请检查输入后重试。' };
 }
 
 function isApiResponseLike(x: unknown): x is { success: boolean; data: unknown; error: unknown } {
@@ -280,7 +277,7 @@ async function apiRequestInner<T>(
       headers.Authorization = `Bearer ${token}`;
     } else {
       // 未登录时直接返回 UNAUTHORIZED，避免发出注定 401 的请求
-      return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<T>;
+      return fail('UNAUTHORIZED', '当前尚未登录，请登录后重试。') as unknown as ApiResponse<T>;
     }
   }
 
@@ -308,12 +305,12 @@ async function apiRequestInner<T>(
   } catch (e) {
     if (timeoutId != null) globalThis.clearTimeout(timeoutId);
     if (timeoutController?.signal.aborted) {
-      return fail('TIMEOUT', '请求超时') as unknown as ApiResponse<T>;
+      return fail('TIMEOUT', '本次等待超时，请稍后重试。') as unknown as ApiResponse<T>;
     }
     if (isDisconnectedError(e)) {
-      return fail('DISCONNECTED', '已断开连接或服务器不可达') as unknown as ApiResponse<T>;
+      return fail('DISCONNECTED', '网络连接已中断，请检查网络后重试。') as unknown as ApiResponse<T>;
     }
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<T>;
+    return fail('NETWORK_ERROR', '网络连接异常，请检查网络后重试。') as unknown as ApiResponse<T>;
   }
 
   // 检测权限指纹变更：后端每个响应都带 X-Perm-Fingerprint 头，
@@ -329,11 +326,11 @@ async function apiRequestInner<T>(
   let text: string;
   try {
     text = await res.text();
-  } catch (e) {
+  } catch {
     if (timeoutController?.signal.aborted) {
-      return fail('TIMEOUT', '请求超时') as unknown as ApiResponse<T>;
+      return fail('TIMEOUT', '本次等待超时，请稍后重试。') as unknown as ApiResponse<T>;
     }
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<T>;
+    return fail('NETWORK_ERROR', '网络连接中断，请检查网络后重试。') as unknown as ApiResponse<T>;
   } finally {
     if (timeoutId != null) globalThis.clearTimeout(timeoutId);
   }
@@ -343,7 +340,7 @@ async function apiRequestInner<T>(
 
   // Nginx/代理层 413：避免把整段 HTML 错误页塞进 UI（会卡顿/难读）
   if (res.status === 413) {
-    return fail('DOCUMENT_TOO_LARGE', '请求体过大（HTTP 413）。请减小图片/内容大小，或调整 Nginx 的 client_max_body_size。') as unknown as ApiResponse<T>;
+    return fail('DOCUMENT_TOO_LARGE', '文件超过当前大小限制，请缩小文件后重新上传。') as unknown as ApiResponse<T>;
   }
 
   // 处理 401 未授权：清除认证状态并跳转登录页
@@ -380,6 +377,16 @@ async function apiRequestInner<T>(
         window.location.href = '/login';
       }
     }
+    if (!json.success) {
+      const rawError = getApiErrorLike((json as { error: unknown }).error);
+      const code = rawError?.code || 'UNKNOWN';
+      const message = toUserReadableErrorMessage(rawError, {
+        code,
+        fallbackMessage: '操作未完成',
+        recoveryMessage: '请检查输入后重试。',
+      });
+      return fail(code, message) as unknown as ApiResponse<T>;
+    }
     return json as ApiResponse<T>;
   }
 
@@ -388,17 +395,17 @@ async function apiRequestInner<T>(
     const err = getApiErrorLike(jsonObj?.error);
     // 有明确业务错误码：尊重后端契约（权限拒绝/限流/会话过期等）
     if (err?.code) {
-      let message =
+      const message =
         err?.message ||
         (typeof jsonObj?.message === 'string' ? jsonObj.message : null) ||
         text ||
-        `HTTP ${res.status} ${res.statusText}`;
-      if (maybeHtml) {
-        message = `HTTP ${res.status} ${res.statusText || 'Request Failed'} (${path})`;
-      } else if (typeof message === 'string' && message.length > 1600) {
-        message = `${message.slice(0, 1600)}…`;
-      }
-      return fail(err.code, String(message || '请求失败')) as unknown as ApiResponse<T>;
+        '';
+      const safeMessage = toUserReadableErrorMessage({ code: err.code, message }, {
+        code: err.code,
+        fallbackMessage: '操作未完成',
+        recoveryMessage: '请检查输入后重试。',
+      });
+      return fail(err.code, safeMessage) as unknown as ApiResponse<T>;
     }
 
     // 非契约错误：按“断连/服务不可用/服务器错误/请求被拒绝”分类

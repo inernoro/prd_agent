@@ -2511,27 +2511,30 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
         <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
           {/* 精简头部：标题 + 模型信息 */}
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                data-tour-id="literary-editor-back"
-                onClick={goBack}
-                className="p-1.5 rounded-lg hover-bg-soft transition-colors"
-                style={{ color: 'var(--text-muted)' }}
-                title="返回"
-              >
-                <ArrowLeft size={16} />
-              </button>
-              <div className="flex items-center gap-2">
-                <FileText size={16} style={{ color: 'var(--text-primary)' }} />
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className={cn("mb-2 flex", isMobile ? "flex-col items-stretch gap-2" : "items-center justify-between")}>
+            <div className={cn("min-w-0 flex", isMobile ? "flex-col gap-2" : "items-center gap-3")}>
+              <div className="flex min-w-0 items-center gap-2">
+                <button
+                  type="button"
+                  data-tour-id="literary-editor-back"
+                  onClick={goBack}
+                  className="shrink-0 p-1.5 rounded-lg hover-bg-soft transition-colors"
+                  style={{ color: 'var(--text-muted)' }}
+                  title="返回"
+                >
+                  <ArrowLeft size={16} />
+                </button>
+                <FileText size={16} className="shrink-0" style={{ color: 'var(--text-primary)' }} />
+                <div className="min-w-0 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                   {uploadedFileName || '文章内容'}
                 </div>
               </div>
 
               {/* 模型切换器：提示词模型 + 生图模型 */}
-              <div className="flex items-center gap-1.5">
+              <div
+                className={cn("flex min-w-0 items-center gap-1.5", isMobile && "overflow-x-auto pb-1")}
+                style={isMobile ? { overscrollBehaviorX: 'contain' } : undefined}
+              >
                 {/* 提示词/标记生成模型切换器 */}
                 {effectiveChatModel?.isAutoResolved ? (
                   <span
@@ -2702,7 +2705,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div
+              className={cn("flex items-center gap-2", isMobile && "min-w-0 overflow-x-auto pb-1")}
+              style={isMobile ? { overscrollBehaviorX: 'contain' } : undefined}
+            >
               {phase === 0 && uploadedFileName && (
                 <Button size="sm" variant="primary" onClick={handleEnterPreview}>
                   <Edit2 size={14} />
@@ -5019,7 +5025,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
       {/* Phase 1: 首次进入的锚点教程气泡 —— 复用全局 TipCard 组件,跟右下角「教程小书」
           抽屉卡片视觉统一(MapPin + 绿色 accent + 知道啦) */}
-      {anchorTutorialSeen === false && phase !== 0 && (
+      {!isMobile && anchorTutorialSeen === false && phase !== 0 && (
         <div
           className="fixed z-[1000]"
           style={{ right: 24, bottom: 24, maxWidth: 340 }}
@@ -5030,13 +5036,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             title="新功能:手动指定配图位置"
             body={
               <div>
-                <div style={{ marginBottom: 6 }}>· 右上角「📍 位置策略」可切换 4 种生成策略</div>
+                <div style={{ marginBottom: 6 }}>右上角「位置策略」可切换 4 种生成策略</div>
                 <div style={{ marginBottom: 6 }}>
-                  · 鼠标悬停段落左侧 → 点{' '}
+                  鼠标悬停段落左侧后，点{' '}
                   <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点
                 </div>
                 <div>
-                  · 段落上
+                  段落上
                   <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> →
                   选择"在上方/下方插入配图"
                 </div>

@@ -73,7 +73,7 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
 
 | 项目 | 结果 | 说明 |
 |---|---|---|
-| 合格证据 | 0/148 | 逐项核销 |
+| 可审核证据 | 0/148 | 逐项核销 |
 | 模块通过 | 0/10 | 缺口未关闭 |
 
 ## 模块覆盖
@@ -106,7 +106,7 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
   assert.match(composed, /2 条 验收项 中有 1 条不通过/);
   assert.equal((composed.match(/## 主管验收总览/g) || []).length, 1);
   assert.equal((composed.match(/## 主管先看/g) || []).length, 1);
-  assert.match(composed, /视觉验收 \| 0\/148 张合格证据，0\/10 个模块通过/);
+  assert.match(composed, /视觉验收 \| 0\/148 张可审核证据，0\/10 个模块通过/);
   assert.doesNotMatch(composed, /旧口径 124 张|caseId/);
   assert.match(composed, /Verdict: fail/);
   assert.doesNotMatch(composed, /## 视觉证据预算/);

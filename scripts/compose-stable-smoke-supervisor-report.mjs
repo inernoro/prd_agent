@@ -57,10 +57,10 @@ function synchronizeExecutiveSummary(executiveContent, visualGateLeadContent) {
   if (!gateTable) return executiveContent;
   const projectIndex = gateTable.headers.indexOf('项目');
   const resultIndex = gateTable.headers.indexOf('结果');
-  const evidenceRow = gateTable.rows.find((row) => row[projectIndex] === '合格证据');
+  const evidenceRow = gateTable.rows.find((row) => ['可审核证据', '合格证据'].includes(row[projectIndex]));
   const moduleRow = gateTable.rows.find((row) => row[projectIndex] === '模块通过');
   if (!evidenceRow || !moduleRow) return executiveContent;
-  const replacement = `| 视觉验收 | ${evidenceRow[resultIndex]} 张合格证据，${moduleRow[resultIndex]} 个模块通过 | 未逐项核销的截图不能计为通过；从模块总览进入缺口或证据 |`;
+  const replacement = `| 视觉验收 | ${evidenceRow[resultIndex]} 张可审核证据，${moduleRow[resultIndex]} 个模块通过 | 可审核不等于通过；从模块总览进入异常状态或证据 |`;
   if (/^\|\s*视觉证据\s*\|.*$/m.test(executiveContent)) {
     return executiveContent.replace(/^\|\s*视觉证据\s*\|.*$/m, replacement);
   }
@@ -72,9 +72,9 @@ function synchronizeMethodSummary(methodContent, visualGateLeadContent) {
   if (!gateTable) return methodContent;
   const projectIndex = gateTable.headers.indexOf('项目');
   const resultIndex = gateTable.headers.indexOf('结果');
-  const evidenceRow = gateTable.rows.find((row) => row[projectIndex] === '合格证据');
+  const evidenceRow = gateTable.rows.find((row) => ['可审核证据', '合格证据'].includes(row[projectIndex]));
   if (!evidenceRow) return methodContent;
-  const replacement = `| 视觉测试 | 每个关键页面状态是否完整、可操作、可理解 | ${evidenceRow[resultIndex]} 张合格证据，未核销项均为未执行 | [查看逐项视觉方法](#视觉测试方法) |`;
+  const replacement = `| 视觉测试 | 每个关键页面状态是否完整、可操作、可理解 | ${evidenceRow[resultIndex]} 张可审核证据，异常状态单独核销 | [查看逐项视觉方法](#视觉测试方法) |`;
   if (/^\|\s*视觉测试\s*\|.*$/m.test(methodContent)) {
     return methodContent.replace(/^\|\s*视觉测试\s*\|.*$/m, replacement);
   }
@@ -86,7 +86,7 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     ...row,
     '视觉结论': row['视觉结论'] || '未执行',
     '采集文件': row['采集文件'] || '0',
-    '合格证据': row['合格证据'] || '0/待定',
+    '可审核证据': row['可审核证据'] || row['合格证据'] || '0/待定',
     '缺口': row['缺口'] || '待补齐逐项证据',
     '查看全部截图': row['查看全部截图'] || '',
   }));
@@ -96,7 +96,7 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     '',
     '| 改动断言 | 必要证明 | 当前结果 |',
     '|---|---|---|',
-    ...rows.map((row) => `| ${row['模块']}的关键用户旅程可用 | 冒烟或功能结果，加 ${String(row['合格证据']).split('/')[1] || row['合格证据']} 张逐项视觉证据，且关键状态无缺口 | ${row['视觉结论']}；视觉部分按未完成处理 |`),
+    ...rows.map((row) => `| ${row['模块']}的关键用户旅程可用 | 冒烟或功能结果，加 ${String(row['可审核证据']).split('/')[1] || row['可审核证据']} 张逐项视觉证据，且关键状态无缺口 | ${row['视觉结论']}；视觉部分按未完成处理 |`),
     '',
     '## 影响面矩阵',
     '',
@@ -133,7 +133,7 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     '',
     '| 改动断言 | 必要证明 | 实际证据 | 关联性 |',
     '|---|---|---|---|',
-    ...rows.map((row) => `| ${row['模块']}关键旅程可用 | ${row['合格证据']} 张唯一证据、关键状态完整、结果无失败 | 已采集 ${row['采集文件']} 张旧文件，但合格证据为 ${row['合格证据']}；[查看逐项任务](#visual-plan-${String(row['查看全部截图'] || '').match(/visual-ledger-([^)]+)/)?.[1] || ''}) | 旧文件缺逐项元数据，不能证明该断言 |`),
+    ...rows.map((row) => `| ${row['模块']}关键旅程可用 | ${row['可审核证据']} 张唯一证据、关键状态完整、结果无失败 | 已采集 ${row['采集文件']} 张旧文件，但可审核证据为 ${row['可审核证据']}；[查看逐项任务](#visual-plan-${String(row['查看全部截图'] || '').match(/visual-ledger-([^)]+)/)?.[1] || ''}) | 旧文件缺逐项元数据，不能证明该断言 |`),
     '',
     '## 覆盖缺口',
     '',
