@@ -9,9 +9,9 @@
 | refactor | prd-admin | `lib/tileAccent` 色带收敛为 `INK_HUES` 八色相并降饱和，新增 `Accent.text`（明度随主题 65%/30%）修类别色文字在浅色纸面发虚——浅色 36% 时橄榄 3.58 / 黛青 3.60 / 松绿 3.72 / 琥珀 4.04 四色不达标（「手边的活儿」的 10px 状态标吃这个色），压到 30% 后八色最低 4.83；`lib/agentAccent`、`lib/appStoreTokens` 的移动端色板同源换笔 |
 | refactor | prd-admin | `formatCompactNumber` 收敛到 `lib/homePulse` 单一实现，移动端改为转出 |
 | refactor | prd-admin | 首页跳转收成唯一出口 `lib/useTrackedNavigate`，**桌面与移动首页共用**：带入口信息的调用自动记打开次数。记账点漏一个，那条路径的启动就永远不计入「你常用的」——桌面收敛后手机上点开的智能体仍不计数，于是桌面的「你常用的」漏掉了用户手机上最常用的那些 |
-| fix | prd-admin | 首页快捷入口记账用的是「偏好别名」（updates / voc / models / teams / my-assets），与目录 id（changelog / team-activity / mds / users / visual-agent）对不上，记进去是一串查无此项的幽灵 id，Cmd+K 最近使用与设置统计都会静默丢掉。改为按路由推导目录 id，且不在目录里的入口（如作品广场）只跳转不记账 |
+| fix | prd-admin | 首页快捷入口记账用的是「偏好别名」（updates / voc / models / teams / my-assets），与目录 id（changelog / team-activity / mds / users / visual-agent）对不上，记进去是一串查无此项的幽灵 id，Cmd+K 最近使用与设置统计都会静默丢掉。改为按路由推导目录 id；「不在目录里就不记账」这道闸收进 `useTrackedNavigate` 出口本身——原先写在桌面调用处，移动端的「米多早报」照样记了个目录里没有的 id |
 | fix | prd-admin | 首页点击补记打开次数：此前只有命令面板（⌘K）记账，瓦片点击与在办工作条都不算数，「你常用的」对只用首页的人永远不出现 |
-| fix | prd-admin | 官网页脚 MAP 徽标与产品预览的发送按钮各存了一份品牌渐变的手抄副本（起点还停在换笔前的旧值），配的是浅色前景——徽标 9px 文字最低 2.09:1，发送按钮白色箭头 2.23:1 连图标的 3:1 都不够。两处改用 `HERO_GRADIENT` + `HERO_GRADIENT_FG` |
+| fix | prd-admin | 官网页脚 MAP 徽标、产品预览发送按钮、导航 Logo 的 SVG 各存了一份品牌渐变的手抄副本（起点还停在换笔前的旧值），配的是浅色前景——徽标 9px 文字最低 2.09:1，发送按钮白色箭头 2.23:1 连图标的 3:1 都不够。导航 Logo 白色 MAP 字缩到约 13px 时最低 2.23:1。三处统一从 `HERO_GRADIENT_STOPS` / `HERO_GRADIENT` + `HERO_GRADIENT_FG` 取，并加守卫禁止再抄色值 |
 | fix | prd-admin | 海鲜市场技能文件树的选中行是 accent 实心底配 `--text-primary`（暗 2.92:1 / 浅 3.13:1），迁到按钮 token 对；对比度判据同批改为读 `color:` 的整个值——真实写法是三元 `color: active ? ... : ...`，按"紧邻"判会整条漏掉 |
 | fix | prd-admin | 9 处主操作面从「`--accent-primary` 当底 + 硬编码白字」（暗色 3.12:1）迁到 `--button-primary-bg/fg` 这对已被守卫钉住的 token |
 | fix | prd-admin | 百宝箱两处用户气泡（基础能力 / 快速创建向导）此前是 accent 渐变底 + `--text-primary` 字，暗色只有 2.92:1，同迁到按钮 token 对；渐变里引用的 `--accent-secondary` 全仓从未定义，一并去掉 |

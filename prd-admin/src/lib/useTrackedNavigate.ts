@@ -1,7 +1,8 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
-import { migrateLegacyNavId } from '@/lib/launcherCatalog';
+import { useAuthStore } from '@/stores/authStore';
+import { getLauncherCatalog, findLauncherItem, migrateLegacyNavId } from '@/lib/launcherCatalog';
 
 /**
  * 带记账的跳转：打开智能体的地方一律走这里。
@@ -13,6 +14,12 @@ import { migrateLegacyNavId } from '@/lib/launcherCatalog';
  *
  * 所以出口只留这一个，两端共用：谁要跳转，谁把入口信息一起给。
  * 不带 `entry` 的调用表示"这不是打开某个智能体"（例如跳到列表页），照常跳、不记账。
+ *
+ * **目录闸也在这里**：id 落不到目录里就只跳转、不记账。
+ * 记一个 findLauncherItem 查不到的 id 等于往使用统计里灌垃圾——Cmd+K 最近使用
+ * 会把它丢掉，usageCounts 却一直在涨。这道闸原先写在桌面首页的调用处，
+ * 结果移动端的「米多早报」照样记了个目录里没有的 id（同一个洞第二次）。
+ * 放进出口本身，调用方就没有忘记它的机会。
  */
 export interface TrackedEntry {
   id: string;
@@ -25,8 +32,12 @@ export type TrackedNavigate = (route: string, entry?: TrackedEntry) => void;
 
 export function useTrackedNavigate(): TrackedNavigate {
   const navigate = useNavigate();
+  const permissions = useAuthStore((s) => s.permissions ?? []);
+  const isRoot = useAuthStore((s) => s.isRoot);
+  const catalog = useMemo(() => getLauncherCatalog({ permissions, isRoot }), [permissions, isRoot]);
+
   return useCallback((route: string, entry?: TrackedEntry) => {
-    if (entry) {
+    if (entry && findLauncherItem(catalog, migrateLegacyNavId(entry.agentKey || entry.id))) {
       useAgentSwitcherStore.getState().addRecentVisit({
         // 首页历史上用过 __xxx__ 形态，统一交给 migrateLegacyNavId 归一到命令面板同款 id
         id: migrateLegacyNavId(entry.agentKey || entry.id),
@@ -38,5 +49,5 @@ export function useTrackedNavigate(): TrackedNavigate {
       });
     }
     navigate(route);
-  }, [navigate]);
+  }, [navigate, catalog]);
 }

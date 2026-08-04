@@ -69,7 +69,7 @@ import { useIsMobile } from '@/hooks/useBreakpoint';
 import type { ToolboxItem, RecentWorkItemDto } from '@/services';
 import { useHomeRecentWorkStore } from '@/stores/homeRecentWorkStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
-import { migrateLegacyNavId, getLauncherCatalog } from '@/lib/launcherCatalog';
+import { migrateLegacyNavId } from '@/lib/launcherCatalog';
 import { navIdFromPath } from '@/app/navRegistry';
 import { useTrackedNavigate } from '@/lib/useTrackedNavigate';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -467,22 +467,11 @@ export default function AgentLauncherPage() {
   const isMobile = useIsMobile();
   const user = useAuthStore((s) => s.user);
   const permissions = useAuthStore((s) => s.permissions ?? []);
-  const isRoot = useAuthStore((s) => s.isRoot);
   const now = useNowByMinute();
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
   const canUsePrReview = permissions.includes('pr-review.use');
   const launcherPerms = useMemo(() => deriveLauncherPerms(permissions), [permissions]);
-  /**
-   * 目录里真实存在的 id 集合。快捷入口只有落在目录里才记账——
-   * 记一个目录查不到的 id 等于往使用统计里灌垃圾：Cmd+K 最近使用和设置统计
-   * 都会静默把它丢掉，不报错，只是永远不出现。/showcase 这类刻意不进目录的
-   * 演示页就属于"跳转但不记账"。
-   */
-  const catalogIds = useMemo(
-    () => new Set(getLauncherCatalog({ permissions, isRoot }).map((item) => item.id)),
-    [permissions, isRoot],
-  );
 
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
@@ -811,7 +800,7 @@ export default function AgentLauncherPage() {
                         // 偏好」的别名（updates / voc / models / teams / my-assets），与目录 id
                         // （changelog / team-activity / mds / users / visual-agent）对不上。
                         const trackedId = navIdFromPath(link.path);
-                        openRoute(link.path, catalogIds.has(trackedId) ? { id: trackedId, name: link.label } : undefined);
+                        openRoute(link.path, { id: trackedId, name: link.label });
                       }}
                       title={link.desc}
                       className="home-desk-quick-item"

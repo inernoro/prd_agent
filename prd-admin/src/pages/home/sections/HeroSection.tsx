@@ -21,7 +21,15 @@ import { useLanguage } from '../contexts/LanguageContext';
  * 陶土同族色（对齐应用内 --accent-primary #D97757），取代早期青→紫→玫红
  * 三色霓虹——邻近色相保证"彩而不乱"，与登录后的工作台观感统一。
  */
-export const HERO_GRADIENT = 'linear-gradient(135deg, #CE6B41 0%, #D97757 48%, #E0A06B 100%)';
+/**
+ * 品牌渐变的三档色标（SSOT 的 SSOT）。
+ *
+ * CSS 渐变、SVG `<stop>` 都从这里取——这条渐变已经被手抄过三份（页脚徽标、
+ * 产品预览发送键、导航 Logo），每一份都各自漂移、各自配错前景色。
+ * 想用它就 import，不要再抄一遍色值。
+ */
+export const HERO_GRADIENT_STOPS = ['#CE6B41', '#D97757', '#E0A06B'] as const;
+export const HERO_GRADIENT = `linear-gradient(135deg, ${HERO_GRADIENT_STOPS[0]} 0%, ${HERO_GRADIENT_STOPS[1]} 48%, ${HERO_GRADIENT_STOPS[2]} 100%)`;
 /**
  * 铺在 HERO_GRADIENT 上的文字色。
  *

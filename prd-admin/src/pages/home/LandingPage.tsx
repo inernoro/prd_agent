@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { HeroSection, HERO_GRADIENT, HERO_GRADIENT_FG } from './sections/HeroSection';
+import { HeroSection, HERO_GRADIENT, HERO_GRADIENT_FG, HERO_GRADIENT_STOPS } from './sections/HeroSection';
 import { StatsStrip } from './sections/StatsStrip';
 import { ThreePillars } from './sections/ThreePillars';
 import { FeatureDeepDive } from './sections/FeatureDeepDive';
@@ -43,9 +43,10 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="brandGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style={{ stopColor: '#C8623A', stopOpacity: 1 }} />
-          <stop offset="50%" style={{ stopColor: '#D97757', stopOpacity: 1 }} />
-          <stop offset="100%" style={{ stopColor: '#E0A06B', stopOpacity: 1 }} />
+          {/* 色标从 HERO_GRADIENT_STOPS 取：这里原是第三份手抄副本，起点漂成旧值 */}
+          {HERO_GRADIENT_STOPS.map((stopColor, index) => (
+            <stop key={stopColor} offset={`${index * 50}%`} style={{ stopColor, stopOpacity: 1 }} />
+          ))}
         </linearGradient>
       </defs>
       <rect x="0" y="0" width="512" height="512" rx="102" ry="102" fill="url(#brandGradient)" />
@@ -57,7 +58,7 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
         fontWeight="900"
         textAnchor="middle"
         dominantBaseline="middle"
-        fill="#ffffff"
+        style={{ fill: HERO_GRADIENT_FG }}
         letterSpacing="-6"
       >
         MAP

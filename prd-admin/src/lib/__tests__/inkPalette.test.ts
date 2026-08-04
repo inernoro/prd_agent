@@ -396,6 +396,38 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     ).toEqual([]);
   });
 
+  it('品牌渐变的色标只有一份，不许再手抄', async () => {
+    // 这条渐变已经被手抄过三份（页脚徽标 / 产品预览发送键 / 导航 Logo 的 SVG stop），
+    // 每一份都各自漂移、各自配错前景色，而且**抄过去就脱离了守卫视野**——
+    // 判据只认得出名字，认不出色值。所以直接禁掉色值副本：
+    // 官网里除 HeroSection（SSOT 所在）外，不许再出现这三个色标。
+    const { HERO_GRADIENT_STOPS } = await import('../../pages/home/sections/HeroSection');
+    const offenders: string[] = [];
+
+    // 判的是「整条渐变被抄走」，不是「用了其中一个颜色」：单独用 #D97757 当光晕
+    // 或段落强调是正常的，两三档凑在一小段里才是副本。窗口取 240 字符——
+    // 一条 linear-gradient / 一组 SVG stop 都在这个量级内。
+    const COPY_WINDOW = 240;
+    for (const file of walk(path.join(SRC, 'pages/home'))) {
+      const rel = file.slice(SRC.length + 1);
+      if (rel.endsWith('sections/HeroSection.tsx')) continue;
+      const content = fs.readFileSync(file, 'utf8').toLowerCase();
+      for (let at = 0; at < content.length; at += COPY_WINDOW / 2) {
+        const window = content.slice(at, at + COPY_WINDOW);
+        const hits = HERO_GRADIENT_STOPS.filter((stop) => window.includes(stop.toLowerCase()));
+        if (hits.length >= 2) {
+          offenders.push(`${rel}:${content.slice(0, at).split('\n').length} 附近出现 ${hits.join(' / ')}`);
+          break;
+        }
+      }
+    }
+
+    expect(
+      offenders,
+      ['', '品牌渐变的色标被抄了一份。import HERO_GRADIENT / HERO_GRADIENT_STOPS，别复制色值。', ...offenders].join('\n'),
+    ).toEqual([]);
+  });
+
   it('色阶尺只在墨带内取色相，且暗浅两主题共用同一支笔', async () => {
     const { ICON_HUE, INK_HUES } = await import('../tileAccent');
     const allowed = new Set<number>(Object.values(INK_HUES));

@@ -14,12 +14,17 @@
  * 都自动同步，CI 不会报错。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { NAV_REGISTRY, navIdFromPath } from '@/app/navRegistry';
 import { getLauncherCatalog, findLauncherItem } from '@/lib/launcherCatalog';
 import { QUICK_LINK_BY_ID } from '@/pages/AgentLauncherPage';
 import appTsxRaw from '../../app/App.tsx?raw';
 import launcherSource from '../../pages/AgentLauncherPage.tsx?raw';
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * 不通过 NAV_REGISTRY 注册、但在 App.tsx 直接写 <Route> 的路由白名单。
@@ -166,6 +171,11 @@ describe('App.tsx 路由覆盖', () => {
     expect(quickLinkBlock, '找不到快捷入口那段渲染，判据已经失效').toBeTruthy();
     expect(quickLinkBlock, '快捷入口的记账 id 不是从路由推导的').toMatch(/const trackedId = navIdFromPath\(link\.path\);/);
     expect(quickLinkBlock, '快捷入口把偏好别名当记账 id 用了').not.toMatch(/\{ id: link\.id/);
-    expect(quickLinkBlock, '不在目录里的入口也记了账').toContain('catalogIds.has(trackedId)');
+    // 目录闸已经收进 useTrackedNavigate（出口本身），调用方不再各写一遍——
+    // 写在调用方就会有人忘记：移动端的「米多早报」就是这么记了个目录里没有的 id。
+    const tracker = fs.readFileSync(path.resolve(TEST_DIR, '../useTrackedNavigate.ts'), 'utf8');
+    expect(tracker, '记账出口没有目录闸，不在目录里的 id 会被记进使用统计').toMatch(
+      /if \(entry && findLauncherItem\(catalog, migrateLegacyNavId\(entry\.agentKey \|\| entry\.id\)\)\)/,
+    );
   });
 });
