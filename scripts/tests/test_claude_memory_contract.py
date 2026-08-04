@@ -169,12 +169,52 @@ def check_no_stale_index() -> None:
         )
 
 
+def check_module_coverage() -> None:
+    """A module Codex can see but Claude cannot is a silent capability gap.
+
+    Claude Code reads CLAUDE.md and never AGENTS.md, so a module directory
+    carrying only AGENTS.md hands Codex its build/verification commands and
+    leaves Claude with nothing - which makes CLAUDE.md rule 5.2 ("run the
+    module's checks before pushing") unfollowable, because Claude cannot know
+    what to run. `llmgw/` sat in exactly that state.
+
+    The documented fix is a CLAUDE.md that imports the AGENTS.md rather than a
+    second copy that drifts, so this also rejects a CLAUDE.md that duplicates
+    the AGENTS.md body instead of importing it.
+    """
+    skip = {"node_modules", "dist", "bin", "obj", "build", ".git", ".claude", ".Codex", ".cursor"}
+    root_text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+
+    for d in sorted(p for p in REPO.iterdir() if p.is_dir() and p.name not in skip):
+        agents = d / "AGENTS.md"
+        claude = d / "CLAUDE.md"
+        if agents.exists() and not claude.exists():
+            fail(
+                f"{d.name}/: has AGENTS.md but no CLAUDE.md. Claude Code never reads AGENTS.md, "
+                f"so this module's instructions are invisible to it. "
+                f'Add {d.name}/CLAUDE.md containing "@AGENTS.md".'
+            )
+            continue
+        if agents.exists() and claude.exists():
+            if "@AGENTS.md" not in claude.read_text(encoding="utf-8"):
+                fail(
+                    f"{d.name}/CLAUDE.md exists alongside AGENTS.md but does not `@AGENTS.md` import it. "
+                    "Two hand-maintained copies drift; import instead."
+                )
+        if claude.exists() and d.name not in root_text:
+            fail(
+                f"{d.name}/: has its own CLAUDE.md but the root CLAUDE.md never mentions it, "
+                "so the module is invisible until someone happens to open a file inside it."
+            )
+
+
 def main() -> int:
     print("Claude memory contract:")
     check_rules()
     check_intro_lines()
     check_claude_md_size()
     check_no_stale_index()
+    check_module_coverage()
 
     if failures:
         print(f"\nFAIL ({len(failures)} problem(s)):")

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-> PRD Agent 全栈项目（`prd-api` .NET 8 / `prd-admin` React+Vite / `prd-desktop` Tauri / `prd-video` Remotion / `cds` 分支预览部署）。
+> PRD Agent 全栈项目（`prd-api` .NET 8 / `prd-admin` React+Vite / `prd-desktop` Tauri / `prd-video` Remotion / `llmgw` LLM 网关 / `cds` 分支预览部署）。
 > 各模块构建命令见子目录 CLAUDE.md；架构规则见 `.claude/rules/`（按 `paths` 命中当前文件时自动加载）。
 
 ## 0. 禁止任何 Emoji（最高优先级，先于一切其他规则）
@@ -32,7 +32,7 @@ cd prd-video && pnpm start   # Remotion 4.0
 
 ### 1. 前端包管理器：pnpm Only
 
-`prd-admin` / `prd-desktop` / `prd-video` 统一 pnpm，禁止 npm / yarn。仅保留 `pnpm-lock.yaml`，禁止提交 `package-lock.json` / `yarn.lock`。
+`prd-admin` / `prd-desktop` / `prd-video` / `llmgw/web` 统一 pnpm，禁止 npm / yarn。仅保留 `pnpm-lock.yaml`，禁止提交 `package-lock.json` / `yarn.lock`。
 
 ### 2. C# 静态分析
 
@@ -48,7 +48,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 4. 更新记录：只写碎片，禁止编辑 CHANGELOG.md
 
-对 `prd-api` / `prd-admin` / `prd-desktop` / `prd-video` 的任何代码变更（feat/fix/refactor/perf），提交前必须建 `changelogs/YYYY-MM-DD_<短描述>.md`，内容为纯表格行（无表头），同一 PR 全部变更放**一个**文件：
+对 `prd-api` / `prd-admin` / `prd-desktop` / `prd-video` / `llmgw` 的任何代码变更（feat/fix/refactor/perf），提交前必须建 `changelogs/YYYY-MM-DD_<短描述>.md`，内容为纯表格行（无表头），同一 PR 全部变更放**一个**文件：
 
 ```
 | feat | prd-admin | 新增XX功能 |

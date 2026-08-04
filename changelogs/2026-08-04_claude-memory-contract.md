@@ -4,3 +4,6 @@
 | refactor | claude-md | 根 CLAUDE.md 由 476 行压到 186 注入行（达标 200 行上限），删除与 harness 自动注入重复的技能表和已漂移的规则索引表，历史背景转入 HTML 注释（注入前被剥离，零 token） |
 | test | claude-md | 新增 scripts/tests/test_claude_memory_contract.py 守卫：frontmatter 键名、死 glob、注入行数、导读两行、索引漂移五项断言 |
 | ci | claude-md | 守卫接入 CI docs-readability job（该 job 的 path filter 含 '**'，每个 PR 必开） |
+| fix | claude-md | llmgw 模块只有 AGENTS.md 没有 CLAUDE.md，Claude Code 读不到它的必跑校验命令；按规范补 llmgw/CLAUDE.md 走 @AGENTS.md 导入 |
+| fix | claude-md | 根 CLAUDE.md 补上此前完全缺失的 llmgw 模块（模块列表 / pnpm 范围 / changelog 范围三处） |
+| test | claude-md | 守卫增加模块覆盖三项断言：有 AGENTS.md 必须有 CLAUDE.md、必须走 @import 而非复制、模块必须在根 CLAUDE.md 露出 |
