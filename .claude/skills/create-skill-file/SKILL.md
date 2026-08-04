@@ -103,10 +103,22 @@ skill-name/
 - `name`：与目录名一致
 - `description`：写清**什么时候该用它**（触发场景 + 触发词），不是只写它是什么
 
-CLAUDE.md 里曾有一张 57 行的技能速查表，2026-08-04 随记忆文件精简删除——它与宿主自动注入
-的内容重复，且已经漂移过。**不要再往 CLAUDE.md 追加技能行。**
+自查（任何仓库都能跑，不依赖本项目脚本）：
 
-自查：`python3 scripts/doc-readability-check.py --ratchet` 的「技能 frontmatter 欠账」一项。
+```bash
+head -5 <skill-dir>/SKILL.md          # 应看到 name 与 description 两行
+basename <skill-dir>                  # 应与 name 完全一致
+```
+
+`description` 自问三条：说清了**什么时候**该用它吗？包含用户会说的触发词吗？第三人称、无 XML 标签、
+不超过 1024 字符吗？
+
+<!-- 以下仅适用于 prd_agent 仓库本身；本技能被分发到其它仓库时没有这个脚本，跳过即可。 -->
+本仓库另有批量闸门：`python3 scripts/doc-readability-check.py --ratchet` 的「技能 frontmatter
+欠账」一项，会一次扫完所有技能根。
+
+CLAUDE.md 里曾有一张 57 行的技能速查表，2026-08-04 随记忆文件精简删除——它与宿主自动注入
+的内容重复，且已经漂移过。本仓库内**不要再往 CLAUDE.md 追加技能行**。
 
 ## 质量评分体系
 

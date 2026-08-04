@@ -201,7 +201,7 @@ echo "  - $changelog_name" >> "$MANIFEST"
 ### Step 4 — 提交前 diff 核验（强制）
 
 ```bash
-git diff doc/ .claude/skills/
+git diff doc/ .claude/skills/ .agents/skills/
 
 # 核验规则：
 # + 行（追加）：无需额外验证，追加前已做 grep -q
@@ -222,7 +222,7 @@ cat > "changelogs/$(date +%Y-%m-%d)_entropy-cleanup.md" << 'EOF'
 EOF
 
 # 2. Stage 并提交
-git add doc/ changelogs/ .claude/
+git add doc/ changelogs/ .claude/ .agents/skills/
 git commit -m "chore: 日常熵清理 $(date +%Y-%m-%d)"
 
 # 3. 推送（当前分支即目标分支，scheduled run 自带隔离分支）

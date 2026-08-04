@@ -5,3 +5,5 @@
 | fix | prd-api | 重新生成 official-skills.generated.json：改了 create-skill-file 却没重跑打包脚本，分发包里还是旧内容，Server Build & Test 的新鲜度自测因此变红 |
 | fix | claude-md | entropy-cleanup 新 D4 只扫了 .claude/skills 一个技能根，且误把 doc-readability 棘轮当成「缺 SKILL.md」的兜底（它遇到缺文件的目录是跳过的）；改为两个根都扫、缺失自查 |
 | fix | claude-md | entropy-cleanup 的 PR 正文模板与自查清单仍按旧的双向 D4 写，与改后的单向指标不一致 |
+| fix | claude-md | entropy-cleanup 的 D4 扫了 .agents/skills 却没把该根加进 diff 核验与 git add，修了也提交不出去 |
+| fix | claude-md | create-skill-file 的自查指向 prd_agent 专属脚本，而该技能会被分发到其它仓库；改为可移植自查，仓库专属闸门降为注释里的补充 |
