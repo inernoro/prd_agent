@@ -27,3 +27,5 @@
 | fix | claude-md | 上一轮只给 6.4 合并闸放行了生成物，Step 4 提交前那道闸仍是窄的：焦点 diff 不含生成物路径（漏看已暂存内容），而其后的 git diff --stat 未限定路径却要求「删除行数=幽灵条目数」，合法重生成必然把这条判死；两处口径拉齐并注明必须同改 |
 | fix | claude-md | AGENTS.md 里「frontmatter 完整性由 CI 强制」是本 PR 自己写下的过度声称——CI 跑的棘轮遇到「目录里整个没有 SKILL.md」是跳过的（移走任一 SKILL.md 可复现：审计退 1、棘轮退 0）；改为如实说明 CI 拦得住什么、拦不住什么，不让文档声称一个不存在的保护 |
 | docs | claude-md | 把「--skills-audit 未接进合并闸」记入 debt 台账（B 类）：接新强制面需先确认技能根下无非技能子目录会被误判，附可复现判据与偿还条件 |
+| fix | doc-tooling | --skills-audit 遇到读不了/解不了码的 SKILL.md（如非 UTF-8）直接抛异常中断，一条 BLOCK 都发不出；改为转成 BLOCK 记录，读不了的清单与「没有 SKILL.md」等价 |
+| fix | claude-md | Step 4.5 硬闸把审计和 grep 挤在一条管道里再 `|| true`，审计崩溃被读成「没有 BLOCK 行」= 干净，闸门 fail-open 放行不可发现的技能；改为先取输出与退出码再判，非零且无 BLOCK 一律当阻塞 |

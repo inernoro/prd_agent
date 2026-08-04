@@ -1197,7 +1197,17 @@ def main() -> int:
                     print(f"BLOCK: {shown} — 目录下没有 SKILL.md")
                     rc = 1
                     continue
-                problems = check_skill(path)
+                try:
+                    problems = check_skill(path)
+                except (OSError, UnicodeDecodeError) as exc:
+                    # 读不了 / 解不了码的清单，宿主同样发现不了这个技能，和「没有
+                    # SKILL.md」是一回事。这里必须转成 BLOCK 而不是让异常冒出去——
+                    # 抛异常会让调用方在拿到任何 BLOCK 行之前就断流，下游那种
+                    # `... | grep '^BLOCK: ' || true` 的写法会把崩溃读成「干净」，
+                    # 闸门于是 fail-open。判据宁可报错也不能悄悄放行。
+                    print(f"BLOCK: {shown} — SKILL.md 读取或解码失败（{exc.__class__.__name__}）")
+                    rc = 1
+                    continue
                 if not problems:
                     continue
                 rc = 1

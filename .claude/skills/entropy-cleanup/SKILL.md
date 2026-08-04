@@ -263,9 +263,19 @@ frontmatter 语法坏、name 空值或与目录不一致、技能根整个不存
 因为它让人以为这里被守住了。重跑只花毫秒级。
 
 ```bash
-BLOCKERS=$(python3 scripts/doc-readability-check.py --skills-audit | grep '^BLOCK: ' || true)
+# 先拿到审计的完整输出和退出码，再判——不能把两件事挤进一条管道。
+# `... | grep '^BLOCK: ' || true` 那种写法会把审计崩溃（比如某个 SKILL.md
+# 不是 UTF-8，读取时抛异常）读成「没有 BLOCK 行」= 干净，闸门 fail-open。
+AUDIT_OUT=$(python3 scripts/doc-readability-check.py --skills-audit 2>&1)
+AUDIT_RC=$?
+BLOCKERS=$(printf '%s\n' "$AUDIT_OUT" | grep '^BLOCK: ' || true)
 
-if [ -n "$BLOCKERS" ]; then
+if [ "$AUDIT_RC" -ne 0 ] && [ -z "$BLOCKERS" ]; then
+  # 非零却一条 BLOCK 都没有 = 审计自己出错了，不是「干净」。一律当阻塞。
+  echo "[BLOCKED] 技能审计异常退出（rc=$AUDIT_RC），无法判定是否干净，本轮不自动合并："
+  printf '%s\n' "$AUDIT_OUT"
+  BLOCKERS="审计异常退出 rc=$AUDIT_RC"
+elif [ -n "$BLOCKERS" ]; then
   echo "[BLOCKED] D4 有无法自动修复的条目，本轮不自动合并："
   printf '%s\n' "$BLOCKERS"
 fi
