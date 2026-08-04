@@ -36,7 +36,7 @@ description: 'Creates and evaluates Claude Code SKILL.md files following Anthrop
 - [ ] Step 3: 编写主体
 - [ ] Step 4: 拆分子文件（如需要）
 - [ ] Step 5: 质量评分自检
-- [ ] Step 6: 注册到 CLAUDE.md
+- [ ] Step 6: 确认可被发现（frontmatter 完整）
 ```
 
 ### Step 1: 明确技能定位
@@ -95,9 +95,18 @@ skill-name/
 
 用下方评分体系打分。目标：**≥ 8.0/10**
 
-### Step 6: 注册到 CLAUDE.md
+### Step 6: 确认可被发现（frontmatter 完整）
 
-在「技能速查表」中添加一行。
+技能的发现机制是 `SKILL.md` 的 frontmatter：宿主靠它自动注入，人工扫描 `.claude/skills/`
+时也是读它来判断该不该用。所以「注册」这一步不是往某张表里加一行，而是确认这两个字段到位：
+
+- `name`：与目录名一致
+- `description`：写清**什么时候该用它**（触发场景 + 触发词），不是只写它是什么
+
+CLAUDE.md 里曾有一张 57 行的技能速查表，2026-08-04 随记忆文件精简删除——它与宿主自动注入
+的内容重复，且已经漂移过。**不要再往 CLAUDE.md 追加技能行。**
+
+自查：`python3 scripts/doc-readability-check.py --ratchet` 的「技能 frontmatter 欠账」一项。
 
 ## 质量评分体系
 
@@ -111,7 +120,7 @@ skill-name/
 | 4 | **Structure & Naming** | 15% | name 规范; 第三人称; 200+行有 TOC; 引用≤1层 | name 不规范; 无 TOC; 引用过深 |
 | 5 | **Workflow & Feedback** | 15% | 可复制 checklist; 执行→验证反馈循环 | 无工作流; 无验证步骤 |
 | 6 | **Examples** | 10% | ≥1 个端到端 input→output 示例 | 无示例或纯抽象 |
-| 7 | **Ecosystem** | 5% | 注册到 CLAUDE.md; 标明上下游技能协作 | 孤立技能 |
+| 7 | **Ecosystem** | 5% | frontmatter 的 description 说清触发场景; 标明上下游技能协作 | 孤立技能 |
 
 ### 评分输出模板
 

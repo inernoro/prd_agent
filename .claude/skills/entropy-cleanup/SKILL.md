@@ -1,6 +1,6 @@
 ---
 name: entropy-cleanup
-description: 日常熵清理技能。扫描七个维度的一致性债务并双向修复（补缺 + 删幽灵）：(1) doc/ 命名规范违规；(2) doc/index.yml 缺失/幽灵条目；(3) doc/guide.list.directory.md 缺失/幽灵条目；(4) CLAUDE.md 技能表缺失/幽灵行；(5) codebase-snapshot 过期数据；(6) changelog→doc 内容覆盖（增量，manifest 追踪）；(7) 文档可读性（导读三行缺失 / 引用点不开 / 死链，判据见 doc/rule.doc.readability.md）。触发词："/entropy"、"熵清理"、"文档欠债"、"索引同步"、"entropy cleanup"。
+description: 日常熵清理技能。扫描七个维度的一致性债务并双向修复（补缺 + 删幽灵）：(1) doc/ 命名规范违规；(2) doc/index.yml 缺失/幽灵条目；(3) doc/guide.list.directory.md 缺失/幽灵条目；(4) 技能可发现性（SKILL.md frontmatter 完整性）；(5) codebase-snapshot 过期数据；(6) changelog→doc 内容覆盖（增量，manifest 追踪）；(7) 文档可读性（导读三行缺失 / 引用点不开 / 死链，判据见 doc/rule.doc.readability.md）。触发词："/entropy"、"熵清理"、"文档欠债"、"索引同步"、"entropy cleanup"。
 ---
 
 # 日常熵清理
@@ -15,7 +15,7 @@ description: 日常熵清理技能。扫描七个维度的一致性债务并双�
 
 ### 双向扫描原则
 
-每个结构化维度（D2/D3/D4）必须同时做两个方向：
+结构化索引维度（D2/D3）必须同时做两个方向；D4 自 2026-08-04 起只有补缺方向（见该维说明）：
 
 | 方向 | 判断条件 | 操作 | 验证方式 |
 |------|---------|------|---------|
@@ -49,7 +49,7 @@ description: 日常熵清理技能。扫描七个维度的一致性债务并双�
 | D1 doc/ 命名规范 | — | — | git mv 改名（文件确实存在才 mv） |
 | D2 index.yml | doc/*.md 无对应 index 条目 → 追加 | index 有条目但 `doc/${key}.md` 不存在 → 删行 | `[ -f doc/${key}.md ]` |
 | D3 guide.list | doc/*.md 无 backtick 条目 → 追加 | guide.list 有 backtick 条目但文件不存在 → 删行 | `[ -f doc/${key}.md ]` |
-| D4 CLAUDE.md 技能表 | .claude/skills/ 有目录无表格行 → 追加 | 表格有行但 `.claude/skills/${name}/` 不存在 → 删行 | `[ -d .claude/skills/${name} ]` |
+| D4 技能可发现性 | 技能目录缺 `SKILL.md` 或 frontmatter 缺 name/description → 补 | — | `python3 scripts/doc-readability-check.py --ratchet` 的「技能 frontmatter 欠账」一项 |
 | D5 codebase-snapshot | — | — | 人工确认后更新 |
 | D6 changelog→doc | changelog 未处理 → 追加章节 | — | manifest 记录，已处理跳过 |
 | D7 文档可读性 | 缺导读三行 → 补；规则缺「一句话 + 什么时候撞上」两行 → 补；技能 frontmatter 的 description 说不清触发时机 → 补；裸引用 → 转可点链接 | 死链（引用的文档不存在）→ 修或删 | `python3 scripts/doc-readability-check.py --ratchet`；批量改写用 `--fix-links` |
@@ -97,15 +97,17 @@ grep -oE '\`[a-z][a-z0-9._-]+\`' doc/guide.list.directory.md | tr -d '`' | while
   [ -f "doc/${key}.md" ] || echo "GHOST_GUIDE: $key"
 done
 
-# D4. 技能表 — 补缺方向
+# D4. 技能可发现性（2026-08-04 起不再查 CLAUDE.md 技能表——那张表已删除）
+#
+# 旧逻辑是 `grep "| **$skill**" CLAUDE.md`，表删掉之后会把 57 个技能全判成缺失，
+# 而它的修复动作是往 CLAUDE.md 追加表格行——正好会把已经精简掉的表重新写回去。
+# 技能的发现机制现在是 SKILL.md frontmatter（宿主自动注入用它，人工扫描也用它），
+# 所以这一维改查 frontmatter 完整性，判据复用既有闸门，不另起一份。
 for d in .claude/skills/*/; do
   skill=$(basename "$d")
-  grep -q "| \*\*$skill\*\*" CLAUDE.md || echo "MISSING_SKILL_TABLE: $skill"
-done
-
-# D4. 技能表 — 删幽灵方向（真实校验）
-grep -oE '\*\*[a-z][a-z0-9_-]+\*\*' CLAUDE.md | tr -d '*' | sort -u | while read skill; do
-  [ -d ".claude/skills/${skill}" ] || echo "GHOST_SKILL_TABLE: $skill"
+  [ -f "$d/SKILL.md" ] || { echo "MISSING_SKILL_MD: $skill"; continue; }
+  head -20 "$d/SKILL.md" | grep -q '^name:' || echo "MISSING_SKILL_NAME: $skill"
+  head -20 "$d/SKILL.md" | grep -q '^description:' || echo "MISSING_SKILL_DESC: $skill"
 done
 
 # D6. 未处理的 changelog（限量：最多 5 条）
@@ -125,7 +127,7 @@ done | head -5
 [D1 命名违规]        N 个
 [D2 index.yml]       补缺 N 条 / 删幽灵 N 条
 [D3 guide.list]      补缺 N 条 / 删幽灵 N 条
-[D4 技能表]          补缺 N 条 / 删幽灵 N 条
+[D4 技能可发现性]    补缺 N 条
 [D5 snapshot]        需人工审查
 [D6 changelog]       本次处理 N 条，manifest 累计 M 条
 
@@ -164,15 +166,7 @@ ghost_key="design.old-removed-doc"
 }
 ```
 
-**D4 技能表删幽灵**：
-```bash
-ghost_skill="old-removed-skill"
-[ -d ".claude/skills/${ghost_skill}" ] && echo "目录仍存在，跳过删除" || {
-  sed -i "/| \*\*${ghost_skill}\*\*/d" CLAUDE.md
-}
-```
-
-**D2/D3/D4 补缺（追加前 grep -q 二次确认）**：
+**D2/D3 补缺（追加前 grep -q 二次确认）**：
 ```bash
 # D2 追加示例
 grep -q "^  $key:" doc/index.yml || {
@@ -182,10 +176,8 @@ grep -q "^  $key:" doc/index.yml || {
 grep -q "\`$key\`" doc/guide.list.directory.md || {
   printf "- \`%s\`\n  > %s\n" "$key" "$desc" >> doc/guide.list.directory.md
 }
-# D4 追加示例
-grep -q "| \*\*$skill\*\*" CLAUDE.md || {
-  printf "| **%s** | \`/%s\` | ... |\n" "$skill" "$trigger" >> CLAUDE.md
-}
+# D4 修复：补 frontmatter，不再往 CLAUDE.md 追加表格行
+# （那张表已删除；技能发现走 SKILL.md frontmatter，见 D4 说明）
 ```
 
 **D6 changelog→doc 内容覆盖**：
@@ -200,7 +192,7 @@ echo "  - $changelog_name" >> "$MANIFEST"
 ### Step 4 — 提交前 diff 核验（强制）
 
 ```bash
-git diff doc/ CLAUDE.md
+git diff doc/ .claude/skills/
 
 # 核验规则：
 # + 行（追加）：无需额外验证，追加前已做 grep -q
@@ -217,11 +209,11 @@ git diff --stat
 ```bash
 # 1. 生成本次 changelog 碎片（用实际数字替换 N）
 cat > "changelogs/$(date +%Y-%m-%d)_entropy-cleanup.md" << 'EOF'
-| chore | doc | 熵清理：D1 N 个，D2 +N/-N，D3 +N/-N，D4 +N/-N，D6 N 条 |
+| chore | doc | 熵清理：D1 N 个，D2 +N/-N，D3 +N/-N，D4 +N，D6 N 条 |
 EOF
 
 # 2. Stage 并提交
-git add doc/ CLAUDE.md changelogs/ .claude/
+git add doc/ changelogs/ .claude/
 git commit -m "chore: 日常熵清理 $(date +%Y-%m-%d)"
 
 # 3. 推送（当前分支即目标分支，scheduled run 自带隔离分支）
@@ -285,7 +277,7 @@ PR body 模板（从 Step 2 报告提取数字）：
    - `clean` / `unstable` → 可继续
 2. 调用 `mcp__github__pull_request_read`（method=`get_diff`）通读 diff，逐条核对：
    - 所有 `-`（删除）行：必须是真实「幽灵条目」（对应 `doc/${key}.md` / `.claude/skills/${name}/` 确实不存在）。**发现删除了仍存在的文件对应条目 → 立即停止，不合并，通知用户**
-   - 所有 `+`（追加）行：仅限 `doc/index.yml` / `doc/guide.list.directory.md` / `CLAUDE.md` 技能表 / `changelogs/` / manifest，不得有代码文件（`.cs`/`.ts`/`.tsx` 等）混入
+   - 所有 `+`（追加）行：仅限 `doc/index.yml` / `doc/guide.list.directory.md` / 技能的 `SKILL.md` frontmatter / `changelogs/` / manifest，不得有代码文件（`.cs`/`.ts`/`.tsx` 等）混入
    - `changed_files` 应全部落在文档/索引/changelog/技能元数据范围内
 3. 任一核查不通过 → **不合并**，发通知说明问题，等用户裁决。
 
