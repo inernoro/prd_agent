@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useAuthStore } from '@/stores/authStore';
-import { getLauncherCatalog, findLauncherItem, migrateLegacyNavId } from '@/lib/launcherCatalog';
+import { getLauncherCatalog, resolveCatalogId } from '@/lib/launcherCatalog';
 
 /**
  * 带记账的跳转：打开智能体的地方一律走这里。
@@ -37,10 +37,13 @@ export function useTrackedNavigate(): TrackedNavigate {
   const catalog = useMemo(() => getLauncherCatalog({ permissions, isRoot }), [permissions, isRoot]);
 
   return useCallback((route: string, entry?: TrackedEntry) => {
-    if (entry && findLauncherItem(catalog, migrateLegacyNavId(entry.agentKey || entry.id))) {
+    // 规范 id 由 resolveCatalogId 解析：agentKey 与目录 id 故意不同名的有好几个
+    // （/task-tree 的 appKey 是 task-tree-agent），只按 agentKey 查会解析失败，
+    // 而失败在这里的后果是**整条记录被丢掉**——比记个幽灵 id 还糟。
+    const canonicalId = entry ? resolveCatalogId(catalog, { id: entry.id, agentKey: entry.agentKey, route }) : undefined;
+    if (entry && canonicalId) {
       useAgentSwitcherStore.getState().addRecentVisit({
-        // 首页历史上用过 __xxx__ 形态，统一交给 migrateLegacyNavId 归一到命令面板同款 id
-        id: migrateLegacyNavId(entry.agentKey || entry.id),
+        id: canonicalId,
         agentKey: entry.agentKey ?? '',
         agentName: entry.name,
         title: entry.name,

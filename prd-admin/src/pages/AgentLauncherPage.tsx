@@ -69,7 +69,7 @@ import { useIsMobile } from '@/hooks/useBreakpoint';
 import type { ToolboxItem, RecentWorkItemDto } from '@/services';
 import { useHomeRecentWorkStore } from '@/stores/homeRecentWorkStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
-import { migrateLegacyNavId } from '@/lib/launcherCatalog';
+import { migrateLegacyNavId, getLauncherCatalog, resolveCatalogId } from '@/lib/launcherCatalog';
 import { navIdFromPath } from '@/app/navRegistry';
 import { useTrackedNavigate } from '@/lib/useTrackedNavigate';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -467,11 +467,14 @@ export default function AgentLauncherPage() {
   const isMobile = useIsMobile();
   const user = useAuthStore((s) => s.user);
   const permissions = useAuthStore((s) => s.permissions ?? []);
+  const isRoot = useAuthStore((s) => s.isRoot);
   const now = useNowByMinute();
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
   const canUsePrReview = permissions.includes('pr-review.use');
   const launcherPerms = useMemo(() => deriveLauncherPerms(permissions), [permissions]);
+  // 排序侧与记账侧必须用同一个解析器，否则「记进去的 key」和「查出来的 key」对不上
+  const launcherCatalog = useMemo(() => getLauncherCatalog({ permissions, isRoot }), [permissions, isRoot]);
 
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
@@ -643,8 +646,11 @@ export default function AgentLauncherPage() {
   const agentShelves = useMemo(() => {
     const all = groups.agents;
     const usageOf = (item: ToolboxItem) => {
-      // 首页与命令面板写的是同一个归一化 id；路径匹配作为老数据的兜底
-      const canonical = migrateLegacyNavId(item.agentKey || item.id);
+      // 与 useTrackedNavigate 走同一个 resolveCatalogId：agentKey 与目录 id 不同名的
+      // 那几个（task-tree-agent / emergence-agent）两边各算各的就永远对不上。
+      const canonical =
+        resolveCatalogId(launcherCatalog, { id: item.id, agentKey: item.agentKey, route: item.routePath })
+        ?? migrateLegacyNavId(item.agentKey || item.id);
       const byRoute = recentVisits.find((v) => v.path && item.routePath && v.path === item.routePath);
       return usageCounts[canonical] ?? (byRoute ? usageCounts[byRoute.id] ?? 0 : 0);
     };
@@ -669,7 +675,7 @@ export default function AgentLauncherPage() {
       { key: 'featured', title: '官方精选', hint: '编辑部挑的旗舰位，不是算法排名', items: featured },
       { key: 'rest', title: '更多智能体', hint: '其余全部，一个都不藏', items: rest },
     ].filter((shelf) => shelf.items.length > 0);
-  }, [groups.agents, recentVisits, usageCounts]);
+  }, [groups.agents, recentVisits, usageCounts, launcherCatalog]);
 
   const renderGroupBody = (meta: CatalogGroupMeta, list: ToolboxItem[]) =>
     meta.layout === 'tile' ? (

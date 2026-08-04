@@ -19,7 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { NAV_REGISTRY, navIdFromPath } from '@/app/navRegistry';
-import { getLauncherCatalog, findLauncherItem } from '@/lib/launcherCatalog';
+import { getLauncherCatalog, findLauncherItem, resolveCatalogId } from '@/lib/launcherCatalog';
 import { QUICK_LINK_BY_ID } from '@/pages/AgentLauncherPage';
 import appTsxRaw from '../../app/App.tsx?raw';
 import launcherSource from '../../pages/AgentLauncherPage.tsx?raw';
@@ -174,8 +174,38 @@ describe('App.tsx 路由覆盖', () => {
     // 目录闸已经收进 useTrackedNavigate（出口本身），调用方不再各写一遍——
     // 写在调用方就会有人忘记：移动端的「米多早报」就是这么记了个目录里没有的 id。
     const tracker = fs.readFileSync(path.resolve(TEST_DIR, '../useTrackedNavigate.ts'), 'utf8');
-    expect(tracker, '记账出口没有目录闸，不在目录里的 id 会被记进使用统计').toMatch(
-      /if \(entry && findLauncherItem\(catalog, migrateLegacyNavId\(entry\.agentKey \|\| entry\.id\)\)\)/,
+    expect(tracker, '记账出口没走 resolveCatalogId，规范 id 会两边各算各的').toMatch(
+      /resolveCatalogId\(catalog, \{ id: entry\.id, agentKey: entry\.agentKey, route \}\)/,
     );
+    expect(tracker, '记账出口没有目录闸：解析不出规范 id 时不该记账').toMatch(/if \(entry && canonicalId\)/);
+    // 排序侧必须用同一个解析器，否则记进去的 key 和查出来的 key 对不上
+    expect(launcherSource, '「你常用的」排序没走 resolveCatalogId').toContain('resolveCatalogId(launcherCatalog');
+  });
+
+  it('appKey 与目录 id 不同名的入口也要能解析出规范 id', () => {
+    // /task-tree 的 appKey 是 task-tree-agent、/emergence 是 emergence-agent——
+    // 目录 id 由路由推导，两者故意不同名。只按 agentKey 查会解析失败，
+    // 而失败的后果是记账**整条被丢掉**（比记个幽灵 id 更糟：排行榜里直接没有）。
+    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
+    const mismatched = catalog.filter((item) => item.agentKey && item.agentKey !== item.id);
+    expect(mismatched.length, '没有 appKey 与目录 id 不同名的入口，判据已经失效').toBeGreaterThan(0);
+
+    for (const item of mismatched) {
+      expect(
+        resolveCatalogId(catalog, { id: item.id, agentKey: item.agentKey, route: item.route }),
+        `${item.route}（appKey ${item.agentKey}）解析不出目录 id`,
+      ).toBe(item.id);
+      // 只给 agentKey 也要能解析——首页瓦片就是这么传的
+      expect(
+        resolveCatalogId(catalog, { id: item.agentKey!, agentKey: item.agentKey }),
+        `只给 agentKey ${item.agentKey} 时解析不出目录 id`,
+      ).toBe(item.id);
+    }
+  });
+
+  it('目录里没有的入口仍然解析不出来（闸不能被顺手拆掉）', () => {
+    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
+    expect(resolveCatalogId(catalog, { id: 'daily-post', agentKey: 'daily-post', route: '/daily-post' })).toBeUndefined();
+    expect(resolveCatalogId(catalog, { id: '不存在的东西' })).toBeUndefined();
   });
 });

@@ -146,6 +146,41 @@ export function migrateLegacyNavId(id: string): string {
     .replace(/^__(.+)__$/, '$1');
 }
 
+/**
+ * 把「一个入口引用」解析成目录里的**规范 id**。
+ *
+ * 为什么不能直接拿 agentKey 当 id：目录 id 由路由推导（navIdFromPath），
+ * 而 appKey 是应用标识，两者故意不同名的就有好几个——
+ * `/task-tree` 的 appKey 是 `task-tree-agent`、`/emergence` 是 `emergence-agent`。
+ * 只按 agentKey 查会查不到，只按 id 查又会漏掉传 agentKey 的调用方。
+ *
+ * 所以按可靠性依次试：id / agentKey 当目录 id → 按 agentKey 字段找 → 按路由找
+ * → 按路由推导的 id 找。记账与「你常用的」排序都走这一个函数，
+ * 两边各写一套就会出现「记进去的 key 和查出来的 key 对不上」。
+ */
+export function resolveCatalogId(
+  catalog: LauncherItem[],
+  ref: { id?: string; agentKey?: string; route?: string },
+): string | undefined {
+  for (const candidate of [ref.agentKey, ref.id]) {
+    if (!candidate) continue;
+    const hit = findLauncherItem(catalog, migrateLegacyNavId(candidate));
+    if (hit) return hit.id;
+  }
+  if (ref.agentKey) {
+    const byAgentKey = catalog.find((it) => it.agentKey === ref.agentKey);
+    if (byAgentKey) return byAgentKey.id;
+  }
+  if (ref.route) {
+    const path = ref.route.split(/[?#]/)[0];
+    const byRoute = catalog.find((it) => it.route.split(/[?#]/)[0] === path);
+    if (byRoute) return byRoute.id;
+    const derived = findLauncherItem(catalog, navIdFromPath(path));
+    if (derived) return derived.id;
+  }
+  return undefined;
+}
+
 /** 按 id 查找 LauncherItem（自动兼容 v7 之前的旧 ID 格式） */
 export function findLauncherItem(
   catalog: LauncherItem[],
