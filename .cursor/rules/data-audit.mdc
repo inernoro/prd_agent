@@ -5,7 +5,7 @@ description: 数据关系审计：新增实体引用时必须审计所有消费�
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/data-audit.md
-     生成时间: 2026-08-04T06:14:59Z -->
+     生成时间: 2026-08-04T08:25:38Z -->
 
 
 # 数据关系审计原则

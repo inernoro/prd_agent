@@ -1,6 +1,7 @@
 ---
 paths:
   - "prd-admin/src/**/*.tsx"
+  - "prd-desktop/src/**/*.tsx"
   - "prd-api/src/**/*.cs"
 ---
 

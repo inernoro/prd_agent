@@ -284,9 +284,32 @@ def check_host_specific_rules_are_announced() -> None:
             )
 
 
+def check_cursor_scopes_are_derived() -> None:
+    """The Cursor mirror must derive its globs, never keep a second hand-written copy.
+
+    `.cursor/rules/*.mdc` is generated from `.claude/rules/`. Its scoping used to be
+    a hardcoded table inside sync-cursor-rules.sh, so widening a rule's `paths` left
+    Cursor on the old narrow scope - the rule silently stopped loading there while
+    looking fixed here. `globs:auto` derives from the source instead, which makes
+    that drift unrepresentable; this guard stops anyone pasting a literal list back.
+    """
+    script = REPO / "scripts" / "sync-cursor-rules.sh"
+    if not script.exists():
+        return
+    for i, line in enumerate(script.read_text(encoding="utf-8").splitlines(), 1):
+        m = re.match(r'\s*"([a-z0-9-]+)\|globs:\s*(.+?)\|', line)
+        if m and m.group(2).strip() != "auto":
+            fail(
+                f"scripts/sync-cursor-rules.sh:{i}: rule {m.group(1)} hardcodes globs "
+                f"({m.group(2)[:40]}...). Use `globs:auto` so the scope derives from "
+                ".claude/rules/ and cannot drift from it."
+            )
+
+
 def main() -> int:
     print("Claude memory contract:")
     check_host_specific_rules_are_announced()
+    check_cursor_scopes_are_derived()
     check_rules()
     check_intro_lines()
     check_claude_md_size()

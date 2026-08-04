@@ -1,11 +1,11 @@
 ---
-globs: prd-admin/src/stores/toolboxStore.ts,prd-admin/src/lib/adminMenu*.ts,prd-admin/src/pages/home/LandingPage.tsx,prd-admin/src/pages/MobileHomePage.tsx
+globs: prd-admin/src/**/*.tsx,prd-admin/src/stores/**/*.ts,prd-admin/src/lib/**/*.ts
 description: 新 Agent 默认注册百宝箱 + 带 wip:true + 交付必须声明位置和点击路径
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/navigation-registry.md
-     生成时间: 2026-08-04T06:14:59Z -->
+     生成时间: 2026-08-04T08:25:38Z -->
 
 
 # 导航注册规则（新 Agent / 新路由必须自动出现在所有入口）

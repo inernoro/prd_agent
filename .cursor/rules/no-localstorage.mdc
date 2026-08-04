@@ -1,11 +1,11 @@
 ---
-globs: prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx}
+globs: prd-admin/src/**/*.ts,prd-admin/src/**/*.tsx,prd-desktop/src/**/*.ts,prd-desktop/src/**/*.tsx
 description: 禁止使用 localStorage，统一 sessionStorage
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/no-localstorage.md
-     生成时间: 2026-08-04T06:14:59Z -->
+     生成时间: 2026-08-04T08:25:38Z -->
 
 
 # 客户端存储选型（默认 sessionStorage，localStorage 限定场景）

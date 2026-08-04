@@ -13,3 +13,6 @@
 | fix | claude-md | 修复裁剪 AGENTS.md 索引表打断 Codex 规则发现路径导致 GatewayDataDomainGuardTests 变红；改为显式点名 .Codex/rules 两条并说明触发范围 |
 | fix | claude-md | 按 Codex 评审补齐 4 条过窄的 paths：production-release-safety 补 fast.sh 与整个 deploy/nginx、config-runtime-drift 补 appsettings 与 .env、enum-ripple-audit 补 pages/lib 下的常量注册表、onboarding-tips 补带教程的产品页 |
 | test | claude-md | 守卫新增断言：.Codex/rules 每条必须在 AGENTS.md 被点名，且更长的同名路径不算数（Codex 无按需加载，未点名等于永不加载） |
+| fix | claude-md | Codex 第二轮评审：quickstart-zero-friction 补 quick*.sh、ai-model-visibility 补 prd-desktop、full-height-layout 补 prd-admin/src/layouts |
+| refactor | claude-md | sync-cursor-rules.sh 的 glob 改为 globs:auto 从源规则 paths 派生，消灭「同一份作用域信息手工维护两份」的漂移类；派生时当场暴露并修正 cds-first-verification 两侧定性不一致 |
+| test | claude-md | 守卫新增断言：cursor 同步表禁止硬编码 glob，必须走 globs:auto |

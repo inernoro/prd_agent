@@ -1,11 +1,11 @@
 ---
-globs: prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx}
+globs: prd-admin/src/**/*.ts,prd-admin/src/**/*.tsx,prd-desktop/src/**/*.ts,prd-desktop/src/**/*.tsx
 description: 前端架构：无业务状态 + SSOT + 注册表 + 统一 Loader + 默认可编辑
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/frontend-architecture.md
-     生成时间: 2026-08-04T06:14:59Z -->
+     生成时间: 2026-08-04T08:25:38Z -->
 
 
 # 前端架构规则

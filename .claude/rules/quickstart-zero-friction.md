@@ -1,7 +1,8 @@
 ---
 paths:
   - "**/exec_*.sh"
-  - "**/quick*.ps1"
+  - "quick*.sh"
+  - "quick*.ps1"
   - "**/Dockerfile*"
   - "scripts/**/*.sh"
 ---
