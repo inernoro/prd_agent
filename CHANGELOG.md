@@ -8,6 +8,1316 @@
 
 ## [未发布]
 
+### 2026-08-03
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 修复真实录音大小上传 Cloudflare R2 时的签名不一致，并将代表性音频写读删纳入就绪门禁 |
+| test | prd-api | 阻止用小文本探针或仅检查请求参数替代真实录音对象存储验收 |
+
+### 2026-08-01
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 每日验收报告和通知摘要强制展示 P0-P3 分布与非零级问题概述 |
+| fix | doc | 修正文档可读性守卫对小范围 PR 的误判 |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0，D4 +0/-0（false-positive pnpm 跳过），D6 5 条（report-agent 图片评论补章节、cds 外部接入补章节、release-system v2 补章节，其余两条确认已自建覆盖），D7 修复裸引用 1 处 |
+
+### 2026-07-31
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | create-visual-test-to-kb | 将每日验收根因结论和规范示例统一为有限枚举，停止从证据叙述中猜测 Verdict |
+| test | create-visual-test-to-kb | 增加核心用例结构化事实、未执行或覆盖缺口与完整性冲突、完整通过冲突和自然语言干扰的 Verdict 真值表测试 |
+| rule | repository | 增加 Review 范围熔断规则，阻止机器评论驱动的无界扩张 |
+| fix | cds | 修复授权申请仅出现在信息中心、通知外发重复配置及失败正文过长 |
+| fix | cds | 修复按项目别名授权后 CLI 保存错误项目 ID 导致后续操作被拒绝 |
+| feat | cds | 启动提示词和一键脚本新增按角色生成的决策回复协议 |
+| test | cds | 覆盖角色协议生成与 harness 重复安装行为 |
+| rule | doc | 新增「文档说人话标准」：每篇长期文档必须带导读三行（一句话 / 谁该读 / 读完能做什么），配机械校验脚本 + 棘轮基线 + CI 闸门 |
+| docs | doc | 新增「百科全书导读」，按角色与场景给出阅读路线，明确 352 篇文档不必通读、地基只有 6 篇 |
+| docs | doc | 回填 12 篇入口文档的导读三行（愿景 / 产品 / 快速开始 / 原则速查 / 命名规则 / 文档模板 / 验收规范 / 文档清单 / 网关设计与计划 / 构建闸债务 / 最近一期周报） |
+| chore | ci | CI 新增 docs-readability job：导读欠账只许降不许升，新文档缺导读直接失败 |
+| fix | doc | 修复文档互引点不开：791 处写成行内代码的引用全库改写为可点链接，覆盖 198 篇 |
+| rule | doc | 标准新增「引用必须可点」条款 + 死链零容忍闸门，并写明四道旧栅栏（doc-sync / 熵减 / 双链 / 模板清单）为何都没拦住 |
+| rule | doc | 明确周报是 md 与 html 双产物，两版的那句话（本周一句话 / 封面故事大标题）各有守卫测试盯住 |
+| chore | doc | 熵减扫描从六维扩到七维，新增「文档可读性」维度（导读三行 / 引用可点 / 死链） |
+| docs | doc | 新增推广计划与状态看板，按读者数量分四波偿还存量 340 篇 |
+| docs | doc | 波 2 试做：12 篇高频入口文档（开发文档 / CDS 教程 / 缺陷指南 / 冒烟测试 / 每日验收 SOP / 索引维护 / 全平台操作手册 / CDS 规格 / 缺陷规格 / 平台需求规格 / 海鲜市场规格 / 演讲智能体规格）补齐导读三行，并清掉与之重复的旧「目标读者」行 |
+| rule | doc | 判据返工：说人话不等于降密度——新增「可替换性测试」，术语从一律禁止改为「允许但必须紧跟中文括号解释」，一句话长度改为 20-100 字并禁空话套话 |
+| docs | doc | 按新判据重写 16 篇的一句话，把关键机制、对象、约束、数字写回去 |
+| rule | doc | 标准扩到正文：新增条款「只写人类要掌控的层次」——留为什么做 / 给谁用 / 数据流 / 关键表设计 / 取舍 / 验收，删实现代码、接口签名、目录树、逐文件改法；判据为「实现无关性测试」 |
+| chore | ci | 棘轮从两项扩到四项，新增「正文实现代码行数」与「散落源码路径处数」，源码路径集中在「实现来源」小节可豁免 |
+| docs | doc | 按新条款重写 GitHub 基础设施设计文档做样例：271 行降到 156 行，代码块 4 个降到 0 |
+| docs | doc | 波 6a：26 篇文档正文里的 362 行实现代码全部换成设计原则（接口签名换成能力表、样式代码换成样式契约、索引脚本换成索引意图表），实现代码块清零 |
+| docs | doc | 顺带回填 25 篇被改文档的导读三行，全库达标率 8% → 15% |
+| docs | doc | 波 2 收尾：指南类 66 篇与规格类 21 篇全部补齐导读三行，读者最多的两类达标率 100%，全库达标率 15% → 33% |
+| docs | doc | 波 3：规则类 27 篇与债务台账 75 篇全部补齐导读三行，两类达标率 100%，全库达标率 33% → 58% |
+| docs | doc | 波 4：设计类 104 篇与计划类 25 篇全部补齐导读三行，除历史周报外六类达标率 100%，全库 58% → 90% |
+| docs | doc | 波 7：债务台账从 75 册收拢到 36 册（11 册吸收 44 篇同模块台账，内容原样保留，49 个文件的引用同步改写），`ls doc/` 里设计文档不再被债务淹没 |
+| docs | doc | 54 行自认已解决的债务条目移到各册文末「已结清（供回溯）」，台账正文只剩未还的账 |
+| rule | doc | 命名规则给 `debt.*` 定默认值：默认一个模块一册，只有「量大 + 被反复独立引用」的子模块才单独成册 |
+| docs | doc | 波 6b：正文散落的源码路径 698 处降到 130 处（-81%），其中 236 处搬进各篇文末「实现来源」小节或改写成人话 |
+| rule | doc | 标准补「成块 vs 夹叙」界线：专门指路的小节 / 表头点名的列 / 首列是指路标签的行算成块可跳过，夹在叙述句里的路径才算欠账；关键是逼作者把指路信息摆到明处 |
+| chore | ci | 校验脚本按上面的界线识别指路列/行，并补 6 项守卫，含「把表头改成说明就能绕过闸门」的反向用例 |
+| docs | doc | 波 5：52 条规则补齐轻量导读两行（这条规则要求什么 / 什么时候会撞上），顺手清掉 14 条与之重复的「触发：」行 |
+| rule | doc | 标准新增条款 7：规则走两行轻量导读（读者主要是 AI，不强求「读完能做什么」）；技能不加导读行，改为要求 frontmatter 的 description 能说清触发时机 |
+| chore | ci | 棘轮从四项扩到六项，新增「规则缺导读条数」与「技能 frontmatter 欠账个数」；CI 路径过滤覆盖 .claude/rules 与 SKILL.md，改规则会触发这道闸 |
+| chore | doc | 熵减 D7 维度同步扩到规则与技能 |
+| rule | doc | 顺手清掉 14 条规则里残留的 67 个表情符号（对错标记改成「正确 / 错误」「要做 / 不做」文字），对齐 CLAUDE.md 第 0 条禁 emoji |
+| fix | doc | 棘轮判据修正：从只比每类总数改为记逐篇明细，堵住「修好一篇旧的、同时新增一篇不合规的」这种总数持平却偷换存量的漏洞（PR review 提出） |
+| fix | prd-admin | 三处代码注释里指向已合并台账的引用改指新册子与小节，避免点进去是空文档 |
+| fix | doc | 规则导读校验补上「代码块里的示例不算数 + 必须写在标题之后」，堵住展示格式的模板自己骗过闸门 |
+| fix | ci | 三份汇报模板登记进文档闸的触发路径，并让守卫自己校验这条接线——此前只改模板的 PR 会整个跳过该闸，守卫等于没设防 |
+| fix | doc | 文档导读与规则导读统一位置判据：写在标题之前、整篇没标题、或只写在代码块示例里一律判红；技能 frontmatter 的 name 有键无值同样判红 |
+| fix | doc | 导读位置判据收口到「第一个小节标题之前」，5 篇把导读埋在正文小节里的文档上移到标题下；技能 frontmatter 的 name 必须是 kebab-case 且与目录名一致 |
+| fix | doc | 两份文档目录的标题与 H1 对齐（8 处存量漂移）并加守卫；技能 frontmatter 按 YAML 语义取值，`description:` 后只写注释视为缺失 |
+| fix | doc | 规则导读同样必须在第一个小节标题之前；目录守卫先比成员集再比标题，漏登或幽灵条目直接判红 |
+| fix | doc | 闸门认波浪号代码围栏；导读排在正文散文之后同样判红；规则扫描与 CI 过滤覆盖 Codex 侧规则目录（两条补导读）；6 处 CDS 代码注释改指合并后的复制集台账 |
+| fix | doc | 棘轮基线自身与目标分支比对，堵住「先制造欠账再跑 --update-baseline」；围栏保留定界符长度与语言标记解析；技能 description 必须讲清触发时机 |
+| fix | doc | 导读豁免收窄到周报文件名；基线逐篇明细比对；源码路径识别扩到 scripts/技能/规则/工作流；44 册合并后的代码面包屑全量重指并加落空守卫 |
+| fix | doc | 周报豁免加尾锚；push 到 main 时基线与推送前 commit 比对；docs 闸门覆盖源码树；面包屑守卫改扫全仓 |
+| fix | doc | docs 闸门触发面改为全仓兜底，与面包屑守卫的扫描面对齐；guide.list 成员判定只认目录条目行 |
+| fix | doc | 死链闸认带标题的链接与引用式定义行；散落路径识别补齐 jsx/sql/html 等实现扩展名 |
+| fix | doc | 技能 frontmatter 里 name/description 写多遍判红，避免判据与 YAML 消费方看到不同的值 |
+| fix | doc | 技能扫描覆盖 .agents/skills；两笔误埋进「已结清」的活账归位并加守卫；合并知识库册重复的实现来源小节 |
+| fix | doc | 闭合围栏不许带信息串；取不到对照基线判失败不再静默降级；面包屑守卫改扫全仓可读文本并修好 8 处旧文档名引用；看板与台账数字按最终判据刷新 |
+| fix | doc | 源码路径词边界改为「前面不是路径字符」，认得出反引号包着的隐藏目录路径，同时不再误判更长路径里的同名片段 |
+| fix | doc | 围栏闭合判定改看原始后缀（```{} 不算闭合）；前缀不在七类里的文档不再被整篇跳过，闸门直接判红；债务台账的散落路径数刷新到最终口径 |
+| fix | doc | 两处第一屏扫描合并为唯一实现；YAML 标量按转义规则解析；「走到哪修到哪」进闸门并补齐 5 篇被碰过的存量报告导读 |
+| fix | doc | 标准里两条过期边界更正；技能 frontmatter 定界行精确匹配；面包屑白名单改按「文件+目标」配对，防同名死引用扩散 |
+| fix | doc | 周报的别名与字数豁免收窄到周报文件名；未加反引号的裸文档名也判为裸引用并支持自动改写 |
+| fix | doc | 裸引用识别认 doc/ 前缀形式并自动转链接；自动改写避开行内代码；技能守卫改判「每个根都被扫到」而非数量下界 |
+| fix | doc | 源码根补 .agents/skills；doc/ 子目录文档判红（原本整篇跳过）；CI base 选择覆盖手动 dispatch 与新分支首推 |
+| fix | prd-admin | 知识库分享弹窗改为范围优先：顶栏分享可一键切「整个知识库 / 只分享当前这篇」，一句话讲清可见范围，修复「想分享单篇却公开整库」 |
+| fix | prd-admin | 修复分享弹窗重复生成链接时列表多出一行同 id 重复卡片（后端复用链接，前端改为按 id 覆盖） |
+| feat | prd-admin | 单篇分享范围下，若整库分享链接仍生效则当面告警并给出撤销入口，避免以为「只分享了一篇」 |
+| feat | prd-admin | 知识库下载改为可选范围与格式：默认「当前文章」直接落一个文件，也可整库打包 ZIP；格式支持 Markdown / 纯文本 / 原始文件 |
+| fix | prd-admin | Markdown 代码块与行内代码改走双主题 token，浅色纸面下不再出现黑底白字的暗块；高亮主题跟随明暗切换 |
+| polish | prd-admin | 统一文档阅读区工具栏尺寸规矩：按钮 28px、纯图标 28x28、状态药丸 22px，消除同一行按钮忽大忽小 |
+| fix | prd-admin | 分享默认范围改为「只分享当前这篇」，整库公开不再是默认；面板改成清单式版式（状态一句话 + 链接高亮 + 设置行 + 底部撤销） |
+| security | prd-api | 知识库分享不再默认分配数字短链 /s/{seq}：对外主链恒为不可枚举的 /s/lib/{token}，数字短链改为用户主动点才生成（新增 POST share-links/{id}/short-link） |
+| feat | prd-admin | 分享面板新增二维码，手机扫一扫直接打开分享页 |
+| polish | prd-admin | 桌面端分享改为从「分享」按钮就地悬浮弹出（AnchoredMenu），不再居中弹窗遮挡正文；手机端仍走弹窗 |
+| polish | prd-admin | 主题切换按钮新增 inline 形态（36px 药丸），修复分享阅读页顶栏与「返回知识库」一高一矮 |
+| polish | prd-admin | 知识库左栏顶部收敛为「搜索 + 筛选」一行：排序 / 标题显示 / 更新时间 / 标签全部收进一屏平铺的筛选面板，已选标签仍在外可见 |
+| fix | prd-admin | 列表「更新时间」默认不再显示（时间挤占标题可见宽度），可在筛选面板打开；验收库仍默认显示 |
+| fix | prd-admin | 修复文档行首悬浮时出现黑方块：批量勾选框不再用近黑遮罩盖住文件图标，改为与图标互斥同槽显示，token 底色同步改为常规表面 |
+| polish | prd-admin | 筛选面板内「排序」与「标题显示」段控尺寸统一（取小号），并去掉与分组标题重复的「排序」二字 |
+| polish | prd-admin | 阅读区工具栏收敛：转录 / 生成字幕 / 智能体 / 证据板 / 历史版本 / 订阅信息 收进「更多」菜单，外面只留评论 / 收起 / 全屏 / 编辑 |
+| fix | prd-admin | 修复大库里读着「后端搜索命中」的文档时分享范围静默回落整库：DocBrowser 回传带 searchResults 兜底的选中条目，页面用它做「当前这篇」的锚点 |
+| fix | prd-admin | 分享与下载弹窗改为 createPortal 到 body + 高度走 inline style，避免被祖先 overflow/transform 裁切（frontend-modal.md 三硬约束） |
+| fix | prd-admin | 下载「纯文本」格式真正去标记（Markdown 语法 / HTML 标签），不再只换后缀 |
+| chore | doc | 每日熵减计划：D1-D4 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项；`**pnpm**` 复核确认仍为正文加粗提及非技能表行，0 改动）；D6 处理 5 条最旧未登记 changelog（录音上传索引/数据字典已随原提交自建覆盖；LLM 网关文档改名本身即文档变更；上一轮熵减计划记录属本技能自身历史；网关控制台排版契约已自建 `rule.platform.llm-gateway.console-design-tonality.md`；三端超长会话已自建 `debt.platform.login-session.md` 全覆盖），均无需新增章节，manifest 累计 506 条；D5 codebase-snapshot 仍停留在 PR #696（2026-05-31），近两月网关剥离/CDS 发布系统/录音状态机等大量变更未反映，超出无人值守自动化安全范围，继续标记待人工审查，未改动 |
+| fix | llmgw | 区分业务请求与异步任务状态查询，默认按逻辑请求展示并保留上游调用明细 |
+| fix | llmgw | 保持分镜提交与轮询的逻辑链，并按 ProviderAttempts 统计真实上游调用 |
+| fix | llmgw | 修正详情链路的任务匹配、索引和物理调用计数，补齐直连视频日志关联并避免共享 RunId 过度聚合 |
+| fix | prd-api | 补齐视频任务日志关联字段，避免状态查询和结果下载重复计入单次价格 |
+| test | llmgw | 更新租户总览静态守卫以覆盖业务操作过滤器封装 |
+| fix | cds | 修复验收报告缺口卡片锚点失效，增加内部链接真实点击门禁并要求至少审计一份交互报告 |
+| ci | scripts | 修正文档可读性门禁对无 doc 改动 PR 的误判 |
+| fix | llmgw | 上游调用仅统计已发起的 Provider 请求，排除构建失败和并发准入拒绝的候选 |
+| fix | cds | 修复编号缺陷清单标题无法生成重点卡跳转的问题 |
+| fix | llmgw | 补齐传输异常与 WebSocket ASR 预检失败的 Provider 外呼计数证据 |
+| fix | prd-admin | 收紧录音实时原文高度并支持折叠，避免长文本遮挡波形与控制区 |
+| fix | prd-admin | 录音转录完成后直达原文结果，知识库默认最新创建优先并保留返回定位高光 |
+| polish | prd-admin | 统一录音播放入口与原文跟随高亮，修复移动端转录文字重叠和重复转录阶段感 |
+| fix | prd-admin | 修复耐久队列录音仍返回列表、待归档音频无播放与刷新详情深链循环 |
+| fix | prd-admin | 串行收口本机录音分片，修复 WebM 音频误判为视频及长原文与反向链接区域重叠 |
+| test | prd-admin | 新增真实浏览器录音注入验收并接入 PR 必过门禁，覆盖长原文布局、结束落点、本机播放、单一内容模式、刷新稳定性、最新排序与返回来源高光 |
+| polish | prd-admin | 将录音结束等待改为三步横向进度，展示当前动作、已等待时间与前台等待上限 |
+| polish | prd-admin | 明确云端副本的处理范围、可离开提示和完成结果，并在归档完成后自动刷新当前页 |
+| feat | prd-admin | 无精准时间戳的录音按语速估算逐句跟随，支持播放高亮、点句跳播与逐句校对 |
+| fix | prd-admin | 快速创建新增录音入口；同一录音更新改为后台局部刷新，云端失败明确显示排队重试，单一原文视图不再伪装成切换按钮 |
+| rule | acceptance | 将连续任务拆为正常、慢、失败、恢复四态验收，禁止模拟数据冒充真实外部依赖成功 |
+| test | prd-admin | 新增通用连续性探针，量化首次反馈、首次可用结果、文档重启、路由写入和内容加载回退 |
+| feat | skill | 米多刊系新增刊徽水印：报头右上角一枚天体 SVG（日报月亮 / 周报地球 / 验收北极星 / 巡检彗星，月报太阳预留），衬字板式 opacity 0.13，解决此前四刊只靠身份色区分、缩略图与黑白打印下几乎分不出是哪种报 |
+| rule | doc | report-design-system 增 §1.4 刊徽注册表：一刊一徽映射表 + 画法必须走剪影刻线语法（禁线框球）+ 板式参数 + 新增刊物的三步清单 |
+| test | ci | 新增 scripts/tests/test_report_emblems.py（CI 自动执行）：钉死每刊有且只有自己那枚徽、SVG 内部 id 可解析、id 带 emb- 前缀防撞车、.emblem 规则确有绝对定位与低透明度 |
+| chore | api | 重新生成 official-skills.generated.json（create-visual-test-to-kb 在分发套装内，archive_report.py 改动须同步嵌入资源） |
+| fix | skill | 日报模板的刊徽 media 覆盖原本写在基础规则之前，同特异性下被整条盖掉，窄屏拿到的仍是桌面尺寸；移到基础规则之后与周报对齐 |
+| test | ci | 刊徽守卫补两条判据：opacity 必须显式声明且落在 (0,0.3]（原先整条删掉时 re.search 返回 None 会静默放行，而 CSS 默认 opacity:1 正是要防的退化）；@media 覆盖必须排在基础规则之后 |
+| test | ci | 刊徽守卫补真实渲染验证：实跑 build_interactive_html 两种 flavor，断言各自戴对刊徽——原先只扫源码，_FLAVORS 里两枚对调或都赋同一枚都查不出 |
+| fix | ci | 刊徽守卫的 @media 归属判定改按花括号配对，不再看规则所在行有无 @media：验收生成器里 @media 与规则分处两行，按行判会把响应式规则误认成基础规则，层叠顺序检查对它完全失明 |
+| rule | doc | 刊徽尺寸改为逐产物登记：模板 92/70 与验收档案 86/60 的差异写明为等比例外（档案报头本就更矮：stamp 44 vs 46、padding-bottom 12 vs 14），不再让规则声称「全刊系一个数」而实现另一套 |
+| test | ci | 刊徽守卫新增尺寸契约校验：桌面/窄屏尺寸与偏移逐产物比对规则登记值，改实现不同步改规则即 CI 红 |
+| fix | ci | 刊徽守卫改为运行时解析规则 §1.4 尺寸表，不再自存副本：原实现把规则数值硬编码进测试，等于在防漂移的工具里内置一处漂移（只改规则不改守卫仍绿）。解析失败显式判红，拒绝用内置默认值兜底 |
+| fix | ci | 尺寸校验补 height：刊徽 viewBox 为正方形，只查 width 时 height 可以悄悄脱钩把水印拉扁 |
+| fix | ci | 尺寸校验改取层叠胜者：CSS 同特异性下后写的赢，原实现取第一条匹配——在合法 92px 之后追加一条 .emblem{width:120px}，浏览器渲染 120px 而守卫仍报「符合登记值」；同层出现互相打架的重复声明一律判红 |
+| fix | ci | 刊徽守卫接上 CI 触发：release-script-test 的 path filter 原先只含 scripts/tests/test_*.py，被测的三个产物与设计系统规则都没登记——只改模板/规则的 PR 一路全绿而守卫从未跑过，防漂移的工具自己没接上线。顺带补上 test_live_asr_websocket_proxy 的被测文件 cds/src/scheduler/nginx-template.ts（原只在 cds filter 里，那个 job 不跑这批 Python 守卫） |
+| test | ci | 刊徽守卫新增 check_ci_wiring：解析 ci.yml 的 release_scripts filter，断言自己的每个输入文件都被某条 glob 覆盖；filter 结构变了解析不出来也判红。日后加第五刊时忘改 ci.yml 会当场红，而不是静默失去覆盖 |
+| fix | ci | 定位类判据改取层叠胜者：position/pointer-events 原用「某条规则里出现过」判定，在合法规则后追加一条 .emblem{position:static;pointer-events:auto} 即可让刊徽重回 flex 流并拦鼠标而守卫全绿。取值口径收敛成唯一的 cascade_value，尺寸校验一并复用；顺带把同属衬字契约但一直没查的 z-index 纳入（漂成 1 以上刊徽就从衬底变成盖住刊名） |
+| fix | ci | 刊徽守卫补三处判据洞：opacity 改走 cascade_value 并拒收非数值胜者（原正则只认数字，opacity:unset 被跳过而保留前面的 0.13，实际解析为 1 完全不透明）；刊徽全集不再与 ALL_KINDS 求交（未注册的 data-emblem 会被交集滤掉，报告多一枚不受检水印仍判绿）；窄屏 top/right 纳入校验 |
+| rule | doc | report-design-system §1.4 尺寸表新增「窄屏偏移」列（模板 top:-8px right:-4px / 档案 top:-8px right:-2px）：原先只登记桌面偏移，窄屏可随意漂——档案窄屏 right 改成 -200px 刊徽整个移出屏幕而守卫判绿 |
+| rule | doc | predicate-and-wiring-discipline 补形状 6（判据读的值不是真正生效的那个值：取第一条而非层叠胜者 / 扫源码字面量而非求值结果 / 修完要横扫同类）与形状 7（守卫自己没接上线，形状 2 的递归：CI path filter 不含被守文件），自查清单同步补两条 |
+| fix | ci | 刊徽守卫补定位上下文两条判据：刊徽必须长在 masthead 报头内（模板查源码、验收生成器查渲染产物，两条路径合起来必须覆盖全部产物否则判红），且 .masthead 必须是已定位祖先（position:relative 被拿掉时绝对偏移会锚到页面级祖先，水印跑出报头，而只看 .emblem 自身声明的判据全绿） |
+| fix | ci | 刊徽守卫补前景层级判据：衬字板式是「刊徽 z-index:0 垫底 + .masthead .t/.r/.stamp position:relative;z-index:1 提到上层」两半合起来才成立，原先只查刊徽那半——三个产物同时删掉前景规则守卫仍判绿，而已定位的 level-0 刊徽会盖过文档流里的报头内容。选择器匹配同时改为按逗号拆开比对（前景是一条三选择器规则，整串 fullmatch 一条都匹配不到） |
+| fix | ci | 报头归属判据再收一层：SVG 必须在 `.emblem` 包裹元素内，不只是在 masthead 内——所有样式（定位/尺寸/透明度/层级）都挂在 wrapper 上，把 SVG 挪出 wrapper 当报头兄弟节点时上一版判据仍判绿，而 SVG 会退化成 120x120 文档流 flex 子项撑歪报头 |
+| fix | ci | 守卫导入验收生成器时禁用字节码缓存：Python 按 (mtime 秒, 文件大小) 判 .pyc 新旧，改一处等长标记再改回来两项都不变，缓存被判有效、导入到旧字节码——红绿自测会因此得到错误结论 |
+| fix | ci | 刊徽发现正则改为捕获整个属性值：原先 `([a-z]+)` 只认纯小写，data-emblem="asteroid-2" 这类值在**发现环节**就进不了集合，后面混装判定与 SVG 完整性检查再宽也看不到它 |
+| fix | ci | 守卫改为直接编译执行生成器源码文本，彻底绕开字节码缓存：上一版置 sys.dont_write_bytecode 只挡住写、挡不住读，只要之前留下过合法 .pyc，exec_module 仍会加载旧字节码，守卫验的就不是盘上这份代码 |
+| fix | ci | 刊徽守卫改为「凡能命中该元素的规则、每条声明都必须合约定值」，不再按字面选择器匹配 + 算层叠胜者：CSS 胜者由特异性先于源码顺序决定，在 .masthead 前插一条 header.masthead{position:static} 浏览器就用 static，而只认字面 .masthead 的判据完全看不见它。守卫不实现特异性计算（那等于在测试里重写 CSS 引擎），改用更强的契约堵死整类失明 |
+| fix | ci | data-emblem 发现与计数改为单双引号都认；顺带修好规则体正则会把 @media 整块吞掉、导致嵌套的窄屏规则整档消失的问题 |
+| fix | ci | 契约元素上拒收能绕过长属性判据的简写/逻辑属性（inset* / all / inline-size / block-size）：判据按长属性名精确取值，这些写法根本不进那条正则——`.emblem{inset:0}` 把桌面偏移改成 0、`all:initial` 把整份契约重置，守卫都判绿 |
+| fix | ci | data-emblem 属性正则允许等号两侧空白：HTML 允许 `data-emblem = "x"`，此前那枚水印在发现环节就消失 |
+| fix | ci | data-emblem 发现正则改为按 HTML 属性语法穷举三种合法写法（双引号/单引号/无引号），不再按「想得到的写法」枚举：该正则已被连续三轮指出收窄，回头对照语法自查又发现第四个维度——无引号值 `data-emblem=asteroid2` 同样合法且仍然漏 |
+| fix | ci | 刊徽守卫统一大小写口径：HTML 属性名/标签名、CSS 属性名/at 规则名、关键字值在规范里都是 ASCII 大小写不敏感，判据此前一律按小写字面匹配——DATA-EMBLEM="x"、.emblem{POSITION:static}、<SVG> 三种写法浏览器照用而守卫全绿；同时修好三种合法写法（大写标签、单引号 class 值、@MEDIA）此前会被误判为红的假阳 |
+| fix | ci | class 匹配改为按空白分词整词比对，不再用 `\bcls\b`：`\b` 把连字符当词边界，`class="masthead-alt"` / `"emblem-alt"` 会命中判据而浏览器里 `.masthead`/`.emblem` 根本不匹配——重命名 class 导致样式全断，守卫却判绿 |
+| fix | ci | 补查行内 style：行内声明优先于任何样式表规则，而判据只扫样式表。给刊徽包裹加 `style="position:static;pointer-events:auto;opacity:1"` 就能让水印回到文档流、变不透明、拦鼠标，守卫全绿。三类契约元素（报头/刊徽包裹/报头前景）的行内 style 一并按同一契约校验并拒收简写 |
+| fix | ci | 扫描前先剥 HTML 注释：把 SVG 用 `<!-- -->` 包起来「先留着参考」是常见改法，浏览器不渲染而按原始文本扫描的判据照样数到它，报告上一枚水印都没有却判绿 |
+| fix | ci | 可见性纳入刊徽契约：`display:none` / `visibility:hidden` 下前面查的每条属性都仍然正确，但任何视口都不渲染水印——「水印存在」这件事本身此前没进过判据 |
+| fix | ci | 报头内禁用不点名类的结构性选择器：`.masthead > div:first-child` 能以更高特异性命中刊徽包裹元素却不提 `.emblem`，靠类名判归属的守卫必然失明；真解需要 CSS 引擎 + DOM，故改为在源头禁掉该写法（现有 CSS 全是点名写法，不受影响） |
+| fix | ci | 刊徽/报头/前景的契约收成三份 SSOT（EMBLEM/MASTHEAD/FOREGROUND_CONTRACT），样式表路径与行内 style 路径共用同一份：此前两边各自手列属性，样式表查 6 项、行内只查 3 项，`style="opacity:1"` / `display:none` / `width:120px` 全部判绿——而行内优先级最高，恰恰最不该漏。行内额外禁写分档属性（尺寸/偏移在所有视口一律生效，必然打破其中一档） |
+| test | ci | 新增 scripts/tests/test_report_emblems_selftest.py：把此前每轮手工重跑的红绿用例固化成 37 条自动化退化用例，逐条在临时树上施加真实退化并断言守卫判红。守卫判绿只说明「此刻没问题」，不说明「还有能力发现问题」——第 18 轮一次重构删掉三个检查函数的调用点，守卫基线照样全绿，正是靠手工重跑历史用例才发现。用例锚点失效时显式判红，不会静默空跑 |
+| fix | ci | 属性名匹配补边界：`data-class="masthead"` 此前会被当成 class 属性命中，浏览器里 `.masthead` 根本不匹配它，刊徽全部样式失配而守卫判绿 |
+| fix | ci | 注释剥离补 CSS 注释：只剥 `<!-- -->` 不够，把基础 `.emblem` 规则用 `/* */` 注释掉后浏览器忽略该规则而 rules_targeting 照样收得到，整条契约失效仍判绿 |
+| test | scripts | 刊徽守卫补三处判据：主语必须正向点名（:not/:has 里的类不算）、color 纳入可见性契约、守卫脚本自身纳入 CI 接线自查 |
+| test | scripts | 刊徽守卫校验窄屏断点与规则表登记一致，颜色 alpha 支持 CSS Color 4 斜杠写法，规则表改按表头名解析 |
+| test | scripts | 刊徽守卫区分「默认状态成立」与「有状态」规则：伪类主语不能供给必需声明，但仍须合契约 |
+| test | scripts | 刊徽守卫覆盖 .emblem 后代（SVG）的可见性；判据与接线纪律补形状 8（把不成立的证据当成证据） |
+| test | scripts | 刊徽守卫覆盖 SVG 自身的行内 style 与表现属性，并解析 color 引用的自定义属性 |
+| test | scripts | 刊徽守卫递归解析 var() 颜色链、opacity 支持百分比；自测新增「合法写法必须判绿」用例类 |
+| test | scripts | 刊徽守卫按继承作用域解析自定义属性（修误伤），并解析嵌在颜色函数里的 var() |
+
+### 2026-07-30
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| rule | 验收技能 | 拆分产品质量、验收完整性与综合结论，并强制输出根因链条 |
+| test | 验收技能 | 新增覆盖不足不得误判为 FAIL 的归档门禁测试 |
+| rule | cds | 新增 emoji 存量棘轮守卫测试，PR 评论模板与 webhook 回帖对外可见输出清零 emoji（#1289） |
+| fix | cds | 自更新失败改为「一句中文主要原因 + 一条恢复动作」，git/pnpm/tsc/esbuild 的英文原文降级到可折叠的原始输出，不再作为主文案 |
+| fix | cds | 强制同步拉取失败时曾把 git 英文 stderr 直接当作整条错误消息下发，现统一走归因 |
+| feat | cds | 更新历史与更新徽章展示失败归因：历史记录同时保存中文原因与英文原文，便于事后复盘 |
+| test | cds | 新增归因判定与接线双守卫，锁住各失败形态互不串味、英文原文不得回流到主文案 |
+| fix | cds | 更新请求被前置层挡回（未进到应用）时也给中文归因，覆盖运维关闭自更新、鉴权失效、限流、网关错误四类，并说明为何更新历史查不到该次失败 |
+| feat | cds | 新增控制面入口可达性自检：从公网回探自身关键入口，用 CDS 指纹头区分「应用拒绝」与「被前置层拦截」，边缘拦截不再无人知晓 |
+| fix | .claude | 日报采集口径从「按日历日」改为「按上期水位线续采」，根治定时任务清晨运行导致当天晚些时候提交永久漏报（实测 07-28/07-29 两天漏 8 个主干条目、36 次真实提交） |
+| feat | .claude | 新增 daily-report-summary/reference/coverage_window.py：从知识库读上期 metadata.lastCommit 解析采集窗口，三级兜底 sha/since/today，中断自动续上 |
+| feat | .claude | publish.py 新增 --last-commit/--cover-from/--cover-to 回写水位线，新增 --replace-same-date 同日重跑替换旧条目（先建新并校验落库、再删旧） |
+| docs | doc | debt.report-agent.md「周报 Agent 日报能力」 记录漏报事故根因、已落地修法与遗留边界（历史空洞在提交图上不连续，需显式枚举补齐；水位线断链自检未做） |
+| chore | doc | 每日熵清理：D1-D5 全部干净（无改动）；D6 处理 5 条未处理 changelog，2 条补齐真实文档覆盖缺口（LLMGW 教程关系可视化补引用、周报划词评论锚定字段补数据模型表），3 条确认已由同 PR 自建文档覆盖；manifest 累计处理 501 条 |
+| fix | 发布预检 | 网关路由自检失败收敛为一个主要原因加一条恢复动作，401/403 明确指向密钥轮换后容器未重建，并点破预检在部署之前运行、重试同一条 run 不会自愈 |
+| test | 发布预检 | 新增归因分辨力守卫测试并接入 CI，锁住四种失败形态各自独立归因、放行时不写归因字段 |
+| rule | 工程规范 | 新增「声明态与运行态漂移」规则，记录三条配置副本漂移通道与受限运维通道纪律 |
+| docs | 生产发布 | 生产发布安全规则新增条目 9：门禁必须分清服务故障与配置副本未刷新，且不得挡死能修好它的那次发布 |
+| feat | cds | 技能目录新增安全冲突处理、分支边界审计、任务交接清单和仓库自适应文档 |
+| refactor | skills | 五个通用技能移除固定产品结构、宿主目录、默认分支和时区依赖 |
+| test | cds | 新增市场技能包便携性与引用完整性守卫 |
+| fix | prd-api | 公开技能下载改走 API 代理，兼容私有对象存储并保持匿名读取 |
+| fix | prd-api | 同步五个 v2 技能的官方目录版本、展示文案和角色套装元数据 |
+| fix | prd-api | 补齐官方技能与套件的稳定 slug，确保搜索、选择和下载链路一致 |
+| fix | prd-api | 市场技能统一使用 SVG 视觉标识，不再写入或下发 Emoji 字段值 |
+| test | prd-api | 验收与交接技能测试改为校验通用能力契约，移除固定产品文档路径依赖 |
+| fix | prd-api | 统一录音转录缺少归档文件时的对象存储中性错误提示，避免在 R2 或本地环境误报为 COS 故障 |
+| fix | prd-admin | 修复视频预览黑屏、版本卡无法直接预览和播放器异常未处理问题 |
+| perf | prd-api | 生成视频入库前启用 MP4 fast-start，并补齐远端镜像运行依赖，缩短首帧等待时间 |
+| fix | prd-api | 拒绝未替换的头像 CDN 占位配置，避免无效资源请求 |
+
+### 2026-07-29
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | cds | 新增小登/老登与角色化 Agent 上手助手，支持技能增减、CDS 开关、启动提示词和无密钥一键脚本 |
+| docs | cds | 沉淀跨项目一键上 CDS、预览账号交付与新人上手范型 |
+| fix | cds | 修复 Agent 上手助手移动端遮挡、复制按钮可用性、返回修改与技能下载降级 |
+| fix | cds | 启动技能目录改为 CDS 本地发布契约，并为仓库内技能提供无外部依赖的 ZIP 下载兜底 |
+| fix | cds | Bootstrap 预设移除 MAP 中不存在的 starter 套装 key，改用已验证可下载的独立技能 |
+| fix | cds | 修复 Bootstrap 错误提示中的 shell 变量边界，确保安装失败时正确返回非零退出码 |
+| test | cds | 同步 Agent 接入对话框五个 tab 的源码契约，解除 CI 旧四列断言阻塞 |
+| feat | cds | 将上手助手扩展为四类十八项技能库，保留角色默认推荐并支持分组选择更多技能 |
+| test | cds | 增加技能目录本地可下载与上手助手分层选择契约，防止发布空卡片或退回长列表 |
+| fix | cds | 将上手助手全局遮罩规则限制为已打开弹窗，修复手机端关闭后入口被隐藏的问题 |
+| fix | cds | 手机端上手助手隐藏总导航后让逐步选择内容填满弹窗，避免下半屏留白 |
+| feat | cds | CDS 系统设置新增“外部接入”统一入口，集中展示 MAP 系统互联与缺陷转发状态，并支持页面保存、验证和清除转发配置 |
+| fix | cds | 将缺陷转发 Token 保存到 CDS 系统级密钥存储，避免误放项目变量并修复环境变量迁移分类 |
+| fix | cds | 将授权、导入、更新和 GitHub 推送统一收进信息中心，消除底部常驻浮层重叠 |
+| polish | cds | 将提交缺陷固定到左侧导航并与 Agent 接入相邻展示 |
+| fix | cds | 修复未开启全局继承的项目仍显示 CDS 全局变量为已生效的问题 |
+| fix | cds | 全屏详情、资源工作台与运维面板取消宽度上限，日志区域自适应填充可用高度 |
+| fix | cds | 移动端容器选择器改为自动换行，避免服务按钮被复制操作遮挡 |
+| feat | cds | 外部接入改为跳转 MAP 一次授权，服务端自动交换永久系统连接与缺陷转发凭据，移除地址、Token 和配对码手工搬运 |
+| feat | prd-admin | MAP 基础设施页支持 CDS 授权深链并自动完成回跳授权，长期凭据仅在主动撤销、删除或实际失效时终止 |
+| security | prd-api | MAP 为 CDS 自动签发永久最小权限缺陷 Key，删除基础设施连接时同步撤销 |
+| fix | cds | 区分明确重启与未知断线，移除长期全屏遮罩并在快速重试后持续低频自动恢复 |
+| ops | cds | 非 systemd 后台启动接入 supervisor 保活，进程退出或自更新后自动重新拉起 |
+| fix | cds | 修复顶部信息中心在窄窗口或靠左宿主位置时越出视口并遮挡内容 |
+| feat | cds | 发布中心改版 v2：环境成为骨架（顶部 main 版本流水轴 + 左栏环境列表），1669 行单文件拆成 pages/release-center/ 下的一组组件 |
+| feat | cds | 发布中心概览页三格摘要（线上版本含提交说明 / 健康含 24 小时可用率 / 近 30 天发布统计）+ 带提交说明的发布时间线 |
+| feat | cds | 发布中心接口下发提交说明台账，发布时间线能显示这次发的是哪个改动而不只是一串 sha |
+| feat | cds | 发布中心接口下发主干提交流水轴与各环境落点（落后/领先提交数），只读本地 ref 不触发 fetch |
+| feat | cds | 发布中心接口下发按环境分组的目标列表与跨环境提升候选，提升的领先提交数由后端直算 |
+| feat | cds | 发布中心每行补齐本目标的近 30 天 DORA 与近 24 小时可用率，无数据一律缺省不编造 |
+| feat | cds | 发布失败判据从日志里提取并摆到首屏（门禁逐项检查表 + 人话解释 + 噪音单列），原始日志退到折叠区 |
+| feat | cds | 跨环境提升：一个按钮把某环境正在跑的那一版原样发到另一个环境，走 expectedCommitSha 钳制，不引入「发布候选」实体 |
+| feat | cds | 「立即发布」改为就地抽屉（选分支 → 发布前检查 → 开始发布 → 实时日志），不再跳去分支列表 |
+| feat | cds | 发布中心新增「自动发布」页签：基于 scheduled-job 的定时发布规则增删改查、启停、立即试跑与运行记录 |
+| feat | cds | 添加环境向导支持选择环境类型（生产 / 预发 / 其他），此前 environment 被写死成 production |
+| feat | cds | 定时任务新增「发布」动作类型：到点直接调 ReleaseService 发版，支持发布指定分支或把某环境正在跑的版本原样提升到另一环境 |
+| feat | cds | 定时发布支持「需要人工确认」：到点只跑发布前检查并生成一条待确认站内信，绝不自动发布 |
+| feat | cds | 定时发布连续失败 2 次自动停用规则并发站内信告警，任务列表直接展示停用原因 |
+| feat | cds | 定时发布支持失败自动回滚、目标版本未变时跳过、目标忙时按并发策略跳过（判据复用发布侧的在途/回收锁闸门） |
+| feat | cds | 发布接口新增 expectedCommitSha 版本钳制：请求版本与分支当前版本不一致时 fail-closed 拒绝，杜绝「原样提升」发出未验证版本 |
+| feat | cds | 新增服务端站内信账本：订阅 cds-events-bus 记录发布失败/自动回滚/现场漂移/健康掉线/自更新失败/预览探测失败/基础设施熔断七类告警，落盘 .cds/notice-ledger.json，10 分钟内同目标同类型合并计次，可选外发到 MAP 站内通知（未配置凭据时如实标记「未外发」） |
+| feat | cds | 存活监控判 down/恢复上事件总线（uptime.target.down / uptime.target.recovered），生产健康掉线不再只躺在故障时间线里 |
+| fix | cds | 回滚发起时补记 commit 台账，回滚记录不再永远缺提交说明 |
+| fix | cds | 发布中心配置变更历史按后端真实形状渲染 before → after 明细，此前接的是不存在的 summary/fields 字段 |
+| fix | cds | 定时任务的「试运行」对发布动作只执行发布前检查，不会真往生产发一次版 |
+| fix | cds | 发布失败摘要纳入 stdout 并保留尾部，门禁判据不再被丢弃 |
+| fix | cds | sidecar 部署 SSH 失败改用同一摘要构造源，凭据统一脱敏 |
+| refactor | cds | 发布目标 environment 的归一与分组收敛为唯一判定源，杜绝前后端各判一遍 |
+| refactor | cds | 环境分组的中文标签改走 releaseEnvironmentLabel 取值，此前该导出无人调用、分组直接读原始映射表，等于同一判定留了两条路径 |
+| refactor | cds | 预览地址推导抽到 web/src/lib/previewUrl.ts 作为唯一判定源，BranchListPage 与发布中心共用 |
+| refactor | cds | 右上角站内信铃铛（SiteNoticeInbox）数据源从 localStorage 换成服务端账本，保留 window 'cds:notice:upsert' 兼容层与调用方；死链项目通知的清理迁到服务端 |
+| refactor | cds | 删除无生产调用方的 gitCommitTimeReader 包装（默认 reader 一直是 gitCommitMetaReader），对应真实 git 用例改为直接打在被接上的那个 reader 上 |
+| chore | cds | 删除未被引用的 releaseModeLabel，发布方式标签统一由 releaseModeDefinitions 提供，避免同一组文案两处维护 |
+| chore | cds | 补齐 /api/scheduled-jobs 与 /api/notices 系列路由的 Activity Monitor 中文 label |
+| test | cds | 新增 releaseDiagnosis / releaseRail / releaseEnvironments / previewUrl 纯函数用例、发布中心接线守卫与渲染冒烟共 84 条 |
+| ops | - | fast.sh 镜像预热超时默认提到 180s，新增总预算闸并收敛超时噪音 |
+| feat | cds | 加环境时可以就地添加服务器：向导第一步内嵌新建表单，不再把用户支到 CDS 系统设置再走回来 |
+| feat | cds | 服务器支持三种接法：CDS 生成密钥对（私钥留在服务端、只给公钥去授权）、粘贴私钥、用户名密码 |
+| feat | cds | 远程主机新增密码认证，发布与 sidecar 两条 SSH 链路同步支持，此前只认私钥 |
+| feat | cds | 新建服务器支持粘贴连接串自动填表（认 ssh:// 、ssh 命令行 -p 端口、user@host:port、IPv6），并按主机名建议显示名 |
+| feat | cds | 新建服务器后就地测试连接，生成密钥对时同时给出公钥与一行授权命令 |
+| fix | cds | 记忆的项目 id 在当前 CDS 实例不存在时自动落到第一个真实项目，不再拿幽灵 id 去打接口换回一串 404 |
+| fix | cds | 发布方式探测失败不再把裸 HTTP 错误糊在页面顶部，改为说明「需要手动填写」 |
+| fix | cds | 录入私钥时不再 trim 尾部换行，避免 PEM 缺失换行导致解析失败 |
+| test | cds | 新增连接串解析 18 条、三种认证方式 10 条、就地新建服务器接线守卫 10 条 |
+| fix | cds | 修复 ssh2 静态具名导入导致 CDS 启动即崩（tsc 与 vitest 均不报错，真 ESM 运行时抛 Named export not found），改走默认导入 |
+| test | cds | 新增 CommonJS 依赖导入方式守卫，禁止对 ssh2 一类 CJS 包使用静态具名导入 |
+| fix | cds | 就地新建的服务器改为直接并入列表，不再重拉按引用过滤的目标接口（新建的主机尚未被任何发布目标引用，重拉会查无此人，界面继续说「还没有服务器」，再加一次撞后端全局重名 409） |
+| fix | cds | 发布中心空状态的「先添加服务器」不再跳去 CDS 系统设置，改为就地打开向导第一步 |
+| fix | cds | 新建服务器重名冲突给出可照做的中文提示，替代原始英文 409 与 requestId |
+| fix | cds | 去掉 InlineHostCreator 上随 hosts 数量变化的 key：新建主机进列表会让组件重挂，刚生成的公钥当场消失，而那是用户唯一一次拿到它的机会 |
+| fix | cds | 站内信 href 只收同源相对路径：项目级 Key 可写入通知，而收件箱把 href 直接渲染成链接，javascript: 之类会在全局运维会话里执行 |
+| fix | cds | 发布告警深链的 target/run 参数真正生效：点「查看发布记录」直接选中出事的目标并打开那次发布的日志，不再落到默认目标 |
+| fix | cds | 镜像预热单张超时被剩余总预算夹住，避免 4 张各 180s 把 420s 的总闸撑到 540s |
+| ci | cds | CI 跑 cds 测试前安装 cds/web 依赖：渲染冒烟 import 的 react 装在 web 侧，此前作业只装 cds/ 导致该测试文件整体加载失败 |
+| security | cds | 密码认证主机的公开标识改为与密钥材料无关的随机串：原先是明文口令的截断 sha256，且经公开接口返回，可离线撞库 |
+| security | cds | 通知合并键按调用方作用域加前缀：项目级 Key 原先可用自定义 id 覆盖其他项目或内部事件生成的告警 |
+| security | cds | SSH 失败摘要脱敏补齐 Authorization 头 / JSON 口令 / URL userinfo 三类格式，发布日志改为复用同一个脱敏器 |
+| fix | cds | port 预览模式不再套用 multi 子域公式伪造地址，发布向导改为现取分配端口 |
+| fix | cds | 晋升候选加祖先判定：分叉版本双向 rev-list 皆为正，原先会被标成可晋升 |
+| fix | cds | 定时发布待人工确认时把过检版本钉进通知深链，审批发出的仍是通过检查的那一版 |
+| fix | cds | 待人工确认的规则预检失败记为失败而非跳过，否则失败计数被清零、永远够不到自动停用阈值 |
+| fix | cds | 切换到密码认证时清空私钥口令，避免公开视图谎报 hasPassphrase 及日后换回私钥时解密失败 |
+| fix | cds | 编辑自动发布规则只替换本目标的 release 动作，不再整体覆盖导致兄弟动作被静默删除 |
+| fix | cds | 新建环境时「设为主目标」按该环境是否已有主目标决定默认勾选，避免保存必被后端拒 |
+| fix | cds | 通知外发到 MAP 的动作链接绝对化为 CDS 自身入口，缺少 origin 时不下发动作 |
+| fix | cds | 自动发布试跑失败给出具体未通过项，替代原先恒定显示的安全横幅 |
+| fix | cds | 发布路由改用 server.ts 那个 ReleaseService 实例：此前路由与定时调度器各持一个，settling 期的在途发布互相看不见，双重并发闸同时放行 |
+| fix | cds | commit 元信息改在服务层 onRunStarted 记录：此前只在 HTTP 路由里记，定时发布的成功记录从不进台账，DORA 只统计人手发布 |
+| fix | cds | 分支来源首次定时发布不再必然失败：历史无发布记录时按 multi 模式现推预览地址，port/simple 如实留空交预检判定 |
+| fix | cds | 晋升候选带可执行判定：来源版本已不是分支 tip 时按钮置灰并说明原因，不再让用户点了才吃版本钳制拒绝 |
+| fix | cds | 忽略通知按 id + 作用域联合查找：此前先取第一条同 id 再校验作用域，跨项目同名 id 会让项目方关不掉自己的通知 |
+| fix | cds | 强制更新按钮补上版本切换声明（transitionIntent / expectedFromSha / transitionReason）：此前只发 branch+force，非快进切换必然被后端回「必须显式声明 release 或 rollback」，而用户刚点的按钮就叫强制更新 |
+| fix | cds | 强制更新对话框可选「发布新版本 / 回滚旧版本」并填原因（预填可编辑），原因不合法时禁用确认；expectedFromSha 取自 self-status 当前 sha |
+| fix | cds | 非快进切换的拒绝文案改为指明去哪里声明、API 缺哪三个字段 |
+| fix | cds | 强制更新改为永不拒绝（resolveForceSyncTransition）：它是用户控制 CDS 的最后手段，能被策略拒绝的强制不叫强制；普通更新仍保留严格闸门 |
+| fix | cds | 自更新重启不再被记账动作取消：记账各自 try/catch，spawn 成功后先排上 process.exit 再做其余记账，避免写日志失败导致「产物已换、进程没重启」 |
+| fix | cds | 「更新成功但进程没重启」从小字 chip 升级为醒目横幅 + 一键重启，说明当前是新前端配旧后端 |
+| fix | cds | Dialog 内层 grid 轨道钉死 minmax(0,1fr)：长日志/整段脚本不再把弹窗内容撑宽导致右半屏被裁（截图「输入框不见了」「步骤 2/4/6 消失」的根因），全部 125 处弹窗受益 |
+| fix | cds | 发布弹窗重做为 frame 布局：shrink-0 头部与底栏 + flex-1 滚动主体，「开始发布」等操作不再被长内容推到两屏以外 |
+| fix | cds | 发布前检查的长文案（如整段生成脚本）折叠为一行摘要 + 手动展开，展开内容在自己的滚动格里消化 |
+| fix | cds | 发布中不再渲染分支下拉等表单壳，改为静态摘要 chips；分支选择框补 w-full min-w-0，修复 commit 文字叠在下拉框上的错位 |
+| fix | cds | 发布日志窗格自动吸底跟随最新，用户上翻即暂停并出现「回到最新」；长行折行不再横向撑破布局；发布中与发布记录两个弹窗共用同一窗格 |
+| fix | cds | 发布来源地址改以 CDS API 的 previewUrl/previewUrls 为 SSOT（多入口全量展示），前端公式仅作兜底；弹窗同时展示「发布到（上线地址）」，来源与去向两端说清 |
+| feat | cds | 发布目标只读磁盘诊断：发布死在磁盘护栏时，失败诊断页给出差额说明 +「磁盘诊断」按钮，在目标机上跑 df / docker system df / 热点目录 du（守卫测试钉死命令只许读，输出过脱敏），清什么由人决定但不用再猜 |
+| feat | cds | 磁盘不足在 CDS 里警报：发布失败事件带人话磁盘结论（站内信直接说「还差多少 MB」而非 ssh exec exit=1）；上次因磁盘失败后预检自动复查 df，不够线拦在「开始发布」之前，不再烧注定失败的 run；磁盘诊断首行标明主机名防止清错机器 |
+| refactor | llmgw | 新增页面骨架 PageShell（PageHeader/PageBody/Prose/FormGrid/HelpPopover/DetailsBlock/TutorialLink），统一控制台页头与容器 |
+| refactor | llmgw | 「团队与成员」按风格调性 v1.2 重写：取消 1060px 居中改贴边全宽、成员卡片流改表格、增改走抽屉、角色说明收进 ? 浮层、概念解释收进折叠块并深链教程第 5 章（537 字/8 段 → 225 字/1 段） |
+| feat | llmgw | 新增令牌 --measure 与 .lg-prose / .lg-form-grid：容器贴边，可读宽度改为作用在段落与表单列上 |
+| feat | llmgw | 新增文字预算守卫 check-prose.mjs（常驻正文 ≤2 段 / ≤400 汉字，出口内文字不计入；页面级居中直接判错），接进 pnpm build |
+| feat | llmgw | check-typography 新增规则三：小字号配正文行高即判错，按棘轮制记录存量只减不增 |
+| fix | llmgw | 修复 --danger / --success 两个从未定义的 CSS 变量：报错文字不显红、ServiceKeys 警告框连边框底色一起丢失；统一改走 --err / --ok 并抽出 InlineAlert |
+| fix | llmgw | 修复角色说明浮层被表格 overflow-x 容器裁切（第 5 个角色显示不全），HelpPopover 增加 align 参数 |
+| style | llmgw | 卡片内边距归一到 14px（此前 home/usage/settings 为 18px），实体详情页取消 1180px 居中 |
+| docs | llmgw | 控制台风格调性规则升到 v1.2：新增原则 6（容器贴边、可读宽度作用在内容上）与原则 7（文字预算与三轨接入），补记漂移检测的三个前提 |
+| fix | llmgw | 修复组织页重构打破的 5 条跨模块源码契约断言（GatewayDataDomainGuardTests 直接读前端源码，本机无 dotnet 未能及时发现） |
+| feat | llmgw | 新增源码契约守卫 check-source-contracts.mjs：解析 GatewayDataDomainGuardTests.cs 并在本地复算全部 343 条前端断言，接进 pnpm build |
+| refactor | llmgw | 「预算与用量」按 v1.2 迁移：解释收进 HelpPopover/DetailsBlock、账单导入表单改抽屉、「对账覆盖」由说明句改为页头派生指标（7 段/575 字 → 0 段/241 字） |
+| refactor | llmgw | 「提示词策略」按 v1.2 迁移：取消 1040px 居中改贴边全宽，合并顺序与日志口径收进折叠块并深链教程第 20 章（3 段/274 字 → 1 段/103 字） |
+| fix | llmgw | 修复预算与用量页表单控件缺高度（padding 撑出的高度低于漂移检测 34px 下限），改用 FIELD_INPUT |
+| refactor | llmgw | 「逻辑模型目录」按 v1.2 迁移：页头统一走 PageShell、创建卡内边距归一到 14、表单栅格改固定列宽，路由策略等说明收进 HelpPopover 并深链教程第 18 章（2 段/230 字 → 1 段/155 字） |
+| fix | llmgw | 逻辑模型页 var(--danger)/var(--success) 两处失效 token 改为 --err/--ok |
+| refactor | llmgw | 系统运维页按 v1.2 迁移：容器拓扑收进折叠块并删 desc 列、删 7 个与侧边栏重复的快捷入口、页头 summary 由发布 Gate 派生（3 段/163 字 → 1 段/76 字） |
+| refactor | llmgw | Exchange 映射按 v1.2 迁移：自造页头换 PageHeader、内边距从 4 种收敛到 2 种（4 段/417 字 → 0 段 JSX 正文） |
+| refactor | llmgw | 模型池按 v1.2 迁移：六种调度策略说明收进 HelpPopover、程序池追加语义收进折叠块（8 段/488 字 → 1 段/286 字） |
+| refactor | llmgw | 接入密钥按 v1.2 迁移：作用域与轮换说明收进出口（4 段/446 字 → 0 段/309 字） |
+| refactor | llmgw | 模型管理按 v1.2 迁移：定价说明收进 HelpPopover、内边距 4 档收敛到 2 档（2 段/275 字 → 0 段/193 字） |
+| refactor | llmgw | 学习中心按 v1.2 迁移：改为「概念索引 + 深链教程」，不再在控制台复述教程正文（真实可见正文 1126 字/15 段 → 274 字/0 段） |
+| refactor | llmgw | Quickstart 按 v1.2 迁移：删 1080px 居中与三张纯解释 Step 卡，首屏挂接入片段与派生态清单（9 段/607 字 → 0 段/335 字） |
+| feat | llmgw | 三轨接入：AccessSnippetBar（老手拿地址就走）+ OnboardingChecklist（四步派生态，全绿自动消失）+ useOnboardingState（按租户缓存 60s） |
+| fix | llmgw | 文字预算守卫补两个洞：正文搬进常量数组即可绕过预算；prose-ok 逃生门因先剥注释而从未生效 |
+| fix | llmgw | 修复 --bg-muted / --radius-xs 两个从未定义的 CSS 变量（圆角与底色此前静默失效） |
+| fix | llmgw | 修复 .lg-tutorial-link 的 5px 间距：该组件出现在每个迁移页，给 4 条被监测路由同时引入第 6 种容器间距 |
+| fix | llmgw | 修复两处「接口 success 但 body 缺字段即整页白屏」：预算与用量的 statusDistribution、系统运维的 keyHealth/configAuthority/shadow summary |
+| test | llmgw | 新增 e2e/llmgw-page-acceptance.mjs：逐页真人路径 + 双主题验收，断言白屏/h1/标题裸露/贴边/pageerror，首次运行即抓到上述两处白屏 |
+| fix | prd-admin | 区分模型网关跳转的两种失败：预览分支名过长导致网关子域超 DNS 63 字符上限时，不再误报「登录凭据未通过安全校验」，改为报出真实原因与超出字符数 |
+| feat | cds | 部署时向所有容器注入已发布入口表 CDS_PREVIEW_URL / CDS_SERVICE_URLS（平台事实层，强制覆盖，项目 env 不得伪造），应用侧不再需要自己按 hostname 推算兄弟服务域名 |
+| refactor | cds | 新增 preview-entrypoints.ts 作为「本分支发布了哪几个入口」的计算 SSOT；DNS 63 octet 判据此前分裂在 forwarder-route-publisher、computeBranchGatewayUrls 两处字面量，收敛为共享谓词 isPublishableNamedLabel |
+| feat | prd-api | SSO 票据接口新增 console 字段，由服务端按平台注入的入口表回答「这张票据该送去哪个控制台」：有基址 / 明确未发布 / 同源三态 |
+| fix | prd-admin | 删除前端按 location.hostname 拼网关子域的第二份域名实现（违反规则 #11）：预览分支名过长导致平台未发布该子域时，此前会拼出一个不存在的域名并把失败报成「登录凭据未通过安全校验」，现改为如实报出未发布原因 |
+| test | cds | 新增 preview-entrypoints 守卫（含 2026-07-29 现场 67 字符分支用例、63/64 边界、项目 env 不得伪造平台注入） |
+| test | prd-admin | SSO 落点测试改为契约驱动，新增源码守卫禁止 llmGatewaySso.ts 再出现域名推算痕迹 |
+| docs | doc | 新增 debt.platform.md「预览入口下发（Preview Entrypoints）· 债务台账」 台账：记录截断未覆盖复合标签、入口表容器创建时定格、其他消费方未清查三项欠账 |
+| fix | prd-api | 区分「入口确实未发布」与「旧版平台没下发入口表」：过渡期预览环境不再误判为正式环境而回退到并不存在的同源控制台 |
+| refactor | prd-api | DeploymentAuthority 里读了两遍的 CDS_PROJECT_ID 判据抽成 IsCdsBranchPreview，供第三个消费方复用 |
+| test | prd-api | 新增 PlatformEntrypointsTests：表里取值 / 尾斜杠归一 / 缺项返回 null 不猜 / 畸形 JSON 降级 / 「没有表」与「表里没这项」可区分 |
+| feat | cds | 命名子域超 DNS 63 字符上限时改为截断 slug + 接 8 位 sha1 摘要（此前整条路由跳过不发布，长分支拿不到网关等命名入口）；摘要保证前缀相同的长分支不会塌成同一 host |
+| fix | cds | 发布器写 host、两处 SSRF 白名单此前各自拼 `<slug>-<sub>`，改为统一走 namedServiceLabel，否则截断后发布的 host 与白名单算出的不是同一个 |
+| fix | cds | 超长命名子域的截断改为只在 `-` 段边界下刀（此前按字符硬切会切出 `...-f4oeh6-cla` 这种半截词，人读不出也拼不对） |
+| refactor | cds | 模型网关控制台子域 llmgw-web 改名为 llmgw（它本身就是 web，`-web` 是废字，还白占 4 个 DNS 标签额度）；发布器同时发布历史别名，存量链接与未重新导入 compose 的存量部署都不受影响 |
+| fix | llmgw | 控制台「返回 MAP / 教程」深链此前硬编码 `-llmgw-web` 后缀反推 MAP 地址，子域改名即失效；改为新旧后缀都认并收敛成文件内唯一一处 |
+| feat | llmgw | console-api 经 /gw/healthz 下发 mapHomeUrl（源头 CDS_PREVIEW_URL），控制台「返回 MAP / 教程」深链改用平台权威地址，不再按 hostname 反推（推算仅作平台未下发时的兜底） |
+| test | prd-admin | 新增全仓守卫 previewHostDerivation.guard：扫 prd-admin 与 llmgw/web 全部源码，禁止新增按 hostname 拼预览域名的实现，例外须登记理由与清除条件 |
+| fix | cds | 撞名检查与两处 SSRF 白名单只算规范子域、漏掉同样被发布的历史别名：别的分支能占走别名 host，探测/压测打自己发布的别名会被自家闸门 403；三处统一走 publishedServiceLabels |
+| fix | llmgw | 新人清单的事实读取失败被当成「确实没有」缓存 60 秒：一次瞬时 500 就让配置齐全的租户被告知去建团队、拉成员；改为失败即抛不入缓存，并新增 unavailable 态让清单沉默 |
+| fix | llmgw | 建团队 / 拉成员 / 签密钥后主动失效新人清单缓存并通知已挂载组件（此前失效函数无人调用，且清缓存本身不会让 hook 重跑） |
+| docs | doc | 预览入口下发债务台账登记进 index.yml 与 guide.list.directory |
+| fix | llmgw | 教程深链传的是未削 basename 的路径：同源部署下控制台挂在 /llmgw/，传过去的 /llmgw/service-keys 与图谱登记的 /service-keys 逐段比对必然不匹配，每个页面都报「没有找到关联教程」 |
+| fix | llmgw | 章节深链改用独立参数 tutorialSourceId：此前把教程 sourceId 塞进 entry（那是 Mongo 文档 id），且会被 tutorialRoute 解析结果覆盖，标着第 15 / 19 章的链接统统打开第一章 |
+| fix | llmgw | 站内学习中心回落改走 router Link：裸 a 标签在 basename=/llmgw 下会跳到 MAP 应用的 /learn |
+| fix | prd-admin | 知识库教程深链按 tutorialSourceId 选中对应章节，取不到才回落第一篇 |
+| test | llmgw | 新增教程深链契约守卫 check-tutorial-deeplink.mjs 并接进 build（这三条依赖 router basename 与跨应用参数约定，行为测不到，只能钉源码契约） |
+| perf | llmgw | 新人清单的「有没有跑过请求」改走可分页的日志列表端点：此前用 /logs/summary 拉一整年，而该端点不接受分页、会把整段区间的日志全量 materialize 后再聚合 |
+| fix | llmgw | 「签一把密钥」改看可用密钥而非历史总数：密钥全被禁用/吊销时清单不再提前消失（此前既跑不出请求、接入片段又还在催签发） |
+| fix | llmgw | 平台下发的 MAP 主入口改在应用挂载时取一次：此前只有登录页与首页会调 healthz，SSO 直落页与书签入口拿不到权威地址会退回按 hostname 反推，而长分支子域是截断+摘要过的、根本还原不出主入口 |
+| fix | cds | 平台入口表注入改为「先清保留 key 再写」：表为空时此前不产出 CDS_SERVICE_URLS，项目/profile 在该 key 上的值会原样留下，等于允许项目在 CDS 明确没有这条路由时伪造网关地址 |
+| fix | llmgw | Quickstart 自己签密钥后也失效新人清单缓存（此前只接了接入密钥页与组织页，同页挂着的清单仍在催「签一把密钥」） |
+| fix | llmgw | 网关入口缺席的提示不再归因于「分支名过长」：命名子域已截断+摘要压进上限、子域本身受 40 字符校验，长分支不会再因此丢入口，改为指向控制台服务未部署或子域声明不一致 |
+| fix | llmgw | 平台下发的 MAP 主入口改为可订阅：此前只改模块变量，healthz 在首屏之后回来时已挂载的「返回 MAP」与教程深链不会重算，整个挂载期指着兜底算出的地址（长预览域名下兜底还原不出主入口） |
+| fix | llmgw | Quickstart 两种测试成功后也失效新人清单缓存：「跑通首条请求」是从日志推的派生态，不失效就一直显示未完成 |
+| fix | llmgw | 新人清单的团队/成员改只数 active：Quickstart 按 active 过滤且无 active 团队时直接挡住签发，按总数判定会让清单先消失、下一步却做不了 |
+| fix | llmgw | 「跑通首条请求」改取密钥的 lastUsedAt（持久事实）：请求日志默认只留 90 天，拿它当「一生是否跑通过」的依据会把长期不活跃的租户打回未完成；顺带彻底去掉那次范围查询 |
+| fix | e2e | 逐页验收脚手架的产物目录、截图目录、浏览器路径改为从 checkout 推导并支持环境变量覆盖（此前写死作者机器绝对路径，换个 checkout 第一次导航就白屏） |
+| fix | cds | 命名子域改为按「展开别名后的最终 label」去重发布：同一分支里若一个 profile 声明 llmgw、另一个声明历史别名 llmgw-web，按原始子域去重会放行两者，而 llmgw 展开别名后publish 的正是同一个 host —— 两条同 host 不同上游的路由。改为两趟发布（规范名先占位、别名后补），显式声明恒压过兼容别名 |
+| fix | llmgw | 新人清单的「可用密钥」判定补上过期时间：网关运行时把 expiresAt 已过的密钥同样视为不可用，只看 enabled 会让只剩过期密钥的租户既跑不出请求、清单又已经把「签一把密钥」划掉 |
+| fix | cds | 命名入口的落点改看 profile 声明的就绪路径，不再看子域名字：子域改名把 llmgw 从「后端 API」改判成「控制台」时，那张全局名字表跟着替所有存量项目改了落点，仍把 llmgw 当 API 用的服务被指到根路径 404，且它们显式声明的 /gw/healthz 被名字表压掉连兜底都轮不上。名字表降级为兜底，只服务「声明了子域却没声明就绪路径」的 profile |
+| fix | llmgw | 撤销接入密钥后也失效新人清单缓存：此前只接了签发路径，撤掉最后一把可用密钥后 60 秒内回到 Quickstart 仍显示已撤销的前缀、清单也还认为这一步完成 |
+| fix | cds | 命名入口新增平台判定的 isConsole 字段，分支抽屉不再按子域名字自己判「哪个是控制台」：子域改名后抽屉里 4 处硬编码的 llmgw-web 判定整块失效，控制台被当成引擎健康入口标注、排序也不再排在最前 |
+| fix | llmgw | 修改成员后也失效新人清单缓存：清单的「拉一个成员」只数 active，把唯一一个额外成员停用后这一步应当重新亮起，此前只在创建路径失效 |
+| fix | llmgw | 「跑通首条请求」叠上本地确证：serving 端 LastUsedAt 是不 await 的后台写，测试成功后立刻重拉可能抢在它落库之前读到旧值，把刚跑成功的租户又标成未完成并缓存 60 秒 |
+| fix | cds | 保存子域别名时也检查已发布的命名服务 host：别名和命名子域挤在同一个命名空间，此前只查 slug/别名/自定义域名，别的分支已发布的 `<slug>-llmgw` 可以被直接占走，forwarder 会收到两条同 host 不同上游的路由 |
+| fix | llmgw | 字段说明气泡靠近滚动容器底部时改为向上展开：气泡是 absolute 定位、不参与布局，被 overflow 裁掉的部分滚动也够不到，长表单末尾那几个字段说明整块读不到 |
+| fix | cds | 历史别名的冲突告警判断整个反了：别名可用（绝大多数情况）时照常告警，而 buildRoutes 每 2 秒重跑一次会把日志刷满；真被另一个 profile 占走时反而静默跳过。改为按「谁占的」区分，真冲突才报且按分支+host+占用者去重上报，冲突消失后清除记录以免二次犯错时静音 |
+| fix | llmgw | 新人清单的「可用密钥」补上调用能力判定：一把只有 readiness:read 的探针密钥此前会让「签一把密钥」划掉、接入片段还亮出它的前缀，而它根本发不出请求。判据照 serving 的 MatchesAny 语义（空列表恒拒、* 通配、其余大小写不敏感精确匹配） |
+| docs | llmgw | 债务台账新增 ONB-key-usability 与 ONB-key-page-cap：授权矩阵的其余三项与密钥列表 500 条上限没有镜像到前端，正解是服务端 onboarding digest（需先让 console-api 与 serving 共享判定） |
+| fix | llmgw | 抽屉内的失败信息改在抽屉里显示：成员抽屉、新建租户抽屉、账单导入抽屉此前都把失败抛给页面级 alert，而那条 alert 渲染在 PageBody 里、被固定定位的抽屉与毛玻璃背板整块盖住，用户只看到表单停止转圈、没有任何可读原因，然后原样再试一次 |
+| fix | cds | 兼容别名发布前查全部分支已保存的子域别名：改名前就存在的别名（或先存别名、后加 profile 的反序）恰好等于 `<slug>-llmgw-web` 时，保存期检查拦不住，兼容别名会与它撞成同 host 两条路由，route-resolver 按路由 id 静默选一条 |
+| fix | cds | 已保存别名的撞名检查收进发布单点：上一版只在兼容别名那一趟查，规范服务 host 无条件写，于是一个早于改名就存在的别名 `<slug>-llmgw` 会与规范 host 撞成同 host 两个上游，resolver 按路由 id 静默选一条，用户可能打开另一个分支的应用 |
+| fix | cds | 入口表与发布器口径对齐：发布器跳过被已保存别名占走的命名 host 后，入口表仍在声明它，SSO 会把用户送到别名拥有者的主应用（可能是另一个分支）。别名枚举抽成 savedAliasOwners 供两侧同用 |
+| fix | cds | isConsole 判据改与落点同源：存量项目里把 llmgw 当后端 API 用且声明 /gw/healthz 的 profile，落点已正确落到健康端点，但面板仍把它排最前、标成「网关控制台」，点开是一串 JSON |
+| fix | cds | 别名抑制决定接齐全部消费方：面板与 GET /api/branches 的网关入口清单、两处 SSRF 探测白名单此前仍在声明/放行被已保存别名占走的 host，前者会让用户点开另一个分支的应用，后者等于允许探测别人的应用 |
+| fix | llmgw | 模型池抽屉打开时反馈渲染在抽屉内：抽屉是 fixed 覆盖层，页面级 toast 被整块盖住，建池/设默认/导入/认领/校准任一失败都只看到按钮停止转圈 |
+| fix | llmgw | 新人清单的「去完成」按每步需要的写权限判定：组织页只要求 logsRead，developer/viewer 到得了页面但建团队/加成员全被 organizationWrite 门控，此前只看页面可达会给这些人一个点进去什么也做不了的链接，现在渲染「由管理员完成」 |
+| fix | llmgw | 逻辑模型页的失败提示不再渲染成绿色成功条：10 个提示写入点里有 6 个是失败路径，却共用固定 tone="ok"，「更新路由策略失败」看起来像改动已生效 |
+| fix | llmgw | 「跑通首条请求」的 CTA 补齐 Quickstart 的真实门控（appCallerWrite + serviceKeyWrite）：不满足时测试按钮压根不渲染，此前给 viewer 一个点进去没有按钮的死链；同时读不到判定源的步骤不再标成可操作 |
+| fix | cds | 命名 host 的占位判定改按完整 host 且纳入自定义域名：自定义域名存的是整条 host 不是标签，一条恰好等于 `<slug>-llmgw.<root>` 的自定义域名在更早处已发出路由，命名服务再发同一 host 就是两个上游 |
+| feat | cds | 入口表新增 CDS_CONSOLE_URL：由平台按 profile 语义判定并下发控制台入口。改名后与改名前的存量项目在表里 key 集合完全相同（llmgw + llmgw-web）而语义相反，消费方按名字猜必然有一半项目挑错 |
+| fix | prd-api | 网关控制台基址优先读平台下发的 CDS_CONSOLE_URL：此前按子域名字先试 llmgw 再退 llmgw-web，在「llmgw 是后端 API」的存量项目上会把管理员的 SSO 票据送到只返回健康 JSON 的服务 |
+| fix | cds | 占位抑制统一升级为「按完整 host + 含自定义域名」并删掉窄判据 savedAliasOwners：入口表、面板与 GET /api/branches、两处 SSRF 探测白名单此前仍按标签且只看别名，会声明/放行发布器故意跳过的 host |
+| fix | llmgw | 组织事实的可读性改按「能读到全貌」判：/gw/organization 对 owner/admin 之外按 teamIds 收窄，独自在新建团队里的 developer 数不到默认团队的 owner，清单会一直说「拉一个成员」没做完而他既改不了也自证不了 |
+| fix | llmgw | 新人轨缓存键加上登录身份：/gw/service-keys 对 developer 按 CreatedByUserId 过滤，只按租户做键会让同浏览器换账号后的 60 秒内读到上一个人的摘要，接入片段亮出别人的密钥前缀；identity 同时进两个 effect 的依赖，否则换账号不重跑 |
+| fix | llmgw | 学习中心页不再渲染指向自己的教程回落链接：非 MAP 管理员身份的用户在 /learn 上点「查看完整教程」只会回到当前页，而该页详细解释已在 v1.2 迁移里收进深链教程，等于断在死链上；改为直说需要什么身份 |
+| fix | prd-api | 修复豆包异步 ASR 提交成功后跳过查询导致空转录 |
+| fix | prd-api | 对象存储异常时直接使用 Mongo 录音分片排队并执行转录 |
+| fix | prd-api | 录音固定转录任务中断或取消后可由重复完成请求原子重排队 |
+| fix | prd-api | 防止录音归档完成并发覆盖已生成的转录正文和索引 |
+| fix | prd-api | 归档与转录结束后主动回收 Mongo 录音分片并清理历史遗留 |
+| test | prd-api | 补充异步查询状态机、录音分片降级和测试项目执行保护 |
+| fix | prd-api | 新增对象存储真实写入、内部读取、公开访问与清理就绪探针，修复 Cloudflare R2 上传签名，持久化完整音频校准意图并让完成态重试自动重建转录任务 |
+| fix | prd-api | 为本地 SHA 与自定义键资产统一生成精确公开 URL 并阻断目录穿越，让 Nginx 前端同源代理参与就绪校验 |
+| fix | prd-admin | 为 Vite 本地开发入口补充本地资产同源代理，避免头像与录音 URL 落入 SPA fallback |
+| fix | prd-admin | 对所有服务端延迟转录任务显示后台进度并禁止前端重复创建转录任务，不再错误依赖对象归档状态 |
+| fix | prd-api | 统一 auto 存储供应商与公开 URL 的运行时解析，并用会话 outbox 自动恢复终态提交后遗漏的完整录音转录任务 |
+| fix | prd-api | 强制降级校准任务读取完整音频，并阻止晚到实时文本覆盖已生成的完整转录摘要与索引 |
+| fix | prd-api | 将录音转录 outbox 保留到确定性任务成功结束，服务重启中断 Running 任务后可自动重新排队 |
+| fix | prd-api | 为录音转录自动恢复增加持久化次数、退避与三次上限，人工取消和终态失败不再无限重放 |
+| polish | prd-api | 自动重试尚有额度时保持排队并持续展示恢复进度，仅在重试耗尽后向前端报告最终失败 |
+| fix | prd-api | 崩溃恢复已上传录音时向前端返回同一延迟转录任务 ID，避免重复创建转录流程 |
+| security | prd-api | 为本地同源资产增加不透明来源沙箱、禁止 MIME 嗅探与来源泄漏，阻止用户托管网页读取管理后台登录令牌 |
+| perf | prd-api | 为录音转录 outbox、对象归档认领、过期清理与分片读取补充可执行 MongoDB 索引清单 |
+| fix | ops | 将正式环境 API 进程健康与腾讯 COS 业务就绪拆分，存储故障不再阻断网关，失败探针可立即复测并保留结构化诊断到发布证据 |
+| fix | prd-api | 录音过期清理先原子认领并跳过尚未确认的转录 outbox，将会话保留期绑定到任务确认，避免并发完成或长时间停机后永久漏转录 |
+| fix | prd-api | 延迟转录取消或自动重试耗尽后关闭固定 outbox，允许人工新任务接管并避免十年音频保留与无限扫描 |
+| test | prd-api | 强制测试项目发现并让录音归档测试使用独立 MongoDB，测试宿主默认隔离正式云存储变量，补齐终态中断恢复、本地公开读取、安全路径和三环境存储合同测试 |
+| ops | cds | 在根级与兼容配置中固化本地 local、CDS Cloudflare R2、正式环境腾讯 COS 三套互斥存储合同，清除跨环境默认值并绑定业务就绪探针 |
+| fix | cds | 已批准的配置导入按 repo 结构权威迁移 CDS 存储提供商合同，同时保留既有密钥与运行时参数 |
+| fix | ops | 本地开发 auto 存储模式不再把 auto 字面值作为 expected provider，避免有效存储被误判为不匹配 |
+| fix | cds | 修复引导脚本失败状态被清理 trap 覆盖，以及 macOS 规范路径差异导致迁移 worktree 别名漏检的问题 |
+| fix | prd-api | 对象存储就绪探针对普通请求短时缓存失败并允许受保护强制探针绕过，避免存储故障时放大压力或阻塞发布门禁 |
+| polish | prd-admin | 重做视频创作交互 Demo、可视化生成进度与系统自适应分镜工作台 |
+| fix | prd-admin, prd-api | 修复视频生成假死反馈、单镜时长与模型能力不匹配及失败原因不可见问题 |
+| fix | prd-admin | 修复真实镜头提交后因首次状态回读陈旧而停止轮询、页面持续显示旧错误的问题 |
+| fix | prd-api, prd-admin | 修复共享数据库下多个视频 worker 重复领取同一镜头、一次点击生成多个上游任务的问题 |
+| fix | prd-api, prd-admin | 修复并发重试覆盖领取标记、worker 重启后镜头永久卡住、恢复轮询模型漂移及历史成本低报问题 |
+| fix | prd-admin | 视频项目编辑态写入浏览器历史与深链，刷新、前进后退和超出最近列表的项目均可恢复 |
+| fix | prd-admin | 修复视频创作 Demo 在手机端被预览遮罩和固定页头拦截触控的问题 |
+| feat | skill | 周报技能 v2：新增 `collect_week_context.py` 四源采集器（日报知识库 / CDS 验收中心 / 缺陷台账 / 部署版本），把「本周产生的一切信息」聚合成周报数据底座，各源独立降级不阻断出报 |
+| feat | skill | 周报技能 v2：验收报告按「每日巡检 / 功能验收 / 发布验收 / PR 验收 / 缺陷复测」自动分类，并拆出 featurePassRate（功能验收通过率），避免例行巡检红灯被误读成产品事故 |
+| rule | skill | 周报技能新增纪律 9/10/11/12：必须逐日关联日报深链、必须给验收通过率与未通过清单（不许只报喜）、业务优先叙事 + 黑话必须翻译、四源缺一必须声明 |
+| refactor | skill | 周报 md 底稿与 html 周刊版重排为业务优先结构：质量闸 → 业务价值看板（谁受益/以前/现在/意味着/验收背书）→ 逐日脉络挂日报链 → 落地对照 → 下周优先级 → 术语表 → 附录（验收表/PR 表/工程数据） |
+| docs | doc | 用 v2 结构重写 doc/report.2026-W30.md，补齐 25 份验收结论、7 篇日报深链、缺陷与线上发布数据 |
+| style | skill | 清理周报技能 reference 文件里的存量 emoji（categories.md / data-collection.md / poster-pages.md），对齐 CLAUDE.md 规则 0 |
+| fix | prd-admin | 修复知识库 HTML 正文里点击超链接导致整页卡死：父页拦截 iframe 内链接点击改用新标签打开（原先会在自增高 iframe 内导航整个 SPA，100vh 布局与自增高互相喂高触发 ResizeObserver 每帧循环），sandbox 不放宽且对存量旧正文同样生效；另给量高逻辑加失控熔断（1 秒内超 40 次写高即断开观察） |
+| fix | skill | 周报采集器改用正式发布台账 /api/releases/runs 统计线上发布，并给出尝试/成功/失败/成功率四个数；分支预览部署版本拆成独立 previewDeploys 段，禁止再充当「线上发布次数」 |
+| fix | skill | 周报采集器列日报补 all=true，修复日报被归进文件夹时被静默漏掉并误报「当天无日报」 |
+| fix | skill | 周报采集器分享链过滤已过期 token，避免周报给出点开即 404 的日报深链 |
+| rule | skill | 周报 html 硬约束新增：所有 a 标签必须带 target=_blank rel=noopener noreferrer；「线上发布」只认正式发布台账口径 |
+| docs | doc | 订正 W30 周报的线上发布数据：由错误的「8 个不可变版本」改为正式发布 39 次尝试 / 成功 23 / 失败 16（成功率 59.0%，上周 35.1%） |
+| fix | skill | 周报采集器解析项目 slug 为 CDS 规范 projectId（如 mdimp -> defd4695ab5f），避免 slug 与 id 不一致的项目被整体过滤成「0 次发布」的静默错误 |
+| fix | skill | 周报采集器按 CDS 终态口径统计发布 run：成功率分母只含终态（success/failed/rollback_*），在途 run 单列 inFlight、回滚单列 rolledBack，消除「1 次尝试 / 0 成功 / 0 失败 / 0%」的自相矛盾 |
+| fix | skill | 周报采集器读 CDS 正式发布台账时显式加载项目级 .cds/credentials.json，并把 cdscli die() 抛的 SystemExit 翻成普通异常 + 走 fatal_network_errors=False，避免只有项目级凭据时取不到数、或 CDS 不可达时整个采集器被带走 |
+| fix | prd-admin | 知识库正文链接拦截只作用于会真正导航本 frame 的 http(s) 链接，mailto/tel/自定义协议与 download 链接保留原生行为，避免被 preventDefault 变成哑巴链接 |
+| fix | skill | publish.py 发布闸新增导航锚点校验：http(s) 链接缺 target=_blank 或 rel=noopener 直接拒发，把原先只写在 SKILL.md 里的约束变成可执行守卫 |
+| fix | prd-admin | 链接拦截改读 href 属性 + new URL(raw, baseURI) 解析，覆盖内联 SVG 锚点（SVGAElement 的 .href 是 SVGAnimatedString 非字符串，原实现会漏拦并让 frame 被导航走）|
+| fix | skill | 发布闸锚点校验按「会不会导航本 frame」判定：文档相对/上级相对/query-only/根相对/协议相对链接一并纳入校验，仅 mailto/tel/自定义协议与页内锚点、download 放行 |
+| fix | prd-admin | 链接拦截覆盖全部可导航锚点形态：a[href]、SVG1.1 的 a[xlink:href]、area[href]（表单提交由 sandbox 无 allow-forms 阻断，base/meta-refresh 由发布闸禁用）|
+| fix | skill | 发布闸锚点校验同步覆盖 xlink:href 与 area 标签，19 例形态矩阵双向自测全过 |
+| security | prd-admin | 正文链接协议判定改为白名单豁免：只放行 mailto/tel/sms 等外部处理器协议，data:/about:/blob:/javascript:/filesystem: 等会导航当前上下文的协议一律拦截且不开新标签 |
+| security | skill | 发布闸同步改白名单豁免，并对 javascript:/data:/blob:/about: 等自导航协议直接拒发 |
+| fix | skill | 采集器判定发布台账覆盖完整性：CDS 按每目标 100 条 + 90 天裁剪，补写历史周时给出 coverage 警告，避免把被裁剪后的残缺数据当成完整发布统计 |
+| security | skill | 发布闸判协议前按浏览器口径归一化 URL（剔除内部 tab/换行、剥首尾 C0 控制符），堵住 java&#9;script: 这类实体绕过 |
+| fix | prd-admin | 量高熔断改为只计真正写高的次数并在熔断前补最后一次写入，避免图多文档 1 秒内几十张图 load 触发误熔断导致内容被永久截断 |
+| fix | skill | 发布台账覆盖判定去掉「最早记录晚于周起点」这条会误报的启发式，只从真实保留信号（超 90 天窗口、目标 run 触顶）出发 |
+| docs | skill | 周刊模板从订正后的成稿重新派生，清除仍在示范旧「8 次线上发布」口径的样例段落 |
+| security | prd-admin | download 链接不再无条件放行：浏览器对跨源 http(s) 会忽略 download 按普通导航处理，现只对同源放行，跨源仍走拦截 |
+| security | skill | 发布闸协议豁免收为纯白名单，file:/ftp:/ws: 等可导航标准协议一并要求 target+rel；download 仅对相对 URL（构造上同源）豁免 |
+| fix | skill | 覆盖判定改用周起点比对保留边界（修跨 90 天边界周漏判），且 run 触顶需叠加「现存最早记录晚于周起点」才告警，避免把完整数据误标成下限 |
+| security | skill | 发布闸按浏览器口径取首个重复属性并直接拒收重复的 href/xlink:href/target/rel，堵住 <a href="javascript:.." href="#safe"> 这类藏在后一个属性里的绕过 |
+| security | skill | 发布闸要求 rel 同时含 noopener 与 noreferrer，与技能/模板声明的契约对齐 |
+| docs | skill | 清除周刊模板与成稿里最后一处旧口径「本周已有 8 次真实发布」，三份产物发布数字口径统一 |
+| fix | skill | 覆盖判定的保留边界改用 >=：CDS 淘汰线是滚动 90*24h 而此处只有日期粒度，起点正好第 90 天时当天清晨的 run 已可被删，用 > 会漏判成完整 |
+| fix | skill | 条数触顶从「丢数警告」降级为提示（advisories）：n==上限只说明恰好装满，新目标攒满 100 条时第 101 条从未存在，原判据会把准确数据误标成下限 |
+| fix | skill | 采集器项目标识改按 id/slug/name 集合匹配：/api/releases/runs 存的是 slug 而 cdscli 返回 hex id，先前归一成单一 id 会把本项目全部 run 静默滤成「0 次发布」 |
+| fix | skill | 台账非空却被项目过滤器全部滤空时改报 available=false + 实际写法示例，拒绝以「本周未发布」的姿态输出静默错误 |
+| fix | skill | 采集器把 cdscli 在本进程内的打印改道 stderr：die() 会往 stdout 打一行 JSON，导致 CDS 不可达时 stdout 变成两段 JSON 拼接、下游解析直接炸 |
+| rule | skill | 周报纪律 12 补「不可用 ≠ 0」：available=false 只能写数据不可用，只有 available=true 且 attempts=0 才写本周未发布 |
+| test | skill | 新增周报采集器判据回归（8 例，含保留边界/条数闸/标识集合/滤空守卫），逐条验证删掉对应修复即变红 |
+| security | prd-admin | 链接拦截区分「无 href 属性」与「href 空串」：srcdoc 的 base URL 继承父页，href="" 会解析成宿主 SPA 地址并导航本 frame，原先当 no-op 放行等于给卡死路径留了后门 |
+| security | skill | 发布闸同步拒收空 href（含纯空白），并按浏览器口径在 href 与 xlink:href 都存在时取 href（不能用 or 串联，空串是 falsy 会串到后者） |
+| docs | skill | 周刊 baseline 行/页脚/术语表的第四源署名由「部署版本」改为「正式发布台账 /api/releases/runs」，并在术语表拆开两个词条——此前只改了数字没改来源署名，等于把正确数字挂在被判作废的来源名下 |
+| rule | skill | 纪律 12 写明第四源必须署名「正式发布台账」，且 baseline/页脚/术语表/附录四处署名要一致 |
+| fix | skill | 发布台账改由服务端 ?project= 过滤，并对「服务端不认该写法」做交叉验证回退；删掉「客户端滤空即判数据不可用」的误报守卫——本项目真没发过时那条守卫会把正确的 0 次报成不可用 |
+| security | skill | 发布闸判 download 豁免前先把反斜杠折成斜杠：URL 标准下 special scheme 的 \ 等价于 /，`\\evil.example/f` 实为跨源，浏览器会忽略 download 直接导航 |
+| security | prd-admin | 链接拦截补 ws:/wss:：它们是 special scheme，点击会真的导航本 frame，且发布闸本来就要求其带 target，两侧判据需一致 |
+| fix | skill | 服务端 ?project= 查询改用解析出的规范 id：项目级凭据下 CDS 精确比对 key 绑定的 projectId，传 slug/项目名直接 403，会让整个发布来源不可用且回退跑不到 |
+| fix | skill | scope 查询失败（403/端点不支持/其它）改为回退全量查询 + 客户端匹配并告警，不再拖垮整个来源 |
+| fix | prd-admin | 量高熔断改按「连续未收敛写高」计数，删掉按秒清零：页面被正反馈拖到 40fps 以下时每秒不足 41 次写高，计数每秒清零会让循环永远跑下去，熔断形同虚设 |
+| fix | skill | 标识解析失败且零匹配时改报 available=false：入参是别名（项目名）而项目列表拿不到时，台账里的 slug 既不被服务端命中也不被客户端命中，那个 0 是「没找着」不是「没发过」，不能盖章 |
+| security | skill | 发布闸 rel 改按 HTML ASCII 空白切词：Python str.split() 连 Unicode 空白也切，rel="noopener noreferrer" 会被切成两个合法 token 过闸，而浏览器只看到一个不认识的整体 token，noreferrer 实际不生效 |
+| fix | skill | 「解析失败不予认证零」的判据改看 scoped_all（任意时间的历史）而非 sel（仅本周）：历史匹配到过就证明标识有效，本周恰好没发是可信的零，按 sel 判会再次把准确的 0 误报成不可用 |
+
+### 2026-07-28
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 关系型隔离支持 jdbc: 复合 scheme 连接串：Java/Spring 项目（SPRING_DATASOURCE_URL 等）此前解析失败导致静默不改写，隔离在这类项目上仍是假的 |
+| fix | cds | 镜像回收把「被容器引用故按住不删」与「删除失败」分开计数：failed/errors 不再恒为 1，真故障不被常亮红灯淹没 |
+| fix | cds | 预构建镜像缺失时先复用「组件未变更的上一版镜像」，只有该组件确实有代码改动才回落宿主源码构建（宕机的临门一脚） |
+| feat | cds | janitor 新增孤儿 worktree 对账：磁盘有目录、台账无分支即回收，带「够老 + 无容器挂载 + 单轮上限」三重护栏，查不到挂载情况整轮只报不删 |
+| fix | cds | 部署 run 的 commitSha 改在 pull 后 HEAD 刷新之后再盖，不再记触发时缓存的旧 sha（排障时曾据此误判 worktree 没拉新代码） |
+| feat | cds | 新增全局回收互斥：CDS 侧回收路径同一时刻只允许一个，拿不到锁跳过本轮不排队；持锁超时视为泄漏可被接管 |
+| security | cds | 关键容器打 cds.protected=true（CDS 状态库 mongo + 全部 infra），孤儿收割器按标记豁免，运维安全清理命令可据此过滤 |
+| fix | cds | CDS 状态库 mongo 容器补日志限额（全仓唯一漏网的 docker run） |
+| fix | cds | 启动期 mongo 不可用改为退避重试（约 90s 忍耐窗口）而非一次失败即退出，消除 systemd 重启风暴；放弃前做磁盘诊断直指真凶 |
+| docs | cds | 宕机债务台账逐条标注偿还状态，补「安全的 Docker 清理命令」运维须知 |
+| fix | cds | 隔离支持引擎中立库名 key（DB_NAME / DATABASE_NAME），引擎从同 env 的关系型 URL scheme 读；Spring 风格项目此前隔离入口即不可用 |
+| fix | cds | 孤儿 worktree 的挂载枚举改走 docker inspect：docker ps 的 .Mounts 是字符串，对它 range 会让命令失败，导致对账永远降级成只报不删（生产实测 66 个孤儿一个没删） |
+| fix | cds | 隔离不可用时的原因改为可诊断：报出疑似数据库变量名与引擎能否从连接串推断，不再只留一句「没有数据库名」 |
+| feat | cds | 隔离可用性接口额外返回「将改写哪些变量」（引擎 + 库名 key + 连接串 key，只报名不报值），点之前就知道会动什么 |
+| fix | cds | 挂载枚举容忍「容器在 ps 与 inspect 之间消失」导致的非零退出：只要拿到输出就用，全空才降级；此前生产上恒定降级、孤儿回收一直停在 0/66 |
+| fix | cds | 挂载枚举模板改用 {{println}}：原 {{"\n"}} 在 TS 单引号串里被转义成真换行，Go 模板解析失败且无输出，是挂载枚举一直返回 null 的真凶 |
+| fix | cds | 状态库 handle 连接失败后复位实例：此前先赋值再连，失败后重试被 if (client) return 短路，启动期退避重试形同虚设 |
+| fix | cds | 镜像复用的等价性改为对着「本次要部署的目标 commit」比对，不再对着 worktree HEAD：锁定版本部署时，改了又被更晚 HEAD revert 的组件会被误判为未变更 |
+| fix | cds | 启动重试的等待定时器不再 unref：事件循环空转时进程可能在重试到期前直接退出，忍耐窗口白设 |
+| ops | cds | 复用已有状态库容器时体检保护标记与日志限额，缺失则打印可直接粘贴的重建命令（docker 无法给存量容器补 label / 改日志限额，现网容器至今仍是裸的） |
+| fix | cds | 孤儿 worktree 只在已知项目桶下枚举：迁移自扁平布局的存量部署里，顶层遗留 worktree 曾被当成项目桶，其源码子目录会被当孤儿递归删除（三道护栏均拦不住） |
+| fix | cds | 孤儿判定加血缘兜底：候选若是台账在用目录的上级或子目录一律保留，只有毫无包含关系才算孤儿 |
+| fix | cds | 关系型 URL 的引擎探测与库名改写合并为同一条 scheme SSOT：此前 jdbc:mariadb / jdbc:postgres 能判引擎却不进改写集合，这类 Java 服务隔离后流量仍打源库而控制面报成功 |
+| fix | cds | 镜像复用的等价性改比 CI 构建输入范围（新增 buildScope，对齐工作流 path-filter），不再比运行时挂载目录：compose 里服务普遍挂整仓 `.`，旧口径等于比整个仓库，复用一次都不会触发，本次止损点在真实配置下形同虚设 |
+| feat | cds | cds-compose 支持 `x-cds-deploy-modes.<svc>.<mode>.buildScope` 声明 CI 构建输入路径；未声明即不复用（fail-closed），新增 CI filter 对拍守卫测试防两处漂移 |
+| fix | cds | 删项目时落 worktree 桶墓碑：项目 id 从台账消失后，其桶不再被孤儿对账枚举，里面无人认领的 worktree 会永久占盘；墓碑并入白名单，桶清空后自动摘除 |
+| fix | cds | 库名 key 取用加优先级：引擎中立的 DB_NAME 只在没有自带引擎的 key 时兜底，此前与 MYSQL_DATABASE 同档、退化成 env 插入顺序，项目级泛化 DB_NAME 会压过服务自己的库名导致克隆错库且连接串漏改 |
+| fix | cds | 部署 run 与不可变版本改记「实际落地的 commit」：webhook 指定 A 而分支已前进到 B 时，entry.githubCommitSha 有意停在 A，run/version 却照抄它，审计挂在没被部署过的代码上，findReusable 还可能拿 A 的产物顶替 B |
+| fix | cds | isSourcePull 补认 profile 级 prebuiltImage：此前只认 deployModes.prebuilt，导致 tag 锁死 sha 的镜像部署被当成源码构建、台账贴成 pull 到的 HEAD |
+| chore | cds | MockShellExecutor 新增 addResponsePatternFirst（exec 首个命中即返回，用例覆盖通用桩只能插队首） |
+| fix | cds | 三个 llmgw 镜像的 buildScope 补上 prd-api/**：其 CI 触发条件含 api 变更、Dockerfile 也编译 prd-api 的 Core/Infrastructure，漏声明会在拉取失败时复用含旧 Core 代码的镜像 |
+| fix | cds | buildScope 对拍守卫改为解析 job 的 if 触发条件而非同名 filter：一个镜像可由多个 filter 触发，只按同名对拍会漏掉跨组件依赖 |
+| fix | cds | 回收锁释放加身份令牌：超时接管后旧持有者跑完会清掉后继者的持有状态，导致第三轮回收与后继者并发跑破坏性清理 |
+| fix | cds | 孤儿枚举读失败不再谎报为空：EACCES/IO 抖动会让已删项目的桶「看起来已清空」而摘掉墓碑，文件系统恢复后那些目录永远回收不了 |
+| fix | cds | 迁移遗留的符号链接别名纳入回收并与真身成对判定：此前别名因 isDirectory 为假被漏掉、真身又被项目桶白名单挡住，两边都收不回；任一侧被认领或挂载则都不动，回收时一并收 |
+| fix | cds | 极速版自动回退源码编译后修正落地 commit 口径：回退发生在 SHA 选定之后，不修正会把 run/version/opLog 记成镜像锁定的 sha 而非实际编译的 HEAD |
+| ops | cds | 复用已存在的 infra 容器时体检日志限额，缺失则告警并给出重建指令：限额只在 docker run 路径生效，现网长生命周期的 mongo/redis 至今仍是无上限日志 |
+| fix | cds | 孤儿 worktree 删除前加临删复核：判定与删除之间同 slug 分支可能被重建（create 先删残留再 checkout、落台账更在其后），拿陈旧计划会删掉刚拉出来的新工作树 |
+| fix | cds | 鉴权 mongo 连接纳入启动退避重试，且失败复位 handle：标准安装下状态库与鉴权指向同一个 mongo，此前后者一次失败即退出，忍耐窗口形同虚设 |
+| fix | cds | 事件日志库与 HTTP 日志库同样修掉「先赋值再连」：连接或建索引失败后 init 被永久短路，日志静默死掉再也不会自愈 |
+| test | cds | 新增 lint 守卫：禁止 this.x = new MongoClient(...) 先赋值再连，并要求失败路径 close 半开连接（同一个坑已出现 5 次） |
+| fix | cds | 孤儿别名与真身成对回收改为先删真身后删别名：真身在顶层不被枚举，别名是它唯一的可发现入口，先删别名再删真身失败就永久漏盘；真身失败时保留别名留待下轮 |
+| fix | cds | 中立库名 key 的引擎判定先按 profile 的 dependsOn 收敛：多引擎项目里项目级 customEnv 灌下全部引擎连接串，全局 URL 判不出唯一引擎，DB_NAME 会在下游消歧跑到之前就被过滤掉，隔离入口对这类服务恒不可用 |
+| fix | cds | 日志库连上即可用：索引建立失败只告警不再把库判死，且后续 init 会重试索引；改保留天数导致的 ttl 索引选项冲突走 drop 再建对账，一条索引失败不掩盖其余 |
+| fix | cds | 库名 key 取用改为来源层级优先（profile > 分支 > 项目），同层再比引擎专属度：此前一律降档中立 key，导致项目级 MYSQL_DATABASE 压过服务自己的 DB_NAME，克隆 infra 默认库而应用连接串原地不动 |
+| docs | cds | 复制集债务台账补两条已知边界：同层多库名 key 无归属信息可判、多引擎项目中立 key 依赖 dependsOn 声明 |
+| fix | cds | 启动退避实际窗口对齐承诺的 90s：N 次尝试只有 N-1 段等待，原默认 6 次只等 60s，少的正是最后那段 30s |
+| fix | cds | 启动失败的磁盘诊断改量仓库盘 + docker 数据根两处：mongo 数据落在 docker 那侧，只量仓库盘会让提示恰好在真凶场景（2026-07-27 撑爆 containerd）下不出现 |
+| fix | cds | 日志库索引失败改为自行排程退避重试：init 只在启动调一次，「下次 init 重试」等于永不重试；TTL 已 drop 又重建失败时保留期会一直失效到重启 |
+| fix | cds | 关系型连接串改写按主机绑定到选定实例：同库名不同主机的两条 JDBC URL 此前会被一起改写，把副本指向另一台服务器上的同名隔离库；单主机时保持全收不误伤常规配置，未绑定的 key 如实报进 unboundUrlKeys |
+| fix | cds | 断链的迁移别名纳入回收：成对回收「真身已删、别名删失败」会留下断链，此前 realpath 抛错即跳过，它既永远无人重试回收、又让已删项目墓碑被误摘，同 slug 重建还会撞上目标已存在 |
+| fix | cds | 复用 infra 容器的体检补查 cds.protected 标记：只查日志限额会让「有限额但无保护标记」的存量容器静默通过，仍会被 label 过滤的安全清理命令误删 |
+| docs | cds | 新增 doc/debt.cds.release-system.md 债务台账：阶段一有意延期的 7 条边界 + 真实环境证据清单，并同步 doc/index.yml 与 guide.list.directory.md |
+| test | cds | 新增生产发布真 SSH 端到端验收（真 sshd + 真 ssh2 + 真路由，无任何注入）：取消后目标保持占用、取消后不再写目标机器、回滚过同一道并发闸、排空期间 /releases/* 拿 503；四条逐条红绿闭环，本机无 sshd 时整套自动跳过 |
+| test | cds | 新增提缺陷转发真 HTTP 端到端验收（本地假 MAP + 真 global fetch/FormData）：断言 create → attachments → submit 的真实顺序与真实字节，以及附件上传失败时如实降级 |
+| test | llmgw | 前端附件总量闸用真实 5MB 量级 base64 验证：两张 5MB 图必须在前端就被拦下（base64 口径），单张 5MB 不误伤 |
+| feat | cds | 发布步骤模型成为一等公民：执行器按 ReleasePlan.steps 汇报「第 N/共 M 步」，前端不再用正则从日志反推步骤，并清除发布中心的本仓脚本名硬编码（CDS 恢复成通用产品） |
+| feat | cds | 发布 ETA：新增独立的生产发布耗时台账（不复用 DeployDurationMode 的 release，那是极速版构建模式，语义不同会互相污染），发布进行中显示「预计还需 MM:SS（近 N 次中位）」，样本不足时给诚实文案而非编造数字 |
+| feat | cds | 生产存活监控：存活探测新增 URL 型发布目标，走 ReleaseTarget.ssh.healthcheckUrl，状态页出现生产目标的可用率与故障时间线；复用既有 uptime-metrics 纯函数，不另起一套聚合 |
+| feat | cds | 发布生命周期事件上 cds-events-bus（started/succeeded/failed/rolled-back），告警通道与存活告警共用一条 |
+| feat | cds | 发布 SSE 流补 id: 行，支持 Last-Event-ID 标准续传，与分支部署流对齐 |
+| test | cds | 新增阶段二回归约 100 例（步骤模型/ETA/存活目标/事件/SSE 续传），含多个「防再修一边」的唯一判定源守卫 |
+| perf | cds | 发布中心健康列改读存活监控快照，打开页面不再按目标数放大成一串对生产的实时探测；监控没接上时诚实报「等待首次探测 / 存活监控未启用」，不偷偷回退到实时探测 |
+| fix | cds | 分支侧发布向导也迁到共享步骤判定源：此前它自带第三份「日志 phase 反推 + `scripts[0] \|\| './fast.sh'` 兜底」的拷贝，换个项目就展示三个根本不会执行的脚本；同步显示「第 N/M 步 · 标题」，与发布中心对同一次发布说同一句话 |
+| fix | cds | 真 SSH 端到端用例不再因私钥路径失效而静默空跑：默认路径原本是 session 级 scratchpad 绝对路径，换会话即 existsSync 失败、整套变成三个空绿灯，而债务台账正引用它当真实环境证据；改为 `CDS_RELEASE_E2E_SSH_KEY` 可覆盖 + 稳定默认路径，跳过时打印到底是缺 key 还是没 sshd |
+| test | cds | 修掉一条断言 bug 本身的契约用例：release-site-ui-contract 逐字要求 BranchListPage 里存在 `执行 ${scriptOne.replace` 与 `releaseScriptPhase(scriptOne)`，等于把硬编码焊死——谁去掉谁 CI 红；改为断言走共享判定源 |
+| feat | cds | 发布预检落库并被 run 引用：一次预检 → 落库 → 发布复用同一份结论，消除「向导跑一次、startRelease 内部再跑一次」的重复（用户看到的那次此前不是真正把关的那次）；复用带 commit 相同 + 2 分钟 TTL + 目标/分支重新校验的过期保护，对不上一律回落重跑 |
+| perf | cds | 发布日志改批量落盘：`appendReleaseRunLog` 此前每追加一行就全量 `save()` 一次，SSH 逐行输出下写放大随已累积日志量增长；实测灌 1200 行的落盘次数从 1200 降到 24，error 级仍立即落盘（失败证据是排障第一现场） |
+| fix | cds | 发布日志加 500 条上限 + `firstEventSeq` 截断标记，SSE 快照走同一份判定并如实报 `truncated`：此前唯一的截断发生在持久化层应急压缩且不写任何标记，客户端拿旧 `afterSeq` 重连会静默缺一段还以为收全了 |
+| feat | cds | 发布 run 保留策略（每目标 100 条 + 90 天窗）：保护集含在途 run、最新一条、最近 20 次成功及其回滚链，避免「保留了版本却回滚不了」 |
+| feat | cds | 远端产物回收：按保留窗口清理远端 worktree 与 static 成品目录，N 与回滚可达范围同源；八条安全边界（current/previous 取远端 readlink 实读值绝不删、读不回来不删、有在途 run 不删、漂移时不删、形状不匹配不碰、publicDirectory 共用时退化）；逃生阀 `CDS_RELEASE_ARTIFACT_RETENTION=0` |
+| feat | cds | 生产漂移检测：定时读回远端 `current` / `previous` 与 CDS 台账比对，不一致走 cds-events-bus 告警（复用存活监控同一条通道与 `isAlertCdsEvent`）。只告警不自动改——单机误自愈会打断人工抢修 |
+| feat | cds | 发布目标配置变更历史：20 个可审计字段白名单 diff（全量递归会被 `updatedAt` 刷成噪声），每目标 50 条上限，`privateKeyRef` 只留指纹，删目标时清桶；新增 `GET /releases/targets/:id/changes` |
+| feat | cds | DORA 四项指标进发布中心：发布频率（回滚不计，否则回滚越多显得发布越频繁）、变更失败率、恢复时长（同目标内找恢复，未恢复的单列不混进 p50）、变更前置时间（发布发起时记 commit 时间，全仓此前没有该数据）；样本不足一律 `null` 并给「最近 30 天仅 N 次发布」的诚实文案，不编造精确假数字 |
+| feat | cds | 存活监控故障挂发布记录，能回答「是哪次发布引入的」 |
+| test | cds | 新增阶段三回归约 200 例，含远端回收的**对抗性**边界套件（让保护对象恰好落在最该淘汰的位置上，确认仍活着）与多条「一行接线掉了不会红」的源码守卫 |
+| fix | cds | 修掉三处「建好却没接上」：`buildReleaseLogSnapshot` 全 src 无人调用（SSE 仍手搓 filter）、`release-remote-watcher` 整个模块无人 import（定时器从不启动，漂移告警达成度实为 0）、漂移告警出口未注册（退化成 console.warn）——三者全量测试都是绿的，属于典型的静默退化 |
+| fix | cds | 共用目录判据补规范化（Codex P1）：`/opt/site` 与 `/opt/site/` 此前被裸字符串比较判成不共用，共用保护被关掉，远端回收会把另一个目标台账里的成品当孤儿删掉——直接砍到别人的生产；判据抽成 `isSameRemoteDirectory` 并加守卫 |
+| fix | cds | 预检裁剪保住被 run 引用的结论（Codex P2）：此前只按条数与时间窗淘汰，同一目标再做 20 次预检就能把在途 run 依据的那份删掉，留下指向空气的审计链接；被引用的记录同时不占淘汰名额，否则条数上限形同虚设 |
+| fix | cds | 故障归因上状态页（Codex P2）：后端 uptime API 一直返回 `releaseId` / `releaseAgeMs`，前端既没声明也没渲染，「是哪次发布引入的」记录了但用户看不到；文案用「疑似」，不把时间相邻说成因果 |
+| rule | doc | 新增 `.claude/rules/predicate-and-wiring-discipline.md`：把 25+ 条 review 意见归纳成四种形状（判据太窄 / 链路只建到一半 / 判据分裂漂移 / 测试反向锁死 bug 或静默空跑）与五条机械自查，核心判据是「改动删掉后测试仍全绿 = 需要一条守卫」 |
+| fix | cds | 自动恢复补落时间戳（Codex P2）：探测失败后 `restorePreviousAfterFailedProbe` 把上一版本推回去此前**只写日志**，不落 run 也不落时间戳，原 run 仍是 failed；DORA 恢复配对因此找不到恢复者，把几秒就自愈的失败算成「进行中故障」一直挂到下次成功发布，恢复时长与 ongoingCount 双双失真。改为在失败 run 上盖 `autoRestoredAt`——不新建 run，那不是一次发布，造假 run 会污染发布频率与变更失败率的分母 |
+| fix | cds | 监控被关闭时发布中心说实话（Codex P2）：`CDS_UPTIME_ENABLED=0` / `CDS_UPTIME_RELEASE_ENABLED=0` 时快照源照常注册但记录永远建不出来，健康列永久显示「稍后自动开始探测」这个不会兑现的承诺，而实时探测已经拿掉了——那一列就永远在骗人；改为不注册源并传入区分两个开关的关闭原因 |
+| chore | cds | 三个碎片文件合并为一个（Codex P1）：同一 PR 的变更必须落在同一个碎片里（CLAUDE.md §4），否则发版合并与后续维护会丢失 PR 级的整体性 |
+| fix | cds | 预检复用绑定目标配置指纹（Codex P1）：复用键此前只有 branchId/targetId/previewUrl/operator/commitSha，运维在两分钟复用窗口里改掉 host / 凭据 / appPath / 发布命令 / healthcheckUrl 后键照样命中，旧结论被套到一台连通性、仓库身份、脚本都没验证过的机器上；指纹清单直接复用变更历史那张白名单表，不另立第二份，存量无指纹记录一律重跑 |
+| fix | cds | 自动恢复配对改用探测失败时刻（Codex P2，修上一版空转）：`autoRestoredAt` 落在 `failRun` 之前，恒早于 `finishedAt`，而上一版拿它与 run 终态时刻比大小，条件恒为 false，整条修复在生产上是空转；新增 `autoRestoreStartedAt` 作为故障窗口起点。上一版用例之所以是绿的，是因为它手写了一个现实中不可能出现的时间顺序——测试编码了作者的假设而不是真实时序 |
+| fix | cds | 配置指纹改用原值计算（Codex P1）：指纹此前建在面向展示的 `formatTrackedValue` 上，512 字截断 + 敏感值掩码会让「只在长命令尾部不同」或「只改了 TOKEN=」的两个目标算出同一个指纹，命令换了旧预检照样放行；改走不脱敏不截断的原值 + sha256 单向哈希，脱敏只留在给人看的那一层 |
+| fix | cds | 预检复用键补项目身份指纹（Codex P1）：预检的 project-identity / remote-repository 两项验的是**项目**仓库身份，`PUT /projects/:id` 改 gitRepoUrl 时目标一个字节没动、指纹不变、缓存命中，而复用路径不会重跑这两项检查 |
+| fix | cds | 复用预检时「上一成功版本」改为现取（Codex P1）：此前还原落库那一份，若 TTL 内同目标另一条发布刚成功，新 run 会跳过该最新版本，后续健康检查失败时自动恢复会把更旧的版本推上生产并断掉回滚链 |
+| fix | cds | 缺恢复起点的存量 run 不再计作 0 时长样本（Codex P2）：只有 `autoRestoredAt` 没有起点时退回 `finishedAt` 会得到负数、夹成 0 就等于宣称「瞬时恢复」，系统性压低 p50/p90，也违背本模块「绝不编造 0」的口径；改为单列 `recoveredUnknownDurationCount`，与已知时长样本、进行中数三者之和恒等于失败数 |
+| fix | cds | 共用目录判定带上 SSH 主机（Codex P2）：只比路径会把不同服务器上同名的 `/var/www/app` 判成共用，回收从此不敢删该目录里不在本目标台账的版本，磁盘无界增长；端口缺省按 22 归一，主机未知时保守判共用（误判不共用会删错东西，误判共用只是少删，两个方向代价不对称） |
+| fix | cds | 发布日志的 1 秒落盘改为真调度（Codex P2）：阈值此前只在「又来一行日志」时求值，不足 50 行后命令转静默的那几行只在内存里，要等无关 save 或 30 秒心跳才落盘，此刻进程被 kill 就丢掉排障最需要的证据——注释承诺了 1 秒而代码从不调度；改为首行 pending 即挂 unref 定时器，显式 flush 时清掉 |
+| fix | cds | 前端 DORA 契约补 `recoveredUnknownDurationCount`（Codex P2）：后端已单列「已恢复但时长未知」，前端不接这个字段就会对着有故障记录的用户说「没有失败发布」，又一次链路只建到一半 |
+| fix | cds | 产物回收全程持进程级目标锁（Codex P2）：`assertTargetFree` 只是时间点检查，而巡检器与路由各 new 了一个 ReleaseService、两张 inFlight 表互不可见，回收的 `git worktree remove` / `prune` 能撞上正在跑的发布，把一次本该成功的生产发布搞失败；锁在盘点之前拿、删除之后放，拿不到就整轮跳过不排队 |
+| fix | cds | 删除失败不再报成已回收（Codex P2）：远端逐条 `[ -e ]` 复核后才打 RECLAIMED，删不掉的打 RECLAIM_FAILED，服务层只认前者——此前直接把计划清单当结果返回，两条删除都失败时仍 `exit 0`，于是报告「已回收」而目录还在盘上、磁盘继续涨（假证据比不清理更糟，它让人以为清理在工作） |
+| fix | cds | 回滚补发 `release.status` 起始事件（Codex P2）：回滚 run 一落库就是 `rollback_running`、不经 patchStatus，总线上第一条生命周期事件是 rolled-back / failed，观测方看不到「正在回滚」 |
+| fix | cds | 恢复时钟对「事后回滚」改从回滚发起算起（Codex P2）：一次成功发布若九天后才被回滚，它会被判为 failed，而恢复时钟起点取的是它自己的完成时刻——把九天正常服务算成 MTTR，中间任何一次成功发布还会被误配成它的「恢复者」；改为以最早那次回滚 run 的 startedAt 为故障起点，自身就是 failed 的发布仍用它自己的终态时刻 |
+| docs | cds | 债务台账补第 12 条：两个目标真共用同一远端目录时，产物归属只能从可被裁剪的 run 台账反推，老 run 被裁掉后双方都不认识老产物、永远 defer，目录无界增长；失效方向是保守的（只漏删不误删），真修需要独立于 run 的产物归属账 |
+| test | cds | 三条既有源码守卫补剥注释：解释「为什么不能这么写」的注释会原样出现被禁字面量，不剥就会被自己的说明文字触发（本 PR 已栽三次同款） |
+| docs | doc | LLM 网关 15 篇文档统一到 `platform.llm-gateway.*` 命名：`llm-gateway.*` 自创 appname 段与 `platform.llm-gateway-xxx` 连字符黏连两种历史写法全部收敛，同步改写全仓 143 处引用（`CHANGELOG.md` 按规则不动，残留 16 处旧名已登记 debt.platform.changelog-center 边界 8） |
+| docs | doc | `rule.doc.naming.md` 补明网关归属：网关不是独立 appname，一律走 `platform.llm-gateway.*`，禁止 `llm-gateway.*` 与 `platform.llm-gateway-xxx`——此前规则的前缀示例与 canonical 清单自相矛盾 |
+| docs | doc | `doc/index.yml` 与 `guide.list.directory.md` 按段重排，改名后的条目回到 platform 簇；两份索引条目与顺序逐行一致 |
+| fix | doc | 验收规则 SSOT 回填：`rule.acceptance.map-enterprise.md` 的 daily_scope 调用示例补上多宿主技能根探测（此前只在三份技能快照里改过、权威原件没同步，导致 `check-acceptance-rule-ssot.py` 在 main 上常红），重跑快照同步与官方技能目录打包使三层内容重新对齐 |
+| chore | doc | 每日熵减计划：D1-D3 全部干净（doc/ 命名、index.yml、guide.list 均无缺项/幽灵项）；D4 补登 `phase0-guard` 技能表行（目录存在但表格缺行），`**pnpm**` 复核为正文加粗提及非技能表行、0 改动；D6 处理 4 条 changelog（教程双链图谱两条 llmgw changelog 补充 `doc/plan.platform.llm-gateway.authoritative-tutorial.md` 「每日漂移维护」行的 Draft/Published/CAS 回滚 API 事实；其余 2 条为窄范围 UI 修复与本技能自身上次运行记录，无对应设计文档，仅登记 manifest），manifest 累计 496 条；`2026-07-27_cds-trunk-protection-uptime-loadtest-bugreport.md` 经 Codex review 指出该 PR 捆绑的全局提 bug 系统与清理端点主干保护仍无文档覆盖（`plan.cds.release-system.md` 仅记录"已发布分支纳入分支保护"为待办缺口，非已实现保护的说明），撤回登记，留待后续运行补齐文档后再处理；D5 codebase-snapshot 的 CDS 小节仍停留在 PR #696（2026-05-31），近两月主干保护/存活监控/复制集/发布系统重构等大量变更未反映，超出无人值守自动化安全范围，标记待人工审查，未改动 |
+| refactor | llmgw | 新增 lib/surface.ts 组件规格 SSOT：卡片内边距 / 次级块 / 容器间距四档 / 卡片操作行 / 主操作按钮规格，落实「同一角色只允许一种规格」 |
+| fix | llmgw | 模型池三套指标展示收敛为一套：删掉 4 张只装一个数字的指标卡，汇总并入标题行小字；页头改 lg-page-heading，主操作统一 primary/sm，裸文字链接改 ghost 按钮 |
+| fix | llmgw | Exchange 去掉 eyebrow 层；三步引导卡由常驻改为仅零数据时出现（并入空状态卡的有序列表，不再多一层盒子）；主操作按钮由大号带 icon 统一为 primary/sm 纯文字 |
+| fix | llmgw | 按钮规格归一：sm 高度 30→32px 落进控件基准区间，按钮文字由 12px 提到 --fs-secondary（按钮文字是要读的，不是角标） |
+| feat | llmgw | 排版漂移检测新增五个「规格种类数」维度（卡片内边距/圆角/容器间距/chip/主操作按钮），上限取自基准页自身而非拍脑袋的理想值 |
+| docs | llmgw | 新增 doc/rule.platform.llm-gateway.console-design-tonality.md：把三轮实测校准出来的控制台风格调性固化为规则（一层卡片/余量均匀/七档字号+角色映射/icon 是扫描锚点/同一角色一种规格），含可测量判据与三层护栏 |
+| fix | llmgw | Provider / 模型 / 审计 / 逻辑模型的页面标题从带边框卡片里提出来，与请求记录页同构（标题裸露在页面上，卡片只装展开后的表单） |
+| fix | llmgw | 逻辑模型页内容区改为撑满剩余高度并自行滚动，空数据不再在下方留 600px 空白；模型池控件高度 30px→36px，对齐基准区间 |
+| feat | llmgw | 新增排版漂移检测 e2e/llmgw-layout-drift.mjs：以请求记录页为基准，逐页量标题字号/标题是否被卡片包住/内容底部空隙/表头与单元格字号/单行行盒/控件高度，输出漂移清单 |
+| fix | llmgw | 请求记录页表格最小宽度不再硬编码 1832px，改为按列自身下限推算；列宽从固定 px 改为内容驱动（长文本列吃剩余空间），空转宽度 51%→11%，1440 视口下不再横向滚动、齿轮不再压住表头 |
+| fix | llmgw | 数值列（输入/输出/费用/速度）取消右对齐，统一左对齐，消除每列中间的空白山谷 |
+| polish | llmgw | 请求趋势去卡片化：无边框无标题坐在表头正上方并可折叠；汇总指标从独立卡片并入标题行；去掉页面副标题；首屏非数据区 374px→250px（无趋势数据时） |
+| polish | llmgw | 行首状态圆点改为失败/进行中整行左侧色条，成功行不再有装饰；表头 info icon 由 4 个收敛到 1 个；默认隐藏「用途」「结束原因」「客户端用户」三列（齿轮里可开） |
+| polish | llmgw | 费用格式 USD 0.00509750 → $0.005097（符号前缀 + 有效位截断），费用列因此可收窄 |
+| feat | llmgw | Provider 图标补 Replicate/Perplexity/xAI/Vercel/Baidu/Nvidia/Ollama/Modal 品牌色；无品牌素材的 Provider 改用按名字生成的确定性彩色首字母标记，取代统一灰云图标 |
+| fix | llmgw | 请求记录页列宽改为「minmax(下限, 与下限等比的 fr)」：宽屏余量按比例摊给每一列，不再全部灌进 App 列在表格中间撑出空洞 |
+| fix | llmgw | 列偏好存储版本 v3→v4：默认可见列集合（隐藏用途/结束原因/客户端用户）对存量用户生效，此前老记录会保留 12 列使改动失效 |
+| fix | llmgw | 窄屏表格最小宽度由写死的 1832px 改为 1080px |
+| refactor | llmgw | 控制台字体收敛为七档阶梯（以「请求记录」页为基准），theme.css 新增 --fs-*/--fw-*/--lh-* token，删除 9~24px 一次性字号 |
+| fix | llmgw | 页头 SSOT 统一：全部 17 个控制台页面的 h1 都是 20px，Provider/模型/审计/影子对比/系统运维补上缺失的页面标题 |
+| fix | llmgw | 修复会话过期后卡在「登录已失效，请重新登录」不跳转：api 层广播失效事件、AuthProvider 翻转登录态、路由守卫送回登录页并保留原页面地址 |
+| feat | llmgw | 会话到点主动登出（不必等下一次点击撞 401），跨标签页同步下线，登录页说明失效原因（过期 / 成员关系被作废） |
+| chore | llmgw | 新增字体阶梯守卫 pnpm check:typography，阻止再写阶梯外的硬编码字号 |
+| refactor | llmgw | 新增字号角色表 lib/typography.ts：系统规定「表格/表单/正文用 14px，控件与字段名 13px，12/11px 只留给角标」，Provider、模型、接入密钥、审计、影子对比、逻辑模型、提示词策略、组织、用量九个页面改为消费角色常量 |
+| fix | llmgw | 修复配置类页面正文比请求记录页糊一档：表头 11px→14px、表格单元格 12px→14px、表单输入 12px→14px、字段名 11px→13px，行高与行距对齐请求记录页 |
+| polish | llmgw | 页面表格统一挂 .lg-data-table：表头底色 + 行分隔 + hover 高亮，与请求记录页表格同款；请求记录页筛选抽屉控件由 12px/30px 提到 13px/36px，与其可见工具条同档 |
+| chore | llmgw | 字体守卫增加角色维度：th/td/labelStyle/inputStyle 等再降到 caption/micro 档即 CI 失败 |
+| fix | llmgw | 改密换发新 token 后重排会话到期定时器（此前会话中途改密的用户仍会在旧 token 到期时刻被登出） |
+| fix | llmgw | 会话失效广播携带失效 token 并按会话过滤，旧 token 的 401 不再把已换新 token 的标签页一起踢出 |
+| fix | llmgw | 字体阶梯守卫接入 pnpm build，必跑的前端校验现在真的会执行它 |
+| fix | llmgw | 排版漂移检测脚本改为从 checkout 推导路径、由 Playwright 自行解析浏览器，不再依赖作者机器的绝对路径 |
+| test | llmgw | 更新 GatewayDataDomainGuardTests：字号/字重契约改为断言 token 定义 + 消费方，替代原来的裸 px 字面量匹配 |
+| fix | llmgw | 漂移检测的「卡片内边距种类」有重复键，窄口径测量覆盖了宽口径，导致无 lg-card 类的卡片（如模型池卡）改内边距不会被发现；删除遗留窄口径测量 |
+| fix | llmgw | 费用格式化修复科学计数法被裁尾零：极小额（如 1e-10）此前显示为 $1.000e-1，金额虚报 9 个数量级 |
+| fix | llmgw | 同标签页 token 轮换期间的迟到 401 不再作废新会话：expireSession 携带失败请求当时的 token 并与当前 token 比对 |
+| fix | llmgw | 模型池「了解路由机制」按钮不再嵌在链接里（button 套 a 是非法 HTML 且产生两个重叠的键盘焦点目标），改为按钮自身 navigate |
+| fix | llmgw | 请求趋势收起后展开按钮被卡片 overflow:hidden 裁掉、再也展不开：收起态改为在流内保留 28px 高度承载按钮 |
+| fix | llmgw | 漂移检测的模型池/趋势图 fixture 由空改为有数据：此前 /pools 只渲染空状态，池卡片、成员行、操作区的内边距与间距改坏了也照报「与基准一致」 |
+| fix | llmgw | 模型池页内边距与间距归一到 surface.ts（卡片 16/12→14、指标块 9→10、间距 13/7/5→12/6），补齐上一条 fixture 修好后暴露出的 2 项真实漂移 |
+| fix | llmgw | 排版漂移检测有漂移时非零退出：此前只打印「合计漂移项: N」仍以 0 退出，按退出码判定的 CI/本地校验会把回归当通过 |
+| fix | llmgw | 字体阶梯守卫补上 React 字符串写法：此前正则只认 fontSize: 18，fontSize: '18px' 这种更常见的写法能从守卫底下溜过去 |
+| fix | llmgw | 会话到期定时器绑定它排给的那个 token：改密换发新 token 时，旧回调若赶在 effect 清理前跑到会清掉新会话 |
+| fix | llmgw | 漂移检测补齐 app-callers / exchanges / logical-models 三条路由的有数据 fixture；顺带修正 /exchanges/meta 的错形状（旧桩写 protocols/targetKinds/models，因页面恒空从未暴露） |
+| fix | llmgw | Exchange 卡片规格归一：卡片 13→14、路由块 9→10、模型行 8→10、列表间距 10→12、路由块间距 7→6、批量行间距 10→8 |
+| fix | llmgw | 逻辑模型页表头改用 TABLE_HEAD_CELL 角色常量（此前就地写 7px/9px + fs-secondary，比基准页表头糊一档）；卡片/间距归一到 surface.ts |
+| fix | llmgw | 字体守卫的角色规则改为按花括号配平取整个声明块比对：此前 const th = { 换行后再写 fontSize: 'var(--fs-caption)' 永远匹配不上，规则形同虚设 |
+| docs | llmgw | 风格调性文档头部补齐 doc 规范：H1 加「· 规则」后缀、改用 blockquote 版本/日期/状态、状态改为枚举内的「已落地」 |
+| feat | prd-api | MAP 登录改超长会话：access token 与会话滑动窗口同为默认 7 天（Jwt:AccessTokenMinutes / Auth:SessionSlidingDays 可调），每次已鉴权请求自动续满，客户端绑定与 tokenVersion 共用同一窗口 |
+| fix | prd-api | 滑动续期同时续 tokenVersion 键，避免被踢过的用户（tv>=2）在 tv 键先过期后，手里仍有效的 token 被误判成已撤销而平白掉登录 |
+| feat | llmgw | 网关控制台会话默认 7 天并支持用后自动续期：服务端在租户校验通过后经 X-Gw-Token 响应头换发新 token，前端自动接住；MAP 一键登录不再固定 15 分钟（LlmGwJwt:MapSsoLifetimeMinutes 可收紧） |
+| feat | llmgw | 控制台会话从 sessionStorage 改存 localStorage（关浏览器再打开仍在登录），并平滑迁移旧会话；撤销仍由服务端每请求校验 SecurityVersion / 成员版本兜底 |
+| feat | cds | 登录会话默认 7 天（与 MAP / 网关控制台统一口径）且滑动续期：剩余时长低于一半时下一次请求续满并重发 cookie（CDS_SESSION_TTL_DAYS 可调，1~90 天） |
+| test | prd-api | 新增 MAP 会话滑动窗口与网关会话续期回归测试（默认时长、配置收敛、短会话不被拉长、续期保留身份 claim） |
+| test | cds | 新增会话滑动续期与 cookie 重发回归测试 |
+| rule | docs | no-localstorage 规则补充「认证态可进 localStorage」的显式例外与前提条件 |
+| fix | llmgw | 会话迁移搬完即删除 sessionStorage 原件，登出/401 后同标签页刷新不再把旧 token 迁回来（Codex P1） |
+| fix | cds | /api/me 触发的滑动续期同步重发 cookie（该路由挂在鉴权中间件之前），登出路径显式不续期（Codex P1） |
+| fix | cds | 会话写库改字段级 $set，避免 lastSeenAt 的异步写回把刚续期的 expiresAt 覆盖回旧值（Codex P1） |
+| fix | prd-api | tokenVersion TTL 改为 max(会话窗口, access token 时长 + 时钟余量)，防止会话窗口配得比 token 短时已撤销的旧 token 复活（Codex P1） |
+| fix | llmgw | 续期换发只替换「发起本次请求的那把 token」，避免请求在途期间用户换账号后被旧凭据覆盖（Codex P1） |
+| fix | prd-api | access token 时长归一化收敛到 AuthTokenLifetimes 单一口径，杜绝配 0/负值时签出立刻过期的 token 却回报 7 天（Codex P2） |
+| fix | cds | ticket SSO 会话纳入统一 7 天策略并支持滑动续期 + 重发 cookie（原硬编码 12 小时且不续期）（Codex P1） |
+| fix | llmgw | 401 只清「发起本次请求的那把 token」，避免请求在途期间换账号后把新会话一起踢下线（Codex P1） |
+| fix | llmgw | 监听 storage 事件同步鉴权上下文，修复跨标签页登出/换账号后界面身份与实际凭据不一致（Codex P1） |
+| fix | cds | basic 模式 cds_token 纳入统一 7 天策略并在已鉴权请求上重发实现滑动续期（原写死 30 天且不续期）（Codex P1） |
+| fix | llmgw | 401 清会话改严格相等判断，无凭据请求的 401 不再清掉别的标签页刚登录的会话（Codex P2） |
+| fix | cds | 过期会话的删除也带上「读到的过期时间」作条件，避免并发续期成功的会话被另一条请求删掉（Codex P2） |
+| fix | llmgw | 续期换发新 token 时同步更新本地到期时间并重排主动过期定时器，避免续期后仍按旧时间掉登录 |
+| fix | llmgw | BugReportDialog 硬编码字号改用字体阶梯 token，修复 main 上「新增弹窗 + 字体守卫」双分支合流后 web 镜像构建失败 |
+| fix | prd-api | access token 时长受会话滑动窗口约束，避免窗口配得比 token 短时「N 天不用就掉登录」失去执行点（Codex P2） |
+| fix | prd-api | refresh 成功时同步续 tokenVersion 台账，避免被踢过的用户刷新后新 token 反被判成已撤销（Codex P2） |
+| fix | llmgw | 跨标签页接管会话时重置失效闩，避免新会话失效后本标签页卡在「已登录但没有 token」（Codex P2） |
+| fix | llmgw | 跨标签页换账号后按新 token 重排主动过期定时器，避免新会话没有定时器、过期后仍显示已登录（Codex P2） |
+| fix | llmgw | BugReportDialog 的裸 fetch 也接住续期响应头，避免「只提缺陷」的用户滑不动会话（Codex P2）；新增源码守卫防再漏 |
+| feat | prd-admin | 周报评论支持粘贴图片与图文结合：评论输入器升级为多行 composer（粘贴截图/选图上传/待发缩略图可删），评论区图片缩略图展示并可点击大图预览 |
+| feat | prd-api | 周报评论新增图片附件：新增评论图片上传端点（有权查看即可上传），评论创建支持 attachmentIds（最多 9 张、归属校验、纯图无文字），列表批量解析附件详情返回 |
+| refactor | prd-admin | 周报三处图片表单上传（富文本图/日报图/评论图）收敛为共用 uploadReportImageForm 实现 |
+| fix | prd-admin | 图片大图预览（ImagePreviewDialog）改为 createPortal 挂 body 并提升到 z-10000，修复被右侧栏/卡片层遮挡的问题 |
+| feat | prd-api | 新增 dev-starter 与 qa-starter 角色套装，配套 dev-project / qa-project 初始化预设 |
+| feat | prd-api | 官方技能对外简介统一改中文，覆盖市场卡片、CDS 技能栏、套装 INSTALL.md 与 sdd-init |
+| fix | 技能 | sdd-init 补宿主到规则文件名的对应，.agents/.cursor 宿主生成 AGENTS.md |
+| fix | 技能 | 四个技能去 emoji（create-skill-file、human-verify、验收模板两份） |
+| test | 脚本 | 套装自测新增中文简介守卫；新增 ai-defect-resolve 内外两版协议契约不漂移守卫 |
+| docs | 文档 | 规则 §6 改为准确描述：ai-defect-resolve 是有意的精简外发版，不合并只守契约 |
+| feat | cds | 接入智能体新增「项目初始化」栏：选预设即得一条命令 + 一句话，真装技能而非只给提示词 |
+| feat | cds | 新增匿名端点 /api/bootstrap/{preset} 生成引导脚本、/api/skills 代理 MAP 技能并缓存兜底 |
+| feat | 技能 | 新增 phase0-guard：底座阶段护栏 + 面向老板与产品经理的六段式沟通规范、术语翻译、读者分层 |
+| fix | cds | 技能缓存新鲜度补时钟偏斜守卫，避免文件时间在未来时缓存被永远判为新鲜 |
+| test | cds | 新增 skill-proxy 与引导脚本守卫 13 项：缓存兜底、项目级安装、无密钥、注入转义 |
+| docs | 文档 | 新增 design.cds.project-bootstrap 与 debt.cds.project-bootstrap |
+| feat | cds | 接入智能体「海鲜市场」栏从跳转外链改为 CDS 内直接浏览技能套装与明细，客户无需 MAP 账号 |
+| feat | cds | 项目初始化栏新增可展开的技能清单，显示这套装到底装哪些技能而非只显示套装名 |
+| fix | 技能 | sdd-init 补宿主到规则文件名的对应（.agents/.cursor 生成 AGENTS.md，不再一律 CLAUDE.md） |
+| fix | 技能 | sdd-init 补技能索引四条硬要求：触发词读正文不靠猜、用途必须中文、折叠标量读完整块、按用途分组 |
+| chore | cds | 删除误提交的一次性验证脚本 fake-cds.local.mts |
+| feat | prd-api | 海鲜市场新增角色技能套装：一条 curl 装齐一个角色的全部技能，匿名可下载，zip 内含 INSTALL.md 与 manifest |
+| feat | prd-api | 新增匿名端点 GET /api/official-skills/bundles，返回角色标签与套装清单（含安装命令） |
+| feat | prd-admin | 海鲜市场新增「我是」角色筛选行，按角色筛出套装与技能 |
+| feat | 技能 | 新增 sdd-init 技能：探测项目现状，生成 CLAUDE.md 八条规则骨架 + doc 七类文档骨架 + 角色路线图与自检报告 |
+| feat | 技能 | 补齐四个零仓库绑定但一直没上架的技能：plan-first、product-document-generator、doc-writer、flow-trace |
+| refactor | prd-api | 技能依赖表从 Controller 硬编码搬到目录声明层，与套装共用递归展开逻辑 |
+| fix | 技能 | 修正 tag 启发式误判：conflict-resolution 曾被标为「周报」、risk-matrix 标为「部署」 |
+| fix | 技能 | acceptance-checklist 两个 reference 文件 de-emoji，对外分发内容不再夹带 emoji |
+| test | prd-api | OfficialSkillCatalogTests 新增 7 项套装用例（注册、key 不撞、成员齐全、打包产物、fork、排序、角色） |
+| test | 脚本 | 新增 scripts/test-official-skill-bundles.mjs 端到端自测：真解压校验分发产物，含三个负向用例 |
+| docs | 文档 | 新增 design.skill.role-bundle 与 debt.skill.role-bundle，同步 index.yml 与目录索引 |
+| feat | prd-api | 海鲜市场读技能全面免凭据：列表/详情/标签/下载改匿名，只有上传与收藏订阅仍要凭据 |
+| refactor | prd-api | findmapskills 正文合并为单一事实源，后端删除内嵌的第二份 SKILL.md 与 README |
+| fix | prd-api | 技能安装目录统一为项目级三宿主探测，套装 installCommand 与 INSTALL.md 不再写用户主目录 |
+| fix | prd-api | findmapskills 进 catalog 后去重，市场列表不再出现两条同名条目 |
+| fix | 技能 | findmapskills 改为项目级安装 + Key 可选，读操作不再因缺 Key 中断 |
+| feat | cds | cds 核心技能补「技能怎么看怎么装」一节，写明与 findmapskills 的职责分工 |
+| test | cds | 新增跨仓守卫：三处安装约定探测顺序一致、不写用户主目录、单行式合法、后端无内嵌副本 |
+| test | prd-api | 新增免凭据守卫：8 个读端点必须匿名，3 个写端点必须留凭据 |
+| rule | 规范 | 新增 skill-install-contract：安装位置、三处同步、职责边界、单一事实源 |
+| fix | cds | 引导脚本必需包没装上时改为非零码退出，不再打一行 warning 就报「安装完成」，避免 CI 带着残缺技能集继续跑 |
+| fix | cds | 引导脚本套装解压失败不再中断，改为计入未安装清单并在收尾统一报错 |
+| fix | 脚本 | 打包器不再截断可执行文件：.py/.sh/.mjs/.js/.ts/.json/.yml 走 512KB 上限且超限直接失败，只有正文类文件才截断，修复 archive_report.py 被截成语法错误后分发给验收角色 |
+| fix | prd-api | 官方技能虚拟注入的 iconEmoji 一律置空，移除三处装饰字符，遵守禁 emoji 规则 |
+| test | cds | 新增引导脚本退出码语义用例：四个预设各跑一次真脚本断言非零退出与失败文案，并校验脚本本身语法合法 |
+| test | prd-api | 修正套装 INSTALL.md 断言，与项目级安装约定对齐（此前仍断言用户主目录路径） |
+| fix | cds | CDS 技能包改为内容签名缓存 + 单飞，匿名端点不再每请求递归复制技能树并 spawn tar |
+| fix | cds | 本地 CDS 技能包必须五个技能齐全才发布，缺任一个回源上游，杜绝半成品被当成装好了 |
+| fix | 技能 | sdd-init 探测扩到 .cursor/.agents 两个宿主目录并读取引导种子，Codex/Cursor 项目不再被误判成没装技能 |
+| fix | 技能 | sdd-init 产出 doc/guide.list.directory.md 取代 doc/README.md，不再违反自己刚装进去的文档命名规范 |
+| fix | 技能 | sdd-init 的角色手册安装命令与开篇描述改为项目级三宿主探测，清掉最后两处用户主目录残留 |
+| test | cds | 安装约定守卫把 sdd-init 的 SKILL.md 与 role-playbooks.md 纳入探测顺序断言 |
+| fix | cds | 引导脚本改为装到所有存在的宿主目录，不再只装第一个命中的，修复同时装了多个 Agent 的仓库「装完了当前 Agent 一个技能都看不见」 |
+| fix | prd-api | 技能安装约定升级为多宿主遍历安装，installCommand 与 INSTALL.md 同步 |
+| fix | prd-api | 匿名下载端点按「技能 + 调用方」做 10 分钟窗口去重，重复 POST 不再累加 DownloadCount，杜绝匿名刷热度排序与白造 Mongo 写入 |
+| refactor | prd-api | 下载计数去重抽成共享 SkillDownloadCounter，站内与开放接口两个 controller 共用一份 |
+| test | prd-api | 新增 SkillDownloadCounterTests：同调用方只计一次、不同技能/来源独立、登录按用户去重、指纹不含原始 IP、窗口长度有界 |
+| test | cds | 安装约定守卫新增「装到所有存在宿主」断言，早期取第一个的写法回潮即红 |
+| fix | prd-api | 套装 INSTALL.md 的解压命令同步为遍历全部宿主，此前仍写单数 $SKILLS_DIR 导致按说明操作只装一个目录 |
+| test | prd-api | 三处安装约定断言改为校验「遍历宿主 + 兜底目录 + 遍历安装」，与多宿主契约对齐 |
+| fix | prd-api | 下载计数去重的查+写合成原子操作，并发重放不再全部绕过去重窗口 |
+| fix | prd-api | 匿名指纹改走 GetRealClientIp（反代 X-Real-IP），不再用上一跳地址把同一代理后的所有人连坐压制 |
+| fix | prd-api | findmapskills 市场条目的 roles 改为读目录，不再写死空表导致按角色筛选时整条消失 |
+| test | prd-api | 新增并发重放只计一次、真实客户端 IP 区分、findmapskills roles 与目录一致三个用例 |
+| fix | cds | 引导脚本定位解压后的技能目录改用固定布局，不再依赖 GNU 扩展 find -maxdepth，避免 macOS 上解压成功却因 set -e 当场退出、一个技能没装 |
+| docs | 文档 | emoji 债务台账用码位描述替代字面量，不在规则正文之外的文档里出现被禁字符 |
+| chore | 文档 | 六个 2026-07-28 碎片合并为一个，符合「同一 PR 一个碎片文件」的约定 |
+| fix | prd-api | 限流分桶改按真实客户端 IP，反代后所有匿名访客不再共用一个桶被互相拖垮 |
+| fix | cds | 上游技能包回源补齐超时、体积上限、缓存与单飞，自托管实例的这条匿名路径不再可被拖垮 |
+| fix | prd-api | 开放接口 /tags 补上官方目录与套装的标签，套装专属标签不再「查不到但能按它筛」 |
+| refactor | prd-api | 标签发现抽成 OfficialSkillCatalog.DiscoverableTags，站内与开放接口共用一份 |
+| test | prd-api | 新增限流分桶守卫与套装标签发现用例 |
+| test | cds | 新增上游回源的缓存/单飞/体积上限/超时/时钟回拨五个用例 |
+| fix | cds | 技能代理的冷缓存回源补齐超时、流式体积上限与按 key 单飞，匿名并发不再能吃干连接与内存 |
+| fix | 技能 | findmapskills 的更新命令自带宿主识别，换个 shell 复制不再零次迭代静默不更新 |
+| refactor | cds | 流式限额读取抽成 readCappedBody，技能代理与引导路由共用一份实现 |
+| test | cds | 新增技能代理单飞/超时/流式中止用例、匿名白名单两处一致守卫、安装命令自包含守卫 |
+| fix | prd-api | 重新生成内嵌官方技能目录，客户下载到的 findmapskills 不再是静默不更新的旧版 |
+| fix | cds | 套装清单回源补齐超时、单飞与短缓存，MAP 慢时匿名并发不再把出站请求堆到超时 |
+| fix | 技能 | findmapskills README 用法表按凭据拆行，读免凭据不再被误写成整条流程都要 API Key |
+| docs | 文档 | 角色套装债务台账用码位描述替代被禁字面量 |
+| ci | 构建 | server-build job 新增官方技能目录新鲜度自测，改了技能忘了重新生成时 CI 直接红 |
+| ci | 构建 | server 路径过滤补上技能源目录，只改技能的 PR 不再整个跳过目录新鲜度闸 |
+| fix | prd-api | 开放接口列表的官方条目也服从调用方 limit，不再出现 limit=1 却返回十条 |
+| test | prd-api | 新增用例钉住裁剪前提：单个 tag 可命中 9 条官方条目 |
+| fix | cds | 引导脚本逐个候选校验技能包再接受，本实例返回 HTML 错误页时会落到上游而不是被 tar 打死 |
+| fix | 脚本 | 禁 emoji 守卫扩到全部可分发技能，不再只扫套装成员，且不设任何豁免 |
+| fix | 技能 | sdd-init 骨架路径统一走 DOC_DIR，项目已用 docs/ 时不再另起一棵 doc/ 文档树 |
+| fix | 技能 | ui-ux-pro-max 的脚本与数据表去 emoji（状态改文字分级），23 个可分发技能 82 个文件全量零 emoji |
+| fix | 技能 | 分发技能里的可执行路径改为运行时探测宿主（.claude/.cursor/.agents），Cursor 与 Codex 项目不再拿到指向 .claude 的死路径 |
+| fix | cds | 「接入智能体」的引导命令改为先落盘再执行，端点不可达时退出码非零而不是静默成功并跑旧脚本 |
+| test | cds | 新增两条守卫：分发技能不得写死宿主路径、引导命令必须失败可见 |
+| fix | prd-api | 防滥用分桶（限流 + 下载去重）改用 GetAbuseControlClientIp：只在对端是我方反代时才采信 X-Real-IP，直连暴露时调用方无法每请求换个头换一份新配额 |
+| fix | cds | 技能包回源加档案魔数校验（zip / tar.gz），200 返回的 HTML 错误页不再被缓存成技能包、上游恢复后立即自愈 |
+| fix | prd-api | 套装 INSTALL.md 与 firstStep 文案去掉写死的 Claude Code，改为「你的 AI 编码工具」，只装 Cursor/Codex 的用户不再被指去一个没有的工具 |
+| test | prd-api | 分桶守卫改钉新口径并覆盖下载去重同源处；新增「对端是公网时不采信 X-Real-IP」用例 |
+| test | cds | 新增四个用例：代理与上游两条路径各自拒收错误页、磁盘坏缓存自愈、恢复后免等 TTL |
+| docs | 文档 | 角色套装债务台账补齐 D6-D9 并同步表头：豁免机制已删除、分桶信任模型的公网反代取舍、回源只校验魔数不校验完整性 |
+
+### 2026-07-27
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 修复分层 smoke 将 HTTP 200 HTML 误判为通过，并按候选替代关系汇总 L2 结果 |
+| fix | cds | 修复 janitor 把主干分支（main/master）当过期分支整条删除的 P0 事故：分支保护判定收敛为唯一 SSOT（branch-protection.ts），janitor 与 scheduler 共用同一份，不再漂移 |
+| fix | cds | janitor 保护判定改为 per-project：按 branch.projectId 查项目默认分支与 gitDefaultBranch，A 项目主干不再因 B 项目配置而失去保护 |
+| fix | cds | GitHub delete webhook 增加主干兜底：主干分支拒绝自动停容器与删除分支条目，只记录拒绝原因 |
+| feat | cds | janitor sweep 报表与快照新增 skippedProtected（受保护而免删的过期分支 + 原因）与 protectedTrunkBranches，主干保护是否生效可见不再静默 |
+| test | cds | 新增分支保护回归测试：defaultBranch 未配置时 main/master 受保护、多项目隔离、普通分支仍正常回收、webhook 主干拒删 |
+| fix | cds | 补齐用户一键触发的删分支路径的主干保护：POST /cleanup、POST /cleanup-orphans、POST /branches/cleanup-stopped 一律先过 branch-protection SSOT，不再只比对全局 state.defaultBranch，多项目下点一次清理不会再删掉项目主干 |
+| fix | cds | cleanup-orphans 增加 fetch 异常守卫：远端分支集合为空时判定为 fetch 异常并中止该项目清理，杜绝「远端一个分支都没有」被解释成「本地全都是孤儿」而整批删除 |
+| fix | cds | 恢复出厂设置默认保留各项目主干分支，需显式 confirmTrunk=1 才连主干一并清除；两种情况都在 SSE 与响应里逐条列明保留/删除的主干 |
+| feat | cds | 清理类接口回传 skippedProtected（保住了谁、凭什么保住），与 janitor 报表同口径，保护可见 |
+| perf | cds | janitor 保护跳过日志改为仅状态变化时输出，主干等永久受保护分支不再每轮 sweep 复读同一行淹没有效信号 |
+| test | cds | 新增一键清理路径主干保护回归（cds/tests/routes/trunk-protection-cleanup.test.ts，10 例事故值用例）与 janitor 日志去噪回归 |
+| fix | cds | 修复 scheduler 的固定名单没传进 janitor：按文档 pin 住的非主干分支只挡得住降温，TTL 到期仍被 janitor 删除，两套保护看似统一实则漏一半 |
+| feat | cds | 新增自建存活监控探测器：周期直连容器宿主端口探测每个 running 分支服务，记录时序采样、连续失败去抖判故障、按天聚合可用率，环形缓冲与天数均有硬上限；探测绕开预览代理，不刷新分支的空闲降温时间 |
+| feat | cds | 新增存活监控只读接口 GET /api/uptime/summary、/api/uptime/targets/:id/history、/api/uptime/incidents，时序输出统一降采样并有点数上限 |
+| feat | cds | 新增状态页 /status（Uptime Kuma 形态）：整体状态横幅、每服务 90 段可用率柱条、24h 可用率与平均响应、故障时间线；双主题可读、柱条带斜纹不只靠颜色区分、手机端减段并横向滚动、加载走柱条骨架屏、空状态给首批数据预计时间 |
+| test | cds | 新增 uptime-metrics 与 uptime-monitor-cycle 两套 vitest：可用率计算、连续失败去抖、环形缓冲不溢出、降采样点数上限、探测不刷新 lastAccessedAt、降温不计故障、监控可关闭 |
+| fix | cds | 修复存活监控把非 HTTP 服务（gRPC / 纯 worker / 裸 TCP 端口）永久误报为故障：新增 CDS_UPTIME_EXCLUDE 排除名单逃生阀（支持通配，命中标「未纳入监控」不计故障、并收尾已开事件），并对「从未答过 HTTP 且连续收到协议层错误」的目标自动降级为容器状态判定；连接被拒 / 超时 / 5xx 仍按真故障处理 |
+| fix | cds | 修复状态页首次加载失败时同时显示错误横幅与永久骨架屏的矛盾态：拆成加载 / 有数据 / 失败三态，失败且无数据时改渲染带具体原因与「重新加载」的引导式错误卡片，不再让读屏用户一直听到「正在读取存活监控数据」 |
+| test | cds | 新增排除名单、自动降级、探测失败分类、状态页三态判定与源码契约的回归用例 |
+| docs | cds | 新增 doc/debt.cds.md「CDS 存活监控（uptime-monitor）」 债务台账（探测口径假定 HTTP 的已知边界、缓解手段与后续可补项），并同步登记 doc/index.yml 与 doc/guide.list.directory.md |
+| fix | cds | 修复状态页首屏被 100+ 个「已暂停/暂无数据」空行霸占：目标按展示优先级排序（故障 > 待确认 > 正常 > 已暂停 > 已排除），同档内才按名字，首屏留给真正在跑的服务 |
+| test | cds | 新增展示排序回归：含生产事故值（103 暂停 vs 36 正常）断言首屏全是有数据的目标 |
+| fix | cds | 存活监控默认只监控主干分支（CDS_UPTIME_SCOPE=all 可恢复全量）：特性分支天然大量处于降温态，全量纳入会把状态页变成一屏噪声，真故障被淹没 |
+| fix | cds | 修复集群下远端 executor 的分支被用协调端 127.0.0.1 探测：会误判 down，更糟的是可能撞上本机复用同端口的无关容器报出假绿；改为不纳入监控并注明原因 |
+| security | cds | 修复项目级 Key 可枚举全实例每个项目的存活状态（分支名/服务名/故障原因/时间线）：summary 按项目收窄并重算总览计数，incidents 先过滤再截断，单 target 详情判归属否则 403 |
+| feat | cds | 复制集延伸出压测能力：主实例与各副本同一入口同时加压，逐秒 QPS/延迟曲线实时生长，结束给出 A/B 对比结论 |
+| feat | cds | 压测四端点（发起/查询/取消/列表）挂在复制集路由，目标由服务端从分支状态解析并用 __rs 钉选 |
+| security | cds | 压测执行器只连本机 forwarder，Host 必须命中本分支已发布域名白名单，杜绝借授权压别的项目 |
+| ops | cds | 压测硬闸：并发/时长/总请求数/落点数上限 + 同时只允许一个任务 + 磁盘冻结档拒绝发起 + 心跳收割僵尸闸位 |
+| test | cds | 新增压测回归：分位数边界、硬上限、SSRF 白名单、并发闸、取消时效、心跳收割、A/B 结论、曲线计算 |
+| docs | cds | 新增 design.cds.replica-loadtest 设计说明并同步 doc 索引 |
+| fix | cds | 修复压测报告在大样本下 500：指标聚合改为 O(1) 记账 + 定长桶直方图，不再对 20 万条采样做 Math.min/push 展开调用（V8 展开实参上限约 12.5 万，超过即抛 RangeError，曲线断掉且整个分支的压测列表持续报错） |
+| perf | cds | 压测运行时不再保留原始延迟数组：每目标 331 槽直方图（1324 字节），单次压测常驻内存 < 2.6MB；跑完冻结成报告快照并释放直方图，历史记录不再拖着秒级采样 |
+| test | cds | 新增大样本回归：跑满 20 万条采样仍能出报告且 count/min/max/avg/分位数正确，并锁住直方图的精度代价与定长内存 |
+| fix | cds | 修复压测路径已带 __rs 时被追加第二个值：forwarder 只认第一个，会让所有 A/B 落点实际打到调用方钉的同一个副本，却仍按不同成员出「谁更快」的对比结论（假对比）；改为解析后替换 |
+| feat | cds | 新增全局快捷提 bug（Ctrl+B / Command+B + 右下角常驻入口），自动带入页面地址/路由/主题/视口/浏览器信息，支持粘贴与拖拽截图 |
+| feat | cds | 新增 POST/GET /api/bug-reports：配置 MAP 缺陷系统凭据时由服务端带凭据转发（create + submit），未配置或转发失败则本地留存并如实告知未同步 |
+| feat | llmgw | 网关控制台新增同款全局快捷提 bug 面板，走 theme.css token 双主题适配 |
+| feat | llmgw | console-api 新增 POST/GET /gw/bug-reports：支持转发到 MAP 缺陷系统，未配置时落 llmgw_bug_reports 集合并回报降级原因 |
+| test | cds | 新增快捷键判定/环境采集/payload 组装（cds 与 llmgw 两份实现同组断言）与 /api/bug-reports 路由契约测试 |
+| fix | cds | 修复截图附件在生产必然 413：全局 100kb JSON 解析器新增 /api/bug-reports 跳过，路由自挂 24mb 解析器（覆盖 12MB 附件经 base64 膨胀后的体积），超限回中文 JSON 而不是 HTML |
+| fix | cds | 修复复制集压测四个端点缺 Activity Monitor 中文 label（发起压测/列出压测记录/取消压测/查看压测报告），cancel 排在单段 runId 之前不被吞 |
+| fix | cds | 修复右下角提交缺陷 pill 压住页面操作反馈 toast：新增共享安全偏移 lib/overlayOffsets，pill 与六个页面的 toast 共用同一份几何常量 |
+| fix | cds | 修复提 bug 转发超时预算：create 与 submit 由各 10s 改为共用 10s 总预算，兑现前端「超过 10 秒转本地留存」文案 |
+| fix | llmgw | 修复 POST /gw/bug-reports 违反 server-authority：转发与落库改用与请求生命周期解耦的独立超时/CancellationToken.None，用户切页不再导致 MAP 已建缺陷而网关无记录 |
+| fix | llmgw | 修复附件可能顶穿 MongoDB 16MB 单文档上限：总量闸改按 base64 字符长度计，并给 InsertOneAsync 套 try/catch，失败返回中文原因而不是裸 500 |
+| test | cds | 新增生产同款 body 解析装配的 413/大附件用例、压测端点 label 守卫、右下角浮层不重叠守卫、llmgw 提 bug 端点源码守卫 |
+| security | cds | 修复项目级 Key 可读取全部项目缺陷台账（正文含页面地址与 query、提交人、环境信息）：缺陷是 CDS 系统级数据且无项目维度可过滤，按既有约定拒绝项目级凭据 |
+| fix | cds | 修复转发到缺陷系统时截图从未上传：此前只 create+submit，正文里仅有文件名，UI 却报「已提交」；改为 submit 前逐个上传附件，部分失败如实回传而非谎报成功 |
+| polish | cds | 验收报告改版为米多刊系检验档案版：补齐期号 dateline、栏目眉、刊尾 colophon、语义色指标条与双框验定印章 |
+| feat | cds | 验收报告正文证据升级为档案图版（图号 + 图注 + 状态标签 + 放大入口），截图填满画布并支持大图灯箱（方向键翻页 / ESC 关闭 / 无 JS 退化为打开原图） |
+| fix | cds | 修复验收报告失败与风险证据的红黄标签渲染成空色块（data-label 挂在 banner 上、伪元素却挂在段落上，取不到文案） |
+| fix | cds | 修复验收报告重点卡泄漏原始 markdown 链接语法，并去掉与标题重复的单元格 |
+| perf | cds | 验收报告工具条吸顶并显示命中计数，筛选同时作用于表格、证据卡与重点卡；新增回到顶部与阅读位置高亮 |
+| fix | cds | 修复验收报告在 CDS 内嵌窄视口下锚点跳转被吸顶导航遮挡 |
+| test | cds | 补 reports 准入用例：改版后的检验档案骨架仍通过 acceptance_html_template 血统校验 |
+| fix | cds | 压测出对比结论前先核实落点：观测到的 X-CDS-Replica 与期望副本不符、或两个落点被同一实例服务时拒绝出结论（否则是拿同一版本跟自己比还贴标签）；一条标识都没观测到时数据照给但标注未核实 |
+| fix | cds | 压测请求补挂钟死线：http.request 的 timeout 是 socket 空闲超时，压 SSE/持续分块端点时对端定期发字节即可让它永不触发，请求 Promise 永久挂起、占住全局唯一压测槽位 |
+| fix | cds | 修复状态页在 React.StrictMode 下永远停在骨架屏：mounted ref 只在 cleanup 置 false，第二次 setup 没置回 true，所有响应被丢弃 |
+| chore | cds | 按「同一 PR 一个碎片文件」的规则把本 PR 的五个 changelog 碎片合并为一个 |
+| fix | cds | 修复存活探测等 body 结束导致整个监控停摆：被探服务根路径若是 SSE/持续分块输出则 end 永不到来，socket 空闲超时也不触发，runCycle 的重入锁再不解开、此后所有轮次全被跳过；改为拿到响应头即结算并拆连接 |
+| fix | cds | 修复批量清理漏传 scheduler 固定名单：只配在 scheduler 那侧的 pin 挡得住降温与 janitor，却会被 /cleanup、/cleanup-orphans、cleanup-stopped 删掉 |
+| fix | cds | 压测落点核对补上副本组（X-CDS-Replica-Group）：成员 id 跨 profile 会重名，只看成员 id 会把「路径解析到别的服务」误判为核对通过 |
+| fix | cds | 修复缺陷转发 submit 返非 2xx 时静默报成功：单子其实还躺在草稿态，现在如实回传「可能仍是草稿态」及状态码 |
+| security | cds | 缺陷本地留存补保留策略（条数上限 + 附件总量上限，超出从最旧的回收）：此前每次提交最多写 12MB 附件到数据卷且永不回收，反复调用即可写满盘，而部署侧磁盘刹车罩不到该路由 |
+| security | cds | 压测占位者按项目脱敏：压测服务是全局单例，项目级 Key 此前能从列表与 409 文案里拿到别的项目的分支/服务/任务 id 与起始时刻 |
+| fix | cds | 修复跨天存活历史返回一整片空桶：原始采样只留约 24h，7d/30d 改用按天聚合铺点，24h 仍走原始采样 |
+| fix | cds | 修复窄屏可用率柱条只覆盖约 10.7 小时却标注「覆盖最近 24 小时」：改为按实际展示段数向服务端要桶，而不是拿 90 段砍掉最早的 50 段 |
+| fix | cds | 连接重置不再当成「这不是 HTTP 服务」的证据：正在崩溃/OOM/过载的 HTTP 服务同样会重置连接，旧判定会把它永久降级为按容器状态判定，于是持续崩溃的服务一直显示绿色（假绿） |
+| fix | cds | 压测落点核对改为要求全部观测身份一致：只看占比最高会放过 rs-a:90/rs-b:10 这种混流，100 个样本里混了 10 个打到别的版本仍被当成纯净落点进 A/B 指标 |
+| fix | cds | 转发成功但截图未跟随/流转失败时，前端结论文案带出 degradeReason，不再只说「已提交」 |
+| fix | cds | 提 bug 面板在前端就拦附件总量：四个各 5MB 单独合法但合计超后端 12MB，此前要等上传完才被整单拒绝 |
+| security | llmgw | console-api 缺陷本地台账补按租户保留上限：附件 base64 直接进 Mongo 文档且无 TTL/配额/回收，反复提交可撑爆网关库 |
+| fix | cds | 恢复出厂设置不再留下僵尸主干：保留分支条目却清空它依赖的构建配置/路由/环境变量/基础设施，会让主干既无法部署路由也已断，而响应仍宣称「已保留」；改为存在主干且未带 confirmTrunk 时整体拒绝并说明两条出路 |
+| security | cds | 缺陷本地留存的保留策略改为按提交方项目分桶：全局一刀切会让一个吵闹的项目挤掉别的项目的本地留存，而未配置 MAP 转发时本地留存是唯一副本 |
+| docs | cds | 新增发布系统改进方案 doc/plan.cds.release-system.md（生命周期与可观测性四阶段计划） |
+| fix | cds | 修复内嵌 master 持有的本地分支（executorId 为 master-*）被误判为远端而永久排除出存活监控；分支归属判定收敛为唯一判定源 executor-ownership，此前散在三处内联字面量正是这次漂移的根源 |
+| fix | llmgw | console-api 缺陷转发 submit 返非 2xx 时如实回传「可能仍是草稿态」，不再只记日志而让 UI 无条件说「已提交」 |
+| fix | cds | 修复左下角提交记录浮层压住常驻导航栏的图标：它裸贴 left-4，而桌面常驻 rail 宽 72px，正好盖在导航图标上 |
+| fix | cds | 修复右下角更新徽章压住提交缺陷入口：入口此前自成一套 fixed 定位，与右下角唯一提醒区几何重合且层级更低，被压住半句 |
+| fix | cds | 修复窄视口下右下角提醒区一路铺到屏幕最左压住导航图标：宽度只减两侧留白、没有减去常驻 rail |
+| refactor | cds | 底部左右两个浮层坞收敛到唯一定位者 .cds-bottom-docks：由它统一让开 rail、两侧留白并在窄视口自动折行，两个坞退化成带内 flex 项，不再各自贴角、互相不知道对方存在 |
+| refactor | cds | 浮层坞元素解析抽出共享 hook lib/useOverlayDock（effect + MutationObserver），消费方不再各自内联 querySelector |
+| test | cds | 新增底部浮层带守卫用例，并修正一条把缺陷写进契约的旧断言（原本要求 CommitInbox 必须自己 fixed bottom-4 left-4，那正是本次遮挡的成因） |
+| fix | cds | 修复生产发布被 CDS 重启腰斩后永久锁死发布目标：run 停在 running，在途守卫据此拒绝该目标的一切新发布，只能改库才能恢复；新增执行心跳（30s 打点，覆盖 SSH 长静默阶段）+ 启动收一轮 + 每 5 分钟周期收割，与分支部署侧 15 分钟过期口径一致 |
+| fix | cds | 自更新排空口径扩展到生产发布：此前只排空分支部署、压根不知道发布存在；两条生命周期的 running 语义相反（部署侧是成功终态、发布侧是在途），故 run 带 kind 区分，各走各的穷尽式终态表 |
+| fix | cds | 发布状态终态判定改为穷尽式 Record：漏判会让在途守卫放行两个并发发布，改后新增状态在编译期即报错 |
+| fix | cds | 发布命令补执行超时（默认 30 分钟，CDS_RELEASE_EXEC_TIMEOUT_MS 可覆盖）：SSH 的 10 秒是连接超时，远端脚本挂住时流不会 close，run 永不终态、目标被永久锁死；预检类探测另用短超时，不占 HTTP 生命周期 |
+| feat | cds | 发布失败落结构化事实 failure（复用分支侧 DeploymentFailure 的 code/owner/retryable/evidenceRefs/suggestedAction，不另发明字段）；新增发布链路特有的失败规则（SSH 传输 / 健康探测 / 执行超时），其余委派给既有分类器 |
+| fix | cds | 删除从未被赋值过的 ReleaseRun 状态 prechecking，并把状态联合提取为具名类型 ReleaseRunStatus |
+| fix | cds | 补齐发布控制面 12 条 Activity Monitor 中文 label 的动态路由 pattern：staticMap 的 :id 条目只够启动自检，真实调用带具体 id 时整条发布链路在面板上都是裸 URL；一律用 segment-safe 匹配，子路径排在裸 id 之前 |
+| test | cds | 新增发布生命周期 53 例回归：心跳过期收敛、状态怪异的存量 run 强制终态化、收割器不叠加不拖垮主流程、排空区分两条生命周期、终态表穷尽性 |
+| fix | cds | 压测落点核对补上无标签样本：成功但没带 X-CDS-Replica 的响应压根不进 servedBy，等于从核对视野蒸发，却照样计入延迟/QPS/成功率——90 条带标签 + 10 条走了非副本路由仍被判为纯净落点。改为「拿到过标签的落点，其每条成功响应都必须带标签」，全无标签的落点仍走既有软档 |
+| fix | cds | 修复发布启动收敛沿用周期收割的心跳阈值：进程刚起来时不可能持有任何执行体，心跳是上一个已死进程打的，用它当活性证据会让刚打过心跳就被重启的发布继续堵住目标至少 15 分钟；启动轮改为收敛全部非终态 run，周期轮保留心跳阈值以免误杀正在执行的发布 |
+| fix | cds | 收割器写日志失败不再吞掉整条收敛：日志是装饰，解锁才是收割器存在的理由，一次日志异常不该让发布目标继续永久锁死 |
+| fix | cds | 修复自更新排空对生产发布「建好了但没接线」：deploy-drain 早已支持发布口径，唯一调用点仍只喂部署 run，于是重启会在预览部署落地后立刻把正在跑的发布 SSH 拦腰砍断 |
+| security | cds | 修复缺陷附件字节配额仍是全局公共池：条数保留已按项目分桶，字节回收却按全局时间正序删起，一个项目猛提即可删光别的项目的截图，而项目级 Key 就能触发；改为每项目上限 + 全局硬顶时总是先削当前占用最大的桶 |
+| test | cds | 新增四条 P1 的回归（含逐条红绿闭环）：无标签样本拦截与软档不误伤、启动收敛 vs 周期收割语义、附件回收跨项目隔离的真实文件行为、排空调用点确实喂了发布 run |
+| fix | cds | 修复取消发布后目标被提前释放：abort 只是「请你停」不是「已经停了」，最终入口探测是普通 HTTP 请求不接 abort，取消时仍在飞；此前立刻摘牌 + 把 run 打成终态，在途守卫遂认为目标空闲放行下一次发布，等老探测失败又走自动恢复把上一版本 SSH 推上去，正好盖掉刚开始的新发布。改为摘牌交给执行体真正退出时，并新增「执行体尚未退出」的占位判定 |
+| fix | cds | 取消之后不再执行自动恢复：用户已经喊停，却把上一版本推回目标机器是越权副作用 |
+| fix | cds | 压测落点核对不再豁免主实例：没有响应头的情况上游已挡掉，走到核对就是有头，而 forwarder 主路由明确打 replicaMemberId='primary'，有头却不是 primary 只能是钉选失效；豁免会放过「主实例被摘除、请求落到未被选中的 rs-a」而照出 A/B 结论，标签是错的 |
+| fix | cds | 缺陷附件写盘失败不再静默：此前只清掉文件名就回 201 说「已记录」，用户以为截图在里面；现在 degradeReason 点名丢了哪几张，并删掉不在账本内的半截残片（否则成永久占盘的孤儿文件） |
+| test | cds | 新增第四十轮四条回归（含逐条红绿闭环）：取消后目标占位与自动恢复抑制（真实 SSH 执行器 + 两段式健康检查服务器复刻「取消时探测还在飞」）、主实例身份核对、附件写盘失败如实告知 |
+| security | cds | 缺陷正文补长度闸：不带附件时 description 可吃满近 24MB body 并原样写进 records.jsonl，按项目保留 200 条即可把台账推向 GB 级，且每次回收都要整文件读回解析——磁盘写满/进程 OOM 都会先于附件配额发生；改为标题 200 字、描述 2 万字、正文 4 万字截断并留明确标记（不整条拒收，用户写的复现步骤不该丢） |
+| fix | cds | 修复附件写盘失败的说明没落进账本：degradeReason 是在记录 append 之后才补的，本次响应看得到、后续 GET 读回来仍是没有解释的旧值；persist 拆成 writeAttachments + appendRecord，记录定型后才落账本 |
+| fix | cds | 存活监控采样容量改为按探测间隔推导：写死 1440 条时把间隔调到 10s 只剩最近 4 小时，可 summary 仍按 24 小时口径计算并标注 availability24h，前面 20 小时被当成「没有数据」既不画也不计入百分比；默认 60s 档容量不变（零回归），绝对上限封在 8640 条 |
+| fix | llmgw | 补齐缺陷转发的附件上传：网关此前只 create + submit，从不把截图传到缺陷系统，MAP 收到的是「说有截图但没有截图」的单子而 UI 照报「已提交」（CDS 侧早已修，网关一直漏着）；上传失败如实降级，且不覆盖 submit 的失败说明 |
+| fix | llmgw | 修复前端附件总量闸与后端不同口径：前端量解码后字节、后端量 base64 字符，差 4/3 倍——两张 5MB 图在前端按 10MB 放行，转 base64 约 13.3MB 被后端拒绝，用户挑完图等完上传才被整单拒 |
+| test | cds | 新增第四十一轮五条回归（含逐条红绿闭环）：文本长度闸、降级说明落账本、采样容量随间隔、llmgw 附件上传顺序与两端口径一致的源码守卫 |
+| fix | cds | 回滚补上与发布同一道并发闸：此前 startRollback 一道闸都没有（连状态在途判定也没有），取消一次发布后紧接着回滚，会和尚未退出的老执行体并发往同一台机器写 SSH，线上最终留下的是「谁后跑完」的那个版本；并发判定抽成唯一判定源 assertTargetFree，发布与回滚共用，杜绝再次只补一边 |
+| fix | cds | 修复跨天可用率的天数与标签对不上：dayKey(now-7d)..dayKey(now) 在 now 不是 UTC 零点时实际跨了 8 个自然日，窗口外那半天的故障也被算进「最近 7 天」；改取 now-(N-1) 天，恰好 N 个自然日 |
+| docs | cds | 状态页 7 日可用率标注为「近 7 日」并加 tooltip 说明口径是自然日（UTC，含今天）而非精确到秒的滚动窗口——跨天窗口只有按天聚合可用，标签必须说清 |
+| fix | llmgw | submit 抛异常的分支同样拼接降级原因：此前只补了非 2xx 分支，submit 抛异常时用户只被告知「可能是草稿」，完全不知道截图也丢了 |
+| test | cds | 新增第四十二轮三条回归（含逐条红绿闭环）：回滚过闸与并发判定唯一性、7d/30d 恰好 N 个自然日、llmgw 两个 submit 失败分支都拼接降级原因 |
+| fix | cds | 自更新排空闸上移到 app 级：它此前只是 branches 路由器里的一段中间件，而生产发布在另一个路由器（/releases/*）里从不经过它——排空最后一次轮询之后仍能开启新发布，再被重启把 SSH 拦腰砍断；判定收敛为 isDrainBlockedPath 唯一源，覆盖分支部署 + 发布发起/回滚/重试，只读与 stop/cancel 等自救动作不受影响 |
+| fix | cds | 历史曲线与可用率共用同一个自然日边界 calendarDayWindow：曲线侧仍在用 now-range 做起点，7d 会返回 8 个桶且首桶早于返回的 from（上一轮只修了可用率一侧） |
+| security | llmgw | 网关提缺陷补文本长度闸（描述/正文/标题/环境键/附件元数据）：此前只判空不判长，多兆字节正文原样进每份 Mongo 文档，而每租户 100 条只管条数不管字节，反复提交仍能吃掉约 1GB/租户；数值与 CDS 侧逐一对齐，并加跨端一致性守卫 |
+| test | cds | 新增第四十三轮三条回归（含逐条红绿闭环）：排空闸覆盖两个路由器且挂在它们之前、曲线与可用率同判定源、llmgw 文本闸与两端上限一致 |
+| fix | cds | 附件删除失败时不再扣减配额账目：unlink 因只读盘/权限/瞬时 IO 失败时仍减字节并清账本引用，文件还占着盘却从所有配额计算里消失，反复失败即可同时绕过每项目上限与全局硬顶；改为只有删成功（或 ENOENT）才动账目，失败的仍留在账本里等下轮再试 |
+| fix | cds | 转发成功但本地账本写入失败时不再静默返回 201：已落盘的附件不在账本里，回收永远发现不了（永久占盘的账外孤儿），用户也不知道 CDS 这边没留底；改为就地清掉这些附件并在 degradeReason 如实说明 |
+| security | llmgw | 补 source 字段长度闸：只截了标题/描述/正文，source 仍原样落库，前面几个上限等于白加 |
+| test | cds | 新增第四十四轮三条回归（含逐条红绿闭环）：删除失败不扣账目、账本失败如实降级并清账外附件、llmgw source 截断守卫 |
+| fix | cds | 自更新排空闸补显式开闸：endSelfUpdateDrain 此前是从未被调用过的死代码，一次没真正重启进程的自更新（fast-forward / spawn 静默失败）会把部署闸晾满整个 fail-open 窗口（默认 6 分钟），期间每次 webhook 部署都拿 503 + 红灯 CI（本 PR 2026-07-28 实际中招一次）；改为 spawn 失败且不退出时立刻开闸，并加 15 秒看门狗——重启真生效时进程已退出，定时器随之消失 |
+| security | cds | 缺陷环境字典补条目数上限（40 条）：只截键和值不够，几万个不同的键照样能拼出多兆字节的无附件文档，把「按条数保留」的存储上限整个架空 |
+| security | llmgw | 网关同上：环境字典条目数封顶，与 CDS 侧同口径 |
+| fix | llmgw | 本地台账写入失败不再覆盖前面的降级说明：截图没传上去 / 可能仍是草稿态两条会被抹掉，用户只看到「台账写入失败」 |
+| fix | cds | 状态页有「待确认」目标时不再报「全部服务正常」：首轮探测中或连续失败未到去抖阈值的目标会被绿色横幅盖住，而同一张卡下面就写着「待确认 N」，自相矛盾；改为琥珀色「N 个服务状态确认中」 |
+| test | cds | 新增第四十五轮三条回归（含逐条红绿闭环）：环境条目数封顶、状态横幅优先级、llmgw 台账降级不覆盖 |
+| chore | doc | 每日熵减计划：D1-D5 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项；D4 的 `**pnpm**` 复核为正文加粗提及非技能表行，0 改动），D6 处理 5 条 changelog（开放平台授权表主题对比度修复/CDS 复制集双画布批次/知识库实时转写/CDS 分层冒烟内容契约/llmgw 移动端相关教程入口），其中实时转写批次补充 `doc/debt.knowledge-base.md` 新章节，复制集批次已由 `doc/design.cds.replica-set.md` + `doc/debt.cds.md` 全量覆盖，其余 3 条为窄范围 UI/bug fix 无对应设计文档，仅登记 manifest，manifest 累计 492 条 |
+| fix | scripts | 围栏判定认行首缩进（四格起是缩进代码块），index.yml 成员只认 docs: 段 |
+| fix | scripts | 技能 frontmatter 先判 YAML 语法（修好 9 个真坏的 SKILL.md），已结清区的活账判定扩到标题/行状态/残留尾巴三种形状 |
+| fix | scripts | 证据脚本的进度页写入目标改回生成物路径（曾指向权威设计文档且是整份覆盖写），并加守卫防复发 |
+| fix | scripts | 缩进代码块里的假导读不算数、引用块里的围栏照样识别、shell 块划出命令与脚本界线 |
+| fix | scripts | 未闭合 shell 围栏文末结算、列表项里的围栏照样识别、引号标量转义按 YAML 规则校验 |
+| fix | scripts | 散落源码引用补上仓库根的入口文件，正文扫描跳过顶层缩进代码块（列表续行不误伤） |
+| fix | scripts | 头部元信息按标签白名单认（正文标签不再冒充元信息），台账欠账清单更正为 23 周报 + 9 篇活账 |
+| fix | scripts | 带行号的源码路径不重复计数，--fix-links 跳过范围与检测端对齐 |
+| fix | scripts | 面包屑扫描按 NUL 读跟踪文件（中文名不再被静默跳过），技能 frontmatter 每个键都查 YAML 语法 |
+| fix | scripts | 缩进代码块判据认制表符，流式集合括号按同类配对判 |
+| fix | doc | 修一处嵌套坏链并加全库零容忍守卫 |
+| fix | scripts | 死链闸挖掉行内代码再找链接，列表续行里的围栏按相对缩进判 |
+| fix | scripts | 技能/规则根下的 md 计入散落引用，改写端补列表上下文，已结清区认「偿还中」 |
+| fix | scripts | 已结清区认 blocked 等状态，引号标量收尾后不许跟多余内容 |
+| fix | scripts | 已结清区状态改为反判（只认结清词），frontmatter 无冒号行判红 |
+| fix | llmgw | 在移动端用户菜单补充当前页面的相关教程入口，保留路由上下文返回 MAP 教程关系 |
+| fix | llmgw | 修复移动端用户菜单越出视口导致相关教程入口被裁切的问题 |
+| fix | llmgw | 修复教程漂移证据边界、发布器事务回滚、人工草稿保护与图谱独立修订读取 |
+| fix | prd-admin | 修复教程关系草稿视图、安全深链、一次性入口、全量教程发现与 publisher 作用域 |
+| fix | prd-api | 修复教程图谱旧租户读取空值与知识库删除级联残留 |
+| test | llmgw | 增加跨章节证据、元数据触发、人工草稿和图谱发布失败恢复测试 |
+| fix | llmgw | 对图谱与节点响应丢失执行远端对账，并按依赖顺序恢复发布批次 |
+| fix | llmgw | 对主文档写入失败执行回读确认与最新 CAS 重试，避免图谱发布后的部分状态 |
+| fix | llmgw | 标记自动图谱草稿并允许后续发布 CAS 替换失败批次遗留草稿，人工草稿仍禁止覆盖 |
+| feat | llmgw | 建立页面、教程步骤与截图证据双向维护图谱，并补齐路由和实战教程反链 |
+| test | llmgw | 增加固定种子随机抽检与缺页面、缺步骤、缺证据、非法路由和孤儿教程故障注入 |
+| rule | skills | 升级教程日常维护技能并将每日验收与教程双链任务分组隔离 |
+| feat | prd-api | 新增 MAP 教程双链图谱 Draft、Published、历史与 CAS 回滚 API |
+| feat | llmgw | 发布器在教程读回成功后同步图谱，并支持每日只写 Draft 与二次 noop 校验 |
+| test | prd-api | 覆盖陈旧发布、失败保持、历史回滚、缺证据、缺节点和孤儿教程拒绝场景 |
+| feat | prd-admin | 新增 LLM Gateway 教程关系覆盖矩阵、漂移、历史回滚和页面详情可视化 |
+| feat | prd-admin | 教程阅读页与 LLM Gateway 页面增加管理员双向安全跳转 |
+| feat | prd-api | 新增按已发布教程图谱解析产品路由的管理员接口 |
+| feat | llmgw | 管理员可从当前控制台页面打开对应 MAP 教程并在 SSO 后返回指定页面 |
+| test | prd-api | 覆盖教程关系动态图谱的精确路由与命名参数匹配 |
+| fix | prd-admin | 教程关系详情完整展示页面级与步骤级教程，并区分对应证据状态 |
+| perf | prd-api | 补齐录音孤儿分片回收与归档超时租约两条 MongoDB 索引 |
+| fix | prd-api | 索引清单移除录音两张表的存量遗留 TTL，避免先删父会话留下孤儿分片 |
+| docs | prd-api | 数据字典按实际清单列全录音索引并标注禁止 TTL |
+| test | prd-api | 录音索引目录守卫补齐新索引，并加限定区块的禁止 TTL 断言 |
+| feat | prd-admin | 周报详情支持划词评论：选中正文弹出评论按钮，被评论文字显示黄色下划线并可点角标跳到评论线程 |
+| feat | prd-api | 周报评论 ReportComment 新增划词锚定字段（SelectedText/前后上下文/偏移），创建端点支持写入 |
+| polish | prd-admin | 划词评论浮出按钮修复变形（max-content + nowrap）并精简样式；移除下划线尾部数字角标，改为点击下划线本身查看评论 |
+
+### 2026-07-24
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | cds | 复制集模式 MVP-1：单服务粒度多版本并排（BranchEntry.replicaSets + ReplicaSetService，成员从保留不可变镜像秒起、禁源码回退，分支停止/删除级联收割） |
+| feat | cds | forwarder 复制集分流：路由组 replicaGroup + 权重加权随机 + 粘性（query __rs / header x-cds-replica / cookie cds_rs），成员直达子域 <slug>-<memberId>.<root> |
+| feat | cds | 分支抽屉新增「复制集」页签（版本并排/权重/直达链/提升/一键退回普通模式）；资源卡对复制集化服务加堆叠徽章特殊标识 |
+| feat | cds | 复制集 REST API：/api/branches/:branchId/replica-sets 系列端点 + Activity Monitor 中文 label 全量登记 |
+| docs | doc | 新增 design.cds.replica-set 设计文档（四条硬要求 + 边界决策 + 一键隔离数据库 MVP-2 规划） |
+| test | cds | 新增 route-resolver 复制集分流单测 + forwarder-route-publisher 复制集路由契约测试 |
+| feat | cds | 复制集 MVP-2 一键隔离数据库（保留）：replica-db-clone 三引擎整库克隆（mongo/mysql/postgres），成员启动前先克隆再切库；隔离库快照台账 + UI 数据快照列表 + 手动删除 drop |
+| feat | cds | 复制集添加成员支持「共享主库 / 一键隔离库」选择；成员行显示隔离库徽标；远端执行器分支明确拒绝复制集化 |
+| polish | cds | 复制集「一个 + 号」简化（对标 Railway）：+ 副本一键把当前版本再起同版本实例并自动均分流量，历史版本并排降级为次级入口 |
+| docs | doc | design.cds.replica-set 增补波4「数据库保护罩」（盾形按钮 + 分阶段真实进度 + 一致性校验）与波5「数据回写」（binlog/oplog/逻辑复制槽）设计规划 |
+| polish | cds | 复制集 Railway 式芯片交互：资源卡每个应用芯片右上角「+」小按钮 + 数量菜单（1/2/3 个副本确认即成），芯片显示 xN 实例数、启动中光环脉冲；分支列表卡新增「复制集 xN」发光标识（配置仅存分支、删分支即消失） |
+| feat | cds | 复制集可观测/可校验（用户五诉求）：成员命名规范化 res-N；每个复制集响应带 X-CDS-Replica / X-CDS-Replica-Group 标记头；副本容器注入 CDS_REPLICA_ID / CDS_REPLICA_INSTANCE 实例指纹；面板「分流实测」按钮走服务端真实入口探测并按响应头统计落点分布 |
+| fix | cds | 分流实测改原生 http.request（fetch 静默丢 Host 头导致误记 100% 主版本的真 bug） |
+| polish | cds | 复制集面板布局收紧：成员行信息与操作紧邻成组左对齐，废除左右两端拉开 |
+| feat | cds | 数据库保护罩：数据库芯片锁按钮一键克隆隔离副本（异步 + 进度轮询 + 芯片环绕动画），副本入数据快照台账保留 |
+| fix | cds | 验收 P1 双修：分流实测 path 由后端按服务 pathPrefixes/api-convention 推导（此前写死 / 打在前端容器永远 100% 主版本）；芯片「+」数量菜单 createPortal 挂 body（此前被芯片行 overflow 裁剪不可见） |
+| feat | cds | 复制集面板全量重设计：方案A 行式视图（每服务一行：服务名/实例块/流量条/加号，次要操作收进「管理」展开）+ 方案B 流量舞台拓扑（点阵网格、入口-实例层-数据层自上而下、贝塞尔曲线连线、基础设施虚线边） |
+| feat | cds | 复制隔离数据库（profile 级）：连接线上「复制隔离」按钮两步动画（第1步克隆入保护罩框、主库不动；第2步副本整体切至隔离库），旧连线灰色留影加断开标记，「回切主库」可逆且快照保留 |
+| feat | cds | 后端 isolateProfile/revertProfile API（POST /replica-sets/:profileId/isolate 与 /revert-db）：guard-N 命名单次克隆 + 逐成员重物化换库，ProfileReplicaSet.isolated 台账 |
+| polish | cds | 新增副本走灰卡渐显可撤回；「退回普通模式」更名「关闭复制集」；分流实测升级串流模式（逐请求服务端往返）+ 实时日志 + 终局环形仪表盘 |
+| fix | cds | 验收 P1 双修：复制隔离识别 .NET 框架风格库名 key（MongoDB__DatabaseName / MySql__Database 等，此前只认白名单家族一点即 409）；同引擎值不同的 key 不再一起覆写 |
+| fix | cds | 验收 P1 双修：副本健康实测（服务端 TCP 直连宿主端口）——死副本不再显示绿色运行中，面板红色「不可达」告警 + 舞台红卡提示下线；无 X-CDS-Replica 头的响应不再伪装成主实例落点 |
+| polish | cds | 分流实测支持指定探测路径；非 2xx 业务响应中性展示（落点以 X-CDS-Replica 头为准），仪表盘补充说明避免误读 |
+| fix | cds | 复验 R2-P1：隔离库名生成归一非法字符（guard-N/res-N 连字符转下划线），此前生成名被自家白名单拒绝导致复制隔离 100% 失败于第 1 步；回归测试绑定真实生成格式 |
+| fix | cds | 复验 R2-P2：隔离失败不再静默——舞台 error 副本红卡显示失败原因、行式折叠态红字告警行、成员转 error 即 toast |
+| fix | cds | 复验 R3-P0：整库克隆改独立限额辅助容器（docker run 同镜像 + 内存/CPU 硬上限 + 共享 DB 网络命名空间 + dump/restore 单并发限流）——此前 dump 管道在数据库容器同 cgroup 内跑，内存压力实测把共享生产 mongod 打崩 |
+| fix | cds | 复验 R3-P1/P2：克隆失败自动 DROP 半成品残留库（清不掉则明示手动路径）；runDockerExec stderr 改头尾双段保留，进度日志不再把致命错误挤出缓冲 |
+| fix | cds | 复验 R3-P3：流量舞台多服务时提供切换器，「+副本」不再默认打到字母序首个服务 |
+| fix | cds | 复验 R4-P0：克隆期临时收紧 mongod WT cache 至 2G（运行时 setParameter，克隆结束恢复、mongod 重启自动回默认）——辅助容器只保住客户端，被宿主 OOM 杀的是无内存上限的 mongod 本体 |
+| fix | cds | 复验 R4-P1：失败残留清理加 20s x5 延迟重试——失败最常见场景是主库崩溃恢复中，立刻 DROP 必失败 |
+| fix | cds | 复验 R5-P0：WT cache 收紧此前从未生效——mongosh 对 int64 输出 Long('...') 致 Number 解析 NaN、保护静默跳过后克隆裸奔；读值改脚本内 Number 强转 + 正则提数兜底，并改 fail-closed：保护建不起来直接中止克隆，禁止裸奔打主库 |
+| fix | cds | 复验 R5-P1：profile 级隔离克隆透传 onOutput——克隆保护/进度写进成员 statusMessage（UI 可见）+ 服务端日志，「受保护克隆」与「未受保护」从此可区分 |
+| security | cds | 复验 R6 熔断闸门：mongo 整库克隆前预检源库 dataSize，超 CDS_REPLICA_CLONE_MAX_MB（默认 512MB）拒绝并明示原因——大库克隆在共享宿主上六轮验收四次打崩生产 mongod（WT cache 收紧实证生效仍崩，方案假设证伪），小库隔离不受影响 |
+| docs | doc | debt.cds.replica-set 补录 #16-#18：大库克隆无安全路径熔断台账（含四次崩溃时间线与三条根治候选）、崩溃现场不可追溯、mysql/pg 闸门待推广 |
+| feat | cds | infra 生命周期取证器（债务 #17）：常驻 docker events 监听 oom/die/kill/start，区分 cgroup OOM / 外部 SIGKILL(137 无 oom) / 进程自身退出，事件入服务器日志 + GET /api/infra/:id/lifecycle-events 回看——mongod 四次 unclean shutdown 的凶手下次可直接定性 |
+| perf | cds | mongo 克隆两阶段读写错峰：dump gzip 落盘（宿主临时目录挂载）确认完整后再 restore，消除读写叠加峰值与管道 broken pipe 失败模式，阶段间留回写喘息 |
+| feat | cds | mongo 复制隔离改「专用隔离实例」通道（终局方案）：dump 只读共享库落盘 → docker run 独立 mongo 实例（默认 mongo:7.0、内存 1.5G/WT cache 1G 上限）→ restore 写入专用实例；副本经连接串覆写直连新实例——共享 mongod 从此零写入风险（八轮取证：8.0.20 凡大批量写随机 SIGSEGV/139，纯读从未崩），隔离升级为实例级 |
+| feat | cds | 快照台账支持专用实例（dedicatedContainer/dedicatedHostPort）：删除快照 = 整容器移除含数据卷；UI 快照行标注「专用隔离实例」；失败善后无残留库问题 |
+| fix | cds | 终验 R9-P3 健壮性双修：正被活跃隔离引用的快照拒绝删除（409 提示先回切）；末位成员下线联动清除悬挂的 isolated 标志 |
+| docs | doc | debt.cds.replica-set 收口：#16 大库克隆熔断解除（专用隔离实例根治）、#17 崩溃取证器落地，新增 #19 分支删除后 rsdb 容器清理路径 |
+| feat | cds | 复制集改草稿-保存执行模型：舞台唯一视图（行式页签删除），所有操作先进「变更清单」可排序草稿，保存后走后端执行计划串行执行；执行中可调序/跳过/取消剩余；失败策略可选「仅停止 / 停止并回滚已完成步骤」；执行记录持久留存（含失败原因与回滚日志） |
+| feat | cds | 后端 ReplicaPlan 执行引擎：6 类步骤（加副本/下线/权重/隔离/回切/关闭）逐步等真实终态，同分支互斥，记录 cap 20；单测 7 条覆盖校验/串行/stop/rollback/顺序控制 |
+| feat | cds | 数据层双框表达：左框共享基础设施、右框隔离区；复制隔离时小库卡从左框动画转移进右框，完成后左侧主库上锁置灰（副本请求已转移一眼可见），回切解锁 |
+| docs | doc | 债务台账补录：分支卡复制集徽章实时刷新（R10 P3）、整组复制「隐藏影子分支」方向定案（波 6） |
+| fix | cds | 用户反馈三修：隔离区空态整块可点击（无副本时提示可同计划先加副本再隔离）；变更清单悬浮右下角「保存执行」按钮（执行中显示进度 N/M）；更新徽章取消置顶后收成小圆钮不再残留宽空按钮 |
+| security | cds | 执行计划启动收敛：CDS 自更新/重启打断的 running 计划开机标记为中断（步骤明示原因、pending 取消），杜绝「更新 CDS 导致的不一致」僵尸态 |
+| docs | doc | 债务台账 #22：两页签重构定案（容器级=全容器调用关系纵览各自加副本；项目级=整组影子容器不隐藏带特殊标记 + 基础设施隔离统一战线） |
+| feat | cds | 容器级视图落地（用户拍板两页签之一）：废除服务下拉框，一屏纵览全部容器自上而下调用关系（入口 → 每容器一行实例组 → 数据层双框），每容器行内独立加副本/调权重/复制隔离/回切/关闭/实测；项目级整组页签（影子容器带标记 + 隔离统一战线）留波 6 |
+| fix | cds | 纠偏重做两页签（用户指正「说的对做的错」）：恢复被误删的好看单容器舞台为「容器级」页签（下拉框换容器胶囊切换），新增「项目级」页签（整组加副本/整组复制隔离统一战线/整组回切，草稿同入变更清单）；丑陋的全行铺开版废弃 |
+| fix | cds | 芯片快捷加副本改走执行计划（消灭绕过变更清单的隐形执行通道，有记录可回溯）；隔离区空态恢复可点击（唯一候选直加草稿，多候选/零候选给指引） |
+| feat | cds | 复制集两页签重构为统一节点卡画布：容器级一屏展示全部容器调用关系（边由环境变量引用 + depends_on 服务端推导，只暴露键名），每容器独立加副本/权重/下线/分流实测 |
+| feat | cds | 项目级画布保持原版舞台形态（入口 → 全部容器 → 基础设施），副本以「复制集成员 · 已负载」叠卡特殊标记不隐藏，整组加副本一键进清单 |
+| feat | cds | 数据隔离统一战线升级到分支级：隔离区一键覆盖所有有副本的服务切同一专用隔离实例，部分隔离黄牌提示「统一战线未对齐」并可一键补齐 |
+| feat | cds | 新增 service-graph 服务：GET /api/branches/:id/replica-sets 返回调用关系图（最长 id 优先主机名匹配 + CDS_<INFRA>_PORT 模板 + depends_on，环路兜底分层） |
+| feat | cds | 复制集管理模式二选一：分支级 replicaMode 首次保存计划钉住，另一页签上锁，副本清零自动解除；后端 409 拦截跨模式计划 |
+| feat | cds | 容器级画布改「展开的容器盒」：主实例/副本/草稿收纳盒内，加号就地可点，连线盒对盒不再遮挡 |
+| feat | cds | 项目级画布改三节点（入口 → 项目 → 基础设施）：整组副本 = 项目节点右侧长出的节点（放不下换行），每组带全容器状态点/整组权重/整组下线 |
+| feat | cds | 分支卡复制集徽章改每容器专属色 chip + xN（替代易误读的合计「复制集 xN」），颜色与画布一致 |
+| refactor | cds | 复制集不再单独占抽屉顶级页签，并入「部署」子页签（发布 / 复制集） |
+| fix | cds | 复制集悬浮「保存执行」按钮上移（bottom-24），不再与底部 GitHub 新 commit 通知 pill / toast 重叠 |
+| fix | cds | 复制集执行按钮改到面板右上角常驻（废除悬浮按钮），与一键还原并排，彻底不与底部通知/自更新 pill 重叠 |
+| polish | cds | 容器盒内改 Railway 风简洁行（细分隔线，无边框小盒），加号/历史版本/分流实测挪到盒外右侧小圆钮 |
+| feat | cds | 新增一键还原：全部容器关闭复制集进变更清单，保存后回到普通模式（隔离库转快照保留） |
+| feat | cds | 右上执行区新增「放弃变更」：只丢弃本页未保存草稿、不执行任何操作，与「一键还原」（业务性关闭复制集）明确分离 |
+| polish | cds | 盒外加号/历史版本按钮提示写明白：加副本=再起一个当前版本实例按权重分流；历史版本=旧版本并排跑（新旧对比/灰度回退） |
+| feat | cds | 生命周期取证器扩展到复制集成员容器（cds-*-res-N）：副本死亡留下 oom/die/exitCode 证据，「副本为什么失败」下次可尸检 |
+| feat | cds | 草稿按用户操作聚合：一次手势（整组副本/统一战线隔离/一键还原）= 一条草稿，保存时才展开为步骤；新增「撤销上一步」（按手势回退，置于放弃变更左侧） |
+| feat | cds | 复制隔离草稿预期管理：主库置灰预览上锁 + 隔离区复制一张同样式黄色副本库卡 + 黄色预连线，保存执行 = 黄转常色 |
+| feat | cds | 整组副本幽灵节点改全样式拷贝（与真节点同结构的黄色卡，带撤销钮）；容器盒草稿行也带单条撤销减号 |
+| polish | cds | 模式切换按钮并入画布头一行压缩纵向空间；项目节点容器 chips 与分支卡同视觉语言（含端口）；部署子页签重排为「复制集（默认）/ 部署」 |
+| feat | cds | 复制集升顶级页签「运行」（默认直开），与「部署」（不可变部署版本+部署事实账本）同级；删除子页签 |
+| polish | cds | 分支状态条并入抽屉标题行（状态/commit/服务数紧凑 chips），origin/推送/部署次数等次要信息按拍板丢弃，「上次停止」告警保留 |
+| feat | cds | 画布连线全部加流动动画（虚线流向目标）；隔离区改为左框镜像——预览时复制整套基础设施元素（mongodb+redis 一一对位），原件全部置灰上锁 |
+| feat | cds | 项目级副本节点改为项目节点的同样式同尺寸拷贝，命名「项目-复制集-N」；幽灵草稿同结构黄色拷贝（每容器行标「待建」） |
+| feat | cds | 隔离不再强制先有副本：零副本可先建隔离库并钉住隔离态，之后新副本自动连隔离库；同源库多服务隔离复用同一专用实例（修掉统一战线各克隆一份的数据分叉隐患） |
+| feat | cds | 历史版本选择与分流实测改弹窗；分流实测按钮常驻每容器、项目级页脚也有入口（模式钉住时不再失踪） |
+| feat | cds | 画布节点可点选：高亮与之相连的线段、其余变淡；基础设施连线提亮、数据层拉高减少重叠 |
+| polish | cds | 副本专属色调色板去红去黄（红色专属出错、黄色专属草稿），健康复制集不再让人恐惧；分支卡 chip 仅副本真出错才转红 |
+| feat | cds | 容器日志囊括副本成员容器：container-logs 端点接受 memberId，日志页签 chips 行列出全部副本容器（靛蓝区分，项目级/容器级兼容） |
+| feat | cds | 项目级复制集在分支列表显形：main-replicaset-N 派生卡紧随主分支卡右侧（成员端口 chips + 预览本组 __rs 粘性直达 + 打开详情），主卡改标「已复制」不再列 xN |
+| fix | cds | 孤儿容器收割器认领复制集成员容器：res-N 副本容器此前不在认领清单，过 30 分钟宽限期即被当孤儿优雅停掉（真实事故：5 个 running 副本被误杀，state 仍标运行，入口 50% 请求 503） |
+| feat | cds | 副本容器真身对账三道防线：启动即对账 + 每分钟周期对账 + 生命周期取证器 die 事件秒级摘流——任何原因死亡的副本标 error 并自动退出入口分流（路由发布器 2s 收敛） |
+| feat | cds | 隔离 MECE 审计：五面实测（意图/配置/实例/数据/边界），配置面逐容器 docker inspect 真实 env、数据面双向金丝雀真写真查（隔离库写入不见于主库、主库写入不见于隔离库），边界面显式列出主实例仍连主库、redis 未隔离、同库其他服务未隔离 |
+| feat | cds | 隔离可观测性：画布「隔离审计」入口（隔离区卡 + 页脚常驻），未隔离时退化为逐容器连接观测——每个容器真正连的库不再是黑盒 |
+| fix | cds | 副本容器日志「看不了/分不清」修复：选中副本后旧代码兜底到第一个服务导致身份校验失败、日志加载成功却显示「暂无容器日志」；现副本合成独立日志目标直出正文 |
+| polish | cds | 日志页签容器选择器分组：主容器 / 副本容器分两行带组标签（不再 10 个 chip 挤一条横滚行把副本遮住），日志面板标题亮明身份（副本带「复制集副本」靛蓝徽章 + 容器名） |
+| polish | cds | 分支卡构建进度簇挪到右下角：构建中状态 + 计时 + 模式/净耗时/预计/细进度条并入 footer 右侧，顶部 chips 行构建期间保持端口/容器信息不动 |
+| feat | cds | 调度器降温提示条悬浮显示「设置降温条件」：就地改 CDS 系统设置的空闲阈值 + 自动降温开关（PUT /api/scheduler/config，调度器每 tick 读配置，保存即刻生效） |
+| refactor | cds | 分支抽屉按方案 A「六问」分类收敛 9 到 6 页签：总览(并入指标) / 运行 / 部署(构建日志内联到每条部署，不再跳页签) / 日志(移除构建模式，只留容器/系统/Webhook/HTTP 持续流) / 配置(生效变量+配置检查器+分支设置三分区) / 资源 |
+| feat | cds | forwarder 被动健康摘除（debt #12 偿还）：连接级死亡信号（ECONNREFUSED/EHOSTUNREACH/ENOTFOUND）连续 2 次临时摘除、指数退避冷却、半开试探、一次成功回池；被摘成员退出粘性与加权，全组皆摘回落主成员；诊断端点 /__forwarder/replica-health |
+| feat | cds | 隔离审计数据面金丝雀补齐 mysql/pg：共享实例通道建 canary 表真写真查（正/反双向），测完 DROP 不留残渣 |
+| polish | cds | 部署页签子模块置顶：进行中/历史部署卡（含分阶段容器日志）放在部署事实账本与版本账本之上 |
+| polish | cds | 入口卡入画布：抽屉头部「应用已上线」大卡只留总览页签，运行画布入口节点右侧挂同组入口直达链——其余页签各腾出约 180px |
+| polish | cds | 窄卡（<640px）构建进度簇只留净耗时，预计值与进度条收进 sm: 以上防 footer 拥挤 |
+| feat | cds | 总览页签重建为仪表盘并坐回第一号位（打开抽屉默认总览）：入口卡置顶 + 八块仪表（状态/服务/复制集/版本/CPU/内存/网络/入口）+ 监控图表——总览像个总览，不再是文字堆砌；运行画布入口节点直达链保留 |
+| polish | cds | 卡片 footer 构建簇去冗余：独立「构建中 + 计时」chip 删除（耗时在进度 pill 已有且会挤压遮挡 commit sha），状态由 pill 内脉冲色点 + tooltip 承载 |
+| fix | cds | 分支重启级联拉起复制集副本容器（Codex P1：此前停止/降温后副本分流永久消失，成员记录空占上限且无路径复原） |
+| fix | cds | 调度器降温级联停复制集副本容器（此前主容器停了、副本还挂权重接分流，且降温分支的副本白占资源） |
+| fix | cds | 删分支级联 drop 隔离库与专用隔离实例容器（Codex P1：rsdb 容器无 cds.branch.id label，台账删除后彻底无主、永久漏跑） |
+| fix | cds | 主容器不可路由时仍发复制集成员路由与直达子域（Codex P1：此前整组蒸发，单服务分支 host 直接消失） |
+| fix | cds | forwarder 复制集粘性 cookie 与上游 Set-Cookie 合并下发（Codex P1：登录响应带 cookie 时 cds_rs 被覆盖，登录后立刻横跳版本） |
+| fix | cds | 删项目级联清理复制集成员容器与专用隔离实例（Codex P1：rsdb 容器无归属 label，项目删除后永久漏跑） |
+| fix | cds | 成员物化加三道在册栅栏（Codex P2：克隆/启动期间成员被移除会起台账外幽灵容器、追加无主快照） |
+| merge | cds | 同步主分支（codex SSO 安全收紧 + 分支卡动作层级 + 生图长超时），文本零冲突；语义冲突一处：replica-sets 路由补登记进 Agent 能力目录（守卫测试） |
+| security | cds | mongo 专用隔离实例启用认证（复用源库 root 凭据，不落盘新密钥；旧无认证实例带标记区分不误发凭据），治宿主全网卡裸端口暴露生产派生克隆（Codex P1） |
+| fix | cds | 隔离库名/专用实例容器名加分支哈希段，治跨分支 guard-1 同名互杀（第二分支克隆 rm -f 摧毁第一分支在用隔离库，Codex P1） |
+| fix | cds | 隔离目标解析合入分支级环境变量（与部署路径同优先级），治分支覆写库名/连接串时克隆到项目级默认库（Codex P1） |
+| fix | cds | promote 改终态门：部署 run 成功终态才解散复制集，失败/取消保留作回退出口，治派发受理瞬间拆掉唯一健康出口（Codex P1） |
+| security | cds | forwarder /__forwarder/replica-health 诊断端点补 loopback 门禁，与相邻 routes/stats/active 同姿态（Codex P2） |
+| fix | cds | 复制集粘性 cookie 改组作用域（cds_rs_<组哈希>），治同 host 多复制集 profile 时 res-1 跨组误钉/cookie 互相覆写（Codex P1） |
+| fix | cds | 成员直达子域带 profile 段（<slug>-<profile>-<成员>），治两个服务同名 res-1 撞同一 host 路由互相覆盖（Codex P1，前端直达链同步） |
+| fix | cds | 隔离快照复用增加同源实例判定（infraContainer 必须一致），治同引擎双实例同名库时把 A 实例克隆错发给连 B 实例的服务（Codex P1） |
+| fix | cds | 多实例同引擎且未声明 dependsOn 时按 CDS_<实例>_PORT/HOST 模板关联定位，无法唯一定位 fail-closed 拒绝，治盲选第一个实例克隆错库（Codex P1） |
+| security | cds | 隔离审计金丝雀表/集合改每次运行唯一命名，治固定名撞上应用同名表时 finally DROP 连业务数据一起删（Codex P1） |
+| fix | cds | 隔离克隆加在途闸（分支+实例+源库串行化），治并发隔离选同 guard-N 后 mongo 幂等 rm -f 互相摧毁对方成功实例（Codex P1） |
+| fix | cds | 分支停止/降温把无容器的 provisioning 成员也标 stopped + 物化栅栏按状态放弃，治分支已 idle 后后台任务仍把副本容器起出来（Codex P1） |
+| fix | cds | 删分支清理专用隔离实例失败时写墓碑交收割器持续重试，治瞬时 Docker 故障后 rsdb 容器永久无主（Codex P2） |
+| fix | cds | auto-lifecycle 自动停止级联复制集副本（此前只停主服务，"已停止"分支经成员兜底路由仍公网可达且占资源，Codex P1） |
+| fix | cds | 隔离目标引擎判定去顺序依赖：多引擎项目按 dependsOn/CDS_<实例> 模板收敛，多义 fail-closed（此前首个 env key 定引擎会克隆错引擎的生产数据，Codex P1） |
+| fix | cds | 克隆完成时分支已删的归属复查：就地 drop 刚克隆的隔离库/专用实例（此前 requireBranch 抛错后产物永久无主，Codex P1） |
+| fix | cds | 服务调用关系图合入项目级/分支级生效 env（此前只看 profile.env，自动供给项目推不出服务到基础设施的边，画布拓扑残缺，Codex P2） |
+| fix | cds | promote 终态清理加代际栅栏：当前成员非派发时子集则跳过 dissolve（防部署期间重建的新副本被旧 watcher 连锅端，Codex P2） |
+| fix | cds | 隔离克隆期间禁加成员（在途闸扩展）：治克隆中途加入的成员连共享库、切换循环碰不到它、隔离态却声称生效（Codex P1） |
+| fix | cds | 计划回滚失败不再谎报成功：removeMember 抛错不吞、任一步失败计划终态 error + 回滚日志说明现场未还原（Codex P1） |
+| fix | cds | 「预览本组」链接带每个 profile 的成员 id（__rs 多值），forwarder 一次导航种齐各组组作用域 cookie，治项目级整组预览混入他组加权流量（Codex P1） |
+| fix | cds | 被动健康半开改单探针占位：冷却到期只放行一个请求试探（10s 超时接棒），治高流量下死成员每个退避周期挨一波真实 503（Codex P2） |
+| fix | cds | 生命周期取证器 error/close 汇入单一重连闸，治 spawn 失败双定时器成倍繁殖 watcher、生命周期记录与死亡回调翻倍（Codex P2） |
+| fix | cds | 隔离库名哈希段升级为分支+profile 双身份、快照 id 加 profile 段：治同分支两个服务的 res-1 同名互杀专用实例、快照 id 重复误删台账（Codex P1） |
+| fix | cds | 命名子域路由走复制集展开：治 llmgw 类命名入口 100% 流量打主容器、分流权重失效且绕过被动健康（Codex P1） |
+| fix | cds | isolate-db 回滚谓词实证回切结果：成员 error 即抛、超时上抛，不再把重物化失败谎报成 rolled-back（Codex P1） |
+| fix | cds | 隔离前置全员运行态检查：存在 stopped/error/provisioning 副本时拒绝隔离（否则重启会按共享库 env 复活它们、控制面却声称已隔离，Codex P1） |
+| fix | cds | 计划回滚遇不可还原的破坏性步骤（remove-member/dissolve）不再整体标 rolled-back，终态 error 如实告知现场未复原（Codex P1） |
+| fix | cds | mongoAdminEval/dropReplicaDb 的 mongo 连接串凭据 percent-encode，治密码含 @ : / # 时体积预检和清理全部失败（Codex P2） |
+| fix | cds | 删 build-profile 级联收割其复制集（成员容器 + 配置），发布器另加数据面保险：profile 不在生效清单即整组跳过——治被删服务经成员兜底继续公网可达（Codex P1） |
+| fix | cds | 隔离/回切三条过渡循环加停止栅栏：逐成员复查停止态，不再把 stopped 成员改回 provisioning 亲手擦掉停止栅栏（Codex P1） |
+| fix | cds | WebSocket 升级结果接入被动健康：握手成功回池、连接错误上报摘除，治 WS-only 服务端口死亡永不被摘、半开探针走 WS 永不回池（Codex P2） |
+| fix | cds | 隔离审计基线对照源库：空源库的空克隆判 pass，不再把合法空库误判 broken（Codex P2） |
+| fix | cds | 回切/复用隔离改「先全员摘流后翻标记」：治过渡期第一个成员已切、其余成员仍按旧库接加权流量，写入被劈到两个库（Codex P1） |
+| fix | cds | 保护罩多库歧义拒绝：同实例多 profile 各用不同库时列候选拒绝，不再按遍历顺序静默保护错库（Codex P2） |
+| security | cds | 分流实测 host 必须属于本分支已发布域名（previewSlug/子域派生/别名/自定义域），治跨项目内网请求探针（Codex P2） |
+| fix | cds | promote 代际栅栏加持久 token（rs.createdAt）：治解散重建后 res-N 同名新集通过成员子集检查被旧 watcher 误解散（Codex P2） |
+| fix | cds | mysql/pg 克隆改两阶段 dump 落盘再导入：治管道退出码只看末端 client、dump 半路失败被记成克隆成功、副本对空库跑实验（Codex P1） |
+| fix | cds | 整组预览钉选升级 profile 作用域条目（profileId:memberId）：治各 profile 成员数组错位时裸 id 列表把 B 组钉到 A 组的 res-N（Codex P1） |
+| chore | cds | 本 PR changelog 碎片收敛为一个（并入 07-23 碎片、删除与 main 重复的 image-timeout 碎片，Codex P1） |
+| fix | cds | 被动健康 key 纳入上游端口 + 闲置条目清理：治重部署换端口/解散重建后旧摘除窗压住全新健康实例 15-120 秒（Codex P2） |
+| fix | cds | 回切前置全员可切换检查（与隔离入口对称）：stopped/provisioning 副本存在时拒绝回切，治重启复活的容器继续写隔离库而控制面宣称已共享（Codex P1） |
+| fix | cds | 分支重启级联副本改就绪实证：TCP/HTTP 探测通过才恢复分流（60s 上限），治慢启动/就绪失败副本被立刻发回加权路由持续吐失败（Codex P1） |
+| fix | cds | 成员直达域 profile 段 DNS 清洗（发布器与前端同款算法，撞名跳过并 warn），治 profile id 含下划线/点时直达链接全废（Codex P2） |
+| fix | cds | forwarder __rs 改 URLSearchParams 完整解析，治含点/百分号编码的作用域钉选条目被字符类正则截断静默失效（Codex P2） |
+| fix | cds | 复制集分支重启级联就绪判定复用成员版本快照的 readinessProbe/startupSignal 契约（noHttp 后台副本、自定义健康路径、启动信号成员按各自契约实证，快照不可得才退默认探测） |
+| fix | cds | 隔离审计 D1 克隆基线改真对照：两侧基线必须可读且克隆集合/表数不少于源库才 pass，半截克隆与源库基线读取失败不再静默放行 |
+| fix | cds | 复制集成员直达子域 DNS 段防撞：profile id 清洗有损时追加确定性短哈希（api_v2 与 api.v2 不再同归一段），发布器与前端直达链接同款算法 |
+| docs | doc | design.cds.replica-set 与 debt.cds.replica-set 补标准文档头部（H1 类型后缀 + 版本/日期/状态元数据） |
+| fix | cds | promote 整分支回滚显式化：提升成员会连带改动其他服务时逐 profile 对照当前版本并 409 列出影响面，要求 confirmWholeBranch 显式确认，不再静默把 web/worker 拉回历史版本 |
+| fix | cds | 复制隔离克隆阶段失败不再毒化健康成员：容器未动时恢复隔离前状态回到分流（只留失败说明），切换阶段中途失败才如实标 error |
+| fix | cds | 项目级复制集画布并入全量服务清单：无可复用版本快照的服务不再从画布消失；整组副本要求覆盖项目全部服务，缺快照/达上限时显式阻断并说明，不再静默发起残组 |
+| fix | cds | promote 影响面对照扩到 materializeProfiles 恢复的全部运行时契约字段（workDir/pathPrefixes/subdomain/dependsOn/readinessProbe/startupSignal/deployedMode），仅探针或路由前缀不同的历史契约不再被静默重放 |
+| fix | cds | 分支删除置 deleting 栅栏：在途克隆完成回调（隔离/保护罩/成员物化）看到标记即自弃并清掉刚克隆的库，封死「台账已扫过后追加快照」的永久无主库窗口 |
+| fix | cds | forwarder 半开探针改「选中者才占位」：isEjected 纯查询化 + reserveProbe 由 resolver 在最终选中后调用，低权重半开成员不再被落选请求烧掉探针名额拖慢回池 |
+| fix | cds | 隔离/回切与分支停止重叠时强制退役 stopped 成员容器（移除旧容器 + 清 containerName），封死「重启原地复活带旧库 env 写错库」的一致性分叉；回切侧同步清成员隔离元数据 |
+| fix | cds | 栅栏克隆清理失败不再静默丢弃：drop 失败时分支在世则快照入台账（可见可手删）、分支已删则专用实例写 teardown 墓碑（收割器兜底）、共享实例克隆留 error 日志给出库名，三处栅栏（成员物化/复制隔离/保护罩）统一接线 |
+| fix | cds | 副本直达链接超 63 octet DNS 标签时回落主入口 ?__rs= 作用域钉选深链，不再展示发布器已跳过的不存在 host |
+| fix | cds | 分支隔离完成态以全量有效服务为分母：零成员/无复制集条目的服务不隔离不算统一战线对齐，多服务计划中途失败不再误报 done |
+| fix | cds | 分流探测 path 强校验（仅可打印 ASCII）+ probeOnce 捕获 http.request 同步抛错，封死 ERR_UNESCAPED_CHARACTERS 经未处理拒绝拖垮 CDS 进程的通道 |
+| fix | cds | 复制集对账收敛孤儿 provisioning 成员：在途操作进程内登记（物化/隔离切换/回切全链路），不在登记表的 provisioning 即上一进程遗留——拆容器 + 标 error 指引重建，不再永久占位转圈 |
+| fix | cds | service-graph 边键的字面 NUL 字节改用 unicode 转义序列（运行时语义不变），文件不再被 git 判成二进制、恢复文本 diff 可审 |
+| fix | cds | 专用隔离实例容器名揉入 CDS 实例段 + cds.instance label，多 master 共宿主管同一分支不再同名互杀；幂等清理前按 label 验归属，异实例容器拒删 |
+| fix | cds | 分流探测 host 改全量对照：域名后缀必须命中 CDS 根域（缺配置退分支 previewUrl 实际后缀）+ 单标签 slug/别名匹配，别家自定义域首标签碰巧带本分支 slug 前缀不再被放行 |
+| fix | cds | cdscli 能力契约测试的版本期望改为从源码解析 VERSION 常量（治 main 上 bump 0.12.1 未同步硬编码 0.12.0 导致的主干红灯，未来 bump 免疫） |
+| fix | cds | 隔离审计金丝雀清理失败不再静默：两侧 drop 带一次重试并记 D4 检查项，清理不净时 overall 判 broken，不许残渣留在生产库还报 effective |
+| fix | cds | 项目级整组改持久化组身份：整组手势生成 projectGroupId 贯穿计划/addMember 落到成员，面板项目舞台与分支整组卡按 id join（存量成员按位兜底），部分失败/单侧下线的数组错位不再拼出假组被钉选放大 |
+| fix | cds | 分流探测自动推导 path 前先过 resolveEffectiveProfile（与发布器同口径），分支级 pathPrefixes 覆写不再拿旧前缀探测出误导分布 |
+| fix | cds | WebSocket 升级握手回种复制集组作用域亲和 cookie（HTTP/WS 共用同一收集函数），WS-first 客户端重连不再重新掷签横跳版本 |
+| fix | cds | 隔离库快照删除门收紧：任何在册成员（含 stopped/error）仍挂该库名即拒删——停了的容器配置仍指向隔离库，重启复活会连已 drop 的库 |
+| fix | cds | mongo 克隆暂存目录按 CDS 实例分段，共宿主双 master 并发克隆同名目标不再互相覆写/误删 dump 归档 |
+| fix | cds | 专用隔离实例连接串凭据改容器活取（inspect env，失败退 infra 现值）：源库轮换 root 密码后，新增副本/重物化不再拿新密码连按旧凭据初始化的老实例 |
+| fix | cds | mongo 克隆 dump 归档改 docker 托管卷承载并在 daemon 命名空间清理：容器化 master 走宿主 socket 时宿主 bind 路径跨命名空间失真，生产派生归档不再滞留宿主 /tmp |
+| fix | cds | 隔离审计对专用实例的认证同样改容器活取凭据（与成员复用路径同款），源库轮换密码后健康隔离不再被审计误报 broken |
+| fix | cds | 执行计划回滚补偿失败步骤自身残留：add-replica 半程入册的成员清理、isolate-db 半程隔离回切、set-weight 恢复原值，破坏性/单向步骤失败如实保持 error 不谎报 rolled-back |
+| fix | cds | 副本身份响应头以路由为唯一权威：复制集路由强制覆写 X-CDS-Replica*、非复制集路由删净，应用/历史版本自发同名头不再伪造分流探测统计 |
+| fix | cds | 共享实例隔离库 DROP 失败入 pendingReplicaDbDrops 台账（分支删除/栅栏清理两路），复制集对账循环持续重试补删；承载 infra 消亡时出队，不再只留一行日志失踪 |
+| fix | cds | isRemoteBranch 判定与部署路径同口径：executorId 非 master- 前缀即远端，注册表查不到时保守视为远端，离线执行器的分支不再被 master 本机错网络物化副本 |
+| fix | cds | 端口分配器把复制集成员与专用隔离实例的 hostPort 计入保留集，stopped/provisioning 成员端口不再被绕回序列判给新部署导致重启启动失败 |
+| fix | cds | 复制集副本就绪失败后停止容器：此前只标 error 却留容器活着，共享库模式下它仍跑后台任务读写主库并白占端口 |
+| fix | cds | 复制集统一战线隔离排除无状态服务：后端按 resolveReplicaDbTarget 输出 dbIsolatable，前端据此收敛目标与已隔离分母，避免必败步拖垮后续服务 |
+| fix | cds | 复制集计划步数上限提到 60 并前端预检：服务数超限的项目此前整组副本按钮可点但保存必被拒，现加草稿前即给出可读提示 |
+| fix | cds | 复制集重启路径就绪失败后停止副本容器：与首次物化同纪律，避免半死副本继续读写主库 |
+| fix | cds | infra 取证器关联 OOM 事件：cgroup OOM 的 oom + die(137) 不再留下两条互相矛盾的判定 |
+| fix | cds | 服务调用关系图节点 id 分命名空间：服务与基础设施同名时不再丢边、不再重复 id 覆盖 |
+| feat | cds | janitor 新增部署镜像定向回收：按版本台账保留最近 N 代，回收 CDS 自产的 per-SHA 镜像（悬空 prune 够不到的那部分） |
+| feat | cds | 磁盘分档刹车：75/85/90 三档，freeze 档拒绝新部署派发并收紧镜像保留代数 |
+| feat | cds | 所有托管容器统一日志限额 50m x 3，容器日志从无界变有界 |
+| fix | cds | 复制集三处后台事务补 catch：分支删除时的抛出不再冒泡成未捕获拒绝（Node 20 下会终止进程） |
+| fix | cds | 磁盘刹车自带测量：读数缺失或过期时部署闸门就地重测，不再依赖 janitor 的启停与一小时节奏 |
+| fix | cds | 镜像回收限定本实例部署过的仓库：共享 docker daemon 的多 master 不再互删回滚镜像 |
+| fix | cds | 成员直达路由带上副本身份，直达链接可正常返回 X-CDS-Replica |
+| fix | cds | 磁盘刹车改为路由器级守卫：按服务重部署与强制重建两个入口此前不受冻结约束 |
+| fix | cds | 磁盘探测同时量 worktree 与 docker 数据目录，取最紧张者判档 |
+| fix | cds | janitor 调度与 enabled 解耦并在启动后跑首轮：重启后不再整整一小时不回收 |
+| fix | cds | promote 终态清理改用不可复用的成员身份栅栏，不再误删同 id 的替身成员 |
+| feat | cds | janitor 快照带上最近一轮 sweep 摘要（磁盘档位/删除分支数/镜像回收与截断数），回收结果从只打日志变为外部可核 |
+| perf | cds | 镜像回收单轮上限随磁盘档位放大（40/100/200/400）：生产实测积压 4598 个，固定 40 追不上存量 |
+| fix | cds | sweep 不再用 worktree 单盘读数覆盖多文件系统档位：docker 盘吃紧时闸门不会被每轮重新打开 |
+| fix | cds | sweep 并发合并成同一次：周期定时器/启动首轮/手工触发不再叠加抢 docker daemon |
+| fix | cds | sweep 摘要在 TTL 清理关闭时同样记录：janitor 关掉后回收仍留证，不再恒为 null |
+| fix | cds | 复制集独立路由器补磁盘刹车：克隆/隔离/加成员/promote/计划保存在冻结档被拒，回切与释放类动作照常放行 |
+| fix | cds | 关系型隔离重写连接 URL 的库名段：此前只改 MYSQL_DATABASE/POSTGRES_DB，副本仍按 DATABASE_URL 写主库，隔离形同虚设 |
+| fix | cds | 隔离审计增查连接 URL 库名段，不再为假隔离背书 |
+| fix | cds | 计划端点按步骤种类判定磁盘刹车：纯清理计划在冻结档放行，面板回收入口不被堵死 |
+| fix | cds | 专用隔离实例墓碑标注连卷删除：容器移除时不再留下装着生产派生克隆的孤儿匿名卷 |
+| feat | cds | janitor 摘要带上镜像回收失败原因样本：只报 failed 数字等于知道有问题但不知道是什么问题 |
+| fix | cds | docker 数据目录先校验本命名空间可见性再采用：master 容器化时不再拿 daemon 路径量错文件系统 |
+| fix | cds | 分流探测 host 白名单改为按本分支真实路由精确枚举，不再前缀匹配放过外部分支域名 |
+| fix | cds | 项目级模式下拒绝单服务直接加副本，避免画布出现残缺组 |
+| fix | cds | image-retention 分隔符改转义写法：字面 NUL 让 git 把该 .ts 当二进制，diff/blame/评审全瞎 |
+| fix | cds | 计划模式赋值移到全部校验之后：被拒的请求不再偷改分支 replicaMode |
+| merge | cds | 合并 main（解 CLI 版本契约测试冲突，采用 main 的模块级 cliVersion 解析） |
+| fix | cds | 镜像回收对 must-be-forced 的镜像做受控强删：先确认无任何容器引用才 -f，查不清一律不动 |
+| fix | cds | 副本停止后实测容器状态再落 stopped：停不下来的共享库副本不再从所有对账视野里消失 |
+| fix | cds | 隔离审计改用分支生效 profile 解析目标，profileOverrides 场景不再验错实例 |
+| fix | cds | 栅栏兜底墓碑补 removeVolumes 标记（第三十二轮漏掉的第三个入口） |
+| feat | cds | 自更新重启前排空在途部署：从源头消除「自更新杀掉分支部署导致 CI 红」的竞态，超时照常重启并如实记录 |
+| fix | cds | 排空在途判定改由终态表取反推导：补上此前漏掉的 preparing / verifying 两个非终态（生产已实证第 7 次竞态正是死在 prepare） |
+| fix | cds | 排空期间关闭部署入口（503 + Retry-After，闸门自动过期 fail-open）：消除「最后一次轮询之后新建 run 仍被重启腰斩」的真空 |
+| fix | cds | 副本容器移除后复核容器是否真的消失：仍在则保留成员记录并写 teardown 墓碑，不再产生无人认领的容器 |
+| fix | cds | 项目级计划必须整组：只覆盖部分服务的 add-replica 计划被拒，杜绝画布显示「整组」实则半数服务未覆盖 |
+| fix | cds | 副本停止核实补齐调度器降温与 auto-lifecycle 两处循环（第三十五轮只修了分支停止一处），判定抽成 settleMemberAfterStop 单一出口 |
+| fix | cds | 项目级改权重/下线必须整组：只动组里一半、或整组给不同权重一律拒绝 |
+| fix | cds | CDS_SELFUPDATE_DRAIN_TIMEOUT_MS=0 真正关闭排空：不再被 `parseInt \|\| 默认值` 吞成 5 分钟，闸门余量也从 5 分钟收到 1 分钟 |
+| fix | cds | 全零权重的分流占比按 resolver 真实回落渲染（主 100% / 副本 0%），不再显示 NaN% |
+| security | cds | 专用隔离实例端口只发布在 CDS_HOST（docker 网桥地址），不再挂在宿主全部网卡上——源库无认证时那是一份可从宿主外读写的生产派生克隆 |
+| fix | cds | 整组校验的成员身份改 profile+memberId 复合键：各服务同名 res-1 不再互相顶替，单服务计划骗不过整组校验 |
+| fix | cds | 项目级模式下直接改单成员权重/下线的两个端点也受整组约束（此前只有变更计划被拦，直连 API 可从侧门掏空整组语义） |
+| fix | cds | replica-set 复合键分隔符改转义写法（字面 NUL 第三次让 git 把 .ts 当二进制），并新增 tests/lint/no-literal-nul 守卫杜绝第四次 |
+| feat | prd-admin | 录音期间实时展示转写原文，并保留本机保险箱与服务端分片双重保护 |
+| feat | prd-api | 新增带会话归属校验的实时 ASR WebSocket 中继与转写结果持久化 |
+| feat | llmgw | 新增模型池多候选实时 ASR 网关端点，流式供应商不可用时按五秒窗口持续调用健康 ASR 池 |
+| ops | prd-api | 正式 Nginx 与 CDS 预览代理支持实时转写 WebSocket 升级 |
+| test | prd-admin | 补充 PCM 降采样、帧协议、实时状态与降级体验测试 |
+| test | prd-api | 补充实时音频顺序、候选策略、WebSocket 鉴权与批处理兜底测试 |
+| fix | prd-api | 修复豆包录音识别结果被误解析为空，并在首选方案失败时自动切换后续 ASR 候选 |
+| fix | prd-api | 录音归档遇到对象存储异常时转入 Mongo 耐久队列，云端恢复后幂等补齐附件并自动排队完整录音转录 |
+| fix | llmgw | 禁止不完整音频覆盖被标记为完成，并限制流式候选仅在尚未消费音频时切换 |
+| fix | prd-admin | 会话建立超时或录音中切换知识库时整路降级到完整文件转写，禁止静默丢失 PCM 中段 |
+| fix | prd-admin | 录音达到大小上限时复用完整收尾路径，确保刷新最后一段实时 PCM |
+| fix | prd-api | 录音完成采用可恢复租约与固定待归档条目 ID，并在源条目删除后终止归档重试 |
+| fix | llmgw | 备用实时转写处理所有非空结尾 PCM，避免漏掉不足一秒的最后一句 |
+| refactor | llmgw | 将备用实时转写核心实现移入基础设施项目，Serving 仅保留端点与依赖装配 |
+| perf | llmgw | 备用实时转写跳过纯静音窗口，按组合规则拒绝解释性回答，并以差异化提示执行最多四次校验后切换候选 |
+| polish | prd-admin | 录音转录展示当前识别方案进度与后台音频归档状态 |
+| test | prd-api | 补充超一分钟缓冲淘汰、流式候选消费边界和延迟归档转录续接回归测试 |
+| test | prd-admin | 补充会话建立前 PCM 缓冲溢出的完整转写降级测试 |
+| test | prd-api | 补充不足一秒尾音与待归档条目幂等恢复回归测试 |
+| fix | prd-api | 为成功录音归档使用确定性条目与附件标识，并按先分片后会话的顺序清理过期数据 |
+| fix | prd-admin | 在录音开始前完成 PCM 捕获初始化，避免实时转写遗漏开头语音 |
+| fix | prd-api | 浏览器未明确完成即断线时强制降级，并独立回收 append 与 cancel 竞态产生的孤儿分片 |
+| fix | llmgw | 实时 ASR WebSocket 复用 appCaller 限流、预算与生命周期日志治理 |
+| fix | prd-api | 限制实时转写网关建连时长，并优先恢复已落库的确定性完成条目 |
+| test | prd-api | 补充实时 ASR 治理身份、建连期限和双形态录音恢复顺序回归测试 |
+| fix | prd-admin | 修复收尾等待建连时丢失终态事件导致界面空等九十秒，并在建连超时后立即转完整录音校准 |
+| fix | prd-api | 录音分片以确定性主键收敛并发重试，拒绝同编号不同内容并避免重复分片阻塞完成 |
+| test | prd-admin | 补充建连错误与建连超时发生在收尾期间的竞态回归测试 |
+| test | prd-api | 补充十六路并发分片重试与负载冲突回归测试 |
+| fix | prd-api | 前台完成与后台归档自动收敛旧版本产生的同内容重复分片，并拒绝冲突分片 |
+| test | prd-api | 补充历史重复分片恢复与冲突拒绝回归测试 |
+| fix | prd-api | 录音归档按部署实例定向领取并以租约令牌隔离过期执行者，录音完成先原子封口再读取最终分片快照 |
+| test | prd-api | 补充跨实例归档、旧会话接管、完成与末片双向竞态及过期租约隔离回归测试 |
+| fix | prd-api | 旧偏移重传已确认录音分片时校验全部历史负载，拒绝缺失或内容不一致的伪幂等请求 |
+| test | prd-api | 补充旧分片一致重传、冲突副本和已确认分片缺失回归测试 |
+| fix | prd-api | 备用实时转写在会话内淘汰故障候选并晋升成功候选，事件与最终元数据记录真实转写方案 |
+| fix | llmgw | 仅在备用转写实际发送上游请求后结算预算，静音跳过时释放预留额度 |
+| fix | prd-admin | 接受录音完成意图时同步锁定终态，关闭、背景点击与 Escape 不再在停止事件前后改写为丢弃并异步创建笔记 |
+| test | prd-api | 补充备用候选跨窗口熔断晋升、真实供应商归因和静音零计费信号回归测试 |
+| test | prd-admin | 补充录音收尾终态的丢弃栅栏回归测试 |
+| refactor | llmgw | 将实时 ASR 模型解析、候选切换和通道生命周期迁入基础设施编排器，Serving 仅保留 WebSocket 与治理适配 |
+| fix | prd-admin | 录音上传会话已删除或过期时立即停止完成重试并回退本地完整文件 |
+| test | prd-api | 增加实时 ASR 编排器双通道排空行为测试与 Serving 主机模块边界守卫 |
+| test | prd-admin | 补充录音会话不存在、已取消、网络未知与可恢复状态的完成重试判定测试 |
+| fix | prd-admin | 实时转写提前降级或报错后完成录音仍发送结束控制并关闭 WebSocket，及时释放中继与网关资源 |
+| test | prd-admin | 补充提前降级终态下结束控制发送与套接字关闭回归测试 |
+| fix | prd-api | 录音完成租约增加主动续期与十五分钟失效保护，防止长时间对象存储重试被并发接管 |
+| fix | prd-api | 录音恢复的文档计数使用过渡期幂等令牌与原子增量，避免旧快照覆盖并发上传 |
+| fix | prd-admin | 暂停录音后点击完成仍冲刷实时转写尾帧，避免最后不足一百毫秒的语音丢失 |
+| test | prd-api | 补充完成租约续期隔离与并发文档计数保全回归测试 |
+| test | prd-admin | 补充暂停、完成锁和采集开关组合下的 PCM 尾帧转发测试 |
+| fix | llmgw | 实时 ASR 编排前打开已验证租户请求上下文，禁止误用内部租户的模型池与凭据 |
+| fix | prd-admin | 服务端录音仍在完成或已完成时有界幂等轮询，超时转入可恢复后台跟踪并保留本地保险文件 |
+| test | prd-api | 增加实时 ASR 租户上下文先于模型编排的模块边界守卫 |
+| test | prd-admin | 补充完成归属跨瞬时网络错误保持与明确回到上传态后释放测试 |
+| fix | prd-api | 修复延迟归档与晚到实时原文竞态，补齐搜索索引并保证降级转录任务可完成 |
+| fix | prd-admin | 录音完成条目被删除时有界退出服务端恢复，改用本地保险文件继续处理 |
+| test | prd-api | 补充晚到实时原文的可搜索字段与固定降级转录任务竞态回归测试 |
+| test | prd-admin | 补充已完成条目不可恢复与瞬时失败的完成循环分流测试 |
+| fix | prd-api | 幂等完成响应按条目持久化意图返回延迟转录任务，覆盖首次响应丢失后的晚到原文竞态 |
+| fix | prd-admin | 实时 PCM 非整数重采样跨 AudioWorklet 分块保留边界样本，消除周期性插值断点 |
+| test | prd-admin | 补充 44.1kHz 分块重采样与整段重采样逐点等价回归测试 |
+| fix | prd-api | 录音条目以确定性过渡令牌原子记账并在会话终态回收，普通删除按实际结果递减，消除并发竞态且避免知识库文档持续膨胀 |
+| fix | llmgw | 滚动窗口 ASR 原始请求继承已验证租户、团队与服务密钥上下文，保持安全出站和并发归因 |
+| test | prd-api | 补充录音记账崩溃重试、并发新增删除、负数保护及批量 ASR 租户上下文回归测试 |
+| test | prd-admin | 补充服务端接管与未知网络两类完成重试硬上限回归测试 |
+| test | prd-api | 补充连续二百五十六次录音完成后记账令牌不累积的容量回归测试 |
+| fix | prd-admin | 录音完成与状态请求增加可中止超时，并在首次确认服务端接管时立即持久化恢复绑定 |
+| fix | prd-api | 确定性录音条目在记账前崩溃时，恢复分支先幂等补记再完成会话 |
+| test | prd-api | 增加中断录音条目恢复补记幂等性与先于会话终态的顺序守卫 |
+| fix | prd-admin | 页面恢复时重新领取过期的录音完成租约，并以幂等成功响应收敛服务端接管终态 |
+| test | prd-admin | 补充完成中、已完成、未接管与瞬时失败状态的录音恢复 MECE 回归测试 |
+| fix | prd-api | 临时完成会话清理后仍按确定性条目与创建者恢复原录音，避免响应丢失导致重复上传 |
+| fix | prd-admin | 录音前台完成恢复增加四十五秒墙钟截止，并按剩余预算缩短状态与完成请求超时 |
+| test | prd-api | 补充已清理会话的确定性录音条目恢复与跨用户隔离测试 |
+| test | prd-admin | 补充录音完成重试次数、服务端归属次数与墙钟截止三维边界测试 |
+| fix | prd-admin | 在暂停与恢复边界冲刷并隔离实时 PCM，避免连续序号掩盖缺字或混入暂停采样 |
+| fix | prd-admin | 保险箱恢复归档中录音时接续可并行去重的延迟转写后台观察器，恢复完成与失败通知 |
+| test | prd-admin | 补充实时 PCM 暂停隔离及保险箱延迟转写恢复决策测试 |
+| fix | prd-admin | 完成请求发出即持久化服务端所有权，网络结果未知时禁止回退整文件重复上传 |
+| fix | prd-api | 录音 pending 条目增加单调租约写栅栏，并在租约守卫失败时精确补偿旧条目与计数 |
+| test | prd-admin | 补充录音完成请求已发出但状态持续未知的所有权保持测试 |
+| test | prd-api | 补充旧完成租约回魂覆盖、新租约隔离及文档计数补偿测试 |
+| fix | prd-admin | 保险箱恢复时对绑定的 uploading 会话重放幂等完成请求，关闭认领前崩溃造成的重复上传窗口 |
+| test | prd-admin | 补充绑定会话仍为 uploading 时成功、冲突、缺失三类恢复决策测试 |
+| fix | llmgw | 实时 ASR 编排异常时取消接收、关闭双通道并等待传输任务退出，避免有界通道背压泄漏会话任务 |
+| test | prd-api | 补充状态事件推送失败且实时音频通道已满时的接收任务回收测试 |
+| test | cds | 让 Agent CLI 导出包契约跟随唯一版本源，避免主分支升级后合并态流水线漂移 |
+| fix | llmgw | 实时 ASR 会话只解析一次完整模型计划，并从同一快照选择流式与批量候选 |
+| fix | llmgw | 滚动窗口降级仅作为实时预览，强制归档后使用完整音频校准避免边界缺字 |
+| fix | prd-admin | 知识库切换与分片上传共用串行队列，历史重放完成前不允许新分片竞争会话序号 |
+| fix | prd-api | 正常归档终态与实时中继双向补写晚到原文，消除对象存储期间的字幕竞态 |
+| test | prd-api | 补充单次模型计划、批量预览强制校准及正常归档晚到原文的回归测试 |
+| test | prd-admin | 补充切换知识库时旧上传、历史重放与新分片的严格顺序测试 |
+| fix | prd-api | 会话清理后的保险箱恢复同时查找正常归档与后台补归档条目，避免重复上传 |
+| fix | llmgw | 模型健康度写入改为后置尽力记录，不再覆盖已成功的实时或滚动窗口原文 |
+| test | prd-api | 补充后台补归档条目恢复及健康度写入失败时保留 ASR 结果的回归测试 |
+| security | prd-api | 会话清理后的录音恢复重新校验知识库当前读写权限，撤权后不再返回条目内容 |
+| fix | prd-api | 对象存储成功路径在产生条目副作用前续租，并在终态 CAS 后再清理竞争形态 |
+| fix | llmgw | 实时 ASR 首个 start 控制消息增加八秒上限并传递连接中断取消信号 |
+| test | prd-api | 补充恢复权限复核、成功归档租约栅栏及首包超时取消测试 |
+| security | prd-api | 录音会话存续期间的状态、实时转写、分片与完成端点统一复核知识库当前权限 |
+| test | prd-api | 补充已完成会话快速返回前及全部活动录音端点的权限顺序守卫 |
+
+### 2026-07-23
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-admin | 修复开放平台授权表残留图形字符与浅色主题文字对比度不足 |
+
+
 ### 2026-07-26
 
 | 类型 | 模块 | 描述 |
