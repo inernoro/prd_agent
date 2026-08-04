@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectSemanticLayerFrames, planSemanticLayerFrame } from '@/lib/semanticLayerFrame';
+import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame } from '@/lib/semanticLayerFrame';
 
 describe('semantic layer frame', () => {
   it('places layer cards near the source while preserving its aspect ratio', () => {
@@ -23,5 +23,22 @@ describe('semantic layer frame', () => {
     expect(frames[0].name).toBe('海报');
     expect(frames[0].layerKeys).toEqual(['layer-1', 'layer-2']);
     expect(frames[0].w).toBeGreaterThan(450);
+  });
+
+  it('keeps the selected-image toolbar inside the visible canvas', () => {
+    expect(computeHorizontalClampShift({
+      stageLeft: 0,
+      stageRight: 1000,
+      elementLeft: 760,
+      elementRight: 1100,
+    })).toBe(-112);
+
+    expect(computeHorizontalClampShift({
+      stageLeft: 0,
+      stageRight: 1000,
+      elementLeft: 300,
+      elementRight: 640,
+      currentShift: -80,
+    })).toBe(0);
   });
 });

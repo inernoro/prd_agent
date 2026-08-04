@@ -40,8 +40,41 @@ const CARD_GAP = 24;
 const SOURCE_GAP = 120;
 const CARD_MAX_WIDTH = 360;
 
+export type HorizontalClampInput = {
+  stageLeft: number;
+  stageRight: number;
+  elementLeft: number;
+  elementRight: number;
+  currentShift?: number;
+  padding?: number;
+};
+
 function positive(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * 返回浮层相对原始锚点应采用的绝对屏幕横向偏移，避免被画布外的聊天面板遮挡。
+ */
+export function computeHorizontalClampShift({
+  stageLeft,
+  stageRight,
+  elementLeft,
+  elementRight,
+  currentShift = 0,
+  padding = 12,
+}: HorizontalClampInput): number {
+  const safeLeft = stageLeft + padding;
+  const safeRight = stageRight - padding;
+  const rawLeft = elementLeft - currentShift;
+  const rawRight = elementRight - currentShift;
+  const width = Math.max(0, elementRight - elementLeft);
+  const available = Math.max(0, safeRight - safeLeft);
+
+  if (width > available) return safeLeft - rawLeft;
+  if (rawLeft < safeLeft) return safeLeft - rawLeft;
+  if (rawRight > safeRight) return safeRight - rawRight;
+  return 0;
 }
 
 /**

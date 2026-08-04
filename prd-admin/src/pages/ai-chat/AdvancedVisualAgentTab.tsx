@@ -74,7 +74,7 @@ import {
   downloadLayeredPsd,
   findLayeredImageModel,
 } from '@/lib/layeredPsd';
-import { collectSemanticLayerFrames, planSemanticLayerFrame } from '@/lib/semanticLayerFrame';
+import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame } from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
@@ -114,7 +114,17 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
@@ -1155,6 +1165,59 @@ function buildTemplate(name: string) {
     return `为短片做分镜首帧图：\n- 画面：室内夜景，窗外雨，暖光\n- 情绪：克制、孤独\n- 镜头：中景，人物背影\n请输出：分镜描述 + 首帧生图提示词`;
   }
   return '';
+}
+
+function StageClampedQuickActionBar({
+  stageRef,
+  zoom,
+  positionKey,
+  children,
+}: {
+  stageRef: RefObject<HTMLDivElement | null>;
+  zoom: number;
+  positionKey: string;
+  children: ReactNode;
+}) {
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [shiftWorldX, setShiftWorldX] = useState(0);
+
+  useLayoutEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const stage = stageRef.current;
+      const bar = barRef.current;
+      if (!stage || !bar) return;
+      const stageRect = stage.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const currentShift = shiftWorldX * Math.max(zoom, 0.01);
+      const nextShiftScreen = computeHorizontalClampShift({
+        stageLeft: stageRect.left,
+        stageRight: stageRect.right,
+        elementLeft: barRect.left,
+        elementRight: barRect.right,
+        currentShift,
+      });
+      const nextShiftWorld = nextShiftScreen / Math.max(zoom, 0.01);
+      setShiftWorldX((current) => Math.abs(current - nextShiftWorld) < 0.25 ? current : nextShiftWorld);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [positionKey, shiftWorldX, stageRef, zoom]);
+
+  return (
+    <div
+      ref={barRef}
+      style={{
+        position: 'absolute',
+        left: `calc(50% + ${shiftWorldX}px)`,
+        top: 0,
+        transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
+        transformOrigin: 'center bottom',
+        pointerEvents: 'auto',
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
 }
 
 export default function AdvancedVisualAgentTab(props: { workspaceId: string; initialPrompt?: string }) {
@@ -7168,16 +7231,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             }}
                           >
                             {/* 快捷操作栏：选区上方居中 */}
-                            <div
-                              style={{
-                                position: 'absolute',
-                                left: '50%',
-                                top: 0,
-                                transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
-                                transformOrigin: 'center bottom',
-                                pointerEvents: 'auto',
-                              }}
-                              onPointerDown={(e) => e.stopPropagation()}
+                            <StageClampedQuickActionBar
+                              stageRef={stageRef}
+                              zoom={zoom}
+                              positionKey={`${it.key}:${ix}:${iy}:${sW}:${camera.x}:${stageSize.w}`}
                             >
                               <ImageQuickActionBar
                                 actions={mergedQuickActions}
@@ -7198,7 +7255,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   setInpaintTarget(it);
                                 }}
                               />
-                            </div>
+                            </StageClampedQuickActionBar>
 
                             {/* 快捷编辑输入框：选区下方居中 */}
                             <div
