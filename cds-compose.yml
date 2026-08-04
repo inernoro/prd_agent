@@ -438,6 +438,10 @@ services:
       # （cds/src/services/preview-entrypoints.ts 的 LEGACY_SUBDOMAIN_ALIASES），
       # 存量链接不断。Vite dev 与 nginx express 都保持同源入口，SPA 无需额外 VITE_LLMGW_API_BASE。
       cds.subdomain: "llmgw"
+      # 用户可见入口与路由拓扑分离：subdomain 负责发布路由，web-entry 明确告诉 CDS
+      # 这是可交付给用户直接打开的控制台，而不是仅供程序调用的 API / 健康检查。
+      cds.web-entry-name: "LLM Gateway"
+      cds.web-entry-path: "/"
       # SPA 根路径返回 index.html 即视为就绪。
       cds.readiness-path: "/"
       # 首次 pnpm 冷安装留足窗口。

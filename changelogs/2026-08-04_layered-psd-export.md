@@ -7,3 +7,4 @@
 | refactor | prd-api | MAP 图片分层改为单向依赖 LLMGW 的 image-layering 公开能力，不再感知上游平台和模型 |
 | fix | llmgw | 重排图片分层安装区与 Exchange 单列列表，修复宽屏双列信息拥挤和层级混乱 |
 | fix | prd-admin | PSD 默认显示 AI 图层合成结果并将原图降为隐藏参考层 |
+| ops | cds | 显式登记 LLMGW 控制台用户入口，适配路由与预览入口分离的新契约 |
