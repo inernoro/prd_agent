@@ -5,10 +5,13 @@ description: 服务器权威性：CancellationToken.None + Run/Worker + SSE 心�
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/server-authority.md
-     生成时间: 2026-06-24T19:54:22Z -->
+     生成时间: 2026-08-04T06:14:59Z -->
 
 
 # 服务器权威性设计
+
+**一句话**：客户端断开不许取消服务器任务：LLM 与写库一律传 CancellationToken.None，长任务走 Run/Worker，SSE 要心跳与断线续传。
+**什么时候撞上**：写后端长任务、SSE 推送、模型调用。
 
 客户端被动断开不得取消服务器任务。只有用户主动调用取消 API 才允许中断。
 

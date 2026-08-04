@@ -1,3 +1,11 @@
+---
+paths:
+  - "**/exec_*.sh"
+  - "**/quick*.ps1"
+  - "**/Dockerfile*"
+  - "scripts/**/*.sh"
+---
+
 # 快速启动零摩擦原则（Quickstart Zero-Friction）
 
 **一句话**：启动脚本要大包大揽：一条命令检查并交互式安装依赖，装不了的给可复制的平台命令，不让用户先装 A 再装 B。

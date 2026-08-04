@@ -1,3 +1,10 @@
+---
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-desktop/src/**/*.tsx"
+  - "cds/web/src/**/*.tsx"
+---
+
 # 产物即体验（Artifact-is-the-Experience）
 
 **一句话**：等待期的主视觉必须是产物本身在生长，进度条与状态卡只配当配角；风格参数是 AI 生成时的参照，不是事后 CSS 换皮。

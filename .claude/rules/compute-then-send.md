@@ -1,5 +1,6 @@
 ---
-globs: ["prd-api/src/**/*.cs"]
+paths:
+  - "prd-api/src/**/*.cs"
 ---
 
 # 外部调用必须分"算/发"两阶段（Compute-then-Send）

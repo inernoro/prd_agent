@@ -1,5 +1,6 @@
 ---
-globs: ["doc/**/*.md"]
+paths:
+  - "doc/**/*.md"
 ---
 
 # doc/ 文档类型规则

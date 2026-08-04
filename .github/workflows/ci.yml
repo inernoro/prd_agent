@@ -147,6 +147,14 @@ jobs:
       - name: Doc readability checker guard test
         run: python3 scripts/tests/doc-readability-ratchet.test.py
 
+      - name: Claude memory contract
+        # 守的是 CLAUDE.md 与 .claude/rules/ 的加载契约：frontmatter 键必须是 `paths`
+        # （写成 `globs` 会静默退化成全量加载）、每个 glob 必须命中真实文件（死 glob
+        # 会让规则永不加载，比不写还差）、注入行数不超预算。这道闸挂在 docs 这里是因为
+        # 它的 filter 已含 '**' 与 '.claude/rules/**'，每个 PR 都开——被测文件在哪
+        # 一棵树里改动都跑得到（predicate-and-wiring-discipline 形状 7）。
+        run: python3 scripts/tests/test_claude_memory_contract.py
+
   release-script-test:
     name: Production Release Script Test
     needs: changes

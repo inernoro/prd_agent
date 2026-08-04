@@ -42,14 +42,14 @@ RULES=(
   "data-audit|globs: prd-api/src/**/Models/**/*.cs,prd-api/src/**/Controllers/**/*.cs|数据关系审计：新增实体引用时必须审计所有消费端点"
   "doc-types|globs: doc/**/*.md|doc/ 下文档 7 种类型前缀（spec/design/plan/rule/guide/report/debt）"
   "e2e-verification|description: 功能开发完成后准备验收时阅读|端到端验收：API 200 不等于功能正常，必须打开真实页面逐项核查"
-  "enum-ripple-audit|globs: prd-api/src/**/Enums/**/*.cs,prd-admin/src/types/**/*.ts,prd-desktop/src/types/**/*.ts|枚举/常量扩展涟漪审计：全栈 6 层同步"
+  "enum-ripple-audit|globs: prd-api/src/**/Enums.cs,prd-api/src/**/Models/**/*.cs,prd-admin/src/types/**/*.ts,prd-desktop/src/types/**/*.ts|枚举/常量扩展涟漪审计：全栈 6 层同步"
   "frontend-architecture|globs: prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx}|前端架构：无业务状态 + SSOT + 注册表 + 统一 Loader + 默认可编辑"
   "frontend-modal|globs: prd-admin/src/**/*.tsx,prd-desktop/src/**/*.tsx|模态框 3 硬约束：inline style 高度 + createPortal + min-h:0"
   "gesture-unification|description: 实现 2D 画布平移/缩放时阅读（ReactFlow / 自定义 canvas / Konva）|画布手势统一原则"
   "guided-exploration|globs: prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx}|陌生页面 3 秒内知道做什么：空状态引导 + 首次使用引导 + 操作提示"
   "llm-gateway|globs: prd-api/src/**/*.cs|LLM Gateway 统一调用规则 + LlmRequestContext.UserId 必填 + 流式场景陷阱"
   "marketplace|description: 发布配置到海鲜市场时阅读（CONFIG_TYPE_REGISTRY + IForkable）|海鲜市场扩展指南"
-  "navigation-registry|globs: prd-admin/src/stores/toolboxStore.ts,prd-admin/src/lib/adminMenu*.ts,prd-admin/src/pages/LandingPage.tsx,prd-admin/src/pages/MobileHomePage.tsx|新 Agent 默认注册百宝箱 + 带 wip:true + 交付必须声明位置和点击路径"
+  "navigation-registry|globs: prd-admin/src/stores/toolboxStore.ts,prd-admin/src/lib/adminMenu*.ts,prd-admin/src/pages/home/LandingPage.tsx,prd-admin/src/pages/MobileHomePage.tsx|新 Agent 默认注册百宝箱 + 带 wip:true + 交付必须声明位置和点击路径"
   "no-auto-index|globs: prd-api/src/**/*.cs|禁止应用启动时自动创建 MongoDB 索引"
   "no-localstorage|globs: prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx}|禁止使用 localStorage，统一 sessionStorage"
   "no-rootless-tree|description: 设计新功能/定义 AI 能力/涌现探索时阅读，防止声明系统不具备的能力|无根之木禁令 + 借用法则"
@@ -116,7 +116,7 @@ description: Cursor 规则入口 —— 事实源在 .claude/rules/，按需加�
 
 事实源：\`.claude/rules/*.md\` + 项目根 \`CLAUDE.md\`
 同步方式：\`bash scripts/sync-cursor-rules.sh\`（Cursor 侧只读）
-完整索引：见 \`CLAUDE.md\` 的「架构规则索引」表格
+完整索引：直接列 \`.claude/rules/\`，每条开头两行导读说明它管什么、什么时候撞上
 
 ## 禁止再引用的废弃概念
 

@@ -1,3 +1,11 @@
+---
+paths:
+  - ".claude/skills/daily-report-summary/**/*.html"
+  - ".claude/skills/weekly-update-summary/**/*.html"
+  - ".claude/skills/create-visual-test-to-kb/**/*.py"
+  - "scripts/tests/test_report_emblems*.py"
+---
+
 # 米多刊系（Miduo Press）—— 汇报产物视觉设计系统
 
 **一句话**：日报、周报、验收报告、巡检特刊是一家出版社的四份刊物：共享纸墨基因，各留一个身份色与版式；移动端必须可见，验收模板的契约标记不许动。
