@@ -174,7 +174,7 @@ export const QUICK_LINK_BY_ID: Partial<Record<HomeQuickLinkId, HomeQuickLink>> =
   showcase: QUICK_LINKS_BASE[2],
   updates: QUICK_LINKS_BASE[3],
   'document-store': { id: 'document-store', icon: Library, label: '知识库', desc: '文档存储与知识管理，支持文件夹、GitHub 同步', path: '/document-store' },
-  'my-assets': { id: 'my-assets', icon: FolderHeart, label: '我的资源', desc: '图片、附件、素材等个人资源统一管理', path: '/visual-agent?tab=assets' },
+  'my-assets': { id: 'my-assets', icon: FolderHeart, label: '我的资源', desc: '图片、附件、素材等个人资源统一管理', path: '/my-assets' },
   'workflow-agent': { id: 'workflow-agent', icon: Workflow, label: '工作流引擎', desc: '可视化工作流编排，自动化多步骤任务串联', path: '/workflow-agent' },
   'web-pages': { id: 'web-pages', icon: Globe, label: '网页托管', desc: '上传 HTML 或 ZIP，托管并分享你的网页', path: '/web-pages' },
   'open-platform': { id: 'open-platform', icon: Code2, label: '开放平台', desc: 'API 签发、应用接入与调用监控', path: '/open-platform' },
@@ -883,7 +883,7 @@ export default function AgentLauncherPage() {
                     title="我的动态"
                     headingId="home-feed-heading"
                     action={
-                      <button type="button" className="home-desk-more" onClick={() => openRoute('/visual-agent?tab=assets', { id: 'my-assets', name: '我的资源' })}>
+                      <button type="button" className="home-desk-more" onClick={() => openRoute('/my-assets', { id: 'my-assets', name: '我的资源' })}>
                         我的资源<ArrowRight size={12} />
                       </button>
                     }

@@ -208,4 +208,22 @@ describe('App.tsx 路由覆盖', () => {
     expect(resolveCatalogId(catalog, { id: 'daily-post', agentKey: 'daily-post', route: '/daily-post' })).toBeUndefined();
     expect(resolveCatalogId(catalog, { id: '不存在的东西' })).toBeUndefined();
   });
+
+  it('快捷入口的 path 必须是目录里原样存在的路由', () => {
+    // 「我的资源」曾经指向 /visual-agent?tab=assets——目标页只读 workspaceId、
+    // 根本不认这个 query，点进去落在视觉创作列表。标签说一处、去处是另一处，
+    // 比死链更难发现：页面确实变了，只是变错了地方。
+    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
+    const routes = new Set(catalog.map((item) => item.route));
+
+    for (const [prefId, link] of Object.entries(QUICK_LINK_BY_ID)) {
+      if (!link) continue;
+      // 目录里没有的入口（作品广场那类演示页）由记账闸负责，不在这条判据内
+      if (!routes.has(link.path.split(/[?#]/)[0])) continue;
+      expect(
+        routes.has(link.path),
+        `快捷入口 ${prefId} 指向 ${link.path}，但目录里注册的是 ${link.path.split(/[?#]/)[0]}——多出来的 query 目标页不认`,
+      ).toBe(true);
+    }
+  });
 });
