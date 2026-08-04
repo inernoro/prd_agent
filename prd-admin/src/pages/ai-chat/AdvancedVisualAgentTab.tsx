@@ -74,6 +74,7 @@ import {
   downloadLayeredPsd,
   findLayeredImageModel,
 } from '@/lib/layeredPsd';
+import { collectSemanticLayerFrames, planSemanticLayerFrame } from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
@@ -176,6 +177,12 @@ type CanvasImageItem = {
   text?: string;
   fontSize?: number;
   textColor?: string;
+
+  // AI 语义分层 Frame。图层仍是普通图片，可单独选择、编辑、移动和复用。
+  layerGroupId?: string;
+  layerSourceKey?: string;
+  layerIndex?: number;
+  layerRole?: 'source' | 'layer';
 };
 
 function computeObjectFitContainRect(containerW: number, containerH: number, contentW: number, contentH: number) {
@@ -1270,6 +1277,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [diyQuickActions]);
   const [quickEditRunning, setQuickEditRunning] = useState(false);
   const [quickActionDialogOpen, setQuickActionDialogOpen] = useState(false);
+  const [layeringProgress, setLayeringProgress] = useState<{
+    sourceKey: string;
+    phase: string;
+    completed?: number;
+    total?: number;
+  } | null>(null);
   // 局部重绘（Inpainting）状态
   const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
@@ -1445,6 +1458,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const canvasRef = useRef<CanvasImageItem[]>([]);
+  const semanticLayerFrames = useMemo(() => collectSemanticLayerFrames(canvas), [canvas]);
 
   // 图片选项（用于 @ 下拉菜单）
   const imageOptions = useMemo<ImageOption[]>(() => {
@@ -2345,52 +2359,214 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     key: string; // 右键点击的元素 key，用于图层操作
   }>({ open: false, x: 0, y: 0, src: '', prompt: '', key: '' });
 
+  const decomposeImageIntoFrame = useCallback(async (input: {
+    key: string;
+    src: string;
+    prompt: string;
+  }) => {
+    if (layeringProgress) return;
+    if (!workspaceId) {
+      toast.error('AI 分层失败', '当前画布尚未创建工作区');
+      return;
+    }
+
+    const model = findLayeredImageModel(allImageGenModels);
+    if (!model) {
+      toast.warning(
+        '尚未配置图片分层模型',
+        '请先在模型网关添加 fal.ai Qwen Image Layered，并分配给视觉创作。OpenRouter 与 OpenAI 图片模型不能替代该能力。',
+        7000,
+      );
+      return;
+    }
+
+    const sourceItem = canvasRef.current.find((candidate) => candidate.key === input.key);
+    if (!sourceItem) {
+      toast.error('AI 分层失败', '画布中找不到当前图片');
+      return;
+    }
+
+    const existingGroupId = String(sourceItem.layerGroupId ?? '').trim();
+    const existingLayers = existingGroupId
+      ? canvasRef.current.filter((candidate) => candidate.layerGroupId === existingGroupId && candidate.layerRole === 'layer')
+      : [];
+    if (existingLayers.length > 0) {
+      setSelectionWithoutChip([existingLayers[0]!.key]);
+      toast.info('分层结果已在画布中', `已复用 ${existingLayers.length} 个可编辑图层，无需再次调用模型。`);
+      return;
+    }
+
+    const source = String(sourceItem.originalSrc || input.src || '').trim();
+    if (!source) {
+      toast.error('AI 分层失败', '当前图片没有可读取的原图');
+      return;
+    }
+
+    const loadingId = toast.loading(
+      '正在创建可编辑图层',
+      '模型拆分、资产保存和画布排列会分阶段进行，预计需要 15–30 秒。',
+    );
+    setLayeringProgress({ sourceKey: sourceItem.key, phase: '正在提交语义分层模型' });
+
+    try {
+      const result = await decomposeImageToLayers({
+        source,
+        sourceSha256: sourceItem.originalSrc ? null : (sourceItem.sha256 ?? null),
+        model,
+        layerCount: 4,
+      });
+      if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
+
+      const remoteLayers = (result.data?.images ?? [])
+        .map((image, index) => ({
+          index,
+          name: `AI 图层 ${String(index + 1).padStart(2, '0')}`,
+          source: String(image.originalUrl || image.url || '').trim(),
+        }))
+        .filter((layer) => !!layer.source);
+      if (remoteLayers.length === 0) throw new Error('分层模型未返回可用图层');
+
+      const persistedLayers: Array<{
+        index: number;
+        name: string;
+        asset: ImageAsset;
+      }> = [];
+      for (let index = 0; index < remoteLayers.length; index += 1) {
+        const layer = remoteLayers[index]!;
+        setLayeringProgress({
+          sourceKey: sourceItem.key,
+          phase: `正在保存图层 ${index + 1}/${remoteLayers.length}`,
+          completed: index,
+          total: remoteLayers.length,
+        });
+        const upload = await uploadVisualAgentWorkspaceAsset({
+          id: workspaceId,
+          sourceUrl: layer.source,
+          prompt: `${input.prompt || '图片'} · ${layer.name}`,
+          idempotencyKey: `semantic_layer_${sourceItem.key}_${layer.index}_${Date.now()}`,
+        });
+        if (!upload.success) throw new Error(upload.error?.message || `${layer.name} 保存失败`);
+        persistedLayers.push({ index: layer.index, name: layer.name, asset: upload.data.asset });
+      }
+
+      setLayeringProgress({
+        sourceKey: sourceItem.key,
+        phase: '正在排列分层 Frame',
+        completed: persistedLayers.length,
+        total: persistedLayers.length,
+      });
+      const groupId = `layer_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const layout = planSemanticLayerFrame(sourceItem, persistedLayers.length);
+      const now = Date.now();
+      const maxRefId = canvasRef.current.reduce(
+        (max, candidate) => typeof candidate.refId === 'number' ? Math.max(max, candidate.refId) : max,
+        0,
+      );
+      const layerItems: CanvasImageItem[] = persistedLayers.map((layer, index) => {
+        const placement = layout.placements[index]!;
+        return {
+          key: `${groupId}_layer_${index + 1}`,
+          createdAt: now + index,
+          prompt: `${input.prompt || '图片'} · ${layer.name}`,
+          src: layer.asset.url,
+          status: 'done',
+          kind: 'image',
+          assetId: layer.asset.id,
+          sha256: layer.asset.sha256,
+          syncStatus: 'synced',
+          syncError: null,
+          naturalW: layer.asset.width,
+          naturalH: layer.asset.height,
+          userResized: true,
+          refId: maxRefId + index + 1,
+          ...placement,
+          layerGroupId: groupId,
+          layerSourceKey: sourceItem.key,
+          layerIndex: index + 1,
+          layerRole: 'layer',
+        };
+      });
+
+      setCanvas((previous) => {
+        const next = previous.map((candidate) => candidate.key === sourceItem.key
+          ? {
+              ...candidate,
+              layerGroupId: groupId,
+              layerSourceKey: sourceItem.key,
+              layerIndex: 0,
+              layerRole: 'source' as const,
+            }
+          : candidate);
+        return [...next, ...layerItems];
+      });
+      setNextRefId(maxRefId + layerItems.length + 1);
+      setSelectionWithoutChip(layerItems.length > 0 ? [layerItems[0]!.key] : []);
+      toast.success(
+        'AI 分层已加入画布',
+        `${layerItems.length} 个透明图层已保存在原图附近。可逐个选择、编辑和复用，也可从 Frame 直接导出 PSD。`,
+        7000,
+      );
+    } catch (error) {
+      toast.error('AI 分层失败', error instanceof Error ? error.message : '图片分层或资产保存失败', 7000);
+    } finally {
+      toast.dismiss(loadingId);
+      setLayeringProgress(null);
+    }
+  }, [allImageGenModels, layeringProgress, setSelectionWithoutChip, workspaceId]);
+
   const exportAiLayeredPsd = useCallback(async (input: {
     key: string;
     src: string;
     prompt: string;
   }) => {
-    const model = findLayeredImageModel(allImageGenModels);
-    if (!model) {
-      toast.warning(
-        '尚未配置图片分层模型',
-        '请先在模型网关添加 fal.ai Qwen Image Layered，并分配给视觉创作。',
-        6000,
-      );
-      return;
-    }
-
     const item = canvasRef.current.find((candidate) => candidate.key === input.key);
-    const source = String(item?.originalSrc || input.src || '').trim();
+    const groupId = String(item?.layerGroupId ?? '').trim();
+    const cachedLayers = groupId
+      ? canvasRef.current
+          .filter((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'layer' && candidate.src)
+          .sort((a, b) => (a.layerIndex ?? 0) - (b.layerIndex ?? 0))
+      : [];
+    const cachedSource = groupId
+      ? canvasRef.current.find((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'source')
+      : item;
+    const source = String(cachedSource?.originalSrc || cachedSource?.src || input.src || '').trim();
     if (!source) {
       toast.error('PSD 导出失败', '当前图片没有可读取的原图');
       return;
     }
 
-    // OriginalUrl 对应的 SHA 不一定是 ImageAsset.Sha256；此时直接读取原图，避免误分解水印展示图。
-    const sourceSha256 = item?.originalSrc ? null : (item?.sha256 ?? null);
     const loadingId = toast.loading(
-      '正在拆分图片图层',
-      '预计需要 15–30 秒。完成后会在本机生成 PSD，期间可以继续使用画布。',
+      cachedLayers.length > 0 ? '正在组装 PSD' : '正在拆分图片图层',
+      cachedLayers.length > 0
+        ? `正在复用画布中的 ${cachedLayers.length} 个图层，不会再次调用模型。`
+        : '预计需要 15–30 秒。完成后会在本机生成 PSD，期间可以继续使用画布。',
     );
 
     try {
-      const result = await decomposeImageToLayers({
-        source,
-        sourceSha256,
-        model,
-        layerCount: 4,
-      });
-      if (!result.success) {
-        throw new Error(result.error?.message || '图片分层请求失败');
-      }
+      let layerSources = cachedLayers.map((layer, index) => ({
+        name: cleanDisplayTitle(layer.prompt) || `AI 图层 ${String(index + 1).padStart(2, '0')}`,
+        source: layer.src,
+      }));
 
-      const layerSources = (result.data?.images ?? [])
-        .map((image, index) => ({
-          name: `AI 图层 ${String(index + 1).padStart(2, '0')}`,
-          source: String(image.originalUrl || image.url || '').trim(),
-        }))
-        .filter((layer) => !!layer.source);
+      if (layerSources.length === 0) {
+        const model = findLayeredImageModel(allImageGenModels);
+        if (!model) {
+          throw new Error('尚未配置 fal.ai Qwen Image Layered，OpenRouter 与 OpenAI 图片模型不提供可替代的分层输出');
+        }
+        const result = await decomposeImageToLayers({
+          source,
+          sourceSha256: cachedSource?.originalSrc ? null : (cachedSource?.sha256 ?? null),
+          model,
+          layerCount: 4,
+        });
+        if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
+        layerSources = (result.data?.images ?? [])
+          .map((image, index) => ({
+            name: `AI 图层 ${String(index + 1).padStart(2, '0')}`,
+            source: String(image.originalUrl || image.url || '').trim(),
+          }))
+          .filter((layer) => !!layer.source);
+      }
       if (layerSources.length === 0) throw new Error('分层模型未返回可用图层');
 
       const blob = await createLayeredPsdBlob({ source, layerSources });
@@ -6693,6 +6869,94 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div ref={worldUiRef} className="absolute inset-0 z-30 pointer-events-none" style={{ transformOrigin: '0 0' }}>
               {/* 展示层：永远可读且压在图片上方 */}
               <div className="absolute inset-0 pointer-events-none">
+                {semanticLayerFrames.map((frame) => (
+                  <div
+                    key={`semantic_frame_${frame.id}`}
+                    className="absolute rounded-[18px]"
+                    style={{
+                      left: Math.round(frame.x),
+                      top: Math.round(frame.y),
+                      width: Math.round(frame.w),
+                      height: Math.round(frame.h),
+                      border: '1px dashed rgba(var(--accent-primary-rgb), 0.72)',
+                      background: 'rgba(var(--accent-primary-rgb), 0.035)',
+                      boxShadow: '0 0 0 1px rgba(var(--accent-primary-rgb), 0.06) inset',
+                    }}
+                  >
+                    <div
+                      className="absolute left-3 top-2 min-w-0 flex items-center gap-2"
+                      style={{
+                        color: 'var(--text-primary)',
+                        transform: 'scale(var(--invZoom))',
+                        transformOrigin: 'left top',
+                      }}
+                    >
+                      <Layers size={15} className="shrink-0" />
+                      <span className="whitespace-nowrap text-[12px] font-semibold" title={frame.name}>
+                        Frame · AI 分层 · {frame.layerKeys.length} 个图层
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="absolute right-3 top-2 pointer-events-auto h-7 px-2.5 rounded-[8px] inline-flex items-center gap-1.5 text-[11px] font-semibold transition-colors hover-bg-soft"
+                      style={{
+                        color: 'var(--text-primary)',
+                        background: 'var(--panel-solid)',
+                        border: '1px solid rgba(var(--accent-primary-rgb), 0.28)',
+                        transform: 'scale(var(--invZoom))',
+                        transformOrigin: 'right top',
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => {
+                        const sourceItem = canvasRef.current.find((candidate) => candidate.key === frame.sourceKey);
+                        void exportAiLayeredPsd({
+                          key: sourceItem?.key || frame.layerKeys[0] || '',
+                          src: sourceItem?.src || '',
+                          prompt: sourceItem?.prompt || frame.name,
+                        });
+                      }}
+                    >
+                      <Download size={13} />
+                      导出 PSD
+                    </button>
+                  </div>
+                ))}
+
+                {layeringProgress ? (() => {
+                  const source = canvas.find((candidate) => candidate.key === layeringProgress.sourceKey);
+                  if (!source) return null;
+                  const progressText = layeringProgress.total
+                    ? `${layeringProgress.phase} · ${layeringProgress.completed ?? 0}/${layeringProgress.total}`
+                    : layeringProgress.phase;
+                  return (
+                    <div
+                      className="absolute"
+                      style={{
+                        left: Math.round(source.x ?? 0),
+                        top: Math.round((source.y ?? 0) + (source.h ?? 220)),
+                        width: Math.max(180, Math.round(source.w ?? 320)),
+                      }}
+                    >
+                      <div
+                        role="status"
+                        aria-live="polite"
+                        className="mt-3 mx-auto w-fit max-w-full rounded-[10px] px-3 h-8 flex items-center gap-2 text-[11px] font-semibold"
+                        style={{
+                          transform: 'scale(var(--invZoom))',
+                          transformOrigin: 'center top',
+                          color: 'var(--text-primary)',
+                          background: 'var(--panel-solid)',
+                          border: '1px solid rgba(var(--accent-primary-rgb), 0.42)',
+                          boxShadow: 'var(--shadow-glass-toast)',
+                        }}
+                      >
+                        <Layers size={14} className="animate-pulse shrink-0" />
+                        <span className="truncate">{progressText}</span>
+                      </div>
+                    </div>
+                  );
+                })() : null}
+
                 {canvas
                   .filter((x) => (x.kind ?? 'image') === 'generator')
                   .map((g) => {
@@ -6918,6 +7182,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               <ImageQuickActionBar
                                 actions={mergedQuickActions}
                                 onAction={handleQuickAction}
+                                onLayer={() => void decomposeImageIntoFrame({
+                                  key: it.key,
+                                  src: it.src,
+                                  prompt: it.prompt || '图片',
+                                })}
+                                layering={layeringProgress?.sourceKey === it.key}
                                 onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
                                 onOpenConfig={() => setQuickActionDialogOpen(true)}
                                 onInpaint={() => {
