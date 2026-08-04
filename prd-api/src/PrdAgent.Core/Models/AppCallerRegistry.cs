@@ -1292,6 +1292,25 @@ public static class ReviewAgent
         )]
         public const string Chat = "review-agent.review::chat";
     }
+
+    public static class RequirementAssessment
+    {
+        [AppCallerMetadata(
+            "需求评估-批量评分",
+            "按产品研发管理规范八因子规则对 Excel 需求表逐条评估打分",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string Chat = "review-agent.requirement-assessment::chat";
+
+        [AppCallerMetadata(
+            "需求评估-列映射识别",
+            "识别需求表表头与八因子评估维度的对应关系",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string ColumnMapping = "review-agent.requirement-assessment.column-mapping::chat";
+    }
 }
 
 public static class PrReview
