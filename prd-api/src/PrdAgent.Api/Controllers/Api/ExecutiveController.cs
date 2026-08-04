@@ -1263,6 +1263,110 @@ public class ExecutiveController : ControllerBase
             },
         };
 
+        // ── 速读：把这一屏读成人话 ──────────────────────────────
+        // 老板不想读五个数字自己算。每句都必须挂着真实数字、算不出来就不出这句，
+        // 不做「整体表现良好」这种放到任何团队都成立的空话。
+        var points = new List<object>();
+        void Point(string text, string tone) => points.Add(new { text, tone });
+
+        var outputParts = new (string Label, int Value)[]
+        {
+            ("生图", curRuns), ("文档", curDocs), ("缺陷", resolvedDefects.Count),
+            ("站点", curSites), ("周报", curReports),
+        }.Where(x => x.Value > 0).OrderByDescending(x => x.Value).ToList();
+
+        if (curOutput > 0 && outputParts.Count > 0)
+        {
+            var top = outputParts[0];
+            var share = (int)Math.Round((double)top.Value / curOutput * 100);
+            Point(outputParts.Count == 1
+                    ? $"本期产出 {curOutput:N0} 件，全部是{top.Label}"
+                    : $"本期产出 {curOutput:N0} 件，{top.Label}占 {share}%（{top.Value:N0}）",
+                share >= 80 && outputParts.Count > 1 ? "watch" : "neutral");
+        }
+
+        if (hasPrev && prevOutput > 0 && curOutput > 0)
+        {
+            var pct = (int)Math.Round((double)(curOutput - prevOutput) / prevOutput * 100);
+            if (Math.Abs(pct) >= 10)
+            {
+                // 归因到变化最大的那一项，只说「降了 47%」没法行动
+                var deltas = new (string Label, int Delta)[]
+                {
+                    ("生图", curRuns - prevRuns), ("文档", curDocs - prevDocs),
+                    ("缺陷", resolvedDefects.Count - prevResolved),
+                    ("站点", curSites - prevSites), ("周报", curReports - prevReports),
+                }.OrderByDescending(x => Math.Abs(x.Delta)).First();
+                var dir = pct > 0 ? "高" : "低";
+                var cause = deltas.Delta == 0 ? "" :
+                    $"，主要是{deltas.Label}{(deltas.Delta > 0 ? "多" : "少")}了 {Math.Abs(deltas.Delta):N0}";
+                Point($"比上一等长窗口{dir} {Math.Abs(pct)}%{cause}", pct > 0 ? "good" : "watch");
+            }
+        }
+
+        var ranked = members.OrderByDescending(m => m.output).ToList();
+        if (ranked.Count >= 4 && curOutput > 0)
+        {
+            var topN = Math.Min(3, ranked.Count);
+            var topSum = ranked.Take(topN).Sum(m => m.output);
+            var share = (int)Math.Round((double)topSum / Math.Max(1, ranked.Sum(m => m.output)) * 100);
+            if (share >= 60)
+                Point($"产出集中在 {topN} 个人手上（占 {share}%），其余 {ranked.Count - topN} 人合计 {100 - share}%", "watch");
+        }
+
+        if (resolvedDefects.Count > 0 && unresolvedInWindow > resolvedDefects.Count)
+            Point($"缺陷进得比出得快：本窗解决 {resolvedDefects.Count} 个、未闭环 {unresolvedInWindow} 个", "watch");
+
+        if (imgTotal >= 20 && imgFailed > 0)
+        {
+            var failPct = Math.Round((double)imgFailed / imgTotal * 100, 1);
+            if (failPct >= 10)
+                Point($"每 10 张出图里有 {Math.Round(failPct / 10, 1)} 张是白跑的（失败 {imgFailed:N0}/{imgTotal:N0}）", "watch");
+        }
+
+        if (pricedCalls == 0 && totalCalls > 0)
+            Point($"{totalCalls:N0} 次模型调用还没有成本数据，模型组配上单价这一屏才能算钱", "neutral");
+
+        // 头条取最该被看见的那一件：先 critical，其次最大的降幅，再退到产出构成
+        var sortedAttention = attention.OrderBy(a => a.Severity == "critical" ? 0 : 1).ToList();
+        var firstCritical = sortedAttention.FirstOrDefault(a => a.Severity == "critical");
+        string headlineText;
+        string headlineTone;
+        if (firstCritical != null)
+        {
+            headlineText = firstCritical.Title;
+            headlineTone = "critical";
+        }
+        else if (hasPrev && prevOutput > 0 && curOutput < prevOutput * 0.8)
+        {
+            headlineText = $"产出较上一窗下降 {(int)Math.Round((1 - (double)curOutput / prevOutput) * 100)}%";
+            headlineTone = "watch";
+        }
+        else if (sortedAttention.Count > 0)
+        {
+            headlineText = sortedAttention[0].Title;
+            headlineTone = "watch";
+        }
+        else if (curOutput > 0)
+        {
+            headlineText = $"本期没有触发任何关注规则，产出 {curOutput:N0} 件";
+            headlineTone = "good";
+        }
+        else
+        {
+            headlineText = "本窗没有可统计的产出";
+            headlineTone = "neutral";
+        }
+
+        var headline = new
+        {
+            text = headlineText,
+            tone = headlineTone,
+            points,
+            attentionCount = attention.Count,
+            criticalCount = attention.Count(a => a.Severity == "critical"),
+        };
+
         var meta = new
         {
             days,
@@ -1302,7 +1406,7 @@ public class ExecutiveController : ControllerBase
             },
         };
 
-        return Ok(ApiResponse<object>.Ok(new { pulse, attention = attentionOut, members, flow, meta }));
+        return Ok(ApiResponse<object>.Ok(new { headline, pulse, attention = attentionOut, members, flow, meta }));
     }
 
     private static string ResolveAgentName(string appKey) => appKey switch

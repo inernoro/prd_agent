@@ -7,6 +7,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import type {
   TeamInsights,
+  TeamInsightHeadline,
   TeamInsightKpi,
   TeamInsightMember,
   TeamInsightFlowNode,
@@ -22,6 +23,23 @@ import type {
  */
 
 const MASK_KEY = 'exec.teamInsights.masked';
+
+/** 区块标题：mono 眉标建立节奏，标题与说明拉开字重差 */
+function SectionHead({ index, title, hint, right }: { index: string; title: string; hint: string; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-2.5 mb-2.5 flex-wrap">
+      <span
+        className="text-[10px] tabular-nums tracking-[0.18em]"
+        style={{ color: 'var(--text-muted)', opacity: 0.7, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+      >
+        {index}
+      </span>
+      <h2 className="m-0 text-[15px] font-semibold tracking-[-0.01em]" style={{ color: 'var(--text-primary)' }}>{title}</h2>
+      <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>{hint}</span>
+      {right && <div className="ml-auto">{right}</div>}
+    </div>
+  );
+}
 
 const SEV = {
   critical: { color: 'var(--semantic-danger-text)', soft: 'var(--semantic-danger-soft)', border: 'var(--semantic-danger-border)', label: '立即处理' },
@@ -64,6 +82,73 @@ function sparkPath(vals: number[], w: number, h: number) {
     .join(' ');
 }
 
+/* ── 速读：进页第一眼给结论，不让人自己读五个数字去算 ────────── */
+
+const TONE: Record<string, { c: string; soft: string; label: string }> = {
+  critical: { c: 'var(--semantic-danger-text)', soft: 'var(--semantic-danger-soft)', label: '要处理' },
+  watch: { c: 'var(--semantic-warning-text)', soft: 'var(--semantic-warning-soft)', label: '要留意' },
+  good: { c: 'var(--semantic-success-text)', soft: 'var(--semantic-success-soft)', label: '还不错' },
+  neutral: { c: 'var(--text-muted)', soft: 'var(--bg-secondary)', label: '' },
+};
+
+function Headline({ h, windowLabel }: { h: TeamInsightHeadline; windowLabel: string }) {
+  const t = TONE[h.tone] ?? TONE.neutral;
+  return (
+    <div
+      className="relative overflow-hidden rounded-2xl"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+    >
+      <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.c }} />
+      <div className="pl-5 pr-5 py-4 flex flex-col gap-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span
+            className="text-[10px] tracking-[0.16em] uppercase px-2 py-[3px] rounded"
+            style={{ color: t.c, background: t.soft }}
+          >
+            {windowLabel}速读
+          </span>
+          {h.criticalCount > 0 && (
+            <span className="text-[11px] tabular-nums" style={{ color: 'var(--semantic-danger-text)' }}>
+              {h.criticalCount} 项待处理
+            </span>
+          )}
+          {h.attentionCount > h.criticalCount && (
+            <span className="text-[11px] tabular-nums" style={{ color: 'var(--semantic-warning-text)' }}>
+              {h.attentionCount - h.criticalCount} 项观察
+            </span>
+          )}
+        </div>
+
+        <h2
+          className="m-0 text-[21px] leading-[1.35] font-bold tracking-[-0.02em]"
+          style={{ color: 'var(--text-primary)', textWrap: 'balance' as never }}
+        >
+          {h.text}
+        </h2>
+
+        {h.points.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            {h.points.map(p => {
+              const pt = TONE[p.tone] ?? TONE.neutral;
+              return (
+                <div key={p.text} className="flex items-start gap-2.5 text-[13px] leading-[1.6]">
+                  <span
+                    className="mt-[7px] rounded-full flex-shrink-0"
+                    style={{ width: 5, height: 5, background: pt.c, opacity: p.tone === 'neutral' ? 0.5 : 1 }}
+                  />
+                  <span style={{ color: p.tone === 'neutral' ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
+                    {p.text}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── A. 团队状态 ─────────────────────────────────────────── */
 
 const PART_TINTS = ['#5B8CFF', '#7BA6FF', '#9ABDFF', '#B9D2FF', '#D5E3FF'];
@@ -77,7 +162,7 @@ function KpiCard({ kpi }: { kpi: TeamInsightKpi }) {
 
   return (
     <div
-      className="relative overflow-hidden rounded-xl px-3.5 pt-3 pb-2.5 flex flex-col gap-1.5"
+      className="ti-card relative overflow-hidden rounded-xl px-3.5 pt-3 pb-2.5 flex flex-col gap-1.5"
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
     >
       <div className="flex items-center gap-1.5 text-[11.5px] leading-none" style={{ color: 'var(--text-secondary)' }}>
@@ -178,7 +263,7 @@ function Quadrant({
   const noQuality = members.length - plotted.length;
 
   return (
-    <div className="rounded-xl px-4 pt-4 pb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+    <div className="ti-card relative rounded-xl px-4 pt-4 pb-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
       <div className="relative ml-7 mt-4" style={{ height: 360 }}>
         {/* 中位线 —— 阈值来自后端真实中位数，不是拍的常数 */}
         <div
@@ -287,7 +372,7 @@ function MemberDetail({ member, masked, costAvailable, bench }: { member: TeamIn
   const barMax = Math.max(1, ...bars.map(x => Math.max(x.val, x.med)));
 
   return (
-    <div className="rounded-xl p-4 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+    <div className="ti-card relative rounded-xl p-4 flex flex-col gap-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
       <div className="flex items-center gap-2.5">
         {member.avatarFileName ? (
           <UserAvatar src={resolveAvatarUrl({ avatarFileName: member.avatarFileName })} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
@@ -416,6 +501,28 @@ function FlowColumn({ title, nodes }: { title: string; nodes: TeamInsightFlowNod
 
 /* ── 主面板 ──────────────────────────────────────────────── */
 
+const PANEL_CSS = `
+.ti-root section { animation: ti-rise .42s cubic-bezier(.2,.7,.3,1) backwards; }
+.ti-root section:nth-of-type(1){animation-delay:.02s}
+.ti-root section:nth-of-type(2){animation-delay:.07s}
+.ti-root section:nth-of-type(3){animation-delay:.12s}
+.ti-root section:nth-of-type(4){animation-delay:.17s}
+.ti-root section:nth-of-type(5){animation-delay:.22s}
+@keyframes ti-rise { from { opacity:0; transform: translateY(7px) } }
+.ti-card { transition: border-color .18s ease, transform .18s ease; }
+.ti-card::before {
+  content:''; position:absolute; inset:0 0 auto 0; height:1px; pointer-events:none;
+  /* 顶边细高光走 token，两个主题各自成立；硬编码白透明会被双皮肤棘轮拦下 */
+  background: linear-gradient(90deg, transparent, var(--border-default), transparent);
+  opacity: .55;
+}
+.ti-card:hover { border-color: var(--border-default) !important; transform: translateY(-1px); }
+@media (prefers-reduced-motion: reduce) {
+  .ti-root section { animation: none }
+  .ti-card:hover { transform: none }
+}
+`;
+
 export default function TeamInsightsPanel({ data, loading }: { data: TeamInsights | null; loading: boolean }) {
   const [masked, setMasked] = useState(false);
   const [pickedId, setPickedId] = useState<string | null>(null);
@@ -441,27 +548,30 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
   if (loading && !data) return <MapSectionLoader text="正在聚合团队洞察…" />;
   if (!data) return <div className="text-[13px] py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无数据</div>;
 
-  const { pulse, attention, flow, meta } = data;
+  const { headline, pulse, attention, flow, meta } = data;
+  const windowLabel = meta.days === 0 ? '全量' : `近 ${meta.days} 天`;
 
   return (
-    <div className="space-y-5">
+    <div className="ti-root flex flex-col gap-6">
+      <style>{PANEL_CSS}</style>
+      <Headline h={headline} windowLabel={windowLabel} />
       {/* A. 团队状态 */}
       <section>
-        <div className="flex items-baseline gap-3 mb-2.5 flex-wrap">
-          <h2 className="text-[14px] font-semibold m-0" style={{ color: 'var(--text-primary)' }}>团队状态</h2>
-          <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-            结果型指标，非点击次数{meta.prevFrom ? ' · 对比等长上一窗' : ' · 全部时间无环比'}
-          </span>
-          <button
-            type="button"
-            onClick={toggleMask}
-            className="ml-auto inline-flex items-center gap-1.5 text-[11.5px] px-2.5 py-1 rounded-lg transition-colors"
-            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-          >
-            {masked ? <EyeOff size={12} /> : <Eye size={12} />}
-            {masked ? '匿名' : '明文'}
-          </button>
-        </div>
+        <SectionHead
+          index="01" title="团队状态"
+          hint={`结果型指标，非点击次数${meta.prevFrom ? ' · 对比等长上一窗' : ' · 全量窗口无环比'}`}
+          right={
+            <button
+              type="button"
+              onClick={toggleMask}
+              className="inline-flex items-center gap-1.5 text-[11.5px] px-2.5 py-1 rounded-lg transition-colors hover:opacity-80"
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+            >
+              {masked ? <EyeOff size={12} /> : <Eye size={12} />}
+              {masked ? '匿名' : '明文'}
+            </button>
+          }
+        />
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5">
           {pulse.map(k => <KpiCard key={k.key} kpi={k} />)}
         </div>
@@ -469,10 +579,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
 
       {/* B. 需要关注 */}
       <section>
-        <div className="flex items-baseline gap-3 mb-2.5 flex-wrap">
-          <h2 className="text-[14px] font-semibold m-0" style={{ color: 'var(--text-primary)' }}>需要关注</h2>
-          <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>规则触发，没触发就是空的</span>
-        </div>
+        <SectionHead index="02" title="需要关注" hint="规则触发，没触发就是空的" />
         {attention.length === 0 ? (
           <div
             className="rounded-xl px-4 py-5 text-[12.5px] text-center"
@@ -487,7 +594,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
               return (
                 <div
                   key={a.key}
-                  className="rounded-xl overflow-hidden grid"
+                  className="ti-card relative rounded-xl overflow-hidden grid"
                   style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', gridTemplateColumns: '3px 1fr' }}
                 >
                   <div style={{ background: s.color }} />
@@ -520,10 +627,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
 
       {/* C. 成员画像 */}
       <section>
-        <div className="flex items-baseline gap-3 mb-2.5 flex-wrap">
-          <h2 className="text-[14px] font-semibold m-0" style={{ color: 'var(--text-primary)' }}>成员画像</h2>
-          <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>产出量 × 结果质量，按团队中位分型，不排名</span>
-        </div>
+        <SectionHead index="03" title="成员画像" hint="产出量 × 结果质量，按团队中位分型，不排名" />
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-2.5">
           <Quadrant
             members={members}
@@ -540,12 +644,9 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
 
       {/* D. 价值流 */}
       <section>
-        <div className="flex items-baseline gap-3 mb-2.5 flex-wrap">
-          <h2 className="text-[14px] font-semibold m-0" style={{ color: 'var(--text-primary)' }}>价值流</h2>
-          <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>三列各按自己的口径计量，条宽只表示同列内占比</span>
-        </div>
+        <SectionHead index="04" title="价值流" hint="三列各按自己的口径计量，条宽只表示同列内占比" />
         <div
-          className="rounded-xl px-4 py-4 grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5"
+          className="ti-card relative rounded-xl px-4 py-4 grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
         >
           <FlowColumn title="投入" nodes={flow.left} />

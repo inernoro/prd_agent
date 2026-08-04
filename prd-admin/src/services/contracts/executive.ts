@@ -151,7 +151,18 @@ export type TeamInsightMember = {
 
 export type TeamInsightFlowNode = { name: string; value: number; unit: string; loss?: boolean; hint?: string | null };
 
+export type TeamInsightHeadline = {
+  /** 头条：这一屏最该被看见的那一件事 */
+  text: string;
+  tone: 'critical' | 'watch' | 'good' | 'neutral';
+  /** 支撑点：每句都挂着真实数字，算不出来的不出句 */
+  points: { text: string; tone: 'critical' | 'watch' | 'good' | 'neutral' }[];
+  attentionCount: number;
+  criticalCount: number;
+};
+
 export type TeamInsights = {
+  headline: TeamInsightHeadline;
   pulse: TeamInsightKpi[];
   attention: TeamInsightAttention[];
   members: TeamInsightMember[];
