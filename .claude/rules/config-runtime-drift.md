@@ -43,6 +43,32 @@
 
 ---
 
+## 三点五、运行态自述必须双值对账（一个值没法自证）
+
+漂移最阴的形态是：**你用来确认「有没有生效」的那个指示器，本身就是副本**。
+版本端点报的 commit、健康页显示的配置、启动日志打的上游地址——如果它们读的是
+运行时可被改写的 env，那它们只能证明「有人希望我是这个值」，不能证明「我真的是」。
+
+所以任何「我现在是哪一版 / 我连的是哪个上游 / 我用的是哪份配置」的自述，必须给两个值：
+
+| | 从哪来 | 能证明什么 |
+|---|---|---|
+| **实际值 actual** | 编译期烤进制品（程序集属性、构建常量、镜像 digest） | 运行时改不了，这才是事实 |
+| **期待值 declared** | 部署时注入（env、启动参数、配置中心） | 只代表「本次部署希望跑哪个」 |
+
+并且必须**当场对账**：两者不一致就在同一个响应里标出来（`match` / `mismatch` / `unknown`），
+不要让人事后自己比。缺任一边只能判 `unknown`——**缺证据不等于没问题**，不许乐观判 match。
+
+判据口诀：**这个值运行时能被改写吗？能，它就不能用来自证。**
+
+落地范例：`/api/v` 返回 `actualCommit`（`-p:SourceRevisionId` 烤进
+`AssemblyInformationalVersion`）+ `expectedCommit`（env 注入）+ `commitMatch` + 不一致时的
+`commitWarning`；判定逻辑在 `PrdAgent.Core/Diagnostics/BuildIdentity.cs`，守卫测试
+`BuildIdentityTests` 锁死「事故值必须判 mismatch」「缺一边只能判 unknown」。
+
+**只写进 ENV 不算烤进制品**：容器启动时平台注入的同名 env 会覆盖镜像里的 ENV，
+覆盖后指示器立刻开始撒谎，且看不出来。
+
 ## 四、受限运维通道的使用纪律
 
 生产机往往**故意**不给自由 shell（本系统 CDS 只有发布通道）。这是安全设计，不是缺陷。
@@ -75,6 +101,7 @@
 
 | 日期 | 通道 | 事故 |
 |------|------|------|
+| 2026-08-04 | 指示器即副本 | `/api/v` 的 commit 取自容器启动注入的 `GIT_COMMIT` env（镜像里虽也写了 ENV，但被平台同名注入覆盖），于是「CI 镜像未就绪、容器仍跑旧二进制」时端点照报最新 commit。验收据此判定新代码已上线，实际新增路由在容器里根本不存在，白排查一轮。修复：commit 改由 `-p:SourceRevisionId` 烤进程序集作为**实际值**，env 值降为**期待值**，端点分列并对账（`BuildIdentity` + `BuildIdentityTests`），不一致时直接在响应里告警 |
 | 2026-07-30 | 通道 1 + 2 | 生产发布连续两次死在网关门禁 401。根因：`.env` 的 `LLMGW_SERVE_KEY` 已轮换成 64 字符新值，但 `api` / `llmgw-serve` / `llmgw-serve-b` 三个持 key 容器从未随之重建，仍带 56 字符旧值——预检拿新 key 敲旧容器，必然 401，且该状态已静默存在数十小时。修复时按当前运行 sha 原样重建四个容器补完轮换（版本零变化），随即踩到通道 2：nginx 已 13 天未 reload，仍连旧容器 IP，公网 502 约 4 分钟，`nginx -s reload` 后恢复。归因提示已固化进 `scripts/llmgw-prod-preflight.py`，守卫见 `scripts/tests/gateway-route-self-test-diagnosis.test.py` |
 
 ---

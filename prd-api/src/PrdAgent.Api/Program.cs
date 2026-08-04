@@ -15,6 +15,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Middleware;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Diagnostics;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Cache;
@@ -1569,16 +1570,28 @@ static IResult VersionInfo(IHostEnvironment env)
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
         ?? "unknown";
-    var commit = FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA");
+
+    // 实际值：编译期由 -p:SourceRevisionId 烤进程序集，运行时改不了
+    var actualCommit = BuildIdentity.ParseBakedCommit(informationalVersion);
+    // 期待值：部署时注入的环境变量，声明「本次希望跑哪个 commit」，可被平台改写
+    var declaredCommit = FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA");
+    var match = BuildIdentity.Compare(actualCommit, declaredCommit);
     var buildTime = FirstEnv("BUILD_TIME", "BUILD_TIME_UTC", "CDS_BUILD_TIME", "VERCEL_GIT_COMMIT_DATE");
+
+    // commit 字段保持向后兼容，但优先给实际值 —— 一个值没法自证，对账结论看 commitMatch
+    var effective = actualCommit ?? declaredCommit;
 
     return Results.Ok(new
     {
         app = "prd-agent",
         service = "prd-api",
         version = informationalVersion,
-        commit,
-        shortCommit = ShortCommit(commit),
+        commit = effective,
+        shortCommit = ShortCommit(effective),
+        actualCommit,
+        expectedCommit = declaredCommit,
+        commitMatch = BuildIdentity.ToWireValue(match),
+        commitWarning = BuildIdentity.DescribeMismatch(match, actualCommit, declaredCommit),
         buildTimeUtc = buildTime,
         environment = env.EnvironmentName,
         serverTimeUtc = DateTime.UtcNow,
