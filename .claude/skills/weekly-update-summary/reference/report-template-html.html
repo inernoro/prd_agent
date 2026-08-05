@@ -7,7 +7,7 @@
 
   ===== v2 与 v1 的根本差别（读者变了，勿回退）=====
   读者是老板 / 产品经理 / 业务经理，不是工程师。因此：
-  1. 章节顺序 = 优先级：封面故事 -> 质量闸 -> 业务价值看板 -> 一周脉络 -> 落地对照
+  1. 章节顺序 = 优先级：封面故事 -> 质量闸 -> 业务价值看板 -> 团队与用量 -> 一周脉络 -> 落地对照
      -> 下周优先级 -> 术语表 -> 附录(验收表/PR表/工程数据)。技术数字一律降到附录 C。
   2. 「质量闸」必须排在业务内容之前（SKILL.md 纪律 10）：给出验收份数、功能验收通过率、
      整体通过率、未通过数、缺陷、线上发布次数，并逐条列出未通过与有条件通过 + 下一步。
@@ -34,6 +34,8 @@
   1. 附录 A 行数 = 头部验收份数；附录 B 行数 = 头部 PR 收口数（禁止节选）
   2. 质量闸每个数字都能在 collect_week_context.py 输出里找到出处
   3. 一周脉络 7 天齐全，每天有日报链接或明确的「无日报」说明
+  3.5 团队与用量：成本 costAvailable=false 时写「不可用 + 原因」不写 0 元；采用度五态不混写，
+      无标签周次显式列出（证据空白 != 采用率 0）
   4. 每条业务能力都标了验收背书（通过/有条件/未通过/本周未验收），未验收的要显著标注
   5. 正文无未翻译的英文缩写、文件名、类名；出现的内部代号都在术语表里
   6. baseline 行含统计基线 SHA + 采集时间 + 四源可用性说明
@@ -139,6 +141,14 @@
   .vd-pass { background: var(--green); color: #f2fff5; }
   .vd-cond { border: 1px solid var(--amber); color: var(--amber); background: var(--paper-2); }
   .vd-fail { background: var(--red); color: #fff5f4; }
+
+  /* 采用度五态：复用 verdict 三色，不引入新色板。
+     zero / not-collected / no-signal 三者必须长得不一样——它们都不是「没人用」。 */
+  .ad { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; border-radius: 2px; padding: 2px 7px; white-space: nowrap; display: inline-block; }
+  .ad-used { background: var(--green); color: #f2fff5; }
+  .ad-zero { background: var(--red); color: #fff5f4; }
+  .ad-none { border: 1px dashed var(--ink-3); color: var(--ink-3); background: var(--paper-2); }
+  .ad-blind { border: 1px solid var(--amber); color: var(--amber); background: var(--paper-2); }
 
   .callout { margin-top: 16px; padding: 13px 16px; border-left: 3px solid var(--red); background: rgba(180,35,24,0.06);
     font-size: 13px; line-height: 1.9; color: var(--ink-2); }
@@ -320,6 +330,7 @@
     </dl>
     <div class="ev"><b>验收背书</b>通过 · 发布验收「模型网关三项能力与日志体验」(07-23)、「日志与三项能力生产闭环」(07-26)</div>
     <p class="src">技术出处：#1218 #1239 #1241 #1242 #1248 #1249 #1252 #1253 #1254 #1255 #1256 #1260</p>
+    <p class="src">用量口径：none:平台能力（网关是独立系统，不在本产品内产生用量信号）</p>
   </article>
 
   <article class="cap">
@@ -407,6 +418,61 @@
       不直接对用户可见，但决定后续速度：评审限流与断流恢复（#1228）、团队副负责人搜索成员修复（#1217，对应缺陷 DEF-2026-0188）、密钥撤销确认修复（#1220）、修复器写入围栏（#1237），以及每日熵减巡检的文档台账对账。
     </p>
   </article>
+
+  <!-- 团队与用量：前四源答不上的三件事（谁做的 / 健不健康 / AI 花了多少钱） -->
+  <div class="col-head"><h2>团队与用量</h2><span>WHO &amp; USAGE</span><span class="w">谁在做 · 有没有人用</span></div>
+  <p class="lede">
+    这一节回答前面几节答不上来的三件事：<b>谁做的、团队健不健康、AI 花了多少钱</b>。
+    首句直接取自团队洞察的规则判定句——它不是模型写的，同一周重跑结论一致。
+  </p>
+  <div class="gate-hero">
+    <div class="good">
+      <div class="k">有产出的人</div>
+      <div class="v">9 / 38</div>
+      <div class="d">留下任何可统计产出 <span class="up">上周 7</span></div>
+    </div>
+    <div class="good">
+      <div class="k">本期产出</div>
+      <div class="v">216</div>
+      <div class="d">文档 + 站点 + 周报 + 出图 + 已解决缺陷 <span class="up">上周 180</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">产出集中度</div>
+      <div class="v">78%</div>
+      <div class="d">前 3 人占比 <span class="flat">决定谁休假会停摆</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">AI 成本</div>
+      <div class="v">不可用</div>
+      <div class="d">模型组未配单价，算不出来 <span class="flat">不是 0 元</span></div>
+    </div>
+  </div>
+
+  <div class="col-head" style="margin-top:30px"><h2>需要关注的</h2><span>ATTENTION</span><span class="w">规则判定 · 不是感觉</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>程度</th><th>事项</th><th>证据</th><th>建议动作</th></tr>
+      <tr><td><span class="vd vd-fail">严重</span></td><td>{attention[].title}</td><td>{attention[].evidence}</td><td>{attention[].suggestion}</td></tr>
+      <tr><td><span class="vd vd-cond">留意</span></td><td>{…}</td><td>{…}</td><td>{…}</td></tr>
+    </table>
+  </div>
+
+  <div class="col-head" style="margin-top:30px"><h2>上线 → 采用</h2><span>ADOPTION</span><span class="w">前几周说上线的，这周有人用吗</span></div>
+  <p class="lede">
+    <b>五种状态不许混写。</b>「本周 0 次」是真的没人用；「无信号」是这条能力本就不在产品内产生用量
+    （平台工具、研发流程、基础设施）；「无采集」是信号源那时还没开始记录。
+    后两种都<b>不是</b>没人用——写成 0 就是拿一句确定的假话替换一个诚实的空白。
+  </p>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>上线周</th><th>能力</th><th>本周用量</th><th>判读</th></tr>
+      <tr><td>2026-W31</td><td>{能力名}</td><td><span class="ad ad-used">142 次 / 6 人</span></td><td>{一句话}</td></tr>
+      <tr><td>2026-W31</td><td>{能力名}</td><td><span class="ad ad-zero">0 次</span></td><td>入口是不是没打通？</td></tr>
+      <tr><td>2026-W30</td><td>{能力名}</td><td><span class="ad ad-none">无信号</span></td><td>平台能力，本就不产生产品内用量</td></tr>
+      <tr><td>2026-W30</td><td>{能力名}</td><td><span class="ad ad-blind">无采集</span></td><td>行为采集晚于该周，只能留空白</td></tr>
+    </table>
+  </div>
+  <p class="lede">{unlabeledWeeks 非空时：<b>说明</b>：2026-W29、2026-W30 的周报早于「用量口径」标签约定，无法度量采用度——这是证据空白，不是采用率为 0。}</p>
 
   <!-- 一周脉络 -->
   <div class="col-head"><h2>一周脉络</h2><span>THE WEEK</span><span class="w">每天挂当天日报</span></div>

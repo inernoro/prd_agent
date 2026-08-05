@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.Core.Analytics;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Security;
@@ -717,19 +718,33 @@ public class ExecutiveController : ControllerBase
 
     /// <summary>
     /// 团队洞察面板 — 结论优先的四段式聚合。
-    /// days=0 表示全部时间（无环比、无日序列）；days>0 时同时算出等长上一窗用于环比。
+    ///
+    /// 两种时间窗入参，二选一：
+    /// <list type="bullet">
+    /// <item>from/to —— 精确区间，to 按「闭区间最后一天」理解（周报按 ISO 周取数走这条）。</item>
+    /// <item>days —— 滚动天数，0 表示全部时间（面板默认走这条）。</item>
+    /// </list>
+    /// 窗口一律是「左闭右开、日对齐」，解析逻辑见 <see cref="InsightWindowResolver"/>（纯函数，可单测）。
     /// </summary>
     [HttpGet("team-insights")]
-    public async Task<IActionResult> GetTeamInsights([FromQuery] int days = 0)
+    public async Task<IActionResult> GetTeamInsights(
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
+        [FromQuery] int days = 0)
     {
         if (days < 0) days = 0;
         var now = DateTime.UtcNow;
         var today = now.Date;
-        var start = days > 0 ? today.AddDays(-days + 1) : DateTime.MinValue;
-        var prevStart = days > 0 ? start.AddDays(-days) : DateTime.MinValue;
-        var hasPrev = days > 0;
+        var win = InsightWindowResolver.Resolve(from, to, days, now);
+        if (win == null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_RANGE", "from 必须早于 to"));
+        var start = win.Start;
+        var end = win.End;
+        var prevStart = win.PrevStart ?? DateTime.MinValue;
+        var prevEnd = win.PrevEnd ?? DateTime.MinValue;
+        var hasPrev = win.HasPrev;
         // 日序列只在窗口有界且不太长时给；超长窗口返回空数组而不是编造
-        var wantSeries = days > 0 && days <= 45;
+        var wantSeries = win.WantSeries;
 
         var allUsers = await _db.Users.Find(_ => true).ToListAsync();
         var humanUsers = allUsers.Where(u => u.UserType != UserType.Bot).ToList();
@@ -743,19 +758,19 @@ public class ExecutiveController : ControllerBase
 
         // ── 产出侧：四类小集合，逐条取时间戳（同时供日序列与产出天数使用） ──
         var docRows = await _db.DocumentEntries
-            .Find(d => d.CreatedAt >= start)
+            .Find(d => d.CreatedAt >= start && d.CreatedAt < end)
             .Project(d => new { d.CreatedBy, d.CreatedAt })
             .ToListAsync();
         var siteRows = await _db.HostedSites
-            .Find(s => s.CreatedAt >= start)
+            .Find(s => s.CreatedAt >= start && s.CreatedAt < end)
             .Project(s => new { s.OwnerUserId, s.CreatedAt })
             .ToListAsync();
         var reportRows = await _db.WeeklyReports
-            .Find(r => r.SubmittedAt != null && r.SubmittedAt >= start)
+            .Find(r => r.SubmittedAt != null && r.SubmittedAt >= start && r.SubmittedAt < end)
             .Project(r => new { r.UserId, r.SubmittedAt })
             .ToListAsync();
         var runRows = await _db.ImageGenRuns
-            .Find(r => r.CreatedAt >= start)
+            .Find(r => r.CreatedAt >= start && r.CreatedAt < end)
             .Project(r => new { r.OwnerAdminId, r.CreatedAt, r.Status, r.Done, r.Failed })
             .ToListAsync();
 
@@ -784,7 +799,7 @@ public class ExecutiveController : ControllerBase
 
         // ── 缺陷：解决时长 / 积压 / 提交与解决归属 ──
         var resolvedDefects = await _db.DefectReports
-            .Find(d => d.ResolvedAt != null && d.ResolvedAt >= start)
+            .Find(d => d.ResolvedAt != null && d.ResolvedAt >= start && d.ResolvedAt < end)
             .Project(d => new { d.AssigneeId, d.ReporterId, d.CreatedAt, d.ResolvedAt })
             .ToListAsync();
         var openStatuses = new[] { DefectStatus.Assigned, DefectStatus.Processing, DefectStatus.Verifying, DefectStatus.Submitted };
@@ -793,9 +808,9 @@ public class ExecutiveController : ControllerBase
             .Project(d => new { d.AssigneeId, d.CreatedAt })
             .ToListAsync();
         var reportedDefects = await CountByUserAsync(_db.DefectReports,
-            d => d.CreatedAt >= start, d => d.ReporterId, userIds);
+            d => d.CreatedAt >= start && d.CreatedAt < end, d => d.ReporterId, userIds);
         var assignedDefects = await CountByUserAsync(_db.DefectReports,
-            d => d.CreatedAt >= start && d.AssigneeId != null, d => d.AssigneeId, userIds);
+            d => d.CreatedAt >= start && d.CreatedAt < end && d.AssigneeId != null, d => d.AssigneeId, userIds);
 
         foreach (var kv in reportedDefects) Bucket(kv.Key).DefectsReported = kv.Value;
         foreach (var kv in assignedDefects) Bucket(kv.Key).DefectsAssigned = kv.Value;
@@ -815,16 +830,16 @@ public class ExecutiveController : ControllerBase
         // ── LLM：调用量 / 失败率 / Token 与成本（按 {用户,模型} 分组后在内存套价） ──
         var aggOpts2 = new AggregateOptions { AllowDiskUse = true };
         var llmByUserModel = await _db.LlmRequestLogs.Aggregate(aggOpts2)
-            .Match(l => l.StartedAt >= start && l.UserId != null && l.Model != null)
+            .Match(l => l.StartedAt >= start && l.StartedAt < end && l.UserId != null && l.Model != null)
             .Group(l => new { l.UserId, l.Model },
                    g => new { g.Key.UserId, g.Key.Model, C = g.Count(), In = g.Sum(x => x.InputTokens ?? 0), Out = g.Sum(x => x.OutputTokens ?? 0) })
             .ToListAsync();
         var llmErrByUser = await _db.LlmRequestLogs.Aggregate(aggOpts2)
-            .Match(l => l.StartedAt >= start && l.UserId != null && l.StatusCode >= 400)
+            .Match(l => l.StartedAt >= start && l.StartedAt < end && l.UserId != null && l.StatusCode >= 400)
             .Group(l => l.UserId, g => new { Uid = g.Key, C = g.Count() })
             .ToListAsync();
         var llmByCaller = await _db.LlmRequestLogs.Aggregate(aggOpts2)
-            .Match(l => l.StartedAt >= start && l.AppCallerCode != null)
+            .Match(l => l.StartedAt >= start && l.StartedAt < end && l.AppCallerCode != null)
             .Group(l => l.AppCallerCode, g => new { K = g.Key, C = g.Count() })
             .ToListAsync();
 
@@ -966,11 +981,11 @@ public class ExecutiveController : ControllerBase
         int prevDocs = 0, prevSites = 0, prevReports = 0, prevRuns = 0, prevResolved = 0;
         if (hasPrev)
         {
-            prevDocs = (int)await _db.DocumentEntries.CountDocumentsAsync(d => d.CreatedAt >= prevStart && d.CreatedAt < start);
-            prevSites = (int)await _db.HostedSites.CountDocumentsAsync(s => s.CreatedAt >= prevStart && s.CreatedAt < start);
-            prevReports = (int)await _db.WeeklyReports.CountDocumentsAsync(r => r.SubmittedAt != null && r.SubmittedAt >= prevStart && r.SubmittedAt < start);
-            prevRuns = (int)await _db.ImageGenRuns.CountDocumentsAsync(r => r.CreatedAt >= prevStart && r.CreatedAt < start && r.Status == ImageGenRunStatus.Completed);
-            prevResolved = (int)await _db.DefectReports.CountDocumentsAsync(d => d.ResolvedAt != null && d.ResolvedAt >= prevStart && d.ResolvedAt < start);
+            prevDocs = (int)await _db.DocumentEntries.CountDocumentsAsync(d => d.CreatedAt >= prevStart && d.CreatedAt < prevEnd);
+            prevSites = (int)await _db.HostedSites.CountDocumentsAsync(s => s.CreatedAt >= prevStart && s.CreatedAt < prevEnd);
+            prevReports = (int)await _db.WeeklyReports.CountDocumentsAsync(r => r.SubmittedAt != null && r.SubmittedAt >= prevStart && r.SubmittedAt < prevEnd);
+            prevRuns = (int)await _db.ImageGenRuns.CountDocumentsAsync(r => r.CreatedAt >= prevStart && r.CreatedAt < prevEnd && r.Status == ImageGenRunStatus.Completed);
+            prevResolved = (int)await _db.DefectReports.CountDocumentsAsync(d => d.ResolvedAt != null && d.ResolvedAt >= prevStart && d.ResolvedAt < prevEnd);
         }
 
         var curDocs = docRows.Count;
@@ -990,7 +1005,7 @@ public class ExecutiveController : ControllerBase
         if (hasPrev)
         {
             var prevResolvedRows = await _db.DefectReports
-                .Find(d => d.ResolvedAt != null && d.ResolvedAt >= prevStart && d.ResolvedAt < start)
+                .Find(d => d.ResolvedAt != null && d.ResolvedAt >= prevStart && d.ResolvedAt < prevEnd)
                 .Project(d => new { d.CreatedAt, d.ResolvedAt })
                 .ToListAsync();
             prevMedianResolve = Median(prevResolvedRows
@@ -1006,10 +1021,13 @@ public class ExecutiveController : ControllerBase
         List<double> outputSeries = new();
         // 全部时间窗原先直接不给序列，卡片右下角永远空着；改为退化成「最近 30 天」——
         // 窗口本身仍是全量，序列只是让读数有个走势参照，note 里会说明。
-        var seriesStart = wantSeries ? start : today.AddDays(-29);
-        if (wantSeries || days == 0)
+        var seriesStart = wantSeries ? start : end.AddDays(-30);
+        // 上界必须跟着窗口走。写死 today 的话，查历史区间会一路生成到今天，
+        // 而数据源已被 end 截断——出来一串尾部全 0 的假走势，图上看不出错。
+        var seriesEnd = end;
+        if (wantSeries || !win.Bounded)
         {
-            for (var d = seriesStart; d < today.AddDays(1); d = d.AddDays(1))
+            for (var d = seriesStart; d < seriesEnd; d = d.AddDays(1))
             {
                 var day = d.Date;
                 var c = docRows.Count(x => x.CreatedAt.Date == day)
@@ -1047,7 +1065,7 @@ public class ExecutiveController : ControllerBase
                  .Select(i => (object)new { label = i.Label, value = i.Value })
                  .ToList();
 
-        var windowDays = days > 0 ? days : Math.Max(1, outputSeries.Count);
+        var windowDays = win.DailyDivisor ?? Math.Max(1, outputSeries.Count);
         var p90Resolve = resolveHours.Count >= 5
             ? resolveHours.OrderBy(v => v).ElementAt((int)Math.Floor(resolveHours.Count * 0.9) is var i && i >= resolveHours.Count ? resolveHours.Count - 1 : i)
             : (double?)null;
@@ -1055,7 +1073,7 @@ public class ExecutiveController : ControllerBase
         var pulse = new List<object>
         {
             Kpi("output", "本期产出", curOutput, "件", hasPrev ? (double?)prevOutput : null, true, outputSeries,
-                days > 0
+                win.Bounded
                     ? "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷"
                     : "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷；窗口为全部时间，走势图取最近 30 天",
                 Parts(("文档", curDocs), ("出图", curRuns), ("缺陷", resolvedDefects.Count), ("站点", curSites), ("周报", curReports)),
@@ -1233,7 +1251,7 @@ public class ExecutiveController : ControllerBase
         if (restCount > 0)
             stageCounts[$"其余 {appKeyCounts.Count - topApps.Count} 个来源"] = restCount;
         var totalOutputDays = memberRows.Sum(r => r.A.OutputDays.Count);
-        var unresolvedInWindow = openDefects.Count(d => d.CreatedAt >= start);
+        var unresolvedInWindow = openDefects.Count(d => d.CreatedAt >= start && d.CreatedAt < end);
 
         var flow = new
         {
@@ -1376,10 +1394,14 @@ public class ExecutiveController : ControllerBase
 
         var meta = new
         {
-            days,
-            from = days > 0 ? start : (DateTime?)null,
-            to = now,
+            // days 是「窗口跨了几天」，无界窗口给 0。前端窗口标签仍读它，别删。
+            days = win.SpanDays,
+            from = win.Bounded ? start : (DateTime?)null,
+            // to 是窗口的右边界（闭区间最后一天），不再是响应生成时刻——
+            // 旧值只是个时间戳，任何人拿它当边界都会被骗。
+            to = end.AddDays(-1),
             prevFrom = hasPrev ? prevStart : (DateTime?)null,
+            prevTo = hasPrev ? prevEnd.AddDays(-1) : (DateTime?)null,
             totalMembers = humanUsers.Count,
             // 前端十字线直接用这两个阈值，保证画出来的分界与后端判定同一口径
             medians = new { output = Math.Round(outputThreshold, 1), quality = Math.Round(medQuality, 1) },
@@ -1398,7 +1420,9 @@ public class ExecutiveController : ControllerBase
             plottedMembers = plotted.Count,
             quadrantReliable,
             costAvailable = pricedCalls > 0,
-            seriesAvailable = wantSeries,
+            // 报「实际有没有给出序列」而不是「本来想不想给」：无界窗口会退化成最近 30 天，
+            // 照旧写 wantSeries 会出现「明明返回了序列却声明没有」的自相矛盾。
+            seriesAvailable = outputSeries.Count > 0,
             // 显式声明拿不到的指标，避免面板上出现无根数字
             unavailable = new object[]
             {
@@ -1410,10 +1434,182 @@ public class ExecutiveController : ControllerBase
                 new { metric = "产出", source = "document_entries / hosted_sites / report_weekly_reports / image_gen_runs / defect_reports" },
                 new { metric = "结果质量", source = "缺陷解决率、生图成功率、模型调用成功率三项按可用性取平均" },
                 new { metric = "成本", source = "llmrequestlogs 的 token 用量 × 模型组已配置单价" },
+                // 积压是「此刻还没关掉的缺陷」，不是「窗口结束那一刻的快照」。查历史区间时这一项
+                // 仍反映当下，与其它按窗口截断的指标口径不同——写出来，别让读者自己撞见。
+                new { metric = "缺陷积压", source = "defect_reports 里当前仍未关闭的缺陷（此刻快照，不随窗口回溯）" },
             },
         };
 
         return Ok(ApiResponse<object>.Ok(new { headline, pulse, attention = attentionOut, members, flow, meta }));
+    }
+
+    /// <summary>
+    /// 采用度查询 —— 回答「周报里说上线的那条能力，这一周到底有没有人用」。
+    ///
+    /// 与 team-insights 的 flow 中间列刻意分开：flow 只留 top 6、过滤零值，
+    /// 「使用 0 次」「掉出前 6」「这个 key 不存在」三者在它的输出里不可区分，
+    /// 拿它答本问题会把「没上榜」讲成「没人用」。本端点以**入参 token 列表为骨架**
+    /// left-join 聚合结果，缺失即 0，并把四种零区分开。
+    /// </summary>
+    /// <param name="tokens">周报能力条目的「用量口径」token，逗号分隔，形如 <c>llm:visual-agent,route:/visual-agent,dim:image-gen,none:平台能力</c>。</param>
+    [HttpGet("adoption")]
+    public async Task<IActionResult> GetAdoption(
+        [FromQuery] string? tokens,
+        [FromQuery] DateTime? from = null,
+        [FromQuery] DateTime? to = null,
+        [FromQuery] int days = 0)
+    {
+        var win = InsightWindowResolver.Resolve(from, to, days, DateTime.UtcNow);
+        if (win == null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_RANGE", "from 必须早于 to"));
+
+        var parsed = AdoptionToken.ParseList(tokens);
+        if (parsed.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("NO_TOKENS", "tokens 不能为空，至少给一个 llm:/route:/dim:/none: token"));
+
+        var start = win.Start;
+        var end = win.End;
+
+        // 合法 appKey 前缀的唯一来源是注册表里真实存在的 AppCode 首段。
+        // 不用 app-identity.md（只登记了 13 个）、也不用 KnownAgentKeys（只有 8 个）——
+        // 那两份清单都比实际窄，拿来当白名单会把真实存在的 key 判成非法。
+        var validLlmKeys = AppCallerRegistrationService.GetAllDefinitions()
+            .Select(d => d.AppCode.Split('.')[0])
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var needLlm = parsed.Any(t => t.Kind == "llm");
+        var llmCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (needLlm)
+        {
+            var rows = await _db.LlmRequestLogs.Aggregate(new AggregateOptions { AllowDiskUse = true })
+                .Match(l => l.StartedAt >= start && l.StartedAt < end && l.AppCallerCode != null)
+                .Group(l => l.AppCallerCode, g => new { K = g.Key, C = g.Count() })
+                .ToListAsync();
+            foreach (var r in rows)
+            {
+                var k = NormalizeAppKey(r.K ?? "", fallbackToAdmin: false);
+                if (string.IsNullOrWhiteSpace(k)) continue;
+                llmCounts[k] = llmCounts.GetValueOrDefault(k) + r.C;
+            }
+        }
+
+        // 路由维度覆盖那些「压根不打模型」的能力（登录、主题、分享链…）。
+        // 但它有采集起点：早于起点的窗口只能报「无采集」，报 0 是撒谎。
+        DateTime? behaviorFrom = null;
+        var routeVisits = new Dictionary<string, int>(StringComparer.Ordinal);
+        var routeUsers = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        if (parsed.Any(t => t.Kind == "route"))
+        {
+            var earliest = await _db.BehaviorEvents.Find(FilterDefinition<BehaviorEvent>.Empty)
+                .SortBy(e => e.OccurredAt).Limit(1).FirstOrDefaultAsync();
+            behaviorFrom = earliest?.OccurredAt;
+            var wanted = parsed.Where(t => t.Kind == "route").Select(t => t.Key).Distinct().ToList();
+            var evts = await _db.BehaviorEvents
+                .Find(e => e.OccurredAt >= start && e.OccurredAt < end && wanted.Contains(e.Route))
+                .Project(e => new { e.Route, e.UserId })
+                .ToListAsync();
+            foreach (var e in evts)
+            {
+                routeVisits[e.Route] = routeVisits.GetValueOrDefault(e.Route) + 1;
+                if (!routeUsers.TryGetValue(e.Route, out var set))
+                    routeUsers[e.Route] = set = new HashSet<string>(StringComparer.Ordinal);
+                if (!string.IsNullOrEmpty(e.UserId)) set.Add(e.UserId);
+            }
+        }
+
+        var dimCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in parsed.Where(t => t.Kind == "dim").Select(t => t.Key).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!AdoptionToken.KnownDimensions.Contains(key)) continue;
+            dimCounts[key] = key.ToLowerInvariant() switch
+            {
+                "docs" => (int)await _db.DocumentEntries.CountDocumentsAsync(d => d.CreatedAt >= start && d.CreatedAt < end),
+                "sites" => (int)await _db.HostedSites.CountDocumentsAsync(s => s.CreatedAt >= start && s.CreatedAt < end),
+                "reports" => (int)await _db.WeeklyReports.CountDocumentsAsync(r => r.SubmittedAt != null && r.SubmittedAt >= start && r.SubmittedAt < end),
+                "image-gen" => (int)await _db.ImageGenRuns.CountDocumentsAsync(r => r.CreatedAt >= start && r.CreatedAt < end && r.Status == ImageGenRunStatus.Completed),
+                "workflows" => (int)await _db.WorkflowExecutions.CountDocumentsAsync(w => w.CreatedAt >= start && w.CreatedAt < end),
+                "defects" => (int)await _db.DefectReports.CountDocumentsAsync(d => d.CreatedAt >= start && d.CreatedAt < end),
+                _ => 0,
+            };
+        }
+
+        var items = new List<AdoptionResult>();
+        foreach (var t in parsed)
+        {
+            string status; int? value = null; int? users = null; string note;
+            switch (t.Kind)
+            {
+                case "none" when AdoptionToken.KnownNoSignalReasons.Contains(t.Key):
+                    status = "no-signal";
+                    note = $"作者声明本条能力不在产品内产生用量信号（{t.Key}）";
+                    break;
+                case "none":
+                    status = "unknown-key";
+                    note = $"none: 的原因只允许 {string.Join(" / ", AdoptionToken.KnownNoSignalReasons)}，收到的是「{t.Key}」";
+                    break;
+                case "malformed":
+                    status = "unknown-key";
+                    note = "用量口径必须写成 <前缀>:<值>，缺冒号无法解析";
+                    break;
+                case "llm":
+                    if (!validLlmKeys.Contains(t.Key))
+                    {
+                        status = "unknown-key";
+                        note = "该 appKey 前缀不在 AppCallerRegistry 里，多半是周报标签写错了";
+                        break;
+                    }
+                    value = llmCounts.GetValueOrDefault(t.Key);
+                    status = value > 0 ? "measured" : "zero";
+                    note = "来源 llmrequestlogs 的 AppCallerCode 首段";
+                    break;
+                case "route":
+                    if (behaviorFrom == null || (win.Bounded && end <= behaviorFrom.Value))
+                    {
+                        status = "not-collected";
+                        note = behaviorFrom == null
+                            ? "行为采集尚无任何数据，本窗无法判断路由用量"
+                            : $"窗口早于行为采集起点（{behaviorFrom:yyyy-MM-dd}），只能报无采集，不能报 0";
+                        break;
+                    }
+                    value = routeVisits.GetValueOrDefault(t.Key);
+                    users = routeUsers.GetValueOrDefault(t.Key)?.Count ?? 0;
+                    status = value > 0 ? "measured" : "zero";
+                    note = "来源 behavior_events 的归一化路由；只覆盖本产品前端，独立系统的页面不在内";
+                    break;
+                case "dim":
+                    if (!AdoptionToken.KnownDimensions.Contains(t.Key))
+                    {
+                        status = "unknown-key";
+                        note = $"维度 key 不在允许清单里：{string.Join(" / ", AdoptionToken.KnownDimensions)}";
+                        break;
+                    }
+                    value = dimCounts.GetValueOrDefault(t.Key);
+                    status = value > 0 ? "measured" : "zero";
+                    note = "来源对应业务集合的窗口内计数";
+                    break;
+                default:
+                    status = "unknown-key";
+                    note = $"无法识别的用量口径前缀「{t.Kind}」，只允许 llm / route / dim / none";
+                    break;
+            }
+            items.Add(new AdoptionResult(t.Raw, t.Kind, t.Key, status, value, users, note));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            window = new { from = win.Bounded ? start : (DateTime?)null, to = end.AddDays(-1), days = win.SpanDays },
+            behaviorCollectedFrom = behaviorFrom,
+            items,
+            summary = new
+            {
+                measured = items.Count(i => i.Status == "measured"),
+                zero = items.Count(i => i.Status == "zero"),
+                noSignal = items.Count(i => i.Status == "no-signal"),
+                unknownKey = items.Count(i => i.Status == "unknown-key"),
+                notCollected = items.Count(i => i.Status == "not-collected"),
+            },
+        }));
     }
 
     private static string ResolveAgentName(string appKey) => appKey switch

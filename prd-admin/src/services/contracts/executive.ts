@@ -168,10 +168,14 @@ export type TeamInsights = {
   members: TeamInsightMember[];
   flow: { left: TeamInsightFlowNode[]; mid: TeamInsightFlowNode[]; right: TeamInsightFlowNode[] };
   meta: {
+    /** 窗口跨了几天；无界窗口（全部时间）为 0 */
     days: number;
     from: string | null;
+    /** 窗口右边界（闭区间最后一天）。注意不是响应生成时刻——旧语义会把人骗过去 */
     to: string;
     prevFrom: string | null;
+    /** 上一窗右边界（闭区间最后一天）；无环比时为 null */
+    prevTo: string | null;
     totalMembers: number;
     /** 四象限分界阈值（产出阈值 / 质量中位），与后端判定同口径 */
     medians: { output: number; quality: number };

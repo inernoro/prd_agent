@@ -86,6 +86,27 @@ export function fmt(n: number | null, unit: string) {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
+/**
+ * 窗口标签。后端支持精确区间之后，「近 N 天」只在窗口确实到今天为止时才成立；
+ * 查一段历史区间还写「近 7 天」会把读者带偏，此时直接报区间。
+ */
+export function buildWindowLabel(days: number, from: string | null, to: string): string {
+  if (days === 0 || !from) return '全量';
+  const md = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : `${d.getMonth() + 1}/${d.getDate()}`;
+  };
+  const end = new Date(to);
+  const today = new Date();
+  const endsToday = !Number.isNaN(end.getTime())
+    && end.getFullYear() === today.getFullYear()
+    && end.getMonth() === today.getMonth()
+    && end.getDate() === today.getDate();
+  if (endsToday) return `近 ${days} 天`;
+  const a = md(from); const b = md(to);
+  return a && b ? `${a}~${b}` : `近 ${days} 天`;
+}
+
 function sparkPath(vals: number[], w: number, h: number) {
   if (vals.length < 2) return '';
   const mn = Math.min(...vals);
@@ -736,7 +757,7 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
   if (!data) return <div className="text-[13px] py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无数据</div>;
 
   const { headline, pulse, attention, flow, meta } = data;
-  const windowLabel = meta.days === 0 ? '全量' : `近 ${meta.days} 天`;
+  const windowLabel = buildWindowLabel(meta.days, meta.from, meta.to);
 
   return (
     <div className="ti-root flex flex-col gap-6">

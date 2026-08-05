@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { api } from '@/services/api';
-import { fmt, maskName } from '@/pages/executive/TeamInsightsPanel';
+import { buildWindowLabel, fmt, maskName } from '@/pages/executive/TeamInsightsPanel';
 
 /**
  * 团队洞察的两条硬约束守卫（predicate-and-wiring-discipline 形状 2）：
@@ -30,5 +30,17 @@ describe('团队洞察 · 接线与空值判据', () => {
     expect(maskName('蒋云峰', false)).toBe('蒋云峰');
     expect(maskName('蒋云峰', true)).toBe('蒋**');
     expect(maskName('', true)).toBe('');
+  });
+
+  it('窗口标签：到今天为止才叫「近 N 天」，历史区间报区间', () => {
+    const today = new Date();
+    const iso = (d: Date) => d.toISOString();
+    const sevenAgo = new Date(today.getTime() - 6 * 86400000);
+    // 窗口右边界是今天 → 「近 N 天」成立
+    expect(buildWindowLabel(7, iso(sevenAgo), iso(today))).toBe('近 7 天');
+    // 历史区间仍写「近 7 天」会把读者带偏，必须报真实区间
+    expect(buildWindowLabel(7, '2026-07-27T00:00:00Z', '2026-08-02T00:00:00Z')).toBe('7/27~8/2');
+    // 无界窗口
+    expect(buildWindowLabel(0, null, iso(today))).toBe('全量');
   });
 });
