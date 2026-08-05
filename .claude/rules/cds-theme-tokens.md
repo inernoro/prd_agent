@@ -1,3 +1,11 @@
+---
+paths:
+  - "cds/web/src/**/*.tsx"
+  - "cds/web/src/**/*.css"
+  - "cds/web-legacy/**/*.css"
+  - "cds/web-legacy/**/*.js"
+---
+
 # CDS 主题 Token 规则
 
 **一句话**：CDS 前端颜色一律走主题 token 且两个主题都要成立，白天模式下不许出现暗色底；新栈 token 是 HSL 三元组，引用必须用 hsl() 包起来，否则整条样式静默失效。

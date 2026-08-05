@@ -180,6 +180,7 @@ import {
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
+  recoverableBackgroundTranscriptionRunId,
   shouldRetryVaultServerCompletion,
   vaultClearServerCompletion,
   vaultDeleteSession,
@@ -1070,6 +1071,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const location = useLocation();
   const isMobile = useIsMobile();
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
+  const currentUserId = useAuthStore(state => state.user?.userId ?? null);
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const entriesRef = useRef(entries);
@@ -1243,6 +1245,33 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     transcribeRunRef.current = normalized;
     setBgTranscribeRunIds(current => enqueueBackgroundTranscriptionRun(current, normalized));
   }, []);
+
+  // 刷新不能抹掉服务端正在执行的转录/整理任务。选中文档恢复后，从服务端权威 run
+  // 重新接回轮询；再补一次短延迟确认，覆盖首屏请求与 worker 认领并发的窗口。
+  useEffect(() => {
+    const entryId = selectedEntryId?.trim();
+    if (!entryId) return;
+    let cancelled = false;
+    let recovered = false;
+    const recover = async () => {
+      if (cancelled || recovered) return;
+      const res = await getLatestAgentRun(entryId, 'transcribe');
+      if (cancelled || !res.success) return;
+      // getAgentRun 只允许读取自己发起的任务；团队库里若最近一次在途 run 属于
+      // 其他协作者，不能把它加入当前用户的轮询队列，否则 404 会让提示永久不消失。
+      if (!currentUserId || res.data?.userId !== currentUserId) return;
+      const runId = recoverableBackgroundTranscriptionRunId(res.data);
+      if (!runId) return;
+      recovered = true;
+      watchBackgroundTranscription(runId);
+    };
+    void recover();
+    const retryTimer = window.setTimeout(() => { void recover(); }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retryTimer);
+    };
+  }, [currentUserId, selectedEntryId, watchBackgroundTranscription]);
   // 保险箱恢复只在进页时检查一次
   const vaultCheckedRef = useRef(false);
 
@@ -2388,6 +2417,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       {/* 左右分栏文档浏览器 —— 与上方 TabBar 左右边缘对齐（不再额外 px-5 内缩，
           消除左上角空白竖条）；仅留 pt-3 作为与标题栏的视觉间距 */}
       <div className="flex-1 min-h-0 flex flex-col pt-3">
+        {bgTranscribeRunIds.length > 0 && !transcribeFlow && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mx-3 mb-3 flex shrink-0 items-start gap-3 rounded-[14px] px-4 py-3"
+            style={{ background: 'var(--semantic-info-bg)', border: '1px solid var(--semantic-info-border)' }}>
+            <div className="mt-0.5 shrink-0"><MapSpinner size={16} /></div>
+            <div className="min-w-0">
+              <p className="text-[12px] font-semibold text-token-primary">
+                后台正在处理{bgTranscribeRunIds.length > 1 ? ` ${bgTranscribeRunIds.length} 条` : ''}录音
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
+                已恢复进度看护，通常需要几十秒至数分钟；完成后本页会自动更新，可以继续查看其他内容。
+              </p>
+            </div>
+          </div>
+        )}
         <DocBrowser
           entries={entries}
           tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
@@ -2490,6 +2536,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           onReprocess={(id) => {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
+          }}
+          onAskRecording={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (!entry) return;
+            setReprocessTarget({
+              id,
+              title: entry.title,
+              initialInput: '请基于整场录音回答我的问题。先给简明结论，再引用支持结论的原文时间段；有多处依据时分别列出，不要编造录音中没有的信息。我的问题是：',
+            });
           }}
           onShareEntry={(id) => {
             const entry = entries.find(e => e.id === id);

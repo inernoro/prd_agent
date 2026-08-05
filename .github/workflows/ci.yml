@@ -77,13 +77,17 @@ jobs:
               - 'scripts/doc-readability-check.py'
               - 'scripts/fixtures/doc-readability-baseline.json'
               - 'scripts/tests/doc-readability-ratchet.test.py'
+              # --skills-audit 的输出契约守卫（entropy-cleanup 的 D4 靠那些前缀决策）
+              - 'scripts/tests/test_skills_audit_contract.py'
               - '.github/workflows/ci.yml'
             release_scripts:
               - 'exec_dep.sh'
               - 'scripts/lib/static-release.sh'
+              - 'scripts/lib/gateway-bind-mount.sh'
               - 'scripts/prd-agent-public-surface-smoke.py'
               - 'scripts/prd-agent-release-evidence.py'
               - 'scripts/tests/static-release-*.test.sh'
+              - 'scripts/tests/gateway-bind-mount-coherence.test.sh'
               - 'scripts/tests/public-surface-smoke.test.py'
               - 'scripts/tests/asset-storage-readiness-gate.test.py'
               - 'scripts/tests/release-evidence.test.py'
@@ -147,6 +151,22 @@ jobs:
       - name: Doc readability checker guard test
         run: python3 scripts/tests/doc-readability-ratchet.test.py
 
+      - name: Claude memory contract
+        # 守的是 CLAUDE.md 与 .claude/rules/ 的加载契约：frontmatter 键必须是 `paths`
+        # （写成 `globs` 会静默退化成全量加载）、每个 glob 必须命中真实文件（死 glob
+        # 会让规则永不加载，比不写还差）、注入行数不超预算。这道闸挂在 docs 这里是因为
+        # 它的 filter 已含 '**' 与 '.claude/rules/**'，每个 PR 都开——被测文件在哪
+        # 一棵树里改动都跑得到（predicate-and-wiring-discipline 形状 7）。
+        run: python3 scripts/tests/test_claude_memory_contract.py
+
+      - name: Skills audit output contract
+        # entropy-cleanup 的 D4 完全靠 --skills-audit 的输出前缀决策：
+        # `AUTOFIX_NAME: ` 触发自动补 name，`BLOCK: ` 触发硬闸拦住自动合并。
+        # 前缀改一个字、某种坏清单漏判、或退出码不对，熵减就会静默地要么不修、
+        # 要么把不可发现的技能合进去，而全仓测试照样全绿——正是「删掉不会红」
+        # 的那类接线，所以必须有守卫。同样挂在 docs 这道闸（filter 含 '**'）。
+        run: python3 scripts/tests/test_skills_audit_contract.py
+
   release-script-test:
     name: Production Release Script Test
     needs: changes
@@ -161,6 +181,9 @@ jobs:
 
       - name: Static release through nginx worker
         run: sh scripts/tests/static-release-nginx.test.sh
+
+      - name: Gateway bind mount coherence
+        run: sh scripts/tests/gateway-bind-mount-coherence.test.sh
 
       - name: Public surface smoke unit test
         run: python3 scripts/tests/public-surface-smoke.test.py

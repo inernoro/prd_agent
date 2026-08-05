@@ -463,6 +463,43 @@ public sealed class DocumentRecordingArchiveWorkerTests
         untouchedMain.ArchiveLeaseId.ShouldBe("main-old");
     }
 
+    [Theory]
+    [InlineData(DocumentRecordingArchiveStatus.Pending)]
+    [InlineData(DocumentRecordingArchiveStatus.Archiving)]
+    public async Task ManualArchiveRetry_ShouldTakeOverRecoverableSession(
+        string archiveStatus)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+
+        var now = DateTime.UtcNow;
+        var session = Session("manual-retry", "old-instance", archiveStatus);
+        session.EntryId = "recording-pending-manual-retry";
+        session.ArchiveLeaseId = "stale-lease";
+        session.ArchiveError = "previous failure";
+        session.ArchiveNextAttemptAt = now.AddHours(2);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        var result = await DocumentStoreController.QueueRecordingArchiveRetryAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.EntryId,
+            session.UserId,
+            "current-instance",
+            now,
+            CancellationToken.None);
+
+        result.ModifiedCount.ShouldBe(1);
+        var retried = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(item => item.Id == session.Id)
+            .SingleAsync();
+        retried.OwnerInstanceId.ShouldBe("current-instance");
+        retried.ArchiveStatus.ShouldBe(DocumentRecordingArchiveStatus.Pending);
+        retried.ArchiveLeaseId.ShouldBeNull();
+        retried.ArchiveError.ShouldBeNull();
+        retried.ArchiveNextAttemptAt.ShouldNotBeNull();
+        (retried.ArchiveNextAttemptAt!.Value - now).Duration()
+            .ShouldBeLessThan(TimeSpan.FromMilliseconds(1));
+    }
+
     [Fact]
     public async Task CompletionClaim_ShouldIncludeFinalChunkCommittedBeforeClaim()
     {
@@ -1511,7 +1548,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     [Theory]
     [InlineData(0, 1)]
     [InlineData(3, 8)]
-    [InlineData(20, 256)]
+    [InlineData(20, 15)]
     public void ComputeBackoff_ShouldBeBounded(int attempts, int expectedMinutes)
     {
         DocumentRecordingArchiveWorker.ComputeBackoff(attempts)

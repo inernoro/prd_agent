@@ -1,5 +1,7 @@
 ---
-globs: ["prd-admin/src/**/*.tsx", "prd-desktop/src/**/*.tsx"]
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-desktop/src/**/*.tsx"
 ---
 
 # 前端模态框布局硬约束

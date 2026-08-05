@@ -12,7 +12,7 @@ import type { HowStep } from '../i18n/landing';
  */
 
 const STEP_ICONS: LucideIcon[] = [MessageSquare, Cpu, Waves];
-const STEP_ACCENTS = ['#6ee4ff', '#a78bfa', '#f472b6'];
+const STEP_ACCENTS = ['#6ee4ff', '#E0A06B', '#D98F6B'];
 
 export function HowItWorks() {
   const { t } = useLanguage();
@@ -26,7 +26,7 @@ export function HowItWorks() {
         <SectionHeader
           Icon={Workflow}
           eyebrow={t.how.eyebrow}
-          accent="#f472b6"
+          accent="#D98F6B"
           title={t.how.title}
         />
       </div>
@@ -37,7 +37,7 @@ export function HowItWorks() {
             className="hidden md:block absolute top-[90px] left-[16%] right-[16%] h-px pointer-events-none"
             style={{
               background:
-                'linear-gradient(90deg, transparent 0%, rgba(167, 139, 250, 0.4) 20%, rgba(167, 139, 250, 0.4) 50%, rgba(244, 114, 182, 0.4) 80%, transparent 100%)',
+                'linear-gradient(90deg, transparent 0%, rgba(224, 160, 107, 0.4) 20%, rgba(224, 160, 107, 0.4) 50%, rgba(217, 143, 107, 0.4) 80%, transparent 100%)',
             }}
           />
 

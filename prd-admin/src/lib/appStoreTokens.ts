@@ -37,16 +37,17 @@ export const AS_COLOR = {
   /** Pill 按钮底 —— App Store Get 按钮的灰色 */
   pillBg: 'rgba(120, 120, 128, 0.24)',
 
-  /** iOS System Colors（暗色）—— 用于强调色、上眉色等 */
-  blue: '#A5B4FC',
-  green: '#30D158',
-  orange: '#FF9F0A',
-  yellow: '#FFD60A',
-  red: '#FF453A',
-  pink: '#FF375F',
-  purple: '#BF5AF2',
-  teal: '#64D2FF',
-  indigo: '#5E5CE6',
+  /** 语义色槽（名称沿用 iOS 习惯，取值已换成米多墨系：暖石墨 + 赭红身份色，
+   *  紫/靛/品红不在色带内，与桌面 lib/tileAccent 的八色墨带同源） */
+  blue: '#E0956B',
+  green: '#68A385',
+  orange: '#D9A05E',
+  yellow: '#D9B85C',
+  red: '#D9705A',
+  pink: '#C87A63',
+  purple: '#6B8DB8',
+  teal: '#6BA9A2',
+  indigo: '#4E7EA8',
 } as const;
 
 /** iOS 浅色（Light Mode）对照色板 —— 与 AS_COLOR 同形状,配合 useAppStoreColors 切换 */
@@ -68,14 +69,14 @@ export const AS_COLOR_LIGHT: Record<keyof typeof AS_COLOR, string> = {
   pillBg: 'rgba(120, 120, 128, 0.16)',
 
   blue: '#8F3F2B',
-  green: '#34c759',
-  orange: '#ff9500',
-  yellow: '#ffcc00',
-  red: '#ff3b30',
-  pink: '#ff2d55',
-  purple: '#af52de',
-  teal: '#32ade6',
-  indigo: '#5856d6',
+  green: '#3F7A5E',
+  orange: '#A8703C',
+  yellow: '#A8842F',
+  red: '#B0402C',
+  pink: '#A85A44',
+  purple: '#3B5F8A',
+  teal: '#3B7A75',
+  indigo: '#37608A',
 } as const;
 
 /* ───────────── 字号阶梯（严格的 9 档，不允许出现中间值） ───────────── */

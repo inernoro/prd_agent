@@ -35,6 +35,8 @@ export function reduceLiveTranscriptionView(
 const TARGET_SAMPLE_RATE = 16_000;
 const FRAME_SAMPLES = 1_600;
 const MAX_QUEUED_FRAMES = 300;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECONNECT_DELAY_MS = 800;
 export const MAX_PENDING_LIVE_PCM_FRAMES = 100;
 
 /**
@@ -206,7 +208,7 @@ export function encodeLivePcmFrame(sequence: number, pcm: Int16Array): ArrayBuff
   return frame;
 }
 
-function apiWebSocketUrl(sessionId: string): string {
+function apiWebSocketUrl(sessionId: string, resumed = false): string {
   const configured = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '')
     .trim()
     .replace(/\/+$/, '');
@@ -218,16 +220,20 @@ function apiWebSocketUrl(sessionId: string): string {
       )
     : new URL(relativePath, window.location.origin);
   httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (resumed) httpUrl.searchParams.set('resumed', 'true');
   return httpUrl.toString();
 }
 
 export class LiveTranscriptionSocket {
   private socket: WebSocket | null = null;
   private sequence = 0;
-  private queuedFrames: ArrayBuffer[] = [];
+  private queuedFrames: Int16Array[] = [];
   private terminalEvent: LiveTranscriptionEvent | null = null;
   private terminalWaiters: Array<(event: LiveTranscriptionEvent | null) => void> = [];
   private state: LiveTranscriptionState = 'connecting';
+  private reconnectAttempts = 0;
+  private reconnectTimer: number | null = null;
+  private intentionallyClosing = false;
 
   constructor(
     private readonly sessionId: string,
@@ -237,17 +243,25 @@ export class LiveTranscriptionSocket {
   ) {}
 
   connect(): void {
-    if (this.socket) return;
+    if (this.socket || this.terminalEvent || this.intentionallyClosing) return;
+    this.openSocket();
+  }
+
+  private openSocket(): void {
     this.setState('connecting');
+    const resumed = this.reconnectAttempts > 0;
     const socket = new WebSocket(
-      apiWebSocketUrl(this.sessionId),
+      apiWebSocketUrl(this.sessionId, resumed),
       ['map-live-asr', `bearer.${this.token}`],
     );
     socket.binaryType = 'arraybuffer';
     this.socket = socket;
     socket.onopen = () => {
+      if (this.socket !== socket) return;
+      this.reconnectAttempts = 0;
+      this.sequence = 0;
       this.setState('live');
-      for (const frame of this.queuedFrames) socket.send(frame);
+      for (const pcm of this.queuedFrames) socket.send(encodeLivePcmFrame(++this.sequence, pcm));
       this.queuedFrames = [];
     };
     socket.onmessage = (message) => {
@@ -266,28 +280,17 @@ export class LiveTranscriptionSocket {
       }
     };
     socket.onerror = () => {
-      this.setState('degraded');
-      this.resolveTerminal({
-        type: 'degraded',
-        message: '实时转写连接异常，录音结束后将自动转写',
-      });
+      this.handleDisconnect(socket);
     };
     socket.onclose = () => {
-      if (!this.terminalEvent) {
-        this.setState('degraded');
-        this.resolveTerminal({
-          type: 'degraded',
-          message: '实时转写连接已断开，录音结束后将自动转写',
-        });
-      }
+      this.handleDisconnect(socket);
     };
   }
 
   send(pcm: Int16Array): void {
     if (pcm.length === 0 || this.terminalEvent) return;
-    const frame = encodeLivePcmFrame(++this.sequence, pcm);
     if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(frame);
+      this.socket.send(encodeLivePcmFrame(++this.sequence, pcm));
       return;
     }
     if (this.queuedFrames.length >= MAX_QUEUED_FRAMES) {
@@ -299,7 +302,7 @@ export class LiveTranscriptionSocket {
       this.close();
       return;
     }
-    this.queuedFrames.push(frame);
+    this.queuedFrames.push(pcm.slice());
   }
 
   async finish(timeoutMs = 90_000): Promise<LiveTranscriptionEvent | null> {
@@ -310,7 +313,17 @@ export class LiveTranscriptionSocket {
     }
     this.setState('finalizing');
     const socket = this.socket;
-    if (!socket) return null;
+    if (!socket) {
+      // 用户可能恰好在断线后的重连退避窗口点击结束。此时必须取消后续重连，
+      // 并明确降级到完整音频校准，不能让抽屉关闭后又建立一条孤儿 WebSocket。
+      this.setState('degraded');
+      this.resolveTerminal({
+        type: 'degraded',
+        message: '实时转写正在重连，录音结束后将自动校准完整原文',
+      });
+      this.close();
+      return this.terminalEvent;
+    }
 
     // 必须先登记终态等待，再等待 WebSocket 建连。连接错误和 close 都可能在
     // 下面的 await 期间到达；若事后才登记 waiter，一次性终态事件会永久丢失。
@@ -357,11 +370,43 @@ export class LiveTranscriptionSocket {
   }
 
   close(): void {
+    this.intentionallyClosing = true;
+    if (this.reconnectTimer != null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     const socket = this.socket;
     if (socket && socket.readyState < WebSocket.CLOSING)
       socket.close(1000, 'recording-finished');
     this.socket = null;
     this.queuedFrames = [];
+  }
+
+  private handleDisconnect(socket: WebSocket): void {
+    if (this.socket !== socket || this.terminalEvent || this.intentionallyClosing) return;
+    this.socket = null;
+    if (this.reconnectTimer != null) return;
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      this.setState('degraded');
+      this.resolveTerminal({
+        type: 'degraded',
+        message: '实时转写多次重连失败，录音结束后将自动校准完整原文',
+      });
+      return;
+    }
+
+    this.reconnectAttempts += 1;
+    this.setState('connecting');
+    this.onEvent({
+      type: 'status',
+      attempt: this.reconnectAttempts,
+      totalAttempts: MAX_RECONNECT_ATTEMPTS,
+      message: `实时转写连接中断，正在重连 ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`,
+    });
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.openSocket();
+    }, RECONNECT_DELAY_MS);
   }
 
   private setState(state: LiveTranscriptionState): void {

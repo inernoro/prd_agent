@@ -37,7 +37,7 @@ interface AgentVisual {
 
 // 注：PRD 解读智能体 Web 端已下线，落地页不再展示该卡片
 const VISUAL_META: Record<string, AgentVisual> = {
-  visual: { Icon: Palette, accent: '#a855f7', route: '/visual-agent', kind: 'custom' },
+  visual: { Icon: Palette, accent: '#C8623A', route: '/visual-agent', kind: 'custom' },
   literary: { Icon: PenTool, accent: '#fb923c', route: '/literary-agent', kind: 'custom' },
   video: { Icon: Video, accent: '#f43f5e', route: '/video-agent', kind: 'custom' },
   defect: { Icon: Bug, accent: '#10b981', route: '/defect-agent', kind: 'custom' },
@@ -45,12 +45,12 @@ const VISUAL_META: Record<string, AgentVisual> = {
   arena: { Icon: Swords, accent: '#eab308', route: '/arena', kind: 'custom' },
   workflow: { Icon: Workflow, accent: '#22c55e', route: '/workflow-agent', kind: 'custom' },
   shortcuts: { Icon: Zap, accent: '#f59e0b', route: '/shortcuts-agent', kind: 'custom' },
-  review: { Icon: ClipboardCheck, accent: '#ec4899', route: '/review-agent', kind: 'custom' },
-  transcript: { Icon: AudioLines, accent: '#8b5cf6', route: '/transcript-agent', kind: 'custom' },
+  review: { Icon: ClipboardCheck, accent: '#C8623A', route: '/review-agent', kind: 'custom' },
+  transcript: { Icon: AudioLines, accent: '#C8623A', route: '/transcript-agent', kind: 'custom' },
   'code-review': { Icon: Code2, accent: '#64748b', kind: 'dialog' },
   translator: { Icon: Languages, accent: '#0ea5e9', kind: 'dialog' },
   summarizer: { Icon: FileSearch, accent: '#14b8a6', kind: 'dialog' },
-  'data-analyst': { Icon: BarChart3, accent: '#d946ef', kind: 'dialog' },
+  'data-analyst': { Icon: BarChart3, accent: '#D9A05E', kind: 'dialog' },
 };
 
 export function AgentGrid() {

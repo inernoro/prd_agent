@@ -11,7 +11,7 @@
  *   3. loadFromServer 拉到含脏数据的远程偏好后，写入 store 前去重
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/services', () => ({
   getUserPreferences: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock('@/stores/authStore', () => ({
   registerLogoutReset: vi.fn(),
 }));
 
-import { getUserPreferences } from '@/services';
+import { getUserPreferences, updateAgentSwitcherPreferences } from '@/services';
 import { useAgentSwitcherStore } from '../agentSwitcherStore';
 
 const baseVisit = {
@@ -113,5 +113,154 @@ describe('agentSwitcherStore: 最近使用去重', () => {
     // usageCounts 累加而非覆盖（5 + 3 + 2 = 10）
     expect(usageCounts.logs).toBe(10);
     expect(usageCounts['visual-agent']).toBe(7);
+  });
+});
+
+describe('agentSwitcherStore: 水合竞态', () => {
+  beforeEach(() => {
+    useAgentSwitcherStore.setState({
+      recentVisits: [],
+      pinnedIds: [],
+      usageCounts: {},
+      serverLoaded: false,
+      serverLoading: false,
+    });
+    vi.clearAllMocks();
+  });
+
+  it('水合期间的点击不会被远端数据抹掉', async () => {
+    // AppShell 一进页就异步 loadFromServer；用户手快先点了一个智能体。
+    // 那一刻 serverLoaded 还是 false，scheduleSync 直接 return（防空态覆盖云端），
+    // 紧接着远端数据整体替换 recentVisits/usageCounts——点击连同计数一起消失。
+    type PrefsResponse = Awaited<ReturnType<typeof getUserPreferences>>;
+    let resolveLoad: (value: PrefsResponse) => void = () => {};
+    vi.mocked(getUserPreferences).mockReturnValue(
+      new Promise<PrefsResponse>((resolve) => { resolveLoad = resolve; }),
+    );
+
+    const loading = useAgentSwitcherStore.getState().loadFromServer();
+
+    // 水合还在飞的时候点开视觉创作
+    useAgentSwitcherStore.getState().addRecentVisit({ ...baseVisit, id: 'visual-agent', path: '/visual-agent' });
+
+    resolveLoad({
+      success: true,
+      data: {
+        agentSwitcherPreferences: {
+          pinnedIds: [],
+          recentVisits: [{ id: 'literary-agent', agentKey: '', agentName: '文学创作', title: '文学创作', path: '/literary-agent', icon: 'Feather', timestamp: 1 }],
+          usageCounts: { 'literary-agent': 5 },
+        },
+      },
+    } as unknown as PrefsResponse);
+    await loading;
+
+    const { recentVisits, usageCounts } = useAgentSwitcherStore.getState();
+    expect(usageCounts['visual-agent'], '水合期间那次点击的计数被抹掉了').toBe(1);
+    expect(usageCounts['literary-agent'], '远端计数没保住').toBe(5);
+    expect(recentVisits[0]?.id, '水合期间那次点击应排在最近使用第一位').toBe('visual-agent');
+    expect(recentVisits.some((v) => v.id === 'literary-agent'), '远端记录被挤掉了').toBe(true);
+  });
+
+  it('水合完成后队列清空，不会重复重放', async () => {
+    vi.mocked(getUserPreferences).mockResolvedValue({
+      success: true,
+      data: { agentSwitcherPreferences: { pinnedIds: [], recentVisits: [], usageCounts: { 'visual-agent': 3 } } },
+    } as unknown as Awaited<ReturnType<typeof getUserPreferences>>);
+
+    useAgentSwitcherStore.getState().addRecentVisit({ ...baseVisit, id: 'visual-agent', path: '/visual-agent' });
+    await useAgentSwitcherStore.getState().loadFromServer();
+    expect(useAgentSwitcherStore.getState().usageCounts['visual-agent']).toBe(4);
+
+    // 第二次水合（换号 / 手动刷新）不该把同一次点击再加一遍
+    useAgentSwitcherStore.setState({ serverLoaded: false, serverLoading: false });
+    await useAgentSwitcherStore.getState().loadFromServer();
+    expect(useAgentSwitcherStore.getState().usageCounts['visual-agent']).toBe(3);
+  });
+});
+
+/**
+ * 拉取失败的两条路必须同样收尾。
+ *
+ * `getUserPreferences` 失败有两种形态：请求本身抛错（网络断了），以及请求通了但
+ * 返回 `success:false`（后端拒绝 / 业务错误）。对本地状态来说两者后果完全一样——
+ * 远端数据没拿到，本地就是唯一真相。所以收尾也必须一样：把水合期间攒下的点击
+ * 推回服务端。曾经只有 catch 那条做了，`success:false` 那条静默留在本地，
+ * 用户换台设备打开就发现刚才点的那个智能体没进「你常用的」。
+ */
+describe('agentSwitcherStore: 水合失败的两条路', () => {
+  beforeEach(() => {
+    useAgentSwitcherStore.setState({
+      recentVisits: [],
+      pinnedIds: [],
+      usageCounts: {},
+      serverLoaded: false,
+      serverLoading: false,
+    });
+    useAgentSwitcherStore.getState().resetServerSync();
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  type PrefsResponse = Awaited<ReturnType<typeof getUserPreferences>>;
+
+  /** 水合飞行途中点一下，然后让这次水合以 `settle` 的方式失败 */
+  async function clickDuringHydrationThenFail(settle: (fail: (r: PrefsResponse) => void, reject: (e: Error) => void) => void) {
+    let resolveLoad: (value: PrefsResponse) => void = () => {};
+    let rejectLoad: (err: Error) => void = () => {};
+    vi.mocked(getUserPreferences).mockReturnValue(
+      new Promise<PrefsResponse>((resolve, reject) => { resolveLoad = resolve; rejectLoad = reject; }),
+    );
+
+    const loading = useAgentSwitcherStore.getState().loadFromServer();
+    useAgentSwitcherStore.getState().addRecentVisit({ ...baseVisit, id: 'visual-agent', path: '/visual-agent' });
+    settle(resolveLoad, rejectLoad);
+    await loading;
+
+    // 越过 scheduleSync 的 debounce，让回写真的发生
+    await vi.advanceTimersByTimeAsync(1000);
+  }
+
+  it('success:false 也要把水合期间的点击推回服务端', async () => {
+    await clickDuringHydrationThenFail((fail) => {
+      fail({ success: false, error: { message: '后端拒绝' }, data: null } as unknown as PrefsResponse);
+    });
+
+    expect(
+      vi.mocked(updateAgentSwitcherPreferences),
+      'success:false 分支没回写：那次点击只活在本设备，换台机器就没了',
+    ).toHaveBeenCalled();
+    const pushed = vi.mocked(updateAgentSwitcherPreferences).mock.calls[0][0];
+    expect(pushed.recentVisits?.some((v) => v.id === 'visual-agent')).toBe(true);
+    expect(pushed.usageCounts?.['visual-agent']).toBe(1);
+  });
+
+  it('请求抛错走同样的收尾', async () => {
+    await clickDuringHydrationThenFail((_fail, reject) => { reject(new Error('network down')); });
+
+    expect(vi.mocked(updateAgentSwitcherPreferences)).toHaveBeenCalled();
+    const pushed = vi.mocked(updateAgentSwitcherPreferences).mock.calls[0][0];
+    expect(pushed.usageCounts?.['visual-agent']).toBe(1);
+  });
+
+  it('两条失败路都清空水合队列，下一次水合不会重放旧点击', async () => {
+    await clickDuringHydrationThenFail((fail) => {
+      fail({ success: false, error: { message: '后端拒绝' }, data: null } as unknown as PrefsResponse);
+    });
+    expect(useAgentSwitcherStore.getState().usageCounts['visual-agent']).toBe(1);
+
+    // 队列没清的话，下一次水合会把这次点击再叠一遍到远端计数上
+    vi.mocked(getUserPreferences).mockResolvedValue({
+      success: true,
+      data: { agentSwitcherPreferences: { pinnedIds: [], recentVisits: [], usageCounts: { 'visual-agent': 9 } } },
+    } as unknown as PrefsResponse);
+    useAgentSwitcherStore.setState({ serverLoaded: false, serverLoading: false });
+    await useAgentSwitcherStore.getState().loadFromServer();
+
+    expect(useAgentSwitcherStore.getState().usageCounts['visual-agent'], '旧点击被重放了第二遍').toBe(9);
   });
 });

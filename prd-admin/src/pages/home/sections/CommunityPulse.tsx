@@ -18,13 +18,13 @@ interface StatVisual {
 
 const STAT_VISUALS: Record<string, StatVisual> = {
   active: { Icon: Activity, value: '15', accent: '#34d399' },
-  convos: { Icon: Users, value: '2,341', accent: '#a855f7' },
+  convos: { Icon: Users, value: '2,341', accent: '#C8623A' },
   tokens: { Icon: Zap, value: '4.2M', accent: '#00f0ff' },
   media: { Icon: Flame, value: '387', accent: '#f43f5e' },
 };
 
 const ROW_VISUALS: Record<string, { usage: string; accent: string; rank: number }> = {
-  visual: { usage: '1,247', accent: '#a855f7', rank: 1 },
+  visual: { usage: '1,247', accent: '#C8623A', rank: 1 },
   prd: { usage: '892', accent: '#3b82f6', rank: 2 },
   literary: { usage: '654', accent: '#fb923c', rank: 3 },
   defect: { usage: '523', accent: '#10b981', rank: 4 },
@@ -165,22 +165,22 @@ function LeaderboardCard({
       className="relative p-5 rounded-lg border overflow-hidden h-full"
       style={{
         background: 'rgba(10, 10, 25, 0.45)',
-        borderColor: 'rgba(168, 85, 247, 0.25)',
+        borderColor: 'rgba(200, 98, 58, 0.25)',
         boxShadow:
-          'inset 0 0 32px rgba(168, 85, 247, 0.06), 0 0 48px -16px rgba(168, 85, 247, 0.5)',
+          'inset 0 0 32px rgba(200, 98, 58, 0.06), 0 0 48px -16px rgba(200, 98, 58, 0.5)',
       }}
     >
       <div
         className="absolute top-0 left-0 right-0 h-px"
         style={{
           background:
-            'linear-gradient(90deg, transparent 0%, rgba(168, 85, 247, 0.8) 50%, transparent 100%)',
+            'linear-gradient(90deg, transparent 0%, rgba(200, 98, 58, 0.8) 50%, transparent 100%)',
         }}
       />
       <div className="flex items-center gap-2 mb-5">
-        <Trophy className="w-4 h-4 text-purple-300" />
+        <Trophy className="w-4 h-4 text-[#E0A06B]" />
         <div
-          className="text-[11px] text-purple-200 uppercase"
+          className="text-[11px] text-[#EEC4A5] uppercase"
           style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.18em' }}
         >
           {title}

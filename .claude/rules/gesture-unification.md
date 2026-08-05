@@ -1,3 +1,9 @@
+---
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-desktop/src/**/*.tsx"
+---
+
 # 画布手势统一原则（Gesture Unification）
 
 **一句话**：所有能平移缩放的 2D 画布共用一套手势：两指拖动平移、捏合或 Ctrl 加滚轮缩放、双击不缩放。

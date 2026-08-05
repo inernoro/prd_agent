@@ -1,14 +1,17 @@
 ---
-globs: prd-api/src/**/Enums/**/*.cs,prd-admin/src/types/**/*.ts,prd-desktop/src/types/**/*.ts
+globs: prd-api/src/**/Enums.cs,prd-api/src/**/Models/**/*.cs,prd-admin/src/types/**/*.ts,prd-admin/src/lib/**/*.ts,prd-admin/src/pages/**/*.tsx,prd-desktop/src/types/**/*.ts
 description: 枚举/常量扩展涟漪审计：全栈 6 层同步
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/enum-ripple-audit.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-08-04T11:22:36Z -->
 
 
 # 枚举/常量扩展涟漪审计
+
+**一句话**：枚举或常量注册表成员一变，必须按六层涟漪全栈审一遍：类型定义、映射表、硬编码列表、序列化、Mock、文档。
+**什么时候撞上**：给枚举、联合类型、常量注册表增删成员。
 
 当枚举（enum）、联合类型（union type）、常量注册表（registry/map）的成员数量发生变化时，必须全栈审计所有消费点，防止遗漏。
 

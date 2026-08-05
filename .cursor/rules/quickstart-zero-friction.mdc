@@ -4,9 +4,13 @@ description: 编写 init/quickstart/setup 脚本或 Dockerfile 时阅读
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/quickstart-zero-friction.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-08-04T11:22:36Z -->
+
 
 # 快速启动零摩擦原则（Quickstart Zero-Friction）
+
+**一句话**：启动脚本要大包大揽：一条命令检查并交互式安装依赖，装不了的给可复制的平台命令，不让用户先装 A 再装 B。
+**什么时候撞上**：写或重构任何入口脚本（init / quick / setup / Dockerfile）。
 
 > **核心主张**：任何系统的快速启动必须**大包大揽**。假设使用者是一个从没见过这个项目的小白——他只知道"跑一条命令能让系统启动"。
 
@@ -28,8 +32,8 @@ description: 编写 init/quickstart/setup 脚本或 Dockerfile 时阅读
 
 入口脚本的 `init` / `start` / `setup` 子命令必须包含依赖检查阶段，每一项依赖：
 
-- **✅ 已安装**：打印版本号，继续
-- **❌ 未安装**：
+- **已安装**：打印版本号，继续
+- **未安装**：
   1. 先问用户 `[Y/n]` 是否允许自动安装
   2. 用户同意 → 尝试最标准的安装命令（见下方表格）
   3. 安装成功 → 继续
@@ -40,14 +44,14 @@ description: 编写 init/quickstart/setup 脚本或 Dockerfile 时阅读
 
 如果 B 的启动依赖 A 已经跑起来（如 nginx 依赖 CDS 已在 9900 端口监听），脚本必须**自己处理依赖顺序**，不要让用户分两步执行。
 
-反例 ❌：
+反例：
 ```
 ./exec_cds.sh build
 ./exec_cds.sh nginx-render
 ./exec_cds.sh start
 ```
 
-正例 ✅：
+正例：
 ```
 ./exec_cds.sh start   # 一条命令包办 build + nginx + start
 ```
@@ -56,13 +60,13 @@ description: 编写 init/quickstart/setup 脚本或 Dockerfile 时阅读
 
 任何命令检测到 `.cds.env` / `config.json` / `.env` 缺失时，**主动建议跑 `init`**，不要让用户猜测。更进一步：可以直接内联调用 init 流程，让用户在当前命令里一次性走完配置。
 
-反例 ❌：
+反例：
 ```
 $ ./exec_cds.sh start
 ERROR: CDS_ROOT_DOMAINS not configured
 ```
 
-正例 ✅：
+正例：
 ```
 $ ./exec_cds.sh start
 [INFO] 未找到 .cds.env，是否立即进入初始化向导? [Y/n]: Y
@@ -150,11 +154,11 @@ $ ./exec_cds.sh start
 $ ./exec_cds.sh init
 欢迎使用 CDS
 正在检查依赖 ...
-  ✅ Node.js v20.11.1
-  ❌ pnpm 未安装
+  [有] Node.js v20.11.1
+  [缺] pnpm 未安装
   我可以帮你装，只需要你点一下 Y。方式: npm install -g pnpm [Y/n]: Y
-  ✅ pnpm v9.15.0
-  ❌ Docker 未安装  
+  [有] pnpm v9.15.0
+  [缺] Docker 未安装  
   我不能自动装 Docker (需要 sudo + 修改用户组)，但给你准确的命令:
     Ubuntu:  curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER
     Mac:     brew install --cask docker
@@ -176,7 +180,7 @@ $ ./exec_cds.sh init
 
 ## 反面案例
 
-### ❌ 反例 1：报错退出
+### 反例 1：报错退出
 
 ```bash
 check_deps() {
@@ -190,7 +194,7 @@ check_deps() {
 - 没问用户要不要自动装
 - 没区分半自动和手动情况
 
-### ❌ 反例 2：README 里写"先装 A 再装 B"
+### 反例 2：README 里写"先装 A 再装 B"
 
 ```markdown
 # 使用前提
@@ -206,7 +210,7 @@ check_deps() {
 - 每一步都可能出错无反馈
 - 违背"唯一入口"原则
 
-### ❌ 反例 3：一次只报一个错
+### 反例 3：一次只报一个错
 
 ```bash
 check_node || exit 1     # 用户装完 node
@@ -218,7 +222,7 @@ check_docker || exit 1   # 再来一次发现缺 docker
 
 ---
 
-## ✅ 正面示范
+## 正面示范
 
 参见 `cds/exec_cds.sh` 的 `check_deps()` + `init` 实现（本原则落地的首个范例）。
 
