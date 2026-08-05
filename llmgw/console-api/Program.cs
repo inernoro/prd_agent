@@ -10925,7 +10925,7 @@ static async Task<ImageLayeringCapabilityStatus> BuildImageLayeringCapabilitySta
             fb.Eq("PublicIdNormalized", FalImageLayeringProvisioning.CapabilityId)))
         .FirstOrDefaultAsync(ct);
 
-    var hasKey = exchange?.AsNullableString("TargetApiKeyEncrypted") is { Length: > 0 };
+    var hasKey = ImageLayeringCapabilityRules.HasKey(exchange);
     var exchangeId = exchange?.GetStringOrEmpty("_id");
     var logicalModelId = logicalModel?.GetStringOrEmpty("_id");
     var offering = string.IsNullOrWhiteSpace(logicalModelId)
@@ -10939,10 +10939,11 @@ static async Task<ImageLayeringCapabilityStatus> BuildImageLayeringCapabilitySta
                 fb.Ne("Enabled", false)))
             .FirstOrDefaultAsync(ct);
     var offeringId = offering?.GetStringOrEmpty("_id");
-    var installed = hasKey
-                    && exchange is not null
-                    && logicalModel?.AsNullableBool("Enabled") != false
-                    && offering is not null;
+    // 注意：上面查 exchange / logicalModel 时刻意不带 Enabled 过滤——禁用的配置仍要被查出来，
+    // 这样 state 落到 incomplete（而不是 not-installed）、ExchangeId 也照常返回，前端能跳过去重新启用。
+    // 「能不能真跑」的判断收在 IsInstalled 里，与 ModelResolver 的解析条件对齐。
+    var installed = ImageLayeringCapabilityRules.IsInstalled(
+        exchange, logicalModel, offering, FalImageLayeringProvisioning.ModelId);
 
     BsonDocument? verifiedLog = null;
     if (installed)
@@ -10952,7 +10953,7 @@ static async Task<ImageLayeringCapabilityStatus> BuildImageLayeringCapabilitySta
             fb.Eq("LogicalModelPublicId", FalImageLayeringProvisioning.CapabilityId),
             fb.Gte("StatusCode", 200),
             fb.Lt("StatusCode", 300),
-            fb.Eq("ActualModel", FalImageLayeringProvisioning.ModelId),
+            fb.Eq(ImageLayeringCapabilityRules.UpstreamModelLogField, FalImageLayeringProvisioning.ModelId),
             fb.Gt("ImageSuccessCount", 0));
         verifiedLog = await requestLogs.Find(successFilter)
             .Sort(Builders<BsonDocument>.Sort.Descending("EndedAt").Descending("CreatedAt"))

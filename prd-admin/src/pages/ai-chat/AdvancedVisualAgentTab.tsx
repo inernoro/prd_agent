@@ -73,7 +73,7 @@ import {
   decomposeImageToLayers,
   downloadLayeredPsd,
 } from '@/lib/layeredPsd';
-import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame } from '@/lib/semanticLayerFrame';
+import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
@@ -2578,11 +2578,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }) => {
     const item = canvasRef.current.find((candidate) => candidate.key === input.key);
     const groupId = String(item?.layerGroupId ?? '').trim();
-    const cachedLayers = groupId
-      ? canvasRef.current
-          .filter((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'layer' && candidate.src)
-          .sort((a, b) => (a.layerIndex ?? 0) - (b.layerIndex ?? 0))
-      : [];
+    // 同一 layerIndex 可能并存「原始图层」和「快捷编辑后的新版本」，只导出最新那版。
+    const cachedLayers = selectExportableLayers(canvasRef.current, groupId);
     const cachedSource = groupId
       ? canvasRef.current.find((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'source')
       : item;
@@ -4741,6 +4738,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           h: genH,
           x: newX,
           y: newY,
+          // 编辑的是某个 AI 分层图层时，产物必须继承同一层的归属，
+          // 否则它在画布上看得见、Frame 导出 PSD 时却只认原始图层（编辑结果静默丢失）。
+          // 不摘除原图层：同 layerIndex 两版并存，由 selectExportableLayers 取最新，
+          // 这样生成还在跑或失败时（src 为空）导出会自动回落到原图层。
+          ...(sourceItem.layerRole === 'layer' && sourceItem.layerGroupId
+            ? {
+                layerGroupId: sourceItem.layerGroupId,
+                layerSourceKey: sourceItem.layerSourceKey,
+                layerIndex: sourceItem.layerIndex,
+                layerRole: 'layer' as const,
+              }
+            : {}),
         };
         return [...prev, placeholder].slice(-60);
       });

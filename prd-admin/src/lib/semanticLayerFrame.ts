@@ -16,6 +16,12 @@ export type SemanticLayerCanvasItem = SemanticLayerMetadata & {
   h?: number;
 };
 
+export type ExportableLayerCandidate = SemanticLayerMetadata & {
+  key: string;
+  src?: string;
+  createdAt?: number;
+};
+
 export type SemanticLayerPlacement = {
   x: number;
   y: number;
@@ -115,6 +121,39 @@ export function planSemanticLayerFrame(
     frame: { x: frameX, y: frameY, w: frameW, h: frameH },
     placements,
   };
+}
+
+/**
+ * 选出某个分层组里应该进 PSD 的图层：同一个 layerIndex 只保留最新的一版。
+ *
+ * 对某个图层做快捷编辑会产出一个继承同一 layerIndex 的新图层，画布上两版并存。
+ * 导出必须取最新那版，否则「编辑完了导出的还是编辑前那张」——编辑在画布上看得见、
+ * 在 PSD 里却消失。反过来，编辑还在跑或者失败时产物 src 为空、会被这里滤掉，
+ * 导出自动回落到原图层，不会导出一张空层。
+ *
+ * layerIndex 缺失时按 key 各成一桶，避免把两个无序号的图层误合并成一层。
+ */
+export function selectExportableLayers<T extends ExportableLayerCandidate>(
+  items: readonly T[],
+  groupId: string,
+): T[] {
+  const normalizedGroupId = String(groupId ?? '').trim();
+  if (!normalizedGroupId) return [];
+
+  const latestPerIndex = new Map<string, T>();
+  for (const item of items) {
+    if (String(item.layerGroupId ?? '').trim() !== normalizedGroupId) continue;
+    if (item.layerRole !== 'layer') continue;
+    if (!item.src) continue;
+
+    const bucket = typeof item.layerIndex === 'number' ? `#${item.layerIndex}` : `key:${item.key}`;
+    const current = latestPerIndex.get(bucket);
+    if (!current || (item.createdAt ?? 0) >= (current.createdAt ?? 0)) {
+      latestPerIndex.set(bucket, item);
+    }
+  }
+
+  return [...latestPerIndex.values()].sort((a, b) => (a.layerIndex ?? 0) - (b.layerIndex ?? 0));
 }
 
 /** 根据可独立移动的图层重新计算 Frame 边界，刷新后也能恢复。 */

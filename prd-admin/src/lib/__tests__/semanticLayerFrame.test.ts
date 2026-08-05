@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame } from '@/lib/semanticLayerFrame';
+import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
 
 describe('semantic layer frame', () => {
   it('places layer cards near the source while preserving its aspect ratio', () => {
@@ -40,5 +40,50 @@ describe('semantic layer frame', () => {
       elementRight: 640,
       currentShift: -80,
     })).toBe(0);
+  });
+});
+
+describe('selectExportableLayers', () => {
+  const base = [
+    { key: 'source', layerGroupId: 'g1', layerRole: 'source' as const, src: 'src.png', createdAt: 1 },
+    { key: 'l1', layerGroupId: 'g1', layerRole: 'layer' as const, layerIndex: 1, src: 'l1.png', createdAt: 10 },
+    { key: 'l2', layerGroupId: 'g1', layerRole: 'layer' as const, layerIndex: 2, src: 'l2.png', createdAt: 11 },
+  ];
+
+  it('exports every layer once, ordered by index', () => {
+    expect(selectExportableLayers(base, 'g1').map((item) => item.key)).toEqual(['l1', 'l2']);
+  });
+
+  it('exports the quick-edited version instead of the layer it replaced', () => {
+    // 编辑产物继承同一 layerIndex；不取最新那版的话，编辑在画布上看得见、PSD 里却是编辑前的图。
+    const edited = [...base, {
+      key: 'qa_1', layerGroupId: 'g1', layerRole: 'layer' as const, layerIndex: 1, src: 'edited.png', createdAt: 99,
+    }];
+    const exported = selectExportableLayers(edited, 'g1');
+    expect(exported.map((item) => item.key)).toEqual(['qa_1', 'l2']);
+  });
+
+  it('falls back to the original layer while an edit is still running or has failed', () => {
+    // 生成中/失败的产物 src 为空，不能顶替掉原图层导出一张空层。
+    const pending = [...base, {
+      key: 'qa_1', layerGroupId: 'g1', layerRole: 'layer' as const, layerIndex: 1, src: '', createdAt: 99,
+    }];
+    expect(selectExportableLayers(pending, 'g1').map((item) => item.key)).toEqual(['l1', 'l2']);
+  });
+
+  it('ignores other groups, the source image, and unrelated items', () => {
+    const mixed = [...base, {
+      key: 'other', layerGroupId: 'g2', layerRole: 'layer' as const, layerIndex: 1, src: 'x.png', createdAt: 50,
+    }];
+    expect(selectExportableLayers(mixed, 'g1').map((item) => item.key)).toEqual(['l1', 'l2']);
+    expect(selectExportableLayers(mixed, '')).toEqual([]);
+  });
+
+  it('keeps index-less layers separate instead of collapsing them into one', () => {
+    const unnumbered = [
+      { key: 'a', layerGroupId: 'g1', layerRole: 'layer' as const, src: 'a.png', createdAt: 1 },
+      { key: 'b', layerGroupId: 'g1', layerRole: 'layer' as const, src: 'b.png', createdAt: 2 },
+    ];
+    expect(selectExportableLayers(unnumbered, 'g1')).toHaveLength(2);
   });
 });
