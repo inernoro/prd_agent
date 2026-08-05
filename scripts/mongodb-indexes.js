@@ -230,6 +230,13 @@ db.llmrequestlogs.createIndex({ "SessionId": 1 })
 db.llmrequestlogs.createIndex({ "Provider": 1, "Model": 1 })
 db.llmrequestlogs.createIndex({ "EndedAt": 1 })
 
+// collection: behavior_events
+// 采用度端点（GET /api/executive/adoption）按窗口 + 路由列表查这张表，并取最早一条当采集起点。
+// 这是每次路由跳转都写的高频表：无索引时那两条查询是全表扫 + 内存排序，
+// 量大后会撞上 Mongo 32MB 排序上限直接抛错。
+db.behavior_events.createIndex({ "OccurredAt": 1 })
+db.behavior_events.createIndex({ "Route": 1, "OccurredAt": 1 })
+
 // collection: apirequestlogs
 db.apirequestlogs.createIndex({ "StartedAt": -1 })
 db.apirequestlogs.createIndex({ "RequestId": 1 })

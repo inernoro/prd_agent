@@ -327,6 +327,7 @@ export const api = {
     agents: () => '/api/executive/agents',
     models: () => '/api/executive/models',
     leaderboard: () => '/api/executive/leaderboard',
+    teamInsights: () => '/api/executive/team-insights',
   },
 
   // ============ Profile 自服务 ============

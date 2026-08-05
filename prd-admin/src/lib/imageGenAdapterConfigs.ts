@@ -8,7 +8,7 @@ export type AdapterConfig = {
   modelIdPattern: string;
   displayName: string;
   provider: string;
-  sizeConstraintType: 'whitelist' | 'range' | 'aspect_ratio';
+  sizeConstraintType: 'whitelist' | 'range' | 'aspect_ratio' | 'adaptive';
   allowedRatios: string[];
   notes: string[];
 };
@@ -64,6 +64,14 @@ export const IMAGE_GEN_ADAPTER_CONFIGS: AdapterConfig[] = [
     sizeConstraintType: 'aspect_ratio',
     allowedRatios: ['1:1', '9:16', '16:9', '3:4', '4:3', '2:3', '3:2'],
     notes: ['通过 aspect_ratio 和 resolution 参数控制尺寸'],
+  },
+  {
+    modelIdPattern: 'fal-qwen-image-layered*',
+    displayName: 'Qwen Image Layered',
+    provider: 'fal.ai',
+    sizeConstraintType: 'adaptive',
+    allowedRatios: [],
+    notes: ['输出继承输入图片尺寸', '专用于语义分层，不进入普通生图选择'],
   },
   {
     modelIdPattern: 'qwen-image*',

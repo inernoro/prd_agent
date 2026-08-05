@@ -7,8 +7,10 @@ git 只能回答「改了什么代码」，回答不了老板/产品经理真正
   2. 做完的东西验没验、验没验过（-> CDS 验收中心的 verdict）
   3. 质量在变好还是变差（-> 缺陷台账）
   4. 有没有真的发到线上（-> CDS 正式发布台账 /api/releases/runs，注意不是分支部署版本）
+  5. 谁在做、团队健不健康、AI 花了多少钱（-> MAP 团队洞察 /api/executive/team-insights）
+  6. 前几周说上线的能力，这一周到底有没有人用（-> /api/executive/adoption + 周报里的用量口径标签）
 
-本脚本把这四类「非 git 事实」按周聚合成一份 JSON，供周报正文引用。
+本脚本把这六类「非 git 事实」按周聚合成一份 JSON，供周报正文引用。
 所有来源都独立降级：任一来源不可达只把该段标 available=false，绝不让整份周报生不出来。
 
 用法：
@@ -339,6 +341,118 @@ def collect_defects(base, H, start, end):
     }
 
 
+# ── 来源 5：团队与用量（谁在做 / 团队健不健康 / AI 花了多少钱） ────────────
+# 前四源全是交付侧事实：做了什么、验没验、发没发、每天忙什么。
+# 「谁做的」「团队健康吗」「AI 成本多少」四源一个都答不上——那半边事实在 MAP 的团队洞察里。
+# 注意时间窗：这里必须传 from/to 精确区间，不能用 days 滚动窗。周一跑上周的周报时，
+# 滚动窗会把本周的数据一起卷进去，直接违反纪律 1。
+def collect_team_insights(base, H, start, end):
+    q = f"from={_urlquote(start)}&to={_urlquote(end)}"
+    res = _curl(H + [f"{base}/api/executive/team-insights?{q}"])
+    if not res.get("success"):
+        err = (res.get("error") or {}).get("message") or "success=false"
+        return {"available": False, "reason": f"团队洞察端点不可用：{err}"}
+    d = res.get("data") or {}
+    meta = d.get("meta") or {}
+    # 成本拿不到时**不许写成 0**：0 元和「模型组没配单价所以算不出来」是两件事，
+    # 混写等于用一句确定的假话替换一个诚实的空白（同 releases 段的 available/0 之别）。
+    return {
+        "available": True,
+        "headline": d.get("headline"),
+        "pulse": d.get("pulse"),
+        "attention": d.get("attention"),
+        "members": d.get("members"),
+        "flow": d.get("flow"),
+        "meta": meta,
+        "costAvailable": bool(meta.get("costAvailable")),
+        "note": "窗口与本周 ISO 周严格对齐（from/to 精确区间）；缺陷积压为此刻快照，不随窗口回溯，详见 meta.sources",
+    }
+
+
+# ── 来源 6：上线 → 采用（前几周说上线的能力，这一周有没有人用） ────────────
+# 只认周报能力条目里那一行机器可读的「用量口径」标签。没有标签的周次一律进 unlabeled，
+# 报「无标签」而不是报 0 —— 把「没测」讲成「没人用」是最恶劣的一种假结论。
+_TOKEN_LINE_RE = re.compile(r"\*\*用量口径\*\*\s*[：:]\s*(.+)")
+_TITLE_RE = re.compile(r"^#{2,4}\s+(?:\d+[.、]\s*)?(.+?)\s*$")
+
+
+def _week_label(iso_date, weeks_back):
+    import datetime as dt
+    d = dt.date.fromisoformat(iso_date) - dt.timedelta(days=7 * weeks_back)
+    y, w, _ = d.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def _parse_capability_tokens(path):
+    """从一份周报底稿里抽出 [(能力标题, [token…])]。抽不到返回空列表。"""
+    out, title = [], ""
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        m = _TITLE_RE.match(line)
+        if m:
+            title = m.group(1).strip()
+            continue
+        m = _TOKEN_LINE_RE.search(line)
+        if not m:
+            continue
+        body = m.group(1)
+        toks = re.findall(r"`([^`]+)`", body)
+        if not toks:
+            toks = [t for t in body.replace("、", " ").split() if ":" in t]
+        if toks:
+            out.append({"title": title or "（未命名能力）", "tokens": toks})
+    return out
+
+
+def collect_adoption(base, H, start, end, doc_dir, lookback_weeks):
+    entries, unlabeled = [], []
+    for back in range(1, lookback_weeks + 1):
+        label = _week_label(start, back)
+        path = os.path.join(doc_dir, f"report.{label}.md")
+        if not os.path.exists(path):
+            continue
+        caps = _parse_capability_tokens(path)
+        if not caps:
+            unlabeled.append(label)
+            continue
+        for c in caps:
+            entries.append({"week": label, "title": c["title"], "tokens": c["tokens"]})
+
+    if not entries:
+        return {
+            "available": False,
+            "reason": "回溯窗口内没有任何一份周报带「用量口径」标签，无法度量采用度",
+            "unlabeledWeeks": unlabeled,
+            "lookbackWeeks": lookback_weeks,
+        }
+
+    all_tokens = sorted({t for e in entries for t in e["tokens"]})
+    q = f"tokens={_urlquote(','.join(all_tokens))}&from={_urlquote(start)}&to={_urlquote(end)}"
+    res = _curl(H + [f"{base}/api/executive/adoption?{q}"])
+    if not res.get("success"):
+        err = (res.get("error") or {}).get("message") or "success=false"
+        return {"available": False, "reason": f"采用度端点不可用：{err}", "unlabeledWeeks": unlabeled}
+
+    d = res.get("data") or {}
+    by_token = {i["token"]: i for i in (d.get("items") or [])}
+    for e in entries:
+        e["measurements"] = [by_token.get(t, {"token": t, "status": "unknown-key",
+                                              "note": "端点未返回该 token"}) for t in e["tokens"]]
+    return {
+        "available": True,
+        "lookbackWeeks": lookback_weeks,
+        "entries": entries,
+        "summary": d.get("summary") or {},
+        "behaviorCollectedFrom": d.get("behaviorCollectedFrom"),
+        # 没有标签的周次必须显式列出。它们不是「采用率 0」，是「这几周还没开始标」。
+        "unlabeledWeeks": unlabeled,
+        "note": "度量的是「前几周周报声明上线的能力，在本周的用量」；status 五态见端点说明",
+    }
+
+
 # ── 来源 4：线上发布（正式发布台账，回答「有没有真的发出去」） ────────────
 # 注意：不能用 deployment-version。任何分支部署成功后 CDS 都会生成不可变部署版本
 # （cds/src/routes/branches.ts 的 version-create），分支预览也算在内——拿它当
@@ -603,6 +717,9 @@ def main():
     p.add_argument("--project", default="prd-agent")
     p.add_argument("--prev-week-hint", default="", help="上周周报标题片段，如 2026-W29")
     p.add_argument("--deeplinks", action="store_true", help="逐条取验收报告 CDS 深链（慢）")
+    p.add_argument("--doc-dir", default="doc", help="周报底稿所在目录，采用度回溯要读它")
+    p.add_argument("--adoption-lookback", type=int, default=4,
+                   help="上线→采用回溯几周（默认 4：本周之前的 4 份周报）")
     p.add_argument("--out", default="")
     p.add_argument("--human", action="store_true")
     a = p.parse_args()
@@ -620,6 +737,8 @@ def main():
         ("dailyReports", lambda: collect_daily_reports(base, H, start, end)),
         ("defects",      lambda: collect_defects(base, H, start, end)),
         ("prevWeekly",   lambda: collect_prev_weekly(base, H, a.prev_week_hint)),
+        ("teamInsights", lambda: collect_team_insights(base, H, start, end)),
+        ("adoption",     lambda: collect_adoption(base, H, start, end, a.doc_dir, a.adoption_lookback)),
     ]:
         if H is None:
             ctx[name] = {"available": False, "reason": "MAP 鉴权缺失"}

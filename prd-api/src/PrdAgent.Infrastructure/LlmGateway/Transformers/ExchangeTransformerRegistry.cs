@@ -19,6 +19,7 @@ public class ExchangeTransformerRegistry
         Register(falImage);
         // 向后兼容：旧类型名 fal-image-edit 也指向同一个转换器
         _transformers["fal-image-edit"] = falImage;
+        Register(new FalImageLayeredTransformer());
 
         Register(new DoubaoAsrTransformer());
         Register(new DoubaoStreamAsrTransformer());

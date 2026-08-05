@@ -395,6 +395,33 @@ public static class ImageGenModelConfigs
             SupportsInpainting = true,
         },
 
+        // ===== fal.ai Qwen Image Layered（必须排在 qwen-image* 之前）=====
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "fal-qwen-image-layered*",
+            DisplayName = "Qwen Image Layered",
+            Provider = "fal.ai",
+            LastUpdated = "2026-08-04",
+            SizeConstraintType = SizeConstraintTypes.Adaptive,
+            SizeConstraintDescription = "输出图层继承输入图片画布尺寸，不接受普通生图尺寸选择",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new(),
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.None,
+            SizesNotApplicable = true,
+            Notes = new List<string>
+            {
+                "专用于图片语义分层，不进入普通文生图模型选择",
+                "返回 1–10 个保持原始坐标系的 RGBA 图层",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+            SupportsResponseFormat = false,
+        },
+
         // ===== 通义万相 qwen-image =====
         new ImageGenModelAdapterConfig
         {

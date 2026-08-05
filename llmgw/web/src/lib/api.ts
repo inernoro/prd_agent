@@ -59,6 +59,7 @@ import type {
   ExchangesData,
   ExchangeItem,
   ExchangeMetaData,
+  ImageLayeringCapabilityStatus,
   CreateExchangeRequest,
   UpdateExchangeRequest,
   UpsertPoolModelRequest,
@@ -607,6 +608,15 @@ export function getParameterCapabilitiesMeta(): Promise<ApiResponse<ParameterCap
 export function getExchanges(params?: { enabled?: boolean }): Promise<ApiResponse<ExchangesData>> {
   return apiRequest<ExchangesData>('/exchanges', {
     query: { enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
+  });
+}
+export function getImageLayeringCapability(): Promise<ApiResponse<ImageLayeringCapabilityStatus>> {
+  return apiRequest<ImageLayeringCapabilityStatus>('/capabilities/image-layering');
+}
+export function installImageLayeringCapability(apiKey: string): Promise<ApiResponse<ImageLayeringCapabilityStatus>> {
+  return apiRequest<ImageLayeringCapabilityStatus>('/capabilities/image-layering/install', {
+    method: 'POST',
+    body: { apiKey },
   });
 }
 export function getKeyHealth(): Promise<ApiResponse<KeyHealthData>> {

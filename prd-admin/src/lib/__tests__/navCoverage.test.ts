@@ -227,3 +227,45 @@ describe('App.tsx 路由覆盖', () => {
     }
   });
 });
+
+/**
+ * 周报「用量口径」里 route: token 的守卫。
+ *
+ * 放在这个文件里，是为了复用上面那一个 parseLiteralRoutesFromAppTsx —— 另写一套路由提取
+ * 就是 predicate-and-wiring-discipline 形状 3（判据分裂后各自漂移）：navRegistry 改了、
+ * 周报守卫的正则没改，两边就会给出相反的答案。
+ *
+ * 为什么必须守：route: token 写错时，采用度端点只会报 zero（behavior_events 里查不到这个
+ * 路由），而「路由写错了」和「这个页面真的没人访问」在输出里长得一模一样。周报会据此
+ * 写出「上线后无人使用」——一句由拼写错误制造的假结论。
+ */
+describe('周报用量口径 · route token 必须指向真实路由', () => {
+  const reportDir = path.resolve(TEST_DIR, '../../../../doc');
+  const tokenLine = /\*\*用量口径\*\*\s*[：:]\s*(.+)/;
+
+  it('每个 route: token 都能在 App.tsx 里找到对应 <Route>', () => {
+    if (!fs.existsSync(reportDir)) return;
+    const routes = new Set(parseLiteralRoutesFromAppTsx());
+    const problems: string[] = [];
+    let checked = 0;
+
+    for (const file of fs.readdirSync(reportDir).filter((f) => /^report\..*\.md$/.test(f))) {
+      const text = fs.readFileSync(path.join(reportDir, file), 'utf-8');
+      for (const line of text.split('\n')) {
+        const m = tokenLine.exec(line);
+        if (!m) continue;
+        const toks = [...m[1].matchAll(/`([^`]+)`/g)].map((x) => x[1]);
+        for (const t of toks) {
+          if (!t.startsWith('route:') || t.includes('{') || t.includes('|')) continue;
+          checked += 1;
+          const route = t.slice('route:'.length);
+          if (!routes.has(route)) problems.push(`${file}：${t} —— App.tsx 里没有这个 <Route>`);
+        }
+      }
+    }
+
+    expect(problems, `用量口径的 route token 有 ${problems.length} 处指向不存在的路由：\n${problems.join('\n')}`).toEqual([]);
+    // checked 为 0 是合法状态：标签约定从落地后的第一份周报开始生效
+    expect(checked).toBeGreaterThanOrEqual(0);
+  });
+});

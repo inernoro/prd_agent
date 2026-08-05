@@ -24,6 +24,7 @@ jobs:
       cds: ${{ steps.filter.outputs.cds }}
       docs: ${{ steps.filter.outputs.docs }}
       release_scripts: ${{ steps.filter.outputs.release_scripts }}
+      acceptance_report: ${{ steps.filter.outputs.acceptance_report }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +36,10 @@ jobs:
           filters: |
             server:
               - 'prd-api/**'
+              # 用量口径守卫（AdoptionTokenGuardTests / navCoverage 里的 route token 套件）读的是
+              # 周报底稿。不登记的话，「只写一份周报、标签写错一个字」的 PR 会整个跳过这道闸——
+              # 而那正是它要防的场景（形状 7：守卫自己没接上线）。
+              - 'doc/report.*.md'
               # GatewayDataDomainGuardTests 直接读取 llmgw/web 源码并校验跨模块产品契约。
               - 'llmgw/web/**'
               - 'llmgw/serving/**'
@@ -49,6 +54,10 @@ jobs:
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
+              # 用量口径守卫（AdoptionTokenGuardTests / navCoverage 里的 route token 套件）读的是
+              # 周报底稿。不登记的话，「只写一份周报、标签写错一个字」的 PR 会整个跳过这道闸——
+              # 而那正是它要防的场景（形状 7：守卫自己没接上线）。
+              - 'doc/report.*.md'
               - 'e2e/**'
               - '.github/workflows/ci.yml'
             desktop:
@@ -112,6 +121,23 @@ jobs:
               - 'scripts/tests/validate-static-dist.test.sh'
               - 'scripts/validate-static-dist.sh'
               - 'deploy/nginx/**'
+              - '.github/workflows/ci.yml'
+            acceptance_report:
+              # 验收报告的归档门禁（结论语义分层 + 给你的一页结论 + HTML 模板契约）。
+              # 这两个守卫此前躺在仓库里没有任何 workflow 引用，只有人手动跑才会红
+              # （predicate-and-wiring-discipline 形状 7：守卫自己没接上线）。
+              # 被守文件与守卫本身一起登记，只改规则/模板的 PR 也必须跑过这道闸。
+              - 'scripts/test-acceptance-archive-report-gates.py'
+              - 'scripts/check-acceptance-rule-ssot.py'
+              - 'scripts/sync-acceptance-rule-snapshots.py'
+              - '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py'
+              - '.claude/skills/create-visual-test-to-kb/scripts/test_archive_report_verdict_contract.py'
+              - '.claude/skills/create-visual-test-to-kb/reference/**'
+              - '.claude/skills/create-visual-test-to-kb/templates/**'
+              - '.claude/skills/*/references/rules/**'
+              - 'doc/rule.acceptance.*.md'
+              - 'doc/guide.acceptance.*.md'
+              - 'doc/design.acceptance.knowledge-governance.md'
               - '.github/workflows/ci.yml'
 
   docs-readability:
@@ -207,6 +233,24 @@ jobs:
             echo "--- $t"
             python3 "$t"
           done
+
+  acceptance-report-gate:
+    name: Acceptance Report Gate
+    needs: changes
+    if: needs.changes.outputs.acceptance_report == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Acceptance rule SSOT wiring
+        run: python3 scripts/check-acceptance-rule-ssot.py
+
+      - name: Archive report gates
+        run: python3 scripts/test-acceptance-archive-report-gates.py
+
+      - name: Daily verdict and plain-summary contract
+        run: python3 .claude/skills/create-visual-test-to-kb/scripts/test_archive_report_verdict_contract.py
 
   # 后端服务构建和测试
   server-build:
@@ -608,7 +652,7 @@ jobs:
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [changes, server-build, admin-build, desktop-check, cds-build, docs-readability]
+    needs: [changes, server-build, admin-build, desktop-check, cds-build, docs-readability, acceptance-report-gate]
     if: always()
     steps:
       - name: Check CI status
@@ -619,6 +663,7 @@ jobs:
           echo "  Desktop: ${{ needs.changes.outputs.desktop }}"
           echo "  CDS: ${{ needs.changes.outputs.cds }}"
           echo "  Docs: ${{ needs.changes.outputs.docs }}"
+          echo "  Acceptance report: ${{ needs.changes.outputs.acceptance_report }}"
 
           # main push 是发布线,所有关键 job 都必须成功。
           # PR/develop 仍只要求本次改动涉及的模块成功。
@@ -628,6 +673,7 @@ jobs:
           desktop_required="${{ needs.changes.outputs.desktop == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
           cds_required="${{ needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
           docs_required="${{ needs.changes.outputs.docs == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
+          acceptance_required="${{ needs.changes.outputs.acceptance_report == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
 
           echo "Main push: $main_push"
           echo "Required jobs:"
@@ -636,14 +682,16 @@ jobs:
           echo "  Desktop: $desktop_required"
           echo "  CDS: $cds_required"
           echo "  Docs: $docs_required"
+          echo "  Acceptance report: $acceptance_required"
 
           server_ok="$([[ "$server_required" != "true" || "${{ needs.server-build.result }}" == "success" ]] && echo true || echo false)"
           admin_ok="$([[ "$admin_required" != "true" || "${{ needs.admin-build.result }}" == "success" ]] && echo true || echo false)"
           desktop_ok="$([[ "$desktop_required" != "true" || "${{ needs.desktop-check.result }}" == "success" ]] && echo true || echo false)"
           cds_ok="$([[ "$cds_required" != "true" || "${{ needs.cds-build.result }}" == "success" ]] && echo true || echo false)"
           docs_ok="$([[ "$docs_required" != "true" || "${{ needs.docs-readability.result }}" == "success" ]] && echo true || echo false)"
+          acceptance_ok="$([[ "$acceptance_required" != "true" || "${{ needs.acceptance-report-gate.result }}" == "success" ]] && echo true || echo false)"
 
-          if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" && "$cds_ok" == "true" && "$docs_ok" == "true" ]]; then
+          if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" && "$cds_ok" == "true" && "$docs_ok" == "true" && "$acceptance_ok" == "true" ]]; then
             echo "All required checks passed!"
             exit 0
           else
@@ -653,5 +701,6 @@ jobs:
             echo "  Desktop: ${{ needs.desktop-check.result }}"
             echo "  CDS: ${{ needs.cds-build.result }}"
             echo "  Docs: ${{ needs.docs-readability.result }}"
+            echo "  Acceptance report: ${{ needs.acceptance-report-gate.result }}"
             exit 1
           fi
