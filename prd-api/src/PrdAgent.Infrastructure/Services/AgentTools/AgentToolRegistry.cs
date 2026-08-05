@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
@@ -15,7 +16,11 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
     private readonly Dictionary<string, IAgentTool> _tools = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<AgentToolRegistry> _logger;
 
-    public AgentToolRegistry(ILogger<AgentToolRegistry> logger, IConfiguration configuration, MongoDbContext db)
+    public AgentToolRegistry(
+        ILogger<AgentToolRegistry> logger,
+        IConfiguration configuration,
+        MongoDbContext db,
+        IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
         var workspace = AgentWorkspace.Resolve(configuration);
@@ -40,6 +45,9 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         Register(new KbDiffTool(db));
         Register(new KbApplyTool(db));
         Register(new KbRejectTool(db));
+        // 通用对话专用的两把：出图与存笔记。都只做转发，不含生成或存储逻辑。
+        Register(new ChatGenerateImageTool(db));
+        Register(new ChatSaveNoteTool(db, scopeFactory));
         Register(new CdsBridgeSnapshotTool());
         Register(new CdsBridgeActionTool());
     }

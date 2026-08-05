@@ -1086,6 +1086,30 @@ public static class DocumentStoreAgent
 }
 
 /// <summary>
+/// 通用对话智能体（面向全体用户的对聊入口）
+/// </summary>
+public static class ChatAgent
+{
+    public const string AppName = "通用对话智能体";
+
+    [AppCallerMetadata(
+        "通用对话-多轮会话",
+        "面向全体用户的通用对话入口。对话循环由 agent 运行时的官方 SDK 执行，本 caller 仅用于关联日志与配额",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Chat"
+    )]
+    public const string Conversation = "chat-agent.conversation::chat";
+
+    [AppCallerMetadata(
+        "通用对话-对话内出图",
+        "用户在对话里说「画一张」时触发，转发给平台已有的出图流水线",
+        ModelTypes = new[] { ModelTypes.ImageGen },
+        Category = "Chat"
+    )]
+    public const string ImageGeneration = "chat-agent.image-gen::generation";
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin

@@ -87,6 +87,9 @@ public class AgentToolsController : ControllerBase
             AppCallerCode = req.AppCallerCode,
             SidecarName = Request.Headers["X-Sidecar-Name"].FirstOrDefault(),
             InfraAgentSessionId = session?.Id,
+            // 工具按「谁发起的」判权限。基础设施 Agent 会话优先；
+            // 通用对话没有这种会话，改用轮次 id 回查对话会话的归属用户。
+            UserId = session?.UserId ?? await ResolveChatAgentUserIdAsync(req.RunId, ct),
             ApprovalId = req.ApprovalId,
             CdsBaseUrl = connection?.PartnerBaseUrl,
             CdsProjectId = connection?.ProjectId,
@@ -267,6 +270,25 @@ public class AgentToolsController : ControllerBase
         }
 
         return ToolApprovalDecision.Deny("tool_approval_cancelled", "tool approval wait cancelled", risk, "cancelled");
+    }
+
+    /// <summary>
+    /// 通用对话的轮次回查归属用户。对话里 runId 就是轮次 id；
+    /// 查不到就返回 null，工具会因为没有用户身份而拒绝执行——绝不放行无主调用。
+    /// </summary>
+    private async Task<string?> ResolveChatAgentUserIdAsync(string? runId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(runId)) return null;
+
+        var message = await _db.ChatAgentMessages
+            .Find(Builders<ChatAgentMessage>.Filter.Eq(m => m.TurnId, runId))
+            .FirstOrDefaultAsync(ct);
+        if (message == null) return null;
+
+        var session = await _db.ChatAgentSessions
+            .Find(Builders<ChatAgentSession>.Filter.Eq(x => x.Id, message.SessionId))
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(session?.UserId) ? null : session!.UserId;
     }
 
     private async Task<InfraAgentSession?> FindSessionByRunIdAsync(string? runId, CancellationToken ct)

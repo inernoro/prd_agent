@@ -251,7 +251,7 @@
       "changeSources": [
         "llmgw/console-api/Governance/*.cs",
         "llmgw/serving/GatewayRuntimeGovernance.cs",
-        "prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayGovernanceRecords.cs"
+        "prd-api/src/PrdAgent.Core/LlmGateway/GatewayGovernanceRecords.cs"
       ],
       "tutorialSourceIds": ["chapter-22", "chapter-29", "chapter-31"],
       "tutorialLinks": [

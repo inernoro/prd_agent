@@ -46,6 +46,12 @@ export const menuList: MenuDef[] = [
     permissions: ['visual-agent.use'],
   },
   {
+    appKey: 'chat-agent',
+    label: '通用对话智能体',
+    icon: 'MessageSquare',
+    permissions: ['chat-agent.use'],
+  },
+  {
     appKey: 'literary-agent',
     label: '文学创作智能体',
     icon: 'PenLine',
@@ -278,6 +284,7 @@ export const allPermissions: PermissionDef[] = [
   // Agent 权限
   { key: 'prd-agent.use', label: 'PRD 解读智能体', description: '智能解读与问答', category: 'use' },
   { key: 'visual-agent.use', label: '视觉创作智能体', description: '高级视觉创作工作区', category: 'use' },
+  { key: 'chat-agent.use', label: '通用对话智能体', description: '打开就能聊的多轮对话入口', category: 'use' },
   { key: 'literary-agent.use', label: '文学创作智能体', description: '文章配图智能生成', category: 'use' },
   { key: 'video-agent.use', label: '视频创作智能体', description: '文章转视频教程生成', category: 'use' },
   { key: 'review-agent.use', label: '产品评审智能体', description: '提交方案并查看自己的评审结果', category: 'use' },

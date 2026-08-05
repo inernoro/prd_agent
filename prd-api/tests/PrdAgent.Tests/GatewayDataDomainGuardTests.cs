@@ -16,7 +16,7 @@ public class GatewayDataDomainGuardTests
         var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
         var httpGateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs");
 
-        Assert.Contains("ILogicalModelGateway : ILlmGateway", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ILogicalModelGateway.cs"));
+        Assert.Contains("ILogicalModelGateway : ILlmGateway", ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/ILogicalModelGateway.cs"));
         Assert.Contains("ILogicalModelGateway, CoreGateway.ILlmGateway", httpGateway);
         Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>", program);
         Assert.Contains("private readonly ILogicalModelGateway _servingGateway", client);
@@ -66,7 +66,7 @@ public class GatewayDataDomainGuardTests
         var costEvidence = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmCostEvidence.cs");
         var logBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
         var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
-        var governanceRecords = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayGovernanceRecords.cs");
+        var governanceRecords = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayGovernanceRecords.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
         var runtime = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
@@ -257,7 +257,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("AppCallerTitle = profileTitle", servingEndpoints);
         Assert.Contains("PinnedModelId = profileRequest.Model", servingEndpoints);
         Assert.Contains("gateway.TestUpstreamProfileAsync(profileRequest, cancellation?.Token ?? CancellationToken.None)", servingEndpoints);
-        Assert.Contains("public GatewayRequestContext? Context { get; init; }", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs"));
+        Assert.Contains("public GatewayRequestContext? Context { get; init; }", ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayRequest.cs"));
         Assert.Contains("SourceSystem = sourceContext?.SourceSystem", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
         Assert.Contains("IngressProtocol = sourceContext?.IngressProtocol", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
         var runtimeProfileService = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentRuntimeProfileService.cs");
@@ -267,7 +267,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LastObservedRequestId = d.AsNullableString(\"LastObservedRequestId\")", consoleProgram);
         Assert.Contains("fb.Regex(\"LastObservedRequestId\", pattern)", consoleProgram);
         Assert.Contains("ValidateActiveGatewayAppCallerConfigAsync", consoleProgram);
-        Assert.Contains("ObservedIngressProtocols", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs"));
+        Assert.Contains("ObservedIngressProtocols", ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayRequest.cs"));
         Assert.Contains(".AddToSet(x => x.ObservedIngressProtocols, ingressProtocol)", servingEndpoints);
         Assert.Contains("ObservedIngressProtocols = GetObservedIngressProtocols(d)", consoleProgram);
         Assert.Contains("fb.AnyEq(\"ObservedIngressProtocols\"", consoleProgram);
@@ -847,7 +847,7 @@ public class GatewayDataDomainGuardTests
         var serving = ReadRepoFile("llmgw/serving/GatewayPromptPolicyApplier.cs");
         var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
         var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
-        var gatewayRequest = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs");
+        var gatewayRequest = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayRequest.cs");
         var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
         var logDto = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
         var webTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
@@ -1652,7 +1652,7 @@ public class GatewayDataDomainGuardTests
     public void AppCallerRouteObservations_DoNotUseOnlyTheLastRequest()
     {
         var endpoint = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
-        var request = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs");
+        var request = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayRequest.cs");
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
 
         Assert.Contains("ObservedModelPolicies", request);

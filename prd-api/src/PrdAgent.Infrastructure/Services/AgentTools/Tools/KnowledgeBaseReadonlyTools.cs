@@ -34,14 +34,14 @@ public sealed class KbListTool : IAgentTool
 
     public async Task<AgentToolInvokeResult> InvokeAsync(JsonElement input, AgentToolInvocationContext context, CancellationToken ct)
     {
-        var user = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(_db, context, ct);
-        if (user == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_list requires an infra agent session user context");
+        var userId = await KnowledgeBaseReadonlyToolSupport.ResolveUserIdAsync(_db, context, ct);
+        if (userId == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_list 需要一个明确的用户身份（基础设施 Agent 会话或调用上下文里的用户）");
 
         var limit = KnowledgeBaseReadonlyToolSupport.ClampInt(input, "limit", 50, 1, 200);
         var storeId = KnowledgeBaseReadonlyToolSupport.GetString(input, "storeId");
         if (string.IsNullOrWhiteSpace(storeId))
         {
-            var stores = await _db.DocumentStores.Find(KnowledgeBaseReadonlyToolSupport.AccessibleStoreFilter(user.UserId))
+            var stores = await _db.DocumentStores.Find(KnowledgeBaseReadonlyToolSupport.AccessibleStoreFilter(userId))
                 .SortByDescending(x => x.UpdatedAt)
                 .Limit(limit)
                 .ToListAsync(ct);
@@ -55,7 +55,7 @@ public sealed class KbListTool : IAgentTool
             }));
         }
 
-        var store = await KnowledgeBaseReadonlyToolSupport.FindAccessibleStoreAsync(_db, storeId, user.UserId, ct);
+        var store = await KnowledgeBaseReadonlyToolSupport.FindAccessibleStoreAsync(_db, storeId, userId, ct);
         if (store == null) return AgentToolInvokeResult.Fail("kb_store_not_found", "knowledge base store not found or not accessible");
 
         var filterBuilder = Builders<DocumentEntry>.Filter;
@@ -116,11 +116,11 @@ public sealed class KbSearchTool : IAgentTool
         if (string.IsNullOrWhiteSpace(query))
             return AgentToolInvokeResult.Fail("kb_query_required", "query is required");
 
-        var user = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(_db, context, ct);
-        if (user == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_search requires an infra agent session user context");
+        var userId = await KnowledgeBaseReadonlyToolSupport.ResolveUserIdAsync(_db, context, ct);
+        if (userId == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_search 需要一个明确的用户身份（基础设施 Agent 会话或调用上下文里的用户）");
 
         var storeId = KnowledgeBaseReadonlyToolSupport.GetString(input, "storeId");
-        var stores = await KnowledgeBaseReadonlyToolSupport.ResolveSearchStoresAsync(_db, user.UserId, storeId, ct);
+        var stores = await KnowledgeBaseReadonlyToolSupport.ResolveSearchStoresAsync(_db, userId, storeId, ct);
         if (stores.Count == 0) return AgentToolInvokeResult.Ok(JsonSerializer.Serialize(new { query, readonlyAccess = true, total = 0, items = Array.Empty<object>() }));
 
         var limit = KnowledgeBaseReadonlyToolSupport.ClampInt(input, "limit", 20, 1, 50);
@@ -194,13 +194,13 @@ public sealed class KbReadTool : IAgentTool
         if (string.IsNullOrWhiteSpace(entryId))
             return AgentToolInvokeResult.Fail("kb_entry_id_required", "entryId is required");
 
-        var user = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(_db, context, ct);
-        if (user == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_read requires an infra agent session user context");
+        var userId = await KnowledgeBaseReadonlyToolSupport.ResolveUserIdAsync(_db, context, ct);
+        if (userId == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_read 需要一个明确的用户身份（基础设施 Agent 会话或调用上下文里的用户）");
 
         var entry = await _db.DocumentEntries.Find(x => x.Id == entryId).FirstOrDefaultAsync(ct);
         if (entry == null) return AgentToolInvokeResult.Fail("kb_entry_not_found", "knowledge base entry not found or not accessible");
 
-        var store = await KnowledgeBaseReadonlyToolSupport.FindAccessibleStoreAsync(_db, entry.StoreId, user.UserId, ct);
+        var store = await KnowledgeBaseReadonlyToolSupport.FindAccessibleStoreAsync(_db, entry.StoreId, userId, ct);
         if (store == null) return AgentToolInvokeResult.Fail("kb_entry_not_found", "knowledge base entry not found or not accessible");
 
         var maxChars = KnowledgeBaseReadonlyToolSupport.ClampInt(input, "maxChars", 12000, 1, 60000);
@@ -266,6 +266,18 @@ public static class KnowledgeBaseReadonlyToolSupport
         if (string.IsNullOrWhiteSpace(context.InfraAgentSessionId))
             return null;
         return await db.InfraAgentSessions.Find(x => x.Id == context.InfraAgentSessionId).FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// 解析「这次工具调用算在谁头上」。基础设施 Agent 会话优先（既有行为逐字不变），
+    /// 没有会话时用上下文里显式带的用户兜底——通用对话走这条。
+    /// 两条都没有就返回 null，工具必须拒绝执行，绝不允许无主身份读写数据。
+    /// </summary>
+    public static async Task<string?> ResolveUserIdAsync(MongoDbContext db, AgentToolInvocationContext context, CancellationToken ct)
+    {
+        var session = await ResolveSessionUserAsync(db, context, ct);
+        if (session != null && !string.IsNullOrWhiteSpace(session.UserId)) return session.UserId;
+        return string.IsNullOrWhiteSpace(context.UserId) ? null : context.UserId;
     }
 
     public static FilterDefinition<KnowledgeBaseStore> AccessibleStoreFilter(string userId)
