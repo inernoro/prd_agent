@@ -92,6 +92,15 @@ function TargetTypeHelp() {
   );
 }
 
+/** 能力卡四种状态的完整含义。收进 ? 里：常驻只留一句「下一步」，细节点开才看。 */
+function StatusHelp() {
+  return (
+    <HelpPopover label="能力状态">
+      未安装：还没提交过 Key。配置不完整：Exchange、逻辑能力、上游供给、凭据这四样缺了一样，或者其中一样被停用了，重新提交一次 Key 会补齐。已安装，等待验证：四样都在，但还没有人成功调用过；任意调用方通过 image-layering 成功分层一次，状态会自动转为已验证，不需要在本页做别的操作。已验证：网关请求日志里存在一条该能力的成功调用记录。
+    </HelpPopover>
+  );
+}
+
 export function ExchangesPage() {
   const { tenant } = useAuth();
   const [searchParams] = useSearchParams();
@@ -402,15 +411,30 @@ export function ExchangesPage() {
             </span>
           </div>
 
-          <Card style={{ ...CARD_BODY, maxWidth: 840 }}>
+          <Card style={CARD_BODY}>
             <div style={capabilityMetaStyle}>
               <span style={metaPairStyle}><span style={HINT_TEXT}>能力</span><code style={MONO_META}>{layeringCapability?.publicId || 'image-layering'}</code></span>
               <span style={metaPairStyle}><span style={HINT_TEXT}>模型</span><code style={MONO_META}>{layeringCapability?.modelId || 'fal-qwen-image-layered'}</code></span>
               {layeringCapability?.lastVerifiedAt ? <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>最近验证 {new Date(layeringCapability.lastVerifiedAt).toLocaleString()}</span> : null}
             </div>
+
+            {/* 状态角标只有四个词，用户看到「等待验证」并不知道在等什么。
+                这里补一句「下一步是什么」——保持短句，四种状态的完整含义收进右侧 ?。 */}
+            <p style={{ ...HINT_TEXT, marginTop: GAP.section }}>
+              {layeringCapability?.verified
+                ? '已有成功调用记录。'
+                : layeringCapability?.installed
+                  ? '配置已就位，成功调用一次后自动转为已验证。'
+                  : layeringCapability?.state === 'incomplete'
+                    ? '配置缺了一部分，重新提交 Key 可补齐。'
+                    : '提交 Key 后自动完成安装。'}
+              <StatusHelp />
+            </p>
             {canWrite ? (
               <div style={capabilityFormStyle}>
-                <label htmlFor="fal-image-layering-key" style={{ ...FIELD_LABEL, flex: '1 1 360px' }}>
+                {/* 卡片不限宽后输入框会一路拉到一千多像素——一个 Key 不需要那么长的槽，
+                    也会把「更新凭据」推到视线之外。限一个上限，按钮就紧跟在它后面。 */}
+                <label htmlFor="fal-image-layering-key" style={{ ...FIELD_LABEL, flex: '1 1 360px', maxWidth: 520 }}>
                   <span style={rowStyle}>
                     fal.ai API Key
                     <HelpPopover label="安装说明">
@@ -527,19 +551,21 @@ export function ExchangesPage() {
               const key = boolChip(item.hasKey, '密钥已配置', '密钥缺失');
               return (
                 <Card key={item.id} style={CARD_BODY}>
+                  {/* 标题行只放「叫什么 + 什么状态」。
+                      内部 id 是排障用的，挪到卡片底部的元信息行——它此前占着标题下最显眼的一行，
+                      让每张卡片一上来就是一串没人读的哈希。 */}
                   <div style={rowStyle}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-                      <strong style={SECTION_TITLE}>{item.name || item.id}</strong>
-                      <code style={MONO_META}>{item.id}</code>
-                    </div>
+                    <strong style={{ ...SECTION_TITLE, minWidth: 0 }}>{item.name || item.id}</strong>
                     <span style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginLeft: 'auto' }}>
                       <Chip label={enabled.label} color={enabled.color} bg={enabled.bg} />
                       <Chip label={key.label} color={key.color} bg={key.bg} />
                     </span>
                   </div>
 
+                  {/* 路由行：adapter 与目标地址此前都是同一种灰字，读起来像一句话而不是两个字段。
+                      adapter 本来就是枚举值，改用 Chip；目标地址前加标签，方向感由箭头承担。 */}
                   <div style={{ ...INSET_BLOCK, ...rowStyle, marginTop: GAP.section }}>
-                    <span style={HINT_TEXT}>{item.transformerType || 'passthrough'}</span>
+                    <Chip label={item.transformerType || 'passthrough'} color="var(--text-secondary)" bg="var(--bg-base)" />
                     <ArrowRight size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                     <code style={{ ...MONO_META, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.targetUrl}>{item.targetUrl || '未配置目标地址'}</code>
                     <span style={{ marginLeft: 'auto' }}>
@@ -587,27 +613,40 @@ export function ExchangesPage() {
                     </span>
                   </div>
 
-                  <div style={{ display: 'grid', gap: GAP.tight, marginTop: GAP.normal }}>
+                  {/* 模型行紧跟路由行，靠 GAP.section 与上方拉开、行间用 GAP.tight 收紧，
+                      让它们读起来是「这条路由下的一组模型」。
+                      刻意不加组标题：本页有常驻文字预算，同样的分组用间距表达即可，不必花字数。 */}
+                  <div style={{ display: 'grid', gap: GAP.tight, marginTop: GAP.section }}>
                     {item.models.length ? item.models.map((model) => (
+                      /* 显示名与上游标识原本并排同一行，读起来像两个并列字段；
+                         改成上下两行——名字是主，标识是它的注脚。 */
                       <div key={`${item.id}:${model.modelId}`} style={{ ...INSET_BLOCK, ...rowStyle }}>
-                        <strong style={BODY_TEXT}>{model.displayName || model.modelId}</strong>
-                        <code style={{ ...MONO_META, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.modelId}</code>
-                        <span style={{ marginLeft: 'auto' }}>
-                          <Chip label={meta.modelTypes.find((option) => option.value === model.modelType)?.label || model.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
+                        <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+                          <strong style={BODY_TEXT}>{model.displayName || model.modelId}</strong>
+                          <code style={{ ...MONO_META, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.modelId}</code>
+                        </span>
+                        <span style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginLeft: 'auto' }}>
+                          {model.enabled ? null : <Chip label="已停用" color="var(--warn)" bg="var(--warn-bg)" />}
+                          <Chip label={meta.modelTypes.find((option) => option.value === model.modelType)?.label || model.modelType} color="var(--text-secondary)" bg="var(--bg-base)" />
                         </span>
                       </div>
                     )) : <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>这条旧配置没有结构化模型映射，请编辑后保存。</span>}
                   </div>
 
-                  <div style={{ ...rowStyle, marginTop: GAP.section, paddingTop: INSET_PADDING, borderTop: '1px solid var(--border-subtle)' }}>
-                    <span style={HINT_TEXT}>{item.authority === 'llm_gateway' ? '当前租户平台配置' : '旧 MAP 配置待导入'} · 认证 {item.targetAuthScheme || 'Bearer'} · 版本 {item.version}</span>
+                  {/* 底部此前是「一串 · 连起来的灰字 + 右侧一排同样灰的文字按钮」，
+                      信息和操作分不开。改成元信息各自成对（标签在上、值在下）、操作独占一行。 */}
+                  <div style={{ marginTop: GAP.section, paddingTop: INSET_PADDING, borderTop: '1px solid var(--border-subtle)' }}>
+                    <div style={rowStyle}>
+                      <span style={HINT_TEXT}>{item.authority === 'llm_gateway' ? '当前租户平台配置' : '旧 MAP 配置待导入'} · 认证 {item.targetAuthScheme || 'Bearer'} · 版本 {item.version}</span>
+                      <code style={{ ...MONO_META, marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.id}>{item.id}</code>
+                    </div>
                     {canWrite ? (
-                      <div style={{ ...CARD_ACTIONS, marginLeft: 'auto', justifyContent: 'flex-end' }}>
+                      <div style={{ ...CARD_ACTIONS, marginTop: GAP.normal, justifyContent: 'flex-end' }}>
                         {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" onClick={() => openEdit(item)}><Pencil size={13} /> 编辑映射</Button> : <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void claimExchange(item)}>导入旧配置</Button>}
                         {item.authority === 'llm_gateway' && keyEditId !== item.id ? <Button size="sm" variant="ghost" onClick={() => { setKeyEditId(item.id); setKeyValue(''); }}><KeyRound size={13} /> 更新密钥</Button> : null}
                         {item.authority === 'llm_gateway' && item.hasKey ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void clearApiKey(item)}>清除密钥</Button> : null}
                       </div>
-                    ) : <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>只读</span>}
+                    ) : <div style={{ ...rowStyle, marginTop: GAP.normal }}><span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>只读</span></div>}
                   </div>
 
                   {keyEditId === item.id ? (
@@ -789,11 +828,12 @@ const listStyle: React.CSSProperties = {
   gap: GAP.section,
 };
 
+// 不限宽：此前固定 840，而下方 Exchange 列表是撑满的，
+// 两个区块右边缘对不齐，一眼就是「这页没排过版」。
 const capabilitySectionStyle: React.CSSProperties = {
   display: 'grid',
   gap: GAP.normal,
   width: '100%',
-  maxWidth: 840,
 };
 
 const sectionHeaderStyle: React.CSSProperties = {
