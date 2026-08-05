@@ -105,6 +105,7 @@
 - [开放平台功能概要 · 设计](./design.open-platform.md) `design.open-platform`
 - [Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计](./design.page-agent.bridge.md) `design.page-agent.bridge`
 - [账户数据共享 · 设计](./design.platform.account-data-sharing.md) `design.platform.account-data-sharing`
+- [通用对话智能体 · 设计](./design.platform.chat-agent.md) `design.platform.chat-agent`
 - [模型中继虚拟平台设计 · 设计](./design.platform.exchange-virtual-platform.md) `design.platform.exchange-virtual-platform`
 - [CDS 部署架构与冲突分析 · 设计](./design.platform.exec-bt-deployment.md) `design.platform.exec-bt-deployment`
 - [外部授权中心 · 设计](./design.platform.external-authorization.md) `design.platform.external-authorization`

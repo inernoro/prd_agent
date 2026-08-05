@@ -1,0 +1,356 @@
+<!doctype html>
+<!--
+  重大改动方案预览 · 起手骨架
+  用法：复制到 assets/prototypes/{topic}-preview.html，把 S0-S8 的占位换成本次改动的真实内容。
+  硬约束：单文件、零外链、双主题、无 emoji。删掉任何一个 section 前先对照 SKILL.md 的拒收判据。
+-->
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{改动名称} · 方案预览</title>
+<style>
+:root{
+  color-scheme: dark;
+  --bg-base:#141418; --bg-elevated:#1e1e24; --bg-card:rgba(255,255,255,.06);
+  --bg-card-hover:rgba(255,255,255,.10); --bg-input:rgba(255,255,255,.07);
+  --bg-nested:rgba(255,255,255,.025);
+  --text-primary:#f7f7fb; --text-secondary:rgba(247,247,251,.80); --text-muted:rgba(247,247,251,.55);
+  --border-faint:rgba(255,255,255,.08); --border-subtle:rgba(255,255,255,.12);
+  --border-default:rgba(255,255,255,.18);
+  --accent:#D97757; --accent-soft:rgba(217,119,87,.16); --accent-border:rgba(217,119,87,.42);
+  --ok:#5FBF7F; --ok-soft:rgba(95,191,127,.14);
+  --warn:#E0A85C; --warn-soft:rgba(224,168,92,.14);
+  --bad:#D96A6A; --bad-soft:rgba(217,106,106,.14);
+  --info:#7BA7D9; --info-soft:rgba(123,167,217,.14);
+  --shadow:0 10px 30px -20px rgba(0,0,0,.85);
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+[data-theme="light"]{
+  color-scheme: light;
+  --bg-base:#EEEAE3; --bg-elevated:#E4DED5; --bg-card:#F8F5EF;
+  --bg-card-hover:rgba(26,26,31,.05); --bg-input:#FBF8F3;
+  --bg-nested:rgba(26,26,31,.03);
+  --text-primary:#262029; --text-secondary:rgba(38,32,41,.78); --text-muted:rgba(38,32,41,.56);
+  --border-faint:rgba(26,26,31,.08); --border-subtle:rgba(26,26,31,.14);
+  --border-default:rgba(26,26,31,.22);
+  --accent:#A64B35; --accent-soft:rgba(166,75,53,.12); --accent-border:rgba(166,75,53,.34);
+  --ok:#3F8A5C; --ok-soft:rgba(63,138,92,.12);
+  --warn:#A9762C; --warn-soft:rgba(169,118,44,.12);
+  --bad:#B04A4A; --bad-soft:rgba(176,74,74,.12);
+  --info:#3F6E9E; --info-soft:rgba(63,110,158,.12);
+  --shadow:0 10px 26px -20px rgba(89,65,50,.5);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg-base);color:var(--text-primary);overflow-x:hidden;
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 100px}
+header.top{position:sticky;top:0;z-index:40;background:var(--bg-base);border-bottom:1px solid var(--border-faint)}
+.top-inner{max-width:1180px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-size:17px;font-weight:650}
+.brand span{color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px}
+.top-spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:12px;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary);white-space:nowrap}
+.pill.accent{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.pill.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-primary);font:13px inherit;
+  transition:background .16s,border-color .16s}
+.btn:hover{background:var(--bg-card-hover);border-color:var(--border-default)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+nav.secnav{position:sticky;top:57px;z-index:30;background:var(--bg-base);border-bottom:1px solid var(--border-faint)}
+.secnav-inner{max-width:1180px;margin:0 auto;padding:9px 20px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.secnav-inner::-webkit-scrollbar{display:none}
+.secnav a{flex:0 0 auto;padding:5px 11px;border-radius:8px;font-size:12.5px;text-decoration:none;
+  color:var(--text-muted);border:1px solid transparent;white-space:nowrap}
+.secnav a.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-border)}
+section{padding-top:52px;scroll-margin-top:112px}
+.sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+.sec-num{font:600 12px/1 var(--mono);color:var(--accent);letter-spacing:1.5px;padding-top:6px}
+h2{font-size:24px;margin:0}
+.sec-sub{color:var(--text-muted);font-size:13.5px;margin:0 0 22px}
+h3{font-size:16px;margin:26px 0 10px}
+.card{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:900px){.g3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.g2,.g3{grid-template-columns:1fr}}
+.figwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:14px;background:var(--bg-card);padding:16px}
+svg .bx{fill:var(--bg-nested);stroke:var(--border-subtle)}
+svg .bx.acc{fill:var(--accent-soft);stroke:var(--accent-border)}
+svg .bx.ok{fill:var(--ok-soft);stroke:transparent}
+svg .bx.info{fill:var(--info-soft);stroke:transparent}
+svg .bx.bad{fill:var(--bad-soft);stroke:var(--bad);stroke-dasharray:5 4}
+svg text{fill:var(--text-primary);font-family:inherit}
+svg .t{font-size:12.5px;font-weight:600}
+svg .s{font-size:10.8px;fill:var(--text-muted)}
+svg .lbl{font-size:10.5px;fill:var(--text-muted)}
+svg .ln{stroke:var(--border-default);fill:none}
+svg .ln.acc{stroke:var(--accent)}
+svg .grp{fill:none;stroke:var(--border-faint);stroke-dasharray:4 4}
+svg .grpt{font-size:10.5px;fill:var(--text-muted);letter-spacing:1px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-muted)}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.lane{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:12px}
+.lane-head{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+.flow{display:flex;align-items:stretch;overflow-x:auto;padding-bottom:4px}
+.step{flex:0 0 auto;min-width:126px;max-width:170px;background:var(--bg-nested);border:1px solid var(--border-faint);
+  border-radius:10px;padding:9px 11px}
+.step b{display:block;font-size:12.4px;margin-bottom:3px}
+.step span{color:var(--text-muted);font-size:11.3px;line-height:1.55;display:block}
+.step.end{background:var(--ok-soft);border-color:transparent}
+.step.end b{color:var(--ok)}
+.arrow{flex:0 0 auto;display:grid;place-items:center;padding:0 7px;color:var(--text-muted)}
+.endnote{margin-top:10px;font-size:12px;color:var(--text-muted)}
+.endnote b{color:var(--ok)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border-faint);vertical-align:top}
+th{font-size:11.5px;color:var(--text-muted);font-weight:600;background:var(--bg-nested)}
+.tblwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:13px}
+.yes{color:var(--ok);font-weight:600}
+.no{color:var(--bad);font-weight:600}
+.dd{border-radius:13px;padding:16px;border:1px solid var(--border-faint)}
+.dd.do{background:var(--ok-soft)}
+.dd.dont{background:var(--bad-soft)}
+.dd h4{margin:0 0 9px;font-size:14px}
+.dd.do h4{color:var(--ok)}
+.dd.dont h4{color:var(--bad)}
+.dd ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+.fuse{background:var(--warn-soft);border:1px solid transparent;border-radius:13px;padding:16px;margin-top:12px}
+.fuse h4{margin:0 0 8px;color:var(--warn);font-size:14px}
+.fuse ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+.dec{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:11px}
+.dec-q{font-size:14px;font-weight:600;margin-bottom:9px;display:flex;gap:9px}
+.dec-q em{font-style:normal;flex:0 0 auto;width:21px;height:21px;border-radius:6px;background:var(--accent-soft);
+  color:var(--accent);display:grid;place-items:center;font:600 11px/1 var(--mono);margin-top:2px}
+.opts{display:grid;gap:8px;grid-template-columns:1fr 1fr}
+@media(max-width:640px){.opts{grid-template-columns:1fr}}
+.opt{border:1px solid var(--border-faint);border-radius:9px;padding:9px 11px;font-size:12.5px;background:var(--bg-nested)}
+.opt.pick{border-color:var(--accent-border);background:var(--accent-soft)}
+.opt b{display:block;margin-bottom:3px}
+.opt.pick b{color:var(--accent)}
+.opt span{color:var(--text-muted);font-size:11.6px;line-height:1.6}
+.phase{display:flex;gap:13px;padding:14px 0;border-bottom:1px solid var(--border-faint)}
+.phase:last-child{border-bottom:0}
+.phase .no{flex:0 0 auto;width:34px;height:34px;border-radius:10px;background:var(--accent-soft);color:var(--accent);
+  display:grid;place-items:center;font:600 13px/1 var(--mono)}
+.phase p{margin:4px 0 0;font-size:12.8px;color:var(--text-muted)}
+.phase .stop{margin-top:6px;font-size:12px;color:var(--ok)}
+footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint);color:var(--text-muted);font-size:12.5px}
+
+/* ---- 演示外壳：按本次改动的真实页面结构改造 ---- */
+.demo-frame{border:1px solid var(--border-default);border-radius:16px;overflow:hidden;background:var(--bg-elevated);box-shadow:var(--shadow)}
+.demo-bar{display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--bg-nested);border-bottom:1px solid var(--border-faint)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--border-default)}
+.urlbar{flex:1;text-align:center;font:11.5px/1 var(--mono);color:var(--text-muted);background:var(--bg-input);
+  border:1px solid var(--border-faint);border-radius:7px;padding:5px 10px}
+.stage{min-height:420px;padding:18px}
+.playbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:14px}
+.playbar .hint{font-size:12.3px;color:var(--text-muted)}
+.bar{height:4px;border-radius:3px;background:var(--border-faint);overflow:hidden;margin:2px 0 8px}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .5s ease}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">{改动名称}<span>方案预览 · 决策用</span></div>
+    <div class="top-spacer"></div>
+    <span class="pill warn">状态：待决策</span>
+    <span class="pill">{日期}</span>
+    <button class="btn" id="themeBtn" type="button">切到白天</button>
+  </div>
+</header>
+
+<nav class="secnav"><div class="secnav-inner">
+  <a href="#s0" class="on">你能得到什么</a>
+  <a href="#s1">操作页面演示</a>
+  <a href="#s2">架构图</a>
+  <a href="#s3">数据流转与鉴权</a>
+  <a href="#s4">角色业务流</a>
+  <a href="#s5">验收方式</a>
+  <a href="#s6">范围契约</a>
+  <a href="#s7">要你拍板的</a>
+  <a href="#s8">成本与退出</a>
+</div></nav>
+
+<div class="wrap">
+
+<section id="s0">
+  <div class="sec-head"><span class="sec-num">S0</span><h2>你能得到什么</h2></div>
+  <p class="sec-sub">一屏答清：做完之后你手上多了什么、少了什么麻烦。每条都要在后面章节有对应验收判据。</p>
+  <div class="grid g3">
+    <!-- 三到五张「得到什么」卡片：标题一句、说明两行 -->
+  </div>
+  <div class="card" style="margin-top:14px;border-style:dashed">
+    <b>首版明确不给你的</b>
+    <!-- 列出本期故意不做的能力，注明全部进债务台账 -->
+  </div>
+</section>
+
+<section id="s1">
+  <div class="sec-head"><span class="sec-num">S1</span><h2>操作页面演示</h2><span class="pill accent">可点击</span></div>
+  <p class="sec-sub">将来真正会看到的那一屏。剧本要走完「提出需求 - 系统干活含等待态 - 产物出现 - 再次使用产物」。</p>
+  <div class="demo-frame">
+    <div class="demo-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="urlbar">{预览地址}</span></div>
+    <div class="stage" id="stage">
+      <!-- 真实页面外壳：侧边导航 + 主区 + 操作区 -->
+    </div>
+  </div>
+  <div class="playbar">
+    <button class="btn primary" id="playBtn" type="button">播放演示</button>
+    <button class="btn" id="stepBtn" type="button">下一步</button>
+    <button class="btn" id="resetBtn" type="button">重播</button>
+    <span class="hint" id="playHint">共 N 轮。</span>
+  </div>
+</section>
+
+<section id="s2">
+  <div class="sec-head"><span class="sec-num">S2</span><h2>架构图</h2></div>
+  <p class="sec-sub">三色必须齐：本次新增 / 复用现有 / 明确不碰。不碰的部分要画出来并虚线标掉。</p>
+  <div class="figwrap"><svg viewBox="0 0 1080 520" width="100%" style="min-width:840px"><!-- 架构图 --></svg></div>
+  <div class="legend">
+    <span><i style="background:var(--accent-soft);border:1px solid var(--accent-border)"></i>本次新增</span>
+    <span><i style="background:var(--ok-soft)"></i>复用现有</span>
+    <span><i style="background:var(--info-soft)"></i>用户侧</span>
+    <span><i style="background:var(--bad-soft);border:1px dashed var(--bad)"></i>明确不碰</span>
+  </div>
+</section>
+
+<section id="s3">
+  <div class="sec-head"><span class="sec-num">S3</span><h2>数据流转与鉴权</h2></div>
+  <p class="sec-sub">每一跳拿什么凭据、在哪个进程里跑、是网络调用还是进程内直调。鉴权点单独标号。</p>
+  <div class="figwrap"><svg viewBox="0 0 1060 460" width="100%" style="min-width:860px"><!-- 数据流图 --></svg></div>
+  <h3>鉴权点</h3>
+  <div class="tblwrap"><table>
+    <thead><tr><th>鉴权点</th><th>谁调谁</th><th>拿什么凭据</th><th>为什么不是新东西</th></tr></thead>
+    <tbody><!-- 逐跳一行 --></tbody>
+  </table></div>
+  <h3>失败与降级</h3>
+  <div class="tblwrap"><table>
+    <thead><tr><th>哪里坏了</th><th>用户看到什么</th><th>数据会不会烂在半路</th></tr></thead>
+    <tbody><!-- 至少四行：上游失败 / 工具失败 / 用户离开 / 循环停不下来 --></tbody>
+  </table></div>
+</section>
+
+<section id="s4">
+  <div class="sec-head"><span class="sec-num">S4</span><h2>角色业务流</h2></div>
+  <p class="sec-sub">每条链路终点必须是「这个人拿到了产物」。至少三类角色，含最不懂技术的那一类。</p>
+  <div class="lane">
+    <div class="lane-head"><b>{角色}</b><span class="pill">{他想要什么}</span></div>
+    <div class="flow"><!-- .step ... .arrow ... .step.end --></div>
+    <div class="endnote"><b>终点检查</b> <span>{什么情况不算到达终点}</span></div>
+  </div>
+</section>
+
+<section id="s5">
+  <div class="sec-head"><span class="sec-num">S5</span><h2>验收方式</h2><span class="pill accent">你自己就能核</span></div>
+  <p class="sec-sub">每条判据写清要证明什么、怎么亲自核、谁来核、什么算过。不接受只有作者能核的条目。</p>
+  <div class="tblwrap"><table>
+    <thead><tr><th>#</th><th>要证明什么</th><th>你怎么亲自核</th><th>谁来核</th><th>什么算过</th></tr></thead>
+    <tbody><!-- 判据行 --></tbody>
+  </table></div>
+  <div class="grid g2" style="margin-top:14px">
+    <div class="dd do"><h4>算数的证据</h4><ul></ul></div>
+    <div class="dd dont"><h4>不算数的证据</h4><ul>
+      <li>接口返回成功、测试全绿</li>
+      <li>截图还在加载，文案写已完成</li>
+      <li>旧版本截图充数</li>
+      <li>通读自审，逻辑没问题</li>
+      <li>只测新建数据，不测存量兼容</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="s6">
+  <div class="sec-head"><span class="sec-num">S6</span><h2>范围契约</h2></div>
+  <p class="sec-sub">可以拿来卡作者的一节。越过任何一条线，决策者有权叫停。</p>
+  <div class="grid g2">
+    <div class="dd do"><h4>本期做这些</h4><ul><!-- 可数清单 --></ul></div>
+    <div class="dd dont"><h4>本期不做</h4><ul><!-- 具体功能，不写抽象类别 --></ul></div>
+  </div>
+  <div class="fuse"><h4>熔断线：命中任意一条立刻停下来找人</h4><ul>
+    <li>连续 N 个提交没有新增可用功能</li>
+    <li>清单外的东西被接进来</li>
+    <li>碰到了「明确不碰」的部分</li>
+    <li>改动量超过第一轮基线的 N 倍</li>
+    <li>同一份计划被重写 N 次而卡点没消失</li>
+  </ul></div>
+</section>
+
+<section id="s7">
+  <div class="sec-head"><span class="sec-num">S7</span><h2>要你拍板的</h2></div>
+  <p class="sec-sub">每个岔路口给默认选项。不回复就按推荐走，不卡在等待上。</p>
+  <div class="dec">
+    <div class="dec-q"><em>1</em>{问题}</div>
+    <div class="opts">
+      <div class="opt pick"><b>{推荐选项}</b><span>{为什么推荐}</span></div>
+      <div class="opt"><b>{备选}</b><span>{选它的代价，写具体}</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="s8">
+  <div class="sec-head"><span class="sec-num">S8</span><h2>成本与退出</h2></div>
+  <p class="sec-sub">每个阶段自己就能验收、自己就能停，并写明「在这里停的话你手上有什么」。</p>
+  <div class="card">
+    <div class="phase"><div class="no">一</div><div>
+      <b>{阶段名}</b><p>{做什么}</p><div class="stop">可停点：{此时可用的东西 + 可验的判据编号}</div>
+    </div></div>
+  </div>
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card"><h4 style="margin:0 0 9px;font-size:14px">怎么退出</h4><ul style="margin:0;padding-left:19px;font-size:13px;line-height:1.8"></ul></div>
+    <div class="card"><h4 style="margin:0 0 9px;font-size:14px">规模量级</h4><ul style="margin:0;padding-left:19px;font-size:13px;line-height:1.8"></ul></div>
+  </div>
+</section>
+
+<footer>
+  <p style="margin:0 0 6px">这份预览由「重大改动方案预览」技能产出。六件套齐全才算合格，判据见技能内的拒收清单。</p>
+  <p style="margin:0">页面里的界面是模拟，不连真实数据；架构与数据流表达的是实现目标，最终以验收判据为准。</p>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var root=document.documentElement,tb=document.getElementById('themeBtn');
+  tb.addEventListener('click',function(){
+    var t=root.getAttribute('data-theme')==='dark'?'light':'dark';
+    root.setAttribute('data-theme',t);
+    tb.textContent=(t==='dark'?'切到白天':'切到黑夜');
+  });
+  var links=[].slice.call(document.querySelectorAll('.secnav a'));
+  var secs=links.map(function(a){return document.querySelector(a.getAttribute('href'));});
+  window.addEventListener('scroll',function(){
+    var y=window.scrollY+150,cur=0;
+    secs.forEach(function(s,i){if(s&&s.offsetTop<=y)cur=i;});
+    links.forEach(function(a,i){a.classList.toggle('on',i===cur);});
+  },{passive:true});
+
+  /* 演示剧本：每个函数演一轮，演完调 next()。等待态必须有阶段推进，不许瞬间完成。 */
+  var script=[
+    function(next){ /* 第一轮 */ next(); }
+  ];
+  var cursor=0,playing=false;
+  var playBtn=document.getElementById('playBtn'),stepBtn=document.getElementById('stepBtn'),
+      resetBtn=document.getElementById('resetBtn'),hint=document.getElementById('playHint'),
+      stage=document.getElementById('stage');
+  function reset(){cursor=0;playing=false;stage.innerHTML='';playBtn.textContent='播放演示';hint.textContent='共 '+script.length+' 轮。';}
+  function runOne(auto){
+    if(cursor>=script.length){hint.textContent='演示结束。';playing=false;playBtn.textContent='播放演示';return;}
+    var i=cursor++;hint.textContent='第 '+(i+1)+' 轮 / 共 '+script.length+' 轮';
+    script[i](function(){ if(auto&&playing)setTimeout(function(){runOne(true);},700); });
+  }
+  playBtn.addEventListener('click',function(){if(cursor>=script.length)reset();playing=true;playBtn.textContent='播放中';runOne(true);});
+  stepBtn.addEventListener('click',function(){playing=false;runOne(false);});
+  resetBtn.addEventListener('click',reset);
+  reset();
+})();
+</script>
+</body>
+</html>
