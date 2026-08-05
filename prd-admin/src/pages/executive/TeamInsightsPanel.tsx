@@ -131,7 +131,7 @@ function Headline({
     >
       <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.c }} />
       <div className="pl-5 pr-5 py-4 flex flex-col xl:flex-row xl:items-start gap-5 xl:gap-7">
-      <div className="flex flex-col gap-3 flex-1 min-w-0 xl:max-w-[46ch]">
+      <div className="flex flex-col gap-3 flex-1 min-w-0">
         <div className="flex items-center gap-2.5 flex-wrap">
           <span
             className="text-[10px] tracking-[0.16em] uppercase px-2 py-[3px] rounded"
@@ -159,7 +159,9 @@ function Headline({
         </h2>
 
         {h.points.length > 0 && (
-          <div className="flex flex-col gap-1.5">
+          <div
+            className={`grid gap-x-7 gap-y-1.5 ${h.points.length >= 4 ? 'xl:grid-cols-2' : ''}`}
+          >
             {h.points.map(p => {
               const pt = TONE[p.tone] ?? TONE.neutral;
               return (
