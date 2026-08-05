@@ -58,6 +58,30 @@ services:                   # 标准 docker-compose services
 | Node Vite / React | `/` |
 | 多后端共存 | 手动指定，CLI 不猜测 |
 
+## 用户 Web 入口
+
+路由与页面入口分开维护：
+
+```yaml
+services:
+  web:
+    labels:
+      cds.path-prefix: "/"
+      cds.web-entry-name: "项目控制台"
+      cds.web-entry-path: "/"
+  docs:
+    labels:
+      cds.subdomain: "docs"
+      cds.web-entry-name: "帮助中心"
+      cds.web-entry-path: "/guide"
+      cds.readiness-path: "/healthz"
+```
+
+- `cds.path-prefix: /` 的已命名 Web 服务自动成为主入口，不再以命名子域重复显示。
+- `cds.subdomain` 只创建路由；没有 `cds.web-entry-name` 的 API 服务不进入用户入口清单。
+- `cds.web-entry-path` 必须是用户页面，绝不能填写 `cds.readiness-path` 的健康检查地址。
+- 用户要求修改入口时，由 Agent 修改这一个 compose 源并重新提交 CDS。
+
 ## --apply-to-cds 流程
 
 ```
@@ -102,7 +126,10 @@ services:
     volumes: [./web:/app]
     ports: ["8000"]
     command: corepack enable && pnpm install && pnpm exec vite --host
-    labels: { cds.path-prefix: "/" }
+    labels:
+      cds.path-prefix: "/"
+      cds.web-entry-name: "myapp"
+      cds.web-entry-path: "/"
 ```
 
 ### 仅 Infra（数据库）

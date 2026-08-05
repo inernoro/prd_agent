@@ -8,21 +8,18 @@ const source = fs.readFileSync(
 );
 
 describe('分支预览地址 API 契约', () => {
-  it('同时下发主入口和可路由 profile 的命名入口', () => {
+  it('同时下发带用户名称的主入口和 Web 页面入口', () => {
     expect(source).toContain("const previewHost = (config.previewDomain || config.rootDomains?.[0] || '')");
-    expect(source).toContain('const mainUrls = b.previewSlug');
-    expect(source).toContain('computeBranchGatewayUrls(b, previewHost)');
-    expect(source).toContain('new Set([...mainUrls, ...namedServiceUrls])');
+    expect(source).toContain('computeBranchWebEntries(b, previewHost)');
+    expect(source).toContain('b.previewEntries = entries');
+    expect(source).toContain('new Set(entries.map((entry) => entry.url))');
     expect(source).toContain('b.previewUrl = b.previewUrls[0]');
   });
 
-  it('每条命名入口都带平台判定的 isConsole（前端不得自己按子域名字判）', () => {
-    // 接线守卫：这个字段一旦消失，BranchDetailDrawer 会静默退回按名字判的兜底，
-    // 而那正是 2026-07-29 子域改名当天失效的那套判定（形状 2：链路只建到一半）。
-    // 判据必须与落点同源：只按子域名字判会把「叫 llmgw 的存量 API profile」
-    // 标成控制台（落点已正确落到 /gw/healthz，标签却说是控制台）。
-    expect(source).toContain("isConsole: isGatewayConsoleEntry(sub, profile?.readinessProbe?.path)");
-    expect(source).toContain('isConsole: boolean');
+  it('入口只读 webEntry，主 profile 不以 subdomain 重复列出', () => {
+    expect(source).toContain('const webEntry = profile?.webEntry');
+    expect(source).toContain('profileId === primaryProfile?.id');
+    expect(source).not.toContain('resolveServiceLandingPath(sub, profile?.readinessProbe?.path)');
   });
 
   it('保存子域别名时也查命名服务 host（helper 建了没接线 = 白建）', () => {
