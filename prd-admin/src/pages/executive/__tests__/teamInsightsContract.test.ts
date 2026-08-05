@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { api } from '@/services/api';
-import { buildWindowLabel, fmt, maskName, relaxNodes } from '@/pages/executive/TeamInsightsPanel';
+import { buildWindowLabel, fmt, maskName, relaxNodes, MAX_SHIFT } from '@/pages/executive/TeamInsightsPanel';
 import type { PlotNode } from '@/pages/executive/TeamInsightsPanel';
 
 /**
@@ -56,7 +56,7 @@ describe('团队洞察 · 接线与空值判据', () => {
 describe('分型散点 · 重叠避让', () => {
   const node = (id: string, x: number, y: number, mx: number, my: number): PlotNode => ({
     m: { userId: id, displayName: id } as PlotNode['m'],
-    trueX: x, trueY: y, x, y, r: 14, hw: 22, hh: 22,
+    trueX: x, trueY: y, x, y, r: 14, hw: 22, hh: 21, oy: 7,
     rightOfMedian: x >= mx, aboveMedian: y <= my,
   });
 
@@ -91,7 +91,8 @@ describe('分型散点 · 重叠避让', () => {
     const nodes = Array.from({ length: 8 }, (_, i) => node(`n${i}`, 200, 200, 100, 100));
     relaxNodes(nodes, 400, 360, 100, 100);
     for (const n of nodes) {
-      expect(Math.hypot(n.x - n.trueX, n.y - n.trueY)).toBeLessThanOrEqual(27);
+      // 上限从实现导出，别在测试里再抄一份数字——抄了就会各自漂移
+      expect(Math.hypot(n.x - n.trueX, n.y - n.trueY)).toBeLessThanOrEqual(MAX_SHIFT + 1);
     }
   });
 

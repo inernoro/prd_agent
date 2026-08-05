@@ -1,0 +1,200 @@
+{
+ "members": [
+  {
+   "displayName": "蒋云峰",
+   "output": 1525,
+   "quality": 54,
+   "outputDays": 134
+  },
+  {
+   "displayName": "管理员",
+   "output": 1421,
+   "quality": 76,
+   "outputDays": 57
+  },
+  {
+   "displayName": "刘文波",
+   "output": 607,
+   "quality": 50,
+   "outputDays": 34
+  },
+  {
+   "displayName": "李文慧",
+   "output": 324,
+   "quality": 94,
+   "outputDays": 12
+  },
+  {
+   "displayName": "魏喜胜",
+   "output": 174,
+   "quality": 55,
+   "outputDays": 13
+  },
+  {
+   "displayName": "张知智",
+   "output": 134,
+   "quality": 90,
+   "outputDays": 16
+  },
+  {
+   "displayName": "余瑞鹏",
+   "output": 78,
+   "quality": 62,
+   "outputDays": 22
+  },
+  {
+   "displayName": "王忠",
+   "output": 33,
+   "quality": 100,
+   "outputDays": 3
+  },
+  {
+   "displayName": "陈凯婷",
+   "output": 28,
+   "quality": 54,
+   "outputDays": 7
+  },
+  {
+   "displayName": "林德燊",
+   "output": 22,
+   "quality": 78,
+   "outputDays": 4
+  },
+  {
+   "displayName": "张世博",
+   "output": 21,
+   "quality": 88,
+   "outputDays": 4
+  },
+  {
+   "displayName": "周泽腾",
+   "output": 17,
+   "quality": 67,
+   "outputDays": 4
+  },
+  {
+   "displayName": "LLMGW QA Admin",
+   "output": 14,
+   "quality": 89,
+   "outputDays": 1
+  },
+  {
+   "displayName": "稳定冒烟 CDS",
+   "output": 14,
+   "quality": 96,
+   "outputDays": 1
+  },
+  {
+   "displayName": "陈恒原",
+   "output": 12,
+   "quality": 100,
+   "outputDays": 2
+  },
+  {
+   "displayName": "赖凯峰",
+   "output": 7,
+   "quality": 100,
+   "outputDays": 1
+  },
+  {
+   "displayName": "殷豪",
+   "output": 6,
+   "quality": 55,
+   "outputDays": 2
+  },
+  {
+   "displayName": "石奇梦",
+   "output": 5,
+   "quality": 73,
+   "outputDays": 1
+  },
+  {
+   "displayName": "潘志凤",
+   "output": 5,
+   "quality": 100,
+   "outputDays": 2
+  },
+  {
+   "displayName": "余仁平",
+   "output": 4,
+   "quality": 40,
+   "outputDays": 1
+  },
+  {
+   "displayName": "陈周满",
+   "output": 3,
+   "quality": 100,
+   "outputDays": 1
+  },
+  {
+   "displayName": "老王",
+   "output": 3,
+   "quality": 100,
+   "outputDays": 2
+  },
+  {
+   "displayName": "廖家玉",
+   "output": 3,
+   "quality": 80,
+   "outputDays": 1
+  },
+  {
+   "displayName": "潘祝",
+   "output": 2,
+   "quality": 70,
+   "outputDays": 1
+  },
+  {
+   "displayName": "陈嘉颖",
+   "output": 2,
+   "quality": 50,
+   "outputDays": 2
+  },
+  {
+   "displayName": "吴志豪",
+   "output": 2,
+   "quality": 67,
+   "outputDays": 1
+  },
+  {
+   "displayName": "伍林波",
+   "output": 1,
+   "quality": 39,
+   "outputDays": 1
+  },
+  {
+   "displayName": "张思进",
+   "output": 1,
+   "quality": 100,
+   "outputDays": 1
+  },
+  {
+   "displayName": "张坤",
+   "output": 1,
+   "quality": 100,
+   "outputDays": 1
+  },
+  {
+   "displayName": "张冉",
+   "output": 1,
+   "quality": 100,
+   "outputDays": 1
+  },
+  {
+   "displayName": "欧石玲",
+   "output": 0,
+   "quality": 42,
+   "outputDays": 0
+  },
+  {
+   "displayName": "胡宇鹏",
+   "output": 0,
+   "quality": 42,
+   "outputDays": 0
+  }
+ ],
+ "medians": {
+  "output": 6.5,
+  "quality": 77
+ }
+}

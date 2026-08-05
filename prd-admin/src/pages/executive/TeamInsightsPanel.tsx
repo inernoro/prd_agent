@@ -448,11 +448,20 @@ export type PlotNode = {
   m: TeamInsightMember;
   /** 数据决定的真实位置（px），避让前 */
   trueX: number; trueY: number;
-  /** 避让后的绘制位置（px） */
+  /** 避让后的绘制位置（px），指气泡圆心 */
   x: number; y: number;
   r: number;
-  /** 碰撞盒：宽取「气泡」与「名字」的较大者，高含名字那一行 */
+  /** 碰撞盒半宽 / 半高 */
   hw: number; hh: number;
+  /**
+   * 碰撞盒中心相对气泡圆心的纵向偏移。
+   *
+   * 名字长在气泡**下方**，所以这个人实际占的竖直区间是 [-r, r+标签高]，
+   * 它的中心不在圆心而在圆心下方。第一版把盒子建成以圆心对称，
+   * 下边根本没盖住标签——于是气泡分开了、名字照样叠，而且盒子一放大，
+   * 拥挤处撞上位移上限解不开，反而叠得更狠。
+   */
+  oy: number;
   /** 起始所在象限，避让不许跨过分型线（跨过去就是把数据改了） */
   rightOfMedian: boolean; aboveMedian: boolean;
 };
@@ -467,7 +476,11 @@ export type PlotNode = {
  *   3. 碰撞盒把名字算进去，否则气泡分开了、名字照样叠成一片。
  * 位移超过阈值的点会画一条细引线回真实位置，让读者看得见「它被挪过」。
  */
-const MAX_SHIFT = 26;
+// 位移上限。取值由真实数据倒推：有三个人的产出与质量几乎重合，横向要摊开
+// 三个标签就得各让约 55px——设得比这小，那一簇永远解不开（实测 26/46/60 都留重叠）。
+// 之所以敢放这么开，是因为另外两条约束把「失真」兜住了：不跨分型线（象限不变）、
+// 位移超阈值画引线回真实位置（读者看得见它被挪过）。
+export const MAX_SHIFT = 70;
 
 export function relaxNodes(nodes: PlotNode[], w: number, h: number, medianX: number, medianY: number) {
   const GAP = 5;
@@ -476,7 +489,9 @@ export function relaxNodes(nodes: PlotNode[], w: number, h: number, medianX: num
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i]; const b = nodes[j];
-        const dx = b.x - a.x; const dy = b.y - a.y;
+        const dx = b.x - a.x;
+        // 竖直方向比的是碰撞盒中心，不是气泡圆心——两者差一个 oy
+        const dy = (b.y + b.oy) - (a.y + a.oy);
         const ox = a.hw + b.hw + GAP - Math.abs(dx);
         const oy = a.hh + b.hh + GAP - Math.abs(dy);
         if (ox <= 0 || oy <= 0) continue;
@@ -511,6 +526,62 @@ export function relaxNodes(nodes: PlotNode[], w: number, h: number, medianX: num
     }
     if (!moved) break;
   }
+}
+
+/** 散点画布高度。抽成常量让布局纯函数与组件用同一个数，别一个 360 一个 400。 */
+export const SCATTER_H = 440;
+
+/** 名字标签的行高（含与气泡之间的间距）。碰撞盒靠它把标签算进去。 */
+const LABEL_H = 14;
+
+/**
+ * 散点上的显示名。超长的要截断——「LLMGW QA Admin」这种 14 个字的名字，
+ * 标签半宽能顶到 81px，一个人占掉三个人的横向空间，把周围一片挤到解不开。
+ * 全名仍在 title 与右侧成员卡里，这里只是画布上的落款。
+ */
+export function scatterLabel(name: string, masked: boolean): string {
+  const s = maskName(name, masked);
+  return s.length > 6 ? `${s.slice(0, 5)}…` : s;
+}
+
+/**
+ * 把成员算成散点节点并完成避让。
+ *
+ * 抽成纯函数的理由：这段几何是「有没有重叠」的唯一判据，留在组件里就只能靠
+ * 部署一轮、截图看一眼来验，而截图分不出「差 2px 没叠上」和「刚好叠上」。
+ * 现在测试拿真实成员数据跑同一个函数，直接量盒子有没有相交。
+ */
+export function layoutScatter(
+  plotted: TeamInsightMember[],
+  medians: { output: number; quality: number },
+  boxW: number,
+  boxH: number,
+  masked: boolean,
+  logX: (v: number) => number,
+  posY: (q: number) => number,
+): PlotNode[] {
+  if (boxW <= 0) return [];
+  const mx = (logX(medians.output) / 100) * boxW;
+  const my = (posY(medians.quality) / 100) * boxH;
+  const list: PlotNode[] = plotted.map(m => {
+    const size = 24 + Math.min(m.outputDays, 10) * 2.4;
+    const r = size / 2;
+    const name = scatterLabel(m.displayName, masked);
+    // 中文按每字 11px 估宽（10px 字号 + 字距），再留 8px 呼吸位
+    const labelW = Math.max(size, name.length * 11 + 8);
+    const tx = (logX(m.output) / 100) * boxW;
+    const ty = (posY(m.quality!) / 100) * boxH;
+    return {
+      m, trueX: tx, trueY: ty, x: tx, y: ty, r,
+      hw: labelW / 2,
+      // 竖直占位是 [-r, r+LABEL_H]：半高 = r + LABEL_H/2，盒心比圆心低 LABEL_H/2
+      hh: r + LABEL_H / 2,
+      oy: LABEL_H / 2,
+      rightOfMedian: tx >= mx, aboveMedian: ty <= my,
+    };
+  });
+  relaxNodes(list, boxW, boxH, mx, my);
+  return list;
 }
 
 function Quadrant({
@@ -556,34 +627,15 @@ function Quadrant({
     return () => ro.disconnect();
   }, []);
 
-  const H = 360;
-  const nodes = useMemo<PlotNode[]>(() => {
-    if (boxW <= 0) return [];
-    const mx = (logX(medians.output) / 100) * boxW;
-    const my = (posY(medians.quality) / 100) * H;
-    const list: PlotNode[] = plotted.map(m => {
-      const size = 24 + Math.min(m.outputDays, 10) * 2.4;
-      const r = size / 2;
-      const name = maskName(m.displayName, masked);
-      // 名字常驻显示，碰撞盒必须把它算进去，否则气泡分开了名字照样叠
-      // 每字按 11px 估宽再留 12px 余量：只按字面宽度算，相邻两个名字会贴成一串，
-      // 分得开但读起来仍是糊的——「不重叠」和「读得清」是两条线，这里按后者取值
-      const labelW = Math.max(size, name.length * 11 + 12);
-      const tx = (logX(m.output) / 100) * boxW;
-      const ty = (posY(m.quality!) / 100) * H;
-      return {
-        m, trueX: tx, trueY: ty, x: tx, y: ty, r,
-        hw: labelW / 2, hh: r + 8,
-        rightOfMedian: tx >= mx, aboveMedian: ty <= my,
-      };
-    });
-    relaxNodes(list, boxW, H, mx, my);
-    return list;
-  }, [boxW, plotted, masked, medians.output, medians.quality]); // eslint-disable-line react-hooks/exhaustive-deps
+  const H = SCATTER_H;
+  const nodes = useMemo<PlotNode[]>(
+    () => layoutScatter(plotted, medians, boxW, H, masked, logX, posY),
+    [boxW, plotted, masked, medians.output, medians.quality], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   return (
     <div className="ti-card relative rounded-xl overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <CardHead title="分型散点" hint={`气泡大小 = 有产出的天数 · 十字线 = 分型阈值（产出 ${medians.output} 件 / 质量 ${medians.quality}，取入图成员的中位数）· 重叠时小幅避让，不跨分型线`} />
+      <CardHead title="分型散点" hint={`气泡大小 = 有产出的天数 · 十字线 = 分型阈值（产出 ${medians.output} 件 / 质量 ${medians.quality}，取入图成员的中位数）· 重叠时避让并画引线回真实位置，不跨分型线`} />
       <div ref={boxRef} className="relative ml-11 mr-5 mt-7" style={{ height: H }}>
         {/* 中位线 —— 阈值来自后端真实中位数，不是拍的常数 */}
         <div
@@ -632,7 +684,10 @@ function Quadrant({
           const m = n.m;
           const color = getRoleMeta(m.role).color;
           const active = pickedId === m.userId;
-          const name = maskName(m.displayName, masked);
+          // 画上去的必须和算碰撞盒时用的是同一个串。渲染全名、碰撞盒按截断名算，
+          // 测试会绿而页面照样叠——这正是判据分裂（形状 3）。
+          const name = scatterLabel(m.displayName, masked);
+          const fullName = maskName(m.displayName, masked);
           const size = n.r * 2;
           return (
             <button
@@ -640,8 +695,8 @@ function Quadrant({
               type="button"
               onClick={() => onPick(m.userId)}
               aria-pressed={active}
-              aria-label={name}
-              title={`${name} · 产出 ${m.output} 件 · 质量 ${m.quality} · 有产出 ${m.outputDays} 天`}
+              aria-label={fullName}
+              title={`${fullName} · 产出 ${m.output} 件 · 质量 ${m.quality} · 有产出 ${m.outputDays} 天`}
               className="absolute flex flex-col items-center transition-transform hover:scale-110 hover:z-20"
               style={{
                 left: n.x, top: n.y,
@@ -665,7 +720,7 @@ function Quadrant({
                     className="w-full h-full rounded-full object-cover"
                   />
                 ) : (
-                  <span className="text-[11px] font-bold">{name[0]}</span>
+                  <span className="text-[11px] font-bold">{fullName[0]}</span>
                 )}
               </span>
               {/* 名字常驻。避让已经把标签的宽度算进碰撞盒，所以这里不再靠 hover 躲 */}
