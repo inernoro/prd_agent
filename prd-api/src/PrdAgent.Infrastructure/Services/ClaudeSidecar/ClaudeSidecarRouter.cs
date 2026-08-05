@@ -953,6 +953,9 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             workspaceRoot = string.IsNullOrWhiteSpace(req.WorkspaceRoot) ? null : req.WorkspaceRoot,
             gitRepository = string.IsNullOrWhiteSpace(req.GitRepository) ? null : req.GitRepository,
             gitRef = string.IsNullOrWhiteSpace(req.GitRef) ? null : req.GitRef,
+            // null 时整个字段不下发，sidecar 沿用进程级默认；空数组必须原样下发
+            // （它表达的是「一个内置工具都不开」，不是「没指定」）。
+            builtinTools = req.BuiltinTools,
         };
         var json = JsonSerializer.Serialize(dto, JsonOpts);
         return new StringContent(json, Encoding.UTF8, "application/json");
@@ -1031,6 +1034,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 ToolUseId = TryStr(root, "tool_use_id"),
                 ToolInput = TryClone(root, "tool_input"),
                 Content = TryStrOrJson(root, "content"),
+                IsError = TryReadBool(root, "is_error"),
                 FinalText = TryStr(root, "final_text"),
                 InputTokens = TryLong(root, "input_tokens"),
                 OutputTokens = TryLong(root, "output_tokens"),

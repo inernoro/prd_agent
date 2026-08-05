@@ -104,6 +104,12 @@ public class MongoDbContext
     public IMongoCollection<InfraAgentHookProfile> InfraAgentHookProfiles => _database.GetCollection<InfraAgentHookProfile>("infra_agent_hook_profiles");
     public IMongoCollection<InfraAgentRuntimeProfile> InfraAgentRuntimeProfiles => _database.GetCollection<InfraAgentRuntimeProfile>("infra_agent_runtime_profiles");
 
+    // 通用对话智能体（面向全体用户的对聊入口，见 doc/design.platform.chat-agent.md）。
+    // 与上面那套基础设施 Agent 刻意分表：语义不同，混表会互相污染。
+    public IMongoCollection<ChatAgentSession> ChatAgentSessions => _database.GetCollection<ChatAgentSession>("chat_agent_sessions");
+    public IMongoCollection<ChatAgentMessage> ChatAgentMessages => _database.GetCollection<ChatAgentMessage>("chat_agent_messages");
+    public IMongoCollection<ChatAgentEvent> ChatAgentEvents => _database.GetCollection<ChatAgentEvent>("chat_agent_events");
+
     // 外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.platform.external-authorization.md）
     public IMongoCollection<ExternalAuthorization> ExternalAuthorizations => _database.GetCollection<ExternalAuthorization>("external_authorizations");
 
