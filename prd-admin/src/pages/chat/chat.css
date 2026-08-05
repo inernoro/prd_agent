@@ -389,3 +389,121 @@
 }
 .chat-send:disabled { opacity: 0.42; cursor: not-allowed; }
 .chat-send:not(:disabled):hover { filter: brightness(1.08); }
+
+/* ── 工具卡：等待期有阶段推进，完成后产物就地可见 ────────── */
+.chat-tool {
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-input);
+  margin-bottom: 8px;
+  animation: chat-rise 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+.chat-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 12.6px;
+  color: var(--text-muted);
+}
+.chat-tool-head b { font-size: 12.8px; color: var(--text-primary); font-weight: 600; }
+.chat-tool-state { margin-left: auto; font-size: 11.5px; }
+.chat-tool.is-running .chat-tool-state { color: var(--accent-primary); }
+.chat-tool.is-done .chat-tool-state { color: #5fbf7f; }
+.chat-tool.is-failed .chat-tool-state { color: #d96a6a; }
+
+.chat-tool-steps {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding: 0 12px 10px;
+  font-size: 11.2px;
+  color: var(--text-muted);
+}
+.chat-tool-steps s {
+  text-decoration: none;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-faint);
+}
+.chat-tool-steps s.on {
+  background: rgba(217, 119, 87, 0.16);
+  border-color: rgba(217, 119, 87, 0.42);
+  color: var(--accent-primary);
+}
+.chat-tool-steps s.ok {
+  background: rgba(95, 191, 127, 0.14);
+  border-color: transparent;
+  color: #5fbf7f;
+}
+
+/* 进度条：只在执行中出现，保证屏幕一直在动 */
+.chat-tool-bar {
+  height: 3px;
+  margin: 0 12px 11px;
+  border-radius: 2px;
+  background: var(--border-faint);
+  overflow: hidden;
+}
+.chat-tool-bar i {
+  display: block;
+  height: 100%;
+  width: 38%;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  animation: chat-tool-slide 1.4s ease-in-out infinite;
+}
+@keyframes chat-tool-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(300%); }
+}
+
+/* 产物：图就地显示，不是给一句「已生成」 */
+.chat-tool-image {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border-top: 1px solid var(--border-faint);
+  background: var(--bg-card);
+  animation: chat-fadein 0.5s ease both;
+}
+@keyframes chat-fadein {
+  from { opacity: 0; transform: scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 产物：知识库条目给可点开的入口，不是「已保存」四个字 */
+.chat-tool-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 12px 11px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  font-size: 12.4px;
+  background: rgba(95, 191, 127, 0.14);
+  color: var(--text-secondary);
+}
+.chat-tool-link a {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-primary);
+  text-decoration: none;
+  font-size: 11.8px;
+  white-space: nowrap;
+}
+.chat-tool-link a:hover { text-decoration: underline; }
+
+.chat-tool-note {
+  margin: 0 12px 11px;
+  font-size: 12.2px;
+  color: var(--text-muted);
+}
+.chat-tool-note.is-bad { color: #d96a6a; }

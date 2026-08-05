@@ -160,6 +160,12 @@ public static class ChatAgentEventTypes
     /// <summary>模型的思考过程（运行时支持时才有）。</summary>
     public const string Thinking = "thinking";
 
+    /// <summary>模型决定用某把工具，载荷含工具名与入参摘要。</summary>
+    public const string ToolStarted = "tool_started";
+
+    /// <summary>工具执行完毕，载荷含成败、产物（图片地址 / 知识库条目）与人话说明。</summary>
+    public const string ToolFinished = "tool_finished";
+
     /// <summary>token 用量。</summary>
     public const string Usage = "usage";
 

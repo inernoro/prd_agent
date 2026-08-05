@@ -13,20 +13,20 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   MessageSquare, Plus, Trash2, Pencil, Check, X, Send,
-  AlertTriangle, RotateCcw, Sparkles,
+  AlertTriangle, RotateCcw, Sparkles, Wrench, ExternalLink,
 } from 'lucide-react';
 import {
   listChatSessions, createChatSession, renameChatSession, deleteChatSession,
   listChatMessages, sendChatMessage, streamChatEvents,
-  type ChatSession, type ChatMessage,
+  type ChatSession, type ChatMessage, type ChatToolCard,
 } from '@/services/real/chatAgentService';
 import './chat.css';
 
 /** 空会话给三条起手式，免得用户对着空白输入框发呆。 */
 const STARTERS = [
-  '帮我把这段会议记录整理成条理清楚的纪要',
-  '用大白话解释一下什么是模型上下文长度',
-  '给这个功能想三个名字，各说一句理由',
+  '帮我画一张发布日海报，横版，暖色调',
+  '把刚才这段结论记进知识库',
+  '我之前存过的配色方案是什么来着',
 ];
 
 /** 等待期的阶段文案。屏幕上必须一直有变化，静止的加载中超过两秒就是缺陷。 */
@@ -47,6 +47,9 @@ export function ChatPage() {
   const [running, setRunning] = useState(false);
   /** 本轮已等待秒数。给用户「还要多久」的量感，而不是一个转圈图标。 */
   const [waited, setWaited] = useState(0);
+
+  /** 本轮的工具卡。按 toolUseId 收敛，开始时进来，结束时更新为产物或失败。 */
+  const [toolCards, setToolCards] = useState<ChatToolCard[]>([]);
 
   const seqRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -81,6 +84,7 @@ export function ChatPage() {
     abortRef.current?.abort();
     abortRef.current = null;
     setMessages([]);
+    setToolCards([]);
     setRunning(false);
     seqRef.current = 0;
     if (!activeId) return;
@@ -126,6 +130,33 @@ export function ChatPage() {
         case 'turn_started': {
           setRunning(true);
           setWaited(0);
+          setToolCards([]);
+          break;
+        }
+        case 'tool_started': {
+          const card: ChatToolCard = {
+            toolUseId: String(evt.payload.toolUseId ?? `t${evt.seq}`),
+            tool: String(evt.payload.tool ?? ''),
+            label: String(evt.payload.label ?? '工具'),
+            steps: Array.isArray(evt.payload.steps) ? (evt.payload.steps as string[]) : ['执行'],
+            status: 'running',
+          };
+          setToolCards((prev) => (prev.some((c) => c.toolUseId === card.toolUseId) ? prev : [...prev, card]));
+          break;
+        }
+        case 'tool_finished': {
+          const id = String(evt.payload.toolUseId ?? '');
+          const ok = evt.payload.ok !== false;
+          setToolCards((prev) => prev.map((c) => (c.toolUseId !== id ? c : {
+            ...c,
+            status: ok ? 'done' : 'failed',
+            message: (evt.payload.message as string) ?? null,
+            imageUrl: (evt.payload.imageUrl as string) ?? null,
+            entryId: (evt.payload.entryId as string) ?? null,
+            storeName: (evt.payload.storeName as string) ?? null,
+            title: (evt.payload.title as string) ?? null,
+            openPath: (evt.payload.openPath as string) ?? null,
+          })));
           break;
         }
         case 'text_delta': {
@@ -211,6 +242,7 @@ export function ChatPage() {
     ]);
     setRunning(true);
     setWaited(0);
+    setToolCards([]);
 
     const res = await sendChatMessage(sessionId, content);
     setSending(false);
@@ -336,7 +368,7 @@ export function ChatPage() {
             <div className="chat-empty">
               <Sparkles size={22} />
               <b>在。想聊什么直接说。</b>
-              <p>它能多轮对话，说到一半刷新页面也不会丢。目前还不会上网、不会读你上传的文件。</p>
+              <p>能多轮对话、在对话里出图、把结论存进知识库、也能翻你存过的东西。说到一半刷新页面不会丢。目前还不会上网、不会读你上传的文件。</p>
               <div className="chat-starters">
                 {STARTERS.map((s) => (
                   <button key={s} type="button" onClick={() => setInput(s)}>{s}</button>
@@ -377,7 +409,49 @@ export function ChatPage() {
             </div>
           ))}
 
-          {running && lastAssistantIsEmpty(messages) && (
+          {toolCards.length > 0 && (
+            <div className="chat-msg is-assistant">
+              <div className="chat-avatar">AI</div>
+              <div className="chat-body">
+                {toolCards.map((c) => (
+                  <div key={c.toolUseId} className={`chat-tool is-${c.status}`}>
+                    <div className="chat-tool-head">
+                      <Wrench size={13} />
+                      <b>{c.label}</b>
+                      <span className="chat-tool-state">
+                        {c.status === 'running' ? '执行中' : c.status === 'done' ? '完成' : '失败'}
+                      </span>
+                    </div>
+                    <div className="chat-tool-steps">
+                      {c.steps.map((st, i) => (
+                        <s key={st} className={c.status === 'running' ? (i === 0 ? 'on' : '') : 'ok'}>{st}</s>
+                      ))}
+                    </div>
+                    {c.status === 'running' && <div className="chat-tool-bar"><i /></div>}
+                    {c.status === 'done' && c.imageUrl && (
+                      <img className="chat-tool-image" src={c.imageUrl} alt={c.title ?? '生成的图片'} />
+                    )}
+                    {c.status === 'done' && c.openPath && (
+                      <div className="chat-tool-link">
+                        <span>已写入{c.storeName ? ` ${c.storeName}` : ''}{c.title ? ` / ${c.title}` : ''}</span>
+                        <a href={c.openPath} target="_blank" rel="noreferrer">
+                          打开这篇 <ExternalLink size={11} />
+                        </a>
+                      </div>
+                    )}
+                    {c.status === 'done' && !c.imageUrl && !c.openPath && c.message && (
+                      <div className="chat-tool-note">{c.message}</div>
+                    )}
+                    {c.status === 'failed' && (
+                      <div className="chat-tool-note is-bad">{c.message ?? '这一步没成功'}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {running && lastAssistantIsEmpty(messages) && toolCards.length === 0 && (
             <div className="chat-msg is-assistant">
               <div className="chat-avatar">AI</div>
               <div className="chat-body">

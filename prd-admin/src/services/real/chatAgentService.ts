@@ -49,8 +49,29 @@ export interface ChatTurnAccepted {
 /** 事件流推回来的一条事件。type 与后端 ChatAgentEventTypes 对齐，另加一个 idle 收流标记。 */
 export interface ChatStreamEvent {
   seq: number;
-  type: 'turn_started' | 'text_delta' | 'thinking' | 'usage' | 'done' | 'error' | 'log' | 'idle';
+  type:
+    | 'turn_started' | 'text_delta' | 'thinking' | 'usage'
+    | 'tool_started' | 'tool_finished'
+    | 'done' | 'error' | 'log' | 'idle';
   payload: Record<string, unknown>;
+}
+
+/** 消息流里的一张工具卡。运行中显示阶段推进，完成后显示产物。 */
+export interface ChatToolCard {
+  toolUseId: string;
+  tool: string;
+  /** 给用户看的名字，如「生成图片」。后端给，前端不写死。 */
+  label: string;
+  steps: string[];
+  status: 'running' | 'done' | 'failed';
+  message?: string | null;
+  /** 出图产物：图片地址。 */
+  imageUrl?: string | null;
+  /** 入库产物：可点开的知识库条目。 */
+  entryId?: string | null;
+  storeName?: string | null;
+  title?: string | null;
+  openPath?: string | null;
 }
 
 export async function listChatSessions(): Promise<ApiResponse<{ items: ChatSession[] }>> {

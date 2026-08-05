@@ -22,6 +22,7 @@ public sealed class ChatAgentService : IChatAgentService
 
     private readonly MongoDbContext _db;
     private readonly IClaudeSidecarRouter _runtime;
+    private readonly IAgentToolRegistry _tools;
     private readonly IChatAgentTurnQueue _queue;
     private readonly IOptionsMonitor<ChatAgentOptions> _options;
     private readonly ILogger<ChatAgentService> _logger;
@@ -29,12 +30,14 @@ public sealed class ChatAgentService : IChatAgentService
     public ChatAgentService(
         MongoDbContext db,
         IClaudeSidecarRouter runtime,
+        IAgentToolRegistry tools,
         IChatAgentTurnQueue queue,
         IOptionsMonitor<ChatAgentOptions> options,
         ILogger<ChatAgentService> logger)
     {
         _db = db;
         _runtime = runtime;
+        _tools = tools;
         _queue = queue;
         _options = options;
         _logger = logger;
@@ -225,8 +228,9 @@ public sealed class ChatAgentService : IChatAgentService
             Model = string.IsNullOrWhiteSpace(session.Model) ? opts.Model : session.Model!,
             SystemPrompt = opts.SystemPrompt,
             Messages = history,
-            // 阶段一零工具：这里是空的，不是忘了填。
-            Tools = new List<SidecarToolDef>(),
+            // 工具只按白名单暴露，且实现全是转发（出图转给出图流水线，
+            // 存/搜/读知识库转给文档空间）。要不要用、什么时候用由官方套件决定，我们不写调度。
+            Tools = BuildTools(opts),
             // 空数组 = 连运行时自带的只读文件工具也不开。通用对话不该顺带具备读仓库的能力。
             BuiltinTools = Array.Empty<string>(),
             MaxTokens = opts.MaxTokens,
@@ -290,11 +294,18 @@ public sealed class ChatAgentService : IChatAgentService
                         break;
 
                     case SidecarEventType.ToolUse:
+                        await AppendEventAsync(sessionId, turnId, ChatAgentEventTypes.ToolStarted, new
+                        {
+                            toolUseId = evt.ToolUseId,
+                            tool = evt.ToolName,
+                            label = ToolLabel(evt.ToolName),
+                            steps = ToolSteps(evt.ToolName),
+                        }, ct);
+                        break;
+
                     case SidecarEventType.ToolResult:
-                        // 阶段一没有注册任何工具，正常不会走到这里；真出现了只记诊断，
-                        // 不假装它是产物（工具卡是阶段二的事）。
-                        await AppendEventAsync(sessionId, turnId, ChatAgentEventTypes.Log,
-                            new { note = "运行时返回了工具事件，但本阶段未注册任何工具", tool = evt.ToolName }, ct);
+                        await AppendEventAsync(sessionId, turnId, ChatAgentEventTypes.ToolFinished,
+                            BuildToolFinishedPayload(evt), ct);
                         break;
 
                     case SidecarEventType.Keepalive:
@@ -476,6 +487,109 @@ public sealed class ChatAgentService : IChatAgentService
         Builders<ChatAgentMessage>.Filter.Eq(m => m.SessionId, sessionId)
         & Builders<ChatAgentMessage>.Filter.Eq(m => m.TurnId, turnId)
         & Builders<ChatAgentMessage>.Filter.Eq(m => m.Role, ChatAgentRoles.Assistant);
+
+    /// <summary>按白名单取工具描述，交给运行时。白名单为空就是真的不给工具。</summary>
+    private List<SidecarToolDef> BuildTools(ChatAgentOptions opts)
+    {
+        var list = new List<SidecarToolDef>();
+        foreach (var d in _tools.Filter(opts.Tools))
+        {
+            JsonElement schema;
+            try
+            {
+                schema = JsonDocument.Parse(d.InputSchemaJson).RootElement.Clone();
+            }
+            catch (JsonException ex)
+            {
+                // 某把工具的 schema 坏了不该让整个对话不可用：跳过它并留下痕迹。
+                _logger.LogError(ex, "[ChatAgent] 工具 {Tool} 的入参 schema 无法解析，本轮跳过", d.Name);
+                continue;
+            }
+            list.Add(new SidecarToolDef { Name = d.Name, Description = d.Description, InputSchema = schema });
+        }
+        return list;
+    }
+
+    /// <summary>工具卡上给用户看的名字。用产物语言，不用函数名。</summary>
+    private static string ToolLabel(string? tool) => tool switch
+    {
+        "chat_generate_image" => "生成图片",
+        "chat_save_note" => "写入知识库",
+        "kb_search" => "检索知识库",
+        "kb_read" => "读取知识库",
+        _ => tool ?? "工具",
+    };
+
+    /// <summary>工具卡的阶段名。等待期屏幕上要有推进感，不能是一个转圈。</summary>
+    private static string[] ToolSteps(string? tool) => tool switch
+    {
+        "chat_generate_image" => new[] { "排队", "模型出图", "写入素材库" },
+        "chat_save_note" => new[] { "整理内容", "选定空间", "写入并建链接" },
+        "kb_search" => new[] { "理解问题", "检索" },
+        "kb_read" => new[] { "定位条目", "读取原文" },
+        _ => new[] { "执行" },
+    };
+
+    /// <summary>
+    /// 工具结果翻成前端能直接画的载荷：成败、产物（图片地址 / 知识库条目）、人话说明。
+    /// 工具返回的是给模型看的 JSON，这里只挑用户看得见的那几项，其余不外泄。
+    /// </summary>
+    private static object BuildToolFinishedPayload(SidecarEvent evt)
+    {
+        var tool = evt.ToolName;
+        string? imageUrl = null, entryId = null, storeName = null, openPath = null, title = null;
+        var ok = true;
+        string? message = null;
+
+        if (!string.IsNullOrWhiteSpace(evt.Content))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(evt.Content!);
+                var root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("imageUrl", out var u) && u.ValueKind == JsonValueKind.String)
+                        imageUrl = u.GetString();
+                    if (root.TryGetProperty("entryId", out var e) && e.ValueKind == JsonValueKind.String)
+                        entryId = e.GetString();
+                    if (root.TryGetProperty("storeName", out var sn) && sn.ValueKind == JsonValueKind.String)
+                        storeName = sn.GetString();
+                    if (root.TryGetProperty("openPath", out var op) && op.ValueKind == JsonValueKind.String)
+                        openPath = op.GetString();
+                    if (root.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String)
+                        title = t.GetString();
+                    if (root.TryGetProperty("total", out var tot) && tot.ValueKind == JsonValueKind.Number)
+                        message = $"命中 {tot.GetInt32()} 条";
+                }
+            }
+            catch (JsonException)
+            {
+                // 工具返回的不是 JSON（少见）：不当失败处理，只是没有可展示的产物。
+            }
+        }
+
+        // 工具桥把失败也放在 content 里回传，这里按结构判定，判不出就当成功但无产物。
+        if (!string.IsNullOrWhiteSpace(evt.Content) && evt.Content!.Contains("\"success\":false", StringComparison.Ordinal))
+        {
+            ok = false;
+            message ??= "这一步没成功";
+        }
+
+        return new
+        {
+            toolUseId = evt.ToolUseId,
+            tool,
+            label = ToolLabel(tool),
+            ok,
+            message,
+            imageUrl,
+            entryId,
+            storeName,
+            title,
+            openPath,
+        };
+    }
 
     /// <summary>
     /// 把运行时的错误码翻成用户能看懂的一句话。翻不了就原样透出，

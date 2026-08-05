@@ -34,8 +34,8 @@ public sealed class KbDraftCreateTool : IAgentTool
 
     public async Task<AgentToolInvokeResult> InvokeAsync(JsonElement input, AgentToolInvocationContext context, CancellationToken ct)
     {
-        var user = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(_db, context, ct);
-        if (user == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_draft_create requires an infra agent session user context");
+        var userId = await KnowledgeBaseReadonlyToolSupport.ResolveUserIdAsync(_db, context, ct);
+        if (userId == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_draft_create 需要一个明确的用户身份（基础设施 Agent 会话或调用上下文里的用户）");
 
         var entryId = KnowledgeBaseReadonlyToolSupport.GetString(input, "entryId");
         if (string.IsNullOrWhiteSpace(entryId))
@@ -49,7 +49,7 @@ public sealed class KbDraftCreateTool : IAgentTool
         if (entry == null || entry.IsFolder)
             return AgentToolInvokeResult.Fail("kb_entry_not_found", "knowledge base entry not found or not draftable");
 
-        var store = await KnowledgeBaseReadonlyToolSupport.FindAccessibleStoreAsync(_db, entry.StoreId, user.UserId, ct);
+        var store = await KnowledgeBaseReadonlyToolSupport.FindAccessibleStoreAsync(_db, entry.StoreId, userId, ct);
         if (store == null)
             return AgentToolInvokeResult.Fail("kb_entry_not_found", "knowledge base entry not found or not accessible");
 
@@ -57,10 +57,13 @@ public sealed class KbDraftCreateTool : IAgentTool
         if (string.IsNullOrWhiteSpace(baseContent.Content))
             return AgentToolInvokeResult.Fail("kb_entry_content_missing", "entry has no readable text content to draft against");
 
+        // 草稿的会话归属沿用基础设施 Agent 会话；通用对话没有这种会话，留空即可
+        // （语义是「不属于任何基础设施会话的草稿」，不影响按 CreatedBy 的归属与过滤）。
+        var infraSession = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(_db, context, ct);
         var now = DateTime.UtcNow;
         var draft = new KnowledgeBaseDraft
         {
-            SessionId = user.Id,
+            SessionId = infraSession?.Id ?? string.Empty,
             StoreId = store.Id,
             EntryId = entry.Id,
             BaseDocumentId = entry.DocumentId,
@@ -69,7 +72,7 @@ public sealed class KbDraftCreateTool : IAgentTool
             TitleDraft = KnowledgeBaseReadonlyToolSupport.GetString(input, "titleDraft") ?? entry.Title,
             ContentDraft = contentDraft,
             Status = KnowledgeBaseDraftStatuses.Draft,
-            CreatedBy = user.UserId,
+            CreatedBy = userId,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -151,18 +154,23 @@ public sealed class KbDraftListTool : IAgentTool
 
     public async Task<AgentToolInvokeResult> InvokeAsync(JsonElement input, AgentToolInvocationContext context, CancellationToken ct)
     {
-        var user = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(_db, context, ct);
-        if (user == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_draft_list requires an infra agent session user context");
+        var userId = await KnowledgeBaseReadonlyToolSupport.ResolveUserIdAsync(_db, context, ct);
+        if (userId == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_draft_list 需要一个明确的用户身份（基础设施 Agent 会话或调用上下文里的用户）");
 
         var filterBuilder = Builders<KnowledgeBaseDraft>.Filter;
-        var filter = filterBuilder.Eq(x => x.CreatedBy, user.UserId);
+        var filter = filterBuilder.Eq(x => x.CreatedBy, userId);
 
         var entryId = KnowledgeBaseReadonlyToolSupport.GetString(input, "entryId");
         if (!string.IsNullOrWhiteSpace(entryId))
             filter &= filterBuilder.Eq(x => x.EntryId, entryId);
 
         if (KnowledgeBaseReadonlyToolSupport.GetBool(input, "sessionOnly", false))
-            filter &= filterBuilder.Eq(x => x.SessionId, user.Id);
+        {
+            // 只看本基础设施会话的草稿；没有这种会话时该过滤没有意义，直接不加条件
+            var scopeSession = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(_db, context, ct);
+            if (scopeSession != null)
+                filter &= filterBuilder.Eq(x => x.SessionId, scopeSession.Id);
+        }
 
         var status = KnowledgeBaseReadonlyToolSupport.GetString(input, "status");
         if (!string.IsNullOrWhiteSpace(status))
@@ -310,8 +318,8 @@ public sealed class KbApplyTool : IAgentTool
         if (string.IsNullOrWhiteSpace(context.ApprovalId))
             return AgentToolInvokeResult.Fail("kb_apply_approval_required", "kb_apply requires a MAP approvalId");
 
-        var user = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(_db, context, ct);
-        if (user == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_apply requires an infra agent session user context");
+        var userId = await KnowledgeBaseReadonlyToolSupport.ResolveUserIdAsync(_db, context, ct);
+        if (userId == null) return AgentToolInvokeResult.Fail("kb_user_context_required", "kb_apply 需要一个明确的用户身份（基础设施 Agent 会话或调用上下文里的用户）");
 
         var loaded = await KnowledgeBaseDraftToolSupport.LoadOwnedDraftAsync(_db, input, context, ct);
         if (!loaded.Success) return loaded.Error!;
@@ -319,7 +327,7 @@ public sealed class KbApplyTool : IAgentTool
         var draft = loaded.Draft!;
         var entry = loaded.Entry!;
         var store = loaded.Store!;
-        if (!string.Equals(store.OwnerId, user.UserId, StringComparison.Ordinal))
+        if (!string.Equals(store.OwnerId, userId, StringComparison.Ordinal))
             return AgentToolInvokeResult.Fail("kb_apply_owner_required", "only the knowledge base owner can apply a draft");
         if (!string.Equals(draft.Status, KnowledgeBaseDraftStatuses.Draft, StringComparison.OrdinalIgnoreCase))
             return AgentToolInvokeResult.Fail("kb_draft_not_active", "only active drafts can be applied");
@@ -361,7 +369,7 @@ public sealed class KbApplyTool : IAgentTool
                     .Set(x => x.ContentIndex, contentIndex.Trim())
                     .Set(x => x.ContentHash, newHash)
                     .Set(x => x.FileSize, Encoding.UTF8.GetByteCount(newContent))
-                    .Set(x => x.UpdatedBy, user.UserId)
+                    .Set(x => x.UpdatedBy, userId)
                     .Set(x => x.UpdatedAt, now),
                 cancellationToken: ct);
             if (entryResult.ModifiedCount == 0)
@@ -395,7 +403,7 @@ public sealed class KbApplyTool : IAgentTool
             entry.Title = newTitle;
             entry.ContentIndex = contentIndex.Trim();
             entry.ContentHash = newHash;
-            entry.UpdatedBy = user.UserId;
+            entry.UpdatedBy = userId;
             entry.UpdatedAt = now;
 
             return AgentToolInvokeResult.Ok(JsonSerializer.Serialize(new
@@ -545,12 +553,12 @@ public static class KnowledgeBaseDraftToolSupport
         if (string.IsNullOrWhiteSpace(draftId))
             return LoadedDraft.Fail(AgentToolInvokeResult.Fail("kb_draft_id_required", "draftId is required"));
 
-        var draft = await db.KnowledgeBaseDrafts.Find(x => x.Id == draftId && x.CreatedBy == user.UserId).FirstOrDefaultAsync(ct);
+        var draft = await db.KnowledgeBaseDrafts.Find(x => x.Id == draftId && x.CreatedBy == userId).FirstOrDefaultAsync(ct);
         if (draft == null)
             return LoadedDraft.Fail(AgentToolInvokeResult.Fail("kb_draft_not_found", "knowledge base draft not found or not accessible"));
 
         var entry = await db.DocumentEntries.Find(x => x.Id == draft.EntryId).FirstOrDefaultAsync(ct);
-        var store = await KnowledgeBaseReadonlyToolSupport.FindAccessibleStoreAsync(db, draft.StoreId, user.UserId, ct);
+        var store = await KnowledgeBaseReadonlyToolSupport.FindAccessibleStoreAsync(db, draft.StoreId, userId, ct);
         if (entry == null || store == null)
             return LoadedDraft.Fail(AgentToolInvokeResult.Fail("kb_draft_source_missing", "draft source entry or store is missing"));
 

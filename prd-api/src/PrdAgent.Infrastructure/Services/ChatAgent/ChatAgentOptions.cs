@@ -33,4 +33,17 @@ public sealed class ChatAgentOptions
 
     /// <summary>标题自动截取长度。</summary>
     public int TitleLength { get; set; } = 20;
+
+    /// <summary>
+    /// 暴露给这次对话的工具白名单。范围契约钉死在四把：出图、存知识库、搜知识库、读知识库。
+    /// 想加第五把必须先经决策者同意——这条正是「工具数量超过三把即熔断」那条红线的落点
+    /// （检索与读取是同一件事的两半，合并计为一把）。
+    /// </summary>
+    public List<string> Tools { get; set; } = new()
+    {
+        "chat_generate_image",
+        "chat_save_note",
+        "kb_search",
+        "kb_read",
+    };
 }
