@@ -8,6 +8,10 @@
 
 ---
 
+> **[已过期 · 2026-08-02]** 本文档下方「靛蓝-紫罗兰同族色」「`HERO_GRADIENT` = `#5B8DEF → #7C6CF0 → #A78BFA`」等品牌色描述已被 2026-08-02 米多墨系改版取代：紫 / 靛 / 品红全面退出，`--accent-primary` 等 token 改为赭红家族，官网底色由冷黑转暖石墨，渐变起点改为 `#CE6B41` 一族。**在本文档完成全量重写前，不要照抄下方色值**，实现请以当前色板常量定义为准（见文末「实现来源」新增行）；欠账见 [doc/debt.frontend.md](./debt.frontend.md)「首页与登录页视觉语言规则待重写」。
+
+---
+
 > **范围**：`prd-admin/src/pages/home/` + 所有对外展示类页面（登录、分享、落地、订阅邮件 H5 等）。
 > **权威出处**：PR inernoro/prd_agent#405（`claude/redesign-homepage-gTSAf`），把 /home 从"粒子堆 + 代理卡片秀"重做成 Linear.app × Retro-Futurism 融合的九幕叙事。
 > **维护原则**：每次更新整页替换，不保留历史变更记录（历史由 git + changelogs 承担）。
@@ -210,3 +214,4 @@ emerald   (#34d399)  ← 状态 / 存活 / 成功（不变）
 | 七、关联文件 | `prd-admin/src/pages/home/components/SectionHeader.tsx` | 幕头版式 |
 | 七、关联文件 | `prd-admin/src/pages/home/components/Reveal.tsx` | 进场动效 |
 | 七、关联文件 | `prd-admin/src/styles/tokens.css` | 字体 CSS 变量 |
+| 已过期提示 | `prd-admin/src/lib/tileAccent.ts` | 当前色板（`INK_HUES`，米多墨系，取代本文档下方靛蓝-紫罗兰色值） |
