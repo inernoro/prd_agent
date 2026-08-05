@@ -36,6 +36,10 @@ jobs:
           filters: |
             server:
               - 'prd-api/**'
+              # 用量口径守卫（AdoptionTokenGuardTests / navCoverage 里的 route token 套件）读的是
+              # 周报底稿。不登记的话，「只写一份周报、标签写错一个字」的 PR 会整个跳过这道闸——
+              # 而那正是它要防的场景（形状 7：守卫自己没接上线）。
+              - 'doc/report.*.md'
               # GatewayDataDomainGuardTests 直接读取 llmgw/web 源码并校验跨模块产品契约。
               - 'llmgw/web/**'
               - 'llmgw/serving/**'
@@ -50,6 +54,10 @@ jobs:
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
+              # 用量口径守卫（AdoptionTokenGuardTests / navCoverage 里的 route token 套件）读的是
+              # 周报底稿。不登记的话，「只写一份周报、标签写错一个字」的 PR 会整个跳过这道闸——
+              # 而那正是它要防的场景（形状 7：守卫自己没接上线）。
+              - 'doc/report.*.md'
               - 'e2e/**'
               - '.github/workflows/ci.yml'
             desktop:
