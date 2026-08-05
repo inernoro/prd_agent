@@ -411,6 +411,7 @@ public static class ImageGenModelConfigs
                 ["4k"] = new(),
             },
             SizeParamFormat = SizeParamFormats.None,
+            SizesNotApplicable = true,
             Notes = new List<string>
             {
                 "专用于图片语义分层，不进入普通文生图模型选择",

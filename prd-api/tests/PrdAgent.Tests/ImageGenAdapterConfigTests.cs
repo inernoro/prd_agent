@@ -77,9 +77,19 @@ public class ImageGenAdapterConfigTests
             Assert.True(config.SizesByResolution.ContainsKey("2k"), $"{config.ModelIdPattern} missing 2k tier");
             Assert.True(config.SizesByResolution.ContainsKey("4k"), $"{config.ModelIdPattern} missing 4k tier");
 
-            // 确保至少有一个分辨率档位有尺寸
             var totalSizes = config.SizesByResolution.Values.Sum(x => x.Count);
-            Assert.True(totalSizes > 0, $"{config.ModelIdPattern} has no sizes configured");
+            if (config.SizesNotApplicable)
+            {
+                // 不存在"选尺寸"的模型（语义分层等）本就没有尺寸可列。
+                // 豁免必须彻底：声明了不适用却又配了尺寸，说明两处判据打架，照样判红。
+                Assert.True(totalSizes == 0,
+                    $"{config.ModelIdPattern} 声明 SizesNotApplicable，却配了 {totalSizes} 个尺寸选项");
+            }
+            else
+            {
+                // 会进尺寸选择器的模型，至少要有一个分辨率档位有尺寸
+                Assert.True(totalSizes > 0, $"{config.ModelIdPattern} has no sizes configured");
+            }
 
             // 验证每个尺寸选项都有效
             foreach (var (tier, sizes) in config.SizesByResolution)
