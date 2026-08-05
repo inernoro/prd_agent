@@ -43,7 +43,26 @@ def report_body(nature: str, counts=(0, 0, 0, 0)) -> str:
         else f"发现 {total} 个产品缺陷，最高 {highest}；P0/P1/P2/P3={counts[0]}/{counts[1]}/{counts[2]}/{counts[3]}；"
     )
     summaries = ["无" if count == 0 else f"{severity} 代表性问题" for severity, count in zip(archive_report.DAILY_SEVERITY_LEVELS, counts)]
+    broken = counts[0] + counts[1] > 0 or nature == "核心用例失败"
+    unconfirmed = nature in {"验收链路失败", "硬门禁失败"}
+    if broken:
+        plain_product = "有功能坏了，用户点进去会失败"
+    elif nature == "完整通过" and not unconfirmed:
+        plain_product = "可以正常使用，走了一遍没发现问题"
+    else:
+        plain_product = "这次没测出来，不能保证"
+    plain_complete = "测完了" if nature == "完整通过" else "没测完，缺 1 项"
     return f"""
+## {archive_report.PLAIN_SUMMARY_SECTION}
+
+| 你要知道的 | 答案 |
+|---|---|
+| 产品能不能用 | {plain_product} |
+| 验收测完了吗 | {plain_complete} |
+| 昨天上了什么 | 录音页面新增自动续录；周报页面加了导出按钮 |
+| 需要你决定什么 | {archive_report.PLAIN_NO_DECISION} |
+| 下面的内容 | 都是给工程师看的技术细节，你可以不看 |
+
 ## 结论分层
 
 | 结论维度 | 结果 |
@@ -155,6 +174,102 @@ class DailyVerdictContractTests(unittest.TestCase):
         cells = [cell.strip() for cell in example.strip("|").split("|")]
         self.assertEqual("覆盖缺口", cells[4])
         self.assertIn("不是已知产品缺陷", cells[3])
+
+    def test_shipped_templates_ship_plain_summary_first(self):
+        heading = f"## {archive_report.PLAIN_SUMMARY_SECTION}"
+        for template_name in ("zz-report.md", "report-template.md"):
+            with self.subTest(template=template_name):
+                body = (TEMPLATES / template_name).read_text(encoding="utf-8")
+                lines = body.splitlines()
+                self.assertEqual(1, lines.count(heading))
+                headings = [line for line in lines if line.startswith("## ")]
+                self.assertEqual(heading, headings[0])
+                rows = archive_report._section_table_rows(
+                    body, archive_report.PLAIN_SUMMARY_SECTION
+                )
+                fields = [row[0].strip() for row in rows if row]
+                self.assertEqual(list(archive_report.PLAIN_SUMMARY_FIELDS), fields)
+
+    def test_standard_and_rule_document_plain_summary(self):
+        for source in (STANDARD, ENTERPRISE_RULE):
+            with self.subTest(source=source.name):
+                body = source.read_text(encoding="utf-8")
+                self.assertIn(archive_report.PLAIN_SUMMARY_SECTION, body)
+                for answer in archive_report.PLAIN_PRODUCT_ANSWERS:
+                    self.assertIn(answer, body)
+                self.assertIn(archive_report.PLAIN_NO_DECISION, body)
+
+    def test_missing_plain_summary_is_rejected(self):
+        body = report_body("覆盖不足")
+        start = body.index(f"## {archive_report.PLAIN_SUMMARY_SECTION}")
+        end = body.index("## 结论分层")
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body[:start] + body[end:]
+        )
+        self.assertTrue(any("[说人话]" in error for error in errors))
+
+    def test_script_failure_cannot_be_reported_as_broken_product(self):
+        body = report_body("硬门禁失败").replace(
+            "| 产品能不能用 | 这次没测出来，不能保证 |",
+            "| 产品能不能用 | 有功能坏了，用户点进去会失败 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertTrue(any("不得说成产品坏了" in error for error in errors))
+
+    def test_unconfirmed_run_cannot_claim_product_is_fine(self):
+        body = report_body("验收链路失败").replace(
+            "| 产品能不能用 | 这次没测出来，不能保证 |",
+            "| 产品能不能用 | 可以正常使用，走了一遍没发现问题 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertTrue(any("必须写「这次没测出来」" in error for error in errors))
+
+    def test_real_product_failure_cannot_be_softened(self):
+        body = report_body("产品失败", counts=(0, 1, 0, 0)).replace(
+            "| 产品能不能用 | 有功能坏了，用户点进去会失败 |",
+            "| 产品能不能用 | 这次没测出来，不能保证 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertTrue(any("不能写成这次没测出来" in error for error in errors))
+
+    def test_claiming_finished_while_coverage_is_open_is_rejected(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收测完了吗 | 没测完，缺 1 项 |",
+            "| 验收测完了吗 | 测完了 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("测完了" in error and "矛盾" in error for error in errors))
+
+    def test_unexplained_jargon_is_rejected_but_explained_jargon_passes(self):
+        base = report_body("覆盖不足")
+        jargon = base.replace(
+            "| 验收测完了吗 | 没测完，缺 1 项 |",
+            "| 验收测完了吗 | 没测完，缺 1 项，发布门禁没跑完 |",
+        )
+        self.assertTrue(
+            any(
+                "未解释的验收行话" in error
+                for error in archive_report._daily_conclusion_contract_errors(
+                    "conditional", jargon
+                )
+            )
+        )
+        explained = base.replace(
+            "| 验收测完了吗 | 没测完，缺 1 项 |",
+            "| 验收测完了吗 | 没测完，缺 1 项，发布门禁（上线前的自动检查）没跑完 |",
+        )
+        self.assertEqual(
+            [],
+            archive_report._daily_conclusion_contract_errors("conditional", explained),
+        )
+
+    def test_decision_row_must_offer_a_recommendation(self):
+        body = report_body("覆盖不足").replace(
+            f"| 需要你决定什么 | {archive_report.PLAIN_NO_DECISION} |",
+            "| 需要你决定什么 | 录音那条链路还没测 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("必须给出建议" in error for error in errors))
 
     def test_coverage_only_fail_is_rejected(self):
         errors = archive_report._daily_conclusion_contract_errors(
