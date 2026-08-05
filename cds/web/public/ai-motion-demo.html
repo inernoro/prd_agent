@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI 控制态动效 · 三个方案 Demo</title>
+<style>
+  :root {
+    --page-bg: #131314;
+    --card-bg: #1e1f20;
+    --card-bg-soft: #232426;
+    --hairline: rgb(255 255 255 / 0.09);
+    --hairline-strong: rgb(255 255 255 / 0.16);
+    --text-primary: #e8e8ec;
+    --text-muted: #9a9aa2;
+    --accent: 56 189 248;
+    --accent-strong: 125 211 252;
+    --chip-bg: rgb(56 189 248 / 0.08);
+    --ok: 52 211 153;
+    --shadow: 0 18px 46px -30px rgb(0 0 0 / 0.9);
+  }
+
+  [data-theme='light'] {
+    --page-bg: #f8f2ed;
+    --card-bg: #ffffff;
+    --card-bg-soft: #f6efe9;
+    --hairline: rgb(60 40 25 / 0.12);
+    --hairline-strong: rgb(60 40 25 / 0.22);
+    --text-primary: #33251c;
+    --text-muted: #7d6a5c;
+    --accent: 2 132 199;
+    --accent-strong: 3 105 161;
+    --chip-bg: rgb(2 132 199 / 0.08);
+    --ok: 5 150 105;
+    --shadow: 0 18px 46px -32px rgb(80 50 30 / 0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 0 0 72px;
+    background: var(--page-bg);
+    color: var(--text-primary);
+    font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    transition: background 240ms ease, color 240ms ease;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+  header.page {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: color-mix(in srgb, var(--page-bg) 92%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--hairline);
+    padding: 18px 0 16px;
+    margin-bottom: 28px;
+  }
+
+  header.page .wrap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 16px;
+  }
+
+  h1 { font-size: 19px; margin: 0; letter-spacing: -0.01em; flex: 1 1 260px; min-width: 0; }
+  h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--text-muted); margin-top: 4px; }
+
+  .ctl {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 13px;
+    border-radius: 8px;
+    border: 1px solid var(--hairline-strong);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color 160ms ease, background 160ms ease;
+  }
+  .ctl:hover { border-color: rgb(var(--accent) / 0.5); }
+  .ctl svg { width: 15px; height: 15px; }
+
+  section.demo { margin-bottom: 44px; }
+
+  .demo-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+  .demo-head h2 { font-size: 16px; margin: 0; letter-spacing: -0.01em; }
+  .demo-head .tag {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+    padding: 2px 7px; border-radius: 5px;
+    border: 1px solid rgb(var(--accent) / 0.35);
+    background: var(--chip-bg);
+    color: rgb(var(--accent-strong));
+  }
+  .demo-head .tag--muted { border-color: var(--hairline-strong); background: transparent; color: var(--text-muted); }
+  .demo-desc { font-size: 12.5px; line-height: 1.75; color: var(--text-muted); margin: 0 0 16px; max-width: 74ch; }
+  .demo-desc b { color: var(--text-primary); font-weight: 600; }
+
+  .notes { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .notes li { font-size: 12px; line-height: 1.6; color: var(--text-muted); padding-left: 16px; position: relative; }
+  .notes li::before {
+    content: ''; position: absolute; left: 3px; top: 8px;
+    width: 4px; height: 4px; border-radius: 50%; background: rgb(var(--accent) / 0.7);
+  }
+
+  /* ---------- 分支卡骨架（尽量贴近 BranchListPage 的真卡） ---------- */
+  .card {
+    position: relative;
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    background: var(--card-bg);
+    padding: 18px 20px 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    max-width: 620px;
+  }
+
+  .card__head { display: flex; align-items: flex-start; gap: 11px; }
+  .card__icon {
+    display: grid; place-items: center;
+    width: 26px; height: 26px; flex: none;
+    color: rgb(var(--accent-strong));
+  }
+  .card__icon svg { width: 20px; height: 20px; }
+  .card__title-row { display: flex; align-items: center; gap: 9px; min-width: 0; flex-wrap: wrap; }
+  .branch-name { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.5; }
+
+  .ai-badge {
+    position: relative;
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 21px; padding: 0 7px;
+    border-radius: 6px;
+    border: 1px solid rgb(var(--accent) / 0.45);
+    background: var(--chip-bg);
+    color: rgb(var(--accent-strong));
+    font-size: 10.5px; font-weight: 700;
+    flex: none;
+  }
+  .ai-badge svg { width: 11px; height: 11px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid rgb(var(--accent) / 0.3);
+    background: var(--chip-bg);
+    font-size: 12px; font-weight: 600;
+    color: rgb(var(--accent-strong));
+  }
+  .chip svg { width: 13px; height: 13px; }
+  .chip--plain { border-color: var(--hairline-strong); background: transparent; color: var(--text-muted); }
+  .chip--infra { border-color: var(--hairline-strong); background: transparent; color: var(--text-muted); gap: 9px; }
+  .chip--infra .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+  .card__foot {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 16px; padding-top: 13px;
+    border-top: 1px solid var(--hairline);
+  }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 50%; flex: none;
+    background: linear-gradient(140deg, #8b6f5a, #4a3a2e);
+    border: 1px solid var(--hairline-strong);
+  }
+  .sha {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11.5px; color: var(--text-muted);
+    border: 1px solid var(--hairline-strong); border-radius: 6px;
+    padding: 3px 8px;
+  }
+  .foot-spacer { flex: 1 1 auto; min-width: 8px; }
+  .robot-btn {
+    position: relative;
+    display: grid; place-items: center;
+    width: 38px; height: 30px; border-radius: 8px;
+    border: 1px solid rgb(var(--ok) / 0.5);
+    background: rgb(var(--ok) / 0.12);
+    color: rgb(var(--ok));
+  }
+  .robot-btn svg { width: 17px; height: 17px; }
+
+  .status-line { font-size: 11.5px; color: var(--text-muted); }
+
+  /* 基线：现网实现 */
+  .card--base { border-color: rgb(var(--accent) / 0.42); box-shadow: 0 0 0 1px rgb(var(--accent) / 0.1), 0 16px 34px -28px rgb(var(--accent) / 0.62); }
+  .rail-base {
+    position: absolute; inset-block: 0; left: 0; width: 4px;
+    background: rgb(var(--accent));
+    box-shadow: 0 0 12px rgb(var(--accent) / 0.42), 0 0 24px rgb(var(--accent) / 0.2);
+    transform-origin: left center;
+    animation: rail-breathe 2.8s ease-in-out infinite;
+  }
+  @keyframes rail-breathe {
+    0%, 100% { opacity: 0.55; transform: scaleX(0.75); }
+    50%      { opacity: 1;    transform: scaleX(1); }
+  }
+  .shiny {
+    background-image: linear-gradient(112deg,
+      rgb(var(--accent-strong) / 0.55) 0%, rgb(var(--accent-strong) / 0.55) 35%,
+      var(--text-primary) 50%,
+      rgb(var(--accent-strong) / 0.55) 65%, rgb(var(--accent-strong) / 0.55) 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+    animation: shiny-sweep 3.8s linear infinite;
+  }
+  [data-theme='light'] .shiny {
+    background-image: linear-gradient(112deg,
+      rgb(var(--accent) / 0.5) 0%, rgb(var(--accent) / 0.5) 35%,
+      var(--text-primary) 50%,
+      rgb(var(--accent) / 0.5) 65%, rgb(var(--accent) / 0.5) 100%);
+  }
+  @keyframes shiny-sweep { from { background-position: 150% center; } to { background-position: -50% center; } }
+
+  /* ================= 方案 A：数据流轨道 ================= */
+  .card--a { border-color: transparent; background: transparent; padding: 0; }
+  .card--a .card__inner {
+    position: relative; z-index: 1;
+    border-radius: 13px;
+    background: var(--card-bg);
+    padding: 18px 20px 14px;
+    margin: 1.5px;
+    overflow: hidden;
+  }
+  .card--a::before {
+    content: ''; position: absolute; inset: -60%;
+    background: conic-gradient(from 0deg,
+      transparent 0deg, transparent 250deg,
+      rgb(var(--accent) / 0.15) 290deg,
+      rgb(var(--accent-strong)) 340deg,
+      rgb(var(--accent) / 0.15) 358deg,
+      transparent 360deg);
+    animation: beam-spin 4.2s linear infinite;
+  }
+  .card--a::after {
+    content: ''; position: absolute; inset: 0;
+    border-radius: 14px;
+    border: 1px solid rgb(var(--accent) / 0.34);
+    pointer-events: none; z-index: 2;
+  }
+  @keyframes beam-spin { to { transform: rotate(360deg); } }
+
+  .rail-flow {
+    position: absolute; inset-block: 0; left: 0; width: 4px;
+    background:
+      linear-gradient(rgb(var(--accent) / 0.28), rgb(var(--accent) / 0.28)),
+      repeating-linear-gradient(180deg,
+        transparent 0 34px,
+        rgb(var(--accent-strong) / 0.95) 40px,
+        rgb(var(--accent-strong) / 0.95) 58px,
+        transparent 64px 98px);
+    background-size: 100% 100%, 100% 128px;
+    box-shadow: 0 0 12px rgb(var(--accent) / 0.5);
+    animation: rail-stream 1.9s linear infinite;
+  }
+  @keyframes rail-stream { to { background-position: 0 0, 0 128px; } }
+
+  .ai-badge--scan { overflow: hidden; }
+  .ai-badge--scan::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(100deg, transparent 30%, rgb(var(--accent-strong) / 0.5) 50%, transparent 70%);
+    animation: badge-scan 2.6s linear infinite;
+  }
+  @keyframes badge-scan { from { transform: translateX(-110%); } to { transform: translateX(110%); } }
+
+  /* ================= 方案 B：思考脉冲 ================= */
+  .ai-badge--pulse::before,
+  .ai-badge--pulse::after {
+    content: ''; position: absolute; inset: -1px;
+    border-radius: 6px;
+    border: 1px solid rgb(var(--accent) / 0.75);
+    animation: pulse-ring 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+    pointer-events: none;
+  }
+  .ai-badge--pulse::after { animation-delay: 1.2s; }
+  @keyframes pulse-ring {
+    0%   { opacity: 0.85; transform: scale(1); }
+    70%  { opacity: 0;    transform: scale(1.9); }
+    100% { opacity: 0;    transform: scale(1.9); }
+  }
+
+  .thinking {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 11px; min-height: 18px;
+  }
+  .wave { display: flex; align-items: flex-end; gap: 2.5px; height: 15px; flex: none; }
+  .wave i {
+    display: block; width: 2.5px; height: 100%;
+    border-radius: 2px;
+    background: rgb(var(--accent-strong) / 0.85);
+    transform-origin: bottom center;
+    animation: wave-jump 1.05s ease-in-out infinite;
+  }
+  .wave i:nth-child(1) { animation-delay: 0s;    animation-duration: 0.92s; }
+  .wave i:nth-child(2) { animation-delay: 0.11s; animation-duration: 1.16s; }
+  .wave i:nth-child(3) { animation-delay: 0.05s; animation-duration: 0.78s; }
+  .wave i:nth-child(4) { animation-delay: 0.22s; animation-duration: 1.32s; }
+  .wave i:nth-child(5) { animation-delay: 0.15s; animation-duration: 0.86s; }
+  .wave i:nth-child(6) { animation-delay: 0.3s;  animation-duration: 1.05s; }
+  .wave i:nth-child(7) { animation-delay: 0.08s; animation-duration: 1.24s; }
+  @keyframes wave-jump {
+    0%, 100% { transform: scaleY(0.18); opacity: 0.5; }
+    50%      { transform: scaleY(1);    opacity: 1; }
+  }
+
+  .thinking__text {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; color: var(--text-muted);
+    white-space: nowrap; min-width: 0;
+    transition: opacity 220ms ease, transform 220ms ease;
+  }
+  .thinking__text.swapping { opacity: 0; transform: translateY(-5px); }
+  .thinking__text span { overflow: hidden; text-overflow: ellipsis; }
+  .thinking__text::after {
+    content: ''; flex: none;
+    width: 1.5px; height: 11px;
+    background: rgb(var(--accent) / 0.85);
+    animation: caret 0.9s step-end infinite;
+  }
+  @keyframes caret { 50% { opacity: 0; } }
+
+  .card--b { border-color: rgb(var(--accent) / 0.4); }
+  .rail-soft {
+    position: absolute; inset-block: 0; left: 0; width: 4px;
+    background: linear-gradient(180deg,
+      rgb(var(--accent) / 0.15),
+      rgb(var(--accent-strong) / 0.9) 50%,
+      rgb(var(--accent) / 0.15));
+    animation: rail-soft-slide 2.4s ease-in-out infinite;
+  }
+  @keyframes rail-soft-slide {
+    0%, 100% { background-position: 0 -40%; opacity: 0.7; }
+    50%      { background-position: 0 140%; opacity: 1; }
+  }
+
+  /* ================= 方案 C：工位接管 ================= */
+  .card--c { border-color: rgb(var(--accent) / 0.4); }
+  .card--c .sweep {
+    position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(104deg,
+      transparent 38%,
+      rgb(var(--accent) / 0.14) 48%,
+      rgb(var(--accent) / 0.05) 55%,
+      transparent 64%);
+    animation: card-sweep 5.6s ease-in-out infinite;
+  }
+  @keyframes card-sweep {
+    0%   { transform: translateX(-58%); opacity: 0; }
+    12%  { opacity: 1; }
+    78%  { opacity: 1; }
+    100% { transform: translateX(58%); opacity: 0; }
+  }
+
+  .rail-steps {
+    position: absolute; inset-block: 12px; left: 0; width: 4px;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+  .rail-steps i {
+    display: block; flex: 1 1 0; border-radius: 3px;
+    background: rgb(var(--accent) / 0.18);
+    animation: step-light 4.8s ease-in-out infinite;
+  }
+  .rail-steps i:nth-child(1) { animation-delay: 0s; }
+  .rail-steps i:nth-child(2) { animation-delay: 1.2s; }
+  .rail-steps i:nth-child(3) { animation-delay: 2.4s; }
+  .rail-steps i:nth-child(4) { animation-delay: 3.6s; }
+  @keyframes step-light {
+    0%, 4%    { background: rgb(var(--accent) / 0.18); box-shadow: none; }
+    12%, 92%  { background: rgb(var(--accent-strong)); box-shadow: 0 0 10px rgb(var(--accent) / 0.6); }
+    100%      { background: rgb(var(--accent) / 0.18); box-shadow: none; }
+  }
+
+  .ai-badge--ring { overflow: visible; }
+  .ai-badge--ring::before {
+    content: ''; position: absolute; inset: -3px;
+    border-radius: 8px;
+    background: conic-gradient(from 0deg,
+      transparent 0 62%,
+      rgb(var(--accent-strong) / 0.9) 82%,
+      transparent 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    padding: 1.5px;
+    animation: beam-spin 3.1s linear infinite;
+    pointer-events: none;
+  }
+
+  .step-label {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: rgb(var(--accent-strong));
+    margin-top: 11px;
+  }
+  .step-label .dots { display: inline-flex; gap: 3px; }
+  .step-label .dots span {
+    width: 3px; height: 3px; border-radius: 50%;
+    background: currentColor;
+    animation: dot-fade 1.4s ease-in-out infinite;
+  }
+  .step-label .dots span:nth-child(2) { animation-delay: 0.18s; }
+  .step-label .dots span:nth-child(3) { animation-delay: 0.36s; }
+  @keyframes dot-fade { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+  .robot-btn--halo::after {
+    content: ''; position: absolute; inset: -4px;
+    border-radius: 11px;
+    border: 1px solid rgb(var(--ok) / 0.55);
+    animation: pulse-ring 2.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  }
+
+  .cmp {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 12px; margin-top: 28px;
+  }
+  .cmp div {
+    border: 1px solid var(--hairline); border-radius: 10px;
+    padding: 12px 14px; background: var(--card-bg-soft);
+  }
+  .cmp h3 { margin: 0 0 5px; font-size: 12.5px; }
+  .cmp p { margin: 0; font-size: 11.5px; line-height: 1.65; color: var(--text-muted); }
+
+  body.paused *, body.paused *::before, body.paused *::after { animation-play-state: paused !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+  }
+
+  @media (max-width: 640px) {
+    .card { padding: 15px 16px 12px; }
+    .card--a .card__inner { padding: 15px 16px 12px; }
+    .branch-name { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="page">
+  <div class="wrap">
+    <h1>
+      AI 控制态动效 · 三个方案
+      <small>对照对象：BranchListPage 分支卡的 <code>.cds-ai-active-card</code> / <code>.cds-ai-active-rail</code> / 标题 ShinyText</small>
+    </h1>
+    <button class="ctl" id="theme-btn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+      <span id="theme-label">切到白天</span>
+    </button>
+    <button class="ctl" id="pause-btn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+      <span id="pause-label">暂停全部</span>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ============ 基线 ============ -->
+  <section class="demo">
+    <div class="demo-head">
+      <h2>基线 · 现网实现</h2>
+      <span class="tag tag--muted">当前线上</span>
+    </div>
+    <p class="demo-desc">
+      左轨 2.8s 低频呼吸 + 标题扫光，全程只有<b>一种频率、一个颜色、一层信息</b>——只说明「有 AI 在」，不说明它在干什么、到哪一步了。看三秒之后就没有新信息进来，这就是单调的来源。
+    </p>
+    <div class="card card--base">
+      <div class="rail-base"></div>
+      <div class="card__head">
+        <span class="card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></span>
+        <div style="min-width:0;flex:1">
+          <div class="card__title-row">
+            <span class="branch-name shiny">claude/team-insights-redesign-4xlmxx</span>
+            <span class="ai-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg>
+              AI
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="chips">
+        <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>:34789</span>
+        <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>:34823</span>
+        <span class="chip chip--plain">+2</span>
+        <span class="chip chip--infra">
+          <span>基础</span>
+          <span class="dot" style="background:rgb(74 222 128)"></span><span>Mongo :10001</span>
+          <span class="dot" style="background:rgb(248 113 113)"></span><span>Redis :10002</span>
+        </span>
+      </div>
+      <div class="card__foot">
+        <span class="avatar"></span>
+        <span class="sha">93e5580</span>
+        <span class="foot-spacer"></span>
+        <span class="status-line">部署成功 3 分钟前</span>
+        <span class="robot-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 A ============ -->
+  <section class="demo">
+    <div class="demo-head">
+      <h2>方案 A · 数据流轨道</h2>
+      <span class="tag">节奏感最强</span>
+    </div>
+    <p class="demo-desc">
+      呼吸改成<b>有方向的流动</b>：左轨是自上而下穿行的光段（像 CI 日志在往下滚），卡片边框有一道流光沿周长巡一圈，AI 徽章内部一条扫描线掠过。三个动效同源同向，读出来的信息是「<b>AI 在持续推进，没卡住</b>」。适合当默认态——它把「活着」这件事表达得比呼吸更确定。
+    </p>
+    <div class="card card--a">
+      <div class="card__inner">
+        <div class="rail-flow"></div>
+        <div class="card__head">
+          <span class="card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></span>
+          <div style="min-width:0;flex:1">
+            <div class="card__title-row">
+              <span class="branch-name shiny">claude/team-insights-redesign-4xlmxx</span>
+              <span class="ai-badge ai-badge--scan">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg>
+                AI
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>:34789</span>
+          <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>:34823</span>
+          <span class="chip chip--plain">+2</span>
+          <span class="chip chip--infra">
+            <span>基础</span>
+            <span class="dot" style="background:rgb(74 222 128)"></span><span>Mongo :10001</span>
+            <span class="dot" style="background:rgb(248 113 113)"></span><span>Redis :10002</span>
+          </span>
+        </div>
+        <div class="card__foot">
+          <span class="avatar"></span>
+          <span class="sha">93e5580</span>
+          <span class="foot-spacer"></span>
+          <span class="status-line">部署成功 3 分钟前</span>
+          <span class="robot-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg></span>
+        </div>
+      </div>
+    </div>
+    <ul class="notes">
+      <li>手法：左轨 <code>repeating-linear-gradient</code> 位移流动（1.9s）+ 边框 <code>conic-gradient</code> 巡光（4.2s）+ 徽章扫描线（2.6s）。</li>
+      <li>成本：纯 CSS，无 JS、无额外 DOM 层级依赖，卡片仍是原来那个盒子。</li>
+      <li>取舍：三个动效同时在跑，需要把幅度压到「余光可见、正视不吵」；边框巡光要配一层内描边，否则白天主题下会显脏。</li>
+    </ul>
+  </section>
+
+  <!-- ============ 方案 B ============ -->
+  <section class="demo">
+    <div class="demo-head">
+      <h2>方案 B · 思考脉冲</h2>
+      <span class="tag">信息量最大</span>
+    </div>
+    <p class="demo-desc">
+      动效带上<b>正在做什么</b>：AI 徽章向外一圈圈发射涟漪（心跳源），下面一条 7 柱波形按不同周期跳动（幅度随 AI 活跃度走），右侧打字机滚动当前动作文案。用户不用点开 AI 面板就知道 AI 此刻停在哪一步——直接消灭「不知道现在在干嘛」这一种预期失控。
+    </p>
+    <div class="card card--b">
+      <div class="rail-soft"></div>
+      <div class="card__head">
+        <span class="card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></span>
+        <div style="min-width:0;flex:1">
+          <div class="card__title-row">
+            <span class="branch-name">claude/team-insights-redesign-4xlmxx</span>
+            <span class="ai-badge ai-badge--pulse">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg>
+              AI
+            </span>
+          </div>
+          <div class="thinking">
+            <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            <span class="thinking__text"><span id="think-text">正在写入 BranchListPage.tsx</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="chips">
+        <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>:34789</span>
+        <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>:34823</span>
+        <span class="chip chip--plain">+2</span>
+        <span class="chip chip--infra">
+          <span>基础</span>
+          <span class="dot" style="background:rgb(74 222 128)"></span><span>Mongo :10001</span>
+          <span class="dot" style="background:rgb(248 113 113)"></span><span>Redis :10002</span>
+        </span>
+      </div>
+      <div class="card__foot">
+        <span class="avatar"></span>
+        <span class="sha">93e5580</span>
+        <span class="foot-spacer"></span>
+        <span class="status-line">部署成功 3 分钟前</span>
+        <span class="robot-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg></span>
+      </div>
+    </div>
+    <ul class="notes">
+      <li>手法：徽章双环 <code>pulse-ring</code>（错峰 1.2s）+ 7 柱波形各自独立周期（0.78s ~ 1.32s，故意不整除，避免看出循环）+ 文案打字机。</li>
+      <li>数据：文案接 <code>aiEvents</code> 最近一条（现在面板里已有），波形幅度可绑最近一次心跳到现在的间隔——离超时越近幅度越小，天然把「AI 快掉线了」画出来。</li>
+      <li>取舍：多占一行高度（约 26px），列表密度会降；文案没有数据时要退化成「AI 正在操作」，不能空着。</li>
+    </ul>
+  </section>
+
+  <!-- ============ 方案 C ============ -->
+  <section class="demo">
+    <div class="demo-head">
+      <h2>方案 C · 工位接管</h2>
+      <span class="tag">最克制</span>
+    </div>
+    <p class="demo-desc">
+      把「AI 占用中」画成一种<b>环境光</b>：一道极淡的光带每 5.6s 斜掠过整卡（像有人在这张工位上开了灯），左轨拆成四个进度节点依次点亮（拉取 → 构建 → 启动 → 就绪），徽章外一圈虚线光环缓慢旋转，右下角机器人按钮带一层呼吸光晕说明「这个操作现在归 AI」。整体频率低、幅度小，长列表里十几张卡同时亮也不会晕。
+    </p>
+    <div class="card card--c">
+      <div class="sweep"></div>
+      <div class="rail-steps"><i></i><i></i><i></i><i></i></div>
+      <div class="card__head">
+        <span class="card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></span>
+        <div style="min-width:0;flex:1">
+          <div class="card__title-row">
+            <span class="branch-name">claude/team-insights-redesign-4xlmxx</span>
+            <span class="ai-badge ai-badge--ring">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg>
+              AI
+            </span>
+          </div>
+          <span class="step-label">
+            阶段 3 / 4 · 启动容器
+            <span class="dots"><span></span><span></span><span></span></span>
+          </span>
+        </div>
+      </div>
+      <div class="chips">
+        <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>:34789</span>
+        <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h4l3-7 5 14 3-7h5"/></svg>:34823</span>
+        <span class="chip chip--plain">+2</span>
+        <span class="chip chip--infra">
+          <span>基础</span>
+          <span class="dot" style="background:rgb(74 222 128)"></span><span>Mongo :10001</span>
+          <span class="dot" style="background:rgb(248 113 113)"></span><span>Redis :10002</span>
+        </span>
+      </div>
+      <div class="card__foot">
+        <span class="avatar"></span>
+        <span class="sha">93e5580</span>
+        <span class="foot-spacer"></span>
+        <span class="status-line">部署成功 3 分钟前</span>
+        <span class="robot-btn robot-btn--halo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg></span>
+      </div>
+    </div>
+    <ul class="notes">
+      <li>手法：整卡 <code>sweep</code> 光带（5.6s，透明度峰值 0.14）+ 四段轨节点错峰点亮（4.8s 一轮）+ 徽章 conic 虚线环（3.1s）+ 机器人按钮呼吸环。</li>
+      <li>数据：四个节点直接映射现有构建阶段，不亮几个就是真到第几步——动效本身就是进度条，不用额外加控件。</li>
+      <li>取舍：单看一张卡最安静，但也最容易被忽略；阶段数写死 4 段，如果某项目的构建阶段不是 4 步需要改成按实际阶段数生成。</li>
+    </ul>
+  </section>
+
+  <div class="cmp">
+    <div>
+      <h3>想要「一眼看出还活着」</h3>
+      <p>选 A。方向性流动比呼吸更能表达进行时，改动最小，不动布局。</p>
+    </div>
+    <div>
+      <h3>想要「知道 AI 在干什么」</h3>
+      <p>选 B。多一行换来动作文案 + 活跃度波形，直接兑现预期管理里的「在做什么」。</p>
+    </div>
+    <div>
+      <h3>想要「十几张卡同时亮也不吵」</h3>
+      <p>选 C。频率最低、幅度最小，同时把构建阶段画进左轨，是信息密度和克制的折中。</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const themeBtn = document.getElementById('theme-btn');
+  const themeLabel = document.getElementById('theme-label');
+  // ?theme=light 直接以白天主题打开，方便双主题取证
+  if (new URLSearchParams(location.search).get('theme') === 'light') {
+    document.documentElement.dataset.theme = 'light';
+    themeLabel.textContent = '切到黑夜';
+  }
+  themeBtn.addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    themeLabel.textContent = next === 'dark' ? '切到白天' : '切到黑夜';
+  });
+
+  const pauseBtn = document.getElementById('pause-btn');
+  const pauseLabel = document.getElementById('pause-label');
+  pauseBtn.addEventListener('click', () => {
+    const paused = document.body.classList.toggle('paused');
+    pauseLabel.textContent = paused ? '继续播放' : '暂停全部';
+  });
+
+  // 方案 B 的动作文案轮播：真实接入时改成读 aiEvents 最近一条
+  const THINK_STEPS = [
+    '正在写入 BranchListPage.tsx',
+    '正在运行 pnpm tsc --noEmit',
+    '正在构建镜像 layer 4/9',
+    '正在等待容器健康检查',
+  ];
+  const thinkText = document.getElementById('think-text');
+  const thinkBox = thinkText.parentElement;
+  let thinkIndex = 0;
+  setInterval(() => {
+    if (document.body.classList.contains('paused')) return;
+    // 换文案走淡出-淡入，不让文字凭空替换（变化必须可感知）
+    thinkBox.classList.add('swapping');
+    setTimeout(() => {
+      thinkIndex = (thinkIndex + 1) % THINK_STEPS.length;
+      thinkText.textContent = THINK_STEPS[thinkIndex];
+      thinkBox.classList.remove('swapping');
+    }, 220);
+  }, 3600);
+</script>
+
+</body>
+</html>
