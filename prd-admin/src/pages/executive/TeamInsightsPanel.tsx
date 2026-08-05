@@ -470,7 +470,7 @@ export type PlotNode = {
 const MAX_SHIFT = 26;
 
 export function relaxNodes(nodes: PlotNode[], w: number, h: number, medianX: number, medianY: number) {
-  const GAP = 3;
+  const GAP = 5;
   for (let iter = 0; iter < 90; iter++) {
     let moved = false;
     for (let i = 0; i < nodes.length; i++) {
@@ -566,7 +566,9 @@ function Quadrant({
       const r = size / 2;
       const name = maskName(m.displayName, masked);
       // 名字常驻显示，碰撞盒必须把它算进去，否则气泡分开了名字照样叠
-      const labelW = Math.max(size, name.length * 10 + 6);
+      // 每字按 11px 估宽再留 12px 余量：只按字面宽度算，相邻两个名字会贴成一串，
+      // 分得开但读起来仍是糊的——「不重叠」和「读得清」是两条线，这里按后者取值
+      const labelW = Math.max(size, name.length * 11 + 12);
       const tx = (logX(m.output) / 100) * boxW;
       const ty = (posY(m.quality!) / 100) * H;
       return {
