@@ -821,7 +821,20 @@ check("doc-readability-check.py --ratchet" in ci, "CI 里跑了棘轮闸门")
 # 都会让这道闸在 PR 上静默不跑（predicate-and-wiring-discipline 形状 2）。
 check("docs: ${{ steps.filter.outputs.docs }}" in ci, "changes job 导出了 docs 变更信号")
 check("needs.changes.outputs.docs" in ci, "docs-readability job 消费了该信号")
-check("cds-build, docs-readability]" in ci, "docs-readability 已并入 CI Status 汇总闸")
+# 判的是「docs-readability 在不在 ci-status 的 needs 里」，不是「它是不是最后一项」。
+# 原来写死 "cds-build, docs-readability]"，任何人往 needs 末尾追加一个新 job
+# 都会让这条无关的断言变红（predicate-and-wiring-discipline 形状 4a：断言实现的字面存在）。
+ci_status_needs_match = re.search(
+    r"^\s*ci-status:\s*$.*?^\s*needs:\s*\[([^\]]*)\]", ci, re.S | re.M
+)
+ci_status_needs = {
+    item.strip()
+    for item in (ci_status_needs_match.group(1).split(",") if ci_status_needs_match else [])
+    if item.strip()
+}
+check(bool(ci_status_needs), f"能从 ci.yml 解析出 ci-status 的 needs（实测 {sorted(ci_status_needs)}）")
+check("docs-readability" in ci_status_needs, "docs-readability 已并入 CI Status 汇总闸")
+check("no-such-job" not in ci_status_needs, "needs 成员判据不是恒真")
 
 print("[6] 标准文档自己得合规")
 

@@ -63,6 +63,40 @@ DAILY_CONCLUSION_FIELDS = (
     "发布建议",
     "判定性质",
 )
+
+# 「给你的一页结论」：写给不看代码的决策读者的第一屏。
+# 结论分层（DAILY_CONCLUSION_FIELDS）解决的是「验收员之间不要混淆语义」，
+# 但它仍是验收行话；本节解决的是「产品负责人打开链接能不能自己判断」。
+# 用户 2026-08-05：报告网页看得懂字、看不懂内容，读完既不敢提交也说不清哪里不对。
+PLAIN_SUMMARY_SECTION = "给你的一页结论"
+PLAIN_SUMMARY_FIELDS = (
+    "产品能不能用",
+    "验收测完了吗",
+    "昨天上了什么",
+    "需要你决定什么",
+    "下面的内容",
+)
+PLAIN_PRODUCT_ANSWERS = ("可以正常使用", "有功能坏了", "这次没测出来")
+PLAIN_COMPLETENESS_ANSWERS = ("测完了", "没测完")
+PLAIN_NO_DECISION = "本次不需要你做任何事"
+# 这一节里出现即拒收的验收行话，除非当场用「（……）」解释。
+# 判据取的是「术语后面紧跟不跟解释」，不是「报告里有没有解释过」——
+# 读者读的是这一屏，别处解释过对他没用。
+PLAIN_JARGON_TERMS = (
+    "门禁",
+    "断言",
+    "契约测试",
+    "冻结提交",
+    "证明力",
+    "覆盖矩阵",
+    "根因链",
+    "Verdict",
+    "SHA",
+    "smoke",
+    "ready",
+    "verify-open",
+    "integration-live",
+)
 DAILY_SEVERITY_SUMMARY_FIELDS = (
     "严重级",
     "数量",
@@ -831,6 +865,151 @@ def _daily_severity_summary_errors(values, body):
     return errors
 
 
+def _has_plain_summary_section(markdown):
+    """True only when the report really carries the plain-summary H2 section.
+
+    A plain substring test would also fire on a report that merely mentions the
+    section name in prose, and the HTML would then open in brief view with no
+    matching heading to keep — an empty body. The anchor here is deliberately
+    the same `^## <heading>$` shape `_section_table` uses, so the renderer and
+    the gate cannot drift into two different answers.
+    """
+    return bool(
+        re.search(
+            rf"^##\s+{re.escape(PLAIN_SUMMARY_SECTION)}\s*$",
+            markdown or "",
+            re.M,
+        )
+    )
+
+
+def _plain_summary_jargon_errors(text):
+    """Reject acceptance jargon that is not explained on the spot.
+
+    The reader of this section does not read code and does not know what a
+    gate, an assertion or a frozen SHA is. A term is allowed only when the very
+    next characters are a parenthesised plain-language explanation, because an
+    explanation living somewhere else in the report does not reach this screen.
+    """
+    errors = []
+    for term in PLAIN_JARGON_TERMS:
+        pattern = (
+            rf"(?<![0-9A-Za-z]){re.escape(term)}(?![0-9A-Za-z])"
+            if re.fullmatch(r"[0-9A-Za-z\-]+", term)
+            else re.escape(term)
+        )
+        for match in re.finditer(pattern, text or "", re.I):
+            # 允许术语与解释之间有任意空白：判的是「下一个非空白字符是不是左括号」，
+            # 固定取两个字符再 lstrip 会把「门禁  （…）」这种多打一个空格的写法冤判。
+            if re.match(r"\s*[（(]", (text or "")[match.end():]):
+                continue
+            errors.append(
+                f"[说人话] 「{PLAIN_SUMMARY_SECTION}」出现未解释的验收行话「{term}」；"
+                "要么换成大白话，要么紧跟「（一句话解释）」"
+            )
+            break
+    return errors
+
+
+def _plain_summary_errors(verdict, body, facts):
+    """Require a decision-maker-readable first screen and keep it honest.
+
+    The five-field conclusion table below answers auditor questions. This one
+    answers the only four questions the person who signs off actually has: can
+    people use the product, did we finish testing, what shipped, and do I have
+    to decide anything. Cross-checks against the same fact signals keep it from
+    drifting into a friendlier but false summary.
+    """
+    errors = []
+    rows = _section_table_rows(body, PLAIN_SUMMARY_SECTION)
+    if not rows:
+        return [
+            f"[说人话] 每日验收缺少实质填写的「{PLAIN_SUMMARY_SECTION}」表："
+            "报告第一屏必须先用大白话回答产品能不能用、验收测完没、昨天上了什么、要不要你决定"
+        ]
+
+    values = {}
+    for row in rows:
+        if len(row) >= 2:
+            values[re.sub(r"[`*_\s]", "", row[0])] = row[1].strip()
+    for field in PLAIN_SUMMARY_FIELDS:
+        if not values.get(field):
+            errors.append(f"[说人话] 「{PLAIN_SUMMARY_SECTION}」缺少「{field}」字段或答案")
+
+    product = values.get("产品能不能用", "")
+    completeness = values.get("验收测完了吗", "")
+    shipped = values.get("昨天上了什么", "")
+    decision = values.get("需要你决定什么", "")
+
+    product_answer = next(
+        (item for item in PLAIN_PRODUCT_ANSWERS if product.startswith(item)), ""
+    )
+    if product and not product_answer:
+        errors.append(
+            "[说人话] 「产品能不能用」必须以固定答案开头："
+            + "/".join(PLAIN_PRODUCT_ANSWERS)
+        )
+    completeness_answer = next(
+        (item for item in PLAIN_COMPLETENESS_ANSWERS if completeness.startswith(item)), ""
+    )
+    if completeness and not completeness_answer:
+        errors.append(
+            "[说人话] 「验收测完了吗」必须以固定答案开头："
+            + "/".join(PLAIN_COMPLETENESS_ANSWERS)
+        )
+    if shipped and (len(re.sub(r"\s", "", shipped)) < 8 or "详见" in shipped):
+        errors.append(
+            "[说人话] 「昨天上了什么」必须逐条写清楚功能和它对用户的意义，不得只写「详见报告」"
+        )
+    if decision and PLAIN_NO_DECISION not in decision and "建议" not in decision:
+        errors.append(
+            "[说人话] 「需要你决定什么」每条必须给出建议和不处理的后果；"
+            f"确实无事项时只写「{PLAIN_NO_DECISION}」"
+        )
+
+    # 用户真正要的那条分界线：产品坏了，和「我们没测成」，是两件事。
+    # 2026-08-04 每日验收把「测试脚本时序断言失败」写成首屏「不通过·阻断」，
+    # 而报告自己写着未发现用户控件失效——读者当然既看不懂也不敢签字。
+    broken = bool(facts["blocking_product_failure"] or facts["core_failure"])
+    unconfirmed = bool(facts["chain_failure"] or facts["hard_gate_failure"])
+    if product_answer == "有功能坏了" and not broken:
+        errors.append(
+            "[说人话] 「产品能不能用=有功能坏了」但没有 P0/P1 产品缺陷、核心用例也不是失败；"
+            "测试脚本或环境自身的问题应写「这次没测出来」，不得说成产品坏了"
+        )
+    if product_answer in {"可以正常使用", "这次没测出来"} and broken:
+        errors.append(
+            "[说人话] 已有 P0/P1 产品缺陷或核心用例失败，「产品能不能用」不能写成"
+            + product_answer
+        )
+    if product_answer == "可以正常使用" and unconfirmed:
+        errors.append(
+            "[说人话] 验收链路或硬门禁失败时无法证明产品可用，"
+            "「产品能不能用」必须写「这次没测出来」"
+        )
+    if completeness_answer == "测完了" and (
+        facts["incomplete"]
+        or facts["coverage_gap_count"] > 0
+        or facts["core_unexecuted"]
+    ):
+        errors.append(
+            "[说人话] 「验收测完了吗=测完了」与验收完整性、覆盖缺口或核心用例未执行的事实矛盾"
+        )
+    if completeness_answer == "没测完" and not (
+        facts["incomplete"] or facts["coverage_gap_count"] > 0 or facts["core_unexecuted"]
+    ):
+        errors.append(
+            "[说人话] 「验收测完了吗=没测完」但报告没有任何未覆盖、无法确认或核心用例未执行的事实"
+        )
+    if verdict == "pass" and product_answer and product_answer != "可以正常使用":
+        errors.append("[说人话] verdict=pass 时「产品能不能用」必须是「可以正常使用」")
+    if verdict == "pass" and completeness_answer and completeness_answer != "测完了":
+        errors.append("[说人话] verdict=pass 时「验收测完了吗」必须是「测完了」")
+
+    errors.extend(_plain_summary_jargon_errors(_section_text(body, PLAIN_SUMMARY_SECTION)))
+    return errors
+
+
 def _daily_conclusion_contract_errors(verdict, body):
     """Keep product quality, acceptance completeness and delivery judgment distinct.
 
@@ -876,6 +1055,7 @@ def _daily_conclusion_contract_errors(verdict, body):
         )
 
     facts = _daily_fact_signals(values, body)
+    errors.extend(_plain_summary_errors(verdict, body, facts))
     if not facts["core_case_results"]:
         errors.append(
             "[事实一致性] 产品质量必须填写结构化核心用例结果：核心用例=通过/失败/未执行"
@@ -1928,6 +2108,24 @@ def build_interactive_html(
         '出现这种形态说明取证环节被跳过，结论不可直接采信。</p>'
     )
     nav_html = "".join(figures) or '<p class="nav-empty">未附截图证据</p>'
+    # 简版/完整版：报告写了「给你的一页结论」才有简版可给，默认就落在简版——
+    # 决策读者点开链接第一眼看到的是四行大白话 + 缺陷 + 截图，其余章节收起。
+    # 没有那一节的报告（单次验收/历史报告）保持完整版，行为不变。
+    has_plain_summary = _has_plain_summary_section(markdown_content)
+    default_view = "brief" if has_plain_summary else "full"
+    view_switch_html = (
+        '<div class="view-switch" data-view-switch>'
+        '<button type="button" class="active" data-view-mode="brief">简版<small>给你看</small></button>'
+        '<button type="button" data-view-mode="full">完整版<small>给工程师看</small></button>'
+        '<span class="vs-hint">简版只留结论、缺陷和截图；完整版是全部取证过程</span>'
+        '</div>'
+        if has_plain_summary
+        else ""
+    )
+    brief_sections_json = json.dumps(
+        [PLAIN_SUMMARY_SECTION, "昨日工作总结", "缺陷清单"],
+        ensure_ascii=False,
+    )
     result = f"""<!doctype html>
 <!-- map-acceptance-template: interactive-html-v2 -->
 <html lang="zh-CN" data-template="map-acceptance-interactive-html-v2" data-skin="miduo-press-dossier">
@@ -2056,6 +2254,19 @@ main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px
 .method-note strong{{color:var(--ink)}}
 .method-note a{{font-weight:700;text-decoration:none}}
 .method-note span{{color:var(--ink-3)}}
+.view-switch{{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:18px 0 0}}
+.view-switch .vs-hint{{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--ink-3)}}
+.view-switch button small{{display:block;font-size:9.5px;letter-spacing:.12em;opacity:.72;font-weight:400}}
+body[data-view="brief"] .rb-hidden{{display:none}}
+body[data-view="brief"] .toolbar{{display:none}}
+/* 简版把正文提到刊头正下方：结论要是第一眼看到的东西，
+   指标条、风险块和证据版面往后排，否则「给你的一页结论」被推到一千像素以下。 */
+body[data-view="brief"] main{{display:flex;flex-direction:column}}
+body[data-view="brief"] main>*{{order:2}}
+body[data-view="brief"] main>.hero{{order:0}}
+body[data-view="brief"] main>#reportBody{{order:1}}
+body[data-view="brief"] main>.colophon{{order:3}}
+body[data-view="brief"] #reportBody h2::before{{content:none}}
 .toolbar{{position:sticky;top:0;z-index:14;background:var(--paper-2);border:1.5px solid var(--ink);border-radius:3px;padding:9px 10px;margin:20px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
 .toolbar input{{min-width:200px;flex:1;border:1px solid var(--line-2);border-radius:2px;padding:8px 10px;font:inherit;background:#fff;color:var(--ink)}}
 .filter-count{{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.06em;margin-left:auto;white-space:nowrap}}
@@ -2216,7 +2427,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 }}
 </style>
 </head>
-<body>
+<body data-view="{default_view}">
 <div class="layout">
 <aside id="report-navigation">
   <div class="side-mast"><span class="side-stamp">MAP</span><div><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><i>{flavor_en}</i></div></div>
@@ -2250,6 +2461,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     </div>
     <div class="title-row"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}"><i>VERDICT</i>{html.escape(verdict_cn)}</span></div>
     <div class="metric-grid">{summary_html}</div>
+    {view_switch_html}
   </header>
   {problem_html}
   <div class="toolbar">
@@ -2286,6 +2498,48 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 </div>
 <script>
 (function(){{
+  // 简版/完整版：把正文按 H2 分段，简版只留决策读者需要的几段。
+  // 不改 DOM 结构，只加 class —— 模板契约（layout/hero/evidence-nav/reportBody）逐字节不变。
+  var viewSwitch=document.querySelector('[data-view-switch]');
+  if(viewSwitch){{
+    var briefSections={brief_sections_json};
+    var squeeze=function(text){{return (text||'').replace(/\\s+/g,'');}};
+    var briefKeys=briefSections.map(squeeze);
+    var keep=false;
+    var kept=0;
+    var hidden=[];
+    Array.prototype.slice.call(document.querySelectorAll('#reportBody>*')).forEach(function(node){{
+      if(node.tagName==='H1'){{return;}}
+      if(node.tagName==='H2'){{
+        var title=squeeze(node.textContent);
+        keep=briefKeys.some(function(name){{return title.indexOf(name)>=0;}});
+      }}
+      if(keep){{kept++;}}else{{hidden.push(node);}}
+    }});
+    // 一段都没留住说明这份报告的章节名不在简版清单里，
+    // 此时收起全部正文会给出一页空白；宁可退回完整版，也不给空页面。
+    if(kept){{hidden.forEach(function(node){{node.classList.add('rb-hidden');}});}}
+    else{{document.body.setAttribute('data-view','full');viewSwitch.style.display='none';}}
+    var setView=function(mode){{
+      document.body.setAttribute('data-view',mode==='full'?'full':'brief');
+      Array.prototype.slice.call(viewSwitch.querySelectorAll('[data-view-mode]')).forEach(function(btn){{
+        btn.classList.toggle('active',btn.getAttribute('data-view-mode')===mode);
+      }});
+    }};
+    viewSwitch.addEventListener('click',function(event){{
+      var btn=event.target.closest?event.target.closest('[data-view-mode]'):null;
+      if(btn){{setView(btn.getAttribute('data-view-mode'));}}
+    }});
+    // 简版下点证据缩略图/目录跳到被收起的章节会「跳了没反应」，
+    // 所以目标不可见时先自动展开完整版，再让浏览器滚过去。
+    document.addEventListener('click',function(event){{
+      if(document.body.getAttribute('data-view')!=='brief'){{return;}}
+      var link=event.target.closest?event.target.closest('a[href^="#"]'):null;
+      if(!link){{return;}}
+      var target=document.getElementById(decodeURIComponent(link.getAttribute('href').slice(1)));
+      if(target&&target.offsetParent===null){{setView('full');}}
+    }},true);
+  }}
   var reportNavigation=document.getElementById('report-navigation');
   var mobileNavDrawer=document.getElementById('mobile-nav-drawer');
   var mobileNavToggle=document.querySelector('[data-mobile-nav-toggle]');
