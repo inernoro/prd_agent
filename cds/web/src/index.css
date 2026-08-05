@@ -698,6 +698,213 @@
     }
   }
 
+  /* ---------- AI 进度轨（分支卡左轨 + 页脚活动条共用） ----------
+     段数一律来自数据，绝不写常量。没有总量时**不许画分段**——分段这个形状
+     本身在向用户承诺「共 N 步」，他会据此估还要等多久，估错就是预期失控。
+     形态三档：staged（部署，唯一有阶段的路径）/ indeterminate（只知道在做
+     什么）/ heartbeat（只有心跳）。 */
+  .cds-ai-rail,
+  .cds-ai-activity {
+    --cds-rail: 56 189 248;
+    --cds-rail-hi: 125 211 252;
+  }
+
+  [data-theme='light'] .cds-ai-rail,
+  [data-theme='light'] .cds-ai-activity {
+    --cds-rail: 2 132 199;
+    --cds-rail-hi: 3 105 161;
+  }
+
+  .cds-ai-rail {
+    display: flex;
+    pointer-events: none;
+  }
+
+  .cds-ai-rail--v {
+    position: absolute;
+    inset-block: 12px;
+    left: 0;
+    width: 4px;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .cds-ai-rail--h {
+    width: 54px;
+    height: 3px;
+    flex: none;
+    gap: 3px;
+  }
+
+  .cds-ai-rail > i {
+    display: block;
+    flex: 1 1 0;
+    border-radius: 2px;
+    background: rgb(var(--cds-rail) / 0.16);
+    transition: background 320ms ease, box-shadow 320ms ease;
+  }
+
+  .cds-ai-rail--v > i { border-radius: 3px; }
+
+  .cds-ai-rail > i[data-seg='done'] {
+    background: rgb(var(--cds-rail) / 0.55);
+  }
+
+  /* 进行中段必须带静态特征（亮度 + 光晕）：reduced-motion 下流动被关掉，
+     只靠流动区分 done / running 的话，这类用户读不出进度停在哪一段。 */
+  .cds-ai-rail--v > i[data-seg='running'] {
+    background:
+      linear-gradient(rgb(var(--cds-rail-hi) / 0.35), rgb(var(--cds-rail-hi) / 0.35)),
+      repeating-linear-gradient(
+        180deg,
+        transparent 0 10px,
+        rgb(var(--cds-rail-hi)) 14px,
+        rgb(var(--cds-rail-hi)) 24px,
+        transparent 28px 44px
+      );
+    background-size: 100% 100%, 100% 44px;
+    box-shadow: 0 0 10px rgb(var(--cds-rail) / 0.55);
+    animation: cds-ai-rail-stream 1.1s linear infinite;
+  }
+
+  .cds-ai-rail--h > i[data-seg='running'] {
+    background: linear-gradient(
+      90deg,
+      rgb(var(--cds-rail-hi) / 0.45),
+      rgb(var(--cds-rail-hi)),
+      rgb(var(--cds-rail-hi) / 0.45)
+    );
+    background-size: 220% 100%;
+    box-shadow: 0 0 7px rgb(var(--cds-rail) / 0.75);
+    animation: cds-ai-track-stream 1.1s linear infinite;
+  }
+
+  /* 不定量：单条不分段，不承诺任何总量，只表达「在跑」 */
+  .cds-ai-rail--v > i[data-seg='indeterminate'] {
+    background:
+      linear-gradient(rgb(var(--cds-rail) / 0.2), rgb(var(--cds-rail) / 0.2)),
+      linear-gradient(180deg, transparent 0%, rgb(var(--cds-rail-hi)) 45%, transparent 78%);
+    background-size: 100% 100%, 100% 42%;
+    background-repeat: no-repeat;
+    animation: cds-ai-rail-indeterminate 2.1s ease-in-out infinite;
+  }
+
+  .cds-ai-rail--h > i[data-seg='indeterminate'] {
+    background:
+      linear-gradient(rgb(var(--cds-rail) / 0.2), rgb(var(--cds-rail) / 0.2)),
+      linear-gradient(90deg, transparent 0%, rgb(var(--cds-rail-hi)) 45%, transparent 78%);
+    background-size: 100% 100%, 62% 100%;
+    background-repeat: no-repeat;
+    animation: cds-ai-track-indeterminate 1.5s ease-in-out infinite;
+  }
+
+  /* 只有心跳：呼吸，不画任何进度形状。只调透明度，横竖两个方向都成立。 */
+  .cds-ai-rail > i[data-seg='heartbeat'] {
+    background: rgb(var(--cds-rail) / 0.8);
+    animation: cds-ai-rail-heartbeat 2.8s ease-in-out infinite;
+  }
+
+  .cds-ai-activity-text {
+    color: rgb(var(--cds-rail-hi));
+  }
+
+  /* 徽章环形巡光：只转渐变角度，不转元素。徽章是 52x27 的扁矩形，
+     transform: rotate() 会让它的对角线扫到 59px 开外，光带直接甩出徽章。 */
+  @property --cds-ai-ring-angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+  }
+
+  .cds-ai-badge-ring::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 8px;
+    padding: 1.5px;
+    background: conic-gradient(
+      from var(--cds-ai-ring-angle),
+      transparent 0 62%,
+      rgb(125 211 252 / 0.9) 82%,
+      transparent 100%
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: cds-ai-ring-sweep 3.1s linear infinite;
+    pointer-events: none;
+  }
+
+  [data-theme='light'] .cds-ai-badge-ring::before {
+    background: conic-gradient(
+      from var(--cds-ai-ring-angle),
+      transparent 0 62%,
+      rgb(3 105 161 / 0.9) 82%,
+      transparent 100%
+    );
+  }
+
+  /* 整卡环境光：一道极淡的光带缓慢斜掠，表达「这张工位被接管了」。
+     自带 overflow-hidden，卡片因浮层打开切到 overflow-visible 时也不外溢。 */
+  .cds-ai-card-sweep > span {
+    position: absolute;
+    inset: 0;
+    display: block;
+    background: linear-gradient(
+      104deg,
+      transparent 38%,
+      rgb(56 189 248 / 0.14) 48%,
+      rgb(56 189 248 / 0.05) 55%,
+      transparent 64%
+    );
+    animation: cds-ai-card-sweep 5.6s ease-in-out infinite;
+  }
+
+  [data-theme='light'] .cds-ai-card-sweep > span {
+    background: linear-gradient(
+      104deg,
+      transparent 38%,
+      rgb(2 132 199 / 0.1) 48%,
+      rgb(2 132 199 / 0.04) 55%,
+      transparent 64%
+    );
+  }
+
+  @keyframes cds-ai-rail-stream {
+    to { background-position: 0 0, 0 44px; }
+  }
+
+  @keyframes cds-ai-track-stream {
+    to { background-position: 220% 0; }
+  }
+
+  @keyframes cds-ai-rail-indeterminate {
+    0% { background-position: 0 0, 0 -50%; }
+    100% { background-position: 0 0, 0 150%; }
+  }
+
+  @keyframes cds-ai-track-indeterminate {
+    0% { background-position: 0 0, -70% 0; }
+    100% { background-position: 0 0, 170% 0; }
+  }
+
+  @keyframes cds-ai-rail-heartbeat {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  @keyframes cds-ai-ring-sweep {
+    to { --cds-ai-ring-angle: 360deg; }
+  }
+
+  @keyframes cds-ai-card-sweep {
+    0% { transform: translateX(-58%); opacity: 0; }
+    12% { opacity: 1; }
+    78% { opacity: 1; }
+    100% { transform: translateX(58%); opacity: 0; }
+  }
+
   @keyframes cds-actor-name-breathe {
     0%, 100% {
       opacity: 0.74;
@@ -719,6 +926,9 @@
     .cds-ai-preview-beacon::after,
     .cds-ai-preview-beacon svg,
     .cds-ai-active-rail,
+    .cds-ai-rail > i,
+    .cds-ai-badge-ring::before,
+    .cds-ai-card-sweep > span,
     .cds-actor-name-glow {
       animation: none;
     }

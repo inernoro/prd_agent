@@ -573,6 +573,13 @@
   .ladder__row--sep { border-top: 1px solid var(--hairline-strong); }
   .ladder__meta { min-width: 0; display: grid; gap: 3px; }
   .ladder__meta b { font-size: 12.5px; font-weight: 650; }
+  .ladder__defer {
+    margin-left: 7px; padding: 1px 6px; border-radius: 4px;
+    border: 1px solid var(--hairline-strong);
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+  .ladder__meta span b { color: var(--text-primary); font-weight: 600; }
   .ladder__meta span { font-size: 11.5px; line-height: 1.6; color: var(--text-muted); }
   .ladder__demo { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .ladder__text {
@@ -876,8 +883,8 @@
 
       <div class="ladder__row">
         <div class="ladder__meta">
-          <b>计数轨 counted</b>
-          <span>知道 done/total 但不是有序阶段（批量重建 23 个容器）。超过 6 段退回连续条，数字交给文案</span>
+          <b>计数轨 counted<span class="ladder__defer">未落地</span></b>
+          <span>知道 done/total 但不是有序阶段（批量重建 23 个容器）。超过 6 段退回连续条，数字交给文案。<b>CDS 目前不上报批量操作的 done/total，这一档没有真实数据源</b>，`BranchListPage` 只实现了另外三档；要用它得先补计数上报</span>
         </div>
         <div class="ladder__demo">
           <span class="ai-rail ai-rail--h" data-rail-state='{"mode":"counted","total":23,"current":7}'></span>

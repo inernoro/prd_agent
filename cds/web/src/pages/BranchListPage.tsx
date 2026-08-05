@@ -48,7 +48,6 @@ import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 
 /** 分支卡上的复制集成员最小视图（整组卡按 projectGroupId join 用） */
 type RsCardMember = { id?: string; status?: string; hostPort?: number; projectGroupId?: string; createdAt?: string };
-import { ShinyText } from '@/components/effects/ShinyText';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -1048,6 +1047,88 @@ function aiOperationState(branch: BranchSummary, now: number): {
     timeoutAt,
     relative,
   };
+}
+
+/**
+ * AI 进度轨的形态判定。
+ *
+ * 核心纪律：**不知道总步数就不画分段**。分段这个形状本身在向用户承诺
+ * 「共 N 步」，他会据此估还要等多久——估错就是预期失控。所以段数一律来自
+ * 数据，没有总量时退到不分段的形态，绝不凑一个好看的段数。
+ *
+ * 三档（降级方向永远是往信息更少的那一档退，不许往上编）：
+ *   staged        部署——CDS 里唯一像流水线的路径
+ *   indeterminate 只知道在做什么（最近一条 AI 调用的 label），没有总量
+ *   heartbeat     只有 lastAiOccupantAt 心跳，连在做什么都不知道
+ */
+type AiRailMode = 'staged' | 'indeterminate' | 'heartbeat';
+
+const AI_DEPLOY_STAGES = ['构建中', '启动中', '就绪'] as const;
+
+/**
+ * 只有 building / starting 映射成「当前段」。
+ *
+ * running 故意不在表里：到了 running 部署就结束了，此时 AI 往往在做别的事
+ * （改配置、查日志），再显示「就绪 3/3」等于拿一条已经跑完的流水线冒充当前
+ * 活动，会一直挂在那儿不动。到 running 就该落到 indeterminate / heartbeat。
+ * restarting / stopping 同理——它们没有已知的阶段序列，不许硬塞进这三段。
+ */
+const AI_DEPLOY_STAGE_INDEX: Partial<Record<BranchSummary['status'], number>> = {
+  building: 0,
+  starting: 1,
+};
+
+function aiRailState(branch: BranchSummary, activityEvents: ActivityEvent[]): {
+  mode: AiRailMode;
+  total: number;
+  current: number;
+  label: string;
+  detail: string;
+} {
+  const stageIndex = AI_DEPLOY_STAGE_INDEX[branch.status];
+  if (stageIndex !== undefined) {
+    const label = AI_DEPLOY_STAGES[stageIndex];
+    return {
+      mode: 'staged',
+      total: AI_DEPLOY_STAGES.length,
+      current: stageIndex,
+      label,
+      detail: `${label} · ${stageIndex + 1}/${AI_DEPLOY_STAGES.length}`,
+    };
+  }
+  const recent = activityEvents[0];
+  if (recent) {
+    const label = activityLabel(recent);
+    return { mode: 'indeterminate', total: 1, current: 0, label, detail: label };
+  }
+  return { mode: 'heartbeat', total: 1, current: 0, label: 'AI 正在操作', detail: 'AI 正在操作' };
+}
+
+function AiRail({
+  state,
+  orientation,
+}: {
+  state: { mode: AiRailMode; total: number; current: number };
+  orientation: 'v' | 'h';
+}): JSX.Element {
+  const segments = state.mode === 'staged'
+    ? Array.from({ length: state.total }, (_, index) => (
+      index < state.current ? 'done' : index === state.current ? 'running' : 'idle'
+    ))
+    : [state.mode];
+  // 类名必须字面写全：这几条规则在 index.css 的 @layer components 里，Tailwind
+  // 会摇掉「选择器里的类没在源码字面出现过」的规则。写成 `cds-ai-rail--${o}`
+  // 的话拼接结果扫不到，整条 --v/--h 规则被静默删除（tsc 与 build 都是绿的）。
+  const railClass = orientation === 'v'
+    ? 'cds-ai-rail cds-ai-rail--v'
+    : 'cds-ai-rail cds-ai-rail--h';
+  return (
+    <span className={railClass} aria-hidden>
+      {segments.map((seg, index) => (
+        <i key={index} data-seg={seg} />
+      ))}
+    </span>
+  );
 }
 
 function aiBadgeClass(status: AiOperationStatus): string {
@@ -5163,6 +5244,7 @@ const BranchCard = memo(function BranchCard({
   const isAiActive = aiState.active;
   const recentAiAgent = activityEvents.find((event) => event.agent)?.agent || '';
   const aiTitle = recentAiAgent ? `${aiState.title}\n最近 Agent: ${recentAiAgent}` : aiState.title;
+  const aiRail = aiRailState(branch, activityEvents);
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
@@ -5375,10 +5457,14 @@ const BranchCard = memo(function BranchCard({
         <div className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-primary shadow-[0_0_18px_hsl(var(--primary)/0.45)]" aria-hidden />
       ) : null}
       {isAiActive ? (
-        <div
-          className="cds-ai-active-rail pointer-events-none absolute inset-y-0 left-0 w-1 bg-sky-400"
-          aria-hidden
-        />
+        <>
+          {/* 环境光：光带缓慢斜掠整卡。自带 overflow-hidden，卡片因浮层打开切到
+              overflow-visible 时也不会溢出到相邻卡片上。 */}
+          <div className="cds-ai-card-sweep pointer-events-none absolute inset-0 overflow-hidden rounded-md" aria-hidden>
+            <span />
+          </div>
+          <AiRail state={aiRail} orientation="v" />
+        </>
       ) : null}
       {/* Header — 用户反馈 2026-05-06:
           - 时间和 ··· 不可挡住分支名 → 时间下沉到 chip 行右侧 / commit 行,
@@ -5410,17 +5496,9 @@ const BranchCard = memo(function BranchCard({
                 className="min-w-0 flex-1 truncate text-[17px] font-semibold leading-7 tracking-tight"
                 title={branch.branch}
               >
-                {isAiActive ? (
-                  <ShinyText
-                    text={branch.branch}
-                    speed={2.4}
-                    delay={1.4}
-                    spread={112}
-                    color="hsl(var(--foreground) / 0.74)"
-                    shineColor="hsl(var(--foreground))"
-                    className="block max-w-full truncate"
-                  />
-                ) : branch.branch}
+                {/* AI 活跃时标题不再扫光：环境光 + 进度轨 + 徽章环已经承担了
+                    「被接管」的表达，再叠一层扫光就是四个动效同时抢注意力。 */}
+                {branch.branch}
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
@@ -5435,7 +5513,7 @@ const BranchCard = memo(function BranchCard({
               {isAiOperated ? (
                 <button
                   type="button"
-                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-semibold transition-colors ${aiBadgeClass(aiState.status)}`}
+                  className={`relative inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-semibold transition-colors ${isAiActive ? 'cds-ai-badge-ring' : ''} ${aiBadgeClass(aiState.status)}`}
                   title={aiTitle}
                   aria-expanded={aiPanelOpen}
                   onClick={(event) => {
@@ -6196,7 +6274,19 @@ const BranchCard = memo(function BranchCard({
                   {footerSha}
                 </span>
               ) : null}
-              {footerSubject ? (
+              {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject
+                  是静态信息且右边的提交历史下拉一点就能看到。AI 一释放就还回去。 */}
+              {isAiActive ? (
+                <span
+                  className="cds-ai-activity flex min-w-0 flex-1 items-center gap-2"
+                  title={`${aiState.label} · ${aiRail.detail}${footerSubject ? `\ncommit: ${footerSubject}` : ''}`}
+                >
+                  <AiRail state={aiRail} orientation="h" />
+                  <span className="cds-ai-activity-text min-w-0 flex-1 truncate text-[12px]">
+                    {aiRail.detail}
+                  </span>
+                </span>
+              ) : footerSubject ? (
                 <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
                   {footerSubject}
                 </span>
