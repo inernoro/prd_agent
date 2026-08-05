@@ -294,7 +294,7 @@
     }
   }
   .cds-branch-card-enter {
-    animation: cds-branch-card-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: cds-branch-card-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
   @keyframes cds-branch-card-leave {
     0% {
@@ -582,14 +582,6 @@
       0 16px 34px -28px rgb(56 189 248 / 0.62);
   }
 
-  .cds-ai-active-rail {
-    box-shadow:
-      0 0 12px rgb(56 189 248 / 0.42),
-      0 0 24px rgb(56 189 248 / 0.2);
-    transform-origin: left center;
-    animation: cds-ai-rail-breathe 2.8s ease-in-out infinite;
-  }
-
   .cds-actor-name-glow {
     animation: cds-actor-name-breathe 1.85s ease-in-out infinite;
     text-shadow:
@@ -643,11 +635,13 @@
       0 0 10px rgb(2 132 199 / 0.12);
   }
 
+  /* 白天靠「边界清晰」而不是「整体发光」来表达选中/占用：白底上柔和外发光会糊，
+     所以收紧内描边、压掉大范围投影，边框本身加深一档。 */
   [data-theme='light'] .cds-ai-active-card {
-    border-color: rgb(2 132 199 / 0.46) !important;
+    border-color: rgb(2 132 199 / 0.62) !important;
     box-shadow:
-      0 0 0 1px rgb(2 132 199 / 0.08),
-      0 16px 34px -28px rgb(2 132 199 / 0.42);
+      0 0 0 1px rgb(2 132 199 / 0.14),
+      0 10px 22px -20px rgb(2 132 199 / 0.34);
   }
 
   @keyframes cds-ai-beacon-body {
@@ -684,17 +678,6 @@
     50% {
       opacity: 1;
       transform: scale(1.08);
-    }
-  }
-
-  @keyframes cds-ai-rail-breathe {
-    0%, 100% {
-      opacity: 0.46;
-      transform: scaleY(0.84);
-    }
-    50% {
-      opacity: 0.92;
-      transform: scaleY(1);
     }
   }
 
@@ -808,6 +791,48 @@
     color: rgb(var(--cds-rail-hi));
   }
 
+  /* 次要信息（最近一次 AI 活动多久前）压到 muted，让主文案不被稀释 */
+  .cds-ai-activity-meta {
+    color: hsl(var(--muted-foreground));
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* heartbeat 档的形态：一颗带光晕的脉冲点。什么进度都不知道时不画条，
+     只表达「还活着」——横线会被读成进度，而它并不表示任何进度。 */
+  .cds-ai-pulse-dot {
+    position: relative;
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background: rgb(var(--cds-rail-hi));
+    box-shadow: 0 0 8px rgb(var(--cds-rail) / 0.7);
+    animation: cds-ai-rail-heartbeat 2.8s ease-in-out infinite;
+  }
+
+  .cds-ai-pulse-dot::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    border: 1px solid rgb(var(--cds-rail) / 0.6);
+    animation: cds-ai-pulse-halo 2.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  }
+
+  @keyframes cds-ai-pulse-halo {
+    0% { opacity: 0.8; transform: scale(0.75); }
+    70% { opacity: 0; transform: scale(1.5); }
+    100% { opacity: 0; transform: scale(1.5); }
+  }
+
+  /* 分支名走等宽：与 llmgw 日志同一套英文字形（llmgw/web/src/theme.css --font-mono）。
+     分支名是标识符不是散文，等宽下 claude/ai-animation-demos-u7uvyr 这类串的
+     断字和数字对齐都更稳。 */
+  .cds-branch-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: -0.015em;
+  }
+
   /* 徽章环形巡光：只转渐变角度，不转元素。徽章是 52x27 的扁矩形，
      transform: rotate() 会让它的对角线扫到 59px 开外，光带直接甩出徽章。 */
   @property --cds-ai-ring-angle {
@@ -861,13 +886,15 @@
     animation: cds-ai-card-sweep 5.6s ease-in-out infinite;
   }
 
+  /* 白天主题：同样的光带在白底上会读成「脏」而不是「亮」——降到刚好可见，
+     让「被接管」的表达主要由边框和进度轨承担，而不是给整卡蒙一层灰蓝雾。 */
   [data-theme='light'] .cds-ai-card-sweep > span {
     background: linear-gradient(
       104deg,
-      transparent 38%,
-      rgb(2 132 199 / 0.1) 48%,
-      rgb(2 132 199 / 0.04) 55%,
-      transparent 64%
+      transparent 40%,
+      rgb(2 132 199 / 0.055) 48%,
+      rgb(2 132 199 / 0.022) 55%,
+      transparent 62%
     );
   }
 
@@ -925,7 +952,6 @@
     .cds-ai-preview-beacon::before,
     .cds-ai-preview-beacon::after,
     .cds-ai-preview-beacon svg,
-    .cds-ai-active-rail,
     .cds-ai-rail > i,
     .cds-ai-badge-ring::before,
     .cds-ai-card-sweep > span,
@@ -1822,7 +1848,7 @@
       inset 0 1px 0 hsl(var(--map-cyan) / 0.16),
       inset 0 -80px 120px hsl(220 78% 2% / 0.5),
       0 0 28px hsl(188 100% 44% / 0.08);
-    animation: cds-agent-world-arrive 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: cds-agent-world-arrive 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
 
   .cds-agent-world-stage::before {
@@ -1939,7 +1965,7 @@
   .cds-agent-world-region {
     cursor: pointer;
     opacity: 0;
-    animation: cds-agent-world-region-enter 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: cds-agent-world-region-enter 360ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
     animation-delay: calc(var(--region-order) * 42ms);
   }
 
@@ -2911,8 +2937,26 @@
     }
   }
 
+  /*
+   * fill-mode 必须是 backwards，不能是 both/forwards。
+   *
+   * 本类挂在 .cds-main 上（AppShell.tsx），而 .cds-main 同时是页面滚动容器
+   * （overflow-y: auto）。这条动画 animates transform，用 forwards 填充时动画
+   * 结束后元素仍处于填充态，Chrome 据此把 .cds-main 当成 position: fixed 的
+   * **包含块**——于是 main 里所有 fixed 浮层（分支详情抽屉等）不再钉在视口上，
+   * 而是跟着内容滚动并被 overflow 裁掉：滚下去之后抽屉只剩下半截。
+   *
+   * 关键点：to 帧是 transform: none，孤立地看「动画结束后没有 transform」，
+   * 所以从代码上完全看不出问题——只有真在滚动容器里滚一次才暴露。
+   *
+   * backwards 只在 delay 阶段应用 from 帧；本动画无 delay，入场观感与 both
+   * 完全一致，但动画结束后不再保留填充态，包含块随之消失。
+   *
+   * 同源事故：AppShell.tsx 里 topbar 的 backdrop-filter 抢走包含块，导致全屏
+   * backdrop 只盖住顶栏（Bugbot #741），修法是 portal 到 body。
+   */
   .cds-page-enter {
-    animation: cds-page-enter 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: cds-page-enter 200ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -4352,7 +4396,7 @@
   cursor: pointer;
   opacity: 1;
   outline: none;
-  animation: cds-agent-geo-region-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: cds-agent-geo-region-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   animation-delay: calc(var(--region-order) * 32ms);
 }
 

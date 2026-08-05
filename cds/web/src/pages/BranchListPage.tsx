@@ -1117,8 +1117,9 @@ function AiRail({
     ))
     : [state.mode];
   // 类名必须字面写全：这几条规则在 index.css 的 @layer components 里，Tailwind
-  // 会摇掉「选择器里的类没在源码字面出现过」的规则。写成 `cds-ai-rail--${o}`
-  // 的话拼接结果扫不到，整条 --v/--h 规则被静默删除（tsc 与 build 都是绿的）。
+  // 会摇掉「选择器里的类没在源码字面出现过」的规则。用模板串把方向后缀拼进类名的
+  // 话，拼接结果扫不到，整条 --v / --h 规则被静默删除（tsc 与 build 都是绿的）。
+  // 守卫见 tests/web/branch-list-preview-contract.test.ts。
   const railClass = orientation === 'v'
     ? 'cds-ai-rail cds-ai-rail--v'
     : 'cds-ai-rail cds-ai-rail--h';
@@ -5493,7 +5494,7 @@ const BranchCard = memo(function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
-                className="min-w-0 flex-1 truncate text-[17px] font-semibold leading-7 tracking-tight"
+                className="cds-branch-name min-w-0 flex-1 truncate text-[17px] font-semibold leading-7"
                 title={branch.branch}
               >
                 {/* AI 活跃时标题不再扫光：环境光 + 进度轨 + 徽章环已经承担了
@@ -6279,11 +6280,21 @@ const BranchCard = memo(function BranchCard({
               {isAiActive ? (
                 <span
                   className="cds-ai-activity flex min-w-0 flex-1 items-center gap-2"
-                  title={`${aiState.label} · ${aiRail.detail}${footerSubject ? `\ncommit: ${footerSubject}` : ''}`}
+                  title={`${aiState.label} · ${aiRail.detail}${aiState.relative ? ` · 最近 ${aiState.relative}` : ''}${footerSubject ? `\ncommit: ${footerSubject}` : ''}`}
                 >
-                  <AiRail state={aiRail} orientation="h" />
+                  {/* heartbeat 档不画条：一条不表示任何进度的横线只是噪音（用户原话
+                      「有点丑陋、单调」）。什么都不知道时就用一颗脉冲点表示「还活着」，
+                      把「画出来的形状 = 拥有的信息」这条纪律贯彻到底。 */}
+                  {aiRail.mode === 'heartbeat' ? (
+                    <span className="cds-ai-pulse-dot" aria-hidden />
+                  ) : (
+                    <AiRail state={aiRail} orientation="h" />
+                  )}
                   <span className="cds-ai-activity-text min-w-0 flex-1 truncate text-[12px]">
                     {aiRail.detail}
+                    {aiState.relative ? (
+                      <span className="cds-ai-activity-meta"> · {aiState.relative}</span>
+                    ) : null}
                   </span>
                 </span>
               ) : footerSubject ? (
