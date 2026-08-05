@@ -1,6 +1,7 @@
 // Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
 // 密钥明文只随创建/轮换请求发送，列表永远只展示 hasKey。
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled } from '@/lib/api';
 import type { CreatePlatformRequest, PlatformItem } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
@@ -173,6 +174,9 @@ export function PlatformsPage() {
           </p>
           <div style={{ marginTop: 6, ...HINT_TEXT }}>
             第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
+          </div>
+          <div style={{ marginTop: 6, ...HINT_TEXT }}>
+            fal.ai 等原生接口不属于 OpenAI 或 Claude Provider。图片分层请到 <Link className="lg-text-link" to="/exchanges#image-layering">Exchange 一键接入</Link>。
           </div>
         </div>
         {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>

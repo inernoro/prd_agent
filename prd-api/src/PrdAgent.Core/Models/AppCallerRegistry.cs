@@ -207,6 +207,14 @@ public static class VisualAgent
         public const string VisionGen = "visual-agent.image.vision::generation";
 
         [AppCallerMetadata(
+            "图片语义分层",
+            "把单张图片拆解为可独立编辑的 RGBA 图层",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string Layering = "visual-agent.image.layering::generation";
+
+        [AppCallerMetadata(
             "图片分析",
             "分析图片内容",
             ModelTypes = new[] { ModelTypes.Vision },

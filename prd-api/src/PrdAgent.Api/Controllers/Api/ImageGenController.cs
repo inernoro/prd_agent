@@ -31,6 +31,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class ImageGenController : ControllerBase
 {
+    private const string ImageLayeringCapabilityId = "image-layering";
+
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
     private readonly IImageGenerationClient _imageClient;
@@ -855,6 +857,12 @@ public class ImageGenController : ControllerBase
     public async Task<IActionResult> Generate([FromBody] ImageGenGenerateRequest request, CancellationToken ct)
     {
         var adminId = GetAdminId();
+        var operation = (request?.Operation ?? "generate").Trim().ToLowerInvariant();
+        if (operation is not ("generate" or "layering"))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "operation 仅支持 generate 或 layering"));
+        }
+        var isLayering = operation == "layering";
         var prompt = (request?.Prompt ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -867,9 +875,17 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = VisualAgent.ImageGen.Generate;
+        var appCallerCode = isLayering ? VisualAgent.Image.Layering : VisualAgent.ImageGen.Generate;
+        var requiredLogicalModelPublicId = isLayering ? ImageLayeringCapabilityId : null;
         GatewayModelResolution? resolved = null;
-        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
+        if (isLayering)
+        {
+            // MAP 只依赖 LLMGW 发布的通用能力标识，不感知 fal.ai、Exchange 或具体模型。
+            modelId = null;
+            platformId = null;
+            modelName = null;
+        }
+        else if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
             resolved = await _gateway.ResolveModelAsync(appCallerCode, "generation", ct: ct);
             if (resolved != null)
@@ -901,6 +917,10 @@ public class ImageGenController : ControllerBase
                                 || !string.IsNullOrWhiteSpace(initImageBase64)
                                 || !string.IsNullOrWhiteSpace(initImageUrl)
                                 || !string.IsNullOrWhiteSpace(initImageAssetSha256);
+        if (isLayering && !initImageProvided)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片分层必须提供一张输入图片"));
+        }
 
         // 兼容：允许前端只传 URL / sha，服务端负责下载/读取并转为 base64（避免浏览器 CORS 与性能问题）
         if (initImageBase64 == null && !string.IsNullOrWhiteSpace(initImageAssetSha256))
@@ -1001,7 +1021,12 @@ public class ImageGenController : ControllerBase
         }
         var maskB64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim();
         var res = await _imageClient.GenerateUnifiedAsync(prompt, n, size, responseFormat, ct, appCallerCode,
-            images: images.Count > 0 ? images : null, modelId, platformId, modelName, maskBase64: maskB64);
+            images: images.Count > 0 ? images : null,
+            modelId,
+            platformId,
+            modelName,
+            maskBase64: maskB64,
+            requiredLogicalModelPublicId: requiredLogicalModelPublicId);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -2134,6 +2159,7 @@ public class ImageGenPlanItem
 
 public class ImageGenGenerateRequest
 {
+    public string? Operation { get; set; }
     public string Prompt { get; set; } = string.Empty;
     public string? ModelId { get; set; }
     public string? PlatformId { get; set; }
