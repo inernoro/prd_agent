@@ -2480,16 +2480,19 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var segments = new JsonArray();
         var segmentId = 0;
-        foreach (var (startSec, endSec, text) in ExtractDoubaoSegments(result))
+        foreach (var (startSec, endSec, text, speaker) in ExtractDoubaoSegments(result))
         {
-            segments.Add(new JsonObject
+            var segment = new JsonObject
             {
                 ["id"] = segmentId++,
                 ["seek"] = 0,
                 ["start"] = startSec,
                 ["end"] = endSec,
                 ["text"] = text,
-            });
+            };
+            if (!string.IsNullOrWhiteSpace(speaker))
+                segment["speaker"] = speaker;
+            segments.Add(segment);
         }
 
         var root = new JsonObject
@@ -2510,7 +2513,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return root.ToJsonString();
     }
 
-    private static IEnumerable<(double StartSec, double EndSec, string Text)> ExtractDoubaoSegments(StreamAsrResult result)
+    private static IEnumerable<(double StartSec, double EndSec, string Text, string? Speaker)> ExtractDoubaoSegments(StreamAsrResult result)
     {
         foreach (var response in result.Responses)
         {
@@ -2534,7 +2537,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var endMs = utterance.TryGetProperty("end_time", out var et) && et.ValueKind == JsonValueKind.Number
                     ? et.GetDouble()
                     : startMs;
-                yield return (startMs / 1000.0, endMs / 1000.0, text.Trim());
+                yield return (
+                    startMs / 1000.0,
+                    endMs / 1000.0,
+                    text.Trim(),
+                    DoubaoStreamAsrService.ResolveSpeakerId(utterance));
             }
         }
 
@@ -2545,14 +2552,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 if (string.IsNullOrWhiteSpace(segment.Text)) continue;
                 var end = cursor + Math.Max(0, segment.DurationSec);
-                yield return (cursor, end, segment.Text.Trim());
+                yield return (cursor, end, segment.Text.Trim(), segment.SpeakerId);
                 cursor = end;
             }
             yield break;
         }
 
         if (!string.IsNullOrWhiteSpace(result.FullText))
-            yield return (0, 0, result.FullText.Trim());
+            yield return (0, 0, result.FullText.Trim(), null);
     }
 
     /// <inheritdoc />

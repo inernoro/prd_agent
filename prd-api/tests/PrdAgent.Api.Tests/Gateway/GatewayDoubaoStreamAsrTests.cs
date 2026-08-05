@@ -11,6 +11,22 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class GatewayDoubaoStreamAsrTests
 {
     [Fact]
+    public void RecognitionRequest_ShouldEnableNativeSpeakerInformation_ByDefault()
+    {
+        var request = DoubaoStreamAsrService.BuildRecognitionRequest(1, 16, 16000, null);
+
+        request["request"]!["show_utterances"]!.GetValue<bool>().ShouldBeTrue();
+        request["request"]!["enable_speaker_info"]!.GetValue<bool>().ShouldBeTrue();
+
+        var explicitlyDisabled = DoubaoStreamAsrService.BuildRecognitionRequest(
+            1,
+            16,
+            16000,
+            new Dictionary<string, object> { ["enableSpeakerInfo"] = false });
+        explicitlyDisabled["request"]!["enable_speaker_info"]!.GetValue<bool>().ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task RawDoubaoStreamAsr_ShouldExecuteInsideGateway_AndReturnVerboseJson()
     {
         var fakeAsr = new FakeDoubaoStreamAsrExecutor();
@@ -76,6 +92,7 @@ public class GatewayDoubaoStreamAsrTests
         segment.GetProperty("start").GetDouble().ShouldBe(1);
         segment.GetProperty("end").GetDouble().ShouldBe(2.5);
         segment.GetProperty("text").GetString().ShouldBe("第一句字幕");
+        segment.GetProperty("speaker").GetString().ShouldBe("2");
         root.GetProperty("gateway").GetProperty("protocol").GetString().ShouldBe("websocket");
         logWriter.Done.ShouldNotBeNull();
         logWriter.Done!.ProviderAttempts.ShouldNotBeNull();
@@ -213,7 +230,7 @@ public class GatewayDoubaoStreamAsrTests
                   "result": {
                     "text": "第一句字幕",
                     "utterances": [
-                      { "start_time": 1000, "end_time": 2500, "text": "第一句字幕" }
+                      { "start_time": 1000, "end_time": 2500, "text": "第一句字幕", "speaker_info": { "speaker_id": 2 } }
                     ]
                   }
                 }

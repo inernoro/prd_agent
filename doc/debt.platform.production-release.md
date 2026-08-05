@@ -10,7 +10,7 @@
 
 ## 总览
 
-当前 open: 0 / paid: 7 / 总计: 7
+当前 open: 0 / paid: 8 / 总计: 8
 
 ## 债务列表
 
@@ -28,6 +28,7 @@
 | 2026-07-12-release-forensic-ledger | PR #1174 | 2026-07-17 | 每次执行写不可覆盖 JSON，记录操作者、主机、release shell PID、开始结束时间、目标 ref、产物 URL/实际与期望 SHA256、校验结论、切换前后 owner/mode/current/previous、公网探针、首个失败阶段与回滚结果。2026-07-12 首次把目录改为 `700` 的历史进程无法追溯，属于不可恢复历史事实；后续发布已具备归因链。 |
 | 2026-07-17-independent-public-surface-watch | PR #1174 | 2026-07-17 | `LLM Gateway Shadow Watch` 新增无密钥 `public-surface` 独立 job，每 6 小时先验证 MAP 根页、真实资源、API 与网关双健康，再以独立 Gateway 模式验证网关产品标识、真实 JS/CSS、Console/Serving 精确提交和 GW Native、OpenAI、Claude、Gemini 四协议无密钥 401；两份 JSON 均上传保存，不依赖发布动作。 |
 | 2026-07-17-static-release-umask-worker-access | PR #1176 | 2026-07-17 | 生产发布在 `umask 077` 下创建的 `.releases` 和版本根目录为 `700`，完整产物仍会被 Nginx worker 拒绝并导致根页 500。发布表面探针拒绝完成后，通过发布前静态与 Nginx 精确备份恢复根页 200，网关容器 ID/IP 保持不变。PR #1176 在原子切换前把目录固定为 `755`、文件固定为 `644`，增加严格 umask 单测、真实 Nginx worker 测试和独立 CI 门禁。 |
+| 2026-08-04-gateway-bind-mount-drift | 待本次发布归档 | 2026-08-04 | 生产仓库目录被替换后，长时间运行的 gateway 仍绑定旧目录 inode，宿主机 `current` 已切换但容器继续读取旧页面。发布脚本现在以 `coherent`、`confirmed-drift`、`probe-error` 三态对账宿主机与容器内的静态指针、首页 hash 和 Nginx 配置 hash；只有确认漂移且 Compose 绝对目录真实拥有当前挂载时才定向重建 gateway，重建后再次对账。重建前后容器 ID、状态与 hash 前缀写入发布证据。公网表面探针要求实际解析出的同源 JS/CSS 入口 URL 含目标 commit，杜绝把 meta 文案当成新版入口而误放行。 |
 
 ## 关闭条件
 

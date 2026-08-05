@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace PrdAgent.Api.Services;
@@ -76,6 +77,12 @@ public static class SubtitleFormatter
             foreach (var seg in segments)
             {
                 if (string.IsNullOrWhiteSpace(seg.Text)) continue;
+                if (!string.IsNullOrWhiteSpace(seg.SpeakerId))
+                {
+                    sb.Append("[说话人")
+                      .Append(NormalizeSpeakerLabel(seg.SpeakerId))
+                      .Append("] ");
+                }
                 sb.AppendLine(seg.Text);
                 sb.AppendLine();
             }
@@ -89,13 +96,30 @@ public static class SubtitleFormatter
               .Append(FormatTime(seg.StartSec))
               .Append(" - ")
               .Append(FormatTime(seg.EndSec))
-              .Append("]** ")
+              .Append("]** ");
+            if (!string.IsNullOrWhiteSpace(seg.SpeakerId))
+            {
+                sb.Append("[说话人")
+                  .Append(NormalizeSpeakerLabel(seg.SpeakerId))
+                  .Append("] ");
+            }
+            sb
               .Append(seg.Text)
               .AppendLine()
               .AppendLine();
         }
 
         return sb.ToString();
+    }
+
+    private static string NormalizeSpeakerLabel(string speakerId)
+    {
+        var trimmed = speakerId.Trim();
+        if (trimmed.StartsWith("说话人", StringComparison.Ordinal))
+            return trimmed[3..];
+        if (int.TryParse(trimmed, out var numeric))
+            return (numeric + 1).ToString(CultureInfo.InvariantCulture);
+        return trimmed;
     }
 
     public static string FormatImageText(string sourceTitle, string rawText)
