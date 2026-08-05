@@ -33,6 +33,14 @@ public class ChatAgentSession
     public string? RunningTurnId { get; set; }
 
     /// <summary>
+    /// 当前这一轮的起始事件序号（turn_started 那条的 Seq）。
+    /// 断线重连时前端从这里起订，正好补齐本轮增量：
+    /// 既不会漏掉长回答的前半段，也不会把上一轮的增量灌进这一轮。
+    /// 轮次结束时随 RunningTurnId 一起清空。
+    /// </summary>
+    public long? RunningTurnStartSeq { get; set; }
+
+    /// <summary>
     /// 会话内事件序号水位线。事件入库前用 $inc 原子自增取号，
     /// 保证断线重连能按 afterSeq 精确续订、不重不漏。
     /// </summary>

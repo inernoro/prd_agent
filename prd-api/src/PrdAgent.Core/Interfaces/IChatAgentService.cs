@@ -47,6 +47,7 @@ public sealed record ChatAgentSessionView(
     string EffectiveModel,
     bool Running,
     long EventSeq,
+    long? RunningTurnStartSeq,
     DateTime CreatedAt,
     DateTime UpdatedAt);
 

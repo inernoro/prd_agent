@@ -185,6 +185,12 @@ public sealed class ChatAgentService : IChatAgentService
             assistantMessageId = assistantMessage.Id,
         }, CancellationToken.None);
 
+        // 记下本轮起始序号，断线重连据此精确补齐本轮增量。
+        await _db.ChatAgentSessions.UpdateOneAsync(
+            Builders<ChatAgentSession>.Filter.Eq(s => s.Id, sessionId),
+            Builders<ChatAgentSession>.Update.Set(s => s.RunningTurnStartSeq, seq),
+            cancellationToken: CancellationToken.None);
+
         // 入队后立刻返回：这一轮的生命周期与 HTTP 请求解绑，客户端断开不取消它。
         await _queue.EnqueueAsync(new ChatAgentTurnJob(sessionId, turnId), CancellationToken.None);
 
@@ -457,6 +463,7 @@ public sealed class ChatAgentService : IChatAgentService
             & Builders<ChatAgentSession>.Filter.Eq(s => s.RunningTurnId, turnId),
             Builders<ChatAgentSession>.Update
                 .Set(s => s.RunningTurnId, (string?)null)
+                .Set(s => s.RunningTurnStartSeq, (long?)null)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
 
@@ -484,6 +491,7 @@ public sealed class ChatAgentService : IChatAgentService
         string.IsNullOrWhiteSpace(s.Model) ? _options.CurrentValue.Model : s.Model!,
         !string.IsNullOrEmpty(s.RunningTurnId),
         s.EventSeq,
+        s.RunningTurnStartSeq,
         s.CreatedAt,
         s.UpdatedAt);
 

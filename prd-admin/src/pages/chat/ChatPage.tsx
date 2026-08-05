@@ -95,13 +95,15 @@ export function ChatPage() {
         return;
       }
       setMessages(res.data?.items ?? []);
-      // 从会话的当前水位线之前开始订阅，保证不漏掉刚才那几条增量。
       const session = sessions.find((s) => s.id === activeId);
-      const running = session?.running ?? false;
-      setRunning(running);
-      // 历史已经通过消息接口拿到，事件流只需要接上「还没落进消息里的增量」。
-      // 从会话水位线起订：没在跑就立刻收到 idle 收流，在跑就继续补增量。
-      seqRef.current = running ? Math.max(0, (session?.eventSeq ?? 0) - 200) : (session?.eventSeq ?? 0);
+      const isRunning = session?.running ?? false;
+      setRunning(isRunning);
+      // 历史正文已经由消息接口给全了，事件流只需要补「还没落进消息里的增量」。
+      // 在跑：从本轮起始序号起订，正好补齐这一轮（不漏长回答的前半段，
+      // 也不会把上一轮的增量灌进来）。空闲：从当前水位起订，立刻收到 idle 收流。
+      seqRef.current = isRunning
+        ? (session?.runningTurnStartSeq ?? session?.eventSeq ?? 0)
+        : (session?.eventSeq ?? 0);
       openStream(activeId);
     })();
 
@@ -217,9 +219,15 @@ export function ChatPage() {
       setRunning(false);
       return;
     }
+
+    // 空闲时服务端会推 idle 并收流，所以此刻没有任何流在听。
+    // 必须用本轮的起始序号重新起订，否则增量到不了页面（只有刷新才看得见）。
+    seqRef.current = res.data?.seq ?? seqRef.current;
+    openStream(sessionId);
+
     // 会话标题可能被首条消息改写，顺手刷新一下列表
     void loadSessions(false);
-  }, [input, sending, running, activeId, loadSessions]);
+  }, [input, sending, running, activeId, loadSessions, openStream]);
 
   const handleDelete = useCallback(async (id: string) => {
     const res = await deleteChatSession(id);

@@ -11,3 +11,5 @@
 | feat | prd-api | 注册 chat-agent.use 权限（operator/viewer/agent_tester 三个内置角色）与 chat-agent.conversation::chat 调用者 |
 | feat | prd-admin | 导航注册表、权限菜单映射、百宝箱同步登记「对话」入口（百宝箱条目带 wip，验收后转正）；补齐卡面职责文案、双主题插画与主题 token |
 | fix | prd-api | 对话接单与事件落库一律用 CancellationToken.None，客户端断开不再可能把一轮撕成半截（server-authority 规则 1） |
+| fix | prd-api | 会话新增 RunningTurnStartSeq（本轮起始事件序号），断线重连据此精确补齐本轮增量；原先前端用「当前水位减 200」这种拍脑袋锚点，长回答会漏前半段、短轮次会把上一轮增量灌进这一轮 |
+| fix | prd-admin | 发完消息后重新起订事件流：服务端在空闲时会推 idle 并收流，此刻没有任何流在听，增量到不了页面（只有手动刷新才看得见） |

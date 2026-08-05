@@ -17,6 +17,8 @@ export interface ChatSession {
   effectiveModel: string;
   running: boolean;
   eventSeq: number;
+  /** 当前这一轮的起始事件序号；没有在跑时为 null。断线重连从这里起订。 */
+  runningTurnStartSeq: number | null;
   createdAt: string;
   updatedAt: string;
 }
