@@ -545,9 +545,9 @@ public static class KnowledgeBaseDraftToolSupport
 
     public static async Task<LoadedDraft> LoadOwnedDraftAsync(MongoDbContext db, JsonElement input, AgentToolInvocationContext context, CancellationToken ct)
     {
-        var user = await KnowledgeBaseReadonlyToolSupport.ResolveSessionUserAsync(db, context, ct);
-        if (user == null)
-            return LoadedDraft.Fail(AgentToolInvokeResult.Fail("kb_user_context_required", "draft tool requires an infra agent session user context"));
+        var userId = await KnowledgeBaseReadonlyToolSupport.ResolveUserIdAsync(db, context, ct);
+        if (userId == null)
+            return LoadedDraft.Fail(AgentToolInvokeResult.Fail("kb_user_context_required", "草稿工具需要一个明确的用户身份（基础设施 Agent 会话或调用上下文里的用户）"));
 
         var draftId = KnowledgeBaseReadonlyToolSupport.GetString(input, "draftId");
         if (string.IsNullOrWhiteSpace(draftId))
