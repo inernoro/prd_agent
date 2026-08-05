@@ -9,3 +9,6 @@
 | polish | cds | heartbeat 档改用脉冲点替代无意义横线，补最近活动时间；浅色模式收敛环境光与边框 |
 | test | cds | 改写反向锁死的 ShinyText 用例为契约断言，新增段数守卫、Tailwind 摇树守卫与 page-enter 包含块守卫 |
 | chore | cds | 删除已无引用的 cds-ai-active-rail 与 cds-ai-rail-breathe |
+| feat | cds | 主题切换提到左侧栏一级入口，不再只藏在头像浮层里 |
+| fix | cds | 补回主题切换水波纹：迁到 React 新栈时只搬了「关掉默认过渡」那一半，扩散动画没搬 |
+| test | cds | 新增水波纹两半守卫（CSS 扩散动画 + JS startViewTransition 接线）与降级用例 |

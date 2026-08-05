@@ -166,10 +166,55 @@
     background-color: hsl(var(--surface-base));
   }
 
-  ::view-transition-old(root),
+}
+
+/*
+ * 主题切换水波纹（View Transition API）。
+ *
+ * 迁移欠账（2026-08-05 补齐）：这套效果原本活在 legacy 栈 `cds/web-legacy/app.js`
+ * + `style.css`，dashboard 迁到 React 新栈时**只搬了「关掉默认淡入淡出」那一半**
+ * （`animation: none`），扩散动画那一半没搬过来，于是主题切换退化成瞬间硬切。
+ * 只留前半条比两条都不留更糟——它把浏览器默认的交叉淡入也一并干掉了。
+ *
+ * 故意不放进 @layer：view transition 伪元素是文档级的，不参与组件层叠讨论，
+ * 放在层外避免被任何未分层规则意外压过。
+ */
+.vt-snapshotting,
+.vt-snapshotting *,
+.vt-snapshotting *::before,
+.vt-snapshotting *::after {
+  /* 捕快照期间冻结全局 micro-motion：否则「新」快照会捕到过渡中途的颜色，
+     波纹扫过时卡片会短暂显示错误皮肤。 */
+  transition-duration: 0s !important;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+
+/* 旧主题作为背景静止不动，新主题以圆形从按钮位置扩散覆盖上去 */
+::view-transition-old(root) {
+  animation: none;
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+  clip-path: circle(0% at var(--ripple-x, 50%) var(--ripple-y, 0));
+  animation: cds-theme-ripple-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes cds-theme-ripple-in {
+  to {
+    clip-path: circle(var(--ripple-radius, 150%) at var(--ripple-x, 50%) var(--ripple-y, 0));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
   ::view-transition-new(root) {
     animation: none;
-    mix-blend-mode: normal;
+    clip-path: none;
   }
 }
 
@@ -463,11 +508,6 @@
     .cds-branch-detail-footer button {
       white-space: nowrap;
     }
-  }
-
-  body[data-cds-branch-drawer-open='true'] .cds-theme-toggle,
-  body:has(.cds-branch-detail-drawer) .cds-theme-toggle {
-    display: none;
   }
 
   /*

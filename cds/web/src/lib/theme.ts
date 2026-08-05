@@ -3,7 +3,7 @@
  * <html>. Bootstrap script in index.html applies the stored value before paint
  * to avoid FOUC.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export type Theme = 'dark' | 'light';
 export type ThemeMode = Theme | 'system';
@@ -40,11 +40,55 @@ export function applyThemeMode(mode: ThemeMode): void {
   }
 }
 
+export type RippleOrigin = { x: number; y: number };
+
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (callback: () => void) => { ready: Promise<void> };
+};
+
+/**
+ * 从 origin 点向外扩散的圆形主题切换（View Transition API），自动降级为瞬时切换。
+ *
+ * `apply` 必须**同步**改 DOM：startViewTransition 在回调返回后立刻捕「新」快照，
+ * 异步改（比如只调 React setState）会让它捕到还没变的画面，波纹扫过去什么都没变。
+ */
+export function runThemeTransition(origin: RippleOrigin | null, apply: () => void): void {
+  const x = origin?.x ?? window.innerWidth / 2;
+  const y = origin?.y ?? 0;
+  // 覆盖整屏所需半径 = 从 origin 到最远角的距离
+  const maxRadius = Math.ceil(Math.sqrt(
+    Math.max(x, window.innerWidth - x) ** 2
+    + Math.max(y, window.innerHeight - y) ** 2,
+  ));
+
+  const root = document.documentElement;
+  root.style.setProperty('--ripple-x', `${x}px`);
+  root.style.setProperty('--ripple-y', `${y}px`);
+  root.style.setProperty('--ripple-radius', `${maxRadius}px`);
+
+  const start = (document as ViewTransitionDocument).startViewTransition;
+  const reduced = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced || typeof start !== 'function') {
+    apply();
+    return;
+  }
+
+  const transition = start.call(document, () => {
+    // 冻结全局 micro-motion，让「新」快照捕到的是最终配色而不是过渡中途色
+    root.classList.add('vt-snapshotting');
+    apply();
+  });
+  const unfreeze = (): void => root.classList.remove('vt-snapshotting');
+  transition.ready.then(unfreeze, unfreeze);
+}
+
 export function useTheme(): {
   theme: Theme;
   mode: ThemeMode;
   setTheme: (t: ThemeMode) => void;
   toggle: () => void;
+  toggleWithRipple: (origin: RippleOrigin | null) => void;
 } {
   const [mode, setMode] = useState<ThemeMode>(() => readStoredMode());
   const [system, setSystem] = useState<Theme>(() => systemTheme());
@@ -72,10 +116,21 @@ export function useTheme(): {
     applyThemeMode(mode);
   }, [mode, theme]);
 
+  const toggleWithRipple = useCallback((origin: RippleOrigin | null) => {
+    const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
+    runThemeTransition(origin, () => {
+      // 先同步落 DOM（View Transition 要立刻捕到新配色），再同步 React 状态；
+      // 下一轮 effect 里的 applyThemeMode 是幂等的，不会二次闪烁。
+      applyThemeMode(next);
+      setMode(next);
+    });
+  }, [theme]);
+
   return {
     theme,
     mode,
     setTheme: setMode,
     toggle: () => setMode((current) => (current === 'dark' ? 'light' : 'dark')),
+    toggleWithRipple,
   };
 }

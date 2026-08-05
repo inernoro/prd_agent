@@ -13,7 +13,7 @@ import {
   resolveAgentPageContext,
 } from '@/lib/agent-onboarding';
 import { apiUrl, fetchInstanceMode, isChildPreviewCdsInstance } from '@/lib/api';
-import { applyThemeMode, useTheme } from '@/lib/theme';
+import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
 /*
@@ -549,6 +549,7 @@ function RailNav({
           <Settings />
           <span>系统设置</span>
         </Link>
+        <RailThemeToggle onNavigate={onNavigate} />
         <UserAccountMenu
           authMode={authMode}
           canLogout={canLogout}
@@ -559,6 +560,34 @@ function RailNav({
         />
       </div>
     </>
+  );
+}
+
+/*
+ * 主题切换是每天要点的动作，不该藏在头像浮层里两步才够得到（用户 2026-08-05 反馈）。
+ * 这里出一个 rail 一级入口做 白天/黑天 快切，水波纹从按钮位置扩散。
+ * 「自动（跟随系统）」是模式选择而不是日常开关，仍留在头像浮层的三档选择器里。
+ */
+function RailThemeToggle({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
+  const { theme, toggleWithRipple } = useTheme();
+  const toLight = theme === 'dark';
+  const Icon = toLight ? Sun : Moon;
+  return (
+    <button
+      type="button"
+      className="cds-rail-item cds-rail-action-entry cds-rail-theme-toggle"
+      aria-label={toLight ? '切换到白天主题' : '切换到黑天主题'}
+      title={toLight ? '切换到白天主题' : '切换到黑天主题'}
+      data-shell-action="theme-toggle"
+      onClick={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        toggleWithRipple({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+        onNavigate?.();
+      }}
+    >
+      <Icon />
+      <span>{toLight ? '白天' : '黑天'}</span>
+    </button>
   );
 }
 
@@ -671,9 +700,17 @@ function UserAccountMenu({
                 type="button"
                 className="cds-account-theme-button"
                 data-active={active ? 'true' : 'false'}
-                onClick={() => {
-                  applyThemeMode(item.mode);
-                  setTheme(item.mode);
+                onClick={(event) => {
+                  // 两个入口用同一套水波纹，避免「rail 有动效、浮层里没有」的割裂。
+                  // 「自动」落到哪个主题取决于系统偏好，同样从按钮位置扩散。
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  runThemeTransition(
+                    { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+                    () => {
+                      applyThemeMode(item.mode);
+                      setTheme(item.mode);
+                    },
+                  );
                 }}
               >
                 <Icon />
