@@ -356,6 +356,23 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
     ):
         if needle not in plain_html:
             raise AssertionError(f"brief view is missing its wiring: {needle}")
+    # 正文只是「提到」这五个字、并没有那一节时，不得切简版：
+    # 子串判据会让这类报告开在简版而没有任何章节留得住，读者看到一页空白。
+    mention_only = daily_report.replace(
+        "## 覆盖缺口",
+        f"## 目标与价值\n\n验证「{archive.PLAIN_SUMMARY_SECTION}」首屏在存量报告上不误伤。\n\n## 覆盖缺口",
+        1,
+    )
+    mention_html = archive.build_interactive_html(
+        "日报",
+        "conditional",
+        compiled_markdown(archive, mention_only, annotated_manifest),
+        annotated_manifest,
+        flavor="daily",
+    )
+    if '<body data-view="full">' not in mention_html or 'data-view-mode="brief"' in mention_html:
+        raise AssertionError("merely mentioning the plain summary must not switch to brief view")
+
     # 模板契约结构（CDS reports.ts 与本 gate 双重校验）不得被简版改动破坏。
     for marker in (
         'data-template="map-acceptance-interactive-html-v2"',

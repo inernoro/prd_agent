@@ -7,3 +7,5 @@
 | test | acceptance-skill | test_archive_report_verdict_contract 增 9 项断言覆盖首屏契约（含模板落地、脚本失败不得写成产品坏了、无法确认不得写成可用、完整性自相矛盾、行话未解释、决策行须给建议）；归档 gate 增简版视图与模板契约断言 |
 | ci | ci | 新增 Acceptance Report Gate job：验收规则 SSOT、归档 gate、每日结论契约三个守卫此前无任何 workflow 引用，只有手动跑才会红；连同被守的规则、模板、快照一起登记进 path filter |
 | fix | doc-tooling | doc-readability 棘轮守卫断言 ci-status 汇总闸时写死 `cds-build, docs-readability]` 字面量，往 needs 末尾追加任何新 job 都会让这条无关断言变红（形状 4a）；改为解析 ci-status 的 needs 列表判成员，并补「解析到了」与「判据不是恒真」两条防空跑断言 |
+| fix | acceptance-skill | 自审发现：判断报告有没有首屏用的是子串命中，正文只要「提到」这五个字就会切简版，而没有任何章节留得住，读者看到一页空白（实测 12 个正文节点被收起 10 个）；改为与 _section_table 同口径的 `^## 标题$` 判据，并在 JS 侧兜底：一段都没留住就退回完整版并隐藏切换按钮 |
+| fix | acceptance-skill | 自审发现：行话解释判据固定取两个字符再 lstrip，「门禁  （解释）」多打一个空格会被冤判成未解释；改为判「下一个非空白字符是不是左括号」 |

@@ -865,6 +865,24 @@ def _daily_severity_summary_errors(values, body):
     return errors
 
 
+def _has_plain_summary_section(markdown):
+    """True only when the report really carries the plain-summary H2 section.
+
+    A plain substring test would also fire on a report that merely mentions the
+    section name in prose, and the HTML would then open in brief view with no
+    matching heading to keep — an empty body. The anchor here is deliberately
+    the same `^## <heading>$` shape `_section_table` uses, so the renderer and
+    the gate cannot drift into two different answers.
+    """
+    return bool(
+        re.search(
+            rf"^##\s+{re.escape(PLAIN_SUMMARY_SECTION)}\s*$",
+            markdown or "",
+            re.M,
+        )
+    )
+
+
 def _plain_summary_jargon_errors(text):
     """Reject acceptance jargon that is not explained on the spot.
 
@@ -881,8 +899,9 @@ def _plain_summary_jargon_errors(text):
             else re.escape(term)
         )
         for match in re.finditer(pattern, text or "", re.I):
-            tail = (text or "")[match.end():match.end() + 2].lstrip()
-            if tail[:1] in {"（", "("}:
+            # 允许术语与解释之间有任意空白：判的是「下一个非空白字符是不是左括号」，
+            # 固定取两个字符再 lstrip 会把「门禁  （…）」这种多打一个空格的写法冤判。
+            if re.match(r"\s*[（(]", (text or "")[match.end():]):
                 continue
             errors.append(
                 f"[说人话] 「{PLAIN_SUMMARY_SECTION}」出现未解释的验收行话「{term}」；"
@@ -2092,7 +2111,7 @@ def build_interactive_html(
     # 简版/完整版：报告写了「给你的一页结论」才有简版可给，默认就落在简版——
     # 决策读者点开链接第一眼看到的是四行大白话 + 缺陷 + 截图，其余章节收起。
     # 没有那一节的报告（单次验收/历史报告）保持完整版，行为不变。
-    has_plain_summary = PLAIN_SUMMARY_SECTION in (markdown_content or "")
+    has_plain_summary = _has_plain_summary_section(markdown_content)
     default_view = "brief" if has_plain_summary else "full"
     view_switch_html = (
         '<div class="view-switch" data-view-switch>'
@@ -2487,14 +2506,20 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     var squeeze=function(text){{return (text||'').replace(/\\s+/g,'');}};
     var briefKeys=briefSections.map(squeeze);
     var keep=false;
+    var kept=0;
+    var hidden=[];
     Array.prototype.slice.call(document.querySelectorAll('#reportBody>*')).forEach(function(node){{
       if(node.tagName==='H1'){{return;}}
       if(node.tagName==='H2'){{
         var title=squeeze(node.textContent);
         keep=briefKeys.some(function(name){{return title.indexOf(name)>=0;}});
       }}
-      if(!keep){{node.classList.add('rb-hidden');}}
+      if(keep){{kept++;}}else{{hidden.push(node);}}
     }});
+    // 一段都没留住说明这份报告的章节名不在简版清单里，
+    // 此时收起全部正文会给出一页空白；宁可退回完整版，也不给空页面。
+    if(kept){{hidden.forEach(function(node){{node.classList.add('rb-hidden');}});}}
+    else{{document.body.setAttribute('data-view','full');viewSwitch.style.display='none';}}
     var setView=function(mode){{
       document.body.setAttribute('data-view',mode==='full'?'full':'brief');
       Array.prototype.slice.call(viewSwitch.querySelectorAll('[data-view-mode]')).forEach(function(btn){{

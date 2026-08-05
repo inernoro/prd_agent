@@ -263,6 +263,26 @@ class DailyVerdictContractTests(unittest.TestCase):
             archive_report._daily_conclusion_contract_errors("conditional", explained),
         )
 
+    def test_plain_summary_presence_needs_a_real_heading(self):
+        self.assertTrue(
+            archive_report._has_plain_summary_section(
+                f"# 标题\n\n## {archive_report.PLAIN_SUMMARY_SECTION}\n\n| a | b |\n"
+            )
+        )
+        self.assertFalse(
+            archive_report._has_plain_summary_section(
+                f"# 标题\n\n## 目标与价值\n\n验证「{archive_report.PLAIN_SUMMARY_SECTION}」首屏不误伤。\n"
+            )
+        )
+
+    def test_jargon_explanation_tolerates_extra_spacing(self):
+        self.assertEqual(
+            [], archive_report._plain_summary_jargon_errors("发布门禁  （上线前的自动检查）没跑完")
+        )
+        self.assertTrue(
+            archive_report._plain_summary_jargon_errors("发布门禁没跑完")
+        )
+
     def test_decision_row_must_offer_a_recommendation(self):
         body = report_body("覆盖不足").replace(
             f"| 需要你决定什么 | {archive_report.PLAIN_NO_DECISION} |",
