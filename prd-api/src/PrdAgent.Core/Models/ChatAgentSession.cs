@@ -73,6 +73,14 @@ public class ChatAgentMessage
     /// <summary>所属轮次。一轮 = 一条用户消息加它触发的一条助手消息。</summary>
     public string TurnId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 轮内序号：用户 0，助手 1。
+    /// 一轮的两条消息是同一次批量插入，CreatedAt 可能一模一样，
+    /// 只按时间排序会不稳定——端到端自测里就出现过「回答排在提问前面」。
+    /// 排序统一按 (CreatedAt, Ordinal)，这一列负责打破同刻并列。
+    /// </summary>
+    public int Ordinal { get; set; }
+
     /// <summary>user 或 assistant。</summary>
     public string Role { get; set; } = ChatAgentRoles.User;
 

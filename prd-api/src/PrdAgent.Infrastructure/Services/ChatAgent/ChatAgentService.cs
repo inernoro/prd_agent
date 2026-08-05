@@ -119,9 +119,11 @@ public sealed class ChatAgentService : IChatAgentService
         var items = await _db.ChatAgentMessages
             .Find(Builders<ChatAgentMessage>.Filter.Eq(m => m.SessionId, sessionId))
             .SortByDescending(m => m.CreatedAt)
+            .ThenByDescending(m => m.Ordinal)
             .Limit(capped)
             .ToListAsync(ct);
 
+        // 倒序取最近 N 条再翻回来，得到按 (CreatedAt, Ordinal) 升序的一页
         items.Reverse();
         return items.Select(ToView).ToList();
     }
@@ -147,6 +149,7 @@ public sealed class ChatAgentService : IChatAgentService
             SessionId = sessionId,
             TurnId = turnId,
             Role = ChatAgentRoles.User,
+            Ordinal = 0,
             Content = trimmed,
             Status = ChatAgentMessageStatus.Completed,
             CompletedAt = DateTime.UtcNow,
@@ -157,6 +160,7 @@ public sealed class ChatAgentService : IChatAgentService
             SessionId = sessionId,
             TurnId = turnId,
             Role = ChatAgentRoles.Assistant,
+            Ordinal = 1,
             Content = string.Empty,
             Status = ChatAgentMessageStatus.Running,
             DeploymentSlug = scope,
@@ -371,6 +375,7 @@ public sealed class ChatAgentService : IChatAgentService
         var items = await _db.ChatAgentMessages
             .Find(Builders<ChatAgentMessage>.Filter.Eq(m => m.SessionId, sessionId))
             .SortByDescending(m => m.CreatedAt)
+            .ThenByDescending(m => m.Ordinal)
             .Limit(Math.Clamp(limit, 2, 200))
             .ToListAsync(ct);
 

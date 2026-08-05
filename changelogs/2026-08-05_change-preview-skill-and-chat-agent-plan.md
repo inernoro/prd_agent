@@ -13,3 +13,4 @@
 | fix | prd-api | 对话接单与事件落库一律用 CancellationToken.None，客户端断开不再可能把一轮撕成半截（server-authority 规则 1） |
 | fix | prd-api | 会话新增 RunningTurnStartSeq（本轮起始事件序号），断线重连据此精确补齐本轮增量；原先前端用「当前水位减 200」这种拍脑袋锚点，长回答会漏前半段、短轮次会把上一轮增量灌进这一轮 |
 | fix | prd-admin | 发完消息后重新起订事件流：服务端在空闲时会推 idle 并收流，此刻没有任何流在听，增量到不了页面（只有手动刷新才看得见） |
+| fix | prd-api | 端到端自测逮到：同一轮的提问与回答是同一次批量插入、CreatedAt 可能一模一样，只按时间排序不稳定，实测出现「回答排在提问前面」；消息新增轮内序号 Ordinal（用户 0 / 助手 1），列表与上下文构建统一按 (CreatedAt, Ordinal) 排 |
