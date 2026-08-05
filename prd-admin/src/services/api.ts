@@ -879,6 +879,14 @@ export const api = {
     probe: (id: string) => `/api/infra-connections/${id}/probe`,
   },
 
+  // ============ 通用对话智能体（打开就能聊的多轮对话入口）============
+  chatAgent: {
+    sessions: () => '/api/chat-agent/sessions',
+    session: (id: string) => `/api/chat-agent/sessions/${id}`,
+    messages: (id: string) => `/api/chat-agent/sessions/${id}/messages`,
+    stream: (id: string) => `/api/chat-agent/sessions/${id}/stream`,
+  },
+
   // ============ Infra Agent Sessions CDS Agent 工作台 ============
   infraAgentSessions: {
     eventSchema: () => '/api/infra-agent-sessions/event-schema',

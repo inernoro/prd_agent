@@ -138,6 +138,13 @@ public sealed class SidecarRunRequest
 
     /// <summary>Git ref/branch for diagnostics and future workspace preparation.</summary>
     public string? GitRef { get; init; }
+
+    /// <summary>
+    /// per-request 覆盖运行时自带的内置工具（Read/Grep/Glob 之类）。
+    /// null = 沿用 sidecar 进程级默认（历史调用方行为不变）；
+    /// 空数组 = 一个内置工具都不开。通用对话走空数组，避免聊天顺带带上仓库读取能力。
+    /// </summary>
+    public IReadOnlyList<string>? BuiltinTools { get; init; }
 }
 
 public sealed class SidecarChatMessage

@@ -62,6 +62,13 @@ class SidecarRunRequest(BaseModel):
     git_repository: Optional[str] = Field(None, alias="gitRepository")
     git_ref: Optional[str] = Field(None, alias="gitRef")
 
+    # Per-run override for the SDK's own built-in tools (Read/Grep/Glob/...).
+    # None keeps the process-wide CLAUDE_AGENT_SDK_ALLOWED_TOOLS default, so every
+    # existing caller behaves exactly as before. An empty list means "no built-in
+    # tools at all" — used by general chat, which must not carry repository read
+    # access just because code review happens to need it.
+    builtin_tools: Optional[list[str]] = Field(None, alias="builtinTools")
+
 
 class SidecarEvent(BaseModel):
     """SSE 事件载荷，type 与 prd-api 的 ToolboxRunEventType 协议保持兼容映射"""

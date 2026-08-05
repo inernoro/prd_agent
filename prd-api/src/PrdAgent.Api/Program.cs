@@ -1287,6 +1287,17 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentHookProfileServic
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentRuntimeProfileService,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentRuntimeProfileService>();
 
+// 通用对话智能体（见 doc/design.platform.chat-agent.md）。
+// 适配层 + 进程内轮次队列 + 后台 worker；对话循环在 agent 运行时的官方 SDK 里，此处没有循环。
+builder.Services.Configure<PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOptions>(
+    builder.Configuration.GetSection(
+        PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOptions.SectionName));
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentTurnQueue,
+    PrdAgent.Infrastructure.Services.ChatAgent.InMemoryChatAgentTurnQueue>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IChatAgentService,
+    PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ChatAgentTurnWorker>();
+
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
 // 详见 doc/design.cds.agent.sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
 //
