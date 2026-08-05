@@ -105,6 +105,15 @@ Provider 切换只影响切换后的读写实现。历史记录中保存的完�
 - 用户资产误分风险以保护用户为先，无法判断时归为 `user`。
 - 迁移工具不得把访问密钥、签名 URL 或用户内容写入普通日志。
 
+### 7.1 R2 签名一致性（真实大小对象必测）
+
+Cloudflare R2 的 S3 兼容端点对真实录音大小的写入曾两次暴露签名相关的坑，都只在真实大小对象上复现、小探针测不出：
+
+- 浏览器录音的 `Content-Type` 常带编码参数（如 `audio/mp4;codecs=mp4a.40.2`），R2 端点会重写这类带参数的 header，导致服务端验签所见 header 与 SDK 签名输入不一致；写入前统一规范化为不带参数的 media type。
+- 对真实体量的负载使用免签流式（`UNSIGNED-PAYLOAD` / chunked）会偶发返回签名不匹配；改为固定携带 `Content-Length` 的完整签名负载、禁用分块编码。
+
+**验收口径**：就绪探针（见 8.）必须用**代表性大小的负载**（当前基线 640KB）做真实写-读-删，禁止用极小文本探针或只检查请求参数替代——那类探针无法复现上述两个坑，会把「探针绿、真实对象因签名失败」的组合误判为就绪。
+
 ## 8. 当前实现入口
 
 | 能力 | 事实入口 |
@@ -114,6 +123,8 @@ Provider 切换只影响切换后的读写实现。历史记录中保存的完�
 | 登记模型 | `prd-api/src/PrdAgent.Core/Models/AssetRegistryEntry.cs` |
 | 系统资产清单 | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/SystemAssetManifest.cs` |
 | 系统资产同步 API | `prd-api/src/PrdAgent.Api/Controllers/Api/StorageSyncController.cs` |
+| 就绪探针（代表性大小写读删） | `prd-api/src/PrdAgent.Api/Services/AssetStorageReadinessProbe.cs` |
+| R2 签名一致性处理 | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/CloudflareR2Storage.cs` |
 | Provider 装配 | `prd-api/src/PrdAgent.Api/Program.cs` |
 | MongoDB 集合入口 | `prd-api/src/PrdAgent.Infrastructure/Data/MongoDbContext.cs` |
 
