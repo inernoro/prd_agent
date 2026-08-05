@@ -12,3 +12,8 @@
 | feat | cds | 主题切换提到左侧栏一级入口，不再只藏在头像浮层里 |
 | fix | cds | 补回主题切换水波纹：迁到 React 新栈时只搬了「关掉默认过渡」那一半，扩散动画没搬 |
 | test | cds | 新增水波纹两半守卫（CSS 扩散动画 + JS startViewTransition 接线）与降级用例 |
+| fix | cds | 信息中心浮层支持点外部与 Esc 关闭，不再必须点 X |
+| polish | cds | PR 徽章从分支卡标题行收进 ... 菜单，把标题宽度还给分支名 |
+| feat | cds | 新增分支卡六状态可分辨性 demo（构建中/回收中/运行中/失败/AI操作中/调试中，双主题） |
+| refactor | cds | GitHub PR URL 收敛到 lib/github-urls，此前散在三处 |
+| test | cds | 新增点外部关闭判据守卫（含 portal 弹窗豁免、触发器排除两类窄判据） |

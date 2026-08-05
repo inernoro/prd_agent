@@ -28,6 +28,7 @@ import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { apiRequest, ApiError } from '@/lib/api';
+import { shouldDismissOnPointerDown } from '@/lib/outside-dismiss';
 import { floatingPanelPosition, type FloatingPanelPosition } from '@/lib/floatingPanelPosition';
 import { useOverlayDock } from '@/lib/useOverlayDock';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
@@ -103,6 +104,7 @@ function outboundHint(notice: SiteNotice): string | null {
 export function SiteNoticeInbox(): JSX.Element {
   const host = useOverlayDock('#cds-information-center-host');
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [notices, setNotices] = useState<SiteNotice[]>([]);
   const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
   const [open, setOpen] = useState(false);
@@ -145,6 +147,39 @@ export function SiteNoticeInbox(): JSX.Element {
       window.removeEventListener('scroll', updatePanelPosition, true);
     };
   }, [open, updatePanelPosition]);
+
+  /*
+   * 点外部 / Esc 关闭（2026-08-05 用户反馈「失焦之后这个窗口应该关闭」）。
+   * 照 AppShell 的 UserAccountMenu 范式：同样是 portal 出去的浮层 + 独立 trigger，
+   * 只能走 document 级监听 + 双 ref 排除，不能靠冒泡。
+   *
+   * 判据收在 shouldDismissOnPointerDown 里（含 [role="dialog"] 豁免）——面板内的
+   * 授权/导入收件箱会把 Radix Dialog portal 到 body，不豁免的话在弹窗里一点就会把
+   * 面板连同弹窗一起卸载。
+   *
+   * 刻意不监听 scroll：面板自己的列表区可滚（下面 overflow-y-auto），滚动关闭会误伤。
+   */
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!shouldDismissOnPointerDown({
+        target: event.target,
+        owned: [panelRef.current, triggerRef.current],
+      })) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -319,6 +354,7 @@ export function SiteNoticeInbox(): JSX.Element {
 
       {open && panelPosition ? createPortal((
         <div
+          ref={panelRef}
           data-testid="cds-information-center-panel"
           className="fixed z-[220] flex flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
           style={panelPosition}

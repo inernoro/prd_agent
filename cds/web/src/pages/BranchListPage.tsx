@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Gauge,
   GitBranch,
+  GitPullRequest,
   Github,
   Lightbulb,
   Loader2,
@@ -73,6 +74,7 @@ import {
   type BranchResourceInfraInput,
   type BranchResourceProfileInput,
 } from '@/lib/resources';
+import { githubPullRequestUrl } from '@/lib/github-urls';
 import { statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, MetricTile } from '@/pages/cds-settings/components';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
@@ -5503,14 +5505,8 @@ const BranchCard = memo(function BranchCard({
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
-              {branch.githubPrNumber ? (
-                <span
-                  className="inline-flex h-5 shrink-0 items-center rounded border border-violet-400/35 bg-violet-400/10 px-1.5 text-[10px] font-semibold text-violet-300"
-                  title={`关联 GitHub PR #${branch.githubPrNumber}`}
-                >
-                  PR #{branch.githubPrNumber}
-                </span>
-              ) : null}
+              {/* PR 徽章 2026-08-05 收进右上角 ... 菜单：它挤占标题宽度，而标题
+                  （分支名）才是这张卡最需要看清的东西。入口见 BranchMoreMenu。 */}
               {isAiOperated ? (
                 <button
                   type="button"
@@ -6516,6 +6512,19 @@ function BranchMoreMenu({
           <Tags className="h-4 w-4 shrink-0" />
           编辑标签
         </DropdownItem>
+        {/* 关联 PR：原本是标题行的一枚徽章，2026-08-05 按用户要求收进本菜单，
+            把标题宽度还给分支名。URL 走 lib/github-urls 唯一拼装源。 */}
+        {branch.githubPrNumber && branch.githubRepoFullName ? (
+          <DropdownItem
+            asChild
+            href={githubPullRequestUrl(branch.githubRepoFullName, branch.githubPrNumber)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <GitPullRequest className="h-4 w-4 text-violet-600 dark:text-violet-300" />
+            打开 PR #{branch.githubPrNumber}
+          </DropdownItem>
+        ) : null}
       </DropdownMenu>
     </>
   );
