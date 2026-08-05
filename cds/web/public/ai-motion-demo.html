@@ -1,11 +1,46 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AI 控制态动效 · 三个方案 Demo</title>
 <style>
+  /* 取值对齐 CDS 双栈 token：dark 侧 #131314 / #1E1F20 + sky-400，
+     light 侧 #f8f2ed / #ffffff + sky-600。白天主题下不出现任何暗色底。 */
   :root {
+    --page-bg: #f8f2ed;
+    --card-bg: #ffffff;
+    --card-bg-soft: #f6efe9;
+    --hairline: rgb(60 40 25 / 0.12);
+    --hairline-strong: rgb(60 40 25 / 0.22);
+    --text-primary: #33251c;
+    --text-muted: #7d6a5c;
+    --accent: 2 132 199;
+    --accent-strong: 3 105 161;
+    --chip-bg: rgb(2 132 199 / 0.08);
+    --ok: 5 150 105;
+    --shadow: 0 18px 46px -32px rgb(80 50 30 / 0.4);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page-bg: #131314;
+      --card-bg: #1e1f20;
+      --card-bg-soft: #232426;
+      --hairline: rgb(255 255 255 / 0.09);
+      --hairline-strong: rgb(255 255 255 / 0.16);
+      --text-primary: #e8e8ec;
+      --text-muted: #9a9aa2;
+      --accent: 56 189 248;
+      --accent-strong: 125 211 252;
+      --chip-bg: rgb(56 189 248 / 0.08);
+      --ok: 52 211 153;
+      --shadow: 0 18px 46px -30px rgb(0 0 0 / 0.9);
+    }
+  }
+
+  /* 显式 data-theme 必须能双向压过系统偏好 */
+  :root[data-theme='dark'] {
     --page-bg: #131314;
     --card-bg: #1e1f20;
     --card-bg-soft: #232426;
@@ -20,7 +55,7 @@
     --shadow: 0 18px 46px -30px rgb(0 0 0 / 0.9);
   }
 
-  [data-theme='light'] {
+  :root[data-theme='light'] {
     --page-bg: #f8f2ed;
     --card-bg: #ffffff;
     --card-bg-soft: #f6efe9;
@@ -86,6 +121,7 @@
     transition: border-color 160ms ease, background 160ms ease;
   }
   .ctl:hover { border-color: rgb(var(--accent) / 0.5); }
+  .ctl:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
   .ctl svg { width: 15px; height: 15px; }
 
   section.demo { margin-bottom: 44px; }
@@ -211,12 +247,6 @@
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent; color: transparent;
     animation: shiny-sweep 3.8s linear infinite;
-  }
-  [data-theme='light'] .shiny {
-    background-image: linear-gradient(112deg,
-      rgb(var(--accent) / 0.5) 0%, rgb(var(--accent) / 0.5) 35%,
-      var(--text-primary) 50%,
-      rgb(var(--accent) / 0.5) 65%, rgb(var(--accent) / 0.5) 100%);
   }
   @keyframes shiny-sweep { from { background-position: 150% center; } to { background-position: -50% center; } }
 
@@ -676,17 +706,31 @@
 </div>
 
 <script>
+  const root = document.documentElement;
   const themeBtn = document.getElementById('theme-btn');
   const themeLabel = document.getElementById('theme-label');
-  // ?theme=light 直接以白天主题打开，方便双主题取证
-  if (new URLSearchParams(location.search).get('theme') === 'light') {
-    document.documentElement.dataset.theme = 'light';
-    themeLabel.textContent = '切到黑夜';
+
+  // 没有显式 data-theme 时跟随系统偏好，标签要反映真实生效的那个主题
+  const effectiveTheme = () =>
+    root.dataset.theme
+    || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const syncLabel = () => {
+    themeLabel.textContent = effectiveTheme() === 'dark' ? '切到白天' : '切到黑夜';
+  };
+
+  // ?theme=light / ?theme=dark 直接指定，方便双主题取证
+  const forced = new URLSearchParams(location.search).get('theme');
+  if (forced === 'light' || forced === 'dark') root.dataset.theme = forced;
+  syncLabel();
+
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)')
+      .addEventListener('change', () => { if (!root.dataset.theme) syncLabel(); });
   }
+
   themeBtn.addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    themeLabel.textContent = next === 'dark' ? '切到白天' : '切到黑夜';
+    root.dataset.theme = effectiveTheme() === 'dark' ? 'light' : 'dark';
+    syncLabel();
   });
 
   const pauseBtn = document.getElementById('pause-btn');
