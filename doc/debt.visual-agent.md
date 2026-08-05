@@ -112,3 +112,40 @@ harness `scripts/harness.mjs` 实装、本地自测 10/10 通过（local http �
 - **离开页面时未取消在途关键帧 ImageGenRun**（Codex P2，2026-06-19）：卸载/重生成只 abort 前端 SSE，后端 `renderKeyframes` 创建的 `ImageGenRun` worker 仍继续出图，消耗 API 调用（配额已全局放开，主要是上游花费），且无恢复入口。
   - 暂缓原因：与 `server-authority.md`「客户端被动断开不得取消服务器任务、只有用户主动取消才中断」存在张力——runs 本就以 `ImageGenRun` 持久化、理论可恢复，问题是分镜台目前没有恢复 UI。补「主动取消端点 + 卸载时调用」还是「补恢复 UI 让 run 跑完可复用」是产品取舍，宜与 debt#2「分镜会话持久化」合并设计，不在本次 review 轮次内仓促加 auto-cancel（会与 server-authority 冲突）。
   - 待办：随 debt#2 把 storyboard 提升为一等 run 实体时一并决策（恢复 vs 主动取消端点）。
+
+---
+
+## 分层 PSD 导出（PR #1328，2026-08-05）
+
+把生成图交给语义分层模型拆成 RGBA 图层、再在前端组装成可直接编辑的 PSD。以下是交付时明确的已知边界。
+
+### 验收缺口：部署环境未走完整产品内链路
+
+已验证的：用真实 fal.ai Key 直接打 `fal-ai/qwen-image-layered` 返回正确层数；`psd-tools` 拆开产物确认图层、透明度与合成正确；三处判据缺陷各自的红绿闭环；CI 全绿。
+
+**未验证的**：登录预览域名 → 录 Key → 点分层 → 等图层 → 导出 PSD → 打开确认这条真人路径，一次都没跑过。所以「功能在部署环境里可用」目前是推断，不是事实。
+
+卡在两个 agent 自己造不出来的输入上，都不是代码问题：
+
+- **浏览器路径**：agent 工作环境的出站代理不放行浏览器流量。同一个 Playwright 进程里，node 侧请求栈拿到 200、chromium 渲染栈 `ERR_CONNECTION_RESET`；`example.com` 同样 reset，只有 github 通。排查中顺带发现该容器的浏览器 NSS 信任库实际是空的（环境说明称已配好），装入代理 CA 后 TLS 层通了，但仍 reset。禁 TLS 验证与绕开代理都是明令禁止的，故无解。
+- **API 路径**：触发分层的那个生图端点要登录态 JWT 加 `VisualAgentUse` 权限，手上只有 M2M 的访问密钥，打过去 401；录 Key 要打 LLMGW 的能力安装端点，需要 LLMGW 管理员认证。两样凭据都没有。
+
+**补法**：拿到一个带 `VisualAgentUse` 的 MAP 账号 + 一个 LLMGW 管理员账号，即可用 curl/node 覆盖除 UI 点击外的全链路（录 Key → 分层 → 在 node 里跑同一份 `ag-psd` 组装 → `psd-tools` 验证）；要出 UI 截图则需换一个放行浏览器流量的环境。在补上之前，本功能不得声称「已通过真视觉验收」。
+
+### 最后一公里只在前端，测试覆盖不到
+
+PSD 组装全在前端，用 `ag-psd` 加浏览器 Canvas 完成，后端没有对应实现。合成与文档结构那几个纯函数可以单测，但「把远端图层解码 → 画进 Canvas → 写出 PSD 字节」这一段依赖浏览器 API，vitest 覆盖不到，只能靠真人下载后用 Photoshop 或 GIMP 打开确认。若日后要自动化，需要在 node 侧引入图像解码库复刻这段取像素的逻辑。
+
+### 快捷编辑的图层归属：同序号两版并存
+
+对某个 AI 图层做快捷编辑，产物继承同一个图层序号，**不摘除原图层**——画布上同一序号会并存两版，导出时只取最新的一版。这是有意取舍：编辑还在跑或者失败时产物没有图片地址，会被导出侧滤掉，于是自动回落到原图层，不会导出一张空层。代价是画布上的图层卡片数会随编辑次数增长，用户看到的条数多于 PSD 里的层数。若日后要收敛，应在编辑成功回填时把旧层标记为历史版本并从画布折叠，而不是简单删除——删除会丢失回退能力。
+
+### verified 状态需要一次真实成功调用才能证伪
+
+LLMGW 图片分层能力卡的「已验证」判据是：请求日志里存在一条该能力的成功调用记录，且确实产出了图。此前这条查询按 `ActualModel` 字段过滤，而落库的字段叫 `Model`——查一个不存在的字段不会报错，只会永远 0 命中，**修复前它不可能转成已验证**。修复已随本 PR 上线，并有一条反射断言钉住字段名必须真实存在于日志实体上。但「现在停在等待验证，到底是确实没人调用过，还是判据还有别的问题」，在没有一次成功调用记录之前分不出来。跑通一次分层即可证伪。
+
+### 实现来源
+
+- 前端 PSD 组装与分层请求：`prd-admin/src/lib/layeredPsd.ts`
+- 图层归属与导出选层：`prd-admin/src/lib/semanticLayerFrame.ts`、`prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx`
+- 网关侧能力判定与守卫：`llmgw/console-api/Provisioning/ImageLayeringCapabilityRules.cs`、`prd-api/tests/PrdAgent.Api.Tests/Gateway/ImageLayeringCapabilityRulesTests.cs`
