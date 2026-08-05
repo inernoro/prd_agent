@@ -17,3 +17,4 @@
 | feat | cds | 新增分支卡六状态可分辨性 demo（构建中/回收中/运行中/失败/AI操作中/调试中，双主题） |
 | refactor | cds | GitHub PR URL 收敛到 lib/github-urls，此前散在三处 |
 | test | cds | 新增点外部关闭判据守卫（含 portal 弹窗豁免、触发器排除两类窄判据） |
+| fix | cds | 修复同页多个 useTheme 实例不同步：rail 与浮层各持一份 state，改主题另一处不跟随 |

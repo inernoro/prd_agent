@@ -144,3 +144,30 @@ describe('主题切换入口', () => {
     expect(theme).toContain('startViewTransition');
   });
 });
+
+describe('同页多个 useTheme 实例的同步', () => {
+  it('applyThemeMode 会广播给同页其它实例（storage 事件只跨标签页，管不到同页）', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../../web/src/lib/theme.ts'),
+      'utf8',
+    );
+    // 模块级订阅表 + 在 applyThemeMode 里广播 + hook 里订阅，三处缺一不可
+    expect(src).toContain('themeListeners');
+    expect(src).toMatch(/applyThemeMode[\s\S]*themeListeners\.forEach/);
+    expect(src).toMatch(/themeListeners\.add\(/);
+    expect(src).toMatch(/themeListeners\.delete\(/);
+  });
+
+  it('shell 里确实有两个以上消费者——这正是需要广播的原因', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const shell = fs.readFileSync(
+      path.resolve(__dirname, '../../web/src/components/layout/AppShell.tsx'),
+      'utf8',
+    );
+    const consumers = (shell.match(/useTheme\(\)/g) || []).length;
+    expect(consumers).toBeGreaterThanOrEqual(2);
+  });
+});

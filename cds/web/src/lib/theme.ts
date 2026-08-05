@@ -28,6 +28,20 @@ function resolveTheme(mode: ThemeMode): Theme {
   return mode === 'system' ? systemTheme() : mode;
 }
 
+/*
+ * 同标签页内的跨实例同步。
+ *
+ * useTheme 的 mode 是**每个组件实例各自的 useState**，而下面那个 storage 监听
+ * 只在**其他标签页**写入时触发，同标签页不触发。所以只要页面里有两个以上消费者
+ * （2026-08-05 起：rail 主题按钮 + 头像浮层的三档选择器），一处改主题另一处的
+ * state 就是陈旧的——rail 图标不翻、浮层对勾停在旧档。
+ *
+ * 这里用一个模块级订阅表补上：applyThemeMode 是所有落地路径的必经之处，
+ * 在它里面广播，任何实例改主题其余实例都会跟上。
+ */
+type ThemeListener = (mode: ThemeMode) => void;
+const themeListeners = new Set<ThemeListener>();
+
 export function applyThemeMode(mode: ThemeMode): void {
   const theme = resolveTheme(mode);
   document.documentElement.dataset.theme = theme;
@@ -38,6 +52,9 @@ export function applyThemeMode(mode: ThemeMode): void {
   } catch {
     /* ignore */
   }
+  // 广播给同页其它实例。回环安全：收到广播的实例 setMode 成同一个值时 React
+  // 直接 bail out，不会再触发它自己的 effect，因此不会来回震荡。
+  themeListeners.forEach((listener) => listener(mode));
 }
 
 export type RippleOrigin = { x: number; y: number };
@@ -110,6 +127,13 @@ export function useTheme(): {
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // 同页其它实例改了主题时跟上（storage 事件只跨标签页，管不到这里）
+  useEffect(() => {
+    const onBroadcast: ThemeListener = (next) => setMode(next);
+    themeListeners.add(onBroadcast);
+    return () => { themeListeners.delete(onBroadcast); };
   }, []);
 
   useEffect(() => {
