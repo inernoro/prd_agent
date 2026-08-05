@@ -208,7 +208,7 @@ function TopContributors({
         <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>按产出件数</span>
       </div>
 
-      <div className="flex flex-col gap-[5px]">
+      <div className="flex flex-col gap-[3px]">
         {top.map(m => {
           const color = getRoleMeta(m.role).color;
           const q = QUADRANT_COLOR[m.quadrant] ?? 'var(--text-muted)';
@@ -217,39 +217,36 @@ function TopContributors({
               key={m.userId}
               type="button"
               onClick={() => { onPick(m.userId); document.getElementById('ti-members')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-              className="ti-top group flex items-center gap-2 text-left rounded-md px-1.5 py-1 -mx-1.5"
+              className="ti-top relative flex items-center gap-2 text-left rounded-md px-1.5 py-[5px] -mx-1.5 overflow-hidden"
               title={`${maskName(m.displayName, masked)} · ${m.quadrant} · 产出 ${m.output} 件`}
             >
+              {/* 比例条做成行底纹：条和人绑在一起，不再单独堆一摞散线 */}
+              <span
+                className="absolute inset-y-0 left-0 rounded-md pointer-events-none"
+                style={{ width: `${(m.output / max) * 100}%`, background: '#5B8CFF', opacity: 0.13 }}
+              />
               {m.avatarFileName ? (
-                <UserAvatar src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
+                <UserAvatar src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="relative w-5 h-5 rounded-full object-cover flex-shrink-0" />
               ) : (
                 <span
-                  className="w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold flex-shrink-0"
+                  className="relative w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold flex-shrink-0"
                   style={{ background: `${color}22`, color }}
                 >
                   {maskName(m.displayName, masked)[0]}
                 </span>
               )}
-              <span className="text-[11.5px] truncate min-w-0 flex-1" style={{ color: 'var(--text-secondary)' }}>
+              <span className="relative text-[11.5px] truncate min-w-0 flex-1" style={{ color: 'var(--text-secondary)' }}>
                 {maskName(m.displayName, masked)}
               </span>
-              <span className="tabular-nums text-[11.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>{m.output}</span>
-              <span className="rounded-full flex-shrink-0" style={{ width: 5, height: 5, background: q }} />
+              <span className="relative tabular-nums text-[11.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>{m.output}</span>
+              <span className="relative rounded-full flex-shrink-0" style={{ width: 5, height: 5, background: q }} />
             </button>
           );
         })}
       </div>
 
-      <div className="flex flex-col gap-[3px] pt-0.5">
-        {top.map(m => (
-          <div key={m.userId} className="h-[3px] rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
-            <div className="h-full rounded-full" style={{ width: `${(m.output / max) * 100}%`, background: '#5B8CFF', opacity: 0.55 }} />
-          </div>
-        ))}
-      </div>
-
       <div className="text-[10.5px] leading-relaxed pt-1.5" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
-        右侧圆点 = 分型；点击跳到该成员画像
+        底纹长度 = 相对产出 · 圆点 = 分型 · 点击跳到该成员画像
       </div>
     </div>
   );
