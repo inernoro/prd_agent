@@ -387,8 +387,8 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
     </div>
     <div class="get">
       <div class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div>
-      <b>不新建包袱</b>
-      <p>不新建运行时、不新建鉴权、不碰现有那套跨容器代理。回滚等于删一个路由。</p>
+      <b>不自己造轮子</b>
+      <p>agent 循环直接用官方 Claude Agent SDK，我们只写适配。不新建运行时、不新建鉴权，回滚等于删一个路由。</p>
     </div>
   </div>
 
@@ -482,259 +482,332 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
 
 <!-- ============ S2 ============ -->
 <section id="s2">
-  <div class="sec-head"><span class="sec-num">S2</span><h2>架构图</h2></div>
-  <p class="sec-sub">看总体设计有没有违规。核心主张：这次不新增任何运行时容器，执行体就跑在主服务进程里；虚线红框是本次明确不碰的部分。</p>
+  <div class="sec-head"><span class="sec-num">S2</span><h2>架构图</h2><span class="pill accent">谁做什么</span></div>
+  <p class="sec-sub">先答最要紧的一句：<b>对话的 agent 循环用官方 Claude Agent SDK，我们一行都不写。</b>它已经在这个仓库里跑着（就是驱动那个工程对话入口的同一个运行时容器），我们只做适配。</p>
+
+  <h3>先把四个东西分清楚</h3>
+  <p style="margin:-4px 0 12px;font-size:13px;color:var(--text-muted)">这四个名字经常被混在一起讲，其实职责完全不同。表看完再看图。</p>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th style="width:132px">名字</th><th style="width:210px">它到底是什么</th><th style="width:126px">跑在哪</th><th style="width:86px">对外域名</th><th>本次动它吗</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>MAP</b></td><td>业务主体，就是你天天用的这个平台（后端加管理前端）</td><td>主服务容器</td><td>有</td>
+        <td><span class="yes">新增</span>：对话页、对话接口、事件翻译、三把工具的实现。<b>本次写的代码全在这里</b></td>
+      </tr>
+      <tr>
+        <td><b>agent 运行时</b><br><span class="mono">claude-sdk-sidecar</span></td>
+        <td>Agent 的大脑。内核是<b>官方 Claude Agent SDK</b>，循环、上下文管理、工具调用协议全是它自带的</td>
+        <td>独立容器，只在内网，和主服务是邻居</td><td>无</td>
+        <td><span class="yes">复用</span>：不改它的代码，只是多一个调用方</td>
+      </tr>
+      <tr>
+        <td><b>模型网关</b><br><span class="mono">llmgw</span></td>
+        <td>管模型池、调度和调用日志的那一层。已经有一个和 Claude 原生格式兼容的入口</td>
+        <td>独立容器</td><td>有，独立子域</td>
+        <td><span class="yes">复用</span>：运行时把模型请求指向它，日志与模型池自动生效</td>
+      </tr>
+      <tr>
+        <td><b>CDS</b></td><td>部署平台。负责把上面这些编排进分支预览</td><td>平台自身</td><td>有</td>
+        <td>不动。它是「部署在哪」，不是并列的一个部件</td>
+      </tr>
+      <tr style="background:var(--bad-soft)">
+        <td><b>CDS Agent</b></td>
+        <td><b>是一个功能，不是一个部件</b>。它用上面那个运行时去做基础设施运维操作</td>
+        <td>——</td><td>——</td>
+        <td><span class="no">不用、不改</span>。你说的那一坨指的是这个<b>功能</b>，不是那个<b>运行时</b></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p style="margin:14px 0 20px;font-size:13.4px;line-height:1.75;color:var(--text-secondary)">
+    这一行是本次方案的关键区分：<b>运行时是好的，那个功能的部署姿势才是问题</b>。它把运行时用在了跨容器的分支预览场景，
+    于是链路长、要二次认证、延迟高。通用对话不走那条路——运行时就在主服务隔壁的内网里，一跳就到。
+  </p>
 
   <div class="figwrap">
-  <svg viewBox="0 0 1080 560" width="100%" style="min-width:840px" role="img" aria-label="总体架构图">
+  <svg viewBox="0 0 1120 560" width="100%" style="min-width:880px" role="img" aria-label="总体架构图">
+    <defs>
+      <marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker>
+      <marker id="ah2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--border-default)"/></marker>
+    </defs>
+
     <!-- browser -->
-    <rect class="bx info" x="30" y="26" width="248" height="82" rx="11"/>
-    <text class="t" x="46" y="54">浏览器</text>
-    <text class="s" x="46" y="74">对话页：会话列表 + 消息流</text>
-    <text class="s" x="46" y="92">工具卡渲染 + 断线自动重连</text>
+    <rect class="bx info" x="16" y="38" width="344" height="76" rx="11"/>
+    <text class="t" x="34" y="64">浏览器 · 对话页</text>
+    <text class="s" x="34" y="84">会话列表 + 消息流 + 工具卡</text>
+    <text class="s" x="34" y="102">断线自动重连，按事件序号续订</text>
 
-    <!-- prd-api group -->
-    <rect class="grp" x="16" y="140" width="620" height="330" rx="14"/>
-    <text class="grpt" x="32" y="162">主服务进程（新增的东西全在这个框里）</text>
+    <!-- MAP group -->
+    <rect class="grp" x="16" y="150" width="344" height="256" rx="14"/>
+    <text class="grpt" x="32" y="172">MAP 主服务 · 本次写的代码全在这个框里</text>
 
-    <rect class="bx acc" x="36" y="180" width="200" height="66" rx="10"/>
-    <text class="t" x="52" y="206">对话接口</text>
-    <text class="s" x="52" y="226">建会话 / 发消息 / 订阅事件流</text>
+    <rect class="bx acc" x="34" y="188" width="308" height="52" rx="10"/>
+    <text class="t" x="50" y="212">对话接口</text>
+    <text class="s" x="50" y="230">建会话 / 发消息 / 订阅事件流</text>
 
-    <rect class="bx" x="36" y="272" width="200" height="62" rx="10"/>
-    <text class="t" x="52" y="298">任务队列（已有）</text>
-    <text class="s" x="52" y="318">入队即盖部署作用域戳</text>
+    <rect class="bx acc" x="34" y="252" width="148" height="56" rx="10"/>
+    <text class="t" x="48" y="276">会话与消息</text>
+    <text class="s" x="48" y="294">落库，盖部署作用域戳</text>
 
-    <rect class="bx acc" x="36" y="360" width="200" height="86" rx="10"/>
-    <text class="t" x="52" y="386">对话执行器</text>
-    <text class="s" x="52" y="406">问模型 - 调工具 - 回灌 - 再问</text>
-    <text class="s" x="52" y="424">轮数有硬上限，超了就收尾</text>
+    <rect class="bx acc" x="194" y="252" width="148" height="56" rx="10"/>
+    <text class="t" x="208" y="276">事件翻译层</text>
+    <text class="s" x="208" y="294">运行时事件译成工具卡</text>
 
-    <rect class="bx" x="286" y="180" width="180" height="266" rx="10"/>
-    <text class="t" x="302" y="206">工具注册表（已有）</text>
-    <text class="s" x="302" y="226">进程内直调，不走网络</text>
-    <rect class="bx acc" x="302" y="244" width="148" height="40" rx="8"/>
-    <text class="s" x="314" y="269" style="font-size:11.5px;fill:var(--accent)">生成图片</text>
-    <rect class="bx acc" x="302" y="292" width="148" height="40" rx="8"/>
-    <text class="s" x="314" y="317" style="font-size:11.5px;fill:var(--accent)">写入知识库</text>
-    <rect class="bx acc" x="302" y="340" width="148" height="40" rx="8"/>
-    <text class="s" x="314" y="365" style="font-size:11.5px;fill:var(--accent)">检索知识库</text>
-    <text class="s" x="302" y="404">首版只开这三把</text>
-    <text class="s" x="302" y="422">其余能力后续逐个放行</text>
+    <text class="s" x="34" y="334" style="font-size:11.5px">三把工具的实现（注册给运行时调用）</text>
+    <rect class="bx acc" x="34" y="342" width="98" height="38" rx="8"/>
+    <text class="s" x="46" y="366" style="font-size:11px;fill:var(--accent)">生成图片</text>
+    <rect class="bx acc" x="140" y="342" width="98" height="38" rx="8"/>
+    <text class="s" x="152" y="366" style="font-size:11px;fill:var(--accent)">写入知识库</text>
+    <rect class="bx acc" x="246" y="342" width="96" height="38" rx="8"/>
+    <text class="s" x="258" y="366" style="font-size:11px;fill:var(--accent)">检索知识库</text>
 
-    <rect class="bx ok" x="486" y="180" width="134" height="62" rx="10"/>
-    <text class="t" x="500" y="206">出图队列</text>
-    <text class="s" x="500" y="226">复用现有</text>
+    <!-- sidecar group -->
+    <rect class="grp" x="384" y="150" width="308" height="256" rx="14"/>
+    <text class="grpt" x="400" y="172">agent 运行时 · 独立容器 · 只在内网 · 无对外域名</text>
 
-    <rect class="bx ok" x="486" y="262" width="134" height="62" rx="10"/>
-    <text class="t" x="500" y="288">文档空间</text>
-    <text class="s" x="500" y="308">复用现有</text>
+    <rect class="bx ok" x="402" y="188" width="272" height="120" rx="10"/>
+    <text class="t" x="418" y="212">官方 Claude Agent SDK</text>
+    <text class="s" x="418" y="232">agent 循环，是它的</text>
+    <text class="s" x="418" y="250">上下文管理，是它的</text>
+    <text class="s" x="418" y="268">工具调用协议，是它的</text>
+    <text class="s" x="418" y="286">轮数上限，是我们传给它的一个参数</text>
+    <text class="s" x="418" y="304">我们一行循环代码都不写</text>
 
-    <rect class="bx ok" x="486" y="344" width="134" height="62" rx="10"/>
-    <text class="t" x="500" y="370">事件存储</text>
-    <text class="s" x="500" y="390">断线可续</text>
+    <rect class="bx ok" x="402" y="322" width="272" height="58" rx="10"/>
+    <text class="t" x="418" y="346">工具桥（已有）</text>
+    <text class="s" x="418" y="364">运行时要用工具时反向调回 MAP</text>
 
-    <!-- gateway -->
-    <rect class="grp" x="672" y="140" width="252" height="196" rx="14"/>
-    <text class="grpt" x="688" y="162">独立容器 · 独立域名</text>
-    <rect class="bx acc" x="690" y="180" width="216" height="72" rx="10"/>
-    <text class="t" x="706" y="206">模型网关</text>
-    <text class="s" x="706" y="226">模型池 / 调度 / 调用日志</text>
-    <text class="s" x="706" y="244">出入口全程加密传输</text>
-    <rect class="bx" x="690" y="266" width="216" height="54" rx="10"/>
-    <text class="t" x="706" y="290">各家大模型</text>
-    <text class="s" x="706" y="308">密钥静态加密存放</text>
+    <!-- gateway group -->
+    <rect class="grp" x="716" y="150" width="388" height="256" rx="14"/>
+    <text class="grpt" x="732" y="172">模型网关 · 独立容器 · 独立子域</text>
 
-    <!-- shared mongo -->
-    <rect class="bx" x="672" y="366" width="252" height="80" rx="10"/>
-    <text class="t" x="688" y="392">共享数据库（已有）</text>
-    <text class="s" x="688" y="412">会话、消息、任务、事件</text>
-    <text class="s" x="688" y="430">分支之间共库，靠作用域戳区分</text>
+    <rect class="bx ok" x="734" y="188" width="352" height="56" rx="10"/>
+    <text class="t" x="750" y="212">Claude 原生格式兼容入口（已有）</text>
+    <text class="s" x="750" y="230">运行时把模型请求指到这里，不直连厂商</text>
 
-    <!-- forbidden -->
-    <rect class="bx bad" x="944" y="180" width="118" height="112" rx="10"/>
-    <text class="t" x="958" y="206" style="font-size:11.5px">本次不碰</text>
-    <text class="s" x="958" y="226">跨容器代理</text>
-    <text class="s" x="958" y="244">分支预览运行时</text>
-    <text class="s" x="958" y="262">另一套鉴权</text>
-    <text class="s" x="958" y="280">既有那个半成品</text>
+    <rect class="bx ok" x="734" y="256" width="352" height="56" rx="10"/>
+    <text class="t" x="750" y="280">模型池 / 调度 / 调用日志</text>
+    <text class="s" x="750" y="298">页面选哪个模型，这里能查到跑的是哪个</text>
+
+    <rect class="bx" x="734" y="324" width="352" height="56" rx="10"/>
+    <text class="t" x="750" y="348">各家大模型</text>
+    <text class="s" x="750" y="366">平台密钥静态加密存放，运行时接触不到</text>
+
+    <!-- bottom row -->
+    <rect class="bx" x="16" y="428" width="344" height="76" rx="10"/>
+    <text class="t" x="34" y="452">共享数据库（已有）</text>
+    <text class="s" x="34" y="472">会话、消息、任务、事件</text>
+    <text class="s" x="34" y="490">分支之间共库，靠作用域戳区分来源</text>
+
+    <rect class="bx bad" x="384" y="428" width="308" height="76" rx="10"/>
+    <text class="t" x="402" y="452" style="font-size:12px">本次明确不碰</text>
+    <text class="s" x="402" y="472">那个基础设施运维功能 · 分支预览里的运行时部署姿势</text>
+    <text class="s" x="402" y="490">以及任何形式的自研 agent 循环或自研 SDK</text>
+
+    <rect class="bx" x="716" y="428" width="388" height="76" rx="10"/>
+    <text class="t" x="734" y="452">CDS 部署平台</text>
+    <text class="s" x="734" y="472">负责把上面三个容器编排进分支预览</text>
+    <text class="s" x="734" y="490">本次不改编排，只是多一个内网调用关系</text>
 
     <!-- arrows -->
-    <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker>
-    <marker id="ah2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--border-default)"/></marker></defs>
-
-    <path class="ln acc" d="M136 110 L136 178" marker-end="url(#ah)"/>
-    <text class="lbl" x="144" y="146">登录态直连</text>
-    <path class="ln acc" d="M136 248 L136 270" marker-end="url(#ah)"/>
-    <path class="ln acc" d="M136 336 L136 358" marker-end="url(#ah)"/>
-    <path class="ln acc" d="M238 400 L284 372" marker-end="url(#ah)"/>
-    <text class="lbl" x="238" y="418">进程内直调</text>
-    <path class="ln" d="M452 262 L484 218" marker-end="url(#ah2)"/>
-    <path class="ln" d="M452 312 L484 300" marker-end="url(#ah2)"/>
-    <path class="ln" d="M238 380 L484 372" marker-end="url(#ah2)"/>
-    <path class="ln acc" d="M240 390 C 420 500, 600 470, 688 250" marker-end="url(#ah)"/>
-    <text class="lbl" x="404" y="500">问模型走网关，内网密钥</text>
-    <path class="ln" d="M620 392 L670 400" marker-end="url(#ah2)"/>
-    <path class="ln acc" d="M232 200 C 300 120, 200 60, 280 66" marker-end="url(#ah)" style="opacity:.45"/>
-    <text class="lbl" x="286" y="112">事件流回推，页面刷新不丢</text>
+    <path class="ln acc" d="M120 116 L120 186" marker-end="url(#ah)"/>
+    <text class="lbl" x="128" y="152">登录态直连</text>
+    <path class="ln acc" d="M268 250 C 268 160, 300 128, 340 118" marker-end="url(#ah)" style="opacity:.55"/>
+    <text class="lbl" x="238" y="146">事件流回推</text>
+    <path class="ln acc" d="M344 214 L400 214" marker-end="url(#ah)"/>
+    <text class="lbl" x="330" y="192">内网令牌，转发这一轮</text>
+    <path class="ln acc" d="M676 214 L732 214" marker-end="url(#ah)"/>
+    <text class="lbl" x="666" y="192">网关服务密钥</text>
+    <path class="ln acc" d="M400 352 L344 362" marker-end="url(#ah)"/>
+    <text class="lbl" x="330" y="392">工具桥反向调</text>
+    <path class="ln" d="M108 310 L108 426" marker-end="url(#ah2)"/>
+    <path class="ln" d="M910 246 L910 254" marker-end="url(#ah2)"/>
+    <path class="ln" d="M910 314 L910 322" marker-end="url(#ah2)"/>
   </svg>
   </div>
 
   <div class="legend">
-    <span><i style="background:var(--accent-soft);border:1px solid var(--accent-border)"></i>本次新增</span>
-    <span><i style="background:var(--ok-soft)"></i>复用现有</span>
+    <span><i style="background:var(--accent-soft);border:1px solid var(--accent-border)"></i>本次新增（我们写的）</span>
+    <span><i style="background:var(--ok-soft)"></i>复用现有（别人写的，不改）</span>
     <span><i style="background:var(--info-soft)"></i>用户侧</span>
     <span><i style="background:var(--bad-soft);border:1px dashed var(--bad)"></i>明确不碰</span>
   </div>
 
-  <div class="grid g2" style="margin-top:16px">
+  <h3>写与不写的分界线</h3>
+  <div class="grid g2">
     <div class="dd do">
-      <h4>这张图想证明的合规点</h4>
+      <h4>别人写好的，直接用，一行不碰</h4>
       <ul>
-        <li>新增部件只有两个：对话接口、对话执行器。其余全是复用。</li>
-        <li>不新增对外容器，因此不触发多容器出口与拓扑标注那套要求。</li>
-        <li>共享数据库上新写的数据一律盖部署作用域戳，分支之间不互相抢任务。</li>
-        <li>模型调用统一走网关，调用日志天然可查，不绕过既有观测面。</li>
+        <li>agent 循环：什么时候继续问、什么时候收尾，SDK 自己管。</li>
+        <li>上下文管理：历史怎么裁、怎么压缩，SDK 自己管。</li>
+        <li>工具调用协议：模型怎么声明要用工具、结果怎么回灌，SDK 自己管。</li>
+        <li>流式协议：文字增量、工具开始、工具结果、用量、终态，运行时已经吐好了。</li>
+        <li>轮数上限、超时、取消：都是传给运行时的参数，不是我们实现的机制。</li>
       </ul>
     </div>
     <div class="dd dont">
-      <h4>为什么不复用那个半成品</h4>
+      <h4>我们只写这四样，别的一律不写</h4>
       <ul>
-        <li>它把执行体放在分支预览容器里，链路长、认证多、延迟高，这三样正是你抱怨的。</li>
-        <li>它的定位是给工程做基础设施操作，不是给普通用户聊天，人设和权限模型都不同。</li>
-        <li>拆它比另起一条干净路径贵，且会把两件事绑死，以后谁也动不了。</li>
-        <li>本次不删不改它，只是不用它，风险为零。</li>
+        <li>会话与消息的存储、断线续订（复用平台已有的任务与事件流）。</li>
+        <li>把运行时的事件翻译成页面上的消息气泡与工具卡。</li>
+        <li>三把工具的实现，各自转发给平台已有的出图与知识库能力。</li>
+        <li>对话页面本身。</li>
+        <li><b>明令禁止</b>：自研 agent 循环、自研 SDK、自研工具调用协议。命中即熔断。</li>
       </ul>
     </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <b style="font-size:13.5px">为什么这么接，模型池和日志还能生效</b>
+    <p style="margin:6px 0 0;font-size:12.9px;color:var(--text-muted);line-height:1.75">
+      官方 SDK 允许把模型请求指向任何一个格式兼容的地址。我们的网关正好已经有这样一个入口，
+      而且带模型池路由与调用日志。于是「用别人的 SDK」和「模型仍归我们的网关管」这两件事不矛盾——
+      SDK 负责怎么思考，网关负责用哪个模型、记什么账。两边都不用为对方改代码。
+    </p>
   </div>
 </section>
 
 <!-- ============ S3 ============ -->
 <section id="s3">
   <div class="sec-head"><span class="sec-num">S3</span><h2>数据流转与鉴权</h2></div>
-  <p class="sec-sub">一句话看懂：数据从哪来、经过谁、每一跳拿什么凭据、失败了怎么退。灰底菱形是鉴权点，橙色是本次新增的执行节点。</p>
+  <p class="sec-sub">数据从哪来、经过谁、每一跳拿什么凭据。橙色是我们新增的执行节点，绿色是别人的现成部件，灰底菱形是鉴权点。注意第 4 步：循环在运行时里，不在我们这儿。</p>
 
   <div class="figwrap">
-  <svg viewBox="0 0 1060 470" width="100%" style="min-width:860px" role="img" aria-label="数据流转与鉴权图">
+  <svg viewBox="0 0 1200 500" width="100%" style="min-width:960px" role="img" aria-label="数据流转与鉴权图">
     <defs><marker id="ah3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker></defs>
 
-    <!-- lanes -->
-    <text class="grpt" x="30" y="26">用户侧</text>
-    <text class="grpt" x="278" y="26">主服务</text>
-    <text class="grpt" x="700" y="26">外部依赖</text>
-    <path class="grp" d="M262 12 L262 452"/>
-    <path class="grp" d="M686 12 L686 452"/>
+    <text class="grpt" x="18" y="26">用户侧</text>
+    <text class="grpt" x="376" y="26">MAP · 我们写的</text>
+    <text class="grpt" x="720" y="26">agent 运行时 · 别人的 SDK</text>
+    <text class="grpt" x="1036" y="26">外部依赖</text>
+    <path class="grp" d="M286 12 L286 486"/>
+    <path class="grp" d="M666 12 L666 486"/>
+    <path class="grp" d="M976 12 L976 486"/>
 
-    <!-- 1 -->
-    <rect class="bx info" x="24" y="42" width="212" height="56" rx="10"/>
-    <text class="t" x="38" y="66">1 用户在页面发一句话</text>
-    <text class="s" x="38" y="86">已登录，带现有登录凭据</text>
+    <rect class="bx info" x="16" y="44" width="180" height="52" rx="10"/>
+    <text class="t" x="30" y="68">1 用户发一句话</text>
+    <text class="s" x="30" y="88">已登录，带现有凭据</text>
 
-    <!-- auth 1 -->
-    <path class="bx" d="M330 44 L378 70 L330 96 L282 70 Z"/>
-    <text class="s" x="292" y="68" style="font-size:10px">鉴权点 A</text>
-    <text class="s" x="292" y="82" style="font-size:10px">登录态校验</text>
+    <path class="bx" d="M286 46 L330 70 L286 94 L242 70 Z"/>
+    <text class="s" x="252" y="68" style="font-size:10px">鉴权 A</text>
+    <text class="s" x="252" y="82" style="font-size:10px">登录态</text>
 
-    <!-- 2 -->
-    <rect class="bx acc" x="404" y="42" width="248" height="56" rx="10"/>
-    <text class="t" x="418" y="66">2 建任务并入队</text>
-    <text class="s" x="418" y="86">盖部署作用域戳，只本部署认领</text>
+    <rect class="bx acc" x="372" y="44" width="240" height="52" rx="10"/>
+    <text class="t" x="386" y="68">2 建任务并入队</text>
+    <text class="s" x="386" y="88">盖部署作用域戳，只本部署认领</text>
 
-    <!-- 3 -->
-    <rect class="bx acc" x="404" y="122" width="248" height="60" rx="10"/>
-    <text class="t" x="418" y="146">3 对话执行器接单</text>
-    <text class="s" x="418" y="166">拼上下文，决定这轮问什么</text>
+    <rect class="bx acc" x="372" y="120" width="240" height="52" rx="10"/>
+    <text class="t" x="386" y="144">3 把这一轮转给运行时</text>
+    <text class="s" x="386" y="164">带上历史、三把工具的定义、轮数上限</text>
 
-    <!-- auth 2 -->
-    <path class="bx" d="M736 128 L790 152 L736 176 L682 152 Z"/>
-    <text class="s" x="694" y="150" style="font-size:10px">鉴权点 B</text>
-    <text class="s" x="694" y="164" style="font-size:10px">网关内网密钥</text>
+    <path class="bx" d="M666 122 L710 146 L666 170 L622 146 Z"/>
+    <text class="s" x="632" y="144" style="font-size:10px">鉴权 B</text>
+    <text class="s" x="628" y="158" style="font-size:10px">内网令牌</text>
 
-    <!-- gw -->
-    <rect class="bx" x="812" y="118" width="222" height="68" rx="10"/>
-    <text class="t" x="826" y="142">模型网关</text>
-    <text class="s" x="826" y="162">选模型 - 记日志 - 转发</text>
-    <text class="s" x="826" y="180">对上游用加密存放的平台密钥</text>
+    <rect class="bx ok" x="716" y="100" width="196" height="120" rx="10"/>
+    <text class="t" x="730" y="124">4 官方 SDK 跑循环</text>
+    <text class="s" x="730" y="144">问模型 · 决定用不用工具</text>
+    <text class="s" x="730" y="162">回灌结果 · 判断要不要再问</text>
+    <text class="s" x="730" y="180">全部是 SDK 自带行为</text>
+    <text class="s" x="730" y="204" style="fill:var(--ok)">这一步我们没有代码</text>
 
-    <!-- 4 decision -->
-    <rect class="bx acc" x="404" y="206" width="248" height="56" rx="10"/>
-    <text class="t" x="418" y="230">4 模型说要用工具</text>
-    <text class="s" x="418" y="250">或者直接出文字，那就跳到第 7 步</text>
+    <path class="bx" d="M976 122 L1020 146 L976 170 L932 146 Z"/>
+    <text class="s" x="942" y="144" style="font-size:10px">鉴权 C</text>
+    <text class="s" x="938" y="158" style="font-size:10px">网关密钥</text>
 
-    <!-- 5 -->
-    <rect class="bx acc" x="404" y="286" width="248" height="60" rx="10"/>
-    <text class="t" x="418" y="310">5 进程内直调工具</text>
-    <text class="s" x="418" y="330">同进程函数调用，无网络无二次认证</text>
+    <rect class="bx ok" x="1032" y="104" width="152" height="52" rx="10"/>
+    <text class="t" x="1046" y="128">模型网关</text>
+    <text class="s" x="1046" y="146">选模型 · 记日志</text>
 
-    <!-- tool targets -->
-    <rect class="bx ok" x="812" y="270" width="222" height="46" rx="9"/>
-    <text class="s" x="826" y="292" style="font-size:11.5px">出图队列（同作用域认领）</text>
-    <text class="s" x="826" y="308" style="font-size:10.5px">产出的图落进你的素材库</text>
-    <rect class="bx ok" x="812" y="326" width="222" height="46" rx="9"/>
-    <text class="s" x="826" y="348" style="font-size:11.5px">文档空间读写</text>
-    <text class="s" x="826" y="364" style="font-size:10.5px">按你本人的权限，不越权</text>
+    <rect class="bx" x="1032" y="168" width="152" height="46" rx="10"/>
+    <text class="t" x="1046" y="192">各家大模型</text>
+    <text class="s" x="1046" y="208">密钥加密存放</text>
 
-    <!-- auth 3 -->
-    <path class="bx" d="M736 296 L790 320 L736 344 L682 320 Z"/>
-    <text class="s" x="696" y="318" style="font-size:10px">鉴权点 C</text>
-    <text class="s" x="696" y="332" style="font-size:10px">沿用你本人身份</text>
+    <rect class="bx ok" x="716" y="252" width="196" height="56" rx="10"/>
+    <text class="t" x="730" y="276">5 工具桥反向调</text>
+    <text class="s" x="730" y="296">SDK 要用工具时回头找 MAP</text>
 
-    <!-- 6 -->
-    <rect class="bx acc" x="404" y="370" width="248" height="52" rx="10"/>
-    <text class="t" x="418" y="394">6 结果回灌，再问一轮</text>
-    <text class="s" x="418" y="412">轮数超上限就停下并如实说明</text>
+    <path class="bx" d="M666 256 L710 280 L666 304 L622 280 Z"/>
+    <text class="s" x="630" y="278" style="font-size:10px">鉴权 D</text>
+    <text class="s" x="624" y="292" style="font-size:10px">你本人身份</text>
 
-    <!-- 7 -->
-    <rect class="bx info" x="24" y="370" width="212" height="52" rx="10"/>
-    <text class="t" x="38" y="394">7 事件流推回页面</text>
-    <text class="s" x="38" y="412">断线重连补发，内容不丢</text>
+    <rect class="bx acc" x="372" y="252" width="240" height="56" rx="10"/>
+    <text class="t" x="386" y="276">6 三把工具执行</text>
+    <text class="s" x="386" y="296">权限不放大，按你本人算</text>
 
-    <rect class="bx" x="24" y="150" width="212" height="86" rx="10"/>
-    <text class="t" x="38" y="174">刷新页面怎么办</text>
-    <text class="s" x="38" y="194">任务在服务端继续跑</text>
-    <text class="s" x="38" y="212">回来按事件序号续订</text>
-    <text class="s" x="38" y="230">客户端断开不取消任务</text>
+    <rect class="bx ok" x="372" y="324" width="240" height="46" rx="10"/>
+    <text class="s" x="386" y="346" style="font-size:11.5px">出图队列 / 文档空间（已有）</text>
+    <text class="s" x="386" y="362" style="font-size:10.5px">产物落进你的素材库与知识库</text>
 
-    <!-- arrows -->
-    <path class="ln acc" d="M238 70 L280 70" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M380 70 L402 70" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M528 100 L528 120" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M654 152 L680 152" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M792 152 L810 152" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M528 184 L528 204" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M528 264 L528 284" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M654 316 L680 318" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M792 306 L810 294" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M792 330 L810 342" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M528 348 L528 368" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M402 396 L240 396" marker-end="url(#ah3)"/>
-    <path class="ln acc" d="M418 380 C 340 330, 340 250, 402 234" marker-end="url(#ah3)" style="opacity:.5"/>
-    <text class="lbl" x="290" y="300">循环，有硬上限</text>
+    <rect class="bx acc" x="372" y="392" width="240" height="56" rx="10"/>
+    <text class="t" x="386" y="416">7 翻译事件并落库</text>
+    <text class="s" x="386" y="436">译成消息与工具卡，按序号存</text>
+
+    <rect class="bx info" x="16" y="392" width="180" height="56" rx="10"/>
+    <text class="t" x="30" y="416">8 推回页面</text>
+    <text class="s" x="30" y="436">断线重连补发，不丢</text>
+
+    <rect class="bx" x="16" y="170" width="180" height="104" rx="10"/>
+    <text class="t" x="30" y="194">刷新页面怎么办</text>
+    <text class="s" x="30" y="214">任务在服务端继续跑</text>
+    <text class="s" x="30" y="232">回来按事件序号续订</text>
+    <text class="s" x="30" y="250">客户端断开不取消任务</text>
+
+    <path class="ln acc" d="M198 70 L240 70" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M332 70 L370 70" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M492 98 L492 118" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M614 146 L620 146" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M712 146 L714 146" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M914 146 L930 146" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M1022 146 L1030 134" marker-end="url(#ah3)"/>
+    <path class="ln" d="M1108 158 L1108 166" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M814 222 L814 250" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M714 280 L712 280" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M620 280 L614 280" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M492 310 L492 322" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M760 310 C 700 380, 660 420, 616 420" marker-end="url(#ah3)"/>
+    <text class="lbl" x="660" y="448">流式事件回传</text>
+    <path class="ln acc" d="M370 420 L200 420" marker-end="url(#ah3)"/>
+    <text class="lbl" x="924" y="242">循环由 SDK 控制</text>
+    <text class="lbl" x="924" y="258">轮数上限是入参</text>
   </svg>
   </div>
 
-  <h3>三个鉴权点，一句话各自说清</h3>
+  <h3>四个鉴权点，一句话各自说清</h3>
   <div class="tblwrap">
   <table>
-    <thead><tr><th style="width:76px">鉴权点</th><th style="width:150px">这一跳是谁在调谁</th><th>拿什么凭据</th><th style="width:200px">为什么不是新东西</th></tr></thead>
+    <thead><tr><th style="width:66px">鉴权点</th><th style="width:172px">这一跳是谁在调谁</th><th>拿什么凭据</th><th style="width:196px">为什么不是新东西</th></tr></thead>
     <tbody>
-      <tr><td><b>A</b></td><td>浏览器调主服务</td><td>你现在登录平台用的那把凭据，一模一样</td><td>不新建登录、不发第二把钥匙、不做设备配对</td></tr>
-      <tr><td><b>B</b></td><td>主服务调模型网关</td><td>网关的内网密钥，服务之间用，用户看不到也不需要知道</td><td>网关早就在用，本次只是多一个调用方</td></tr>
-      <tr><td><b>C</b></td><td>工具读写你的数据</td><td>沿用发起这次对话的那个人的身份，权限不放大</td><td>出图和知识库的权限判断都是现成的，原样复用</td></tr>
+      <tr><td><b>A</b></td><td>浏览器调 MAP</td><td>你现在登录平台用的那把凭据，一模一样</td><td>不新建登录、不发第二把钥匙、不做设备配对</td></tr>
+      <tr><td><b>B</b></td><td>MAP 调 agent 运行时</td><td>运行时的内网令牌，服务之间用，走内网不出容器网络</td><td>这条链路已经在跑着，本次只是多一个调用方</td></tr>
+      <tr><td><b>C</b></td><td>运行时调模型网关</td><td>网关的服务密钥，用户看不到也不需要知道</td><td>网关早就在用，本次只是把运行时的模型出口指过去</td></tr>
+      <tr><td><b>D</b></td><td>工具桥回调 MAP 读写你的数据</td><td>沿用发起这次对话的那个人的身份，权限不放大</td><td>工具桥与权限判断都是现成的，原样复用</td></tr>
     </tbody>
   </table>
+  </div>
+
+  <div class="card" style="margin-top:12px;background:var(--info-soft);border-color:transparent">
+    <b style="font-size:13.4px">这里没有「超远距离传输」</b>
+    <p style="margin:6px 0 0;font-size:12.9px;color:var(--text-secondary);line-height:1.75">
+      鉴权 B 那一跳是同一个容器网络里的邻居调用，不出机房、不经公网、不需要用户再认证一次。
+      你之前遇到的延迟和认证麻烦，来自那个运维功能把运行时放到了分支预览里、隔着好几层往回打。
+      本次的部署姿势不同，所以那些问题不会跟过来。
+    </p>
   </div>
 
   <h3>失败了会怎样（这一段决定它像不像个成品）</h3>
   <div class="tblwrap">
   <table>
-    <thead><tr><th style="width:170px">哪里坏了</th><th>页面上你看到什么</th><th style="width:210px">数据会不会烂在半路</th></tr></thead>
+    <thead><tr><th style="width:180px">哪里坏了</th><th>页面上你看到什么</th><th style="width:200px">数据会不会烂在半路</th></tr></thead>
     <tbody>
-      <tr><td>模型超时或报错</td><td>这一轮转红，写清是模型的问题，给「重试这一轮」按钮</td><td>不会。这轮的消息标记为失败，历史完整保留</td></tr>
-      <tr><td>出图失败</td><td>工具卡转红并写原因，对话继续，可以换描述再来一次</td><td>不会。出图任务本来就有自己的失败态</td></tr>
-      <tr><td>知识库写入失败</td><td>工具卡转红，明确告诉你没存进去，不给假链接</td><td>不会。写入是一次原子操作，要么成要么没有</td></tr>
-      <tr><td>你把页面关了</td><td>下次进来接着看，中途的内容按顺序补齐</td><td>不会。任务在服务端跑完，事件按序号存着</td></tr>
-      <tr><td>工具绕圈停不下来</td><td>到轮数上限自动收尾，如实说「我卡住了」并给出已完成的部分</td><td>不会。上限是硬的，不靠模型自觉</td></tr>
+      <tr><td>模型超时或报错</td><td>这一轮转红，写清是模型的问题，给「重试这一轮」按钮</td><td>不会。这轮标记失败，历史完整保留</td></tr>
+      <tr><td>agent 运行时挂了</td><td>明确提示运行时不可用，而不是假装在思考</td><td>不会。任务标记失败，可重新发起</td></tr>
+      <tr><td>出图失败</td><td>工具卡转红并写原因，对话继续，可换描述再来</td><td>不会。出图任务本来就有失败态</td></tr>
+      <tr><td>知识库写入失败</td><td>工具卡转红，明确说没存进去，不给假链接</td><td>不会。写入是一次原子操作</td></tr>
+      <tr><td>你把页面关了</td><td>下次进来接着看，中途内容按序号补齐</td><td>不会。任务在服务端跑完</td></tr>
+      <tr><td>模型绕圈停不下来</td><td>到轮数上限自动收尾，如实说卡住了并给出已完成部分</td><td>不会。上限是传给 SDK 的硬参数，不靠模型自觉</td></tr>
     </tbody>
   </table>
   </div>
@@ -793,7 +866,7 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
 <!-- ============ S5 ============ -->
 <section id="s5">
   <div class="sec-head"><span class="sec-num">S5</span><h2>验收方式</h2><span class="pill accent">你自己就能核</span></div>
-  <p class="sec-sub">防自嗨用的。每条判据都写清「谁来核、怎么核、什么算过」，不接受「我通读自审过」「代码逻辑没问题」这类说法当证据。</p>
+  <p class="sec-sub">防自嗨用的。每条判据都写清「谁来核、怎么核、什么算过」，不接受「我通读自审过」「代码逻辑没问题」这类说法当证据。第 7 条专门用来卡「有没有偷偷自己造轮子」。</p>
 
   <div class="tblwrap">
   <table>
@@ -805,10 +878,11 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
       <tr><td>4</td><td>入库闭环</td><td>说「把这套配色记进知识库」，然后点它给的链接</td><td>你</td><td>链接能打开，内容就是刚才那段</td></tr>
       <tr><td>5</td><td>检索闭环</td><td>新开一个会话，问上一步存的那件事</td><td>你</td><td>答得出来，且标了出处能点开</td></tr>
       <tr><td>6</td><td>模型没串</td><td>页面上指定一个模型，去网关日志查这一次调用</td><td>管理员</td><td>日志里跑的就是你选的那个</td></tr>
-      <tr><td>7</td><td>没有越界</td><td>看改动文件清单</td><td>评审</td><td><span class="no">一个字都没碰</span>跨容器代理、既有半成品、鉴权</td></tr>
-      <tr><td>8</td><td>两套皮肤都行</td><td>白天黑夜各切一次，各截一张图</td><td>验收</td><td>不破版、不出现看不清的字</td></tr>
-      <tr><td>9</td><td>等待期有内容</td><td>盯着任一超过两秒的等待</td><td>验收</td><td>屏幕上一直有东西在变，不是一个死转圈</td></tr>
-      <tr><td>10</td><td>失败讲人话</td><td>故意写一句会让它失败的要求</td><td>验收</td><td>红态 + 说清原因 + 会话还能继续</td></tr>
+      <tr><td>7</td><td><b>没有自研循环</b></td><td>看改动文件清单，搜有没有「问模型 - 调工具 - 回灌 - 再问」这类代码</td><td>评审</td><td><span class="no">一行都没有</span>。循环全在运行时的官方 SDK 里</td></tr>
+      <tr><td>8</td><td>没有越界</td><td>看改动文件清单</td><td>评审</td><td>运行时内核、那个运维功能、鉴权，三者<span class="no">一个字未碰</span></td></tr>
+      <tr><td>9</td><td>两套皮肤都行</td><td>白天黑夜各切一次，各截一张图</td><td>验收</td><td>不破版、不出现看不清的字</td></tr>
+      <tr><td>10</td><td>等待期有内容</td><td>盯着任一超过两秒的等待</td><td>验收</td><td>屏幕上一直有东西在变，不是一个死转圈</td></tr>
+      <tr><td>11</td><td>失败讲人话</td><td>故意写一句会让它失败的要求</td><td>验收</td><td>红态 + 说清原因 + 会话还能继续</td></tr>
     </tbody>
   </table>
   </div>
@@ -859,6 +933,7 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
         <li>跨会话长期记忆、用户画像。</li>
         <li>把百宝箱所有工具接进来。</li>
         <li>改任何现有表结构、改任何现有鉴权。</li>
+        <li><b>自研 agent 循环、自研 SDK、自研工具调用协议</b>。这条永远不做，不只本期。</li>
       </ul>
     </div>
   </div>
@@ -868,7 +943,9 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
     <ul>
       <li>连续八个提交没有新增可用功能，只在改文档、改脚本、改计划。</li>
       <li>工具数量超过三把，或者有人提议「顺手把某某也接上」。</li>
-      <li>改动碰到了跨容器代理、既有那个半成品、或任何鉴权代码。</li>
+      <li><b>出现任何自研 agent 循环、自研 SDK、自研工具调用协议的代码。</b>这条是红线中的红线。</li>
+      <li>改动伸进了 agent 运行时的内核代码，而不是只加适配与配置。</li>
+      <li>改动碰到了那个基础设施运维功能、分支预览的运行时部署、或任何鉴权代码。</li>
       <li>改动行数超过第一轮基线的两倍，或者文件范围扩出第一轮清单。</li>
       <li>同一份计划文档被重写五次以上，而卡点没有消失。</li>
     </ul>
@@ -877,7 +954,7 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
 
 <!-- ============ S7 ============ -->
 <section id="s7">
-  <div class="sec-head"><span class="sec-num">S7</span><h2>要你拍板的</h2><span class="pill accent">五个岔路口</span></div>
+  <div class="sec-head"><span class="sec-num">S7</span><h2>要你拍板的</h2><span class="pill accent">六个岔路口</span></div>
   <p class="sec-sub">每个都给了默认选项。你什么都不说，我就按橙色那个走；想改哪个直接点名。</p>
 
   <div class="dec">
@@ -919,6 +996,15 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
       <div class="opt"><b>三个阶段全做完再一起放</b><span>观感更完整，但把「不要过度开发」的风险又拉回来了，中间没有任何真实反馈来纠偏。</span></div>
     </div>
   </div>
+
+  <div class="dec">
+    <div class="dec-q"><em>6</em>运行时自带的只读文件工具，通用对话要不要关掉</div>
+    <p style="margin:-4px 0 9px;font-size:12.4px;color:var(--text-muted)">背景：agent 运行时目前默认开着三个只读文件工具（读文件、按内容找、按文件名找），是给代码审查场景准备的。通用对话用不上，而且口径讲不清。</p>
+    <div class="opts">
+      <div class="opt pick"><b>关掉，只留我们注册的三把工具</b><span>推荐。给运行时补一个按次生效的开关即可，属于适配层配置，不动 SDK 内核。用户问一句不会读到仓库文件，权限口径干净。</span></div>
+      <div class="opt"><b>先不关，接受它能读仓库文件</b><span>省一点工夫，但普通用户的对话会带着代码读取能力，出了事说不清是谁批准的。不建议。</span></div>
+    </div>
+  </div>
 </section>
 
 <!-- ============ S8 ============ -->
@@ -931,8 +1017,8 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
       <div class="no">一</div>
       <div>
         <b>纯多轮对话，零工具</b>
-        <p>页面、执行器、事件流、断线恢复。这一阶段结束就已经回答了「有没有能对聊的智能体、在哪用」。</p>
-        <div class="stop">可停点：此时上线即可用，判据 1、2、8、9、10 全部可验。</div>
+        <p>页面、转发与事件翻译、事件流、断线恢复。循环直接交给运行时，我们这一阶段一行循环代码都不写。这一阶段结束就已经回答了「有没有能对聊的智能体、在哪用」。</p>
+        <div class="stop">可停点：此时上线即可用，判据 1、2、7、8、9、10、11 全部可验。</div>
       </div>
     </div>
     <div class="phase">
@@ -966,7 +1052,7 @@ footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint)
     <div class="card">
       <h4 style="margin:0 0 9px;font-size:14px">规模量级</h4>
       <ul style="margin:0;padding-left:19px;font-size:13px;line-height:1.8;color:var(--text-secondary)">
-        <li>后端新增：一个接口层、一个执行器、三个工具适配。</li>
+        <li>后端新增：一个接口层、一个转发与事件翻译层、三个工具适配。没有循环、没有 SDK。</li>
         <li>前端新增：一个页面，消息渲染直接复用现有组件。</li>
         <li>预计触及八到十二个文件，不含测试。</li>
         <li>超出这个量级就是走偏了，按熔断线处理。</li>
