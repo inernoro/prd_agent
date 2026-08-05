@@ -1525,21 +1525,30 @@ public class ExecutiveController : ControllerBase
                 .SortBy(e => e.OccurredAt).Limit(1).FirstOrDefaultAsync();
             behaviorFrom = earliest?.OccurredAt;
             var wanted = parsed.Where(t => t.Kind == "route").Select(t => t.Key).Distinct().ToList();
-            // 只数 route-transition（进入该页一次 = 一次访问）。
-            // 两种事件都数的话一次访问会被记两遍：进入时写 transition、离开时再写 dwell，
-            // 用量凭空翻倍，会把「几乎没人用」粉饰成「用得还行」——采用度报告最不该出的错。
+            // 口径是「活跃人天」：同一人同一天访问同一页只算一次。
+            //
+            // 两种更直观的算法都不对，各错一头：
+            //   数全部事件 —— 一次访问会写多条（进入写 route-transition，之后每次标签页
+            //     隐藏/离开都再写一条 route-dwell），实测同一窗口把 5 次膨胀成 30 次；
+            //   只数 route-transition —— 它要求前后两个路由都可追踪，而 currentRoute 初始为 null，
+            //     所以**用户落地的第一个页面永远不产生 transition**。直达链接、刷新、
+            //     从登录页进来全都漏掉，恰恰是新上线页面最主要的到达方式。
+            // 按 (人, 页, 日) 去重两头都躲开：不受 dwell 条数影响，也不依赖有没有前一个路由。
             var evts = await _db.BehaviorEvents
-                .Find(e => e.OccurredAt >= start && e.OccurredAt < end
-                           && e.Type == "route-transition" && wanted.Contains(e.Route))
-                .Project(e => new { e.Route, e.UserId })
+                .Find(e => e.OccurredAt >= start && e.OccurredAt < end && wanted.Contains(e.Route))
+                .Project(e => new { e.Route, e.UserId, e.OccurredAt })
                 .ToListAsync();
+            var routePersonDays = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
             foreach (var e in evts)
             {
-                routeVisits[e.Route] = routeVisits.GetValueOrDefault(e.Route) + 1;
+                if (!routePersonDays.TryGetValue(e.Route, out var days))
+                    routePersonDays[e.Route] = days = new HashSet<string>(StringComparer.Ordinal);
+                days.Add($"{e.UserId}|{e.OccurredAt:yyyy-MM-dd}");
                 if (!routeUsers.TryGetValue(e.Route, out var set))
                     routeUsers[e.Route] = set = new HashSet<string>(StringComparer.Ordinal);
                 if (!string.IsNullOrEmpty(e.UserId)) set.Add(e.UserId);
             }
+            foreach (var kv in routePersonDays) routeVisits[kv.Key] = kv.Value.Count;
         }
 
         var dimCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1585,7 +1594,7 @@ public class ExecutiveController : ControllerBase
                     }
                     value = llmCounts.GetValueOrDefault(t.Key);
                     status = value > 0 ? "measured" : "zero";
-                    note = "来源 llmrequestlogs 的 AppCallerCode 首段";
+                    note = "单位：模型调用次数（来源 llmrequestlogs 的 AppCallerCode 首段）";
                     break;
                 case "route":
                     if (behaviorFrom == null || (win.Bounded && end <= behaviorFrom.Value))
@@ -1599,7 +1608,7 @@ public class ExecutiveController : ControllerBase
                     value = routeVisits.GetValueOrDefault(t.Key);
                     users = routeUsers.GetValueOrDefault(t.Key)?.Count ?? 0;
                     status = value > 0 ? "measured" : "zero";
-                    note = "来源 behavior_events 的路由跳转事件（一次进入计一次，不含停留事件）；只覆盖本产品前端，独立系统的页面不在内";
+                    note = "单位：活跃人天（同一人同一天访问同一页只计一次）；只覆盖本产品前端，独立系统的页面不在内";
                     break;
                 case "dim":
                     if (!AdoptionToken.KnownDimensions.Contains(t.Key))
@@ -1610,7 +1619,7 @@ public class ExecutiveController : ControllerBase
                     }
                     value = dimCounts.GetValueOrDefault(t.Key);
                     status = value > 0 ? "measured" : "zero";
-                    note = "来源对应业务集合的窗口内计数";
+                    note = "单位：件（对应业务集合在窗口内的条数）";
                     break;
                 default:
                     status = "unknown-key";
