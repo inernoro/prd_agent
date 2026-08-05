@@ -1292,7 +1292,9 @@ public class ExecutiveController : ControllerBase
         // 老板不想读五个数字自己算。每句都必须挂着真实数字、算不出来就不出这句，
         // 不做「整体表现良好」这种放到任何团队都成立的空话。
         var points = new List<object>();
-        void Point(string text, string tone) => points.Add(new { text, tone });
+        // 每条结论都要能被读者自己核一遍：basis 说清它是从哪张表、按什么口径算出来的。
+        // 只给结论不给依据，读者只能选择信或不信，而不能去查——那不叫结论，叫断言。
+        void Point(string text, string tone, string basis) => points.Add(new { text, tone, basis });
 
         var outputParts = new (string Label, int Value)[]
         {
@@ -1307,7 +1309,8 @@ public class ExecutiveController : ControllerBase
             Point(outputParts.Count == 1
                     ? $"本期产出 {curOutput:N0} 件，全部是{top.Label}"
                     : $"本期产出 {curOutput:N0} 件，{top.Label}占 {share}%（{top.Value:N0}）",
-                share >= 80 && outputParts.Count > 1 ? "watch" : "neutral");
+                share >= 80 && outputParts.Count > 1 ? "watch" : "neutral",
+                "产出 = 窗口内的已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷，按来源分项后取最大的一项");
         }
 
         if (hasPrev && prevOutput > 0 && curOutput > 0)
@@ -1325,7 +1328,8 @@ public class ExecutiveController : ControllerBase
                 var dir = pct > 0 ? "高" : "低";
                 var cause = deltas.Delta == 0 ? "" :
                     $"，主要是{deltas.Label}{(deltas.Delta > 0 ? "多" : "少")}了 {Math.Abs(deltas.Delta):N0}";
-                Point($"比上一等长窗口{dir} {Math.Abs(pct)}%{cause}", pct > 0 ? "good" : "watch");
+                Point($"比上一等长窗口{dir} {Math.Abs(pct)}%{cause}", pct > 0 ? "good" : "watch",
+                    $"与紧邻的等长上一窗（{prevStart:MM-dd} 至 {prevEnd.AddDays(-1):MM-dd}）逐项相减，归因取变化绝对值最大的那一项");
             }
         }
 
@@ -1336,57 +1340,68 @@ public class ExecutiveController : ControllerBase
             var topSum = ranked.Take(topN).Sum(m => m.output);
             var share = (int)Math.Round((double)topSum / Math.Max(1, ranked.Sum(m => m.output)) * 100);
             if (share >= 60)
-                Point($"产出集中在 {topN} 个人手上（占 {share}%），其余 {ranked.Count - topN} 人合计 {100 - share}%", "watch");
+                Point($"产出集中在 {topN} 个人手上（占 {share}%），其余 {ranked.Count - topN} 人合计 {100 - share}%", "watch",
+                    "按逐人可统计产出件数降序，取前 3 人之和 ÷ 全员之和");
         }
 
         if (resolvedDefects.Count > 0 && unresolvedInWindow > resolvedDefects.Count)
-            Point($"缺陷进得比出得快：本窗解决 {resolvedDefects.Count} 个、未闭环 {unresolvedInWindow} 个", "watch");
+            Point($"缺陷进得比出得快：本窗解决 {resolvedDefects.Count} 个、未闭环 {unresolvedInWindow} 个", "watch",
+                "解决数 = 解决时间落在窗口内的缺陷；未闭环 = 窗口内新建且至今仍未关闭的缺陷");
 
         if (imgTotal >= 20 && imgFailed > 0)
         {
             var failPct = Math.Round((double)imgFailed / imgTotal * 100, 1);
             if (failPct >= 10)
-                Point($"每 10 张出图里有 {Math.Round(failPct / 10, 1)} 张是白跑的（失败 {imgFailed:N0}/{imgTotal:N0}）", "watch");
+                Point($"每 10 张出图里有 {Math.Round(failPct / 10, 1)} 张是白跑的（失败 {imgFailed:N0}/{imgTotal:N0}）", "watch",
+                    "窗口内生图任务的失败张数 ÷（成功张数 + 失败张数），样本满 20 张才出这条");
         }
 
         if (pricedCalls == 0 && totalCalls > 0)
-            Point($"{totalCalls:N0} 次模型调用还没有成本数据，模型组配上单价这一屏才能算钱", "neutral");
+            Point($"{totalCalls:N0} 次模型调用还没有成本数据，模型组配上单价这一屏才能算钱", "neutral",
+                "调用记录里能查到用量，但这些模型在模型组里没有配单价，金额无法折算——是缺配置，不是花了 0 元");
 
         // 头条取最该被看见的那一件：先 critical，其次最大的降幅，再退到产出构成
         var sortedAttention = attention.OrderBy(a => a.Severity == "critical" ? 0 : 1).ToList();
         var firstCritical = sortedAttention.FirstOrDefault(a => a.Severity == "critical");
         string headlineText;
         string headlineTone;
+        string headlineBasis;
         if (firstCritical != null)
         {
             headlineText = firstCritical.Title;
             headlineTone = "critical";
+            headlineBasis = firstCritical.Evidence;
         }
         else if (hasPrev && prevOutput > 0 && curOutput < prevOutput * 0.8)
         {
             headlineText = $"产出较上一窗下降 {(int)Math.Round((1 - (double)curOutput / prevOutput) * 100)}%";
             headlineTone = "watch";
+            headlineBasis = $"本窗 {curOutput:N0} 件 vs 上一等长窗 {prevOutput:N0} 件（{prevStart:MM-dd} 至 {prevEnd.AddDays(-1):MM-dd}）";
         }
         else if (sortedAttention.Count > 0)
         {
             headlineText = sortedAttention[0].Title;
             headlineTone = "watch";
+            headlineBasis = sortedAttention[0].Evidence;
         }
         else if (curOutput > 0)
         {
             headlineText = $"本期没有触发任何关注规则，产出 {curOutput:N0} 件";
             headlineTone = "good";
+            headlineBasis = "缺陷积压、生图失败率、调用高产出低、成本离群四条规则本窗均未触发";
         }
         else
         {
             headlineText = "本窗没有可统计的产出";
             headlineTone = "neutral";
+            headlineBasis = "窗口内五类产出集合（文档 / 站点 / 周报 / 生图 / 缺陷）均无记录";
         }
 
         var headline = new
         {
             text = headlineText,
             tone = headlineTone,
+            basis = headlineBasis,
             points,
             attentionCount = attention.Count,
             criticalCount = attention.Count(a => a.Severity == "critical"),

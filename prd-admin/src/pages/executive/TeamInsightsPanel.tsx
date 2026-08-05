@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { AlertTriangle, Eye, EyeOff, ChevronRight, Info } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
@@ -179,6 +179,15 @@ function Headline({
           {h.text}
         </h2>
 
+        {/* 结论必须可回溯：说清它从哪张表、按什么口径算出来的，读者才能自己去核，
+            而不是只能选择信或不信（.claude/rules/conclusion-before-numbers.md 第二节第 4 条）*/}
+        {h.basis && (
+          <div className="text-[11.5px] leading-[1.65] -mt-1" style={{ color: 'var(--text-muted)' }}>
+            <span className="font-mono tracking-wider mr-1.5" style={{ fontSize: 10 }}>根据</span>
+            {h.basis}
+          </div>
+        )}
+
         {h.points.length > 0 && (
           <div
             className={`grid gap-x-7 gap-y-1.5 ${h.points.length >= 4 ? 'xl:grid-cols-2' : ''}`}
@@ -191,8 +200,16 @@ function Headline({
                     className="mt-[7px] rounded-full flex-shrink-0"
                     style={{ width: 5, height: 5, background: pt.c, opacity: p.tone === 'neutral' ? 0.5 : 1 }}
                   />
-                  <span style={{ color: p.tone === 'neutral' ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
-                    {p.text}
+                  <span className="min-w-0">
+                    <span style={{ color: p.tone === 'neutral' ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
+                      {p.text}
+                    </span>
+                    {p.basis && (
+                      <span className="block text-[11px] leading-[1.6] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        <span className="font-mono tracking-wider mr-1" style={{ fontSize: 9.5 }}>根据</span>
+                        {p.basis}
+                      </span>
+                    )}
                   </span>
                 </div>
               );
@@ -426,6 +443,76 @@ function KpiCard({ kpi }: { kpi: TeamInsightKpi }) {
 
 /* ── C. 成员画像散点 ─────────────────────────────────────── */
 
+/** 散点上的一个人：真实坐标 + 避让后坐标 + 碰撞盒（含名字标签，不然标签仍会叠） */
+export type PlotNode = {
+  m: TeamInsightMember;
+  /** 数据决定的真实位置（px），避让前 */
+  trueX: number; trueY: number;
+  /** 避让后的绘制位置（px） */
+  x: number; y: number;
+  r: number;
+  /** 碰撞盒：宽取「气泡」与「名字」的较大者，高含名字那一行 */
+  hw: number; hh: number;
+  /** 起始所在象限，避让不许跨过分型线（跨过去就是把数据改了） */
+  rightOfMedian: boolean; aboveMedian: boolean;
+};
+
+/**
+ * 重叠避让。
+ *
+ * 为什么不是简单加随机抖动：抖动改变的是「这个人在哪个象限」这件事本身，
+ * 那不叫排版，叫改数据。这里的约束有三条 ——
+ *   1. 位移有上限（MAX_SHIFT），超过就不再推，宁可留一点重叠也不搬家；
+ *   2. 绝不跨越十字线，起始在右上的人避让后仍在右上；
+ *   3. 碰撞盒把名字算进去，否则气泡分开了、名字照样叠成一片。
+ * 位移超过阈值的点会画一条细引线回真实位置，让读者看得见「它被挪过」。
+ */
+const MAX_SHIFT = 26;
+
+export function relaxNodes(nodes: PlotNode[], w: number, h: number, medianX: number, medianY: number) {
+  const GAP = 3;
+  for (let iter = 0; iter < 90; iter++) {
+    let moved = false;
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i]; const b = nodes[j];
+        const dx = b.x - a.x; const dy = b.y - a.y;
+        const ox = a.hw + b.hw + GAP - Math.abs(dx);
+        const oy = a.hh + b.hh + GAP - Math.abs(dy);
+        if (ox <= 0 || oy <= 0) continue;
+        moved = true;
+        // 沿「重叠更少」的那个轴分开：横向挤得开就横着挪，省得把纵向的质量读数搅乱
+        if (ox < oy) {
+          const push = (ox / 2) * (dx === 0 ? (i % 2 ? 1 : -1) : Math.sign(dx));
+          a.x -= push; b.x += push;
+        } else {
+          const push = (oy / 2) * (dy === 0 ? (i % 2 ? 1 : -1) : Math.sign(dy));
+          a.y -= push; b.y += push;
+        }
+      }
+    }
+    // 每轮收束：位移封顶 + 不跨线 + 不出画布
+    for (const n of nodes) {
+      const dx = n.x - n.trueX; const dy = n.y - n.trueY;
+      const dist = Math.hypot(dx, dy);
+      if (dist > MAX_SHIFT) {
+        n.x = n.trueX + (dx / dist) * MAX_SHIFT;
+        n.y = n.trueY + (dy / dist) * MAX_SHIFT;
+      }
+      n.x = Math.min(Math.max(n.x, n.hw), w - n.hw);
+      n.y = Math.min(Math.max(n.y, n.hh), h - n.hh);
+      // 不跨分型线：起始在线右边的，避让后仍必须在线右边（含在线上的边界情形）。
+      // 跨过去看着是「排版好看了」，实际是把这个人换了个象限——那是改数据。
+      if (n.rightOfMedian) n.x = Math.max(n.x, medianX + 0.5);
+      else n.x = Math.min(n.x, medianX - 0.5);
+      // y 轴向下为正，「质量在中位以上」= y 更小
+      if (n.aboveMedian) n.y = Math.min(n.y, medianY - 0.5);
+      else n.y = Math.max(n.y, medianY + 0.5);
+    }
+    if (!moved) break;
+  }
+}
+
 function Quadrant({
   members, medians, masked, pickedId, onPick, reliable, counts,
 }: {
@@ -457,10 +544,45 @@ function Quadrant({
   // 返回 top 百分比：质量越高越靠上
   const posY = (q: number) => 100 - (((q - qLo) / span) * 84 + 8);
 
+  // 避让要在像素域算（百分比域里横竖两轴的一个单位不等长，推出来会歪），所以得先量出画布宽度
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [boxW, setBoxW] = useState(0);
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBoxW(el.clientWidth));
+    ro.observe(el);
+    setBoxW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  const H = 360;
+  const nodes = useMemo<PlotNode[]>(() => {
+    if (boxW <= 0) return [];
+    const mx = (logX(medians.output) / 100) * boxW;
+    const my = (posY(medians.quality) / 100) * H;
+    const list: PlotNode[] = plotted.map(m => {
+      const size = 24 + Math.min(m.outputDays, 10) * 2.4;
+      const r = size / 2;
+      const name = maskName(m.displayName, masked);
+      // 名字常驻显示，碰撞盒必须把它算进去，否则气泡分开了名字照样叠
+      const labelW = Math.max(size, name.length * 10 + 6);
+      const tx = (logX(m.output) / 100) * boxW;
+      const ty = (posY(m.quality!) / 100) * H;
+      return {
+        m, trueX: tx, trueY: ty, x: tx, y: ty, r,
+        hw: labelW / 2, hh: r + 8,
+        rightOfMedian: tx >= mx, aboveMedian: ty <= my,
+      };
+    });
+    relaxNodes(list, boxW, H, mx, my);
+    return list;
+  }, [boxW, plotted, masked, medians.output, medians.quality]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="ti-card relative rounded-xl overflow-hidden" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-      <CardHead title="分型散点" hint={`气泡大小 = 有产出的天数 · 十字线 = 分型阈值（产出 ${medians.output} 件 / 质量 ${medians.quality}）`} />
-      <div className="relative ml-11 mr-5 mt-7" style={{ height: 360 }}>
+      <CardHead title="分型散点" hint={`气泡大小 = 有产出的天数 · 十字线 = 分型阈值（产出 ${medians.output} 件 / 质量 ${medians.quality}，取入图成员的中位数）· 重叠时小幅避让，不跨分型线`} />
+      <div ref={boxRef} className="relative ml-11 mr-5 mt-7" style={{ height: H }}>
         {/* 中位线 —— 阈值来自后端真实中位数，不是拍的常数 */}
         <div
           className="absolute"
@@ -493,46 +615,67 @@ function Quadrant({
         </div>
         <div className="absolute text-[10px]" style={{ left: 0, bottom: -18, color: 'var(--text-secondary)' }}>产出量（对数刻度）</div>
 
-        {plotted.map(m => {
-          const x = logX(m.output);
-          const y = posY(m.quality!);
-          const size = 22 + Math.min(m.outputDays, 10) * 2.6;
+        {/* 被挪动过的点画一条引线回真实位置：避让是排版行为，不能让它悄悄伪装成数据 */}
+        <svg className="absolute inset-0 pointer-events-none" width="100%" height="100%" aria-hidden>
+          {nodes.filter(n => Math.hypot(n.x - n.trueX, n.y - n.trueY) > 6).map(n => (
+            <line
+              key={n.m.userId}
+              x1={n.trueX} y1={n.trueY} x2={n.x} y2={n.y}
+              stroke="var(--border-default)" strokeWidth={1} strokeDasharray="2 2"
+            />
+          ))}
+        </svg>
+
+        {nodes.map(n => {
+          const m = n.m;
           const color = getRoleMeta(m.role).color;
           const active = pickedId === m.userId;
+          const name = maskName(m.displayName, masked);
+          const size = n.r * 2;
           return (
             <button
               key={m.userId}
               type="button"
               onClick={() => onPick(m.userId)}
               aria-pressed={active}
-              aria-label={maskName(m.displayName, masked)}
-              title={`${maskName(m.displayName, masked)} · 产出 ${m.output} · 质量 ${m.quality}`}
-              className="absolute rounded-full grid place-items-center transition-transform hover:scale-110 hover:z-10 [&:hover>span:last-child]:opacity-100"
+              aria-label={name}
+              title={`${name} · 产出 ${m.output} 件 · 质量 ${m.quality} · 有产出 ${m.outputDays} 天`}
+              className="absolute flex flex-col items-center transition-transform hover:scale-110 hover:z-20"
               style={{
-                left: `${x}%`,
-                top: `${y}%`,
-                width: size,
-                height: size,
+                left: n.x, top: n.y,
                 transform: 'translate(-50%,-50%)',
-                background: `${color}26`,
-                border: `1.5px solid ${color}`,
-                color,
-                boxShadow: active ? `0 0 0 3px ${color}33` : undefined,
-                zIndex: active ? 5 : 1,
+                zIndex: active ? 30 : 1,
               }}
             >
-              <span className="text-[10px] font-bold">{maskName(m.displayName, masked)[0]}</span>
-              {/* 密集区名字会叠成一片，只有选中的那个常驻显示全名，其余交给 hover 与 title */}
               <span
-                className="absolute whitespace-nowrap text-[10.5px] pointer-events-none transition-opacity"
+                className="rounded-full grid place-items-center overflow-hidden"
                 style={{
-                  top: 'calc(100% + 4px)', left: '50%', transform: 'translateX(-50%)',
-                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  opacity: active ? 1 : 0,
-                  fontWeight: active ? 600 : 400,
+                  width: size, height: size,
+                  background: `${color}26`,
+                  border: `1.5px solid ${color}`,
+                  color,
+                  boxShadow: active ? `0 0 0 3px ${color}33` : undefined,
                 }}
               >
-                {maskName(m.displayName, masked)}
+                {m.avatarFileName ? (
+                  <UserAvatar
+                    src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })}
+                    className="w-full h-full rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="text-[11px] font-bold">{name[0]}</span>
+                )}
+              </span>
+              {/* 名字常驻。避让已经把标签的宽度算进碰撞盒，所以这里不再靠 hover 躲 */}
+              <span
+                className="whitespace-nowrap text-[10px] leading-none mt-1 px-1 rounded-sm"
+                style={{
+                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  fontWeight: active ? 600 : 400,
+                  background: active ? 'var(--bg-card)' : 'transparent',
+                }}
+              >
+                {name}
               </span>
             </button>
           );
@@ -833,7 +976,15 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
                     <h3 className="text-[14.5px] font-semibold leading-snug m-0 tracking-[-0.01em]" style={{ color: 'var(--text-primary)' }}>
                       {a.title}
                     </h3>
+                    {/* 证据句挂上「根据」眉标：与下方的「建议」形成对仗，读者一眼分清
+                        「这是我据以判断的事实」和「这是要我做的事」 */}
                     <p className="text-[12.5px] leading-[1.7] m-0" style={{ color: 'var(--text-secondary)' }}>
+                      <span
+                        className="text-[10px] tracking-[0.12em] uppercase mr-1.5"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        根据
+                      </span>
                       {a.evidence}
                     </p>
                   </div>

@@ -155,8 +155,10 @@ export type TeamInsightHeadline = {
   /** 头条：这一屏最该被看见的那一件事 */
   text: string;
   tone: 'critical' | 'watch' | 'good' | 'neutral';
-  /** 支撑点：每句都挂着真实数字，算不出来的不出句 */
-  points: { text: string; tone: 'critical' | 'watch' | 'good' | 'neutral' }[];
+  /** 头条是怎么算出来的 —— 读者不必信任面板，他可以照着去查 */
+  basis: string;
+  /** 支撑点：每句都挂着真实数字，算不出来的不出句；basis 说清口径 */
+  points: { text: string; tone: 'critical' | 'watch' | 'good' | 'neutral'; basis: string }[];
   attentionCount: number;
   criticalCount: number;
 };

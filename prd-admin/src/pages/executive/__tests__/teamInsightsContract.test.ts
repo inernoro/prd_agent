@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { api } from '@/services/api';
-import { buildWindowLabel, fmt, maskName } from '@/pages/executive/TeamInsightsPanel';
+import { buildWindowLabel, fmt, maskName, relaxNodes } from '@/pages/executive/TeamInsightsPanel';
+import type { PlotNode } from '@/pages/executive/TeamInsightsPanel';
 
 /**
  * 团队洞察的两条硬约束守卫（predicate-and-wiring-discipline 形状 2）：
@@ -42,5 +43,62 @@ describe('团队洞察 · 接线与空值判据', () => {
     expect(buildWindowLabel(7, '2026-07-27T00:00:00Z', '2026-08-02T00:00:00Z')).toBe('7/27~8/2');
     // 无界窗口
     expect(buildWindowLabel(0, null, iso(today))).toBe('全量');
+  });
+});
+
+/**
+ * 散点避让的守卫。
+ *
+ * 避让是排版行为，一旦越界就变成改数据：把一个「质量低于中位」的人推到线上方，
+ * 他在读者眼里就换了象限。所以这里锁死两件事——真的分开了、并且没跨线。
+ * 删掉 relaxNodes 里的不跨线约束，第二条会红。
+ */
+describe('分型散点 · 重叠避让', () => {
+  const node = (id: string, x: number, y: number, mx: number, my: number): PlotNode => ({
+    m: { userId: id, displayName: id } as PlotNode['m'],
+    trueX: x, trueY: y, x, y, r: 14, hw: 22, hh: 22,
+    rightOfMedian: x >= mx, aboveMedian: y <= my,
+  });
+
+  it('完全重叠的两个点会被分开', () => {
+    const nodes = [node('a', 100, 100, 50, 50), node('b', 100, 100, 50, 50)];
+    relaxNodes(nodes, 400, 360, 50, 50);
+    const dx = Math.abs(nodes[0].x - nodes[1].x);
+    const dy = Math.abs(nodes[0].y - nodes[1].y);
+    expect(dx > 40 || dy > 40).toBe(true);
+  });
+
+  it('避让不跨分型线：被同侧邻居挤向线的点会被拦在线内', () => {
+    // 场景要真的会跨线才算测到东西：三个点全在竖线左侧且互相重叠，
+    // 最右那个会被左边两个一路推向 200——不加约束它就跨到右象限去了。
+    // （第一版这条测试用的是「线两侧各一个点」，那种排布天然不会跨线，
+    //   把约束删掉照样绿 —— 测了个寂寞。）
+    const mx = 200; const my = 320;
+    const nodes = [node('a', 160, 100, mx, my), node('b', 178, 100, mx, my), node('c', 196, 100, mx, my)];
+    relaxNodes(nodes, 400, 360, mx, my);
+    for (const n of nodes) expect(n.x).toBeLessThan(mx);
+  });
+
+  it('避让不跨分型线：横线同理，同侧邻居不能把人挤到线另一边', () => {
+    const mx = 30; const my = 200;
+    const nodes = [node('a', 300, 160, mx, my), node('b', 300, 178, mx, my), node('c', 300, 196, mx, my)];
+    relaxNodes(nodes, 400, 360, mx, my);
+    for (const n of nodes) expect(n.y).toBeLessThan(my);
+  });
+
+  it('位移有上限，宁可留一点重叠也不搬家', () => {
+    // 一堆点挤在同一处：不封顶的话会被推到画布边缘，位置就彻底失真了
+    const nodes = Array.from({ length: 8 }, (_, i) => node(`n${i}`, 200, 200, 100, 100));
+    relaxNodes(nodes, 400, 360, 100, 100);
+    for (const n of nodes) {
+      expect(Math.hypot(n.x - n.trueX, n.y - n.trueY)).toBeLessThanOrEqual(27);
+    }
+  });
+
+  it('不重叠的点原地不动', () => {
+    const nodes = [node('a', 60, 60, 30, 30), node('b', 300, 300, 30, 30)];
+    relaxNodes(nodes, 400, 360, 30, 30);
+    expect(nodes[0].x).toBe(60);
+    expect(nodes[1].y).toBe(300);
   });
 });
