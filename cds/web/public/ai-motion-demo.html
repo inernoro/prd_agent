@@ -19,6 +19,10 @@
     --accent-strong: 3 105 161;
     --chip-bg: rgb(2 132 199 / 0.08);
     --ok: 5 150 105;
+    --tone-warn: 217 119 6;
+    --tone-warn-hi: 180 83 9;
+    --tone-danger: 220 38 38;
+    --tone-danger-hi: 185 28 28;
     --shadow: 0 18px 46px -32px rgb(80 50 30 / 0.4);
   }
 
@@ -35,6 +39,10 @@
       --accent-strong: 125 211 252;
       --chip-bg: rgb(56 189 248 / 0.08);
       --ok: 52 211 153;
+      --tone-warn: 245 158 11;
+      --tone-warn-hi: 251 191 36;
+      --tone-danger: 239 68 68;
+      --tone-danger-hi: 248 113 113;
       --shadow: 0 18px 46px -30px rgb(0 0 0 / 0.9);
     }
   }
@@ -52,6 +60,10 @@
     --accent-strong: 125 211 252;
     --chip-bg: rgb(56 189 248 / 0.08);
     --ok: 52 211 153;
+    --tone-warn: 245 158 11;
+    --tone-warn-hi: 251 191 36;
+    --tone-danger: 239 68 68;
+    --tone-danger-hi: 248 113 113;
     --shadow: 0 18px 46px -30px rgb(0 0 0 / 0.9);
   }
 
@@ -67,6 +79,10 @@
     --accent-strong: 3 105 161;
     --chip-bg: rgb(2 132 199 / 0.08);
     --ok: 5 150 105;
+    --tone-warn: 217 119 6;
+    --tone-warn-hi: 180 83 9;
+    --tone-danger: 220 38 38;
+    --tone-danger-hi: 185 28 28;
     --shadow: 0 18px 46px -32px rgb(80 50 30 / 0.4);
   }
 
@@ -389,56 +405,112 @@
     100% { transform: translateX(58%); opacity: 0; }
   }
 
-  /* 左轨四段与页脚活动条的四段由同一份阶段状态驱动，不各自跑 CSS 循环，
-     否则两处会各自漂移，读出来是两个互相矛盾的进度。 */
-  .rail-steps {
+  /* ---------- 通用 AI 进度轨（左轨与页脚轨共用一套形态与状态） ----------
+     段数一律来自数据，绝不写死。没有总量的时候不许画分段——分段这个形状
+     本身在承诺「共 N 步」，用户会据此估剩余时间，估错就是预期失控。 */
+  .ai-rail {
+    --rail: var(--accent);
+    --rail-hi: var(--accent-strong);
+    display: flex; gap: 3px;
+  }
+  .ai-rail[data-tone='warn']   { --rail: var(--tone-warn);   --rail-hi: var(--tone-warn-hi); }
+  .ai-rail[data-tone='danger'] { --rail: var(--tone-danger); --rail-hi: var(--tone-danger-hi); }
+
+  /* 横向：页脚那条 */
+  .ai-rail--h { width: 58px; height: 3px; flex: none; }
+  /* 纵向：卡片左轨 */
+  .ai-rail--v {
     position: absolute; inset-block: 12px; left: 0; width: 4px;
-    display: flex; flex-direction: column; gap: 5px;
-  }
-  .rail-steps i {
-    display: block; flex: 1 1 0; border-radius: 3px;
-    background: rgb(var(--accent) / 0.16);
-    transition: background 320ms ease, box-shadow 320ms ease;
-  }
-  .rail-steps i.done {
-    background: rgb(var(--accent) / 0.55);
-  }
-  .rail-steps i.running {
-    background:
-      linear-gradient(rgb(var(--accent-strong) / 0.35), rgb(var(--accent-strong) / 0.35)),
-      repeating-linear-gradient(180deg,
-        transparent 0 10px,
-        rgb(var(--accent-strong)) 14px,
-        rgb(var(--accent-strong)) 24px,
-        transparent 28px 44px);
-    background-size: 100% 100%, 100% 44px;
-    box-shadow: 0 0 10px rgb(var(--accent) / 0.55);
-    animation: rail-stream 1.1s linear infinite;
+    flex-direction: column; gap: 5px;
   }
 
-  /* 页脚活动条：占用 sha 与状态文案之间那块闲置横向空间，零额外行高 */
+  .ai-rail i {
+    display: block; flex: 1 1 0; border-radius: 2px;
+    background: rgb(var(--rail) / 0.16);
+    transition: background 320ms ease, box-shadow 320ms ease;
+  }
+  .ai-rail--v i { border-radius: 3px; }
+  .ai-rail i.done { background: rgb(var(--rail) / 0.55); }
+
+  /* 进行中段必须有「静态」特征（亮度 + 光晕）：reduced-motion 下流动被关掉，
+     只靠流动区分 done / running 的话，这类用户完全读不出进度停在哪一段。 */
+  .ai-rail--h i.running {
+    background: linear-gradient(90deg,
+      rgb(var(--rail-hi) / 0.45), rgb(var(--rail-hi)), rgb(var(--rail-hi) / 0.45));
+    background-size: 220% 100%;
+    box-shadow: 0 0 7px rgb(var(--rail) / 0.75);
+    animation: track-stream 1.1s linear infinite;
+  }
+  .ai-rail--v i.running {
+    background:
+      linear-gradient(rgb(var(--rail-hi) / 0.35), rgb(var(--rail-hi) / 0.35)),
+      repeating-linear-gradient(180deg,
+        transparent 0 10px,
+        rgb(var(--rail-hi)) 14px,
+        rgb(var(--rail-hi)) 24px,
+        transparent 28px 44px);
+    background-size: 100% 100%, 100% 44px;
+    box-shadow: 0 0 10px rgb(var(--rail) / 0.55);
+    animation: rail-stream 1.1s linear infinite;
+  }
+  @keyframes track-stream { to { background-position: 220% 0; } }
+
+  /* 停滞 / 失败：必须停掉流动。继续流动等于在说「还在跑」，那是谎。 */
+  .ai-rail i.stalled { background: rgb(var(--rail) / 0.75); animation: none; }
+  .ai-rail i.failed {
+    background: rgb(var(--rail-hi)); animation: none;
+    box-shadow: 0 0 7px rgb(var(--rail) / 0.6);
+  }
+
+  /* 不定量：单条不分段，不承诺任何总量，只表达「在跑」 */
+  .ai-rail--h i.indeterminate {
+    background:
+      linear-gradient(rgb(var(--rail) / 0.2), rgb(var(--rail) / 0.2)),
+      linear-gradient(90deg, transparent 0%, rgb(var(--rail-hi)) 45%, transparent 78%);
+    background-size: 100% 100%, 62% 100%;
+    background-repeat: no-repeat;
+    animation: indeterminate-h 1.5s ease-in-out infinite;
+  }
+  @keyframes indeterminate-h {
+    0%   { background-position: 0 0, -70% 0; }
+    100% { background-position: 0 0, 170% 0; }
+  }
+  .ai-rail--v i.indeterminate {
+    background:
+      linear-gradient(rgb(var(--rail) / 0.2), rgb(var(--rail) / 0.2)),
+      linear-gradient(180deg, transparent 0%, rgb(var(--rail-hi)) 45%, transparent 78%);
+    background-size: 100% 100%, 100% 42%;
+    background-repeat: no-repeat;
+    animation: indeterminate-v 2.1s ease-in-out infinite;
+  }
+  @keyframes indeterminate-v {
+    0%   { background-position: 0 0, 0 -50%; }
+    100% { background-position: 0 0, 0 150%; }
+  }
+
+  /* 计数超过分段上限：退回连续条 + 文字里的 N/M，不硬塞成噪点 */
+  .ai-rail i.fill {
+    background:
+      linear-gradient(rgb(var(--rail) / 0.16), rgb(var(--rail) / 0.16)),
+      linear-gradient(90deg, rgb(var(--rail-hi)), rgb(var(--rail-hi)));
+    background-size: 100% 100%, var(--fill, 0%) 100%;
+    background-repeat: no-repeat;
+  }
+  .ai-rail--v i.fill { background-size: 100% 100%, 100% var(--fill, 0%); }
+
+  /* 只有心跳：呼吸，不画任何进度形状。只调透明度，横竖两个方向都成立。 */
+  .ai-rail i.heartbeat {
+    background: rgb(var(--rail) / 0.8);
+    animation: rail-heartbeat 2.8s ease-in-out infinite;
+  }
+  @keyframes rail-heartbeat { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+  /* 页脚活动条：占用 sha 与部署状态之间那块闲置横向空间，零额外行高 */
   .ai-activity {
     flex: 1 1 auto; min-width: 0;
     display: flex; align-items: center; gap: 9px;
     padding-left: 3px;
   }
-  .ai-activity__track { display: flex; gap: 3px; flex: none; width: 58px; }
-  .ai-activity__track i {
-    flex: 1 1 0; height: 3px; border-radius: 2px;
-    background: rgb(var(--accent) / 0.16);
-    transition: background 320ms ease;
-  }
-  .ai-activity__track i.done { background: rgb(var(--accent) / 0.55); }
-  /* 进行中段必须有「静态」特征（亮度 + 光晕）：reduced-motion 下流动被关掉，
-     只靠流动区分 done / running 的话，这类用户就完全读不出进度停在哪一段。 */
-  .ai-activity__track i.running {
-    background: linear-gradient(90deg,
-      rgb(var(--accent-strong) / 0.45), rgb(var(--accent-strong)), rgb(var(--accent-strong) / 0.45));
-    background-size: 220% 100%;
-    box-shadow: 0 0 7px rgb(var(--accent) / 0.75);
-    animation: track-stream 1.1s linear infinite;
-  }
-  @keyframes track-stream { to { background-position: 220% 0; } }
 
   .ai-activity__text {
     min-width: 0; font-size: 11.5px; color: var(--text-muted);
@@ -446,8 +518,10 @@
     transition: opacity 200ms ease, transform 200ms ease;
   }
   .ai-activity__text.swapping { opacity: 0; transform: translateY(-4px); }
+  .ai-activity[data-tone='warn']   { --rail-hi: var(--tone-warn-hi); }
+  .ai-activity[data-tone='danger'] { --rail-hi: var(--tone-danger-hi); }
   .ai-activity__text b {
-    font-weight: 600; color: rgb(var(--accent-strong));
+    font-weight: 600; color: rgb(var(--rail-hi, var(--accent-strong)));
   }
   .ai-activity__text .elapsed { font-variant-numeric: tabular-nums; }
 
@@ -481,6 +555,37 @@
     border-radius: 11px;
     border: 1px solid rgb(var(--ok) / 0.55);
     animation: pulse-ring 2.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  }
+
+  /* 退化梯度：左边写清触发条件，右边是同一个 renderRail 的真实产物 */
+  .ladder {
+    border: 1px solid var(--hairline); border-radius: 12px;
+    background: var(--card-bg); overflow: hidden;
+    max-width: 900px;
+  }
+  .ladder__row {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 300px);
+    gap: 12px 20px; align-items: center;
+    padding: 13px 18px;
+    border-top: 1px solid var(--hairline);
+  }
+  .ladder__row:first-child { border-top: none; }
+  .ladder__row--sep { border-top: 1px solid var(--hairline-strong); }
+  .ladder__meta { min-width: 0; display: grid; gap: 3px; }
+  .ladder__meta b { font-size: 12.5px; font-weight: 650; }
+  .ladder__meta span { font-size: 11.5px; line-height: 1.6; color: var(--text-muted); }
+  .ladder__demo { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ladder__text {
+    font-size: 11.5px; color: var(--text-muted); min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .ladder__text b { font-weight: 600; color: rgb(var(--accent-strong)); }
+  .ladder__text--warn b { color: rgb(var(--tone-warn-hi)); }
+  .ladder__text--danger b { color: rgb(var(--tone-danger-hi)); }
+
+  @media (max-width: 720px) {
+    .ladder__row { grid-template-columns: minmax(0, 1fr); }
   }
 
   .cmp {
@@ -684,14 +789,14 @@
       <span class="tag tag--muted">零额外行高</span>
     </div>
     <p class="demo-desc">
-      把「AI 占用中」画成一种<b>环境光</b>：一道极淡的光带每 5.6s 斜掠过整卡（像有人在这张工位上开了灯），左轨拆成四个进度节点（拉取 → 构建 → 启动 → 就绪），徽章外一圈光带沿环巡行，右下角机器人按钮带一层呼吸光晕说明「这个操作现在归 AI」。整体频率低、幅度小，长列表里十几张卡同时亮也不会晕。
+      把「AI 占用中」画成一种<b>环境光</b>：一道极淡的光带每 5.6s 斜掠过整卡（像有人在这张工位上开了灯），左轨按当前操作的阶段数分段（这里是部署，<code>building → starting → running</code> 三段），徽章外一圈光带沿环巡行，右下角机器人按钮带一层呼吸光晕说明「这个操作现在归 AI」。整体频率低、幅度小，长列表里十几张卡同时亮也不会晕。
     </p>
     <p class="demo-desc">
-      阶段信息放在<b>页脚 sha 与部署状态之间那块闲置横向空间</b>里，不再往标题下面另起一行——卡片高度和基线完全一致，读起来还顺：头像是<b>谁</b>，紧接着是<b>在做什么、做了多久</b>，再往右才是<b>上一次部署什么时候</b>。左轨四段和页脚四段轨由同一份阶段状态驱动，不各自跑 CSS 循环，避免两处进度互相打架。
+      阶段信息放在<b>页脚 sha 与部署状态之间那块闲置横向空间</b>里，不再往标题下面另起一行——卡片高度和基线完全一致，读起来还顺：头像是<b>谁</b>，紧接着是<b>在做什么、做了多久</b>，再往右才是<b>上一次部署什么时候</b>。左轨和页脚轨由同一份状态驱动、共用同一个渲染函数，不各自跑 CSS 循环，避免两处进度互相打架。
     </p>
     <div class="card card--c">
       <div class="sweep"></div>
-      <div class="rail-steps"><i></i><i></i><i></i><i></i></div>
+      <span class="ai-rail ai-rail--v" id="c-rail-v"></span>
       <div class="card__head">
         <span class="card__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></span>
         <div style="min-width:0;flex:1">
@@ -717,19 +822,119 @@
       <div class="card__foot">
         <span class="avatar"></span>
         <span class="sha">93e5580</span>
-        <span class="ai-activity">
-          <span class="ai-activity__track" id="c-track"><i></i><i></i><i></i><i></i></span>
-          <span class="ai-activity__text" id="c-activity"><b>启动容器</b> · 已 <span class="elapsed">01:24</span></span>
+        <span class="ai-activity" id="c-activity-box">
+          <span class="ai-rail ai-rail--h" id="c-rail-h"></span>
+          <span class="ai-activity__text" id="c-activity"></span>
         </span>
         <span class="status-line">部署成功 3 分钟前</span>
         <span class="robot-btn robot-btn--halo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="12" rx="2"/><path d="M12 9V5M8 15h.01M16 15h.01"/><circle cx="12" cy="4" r="1.6"/></svg></span>
       </div>
     </div>
     <ul class="notes">
-      <li>手法：整卡 <code>sweep</code> 光带（5.6s，透明度峰值 0.14）+ 左轨与页脚双四段轨（JS 单一阶段状态驱动，当前段内部流动）+ 徽章 conic 环巡光（3.1s）+ 机器人按钮呼吸环。</li>
-      <li>数据：四个节点直接映射现有构建阶段，亮到第几段就是真到第几步——动效本身就是进度条，不用额外加控件；页脚文案取阶段名 + 该阶段已用时。</li>
+      <li>手法：整卡 <code>sweep</code> 光带（5.6s，透明度峰值 0.14）+ 左轨与页脚两条轨（同一份状态驱动，当前段内部流动）+ 徽章 conic 环巡光（3.1s）+ 机器人按钮呼吸环。</li>
+      <li>数据：段数来自当前操作本身，亮到第几段就是真到第几步——动效本身就是进度条，不用额外加控件；页脚文案取阶段名 + N/M + 该阶段已用时。<b>段数不是常量</b>，没有阶段的操作走下面的退化梯度。</li>
       <li>环形巡光只转<b>渐变角度</b>（<code>@property --ring-angle</code>），不转元素。徽章是 52x27 的扁矩形，<code>transform: rotate()</code> 会让对角线扫到 59px 开外，光带直接甩出徽章——这是第一版的真实 bug。</li>
-      <li>取舍：单看一张卡最安静，但也最容易被忽略；阶段数写死 4 段，构建阶段不是 4 步的项目要按实际阶段数生成；页脚活动条和「部署成功 N 分钟前」并列会让页脚偏挤，窄屏下文案先隐藏、只留四段轨。</li>
+      <li>取舍：单看一张卡最安静，但也最容易被忽略；页脚活动条和「部署成功 N 分钟前」并列会让页脚偏挤，窄屏下文案先隐藏、只留进度轨。</li>
+    </ul>
+  </section>
+
+  <!-- ============ 鲁棒性 ============ -->
+  <section class="demo" id="robustness">
+    <div class="demo-head">
+      <h2>鲁棒性 · 段数从来不是固定的</h2>
+      <span class="tag">必读</span>
+    </div>
+    <p class="demo-desc">
+      AI 对 CDS 的操作绝大多数<b>根本没有阶段</b>。<code>cds/src/types.ts</code> 里分支状态是 7 值状态机（<code>idle / building / starting / running / restarting / stopping / error</code>），只有部署这一条路径像流水线，而且是 <b>building → starting → running 三段</b>；改环境变量、停服务、查日志、改构建配置这些只是一串 <code>/api/*</code> 调用，没有总量可言。
+    </p>
+    <p class="demo-desc">
+      所以纪律是：<b>不知道总步数，就不许画分段</b>。分段这个形状本身在向用户承诺「共 N 步」，他会据此估还要等多久——估错就是预期失控。下面五档由同一个 <code>renderRail(el, state)</code> 渲染，形态差异<b>全部来自数据</b>，没有一处写死段数。
+    </p>
+
+    <div class="ladder">
+      <div class="ladder__row">
+        <div class="ladder__meta">
+          <b>阶段轨 staged</b>
+          <span>知道有序阶段 + 当前第几段。CDS 里只有部署命中：<code>building / starting / running</code></span>
+        </div>
+        <div class="ladder__demo">
+          <span class="ai-rail ai-rail--h" data-rail-state='{"mode":"staged","total":3,"current":1}'></span>
+          <span class="ladder__text"><b>启动中</b> · 2/3 · 已 01:24</span>
+        </div>
+      </div>
+
+      <div class="ladder__row">
+        <div class="ladder__meta">
+          <b>阶段轨 staged（段数由数据给）</b>
+          <span>某项目 profile 声明了 5 个构建阶段，就渲染 5 段。段数上限 6，来源是数据不是常量</span>
+        </div>
+        <div class="ladder__demo">
+          <span class="ai-rail ai-rail--h" data-rail-state='{"mode":"staged","total":5,"current":3}'></span>
+          <span class="ladder__text"><b>推送镜像</b> · 4/5 · 已 00:37</span>
+        </div>
+      </div>
+
+      <div class="ladder__row">
+        <div class="ladder__meta">
+          <b>计数轨 counted</b>
+          <span>知道 done/total 但不是有序阶段（批量重建 23 个容器）。超过 6 段退回连续条，数字交给文案</span>
+        </div>
+        <div class="ladder__demo">
+          <span class="ai-rail ai-rail--h" data-rail-state='{"mode":"counted","total":23,"current":7}'></span>
+          <span class="ladder__text"><b>批量重建</b> · 7/23 · 已 02:05</span>
+        </div>
+      </div>
+
+      <div class="ladder__row">
+        <div class="ladder__meta">
+          <b>不定量轨 indeterminate</b>
+          <span>只知道在做什么，没有总量。文案直接取最近一条 AI 调用的 <code>ActivityEvent.label</code>——就是 <code>resolveApiLabel()</code> 维护的那份中文 label</span>
+        </div>
+        <div class="ladder__demo">
+          <span class="ai-rail ai-rail--h" data-rail-state='{"mode":"indeterminate"}'></span>
+          <span class="ladder__text"><b>保存项目环境变量</b> · 已 00:06</span>
+        </div>
+      </div>
+
+      <div class="ladder__row">
+        <div class="ladder__meta">
+          <b>心跳轨 heartbeat</b>
+          <span>只有 <code>lastAiOccupantAt</code> 心跳，连在做什么都不知道。退化成现网基线那条呼吸轨</span>
+        </div>
+        <div class="ladder__demo">
+          <span class="ai-rail ai-rail--h" data-rail-state='{"mode":"heartbeat"}'></span>
+          <span class="ladder__text">AI 操作中 · 已 03:12</span>
+        </div>
+      </div>
+
+      <div class="ladder__row ladder__row--sep">
+        <div class="ladder__meta">
+          <b>异常：AI 超时</b>
+          <span>超过 <code>AI_ACTIVE_TTL_MS</code>（5 分钟）没有续租。流动必须停——继续流动等于在说「还在跑」</span>
+        </div>
+        <div class="ladder__demo">
+          <span class="ai-rail ai-rail--h" data-rail-state='{"mode":"staged","total":3,"current":1,"tone":"warn"}'></span>
+          <span class="ladder__text ladder__text--warn"><b>启动中</b> · 停在 2/3 · 最后心跳 6 分钟前</span>
+        </div>
+      </div>
+
+      <div class="ladder__row">
+        <div class="ladder__meta">
+          <b>异常：部署失败</b>
+          <span><code>branch.status === 'error'</code>。当前段转红并停住，后面的段永远不会亮</span>
+        </div>
+        <div class="ladder__demo">
+          <span class="ai-rail ai-rail--h" data-rail-state='{"mode":"staged","total":3,"current":0,"tone":"danger"}'></span>
+          <span class="ladder__text ladder__text--danger"><b>构建中</b> · 1/3 失败 · 见容器日志</span>
+        </div>
+      </div>
+    </div>
+
+    <ul class="notes">
+      <li>接口只有一个：<code>renderRail(el, state)</code>，左轨（纵向）和页脚轨（横向）共用。上面七行的形态差异全部来自 <code>state</code>，段数没有一处是常量。</li>
+      <li>文案来源已经存在，不需要新数据：<code>staged</code> 取分支状态机，<code>indeterminate</code> 取最近一条 AI <code>ActivityEvent.label</code>。后者由 <code>resolveApiLabel()</code> 维护，CDS 启动时 <code>auditApiLabels()</code> 会对缺 label 的路由报 warning——覆盖率有守卫盯着。</li>
+      <li>降级方向永远是<b>往信息更少的那一档退</b>，不许往上编。拿不到阶段就退 <code>indeterminate</code>，拿不到 label 就退 <code>heartbeat</code>，最差也就是回到现网基线，不会更糟。</li>
+      <li>超时与失败必须停掉流动并换色。缺了这一档，AI 掉线后卡片会永远停在「正在启动中」——那是彻头彻尾的谎，比没有动效更坏。</li>
     </ul>
   </section>
 
@@ -792,30 +997,74 @@
     '正在构建镜像 layer 4/9',
     '正在等待容器健康检查',
   ];
-  // ---- 方案 C：左轨四段与页脚活动条共用同一份阶段状态 ----
-  const C_PHASES = [
-    { name: '拉取代码', seconds: 18 },
-    { name: '构建镜像', seconds: 142 },
-    { name: '启动容器', seconds: 84 },
-    { name: '就绪检查', seconds: 11 },
-  ];
-  const railSteps = Array.from(document.querySelectorAll('.rail-steps i'));
-  const trackSteps = Array.from(document.querySelectorAll('#c-track i'));
-  const activityText = document.getElementById('c-activity');
-  let phase = 2;
+  // ================= 通用 AI 进度轨 =================
+  // 段数一律由 state 给，绝不写死。没有总量就退到不分段的形态——
+  // 分段的形状本身在承诺「共 N 步」，画出来就是编造进度。
+  //
+  // state = { mode, total?, current?, tone? }
+  //   staged        有序阶段且知道当前第几段（CDS 里只有部署命中）
+  //   counted       知道 done/total 但不是有序阶段（批量操作）
+  //   indeterminate 只知道在跑，没有总量
+  //   heartbeat     只有心跳，连在做什么都不知道
+  const SEGMENT_CAP = 6; // 轨宽 58px，超过 6 段每段不足 6px，成噪点
+
+  function renderRail(el, state) {
+    const tone = state.tone || 'normal';
+    el.dataset.mode = state.mode;
+    el.dataset.tone = tone;
+    el.innerHTML = '';
+
+    const segClassFor = (i) => {
+      if (i < state.current) return 'done';
+      if (i > state.current) return '';
+      if (tone === 'danger') return 'failed';
+      if (tone === 'warn') return 'stalled';
+      return 'running';
+    };
+
+    if ((state.mode === 'staged' || state.mode === 'counted') && state.total <= SEGMENT_CAP) {
+      for (let i = 0; i < state.total; i += 1) {
+        const seg = document.createElement('i');
+        seg.className = segClassFor(i);
+        el.appendChild(seg);
+      }
+      return;
+    }
+    if (state.mode === 'counted') {
+      // 超过分段上限：退回连续条，比例照实填，具体数字交给旁边的文案
+      const seg = document.createElement('i');
+      seg.className = 'fill';
+      seg.style.setProperty('--fill', Math.round((state.current / state.total) * 100) + '%');
+      el.appendChild(seg);
+      return;
+    }
+    const seg = document.createElement('i');
+    seg.className = state.mode === 'indeterminate' ? 'indeterminate' : 'heartbeat';
+    el.appendChild(seg);
+  }
 
   const mmss = (s) => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
 
+  // ---- 方案 C 主卡：走真实部署路径。branch.status 的 building → starting →
+  // running 是三段，不是四段；四段是我上一版编的。 ----
+  const C_STAGES = [
+    { name: '构建中', seconds: 142 },
+    { name: '启动中', seconds: 84 },
+    { name: '就绪', seconds: 11 },
+  ];
+  const cRailV = document.getElementById('c-rail-v');
+  const cRailH = document.getElementById('c-rail-h');
+  const activityText = document.getElementById('c-activity');
+  let phase = 1;
+
   const paintPhase = () => {
-    [railSteps, trackSteps].forEach((group) => {
-      group.forEach((el, i) => {
-        el.classList.toggle('done', i < phase);
-        el.classList.toggle('running', i === phase);
-      });
-    });
-    const cur = C_PHASES[phase];
+    const state = { mode: 'staged', total: C_STAGES.length, current: phase };
+    renderRail(cRailV, state);
+    renderRail(cRailH, state);
+    const cur = C_STAGES[phase];
     activityText.innerHTML =
-      '<b>' + cur.name + '</b> · 已 <span class="elapsed">' + mmss(cur.seconds) + '</span>';
+      '<b>' + cur.name + '</b> · ' + (phase + 1) + '/' + C_STAGES.length
+      + ' · 已 <span class="elapsed">' + mmss(cur.seconds) + '</span>';
   };
   paintPhase();
 
@@ -823,11 +1072,16 @@
     if (document.body.classList.contains('paused')) return;
     activityText.classList.add('swapping');
     setTimeout(() => {
-      phase = (phase + 1) % C_PHASES.length;
+      phase = (phase + 1) % C_STAGES.length;
       paintPhase();
       activityText.classList.remove('swapping');
     }, 200);
   }, 2600);
+
+  // ---- 退化梯度：每一档用同一个 renderRail 渲染，形态差异全部来自 state ----
+  document.querySelectorAll('[data-rail-state]').forEach((el) => {
+    renderRail(el, JSON.parse(el.dataset.railState));
+  });
 
   const thinkText = document.getElementById('think-text');
   const thinkBox = thinkText.parentElement;
