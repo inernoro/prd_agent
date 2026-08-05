@@ -806,11 +806,9 @@ export function ToolEditor() {
           onClick={() => setForm({ ...form, enableMemory: !form.enableMemory })}
           className="w-11 h-6 rounded-full transition-all relative"
           style={{
-            background: form.enableMemory
-              ? 'linear-gradient(90deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
-              : 'var(--bg-nested)',
+            background: form.enableMemory ? 'var(--accent-primary)' : 'var(--bg-nested)',
             boxShadow: form.enableMemory
-              ? '0 2px 8px -2px rgba(var(--accent-primary-rgb, 99, 102, 241), 0.4)'
+              ? '0 2px 8px -2px rgba(var(--accent-primary-rgb), 0.4)'
               : 'none',
           }}
         >

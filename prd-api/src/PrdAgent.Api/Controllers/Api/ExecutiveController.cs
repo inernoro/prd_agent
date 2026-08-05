@@ -1065,7 +1065,10 @@ public class ExecutiveController : ControllerBase
                  .Select(i => (object)new { label = i.Label, value = i.Value })
                  .ToList();
 
-        var windowDays = win.DailyDivisor ?? Math.Max(1, outputSeries.Count);
+        // 无界窗口没有可信分母：产出是全时段累计，而退化出来的日序列只有 30 天，
+        // 相除等于「用一个月的天数去除几年的产出」——线上实测报出过「日均 150.7 件」。
+        // 按本面板自己立的规矩：算不出来就不出这句，不拿一个错数占位。
+        var windowDays = win.DailyDivisor;
         var p90Resolve = resolveHours.Count >= 5
             ? resolveHours.OrderBy(v => v).ElementAt((int)Math.Floor(resolveHours.Count * 0.9) is var i && i >= resolveHours.Count ? resolveHours.Count - 1 : i)
             : (double?)null;
@@ -1077,7 +1080,9 @@ public class ExecutiveController : ControllerBase
                     ? "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷"
                     : "已发布文档 + 上线站点 + 已提交周报 + 完成的生图任务 + 已解决缺陷；窗口为全部时间，走势图取最近 30 天",
                 Parts(("文档", curDocs), ("出图", curRuns), ("缺陷", resolvedDefects.Count), ("站点", curSites), ("周报", curReports)),
-                curOutput > 0 ? $"日均 {Math.Round((double)curOutput / windowDays, 1)} 件" : null),
+                curOutput > 0 && windowDays != null
+                    ? $"日均 {Math.Round((double)curOutput / windowDays.Value, 1)} 件"
+                    : null),
             // 中位不足 1 小时的时候用「小时」表述会四舍五入成 0，读起来像坏了；按量级换单位
             Kpi("resolveHours", "缺陷中位解决时长",
                 medianResolve != null ? (double?)Math.Round(medianResolve.Value < 1 ? medianResolve.Value * 60 : medianResolve.Value, 1) : null,
@@ -1520,8 +1525,12 @@ public class ExecutiveController : ControllerBase
                 .SortBy(e => e.OccurredAt).Limit(1).FirstOrDefaultAsync();
             behaviorFrom = earliest?.OccurredAt;
             var wanted = parsed.Where(t => t.Kind == "route").Select(t => t.Key).Distinct().ToList();
+            // 只数 route-transition（进入该页一次 = 一次访问）。
+            // 两种事件都数的话一次访问会被记两遍：进入时写 transition、离开时再写 dwell，
+            // 用量凭空翻倍，会把「几乎没人用」粉饰成「用得还行」——采用度报告最不该出的错。
             var evts = await _db.BehaviorEvents
-                .Find(e => e.OccurredAt >= start && e.OccurredAt < end && wanted.Contains(e.Route))
+                .Find(e => e.OccurredAt >= start && e.OccurredAt < end
+                           && e.Type == "route-transition" && wanted.Contains(e.Route))
                 .Project(e => new { e.Route, e.UserId })
                 .ToListAsync();
             foreach (var e in evts)
@@ -1590,7 +1599,7 @@ public class ExecutiveController : ControllerBase
                     value = routeVisits.GetValueOrDefault(t.Key);
                     users = routeUsers.GetValueOrDefault(t.Key)?.Count ?? 0;
                     status = value > 0 ? "measured" : "zero";
-                    note = "来源 behavior_events 的归一化路由；只覆盖本产品前端，独立系统的页面不在内";
+                    note = "来源 behavior_events 的路由跳转事件（一次进入计一次，不含停留事件）；只覆盖本产品前端，独立系统的页面不在内";
                     break;
                 case "dim":
                     if (!AdoptionToken.KnownDimensions.Contains(t.Key))

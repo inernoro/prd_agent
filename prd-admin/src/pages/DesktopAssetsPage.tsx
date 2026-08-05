@@ -418,8 +418,8 @@ function DetailPanel({
               onClick={() => asset.url && window.open(asset.url, '_blank', 'noopener,noreferrer')}
               className="flex items-center justify-center gap-2 w-full h-9 rounded-lg text-[13px] font-medium transition-colors"
               style={{
-                background: 'var(--accent-primary, #818CF8)',
-                color: '#fff',
+                background: 'var(--button-primary-bg)',
+                color: 'var(--button-primary-fg)',
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.opacity = '0.85';

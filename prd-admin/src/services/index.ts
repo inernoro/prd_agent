@@ -1913,6 +1913,24 @@ export type {
   CheckboxState,
 } from '@/services/real/reviewAgent';
 
+// ============ 产品评审员 — 需求评估（Excel 需求表批量评估 + 优先级排序） ============
+export {
+  createAssessment,
+  listAssessments,
+  getAssessment,
+  rerunAssessment,
+  getAssessmentStreamUrl,
+  downloadAssessmentReport,
+} from '@/services/real/reviewAssessment';
+export type {
+  RequirementAssessmentRun,
+  RequirementAssessmentItem,
+  RequirementAssessmentStatus,
+  RequirementFactorScore,
+  RequirementFactorDefinition,
+  RequirementItemStatus,
+} from '@/services/real/reviewAssessment';
+
 // ============ PR Review（pr-review）基于每用户 GitHub Device Flow 的审查工作台 ============
 export {
   getPrReviewAuthStatus,
@@ -1961,6 +1979,7 @@ export {
   appendRecordingUploadChunk,
   completeRecordingUpload,
   getRecordingUpload,
+  retryRecordingArchive,
   cancelRecordingUpload,
   replaceDocumentFile,
   getDocumentContent,

@@ -116,7 +116,8 @@ public class TranscribeNoteTextTests
     public void BuildSummarySystemPrompt_会议纪要风格()
     {
         var prompt = TranscribeNoteText.BuildSummarySystemPrompt(new DocumentStoreAgentRun { TemplateKey = "meeting" });
-        Assert.Contains("【方案评审结果通知】", prompt);
+        Assert.Contains("会议概要", prompt);
+        Assert.Contains("待办事项", prompt);
         Assert.Contains("评审意见", prompt);
         Assert.Contains("不得擅自写成通过", prompt);
         Assert.Contains("不得编造", prompt);

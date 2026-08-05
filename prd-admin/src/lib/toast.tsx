@@ -16,6 +16,7 @@ export type Toast = {
   message?: string;
   duration: number;
   action?: ToastAction;
+  loading?: boolean;
 };
 
 type ToastState = {
@@ -107,7 +108,7 @@ export const toast = {
   loading: (title: string, message?: string): string => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const store = useToastStore.getState();
-    store.addToast({ type: 'info' as ToastType, title, message, duration: 60_000 });
+    store.addToast({ type: 'info' as ToastType, title, message, duration: 60_000, loading: true });
     // addToast 内部生成 id，这里用最新添加的 toast id
     const toasts = useToastStore.getState().toasts;
     return toasts[toasts.length - 1]?.id ?? id;

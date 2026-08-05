@@ -96,7 +96,7 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
           style={{
             aspectRatio: '16 / 9',
             boxShadow:
-              '0 0 0 1px rgba(255,255,255,0.04), 0 80px 160px -40px rgba(0, 240, 255, 0.18), 0 40px 120px -30px rgba(124, 58, 237, 0.22)',
+              '0 0 0 1px rgba(255,255,255,0.04), 0 80px 160px -40px rgba(107, 169, 162, 0.18), 0 40px 120px -30px rgba(176, 82, 46, 0.22)',
           }}
         >
           {/* 视频 or 海报 */}
@@ -129,7 +129,7 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
             className="absolute top-0 left-0 right-0 h-px pointer-events-none"
             style={{
               background:
-                'linear-gradient(90deg, transparent 0%, rgba(0, 240, 255, 0.6) 50%, transparent 100%)',
+                'linear-gradient(90deg, transparent 0%, rgba(107, 169, 162, 0.6) 50%, transparent 100%)',
             }}
           />
 
@@ -162,7 +162,7 @@ function PosterFallback({ poster, comingSoon }: { poster?: string; comingSoon: s
           className="absolute inset-0"
           style={{
             background:
-              'radial-gradient(ellipse at 35% 40%, rgba(0, 240, 255, 0.22) 0%, transparent 55%), radial-gradient(ellipse at 65% 60%, rgba(124, 58, 237, 0.25) 0%, transparent 55%), linear-gradient(135deg, #050512 0%, #0a0a1f 50%, #0b0516 100%)',
+              'radial-gradient(ellipse at 35% 40%, rgba(107, 169, 162, 0.22) 0%, transparent 55%), radial-gradient(ellipse at 65% 60%, rgba(176, 82, 46, 0.25) 0%, transparent 55%), linear-gradient(135deg, #100E0C 0%, #171310 50%, #12100E 100%)',
           }}
         />
       )}
@@ -173,7 +173,7 @@ function PosterFallback({ poster, comingSoon }: { poster?: string; comingSoon: s
           className="w-20 h-20 md:w-24 md:h-24 rounded-full border border-token-subtle backdrop-blur-md flex items-center justify-center bg-white/[0.04]"
           style={{
             boxShadow:
-              '0 0 60px rgba(0, 240, 255, 0.25), inset 0 0 40px rgba(124, 58, 237, 0.12)',
+              '0 0 60px rgba(107, 169, 162, 0.25), inset 0 0 40px rgba(176, 82, 46, 0.12)',
           }}
         >
           <svg

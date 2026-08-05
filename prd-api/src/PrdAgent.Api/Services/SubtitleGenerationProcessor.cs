@@ -21,6 +21,16 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class SubtitleGenerationProcessor
 {
+    internal static readonly IReadOnlyList<string> RecordingAsrCallerChain =
+    [
+        AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+        AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+    ];
+
+    private sealed record RecordingAsrPlan(
+        string AppCallerCode,
+        ModelResolutionResult Resolution);
+
     private readonly IModelResolver _modelResolver;
     private readonly ILlmGateway _llmGateway;
     private readonly IDocumentService _documentService;
@@ -525,7 +535,7 @@ public class SubtitleGenerationProcessor
             "[doc-store-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes} isVideo={IsVideo}",
             sourceBytes, bytes.Length, isVideo);
 
-        // 解析 ASR 模型 —— 直接走默认调度，尊重模型池优先级
+        // 解析 ASR 模型 —— 每个受治理调用标识只解析一次完整候选计划，发送阶段复用已解析结果。
         //
         // 历史血泪 (2026-05-08)：
         //   c237e6d (跑通): 默认调度 → 模型池按你配的优先级选 → 命中 vveai/whisper → 14.9s 成功
@@ -534,26 +544,45 @@ public class SubtitleGenerationProcessor
         //     → 选中"另一个" whisper-large-v3 实例（baseUrl 不同 / 健康判定不同）→ 暂不支持该接口
         //   教训：用户在管理后台配的优先级已经是 source of truth，不要在代码里二次干预。
         //
-        // 谁来路由：用户 → 管理后台模型池配置（绑 AppCallerCode + 排优先级）
-        // 谁来执行：ResolveAsync 的默认排序（HealthStatus → ModelGroup.Priority → Model.Priority）
-        // 代码层只做：拿到结果 → 按 IsExchange / ExchangeTransformerType 分发到豆包流式 / Whisper HTTP
-        var resolution = await _modelResolver.ResolveAsync(
-            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
+        // 谁来路由：用户 → 管理后台模型池配置（绑 AppCallerCode + 排优先级）。录音先走
+        // transcript-agent.transcribe::asr 专属池，以便单独绑定带原生 speaker 信息的模型；
+        // 专属池不可用或调用失败时再走 document-store.subtitle::asr 通用池，保证原文不丢。
+        var plans = new List<RecordingAsrPlan>();
+        var resolutionErrors = new List<string>();
+        foreach (var appCallerCode in RecordingAsrCallerChain)
+        {
+            var candidate = await _modelResolver.ResolveAsync(appCallerCode, ModelTypes.Asr);
+            if (candidate.Success)
+                plans.Add(new RecordingAsrPlan(appCallerCode, candidate));
+            else
+                resolutionErrors.Add($"{appCallerCode}: {candidate.ErrorMessage ?? "未找到可用模型"}");
+        }
 
-        if (!resolution.Success)
+        if (plans.Count == 0)
             throw new SubtitleAsrException(
-                $"ASR 模型调度失败: {resolution.ErrorMessage}",
-                BuildResolverDiagnostic(resolution, "调度失败"));
+                $"ASR 模型调度失败: {string.Join(" | ", resolutionErrors)}",
+                new Dictionary<string, object?>
+                {
+                    ["stage"] = "调度失败",
+                    ["appCallers"] = RecordingAsrCallerChain,
+                    ["errors"] = resolutionErrors,
+                });
 
-        _logger.LogInformation(
-            "[doc-store-agent] ASR 调度命中: model={Model} platform={Platform} isExchange={IsExchange} transformerType={Tt}",
-            resolution.ActualModel, resolution.ActualPlatformName,
-            resolution.IsExchange, resolution.ExchangeTransformerType);
+        foreach (var plan in plans)
+        {
+            _logger.LogInformation(
+                "[doc-store-agent] ASR 调度命中: appCaller={AppCaller} model={Model} platform={Platform} isExchange={IsExchange} transformerType={Tt}",
+                plan.AppCallerCode,
+                plan.Resolution.ActualModel,
+                plan.Resolution.ActualPlatformName,
+                plan.Resolution.IsExchange,
+                plan.Resolution.ExchangeTransformerType);
+        }
 
-        return await TranscribeWithFallbackAsync(
+        return await TranscribeWithCallerFallbackAsync(
             run,
             bytes,
-            resolution,
+            plans,
             (attempt, total) => UpdateProgressAsync(
                 db,
                 runStore,
@@ -592,13 +621,29 @@ public class SubtitleGenerationProcessor
         byte[] audioBytes,
         ModelResolutionResult primaryResolution,
         Func<int, int, Task>? onAttempt = null)
+        => await TranscribeWithCallerFallbackAsync(
+            run,
+            audioBytes,
+            [new RecordingAsrPlan(AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, primaryResolution)],
+            onAttempt);
+
+    private async Task<List<SubtitleSegment>> TranscribeWithCallerFallbackAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        IReadOnlyList<RecordingAsrPlan> plans,
+        Func<int, int, Task>? onAttempt = null)
     {
         const int maxAttempts = 3;
-        var candidates = new[] { primaryResolution }
-            .Concat(primaryResolution.RetryCandidates ?? [])
-            .Where(candidate => candidate.Success && !string.IsNullOrWhiteSpace(candidate.ActualModel))
+        // 先保留每个调用标识的首选方案，再追加各池内部重试。这样即使专属池配置了多个
+        // provider，三次尝试上限内也一定留有通用调用标识的兜底位置。
+        var candidates = plans
+            .Concat(plans.SelectMany(plan => (plan.Resolution.RetryCandidates ?? [])
+                .Select(resolution => new RecordingAsrPlan(plan.AppCallerCode, resolution))))
+            .Where(candidate => candidate.Resolution.Success
+                                && !string.IsNullOrWhiteSpace(candidate.Resolution.ActualModel))
+            .OrderByDescending(candidate => IsNativeSpeakerAsr(candidate.Resolution))
             .GroupBy(
-                candidate => $"{candidate.ActualPlatformId}::{candidate.ActualModel}",
+                candidate => $"{candidate.Resolution.ActualPlatformId}::{candidate.Resolution.ActualModel}",
                 StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .Take(maxAttempts)
@@ -607,7 +652,8 @@ public class SubtitleGenerationProcessor
         var failures = new List<Dictionary<string, object?>>();
         for (var index = 0; index < candidates.Count; index++)
         {
-            var candidate = candidates[index];
+            var plan = candidates[index];
+            var candidate = plan.Resolution;
             // 语义降级由本处理器按候选协议重建请求。单次发送不能继续携带候选，
             // 否则 Gateway 可能拿豆包 JSON 请求去重试 Whisper multipart，协议形状会错位。
             candidate.RetryCandidates = null;
@@ -617,12 +663,61 @@ public class SubtitleGenerationProcessor
 
             try
             {
-                var segments = await TranscribeWithResolutionAsync(run, audioBytes, candidate);
+                var segments = await TranscribeWithResolutionAsync(
+                    run,
+                    audioBytes,
+                    candidate,
+                    plan.AppCallerCode);
                 if (segments.Count == 0)
                 {
                     throw new SubtitleAsrException(
                         "ASR 返回为空（上游成功响应中没有可用文字）",
                         BuildResolverDiagnostic(candidate, "empty-content"));
+                }
+
+                // 有些多模态音频模型不会返回 NO_SPEECH，而是用自然语言回答
+                // “没有检测到有效语音”。这仍是无效转录，必须在候选循环内失败，
+                // 让后续 Whisper / 豆包等方案接管；若等到 ProcessTranscribeAsync
+                // 最外层才判断，就会把第一个拒答响应误当成功并提前结束降级链。
+                var candidateTranscript = string.Join("\n", segments
+                    .Where(segment => !string.IsNullOrWhiteSpace(segment.Text))
+                    .Select(segment => segment.Text.Trim()));
+                if (TranscribeNoteText.LooksLikeNoSpeech(candidateTranscript))
+                {
+                    throw new SubtitleAsrException(
+                        "ASR 返回无有效语音（上游返回了静音哨兵或拒答文本）",
+                        BuildResolverDiagnostic(candidate, "no-speech-content"));
+                }
+
+                var providerSpeakerCount = CountSpeakers(segments);
+                if (providerSpeakerCount < 4)
+                {
+                    var localDiarization = LocalSpeakerDiarizer.TryDiarize(audioBytes, candidateTranscript);
+                    if (localDiarization is not null
+                        && ShouldUseLocalSpeakerDiarization(
+                            segments,
+                            localDiarization,
+                            candidateTranscript))
+                    {
+                        _logger.LogInformation(
+                            "[doc-store-agent] 本地声纹补足上游角色: run={RunId} providerSpeakers={ProviderSpeakers} speakers={Speakers} turns={Turns} confidence={Confidence:F2}",
+                            run.Id,
+                            providerSpeakerCount,
+                            localDiarization.SpeakerCount,
+                            localDiarization.VoiceTurnCount,
+                            localDiarization.Confidence);
+                        segments = localDiarization.Segments.ToList();
+                    }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "[doc-store-agent] 本地声纹未证明更多角色，保留上游分段 run={RunId} providerSpeakers={ProviderSpeakers} localSpeakers={LocalSpeakers} turns={Turns} confidence={Confidence:F2}",
+                            run.Id,
+                            providerSpeakerCount,
+                            localDiarization?.SpeakerCount ?? 0,
+                            localDiarization?.VoiceTurnCount ?? 0,
+                            localDiarization?.Confidence ?? 0);
+                    }
                 }
 
                 if (index > 0)
@@ -641,6 +736,7 @@ public class SubtitleGenerationProcessor
                 failures.Add(new Dictionary<string, object?>
                 {
                     ["attempt"] = index + 1,
+                    ["appCallerCode"] = plan.AppCallerCode,
                     ["model"] = candidate.ActualModel,
                     ["platformId"] = candidate.ActualPlatformId,
                     ["platformName"] = candidate.ActualPlatformName,
@@ -668,19 +764,34 @@ public class SubtitleGenerationProcessor
                     index + 1,
                     candidates.Count,
                     candidate.ActualModel,
-                    candidates[index + 1].ActualModel);
+                    candidates[index + 1].Resolution.ActualModel);
             }
         }
 
         throw new SubtitleAsrException(
             "ASR 模型池没有可执行的识别方案",
-            BuildResolverDiagnostic(primaryResolution, "no-candidates"));
+            BuildResolverDiagnostic(
+                plans.FirstOrDefault()?.Resolution ?? new ModelResolutionResult
+                {
+                    Success = false,
+                    ErrorMessage = "没有成功解析的 ASR 候选",
+                },
+                "no-candidates"));
     }
+
+    internal static IEnumerable<ModelResolutionResult> OrderRecordingAsrCandidates(
+        IEnumerable<ModelResolutionResult> candidates)
+        => candidates.OrderByDescending(IsNativeSpeakerAsr);
+
+    private static bool IsNativeSpeakerAsr(ModelResolutionResult candidate)
+        => candidate.IsExchange
+           && candidate.ExchangeTransformerType is "doubao-asr" or "doubao-asr-stream";
 
     private async Task<List<SubtitleSegment>> TranscribeWithResolutionAsync(
         DocumentStoreAgentRun run,
         byte[] audioBytes,
-        ModelResolutionResult resolution)
+        ModelResolutionResult resolution,
+        string appCallerCode)
     {
         // 三路分发（参考 TranscriptRunWorker.cs:159-192）
         if (resolution.IsExchange)
@@ -689,7 +800,7 @@ public class SubtitleGenerationProcessor
             {
                 case "doubao-asr-stream":
                     // WebSocket 协议由 LlmGateway/llmgw-serve 执行；本处理器仍只提交 GatewayRawRequest。
-                    return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(),
+                    return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode,
                         new Dictionary<string, object>
                         {
                             ["model"] = resolution.ActualModel ?? "doubao-asr-stream",
@@ -703,7 +814,7 @@ public class SubtitleGenerationProcessor
                     // Gateway.ConsolidateMultipartToJson 会把 multipart 文件转成 image_urls，
                     // 路径不通。必须把音频以 base64 audio_data 形式塞进 RequestBody。
                     // 参考：Bugbot + Codex 双 P1 review on PR #542 commit 9253b0f
-                    return await TranscribeViaDoubaoAsyncJsonAsync(run, audioBytes, resolution);
+                    return await TranscribeViaDoubaoAsyncJsonAsync(run, audioBytes, resolution, appCallerCode);
 
                 default:
                     throw new SubtitleAsrException(
@@ -723,7 +834,7 @@ public class SubtitleGenerationProcessor
                 "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
                 resolution.ActualModel, resolution.ActualPlatformName);
             // 上面已统一转成 WAV，chat-audio 只接收规范化后的字节，避免重复转码。
-            return await TranscribeViaChatAudioAsync(run, audioBytes, resolution.ToGatewayResolution());
+            return await TranscribeViaChatAudioAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode);
         }
 
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
@@ -734,7 +845,7 @@ public class SubtitleGenerationProcessor
         _logger.LogInformation(
             "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
             resolution.ActualModel, resolution.ActualPlatformName);
-        return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(),
+        return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode,
             new Dictionary<string, object>
             {
                 ["model"] = resolution.ActualModel ?? "whisper-1",
@@ -752,6 +863,7 @@ public class SubtitleGenerationProcessor
         DocumentStoreAgentRun run,
         byte[] audioBytes,
         GatewayModelResolution gwResolution,
+        string appCallerCode,
         Dictionary<string, object> multipartFields)
     {
         // 不要在 multipart 里暴露空 model/language（OpenAI 严格模式会拒）
@@ -765,7 +877,7 @@ public class SubtitleGenerationProcessor
         // 平台依赖 magic bytes 解码（你传 m4a 字节 + audio/wav 标签也能转录），mime 字段等同身份证不等同实际内容。
         var rawRequest = new GatewayRawRequest
         {
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             EndpointPath = "/v1/audio/transcriptions",
             IsMultipart = true,
@@ -788,7 +900,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode: appCallerCode,
             ForceFullShadowSample: run.ForceFullShadowSample));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
@@ -819,8 +931,13 @@ public class SubtitleGenerationProcessor
                     var start = seg.TryGetProperty("start", out var st) ? st.GetDouble() : 0;
                     var end = seg.TryGetProperty("end", out var et) ? et.GetDouble() : 0;
                     var text = (seg.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    var speaker = seg.TryGetProperty("speaker", out var speakerNode)
+                        ? speakerNode.ValueKind == JsonValueKind.String
+                            ? speakerNode.GetString()
+                            : speakerNode.GetRawText()
+                        : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim()));
+                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
                 }
             }
             // 没有 segments 数组就用 text 兜底
@@ -848,13 +965,178 @@ public class SubtitleGenerationProcessor
     private async Task<List<SubtitleSegment>> TranscribeViaChatAudioAsync(
         DocumentStoreAgentRun run,
         byte[] audioBytes,
-        GatewayModelResolution gwResolution)
+        GatewayModelResolution gwResolution,
+        string appCallerCode)
     {
-        var base64 = Convert.ToBase64String(audioBytes);
+        GatewayRawResponse? lastResponse = null;
+        string? transcript = null;
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var result = await SendChatAudioTextAsync(
+                run,
+                audioBytes,
+                gwResolution,
+                appCallerCode,
+                BuildChatAudioPrompt(attempt));
+            lastResponse = result.Response;
+            if (!result.Text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+            {
+                transcript = result.Text.Trim();
+                break;
+            }
+
+            if (attempt == 1)
+            {
+                _logger.LogWarning(
+                    "[doc-store-agent] chat 音频首次返回 NO_SPEECH，使用同一完整音频复核 run={RunId}",
+                    run.Id);
+                continue;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(transcript))
+            throw new SubtitleAsrException(
+                "未检测到有效语音内容：录音可能是静音、音量过低或没有人声。请靠近麦克风重新录制。",
+                BuildHttpDiagnostic(gwResolution, lastResponse, new Dictionary<string, object>
+                {
+                    ["model"] = gwResolution.ActualModel ?? "",
+                    ["reason"] = "no-speech",
+                }));
+
+        try
+        {
+            var diarized = await SendChatAudioTextAsync(
+                run,
+                audioBytes,
+                gwResolution,
+                appCallerCode,
+                BuildChatAudioDiarizationPrompt(transcript));
+            if (ContainsExplicitSpeakerLabel(diarized.Text))
+            {
+                var parsed = ParseChatAudioSpeakerSegments(diarized.Text);
+                if (CountSpeakers(parsed) > 1)
+                    return parsed;
+            }
+
+            _logger.LogWarning(
+                "[doc-store-agent] chat 音频角色增强未返回角色标签，保留已确认原文 run={RunId}",
+                run.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "[doc-store-agent] chat 音频角色增强失败，保留已确认原文 run={RunId}",
+                run.Id);
+        }
+
+        return new List<SubtitleSegment> { new(0, 0, transcript, "说话人1") };
+    }
+
+    private static int CountSpeakers(IEnumerable<SubtitleSegment> segments)
+        => segments
+            .Select(segment => segment.SpeakerId)
+            .Where(speaker => !string.IsNullOrWhiteSpace(speaker))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+
+    internal static bool ShouldUseLocalSpeakerDiarization(
+        IReadOnlyList<SubtitleSegment> providerSegments,
+        LocalSpeakerDiarizer.Result localDiarization,
+        string transcript)
+    {
+        var providerSpeakerCount = CountSpeakers(providerSegments);
+        if (providerSpeakerCount >= 4
+            || localDiarization.SpeakerCount <= Math.Max(1, providerSpeakerCount)
+            || !HasValidLocalDiarization(localDiarization, transcript))
+            return false;
+
+        // 上游已经给出多个角色时，只允许声学证据补足一个遗漏角色。
+        // 必须是长发言块逐块对应不同声纹，避免把上游可靠的两人结果
+        // 因为本地短暂停顿或音高波动而整体覆盖成三人。
+        // 上游没有可靠的多人标签时，本地承担兜底职责，使用通用 0.18
+        // 声学门槛；一旦上游已有多人标签，则进入上面的严格补足路径。
+        return providerSpeakerCount < 2
+               || (localDiarization.SpeakerCount == providerSpeakerCount + 1
+                   && localDiarization.HasDistinctLongTurnEvidence
+                   && localDiarization.Confidence >= 0.20
+                   && localDiarization.Segments.Count == localDiarization.SpeakerCount);
+    }
+
+    private static bool HasValidLocalDiarization(
+        LocalSpeakerDiarizer.Result result,
+        string transcript)
+    {
+        if (result.SpeakerCount is < 2 or > 4
+            || result.Segments.Count < result.SpeakerCount
+            || result.Confidence < 0.18
+            || result.VoiceTurnCount < result.SpeakerCount)
+            return false;
+
+        var previousEnd = -1d;
+        foreach (var segment in result.Segments)
+        {
+            if (!double.IsFinite(segment.StartSec)
+                || !double.IsFinite(segment.EndSec)
+                || segment.StartSec < 0
+                || segment.EndSec <= segment.StartSec
+                || segment.StartSec < previousEnd
+                || string.IsNullOrWhiteSpace(segment.Text)
+                || string.IsNullOrWhiteSpace(segment.SpeakerId))
+                return false;
+            previousEnd = segment.EndSec;
+        }
+
+        if (CountSpeakers(result.Segments) != result.SpeakerCount)
+            return false;
+
+        static string Compact(string value)
+            => string.Concat(value.Where(character => !char.IsWhiteSpace(character)));
+
+        return string.Equals(
+            Compact(string.Concat(result.Segments.Select(segment => segment.Text))),
+            Compact(transcript.Trim()),
+            StringComparison.Ordinal);
+    }
+
+    internal static string BuildChatAudioPrompt(int attempt)
+    {
+        var retryPrefix = attempt > 1
+            ? "上一次识别可能误判为无人声。请从头到尾重新完整听取音频，确认所有可辨识的人声后再作答。"
+            : string.Empty;
+        return retryPrefix +
+               "请把这段音频逐字转写成文字，尽量一字不差保留原话。只输出转写出的文字本身，不要任何解释、说明或前后缀。" +
+               "只有完整音频从头到尾都没有任何可识别的人声（确为静音、空白或纯噪音）时，才只输出 NO_SPEECH。";
+    }
+
+    internal static string BuildChatAudioDiarizationPrompt(string transcript)
+    {
+        return "这段音频已经确认包含可识别的人声。请重新完整听取音频，根据不同声音把下面的粗转原文分成说话人段落。" +
+               "每次说话必须单独一行，严格使用“[说话人1] 原话”“[说话人2] 原话”的格式；同一个声音始终使用同一个编号。" +
+               "不要猜测真实姓名，不要总结、解释、增删或改写原话，也不要输出 NO_SPEECH。" +
+               "如果确实无法区分声音，使用[说话人1]标记全部原文。粗转原文如下：\n" + transcript;
+    }
+
+    internal static bool ContainsExplicitSpeakerLabel(string text)
+    {
+        return text.Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Any(line => TryParseSpeakerLine(line) != null);
+    }
+
+    private async Task<(string Text, GatewayRawResponse Response)> SendChatAudioTextAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        GatewayModelResolution gwResolution,
+        string appCallerCode,
+        string prompt)
+    {
         var requestBody = new JsonObject
         {
             ["model"] = gwResolution.ActualModel,
             ["modalities"] = new JsonArray("text"),
+            ["temperature"] = 0,
             ["messages"] = new JsonArray
             {
                 new JsonObject
@@ -862,25 +1144,23 @@ public class SubtitleGenerationProcessor
                     ["role"] = "user",
                     ["content"] = new JsonArray
                     {
-                        new JsonObject
-                        {
-                            ["type"] = "text",
-                            ["text"] = "请把这段音频逐字转写成文字，尽量一字不差保留原话。只输出转写出的文字本身，不要任何解释、说明或前后缀。" +
-                                       "如果音频中没有任何可识别的人声（静音、空白或纯噪音），只输出 NO_SPEECH 这一个词，不要输出其他任何文字。",
-                        },
+                        new JsonObject { ["type"] = "text", ["text"] = prompt },
                         new JsonObject
                         {
                             ["type"] = "input_audio",
-                            ["input_audio"] = new JsonObject { ["data"] = base64, ["format"] = "wav" },
+                            ["input_audio"] = new JsonObject
+                            {
+                                ["data"] = Convert.ToBase64String(audioBytes),
+                                ["format"] = "wav",
+                            },
                         },
                     },
                 },
             },
         };
-
         var rawRequest = new GatewayRawRequest
         {
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             EndpointPath = "/v1/chat/completions",
             IsMultipart = false,
@@ -899,7 +1179,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode: appCallerCode,
             ForceFullShadowSample: run.ForceFullShadowSample));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
@@ -912,8 +1192,6 @@ public class SubtitleGenerationProcessor
         }
 
         var text = ExtractChatCompletionContent(rawResp.Content);
-        // HTTP 成功但没解析出文字（模型拒答 / 响应结构异常 / 空内容）：必须当失败抛出，
-        // 否则字幕生成会拿空文本生成一个"无内容"占位文档，把失败伪装成成功（Bugbot Medium）。
         if (string.IsNullOrWhiteSpace(text))
             throw new SubtitleAsrException(
                 "多模态 chat 音频转写返回为空（模型可能拒答或响应格式异常）",
@@ -922,17 +1200,69 @@ public class SubtitleGenerationProcessor
                     ["model"] = gwResolution.ActualModel ?? "",
                     ["reason"] = "empty-content",
                 }));
-        // 静音哨兵：提示词约定无人声时只输出 NO_SPEECH → 当"无有效语音"失败抛出，
-        // 不能让它流进后续摘要/落库（真实事故：静音音频产出对话式回复被存成笔记）。
-        if (text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
-            throw new SubtitleAsrException(
-                "未检测到有效语音内容：录音可能是静音、音量过低或没有人声。请靠近麦克风重新录制。",
-                BuildHttpDiagnostic(gwResolution, rawResp, new Dictionary<string, object>
-                {
-                    ["model"] = gwResolution.ActualModel ?? "",
-                    ["reason"] = "no-speech",
-                }));
-        return new List<SubtitleSegment> { new(0, 0, text.Trim()) };
+        return (text, rawResp);
+    }
+
+    internal static List<SubtitleSegment> ParseChatAudioSpeakerSegments(string text)
+    {
+        var segments = new List<SubtitleSegment>();
+        string? activeSpeaker = null;
+        var activeText = new StringBuilder();
+
+        void Flush()
+        {
+            var content = activeText.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(content))
+                segments.Add(new SubtitleSegment(0, 0, content, activeSpeaker));
+            activeText.Clear();
+        }
+
+        foreach (var rawLine in text.Replace("\r", string.Empty, StringComparison.Ordinal).Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var parsed = TryParseSpeakerLine(line);
+            if (parsed != null)
+            {
+                Flush();
+                activeSpeaker = parsed.Value.Speaker;
+                activeText.Append(parsed.Value.Text);
+                continue;
+            }
+
+            if (activeText.Length > 0) activeText.Append(' ');
+            activeText.Append(line);
+        }
+        Flush();
+
+        if (segments.Count > 0 && segments.All(segment => string.IsNullOrWhiteSpace(segment.SpeakerId)))
+            return new List<SubtitleSegment> { new(0, 0, text.Trim(), "说话人1") };
+        return segments.Count > 0
+            ? segments
+            : new List<SubtitleSegment> { new(0, 0, text.Trim(), "说话人1") };
+    }
+
+    private static (string Speaker, string Text)? TryParseSpeakerLine(string line)
+    {
+        if (line.StartsWith("[", StringComparison.Ordinal))
+        {
+            var close = line.IndexOf(']');
+            if (close > 1)
+            {
+                var label = line[1..close].Trim();
+                if (label.StartsWith("说话人", StringComparison.Ordinal))
+                    return (label, line[(close + 1)..].TrimStart(' ', ':', '：'));
+            }
+        }
+
+        if (line.StartsWith("说话人", StringComparison.Ordinal))
+        {
+            var separator = line.IndexOfAny([':', '：']);
+            if (separator > 3)
+                return (line[..separator].Trim(), line[(separator + 1)..].Trim());
+        }
+        return null;
     }
 
     private static string ExtractChatCompletionContent(string json)
@@ -971,7 +1301,8 @@ public class SubtitleGenerationProcessor
     private async Task<List<SubtitleSegment>> TranscribeViaDoubaoAsyncJsonAsync(
         DocumentStoreAgentRun run,
         byte[] audioBytes,
-        ModelResolutionResult resolution)
+        ModelResolutionResult resolution,
+        string appCallerCode)
     {
         var gwResolution = resolution.ToGatewayResolution();
         // 豆包异步 ASR 接受 base64 音频。模型字段 Gateway 会自动注入。
@@ -982,7 +1313,7 @@ public class SubtitleGenerationProcessor
 
         var rawRequest = new GatewayRawRequest
         {
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             RequestBody = requestBody,
             IsMultipart = false,
@@ -1004,7 +1335,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR_JSON]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode: appCallerCode,
             ForceFullShadowSample: run.ForceFullShadowSample));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
@@ -1034,8 +1365,11 @@ public class SubtitleGenerationProcessor
                     var start = segment.TryGetProperty("start", out var s) ? s.GetDouble() : 0;
                     var end = segment.TryGetProperty("end", out var e) ? e.GetDouble() : 0;
                     var text = (segment.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    var speaker = segment.TryGetProperty("speaker", out var speakerNode)
+                        ? speakerNode.GetString()
+                        : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim()));
+                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
                 }
             }
             if (segments.Count == 0 && root.TryGetProperty("text", out var normalizedText))
@@ -1053,8 +1387,11 @@ public class SubtitleGenerationProcessor
                     var startMs = u.TryGetProperty("start_time", out var s) ? s.GetDouble() : 0;
                     var endMs = u.TryGetProperty("end_time", out var e) ? e.GetDouble() : 0;
                     var text = (u.TryGetProperty("text", out var t) ? t.GetString() : "") ?? "";
+                    var speaker = u.TryGetProperty("speaker_id", out var speakerNode)
+                        ? speakerNode.ToString()
+                        : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim()));
+                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim(), speaker));
                 }
             }
             // 兜底：从 result.text 取整段文本（无时间戳）
@@ -1294,7 +1631,7 @@ public class SubtitleGenerationProcessor
     }
 }
 
-public record SubtitleSegment(double StartSec, double EndSec, string Text);
+public record SubtitleSegment(double StartSec, double EndSec, string Text, string? SpeakerId = null);
 
 /// <summary>
 /// 字幕生成 ASR 阶段失败时抛出的异常，携带可观测的 diagnostic 数据，

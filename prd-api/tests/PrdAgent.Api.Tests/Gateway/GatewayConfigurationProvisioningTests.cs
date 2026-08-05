@@ -281,4 +281,25 @@ public sealed class GatewayConfigurationProvisioningTests
         model["SourceCollection"].AsString.ShouldBe("llmgw_model_exchanges");
         GatewayModelPoolTypeRegistry.IsCompatible(model, modelType).ShouldBeTrue();
     }
+
+    [Fact]
+    public void FalImageLayeringBlueprint_PublishesGenericLogicalCapabilityWithoutBusinessBinding()
+    {
+        var draft = FalImageLayeringProvisioning.CreateExchangeDraft("fal-secret");
+        var logicalModel = FalImageLayeringProvisioning.BuildLogicalModelDocument(
+            "tenant-a", "logical-a", DateTime.UnixEpoch);
+        var offering = FalImageLayeringProvisioning.BuildOfferingDocument(
+            "tenant-a", "offering-a", "logical-a", "exchange-a", DateTime.UnixEpoch);
+
+        draft.TargetAuthScheme.ShouldBe("Key");
+        draft.TransformerType.ShouldBe("fal-image-layered");
+        draft.Models.Single().ModelId.ShouldBe("fal-qwen-image-layered");
+        logicalModel["PublicId"].AsString.ShouldBe("image-layering");
+        logicalModel["AllowedAppCallerCodes"].AsBsonArray.ShouldBeEmpty();
+        logicalModel.ToJson().ShouldNotContain("visual-agent");
+        offering["LogicalModelId"].AsString.ShouldBe("logical-a");
+        offering["TargetId"].AsString.ShouldBe("exchange-a");
+        offering["UpstreamModelId"].AsString.ShouldBe("fal-qwen-image-layered");
+        offering.Contains("AppCallerCode").ShouldBeFalse();
+    }
 }

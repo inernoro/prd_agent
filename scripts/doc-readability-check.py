@@ -843,6 +843,42 @@ TRIGGER_CUE = re.compile(
     r"[Ii]nvoke|Actions?:|/[a-z][a-z0-9-]{3,}")
 
 
+def autofix_name_unsafe_reason(path: str) -> str | None:
+    """这份 frontmatter 的结构，简单到可以放心自动补 name 吗？不能就说明理由。
+
+    check_skill() 是按行找顶格键的，缩进的续行它跳过。所以嵌套字段写坏
+    （`metadata:` 下面跟一行 `  tags: [unclosed`）它看不见，只会报「缺 name」——
+    而那恰好是唯一判为可自动修的一类。补完 name 再审就全绿，可宿主 load 的是整份
+    YAML，依然读不到这个技能：**修复动作把坏清单洗成了假绿灯**，比不修更糟，
+    因为从此再没人会看它。
+
+    所以这里不问「YAML 合不合法」（那需要 PyYAML，而本脚本是刻意只用标准库的——
+    同一 CI job 的 doc-readability-ratchet.test.py 明写「判据本身不依赖它」），
+    只问一个更窄、标准库答得了的问题：**这份 frontmatter 有没有超出行判据能理解的
+    结构**。有嵌套/续行就说明判据没完全看懂它，那就不该在没看懂的东西上动自动修复，
+    交给人。
+
+    只作用于「可不可以自动修」这一个判定，不改变技能是红是绿——原本要 BLOCK 的照样
+    BLOCK。也刻意不进 check_skill()：那个判据同时喂着可读性棘轮，加判定类别会改变
+    全仓欠账口径。
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"SKILL.md 读取或解码失败（{exc.__class__.__name__}）"
+    if not lines or lines[0].strip() != "---":
+        return None   # 「缺 frontmatter」由 check_skill 报，这里不重复
+    close = next((i for i, ln in enumerate(lines[1:], start=1) if ln.strip() == "---"), None)
+    if close is None:
+        return None   # 「没有闭合定界行」同上
+    for ln in lines[1:close]:
+        if ln.strip() and ln.startswith((" ", "\t")):
+            return ("frontmatter 有行判据看不懂的嵌套或续行结构，缺 name 可能只是表象，"
+                    "不自动补——补上去会让下一轮审计误判为干净")
+    return None
+
+
 def check_skill(path: str) -> list[str]:
     """技能文档：frontmatter 必须有 name 与 description，且 description 要说清什么时候用它。"""
     with open(path, encoding="utf-8") as fh:
@@ -1140,6 +1176,8 @@ def main() -> int:
     ap.add_argument("--ratchet", action="store_true", help="与基线比对，欠账上升即失败（CI 用）")
     ap.add_argument("--update-baseline", action="store_true", help="把当前欠账写回基线")
     ap.add_argument("--list-missing", action="store_true", help="逐条列出欠账文件")
+    ap.add_argument("--skills-audit", action="store_true",
+                    help="按技能逐个输出可发现性判定（entropy-cleanup D4 用），含缺 SKILL.md 的目录")
     ap.add_argument("--baseline-ref", default="",
                     help="拿这个 git ref 上的基线当上限，防止本分支自己把基线放宽（CI 传 origin/main）")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
@@ -1163,6 +1201,61 @@ def main() -> int:
                 rewritten += n
         print(f"已把 {rewritten} 处裸引用改写为可点链接，涉及 {touched} 篇")
         return 0
+
+    if args.skills_audit:
+        # entropy-cleanup 的 D4 唯一判据入口。以前 D4 在 bash 里另写了一套 grep 判据，
+        # 连续多轮出现「只查键不查值」「不限定 frontmatter 块」「空值算合规」这类偏差——
+        # 同一件事两处实现，弱的那处就是漏洞。这里复用 check_skill()，D4 只消费输出。
+        #
+        # 输出契约（每行一条，前缀决定 D4 怎么处理）：
+        #   AUTOFIX_NAME: <dir>   frontmatter 在、name 键整个缺失 —— 可由目录名确定性补全
+        #   BLOCK: <dir> — <原因> 其余一切 —— 不可安全自动修，必须挡住自动合并
+        rc = 0
+        for rel_dir in SKILL_DIRS:
+            abs_dir = os.path.join(REPO_ROOT, rel_dir)
+            shown_root = rel_dir.replace(os.sep, "/")
+            if not os.path.isdir(abs_dir):
+                # 整个技能根消失（删掉 / 改名）= 那个宿主的全部技能一次性不可发现，
+                # 比单个技能坏掉严重得多。这里跳过就等于「删光了也算干净」——
+                # 正是上面刚修掉的 scan_skills() 那个 continue 的同款，别在这里重犯。
+                print(f"BLOCK: {shown_root} — 声明的技能根不存在（该宿主的技能全部不可发现）")
+                rc = 1
+                continue
+            for name in sorted(os.listdir(abs_dir)):
+                skill_dir = os.path.join(abs_dir, name)
+                if not os.path.isdir(skill_dir):
+                    continue
+                path = os.path.join(skill_dir, "SKILL.md")
+                shown = f"{rel_dir.replace(os.sep, '/')}/{name}"
+                # scan_skills() 对没有 SKILL.md 的目录是 continue 跳过的（它只统计
+                # frontmatter 欠账）。那种技能装不上也发现不了，这里必须报出来。
+                if not os.path.isfile(path):
+                    print(f"BLOCK: {shown} — 目录下没有 SKILL.md")
+                    rc = 1
+                    continue
+                try:
+                    problems = check_skill(path)
+                except (OSError, UnicodeDecodeError) as exc:
+                    # 读不了 / 解不了码的清单，宿主同样发现不了这个技能，和「没有
+                    # SKILL.md」是一回事。这里必须转成 BLOCK 而不是让异常冒出去——
+                    # 抛异常会让调用方在拿到任何 BLOCK 行之前就断流，下游那种
+                    # `... | grep '^BLOCK: ' || true` 的写法会把崩溃读成「干净」，
+                    # 闸门于是 fail-open。判据宁可报错也不能悄悄放行。
+                    print(f"BLOCK: {shown} — SKILL.md 读取或解码失败（{exc.__class__.__name__}）")
+                    rc = 1
+                    continue
+                if not problems:
+                    continue
+                rc = 1
+                # 只有「缺 name」这一类可自动修（name 按定义等于目录名）。但在判为
+                # 可自动修之前，还要确认这份 frontmatter 的结构行判据是完全看懂了的——
+                # 看不懂就说明「缺 name」可能只是表象，自动补完会把坏清单洗成假绿灯。
+                unsafe = autofix_name_unsafe_reason(path) if problems == ["frontmatter 缺 name"] else None
+                if problems == ["frontmatter 缺 name"] and not unsafe:
+                    print(f"AUTOFIX_NAME: {shown}")
+                else:
+                    print(f"BLOCK: {shown} — {'；'.join(problems + ([unsafe] if unsafe else []))}")
+        return rc
 
     stats, missing, bad_prefix = scan()
     bare_per_type, bare_detail, dead_detail = scan_links()

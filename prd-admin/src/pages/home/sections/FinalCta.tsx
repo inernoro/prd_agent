@@ -1,5 +1,5 @@
 import { ArrowRight, Sparkles, Star } from 'lucide-react';
-import { HERO_GRADIENT } from './HeroSection';
+import { HERO_GRADIENT, HERO_GRADIENT_FG } from './HeroSection';
 import { Reveal } from '../components/Reveal';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -26,7 +26,7 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            'radial-gradient(ellipse 80% 60% at 50% 50%, rgba(124, 108, 240, 0.22) 0%, rgba(122, 140, 246, 0.08) 40%, transparent 70%)',
+            'radial-gradient(ellipse 80% 60% at 50% 50%, rgba(217, 119, 87, 0.22) 0%, rgba(224, 160, 107, 0.08) 40%, transparent 70%)',
         }}
       />
 
@@ -36,18 +36,18 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
             className="inline-flex items-center gap-2 mb-7 px-3.5 py-1.5 rounded-md"
             style={{
               fontFamily: 'var(--font-terminal)',
-              background: 'rgba(139, 92, 246, 0.07)',
-              border: '1px solid rgba(139, 92, 246, 0.32)',
-              boxShadow: '0 0 22px rgba(139, 92, 246, 0.22)',
+              background: 'rgba(200, 98, 58, 0.07)',
+              border: '1px solid rgba(200, 98, 58, 0.32)',
+              boxShadow: '0 0 22px rgba(200, 98, 58, 0.22)',
             }}
           >
-            <Star className="w-3.5 h-3.5 text-violet-300" />
+            <Star className="w-3.5 h-3.5 text-[#E0A06B]" />
             <span
               className="text-[12.5px] uppercase"
               style={{
-                color: '#C4B5FD',
+                color: '#EEC4A5',
                 letterSpacing: '0.2em',
-                textShadow: '0 0 10px rgba(139, 92, 246, 0.55)',
+                textShadow: '0 0 10px rgba(200, 98, 58, 0.55)',
               }}
             >
               {t.cta.eyebrow}
@@ -64,7 +64,7 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
               lineHeight: 1.02,
               letterSpacing: '-0.035em',
               textShadow:
-                '0 0 40px rgba(122, 140, 246, 0.35), 0 0 100px rgba(168, 85, 247, 0.25)',
+                '0 0 40px rgba(224, 160, 107, 0.35), 0 0 100px rgba(200, 98, 58, 0.25)',
             }}
           >
             {t.cta.title}
@@ -81,11 +81,12 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
           <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
             <button
               onClick={onGetStarted}
-              className="group relative inline-flex items-center gap-2.5 h-14 px-10 rounded-full font-medium text-[15px] text-white transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
+              className="group relative inline-flex items-center gap-2.5 h-14 px-10 rounded-full font-medium text-[15px] transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
               style={{
                 background: HERO_GRADIENT,
+                color: HERO_GRADIENT_FG,
                 boxShadow:
-                  '0 0 60px rgba(124, 108, 240, 0.42), 0 0 140px rgba(122, 140, 246, 0.2), 0 12px 36px rgba(0, 0, 0, 0.55)',
+                  '0 0 60px rgba(217, 119, 87, 0.42), 0 0 140px rgba(224, 160, 107, 0.2), 0 12px 36px rgba(0, 0, 0, 0.55)',
                 letterSpacing: '0.01em',
                 fontFamily: 'var(--font-display)',
               }}

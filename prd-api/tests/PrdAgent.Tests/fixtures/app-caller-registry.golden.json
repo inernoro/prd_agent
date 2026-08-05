@@ -642,6 +642,18 @@
     ]
   },
   {
+    "code": "review-agent.requirement-assessment.column-mapping::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "review-agent.requirement-assessment::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "review-agent.review::chat",
     "modelTypes": [
       "chat"
@@ -895,6 +907,12 @@
   },
   {
     "code": "visual-agent.image.img2img::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.image.layering::generation",
     "modelTypes": [
       "generation"
     ]

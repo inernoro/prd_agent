@@ -129,6 +129,11 @@ export interface CanvasImageItem {
   text?: string;
   fontSize?: number;
   textColor?: string;
+  /** AI 语义分层 Frame 元数据。图层本身仍是可独立编辑的普通图片。 */
+  layerGroupId?: string;
+  layerSourceKey?: string;
+  layerIndex?: number;
+  layerRole?: 'source' | 'layer';
 }
 
 export interface ImageAsset {
@@ -216,7 +221,12 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
         refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
         // 持久化 runId，用于刷新页面后同步状态
         runId: isPlaceholder && it.runId ? String(it.runId).trim() : undefined,
-        ext: {},
+        ext: {
+          layerGroupId: it.layerGroupId,
+          layerSourceKey: it.layerSourceKey,
+          layerIndex: it.layerIndex,
+          layerRole: it.layerRole,
+        },
       });
     } else if (kind === 'generator') {
       els.push({
@@ -296,6 +306,8 @@ export function persistedV1ToCanvas(
       }
 
       const prompt = String(el.name ?? a?.prompt ?? '').trim();
+      const ext = el.ext && typeof el.ext === 'object' ? el.ext : {};
+      const layerRole = ext.layerRole === 'source' || ext.layerRole === 'layer' ? ext.layerRole : undefined;
       out.push({
         key: id,
         assetId: aid || a?.id,
@@ -318,6 +330,10 @@ export function persistedV1ToCanvas(
         refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
         // 恢复持久化的 runId，用于刷新页面后同步状态
         runId: isPlaceholder && el.runId ? String(el.runId).trim() : undefined,
+        layerGroupId: typeof ext.layerGroupId === 'string' ? ext.layerGroupId : undefined,
+        layerSourceKey: typeof ext.layerSourceKey === 'string' ? ext.layerSourceKey : undefined,
+        layerIndex: typeof ext.layerIndex === 'number' && Number.isFinite(ext.layerIndex) ? ext.layerIndex : undefined,
+        layerRole,
       });
     } else if (el.kind === 'generator') {
       out.push({

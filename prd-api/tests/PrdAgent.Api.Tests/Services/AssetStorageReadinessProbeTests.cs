@@ -44,7 +44,7 @@ public sealed class AssetStorageReadinessProbeTests
         storage.DeleteCount.ShouldBe(1);
         storage.ObjectCount.ShouldBe(0);
         storage.LastUploadKey.ShouldEndWith(".m4a");
-        storage.LastUploadContentType.ShouldBe("audio/mp4");
+        storage.LastUploadContentType.ShouldBe("audio/mp4;codecs=mp4a.40.2");
         storage.LastUploadCacheControl.ShouldBeNull();
         storage.LastUploadBytes.ShouldNotBeNull();
         storage.LastUploadBytes.Length.ShouldBe(AssetStorageReadinessProbe.RepresentativePayloadBytes);

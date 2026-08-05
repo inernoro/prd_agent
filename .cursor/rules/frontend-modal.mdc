@@ -5,10 +5,13 @@ description: 模态框 3 硬约束：inline style 高度 + createPortal + min-h:
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/frontend-modal.md
-     生成时间: 2026-06-24T19:54:22Z -->
+     生成时间: 2026-08-04T11:22:36Z -->
 
 
 # 前端模态框布局硬约束
+
+**一句话**：浮层必须满足三条物理约束：高度写 inline style、createPortal 挂到 body、滚动容器带 min-height 0，否则内容一多就撑破屏幕。
+**什么时候撞上**：新增或改动任何 Modal、Drawer、Popover、Toast。
 
 任何浮层组件（Modal / Dialog / Drawer / Popover / Toast）都必须满足 3 条物理约束，否则会在内容增多时超出屏幕。**不是 Tailwind 类名技巧，是物理要求**。
 
@@ -21,13 +24,13 @@ description: 模态框 3 硬约束：inline style 高度 + createPortal + min-h:
 **理由**：Tailwind v4（`@tailwindcss/vite` + Oxide 引擎）在不同构建模式下对 arbitrary value 的扫描行为有差异；v3 JIT 也有边缘情况。布局关键尺寸一旦没生效，视觉表现就是"内容撑破屏幕"。inline style 直接走 DOM，不受任何 CSS 预处理 / 类名扫描 / 构建缓存影响。
 
 ```tsx
-// ✅ 正确
+// 正确
 <div
   style={{ height: '90vh', maxHeight: '90vh' }}
   className="rounded-xl border border-white/10 bg-[#0f1014]"
 >
 
-// ❌ 错误（布局关键类走 Tailwind arbitrary value）
+// 错误（布局关键类走 Tailwind arbitrary value）
 <div className="h-[90vh] max-h-[90vh] rounded-xl ...">
 ```
 
@@ -59,7 +62,7 @@ export function MyModal({ onClose }: Props) {
 Flex 子元素的 `min-height` 默认是 `auto`，这会阻止它收缩到内容尺寸以下，导致 `overflow-auto` **不生效**（子元素把父容器撑开，overflow 没机会触发）。必须显式设 `min-height: 0`。
 
 ```tsx
-// ✅ 正确
+// 正确
 <div className="flex flex-col" style={{ height: '90vh' }}>
   <Header />  {/* shrink-0 */}
   <TabBar />  {/* shrink-0 */}
@@ -75,7 +78,7 @@ Flex 子元素的 `min-height` 默认是 `auto`，这会阻止它收缩到内容
   </div>
 </div>
 
-// ❌ 错误（缺 min-h-0，overflow-auto 失效，内容撑破父容器）
+// 错误（缺 min-h-0，overflow-auto 失效，内容撑破父容器）
 <div className="flex flex-col h-[90vh]">
   <Header />
   <div className="flex-1 overflow-auto">{longContent}</div>

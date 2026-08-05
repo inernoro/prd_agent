@@ -666,6 +666,7 @@ builder.Services.AddHttpClient("AssetStorageReadiness", client =>
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
+builder.Services.AddSingleton<IRequirementExcelParser, RequirementExcelParser>();
 
 // 海鲜市场「技能包」zip 元数据解析
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.MarketplaceSkills.SkillZipMetadataExtractor>();

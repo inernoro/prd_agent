@@ -108,8 +108,8 @@ export function DocEmptyState(props: DocEmptyStateProps) {
               onClick={onCreateDocument}
               className="inline-flex items-center gap-1.5 transition-opacity hover:opacity-90"
               style={{
-                background: 'var(--accent-primary, #818cf8)',
-                color: '#fff',
+                background: 'var(--button-primary-bg)',
+                color: 'var(--button-primary-fg)',
                 borderRadius: 8,
                 padding: '7px 14px',
                 fontSize: 13,

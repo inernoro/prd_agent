@@ -8,12 +8,20 @@ import {
 const STORE_ID = 'recording-acceptance-store';
 const ENTRY_ID = 'recording-acceptance-entry';
 const SESSION_ID = 'recording-acceptance-session';
-const LONG_TRANSCRIPT = Array.from(
+const TRANSCRIPT_SEGMENTS = Array.from(
   { length: 18 },
   (_, index) => `验收注入第 ${index + 1} 段：录音文字增加时，波形与结束按钮必须始终可见。`,
-).join('');
+);
+const LONG_TRANSCRIPT = TRANSCRIPT_SEGMENTS.join('');
 
-const now = '2026-07-31T03:45:00.000Z';
+// 归档状态会按条目创建时间判断是否停滞。夹具必须相对测试启动时间生成，
+// 否则固定历史日期会随着时间推移自动落入“等待重试”，让发布门禁自然腐烂。
+const fixtureStartedAtMs = Date.now();
+const now = new Date(fixtureStartedAtMs).toISOString();
+const transcriptUpdatedAt = new Date(fixtureStartedAtMs + 1).toISOString();
+const archiveUpdatedAt = new Date(fixtureStartedAtMs + 2).toISOString();
+const uploadExpiresAt = new Date(fixtureStartedAtMs + 24 * 60 * 60 * 1000).toISOString();
+const fixtureDate = now.slice(0, 10);
 
 const store = {
   id: STORE_ID,
@@ -72,7 +80,16 @@ function json(route: Route, data: unknown) {
 }
 
 async function installRecordingBrowserFakes(page: Page) {
-  await page.addInitScript(({ transcript }) => {
+  await page.addInitScript(({ segments }) => {
+    const transcript = segments.join('');
+    const acceptanceWindow = window as typeof window & {
+      __recordingAcceptanceLiveEvents?: Array<{
+        kind: 'partial' | 'final';
+        segmentCount: number;
+        at: number;
+      }>;
+    };
+    acceptanceWindow.__recordingAcceptanceLiveEvents = [];
     localStorage.setItem('prd-admin-auth', JSON.stringify({
       state: {
         isAuthenticated: true,
@@ -111,16 +128,23 @@ async function installRecordingBrowserFakes(page: Page) {
       mimeType = 'audio/webm';
       ondataavailable: ((event: { data: Blob }) => void) | null = null;
       onstop: (() => void | Promise<void>) | null = null;
+      timers: number[] = [];
 
       start() {
         this.state = 'recording';
-        window.setTimeout(() => {
-          this.ondataavailable?.({ data: new Blob(['recording-acceptance-audio'], { type: this.mimeType }) });
-        }, 30);
+        [30, 190, 350, 700].forEach((delay, index) => {
+          this.timers.push(window.setTimeout(() => {
+            this.ondataavailable?.({
+              data: new Blob([`recording-acceptance-audio-${index}`], { type: this.mimeType }),
+            });
+          }, delay));
+        });
       }
 
       stop() {
         this.state = 'inactive';
+        this.timers.forEach(timer => window.clearTimeout(timer));
+        this.timers = [];
         this.ondataavailable?.({ data: new Blob(['recording-acceptance-tail'], { type: this.mimeType }) });
         window.setTimeout(() => { void this.onstop?.(); }, 0);
       }
@@ -144,6 +168,7 @@ async function installRecordingBrowserFakes(page: Page) {
       onmessage: ((event: MessageEvent) => void) | null = null;
       onerror: ((event: Event) => void) | null = null;
       onclose: ((event: CloseEvent) => void) | null = null;
+      timers: number[] = [];
 
       constructor() {
         super();
@@ -152,14 +177,40 @@ async function installRecordingBrowserFakes(page: Page) {
           const openEvent = new Event('open');
           this.onopen?.(openEvent);
           this.dispatchEvent(openEvent);
-          this.onmessage?.(new MessageEvent('message', {
-            data: JSON.stringify({ type: 'partial', text: transcript, stable: true }),
-          }));
+          [
+            { segmentCount: 3, delay: 30 },
+            { segmentCount: 6, delay: 110 },
+            { segmentCount: 9, delay: 230 },
+            { segmentCount: 12, delay: 590 },
+            { segmentCount: 15, delay: 750 },
+            { segmentCount: 18, delay: 910 },
+          ].forEach(({ segmentCount, delay }) => {
+            this.timers.push(window.setTimeout(() => {
+              if (this.readyState !== AcceptanceWebSocket.OPEN) return;
+              acceptanceWindow.__recordingAcceptanceLiveEvents?.push({
+                kind: 'partial',
+                segmentCount,
+                at: performance.now(),
+              });
+              this.onmessage?.(new MessageEvent('message', {
+                data: JSON.stringify({
+                  type: 'partial',
+                  text: segments.slice(0, segmentCount).join(''),
+                  stable: true,
+                }),
+              }));
+            }, delay));
+          });
         }, 10);
       }
 
       send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
         if (typeof data !== 'string' || !data.includes('"finish"')) return;
+        acceptanceWindow.__recordingAcceptanceLiveEvents?.push({
+          kind: 'final',
+          segmentCount: segments.length,
+          at: performance.now(),
+        });
         this.onmessage?.(new MessageEvent('message', {
           data: JSON.stringify({ type: 'final', text: transcript, stable: true }),
         }));
@@ -167,6 +218,8 @@ async function installRecordingBrowserFakes(page: Page) {
 
       close() {
         this.readyState = AcceptanceWebSocket.CLOSED;
+        this.timers.forEach(timer => window.clearTimeout(timer));
+        this.timers = [];
       }
     }
 
@@ -202,7 +255,7 @@ async function installRecordingBrowserFakes(page: Page) {
     Object.defineProperty(window, 'Audio', { configurable: true, value: AcceptanceAudio });
     Object.defineProperty(window, 'AudioContext', { configurable: true, value: undefined });
     Object.defineProperty(window, 'webkitAudioContext', { configurable: true, value: undefined });
-  }, { transcript: LONG_TRANSCRIPT });
+  }, { segments: TRANSCRIPT_SEGMENTS });
 }
 
 type RecordingFixtureOptions = {
@@ -232,10 +285,10 @@ async function installApiFixture(
     ? {
         ...pendingEntry,
         metadata: { ...pendingEntry.metadata, audioArchiveStatus: 'completed' },
-        updatedAt: '2026-07-31T03:46:00.000Z',
+        updatedAt: archiveUpdatedAt,
       }
     : transcriptReady()
-      ? { ...pendingEntry, updatedAt: '2026-07-31T03:45:30.000Z' }
+      ? { ...pendingEntry, updatedAt: transcriptUpdatedAt }
       : pendingEntry;
   await page.route('**/api/**', async (route) => {
     const request = route.request();
@@ -253,8 +306,8 @@ async function installApiFixture(
     }
     if (path === '/api/changelog/current-week') {
       return json(route, {
-        weekStart: '2026-07-31',
-        weekEnd: '2026-07-31',
+        weekStart: fixtureDate,
+        weekEnd: fixtureDate,
         dataSourceAvailable: true,
         source: 'local',
         fetchedAt: now,
@@ -300,7 +353,7 @@ async function installApiFixture(
         sessionId: SESSION_ID,
         nextChunkIndex: 0,
         uploadedBytes: 0,
-        expiresAt: '2026-08-01T03:45:00.000Z',
+        expiresAt: uploadExpiresAt,
       });
     }
     if (path.startsWith(`/api/document-store/recording-uploads/${SESSION_ID}/chunks/`) && method === 'POST') {
@@ -342,8 +395,11 @@ async function installApiFixture(
           : null,
         liveTranscriptStatus: 'completed',
         liveTranscript: LONG_TRANSCRIPT,
-        expiresAt: '2026-08-01T03:45:00.000Z',
+        expiresAt: uploadExpiresAt,
       });
+    }
+    if (path === `/api/document-store/entries/${ENTRY_ID}/recording-archive/retry` && method === 'POST') {
+      return json(route, { queued: true, completed: false });
     }
     if (path === `/api/document-store/entries/${ENTRY_ID}/content` && method === 'GET') {
       return json(route, {
@@ -459,9 +515,39 @@ test.describe('录音连续性发布门禁', () => {
     const transcript = page.getByTestId('recording-live-transcript');
     const waveform = page.getByTestId('recording-waveform');
     const finish = page.getByTestId('recording-finish');
-    await expect(transcript).toContainText('验收注入第 18 段');
+    await expect(transcript).toContainText('验收注入第 3 段');
+    await expect(transcript).not.toContainText('验收注入第 18 段');
     await expect(waveform).toBeVisible();
     await expect(finish).toBeInViewport();
+
+    await expect.poll(async () => page.evaluate(() => {
+      const acceptanceWindow = window as typeof window & {
+        __recordingAcceptanceLiveEvents?: Array<{ kind: string; segmentCount: number }>;
+      };
+      return acceptanceWindow.__recordingAcceptanceLiveEvents
+        ?.filter(event => event.kind === 'partial')
+        .at(-1)?.segmentCount ?? 0;
+    })).toBe(9);
+    await expect(transcript).toContainText('验收注入第 9 段');
+    await expect(transcript).not.toContainText('验收注入第 18 段');
+    await expect(waveform).toBeVisible();
+    await expect(finish).toBeInViewport();
+
+    await expect(transcript).toContainText('验收注入第 18 段', { timeout: 2_000 });
+    const liveEventsBeforeFinish = await page.evaluate(() => {
+      const acceptanceWindow = window as typeof window & {
+        __recordingAcceptanceLiveEvents?: Array<{
+          kind: 'partial' | 'final';
+          segmentCount: number;
+          at: number;
+        }>;
+      };
+      return acceptanceWindow.__recordingAcceptanceLiveEvents ?? [];
+    });
+    expect(liveEventsBeforeFinish.filter(event => event.kind === 'partial').map(event => event.segmentCount))
+      .toEqual([3, 6, 9, 12, 15, 18]);
+    expect(liveEventsBeforeFinish.filter(event => event.kind === 'final')).toHaveLength(0);
+    expect(liveEventsBeforeFinish.at(-1)!.at).toBeGreaterThan(liveEventsBeforeFinish[0].at);
 
     const layout = await transcript.evaluate((element) => ({
       clientHeight: element.clientHeight,
@@ -525,6 +611,12 @@ test.describe('录音连续性发布门禁', () => {
 
     await expect(backgroundProgress).toContainText('云端服务暂时不可用，已排队重试');
     await expect(backgroundProgress).toContainText('不需要停在本页等待');
+    const manualRetry = page.getByRole('button', { name: '立即重试' });
+    await expect(manualRetry).toBeVisible();
+    await manualRetry.click();
+    await expect.poll(() => apiRequests.filter(request => (
+      request === `POST /api/document-store/entries/${ENTRY_ID}/recording-archive/retry`
+    )).length).toBe(1);
     await backgroundProgress.scrollIntoViewIfNeeded();
     await attachViewport(page, testInfo, '05b-cloud-retry-is-non-blocking');
     const beforeManualReload = await readContinuityProbe(page);
@@ -574,12 +666,23 @@ test.describe('录音连续性发布门禁', () => {
         requirements: [
           { id: 'recording-entry', result: 'pass', evidence: '快速创建首屏可见快速录音入口' },
           { id: 'long-transcript-layout', result: 'pass', evidence: '18 段原文滚动且波形、结束按钮仍在视口' },
+          {
+            id: 'live-transcript-midpoint-continuity',
+            result: 'pass',
+            evidence: {
+              partialSegmentCounts: liveEventsBeforeFinish
+                .filter(event => event.kind === 'partial')
+                .map(event => event.segmentCount),
+              finalEventsBeforeFinish: liveEventsBeforeFinish.filter(event => event.kind === 'final').length,
+            },
+          },
           { id: 'finish-to-result', result: 'pass', evidence: '结束后 URL 保持同一 storeId 与 entryId' },
           { id: 'first-feedback', result: 'pass', evidence: { firstFeedbackMs, limitMs: 2_000 } },
           { id: 'first-usable-result', result: 'pass', evidence: { firstUsableResultMs, limitMs: 4_000 } },
           { id: 'local-playback', result: 'pass', evidence: '云端归档期间播放器可用且能进入暂停态' },
           { id: 'single-content-mode', result: 'pass', evidence: '仅有原文时不存在名为原文的单独按钮' },
           { id: 'failure-degradation', result: 'pass', evidence: '云端失败时已有播放与原文保留，并说明自动重试' },
+          { id: 'manual-retry', result: 'pass', evidence: '立即重试按钮可见且只发起一次归档重试请求' },
           { id: 'recovery-in-place', result: 'pass', evidence: '恢复时内容加载层出现 0 次，页面未离开' },
           { id: 'refresh-restore', result: 'pass', evidence: '手动刷新后 URL 与任务身份不变，无 history 循环' },
         ],

@@ -1,3 +1,13 @@
+---
+paths:
+  - "docker-compose*.yml"
+  - "**/appsettings*.json"
+  - ".env*"
+  - "deploy/nginx/**/*"
+  - "scripts/**/*.sh"
+  - "scripts/**/*.py"
+---
+
 # 声明态与运行态漂移（Config-Runtime Drift）
 
 **一句话**：改的是源头，生效的是副本——改完配置必须让所有持有者重新读一遍（recreate 而非 restart），并 reload 指向它的代理。

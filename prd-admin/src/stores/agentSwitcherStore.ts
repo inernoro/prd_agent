@@ -175,6 +175,17 @@ const SYNC_DEBOUNCE_MS = 800;
 
 const MAX_RECENT_VISITS = 20;
 
+/**
+ * 水合完成前发生的访问，等远端数据回来后补回去。
+ *
+ * 竞态很窄但真实：AppShell 一进页就异步 loadFromServer，用户手快先点了一个
+ * 智能体——此时 serverLoaded 还是 false，scheduleSync 直接 return（不回写，
+ * 防止空态覆盖云端），紧接着水合成功又用远端值整体替换 recentVisits/usageCounts。
+ * 那一次点击连同它的计数就这么被抹掉了，而且用户无从察觉。
+ * 所以先攒着，水合落地后按同样的规则重放一遍。
+ */
+let pendingVisits: RecentVisit[] = [];
+
 export const useAgentSwitcherStore = create<AgentSwitcherState>()(
   persist(
     (set, get) => {
@@ -189,6 +200,22 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
           pendingSyncTimer = null;
           void get().flushToServer();
         }, SYNC_DEBOUNCE_MS);
+      };
+
+      /**
+       * 拉取失败的统一收尾（HTTP 抛错 与 `success:false` 走同一条）。
+       *
+       * 失败时本地状态就是唯一的真相，所以三件事都得做：标记「尝试过」让后续
+       * mutation 能回写、清掉水合队列（它只在水合窗口内有意义）、本地非空就立刻
+       * 推一次——否则水合期间那次点击只活在本设备上，换台机器就没了。
+       *
+       * 两条失败路径以前各写各的，`success:false` 那条漏了后两件事。语义相同的
+       * 收尾必须共用一份，分开写迟早再漂一次。
+       */
+      const settleFailedLoad = () => {
+        pendingVisits = [];
+        set({ serverLoading: false, serverLoaded: true });
+        if (get().recentVisits.length > 0) scheduleSync();
       };
 
       return {
@@ -241,6 +268,10 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
             recentVisits: updated,
             usageCounts: { ...usageCounts, [id]: (usageCounts[id] ?? 0) + 1 },
           });
+          // 还没水合完 → 记进待合并队列，否则等远端数据回来会把这次点击抹掉
+          if (!get().serverLoaded) {
+            pendingVisits = [...pendingVisits, newVisit].slice(-MAX_RECENT_VISITS);
+          }
           scheduleSync();
         },
 
@@ -272,6 +303,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
         },
 
         resetServerSync: () => {
+          pendingVisits = [];
           if (pendingSyncTimer) {
             clearTimeout(pendingSyncTimer);
             pendingSyncTimer = null;
@@ -287,7 +319,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
             const res = await getUserPreferences();
             if (!res.success) {
               // 拉取失败保持本地缓存，标记为已尝试（避免无限重试打后端）
-              set({ serverLoading: false, serverLoaded: true });
+              settleFailedLoad();
               return;
             }
             const remote = res.data?.agentSwitcherPreferences;
@@ -325,15 +357,34 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
                   remotePinSeen.add(id);
                   return true;
                 });
+              // 水合期间发生的点击按同样的规则重放到远端数据之上——
+              // 直接覆盖会把它们连同计数一起抹掉。
+              // 只重放本地仍然在册的：队列是「水合开始以来用户做了什么」的流水，
+              // 本地已经没有的（登出清空、测试重置）就是过期条目，重放它等于凭空造记录。
+              const localIds = new Set(get().recentVisits.map((v) => migrateLegacyNavId(v.id)));
+              const replay = pendingVisits.filter((v) => localIds.has(v.id));
+              let mergedVisits = dedupVisits;
+              const mergedUsage = { ...remoteUsage };
+              for (const visit of replay) {
+                mergedVisits = [visit, ...mergedVisits.filter((v) => migrateLegacyNavId(v.id) !== visit.id)]
+                  .slice(0, MAX_RECENT_VISITS);
+                mergedUsage[visit.id] = (mergedUsage[visit.id] ?? 0) + 1;
+              }
+              const hadPending = replay.length > 0;
+              pendingVisits = [];
+
               set({
                 pinnedIds: remotePins,
-                recentVisits: dedupVisits,
-                usageCounts: remoteUsage,
+                recentVisits: mergedVisits,
+                usageCounts: mergedUsage,
                 serverLoaded: true,
                 serverLoading: false,
               });
+              // 重放出来的增量得推回服务端，否则换台设备又没了
+              if (hadPending) scheduleSync();
             } else {
               // 服务端空 → 保留本地，并把本地 push 上去防止下次丢
+              pendingVisits = [];
               set({ serverLoaded: true, serverLoading: false });
               const { pinnedIds, recentVisits, usageCounts } = get();
               const hasLocal =
@@ -345,7 +396,7 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
               }
             }
           } catch {
-            set({ serverLoading: false, serverLoaded: true });
+            settleFailedLoad();
           }
         },
 
@@ -447,6 +498,8 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
 // 登出时同步清空最近访问/使用/置顶 + 重置 serverLoaded 标志，
 // 避免切换账号后下个用户看到旧用户的命令面板数据
 registerLogoutReset(() => {
+  // 待合并队列也要清：换号登录后重放上一位用户的点击会把他的足迹带进新账号
+  pendingVisits = [];
   useAgentSwitcherStore.getState().resetServerSync();
   useAgentSwitcherStore.setState({ recentVisits: [], usageCounts: {}, pinnedIds: [] });
 });
