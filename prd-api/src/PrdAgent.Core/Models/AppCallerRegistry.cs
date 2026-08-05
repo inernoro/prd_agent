@@ -1095,7 +1095,7 @@ public static class ChatAgent
     [AppCallerMetadata(
         "通用对话-对话内出图",
         "用户在对话里说「画一张」时触发，转发给平台已有的出图流水线",
-        ModelTypes = new[] { ModelTypes.Generation },
+        ModelTypes = new[] { ModelTypes.ImageGen },
         Category = "Chat"
     )]
     public const string ImageGeneration = "chat-agent.image-gen::generation";
