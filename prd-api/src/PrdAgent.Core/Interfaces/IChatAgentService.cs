@@ -35,6 +35,16 @@ public interface IChatAgentService
     /// <summary>后台 worker 调用：真正把这一轮转给运行时并把事件写回。</summary>
     Task RunTurnAsync(string sessionId, string turnId, CancellationToken ct);
 
+    /// <summary>
+    /// 启动收敛：把上一次进程留下的「还在跑」的轮次判死。
+    ///
+    /// 硬杀（OOM / 容器直接替换）时没有任何代码有机会跑收尾，会话的 RunningTurnId
+    /// 会永远留着——页面一直显示在跑、再也发不出下一句，只能删会话。这一步是它的唯一出路。
+    /// 只收本部署作用域内、且开始时间早于本进程启动的轮次（共享库里别人的轮次不许碰）。
+    /// </summary>
+    /// <returns>被判死的轮次数。</returns>
+    Task<int> ReconcileInterruptedTurnsAsync(DateTime processStartedAt, CancellationToken ct);
+
     /// <summary>按序号读事件，用于 SSE 续订。</summary>
     Task<ChatAgentEventPage> ReadEventsAsync(
         string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);

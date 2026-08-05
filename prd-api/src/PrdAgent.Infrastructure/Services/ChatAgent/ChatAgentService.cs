@@ -342,6 +342,51 @@ public sealed class ChatAgentService : IChatAgentService
         }
     }
 
+    public async Task<int> ReconcileInterruptedTurnsAsync(DateTime processStartedAt, CancellationToken ct)
+    {
+        // 只认本部署作用域：共享 Mongo 里跑着别的分支预览与生产，
+        // 无差别清空会把别人正在跑的轮次判死（cross-project-isolation 通道 8）。
+        var scope = DeploymentScope.Current;
+        var stuck = await _db.ChatAgentSessions
+            .Find(Builders<ChatAgentSession>.Filter.Ne(s => s.RunningTurnId, null)
+                  & Builders<ChatAgentSession>.Filter.Eq(s => s.DeploymentSlug, scope)
+                  // 早于本进程启动 = 上一个进程留下的。本进程自己刚接下的轮次不会落进
+                  // 这个窗口，不存在「启动瞬间把新轮次误杀」。
+                  // 已知边界：同一作用域跑多个实例时，后启动的实例会把先启动实例正在跑的
+                  // 轮次判死。当前部署形态是「一个作用域一个容器」，成立；真要横向扩容，
+                  // 这里要换成心跳过期收割（concurrency-gate-discipline 第 4 件套）。
+                  & Builders<ChatAgentSession>.Filter.Lt(s => s.UpdatedAt, processStartedAt))
+            .Limit(500)
+            .ToListAsync(ct);
+
+        var healed = 0;
+        foreach (var session in stuck)
+        {
+            var turnId = session.RunningTurnId;
+            if (string.IsNullOrEmpty(turnId)) continue;
+            try
+            {
+                var partial = await _db.ChatAgentMessages
+                    .Find(AssistantOfTurn(session.Id, turnId))
+                    .FirstOrDefaultAsync(ct);
+
+                await FailTurnAsync(session.Id, turnId, partial?.Content ?? string.Empty,
+                    "server_restart", "上一轮被服务重启打断了，可以重新发一次。", CancellationToken.None);
+                healed++;
+            }
+            catch (Exception ex)
+            {
+                // 一条收不动不该挡住其余的：会话卡住的代价远大于日志里多一行。
+                _logger.LogError(ex, "[ChatAgent] 启动收敛失败 session={SessionId} turn={TurnId}", session.Id, turnId);
+            }
+        }
+
+        if (healed > 0)
+            _logger.LogWarning("[ChatAgent] 启动收敛：{Count} 轮被上次重启打断，已判死并放开会话", healed);
+
+        return healed;
+    }
+
     // ──────────────────────────────────────────────────────────────
     // 事件读取（SSE 续订用）
     // ──────────────────────────────────────────────────────────────
