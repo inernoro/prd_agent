@@ -1034,6 +1034,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 ToolUseId = TryStr(root, "tool_use_id"),
                 ToolInput = TryClone(root, "tool_input"),
                 Content = TryStrOrJson(root, "content"),
+                IsError = TryReadBool(root, "is_error"),
                 FinalText = TryStr(root, "final_text"),
                 InputTokens = TryLong(root, "input_tokens"),
                 OutputTokens = TryLong(root, "output_tokens"),

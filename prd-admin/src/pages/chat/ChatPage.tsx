@@ -55,6 +55,12 @@ export function ChatPage() {
   const abortRef = useRef<AbortController | null>(null);
   const streamEndRef = useRef<HTMLDivElement | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  /**
+   * 刚由「发送」这一步新建出来的会话 id。切会话的副作用会清空消息再从服务端重拉，
+   * 而这一步紧接着就要画上乐观气泡——不打这个标记的话，用户自己那句话会被副作用
+   * 当场抹掉（新会话服务端还没有任何消息可拉回来），直到刷新才重新出现。
+   */
+  const freshSessionRef = useRef<string | null>(null);
 
   activeIdRef.current = activeId;
 
@@ -81,6 +87,12 @@ export function ChatPage() {
 
   // ── 切换会话：拉历史 + 接事件流 ──────────────────────────
   useEffect(() => {
+    // 新建即发送的这一次由 handleSend 自己接管（乐观气泡 + 起订序号 + 开流），
+    // 这里不要插手，否则等于把用户刚说的那句话擦掉。
+    if (activeId && freshSessionRef.current === activeId) {
+      freshSessionRef.current = null;
+      return;
+    }
     abortRef.current?.abort();
     abortRef.current = null;
     setMessages([]);
@@ -228,7 +240,14 @@ export function ChatPage() {
       }
       sessionId = created.data.item.id;
       setSessions((prev) => [created.data!.item, ...prev]);
+      // 先打标记再切 activeId，副作用跑到时才认得出「这一次不用重拉」。
+      freshSessionRef.current = sessionId;
       setActiveId(sessionId);
+      // 切会话的副作用被跳过了，属于它的现场重置在这里补上。
+      abortRef.current?.abort();
+      abortRef.current = null;
+      setMessages([]);
+      seqRef.current = 0;
     }
 
     setSending(true);

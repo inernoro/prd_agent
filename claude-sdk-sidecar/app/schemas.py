@@ -84,3 +84,6 @@ class SidecarEvent(BaseModel):
     error_code: Optional[str] = None
     message: Optional[str] = None
     turn: Optional[int] = None
+    # 工具结果是成是败。历史上这个信息只进了给模型看的历史，没进 SSE 事件，
+    # 于是消费方无从分辨——失败的工具会被当成成功展示。
+    is_error: Optional[bool] = None

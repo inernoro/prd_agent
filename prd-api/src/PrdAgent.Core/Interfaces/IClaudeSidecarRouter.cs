@@ -70,6 +70,13 @@ public sealed class SidecarEvent
     public string? ToolUseId { get; init; }
     public System.Text.Json.JsonElement? ToolInput { get; init; }
     public string? Content { get; init; }
+
+    /// <summary>
+    /// 工具结果是成是败。null 表示运行时没给出这个信息（旧版本运行时），
+    /// 消费方此时不得默认当成功——那正是「失败的工具显示成完成」的来源。
+    /// </summary>
+    public bool? IsError { get; init; }
+
     public string? FinalText { get; init; }
     public long? InputTokens { get; init; }
     public long? OutputTokens { get; init; }

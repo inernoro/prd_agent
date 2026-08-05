@@ -230,6 +230,7 @@ async def run_agent(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
                     tool_use_id=use["id"],
                     tool_name=use["name"],
                     content=content,
+                    is_error=not ok,
                     turn=turn,
                 )
 

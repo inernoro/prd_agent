@@ -156,6 +156,18 @@
     ]
   },
   {
+    "code": "chat-agent.conversation::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "chat-agent.image-gen::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
     "code": "defect-agent.analyze-image::vision",
     "modelTypes": [
       "vision"
