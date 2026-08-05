@@ -1128,6 +1128,26 @@ public sealed class UpdateExchangeRequest
     public long? Version { get; set; }
 }
 
+public sealed class InstallImageLayeringCapabilityRequest
+{
+    public string? ApiKey { get; set; }
+}
+
+public sealed class ImageLayeringCapabilityStatus
+{
+    public string CapabilityId { get; set; } = "image-layering";
+    public string State { get; set; } = "not-installed";
+    public bool Installed { get; set; }
+    public bool Verified { get; set; }
+    public bool HasKey { get; set; }
+    public string? ExchangeId { get; set; }
+    public string? LogicalModelId { get; set; }
+    public string? OfferingId { get; set; }
+    public string ModelId { get; set; } = "fal-qwen-image-layered";
+    public string PublicId { get; set; } = "image-layering";
+    public string? LastVerifiedAt { get; set; }
+}
+
 // ── GW-owned API key 健康自检（不返回明文/密文/脱敏 key）──
 public sealed class KeyHealthData
 {

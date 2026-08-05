@@ -17,6 +17,8 @@ export type ImageGenImage = {
   index: number;
   base64?: string | null;
   url?: string | null;
+  originalUrl?: string | null;
+  originalSha256?: string | null;
   revisedPrompt?: string | null;
 };
 
@@ -72,9 +74,10 @@ export type ClarifyImageGenPromptContract = (input: {
 }) => Promise<ApiResponse<ImageGenClarifyResponse>>;
 
 export type GenerateImageGenContract = (input: {
-  modelId: string;
+  modelId?: string;
   platformId?: string;
   modelName?: string;
+  operation?: 'generate' | 'layering';
   prompt: string;
   n?: number;
   size?: string;

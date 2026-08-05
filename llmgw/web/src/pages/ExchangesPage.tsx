@@ -14,7 +14,7 @@
 //   - 本路由被 e2e/llmgw-layout-drift.mjs 监测：表单一律内联、DOM 保持扁平，
 //     不许把创建/编辑改成抽屉或对话框（EntityPreviewDrawer 是只读预览，另论）。
 import { useEffect, useState } from 'react';
-import { ArrowRight, CheckCircle2, KeyRound, Pencil, Plus, Route, Trash2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, KeyRound, Layers3, Pencil, Plus, Route, Trash2 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   bulkRotateApiKeys,
@@ -23,6 +23,8 @@ import {
   deleteExchangeApiKey,
   getExchangeMeta,
   getExchanges,
+  getImageLayeringCapability,
+  installImageLayeringCapability,
   rotateExchangeApiKey,
   updateExchange,
 } from '@/lib/api';
@@ -31,6 +33,7 @@ import type {
   ExchangeItem,
   ExchangeMetaData,
   ExchangeModelWriteRequest,
+  ImageLayeringCapabilityStatus,
   UpdateExchangeRequest,
 } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
@@ -109,6 +112,8 @@ export function ExchangesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ExchangeFormState>(emptyForm);
   const [savedItem, setSavedItem] = useState<ExchangeItem | null>(null);
+  const [layeringCapability, setLayeringCapability] = useState<ImageLayeringCapabilityStatus | null>(null);
+  const [layeringApiKey, setLayeringApiKey] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -128,6 +133,16 @@ export function ExchangesPage() {
       if (!alive) return;
       if (res.success) setMeta(res.data);
       else setError(res.error?.message || 'Exchange 配置选项加载失败');
+    });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    getImageLayeringCapability().then((res) => {
+      if (!alive) return;
+      if (res.success) setLayeringCapability(res.data);
+      else setError(res.error?.message || '图片分层能力状态加载失败');
     });
     return () => { alive = false; };
   }, []);
@@ -325,6 +340,29 @@ export function ExchangesPage() {
     }
   }
 
+  async function installLayeringCapability() {
+    const apiKey = layeringApiKey.trim();
+    if (!apiKey) {
+      setNotice('请填写 fal.ai API Key');
+      return;
+    }
+    setBusyId('install-image-layering');
+    setNotice(null);
+    const res = await installImageLayeringCapability(apiKey);
+    setBusyId(null);
+    if (!res.success) {
+      setNotice(res.error?.message || '图片分层能力安装失败');
+      return;
+    }
+    setLayeringCapability(res.data);
+    setLayeringApiKey('');
+    setNotice(res.data.verified
+      ? '图片分层能力已更新，并保留真实调用验证状态'
+      : '图片分层能力已安装。调用方通过 image-layering 发起首次真实请求后，这里会显示已验证。');
+    const exchanges = await getExchanges({ enabled: enabledOnly ? true : undefined });
+    if (exchanges.success) setItems(exchanges.data.items);
+  }
+
   return (
     <PageShell>
       <PageHeader
@@ -344,6 +382,67 @@ export function ExchangesPage() {
         {notice ? <InlineAlert tone="info">{notice}</InlineAlert> : null}
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
+
+        <section id="image-layering" aria-labelledby="image-layering-title" style={capabilitySectionStyle}>
+          <div style={sectionHeaderStyle}>
+            <span style={sectionIconStyle}><Layers3 size={16} /></span>
+            <strong id="image-layering-title" style={SECTION_TITLE}>fal.ai 图片分层</strong>
+            <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
+              <Chip
+                label={layeringCapability?.verified
+                  ? '调用已验证'
+                  : layeringCapability?.installed
+                    ? '已安装，等待验证'
+                    : layeringCapability?.state === 'incomplete'
+                      ? '配置不完整'
+                      : '未安装'}
+                color={layeringCapability?.verified ? 'var(--ok)' : layeringCapability?.installed ? 'var(--warn)' : 'var(--text-secondary)'}
+                bg={layeringCapability?.verified ? 'var(--ok-bg)' : layeringCapability?.installed ? 'var(--warn-bg)' : 'var(--bg-elevated)'}
+              />
+            </span>
+          </div>
+
+          <Card style={{ ...CARD_BODY, maxWidth: 840 }}>
+            <div style={capabilityMetaStyle}>
+              <span style={metaPairStyle}><span style={HINT_TEXT}>能力</span><code style={MONO_META}>{layeringCapability?.publicId || 'image-layering'}</code></span>
+              <span style={metaPairStyle}><span style={HINT_TEXT}>模型</span><code style={MONO_META}>{layeringCapability?.modelId || 'fal-qwen-image-layered'}</code></span>
+              {layeringCapability?.lastVerifiedAt ? <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>最近验证 {new Date(layeringCapability.lastVerifiedAt).toLocaleString()}</span> : null}
+            </div>
+            {canWrite ? (
+              <div style={capabilityFormStyle}>
+                <label htmlFor="fal-image-layering-key" style={{ ...FIELD_LABEL, flex: '1 1 360px' }}>
+                  <span style={rowStyle}>
+                    fal.ai API Key
+                    <HelpPopover label="安装说明">
+                      LLMGW 会创建原生 Exchange、公开逻辑能力和上游供给。它不绑定任何业务系统；保存不调用模型，首次真实请求才产生费用。
+                    </HelpPopover>
+                  </span>
+                  <input
+                    id="fal-image-layering-key"
+                    type="password"
+                    autoComplete="new-password"
+                    value={layeringApiKey}
+                    onChange={(event) => setLayeringApiKey(event.target.value)}
+                    placeholder={layeringCapability?.hasKey ? '输入新 Key 可更新凭据并修复能力配置' : '输入后加密保存，不会回显'}
+                    style={FIELD_INPUT}
+                  />
+                </label>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={busyId === 'install-image-layering'}
+                  onClick={() => void installLayeringCapability()}
+                >
+                  {busyId === 'install-image-layering'
+                    ? '安装中'
+                    : layeringCapability?.installed
+                      ? '更新凭据'
+                      : '安装能力'}
+                </Button>
+              </div>
+            ) : null}
+          </Card>
+        </section>
 
         {savedItem ? (
           <Card style={{ ...CARD_BODY, borderColor: 'color-mix(in srgb, var(--ok) 45%, var(--border-subtle))', background: 'var(--ok-bg)' }}>
@@ -374,6 +473,11 @@ export function ExchangesPage() {
             onCancel={closeForm}
           />
         ) : null}
+
+        <div style={sectionHeaderStyle}>
+          <span style={sectionIconStyle}><Route size={16} /></span>
+          <strong style={SECTION_TITLE}>Exchange</strong>
+        </div>
 
         <div style={toolbarStyle}>
           <label style={checkStyle}>
@@ -417,7 +521,7 @@ export function ExchangesPage() {
             </div>
           </Card>
         ) : (
-          <div style={listStyle}>
+          <div data-testid="exchange-list" style={listStyle}>
             {items.map((item) => {
               const enabled = boolChip(item.enabled, '已启用', '已停用');
               const key = boolChip(item.hasKey, '密钥已配置', '密钥缺失');
@@ -681,8 +785,58 @@ const rowStyle: React.CSSProperties = {
 
 const listStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 540px), 1fr))',
+  gridTemplateColumns: 'minmax(0, 1fr)',
   gap: GAP.section,
+};
+
+const capabilitySectionStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: GAP.normal,
+  width: '100%',
+  maxWidth: 840,
+};
+
+const sectionHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.normal,
+  minWidth: 0,
+};
+
+const sectionIconStyle: React.CSSProperties = {
+  width: 30,
+  height: 30,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+  borderRadius: 'var(--radius-sm)',
+  color: 'var(--accent)',
+  background: 'var(--accent-soft)',
+};
+
+const capabilityMetaStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: GAP.section,
+  paddingBottom: GAP.section,
+  borderBottom: '1px solid var(--border-subtle)',
+};
+
+const metaPairStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: GAP.tight,
+  minWidth: 0,
+};
+
+const capabilityFormStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-end',
+  flexWrap: 'wrap',
+  gap: GAP.normal,
+  marginTop: GAP.section,
 };
 
 const toolbarStyle: React.CSSProperties = {

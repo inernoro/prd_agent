@@ -5,6 +5,8 @@ import {
   Download,
   Expand,
   Eraser,
+  Layers,
+  LoaderCircle,
   Maximize,
   Paintbrush,
   Settings,
@@ -37,6 +39,9 @@ export type ImageQuickActionBarProps = {
   onOpenConfig?: () => void;
   /** 局部重绘 */
   onInpaint?: () => void;
+  /** 将当前图片拆成可复用的语义图层 */
+  onLayer?: () => void;
+  layering?: boolean;
 };
 
 /**
@@ -106,6 +111,8 @@ export function ImageQuickActionBar({
   onDownload,
   onOpenConfig,
   onInpaint,
+  onLayer,
+  layering = false,
 }: ImageQuickActionBarProps) {
   // 二次确认状态：记录待确认的 action id
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
@@ -173,6 +180,22 @@ export function ImageQuickActionBar({
           </div>
         );
       })}
+
+      {onLayer ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-2 h-[28px] rounded-[7px] text-[12px] font-medium whitespace-nowrap transition-colors hover-bg-soft disabled:opacity-55"
+          style={{ color: 'var(--text-primary)' }}
+          aria-label={layering ? 'AI 分层处理中' : 'AI 分层'}
+          aria-busy={layering}
+          disabled={layering}
+          title="拆成可独立编辑并重复使用的透明图层"
+          onClick={onLayer}
+        >
+          {layering ? <LoaderCircle size={14} className="animate-spin shrink-0" /> : <Layers size={14} className="shrink-0" />}
+          <span>{layering ? '分层中' : 'AI 分层'}</span>
+        </button>
+      ) : null}
 
       {/* 分隔线 */}
       <div className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.14)' }} />

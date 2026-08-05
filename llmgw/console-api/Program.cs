@@ -2750,6 +2750,180 @@ app.MapGet("/gw/exchanges/meta", () =>
     return Json(ApiEnvelope<ExchangeMetaData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// 图片分层能力：管理员只提交一次 fal.ai Key，LLMGW 幂等完成 Exchange 与通用逻辑能力发布。
+app.MapGet("/gw/capabilities/image-layering", async (HttpContext http) =>
+{
+    var status = await BuildImageLayeringCapabilityStatusAsync(
+        gwModelExchanges,
+        gwLogicalModels,
+        gwModelOfferings,
+        logs,
+        TenantAccess.GetRequired(http).TenantId,
+        http.RequestAborted);
+    return Json(ApiEnvelope<ImageLayeringCapabilityStatus>.Ok(status), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapPost("/gw/capabilities/image-layering/install", async (
+    HttpContext http,
+    [FromBody] InstallImageLayeringCapabilityRequest? body) =>
+{
+    var apiKey = body?.ApiKey?.Trim() ?? string.Empty;
+    if (apiKey.Length == 0)
+        return Json(ApiEnvelope<ImageLayeringCapabilityStatus>.Fail("INVALID_INPUT", "fal.ai API Key 不能为空"), jsonOptions, 400);
+    if (apiKey.Length > 20000)
+        return Json(ApiEnvelope<ImageLayeringCapabilityStatus>.Fail("INVALID_INPUT", "fal.ai API Key 长度超出限制"), jsonOptions, 400);
+
+    var access = TenantAccess.GetRequired(http);
+    var tenantId = access.TenantId;
+    string encryptedApiKey;
+    try
+    {
+        encryptedApiKey = GwApiKeyCrypto.Encrypt(apiKey, config);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Json(ApiEnvelope<ImageLayeringCapabilityStatus>.Fail("API_KEY_CRYPTO_NOT_READY", ex.Message), jsonOptions, 500);
+    }
+
+    var fb = Builders<BsonDocument>.Filter;
+    var now = DateTime.UtcNow;
+    var exchangeFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Or(
+            fb.Eq("TransformerType", FalImageLayeringProvisioning.TransformerType),
+            fb.Eq("NameNormalized", FalImageLayeringProvisioning.ExchangeNameNormalized)));
+    var existingExchange = await gwModelExchanges.Find(exchangeFilter).FirstOrDefaultAsync(http.RequestAborted);
+    var exchangeId = existingExchange?.GetStringOrEmpty("_id") is { Length: > 0 } existingExchangeId
+        ? existingExchangeId
+        : $"gw-exchange-{Guid.NewGuid():N}";
+    var exchangeDraft = FalImageLayeringProvisioning.CreateExchangeDraft(apiKey);
+    if (existingExchange is null)
+    {
+        var exchangeDocument = GatewayConfigurationProvisioning.BuildExchangeDocument(
+            exchangeDraft,
+            tenantId,
+            exchangeId,
+            encryptedApiKey,
+            now);
+        await gwModelExchanges.InsertOneAsync(exchangeDocument, cancellationToken: http.RequestAborted);
+    }
+    else
+    {
+        await gwModelExchanges.UpdateOneAsync(
+            exchangeFilter,
+            Builders<BsonDocument>.Update
+                .Set("Name", exchangeDraft.Name)
+                .Set("NameNormalized", exchangeDraft.NameNormalized)
+                .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(exchangeDraft.Models))
+                .Set("TargetUrl", exchangeDraft.TargetUrl)
+                .Set("TargetApiKeyEncrypted", encryptedApiKey)
+                .Set("TargetAuthScheme", exchangeDraft.TargetAuthScheme)
+                .Set("TransformerType", exchangeDraft.TransformerType)
+                .Set("Enabled", true)
+                .Set("Description", exchangeDraft.Description)
+                .Set("Authority", "llm_gateway")
+                .Set("SourceCollection", "llmgw_model_exchanges")
+                .Set("UpdatedAt", now)
+                .Inc("Version", 1),
+            cancellationToken: http.RequestAborted);
+    }
+
+    var logicalModelFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("PublicIdNormalized", FalImageLayeringProvisioning.CapabilityId));
+    var existingLogicalModel = await gwLogicalModels.Find(logicalModelFilter).FirstOrDefaultAsync(http.RequestAborted);
+    var logicalModelId = existingLogicalModel?.GetStringOrEmpty("_id") is { Length: > 0 } existingLogicalModelId
+        ? existingLogicalModelId
+        : $"gw-logical-{Guid.NewGuid():N}";
+    if (existingLogicalModel is null)
+    {
+        await gwLogicalModels.InsertOneAsync(
+            FalImageLayeringProvisioning.BuildLogicalModelDocument(tenantId, logicalModelId, now),
+            cancellationToken: http.RequestAborted);
+    }
+    else
+    {
+        await gwLogicalModels.UpdateOneAsync(
+            logicalModelFilter,
+            Builders<BsonDocument>.Update
+                .Set("PublicId", FalImageLayeringProvisioning.CapabilityId)
+                .Set("PublicIdNormalized", FalImageLayeringProvisioning.CapabilityId)
+                .Set("Name", FalImageLayeringProvisioning.LogicalModelName)
+                .Set("ModelType", FalImageLayeringProvisioning.RequestType)
+                .Set("Capabilities", new BsonArray { "image_generation", "image_layering" })
+                .Set("AllowedAppCallerCodes", new BsonArray())
+                .Set("RoutingStrategy", "priority")
+                .Set("Enabled", true)
+                .Set("DisplayOrder", 20)
+                .Set("Description", "通用图片分层能力。调用方只依赖公开标识 image-layering，不感知 fal.ai、Endpoint 或凭据。")
+                .Set("UpdatedAt", now),
+            cancellationToken: http.RequestAborted);
+    }
+
+    var offeringFilter = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("LogicalModelId", logicalModelId),
+        fb.Eq("TargetKind", "exchange"));
+    var existingOffering = await gwModelOfferings.Find(offeringFilter).FirstOrDefaultAsync(http.RequestAborted);
+    var offeringId = existingOffering?.GetStringOrEmpty("_id") is { Length: > 0 } existingOfferingId
+        ? existingOfferingId
+        : $"gw-offering-{Guid.NewGuid():N}";
+    if (existingOffering is null)
+    {
+        await gwModelOfferings.InsertOneAsync(
+            FalImageLayeringProvisioning.BuildOfferingDocument(
+                tenantId,
+                offeringId,
+                logicalModelId,
+                exchangeId,
+                now),
+            cancellationToken: http.RequestAborted);
+    }
+    else
+    {
+        await gwModelOfferings.UpdateOneAsync(
+            offeringFilter,
+            Builders<BsonDocument>.Update
+                .Set("TargetId", exchangeId)
+                .Set("UpstreamModelId", FalImageLayeringProvisioning.ModelId)
+                .Set("Protocol", FalImageLayeringProvisioning.TransformerType)
+                .Set("Priority", 10)
+                .Set("Weight", 100)
+                .Set("Enabled", true)
+                .Set("Notes", "fal.ai Qwen Image Layered 原生供给")
+                .Set("UpdatedAt", now),
+            cancellationToken: http.RequestAborted);
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "capability.image_layering.install",
+        targetType: "llmgw_capability",
+        targetId: FalImageLayeringProvisioning.CapabilityId,
+        targetName: "图片分层能力",
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "exchangeId", exchangeId },
+            { "logicalModelId", logicalModelId },
+            { "offeringId", offeringId },
+            { "modelId", FalImageLayeringProvisioning.ModelId },
+            { "hasKey", true },
+            { "idempotentRepair", existingExchange is not null || existingLogicalModel is not null || existingOffering is not null },
+        });
+
+    var status = await BuildImageLayeringCapabilityStatusAsync(
+        gwModelExchanges,
+        gwLogicalModels,
+        gwModelOfferings,
+        logs,
+        tenantId,
+        http.RequestAborted);
+    return Json(ApiEnvelope<ImageLayeringCapabilityStatus>.Ok(status), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 // GW-owned key 健康自检：只解密验证，不返回明文/密文/脱敏 key，不打上游，避免产生成本。
 app.MapGet("/gw/key-health", async (HttpContext http) =>
 {
@@ -10729,6 +10903,77 @@ static LogicalModelItem MapLogicalModel(
         CreatedAt = logical.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = logical.AsNullableUtcDateTime("UpdatedAt").ToIso(),
         Offerings = offerings,
+    };
+}
+
+static async Task<ImageLayeringCapabilityStatus> BuildImageLayeringCapabilityStatusAsync(
+    IMongoCollection<BsonDocument> exchanges,
+    IMongoCollection<BsonDocument> logicalModels,
+    IMongoCollection<BsonDocument> offerings,
+    IMongoCollection<BsonDocument> requestLogs,
+    string tenantId,
+    CancellationToken ct)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var exchange = await exchanges.Find(fb.And(
+            fb.Eq("TenantId", tenantId),
+            fb.Eq("TransformerType", FalImageLayeringProvisioning.TransformerType),
+            fb.Eq("Models.ModelId", FalImageLayeringProvisioning.ModelId)))
+        .FirstOrDefaultAsync(ct);
+    var logicalModel = await logicalModels.Find(fb.And(
+            fb.Eq("TenantId", tenantId),
+            fb.Eq("PublicIdNormalized", FalImageLayeringProvisioning.CapabilityId)))
+        .FirstOrDefaultAsync(ct);
+
+    var hasKey = ImageLayeringCapabilityRules.HasKey(exchange);
+    var exchangeId = exchange?.GetStringOrEmpty("_id");
+    var logicalModelId = logicalModel?.GetStringOrEmpty("_id");
+    var offering = string.IsNullOrWhiteSpace(logicalModelId)
+        ? null
+        : await offerings.Find(fb.And(
+                fb.Eq("TenantId", tenantId),
+                fb.Eq("LogicalModelId", logicalModelId),
+                fb.Eq("TargetKind", "exchange"),
+                fb.Eq("TargetId", exchangeId),
+                fb.Eq("UpstreamModelId", FalImageLayeringProvisioning.ModelId),
+                fb.Ne("Enabled", false)))
+            .FirstOrDefaultAsync(ct);
+    var offeringId = offering?.GetStringOrEmpty("_id");
+    // 注意：上面查 exchange / logicalModel 时刻意不带 Enabled 过滤——禁用的配置仍要被查出来，
+    // 这样 state 落到 incomplete（而不是 not-installed）、ExchangeId 也照常返回，前端能跳过去重新启用。
+    // 「能不能真跑」的判断收在 IsInstalled 里，与 ModelResolver 的解析条件对齐。
+    var installed = ImageLayeringCapabilityRules.IsInstalled(
+        exchange, logicalModel, offering, FalImageLayeringProvisioning.ModelId);
+
+    BsonDocument? verifiedLog = null;
+    if (installed)
+    {
+        var successFilter = fb.And(
+            fb.Eq("TenantId", tenantId),
+            fb.Eq("LogicalModelPublicId", FalImageLayeringProvisioning.CapabilityId),
+            fb.Gte("StatusCode", 200),
+            fb.Lt("StatusCode", 300),
+            fb.Eq(ImageLayeringCapabilityRules.UpstreamModelLogField, FalImageLayeringProvisioning.ModelId),
+            fb.Gt("ImageSuccessCount", 0));
+        verifiedLog = await requestLogs.Find(successFilter)
+            .Sort(Builders<BsonDocument>.Sort.Descending("EndedAt").Descending("CreatedAt"))
+            .FirstOrDefaultAsync(ct);
+    }
+    var verifiedAt = verifiedLog?.AsNullableUtcDateTime("EndedAt")
+                     ?? verifiedLog?.AsNullableUtcDateTime("CreatedAt");
+    var verified = verifiedLog is not null;
+    var anyPieceExists = exchange is not null || logicalModel is not null || offering is not null;
+
+    return new ImageLayeringCapabilityStatus
+    {
+        State = verified ? "verified" : installed ? "installed" : anyPieceExists ? "incomplete" : "not-installed",
+        Installed = installed,
+        Verified = verified,
+        HasKey = hasKey,
+        ExchangeId = string.IsNullOrWhiteSpace(exchangeId) ? null : exchangeId,
+        LogicalModelId = string.IsNullOrWhiteSpace(logicalModelId) ? null : logicalModelId,
+        OfferingId = string.IsNullOrWhiteSpace(offeringId) ? null : offeringId,
+        LastVerifiedAt = verifiedAt.HasValue ? verifiedAt.Value.ToUniversalTime().ToString("O") : null,
     };
 }
 

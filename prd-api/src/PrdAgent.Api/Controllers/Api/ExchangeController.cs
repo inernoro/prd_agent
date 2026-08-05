@@ -971,6 +971,24 @@ public static class ExchangeTemplates
         },
         new ExchangeTemplate
         {
+            Id = "fal-image-layered",
+            Name = "fal.ai 图片语义分层",
+            Description = "使用 Qwen-Image-Layered 将单张图片拆成可编辑 RGBA 图层",
+            ApiKeyPlaceholder = "fal.ai API Key",
+            ApiKeyHint = "在 fal.ai 控制台获取 API Key",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "fal.ai Qwen Image Layered",
+                ModelAlias = "fal-qwen-image-layered",
+                TargetUrl = "https://fal.run/fal-ai/qwen-image-layered",
+                TargetAuthScheme = "Key",
+                TransformerType = "fal-image-layered",
+                Enabled = true,
+                Description = "fal.ai 图片语义分层 - Qwen-Image-Layered"
+            }
+        },
+        new ExchangeTemplate
+        {
             Id = "volcengine-video",
             Name = "火山方舟 Seedance 视频生成",
             Description = "火山方舟原生视频生成 API，使用 /contents/generations/tasks 异步任务协议，适配 MAP 现有视频生成客户端。",
