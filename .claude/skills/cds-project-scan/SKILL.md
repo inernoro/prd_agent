@@ -1,11 +1,13 @@
 ---
 name: cds-project-scan
+metadata:
+  version: 1.1.0
 description: Scans local project structure and generates or uploads CDS compose YAML for project onboarding (the cold path of CDS lifecycle). Activates when the user wants to register a new project to CDS, regenerate the compose contract after structural changes, or push cds-compose.yml to CDS for approval. Detects tech stacks (.NET, Node, Rust, Python, Go), infrastructure services (MongoDB/Redis/Postgres), environment variables and routing prefixes; can submit via --apply-to-cds. Does NOT handle deployed-branch debugging, container logs, deploy failures, smoke tests, or CDS service self-update — those belong to cds-deploy-pipeline (hot path) and cds (core). Trigger phrases include "扫描项目", "接入 CDS", "生成 compose", "上传 cds 配置", "apply to cds", "注册项目到 cds", "register project", "/cds-scan", "--apply-to-cds".
 ---
 
 # CDS 项目扫描（冷路径：项目接入 / 配置生成）
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/cds-scan`、"扫描项目"、"接入 CDS"、"生成 compose"、"--apply-to-cds"
+> **版本**：v1.1.0 | **状态**：已落地 | **触发**：`/cds-scan`、"扫描项目"、"接入 CDS"、"生成 compose"、"--apply-to-cds"
 
 > **冷路径定位**：一次性 / 低频。把"本地仓库"变成"CDS 可识别的项目"。
 > 已部署后的调试、日志、冒烟 → 走 `cds-deploy-pipeline`（热路径）。
@@ -86,9 +88,21 @@ CDS 扫描进度：
 | 有相对路径 volume mount（`./xxx:/app`） | App 服务 |
 | 无相对路径 mount + 有 ports | 基础设施 |
 | `labels.cds.path-prefix` | 代理路由前缀 |
+| `labels.cds.web-entry-name` | 用户在 CDS 看到的页面名称；有多个入口时逐个声明 |
+| `labels.cds.web-entry-path` | 用户点击后到达的站内页面，默认 `/`；禁止健康检查路径 |
+| `labels.cds.web-entry-primary` | 仅路由歧义时显式指定主入口；通常 `cds.path-prefix: /` 会自动识别 |
 | `${CDS_HOST}` / `${CDS_<SERVICE>_PORT}` | 运行时替换 |
 
 提交前自检：`cdscli verify <repo-root>` exit code 必须 == 0（允许 WARNING/INFO，不允许 ERROR）。
+
+### 多 Web 入口规范（强制）
+
+1. `cds.subdomain` 只声明独立路由，不代表该服务应该显示在“应用已上线”的入口列表。
+2. 用户可见入口必须声明 `cds.web-entry-name`；`cds.web-entry-path` 缺省为 `/`。
+3. `cds.readiness-path` 只给机器探活，禁止用作 Web 入口。`/healthz`、`/readyz`、`/livez` 及同类路径会被 `verify` 拒绝。
+4. 主入口优先从同时具有 `cds.path-prefix: /` 与 `cds.web-entry-name` 的服务自动识别。同一服务即使还声明了 `cds.subdomain`，入口列表也只显示一次。
+5. 只有多个服务都承载 `/` 时才使用 `cds.web-entry-primary: "true"` 消除歧义；一个项目最多一个显式主入口。
+6. 用户要求增删改入口时，Agent 直接维护仓库根 `cds-compose.yml` 并重新提交 CDS，不让用户去分支覆盖、隐藏设置或代理配置中重复维护。
 
 ## 7 类常见漏洞（提交前对照）
 

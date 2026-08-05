@@ -1249,7 +1249,7 @@ describe('Branch Routes', () => {
       expect((res.body as any).branches[0].id).toBe('main');
     });
 
-    it('returns the main app and every routable named service as actual preview entries', async () => {
+    it('returns named Web pages, deduplicates the main profile, and excludes stopped routes', async () => {
       const now = new Date().toISOString();
       config.rootDomains = ['hidden-backup.example.test', 'example.test'];
       config.previewDomain = 'example.test';
@@ -1261,6 +1261,9 @@ describe('Branch Routes', () => {
         workDir: '.',
         command: 'serve',
         containerPort: 80,
+        pathPrefixes: ['/'],
+        subdomain: 'admin',
+        webEntry: { name: 'MOS 管理端', path: '/' },
       });
       stateService.addBuildProfile({
         id: 'llmgw-web',
@@ -1271,6 +1274,7 @@ describe('Branch Routes', () => {
         command: 'serve',
         containerPort: 8100,
         subdomain: 'llmgw-web',
+        webEntry: { name: '模型网关控制台', path: '/console' },
       });
       stateService.addBuildProfile({
         id: 'stopped-docs',
@@ -1281,6 +1285,7 @@ describe('Branch Routes', () => {
         command: 'serve',
         containerPort: 8080,
         subdomain: 'docs',
+        webEntry: { name: '帮助中心', path: '/' },
       });
       stateService.addBranch({
         id: 'dual-entry',
@@ -1318,8 +1323,24 @@ describe('Branch Routes', () => {
       expect(branch.previewUrl).toBe('https://dual-entry-feature-default.example.test');
       expect(branch.previewUrls).toEqual([
         'https://dual-entry-feature-default.example.test',
-        'https://dual-entry-feature-default-llmgw-web.example.test/',
+        'https://dual-entry-feature-default-llmgw-web.example.test/console',
       ]);
+      expect(branch.previewEntries).toEqual([
+        {
+          name: 'MOS 管理端',
+          url: 'https://dual-entry-feature-default.example.test',
+          serviceId: 'admin',
+          primary: true,
+        },
+        {
+          name: '模型网关控制台',
+          url: 'https://dual-entry-feature-default-llmgw-web.example.test/console',
+          serviceId: 'llmgw-web',
+          subdomain: 'llmgw-web',
+          primary: false,
+        },
+      ]);
+      expect(branch.previewUrls.join('\n')).not.toContain('-admin.');
       expect(branch.previewUrls.join('\n')).not.toContain('stopped-docs');
       expect(branch.previewUrls.join('\n')).not.toContain('hidden-backup.example.test');
     });
