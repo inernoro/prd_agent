@@ -112,13 +112,16 @@ const TONE: Record<string, { c: string; soft: string; label: string }> = {
 const QUADRANT_ORDER = ['主力产出', '精工型', '高量低果', '低活跃', '样本不足', '数据不足'] as const;
 
 function Headline({
-  h, windowLabel, counts, totalMembers, activeMembers,
+  h, windowLabel, counts, totalMembers, activeMembers, members, masked, onPick,
 }: {
   h: TeamInsightHeadline;
   windowLabel: string;
   counts: Record<string, number>;
   totalMembers: number;
   activeMembers: number;
+  members: TeamInsightMember[];
+  masked: boolean;
+  onPick: (id: string) => void;
 }) {
   const t = TONE[h.tone] ?? TONE.neutral;
   return (
@@ -127,8 +130,8 @@ function Headline({
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
     >
       <div className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.c }} />
-      <div className="pl-5 pr-5 py-4 flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-8">
-      <div className="flex flex-col gap-3 flex-1 min-w-0">
+      <div className="pl-5 pr-5 py-4 flex flex-col xl:flex-row xl:items-start gap-5 xl:gap-7">
+      <div className="flex flex-col gap-3 flex-1 min-w-0 xl:max-w-[46ch]">
         <div className="flex items-center gap-2.5 flex-wrap">
           <span
             className="text-[10px] tracking-[0.16em] uppercase px-2 py-[3px] rounded"
@@ -175,9 +178,78 @@ function Headline({
         )}
       </div>
 
+      {/* 中间：本期主力 —— 砍掉的是「综合分排名」那个有毒口径，不是「谁产出最多」这个真问题。
+          按可统计产出件数排，点一个人直接跳到他的画像。 */}
+      <TopContributors members={members} masked={masked} onPick={onPick} />
+
       {/* 右侧：团队构成 —— 头条讲「发生了什么」，这里讲「这个团队长什么样」，
           两边都不重复下方的 KPI。点击滚到成员画像继续下钻。 */}
       <TeamShape counts={counts} totalMembers={totalMembers} activeMembers={activeMembers} windowLabel={windowLabel} />
+      </div>
+    </div>
+  );
+}
+
+function TopContributors({
+  members, masked, onPick,
+}: {
+  members: TeamInsightMember[];
+  masked: boolean;
+  onPick: (id: string) => void;
+}) {
+  const top = members.filter(m => m.output > 0).slice(0, 5);
+  if (top.length === 0) return null;
+  const max = Math.max(1, ...top.map(m => m.output));
+
+  return (
+    <div className="xl:w-[252px] xl:shrink-0 xl:border-l xl:pl-6 flex flex-col gap-2.5" style={{ borderColor: 'var(--border-subtle)' }}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[10px] tracking-[0.16em] uppercase" style={{ color: 'var(--text-muted)' }}>本期主力</span>
+        <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>按产出件数</span>
+      </div>
+
+      <div className="flex flex-col gap-[5px]">
+        {top.map(m => {
+          const color = getRoleMeta(m.role).color;
+          const q = QUADRANT_COLOR[m.quadrant] ?? 'var(--text-muted)';
+          return (
+            <button
+              key={m.userId}
+              type="button"
+              onClick={() => { onPick(m.userId); document.getElementById('ti-members')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+              className="ti-top group flex items-center gap-2 text-left rounded-md px-1.5 py-1 -mx-1.5"
+              title={`${maskName(m.displayName, masked)} · ${m.quadrant} · 产出 ${m.output} 件`}
+            >
+              {m.avatarFileName ? (
+                <UserAvatar src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
+              ) : (
+                <span
+                  className="w-5 h-5 rounded-full grid place-items-center text-[9px] font-bold flex-shrink-0"
+                  style={{ background: `${color}22`, color }}
+                >
+                  {maskName(m.displayName, masked)[0]}
+                </span>
+              )}
+              <span className="text-[11.5px] truncate min-w-0 flex-1" style={{ color: 'var(--text-secondary)' }}>
+                {maskName(m.displayName, masked)}
+              </span>
+              <span className="tabular-nums text-[11.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>{m.output}</span>
+              <span className="rounded-full flex-shrink-0" style={{ width: 5, height: 5, background: q }} />
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-col gap-[3px] pt-0.5">
+        {top.map(m => (
+          <div key={m.userId} className="h-[3px] rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+            <div className="h-full rounded-full" style={{ width: `${(m.output / max) * 100}%`, background: '#5B8CFF', opacity: 0.55 }} />
+          </div>
+        ))}
+      </div>
+
+      <div className="text-[10.5px] leading-relaxed pt-1.5" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+        右侧圆点 = 分型；点击跳到该成员画像
       </div>
     </div>
   );
@@ -198,7 +270,7 @@ function TeamShape({
   if (total === 0) return null;
 
   return (
-    <div className="lg:w-[268px] lg:shrink-0 lg:border-l lg:pl-6 flex flex-col gap-2.5" style={{ borderColor: 'var(--border-subtle)' }}>
+    <div className="xl:w-[252px] xl:shrink-0 xl:border-l xl:pl-6 flex flex-col gap-2.5" style={{ borderColor: 'var(--border-subtle)' }}>
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[10px] tracking-[0.16em] uppercase" style={{ color: 'var(--text-muted)' }}>团队构成</span>
         <a
@@ -627,6 +699,8 @@ const PANEL_CSS = `
 .ti-attn:hover { border-top-color: currentColor; }
 .ti-link { transition: background .16s ease, border-color .16s ease; }
 .ti-link:hover { background: var(--bg-card-hover); border-color: var(--border-default) !important; }
+.ti-top { transition: background .14s ease; }
+.ti-top:hover { background: var(--bg-secondary); }
 .ti-table tbody tr { transition: background .14s ease; }
 .ti-table tbody tr:hover { background: var(--bg-secondary); }
 .ti-root details > summary { transition: background .14s ease; }
@@ -674,6 +748,9 @@ export default function TeamInsightsPanel({ data, loading }: { data: TeamInsight
         counts={meta.quadrantCounts}
         totalMembers={meta.totalMembers}
         activeMembers={members.length}
+        members={members}
+        masked={masked}
+        onPick={setPickedId}
       />
       {/* A. 团队状态 */}
       <section>
