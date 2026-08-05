@@ -6,3 +6,4 @@
 | docs | doc | rule.acceptance.map-enterprise 新增 §7.0、standard-v2 新增 §6.0，定义首屏判据与拒收条件，并同步官方技能规则快照与分发包 |
 | test | acceptance-skill | test_archive_report_verdict_contract 增 9 项断言覆盖首屏契约（含模板落地、脚本失败不得写成产品坏了、无法确认不得写成可用、完整性自相矛盾、行话未解释、决策行须给建议）；归档 gate 增简版视图与模板契约断言 |
 | ci | ci | 新增 Acceptance Report Gate job：验收规则 SSOT、归档 gate、每日结论契约三个守卫此前无任何 workflow 引用，只有手动跑才会红；连同被守的规则、模板、快照一起登记进 path filter |
+| fix | doc-tooling | doc-readability 棘轮守卫断言 ci-status 汇总闸时写死 `cds-build, docs-readability]` 字面量，往 needs 末尾追加任何新 job 都会让这条无关断言变红（形状 4a）；改为解析 ci-status 的 needs 列表判成员，并补「解析到了」与「判据不是恒真」两条防空跑断言 |
