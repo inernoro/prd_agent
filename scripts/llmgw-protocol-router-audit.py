@@ -104,7 +104,7 @@ def build_report() -> dict[str, Any]:
     full_cutover_doc = _read("doc/plan.platform.llm-gateway.full-cutover.md")
     brief = _read("assets/prototypes/llmgw-architecture-drawing-brief.md")
     html = _read("assets/prototypes/llmgw-architecture-map.html")
-    request = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs")
+    request = _read("prd-api/src/PrdAgent.Core/LlmGateway/GatewayRequest.cs")
     endpoints = _read("llmgw/serving/GatewayHttpEndpoints.cs")
     gateway_core = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs")
     resolver = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs")
@@ -199,7 +199,7 @@ def build_report() -> dict[str, Any]:
         "gateway_request_ir_has_target_fields",
         ok,
         detail,
-        ["prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs"],
+        ["prd-api/src/PrdAgent.Core/LlmGateway/GatewayRequest.cs"],
     ))
 
     ok, detail = _contains_all(
