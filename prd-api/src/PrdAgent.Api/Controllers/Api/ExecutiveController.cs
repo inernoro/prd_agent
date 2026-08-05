@@ -1541,9 +1541,10 @@ public class ExecutiveController : ControllerBase
             var routePersonDays = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
             foreach (var e in evts)
             {
-                if (!routePersonDays.TryGetValue(e.Route, out var days))
-                    routePersonDays[e.Route] = days = new HashSet<string>(StringComparer.Ordinal);
-                days.Add($"{e.UserId}|{e.OccurredAt:yyyy-MM-dd}");
+                // 变量名不能叫 days —— 与方法参数 int days 同名，C# 会报 CS0136
+                if (!routePersonDays.TryGetValue(e.Route, out var dayKeys))
+                    routePersonDays[e.Route] = dayKeys = new HashSet<string>(StringComparer.Ordinal);
+                dayKeys.Add($"{e.UserId}|{e.OccurredAt:yyyy-MM-dd}");
                 if (!routeUsers.TryGetValue(e.Route, out var set))
                     routeUsers[e.Route] = set = new HashSet<string>(StringComparer.Ordinal);
                 if (!string.IsNullOrEmpty(e.UserId)) set.Add(e.UserId);
