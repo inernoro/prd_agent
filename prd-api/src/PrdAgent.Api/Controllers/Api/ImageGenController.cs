@@ -32,7 +32,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class ImageGenController : ControllerBase
 {
-    private const string ImageLayeringCapabilityId = "image-layering";
+    // 能力标识的唯一来源在 Core 的 GatewayCapabilityIds，此处只做本文件内的短别名。
+    private const string ImageLayeringCapabilityId = PrdAgent.Core.Models.GatewayCapabilityIds.ImageLayering;
 
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;

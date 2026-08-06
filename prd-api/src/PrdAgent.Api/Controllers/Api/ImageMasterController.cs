@@ -1632,6 +1632,18 @@ public class ImageMasterController : ControllerBase
                 }).ToList();
             }
 
+            // 语义分层：MAP 只认 LLMGW 发布的通用能力标识，不感知上游平台与具体模型，
+            // 因此显式清掉 picker 传来的平台/模型，交给 Gateway 按逻辑模型解析。
+            var isLayering = string.Equals(
+                (request?.Operation ?? string.Empty).Trim(), "layering", StringComparison.OrdinalIgnoreCase);
+            if (isLayering)
+            {
+                cfgModelId = null;
+                platformId = null;
+                modelId = null;
+            }
+            var layerCount = isLayering ? Math.Clamp(request?.LayerCount ?? 4, 1, 10) : 1;
+
             var run = new ImageGenRun
             {
                 OwnerAdminId = adminId,
@@ -1642,24 +1654,27 @@ public class ImageMasterController : ControllerBase
                 ModelId = modelId,
                 LogicalModelPublicId = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                     ? modelId
-                    : null,
+                    // 分层的 platformId 已在上面清空，所以只会落到这一支；能力标识由网关发布，MAP 不感知上游。
+                    : isLayering ? PrdAgent.Core.Models.GatewayCapabilityIds.ImageLayering : null,
                 // 用户显式选择优先。逻辑模型只携带稳定 PublicId，真实上游由 Gateway 决定；
                 // 兼容旧 picker 的 platformId + modelId 仍记为 DirectModel。
-                ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                ModelResolutionType = isLayering || string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                     ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
                     : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
                 Size = size,
                 ResponseFormat = responseFormat,
                 MaxConcurrency = 1,
-                Items = new List<ImageGenRunPlanItem> { new() { Prompt = prompt, Count = 1, Size = null } },
-                Total = 1,
+                Items = new List<ImageGenRunPlanItem> { new() { Prompt = prompt, Count = layerCount, Size = null } },
+                Total = layerCount,
                 Done = 0,
                 Failed = 0,
                 CancelRequested = false,
                 LastSeq = 0,
                 IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
                 CreatedAt = DateTime.UtcNow,
-                AppCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img, // 默认文生图，Worker 会根据参考图动态调整
+                AppCallerCode = isLayering
+                    ? AppCallerRegistry.VisualAgent.Image.Layering
+                    : AppCallerRegistry.VisualAgent.Image.Text2Img, // 默认文生图，Worker 会根据参考图动态调整
                 AppKey = AppKey, // 硬编码视觉创作的应用标识
                 WorkspaceId = wid,
                 TargetCanvasKey = targetKey,
@@ -3160,6 +3175,18 @@ public class ImageMasterController : ControllerBase
 
 public class CreateWorkspaceImageGenRunRequest
 {
+    /// <summary>
+    /// generate（默认，文生图/图生图）或 layering（语义分层）。
+    ///
+    /// 分层此前只有同步端点，而模型本身要二三十秒，实测稳定撞上边缘网关的 30 秒超时——
+    /// 用户永远拿不到结果。走这条异步 run 后，提交立即返回任务号，产物由 Worker 落库，
+    /// 与 HTTP 连接的存活时间脱钩。
+    /// </summary>
+    public string? Operation { get; set; }
+
+    /// <summary>分层要拆成几层（1-10，仅 Operation=layering 时有意义）。</summary>
+    public int? LayerCount { get; set; }
+
     public string Prompt { get; set; } = string.Empty;
     public string TargetKey { get; set; } = string.Empty;
     public double? X { get; set; }
