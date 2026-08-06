@@ -43,6 +43,15 @@ public class RequirementAssessmentRun
     /// <summary>因子 → 证据来源列索引（启发式 + LLM 自动综合）</summary>
     public Dictionary<string, List<int>> FactorColumnMapping { get; set; } = new();
 
+    /// <summary>产品经理评论列索引（前五因子的最高优先级证据源；可空 = 表中无评论列）</summary>
+    public List<int> CommentColumnIndexes { get; set; } = new();
+
+    /// <summary>
+    /// 锚点分制（10 = 0-10 分制；存量任务缺省 5 = 旧版 1-5 分制）。
+    /// 仅影响前端展示口径「x/5」vs「x/10」，历史数据不重算。
+    /// </summary>
+    public int AnchorScale { get; set; } = 5;
+
     /// <summary>列映射是否已经过 LLM 精化（评估流开始时执行一次，避免重试时重复调用）</summary>
     public bool MappingRefined { get; set; }
 
@@ -122,6 +131,12 @@ public class RequirementAssessmentItem
     /// <summary>一句话评估结论（LLM 输出）</summary>
     public string Conclusion { get; set; } = string.Empty;
 
+    /// <summary>合理性判定（评论驱动）：合理 / 不合理 / null=评论未给出判定</summary>
+    public string? ReasonablenessVerdict { get; set; }
+
+    /// <summary>合理性判定依据（评论原文引用）</summary>
+    public string? ReasonablenessEvidence { get; set; }
+
     /// <summary>全局优先级序号（1 起，数字越小越优先；Done 后填写）</summary>
     public int? Priority { get; set; }
 
@@ -158,7 +173,7 @@ public class RequirementFactorScore
     /// <summary>因子名称快照</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>锚点分 1-5（证据缺失时为系统保守化后的值；LLM 原始值见 OriginalAnchor）</summary>
+    /// <summary>锚点分 0-10（存量旧任务为 1-5 制；证据缺失时为系统保守化后的值，LLM 原始值见 OriginalAnchor）</summary>
     public int Anchor { get; set; }
 
     /// <summary>LLM 原始锚点分（仅当被系统调整时填充）</summary>
@@ -167,7 +182,7 @@ public class RequirementFactorScore
     /// <summary>权重快照</summary>
     public int Weight { get; set; }
 
-    /// <summary>加权得分 = Anchor x Weight / 5（一位小数，系统计算）</summary>
+    /// <summary>加权得分 = Anchor x Weight / 10（一位小数，系统计算；旧版任务为 /5）</summary>
     public double WeightedScore { get; set; }
 
     /// <summary>是否有表格原文证据</summary>
