@@ -18,3 +18,8 @@
 | refactor | cds | GitHub PR URL 收敛到 lib/github-urls，此前散在三处 |
 | test | cds | 新增点外部关闭判据守卫（含 portal 弹窗豁免、触发器排除两类窄判据） |
 | fix | cds | 修复同页多个 useTheme 实例不同步：rail 与浮层各持一份 state，改主题另一处不跟随 |
+| fix | cds | 主入口 URL 改按 profile 真实路由拼：非根挂载带上前缀、非根命名子域走命名 host，此前一律主域名根会指向别的应用 |
+| refactor | cds | 前端 PR 链接收敛到 lib/github-urls，删掉抽屉里遗留的同名副本 |
+| fix | cds | Esc 关闭信息中心补上与点外部同一套弹窗豁免，不再一次关掉两层 |
+| polish | cds | 移动端切主题不再顺手关掉导航抽屉 |
+| test | cds | 补非根 primary 入口的真实 API 行为用例、主入口路由守卫与 Esc 豁免用例 |

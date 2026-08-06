@@ -22,6 +22,32 @@ describe('分支预览地址 API 契约', () => {
     expect(source).not.toContain('resolveServiceLandingPath(sub, profile?.readinessProbe?.path)');
   });
 
+  /*
+   * 2026-08-06 review P2-1：主入口 URL 一度写死 `https://${previewSlug}.${primaryRoot}` +
+   * 入口路径，完全不看该 profile 真实怎么被路由。于是 `cds.web-entry-primary` 声明在
+   * 命名子域或非根前缀的服务上时，URL 指向承载 `/` 的另一个应用，而它自己那条能用的
+   * URL 又被下面的命名子域循环跳过——声明 primary 反而比不声明更糟。
+   *
+   * 判据钉在「主入口 host 与路径都是算出来的」而不是「字面量长什么样」：把 host 改回
+   * 无条件的 previewSlug、或把路径改回不经 mainDomainEntryPath，下面必有一条变红。
+   */
+  it('主入口按该 profile 的真实路由拼，不是一律主域名根', () => {
+    // 承载 `/` 的主应用即使也声明了 subdomain，入口仍是主域名（顺序不能反）
+    expect(source).toContain('const primaryHandlesRoot = primaryProfile ? handlesRootPath(primaryProfile) : false');
+    expect(source).toContain('const primaryUsesNamedHost = !primaryHandlesRoot');
+    // 非根路由 + 有可用命名子域 → 走命名 host
+    expect(source).toContain('&& Boolean(primarySub)');
+    expect(source).toContain('isPublishableNamedLabel(primaryNamedLabel)');
+    expect(source).toContain('!occupied.has(`${primaryNamedLabel}.${primaryRoot}`.toLowerCase())');
+    expect(source).toContain('const primaryHost = primaryUsesNamedHost');
+    // 落主域名时 → 入口路径挂到该 profile 自己的挂载前缀下
+    expect(source).toContain('mainDomainEntryPath(primaryProfile, primaryPath)');
+    expect(source).toContain('const primaryHostPath = primaryUsesNamedHost || !primaryProfile');
+    expect(source).toContain('url: `https://${primaryHost}${primaryHostPath === \'/\' ? \'\' : primaryHostPath}`');
+    // 主入口占掉的命名子域要预先登记，否则别的 profile 会在同一个 host 再列一条
+    expect(source).toContain('if (primaryUsesNamedHost && primarySub) seenSubdomains.add(primarySub)');
+  });
+
   it('保存子域别名时也查命名服务 host（helper 建了没接线 = 白建）', () => {
     // 形状 2：computeBranchPublishedServiceHosts 一度只接进 PUT /custom-domains，
     // 别名保存那条路径从头到尾没查过，别的分支的 `<slug>-llmgw` 可以被直接占走。

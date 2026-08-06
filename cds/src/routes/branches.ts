@@ -31,7 +31,7 @@ import {
   occupiedHostOwners,
   resolveBranchEntrypointsEnv,
 } from '../services/preview-entrypoints.js';
-import { normalizeWebEntryPath, selectPrimaryWebEntry } from '../services/web-entry.js';
+import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
@@ -15229,11 +15229,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     );
     const primaryProfile = selectPrimaryWebEntry(effectiveProfiles);
     const primaryConfig = primaryProfile?.webEntry;
-    const primaryPath = normalizeWebEntryPath(primaryConfig?.path);
+    const primaryPath = normalizeWebEntryPath(primaryConfig?.path) || '/';
+    // 主入口 URL 必须按该 profile **真实的路由**拼，不能一律用主域名根：
+    // 有 cds.subdomain 就走它的命名 host；挂在非根前缀就把入口路径挂到前缀下。
+    // 否则显式 primary 的服务会指向承载根路径的另一个应用，而它自己那条能用的
+    // URL 又被下面的命名子域循环跳过 —— 声明 primary 反而比不声明更糟（review P2-1）。
+    const primarySub = primaryProfile?.subdomain;
+    const primaryNamedLabel = primarySub ? namedServiceLabel(previewSlug, primarySub) : '';
+    // 顺序要紧：承载 `/` 的主应用即使**也**声明了 cds.subdomain，它的用户入口依然是
+    // 主域名（命名子域只是额外一条路由）。先判根路由再判子域，否则主应用会被挪到
+    // `<slug>-admin.<root>`，而 branches.test.ts 的 dual-entry 用例正是钉这条。
+    const primaryHandlesRoot = primaryProfile ? handlesRootPath(primaryProfile) : false;
+    const primaryUsesNamedHost = !primaryHandlesRoot
+      && Boolean(primarySub)
+      && isPublishableNamedLabel(primaryNamedLabel)
+      && !occupied.has(`${primaryNamedLabel}.${primaryRoot}`.toLowerCase());
+    // 命名 host 上整条路由都指向该容器，入口路径原样用；主域名上则要带上它的挂载前缀。
+    const primaryHost = primaryUsesNamedHost
+      ? `${primaryNamedLabel}.${primaryRoot}`
+      : `${previewSlug}.${primaryRoot}`;
+    const primaryHostPath = primaryUsesNamedHost || !primaryProfile
+      ? primaryPath
+      : mainDomainEntryPath(primaryProfile, primaryPath);
     const primaryEntry = {
       name: primaryConfig?.name || '主应用入口',
-      url: `https://${previewSlug}.${primaryRoot}${primaryPath === '/' || !primaryPath ? '' : primaryPath}`,
+      url: `https://${primaryHost}${primaryHostPath === '/' ? '' : primaryHostPath}`,
       ...(primaryProfile ? { serviceId: primaryProfile.id } : {}),
+      ...(primaryUsesNamedHost && primarySub ? { subdomain: primarySub } : {}),
       primary: true,
     };
     const entries: Array<{ name: string; url: string; serviceId?: string; subdomain?: string; primary: boolean }> = [primaryEntry];
@@ -15244,6 +15266,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       .map(([profileId]) => profileId)
       .sort((a, b) => a.localeCompare(b));
     const seenSubdomains = new Set<string>();
+    // 主入口已经占用了这个命名 host，别的 profile 声明同名子域时不能再列一条同址入口。
+    if (primaryUsesNamedHost && primarySub) seenSubdomains.add(primarySub);
     for (const profileId of routable) {
       const profile = profileById.get(profileId);
       const sub = profile?.subdomain;

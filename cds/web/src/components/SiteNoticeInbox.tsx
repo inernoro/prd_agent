@@ -28,7 +28,7 @@ import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { apiRequest, ApiError } from '@/lib/api';
-import { shouldDismissOnPointerDown } from '@/lib/outside-dismiss';
+import { shouldDismissOnEscape, shouldDismissOnPointerDown } from '@/lib/outside-dismiss';
 import { floatingPanelPosition, type FloatingPanelPosition } from '@/lib/floatingPanelPosition';
 import { useOverlayDock } from '@/lib/useOverlayDock';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
@@ -170,6 +170,9 @@ export function SiteNoticeInbox(): JSX.Element {
     };
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return;
+      // 与 pointerdown 同一套豁免：焦点在面板内 portal 出去的弹窗里时，这次 Esc 属于
+      // 那个弹窗，不能顺手把底下的面板也关了、还把焦点抢回铃铛。
+      if (!shouldDismissOnEscape({ target: event.target, activeElement: document.activeElement })) return;
       setOpen(false);
       triggerRef.current?.focus();
     };

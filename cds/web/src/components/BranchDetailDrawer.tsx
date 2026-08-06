@@ -4,6 +4,7 @@ import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, 
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
+import { githubPullRequestUrl } from '@/lib/github-urls';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -593,9 +594,6 @@ function githubBranchTreeUrl(repoFullName: string, branchName: string): string {
   return `https://github.com/${repoFullName}/tree/${encodedBranch}`;
 }
 
-function githubPullRequestUrl(repoFullName: string, prNumber: number): string {
-  return `https://github.com/${repoFullName}/pull/${prNumber}`;
-}
 
 function deploymentStages(log: string[]): string[] {
   const stages = new Set<string>();

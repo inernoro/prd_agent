@@ -138,6 +138,24 @@ describe('主题切换入口', () => {
     expect(shell).toContain('toggleWithRipple');
   });
 
+  it('切主题不关移动端抽屉——它是设置不是导航（review P3-2）', () => {
+    const shell = fs.readFileSync(
+      path.resolve(__dirname, '../../web/src/components/layout/AppShell.tsx'),
+      'utf8',
+    );
+    const toggle = shell.slice(
+      shell.indexOf('function RailThemeToggle'),
+      shell.indexOf('function userDisplayName'),
+    );
+    expect(toggle).toContain('toggleWithRipple');
+    // 断「有没有真的调用」，不是「源码里出没出现这个词」——解释为什么不调的注释
+    // 本身就含这个词，按字面扫会把正确实现判红（形状 4a：断言实现字面而非行为）。
+    expect(toggle).not.toMatch(/onNavigate\s*\?\.\s*\(/);
+    expect(toggle).not.toMatch(/onNavigate\s*\(/);
+    // 也不该再从 props 收这个回调
+    expect(toggle).not.toMatch(/function RailThemeToggle\([^)]*onNavigate/);
+  });
+
   it('useTheme 暴露 toggleWithRipple（删了这条接线本文件会红）', () => {
     const theme = fs.readFileSync(THEME_TS_PATH, 'utf8');
     expect(theme).toContain('toggleWithRipple');

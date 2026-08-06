@@ -1345,6 +1345,64 @@ describe('Branch Routes', () => {
       expect(branch.previewUrls.join('\n')).not.toContain('hidden-backup.example.test');
     });
 
+    /*
+     * 2026-08-06 review P2-1：显式 primary 声明在**非根路由**的 profile 上时，主入口 URL
+     * 曾一律拼成主域名根，点开落到承载 `/` 的另一个应用；而它自己那条能用的 URL 又被
+     * 命名子域循环跳过（profileId === primaryProfile.id），于是声明 primary 反而更糟。
+     * 这条用例走真实 API，断言最终 URL 带上了它自己的挂载前缀。
+     */
+    it('primary declared on a prefix-mounted profile lands under that prefix', async () => {
+      const now = new Date().toISOString();
+      config.previewDomain = 'example.test';
+      stateService.addBuildProfile({
+        id: 'root-app',
+        projectId: 'default',
+        name: 'Root app',
+        dockerImage: 'root:latest',
+        workDir: '.',
+        command: 'serve',
+        containerPort: 80,
+        pathPrefixes: ['/'],
+        webEntry: { name: '管理端', path: '/' },
+      });
+      stateService.addBuildProfile({
+        id: 'open-platform',
+        projectId: 'default',
+        name: 'Open platform',
+        dockerImage: 'open:latest',
+        workDir: '.',
+        command: 'serve',
+        containerPort: 8200,
+        pathPrefixes: ['/open/'],
+        webEntry: { name: '开放平台', path: '/', primary: true },
+      });
+      stateService.addBranch({
+        id: 'prefix-primary',
+        projectId: 'default',
+        branch: 'feature/prefix-primary',
+        worktreePath: path.join(tmpDir, 'worktrees', 'prefix-primary'),
+        status: 'running',
+        services: {
+          'root-app': { profileId: 'root-app', containerName: 'cds-pp-root', hostPort: 18090, status: 'running' },
+          'open-platform': { profileId: 'open-platform', containerName: 'cds-pp-open', hostPort: 18200, status: 'running' },
+        },
+        createdAt: now,
+      });
+
+      const res = await request(server, 'GET', '/api/branches?project=default');
+      const branch = (res.body as any).branches.find((item: any) => item.id === 'prefix-primary');
+
+      expect(res.status).toBe(200);
+      // 关键断言：不是裸主域名根（那会落到 root-app），而是开放平台自己的挂载前缀
+      expect(branch.previewUrl).toBe('https://prefix-primary-feature-default.example.test/open/');
+      expect(branch.previewEntries[0]).toEqual({
+        name: '开放平台',
+        url: 'https://prefix-primary-feature-default.example.test/open/',
+        serviceId: 'open-platform',
+        primary: true,
+      });
+    });
+
     it('returns cached branch state by default without probing Docker', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({

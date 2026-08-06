@@ -13,7 +13,7 @@
  * 真实事件行为测不了，不抽出来就只能退化成「源码里含某段字面量」的反向锁死断言。
  */
 import { describe, it, expect } from 'vitest';
-import { shouldDismissOnPointerDown } from '../../web/src/lib/outside-dismiss';
+import { shouldDismissOnEscape, shouldDismissOnPointerDown } from '../../web/src/lib/outside-dismiss';
 
 /** 极简节点替身：只实现判据会用到的 contains / closest。 */
 function node(opts: { owns?: unknown[]; closestHits?: string[] } = {}) {
@@ -65,6 +65,37 @@ describe('shouldDismissOnPointerDown', () => {
   });
 });
 
+/*
+ * 2026-08-06 review P3-1：豁免曾只加在 pointerdown 上，Escape 直连 setOpen(false)。
+ * 于是在面板内 portal 出去的弹窗里按 Esc，会一次关掉弹窗和它底下的面板，还把焦点
+ * 抢回铃铛——鼠标那路早就修好了，键盘这路照旧。两条路径必须共用同一套豁免。
+ */
+describe('shouldDismissOnEscape', () => {
+  it('焦点在普通位置 → 关闭', () => {
+    expect(shouldDismissOnEscape({ target: node(), activeElement: node() })).toBe(true);
+  });
+
+  it('事件目标在 portal 弹窗里 → 不关', () => {
+    expect(shouldDismissOnEscape({
+      target: node({ closestHits: ['[role="dialog"]'] }),
+      activeElement: node(),
+    })).toBe(false);
+  });
+
+  it('焦点在 portal 弹窗里（事件目标是 body）→ 不关', () => {
+    // Radix 弹窗打开后焦点常落在弹窗内，而 keydown 的 target 可能是 body：
+    // 只判 target 会漏掉这一半。
+    expect(shouldDismissOnEscape({
+      target: node(),
+      activeElement: node({ closestHits: ['[role="dialog"]'] }),
+    })).toBe(false);
+  });
+
+  it('两个都缺省时按「可以关」处理，不抛错', () => {
+    expect(shouldDismissOnEscape({})).toBe(true);
+  });
+});
+
 describe('信息中心接线', () => {
   it('SiteNoticeInbox 真的用了这条判据，且没自己另写一套', async () => {
     const fs = await import('node:fs');
@@ -80,6 +111,8 @@ describe('信息中心接线', () => {
     // Esc 也要能关，并把焦点还给铃铛
     expect(src).toMatch(/event\.key !== 'Escape'/);
     expect(src).toContain('triggerRef.current?.focus()');
+    // Esc 必须走同一套豁免，不能直连 setOpen(false)（review P3-1）
+    expect(src).toContain('shouldDismissOnEscape({ target: event.target, activeElement: document.activeElement })');
     // 刻意不监听 scroll：面板列表区可滚，滚动关闭会误伤
     expect(src).not.toMatch(/addEventListener\('scroll'[^)]*\)\s*;?\s*\/\/\s*close/);
   });

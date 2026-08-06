@@ -38,6 +38,23 @@ export interface OutsideDismissOptions {
 
 const DEFAULT_EXEMPT = ['[role="dialog"]'];
 
+/**
+ * 这个节点是否落在豁免层里（默认：portal 出去的 Radix Dialog）。
+ *
+ * 抽出来是因为鼠标和键盘两条关闭路径**必须用同一套豁免**：只给 pointerdown 加豁免、
+ * 让 Escape 直连 setOpen(false)，会变成「弹窗里点没事、按 Esc 却把底下的面板一起关掉」
+ * （2026-08-06 review P3-1）。判据分成两套就是 predicate-and-wiring-discipline 形状 3。
+ */
+export function isInsideExemptLayer(
+  node: unknown,
+  exemptSelectors: string[] = DEFAULT_EXEMPT,
+): boolean {
+  if (!node) return false;
+  const closest = (node as { closest?: (selector: string) => unknown }).closest;
+  if (typeof closest !== 'function') return false;
+  return exemptSelectors.some((selector) => Boolean(closest.call(node, selector)));
+}
+
 export function shouldDismissOnPointerDown({
   target,
   owned,
@@ -49,12 +66,24 @@ export function shouldDismissOnPointerDown({
     if (node && typeof node.contains === 'function' && node.contains(target)) return false;
   }
 
-  const closest = (target as { closest?: (selector: string) => unknown }).closest;
-  if (typeof closest === 'function') {
-    for (const selector of exemptSelectors) {
-      if (closest.call(target, selector)) return false;
-    }
-  }
+  return !isInsideExemptLayer(target, exemptSelectors);
+}
 
-  return true;
+/**
+ * 「这次 Escape 该不该关掉这个浮层」。
+ *
+ * 焦点在浮层内部 portal 出去的弹窗里时不关：Radix 的 DismissableLayer 处理 Escape
+ * 不会阻断原生 keydown 冒泡到 window，不判就会一次按键关掉两层。
+ */
+export function shouldDismissOnEscape({
+  target,
+  activeElement,
+  exemptSelectors = DEFAULT_EXEMPT,
+}: {
+  target?: unknown;
+  activeElement?: unknown;
+  exemptSelectors?: string[];
+}): boolean {
+  return !isInsideExemptLayer(target, exemptSelectors)
+    && !isInsideExemptLayer(activeElement, exemptSelectors);
 }

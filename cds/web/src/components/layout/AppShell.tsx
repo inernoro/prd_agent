@@ -549,7 +549,7 @@ function RailNav({
           <Settings />
           <span>系统设置</span>
         </Link>
-        <RailThemeToggle onNavigate={onNavigate} />
+        <RailThemeToggle />
         <UserAccountMenu
           authMode={authMode}
           canLogout={canLogout}
@@ -568,7 +568,7 @@ function RailNav({
  * 这里出一个 rail 一级入口做 白天/黑天 快切，水波纹从按钮位置扩散。
  * 「自动（跟随系统）」是模式选择而不是日常开关，仍留在头像浮层的三档选择器里。
  */
-function RailThemeToggle({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
+function RailThemeToggle(): JSX.Element {
   const { theme, toggleWithRipple } = useTheme();
   const toLight = theme === 'dark';
   const Icon = toLight ? Sun : Moon;
@@ -582,7 +582,8 @@ function RailThemeToggle({ onNavigate }: { onNavigate?: () => void }): JSX.Eleme
       onClick={(event) => {
         const rect = event.currentTarget.getBoundingClientRect();
         toggleWithRipple({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-        onNavigate?.();
+        // 刻意不调 onNavigate：切主题是设置不是导航，移动端不该顺手把抽屉关掉，
+        // 用户多半想留在原地看效果（浮层里的三档选择器同样不关）。
       }}
     >
       <Icon />
