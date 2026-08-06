@@ -65,6 +65,26 @@
 | 2026-07-08-video-shadow-cost-cap | high | 2026-07-08 | LLM Gateway 生产 shadow 取证期曾批量触发视频生成真实入口，成功 submit 会产生真实供应商成本；后续余额不足/通道不可用只说明供应链阻断，不代表前序成功请求没有计费 | 任何生产 seed/canary 同时启用 `--include-video-direct`、`--include-visual-video-direct`、视频 poll/download 或提高 `--iterations` 时 | in-progress | 已在 `scripts/llmgw-map-shadow-seed.py` 增加默认 `--max-video-submits=3` 与 `--allow-high-cost-video` 显式解除闸门；视频能力暂缓期间，非视频 release gate 必须使用 scoped 过滤，不再为了全量门槛重复打视频供应商。2026-07-08 只读取证：`visual-agent.videogen::video-gen` 近期 http 成功 418 次，`video-agent.videogen::video-gen` http 成功 39 次，失败 7 次，失败集中在 APIyi 无通道、Ark 404、火山方舟 overdue balance 和模型池不可用。 |
 | 2026-07-07-prod-video-asr-upstream-unavailable | critical | 2026-07-07 | 生产 video/ASR raw 发布 gate 仍未闭合：`video-agent.videogen::video-gen` 绑定池不可用；APIyi `alibaba/wan-2.6`、`bytedance/seedance-2.0-fast` 均返回 no available channels；豆包 ASR 已补池并可解析，但真实 raw seed 返回 `Invalid X-Api-Key` | 全量 `LLMGW_MODE=http`、`canary-video-asr`、或宣称视频/ASR/字幕已迁移成功 | open | 已备份 `/root/backups/llmgw-prod-before-video-asr-evidence-20260707T070525+0800`、`/root/backups/llmgw-prod-before-restore-shadow-sample-20260707T073402+0800`、`/root/backups/llmgw-prod-before-video-reprobe-20260707T074011+0800`、`/root/backups/llmgw-prod-before-asr-pool-bootstrap-20260707T080433+0800`、`/root/backups/llmgw-prod-before-asr-seed-20260707T081332+0800`。生产仍为 `LlmGateway__Mode=shadow`、`LlmGateway__ShadowFullSamplePercent=1`、allowlist 空。2026-07-07 已用 `scripts/llmgw-prod-asr-pool-bootstrap.sh` 新增 `asr_doubao_bigmodel_pool` 并绑定四个 ASR caller：`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`、`video-agent.v2d.transcribe::asr`、`video-agent.video-to-text::asr`。新版 upstream readiness 取证：四个 ASR caller 均解析为 DedicatedPool `doubao-asr-bigmodel` / `Exchange:豆包 ASR (BigModel)` / `protocol=exchange` / `Healthy`；视频仍返回“模型池内所有模型不可用”。同日备份后跑真实 MAP seed：`seed[1].session_chat` 成功，`seed[1].transcript_asr` 与 `seed[1].document_store_subtitle_asr` 均失败，错误为豆包 ASR `code=45000010, message=Invalid X-Api-Key`，证据文件在生产 `/tmp/llmgw-asr-seed-after-bootstrap.json`。只读 provider config audit 报告在生产 `/tmp/llmgw-provider-config-audit.json`：ASR key 可解密、长度 36、UUID 单 key 形态、`TargetAuthScheme=XApiKey` 合理；失败项为 no Healthy video-gen model 以及两个 ASR seed 失败。此前短时把原视频池健康恢复为 Healthy 且采样提到 100% 后跑 `--include-video-direct`，真实业务入口仍失败：`video direct upstream failed ... HTTP 404`，raw shadow `httpFail=5`。下一步必须补可用视频渠道和有效豆包 ASR key/resourceId，并重跑 `scripts/llmgw-prod-provider-config-audit.py --seed-evidence-json <new-seed>` 与 `scripts/llmgw-map-shadow-seed.py --include-video-direct --include-transcript-asr --include-document-store-subtitle-asr`，得到 `raw` allMatch 且 httpFail=0 后才可进入 video-asr 灰度。 |
 
+## 网关账号自助（2026-08-06 修复 + 剩余边界）
+
+网关是独立账号体系，但账号的钥匙此前配不出来：MAP 一键登录自动建号时，用户名取 `map-{哈希}`、
+口令取随机 48 字节，两个值没有任何人知道；改密端点又无条件校验旧口令；控制台的用户菜单里
+也没有任何入口能走到改密。三处叠加的结果是「网关明明有口令，却登不进去，也改不了」——
+用户 2026-08-06 直接把它称为断头设计。
+
+本次修复：新增「账号与安全」页（用户菜单常驻入口，任何角色可进），展示登录名与口令状态；
+联邦账号在真人首次认领口令时豁免旧口令（依据是当前会话本身已由 MAP 完成鉴权），并允许把
+自动用户名改成记得住的；认领之后立即恢复常规的旧口令校验。判定收敛在
+`LocalPasswordPolicy` 一处，接线由源码守卫钉住。
+
+剩余边界（尚未偿还）：
+
+| 边界 | 说明 |
+| --- | --- |
+| 忘记口令无自助路径 | 只能由租户 Owner 从组织页重置，没有邮箱/短信找回。内部工具可接受，对外开放前须补 |
+| Owner 重置他人口令的入口未验证 | 组织页成员编辑是否真的能重置口令，本轮没有端到端走通；账号页文案已指向该路径，需要一次真实验收确认它成立 |
+| 登录名唯一性依赖唯一索引 | 占用检查与写入之间有窗口，靠 11000 兜底返回 USERNAME_TAKEN；若该集合尚未建唯一索引，并发改名可能撞出重名（索引由 DBA 手动创建，见 no-auto-index 规则） |
+
 ## 最新协议路由债务收口（2026-07-09）
 
 - `ProviderAttempts` 已从静态候选快照推进到结果快照：日志完成路径会写入最终发送 attempt 的 `statusCode`、`durationMs`、`error`、`endedAt`，控制台详情 API 和详情抽屉同步展示。

@@ -57,6 +57,22 @@ public class LayeringRunCreationTests
     }
 
     [Fact]
+    public void LayeringRun_IsNotBlockedByTheModelRequirement()
+    {
+        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+
+        // 分层不带模型，必填校验必须先认出它、放它过去。判定算得比校验晚一行，
+        // 请求就会被「必须提供 configModelId」挡在门外，后面清空 picker 的代码永远走不到——
+        // 编译过、测试绿、只有真的点一次分层才会发现这条链路根本没通。
+        var decided = controller.IndexOf("var isLayering = string.Equals", System.StringComparison.Ordinal);
+        var required = controller.IndexOf("必须提供 configModelId", System.StringComparison.Ordinal);
+        Assert.True(decided > 0 && required > 0, "找不到分层判定或模型必填校验");
+        Assert.True(decided < required, "isLayering 必须在模型必填校验之前算出来");
+        Assert.Contains("if (!isLayering && !string.IsNullOrWhiteSpace(cfgModelId))", controller);
+        Assert.Contains("else if (!isLayering)", controller);
+    }
+
+    [Fact]
     public void CapabilityId_HasSingleSourceOfTruth()
     {
         // 这个标识已经有两个调用方（同步端点与异步任务创建）。各自抄一份私有常量迟早漂移，

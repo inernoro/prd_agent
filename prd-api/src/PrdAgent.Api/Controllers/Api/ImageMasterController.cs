@@ -1564,6 +1564,12 @@ public class ImageMasterController : ControllerBase
             var targetKey = (request?.TargetKey ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(targetKey)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "targetKey 不能为空"));
 
+            // 语义分层：MAP 只认 LLMGW 发布的通用能力标识，不感知上游平台与具体模型。
+            // 这个判定必须在模型必填校验之前算出来——否则分层请求会先被「必须提供模型」挡掉，
+            // 后面清空 picker 字段的代码永远走不到，异步分层这条链路等于没接上。
+            var isLayering = string.Equals(
+                (request?.Operation ?? string.Empty).Trim(), "layering", StringComparison.OrdinalIgnoreCase);
+
             // 模型：configModelId 或 platformId+modelId
             var cfgModelId = (request?.ConfigModelId ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(cfgModelId)) cfgModelId = null;
@@ -1571,14 +1577,14 @@ public class ImageMasterController : ControllerBase
             if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
             var modelId = (request?.ModelId ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
-            if (!string.IsNullOrWhiteSpace(cfgModelId))
+            if (!isLayering && !string.IsNullOrWhiteSpace(cfgModelId))
             {
                 var m = await _db.LLMModels.Find(x => x.Id == cfgModelId && x.Enabled).FirstOrDefaultAsync(ct);
                 if (m == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "指定的模型不存在或未启用"));
                 platformId = m.PlatformId;
                 modelId = m.ModelName;
             }
-            else
+            else if (!isLayering)
             {
                 if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelId))
                 {
@@ -1632,10 +1638,7 @@ public class ImageMasterController : ControllerBase
                 }).ToList();
             }
 
-            // 语义分层：MAP 只认 LLMGW 发布的通用能力标识，不感知上游平台与具体模型，
-            // 因此显式清掉 picker 传来的平台/模型，交给 Gateway 按逻辑模型解析。
-            var isLayering = string.Equals(
-                (request?.Operation ?? string.Empty).Trim(), "layering", StringComparison.OrdinalIgnoreCase);
+            // 显式清掉 picker 传来的平台/模型，交给 Gateway 按逻辑模型解析。
             if (isLayering)
             {
                 cfgModelId = null;

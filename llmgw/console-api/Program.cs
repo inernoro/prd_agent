@@ -818,21 +818,21 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 // ───────────────────────────── 改密（需鉴权，mcp token 也可）─────────────────────────────
 // 首登强制改密：校验旧口令 → 写新哈希 → 清 MustChangePassword → 重新签发不带 mcp 的 token。
 // 用普通 RequireAuthorization（不走 LogsRead 策略），使 mcp=1 的 token 能在此改密后解锁日志。
+//
+// 同一条路径也承担「联邦账号首次认领本地口令」：MAP 一键登录建的号，用户名与口令都是自动生成的，
+// 没人知道旧口令。是否豁免旧口令由 LocalPasswordPolicy 单点判定，写口令仍然只有这一处实现。
 app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] ChangePasswordRequestDto req) =>
 {
     var oldPwd = req.OldPassword ?? "";
     var newPwd = req.NewPassword ?? "";
-    if (oldPwd.Length == 0 || newPwd.Length == 0)
+    var requestedUsername = (req.Username ?? "").Trim();
+    if (newPwd.Length == 0)
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令与新口令不能为空"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "新口令不能为空"), jsonOptions);
     }
-    if (newPwd.Length < 12)
+    if (newPwd.Length < LocalPasswordPolicy.MinPasswordLength)
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", "新口令至少 12 位"), jsonOptions);
-    }
-    if (newPwd == oldPwd)
-    {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("SAME_PASSWORD", "新口令不能与旧口令相同"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", $"新口令至少 {LocalPasswordPolicy.MinPasswordLength} 位"), jsonOptions);
     }
 
     // 从 token 的 sub（用户 Id）定位账号，避免依赖可变的用户名。
@@ -848,7 +848,33 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
     }
-    if (!PasswordHasher.Verify(oldPwd, user.PasswordHash))
+
+    var requiresOldPassword = LocalPasswordPolicy.RequiresOldPassword(user.IdentityProvider, user.PasswordChangedByUser);
+    if (requiresOldPassword && oldPwd.Length == 0)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令不能为空"), jsonOptions);
+    }
+    if (requiresOldPassword && newPwd == oldPwd)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("SAME_PASSWORD", "新口令不能与旧口令相同"), jsonOptions);
+    }
+
+    var newUsername = user.Username;
+    if (requestedUsername.Length > 0)
+    {
+        if (!LocalPasswordPolicy.TryNormalizeUsername(requestedUsername, out var normalizedUsername, out var usernameError))
+        {
+            return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_USERNAME", usernameError!), jsonOptions);
+        }
+        if (!string.Equals(normalizedUsername, user.Username, StringComparison.Ordinal)
+            && await users.Find(u => u.Username == normalizedUsername).AnyAsync())
+        {
+            return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("USERNAME_TAKEN", "该登录名已被占用"), jsonOptions);
+        }
+        newUsername = normalizedUsername;
+    }
+
+    if (requiresOldPassword && !PasswordHasher.Verify(oldPwd, user.PasswordHash))
     {
         await WriteOperationAuditAsync(
             operationAudits,
@@ -866,21 +892,41 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     var wasPasswordChangedByUser = user.PasswordChangedByUser;
     var update = Builders<LlmGwUser>.Update
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
+        .Set(u => u.Username, newUsername)
         .Set(u => u.MustChangePassword, false)
         // 标记为真人认领：默认模式下重启不再自愈回 admin/admin，保住用户新口令。
+        // 联邦账号一旦认领，下次改密就回到常规的旧口令校验。
         .Set(u => u.PasswordChangedByUser, true)
         .Inc(u => u.SecurityVersion, 1)
         .Set(u => u.UpdatedAt, DateTime.UtcNow);
-    var changedUser = await users.FindOneAndUpdateAsync(
-        Builders<LlmGwUser>.Filter.And(
-            Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
-            Builders<LlmGwUser>.Filter.Eq(u => u.IsActive, true),
-            Builders<LlmGwUser>.Filter.Eq(u => u.SecurityVersion, user.SecurityVersion),
-            Builders<LlmGwUser>.Filter.Eq(u => u.PasswordHash, user.PasswordHash)),
-        update,
-        new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+    LlmGwUser? changedUser;
+    try
+    {
+        changedUser = await users.FindOneAndUpdateAsync(
+            Builders<LlmGwUser>.Filter.And(
+                Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
+                Builders<LlmGwUser>.Filter.Eq(u => u.IsActive, true),
+                Builders<LlmGwUser>.Filter.Eq(u => u.SecurityVersion, user.SecurityVersion),
+                Builders<LlmGwUser>.Filter.Eq(u => u.PasswordHash, user.PasswordHash)),
+            update,
+            new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+    }
+    catch (MongoCommandException ex) when (ex.Code == 11000)
+    {
+        // 上面的占用查询与这次写入之间有窗口，唯一索引才是权威。
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("USERNAME_TAKEN", "该登录名已被占用"), jsonOptions);
+    }
     if (changedUser is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("PASSWORD_CHANGE_CONFLICT", "账号口令已被其他操作更新，请重新登录"), jsonOptions, 409);
+    var auditChanges = new BsonDocument
+    {
+        { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
+        { "passwordChangedByUser", new BsonDocument { { "from", wasPasswordChangedByUser }, { "to", true } } },
+        // 免旧口令的首次认领要在审计里留痕，否则事后分不清「验过旧口令」和「凭会话认领」。
+        { "oldPasswordVerified", requiresOldPassword },
+    };
+    if (!string.Equals(newUsername, user.Username, StringComparison.Ordinal))
+        auditChanges.Add("username", new BsonDocument { { "from", user.Username }, { "to", newUsername } });
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -890,11 +936,7 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         targetName: user.Username,
         success: true,
         reason: null,
-        changes: new BsonDocument
-        {
-            { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
-            { "passwordChangedByUser", new BsonDocument { { "from", wasPasswordChangedByUser }, { "to", true } } },
-        });
+        changes: auditChanges);
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
     var tenantAccess = TenantAccess.GetRequired(http);
@@ -913,6 +955,42 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         Tenant = ToTenantSession(tenant, membership),
     };
     return Json(ApiEnvelope<ChangePasswordResultDto>.Ok(data), jsonOptions);
+}).RequireAuthorization();
+
+// 「账号与安全」页的数据源：告诉用户自己的登录名是什么、有没有可用的本地口令。
+// 一键登录进来的人此前无处得知这两件事，于是「网关有口令但登不进去」。
+// 与改密同为普通 RequireAuthorization：任何角色都必须能管自己的凭据。
+app.MapGet("/gw/auth/account", async (HttpContext http) =>
+{
+    var userId = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        ?? http.User.FindFirst("sub")?.Value;
+    if (string.IsNullOrEmpty(userId))
+        return Json(ApiEnvelope<AccountProfileDto>.Fail("UNAUTHORIZED", "无效的登录态"), jsonOptions, statusCode: 401);
+
+    var user = await users.Find(u => u.Id == userId).FirstOrDefaultAsync();
+    if (user is null || !user.IsActive)
+        return Json(ApiEnvelope<AccountProfileDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
+
+    var access = TenantAccess.GetRequired(http);
+    var requiresOld = LocalPasswordPolicy.RequiresOldPassword(user.IdentityProvider, user.PasswordChangedByUser);
+    return Json(ApiEnvelope<AccountProfileDto>.Ok(new AccountProfileDto
+    {
+        Username = user.Username,
+        DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
+        IdentityProvider = user.IdentityProvider,
+        HasLocalPassword = LocalPasswordPolicy.HasUsablePassword(user.IdentityProvider, user.PasswordChangedByUser),
+        RequiresOldPassword = requiresOld,
+        UsernameIsGenerated = user.Username.StartsWith(LocalPasswordPolicy.ReservedUsernamePrefix, StringComparison.Ordinal),
+        MinPasswordLength = LocalPasswordPolicy.MinPasswordLength,
+        Tenant = new TenantSessionDto
+        {
+            Id = access.TenantId,
+            Name = access.TenantName,
+            IsInternal = access.IsInternalTenant,
+            Role = access.Role,
+            TeamIds = access.TeamIds.ToList(),
+        },
+    }), jsonOptions);
 }).RequireAuthorization();
 
 app.MapGet("/gw/auth/context", (HttpContext http) =>

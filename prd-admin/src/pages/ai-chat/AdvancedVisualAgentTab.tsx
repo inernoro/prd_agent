@@ -78,6 +78,7 @@ import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/image
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
 import type { ImageAsset, ReconcileCanvasItem, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
+import type { ImageGenRunStreamPayload } from '@/services/contracts/imageGen';
 import type { Model } from '@/types/admin';
 import {
   ArrowUpToLine,
@@ -1130,28 +1131,6 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
     reader.readAsDataURL(blob);
   });
 }
-
-type ImageGenRunStreamPayload = {
-  type?: unknown;
-  errorMessage?: unknown;
-  asset?: { id?: unknown; sha256?: unknown; url?: unknown; originalUrl?: unknown; originalSha256?: unknown } | null;
-  url?: unknown;
-  originalUrl?: unknown;
-  originalSha256?: unknown;
-  // 后端 runStart / imageDone 推送的模型身份；逻辑模型用于主展示，上游模型仅用于诊断。
-  modelId?: unknown;
-  logicalModelPublicId?: unknown;
-  modelGroupName?: unknown;
-  platformId?: unknown;
-  isAdaptive?: unknown;
-  adapterDisplayName?: unknown;
-  resolutionType?: unknown;
-  // 后端 imageDone 携带的尺寸真值（请求尺寸 vs 实际返回尺寸）
-  requestedSize?: unknown;
-  effectiveSize?: unknown;
-  sizeAdjusted?: unknown;
-  ratioAdjusted?: unknown;
-};
 
 function buildTemplate(name: string) {
   if (name === 'wine') {
@@ -2462,15 +2441,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
     const loadingId = toast.loading(
       '正在创建可编辑图层',
-      '模型拆分、资产保存和画布排列会分阶段进行，预计需要 15–30 秒。',
+      '模型拆分、资产保存和画布排列会分阶段进行，预计需要 30–90 秒。',
     );
-    setLayeringProgress({ sourceKey: sourceItem.key, phase: '正在提交语义分层模型' });
+    setLayeringProgress({ sourceKey: sourceItem.key, phase: '正在提交语义分层任务' });
 
     try {
       const result = await decomposeImageToLayers({
+        workspaceId,
+        targetKey: sourceItem.key,
         source,
-        sourceSha256: sourceItem.originalSrc ? null : (sourceItem.sha256 ?? null),
+        sourceSha256: sourceItem.originalSha256 || sourceItem.sha256 || null,
         layerCount: 4,
+        // 分层要跑几十秒，等待期必须一直有东西在动（禁止静止的「加载中」）。
+        onProgress: ({ phase, completed, total }) =>
+          setLayeringProgress({ sourceKey: sourceItem.key, phase, completed, total }),
       });
       if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
 
@@ -2593,7 +2577,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       cachedLayers.length > 0 ? '正在组装 PSD' : '正在拆分图片图层',
       cachedLayers.length > 0
         ? `正在复用画布中的 ${cachedLayers.length} 个图层，不会再次调用模型。`
-        : '预计需要 15–30 秒。完成后会在本机生成 PSD，期间可以继续使用画布。',
+        : '预计需要 30–90 秒。完成后会在本机生成 PSD，期间可以继续使用画布。',
     );
 
     try {
@@ -2603,10 +2587,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }));
 
       if (layerSources.length === 0) {
+        if (!workspaceId) throw new Error('当前画布尚未创建工作区');
+        const targetKey = String(cachedSource?.key || item?.key || input.key || '').trim();
         const result = await decomposeImageToLayers({
+          workspaceId,
+          targetKey,
           source,
-          sourceSha256: cachedSource?.originalSrc ? null : (cachedSource?.sha256 ?? null),
+          sourceSha256: cachedSource?.originalSha256 || cachedSource?.sha256 || null,
           layerCount: 4,
+          onProgress: ({ phase, completed, total }) => {
+            toast.update(loadingId, {
+              title: '正在拆分图片图层',
+              message: total > 0 ? `${phase}（${completed}/${total}）` : phase,
+            });
+          },
         });
         if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
         layerSources = (result.data?.images ?? [])
@@ -2634,7 +2628,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } finally {
       toast.dismiss(loadingId);
     }
-  }, []);
+  }, [workspaceId]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const msgContentRef = useRef<HTMLDivElement | null>(null);
