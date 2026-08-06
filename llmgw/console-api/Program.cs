@@ -911,9 +911,10 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
             update,
             new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
     }
-    catch (MongoCommandException ex) when (ex.Code == 11000)
+    catch (Exception ex) when (IsDuplicateKey(ex))
     {
         // 上面的占用查询与这次写入之间有窗口，唯一索引才是权威。
+        // 两种异常都要接：findAndModify 走 MongoCommandException，普通写入走 MongoWriteException。
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("USERNAME_TAKEN", "该登录名已被占用"), jsonOptions);
     }
     if (changedUser is null)
@@ -11817,6 +11818,15 @@ static BsonDocument PromptPolicyAuditChanges(BsonDocument doc) => new()
 };
 
 // 统一 JSON 输出（带信封 + 指定状态码）。
+// 唯一索引冲突的统一判定：findAndModify 走 MongoCommandException，普通写入走 MongoWriteException，
+// 两条路径的错误码都是 11000。分散着各判一次迟早漏一条，所以只在这里判。
+static bool IsDuplicateKey(Exception ex) => ex switch
+{
+    MongoCommandException command => command.Code == 11000,
+    MongoWriteException write => write.WriteError?.Category == ServerErrorCategory.DuplicateKey,
+    _ => false,
+};
+
 static IResult Json<T>(T value, JsonSerializerOptions options, int statusCode = 200)
     => Results.Json(value, options, statusCode: statusCode);
 
