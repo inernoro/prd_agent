@@ -19,6 +19,7 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.LLM.Adapters;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LLM;
 

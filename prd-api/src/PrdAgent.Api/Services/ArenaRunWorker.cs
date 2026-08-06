@@ -6,6 +6,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 using MongoDB.Driver;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 
@@ -184,7 +185,7 @@ public sealed class ArenaRunWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var httpClientFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
-        var gateway = scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var gateway = scope.ServiceProvider.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>();
 
         // Check for cancel
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -377,7 +378,7 @@ public sealed class ArenaRunWorker : BackgroundService
         string userId,
         List<LLMAttachment> llmAttachments,
         MongoDbContext db,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         ILLMRequestContextAccessor ctxAccessor,
         Dictionary<string, StringBuilder> slotTexts,
         CancellationToken ct)

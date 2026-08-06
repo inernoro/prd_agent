@@ -1,6 +1,8 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Asr;
 
 namespace PrdAgent.Infrastructure.LlmGateway.Asr;
 

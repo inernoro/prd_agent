@@ -7,6 +7,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 

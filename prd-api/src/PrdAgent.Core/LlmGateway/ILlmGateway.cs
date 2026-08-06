@@ -1,4 +1,4 @@
-namespace PrdAgent.Infrastructure.LlmGateway;
+namespace PrdAgent.Core.LlmGateway;
 
 /// <summary>
 /// LLM Gateway 统一接口 - 所有大模型调用的守门员

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Database;
 

@@ -11,6 +11,7 @@ using PrdAgent.Infrastructure.Services;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 

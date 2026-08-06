@@ -13,6 +13,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Security;
 
 using PrdAgent.Api.Services.MdToPpt;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 

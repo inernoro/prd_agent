@@ -4,7 +4,7 @@ using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using PrdAgent.Core.Models;
 
-namespace PrdAgent.Infrastructure.LlmGateway;
+namespace PrdAgent.Core.LlmGateway;
 
 /// <summary>
 /// LLM Gateway 统一请求模型

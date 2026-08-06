@@ -208,7 +208,7 @@ builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHea
 builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWorker>();
 
 // 模型调度执行器
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
@@ -223,7 +223,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(
         sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>>()));
 
 var configuredGatewayMode = builder.Configuration["LlmGateway:Mode"]?.Trim();
-var gatewayMode = PrdAgent.Infrastructure.LlmGateway.LlmGatewayModePolicy.Resolve(
+var gatewayMode = PrdAgent.Core.LlmGateway.LlmGatewayModePolicy.Resolve(
     configuredGatewayMode,
     builder.Environment.IsProduction());
 // 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
@@ -244,12 +244,12 @@ var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway
 // 显式逻辑模型不跟随 MAP 的全局 inproc/shadow 迁移开关：它始终使用独立 serving HTTP 边界。
 // 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>(sp =>
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
 {
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 }
 else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
@@ -258,10 +258,10 @@ else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
     // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
     // LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对）。inproc+仅白名单时不比对（writer=null）。
     var shadowSamplePercent = int.TryParse(builder.Configuration["LlmGateway:ShadowFullSamplePercent"], out var sp0) ? sp0 : 0;
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>
         new PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway(
             inproc: new PrdAgent.Infrastructure.LlmGateway.LlmGateway(
-                sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>(),
+                sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>(),
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>>(),
                 sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
@@ -281,19 +281,19 @@ else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
 }
 else
 {
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
 }
 
 // 把同一个实例也暴露成 Core 层那个窄接口。宽接口已继承窄接口，这里是隐式向上转型；
 // 此前写的是强制类型转换，接口一旦漂移只会在运行时炸，现在由编译期兜住。
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
-    sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>());
+    sp.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>());
 
 // OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenerationClient>(sp =>
     sp.GetRequiredService<OpenAIImageClient>());
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenGateway,
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ImageGen.IImageGenGateway,
     PrdAgent.Infrastructure.LlmGateway.ImageGen.ImageGenGateway>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();

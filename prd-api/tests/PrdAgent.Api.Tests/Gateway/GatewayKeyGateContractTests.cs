@@ -20,6 +20,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
@@ -440,7 +441,7 @@ public class GatewayKeyGateContractTests
         builder.Logging.ClearProviders();
         builder.WebHost.UseTestServer();
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
-        builder.Services.AddSingleton<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, ThrowingGateway>();
+        builder.Services.AddSingleton<PrdAgent.Core.LlmGateway.ILlmGateway, ThrowingGateway>();
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
         builder.Services.AddSingleton<GatewayCancellationRegistry>();
 
@@ -2926,7 +2927,7 @@ public class GatewayKeyGateContractTests
     /// 上游 stub：任何方法被调用即抛。401 应在中间件层短路，永远到不了这里；
     /// 若哪个受保护端点在无 key 时仍触达 gateway，会抛出而不是静默 200，暴露密钥门漏洞。
     /// </summary>
-    private sealed class ThrowingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class ThrowingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         private static InvalidOperationException Boom([CallerMemberName] string m = "")
             => new($"密钥门未短路：无授权请求触达了 gateway.{m}()");
@@ -2945,7 +2946,7 @@ public class GatewayKeyGateContractTests
     }
 
     private static WebApplication BuildHostWithGateway(
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         IGatewayServingReadinessProbe? readinessProbe = null,
         IGatewayScopedKeyAuthorizer? keyAuthorizer = null,
         ILLMRequestContextAccessor? contextAccessor = null,
@@ -3099,7 +3100,7 @@ public class GatewayKeyGateContractTests
         }
     }
 
-    private sealed class TenantCountingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class TenantCountingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         private readonly ConcurrentDictionary<string, int> _counts = new(StringComparer.Ordinal);
 
@@ -3128,7 +3129,7 @@ public class GatewayKeyGateContractTests
             => throw new NotSupportedException();
     }
 
-    private sealed class ConcurrentCountingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class ConcurrentCountingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         private int _sendCount;
         public int SendCount => _sendCount;
@@ -3151,7 +3152,7 @@ public class GatewayKeyGateContractTests
             => throw new NotSupportedException();
     }
 
-    private sealed class LifecycleFailureGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class LifecycleFailureGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         private readonly LlmGatewayDataContext _data;
         private readonly IHttpContextAccessor _httpContextAccessor;
@@ -3198,7 +3199,7 @@ public class GatewayKeyGateContractTests
             => throw new NotSupportedException();
     }
 
-    private sealed class CancellableGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class CancellableGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -3234,7 +3235,7 @@ public class GatewayKeyGateContractTests
             => throw new NotSupportedException();
     }
 
-    private sealed class NativeFailureGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class NativeFailureGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
             => Task.FromResult(GatewayResponse.Fail("NATIVE_SEND_FAILED", "send failed", 422));
@@ -3303,7 +3304,7 @@ public class GatewayKeyGateContractTests
         context.ParameterPolicy.ShouldBe(parameterPolicy);
     }
 
-    private sealed class EchoingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class EchoingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         private readonly ILLMRequestContextAccessor? _contextAccessor;
 

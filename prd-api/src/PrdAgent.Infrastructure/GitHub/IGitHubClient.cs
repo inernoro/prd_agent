@@ -6,7 +6,7 @@ namespace PrdAgent.Infrastructure.GitHub;
 /// GitHub 操作基础设施组件 —— 统一的 GitHub REST API 入口。
 ///
 /// 定位：
-///   和 <see cref="PrdAgent.Infrastructure.LlmGateway.ILlmGateway"/> 同级的独立基础设施组件。
+///   和 <see cref="PrdAgent.Core.LlmGateway.ILlmGateway"/> 同级的独立基础设施组件。
 ///   封装所有对 GitHub API 的 HTTP 调用，消灭散落在各模块（周报同步、PR 审查工作台、
 ///   未来的日报/检测功能等）里的重复 HttpClient/Authorization 胶水代码。
 ///

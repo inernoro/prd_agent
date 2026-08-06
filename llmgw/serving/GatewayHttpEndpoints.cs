@@ -13,6 +13,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.LlmGatewayHost;
 
@@ -273,7 +274,7 @@ public static class GatewayHttpEndpoints
         // 内部统一转成 chat-style GatewayRequest，router、日志、appCaller registry 不分叉。
         app.MapPost("/v1/responses", async (
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             IServiceProvider services) =>
         {
@@ -351,7 +352,7 @@ public static class GatewayHttpEndpoints
         // OpenAI Images 兼容入口。JSON 文生图走 raw JSON；图片编辑走 raw multipart。
         app.MapPost("/v1/images/generations", async (
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             IServiceProvider services) =>
         {
@@ -418,7 +419,7 @@ public static class GatewayHttpEndpoints
 
         app.MapPost("/v1/images/edits", async (
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             IServiceProvider services) =>
         {
@@ -491,7 +492,7 @@ public static class GatewayHttpEndpoints
         // 工具循环：sidecar 继续负责多轮 tool calls，模型请求统一穿过 llmgw-serve。
         app.MapPost("/v1/chat/completions", async (
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             IServiceProvider services) =>
         {
@@ -573,7 +574,7 @@ public static class GatewayHttpEndpoints
         // Claude-compatible 入口：接收 Anthropic Messages 形状，统一转成 GW IR 后进入同一个 router。
         app.MapPost("/v1/messages", async (
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
@@ -652,28 +653,28 @@ public static class GatewayHttpEndpoints
         app.MapPost("/v1beta/models/{model}:generateContent", (
             string model,
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
             => GeminiGenerateContentAsync(model, stream: false, http, gateway, accessor, services));
         app.MapPost("/gemini/v1beta/models/{model}:generateContent", (
             string model,
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
             => GeminiGenerateContentAsync(model, stream: false, http, gateway, accessor, services));
         app.MapPost("/v1beta/models/{model}:streamGenerateContent", (
             string model,
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
             => GeminiGenerateContentAsync(model, stream: true, http, gateway, accessor, services));
         app.MapPost("/gemini/v1beta/models/{model}:streamGenerateContent", (
             string model,
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
             => GeminiGenerateContentAsync(model, stream: true, http, gateway, accessor, services));
@@ -682,7 +683,7 @@ public static class GatewayHttpEndpoints
             string model,
             bool stream,
             HttpContext http,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
         {
@@ -759,7 +760,7 @@ public static class GatewayHttpEndpoints
         app.MapPost("/gw/v1/resolve", async (
             HttpContext http,
             ResolveRequestDto body,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
@@ -819,7 +820,7 @@ public static class GatewayHttpEndpoints
         async Task<IResult> HandleNativeInvokeAsync(
             HttpContext http,
             GatewayRequest request,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
         {
@@ -919,7 +920,7 @@ public static class GatewayHttpEndpoints
         app.MapPost("/gw/v1/stream", async (
             HttpContext http,
             GatewayRequest request,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
@@ -975,7 +976,7 @@ public static class GatewayHttpEndpoints
         app.MapPost("/gw/v1/raw", async (
             HttpContext http,
             GatewayRawRequest request,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
@@ -1103,7 +1104,7 @@ public static class GatewayHttpEndpoints
         app.MapPost("/gw/v1/profile-test", async (
             HttpContext http,
             GatewayUpstreamProfileTestRequest request,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
             var requestId = TrackGatewayRequestId(http, request.RequestId);
@@ -1173,7 +1174,7 @@ public static class GatewayHttpEndpoints
             HttpContext http,
             string appCallerCode,
             string modelType,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor) =>
         {
             using var _ = OpenContextScope(accessor, new GatewayRequestContext
@@ -1193,7 +1194,7 @@ public static class GatewayHttpEndpoints
         app.MapPost("/gw/v1/client-stream", async (
             HttpContext http,
             ClientStreamRequestDto body,
-            PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
@@ -3620,7 +3621,7 @@ public static class GatewayHttpEndpoints
     private static async Task ExecuteRawWithIdempotencyAsync(
         HttpContext http,
         IServiceProvider services,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         ILLMRequestContextAccessor accessor,
         GatewayIngressRequest ingress,
         GatewayRawRequest request,
@@ -3712,7 +3713,7 @@ public static class GatewayHttpEndpoints
 
     private static async Task SendOpenAiCompatibleAsync(
         HttpContext http,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         GatewayRequest request,
         string requestId,
         string? requestedModel,
@@ -3772,7 +3773,7 @@ public static class GatewayHttpEndpoints
 
     private static async Task StreamOpenAiCompatibleAsync(
         HttpContext http,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         GatewayRequest request,
         string requestId,
         string? requestedModel,
@@ -3886,7 +3887,7 @@ public static class GatewayHttpEndpoints
 
     private static async Task SendOpenAiResponsesCompatibleAsync(
         HttpContext http,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         GatewayRequest request,
         string requestId,
         string? requestedModel,
@@ -4056,7 +4057,7 @@ public static class GatewayHttpEndpoints
 
     private static async Task StreamOpenAiResponsesCompatibleAsync(
         HttpContext http,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         GatewayRequest request,
         string requestId,
         string? requestedModel,
@@ -4363,7 +4364,7 @@ public static class GatewayHttpEndpoints
 
     private static async Task SendClaudeCompatibleAsync(
         HttpContext http,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         GatewayRequest request,
         string requestId,
         string? requestedModel,
@@ -4506,7 +4507,7 @@ public static class GatewayHttpEndpoints
 
     private static async Task StreamClaudeCompatibleAsync(
         HttpContext http,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         GatewayRequest request,
         string requestId,
         string? requestedModel,
@@ -4604,7 +4605,7 @@ public static class GatewayHttpEndpoints
 
     private static async Task SendGeminiCompatibleAsync(
         HttpContext http,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         GatewayRequest request,
         string requestId,
         string? requestedModel,
@@ -4649,7 +4650,7 @@ public static class GatewayHttpEndpoints
 
     private static async Task StreamGeminiCompatibleAsync(
         HttpContext http,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         GatewayRequest request,
         string requestId,
         string? requestedModel,

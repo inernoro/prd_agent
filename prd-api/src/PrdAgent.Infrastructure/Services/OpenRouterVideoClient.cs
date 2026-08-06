@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Services;
 

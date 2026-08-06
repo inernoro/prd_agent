@@ -8,6 +8,8 @@ using PrdAgent.Core.Models.SpeechAgent;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.ImageGen;
 
 namespace PrdAgent.Api.Services;
 

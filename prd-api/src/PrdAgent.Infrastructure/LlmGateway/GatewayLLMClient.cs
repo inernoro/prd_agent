@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 

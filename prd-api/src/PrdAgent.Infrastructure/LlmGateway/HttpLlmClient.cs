@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.ModelPool;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 

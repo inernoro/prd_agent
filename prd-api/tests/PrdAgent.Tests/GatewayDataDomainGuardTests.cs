@@ -18,7 +18,7 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("ILogicalModelGateway : ILlmGateway", ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/ILogicalModelGateway.cs"));
         Assert.Contains("ILogicalModelGateway, CoreGateway.ILlmGateway", httpGateway);
-        Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>", program);
+        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>", program);
         Assert.Contains("private readonly ILogicalModelGateway _servingGateway", client);
         Assert.Contains("HttpLlmGatewayClient servingGateway", client);
         Assert.True(
@@ -199,7 +199,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("new RegistryAssetStorage(inner, db, providerName, regLogger, \"llmgw_asset_registry\")", program);
         Assert.Contains("GetCollection<PrdAgent.Core.Models.LLMPlatform>(\"llmgw_platforms\")", program);
         Assert.DoesNotContain("AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>()", program);
-        Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
     }
 
     [Fact]

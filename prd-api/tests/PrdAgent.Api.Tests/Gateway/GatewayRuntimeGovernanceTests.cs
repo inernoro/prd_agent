@@ -13,6 +13,7 @@ using PrdAgent.LlmGw.Costs;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 

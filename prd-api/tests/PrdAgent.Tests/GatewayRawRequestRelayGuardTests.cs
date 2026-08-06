@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using PrdAgent.Infrastructure.LlmGateway;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Tests;
 
