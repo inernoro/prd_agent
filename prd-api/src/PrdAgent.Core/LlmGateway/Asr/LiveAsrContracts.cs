@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using System.Text.Json.Serialization;
 
-namespace PrdAgent.Infrastructure.LlmGateway.Asr;
+namespace PrdAgent.Core.LlmGateway.Asr;
 
 /// <summary>
 /// 浏览器、MAP 与独立 LLM Gateway 之间的实时 ASR 控制消息。

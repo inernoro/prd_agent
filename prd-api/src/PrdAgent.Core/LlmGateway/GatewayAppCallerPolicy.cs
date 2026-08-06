@@ -1,4 +1,4 @@
-namespace PrdAgent.Infrastructure.LlmGateway;
+namespace PrdAgent.Core.LlmGateway;
 
 public static class GatewayAppCallerPolicy
 {

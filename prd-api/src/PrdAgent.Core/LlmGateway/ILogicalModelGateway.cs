@@ -1,4 +1,4 @@
-namespace PrdAgent.Infrastructure.LlmGateway;
+namespace PrdAgent.Core.LlmGateway;
 
 /// <summary>
 /// 显式逻辑模型的独立 Gateway 边界。

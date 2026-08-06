@@ -2,6 +2,8 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Adapters;
 
 namespace PrdAgent.Infrastructure.LlmGateway.Adapters;
 

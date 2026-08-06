@@ -1,4 +1,4 @@
-namespace PrdAgent.Infrastructure.LlmGateway.ImageGen;
+namespace PrdAgent.Core.LlmGateway.ImageGen;
 
 /// <summary>
 /// 图片生成请求 payload（业务无关，只有生成参数）

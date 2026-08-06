@@ -5,6 +5,7 @@ using PrdAgent.Core.Models.Toolbox;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services.Toolbox.Adapters;
 

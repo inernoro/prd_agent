@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
