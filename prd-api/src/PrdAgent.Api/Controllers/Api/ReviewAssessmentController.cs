@@ -142,7 +142,6 @@ public class ReviewAssessmentController : ControllerBase
             Truncated = table.Truncated,
             NameColumnIndex = mapping.NameColumnIndex ?? 0,
             DescColumnIndex = mapping.DescColumnIndex,
-            FactorColumnMapping = mapping.FactorColumns,
             CommentColumnIndexes = mapping.CommentColumns,
             AnchorScale = RequirementFactorCatalog.AnchorMax,
             MappingRefined = false,
@@ -393,13 +392,11 @@ public class ReviewAssessmentController : ControllerBase
                 {
                     NameColumnIndex = run.NameColumnIndex,
                     DescColumnIndex = run.DescColumnIndex,
-                    FactorColumns = run.FactorColumnMapping,
                     CommentColumns = run.CommentColumnIndexes,
                 };
                 var refined = await RefineMappingWithLlmAsync(table, heuristic);
                 run.NameColumnIndex = refined.NameColumnIndex ?? run.NameColumnIndex ?? 0;
                 run.DescColumnIndex = refined.DescColumnIndex;
-                run.FactorColumnMapping = refined.FactorColumns;
                 run.CommentColumnIndexes = refined.CommentColumns;
             }
             catch (Exception ex)
@@ -413,7 +410,6 @@ public class ReviewAssessmentController : ControllerBase
                 Builders<RequirementAssessmentRun>.Update
                     .Set(x => x.NameColumnIndex, run.NameColumnIndex)
                     .Set(x => x.DescColumnIndex, run.DescColumnIndex)
-                    .Set(x => x.FactorColumnMapping, run.FactorColumnMapping)
                     .Set(x => x.CommentColumnIndexes, run.CommentColumnIndexes)
                     .Set(x => x.MappingRefined, true),
                 cancellationToken: CancellationToken.None);
@@ -765,26 +761,16 @@ public class ReviewAssessmentController : ControllerBase
             sb.AppendLine($"| {f.Key} | {f.Name} | {f.Weight} | 第({f.RuleRef})条 | {f.AnchorGuide} |");
         sb.AppendLine();
 
-        sb.AppendLine("## 证据来源优先级（按维度分组，自动综合）");
+        sb.AppendLine("## 证据来源（仅限需求名称、详细描述、产品经理评论三类，其它字段一律不作为证据）");
         sb.AppendLine($"1. 前五维度（{string.Join("/", commentDriven)}）：**产品经理评论是最高优先级证据**。" +
-            (commentHeaders.Count > 0 ? $"评论列为「{string.Join("」「", commentHeaders)}」。" : "评论可能出现在任意意见/回复类字段中。") +
-            "评论中给出的明确评估意见或分值（如「通用性 8 分」「不合理」）应高权重采纳；评论与需求详情冲突时以评论为准，可结合详情做小幅微调；同一需求有多条评论时以最新一条为准。评论未覆盖的维度再回退用需求详情等其他字段推断。");
+            (commentHeaders.Count > 0 ? $"评论列为「{string.Join("」「", commentHeaders)}」。" : string.Empty) +
+            "评论中给出的明确评估意见或分值（如「通用性 8 分」「不合理」）应高权重采纳；评论与需求详情冲突时以评论为准，可结合详情做小幅微调；同一需求有多条评论时以最新一条为准。评论未覆盖的维度再回退用详细描述推断。");
         if (run.DescColumnIndex is int dc && dc >= 0 && dc < run.Headers.Count)
-            sb.AppendLine($"2. 后三维度（{string.Join("/", detailDriven)}）：以需求详情内容（列「{run.Headers[dc]}」）与需求名称为准，评论仅作辅助参考。");
+            sb.AppendLine($"2. 后三维度（{string.Join("/", detailDriven)}）：以需求详细描述（列「{run.Headers[dc]}」）与需求名称为准，评论仅作辅助参考。");
         else
-            sb.AppendLine($"2. 后三维度（{string.Join("/", detailDriven)}）：以需求描述/名称类字段为准，评论仅作辅助参考。");
-        sb.AppendLine("3. 辅助参考：客户名称、需求来源、需求类型、关联缺陷数、时间等其余全部字段，任何字段中的线索都可作为证据。");
-        if (run.FactorColumnMapping.Count > 0)
-        {
-            var hints = run.FactorColumnMapping
-                .Select(kv => (def: RequirementFactorCatalog.Find(kv.Key), cols: kv.Value))
-                .Where(x => x.def != null && x.cols.Count > 0)
-                .Select(x => $"{x.def!.Name} → {string.Join("、", x.cols.Where(c => c >= 0 && c < run.Headers.Count).Select(c => run.Headers[c]))}")
-                .ToList();
-            if (hints.Count > 0)
-                sb.AppendLine($"4. 系统自动识别的因子相关列（仅提示，不限制）：{string.Join("；", hints)}。");
-        }
-        sb.AppendLine("5. 结合行业通用优先级实践（WSJF 延迟成本思想、RICE 触达/影响/置信度）辅助判断锚点档位，但每个因子的打分依据必须落到表格字段原文，禁止脱离表格凭空判断。");
+            sb.AppendLine($"2. 后三维度（{string.Join("/", detailDriven)}）：以需求详细描述与需求名称为准，评论仅作辅助参考。");
+        sb.AppendLine("3. 除需求名称、详细描述、评论之外的字段信息均不列入评估参考数据范围，禁止引用或推断。");
+        sb.AppendLine("4. 结合行业通用优先级实践（WSJF 延迟成本思想、RICE 触达/影响/置信度）辅助判断锚点档位，但每个因子的打分依据必须落到上述证据原文，禁止凭空判断。");
         sb.AppendLine();
 
         sb.AppendLine("## 合理性判定（评论驱动，独立于八因子打分）");
@@ -807,20 +793,24 @@ public class ReviewAssessmentController : ControllerBase
         return sb.ToString();
     }
 
+    /// <summary>
+    /// 评分 user prompt：只投喂需求名称 + 详细描述 + 产品经理评论三类信息，
+    /// 表格其它字段一律不进入评估参考范围（2026-08-06 用户核定）。
+    /// </summary>
     private static string BuildScoringUserPrompt(RequirementAssessmentRun run, RequirementAssessmentItem[] batch)
     {
         var commentHeaders = new HashSet<string>(CommentHeadersOf(run), StringComparer.Ordinal);
+        var descHeader = run.DescColumnIndex is int dc && dc >= 0 && dc < run.Headers.Count ? run.Headers[dc] : null;
+
         var sb = new StringBuilder();
         sb.AppendLine($"请评估以下 {batch.Length} 条需求（row 为行号标识，输出时原样带回）：");
         foreach (var item in batch)
         {
             sb.AppendLine();
             sb.AppendLine($"### 需求 row={item.RowIndex}：{item.Name}");
-            foreach (var (header, value) in item.RawFields)
-            {
-                if (commentHeaders.Contains(header)) continue;
-                sb.AppendLine($"- {header}: {TrimTo(value, 500)}");
-            }
+
+            if (descHeader != null && item.RawFields.TryGetValue(descHeader, out var desc) && !string.IsNullOrWhiteSpace(desc))
+                sb.AppendLine($"- 详细描述: {TrimTo(desc, 1500)}");
 
             // 评论单独成块醒目展示（前五维度的最高优先级证据源）
             var comments = item.RawFields
@@ -844,7 +834,6 @@ public class ReviewAssessmentController : ControllerBase
     {
         public int? NameColumnIndex { get; set; }
         public int? DescColumnIndex { get; set; }
-        public Dictionary<string, List<int>> FactorColumns { get; set; } = new();
         public List<int> CommentColumns { get; set; } = new();
     }
 
@@ -877,18 +866,6 @@ public class ReviewAssessmentController : ControllerBase
                 result.CommentColumns.Add(i);
         }
 
-        foreach (var def in RequirementFactorCatalog.All)
-        {
-            var cols = new List<int>();
-            for (int i = 0; i < headers.Count; i++)
-            {
-                if (i == nameIdx) continue;
-                if (def.HeaderKeywords.Any(kw => headers[i].Contains(kw, StringComparison.OrdinalIgnoreCase)))
-                    cols.Add(i);
-            }
-            if (cols.Count > 0) result.FactorColumns[def.Key] = cols;
-        }
-
         return result;
     }
 
@@ -903,15 +880,12 @@ public class ReviewAssessmentController : ControllerBase
         foreach (var row in table.Rows.Take(3))
             sb.AppendLine(string.Join(" | ", row.Select(c => TrimTo(c, 40))));
         sb.AppendLine();
-        sb.AppendLine("评估因子（key 与含义）：");
-        foreach (var f in RequirementFactorCatalog.All)
-            sb.AppendLine($"- {f.Key}: {f.Name}（规范第{f.RuleRef}条）");
-        sb.AppendLine();
         sb.AppendLine("请输出 JSON（只输出 JSON）：");
-        sb.AppendLine("""{"nameColumn":0,"descColumn":1,"commentColumns":[7],"factorColumns":{"universality":[2],"frequency":[],"impactScope":[],"customerVoice":[3,4],"roadmapFit":[],"customerTier":[5],"dealLeverage":[],"contractUrgency":[6]}}""");
-        sb.AppendLine("规则：nameColumn 必填（最能代表需求名称的列）；descColumn 可为 null；");
-        sb.AppendLine("commentColumns 给出产品经理评论/评审意见类列的 index 数组（评论中通常含合理性判断与维度打分意见），没有就给空数组；");
-        sb.AppendLine("factorColumns 中每个因子给出可作为评估证据的列 index 数组，没有对应列就给空数组，禁止猜测无关列。");
+        sb.AppendLine("""{"nameColumn":0,"descColumn":1,"commentColumns":[7]}""");
+        sb.AppendLine("规则：nameColumn 必填（最能代表需求名称的列）。");
+        sb.AppendLine("descColumn：需求详细描述列（评估的核心证据源）。字段名可能有差异（如「详细描述」「需求描述」「需求说明」「需求内容」等），按语义智能判断；确实没有则给 null。");
+        sb.AppendLine("commentColumns：产品经理评论/评审意见类列的 index 数组（评论中通常含合理性判断与维度打分意见）。字段名可能有差异（如「评论」「评审意见」「PM 意见」「审核回复」等），按语义智能判断；没有就给空数组。");
+        sb.AppendLine("只识别以上三类列，其它字段不参与评估，无需标注。");
 
         var gatewayRequest = new GatewayRequest
         {
@@ -956,19 +930,6 @@ public class ReviewAssessmentController : ControllerBase
             result.DescColumnIndex = descCol >= 0 && descCol < table.Headers.Count && descCol != result.NameColumnIndex
                 ? descCol : heuristic.DescColumnIndex;
 
-            if (root["factorColumns"] is JsonObject fc)
-            {
-                foreach (var def in RequirementFactorCatalog.All)
-                {
-                    if (fc[def.Key] is not JsonArray arr) continue;
-                    var cols = arr.Select(n => ReadInt(n, -1))
-                        .Where(i => i >= 0 && i < table.Headers.Count)
-                        .Distinct()
-                        .ToList();
-                    if (cols.Count > 0) result.FactorColumns[def.Key] = cols;
-                }
-            }
-
             if (root["commentColumns"] is JsonArray cc)
             {
                 result.CommentColumns = cc.Select(n => ReadInt(n, -1))
@@ -977,8 +938,7 @@ public class ReviewAssessmentController : ControllerBase
                     .ToList();
             }
 
-            // LLM 一列未映射时回退启发式（避免 LLM 偷懒输出全空）
-            if (result.FactorColumns.Count == 0) result.FactorColumns = heuristic.FactorColumns;
+            // LLM 未识别出评论列时回退启发式（避免 LLM 偷懒输出全空）
             if (result.CommentColumns.Count == 0) result.CommentColumns = heuristic.CommentColumns;
             return result;
         }
@@ -1001,7 +961,7 @@ public class ReviewAssessmentController : ControllerBase
         {
             var missing = items.Count(i => i.FactorScores.Any(f => f.Key == def.Key && !f.HasEvidence));
             if (missing * 2 > items.Count)
-                hints.Add($"「{def.Name}」维度证据普遍缺失（{missing}/{items.Count} 条无证据，已按保守值计分），建议需求表补充相关信息列");
+                hints.Add($"「{def.Name}」维度证据普遍缺失（{missing}/{items.Count} 条无证据，已按保守值计分），建议在需求详细描述或评论中补充该维度信息");
         }
         return hints;
     }
@@ -1083,12 +1043,13 @@ public class ReviewAssessmentController : ControllerBase
         sb.AppendLine();
         sb.AppendLine("计分与排序规则：");
         sb.AppendLine("1. 因子得分 = 锚点分（0-10）x 权重 / 10，需求总分 = 八因子得分之和（满分 100）。");
-        sb.AppendLine("2. 评论权重：通用性/使用频次/影响范围/客户反馈量/产品主线契合度五个维度以产品经理评论为最高优先级证据，评论与需求详情冲突时以评论为准；客户重要度/成交助力/签约紧迫度三个维度以需求详情内容为准。");
-        sb.AppendLine("3. 合理性判定：产品经理评论明确判定「不合理」的需求（须有评论原文依据），强制分档 P3 并排序置于所有合理需求之后。");
-        sb.AppendLine($"4. 证据兜底：表格中无证据的因子按保守锚点 {RequirementFactorCatalog.ConservativeAnchor} 分计，并在明细中标注，杜绝 AI 凭空判断。");
-        sb.AppendLine($"5. 签约强制置顶：已签约且承诺期限 ≤30 天（签约紧迫度 ≥{RequirementFactorCatalog.ContractOverrideAnchorMin} 分且有证据）的需求排在所有普通需求之前（评论判定不合理的除外）。");
-        sb.AppendLine("6. 同分决胜链：签约紧迫度 → 客户反馈量 → 主线契合度 → 成交助力 → 通用性 → 原始行号。");
-        sb.AppendLine($"7. 分档：置顶或 ≥{RequirementFactorCatalog.TierP0Threshold} 为 P0；≥{RequirementFactorCatalog.TierP1Threshold} 为 P1；≥{RequirementFactorCatalog.TierP2Threshold} 为 P2；其余 P3。");
+        sb.AppendLine("2. 证据范围：评估仅参考需求名称、详细描述与产品经理评论，表格其它字段不列入评估参考。");
+        sb.AppendLine("3. 评论权重：通用性/使用频次/影响范围/客户反馈量/产品主线契合度五个维度以产品经理评论为最高优先级证据，评论与需求详情冲突时以评论为准；客户重要度/成交助力/签约紧迫度三个维度以需求详情内容为准。");
+        sb.AppendLine("4. 合理性判定：产品经理评论明确判定「不合理」的需求（须有评论原文依据），强制分档 P3 并排序置于所有合理需求之后。");
+        sb.AppendLine($"5. 证据兜底：详细描述与评论中均无证据的因子按保守锚点 {RequirementFactorCatalog.ConservativeAnchor} 分计，并在明细中标注，杜绝 AI 凭空判断。");
+        sb.AppendLine($"6. 签约强制置顶：已签约且承诺期限 ≤30 天（签约紧迫度 ≥{RequirementFactorCatalog.ContractOverrideAnchorMin} 分且有证据）的需求排在所有普通需求之前（评论判定不合理的除外）。");
+        sb.AppendLine("7. 同分决胜链：签约紧迫度 → 客户反馈量 → 主线契合度 → 成交助力 → 通用性 → 原始行号。");
+        sb.AppendLine($"8. 分档：置顶或 ≥{RequirementFactorCatalog.TierP0Threshold} 为 P0；≥{RequirementFactorCatalog.TierP1Threshold} 为 P1；≥{RequirementFactorCatalog.TierP2Threshold} 为 P2；其余 P3。");
         sb.AppendLine();
 
         // 四、逐条评估明细

@@ -40,7 +40,10 @@ public class RequirementAssessmentRun
     /// <summary>需求描述列索引（可空）</summary>
     public int? DescColumnIndex { get; set; }
 
-    /// <summary>因子 → 证据来源列索引（启发式 + LLM 自动综合）</summary>
+    /// <summary>
+    /// 因子 → 证据来源列索引（遗留字段：2026-08-06 起评估证据仅取详细描述与评论，
+    /// 新任务不再填充本字段，保留仅为存量任务数据兼容）
+    /// </summary>
     public Dictionary<string, List<int>> FactorColumnMapping { get; set; } = new();
 
     /// <summary>产品经理评论列索引（前五因子的最高优先级证据源；可空 = 表中无评论列）</summary>
