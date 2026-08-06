@@ -284,9 +284,10 @@ else
     builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
 }
 
-// 注册 Core 层的 ILlmGateway 接口（同一实例）
+// 把同一个实例也暴露成 Core 层那个窄接口。宽接口已继承窄接口，这里是隐式向上转型；
+// 此前写的是强制类型转换，接口一旦漂移只会在运行时炸，现在由编译期兜住。
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
-    (PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway)sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>());
+    sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>());
 
 // OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();

@@ -30,7 +30,12 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// }
 /// </code>
 /// </summary>
-public interface ILlmGateway
+/// <remarks>
+/// 继承 Core 层那个只有 CreateClient 的窄接口，而不是各自声明一份：
+/// 此前两处独立定义、靠装配时的强制类型转换桥接，签名一旦漂移就在运行时才炸。
+/// 继承之后是编译期保证，窄接口也成了 CreateClient 的唯一声明处。
+/// </remarks>
+public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
 {
     /// <summary>
     /// 发送非流式请求（Chat/Completion）
@@ -130,24 +135,7 @@ public interface ILlmGateway
         string modelType,
         CancellationToken ct = default);
 
-    /// <summary>
-    /// 创建 LLM 客户端（用于流式对话等场景）
-    /// 这是一个简单的工厂方法，返回的客户端内部通过 Gateway 发送所有请求
-    /// </summary>
-    /// <param name="appCallerCode">应用调用标识（如 "prd-agent.skill-gen::chat"）</param>
-    /// <param name="modelType">模型类型（chat/vision/intent/generation）</param>
-    /// <param name="maxTokens">最大 Token 数（默认 4096）</param>
-    /// <param name="temperature">温度参数（默认 0.2）</param>
-    /// <returns>LLM 客户端实例</returns>
-    Core.Interfaces.ILLMClient CreateClient(
-        string appCallerCode,
-        string modelType,
-        int maxTokens = 4096,
-        double temperature = 0.2,
-        bool includeThinking = false,
-        string? expectedModel = null,
-        string? pinnedPlatformId = null,
-        string? pinnedModelId = null);
+    // CreateClient 由继承的 Core.Interfaces.LlmGateway.ILlmGateway 提供，此处不再重复声明。
 }
 
 /// <summary>
