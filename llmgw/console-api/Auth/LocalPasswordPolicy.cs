@@ -29,23 +29,32 @@ public static class LocalPasswordPolicy
         => !string.IsNullOrWhiteSpace(identityProvider);
 
     /// <summary>
-    /// 改密时是否必须校验旧口令。
+    /// 改密时是否必须校验旧口令。判据是「这次请求有没有别的方式证明过身份」，
+    /// 不是「账号属于谁」——所以入参里有会话来源。
     ///
-    /// 唯一豁免：联邦账号且真人从未设置过本地口令——此时库里的哈希是建号时随机生成的，
-    /// 世上没有人能提供那个值，坚持要旧口令等于把账号永久锁死。豁免不降低安全性：
-    /// 调用方必须已经持有有效会话，而那个会话本身就是 MAP 侧完成鉴权后签发的。
-    /// 一旦真人设置过口令（PasswordChangedByUser=true），立即恢复常规校验。
+    /// 两种豁免，都建立在「坚持要旧口令拦不住任何人，只会把本人锁死」之上：
+    /// 其一，会话由外部身份提供方（MAP 一键登录）换来——持有它的人此刻就能再走一遍 SSO，
+    /// 旧口令没有增加任何门槛，却是忘记口令时唯一的回家路；
+    /// 其二，联邦账号且真人从未设置过本地口令——库里的哈希是建号时随机生成的，没有人知道那个值。
+    ///
+    /// 用口令登录得到的会话一律照常校验：那种会话不证明 SSO 身份，豁免它等于让被盗会话可以直接改密。
     /// </summary>
-    public static bool RequiresOldPassword(string? identityProvider, bool passwordChangedByUser)
-        => !IsFederatedIdentity(identityProvider) || passwordChangedByUser;
+    public static bool RequiresOldPassword(
+        string? identityProvider,
+        bool passwordChangedByUser,
+        bool sessionFromFederatedLogin = false)
+    {
+        if (sessionFromFederatedLogin) return false;
+        return !IsFederatedIdentity(identityProvider) || passwordChangedByUser;
+    }
 
     /// <summary>
     /// 账号当前是否持有「有人知道的」口令。种子账号的口令来自部署环境变量，算知道；
-    /// 联邦账号在真人设置之前不算。与 <see cref="RequiresOldPassword"/> 是同一件事的两种问法，
-    /// 共用一个判定源，避免两处各写一遍再各自漂移。
+    /// 联邦账号在真人设置之前不算。这是账号自身的属性，与本次会话怎么来的无关——
+    /// 所以刻意不接会话来源，避免和 <see cref="RequiresOldPassword"/> 混为一谈。
     /// </summary>
     public static bool HasUsablePassword(string? identityProvider, bool passwordChangedByUser)
-        => RequiresOldPassword(identityProvider, passwordChangedByUser);
+        => !IsFederatedIdentity(identityProvider) || passwordChangedByUser;
 
     /// <summary>
     /// 规范化真人认领的登录名：统一小写（登录查询区分大小写，不统一会出现看着一样却登不进的两个账号），

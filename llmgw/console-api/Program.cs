@@ -792,7 +792,7 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 
         // MAP 联邦会话默认与普通会话同为 7 天（LlmGwJwt:MapSsoLifetimeMinutes 可收紧）；
         // 再次从 MAP 点击仍会原子吊销该用户旧 Gateway 会话。
-        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, mapSsoLifetime);
+        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, mapSsoLifetime, federatedSession: true);
         return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
         {
             Token = token,
@@ -849,7 +849,11 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
     }
 
-    var requiresOldPassword = LocalPasswordPolicy.RequiresOldPassword(user.IdentityProvider, user.PasswordChangedByUser);
+    // 会话来源参与判定：从 MAP 一键登录进来的人此刻就能再走一遍 SSO，
+    // 要求旧口令拦不住任何人，只会把忘记口令的本人锁死。
+    var fromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
+    var requiresOldPassword = LocalPasswordPolicy.RequiresOldPassword(
+        user.IdentityProvider, user.PasswordChangedByUser, fromFederatedSession);
     if (requiresOldPassword && oldPwd.Length == 0)
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令不能为空"), jsonOptions);
@@ -945,7 +949,7 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     var tenant = membership is null ? null : await tenants.Find(x => x.Id == tenantAccess.TenantId && x.Status == "active").FirstOrDefaultAsync();
     if (tenant is null || membership is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("TENANT_ACCESS_DENIED", "租户成员关系已失效"), jsonOptions, 403);
-    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership);
+    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership, federatedSession: fromFederatedSession);
     var data = new ChangePasswordResultDto
     {
         Token = token,
@@ -973,7 +977,10 @@ app.MapGet("/gw/auth/account", async (HttpContext http) =>
         return Json(ApiEnvelope<AccountProfileDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
 
     var access = TenantAccess.GetRequired(http);
-    var requiresOld = LocalPasswordPolicy.RequiresOldPassword(user.IdentityProvider, user.PasswordChangedByUser);
+    var requiresOld = LocalPasswordPolicy.RequiresOldPassword(
+        user.IdentityProvider,
+        user.PasswordChangedByUser,
+        http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1");
     return Json(ApiEnvelope<AccountProfileDto>.Ok(new AccountProfileDto
     {
         Username = user.Username,

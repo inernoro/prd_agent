@@ -23,10 +23,22 @@ public class LocalPasswordPolicyTests
     }
 
     [Fact]
-    public void FederatedAccount_AfterHumanClaim_RequiresOldPasswordAgain()
+    public void FederatedAccount_AfterHumanClaim_RequiresOldPasswordOnAPasswordSession()
     {
-        // 认领之后立刻回到常规校验，豁免只发生一次。
+        // 用口令登录进来的会话不证明 SSO 身份，认领之后回到常规校验。
         Assert.True(LocalPasswordPolicy.RequiresOldPassword("map", passwordChangedByUser: true));
+        Assert.True(LocalPasswordPolicy.HasUsablePassword("map", passwordChangedByUser: true));
+    }
+
+    [Fact]
+    public void FederatedSession_AlwaysSkipsOldPassword_SoForgettingItIsNotALockout()
+    {
+        // 忘记口令的人重新从 MAP 一键登录进来，必须能直接设新口令。
+        // 否则「认领口令」本身就把账号第二次锁死——正是这次要修的那种断头。
+        // 拦不住任何人：持有这种会话的人此刻本来就能再走一遍 SSO。
+        Assert.False(LocalPasswordPolicy.RequiresOldPassword("map", true, sessionFromFederatedLogin: true));
+        Assert.False(LocalPasswordPolicy.RequiresOldPassword("map", false, sessionFromFederatedLogin: true));
+        // 但账号确实有口令这件事不变——会话怎么来的不改变账号属性。
         Assert.True(LocalPasswordPolicy.HasUsablePassword("map", passwordChangedByUser: true));
     }
 
@@ -106,7 +118,12 @@ public class AccountSelfServiceWiringTests
 
         // 端点必须走共享判定源。自己就地写一份 identityProvider == "map" 的条件，
         // 上面那组安全断言就管不到它了。
-        Assert.Contains("LocalPasswordPolicy.RequiresOldPassword(user.IdentityProvider, user.PasswordChangedByUser)", program);
+        Assert.Contains("LocalPasswordPolicy.RequiresOldPassword(", program);
+        Assert.Contains("user.IdentityProvider, user.PasswordChangedByUser, fromFederatedSession)", program);
+        // 会话来源必须真的从 token 里读，不能凭账号属性猜。
+        Assert.Contains("http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == \"1\"", program);
+        // 只有 SSO 换来的会话才盖这个标记；口令登录那条路径不许盖。
+        Assert.Contains("mapSsoLifetime, federatedSession: true)", program);
         Assert.Contains("if (requiresOldPassword && !PasswordHasher.Verify(oldPwd, user.PasswordHash))", program);
         // 联邦账号的自动用户名没人记得住，不能改名的话设了口令也登不进来。
         Assert.Contains("LocalPasswordPolicy.TryNormalizeUsername", program);
