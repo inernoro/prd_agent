@@ -97,6 +97,13 @@ export interface BuildProfile {
    */
   subdomain?: string;
   /**
+   * User-facing Web entry metadata. This is deliberately separate from
+   * `readinessProbe`: readiness answers whether a process can serve traffic,
+   * while a Web entry answers where a person should land and what the link is
+   * called. Derived from the `cds.web-entry-*` compose labels.
+   */
+  webEntry?: WebEntryConfig;
+  /**
    * Service dependencies — IDs of infra services or other profiles this app depends on.
    * Derived from compose `depends_on`. Used for startup ordering.
    */
@@ -1183,10 +1190,21 @@ export interface DeploymentVersionProfile {
   containerWorkDir?: string;
   pathPrefixes?: string[];
   subdomain?: string;
+  webEntry?: WebEntryConfig;
   dependsOn?: string[];
   readinessProbe?: ReadinessProbe;
   startupSignal?: string;
   deployedMode?: string;
+}
+
+/** Human-facing browser entry declared by one build profile. */
+export interface WebEntryConfig {
+  /** User-defined label rendered in CDS. */
+  name: string;
+  /** Same-origin page path. Operational probe paths are not allowed. */
+  path: string;
+  /** Explicitly select this profile as the branch main entry when routing is ambiguous. */
+  primary?: boolean;
 }
 
 /** 构建成功后生成的不可变部署版本；不保存环境变量明文或密钥。 */
