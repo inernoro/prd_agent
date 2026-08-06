@@ -142,6 +142,27 @@ public class AccountSelfServiceWiringTests
     }
 
     [Fact]
+    public void SsoProvisioning_PrefersTheMapUsernameOverTheGeneratedOne()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 一键登录进来的人不该被迫记住第二个名字：建号就用 MAP 用户名，
+        // 只有不合法或被占用才退回 map-{hash}。
+        Assert.Contains("preferredUsername is not null && !preferredTaken ? preferredUsername : fallbackUsername", program);
+        // 存量账号（还叫自动名）在下次一键登录时就地自愈。
+        Assert.Contains("gwUser.Username.StartsWith(LocalPasswordPolicy.ReservedUsernamePrefix", program);
+        // MAP 那边改了名要跟着刷新，否则建议值是过期的。
+        Assert.Contains(".Set(x => x.ExternalUsername, mapUsername)", program);
+        // 冲突时不能闷声退回自动名——账号页要说清「为什么你不能用自己那个名字」。
+        Assert.Contains("SuggestedUsername = suggestedUsername", program);
+        Assert.Contains("SuggestedUsernameTaken = suggestedTaken", program);
+
+        var page = ReadRepoFile("llmgw/web/src/pages/AccountSecurityPage.tsx");
+        Assert.Contains("suggestedUsernameTaken", page);
+        Assert.Contains("已被网关上的其他账号占用", page);
+    }
+
+    [Fact]
     public void Console_HasAReachableEntryToAccountSecurity()
     {
         // 断头的那一半：后端能改密，但用户菜单里没有任何入口能走到。

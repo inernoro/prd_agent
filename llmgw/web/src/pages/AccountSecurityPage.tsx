@@ -32,7 +32,10 @@ export function AccountSecurityPage() {
     const res = await getAccountProfile();
     if (res.success && res.data) {
       setProfile(res.data);
-      setUsername(res.data.usernameIsGenerated ? '' : res.data.username);
+      // 预填 MAP 登录名：一键登录进来的人不该被迫再想一个名字。
+      // 那个名字被别人占了就留空，让下面的提示说清原因，而不是填上去等他撞一次。
+      const suggested = res.data.suggestedUsernameTaken ? '' : (res.data.suggestedUsername ?? '');
+      setUsername(res.data.usernameIsGenerated ? suggested : res.data.username);
       setLoadError(null);
     } else {
       setLoadError(res.error?.message || '读取账号信息失败');
@@ -141,6 +144,13 @@ export function AccountSecurityPage() {
                       placeholder="小写字母、数字、点、下划线、连字符"
                       onChange={(e) => setUsername(e.target.value)}
                     />
+                    {profile.suggestedUsernameTaken && profile.suggestedUsername ? (
+                      <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>
+                        你的 MAP 登录名「{profile.suggestedUsername}」已被网关上的其他账号占用，请另取一个。
+                      </span>
+                    ) : profile.suggestedUsername ? (
+                      <span style={HINT_TEXT}>已按你的 MAP 登录名填好，保持一致更好记。</span>
+                    ) : null}
                   </label>
                 ) : null}
                 {needsOld ? (

@@ -700,16 +700,27 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 
         var externalSubjectId = $"map:{mapUserId}";
         var gwUser = await users.Find(x => x.IdentityProvider == "map" && x.ExternalSubjectId == externalSubjectId).FirstOrDefaultAsync();
+
+        // 登录名默认跟 MAP 一致：一键登录进来的人不该被迫记住第二个名字。
+        // 取不到（不合法字符集、或已被别人占用）才退回自动名，并在账号页如实说明为什么。
+        var preferredUsername = LocalPasswordPolicy.TryNormalizeUsername(mapUsername, out var normalizedMapUsername, out _)
+            ? normalizedMapUsername
+            : null;
+        var preferredTaken = preferredUsername is not null
+            && await users.Find(x => x.Username == preferredUsername
+                                     && (x.IdentityProvider != "map" || x.ExternalSubjectId != externalSubjectId)).AnyAsync();
+        var fallbackUsername = $"map-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mapUserId))).ToLowerInvariant()[..16]}";
+
         if (gwUser is null)
         {
-            var stableUserHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mapUserId))).ToLowerInvariant();
             var createdUser = new LlmGwUser
             {
                 Id = Guid.NewGuid().ToString("N"),
-                Username = $"map-{stableUserHash[..16]}",
+                Username = preferredUsername is not null && !preferredTaken ? preferredUsername : fallbackUsername,
                 DisplayName = mapDisplayName.Length > 0 ? mapDisplayName : mapUsername,
                 IdentityProvider = "map",
                 ExternalSubjectId = externalSubjectId,
+                ExternalUsername = mapUsername,
                 PasswordHash = PasswordHasher.Hash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(48))),
                 IsActive = true,
                 MustChangePassword = false,
@@ -732,11 +743,35 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
                 if (gwUser is null) throw;
             }
         }
+        else if (preferredUsername is not null
+                 && !preferredTaken
+                 && gwUser.Username.StartsWith(LocalPasswordPolicy.ReservedUsernamePrefix, StringComparison.Ordinal))
+        {
+            // 存量自愈：早先建的号还叫自动名，而 MAP 用户名此刻可用，就地改过来。
+            // 判据用保留前缀而不是别的标记——那个命名空间真人拿不到，落在里面必然是自动生成的。
+            // 改名不影响身份关联：绑定走 ExternalSubjectId，从来不依赖用户名。
+            try
+            {
+                var renamed = await users.FindOneAndUpdateAsync(
+                    Builders<LlmGwUser>.Filter.And(
+                        Builders<LlmGwUser>.Filter.Eq(x => x.Id, gwUser.Id),
+                        Builders<LlmGwUser>.Filter.Eq(x => x.Username, gwUser.Username)),
+                    Builders<LlmGwUser>.Update.Set(x => x.Username, preferredUsername),
+                    new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+                if (renamed is not null) gwUser = renamed;
+            }
+            catch (Exception ex) when (IsDuplicateKey(ex))
+            {
+                // 查到可用与真正写入之间被人抢先。保持自动名，账号页会提示改名。
+            }
+        }
 
         gwUser = await users.FindOneAndUpdateAsync(
             Builders<LlmGwUser>.Filter.Eq(x => x.Id, gwUser.Id),
             Builders<LlmGwUser>.Update
                 .Set(x => x.DisplayName, mapDisplayName.Length > 0 ? mapDisplayName : mapUsername)
+                // MAP 那边改了名要跟着刷新，否则账号页给的建议值是过期的。
+                .Set(x => x.ExternalUsername, mapUsername)
                 .Set(x => x.IsActive, true)
                 .Set(x => x.MustChangePassword, false)
                 .Set(x => x.DefaultTenantId, tenant.Id)
@@ -981,6 +1016,18 @@ app.MapGet("/gw/auth/account", async (HttpContext http) =>
         user.IdentityProvider,
         user.PasswordChangedByUser,
         http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1");
+
+    // 建议登录名 = 外部身份那边的登录名。只在它与当前用户名不同时才有意义；
+    // 被别人占用时也要返回，好让页面说清「为什么你不能用自己那个名字」。
+    string? suggestedUsername = null;
+    var suggestedTaken = false;
+    if (LocalPasswordPolicy.TryNormalizeUsername(user.ExternalUsername, out var normalizedExternal, out _)
+        && !string.Equals(normalizedExternal, user.Username, StringComparison.Ordinal))
+    {
+        suggestedUsername = normalizedExternal;
+        suggestedTaken = await users.Find(x => x.Username == normalizedExternal && x.Id != user.Id).AnyAsync();
+    }
+
     return Json(ApiEnvelope<AccountProfileDto>.Ok(new AccountProfileDto
     {
         Username = user.Username,
@@ -989,6 +1036,8 @@ app.MapGet("/gw/auth/account", async (HttpContext http) =>
         HasLocalPassword = LocalPasswordPolicy.HasUsablePassword(user.IdentityProvider, user.PasswordChangedByUser),
         RequiresOldPassword = requiresOld,
         UsernameIsGenerated = user.Username.StartsWith(LocalPasswordPolicy.ReservedUsernamePrefix, StringComparison.Ordinal),
+        SuggestedUsername = suggestedUsername,
+        SuggestedUsernameTaken = suggestedTaken,
         MinPasswordLength = LocalPasswordPolicy.MinPasswordLength,
         Tenant = new TenantSessionDto
         {

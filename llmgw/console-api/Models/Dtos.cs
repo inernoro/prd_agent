@@ -107,6 +107,18 @@ public sealed class AccountProfileDto
     /// <summary>当前用户名是否为自动生成（据此提示用户改成记得住的名字）。</summary>
     public bool UsernameIsGenerated { get; init; }
 
+    /// <summary>
+    /// 建议的登录名，即外部身份那边的登录名（MAP 用户名）。
+    /// 前端拿它预填输入框——SSO 进来的人不该被迫记住第二个名字。为空表示没有可用建议。
+    /// </summary>
+    public string? SuggestedUsername { get; init; }
+
+    /// <summary>
+    /// 建议登录名已被别人占用。为 true 时前端必须明说「你的 MAP 登录名已被占用，请另取一个」，
+    /// 否则用户会照着填、撞一次冲突、再自己猜原因。
+    /// </summary>
+    public bool SuggestedUsernameTaken { get; init; }
+
     public int MinPasswordLength { get; init; }
     public TenantSessionDto? Tenant { get; init; }
 }

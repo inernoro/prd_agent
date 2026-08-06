@@ -56,6 +56,10 @@ export type AccountProfile = {
   requiresOldPassword: boolean;
   /** 当前用户名是否为自动生成（map-xxxx），据此提示用户改成记得住的名字。 */
   usernameIsGenerated: boolean;
+  /** 建议的登录名（MAP 用户名），用于预填输入框；为空表示没有可用建议。 */
+  suggestedUsername?: string | null;
+  /** 建议登录名已被别人占用——必须明说，否则用户会照着填再撞一次。 */
+  suggestedUsernameTaken?: boolean;
   minPasswordLength: number;
   tenant?: TenantSession | null;
 };
