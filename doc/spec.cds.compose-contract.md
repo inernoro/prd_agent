@@ -81,11 +81,17 @@ CDS 在项目根目录按下面顺序探测,**第一个命中即用**:
 | `environment:` | dict \| array | 否 | 容器 env;**值可以含 `${VAR}` 引用** `x-cds-env` 或同 service env 里的其他 key |
 | `depends_on:` | dict \| array | 否 | 启动顺序(对 infra service 的 `id` 引用);**Phase 2 起即使不写也兜底起所有 infra** |
 | `labels.cds.path-prefix:` | string | 否 | 路由前缀,如 `/api/`,proxy 把 `域名/api/*` 转给该 service |
+| `labels.cds.subdomain:` | string | 否 | 为服务发布独立命名 host；只代表路由存在，不自动成为用户入口 |
+| `labels.cds.web-entry-name:` | string | 否 | 用户在 CDS 入口列表看到的名称；声明后才是用户可见页面 |
+| `labels.cds.web-entry-path:` | string | 否 | 用户落地页面，默认 `/`；禁止 readiness/liveness/health 路径 |
+| `labels.cds.web-entry-primary:` | bool string | 否 | 路由歧义时指定唯一主入口；通常 `cds.path-prefix: /` 自动识别 |
 | `labels.cds.readiness-path:` | string | 否 | 就绪探测路径,默认 `/`,4xx 也算"HTTP 活" |
 | `labels.cds.readiness-timeout:` | int | 否 | 单位秒,默认 180 |
 | `labels.cds.readiness-interval:` | int | 否 | 单位秒,默认 2 |
 | `deploy.resources.limits:` | dict | 否 | 标准 cgroup 限制(`memory: "512M"`, `cpus: "1.5"`) |
 | `x-cds-resources:` | dict | 否 | CDS 优先扩展(`memoryMB: 512`, `cpus: 1.5`),与上面二选一,本字段优先 |
+
+用户入口与运行探针是两套独立合同：`cds.web-entry-*` 回答“人点击哪里、看到什么名字”，`cds.readiness-*` 回答“机器如何判断进程就绪”。不得从 readiness 路径反推入口。具有 `cds.path-prefix: /` 的已命名 Web 服务自动成为主入口；同一 profile 即使有 `cds.subdomain` 也不会重复列出。API-only 命名路由不声明 `cds.web-entry-name` 即可。
 
 ### 2.2.1 `x-cds-deploy-modes` 子键（含 2026-06-23 极速版 / CI 预构建）
 
