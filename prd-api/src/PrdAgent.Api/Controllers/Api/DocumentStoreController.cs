@@ -18,6 +18,7 @@ using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 

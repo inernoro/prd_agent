@@ -13,6 +13,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Prompts.Templates;
 using PrdAgent.Infrastructure.Security;
 using static PrdAgent.Core.Models.AppCallerRegistry;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -29,7 +30,7 @@ public class ModelLabController : ControllerBase
     private readonly IModelLabRepository _repo;
     private readonly IConfiguration _config;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
-    private readonly PrdAgent.Infrastructure.LlmGateway.ILlmGateway _gateway;
+    private readonly PrdAgent.Core.LlmGateway.ILlmGateway _gateway;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -38,7 +39,7 @@ public class ModelLabController : ControllerBase
         IModelLabRepository repo,
         IConfiguration config,
         ILLMRequestContextAccessor ctxAccessor,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway)
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway)
     {
         _db = db;
         _repo = repo;

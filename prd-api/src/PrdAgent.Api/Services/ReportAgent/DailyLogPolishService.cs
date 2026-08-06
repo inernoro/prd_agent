@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using PrdAgent.Api.Services.PrReview;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services.ReportAgent;
 

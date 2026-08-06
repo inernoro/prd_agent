@@ -15,6 +15,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
@@ -224,7 +225,7 @@ public class GatewayServingEndpointContractTests
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
-        builder.Services.AddSingleton<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, EchoingGateway>();
+        builder.Services.AddSingleton<PrdAgent.Core.LlmGateway.ILlmGateway, EchoingGateway>();
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
 
         var app = builder.Build();
@@ -255,7 +256,7 @@ public class GatewayServingEndpointContractTests
     /// stub 上游：把「调用方传入的 expectedModel」回显为 ActualModel / Content，
     /// 以此在无 Mongo 的前提下断言「不选 A 给 B」跨 HTTP 边界仍成立。
     /// </summary>
-    private sealed class EchoingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class EchoingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         private static GatewayModelResolution Resolve(string? expected) => new()
         {

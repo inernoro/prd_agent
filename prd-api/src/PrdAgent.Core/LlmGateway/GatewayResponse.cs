@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
-namespace PrdAgent.Infrastructure.LlmGateway;
+namespace PrdAgent.Core.LlmGateway;
 
 /// <summary>
 /// LLM Gateway 统一响应模型

@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 
-namespace PrdAgent.Infrastructure.LlmGateway.Adapters;
+namespace PrdAgent.Core.LlmGateway.Adapters;
 
 /// <summary>
 /// Gateway 平台适配器接口
