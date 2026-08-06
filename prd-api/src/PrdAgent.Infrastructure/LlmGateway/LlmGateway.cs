@@ -12,6 +12,8 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
 using PrdAgent.Infrastructure.LlmGateway.Transformers;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Adapters;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 

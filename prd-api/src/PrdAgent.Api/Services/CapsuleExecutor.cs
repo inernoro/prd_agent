@@ -12,6 +12,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 
@@ -672,7 +673,7 @@ public static class CapsuleExecutor
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables, List<ExecutionArtifact> inputArtifacts,
         EmitEventDelegate? emitEvent = null)
     {
-        var gateway = sp.GetService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var gateway = sp.GetService<PrdAgent.Core.LlmGateway.ILlmGateway>();
         if (gateway == null)
             throw new InvalidOperationException("LLM Gateway 未配置，无法执行 LLM 分析");
 
@@ -738,7 +739,7 @@ public static class CapsuleExecutor
             ["content"] = userContent
         });
 
-        var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        var request = new PrdAgent.Core.LlmGateway.GatewayRequest
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.LlmAnalyzer.Chat,
             ModelType = "chat",
@@ -782,7 +783,7 @@ public static class CapsuleExecutor
             {
                 switch (chunk.Type)
                 {
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Start:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Start:
                         model = chunk.Resolution?.ActualModel ?? "(unknown)";
                         resolutionType = chunk.Resolution?.ResolutionType;
                         if (emitEvent != null)
@@ -791,7 +792,7 @@ public static class CapsuleExecutor
                         }
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Text:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Text:
                         if (!string.IsNullOrEmpty(chunk.Content))
                         {
                             contentBuilder.Append(chunk.Content);
@@ -811,12 +812,12 @@ public static class CapsuleExecutor
                         }
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Done:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Done:
                         inputTokens = chunk.TokenUsage?.InputTokens ?? 0;
                         outputTokens = chunk.TokenUsage?.OutputTokens ?? 0;
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Error:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Error:
                         errorCode = "STREAM_ERROR";
                         errorMessage = chunk.Error;
                         break;
@@ -3315,7 +3316,7 @@ public static class CapsuleExecutor
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null)
     {
-        var gateway = sp.GetService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var gateway = sp.GetService<PrdAgent.Core.LlmGateway.ILlmGateway>();
         if (gateway == null)
             throw new InvalidOperationException("LLM Gateway 未配置，无法生成报告");
 
@@ -3348,7 +3349,7 @@ public static class CapsuleExecutor
             ? $"请根据以下数据生成{format}格式的报告：\n\n{inputText}"
             : $"{reportTemplate}\n\n## 数据\n\n{inputText}";
 
-        var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        var request = new PrdAgent.Core.LlmGateway.GatewayRequest
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.ReportGenerator.Chat,
             ModelType = "chat",
@@ -3393,7 +3394,7 @@ public static class CapsuleExecutor
             {
                 switch (chunk.Type)
                 {
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Start:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Start:
                         model = chunk.Resolution?.ActualModel ?? "(unknown)";
                         resolutionType = chunk.Resolution?.ResolutionType;
                         if (emitEvent != null)
@@ -3402,7 +3403,7 @@ public static class CapsuleExecutor
                         }
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Text:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Text:
                         if (!string.IsNullOrEmpty(chunk.Content))
                         {
                             contentBuilder.Append(chunk.Content);
@@ -3421,12 +3422,12 @@ public static class CapsuleExecutor
                         }
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Done:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Done:
                         inputTokens = chunk.TokenUsage?.InputTokens ?? 0;
                         outputTokens = chunk.TokenUsage?.OutputTokens ?? 0;
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Error:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Error:
                         errorCode = "STREAM_ERROR";
                         errorMessage = chunk.Error;
                         break;
@@ -3508,7 +3509,7 @@ public static class CapsuleExecutor
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null)
     {
-        var gateway = sp.GetService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var gateway = sp.GetService<PrdAgent.Core.LlmGateway.ILlmGateway>();
         if (gateway == null)
             throw new InvalidOperationException("LLM Gateway 未配置，无法生成网页报告");
 
@@ -3809,7 +3810,7 @@ function safeChart(canvasId, config) {
         if (!string.IsNullOrWhiteSpace(title))
             userPrompt = $"网页标题：{title}\n\n{userPrompt}";
 
-        var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        var request = new PrdAgent.Core.LlmGateway.GatewayRequest
         {
             AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.WebpageGenerator.Code,
             ModelType = "code",
@@ -3847,13 +3848,13 @@ function safeChart(canvasId, config) {
             {
                 switch (chunk.Type)
                 {
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Start:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Start:
                         model = chunk.Resolution?.ActualModel ?? "(unknown)";
                         if (emitEvent != null)
                             await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name, model });
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Text:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Text:
                         if (!string.IsNullOrEmpty(chunk.Content))
                         {
                             contentBuilder.Append(chunk.Content);
@@ -3871,12 +3872,12 @@ function safeChart(canvasId, config) {
                         }
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Done:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Done:
                         inputTokens = chunk.TokenUsage?.InputTokens ?? 0;
                         outputTokens = chunk.TokenUsage?.OutputTokens ?? 0;
                         break;
 
-                    case PrdAgent.Infrastructure.LlmGateway.GatewayChunkType.Error:
+                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Error:
                         errorCode = "STREAM_ERROR";
                         errorMessage = chunk.Error;
                         break;
@@ -5122,7 +5123,7 @@ function safeChart(canvasId, config) {
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
         CliAgentContext ctx, StringBuilder sb, EmitEventDelegate? emitEvent)
     {
-        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var gateway = sp.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>();
         sb.AppendLine("[builtin-llm] 使用内置 LLM 生成页面");
 
         if (emitEvent != null)
@@ -5158,7 +5159,7 @@ function safeChart(canvasId, config) {
             new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
             new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = userPrompt.ToString() },
         };
-        var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        var request = new PrdAgent.Core.LlmGateway.GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
@@ -5452,7 +5453,7 @@ function safeChart(canvasId, config) {
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
         CliAgentContext ctx, StringBuilder sb, ILogger logger, EmitEventDelegate? emitEvent)
     {
-        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var gateway = sp.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>();
         var lobsterStyle = ReplaceVariables(GetConfigString(node, "lobsterStyle") ?? "professional", variables).Trim();
         sb.AppendLine($"[lobster] 龙虾执行器启动, style={lobsterStyle}");
 
@@ -5475,7 +5476,7 @@ function safeChart(canvasId, config) {
         {
             new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = planPrompt },
         };
-        var planReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        var planReq = new PrdAgent.Core.LlmGateway.GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
@@ -5513,7 +5514,7 @@ function safeChart(canvasId, config) {
             new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = genSystemPrompt },
             new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = genUserPrompt.ToString() },
         };
-        var genReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        var genReq = new PrdAgent.Core.LlmGateway.GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
@@ -6312,8 +6313,8 @@ function safeChart(canvasId, config) {
             if (emitEvent != null)
                 await emitEvent("capsule-progress", new { message = "使用 LLM 分析视频内容…" });
 
-            var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
-            var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+            var gateway = sp.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>();
+            var request = new PrdAgent.Core.LlmGateway.GatewayRequest
             {
                 AppCallerCode = "video-agent.video-to-text::chat",
                 ModelType = "chat",
@@ -6421,9 +6422,9 @@ function safeChart(canvasId, config) {
         sb.AppendLine($"[VideoToText:asr] 输入条目 {totalCount} 条，本次处理 {processCount} 条 (maxItems={maxItems})");
 
         // DI
-        var modelResolver = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>();
+        var modelResolver = sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>();
         var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
-        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var gateway = sp.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>();
         var urlValidator = sp.GetRequiredService<ISafeOutboundUrlValidator>();
 
         // 解析 ASR 模型（fallback 链：先专属 → 再 v2d.transcribe → 再 document-store.subtitle）。
@@ -6435,8 +6436,8 @@ function safeChart(canvasId, config) {
             AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
         };
-        PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult? resolution = null;
-        PrdAgent.Infrastructure.LlmGateway.ModelResolutionResult? firstSuccessfulResolution = null;
+        PrdAgent.Core.LlmGateway.ModelResolutionResult? resolution = null;
+        PrdAgent.Core.LlmGateway.ModelResolutionResult? firstSuccessfulResolution = null;
         string? firstSuccessfulCaller = null;
         string? resolvedCaller = null;
         var resolutionErrors = new List<string>();
@@ -6600,7 +6601,7 @@ function safeChart(canvasId, config) {
                         : hookPromptOverride;
                     var userPrompt = $"原标题：{origTitle}\n\n转写文字：\n{transcript}";
 
-                    var llmRequest = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+                    var llmRequest = new PrdAgent.Core.LlmGateway.GatewayRequest
                     {
                         AppCallerCode = AppCallerRegistry.VideoAgent.VideoToText.Chat,
                         ModelType = "chat",
@@ -7108,8 +7109,8 @@ function safeChart(canvasId, config) {
         if (emitEvent != null)
             await emitEvent("capsule-progress", new { message = $"使用 LLM 生成 {style} 风格文案…" });
 
-        var gateway = sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
-        var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
+        var gateway = sp.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>();
+        var request = new PrdAgent.Core.LlmGateway.GatewayRequest
         {
             AppCallerCode = "video-agent.text-to-copy::chat",
             ModelType = "chat",

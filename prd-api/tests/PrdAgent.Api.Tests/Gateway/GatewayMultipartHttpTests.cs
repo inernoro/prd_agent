@@ -21,6 +21,7 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
@@ -591,7 +592,7 @@ public class GatewayMultipartHttpTests
         builder.WebHost.UseTestServer();
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
         builder.Services.AddSingleton<IAssetStorage>(storage);
-        builder.Services.AddSingleton<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(gateway);
+        builder.Services.AddSingleton<PrdAgent.Core.LlmGateway.ILlmGateway>(gateway);
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
         if (data is not null)
         {
@@ -716,7 +717,7 @@ public class GatewayMultipartHttpTests
             => $"web-hosting/sites/{siteId}/{filePath.TrimStart('/')}";
     }
 
-    private sealed class CapturingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class CapturingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         public GatewayRawRequest? CapturedRaw { get; private set; }
 

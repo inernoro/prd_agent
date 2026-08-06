@@ -8,6 +8,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 

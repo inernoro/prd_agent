@@ -7,6 +7,8 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Asr;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 

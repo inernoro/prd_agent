@@ -1,4 +1,4 @@
-namespace PrdAgent.Infrastructure.LlmGateway.ImageGen;
+namespace PrdAgent.Core.LlmGateway.ImageGen;
 
 /// <summary>
 /// 图片生成统一入口（对外唯一）。

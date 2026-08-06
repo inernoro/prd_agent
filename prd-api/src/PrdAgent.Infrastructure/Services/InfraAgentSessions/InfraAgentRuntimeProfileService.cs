@@ -10,6 +10,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Security;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 

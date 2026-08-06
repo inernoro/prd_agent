@@ -19,6 +19,7 @@ using System.Text.RegularExpressions;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using static PrdAgent.Core.Models.AppCallerRegistry;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 

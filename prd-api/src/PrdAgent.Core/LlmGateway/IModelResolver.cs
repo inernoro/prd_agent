@@ -1,6 +1,6 @@
 using PrdAgent.Core.Models;
 
-namespace PrdAgent.Infrastructure.LlmGateway;
+namespace PrdAgent.Core.LlmGateway;
 
 /// <summary>
 /// 模型调度执行器接口
