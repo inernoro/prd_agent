@@ -273,6 +273,11 @@ export function ReviewAssessmentDetailPage() {
                 签约置顶 <span className="font-semibold">{orderedItems.filter(x => x.isContractualOverride).length}</span> 条
               </div>
             )}
+            {orderedItems.some(x => x.reasonablenessVerdict === '不合理') && (
+              <div className="px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-300">
+                评论判定不合理 <span className="font-semibold">{orderedItems.filter(x => x.reasonablenessVerdict === '不合理').length}</span> 条
+              </div>
+            )}
           </div>
           {run.globalMissingHints.length > 0 && (
             <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-amber-300/90 space-y-1">
@@ -305,6 +310,7 @@ export function ReviewAssessmentDetailPage() {
                     key={item.id}
                     item={item}
                     isDone={isDone}
+                    anchorScale={run.anchorScale ?? 5}
                     expanded={expandedId === item.id}
                     onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
                   />
@@ -328,14 +334,17 @@ export function ReviewAssessmentDetailPage() {
 function ItemRow({
   item,
   isDone,
+  anchorScale,
   expanded,
   onToggle,
 }: {
   item: RequirementAssessmentItem;
   isDone: boolean;
+  anchorScale: number;
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const isUnreasonable = item.reasonablenessVerdict === '不合理';
   return (
     <>
       <tr
@@ -355,7 +364,12 @@ function ItemRow({
           )}
         </td>
         <td className="px-4 py-3">
-          <p className="text-token-primary truncate max-w-[320px]">{item.name}</p>
+          <p className="text-token-primary truncate max-w-[320px]">
+            {isUnreasonable && (
+              <span className="text-[10px] text-red-300 border border-red-500/30 bg-red-500/10 rounded px-1 mr-1.5 align-middle">不合理</span>
+            )}
+            {item.name}
+          </p>
           {item.conclusion && (
             <p className="text-xs text-token-muted mt-0.5 truncate max-w-[400px]">{item.conclusion}</p>
           )}
@@ -370,6 +384,15 @@ function ItemRow({
       {expanded && (
         <tr className="border-b border-token-subtle/50">
           <td colSpan={6} className="px-4 py-4 bg-token-card">
+            {item.reasonablenessVerdict && (
+              <p className={`text-xs mb-3 ${isUnreasonable ? 'text-red-300' : 'text-emerald-300'}`}>
+                合理性判定：{item.reasonablenessVerdict}
+                {isUnreasonable && <span className="text-token-muted">（已强制 P3 并排序置底）</span>}
+                {item.reasonablenessEvidence && (
+                  <span className="block text-token-muted mt-0.5">依据：{item.reasonablenessEvidence}</span>
+                )}
+              </p>
+            )}
             <table className="w-full text-xs mb-3">
               <thead>
                 <tr className="text-token-secondary border-b border-token-subtle/60">
@@ -383,7 +406,7 @@ function ItemRow({
                 {item.factorScores.map(f => (
                   <tr key={f.key} className="border-b border-token-subtle/30">
                     <td className="py-1.5 pr-3 text-token-primary">{f.name}</td>
-                    <td className="py-1.5 pr-3 text-right font-mono text-token-secondary">{f.anchor}/5</td>
+                    <td className="py-1.5 pr-3 text-right font-mono text-token-secondary">{f.anchor}/{anchorScale}</td>
                     <td className="py-1.5 pr-3 text-right font-mono text-token-secondary">{f.weightedScore}</td>
                     <td className="py-1.5 text-token-muted">
                       {f.hasEvidence ? f.evidence : <span className="text-amber-400/70">表格中无证据，按保守值计</span>}

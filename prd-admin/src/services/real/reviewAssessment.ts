@@ -16,12 +16,12 @@ export interface RequirementFactorDefinition {
 export interface RequirementFactorScore {
   key: string;
   name: string;
-  /** 锚点分 1-5（证据缺失时为系统保守化后的值） */
+  /** 锚点分 0-10（存量旧任务为 1-5 制，展示口径看 run.anchorScale；证据缺失时为系统保守化后的值） */
   anchor: number;
   /** LLM 原始锚点分（仅被系统调整时填充） */
   originalAnchor?: number | null;
   weight: number;
-  /** 加权得分 = anchor x weight / 5 */
+  /** 加权得分 = anchor x weight / anchorScale */
   weightedScore: number;
   hasEvidence: boolean;
   evidence: string;
@@ -40,6 +40,10 @@ export interface RequirementAssessmentItem {
   confidencePercent: number;
   missingInfo: string[];
   conclusion: string;
+  /** 合理性判定（评论驱动）：合理 / 不合理 / null=评论未给出判定 */
+  reasonablenessVerdict?: string | null;
+  /** 合理性判定依据（评论原文引用） */
+  reasonablenessEvidence?: string | null;
   /** 全局优先级序号（1 起，数字越小越优先） */
   priority?: number | null;
   tier?: string | null;
@@ -65,6 +69,10 @@ export interface RequirementAssessmentRun {
   nameColumnIndex?: number | null;
   descColumnIndex?: number | null;
   factorColumnMapping: Record<string, number[]>;
+  /** 产品经理评论列索引（前五因子的最高优先级证据源） */
+  commentColumnIndexes?: number[];
+  /** 锚点分制（10 = 0-10 分制；旧任务缺省 5 = 1-5 分制），仅影响展示口径 */
+  anchorScale?: number;
   weightsSnapshot: { key: string; name: string; weight: number }[];
   status: RequirementAssessmentStatus;
   scoredCount: number;
