@@ -60,6 +60,25 @@ export type TranscribeFlowDrawerProps = {
 
 type StepState = TranscribeStepState;
 
+/**
+ * 等自动重试时给用户的那句话。
+ *
+ * 说清三件事：为什么停着、已经试了几次、下一次什么时候——
+ * 「还要多久」给不出确切值就给出下次时刻，绝不用一个不动的转圈糊弄过去。
+ * 时间戳坏掉时宁可不提时刻，也不把 Invalid Date 摆到用户脸上。
+ */
+export function describeRetryWait(
+  retry: { count: number; nextAt: string } | null,
+): string {
+  if (!retry) return '';
+  const at = new Date(retry.nextAt);
+  const when = Number.isNaN(at.getTime())
+    ? ''
+    : `下一次约在 ${at.toLocaleTimeString('zh-CN', { hour12: false })}。`;
+  return `语音转写服务暂时不可用，已自动重试 ${retry.count} 次；${when}`
+    + '录音已安全保存，可以关闭面板，恢复后会自动接着跑。';
+}
+
 export function TranscribeFlowDrawer({
   storeId,
   file,
@@ -378,13 +397,7 @@ export function TranscribeFlowDrawer({
     () => selectedStyle?.contextInput ? parseMeetingContext(styleContext) : [],
     [selectedStyle?.contextInput, styleContext],
   );
-  // 等重试时说清三件事：为什么停着、已经试了几次、下一次什么时候——
-  // 「还要多久」给不出确切值就给出下次时刻，绝不用一个不动的转圈糊弄过去。
-  const retryWaitDescription = retryWait
-    ? `语音转写服务暂时不可用，已自动重试 ${retryWait.count} 次；`
-      + `下一次约在 ${new Date(retryWait.nextAt).toLocaleTimeString('zh-CN', { hour12: false })}。`
-      + '录音已安全保存，可以关闭面板，恢复后会自动接着跑。'
-    : '';
+  const retryWaitDescription = describeRetryWait(retryWait);
 
   const runningDescription = status === 'uploading'
     ? '录音正在安全保存，随后只生成可编辑原文'

@@ -61,4 +61,66 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(recordingCitationMatchesTimeline(7, timeline)).toBe(true);
     expect(recordingCitationMatchesTimeline(20, timeline)).toBe(false);
   });
+
+  // ── 说话人来源：用户第一眼看到的诚实度，删掉不会报错，只会悄悄变回「看不出真假」 ──
+
+  const noteWithSource = (line: string) =>
+    `## 转录全文\n\n${line}\n\n**[00:00 - 00:03]** [说话人1] 甲。\n\n**[00:03 - 00:06]** [说话人2] 乙。`;
+
+  it('本地声纹兜底：把「这是估算」当着用户的面说出来，并用警示色区分', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptKaraoke
+        src="/recording.m4a"
+        noteMd={noteWithSource('> 说话人来源：local · 声纹估算 · 本地按声纹分出几种声音是真实声学结果，但每句归谁是按语速比例推算的，可能与实际不符')}
+        documentMode
+      />,
+    );
+
+    expect(html).toContain('按语速比例推算');
+    // 估算必须用警示色，和原生识别在视觉上分得开
+    expect(html).toContain('var(--semantic-warning-text)');
+    // 机器判定用的 key 是给程序看的，不该出现在用户眼前
+    expect(html).not.toContain('说话人来源：local');
+  });
+
+  it('上游原生识别：如实说明来源，但不摆出警示色吓人', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptKaraoke
+        src="/recording.m4a"
+        noteMd={noteWithSource('> 说话人来源：native · 原生识别 · 由语音识别服务直接返回，逐句归属可信')}
+        documentMode
+      />,
+    );
+
+    expect(html).toContain('逐句归属可信');
+    expect(html).not.toContain('var(--semantic-warning-text)');
+  });
+
+  it('旧笔记没有来源行：不渲染任何来源说明，也不影响逐句展示', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptKaraoke
+        src="/recording.m4a"
+        noteMd={'## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 甲。\n\n**[00:03 - 00:06]** [说话人2] 乙。'}
+        documentMode
+      />,
+    );
+
+    expect(html).not.toContain('来源');
+    expect(html).not.toContain('var(--semantic-warning-text)');
+    // 存量数据的正常能力不能受影响
+    expect(html).toContain('说话人1');
+    expect(html).toContain('说话人2');
+  });
+
+  it('来源行不会被当成一句转录混进歌词轮', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptKaraoke
+        src="/recording.m4a"
+        noteMd={noteWithSource('> 说话人来源：local · 声纹估算 · 每句归谁按语速比例推算')}
+        documentMode
+      />,
+    );
+    // 正文里只有两句真转录，来源行不该以「一句话」的形态出现在可点击行里
+    expect(html).not.toContain('>&gt; 说话人来源');
+  });
 });

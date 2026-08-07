@@ -267,6 +267,50 @@ export function resolveMention(
   return { item: matched, rest: body.slice(matched.name.length).trimStart() };
 }
 
+/**
+ * 本轮这句话到底发给谁。
+ *
+ * 抽成纯函数是因为这条决策就是「不必先挑智能体」这件事本身——它藏在组件里时，
+ * 只能靠打开浏览器点一遍才知道对不对，而这个环境里恰恰点不了。
+ *
+ * 优先级：开头的 @ 指派 > 当前收件人 > 通用体（可用时）> 拦下来并说清为什么。
+ */
+export function resolveOutgoingTarget(params: {
+  input: string;
+  active: ActiveAgent;
+  generalAvailable: boolean;
+  toolboxItems: ToolboxItem[];
+}): {
+  target: ActiveAgent;
+  /** 摘掉 @ 之后真正发出去的话 */
+  text: string;
+  /** 本轮是显式指派（需要把收件人切过去） */
+  mentioned: boolean;
+  /** 非空表示不能发；内容是给用户看的原因，不是 'invalid' 这种代号 */
+  blocked: 'no-recipient' | 'mention-without-instruction' | null;
+} {
+  const { input, active, generalAvailable, toolboxItems } = params;
+  const mention = resolveMention(input, toolboxItems);
+  const text = mention ? mention.rest : input;
+
+  if (mention) {
+    return {
+      target: { kind: 'toolbox', item: mention.item },
+      text,
+      mentioned: true,
+      blocked: text.trim() ? null : 'mention-without-instruction',
+    };
+  }
+  if (active) return { target: active, text, mentioned: false, blocked: null };
+  // 没选、通用体又不可用 —— 这时候才轮到要求用户手动挑，并且要说清是「运行时不可用」
+  return {
+    target: null,
+    text,
+    mentioned: false,
+    blocked: generalAvailable ? null : 'no-recipient',
+  };
+}
+
 const FOCUSED_TOOLBOX_IDS = [
   // 偏文本对话型 builtin agent 排前；视觉/视频/缺陷管理放后面
   'builtin-literary-agent',
@@ -1382,13 +1426,20 @@ export function ReprocessChatDrawer({
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;
 
-    // 「@某某」是显式指派：把它从正文里摘掉，本轮直接交给那个智能体。
-    // 不写 @ 就走当前收件人（默认是通用智能体，由它自己判断要不要转派）。
-    const mention = resolveMention(input, toolboxItems);
-    const outgoingText = mention ? mention.rest : input;
-    const target: ActiveAgent = mention ? { kind: 'toolbox', item: mention.item } : active;
+    // 决策抽在 resolveOutgoingTarget（纯函数、有单测）：@ 指派 > 当前收件人 > 通用体 > 拦下
+    const decision = resolveOutgoingTarget({
+      input,
+      active,
+      generalAvailable: !!general?.available,
+      toolboxItems,
+    });
+    const outgoingText = decision.text;
 
-    if (!target) {
+    if (decision.blocked === 'mention-without-instruction') {
+      toast.warning('还没写要做什么', '已指派智能体，再补一句指令');
+      return;
+    }
+    if (decision.blocked === 'no-recipient' || !decision.target) {
       // 走到这里只有一种情况：通用体运行时不可用，且用户也没挑智能体。
       // 如实说清楚为什么，而不是甩一句「请先选择智能体」让人猜。
       toast.warning(
@@ -1398,13 +1449,9 @@ export function ReprocessChatDrawer({
       setPickerOpen(true);
       return;
     }
-    if (mention && !outgoingText.trim()) {
-      toast.warning('还没写要做什么', `已指派「${mention.item.name}」，再补一句指令`);
-      return;
-    }
-    if (mention) setActive(target);
+    if (decision.mentioned) setActive(decision.target);
 
-    const active2 = target;
+    const active2 = decision.target;
     if (active2.kind === 'shortVideoTool') {
       void runShortVideoTool(input);
       return;
@@ -1818,45 +1865,13 @@ export function ReprocessChatDrawer({
 
         {/* 专家条：一排窄头像，悬浮看作用，点一下才是强制指派。
             默认不用点——收件人已经是通用智能体，转派给谁由它自己判断。 */}
-        {general && general.delegates.length > 0 && (
-          <div className="px-5 pt-3 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-token-muted shrink-0">
-                {general.available ? '可随时 @ 指定' : '通用智能体不可用，请手动挑'}
-              </span>
-              <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto">
-                {general.delegates.map((d) => {
-                  const item = toolboxItems.find((t) => t.agentKey === d.agentKey);
-                  const picked = active?.kind === 'toolbox' && active.item.agentKey === d.agentKey;
-                  return (
-                    <button
-                      key={d.agentKey}
-                      type="button"
-                      disabled={isBusy || !item}
-                      onClick={() => { if (item) { setActive({ kind: 'toolbox', item }); setPickerOpen(false); } }}
-                      // 悬浮就能看懂它是干嘛的 + 通用体什么时候会自己找它
-                      title={`${d.name}\n${d.description}\n${d.hint}${item ? '' : '\n（当前不可用）'}`}
-                      aria-label={`${d.name}：${d.hint}`}
-                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] transition-all disabled:opacity-40"
-                      style={{
-                        background: picked ? `${d.accent}2E` : 'var(--nested-block-bg)',
-                        border: `1px solid ${picked ? d.accent : 'var(--border-faint)'}`,
-                        color: d.accent,
-                      }}
-                    >
-                      <ToolboxIcon name={item?.icon} size={13} />
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            {!general.available && general.unavailableReason && (
-              <p className="mt-1.5 text-[10px]" style={{ color: 'var(--semantic-warning-text)' }}>
-                {general.unavailableReason}
-              </p>
-            )}
-          </div>
-        )}
+        <AgentDelegateBar
+          general={general}
+          toolboxItems={toolboxItems}
+          activeAgentKey={active?.kind === 'toolbox' ? active.item.agentKey : undefined}
+          disabled={isBusy}
+          onPick={(item) => { setActive({ kind: 'toolbox', item }); setPickerOpen(false); }}
+        />
 
         {/* 智能体选择器（精简版 - 顶部下拉） */}
         <div className="px-5 pt-3 pb-3 shrink-0 relative">
@@ -2307,6 +2322,63 @@ function DropdownSection({
         )}
       </div>
       {children}
+    </div>
+  );
+}
+
+/**
+ * 专家条：一排窄头像，悬浮看作用，点一下才是强制指派。
+ *
+ * 单独成组件是为了能被渲染测试断言——它是用户第一眼看到的那排东西，
+ * 少渲染一个、少一句悬浮说明都不会报错，只会安静地退回「看不出有哪些专家」。
+ */
+export function AgentDelegateBar({
+  general, toolboxItems, activeAgentKey, disabled, onPick,
+}: {
+  general: GeneralAgentInfo | null;
+  toolboxItems: ToolboxItem[];
+  activeAgentKey?: string;
+  disabled?: boolean;
+  onPick: (item: ToolboxItem) => void;
+}) {
+  if (!general || general.delegates.length === 0) return null;
+  return (
+    <div className="px-5 pt-3 shrink-0">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-token-muted shrink-0">
+          {general.available ? '可随时 @ 指定' : '通用智能体不可用，请手动挑'}
+        </span>
+        <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto">
+          {general.delegates.map((d) => {
+            const item = toolboxItems.find((t) => t.agentKey === d.agentKey);
+            const picked = activeAgentKey === d.agentKey;
+            return (
+              <button
+                key={d.agentKey}
+                type="button"
+                disabled={disabled || !item}
+                onClick={() => { if (item) onPick(item); }}
+                // 悬浮就能看懂它是干嘛的 + 通用体什么时候会自己找它
+                title={`${d.name}\n${d.description}\n${d.hint}${item ? '' : '\n（当前不可用）'}`}
+                aria-label={`${d.name}：${d.hint}`}
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] transition-all disabled:opacity-40"
+                style={{
+                  background: picked ? `${d.accent}2E` : 'var(--nested-block-bg)',
+                  border: `1px solid ${picked ? d.accent : 'var(--border-faint)'}`,
+                  color: d.accent,
+                }}
+              >
+                <ToolboxIcon name={item?.icon} size={13} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {!general.available && general.unavailableReason && (
+        <p className="mt-1.5 text-[10px]" style={{ color: 'var(--semantic-warning-text)' }}>
+          {general.unavailableReason}
+        </p>
+      )}
     </div>
   );
 }

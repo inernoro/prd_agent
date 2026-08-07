@@ -406,9 +406,7 @@ public class AgentUniverseController : ControllerBase
                 switch (evt.Type)
                 {
                     case ChatAgentEventTypes.TextDelta:
-                        // 载荷形状必须翻成本信封的 { content }。只改事件名不改字段，
-                        // 前端流式渲染会一个字都收不到——名字对上了、字段没对上，等于没接线。
-                        var delta = ReadJsonString(evt.PayloadJson, "text");
+                        var delta = ExtractTextDelta(evt.PayloadJson);
                         if (!string.IsNullOrEmpty(delta))
                             await WriteSseEventAsync("text", new { content = delta });
                         break;
@@ -438,6 +436,16 @@ public class AgentUniverseController : ControllerBase
             catch { /* ignore */ }
         }
     }
+
+    /// <summary>
+    /// 对话事件的文本增量 → 本信封 text 事件的正文。
+    ///
+    /// 两条信封的字段名不一样（对话用 text，本信封用 content）。只改事件名不改字段，
+    /// 前端流式渲染会一个字都收不到——名字对上了、字段没对上，等于没接线，
+    /// 而且不会报错，只会安静地不出字。所以这一步单独成函数，由单测盯着。
+    /// </summary>
+    internal static string? ExtractTextDelta(string payloadJson)
+        => ReadJsonString(payloadJson, "text");
 
     /// <summary>从事件载荷里取一个字符串字段，取不到返回 null（不抛，不猜）。</summary>
     private static string? ReadJsonString(string payloadJson, string field)
