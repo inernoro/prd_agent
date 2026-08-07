@@ -32,6 +32,11 @@ export async function decomposeImageToLayers(input: {
   signal?: AbortSignal;
   /** 等待期的可见进度：分层要跑几十秒，静止的「加载中」超过 2 秒就是体验缺陷。 */
   onProgress?: (progress: { phase: string; completed: number; total: number }) => void;
+  /**
+   * 每有一个图层出图就回调一次，让调用方当场把它画到画布上。
+   * 只报进度是不够的——用户要看的是图层本身在长出来，不是一句「已生成 2/4」。
+   */
+  onLayer?: (layer: { index: number; url: string }) => void;
 }): Promise<ApiResponse<ImageGenGenerateResponse>> {
   const layerCount = Math.max(1, Math.min(10, Math.round(input.layerCount ?? 4)));
   const sourceSha256 = String(input.sourceSha256 ?? '').trim();
@@ -63,6 +68,7 @@ export async function decomposeImageToLayers(input: {
     total: layerCount,
     signal: input.signal,
     onProgress: input.onProgress,
+    onLayer: input.onLayer,
   });
   if (!images.success) return images;
   if (images.data!.images.length === 0) {
@@ -82,6 +88,7 @@ async function collectLayeringRunImages(input: {
   total: number;
   signal?: AbortSignal;
   onProgress?: (progress: { phase: string; completed: number; total: number }) => void;
+  onLayer?: (layer: { index: number; url: string }) => void;
 }): Promise<ApiResponse<ImageGenGenerateResponse>> {
   const { runId, total } = input;
   const collected = new Map<number, ImageGenImage>();
@@ -113,12 +120,14 @@ async function collectLayeringRunImages(input: {
           if (!url) return;
           const index = Number(payload.imageIndex ?? collected.size);
           const slot = Number.isFinite(index) ? index : collected.size;
+          const isNewSlot = !collected.has(slot);
           collected.set(slot, {
             index: slot,
             url,
             originalUrl: url,
             originalSha256: String(payload.asset?.originalSha256 || payload.asset?.sha256 || ''),
           });
+          if (isNewSlot) input.onLayer?.({ index: slot, url });
           report(`已生成 ${collected.size}/${total} 个图层`);
           if (collected.size >= total) controller.abort();
         } else if (type === 'imageError' || type === 'error') {
@@ -142,7 +151,10 @@ async function collectLayeringRunImages(input: {
       const url = String(item.url ?? '').trim();
       if (!url) continue;
       const slot = Number(item.imageIndex ?? collected.size);
+      const isNewSlot = !collected.has(slot);
       collected.set(slot, { index: slot, url, originalUrl: url });
+      // 流断了才走到这里：补回来的图层同样要点亮画布，否则占位卡会一直空着。
+      if (isNewSlot) input.onLayer?.({ index: slot, url });
     }
     if (collected.size > 0) return succeeded({ images: sortedImages(collected) });
     const status = res.data.run.status;
@@ -194,16 +206,46 @@ export function compositePixelLayers(layers: PixelData[], width: number, height:
   return { width, height, data: output };
 }
 
+/** 把不透明度烘进像素的 alpha，用于合成预览；图层本身另外带 opacity 交给 PSD。 */
+function applyOpacity(image: PixelData, opacity: number): PixelData {
+  if (opacity >= 1) return image;
+  const scaled = new Uint8ClampedArray(image.data);
+  const factor = Math.max(0, opacity);
+  for (let offset = 3; offset < scaled.length; offset += 4) {
+    scaled[offset] = Math.round(scaled[offset]! * factor);
+  }
+  return { width: image.width, height: image.height, data: scaled };
+}
+
+/** 图层面板里的显隐与不透明度必须一路带到产物，否则「所见」和「所download」两套结果。 */
+export type PsdLayerInput = {
+  name: string;
+  image: PixelData;
+  /** 0–1，缺省 1。 */
+  opacity?: number;
+  /** 关掉眼睛的图层：仍写进 PSD（可在 Photoshop 里打开），但不参与合成。 */
+  hidden?: boolean;
+};
+
+function normalizedOpacity(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 1;
+  return Math.min(1, Math.max(0, value));
+}
+
 export function buildLayeredPsdDocument(input: {
   source: PixelData;
-  layers: Array<{ name: string; image: PixelData }>;
+  layers: PsdLayerInput[];
 }): Psd {
   const semanticLayers: Layer[] = input.layers.map((layer) => ({
     name: layer.name,
     imageData: clonePixelData(layer.image),
+    opacity: normalizedOpacity(layer.opacity),
+    hidden: layer.hidden === true,
   }));
   const composite = compositePixelLayers(
-    input.layers.map((layer) => layer.image),
+    input.layers
+      .filter((layer) => layer.hidden !== true)
+      .map((layer) => applyOpacity(layer.image, normalizedOpacity(layer.opacity))),
     input.source.width,
     input.source.height,
   );
@@ -259,26 +301,79 @@ async function loadImageData(source: string, targetSize?: { width: number; heigh
   }
 }
 
-export async function createLayeredPsdBlob(input: {
+/** 图层面板交给下载链路的一层：顺序即数组顺序（先画的在下）。 */
+export type LayerSourceInput = {
+  name: string;
   source: string;
-  layerSources: Array<{ name: string; source: string }>;
-}): Promise<Blob> {
-  if (input.layerSources.length === 0) throw new Error('分层模型未返回可用图层');
+  opacity?: number;
+  hidden?: boolean;
+};
 
+async function loadLayerImages(input: { source: string; layerSources: LayerSourceInput[] }) {
   const source = await loadImageData(input.source);
   const layers = await Promise.all(
     input.layerSources.map(async (layer) => ({
       name: layer.name,
+      opacity: layer.opacity,
+      hidden: layer.hidden,
       image: await loadImageData(layer.source, { width: source.width, height: source.height }),
     })),
   );
+  return { source, layers };
+}
+
+export async function createLayeredPsdBlob(input: {
+  source: string;
+  layerSources: LayerSourceInput[];
+}): Promise<Blob> {
+  if (input.layerSources.length === 0) throw new Error('分层模型未返回可用图层');
+
+  const { source, layers } = await loadLayerImages(input);
   const document = buildLayeredPsdDocument({ source, layers });
   const { writePsd } = await import('ag-psd');
   const buffer = writePsd(document, { noBackground: true, trimImageData: true });
   return new Blob([buffer], { type: 'image/vnd.adobe.photoshop' });
 }
 
-export function downloadLayeredPsd(blob: Blob, filename: string): void {
+/**
+ * 按图层面板当前的显隐 / 不透明度 / 叠放次序拍平成一张 PNG。
+ * 「所见即所得」的那个「所得」：面板上看到的合成预览就是这张图。
+ */
+export async function createCompositePngBlob(input: {
+  source: string;
+  layerSources: LayerSourceInput[];
+}): Promise<Blob> {
+  const visible = input.layerSources.filter((layer) => layer.hidden !== true);
+  if (visible.length === 0) throw new Error('当前没有可见图层，合成图会是空的');
+
+  const { source, layers } = await loadLayerImages({ source: input.source, layerSources: visible });
+  const composite = compositePixelLayers(
+    layers.map((layer) => applyOpacity(layer.image, normalizedOpacity(layer.opacity))),
+    source.width,
+    source.height,
+  );
+
+  const canvas = document.createElement('canvas');
+  canvas.width = composite.width;
+  canvas.height = composite.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('浏览器不支持 Canvas 2D');
+  // 走 createImageData + set：ag-psd 的 PixelArray 底层 buffer 类型与 ImageData
+  // 构造签名对不上，直接 new ImageData(...) 编译不过。
+  const imageData = context.createImageData(composite.width, composite.height);
+  imageData.data.set(composite.data);
+  context.putImageData(imageData, 0, 0);
+
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('合成图导出失败'))),
+      'image/png',
+    );
+  });
+}
+
+/** 通用下载：PSD 之外的产物（合成 PNG 等）走这里，文件名清洗规则与 PSD 一致。 */
+export function downloadBlob(blob: Blob, filename: string, extension: string): void {
   const safe = String(filename || 'image')
     .trim()
     .replace(/[\\/:*?"<>|]/g, '-')
@@ -286,10 +381,14 @@ export function downloadLayeredPsd(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `${safe}.psd`;
+  anchor.download = `${safe}.${extension}`;
   anchor.rel = 'noopener';
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function downloadLayeredPsd(blob: Blob, filename: string): void {
+  downloadBlob(blob, filename, 'psd');
 }

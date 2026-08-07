@@ -5,6 +5,10 @@ export type SemanticLayerMetadata = {
   layerSourceKey?: string;
   layerIndex?: number;
   layerRole?: SemanticLayerRole;
+  /** 图层面板的显隐 / 不透明度 / 叠放次序；缺省分别是「可见 / 1 / 按 layerIndex」。 */
+  layerHidden?: boolean;
+  layerOpacity?: number;
+  layerZ?: number;
 };
 
 export type SemanticLayerCanvasItem = SemanticLayerMetadata & {
@@ -136,24 +140,50 @@ export function planSemanticLayerFrame(
 export function selectExportableLayers<T extends ExportableLayerCandidate>(
   items: readonly T[],
   groupId: string,
+  options?: {
+    /**
+     * 图层面板要连「还没出图的占位层」一起列出来（用户要看见空位在生成中），
+     * 而导出链路必须把它们滤掉。同一套分桶逻辑只此一份，靠这个开关分流，
+     * 不允许再抄一份「几乎一样但不完全一样」的挑选函数。
+     */
+    includeEmpty?: boolean;
+  },
 ): T[] {
   const normalizedGroupId = String(groupId ?? '').trim();
   if (!normalizedGroupId) return [];
+  const includeEmpty = options?.includeEmpty === true;
 
   const latestPerIndex = new Map<string, T>();
   for (const item of items) {
     if (String(item.layerGroupId ?? '').trim() !== normalizedGroupId) continue;
     if (item.layerRole !== 'layer') continue;
-    if (!item.src) continue;
+    if (!item.src && !includeEmpty) continue;
 
     const bucket = typeof item.layerIndex === 'number' ? `#${item.layerIndex}` : `key:${item.key}`;
     const current = latestPerIndex.get(bucket);
-    if (!current || (item.createdAt ?? 0) >= (current.createdAt ?? 0)) {
+    // 同一层的多个版本里，空 src 的那版永远不该盖掉已经出图的那版
+    // （否则「编辑中」会把编辑前的成品从面板和导出里挤掉）。
+    if (!current) {
+      latestPerIndex.set(bucket, item);
+      continue;
+    }
+    const currentHasSrc = !!current.src;
+    const itemHasSrc = !!item.src;
+    if (currentHasSrc && !itemHasSrc) continue;
+    if ((!currentHasSrc && itemHasSrc) || (item.createdAt ?? 0) >= (current.createdAt ?? 0)) {
       latestPerIndex.set(bucket, item);
     }
   }
 
-  return [...latestPerIndex.values()].sort((a, b) => (a.layerIndex ?? 0) - (b.layerIndex ?? 0));
+  return [...latestPerIndex.values()].sort(compareStackOrder);
+}
+
+/** 叠放次序：优先用面板调过的 layerZ，没调过就回落到分层序号。 */
+function compareStackOrder(a: ExportableLayerCandidate, b: ExportableLayerCandidate): number {
+  const az = typeof a.layerZ === 'number' && Number.isFinite(a.layerZ) ? a.layerZ : (a.layerIndex ?? 0);
+  const bz = typeof b.layerZ === 'number' && Number.isFinite(b.layerZ) ? b.layerZ : (b.layerIndex ?? 0);
+  if (az !== bz) return az - bz;
+  return (a.layerIndex ?? 0) - (b.layerIndex ?? 0);
 }
 
 /** 根据可独立移动的图层重新计算 Frame 边界，刷新后也能恢复。 */

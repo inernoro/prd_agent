@@ -521,7 +521,7 @@ public class ImageGenRunWorker : BackgroundService
                             var guardGenType = "unresolved";
                             var guardPayload = JsonSerializer.Serialize(new { msg = guardMsg, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }, JsonOptions);
                             var errMsgContent = $"[GEN_ERROR]{guardPayload}";
-                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+                            var errMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", errMsgContent, ct);
 
                             await AppendEventAsync(run, "image", new
                             {
@@ -561,7 +561,7 @@ public class ImageGenRunWorker : BackgroundService
                                 .Where(s => !string.IsNullOrWhiteSpace(s))
                                 .ToList();
                             var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg = missingMsg, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = "image-ref-unavailable", imageRefShas = refShas }, JsonOptions)}";
-                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+                            var errMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", errMsgContent, ct);
 
                             await AppendEventAsync(run, "image", new
                             {
@@ -697,7 +697,7 @@ public class ImageGenRunWorker : BackgroundService
 
                             // 失败时也记录 input images（方便日志排查参考图问题）
                             await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, null, ct);
-                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+                            var errMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", errMsgContent, ct);
 
                             await AppendEventAsync(run, "image", new
                             {
@@ -758,7 +758,7 @@ public class ImageGenRunWorker : BackgroundService
                         // 持久化的 GEN_DONE 必须带上实际模型 / 真实出图尺寸 / 自适应标记，
                         // 否则刷新后从 DB 重放时这些字段丢失，徽标会回退到"请求尺寸 + 池名"而显示错误。
                         var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = doneDisplayModel, logicalModelPublicId = run.LogicalModelPublicId, actualModel = run.ModelId, actualModelPool = run.ModelGroupName, effectiveSize = effSize, isAdaptive = doneIsAdaptive, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
-                        var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
+                        var doneMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", doneMsgContent, ct);
 
                         // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
                         await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, res.Data.Images, ct);
@@ -964,10 +964,21 @@ public class ImageGenRunWorker : BackgroundService
     }
 
     /// <summary>
+    /// 语义分层不是对话，产物直接落在画布的分层 Frame 上。
+    /// 它的 prompt 是一句内部英文指令（Decompose this image into...），
+    /// 每层再写一条聊天消息就会把对话刷满看不懂的英文卡片，还带一个没意义的「重试」。
+    /// </summary>
+    private static bool IsLayeringRun(ImageGenRun run)
+        => string.Equals(run.AppCallerCode, AppCallerRegistry.VisualAgent.Image.Layering, StringComparison.Ordinal);
+
+    /// <summary>
     /// 在 image_master_messages 中保存一条消息（服务器权威性：消息由后端保存，不依赖前端补存）
     /// </summary>
-    private async Task<string?> SaveWorkspaceMessageAsync(string workspaceId, string ownerUserId, string role, string content, CancellationToken ct)
+    private async Task<string?> SaveWorkspaceMessageAsync(ImageGenRun run, string role, string content, CancellationToken ct)
     {
+        if (IsLayeringRun(run)) return null;
+        var workspaceId = run.WorkspaceId ?? string.Empty;
+        var ownerUserId = run.OwnerAdminId;
         if (string.IsNullOrWhiteSpace(workspaceId)) return null;
         try
         {

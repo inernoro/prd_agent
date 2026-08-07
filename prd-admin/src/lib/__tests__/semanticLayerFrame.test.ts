@@ -86,4 +86,35 @@ describe('selectExportableLayers', () => {
     ];
     expect(selectExportableLayers(unnumbered, 'g1')).toHaveLength(2);
   });
+
+  it('lists still-generating placeholders for the panel but never for export', () => {
+    // 图层面板要显示「第 3 层正在生成」的空位；导出链路拿到空 src 会写出一张空层。
+    const withPlaceholder = [...base, {
+      key: 'l3', layerGroupId: 'g1', layerRole: 'layer' as const, layerIndex: 3, src: '', createdAt: 12,
+    }];
+    expect(selectExportableLayers(withPlaceholder, 'g1', { includeEmpty: true }).map((item) => item.key))
+      .toEqual(['l1', 'l2', 'l3']);
+    expect(selectExportableLayers(withPlaceholder, 'g1').map((item) => item.key)).toEqual(['l1', 'l2']);
+  });
+
+  it('does not let an in-flight edit blank out the finished layer in the panel', () => {
+    // includeEmpty 打开后，同一层的「编辑中空版本」比原成品新——按时间取最新会把成品挤掉，
+    // 面板上那一层就凭空变成空位。有图的那版必须赢。
+    const editing = [...base, {
+      key: 'qa_1', layerGroupId: 'g1', layerRole: 'layer' as const, layerIndex: 1, src: '', createdAt: 99,
+    }];
+    const panel = selectExportableLayers(editing, 'g1', { includeEmpty: true });
+    expect(panel.map((item) => item.key)).toEqual(['l1', 'l2']);
+  });
+
+  it('stacks by the panel-assigned order, falling back to the layer index', () => {
+    // 面板里把 l2 拖到最下面：导出与合成都必须按 layerZ 走，不能还按 layerIndex。
+    const reordered = [
+      { ...base[1], layerZ: 2 },
+      { ...base[2], layerZ: 1 },
+    ];
+    expect(selectExportableLayers(reordered, 'g1').map((item) => item.key)).toEqual(['l2', 'l1']);
+    // 没调过顺序的旧数据没有 layerZ，仍按分层序号排。
+    expect(selectExportableLayers(base, 'g1').map((item) => item.key)).toEqual(['l1', 'l2']);
+  });
 });
