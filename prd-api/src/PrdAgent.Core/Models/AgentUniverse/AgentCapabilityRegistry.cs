@@ -124,7 +124,7 @@ public static class AgentCapabilityRegistry
     /// 通用体的工具清单从这里长出来，不另抄一份名单——否则加了能力忘了加工具、
     /// 或者删了能力工具还挂着（形状 2：链路只建一半）。
     /// </summary>
-    public static IReadOnlyList<AgentCapability> Delegatable =>
+    public static readonly IReadOnlyList<AgentCapability> Delegatable =
         All.Where(c => !string.IsNullOrWhiteSpace(c.ToolName)).ToList();
 
     /// <summary>按 agentKey 查找能力契约，找不到返回 null。</summary>
