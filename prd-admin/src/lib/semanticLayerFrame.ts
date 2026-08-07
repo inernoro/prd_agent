@@ -46,9 +46,8 @@ export type SemanticLayerFrame = {
 
 const FRAME_PADDING = 28;
 const FRAME_HEADER = 46;
-const CARD_GAP = 24;
+const CARD_GAP = 64;
 const SOURCE_GAP = 120;
-const CARD_MAX_WIDTH = 360;
 
 export type HorizontalClampInput = {
   stageLeft: number;
@@ -88,8 +87,12 @@ export function computeHorizontalClampShift({
 }
 
 /**
- * 将透明 RGBA 图层放在原图右侧的 Frame 中。
- * 每个卡片保持原图比例，图层内部坐标因此仍与原始构图一致。
+ * 把透明 RGBA 图层排在原图右侧的 Frame 里。
+ *
+ * 图层一律**按原图尺寸**摆，横向一排。缩成小卡片墙（早先的 2×2 + 最大宽 360）看着整齐，
+ * 但图层就没法用了——它和原图不是同一个坐标系，既对不上位、也看不清内容；
+ * 用户要的是「和原图一样大、摆在旁边、能直接接着改」（2026-08-07 反馈）。
+ * 画布本来就是无限的，宽度交给缩放解决，不该靠压缩产物来迁就取景。
  */
 export function planSemanticLayerFrame(
   source: Pick<SemanticLayerCanvasItem, 'x' | 'y' | 'w' | 'h'>,
@@ -100,26 +103,19 @@ export function planSemanticLayerFrame(
   const sourceY = Number.isFinite(source.y) ? Number(source.y) : 0;
   const sourceW = positive(source.w, 1024);
   const sourceH = positive(source.h, 1024);
-  const scale = Math.min(1, CARD_MAX_WIDTH / sourceW);
-  const cardW = Math.max(120, Math.round(sourceW * scale));
-  const cardH = Math.max(120, Math.round(sourceH * scale));
-  const columns = count === 1 ? 1 : Math.min(2, count);
-  const rows = Math.ceil(count / columns);
+  const cardW = Math.round(sourceW);
+  const cardH = Math.round(sourceH);
   const frameX = Math.round(sourceX + sourceW + SOURCE_GAP);
   const frameY = Math.round(sourceY);
-  const frameW = FRAME_PADDING * 2 + columns * cardW + (columns - 1) * CARD_GAP;
-  const frameH = FRAME_HEADER + FRAME_PADDING + rows * cardH + (rows - 1) * CARD_GAP + FRAME_PADDING;
+  const frameW = FRAME_PADDING * 2 + count * cardW + (count - 1) * CARD_GAP;
+  const frameH = FRAME_HEADER + FRAME_PADDING * 2 + cardH;
 
-  const placements = Array.from({ length: count }, (_, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    return {
-      x: frameX + FRAME_PADDING + column * (cardW + CARD_GAP),
-      y: frameY + FRAME_HEADER + FRAME_PADDING + row * (cardH + CARD_GAP),
-      w: cardW,
-      h: cardH,
-    };
-  });
+  const placements = Array.from({ length: count }, (_, index) => ({
+    x: frameX + FRAME_PADDING + index * (cardW + CARD_GAP),
+    y: frameY + FRAME_HEADER + FRAME_PADDING,
+    w: cardW,
+    h: cardH,
+  }));
 
   return {
     frame: { x: frameX, y: frameY, w: frameW, h: frameH },

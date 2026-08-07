@@ -2579,14 +2579,36 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }));
     };
 
-    // 先落占位：右侧当场出现 Frame 和 N 张待填充的卡。
+    // 先落占位：右侧当场出现一个和原图等大的「图层分离中」框。
+    // 一上来就铺 N 张空卡是错的——层数要等模型回话才知道，先铺 4 个空盒子既是猜、
+    // 又让用户以为已经拆好了（2026-08-07 反馈）。等图层真的回来再按实际张数展开。
+    const ensureSlots = (count: number) => {
+      const wanted = Math.max(1, Math.min(10, count));
+      const seats = buildPlaceholders(wanted);
+      const seatByKey = new Map(seats.map((seat) => [seat.key, seat]));
+      setCanvas((previous) => {
+        const survivors = previous.filter((candidate) => candidate.layerGroupId !== groupId
+          || candidate.layerRole !== 'layer'
+          || seatByKey.has(candidate.key));
+        const existing = new Set(survivors.map((candidate) => candidate.key));
+        // 已有的卡只挪位置、不动内容；缺的补上。
+        const repositioned = survivors.map((candidate) => {
+          const seat = seatByKey.get(candidate.key);
+          return seat && candidate.layerRole === 'layer'
+            ? { ...candidate, x: seat.x, y: seat.y, w: seat.w, h: seat.h }
+            : candidate;
+        });
+        return [...repositioned, ...seats.filter((seat) => !existing.has(seat.key))];
+      });
+    };
+
     setCanvas((previous) => {
       const cleaned = previous.filter((candidate) => !(
         candidate.layerSourceKey === sourceItem.key
         && candidate.layerRole === 'layer'
         && !candidate.src
       ));
-      const withSource = cleaned.map((candidate) => candidate.key === sourceItem.key
+      return cleaned.map((candidate) => candidate.key === sourceItem.key
         ? {
             ...candidate,
             layerGroupId: groupId,
@@ -2595,8 +2617,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             layerRole: 'source' as const,
           }
         : candidate);
-      return [...withSource, ...buildPlaceholders(AI_LAYER_COUNT)];
     });
+    ensureSlots(1);
     setNextRefId(maxRefId + AI_LAYER_COUNT + 1);
     // 组装台跟着一起开：拆分的下一步就是排图层，别让用户拆完还要自己找面板在哪。
     setLayerPanelGroupId(groupId);
@@ -2624,7 +2646,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           setLayeringProgress({ sourceKey: sourceItem.key, groupId, phase, completed, total }),
         // 出一层点亮一张占位卡。此时用的是模型直出地址，落资产后再换成资产地址。
         onLayer: ({ index, url }) => {
-          if (!url || index < 0 || index >= AI_LAYER_COUNT) return;
+          if (!url || index < 0 || index >= 10) return;
+          // 层数以模型实际吐出来的为准：先把座位补够，再点亮这一张。
+          ensureSlots(index + 1);
           setCanvas((previous) => previous.map((candidate) => candidate.key === layerKeyAt(index)
             ? { ...candidate, src: url, status: 'done' as const, syncStatus: 'pending' as const, syncError: null }
             : candidate));
@@ -2637,22 +2661,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         .filter((url) => !!url);
       if (remoteLayers.length === 0) throw new Error('分层模型未返回可用图层');
 
-      // 模型给的层数不一定等于占位数：多退少补，别在画布上留空壳或漏掉一层。
-      if (remoteLayers.length !== AI_LAYER_COUNT) {
-        const reflowed = buildPlaceholders(remoteLayers.length);
-        const keptKeys = new Set(reflowed.map((item) => item.key));
-        setCanvas((previous) => {
-          const survivors = previous.filter((candidate) => candidate.layerGroupId !== groupId
-            || candidate.layerRole !== 'layer'
-            || keptKeys.has(candidate.key));
-          const existing = new Map(survivors.map((candidate) => [candidate.key, candidate]));
-          const merged = survivors.map((candidate) => {
-            const seat = reflowed.find((item) => item.key === candidate.key);
-            return seat ? { ...candidate, x: seat.x, y: seat.y, w: seat.w, h: seat.h } : candidate;
-          });
-          return [...merged, ...reflowed.filter((item) => !existing.has(item.key))];
-        });
-      }
+      // 以模型实际返回的张数为准收口：多的座位撤掉，少的补上。
+      ensureSlots(remoteLayers.length);
 
       const layerSources: Array<{ name: string; source: string }> = [];
       for (let index = 0; index < remoteLayers.length; index += 1) {
@@ -6901,9 +6911,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             transform: 'scale(var(--invZoom))',
                             transformOrigin: 'right top',
                           }}
-                          title="预计生成尺寸（画布占位）"
+                          title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
                         >
-                          预计 {Math.round(w)} × {Math.round(h)}
+                          {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
                         </div>
                         <GenSweepLoader createdAt={it.createdAt} />
                       </div>
