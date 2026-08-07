@@ -2592,7 +2592,7 @@ function MessageBubble({
         </div>
         {(msg.tools?.length ?? 0) > 0 && (
           <div className="mb-2 flex flex-col gap-1.5">
-            {msg.tools!.map((card, index) => (
+            {(msg.tools ?? []).map((card, index) => (
               <div
                 key={card.toolUseId ?? `${card.tool}-${index}`}
                 className="flex items-center gap-2 rounded-[9px] px-2.5 py-1.5 text-[11px]"
