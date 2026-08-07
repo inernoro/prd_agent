@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, MessageSquareText, Search, UserRound, X } from 'lucide-react';
+import { Check, Info, MessageSquareText, Search, UserRound, X } from 'lucide-react';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import {
   parseTranscriptSegments,
@@ -11,6 +11,7 @@ import {
   renameTranscriptSpeaker,
   buildTranscriptWordCloud,
   parseRecordingAnswerParts,
+  parseSpeakerSourceNote,
 } from '@/components/doc-browser/transcriptSegments';
 import { streamDirectChat } from '@/services/real/aiToolbox';
 
@@ -114,6 +115,9 @@ export function TranscriptKaraoke({
     () => [...new Set(segments.map(segment => segment.speaker).filter((value): value is string => Boolean(value)))],
     [segments],
   );
+  // 说话人是原生识别来的还是本地声纹估算来的，可信度差一个量级。
+  // 不标出来的话两者在界面上完全一样，用户没有任何线索判断该不该信。
+  const speakerSource = useMemo(() => parseSpeakerSourceNote(noteMd), [noteMd]);
   const searchMatches = useMemo(() => {
     const normalized = keyword.trim().toLocaleLowerCase();
     if (!normalized) return [];
@@ -276,6 +280,16 @@ export function TranscriptKaraoke({
                 <button key={speaker} type="button" onClick={() => { setRenamingSpeaker(speaker); setSpeakerDraft(speaker); }} className="min-h-9 rounded-full px-3 text-[11px] text-token-secondary" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }} title="修改这个说话人的名称">{speaker}</button>
               ))}
             </div>
+          )}
+
+          {speakerSource && (
+            <p
+              className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed"
+              style={{ color: speakerSource.estimated ? 'var(--semantic-warning-text)' : 'var(--text-muted)' }}
+            >
+              <Info size={12} className="mt-0.5 shrink-0" />
+              <span>{speakerSource.text}</span>
+            </p>
           )}
 
           {wordCloud.length > 0 && (

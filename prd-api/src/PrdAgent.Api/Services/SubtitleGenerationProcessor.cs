@@ -938,7 +938,9 @@ public class SubtitleGenerationProcessor
                             : speakerNode.GetRawText()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            start, end, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             // 没有 segments 数组就用 text 兜底
@@ -1214,7 +1216,9 @@ public class SubtitleGenerationProcessor
         {
             var content = activeText.ToString().Trim();
             if (!string.IsNullOrWhiteSpace(content))
-                segments.Add(new SubtitleSegment(0, 0, content, activeSpeaker));
+                segments.Add(new SubtitleSegment(
+                    0, 0, content, activeSpeaker,
+                    string.IsNullOrWhiteSpace(activeSpeaker) ? null : SpeakerSources.Model));
             activeText.Clear();
         }
 
@@ -1370,7 +1374,9 @@ public class SubtitleGenerationProcessor
                         ? speakerNode.GetString()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            start, end, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             if (segments.Count == 0 && root.TryGetProperty("text", out var normalizedText))
@@ -1392,7 +1398,9 @@ public class SubtitleGenerationProcessor
                         ? speakerNode.ToString()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            startMs / 1000.0, endMs / 1000.0, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             // 兜底：从 result.text 取整段文本（无时间戳）
@@ -1632,7 +1640,40 @@ public class SubtitleGenerationProcessor
     }
 }
 
-public record SubtitleSegment(double StartSec, double EndSec, string Text, string? SpeakerId = null);
+public record SubtitleSegment(
+    double StartSec,
+    double EndSec,
+    string Text,
+    string? SpeakerId = null,
+    string? SpeakerSource = null);
+
+/// <summary>
+/// 说话人标签是怎么来的。三条路径的可信度差一个量级，UI 必须能分辨——
+/// 否则「上游原生识别」和「本地按语速比例推算」在界面上长得一模一样，
+/// 用户没有任何线索判断该不该信（no-rootless-tree / expectation-management）。
+///
+/// 判据只有一条：**谁产出这批 segment，谁在产出处盖戳**。禁止事后从别处猜来源。
+/// </summary>
+public static class SpeakerSources
+{
+    /// <summary>上游 ASR 直接返回的说话人字段（豆包 speaker / speaker_id、Whisper 兼容 speaker）。</summary>
+    public const string Native = "native";
+
+    /// <summary>多模态音频模型重听整段音频后按声音切分的结果——真听了，但仍是模型判断。</summary>
+    public const string Model = "model";
+
+    /// <summary>本地声纹兜底：分簇来自真实声学特征，每句归属按字数比例摊到语音段上。</summary>
+    public const string Local = "local";
+
+    /// <summary>供 Markdown 笔记展示的人话说明。产出端只盖 key，说明文案在这里统一维护。</summary>
+    public static string? Describe(string? source) => source switch
+    {
+        Native => "原生识别 · 由语音识别服务直接返回，逐句归属可信",
+        Model => "模型重听 · 音频模型重新听完整段后按声音切分，属模型判断",
+        Local => "声纹估算 · 本地按声纹分出几种声音是真实声学结果，但每句归谁是按语速比例推算的，可能与实际不符",
+        _ => null,
+    };
+}
 
 /// <summary>
 /// 字幕生成 ASR 阶段失败时抛出的异常，携带可观测的 diagnostic 数据，

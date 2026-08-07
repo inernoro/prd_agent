@@ -113,6 +113,32 @@ export function replaceTranscriptSegmentText(md: string, index: number, nextText
   return head + updated.join('\n');
 }
 
+/**
+ * 说话人来源（后端 SubtitleFormatter.FormatSpeakerSourceNote 写进笔记的那一行）。
+ * key 用来决定展示口吻，text 直接来自笔记——文案只有后端一份，前端不再抄一遍。
+ */
+export type SpeakerSourceNote = {
+  /** native=上游原生识别 / model=音频模型重听 / local=本地声纹估算 */
+  key: 'native' | 'model' | 'local';
+  /** 给人读的说明，原样来自笔记 */
+  text: string;
+  /** 是否属于「估算」——本地声纹的逐句归属是按语速比例推的，必须提醒 */
+  estimated: boolean;
+};
+
+const SPEAKER_SOURCE_RE = /^>\s*说话人来源：(native|model|local)\s*·\s*(.+)$/m;
+
+/**
+ * 读出笔记里的说话人来源。没有这一行 = 单人录音或旧笔记，返回 null（不猜、不兜底）。
+ */
+export function parseSpeakerSourceNote(md: string): SpeakerSourceNote | null {
+  if (!md) return null;
+  const match = SPEAKER_SOURCE_RE.exec(md);
+  if (!match) return null;
+  const key = match[1] as SpeakerSourceNote['key'];
+  return { key, text: match[2].trim(), estimated: key !== 'native' };
+}
+
 /** 批量修改说话人显示名，保留时间戳和正文。 */
 export function renameTranscriptSpeaker(md: string, currentName: string, nextName: string): string {
   const current = currentName.trim();

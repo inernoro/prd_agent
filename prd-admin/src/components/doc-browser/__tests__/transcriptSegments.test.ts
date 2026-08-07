@@ -12,6 +12,7 @@ import {
   renameTranscriptSpeaker,
   buildTranscriptWordCloud,
   parseRecordingAnswerParts,
+  parseSpeakerSourceNote,
 } from '../transcriptSegments';
 
 /**
@@ -202,5 +203,42 @@ describe('activeSummaryModuleIndex', () => {
     expect(activeSummaryModuleIndex(4, 0, 100)).toBe(0);
     expect(activeSummaryModuleIndex(4, 51, 100)).toBe(2);
     expect(activeSummaryModuleIndex(4, 100, 100)).toBe(3);
+  });
+});
+
+describe('parseSpeakerSourceNote', () => {
+  // 契约来源：后端 SubtitleFormatter.FormatSpeakerSourceNote 写进笔记的
+  //   `> 说话人来源：{key} · {说明}` 行。key 决定口吻，说明文案只在后端维护一份。
+  const noteWith = (line: string) =>
+    `# 录音 · 转录笔记\n> 来源：a.m4a\n\n## 转录全文\n\n${line}\n\n**[00:00 - 00:09]** [说话人1] 甲。\n`;
+
+  it('本地声纹兜底判为估算，说明文案原样取自笔记', () => {
+    const parsed = parseSpeakerSourceNote(noteWith(
+      '> 说话人来源：local · 声纹估算 · 本地按声纹分出几种声音是真实声学结果，但每句归谁是按语速比例推算的，可能与实际不符'));
+    expect(parsed?.key).toBe('local');
+    expect(parsed?.estimated).toBe(true);
+    expect(parsed?.text).toContain('按语速比例推算');
+  });
+
+  it('上游原生识别不标估算', () => {
+    const parsed = parseSpeakerSourceNote(noteWith('> 说话人来源：native · 原生识别 · 由语音识别服务直接返回，逐句归属可信'));
+    expect(parsed?.key).toBe('native');
+    expect(parsed?.estimated).toBe(false);
+  });
+
+  it('模型重听属于模型判断，同样标估算', () => {
+    expect(parseSpeakerSourceNote(noteWith('> 说话人来源：model · 模型重听 · 音频模型重新听完整段后按声音切分，属模型判断'))?.estimated).toBe(true);
+  });
+
+  it('旧笔记没有来源行时返回 null，不猜也不兜底', () => {
+    expect(parseSpeakerSourceNote('# 录音\n\n## 转录全文\n\n**[00:00 - 00:09]** [说话人1] 甲。')).toBeNull();
+    expect(parseSpeakerSourceNote('')).toBeNull();
+  });
+
+  it('来源行不参与逐句解析，不会被当成一句转录', () => {
+    const md = noteWith('> 说话人来源：local · 声纹估算 · 每句归谁按语速比例推算');
+    expect(parseTranscriptSegments(md)).toEqual([
+      { start: 0, end: 9, speaker: '说话人1', text: '甲。' },
+    ]);
   });
 });

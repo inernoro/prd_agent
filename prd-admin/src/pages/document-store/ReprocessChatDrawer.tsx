@@ -34,7 +34,10 @@ import {
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
 import { invokeAgent, listAgentCapabilities, getAgentParameters, createDefectFromContent } from '@/services/real/agentUniverse';
-import type { AgentCapability, AgentArtifact, AgentParameter, AgentOutboundAction } from '@/services/real/agentUniverse';
+import type {
+  AgentCapability, AgentArtifact, AgentParameter, AgentOutboundAction,
+  GeneralAgentInfo, AgentToolCard,
+} from '@/services/real/agentUniverse';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type { ReprocessAgent, DocumentStoreConversation } from '@/services/contracts/documentStore';
 import { DocApplyDiffModal } from './DocApplyDiffModal';
@@ -116,7 +119,11 @@ const CHAT_HISTORY_STORAGE_KEY = 'reprocess-chat-drawer:history';
 const MAX_PERSISTED_ENTRIES = 30;
 type PersistedChatState = {
   messages: ChatMessage[];
-  activeRef?: { kind: 'toolbox'; itemId: string } | { kind: 'kbAgent'; key: string } | { kind: 'shortVideoTool' };
+  activeRef?:
+    | { kind: 'toolbox'; itemId: string }
+    | { kind: 'kbAgent'; key: string }
+    | { kind: 'shortVideoTool' }
+    | { kind: 'general' };
 };
 function loadPersistedChat(entryId: string): PersistedChatState | null {
   try {
@@ -143,12 +150,14 @@ function savePersistedChat(entryId: string, state: PersistedChatState) {
 type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
-  invoker?: { kind: 'toolbox' | 'kbAgent'; label: string; ref: string; icon?: string };
+  invoker?: { kind: 'toolbox' | 'kbAgent' | 'general'; label: string; ref: string; icon?: string };
   content: string;
   /** 生成型智能体产出的成果物（目前主要是图片），随流式逐个追加 */
   artifacts?: AgentArtifact[];
   /** 产出该消息的智能体的专属出站动作（如缺陷→创建缺陷），随消息记忆，写回按钮旁额外渲染 */
   outboundActions?: AgentOutboundAction[];
+  /** 通用智能体这一轮用了哪些工具 / 转派给了谁。等待期靠它给推进感，不能只留转圈 */
+  tools?: AgentToolCard[];
   streaming?: boolean;
   /** 流式阶段：thinking / streaming / done */
   phase?: 'thinking' | 'streaming' | 'done' | 'error';
@@ -228,7 +237,35 @@ type ActiveAgent =
   | { kind: 'toolbox'; item: ToolboxItem }
   | { kind: 'kbAgent'; agent: ReprocessAgent }
   | { kind: 'shortVideoTool' }
+  // 通用智能体：默认就是它。用户不必挑，说要做什么即可，转派给谁由它自己判断
+  | { kind: 'general' }
   | null;
+
+/** 通用智能体的 agentKey。与后端 AgentUniverseController.GeneralAgentKey 对齐。 */
+export const GENERAL_AGENT_KEY = 'chat-agent';
+
+/**
+ * 解析开头的「@某某」显式指派。
+ *
+ * 只认**开头**的 @：正文中间提到「@张三说……」不该被当成指派。
+ * 同名前缀取最长匹配，否则「@视觉」会先命中「视觉创作」而漏掉「视觉创作智能体」。
+ * 认不出名字就当普通文字，原样发给当前收件人——绝不静默丢弃用户输入。
+ */
+export function resolveMention(
+  input: string,
+  items: ToolboxItem[],
+): { item: ToolboxItem; rest: string } | null {
+  const trimmed = input.trimStart();
+  if (!trimmed.startsWith('@')) return null;
+  const body = trimmed.slice(1);
+
+  const matched = items
+    .filter((item) => item.name && body.startsWith(item.name))
+    .sort((a, b) => b.name.length - a.name.length)[0];
+  if (!matched) return null;
+
+  return { item: matched, rest: body.slice(matched.name.length).trimStart() };
+}
 
 const FOCUSED_TOOLBOX_IDS = [
   // 偏文本对话型 builtin agent 排前；视觉/视频/缺陷管理放后面
@@ -517,6 +554,9 @@ export function ReprocessChatDrawer({
   const [pickerOpen, setPickerOpen] = useState(false);
   // 智能体能力契约（后端 SSOT 下发）：决定哪些 builtin 智能体可选 + 各自交互形态
   const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
+  // 通用智能体（后端下发，含运行时可用性 + 头像条要展示的专家清单）。
+  // 它是默认收件人：用户不选智能体也能直接发。
+  const [general, setGeneral] = useState<GeneralAgentInfo | null>(null);
   // 当前生成型智能体的可选参数（尺寸/模型，后端按真实池下发）+ 用户的选择
   const [agentParams, setAgentParams] = useState<AgentParameter[]>([]);
   const [selectedParams, setSelectedParams] = useState<Record<string, string>>({});
@@ -676,6 +716,7 @@ export function ReprocessChatDrawer({
 
       const caps = capRes.success ? capRes.data.capabilities : [];
       setCapabilities(caps);
+      setGeneral(capRes.success ? capRes.data.general ?? null : null);
       const capKeys = new Set(caps.map((c) => c.agentKey));
 
       // 只展示在「智能体宇宙」注册了能力契约的 builtin 智能体；各自按 invokeMode 走对应交互
@@ -790,6 +831,10 @@ export function ReprocessChatDrawer({
             if (kb) setActive({ kind: 'kbAgent', agent: kb });
           } else if (ref.kind === 'shortVideoTool') {
             setActive({ kind: 'shortVideoTool' });
+          } else if (ref.kind === 'general') {
+            // 通用体不可用时不还原它——还原了就是一个点了必然失败的收件人，
+            // 不如让「默认收件人」那条 effect 保持空、把选择权交回用户。
+            if (capRes.success && capRes.data.general?.available) setActive({ kind: 'general' });
           }
         }
       }
@@ -850,7 +895,9 @@ export function ReprocessChatDrawer({
         ? { kind: 'kbAgent', key: active.agent.key }
         : active?.kind === 'shortVideoTool'
           ? { kind: 'shortVideoTool' }
-          : undefined;
+          : active?.kind === 'general'
+            ? { kind: 'general' }
+            : undefined;
     savePersistedChat(conversationKey, { messages: sanitized, activeRef });
     if (!entryId || isShortVideoMode) return;
     // 同步落后端（去抖 800ms）：这才是关浏览器标签页也不丢的持久化（sessionStorage 关页即焚）。
@@ -905,6 +952,14 @@ export function ReprocessChatDrawer({
     [active, capabilityForAgent],
   );
 
+  // 选智能体从必答题变回可选题：加载完还没选中的，默认收件人就是通用智能体。
+  // 运行时不可用时**不**默认选它——否则用户会对着一个必然失败的入口发消息，
+  // 那比要求他手动挑更糟（no-rootless-tree：能力得运行时可验证）。
+  useEffect(() => {
+    if (loadingAgents || active || !general?.available) return;
+    setActive({ kind: 'general' });
+  }, [loadingAgents, active, general]);
+
   // 选中生成型智能体时，拉它的「可选参数」（尺寸/模型，后端按真实池下发）。
   // 非生成型 / 无可选项 → 清空，不渲染选择器（"如果可选才选"）。
   useEffect(() => {
@@ -954,13 +1009,15 @@ export function ReprocessChatDrawer({
       return;
     }
     const cap = capabilityForAgent(agent);
+    const isGeneral = agent?.kind === 'general';
     const isGeneration = cap?.invokeMode === 'generation';
     // 百宝箱自定义智能体（用户自建，type!=='builtin'）也走统一 invoke 信封（custom:{id}）。
     // 它的 systemPrompt 由后端实时读库，新建任意自定义智能体即可立刻接入，无需改代码。
     const isCustomToolbox = agent?.kind === 'toolbox' && agent.item.type !== 'builtin';
 
-    // chat / 结构化类把文档作为输入，必须有正文；生成类只需文本 prompt，可不依赖文档
-    if (!isGeneration && (!docContent || docContent.trim().length === 0)) {
+    // chat / 结构化类把文档作为输入，必须有正文；生成类只需文本 prompt，可不依赖文档。
+    // 通用智能体也不卡这条：用户可能只是想问一句话，不一定要拿这篇文档当输入。
+    if (!isGeneration && !isGeneral && (!docContent || docContent.trim().length === 0)) {
       // 防御：文档为空时不让 chat 类发送（Bugbot #1 二轮 Medium）
       toast.warning('文档无正文', '没有可读正文喂给智能体');
       return;
@@ -1052,10 +1109,12 @@ export function ReprocessChatDrawer({
     // builtin（有契约）→ 后端路由到真实适配器（生成型出图 / chat 文本）
     // 自定义百宝箱智能体 → 后端 custom:{id} 实时读库 systemPrompt 跑真实网关
     // 两者共用同一个 invoke，新建自定义智能体即可立刻接入。
-    if (cap || isCustomToolbox) {
-      const invokeKey = cap
-        ? cap.agentKey
-        : `custom:${agent?.kind === 'toolbox' ? agent.item.id : ''}`;
+    if (cap || isCustomToolbox || isGeneral) {
+      const invokeKey = isGeneral
+        ? GENERAL_AGENT_KEY
+        : cap
+          ? cap.agentKey
+          : `custom:${agent?.kind === 'toolbox' ? agent.item.id : ''}`;
       const stop = invokeAgent({
         agentKey: invokeKey,
         text: userText.trim(),
@@ -1071,6 +1130,23 @@ export function ReprocessChatDrawer({
             m.id === asstMsgId
               ? { ...m, artifacts: [...(m.artifacts ?? []), art], phase: 'streaming' }
               : m));
+          scrollToBottom();
+        },
+        // 通用体转派/用工具的过程要看得见：等待期屏幕上有推进，不是一个转圈
+        // （CLAUDE.md 规则 #6）。同一次调用按 toolUseId 就地更新，不堆卡片。
+        onTool: (card) => {
+          if (!isOwnedByCurrentEntry()) return;
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== asstMsgId) return m;
+            const list = m.tools ?? [];
+            const at = card.toolUseId
+              ? list.findIndex((t) => t.toolUseId === card.toolUseId)
+              : -1;
+            const next = at >= 0
+              ? list.map((t, i) => (i === at ? { ...t, ...card } : t))
+              : [...list, card];
+            return { ...m, tools: next, phase: 'streaming' };
+          }));
           scrollToBottom();
         },
         onError,
@@ -1302,20 +1378,39 @@ export function ReprocessChatDrawer({
 
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;
-    if (!active) {
-      toast.warning('请先选择智能体', '点上方选择器挑一个');
+
+    // 「@某某」是显式指派：把它从正文里摘掉，本轮直接交给那个智能体。
+    // 不写 @ 就走当前收件人（默认是通用智能体，由它自己判断要不要转派）。
+    const mention = resolveMention(input, toolboxItems);
+    const outgoingText = mention ? mention.rest : input;
+    const target: ActiveAgent = mention ? { kind: 'toolbox', item: mention.item } : active;
+
+    if (!target) {
+      // 走到这里只有一种情况：通用体运行时不可用，且用户也没挑智能体。
+      // 如实说清楚为什么，而不是甩一句「请先选择智能体」让人猜。
+      toast.warning(
+        '现在需要手动挑一个智能体',
+        general?.unavailableReason ?? '通用智能体暂时不可用，点上方选择器挑一个',
+      );
       setPickerOpen(true);
       return;
     }
-    if (active.kind === 'shortVideoTool') {
+    if (mention && !outgoingText.trim()) {
+      toast.warning('还没写要做什么', `已指派「${mention.item.name}」，再补一句指令`);
+      return;
+    }
+    if (mention) setActive(target);
+
+    const active2 = target;
+    if (active2.kind === 'shortVideoTool') {
       void runShortVideoTool(input);
       return;
     }
     const isLiteraryToolbox =
-      active.kind === 'toolbox' &&
-      active.item.type === 'builtin' &&
-      active.item.agentKey === 'literary-agent';
-    if (isLiteraryToolbox && isLiteraryIllustrationRequest(input)) {
+      active2.kind === 'toolbox' &&
+      active2.item.type === 'builtin' &&
+      active2.item.agentKey === 'literary-agent';
+    if (isLiteraryToolbox && isLiteraryIllustrationRequest(outgoingText)) {
       if (loadingDoc) {
         toast.warning('请稍候', '文档还在加载');
         return;
@@ -1324,7 +1419,7 @@ export function ReprocessChatDrawer({
         toast.warning('无法配图', docLoadError);
         return;
       }
-      setVisualInitialPrompt(buildLiteraryIllustrationPrompt(input, entryTitle, docContent));
+      setVisualInitialPrompt(buildLiteraryIllustrationPrompt(outgoingText, entryTitle, docContent));
       setLiteraryImageMode(true);
       setPickerOpen(false);
       setError(null);
@@ -1332,12 +1427,17 @@ export function ReprocessChatDrawer({
       return;
     }
     const invoker: ChatMessage['invoker'] =
-      active.kind === 'toolbox'
-        ? { kind: 'toolbox', label: active.item.name, ref: active.item.id, icon: active.item.icon }
-        : { kind: 'kbAgent', label: active.agent.label, ref: active.agent.key };
+      active2.kind === 'toolbox'
+        ? { kind: 'toolbox', label: active2.item.name, ref: active2.item.id, icon: active2.item.icon }
+        : active2.kind === 'general'
+          ? { kind: 'general', label: general?.name ?? '通用智能体', ref: general?.agentKey ?? GENERAL_AGENT_KEY }
+          : { kind: 'kbAgent', label: active2.agent.label, ref: active2.agent.key };
     setLiteraryImageMode(false);
-    void sendMessage(input, invoker, active);
-  }, [input, active, loadingDoc, docLoadError, entryTitle, docContent, sendMessage, runShortVideoTool]);
+    void sendMessage(outgoingText, invoker, active2);
+  }, [
+    input, active, general, toolboxItems,
+    loadingDoc, docLoadError, entryTitle, docContent, sendMessage, runShortVideoTool,
+  ]);
 
   // 开启全新对话：清空当前对话 + 清掉本文档的持久化（保留已选智能体，方便直接再问）
   const handleNewConversation = useCallback(() => {
@@ -1634,6 +1734,14 @@ export function ReprocessChatDrawer({
 
   const activeLabel = useMemo(() => {
     if (!active) return null;
+    if (active.kind === 'general') {
+      return {
+        icon: undefined,
+        name: general?.name ?? '通用智能体',
+        kind: 'general' as const,
+        sub: general?.description ?? '直接说要做什么就行',
+      };
+    }
     if (active.kind === 'toolbox') {
       return { icon: active.item.icon, name: active.item.name, kind: 'toolbox' as const, sub: active.item.description };
     }
@@ -1646,7 +1754,7 @@ export function ReprocessChatDrawer({
       };
     }
     return { icon: undefined, name: active.agent.label, kind: 'kbAgent' as const, sub: active.agent.description };
-  }, [active]);
+  }, [active, general]);
 
   const modal = (
     <motion.div
@@ -1705,6 +1813,48 @@ export function ReprocessChatDrawer({
           </div>
         </div>
 
+        {/* 专家条：一排窄头像，悬浮看作用，点一下才是强制指派。
+            默认不用点——收件人已经是通用智能体，转派给谁由它自己判断。 */}
+        {general && general.delegates.length > 0 && (
+          <div className="px-5 pt-3 shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-token-muted shrink-0">
+                {general.available ? '可随时 @ 指定' : '通用智能体不可用，请手动挑'}
+              </span>
+              <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto">
+                {general.delegates.map((d) => {
+                  const item = toolboxItems.find((t) => t.agentKey === d.agentKey);
+                  const picked = active?.kind === 'toolbox' && active.item.agentKey === d.agentKey;
+                  return (
+                    <button
+                      key={d.agentKey}
+                      type="button"
+                      disabled={isBusy || !item}
+                      onClick={() => { if (item) { setActive({ kind: 'toolbox', item }); setPickerOpen(false); } }}
+                      // 悬浮就能看懂它是干嘛的 + 通用体什么时候会自己找它
+                      title={`${d.name}\n${d.description}\n${d.hint}${item ? '' : '\n（当前不可用）'}`}
+                      aria-label={`${d.name}：${d.hint}`}
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] transition-all disabled:opacity-40"
+                      style={{
+                        background: picked ? `${d.accent}2E` : 'var(--nested-block-bg)',
+                        border: `1px solid ${picked ? d.accent : 'var(--border-faint)'}`,
+                        color: d.accent,
+                      }}
+                    >
+                      <ToolboxIcon name={item?.icon} size={13} />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {!general.available && general.unavailableReason && (
+              <p className="mt-1.5 text-[10px]" style={{ color: 'var(--semantic-warning-text)' }}>
+                {general.unavailableReason}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* 智能体选择器（精简版 - 顶部下拉） */}
         <div className="px-5 pt-3 pb-3 shrink-0 relative">
           <button
@@ -1724,6 +1874,18 @@ export function ReprocessChatDrawer({
             {activeLabel ? (
               activeLabel.kind === 'toolbox' ? (
                 <ToolboxIcon name={activeLabel.icon} size={13} />
+              ) : activeLabel.kind === 'general' ? (
+                <span
+                  className="inline-flex items-center justify-center rounded-[6px]"
+                  style={{
+                    width: 25, height: 25,
+                    background: 'rgba(217,119,87,0.18)',
+                    color: 'rgba(240,170,140,0.98)',
+                    border: '1px solid rgba(217,119,87,0.32)',
+                  }}
+                >
+                  <Sparkles size={13} />
+                </span>
               ) : (
                 <span
                   className="inline-flex items-center justify-center rounded-[6px]"
@@ -1789,6 +1951,25 @@ export function ReprocessChatDrawer({
                 transition={{ duration: 0.15 }}
               >
                 <div className="overflow-y-auto" style={{ maxHeight: '60vh' }}>
+                  {/* 通用智能体：默认收件人。指派过某个专家之后，从这里切回来 */}
+                  {general && (
+                    <DropdownSection
+                      title="默认"
+                      subtitle="不必挑智能体，说要做什么即可；该转派给谁由它判断"
+                    >
+                      <DropdownRow
+                        icon={<Sparkles size={14} style={{ color: general.accent }} />}
+                        title={general.name}
+                        subtitle={general.available
+                          ? general.description
+                          : (general.unavailableReason ?? '运行时暂时不可用')}
+                        active={active?.kind === 'general'}
+                        disabled={isBusy || !general.available}
+                        onClick={() => { setActive({ kind: 'general' }); setPickerOpen(false); }}
+                      />
+                    </DropdownSection>
+                  )}
+
                   {/* 百宝箱 section */}
                   <DropdownSection
                     title="百宝箱智能体"
@@ -2261,8 +2442,8 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError, mode }: {
         <p className="text-[13px] font-semibold text-token-primary mb-1">和《{entryTitle}》对话</p>
         <p className="text-[11px] text-token-muted max-w-[360px] leading-relaxed">
           {hasAgent
-            ? '已选择智能体。在下方输入指令（视觉创作则输入画面描述）后点发送开始；选中不会自动发送。'
-            : '点击上方下拉选择一个智能体（百宝箱内置 / 我的快捷智能体 / 新建）后即可开始。'}
+            ? '直接在下方说要做什么就行——该找哪个专业智能体，通用助手会自己判断；想指定某一个，用「@名字」或点上方头像。'
+            : '通用智能体暂时不可用，请点上方下拉挑一个智能体（百宝箱内置 / 我的快捷智能体 / 新建）后开始。'}
         </p>
         {/* 预期说明：第一次用就知道会发生什么 */}
         <ul className="mt-3 text-[10px] text-token-muted max-w-[360px] leading-relaxed text-left mx-auto space-y-1" style={{ listStyle: 'none', paddingLeft: 0 }}>
@@ -2406,13 +2587,44 @@ function MessageBubble({
             </span>
           )}
         </div>
+        {(msg.tools?.length ?? 0) > 0 && (
+          <div className="mb-2 flex flex-col gap-1.5">
+            {msg.tools!.map((card, index) => (
+              <div
+                key={card.toolUseId ?? `${card.tool}-${index}`}
+                className="flex items-center gap-2 rounded-[9px] px-2.5 py-1.5 text-[11px]"
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-faint)',
+                  color: card.done && card.ok === false
+                    ? 'var(--semantic-danger)'
+                    : 'var(--text-secondary)',
+                }}
+              >
+                {card.done
+                  ? (card.ok === false
+                      ? <X size={11} className="shrink-0" />
+                      : <Check size={11} className="shrink-0" />)
+                  : <MapSpinner size={10} />}
+                <span className="font-semibold shrink-0">{card.label}</span>
+                <span className="truncate text-token-muted">
+                  {card.done
+                    ? (card.message ?? (card.ok === false ? '没成功' : '已完成'))
+                    // 未完成时滚动展示阶段名：等待期屏幕上要有变化，不能是一个静止的转圈
+                    : (card.steps?.[Math.min(card.steps.length - 1, Math.floor(elapsed / 3))] ?? '进行中')}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {msg.shortVideoRun?.card ? (
           <ShortVideoCardBlock run={msg.shortVideoRun} phase={msg.phase} content={msg.content} />
         ) : msg.streaming && msg.content ? (
           <StreamingText text={msg.content} streaming mode="blur" />
         ) : msg.content ? (
           <ChatMarkdown content={msg.content} />
-        ) : imageArtifacts.length === 0 ? (
+        ) : imageArtifacts.length === 0 && (msg.tools?.length ?? 0) === 0 ? (
           <ThinkingDots />
         ) : null}
 
