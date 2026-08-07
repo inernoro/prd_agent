@@ -2233,15 +2233,18 @@ export function ReprocessChatDrawer({
                     ? (isGenerationActive ? '正在生成…' : 'AI 正在回复，请稍候…')
                     : activeCapability
                       ? activeCapability.inputHint
-                      : active
-                        ? `输入指令配合「${
-                            active.kind === 'toolbox'
-                              ? active.item.name
-                              : active.kind === 'shortVideoTool'
-                                ? SHORT_VIDEO_TOOLBOX_ITEM.name
-                                : active.agent.label
-                          }」，Enter 发送`
-                        : '先选个智能体，然后输入指令'
+                      : active?.kind === 'general'
+                        // 默认收件人：占位就该说清「不用挑」，别再引导用户去选
+                        ? '直接说要做什么，需要时我会转给对应的专业智能体；想指定就用「@名字」'
+                        : active
+                          ? `输入指令配合「${
+                              active.kind === 'toolbox'
+                                ? active.item.name
+                                : active.kind === 'shortVideoTool'
+                                  ? SHORT_VIDEO_TOOLBOX_ITEM.name
+                                  : active.agent.label
+                            }」，Enter 发送`
+                          : '先选个智能体，然后输入指令'
               }
               disabled={isBusy || (!!docLoadError && !isShortVideoMode)}
               rows={2}
