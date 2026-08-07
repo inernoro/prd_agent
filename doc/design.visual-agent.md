@@ -261,3 +261,7 @@
 ## 视觉分镜台（Storyboard，2026-06-14）
 
 将文章/想法拆解为电影风格分镜，每镜生成关键帧 image prompt + 运动 prompt，复用现有生图引擎实时生长并支持逐镜精修。后端新增 `storyboard-script` 接口（`visual-agent.storyboard.script::chat`），预留 image-to-video 扩展点。同步修复 OpenAIImageClient 对 OpenRouter 图片生成协议的支持（`/chat/completions + modalities:[image,text]`）。
+
+## 图层化导出（AI 分层 PSD，2026-08-04）
+
+生成图片可按语义拆分为独立图层（如主体/背景/文字），持久化到画布 Frame 后支持单层编辑、重复使用与免重算导出 PSD；默认展示 AI 图层合成结果，原图降级为隐藏参考层，快捷编辑产物沿用同一图层归属并在导出时取每层最新一版，编辑中或失败自动回落原图层。分层能力由 LLM Gateway 统一持有（图片分层转换器 + 配置模板），MAP 侧改为单向依赖 LLMGW 公开的 image-layering 能力，不再感知上游平台与具体模型。
