@@ -9,3 +9,5 @@
 | test | prd-admin | 补说话人来源渲染、专家头像条、收件人决策、重试文案四组守卫用例 |
 | test | prd-api | 补通用体信封载荷字段与事件类型常量守卫 |
 | refactor | prd-admin | 收件人决策与专家头像条抽成可测的纯函数与展示组件 |
+| fix | prd-admin | 再加工抽屉支持 Esc 逐层关闭，蒙版不再一直盖住侧栏导航与主题切换 |
+| test | prd-admin | 补 Esc 收哪一层的分层判据用例 |

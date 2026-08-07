@@ -268,6 +268,19 @@ export function resolveMention(
 }
 
 /**
+ * Esc 该收哪一层。
+ *
+ * 抽成纯函数是因为「按 Esc 关掉最上面那层」是一条分支判断，
+ * 藏在 keydown 回调里既测不到、也很容易在加新浮层时忘记补一支。
+ */
+export function resolveEscapeAction(state: { createAgentOpen: boolean; pickerOpen: boolean }):
+  'close-create-agent' | 'close-picker' | 'close-drawer' {
+  if (state.createAgentOpen) return 'close-create-agent';
+  if (state.pickerOpen) return 'close-picker';
+  return 'close-drawer';
+}
+
+/**
  * 本轮这句话到底发给谁。
  *
  * 抽成纯函数是因为这条决策就是「不必先挑智能体」这件事本身——它藏在组件里时，
@@ -1806,9 +1819,26 @@ export function ReprocessChatDrawer({
     return { icon: undefined, name: active.agent.label, kind: 'kbAgent' as const, sub: active.agent.description };
   }, [active, general]);
 
+  // Esc 按最上面那层收：新建面板 > 智能体下拉 > 整个抽屉。
+  // 少了这条，抽屉的 z-[1200] 蒙版会一直盖住侧栏——点不到主题切换、点不到导航，
+  // 用户只剩「找那个 X」一条路（frontend-modal.md 要求 Esc 与点蒙版都能关）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const action = resolveEscapeAction({ createAgentOpen: showCreateAgent, pickerOpen });
+      e.stopPropagation();
+      if (action === 'close-create-agent') setShowCreateAgent(false);
+      else if (action === 'close-picker') setPickerOpen(false);
+      else onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showCreateAgent, pickerOpen, onClose]);
+
   const modal = (
     <motion.div
       className="surface-backdrop fixed inset-0 z-[1200] flex justify-end"
+      data-drawer="reprocess-chat"
       initial={{ backgroundColor: 'rgba(0,0,0,0)' }}
       animate={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
       exit={{ backgroundColor: 'rgba(0,0,0,0)' }}
