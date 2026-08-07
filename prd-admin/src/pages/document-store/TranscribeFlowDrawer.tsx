@@ -81,6 +81,10 @@ export function TranscribeFlowDrawer({
   const [entryId, setEntryId] = useState<string | null>(initialEntryId ?? null);
   const [runId, setRunId] = useState<string | null>(restyleRun?.runId ?? null);
   const [phase, setPhase] = useState(restyleRun ? '完成' : '排队中');
+  // 转录暂时不可用、正在等自动重试。后端下发结构化字段，界面如实转述——
+  // 之前这一屏只显示按步骤推断出来的「排队中」，把服务端说的实话盖掉了，
+  // 用户盯着一个转圈几分钟，分不清是在跑还是已经坏了。
+  const [retryWait, setRetryWait] = useState<{ count: number; nextAt: string } | null>(null);
   const [status, setStatus] = useState<'uploading' | 'running' | 'done' | 'failed'>(
     file ? 'uploading' : restyleRun ? 'done' : 'running');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -188,6 +192,10 @@ export function TranscribeFlowDrawer({
     if (!res.success) return;
     const r = res.data;
     if (r.phase) setPhase(r.phase);
+    // 结构化事实，不是从 phase 文案里猜出来的：有下次重试时刻 = 正在等自动重试
+    setRetryWait(r.automaticRetryNextAt
+      ? { count: r.automaticRetryCount ?? 0, nextAt: r.automaticRetryNextAt }
+      : null);
     if (r.status === 'done') {
       setPhase('完成');
       setStatus('done');
@@ -370,6 +378,14 @@ export function TranscribeFlowDrawer({
     () => selectedStyle?.contextInput ? parseMeetingContext(styleContext) : [],
     [selectedStyle?.contextInput, styleContext],
   );
+  // 等重试时说清三件事：为什么停着、已经试了几次、下一次什么时候——
+  // 「还要多久」给不出确切值就给出下次时刻，绝不用一个不动的转圈糊弄过去。
+  const retryWaitDescription = retryWait
+    ? `语音转写服务暂时不可用，已自动重试 ${retryWait.count} 次；`
+      + `下一次约在 ${new Date(retryWait.nextAt).toLocaleTimeString('zh-CN', { hour12: false })}。`
+      + '录音已安全保存，可以关闭面板，恢复后会自动接着跑。'
+    : '';
+
   const runningDescription = status === 'uploading'
     ? '录音正在安全保存，随后只生成可编辑原文'
     : phase.includes('写入')
@@ -426,10 +442,15 @@ export function TranscribeFlowDrawer({
             <MapSpinner size={28} />
           </motion.div>
           <p className="text-[18px] font-semibold text-token-primary">
-            {status === 'uploading' ? '正在保存录音' : (activeStep?.label ?? phase)}
+            {status === 'uploading'
+              ? '正在保存录音'
+              // 等重试时以服务端下发的 phase 为准：推断出来的步骤标签会把「暂时不可用」说成「排队中」
+              : retryWait
+                ? phase
+                : (activeStep?.label ?? phase)}
           </p>
           <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
-            {runningDescription}
+            {retryWait ? retryWaitDescription : runningDescription}
           </p>
           <p className="mt-3 text-[11px] tabular-nums text-token-muted">
             已进行 {formatProcessDuration(runningSeconds)}
