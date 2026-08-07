@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using PrdAgent.Api.Services;
 using Shouldly;
 using Xunit;
@@ -14,30 +13,12 @@ namespace PrdAgent.Api.Tests.Services;
 ///
 /// 这批用例锁住两件事：产出端真的盖了戳、笔记里真的写出了来源；
 /// 以及不确定时（单人 / 来源混合）**不下结论**，而不是随便挑一个。
+///
+/// 本地声纹那条路径的盖戳断言放在 LocalSpeakerDiarizerTests：那里已有被证明
+/// 能分出两个人的合成音频，判据该建在验证过的地基上，不另造一份声学素材。
 /// </summary>
 public class SubtitleSpeakerSourceTests
 {
-    [Fact]
-    public void LocalDiarizerOutput_ShouldStampLocalSource()
-    {
-        // 两种明显不同的声音 → 走本地声纹兜底，每一句都必须带上 local 戳。
-        // 删掉产出端的盖戳，这条会红。
-        var wav = BuildWav(
-            (0.35, 0, 0),
-            (2.2, 125, 0.70),
-            (0.55, 0, 0),
-            (2.8, 255, 0.65),
-            (0.30, 0, 0));
-
-        var result = LocalSpeakerDiarizer.TryDiarize(
-            wav,
-            "米多有十年的行业经验和丰富的营销策略。只要交付质量达到标准，当前报价是合理的。希望通用功能优化不要额外收费。");
-
-        result.ShouldNotBeNull();
-        result.SpeakerCount.ShouldBeGreaterThan(1);
-        result.Segments.ShouldAllBe(segment => segment.SpeakerSource == SpeakerSources.Local);
-    }
-
     [Fact]
     public void ModelDiarization_ShouldStampModelSource()
     {
@@ -111,48 +92,5 @@ public class SubtitleSpeakerSourceTests
                 new(0, 9, "甲。", "说话人1"),
                 new(10, 20, "乙。", "说话人2"),
             ]).ShouldBeNull();
-    }
-
-    /// <summary>合成 16k 单声道 PCM16 WAV：(秒数, 基频Hz, 幅度)，基频 0 表示静音。</summary>
-    private static byte[] BuildWav(params (double Seconds, double Frequency, double Amplitude)[] parts)
-    {
-        const int sampleRate = 16000;
-        var samples = new List<short>();
-        foreach (var (seconds, frequency, amplitude) in parts)
-        {
-            var count = (int)(seconds * sampleRate);
-            for (var i = 0; i < count; i++)
-            {
-                if (frequency <= 0)
-                {
-                    samples.Add(0);
-                    continue;
-                }
-                var t = i / (double)sampleRate;
-                var value = Math.Sin(2 * Math.PI * frequency * t)
-                            + 0.45 * Math.Sin(2 * Math.PI * frequency * 2 * t)
-                            + 0.25 * Math.Sin(2 * Math.PI * frequency * 3 * t);
-                samples.Add((short)(value * amplitude * 9000));
-            }
-        }
-
-        var dataBytes = samples.Count * 2;
-        var buffer = new byte[44 + dataBytes];
-        "RIFF"u8.CopyTo(buffer.AsSpan(0, 4));
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(4, 4), 36 + dataBytes);
-        "WAVE"u8.CopyTo(buffer.AsSpan(8, 4));
-        "fmt "u8.CopyTo(buffer.AsSpan(12, 4));
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(16, 4), 16);
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(20, 2), 1);
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(22, 2), 1);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(24, 4), sampleRate);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(28, 4), sampleRate * 2);
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(32, 2), 2);
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(34, 2), 16);
-        "data"u8.CopyTo(buffer.AsSpan(36, 4));
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(40, 4), dataBytes);
-        for (var i = 0; i < samples.Count; i++)
-            BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(44 + i * 2, 2), samples[i]);
-        return buffer;
     }
 }
