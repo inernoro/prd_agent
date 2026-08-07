@@ -181,6 +181,7 @@ import {
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
   recoverableBackgroundTranscriptionRunId,
+  describeFailedTranscription,
   shouldRetryVaultServerCompletion,
   vaultClearServerCompletion,
   vaultDeleteSession,
@@ -1246,10 +1247,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     setBgTranscribeRunIds(current => enqueueBackgroundTranscriptionRun(current, normalized));
   }, []);
 
+  // 最近一次转录失败的说明（按当前选中条目）。null = 没失败过或已被新一轮覆盖。
+  const [transcribeFailure, setTranscribeFailure] = useState<{ reason: string; at: string | null } | null>(null);
+
   // 刷新不能抹掉服务端正在执行的转录/整理任务。选中文档恢复后，从服务端权威 run
   // 重新接回轮询；再补一次短延迟确认，覆盖首屏请求与 worker 认领并发的窗口。
   useEffect(() => {
     const entryId = selectedEntryId?.trim();
+    // 换条目先清空，否则上一条的失败说明会挂在下一条头上
+    setTranscribeFailure(null);
     if (!entryId) return;
     let cancelled = false;
     let recovered = false;
@@ -1260,6 +1266,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       // getAgentRun 只允许读取自己发起的任务；团队库里若最近一次在途 run 属于
       // 其他协作者，不能把它加入当前用户的轮询队列，否则 404 会让提示永久不消失。
       if (!currentUserId || res.data?.userId !== currentUserId) return;
+      // 失败态在这里落地：在途 run 有下面的看护、成功 run 会长出笔记，
+      // 只有失败 run 两头不沾，不接住就等于「跑过但界面装作没跑过」。
+      setTranscribeFailure(describeFailedTranscription(res.data));
       const runId = recoverableBackgroundTranscriptionRunId(res.data);
       if (!runId) return;
       recovered = true;
@@ -2505,9 +2514,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
+          transcribeFailure={transcribeFailure}
           onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {
+              // 重试即当作新一轮，先撤掉上一轮的失败说明，别让旧原因压在新进度上
+              setTranscribeFailure(null);
               setTranscribeFlow({ entryId: id, title: entry.title, style: styleKey ? { styleKey } : undefined });
               transcribeFlowOpenRef.current = true;
             }

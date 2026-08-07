@@ -360,6 +360,8 @@ export type DocBrowserProps = {
   onQuickRecord?: () => void;
   /** 音频结果区「换个整理方式」：对已完成转录的音频免重跑 ASR 重新整理摘要 */
   onRestyleTranscribe?: (entryId: string) => void;
+  /** 当前选中音频最近一次转录失败的说明；有值时结果区如实写明原因并把按钮改成重试 */
+  transcribeFailure?: { reason: string; at: string | null } | null;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
   /** 音频原文页的问答入口；可预置带时间引用约束的提问。 */
@@ -588,6 +590,7 @@ function TranscribeHeroCard({
   currentEntryId,
   noteEntryId,
   subtitleEntryId,
+  lastFailure,
   onStart,
   onOpenNote,
   onRestyle,
@@ -595,6 +598,8 @@ function TranscribeHeroCard({
   currentEntryId: string;
   noteEntryId?: string;
   subtitleEntryId?: string;
+  /** 最近一次转录失败的说明；有值时卡片如实写明失败原因，按钮改为重试 */
+  lastFailure?: { reason: string; at: string | null } | null;
   /** 发起原文转录；整理在完成后另选 */
   onStart?: (styleKey?: string) => void;
   onOpenNote: (entryId: string) => void;
@@ -602,6 +607,8 @@ function TranscribeHeroCard({
   onRestyle?: () => void;
 }) {
   const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
+  // 没转出笔记、且上次是失败告终 —— 这时候必须说话，不能装作从没跑过
+  const showFailure = !noteEntryId && !!lastFailure;
   return (
     <div
       className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
@@ -613,10 +620,16 @@ function TranscribeHeroCard({
           </div>
           <div className="min-w-0">
             <p className="text-[13px] font-semibold text-token-primary">
-              {inPlace ? '录音和原文已保存在本页' : noteEntryId ? '录音原文已生成' : '把录音转成文字'}
+              {inPlace ? '录音和原文已保存在本页'
+                : noteEntryId ? '录音原文已生成'
+                : showFailure ? '上次转文字没成功'
+                : '把录音转成文字'}
             </p>
             <p className="truncate text-[11px] text-token-muted">
-              {inPlace ? '位置与标题保持不变，需要时再一键整理' : noteEntryId ? '点下方打开原文，需要时再一键整理' : '先生成可编辑原文，不自动总结或改写'}
+              {inPlace ? '位置与标题保持不变，需要时再一键整理'
+                : noteEntryId ? '点下方打开原文，需要时再一键整理'
+                : showFailure ? '录音还在，没有丢；可以直接重试'
+                : '先生成可编辑原文，不自动总结或改写'}
             </p>
           </div>
         </div>
@@ -625,10 +638,20 @@ function TranscribeHeroCard({
             onClick={() => onStart()}
             className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
             style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}>
-            转成文字
+            {showFailure ? '重试' : '转成文字'}
           </button>
         )}
       </div>
+
+      {/* 失败原因照抄服务端，不改写成「稍后再试」那种等于没说的话 */}
+      {showFailure && (
+        <div
+          className="flex items-start gap-2 rounded-[10px] px-3 py-2 text-[11.5px] leading-relaxed"
+          style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
+          <AlertTriangle size={13} className="mt-[2px] flex-shrink-0" />
+          <span className="min-w-0 break-words">{lastFailure!.reason}</span>
+        </div>
+      )}
 
       {/* 已转录：历史产物 chips + 换个整理方式 */}
       {(noteEntryId || subtitleEntryId) && (
@@ -1676,6 +1699,7 @@ export function DocBrowser({
   onUploadAudio,
   onQuickRecord,
   onRestyleTranscribe,
+  transcribeFailure,
   onReprocess,
   onAskRecording,
   onShareEntry,
@@ -3647,6 +3671,7 @@ export function DocBrowser({
                     currentEntryId={selectedEntryData.id}
                     noteEntryId={selectedEntryData.metadata?.transcribe_entry_id}
                     subtitleEntryId={selectedEntryData.metadata?.subtitle_entry_id}
+                    lastFailure={transcribeFailure}
                     onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}
                     onOpenNote={(noteId) => handleSelectEntry(noteId)}
                     onRestyle={onRestyleTranscribe ? () => onRestyleTranscribe(selectedEntryData.id) : undefined}
