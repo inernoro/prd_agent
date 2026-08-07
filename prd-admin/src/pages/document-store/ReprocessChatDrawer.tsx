@@ -1086,8 +1086,11 @@ export function ReprocessChatDrawer({
       let emptyAndNoToken = false;
       setMessages((prev) => prev.map((m) => {
         if (m.id !== asstMsgId) return m;
+        // 工具卡也算产出：通用体可能这一轮只做了转派/出图而没有再多说一句话，
+        // 不把它计入就会给一条明明有结果的消息扣上「上游没返回任何内容」的帽子。
         const empty = (!m.content || m.content.trim().length === 0)
-          && (!m.artifacts || m.artifacts.length === 0);
+          && (!m.artifacts || m.artifacts.length === 0)
+          && (!m.tools || m.tools.length === 0);
         if (empty && !tokenInfo) {
           emptyAndNoToken = true;
           return { ...m, streaming: false, phase: 'error',
