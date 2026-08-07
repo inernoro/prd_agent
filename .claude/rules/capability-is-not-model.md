@@ -1,3 +1,13 @@
+---
+paths:
+  - "llmgw/console-api/Provisioning/**/*.cs"
+  - "prd-api/src/**/LlmGateway/**/*.cs"
+  - "prd-api/src/**/Models/GatewayCapabilityIds.cs"
+  - "prd-api/src/**/Controllers/Api/ImageGenController.cs"
+  - "prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts"
+  - "prd-admin/src/types/modelGroup.ts"
+---
+
 # 上游能力不等于用户可选模型（Capability is not a Model）
 
 **一句话**：用户在选择器里挑的是「意图」，模型是实现细节；需要特定输入、不吃提示词、没有尺寸概念的能力属于动作，只能被具体按钮点名调用，绝不许摆进「选择模型」列表。
