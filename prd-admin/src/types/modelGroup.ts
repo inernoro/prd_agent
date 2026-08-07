@@ -69,6 +69,11 @@ export interface ModelGroupForApp extends ModelGroup {
   isDefault: boolean;
   /** 是否为传统配置模型（isImageGen 等标记） */
   isLegacy: boolean;
+  /**
+   * 网关声明的能力标签（image_generation / image_layering ...）。
+   * 用来区分「用户可以挑来生图的模型」与「只能被具体动作调用的能力」。
+   */
+  capabilities?: string[];
 }
 
 /**

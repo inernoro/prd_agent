@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ArrowDown, ArrowUp, Download, Eye, EyeOff, Image as ImageIcon, Layers, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Download, Eye, EyeOff, Image as ImageIcon, Layers, ShieldCheck, X } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
@@ -45,6 +45,7 @@ export type SemanticLayerPanelProps = {
   onExportPsd: () => void;
   onExportComposite: () => void;
   onExportZip: () => void;
+  onSelfCheck: () => void;
   onClose: () => void;
 };
 
@@ -75,6 +76,7 @@ export function SemanticLayerPanel({
   onExportPsd,
   onExportComposite,
   onExportZip,
+  onSelfCheck,
   onClose,
 }: SemanticLayerPanelProps) {
   // 面板从上往下读 = 从最上层往下读，和 Photoshop 一致；数组本身保持「底层在前」。
@@ -342,6 +344,19 @@ export function SemanticLayerPanel({
             </div>
           </>
         )}
+        {/* 导出前先问一句「读得到吗」：不做这步，跨域读不到时只会在下载到一半时
+            抛一句没头没尾的 Failed to fetch，谁也不知道是哪一层出的问题。 */}
+        <button
+          type="button"
+          className="h-7 rounded-[8px] inline-flex items-center justify-center gap-1.5 text-[11px] hover-bg-soft disabled:opacity-40"
+          style={{ color: 'var(--text-secondary)', border: '1px dashed var(--border-default)' }}
+          disabled={!!busy || layers.every((layer) => !layer.src)}
+          title="逐个确认原图与每个图层真的读得到，读不到会说清是哪一层、什么原因"
+          onClick={onSelfCheck}
+        >
+          <ShieldCheck size={12} />
+          导出前自检
+        </button>
         <div className="text-[10px] text-center" style={{ color: 'var(--text-muted)' }}>
           {sourceSrc ? '导出以原图尺寸对齐，隐藏层仍写进 PSD' : '缺少原图，导出可能失败'}
         </div>

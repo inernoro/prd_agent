@@ -69,6 +69,7 @@ import {
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
 import {
+  checkLayerSourcesReadable,
   createCompositePngBlob,
   createLayeredPsdBlob,
   decomposeImageToLayers,
@@ -207,6 +208,9 @@ type CanvasImageItem = {
 
 /** 一次语义分层拆几层。占位卡数量、请求参数、PSD 图层数共用这一个值。 */
 const AI_LAYER_COUNT = 4;
+
+/** 图层面板占掉的右侧宽度（面板 300 + 右边距 16）。视角适配要把它让出来，不能把产物摆到面板底下。 */
+const LAYER_PANEL_RESERVED_WIDTH = 316;
 
 /** 透明底纹：与图层面板同一套，保证画布和面板里的「透明」长得一样。 */
 const CANVAS_CHECKERBOARD: React.CSSProperties = {
@@ -1387,6 +1391,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   /** 图层面板当前挂在哪个分层组上；null = 面板收起。 */
   const [layerPanelGroupId, setLayerPanelGroupId] = useState<string | null>(null);
   const [layerExportBusy, setLayerExportBusy] = useState<string | null>(null);
+  // 分层完成后要把 Frame 收进视野，但视角函数定义在下面，用 ref 打通前后引用顺序。
+  const animateCameraToFitRectRef = useRef<
+    ((rect: { x: number; y: number; w: number; h: number }, opts?: { maxZoom?: number; rightInset?: number }) => void) | null
+  >(null);
   // 局部重绘（Inpainting）状态
   const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
@@ -2519,6 +2527,32 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     layeringRunningRef.current = true;
     const groupId = `layer_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const createdAt = Date.now();
+    const waitForSourceSha = async (): Promise<string | null> => {
+      // 刚拖进来的图还在同步，此时既没 sha 也不是 https 外链，后端读不到原图。
+      // 旧行为是直接弹「请先等待图片同步完成再分层」——把系统的时序问题甩给用户。
+      // 现在改成排队：意图先记下，同步一完成自动开跑（预期管理 / 少绕路）。
+      const readSha = () => {
+        const latest = canvasRef.current.find((candidate) => candidate.key === sourceItem.key);
+        return String(latest?.originalSha256 || latest?.sha256 || '').trim() || null;
+      };
+      const existing = readSha();
+      if (existing || /^https:\/\//i.test(source)) return existing;
+
+      setLayeringProgress({
+        sourceKey: sourceItem.key,
+        groupId,
+        phase: '正在等待原图同步完成',
+        completed: 0,
+        total: AI_LAYER_COUNT,
+      });
+      // 上传通常几秒内完成；给 60 秒上限，超时如实报错而不是无限等。
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const sha = readSha();
+        if (sha) return sha;
+      }
+      return null;
+    };
     const maxRefId = canvasRef.current.reduce(
       (max, candidate) => typeof candidate.refId === 'number' ? Math.max(max, candidate.refId) : max,
       0,
@@ -2575,11 +2609,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     });
 
     try {
+      const readySha = await waitForSourceSha();
+      if (!readySha && !/^https:\/\//i.test(source)) {
+        throw new Error('原图同步超时，还没能保存到服务器。稍后重试，或先确认网络是否正常。');
+      }
       const result = await decomposeImageToLayers({
         workspaceId,
         targetKey: sourceItem.key,
         source,
-        sourceSha256: sourceItem.originalSha256 || sourceItem.sha256 || null,
+        sourceSha256: readySha,
         layerCount: AI_LAYER_COUNT,
         // 分层要跑几十秒，等待期必须一直有东西在动（禁止静止的「加载中」）。
         onProgress: ({ phase, completed, total }) =>
@@ -2655,6 +2693,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
 
       setSelectionWithoutChip([layerKeyAt(0)]);
+      // 拆完把整个 Frame 收进视野（避开右侧面板），不让用户自己去找刚生成的东西。
+      const framed = planSemanticLayerFrame(sourceItem, remoteLayers.length).frame;
+      animateCameraToFitRectRef.current?.(
+        { x: framed.x - 40, y: framed.y - 40, w: framed.w + 80, h: framed.h + 80 },
+        { maxZoom: 1, rightInset: LAYER_PANEL_RESERVED_WIDTH },
+      );
       toast.success(
         'AI 分层已加入画布',
         `${layerSources.length} 个透明图层已排在原图右侧。可逐个选择、编辑和复用，也可从 Frame 直接导出 PSD。`,
@@ -2700,6 +2744,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     let layerSources: LayerSourceInput[] = cachedLayers.map((layer, index) => ({
       name: cleanDisplayTitle(layer.prompt) || aiLayerName(index),
       source: layer.src,
+      sha256: layer.sha256 || layer.originalSha256 || null,
       opacity: layer.layerOpacity,
       hidden: layer.layerHidden === true,
     }));
@@ -2796,16 +2841,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const readLayerExportInput = useCallback(() => {
     const source = String(layerPanelSource?.originalSrc || layerPanelSource?.src || '').trim();
     if (!source) throw new Error('缺少原图，无法按原始尺寸对齐导出');
+    // sha 一起带上：导出要把图读成像素，带 sha 才能走同源资产地址，
+    // 否则对象存储部署上会撞 CORS，用户只会看到一句没头没尾的 Failed to fetch。
+    const sourceSha256 = layerPanelSource?.originalSha256 || layerPanelSource?.sha256 || null;
     const layerSources: LayerSourceInput[] = layerPanelLayers
       .filter((layer) => !!layer.src)
       .map((layer, index) => ({
         name: cleanDisplayTitle(layer.prompt) || aiLayerName(index),
         source: layer.src,
+        sha256: layer.sha256 || layer.originalSha256 || null,
         opacity: layer.layerOpacity,
         hidden: layer.layerHidden === true,
       }));
     if (layerSources.length === 0) throw new Error('还没有出图的图层可以导出');
-    return { source, layerSources };
+    const pending = layerPanelLayers.filter((layer) => layer.status === 'running');
+    if (pending.length > 0) throw new Error(`还有 ${pending.length} 个图层在生成中，等它们出图再导出`);
+    return { source, sourceSha256, layerSources };
   }, [layerPanelLayers, layerPanelSource]);
 
   const exportName = useMemo(
@@ -2816,8 +2867,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const handleLayerPanelExportPsd = useCallback(async () => {
     setLayerExportBusy('正在写 PSD');
     try {
-      const { source, layerSources } = readLayerExportInput();
-      const blob = await createLayeredPsdBlob({ source, layerSources });
+      const { source, sourceSha256, layerSources } = readLayerExportInput();
+      const blob = await createLayeredPsdBlob({ source, sourceSha256, layerSources });
       downloadLayeredPsd(blob, exportName);
       const visible = layerSources.filter((layer) => !layer.hidden).length;
       toast.success('PSD 已生成', `${layerSources.length} 个图层（${visible} 个可见）+ 1 个隐藏原图参考层。`, 6000);
@@ -2831,8 +2882,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const handleLayerPanelExportComposite = useCallback(async () => {
     setLayerExportBusy('正在拍平合成图');
     try {
-      const { source, layerSources } = readLayerExportInput();
-      const blob = await createCompositePngBlob({ source, layerSources });
+      const { source, sourceSha256, layerSources } = readLayerExportInput();
+      const blob = await createCompositePngBlob({ source, sourceSha256, layerSources });
       downloadBlob(blob, `${exportName}-合成`, 'png');
       toast.success('合成 PNG 已生成', '与面板预览一致：只包含当前可见图层，并带上不透明度。', 5000);
     } catch (error) {
@@ -2860,6 +2911,28 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       setLayerExportBusy(null);
     }
   }, [exportName, layerPanelLayers]);
+
+  const handleLayerPanelSelfCheck = useCallback(async () => {
+    setLayerExportBusy('正在自检图层可读性');
+    try {
+      const { source, sourceSha256, layerSources } = readLayerExportInput();
+      const rows = await checkLayerSourcesReadable({ source, sourceSha256, layerSources });
+      const bad = rows.filter((row) => !row.ok);
+      if (bad.length === 0) {
+        toast.success('自检通过', `原图与 ${layerSources.length} 个图层都读得到，可以导出。`, 5000);
+        return;
+      }
+      toast.error(
+        `自检未通过（${bad.length}/${rows.length} 项读不到）`,
+        bad.map((row) => `${row.name}：${row.detail}`).join('；'),
+        9000,
+      );
+    } catch (error) {
+      toast.error('自检未通过', error instanceof Error ? error.message : '无法读取图层', 8000);
+    } finally {
+      setLayerExportBusy(null);
+    }
+  }, [readLayerExportInput]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const msgContentRef = useRef<HTMLDivElement | null>(null);
@@ -3973,10 +4046,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   /** 动画移动视角并适配尺寸，使指定矩形区域完整显示在视口中 */
   const animateCameraToFitRect = useCallback(
-    (rect: { x: number; y: number; w: number; h: number }, opts?: { maxZoom?: number }) => {
+    (rect: { x: number; y: number; w: number; h: number }, opts?: { maxZoom?: number; rightInset?: number }) => {
       if (!stageSize.w || !stageSize.h) return;
       const pad = 60; // 留边距
-      const viewW = Math.max(1, stageSize.w - pad * 2);
+      // 右侧被图层面板这类常驻浮层占掉的宽度：可视区要相应收窄，
+      // 否则「适配到视口」会把产物摆到面板底下——看着像居中，其实被盖住了。
+      const rightInset = Math.max(0, Math.min(opts?.rightInset ?? 0, stageSize.w * 0.5));
+      const usableW = Math.max(1, stageSize.w - rightInset);
+      const viewW = Math.max(1, usableW - pad * 2);
       const viewH = Math.max(1, stageSize.h - pad * 2);
       const rectW = Math.max(1, rect.w);
       const rectH = Math.max(1, rect.h);
@@ -3989,7 +4066,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const fromCam = { ...cameraRef.current };
       const toZoom = targetZoom;
       const toCam = {
-        x: stageSize.w / 2 - worldCx * toZoom,
+        x: usableW / 2 - worldCx * toZoom,
         y: stageSize.h / 2 - worldCy * toZoom,
       };
       if (cameraAnimRef.current != null) cancelAnimationFrame(cameraAnimRef.current);
@@ -4009,6 +4086,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     },
     [setViewport, stageSize.h, stageSize.w]
   );
+
+  useEffect(() => {
+    animateCameraToFitRectRef.current = animateCameraToFitRect;
+  }, [animateCameraToFitRect]);
 
   const pickNearestGeneratorKey = useCallback(
     (items: CanvasImageItem[], nearWorld: { x: number; y: number }) => {
@@ -7518,6 +7599,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 onExportPsd={() => void handleLayerPanelExportPsd()}
                 onExportComposite={() => void handleLayerPanelExportComposite()}
                 onExportZip={() => void handleLayerPanelExportZip()}
+                onSelfCheck={() => void handleLayerPanelSelfCheck()}
                 onClose={() => setLayerPanelGroupId(null)}
               />
             ) : null}

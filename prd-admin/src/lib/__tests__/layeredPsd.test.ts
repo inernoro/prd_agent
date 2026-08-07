@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readPsd, writePsd } from 'ag-psd';
-import { buildLayeredPsdDocument, compositePixelLayers } from '@/lib/layeredPsd';
+import { buildLayeredPsdDocument, compositePixelLayers, resolveReadableImageUrl } from '@/lib/layeredPsd';
 
 function pixels(r: number, g: number, b: number, a = 255) {
   return { width: 1, height: 1, data: new Uint8ClampedArray([r, g, b, a]) };
@@ -77,5 +77,38 @@ describe('layered PSD export', () => {
     expect(composite[0]).toBeLessThan(160);
     expect(composite[2]).toBeGreaterThan(100);
     expect(composite[3]).toBe(255);
+  });
+});
+
+describe('导出读图地址（治「PSD 导出失败 Failed to fetch」）', () => {
+  const sha = 'a'.repeat(64);
+
+  it('有 sha 就走同源资产地址，绕开对象存储的 CORS', () => {
+    // 直接 fetch 跨域 COS 链接时浏览器抛的是没有任何上下文的 Failed to fetch，
+    // 用户完全无法自测。本站 assets/file/{sha} 同源，资产落库后一定能读。
+    expect(resolveReadableImageUrl(`https://cos.example.com/${sha}.png`, sha))
+      .toBe(`/api/visual-agent/image-master/assets/file/${sha}`);
+  });
+
+  it('没传 sha 时也能从跨域地址里认出 sha 文件名', () => {
+    expect(resolveReadableImageUrl(`https://cos.example.com/visual/${sha}.png?sign=abc`))
+      .toBe(`/api/visual-agent/image-master/assets/file/${sha}`);
+  });
+
+  it('本站相对地址、data / blob 一律原样用', () => {
+    expect(resolveReadableImageUrl('/api/visual-agent/image-master/assets/file/x')).toBe('/api/visual-agent/image-master/assets/file/x');
+    expect(resolveReadableImageUrl('data:image/png;base64,AAAA')).toBe('data:image/png;base64,AAAA');
+    expect(resolveReadableImageUrl('blob:http://localhost/abc')).toBe('blob:http://localhost/abc');
+  });
+
+  it('认不出 sha 的跨域地址原样交给 fetch，不瞎猜', () => {
+    const foreign = 'https://cdn.example.com/some/photo.png';
+    expect(resolveReadableImageUrl(foreign)).toBe(foreign);
+  });
+
+  it('sha 格式不对就不当 sha 用', () => {
+    const foreign = 'https://cdn.example.com/photo.png';
+    expect(resolveReadableImageUrl(foreign, 'not-a-sha')).toBe(foreign);
+    expect(resolveReadableImageUrl(foreign, '')).toBe(foreign);
   });
 });

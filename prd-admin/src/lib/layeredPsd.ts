@@ -269,9 +269,54 @@ export function buildLayeredPsdDocument(input: {
   };
 }
 
-async function loadImageData(source: string, targetSize?: { width: number; height: number }): Promise<PixelData> {
-  const response = await fetch(source, { mode: 'cors' });
-  if (!response.ok) throw new Error(`读取图层失败：HTTP ${response.status}`);
+/**
+ * PSD / 合成 PNG 都要把图片读成像素，读不到就是整条导出链路失败。
+ *
+ * 直接 fetch 图片地址在对象存储部署上会撞 CORS —— 浏览器抛的是没有任何上下文的
+ * `Failed to fetch`，用户只看到「PSD 导出失败 Failed to fetch」，完全无法自测。
+ * 本站的 `assets/file/{sha}` 是同源的，只要资产已经落库就一定能读，
+ * 所以有 sha 时一律改走同源地址，跨域地址只作最后兜底。
+ */
+export function resolveReadableImageUrl(source: string, sha256?: string | null): string {
+  const sha = String(sha256 ?? '').trim().toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(sha)) return `/api/visual-agent/image-master/assets/file/${sha}`;
+
+  const raw = String(source ?? '').trim();
+  if (!raw) return raw;
+  // 已经是本站地址（相对路径或同源绝对路径）就原样用。
+  if (raw.startsWith('/')) return raw;
+  if (raw.startsWith('data:') || raw.startsWith('blob:')) return raw;
+  try {
+    if (typeof window !== 'undefined' && new URL(raw).origin === window.location.origin) return raw;
+  } catch {
+    // 解析不了的地址交给 fetch 自己报错，这里不猜。
+  }
+  // 从资产地址里把 sha 抠出来：跨域 COS 链接的文件名通常就是 sha。
+  const embedded = raw.match(/([0-9a-f]{64})(?:\.[a-z0-9]+)?(?:[?#]|$)/i);
+  if (embedded) return `/api/visual-agent/image-master/assets/file/${embedded[1]!.toLowerCase()}`;
+  return raw;
+}
+
+async function loadImageData(
+  source: string,
+  targetSize?: { width: number; height: number },
+  meta?: { label?: string; sha256?: string | null },
+): Promise<PixelData> {
+  const label = meta?.label ? `「${meta.label}」` : '';
+  const url = resolveReadableImageUrl(source, meta?.sha256);
+
+  let response: Response;
+  try {
+    response = await fetch(url, { mode: 'cors' });
+  } catch (error) {
+    // 把 `Failed to fetch` 翻译成能行动的话：说清是哪一层、读的哪个地址、下一步做什么。
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `读取${label || '图片'}失败（${reason}）。地址：${url}。`
+      + (url.startsWith('/api/') ? '该图可能尚未同步到本站资产，等右上角「同步中」消失后重试。' : '该图是跨域外链且未开放 CORS，请等它同步到本站资产后再导出。'),
+    );
+  }
+  if (!response.ok) throw new Error(`读取${label || '图片'}失败：HTTP ${response.status}（${url}）`);
   const blob = await response.blob();
   const objectUrl = URL.createObjectURL(blob);
 
@@ -305,18 +350,31 @@ async function loadImageData(source: string, targetSize?: { width: number; heigh
 export type LayerSourceInput = {
   name: string;
   source: string;
+  /** 有 sha 就走同源资产地址读图，绕开对象存储的 CORS。 */
+  sha256?: string | null;
   opacity?: number;
   hidden?: boolean;
 };
 
-async function loadLayerImages(input: { source: string; layerSources: LayerSourceInput[] }) {
-  const source = await loadImageData(input.source);
+async function loadLayerImages(input: {
+  source: string;
+  sourceSha256?: string | null;
+  layerSources: LayerSourceInput[];
+}) {
+  const source = await loadImageData(input.source, undefined, {
+    label: '原图',
+    sha256: input.sourceSha256,
+  });
   const layers = await Promise.all(
     input.layerSources.map(async (layer) => ({
       name: layer.name,
       opacity: layer.opacity,
       hidden: layer.hidden,
-      image: await loadImageData(layer.source, { width: source.width, height: source.height }),
+      image: await loadImageData(
+        layer.source,
+        { width: source.width, height: source.height },
+        { label: layer.name, sha256: layer.sha256 },
+      ),
     })),
   );
   return { source, layers };
@@ -324,6 +382,7 @@ async function loadLayerImages(input: { source: string; layerSources: LayerSourc
 
 export async function createLayeredPsdBlob(input: {
   source: string;
+  sourceSha256?: string | null;
   layerSources: LayerSourceInput[];
 }): Promise<Blob> {
   if (input.layerSources.length === 0) throw new Error('分层模型未返回可用图层');
@@ -341,12 +400,17 @@ export async function createLayeredPsdBlob(input: {
  */
 export async function createCompositePngBlob(input: {
   source: string;
+  sourceSha256?: string | null;
   layerSources: LayerSourceInput[];
 }): Promise<Blob> {
   const visible = input.layerSources.filter((layer) => layer.hidden !== true);
   if (visible.length === 0) throw new Error('当前没有可见图层，合成图会是空的');
 
-  const { source, layers } = await loadLayerImages({ source: input.source, layerSources: visible });
+  const { source, layers } = await loadLayerImages({
+    source: input.source,
+    sourceSha256: input.sourceSha256,
+    layerSources: visible,
+  });
   const composite = compositePixelLayers(
     layers.map((layer) => applyOpacity(layer.image, normalizedOpacity(layer.opacity))),
     source.width,
@@ -370,6 +434,52 @@ export async function createCompositePngBlob(input: {
       'image/png',
     );
   });
+}
+
+export type LayerReadinessRow = {
+  name: string;
+  url: string;
+  ok: boolean;
+  detail: string;
+};
+
+/**
+ * 导出前自检：逐个确认原图与图层真的读得到。
+ *
+ * 存在的理由是「能自测」——不做这一步，用户点导出后要等模型图全部下载完才可能
+ * 在半路炸一句 `Failed to fetch`，既不知道是哪一层，也不知道下一步该干嘛。
+ * 自检只发一次轻量请求，逐行给出「哪一层 / 什么地址 / 行不行」。
+ */
+export async function checkLayerSourcesReadable(input: {
+  source: string;
+  sourceSha256?: string | null;
+  layerSources: LayerSourceInput[];
+}): Promise<LayerReadinessRow[]> {
+  const targets = [
+    { name: '原图', source: input.source, sha256: input.sourceSha256 },
+    ...input.layerSources.map((layer) => ({ name: layer.name, source: layer.source, sha256: layer.sha256 })),
+  ];
+
+  return await Promise.all(targets.map(async (target) => {
+    const url = resolveReadableImageUrl(target.source, target.sha256);
+    if (!url) return { name: target.name, url, ok: false, detail: '没有可读取的地址' };
+    try {
+      const response = await fetch(url, { mode: 'cors' });
+      if (!response.ok) return { name: target.name, url, ok: false, detail: `HTTP ${response.status}` };
+      const type = response.headers.get('content-type') || '';
+      if (type && !type.startsWith('image/')) {
+        return { name: target.name, url, ok: false, detail: `返回的不是图片（${type}）` };
+      }
+      return { name: target.name, url, ok: true, detail: '可读取' };
+    } catch (error) {
+      return {
+        name: target.name,
+        url,
+        ok: false,
+        detail: error instanceof Error ? error.message : '读取失败',
+      };
+    }
+  }));
 }
 
 /** 通用下载：PSD 之外的产物（合成 PNG 等）走这里，文件名清洗规则与 PSD 一致。 */
