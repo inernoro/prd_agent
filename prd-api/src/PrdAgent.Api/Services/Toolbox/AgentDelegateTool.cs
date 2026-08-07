@@ -29,8 +29,12 @@ public sealed class AgentDelegateTool : IAgentTool
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AgentDelegateTool> _logger;
 
-    /// <summary>单次转派的等待上限。超了如实说超时，不假装还在跑。</summary>
-    private static readonly TimeSpan RunLimit = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// 单次转派的等待上限。超了如实说超时，不假装还在跑。
+    /// 取 4 分钟对齐 ChatGenerateImageTool 的既有口径——工具调用是运行时的一次同步回调，
+    /// 比它等更久只会先撞上运行时自己的超时，届时用户看到的是一条无来由的中断。
+    /// </summary>
+    private static readonly TimeSpan RunLimit = TimeSpan.FromMinutes(4);
 
     public AgentDelegateTool(
         AgentCapability capability,

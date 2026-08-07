@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
 
@@ -91,7 +92,9 @@ public static class SubtitleFormatter
         if (sources.Count != 1) return null;
 
         var description = SpeakerSources.Describe(sources[0]);
-        return description == null ? null : $"> 说话人来源：{sources[0]} · {description}";
+        return description == null
+            ? null
+            : $"{TranscribeNoteText.SpeakerSourcePrefix}{sources[0]} · {description}";
     }
 
     /// <summary>ASR 分段正文：有时间戳时逐段带 **[mm:ss - mm:ss]**，全 0 时按纯段落输出。</summary>
