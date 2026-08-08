@@ -96,6 +96,7 @@
 | **尺寸限制** | 不同模型支持不同尺寸，动态配置 | ImageGenSizeCaps |
 | **资产管理** | 上传/删除工作空间资产，COS 存储 | UploadArtifacts |
 | **投稿系统** | 优秀作品投稿展示，含生成快照 | SubmissionsController |
+| **分层 PSD 导出** | 生成图片按语义拆成多个图层（如主体/背景/文字），导出为可在设计软件里逐层编辑的 PSD；分层结果持久化到画布 Frame，支持单层重新编辑与免重算复用；默认展示 AI 分层合成结果，原图降级为隐藏参考层 | LLM Gateway `image-layering` 公开能力 |
 
 ## 五、整体架构
 
@@ -248,6 +249,7 @@
 | Video Agent | 视频封面/素材复用 VisualAgent 资产 | 视频团队 |
 | 水印系统 | 按 appKey 绑定，生图后自动叠加 | 全局 |
 | 桌面客户端 | 桌面端有独立的 VisualAgent 入口 | 桌面团队 |
+| LLM Gateway 分层能力 | MAP 单向依赖网关暴露的 `image-layering` 公开能力，不感知具体上游平台和模型 | 网关团队 |
 
 ### 风险评估
 
@@ -261,11 +263,3 @@
 ## 视觉分镜台（Storyboard，2026-06-14）
 
 将文章/想法拆解为电影风格分镜，每镜生成关键帧 image prompt + 运动 prompt，复用现有生图引擎实时生长并支持逐镜精修。后端新增 `storyboard-script` 接口（`visual-agent.storyboard.script::chat`），预留 image-to-video 扩展点。同步修复 OpenAIImageClient 对 OpenRouter 图片生成协议的支持（`/chat/completions + modalities:[image,text]`）。
-
-## 分层 PSD 导出（2026-08-04）
-
-生成图片可按语义拆成多个图层（如主体/背景/文字），导出为可在设计软件里逐层编辑的 PSD 文件，而不是一张压平的位图。分层结果持久化到画布 Frame，支持单层重新编辑与免重算复用——用户改一层不必重跑整张图的生成。默认展示 AI 分层合成结果，原图降级为隐藏参考层，避免用户误把参考图当最终产物。
-
-依赖 LLM Gateway 的 `image-layering` 公开能力：MAP 侧只单向依赖网关暴露的分层接口，不感知具体上游平台和模型（fal.ai Qwen Image Layered 是当前落地的一种转换器实现，可替换）。网关侧模型控制台支持分层转换器配置，并允许一次录入上游 Key 自动安装分层能力、通用逻辑与上游供给三件套。
-
-编辑闭环：对分层结果做快捷编辑后，导出的 PSD 必须反映编辑后的最新版本而非编辑前的旧图——编辑产物与原图层共享归属，导出时取每层最新一版，编辑中或失败时自动回落原图层，避免用户拿到"看起来分层了，实际还是旧图"的产物。
