@@ -8,6 +8,351 @@
 
 ## [未发布]
 
+### 2026-08-08
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理：D6 changelog→doc 覆盖 4 条（1 条为 design.visual-agent.md 追加分层 PSD 导出章节，3 条既有内容已覆盖仅标记已处理） |
+
+### 2026-08-06
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 每日熵减计划：D1-D4 全绿零欠账，D6 核对 5 条 changelog（4 条无对应设计文档缺口，`rule.frontend.landing-visual-style.md` 品牌色描述已过时——2026-08-02 米多墨系落地后仍写着 2026-07-07 靛蓝-紫罗兰旧配色且与 `inkPalette` 守卫冲突，重写为陶土/八色墨带现状），D7 可读性棘轮零回升 |
+| refactor | prd-api | 网关宽接口改为继承 Core 窄接口，删掉装配时的运行时强制类型转换：两处独立声明合成一处，签名漂移由编译期拦截 |
+| refactor | prd-api | 网关契约命名空间由 Infrastructure 改为 Core，与所在项目对齐；136 个引用文件按编译器报错精确补 using，并清掉脚本多加的 33 条 |
+| docs | prd-api | 网关退场看板更新搬迁进度，并纠正「实现可先于删除装配搬出」的错误判断 |
+| feat | prd-api | 产品评审需求评估增加评论权重：前五维度以产品经理评论为最高优先级证据，后三维度以需求详情为准；新增合理性判定（评论判定不合理强制 P3 置底）；锚点改 0-10 分制 |
+| feat | prd-admin | 需求评估详情页展示合理性判定徽标与依据，锚点分按任务分制（0-10 / 旧版 1-5）渲染，概览新增不合理条数统计 |
+| feat | prd-api | 需求评估证据范围收窄：仅需求名称、详细描述、产品经理评论进入评估（列名差异由 LLM 语义识别），其它字段一律不投喂；因子相关列映射随之下线（存量字段仅保留兼容） |
+
+### 2026-08-05
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| feat | acceptance-skill | 每日验收报告新增强制首屏「给你的一页结论」：五行大白话答完产品能不能用 / 验收测完了吗 / 昨天上了什么 / 需要你决定什么，答案用固定枚举开头，归档脚本逐条校验不达标拒收 |
+| feat | acceptance-skill | 产品失败与验收失败在首屏强制分开：验收链路或硬门禁失败而产品未失败时必须写「这次没测出来」，不得说成产品坏了；已有 P0/P1 或核心用例失败也不得粉饰成「可以正常使用」 |
+| feat | acceptance-skill | 首屏禁用未解释的验收行话（门禁/断言/契约测试/Verdict/SHA/smoke/ready/verify-open 等），判据是「术语后是否紧跟括号解释」，别处解释过不算 |
+| feat | acceptance-skill | 交互 HTML 报告新增简版/完整版切换：含首屏结论的报告默认渲染简版（只留结论、昨日工作总结、缺陷清单、问题卡与证据截图），点被收起章节的证据链接时自动展开完整版；模板契约标记与结构 class 逐字节不变 |
+| feat | acceptance-skill | 最终回复与 Slack 的「直观汇报模板」下沉进技能，自动化 prompt 不再自带汇报格式，消除 prompt 与技能的双份维护 |
+| docs | doc | rule.acceptance.map-enterprise 新增 §7.0、standard-v2 新增 §6.0，定义首屏判据与拒收条件，并同步官方技能规则快照与分发包 |
+| test | acceptance-skill | test_archive_report_verdict_contract 增 9 项断言覆盖首屏契约（含模板落地、脚本失败不得写成产品坏了、无法确认不得写成可用、完整性自相矛盾、行话未解释、决策行须给建议）；归档 gate 增简版视图与模板契约断言 |
+| ci | ci | 新增 Acceptance Report Gate job：验收规则 SSOT、归档 gate、每日结论契约三个守卫此前无任何 workflow 引用，只有手动跑才会红；连同被守的规则、模板、快照一起登记进 path filter |
+| fix | doc-tooling | doc-readability 棘轮守卫断言 ci-status 汇总闸时写死 `cds-build, docs-readability]` 字面量，往 needs 末尾追加任何新 job 都会让这条无关断言变红（形状 4a）；改为解析 ci-status 的 needs 列表判成员，并补「解析到了」与「判据不是恒真」两条防空跑断言 |
+| fix | acceptance-skill | 自审发现：判断报告有没有首屏用的是子串命中，正文只要「提到」这五个字就会切简版，而没有任何章节留得住，读者看到一页空白（实测 12 个正文节点被收起 10 个）；改为与 _section_table 同口径的 `^## 标题$` 判据，并在 JS 侧兜底：一段都没留住就退回完整版并隐藏切换按钮 |
+| fix | acceptance-skill | 自审发现：行话解释判据固定取两个字符再 lstrip，「门禁  （解释）」多打一个空格会被冤判成未解释；改为判「下一个非空白字符是不是左括号」 |
+| feat | cds | 新增 AI 控制态动效三方案 demo 页（数据流轨道 / 思考脉冲 / 工位接管），含基线对照与双主题切换 |
+| fix | cds | 修复方案 C 徽章环形巡光甩出徽章：扁矩形不能转元素，改转 conic 渐变角度 |
+| feat | cds | 方案 C 阶段信息移入页脚闲置空间，左轨与页脚轨改由同一份状态驱动 |
+| refactor | cds | 进度轨段数改为完全由数据决定，新增 staged/counted/indeterminate/heartbeat 四档退化与超时/失败两种异常态 |
+| feat | cds | 分支卡落地方案 C：环境光扫掠 + AI 进度轨（staged/indeterminate/heartbeat 三档）+ 徽章环形巡光，页脚展示 AI 当前动作 |
+| fix | cds | 修复 AI 进度轨方向修饰类被 Tailwind 摇掉：@layer components 里的规则不能用模板拼类名 |
+| fix | cds | 修复分支详情抽屉滚动后被截断：page-enter 动画的 forwards 填充让滚动容器成了 fixed 的包含块 |
+| polish | cds | 分支名改用等宽字体，对齐 llmgw 日志的英文字形 |
+| polish | cds | heartbeat 档改用脉冲点替代无意义横线，补最近活动时间；浅色模式收敛环境光与边框 |
+| test | cds | 改写反向锁死的 ShinyText 用例为契约断言，新增段数守卫、Tailwind 摇树守卫与 page-enter 包含块守卫 |
+| chore | cds | 删除已无引用的 cds-ai-active-rail 与 cds-ai-rail-breathe |
+| feat | cds | 主题切换提到左侧栏一级入口，不再只藏在头像浮层里 |
+| fix | cds | 补回主题切换水波纹：迁到 React 新栈时只搬了「关掉默认过渡」那一半，扩散动画没搬 |
+| test | cds | 新增水波纹两半守卫（CSS 扩散动画 + JS startViewTransition 接线）与降级用例 |
+| fix | cds | 信息中心浮层支持点外部与 Esc 关闭，不再必须点 X |
+| polish | cds | PR 徽章从分支卡标题行收进 ... 菜单，把标题宽度还给分支名 |
+| feat | cds | 新增分支卡六状态可分辨性 demo（构建中/回收中/运行中/失败/AI操作中/调试中，双主题） |
+| refactor | cds | GitHub PR URL 收敛到 lib/github-urls，此前散在三处 |
+| test | cds | 新增点外部关闭判据守卫（含 portal 弹窗豁免、触发器排除两类窄判据） |
+| fix | cds | 修复同页多个 useTheme 实例不同步：rail 与浮层各持一份 state，改主题另一处不跟随 |
+| fix | cds | 主入口 URL 改按 profile 真实路由拼：非根挂载带上前缀、非根命名子域走命名 host，此前一律主域名根会指向别的应用 |
+| refactor | cds | 前端 PR 链接收敛到 lib/github-urls，删掉抽屉里遗留的同名副本 |
+| fix | cds | Esc 关闭信息中心补上与点外部同一套弹窗豁免，不再一次关掉两层 |
+| polish | cds | 移动端切主题不再顺手关掉导航抽屉 |
+| test | cds | 补非根 primary 入口的真实 API 行为用例、主入口路由守卫与 Esc 豁免用例 |
+| feat | skill | 新增 change-preview 技能：重大改动动手前产出「效果提前」预览包，六件套（可点击的操作页面演示 / 架构图 / 数据流转与鉴权图 / 角色业务流 / 验收方式 / 范围契约）加三个附件（决策点、成本与退出、一页结论），含 13 条拒收判据与起手骨架 |
+| docs | doc | 新增通用对话智能体设计文档：诉求、复用清单、数据流与三个鉴权点、四项取舍、明确不做清单、五条熔断线、十条验收判据、三阶段与退出方式 |
+| docs | assets | 新增通用对话智能体可交互方案预览页（单文件零外链、双主题、可播放三轮演示：出图 / 入库 / 检索回答） |
+| feat | skill | change-preview 模板升级为成品级：主题系统、九章节、图表元件与可复用演示引擎（打字机 / 工具卡 / 阶段推进 / 产物出现 / 失败态）全部就位，打开即渲染，用的人只需替换占位与改剧本数组 |
+| feat | skill | 架构图判据新增两条硬要求：画图前必须先出「名字分清表」（部件 vs 功能 vs 部署平台），以及「写与不写的分界线」双栏含明令禁止自造的红线；拒收清单相应加四条，判据细则补复用优先三问与真实事故 |
+| fix | doc | 通用对话智能体设计修正核心架构：对话循环改为直接复用现有 agent 运行时里的官方智能体套件，平台侧只写会话存储、事件翻译、三把工具与页面；原方案的自研执行器循环属于自造轮子，已删除并写进永久禁止项与熔断线 |
+| docs | assets | 方案预览页重绘架构图与数据流图：四个名字分清（业务主体 / agent 运行时 / 模型网关 / 部署平台），鉴权点从三个补到四个，验收判据补「没有自研循环」一条，决策点补「运行时自带只读文件工具是否关闭」 |
+| feat | prd-api | 通用对话智能体阶段一后端：会话/消息/事件三张表、对话接口层、进程内轮次队列与后台 worker、按序号续订的事件流；一轮对话整体转发给 agent 运行时的官方 SDK，适配层无任何自研对话循环 |
+| feat | prd-admin | 新增「对话」页：会话列表、多轮消息流、流式打字、等待期阶段文案与已等待秒数、失败转红可重填、空状态三条起手式；断线按事件序号续订，刷新不丢 |
+| feat | claude-sdk-sidecar | 运行时新增 builtinTools 按次生效开关：未传时行为与历史完全一致，传空数组即一个内置工具都不开；通用对话走空数组，聊天不再顺带具备仓库读取能力 |
+| feat | prd-api | 注册 chat-agent.use 权限（operator/viewer/agent_tester 三个内置角色）与 chat-agent.conversation::chat 调用者 |
+| feat | prd-admin | 导航注册表、权限菜单映射、百宝箱同步登记「对话」入口（百宝箱条目带 wip，验收后转正）；补齐卡面职责文案、双主题插画与主题 token |
+| fix | prd-api | 对话接单与事件落库一律用 CancellationToken.None，客户端断开不再可能把一轮撕成半截（server-authority 规则 1） |
+| fix | prd-api | 会话新增 RunningTurnStartSeq（本轮起始事件序号），断线重连据此精确补齐本轮增量；原先前端用「当前水位减 200」这种拍脑袋锚点，长回答会漏前半段、短轮次会把上一轮增量灌进这一轮 |
+| fix | prd-admin | 发完消息后重新起订事件流：服务端在空闲时会推 idle 并收流，此刻没有任何流在听，增量到不了页面（只有手动刷新才看得见） |
+| fix | prd-api | 端到端自测逮到：同一轮的提问与回答是同一次批量插入、CreatedAt 可能一模一样，只按时间排序不稳定，实测出现「回答排在提问前面」；消息新增轮内序号 Ordinal（用户 0 / 助手 1），列表与上下文构建统一按 (CreatedAt, Ordinal) 排 |
+| docs | doc | 对话智能体设计补「官方与自建的边界」十行表（模型客户端/对话循环/工具协议/取消超时归官方套件，传输层/工具桥/审批/工作区工具/运行时池归本仓库既有，本次只新增会话与消息、事件翻译、页面），避免「官方套件」四个字盖住自建部分（agent-runtime-sdk-boundary 规则要求） |
+| feat | prd-api | 对话智能体阶段二三：接上四把工具（出图、写知识库、搜知识库、读知识库）。出图转发给已有出图流水线、写笔记转发给已有文档空间，搜/读直接复用既有 kb 工具，零自研生成与存储逻辑；工具白名单进配置，越界即触发范围契约红线 |
+| fix | prd-api | 工具的用户身份从「只认基础设施 Agent 会话」解耦为「会话优先 + 上下文用户兜底」，通用对话据此可用既有知识库工具；无任何身份时工具一律拒绝执行，不放行无主调用 |
+| feat | prd-api | 事件流新增 tool_started / tool_finished 两类，把运行时工具事件翻译成前端能直接画的载荷（阶段名、成败、图片地址、知识库条目深链），工具返回给模型的原始 JSON 不外泄 |
+| feat | prd-admin | 对话页新增工具卡：执行中显示阶段推进与进度条，完成后图片就地展示、知识库条目给「打开这篇」深链，失败转红并写清原因 |
+| docs | doc | 对话智能体设计更新为三阶段全部落地：记录四把工具逐把实调的结果（存/搜/读/出图均真跑通），并如实记下两条未验证项——模型自主调度工具（运行时池为空）与出图画面质量（灰度命中占位模型，链路真、画笔假） |
+| fix | claude-sdk-sidecar | 工具成败进 SSE 事件：is_error 此前只进给模型看的历史，消费方无从分辨，失败的工具会被画成完成；两个适配器同时补上，取不到就报「不知道」而非默认成功 |
+| fix | prd-api | 对话工具卡成败改认运行时的 is_error：工具桥失败回传的是一句纯文本原因、不是带 success 字段的 JSON，原先嗅 content 的判据永远判不出失败 |
+| fix | prd-api | 官方 SDK 通过内置 MCP server 暴露工具，回传名字带 mcp__map__ 前缀；工具卡的标签与阶段判据先剥前缀再分派，否则四把工具全部静默落进兜底分支，卡上永远写「工具 · 执行」 |
+| test | prd-api | 补工具卡展示判据守卫（名字归一、失败标记、产物字段、命中数、长原因截断）与注册表黄金快照补登两条 chat-agent 调用者 |
+| fix | prd-admin | 新建会话即发送时，用户自己那句话会被切会话副作用当场抹掉（新会话服务端还没有消息可拉回来），刷新才回来；这一次由发送流程自己接管现场，不再重拉 |
+| fix | prd-api | 对话轮次停机改为等在跑的轮次把「被打断」写完再放行，并新增启动收敛把上个进程遗留的在跑轮次判死；此前硬杀会让会话永久停在「在跑」，再也发不出下一句，只能删会话 |
+| test | prd-api | 补对话轮次接线守卫：启动收敛与停机等收尾的存在性，以及收敛必须按部署作用域过滤（共享库里无差别清空会判死别人正在跑的轮次） |
+| docs | doc | 复测结果如实回填：合并主干后灰度环境的运行时池归零、生图 generation 类型无默认池，正常回答与出图两条当前无法复测；知识库存/搜/读三把复测仍全通 |
+| feat | prd-admin | 团队洞察每条结论补「根据」行，说清它从哪张表、按什么口径算出来，读者可自行核对 |
+| feat | prd-api | 头条与每个支撑点新增 basis 字段（必填参数，编译期强制每个结论都有依据） |
+| feat | prd-admin | 分型散点改用头像 + 常驻姓名渲染，替代原先的单字圆圈 |
+| fix | prd-admin | 分型散点重叠治理：碰撞盒含姓名标签的迭代避让，位移封顶且不跨分型线，被挪动的点画引线回真实位置 |
+| polish | prd-admin | 散点姓名标签按每字 11px 加余量算碰撞宽度，相邻名字不再贴成一串 |
+| fix | prd-admin | 散点碰撞盒模型修正：名字在气泡下方，盒子改为非对称（原按圆心对称，下边没盖住标签） |
+| fix | prd-admin | 散点超长姓名截断，避免单个标签占掉三个人的横向空间 |
+| test | prd-admin | 新增真实 32 人数据的散点重叠守卫，直接量碰撞盒有没有相交 |
+| fix | prd-api | 路由采用度改按活跃人天去重：数全部事件会被停留事件放大数倍，只数跳转事件又漏掉直达进入的人 |
+| fix | prd-api | 无界窗口不再输出日均（分子全时段、分母 30 天，线上报出过错数） |
+| security | prd-admin | 散点测试 fixture 脱敏：公开仓库不放真实姓名与绩效分，保长度不保身份 |
+| ops | ops | behavior_events 索引补进 DBA 清单（采用度端点按窗口 + 路由查询） |
+| refactor | prd-api | 网关契约（接口与 DTO）从 Infrastructure 迁到 Core：MAP 与 llmgw 从此引用同一份契约，为实现搬出 MAP 建立物理边界 |
+| chore | prd-api | 同步守卫测试与协议审计脚本里被钉死的契约文件路径 |
+| docs | prd-api | 网关退场看板新增「把实现搬出主系统」阶段，区分不受门禁约束的搬与需要线上证据的删 |
+| chore | llmgw | 同步教程维护映射里被钉死的契约文件路径，修复文件移动触发的教程漂移误报 |
+| polish | llmgw | Exchange 页重排信息层级：内部 ID 从标题下移到卡片底部、adapter 改用 Chip、模型显示名与上游标识改为主次两行、元信息与操作按钮分行 |
+| fix | llmgw | 图片分层能力卡补一句状态说明，讲清「等待验证」在等什么（成功调用一次后自动转为已验证），四种状态的完整含义收进 ? |
+| polish | llmgw | 图片分层能力卡不再固定 840px 限宽，与下方 Exchange 列表右边缘对齐 |
+| polish | llmgw | Exchange 卡片补类型图标与状态色条，模型行去掉灰底块，标题/筛选/批量三行合一——整页从需要滚动变为一屏装下 |
+| docs | prd-admin | 分层 PSD 导出的已知边界固化进视觉创作债务台账：部署环境验收缺口与其外部阻塞、前端最后一公里测试盲区、图层归属两版并存的取舍、已验证状态的证伪方式 |
+| feat | prd-api | 团队洞察端点支持 from/to 精确区间，12 处查询补上界；窗口解析抽成纯函数 InsightWindowResolver |
+| fix | prd-api | 团队洞察时间窗此前只有下界没有上界，meta.to 仅是响应时刻不参与过滤，按周取数会把窗口外数据卷进来 |
+| fix | prd-api | seriesAvailable 与实际是否返回序列不一致（无界窗口返回 30 天序列却声明没有），改为报实际结果 |
+| feat | prd-api | 新增采用度端点 /api/executive/adoption：以显式 token 列表为骨架 left-join，把「本窗 0 次 / 无信号 / 未采集 / 标签写错」四种零区分开 |
+| feat | skill | 周报技能从四源扩到六源，新增团队与用量、上线→采用两段；能力条目增加机器可读的「用量口径」标签 |
+| feat | prd-api | 新增用量口径 token 守卫，校验源取注册表实际前缀而非更窄的 app-identity 清单 |
+| feat | prd-admin | 周报 route token 守卫并入 navCoverage，复用同一份路由提取，避免判据分裂 |
+| polish | prd-admin | 窗口标签在查历史区间时报真实区间，不再一律写「近 N 天」 |
+| ci | ci | doc/report.*.md 登记进 server 与 admin 的 path filter，只改周报的 PR 不再跳过用量口径守卫 |
+
+### 2026-08-04
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 分离用户 Web 入口与健康探针，按 compose 声明名称和页面路径展示，并去除主应用重复入口 |
+| fix | cds | 恢复分支详情面板桌面端三分之二屏宽，移动端保持全屏 |
+| rule | cds | 为多入口补充 cds.web-entry-* 扫描、校验、预览与维护规范 |
+| chore | cds | CDS 核心技能升级至 0.13.0，项目扫描技能升级至 1.1.0 |
+| fix | claude-md | 规则 frontmatter 键名 globs 改为规范要求的 paths，修复 52 条规则全部无条件加载的静默退化 |
+| fix | claude-md | 修掉 4 条死 glob（enum-ripple-audit 的 Enums 目录、marketplace 的 IForkable.cs、cursor 表的 LandingPage 路径），死 glob 会让规则永不加载 |
+| refactor | claude-md | 39 条规则改为按 paths 作用域加载，13 条跨切面行为规则保持常驻；常规 session 规则注入量 272KB 降至 60KB |
+| refactor | claude-md | 根 CLAUDE.md 由 476 行压到 186 注入行（达标 200 行上限），删除与 harness 自动注入重复的技能表和已漂移的规则索引表，历史背景转入 HTML 注释（注入前被剥离，零 token） |
+| test | claude-md | 新增 scripts/tests/test_claude_memory_contract.py 守卫：frontmatter 键名、死 glob、注入行数、导读两行、索引漂移五项断言 |
+| ci | claude-md | 守卫接入 CI docs-readability job（该 job 的 path filter 含 '**'，每个 PR 必开） |
+| fix | claude-md | llmgw 模块只有 AGENTS.md 没有 CLAUDE.md，Claude Code 读不到它的必跑校验命令；按规范补 llmgw/CLAUDE.md 走 @AGENTS.md 导入 |
+| fix | claude-md | 根 CLAUDE.md 补上此前完全缺失的 llmgw 模块（模块列表 / pnpm 范围 / changelog 范围三处） |
+| test | claude-md | 守卫增加模块覆盖三项断言：有 AGENTS.md 必须有 CLAUDE.md、必须走 @import 而非复制、模块必须在根 CLAUDE.md 露出 |
+| refactor | claude-md | 根 AGENTS.md 与 CLAUDE.md 合二为一：AGENTS.md 改为工具中立的共用 SSOT（483 行压到 205 行），CLAUDE.md 改为 @AGENTS.md 导入 + 宿主专属差异（9 行），消灭两份 95% 相同的手工副本 |
+| fix | claude-md | 守卫的行数预算改为解析 @import 后再计量，否则导入模式会让预算检查变成假绿灯 |
+| test | claude-md | 守卫新增断言：根有 AGENTS.md 时 CLAUDE.md 必须 @import 而非复制；模块覆盖与索引检查改看解析后文本 |
+| fix | claude-md | 修复裁剪 AGENTS.md 索引表打断 Codex 规则发现路径导致 GatewayDataDomainGuardTests 变红；改为显式点名 .Codex/rules 两条并说明触发范围 |
+| fix | claude-md | 按 Codex 评审补齐 4 条过窄的 paths：production-release-safety 补 fast.sh 与整个 deploy/nginx、config-runtime-drift 补 appsettings 与 .env、enum-ripple-audit 补 pages/lib 下的常量注册表、onboarding-tips 补带教程的产品页 |
+| test | claude-md | 守卫新增断言：.Codex/rules 每条必须在 AGENTS.md 被点名，且更长的同名路径不算数（Codex 无按需加载，未点名等于永不加载） |
+| fix | claude-md | Codex 第二轮评审：quickstart-zero-friction 补 quick*.sh、ai-model-visibility 补 prd-desktop、full-height-layout 补 prd-admin/src/layouts |
+| refactor | claude-md | sync-cursor-rules.sh 的 glob 改为 globs:auto 从源规则 paths 派生，消灭「同一份作用域信息手工维护两份」的漂移类；派生时当场暴露并修正 cds-first-verification 两侧定性不一致 |
+| test | claude-md | 守卫新增断言：cursor 同步表禁止硬编码 glob，必须走 globs:auto |
+| fix | claude-md | Codex 第三轮：snapshot-fallback 补 Models（快照实体本体就在那）、codebase-snapshot 补 doc/、report-design-system 补报告发布器 py |
+| refactor | claude-md | predicate-and-wiring-discipline 由路径作用域改回无条件常驻——它的触发是「任何新增判定/模块/测试」，枚举下去等于全仓，常驻更诚实（常驻预算 60KB→74KB） |
+| fix | claude-md | 恢复被重写误删的 AGENTS.md §5.5「Review 范围熔断」——CHANGELOG 记录它是生效规则，删掉等于重新放开机器评论驱动的无界扩张 |
+| fix | claude-md | 守卫的 cursor 检查名不副实：只验映射写了 globs:auto，不验镜像是否真的重新生成过；改为重新生成到临时目录逐字比对 |
+| docs | claude-md | 新增 doc/debt.platform.agent-rule-scope.md 记录三条 B 类作用域缺口，按 §5.5 分类不在本 PR 展开 |
+| test | claude-md | 守卫新增条款完整性断言：AGENTS.md 的 17 条编号条款不得在重写中静默消失，删除必须显式改 REQUIRED_CLAUSES 并说明理由 |
+| docs | claude-md | Codex 第五轮三条 B 类作用域缺口（导航登记漏后端菜单目录、移动端密度漏样式 token、CDS 主题漏 Tailwind 配置）记入 debt 台账 |
+| fix | claude-md | AGENTS.md 规则发现指令指向一个被同次重写删掉的清单；改为写清扫描步骤（ls 规则目录 + 读导读两行选取），不再维护会漂移的第二份索引 |
+| docs | claude-md | Codex 第七轮 B 类记账：server-authority 漏网关 C# 表面；台账补记「网关剥离后没人回头拓宽既有规则作用域」这条跨条目规律 |
+| docs | claude-md | Codex 第八轮两条 B 类记账（concurrency-gate-discipline 与 marketplace 漏网关/后端实现面） |
+| feat | claude-md | 新增 scripts/audit-rule-scope-gaps.py 诊断脚本：枚举「规则正文点名却不在自身作用域内」的文件，把作用域债从评审逐条捡变成可复跑的有界清单（当前 9/38） |
+| fix | claude-md | 守卫的注入预算逐个文件独立计量，低估了真实注入量——模块下工作拿到的是根记忆+模块记忆；改为按模块计累计值并钉成只降不升的上限 |
+| feat | prd-admin | 视觉创作支持将生成图片语义分层并导出 PSD |
+| feat | prd-admin | 语义图层可持久化到画布 Frame，支持单层编辑、重复使用与免重算导出 PSD |
+| fix | prd-admin | 约束图片快捷工具条在可见画布内，避免 AI 分层入口被右侧面板遮挡 |
+| feat | prd-api | 新增 fal.ai Qwen Image Layered 网关转换器与配置模板 |
+| feat | llmgw | 模型网关控制台支持图片分层转换器配置 |
+| feat | llmgw | 支持一次录入 fal.ai Key 自动安装图片分层 Exchange、通用逻辑能力和上游供给 |
+| refactor | prd-api | MAP 图片分层改为单向依赖 LLMGW 的 image-layering 公开能力，不再感知上游平台和模型 |
+| fix | llmgw | 重排图片分层安装区与 Exchange 单列列表，修复宽屏双列信息拥挤和层级混乱 |
+| fix | prd-admin | PSD 默认显示 AI 图层合成结果并将原图降为隐藏参考层 |
+| ops | cds | 显式登记 LLMGW 控制台用户入口，适配路由与预览入口分离的新契约 |
+| fix | prd-api | 修复分层模型配置触发生图尺寸守卫误报：该类模型输出继承输入画布、本就无尺寸可选，判据改为按用途收窄并对"声明不适用却配了尺寸"反向判红 |
+| fix | prd-api | 修复 GatewayRawRequest 跨进程时新字段被静默丢弃：MAP 过线拷贝与 serving 重建拷贝各补一处，并加守卫测试对账两处初始化器与类型公开属性集合 |
+| fix | prd-admin | 修复对 AI 图层做快捷编辑后导出 PSD 仍是编辑前的图：编辑产物继承同一图层归属，导出取每层最新一版，编辑中或失败时自动回落原图层 |
+| fix | llmgw | 修复图片分层能力卡验证状态永远停在「等待验证」：请求日志按不存在的 ActualModel 字段过滤，改回落库真实字段 Model |
+| fix | llmgw | 修复禁用图片分层 Exchange 后能力卡仍报「已安装」：安装判定补齐 Exchange 与模型条目的启用状态，与运行时解析条件对齐 |
+| fix | prd-admin | 实时转写断线后自动重连，避免录音中途停止出字 |
+| fix | prd-api | 录音云端归档退避缩短至十五分钟并提供手动立即重试 |
+| fix | prd-api | 允许用户接管长期停滞的录音归档租约并立即重新排队 |
+| fix | prd-admin | 超过十分钟未完成的录音归档自动显示可恢复状态与手动重试入口 |
+| feat | prd-api | 保留语音识别的说话人信息并写入带时间轴的转录原文 |
+| feat | prd-admin | 录音结果页新增说话人改名、整场词云、原文关键词定位与录音问答入口 |
+| fix | prd-api | 修复 Safari 录音 MIME 参数导致 R2 签名失败，并让存储健康检查覆盖真实浏览器格式 |
+| feat | prd-api | 让当前生产多模态音频模型按不同声音输出可编辑的说话人分段 |
+| fix | prd-api | 先确认完整原文再独立增强角色分段，假静音或角色识别失败不再丢失有效录音 |
+| fix | prd-api | 录音转录优先使用原生说话人信息，豆包流式 ASR 请求并透传角色编号 |
+| fix | prd-api | 录音优先走专属转录模型池，原生角色识别失败时自动回退通用音频转写 |
+| feat | prd-api | 上游未返回角色时按本地声纹与发言间隔保守区分说话人并补齐时间轴 |
+| fix | prd-api | 本地声纹簇未分配文字时自动压缩角色编号，避免页面出现说话人编号跳号 |
+| fix | prd-api | 会议纪要兼容方案评审结果与评审意见，未明确时禁止擅自判定通过 |
+| fix | prd-api | ASR 返回自然语言静音拒答时继续尝试后续候选方案 |
+| fix | prd-api | 本地说话人分离改用声学距离聚类，支持三角色并避免把同声不同音量误拆为多人 |
+| fix | ops | 正式发布自动识别并修复网关绑定目录漂移，首页资源版本不一致时拒绝误报成功 |
+| fix | prd-api | 结合自然停顿长段声纹补足上游漏分角色，三段不同声音不再被合并为两人 |
+| polish | prd-admin | 录音整理过程持续展示已用时间、常见耗时范围与后台运行提示 |
+| fix | prd-admin | 页面刷新后从服务端恢复录音后台任务看护，并持续展示自动更新提示 |
+| test | prd-admin | 录音发布门禁改为六批次持续注入并验证中段后仍转写，同时覆盖手动归档重试 |
+| feat | prd-api | 产品评审员新增需求评估：上传 .xls/.xlsx 需求表，按八因子规则模型（通用性/使用频次/影响范围/客户反馈量/主线契合/客户重要度/成交助力/签约紧迫度）逐条评估，系统派生加权总分、签约强制置顶、同分决胜链与全局优先级排序，输出可导出的评估报告 |
+| feat | prd-admin | 产品评审员页新增「需求评估」入口：Excel 上传即自动评估（列映射 AI 自动综合，零配置）、逐条评估实时进度、优先级排序报告展示与 Markdown 导出 |
+| test | prd-api | 需求评估计分引擎守卫测试（权重合计/加权计分/证据兜底/强制置顶/决胜链/分档阈值） |
+| perf | prd-api | 需求评估批次改三路并发评分（总耗时约降至串行 1/3），列映射 LLM 调用挪进评估流使上传秒级返回 |
+| fix | prd-admin | 需求评估完成后自动出结果：详情页 Running 态每 4 秒轮询兜底、列表页活动任务静默自动刷新，客户端断开不再中断后台评估 |
+| fix | claude-md | entropy-cleanup 的 D4 维仍在查已删除的 CLAUDE.md 技能表，会把 57 个技能全判成缺失并把表格行追加回 CLAUDE.md——等于自动撤销记忆文件精简；改为查 SKILL.md frontmatter 完整性 |
+| fix | claude-md | create-skill-file 的 Step 6「注册到 CLAUDE.md」指向已删除的表；改为「确认 frontmatter 完整」，并同步评分表与 structure-guide |
+| fix | claude-md | AGENTS.md 补技能发现步骤：只认 .agents/skills 的宿主看不到 .claude/skills 下的 57 个技能，此前依赖「宿主自动注入」的说法对这类宿主不成立 |
+| docs | claude-md | guide.skill.removal-checklist 里「删 CLAUDE.md 技能表行」一项标注作废 |
+| fix | prd-api | 重新生成 official-skills.generated.json：改了 create-skill-file 却没重跑打包脚本，分发包里还是旧内容，Server Build & Test 的新鲜度自测因此变红 |
+| fix | claude-md | entropy-cleanup 新 D4 只扫了 .claude/skills 一个技能根，且误把 doc-readability 棘轮当成「缺 SKILL.md」的兜底（它遇到缺文件的目录是跳过的）；改为两个根都扫、缺失自查 |
+| fix | claude-md | entropy-cleanup 的 PR 正文模板与自查清单仍按旧的双向 D4 写，与改后的单向指标不一致 |
+| fix | claude-md | entropy-cleanup 的 D4 扫了 .agents/skills 却没把该根加进 diff 核验与 git add，修了也提交不出去 |
+| fix | claude-md | create-skill-file 的自查指向 prd_agent 专属脚本，而该技能会被分发到其它仓库；改为可移植自查，仓库专属闸门降为注释里的补充 |
+| fix | claude-md | 上一轮把 D4 的修复动作删成了两行注释，导致只检测不修复、第二次运行仍报同笔债；补真实修复路径：name 可由目录名确定性推导故自动补，description 与整份 SKILL.md 不可安全重建故升级人工 |
+| fix | claude-md | entropy-cleanup 的 PR 正文模板「改动 diff」只列文档索引与 changelog，漏掉 D4 会修改的 SKILL.md；补两个技能根的条件条目、「需人工处理」小节，并修正 changelog 碎片的模块列 |
+| fix | claude-md | D4 的字段判据未限定在 frontmatter 块内，正文出现 name: 示例行会把缺字段的技能误判成合规；改用 awk 取 frontmatter 块 |
+| fix | claude-md | 新增 Step 4.5 硬闸：D4 里无法自动修复的三类条目命中时跳过自动 squash 合并，只写进 PR 正文等于随 PR 一起被合并掉 |
+| fix | claude-md | 上一轮加的 D4 合并硬闸读 $D4_SCAN_OUTPUT，而该变量从未被赋值，真实运行时恒为空、闸门永不触发；改为闸门自己重跑判据，不依赖任何外部变量 |
+| feat | doc-tooling | doc-readability-check.py 新增 --skills-audit 模式，复用 check_skill 输出可发现性判定，并补上「目录没有 SKILL.md」这个既有缺口 |
+| refactor | claude-md | entropy-cleanup 的 D4 扫描/修复/合并闸三处不再自己写 frontmatter 判据，统一调用 --skills-audit；判据两处实现是前七轮偏差的共同根因 |
+| fix | claude-md | Step 6.2 无条件合并同名旧 PR，会把被硬闸挡下的 [需人工] PR 一并合掉，使硬闸只延迟一轮；改为跳过并对其余 PR 合并前复跑审计 |
+| fix | claude-md | Step 6.2 的「合并前复跑审计」跑在当前 checkout 上，而要合的是另一个 PR 的 head，等于用不相干的证据放行；移除该步的旧 PR 自动合并，恢复条件记入 debt |
+| fix | claude-md | D4 自动修复会改分发技能的源却不重生成分发包，定时熵减会重现「分发旧内容 + 新鲜度自测变红」；修复路径补重生成与自测，git add 补生成物路径 |
+| fix | claude-md | 可移植自查块用 <skill-dir> 占位，bash 当成重定向导致语法错误，外部用户复制即报错；改为 skill_dir 变量并加引号 |
+| fix | doc-tooling | --skills-audit 对「声明的技能根整个不存在」是 continue 跳过，删光一个宿主的技能仍判干净；改为 BLOCK + 非零退出 |
+| fix | claude-md | PR 工作流摘要仍写「有同类 PR 先合并再创建」，与 6.2 新规矛盾，照摘要执行会绕过刚移除的不安全合并 |
+| fix | claude-md | D4 判据收敛到 --skills-audit 后输出词表变成 AUTOFIX_NAME / BLOCK，但硬闸说明与 PR 模板仍匹配自造的 MISSING_SKILL_*，导致缺技能根、坏 YAML 等多数阻塞情形下「需人工处理」小节被判为不需要而删掉，留下无线索的 [需人工] PR；改为按 BLOCK 判定并逐条照抄审计原因 |
+| fix | claude-md | 6.4 合并前的追加行白名单漏了 official-skills.generated.json，而 Step 3 会重新生成、Step 5 会提交它，等于自动审计必然拒绝自己产出的合法 PR；补进白名单与 PR 模板，并限定「本轮没改技能却出现它按越界处理」 |
+| fix | claude-md | 上一轮只放行了生成物的追加行，删除行仍套「必须是幽灵条目」判据；重新打包是整段重新序列化、同处必然同时产生增删两行，合法重生成照样被判死，补删除行例外 |
+| fix | claude-md | Step 5 的 changelog 碎片把两行说明写在了 quoted heredoc 里，会照字面进碎片，而 assemble-changelog.sh 发版时原样拼进 CHANGELOG（content=$(cat)，无过滤），最终变成正式变更日志表格里的垃圾行；说明移到 heredoc 外 |
+| fix | claude-md | 上一轮只给 6.4 合并闸放行了生成物，Step 4 提交前那道闸仍是窄的：焦点 diff 不含生成物路径（漏看已暂存内容），而其后的 git diff --stat 未限定路径却要求「删除行数=幽灵条目数」，合法重生成必然把这条判死；两处口径拉齐并注明必须同改 |
+| fix | claude-md | AGENTS.md 里「frontmatter 完整性由 CI 强制」是本 PR 自己写下的过度声称——CI 跑的棘轮遇到「目录里整个没有 SKILL.md」是跳过的（移走任一 SKILL.md 可复现：审计退 1、棘轮退 0）；改为如实说明 CI 拦得住什么、拦不住什么，不让文档声称一个不存在的保护 |
+| docs | claude-md | 把「--skills-audit 未接进合并闸」记入 debt 台账（B 类）：接新强制面需先确认技能根下无非技能子目录会被误判，附可复现判据与偿还条件 |
+| fix | doc-tooling | --skills-audit 遇到读不了/解不了码的 SKILL.md（如非 UTF-8）直接抛异常中断，一条 BLOCK 都发不出；改为转成 BLOCK 记录，读不了的清单与「没有 SKILL.md」等价 |
+| fix | claude-md | Step 4.5 硬闸把审计和 grep 挤在一条管道里再 `|| true`，审计崩溃被读成「没有 BLOCK 行」= 干净，闸门 fail-open 放行不可发现的技能；改为先取输出与退出码再判，非零且无 BLOCK 一律当阻塞 |
+| docs | claude-md | 把「可发现性审计不校验 name/description 尺寸限制」记入 debt 台账（B 类）：实测零违反、且该判据同时喂棘轮，加判定会改全仓欠账口径；附偿还时的语义分界提醒 |
+| fix | doc-tooling | AUTOFIX_NAME 分类会把「嵌套字段写坏但缺 name」的清单判为可自动修，补完 name 后再审全绿，而宿主实际 load 不了——修复动作把坏清单洗成假绿灯；分类前先用真正的 YAML 解析器验结构，解析不了一律 BLOCK（只加在 --skills-audit，不进 check_skill 以免改动棘轮口径） |
+| fix | doc-tooling | 上一轮用 PyYAML 验 frontmatter，而本脚本刻意只用标准库（同 job 的 ratchet 测试明写「判据本身不依赖它」），无 PyYAML 环境下 60 个合法技能全被判 BLOCK、熵减自动合并被永久关死；改为标准库判据：只在「缺 name」这一类上追问「结构是否超出行判据的理解范围」，超出就不自动补 |
+| fix | claude-md | create-skill-file 标着「任何仓库都能跑」的自查块把技能根写死成 .claude/skills，而该技能会被分发给只有 .agents/skills 的宿主，照抄即读到不存在的路径；改为不写死根、默认取当前目录，并同步修正正文里同样写死的扫描路径 |
+| docs | claude-md | 把「frontmatter 嵌套结构写坏（name 正确）判据看不出来」记入 debt 台账（B 类）：彻底堵需要 YAML 解析器而本脚本刻意只用标准库，纯启发式会误伤 6 个合法技能，偿还前需先决定是否引入 PyYAML 依赖 |
+| test | doc-tooling | 新增 scripts/tests/test_skills_audit_contract.py：--skills-audit 此前零测试覆盖，输出前缀/退出码/各类坏清单判定全靠手工验，改坏了全仓测试照样绿；10 项断言覆盖干净、可自动修、六类阻塞、判据不依赖第三方库、判定行顶格 |
+| ci | doc-tooling | 输出契约守卫接入 docs-readability job（filter 含 '**'，每个 PR 必开），并把守卫文件登记进 filter 清单 |
+| polish | prd-admin | 需要关注卡重做：去掉贴边硬色条改顶边定调、独立动作区（建议 + 入口按钮）、去掉浏览器默认味的虚线分隔，四段建立字重层级 |
+| polish | prd-admin | 散点/单人画像/价值流统一加卡内表头，说明不再吊在卡片底角；区块序号眉标改带底小方块，浅色主题下不再糊成灰渣 |
+| polish | prd-admin | 明细表加表头底色与行 hover，折叠头加 hover 反馈 |
+| fix | prd-api | 价值流中间列改按真实 appKey 取前 6 大，消灭「其他占 64%」这种最大档却没信息的分组；删除随之失效的 ResolveFlowStage |
+| fix | prd-api | 成员要点不再重复上方进度条已画过的项，改为只说风险与损耗（积压/出图张数/失败次数/提交缺陷/产出天数） |
+| polish | prd-admin | 散点纵轴改按实际数据范围映射（原先固定 0-100 导致上下两头永远空着），分界线走同一映射保持与后端同口径；轴标注明范围与刻度类型 |
+| polish | prd-admin | 明细表在模型组无定价时不再渲染整列「—」的 AI 成本列 |
+| fix | prd-api | 价值流环节占比分母用错聚合口径导致各档加起来超过 100%，改用本列自身合计 |
+| polish | prd-api | 环节名不再直接暴露 system / unknown 等内部 appKey，补中文标签 |
+| polish | prd-api | 团队洞察 KPI 增加构成拆解与副指标（日均/P90/占比），全部时间窗也给最近 30 天走势 |
+| polish | prd-api | 价值流每项补转化口径（出图成功率、缺陷中位、人均调用、环节占比），成员画像补团队中位参照与各象限人数 |
+| polish | prd-admin | KPI 卡重做为「数字 + 构成微条 + 副指标」，去掉没有信息量的「无环比」占位；成员卡每项加团队中位刻度与差额百分比 |
+| polish | prd-api | 多人缺陷积压合并为一张关注卡，不再出现三张只有人名不同、建议一字不差的重复卡片 |
+| polish | prd-admin | 成员卡与中位的差距超过两倍时改用「×N」表示，避免退化成 +6864% 这种噪音 |
+| feat | prd-api | 团队洞察新增速读：规则生成的头条结论 + 支撑点（构成/环比归因/集中度/缺陷进出比/失败占比），每句挂真实数字，算不出来不出句 |
+| polish | prd-admin | 面板加速读条（左侧色条 + 头条 + 支撑点）、统一区块标题层级（mono 序号 + 标题 + 说明）、卡片顶边细高光与 hover 微抬、区块错峰进入动效，全部尊重 prefers-reduced-motion |
+| rule | 规则 | 新增「先给结论，再给数字」规则：数据界面三层递进（计数→对照→结论）、结论四条自律、同类项合并、极端值换量纲、打磨在密度之后 |
+| feat | prd-api | 新增 GET /api/executive/team-insights：团队洞察四段式真实聚合（团队状态/需要关注/成员画像/价值流），指标口径与不可得项由后端 SSOT 下发 |
+| feat | prd-admin | 团队洞察改版为结论优先四段式面板，综合排行榜降级为可折叠明细 |
+| fix | prd-admin | 修正综合分口径缺陷：图片合计与视觉生图/文学配图/上传参考图重复计分、日均一次即满分的归一化抹平真实差距 |
+| fix | prd-api | 结果质量必须有结果型信号（缺陷解决率/生图成功率）才计算，调用成功率降为附加项，避免只聊天不交付的人拿满分 |
+| fix | prd-api | 分型阈值只在入图成员里取中位并下限为 1；入图不足 3 人时标记样本不足，不强行分四象限 |
+| fix | prd-api | 无模型单价时成本返回空值而非 0；缺陷时长按量级换算分钟/小时/天，不再出现「0 小时」 |
+| fix | prd-admin | 成员画像散点改对数刻度，解决长尾产出下气泡挤成一坨互相遮盖 |
+| fix | prd-admin | 移除排行榜奖牌 emoji，改用序号与语义色（CLAUDE.md 规则 0） |
+| docs | doc | 总裁面板设计文档补充团队洞察四段式结构与两条口径约束 |
+| test | prd-admin | 新增团队洞察接线与空值判据守卫测试（端点登记 + null 指标不得退化成 0） |
+| polish | prd-admin | 速读条右侧补「团队构成」：四象限人数堆叠条 + 图例 + 窗口与覆盖说明，可点击下钻到成员画像；填的是头条与 KPI 都没讲的信息，不是装饰 |
+| polish | prd-admin | 速读条中间补「本期主力」：按真实产出件数取前 5，带头像/件数/分型圆点，点击跳到该成员画像；结论文字限宽 46ch 保证可读，三列在宽屏铺满 |
+| polish | prd-admin | 本期主力的比例条从「单独堆一摞散线」改为行内底纹，条与人绑在一起 |
+| fix | prd-admin | 修复宽屏下速读条右侧吊一块空白：文字列的可读性宽度上限与固定侧栏加起来撑不满卡片，剩余宽度无人认领；改为文字列吃满剩余、条目在宽屏分两列 |
+| fix | prd-api | 版本端点改为双值对账：commit 烤进程序集作为实际值、环境变量降为期待值，不一致时直接在响应里告警，杜绝「镜像还是旧的却报新 commit」 |
+| test | prd-api | 新增 BuildIdentity 守卫测试，锁死事故值判 mismatch、缺一边只能判 unknown |
+| rule | 规则 | config-runtime-drift 新增「运行态自述必须双值对账」一节：能被运行时改写的值不能用来自证 |
+
+### 2026-08-03
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 修复真实录音大小上传 Cloudflare R2 时的签名不一致，并将代表性音频写读删纳入就绪门禁 |
+| test | prd-api | 阻止用小文本探针或仅检查请求参数替代真实录音对象存储验收 |
+| fix | skill | 周报发布命令补 BASELINE_SHA 赋值（原引用未定义变量导致 --last-commit 静默传空），并订正 --last-commit 的作用描述为出处记录 |
+| docs | doc | 重写验收报告重复归档条目：真实根因是归档无条件新建缺身份查找；CDS 已有 PATCH 可复用；澄清带时间戳的 client id 既非去重键也非深链组成 |
+
+### 2026-08-02
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 每日熵减计划：D1-D4 全绿零欠账，D6 核对 1 条 changelog（doc/changelog 自身归档，无需追加设计文档覆盖），D7 可读性棘轮零回升 |
+| feat | prd-admin | 三个首页（未登录官网 / 桌面首页 / 移动首页）统一到「米多墨系」：暖石墨 + 暖纸双主题、赭红身份色、八色墨带（陶土/焦糖/琥珀/橄榄/松绿/黛青/钢青/钢蓝），紫 / 靛 / 品红全面退出 |
+| feat | prd-admin | 桌面首页重做为「工位」：上层收敛为无框状态栏（时钟 + 日期 + 教程等级）+ 一块台面，命令条与近 7 日数字同排，常去入口为台面内无框文字链，在办工作与我的动态并列成两栏行式列表 |
+| feat | prd-admin | 首页命令条：斜杠键聚焦、回车打开首个结果（输入法组字中的回车放过，中文选词不会误跳页）、Esc 清空、输入时实时显示命中数（原 kbd 标 ⌘K 但那是全局智能体浮层，名不副实） |
+| feat | prd-admin | 「手边的活儿」默认只露 6 条，列底部居中「更多 N 条」就地展开，不跳页；无在办工作时给一行引导而非空盒 |
+| feat | prd-admin | 首页目录合并为「全部能力」一片 + 全部/智能体/工具/底座分段筛选器，默认仍展示全部三组；智能体再分三档：你常用的（真实打开次数，未达门槛整档不出现）/ 官方精选（编辑部口径，如实标注不是算法排名）/ 更多智能体 |
+| feat | prd-admin | 桌面首页新增「近 7 日 + 我的动态」；移动首页的 `useMobileHomeData` 同时改为复用 `lib/homePulse`（此前它自己又拉了一遍 stats/feed），两端同一个 hook、同一份数据，数字不会打架，失败处理也只需修一处 |
+| feat | prd-admin | 新增 `lib/isoWeek.ts`（ISO 8601 周序 SSOT）供首页日期条使用，含跨年归属单测 |
+| feat | prd-admin | 新增 `inkPalette` 守卫测试：受管首页、品牌 token（按 token 名圈定，语义色槽除外）出现紫/靛/品红色相（hex / rgb() / hsl() / Tailwind 紫系类）直接 CI 红；另有一条守卫禁止「accent 当底 + 白字」的 3.12:1 组合 |
+| refactor | prd-admin | `lib/tileAccent` 色带收敛为 `INK_HUES` 八色相并降饱和，新增 `Accent.text`（明度随主题 65%/30%）修类别色文字在浅色纸面发虚——浅色 36% 时橄榄 3.58 / 黛青 3.60 / 松绿 3.72 / 琥珀 4.04 四色不达标（「手边的活儿」的 10px 状态标吃这个色），压到 30% 后八色最低 4.83；`lib/agentAccent`、`lib/appStoreTokens` 的移动端色板同源换笔 |
+| refactor | prd-admin | `formatCompactNumber` 收敛到 `lib/homePulse` 单一实现，移动端改为转出 |
+| refactor | prd-admin | 首页跳转收成唯一出口 `lib/useTrackedNavigate`，**桌面与移动首页共用**：带入口信息的调用自动记打开次数。记账点漏一个，那条路径的启动就永远不计入「你常用的」——桌面收敛后手机上点开的智能体仍不计数，于是桌面的「你常用的」漏掉了用户手机上最常用的那些 |
+| fix | prd-admin | 首屏水合竞态：进页即异步拉云端偏好，此间用户手快点开的智能体会先写本地、但 `scheduleSync` 因 `serverLoaded=false` 不回写，紧接着远端数据整体覆盖，那次点击连同计数一并消失。改为把水合期间的访问攒进队列、水合落地后按同规则重放并回写；只重放本地仍在册的条目，登出与重置一并清空 |
+| fix | prd-admin | 「accent 底 + 浅色字」判据只从 `background:` 声明起判底色：前景早先补过 class 写法（`text-white` / `text-token-primary`），底色没补，于是 `className="bg-[var(--accent-primary)] text-token-primary"` 这种两边都写在 class 里的形态原样重建 2.92:1 而判据全绿。底色改为两路（style 声明 + Tailwind 任意值 `bg-[…]`，认变体前缀，还原下划线转义）走同一套判据 |
+| fix | prd-admin | 拉云端偏好失败的两条路（请求抛错 / 返回 `success:false`）此前收尾不一致：抛错那条会清队列并把本地推回服务端，`success:false` 那条只标了个「尝试过」就返回——水合期间那次点击于是只活在本设备，换台机器打开就不在「你常用的」里，且队列一直留着，下次水合会把它重放第二遍。两条合并到同一个收尾函数 |
+| fix | prd-admin | 记账的规范 id 收敛到 `resolveCatalogId`（目录 id 由路由推导，appKey 与它故意不同名的有 `task-tree-agent` / `emergence-agent` 等）——只按 agentKey 查会解析失败，加了目录闸之后失败的后果是整条记录被丢掉，个人任务树与涌现探索器从首页启动将完全不计入「你常用的」。记账侧与排序侧现在走同一个解析器 |
+| fix | prd-admin | 「我的资源」三处入口（首页动态区、快捷入口、静态启动项）都指向 `/visual-agent?tab=assets`，而视觉创作页只读 `workspaceId`、根本不认这个 query——点进去落在工作区列表。改指注册在案的 `/my-assets`，并加守卫禁止「带 query 假装能落到子页」 |
+| fix | prd-admin | 首页快捷入口记账用的是「偏好别名」（updates / voc / models / teams），与目录 id（changelog / team-activity / mds / users）对不上，记进去是一串查无此项的幽灵 id，Cmd+K 最近使用与设置统计都会静默丢掉。改为按路由推导目录 id；「不在目录里就不记账」这道闸收进 `useTrackedNavigate` 出口本身——原先写在桌面调用处，移动端的「米多早报」照样记了个目录里没有的 id |
+| fix | prd-admin | 首页点击补记打开次数：此前只有命令面板（⌘K）记账，瓦片点击与在办工作条都不算数，「你常用的」对只用首页的人永远不出现 |
+| fix | prd-admin | 官网页脚 MAP 徽标、产品预览发送按钮、导航 Logo 的 SVG 各存了一份品牌渐变的手抄副本（起点还停在换笔前的旧值），配的是浅色前景——徽标 9px 文字最低 2.09:1，发送按钮白色箭头 2.23:1 连图标的 3:1 都不够。导航 Logo 白色 MAP 字缩到约 13px 时最低 2.23:1。三处统一从 `HERO_GRADIENT_STOPS` / `HERO_GRADIENT` + `HERO_GRADIENT_FG` 取，并加守卫禁止再抄色值 |
+| fix | prd-admin | 海鲜市场技能文件树的选中行是 accent 实心底配 `--text-primary`（暗 2.92:1 / 浅 3.13:1），迁到按钮 token 对；对比度判据同批改为读 `color:` 的整个值——真实写法是三元 `color: active ? ... : ...`，按"紧邻"判会整条漏掉 |
+| fix | prd-admin | 9 处主操作面从「`--accent-primary` 当底 + 硬编码白字」（暗色 3.12:1）迁到 `--button-primary-bg/fg` 这对已被守卫钉住的 token |
+| fix | prd-admin | 百宝箱两处用户气泡（基础能力 / 快速创建向导）此前是 accent 渐变底 + `--text-primary` 字，暗色只有 2.92:1，同迁到按钮 token 对；渐变里引用的 `--accent-secondary` 全仓从未定义，一并去掉 |
+| fix | prd-admin | 色带守卫补两个漏判口子：tokens.css 改按「完整声明」解析（逐行正则会整条跳过 `--home-ambient-background` 这种多行值，往首页氛围光塞紫色照样绿）；「accent 底 + 浅色字」判据改为按括号深度读值 + 按 JSX 开标签配对（原判据读到第一个逗号就断，渐变形态全漏；邻近窗口配对则会把兄弟元素的文字色误报 3 处） |
+| fix | prd-admin | 首页「近 7 日 / 我的动态」取数失败此前会渲染成「全零 + 你还没用过」——等于当着老用户面说他什么都没干过。两路各记成败（`resolveHomePulse` 纯函数，reject / `success:false` / `data` 缺失一律算没取到），无数据时显示 `--` 而非 0，动态给「取不到 + 重试」，有旧数据则保留并标注可能不是最新；移动首页同款处理。两个端点各自成败，用量单独挂了也给看得见的说明 + 重试（原来只挂 title，触屏没有悬停等于什么都没说）；留着上一轮列表时也明说「没能刷新，这份是上一次取到的」+ 重试，不默不作声地把过期数据当现状 |
+| fix | prd-api | `/api/mobile/feed` 逐来源查库时单个失败原本被静默吞掉、照样返回 200，前端把「两个来源都查挂了」读成「你还没用过」。新增 `degradedSources` 如实报出没取到的来源 |
+| fix | prd-api | `/api/mobile/feed` 不再产出 PRD 会话：PRD 解读智能体 Web 端已下线，列出来只是一条点了没反应的条目，还会占掉 limit 名额把真能点的动态挤出这一页 |
+| fix | prd-admin | 首页动态流不再列死链：指向已下线路由（`/prd-agent`、`/stats`）的条目在共享 hook 层滤掉，清单与 App.tsx 的重定向路由由守卫对账；**先过滤再截断**，并按 3 倍多取几条补位——否则最新几条恰好都是死链时列表会被清空，页面转头说「你还没用过」 |
+| fix | prd-admin | 色带守卫的禁色下限由 244 压到 225：这个 PR 换掉的那批老靛色恰好落在 234-241，判据画在 244 等于把它们原样贴回来照样全绿。门头主标题渐变末端那支色相 233 的长春花蓝同批转暖（换笔前留下的尾巴，最大一块字反倒还是冷的） |
+| fix | prd-admin | 首页动态空态原来写「用过知识库、周报、生图或缺陷之后，动态会出现在这里」，但 `/api/mobile/feed` 只查视觉工作区与缺陷——用户照做两件仍是空的。文案改成只承诺端点真会返回的来源，并加守卫从 Controller 解析实际产出类型对账 |
+| fix | prd-admin | 「手边的活儿」加载中与取不到都会被渲染成「还没有进行中的工作」——`homeRecentWorkStore` 原本把失败吞成空列表（区块整块隐藏时尚可，改版后空态会明说，就变成骗人）。store 加失败态且失败不清空已有列表，页面分加载中 / 取不到 + 重试 / 旧数据提示 / 真空态四种 |
+| fix | prd-admin | 移动首页色板（`pages/mobile-home/shared.ts`）漏在守卫外：视觉创作 `#A78BFA`、更新中心 `#F472B6` 一直在移动首页显示，换成陶土 / 黛青，受管范围补上该模块 |
+| fix | prd-admin | 官网与 Arena 主 CTA 的品牌渐变对白字只有 2.23~3.62:1，7 处 13-15px 标签迁到深墨字（复用 `--button-primary-fg`，暗浅同值），渐变起点 `#C8623A` 抬到 `#CE6B41` 让最暗那档也过 4.5；守卫逐档算「色标 x 两主题文字色」 |
+| chore | prd-admin | 清掉 `surface.css` / `ToolEditor` 里 6 处 `var(--accent-primary-rgb, 99, 102, 241)` 与 `var(--accent-primary, #818cf8)` 的靛色兜底字面量（token 恒有定义，兜底永不生效，但会把紫色抄回来） |
+| fix | prd-admin | 主按钮对比度：暗色改「亮一档陶土底 + 深墨字」5.49:1（原白字 3.74:1 不达标），浅色 hover 由压暗改提亮 5.98:1（原 4.18:1）；themeSystem 契约扩到暗浅双向 + hover 态 |
+| style | prd-admin | 主题 token 去靛：`--accent-primary`、按钮主色、选择态、聚焦环、门头氛围光、移动 FAB 全部换成赭红家族（暗浅双主题同一支笔） |
+| style | prd-admin | 未登录官网底色由冷黑 `#030306` 转为暖石墨 `#0E0C0A`，Logo、CTA、光晕、假素材缩略图同步转暖 |
+| polish | prd-admin | 清晰度专项：首页字号一律取整（1x 屏上分数 px 会让字形发虚）、去掉标题/副标题的文字投影、小字提权重与对比、门头氛围雾再压一档、台面描边改 border-default |
+| polish | prd-admin | 卡片插画对比度上调（`--media-art-filter` 暗 contrast 1.05→1.18 / 浅 1.10→1.20，暗色不再压暗到 0.88 透明度），200px 缩略图下细节不再糊 |
+| polish | prd-admin | 移动首页密度微调：区块间距 24→18、组标题 20→17、卡片圆角 16→12，与桌面同一套刻度 |
+| fix | skill | 周报发布命令补 --replace-same-date 与 --last-commit，修复同周重跑在知识库叠出重复周刊、水位线漏写 |
+| docs | doc | 验收报告重复归档定位到去重键含分钟级时间戳，根因与关闭动作落 debt.acceptance-center-cds |
+| docs | doc | 新增 2026-W31 周报（md 底稿 + 米多智能体周刊 html 版并发布到周报知识库），同步 index.yml 与目录索引 |
+| chore | changelogs | 归档 51 个 changelog 碎片到 CHANGELOG.md [未发布] |
+
+### 2026-07-31
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-admin | 收紧录音实时原文高度并支持折叠，避免长文本遮挡波形与控制区 |
+| fix | prd-admin | 录音转录完成后直达原文结果，知识库默认最新创建优先并保留返回定位高光 |
+| polish | prd-admin | 统一录音播放入口与原文跟随高亮，修复移动端转录文字重叠和重复转录阶段感 |
+| fix | prd-admin | 修复耐久队列录音仍返回列表、待归档音频无播放与刷新详情深链循环 |
+| fix | prd-admin | 串行收口本机录音分片，修复 WebM 音频误判为视频及长原文与反向链接区域重叠 |
+| test | prd-admin | 新增真实浏览器录音注入验收并接入 PR 必过门禁，覆盖长原文布局、结束落点、本机播放与刷新稳定性 |
+| polish | prd-admin | 将录音结束等待改为三步横向进度，展示当前动作、已等待时间与前台等待上限 |
+| polish | prd-admin | 明确云端副本的处理范围、可离开提示和完成结果，并在归档完成后自动刷新当前页 |
+| feat | prd-admin | 无精准时间戳的录音按语速估算逐句跟随，支持播放高亮、点句跳播与逐句校对 |
+| fix | prd-admin | 快速创建新增录音入口；同一录音更新改为后台局部刷新，云端失败明确显示排队重试，单一原文视图不再伪装成切换按钮 |
+
+
 ### 2026-08-03
 
 | 类型 | 模块 | 描述 |
