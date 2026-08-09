@@ -243,9 +243,15 @@ describe('周报用量口径 · route token 必须指向真实路由', () => {
   const reportDir = path.resolve(TEST_DIR, '../../../../doc');
   const tokenLine = /\*\*用量口径\*\*\s*[：:]\s*(.+)/;
 
-  it('每个 route: token 都能在 App.tsx 里找到对应 <Route>', () => {
+  it('每个 route: token 都能找到对应 <Route>（App.tsx 字面量 + NAV_REGISTRY 自动生成）', () => {
     if (!fs.existsSync(reportDir)) return;
-    const routes = new Set(parseLiteralRoutesFromAppTsx());
+    // 路由有两个来源，缺一个判据就太窄（predicate-and-wiring-discipline 形状 1）：
+    // App.tsx 里的字面量 <Route>，以及 App.tsx 从 NAV_REGISTRY 自动 map 出来的那批
+    // （见 App.tsx 的 `NAV_REGISTRY.filter(...).map(e => <Route path={e.path} …/>)` 两处）。
+    // 只认字面量会把 /chat、/visual-agent 这类注册表路由误判成「不存在」，
+    // 而它们恰恰是新能力最常用的入口——误判的后果与 token 写错相反但同样坏：
+    // 作者会被逼着把正确的 token 改错，采用度从此永远查不到这个页面。
+    const routes = new Set([...parseLiteralRoutesFromAppTsx(), ...NAV_REGISTRY.map((e) => e.path)]);
     const problems: string[] = [];
     let checked = 0;
 
@@ -259,7 +265,7 @@ describe('周报用量口径 · route token 必须指向真实路由', () => {
           if (!t.startsWith('route:') || t.includes('{') || t.includes('|')) continue;
           checked += 1;
           const route = t.slice('route:'.length);
-          if (!routes.has(route)) problems.push(`${file}：${t} —— App.tsx 里没有这个 <Route>`);
+          if (!routes.has(route)) problems.push(`${file}：${t} —— App.tsx 与 NAV_REGISTRY 里都没有这个路由`);
         }
       }
     }
