@@ -1,1 +1,0 @@
-| chore | doc | 每日熵减计划：D1-D4 全绿零欠账，D6 核对 5 条 changelog（4 条无对应设计文档缺口，`rule.frontend.landing-visual-style.md` 品牌色描述已过时——2026-08-02 米多墨系落地后仍写着 2026-07-07 靛蓝-紫罗兰旧配色且与 `inkPalette` 守卫冲突，重写为陶土/八色墨带现状），D7 可读性棘轮零回升 |
