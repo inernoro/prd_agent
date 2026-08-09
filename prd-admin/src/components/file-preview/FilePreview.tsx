@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Check, CloudUpload, FileText, Clock3, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, CloudUpload, FileText, Clock3, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
@@ -162,6 +163,28 @@ function RecordingArchiveProgress({
 }
 
 /**
+ * 移动端 HTML 报告字号档位（CSS zoom，作用于 srcDoc body）：
+ * 周报/验收报告等 HTML 产物按 980px 桌面纸面设计，手机上正文与等宽小字偏小且
+ * sandbox iframe 内无法双指缩放——给读者一个显式放大手段。zoom 会触发真实重排
+ * （非截图式缩放），流式布局按更窄的等效视口重新换行，不会出横向滚动条。
+ * 纯 UI 偏好，发版后旧值无害 → 允许 localStorage（.claude/rules/no-localstorage.md）。
+ */
+const HTML_ZOOM_STORAGE_KEY = 'doc-html-preview-zoom';
+const HTML_ZOOM_MIN = 1;
+const HTML_ZOOM_MAX = 1.6;
+const HTML_ZOOM_STEP = 0.15;
+
+function readStoredHtmlZoom(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(HTML_ZOOM_STORAGE_KEY) ?? '');
+    if (Number.isFinite(v) && v >= HTML_ZOOM_MIN && v <= HTML_ZOOM_MAX) {
+      return Math.round(v * 100) / 100;
+    }
+  } catch { /* ignore */ }
+  return 1;
+}
+
+/**
  * 给 srcDoc 渲染的 HTML 正文注入移动端响应式能力：
  * - 缺 <meta viewport> 时补一条 width=device-width（核心：让移动端按真机宽度排版而非 980px 桌面视口）
  * - 注入流式兜底 CSS（img/table/pre 等 max-width:100%），把固定像素宽内容收进屏宽
@@ -180,7 +203,7 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, htmlBleedX }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
@@ -189,7 +212,22 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
   /** 打开知识库智能体，并以当前录音原文作为上下文。 */
   onAskRecording?: () => void;
+  /** 移动端 HTML 预览左右出血像素：抵消调用方内容区的水平 padding，让报告纸面满铺卡片宽度。 */
+  htmlBleedX?: number;
 }) {
+  const isMobile = useIsMobile();
+  const htmlIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [htmlZoom, setHtmlZoom] = useState<number>(readStoredHtmlZoom);
+  // onLoad 闭包里读的是挂载时的 zoom，用 ref 镜像保证 iframe 重载后应用的是当前档位
+  const htmlZoomRef = useRef(htmlZoom);
+  useEffect(() => {
+    htmlZoomRef.current = htmlZoom;
+    try { localStorage.setItem(HTML_ZOOM_STORAGE_KEY, String(htmlZoom)); } catch { /* ignore */ }
+    // 已渲染的 srcDoc 文档就地应用（allow-same-origin 可达）；重排后 ResizeObserver 会自动跟高
+    const body = htmlIframeRef.current?.contentDocument?.body;
+    if (body) body.style.setProperty('zoom', String(htmlZoom));
+  }, [htmlZoom]);
+
   if (!entry) {
     return (
       <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -327,8 +365,14 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     // 视口排版再缩放进窄 iframe → 整页看起来很小。srcDoc 正文可注入 viewport + 流式 CSS
     // 让其按设备宽度重排（fileUrl 上传文件无法注入，由生成端补 viewport 兜底）。
     const srcDocHtml = !fileUrl ? ensureResponsiveHtml(text ?? '') : null;
-    return (
+    // 移动端满铺：负 margin 抵消调用方内容区的水平 padding，纸面横向撑满卡片
+    // （mobile-first-density：手机端只留一层 gutter，不让三层 padding 叠加吃掉屏宽）。
+    // 仅 srcDoc 走满铺/字号（fileUrl 依赖 height:100% 链，包一层 div 会塌高，保持原样）。
+    const bleed = isMobile && !fileUrl && htmlBleedX ? htmlBleedX : 0;
+    const showZoomBar = isMobile && !fileUrl;
+    const iframeEl = (
       <iframe
+        ref={htmlIframeRef}
         {...(fileUrl ? { src: fileUrl } : { srcDoc: srcDocHtml ?? '' })}
         title={entry.title}
         // srcDoc（导入/手写 HTML，与父同源可量高）：用 allow-same-origin（仍未给 allow-scripts，
@@ -350,6 +394,10 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             };
             const d = ifr.contentDocument;
             if (!d || !d.documentElement) return;
+            // 用户设过字号档位 → 文档一挂载就应用，避免先按 100% 排完再跳一次
+            if (d.body && htmlZoomRef.current !== 1) {
+              d.body.style.setProperty('zoom', String(htmlZoomRef.current));
+            }
             // 失控熔断：正常内容量高会在几帧内收敛（±2px 阈值兜住抖动）。若**连续**写高
             // 迟迟不收敛，说明内容高度反过来依赖 iframe 高度（如 100vh 布局）形成正反馈——
             // 此时必须停手，否则 RO 每帧触发，主线程被打满、整页卡死。
@@ -473,11 +521,52 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}
-        className="w-full rounded-lg border border-token-subtle"
+        // 满铺时去掉左右描边与圆角（纸面直抵卡片边缘，只留上下分隔线）
+        className={`w-full border-token-subtle ${bleed ? 'border-y' : 'rounded-lg border'}`}
         // overflowAnchor none：把 iframe 从外层滚动器的 scroll anchoring 候选里摘出去，
         // 自增高过程中浏览器不再为"补偿高度变化"回调 scrollTop（滚动阻滞感的另一半根因）。
         style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, background: '#fff', overflowAnchor: 'none' }}
       />
+    );
+    if (!showZoomBar && !bleed) return iframeEl;
+    return (
+      <div style={bleed ? { marginLeft: -bleed, marginRight: -bleed } : undefined}>
+        {showZoomBar && (
+          <div
+            className="flex items-center justify-end gap-1.5 pb-2"
+            style={{ paddingLeft: bleed || undefined, paddingRight: bleed || undefined }}
+          >
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>字号</span>
+            <button
+              type="button"
+              aria-label="缩小字号"
+              disabled={htmlZoom <= HTML_ZOOM_MIN}
+              onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
+              className="h-8 w-8 rounded-[9px] inline-flex items-center justify-center transition-colors disabled:opacity-40"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+            >
+              <ZoomOut size={14} />
+            </button>
+            <span
+              className="text-[11px] tabular-nums text-center"
+              style={{ color: 'var(--text-secondary)', minWidth: 38 }}
+            >
+              {Math.round(htmlZoom * 100)}%
+            </span>
+            <button
+              type="button"
+              aria-label="放大字号"
+              disabled={htmlZoom >= HTML_ZOOM_MAX}
+              onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
+              className="h-8 w-8 rounded-[9px] inline-flex items-center justify-center transition-colors disabled:opacity-40"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+            >
+              <ZoomIn size={14} />
+            </button>
+          </div>
+        )}
+        {iframeEl}
+      </div>
     );
   }
 

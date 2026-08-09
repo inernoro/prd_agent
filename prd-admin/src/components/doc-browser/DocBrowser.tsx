@@ -1636,7 +1636,9 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 function ReaderColumnFrame({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
   if (!fullscreen) return <>{children}</>;
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100vh', background: 'var(--bg-base)' }}>
+    // 100dvh：移动端浏览器工具栏收展时 100vh 会比可视视口高（底部被吃掉一条），
+    // dvh 跟随动态视口；不支持 dvh 的浏览器忽略该声明，由 inset-0 兜底撑满。
+    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100dvh', background: 'var(--bg-base)' }}>
       {children}
     </div>,
     document.body,
@@ -3511,12 +3513,18 @@ export function DocBrowser({
                   <PanelRight size={12} /> {rightPanelCollapsed ? '章节' : '收起'}
                 </button>
               )}
-              {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
-              {selectedEntryId && !isMobile && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
+              {/* 全屏阅读（CSS 全屏覆盖层，ESC / 再点一次退出）。
+                  移动端不再隐藏：周报等 HTML 报告被 TabBar + 底部导航夹成一小条（2026-08-09
+                  用户截图反馈「屏幕中间一点点，太小了」），全屏铺满视口是移动端的主要阅读姿势。 */}
+              {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
-                  className={TOOLBAR_ICON_BTN}
-                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                  className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+                  style={{
+                    background: readerFullscreen ? 'var(--selection-bg)' : 'var(--bg-card)',
+                    border: `1px solid ${readerFullscreen ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
+                    color: readerFullscreen ? 'var(--selection-text)' : 'var(--text-muted)',
+                  }}
                   title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
                   {readerFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
                 </button>
@@ -3720,6 +3728,8 @@ export function DocBrowser({
                   <FilePreview
                     entry={selectedEntryData}
                     preview={preview}
+                    // 移动端内容区 px-4（16px）：HTML 报告纸面用负 margin 抵消它满铺卡片宽
+                    htmlBleedX={16}
                     transcriptNoteMd={transcriptNoteMd}
                     onSaveTranscriptNote={audioNoteId && onSaveContent ? async (nextNoteMd) => {
                       const saved = audioNoteId === selectedEntryData?.id
