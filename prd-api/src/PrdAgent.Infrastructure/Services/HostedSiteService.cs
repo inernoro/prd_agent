@@ -2870,6 +2870,38 @@ public class HostedSiteService : IHostedSiteService
     }
 
     /// <summary>
+    /// 经分享链接解析出一个可读取正文的站点。门禁**完全复用** ResolveShareForCommentAsync
+    /// （撤销 / 过期 / 可见性 / 密码 + 滑动窗口限流），不另写一套判定，避免两份判据日后漂移。
+    /// </summary>
+    public async Task<ShareSiteResolveResult> ResolveShareSiteAsync(
+        string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default)
+    {
+        var (sites, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
+        if (err is { } e)
+            return new ShareSiteResolveResult
+            {
+                Error = e.Error,
+                HttpStatus = e.HttpStatus,
+                ErrorCode = e.ErrorCode,
+                RetryAfterSeconds = e.RetryAfter,
+            };
+
+        if (sites.Count == 0)
+            return new ShareSiteResolveResult { Error = "分享链接没有可访问的站点", HttpStatus = 404, ErrorCode = "not_found" };
+
+        // siteId 为空取首站点；指定时必须在本分享的站点集合内，否则等同不存在
+        // （不能让持有任意分享 token 的人拿它去读别人的站点）。
+        var site = string.IsNullOrWhiteSpace(siteId)
+            ? sites[0]
+            : sites.FirstOrDefault(s => s.Id == siteId);
+
+        if (site == null)
+            return new ShareSiteResolveResult { Error = "站点不属于该分享链接", HttpStatus = 404, ErrorCode = "not_found" };
+
+        return new ShareSiteResolveResult { Site = site };
+    }
+
+    /// <summary>
     /// 评论专用分享门禁：撤销 / 过期 / 可见性 / 密码。复用 EnforceShareVisibilityAsync（与 ViewShareAsync 同款）；
     /// 密码仅校验不动滑动窗口（防爆破由 view 端点承担）。通过后内联解析分享目标站点。
     /// </summary>

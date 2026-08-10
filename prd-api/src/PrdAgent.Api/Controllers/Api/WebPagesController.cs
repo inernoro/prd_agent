@@ -796,8 +796,38 @@ public class WebPagesController : ControllerBase
     {
         var site = await _siteService.GetByIdAsync(id, GetUserId());
         if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+        return await FetchSiteHtmlResultAsync(site);
+    }
+
+    /// <summary>
+    /// 经分享链接读取站点入口 HTML 原文（匿名可访问，走分享门禁）。
+    ///
+    /// 为什么必须有这条：托管内容在独立域名（与主站刻意跨域隔离，防止用户上传的 HTML 触达主站登录态），
+    /// 该域名不返回 Access-Control-Allow-Origin，浏览器侧 fetch 一律被 CORS 拦掉。预览页要拿原文注入
+    /// srcDoc 渲染，只能走服务端同源代理——与 GetSiteContent 同一个取回实现，不另开一套。
+    /// </summary>
+    [HttpGet("shares/view/{token}/content")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetShareSiteContent(string token, [FromQuery] string? siteId, [FromQuery] string? password)
+    {
+        var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
+        var resolved = await _siteService.ResolveShareSiteAsync(token, siteId, password, viewerUserId);
+        if (resolved.Error != null)
+            return MapCommentError(resolved.Error, resolved.HttpStatus, resolved.ErrorCode, resolved.RetryAfterSeconds);
+        if (resolved.Site == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+        return await FetchSiteHtmlResultAsync(resolved.Site);
+    }
+
+    /// <summary>
+    /// 服务端代理取回站点入口 HTML，绕开浏览器跨域限制。站内路径与分享路径共用，
+    /// 保证「什么算可读、多大算超限、失败怎么报」只有一份判定（判据分裂会随时间漂移）。
+    /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。
+    /// </summary>
+    private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site)
+    {
         if (!string.IsNullOrEmpty(site.WrappedAssetType))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频/Markdown 包装站，不支持以 HTML 导入"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频/Markdown 包装站，不支持以 HTML 读取"));
         if (string.IsNullOrWhiteSpace(site.SiteUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
 
@@ -812,11 +842,18 @@ public class WebPagesController : ControllerBase
             if (!resp.IsSuccessStatusCode)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
             if (resp.Content.Headers.ContentLength is > maxBytes)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持导入"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
             var html = await resp.Content.ReadAsStringAsync();
             if (html.Length > maxBytes)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持导入"));
-            return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title, contentType = "text/html", html }));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                siteId = site.Id,
+                title = site.Title,
+                contentType = "text/html",
+                siteUrl = site.SiteUrl,
+                html,
+            }));
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {

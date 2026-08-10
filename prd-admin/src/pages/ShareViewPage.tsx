@@ -2,12 +2,13 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
-import { listShareComments } from '@/services/real/webPages';
+import { listShareComments, getShareSiteContent } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;
@@ -49,6 +50,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const navigate = useNavigate();
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const currentUserId = useAuthStore(s => s.user?.userId);
+  const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,6 +69,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [commentCount, setCommentCount] = useState<number | null>(null);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
   const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
+  /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
+  const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -146,32 +150,44 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     return () => { alive = false; };
   }, [token, password, data]);
 
+  // 取回入口 HTML 走**服务端同源代理**（getShareSiteContent），不是浏览器直接 fetch(site.siteUrl)。
+  // 托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧跨域 fetch 一律被拦，
+  // 于是 srcDoc 分支永远拿不到内容、静默退化成「Chrome 里只绘制空白」的直链 iframe——
+  // 这就是「三个网页无法预览」的根因之一。改回浏览器 fetch 会让这条兜底再次变成死代码，
+  // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
     const site = data?.sites.length === 1 ? data.sites[0] : null;
-    if (!site || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
+    if (!site || !token || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
       setEmbeddedHtml(null);
+      setEmbeddedHtmlError(null);
       setEmbeddedHtmlLoading(false);
       return;
     }
 
     let alive = true;
     setEmbeddedHtml(null);
+    setEmbeddedHtmlError(null);
     setEmbeddedHtmlLoading(true);
-    fetch(site.siteUrl, { credentials: 'omit' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const html = await res.text();
-        if (alive) setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(html, site.siteUrl) });
+    getShareSiteContent(token, site.id, password || undefined)
+      .then((res) => {
+        if (!alive) return;
+        if (res.success && res.data?.html) {
+          setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) });
+          return;
+        }
+        // 取不回原文时仍回退直链 iframe（多数情况仍能显示），但把原因显式说出来，
+        // 不再静默吞掉——用户至少知道「为什么这页可能是空白的」。
+        setEmbeddedHtmlError(res.error?.message || '未能取回网页原文，已回退直接加载');
       })
       .catch(() => {
-        if (alive) setEmbeddedHtml(null);
+        if (alive) setEmbeddedHtmlError('未能取回网页原文，已回退直接加载');
       })
       .finally(() => {
         if (alive) setEmbeddedHtmlLoading(false);
       });
 
     return () => { alive = false; };
-  }, [data]);
+  }, [data, token, password]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -440,34 +456,41 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         }}
       >
         {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏 */}
-        <div className="border-b border-b-token-subtle" style={{ padding: '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />
+        <div className="border-b border-b-token-subtle" style={{ padding: isMobile ? '6px 10px' : '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
+          {/* 标题区必须可收缩（minWidth:0 + 省略号），否则手机端它会把右侧按钮挤扁 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+            <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" style={{ flexShrink: 0 }} />
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
-            <span style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>
+            <span style={{ color: '#fff', fontSize: isMobile ? 13 : 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {data.title || site.title}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
+              这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 2 : 12, flexShrink: 0 }}>
             {!site.pdfAssetUrl && (
               <button
                 onClick={togglePresentFullscreen}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : '4px 10px', borderRadius: 6, border: 'none', background: isMobile ? 'transparent' : 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
                 title="全屏演示（Esc 退出）"
+                aria-label="全屏演示"
               >
-                {isFullscreen ? <Minimize size={12} /> : <Maximize size={12} />}
-                全屏演示
+                {isFullscreen ? <Minimize size={isMobile ? 15 : 12} /> : <Maximize size={isMobile ? 15 : 12} />}
+                {!isMobile && '全屏演示'}
               </button>
             )}
             {!isOwner && (
               <button
                 onClick={handleSave}
                 disabled={saving || saveStatus !== 'idle'}
+                title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                aria-label="保存到我的托管"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 4,
-                  padding: '4px 10px', borderRadius: 6, border: 'none',
+                  padding: isMobile ? '6px 8px' : '4px 10px', borderRadius: 6, border: 'none',
                   fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-                  background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
+                  background: isMobile ? 'transparent'
+                    : saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
                     : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
                     : 'rgba(59, 130, 246, 0.15)',
                   color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
@@ -477,15 +500,15 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 }}
               >
                 {saving ? (
-                  <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
+                  <><div style={{ ...styles.miniSpinner }} /> {!isMobile && '保存中...'}</>
                 ) : saveStatus === 'saved' ? (
-                  <><Check size={12} /> 已保存</>
+                  <><Check size={isMobile ? 15 : 12} /> {!isMobile && '已保存'}</>
                 ) : saveStatus === 'already' ? (
-                  <><Check size={12} /> 你已经保存过了</>
+                  <><Check size={isMobile ? 15 : 12} /> {!isMobile && '你已经保存过了'}</>
                 ) : !isAuthenticated ? (
-                  <><LogIn size={12} /> 登录并保存</>
+                  <><LogIn size={isMobile ? 15 : 12} /> {!isMobile && '登录并保存'}</>
                 ) : (
-                  <><Download size={12} /> 保存到我的托管</>
+                  <><Download size={isMobile ? 15 : 12} /> {!isMobile && '保存到我的托管'}</>
                 )}
               </button>
             )}
@@ -493,20 +516,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               href={site.pdfAssetUrl || site.siteUrl}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
+              title="新窗口打开"
+              aria-label="新窗口打开"
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : 0, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
             >
-              <ExternalLink size={12} />
-              新窗口打开
+              <ExternalLink size={isMobile ? 15 : 12} />
+              {!isMobile && '新窗口打开'}
             </a>
             {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
                 浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
             {token && (
               <button
                 onClick={() => setShowComments(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
+                title="评论"
+                aria-label="评论"
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
               >
-                <MessageSquare size={12} />
-                评论{commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}
+                <MessageSquare size={isMobile ? 15 : 12} />
+                {isMobile
+                  ? (commentCount != null && commentCount > 0 ? commentCount : '')
+                  : `评论${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
               </button>
             )}
           </div>
@@ -539,6 +568,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               fontSize: 14,
             }}>
               正在准备预览...
+            </div>
+          )}
+          {/* 取回原文失败：不遮住 iframe（页面多半仍能直接加载出来），只在角落把原因说清楚。
+              静默吞掉失败正是「明明打不开、却不知道为什么」的来源。 */}
+          {embeddedHtmlError && !iframeHtml && !embeddedHtmlLoading && (
+            <div style={{
+              position: 'absolute',
+              left: 12,
+              bottom: 12,
+              maxWidth: 'min(420px, calc(100% - 24px))',
+              padding: '6px 10px',
+              borderRadius: 8,
+              background: 'rgba(17,17,17,0.82)',
+              color: 'rgba(255,255,255,0.86)',
+              fontSize: 12,
+              lineHeight: 1.5,
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+            }}>
+              {embeddedHtmlError}
             </div>
           )}
         </div>
