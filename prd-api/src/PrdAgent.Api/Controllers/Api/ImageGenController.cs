@@ -419,27 +419,45 @@ public class ImageGenController : ControllerBase
     /// </summary>
     /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-image-1.5）</param>
     [HttpGet("adapter-info")]
-    public IActionResult GetAdapterInfo([FromQuery] string modelId)
+    public async Task<IActionResult> GetAdapterInfo([FromQuery] string modelId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(modelId))
         {
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "modelId 不能为空"));
         }
 
-        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(modelId.Trim());
+        var requestedModelId = modelId.Trim();
+        var adapterModelId = requestedModelId;
+        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
+        if (adapterInfo == null || !adapterInfo.Matched)
+        {
+            // 视觉创作展示的是 Gateway 逻辑模型公开 ID（如 image2），而尺寸传输方式属于实际
+            // Offering 的适配能力。统一通过 Gateway 解析契约取得运行时模型，不在前端或此处维护别名表。
+            var resolution = await _gateway.ResolveRequiredLogicalModelAsync(
+                AppCallerCodes.Text2Img,
+                "generation",
+                requestedModelId,
+                ct);
+            if (resolution.Success && !string.IsNullOrWhiteSpace(resolution.ActualModel))
+            {
+                adapterModelId = resolution.ActualModel.Trim();
+                adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
+            }
+        }
+
         if (adapterInfo == null || !adapterInfo.Matched)
         {
             return Ok(ApiResponse<object>.Ok(new
             {
                 matched = false,
-                modelId = modelId.Trim(),
+                modelId = requestedModelId,
             }));
         }
 
         return Ok(ApiResponse<object>.Ok(new
         {
             matched = true,
-            modelId = modelId.Trim(),
+            modelId = requestedModelId,
             adapterName = adapterInfo.AdapterName,
             displayName = adapterInfo.DisplayName,
             provider = adapterInfo.Provider,
