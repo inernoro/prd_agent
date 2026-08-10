@@ -33,6 +33,8 @@ import {
   copySiteToTeam,
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
+import { getSiteAskConfig } from '@/services/real/webPages';
+import { resolveShareAskSelection } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
 import {
   canDeleteInWebHosting,
@@ -98,6 +100,7 @@ import {
   Plus,
   Settings2,
   MoreHorizontal,
+  MessageCircleQuestion,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -3036,8 +3039,38 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
   const [showRiskGate, setShowRiskGate] = useState(false);
   const [riskCountdown, setRiskCountdown] = useState(10);
 
+  // ── 分享时自选开场问题 ──
+  // 站点题库（owner 在「提问设置」里维护）。只有单站点分享 + 站点开了提问才拉。
+  const [askLibrary, setAskLibrary] = useState<string[] | null>(null);
+  const [askPicked, setAskPicked] = useState<string[]>([]);
+  const [askCustom, setAskCustom] = useState('');
+  /**
+   * 用户有没有动过这一栏。
+   * 没动 = 不传该字段（后端 null → 继承站点题库，日后 owner 改题库这条链接会跟着变）；
+   * 动过 = 传数组（哪怕是空数组，表示"这条链接不显示开场问题"）。
+   * 把"没动"也当成"选了当前全部"会把题库冻结成快照，是两回事。
+   */
+  const [askTouched, setAskTouched] = useState(false);
+
   const isCollection = !siteId && siteIds && siteIds.length > 1;
   const isShort = linkType === 'short';
+
+  // 合集分享一期不支持按站点挑问题（一条链接对多个站点，题库无法归一），故只在单站点时拉
+  useEffect(() => {
+    if (!siteId || isCollection) return;
+    let alive = true;
+    void getSiteAskConfig(siteId).then((res) => {
+      if (!alive) return;
+      if (res.success && res.data?.enabled) {
+        const lib = res.data.suggestedQuestions ?? [];
+        setAskLibrary(lib);
+        setAskPicked(lib);
+      } else {
+        setAskLibrary(null);
+      }
+    });
+    return () => { alive = false; };
+  }, [siteId, isCollection]);
   const pwdInvalid = isShort && usePassword && !STRONG_PWD_RE.test(password);
 
   // 切到短链：强制开启密码，且若现有密码不达强密码标准就自动重生成
@@ -3094,6 +3127,9 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
         // /s/{seq}，否则后端不写 short_links，只发不可枚举的 /s/wp/{token} 长链——
         // 杜绝「用户没选短链却拿到数字链」+「管理员短链页冒出几百条」。
         allocateShortLink: isShort,
+        // 三态：没动过就整个字段不传（继承站点题库），动过才传数组（空数组=这条链接不显示）。
+        // 判定收在 resolveShareAskSelection 里，有守卫盯着，别在这儿就地写三元。
+        askSuggestedQuestions: resolveShareAskSelection(askTouched, askPicked),
       });
       if (res.success) {
         onCreated?.();
@@ -3350,6 +3386,96 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                   })}
                 </div>
               </div>
+
+              {/* 开场问题 — 这条链接上访客一点即问的引子。
+                  发给客户和发给同事可以不一样，所以按分享链接各自选，而不是全站一套。 */}
+              {askLibrary !== null && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs text-token-muted">
+                    <MessageCircleQuestion size={12} className="inline mr-1" />开场问题
+                    <span className="ml-1 text-token-muted">（访客打开提问面板时可一点即问）</span>
+                  </span>
+
+                  {askLibrary.length === 0 && askPicked.length === 0 && (
+                    <span className="text-xs text-token-muted">
+                      这个站点还没有开场问题，可在「提问设置」里建题库，也可以在下面直接加。
+                    </span>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    {Array.from(new Set([...askLibrary, ...askPicked])).map((q) => {
+                      const active = askPicked.includes(q);
+                      return (
+                        <button
+                          key={q}
+                          type="button"
+                          onClick={() => {
+                            setAskTouched(true);
+                            setAskPicked((prev) =>
+                              prev.includes(q) ? prev.filter((x) => x !== q) : [...prev, q],
+                            );
+                          }}
+                          className="px-3 py-1 rounded-lg text-xs text-left"
+                          style={{
+                            cursor: 'pointer',
+                            maxWidth: '100%',
+                            transition: 'border-color 120ms, background 120ms',
+                            border: active ? '1.5px solid #3b82f6' : '1px solid var(--border-default)',
+                            background: active ? 'rgba(59,130,246,0.10)' : 'var(--bg-sunken)',
+                            color: active ? '#3b82f6' : 'var(--text-secondary)',
+                          }}
+                        >
+                          {q}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={askCustom}
+                      maxLength={60}
+                      onChange={(e) => setAskCustom(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return;
+                        e.preventDefault();
+                        const q = askCustom.trim();
+                        if (!q) return;
+                        setAskTouched(true);
+                        setAskPicked((prev) => (prev.includes(q) ? prev : [...prev, q]));
+                        setAskCustom('');
+                      }}
+                      placeholder="给这条链接单独加一个问题…"
+                      className="flex-1 px-3 py-1.5 rounded-lg text-xs outline-none"
+                      style={inputStyle}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const q = askCustom.trim();
+                        if (!q) return;
+                        setAskTouched(true);
+                        setAskPicked((prev) => (prev.includes(q) ? prev : [...prev, q]));
+                        setAskCustom('');
+                      }}
+                      disabled={!askCustom.trim()}
+                      className="px-3 py-1.5 rounded-lg text-xs"
+                      style={{
+                        cursor: askCustom.trim() ? 'pointer' : 'default',
+                        border: '1px solid var(--border-default)',
+                        background: 'var(--bg-sunken)',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      添加
+                    </button>
+                  </div>
+
+                  {askTouched && askPicked.length === 0 && (
+                    <span className="text-xs text-token-muted">这条链接不显示开场问题，访客直接自己打字提问。</span>
+                  )}
+                </div>
+              )}
 
               {/* 高级选项 — 链接形式（收起时只显示当前值） */}
               <button

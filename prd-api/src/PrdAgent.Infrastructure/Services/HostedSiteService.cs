@@ -824,8 +824,15 @@ public class HostedSiteService : IHostedSiteService
         string purpose = "share",
         bool forceNew = false,
         string visibility = "owner-only",
-        bool allocateShortLink = false)
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null)
     {
+        // 开场问题保持三态：null（调用方没提这茬）不动存量值，非 null（含空数组）按用户本次所选落库。
+        // 清洗走 AskOpeningQuestions.Normalize，与读取侧同一把尺子。
+        var effAskQuestions = askSuggestedQuestions == null
+            ? null
+            : AskOpeningQuestions.Normalize(askSuggestedQuestions);
+
         // 规范化 visibility 入参（白名单），缺省回退 owner-only
         var normalizedVisibility = visibility?.ToLowerInvariant() switch
         {
@@ -974,6 +981,13 @@ public class HostedSiteService : IHostedSiteService
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Description, effDescription));
                 reuse.Description = effDescription;
             }
+            // 开场问题与标题/密码同理：用户这次挑了新的一组，却因为命中复用而被静默丢弃，
+            // 就是"设了没生效"。null 表示本次调用没碰这个字段，保持原值不动。
+            if (effAskQuestions != null && !AskQuestionsEqual(reuse.AskSuggestedQuestions, effAskQuestions))
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.AskSuggestedQuestions, effAskQuestions));
+                reuse.AskSuggestedQuestions = effAskQuestions;
+            }
             // 复用即视为续期事件 —— 写一条审计记录，便于事后排查"为什么过期时间变了"
             if (oldExpiresAtForAudit != newExpiresAt || ups.Count > 0)
             {
@@ -1025,6 +1039,8 @@ public class HostedSiteService : IHostedSiteService
             PasswordSalt = pwdHash?.Salt,
             ExpiresAt = newExpiresAt,
             Visibility = effVisibility,
+            // 保持 null（而不是 new List）当"没选过" —— 读取侧据此继承站点题库
+            AskSuggestedQuestions = effAskQuestions,
             CreatedBy = userId,
             CreatedByName = displayName,
             RenewalHistory = new List<ShareRenewalEvent>
@@ -1382,6 +1398,12 @@ public class HostedSiteService : IHostedSiteService
             Builders<HostedSite>.Update.Inc(x => x.ViewCount, 1),
             cancellationToken: ct);
 
+        // 提问挂在分享的「首站点」上。这里按 siteIds 的顺序取，不能用 rawSites[0] ——
+        // Mongo Find 不保证返回顺序等于 siteIds 顺序，合集分享会把提问挂到错误的站点上
+        // （评论路径栽过同一个跟头，见 ResolveShareForCommentAsync 的重排注释）。
+        var askSiteId = siteIds.FirstOrDefault(id => rawSites.Any(s => s.Id == id));
+        var askSite = askSiteId != null ? rawSites.First(s => s.Id == askSiteId) : null;
+
         return new ShareViewResult
         {
             Title = StripLegacySharePrefix(share.Title),
@@ -1391,6 +1413,18 @@ public class HostedSiteService : IHostedSiteService
             CreatedBy = share.CreatedBy,
             CreatedByName = share.CreatedByName ?? await LookupDisplayNameAsync(share.CreatedBy, ct),
             Sites = sites,
+            Ask = askSite is { AskEnabled: true }
+                ? new ShareAskInfo
+                {
+                    SiteId = askSite.Id,
+                    Enabled = true,
+                    AllowAnonymous = askSite.AskAllowAnonymous,
+                    Welcome = askSite.AskWelcome,
+                    // 两层三态收敛的唯一发生地
+                    OpeningQuestions = AskOpeningQuestions.Resolve(
+                        share.AskSuggestedQuestions, askSite.AskSuggestedQuestions),
+                }
+                : null,
         };
     }
 
@@ -2690,6 +2724,53 @@ public class HostedSiteService : IHostedSiteService
         return site;
     }
 
+    /// <summary>
+    /// 两组开场问题是否等价。用于复用分享时判断"用户这次选的和链接上已有的是不是同一组"，
+    /// 避免每次创建都写一次库。顺序敏感（用户排的顺序就是展示顺序，换序也算改动）。
+    /// </summary>
+    private static bool AskQuestionsEqual(List<string>? a, List<string>? b)
+    {
+        if (a == null || b == null) return ReferenceEquals(a, b);
+        return a.Count == b.Count && a.SequenceEqual(b, StringComparer.Ordinal);
+    }
+
+    public async Task<HostedSite?> SetAskConfigAsync(
+        string siteId, string userId, AskConfigUpdate update, CancellationToken ct = default)
+    {
+        var site = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync(ct);
+        if (site == null) return null;
+
+        // 与评论开关同一套角色门：仅 owner / editor 可改。提问要烧钱，viewer 更不能碰。
+        var role = site.OwnerUserId == userId ? "owner" : await ResolveSiteRoleAsync(site, userId, ct);
+        if (role != "owner" && role != "editor") return null;
+
+        var questions = AskOpeningQuestions.Normalize(update.SuggestedQuestions);
+        var dailyLimit = update.DailyLimit < 0 ? 0 : update.DailyLimit;
+        var welcome = string.IsNullOrWhiteSpace(update.Welcome) ? null : update.Welcome.Trim();
+
+        await _db.HostedSites.UpdateOneAsync(
+            s => s.Id == siteId,
+            Builders<HostedSite>.Update
+                .Set(s => s.AskEnabled, update.Enabled)
+                .Set(s => s.AskWelcome, welcome)
+                .Set(s => s.AskSuggestedQuestions, questions)
+                .Set(s => s.AskAllowAnonymous, update.AllowAnonymous)
+                .Set(s => s.AskDailyLimit, dailyLimit)
+                .Set(s => s.AskConfigUpdatedAt, DateTime.UtcNow)
+                .Set(s => s.AskConfigUpdatedBy, userId)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        site.AskEnabled = update.Enabled;
+        site.AskWelcome = welcome;
+        site.AskSuggestedQuestions = questions;
+        site.AskAllowAnonymous = update.AllowAnonymous;
+        site.AskDailyLimit = dailyLimit;
+        site.AskConfigUpdatedAt = DateTime.UtcNow;
+        site.AskConfigUpdatedBy = userId;
+        return site;
+    }
+
     public async Task<SiteCommentsResult?> ListCommentsBySiteAsync(string siteId, string viewerUserId, CancellationToken ct = default)
     {
         // GetByIdAsync 已封装 "owner 本人 / 团队成员" 访问校验
@@ -2708,7 +2789,7 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default)
     {
-        var (sites, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
+        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
         if (err != null)
             return new SiteCommentsResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
         if (sites.Count == 0)
@@ -2745,7 +2826,7 @@ public class HostedSiteService : IHostedSiteService
         if (string.IsNullOrWhiteSpace(authorUserId))
             return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
 
-        var (sites, err) = await ResolveShareForCommentAsync(token, password, authorUserId, ct);
+        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, authorUserId, ct);
         if (err != null)
             return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
         if (sites.Count == 0)
@@ -2876,7 +2957,7 @@ public class HostedSiteService : IHostedSiteService
     public async Task<ShareSiteResolveResult> ResolveShareSiteAsync(
         string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default)
     {
-        var (sites, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
+        var (sites, share, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
         if (err is { } e)
             return new ShareSiteResolveResult
             {
@@ -2898,27 +2979,27 @@ public class HostedSiteService : IHostedSiteService
         if (site == null)
             return new ShareSiteResolveResult { Error = "站点不属于该分享链接", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return new ShareSiteResolveResult { Site = site };
+        return new ShareSiteResolveResult { Site = site, Share = share };
     }
 
     /// <summary>
     /// 评论专用分享门禁：撤销 / 过期 / 可见性 / 密码。复用 EnforceShareVisibilityAsync（与 ViewShareAsync 同款）；
     /// 密码仅校验不动滑动窗口（防爆破由 view 端点承担）。通过后内联解析分享目标站点。
     /// </summary>
-    private async Task<(List<HostedSite> Sites, (string Error, int HttpStatus, string ErrorCode, int? RetryAfter)? Err)>
+    private async Task<(List<HostedSite> Sites, WebPageShareLink? Share, (string Error, int HttpStatus, string ErrorCode, int? RetryAfter)? Err)>
         ResolveShareForCommentAsync(string token, string? password, string? viewerUserId, CancellationToken ct)
     {
         var empty = new List<HostedSite>();
         var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
         if (share == null || share.IsRevoked)
-            return (empty, ("分享链接不存在", 404, "not_found", null));
+            return (empty, null, ("分享链接不存在", 404, "not_found", null));
 
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
-            return (empty, ("分享链接已过期", 400, "expired", null));
+            return (empty, null, ("分享链接已过期", 400, "expired", null));
 
         var visForbid = await EnforceShareVisibilityAsync(share, viewerUserId, ct);
         if (visForbid is { } vf)
-            return (empty, (vf.Error, vf.HttpStatus, vf.ErrorCode, null));
+            return (empty, null, (vf.Error, vf.HttpStatus, vf.ErrorCode, null));
 
         // 密码门控：复用 ViewShareAsync 同款 EnforceShareAccessAsync —— 它内置滑动窗口速率限制
         // （10 次/分钟）+ 持久化 RecentAttempts + 恒时比对。直接手写比对会绕过防爆破（Codex P1）。
@@ -2926,7 +3007,7 @@ public class HostedSiteService : IHostedSiteService
         if (gate is { } g)
         {
             var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";
-            return (empty, (g.Error, g.HttpStatus, code, g.RetryAfter));
+            return (empty, null, (g.Error, g.HttpStatus, code, g.RetryAfter));
         }
 
         var siteIds = new List<string>(share.SiteIds ?? new List<string>());
@@ -2937,7 +3018,7 @@ public class HostedSiteService : IHostedSiteService
         // 必须按 share 定义的 siteIds 顺序重排，否则多站点合集分享会把评论挂到错误站点（Cursor medium）。
         var byId = fetched.ToDictionary(s => s.Id);
         var sites = siteIds.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
-        return (sites, null);
+        return (sites, share, null);
     }
 
     private sealed class ZipExtractResult

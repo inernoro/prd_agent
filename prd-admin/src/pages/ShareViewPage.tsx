@@ -8,6 +8,7 @@ import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, U
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
+import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 
 function fmtSize(b: number) {
@@ -623,6 +624,19 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               </div>
             </aside>
           </>
+        )}
+
+        {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
+            开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
+        {token && data.ask?.enabled && (
+          <AskWidget
+            source={{ mode: 'share', token, siteId: data.ask.siteId, password: password || undefined }}
+            title={site.title || data.title || '这个页面'}
+            welcome={data.ask.welcome}
+            openingQuestions={data.ask.openingQuestions ?? []}
+            allowAnonymous={data.ask.allowAnonymous}
+            hidden={isFullscreen || showComments}
+          />
         )}
       </div>
     );

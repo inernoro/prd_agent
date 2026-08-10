@@ -1,0 +1,96 @@
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { MessageCircleQuestion } from 'lucide-react';
+import AskPanel from './AskPanel';
+import type { AskSource } from './askTypes';
+
+interface Props {
+  source: AskSource;
+  title: string;
+  welcome?: string | null;
+  openingQuestions: string[];
+  allowAnonymous: boolean;
+  /**
+   * 隐藏入口（全屏演示态等）。父级判定后传进来，
+   * 组件自己不去猜"现在是不是全屏"。
+   */
+  hidden?: boolean;
+}
+
+/**
+ * 右下角「向我提问」入口 + 抽屉。
+ *
+ * 走 createPortal 挂到 body：托管页面本体在 iframe 里，浮层必须在 iframe 之外、
+ * MAP 页面之内——注入托管 HTML 要放行 CORS 到对象存储域名、处理 srcDoc 下的 null
+ * origin，还会打开一个 XSS 面，代价远大于收益。
+ *
+ * 收起状态只存在 React state 里，不落 localStorage：这是"这一次访问要不要开着"，
+ * 不是设备级偏好。
+ */
+export default function AskWidget({
+  source, title, welcome, openingQuestions, allowAnonymous, hidden,
+}: Props) {
+  const [open, setOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false,
+  );
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Esc 关闭：抽屉是覆盖层，用户的第一反应就是按 Esc
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  if (hidden) return null;
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <>
+      {!open && (
+        <button
+          onClick={() => setOpen(true)}
+          aria-label="向我提问"
+          style={{
+            position: 'fixed',
+            right: 18,
+            // 移动端上移，避开 iOS 底部手势条
+            bottom: isMobile ? 'calc(18px + env(safe-area-inset-bottom, 0px))' : 18,
+            zIndex: 55,
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 16px', borderRadius: 999, border: 'none',
+            background: 'var(--accent-primary)',
+            color: 'var(--text-primary)',
+            fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            boxShadow: 'var(--shadow-glass-floating)',
+          }}
+        >
+          <MessageCircleQuestion size={17} />
+          向我提问
+        </button>
+      )}
+
+      {open && (
+        <AskPanel
+          source={source}
+          title={title}
+          welcome={welcome}
+          openingQuestions={openingQuestions}
+          allowAnonymous={allowAnonymous}
+          isMobile={isMobile}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>,
+    document.body,
+  );
+}

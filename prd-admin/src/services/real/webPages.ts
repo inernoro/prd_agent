@@ -41,6 +41,11 @@ export interface HostedSite {
   publishedAt?: string | null;
   /** 是否允许被评论（默认 true，owner 可关闭） */
   commentsEnabled?: boolean;
+  /** 是否开放「向我提问」。默认 false —— 提问烧 token，存量站点不会被顺带打开 */
+  askEnabled?: boolean;
+  /** 站点级开场问题题库（分享时可从中挑几条） */
+  askSuggestedQuestions?: string[];
+  askAllowAnonymous?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -431,6 +436,13 @@ export async function createShareLink(data: {
   visibility?: 'owner-only' | 'logged-in' | 'public';
   /** 是否分配数字短链 /s/{seq}。默认 false：只发 /s/wp/{token} 长链，不污染 short_links */
   allocateShortLink?: boolean;
+  /**
+   * 本条分享链接自选的开场问题。三态，**不要**在调用前把 undefined 兜成 []：
+   *   不传   = 沿用站点题库
+   *   []     = 这条链接不显示开场问题
+   *   非空   = 只显示这几条
+   */
+  askSuggestedQuestions?: string[];
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -494,6 +506,20 @@ export interface ShareViewData {
   createdBy?: string;
   createdByName?: string;
   sites: SharedSiteInfo[];
+  /**
+   * 「向我提问」呈现配置。开关关闭时后端返回 null，前端据此不渲染入口。
+   * openingQuestions 已由后端把「分享自选 / 站点题库」两层三态取舍完毕，
+   * 前端**不要**再自己合并一遍（那正是判据分裂的起点）。
+   */
+  ask?: ShareAskInfo | null;
+}
+
+export interface ShareAskInfo {
+  siteId: string;
+  enabled: boolean;
+  allowAnonymous: boolean;
+  welcome?: string | null;
+  openingQuestions: string[];
 }
 
 export async function viewShare(token: string, password?: string): Promise<ApiResponse<ShareViewData>> {
@@ -657,4 +683,41 @@ export async function deleteSiteComment(commentId: string): Promise<ApiResponse<
   return apiRequest(`/api/web-pages/comments/${encodeURIComponent(commentId)}`, {
     method: 'DELETE',
   });
+}
+
+// ─── 向我提问 ───
+
+/** 站点提问配置（owner 视角） */
+export interface SiteAskConfig {
+  siteId: string;
+  enabled: boolean;
+  welcome?: string | null;
+  /** 站点级题库；分享时可从中挑几条 */
+  suggestedQuestions: string[];
+  allowAnonymous: boolean;
+  /** 0 = 用系统默认 */
+  dailyLimit: number;
+  updatedAt?: string | null;
+  /** 一个面板最多显示几条开场问题（服务端 SSOT，前端不自己定） */
+  maxQuestions: number;
+  maxQuestionLength: number;
+}
+
+/** 读站点的提问配置 */
+export async function getSiteAskConfig(siteId: string): Promise<ApiResponse<SiteAskConfig>> {
+  return apiRequest(api.webPages.askConfig(siteId));
+}
+
+/** 写站点的提问配置（仅 owner / editor） */
+export async function updateSiteAskConfig(
+  siteId: string,
+  config: {
+    enabled: boolean;
+    welcome?: string | null;
+    suggestedQuestions: string[];
+    allowAnonymous: boolean;
+    dailyLimit: number;
+  },
+): Promise<ApiResponse<SiteAskConfig>> {
+  return apiRequest(api.webPages.askConfig(siteId), { method: 'PUT', body: config });
 }

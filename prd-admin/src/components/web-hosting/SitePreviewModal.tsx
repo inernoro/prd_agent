@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, Loader2, FileWarning, MessageSquare } from 'lucide-react';
+import { X, ExternalLink, Loader2, FileWarning, MessageSquare, MessageCircleQuestion, Settings2 } from 'lucide-react';
 import type { HostedSite } from '../../services/real/webPages';
 import { setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
+import AskPanelInline from './ask/AskPanelInline';
+import AskConfigDrawer from './ask/AskConfigDrawer';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
 const SLOW_HINT_MS = 8000;
@@ -27,7 +29,17 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   const [errored, setErrored] = useState(false);
   /** 加载偏慢：只挂一条角标提示，不遮挡已经绘制出来的内容 */
   const [slow, setSlow] = useState(false);
-  const [showComments, setShowComments] = useState(false);
+  // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
+  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>('none');
+  const showComments = rightPanel === 'comments';
+  const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
+    const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
+    setRightPanel(want ? 'comments' : 'none');
+  };
+  /** 提问设置抽屉（owner/editor 才有入口） */
+  const [showAskConfig, setShowAskConfig] = useState(false);
+  /** 站点提问开关的本地镜像：配置抽屉保存后即时回填，不必等父级刷新列表 */
+  const [askEnabled, setAskEnabled] = useState(site.askEnabled === true);
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -105,6 +117,26 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               <MessageSquare className="w-3.5 h-3.5" />
               评论
             </button>
+            {askEnabled && (
+              <button
+                onClick={() => setRightPanel((p) => (p === 'ask' ? 'none' : 'ask'))}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                  rightPanel === 'ask' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
+                }`}
+              >
+                <MessageCircleQuestion className="w-3.5 h-3.5" />
+                提问
+              </button>
+            )}
+            {canToggleComments && (
+              <button
+                onClick={() => setShowAskConfig(true)}
+                className="flex items-center justify-center w-8 h-8 rounded-lg bg-token-nested hover-bg-soft text-token-secondary transition-colors"
+                title="提问设置"
+              >
+                <Settings2 className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={handleOpenExternal}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft text-token-secondary text-xs transition-colors"
@@ -223,8 +255,27 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               </div>
             </aside>
           )}
+
+          {/* 提问面板：与评论共用右侧 aside 位置，互斥切换 */}
+          {rightPanel === 'ask' && (
+            <aside
+              className="w-[380px] shrink-0 border-l border-token-subtle flex flex-col min-h-0"
+              style={{ background: 'var(--panel-solid, var(--bg-elevated))' }}
+            >
+              <AskPanelInline siteId={site.id} title={site.title} />
+            </aside>
+          )}
         </div>
       </div>
+
+      {showAskConfig && (
+        <AskConfigDrawer
+          siteId={site.id}
+          siteTitle={site.title}
+          onClose={() => setShowAskConfig(false)}
+          onSaved={(cfg) => setAskEnabled(cfg.enabled)}
+        />
+      )}
     </div>
   );
 

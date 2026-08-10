@@ -1004,7 +1004,9 @@ public class WebPagesController : ControllerBase
                 visibility: visibility,
                 // 数字短链按需分配：仅当用户在分享面板主动选「数字短链」时 client 传 true。
                 // 默认 false → 只发不可枚举的 /s/wp/{token} 长链，不污染 short_links。
-                allocateShortLink: req.AllocateShortLink ?? false);
+                allocateShortLink: req.AllocateShortLink ?? false,
+                // 原样透传（含 null），三态判定归 AskOpeningQuestions.Resolve 一处
+                askSuggestedQuestions: req.AskSuggestedQuestions);
 
             // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
             //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
@@ -1180,6 +1182,7 @@ public class WebPagesController : ControllerBase
             result.CreatedBy,
             result.CreatedByName,
             result.Sites,
+            result.Ask,
         }));
     }
 
@@ -1431,6 +1434,14 @@ public class CreateWebPageShareRequest
 
     /// <summary>访问可见性：owner-only（默认） / logged-in / public</summary>
     public string? Visibility { get; set; }
+
+    /// <summary>
+    /// 本条分享链接自选的开场问题（分享面板里从站点题库勾选 / 手写）。
+    ///
+    /// 三态必须原样传达到服务层，**不要**在这里把 null 兜成空数组：
+    ///   不传（null）= 沿用站点题库；传 []= 这条链接不显示开场问题；传非空 = 只显示这几条。
+    /// </summary>
+    public List<string>? AskSuggestedQuestions { get; set; }
 
     /// <summary>
     /// 是否分配数字短链 /s/{seq}。默认 false：用户意图里没有短链就不强制生成，
