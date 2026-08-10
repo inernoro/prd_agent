@@ -2942,7 +2942,11 @@ export function DocBrowser({
               })}
             </div>
           )}
-          {readerMenuExtra}
+          {readerMenuExtra != null && (
+            <div onClick={() => setReaderMoreOpen(false)}>
+              {readerMenuExtra}
+            </div>
+          )}
           {showDirectoryItem && (
             <ReaderMoreItem icon={<PanelLeftOpen size={13} />} label="文档目录"
               onClick={() => { setReaderMoreOpen(false); setMobileDirectoryOpen(true); }} />
@@ -3849,7 +3853,9 @@ export function DocBrowser({
                     preview={preview}
                     // 移动端内容区 px-4（16px）：HTML 报告纸面用负 margin 抵消它满铺卡片宽
                     htmlBleedX={16}
-                    htmlZoom={htmlZoom}
+                    // 字号档位只在移动端生效：桌面无调节控件，若把移动端的档位带过去
+                    // 会放大后无处重置（Codex P2）——桌面恒传 1
+                    htmlZoom={isMobile ? htmlZoom : 1}
                     transcriptNoteMd={transcriptNoteMd}
                     onSaveTranscriptNote={audioNoteId && onSaveContent ? async (nextNoteMd) => {
                       const saved = audioNoteId === selectedEntryData?.id
