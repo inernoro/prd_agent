@@ -88,7 +88,10 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   }, [allowAnonymous, dailyLimit, enabled, onClose, onSaved, questions, siteId, welcome]);
 
   const body = (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 80 }}>
+    // z-index 必须高于 SitePreviewModal 的 z-[100]：本抽屉唯一的入口就在那个弹窗的顶栏里，
+    // 两者又是并列的 portal（都挂 body）。80 < 100 意味着抽屉永远被弹窗盖住点不到，
+    // 而提问默认关闭、这里是唯一的开启入口——等于整个功能没人打得开。
+    <div style={{ position: 'fixed', inset: 0, zIndex: 110 }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'var(--overlay-scrim, rgba(0,0,0,0.45))' }} />
       <aside
         style={{

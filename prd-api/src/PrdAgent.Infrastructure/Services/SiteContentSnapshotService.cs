@@ -26,6 +26,18 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     /// <summary>一个站点最多取几个正文文件，避免几百个碎文件把每个文件的固定开销放大。</summary>
     private const int MaxFilesPerSite = 12;
 
+    /// <summary>
+    /// 单个文件最多下载多少字节，超过直接不下。
+    ///
+    /// 这是**安全上限**不是体验上限：托管上传允许到 500MB，而提问端点匿名可达
+    /// （拿着公开分享 token 就能打）。没有这道闸的话，一个内含超大 .txt/.json 的站点
+    /// 会让每次未命中缓存的提问都把几百 MB 读进内存、再对整串跑正则，
+    /// 反复打就是把 API 拖垮。PerFileBudget 只截**抽完之后**的文本，拦不住下载与抽取本身。
+    ///
+    /// 判据用的是我们自己入库时记的 Size，不是对端自报的 Content-Length，可信。
+    /// </summary>
+    private const long MaxFileDownloadBytes = 2L * 1024 * 1024;
+
     /// <summary>缓存时长。内容变了 ContentVersion 会变、缓存键随之改变，所以这里可以放长。</summary>
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(30);
 
@@ -200,6 +212,12 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         var entry = textual.FirstOrDefault(f =>
             string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
 
+        // 超大文件在**下载之前**就剔掉。留到下载后再截断已经晚了——
+        // 内存和存储 IO 早就付掉了，而这条路径是匿名可达的。
+        var oversized = textual.Count(f => f.Size > MaxFileDownloadBytes);
+        textual = textual.Where(f => f.Size <= MaxFileDownloadBytes).ToList();
+        if (entry != null && entry.Size > MaxFileDownloadBytes) entry = null;
+
         var rest = textual.Where(f => f != entry).OrderBy(f => f.Size).ToList();
 
         var ordered = new List<HostedSiteFile>();
@@ -210,7 +228,8 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         // 丢掉的文件数必须报上去。漏报的后果很具体：prompt 会说「以下是这个页面的全部内容」，
         // 模型据此把没读到的东西当成"页面里没有"，斩钉截铁地回答不存在——
         // 而事实是我们压根没给它看。宁可告诉用户「只读了一部分」。
-        return (ordered, Math.Max(0, rest.Count - MaxFilesPerSite));
+        // 被数量上限挡掉的 + 被体积上限挡掉的，都算「没给模型看」，一起报上去置 Truncated
+        return (ordered, Math.Max(0, rest.Count - MaxFilesPerSite) + oversized);
     }
 
     private string? ExtractText(byte[] bytes, HostedSiteFile file)

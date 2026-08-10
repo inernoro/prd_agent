@@ -37,6 +37,20 @@ public class SiteContentSnapshotServiceTests
         }).ToList(),
     };
 
+    private static HostedSite SiteWithSized(params (string Path, string Key, long Size)[] files) => new()
+    {
+        Id = "site-1",
+        Title = "测试站点",
+        EntryFile = "index.html",
+        Files = files.Select(f => new HostedSiteFile
+        {
+            Path = f.Path,
+            CosKey = f.Key,
+            Size = f.Size,
+            MimeType = "text/html",
+        }).ToList(),
+    };
+
     // ── 文件数超上限必须标 Truncated ──────────────────────────
 
     [Fact]
@@ -139,16 +153,63 @@ public class SiteContentSnapshotServiceTests
         Assert.Equal(callsAfterFirst, storage.DownloadCalls);
     }
 
+    // ── 体积上限：下载之前就挡住 ──────────────────────────────
+
+    /// <summary>
+    /// 核心用例：超大文件在**下载之前**就被剔掉。
+    ///
+    /// 由 PR #1351 第十一轮 review 抓出，与已修的匿名正文代理是同一个形状：
+    /// 托管上传允许到 500MB，而提问端点匿名可达。没有这道闸，一次未命中缓存的提问
+    /// 就会把几百 MB 读进内存再对整串跑正则，反复打即可拖垮 API。
+    /// PerFileBudget 只截「抽完之后」的文本，拦不住下载与抽取本身。
+    /// </summary>
+    [Fact]
+    public async Task 超大文件不下载_且如实标截断()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["big"] = "巨大的正文";
+        storage.Objects["small"] = "正常正文";
+
+        var site = SiteWithSized(
+            ("index.html", "small", 100),
+            ("huge.txt", "big", 50L * 1024 * 1024));
+
+        var snap = await NewService(storage).GetAsync(site);
+
+        Assert.Contains("正常正文", snap.Text);
+        Assert.DoesNotContain("巨大的正文", snap.Text);
+        Assert.True(snap.Truncated, "被体积上限挡掉的文件必须反映到 Truncated 上");
+        // 关键：那个 key 根本不该被读过
+        Assert.False(storage.RequestedKeys.Contains("big"), "超大文件仍然发起了下载——闸门形同虚设");
+    }
+
+    [Fact]
+    public async Task 入口文件超大时也不下载()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = "入口正文";
+
+        var site = SiteWithSized(("index.html", "entry", 50L * 1024 * 1024));
+
+        var snap = await NewService(storage).GetAsync(site);
+
+        Assert.False(storage.RequestedKeys.Contains("entry"));
+        Assert.NotNull(snap.Unavailable);
+    }
+
     // ── 手写替身（本测试项目没有 mock 库） ────────────────────
 
     private sealed class FakeAssetStorage : IAssetStorage
     {
         public Dictionary<string, string> Objects { get; } = new();
         public int DownloadCalls { get; private set; }
+        /// <summary>实际发起过下载的 key。用来断言「超大文件根本没被读」。</summary>
+        public HashSet<string> RequestedKeys { get; } = new();
 
         public Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
         {
             DownloadCalls++;
+            RequestedKeys.Add(key);
             return Task.FromResult(Objects.TryGetValue(key, out var s)
                 ? System.Text.Encoding.UTF8.GetBytes(s)
                 : null);
