@@ -2796,36 +2796,51 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
   };
 
   const handleSave = async () => {
+    if (!isEdit && !file) return;
     setSaving(true);
 
-    if (isEdit) {
-      if (file) {
-        // Reupload
-        const res = await reuploadSite(item.id, file);
-        if (!res.success) { setSaving(false); return; }
+    try {
+      if (isEdit) {
+        if (file) {
+          // Reupload
+          const res = await reuploadSite(item.id, file);
+          if (!res.success) {
+            toast.error('重新上传失败', res.error?.message || '请稍后重试');
+            return;
+          }
+        }
+        // Update metadata
+        const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+        const res = await updateSite(item.id, {
+          title: title.trim() || undefined,
+          description: description.trim() || undefined,
+          tags,
+          folder: folder.trim() || undefined,
+        });
+        if (!res.success) {
+          toast.error('保存失败', res.error?.message || '请稍后重试');
+          return;
+        }
+        onSaved(res.data, /*isCreate*/ false);
+      } else {
+        const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+        const res = await uploadSite({
+          file: file!,
+          title: title.trim() || undefined,
+          description: description.trim() || undefined,
+          folder: folder.trim() || undefined,
+          tags: tags.length > 0 ? tags.join(',') : undefined,
+        });
+        if (!res.success) {
+          toast.error('上传失败', res.error?.message || '请稍后重试');
+          return;
+        }
+        onSaved(res.data, /*isCreate*/ true);
       }
-      // Update metadata
-      const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
-      const res = await updateSite(item.id, {
-        title: title.trim() || undefined,
-        description: description.trim() || undefined,
-        tags,
-        folder: folder.trim() || undefined,
-      });
+    } catch (error) {
+      toast.error(isEdit ? '保存失败' : '上传失败', error instanceof Error ? error.message : '网络异常，请稍后重试');
+    } finally {
       setSaving(false);
-      if (res.success) onSaved(res.data, /*isCreate*/ false);
-    } else {
-      if (!file) { setSaving(false); return; }
-      const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
-      const res = await uploadSite({
-        file,
-        title: title.trim() || undefined,
-        description: description.trim() || undefined,
-        folder: folder.trim() || undefined,
-        tags: tags.length > 0 ? tags.join(',') : undefined,
-      });
-      setSaving(false);
-      if (res.success) onSaved(res.data, /*isCreate*/ true);
     }
   };
 
