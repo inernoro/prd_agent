@@ -1115,6 +1115,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   /** 图层面板当前挂在哪个分层组上；null = 面板收起。 */
   const [layerPanelGroupId, setLayerPanelGroupId] = useState<string | null>(null);
   // 拆几层由用户定。纯 UI 偏好、发版后用旧值无害，按 no-localstorage 的例外清单可用 localStorage。
+  // 摆放方式是纯 UI 偏好（发版后用旧值无害），按 no-localstorage 规则可以进 localStorage。
+  const [layerLayoutMode, setLayerLayoutMode] = useState<'stacked' | 'spread'>(() => {
+    try { return localStorage.getItem('prdAdmin.visualAgent.layerLayout') === 'spread' ? 'spread' : 'stacked'; }
+    catch { return 'stacked'; }
+  });
   const [layerCountPref, setLayerCountPref] = useState<number>(() => {
     try { return clampLayerCount(localStorage.getItem('prdAdmin.visualAgent.layerCount')); }
     catch { return AI_LAYER_COUNT; }
@@ -2299,7 +2304,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // ——拼进去会被显示层的 60 字截断切掉，四层退化成同一串（2026-08-07 实测）。
     const layerPromptAt = () => String(input.prompt || '图片');
     const buildPlaceholders = (count: number): CanvasImageItem[] => {
-      const layout = planSemanticLayerFrame(sourceItem, count);
+      const layout = planSemanticLayerFrame(sourceItem, count, layerLayoutMode);
       return Array.from({ length: count }, (_, index) => ({
         key: layerKeyAt(index),
         createdAt: createdAt + index,
@@ -2474,16 +2479,23 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }));
       })();
 
+      // 各部件已经叠回原位，原图退居参考：不隐藏的话，关掉某一层看到的是原图而不是透明，
+      // 用户会以为「关了没反应」。原图仍在画布上（可随时打开），也仍会写进 PSD 的隐藏参考层。
+      setCanvas((previous) => previous.map((candidate) => candidate.key === sourceItem.key
+        ? { ...candidate, layerHidden: true }
+        : candidate));
+
       setSelectionWithoutChip([layerKeyAt(0)]);
-      // 拆完把整个 Frame 收进视野（避开右侧面板），不让用户自己去找刚生成的东西。
-      const framed = planSemanticLayerFrame(sourceItem, remoteLayers.length).frame;
+      // 拆完把原图那块收进视野（避开右侧面板）。默认原位叠放，所以要看的就是原来那块。
+      const framed = planSemanticLayerFrame(sourceItem, remoteLayers.length, layerLayoutMode).frame;
       animateCameraToFitRectRef.current?.(
         { x: framed.x - 40, y: framed.y - 40, w: framed.w + 80, h: framed.h + 80 },
         { maxZoom: 1, rightInset: LAYER_PANEL_RESERVED_WIDTH },
       );
       toast.success(
-        'AI 分层已加入画布',
-        `${layerSources.length} 个透明图层已排在原图右侧。可逐个选择、编辑和复用，也可从 Frame 直接导出 PSD。`,
+        'AI 分层完成',
+        `${layerSources.length} 个部件已叠回原位，画面看起来没变，但每一块现在都能单独选中、拖动。`
+        + '想逐块检视可在图层面板切「平铺展开」。',
         7000,
       );
       return layerSources;
@@ -2501,7 +2513,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       layeringRunningRef.current = false;
       setLayeringProgress(null);
     }
-  }, [layerCountPref, setSelectionWithoutChip, workspaceId]);
+  }, [layerCountPref, layerLayoutMode, setSelectionWithoutChip, workspaceId]);
 
   const exportAiLayeredPsd = useCallback(async (input: {
     key: string;
@@ -2606,6 +2618,71 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     })),
     [layerPanelLayers],
   );
+
+  /** 切换摆放方式：就地把这一组图层重新摆一遍，不重新生成。 */
+  const applyLayerLayout = useCallback((groupId: string, mode: 'stacked' | 'spread') => {
+    setLayerLayoutMode(mode);
+    try { localStorage.setItem('prdAdmin.visualAgent.layerLayout', mode); } catch { /* 偏好写不进去不影响功能 */ }
+    const items = canvasRef.current;
+    const source = items.find((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'source');
+    if (!source) return;
+    const layers = selectExportableLayers(items, groupId, { includeEmpty: true });
+    if (layers.length === 0) return;
+    const { placements } = planSemanticLayerFrame(source, layers.length, mode);
+    const placementByKey = new Map(layers.map((layer, index) => [layer.key, placements[index]!]));
+    setCanvas((previous) => previous.map((candidate) => {
+      const placement = placementByKey.get(candidate.key);
+      return placement ? { ...candidate, ...placement, userResized: true } : candidate;
+    }));
+  }, []);
+
+  /**
+   * 画布绘制顺序。
+   *
+   * 原位叠放后，谁压着谁**看得见**了，所以必须按图层面板的叠放次序（layerZ）绘制；
+   * 摊开摆放时各块不重叠，这一步没有可见效果，但保持一致省得两套心智。
+   * 只在同一分层组内部重排，其它元素的相对位置一律不动。
+   */
+  const canvasInPaintOrder = useMemo(() => {
+    const groups = new Map<string, CanvasImageItem[]>();
+    for (const item of canvas) {
+      if (item.layerRole !== 'layer' || !item.layerGroupId) continue;
+      const bucket = groups.get(item.layerGroupId) ?? [];
+      bucket.push(item);
+      groups.set(item.layerGroupId, bucket);
+    }
+    if (groups.size === 0) return canvas;
+    const zOf = (item: CanvasImageItem) => (typeof item.layerZ === 'number' && Number.isFinite(item.layerZ)
+      ? item.layerZ
+      : (typeof item.layerIndex === 'number' ? item.layerIndex : 0));
+    for (const bucket of groups.values()) bucket.sort((a, b) => zOf(a) - zOf(b));
+    const cursor = new Map<string, number>();
+    return canvas.map((item) => {
+      if (item.layerRole !== 'layer' || !item.layerGroupId) return item;
+      const bucket = groups.get(item.layerGroupId)!;
+      const at = cursor.get(item.layerGroupId) ?? 0;
+      cursor.set(item.layerGroupId, at + 1);
+      return bucket[at] ?? item;
+    });
+  }, [canvas]);
+
+  /**
+   * 叠放时只让最底下那块铺透明棋盘格。
+   * 棋盘底纹带的是不透明底色，每块都铺的话上面那张会把下面全盖住——
+   * 摊开时各块不重叠所以看不出来，一叠起来整幅就只剩最上层 + 一片棋盘。
+   */
+  const bottomStackedLayerKeys = useMemo(() => {
+    const bottom = new Map<string, { key: string; z: number }>();
+    for (const item of canvas) {
+      if (item.layerRole !== 'layer' || !item.layerGroupId) continue;
+      const z = typeof item.layerZ === 'number' && Number.isFinite(item.layerZ)
+        ? item.layerZ
+        : (typeof item.layerIndex === 'number' ? item.layerIndex : 0);
+      const current = bottom.get(item.layerGroupId);
+      if (!current || z < current.z) bottom.set(item.layerGroupId, { key: item.key, z });
+    }
+    return new Set([...bottom.values()].map((entry) => entry.key));
+  }, [canvas]);
 
   const patchLayer = useCallback((key: string, patch: Partial<CanvasImageItem>) => {
     setCanvas((previous) => previous.map((candidate) => candidate.key === key ? { ...candidate, ...patch } : candidate));
@@ -6378,7 +6455,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="absolute inset-0"
               style={{ transformOrigin: '0 0' }}
             >
-              {canvas.map((it) => {
+              {canvasInPaintOrder.map((it) => {
                 const kind = it.kind ?? 'image';
                 // 错误态：仍需要渲染占位框（否则用户不知道尺寸，也无法直接选中/删除）
                 if (kind === 'image' && !it.src && it.status !== 'running' && it.status !== 'error') return null;
@@ -6778,7 +6855,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             className={`w-full h-full relative ${it.syncStatus === 'pending' ? 'prd-upload-wave' : ''}`}
                             // 分层产物是 RGBA：直接摆在深色画布上看着就是一张黑图，
                             // 铺棋盘格才看得出「这一层是透明的」。
-                            style={it.layerRole === 'layer' ? { ...CANVAS_CHECKERBOARD, borderRadius: 14 } : undefined}
+                            style={it.layerRole === 'layer'
+                              && (layerLayoutMode === 'spread' || bottomStackedLayerKeys.has(it.key))
+                              ? { ...CANVAS_CHECKERBOARD, borderRadius: 14 }
+                              : undefined}
                           >
                             {it.syncStatus && it.syncStatus !== 'synced' ? (
                               <div
@@ -7401,6 +7481,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 busyText={layerExportBusy || undefined}
                 layerCount={layerCountPref}
                 requestedLayerCount={layerPanelSource?.layerRequestedCount}
+                layoutMode={layerLayoutMode}
+                onLayoutModeChange={(mode) => { if (layerPanelGroupId) applyLayerLayout(layerPanelGroupId, mode); }}
                 onLayerCountChange={updateLayerCountPref}
                 onResplit={() => {
                   const sourceItem = layerPanelSource;

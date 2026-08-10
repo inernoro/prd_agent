@@ -2,8 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
 
 describe('semantic layer frame', () => {
-  it('places layer cards near the source while preserving its aspect ratio', () => {
-    const result = planSemanticLayerFrame({ x: 100, y: 200, w: 1000, h: 500 }, 4);
+  it('【默认】拆完各部件叠回原位，画面看起来和原图一样', () => {
+    // 用户心智（2026-08-10）：「分层之后不应该展开，而是还在原来的位置」——
+    // 多数时候只是想把 logo 挪一点，摊开成一排等于让用户自己再拼一次。
+    const source = { x: 100, y: 200, w: 1000, h: 500 };
+    const result = planSemanticLayerFrame(source, 4);
+
+    expect(result.placements).toHaveLength(4);
+    for (const placement of result.placements) {
+      expect(placement).toEqual({ x: 100, y: 200, w: 1000, h: 500 });
+    }
+    // Frame 框住的就是原图那块，不额外占地方
+    expect(result.frame).toEqual({ x: 100, y: 200, w: 1000, h: 500 });
+  });
+
+  it('spread 视图才铺开成一排，且每块仍按原图尺寸', () => {
+    const result = planSemanticLayerFrame({ x: 100, y: 200, w: 1000, h: 500 }, 4, 'spread');
 
     expect(result.frame.x).toBeGreaterThan(1100);
     expect(result.placements).toHaveLength(4);

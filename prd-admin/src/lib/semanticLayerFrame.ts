@@ -89,14 +89,23 @@ export function computeHorizontalClampShift({
 /**
  * 把透明 RGBA 图层排在原图右侧的 Frame 里。
  *
- * 图层一律**按原图尺寸**摆，横向一排。缩成小卡片墙（早先的 2×2 + 最大宽 360）看着整齐，
- * 但图层就没法用了——它和原图不是同一个坐标系，既对不上位、也看不清内容；
- * 用户要的是「和原图一样大、摆在旁边、能直接接着改」（2026-08-07 反馈）。
- * 画布本来就是无限的，宽度交给缩放解决，不该靠压缩产物来迁就取景。
+ * 两种摆法，默认「原位」：
+ *
+ * - **stacked（默认）**：所有部件按原图坐标叠回原位，画面看起来和原图一模一样，
+ *   区别只是现在每一块都能单独选中、拖动。用户多数时候只是想「把 logo 挪一点」
+ *   或者「人物靠左一点点」——摊开成一排的话，他还得自己拼回去，那是倒忙
+ *   （2026-08-10 反馈：「分层之后不应该展开，而是还在原来的位置」）。
+ * - **spread**：横向一排铺开，用来逐块检视。作为可切换的视图，不是默认。
+ *
+ * 一排摆法里图层一律按原图尺寸，不缩成小卡片墙——那样和原图不是同一个坐标系，
+ * 既对不上位也看不清内容（2026-08-07 反馈）。
  */
+export type SemanticLayerLayoutMode = 'stacked' | 'spread';
+
 export function planSemanticLayerFrame(
   source: Pick<SemanticLayerCanvasItem, 'x' | 'y' | 'w' | 'h'>,
   layerCount: number,
+  mode: SemanticLayerLayoutMode = 'stacked',
 ): { frame: Omit<SemanticLayerFrame, 'id' | 'sourceKey' | 'name' | 'layerKeys'>; placements: SemanticLayerPlacement[] } {
   const count = Math.max(1, Math.min(10, Math.round(layerCount)));
   const sourceX = Number.isFinite(source.x) ? Number(source.x) : 0;
@@ -105,6 +114,21 @@ export function planSemanticLayerFrame(
   const sourceH = positive(source.h, 1024);
   const cardW = Math.round(sourceW);
   const cardH = Math.round(sourceH);
+
+  if (mode === 'stacked') {
+    // 每一块都落在原图那块矩形上：叠起来就是原图。
+    // Frame 框住的也正是原图那块，头部标签靠它给出「这是一组分层」的提示。
+    return {
+      frame: { x: Math.round(sourceX), y: Math.round(sourceY), w: cardW, h: cardH },
+      placements: Array.from({ length: count }, () => ({
+        x: Math.round(sourceX),
+        y: Math.round(sourceY),
+        w: cardW,
+        h: cardH,
+      })),
+    };
+  }
+
   const frameX = Math.round(sourceX + sourceW + SOURCE_GAP);
   const frameY = Math.round(sourceY);
   const frameW = FRAME_PADDING * 2 + count * cardW + (count - 1) * CARD_GAP;

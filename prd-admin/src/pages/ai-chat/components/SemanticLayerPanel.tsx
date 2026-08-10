@@ -51,6 +51,12 @@ export type SemanticLayerPanelProps = {
    * 却没人解释（2026-08-10 实测截图）。
    */
   requestedLayerCount?: number;
+  /**
+   * 摆放方式。默认 stacked：各部件叠回原位，画面看起来和原图一样，只是每块能单独挪。
+   * spread 只是「想逐块看看」时的临时视图，不该是默认——摊开等于让用户自己再拼一次。
+   */
+  layoutMode?: 'stacked' | 'spread';
+  onLayoutModeChange?: (mode: 'stacked' | 'spread') => void;
   onLayerCountChange: (value: number) => void;
   onResplit: () => void;
   selectedKey?: string;
@@ -98,6 +104,8 @@ export function SemanticLayerPanel({
   busyText,
   layerCount,
   requestedLayerCount,
+  layoutMode = 'stacked',
+  onLayoutModeChange,
   onLayerCountChange,
   onResplit,
   selectedKey,
@@ -380,6 +388,29 @@ export function SemanticLayerPanel({
               </button>
             </div>
           </>
+        )}
+        {/* 摆放方式：默认原位叠放，想逐块检视再切平铺 */}
+        {onLayoutModeChange && (
+          <div className="h-7 flex items-center gap-1.5 text-[11px] pb-1" style={{ color: 'var(--text-secondary)' }}>
+            <span className="shrink-0">摆放</span>
+            {(['stacked', 'spread'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className="h-6 px-2 rounded-[6px] text-[11px] font-semibold transition-colors hover-bg-soft disabled:opacity-40"
+                style={{
+                  color: layoutMode === mode ? 'var(--text-primary)' : 'var(--text-muted)',
+                  background: layoutMode === mode ? 'rgba(var(--accent-primary-rgb), 0.18)' : 'transparent',
+                  border: `1px solid ${layoutMode === mode ? 'rgba(var(--accent-primary-rgb), 0.45)' : 'var(--border-subtle)'}`,
+                }}
+                disabled={!!busy}
+                title={mode === 'stacked' ? '各部件叠在原位，画面与原图一致' : '铺开成一排，逐块检视'}
+                onClick={() => onLayoutModeChange(mode)}
+              >
+                {mode === 'stacked' ? '原位叠放' : '平铺展开'}
+              </button>
+            ))}
+          </div>
         )}
         {/* 层数是期望不是保证：请求 N 层但模型只给 M 层时必须说清楚，否则页面上会出现
             三个互相矛盾的数字而无人解释。相等时不占地方。

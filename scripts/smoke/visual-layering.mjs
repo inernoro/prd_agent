@@ -323,14 +323,20 @@ async function main() {
     await page.waitForTimeout(14000);
     await esc(page);
     const reloadShot = await shot(page, 'after-reload');
-    const sizes = await page.evaluate(() => [...document.querySelectorAll('img')]
+    const rects = await page.evaluate(() => [...document.querySelectorAll('img')]
       .map((i) => i.getBoundingClientRect())
       .filter((r) => r.width > 60 && r.height > 60)
-      .map((r) => `${Math.round(r.width)}x${Math.round(r.height)}`));
-    const uniqueSizes = [...new Set(sizes)];
+      .map((r) => ({ w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.x), y: Math.round(r.y) })));
+    const uniqueSizes = [...new Set(rects.map((r) => `${r.w}x${r.h}`))];
     check('刷新后同一 Frame 内图块等大（不塌成碎块）',
-      sizes.length >= 2 && uniqueSizes.length === 1,
+      rects.length >= 2 && uniqueSizes.length === 1,
       `尺寸集合 ${JSON.stringify(uniqueSizes)}（见 ${reloadShot}）`);
+    // 用户心智：拆完还是原来那张图，只是每块能单独挪。所以各部件必须**落在同一个位置**，
+    // 而不是摊成一排——摊开等于让用户自己再拼一次。
+    const uniquePositions = [...new Set(rects.map((r) => `${r.x},${r.y}`))];
+    check('各部件叠在原位（不是摊开成一排）',
+      rects.length >= 2 && uniquePositions.length === 1,
+      `位置集合 ${JSON.stringify(uniquePositions)}`);
 
     // ---- 导出 PSD：层名互不相同，文件非空
     const panelBtn = page.locator('button:has-text("图层面板")').first();
@@ -348,20 +354,30 @@ async function main() {
         await (await download).saveAs(file);
         const bytes = fs.statSync(file).size;
         const buf = fs.readFileSync(file);
-        // PSD 的 Unicode 层名是 UTF-16BE；Node 只认 utf16le，所以自己翻字节序。
-        const swap16 = (b) => { const o = Buffer.from(b); o.swap16(); return o; };
-        const names = new Set();
-        for (const [needle, decode] of [
-          [swap16(Buffer.from('图层', 'utf16le')), (b) => swap16(Buffer.from(b)).toString('utf16le')],
-          [Buffer.from('图层', 'utf16le'), (b) => Buffer.from(b).toString('utf16le')],
-        ]) {
-          let at = buf.indexOf(needle);
-          while (at >= 0) {
-            const text = decode(buf.subarray(at, at + 24)).split('\u0000')[0].trim();
-            if (/^图层\s*\d/.test(text)) names.add(text.split(' ·')[0].trim());
-            at = buf.indexOf(needle, at + 2);
-          }
-        }
+        // 不靠在字节流里 grep 层名——那只能证明这几个字出现过。
+        // 真正的校验是把 PSD **反读**回来：层数对不对、每层有没有自己的包围盒、
+        // 画布尺寸是不是原图。用户要的「PSD 格式得到校验」就是这个意思。
+        let parsed = null;
+        let parseError = '';
+        try {
+          const { readPsd } = await import(path.join(REPO, 'prd-admin/node_modules/ag-psd/dist/index.js'));
+          parsed = readPsd(buf, { skipLayerImageData: true, skipCompositeImageData: true, skipThumbnail: true });
+        } catch (e) { parseError = String(e).slice(0, 120); }
+        const group = parsed?.children?.find((c) => Array.isArray(c.children) && c.children.length);
+        const psdLayers = group?.children ?? [];
+        const names = new Set(psdLayers.map((l) => String(l.name ?? '')));
+        const sized = psdLayers.filter((l) => (l.right ?? 0) - (l.left ?? 0) > 0 && (l.bottom ?? 0) - (l.top ?? 0) > 0);
+        const fullCanvas = psdLayers.filter((l) => (l.right ?? 0) - (l.left ?? 0) >= (parsed?.width ?? 0)
+          && (l.bottom ?? 0) - (l.top ?? 0) >= (parsed?.height ?? 0));
+        check('导出的 PSD 能被反读回来（不是只有个文件头）', !!parsed, parseError);
+        check('PSD 是真分层：可编辑图层组里有多层',
+          psdLayers.length >= 2, `层数 ${psdLayers.length}`);
+        check('PSD 画布尺寸 = 原图尺寸（各块拼回去就是原图）',
+          !!parsed && parsed.width > 0 && parsed.height > 0,
+          parsed ? `${parsed.width}x${parsed.height}` : '');
+        check('每层都有自己的包围盒（不是每层都铺满整张画布）',
+          sized.length >= 2 && fullCanvas.length < psdLayers.length,
+          `有界 ${sized.length}/${psdLayers.length}，满幅 ${fullCanvas.length}`);
         check('导出的 PSD 非空且是真 PSD', bytes > 10000 && buf.subarray(0, 4).toString() === '8BPS', `${bytes} bytes`);
         check('PSD 里的层名互不相同', names.size >= 2, [...names].slice(0, 6).join(' / '));
       } catch (error) {

@@ -111,4 +111,49 @@ describe('导出读图地址（治「PSD 导出失败 Failed to fetch」）', ()
     expect(resolveReadableImageUrl(foreign, 'not-a-sha')).toBe(foreign);
     expect(resolveReadableImageUrl(foreign, '')).toBe(foreign);
   });
+
+  it('【关键】每层只写「有内容的最小矩形」，不是满幅', () => {
+    // 用户心智：拆完是一个个独立部件，在 Photoshop 里想把 logo 挪一点就直接拖那一块。
+    // 满幅写法会让每层的变换框都套着整张画布，还得自己先找边界。
+    const canvas = { width: 20, height: 10 };
+    const withRect = (r: { x: number; y: number; w: number; h: number }) => {
+      const data = new Uint8ClampedArray(canvas.width * canvas.height * 4);
+      for (let y = r.y; y < r.y + r.h; y += 1) {
+        for (let x = r.x; x < r.x + r.w; x += 1) {
+          const o = (y * canvas.width + x) * 4;
+          data[o] = 180; data[o + 1] = 90; data[o + 2] = 40; data[o + 3] = 255;
+        }
+      }
+      return { ...canvas, data };
+    };
+
+    const document = buildLayeredPsdDocument({
+      source: { ...canvas, data: new Uint8ClampedArray(canvas.width * canvas.height * 4).fill(255) },
+      layers: [
+        { name: '图层 01', image: withRect({ x: 2, y: 1, w: 5, h: 3 }) },
+        { name: '图层 02', image: withRect({ x: 12, y: 6, w: 4, h: 2 }) },
+      ],
+    });
+
+    const group = document.children!.find((c) => c.name === 'AI 可编辑图层')!;
+    const [first, second] = group.children!;
+    expect({ left: first.left, top: first.top, right: first.right, bottom: first.bottom })
+      .toEqual({ left: 2, top: 1, right: 7, bottom: 4 });
+    expect({ left: second.left, top: second.top, right: second.right, bottom: second.bottom })
+      .toEqual({ left: 12, top: 6, right: 16, bottom: 8 });
+    // 画布尺寸不变——各块拼回去仍是原来那张图
+    expect(document.width).toBe(canvas.width);
+    expect(document.height).toBe(canvas.height);
+  });
+
+  it('整层全透明时给零面积占位，不占满画布', () => {
+    const canvas = { width: 8, height: 8 };
+    const document = buildLayeredPsdDocument({
+      source: { ...canvas, data: new Uint8ClampedArray(8 * 8 * 4).fill(255) },
+      layers: [{ name: '空层', image: { ...canvas, data: new Uint8ClampedArray(8 * 8 * 4) } }],
+    });
+    const layer = document.children!.find((c) => c.name === 'AI 可编辑图层')!.children![0]!;
+    expect(layer.right! - layer.left!).toBe(0);
+    expect(layer.bottom! - layer.top!).toBe(0);
+  });
 });

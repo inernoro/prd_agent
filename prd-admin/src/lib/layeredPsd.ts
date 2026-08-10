@@ -3,6 +3,7 @@ import { createWorkspaceImageGenRun, getImageGenRun, streamImageGenRunWithRetry 
 import type { ImageGenGenerateResponse, ImageGenImage, ImageGenRunStreamPayload } from '@/services/contracts/imageGen';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
+import { computeAlphaBounds, cropRgba } from './layerTrim';
 
 /** ApiResponse 是三字段闭合形状（success/data/error），这两个小工具避免每处都手写 null。 */
 function failed<T>(code: string, message: string): ApiResponse<T> {
@@ -249,12 +250,33 @@ export function buildLayeredPsdDocument(input: {
   source: PixelData;
   layers: PsdLayerInput[];
 }): Psd {
-  const semanticLayers: Layer[] = input.layers.map((layer) => ({
-    name: layer.name,
-    imageData: clonePixelData(layer.image),
-    opacity: normalizedOpacity(layer.opacity),
-    hidden: layer.hidden === true,
-  }));
+  // 每层只写「有内容的最小矩形」，而不是满幅。
+  // 满幅写法在 Photoshop 里的后果是：每一层的变换框都套着整张画布，想把 logo 挪一点
+  // 得自己先找边界；文件也大好几倍。裁完写 top/left/bottom/right 才是真正的分层文档。
+  const semanticLayers: Layer[] = input.layers.map((layer) => {
+    const image = layer.image;
+    const bounds = computeAlphaBounds(image.data, image.width, image.height);
+    const cropped = bounds ? cropRgba(image.data, image.width, image.height, bounds) : null;
+    if (!bounds || !cropped) {
+      // 整层全透明：给一个零面积的空图层占位，保住序号与可见性，但不占画布。
+      return {
+        name: layer.name,
+        top: 0, left: 0, bottom: 0, right: 0,
+        opacity: normalizedOpacity(layer.opacity),
+        hidden: layer.hidden === true,
+      };
+    }
+    return {
+      name: layer.name,
+      top: bounds.top,
+      left: bounds.left,
+      bottom: bounds.bottom,
+      right: bounds.right,
+      imageData: { width: cropped.width, height: cropped.height, data: cropped.data },
+      opacity: normalizedOpacity(layer.opacity),
+      hidden: layer.hidden === true,
+    };
+  });
   const composite = compositePixelLayers(
     input.layers
       .filter((layer) => layer.hidden !== true)
