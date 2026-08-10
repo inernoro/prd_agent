@@ -100,6 +100,8 @@ import type {
   OrganizationData,
   CreatedTenant,
   CreatedTeam,
+  TeamDeleteBlockers,
+  TenantDeleteBlockers,
   TeamUpdateResult,
   CreateMemberRequest,
   CreatedMember,
@@ -804,6 +806,18 @@ export function deleteAppCaller(id: string): Promise<ApiResponse<unknown>> {
 /** 删除交换所。仍被池成员引用时返回 409 + EXCHANGE_IN_USE。 */
 export function deleteExchange(id: string): Promise<ApiResponse<ExchangeDeleteBlockers>> {
   return apiRequest<ExchangeDeleteBlockers>(`/exchanges/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除团队。仍被成员/密钥/appCaller 引用时返回 409 + TEAM_IN_USE。 */
+export function deleteTeam(id: string): Promise<ApiResponse<TeamDeleteBlockers>> {
+  return apiRequest<TeamDeleteBlockers>(`/teams/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除成员关系。不能删自己，不能删掉最后一个活跃 owner。 */
+export function deleteMember(id: string): Promise<ApiResponse<unknown>> {
+  return apiRequest<unknown>(`/members/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除当前租户。刻意只删空租户，剩余内容会原样列在返回体里。 */
+export function deleteTenant(id: string): Promise<ApiResponse<TenantDeleteBlockers>> {
+  return apiRequest<TenantDeleteBlockers>(`/tenants/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 /**
  * 改团队名。后端一直有这个端点，前端此前没有入口——团队能建不能改名。

@@ -1115,6 +1115,70 @@ app.MapPost("/gw/tenants", async (HttpContext http, [FromBody] CreateTenantReque
     return Json(ApiEnvelope<object>.Ok(new { tenant.Id, tenant.Name, tenant.Slug, defaultTeamId = team.Id }), jsonOptions, 201);
 }).RequireAuthorization("TenantOwner");
 
+// 删除租户。这是控制台里破坏力最大的一个动作——租户是所有网关配置的根，
+// 所以这里刻意做成「只删空租户」：任何一类数据还在就拒绝，并把还剩什么原样报回去。
+// 不做级联删除是有意的：级联一旦写错，错误是不可逆的，而「先自己清干净再删」是可逆的。
+//
+// 三条额外归属校验：
+//   1) 只能删当前会话所在的租户（access 是按租户签发的，跨租户删除等于越权）
+//   2) 内置租户不能删——它承载平台默认模型池的来源
+//   3) 除自己以外还有别的成员就不能删——那是别人的工作区，不是你的
+app.MapDelete("/gw/tenants/{id}", async (HttpContext http, string id) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    if (!string.Equals(id, access.TenantId, StringComparison.Ordinal))
+        return Json(ApiEnvelope<TenantDeleteBlockers>.Fail("TENANT_SCOPE_MISMATCH", "只能删除当前登录的租户，请先切换过去再删"), jsonOptions, 403);
+    if (string.Equals(id, internalTenantId, StringComparison.Ordinal))
+        return Json(ApiEnvelope<TenantDeleteBlockers>.Fail("INTERNAL_TENANT", "内置租户不能删除，它承载平台默认模型池的来源"), jsonOptions, 409);
+
+    var tenant = await tenants.Find(x => x.Id == id).FirstOrDefaultAsync();
+    if (tenant is null)
+        return Json(ApiEnvelope<TenantDeleteBlockers>.Fail("TENANT_NOT_FOUND", "租户不存在"), jsonOptions, 404);
+
+    var tenantFilter = Builders<BsonDocument>.Filter.Eq("TenantId", id);
+    var blockers = new TenantDeleteBlockers
+    {
+        OtherMembers = (int)await memberships.CountDocumentsAsync(x => x.TenantId == id && x.UserId != access.UserId),
+        Platforms = (int)await gwPlatforms.CountDocumentsAsync(tenantFilter),
+        Models = (int)await gwModels.CountDocumentsAsync(tenantFilter),
+        Pools = (int)await gwModelPools.CountDocumentsAsync(tenantFilter),
+        Exchanges = (int)await gwModelExchanges.CountDocumentsAsync(tenantFilter),
+        LogicalModels = (int)await gwLogicalModels.CountDocumentsAsync(tenantFilter),
+        ServiceKeys = (int)await serviceKeys.CountDocumentsAsync(tenantFilter),
+        AppCallers = (int)await gwAppCallers.CountDocumentsAsync(tenantFilter),
+    };
+    if (blockers.TotalCount > 0)
+    {
+        var parts = new List<string>();
+        if (blockers.OtherMembers > 0) parts.Add($"还有 {blockers.OtherMembers} 位其他成员");
+        if (blockers.Platforms > 0) parts.Add($"上游 {blockers.Platforms} 条");
+        if (blockers.Models > 0) parts.Add($"模型 {blockers.Models} 个");
+        if (blockers.Pools > 0) parts.Add($"模型池 {blockers.Pools} 个");
+        if (blockers.Exchanges > 0) parts.Add($"交换所 {blockers.Exchanges} 个");
+        if (blockers.LogicalModels > 0) parts.Add($"逻辑模型 {blockers.LogicalModels} 个");
+        if (blockers.ServiceKeys > 0) parts.Add($"接入密钥 {blockers.ServiceKeys} 把");
+        if (blockers.AppCallers > 0) parts.Add($"appCaller {blockers.AppCallers} 个");
+        return Json(
+            ApiEnvelope<TenantDeleteBlockers>.Fail("TENANT_NOT_EMPTY", $"租户里还有内容，请先清空再删：{string.Join("、", parts)}", blockers),
+            jsonOptions, 409);
+    }
+
+    // 到这里租户已经是空的：只剩自己的成员关系与若干没人引用的团队。
+    var teamsRemoved = (await teams.DeleteManyAsync(x => x.TenantId == id)).DeletedCount;
+    await memberships.DeleteManyAsync(x => x.TenantId == id);
+    await users.UpdateManyAsync(
+        Builders<LlmGwUser>.Filter.AnyEq(x => x.TenantIds, id),
+        Builders<LlmGwUser>.Update.Pull(x => x.TenantIds, id).Set(x => x.UpdatedAt, DateTime.UtcNow));
+    await tenants.DeleteOneAsync(x => x.Id == id);
+    await WriteOperationAuditAsync(operationAudits, http, "tenant.delete", "llmgw_tenant", id, tenant.Name, true, null,
+        new BsonDocument
+        {
+            { "slug", ToBsonAuditValue(tenant.Slug) },
+            { "teamsRemoved", teamsRemoved },
+        });
+    return Json(ApiEnvelope<TenantDeleteBlockers>.Ok(new TenantDeleteBlockers()), jsonOptions);
+}).RequireAuthorization("TenantOwner");
+
 app.MapGet("/gw/organization", async (HttpContext http) =>
 {
     var access = TenantAccess.GetRequired(http);
@@ -1357,6 +1421,51 @@ app.MapPut("/gw/teams/{id}", async (HttpContext http, string id, [FromBody] Upda
         revokedServiceKeys,
         disabledAppCallers,
     }), jsonOptions);
+}).RequireAuthorization("OrganizationWrite");
+
+// 删除团队。团队是成员、接入密钥、appCaller 的共同作用范围：删掉一个还在被引用的团队，
+// 引用方并不会报错，只会被权限判定当成「没有范围」静默处理——比报错难查得多。
+// 所以三类引用先查清再删，且把「谁还在引用」原样报回去，运维才知道下一步解哪个。
+app.MapDelete("/gw/teams/{id}", async (HttpContext http, string id) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var team = await teams.Find(x => x.Id == id && x.TenantId == access.TenantId).FirstOrDefaultAsync();
+    if (team is null)
+        return Json(ApiEnvelope<TeamDeleteBlockers>.Fail("TEAM_NOT_FOUND", "团队不存在"), jsonOptions, 404);
+
+    var memberUserIds = (await memberships
+            .Find(x => x.TenantId == access.TenantId && x.TeamIds.Contains(id))
+            .ToListAsync())
+        .Select(x => x.UserId)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+    var blockers = new TeamDeleteBlockers
+    {
+        Members = memberUserIds,
+        ServiceKeys = (int)await serviceKeys.CountDocumentsAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("TeamId", id))),
+        AppCallers = (int)await gwAppCallers.CountDocumentsAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("TeamId", id))),
+    };
+    if (blockers.TotalCount > 0)
+    {
+        var parts = new List<string>();
+        if (blockers.Members.Count > 0)
+            parts.Add($"还有 {blockers.Members.Count} 位成员在这个团队里（{string.Join("、", blockers.Members.Take(5))}{(blockers.Members.Count > 5 ? " 等" : "")}）");
+        if (blockers.ServiceKeys > 0) parts.Add($"还有 {blockers.ServiceKeys} 把接入密钥挂在它名下");
+        if (blockers.AppCallers > 0) parts.Add($"还有 {blockers.AppCallers} 个 appCaller 归属它");
+        return Json(ApiEnvelope<TeamDeleteBlockers>.Fail("TEAM_IN_USE", string.Join("；", parts), blockers), jsonOptions, 409);
+    }
+
+    await teams.DeleteOneAsync(x => x.Id == id && x.TenantId == access.TenantId);
+    await WriteOperationAuditAsync(operationAudits, http, "team.delete", "llmgw_team", id, team.Name, true, null,
+        new BsonDocument
+        {
+            { "name", ToBsonAuditValue(team.Name) },
+            { "status", ToBsonAuditValue(team.Status) },
+        });
+    return Json(ApiEnvelope<TeamDeleteBlockers>.Ok(new TeamDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("OrganizationWrite");
 
 app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberRequest body) =>
@@ -1612,6 +1721,82 @@ app.MapPut("/gw/members/{id}", async (HttpContext http, string id, [FromBody] Up
     if (recoveryOperation is not null)
         await GatewayRecoveryOperations.CompleteAsync(recoveryOperations, recoveryOperation.Id, "completed", $"owner-fence-generation:{ownerFenceGeneration}");
     return Json(ApiEnvelope<object>.Ok(new { membership.Id, membership.Role, membership.Status, membership.TeamIds, membership.Version, ownerFenceGeneration }), jsonOptions);
+}).RequireAuthorization("OrganizationWrite");
+
+// 删除成员关系。三条归属校验缺一不可，且顺序要紧：
+//   1) 不能删自己——删完这个会话立刻失权，连补救都做不了
+//   2) 只有 owner 能删 owner
+//   3) 不能删掉最后一个活跃 owner——租户会永久失去唯一能授权的人
+// 第 3 条走 TenantOwnerAuthority.TryRemoveAsync：它是原子的「摘牌 + 拒绝最后一个」，
+// 比先读再判安全。摘牌成功但随后版本冲突删不掉时必须把牌补回去，否则 owner 名单少一位。
+app.MapDelete("/gw/members/{id}", async (HttpContext http, string id) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var membership = await memberships.Find(x => x.Id == id && x.TenantId == access.TenantId).FirstOrDefaultAsync();
+    if (membership is null)
+        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_NOT_FOUND", "成员关系不存在"), jsonOptions, 404);
+    if (membership.UserId == access.UserId)
+        return Json(ApiEnvelope<object>.Fail("SELF_MEMBERSHIP_CHANGE_FORBIDDEN", "不能删除自己的成员关系，请由另一位管理员操作"), jsonOptions, 409);
+    if (membership.Role == LlmGwTenantRoles.Owner && access.Role != LlmGwTenantRoles.Owner)
+        return Json(ApiEnvelope<object>.Fail("OWNER_REQUIRED", "只有 owner 可以删除 owner 成员关系"), jsonOptions, 403);
+
+    var previousVersion = membership.Version;
+    var requiredAuditId = await BeginRequiredOperationAuditAsync(
+        operationAudits,
+        http,
+        "membership.delete",
+        "llmgw_membership",
+        membership.Id,
+        membership.UserId,
+        new BsonDocument
+        {
+            { "beforeRole", membership.Role },
+            { "beforeStatus", membership.Status },
+            { "beforeTeamIds", new BsonArray(membership.TeamIds) },
+            { "beforeVersion", previousVersion },
+        });
+
+    var removesOwner = membership.Role == LlmGwTenantRoles.Owner && membership.Status == "active";
+    OwnerRemovalDecision? ownerRemoval = null;
+    if (removesOwner)
+    {
+        ownerRemoval = await TenantOwnerAuthority.TryRemoveAsync(tenants, access.TenantId, membership.Id);
+        if (ownerRemoval.Result == OwnerRemovalResult.LastOwner)
+        {
+            await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "last_owner");
+            return Json(ApiEnvelope<object>.Fail("LAST_OWNER", "不能移除租户最后一个 owner"), jsonOptions, 409);
+        }
+    }
+
+    DeleteResult deleted;
+    try
+    {
+        deleted = await memberships.DeleteOneAsync(
+            x => x.Id == id && x.TenantId == access.TenantId && x.Version == previousVersion);
+    }
+    catch
+    {
+        if (ownerRemoval?.Result == OwnerRemovalResult.Removed)
+            await TenantOwnerAuthority.RestoreAsync(tenants, access.TenantId, membership.Id);
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "membership_write_failed");
+        throw;
+    }
+    if (deleted.DeletedCount != 1)
+    {
+        if (ownerRemoval?.Result == OwnerRemovalResult.Removed)
+            await TenantOwnerAuthority.RestoreAsync(tenants, access.TenantId, membership.Id);
+        await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: false, reason: "version_conflict");
+        return Json(ApiEnvelope<object>.Fail("MEMBERSHIP_VERSION_CONFLICT", "成员关系已被其他操作更新，请刷新后重试"), jsonOptions, 409);
+    }
+
+    // 用户可能还属于别的租户，所以只摘掉本租户的归属，不动账号本身。
+    await users.UpdateOneAsync(
+        x => x.Id == membership.UserId,
+        Builders<LlmGwUser>.Update
+            .Pull(x => x.TenantIds, access.TenantId)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow));
+    await CompleteRequiredOperationAuditAsync(operationAudits, access.TenantId, requiredAuditId, success: true, reason: null);
+    return Json(ApiEnvelope<object>.Ok(new { id, membership.UserId, removed = true }), jsonOptions);
 }).RequireAuthorization("OrganizationWrite");
 
 app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, string id) =>

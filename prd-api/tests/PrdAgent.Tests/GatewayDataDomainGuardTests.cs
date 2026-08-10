@@ -4186,6 +4186,57 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 组织三件（团队 / 成员 / 租户）的删除。它们和网关资源不同：删错了丢的是「谁能进来」，
+    /// 补不回来。所以每一条都要求额外的归属校验，且这些校验必须写在服务端——
+    /// 前端按钮可见性只是提示，绕过它的人正是最需要被挡住的那个。
+    /// </summary>
+    [Fact]
+    public void OrganizationDeletes_CarryTheirOwnershipGuards()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var page = ReadRepoFile("llmgw/web/src/pages/OrganizationPage.tsx");
+
+        // 团队：三类引用（成员 / 接入密钥 / appCaller）任一存在就不许删。
+        // 团队被删后引用方不会报错，只会被权限判定当成「没有范围」，所以必须拦在删除前。
+        Assert.Contains("app.MapDelete(\"/gw/teams/{id}\"", console);
+        Assert.Contains("TEAM_IN_USE", console);
+        Assert.Contains("team.delete", console);
+        Assert.Contains("export function deleteTeam(", api);
+        Assert.Contains("removeTeam", page);
+
+        // 成员：不能删自己、只有 owner 能删 owner、不能删掉最后一个活跃 owner。
+        // 最后一条走 TenantOwnerAuthority.TryRemoveAsync 的原子判定，
+        // 且摘牌后若删除失败必须补回去——否则 owner 名单会凭空少一位。
+        var memberDeleteStart = console.IndexOf("app.MapDelete(\"/gw/members/{id}\"", StringComparison.Ordinal);
+        Assert.True(memberDeleteStart > 0, "成员删除端点应当存在");
+        var memberDelete = console[memberDeleteStart..(memberDeleteStart + 4000)];
+        Assert.Contains("SELF_MEMBERSHIP_CHANGE_FORBIDDEN", memberDelete);
+        Assert.Contains("OWNER_REQUIRED", memberDelete);
+        Assert.Contains("TenantOwnerAuthority.TryRemoveAsync", memberDelete);
+        Assert.Contains("OwnerRemovalResult.LastOwner", memberDelete);
+        Assert.Contains("TenantOwnerAuthority.RestoreAsync", memberDelete);
+        Assert.Contains("membership.delete", memberDelete);
+        Assert.Contains("export function deleteMember(", api);
+        Assert.Contains("removeMember", page);
+
+        // 租户：只能删当前会话所在的租户、内置租户不许删、非空不许删。
+        // 刻意不做级联——级联写错不可逆，「先自己清干净再删」可逆。
+        var tenantDeleteStart = console.IndexOf("app.MapDelete(\"/gw/tenants/{id}\"", StringComparison.Ordinal);
+        Assert.True(tenantDeleteStart > 0, "租户删除端点应当存在");
+        var tenantDelete = console[tenantDeleteStart..(tenantDeleteStart + 4000)];
+        Assert.Contains("TENANT_SCOPE_MISMATCH", tenantDelete);
+        Assert.Contains("INTERNAL_TENANT", tenantDelete);
+        Assert.Contains("TENANT_NOT_EMPTY", tenantDelete);
+        Assert.Contains("tenant.delete", tenantDelete);
+        Assert.Contains("RequireAuthorization(\"TenantOwner\")", tenantDelete);
+        Assert.Contains("export function deleteTenant(", api);
+        Assert.Contains("removeTenant", page);
+        // 租户没了，绑在它上面的会话也就没了：必须正规登出，不能留一个指向空租户的 token
+        Assert.Contains("logout();", page);
+    }
+
+    /// <summary>
     /// 反断头通用守卫：api.ts 里导出的每个函数都必须有人调用。
     ///
     /// 形状 2（链路只建到一半）在本仓库的具体形态就是「后端加了端点、api.ts 加了函数、

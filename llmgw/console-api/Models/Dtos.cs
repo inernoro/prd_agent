@@ -962,6 +962,32 @@ public sealed class ExchangeDeleteBlockers
     public int TotalCount => Pools.Count;
 }
 
+/// <summary>删除团队前的占用清单：成员、接入密钥、appCaller 三类引用。</summary>
+public sealed class TeamDeleteBlockers
+{
+    public List<string> Members { get; set; } = new();
+    public int ServiceKeys { get; set; }
+    public int AppCallers { get; set; }
+    public int TotalCount => Members.Count + ServiceKeys + AppCallers;
+}
+
+/// <summary>
+/// 删除租户前的剩余内容清单。租户删除刻意不做级联，所以这张清单同时就是
+/// 「还要自己清掉什么」的待办：每一项非零都会挡下删除。
+/// </summary>
+public sealed class TenantDeleteBlockers
+{
+    public int OtherMembers { get; set; }
+    public int Platforms { get; set; }
+    public int Models { get; set; }
+    public int Pools { get; set; }
+    public int Exchanges { get; set; }
+    public int LogicalModels { get; set; }
+    public int ServiceKeys { get; set; }
+    public int AppCallers { get; set; }
+    public int TotalCount => OtherMembers + Platforms + Models + Pools + Exchanges + LogicalModels + ServiceKeys + AppCallers;
+}
+
 /// <summary>删除逻辑模型的结果：它名下的 offering 是从属子项，跟着一起删。</summary>
 public sealed class LogicalModelDeleteResult
 {

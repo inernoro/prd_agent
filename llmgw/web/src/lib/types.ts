@@ -1205,6 +1205,13 @@ export type OrganizationData = {
 };
 
 export type CreatedTenant = { id: string; name: string; slug: string; defaultTeamId: string };
+/** 删除团队前的占用清单。 */
+export type TeamDeleteBlockers = { members: string[]; serviceKeys: number; appCallers: number; totalCount: number };
+/** 删除租户前的剩余内容清单：每一项非零都会挡下删除，同时就是「还要清什么」的待办。 */
+export type TenantDeleteBlockers = {
+  otherMembers: number; platforms: number; models: number; pools: number;
+  exchanges: number; logicalModels: number; serviceKeys: number; appCallers: number; totalCount: number;
+};
 export type CreatedTeam = { id: string; name: string; status: string };
 /** PUT /gw/teams/{id} 的返回体：只有 id 与连带影响计数，不回读团队名。 */
 export type TeamUpdateResult = {
