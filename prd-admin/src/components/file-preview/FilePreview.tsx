@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, CloudUpload, FileText, Clock3, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { Check, CloudUpload, FileText, Clock3, RefreshCw } from 'lucide-react';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
@@ -167,14 +167,16 @@ function RecordingArchiveProgress({
  * 周报/验收报告等 HTML 产物按 980px 桌面纸面设计，手机上正文与等宽小字偏小且
  * sandbox iframe 内无法双指缩放——给读者一个显式放大手段。zoom 会触发真实重排
  * （非截图式缩放），流式布局按更窄的等效视口重新换行，不会出横向滚动条。
+ * 档位状态由调用方（DocBrowser 工具栏）持有并经 htmlZoom prop 下发——控件与
+ * 其他阅读动作同一行，不单独占行；本组件只负责把 zoom 应用到 srcDoc body。
  * 纯 UI 偏好，发版后旧值无害 → 允许 localStorage（.claude/rules/no-localstorage.md）。
  */
-const HTML_ZOOM_STORAGE_KEY = 'doc-html-preview-zoom';
-const HTML_ZOOM_MIN = 1;
-const HTML_ZOOM_MAX = 1.6;
-const HTML_ZOOM_STEP = 0.15;
+export const HTML_ZOOM_STORAGE_KEY = 'doc-html-preview-zoom';
+export const HTML_ZOOM_MIN = 1;
+export const HTML_ZOOM_MAX = 1.6;
+export const HTML_ZOOM_STEP = 0.15;
 
-function readStoredHtmlZoom(): number {
+export function readStoredHtmlZoom(): number {
   try {
     const v = parseFloat(localStorage.getItem(HTML_ZOOM_STORAGE_KEY) ?? '');
     if (Number.isFinite(v) && v >= HTML_ZOOM_MIN && v <= HTML_ZOOM_MAX) {
@@ -203,7 +205,7 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, htmlBleedX }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, htmlBleedX, htmlZoom }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
@@ -214,18 +216,18 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   onAskRecording?: () => void;
   /** 移动端 HTML 预览左右出血像素：抵消调用方内容区的水平 padding，让报告纸面满铺卡片宽度。 */
   htmlBleedX?: number;
+  /** HTML 报告字号档位（受控，由调用方工具栏持有；缺省 1 = 100%）。 */
+  htmlZoom?: number;
 }) {
   const isMobile = useIsMobile();
   const htmlIframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [htmlZoom, setHtmlZoom] = useState<number>(readStoredHtmlZoom);
   // onLoad 闭包里读的是挂载时的 zoom，用 ref 镜像保证 iframe 重载后应用的是当前档位
-  const htmlZoomRef = useRef(htmlZoom);
+  const htmlZoomRef = useRef(htmlZoom ?? 1);
   useEffect(() => {
-    htmlZoomRef.current = htmlZoom;
-    try { localStorage.setItem(HTML_ZOOM_STORAGE_KEY, String(htmlZoom)); } catch { /* ignore */ }
+    htmlZoomRef.current = htmlZoom ?? 1;
     // 已渲染的 srcDoc 文档就地应用（allow-same-origin 可达）；重排后 ResizeObserver 会自动跟高
     const body = htmlIframeRef.current?.contentDocument?.body;
-    if (body) body.style.setProperty('zoom', String(htmlZoom));
+    if (body) body.style.setProperty('zoom', String(htmlZoom ?? 1));
   }, [htmlZoom]);
 
   if (!entry) {
@@ -369,7 +371,6 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     // （mobile-first-density：手机端只留一层 gutter，不让三层 padding 叠加吃掉屏宽）。
     // 仅 srcDoc 走满铺/字号（fileUrl 依赖 height:100% 链，包一层 div 会塌高，保持原样）。
     const bleed = isMobile && !fileUrl && htmlBleedX ? htmlBleedX : 0;
-    const showZoomBar = isMobile && !fileUrl;
     const iframeEl = (
       <iframe
         ref={htmlIframeRef}
@@ -528,43 +529,12 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
         style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, background: '#fff', overflowAnchor: 'none' }}
       />
     );
-    if (!showZoomBar && !bleed) return iframeEl;
+    if (!bleed) return iframeEl;
+    // overflowX clip：zoom 重排的亚像素舍入偶尔会让内容超宽 1-2px，
+    // 阅读列因此变成可横移容器（overflow-y:auto 会把 overflow-x 也算成 auto），
+    // 竖滑手势被横向分量搅得发飘——阅读区一律禁止横向滚动
     return (
-      <div style={bleed ? { marginLeft: -bleed, marginRight: -bleed } : undefined}>
-        {showZoomBar && (
-          <div
-            className="flex items-center justify-end gap-1.5 pb-2"
-            style={{ paddingLeft: bleed || undefined, paddingRight: bleed || undefined }}
-          >
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>字号</span>
-            <button
-              type="button"
-              aria-label="缩小字号"
-              disabled={htmlZoom <= HTML_ZOOM_MIN}
-              onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
-              className="h-8 w-8 rounded-[9px] inline-flex items-center justify-center transition-colors disabled:opacity-40"
-              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
-            >
-              <ZoomOut size={14} />
-            </button>
-            <span
-              className="text-[11px] tabular-nums text-center"
-              style={{ color: 'var(--text-secondary)', minWidth: 38 }}
-            >
-              {Math.round(htmlZoom * 100)}%
-            </span>
-            <button
-              type="button"
-              aria-label="放大字号"
-              disabled={htmlZoom >= HTML_ZOOM_MAX}
-              onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
-              className="h-8 w-8 rounded-[9px] inline-flex items-center justify-center transition-colors disabled:opacity-40"
-              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
-            >
-              <ZoomIn size={14} />
-            </button>
-          </div>
-        )}
+      <div style={{ marginLeft: -bleed, marginRight: -bleed, overflowX: 'clip' }}>
         {iframeEl}
       </div>
     );

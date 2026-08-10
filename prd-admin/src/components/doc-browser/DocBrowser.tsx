@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePreview } from '@/components/file-preview';
+import {
+  FilePreview,
+  HTML_ZOOM_STORAGE_KEY,
+  HTML_ZOOM_MIN,
+  HTML_ZOOM_MAX,
+  HTML_ZOOM_STEP,
+  readStoredHtmlZoom,
+} from '@/components/file-preview';
 import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
 import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
@@ -11,6 +18,7 @@ import {
   Upload, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, SlidersHorizontal, Share2, ExternalLink, Copy,
   ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText, MoreHorizontal,
+  ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -1758,6 +1766,12 @@ export function DocBrowser({
   // 在任何嵌套上下文都铺满视口（遵守 .claude/rules/frontend-modal.md）。
   const [readerFullscreen, setReaderFullscreen] = useState(false);
   const toggleReaderFullscreen = useCallback(() => setReaderFullscreen((v) => !v), []);
+  // HTML 报告字号档位（移动端工具栏 ± 控件；FilePreview 受控应用到 srcDoc body）。
+  // 纯 UI 偏好 → localStorage 记忆（no-localstorage.md 例外清单）
+  const [htmlZoom, setHtmlZoom] = useState<number>(readStoredHtmlZoom);
+  useEffect(() => {
+    try { localStorage.setItem(HTML_ZOOM_STORAGE_KEY, String(htmlZoom)); } catch { /* ignore */ }
+  }, [htmlZoom]);
   // 右侧栏（本页章节 TOC / 批注栏）可收起，给正文让出宽度。纯 UI 偏好，sessionStorage 持久化
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(() => sessionStorage.getItem('doc-browser-right-collapsed') === '1');
   const toggleRightPanel = useCallback(() => setRightPanelCollapsed((v) => {
@@ -3287,12 +3301,17 @@ export function DocBrowser({
       >
         {selectedEntryId ? (
           <>
-            {/* 面包屑导航 header：移动端保持单行横滑，正文面积优先。 */}
+            {/* 面包屑导航 header：移动端保持单行横滑，正文面积优先。
+                全屏阅读 = 整页只留内容（2026-08-09 用户要求「全屏就是整个网页独占」）：
+                工具栏整条隐藏，退出走下方半透明浮动钮；编辑态例外（保存/取消在这条上）。 */}
+            {(!readerFullscreen || editMode) && (
             <div
               className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-nowrap overflow-x-auto' : 'px-5 flex-wrap'}`}
               style={{
                 borderBottom: '1px solid var(--border-subtle)',
                 scrollbarWidth: isMobile ? 'none' : undefined,
+                // 横滑到尽头不把手势链给祖先（iOS 会整页橡皮筋，体感"页面在左右滑"）
+                overscrollBehaviorX: isMobile ? 'contain' : undefined,
               }}
             >
               {/* 移动端目录抽屉入口：不再把正文切回列表。 */}
@@ -3439,7 +3458,13 @@ export function DocBrowser({
                 const isSubscription = sel.sourceType === 'subscription';
                 const githubSha = sel.metadata?.github_sha;
                 const showSubscription = isSubscription && !!onOpenSubscription;
-                const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions || showSubscription;
+                // 移动端把低频动作（划词评论 / 编辑）折进菜单，工具栏只留 目录/标签/更多/字号/全屏，
+                // 图标尺寸统一（2026-08-09 用户反馈「图标大小不一、该折进去就应该折进去」）
+                const showCommentsItem = isMobile && !!trackedEntryForComments;
+                const showEditItem = isMobile && !!onSaveContent
+                  && getFileTypeConfig(sel.title, sel.contentType).editable && !editMode;
+                const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions
+                  || showSubscription || showCommentsItem || showEditItem;
                 if (!any) return null;
                 return (
                   <div ref={readerMoreRef} className="relative flex-shrink-0">
@@ -3453,6 +3478,15 @@ export function DocBrowser({
                     <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
                       anchorRef={readerMoreRef} minWidth={190}
                       className="surface-popover rounded-[10px] p-1.5">
+                      {showCommentsItem && (
+                        <ReaderMoreItem icon={<MessageSquareText size={13} />}
+                          label={commentCount > 0 ? `划词评论 · ${commentCount} 条` : '划词评论'}
+                          onClick={() => { setReaderMoreOpen(false); setInlineCommentsOpen(true); }} />
+                      )}
+                      {showEditItem && (
+                        <ReaderMoreItem icon={<Pencil size={13} />} label="编辑文档"
+                          onClick={() => { setReaderMoreOpen(false); setEditContent(preview?.text ?? ''); setEditMode(true); }} />
+                      )}
                       {showTranscribe && (
                         <ReaderMoreItem icon={<AudioLines size={13} />} label="转录并生成摘要"
                           onClick={() => { setReaderMoreOpen(false); onTranscribe!(sel.id); }} />
@@ -3482,8 +3516,8 @@ export function DocBrowser({
                   </div>
                 );
               })()}
-              {/* 批次 D：划词评论开关按钮 */}
-              {trackedEntryForComments && (
+              {/* 批次 D：划词评论开关按钮（移动端折进「更多」菜单，不占工具栏位） */}
+              {trackedEntryForComments && !isMobile && (
                 <button
                   onClick={() => setInlineCommentsOpen(true)}
                   // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
@@ -3513,6 +3547,44 @@ export function DocBrowser({
                   <PanelRight size={12} /> {rightPanelCollapsed ? '章节' : '收起'}
                 </button>
               )}
+              {/* HTML 报告字号档位（移动端专属；与其他阅读动作同一行，不单独占行——
+                  2026-08-09 用户反馈「字号不必单独一行」） */}
+              {isMobile && !editMode && (() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder) return null;
+                const isHtml = getFileTypeConfig(sel.title, sel.contentType).preview === 'html'
+                  || (sel.contentType ?? '').toLowerCase().includes('html') || /\.html?$/i.test(sel.title);
+                if (!isHtml) return null;
+                return (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="缩小字号"
+                      disabled={htmlZoom <= HTML_ZOOM_MIN}
+                      onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
+                      className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+                      title={`缩小字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+                      <ZoomOut size={15} />
+                    </button>
+                    {htmlZoom !== 1 && (
+                      <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        {Math.round(htmlZoom * 100)}%
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      aria-label="放大字号"
+                      disabled={htmlZoom >= HTML_ZOOM_MAX}
+                      onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
+                      className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+                      title={`放大字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+                      <ZoomIn size={15} />
+                    </button>
+                  </>
+                );
+              })()}
               {/* 全屏阅读（CSS 全屏覆盖层，ESC / 再点一次退出）。
                   移动端不再隐藏：周报等 HTML 报告被 TabBar + 底部导航夹成一小条（2026-08-09
                   用户截图反馈「屏幕中间一点点，太小了」），全屏铺满视口是移动端的主要阅读姿势。 */}
@@ -3573,7 +3645,7 @@ export function DocBrowser({
                           <X size={12} /> 取消
                         </button>
                       </>
-                    ) : (
+                    ) : !isMobile ? (
                       <button
                         onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
                         className={TOOLBAR_ICON_BTN}
@@ -3581,11 +3653,36 @@ export function DocBrowser({
                         title="编辑文档">
                         <Pencil size={13} />
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 );
               })()}
             </div>
+            )}
+            {/* 全屏沉浸态：半透明浮动退出钮（fixed 挂在 portal 树内，z 高于全屏覆盖层） */}
+            {readerFullscreen && !editMode && (
+              <button
+                type="button"
+                onClick={toggleReaderFullscreen}
+                aria-label="退出全屏"
+                title="退出全屏（ESC）"
+                className="fixed inline-flex items-center justify-center rounded-full cursor-pointer transition-opacity active:opacity-70"
+                style={{
+                  top: 'calc(env(safe-area-inset-top, 0px) + 10px)',
+                  right: 12,
+                  zIndex: 130,
+                  width: 38,
+                  height: 38,
+                  background: 'color-mix(in srgb, var(--bg-elevated) 68%, transparent)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <Minimize2 size={16} />
+              </button>
+            )}
             {/* 内容区 + 右侧本页章节导航（F1）。 */}
             <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0, background: 'var(--bg-card)' }}>
               {/* 内容列包裹：让进度条 absolute 限定在本列宽度内，不跨到右侧 TOC 列（Bugbot Low） */}
@@ -3730,6 +3827,7 @@ export function DocBrowser({
                     preview={preview}
                     // 移动端内容区 px-4（16px）：HTML 报告纸面用负 margin 抵消它满铺卡片宽
                     htmlBleedX={16}
+                    htmlZoom={htmlZoom}
                     transcriptNoteMd={transcriptNoteMd}
                     onSaveTranscriptNote={audioNoteId && onSaveContent ? async (nextNoteMd) => {
                       const saved = audioNoteId === selectedEntryData?.id
