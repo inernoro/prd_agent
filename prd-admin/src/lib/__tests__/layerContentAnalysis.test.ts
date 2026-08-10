@@ -144,10 +144,13 @@ describe('分层产物内容判定（构造样本）', () => {
     expect(describeLayerContent('flat')).toContain('纯色');
   });
 
-  it('覆盖率极小时不退化成 0%，否则和真空层看起来一样', () => {
+  it('覆盖率两头都不退化：极小值不是 0%，中间段不取整撞车', () => {
     expect(formatCoverage(0.0004)).toBe('不足 0.1%');
-    expect(formatCoverage(0.0723)).toBe('7%');
+    expect(formatCoverage(0.0723)).toBe('7.2%');
     expect(formatCoverage(1)).toBe('100%');
+    expect(formatCoverage(0)).toBe('0%');
+    // 冒烟实测撞过：两层 13.8% / 14.2% 取整后都显示「14%」，事实行就白占一行。
+    expect(formatCoverage(0.138)).not.toBe(formatCoverage(0.142));
   });
 });
 

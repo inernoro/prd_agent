@@ -206,13 +206,20 @@ export function describeLayerContent(kind: LayerContentKind, coverage?: number):
   return head ? `${head} · ${tail}` : tail;
 }
 
-/** 覆盖率的人类读法：极小值不退化成 0%，否则「0%」和「空层」看起来一样。 */
+/**
+ * 覆盖率的人类读法。
+ *
+ * 两头都不能退化：极小值不能显示成 0%（会和真空层长得一样）；中间段取整会让
+ * 13.8% 和 14.2% 两层显示成同一个「14%」——这一行的职责就是把各层区分开，
+ * 撞成同一串字就等于白占一行（冒烟实测撞过，见 scripts/smoke/visual-layering.mjs）。
+ * 所以 0 与 100% 取整，其余保留一位小数。
+ */
 export function formatCoverage(coverage: number): string {
   const value = Number.isFinite(coverage) ? Math.max(0, Math.min(1, coverage)) : 0;
   if (value <= 0) return '0%';
+  if (value >= 1) return '100%';
   if (value < 0.001) return '不足 0.1%';
-  if (value < 0.01) return `${(value * 100).toFixed(1)}%`;
-  return `${Math.round(value * 100)}%`;
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 export type LayerContentVerdict = {

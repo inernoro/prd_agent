@@ -6682,20 +6682,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           boxShadow: 'none',
                         }}
                       >
-                        <div
-                          className="absolute right-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
-                          style={{
-                            background: 'rgba(0,0,0,0.28)',
-                            border: '1px solid rgba(255,255,255,0.10)',
-                            color: 'rgba(255,255,255,0.78)',
-                            // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
-                            transform: 'scale(var(--invZoom))',
-                            transformOrigin: 'right top',
-                          }}
-                          title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
-                        >
-                          {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
-                        </div>
+                        {/* 贴左下角而不是右上角：右上角是 Frame 的「图层面板」按钮、
+                            正上方是 Frame 头部，三者都用 scale(1/zoom) 保持屏幕尺寸恒定，
+                            缩小时必然叠在一起（冒烟实测 35% 起就撞）。卡片在屏幕上太小时
+                            直接不显示——那个尺寸下它只会盖住产物本身。 */}
+                        {h * zoom >= 90 && (
+                          <div
+                            className="absolute left-3 bottom-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
+                            style={{
+                              background: 'rgba(0,0,0,0.28)',
+                              border: '1px solid rgba(255,255,255,0.10)',
+                              color: 'rgba(255,255,255,0.78)',
+                              // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
+                              transform: 'scale(var(--invZoom))',
+                              transformOrigin: 'left bottom',
+                            }}
+                            title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
+                          >
+                            {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
+                          </div>
+                        )}
                         <GenSweepLoader createdAt={it.createdAt} />
                       </div>
                     ) : kind === 'shape' ? (
@@ -7041,11 +7047,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 {semanticLayerFrames.map((frame) => {
                   // 拆分进度就写在这个 Frame 的头部：产物在哪长，进度就在哪显示。
                   const layering = layeringProgress?.groupId === frame.id ? layeringProgress : null;
-                  const headline = layering
+                  // 头部的文字与按钮都用 scale(1/zoom) 反向放大以保持屏幕尺寸恒定，
+                  // 所以缩得越小、它们占 Frame 的比例越大。低倍下三者会互相压住
+                  // （冒烟实测：35% 起头部撞按钮，23% 起连「图层分离中」也一起撞）。
+                  // 按 Frame 在屏幕上的实际宽度分档收起：先收文字、再收按钮标签。
+                  const frameScreenW = frame.w * zoom;
+                  const compactHeadline = frameScreenW < 420;
+                  const iconOnlyButton = frameScreenW < 260;
+                  const fullHeadline = layering
                     ? (layering.total
                         ? `Frame · ${layering.phase} · ${layering.completed ?? 0}/${layering.total}`
                         : `Frame · ${layering.phase}`)
                     : `Frame · AI 分层 · ${frame.layerKeys.length} 个图层`;
+                  const headline = compactHeadline
+                    ? (layering
+                        ? (layering.total ? `分层中 ${layering.completed ?? 0}/${layering.total}` : '分层中')
+                        : `${frame.layerKeys.length} 层`)
+                    : fullHeadline;
+                  // 文字区留出按钮的位置，超出就截断——绝不允许压到按钮底下。
+                  const buttonReserveScreen = iconOnlyButton ? 34 : 92;
+                  const headlineMaxWidth = Math.max(0, frameScreenW - buttonReserveScreen - 28) / Math.max(0.0001, zoom);
                   return (
                   <div
                     key={`semantic_frame_${frame.id}`}
@@ -7063,21 +7084,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <div
                       role={layering ? 'status' : undefined}
                       aria-live={layering ? 'polite' : undefined}
-                      className="absolute left-3 top-2 min-w-0 flex items-center gap-2"
+                      className="absolute left-3 top-2 min-w-0 flex items-center gap-2 overflow-hidden"
                       style={{
                         color: 'var(--text-primary)',
                         transform: 'scale(var(--invZoom))',
                         transformOrigin: 'left top',
+                        maxWidth: headlineMaxWidth,
                       }}
                     >
                       <Layers size={15} className={`shrink-0 ${layering ? 'animate-pulse' : ''}`} />
-                      <span className="whitespace-nowrap text-[12px] font-semibold" title={frame.name}>
+                      <span
+                        className="truncate text-[12px] font-semibold"
+                        title={`${frame.name}｜${fullHeadline}`}
+                      >
                         {headline}
                       </span>
                     </div>
                     <button
                       type="button"
-                      className="absolute right-3 top-2 pointer-events-auto h-7 px-2.5 rounded-[8px] inline-flex items-center gap-1.5 text-[11px] font-semibold transition-colors hover-bg-soft"
+                      className={`absolute right-3 top-2 pointer-events-auto h-7 rounded-[8px] inline-flex items-center gap-1.5 text-[11px] font-semibold transition-colors hover-bg-soft ${iconOnlyButton ? 'w-7 justify-center px-0' : 'px-2.5'}`}
                       style={{
                         color: 'var(--text-primary)',
                         background: layerPanelGroupId === frame.id
@@ -7093,7 +7118,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       onClick={() => setLayerPanelGroupId((current) => current === frame.id ? null : frame.id)}
                     >
                       <Layers size={13} />
-                      图层面板
+                      {iconOnlyButton ? null : '图层面板'}
                     </button>
                   </div>
                   );
