@@ -153,18 +153,30 @@ describe('buildTranscriptWordCloud', () => {
     }
   });
 
-  it('已知边界：连着不带标点的实词长串，中间那个词会被当碎片吃掉', () => {
-    // 「存在下单会议」这种一口气 6 个字的实词串里，每个双字窗频次都相同，
-    // 中间的「下单」左右两侧都有不更少见的邻居，判据无法区分它和真碎片。
-    // 真实转写里实词之间几乎总隔着虚词（已被虚词字过滤掉），长串很少出现，
-    // 所以这条边界留着不修——真要根治得换真分词器，不是这次「简单修正」的范围。
-    // 这条用例存在的意义是：它变红时说明有人动了判据，得重新想清楚，而不是悄悄漂移。
+  it('连着不带标点的实词长串，中间那个词也留得住', () => {
+    // 「存在下单会议」一口气 6 个字，每个双字窗频次都相同。
+    // 靠词形猜的判据在这里必然吃掉中间的「下单」（它左右都有不更少见的邻居）；
+    // 按位置抢座就没这个问题：存在占 0-1，在下想占 1-2 被挡，下单占 2-3，
+    // 单会被挡，会议占 4-5。三个真词全留下，两个碎片全丢。
     const cloud = buildTranscriptWordCloud([
       { start: 0, end: 3, text: '存在下单会议，存在下单会议' },
     ]);
-    expect(cloud.some(item => item.word === '存在')).toBe(true);
-    expect(cloud.some(item => item.word === '会议')).toBe(true);
-    expect(cloud.some(item => item.word === '下单')).toBe(false);
+    for (const word of ['存在', '下单', '会议']) {
+      expect(cloud.some(item => item.word === word)).toBe(true);
+    }
+    for (const fragment of ['在下', '单会']) {
+      expect(cloud.some(item => item.word === fragment)).toBe(false);
+    }
+  });
+
+  it('抢座按全文频次排序：高频词先占字，碎片抢不到座', () => {
+    // 「参考图」滑出 参考 / 考图。参考在别处还出现过，全文频次更高，
+    // 先占住字，考图就没座了——这正是真实转写里 考图/如说/后第 那批的成因。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '参考图。参考图。参考。参考。' },
+    ]);
+    expect(cloud.some(item => item.word === '参考')).toBe(true);
+    expect(cloud.some(item => item.word === '考图')).toBe(false);
   });
 
   it('按频次降序，第一个就是全场最常提到的（展示层的权重基准）', () => {

@@ -179,49 +179,57 @@ const STOP_WORDS = new Set([
   '原文', '录音', '实时', '刚刚', '这是', '下来', '来的', '的实', '时原',
 ]);
 
-/** 整场录音的轻量词频；不依赖网络，打开结果页即可用。 */
+/**
+ * 整场录音的轻量词频；不依赖网络，打开结果页即可用。
+ *
+ * 中文没有空格，这里按 2 字滑窗切。滑窗必然产出「交付 + 质量 → 付质」这种骑在
+ * 两个真词中间的碎片——STOP_WORDS 里的 的实 / 时原 / 来的 就是过去一个个手工
+ * 补进去的同类货，补不完。
+ *
+ * 治法是**按位置抢座**而不是按词形猜：滑窗时记下每个组合出现在第几个字上，
+ * 然后频次高的先占字、同频次的位置靠前的先占；两个字里只要有一个被占过，
+ * 这个组合就是骑在别人身上的碎片，直接丢。
+ *   「交付质量」→ 交付 占住 0-1，付质 想占 1-2 但 1 被占了，质量 占住 2-3。
+ * 停用词也要参与抢座（虽然自己不显示），否则「一个东西」里的「个东」没人挡。
+ *
+ * 这一步解决的是「哪些是词」；至于「哪些词值得显示」，交给下面的停用词 +
+ * 虚词字 + 至少出现两次三道闸。
+ */
 export function buildTranscriptWordCloud(segments: TranscriptSegment[], limit = 18): Array<{ word: string; count: number }> {
   const source = segments.map(segment => segment.text).join(' ');
-  const englishTokens = source.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? [];
-  const chineseTokens = (source.match(/[\u3400-\u9fff]{2,}/g) ?? []).flatMap((sequence) => {
-    const chars = Array.from(sequence);
-    return chars.slice(0, -1).map((_, index) => chars.slice(index, index + 2).join(''));
-  });
-  const tokens = [...englishTokens, ...chineseTokens];
   const counts = new Map<string, number>();
-  tokens.forEach((token) => {
+  for (const token of source.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? []) {
     const word = token.toLowerCase();
-    if (STOP_WORDS.has(word)) return;
-    // 双字组合里只要带虚词字就不是实词，直接不入账
-    if (word.length === 2 && Array.from(word).some(char => FUNCTION_CHARS.has(char))) return;
     counts.set(word, (counts.get(word) ?? 0) + 1);
-  });
-  const ranked = [...counts.entries()]
-    // 只出现一次的不叫「反复提到」，是噪音。滤掉它同时也扫掉了大半滑窗碎片。
-    .filter(([, count]) => count >= 2)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'));
-
-  // 中文按 2 字滑窗切，必然产出「交付 + 质量 → 付质」这种骑在两个真词中间的碎片。
-  // STOP_WORDS 里的 的实 / 时原 / 来的 就是过去一个个手工补进去的同类货——
-  // 与其继续按词打补丁，不如把这个形态本身判掉。
-  //
-  // 碎片的特征是**两头都搭着别人**：首字是某个不更少见的词的尾字，尾字又是另一个
-  // 不更少见的词的首字。只判一头会误伤：「付质」和「质量」在频次相同时谁排在前面
-  // 由 localeCompare 决定，先被留下的那个会把真词顶掉（实测「质量」就这么被顶掉过）。
-  const tailMax = new Map<string, number>();
-  const headMax = new Map<string, number>();
-  for (const [word, count] of counts) {
-    if (word.length !== 2 || word[0] === word[1]) continue;
-    tailMax.set(word[1], Math.max(tailMax.get(word[1]) ?? 0, count));
-    headMax.set(word[0], Math.max(headMax.get(word[0]) ?? 0, count));
   }
-  const isWindowFragment = (word: string, count: number) => word.length === 2
-    && word[0] !== word[1]
-    && (tailMax.get(word[0]) ?? 0) >= count
-    && (headMax.get(word[1]) ?? 0) >= count;
 
-  return ranked
-    .filter(([word, count]) => !isWindowFragment(word, count))
+  const runs = (source.match(/[\u3400-\u9fff]{2,}/g) ?? []).map(run => Array.from(run));
+  const occurrences: Array<{ word: string; run: number; at: number }> = [];
+  runs.forEach((chars, run) => {
+    for (let at = 0; at + 1 < chars.length; at += 1) occurrences.push({ word: chars[at] + chars[at + 1], run, at });
+  });
+  // 抢座的排序依据是**全文频次**（含停用词），不是抢完之后的频次
+  const frequency = new Map<string, number>();
+  for (const item of occurrences) frequency.set(item.word, (frequency.get(item.word) ?? 0) + 1);
+
+  const taken = new Set<string>();
+  const ordered = [...occurrences].sort((a, b) => (frequency.get(b.word)! - frequency.get(a.word)!)
+    || a.run - b.run
+    || a.at - b.at);
+  for (const item of ordered) {
+    const left = `${item.run}:${item.at}`;
+    const right = `${item.run}:${item.at + 1}`;
+    if (taken.has(left) || taken.has(right)) continue;
+    taken.add(left);
+    taken.add(right);
+    counts.set(item.word, (counts.get(item.word) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .filter(([word, count]) => count >= 2                        // 只出现一次的不叫「反复提到」
+      && !STOP_WORDS.has(word)
+      && !(word.length === 2 && Array.from(word).some(char => FUNCTION_CHARS.has(char))))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'))
     .slice(0, limit)
     .map(([word, count]) => ({ word, count }));
 }
