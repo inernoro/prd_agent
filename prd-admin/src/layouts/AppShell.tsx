@@ -46,6 +46,7 @@ import {
   GraduationCap,
   Droplets,
   ExternalLink,
+  ChevronLeft,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -70,6 +71,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
 import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -537,6 +539,9 @@ export default function AppShell() {
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const activeNavItem = visibleItems.find((it) => it.key === activeKey);
   const mobileAppName = isHomePage ? 'PRD Agent' : (activeNavItem?.label || 'PRD Agent');
+  // 移动端沉浸阅读：DocBrowser 阅读态接管顶栏（文档标题 + 返回），铃铛/汉堡随之隐藏，
+  // 返回一步恢复（stores/readerChromeStore.ts）
+  const readerOverride = useReaderChromeStore((s) => s.override);
   const suppressFloatingDock = location.pathname.startsWith('/cds-agent');
 
   // 液态玻璃一键开关（头像菜单内）：2026-07-17 起接到「界面材质」SSOT——
@@ -1039,7 +1044,35 @@ export default function AppShell() {
         );
       })()}
       {/* ── 移动端: 全局顶部导航栏 ── */}
-      {isMobile && (
+      {isMobile && readerOverride && (
+        // 沉浸阅读顶栏：文档标题替代应用名，返回箭头是唯一出口（一步回列表即恢复完整顶栏）
+        <header
+          className="fixed top-0 left-0 right-0 z-100 flex items-center gap-1 px-2"
+          style={{
+            ...glassMobileHeader,
+            height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={readerOverride.onBack}
+            className="h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-xl"
+            style={{ color: 'var(--text-primary)' }}
+            aria-label="返回列表"
+          >
+            <ChevronLeft size={22} />
+          </button>
+          <span
+            className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-none pr-3"
+            style={{ color: 'var(--text-primary)' }}
+            title={readerOverride.title}
+          >
+            {readerOverride.title}
+          </span>
+        </header>
+      )}
+      {isMobile && !readerOverride && (
         <header
           className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{

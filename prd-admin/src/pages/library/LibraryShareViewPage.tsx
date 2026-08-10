@@ -36,6 +36,8 @@ import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   parseLibraryShareViewMode,
   resolveShareKnowledgeBaseReturnPath,
@@ -52,6 +54,10 @@ import {
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 export function LibraryShareViewPage() {
+  // 移动端沉浸阅读：分享页无 AppShell，自己消费 DocBrowser 的顶栏接管
+  //（文档标题 + 返回一条顶栏，标题条/简介条/查看方式条全部让位）
+  const isMobileViewport = useIsMobile();
+  const readerOverride = useReaderChromeStore((s) => s.override);
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -276,9 +282,39 @@ export function LibraryShareViewPage() {
       ? '当前账号不能直接打开该知识库，返回我的知识库列表'
       : '登录后进入我的知识库列表';
 
+  const immersiveReading = isMobileViewport && activeView === 'read' && !!readerOverride;
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: SANS }}>
+      {/* 移动端沉浸阅读顶栏：文档标题 + 返回列表，替代下方三条头部行 */}
+      {immersiveReading && (
+        <div style={{
+          padding: '6px 8px',
+          display: 'flex', alignItems: 'center', gap: 4,
+          background: 'var(--panel-solid)',
+          borderBottom: '1px solid var(--border-faint)',
+          flexShrink: 0,
+        }}>
+          <button
+            type="button"
+            onClick={readerOverride!.onBack}
+            aria-label="返回列表"
+            className="h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-xl"
+            style={{ color: 'var(--text-primary)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <span
+            className="min-w-0 flex-1 truncate"
+            style={{ color: 'var(--text-primary)', fontSize: 15, fontWeight: 600, paddingRight: 12 }}
+            title={readerOverride!.title}
+          >
+            {readerOverride!.title}
+          </span>
+        </div>
+      )}
       {/* 顶栏：跟随全局主题偏好 */}
+      {!immersiveReading && (
       <div style={{
         padding: '10px 16px',
         display: 'flex',
@@ -335,9 +371,10 @@ export function LibraryShareViewPage() {
           </button>
         </div>
       </div>
+      )}
 
       {/* 简介条：低饱和度 */}
-      {hasMeta && (
+      {hasMeta && !immersiveReading && (
         <div style={{
           padding: '8px 16px',
           display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
@@ -360,7 +397,7 @@ export function LibraryShareViewPage() {
         </div>
       )}
 
-      {!isSingleDoc && (
+      {!isSingleDoc && !immersiveReading && (
         <nav
           aria-label="知识库查看方式"
           style={{
