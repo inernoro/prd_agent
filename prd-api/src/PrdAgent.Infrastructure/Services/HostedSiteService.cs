@@ -1398,11 +1398,11 @@ public class HostedSiteService : IHostedSiteService
             Builders<HostedSite>.Update.Inc(x => x.ViewCount, 1),
             cancellationToken: ct);
 
-        // 提问挂在分享的「首站点」上。这里按 siteIds 的顺序取，不能用 rawSites[0] ——
-        // Mongo Find 不保证返回顺序等于 siteIds 顺序，合集分享会把提问挂到错误的站点上
-        // （评论路径栽过同一个跟头，见 ResolveShareForCommentAsync 的重排注释）。
-        var askSiteId = siteIds.FirstOrDefault(id => rawSites.Any(s => s.Id == id));
-        var askSite = askSiteId != null ? rawSites.First(s => s.Id == askSiteId) : null;
+        // 一期只有单站点分享暴露提问入口，判据见 AskAccessPolicy.ShouldExposeAskOnShare
+        var askSite = sites.Count == 1
+            ? rawSites.FirstOrDefault(s => s.Id == sites[0].Id)
+            : null;
+        var exposeAsk = AskAccessPolicy.ShouldExposeAskOnShare(sites.Count, askSite?.AskEnabled ?? false);
 
         return new ShareViewResult
         {
@@ -1413,7 +1413,7 @@ public class HostedSiteService : IHostedSiteService
             CreatedBy = share.CreatedBy,
             CreatedByName = share.CreatedByName ?? await LookupDisplayNameAsync(share.CreatedBy, ct),
             Sites = sites,
-            Ask = askSite is { AskEnabled: true }
+            Ask = exposeAsk && askSite != null
                 ? new ShareAskInfo
                 {
                     SiteId = askSite.Id,

@@ -42,6 +42,15 @@ export type AskSource =
 
 export type AskStatus = 'idle' | 'connecting' | 'answering' | 'done' | 'error';
 
+/**
+ * 单条问题的最大长度，必须与后端 WebPageAskController.MaxQuestionLength 保持一致。
+ *
+ * 后端超长是**拒绝**而不是截断——静默截断会让答案漏掉问题结尾的诉求，而用户看不出异常。
+ * 前端在输入框同步这个上限并显示剩余字数，是为了让用户在打字时就知道边界，
+ * 而不是写完一大段、点发送才吃一个 400。
+ */
+export const ASK_MAX_QUESTION_LENGTH = 500;
+
 /** 门禁失败时的错误码，前端据此给不同的引导（登录 / 稍后再来 / 换个页面） */
 export const ASK_ERROR_CODES = {
   disabled: 'ASK_DISABLED',

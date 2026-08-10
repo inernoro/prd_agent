@@ -3,7 +3,7 @@ import { LogIn, Send, Sparkles, X } from 'lucide-react';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
-import { ASK_ERROR_CODES, type AskSource } from './askTypes';
+import { ASK_ERROR_CODES, ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
 import { useAskStream } from './useAskStream';
 
 interface Props {
@@ -223,6 +223,9 @@ export default function AskPanel({
             placeholder={needLogin ? '登录后即可提问' : '问点什么…'}
             disabled={needLogin}
             rows={1}
+            // 与后端同一个上限。后端超长直接 400（不静默截断），这里把边界前移到打字时，
+            // 用户不会写完一大段才被拒。
+            maxLength={ASK_MAX_QUESTION_LENGTH}
             style={{
               flex: 1, resize: 'none', maxHeight: 120,
               padding: '9px 11px', borderRadius: 10,
@@ -248,10 +251,18 @@ export default function AskPanel({
             {isBusy ? <MapSpinner size={14} /> : <Send size={15} />}
           </button>
         </div>
-        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-muted)' }}>
-          {status === 'error' && gateError && gateError.code !== ASK_ERROR_CODES.quotaExceeded
-            ? gateError.message
-            : '回答由 AI 生成，仅依据本页内容'}
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            {status === 'error' && gateError && gateError.code !== ASK_ERROR_CODES.quotaExceeded
+              ? gateError.message
+              : '回答由 AI 生成，仅依据本页内容'}
+          </span>
+          {/* 只在快到上限时才出现：平时显示字数是噪音，接近边界时它才是有用的预期管理 */}
+          {draft.length >= ASK_MAX_QUESTION_LENGTH - 50 && (
+            <span style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+              {draft.length} / {ASK_MAX_QUESTION_LENGTH}
+            </span>
+          )}
         </div>
       </div>
     </div>

@@ -23,9 +23,6 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class WebPageAskController : ControllerBase
 {
-    /// <summary>单条问题最大长度：提问是问句不是投喂正文，长了就是想绕过上下文限制。</summary>
-    private const int MaxQuestionLength = 500;
-
     private readonly IHostedSiteService _siteService;
     private readonly ISiteContentSnapshotService _snapshots;
     private readonly IAskQuotaService _quota;
@@ -180,8 +177,15 @@ public class WebPageAskController : ControllerBase
             await WriteJsonErrorAsync(400, ErrorCodes.CONTENT_EMPTY, "请输入问题");
             return;
         }
-        if (question.Length > MaxQuestionLength)
-            question = question[..MaxQuestionLength];
+        // 超长拒绝而不是截断，理由见 AskAccessPolicy.IsQuestionTooLong
+        if (AskAccessPolicy.IsQuestionTooLong(question))
+        {
+            await WriteJsonErrorAsync(
+                400,
+                ErrorCodes.CONTENT_EMPTY,
+                $"问题太长了（{question.Length} 字），请精简到 {AskAccessPolicy.MaxQuestionLength} 字以内");
+            return;
+        }
 
         // 配额也在写流之前判 —— 超限要让前端拿到 429 + Retry-After，而不是流里一条 error。
         var clientIp = HttpContext.GetRealClientIp();

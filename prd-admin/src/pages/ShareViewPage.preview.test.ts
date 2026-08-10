@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canUseSrcDocPreview } from './ShareViewPage';
+import { canUseSrcDocPreview, shouldMaskDirectPreview, PREVIEW_MASK_TIMEOUT_MS } from './ShareViewPage';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHARE_VIEW = path.join(HERE, 'ShareViewPage.tsx');
@@ -79,5 +79,37 @@ describe('canUseSrcDocPreview', () => {
 
   it('空内容不走 srcDoc', () => {
     expect(canUseSrcDocPreview('')).toBe(false);
+  });
+});
+
+/**
+ * 加载遮罩必须限时让位。
+ *
+ * 由 PR #1351 第二轮 review 抓出：那层「正在准备预览...」是不透明全屏遮罩，而底下的直链
+ * iframe 一直在正常加载。代理慢或不可达时，一个本来能显示的页面会被白屏盖住整个 HTTP 超时——
+ * 这正是本 PR 立意要修的毛病（超时不等于坏了，别盖住已经画出来的页面），却在新加的遮罩上
+ * 又犯了一次。核心断言：loading 永不结束时，遮罩不能永远盖着。
+ */
+describe('shouldMaskDirectPreview', () => {
+  it('刚开始取原文时遮一下，避免先闪直链再跳 srcDoc 的跳变', () => {
+    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: false, maskExpired: false })).toBe(true);
+  });
+
+  it('短窗口到点后必须让位 —— 即使原文始终没回来', () => {
+    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: false, maskExpired: true })).toBe(false);
+  });
+
+  it('已经拿到 srcDoc 就不再需要遮罩', () => {
+    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: true, maskExpired: false })).toBe(false);
+  });
+
+  it('没在加载就不该有遮罩', () => {
+    expect(shouldMaskDirectPreview({ loading: false, hasSrcDoc: false, maskExpired: false })).toBe(false);
+  });
+
+  it('遮罩窗口必须短于任何合理的 HTTP 超时，否则等于没限', () => {
+    expect(PREVIEW_MASK_TIMEOUT_MS).toBeGreaterThan(0);
+    // 5s 是个宽松上界：真实代理超时以十秒计，遮罩必须远早于它让位
+    expect(PREVIEW_MASK_TIMEOUT_MS).toBeLessThanOrEqual(5000);
   });
 });

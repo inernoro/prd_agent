@@ -53,6 +53,29 @@ export function canUseSrcDocPreview(html: string): boolean {
   return !moduleWithSrc;
 }
 
+/**
+ * 取回原文期间，那层「正在准备预览...」的白色遮罩最多盖多久。
+ *
+ * 遮罩本身是为了避免「先闪一下直链 iframe、再跳成 srcDoc」的跳变，但它是**不透明全屏**的：
+ * 底下的直链 iframe 其实一直在加载，代理慢或不可达时，一个本来能正常显示的页面会被白屏
+ * 盖住整个 HTTP 超时。这正是本 PR 要修的那个毛病（超时不等于坏了，别拿遮罩盖住已经画出来
+ * 的页面）——在自己新加的遮罩上重犯一次就说不过去了。所以给它一个短窗口，到点必让位。
+ */
+export const PREVIEW_MASK_TIMEOUT_MS = 1500;
+
+/**
+ * 该不该用遮罩盖住直链 iframe。抽成纯函数是为了能被测到「加载永远不结束时遮罩必须让位」。
+ *
+ * 三个条件缺一不可：确实在取原文、还没拿到可用的 srcDoc、短窗口没到点。
+ */
+export function shouldMaskDirectPreview(opts: {
+  loading: boolean;
+  hasSrcDoc: boolean;
+  maskExpired: boolean;
+}): boolean {
+  return opts.loading && !opts.hasSrcDoc && !opts.maskExpired;
+}
+
 function withPreviewBase(html: string, siteUrl: string) {
   if (/<base\b/i.test(html)) return html;
   const baseHref = new URL('.', siteUrl).toString();
@@ -93,6 +116,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [commentCount, setCommentCount] = useState<number | null>(null);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
   const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
+  /** 遮罩的短窗口是否已到点。到点后不再遮挡底下的直链 iframe，见 PREVIEW_MASK_TIMEOUT_MS */
+  const [previewMaskExpired, setPreviewMaskExpired] = useState(false);
   /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
   const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
 
@@ -185,6 +210,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       setEmbeddedHtml(null);
       setEmbeddedHtmlError(null);
       setEmbeddedHtmlLoading(false);
+      setPreviewMaskExpired(false);
       return;
     }
 
@@ -192,6 +218,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     setEmbeddedHtml(null);
     setEmbeddedHtmlError(null);
     setEmbeddedHtmlLoading(true);
+    // 遮罩只挡一小会儿。到点后即便原文还没回来，也把底下的直链 iframe 露出来——
+    // 它多半已经把页面画好了，继续盖着就是拿「可能更好的预览」换「确定看不见」。
+    setPreviewMaskExpired(false);
+    const maskTimer = window.setTimeout(() => {
+      if (alive) setPreviewMaskExpired(true);
+    }, PREVIEW_MASK_TIMEOUT_MS);
     getShareSiteContent(token, site.id, password || undefined)
       .then((res) => {
         if (!alive) return;
@@ -210,7 +242,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         if (alive) setEmbeddedHtmlLoading(false);
       });
 
-    return () => { alive = false; };
+    return () => { alive = false; window.clearTimeout(maskTimer); };
   }, [data, token, password]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
@@ -583,7 +615,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               : 'allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen'}
             allowFullScreen
           />
-          {embeddedHtmlLoading && !iframeHtml && (
+          {/* 遮罩是为了避免「先闪直链、再跳 srcDoc」的跳变，但它不透明且全屏：代理慢或不可达时
+              会把底下那个其实已经渲染好的直链页面白屏盖住整个 HTTP 超时。所以只挡一小会儿，
+              到点让位——判据抽在 shouldMaskDirectPreview，守卫见 ShareViewPage.preview.test.ts。 */}
+          {shouldMaskDirectPreview({
+            loading: embeddedHtmlLoading,
+            hasSrcDoc: !!iframeHtml,
+            maskExpired: previewMaskExpired,
+          }) && (
             <div style={{
               position: 'absolute',
               inset: 0,
