@@ -1112,6 +1112,7 @@ public class OpenAIImageClient : IImageGenerationClient
             var watermarkConfig = string.IsNullOrWhiteSpace(appKeyForWatermark) ? null : await TryGetWatermarkConfigAsync(appKeyForWatermark, ct);
             _logger.LogInformation("ImageGen watermark config resolved: {HasWatermark}", watermarkConfig != null);
             var cosInfos = new List<object>();
+            string? actualOutputSize = null;
             for (var i = 0; i < images.Count; i++)
             {
                 byte[]? bytes = null;
@@ -1142,6 +1143,11 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
+                // 上游的实际像素可能与请求占位尺寸不同（例如 3:4 返回 1152x1536）。
+                // 元数据与产物记录必须以图片字节为准，否则用户会看到“实际竖图、标签方图”。
+                var identifiedSize = IdentifyActualImageSize(bytes);
+                actualOutputSize ??= identifiedSize;
+
                 // 1. 原图保存到 visual-agent 目录（核心数据，不会删除）
                 var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
 
@@ -1171,8 +1177,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 images[i].OriginalUrl = stored.Url;
                 images[i].OriginalSha256 = stored.Sha256;
 
-                // 尺寸：优先使用本次请求最终 size（若解析失败则为 0）
-                var sizeStr = NormalizeSizeString(size);
+                // 尺寸：优先使用图片字节识别出的真实尺寸，请求尺寸仅作无法识别时的兜底。
+                var sizeStr = NormalizeSizeString(identifiedSize ?? size);
                 var okDim = TryParseSize(sizeStr, out var w0, out var h0);
                 var output = new UploadArtifact
                 {
@@ -1198,7 +1204,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
             // Gateway 已处理日志记录，无需手动记录
 
-            var finalSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
+            var finalSize = actualOutputSize ?? GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
             var effectiveSize = string.IsNullOrWhiteSpace(finalSize) ? null : finalSize.Trim();
             var effectiveSizeNorm = NormalizeSizeString(effectiveSize);
             var sizeAdjusted = !string.IsNullOrWhiteSpace(requestedSizeNorm) &&
@@ -2769,6 +2775,20 @@ public class OpenAIImageClient : IImageGenerationClient
         catch
         {
             return false;
+        }
+    }
+
+    internal static string? IdentifyActualImageSize(byte[]? bytes)
+    {
+        if (bytes == null || bytes.Length == 0) return null;
+        try
+        {
+            var info = SixLabors.ImageSharp.Image.Identify(bytes);
+            return info is { Width: > 0, Height: > 0 } ? $"{info.Width}x{info.Height}" : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 }

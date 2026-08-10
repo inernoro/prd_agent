@@ -1,5 +1,7 @@
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LLM.Adapters;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -82,5 +84,17 @@ public class ImageGenAdaptiveSizePromptTests
         var prompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt("分离图片图层", requestParams, config);
 
         Assert.Equal("分离图片图层", prompt);
+    }
+
+    [Fact]
+    public void IdentifyActualImageSize_UsesImageBytesInsteadOfRequestedPlaceholder()
+    {
+        using var image = new Image<Rgba32>(1152, 1536);
+        using var stream = new MemoryStream();
+        image.SaveAsPng(stream);
+
+        var actualSize = OpenAIImageClient.IdentifyActualImageSize(stream.ToArray());
+
+        Assert.Equal("1152x1536", actualSize);
     }
 }
