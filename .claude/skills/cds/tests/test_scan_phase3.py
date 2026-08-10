@@ -187,6 +187,33 @@ services:
         assert 'cds.web-entry-path: "/guide"' in help_block
 
 
+def test_scan_matches_web_service_names_on_token_boundaries():
+    """builder/build-worker 里的连续字符 ui 不能抢走 website 的主入口。"""
+    for build_service in ("builder", "build-worker"):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "docker-compose.yml").write_text(f"""\
+services:
+  api:
+    image: node:20
+    ports: ["5000"]
+  {build_service}:
+    image: node:20
+    ports: ["7000"]
+  website:
+    image: node:20
+    ports: ["8000"]
+""")
+            result = run_scan(tmp)
+            yaml_out = result["data"]["yaml"]
+
+            build_block = yaml_out.split(f"  {build_service}:", 1)[1].split("  website:", 1)[0]
+            website_block = yaml_out.split("  website:", 1)[1]
+            assert 'cds.path-prefix: "/"' not in build_block
+            assert f'cds.path-prefix: "/{build_service}/"' in build_block
+            assert 'cds.path-prefix: "/"' in website_block
+            assert "cds.web-entry-name" in website_block
+
+
 # ─────────────────────────────────────────────────────────
 # Scenario 3: command 已含 wait-for → 不重复添加(幂等)
 # ─────────────────────────────────────────────────────────

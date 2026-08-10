@@ -30,6 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
+import { multiPreviewUrl, resolveWebEntryUrl, simplePreviewUrl, type PreviewMode } from '@/lib/previewUrl';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
@@ -78,7 +79,7 @@ interface BranchesResponse {
 }
 
 interface PreviewModeResponse {
-  mode: 'simple' | 'port' | 'multi';
+  mode: PreviewMode;
 }
 
 interface CdsConfigResponse {
@@ -156,17 +157,22 @@ interface ProfileOverridesResponse {
   profiles: ProfileRow[];
 }
 
-interface GatewayUrl {
-  subdomain: string;
+interface WebEntryUrl {
+  subdomain?: string;
+  serviceId?: string;
   name: string;
   url: string;
+  primary: boolean;
 }
 
 interface AliasResponse {
   aliases: string[];
   defaultUrl?: string;
   previewUrls?: string[];
-  gatewayUrls?: GatewayUrl[];
+  primaryEntry?: WebEntryUrl;
+  webEntries?: WebEntryUrl[];
+  /** 一版兼容字段；内容已经是 Web 页面，不再是健康或网关地址。 */
+  gatewayUrls?: WebEntryUrl[];
   rootDomain?: string;
 }
 
@@ -435,35 +441,6 @@ async function postSse(
     }
     if (done) break;
   }
-}
-
-function cleanHost(host?: string): string {
-  if (!host) return '';
-  return host.replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim();
-}
-
-function isLocalHost(host: string): boolean {
-  const clean = host.split(':')[0];
-  return clean === 'localhost' || clean.endsWith('.localhost') || clean === '127.0.0.1' || clean === '::1';
-}
-
-function hostWithPort(host: string, port?: number): string {
-  if (!port || host.includes(':')) return host;
-  if (!isLocalHost(host)) return host;
-  return `${host}:${port}`;
-}
-
-function multiPreviewUrl(branch: BranchSummary, config: CdsConfigResponse): string {
-  const host = cleanHost(config.previewDomain || config.rootDomains?.[0]);
-  if (!host) return '';
-  const slug = branch.previewSlug || branch.id;
-  return `${window.location.protocol}//${slug}.${hostWithPort(host, config.workerPort || 5500)}`;
-}
-
-function simplePreviewUrl(config: CdsConfigResponse): string {
-  const configured = cleanHost(config.mainDomain);
-  if (configured) return `${window.location.protocol}//${hostWithPort(configured, config.workerPort || 5500)}`;
-  return `${window.location.protocol}//${window.location.hostname}:${config.workerPort || 5500}`;
 }
 
 function branchProxyLabels(branch: BranchSummary, aliases: AliasResponse): Set<string> {
@@ -840,6 +817,18 @@ export function BranchDetailPage(): JSX.Element {
     if (state.status !== 'ok') return undefined;
     return state.profiles.find((profile) => profile.profileId === selectedProfileId) || state.profiles[0];
   }, [selectedProfileId, state]);
+  const webEntries = useMemo(() => (
+    state.status === 'ok'
+      ? (state.aliases.webEntries || state.aliases.gatewayUrls || [])
+      : []
+  ), [state]);
+  const primaryEntryUrl = useMemo(() => {
+    if (state.status !== 'ok') return '';
+    const baseUrl = state.previewMode === 'simple'
+      ? simplePreviewUrl(state.config)
+      : (state.aliases.defaultUrl || multiPreviewUrl(state.branch, state.config));
+    return resolveWebEntryUrl(state.previewMode, baseUrl, state.aliases.primaryEntry);
+  }, [state]);
 
   const saveAliases = useCallback(async () => {
     if (state.status !== 'ok') return;
@@ -1175,6 +1164,7 @@ export function BranchDetailPage(): JSX.Element {
       } else {
         url = multiPreviewUrl(state.branch, state.config);
       }
+      url = resolveWebEntryUrl(state.previewMode, url, state.aliases.primaryEntry);
       if (!url) throw new Error('缺少预览域名配置');
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (err) {
@@ -1244,12 +1234,12 @@ export function BranchDetailPage(): JSX.Element {
                 </a>
               </Button>
               {state.status === 'ok' && state.branch.status === 'running' ? (
-                (state.aliases.gatewayUrls?.length ?? 0) > 0 ? (
+                webEntries.length > 0 ? (
                   <DropdownMenu
                     align="end"
                     width={280}
                     trigger={
-                      <Button variant="ghost" size="sm" title="打开主应用入口或网关入口">
+                      <Button variant="ghost" size="sm" title="打开主应用入口或其他 Web 页面">
                         <ExternalLink />
                         新标签
                         <ChevronDown className="ml-0.5 opacity-70" />
@@ -1258,18 +1248,20 @@ export function BranchDetailPage(): JSX.Element {
                   >
                     <DropdownItem onSelect={() => void openPreview()}>
                       <ExternalLink />
-                      打开主应用入口
+                      打开 {state.aliases.primaryEntry?.name || '主应用入口'}
                     </DropdownItem>
                     <DropdownDivider />
-                    <DropdownLabel>网关入口</DropdownLabel>
-                    {state.aliases.gatewayUrls!.map((gw) => (
+                    <DropdownLabel>其他 Web 页面</DropdownLabel>
+                    {webEntries.map((entry) => (
                       <DropdownItem
-                        key={gw.subdomain}
-                        onSelect={() => window.open(gw.url, '_blank', 'noopener,noreferrer')}
+                        key={entry.serviceId || entry.subdomain || entry.url}
+                        onSelect={() => window.open(entry.url, '_blank', 'noopener,noreferrer')}
                       >
                         <RouterIcon />
-                        <span className="min-w-0 flex-1 truncate">{gw.name}</span>
-                        <span className="shrink-0 font-mono text-xs text-muted-foreground">{gw.subdomain}</span>
+                        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                        {entry.subdomain || entry.serviceId ? (
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground">{entry.subdomain || entry.serviceId}</span>
+                        ) : null}
                       </DropdownItem>
                     ))}
                   </DropdownMenu>
@@ -1366,12 +1358,12 @@ export function BranchDetailPage(): JSX.Element {
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {state.branch.status === 'running' && (state.aliases.gatewayUrls?.length ?? 0) > 0 ? (
+                      {state.branch.status === 'running' && webEntries.length > 0 ? (
                         <DropdownMenu
                           align="start"
                           width={280}
                           trigger={
-                            <Button title="打开主应用入口或网关入口">
+                            <Button title="打开主应用入口或其他 Web 页面">
                               <ExternalLink />
                               打开预览
                               <ChevronDown className="ml-0.5 opacity-70" />
@@ -1380,18 +1372,20 @@ export function BranchDetailPage(): JSX.Element {
                         >
                           <DropdownItem onSelect={() => void openPreview()}>
                             <ExternalLink />
-                            打开主应用入口
+                            打开 {state.aliases.primaryEntry?.name || '主应用入口'}
                           </DropdownItem>
                           <DropdownDivider />
-                          <DropdownLabel>网关入口</DropdownLabel>
-                          {state.aliases.gatewayUrls!.map((gw) => (
+                          <DropdownLabel>其他 Web 页面</DropdownLabel>
+                          {webEntries.map((entry) => (
                             <DropdownItem
-                              key={gw.subdomain}
-                              onSelect={() => window.open(gw.url, '_blank', 'noopener,noreferrer')}
+                              key={entry.serviceId || entry.subdomain || entry.url}
+                              onSelect={() => window.open(entry.url, '_blank', 'noopener,noreferrer')}
                             >
                               <RouterIcon />
-                              <span className="min-w-0 flex-1 truncate">{gw.name}</span>
-                              <span className="shrink-0 font-mono text-xs text-muted-foreground">{gw.subdomain}</span>
+                              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                              {entry.subdomain || entry.serviceId ? (
+                                <span className="shrink-0 font-mono text-xs text-muted-foreground">{entry.subdomain || entry.serviceId}</span>
+                              ) : null}
                             </DropdownItem>
                           ))}
                         </DropdownMenu>
@@ -1670,7 +1664,7 @@ export function BranchDetailPage(): JSX.Element {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 p-5 pt-0 text-sm">
-                  <Field label="主应用入口" value={state.aliases.defaultUrl || multiPreviewUrl(state.branch, state.config) || '未配置'} />
+                  <Field label={state.aliases.primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || '未配置'} />
                   {state.aliases.aliases.length > 0 ? (
                     <div className="space-y-2">
                       <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>
@@ -1686,30 +1680,30 @@ export function BranchDetailPage(): JSX.Element {
                     </div>
                   )}
 
-                  {/* 网关入口:声明了 cds.subdomain 的服务(如 LLM 网关)获得独立命名域名
-                      `<previewSlug>-<subdomain>.<root>`,可绕过主应用直连该容器。 */}
+                  {/* 用户页面由 cds.web-entry-* 显式声明。readiness/health 地址只供机器探测，
+                      不得出现在这里；cds.subdomain 只负责发布路由，不自动创造用户入口。 */}
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
                       <RouterIcon className="h-3.5 w-3.5" />
-                      网关入口
+                      其他 Web 页面
                     </div>
-                    {(state.aliases.gatewayUrls?.length ?? 0) > 0 ? (
-                      state.aliases.gatewayUrls!.map((gw) => (
+                    {webEntries.length > 0 ? (
+                      webEntries.map((entry) => (
                         <a
-                          key={gw.subdomain}
-                          href={gw.url}
+                          key={entry.serviceId || entry.subdomain || entry.url}
+                          href={entry.url}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex items-center gap-2 break-all cds-surface-sunken cds-hairline px-3 py-2 transition-colors hover:bg-[hsl(var(--surface-raised))]"
-                          title={`打开 ${gw.name} 网关入口`}
+                          title={`打开 ${entry.name}`}
                         >
-                          <span className="min-w-0 flex-1 break-all">{gw.url}</span>
-                          <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-xs text-foreground">{gw.name}</span>
+                          <span className="min-w-0 flex-1 break-all">{entry.url}</span>
+                          <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-xs text-foreground">{entry.name}</span>
                         </a>
                       ))
                     ) : (
                       <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
-                        暂无网关入口。为服务在 compose 里声明 <code className="font-mono">cds.subdomain</code> 标签，即可获得独立命名域名（如 LLM 网关），无需埋在主应用路径下。
+                        暂无其他 Web 页面。需要展示时，请在 compose 中为对应服务声明 <code className="font-mono">cds.web-entry-name</code> 和页面路径。
                       </div>
                     )}
                   </div>

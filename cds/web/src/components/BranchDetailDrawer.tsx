@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
+import { resolveWebEntryUrl, type PreviewMode } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -817,6 +818,7 @@ export function BranchDetailDrawer({
   deployments = [],
   activityEvents = [],
   previewUrl = '',
+  previewMode = 'multi',
   branchStatus,
   initialResourceId,
   initialResourceDetailTab,
@@ -843,6 +845,8 @@ export function BranchDetailDrawer({
    * domain configured). Drawer 仅在 running 时显示 URL chip。
    */
   previewUrl?: string;
+  /** 决定主入口是否需要保留 simple/port 模式下由调用方给出的 host。 */
+  previewMode?: PreviewMode;
   initialResourceId?: string | null;
   initialResourceDetailTab?: BranchResourceDetailTab | null;
   /**
@@ -860,6 +864,10 @@ export function BranchDetailDrawer({
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   const [primaryEntry, setPrimaryEntry] = useState<WebEntryUrl | null>(null);
   const [webEntries, setWebEntries] = useState<WebEntryUrl[]>([]);
+  const primaryEntryUrl = useMemo(
+    () => resolveWebEntryUrl(previewMode, previewUrl || branch?.previewUrl || '', primaryEntry),
+    [branch?.previewUrl, previewMode, previewUrl, primaryEntry],
+  );
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
   const [deploymentVersions, setDeploymentVersions] = useState<DeploymentVersionSummary[]>([]);
@@ -2034,7 +2042,7 @@ export function BranchDetailDrawer({
                   只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
               {/* 2026-07-26 用户拍板：入口卡不再常驻抽屉头部占每个页签 ~180px——
                   只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
-              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
+              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && primaryEntryUrl ? (
                 <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     <Rocket className="h-4 w-4" />
@@ -2044,7 +2052,7 @@ export function BranchDetailDrawer({
                       readiness/health URL 不属于用户入口，不在这里渲染。 */}
                   <div className="flex flex-col gap-1.5">
                     <a
-                      href={primaryEntry?.url || previewUrl || branch.previewUrl}
+                      href={primaryEntryUrl}
                       target="_blank"
                       rel="noreferrer"
                       title={`打开 ${primaryEntry?.name || '主应用入口'}`}
@@ -2055,7 +2063,7 @@ export function BranchDetailDrawer({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">{primaryEntry?.name || '主应用入口'}</span>
-                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{primaryEntry?.url || previewUrl || branch.previewUrl}</span>
+                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{primaryEntryUrl}</span>
                       </span>
                       <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
                     </a>
@@ -2231,13 +2239,13 @@ export function BranchDetailDrawer({
                 {activeTab === 'run' ? (
                   <ReplicaSetPanel
                     branchId={branch.id}
-                    previewUrl={primaryEntry?.url || branch.previewUrl || previewUrl}
+                    previewUrl={primaryEntryUrl}
                     services={branch.services || {}}
                     infra={infraServices.map((svc) => ({ id: svc.id, name: svc.name, dockerImage: svc.dockerImage, status: svc.status }))}
                     entries={[
                       // 入口卡入画布（2026-07-26 用户拍板）：抽屉头部入口卡只留总览，
-                      // 运行画布的入口节点承载同一组公开入口（主应用 + 命名子域网关）
-                      ...((primaryEntry?.url || previewUrl || branch.previewUrl) ? [{ name: primaryEntry?.name || '主应用', url: (primaryEntry?.url || previewUrl || branch.previewUrl)! }] : []),
+                      // 运行画布的入口节点承载同一组公开入口（主应用 + 其他 Web 页面）
+                      ...(primaryEntryUrl ? [{ name: primaryEntry?.name || '主应用', url: primaryEntryUrl }] : []),
                       ...[...webEntries]
                         .sort((a, b) => a.name.localeCompare(b.name))
                         .map((entry) => ({ name: entry.name, url: entry.url })),
@@ -2559,7 +2567,7 @@ export function BranchDetailDrawer({
                         tone={memNow != null && memNow > 85 ? 'bad' : 'muted'} />
                       <OverviewTile label="网络" value={netNow != null ? `${formatBytes(netNow)}/s` : '—'}
                         sub={netNow != null ? '全服务收发合计' : '监控采样中…'} />
-                      <OverviewTile label="入口" value={running && (previewUrl || branch.previewUrl) ? `${1 + webEntries.length} 个` : '未上线'}
+                      <OverviewTile label="入口" value={running && primaryEntryUrl ? `${1 + webEntries.length} 个` : '未上线'}
                         sub={running ? '上方入口卡直达' : '部署成功后出现'} tone={running ? 'good' : 'muted'} />
                     </div>
                   );

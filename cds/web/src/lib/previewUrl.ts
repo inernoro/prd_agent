@@ -25,6 +25,12 @@ export interface PreviewUrlBranchLike {
 
 export type PreviewMode = 'simple' | 'port' | 'multi';
 
+export interface WebEntryUrlLike {
+  url: string;
+  /** 命名子域入口由 CDS 单独发布，不应被 simple/port 模式改写 host。 */
+  subdomain?: string;
+}
+
 /** 协议来源。默认取浏览器；单测传死值，避免依赖 window。 */
 export interface PreviewUrlOrigin {
   protocol: string;
@@ -99,4 +105,31 @@ export function resolvePreviewUrl(
   // （Codex review P1，2026-07-29）。宁可空着让检查拦下来。
   if (mode === 'port') return '';
   return multiPreviewUrl(branch, config, origin);
+}
+
+/**
+ * 把 CDS 下发的主入口与当前预览模式合成最终可点击地址。
+ *
+ * `primaryEntry.url` 使用分支公开域名表达真实入口路径；simple 模式实际承载
+ * 分支的是共享 mainDomain，port 模式则是运行期端口。两种模式都必须保留调用方
+ * 给出的 host，只取入口的 pathname/search/hash。命名子域是独立发布的真实入口，
+ * 不参与 host 替换。
+ */
+export function resolveWebEntryUrl(
+  mode: PreviewMode | undefined,
+  previewBaseUrl: string,
+  entry?: WebEntryUrlLike | null,
+): string {
+  if (!entry?.url) return previewBaseUrl;
+  if (mode === 'multi' || entry.subdomain || !previewBaseUrl) return entry.url;
+
+  try {
+    const base = new URL(previewBaseUrl);
+    const declared = new URL(entry.url);
+    const pathname = declared.pathname === '/' ? '' : declared.pathname;
+    return `${base.origin}${pathname}${declared.search}${declared.hash}`;
+  } catch {
+    // 调用方给出的 mode-aware 地址优先于无法解析的 API 候选地址。
+    return previewBaseUrl;
+  }
 }

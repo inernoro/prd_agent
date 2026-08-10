@@ -44,7 +44,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.13.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.13.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -4838,9 +4838,18 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
         name for name in app_names
         if _service_labels(services[name]).get("cds.path-prefix", "").strip() == "/"
     ]
+
+    def _looks_like_web_service_name(name: str) -> bool:
+        # 只按完整语义 token 判定，不能做裸子串搜索：builder/build-worker 都含连续
+        # 字符 "ui"，旧逻辑会把构建服务误认成用户页面。先拆 camelCase，再按非字母
+        # 数字分词，保留 web/admin/frontend/ui/client 等明确 Web 角色名。
+        separated = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", name)
+        tokens = set(re.findall(r"[a-z0-9]+", separated.lower()))
+        return bool(tokens & {"web", "website", "site", "admin", "front", "frontend", "ui", "client"})
+
     web_named = [
         name for name in app_names
-        if any(token in name.lower() for token in ("web", "admin", "front", "ui", "client"))
+        if _looks_like_web_service_name(name)
     ]
     primary_app_name = (root_routed or web_named or app_names or [None])[0]
 
