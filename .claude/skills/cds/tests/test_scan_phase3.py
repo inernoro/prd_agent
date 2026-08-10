@@ -188,10 +188,11 @@ services:
 
 
 def test_scan_matches_web_service_names_on_token_boundaries():
-    """builder/build-worker 里的连续字符 ui 不能抢走 website 的主入口。"""
+    """构建角色不能抢入口，website/webapp 等紧凑 Web 名仍应被识别。"""
     for build_service in ("builder", "build-worker"):
-        with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "docker-compose.yml").write_text(f"""\
+        for web_service in ("website", "webapp"):
+            with tempfile.TemporaryDirectory() as tmp:
+                Path(tmp, "docker-compose.yml").write_text(f"""\
 services:
   api:
     image: node:20
@@ -199,19 +200,19 @@ services:
   {build_service}:
     image: node:20
     ports: ["7000"]
-  website:
+  {web_service}:
     image: node:20
     ports: ["8000"]
 """)
-            result = run_scan(tmp)
-            yaml_out = result["data"]["yaml"]
+                result = run_scan(tmp)
+                yaml_out = result["data"]["yaml"]
 
-            build_block = yaml_out.split(f"  {build_service}:", 1)[1].split("  website:", 1)[0]
-            website_block = yaml_out.split("  website:", 1)[1]
-            assert 'cds.path-prefix: "/"' not in build_block
-            assert f'cds.path-prefix: "/{build_service}/"' in build_block
-            assert 'cds.path-prefix: "/"' in website_block
-            assert "cds.web-entry-name" in website_block
+                build_block = yaml_out.split(f"  {build_service}:", 1)[1].split(f"  {web_service}:", 1)[0]
+                web_block = yaml_out.split(f"  {web_service}:", 1)[1]
+                assert 'cds.path-prefix: "/"' not in build_block
+                assert f'cds.path-prefix: "/{build_service}/"' in build_block
+                assert 'cds.path-prefix: "/"' in web_block
+                assert "cds.web-entry-name" in web_block
 
 
 # ─────────────────────────────────────────────────────────

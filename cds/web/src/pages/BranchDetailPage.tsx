@@ -30,7 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
-import { multiPreviewUrl, resolveWebEntryUrl, simplePreviewUrl, type PreviewMode } from '@/lib/previewUrl';
+import { multiPreviewUrl, resolveWebEntryPresentation, resolveWebEntryUrl, simplePreviewUrl, type PreviewMode } from '@/lib/previewUrl';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
@@ -817,17 +817,14 @@ export function BranchDetailPage(): JSX.Element {
     if (state.status !== 'ok') return undefined;
     return state.profiles.find((profile) => profile.profileId === selectedProfileId) || state.profiles[0];
   }, [selectedProfileId, state]);
-  const webEntries = useMemo(() => (
-    state.status === 'ok'
-      ? (state.aliases.webEntries || state.aliases.gatewayUrls || [])
-      : []
-  ), [state]);
-  const primaryEntryUrl = useMemo(() => {
-    if (state.status !== 'ok') return '';
+  const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(() => {
+    if (state.status !== 'ok') {
+      return { primaryEntry: null, primaryEntryUrl: '', webEntries: [] as WebEntryUrl[] };
+    }
     const baseUrl = state.previewMode === 'simple'
       ? simplePreviewUrl(state.config)
       : (state.aliases.defaultUrl || multiPreviewUrl(state.branch, state.config));
-    return resolveWebEntryUrl(state.previewMode, baseUrl, state.aliases.primaryEntry);
+    return resolveWebEntryPresentation(state.previewMode, baseUrl, state.aliases);
   }, [state]);
 
   const saveAliases = useCallback(async () => {
@@ -1164,7 +1161,7 @@ export function BranchDetailPage(): JSX.Element {
       } else {
         url = multiPreviewUrl(state.branch, state.config);
       }
-      url = resolveWebEntryUrl(state.previewMode, url, state.aliases.primaryEntry);
+      url = resolveWebEntryUrl(state.previewMode, url, primaryEntry);
       if (!url) throw new Error('缺少预览域名配置');
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (err) {
@@ -1248,7 +1245,7 @@ export function BranchDetailPage(): JSX.Element {
                   >
                     <DropdownItem onSelect={() => void openPreview()}>
                       <ExternalLink />
-                      打开 {state.aliases.primaryEntry?.name || '主应用入口'}
+                      打开 {primaryEntry?.name || '主应用入口'}
                     </DropdownItem>
                     <DropdownDivider />
                     <DropdownLabel>其他 Web 页面</DropdownLabel>
@@ -1372,7 +1369,7 @@ export function BranchDetailPage(): JSX.Element {
                         >
                           <DropdownItem onSelect={() => void openPreview()}>
                             <ExternalLink />
-                            打开 {state.aliases.primaryEntry?.name || '主应用入口'}
+                            打开 {primaryEntry?.name || '主应用入口'}
                           </DropdownItem>
                           <DropdownDivider />
                           <DropdownLabel>其他 Web 页面</DropdownLabel>
@@ -1664,7 +1661,7 @@ export function BranchDetailPage(): JSX.Element {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 p-5 pt-0 text-sm">
-                  <Field label={state.aliases.primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || '未配置'} />
+                  <Field label={primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || '未配置'} />
                   {state.aliases.aliases.length > 0 ? (
                     <div className="space-y-2">
                       <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>

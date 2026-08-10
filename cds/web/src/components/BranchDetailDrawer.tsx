@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
-import { resolveWebEntryUrl, type PreviewMode } from '@/lib/previewUrl';
+import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -862,11 +862,14 @@ export function BranchDetailDrawer({
   // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
   const now = useNowTick(open);
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
-  const [primaryEntry, setPrimaryEntry] = useState<WebEntryUrl | null>(null);
-  const [webEntries, setWebEntries] = useState<WebEntryUrl[]>([]);
-  const primaryEntryUrl = useMemo(
-    () => resolveWebEntryUrl(previewMode, previewUrl || branch?.previewUrl || '', primaryEntry),
-    [branch?.previewUrl, previewMode, previewUrl, primaryEntry],
+  const [entryAliases, setEntryAliases] = useState<WebEntryCollectionLike<WebEntryUrl>>({});
+  const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(
+    () => resolveWebEntryPresentation(
+      previewMode,
+      previewUrl || branch?.previewUrl || '',
+      entryAliases,
+    ),
+    [branch?.previewUrl, entryAliases, previewMode, previewUrl],
   );
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
@@ -987,8 +990,7 @@ export function BranchDetailDrawer({
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
-      setPrimaryEntry(aliasesRes.primaryEntry || null);
-      setWebEntries(aliasesRes.webEntries || aliasesRes.gatewayUrls || []);
+      setEntryAliases(aliasesRes);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {

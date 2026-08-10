@@ -31,6 +31,13 @@ export interface WebEntryUrlLike {
   subdomain?: string;
 }
 
+export interface WebEntryCollectionLike<T extends WebEntryUrlLike> {
+  primaryEntry?: T | null;
+  webEntries?: T[];
+  /** 一版兼容字段；新响应应使用 webEntries。 */
+  gatewayUrls?: T[];
+}
+
 /** 协议来源。默认取浏览器；单测传死值，避免依赖 window。 */
 export interface PreviewUrlOrigin {
   protocol: string;
@@ -132,4 +139,23 @@ export function resolveWebEntryUrl(
     // 调用方给出的 mode-aware 地址优先于无法解析的 API 候选地址。
     return previewBaseUrl;
   }
+}
+
+/**
+ * 统一两个详情消费端的入口选择与地址合成行为。
+ *
+ * 新字段存在时，即使是空数组也以 webEntries 为准；只有旧响应完全没有该字段时
+ * 才读取 gatewayUrls。这样抽屉和完整详情页不会各自维护一份兼容判断。
+ */
+export function resolveWebEntryPresentation<T extends WebEntryUrlLike>(
+  mode: PreviewMode | undefined,
+  previewBaseUrl: string,
+  aliases: WebEntryCollectionLike<T>,
+): { primaryEntry: T | null; primaryEntryUrl: string; webEntries: T[] } {
+  const primaryEntry = aliases.primaryEntry || null;
+  return {
+    primaryEntry,
+    primaryEntryUrl: resolveWebEntryUrl(mode, previewBaseUrl, primaryEntry),
+    webEntries: aliases.webEntries ?? aliases.gatewayUrls ?? [],
+  };
 }

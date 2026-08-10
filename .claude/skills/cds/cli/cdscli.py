@@ -44,7 +44,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.13.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.13.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -4840,12 +4840,19 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
     ]
 
     def _looks_like_web_service_name(name: str) -> bool:
-        # 只按完整语义 token 判定，不能做裸子串搜索：builder/build-worker 都含连续
-        # 字符 "ui"，旧逻辑会把构建服务误认成用户页面。先拆 camelCase，再按非字母
-        # 数字分词，保留 web/admin/frontend/ui/client 等明确 Web 角色名。
+        # 不能做裸子串搜索：builder/build-worker 都含连续字符 "ui"，旧逻辑会把
+        # 构建服务误认成用户页面。先拆 camelCase，再按非字母数字分词；构建角色
+        # 明确排除，Web 角色允许常见的紧凑命名（webapp/adminportal），但不会把
+        # webhook 这类仅共享前缀的服务算成页面。
         separated = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", name)
         tokens = set(re.findall(r"[a-z0-9]+", separated.lower()))
-        return bool(tokens & {"web", "website", "site", "admin", "front", "frontend", "ui", "client"})
+        if tokens & {"build", "builder", "worker", "runner", "compiler"}:
+            return False
+        web_role = re.compile(
+            r"^(?:web|admin|front|frontend|ui|client)"
+            r"(?:app|application|portal|site|ui|web)?$"
+        )
+        return any(web_role.fullmatch(token) for token in tokens)
 
     web_named = [
         name for name in app_names

@@ -1,24 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
+import { resolveWebEntryPresentation } from '../../web/src/lib/previewUrl.js';
 
-const webRoot = path.resolve(process.cwd(), 'web', 'src');
-const drawer = fs.readFileSync(path.join(webRoot, 'components', 'BranchDetailDrawer.tsx'), 'utf8');
-const branchList = fs.readFileSync(path.join(webRoot, 'pages', 'BranchListPage.tsx'), 'utf8');
-const detailPage = fs.readFileSync(path.join(webRoot, 'pages', 'BranchDetailPage.tsx'), 'utf8');
+describe('Web 入口消费行为', () => {
+  it('simple 模式保留真实主域名，并返回用户定义的入口名称', () => {
+    const result = resolveWebEntryPresentation(
+      'simple',
+      'https://app.example.test',
+      {
+        primaryEntry: { url: 'https://branch.example.test/admin', name: '管理后台' },
+        webEntries: [{ url: 'https://help.example.test/guide', name: '帮助中心', subdomain: 'help' }],
+      },
+    );
 
-describe('Web 入口消费端接线', () => {
-  it('抽屉收到 previewMode，并通过共享函数生成最终主入口', () => {
-    expect(branchList).toContain("previewMode={state.status === 'ok' ? state.previewMode : 'multi'}");
-    expect(drawer).toContain("from '@/lib/previewUrl'");
-    expect(drawer).toContain('resolveWebEntryUrl(previewMode');
+    expect(result.primaryEntryUrl).toBe('https://app.example.test/admin');
+    expect(result.primaryEntry?.name).toBe('管理后台');
+    expect(result.webEntries.map((entry) => entry.name)).toEqual(['帮助中心']);
   });
 
-  it('完整详情页消费 primaryEntry/webEntries，不再把用户页面叫网关入口', () => {
-    expect(detailPage).toContain('primaryEntry?: WebEntryUrl;');
-    expect(detailPage).toContain('webEntries?: WebEntryUrl[];');
-    expect(detailPage).toContain('resolveWebEntryUrl(state.previewMode');
-    expect(detailPage).toContain('其他 Web 页面');
-    expect(detailPage).not.toContain('网关入口');
+  it('新字段存在时不混入旧字段；只有旧响应才回退 gatewayUrls', () => {
+    const declared = resolveWebEntryPresentation(
+      'multi',
+      'https://branch.example.test',
+      {
+        webEntries: [],
+        gatewayUrls: [{ url: 'https://legacy.example.test/healthz', name: '旧入口' }],
+      },
+    );
+    const legacy = resolveWebEntryPresentation(
+      'multi',
+      'https://branch.example.test',
+      {
+        gatewayUrls: [{ url: 'https://legacy.example.test/help', name: '帮助中心' }],
+      },
+    );
+
+    expect(declared.webEntries).toEqual([]);
+    expect(legacy.webEntries.map((entry) => entry.name)).toEqual(['帮助中心']);
   });
 });
