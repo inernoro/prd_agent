@@ -111,6 +111,21 @@ public class StubOpenAIController : ControllerBase
                     task_type = new[] { "image_generation" },
                     modalities = new { input_modalities = new[] { "text", "image" }, output_modalities = new[] { "image" } },
                     features = new { tools = new { function_calling = false } }
+                },
+                // 必须在这里登记，否则「无 key 也能端到端自测检索」这句话是假的：
+                // 走正常模型同步配出来的 stub 平台根本看不到 embedding 模型，
+                // 而 embedding 已经改成专属池不可用即失败关闭，于是卡在 ResolveModelAsync，
+                // 压根到不了下面那个 /v1/embeddings 端点。端点存在 ≠ 能力可达
+                // （no-rootless-tree：声明的能力必须运行时可验证）。
+                new
+                {
+                    id = "stub-embedding",
+                    name = "Stub Embedding",
+                    status = "Active",
+                    domain = "embedding",
+                    task_type = new[] { "embedding" },
+                    modalities = new { input_modalities = new[] { "text" }, output_modalities = new[] { "embedding" } },
+                    features = new { tools = new { function_calling = false } }
                 }
             }
         };

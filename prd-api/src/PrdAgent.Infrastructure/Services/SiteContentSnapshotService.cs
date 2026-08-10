@@ -197,12 +197,22 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     /// </summary>
     private static (List<HostedSiteFile> Picked, int Dropped) SelectFiles(HostedSite site, List<HostedSiteFile> files)
     {
+        // 体积上限放在**所有分支之前**，对任何站点形态一视同仁。
+        //
+        // 上一版把它放在 PDF 分支之后，于是 PDF 包装站整条路绕过了闸门——一个 200MB 的 PDF，
+        // 拿着公开分享 token 每问一次就整份下载 + 抽取一次。同一个函数里「按形态分支」与
+        // 「按安全上限过滤」两件事的先后顺序错了，闸门就只挡住其中一条路。
+        // 这类「修一条分支、漏兄弟分支」正是 predicate-and-wiring-discipline 形状 1，
+        // 所以这里不再逐分支补，而是把闸门提到分支之前，让任何新增形态都不可能绕过。
+        var oversized = files.Count(f => f.Size > MaxFileDownloadBytes);
+        files = files.Where(f => f.Size <= MaxFileDownloadBytes).ToList();
+
         // PDF 包装站：读原始 PDF，不读那个只有一个 iframe 的壳子 index.html
         if (string.Equals(site.WrappedAssetType, "pdf", StringComparison.OrdinalIgnoreCase))
         {
             var pdf = files.FirstOrDefault(f =>
                 f.Path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
-            return (pdf != null ? new List<HostedSiteFile> { pdf } : new List<HostedSiteFile>(), 0);
+            return (pdf != null ? new List<HostedSiteFile> { pdf } : new List<HostedSiteFile>(), oversized);
         }
 
         var textual = files
@@ -211,12 +221,6 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
 
         var entry = textual.FirstOrDefault(f =>
             string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
-
-        // 超大文件在**下载之前**就剔掉。留到下载后再截断已经晚了——
-        // 内存和存储 IO 早就付掉了，而这条路径是匿名可达的。
-        var oversized = textual.Count(f => f.Size > MaxFileDownloadBytes);
-        textual = textual.Where(f => f.Size <= MaxFileDownloadBytes).ToList();
-        if (entry != null && entry.Size > MaxFileDownloadBytes) entry = null;
 
         var rest = textual.Where(f => f != entry).OrderBy(f => f.Size).ToList();
 

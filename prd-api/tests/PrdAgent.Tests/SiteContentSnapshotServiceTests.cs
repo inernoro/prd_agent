@@ -197,6 +197,44 @@ public class SiteContentSnapshotServiceTests
         Assert.NotNull(snap.Unavailable);
     }
 
+    /// <summary>
+    /// 核心用例：PDF 包装站同样受体积上限约束。
+    ///
+    /// 由 PR #1351 第十二轮 review 抓出：上一版把体积过滤放在 PDF 分支**之后**，
+    /// 于是 PDF 站整条路绕过闸门——一个 200MB 的 PDF，拿公开分享 token 每问一次就整份下载 + 抽取。
+    /// 修法不是给 PDF 分支再补一道判断，而是把闸门提到所有分支之前，
+    /// 让任何新增站点形态都不可能绕过。这条用例锁的就是「提到分支之前」这件事。
+    /// </summary>
+    [Fact]
+    public async Task 超大PDF包装站也不下载()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["pdfkey"] = "PDF 正文";
+
+        var site = SiteWithSized(("doc.pdf", "pdfkey", 200L * 1024 * 1024));
+        site.WrappedAssetType = "pdf";
+
+        var snap = await NewService(storage).GetAsync(site);
+
+        Assert.False(storage.RequestedKeys.Contains("pdfkey"), "超大 PDF 仍被下载——闸门放在了分支之后");
+        Assert.NotNull(snap.Unavailable);
+    }
+
+    [Fact]
+    public async Task 正常体积的PDF包装站照常读取()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["pdfkey"] = "PDF 正文";
+
+        var site = SiteWithSized(("doc.pdf", "pdfkey", 1024));
+        site.WrappedAssetType = "pdf";
+
+        var snap = await NewService(storage).GetAsync(site);
+
+        Assert.Null(snap.Unavailable);
+        Assert.Contains("PDF 正文", snap.Text);
+    }
+
     // ── 手写替身（本测试项目没有 mock 库） ────────────────────
 
     private sealed class FakeAssetStorage : IAssetStorage
