@@ -34,7 +34,7 @@ import {
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import { getSiteAskConfig } from '@/services/real/webPages';
-import { resolveShareAskSelection, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
+import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
 import {
   canDeleteInWebHosting,
@@ -3068,7 +3068,9 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
       if (res.success && res.data?.enabled) {
         const lib = res.data.suggestedQuestions ?? [];
         setAskLibrary(lib);
-        setAskPicked(lib);
+        // 题库可能有 12 条，但面板只显示 ASK_MAX_DISPLAY 条——初始勾选也必须按上限截，
+        // 否则一进来就是"选了 12 条"，存下去只留 4 条，其余静默消失。
+        setAskPicked(lib.slice(0, ASK_MAX_DISPLAY));
       } else {
         setAskLibrary(null);
       }
@@ -3420,11 +3422,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                           title={blocked ? `一个面板最多显示 ${ASK_MAX_DISPLAY} 条，取消一条再选` : undefined}
                           onClick={() => {
                             setAskTouched(true);
-                            setAskPicked((prev) =>
-                              prev.includes(q)
-                                ? prev.filter((x) => x !== q)
-                                : prev.length >= ASK_MAX_DISPLAY ? prev : [...prev, q],
-                            );
+                            setAskPicked((prev) => toggleAskPick(prev, q));
                           }}
                           className="px-3 py-1 rounded-lg text-xs text-left"
                           style={{
@@ -3447,6 +3445,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                     <input
                       value={askCustom}
                       maxLength={60}
+                      disabled={askPicked.length >= ASK_MAX_DISPLAY}
                       onChange={(e) => setAskCustom(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key !== 'Enter') return;
@@ -3454,10 +3453,12 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                         const q = askCustom.trim();
                         if (!q) return;
                         setAskTouched(true);
-                        setAskPicked((prev) => (prev.includes(q) ? prev : [...prev, q]));
+                        setAskPicked((prev) => addAskPick(prev, q));
                         setAskCustom('');
                       }}
-                      placeholder="给这条链接单独加一个问题…"
+                      placeholder={askPicked.length >= ASK_MAX_DISPLAY
+                        ? `最多 ${ASK_MAX_DISPLAY} 条，取消一条再加`
+                        : '给这条链接单独加一个问题…'}
                       className="flex-1 px-3 py-1.5 rounded-lg text-xs outline-none"
                       style={inputStyle}
                     />
@@ -3467,10 +3468,10 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                         const q = askCustom.trim();
                         if (!q) return;
                         setAskTouched(true);
-                        setAskPicked((prev) => (prev.includes(q) ? prev : [...prev, q]));
+                        setAskPicked((prev) => addAskPick(prev, q));
                         setAskCustom('');
                       }}
-                      disabled={!askCustom.trim()}
+                      disabled={!askCustom.trim() || askPicked.length >= ASK_MAX_DISPLAY}
                       className="px-3 py-1.5 rounded-lg text-xs"
                       style={{
                         cursor: askCustom.trim() ? 'pointer' : 'default',

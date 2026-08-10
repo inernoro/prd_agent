@@ -205,6 +205,10 @@ public class WebPageAskController : ControllerBase
         var snapshot = await _snapshots.GetAsync(site);
         if (snapshot.Unavailable != null)
         {
+            // 这一条根本没碰上游、没花钱，配额得退回去。
+            // 尤其是对象存储暂时读不到的时候：用户会反复重试，不退的话额度先被烧光，
+            // 等存储恢复了反而问不了了——用一次故障换掉一整个窗口的可用性。
+            await _quota.RefundAsync(site.Id, userId, clientIp);
             await WriteJsonErrorAsync(422, "ASK_NO_CONTENT", snapshot.Unavailable);
             return;
         }

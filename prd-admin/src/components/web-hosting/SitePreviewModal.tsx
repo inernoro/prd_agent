@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, Loader2, FileWarning, MessageSquare, MessageCircleQuestion, Settings2 } from 'lucide-react';
+import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2 } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
@@ -164,7 +165,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {loading && !slow && (
               <div className="absolute inset-0 flex items-center justify-center bg-[#0f1014]">
-                <Loader2 className="w-8 h-8 animate-spin text-token-muted" />
+                <MapSectionLoader text="正在加载站点…" />
               </div>
             )}
             {/* 真失败（onError）才铺满遮罩 */}
@@ -183,7 +184,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             {/* 加载慢：角标提示，不遮挡内容。措辞只说「较慢」，不谎报「失败」。 */}
             {loading && slow && !errored && (
               <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 rounded-lg bg-black/70 px-3 py-1.5 text-[12px] text-token-secondary backdrop-blur-sm">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <MapSpinner size={14} />
                 <span>加载较慢，内容可能仍在陆续显示</span>
                 <button onClick={handleOpenExternal} className="text-blue-400 hover:text-blue-300">
                   新窗口打开

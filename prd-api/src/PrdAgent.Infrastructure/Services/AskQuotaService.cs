@@ -96,6 +96,36 @@ public class AskQuotaService : IAskQuotaService
         }
     }
 
+    public async Task RefundAsync(
+        string siteId, string? userId, string? clientIp, CancellationToken ct = default)
+    {
+        try
+        {
+            var db = _redis.GetDatabase();
+            var isAnonymous = string.IsNullOrWhiteSpace(userId);
+            var visitorKey = isAnonymous
+                ? $"ask-quota:anon:{HashIp(clientIp)}"
+                : $"ask-quota:user:{userId}";
+            var siteKey = $"ask-quota:site:{siteId}:{DateTime.UtcNow:yyyyMMdd}";
+
+            // 只在计数为正时回退，避免窗口刚好翻篇后把计数减成负数
+            await DecrIfPositiveAsync(db, visitorKey);
+            await DecrIfPositiveAsync(db, siteKey);
+        }
+        catch (Exception ex)
+        {
+            // 退不回去不该让请求失败——它只是让用户这次多花了一格额度
+            _logger.LogWarning(ex, "提问配额：回退失败 site={SiteId}", siteId);
+        }
+    }
+
+    private static async Task DecrIfPositiveAsync(IDatabase db, string key)
+    {
+        var current = await db.StringGetAsync(key);
+        if (current.HasValue && current.TryParse(out long n) && n > 0)
+            await db.StringDecrementAsync(key);
+    }
+
     /// <summary>
     /// INCR 后仅在"这是本窗口第一次"时设过期。
     /// 每次都 EXPIRE 会让窗口被持续续命，一个高频用户永远滚不出窗口。

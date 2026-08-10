@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveShareAskSelection, ASK_MAX_DISPLAY } from './askTypes';
+import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from './askTypes';
 
 /**
  * 「分享时自选开场问题」的三态守卫（前端侧）。
@@ -45,5 +45,52 @@ describe('ASK_MAX_DISPLAY', () => {
   it('必须小于题库上限，否则分享时无从挑选', () => {
     // 后端 MaxLibrary = 12；这里只断言"展示上限得留出挑选空间"
     expect(ASK_MAX_DISPLAY).toBeLessThan(12);
+  });
+});
+
+/**
+ * 上限判据必须只有一处。
+ *
+ * 第四轮 review 修上限时，我只给「点题库标签」那一处加了判断，漏掉了自定义输入回车、
+ * 自定义输入点按钮、以及按题库初始预勾——UI 能显示 5 条以上，后端只存 4 条，
+ * 分享出去多余的就没了。这正是 predicate-and-wiring-discipline 形状 3（判据分裂后各自漂移）。
+ * 现在四处都走 addAskPick / toggleAskPick，这组用例锁住它。
+ */
+describe('addAskPick / toggleAskPick', () => {
+  const full = ['一', '二', '三', '四'];
+
+  it('没满时正常追加', () => {
+    expect(addAskPick(['一'], '二')).toEqual(['一', '二']);
+  });
+
+  it('满了就不再追加', () => {
+    expect(addAskPick(full, '五')).toEqual(full);
+    expect(addAskPick(full, '五')).toHaveLength(ASK_MAX_DISPLAY);
+  });
+
+  it('重复的不追加，也不因此挤掉别的', () => {
+    expect(addAskPick(['一', '二'], '一')).toEqual(['一', '二']);
+  });
+
+  it('空白输入不追加', () => {
+    expect(addAskPick(['一'], '   ')).toEqual(['一']);
+  });
+
+  it('追加时去掉首尾空白，避免"看着一样"的重复项', () => {
+    expect(addAskPick(['一'], '  二  ')).toEqual(['一', '二']);
+    expect(addAskPick(['一'], '  一  ')).toEqual(['一']);
+  });
+
+  it('取消永远允许——满了也能取消', () => {
+    expect(toggleAskPick(full, '二')).toEqual(['一', '三', '四']);
+  });
+
+  it('满了再点未选中的，不产生变化', () => {
+    expect(toggleAskPick(full, '五')).toEqual(full);
+  });
+
+  it('取消一条之后又能加一条', () => {
+    const afterRemove = toggleAskPick(full, '一');
+    expect(addAskPick(afterRemove, '五')).toEqual(['二', '三', '四', '五']);
   });
 });

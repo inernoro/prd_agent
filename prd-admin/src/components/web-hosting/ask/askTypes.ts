@@ -60,6 +60,29 @@ export const ASK_MAX_QUESTION_LENGTH = 500;
  */
 export const ASK_MAX_DISPLAY = 4;
 
+/**
+ * 往「本条链接的开场问题」里加一条，加满就不再加。
+ *
+ * 抽成函数是因为上限判据被抄散过一次：分享面板里有**四处**会改这个数组
+ * （初始按题库预勾、点题库标签、自定义输入回车、自定义输入点按钮），
+ * 第一次只给点标签那处加了上限，另外三处照旧能超——UI 显示 5 条、后端只存 4 条，
+ * 第 5 条分享出去就没了。判据只许有一处，其余调用它。
+ */
+export function addAskPick(picked: string[], question: string): string[] {
+  const q = question.trim();
+  if (!q) return picked;
+  if (picked.includes(q)) return picked;
+  if (picked.length >= ASK_MAX_DISPLAY) return picked;
+  return [...picked, q];
+}
+
+/** 选中/取消一条。取消永远允许；选中受 addAskPick 的上限约束。 */
+export function toggleAskPick(picked: string[], question: string): string[] {
+  return picked.includes(question)
+    ? picked.filter((x) => x !== question)
+    : addAskPick(picked, question);
+}
+
 /** 门禁失败时的错误码，前端据此给不同的引导（登录 / 稍后再来 / 换个页面） */
 export const ASK_ERROR_CODES = {
   disabled: 'ASK_DISABLED',

@@ -18,6 +18,19 @@ public interface IAskQuotaService
     /// </summary>
     Task<AskQuotaDecision> TryConsumeAsync(
         string siteId, string? userId, string? clientIp, int siteDailyLimit, CancellationToken ct = default);
+
+    /// <summary>
+    /// 把已占用的一次配额退回去。
+    ///
+    /// 用在「占了额度但最终一个字都没问出去」的分叉上——最典型的是对象存储暂时读不到正文：
+    /// 这种请求根本没碰上游模型、没花一分钱，却把来访者和站点的计数各加了一次。
+    /// 存储抖动期间用户反复重试，额度会被白白烧光，等存储恢复了反而问不了了。
+    ///
+    /// 仍然保留「先占后退」而不是「后占」：快照构建要读对象存储，本身有成本，
+    /// 先占额度才挡得住匿名连打。
+    /// </summary>
+    Task RefundAsync(
+        string siteId, string? userId, string? clientIp, CancellationToken ct = default);
 }
 
 public class AskQuotaDecision
