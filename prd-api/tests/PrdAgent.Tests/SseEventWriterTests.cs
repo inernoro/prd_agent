@@ -138,7 +138,7 @@ public class SseEventWriterTests
     }
 
     [Fact]
-    public async Task flush 失败同样按断线处理()
+    public async Task Flush失败同样按断线处理()
     {
         var writer = new SseEventWriter(
             _ => Task.CompletedTask,
