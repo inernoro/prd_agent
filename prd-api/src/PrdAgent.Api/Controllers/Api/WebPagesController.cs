@@ -838,14 +838,46 @@ public class WebPagesController : ControllerBase
             var url = $"{site.SiteUrl}{(site.SiteUrl.Contains('?') ? "&" : "?")}v={version.Ticks}";
             var http = _httpClientFactory.CreateClient();
             http.Timeout = TimeSpan.FromSeconds(20);
-            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+
+            // 整个取回过程（含读 body）都必须有截止时间。
+            // HttpClient.Timeout 配 ResponseHeadersRead 只覆盖到「响应头到手」，之后读 body
+            // 是不设防的——对方慢慢滴数据就能把这个请求永久挂住。
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             if (!resp.IsSuccessStatusCode)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
             if (resp.Content.Headers.ContentLength is > maxBytes)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
-            var html = await resp.Content.ReadAsStringAsync();
-            if (html.Length > maxBytes)
+
+            // 边读边卡上限，**不能**先 ReadAsStringAsync 再判长度。
+            //
+            // Content-Length 只是「对方自愿声明的」：缺头、chunked、或者声明一个压缩后的小尺寸，
+            // 上面那道判断就形同虚设，而托管上传允许到 500MB。这条路由是匿名可达的
+            // （拿着公开分享 token 就能打），先缓冲后判断等于把「一次请求分配几百 MB」
+            // 的开关交给外部——读满上限就立刻断，多一个字节都不收。
+            var over = false;
+            byte[] bytes;
+            await using (var stream = await resp.Content.ReadAsStreamAsync(cts.Token))
+            using (var buffered = new MemoryStream())
+            {
+                var chunk = new byte[8192];
+                while (true)
+                {
+                    var read = await stream.ReadAsync(chunk, cts.Token);
+                    if (read <= 0) break;
+                    if (buffered.Length + read > maxBytes) { over = true; break; }
+                    buffered.Write(chunk, 0, read);
+                }
+                bytes = buffered.ToArray();
+            }
+            if (over)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
+
+            // 去掉 UTF-8 BOM，否则首字符是 \ufeff，注进 srcDoc 会在页面顶部留一个空白字符
+            var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+                ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
+                : Encoding.UTF8.GetString(bytes);
             return Ok(ApiResponse<object>.Ok(new
             {
                 siteId = site.Id,
@@ -855,7 +887,9 @@ public class WebPagesController : ControllerBase
                 html,
             }));
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        // OperationCanceledException 而不是 TaskCanceledException：显式 CancellationToken 触发时
+        // 抛的是前者，只写后者会漏掉「读 body 超时」这条新路径（TaskCanceled 是它的子类，写父类才全）。
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点内容读取超时或失败，请稍后重试"));
         }
