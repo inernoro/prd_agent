@@ -2854,6 +2854,9 @@ export function DocBrowser({
     && (getFileTypeConfig(selectedEntryData.title, selectedEntryData.contentType).preview === 'html'
       || (selectedEntryData.contentType ?? '').toLowerCase().includes('html')
       || /\.html?$/i.test(selectedEntryData.title));
+  // 字号仅对 srcDoc 型 HTML 生效：fileUrl 型上传附件走最严 sandbox 跨域 iframe，
+  // zoom 注入不进去，显示控件会变成"改了百分比却没效果"的假开关（Codex P2）
+  const selectedIsZoomableHtml = selectedIsHtmlPreview && !!preview?.text && !preview?.fileUrl;
 
   // 「更多」按钮 + 菜单：桌面渲染在工具栏尾部、移动端渲染在沉浸顶栏——同一份节点，杜绝双份漂移
   const readerMoreNode = (() => {
@@ -2895,7 +2898,8 @@ export function DocBrowser({
         </button>
         <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
           anchorRef={readerMoreRef} minWidth={190}
-          className="surface-popover rounded-[10px] p-1.5">
+          className="surface-popover rounded-[10px] p-1.5"
+          style={{ maxHeight: 'min(70vh, 480px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {infoAny && (
             <div
               className="flex flex-wrap items-center gap-1.5 px-2 pt-1.5 pb-2 mb-1"
@@ -3014,7 +3018,7 @@ export function DocBrowser({
           </span>
           {!editMode && (
             <>
-              {selectedIsHtmlPreview && (
+              {selectedIsZoomableHtml && (
                 <button
                   type="button"
                   aria-label="缩小字号"
@@ -3026,12 +3030,12 @@ export function DocBrowser({
                   <ZoomOut size={16} />
                 </button>
               )}
-              {selectedIsHtmlPreview && htmlZoom !== 1 && (
+              {selectedIsZoomableHtml && htmlZoom !== 1 && (
                 <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                   {Math.round(htmlZoom * 100)}%
                 </span>
               )}
-              {selectedIsHtmlPreview && (
+              {selectedIsZoomableHtml && (
                 <button
                   type="button"
                   aria-label="放大字号"
