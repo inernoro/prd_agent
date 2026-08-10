@@ -41,6 +41,8 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   };
   /** 提问设置抽屉（owner/editor 才有入口） */
   const [showAskConfig, setShowAskConfig] = useState(false);
+  /** 提问面板打开过至少一次；之后常驻挂载，切走只藏不卸（见渲染处注释） */
+  const [askEverOpened, setAskEverOpened] = useState(false);
   /** 站点提问开关的本地镜像：配置抽屉保存后即时回填，不必等父级刷新列表 */
   const [askEnabled, setAskEnabled] = useState(site.askEnabled === true);
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
@@ -122,7 +124,10 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             </button>
             {askEnabled && (
               <button
-                onClick={() => setRightPanel((p) => (p === 'ask' ? 'none' : 'ask'))}
+                onClick={() => {
+                  setAskEverOpened(true);
+                  setRightPanel((p) => (p === 'ask' ? 'none' : 'ask'));
+                }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
                   rightPanel === 'ask' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
                 }`}
@@ -260,10 +265,16 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
           )}
 
           {/* 提问面板：与评论共用右侧 aside 位置，互斥切换 */}
-          {rightPanel === 'ask' && (
+          {/* 与 AskWidget 同理：打开过就常驻挂载，切走只藏不卸。
+              卸载会销毁 useAskStream 的对话与 sessionId，切到评论再切回来就是空的；
+              流式输出中途切走还会让那次请求无人认领地跑完。 */}
+          {askEverOpened && (
             <aside
               className="w-[380px] shrink-0 border-l border-token-subtle flex flex-col min-h-0"
-              style={{ background: 'var(--panel-solid, var(--bg-elevated))' }}
+              style={{
+                background: 'var(--panel-solid, var(--bg-elevated))',
+                display: rightPanel === 'ask' ? 'flex' : 'none',
+              }}
             >
               <AskPanelInline siteId={site.id} title={site.title} />
             </aside>

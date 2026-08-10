@@ -31,6 +31,8 @@ export default function AskWidget({
   source, title, welcome, openingQuestions, allowAnonymous, hidden,
 }: Props) {
   const [open, setOpen] = useState(false);
+  /** 打开过至少一次。之后面板常驻挂载，收起只藏不卸——理由见下方渲染处注释 */
+  const [hasOpened, setHasOpened] = useState(false);
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false,
   );
@@ -58,7 +60,7 @@ export default function AskWidget({
     <>
       {!open && (
         <button
-          onClick={() => setOpen(true)}
+          onClick={() => { setOpen(true); setHasOpened(true); }}
           aria-label="向我提问"
           style={{
             position: 'fixed',
@@ -81,7 +83,11 @@ export default function AskWidget({
         </button>
       )}
 
-      {open && (
+      {/* 一旦打开过就保持挂载，收起只是 display:none。
+          卸载会连同 useAskStream 的 messages 与 sessionId 一起销毁：重开是一段空对话；
+          若在流式输出中途收起，那次 fetch 也没有卸载清理、会继续跑到底——钱花了、答案没人看见。
+          没打开过的访客不挂载，避免给所有人白付一个组件。 */}
+      {(open || hasOpened) && (
         <AskPanel
           source={source}
           title={title}
@@ -89,6 +95,7 @@ export default function AskWidget({
           openingQuestions={openingQuestions}
           allowAnonymous={allowAnonymous}
           isMobile={isMobile}
+          hidden={!open}
           onClose={() => setOpen(false)}
         />
       )}

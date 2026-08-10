@@ -280,6 +280,12 @@ public class WebPageAskController : ControllerBase
         string? platform = null;
         var sentModel = false;
 
+        // 等首字期间必须持续有流量：模型 TTFT 几十秒是常态，而这段时间 await foreach 一个字节
+        // 都不写，中间任何带 idle timeout 的反代都会掐掉一条本来健康的连接（前端只会看到
+        // 「连接中断」）。同时这也是 AGENTS.md §6 的要求——静止超过 2 秒即体验缺陷。
+        using var heartbeatCts = new CancellationTokenSource();
+        var heartbeat = RunHeartbeatAsync(startedAt, () => answer.Length > 0, heartbeatCts.Token);
+
         try
         {
             // CancellationToken.None：客户端断开不取消服务端任务（server-authority 规则）。
@@ -329,6 +335,13 @@ public class WebPageAskController : ControllerBase
             await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                 snapshot.Text.Length, model, platform, Elapsed(startedAt), ex.Message);
             try { await WriteSseAsync("error", new { message = "回答失败：" + ex.Message }); } catch { }
+        }
+        finally
+        {
+            // 无论正常收尾、网关报错还是异常，心跳都必须停——否则它会继续往一个已经写完
+            // 或已经断掉的响应上写，把 done 之后的流搅乱。
+            heartbeatCts.Cancel();
+            try { await heartbeat; } catch { /* 收尾异常不该盖掉真正的失败原因 */ }
         }
     }
 
@@ -438,8 +451,58 @@ public class WebPageAskController : ControllerBase
         await Response.WriteAsync(json);
     }
 
+    /// <summary>等首字期间的心跳间隔。取 5 秒：远小于常见反代 60s 空闲超时，又不会把流刷成噪音。</summary>
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// 心跳循环：在网关还没吐字的这段时间里保持 SSE 有流量。
+    ///
+    /// 两件事一起做：
+    ///   1. `heartbeat` 事件保活连接（前端 switch 走 default 忽略它，不需要改前端）
+    ///   2. `phase` 事件带上已等待秒数，让用户看到「在动」而不是一个静止的「正在思考」
+    ///
+    /// 首字一到就停：答案开始流了，再推 phase 会把面板上的状态行反复覆盖。
+    /// </summary>
+    private async Task RunHeartbeatAsync(DateTime startedAt, Func<bool> hasOutput, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(HeartbeatInterval, ct);
+                if (ct.IsCancellationRequested) break;
+
+                var seconds = (int)(DateTime.UtcNow - startedAt).TotalSeconds;
+                await WriteSseAsync("heartbeat", new { elapsedSeconds = seconds });
+
+                if (!hasOutput())
+                {
+                    await WriteSseAsync("phase", new
+                    {
+                        phase = "waiting",
+                        message = $"模型正在思考…已等待 {seconds} 秒",
+                        elapsedSeconds = seconds,
+                    });
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* 正常收尾 */ }
+        catch (ObjectDisposedException) { /* 客户端走了 */ }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "网页托管提问：心跳循环异常");
+        }
+    }
+
+    /// <summary>
+    /// SSE 写入必须串行：心跳循环与网关 chunk 是两个并发写者，
+    /// 交错写会把事件帧撕成两半，前端解析直接乱掉。
+    /// </summary>
+    private readonly SemaphoreSlim _sseWriteLock = new(1, 1);
+
     private async Task WriteSseAsync(string eventType, object data)
     {
+        await _sseWriteLock.WaitAsync();
         try
         {
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions

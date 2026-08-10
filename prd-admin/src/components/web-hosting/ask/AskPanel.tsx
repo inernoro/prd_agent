@@ -23,6 +23,14 @@ interface Props {
    * 自己不再 fixed 定位、不出关闭按钮。
    */
   embedded?: boolean;
+  /**
+   * 收起时用 display:none 藏起来，而不是让父组件卸载本组件。
+   *
+   * 卸载会一并销毁 useAskStream 里的 messages 与 sessionId：重新打开就是一段空对话，
+   * 而且如果是在回答流式输出中途关掉的，那次 fetch 没有卸载清理、会继续跑到底——
+   * 钱花了、答案却没人看见。所以「关闭」只是藏起来。
+   */
+  hidden?: boolean;
 }
 
 /**
@@ -30,7 +38,7 @@ interface Props {
  * 而托管内容里 reveal.js 幻灯片恰恰是最常见的形态之一。
  */
 export default function AskPanel({
-  source, title, welcome, openingQuestions, allowAnonymous, onClose, isMobile, embedded,
+  source, title, welcome, openingQuestions, allowAnonymous, onClose, isMobile, embedded, hidden,
 }: Props) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { messages, status, phaseMessage, model, gateError, isBusy, ask } = useAskStream(source);
@@ -62,7 +70,7 @@ export default function AskPanel({
   return (
     <div
       style={{
-        display: 'flex',
+        display: hidden ? 'none' : 'flex',
         flexDirection: 'column',
         background: 'var(--panel-solid, var(--bg-elevated))',
         color: 'var(--text-primary)',
@@ -84,6 +92,7 @@ export default function AskPanel({
                   }),
             }),
       }}
+      aria-hidden={hidden || undefined}
       role="dialog"
       aria-label="向我提问"
     >
