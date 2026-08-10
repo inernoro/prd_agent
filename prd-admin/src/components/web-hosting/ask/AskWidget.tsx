@@ -43,22 +43,25 @@ export default function AskWidget({
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Esc 关闭：抽屉是覆盖层，用户的第一反应就是按 Esc
+  // Esc 关闭：抽屉是覆盖层，用户的第一反应就是按 Esc。
+  // hidden 时（评论抽屉/全屏演示在上层）不抢 Esc——那时候盖在最上面的不是我们。
   useEffect(() => {
-    if (!open) return;
+    if (!open || hidden) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  }, [open, hidden]);
 
-  if (hidden) return null;
   if (typeof document === 'undefined') return null;
 
   return createPortal(
     <>
-      {!open && (
+      {/* hidden（全屏演示 / 评论抽屉在上层）时只藏入口，**不卸载**整棵子树——
+          早先这里是 `if (hidden) return null`，切去评论再切回来对话就没了，
+          流式输出中途切走那次请求还会无人认领地跑完。藏与卸的区别就在这。 */}
+      {!open && !hidden && (
         <button
           onClick={() => { setOpen(true); setHasOpened(true); }}
           aria-label="向我提问"
@@ -95,7 +98,7 @@ export default function AskWidget({
           openingQuestions={openingQuestions}
           allowAnonymous={allowAnonymous}
           isMobile={isMobile}
-          hidden={!open}
+          hidden={hidden || !open}
           onClose={() => setOpen(false)}
         />
       )}

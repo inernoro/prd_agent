@@ -32,4 +32,19 @@ public static class AskAccessPolicy
     /// </summary>
     public static bool ShouldExposeAskOnShare(int sharedSiteCount, bool siteAskEnabled)
         => sharedSiteCount == 1 && siteAskEnabled;
+
+    /// <summary>
+    /// 这个站点为什么不能开提问；null = 可以开。
+    ///
+    /// 唯一判定源。快照服务据此拒绝取正文，配置接口据此拒绝打开开关，配置面板据此
+    /// 灰掉开关并说明原因——三处必须同一个答案，否则就会出现「开关打得开、
+    /// 每个访客都吃 422」这种把用户耍着玩的状态。
+    ///
+    /// 视频包装站没有任何可读文本：让模型对着标题编，比明说不支持更糟
+    /// （no-rootless-tree：做不到的事不装能做）。
+    /// </summary>
+    public static string? UnsupportedReason(string? wrappedAssetType)
+        => string.Equals(wrappedAssetType, "video", StringComparison.OrdinalIgnoreCase)
+            ? "这是一个视频页面，没有可供阅读的文字内容，暂不支持提问。"
+            : null;
 }

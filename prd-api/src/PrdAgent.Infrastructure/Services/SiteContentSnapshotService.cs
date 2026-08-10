@@ -76,11 +76,12 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     {
         var result = new SiteContentSnapshot { SiteId = site.Id };
 
-        // 视频包装站没有可读正文。这里必须如实说，不能让模型对着标题瞎编
-        // （no-rootless-tree：做不到的事不装能做）。
-        if (string.Equals(site.WrappedAssetType, "video", StringComparison.OrdinalIgnoreCase))
+        // 不支持提问的站点形态（目前只有视频包装站）走唯一判定源，
+        // 与「配置接口拒绝打开开关」「面板灰掉开关」是同一个答案，不许各判各的。
+        var unsupported = AskAccessPolicy.UnsupportedReason(site.WrappedAssetType);
+        if (unsupported != null)
         {
-            result.Unavailable = "这是一个视频页面，没有可供阅读的文字内容。";
+            result.Unavailable = unsupported;
             return result;
         }
 

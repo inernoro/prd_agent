@@ -713,6 +713,10 @@ export interface SiteAskConfig {
   maxQuestions: number;
   /** 一条分享面板最多显示几条（题库比它大，分享时挑子集） */
   maxDisplay?: number;
+  /** 这个站点形态支不支持提问（视频包装站没有正文，开了每个访客都会吃 422） */
+  supported?: boolean;
+  /** 不支持的原因，直接展示给 owner */
+  unsupportedReason?: string | null;
   maxQuestionLength: number;
 }
 

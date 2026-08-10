@@ -31,6 +31,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   const [maxLength, setMaxLength] = useState(60);
   /** 题库条数上限（后端下发）。到顶必须挡住，不然第 N+1 条存进去又静默消失 */
   const [maxQuestions, setMaxQuestions] = useState(12);
+  /** 站点形态不支持提问时的原因；非空则开关灰掉（服务端同一判定源，前端不自己判） */
+  const [unsupportedReason, setUnsupportedReason] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -44,6 +46,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
         setQuestions(res.data.suggestedQuestions ?? []);
         setMaxLength(res.data.maxQuestionLength ?? 60);
         setMaxQuestions(res.data.maxQuestions ?? 12);
+        setUnsupportedReason(res.data.supported === false ? (res.data.unsupportedReason ?? '这个站点暂不支持提问。') : null);
       } else {
         setError(res.error?.message ?? '读取配置失败');
       }
@@ -115,8 +118,20 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
               label="开放提问"
               hint="访客可以对着这个页面向 AI 提问，回答只依据页面内容。每次提问都会消耗模型额度，所以默认关闭。"
             >
-              <Toggle checked={enabled} onChange={setEnabled} />
+              <Toggle checked={enabled} onChange={setEnabled} disabled={!!unsupportedReason} />
             </Row>
+
+            {/* 不支持的形态（如视频包装站）如实说明，而不是让 owner 打开一个
+                每个访客都会失败的开关。判定源在服务端，前端不自己判。 */}
+            {unsupportedReason && (
+              <div style={{
+                marginTop: -8, padding: '8px 10px', borderRadius: 8,
+                background: 'var(--bg-card)', border: '1px solid var(--border-subtle)',
+                fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6,
+              }}>
+                {unsupportedReason}
+              </div>
+            )}
 
             <Row label="允许未登录访客提问" hint="关闭后，分享链接上的访客需要先登录才能提问。">
               <Toggle checked={allowAnonymous} onChange={setAllowAnonymous} />
@@ -253,14 +268,17 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       role="switch"
       aria-checked={checked}
-      onClick={() => onChange(!checked)}
+      disabled={disabled}
+      onClick={() => !disabled && onChange(!checked)}
       style={{
-        position: 'relative', width: 38, height: 21, borderRadius: 999, border: 'none', cursor: 'pointer',
+        position: 'relative', width: 38, height: 21, borderRadius: 999, border: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
         background: checked ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
         transition: 'background 0.18s',
       }}

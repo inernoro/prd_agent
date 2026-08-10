@@ -72,6 +72,9 @@ public class WebPageAskController : ControllerBase
             updatedAt = site.AskConfigUpdatedAt,
             // owner 在这里编辑的是**题库**（候选池），上限是存储上限；
             // 一条分享面板最多显示 maxDisplay 条，是另一回事，别混
+            // 能不能开提问是站点形态决定的，面板据此灰掉开关并说明原因
+            supported = AskAccessPolicy.UnsupportedReason(site.WrappedAssetType) == null,
+            unsupportedReason = AskAccessPolicy.UnsupportedReason(site.WrappedAssetType),
             maxQuestions = AskOpeningQuestions.MaxLibrary,
             maxDisplay = AskOpeningQuestions.MaxDisplay,
             maxQuestionLength = AskOpeningQuestions.MaxLength,
@@ -84,6 +87,19 @@ public class WebPageAskController : ControllerBase
     {
         if (req == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "请求体不能为空"));
+
+        // 视频包装站这类没有正文的形态，开关一旦打开每个访客都会吃 422 —— 那是把人耍着玩。
+        // 在写库之前拒绝，理由与快照服务、配置面板同一个判定源。
+        if (req.Enabled)
+        {
+            var existing = await _siteService.GetByIdAsync(siteId, this.GetRequiredUserId());
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+
+            var reason = AskAccessPolicy.UnsupportedReason(existing.WrappedAssetType);
+            if (reason != null)
+                return BadRequest(ApiResponse<object>.Fail("ASK_UNSUPPORTED", reason));
+        }
 
         var site = await _siteService.SetAskConfigAsync(siteId, this.GetRequiredUserId(), new AskConfigUpdate
         {
@@ -495,26 +511,17 @@ public class WebPageAskController : ControllerBase
     }
 
     /// <summary>
-    /// SSE 写入必须串行：心跳循环与网关 chunk 是两个并发写者，
-    /// 交错写会把事件帧撕成两半，前端解析直接乱掉。
+    /// SSE 写入器。串行化 + 断线容忍的实现在 SseEventWriter（Core），
+    /// 放在那里是为了**能被单测覆盖**——本控制器有 7 个依赖，单测构造不出来，
+    /// 上一次把并发控制写在这里就漏了 Release、整个功能挂掉而 CI 全绿。
     /// </summary>
-    private readonly SemaphoreSlim _sseWriteLock = new(1, 1);
+    private SseEventWriter? _sse;
 
-    private async Task WriteSseAsync(string eventType, object data)
-    {
-        await _sseWriteLock.WaitAsync();
-        try
-        {
-            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            });
-            await Response.WriteAsync($"event: {eventType}\ndata: {json}\n\n");
-            await Response.Body.FlushAsync();
-        }
-        catch (ObjectDisposedException) { }
-        catch (OperationCanceledException) { }
-    }
+    private SseEventWriter Sse => _sse ??= new SseEventWriter(
+        frame => Response.WriteAsync(frame),
+        () => Response.Body.FlushAsync());
+
+    private Task WriteSseAsync(string eventType, object data) => Sse.WriteAsync(eventType, data);
 }
 
 public class AskConfigRequest

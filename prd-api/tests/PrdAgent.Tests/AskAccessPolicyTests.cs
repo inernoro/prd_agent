@@ -87,4 +87,27 @@ public class AskAccessPolicyTests
     {
         Assert.False(AskAccessPolicy.ShouldExposeAskOnShare(0, siteAskEnabled: true));
     }
+
+    // ── 不支持提问的站点形态 ──────────────────────────────────
+
+    /// <summary>
+    /// 核心用例：视频包装站没有正文，开了提问每个访客都会吃 422。
+    /// 判定必须只有一处——快照服务、配置接口、配置面板三处共用它，
+    /// 否则会出现「开关打得开、每次提问都失败」这种耍人玩的状态。
+    /// </summary>
+    [Fact]
+    public void 视频包装站不支持提问()
+    {
+        Assert.NotNull(AskAccessPolicy.UnsupportedReason("video"));
+        Assert.NotNull(AskAccessPolicy.UnsupportedReason("VIDEO"));
+    }
+
+    [Fact]
+    public void 普通站与PDF站支持提问()
+    {
+        Assert.Null(AskAccessPolicy.UnsupportedReason(null));
+        Assert.Null(AskAccessPolicy.UnsupportedReason(""));
+        Assert.Null(AskAccessPolicy.UnsupportedReason("pdf"));
+        Assert.Null(AskAccessPolicy.UnsupportedReason("markdown"));
+    }
 }
