@@ -109,6 +109,12 @@ public class ImageGenModelAdapterConfig
 
     public string SizeParamFormat { get; set; } = SizeParamFormats.WxH;
 
+    /// <summary>
+    /// 是否在保留原生尺寸参数的同时，把用户选择的画布尺寸写入 prompt 作为语义兜底。
+    /// 仅用于已确认上游会偶发忽略结构化尺寸字段的模型，不应按模型名在发送层硬编码。
+    /// </summary>
+    public bool InjectSizePrompt { get; set; }
+
     /// <summary>宽高必须整除的值（如 32、64）</summary>
     public int? MustBeDivisibleBy { get; set; }
 

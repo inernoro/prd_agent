@@ -128,6 +128,7 @@ public class ImageGenAdapterConfigTests
         Assert.NotNull(config);
         Assert.Equal(SizeConstraintTypes.AspectRatio, config.SizeConstraintType);
         Assert.Equal(SizeParamFormats.AspectRatio, config.SizeParamFormat);
+        Assert.True(config.InjectSizePrompt);
         Assert.False(config.SizesNotApplicable);
         Assert.Contains(config.SizesByResolution["1k"], x => x.AspectRatio == "3:4" && x.Size == "768x1024");
     }

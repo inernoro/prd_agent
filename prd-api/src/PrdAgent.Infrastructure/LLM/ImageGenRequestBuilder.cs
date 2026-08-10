@@ -37,17 +37,18 @@ public static class ImageGenRequestBuilder
 
     /// <summary>
     /// 把结构化尺寸转换成特殊模型可理解的置顶语言指令。
-    /// 仅作用于“自适应 + 不发送尺寸参数 + 尺寸仍适用”的模型；普通模型继续使用原生尺寸字段，
-    /// SizesNotApplicable 模型则完全不参与尺寸选择和提示词注入。
+    /// 默认作用于“自适应 + 不发送尺寸参数 + 尺寸仍适用”的模型；配置明确开启
+    /// InjectSizePrompt 时，会在保留原生尺寸参数的同时增加语义兜底。
+    /// SizesNotApplicable 模型完全不参与尺寸选择和提示词注入。
     /// </summary>
     public static string ApplyAdaptiveSizePrompt(
         string prompt,
         ImageGenRequestParams requestParams,
         ImageGenModelAdapterConfig? adapterConfig)
     {
-        if (!requestParams.IsAdaptive
-            || adapterConfig == null
-            || adapterConfig.SizeParamFormat != SizeParamFormats.None
+        if (adapterConfig == null
+            || (!requestParams.IsAdaptive && !adapterConfig.InjectSizePrompt)
+            || (requestParams.IsAdaptive && adapterConfig.SizeParamFormat != SizeParamFormats.None)
             || adapterConfig.SizesNotApplicable)
         {
             return prompt;

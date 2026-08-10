@@ -60,6 +60,20 @@ public class ImageGenAdaptiveSizePromptTests
     }
 
     [Fact]
+    public void ApplyAdaptiveSizePrompt_ConfiguredNativeModel_InjectsPromptAndKeepsAspectRatioParam()
+    {
+        var requestParams = ImageGenModelAdapterRegistry.BuildRequestParams("openai/gpt-image-2", "768x1024");
+        var config = ImageGenModelAdapterRegistry.TryMatch("openai/gpt-image-2");
+
+        var prompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt("生成竖版海报", requestParams, config);
+
+        Assert.StartsWith("[输出尺寸要求 / OUTPUT SIZE，最高优先级]", prompt);
+        Assert.Contains("严格宽高比 3:4", prompt);
+        Assert.Equal("3:4", requestParams.SizeParams["aspect_ratio"]);
+        Assert.False(requestParams.IsAdaptive);
+    }
+
+    [Fact]
     public void ApplyAdaptiveSizePrompt_SizeNotApplicableModel_DoesNotChangePrompt()
     {
         var requestParams = ImageGenModelAdapterRegistry.BuildRequestParams("fal-qwen-image-layered", "768x1024");

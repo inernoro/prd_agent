@@ -721,10 +721,11 @@ public static class ImageGenModelConfigs
                 ["4k"] = new(),
             },
             SizeParamFormat = SizeParamFormats.AspectRatio,
+            InjectSizePrompt = true,
             Notes = new List<string>
             {
                 "网关按 openrouter-image 协议调用专用 Images API，并把用户选择的尺寸转换为 aspect_ratio",
-                "提示词保持用户原文，不承担协议参数职责",
+                "同时把尺寸要求写到 prompt 最前面，防止上游忽略结构化比例参数",
             },
             SupportsImageToImage = true,
             SupportsInpainting = false,
