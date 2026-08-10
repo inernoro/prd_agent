@@ -1928,7 +1928,11 @@ public class LlmGatewayTests
         Assert.True(
             body["aspect_ratio"]?.GetValue<string>() == "3:4",
             body.ToJsonString());
-        Assert.Equal("draw a portrait poster", body["prompt"]?.GetValue<string>());
+        var prompt = body["prompt"]?.GetValue<string>();
+        Assert.NotNull(prompt);
+        Assert.StartsWith("[输出尺寸要求 / OUTPUT SIZE，最高优先级]", prompt);
+        Assert.Contains("严格宽高比 3:4", prompt);
+        Assert.EndsWith("draw a portrait poster", prompt);
         Assert.False(body.ContainsKey("modalities"));
     }
 

@@ -1393,6 +1393,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var protocol = string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol;
         var normalizedProtocol = protocol?.Trim().ToLowerInvariant();
         var images = spec.Images.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        // 逻辑模型可能直到 Gateway 路由后才解析为实际模型，因此尺寸语言化必须在最终发送边界
+        // 再按实际模型配置应用一次。该转换带标记且幂等，MAP 侧已处理时不会重复注入。
+        var finalRequestParams = ImageGenModelAdapterRegistry.BuildRequestParams(
+            resolution.ActualModel,
+            spec.Size);
+        var finalAdapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
+        var effectivePrompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt(
+            spec.Prompt,
+            finalRequestParams,
+            finalAdapterConfig);
         JsonObject? body = null;
         Dictionary<string, object>? multipartFields = null;
         Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null;
@@ -1401,7 +1411,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         if (resolution.IsExchange)
         {
-            body = new JsonObject { ["prompt"] = spec.Prompt, ["n"] = Math.Max(1, spec.Count) };
+            body = new JsonObject { ["prompt"] = effectivePrompt, ["n"] = Math.Max(1, spec.Count) };
             if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
             if (images.Count > 0)
             {
@@ -1415,7 +1425,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var (aspectRatio, imageSize) = LLM.Adapters.GooglePlatformAdapter.ParseSizeToGoogleParams(spec.Size);
             body = LLM.Adapters.GooglePlatformAdapter.BuildGoogleRequestBody(
-                resolution.ActualModel!, spec.Prompt, aspectRatio, imageSize, images, spec.MaskBase64);
+                resolution.ActualModel!, effectivePrompt, aspectRatio, imageSize, images, spec.MaskBase64);
             endpointPath = LLM.Adapters.GooglePlatformAdapter.BuildGoogleEndpointPath(resolution.ActualModel!);
         }
         else if (normalizedProtocol is "openrouter-image" or "openrouter-images")
@@ -1423,7 +1433,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             body = new JsonObject
             {
                 ["model"] = resolution.ActualModel,
-                ["prompt"] = spec.Prompt,
+                ["prompt"] = effectivePrompt,
                 ["n"] = Math.Max(1, spec.Count),
             };
             var aspectRatio = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(spec.Size);
@@ -1452,11 +1462,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             JsonNode userContent;
             if (images.Count == 0)
             {
-                userContent = JsonValue.Create(spec.Prompt)!;
+                userContent = JsonValue.Create(effectivePrompt)!;
             }
             else
             {
-                var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = spec.Prompt });
+                var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = effectivePrompt });
                 foreach (var image in images)
                 {
                     content.Add(new JsonObject
@@ -1489,7 +1499,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (images.Count == 0)
             {
                 var requestObject = adapter.BuildGenerationRequest(
-                    resolution.ActualModel!, spec.Prompt, Math.Max(1, spec.Count), effectiveSize, effectiveFormat);
+                    resolution.ActualModel!, effectivePrompt, Math.Max(1, spec.Count), effectiveSize, effectiveFormat);
                 body = JsonNode.Parse(adapter.SerializeRequest(requestObject))?.AsObject() ?? new JsonObject();
                 endpointPath = "images/generations";
             }
@@ -1499,7 +1509,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 endpointPath = "images/edits";
                 multipartFields = new Dictionary<string, object>
                 {
-                    ["prompt"] = spec.Prompt,
+                    ["prompt"] = effectivePrompt,
                     ["n"] = Math.Max(1, spec.Count),
                 };
                 if (!string.IsNullOrWhiteSpace(effectiveSize)) multipartFields["size"] = effectiveSize;
