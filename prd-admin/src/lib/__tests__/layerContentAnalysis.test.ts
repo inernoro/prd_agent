@@ -97,6 +97,16 @@ describe('图层命名与源提示词解耦', () => {
     expect(clampLayerCount(undefined)).toBe(LAYER_COUNT_DEFAULT);
     expect(clampLayerCount(6)).toBe(6);
   });
+
+  it('【关键】没存过偏好时默认 4 层，不能掉到下限 2', () => {
+    // 真机实测（2026-08-10）：面板显示「下次拆 2 层」，看着像用户自己选的，其实是缺省被夹坏了。
+    // 调用方传的就是 localStorage.getItem(...)，没存过是 null，而 Number(null) === 0（不是 NaN），
+    // 于是被夹成下限 2。旧用例只测 undefined，照不出这条。
+    expect(clampLayerCount(null)).toBe(LAYER_COUNT_DEFAULT);
+    expect(clampLayerCount('')).toBe(LAYER_COUNT_DEFAULT);
+    expect(clampLayerCount('   ')).toBe(LAYER_COUNT_DEFAULT);
+    expect(LAYER_COUNT_DEFAULT).not.toBe(LAYER_COUNT_MIN);
+  });
 });
 
 describe('分层产物内容判定（构造样本）', () => {

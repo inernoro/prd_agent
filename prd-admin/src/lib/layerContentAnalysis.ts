@@ -269,12 +269,13 @@ export async function sampleLayerRgba(
   source: string,
   sha256?: string | null,
 ): Promise<Uint8ClampedArray | null> {
-  const { resolveReadableImageUrl } = await import('./layeredPsd');
+  const { resolveReadableImageUrl, readableImageFetchHeaders } = await import('./layeredPsd');
   const url = resolveReadableImageUrl(source, sha256);
   if (!url) return null;
 
   try {
-    const response = await fetch(url, { mode: 'cors' });
+    // 同源资产端点是 [Authorize] 的，不带 token 一律 401，判定会静默失败。
+    const response = await fetch(url, { mode: 'cors', headers: readableImageFetchHeaders(url) });
     if (!response.ok) return null;
     const blob = await response.blob();
     const objectUrl = URL.createObjectURL(blob);

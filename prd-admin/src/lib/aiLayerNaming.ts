@@ -16,6 +16,13 @@ export const LAYER_COUNT_MAX = 8;
 export const LAYER_COUNT_DEFAULT = 4;
 
 export function clampLayerCount(value: unknown): number {
+  // 「没有值」必须回落默认值，不能落到下限。
+  // 实测事故（2026-08-10）：调用方传的是 localStorage.getItem(...) 的返回值，没存过是 null，
+  // 而 Number(null) === 0（不是 NaN），旧写法把它夹成下限 2 —— 于是新用户的默认层数
+  // 一直是 2 而不是 4，界面上「下次拆 2 层」看着像用户自己选的。
+  // 旧单测只测了 undefined（Number(undefined) 是 NaN）所以从来没照出这条。
+  if (value === null || value === undefined) return LAYER_COUNT_DEFAULT;
+  if (typeof value === 'string' && value.trim() === '') return LAYER_COUNT_DEFAULT;
   const n = Math.round(Number(value));
   if (!Number.isFinite(n)) return LAYER_COUNT_DEFAULT;
   return Math.min(LAYER_COUNT_MAX, Math.max(LAYER_COUNT_MIN, n));

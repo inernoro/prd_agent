@@ -2,6 +2,7 @@ import type { Layer, PixelData, Psd } from 'ag-psd';
 import { createWorkspaceImageGenRun, getImageGenRun, streamImageGenRunWithRetry } from '@/services';
 import type { ImageGenGenerateResponse, ImageGenImage, ImageGenRunStreamPayload } from '@/services/contracts/imageGen';
 import type { ApiResponse } from '@/types/api';
+import { useAuthStore } from '@/stores/authStore';
 
 /** ApiResponse 是三字段闭合形状（success/data/error），这两个小工具避免每处都手写 null。 */
 function failed<T>(code: string, message: string): ApiResponse<T> {
@@ -309,6 +310,32 @@ export function resolveReadableImageUrl(source: string, sha256?: string | null):
   return raw;
 }
 
+/**
+ * 读本站图片要带上登录凭据。
+ *
+ * `/api/visual-agent/image-master/assets/file/{sha}` 是 [Authorize] 端点，裸 fetch 一律 401。
+ * 页面上的 <img> 显示走的是对象存储直链所以看不出来，但**用 fetch 读像素**的两条路
+ * （导出 PSD / 合成 PNG、分层内容判定）都会栽在这里：判定悄悄失败退回普通层，
+ * 面板上那行「正在识别内容…」就永远停着（2026-08-10 真机截图实测）。
+ *
+ * 只对同源地址加 header：跨域外链带 Bearer 等于把凭据送给第三方主机。
+ */
+export function readableImageFetchHeaders(url: string): Record<string, string> {
+  const raw = String(url ?? '').trim();
+  const sameOrigin = raw.startsWith('/')
+    || (typeof window !== 'undefined' && (() => {
+      try { return new URL(raw, window.location.href).origin === window.location.origin; }
+      catch { return false; }
+    })());
+  if (!sameOrigin) return {};
+  try {
+    const token = useAuthStore.getState().token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function loadImageData(
   source: string,
   targetSize?: { width: number; height: number },
@@ -319,7 +346,7 @@ async function loadImageData(
 
   let response: Response;
   try {
-    response = await fetch(url, { mode: 'cors' });
+    response = await fetch(url, { mode: 'cors', headers: readableImageFetchHeaders(url) });
   } catch (error) {
     // 把 `Failed to fetch` 翻译成能行动的话：说清是哪一层、读的哪个地址、下一步做什么。
     const reason = error instanceof Error ? error.message : String(error);

@@ -60,6 +60,22 @@ describe('分层内容判定的接线', () => {
   });
 });
 
+describe('读图必须带登录凭据', () => {
+  const psd = read('src/lib/layeredPsd.ts');
+
+  it('同源资产端点是 [Authorize] 的，两条 fetch 读像素的路都要带 token', () => {
+    // 真机实测（2026-08-10）：裸 fetch 拿 401，分层判定静默失败，
+    // 面板上「正在识别内容…」永远停着；导出 PSD 走同一条读图路径，同样会栽。
+    expect(psd).toContain('export function readableImageFetchHeaders');
+    expect(psd).toMatch(/fetch\(url,\s*\{\s*mode:\s*'cors',\s*headers:\s*readableImageFetchHeaders\(url\)\s*\}\)/);
+    expect(read('src/lib/layerContentAnalysis.ts')).toMatch(/headers:\s*readableImageFetchHeaders\(url\)/);
+  });
+
+  it('只给同源地址加 Bearer，跨域外链不许带凭据', () => {
+    expect(psd).toMatch(/if \(!sameOrigin\) return \{\};/);
+  });
+});
+
 describe('画布持久化只许有一份实现', () => {
   it('页面从 lib 引入持久化函数，自己不再留一份拷贝', () => {
     const tab = read(TAB);
