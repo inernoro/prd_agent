@@ -148,6 +148,54 @@ export function validateEnvironmentConfig(name, values) {
   return errors;
 }
 
+const validationOnlyPrefixes = [
+  '.agents/skills/',
+  '.claude/skills/create-visual-test-to-kb/',
+  '.claude/skills/stable-smoke/',
+  '.codex/',
+  'changelogs/',
+  'doc/',
+  'scripts/tests/',
+];
+
+const validationOnlyFiles = new Set([
+  'scripts/compose-stable-smoke-supervisor-report.mjs',
+  'scripts/prepare-stable-smoke-archive-report.mjs',
+  'scripts/render-stable-smoke-report.mjs',
+  'scripts/split-stable-smoke-report.mjs',
+]);
+
+export function isValidationOnlyPath(path) {
+  const normalized = String(path || '').replaceAll('\\', '/');
+  return validationOnlyFiles.has(normalized)
+    || normalized.startsWith('scripts/stable-smoke-')
+    || validationOnlyPrefixes.some((prefix) => normalized.startsWith(prefix));
+}
+
+export function deployedRuntimeCommit(branch) {
+  const commits = new Set(Object.values(branch?.services || {}).flatMap((service) => {
+    const match = String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})$/i);
+    return match ? [match[1]] : [];
+  }));
+  return commits.size === 1 ? [...commits][0] : '';
+}
+
+export function resolveRuntimeExpectation(branch, expectedCommit, changedFiles = []) {
+  const deployedCommit = deployedRuntimeCommit(branch);
+  const runtimeEquivalent = Boolean(
+    deployedCommit
+    && deployedCommit !== expectedCommit
+    && changedFiles.length > 0
+    && changedFiles.every(isValidationOnlyPath),
+  );
+  return {
+    expectedCommit,
+    runtimeCommit: runtimeEquivalent ? deployedCommit : expectedCommit,
+    runtimeEquivalent,
+    validationOnlyChanges: runtimeEquivalent ? [...changedFiles] : [],
+  };
+}
+
 function readJson(path) {
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
@@ -156,21 +204,23 @@ function readJson(path) {
   }
 }
 
-export function evaluateCdsReadiness(branch, expectedCommit) {
+export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation = {}) {
+  const runtimeCommit = runtimeExpectation.runtimeCommit || expectedCommit;
+  const runtimeEquivalent = runtimeExpectation.runtimeEquivalent === true;
   const reasons = [];
   const services = Object.values(branch?.services || {});
   if (branch?.status !== 'running') reasons.push(`分支状态为 ${branch?.status || 'unknown'}`);
   if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到本地目标提交');
-  if (branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
-  if (branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
-  if (branch?.lastDeployDispatchCommitSha !== expectedCommit) reasons.push('CDS 尚未对目标提交完成部署调度');
+  if (!runtimeEquivalent && branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
+  if (!runtimeEquivalent && branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
+  if (branch?.lastDeployDispatchCommitSha !== runtimeCommit) reasons.push('CDS 尚未对运行时目标提交完成部署调度');
   if (branch?.deployRuntime?.drift?.hasDrift) reasons.push('CDS 服务存在版本漂移');
   if (services.length === 0) reasons.push('CDS 未返回任何业务服务');
   for (const service of services) {
     const serviceName = service.profileId || service.containerName || '未知服务';
     if (service.status !== 'running') reasons.push(`${serviceName} 未运行`);
-    if (!String(service.deployedImage || '').endsWith(`:sha-${expectedCommit}`)) {
-      reasons.push(`${serviceName} 尚未切换到目标镜像`);
+    if (!String(service.deployedImage || '').endsWith(`:sha-${runtimeCommit}`)) {
+      reasons.push(`${serviceName} 尚未切换到运行时目标镜像`);
     }
   }
   return {
@@ -178,7 +228,22 @@ export function evaluateCdsReadiness(branch, expectedCommit) {
     reasons: [...new Set(reasons)],
     versionId: branch?.currentVersionId || '',
     commit: branch?.commitSha || '',
+    runtimeCommit,
+    runtimeEquivalent,
+    validationOnlyChanges: runtimeExpectation.validationOnlyChanges || [],
   };
+}
+
+function runtimeExpectationForBranch(branch, expectedCommit) {
+  const deployedCommit = deployedRuntimeCommit(branch);
+  if (!deployedCommit || deployedCommit === expectedCommit) {
+    return resolveRuntimeExpectation(branch, expectedCommit);
+  }
+  const diffResult = command('git', ['diff', '--name-only', `${deployedCommit}..${expectedCommit}`]);
+  const changedFiles = diffResult.status === 0
+    ? String(diffResult.stdout || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+    : [];
+  return resolveRuntimeExpectation(branch, expectedCommit, changedFiles);
 }
 
 function readCdsBranchStatus() {
@@ -196,7 +261,8 @@ async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) 
   const startedAt = Date.now();
   let readiness = { ready: false, reasons: ['尚未检查'], versionId: '', commit: '' };
   while (Date.now() - startedAt < timeoutMs) {
-    readiness = evaluateCdsReadiness(readCdsBranchStatus(), expectedCommit);
+    const branch = readCdsBranchStatus();
+    readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
     if (readiness.ready) return { ...readiness, waitedMs: Date.now() - startedAt };
     await delay(10_000);
   }
@@ -331,7 +397,8 @@ async function main() {
         preflightBlockers.push('无法读取待验收提交');
       } else {
         try {
-          const readiness = evaluateCdsReadiness(readCdsBranchStatus(), expectedCommit);
+          const branch = readCdsBranchStatus();
+          const readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
           preflightBlockers.push(...readiness.reasons);
         } catch (error) {
           preflightBlockers.push(error instanceof Error ? error.message : 'CDS 部署状态读取失败');

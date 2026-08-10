@@ -3,10 +3,13 @@ import test from 'node:test';
 import {
   applyCredentialRegistry,
   buildExecutionRecord,
+  deployedRuntimeCommit,
   evaluateCdsReadiness,
+  isValidationOnlyPath,
   parseEnvFile,
   parseRunnerArgs,
   runnerHelpText,
+  resolveRuntimeExpectation,
   validateEnvironmentConfig,
 } from '../stable-smoke-run.mjs';
 
@@ -103,6 +106,9 @@ test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移'
     reasons: [],
     versionId: 'dv-test',
     commit,
+    runtimeCommit: commit,
+    runtimeEquivalent: false,
+    validationOnlyChanges: [],
   });
   branch.services.admin.status = 'stopped';
   branch.deployRuntime.drift.hasDrift = true;
@@ -110,4 +116,52 @@ test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移'
   assert.equal(blocked.ready, false);
   assert.ok(blocked.reasons.some((reason) => reason.includes('版本漂移')));
   assert.ok(blocked.reasons.some((reason) => reason.includes('admin 未运行')));
+});
+
+test('纯验收工具变化可复用已部署业务版本且留下等价记录', () => {
+  const deployedCommit = '1111111';
+  const expectedCommit = '2222222';
+  const branch = {
+    status: 'running',
+    commitSha: expectedCommit,
+    ciTargetSha: expectedCommit,
+    ciImageStatus: 'waiting',
+    lastDeployDispatchCommitSha: deployedCommit,
+    currentVersionId: 'dv-runtime',
+    deployRuntime: { drift: { hasDrift: false } },
+    services: {
+      api: { profileId: 'api', status: 'running', deployedImage: `registry/api:sha-${deployedCommit}` },
+      admin: { profileId: 'admin', status: 'running', deployedImage: `registry/admin:sha-${deployedCommit}` },
+    },
+  };
+  const files = [
+    '.claude/skills/stable-smoke/reference/regression-ledger.md',
+    'scripts/stable-smoke-visual-gate.mjs',
+    'scripts/tests/stable-smoke-visual-gate.test.mjs',
+    'changelogs/2026-08-05_stable-smoke.md',
+  ];
+  assert.equal(deployedRuntimeCommit(branch), deployedCommit);
+  assert.equal(files.every(isValidationOnlyPath), true);
+  const expectation = resolveRuntimeExpectation(branch, expectedCommit, files);
+  assert.deepEqual(evaluateCdsReadiness(branch, expectedCommit, expectation), {
+    ready: true,
+    reasons: [],
+    versionId: 'dv-runtime',
+    commit: expectedCommit,
+    runtimeCommit: deployedCommit,
+    runtimeEquivalent: true,
+    validationOnlyChanges: files,
+  });
+});
+
+test('业务运行时代码变化不得借用旧镜像通过版本门禁', () => {
+  const branch = {
+    services: {
+      api: { deployedImage: 'registry/api:sha-1111111' },
+      admin: { deployedImage: 'registry/admin:sha-1111111' },
+    },
+  };
+  const expectation = resolveRuntimeExpectation(branch, '2222222', ['prd-api/src/Program.cs']);
+  assert.equal(expectation.runtimeEquivalent, false);
+  assert.equal(expectation.runtimeCommit, '2222222');
 });
