@@ -1418,6 +1418,34 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 resolution.ActualModel!, spec.Prompt, aspectRatio, imageSize, images, spec.MaskBase64);
             endpointPath = LLM.Adapters.GooglePlatformAdapter.BuildGoogleEndpointPath(resolution.ActualModel!);
         }
+        else if (normalizedProtocol is "openrouter-image" or "openrouter-images")
+        {
+            body = new JsonObject
+            {
+                ["model"] = resolution.ActualModel,
+                ["prompt"] = spec.Prompt,
+                ["n"] = Math.Max(1, spec.Count),
+            };
+            var aspectRatio = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(spec.Size);
+            if (aspectRatio != null)
+            {
+                body["aspect_ratio"] = aspectRatio;
+            }
+            if (images.Count > 0)
+            {
+                var inputReferences = new JsonArray();
+                foreach (var image in images)
+                {
+                    inputReferences.Add(new JsonObject
+                    {
+                        ["type"] = "image_url",
+                        ["image_url"] = new JsonObject { ["url"] = EnsureImageDataUri(image) }
+                    });
+                }
+                body["input_references"] = inputReferences;
+            }
+            endpointPath = "images";
+        }
         else if (normalizedProtocol == "openrouter"
                  || (resolution.ApiUrl?.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase) ?? false))
         {

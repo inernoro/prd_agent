@@ -237,10 +237,12 @@ public class OpenAIImageClient : IImageGenerationClient
         // 获取平台适配器（优先使用 Gateway 解析出的 wire 协议，避免同平台多协议时被 URL/模型名猜回旧适配器）。
         var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName, wireProtocol);
         var isVolces = platformAdapter.PlatformType == "volces"; // 保留兼容变量
-        // OpenRouter 图片生成不走 /images/generations，而是 /chat/completions + modalities:[image,text]，
-        // 图片在 choices[0].message.images[].image_url.url（base64 data URI）返回。详见 doc 与 LiteLLM 同款适配。
-        var isOpenRouter = apiUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(wireProtocol, "openrouter", StringComparison.OrdinalIgnoreCase);
+        // OpenRouter 有两条显式协议：openrouter-image 走专用 Images API；openrouter 保留
+        // chat/completions + modalities 的多模态模型兼容路径。不能只凭域名把专用图片模型改回 chat。
+        var isOpenRouterImagesApi = wireProtocol is "openrouter-image" or "openrouter-images";
+        var isOpenRouter = !isOpenRouterImagesApi
+            && (apiUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(wireProtocol, "openrouter", StringComparison.OrdinalIgnoreCase));
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
         if (!platformAdapter.SupportsImageToImage && initImageBase64 != null)
         {
@@ -516,7 +518,62 @@ public class OpenAIImageClient : IImageGenerationClient
                         }
                     }, resolution, token);
                 }
-                // OpenRouter 图片生成：chat/completions + modalities（文生图 / 图生图统一走这条）
+                // OpenRouter 专用 Images API：文生图与参考图统一使用顶层 prompt/aspect_ratio/input_references。
+                else if (isOpenRouterImagesApi)
+                {
+                    var orImageBody = new JsonObject
+                    {
+                        ["model"] = effectiveModelName,
+                        ["prompt"] = prompt,
+                        ["n"] = Math.Max(1, n),
+                    };
+                    var orImageAspect = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(size);
+                    if (orImageAspect != null)
+                    {
+                        orImageBody["aspect_ratio"] = orImageAspect;
+                    }
+                    if (initImageBase64 != null)
+                    {
+                        var dataUri = initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                            ? initImageBase64
+                            : $"data:image/png;base64,{initImageBase64}";
+                        orImageBody["input_references"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["type"] = "image_url",
+                                ["image_url"] = new JsonObject { ["url"] = dataUri },
+                            },
+                        };
+                    }
+
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] OpenRouter 专用 Images API 请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
+                        appCallerCode, initImageBase64 != null, effectiveModelName);
+
+                    return await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                    {
+                        AppCallerCode = appCallerCode,
+                        ModelType = "generation",
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
+                        CanonicalImageRequest = canonicalImageRequest,
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
+                        EndpointPath = "images",
+                        RequestBody = orImageBody,
+                        IsMultipart = false,
+                        TimeoutSeconds = imageGenTimeoutSeconds,
+                        Context = new GatewayRequestContext
+                        {
+                            RequestId = requestId,
+                            SessionId = ctx?.SessionId,
+                            GroupId = ctx?.GroupId,
+                            UserId = ctx?.UserId,
+                            ViewRole = ctx?.ViewRole,
+                            QuestionText = prompt.Trim()
+                        }
+                    }, resolution, token);
+                }
+                // OpenRouter 多模态图片生成：chat/completions + modalities（文生图 / 图生图统一走这条）
                 // isOpenRouter = apiUrl 命中；forceOpenRouter = images/generations 返回 404 后的兜底重试
                 else if (isOpenRouter || forceOpenRouter)
                 {

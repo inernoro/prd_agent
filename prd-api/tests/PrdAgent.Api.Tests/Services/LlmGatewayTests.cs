@@ -1860,7 +1860,7 @@ public class LlmGatewayTests
     }
 
     [Fact]
-    public async Task SendRawWithResolutionAsync_WhenCanonicalOpenRouterImageHasSize_ShouldPreserveAspectRatio()
+    public async Task SendRawWithResolutionAsync_WhenCanonicalOpenRouterImagesApiHasSize_ShouldUseDedicatedEndpointAndPreserveAspectRatio()
     {
         var openRouterCandidate = new ModelResolutionResult
         {
@@ -1875,7 +1875,7 @@ public class LlmGatewayTests
             ActualPlatformId = "openrouter-platform",
             ActualPlatformName = "OpenRouter",
             PlatformType = "openai",
-            Protocol = "openrouter",
+            Protocol = "openrouter-image",
             ApiUrl = "https://openrouter.ai/api",
             ApiKey = "openrouter-key",
         };
@@ -1899,7 +1899,7 @@ public class LlmGatewayTests
         };
         var http = new SequenceHttpClientFactory(
             (404, "{\"error\":{\"message\":\"model unavailable\"}}"),
-            (200, "{\"choices\":[{\"message\":{\"images\":[]}}]}"));
+            (200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
         var gateway = new LlmGateway(
             new InMemoryModelResolver(),
             http,
@@ -1922,10 +1922,14 @@ public class LlmGatewayTests
 
         Assert.True(response.Success, response.ErrorMessage);
         Assert.Equal(2, http.RequestBodies.Count);
+        Assert.Contains("/images", http.RequestUris[1]);
+        Assert.DoesNotContain("chat/completions", http.RequestUris[1]);
         var body = JsonNode.Parse(http.RequestBodies[1])!.AsObject();
         Assert.True(
-            body["image_config"]?["aspect_ratio"]?.GetValue<string>() == "3:4",
+            body["aspect_ratio"]?.GetValue<string>() == "3:4",
             body.ToJsonString());
+        Assert.Equal("draw a portrait poster", body["prompt"]?.GetValue<string>());
+        Assert.False(body.ContainsKey("modalities"));
     }
 
     [Fact]

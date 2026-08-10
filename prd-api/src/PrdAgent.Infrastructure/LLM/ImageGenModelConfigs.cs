@@ -704,7 +704,7 @@ public static class ImageGenModelConfigs
             PlatformType = "openai",
             LastUpdated = "2026-08-10",
             SizeConstraintType = SizeConstraintTypes.AspectRatio,
-            SizeConstraintDescription = "通过 OpenRouter image_config.aspect_ratio 控制比例，具体像素由模型决定",
+            SizeConstraintDescription = "通过 OpenRouter Images API 的 aspect_ratio 控制比例，具体像素由模型决定",
             SizesByResolution = new Dictionary<string, List<SizeOption>>
             {
                 ["1k"] = new()
@@ -723,7 +723,7 @@ public static class ImageGenModelConfigs
             SizeParamFormat = SizeParamFormats.AspectRatio,
             Notes = new List<string>
             {
-                "网关把用户选择的尺寸转换为 image_config.aspect_ratio",
+                "网关按 openrouter-image 协议调用专用 Images API，并把用户选择的尺寸转换为 aspect_ratio",
                 "提示词保持用户原文，不承担协议参数职责",
             },
             SupportsImageToImage = true,
