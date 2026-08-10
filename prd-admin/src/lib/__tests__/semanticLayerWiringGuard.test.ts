@@ -30,7 +30,22 @@ describe('分层内容判定的接线', () => {
 
   it('判定结果被写回画布（否则算了等于没算）', () => {
     expect(tab).toMatch(/layerContentKind:\s*verdict\.kind/);
-    expect(tab).toMatch(/layerCoverage:\s*verdict\.stats\.coverage/);
+    expect(tab).toMatch(/layerCoverage:\s*verdict\.stats\s*\?\s*verdict\.stats\.coverage\s*:\s*undefined/);
+  });
+
+  it('判定样本取自上传返回值，不回头去画布上捞（会读到没刷新的旧值）', () => {
+    // 真机实测（用户截图）：最后一层永远停在「正在识别内容…」。根因是这里读 canvasRef，
+    // 而 setCanvas 还没刷进 ref，最后一层拿到的仍是模型直出的跨域直链且没有 sha；
+    // 对象存储不给 CORS 头，读像素必然被拦。
+    expect(tab).toMatch(/layerSamples\.push\(\{\s*key:\s*layerKeyAt\(index\),\s*src:\s*asset\.url,\s*sha256:\s*asset\.sha256/);
+    expect(tab).toMatch(/layers:\s*layerSamples/);
+    expect(tab).not.toMatch(/layers:\s*Array\.from\(\{\s*length:\s*remoteLayers\.length/);
+  });
+
+  it('采样失败的那层要出「内容未识别」，不许永远停在进行时', () => {
+    const analysis = read('src/lib/layerContentAnalysis.ts');
+    expect(analysis).toMatch(/verdicts\.push\(\{\s*key:\s*layer\.key,\s*kind:\s*'layer',\s*stats:\s*null/);
+    expect(analysis).toContain("return '内容未识别'");
   });
 
   it('判定用的是生产采样器，不是测试桩', () => {

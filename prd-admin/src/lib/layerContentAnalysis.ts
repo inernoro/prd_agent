@@ -195,6 +195,8 @@ export function isHiddenByDefault(kind: LayerContentKind): boolean {
  * 等于白占一行——分辨图层要靠内容事实，不是靠来源。
  */
 export function describeLayerContent(kind: LayerContentKind, coverage?: number): string {
+  // 判定跑过但拿不到像素（跨域读图被拦、图还没落到本站）：如实说未识别，别装作还在跑。
+  if (kind === 'layer' && !Number.isFinite(coverage)) return '内容未识别';
   const pct = Number.isFinite(coverage) ? formatCoverage(coverage!) : '';
   const head = pct ? `覆盖 ${pct}` : '';
   const tail = kind === 'empty' ? '几乎空层，已默认隐藏'
@@ -216,7 +218,8 @@ export function formatCoverage(coverage: number): string {
 export type LayerContentVerdict = {
   key: string;
   kind: LayerContentKind;
-  stats: LayerContentStats;
+  /** 采样失败时为 null：判不出来要如实说「未识别」，不能让那行永远停在「正在识别…」。 */
+  stats: LayerContentStats | null;
   hidden: boolean;
 };
 
@@ -244,8 +247,13 @@ export async function buildLayerContentVerdicts(input: {
   for (const layer of input.layers) {
     if (!layer.src) continue;
     const rgba = await input.sampler(layer.src, layer.sha256 ?? null);
-    // 采样失败不该让这一层消失或被瞎猜：跳过即保持原样（普通层 + 无事实行）。
-    if (!rgba) continue;
+    // 采样失败也要出一条：判不出来就如实标「内容未识别」。
+    // 早先这里是 continue，结果那一行永远停在「正在识别内容…」——一个不会结束的进行时
+    // 比一句「没识别出来」更糟，用户根本不知道它是在跑还是已经死了（2026-08-10 用户截图）。
+    if (!rgba) {
+      verdicts.push({ key: layer.key, kind: 'layer', stats: null, hidden: false });
+      continue;
+    }
     const stats = computeContentStats(rgba);
     const kind = classifyLayerContent({
       coverage: stats.coverage,

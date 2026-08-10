@@ -216,16 +216,22 @@ describe('采样 → 判定 → 回写这条链本身', () => {
     expect(verdicts[0]!.kind).toBe('flat');
     expect(verdicts[0]!.hidden).toBe(false);
     expect(verdicts[1]!.kind).toBe('layer');
-    expect(verdicts.every((v) => v.stats.coverage > 0)).toBe(true);
+    expect(verdicts.every((v) => (v.stats?.coverage ?? 0) > 0)).toBe(true);
   });
 
-  it('采样失败的那层被跳过，不影响其余层，也不瞎猜', async () => {
+  it('【关键】采样失败的那层也要出结论，不许永远停在「正在识别…」', async () => {
+    // 用户截图实测：跨域直链读像素被浏览器拦掉（对象存储不给 CORS 头），
+    // 早先这里直接跳过，那一行就永远显示「正在识别内容…」——一个不会结束的进行时。
     const verdicts = await buildLayerContentVerdicts({
       layers: [{ key: 'a', src: 'src://missing' }, { key: 'b', src: 'src://l1' }],
       source: { src: 'src://source' },
       sampler,
     });
-    expect(verdicts.map((v) => v.key)).toEqual(['b']);
+    expect(verdicts.map((v) => v.key)).toEqual(['a', 'b']);
+    expect(verdicts[0]!.stats).toBeNull();
+    expect(verdicts[0]!.hidden).toBe(false);
+    expect(describeLayerContent(verdicts[0]!.kind, undefined)).toBe('内容未识别');
+    expect(describeLayerContent(verdicts[0]!.kind, undefined)).not.toContain('正在');
   });
 
   it('拿不到原图时仍然出判定，只是不判整图', async () => {

@@ -2407,6 +2407,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       ensureSlots(remoteLayers.length);
 
       const layerSources: Array<{ name: string; source: string }> = [];
+      // 判定用的样本清单：地址与 sha 都取自上传返回值，不再回头去画布上捞（会读到未刷新的旧值）。
+      const layerSamples: Array<{ key: string; src: string; sha256?: string | null }> = [];
       for (let index = 0; index < remoteLayers.length; index += 1) {
         const name = aiLayerExportName(index);
         setLayeringProgress({
@@ -2442,6 +2444,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             }
           : candidate));
         layerSources.push({ name, source: asset.url });
+        // 判定要用的地址与 sha 在这里就是确定的，当场记下来。
+        // 早先是等循环跑完再去 canvasRef 里捞——而 setCanvas 还没刷进 ref，
+        // 最后一层捞到的仍是模型直出的跨域直链且没有 sha；对象存储不给 CORS 头，
+        // 读像素必然被浏览器拦掉，那一行就永远停在「正在识别内容…」（用户截图实测）。
+        layerSamples.push({ key: layerKeyAt(index), src: asset.url, sha256: asset.sha256 });
       }
 
       // 内容判定：每一层到底装了什么（覆盖率 + 是否近乎纯色 / 空层 / 整张原图）。
@@ -2449,11 +2456,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 判定失败不影响主流程（拿不到样本就保持普通层），用户始终能自己开关。
       void (async () => {
         const verdicts = await buildLayerContentVerdicts({
-          layers: Array.from({ length: remoteLayers.length }, (_, index) => {
-            const key = layerKeyAt(index);
-            const item = canvasRef.current.find((candidate) => candidate.key === key);
-            return { key, src: item?.src ?? '', sha256: item?.sha256 || item?.originalSha256 || null };
-          }),
+          layers: layerSamples,
           source: { src: source, sha256: readySha },
           sampler: sampleLayerRgba,
         });
@@ -2465,7 +2468,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           return {
             ...candidate,
             layerContentKind: verdict.kind,
-            layerCoverage: verdict.stats.coverage,
+            layerCoverage: verdict.stats ? verdict.stats.coverage : undefined,
             layerHidden: verdict.hidden ? true : candidate.layerHidden,
           };
         }));
