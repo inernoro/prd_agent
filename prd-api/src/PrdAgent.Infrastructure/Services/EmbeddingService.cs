@@ -47,11 +47,22 @@ public class EmbeddingService : IEmbeddingService
     {
         var input = (texts ?? Array.Empty<string>())
             .Select(t => (t ?? string.Empty).Trim())
-            .Where(t => t.Length > 0)
             .ToList();
 
         if (input.Count == 0)
             return EmbeddingBatch.Fail("EMPTY_INPUT", "没有可向量化的文本");
+
+        // 空白项必须整批拒绝，**不能**过滤掉。
+        //
+        // Vectors 的契约是「与入参一一对应、顺序一致」，调用方靠下标把向量配回原文。
+        // 过滤会让返回的向量比入参少，后面每一条都错位一格——第 5 段的向量被安到第 4 段身上，
+        // 而且悄无声息（本仓库的「选 A 给 B」事故就是这么来的）。少一条不如整批红。
+        var blankIndex = input.FindIndex(t => t.Length == 0);
+        if (blankIndex >= 0)
+        {
+            return EmbeddingBatch.Fail("EMPTY_INPUT",
+                $"第 {blankIndex + 1} 条文本为空，整批拒绝——过滤空白会让向量与原文错位");
+        }
 
         if (input.Count > MaxBatchSize)
             return EmbeddingBatch.Fail("EMPTY_INPUT", $"单批最多 {MaxBatchSize} 条，请分批调用");

@@ -23,6 +23,9 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     /// <summary>单个文件最多贡献多少字符，防止一个巨型文件把预算吃光、其它文件一个字进不去。</summary>
     private const int PerFileBudget = 8000;
 
+    /// <summary>一个站点最多取几个正文文件，避免几百个碎文件把每个文件的固定开销放大。</summary>
+    private const int MaxFilesPerSite = 12;
+
     /// <summary>缓存时长。内容变了 ContentVersion 会变、缓存键随之改变，所以这里可以放长。</summary>
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(30);
 
@@ -59,7 +62,13 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             return cached;
 
         var snapshot = await BuildAsync(site, ct);
-        _cache.Set(cacheKey, snapshot, CacheTtl);
+
+        // 只缓存"确定的结论"。对象存储抖一下就把 30 分钟的空快照钉死在缓存里，
+        // 存储恢复之后每次提问照样吃 ASK_NO_CONTENT，而配额已经先扣掉了。
+        // 「这页确实没有正文」是事实，可以缓存；「这次没读回来」不是。
+        if (!snapshot.TransientFailure)
+            _cache.Set(cacheKey, snapshot, CacheTtl);
+
         return snapshot;
     }
 
@@ -76,16 +85,22 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         }
 
         var files = site.Files ?? new List<HostedSiteFile>();
-        var picked = SelectFiles(site, files);
+        var (picked, droppedByCap) = SelectFiles(site, files);
         if (picked.Count == 0)
         {
             result.Unavailable = "这个页面没有可供阅读的文字内容。";
             return result;
         }
 
+        // 被数量上限挡在门外的文件也算截断——它们连读都没读，更谈不上进 prompt
+        if (droppedByCap > 0) result.Truncated = true;
+
         var sb = new StringBuilder();
         var totalChars = 0;
         var used = 0;
+        // 读失败与"确实没有正文"必须分开：前者是暂时的，后者是这个站点的事实。
+        // 混作一谈会让一次对象存储抖动被当成"这页没内容"缓存半小时。
+        var downloadFailed = false;
 
         foreach (var file in picked)
         {
@@ -101,9 +116,16 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             {
                 // 单个文件读不回来不该让整站问答挂掉——跳过并继续，最后按"有没有攒到正文"判定
                 _logger.LogWarning(ex, "站点正文快照：读取对象失败 site={SiteId} key={Key}", site.Id, file.CosKey);
+                downloadFailed = true;
                 continue;
             }
-            if (bytes == null || bytes.Length == 0) continue;
+            if (bytes == null)
+            {
+                // null = 取不到这个对象（存储抖动 / key 失效），与"文件本身是空的"不同
+                downloadFailed = true;
+                continue;
+            }
+            if (bytes.Length == 0) continue;
 
             var text = ExtractText(bytes, file);
             if (string.IsNullOrWhiteSpace(text)) continue;
@@ -136,7 +158,19 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         result.TotalChars = totalChars;
 
         if (result.Text.Length == 0)
-            result.Unavailable = "这个页面没有可供阅读的文字内容。";
+        {
+            // 一个字都没攒到，但有文件读失败了 —— 这是"暂时读不到"，不是"这页没内容"。
+            // 说成后者既是撒谎，还会被缓存半小时，让存储恢复后照样问不了。
+            result.TransientFailure = downloadFailed;
+            result.Unavailable = downloadFailed
+                ? "暂时读取不到这个页面的内容，请稍后再试。"
+                : "这个页面没有可供阅读的文字内容。";
+        }
+        else if (downloadFailed)
+        {
+            // 攒到了一部分，但有文件没读回来：内容不完整，如实标注
+            result.Truncated = true;
+        }
 
         return result;
     }
@@ -144,15 +178,18 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     /// <summary>
     /// 挑出参与抽取的文件：入口文件优先，其余正文类文件按体积从小到大补齐
     /// （小文件通常是真正的内容页，超大文件多半是打包产物）。
+    ///
+    /// 返回值第二项是**被数量上限挡掉的文件数**——调用方据此置 Truncated，
+    /// 否则「只读了一部分」会被 prompt 说成「这是全部内容」。
     /// </summary>
-    private static List<HostedSiteFile> SelectFiles(HostedSite site, List<HostedSiteFile> files)
+    private static (List<HostedSiteFile> Picked, int Dropped) SelectFiles(HostedSite site, List<HostedSiteFile> files)
     {
         // PDF 包装站：读原始 PDF，不读那个只有一个 iframe 的壳子 index.html
         if (string.Equals(site.WrappedAssetType, "pdf", StringComparison.OrdinalIgnoreCase))
         {
             var pdf = files.FirstOrDefault(f =>
                 f.Path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
-            return pdf != null ? new List<HostedSiteFile> { pdf } : new List<HostedSiteFile>();
+            return (pdf != null ? new List<HostedSiteFile> { pdf } : new List<HostedSiteFile>(), 0);
         }
 
         var textual = files
@@ -162,15 +199,17 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         var entry = textual.FirstOrDefault(f =>
             string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
 
+        var rest = textual.Where(f => f != entry).OrderBy(f => f.Size).ToList();
+
         var ordered = new List<HostedSiteFile>();
         if (entry != null) ordered.Add(entry);
-        ordered.AddRange(textual
-            .Where(f => f != entry)
-            .OrderBy(f => f.Size)
-            // 一个站点最多取 12 个文件，避免几百个碎文件把每个文件的固定开销放大
-            .Take(12));
+        // 一个站点最多取 12 个文件，避免几百个碎文件把每个文件的固定开销放大
+        ordered.AddRange(rest.Take(MaxFilesPerSite));
 
-        return ordered;
+        // 丢掉的文件数必须报上去。漏报的后果很具体：prompt 会说「以下是这个页面的全部内容」，
+        // 模型据此把没读到的东西当成"页面里没有"，斩钉截铁地回答不存在——
+        // 而事实是我们压根没给它看。宁可告诉用户「只读了一部分」。
+        return (ordered, Math.Max(0, rest.Count - MaxFilesPerSite));
     }
 
     private string? ExtractText(byte[] bytes, HostedSiteFile file)

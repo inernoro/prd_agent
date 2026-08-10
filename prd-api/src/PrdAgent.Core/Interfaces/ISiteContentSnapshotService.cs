@@ -40,4 +40,13 @@ public class SiteContentSnapshot
     /// 非空时 Text 为空，调用方必须把这句话如实透出，不得假装有内容。
     /// </summary>
     public string? Unavailable { get; set; }
+
+    /// <summary>
+    /// 这次拿不到正文是**暂时的**（对象存储读失败），而不是这个站点本来就没有正文。
+    ///
+    /// 区分这两者是为了缓存：「这页确实没有正文」是事实、可以缓存；
+    /// 「这次没读回来」不是，缓存它等于让一次抖动把该站点问答废掉整个 TTL，
+    /// 而每次尝试的配额都已经先扣了。
+    /// </summary>
+    public bool TransientFailure { get; set; }
 }
