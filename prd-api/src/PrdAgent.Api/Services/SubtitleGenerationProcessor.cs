@@ -1017,8 +1017,14 @@ public class SubtitleGenerationProcessor
             if (ContainsExplicitSpeakerLabel(diarized.Text))
             {
                 var parsed = ParseChatAudioSpeakerSegments(diarized.Text);
-                if (CountSpeakers(parsed) > 1)
+                if (CountSpeakers(parsed) > 1 && !HasHallucinatedSpeakerSplit(parsed))
                     return parsed;
+
+                if (CountSpeakers(parsed) > 1)
+                    _logger.LogWarning(
+                        "[doc-store-agent] chat 音频角色增强给出的切分不含信息（不同说话人内容完全相同），"
+                        + "按未切分处理 run={RunId}",
+                        run.Id);
             }
 
             _logger.LogWarning(
@@ -1034,6 +1040,43 @@ public class SubtitleGenerationProcessor
         }
 
         return new List<SubtitleSegment> { new(0, 0, transcript, "说话人1") };
+    }
+
+    /// <summary>
+    /// 这份「切分」是不是模型编出来的。
+    ///
+    /// 真实发生过：一段单人录音，模型返回 说话人1 说了 A、B，说话人2 也说了 A、B——
+    /// 同一批句子原样复制给两个人。这种切分不含任何信息，却会让界面言之凿凿地
+    /// 显示「两位说话人」，正是「说话人推断是真的吗」要防的那种编造。
+    ///
+    /// 判据保守：只有当两个说话人的内容集合**完全相同**时才判为编造。
+    /// 真实对话里两个人不会说出一字不差的同一批句子；而复读式幻觉必然命中。
+    /// </summary>
+    internal static bool HasHallucinatedSpeakerSplit(IReadOnlyList<SubtitleSegment> segments)
+    {
+        static string Normalize(string? text) =>
+            new string((text ?? string.Empty).Where(ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch)).ToArray());
+
+        var bySpeaker = segments
+            .Where(s => !string.IsNullOrWhiteSpace(s.SpeakerId))
+            .GroupBy(s => s.SpeakerId!, StringComparer.Ordinal)
+            .Select(g => new
+            {
+                Speaker = g.Key,
+                Content = g.Select(s => Normalize(s.Text)).Where(t => t.Length > 0).OrderBy(t => t, StringComparer.Ordinal).ToList(),
+            })
+            .Where(x => x.Content.Count > 0)
+            .ToList();
+
+        for (var i = 0; i < bySpeaker.Count; i++)
+        {
+            for (var j = i + 1; j < bySpeaker.Count; j++)
+            {
+                if (bySpeaker[i].Content.SequenceEqual(bySpeaker[j].Content, StringComparer.Ordinal))
+                    return true;
+            }
+        }
+        return false;
     }
 
     private static int CountSpeakers(IEnumerable<SubtitleSegment> segments)
@@ -1211,15 +1254,20 @@ public class SubtitleGenerationProcessor
         var segments = new List<SubtitleSegment>();
         string? activeSpeaker = null;
         var activeText = new StringBuilder();
+        // 见过第一条说话人标签之前，攒下的都是模型的开场白（「好的，我会根据不同声音…」），
+        // 不是录音内容。此前它会被当成一个无说话人的段落 flush 进产物，
+        // 直接出现在用户看到的转录全文里。
+        var sawSpeaker = false;
 
         void Flush()
         {
             var content = activeText.ToString().Trim();
-            if (!string.IsNullOrWhiteSpace(content))
-                segments.Add(new SubtitleSegment(
-                    0, 0, content, activeSpeaker,
-                    string.IsNullOrWhiteSpace(activeSpeaker) ? null : SpeakerSources.Model));
             activeText.Clear();
+            if (string.IsNullOrWhiteSpace(content)) return;
+            if (string.IsNullOrWhiteSpace(activeSpeaker) && sawSpeaker) return;
+            segments.Add(new SubtitleSegment(
+                0, 0, content, activeSpeaker,
+                string.IsNullOrWhiteSpace(activeSpeaker) ? null : SpeakerSources.Model));
         }
 
         foreach (var rawLine in text.Replace("\r", string.Empty, StringComparison.Ordinal).Split('\n'))
@@ -1231,6 +1279,7 @@ public class SubtitleGenerationProcessor
             if (parsed != null)
             {
                 Flush();
+                sawSpeaker = true;
                 activeSpeaker = parsed.Value.Speaker;
                 activeText.Append(parsed.Value.Text);
                 continue;
