@@ -377,6 +377,89 @@ public class StubOpenAIController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Stub 向量化：OpenAI 兼容的 /v1/embeddings。
+    ///
+    /// 存在的理由是**让整条检索链路在没有真实 embedding key 时也能端到端跑通并被验收**：
+    /// 解析模型 → 网关 → HTTP → 解析响应 → 存向量 → 检索，一步不少走真路径。
+    /// 接了真实供应商之后，这里一行都不用改，换的只是平台配置。
+    ///
+    /// 向量怎么造：字符 bigram 哈希到固定维度 + L2 归一化。它不是语义向量，但满足两个
+    /// 让检索测试有意义的性质——**同文本恒等**（可复现）、**共享子串越多越接近**
+    /// （所以"暗号命中"和"跨库隔离"这类断言是真的在考检索，而不是在考随机数）。
+    /// </summary>
+    [HttpPost("v1/embeddings")]
+    public IActionResult Embeddings([FromBody] StubEmbeddingRequest request)
+    {
+        var model = (request?.Model ?? "stub-embedding").Trim();
+        var inputs = request?.ReadInputs() ?? new List<string>();
+        if (inputs.Count == 0)
+            return BadRequest(new { error = new { message = "input 不能为空", type = "invalid_request_error" } });
+
+        var dim = StubEmbeddingDimension;
+        var data = new List<object>(inputs.Count);
+        for (var i = 0; i < inputs.Count; i++)
+        {
+            data.Add(new
+            {
+                @object = "embedding",
+                index = i,                      // 显式给 index：调用方按 index 归位
+                embedding = BuildDeterministicVector(inputs[i], dim),
+            });
+        }
+
+        return Ok(new
+        {
+            @object = "list",
+            model,
+            data,
+            usage = new { prompt_tokens = inputs.Sum(t => t.Length), total_tokens = inputs.Sum(t => t.Length) },
+        });
+    }
+
+    /// <summary>Stub 向量维度。取 256：够区分，又不至于让测试数据体积失控。</summary>
+    private const int StubEmbeddingDimension = 256;
+
+    internal static float[] BuildDeterministicVector(string text, int dim)
+    {
+        var vec = new float[dim];
+        var s = (text ?? string.Empty).Trim();
+        if (s.Length == 0) { vec[0] = 1f; return vec; }
+
+        // 字符 bigram（中文没有空格分词，bigram 是最省事又有效的粒度）
+        for (var i = 0; i < s.Length; i++)
+        {
+            var gram = i + 1 < s.Length ? s.Substring(i, 2) : s.Substring(i, 1);
+            var h = StableHash(gram);
+            vec[(int)(h % (uint)dim)] += 1f;
+        }
+
+        // L2 归一化，让余弦相似度等价于点积，且不受文本长度影响
+        var norm = MathF.Sqrt(vec.Sum(v => v * v));
+        if (norm > 0)
+            for (var i = 0; i < dim; i++) vec[i] /= norm;
+        return vec;
+    }
+
+    /// <summary>
+    /// FNV-1a。刻意不用 string.GetHashCode()——它按进程随机化种子，
+    /// 同一段文本在两次部署里会哈到不同槽位，向量就不可复现了，
+    /// 而"同文本恒等"正是这个 stub 唯一要保证的性质。
+    /// </summary>
+    private static uint StableHash(string s)
+    {
+        unchecked
+        {
+            var hash = 2166136261u;
+            foreach (var c in s)
+            {
+                hash ^= c;
+                hash *= 16777619u;
+            }
+            return hash;
+        }
+    }
+
     [HttpPost("v1/images/generations")]
     public IActionResult ImageGenerations([FromBody] StubImageGenRequest request)
     {
@@ -968,6 +1051,36 @@ public sealed class StubChatMessage
 {
     public string Role { get; set; } = "user";
     public JsonElement Content { get; set; }
+}
+
+/// <summary>
+/// OpenAI 的 /embeddings 里 input 既可以是字符串也可以是字符串数组，
+/// 所以按 JsonElement 收，再自己摊平——直接声明成 string[] 会让单条调用 400。
+/// </summary>
+public sealed class StubEmbeddingRequest
+{
+    public string? Model { get; set; }
+    public JsonElement Input { get; set; }
+
+    public List<string> ReadInputs()
+    {
+        var result = new List<string>();
+        if (Input.ValueKind == JsonValueKind.String)
+        {
+            var s = Input.GetString();
+            if (!string.IsNullOrWhiteSpace(s)) result.Add(s!);
+        }
+        else if (Input.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in Input.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                var s = item.GetString();
+                if (!string.IsNullOrWhiteSpace(s)) result.Add(s!);
+            }
+        }
+        return result;
+    }
 }
 
 public sealed class StubImageGenRequest

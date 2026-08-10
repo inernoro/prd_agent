@@ -1128,6 +1128,26 @@ public static class Admin
         public const string Ask = "prd-agent-web.web-hosting.ask::chat";
     }
 
+    /// <summary>知识库语义检索：文档切块与提问的向量化。</summary>
+    public static class KnowledgeBase
+    {
+        [AppCallerMetadata(
+            "知识库-文档向量化",
+            "给知识库文档切块建索引时调用向量模型（批量、离线）",
+            ModelTypes = new[] { ModelTypes.Embedding },
+            Category = "Document"
+        )]
+        public const string Index = "prd-agent-web.knowledge-base.index::embedding";
+
+        [AppCallerMetadata(
+            "知识库-检索向量化",
+            "把用户的提问转成向量以检索知识库（在线、单条、低延迟）",
+            ModelTypes = new[] { ModelTypes.Embedding },
+            Category = "Document"
+        )]
+        public const string Query = "prd-agent-web.knowledge-base.query::embedding";
+    }
+
     public static class Lab
     {
         [AppCallerMetadata(
