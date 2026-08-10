@@ -110,4 +110,23 @@ public class AskAccessPolicyTests
         Assert.Null(AskAccessPolicy.UnsupportedReason("pdf"));
         Assert.Null(AskAccessPolicy.UnsupportedReason("markdown"));
     }
+
+    /// <summary>
+    /// 核心用例：不支持的形态只挡「开启」，不挡「关闭」。
+    ///
+    /// 由 PR #1351 第十三轮 review 抓出：我上一轮把开关两个方向一起灰掉，
+    /// 造成一种没法自救的状态——HTML 站重传成视频后形态变成不支持，AskEnabled 仍是 true，
+    /// 开关又点不动，owner 想关都关不掉，而已发出去的分享还挂着必定 422 的提问入口。
+    /// 这条锁住「判据只约束开启方向」这个语义，前后端共用它。
+    /// </summary>
+    [Fact]
+    public void 不支持的形态只影响开启_不影响关闭()
+    {
+        // 判据本身只回答「能不能开」，不掺和关闭
+        Assert.NotNull(AskAccessPolicy.UnsupportedReason("video"));
+
+        // 关闭永远合法：语义上「关掉一个不该开着的东西」在任何形态下都成立
+        // （后端 PUT 只在 req.Enabled 为 true 时才查这个判据）
+        Assert.Null(AskAccessPolicy.UnsupportedReason("html"));
+    }
 }

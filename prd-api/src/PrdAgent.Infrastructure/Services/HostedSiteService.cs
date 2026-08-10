@@ -378,18 +378,23 @@ public class HostedSiteService : IHostedSiteService
         var normalizedType = string.IsNullOrWhiteSpace(wrappedAssetType)
             ? null : wrappedAssetType.Trim().ToLowerInvariant();
 
-        await _db.HostedSites.UpdateOneAsync(
-            x => x.Id == siteId,
-            Builders<HostedSite>.Update
-                .Set(x => x.EntryFile, entryFile)
-                .Set(x => x.SiteUrl, siteUrl)
-                .Set(x => x.Files, siteFiles)
-                .Set(x => x.TotalSize, totalSize)
-                .Set(x => x.WrappedAssetType, normalizedType)
-                .Set(x => x.UpdatedAt, now)
-                .Set(x => x.ContentVersion, now)
-                .Set(x => x.SlideNavCompatVersion, SlideNavVersion), // 重传内容已注入当前版垫片
-            cancellationToken: ct);
+        var update = Builders<HostedSite>.Update
+            .Set(x => x.EntryFile, entryFile)
+            .Set(x => x.SiteUrl, siteUrl)
+            .Set(x => x.Files, siteFiles)
+            .Set(x => x.TotalSize, totalSize)
+            .Set(x => x.WrappedAssetType, normalizedType)
+            .Set(x => x.UpdatedAt, now)
+            .Set(x => x.ContentVersion, now)
+            .Set(x => x.SlideNavCompatVersion, SlideNavVersion); // 重传内容已注入当前版垫片
+
+        // 重传把站点换成了不支持提问的形态（如 HTML 站换成视频），提问开关必须一起关掉。
+        // 留着不管的话，已经发出去的分享还挂着提问入口，而每次提问都必定 422 ——
+        // 站点内容变了，基于旧内容开的能力就不该继续声称可用。
+        if (AskAccessPolicy.UnsupportedReason(normalizedType) != null)
+            update = update.Set(x => x.AskEnabled, false);
+
+        await _db.HostedSites.UpdateOneAsync(x => x.Id == siteId, update, cancellationToken: ct);
 
         // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
         // 原地覆盖，不能删——否则会删掉刚写入的文件。

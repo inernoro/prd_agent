@@ -121,7 +121,16 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
               label="开放提问"
               hint="访客可以对着这个页面向 AI 提问，回答只依据页面内容。每次提问都会消耗模型额度，所以默认关闭。"
             >
-              <Toggle checked={enabled} onChange={setEnabled} disabled={!!unsupportedReason} />
+              {/* 只挡「关 → 开」，永远保留「开 → 关」这条退路。
+                  两个方向一起挡会造成一种没法自救的状态：HTML 站重传成视频之后形态变成不支持，
+                  但 AskEnabled 还是 true，开关又被灰掉——owner 想关都关不掉，
+                  而已发出去的分享还挂着一个每次必 422 的提问入口。
+                  后端 PUT 也只拒绝「开」，两边判据一致。 */}
+              <Toggle
+                checked={enabled}
+                onChange={setEnabled}
+                disabled={!!unsupportedReason && !enabled}
+              />
             </Row>
 
             {/* 不支持的形态（如视频包装站）如实说明，而不是让 owner 打开一个
@@ -133,6 +142,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
                 fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6,
               }}>
                 {unsupportedReason}
+                {enabled && '（这个站点当前仍开着提问，访客每次提问都会失败，建议关掉。）'}
               </div>
             )}
 
