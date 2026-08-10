@@ -1860,6 +1860,75 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenCanonicalOpenRouterImageHasSize_ShouldPreserveAspectRatio()
+    {
+        var openRouterCandidate = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-openrouter",
+            OfferingTargetKind = "model",
+            ActualModel = "openai/gpt-image-2",
+            ActualPlatformId = "openrouter-platform",
+            ActualPlatformName = "OpenRouter",
+            PlatformType = "openai",
+            Protocol = "openrouter",
+            ApiUrl = "https://openrouter.ai/api",
+            ApiKey = "openrouter-key",
+        };
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-google",
+            OfferingTargetKind = "model",
+            ActualModel = "gemini-2.5-flash-image",
+            ActualPlatformId = "google-platform",
+            ActualPlatformName = "Google",
+            PlatformType = "google",
+            Protocol = "google",
+            ApiUrl = "https://generativelanguage.googleapis.com",
+            ApiKey = "google-key",
+            RetryCandidates = [openRouterCandidate],
+        };
+        var http = new SequenceHttpClientFactory(
+            (404, "{\"error\":{\"message\":\"model unavailable\"}}"),
+            (200, "{\"choices\":[{\"message\":{\"images\":[]}}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            RequestBody = new JsonObject { ["prompt"] = "draw a portrait poster" },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a portrait poster",
+                Count = 1,
+                Size = "768x1024",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal(2, http.RequestBodies.Count);
+        var body = JsonNode.Parse(http.RequestBodies[1])!.AsObject();
+        Assert.True(
+            body["image_config"]?["aspect_ratio"]?.GetValue<string>() == "3:4",
+            body.ToJsonString());
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
     {
         var legacyResolution = new GatewayModelResolution

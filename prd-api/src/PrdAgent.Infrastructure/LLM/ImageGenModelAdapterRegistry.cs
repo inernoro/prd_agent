@@ -451,7 +451,7 @@ public static class ImageGenModelAdapterRegistry
         return string.Equals(p, input, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool TryParseSize(string? size, out int w, out int h)
+    internal static bool TryParseSize(string? size, out int w, out int h)
     {
         w = 0;
         h = 0;

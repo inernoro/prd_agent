@@ -27,10 +27,7 @@ public static class ImageGenModelConfigs
             "gpt-image-2-all*",
             "gpt-image-2-all（自适应）",
             "OpenAI 兼容（apiyi）"),
-        BuildPromptControlledGptImage2Config(
-            "openai/gpt-image-2*",
-            "GPT Image 2（OpenRouter 自适应）",
-            "OpenRouter"),
+        BuildOpenRouterGptImage2Config(),
 
         // ===== gpt-image-1.5（标准 size 参数）=====
         // 与传统 OpenAI 兼容：通过 size 字段控制尺寸
@@ -692,6 +689,42 @@ public static class ImageGenModelConfigs
                 "系统会把用户选择的尺寸和比例写到 prompt 最前面",
                 "不传 size / n / quality / aspect_ratio / response_format",
                 "兼容图片端点与 OpenRouter chat/completions 端点",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+            SupportsResponseFormat = false,
+        };
+
+    private static ImageGenModelAdapterConfig BuildOpenRouterGptImage2Config()
+        => new()
+        {
+            ModelIdPattern = "openai/gpt-image-2*",
+            DisplayName = "GPT Image 2（OpenRouter）",
+            Provider = "OpenRouter",
+            PlatformType = "openai",
+            LastUpdated = "2026-08-10",
+            SizeConstraintType = SizeConstraintTypes.AspectRatio,
+            SizeConstraintDescription = "通过 OpenRouter image_config.aspect_ratio 控制比例，具体像素由模型决定",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1344x768", "16:9"),
+                    new("768x1344", "9:16"),
+                    new("1024x768", "4:3"),
+                    new("768x1024", "3:4"),
+                    new("1248x832", "3:2"),
+                    new("832x1248", "2:3"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.AspectRatio,
+            Notes = new List<string>
+            {
+                "网关把用户选择的尺寸转换为 image_config.aspect_ratio",
+                "提示词保持用户原文，不承担协议参数职责",
             },
             SupportsImageToImage = true,
             SupportsInpainting = false,

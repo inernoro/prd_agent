@@ -214,6 +214,27 @@ public static class ImageGenRequestBuilder
         var divisor = Math.Max(1, a);
         return $"{width / divisor}:{height / divisor}";
     }
+
+    /// <summary>
+    /// 从像素尺寸推导 OpenRouter image_config.aspect_ratio 支持的最接近比例。
+    /// </summary>
+    internal static string? DeriveOpenRouterAspectRatio(string? size)
+    {
+        if (!ImageGenModelAdapterRegistry.TryParseSize(size, out var width, out var height)
+            || width <= 0
+            || height <= 0)
+        {
+            return null;
+        }
+
+        var target = (double)width / height;
+        var candidates = new (string Label, double Ratio)[]
+        {
+            ("1:1", 1.0), ("2:3", 2.0 / 3), ("3:2", 3.0 / 2), ("3:4", 3.0 / 4), ("4:3", 4.0 / 3),
+            ("4:5", 4.0 / 5), ("5:4", 5.0 / 4), ("9:16", 9.0 / 16), ("16:9", 16.0 / 9), ("21:9", 21.0 / 9),
+        };
+        return candidates.MinBy(candidate => Math.Abs(candidate.Ratio - target)).Label;
+    }
 }
 
 /// <summary>

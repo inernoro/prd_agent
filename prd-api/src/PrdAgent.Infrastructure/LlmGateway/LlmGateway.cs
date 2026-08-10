@@ -1445,6 +1445,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = userContent }),
                 ["modalities"] = new JsonArray("image", "text"),
             };
+            var aspectRatio = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(spec.Size);
+            if (aspectRatio != null)
+            {
+                body["image_config"] = new JsonObject { ["aspect_ratio"] = aspectRatio };
+            }
             endpointPath = "chat/completions";
         }
         else
