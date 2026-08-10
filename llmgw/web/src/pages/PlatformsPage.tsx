@@ -1,7 +1,7 @@
 // Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, mergePlatformInto, rotatePlatformApiKey, setPlatformEnabled, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, PlatformItem, UpdatePlatformRequest } from '@/lib/types';
@@ -368,7 +368,9 @@ export function PlatformsPage() {
                 ? { label: '解不开', color: 'var(--semantic-warning-text, #b45309)', bg: 'rgba(180,83,9,0.14)' }
                 : boolChip(p.hasKey, '已配置', '未配置');
               return (
-                <tr key={p.id}>
+                // 一行可能渲染两个兄弟节点（数据行 + 展开的编辑行），列表里的 Fragment 必须带 key
+                <Fragment key={p.id}>
+                <tr>
                   <td style={td}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                       <span style={{ fontWeight: 600 }}>{p.name}</span>
@@ -421,7 +423,7 @@ export function PlatformsPage() {
                       {/* 指纹：同名同 URL 的两条上游只有密钥不同时，这是唯一能分清谁是谁的线索 */}
                       {p.keyFingerprint ? (
                         <code
-                          style={{ fontSize: 'var(--fs-tertiary)', color: 'var(--text-secondary)' }}
+                          style={{ fontSize: 'var(--fs-tertiary)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}
                           title="密钥指纹（头尾各留几位，中间打码），用于分辨是哪一把，不是完整密钥">
                           {p.keyFingerprint}
                         </code>
@@ -430,52 +432,7 @@ export function PlatformsPage() {
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      {editId === p.id ? (
-                        <>
-                          <input
-                            aria-label="平台名称"
-                            value={editDraft.name ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
-                            placeholder="名称"
-                            style={{ ...inputStyle, width: 150 }}
-                          />
-                          <select
-                            aria-label="接口类型"
-                            value={editDraft.platformType ?? 'openai'}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
-                            style={inputStyle}>
-                            <option value="openai">openai</option>
-                            <option value="claude">claude</option>
-                          </select>
-                          <input
-                            aria-label="API 地址"
-                            value={editDraft.apiUrl ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
-                            placeholder="https://…"
-                            style={{ ...inputStyle, width: 240 }}
-                          />
-                          <input
-                            aria-label="并发"
-                            type="number"
-                            value={editDraft.maxConcurrency ?? 0}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
-                            style={{ ...inputStyle, width: 80 }}
-                          />
-                          <input
-                            aria-label="备注"
-                            value={editDraft.remark ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
-                            placeholder="备注"
-                            style={{ ...inputStyle, width: 160 }}
-                          />
-                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
-                            保存
-                          </Button>
-                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => setEditId(null)}>
-                            取消
-                          </Button>
-                        </>
-                      ) : keyEditId === p.id ? (
+                      {keyEditId === p.id ? (
                         <>
                           <input
                             type="password"
@@ -540,6 +497,59 @@ export function PlatformsPage() {
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
+                {editId === p.id ? (
+                  <tr>
+                    {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
+                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={8}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
+                          <input
+                            aria-label="平台名称"
+                            value={editDraft.name ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
+                            placeholder="名称"
+                            style={{ ...inputStyle, width: 150 }}
+                          />
+                          <select
+                            aria-label="接口类型"
+                            value={editDraft.platformType ?? 'openai'}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
+                            style={inputStyle}>
+                            <option value="openai">openai</option>
+                            <option value="claude">claude</option>
+                          </select>
+                          <input
+                            aria-label="API 地址"
+                            value={editDraft.apiUrl ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
+                            placeholder="https://…"
+                            style={{ ...inputStyle, width: 240 }}
+                          />
+                          <input
+                            aria-label="并发"
+                            type="number"
+                            value={editDraft.maxConcurrency ?? 0}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
+                            style={{ ...inputStyle, width: 80 }}
+                          />
+                          <input
+                            aria-label="备注"
+                            value={editDraft.remark ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
+                            placeholder="备注"
+                            style={{ ...inputStyle, width: 160 }}
+                          />
+                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
+                            保存
+                          </Button>
+                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => setEditId(null)}>
+                            取消
+                          </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
           </tbody>
