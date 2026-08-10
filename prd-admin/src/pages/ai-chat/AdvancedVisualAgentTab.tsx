@@ -1369,15 +1369,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type SizeOption = { size: string; aspectRatio: string };
   type SizesByResolutionType = Record<'1k' | '2k' | '4k', SizeOption[]>;
   const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
-  // 当前模型是否为自适应模型（gpt-image-2-all 等）：true 时尺寸选择器应展示"自适应"
-  const [currentModelIsAdaptive, setCurrentModelIsAdaptive] = useState(false);
+  // 仅“尺寸语义不适用”的模型隐藏选择器；提示词传输型自适应模型仍允许用户选尺寸。
+  const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
 
   useEffect(() => {
     // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
     const modelCode = effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
-      setCurrentModelIsAdaptive(false);
+      setCurrentModelSizesNotApplicable(false);
       return;
     }
 
@@ -1390,15 +1390,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             '2k': Array.isArray(data['2k']) ? data['2k'] : [],
             '4k': Array.isArray(data['4k']) ? data['4k'] : [],
           });
-          setCurrentModelIsAdaptive(res.data.isAdaptive === true);
+          setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);
         } else {
           setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
-          setCurrentModelIsAdaptive(false);
+          setCurrentModelSizesNotApplicable(false);
         }
       })
       .catch(() => {
         setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
-        setCurrentModelIsAdaptive(false);
+        setCurrentModelSizesNotApplicable(false);
       });
   }, [effectiveModel]);
 
@@ -7351,8 +7351,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                   <div className="mt-2 flex items-center justify-between gap-2">
                     {/* 尺寸选择器 */}
-                    {/* 自适应模型：渲染一个非交互的静态 chip，避免打开一个仅用于迷惑的尺寸面板 */}
-                    {currentModelIsAdaptive ? (
+                    {/* 尺寸不适用的模型：渲染非交互静态 chip。提示词传输型模型仍走正常选择器。 */}
+                    {currentModelSizesNotApplicable ? (
                       <span
                         className="inline-flex items-center gap-1 rounded-full px-2.5 h-6 text-[11px] font-medium"
                         style={{
@@ -8557,15 +8557,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div ref={sizeSelectorRef} className="relative flex items-center gap-1.5">
                   <button
                     type="button"
-                    className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-semibold ${sizeSelectorOpen ? 'surface-action-accent' : 'surface-action'} ${currentModelIsAdaptive ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
+                    className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-semibold ${sizeSelectorOpen ? 'surface-action-accent' : 'surface-action'} ${currentModelSizesNotApplicable ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
                     aria-label="尺寸比例"
-                    title={currentModelIsAdaptive ? '该模型为自适应尺寸，具体尺寸由 prompt 描述决定' : '选择分辨率和比例'}
-                    disabled={currentModelIsAdaptive}
-                    onClick={() => { if (!currentModelIsAdaptive) setSizeSelectorOpen((v) => !v); }}
+                    title={currentModelSizesNotApplicable ? '该模型不提供尺寸选择' : '选择分辨率和比例'}
+                    disabled={currentModelSizesNotApplicable}
+                    onClick={() => { if (!currentModelSizesNotApplicable) setSizeSelectorOpen((v) => !v); }}
                   >
                     {(() => {
-                      // 自适应模型：尺寸由 prompt 决定，标"自适应"
-                      if (currentModelIsAdaptive) {
+                      if (currentModelSizesNotApplicable) {
                         return <span style={{ whiteSpace: 'nowrap' }}>自适应</span>;
                       }
                       const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
@@ -8577,7 +8576,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect || '1:1'}</span>
                       );
                     })()}
-                    {currentModelIsAdaptive ? null : (
+                    {currentModelSizesNotApplicable ? null : (
                       <span className="text-[9px] text-token-muted">▾</span>
                     )}
                   </button>

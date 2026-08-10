@@ -40,7 +40,7 @@ export type UpdateModelPrioritiesContract = (updates: ModelPriorityUpdate[]) => 
 
 // 模型适配器信息
 export type ModelAdapterSizeConstraint = {
-  type: 'whitelist' | 'range' | 'aspect_ratio';
+  type: 'whitelist' | 'range' | 'aspect_ratio' | 'adaptive';
   description: string;
 };
 
@@ -73,10 +73,12 @@ export type ModelAdapterInfo = {
   /** 按分辨率分组的尺寸选项（1k/2k/4k），前端直接使用 */
   sizesByResolution?: Record<string, SizeOptionFromBackend[]>;
   sizeParamFormat?: string;
+  /** true 表示该模型没有尺寸选择语义；与“尺寸通过 prompt 传输”不同 */
+  sizesNotApplicable?: boolean;
   limitations?: ModelAdapterLimitations;
   supportsImageToImage?: boolean;
   supportsInpainting?: boolean;
-  /** 自适应模型：true 表示尺寸由 prompt 决定，前端不应展示尺寸选择器 */
+  /** 自适应模型：true 表示尺寸不通过 API 字段传输 */
   isAdaptive?: boolean;
 };
 
@@ -89,6 +91,7 @@ export type ModelAdapterInfoBrief = {
   sizesCount?: number;
   sizesByResolution?: Record<string, SizeOptionFromBackend[]>;
   notes?: string[];
+  sizesNotApplicable?: boolean;
   /** 自适应模型标识 */
   isAdaptive?: boolean;
 };
