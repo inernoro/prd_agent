@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
-import { ArrowDown, ArrowUp, Download, Eye, EyeOff, Image as ImageIcon, Layers, ShieldCheck, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Download, Eye, EyeOff, Image as ImageIcon, Layers, Minus, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
+
+import { LAYER_COUNT_MAX, LAYER_COUNT_MIN } from '@/lib/aiLayerNaming';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
@@ -17,7 +19,12 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 
 export type SemanticLayerPanelLayer = {
   key: string;
+  /** 主标题：序号，任何情况下都能相互区分。 */
   name: string;
+  /** 副标题：来源提示词，可截断，不承担分辨职责。 */
+  subtitle?: string;
+  /** 附注：这一层被判成了什么（近乎空层 / 整张原图）。普通图层为空串。 */
+  note?: string;
   src: string;
   /** 生成中的占位层：没有图，只占位子。 */
   pending?: boolean;
@@ -36,6 +43,10 @@ export type SemanticLayerPanelProps = {
   aspectRatio?: number;
   busy?: boolean;
   busyText?: string;
+  /** 下次拆几层（2-8）。层数写死会让只拆得出两三层的图多出空层。 */
+  layerCount: number;
+  onLayerCountChange: (value: number) => void;
+  onResplit: () => void;
   selectedKey?: string;
   onSelect: (key: string) => void;
   onToggleHidden: (key: string) => void;
@@ -67,6 +78,9 @@ export function SemanticLayerPanel({
   aspectRatio,
   busy,
   busyText,
+  layerCount,
+  onLayerCountChange,
+  onResplit,
   selectedKey,
   onSelect,
   onToggleHidden,
@@ -220,8 +234,10 @@ export function SemanticLayerPanel({
                   >
                     {layer.name}
                   </div>
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    {layer.pending ? '生成中' : layer.failed ? '未生成' : `不透明度 ${Math.round(layer.opacity * 100)}%`}
+                  <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={layer.subtitle || undefined}>
+                    {layer.pending ? '生成中'
+                      : layer.failed ? '未生成'
+                      : (layer.note || layer.subtitle || `不透明度 ${Math.round(layer.opacity * 100)}%`)}
                   </div>
                 </div>
 
@@ -344,6 +360,44 @@ export function SemanticLayerPanel({
             </div>
           </>
         )}
+        {/* 层数就地可调：不为一个参数开配置面板（奥卡姆），但也不写死 4 */}
+        <div className="h-7 flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+          <span className="shrink-0">下次拆</span>
+          <button
+            type="button"
+            className="w-5 h-5 rounded-[5px] inline-flex items-center justify-center hover-bg-soft disabled:opacity-30"
+            style={{ border: '1px solid var(--border-default)' }}
+            disabled={!!busy || layerCount <= LAYER_COUNT_MIN}
+            title="减少一层"
+            onClick={() => onLayerCountChange(layerCount - 1)}
+          >
+            <Minus size={11} />
+          </button>
+          <span className="w-6 text-center font-semibold" style={{ color: 'var(--text-primary)' }}>{layerCount}</span>
+          <button
+            type="button"
+            className="w-5 h-5 rounded-[5px] inline-flex items-center justify-center hover-bg-soft disabled:opacity-30"
+            style={{ border: '1px solid var(--border-default)' }}
+            disabled={!!busy || layerCount >= LAYER_COUNT_MAX}
+            title="增加一层"
+            onClick={() => onLayerCountChange(layerCount + 1)}
+          >
+            <Plus size={11} />
+          </button>
+          <span className="shrink-0">层</span>
+          <button
+            type="button"
+            className="ml-auto h-6 px-2 rounded-[6px] inline-flex items-center gap-1 hover-bg-soft disabled:opacity-40"
+            style={{ color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
+            disabled={!!busy}
+            title="用当前层数重新拆一次"
+            onClick={onResplit}
+          >
+            <RefreshCw size={11} />
+            重新拆分
+          </button>
+        </div>
+
         {/* 导出前先问一句「读得到吗」：不做这步，跨域读不到时只会在下载到一半时
             抛一句没头没尾的 Failed to fetch，谁也不知道是哪一层出的问题。 */}
         <button

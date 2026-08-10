@@ -78,6 +78,23 @@ import {
   type LayerSourceInput,
 } from '@/lib/layeredPsd';
 import { SemanticLayerPanel, type SemanticLayerPanelLayer } from './components/SemanticLayerPanel';
+import {
+  aiLayerDisplayName,
+  aiLayerExportName,
+  aiLayerSubtitle,
+  clampLayerCount,
+  LAYER_COUNT_DEFAULT,
+  SOURCE_REFERENCE_LAYER_NAME,
+} from '@/lib/aiLayerNaming';
+import {
+  classifyLayerContent,
+  computeAlphaCoverage,
+  computeMeanAbsDifference,
+  describeLayerContent,
+  isHiddenByDefault,
+  sampleLayerRgba,
+  type LayerContentKind,
+} from '@/lib/layerContentAnalysis';
 import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
@@ -204,10 +221,15 @@ type CanvasImageItem = {
   layerOpacity?: number;
   /** 叠放次序（小的在下）。缺省回落到 layerIndex，保证旧数据仍有确定顺序。 */
   layerZ?: number;
+  /** 内容判定：普通图层 / 近乎空层 / 整张原图。判定可见且可由用户改回。 */
+  layerContentKind?: LayerContentKind;
 };
 
-/** 一次语义分层拆几层。占位卡数量、请求参数、PSD 图层数共用这一个值。 */
-const AI_LAYER_COUNT = 4;
+/**
+ * 分层层数的**默认**值。真实层数由用户在图层面板选（2-8），这里只是没选过时的起点。
+ * 早先它是写死的常量：一张只拆得出两三层的图硬凑 4 层，就会多出近乎全暗的空层白占位置。
+ */
+const AI_LAYER_COUNT = LAYER_COUNT_DEFAULT;
 
 /** 图层面板占掉的右侧宽度（面板 300 + 右边距 16）。视角适配要把它让出来，不能把产物摆到面板底下。 */
 const LAYER_PANEL_RESERVED_WIDTH = 316;
@@ -223,11 +245,6 @@ const CANVAS_CHECKERBOARD: React.CSSProperties = {
   backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px',
   backgroundColor: 'var(--bg-tertiary)',
 };
-
-/** 分层卡片的命名：画布占位、资产 prompt、PSD 图层名共用一份，避免三处各写各的。 */
-function aiLayerName(index: number): string {
-  return `AI 图层 ${String(index + 1).padStart(2, '0')}`;
-}
 
 function computeObjectFitContainRect(containerW: number, containerH: number, contentW: number, contentH: number) {
   const cw = Number.isFinite(containerW) ? Math.max(0, containerW) : 0;
@@ -424,6 +441,7 @@ function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvas
           layerHidden: it.layerHidden,
           layerOpacity: it.layerOpacity,
           layerZ: it.layerZ,
+          layerContentKind: it.layerContentKind,
         },
       });
     } else if (kind === 'generator') {
@@ -520,6 +538,9 @@ function persistedV1ToCanvas(
         layerHidden: ext.layerHidden === true,
         layerOpacity: typeof ext.layerOpacity === 'number' && Number.isFinite(ext.layerOpacity) ? ext.layerOpacity : undefined,
         layerZ: typeof ext.layerZ === 'number' && Number.isFinite(ext.layerZ) ? ext.layerZ : undefined,
+        layerContentKind: ext.layerContentKind === 'empty' || ext.layerContentKind === 'source-reference'
+          ? ext.layerContentKind
+          : undefined,
       });
     } else if (el.kind === 'generator') {
       out.push({
@@ -1390,6 +1411,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const layeringRunningRef = useRef(false);
   /** 图层面板当前挂在哪个分层组上；null = 面板收起。 */
   const [layerPanelGroupId, setLayerPanelGroupId] = useState<string | null>(null);
+  // 拆几层由用户定。纯 UI 偏好、发版后用旧值无害，按 no-localstorage 的例外清单可用 localStorage。
+  const [layerCountPref, setLayerCountPref] = useState<number>(() => {
+    try { return clampLayerCount(localStorage.getItem('prdAdmin.visualAgent.layerCount')); }
+    catch { return AI_LAYER_COUNT; }
+  });
+  const updateLayerCountPref = useCallback((value: number) => {
+    const next = clampLayerCount(value);
+    setLayerCountPref(next);
+    try { localStorage.setItem('prdAdmin.visualAgent.layerCount', String(next)); } catch { /* 存不下不影响本次使用 */ }
+  }, []);
   const [layerExportBusy, setLayerExportBusy] = useState<string | null>(null);
   // 分层完成后要把 Frame 收进视野，但视角函数定义在下面，用 ref 打通前后引用顺序。
   const animateCameraToFitRectRef = useRef<
@@ -2513,7 +2544,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       setLayerPanelGroupId(existingGroupId);
       toast.info('分层结果已在画布中', `已复用 ${existingLayers.length} 个可编辑图层，无需再次调用模型。`);
       return existingLayers.map((layer, index) => ({
-        name: cleanDisplayTitle(layer.prompt) || aiLayerName(index),
+        name: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
         source: layer.src,
       }));
     }
@@ -2557,14 +2588,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       (max, candidate) => typeof candidate.refId === 'number' ? Math.max(max, candidate.refId) : max,
       0,
     );
+    const requestedLayerCount = clampLayerCount(layerCountPref);
     const layerKeyAt = (index: number) => `${groupId}_layer_${index + 1}`;
-    const layerPromptAt = (index: number) => `${input.prompt || '图片'} · ${aiLayerName(index)}`;
+    // 图层的 prompt 只保留来源信息；显示名由序号决定，不再把序号拼进这串文字
+    // ——拼进去会被显示层的 60 字截断切掉，四层退化成同一串（2026-08-07 实测）。
+    const layerPromptAt = () => String(input.prompt || '图片');
     const buildPlaceholders = (count: number): CanvasImageItem[] => {
       const layout = planSemanticLayerFrame(sourceItem, count);
       return Array.from({ length: count }, (_, index) => ({
         key: layerKeyAt(index),
         createdAt: createdAt + index,
-        prompt: layerPromptAt(index),
+        prompt: layerPromptAt(),
         src: '',
         status: 'running' as const,
         kind: 'image' as const,
@@ -2619,7 +2653,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         : candidate);
     });
     ensureSlots(1);
-    setNextRefId(maxRefId + AI_LAYER_COUNT + 1);
+    setNextRefId(maxRefId + requestedLayerCount + 1);
     // 组装台跟着一起开：拆分的下一步就是排图层，别让用户拆完还要自己找面板在哪。
     setLayerPanelGroupId(groupId);
     setLayeringProgress({
@@ -2627,7 +2661,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       groupId,
       phase: '正在提交分层任务',
       completed: 0,
-      total: AI_LAYER_COUNT,
+      total: requestedLayerCount,
     });
 
     try {
@@ -2640,7 +2674,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         targetKey: sourceItem.key,
         source,
         sourceSha256: readySha,
-        layerCount: AI_LAYER_COUNT,
+        layerCount: requestedLayerCount,
         // 分层要跑几十秒，等待期必须一直有东西在动（禁止静止的「加载中」）。
         onProgress: ({ phase, completed, total }) =>
           setLayeringProgress({ sourceKey: sourceItem.key, groupId, phase, completed, total }),
@@ -2666,7 +2700,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       const layerSources: Array<{ name: string; source: string }> = [];
       for (let index = 0; index < remoteLayers.length; index += 1) {
-        const name = aiLayerName(index);
+        const name = aiLayerExportName(index);
         setLayeringProgress({
           sourceKey: sourceItem.key,
           groupId,
@@ -2681,7 +2715,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const upload = await uploadVisualAgentWorkspaceAsset({
           id: workspaceId,
           sourceUrl: remoteLayers[index]!,
-          prompt: layerPromptAt(index),
+          prompt: layerPromptAt(),
           idempotencyKey: `semantic_layer_${sourceItem.key}_${index}_${createdAt}`,
         });
         if (!upload.success) throw new Error(upload.error?.message || `${name} 保存失败`);
@@ -2701,6 +2735,27 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           : candidate));
         layerSources.push({ name, source: asset.url });
       }
+
+      // 内容判定：哪一层其实是整张原图、哪一层几乎是空的。
+      // 判定失败不影响主流程（拿不到样本就当普通层），用户始终能自己开关。
+      void (async () => {
+        const sourceRgba = await sampleLayerRgba(source, readySha);
+        for (let index = 0; index < remoteLayers.length; index += 1) {
+          const key = layerKeyAt(index);
+          const item = canvasRef.current.find((candidate) => candidate.key === key);
+          if (!item?.src) continue;
+          const rgba = await sampleLayerRgba(item.src, item.sha256 || item.originalSha256 || null);
+          if (!rgba) continue;
+          const kind = classifyLayerContent({
+            coverage: computeAlphaCoverage(rgba),
+            sourceDifference: sourceRgba ? computeMeanAbsDifference(rgba, sourceRgba) : null,
+          });
+          if (kind === 'layer') continue;
+          setCanvas((previous) => previous.map((candidate) => candidate.key === key
+            ? { ...candidate, layerContentKind: kind, layerHidden: isHiddenByDefault(kind) }
+            : candidate));
+        }
+      })();
 
       setSelectionWithoutChip([layerKeyAt(0)]);
       // 拆完把整个 Frame 收进视野（避开右侧面板），不让用户自己去找刚生成的东西。
@@ -2729,7 +2784,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       layeringRunningRef.current = false;
       setLayeringProgress(null);
     }
-  }, [setSelectionWithoutChip, workspaceId]);
+  }, [layerCountPref, setSelectionWithoutChip, workspaceId]);
 
   const exportAiLayeredPsd = useCallback(async (input: {
     key: string;
@@ -2752,7 +2807,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 导出必须复刻图层面板此刻的样子（顺序 / 显隐 / 不透明度），
     // 否则「面板上看到的」和「下载下来的」是两个东西。
     let layerSources: LayerSourceInput[] = cachedLayers.map((layer, index) => ({
-      name: cleanDisplayTitle(layer.prompt) || aiLayerName(index),
+      name: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
       source: layer.src,
       sha256: layer.sha256 || layer.originalSha256 || null,
       opacity: layer.layerOpacity,
@@ -2814,7 +2869,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const layerPanelModel = useMemo<SemanticLayerPanelLayer[]>(
     () => layerPanelLayers.map((layer, index) => ({
       key: layer.key,
-      name: cleanDisplayTitle(layer.prompt) || aiLayerName(index),
+      // 名字只由序号决定，源提示词降为副标题：再长也不影响分辨。
+      name: layer.layerContentKind === 'source-reference'
+        ? SOURCE_REFERENCE_LAYER_NAME
+        : aiLayerDisplayName(index),
+      subtitle: aiLayerSubtitle(cleanDisplayTitle(layer.prompt)),
+      note: describeLayerContent(layer.layerContentKind ?? 'layer'),
       src: layer.src,
       pending: layer.status === 'running',
       failed: layer.status === 'error',
@@ -2857,7 +2917,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const layerSources: LayerSourceInput[] = layerPanelLayers
       .filter((layer) => !!layer.src)
       .map((layer, index) => ({
-        name: cleanDisplayTitle(layer.prompt) || aiLayerName(index),
+        name: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
         source: layer.src,
         sha256: layer.sha256 || layer.originalSha256 || null,
         opacity: layer.layerOpacity,
@@ -2911,7 +2971,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         .map((layer, index) => ({
           src: layer.src,
           // 带序号，解压后顺序一眼可读（01 在最下层）。
-          filename: `${String(index + 1).padStart(2, '0')}_${cleanDisplayTitle(layer.prompt) || aiLayerName(index)}`,
+          filename: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
         }));
       if (items.length === 0) throw new Error('还没有出图的图层可以打包');
       await exportAllAsZip(items, `${exportName}-图层`, 'png');
@@ -7593,6 +7653,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 })()}
                 busy={!!layerExportBusy}
                 busyText={layerExportBusy || undefined}
+                layerCount={layerCountPref}
+                onLayerCountChange={updateLayerCountPref}
+                onResplit={() => {
+                  const sourceItem = layerPanelSource;
+                  if (!sourceItem) return;
+                  void decomposeImageIntoFrame({
+                    key: sourceItem.key,
+                    src: sourceItem.originalSrc || sourceItem.src,
+                    prompt: sourceItem.prompt || '图片',
+                  });
+                }}
                 selectedKey={selectedKeys.length === 1 ? selectedKeys[0] : undefined}
                 onSelect={(key) => setSelectionWithoutChip([key])}
                 onToggleHidden={(key) => {
