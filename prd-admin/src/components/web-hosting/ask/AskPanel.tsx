@@ -240,8 +240,8 @@ export default function AskPanel({
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 38, height: 38, borderRadius: 10, border: 'none', flexShrink: 0,
-              background: !draft.trim() || isBusy || needLogin ? 'var(--bg-tertiary)' : 'var(--accent-primary)',
-              color: 'var(--text-primary)',
+              background: !draft.trim() || isBusy || needLogin ? 'var(--bg-tertiary)' : 'var(--button-primary-bg)',
+              color: !draft.trim() || isBusy || needLogin ? 'var(--text-muted)' : 'var(--button-primary-fg)',
               cursor: !draft.trim() || isBusy || needLogin ? 'default' : 'pointer',
             }}
           >

@@ -167,8 +167,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
                   style={{
                     width: 38, height: 38, borderRadius: 9, border: 'none', flexShrink: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: draft.trim() ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                    color: 'var(--text-primary)', cursor: draft.trim() ? 'pointer' : 'default',
+                    background: draft.trim() ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
+                    color: draft.trim() ? 'var(--button-primary-fg)' : 'var(--text-muted)', cursor: draft.trim() ? 'pointer' : 'default',
                   }}
                 >
                   <Plus size={16} />
@@ -204,7 +204,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
             style={{
               padding: '8px 16px', borderRadius: 9, border: 'none', fontSize: 13,
               display: 'flex', alignItems: 'center', gap: 6,
-              background: 'var(--accent-primary)', color: 'var(--text-primary)',
+              background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)',
               cursor: saving || loading ? 'default' : 'pointer',
             }}
           >
@@ -252,7 +252,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       onClick={() => onChange(!checked)}
       style={{
         position: 'relative', width: 38, height: 21, borderRadius: 999, border: 'none', cursor: 'pointer',
-        background: checked ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+        background: checked ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
         transition: 'background 0.18s',
       }}
     >

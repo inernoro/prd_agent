@@ -68,8 +68,10 @@ export default function AskWidget({
             zIndex: 55,
             display: 'flex', alignItems: 'center', gap: 8,
             padding: '10px 16px', borderRadius: 999, border: 'none',
-            background: 'var(--accent-primary)',
-            color: 'var(--text-primary)',
+            background: 'var(--button-primary-bg)',
+            // 主操作面必须走 button-primary 这对 token：accent 底配浅色字只有 2.92:1，
+            // 达不到对比度下限（守卫见 inkPalette.test.ts）
+            color: 'var(--button-primary-fg)',
             fontSize: 13, fontWeight: 600, cursor: 'pointer',
             boxShadow: 'var(--shadow-glass-floating)',
           }}
