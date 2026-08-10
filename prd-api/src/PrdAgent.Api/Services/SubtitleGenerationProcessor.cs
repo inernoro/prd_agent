@@ -1278,8 +1278,11 @@ public class SubtitleGenerationProcessor
             var parsed = TryParseSpeakerLine(line);
             if (parsed != null)
             {
-                Flush();
+                // 顺序要紧：先立起 sawSpeaker 再 Flush。
+                // 反过来写的话，第一次 Flush（冲的正是开场白）看到的 sawSpeaker 还是 false，
+                // 开场白照样被放行——这条顺序错误就是被本文件配套用例抓出来的。
                 sawSpeaker = true;
+                Flush();
                 activeSpeaker = parsed.Value.Speaker;
                 activeText.Append(parsed.Value.Text);
                 continue;
