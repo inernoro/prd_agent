@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom';
 import {
   createMember,
   createTeam,
+  updateTeam,
   createTenant,
   getOrganization,
   invalidateMemberSessions,
@@ -91,6 +92,25 @@ export function OrganizationPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // 后端一直有 PUT /gw/teams/{id}，但前端从没给过入口 —— 团队名一旦打错就永远改不回来。
+  // 这是断头自检里唯一一条 A 类（后端有能力、前端无入口），补在团队 chip 上。
+  const renameTeam = async (team: OrganizationData['teams'][number]) => {
+    const next = window.prompt(`把团队“${team.name}”改成什么名字？`, team.name);
+    if (next === null) return;
+    const name = next.trim();
+    if (name.length < 2) { setError('团队名称至少 2 个字符'); return; }
+    if (name === team.name) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const response = await updateTeam(team.id, name);
+    setBusy(false);
+    if (!response.success) { setError(response.error.message); return; }
+    invalidateOnboardingCache(sessionTenant?.id);
+    setNotice(`团队已改名为“${name}”`);
+    await load();
+  };
+
   const addTeam = async () => {
     setBusy(true);
     setError(null);
@@ -156,14 +176,29 @@ export function OrganizationPage() {
                 <Prose style={{ marginBottom: GAP.section }}>还没有团队。团队把成员、appCaller 和接入密钥放进同一工作范围。</Prose>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginBottom: GAP.section }}>
-                  {data.teams.map((team) => (
-                    <Chip
-                      key={team.id}
-                      label={team.status === 'active' ? team.name : `${team.name}（已停用）`}
-                      color={team.status === 'active' ? 'var(--accent)' : 'var(--text-muted)'}
-                      bg={team.status === 'active' ? 'var(--accent-soft)' : 'var(--bg-elevated)'}
-                    />
-                  ))}
+                  {data.teams.map((team) => {
+                    const chip = (
+                      <Chip
+                        label={team.status === 'active' ? team.name : `${team.name}（已停用）`}
+                        color={team.status === 'active' ? 'var(--accent)' : 'var(--text-muted)'}
+                        bg={team.status === 'active' ? 'var(--accent-soft)' : 'var(--bg-elevated)'}
+                      />
+                    );
+                    if (!canManage) return <span key={team.id}>{chip}</span>;
+                    return (
+                      <button
+                        key={team.id}
+                        type="button"
+                        aria-label={`重命名团队 ${team.name}`}
+                        title="点击重命名"
+                        disabled={busy}
+                        onClick={() => void renameTeam(team)}
+                        style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0 }}
+                      >
+                        {chip}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
               {canManage ? (

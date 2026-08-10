@@ -21,6 +21,7 @@ import {
   bulkRotateApiKeys,
   claimExchangeToGateway,
   createExchange,
+  deleteExchange,
   deleteExchangeApiKey,
   getExchangeMeta,
   getExchanges,
@@ -340,6 +341,23 @@ export function ExchangesPage() {
     } else {
       setNotice(res.error?.message || '密钥清除失败');
     }
+  }
+
+  // 交换所可能正被模型池成员当上游用（直指 id，或走 __exchange__ 别名匹配）。
+  // 后端两种引用都查，这里只负责把它报回来的阻挡原文原样端给运维。
+  async function removeExchange(item: ExchangeItem) {
+    const typed = window.prompt(
+      `删除 Exchange「${item.name}」（${item.targetUrl || '无地址'}）。\n它的地址、通讯密钥与全部模型映射一并消失，无法撤销。\n确认请输入 Exchange 名称：`,
+    );
+    if (typed === null) return;
+    if (typed.trim() !== item.name) { setNotice('输入的名称不一致，已取消删除'); return; }
+    setBusyId(item.id);
+    setNotice(null);
+    const res = await deleteExchange(item.id);
+    setBusyId(null);
+    if (!res.success) { setNotice(res.error?.message || '删除失败'); return; }
+    setItems((current) => current?.filter((candidate) => candidate.id !== item.id) ?? current);
+    setNotice(`已删除 Exchange「${item.name}」`);
   }
 
   async function applyBulkApiKey() {
@@ -671,6 +689,7 @@ export function ExchangesPage() {
                         {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" onClick={() => openEdit(item)}><Pencil size={13} /> 编辑映射</Button> : <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void claimExchange(item)}>导入旧配置</Button>}
                         {item.authority === 'llm_gateway' && keyEditId !== item.id ? <Button size="sm" variant="ghost" onClick={() => { setKeyEditId(item.id); setKeyValue(''); }}><KeyRound size={13} /> 更新密钥</Button> : null}
                         {item.authority === 'llm_gateway' && item.hasKey ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void clearApiKey(item)}>清除密钥</Button> : null}
+                        {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void removeExchange(item)}><Trash2 size={13} /> 删除</Button> : null}
                       </div>
                     ) : <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>只读</span>}
                   </div>

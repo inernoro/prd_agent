@@ -53,6 +53,9 @@ import type {
   PlatformItem,
   PlatformDeleteBlockers,
   ModelDeleteBlockers,
+  PoolDeleteBlockers,
+  ExchangeDeleteBlockers,
+  LogicalModelDeleteResult,
   UpdatePlatformRequest,
   PlatformMergeResult,
   ModelItem,
@@ -97,6 +100,7 @@ import type {
   OrganizationData,
   CreatedTenant,
   CreatedTeam,
+  TeamUpdateResult,
   CreateMemberRequest,
   CreatedMember,
   UpdateMemberRequest,
@@ -784,6 +788,30 @@ export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiRes
 }
 export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
+}
+/** 删除模型池。是当前默认池或仍有 appCaller 绑定时返回 409 + POOL_IN_USE。 */
+export function deletePool(id: string): Promise<ApiResponse<PoolDeleteBlockers>> {
+  return apiRequest<PoolDeleteBlockers>(`/pools/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除逻辑模型。名下 offering 是从属子项，跟着一起删，返回删除条数。 */
+export function deleteLogicalModel(id: string): Promise<ApiResponse<LogicalModelDeleteResult>> {
+  return apiRequest<LogicalModelDeleteResult>(`/logical-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除 appCaller 登记。删除后该 code 再来调用会被当成未注册拒绝。 */
+export function deleteAppCaller(id: string): Promise<ApiResponse<unknown>> {
+  return apiRequest<unknown>(`/app-callers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除交换所。仍被池成员引用时返回 409 + EXCHANGE_IN_USE。 */
+export function deleteExchange(id: string): Promise<ApiResponse<ExchangeDeleteBlockers>> {
+  return apiRequest<ExchangeDeleteBlockers>(`/exchanges/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/**
+ * 改团队名。后端一直有这个端点，前端此前没有入口——团队能建不能改名。
+ * 注意返回体里**没有** name：后端只回 id + updated + 三个连带影响计数，
+ * 所以调用方要报新名字得用自己传进去的那个，不能读 data.name（那是 undefined）。
+ */
+export function updateTeam(id: string, name: string): Promise<ApiResponse<TeamUpdateResult>> {
+  return apiRequest<TeamUpdateResult>(`/teams/${encodeURIComponent(id)}`, { method: 'PUT', body: { name } });
 }
 /** 编辑上游（名称/类型/地址/并发/备注）。密钥不在这里改，走 rotatePlatformApiKey。 */
 export function updatePlatform(id: string, req: UpdatePlatformRequest): Promise<ApiResponse<PlatformItem>> {

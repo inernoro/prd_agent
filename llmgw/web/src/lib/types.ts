@@ -621,6 +621,12 @@ export type PlatformItem = {
 export type PlatformDeleteBlockers = { models: string[]; pools: string[]; totalCount: number };
 /** 删除模型被挡下时回来的占用清单。 */
 export type ModelDeleteBlockers = { pools: string[]; totalCount: number };
+/** 删除模型池被挡下时回来的占用清单；isCurrentDefault 是「删了那个类型没默认可用」这类阻挡。 */
+export type PoolDeleteBlockers = { isCurrentDefault: boolean; appCallers: string[]; totalCount: number };
+/** 删除交换所被挡下时回来的占用清单。 */
+export type ExchangeDeleteBlockers = { pools: string[]; totalCount: number };
+/** 删除逻辑模型的结果：名下 offering 作为从属子项一并删除。 */
+export type LogicalModelDeleteResult = { offeringsDeleted: number };
 /** 编辑上游：只改这几项，密钥走独立的轮换端点。 */
 export type UpdatePlatformRequest = {
   name?: string;
@@ -1200,6 +1206,14 @@ export type OrganizationData = {
 
 export type CreatedTenant = { id: string; name: string; slug: string; defaultTeamId: string };
 export type CreatedTeam = { id: string; name: string; status: string };
+/** PUT /gw/teams/{id} 的返回体：只有 id 与连带影响计数，不回读团队名。 */
+export type TeamUpdateResult = {
+  id: string;
+  updated: boolean;
+  invalidatedMemberships: number;
+  revokedServiceKeys: number;
+  disabledAppCallers: number;
+};
 export type CreateMemberRequest = {
   username: string;
   displayName?: string;

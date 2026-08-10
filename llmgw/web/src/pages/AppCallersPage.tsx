@@ -2,7 +2,7 @@
 // 这是目标架构里“appCaller 权威迁到 GW”的第一步，只读，不修改 MAP 旧配置。
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { bulkUpdateGatewayAppCallers, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
+import { bulkUpdateGatewayAppCallers, deleteAppCaller, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
 import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
@@ -230,6 +230,31 @@ export function AppCallersPage() {
     });
   };
 
+  // appCaller 是被动发现的：删掉它，下一条同 code 的请求会把它重新登记回来。
+  // 所以这里删的是「治理配置」不是「调用权限」，确认文案必须说清，免得运维以为删了就断流。
+  const removeItem = async (item: GatewayAppCaller) => {
+    const typed = window.prompt(
+      `删除 appCaller「${item.appCallerCode}」的注册与治理配置（模型池绑定、预算、限流一并消失）。\n它只是被动发现的登记，下一次同名调用会重新出现，但配置不会回来。\n确认请输入 appCallerCode：`,
+    );
+    if (typed === null) return;
+    if (typed.trim() !== item.appCallerCode) {
+      setActionError('输入的 appCallerCode 不一致，已取消删除');
+      return;
+    }
+    setSavingId(item.id);
+    setActionError(null);
+    setActionNotice(null);
+    const res = await deleteAppCaller(item.id);
+    setSavingId(null);
+    if (!res.success) {
+      setActionError(res.error?.message || '删除失败');
+      return;
+    }
+    setExpandedId((prev) => (prev === item.id ? null : prev));
+    setData((prev) => (prev ? { ...prev, items: prev.items.filter((x) => x.id !== item.id), total: Math.max(0, prev.total - 1) } : prev));
+    setActionNotice(`已删除 appCaller「${item.appCallerCode}」`);
+  };
+
   const applyBulkGovernance = async () => {
     if (!hasBulkFilter || !hasBulkUpdate || bulkSaving) return;
     const confirmed = window.confirm(`按当前筛选批量更新 ${data.total} 个 appCaller？`);
@@ -360,6 +385,7 @@ export function AppCallersPage() {
                 onToggle={() => setExpandedId((current) => current === item.id ? null : item.id)}
                 onDraft={(patch) => patchDraft(item, patch)}
                 onSave={() => saveItem(item)}
+                onDelete={() => removeItem(item)}
               />
             ))}
           </tbody>
@@ -382,6 +408,7 @@ export function AppCallersPage() {
             onToggle={() => setExpandedId((current) => current === item.id ? null : item.id)}
             onDraft={(patch) => patchDraft(item, patch)}
             onSave={() => saveItem(item)}
+            onDelete={() => removeItem(item)}
           />
         ))}
         {data.items.length === 0 ? <EmptyBlock text="没有匹配的 appCaller" /> : null}
@@ -418,6 +445,7 @@ function AppCallerRow({
   onToggle,
   onDraft,
   onSave,
+  onDelete,
 }: {
   item: GatewayAppCaller;
   td: React.CSSProperties;
@@ -431,6 +459,7 @@ function AppCallerRow({
   onToggle: () => void;
   onDraft: (patch: Partial<Draft>) => void;
   onSave: () => void;
+  onDelete: () => void;
 }) {
   const chip = statusChip(item.status);
   const compatiblePools = pools.filter((p) => !item.requestType || p.modelType.toLowerCase() === item.requestType.toLowerCase());
@@ -466,7 +495,7 @@ function AppCallerRow({
             <label>每分钟请求上限<input disabled={!canWrite} value={draft.rateLimitPerMinute} onChange={(e) => onDraft({ rateLimitPerMinute: e.target.value })} placeholder="未设置" inputMode="numeric" /></label>
           </div>
           {observedPolicy || observedParameter ? <p className="lg-app-caller-observed">最近请求实际观察：{[observedPolicy, observedParameter].filter(Boolean).join('；')}</p> : null}
-          <div className="lg-app-caller-editor-actions">{canWrite ? <Button variant="primary" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存配置'}</Button> : null}<Button variant="ghost" onClick={onToggle}>关闭</Button></div>
+          <div className="lg-app-caller-editor-actions">{canWrite ? <Button variant="primary" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存配置'}</Button> : null}{canWrite ? <Button variant="ghost" disabled={saving} onClick={onDelete}>删除</Button> : null}<Button variant="ghost" onClick={onToggle}>关闭</Button></div>
         </div>
       </td></tr> : null}
     </>
@@ -485,6 +514,7 @@ function AppCallerMobileCard({
   onToggle,
   onDraft,
   onSave,
+  onDelete,
 }: {
   item: GatewayAppCaller;
   pools: ModelPool[];
@@ -497,6 +527,7 @@ function AppCallerMobileCard({
   onToggle: () => void;
   onDraft: (patch: Partial<Draft>) => void;
   onSave: () => void;
+  onDelete: () => void;
 }) {
   const chip = statusChip(item.status);
   const compatiblePools = pools.filter((pool) => !item.requestType || pool.modelType.toLowerCase() === item.requestType.toLowerCase());
@@ -534,7 +565,7 @@ function AppCallerMobileCard({
           <label>单次预算预占（USD）<input disabled={!canWrite} value={draft.budgetReservationUsd} onChange={(e) => onDraft({ budgetReservationUsd: e.target.value })} placeholder="未设置" inputMode="decimal" /></label>
           <label>每分钟请求上限<input disabled={!canWrite} value={draft.rateLimitPerMinute} onChange={(e) => onDraft({ rateLimitPerMinute: e.target.value })} placeholder="未设置" inputMode="numeric" /></label>
         </div>
-        <div className="lg-app-caller-editor-actions">{canWrite ? <Button variant="primary" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存配置'}</Button> : null}<Button variant="ghost" onClick={onToggle}>关闭</Button></div>
+        <div className="lg-app-caller-editor-actions">{canWrite ? <Button variant="primary" disabled={saving} onClick={onSave}>{saving ? '保存中' : '保存配置'}</Button> : null}{canWrite ? <Button variant="ghost" disabled={saving} onClick={onDelete}>删除</Button> : null}<Button variant="ghost" onClick={onToggle}>关闭</Button></div>
       </div> : null}
     </article>
   );

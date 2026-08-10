@@ -44,12 +44,12 @@ const BUDGETS = [
   // 本轮范围外的页面（用户点名的 10 页不含它们），按当前实测值封顶，只减不增。
   // 数值偏大是因为 2026-07-29 加宽了口径：此前只数 `>文本<`，把正文搬进常量数组即可绕过，
   // 学习中心旧版就是靠 TOPICS 数组藏了约 750 汉字。加宽后这些页面的真实文字量才显形。
-  { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 299, reason: '本轮范围外，按加宽口径后的实测值封顶' },
+  { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 303, reason: '本轮范围外，按加宽口径后的实测值封顶；2026-08-10 +4 是两处「删除」按钮文案（桌面行与移动卡各一），按钮标签属控件可供性不是正文，但守卫的 `>文本<` 口径分辨不出，只能计入' },
   { file: 'pages/PlatformsPage.tsx', maxParagraphs: 3, maxCjk: 300, reason: '本轮范围外，按加宽口径后的实测值封顶' },
   // Exchange 已迁移，常驻 JSX 正文为 0 段；超出的字来自 transformerType 等选项常量，
   // 它们实际渲染在 HelpPopover 里，但守卫看不出常量最终落到哪个出口（已知边界）。
-  { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 420, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置' },
-  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 433, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案' },
+  { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置；2026-08-10 +1 是新增的「删除」按钮文案（与图标同段，只多算一个汉字）' },
+  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 435, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案；2026-08-10 +2 是模型池详情抽屉里新增的「删除」按钮文案' },
   { file: 'pages/QuickstartPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '四协议接入片段常量属产品内容，且部分渲染在 HelpPopover 内' },
 ];
 

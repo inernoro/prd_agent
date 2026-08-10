@@ -14,7 +14,7 @@
 //     卡片内边距只允许 CARD_PADDING(14) 与嵌套块 INSET_PADDING(10) 两种。
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
+import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, deletePool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
 import type { ExchangeItem, ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo, PoolTypesData } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
@@ -131,6 +131,25 @@ export function ModelPoolsPage() {
     } else {
       setToast(res.error?.message || '操作失败');
     }
+  }
+
+  // 删除模型池。后端把「它是某类型的当前默认池」和「还有 appCaller 绑着它」分开报，
+  // 因为前者要先改默认、后者要先解绑，补救动作不一样，合并成一句会让运维不知道先做哪个。
+  async function removePool(pool: ModelPool) {
+    const label = pool.name || pool.code || pool.id;
+    const typed = window.prompt(
+      `删除模型池「${label}」。\n它的 ${pool.models.length} 个成员配置一并消失，无法撤销。\n确认请输入模型池名称：`,
+    );
+    if (typed === null) return;
+    if (typed.trim() !== label) { setToast('输入的名称不一致，已取消删除'); return; }
+    setBusyId(pool.id);
+    setToast(null);
+    const res = await deletePool(pool.id);
+    setBusyId(null);
+    if (!res.success) { setToast(res.error?.message || '删除失败'); return; }
+    setDrawer(null);
+    setPools((prev) => (prev ? prev.filter((x) => x.id !== pool.id) : prev));
+    setToast(`已删除模型池「${label}」`);
   }
 
   async function claimPool(pool: ModelPool) {
@@ -549,6 +568,7 @@ export function ModelPoolsPage() {
                 <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap', margin: `${GAP.section}px 0` }}>
                   {canWrite ? (selectedPool.authority === 'llm_gateway' ? <Button size="sm" variant="secondary" onClick={() => (editDrafts[selectedPool.id] ? cancelEditPool(selectedPool.id) : startEditPool(selectedPool))}>{editDrafts[selectedPool.id] ? '取消编辑' : '编辑属性'}</Button> : <Button size="sm" variant="secondary" disabled={busyId === selectedPool.id} onClick={() => void claimPool(selectedPool)}>导入为可维护配置</Button>) : null}
                   {canWrite && !selectedPool.isDefaultForType ? <Button size="sm" variant="ghost" disabled={busyId === selectedPool.id} onClick={() => void makeDefault(selectedPool)}>设为默认池</Button> : null}
+                  {canWrite && selectedPool.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" disabled={busyId === selectedPool.id} onClick={() => void removePool(selectedPool)}>删除</Button> : null}
                   <Link to={`/app-callers?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-secondary)', textDecoration: 'none' }}>查看 appCaller</Link>
                   <Link to={`/logs?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-secondary)', textDecoration: 'none' }}>查看请求记录</Link>
                 </div>

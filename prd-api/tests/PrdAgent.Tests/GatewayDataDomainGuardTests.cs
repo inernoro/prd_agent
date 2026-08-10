@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -4135,6 +4136,92 @@ public class GatewayDataDomainGuardTests
         // existing 会把陈旧的 Unavailable 一路带回去；现在改成空构造 + 无条件重置。
         // 断言这一行的存在，等于断言不会退回旧写法。
         Assert.Contains("existing is not null ? new BsonDocument(existing) : new BsonDocument();", console);
+    }
+
+    /// <summary>
+    /// 「建得出、删不掉」是垃圾堆积的系统性成因。
+    ///
+    /// 断头自检（2026-08-10）扫出 7 类资源只有创建没有删除：模型池、交换所、逻辑模型、
+    /// appCaller、池成员、团队、租户。本测试钉住其中已补齐的五条删除链路——
+    /// 每条都要求「后端端点 + 审计动作 + 前端 api 函数 + 页面调用点」四段齐全，
+    /// 缺任何一段这条能力就是断头的，而少任何一段都不会让别的测试变红。
+    /// </summary>
+    [Fact]
+    public void GatewayResources_ThatCanBeCreated_CanAlsoBeDeleted()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+
+        // 端点路径 / 审计动作 / api 函数 / 页面文件 / 页面里的调用点
+        var links = new[]
+        {
+            ("app.MapDelete(\"/gw/pools/{id}\"", "pool.delete", "export function deletePool(", "llmgw/web/src/pages/ModelPoolsPage.tsx", "deletePool("),
+            ("app.MapDelete(\"/gw/logical-models/{id}\"", "logical-model.delete", "export function deleteLogicalModel(", "llmgw/web/src/pages/LogicalModelsPage.tsx", "deleteLogicalModel("),
+            ("app.MapDelete(\"/gw/app-callers/{id}\"", "app_caller.delete", "export function deleteAppCaller(", "llmgw/web/src/pages/AppCallersPage.tsx", "deleteAppCaller("),
+            ("app.MapDelete(\"/gw/exchanges/{id}\"", "exchange.delete", "export function deleteExchange(", "llmgw/web/src/pages/ExchangesPage.tsx", "deleteExchange("),
+            ("app.MapDelete(\"/gw/models/{id}\"", "model.delete", "export function deleteModel(", "llmgw/web/src/pages/ModelsPage.tsx", "deleteModel("),
+        };
+
+        foreach (var (endpoint, auditAction, apiExport, pagePath, pageCall) in links)
+        {
+            Assert.Contains(endpoint, console);
+            Assert.Contains(auditAction, console);
+            Assert.Contains(apiExport, api);
+            Assert.Contains(pageCall, ReadRepoFile(pagePath));
+        }
+
+        // 删除阻挡：删掉一个还在被引用的对象，引用方不会报错，只会在路由时静默降级。
+        // 所以每条删除都必须先查引用并把阻挡原因报回去，而不是「删了再说」。
+        Assert.Contains("POOL_IN_USE", console);
+        Assert.Contains("EXCHANGE_IN_USE", console);
+        Assert.Contains("MODEL_IN_USE", console);
+        // 逻辑模型没有阻挡：Offering 是它自己的下挂路由，别处不引用，所以是连带删。
+        // 但连带删必须把删掉几条报回去——否则运维点一次删掉 N 条却毫无感知。
+        Assert.Contains("OfferingsDeleted", console);
+        Assert.Contains("offeringsDeleted", ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx"));
+        // 交换所被池成员引用有两种写法（直指 id / __exchange__ 别名），只查一种会漏判成「没人用」
+        Assert.Contains("__exchange__", console);
+        // 模型池删除的两类阻挡语义不同，必须分开报：改默认 vs 解绑 appCaller，补救动作不一样
+        Assert.Contains("IsCurrentDefault", console);
+    }
+
+    /// <summary>
+    /// 反断头通用守卫：api.ts 里导出的每个函数都必须有人调用。
+    ///
+    /// 形状 2（链路只建到一半）在本仓库的具体形态就是「后端加了端点、api.ts 加了函数、
+    /// 然后没有任何页面用它」——编译过、全量测试绿、通读也看不出来，只会静默地
+    /// 「功能像是有，但界面上找不到入口」。本测试写完当场就抓到一条：deleteModel
+    /// 已经写了两天，前端一个调用点都没有。
+    /// </summary>
+    [Fact]
+    public void ConsoleApiClient_HasNoOrphanExports()
+    {
+        var root = LocateRepoRoot();
+        var srcDir = Path.Combine(root, "llmgw", "web", "src");
+        var apiPath = Path.Combine(srcDir, "lib", "api.ts");
+        var apiSource = File.ReadAllText(apiPath);
+
+        var others = Directory
+            .EnumerateFiles(srcDir, "*.*", SearchOption.AllDirectories)
+            .Where(x => x.EndsWith(".ts", StringComparison.Ordinal) || x.EndsWith(".tsx", StringComparison.Ordinal))
+            .Where(x => !string.Equals(x, apiPath, StringComparison.Ordinal))
+            .Select(File.ReadAllText)
+            .ToList();
+
+        var orphans = new List<string>();
+        foreach (Match match in Regex.Matches(apiSource, @"^export function (\w+)", RegexOptions.Multiline))
+        {
+            var name = match.Groups[1].Value;
+            var word = new Regex($@"\b{Regex.Escape(name)}\b");
+            if (others.Any(x => word.IsMatch(x))) continue;
+            // 同文件内被引用 ≥2 次（定义 + 至少一处使用）说明它是内部 helper 顺带导出的，不算断头
+            if (word.Matches(apiSource).Count >= 2) continue;
+            orphans.Add(name);
+        }
+
+        Assert.True(
+            orphans.Count == 0,
+            $"api.ts 有 {orphans.Count} 个导出没有任何调用点，功能建了一半：{string.Join("、", orphans)}");
     }
 
     private static string ReadRepoFile(string relativePath)

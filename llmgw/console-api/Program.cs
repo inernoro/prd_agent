@@ -2517,6 +2517,34 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
         Array.Empty<BsonDocument>())), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
+// 删除逻辑模型。它名下的 offering 是从属子项——离开逻辑模型没有独立意义，
+// 留着就是一堆指向不存在父项的孤儿，所以跟着一起删，并把条数如实回报。
+app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
+{
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwLogicalModels.Find(filter).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("NOT_FOUND", $"逻辑模型不存在：{id}"), jsonOptions, 404);
+
+    var offeringFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id));
+    var offeringCount = (int)await gwModelOfferings.CountDocumentsAsync(offeringFilter);
+    await gwModelOfferings.DeleteManyAsync(offeringFilter);
+    await gwLogicalModels.DeleteOneAsync(filter);
+
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "logical-model.delete", targetType: "llmgw_logical_model", targetId: id,
+        targetName: doc.AsNullableString("Name"), success: true, reason: null,
+        changes: new BsonDocument
+        {
+            { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
+            { "publicId", ToBsonAuditValue(doc.AsNullableString("PublicId")) },
+            { "modelType", ToBsonAuditValue(doc.AsNullableString("ModelType")) },
+            { "offeringsDeleted", offeringCount },
+        });
+    return Json(ApiEnvelope<LogicalModelDeleteResult>.Ok(new LogicalModelDeleteResult { OfferingsDeleted = offeringCount }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromBody] UpdateLogicalModelRequest? body) =>
 {
     if (body is null)
@@ -4334,6 +4362,29 @@ app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGateway
 }).RequireAuthorization("AppCallerWrite");
 
 // GW appCaller 配置：状态、模型池绑定与参数策略落 GW 自有库；active 状态必须绑定可用的 GW 权威池。
+// 删除 appCaller 登记。没有结构性引用（日志里的 AppCallerCode 是历史，不该拦删除），
+// 但删掉之后这个 code 再来调用会被当成未注册而拒绝——这是预期行为，不是副作用，
+// 所以只留审计而不加阻挡，把「删了会怎样」写进确认文案由调用方承担。
+app.MapDelete("/gw/app-callers/{id}", async (HttpContext http, string id) =>
+{
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwAppCallers.Find(filter).FirstOrDefaultAsync();
+    if (doc is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", $"appCaller 不存在：{id}"), jsonOptions, 404);
+
+    await gwAppCallers.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "app_caller.delete", targetType: "llmgw_app_caller", targetId: id,
+        targetName: doc.AsNullableString("Code") ?? doc.AsNullableString("AppCallerCode"), success: true, reason: null,
+        changes: new BsonDocument
+        {
+            { "code", ToBsonAuditValue(doc.AsNullableString("Code") ?? doc.AsNullableString("AppCallerCode")) },
+            { "title", ToBsonAuditValue(doc.AsNullableString("Title")) },
+            { "modelPoolId", ToBsonAuditValue(doc.AsNullableString("ModelPoolId")) },
+        });
+    return Json(ApiEnvelope<object>.Ok(new { }), jsonOptions);
+}).RequireAuthorization("AppCallerWrite");
+
 app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody] UpdateGatewayAppCallerRequest body) =>
 {
     if (body is null) return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
@@ -7396,6 +7447,55 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
 }).RequireAuthorization("ConfigWrite");
 
 // Exchange 映射编辑：完整替换可见映射字段，并用 version 防止旧页面覆盖并发修改。
+// 删除交换所。池成员指向它有两种写法（platformId 直接写交换所 id，或写 __exchange__
+// 再靠 modelId 匹配别名），两种都要查——只查一种会漏判成「没人用」，把在服务的上游删掉。
+app.MapDelete("/gw/exchanges/{id}", async (HttpContext http, string id) =>
+{
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwModelExchanges.Find(filter).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<ExchangeDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的交换所"), jsonOptions, 409);
+
+    var pools = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
+    var blocking = pools
+        .Where(pool => (pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray())
+            .Where(x => x.IsBsonDocument)
+            .Select(x => x.AsBsonDocument)
+            .Any(member =>
+            {
+                var platformId = member.GetStringOrEmpty("PlatformId");
+                if (string.Equals(platformId, id, StringComparison.Ordinal)) return true;
+                return string.Equals(platformId, "__exchange__", StringComparison.Ordinal)
+                       && GatewayExchangeSupportsModel(doc, member.GetStringOrEmpty("ModelId"));
+            }))
+        .Select(pool => pool.AsNullableString("Name") ?? pool.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+    if (blocking.Count > 0)
+    {
+        var blockers = new ExchangeDeleteBlockers { Pools = blocking };
+        return Json(
+            ApiEnvelope<ExchangeDeleteBlockers>.Fail(
+                "EXCHANGE_IN_USE",
+                $"还有模型池 {blocking.Count} 个（{string.Join("、", blocking.Take(5))}{(blocking.Count > 5 ? " 等" : "")}）在用这个交换所，先把成员摘掉再删",
+                blockers),
+            jsonOptions, 409);
+    }
+
+    await gwModelExchanges.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "exchange.delete", targetType: "llmgw_model_exchange", targetId: id,
+        targetName: doc.AsNullableString("Name"), success: true, reason: null,
+        changes: new BsonDocument
+        {
+            { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
+            { "hadKey", !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) },
+        });
+    return Json(ApiEnvelope<ExchangeDeleteBlockers>.Ok(new ExchangeDeleteBlockers()), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] UpdateExchangeRequest? body) =>
 {
     if (!GatewayConfigurationProvisioning.TryNormalizeExchange(body, out var draft, out var error) || draft is null)
@@ -7821,6 +7921,51 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池属性编辑：只允许写 GW 权威池。MAP 来源池必须先认领，避免把目标权威又写回旧集合。
+// 删除模型池。两类阻挡语义不同，所以分开报：
+//   - 它是某个类型的当前默认池 → 删了那个类型就没有默认可用，必须先改指别的池
+//   - 还有 appCaller 绑着它    → 那些调用方会失去路由目标
+app.MapDelete("/gw/pools/{id}", async (HttpContext http, string id) =>
+{
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型池；MAP 来源请先认领"), jsonOptions, 409);
+
+    var blockers = new PoolDeleteBlockers
+    {
+        IsCurrentDefault = await IsCurrentDefaultPoolAsync(gwModelPoolTypes, doc),
+        AppCallers = (await gwAppCallers
+                .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("ModelPoolId", id)))
+                .ToListAsync())
+            .Select(d => d.AsNullableString("Code") ?? d.GetStringOrEmpty("_id"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList(),
+    };
+    if (blockers.TotalCount > 0)
+    {
+        var parts = new List<string>();
+        if (blockers.IsCurrentDefault) parts.Add($"它还是 {doc.AsNullableString("ModelType")} 类型的当前默认池，先把默认改指别的池");
+        if (blockers.AppCallers.Count > 0)
+            parts.Add($"还有 {blockers.AppCallers.Count} 个 appCaller 绑着它（{string.Join("、", blockers.AppCallers.Take(5))}{(blockers.AppCallers.Count > 5 ? " 等" : "")}）");
+        return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("POOL_IN_USE", string.Join("；", parts), blockers), jsonOptions, 409);
+    }
+
+    await gwModelPools.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "pool.delete", targetType: "llmgw_model_pool", targetId: id,
+        targetName: doc.AsNullableString("Name"), success: true, reason: null,
+        changes: new BsonDocument
+        {
+            { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
+            { "modelType", ToBsonAuditValue(doc.AsNullableString("ModelType")) },
+            { "memberCount", doc.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray.Count : 0 },
+            { "authority", "llm_gateway" },
+        });
+    return Json(ApiEnvelope<PoolDeleteBlockers>.Ok(new PoolDeleteBlockers()), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] UpdatePoolRequest body) =>
 {
     if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);

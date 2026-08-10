@@ -943,6 +943,31 @@ public sealed class ModelDeleteBlockers
     public int TotalCount => Pools.Count;
 }
 
+/// <summary>
+/// 删除模型池前的占用清单。
+/// 「是某个类型的当前默认池」单列一条：它不是别人引用了你，而是删掉之后那个类型没有默认可用，
+/// 属于同样必须先解决、但解决方式完全不同的一类阻挡。
+/// </summary>
+public sealed class PoolDeleteBlockers
+{
+    public bool IsCurrentDefault { get; set; }
+    public List<string> AppCallers { get; set; } = new();
+    public int TotalCount => AppCallers.Count + (IsCurrentDefault ? 1 : 0);
+}
+
+/// <summary>删除交换所前的占用清单：哪些模型池成员还指着它。</summary>
+public sealed class ExchangeDeleteBlockers
+{
+    public List<string> Pools { get; set; } = new();
+    public int TotalCount => Pools.Count;
+}
+
+/// <summary>删除逻辑模型的结果：它名下的 offering 是从属子项，跟着一起删。</summary>
+public sealed class LogicalModelDeleteResult
+{
+    public int OfferingsDeleted { get; set; }
+}
+
 /// <summary>编辑上游：只改这几项；密钥走独立的轮换端点，不混在这里。</summary>
 public sealed class UpdatePlatformRequest
 {

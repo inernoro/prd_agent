@@ -21,7 +21,7 @@
 // Provider 内联预览的按钮文案。改那处措辞会让 CI 的 dotnet test 变红，动手前先读那个测试。
 // （此处刻意不复制该字面量：注释里再抄一份，会让守卫在 UI 文案被删后仍然误判通过。）
 import { useEffect, useMemo, useState } from 'react';
-import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled } from '@/lib/api';
+import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled } from '@/lib/api';
 import type { CreateModelRequest, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { FormGrid, HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
@@ -157,6 +157,24 @@ export function ModelsPage() {
     } else {
       setToast(res.error?.message || '操作失败');
     }
+  }
+
+  // 删除模型。后端会先查它还在不在池成员里——直接删掉在服务的模型，
+  // 池会保留一条指向不存在模型的成员，路由时静默降级而不是报错，最难查。
+  async function removeModel(m: ModelItem) {
+    const label = m.modelName || m.name || m.id;
+    const typed = window.prompt(
+      `删除模型「${label}」。\n它的配置与密钥一并消失，无法撤销。\n确认请输入模型标识：`,
+    );
+    if (typed === null) return;
+    if (typed.trim() !== label) { setToast('输入的模型标识不一致，已取消删除'); return; }
+    setBusyId(m.id);
+    setToast(null);
+    const res = await deleteModel(m.id);
+    setBusyId(null);
+    if (!res.success) { setToast(res.error?.message || '删除失败'); return; }
+    setItems((prev) => (prev ? prev.filter((x) => x.id !== m.id) : prev));
+    setToast(`已删除模型「${label}」`);
   }
 
   async function claimModel(m: ModelItem) {
@@ -606,6 +624,11 @@ export function ModelsPage() {
                               <Button size="sm" variant={m.enabled ? 'ghost' : 'primary'} disabled={busyId === m.id} onClick={() => void toggle(m)}>
                                 {busyId === m.id ? '处理中…' : m.enabled ? '停用' : '启用'}
                               </Button>
+                              {m.authority === 'llm_gateway' ? (
+                                <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => void removeModel(m)}>
+                                  删除
+                                </Button>
+                              ) : null}
                             </>
                           )}
                         </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
