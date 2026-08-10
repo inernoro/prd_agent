@@ -409,6 +409,7 @@ export function LibraryShareViewPage() {
         {activeView === 'read' && (
           <DocBrowser
             entries={browserEntries}
+            immersiveOnMobile
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
             selectedEntryId={controlledSelectedEntryId}

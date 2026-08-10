@@ -396,6 +396,9 @@ export type DocBrowserProps = {
   contentFooter?: (entryId: string) => React.ReactNode;
   /** 阅读区「更多」菜单顶部自定义插槽（移动端沉浸阅读时页面级信息/动作的收纳处，如 空间信息、分享）。 */
   readerMenuExtra?: ReactNode;
+  /** 移动端沉浸阅读（标题接管顶栏 + 单行操作 + 满铺）。默认关闭——嵌入式消费方
+   *（pm-agent 知识面板等，宿主自带头部 chrome）不受影响；仅全屏阅读页显式开启（Codex P2）。 */
+  immersiveOnMobile?: boolean;
   /**
    * 启用双链编辑器自动补全：编辑模式下输入 [[ 或 @ 弹出本库文档候选。
    * 不传则编辑器无补全。仅 DocumentStorePage 的私人编辑场景传入。
@@ -1673,6 +1676,7 @@ export function DocBrowser({
   inlineCommentShareToken,
   contentFooter,
   readerMenuExtra,
+  immersiveOnMobile,
   autocompleteStoreId,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
@@ -1814,6 +1818,8 @@ export function DocBrowser({
 
   // ── 移动端主从布局：正文为主，目录用左侧抽屉承载。桌面端 isMobile=false 时不改动原布局。──
   const { isMobile } = useBreakpoint();
+  // 沉浸阅读是调用方显式开启的能力：未开启的嵌入式消费方在移动端保持原工具栏行为
+  const immersiveActive = !!immersiveOnMobile && isMobile;
   const [mobileDetail, setMobileDetail] = useState(false);
   const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
   const [lastVisitedEntryId, setLastVisitedEntryId] = useState<string | undefined>(selectedEntryId);
@@ -1861,7 +1867,7 @@ export function DocBrowser({
   const setReaderChrome = useReaderChromeStore((s) => s.setOverride);
   const clearReaderChrome = useReaderChromeStore((s) => s.clearOverride);
   useEffect(() => {
-    if (!(isMobile && mobileDetail && selectedEntryData && !selectedEntryData.isFolder)) {
+    if (!(immersiveActive && mobileDetail && selectedEntryData && !selectedEntryData.isFolder)) {
       clearReaderChrome();
       return;
     }
@@ -1873,7 +1879,7 @@ export function DocBrowser({
       },
     });
     return () => clearReaderChrome();
-  }, [isMobile, mobileDetail, selectedEntryData, useContentTitle, contentFirstLines, setReaderChrome, clearReaderChrome]);
+  }, [immersiveActive, mobileDetail, selectedEntryData, useContentTitle, contentFirstLines, setReaderChrome, clearReaderChrome]);
 
   // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹。
   // 合并 searchResults：搜索命中 / 深链 ?entry 的条目可能不在已加载的 entries 里，
@@ -2836,7 +2842,7 @@ export function DocBrowser({
   const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen && mobileHasSelectedEntry;
   // 沉浸阅读态（移动端正文打开）：外层卡片 chrome（p-3 / 圆角 / 浮起面）全部去掉，
   // 正文从沉浸顶栏下边缘直接开始、左右满铺（2026-08-10 用户「主页面尽可能的大」）
-  const mobileDetailChromeless = isMobile && mobileDetail && mobileHasSelectedEntry;
+  const mobileDetailChromeless = immersiveActive && mobileDetail && mobileHasSelectedEntry;
   // cards: 双独立圆角卡片 + 中间 12px 可拖拽分隔条（周报风格）；inset: 单容器无 gap（知识库/分享）
   // cards 模式不再用 gap-3，改由两卡片之间的 ResizeHandle（宽 12px）承担间距 + 拖拽调宽
   const rootClass = isCards
@@ -2849,7 +2855,7 @@ export function DocBrowser({
 
   // ── 沉浸阅读单行顶栏（移动端）：返回 + 标题 + 字号 + 全屏 + 更多合成一行，
   //    替代「AppShell 顶栏 + 阅读工具栏」两行（2026-08-10 用户「还有这么多空间没有利用到」）──
-  const mobileImmersiveReading = isMobile && mobileDetail && !!selectedEntryData && !selectedEntryData.isFolder;
+  const mobileImmersiveReading = immersiveActive && mobileDetail && !!selectedEntryData && !selectedEntryData.isFolder;
   const selectedIsHtmlPreview = !!selectedEntryData && !selectedEntryData.isFolder
     && (getFileTypeConfig(selectedEntryData.title, selectedEntryData.contentType).preview === 'html'
       || (selectedEntryData.contentType ?? '').toLowerCase().includes('html')
@@ -2857,6 +2863,37 @@ export function DocBrowser({
   // 字号仅对 srcDoc 型 HTML 生效：fileUrl 型上传附件走最严 sandbox 跨域 iframe，
   // zoom 注入不进去，显示控件会变成"改了百分比却没效果"的假开关（Codex P2）
   const selectedIsZoomableHtml = selectedIsHtmlPreview && !!preview?.text && !preview?.fileUrl;
+
+  // 字号控件（srcDoc 型 HTML 专属）：沉浸态渲染在顶栏、非沉浸移动端渲染在工具栏行——同一份节点
+  const zoomControlsNode = (!editMode && selectedIsZoomableHtml) ? (
+    <>
+      <button
+        type="button"
+        aria-label="缩小字号"
+        disabled={htmlZoom <= HTML_ZOOM_MIN}
+        onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
+        className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+        style={{ color: 'var(--text-secondary)' }}
+        title={`缩小字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+        <ZoomOut size={16} />
+      </button>
+      {htmlZoom !== 1 && (
+        <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+          {Math.round(htmlZoom * 100)}%
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label="放大字号"
+        disabled={htmlZoom >= HTML_ZOOM_MAX}
+        onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
+        className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+        style={{ color: 'var(--text-secondary)' }}
+        title={`放大字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+        <ZoomIn size={16} />
+      </button>
+    </>
+  ) : null;
 
   // 「更多」按钮 + 菜单：桌面渲染在工具栏尾部、移动端渲染在沉浸顶栏——同一份节点，杜绝双份漂移
   const readerMoreNode = (() => {
@@ -3022,35 +3059,7 @@ export function DocBrowser({
           </span>
           {!editMode && (
             <>
-              {selectedIsZoomableHtml && (
-                <button
-                  type="button"
-                  aria-label="缩小字号"
-                  disabled={htmlZoom <= HTML_ZOOM_MIN}
-                  onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
-                  className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
-                  style={{ color: 'var(--text-secondary)' }}
-                  title={`缩小字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
-                  <ZoomOut size={16} />
-                </button>
-              )}
-              {selectedIsZoomableHtml && htmlZoom !== 1 && (
-                <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                  {Math.round(htmlZoom * 100)}%
-                </span>
-              )}
-              {selectedIsZoomableHtml && (
-                <button
-                  type="button"
-                  aria-label="放大字号"
-                  disabled={htmlZoom >= HTML_ZOOM_MAX}
-                  onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
-                  className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
-                  style={{ color: 'var(--text-secondary)' }}
-                  title={`放大字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
-                  <ZoomIn size={16} />
-                </button>
-              )}
+              {zoomControlsNode}
               <button
                 type="button"
                 aria-label="全屏阅读"
@@ -3557,7 +3566,7 @@ export function DocBrowser({
             )}
             {/* 行2：主操作行。移动端非编辑态不渲染——动作全部并入沉浸顶栏一行
                 （2026-08-10 用户「还有这么多空间没有利用到」）；编辑态保留（保存/取消在此）。 */}
-            {(!isMobile || editMode) && (
+            {(!immersiveActive || editMode) && (
             <div
               className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-nowrap overflow-x-auto' : 'px-5 flex-wrap'}`}
               style={{
@@ -3567,6 +3576,18 @@ export function DocBrowser({
                 overscrollBehaviorX: isMobile ? 'contain' : undefined,
               }}
             >
+              {/* 移动端目录抽屉入口（沉浸态由顶栏/菜单承载，此按钮只在非沉浸或编辑态出现） */}
+              {isMobile && (
+                <button
+                  onClick={() => setMobileDirectoryOpen(true)}
+                  className={`${TOOLBAR_ICON_BTN_MOBILE} hover:opacity-80`}
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+                  aria-label="打开目录"
+                  title="打开目录"
+                >
+                  <PanelLeftOpen size={15} />
+                </button>
+              )}
               {/* 阅读区返回按钮：返回当前空间的文档列表（上一层），仅调用方传 onBackToList 才显示 */}
               {onBackToList && !isMobile && (
                 <button
@@ -3609,11 +3630,13 @@ export function DocBrowser({
                   <PanelRight size={12} /> {rightPanelCollapsed ? '章节' : '收起'}
                 </button>
               )}
-              {/* 全屏阅读（CSS 全屏覆盖层，ESC / 再点一次退出）。移动端入口在沉浸顶栏。 */}
-              {selectedEntryId && !isMobile && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
+              {/* 非沉浸移动端：字号控件仍在工具栏行 */}
+              {isMobile && !immersiveActive && zoomControlsNode}
+              {/* 全屏阅读（CSS 全屏覆盖层，ESC / 再点一次退出）。沉浸态移动端入口在沉浸顶栏。 */}
+              {selectedEntryId && (!isMobile || !immersiveActive) && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
-                  className={TOOLBAR_ICON_BTN}
+                  className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
                   style={{
                     background: readerFullscreen ? 'var(--selection-bg)' : 'var(--bg-card)',
                     border: `1px solid ${readerFullscreen ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
@@ -3679,8 +3702,8 @@ export function DocBrowser({
                   </div>
                 );
               })()}
-              {/* 「更多」置尾（桌面；移动端渲染在沉浸顶栏，共享同一节点） */}
-              {!isMobile && readerMoreNode}
+              {/* 「更多」置尾（沉浸态移动端渲染在沉浸顶栏，共享同一节点） */}
+              {(!isMobile || !immersiveActive) && readerMoreNode}
             </div>
             )}
             </>

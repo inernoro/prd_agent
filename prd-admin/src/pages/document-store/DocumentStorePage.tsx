@@ -2442,6 +2442,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
         <DocBrowser
           entries={entries}
+          immersiveOnMobile
           // 移动端沉浸阅读时店头行隐藏——空间信息与「分享」收进阅读区「更多」菜单（2026-08-10 demo 确认）
           readerMenuExtra={isMobile ? (
             <>
