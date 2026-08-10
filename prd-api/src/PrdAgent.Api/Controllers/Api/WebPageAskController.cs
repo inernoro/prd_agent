@@ -342,7 +342,8 @@ public class WebPageAskController : ControllerBase
                     _logger.LogError("网页托管提问 网关错误 site={SiteId}: {Error}", site.Id, err);
                     await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                         snapshot.Text.Length, model, platform, Elapsed(startedAt), err);
-                    try { await WriteSseAsync("error", new { message = "回答失败：" + err }); } catch { }
+                    // 详情只进日志与消息记录，**不回给访客**：见 PublicErrorMessage
+                    await WriteSseAsync("error", new { code = "ASK_UPSTREAM_ERROR", message = PublicErrorMessage });
                     return;
                 }
             }
@@ -365,7 +366,7 @@ public class WebPageAskController : ControllerBase
             _logger.LogError(ex, "网页托管提问失败 site={SiteId}", site.Id);
             await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                 snapshot.Text.Length, model, platform, Elapsed(startedAt), ex.Message);
-            try { await WriteSseAsync("error", new { message = "回答失败：" + ex.Message }); } catch { }
+            await WriteSseAsync("error", new { code = "ASK_FAILED", message = PublicErrorMessage });
         }
         finally
         {
@@ -481,6 +482,17 @@ public class WebPageAskController : ControllerBase
         });
         await Response.WriteAsync(json);
     }
+
+    /// <summary>
+    /// 回给访客的通用失败文案。
+    ///
+    /// 分享路径是**匿名可达**的，任何拿到 token 的人都能读到这条 SSE。上游/网关的原始错误里
+    /// 常带着模型名、路由决策、账号或基础设施细节（甚至上游返回的整段响应体），
+    /// 原样透出去等于把内部拓扑讲给外人听。
+    ///
+    /// 详情照旧进日志和消息记录（owner 在会话审计里看得到），访客只拿一句稳定文案 + 错误码。
+    /// </summary>
+    private const string PublicErrorMessage = "回答失败了，请稍后再试。";
 
     /// <summary>等首字期间的心跳间隔。取 5 秒：远小于常见反代 60s 空闲超时，又不会把流刷成噪音。</summary>
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
