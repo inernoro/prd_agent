@@ -4050,6 +4050,51 @@ public class GatewayDataDomainGuardTests
             "实时 ASR 必须先把已验证租户打开为请求上下文，再解析和访问该租户的模型供应商");
     }
 
+    /// <summary>
+    /// 上游治理三件套：删得掉、认得出、查得到。
+    ///
+    /// 这三条都是「删掉之后测试仍全绿」的接线，只会安静地退化成
+    /// 「垃圾平台清不掉 / 两条同名上游分不清谁是谁 / 出了事翻不到这条上游的日志」，
+    /// 所以逐条钉死，别指望下一个人记得。
+    /// </summary>
+    [Fact]
+    public void PlatformGovernance_CanDeleteIdentifyAndTraceUpstreams()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var crypto = ReadRepoFile("llmgw/console-api/Security/GwApiKeyCrypto.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+
+        // 1) 删得掉——但必须先查占用，否则池成员会挂着一条不存在的平台静默失联
+        Assert.Contains("app.MapDelete(\"/gw/platforms/{id}\"", console);
+        Assert.Contains("CollectPlatformDeleteBlockersAsync", console);
+        Assert.Contains("PLATFORM_IN_USE", console);
+        Assert.Contains("platform.delete", console);
+        Assert.Contains("ElemMatch<BsonDocument>(\"Models\"", console);
+        Assert.Contains("export function deletePlatform(", api);
+        Assert.Contains("removePlatform", page);
+
+        // 2) 认得出——只给指纹，且必须有 ConfigWrite 才下发；明文任何时候都不许出现在响应里
+        Assert.Contains("public static string Fingerprint(", crypto);
+        Assert.Contains("public string? KeyFingerprint", dtos);
+        Assert.Contains("LlmGwPermissions.ConfigWrite", console);
+        Assert.Contains("revealFingerprint", console);
+        Assert.Contains("keyFingerprint", page);
+        // 明文解出来只有一个去处：喂给 Fingerprint。多出任何一处引用都可能是把整把 key 塞进了响应。
+        Assert.Contains("GwApiKeyCrypto.Fingerprint(decrypted.PlainText)", console);
+        Assert.Equal(
+            1,
+            console.Split("decrypted.PlainText").Length - 1);
+
+        // 3) 查得到——按 PlatformId 精确过滤（provider 会重名，本仓库真出现过同名同 URL 两条上游）
+        Assert.Contains("fb.Eq(\"PlatformId\", platformId.Trim())", console);
+        Assert.Contains("platformId?: string;", ReadRepoFile("llmgw/web/src/lib/types.ts"));
+        Assert.Contains("initialQueryValue('platformId')", logsView);
+        Assert.Contains("/logs?platformId=", page);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

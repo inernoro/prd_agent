@@ -1672,13 +1672,13 @@ app.MapGet("/gw/logs", async (
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
     string? runId, string? requestId, string? sessionId, string? modelPoolId,
     string? serviceKeyId, string? clientCode, string? environment,
-    string? operation, string? view) =>
+    string? operation, string? view, string? platformId) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view, platformId));
 
     var total = await logs.CountDocumentsAsync(filter);
     var docs = await logs.Find(filter)
@@ -1742,10 +1742,10 @@ app.MapGet("/gw/logs/timeseries", async (
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
     string? runId, string? requestId, string? sessionId, string? modelPoolId,
     string? serviceKeyId, string? clientCode, string? environment,
-    string? operation, string? view) =>
+    string? operation, string? view, string? platformId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view, platformId));
 
     // 仅取 StartedAt 字段做内存分组（按 UTC 日期）。
     var projection = Builders<BsonDocument>.Projection.Include("StartedAt");
@@ -1776,11 +1776,11 @@ app.MapGet("/gw/logs/summary", async (
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
     string? runId, string? requestId, string? sessionId, string? modelPoolId,
     string? serviceKeyId, string? clientCode, string? environment,
-    string? operation, string? view) =>
+    string? operation, string? view, string? platformId) =>
 {
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view));
-    var physicalFilter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation: null, view: "physical"));
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view, platformId));
+    var physicalFilter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation: null, view: "physical", platformId: platformId));
     var projection = Builders<BsonDocument>.Projection
         .Include("Status")
         .Include("DurationMs")
@@ -2415,7 +2415,13 @@ app.MapGet("/gw/platforms", async (HttpContext http) =>
         .Sort(Builders<BsonDocument>.Sort.Ascending("Name")).ToListAsync();
     var gwIds = gwDocs.Select(d => d.GetStringOrEmpty("_id")).Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet(StringComparer.Ordinal);
     var docs = gwDocs.Concat(mapDocs.Where(d => !gwIds.Contains(d.GetStringOrEmpty("_id")))).ToList();
-    var data = new PlatformsData { Items = docs.Select(MapPlatform).ToList(), Total = docs.Count };
+    // 指纹只给配置权限的人：列表本身 LogsRead 就能看，但「认出是哪一把 key」要再高一档
+    var revealFingerprint = TenantAccess.HasPermission(http.User, LlmGwPermissions.ConfigWrite);
+    var data = new PlatformsData
+    {
+        Items = docs.Select(d => MapPlatform(d, config, revealFingerprint)).ToList(),
+        Total = docs.Count,
+    };
     return Json(ApiEnvelope<PlatformsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -6515,7 +6521,7 @@ app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformR
             { "maxConcurrency", draft.MaxConcurrency },
             { "hasKey", true },
         });
-    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(document)), jsonOptions, 201);
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(document, config, revealFingerprint: true)), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
 // 创建模型：Provider 必须属于当前租户；缺少模型 key 时继承 Provider key。
@@ -6653,7 +6659,7 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
             { "authority", targetAuthority },
         });
     var fresh = await targetPlatforms.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型启用/停用
@@ -6733,7 +6739,7 @@ app.MapPut("/gw/platforms/{id}/claim", async (HttpContext http, string id) =>
         });
 
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 平台密钥轮换：只允许写入已认领到 GW 的平台，不直接修改 MAP 来源平台。
@@ -6774,7 +6780,7 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
             { "authority", "llm_gateway" },
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 平台密钥删除：只允许清理 GW 权威平台的密钥，MAP 来源平台必须先认领。
@@ -6803,7 +6809,56 @@ app.MapDelete("/gw/platforms/{id}/api-key", async (HttpContext http, string id) 
             { "authority", "llm_gateway" },
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 删除上游平台：只删 GW 权威的，且必须先确认没人引用。
+//
+// 为什么一定要挡引用：池成员是按 (modelId, platformId) 定位的，平台删了成员还在，
+// 池子看起来正常、实际解析不到上游——这类静默损坏最难查（本仓库刚为同类问题排查过一整轮）。
+// 所以宁可拒绝并列清单，让运维先把引用摘干净，也不做级联删除。
+app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
+{
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的平台；MAP 来源平台请先认领"), jsonOptions, 409);
+
+    var blockers = await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId);
+    if (blockers.TotalCount > 0)
+    {
+        var parts = new List<string>();
+        if (blockers.Models.Count > 0) parts.Add($"模型 {blockers.Models.Count} 个（{string.Join("、", blockers.Models.Take(5))}{(blockers.Models.Count > 5 ? " 等" : "")}）");
+        if (blockers.Pools.Count > 0) parts.Add($"模型池 {blockers.Pools.Count} 个（{string.Join("、", blockers.Pools.Take(5))}{(blockers.Pools.Count > 5 ? " 等" : "")}）");
+        return Json(
+            ApiEnvelope<PlatformDeleteBlockers>.Fail(
+                "PLATFORM_IN_USE",
+                $"还有 {string.Join("；", parts)} 在用这条上游，先把它们改绑或删掉再删平台",
+                blockers),
+            jsonOptions,
+            409);
+    }
+
+    await gwPlatforms.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "platform.delete",
+        targetType: "llmgw_platform",
+        targetId: id,
+        targetName: doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        // 删掉之后文档就没了，快照留在审计里，方便事后核对删的是不是这一条
+        changes: new BsonDocument
+        {
+            { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
+            { "apiUrl", ToBsonAuditValue(doc.AsNullableString("ApiUrl")) },
+            { "platformType", ToBsonAuditValue(doc.AsNullableString("PlatformType")) },
+            { "hadKey", !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) },
+            { "authority", "llm_gateway" },
+        });
+    return Json(ApiEnvelope<PlatformDeleteBlockers>.Ok(new PlatformDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型认领：把 MAP 模型复制到 GW 自有 llm_gateway.llmgw_models。
@@ -9593,7 +9648,8 @@ static FilterDefinition<BsonDocument> BuildFilter(
     string? clientCode,
     string? environment,
     string? operation = null,
-    string? view = null)
+    string? view = null,
+    string? platformId = null)
 {
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>
@@ -9604,6 +9660,9 @@ static FilterDefinition<BsonDocument> BuildFilter(
     if (!string.IsNullOrWhiteSpace(model)) filters.Add(fb.Eq("Model", model));
     if (!string.IsNullOrWhiteSpace(status)) filters.Add(fb.Eq("Status", status));
     if (!string.IsNullOrWhiteSpace(provider)) filters.Add(fb.Eq("Provider", provider));
+    // 按上游平台过滤：provider 是厂商类型、会重名（本仓库两条上游同名同 URL 只有 key 不同），
+    // 想看「这条上游到底有没有在被调、报什么错」只能按 PlatformId 精确过滤。
+    if (!string.IsNullOrWhiteSpace(platformId)) filters.Add(fb.Eq("PlatformId", platformId.Trim()));
     if (!string.IsNullOrWhiteSpace(appCallerCode)) filters.Add(fb.Eq("AppCallerCode", appCallerCode));
     if (!string.IsNullOrWhiteSpace(transport)) filters.Add(fb.Eq("GatewayTransport", transport));
     if (!string.IsNullOrWhiteSpace(requestType)) filters.Add(fb.Eq("RequestType", requestType));
@@ -10755,23 +10814,91 @@ static PoolItem MapPool(BsonDocument d)
 }
 
 // 硬约束：绝不读 ApiKeyEncrypted 到 DTO，只用它算 hasKey。
-static PlatformItem MapPlatform(BsonDocument d) => new()
+/// <summary>
+/// 谁还在引用这条上游。两类来源都要查：模型的 PlatformId，以及模型池成员里的 PlatformId
+/// （池成员是 (modelId, platformId) 复合定位，只查模型会漏掉「模型已删、池成员还挂着」的残留）。
+/// GW 与 MAP 两套集合都扫，内部租户才看得到 MAP 那一侧。
+/// </summary>
+static async Task<PlatformDeleteBlockers> CollectPlatformDeleteBlockersAsync(
+    HttpContext http,
+    string platformId,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> mapModels,
+    IMongoCollection<BsonDocument> gwPools,
+    IMongoCollection<BsonDocument> mapPools,
+    string internalTenantId)
 {
-    Id = d.GetStringOrEmpty("_id"),
-    Name = d.GetStringOrEmpty("Name"),
-    PlatformType = d.GetStringOrEmpty("PlatformType"),
-    ProviderId = d.AsNullableString("ProviderId"),
-    ApiUrl = d.AsNullableString("ApiUrl"),
-    Enabled = d.AsNullableBool("Enabled") ?? true,
-    MaxConcurrency = d.AsNullableInt("MaxConcurrency") ?? 0,
-    Remark = d.AsNullableString("Remark"),
-    HasKey = !string.IsNullOrEmpty(d.AsNullableString("ApiKeyEncrypted")),
-    SourceCollection = d.AsNullableString("SourceCollection") ?? "llmplatforms",
-    Authority = d.AsNullableString("Authority") ?? "map",
-    ClaimedAt = d.AsNullableUtcDateTime("ClaimedAt").ToIso(),
-    CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
-    UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
-};
+    var fb = Builders<BsonDocument>.Filter;
+    var isInternal = TenantAccess.GetRequired(http).TenantId == internalTenantId;
+    var result = new PlatformDeleteBlockers();
+
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", platformId))).ToListAsync();
+    if (isInternal)
+        modelDocs.AddRange(await mapModels.Find(fb.Eq("PlatformId", platformId)).ToListAsync());
+    result.Models = modelDocs
+        .Select(d => d.AsNullableString("Name") ?? d.AsNullableString("ModelName") ?? d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
+    var poolFilter = fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", platformId));
+    var poolDocs = await gwPools.Find(TenantAccess.Filter(http, poolFilter)).ToListAsync();
+    if (isInternal)
+        poolDocs.AddRange(await mapPools.Find(poolFilter).ToListAsync());
+    result.Pools = poolDocs
+        .Select(d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
+    return result;
+}
+
+/// <param name="keyConfig">
+/// 传入才会计算密钥可读性与指纹；不传保持老行为（只回 hasKey）。
+/// </param>
+/// <param name="revealFingerprint">
+/// 是否下发指纹。调用方必须具备 ConfigWrite——列表端点本身只要 LogsRead，
+/// 而「能认出是哪一把密钥」比「能看日志」敏感一档，不能跟着列表权限一起放出去。
+/// </param>
+static PlatformItem MapPlatform(BsonDocument d, IConfiguration? keyConfig = null, bool revealFingerprint = false)
+{
+    var encrypted = d.AsNullableString("ApiKeyEncrypted");
+    var hasKey = !string.IsNullOrEmpty(encrypted);
+    var keyStatus = "missing";
+    string? fingerprint = null;
+    if (hasKey && keyConfig is not null)
+    {
+        var decrypted = GwApiKeyCrypto.Decrypt(encrypted, keyConfig);
+        keyStatus = decrypted.Success ? "ok" : "unreadable";
+        if (decrypted.Success && revealFingerprint)
+            fingerprint = GwApiKeyCrypto.Fingerprint(decrypted.PlainText);
+    }
+    else if (hasKey)
+    {
+        keyStatus = "ok";
+    }
+
+    return new PlatformItem
+    {
+        Id = d.GetStringOrEmpty("_id"),
+        Name = d.GetStringOrEmpty("Name"),
+        PlatformType = d.GetStringOrEmpty("PlatformType"),
+        ProviderId = d.AsNullableString("ProviderId"),
+        ApiUrl = d.AsNullableString("ApiUrl"),
+        Enabled = d.AsNullableBool("Enabled") ?? true,
+        MaxConcurrency = d.AsNullableInt("MaxConcurrency") ?? 0,
+        Remark = d.AsNullableString("Remark"),
+        HasKey = hasKey,
+        KeyStatus = keyStatus,
+        KeyFingerprint = fingerprint,
+        SourceCollection = d.AsNullableString("SourceCollection") ?? "llmplatforms",
+        Authority = d.AsNullableString("Authority") ?? "map",
+        ClaimedAt = d.AsNullableUtcDateTime("ClaimedAt").ToIso(),
+        CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
+        UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+    };
+}
 
 static ModelItem MapModel(BsonDocument d)
 {

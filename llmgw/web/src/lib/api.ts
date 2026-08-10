@@ -51,6 +51,7 @@ import type {
   ShadowData,
   ModelPool,
   PlatformItem,
+  PlatformDeleteBlockers,
   ModelItem,
   CreatePlatformRequest,
   CreateModelRequest,
@@ -780,6 +781,13 @@ export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiRes
 }
 export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
+}
+/**
+ * 删除整条上游。被引用时后端返回 409 + PLATFORM_IN_USE，
+ * data 里带占用清单（哪些模型、哪些池还挂着），照着摘干净才能删。
+ */
+export function deletePlatform(id: string): Promise<ApiResponse<PlatformDeleteBlockers>> {
+  return apiRequest<PlatformDeleteBlockers>(`/platforms/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });

@@ -11,6 +11,14 @@ public sealed class ApiEnvelope<T>
 
     public static ApiEnvelope<T> Fail(string code, string message) =>
         new() { Success = false, Data = default, Error = new ApiErrorBody { Code = code, Message = message } };
+
+    /// <summary>
+    /// 带数据的失败。用于「拒绝了，但要告诉调用方拒绝的依据」——
+    /// 例如删除被引用挡下时，把占用清单一起回去，前端才能把「先摘哪几个」列出来，
+    /// 而不是只甩一句「删不了」让人自己猜。
+    /// </summary>
+    public static ApiEnvelope<T> Fail(string code, string message, T data) =>
+        new() { Success = false, Data = data, Error = new ApiErrorBody { Code = code, Message = message } };
 }
 
 public sealed class ApiErrorBody
@@ -904,6 +912,28 @@ public sealed class PlatformItem
     public string SourceCollection { get; set; } = "llmplatforms"; public string Authority { get; set; } = "map";
     public string? ClaimedAt { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// 密钥指纹：只保留头尾各几位，中间打码（如 sk-or-v1…9c2a）。
+    /// 存在的理由是两条上游可以同名同 URL、只有 key 不同——只回 hasKey 时运维分不出谁是谁，
+    /// 也就没法判断该换哪一把。仅在调用方具备 ConfigWrite 时下发，其余一律 null。
+    /// 明文永不外泄，这里也永远不是完整密钥。
+    /// </summary>
+    public string? KeyFingerprint { get; set; }
+
+    /// <summary>密钥可读性：missing（没配）/ ok（能解开）/ unreadable（密文在但当前密钥解不开，多半是换过 ApiKeyCrypto:Secret）。</summary>
+    public string KeyStatus { get; set; } = "missing";
+}
+
+/// <summary>
+/// 删除上游前的占用清单：谁还在引用它。空 = 可安全删除。
+/// 交换所（exchanges）自带上游地址与密钥、不绑平台，所以不在这张表里。
+/// </summary>
+public sealed class PlatformDeleteBlockers
+{
+    public List<string> Models { get; set; } = new();
+    public List<string> Pools { get; set; } = new();
+    public int TotalCount => Models.Count + Pools.Count;
 }
 public sealed class CreatePlatformRequest
 {

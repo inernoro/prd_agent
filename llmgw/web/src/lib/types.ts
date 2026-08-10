@@ -417,6 +417,8 @@ export type LogsListParams = {
   environment?: string;
   operation?: string;
   view?: 'logical' | 'physical';
+  /** 按上游平台过滤。provider 是厂商类型会重名，只有 platformId 能精确定位到某一条上游。 */
+  platformId?: string;
 };
 
 export type LogsListData = {
@@ -604,13 +606,19 @@ export type UpsertPoolModelRequest = {
   capabilities?: ModelCapability[];
 };
 
-// ── 平台（无密钥，仅 hasKey）──
+// ── 平台（密钥明文永不下发；只有头尾打码的指纹）──
 export type PlatformItem = {
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
+  /** 密钥指纹（如 sk-or-…9c2a）。仅具备 config:write 时下发，其余为 null。永远不是完整密钥。 */
+  keyFingerprint?: string | null;
+  /** missing 没配 / ok 能解开 / unreadable 密文在但当前 ApiKeyCrypto:Secret 解不开 */
+  keyStatus: 'missing' | 'ok' | 'unreadable';
   sourceCollection: string; authority: string; claimedAt?: string | null;
   createdAt?: string | null; updatedAt?: string | null;
 };
+/** 删除上游被挡下时回来的占用清单：先摘掉这些才能删。 */
+export type PlatformDeleteBlockers = { models: string[]; pools: string[]; totalCount: number };
 export type PlatformsData = { items: PlatformItem[]; total: number };
 export type CreatePlatformRequest = {
   name: string;
