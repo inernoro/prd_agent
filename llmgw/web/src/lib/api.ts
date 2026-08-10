@@ -52,6 +52,9 @@ import type {
   ModelPool,
   PlatformItem,
   PlatformDeleteBlockers,
+  ModelDeleteBlockers,
+  UpdatePlatformRequest,
+  PlatformMergeResult,
   ModelItem,
   CreatePlatformRequest,
   CreateModelRequest,
@@ -781,6 +784,21 @@ export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiRes
 }
 export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
+}
+/** 编辑上游（名称/类型/地址/并发/备注）。密钥不在这里改，走 rotatePlatformApiKey。 */
+export function updatePlatform(id: string, req: UpdatePlatformRequest): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+/** 把源上游名下的模型与池成员改嫁给目标，然后删掉源。 */
+export function mergePlatformInto(sourceId: string, targetId: string): Promise<ApiResponse<PlatformMergeResult>> {
+  return apiRequest<PlatformMergeResult>(
+    `/platforms/${encodeURIComponent(sourceId)}/merge-into/${encodeURIComponent(targetId)}`,
+    { method: 'POST' },
+  );
+}
+/** 删除模型。被池引用时返回 409 + MODEL_IN_USE，data 里带占用的池名。 */
+export function deleteModel(id: string): Promise<ApiResponse<ModelDeleteBlockers>> {
+  return apiRequest<ModelDeleteBlockers>(`/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 /**
  * 删除整条上游。被引用时后端返回 409 + PLATFORM_IN_USE，

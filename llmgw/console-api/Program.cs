@@ -6812,6 +6812,175 @@ app.MapDelete("/gw/platforms/{id}/api-key", async (HttpContext http, string id) 
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
+// 编辑上游：名称 / 类型 / 地址 / 并发 / 备注。密钥不在这里改——它走独立的轮换端点，
+// 混在一起会让「改个备注」也要求重填密钥，或者让密钥被一次误提交清空。
+app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] UpdatePlatformRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<PlatformItem>.Fail("NOT_GW_AUTHORITY", "只能编辑已认领到 GW 的平台；MAP 来源平台请先认领"), jsonOptions, 409);
+
+    var updates = new List<UpdateDefinition<BsonDocument>>();
+    var changes = new BsonDocument();
+
+    if (body.Name is not null)
+    {
+        var name = body.Name.Trim();
+        if (name.Length == 0) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "平台名称不能为空"), jsonOptions, 400);
+        if (name.Length > 120) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "平台名称长度超出限制"), jsonOptions, 400);
+        updates.Add(Builders<BsonDocument>.Update.Set("Name", name));
+        changes.Add("name", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableString("Name")) }, { "to", name } });
+    }
+    if (body.PlatformType is not null)
+    {
+        var type = body.PlatformType.Trim().ToLowerInvariant();
+        if (type is not ("openai" or "claude"))
+            return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "接口类型只支持 openai 或 claude"), jsonOptions, 400);
+        updates.Add(Builders<BsonDocument>.Update.Set("PlatformType", type));
+        changes.Add("platformType", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableString("PlatformType")) }, { "to", type } });
+    }
+    if (body.ApiUrl is not null)
+    {
+        var url = body.ApiUrl.Trim();
+        // 地址写错 = 这条上游整条哑掉，且报错发生在运行时。所以这里当场挡住明显不成立的写法。
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed)
+            || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+            return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "API 地址必须是 http/https 绝对地址"), jsonOptions, 400);
+        updates.Add(Builders<BsonDocument>.Update.Set("ApiUrl", url));
+        changes.Add("apiUrl", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableString("ApiUrl")) }, { "to", url } });
+    }
+    if (body.MaxConcurrency is int concurrency)
+    {
+        if (concurrency is < 0 or > 10000)
+            return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "并发必须在 0 到 10000 之间"), jsonOptions, 400);
+        updates.Add(Builders<BsonDocument>.Update.Set("MaxConcurrency", concurrency));
+        changes.Add("maxConcurrency", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableInt("MaxConcurrency")) }, { "to", concurrency } });
+    }
+    if (body.Remark is not null)
+    {
+        var remark = body.Remark.Trim();
+        if (remark.Length > 500) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "备注长度超出限制"), jsonOptions, 400);
+        updates.Add(Builders<BsonDocument>.Update.Set("Remark", remark));
+        changes.Add("remark", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableString("Remark")) }, { "to", remark } });
+    }
+
+    if (updates.Count == 0)
+        return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "没有需要修改的字段"), jsonOptions, 400);
+
+    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
+    await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
+    changes.Add("authority", "llm_gateway");
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "platform.update", targetType: "llmgw_platform", targetId: id,
+        targetName: doc.AsNullableString("Name"), success: true, reason: null, changes: changes);
+    var updated = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
+    return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(updated, config, revealFingerprint: true)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 合并上游：把源上游名下的模型与池成员改嫁给目标，然后删掉源。
+//
+// 存在的理由就是本仓库这个真实局面：两条 openrouter.ai 同名同址、只有密钥不同，
+// 一条能用一条废了。没有合并，运维只能一个个手工改绑再删，中间任何一步漏掉
+// 就留下一条指向已删平台的成员——看起来正常、实际解析不到。
+app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http, string id, string targetId) =>
+{
+    if (string.Equals(id, targetId, StringComparison.Ordinal))
+        return Json(ApiEnvelope<PlatformMergeResult>.Fail("INVALID_INPUT", "源上游与目标上游不能是同一条"), jsonOptions, 400);
+
+    var sourceFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var targetFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", targetId));
+    var source = await gwPlatforms.Find(sourceFilter).FirstOrDefaultAsync();
+    var target = await gwPlatforms.Find(targetFilter).FirstOrDefaultAsync();
+    if (source is null) return Json(ApiEnvelope<PlatformMergeResult>.Fail("NOT_GW_AUTHORITY", "源上游必须是已认领到 GW 的平台"), jsonOptions, 409);
+    if (target is null) return Json(ApiEnvelope<PlatformMergeResult>.Fail("NOT_GW_AUTHORITY", "目标上游必须是已认领到 GW 的平台"), jsonOptions, 409);
+
+    var result = new PlatformMergeResult { SourceId = id, TargetId = targetId };
+    var fb = Builders<BsonDocument>.Filter;
+
+    // 1) 模型改嫁：目标已有同名（ModelName）就删掉源上的重复，否则整条改绑过去
+    var targetModelNames = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", targetId))).ToListAsync())
+        .Select(d => d.AsNullableString("ModelName") ?? string.Empty)
+        .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.Ordinal);
+    foreach (var model in await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
+    {
+        var modelName = model.AsNullableString("ModelName") ?? string.Empty;
+        var modelFilter = TenantAccess.Filter(http, fb.Eq("_id", model.GetStringOrEmpty("_id")));
+        if (modelName.Length > 0 && targetModelNames.Contains(modelName))
+        {
+            await gwModels.DeleteOneAsync(modelFilter);
+            result.ModelsDropped++;
+            continue;
+        }
+        await gwModels.UpdateOneAsync(modelFilter, Builders<BsonDocument>.Update
+            .Set("PlatformId", targetId)
+            .Set("UpdatedAt", DateTime.UtcNow));
+        if (modelName.Length > 0) targetModelNames.Add(modelName);
+        result.ModelsMoved++;
+    }
+
+    // 2) 池成员改指：同一个池里若目标已在，就不能留两条同 (modelId, platformId)，去重
+    var poolFilter = fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", id));
+    foreach (var pool in await gwModelPools.Find(TenantAccess.Filter(http, poolFilter)).ToListAsync())
+    {
+        var members = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
+        var kept = new BsonArray();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in members)
+        {
+            if (!raw.IsBsonDocument) { kept.Add(raw); continue; }
+            var member = raw.AsBsonDocument;
+            var isSource = string.Equals(member.GetStringOrEmpty("PlatformId"), id, StringComparison.Ordinal);
+            if (isSource)
+            {
+                member = new BsonDocument(member) { ["PlatformId"] = targetId };
+                // 改指之后健康位得重算：它记录的是「在源上游那边」的历史，对目标不成立
+                member["HealthStatus"] = 0;
+                member["ConsecutiveFailures"] = 0;
+                member["ConsecutiveSuccesses"] = 0;
+            }
+            var key = $"{member.GetStringOrEmpty("PlatformId")}\n{member.GetStringOrEmpty("ModelId")}";
+            if (!seen.Add(key))
+            {
+                if (isSource) result.PoolMembersDeduped++;
+                continue;
+            }
+            if (isSource) result.PoolMembersRepointed++;
+            kept.Add(member);
+        }
+        await gwModelPools.UpdateOneAsync(
+            TenantAccess.Filter(http, fb.Eq("_id", pool.GetStringOrEmpty("_id"))),
+            Builders<BsonDocument>.Update.Set("Models", kept).Set("UpdatedAt", DateTime.UtcNow));
+    }
+
+    // 3) 引用清空后再删源。这里复用同一条占用判据，避免「合并漏了什么却照删」
+    var leftovers = await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId);
+    if (leftovers.TotalCount == 0)
+    {
+        await gwPlatforms.DeleteOneAsync(sourceFilter);
+        result.SourceDeleted = true;
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "platform.merge", targetType: "llmgw_platform", targetId: id,
+        targetName: source.AsNullableString("Name"), success: true, reason: null,
+        changes: new BsonDocument
+        {
+            { "targetId", targetId },
+            { "targetName", ToBsonAuditValue(target.AsNullableString("Name")) },
+            { "modelsMoved", result.ModelsMoved },
+            { "modelsDropped", result.ModelsDropped },
+            { "poolMembersRepointed", result.PoolMembersRepointed },
+            { "poolMembersDeduped", result.PoolMembersDeduped },
+            { "sourceDeleted", result.SourceDeleted },
+        });
+    return Json(ApiEnvelope<PlatformMergeResult>.Ok(result), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 // 删除上游平台：只删 GW 权威的，且必须先确认没人引用。
 //
 // 为什么一定要挡引用：池成员是按 (modelId, platformId) 定位的，平台删了成员还在，
@@ -6859,6 +7028,46 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
             { "authority", "llm_gateway" },
         });
     return Json(ApiEnvelope<PlatformDeleteBlockers>.Ok(new PlatformDeleteBlockers()), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 删除模型：同样先查引用。模型能建不能删，是「垃圾越攒越多」在平台下一层的同一个洞——
+// 而且平台删除要求先清模型引用，没有这个端点，那条路径根本走不通。
+app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
+{
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwModels.Find(filter).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型；MAP 来源模型请先认领"), jsonOptions, 409);
+
+    var blockers = await CollectModelDeleteBlockersAsync(http, doc, gwModelPools, modelGroups, internalTenantId);
+    if (blockers.Pools.Count > 0)
+    {
+        return Json(
+            ApiEnvelope<ModelDeleteBlockers>.Fail(
+                "MODEL_IN_USE",
+                $"还有模型池 {blockers.Pools.Count} 个（{string.Join("、", blockers.Pools.Take(5))}{(blockers.Pools.Count > 5 ? " 等" : "")}）在用这个模型，先把成员摘掉再删",
+                blockers),
+            jsonOptions,
+            409);
+    }
+
+    await gwModels.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.delete",
+        targetType: "llmgw_model",
+        targetId: id,
+        targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "modelName", ToBsonAuditValue(doc.AsNullableString("ModelName")) },
+            { "platformId", ToBsonAuditValue(doc.AsNullableString("PlatformId")) },
+            { "authority", "llm_gateway" },
+        });
+    return Json(ApiEnvelope<ModelDeleteBlockers>.Ok(new ModelDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型认领：把 MAP 模型复制到 GW 自有 llm_gateway.llmgw_models。
@@ -8262,12 +8471,17 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
             "INCOMPATIBLE_MODEL_TYPE",
             $"模型与程序池类型 {pool.GetStringOrEmpty("ModelType")} 不兼容。"), jsonOptions, 409);
     }
-    var member = existing is not null ? new BsonDocument(existing) : new BsonDocument
-    {
-        ["HealthStatus"] = 0,
-        ["ConsecutiveFailures"] = 0,
-        ["ConsecutiveSuccesses"] = 0,
-    };
+    var member = existing is not null ? new BsonDocument(existing) : new BsonDocument();
+    // 运维显式重新声明这条成员，就是在说「按这份配置重新算」，健康位必须跟着归零。
+    //
+    // 此前只有全新成员才给 0，existing 会把陈旧的 HealthStatus 原样带过来。
+    // 后果不是「保留了历史」，而是死锁：默认池的成员全部掉成 Unavailable 之后，
+    // 「必须留一个可用成员」那条守卫会把删除、覆盖、重新声明**全部**挡下——
+    // 唯一能救回池子的动作被池子当前的坏状态挡在门外，重试多少次都是同一个结果。
+    // 健康位本就该由真实调用重新算出来，这里归零不丢任何真信息。
+    member["HealthStatus"] = 0;
+    member["ConsecutiveFailures"] = 0;
+    member["ConsecutiveSuccesses"] = 0;
     member["ModelId"] = modelId;
     member["PlatformId"] = resolvedPlatformId;
     member["Priority"] = managedAppendOnly
@@ -10416,12 +10630,17 @@ static string? NormalizePriceCurrency(string? currency)
 
 static BsonDocument BuildPoolMemberFromModel(BsonDocument modelDoc, string modelId, string platformId, int priority, BsonDocument? existing)
 {
-    var member = existing is not null ? new BsonDocument(existing) : new BsonDocument
-    {
-        ["HealthStatus"] = 0,
-        ["ConsecutiveFailures"] = 0,
-        ["ConsecutiveSuccesses"] = 0,
-    };
+    var member = existing is not null ? new BsonDocument(existing) : new BsonDocument();
+    // 运维显式重新声明这条成员，就是在说「按这份配置重新算」，健康位必须跟着归零。
+    //
+    // 此前只有全新成员才给 0，existing 会把陈旧的 HealthStatus 原样带过来。
+    // 后果不是「保留了历史」，而是死锁：默认池的成员全部掉成 Unavailable 之后，
+    // 「必须留一个可用成员」那条守卫会把删除、覆盖、重新声明**全部**挡下——
+    // 唯一能救回池子的动作被池子当前的坏状态挡在门外，重试多少次都是同一个结果。
+    // 健康位本就该由真实调用重新算出来，这里归零不丢任何真信息。
+    member["HealthStatus"] = 0;
+    member["ConsecutiveFailures"] = 0;
+    member["ConsecutiveSuccesses"] = 0;
     member["ModelId"] = modelId;
     member["PlatformId"] = platformId;
     member["Priority"] = priority;
@@ -10814,6 +11033,47 @@ static PoolItem MapPool(BsonDocument d)
 }
 
 // 硬约束：绝不读 ApiKeyEncrypted 到 DTO，只用它算 hasKey。
+/// <summary>
+/// 谁还在引用这个模型。池成员按 (modelId, platformId) 定位，而 modelId 允许写模型 id、
+/// ModelName 或 Name 三种形态（见 upsert 的查找条件），所以三种都要比对，
+/// 只比一种会漏判成「没人用」，把正在服务的模型删掉。
+/// </summary>
+static async Task<ModelDeleteBlockers> CollectModelDeleteBlockersAsync(
+    HttpContext http,
+    BsonDocument modelDoc,
+    IMongoCollection<BsonDocument> gwPools,
+    IMongoCollection<BsonDocument> mapPools,
+    string internalTenantId)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var isInternal = TenantAccess.GetRequired(http).TenantId == internalTenantId;
+    var platformId = modelDoc.GetStringOrEmpty("PlatformId");
+    var aliases = new[]
+        {
+            modelDoc.GetStringOrEmpty("_id"),
+            modelDoc.AsNullableString("ModelName") ?? string.Empty,
+            modelDoc.AsNullableString("Name") ?? string.Empty,
+        }
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
+    var memberFilter = fb.ElemMatch<BsonDocument>(
+        "Models",
+        fb.And(fb.In("ModelId", aliases), fb.Eq("PlatformId", platformId)));
+    var poolDocs = await gwPools.Find(TenantAccess.Filter(http, memberFilter)).ToListAsync();
+    if (isInternal) poolDocs.AddRange(await mapPools.Find(memberFilter).ToListAsync());
+
+    return new ModelDeleteBlockers
+    {
+        Pools = poolDocs
+            .Select(d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList(),
+    };
+}
+
 /// <summary>
 /// 谁还在引用这条上游。两类来源都要查：模型的 PlatformId，以及模型池成员里的 PlatformId
 /// （池成员是 (modelId, platformId) 复合定位，只查模型会漏掉「模型已删、池成员还挂着」的残留）。
@@ -11328,6 +11588,15 @@ static async Task<string?> ValidateDefaultGatewayPoolMembersAsync(
         ["Models"] = nextModels,
     };
     if (await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, nextPool))
+    {
+        return null;
+    }
+
+    // 池子在改动之前就已经零可用成员时，这条守卫拦不住任何损害——损害早就发生了，
+    // 它只会把「唯一能修好它的那次改动」一起挡在门外，形成谁也解不开的死锁
+    // （判据取的是变更前的状态，却用来 gate 那个会改变该状态的变更）。
+    // 所以只在「本次改动确实把一个原本可用的默认池弄成不可用」时才拒绝。
+    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
     {
         return null;
     }

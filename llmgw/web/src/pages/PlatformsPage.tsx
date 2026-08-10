@@ -3,8 +3,8 @@
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled } from '@/lib/api';
-import type { CreatePlatformRequest, PlatformItem } from '@/lib/types';
+import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, mergePlatformInto, rotatePlatformApiKey, setPlatformEnabled, updatePlatform } from '@/lib/api';
+import type { CreatePlatformRequest, PlatformItem, UpdatePlatformRequest } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
@@ -19,6 +19,9 @@ export function PlatformsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keyEditId, setKeyEditId] = useState<string | null>(null);
+  // 行内编辑：只在展开的那一行生效，避免整页进「编辑模式」
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<UpdatePlatformRequest>({});
   const [keyValue, setKeyValue] = useState('');
   const [bulkKeyValue, setBulkKeyValue] = useState('');
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
@@ -124,6 +127,74 @@ export function PlatformsPage() {
     } else {
       setToast(res.error?.message || '操作失败');
     }
+  }
+
+  function beginEdit(p: PlatformItem) {
+    setEditId(p.id);
+    setKeyEditId(null);
+    setEditDraft({
+      name: p.name,
+      platformType: p.platformType || 'openai',
+      apiUrl: p.apiUrl || '',
+      maxConcurrency: p.maxConcurrency,
+      remark: p.remark || '',
+    });
+  }
+
+  async function saveEdit(p: PlatformItem) {
+    setBusyId(p.id);
+    setToast(null);
+    const res = await updatePlatform(p.id, editDraft);
+    setBusyId(null);
+    if (res.success) {
+      setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
+      setEditId(null);
+      setToast(`已保存「${res.data.name}」`);
+    } else {
+      setToast(res.error?.message || '保存失败');
+    }
+  }
+
+  /**
+   * 合并上游：把源名下的模型与池成员改嫁给目标，然后删掉源。
+   *
+   * 为「两条同名同址、只有密钥不同」这种局面准备的——手工一个个改绑再删，
+   * 中间漏一步就留下指向已删平台的池成员，看起来正常、实际解析不到。
+   */
+  async function mergeInto(source: PlatformItem) {
+    const candidates = (items || []).filter((x) => x.id !== source.id && x.authority === 'llm_gateway');
+    if (candidates.length === 0) {
+      setToast('没有可合并的目标上游');
+      return;
+    }
+    const listed = candidates.map((x, i) => `${i + 1}. ${x.name}（${x.apiUrl || '无地址'}）`).join('\n');
+    const picked = window.prompt(
+      `把「${source.name}」并入哪一条？\n它名下的模型与池成员会改指到目标，重复的会被去重，随后源上游被删除。\n\n${listed}\n\n输入序号：`,
+    );
+    if (picked === null) return;
+    const index = Number(picked.trim()) - 1;
+    const target = candidates[index];
+    if (!target) {
+      setToast('序号无效，已取消合并');
+      return;
+    }
+    if (!window.confirm(`确认把「${source.name}」并入「${target.name}」？源上游会被删除。`)) return;
+    setBusyId(source.id);
+    setToast(null);
+    const res = await mergePlatformInto(source.id, target.id);
+    setBusyId(null);
+    if (!res.success) {
+      setToast(res.error?.message || '合并失败');
+      return;
+    }
+    const r = res.data;
+    const reload = await getPlatforms();
+    if (reload.success) setItems(reload.data.items);
+    setToast(
+      `已并入「${target.name}」：模型改嫁 ${r.modelsMoved}、去重 ${r.modelsDropped}，`
+      + `池成员改指 ${r.poolMembersRepointed}、去重 ${r.poolMembersDeduped}`
+      + (r.sourceDeleted ? '，源上游已删除' : '，源上游仍有残留引用未删除'),
+    );
   }
 
   /**
@@ -358,8 +429,53 @@ export function PlatformsPage() {
                     </div>
                   </td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                    {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                      {keyEditId === p.id ? (
+                    {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {editId === p.id ? (
+                        <>
+                          <input
+                            aria-label="平台名称"
+                            value={editDraft.name ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
+                            placeholder="名称"
+                            style={{ ...inputStyle, width: 150 }}
+                          />
+                          <select
+                            aria-label="接口类型"
+                            value={editDraft.platformType ?? 'openai'}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
+                            style={inputStyle}>
+                            <option value="openai">openai</option>
+                            <option value="claude">claude</option>
+                          </select>
+                          <input
+                            aria-label="API 地址"
+                            value={editDraft.apiUrl ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
+                            placeholder="https://…"
+                            style={{ ...inputStyle, width: 240 }}
+                          />
+                          <input
+                            aria-label="并发"
+                            type="number"
+                            value={editDraft.maxConcurrency ?? 0}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
+                            style={{ ...inputStyle, width: 80 }}
+                          />
+                          <input
+                            aria-label="备注"
+                            value={editDraft.remark ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
+                            placeholder="备注"
+                            style={{ ...inputStyle, width: 160 }}
+                          />
+                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
+                            保存
+                          </Button>
+                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => setEditId(null)}>
+                            取消
+                          </Button>
+                        </>
+                      ) : keyEditId === p.id ? (
                         <>
                           <input
                             type="password"
@@ -394,6 +510,11 @@ export function PlatformsPage() {
                               {busyId === p.id ? '处理中…' : '导入到平台'}
                             </Button>
                           )}
+                          {p.authority === 'llm_gateway' ? (
+                            <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => beginEdit(p)}>
+                              编辑
+                            </Button>
+                          ) : null}
                           <Button size="sm" variant={p.enabled ? 'ghost' : 'primary'} disabled={busyId === p.id} onClick={() => void toggle(p)}>
                             {busyId === p.id ? '处理中…' : p.enabled ? '停用' : '启用'}
                           </Button>
@@ -405,9 +526,14 @@ export function PlatformsPage() {
                             查看日志
                           </Link>
                           {p.authority === 'llm_gateway' ? (
-                            <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void removePlatform(p)}>
-                              删除
-                            </Button>
+                            <>
+                              <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void mergeInto(p)}>
+                                合并到…
+                              </Button>
+                              <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void removePlatform(p)}>
+                                删除
+                              </Button>
+                            </>
                           ) : null}
                         </>
                       )}

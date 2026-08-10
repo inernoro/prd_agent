@@ -4093,6 +4093,48 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("platformId?: string;", ReadRepoFile("llmgw/web/src/lib/types.ts"));
         Assert.Contains("initialQueryValue('platformId')", logsView);
         Assert.Contains("/logs?platformId=", page);
+
+        // 4) 改得动 / 并得了——「只能建不能改、不能并」正是垃圾堆积的上游成因
+        Assert.Contains("app.MapPut(\"/gw/platforms/{id}\"", console);
+        Assert.Contains("app.MapPost(\"/gw/platforms/{id}/merge-into/{targetId}\"", console);
+        Assert.Contains("platform.update", console);
+        Assert.Contains("platform.merge", console);
+        Assert.Contains("export function updatePlatform(", api);
+        Assert.Contains("export function mergePlatformInto(", api);
+        Assert.Contains("beginEdit", page);
+        Assert.Contains("mergeInto", page);
+        // 合并把成员改指到目标后，健康位记的是「在源那边」的历史，必须重算
+        Assert.Contains("member[\"HealthStatus\"] = 0;", console);
+
+        // 5) 模型也删得掉——平台删除要求先清模型引用，没有这个端点那条路径根本走不通
+        Assert.Contains("app.MapDelete(\"/gw/models/{id}\"", console);
+        Assert.Contains("MODEL_IN_USE", console);
+        Assert.Contains("model.delete", console);
+        Assert.Contains("export function deleteModel(", api);
+    }
+
+    /// <summary>
+    /// 默认池不能被自己的坏状态锁死。
+    ///
+    /// 真实死锁：默认池成员全部掉成 Unavailable 后，「必须留一个可用成员」这条守卫
+    /// 把删除／覆盖／重新声明全部挡下——唯一能救回池子的动作，被池子当前的坏状态挡在门外。
+    /// 判据取的是变更前的状态，却用来 gate 那个会改变该状态的变更。
+    /// </summary>
+    [Fact]
+    public void DefaultPoolGuard_DoesNotBlockTheOnlyActionThatCanRepairIt()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 改动前就已经零可用成员时不再拦：拦不住任何损害，只会把修复一起挡掉
+        var guardStart = console.IndexOf("static async Task<string?> ValidateDefaultGatewayPoolMembersAsync", StringComparison.Ordinal);
+        Assert.True(guardStart > 0, "默认池守卫函数应当存在");
+        var guardBody = console[guardStart..(guardStart + 2000)];
+        Assert.Contains("HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool)", guardBody);
+
+        // 显式重新声明成员必须重置健康位。旧写法把 HealthStatus 塞在「仅新成员」的初始化块里，
+        // existing 会把陈旧的 Unavailable 一路带回去；现在改成空构造 + 无条件重置。
+        // 断言这一行的存在，等于断言不会退回旧写法。
+        Assert.Contains("existing is not null ? new BsonDocument(existing) : new BsonDocument();", console);
     }
 
     private static string ReadRepoFile(string relativePath)

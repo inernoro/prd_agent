@@ -619,6 +619,26 @@ export type PlatformItem = {
 };
 /** 删除上游被挡下时回来的占用清单：先摘掉这些才能删。 */
 export type PlatformDeleteBlockers = { models: string[]; pools: string[]; totalCount: number };
+/** 删除模型被挡下时回来的占用清单。 */
+export type ModelDeleteBlockers = { pools: string[]; totalCount: number };
+/** 编辑上游：只改这几项，密钥走独立的轮换端点。 */
+export type UpdatePlatformRequest = {
+  name?: string;
+  platformType?: string;
+  apiUrl?: string;
+  maxConcurrency?: number;
+  remark?: string;
+};
+/** 合并上游的结果：源名下的东西改嫁给目标后，源被删掉。 */
+export type PlatformMergeResult = {
+  sourceId: string;
+  targetId: string;
+  modelsMoved: number;
+  modelsDropped: number;
+  poolMembersRepointed: number;
+  poolMembersDeduped: number;
+  sourceDeleted: boolean;
+};
 export type PlatformsData = { items: PlatformItem[]; total: number };
 export type CreatePlatformRequest = {
   name: string;
