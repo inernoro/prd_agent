@@ -43,8 +43,11 @@ public class EmbeddingService : IEmbeddingService
     }
 
     public async Task<EmbeddingBatch> EmbedAsync(
-        IReadOnlyList<string> texts, string appCallerCode, CancellationToken ct = default)
+        IReadOnlyList<string> texts, string appCallerCode, string userId, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(userId))
+            return EmbeddingBatch.Fail("EMPTY_INPUT", "缺少发起方身份，无法向量化");
+
         var input = (texts ?? Array.Empty<string>())
             .Select(t => (t ?? string.Empty).Trim())
             .ToList();
@@ -89,6 +92,13 @@ public class EmbeddingService : IEmbeddingService
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Embedding,
             ExpectedModel = resolution.ActualModel,
+            // Context 必须显式填：http 模式下这条请求要跨进程，进程内的 LlmRequestContext
+            // 过不去，serving 侧拿不到 UserId 会以 "User not found" 拒掉，账单也挂不到人头上。
+            Context = new GatewayRequestContext
+            {
+                RequestId = Guid.NewGuid().ToString("N"),
+                UserId = userId,
+            },
             RequestBody = body,
         }, resolution, ct);
 

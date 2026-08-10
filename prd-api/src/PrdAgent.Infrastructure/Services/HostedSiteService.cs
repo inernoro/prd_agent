@@ -2997,8 +2997,17 @@ public class HostedSiteService : IHostedSiteService
         if (share == null || share.IsRevoked)
             return (empty, null, ("分享链接不存在", 404, "not_found", null));
 
-        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
+        // 过期判定必须走 ShouldRejectExpiredShare，与 ViewShareAsync 同一把尺子。
+        //
+        // 这里原本是裸的 ExpiresAt 比较，漏掉了 visit 链接的豁免：历史遗留的 Purpose="visit"
+        // 链接带着一个早已过去的 ExpiresAt，ViewShareAsync 会放行并顺手治好它，
+        // 而这条路径直接判过期。后果是同一条链接「页面打得开、正文代理和提问却说已过期」——
+        // 判据抄成两份之后各自漂移的典型（predicate-and-wiring-discipline 形状 3）。
+        if (ShouldRejectExpiredShare(share, DateTime.UtcNow))
             return (empty, null, ("分享链接已过期", 400, "expired", null));
+
+        // 与 ViewShareAsync 一样顺手治愈：不然每次访问都要再走一遍豁免分支
+        await HealVisitShareIfNeededAsync(share, ct);
 
         var visForbid = await EnforceShareVisibilityAsync(share, viewerUserId, ct);
         if (visForbid is { } vf)

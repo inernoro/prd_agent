@@ -258,12 +258,27 @@ public class WebPageAskController : ControllerBase
             messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
         messages.Add(new JsonObject { ["role"] = "user", ["content"] = question });
 
+        // 匿名访客没有 userId：记在站点 owner 账上。提问烧的本来就是 owner 的额度，
+        // 账单归属也是对的。这个身份要同时给到 Context（跨进程）与 LlmRequestContext（进程内）。
+        var billingUserId = userId ?? site.OwnerUserId;
+        var requestId = Guid.NewGuid().ToString("N");
+
         var gatewayRequest = new GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.Admin.WebHosting.Ask,
             ModelType = ModelTypes.Chat,
             Stream = true,
             IncludeThinking = false,
+            // Context 必须显式填。网关跑在 http 模式（生产主路径）时请求要跨进程，
+            // 进程内的 LlmRequestContext 过不去——serving 侧拿不到 UserId，
+            // 访问控制会以 "User not found" 的形式拒掉整条请求（llm-gateway 规则记着这个坑）。
+            // 只 BeginScope 不填 Context，在 inproc 下能跑、切到 http 就整个功能挂掉。
+            Context = new GatewayRequestContext
+            {
+                RequestId = requestId,
+                SessionId = session.Id,
+                UserId = billingUserId,
+            },
             RequestBody = new JsonObject
             {
                 ["messages"] = messages,
@@ -277,10 +292,10 @@ public class WebPageAskController : ControllerBase
         // 匿名访客没有 userId，这里退到站点 owner —— 提问烧的本来就是 owner 的额度，
         // 记在 owner 账上既能通过访问控制，账单归属也是对的。
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
+            RequestId: requestId,
             GroupId: null,
             SessionId: session.Id,
-            UserId: userId ?? site.OwnerUserId,
+            UserId: billingUserId,
             ViewRole: null,
             DocumentChars: snapshot.Text.Length,
             DocumentHash: null,

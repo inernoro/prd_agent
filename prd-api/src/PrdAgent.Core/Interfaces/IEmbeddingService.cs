@@ -15,9 +15,16 @@ public interface IEmbeddingService
     /// 批量向量化。返回的每条向量都带着「哪个模型算的、多少维」——
     /// 这两个值必须跟着向量一路存下去，见 <see cref="EmbeddingBatch.Model"/> 的说明。
     /// </summary>
+    /// <param name="userId">
+    /// 发起方身份，**必填**。网关跑在 http 模式时请求要跨进程，进程内的 LlmRequestContext
+    /// 过不去；不把身份放进 GatewayRequestContext，serving 侧就拿不到 UserId，
+    /// 访问控制会以 "User not found" 拒掉，账单也挂不到人头上。
+    /// 后台任务传触发它的那个实体的 owner。
+    /// </param>
     Task<EmbeddingBatch> EmbedAsync(
         IReadOnlyList<string> texts,
         string appCallerCode,
+        string userId,
         CancellationToken ct = default);
 
     /// <summary>
