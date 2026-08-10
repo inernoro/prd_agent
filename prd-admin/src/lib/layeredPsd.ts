@@ -11,6 +11,12 @@ function succeeded<T>(data: T): ApiResponse<T> {
   return { success: true, data, error: null };
 }
 
+/** 幂等键后缀：不传 attempt 时保持原样，避免既有调用方的键形状变化。 */
+export function attemptSuffix(attempt: string | number | undefined | null): string {
+  const value = String(attempt ?? '').trim();
+  return value ? `_${value.replace(/[^A-Za-z0-9_-]/g, '')}` : '';
+}
+
 const LAYERING_PROMPT =
   'Decompose this image into semantically distinct editable RGBA layers. Preserve composition and transparent edges.';
 
@@ -29,6 +35,12 @@ export async function decomposeImageToLayers(input: {
   source: string;
   sourceSha256?: string | null;
   layerCount?: number;
+  /**
+   * 重拆标记。幂等键只由 workspace + 目标 + 层数组成，同样的层数再点「重新拆分」
+   * 会命中同一个 run 而直接返回上次的结果——看起来像按钮没反应。
+   * 重拆时传一个变化的值，让它落到不同的 run 上。
+   */
+  attempt?: string | number;
   signal?: AbortSignal;
   /** 等待期的可见进度：分层要跑几十秒，静止的「加载中」超过 2 秒就是体验缺陷。 */
   onProgress?: (progress: { phase: string; completed: number; total: number }) => void;
@@ -57,7 +69,7 @@ export async function decomposeImageToLayers(input: {
       responseFormat: 'url',
       imageRefs: [{ refId: 1, assetSha256: sourceSha256, url: sourceUrl, label: '待分层原图' }],
     },
-    idempotencyKey: `imLayer_${input.workspaceId}_${input.targetKey}_${layerCount}`,
+    idempotencyKey: `imLayer_${input.workspaceId}_${input.targetKey}_${layerCount}${attemptSuffix(input.attempt)}`,
   });
   if (!runRes.success) return failed(runRes.error?.code ?? 'RUN_FAILED', runRes.error?.message ?? '分层任务创建失败');
   const runId = String(runRes.data?.runId ?? '').trim();

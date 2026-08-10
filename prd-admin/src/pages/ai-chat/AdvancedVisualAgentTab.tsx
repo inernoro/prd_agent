@@ -87,18 +87,22 @@ import {
   SOURCE_REFERENCE_LAYER_NAME,
 } from '@/lib/aiLayerNaming';
 import {
-  classifyLayerContent,
-  computeAlphaCoverage,
-  computeMeanAbsDifference,
+  buildLayerContentVerdicts,
   describeLayerContent,
-  isHiddenByDefault,
   sampleLayerRgba,
   type LayerContentKind,
 } from '@/lib/layerContentAnalysis';
 import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
-import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
+import {
+  assignMissingRefIds,
+  canvasToPersistedV1,
+  getMaxRefId,
+  persistedV1ToCanvas,
+  PERSIST_SCHEMA_VERSION,
+  type PersistedCanvasStateV1,
+} from '@/lib/visualAgentCanvasPersist';
 import type { ImageAsset, ReconcileCanvasItem, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { ImageGenRunStreamPayload } from '@/services/contracts/imageGen';
 import type { Model } from '@/types/admin';
@@ -221,8 +225,12 @@ type CanvasImageItem = {
   layerOpacity?: number;
   /** 叠放次序（小的在下）。缺省回落到 layerIndex，保证旧数据仍有确定顺序。 */
   layerZ?: number;
-  /** 内容判定：普通图层 / 近乎空层 / 整张原图。判定可见且可由用户改回。 */
+  /** 内容判定：普通图层 / 近乎空层 / 近乎纯色 / 整张原图。判定可见且可由用户改回。 */
   layerContentKind?: LayerContentKind;
+  /** 不透明像素占比 0–1，面板每行显示它——这是把各层区分开的最直接事实。 */
+  layerCoverage?: number;
+  /** 本次向模型请求的层数（只挂在 source 上）。层数是期望值，实到几层由模型决定。 */
+  layerRequestedCount?: number;
 };
 
 /**
@@ -283,90 +291,6 @@ function shrinkDirForCorner(corner: 'nw' | 'ne' | 'sw' | 'se') {
   return { x: 1, y: -1 }; // sw
 }
 
-type PersistedCanvasStateV1 = {
-  schemaVersion: 1;
-  meta?: Record<string, unknown>;
-  elements: PersistedCanvasElementV1[];
-};
-
-type PersistedCanvasElementV1 =
-  | {
-      id: string;
-      kind: 'image';
-      x?: number;
-      y?: number;
-      w?: number;
-      h?: number;
-      z?: number;
-      name?: string;
-      assetId?: string;
-      src?: string;
-      sha256?: string;
-      naturalW?: number;
-      naturalH?: number;
-      locked?: boolean;
-      hidden?: boolean;
-      /** 占位状态：running 表示生成中，后端会回填 */
-      status?: 'running' | 'error';
-      /** 占位元素关联的后端生图 runId，持久化以便刷新后快速对账（SSOT 仍是后端 run.TargetCanvasKey） */
-      runId?: string;
-      /** 图片引用 ID，用于消息中的 @imgN 引用，持久化保存 */
-      refId?: number;
-      ext?: Record<string, unknown>;
-    }
-  | {
-      id: string;
-      kind: 'generator';
-      x?: number;
-      y?: number;
-      w?: number;
-      h?: number;
-      z?: number;
-      name?: string;
-      prompt?: string;
-      requestedSize?: string | null;
-      effectiveSize?: string | null;
-      sizeAdjusted?: boolean;
-      ratioAdjusted?: boolean;
-      locked?: boolean;
-      hidden?: boolean;
-      ext?: Record<string, unknown>;
-    }
-  | {
-      id: string;
-      kind: 'shape';
-      x?: number;
-      y?: number;
-      w?: number;
-      h?: number;
-      z?: number;
-      shapeType?: 'rect' | 'circle' | 'triangle' | 'star';
-      fill?: string;
-      stroke?: string;
-      locked?: boolean;
-      hidden?: boolean;
-      ext?: Record<string, unknown>;
-    }
-  | {
-      id: string;
-      kind: 'text';
-      x?: number;
-      y?: number;
-      w?: number;
-      h?: number;
-      z?: number;
-      text?: string;
-      fontSize?: number;
-      textColor?: string;
-      fill?: string;
-      stroke?: string;
-      locked?: boolean;
-      hidden?: boolean;
-      ext?: Record<string, unknown>;
-    };
-
-const PERSIST_SCHEMA_VERSION = 1 as const;
-const MAX_PERSIST_ELEMENTS = 200;
 
 function safeJsonParse<T>(s: string): T | null {
   const raw = String(s ?? '').trim();
@@ -376,227 +300,6 @@ function safeJsonParse<T>(s: string): T | null {
   } catch {
     return null;
   }
-}
-
-function isRemoteImageSrc(src: string): boolean {
-  const s = String(src ?? '').trim();
-  if (!s) return false;
-  if (s.startsWith('data:')) return false;
-  if (s.startsWith('/api/')) return true;
-  return /^https?:\/\//i.test(s);
-}
-
-function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvasStateV1; skippedLocalOnlyImages: number } {
-  const els: PersistedCanvasElementV1[] = [];
-  let skippedLocalOnlyImages = 0;
-  const src = Array.isArray(items) ? items : [];
-  for (let i = 0; i < src.length && els.length < MAX_PERSIST_ELEMENTS; i++) {
-    const it = src[i]!;
-    const kind = (it.kind ?? 'image') as PersistedCanvasElementV1['kind'];
-    const base = {
-      id: String(it.key ?? '').trim() || `el_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      kind,
-      x: it.x,
-      y: it.y,
-      w: it.w,
-      h: it.h,
-      z: i,
-      name: String(it.prompt ?? '').trim() || undefined,
-    };
-    if (kind === 'image') {
-      const assetId = String(it.assetId ?? '').trim();
-      const srcOk = isRemoteImageSrc(it.src);
-      const isPlaceholder = it.status === 'running' || it.status === 'error';
-      if (!assetId && !srcOk && !isPlaceholder) {
-        // 仅把"真正的本地临时内容"计入 skipped：
-        // - data: / blob: 属于本地内容，刷新后无法从服务器恢复 => 计数并提示
-        // - 空 src（例如生图占位 running/error）不应被误判为"本地临时内容"
-        const rawSrc = String(it.src ?? '').trim();
-        if (rawSrc && (rawSrc.startsWith('data:') || rawSrc.startsWith('blob:'))) {
-          skippedLocalOnlyImages += 1;
-        }
-        continue;
-      }
-      els.push({
-        ...base,
-        kind: 'image',
-        assetId: assetId || undefined,
-        src: srcOk ? it.src : undefined,
-        sha256: String(it.sha256 ?? '').trim() || undefined,
-        naturalW: it.naturalW,
-        naturalH: it.naturalH,
-        // 保存占位状态，以便后端回填时能找到目标元素
-        status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
-        // 持久化 runId（仅占位元素）：避免关页/刷新后丢失，导致占位无法被对账/看门狗恢复
-        runId: isPlaceholder && it.runId ? String(it.runId).trim() || undefined : undefined,
-        // 持久化 refId
-        refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
-        // 分层归属必须落盘：不存的话刷新后 Frame 散架、图层退化成一堆散图，
-        // 「复用已有图层」判不出来，导出 PSD 会再调一次模型。
-        ext: {
-          layerGroupId: it.layerGroupId,
-          layerSourceKey: it.layerSourceKey,
-          layerIndex: it.layerIndex,
-          layerRole: it.layerRole,
-          layerHidden: it.layerHidden,
-          layerOpacity: it.layerOpacity,
-          layerZ: it.layerZ,
-          layerContentKind: it.layerContentKind,
-        },
-      });
-    } else if (kind === 'generator') {
-      els.push({
-        ...base,
-        kind: 'generator',
-        prompt: String(it.prompt ?? '').trim() || undefined,
-        requestedSize: it.requestedSize ?? null,
-        effectiveSize: it.effectiveSize ?? null,
-        sizeAdjusted: Boolean(it.sizeAdjusted),
-        ratioAdjusted: Boolean(it.ratioAdjusted),
-        ext: {},
-      });
-    } else if (kind === 'shape') {
-      els.push({
-        ...base,
-        kind: 'shape',
-        shapeType: it.shapeType,
-        fill: it.fill,
-        stroke: it.stroke,
-        ext: {},
-      });
-    } else if (kind === 'text') {
-      els.push({
-        ...base,
-        kind: 'text',
-        text: it.text,
-        fontSize: it.fontSize,
-        textColor: it.textColor,
-        fill: it.fill,
-        stroke: it.stroke,
-        ext: {},
-      });
-    }
-  }
-  return { state: { schemaVersion: 1, meta: { skippedLocalOnlyImages }, elements: els }, skippedLocalOnlyImages };
-}
-
-function persistedV1ToCanvas(
-  state: PersistedCanvasStateV1,
-  assets: ImageAsset[]
-): { canvas: CanvasImageItem[]; missingAssets: number; localOnlyImages: number } {
-  const byId = new Map<string, ImageAsset>();
-  for (const a of assets ?? []) {
-    if (a?.id) byId.set(String(a.id), a);
-  }
-  const out: CanvasImageItem[] = [];
-  let missingAssets = 0;
-  let localOnlyImages = 0;
-  const sorted = [...(state.elements ?? [])].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
-  for (const el of sorted) {
-    const id = String(el.id ?? '').trim();
-    if (!id) continue;
-    if (el.kind === 'image') {
-      const aid = String(el.assetId ?? '').trim();
-      const a = aid ? byId.get(aid) : undefined;
-      const src = a?.url || (isRemoteImageSrc(String(el.src ?? '')) ? String(el.src) : '');
-      const isPlaceholder = el.status === 'running' || el.status === 'error';
-      if (!src && !isPlaceholder) {
-        if (!aid && !el.src) localOnlyImages += 1;
-        else missingAssets += 1;
-        continue;
-      }
-      const prompt = String(el.name ?? a?.prompt ?? '').trim();
-      const ext = (el.ext && typeof el.ext === 'object' ? el.ext : {}) as Record<string, unknown>;
-      const layerRole = ext.layerRole === 'source' || ext.layerRole === 'layer' ? ext.layerRole : undefined;
-      out.push({
-        key: id,
-        assetId: aid || a?.id,
-        sha256: String(el.sha256 ?? a?.sha256 ?? '').trim() || undefined,
-        createdAt: Date.now(),
-        prompt,
-        src,
-        // 恢复占位状态：running 表示后端仍在生成中
-        status: isPlaceholder ? el.status! : 'done',
-        // 恢复持久化的 runId（占位元素），供 in-session 看门狗/刷新走快速路径
-        runId: isPlaceholder && el.runId ? String(el.runId).trim() || undefined : undefined,
-        kind: 'image',
-        syncStatus: src.startsWith('/api/visual-agent/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
-        syncError: null,
-        x: el.x,
-        y: el.y,
-        w: typeof el.w === 'number' && el.w > 0 ? el.w : a?.width || undefined,
-        h: typeof el.h === 'number' && el.h > 0 ? el.h : a?.height || undefined,
-        naturalW: typeof el.naturalW === 'number' && el.naturalW > 0 ? el.naturalW : a?.width || undefined,
-        naturalH: typeof el.naturalH === 'number' && el.naturalH > 0 ? el.naturalH : a?.height || undefined,
-        // 恢复持久化的 refId
-        refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
-        // 恢复分层归属与图层面板状态（显隐/不透明度/叠放次序）
-        layerGroupId: typeof ext.layerGroupId === 'string' ? ext.layerGroupId : undefined,
-        layerSourceKey: typeof ext.layerSourceKey === 'string' ? ext.layerSourceKey : undefined,
-        layerIndex: typeof ext.layerIndex === 'number' && Number.isFinite(ext.layerIndex) ? ext.layerIndex : undefined,
-        layerRole,
-        layerHidden: ext.layerHidden === true,
-        layerOpacity: typeof ext.layerOpacity === 'number' && Number.isFinite(ext.layerOpacity) ? ext.layerOpacity : undefined,
-        layerZ: typeof ext.layerZ === 'number' && Number.isFinite(ext.layerZ) ? ext.layerZ : undefined,
-        layerContentKind: ext.layerContentKind === 'empty' || ext.layerContentKind === 'source-reference'
-          ? ext.layerContentKind
-          : undefined,
-      });
-    } else if (el.kind === 'generator') {
-      out.push({
-        key: id,
-        createdAt: Date.now(),
-        prompt: String(el.prompt ?? el.name ?? 'Image Generator'),
-        src: '',
-        status: 'done',
-        kind: 'generator',
-        x: el.x,
-        y: el.y,
-        w: el.w,
-        h: el.h,
-        requestedSize: el.requestedSize ?? null,
-        effectiveSize: el.effectiveSize ?? null,
-        sizeAdjusted: Boolean(el.sizeAdjusted),
-        ratioAdjusted: Boolean(el.ratioAdjusted),
-      });
-    } else if (el.kind === 'shape') {
-      out.push({
-        key: id,
-        createdAt: Date.now(),
-        prompt: '',
-        src: '',
-        status: 'done',
-        kind: 'shape',
-        x: el.x,
-        y: el.y,
-        w: el.w,
-        h: el.h,
-        shapeType: el.shapeType,
-        fill: el.fill,
-        stroke: el.stroke,
-      });
-    } else if (el.kind === 'text') {
-      out.push({
-        key: id,
-        createdAt: Date.now(),
-        prompt: '',
-        src: '',
-        status: 'done',
-        kind: 'text',
-        x: el.x,
-        y: el.y,
-        w: el.w,
-        h: el.h,
-        text: el.text,
-        fontSize: el.fontSize,
-        textColor: el.textColor,
-        fill: el.fill,
-        stroke: el.stroke,
-      });
-    }
-  }
-  // 还原时不应无故少一张；用与持久化一致的上限（MAX_PERSIST_ELEMENTS）
-  return { canvas: out.slice(0, MAX_PERSIST_ELEMENTS), missingAssets, localOnlyImages };
 }
 
 /**
@@ -2516,6 +2219,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     key: string;
     src: string;
     prompt: string;
+    /** 重拆标记：同样的层数再拆一次要落到新的 run 上，否则命中幂等键原样返回上次结果。 */
+    attempt?: string | number;
   }): Promise<Array<{ name: string; source: string }> | null> => {
     if (layeringRunningRef.current) {
       toast.info('分层进行中', '已经有一张图片在拆分图层，等它完成再试。');
@@ -2649,6 +2354,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             layerSourceKey: sourceItem.key,
             layerIndex: 0,
             layerRole: 'source' as const,
+            // 记下「这次要了几层」，面板才能解释实到层数为什么不等于它。
+            layerRequestedCount: requestedLayerCount,
           }
         : candidate);
     });
@@ -2675,6 +2382,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         source,
         sourceSha256: readySha,
         layerCount: requestedLayerCount,
+        attempt: input.attempt,
         // 分层要跑几十秒，等待期必须一直有东西在动（禁止静止的「加载中」）。
         onProgress: ({ phase, completed, total }) =>
           setLayeringProgress({ sourceKey: sourceItem.key, groupId, phase, completed, total }),
@@ -2736,25 +2444,31 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         layerSources.push({ name, source: asset.url });
       }
 
-      // 内容判定：哪一层其实是整张原图、哪一层几乎是空的。
-      // 判定失败不影响主流程（拿不到样本就当普通层），用户始终能自己开关。
+      // 内容判定：每一层到底装了什么（覆盖率 + 是否近乎纯色 / 空层 / 整张原图）。
+      // 每层都要回写——面板每行都要显示覆盖率，只回写异常层会让普通层那行没有事实可显示。
+      // 判定失败不影响主流程（拿不到样本就保持普通层），用户始终能自己开关。
       void (async () => {
-        const sourceRgba = await sampleLayerRgba(source, readySha);
-        for (let index = 0; index < remoteLayers.length; index += 1) {
-          const key = layerKeyAt(index);
-          const item = canvasRef.current.find((candidate) => candidate.key === key);
-          if (!item?.src) continue;
-          const rgba = await sampleLayerRgba(item.src, item.sha256 || item.originalSha256 || null);
-          if (!rgba) continue;
-          const kind = classifyLayerContent({
-            coverage: computeAlphaCoverage(rgba),
-            sourceDifference: sourceRgba ? computeMeanAbsDifference(rgba, sourceRgba) : null,
-          });
-          if (kind === 'layer') continue;
-          setCanvas((previous) => previous.map((candidate) => candidate.key === key
-            ? { ...candidate, layerContentKind: kind, layerHidden: isHiddenByDefault(kind) }
-            : candidate));
-        }
+        const verdicts = await buildLayerContentVerdicts({
+          layers: Array.from({ length: remoteLayers.length }, (_, index) => {
+            const key = layerKeyAt(index);
+            const item = canvasRef.current.find((candidate) => candidate.key === key);
+            return { key, src: item?.src ?? '', sha256: item?.sha256 || item?.originalSha256 || null };
+          }),
+          source: { src: source, sha256: readySha },
+          sampler: sampleLayerRgba,
+        });
+        if (verdicts.length === 0) return;
+        const byKey = new Map(verdicts.map((verdict) => [verdict.key, verdict]));
+        setCanvas((previous) => previous.map((candidate) => {
+          const verdict = byKey.get(candidate.key);
+          if (!verdict) return candidate;
+          return {
+            ...candidate,
+            layerContentKind: verdict.kind,
+            layerCoverage: verdict.stats.coverage,
+            layerHidden: verdict.hidden ? true : candidate.layerHidden,
+          };
+        }));
       })();
 
       setSelectionWithoutChip([layerKeyAt(0)]);
@@ -2869,12 +2583,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const layerPanelModel = useMemo<SemanticLayerPanelLayer[]>(
     () => layerPanelLayers.map((layer, index) => ({
       key: layer.key,
-      // 名字只由序号决定，源提示词降为副标题：再长也不影响分辨。
+      // 名字只由序号决定：源提示词再长也不影响分辨。
       name: layer.layerContentKind === 'source-reference'
         ? SOURCE_REFERENCE_LAYER_NAME
         : aiLayerDisplayName(index),
-      subtitle: aiLayerSubtitle(cleanDisplayTitle(layer.prompt)),
-      note: describeLayerContent(layer.layerContentKind ?? 'layer'),
+      // 副标题写「这一层装了什么」而不是来源——来源只有一个，写在这里会让每行显示同一串
+      // 文字，白占一行（2026-08-10 实测：三行副标题全是同一个文件名）。面板标题已经带来源。
+      subtitle: layer.layerContentKind || typeof layer.layerCoverage === 'number'
+        ? describeLayerContent(layer.layerContentKind ?? 'layer', layer.layerCoverage)
+        : '正在识别内容…',
+      note: undefined,
       src: layer.src,
       pending: layer.status === 'running',
       failed: layer.status === 'error',
@@ -7654,6 +7372,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 busy={!!layerExportBusy}
                 busyText={layerExportBusy || undefined}
                 layerCount={layerCountPref}
+                requestedLayerCount={layerPanelSource?.layerRequestedCount}
                 onLayerCountChange={updateLayerCountPref}
                 onResplit={() => {
                   const sourceItem = layerPanelSource;
@@ -7662,6 +7381,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     key: sourceItem.key,
                     src: sourceItem.originalSrc || sourceItem.src,
                     prompt: sourceItem.prompt || '图片',
+                    // 「重新拆分」必须真的再跑一次：不带这个标记会命中上一次的幂等键，
+                    // 原样返回旧图层，用户看到的是「点了没反应」。
+                    attempt: Date.now(),
                   });
                 }}
                 selectedKey={selectedKeys.length === 1 ? selectedKeys[0] : undefined}

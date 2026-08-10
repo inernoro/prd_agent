@@ -8,7 +8,14 @@
  * 关键点：
  * - running 状态的占位元素必须被保存，以便后端能够回填
  * - 使用 id 字段作为元素标识（与后端保持一致）
+ *
+ * 这两个函数是**生产路径唯一实现**。历史上 AdvancedVisualAgentTab 里另有一份拷贝，
+ * 真正在跑的是页面里那份，而单测跑的是本文件这份——两份逐渐漂移，本文件这份缺了
+ * 图层显隐/不透明度/次序等字段，于是「分层相关的持久化」实际上从来没有被测过。
+ * 2026-08-10 合并为一份：页面改为 import 本文件，测试与生产从此是同一段代码。
  */
+
+import type { LayerContentKind } from './layerContentAnalysis';
 
 // ============ 类型定义 ============
 
@@ -134,13 +141,26 @@ export interface CanvasImageItem {
   layerSourceKey?: string;
   layerIndex?: number;
   layerRole?: 'source' | 'layer';
+  /** 图层面板里被关掉了眼睛：合成预览、合成 PNG、PSD 都跳过它。 */
+  layerHidden?: boolean;
+  /** 图层不透明度 0–1，缺省视为 1。 */
+  layerOpacity?: number;
+  /** 叠放次序（小的在下）。缺省回落到 layerIndex。 */
+  layerZ?: number;
+  /** 内容判定：普通图层 / 近乎空层 / 近乎纯色 / 整张原图。 */
+  layerContentKind?: LayerContentKind;
+  /** 不透明像素占比 0–1。 */
+  layerCoverage?: number;
+  /** 本次向模型请求的层数（只挂在 source 上）。层数是期望值，实到几层由模型决定。 */
+  layerRequestedCount?: number;
 }
 
 export interface ImageAsset {
   id: string;
   url?: string;
   sha256?: string;
-  prompt?: string;
+  /** 后端契约里这个字段可能是 null，别收窄成 undefined——收窄会让调用方类型对不上。 */
+  prompt?: string | null;
   width?: number;
   height?: number;
 }
@@ -169,6 +189,12 @@ export function isRemoteImageSrc(src: string): boolean {
  * - 对于 image 类型，如果有 assetId 或远程 src 或是占位状态（running/error），则保存
  * - 对于 data:/blob: 本地图片，跳过并计入 skippedLocalOnlyImages
  */
+const LAYER_CONTENT_KINDS: readonly LayerContentKind[] = ['layer', 'empty', 'flat', 'source-reference'];
+
+function isLayerContentKind(value: unknown): value is LayerContentKind {
+  return typeof value === 'string' && (LAYER_CONTENT_KINDS as readonly string[]).includes(value);
+}
+
 export function canvasToPersistedV1(items: CanvasImageItem[]): {
   state: PersistedCanvasStateV1;
   skippedLocalOnlyImages: number;
@@ -220,12 +246,23 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
         // 持久化 refId，用于消息中的 @imgN 引用
         refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
         // 持久化 runId，用于刷新页面后同步状态
-        runId: isPlaceholder && it.runId ? String(it.runId).trim() : undefined,
+        runId: isPlaceholder && it.runId ? String(it.runId).trim() || undefined : undefined,
+        // 分层归属必须落盘：不存的话刷新后 Frame 散架、图层退化成一堆散图，
+        // 「复用已有图层」判不出来，导出 PSD 会再调一次模型。
         ext: {
           layerGroupId: it.layerGroupId,
           layerSourceKey: it.layerSourceKey,
           layerIndex: it.layerIndex,
           layerRole: it.layerRole,
+          layerHidden: it.layerHidden,
+          layerOpacity: it.layerOpacity,
+          layerZ: it.layerZ,
+          layerContentKind: it.layerContentKind,
+          layerCoverage: it.layerCoverage,
+          layerRequestedCount: it.layerRequestedCount,
+          // 尺寸是不是已由排版决定，必须落盘：不存的话刷新后 img.onLoad 会拿 natural 尺寸
+          // 覆盖 w/h，同一个 Frame 里等大对齐的图层塌成大小不一的碎块（2026-08-10 实测截图）。
+          userResized: it.userResized === true ? true : undefined,
         },
       });
     } else if (kind === 'generator') {
@@ -329,11 +366,26 @@ export function persistedV1ToCanvas(
         // 恢复持久化的 refId
         refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
         // 恢复持久化的 runId，用于刷新页面后同步状态
-        runId: isPlaceholder && el.runId ? String(el.runId).trim() : undefined,
+        runId: isPlaceholder && el.runId ? String(el.runId).trim() || undefined : undefined,
         layerGroupId: typeof ext.layerGroupId === 'string' ? ext.layerGroupId : undefined,
         layerSourceKey: typeof ext.layerSourceKey === 'string' ? ext.layerSourceKey : undefined,
         layerIndex: typeof ext.layerIndex === 'number' && Number.isFinite(ext.layerIndex) ? ext.layerIndex : undefined,
         layerRole,
+        layerHidden: ext.layerHidden === true,
+        layerOpacity: typeof ext.layerOpacity === 'number' && Number.isFinite(ext.layerOpacity) ? ext.layerOpacity : undefined,
+        layerZ: typeof ext.layerZ === 'number' && Number.isFinite(ext.layerZ) ? ext.layerZ : undefined,
+        layerContentKind: isLayerContentKind(ext.layerContentKind) ? ext.layerContentKind : undefined,
+        layerCoverage: typeof ext.layerCoverage === 'number' && Number.isFinite(ext.layerCoverage)
+          ? ext.layerCoverage
+          : undefined,
+        layerRequestedCount: typeof ext.layerRequestedCount === 'number' && Number.isFinite(ext.layerRequestedCount)
+          ? ext.layerRequestedCount
+          : undefined,
+        // 分层 Frame 里的图层尺寸由排版决定，不能被 onLoad 的 natural 尺寸覆盖。
+        // 存量数据没有这个字段，靠 layerRole 兜底；但必须真的存下过尺寸才敢锁，
+        // 否则没尺寸又不让 onLoad 填，卡片会渲染成 0。
+        userResized: ext.userResized === true
+          || (!!layerRole && typeof el.w === 'number' && el.w > 0 && typeof el.h === 'number' && el.h > 0),
       });
     } else if (el.kind === 'generator') {
       out.push({
@@ -389,7 +441,8 @@ export function persistedV1ToCanvas(
     }
   }
 
-  return { canvas: out, missingAssets, localOnlyImages };
+  // 还原时不应无故少一张；用与持久化一致的上限（MAX_PERSIST_ELEMENTS）
+  return { canvas: out.slice(0, MAX_PERSIST_ELEMENTS), missingAssets, localOnlyImages };
 }
 
 // ============ refId 管理函数 ============

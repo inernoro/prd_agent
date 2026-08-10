@@ -45,6 +45,12 @@ export type SemanticLayerPanelProps = {
   busyText?: string;
   /** 下次拆几层（2-8）。层数写死会让只拆得出两三层的图多出空层。 */
   layerCount: number;
+  /**
+   * 本次实际请求的层数。层数是「期望」不是「保证」——模型可能给得更少。
+   * 不把它显示出来，用户就会看到「下次拆 2 层」旁边站着 3 个图层，三个数字互相打架
+   * 却没人解释（2026-08-10 实测截图）。
+   */
+  requestedLayerCount?: number;
   onLayerCountChange: (value: number) => void;
   onResplit: () => void;
   selectedKey?: string;
@@ -59,6 +65,18 @@ export type SemanticLayerPanelProps = {
   onSelfCheck: () => void;
   onClose: () => void;
 };
+
+/**
+ * 每行第二行显示什么。
+ *
+ * 抽成纯函数是为了它可测：这一行的职责是「把各图层区分开」，
+ * 上一版把只有一个值的来源文本放进来，三行显示同一串字，等于白占一行。
+ */
+export function layerRowSecondaryText(layer: SemanticLayerPanelLayer): string {
+  if (layer.pending) return '生成中';
+  if (layer.failed) return '未生成';
+  return layer.note || layer.subtitle || `不透明度 ${Math.round(layer.opacity * 100)}%`;
+}
 
 const CHECKERBOARD: React.CSSProperties = {
   backgroundImage:
@@ -79,6 +97,7 @@ export function SemanticLayerPanel({
   busy,
   busyText,
   layerCount,
+  requestedLayerCount,
   onLayerCountChange,
   onResplit,
   selectedKey,
@@ -235,9 +254,7 @@ export function SemanticLayerPanel({
                     {layer.name}
                   </div>
                   <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={layer.subtitle || undefined}>
-                    {layer.pending ? '生成中'
-                      : layer.failed ? '未生成'
-                      : (layer.note || layer.subtitle || `不透明度 ${Math.round(layer.opacity * 100)}%`)}
+                    {layerRowSecondaryText(layer)}
                   </div>
                 </div>
 
@@ -359,6 +376,13 @@ export function SemanticLayerPanel({
               </button>
             </div>
           </>
+        )}
+        {/* 层数是期望不是保证：请求 N 层但模型只给 M 层时必须说清楚，否则页面上会出现
+            三个互相矛盾的数字而无人解释。相等时不占地方。 */}
+        {typeof requestedLayerCount === 'number' && requestedLayerCount > 0 && requestedLayerCount !== layers.length && (
+          <div className="text-[10px] leading-4 pb-1" style={{ color: 'var(--text-muted)' }}>
+            {`本次请求 ${requestedLayerCount} 层，模型实际给出 ${layers.length} 层（层数由模型决定，只能是期望值）`}
+          </div>
         )}
         {/* 层数就地可调：不为一个参数开配置面板（奥卡姆），但也不写死 4 */}
         <div className="h-7 flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
