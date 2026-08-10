@@ -30,6 +30,29 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
   return /\.html?$/i.test(target);
 }
 
+/**
+ * 这份 HTML 能不能安全地走 srcDoc 预览。
+ *
+ * srcDoc 路径刻意不给 allow-same-origin（否则用户上传的任意 HTML 就拿到 MAP 同源能力），
+ * 代价是文档处于**不透明源**。经典 `<script src>` 跨域不需要 CORS，照常能加载；
+ * 但 `<script type="module">` 是按 CORS 模式取的——而托管域名不返回
+ * Access-Control-Allow-Origin（正是本文件到处在说的那件事），模块脚本会被浏览器拦掉。
+ *
+ * 后果很具体：Vite/webpack 打包出来的 SPA 入口恰恰是 `<script type="module" src="...">`，
+ * 走 srcDoc 会白屏。这类站点必须留在直链 iframe 上——直链是同源加载，模块脚本没问题。
+ *
+ * 所以判据是「有没有外链的模块脚本」，而不是「是不是 HTML」。
+ * 内联的 `<script type="module">`（没有 src）不受影响，不必排除。
+ */
+export function canUseSrcDocPreview(html: string): boolean {
+  if (!html) return false;
+  // 匹配带 src 且 type=module 的 script 标签，属性顺序两种都要认
+  const moduleWithSrc =
+    /<script\b[^>]*\btype\s*=\s*["']module["'][^>]*\bsrc\s*=/i.test(html) ||
+    /<script\b[^>]*\bsrc\s*=[^>]*\btype\s*=\s*["']module["']/i.test(html);
+  return !moduleWithSrc;
+}
+
 function withPreviewBase(html: string, siteUrl: string) {
   if (/<base\b/i.test(html)) return html;
   const baseHref = new URL('.', siteUrl).toString();
@@ -442,7 +465,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
     const site = data.sites[0];
-    const iframeHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    // 打包型 SPA（入口是外链 module 脚本）必须留在直链 iframe：srcDoc 的不透明源会让
+    // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
+    const fetchedHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    const iframeHtml = fetchedHtml && canUseSrcDocPreview(fetchedHtml) ? fetchedHtml : null;
     return (
       <div
         ref={singleViewRef}

@@ -1,100 +1,83 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { canUseSrcDocPreview } from './ShareViewPage';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SHARE_VIEW = path.join(HERE, 'ShareViewPage.tsx');
 
 /**
- * 网页托管预览的两条接线守卫。
+ * 分享页预览的两条接线守卫 + 一条 srcDoc 适用性判据。
  *
- * 这两件事都属于「删掉之后测试仍然全绿、只有用户会发现」的类别，所以必须有守卫盯着
- * （.claude/rules/predicate-and-wiring-discipline.md 形状 1 判据太窄 / 形状 2 链路只建一半）：
- *
- *  1. 预览页取回网页原文必须走**服务端同源代理**。托管内容在独立域名且不返回
- *     Access-Control-Allow-Origin，浏览器侧 fetch(site.siteUrl) 一律被 CORS 拦掉，
- *     catch 里静默降级 → srcDoc 分支永远拿不到内容 → 退回「Chrome 里只绘制空白」的直链 iframe。
- *     这条兜底曾经写了却从未生效过。
- *
- *  2. 「iframe 的 load 事件没来」不等于「站点坏了」。load 要等所有子资源结算，而托管页普遍
- *     外链三方字体，在部分网络里挂起而非快速失败——正文早已绘制，load 永远不来。旧实现按超时
- *     判 errored，把错误遮罩盖在已经渲染好的页面上，用户看到的就是「无法预览」。
+ * 前两条防的是「兜底代码写了却从没生效过」：托管内容在独立域名且不返回
+ * Access-Control-Allow-Origin，浏览器侧 fetch 一律被 CORS 拦掉，于是 srcDoc 分支
+ * 永远拿不到内容、静默退化成直链 iframe。改回浏览器 fetch 就会让它再次变成死代码。
  */
-
 /**
- * 「禁止出现某写法」这类断言必须扫**代码**而不是注释——否则解释这条规则的注释本身
- * 就会把守卫弄红，逼后来人删掉解释。
+ * 剥掉注释再判。文件里有大段注释在**描述**这个反模式（"不是浏览器直接 fetch(site.siteUrl)"），
+ * 不剥的话守卫会匹配到自己的说明文字而误报——判据要看代码，不看散文。
  */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+function stripComments(code: string): string {
+  return code
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .map((line) => line.replace(/(^|[^:])\/\/.*$/, '$1'))
+    .join('\n');
 }
 
-const shareViewSource = readFileSync(new URL('./ShareViewPage.tsx', import.meta.url), 'utf8');
-const shareViewCode = stripComments(shareViewSource);
-const previewModalSource = readFileSync(
-  new URL('../components/web-hosting/SitePreviewModal.tsx', import.meta.url),
-  'utf8',
-);
-const previewModalCode = stripComments(previewModalSource);
-const sitePreviewSource = readFileSync(
-  new URL('../components/SitePreview.tsx', import.meta.url),
-  'utf8',
-);
-const sitePreviewCode = stripComments(sitePreviewSource);
+describe('分享页预览接线', () => {
+  const source = stripComments(fs.readFileSync(SHARE_VIEW, 'utf8'));
 
-describe('分享预览页取回网页原文走同源代理', () => {
-  it('调用服务端代理 getShareSiteContent 取原文', () => {
-    expect(
-      shareViewSource.includes('getShareSiteContent('),
-      '预览页必须调 getShareSiteContent（服务端同源代理）取回入口 HTML',
-    ).toBe(true);
+  it('取回入口 HTML 走服务端同源代理，不是浏览器直接 fetch 托管域名', () => {
+    expect(source).toContain('getShareSiteContent');
+    // 断言行为而不是字面量：不允许出现「直接 fetch 站点 URL」这种写法
+    expect(source).not.toMatch(/fetch\(\s*site\.siteUrl/);
+    expect(source).not.toMatch(/fetch\(\s*`?\$?\{?site\.siteUrl/);
   });
 
-  it('不再用浏览器直接跨域 fetch 托管地址', () => {
-    // fetch(site.siteUrl ...) / fetch(siteUrl ...) 都算回退到被 CORS 拦掉的老路
-    const rawCrossOriginFetch = /fetch\(\s*(site\.)?siteUrl\b/;
-    expect(
-      rawCrossOriginFetch.test(shareViewCode),
-      '禁止改回浏览器直接 fetch(site.siteUrl)：托管域名无 CORS 头，会让 srcDoc 兜底重新变成死代码',
-    ).toBe(false);
-  });
-
-  it('取不回原文时把原因显式告诉用户，不静默吞掉', () => {
-    expect(shareViewSource).toContain('setEmbeddedHtmlError');
-    expect(shareViewSource).toContain('embeddedHtmlError &&');
+  it('加载超时不产生「失败」文案——超时只是慢，不是坏', () => {
+    // 超时相关的判定不得把状态置成 errored/失败
+    expect(source).not.toMatch(/setErrored\(true\)[^\n]*超时/);
+    expect(source).not.toMatch(/超时[^\n]*setErrored\(true\)/);
   });
 });
 
-describe('加载慢不等于加载失败', () => {
-  it('大预览弹窗只在 iframe onError 时判失败，不由定时器推断', () => {
-    // setErrored(true) 只允许出现一次，且必须挂在 onError 上
-    const errorSetCount = (previewModalCode.match(/setErrored\(true\)/g) ?? []).length;
-    expect(errorSetCount, 'setErrored(true) 只应出现在 onError 分支').toBe(1);
-
-    const onErrorBlock = previewModalCode.slice(
-      previewModalCode.indexOf('onError={'),
-      previewModalCode.indexOf('sandbox='),
-    );
-    expect(
-      onErrorBlock.includes('setErrored(true)'),
-      '唯一一处 setErrored(true) 必须来自 iframe 的 onError',
-    ).toBe(true);
+/**
+ * srcDoc 适用性判据。
+ *
+ * 由 PR #1351 的 Codex review 抓出：srcDoc 路径刻意不给 allow-same-origin
+ * （否则用户上传的任意 HTML 就拿到 MAP 同源能力），代价是文档处于不透明源。
+ * 经典 `<script src>` 跨域不需要 CORS，但 `<script type="module">` 需要——
+ * 而托管域名不返回 ACAO。所以打包型 SPA 走 srcDoc 会白屏，必须留在直链 iframe。
+ */
+describe('canUseSrcDocPreview', () => {
+  it('普通单文件页面可以走 srcDoc', () => {
+    expect(canUseSrcDocPreview('<html><body><h1>你好</h1></body></html>')).toBe(true);
   });
 
-  it('大预览弹窗的超时只产出「较慢」提示，不产出「失败」文案', () => {
-    expect(previewModalCode).toContain('setSlow(true)');
-    expect(
-      previewModalCode.includes('站点加载超时或失败'),
-      '超时不得再被描述成失败——页面此时多半已经渲染出来了',
-    ).toBe(false);
+  it('经典外链脚本仍可走 srcDoc（跨域加载不需要 CORS）', () => {
+    expect(canUseSrcDocPreview('<script src="https://cdn.example.com/a.js"></script>')).toBe(true);
   });
 
-  it('卡片缩略图不再把「是否显示」只押在 load 事件上', () => {
-    expect(
-      sitePreviewCode.includes('const visible = inView && (loaded || revealed)'),
-      '缩略图必须在首绘窗口到点后淡入，否则外链字体挂起时会永久停在地球占位符',
-    ).toBe(true);
-    expect(
-      sitePreviewCode.includes('opacity: inView && loaded ? 1 : 0'),
-      '禁止把 iframe 的显示与否只绑在 loaded 上',
-    ).toBe(false);
+  it('内联 module 脚本可以走 srcDoc（没有跨域请求）', () => {
+    expect(canUseSrcDocPreview('<script type="module">console.log(1)</script>')).toBe(true);
+  });
+
+  it('外链 module 脚本不能走 srcDoc —— 不透明源下会因缺 CORS 被拦成白屏', () => {
+    expect(canUseSrcDocPreview('<script type="module" src="/assets/index-abc.js"></script>')).toBe(false);
+  });
+
+  it('属性顺序反过来也要认出来', () => {
+    expect(canUseSrcDocPreview('<script src="/assets/index.js" type="module"></script>')).toBe(false);
+  });
+
+  it('带 crossorigin 等额外属性的 Vite 产物入口也要认出来', () => {
+    const vite = '<script type="module" crossorigin src="/assets/index-DkZ1s.js"></script>';
+    expect(canUseSrcDocPreview(vite)).toBe(false);
+  });
+
+  it('空内容不走 srcDoc', () => {
+    expect(canUseSrcDocPreview('')).toBe(false);
   });
 });

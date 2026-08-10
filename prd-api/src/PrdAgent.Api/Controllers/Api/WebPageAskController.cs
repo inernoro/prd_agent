@@ -26,9 +26,6 @@ public class WebPageAskController : ControllerBase
     /// <summary>单条问题最大长度：提问是问句不是投喂正文，长了就是想绕过上下文限制。</summary>
     private const int MaxQuestionLength = 500;
 
-    /// <summary>带进上下文的历史轮数（一问一答算两条）。</summary>
-    private const int MaxHistoryMessages = 8;
-
     private readonly IHostedSiteService _siteService;
     private readonly ISiteContentSnapshotService _snapshots;
     private readonly IAskQuotaService _quota;
@@ -220,20 +217,18 @@ public class WebPageAskController : ControllerBase
                 : "已读取本页内容，正在思考…",
         });
 
-        var history = (req?.History ?? new List<AskHistoryItem>())
-            .Where(h => !string.IsNullOrWhiteSpace(h.Content))
-            .TakeLast(MaxHistoryMessages)
-            .ToList();
+        // 历史由客户端提交，且分享路径是匿名可达的——只限条数不限长度等于没限：
+        // 直接打端点的人可以塞几条几 MB 的字符串，一次就把站点主的额度啃掉一大块。
+        // 配额闸数的是「请求次数」，拦不住「单次超大」，所以这里必须按字符预算裁剪。
+        var history = AskHistoryBudget.Trim(
+            (req?.History ?? new List<AskHistoryItem>()).Select(h => (h.Role, h.Content)));
 
         var messages = new JsonArray
         {
             new JsonObject { ["role"] = "system", ["content"] = BuildSystemPrompt(site, snapshot) },
         };
-        foreach (var h in history)
-        {
-            var role = string.Equals(h.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user";
-            messages.Add(new JsonObject { ["role"] = role, ["content"] = h.Content });
-        }
+        foreach (var (role, content) in history)
+            messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
         messages.Add(new JsonObject { ["role"] = "user", ["content"] = question });
 
         var gatewayRequest = new GatewayRequest

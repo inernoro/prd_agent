@@ -81,6 +81,10 @@ export function useAskStream(source: AskSource) {
         if (source.password) body.password = source.password;
       }
 
+      // 是否真的收到了 done。EOF 不等于答完——代理截断 / 空闲超时都会让流静默结束，
+      // 把半截答案当成功呈现出去，用户完全看不出来。
+      let sawDone = false;
+
       const failAssistant = (message: string) => {
         setMessages((prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, streaming: false, error: message } : m)),
@@ -146,6 +150,7 @@ export function useAskStream(source: AskSource) {
                 break;
               }
               case 'done':
+                sawDone = true;
                 setMessages((prev) =>
                   prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
                 );
@@ -163,11 +168,23 @@ export function useAskStream(source: AskSource) {
           ac.signal,
         );
 
-        // 流正常结束但没收到 done（网络中断等）：把光标收掉，别让它永远在闪
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId && m.streaming ? { ...m, streaming: false } : m)),
-        );
-        setStatus((s) => (s === 'answering' ? 'done' : s));
+        // 流结束但没收到 done：这是被截断，不是答完。必须如实标成中断——
+        // 之前这里无条件把 answering 改成 done，半截答案会被当成功呈现，
+        // 用户既看不出少了什么，也不知道可以重试。
+        if (!sawDone) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId && m.streaming
+                ? {
+                    ...m,
+                    streaming: false,
+                    error: m.content ? '回答被中断，内容可能不完整，可以再问一次。' : '连接中断，没有收到回答。',
+                  }
+                : m,
+            ),
+          );
+          setStatus((s) => (s === 'answering' || s === 'connecting' ? 'error' : s));
+        }
       } catch (e) {
         if (ac.signal.aborted) return;
         const message = e instanceof Error ? e.message : '网络请求失败';
