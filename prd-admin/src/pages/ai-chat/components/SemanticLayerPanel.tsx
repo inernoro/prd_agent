@@ -117,6 +117,10 @@ export function SemanticLayerPanel({
   const visibleCount = layers.filter((layer) => !layer.hidden && !layer.pending && !layer.failed).length;
   const ratio = aspectRatio && Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1;
   const nothingToExport = visibleCount === 0;
+  // 还有占位层在生成时，layers.length 只是「已铺了几个位子」，不是模型的最终答案。
+  // 拿它去下「模型实际给出 N 层」的结论，是在报一个还没发生的事（冒烟实测截到）。
+  // 注意不能用 busy：那是导出忙标志，分层进行中它是 false。
+  const stillGenerating = layers.some((layer) => layer.pending);
 
   return (
     <div
@@ -378,8 +382,10 @@ export function SemanticLayerPanel({
           </>
         )}
         {/* 层数是期望不是保证：请求 N 层但模型只给 M 层时必须说清楚，否则页面上会出现
-            三个互相矛盾的数字而无人解释。相等时不占地方。 */}
-        {typeof requestedLayerCount === 'number' && requestedLayerCount > 0 && requestedLayerCount !== layers.length && (
+            三个互相矛盾的数字而无人解释。相等时不占地方。
+            **生成中不能显示**——那会儿只铺了占位卡，写「模型实际给出 1 层」是在报一个
+            还没发生的结论（冒烟截图实测）。 */}
+        {!stillGenerating && typeof requestedLayerCount === 'number' && requestedLayerCount > 0 && requestedLayerCount !== layers.length && (
           <div className="text-[10px] leading-4 pb-1" style={{ color: 'var(--text-muted)' }}>
             {`本次请求 ${requestedLayerCount} 层，模型实际给出 ${layers.length} 层（层数由模型决定，只能是期望值）`}
           </div>

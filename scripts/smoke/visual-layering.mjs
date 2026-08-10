@@ -257,6 +257,10 @@ async function main() {
       if (hit.hits.length) await shot(page, `overlap-at-${zoom}`);
       await zoomOut();
     }
+    // 生成中不许提前下「模型实际给出 N 层」的结论——那会儿只铺了占位卡。
+    const prematureVerdict = await page.evaluate(() => /模型实际给出/.test(document.body.innerText));
+    check('生成中不提前宣布「模型实际给出 N 层」', !prematureVerdict);
+
     const bad = overlapReport.filter((r) => r.hits.length);
     const waitingShot = await shot(page, 'waiting');
     check(
