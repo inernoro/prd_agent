@@ -80,6 +80,44 @@ describe('canUseSrcDocPreview', () => {
   it('空内容不走 srcDoc', () => {
     expect(canUseSrcDocPreview('')).toBe(false);
   });
+
+  /**
+   * 属性写法的等价形式必须一视同仁。
+   *
+   * 第一版判据写成 `type\s*=\s*["']module["']`，硬要求引号存在——而 HTML 允许
+   * 不带引号的属性值，`<script type=module src=...>` 完全合法。于是这类页面被判成
+   * 「能走 srcDoc」，进去之后模块脚本因缺 CORS 被拦，白屏。
+   * 这就是 predicate-and-wiring-discipline 形状 1：语义相同、写法不同 → 判据翻转。
+   */
+  describe('属性写法的等价形式', () => {
+    const externalModuleForms = [
+      '<script type=module src=/assets/app.js></script>',
+      "<script type='module' src='/assets/app.js'></script>",
+      '<script type="module" src=/assets/app.js></script>',
+      '<script type=module src="/assets/app.js"></script>',
+      '<script TYPE=MODULE SRC="/assets/app.js"></script>',
+      '<script   type = "module"   src = "/assets/app.js" ></script>',
+      '<script src=/assets/app.js type=module></script>',
+      '<script defer type=module src=/a.js></script>',
+      '<script type="module" crossorigin src=/assets/index-DkZ1s.js></script>',
+    ];
+
+    it.each(externalModuleForms)('识别为外链 module，不走 srcDoc：%s', (html) => {
+      expect(canUseSrcDocPreview(html)).toBe(false);
+    });
+
+    const safeForms = [
+      '<script type=module>console.log(1)</script>',        // 内联 module，无跨域请求
+      '<script src=/a.js></script>',                         // 经典脚本，跨域不需要 CORS
+      '<script type=text/javascript src=/a.js></script>',
+      '<script type=modulepreload href=/a.js></script>',     // 不是 module，别误伤
+      '<div data-type="module" data-src="/a.js"></div>',     // 压根不是 script 标签
+    ];
+
+    it.each(safeForms)('不该误判，仍可走 srcDoc：%s', (html) => {
+      expect(canUseSrcDocPreview(html)).toBe(true);
+    });
+  });
 });
 
 /**

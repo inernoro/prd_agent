@@ -46,11 +46,46 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
  */
 export function canUseSrcDocPreview(html: string): boolean {
   if (!html) return false;
-  // 匹配带 src 且 type=module 的 script 标签，属性顺序两种都要认
-  const moduleWithSrc =
-    /<script\b[^>]*\btype\s*=\s*["']module["'][^>]*\bsrc\s*=/i.test(html) ||
-    /<script\b[^>]*\bsrc\s*=[^>]*\btype\s*=\s*["']module["']/i.test(html);
-  return !moduleWithSrc;
+  return !hasExternalModuleScript(html);
+}
+
+/**
+ * 有没有「外链的模块脚本」。
+ *
+ * 这里**逐个属性解析**而不是拿一条正则去撞整段标签。第一版写的是
+ * `type\s*=\s*["']module["']`，要求引号必须存在——而 `<script type=module src=...>`
+ * 是完全合法的 HTML，于是这类页面被判成「可以走 srcDoc」，进去之后模块脚本因缺 CORS
+ * 被拦，白屏。判据比它该管的范围窄，正是 predicate-and-wiring-discipline 形状 1：
+ * 语义相同、写法不同的输入让判据翻转。
+ *
+ * 属性值三种合法写法（双引号 / 单引号 / 不带引号）都要认，属性顺序与大小写也不能挑。
+ */
+function hasExternalModuleScript(html: string): boolean {
+  // 只取 <script ...> 的开标签部分，逐个解析里面的属性
+  const openTags = html.match(/<script\b[^>]*>/gi);
+  if (!openTags) return false;
+
+  for (const tag of openTags) {
+    const attrs = parseAttributes(tag);
+    if (attrs.type === 'module' && attrs.src) return true;
+  }
+  return false;
+}
+
+/** 解析标签里的属性；值支持双引号、单引号、无引号三种写法，键统一小写。 */
+function parseAttributes(tag: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // 去掉开头的 `<script` 与结尾的 `>`，只留属性区
+  const body = tag.replace(/^<\s*script\b/i, '').replace(/\/?>$/, '');
+  const re = /([^\s=/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+)))?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const key = m[1].toLowerCase();
+    if (!key) continue;
+    const value = (m[2] ?? m[3] ?? m[4] ?? '').trim().toLowerCase();
+    out[key] = value;
+  }
+  return out;
 }
 
 /**
