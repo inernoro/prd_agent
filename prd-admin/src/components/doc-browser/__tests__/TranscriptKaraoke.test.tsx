@@ -27,7 +27,7 @@ describe('TranscriptKaraoke unified playback', () => {
     const html = renderToStaticMarkup(
       <TranscriptKaraoke
         src="/recording.m4a"
-        noteMd={'## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 客户认为报价合理。\n**[00:03 - 00:06]** [说话人2] 交付质量需要保证。'}
+        noteMd={'## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 客户认为报价合理，报价还要再谈。\n**[00:03 - 00:06]** [说话人2] 交付质量需要保证，报价我们再看。'}
         documentMode
         onSaveNote={async () => true}
         onAskRecording={() => undefined}
@@ -37,8 +37,33 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(html).toContain('录音理解');
     expect(html).toContain('搜索录音里的关键词');
     expect(html).toContain('整场录音词云');
+    // 词云的权重按频次映射，不按排名。断言的是行为不是某个字面尺寸：
+    // 云里必须出现**多种**字号（旧写法 15 - index*0.2 也会多种，所以还要下一条），
+    // 且最大的那一档必须落在频次最高的词上。
+    expect(html).toContain('这场反复提到的是');
+    const cloudHtml = html.slice(html.indexOf('整场录音词云'));
+    const sizes = [...cloudHtml.matchAll(/font-size:([\d.]+)px/g)].map(m => Number(m[1]));
+    expect(sizes.length).toBeGreaterThan(1);
+    expect(new Set(sizes).size).toBeGreaterThan(1);
+    expect(sizes[0]).toBe(Math.max(...sizes));
+    // 次数直接写在词上，不再只藏在 title 里
+    expect(cloudHtml).toMatch(/报价<span[^>]*>\d+<\/span>/);
     expect(html).toContain('说话人1');
     expect(html).toContain('问这场录音');
+  });
+
+  it('没有任何词被重复提到时不出词云——「反复提到的是 X（1 次）」是句假话', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptKaraoke
+        src="/recording.m4a"
+        noteMd={'## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 今天先到这里。'}
+        documentMode
+      />,
+    );
+
+    expect(html).toContain('录音理解');
+    expect(html).not.toContain('整场录音词云');
+    expect(html).not.toContain('这场反复提到的是');
   });
 
   it('问答提示保留超过四万字录音的开头和结尾，不偷偷截成局部', () => {

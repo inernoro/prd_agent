@@ -292,11 +292,42 @@ export function TranscriptKaraoke({
             </p>
           )}
 
+          {/*
+            词云的权重必须按「出现几次」映射，不能按排名。旧写法是 15 - index*0.2：
+            18 个词从 15px 递减到 11.4px，肉眼分不出；而且排名相邻的两个词就算一个说了 30 次、
+            一个说了 3 次也一样大——等于把唯一有信息量的那一维抹平了，剩下一排一模一样的药丸。
+            现在字号/底色/边框/字重全部由 count 相对最大值决定，并把次数直接写在词上（不再藏 title），
+            开头先给一句结论，让人一眼知道「这场到底在反复讲什么」而不是自己读一排词去数。
+          */}
           {wordCloud.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
-              {wordCloud.map(({ word, count }, index) => (
-                <button key={word} type="button" onClick={() => setKeyword(word)} className="min-h-9 rounded-full px-3" style={{ fontSize: `${Math.max(11, 15 - index * 0.2)}px`, background: 'rgba(168,85,247,0.08)', color: 'var(--text-secondary)', border: '1px solid rgba(168,85,247,0.14)' }} title={`出现 ${count} 次，点击检索`}>{word}</button>
-              ))}
+            <div className="mt-3">
+              <p className="text-[11px] leading-relaxed text-token-muted">
+                这场反复提到的是 <strong className="font-semibold text-token-secondary">{wordCloud[0].word}</strong>（{wordCloud[0].count} 次）；点任意一个词看它出现在哪几处
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
+                {wordCloud.map(({ word, count }) => {
+                  const weight = count / wordCloud[0].count;
+                  return (
+                    <button
+                      key={word}
+                      type="button"
+                      onClick={() => setKeyword(word)}
+                      className="min-h-9 rounded-full px-3"
+                      style={{
+                        fontSize: `${Math.round((12 + weight * 7) * 2) / 2}px`,
+                        fontWeight: weight >= 0.6 ? 600 : 400,
+                        background: `rgba(168,85,247,${(0.06 + weight * 0.16).toFixed(3)})`,
+                        color: weight >= 0.45 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        border: `1px solid rgba(168,85,247,${(0.12 + weight * 0.26).toFixed(3)})`,
+                      }}
+                      title={`出现 ${count} 次，点击检索`}
+                    >
+                      {word}
+                      <span className="ml-1 text-[10px] font-normal tabular-nums opacity-60">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </section>

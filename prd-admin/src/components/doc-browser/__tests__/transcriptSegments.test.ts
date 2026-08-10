@@ -109,6 +109,35 @@ describe('buildTranscriptWordCloud', () => {
     expect(cloud.some(item => item.word.includes('报价'))).toBe(true);
     expect(cloud.some(item => item.word === '需要')).toBe(false);
   });
+
+  it('只出现一次的词不进词云——词云的意义是「反复提到」', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 2, text: '报价报价，顺带提一句排期' },
+    ]);
+    expect(cloud.some(item => item.word === '报价')).toBe(true);
+    // 排期只说了一次，不算这场的关键词
+    expect(cloud.some(item => item.word === '排期')).toBe(false);
+  });
+
+  it('丢掉「接上前一个窗口尾字」的滑窗碎片', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 2, text: '交付质量重要' },
+      { start: 2, end: 4, text: '匹配交付质量' },
+    ]);
+    // 交付、质量是真词
+    expect(cloud.some(item => item.word === '交付')).toBe(true);
+    expect(cloud.some(item => item.word === '质量')).toBe(true);
+    // 付质 是「交付」的尾字接上「质量」的首字滑出来的半截，频次与本体相同，必须丢
+    expect(cloud.some(item => item.word === '付质')).toBe(false);
+  });
+
+  it('按频次降序，第一个就是全场最常提到的（展示层的权重基准）', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 2, text: '排期排期排期，另外说说预算预算' },
+    ]);
+    expect(cloud[0]).toEqual({ word: '排期', count: 3 });
+    expect(cloud.every((item, index) => index === 0 || item.count <= cloud[index - 1].count)).toBe(true);
+  });
 });
 
 describe('parseRecordingAnswerParts', () => {

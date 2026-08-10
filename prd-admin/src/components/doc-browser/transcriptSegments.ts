@@ -178,8 +178,32 @@ export function buildTranscriptWordCloud(segments: TranscriptSegment[], limit = 
     if (STOP_WORDS.has(word)) return;
     counts.set(word, (counts.get(word) ?? 0) + 1);
   });
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'))
+  const ranked = [...counts.entries()]
+    // 只出现一次的不叫「反复提到」，是噪音。滤掉它同时也扫掉了大半滑窗碎片。
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'));
+
+  // 中文按 2 字滑窗切，必然产出「交付 + 质量 → 付质」这种骑在两个真词中间的碎片。
+  // STOP_WORDS 里的 的实 / 时原 / 来的 就是过去一个个手工补进去的同类货——
+  // 与其继续按词打补丁，不如把这个形态本身判掉。
+  //
+  // 碎片的特征是**两头都搭着别人**：首字是某个不更少见的词的尾字，尾字又是另一个
+  // 不更少见的词的首字。只判一头会误伤：「付质」和「质量」在频次相同时谁排在前面
+  // 由 localeCompare 决定，先被留下的那个会把真词顶掉（实测「质量」就这么被顶掉过）。
+  const tailMax = new Map<string, number>();
+  const headMax = new Map<string, number>();
+  for (const [word, count] of counts) {
+    if (word.length !== 2 || word[0] === word[1]) continue;
+    tailMax.set(word[1], Math.max(tailMax.get(word[1]) ?? 0, count));
+    headMax.set(word[0], Math.max(headMax.get(word[0]) ?? 0, count));
+  }
+  const isWindowFragment = (word: string, count: number) => word.length === 2
+    && word[0] !== word[1]
+    && (tailMax.get(word[0]) ?? 0) >= count
+    && (headMax.get(word[1]) ?? 0) >= count;
+
+  return ranked
+    .filter(([word, count]) => !isWindowFragment(word, count))
     .slice(0, limit)
     .map(([word, count]) => ({ word, count }));
 }
