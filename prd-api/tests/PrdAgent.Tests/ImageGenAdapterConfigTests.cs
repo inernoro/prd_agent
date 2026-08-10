@@ -120,6 +120,18 @@ public class ImageGenAdapterConfigTests
         Assert.True(sizeNotApplicable.SizesNotApplicable);
     }
 
+    [Fact]
+    public void OpenRouterGptImage2_UsesSamePromptSizeTransport()
+    {
+        var config = ImageGenModelAdapterRegistry.TryMatch("openai/gpt-image-2");
+
+        Assert.NotNull(config);
+        Assert.Equal(SizeConstraintTypes.Adaptive, config.SizeConstraintType);
+        Assert.Equal(SizeParamFormats.None, config.SizeParamFormat);
+        Assert.False(config.SizesNotApplicable);
+        Assert.Contains(config.SizesByResolution["1k"], x => x.AspectRatio == "3:4" && x.Size == "768x1024");
+    }
+
     /// <summary>
     /// 验证 GetAdapterInfo 返回正确的 SizesByResolution
     /// </summary>
