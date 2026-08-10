@@ -157,6 +157,22 @@ export function renameTranscriptSpeaker(md: string, currentName: string, nextNam
   }).join('\n');
 }
 
+/**
+ * 虚词字：这些字几乎不会出现在「值得进词云的双字实词」里。
+ *
+ * 由来：2026-08-10 拿真实转写的词云一看，18 个词里 6 个是半截词
+ * （个东 / 的就 / 个动 / 个就 / 后呢 / 它是）。它们躲过滑窗碎片规则的原因很具体——
+ * 那条规则要靠左右两侧的真词当锚点，而「一个 / 这个 / 就是」这些锚点本身是停用词，
+ * 早在建索引前就被删了，碎片于是变成无锚点的孤儿活了下来。
+ * 与其继续给锚点打补丁，不如直接判字：含虚词字的双字组合本来就没有进词云的价值。
+ *
+ * 刻意不收的字：在（存在/实在）、上下（下单/上线）、会能要给对到最更再去看好说，
+ * 它们都能组成真实实词，收进来会误伤。宁可漏掉几个噪音，不可吃掉真词。
+ */
+const FUNCTION_CHARS = new Set(Array.from(
+  '的了是就都而与或着也很呢吧吗啊嗯哦把被让但又才只已之其此该每些什么嘛哈呀咯个们我你他她它这那不没咱',
+));
+
 const STOP_WORDS = new Set([
   '我们', '你们', '他们', '这个', '那个', '然后', '就是', '因为', '所以', '如果', '可以',
   '还是', '没有', '一个', '什么', '怎么', '现在', '觉得', '进行', '已经', '需要', '不是',
@@ -176,6 +192,8 @@ export function buildTranscriptWordCloud(segments: TranscriptSegment[], limit = 
   tokens.forEach((token) => {
     const word = token.toLowerCase();
     if (STOP_WORDS.has(word)) return;
+    // 双字组合里只要带虚词字就不是实词，直接不入账
+    if (word.length === 2 && Array.from(word).some(char => FUNCTION_CHARS.has(char))) return;
     counts.set(word, (counts.get(word) ?? 0) + 1);
   });
   const ranked = [...counts.entries()]

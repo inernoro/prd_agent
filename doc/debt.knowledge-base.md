@@ -516,6 +516,23 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 
 ---
 
+## 录音词云的分词质量 — 待做（本轮只治了展示与噪音，没换分词器）
+
+**现状**：中文按 2 字滑窗切词。这个做法的好处是零依赖、打开页面即用，代价是必然产出
+「交付 + 质量 → 付质」这类骑在两个真词中间的碎片。
+
+**2026-08-10 做了什么**：把权重从「按排名」改成「按频次」（展示层的真问题），
+并加了两道噪音闸——含虚词字的双字组合不入账、两头都搭着不更少见邻居的双字组合判为碎片。
+拿真实转写实测，18 个词里的 6 个半截词（个东 / 的就 / 个动 / 个就 / 后呢 / 它是）被清掉。
+
+**留下的边界**：连着不带标点的实词长串（如「存在下单会议」），每个双字窗频次相同，
+中间那个真词左右都有不更少见的邻居，判据无法把它和真碎片区分开，会被一起吃掉。
+真实转写里实词之间几乎总隔着虚词，长串很少出现，所以本轮不修。
+守卫用例 `已知边界：连着不带标点的实词长串，中间那个词会被当碎片吃掉`
+把这个行为钉住——它变红说明有人动了判据，需要重新想清楚，而不是悄悄漂移。
+
+**根治方向**：换真分词器（jieba 类）。届时上面两道闸和这条边界用例一并删除。
+
 ---
 
 ## 实现来源
@@ -530,3 +547,4 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 | 划词编辑单测 | `prd-admin/src/components/doc-browser/__tests__/selectionEdit.test.ts` |
 | 双链自动补全 | `prd-admin/src/components/doc-browser/WikilinkAutocomplete.tsx` |
 | 星系与宇宙图 | `prd-admin/src/pages/document-store/DocumentGalaxyView.tsx`、`prd-admin/src/pages/document-store/UniverseGraphPage.tsx`、`prd-admin/src/pages/document-store/DocumentStorePage.tsx` |
+| 录音词云 | `prd-admin/src/components/doc-browser/transcriptSegments.ts`（`buildTranscriptWordCloud` / `FUNCTION_CHARS` / `STOP_WORDS`）、`prd-admin/src/components/doc-browser/__tests__/transcriptSegments.test.ts`、`prd-admin/src/components/doc-browser/TranscriptKaraoke.tsx` |

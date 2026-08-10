@@ -131,6 +131,42 @@ describe('buildTranscriptWordCloud', () => {
     expect(cloud.some(item => item.word === '付质')).toBe(false);
   });
 
+  it('含虚词字的双字组合不进词云——真实转写里 1/3 的噪音出在这', () => {
+    // 「一个东西」滑窗出 一个/个东/东西：一个是停用词，个东是碎片但没有左锚点
+    // （锚点「一个」已被停用词删掉），只有判虚词字才拦得住它。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '一个东西，另一个东西，还有一个东西' },
+    ]);
+    expect(cloud.some(item => item.word === '东西')).toBe(true);
+    expect(cloud.some(item => item.word === '个东')).toBe(false);
+    expect(cloud.some(item => item.word.includes('的'))).toBe(false);
+  });
+
+  it('虚词字表不吃真词：含 在/下/会 的实词必须留下', () => {
+    // 这三个字刻意没收进 FUNCTION_CHARS，因为它们能组成真实实词。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '存在。下单。会议。' },
+      { start: 3, end: 6, text: '存在。下单。会议。' },
+    ]);
+    for (const word of ['存在', '下单', '会议']) {
+      expect(cloud.some(item => item.word === word)).toBe(true);
+    }
+  });
+
+  it('已知边界：连着不带标点的实词长串，中间那个词会被当碎片吃掉', () => {
+    // 「存在下单会议」这种一口气 6 个字的实词串里，每个双字窗频次都相同，
+    // 中间的「下单」左右两侧都有不更少见的邻居，判据无法区分它和真碎片。
+    // 真实转写里实词之间几乎总隔着虚词（已被虚词字过滤掉），长串很少出现，
+    // 所以这条边界留着不修——真要根治得换真分词器，不是这次「简单修正」的范围。
+    // 这条用例存在的意义是：它变红时说明有人动了判据，得重新想清楚，而不是悄悄漂移。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '存在下单会议，存在下单会议' },
+    ]);
+    expect(cloud.some(item => item.word === '存在')).toBe(true);
+    expect(cloud.some(item => item.word === '会议')).toBe(true);
+    expect(cloud.some(item => item.word === '下单')).toBe(false);
+  });
+
   it('按频次降序，第一个就是全场最常提到的（展示层的权重基准）', () => {
     const cloud = buildTranscriptWordCloud([
       { start: 0, end: 2, text: '排期排期排期，另外说说预算预算' },
