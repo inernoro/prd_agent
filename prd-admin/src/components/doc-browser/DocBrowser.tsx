@@ -30,6 +30,7 @@ const MDEditor = lazy(() => import('@uiw/react-md-editor'));
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
 import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '@/lib/tagPalette';
 import { useReaderChromeStore } from '@/stores/readerChromeStore';
+import { glassMobileHeader } from '@/lib/glassStyles';
 import { compareDocBrowserEntries, computeReorderUpdates, type DocBrowserReorderUpdate, type DocBrowserSortMode } from './docBrowserSort';
 
 export type { DocBrowserSortMode } from './docBrowserSort';
@@ -2830,22 +2831,233 @@ export function DocBrowser({
   }
 
   const isCards = appearance === 'cards';
+  const mobileHasSelectedEntry = Boolean(selectedEntryId);
+  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen && mobileHasSelectedEntry;
+  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen && mobileHasSelectedEntry;
+  // 沉浸阅读态（移动端正文打开）：外层卡片 chrome（p-3 / 圆角 / 浮起面）全部去掉，
+  // 正文从沉浸顶栏下边缘直接开始、左右满铺（2026-08-10 用户「主页面尽可能的大」）
+  const mobileDetailChromeless = isMobile && mobileDetail && mobileHasSelectedEntry;
   // cards: 双独立圆角卡片 + 中间 12px 可拖拽分隔条（周报风格）；inset: 单容器无 gap（知识库/分享）
   // cards 模式不再用 gap-3，改由两卡片之间的 ResizeHandle（宽 12px）承担间距 + 拖拽调宽
   const rootClass = isCards
-    ? 'flex flex-1 overflow-hidden p-3 rounded-2xl surface-raised'
-    : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]';
+    ? (mobileDetailChromeless ? 'flex flex-1 overflow-hidden' : 'flex flex-1 overflow-hidden p-3 rounded-2xl surface-raised')
+    : (mobileDetailChromeless ? 'surface-inset flex flex-1 gap-0 overflow-hidden' : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]');
   // cards 模式下左右各自包圆角卡片；inset 模式下走原生分隔线
   const sidebarClass = isCards
     ? 'surface-reading relative flex flex-shrink-0 flex-col rounded-xl overflow-hidden'
     : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
-  const mobileHasSelectedEntry = Boolean(selectedEntryId);
-  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen && mobileHasSelectedEntry;
-  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen && mobileHasSelectedEntry;
+
+  // ── 沉浸阅读单行顶栏（移动端）：返回 + 标题 + 字号 + 全屏 + 更多合成一行，
+  //    替代「AppShell 顶栏 + 阅读工具栏」两行（2026-08-10 用户「还有这么多空间没有利用到」）──
+  const mobileImmersiveReading = isMobile && mobileDetail && !!selectedEntryData && !selectedEntryData.isFolder;
+  const selectedIsHtmlPreview = !!selectedEntryData && !selectedEntryData.isFolder
+    && (getFileTypeConfig(selectedEntryData.title, selectedEntryData.contentType).preview === 'html'
+      || (selectedEntryData.contentType ?? '').toLowerCase().includes('html')
+      || /\.html?$/i.test(selectedEntryData.title));
+
+  // 「更多」按钮 + 菜单：桌面渲染在工具栏尾部、移动端渲染在沉浸顶栏——同一份节点，杜绝双份漂移
+  const readerMoreNode = (() => {
+    const sel = selectedEntryData;
+    if (!sel || sel.isFolder) return null;
+    const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
+    const showTranscribe = canTranscribe(sel) && !!onTranscribe;
+    const showReprocess = canReprocess(sel) && !!onReprocess;
+    const isAcc = !!(sel.metadata?.kind === 'acceptance-report' || sel.metadata?.verdict);
+    const showEvidence = isAcc && !!preview?.text && !editMode;
+    const showVersions = !!versionApi && !isMobile && !editMode;
+    const isSubscription = sel.sourceType === 'subscription';
+    const githubSha = sel.metadata?.github_sha;
+    const showSubscription = isSubscription && !!onOpenSubscription;
+    // 移动端把低频动作（目录 / 划词评论 / 编辑）折进菜单，顶栏只留 字号/全屏/更多
+    const showDirectoryItem = isMobile;
+    const showCommentsItem = isMobile && !!trackedEntryForComments;
+    const showEditItem = isMobile && !!onSaveContent
+      && getFileTypeConfig(sel.title, sel.contentType).editable && !editMode;
+    // 原工具栏 chips（验收结论 / README / 置顶 / new / 标签）折进菜单顶部信息区
+    const vc = getVerdictConfig(sel.metadata?.verdict);
+    const tier = sel.metadata?.tier;
+    const isReadme = sel.id === primaryEntryId;
+    const isPinnedItem = pinnedSet.has(sel.id) && !isReadme;
+    const infoTags = sel.tags ?? [];
+    const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
+    const infoAny = !!vc || isReadme || isPinnedItem || infoTags.length > 0 || recentlyChanged;
+    const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions
+      || showSubscription || showDirectoryItem || showCommentsItem || showEditItem || infoAny || !!readerMenuExtra;
+    if (!any) return null;
+    return (
+      <div ref={readerMoreRef} className="relative flex-shrink-0" style={{ marginLeft: 'auto' }}>
+        <button
+          onClick={() => setReaderMoreOpen(v => !v)}
+          className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+          title="更多操作">
+          <MoreHorizontal size={13} />
+        </button>
+        <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
+          anchorRef={readerMoreRef} minWidth={190}
+          className="surface-popover rounded-[10px] p-1.5">
+          {infoAny && (
+            <div
+              className="flex flex-wrap items-center gap-1.5 px-2 pt-1.5 pb-2 mb-1"
+              style={{ borderBottom: '1px solid var(--border-faint)' }}
+            >
+              {vc && (
+                <span className={`${TOOLBAR_CHIP} font-bold tabular-nums`}
+                  style={{ background: vc.background, color: vc.color, border: vc.border }}
+                  title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}>
+                  {vc.label}{tier ? ` ${tier}` : ''}
+                </span>
+              )}
+              {isReadme && (
+                <span className={TOOLBAR_CHIP}
+                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
+                  README
+                </span>
+              )}
+              {isPinnedItem && (
+                <span className={TOOLBAR_CHIP}
+                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
+                  置顶
+                </span>
+              )}
+              {recentlyChanged && (
+                <span className={`${TOOLBAR_CHIP} font-bold`}
+                  style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)', letterSpacing: '0.3px' }}
+                  title={sel.lastChangedAt ? `最近更新: ${new Date(sel.lastChangedAt).toLocaleString('zh-CN')}` : ''}>
+                  new
+                </span>
+              )}
+              {infoTags.map(tag => {
+                const c = getTagColor(tag, tagColorMap);
+                return (
+                  <span key={tag} className={TOOLBAR_CHIP}
+                    style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
+                    #{tag}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {readerMenuExtra}
+          {showDirectoryItem && (
+            <ReaderMoreItem icon={<PanelLeftOpen size={13} />} label="文档目录"
+              onClick={() => { setReaderMoreOpen(false); setMobileDirectoryOpen(true); }} />
+          )}
+          {showCommentsItem && (
+            <ReaderMoreItem icon={<MessageSquareText size={13} />}
+              label={commentCount > 0 ? `划词评论 · ${commentCount} 条` : '划词评论'}
+              onClick={() => { setReaderMoreOpen(false); setInlineCommentsOpen(true); }} />
+          )}
+          {showEditItem && (
+            <ReaderMoreItem icon={<Pencil size={13} />} label="编辑文档"
+              onClick={() => { setReaderMoreOpen(false); setEditContent(preview?.text ?? ''); setEditMode(true); }} />
+          )}
+          {showTranscribe && (
+            <ReaderMoreItem icon={<AudioLines size={13} />} label="转录并生成摘要"
+              onClick={() => { setReaderMoreOpen(false); onTranscribe!(sel.id); }} />
+          )}
+          {showSubtitle && (
+            <ReaderMoreItem icon={<Sparkles size={13} />} label="生成字幕"
+              onClick={() => { setReaderMoreOpen(false); onGenerateSubtitle!(sel.id); }} />
+          )}
+          {showReprocess && (
+            <ReaderMoreItem icon={<Wand2 size={13} />} label="用智能体加工"
+              onClick={() => { setReaderMoreOpen(false); onReprocess!(sel.id); }} />
+          )}
+          {showEvidence && (
+            <ReaderMoreItem icon={<Workflow size={13} />} label="证据板"
+              onClick={() => { setReaderMoreOpen(false); setEvidenceGraphOpen(true); }} />
+          )}
+          {showVersions && (
+            <ReaderMoreItem icon={<History size={13} />} label="历史版本"
+              onClick={() => { setReaderMoreOpen(false); setVersionHistoryOpen(true); }} />
+          )}
+          {showSubscription && (
+            <ReaderMoreItem icon={<Rss size={13} />}
+              label={githubSha ? `订阅信息 · #${githubSha.slice(0, 7)}` : '订阅信息'}
+              onClick={() => { setReaderMoreOpen(false); onOpenSubscription!(sel.id); }} />
+          )}
+        </AnchoredMenu>
+      </div>
+    );
+  })();
 
   return (
     <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
+      {/* ── 沉浸阅读单行顶栏（移动端，portal 到 body）：返回 + 标题 + 字号 + 全屏 + 更多。
+          AppShell 顶栏与阅读工具栏两行合一，编辑态只留 返回 + 标题（保存/取消在下方工具栏行）。 ── */}
+      {mobileImmersiveReading && !readerFullscreen && createPortal(
+        <header
+          className="fixed top-0 left-0 right-0 z-100 flex items-center gap-1 pl-1 pr-2"
+          style={{
+            ...glassMobileHeader,
+            height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => { setMobileDetail(false); setMobileDirectoryOpen(false); }}
+            className="h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-xl"
+            style={{ color: 'var(--text-primary)' }}
+            aria-label="返回列表"
+          >
+            <ChevronLeft size={22} />
+          </button>
+          <span
+            className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-none"
+            style={{ color: 'var(--text-primary)' }}
+            title={selectedEntryData ? getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines) : undefined}
+          >
+            {selectedEntryData ? getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines) : ''}
+          </span>
+          {!editMode && (
+            <>
+              {selectedIsHtmlPreview && (
+                <button
+                  type="button"
+                  aria-label="缩小字号"
+                  disabled={htmlZoom <= HTML_ZOOM_MIN}
+                  onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
+                  className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+                  style={{ color: 'var(--text-secondary)' }}
+                  title={`缩小字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+                  <ZoomOut size={16} />
+                </button>
+              )}
+              {selectedIsHtmlPreview && htmlZoom !== 1 && (
+                <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                  {Math.round(htmlZoom * 100)}%
+                </span>
+              )}
+              {selectedIsHtmlPreview && (
+                <button
+                  type="button"
+                  aria-label="放大字号"
+                  disabled={htmlZoom >= HTML_ZOOM_MAX}
+                  onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
+                  className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+                  style={{ color: 'var(--text-secondary)' }}
+                  title={`放大字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+                  <ZoomIn size={16} />
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label="全屏阅读"
+                onClick={toggleReaderFullscreen}
+                className={TOOLBAR_ICON_BTN_MOBILE}
+                style={{ color: 'var(--text-secondary)' }}
+                title="全屏阅读">
+                <Maximize2 size={16} />
+              </button>
+              {readerMoreNode}
+            </>
+          )}
+        </header>,
+        document.body,
+      )}
       {sidebarAsMobileDrawer && (
         <div
           className="fixed inset-0 z-[130]"
@@ -3277,7 +3489,7 @@ export function DocBrowser({
           全屏时整列经 ReaderColumnFrame createPortal 到 body 铺满视口。 */}
       <ReaderColumnFrame fullscreen={readerFullscreen}>
       <div
-        className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
+        className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? (mobileDetailChromeless ? ' surface-reading' : ' surface-reading rounded-xl') : ''}`}
         style={{ minHeight: 0, display: isMobile && (!mobileDetail || !selectedEntryId) ? 'none' : undefined }}
       >
         {selectedEntryId ? (
@@ -3335,6 +3547,9 @@ export function DocBrowser({
                 )}
               </div>
             )}
+            {/* 行2：主操作行。移动端非编辑态不渲染——动作全部并入沉浸顶栏一行
+                （2026-08-10 用户「还有这么多空间没有利用到」）；编辑态保留（保存/取消在此）。 */}
+            {(!isMobile || editMode) && (
             <div
               className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-nowrap overflow-x-auto' : 'px-5 flex-wrap'}`}
               style={{
@@ -3344,18 +3559,6 @@ export function DocBrowser({
                 overscrollBehaviorX: isMobile ? 'contain' : undefined,
               }}
             >
-              {/* 移动端目录抽屉入口：不再把正文切回列表。 */}
-              {isMobile && (
-                <button
-                  onClick={() => setMobileDirectoryOpen(true)}
-                  className={`${TOOLBAR_ICON_BTN_MOBILE} hover:opacity-80`}
-                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
-                  aria-label="打开目录"
-                  title="打开目录"
-                >
-                  <PanelLeftOpen size={15} />
-                </button>
-              )}
               {/* 阅读区返回按钮：返回当前空间的文档列表（上一层），仅调用方传 onBackToList 才显示 */}
               {onBackToList && !isMobile && (
                 <button
@@ -3398,51 +3601,11 @@ export function DocBrowser({
                   <PanelRight size={12} /> {rightPanelCollapsed ? '章节' : '收起'}
                 </button>
               )}
-              {/* HTML 报告字号档位（移动端专属；与其他阅读动作同一行，不单独占行——
-                  2026-08-09 用户反馈「字号不必单独一行」） */}
-              {isMobile && !editMode && (() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
-                const isHtml = getFileTypeConfig(sel.title, sel.contentType).preview === 'html'
-                  || (sel.contentType ?? '').toLowerCase().includes('html') || /\.html?$/i.test(sel.title);
-                if (!isHtml) return null;
-                return (
-                  <>
-                    <button
-                      type="button"
-                      aria-label="缩小字号"
-                      disabled={htmlZoom <= HTML_ZOOM_MIN}
-                      onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
-                      className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
-                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
-                      title={`缩小字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
-                      <ZoomOut size={15} />
-                    </button>
-                    {htmlZoom !== 1 && (
-                      <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        {Math.round(htmlZoom * 100)}%
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      aria-label="放大字号"
-                      disabled={htmlZoom >= HTML_ZOOM_MAX}
-                      onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
-                      className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
-                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
-                      title={`放大字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
-                      <ZoomIn size={15} />
-                    </button>
-                  </>
-                );
-              })()}
-              {/* 全屏阅读（CSS 全屏覆盖层，ESC / 再点一次退出）。
-                  移动端不再隐藏：周报等 HTML 报告被 TabBar + 底部导航夹成一小条（2026-08-09
-                  用户截图反馈「屏幕中间一点点，太小了」），全屏铺满视口是移动端的主要阅读姿势。 */}
-              {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
+              {/* 全屏阅读（CSS 全屏覆盖层，ESC / 再点一次退出）。移动端入口在沉浸顶栏。 */}
+              {selectedEntryId && !isMobile && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
-                  className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+                  className={TOOLBAR_ICON_BTN}
                   style={{
                     background: readerFullscreen ? 'var(--selection-bg)' : 'var(--bg-card)',
                     border: `1px solid ${readerFullscreen ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
@@ -3508,129 +3671,10 @@ export function DocBrowser({
                   </div>
                 );
               })()}
-              {/* 「更多」置尾（ml-auto 靠右）：低频动作 + 从工具栏折进来的徽标/标签信息。
-                  2026-07-31「一排七八个彩色按钮谁是主操作看不出来」+ 2026-08-10「该折进去就折进去」。 */}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
-                const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
-                const showTranscribe = canTranscribe(sel) && !!onTranscribe;
-                const showReprocess = canReprocess(sel) && !!onReprocess;
-                const isAcc = !!(selectedEntryData?.metadata?.kind === 'acceptance-report' || selectedEntryData?.metadata?.verdict);
-                const showEvidence = isAcc && !!preview?.text && !editMode;
-                const showVersions = !!versionApi && !isMobile && !editMode;
-                const isSubscription = sel.sourceType === 'subscription';
-                const githubSha = sel.metadata?.github_sha;
-                const showSubscription = isSubscription && !!onOpenSubscription;
-                // 移动端把低频动作（划词评论 / 编辑）折进菜单，工具栏只留 目录/字号/全屏/更多
-                const showCommentsItem = isMobile && !!trackedEntryForComments;
-                const showEditItem = isMobile && !!onSaveContent
-                  && getFileTypeConfig(sel.title, sel.contentType).editable && !editMode;
-                // 原工具栏 chips（验收结论 / README / 置顶 / new / 标签）折进菜单顶部信息区
-                const vc = getVerdictConfig(sel.metadata?.verdict);
-                const tier = sel.metadata?.tier;
-                const isReadme = sel.id === primaryEntryId;
-                const isPinnedItem = pinnedSet.has(sel.id) && !isReadme;
-                const infoTags = sel.tags ?? [];
-                const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
-                const infoAny = !!vc || isReadme || isPinnedItem || infoTags.length > 0 || recentlyChanged;
-                const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions
-                  || showSubscription || showCommentsItem || showEditItem || infoAny || !!readerMenuExtra;
-                if (!any) return null;
-                return (
-                  <div ref={readerMoreRef} className="relative flex-shrink-0" style={{ marginLeft: 'auto' }}>
-                    <button
-                      onClick={() => setReaderMoreOpen(v => !v)}
-                      className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
-                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                      title="更多操作">
-                      <MoreHorizontal size={13} />
-                    </button>
-                    <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
-                      anchorRef={readerMoreRef} minWidth={190}
-                      className="surface-popover rounded-[10px] p-1.5">
-                      {infoAny && (
-                        <div
-                          className="flex flex-wrap items-center gap-1.5 px-2 pt-1.5 pb-2 mb-1"
-                          style={{ borderBottom: '1px solid var(--border-faint)' }}
-                        >
-                          {vc && (
-                            <span className={`${TOOLBAR_CHIP} font-bold tabular-nums`}
-                              style={{ background: vc.background, color: vc.color, border: vc.border }}
-                              title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}>
-                              {vc.label}{tier ? ` ${tier}` : ''}
-                            </span>
-                          )}
-                          {isReadme && (
-                            <span className={TOOLBAR_CHIP}
-                              style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
-                              README
-                            </span>
-                          )}
-                          {isPinnedItem && (
-                            <span className={TOOLBAR_CHIP}
-                              style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
-                              置顶
-                            </span>
-                          )}
-                          {recentlyChanged && (
-                            <span className={`${TOOLBAR_CHIP} font-bold`}
-                              style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)', letterSpacing: '0.3px' }}
-                              title={sel.lastChangedAt ? `最近更新: ${new Date(sel.lastChangedAt).toLocaleString('zh-CN')}` : ''}>
-                              new
-                            </span>
-                          )}
-                          {infoTags.map(tag => {
-                            const c = getTagColor(tag, tagColorMap);
-                            return (
-                              <span key={tag} className={TOOLBAR_CHIP}
-                                style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
-                                #{tag}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
-                      {readerMenuExtra}
-                      {showCommentsItem && (
-                        <ReaderMoreItem icon={<MessageSquareText size={13} />}
-                          label={commentCount > 0 ? `划词评论 · ${commentCount} 条` : '划词评论'}
-                          onClick={() => { setReaderMoreOpen(false); setInlineCommentsOpen(true); }} />
-                      )}
-                      {showEditItem && (
-                        <ReaderMoreItem icon={<Pencil size={13} />} label="编辑文档"
-                          onClick={() => { setReaderMoreOpen(false); setEditContent(preview?.text ?? ''); setEditMode(true); }} />
-                      )}
-                      {showTranscribe && (
-                        <ReaderMoreItem icon={<AudioLines size={13} />} label="转录并生成摘要"
-                          onClick={() => { setReaderMoreOpen(false); onTranscribe!(sel.id); }} />
-                      )}
-                      {showSubtitle && (
-                        <ReaderMoreItem icon={<Sparkles size={13} />} label="生成字幕"
-                          onClick={() => { setReaderMoreOpen(false); onGenerateSubtitle!(sel.id); }} />
-                      )}
-                      {showReprocess && (
-                        <ReaderMoreItem icon={<Wand2 size={13} />} label="用智能体加工"
-                          onClick={() => { setReaderMoreOpen(false); onReprocess!(sel.id); }} />
-                      )}
-                      {showEvidence && (
-                        <ReaderMoreItem icon={<Workflow size={13} />} label="证据板"
-                          onClick={() => { setReaderMoreOpen(false); setEvidenceGraphOpen(true); }} />
-                      )}
-                      {showVersions && (
-                        <ReaderMoreItem icon={<History size={13} />} label="历史版本"
-                          onClick={() => { setReaderMoreOpen(false); setVersionHistoryOpen(true); }} />
-                      )}
-                      {showSubscription && (
-                        <ReaderMoreItem icon={<Rss size={13} />}
-                          label={githubSha ? `订阅信息 · #${githubSha.slice(0, 7)}` : '订阅信息'}
-                          onClick={() => { setReaderMoreOpen(false); onOpenSubscription!(sel.id); }} />
-                      )}
-                    </AnchoredMenu>
-                  </div>
-                );
-              })()}
+              {/* 「更多」置尾（桌面；移动端渲染在沉浸顶栏，共享同一节点） */}
+              {!isMobile && readerMoreNode}
             </div>
+            )}
             </>
             )}
             {/* 全屏沉浸态：半透明浮动退出钮（fixed 挂在 portal 树内，z 高于全屏覆盖层） */}

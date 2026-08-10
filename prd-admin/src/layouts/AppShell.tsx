@@ -46,7 +46,6 @@ import {
   GraduationCap,
   Droplets,
   ExternalLink,
-  ChevronLeft,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -1044,34 +1043,8 @@ export default function AppShell() {
         );
       })()}
       {/* ── 移动端: 全局顶部导航栏 ── */}
-      {isMobile && readerOverride && (
-        // 沉浸阅读顶栏：文档标题替代应用名，返回箭头是唯一出口（一步回列表即恢复完整顶栏）
-        <header
-          className="fixed top-0 left-0 right-0 z-100 flex items-center gap-1 px-2"
-          style={{
-            ...glassMobileHeader,
-            height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
-            paddingTop: 'env(safe-area-inset-top, 0px)',
-          }}
-        >
-          <button
-            type="button"
-            onClick={readerOverride.onBack}
-            className="h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-xl"
-            style={{ color: 'var(--text-primary)' }}
-            aria-label="返回列表"
-          >
-            <ChevronLeft size={22} />
-          </button>
-          <span
-            className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-none pr-3"
-            style={{ color: 'var(--text-primary)' }}
-            title={readerOverride.title}
-          >
-            {readerOverride.title}
-          </span>
-        </header>
-      )}
+      {/* 沉浸阅读态（readerOverride 激活）：顶栏由 DocBrowser 自绘的单行阅读栏接管
+          （返回 + 标题 + 字号/全屏/更多同一行），AppShell 不再渲染自己的顶栏。 */}
       {isMobile && !readerOverride && (
         <header
           className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
@@ -2000,7 +1973,9 @@ export default function AppShell() {
               'relative w-full flex-1 min-h-0 flex flex-col',
               useCanvasPanel && 'overflow-auto',
               isMobile
-                ? 'px-[var(--mobile-padding,16px)] py-3'
+                // 沉浸阅读：主区零内边距，正文从顶栏下边缘直接开始、左右满铺
+                //（2026-08-10 用户「还有这么多空间没有利用到」「主页面尽可能的大」）
+                ? (readerOverride ? 'p-0' : 'px-[var(--mobile-padding,16px)] py-3')
                 : fullBleedMain
                   ? 'p-0'
                   : isHomePage
