@@ -15,6 +15,8 @@ interface Props {
   onClose: () => void;
   /** 评论开关变更后回传给父组件，避免关闭再打开时从 stale site.commentsEnabled 重新初始化 */
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
+  /** 提问开关同理：只改弹窗内的 state，关掉再打开会从 stale site.askEnabled 退回旧值 */
+  onAskEnabledChange?: (siteId: string, enabled: boolean) => void;
   /** 是否可改「允许访客评论」开关（仅 owner/editor）。viewer 角色只读评论、不显示开关 */
   canToggleComments?: boolean;
 }
@@ -23,7 +25,7 @@ interface Props {
  * 站点预览模态框 —— 在 iframe 中加载站点入口 URL，右侧可展开评论面板
  * 遵循 frontend-modal.md 三硬约束: inline style 高度 + createPortal + min-h-0
  */
-export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange, canToggleComments = true }: Props) {
+export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange, onAskEnabledChange, canToggleComments = true }: Props) {
   const [loading, setLoading] = useState(true);
   /** 只在 iframe 真的 onError 时为 true —— 不由超时推断（见下方 effect 注释） */
   const [errored, setErrored] = useState(false);
@@ -273,7 +275,11 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
           siteId={site.id}
           siteTitle={site.title}
           onClose={() => setShowAskConfig(false)}
-          onSaved={(cfg) => setAskEnabled(cfg.enabled)}
+          onSaved={(cfg) => {
+            setAskEnabled(cfg.enabled);
+            // 同步父组件持有的 site 快照 + 列表，避免关闭再开时退回旧值（与评论开关同一处理）
+            onAskEnabledChange?.(site.id, cfg.enabled);
+          }}
         />
       )}
     </div>

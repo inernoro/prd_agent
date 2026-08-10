@@ -178,6 +178,17 @@ function joinUrl(base: string, path: string) {
   return `${b}/${p}`;
 }
 
+/**
+ * 把 `/api/...` 拼成实际要请求的地址。
+ *
+ * 走 apiRequest 的调用不用管这件事，但**裸 fetch 必须自己拼**——SSE 和 FormData 都绕开了
+ * apiRequest。后端与前端分开部署时（VITE_API_BASE_URL 指向另一个域），相对路径会打到
+ * 前端自己身上，拿回一个 404 或者一坨 HTML 而不是事件流。
+ */
+export function buildApiUrl(path: string) {
+  return joinUrl(getApiBaseUrl(), path);
+}
+
 // ─── Upload (FormData) ───
 
 export async function uploadSite(input: {
@@ -698,8 +709,10 @@ export interface SiteAskConfig {
   /** 0 = 用系统默认 */
   dailyLimit: number;
   updatedAt?: string | null;
-  /** 一个面板最多显示几条开场问题（服务端 SSOT，前端不自己定） */
+  /** 题库最多存几条（服务端 SSOT，前端不自己定）。这是**存储**上限，不是展示上限 */
   maxQuestions: number;
+  /** 一条分享面板最多显示几条（题库比它大，分享时挑子集） */
+  maxDisplay?: number;
   maxQuestionLength: number;
 }
 

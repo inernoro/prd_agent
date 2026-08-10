@@ -34,7 +34,7 @@ import {
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import { getSiteAskConfig } from '@/services/real/webPages';
-import { resolveShareAskSelection } from '@/components/web-hosting/ask/askTypes';
+import { resolveShareAskSelection, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
 import {
   canDeleteInWebHosting,
@@ -1630,6 +1630,10 @@ export default function WebPagesPage() {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
             setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, commentsEnabled: enabled } : prev));
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, commentsEnabled: enabled } : x)));
+          }}
+          onAskEnabledChange={(sid, enabled) => {
+            setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, askEnabled: enabled } : prev));
+            setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, askEnabled: enabled } : x)));
           }}
         />
       )}
@@ -3405,19 +3409,27 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                   <div className="flex flex-wrap gap-2">
                     {Array.from(new Set([...askLibrary, ...askPicked])).map((q) => {
                       const active = askPicked.includes(q);
+                      // 挑满就挡住：这份选择就是面板要显示的那份，选超了后端也存不下，
+                      // 与其让第 5 条静默消失，不如当场说明「最多几条」。
+                      const blocked = !active && askPicked.length >= ASK_MAX_DISPLAY;
                       return (
                         <button
                           key={q}
                           type="button"
+                          disabled={blocked}
+                          title={blocked ? `一个面板最多显示 ${ASK_MAX_DISPLAY} 条，取消一条再选` : undefined}
                           onClick={() => {
                             setAskTouched(true);
                             setAskPicked((prev) =>
-                              prev.includes(q) ? prev.filter((x) => x !== q) : [...prev, q],
+                              prev.includes(q)
+                                ? prev.filter((x) => x !== q)
+                                : prev.length >= ASK_MAX_DISPLAY ? prev : [...prev, q],
                             );
                           }}
                           className="px-3 py-1 rounded-lg text-xs text-left"
                           style={{
-                            cursor: 'pointer',
+                            cursor: blocked ? 'not-allowed' : 'pointer',
+                            opacity: blocked ? 0.45 : 1,
                             maxWidth: '100%',
                             transition: 'border-color 120ms, background 120ms',
                             border: active ? '1.5px solid #3b82f6' : '1px solid var(--border-default)',

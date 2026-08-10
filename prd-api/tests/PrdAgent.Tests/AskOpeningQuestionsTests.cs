@@ -73,17 +73,60 @@ public class AskOpeningQuestionsTests
         Assert.Equal(AskOpeningQuestions.MaxLength, result[0].Length);
     }
 
+    /// <summary>
+    /// 存储上限必须大于展示上限。
+    ///
+    /// 这条原本写反了——断言 Normalize 会把题库砍到 MaxDisplay(4)，等于用测试把 bug 锁死：
+    /// 题库是候选池，分享时从中挑子集，砍到 4 条就挑无可挑，owner 存的第 5 条还会静默消失。
+    /// PR #1351 第四轮 review 抓出后改成断言正确语义。
+    /// </summary>
     [Fact]
-    public void Normalize_限量到面板可展示条数()
+    public void 题库存储上限必须大于面板展示上限()
     {
-        var many = Enumerable.Range(1, AskOpeningQuestions.MaxDisplay + 5)
+        Assert.True(AskOpeningQuestions.MaxLibrary > AskOpeningQuestions.MaxDisplay,
+            "题库若不比展示上限大，「分享时自选开场问题」就没有可挑的余地");
+    }
+
+    [Fact]
+    public void Normalize_默认限到题库上限_而不是展示上限()
+    {
+        var many = Enumerable.Range(1, AskOpeningQuestions.MaxLibrary + 5)
             .Select(i => $"问题{i}")
             .ToList();
 
         var result = AskOpeningQuestions.Normalize(many);
 
-        Assert.Equal(AskOpeningQuestions.MaxDisplay, result.Count);
+        Assert.Equal(AskOpeningQuestions.MaxLibrary, result.Count);
         Assert.Equal("问题1", result[0]);
+    }
+
+    /// <summary>
+    /// 核心用例：owner 存 MaxDisplay+1 条题库，必须一条不少地留下来。
+    /// 原实现在这里会悄悄丢掉第 5 条及以后——存进去了，回显没了。
+    /// </summary>
+    [Fact]
+    public void 题库存超过展示上限的条数_不许静默丢弃()
+    {
+        var library = Enumerable.Range(1, AskOpeningQuestions.MaxDisplay + 3)
+            .Select(i => $"问题{i}")
+            .ToList();
+
+        var stored = AskOpeningQuestions.Normalize(library);
+
+        Assert.Equal(library.Count, stored.Count);
+        Assert.Equal(library, stored);
+    }
+
+    [Fact]
+    public void 面板显示时才限到展示上限()
+    {
+        var library = Enumerable.Range(1, AskOpeningQuestions.MaxDisplay + 3)
+            .Select(i => $"问题{i}")
+            .ToList();
+
+        var shown = AskOpeningQuestions.Resolve(null, library);
+
+        Assert.Equal(AskOpeningQuestions.MaxDisplay, shown.Count);
     }
 
     /// <summary>

@@ -51,6 +51,15 @@ export type AskStatus = 'idle' | 'connecting' | 'answering' | 'done' | 'error';
  */
 export const ASK_MAX_QUESTION_LENGTH = 500;
 
+/**
+ * 一条分享面板最多显示几条开场问题，必须与后端 AskOpeningQuestions.MaxDisplay 一致。
+ *
+ * 注意与「题库上限」区分：题库是候选池（后端 MaxLibrary，更大），分享时从中挑子集，
+ * 挑的这份就是要显示的那份，所以卡的是展示上限。挑超了后端也存不下，
+ * 与其让第 N+1 条静默消失，不如在选的时候就挡住。
+ */
+export const ASK_MAX_DISPLAY = 4;
+
 /** 门禁失败时的错误码，前端据此给不同的引导（登录 / 稍后再来 / 换个页面） */
 export const ASK_ERROR_CODES = {
   disabled: 'ASK_DISABLED',

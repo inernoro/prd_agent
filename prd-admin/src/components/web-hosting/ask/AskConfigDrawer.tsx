@@ -29,6 +29,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   const [questions, setQuestions] = useState<string[]>([]);
   const [draft, setDraft] = useState('');
   const [maxLength, setMaxLength] = useState(60);
+  /** 题库条数上限（后端下发）。到顶必须挡住，不然第 N+1 条存进去又静默消失 */
+  const [maxQuestions, setMaxQuestions] = useState(12);
 
   useEffect(() => {
     let alive = true;
@@ -41,6 +43,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
         setDailyLimit(res.data.dailyLimit ?? 0);
         setQuestions(res.data.suggestedQuestions ?? []);
         setMaxLength(res.data.maxQuestionLength ?? 60);
+        setMaxQuestions(res.data.maxQuestions ?? 12);
       } else {
         setError(res.error?.message ?? '读取配置失败');
       }
@@ -51,12 +54,16 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     };
   }, [siteId]);
 
+  const atLibraryCap = questions.length >= maxQuestions;
+
   const addQuestion = useCallback(() => {
     const q = draft.trim();
     if (!q) return;
-    setQuestions((prev) => (prev.includes(q) ? prev : [...prev, q.slice(0, maxLength)]));
+    setQuestions((prev) =>
+      prev.includes(q) || prev.length >= maxQuestions ? prev : [...prev, q.slice(0, maxLength)],
+    );
     setDraft('');
-  }, [draft, maxLength]);
+  }, [draft, maxLength, maxQuestions]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -157,18 +164,20 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
                       addQuestion();
                     }
                   }}
-                  placeholder="添加一个开场问题…"
+                  placeholder={atLibraryCap ? `最多 ${maxQuestions} 条，删掉一条再加` : '添加一个开场问题…'}
+                  disabled={atLibraryCap}
                   style={{ ...inputStyle, flex: 1 }}
                 />
                 <button
                   onClick={addQuestion}
-                  disabled={!draft.trim()}
+                  disabled={!draft.trim() || atLibraryCap}
                   aria-label="添加"
                   style={{
                     width: 38, height: 38, borderRadius: 9, border: 'none', flexShrink: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: draft.trim() ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
-                    color: draft.trim() ? 'var(--button-primary-fg)' : 'var(--text-muted)', cursor: draft.trim() ? 'pointer' : 'default',
+                    background: draft.trim() && !atLibraryCap ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
+                    color: draft.trim() && !atLibraryCap ? 'var(--button-primary-fg)' : 'var(--text-muted)',
+                    cursor: draft.trim() && !atLibraryCap ? 'pointer' : 'default',
                   }}
                 >
                   <Plus size={16} />

@@ -70,7 +70,10 @@ public class WebPageAskController : ControllerBase
             allowAnonymous = site.AskAllowAnonymous,
             dailyLimit = site.AskDailyLimit,
             updatedAt = site.AskConfigUpdatedAt,
-            maxQuestions = AskOpeningQuestions.MaxDisplay,
+            // owner 在这里编辑的是**题库**（候选池），上限是存储上限；
+            // 一条分享面板最多显示 maxDisplay 条，是另一回事，别混
+            maxQuestions = AskOpeningQuestions.MaxLibrary,
+            maxDisplay = AskOpeningQuestions.MaxDisplay,
             maxQuestionLength = AskOpeningQuestions.MaxLength,
         }));
     }

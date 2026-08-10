@@ -11,8 +11,17 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public static class AskOpeningQuestions
 {
-    /// <summary>面板最多展示几条（多了会把提问框挤出首屏）</summary>
+    /// <summary>面板最多展示几条（多了会把提问框挤出首屏）。这是**展示**上限，不是存储上限。</summary>
     public const int MaxDisplay = 4;
+
+    /// <summary>
+    /// 站点题库最多存几条。
+    ///
+    /// 必须大于 MaxDisplay：题库是**候选池**，分享时从里面挑几条，不同链接挑不同的子集——
+    /// 这正是「分享时自选开场问题」这个功能的前提。拿展示上限去卡存储，题库就永远只有 4 条、
+    /// 挑无可挑，而且 owner 存第 5 条时会**静默消失**（存进去了、回显没了）。
+    /// </summary>
+    public const int MaxLibrary = 12;
 
     /// <summary>单条问题最大长度（超出截断；开场问题是"一点即问"的引子，不是需求描述）</summary>
     public const int MaxLength = 60;
@@ -29,11 +38,17 @@ public static class AskOpeningQuestions
     /// 「选了空」误判成「没选过」，正是这个函数存在的理由。
     /// </summary>
     public static List<string> Resolve(List<string>? shareSelected, List<string>? siteLibrary)
-        => Normalize(shareSelected ?? siteLibrary);
+        => Normalize(shareSelected ?? siteLibrary, MaxDisplay);
 
-    /// <summary>清洗一组问题：去空白、丢空串、超长截断、去重、限量。入库与出参都走它，避免两端标准不一。</summary>
-    public static List<string> Normalize(IEnumerable<string>? raw)
+    /// <summary>
+    /// 清洗一组问题：去空白、丢空串、超长截断、去重、限量。入库与出参都走它，避免两端标准不一。
+    ///
+    /// limit 默认是**存储上限** MaxLibrary，不是展示上限——用错会让 owner 存进去的题
+    /// 悄悄消失。只有 Resolve（算面板真正显示哪几条）才传 MaxDisplay。
+    /// </summary>
+    public static List<string> Normalize(IEnumerable<string>? raw, int? limit = null)
     {
+        var cap = limit ?? MaxLibrary;
         if (raw == null) return new List<string>();
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -45,7 +60,7 @@ public static class AskOpeningQuestions
             if (q.Length > MaxLength) q = q[..MaxLength];
             if (!seen.Add(q)) continue;
             result.Add(q);
-            if (result.Count >= MaxDisplay) break;
+            if (result.Count >= cap) break;
         }
         return result;
     }

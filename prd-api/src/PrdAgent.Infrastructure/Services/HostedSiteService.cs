@@ -828,10 +828,13 @@ public class HostedSiteService : IHostedSiteService
         List<string>? askSuggestedQuestions = null)
     {
         // 开场问题保持三态：null（调用方没提这茬）不动存量值，非 null（含空数组）按用户本次所选落库。
-        // 清洗走 AskOpeningQuestions.Normalize，与读取侧同一把尺子。
+        //
+        // 这里限的是 MaxDisplay 而不是 MaxLibrary：分享挑的这份**就是面板要显示的那一份**，
+        // 存得比能显示的多，多出来的到了面板一样看不见——又是一次静默丢弃。
+        // 题库（候选池）才用 MaxLibrary，两者别搞混。
         var effAskQuestions = askSuggestedQuestions == null
             ? null
-            : AskOpeningQuestions.Normalize(askSuggestedQuestions);
+            : AskOpeningQuestions.Normalize(askSuggestedQuestions, AskOpeningQuestions.MaxDisplay);
 
         // 规范化 visibility 入参（白名单），缺省回退 owner-only
         var normalizedVisibility = visibility?.ToLowerInvariant() switch

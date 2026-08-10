@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveShareAskSelection } from './askTypes';
+import { resolveShareAskSelection, ASK_MAX_DISPLAY } from './askTypes';
 
 /**
  * 「分享时自选开场问题」的三态守卫（前端侧）。
@@ -29,5 +29,21 @@ describe('分享链接的开场问题选择', () => {
 
   it('没碰过的判定与选项内容无关——空题库也照样是"继承"而非"清空"', () => {
     expect(resolveShareAskSelection(false, [])).toBeUndefined();
+  });
+});
+
+/**
+ * 展示上限是**跨语言重复的判据**（后端 AskOpeningQuestions.MaxDisplay 是 SSOT，
+ * 前端为了在选的时候就挡住必须再写一份），所以给它钉一条守卫：
+ * 值变了必须两边一起改，而不是某一边悄悄漂走，让用户挑了 6 条却只显示 4 条。
+ */
+describe('ASK_MAX_DISPLAY', () => {
+  it('与后端 AskOpeningQuestions.MaxDisplay 对齐（改动必须同步两边）', () => {
+    expect(ASK_MAX_DISPLAY).toBe(4);
+  });
+
+  it('必须小于题库上限，否则分享时无从挑选', () => {
+    // 后端 MaxLibrary = 12；这里只断言"展示上限得留出挑选空间"
+    expect(ASK_MAX_DISPLAY).toBeLessThan(12);
   });
 });

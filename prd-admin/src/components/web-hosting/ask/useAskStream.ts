@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { api } from '@/services/api';
+import { buildApiUrl } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import type { AskMessage, AskSource, AskStatus } from './askTypes';
 
@@ -66,10 +67,13 @@ export function useAskStream(source: AskSource) {
         .filter((m) => m.content.trim().length > 0 && !m.error)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      const url =
+      // 必须过 buildApiUrl：这是裸 fetch（SSE 绕开了 apiRequest），前后端分开部署时
+      // 相对路径会打到前端自己身上，拿回 404 或一坨 HTML 而不是事件流。
+      const url = buildApiUrl(
         source.mode === 'share'
           ? api.webPages.askStreamByShare(encodeURIComponent(source.token))
-          : api.webPages.askStream(encodeURIComponent(source.siteId));
+          : api.webPages.askStream(encodeURIComponent(source.siteId)),
+      );
 
       const body: Record<string, unknown> = {
         question: q,
