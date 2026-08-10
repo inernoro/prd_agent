@@ -97,7 +97,7 @@ public class ImageGenModelAdapterConfig
     [Obsolete("比例信息已包含在 SizesByResolution 中")]
     public List<string> AllowedRatios { get; set; } = new();
 
-    /// <summary>尺寸参数格式：WxH / {width,height} / aspect_ratio</summary>
+    /// <summary>尺寸参数格式：WxH / {width,height} / aspect_ratio / none</summary>
     /// <summary>
     /// 该模型压根不存在"选尺寸"这件事（如语义分层：输出图层继承输入画布）。
     /// 置 true 表示它不进生图尺寸选择器，因此 SizesByResolution 三档必须全空——

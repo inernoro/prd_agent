@@ -105,6 +105,21 @@ public class ImageGenAdapterConfigTests
         }
     }
 
+    [Fact]
+    public void AdaptiveConfigs_DistinguishPromptTransportFromSizeNotApplicable()
+    {
+        var promptTransport = ImageGenModelAdapterRegistry.TryMatch("gpt-image-2-all");
+        Assert.NotNull(promptTransport);
+        Assert.Equal(SizeConstraintTypes.Adaptive, promptTransport.SizeConstraintType);
+        Assert.Equal(SizeParamFormats.None, promptTransport.SizeParamFormat);
+        Assert.False(promptTransport.SizesNotApplicable);
+        Assert.Contains(promptTransport.SizesByResolution["1k"], x => x.AspectRatio == "3:4" && x.Size == "768x1024");
+
+        var sizeNotApplicable = ImageGenModelAdapterRegistry.TryMatch("fal-qwen-image-layered");
+        Assert.NotNull(sizeNotApplicable);
+        Assert.True(sizeNotApplicable.SizesNotApplicable);
+    }
+
     /// <summary>
     /// 验证 GetAdapterInfo 返回正确的 SizesByResolution
     /// </summary>

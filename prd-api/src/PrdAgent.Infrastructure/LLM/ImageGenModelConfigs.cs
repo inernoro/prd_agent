@@ -32,7 +32,7 @@ public static class ImageGenModelConfigs
             DisplayName = "gpt-image-2-all（自适应）",
             Provider = "OpenAI 兼容（apiyi）",
             PlatformType = "openai",
-            LastUpdated = "2026-04-22",
+            LastUpdated = "2026-08-10",
             SizeConstraintType = SizeConstraintTypes.Adaptive,
             SizeConstraintDescription = "自适应模型：不接受尺寸字段，输出尺寸由 prompt 描述决定（推荐把尺寸词写在最前面）",
             SizesByResolution = new Dictionary<string, List<SizeOption>>
@@ -43,6 +43,8 @@ public static class ImageGenModelConfigs
                     new("1024x1024", "1:1"),
                     new("1344x768", "16:9"),
                     new("768x1344", "9:16"),
+                    new("1024x768", "4:3"),
+                    new("768x1024", "3:4"),
                     new("1248x832", "3:2"),
                     new("832x1248", "2:3"),
                 },
@@ -52,7 +54,7 @@ public static class ImageGenModelConfigs
             SizeParamFormat = SizeParamFormats.None,
             Notes = new List<string>
             {
-                "尺寸/比例请写进 prompt 最前面（推荐：'横版 16:9 电影画幅，...' / '竖版 9:16 海报，...'）",
+                "系统会把用户选择的尺寸和比例写到 prompt 最前面",
                 "不传 size / n / quality / aspect_ratio / response_format，否则会触发参数校验错误",
                 "b64_json 已含 data:image/png;base64, 前缀，无需手动拼接",
                 "兼容 /v1/images/generations、/v1/images/edits、/v1/chat/completions 三端点",

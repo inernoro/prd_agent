@@ -452,6 +452,7 @@ public class ImageGenController : ControllerBase
             },
             sizesByResolution = adapterInfo.SizesByResolution,
             sizeParamFormat = adapterInfo.SizeParamFormat,
+            sizesNotApplicable = adapterInfo.SizesNotApplicable,
             limitations = new
             {
                 mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,

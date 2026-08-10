@@ -295,6 +295,10 @@ public class OpenAIImageClient : IImageGenerationClient
             size = null;
         }
 
+        // 特殊模型拒绝尺寸字段，但仍允许用户选择画幅：在模型解析完成后，
+        // 由统一请求边界把结构化尺寸语言化，确保标准、Exchange、图生图等路径使用同一份实际 prompt。
+        prompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt(prompt, reqParams, adapterConfig);
+
         // 非 Volces 且无适配器：尝试命中"允许尺寸白名单"缓存，避免先 400 再重试
         var capsKey = BuildCapsKey(null, platformIdForLog, null, effectiveModelName);
         if (!isVolces && adapterConfig == null)
