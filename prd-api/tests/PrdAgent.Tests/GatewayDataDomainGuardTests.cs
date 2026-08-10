@@ -4204,6 +4204,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("team.delete", console);
         Assert.Contains("export function deleteTeam(", api);
         Assert.Contains("removeTeam", page);
+        // 阻挡清单报 userId 等于没报——运维看着一串 hex 不知道去找谁解绑。必须解成账号名。
+        Assert.Contains("nameById.TryGetValue(x, out var name)", console);
 
         // 成员：不能删自己、只有 owner 能删 owner、不能删掉最后一个活跃 owner。
         // 最后一条走 TenantOwnerAuthority.TryRemoveAsync 的原子判定，

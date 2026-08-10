@@ -1440,9 +1440,20 @@ app.MapDelete("/gw/teams/{id}", async (HttpContext http, string id) =>
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .Distinct(StringComparer.Ordinal)
         .ToList();
+    // 报 userId 等于没报——运维看着一串 hex 不知道该去找谁解绑。
+    // 换成账号名（拿不到的才退回 id），阻挡清单才真的是「下一步做什么」。
+    var memberNames = new List<string>(memberUserIds);
+    if (memberUserIds.Count > 0)
+    {
+        var nameById = (await users.Find(Builders<LlmGwUser>.Filter.In(x => x.Id, memberUserIds)).ToListAsync())
+            .ToDictionary(x => x.Id, x => x.Username, StringComparer.Ordinal);
+        memberNames = memberUserIds
+            .Select(x => nameById.TryGetValue(x, out var name) && !string.IsNullOrWhiteSpace(name) ? name : x)
+            .ToList();
+    }
     var blockers = new TeamDeleteBlockers
     {
-        Members = memberUserIds,
+        Members = memberNames,
         ServiceKeys = (int)await serviceKeys.CountDocumentsAsync(
             TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("TeamId", id))),
         AppCallers = (int)await gwAppCallers.CountDocumentsAsync(
