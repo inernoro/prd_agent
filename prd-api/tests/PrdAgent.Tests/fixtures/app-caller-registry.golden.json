@@ -528,6 +528,18 @@
     ]
   },
   {
+    "code": "prd-agent-web.knowledge-base.index::embedding",
+    "modelTypes": [
+      "embedding"
+    ]
+  },
+  {
+    "code": "prd-agent-web.knowledge-base.query::embedding",
+    "modelTypes": [
+      "embedding"
+    ]
+  },
+  {
     "code": "prd-agent-web.lab::chat",
     "modelTypes": [
       "chat"

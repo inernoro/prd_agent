@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, Loader2, FileWarning, MessageSquare } from 'lucide-react';
+import { X, ExternalLink, FileWarning, MessageSquare } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
+
+/** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
+const SLOW_HINT_MS = 8000;
 
 interface Props {
   site: HostedSite;
@@ -20,7 +24,10 @@ interface Props {
  */
 export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange, canToggleComments = true }: Props) {
   const [loading, setLoading] = useState(true);
+  /** 只在 iframe 真的 onError 时为 true —— 不由超时推断（见下方 effect 注释） */
   const [errored, setErrored] = useState(false);
+  /** 加载偏慢：只挂一条角标提示，不遮挡已经绘制出来的内容 */
+  const [slow, setSlow] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
@@ -43,14 +50,16 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
-  // 加载超时检测 (10s 未触发 onLoad 视为可能失败)
+  // 加载慢 ≠ 加载失败。
+  //
+  // iframe 的 load 事件要等**所有子资源**结算才触发；托管的 AI 生成页普遍外链 Google Fonts 等
+  // 三方域名，这些域名在部分网络里是「挂起」而不是快速失败——页面正文其实早就画出来了，
+  // load 却迟迟不来。旧实现「10s 没 load 就判 errored」会把一层错误遮罩盖在**已经渲染好的页面**上，
+  // 用户看到的就是「无法预览」。判据必须换成真正能证明失败的信号：iframe onError。
+  // 超时只降级为一条非阻断的角标提示，绝不遮挡内容。
+  // 参见 .claude/rules/predicate-and-wiring-discipline.md 形状 1（判据比它该管的范围窄）。
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setLoading((prev) => {
-        if (prev) setErrored(true);
-        return false;
-      });
-    }, 10000);
+    const timer = setTimeout(() => setSlow(true), SLOW_HINT_MS);
     return () => clearTimeout(timer);
   }, []);
 
@@ -118,20 +127,33 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
         <div className="flex-1 min-h-0 flex">
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
           <div className="flex-1 min-w-0 relative bg-[#0f1014]">
-            {loading && (
+            {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
+                因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
+            {loading && !slow && (
               <div className="absolute inset-0 flex items-center justify-center bg-[#0f1014]">
-                <Loader2 className="w-8 h-8 animate-spin text-token-muted" />
+                <MapSectionLoader text="正在加载站点…" />
               </div>
             )}
+            {/* 真失败（onError）才铺满遮罩 */}
             {errored && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f1014] gap-3">
                 <FileWarning className="w-12 h-12 text-amber-400/70" />
-                <p className="text-sm text-token-secondary">站点加载超时或失败</p>
+                <p className="text-sm text-token-secondary">站点加载失败</p>
                 <button
                   onClick={handleOpenExternal}
                   className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm"
                 >
                   在新窗口打开
+                </button>
+              </div>
+            )}
+            {/* 加载慢：角标提示，不遮挡内容。措辞只说「较慢」，不谎报「失败」。 */}
+            {loading && slow && !errored && (
+              <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 rounded-lg bg-black/70 px-3 py-1.5 text-[12px] text-token-secondary backdrop-blur-sm">
+                <MapSpinner size={14} />
+                <span>加载较慢，内容可能仍在陆续显示</span>
+                <button onClick={handleOpenExternal} className="text-blue-400 hover:text-blue-300">
+                  新窗口打开
                 </button>
               </div>
             )}
@@ -146,6 +168,10 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
                 setLoading(false);
                 setErrored(false);
                 focusPreviewFrame();
+              }}
+              onError={() => {
+                setLoading(false);
+                setErrored(true);
               }}
               sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals"
               title={site.title}
@@ -198,8 +224,10 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               </div>
             </aside>
           )}
+
         </div>
       </div>
+
     </div>
   );
 
