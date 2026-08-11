@@ -32,6 +32,9 @@ public class ProfileController : ControllerBase
     private readonly IAssetStorage _assetStorage;
 
     private const long MaxAvatarUploadBytes = 5 * 1024 * 1024; // 5MB
+    private const int MaxAvatarDimension = 8192;
+    private const long MaxAvatarPixels = 16_777_216;
+    private const int MaxAvatarFrames = 120;
 
     public ProfileController(
         MongoDbContext db,
@@ -100,12 +103,19 @@ public class ProfileController : ControllerBase
 
         try
         {
-            var format = Image.DetectFormat(bytes);
+            var imageInfo = Image.Identify(bytes);
+            var format = imageInfo.Metadata.DecodedImageFormat;
             if (format == null)
                 return (false, null, null);
 
+            var frameCount = Math.Max(1, imageInfo.FrameMetadataCollection.Count);
+            if (!HasSafeAvatarImageDimensions(imageInfo.Width, imageInfo.Height, frameCount))
+                return (false, null, null);
+
             using var image = Image.Load(bytes);
-            if (image.Width <= 0 || image.Height <= 0)
+            if (image.Width != imageInfo.Width
+                || image.Height != imageInfo.Height
+                || image.Frames.Count != frameCount)
                 return (false, null, null);
 
             var actualExt = GuessAvatarImageExtFromMime(format.DefaultMimeType);
@@ -136,6 +146,18 @@ public class ProfileController : ControllerBase
         {
             return (false, null, null);
         }
+    }
+
+    internal static bool HasSafeAvatarImageDimensions(int width, int height, int frameCount)
+    {
+        if (width <= 0 || height <= 0 || frameCount <= 0)
+            return false;
+        if (width > MaxAvatarDimension || height > MaxAvatarDimension || frameCount > MaxAvatarFrames)
+            return false;
+
+        var pixels = (long)width * height;
+        return pixels <= MaxAvatarPixels
+            && pixels * frameCount <= MaxAvatarPixels;
     }
 
     private static string BuildVersionedAvatarFileName(string userId, string ext, ReadOnlySpan<byte> bytes)

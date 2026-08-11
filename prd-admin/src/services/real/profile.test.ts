@@ -161,6 +161,43 @@ describe('generateMyAvatarPreview', () => {
     expect(getPendingMyAvatarGenerationRunId()).toBe('run-auto-resume');
   });
 
+  it('旧预览与新创建记录并存时优先恢复较新的创建请求', async () => {
+    sessionStorage.setItem('prd-admin:avatar-generation-run:user-1', 'run-old-preview');
+    sessionStorage.setItem('prd-admin:avatar-generation-create:user-1', JSON.stringify({
+      prompt: '生成一个更新的头像',
+      idempotencyKey: 'profile-avatar-newer-creation',
+    }));
+    const sha = '8'.repeat(64);
+    mockedApiRequest
+      .mockResolvedValueOnce({
+        success: true,
+        data: { runId: 'run-newer-preview', status: 'queued', stage: '正在排队' },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          status: 'completed',
+          stage: '生成完成',
+          previewUrl: 'https://assets.example/newer-avatar.png',
+          assetSha256: sha,
+        },
+        error: null,
+      });
+
+    const resultPromise = resumeMyAvatarPreview({});
+    await vi.runAllTimersAsync();
+
+    await expect(resultPromise).resolves.toEqual({
+      success: true,
+      data: { previewUrl: 'https://assets.example/newer-avatar.png', assetSha256: sha },
+      error: null,
+    });
+    expect(mockedApiRequest.mock.calls[0]?.[0]).toBe('/api/profile/avatar/generation-runs');
+    expect(mockedApiRequest.mock.calls[0]?.[1]?.headers?.['Idempotency-Key']).toBe('profile-avatar-newer-creation');
+    expect(getPendingMyAvatarGenerationRunId()).toBe('run-newer-preview');
+  });
+
   it('创建已被服务端接受时先保存任务引用再响应关闭取消', async () => {
     mockedApiRequest.mockImplementationOnce(() => new Promise((resolve) => {
       globalThis.setTimeout(() => resolve({

@@ -51,4 +51,24 @@ public class ProfileAvatarImageValidationTests
 
         Assert.False(result.ok);
     }
+
+    [Theory]
+    [InlineData(4096, 4096, 1, true)]
+    [InlineData(8193, 1, 1, false)]
+    [InlineData(4097, 4097, 1, false)]
+    [InlineData(1024, 1024, 65, false)]
+    [InlineData(512, 512, 64, true)]
+    [InlineData(512, 512, 65, false)]
+    [InlineData(256, 256, 120, true)]
+    [InlineData(256, 256, 121, false)]
+    public void HasSafeAvatarImageDimensions_ShouldBoundDecodedMemory(
+        int width,
+        int height,
+        int frameCount,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            ProfileController.HasSafeAvatarImageDimensions(width, height, frameCount));
+    }
 }

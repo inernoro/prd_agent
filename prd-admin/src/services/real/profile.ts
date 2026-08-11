@@ -333,17 +333,20 @@ export async function resumeMyAvatarPreview(input: {
   onProgress?: (stage: string) => void;
   signal?: AbortSignal;
 }): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }>> {
-  const runId = String(input.runId || getPendingMyAvatarGenerationRunId() || '').trim();
+  const explicitRunId = String(input.runId || '').trim();
   input.onProgress?.('正在恢复头像生成任务');
-  if (!runId) {
+  if (!explicitRunId) {
     const pendingCreation = getPendingAvatarGenerationCreation();
-    if (!pendingCreation) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
-    return createAndWaitForMyAvatarPreview(
-      pendingCreation.prompt,
-      pendingCreation.idempotencyKey,
-      input,
-    );
+    if (pendingCreation) {
+      return createAndWaitForMyAvatarPreview(
+        pendingCreation.prompt,
+        pendingCreation.idempotencyKey,
+        input,
+      );
+    }
   }
+  const runId = explicitRunId || getPendingMyAvatarGenerationRunId() || '';
+  if (!runId) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
   rememberAvatarGenerationRun(runId);
   return waitForMyAvatarPreview(runId, input);
 }
