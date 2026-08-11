@@ -7415,7 +7415,24 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
                 member["ConsecutiveFailures"] = 0;
                 member["ConsecutiveSuccesses"] = 0;
             }
-            var key = $"{member.GetStringOrEmpty("PlatformId")}\n{member.GetStringOrEmpty("ModelId")}";
+            // 去重键要按「这条成员最终指向哪个模型」算，不能按它字面写了什么。
+            // 加成员端点 _id 与模型名两种写法都收，所以合并后很容易出现
+            //   (目标平台, 幸存者_id)  与  (目标平台, "gpt-4o")
+            // 两条：字面不同、指向同一个模型。留着不只是列表里多一行——加权选择会把这个
+            // 模型的权重算两遍，健康位也各记一份，等于悄悄改了这个池的调度分布。
+            // 归一**只对已经落在目标平台的成员做**：模型名只在一条上游内唯一，跨平台同名是
+            // 两个不同模型，而键里本来就带 PlatformId，天然把它们隔开——不能再犯上一轮
+            // 「拿名字做全局匹配」的错。
+            var memberPlatformId = member.GetStringOrEmpty("PlatformId");
+            var memberModelKey = member.GetStringOrEmpty("ModelId");
+            if (string.Equals(memberPlatformId, targetId, StringComparison.Ordinal)
+                && memberModelKey.Length > 0
+                && targetModelIdByName.TryGetValue(memberModelKey.Trim().ToLowerInvariant(), out var canonicalModelId)
+                && canonicalModelId.Length > 0)
+            {
+                memberModelKey = canonicalModelId;
+            }
+            var key = $"{memberPlatformId}\n{memberModelKey}";
             if (!seen.Add(key))
             {
                 if (isSource) result.PoolMembersDeduped++;

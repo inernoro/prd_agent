@@ -4340,6 +4340,14 @@ public class GatewayDataDomainGuardTests
         // 亲手造出一对解析不到的组合——这正是「判据太窄」被修过头成「判据太宽」。
         Assert.Contains("survivorByDroppedModelName", merge);
         Assert.Contains("survivorByDroppedModelName.ContainsKey(alias)", merge);
+        // 去重键按「最终指向哪个模型」算，不按字面：合并后 (目标平台, 幸存者_id) 与
+        // (目标平台, "gpt-4o") 是同一个模型的两条成员，字面不同会被当成两条留下来，
+        // 加权选择就把这个模型的权重算了两遍。归一只对落在目标平台的成员做——
+        // 跨平台同名是两个不同模型，键里本来就带 PlatformId 隔开。
+        Assert.Contains("targetModelIdByName.TryGetValue(memberModelKey", merge);
+        var dedupDense = new string(merge.Where(c => !char.IsWhiteSpace(c)).ToArray());
+        Assert.Contains("string.Equals(memberPlatformId,targetId,StringComparison.Ordinal)", dedupDense);
+
         // 名字命中必须**与**「这条成员本来就在源平台」取合取，不能只是恰好写在附近。
         // 去空白后断言这个合取本身：`pointsAtSourcePlatform` 在旧版里也出现在附近
         // （它就声明在上一行），按距离判会在出问题的那版上照样绿——那种断言是假证据。
