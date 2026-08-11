@@ -46,3 +46,34 @@ public class AskQuotaScopeTests
         Assert.Equal("", DeploymentScope.ScopeIdempotencyKey(""));
     }
 }
+
+/// <summary>
+/// 匿名配额取哪个 IP —— 源码守卫。
+///
+/// 由 review 抓出：`GetRealClientIp` 是给**统计**用的，它无条件采信 X-Real-IP /
+/// X-Forwarded-For；而提问的分享路径匿名可达，攻击者每次换一个头就换一个配额桶，
+/// 匿名闸形同虚设，站点主付费的日额度会被迅速啃光。
+/// `GetAbuseControlClientIp` 只在对端是回环/私网（即我方反代）时才采信该头，
+/// 与 RateLimitMiddleware 用的是同一个判据。
+///
+/// 改回去之后没有任何行为测试会红（两个方法签名一样、返回值也一样），只能守源码。
+/// </summary>
+public class AskQuotaClientIpGuardTests
+{
+    [Fact]
+    public void 匿名配额必须用防滥用IP而不是统计IP()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+            dir = dir.Parent;
+        Assert.NotNull(dir); // 找不到仓库根就让用例红，而不是静默跳过
+
+        var path = Path.Combine(dir!.FullName,
+            "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs");
+        Assert.True(File.Exists(path), $"未找到被守文件：{path}");
+        var src = File.ReadAllText(path);
+
+        Assert.Contains("HttpContext.GetAbuseControlClientIp()", src);
+        Assert.DoesNotContain("HttpContext.GetRealClientIp()", src);
+    }
+}

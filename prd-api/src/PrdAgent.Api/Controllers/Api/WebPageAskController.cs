@@ -222,7 +222,13 @@ public class WebPageAskController : ControllerBase
         }
 
         // 配额也在写流之前判 —— 超限要让前端拿到 429 + Retry-After，而不是流里一条 error。
-        var clientIp = HttpContext.GetRealClientIp();
+        //
+        // IP 必须走 GetAbuseControlClientIp，不能用 GetRealClientIp。
+        // 后者是给统计用的，它**无条件采信** X-Real-IP / X-Forwarded-For；分享路径匿名可达，
+        // 攻击者每次换一个头就换一个配额桶，10 次/小时的匿名闸形同虚设，站点主付费的日额度
+        // 会被迅速啃光。前者只在对端是回环/私网（即我方反代）时才采信该头，
+        // 与 RateLimitMiddleware 用的是同一个判据。
+        var clientIp = HttpContext.GetAbuseControlClientIp();
         var decision = await _quota.TryConsumeAsync(site.Id, userId, clientIp, site.AskDailyLimit);
         if (!decision.Allowed)
         {
@@ -262,8 +268,13 @@ public class WebPageAskController : ControllerBase
         // 历史由客户端提交，且分享路径是匿名可达的——只限条数不限长度等于没限：
         // 直接打端点的人可以塞几条几 MB 的字符串，一次就把站点主的额度啃掉一大块。
         // 配额闸数的是「请求次数」，拦不住「单次超大」，所以这里必须按字符预算裁剪。
+        // 先滤掉 null 元素再取字段：`{"history":[null]}` 是合法 JSON，System.Text.Json
+        // 会照样放一个 null 进列表（元素上的非空标注不是运行时约束）。不滤就在这里 NRE，
+        // 而此刻配额已经扣了、快照已经建了、会话已经落库了，用户拿到的是一条断掉的 SSE。
         var history = AskHistoryBudget.Trim(
-            (req?.History ?? new List<AskHistoryItem>()).Select(h => (h.Role, h.Content)));
+            (req?.History ?? new List<AskHistoryItem>())
+                .Where(h => h != null)
+                .Select(h => (h.Role, h.Content)));
 
         var messages = new JsonArray
         {
