@@ -8,6 +8,8 @@ import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, U
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
+import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;
@@ -160,6 +162,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const navigate = useNavigate();
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const currentUserId = useAuthStore(s => s.user?.userId);
+  const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -589,34 +592,41 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         }}
       >
         {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏 */}
-        <div className="border-b border-b-token-subtle" style={{ padding: '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />
+        <div className="border-b border-b-token-subtle" style={{ padding: isMobile ? '6px 10px' : '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
+          {/* 标题区必须可收缩（minWidth:0 + 省略号），否则手机端它会把右侧按钮挤扁 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+            <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" style={{ flexShrink: 0 }} />
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
-            <span style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>
+            <span style={{ color: '#fff', fontSize: isMobile ? 13 : 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {data.title || site.title}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
+              这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 2 : 12, flexShrink: 0 }}>
             {!site.pdfAssetUrl && (
               <button
                 onClick={togglePresentFullscreen}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : '4px 10px', borderRadius: 6, border: 'none', background: isMobile ? 'transparent' : 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
                 title="全屏演示（Esc 退出）"
+                aria-label="全屏演示"
               >
-                {isFullscreen ? <Minimize size={12} /> : <Maximize size={12} />}
-                全屏演示
+                {isFullscreen ? <Minimize size={isMobile ? 15 : 12} /> : <Maximize size={isMobile ? 15 : 12} />}
+                {!isMobile && '全屏演示'}
               </button>
             )}
             {!isOwner && (
               <button
                 onClick={handleSave}
                 disabled={saving || saveStatus !== 'idle'}
+                title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                aria-label="保存到我的托管"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 4,
-                  padding: '4px 10px', borderRadius: 6, border: 'none',
+                  padding: isMobile ? '6px 8px' : '4px 10px', borderRadius: 6, border: 'none',
                   fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-                  background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
+                  background: isMobile ? 'transparent'
+                    : saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
                     : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
                     : 'rgba(59, 130, 246, 0.15)',
                   color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
@@ -626,15 +636,15 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 }}
               >
                 {saving ? (
-                  <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
+                  <><div style={{ ...styles.miniSpinner }} /> {!isMobile && '保存中...'}</>
                 ) : saveStatus === 'saved' ? (
-                  <><Check size={12} /> 已保存</>
+                  <><Check size={isMobile ? 15 : 12} /> {!isMobile && '已保存'}</>
                 ) : saveStatus === 'already' ? (
-                  <><Check size={12} /> 你已经保存过了</>
+                  <><Check size={isMobile ? 15 : 12} /> {!isMobile && '你已经保存过了'}</>
                 ) : !isAuthenticated ? (
-                  <><LogIn size={12} /> 登录并保存</>
+                  <><LogIn size={isMobile ? 15 : 12} /> {!isMobile && '登录并保存'}</>
                 ) : (
-                  <><Download size={12} /> 保存到我的托管</>
+                  <><Download size={isMobile ? 15 : 12} /> {!isMobile && '保存到我的托管'}</>
                 )}
               </button>
             )}
@@ -642,20 +652,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               href={site.pdfAssetUrl || site.siteUrl}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
+              title="新窗口打开"
+              aria-label="新窗口打开"
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : 0, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
             >
-              <ExternalLink size={12} />
-              新窗口打开
+              <ExternalLink size={isMobile ? 15 : 12} />
+              {!isMobile && '新窗口打开'}
             </a>
             {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
                 浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
             {token && (
               <button
                 onClick={() => setShowComments(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
+                title="评论"
+                aria-label="评论"
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
               >
-                <MessageSquare size={12} />
-                评论{commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}
+                <MessageSquare size={isMobile ? 15 : 12} />
+                {isMobile
+                  ? (commentCount != null && commentCount > 0 ? commentCount : '')
+                  : `评论${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
               </button>
             )}
           </div>
@@ -750,6 +766,19 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               </div>
             </aside>
           </>
+        )}
+
+        {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
+            开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
+        {token && data.ask?.enabled && (
+          <AskWidget
+            source={{ mode: 'share', token, siteId: data.ask.siteId, password: password || undefined }}
+            title={site.title || data.title || '这个页面'}
+            welcome={data.ask.welcome}
+            openingQuestions={data.ask.openingQuestions ?? []}
+            allowAnonymous={data.ask.allowAnonymous}
+            hidden={isFullscreen || showComments}
+          />
         )}
       </div>
     );
