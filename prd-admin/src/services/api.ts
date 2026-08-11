@@ -1239,6 +1239,9 @@ export const api = {
     renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
     shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
+    // 分享 token 域的正文代理：托管域名不返回 ACAO，浏览器直接 fetch 必被 CORS 拦，
+    // 预览页要拿原文注入 srcDoc 只能走服务端同源代理
+    shareContent: (token: string) => `/api/web-pages/shares/view/${token}/content`,
   },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {

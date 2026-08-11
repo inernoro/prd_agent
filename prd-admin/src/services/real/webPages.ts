@@ -484,6 +484,8 @@ export interface SharedSiteInfo {
   // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
   // 不能走 siteUrl + sandbox 嵌套——会被 Chrome 屏蔽 PDF Viewer。
   pdfAssetUrl?: string;
+  /** 包装资产类型（pdf / video / markdown …），普通 HTML 站为空。包装站没有可读正文 */
+  wrappedAssetType?: string | null;
 }
 
 export interface ShareViewData {
@@ -611,6 +613,33 @@ export async function listShareComments(token: string, password?: string): Promi
   try {
     const res = await fetch(url, { headers });
     return (await res.json()) as ApiResponse<SiteCommentsResult>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
+  }
+}
+
+/**
+ * 经分享链接读取站点入口 HTML 原文（无需登录）。走服务端同源代理，**不要**改回浏览器直接
+ * fetch(site.siteUrl)：托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧 fetch
+ * 必被 CORS 拦掉，srcDoc 预览会永远拿不到内容而静默退化成「Chrome 里只绘制空白」的直链 iframe。
+ * 守卫见 ShareViewPage.preview.test.ts。
+ */
+export async function getShareSiteContent(
+  token: string,
+  siteId?: string,
+  password?: string,
+): Promise<ApiResponse<{ siteId: string; title: string; contentType: string; siteUrl: string; html: string }>> {
+  const params = new URLSearchParams();
+  if (siteId) params.set('siteId', siteId);
+  if (password) params.set('password', password);
+  const q = params.toString() ? `?${params.toString()}` : '';
+  const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/content${q}`);
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(url, { headers });
+    return (await res.json()) as ApiResponse<{ siteId: string; title: string; contentType: string; siteUrl: string; html: string }>;
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
   }
