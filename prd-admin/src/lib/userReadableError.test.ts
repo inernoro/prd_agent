@@ -120,4 +120,35 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('账号已被锁定，请稍后重试。');
     expect(message).not.toContain('traceId');
   });
+
+  it.each([
+    ['INVALID_INVITE_CODE', '邀请码无效或已使用，请更换邀请码后重试。'],
+    ['INVALID_INVITE_LINK', '邀请入口无效，请联系邀请人重新生成。'],
+    ['INVITE_EXPIRED', '邀请码已过期，请联系邀请人重新生成。'],
+    ['ALREADY_MEMBER', '当前账号已加入该群组，请返回群组列表查看。'],
+    ['GROUP_FULL', '群组人数已达上限，请联系群组管理员处理。'],
+  ])('为群组加入错误 %s 提供可执行的恢复动作', (code, expected) => {
+    const message = toUserReadableErrorMessage(
+      { code, message: '不应直接展示的服务端文案' },
+      options,
+    );
+
+    expect(message).toBe(expected);
+    expect(message).not.toContain(options.fallbackMessage);
+  });
+
+  it.each([
+    ['SESSION_EXPIRED', '当前会话已过期，请返回后重新打开。'],
+    ['SHARE_EXPIRED', '分享入口已过期，请联系分享者重新生成。'],
+    ['STALE_UPDATE', '内容已被其他操作更新，请刷新页面后重新提交。'],
+    ['QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度后重试。'],
+  ])('为稳定业务错误 %s 使用已登记文案而不是通用输入提示', (code, expected) => {
+    const message = toUserReadableErrorMessage(
+      { code, message: 'HTTP 500 provider traceId=secret' },
+      options,
+    );
+
+    expect(message).toBe(expected);
+    expect(message).not.toMatch(/HTTP|provider|traceId/i);
+  });
 });
