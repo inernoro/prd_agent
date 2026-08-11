@@ -453,6 +453,18 @@ public static class GatewayConfigurationProvisioning
         => NormalizeParameterCapabilityName(type)?
             .StartsWith(ImageSizeParameterPrefix, StringComparison.OrdinalIgnoreCase) == true;
 
+    public static bool HasEnabledCapability(IEnumerable<BsonDocument> capabilities, string capabilityType)
+        => capabilities.Any(capability =>
+        {
+            if (!capability.TryGetValue("Type", out var typeValue)
+                || !typeValue.IsString
+                || !string.Equals(typeValue.AsString, capabilityType, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            return capability.TryGetValue("Value", out var value) && value.IsBoolean && value.AsBoolean;
+        });
+
     public static string? NormalizeParameterCapabilityName(string? type)
     {
         if (string.IsNullOrWhiteSpace(type)) return null;

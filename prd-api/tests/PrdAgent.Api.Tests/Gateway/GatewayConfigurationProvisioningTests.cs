@@ -249,6 +249,20 @@ public sealed class GatewayConfigurationProvisioningTests
     }
 
     [Fact]
+    public void HasEnabledCapability_RequiresBooleanTrueValue()
+    {
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+        ], "image_generation").ShouldBeFalse();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "IMAGE_GENERATION", ["Value"] = true },
+        ], "image_generation").ShouldBeTrue();
+    }
+
+    [Fact]
     public void Exchange_RequiresCommunicationKeyAndAtLeastOneUniqueModelMapping()
     {
         var missingKey = new CreateExchangeRequest

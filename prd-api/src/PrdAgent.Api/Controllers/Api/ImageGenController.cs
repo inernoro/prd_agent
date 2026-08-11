@@ -442,16 +442,44 @@ public class ImageGenController : ControllerBase
             adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
         }
 
+        var upstreamSizeControl = ImageSizeControlCapabilities.Parse(runtimeResolution?.ParameterCapabilities);
         if (adapterInfo == null || !adapterInfo.Matched)
         {
-            return Ok(ApiResponse<object>.Ok(new
+            if (!upstreamSizeControl.IsConfigured)
             {
-                matched = false,
-                modelId = requestedModelId,
-            }));
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    matched = false,
+                    modelId = requestedModelId,
+                }));
+            }
+
+            // 新上游可以只通过显式 image_size 能力完成接入，不要求先把模型名写进
+            // MAP 的旧适配表。保留一组通用选择项，none 模式由 sizesNotApplicable 隐藏。
+            adapterInfo = new ImageGenAdapterInfo
+            {
+                Matched = true,
+                AdapterName = adapterModelId,
+                DisplayName = adapterModelId,
+                Provider = runtimeResolution?.ActualPlatformName ?? string.Empty,
+                SizeConstraintType = "upstream",
+                SizeConstraintDescription = "由上游模型显式尺寸能力控制",
+                SizesByResolution = new Dictionary<string, List<SizeOption>>
+                {
+                    ["1k"] =
+                    [
+                        new("1024x1024", "1:1"),
+                        new("1344x768", "7:4"),
+                        new("768x1344", "4:7"),
+                        new("1248x832", "3:2"),
+                        new("832x1248", "2:3"),
+                    ],
+                    ["2k"] = [],
+                    ["4k"] = [],
+                },
+            };
         }
 
-        var upstreamSizeControl = ImageSizeControlCapabilities.Parse(runtimeResolution?.ParameterCapabilities);
         var effectiveSizeParamFormat = upstreamSizeControl.IsConfigured
             ? upstreamSizeControl.FieldFormat switch
             {
