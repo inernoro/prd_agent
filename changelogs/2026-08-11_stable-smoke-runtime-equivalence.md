@@ -224,3 +224,6 @@
 | fix | stable-smoke | CDS 使用筛选用例复测时正式环境固定保持只读，禁止子集通过提升写入门禁 |
 | fix | prd-admin | 登记模型额度耗尽错误码并明确提示管理员补充额度或切换可用配置 |
 | test | prd-admin/stable-smoke | 增加 CDS 筛选安全门与模型额度恢复文案回归覆盖 |
+| fix | stable-smoke | 正式环境只读模式只对账安全门实际执行的健康检查，避免成功检查被未执行写入用例覆盖 |
+| fix | prd-admin | 登记 SSO 提供方未启用、授权参数无效和管理员身份不足的可恢复提示 |
+| test | prd-admin/stable-smoke | 增加正式只读覆盖范围与 SSO 授权错误恢复文案回归覆盖 |

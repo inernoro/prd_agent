@@ -140,6 +140,20 @@ describe('toUserReadableErrorMessage', () => {
   });
 
   it.each([
+    ['SSO_PROVIDER_DISABLED', 'SSO 提供方尚未启用，请联系管理员启用后重试。'],
+    ['SSO_AUTHORIZE_INVALID', 'SSO 授权参数无效，请返回模型网关重新发起登录。'],
+    ['SSO_ADMIN_REQUIRED', '当前账号不是管理员，无法进入外部控制台，请使用管理员账号登录后重试。'],
+  ])('为 SSO 授权错误 %s 提供对应恢复动作', (code, expected) => {
+    const message = toUserReadableErrorMessage(
+      { code, message: '不应直接展示的服务端文案' },
+      options,
+    );
+
+    expect(message).toBe(expected);
+    expect(message).not.toContain(options.fallbackMessage);
+  });
+
+  it.each([
     ['INVALID_INVITE_CODE', '邀请码无效或已使用，请更换邀请码后重试。'],
     ['INVALID_INVITE_LINK', '邀请入口无效，请联系邀请人重新生成。'],
     ['INVITE_EXPIRED', '邀请码已过期，请联系邀请人重新生成。'],

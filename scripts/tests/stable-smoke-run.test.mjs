@@ -30,6 +30,7 @@ import {
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
   buildReportVerificationArgs,
+  selectCoverageCaseIds,
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
   validateProductionReadOnlyConfig,
@@ -168,6 +169,24 @@ test('正式环境单独运行时默认禁止业务写入', () => {
     grep: '',
     reasons: [],
   });
+});
+
+test('正式环境只读模式只对账安全门实际执行的健康检查', () => {
+  const required = ['CORE-001', 'REC-003', 'VIS-001'];
+  const gate = initializeProductionSafetyGate(['production']);
+
+  assert.deepEqual(
+    selectCoverageCaseIds(required, '', ['production'], gate),
+    ['CORE-001'],
+  );
+  assert.deepEqual(
+    selectCoverageCaseIds(required, '\\[VIS-001\\]', ['production'], gate),
+    ['CORE-001'],
+  );
+  assert.deepEqual(
+    selectCoverageCaseIds(required, '', ['cds', 'production'], { ...gate, restricted: false }),
+    required,
+  );
 });
 
 test('功能与视觉结论取更严格结果', () => {

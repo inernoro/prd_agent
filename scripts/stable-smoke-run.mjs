@@ -536,6 +536,14 @@ export function initializeProductionSafetyGate(selected) {
   return { restricted: false, mode: 'full', grep: '', reasons: [] };
 }
 
+export function selectCoverageCaseIds(requiredCaseIds, userGrep, selected, productionSafetyGate) {
+  const productionOnlyReadOnly = selected.length === 1
+    && selected[0] === 'production'
+    && productionSafetyGate.restricted;
+  const effectiveGrep = productionOnlyReadOnly ? productionSafetyGate.grep : userGrep;
+  return selectRequiredCaseIds(requiredCaseIds, effectiveGrep);
+}
+
 export function foldVisualGateVerdict(functionalVerdict, visualResult) {
   if (functionalVerdict === 'fail') return 'fail';
   if (visualResult?.verdict === '通过') return functionalVerdict;
@@ -1016,7 +1024,12 @@ async function main() {
       if (!execution.resultPath) return [];
       return collectPlaywrightCases(readJson(execution.resultPath), execution.environment);
     });
-    const requiredCaseIds = selectRequiredCaseIds(plan?.requiredCaseIds || [], grep);
+    const requiredCaseIds = selectCoverageCaseIds(
+      plan?.requiredCaseIds || [],
+      grep,
+      selected,
+      productionSafetyGate,
+    );
     const rows = reconcileCaseCoverage(requiredCaseIds, environmentRows, selected);
     const coverageSummary = summarizeCoverage(rows, plan?.verdict || 'conditional');
     const functionalSummary = enforceExecutionVerdict(coverageSummary, executions);
