@@ -141,12 +141,29 @@ public class EmbeddingService : IEmbeddingService
         {
             if (item?["embedding"] is not JsonArray arr) continue;
 
-            // index 缺省时退回"按出现顺序"，但只要给了就以 index 为准
-            var idx = item["index"]?.GetValue<int>() ?? -1;
-            if (idx < 0 || idx >= expectedCount)
+            // index 缺省（字段不存在）才退回"按出现顺序"填第一个空位。
+            //
+            // 给了却越界是另一回事：那说明上游的应答与我们发出去的这批输入对不上，
+            // 把它当"没给"塞进第一个空位，等于**猜**它属于哪条原文——猜错就是
+            // 「A 的向量记在 B 名下」，写进库之后余弦照算、不报错，检索永远给错答案。
+            // 整批拒绝，不猜。
+            var indexNode = item["index"];
+            int idx;
+            if (indexNode == null)
             {
                 idx = Array.IndexOf(slots, null);
-                if (idx < 0) continue;
+                if (idx < 0)
+                    return EmbeddingBatch.Fail("UPSTREAM_ERROR", "向量模型返回的条数多于请求的文本数");
+            }
+            else
+            {
+                idx = indexNode.GetValue<int>();
+                if (idx < 0 || idx >= expectedCount)
+                    return EmbeddingBatch.Fail("UPSTREAM_ERROR",
+                        $"向量模型返回了越界的 index {idx}（本批共 {expectedCount} 条），已整批拒绝");
+                if (slots[idx] != null)
+                    return EmbeddingBatch.Fail("UPSTREAM_ERROR",
+                        $"向量模型对 index {idx} 返回了两条向量，已整批拒绝");
             }
 
             var vec = new float[arr.Count];

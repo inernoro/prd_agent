@@ -100,4 +100,31 @@ public class DocumentChunkerTests
         var b = DocumentChunker.ComputeHash("另一段内容", "bge-m3");
         Assert.NotEqual(a, b);
     }
+
+    /// <summary>
+    /// 源文件里不许出现裸 NUL 字节。
+    ///
+    /// Review 第一轮（#1357）抓出：分隔符当初直接写成了字面 NUL 而不是 C# 转义 `\0`，
+    /// git 据此把整个 .cs 判成 binary —— 之后这个文件不再有行级 diff，合并、评审、
+    /// 源码扫描全部失灵。运行时哈希输入不变，所以任何行为测试都发现不了；
+    /// 只有从字节层面看这个文件才看得出来。
+    /// </summary>
+    [Fact]
+    public void 源文件不得含裸NUL字节_否则git把整个文件当二进制()
+    {
+        var path = LocateSource("prd-api/src/PrdAgent.Core/Models/DocumentChunker.cs");
+        var bytes = File.ReadAllBytes(path);
+        Assert.DoesNotContain((byte)0, bytes);
+    }
+
+    private static string LocateSource(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+            dir = dir.Parent;
+        Assert.NotNull(dir); // 找不到仓库根就让用例红，而不是静默跳过
+        var path = Path.Combine(dir!.FullName, relative.Replace('/', Path.DirectorySeparatorChar));
+        Assert.True(File.Exists(path), $"未找到被守文件：{path}");
+        return path;
+    }
 }
