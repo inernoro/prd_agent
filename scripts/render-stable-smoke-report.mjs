@@ -64,7 +64,7 @@ const evidenceRows = [
   ...collectPlaywrightCases(productionReport, 'production'),
 ];
 const rows = reconcileCaseCoverage(
-  selectRequiredCaseIds(plan?.requiredCaseIds || [], grepExpression),
+  selectRequiredCaseIds(plan?.requiredCaseIds || [], grepExpression, evidenceRows),
   evidenceRows,
   selectedEnvironments.length > 0 ? selectedEnvironments : ['cds', 'production'],
 );

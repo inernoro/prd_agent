@@ -256,3 +256,5 @@
 | test | prd-admin/stable-smoke | 增加 CDS 必测覆盖缺口与米多绑定错误回归覆盖 |
 | fix | prd-admin | 头像生成完成后保留可恢复预览，直到应用或被新头像替代 |
 | fix | prd-admin | 头像创建请求关闭或刷新后使用幂等记录自动恢复已接受任务 |
+| fix | prd-api | 内容安全拒绝统一复用规范分类且不重试、不隔离健康图片 Offering |
+| fix | stable-smoke | 标题正则筛选按 Playwright 实际发现用例对账，避免无关用例误报未执行 |

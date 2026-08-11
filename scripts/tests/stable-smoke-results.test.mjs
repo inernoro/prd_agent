@@ -113,7 +113,11 @@ test('grep 单用例复测只对账表达式中选择的 caseId', () => {
     selectRequiredCaseIds(required, '\\[REC-003\\]|\\[REG-user-error-001\\]'),
     ['REC-003', 'REG-user-error-001'],
   );
-  expectCaseIds(selectRequiredCaseIds(required, '头像生成'), required);
+  expectCaseIds(selectRequiredCaseIds(required, '头像生成', [
+    { caseId: 'REC-003' },
+    { caseId: 'REG-USER-ERROR-001' },
+  ]), ['REC-003', 'REG-user-error-001']);
+  expectCaseIds(selectRequiredCaseIds(required, '不存在的标题', []), []);
 });
 
 test('单环境复测不会把未选择环境标记为通过', () => {

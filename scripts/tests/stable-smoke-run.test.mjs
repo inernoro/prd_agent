@@ -326,6 +326,12 @@ test('正式环境只读模式只对账安全门实际执行的健康检查', ()
     selectCoverageCaseIds(required, '', ['cds', 'production'], { ...gate, restricted: false }),
     required,
   );
+  assert.deepEqual(
+    selectCoverageCaseIds(required, '头像', ['cds'], { ...gate, restricted: false }, [
+      { caseId: 'VIS-001', environment: 'cds' },
+    ]),
+    ['VIS-001'],
+  );
 });
 
 test('功能与视觉结论取更严格结果', () => {

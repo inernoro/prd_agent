@@ -15,6 +15,9 @@ public class ImageGenerationUserErrorTests
     [InlineData(400, "blocked by safety policy", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
     [InlineData(403, "content_policy_violation", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
     [InlineData(403, "content_filter", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
+    [InlineData(403, "moderation_blocked", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
+    [InlineData(403, "unsafe content", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
+    [InlineData(500, "unsafe content", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
     [InlineData(500, "provider internal error", ErrorCodes.IMAGE_GEN_UNAVAILABLE)]
     public void Classify_ShouldReturnUserReadableMessageWithoutRawDiagnostic(
         int statusCode,

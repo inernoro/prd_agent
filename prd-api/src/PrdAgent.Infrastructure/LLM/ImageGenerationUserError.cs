@@ -64,17 +64,7 @@ internal static class ImageGenerationUserError
                 "图片生成等待超时，请稍后重试。");
         }
 
-        if (ContainsAny(
-                text,
-                "content policy",
-                "content_policy",
-                "content_filter",
-                "safety policy",
-                "safety system",
-                "moderation",
-                "blocked by safety",
-                "blocked for safety",
-                "unsafe content"))
+        if (IsContentSafetyDenial(text))
         {
             return new Result(
                 ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,
@@ -108,6 +98,21 @@ internal static class ImageGenerationUserError
         => new(
             ErrorCodes.IMAGE_GEN_UNAVAILABLE,
             "当前生图服务暂时不可用，请稍后重试。若持续出现，请联系管理员。");
+
+    internal static bool IsContentSafetyDenial(string? diagnostic)
+        => ContainsAny(
+            diagnostic ?? string.Empty,
+            "content policy",
+            "content_policy",
+            "content filter",
+            "content_filter",
+            "safety policy",
+            "safety system",
+            "moderation",
+            "blocked by safety",
+            "blocked for safety",
+            "unsafe content",
+            "responsible ai policy");
 
     private static bool ContainsAny(string text, params string[] values)
         => values.Any(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));

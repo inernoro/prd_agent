@@ -630,12 +630,12 @@ export function buildDryRunSummary({ runId, plan, selected, envFileLoaded, produ
   };
 }
 
-export function selectCoverageCaseIds(requiredCaseIds, userGrep, selected, productionSafetyGate) {
+export function selectCoverageCaseIds(requiredCaseIds, userGrep, selected, productionSafetyGate, discoveredRows = []) {
   const productionOnlyReadOnly = selected.length === 1
     && selected[0] === 'production'
     && productionSafetyGate.restricted;
   const effectiveGrep = productionOnlyReadOnly ? productionSafetyGate.grep : userGrep;
-  return selectRequiredCaseIds(requiredCaseIds, effectiveGrep);
+  return selectRequiredCaseIds(requiredCaseIds, effectiveGrep, discoveredRows);
 }
 
 export function foldVisualGateVerdict(functionalVerdict, visualResult) {
@@ -1223,6 +1223,7 @@ async function main() {
       grep,
       selected,
       productionSafetyGate,
+      environmentRows,
     );
     const rows = reconcileCaseCoverage(requiredCaseIds, environmentRows, selected);
     const coverageSummary = summarizeCoverage(rows, plan?.verdict || 'conditional');

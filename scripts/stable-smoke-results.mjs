@@ -43,17 +43,24 @@ export function collectPlaywrightCases(report, environment) {
   return rows;
 }
 
-export function selectRequiredCaseIds(requiredCaseIds, grepExpression = '') {
+export function selectRequiredCaseIds(requiredCaseIds, grepExpression = '', discoveredRows = []) {
+  if (!grepExpression) return [...requiredCaseIds];
   const normalizedExpression = String(grepExpression).replaceAll('\\', '');
   const requested = [...normalizedExpression.matchAll(CASE_ID_PATTERN)]
     .map((match) => match[1].toUpperCase());
-  if (requested.length === 0) return [...requiredCaseIds];
 
   const requiredByNormalizedId = new Map(requiredCaseIds.map((caseId) => [
     String(caseId).toUpperCase(),
     caseId,
   ]));
-  return [...new Set(requested)].map((caseId) => requiredByNormalizedId.get(caseId) || caseId);
+  if (requested.length > 0) {
+    return [...new Set(requested)].map((caseId) => requiredByNormalizedId.get(caseId) || caseId);
+  }
+
+  const discovered = discoveredRows
+    .map((row) => String(row?.caseId ?? '').toUpperCase())
+    .filter((caseId) => requiredByNormalizedId.has(caseId));
+  return [...new Set(discovered)].map((caseId) => requiredByNormalizedId.get(caseId));
 }
 
 export function environmentResultLabel(rows, selected = true) {

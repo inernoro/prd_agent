@@ -225,6 +225,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string? responseBody,
         GatewayRawRequest request)
     {
+        if (IsContentPolicyDenial(statusCode, responseBody))
+            return false;
+
         if (ShouldRetryProviderStatus(statusCode))
             return true;
 
@@ -271,21 +274,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     internal static bool IsContentPolicyDenial(int statusCode, string? responseBody)
     {
-        if (statusCode is < 400 or > 499 || string.IsNullOrWhiteSpace(responseBody))
+        if (statusCode < 400 || string.IsNullOrWhiteSpace(responseBody))
             return false;
 
         var message = TryExtractErrorMessage(responseBody) ?? string.Empty;
         var diagnostic = $"{message}\n{responseBody}";
-        return diagnostic.Contains("content policy", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("content_policy", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("content filter", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("content_filter", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("safety policy", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("safety system", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("blocked for safety", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("blocked by safety", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("content moderation", StringComparison.OrdinalIgnoreCase)
-               || diagnostic.Contains("responsible ai policy", StringComparison.OrdinalIgnoreCase);
+        return ImageGenerationUserError.IsContentSafetyDenial(diagnostic);
     }
 
     private Task RecordRawProviderFailureAsync(
