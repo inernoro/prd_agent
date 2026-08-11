@@ -6603,6 +6603,8 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
             { "modelName", draft.ModelName },
             { "protocol", ToBsonAuditValue(draft.Protocol) },
             { "capabilities", new BsonArray(draft.Capabilities) },
+            { "imageSizeControlMode", draft.ImageSizeControlMode },
+            { "imageSizeFieldFormat", ToBsonAuditValue(draft.ImageSizeFieldFormat) },
             { "priceCurrency", ToBsonAuditValue(draft.PriceCurrency) },
             { "hasDedicatedKey", encryptedApiKey is not null },
             { "modelsAppended", ensured.ModelsAppended },
@@ -6693,6 +6695,58 @@ app.MapPut("/gw/models/{id}/enabled", async (HttpContext http, string id, Toggle
             { "authority", targetAuthority },
         });
     var fresh = await targetModels.Find(filter).FirstOrDefaultAsync();
+    return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 上游生图模型尺寸能力：能力跟随实际模型，逻辑模型和业务端不得按模型名猜测。
+app.MapPut("/gw/models/{id}/image-size-control", async (
+    HttpContext http,
+    string id,
+    [FromBody] UpdateModelImageSizeControlRequest? body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "缺少图片尺寸控制配置"), jsonOptions, 400);
+    if (!GatewayConfigurationProvisioning.TryNormalizeImageSizeControl(
+            body.Mode, body.FieldFormat, out var mode, out var fieldFormat, out var error))
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwModels.Find(filter).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("NOT_GW_AUTHORITY", "请先将模型导入平台，再维护上游尺寸能力"), jsonOptions, 409);
+
+    var currentCaps = doc.TryGetValue("Capabilities", out var cv) && cv.IsBsonArray
+        ? cv.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList()
+        : new List<BsonDocument>();
+    var isImageGeneration = doc.AsNullableBool("IsImageGen") == true
+                            || currentCaps.Any(x => string.Equals(x.AsNullableString("Type"), "image_generation", StringComparison.OrdinalIgnoreCase));
+    if (mode != "inherit" && !isImageGeneration)
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "只有图片生成模型可以配置图片尺寸控制能力"), jsonOptions, 400);
+
+    var before = MapImageSizeControl(currentCaps);
+    var nextCaps = currentCaps
+        .Where(x => !GatewayConfigurationProvisioning.IsImageSizeControlCapability(x.AsNullableString("Type")))
+        .ToList();
+    nextCaps.AddRange(GatewayConfigurationProvisioning.BuildImageSizeCapabilityDocuments(mode, fieldFormat));
+    await gwModels.UpdateOneAsync(filter, Builders<BsonDocument>.Update
+        .Set("Capabilities", new BsonArray(nextCaps))
+        .Set("UpdatedAt", DateTime.UtcNow));
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.update_image_size_control",
+        targetType: "llmgw_model",
+        targetId: id,
+        targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "mode", new BsonDocument { { "from", before.Mode }, { "to", mode } } },
+            { "fieldFormat", new BsonDocument { { "from", ToBsonAuditValue(before.FieldFormat) }, { "to", ToBsonAuditValue(fieldFormat) } } },
+            { "authority", "llm_gateway" },
+        });
+    var fresh = await gwModels.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
@@ -10782,6 +10836,7 @@ static ModelItem MapModel(BsonDocument d)
         Source = c.GetStringOrEmpty("Source"),
         Value = c.AsNullableBool("Value") ?? false,
     }).ToList();
+    var imageSizeControl = MapImageSizeControl(capsArr.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument));
     return new ModelItem
     {
         Id = d.GetStringOrEmpty("_id"),
@@ -10812,6 +10867,8 @@ static ModelItem MapModel(BsonDocument d)
         FailCount = d.AsNullableLong("FailCount") ?? 0,
         TotalDuration = d.AsNullableLong("TotalDuration") ?? 0,
         Capabilities = caps,
+        ImageSizeControlMode = imageSizeControl.Mode,
+        ImageSizeFieldFormat = imageSizeControl.FieldFormat,
         InputPricePerMillion = d.AsNullableDecimal("InputPricePerMillion"),
         OutputPricePerMillion = d.AsNullableDecimal("OutputPricePerMillion"),
         PricePerCall = d.AsNullableDecimal("PricePerCall"),
@@ -10819,6 +10876,29 @@ static ModelItem MapModel(BsonDocument d)
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
     };
+}
+
+static (string Mode, string? FieldFormat) MapImageSizeControl(IEnumerable<BsonDocument> capabilities)
+{
+    var enabled = capabilities
+        .Where(x => x.AsNullableBool("Value") != false)
+        .Select(x => x.AsNullableString("Type"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    if (enabled.Contains("parameter:image_size.none")) return ("none", null);
+    var usePrompt = enabled.Contains("parameter:image_size.prompt");
+    var fieldFormat = enabled.Contains("parameter:image_size.field.image_config_aspect_ratio")
+        ? "image_config.aspect_ratio"
+        : enabled.Contains("parameter:image_size.field.aspect_ratio")
+            ? "aspect_ratio"
+            : enabled.Contains("parameter:image_size.field.width_height")
+                ? "width_height"
+                : enabled.Contains("parameter:image_size.field.size")
+                    ? "size"
+                    : null;
+    return fieldFormat is null
+        ? (usePrompt ? "prompt" : "inherit", null)
+        : (usePrompt ? "field_and_prompt" : "field", fieldFormat);
 }
 
 static bool IsSafeOfferingEndpointPath(string? value)

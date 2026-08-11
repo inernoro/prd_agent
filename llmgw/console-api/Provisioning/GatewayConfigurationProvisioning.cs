@@ -22,6 +22,8 @@ public sealed record NormalizedModelDraft(
     string ModelNameNormalized,
     string? Protocol,
     IReadOnlyList<string> Capabilities,
+    string ImageSizeControlMode,
+    string? ImageSizeFieldFormat,
     string? ApiKey,
     int Timeout,
     int MaxRetries,
@@ -54,6 +56,15 @@ public sealed record NormalizedExchangeDraft(
 
 public static class GatewayConfigurationProvisioning
 {
+    private const string ImageSizeCapabilityPrefix = "parameter:image_size.";
+    private static readonly HashSet<string> SupportedImageSizeControlModes =
+    [
+        "inherit", "field", "prompt", "field_and_prompt", "none",
+    ];
+    private static readonly HashSet<string> SupportedImageSizeFieldFormats =
+    [
+        "size", "width_height", "aspect_ratio", "image_config.aspect_ratio",
+    ];
     private static readonly HashSet<string> SupportedModelTypes =
     [
         "chat", "intent", "vision", "generation", "code", "long-context", "embedding",
@@ -184,6 +195,18 @@ public static class GatewayConfigurationProvisioning
         if (modelTypes.Any(x => !SupportedModelTypes.Contains(x)))
             return Fail("模型用途包含不支持的类型", out error);
 
+        var imageSizeControlMode = request.ImageSizeControlMode?.Trim().ToLowerInvariant() ?? "inherit";
+        var imageSizeFieldFormat = request.ImageSizeFieldFormat?.Trim().ToLowerInvariant();
+        if (!SupportedImageSizeControlModes.Contains(imageSizeControlMode))
+            return Fail("图片尺寸控制方式不支持", out error);
+        var usesSizeField = imageSizeControlMode is "field" or "field_and_prompt";
+        if (usesSizeField && (imageSizeFieldFormat is null || !SupportedImageSizeFieldFormats.Contains(imageSizeFieldFormat)))
+            return Fail("字段控制尺寸时必须选择受支持的字段格式", out error);
+        if (!usesSizeField && !string.IsNullOrWhiteSpace(imageSizeFieldFormat))
+            return Fail("当前尺寸控制方式不应填写字段格式", out error);
+        if (imageSizeControlMode != "inherit" && !modelTypes.Contains("generation", StringComparer.OrdinalIgnoreCase))
+            return Fail("只有图片生成模型可以配置图片尺寸控制能力", out error);
+
         var apiKey = request.ApiKey?.Trim();
         if (apiKey?.Length > 20000) return Fail("模型通讯密钥长度超出限制", out error);
         if (apiKey?.Length == 0) apiKey = null;
@@ -215,6 +238,8 @@ public static class GatewayConfigurationProvisioning
             modelName.ToLowerInvariant(),
             protocol,
             modelTypes,
+            imageSizeControlMode,
+            usesSizeField ? imageSizeFieldFormat : null,
             apiKey,
             timeout,
             maxRetries,
@@ -373,6 +398,8 @@ public static class GatewayConfigurationProvisioning
         string? encryptedApiKey,
         DateTime now)
     {
+        var capabilityDocuments = draft.Capabilities.Select(ToCapabilityDocument).ToList();
+        capabilityDocuments.AddRange(BuildImageSizeCapabilityDocuments(draft.ImageSizeControlMode, draft.ImageSizeFieldFormat));
         var document = new BsonDocument
         {
             ["_id"] = id,
@@ -397,7 +424,7 @@ public static class GatewayConfigurationProvisioning
             ["IsIntent"] = draft.Capabilities.Contains("intent", StringComparer.OrdinalIgnoreCase),
             ["IsVision"] = draft.Capabilities.Contains("vision", StringComparer.OrdinalIgnoreCase),
             ["IsImageGen"] = draft.Capabilities.Contains("generation", StringComparer.OrdinalIgnoreCase),
-            ["Capabilities"] = new BsonArray(draft.Capabilities.Select(ToCapabilityDocument)),
+            ["Capabilities"] = new BsonArray(capabilityDocuments),
             ["Authority"] = "llm_gateway",
             ["SourceCollection"] = "llmgw_models",
             ["CreatedAt"] = now,
@@ -418,6 +445,55 @@ public static class GatewayConfigurationProvisioning
             _ => modelType,
         };
         return new BsonDocument { ["Type"] = capability, ["Source"] = "user", ["Value"] = true };
+    }
+
+    public static bool IsImageSizeControlCapability(string? type)
+        => !string.IsNullOrWhiteSpace(type)
+           && type.Trim().StartsWith(ImageSizeCapabilityPrefix, StringComparison.OrdinalIgnoreCase);
+
+    public static IReadOnlyList<BsonDocument> BuildImageSizeCapabilityDocuments(string mode, string? fieldFormat)
+    {
+        var types = new List<string>();
+        if (mode == "none") types.Add("parameter:image_size.none");
+        if (mode is "prompt" or "field_and_prompt") types.Add("parameter:image_size.prompt");
+        if (mode is "field" or "field_and_prompt")
+        {
+            types.Add(fieldFormat switch
+            {
+                "size" => "parameter:image_size.field.size",
+                "width_height" => "parameter:image_size.field.width_height",
+                "aspect_ratio" => "parameter:image_size.field.aspect_ratio",
+                "image_config.aspect_ratio" => "parameter:image_size.field.image_config_aspect_ratio",
+                _ => throw new ArgumentOutOfRangeException(nameof(fieldFormat), fieldFormat, "不支持的生图尺寸字段格式"),
+            });
+        }
+        return types.Select(type => new BsonDocument
+        {
+            ["Type"] = type,
+            ["Source"] = "user",
+            ["Value"] = true,
+        }).ToList();
+    }
+
+    public static bool TryNormalizeImageSizeControl(
+        string? rawMode,
+        string? rawFieldFormat,
+        out string mode,
+        out string? fieldFormat,
+        out string error)
+    {
+        mode = rawMode?.Trim().ToLowerInvariant() ?? "inherit";
+        fieldFormat = rawFieldFormat?.Trim().ToLowerInvariant();
+        error = string.Empty;
+        if (!SupportedImageSizeControlModes.Contains(mode))
+            return Fail("图片尺寸控制方式不支持", out error);
+        var usesSizeField = mode is "field" or "field_and_prompt";
+        if (usesSizeField && (fieldFormat is null || !SupportedImageSizeFieldFormats.Contains(fieldFormat)))
+            return Fail("字段控制尺寸时必须选择受支持的字段格式", out error);
+        if (!usesSizeField && !string.IsNullOrWhiteSpace(fieldFormat))
+            return Fail("当前尺寸控制方式不应填写字段格式", out error);
+        if (!usesSizeField) fieldFormat = null;
+        return true;
     }
 
     private static bool TryNormalizeExchangeCore(

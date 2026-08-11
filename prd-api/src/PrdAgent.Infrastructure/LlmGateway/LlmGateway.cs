@@ -1393,16 +1393,27 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var protocol = string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol;
         var normalizedProtocol = protocol?.Trim().ToLowerInvariant();
         var images = spec.Images.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
-        // 逻辑模型可能直到 Gateway 路由后才解析为实际模型，因此尺寸语言化必须在最终发送边界
-        // 再按实际模型配置应用一次。该转换带标记且幂等，MAP 侧已处理时不会重复注入。
-        var finalRequestParams = ImageGenModelAdapterRegistry.BuildRequestParams(
-            resolution.ActualModel,
-            spec.Size);
-        var finalAdapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
-        var effectivePrompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt(
-            spec.Prompt,
-            finalRequestParams,
-            finalAdapterConfig);
+        // 上游模型能力优先于 MAP 静态兼容表。只有存量模型尚未配置 image_size 能力时，
+        // 才回退到旧适配表，避免新增模型继续依赖按名称猜测。
+        var upstreamSizeControl = ImageSizeControlCapabilities.Parse(resolution.ParameterCapabilities);
+        string effectivePrompt;
+        if (upstreamSizeControl.IsConfigured)
+        {
+            effectivePrompt = upstreamSizeControl.UsePrompt
+                ? ImageGenRequestBuilder.ApplyConfiguredSizePrompt(spec.Prompt, spec.Size)
+                : spec.Prompt;
+        }
+        else
+        {
+            var finalRequestParams = ImageGenModelAdapterRegistry.BuildRequestParams(
+                resolution.ActualModel,
+                spec.Size);
+            var finalAdapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
+            effectivePrompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt(
+                spec.Prompt,
+                finalRequestParams,
+                finalAdapterConfig);
+        }
         JsonObject? body = null;
         Dictionary<string, object>? multipartFields = null;
         Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null;
@@ -1521,6 +1532,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
         }
 
+        if (upstreamSizeControl.IsConfigured)
+        {
+            ApplyConfiguredImageSizeControl(body, multipartFields, upstreamSizeControl, spec.Size);
+        }
+
         if (!resolution.IsExchange && !string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath))
             endpointPath = resolution.OfferingEndpointPath;
 
@@ -1543,6 +1559,105 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             Context = source.Context,
             CanonicalImageRequest = spec,
         };
+    }
+
+    private static void ApplyConfiguredImageSizeControl(
+        JsonObject? body,
+        Dictionary<string, object>? multipartFields,
+        ImageSizeControlCapabilityState capability,
+        string? requestedSize)
+    {
+        RemoveImageSizeFields(body, multipartFields);
+        if (!capability.UseField || string.IsNullOrWhiteSpace(capability.FieldFormat)) return;
+
+        var normalizedSize = string.IsNullOrWhiteSpace(requestedSize) ? "1024x1024" : requestedSize.Trim();
+        var aspectRatio = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(normalizedSize) ?? "1:1";
+        var (width, height) = ParseImageSize(normalizedSize);
+
+        if (body is not null)
+        {
+            switch (capability.FieldFormat)
+            {
+                case ImageSizeFieldFormats.Size:
+                    body["size"] = normalizedSize;
+                    break;
+                case ImageSizeFieldFormats.WidthHeight:
+                    body["width"] = width;
+                    body["height"] = height;
+                    break;
+                case ImageSizeFieldFormats.AspectRatio:
+                    body["aspect_ratio"] = aspectRatio;
+                    break;
+                case ImageSizeFieldFormats.ImageConfigAspectRatio:
+                    var imageConfig = body["image_config"] as JsonObject ?? new JsonObject();
+                    imageConfig["aspect_ratio"] = aspectRatio;
+                    body["image_config"] = imageConfig;
+                    break;
+            }
+        }
+
+        if (multipartFields is not null)
+        {
+            switch (capability.FieldFormat)
+            {
+                case ImageSizeFieldFormats.Size:
+                    multipartFields["size"] = normalizedSize;
+                    break;
+                case ImageSizeFieldFormats.WidthHeight:
+                    multipartFields["width"] = width;
+                    multipartFields["height"] = height;
+                    break;
+                case ImageSizeFieldFormats.AspectRatio:
+                    multipartFields["aspect_ratio"] = aspectRatio;
+                    break;
+                case ImageSizeFieldFormats.ImageConfigAspectRatio:
+                    multipartFields["image_config.aspect_ratio"] = aspectRatio;
+                    break;
+            }
+        }
+    }
+
+    private static void RemoveImageSizeFields(JsonObject? body, Dictionary<string, object>? multipartFields)
+    {
+        if (body is not null)
+        {
+            body.Remove("size");
+            body.Remove("width");
+            body.Remove("height");
+            body.Remove("aspect_ratio");
+            body.Remove("resolution");
+            if (body["image_config"] is JsonObject imageConfig)
+            {
+                imageConfig.Remove("aspect_ratio");
+                if (imageConfig.Count == 0) body.Remove("image_config");
+            }
+            if (body["generationConfig"] is JsonObject generationConfig
+                && generationConfig["imageConfig"] is JsonObject googleImageConfig)
+            {
+                googleImageConfig.Remove("aspectRatio");
+                googleImageConfig.Remove("imageSize");
+            }
+        }
+
+        if (multipartFields is null) return;
+        multipartFields.Remove("size");
+        multipartFields.Remove("width");
+        multipartFields.Remove("height");
+        multipartFields.Remove("aspect_ratio");
+        multipartFields.Remove("resolution");
+        multipartFields.Remove("image_config.aspect_ratio");
+    }
+
+    private static (int Width, int Height) ParseImageSize(string normalizedSize)
+    {
+        var parts = normalizedSize.Split(new[] { 'x', 'X' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 2
+               && int.TryParse(parts[0], out var width)
+               && int.TryParse(parts[1], out var height)
+               && width > 0
+               && height > 0
+            ? (width, height)
+            : (1024, 1024);
     }
 
     private static string EnsureImageDataUri(string value)
@@ -1585,6 +1700,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         DateTime startedAt,
         CancellationToken ct)
     {
+        // 正常发送与每一次故障切换都必须在最终上游已确定后重建 wire 请求。
+        // 过去只有并发准入失败分支会重建，预解析直发会把 canonical 请求丢成仅含 model 的空 body。
+        if (request.CanonicalImageRequest is not null)
+            request = RebuildCanonicalImageRequest(request, resolution);
+
         string? logId = null;
         GatewayProviderConcurrencyLease? providerLease = null;
         var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
@@ -1602,8 +1722,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var candidate = resolution.RetryCandidates[0];
                     candidate.RetryCandidates = resolution.RetryCandidates.Skip(1).ToList();
-                    var rebuiltRequest = RebuildCanonicalImageRequest(request, candidate);
-                    return await ExecuteRawWithResolutionAsync(rebuiltRequest, candidate, startedAt, ct);
+                    return await ExecuteRawWithResolutionAsync(request, candidate, startedAt, ct);
                 }
                 return GatewayRawResponse.Fail(concurrency.ErrorCode, admissionMessage, 429);
             }

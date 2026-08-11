@@ -710,7 +710,27 @@ public class ModelResolutionResult
         => CapabilityValue(EffectiveCapabilities(model, modelConfig), "parallel_tool_calls", "parallel_tools", "parallel_function_calling");
 
     private static IEnumerable<LLMModelCapability>? EffectiveCapabilities(ModelGroupItem model, LLMModel? modelConfig)
-        => model.Capabilities is { Count: > 0 } ? model.Capabilities : modelConfig?.Capabilities;
+    {
+        // 上游模型能力是最终事实；池成员/逻辑模型能力可以覆盖同名项，但不能让非空的用途列表
+        // 把上游字段能力整组遮掉。否则逻辑模型路由后会丢失 image_size 等实际模型契约。
+        var merged = new Dictionary<string, LLMModelCapability>(StringComparer.OrdinalIgnoreCase);
+        var upstreamHasImageSizeControl = modelConfig?.Capabilities?.Any(capability =>
+            !string.IsNullOrWhiteSpace(capability.Type)
+            && capability.Type.StartsWith("parameter:image_size.", StringComparison.OrdinalIgnoreCase)) == true;
+        foreach (var capability in modelConfig?.Capabilities ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(capability.Type)) merged[capability.Type] = capability;
+        }
+        foreach (var capability in model.Capabilities ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(capability.Type)
+                && upstreamHasImageSizeControl
+                && capability.Type.StartsWith("parameter:image_size.", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!string.IsNullOrWhiteSpace(capability.Type)) merged[capability.Type] = capability;
+        }
+        return merged.Count == 0 ? null : merged.Values;
+    }
 
     private static bool? CapabilityValue(IEnumerable<LLMModelCapability>? capabilities, params string[] types)
     {

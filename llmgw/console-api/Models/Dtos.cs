@@ -930,6 +930,8 @@ public sealed class ModelItem
     public string? ClaimedAt { get; set; }
     public long CallCount { get; set; } public long SuccessCount { get; set; } public long FailCount { get; set; } public long TotalDuration { get; set; }
     public List<ModelCapabilityItem> Capabilities { get; set; } = new();
+    public string ImageSizeControlMode { get; set; } = "inherit";
+    public string? ImageSizeFieldFormat { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
@@ -943,6 +945,8 @@ public sealed class CreateModelRequest
     public string? ModelName { get; set; }
     public string? Protocol { get; set; }
     public List<string> Capabilities { get; set; } = new();
+    public string? ImageSizeControlMode { get; set; }
+    public string? ImageSizeFieldFormat { get; set; }
     public string? ApiKey { get; set; }
     public int? Timeout { get; set; }
     public int? MaxRetries { get; set; }
@@ -953,6 +957,11 @@ public sealed class CreateModelRequest
     public decimal? PricePerCall { get; set; }
     public string? PriceCurrency { get; set; }
     public string? Remark { get; set; }
+}
+public sealed class UpdateModelImageSizeControlRequest
+{
+    public string? Mode { get; set; }
+    public string? FieldFormat { get; set; }
 }
 public sealed class CreateModelResult
 {

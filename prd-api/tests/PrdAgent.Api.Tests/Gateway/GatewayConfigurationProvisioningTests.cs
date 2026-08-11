@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using PrdAgent.Core.Models;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Provisioning;
@@ -167,6 +168,48 @@ public sealed class GatewayConfigurationProvisioningTests
         document["IsVision"].AsBoolean.ShouldBeTrue();
         document["IsImageGen"].AsBoolean.ShouldBeTrue();
         document.Contains("ApiKeyEncrypted").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ImageGenerationModel_PersistsStructuredUpstreamSizeControlCapabilities()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeModel(new CreateModelRequest
+        {
+            PlatformId = "platform-1",
+            ModelName = "custom-image-model",
+            Capabilities = ["generation"],
+            ImageSizeControlMode = "field_and_prompt",
+            ImageSizeFieldFormat = "aspect_ratio",
+        }, out var draft, out var error).ShouldBeTrue(error);
+
+        var document = GatewayConfigurationProvisioning.BuildModelDocument(
+            draft!, "tenant-a", "model-image", null, DateTime.UnixEpoch);
+        var capabilityTypes = document["Capabilities"].AsBsonArray
+            .Select(item => item.AsBsonDocument["Type"].AsString)
+            .ToList();
+
+        capabilityTypes.ShouldContain("image_generation");
+        capabilityTypes.ShouldContain("parameter:image_size.prompt");
+        capabilityTypes.ShouldContain("parameter:image_size.field.aspect_ratio");
+        capabilityTypes
+            .Where(ImageSizeControlCapabilities.IsSizeControlCapability)
+            .ShouldBe(ImageSizeControlCapabilities.BuildCapabilityTypes(
+                ImageSizeControlModes.FieldAndPrompt,
+                ImageSizeFieldFormats.AspectRatio));
+    }
+
+    [Fact]
+    public void NonImageModel_RejectsImageSizeControlCapability()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeModel(new CreateModelRequest
+        {
+            PlatformId = "platform-1",
+            ModelName = "tutorial-chat",
+            Capabilities = ["chat"],
+            ImageSizeControlMode = "prompt",
+        }, out _, out var error).ShouldBeFalse();
+
+        error.ShouldContain("图片生成模型");
     }
 
     [Fact]

@@ -1937,6 +1937,56 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_UsesUpstreamModelSizeCapabilityBeforeLegacyAdapterTable()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "custom-image",
+            ActualModel = "vendor/new-image-model",
+            ActualPlatformId = "provider-1",
+            ActualPlatformName = "Provider",
+            PlatformType = "openai",
+            Protocol = "openrouter-image",
+            ApiUrl = "https://provider.example.com/v1",
+            ApiKey = "test-key",
+            ParameterCapabilities = new Dictionary<string, bool>
+            {
+                ["image_size.prompt"] = true,
+                ["image_size.field.aspect_ratio"] = true,
+            },
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "custom-image",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a poster",
+                Count = 1,
+                Size = "768x1024",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.True(body["aspect_ratio"]?.GetValue<string>() == "3:4", body.ToJsonString());
+        Assert.StartsWith(
+            "[输出尺寸要求 / OUTPUT SIZE，最高优先级]",
+            body["prompt"]?.GetValue<string>());
+        Assert.Equal("vendor/new-image-model", body["model"]?.GetValue<string>());
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
     {
         var legacyResolution = new GatewayModelResolution

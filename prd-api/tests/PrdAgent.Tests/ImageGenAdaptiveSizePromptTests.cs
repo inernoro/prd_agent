@@ -1,5 +1,6 @@
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LLM.Adapters;
+using PrdAgent.Core.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
@@ -96,5 +97,21 @@ public class ImageGenAdaptiveSizePromptTests
         var actualSize = OpenAIImageClient.IdentifyActualImageSize(stream.ToArray());
 
         Assert.Equal("1152x1536", actualSize);
+    }
+
+    [Fact]
+    public void UpstreamImageSizeCapabilities_ParseFieldAndPromptWithoutModelNameMatching()
+    {
+        var state = ImageSizeControlCapabilities.Parse(new Dictionary<string, bool>
+        {
+            ["image_size.prompt"] = true,
+            ["image_size.field.aspect_ratio"] = true,
+        });
+
+        Assert.True(state.IsConfigured);
+        Assert.True(state.UseField);
+        Assert.True(state.UsePrompt);
+        Assert.Equal(ImageSizeControlModes.FieldAndPrompt, state.Mode);
+        Assert.Equal(ImageSizeFieldFormats.AspectRatio, state.FieldFormat);
     }
 }

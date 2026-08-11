@@ -386,6 +386,41 @@ public class ModelResolverTests
         Assert.False(result.ParameterCapabilities!["seed"]);
     }
 
+    [Fact]
+    public async Task PoolModelCapability_WhenPoolHasOtherCapabilities_ShouldMergeUpstreamSizeControl()
+    {
+        var platform = CreatePlatform("plat-1", "OpenAI", "openai");
+        var pool = CreateModelGroup(
+            "pool-image", "Image Pool", "generation",
+            isDefault: true, priority: 0,
+            ("plat-1", "image-model", ModelHealthStatus.Healthy));
+        pool.Models[0].Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "image_generation", Source = "user", Value = true },
+            new() { Type = "parameter:image_size.none", Source = "legacy-snapshot", Value = true }
+        };
+        var modelConfig = CreateLegacyModel("image-model", "plat-1", "generation");
+        modelConfig.Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "parameter:image_size.prompt", Source = "user", Value = true },
+            new() { Type = "parameter:image_size.field.aspect_ratio", Source = "user", Value = true }
+        };
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithModelGroup(pool)
+            .WithLegacyModel(modelConfig, "sk-test");
+
+        var result = await resolver.ResolveAsync("visual-agent.image::generation", "generation");
+
+        Assert.True(result.Success);
+        Assert.Equal("image-model", result.ActualModel);
+        Assert.NotNull(result.ParameterCapabilities);
+        Assert.True(result.ParameterCapabilities!["image_size.prompt"]);
+        Assert.True(result.ParameterCapabilities["image_size.field.aspect_ratio"]);
+        Assert.False(result.ParameterCapabilities.ContainsKey("image_size.none"));
+    }
+
     [Theory]
     [InlineData("gemini", "claude", "gemini", "protocol-from-pool-item")]
     [InlineData(null, "claude", "claude", "protocol-from-model")]

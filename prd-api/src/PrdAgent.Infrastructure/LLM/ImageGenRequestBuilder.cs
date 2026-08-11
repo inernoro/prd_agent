@@ -18,8 +18,10 @@ namespace PrdAgent.Infrastructure.LLM;
 ///   // built.RequestBody 即可直接发上游
 ///
 /// 加一个新生图模型的成本目标：
-///   - 只在 <see cref="ImageGenModelConfigs"/> 加一条 <see cref="ImageGenModelAdapterConfig"/>
-///     （含 ModelIdPattern / SizeParamFormat / SizesByResolution / ParamRenames / PlatformType）。
+///   - 尺寸怎么传给上游由 llmgw 模型能力显式声明；旧模型才按名称回退到
+///     <see cref="ImageGenModelConfigs"/> 的 SizeParamFormat / InjectSizePrompt。
+///   - 模型支持哪些尺寸与归一化限制仍在 <see cref="ImageGenModelConfigs"/> 维护，
+///     直到上游能力契约覆盖这组约束。
 ///   - 仅当上游协议形状全新（既非 OpenAI 兼容、又非 Volces/Google/OpenRouter/即梦 Exchange 之一）时，
 ///     才需要再新增一个 <c>IImageGenPlatformAdapter</c> 实现并在
 ///     <see cref="ImageGenPlatformAdapterFactory"/> 注册。
@@ -80,6 +82,43 @@ public static class ImageGenRequestBuilder
             : "不要输出正方形或其他比例。";
         var directive = $"{AdaptiveSizePromptMarker} 目标画布 {adaptation.Size}，严格宽高比 {ratio}，{orientation}。{exclusion}";
         return string.IsNullOrWhiteSpace(safePrompt) ? directive : $"{directive}\n{safePrompt}";
+    }
+
+    /// <summary>
+    /// 按上游模型能力显式注入尺寸提示词。与静态适配表无关，用于 Gateway 已解析出实际模型后
+    /// 消费 llmgw_models 上的 image_size.prompt 能力。
+    /// </summary>
+    public static string ApplyConfiguredSizePrompt(string prompt, string? requestedSize)
+    {
+        var normalized = string.IsNullOrWhiteSpace(requestedSize) ? "1024x1024" : requestedSize.Trim();
+        var parts = normalized.Split(new[] { 'x', 'X' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2
+            || !int.TryParse(parts[0], out var width)
+            || !int.TryParse(parts[1], out var height)
+            || width <= 0
+            || height <= 0)
+        {
+            return prompt;
+        }
+
+        var requestParams = new ImageGenRequestParams
+        {
+            IsAdaptive = true,
+            Adaptation = new SizeAdaptationResult
+            {
+                Size = $"{width}x{height}",
+                Width = width,
+                Height = height,
+                AspectRatio = ReduceRatio(width, height),
+            },
+        };
+        var configuredAdapter = new ImageGenModelAdapterConfig
+        {
+            SizeConstraintType = SizeConstraintTypes.Adaptive,
+            SizeParamFormat = SizeParamFormats.None,
+            InjectSizePrompt = true,
+        };
+        return ApplyAdaptiveSizePrompt(prompt, requestParams, configuredAdapter);
     }
 
     /// <summary>

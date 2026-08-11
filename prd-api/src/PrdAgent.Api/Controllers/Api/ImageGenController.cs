@@ -429,20 +429,17 @@ public class ImageGenController : ControllerBase
         var requestedModelId = modelId.Trim();
         var adapterModelId = requestedModelId;
         var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
-        if (adapterInfo == null || !adapterInfo.Matched)
+        // 尺寸传输方式属于实际上游模型，即使公开模型名恰好命中旧适配表，也要先解析
+        // 当前路由，避免静态兼容配置遮住控制台显式声明的字段或提示词能力。
+        var runtimeResolution = await _gateway.ResolveRequiredLogicalModelAsync(
+            AppCallerCodes.Text2Img,
+            "generation",
+            requestedModelId,
+            ct);
+        if (runtimeResolution.Success && !string.IsNullOrWhiteSpace(runtimeResolution.ActualModel))
         {
-            // 视觉创作展示的是 Gateway 逻辑模型公开 ID（如 image2），而尺寸传输方式属于实际
-            // Offering 的适配能力。统一通过 Gateway 解析契约取得运行时模型，不在前端或此处维护别名表。
-            var resolution = await _gateway.ResolveRequiredLogicalModelAsync(
-                AppCallerCodes.Text2Img,
-                "generation",
-                requestedModelId,
-                ct);
-            if (resolution.Success && !string.IsNullOrWhiteSpace(resolution.ActualModel))
-            {
-                adapterModelId = resolution.ActualModel.Trim();
-                adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
-            }
+            adapterModelId = runtimeResolution.ActualModel.Trim();
+            adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
         }
 
         if (adapterInfo == null || !adapterInfo.Matched)
@@ -453,6 +450,23 @@ public class ImageGenController : ControllerBase
                 modelId = requestedModelId,
             }));
         }
+
+        var upstreamSizeControl = ImageSizeControlCapabilities.Parse(runtimeResolution?.ParameterCapabilities);
+        var effectiveSizeParamFormat = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.FieldFormat switch
+            {
+                ImageSizeFieldFormats.Size => SizeParamFormats.WxH,
+                ImageSizeFieldFormats.WidthHeight => SizeParamFormats.WidthHeight,
+                ImageSizeFieldFormats.AspectRatio or ImageSizeFieldFormats.ImageConfigAspectRatio => SizeParamFormats.AspectRatio,
+                _ => SizeParamFormats.None,
+            }
+            : adapterInfo.SizeParamFormat;
+        var effectiveSizesNotApplicable = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.SizesNotApplicable
+            : adapterInfo.SizesNotApplicable;
+        var effectiveIsAdaptive = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.UsePrompt
+            : adapterInfo.IsAdaptive;
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -469,8 +483,14 @@ public class ImageGenController : ControllerBase
                 description = adapterInfo.SizeConstraintDescription,
             },
             sizesByResolution = adapterInfo.SizesByResolution,
-            sizeParamFormat = adapterInfo.SizeParamFormat,
-            sizesNotApplicable = adapterInfo.SizesNotApplicable,
+            sizeParamFormat = effectiveSizeParamFormat,
+            sizesNotApplicable = effectiveSizesNotApplicable,
+            sizeControl = new
+            {
+                source = upstreamSizeControl.IsConfigured ? "upstream-model" : "legacy-adapter",
+                mode = upstreamSizeControl.Mode,
+                fieldFormat = upstreamSizeControl.FieldFormat,
+            },
             limitations = new
             {
                 mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
@@ -483,7 +503,7 @@ public class ImageGenController : ControllerBase
             },
             supportsImageToImage = adapterInfo.SupportsImageToImage,
             supportsInpainting = adapterInfo.SupportsInpainting,
-            isAdaptive = adapterInfo.IsAdaptive,
+            isAdaptive = effectiveIsAdaptive,
         }));
     }
 

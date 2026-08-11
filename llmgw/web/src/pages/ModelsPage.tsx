@@ -21,8 +21,8 @@
 // Provider 内联预览的按钮文案。改那处措辞会让 CI 的 dotnet test 变红，动手前先读那个测试。
 // （此处刻意不复制该字面量：注释里再抄一份，会让守卫在 UI 文案被删后仍然误判通过。）
 import { useEffect, useMemo, useState } from 'react';
-import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled } from '@/lib/api';
-import type { CreateModelRequest, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
+import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled, updateModelImageSizeControl } from '@/lib/api';
+import type { CreateModelRequest, ImageSizeControlMode, ImageSizeFieldFormat, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { FormGrid, HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
@@ -54,6 +54,8 @@ export function ModelsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createDraft, setCreateDraft] = useState<ModelDraftState>(emptyModelDraft());
+  const [sizeControlDrafts, setSizeControlDrafts] = useState<Record<string, ImageSizeControlMode>>({});
+  const [sizeFieldFormatDrafts, setSizeFieldFormatDrafts] = useState<Record<string, ImageSizeFieldFormat>>({});
 
   useEffect(() => {
     let alive = true;
@@ -107,6 +109,8 @@ export function ModelsPage() {
       modelName: createDraft.modelName,
       protocol: createDraft.protocol,
       capabilities: createDraft.capabilities,
+      imageSizeControlMode: createDraft.imageSizeControlMode,
+      imageSizeFieldFormat: usesImageSizeField(createDraft.imageSizeControlMode) ? createDraft.imageSizeFieldFormat : undefined,
       apiKey: createDraft.apiKey.trim() || undefined,
       inputPricePerMillion: optionalNumber(createDraft.inputPricePerMillion),
       outputPricePerMillion: optionalNumber(createDraft.outputPricePerMillion),
@@ -143,7 +147,30 @@ export function ModelsPage() {
       capabilities: value.capabilities.includes(code)
         ? value.capabilities.filter((item) => item !== code)
         : [...value.capabilities, code],
+      ...(code === 'generation' && value.capabilities.includes(code)
+        ? { imageSizeControlMode: 'inherit' as const }
+        : {}),
     }));
+  }
+
+  async function saveImageSizeControl(model: ModelItem) {
+    const mode = sizeControlDrafts[model.id] ?? model.imageSizeControlMode ?? 'inherit';
+    const fieldFormat = sizeFieldFormatDrafts[model.id] ?? model.imageSizeFieldFormat ?? 'aspect_ratio';
+    setBusyId(`size-control:${model.id}`);
+    setToast(null);
+    const res = await updateModelImageSizeControl(model.id, {
+      mode,
+      fieldFormat: usesImageSizeField(mode) ? fieldFormat : undefined,
+    });
+    setBusyId(null);
+    if (!res.success) {
+      setToast(res.error?.message || '图片尺寸能力保存失败');
+      return;
+    }
+    setItems((prev) => (prev ? prev.map((item) => (item.id === model.id ? res.data : item)) : prev));
+    setSizeControlDrafts((prev) => omitKey(prev, model.id));
+    setSizeFieldFormatDrafts((prev) => omitKey(prev, model.id));
+    setToast(`已更新「${res.data.name || res.data.modelName}」的上游图片尺寸能力`);
   }
 
   async function toggle(m: ModelItem) {
@@ -352,6 +379,41 @@ export function ModelsPage() {
                 </FormGrid>
               </fieldset>
 
+              {createDraft.capabilities.includes('generation') ? (
+                <details>
+                  <summary style={summaryStyle}>高级：图片生成尺寸能力</summary>
+                  <FormGrid style={{ marginTop: GAP.normal }}>
+                    <label style={FIELD_LABEL}>
+                      <span>尺寸控制方式</span>
+                      <select
+                        value={createDraft.imageSizeControlMode}
+                        onChange={(e) => setCreateDraft((value) => ({ ...value, imageSizeControlMode: e.target.value as ImageSizeControlMode }))}
+                        style={FIELD_INPUT}
+                      >
+                        {IMAGE_SIZE_CONTROL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                    {usesImageSizeField(createDraft.imageSizeControlMode) ? (
+                      <label style={FIELD_LABEL}>
+                        <span>上游字段格式</span>
+                        <select
+                          value={createDraft.imageSizeFieldFormat}
+                          onChange={(e) => setCreateDraft((value) => ({ ...value, imageSizeFieldFormat: e.target.value as ImageSizeFieldFormat }))}
+                          style={FIELD_INPUT}
+                        >
+                          {IMAGE_SIZE_FIELD_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                      </label>
+                    ) : null}
+                  </FormGrid>
+                  <div style={{ marginTop: GAP.normal }}>
+                    <HelpPopover label="尺寸能力说明">
+                      该配置跟随实际上游模型。字段与提示词可单独使用或同时使用；选择“不支持尺寸”后，业务端不得伪造尺寸参数。
+                    </HelpPopover>
+                  </div>
+                </details>
+              ) : null}
+
               <details>
                 <summary style={summaryStyle}>可选：价格、模型专属密钥与备注</summary>
                 <FormGrid style={{ marginTop: GAP.normal }}>
@@ -555,6 +617,36 @@ export function ModelsPage() {
                         <span style={{ display: 'inline-flex', gap: GAP.tight, flexWrap: 'wrap' }}>
                           {caps.length ? caps.map((c) => <Chip key={`${m.id}:${c.type}`} label={c.type} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                         </span>
+                        {m.isImageGen ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, marginTop: GAP.tight, minWidth: 210 }}>
+                            <span style={HINT_TEXT}>尺寸：{imageSizeControlLabel(m.imageSizeControlMode ?? 'inherit', m.imageSizeFieldFormat)}</span>
+                            {canWrite && m.authority === 'llm_gateway' ? (
+                              <span style={{ display: 'inline-flex', gap: GAP.tight, flexWrap: 'wrap' }}>
+                                <select
+                                  aria-label={`${m.name || m.modelName} 尺寸控制方式`}
+                                  value={sizeControlDrafts[m.id] ?? m.imageSizeControlMode ?? 'inherit'}
+                                  onChange={(e) => setSizeControlDrafts((prev) => ({ ...prev, [m.id]: e.target.value as ImageSizeControlMode }))}
+                                  style={{ ...selectStyle, width: 150 }}
+                                >
+                                  {IMAGE_SIZE_CONTROL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                </select>
+                                {usesImageSizeField(sizeControlDrafts[m.id] ?? m.imageSizeControlMode ?? 'inherit') ? (
+                                  <select
+                                    aria-label={`${m.name || m.modelName} 尺寸字段格式`}
+                                    value={sizeFieldFormatDrafts[m.id] ?? m.imageSizeFieldFormat ?? 'aspect_ratio'}
+                                    onChange={(e) => setSizeFieldFormatDrafts((prev) => ({ ...prev, [m.id]: e.target.value as ImageSizeFieldFormat }))}
+                                    style={{ ...selectStyle, width: 155 }}
+                                  >
+                                    {IMAGE_SIZE_FIELD_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                  </select>
+                                ) : null}
+                                <Button size="sm" variant="ghost" disabled={busyId === `size-control:${m.id}`} onClick={() => void saveImageSizeControl(m)}>
+                                  {busyId === `size-control:${m.id}` ? '保存中…' : '保存尺寸能力'}
+                                </Button>
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>{formatModelPrice(m)}</td>
                       <td style={td}>
@@ -740,6 +832,8 @@ type ModelDraftState = {
   modelName: string;
   protocol: 'inherit' | 'openai' | 'claude';
   capabilities: string[];
+  imageSizeControlMode: ImageSizeControlMode;
+  imageSizeFieldFormat: ImageSizeFieldFormat;
   apiKey: string;
   hasPricing: boolean;
   inputPricePerMillion: string;
@@ -772,6 +866,8 @@ function emptyModelDraft(platformId = ''): ModelDraftState {
     modelName: '',
     protocol: 'inherit',
     capabilities: ['chat'],
+    imageSizeControlMode: 'inherit',
+    imageSizeFieldFormat: 'aspect_ratio',
     apiKey: '',
     hasPricing: false,
     inputPricePerMillion: '',
@@ -780,6 +876,36 @@ function emptyModelDraft(platformId = ''): ModelDraftState {
     priceCurrency: 'CNY',
     remark: '',
   };
+}
+
+const IMAGE_SIZE_CONTROL_OPTIONS: Array<{ value: ImageSizeControlMode; label: string }> = [
+  { value: 'inherit', label: '兼容旧配置' },
+  { value: 'field', label: '上游字段' },
+  { value: 'prompt', label: '提示词注入' },
+  { value: 'field_and_prompt', label: '字段 + 提示词' },
+  { value: 'none', label: '不支持尺寸' },
+];
+
+const IMAGE_SIZE_FIELD_OPTIONS: Array<{ value: ImageSizeFieldFormat; label: string }> = [
+  { value: 'size', label: 'size: WxH' },
+  { value: 'width_height', label: 'width + height' },
+  { value: 'aspect_ratio', label: 'aspect_ratio' },
+  { value: 'image_config.aspect_ratio', label: 'image_config.aspect_ratio' },
+];
+
+function usesImageSizeField(mode: ImageSizeControlMode) {
+  return mode === 'field' || mode === 'field_and_prompt';
+}
+
+function imageSizeControlLabel(mode: ImageSizeControlMode, fieldFormat?: ImageSizeFieldFormat | null) {
+  const modeLabel = IMAGE_SIZE_CONTROL_OPTIONS.find((option) => option.value === mode)?.label ?? '兼容旧配置';
+  return usesImageSizeField(mode) && fieldFormat ? `${modeLabel} · ${fieldFormat}` : modeLabel;
+}
+
+function omitKey<T>(source: Record<string, T>, key: string): Record<string, T> {
+  const next = { ...source };
+  delete next[key];
+  return next;
 }
 
 function optionalNumber(value: string): number | undefined {
