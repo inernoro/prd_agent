@@ -4282,6 +4282,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("member[\"ModelId\"] = survivorModelId", merge);
         // 扫池的过滤也要认这一类：成员可能只有 ModelId 命中、PlatformId 早就不是源平台
         Assert.Contains("fb.In(\"ModelId\", survivorByDroppedModelId.Keys)", merge);
+
+        // 「同名」必须按归一名判，不能按大小写敏感的原名：模型身份的唯一索引建在
+        // ModelNameNormalized 上，按原名比会把 GPT-4o 与 gpt-4o 当成两个模型，
+        // 于是走「改绑过去」撞唯一索引抛异常——而此时前面的模型与 offering 已经改完了，
+        // 留下一个改了一半的合并（合并没有事务，抛在中间就回不去了）。
+        Assert.Contains("NormalizedModelKey(", merge);
+        Assert.DoesNotContain("targetModelIdByName.TryGetValue(modelName", merge);
+        // 归一口径与创建路径同源，且存量文档缺字段时不许退回大小写敏感的原名
+        Assert.Contains("model.AsNullableString(\"ModelNameNormalized\")", console);
+        Assert.Contains("raw.ToLowerInvariant()", console);
     }
 
     /// <summary>

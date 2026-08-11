@@ -7197,13 +7197,20 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     var result = new PlatformMergeResult { SourceId = id, TargetId = targetId };
     var fb = Builders<BsonDocument>.Filter;
 
-    // 1) 模型改嫁：目标已有同名（ModelName）就删掉源上的重复，否则整条改绑过去。
+    // 1) 模型改嫁：目标已有同名的就删掉源上的重复，否则整条改绑过去。
     //    被丢弃的那条上可能挂着 offering（逻辑模型按 _id 指过来），删之前必须先改指到留下来的同名模型，
     //    否则合并的净效果是「把一条能用的 offering 变成指向已删模型」——正是合并本来要消除的那种残留。
+    //
+    // 按**归一名**认同名，不是按原样的 ModelName：模型身份的唯一索引建在
+    // (TenantId, PlatformId, ModelNameNormalized) 上，创建路径也按归一名判重。
+    // 这里若按大小写敏感的原名比，源上的 GPT-4o 与目标上的 gpt-4o 会被当成两个模型 →
+    // 走「改绑过去」→ 撞唯一索引抛异常，而此时前面的模型与 offering 已经改完了，
+    // 留下一个改了一半的合并。
     var targetModelIdByName = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", targetId))).ToListAsync())
-        .Where(d => !string.IsNullOrWhiteSpace(d.AsNullableString("ModelName")))
-        .GroupBy(d => d.AsNullableString("ModelName")!, StringComparer.Ordinal)
-        .ToDictionary(g => g.Key, g => g.First().GetStringOrEmpty("_id"), StringComparer.Ordinal);
+        .Select(d => (Key: NormalizedModelKey(d), Id: d.GetStringOrEmpty("_id")))
+        .Where(x => x.Key.Length > 0)
+        .GroupBy(x => x.Key, StringComparer.Ordinal)
+        .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.Ordinal);
     // 被丢弃模型的 _id → 留下来那条的 _id。池成员的 ModelId 可以是 _id（加成员端点
     // 同时接受 _id / ModelName / Name），只改成员的 PlatformId 会留下
     //「目标平台 + 已删模型 _id」这种解析不到的组合，而且它不再指向源平台，
@@ -7211,10 +7218,10 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     var survivorByDroppedModelId = new Dictionary<string, string>(StringComparer.Ordinal);
     foreach (var model in await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
     {
-        var modelName = model.AsNullableString("ModelName") ?? string.Empty;
+        var modelKey = NormalizedModelKey(model);
         var modelId = model.GetStringOrEmpty("_id");
         var modelFilter = TenantAccess.Filter(http, fb.Eq("_id", modelId));
-        if (modelName.Length > 0 && targetModelIdByName.TryGetValue(modelName, out var survivorId))
+        if (modelKey.Length > 0 && targetModelIdByName.TryGetValue(modelKey, out var survivorId))
         {
             var (repointed, deduped) = await RepointOfferingsAsync(http, gwModelOfferings, modelId, survivorId);
             result.OfferingsRepointed += repointed;
@@ -7228,8 +7235,8 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             .Set("PlatformId", targetId)
             .Set("UpdatedAt", DateTime.UtcNow));
         // 改嫁过去的模型 _id 不变，offering 自然还指着它；但它从此代表这个名字，
-        // 后面再遇到同名的源模型就该合并到它身上
-        if (modelName.Length > 0) targetModelIdByName[modelName] = modelId;
+        // 后面再遇到同名的源模型就该合并到它身上（同样按归一名登记）
+        if (modelKey.Length > 0) targetModelIdByName[modelKey] = modelId;
         result.ModelsMoved++;
     }
 
@@ -11157,6 +11164,21 @@ static bool IsManagedAppendOnlyPool(BsonDocument pool)
     => pool.AsNullableBool("ManagedByRegistry") == true
        && pool.AsNullableBool("AppendOnly") == true
        && string.Equals(pool.AsNullableString("PoolRole"), "default", StringComparison.OrdinalIgnoreCase);
+
+/// <summary>
+/// 模型的身份键：归一后的模型名。唯一索引与创建路径的判重都按它走
+/// （`GatewayConfigurationProvisioning.TryNormalizeModel`：Trim + ToLowerInvariant）。
+///
+/// 优先取持久化的 ModelNameNormalized；存量文档没写这个字段时，用与创建路径**同一套**
+/// 归一方式现算，而不是退回大小写敏感的原名——退回去就等于对存量数据关掉了这条判据。
+/// </summary>
+static string NormalizedModelKey(BsonDocument model)
+{
+    var persisted = model.AsNullableString("ModelNameNormalized")?.Trim();
+    if (!string.IsNullOrEmpty(persisted)) return persisted.ToLowerInvariant();
+    var raw = (model.AsNullableString("ModelName") ?? model.AsNullableString("Name") ?? string.Empty).Trim();
+    return raw.ToLowerInvariant();
+}
 
 /// <summary>池里挂了几个成员。字段缺失或形状不对一律当 0，不抛。</summary>
 static int PoolMemberCount(BsonDocument pool)
