@@ -3472,14 +3472,23 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       canvasSaveTimerRef.current = null;
     }
 
-    canvasSaveTimerRef.current = window.setTimeout(() => {
+    const runSave = () => {
       canvasSaveTimerRef.current = null;
       const built = canvasToPersistedV1(canvasRef.current ?? []);
       const json = JSON.stringify(built.state);
       if (json === lastSavedJsonRef.current) return;
 
       const now = Date.now();
-      if (now - lastSaveAtRef.current < 800) return;
+      // 距上次落盘不足 800ms 就**改期**，绝不直接放弃。
+      // 早先这里是 `return`：这次改动就此消失，而后面若没有新的画布变化，
+      // 再也没有人来救它。分层收尾时会连着刷好几次画布（点亮图层 → 裁剪落位 →
+      // 内容判定），最后一批正好撞进这个窗口，于是「刚拆完立刻刷新，整组图层
+      // 凭空消失」（2026-08-11 冒烟实测：重拆后刷新，第二组 4 个部件全没了）。
+      const cooldown = 800 - (now - lastSaveAtRef.current);
+      if (cooldown > 0) {
+        canvasSaveTimerRef.current = window.setTimeout(runSave, cooldown);
+        return;
+      }
       lastSaveAtRef.current = now;
       lastSavedJsonRef.current = json;
 
@@ -3502,7 +3511,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         payloadJson: json,
         idempotencyKey: `autosave_${Math.floor(now / 1000)}`,
       });
-    }, 1200);
+    };
+
+    canvasSaveTimerRef.current = window.setTimeout(runSave, 1200);
 
     return () => {
       if (canvasSaveTimerRef.current != null) {
@@ -6630,6 +6641,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <div
                     key={it.key}
                     className="absolute rounded-[16px] group/citem"
+                    // 结构标记：让端到端冒烟能直接判「哪个分层组、第几层、是不是原图」，
+                    // 而不是靠图片尺寸倒猜。倒猜过一次，猜错了整整两轮
+                    //（2026-08-11：把「多出一组幽灵图层」误读成「排版没落盘」）。
+                    data-canvas-key={it.key}
+                    data-layer-group={it.layerGroupId || undefined}
+                    data-layer-index={typeof it.layerIndex === 'number' ? it.layerIndex : undefined}
+                    data-layer-role={it.layerRole || undefined}
+                    data-layer-status={it.status || undefined}
                     style={{
                       left: Math.round(x) - (isMobile ? 12 : 0),
                       top: Math.round(y) - (isMobile ? 12 : 0),

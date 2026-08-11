@@ -329,7 +329,7 @@ async function main() {
     // ---- 层数：面板显示的数字必须能解释实到层数
     const countText = await page.evaluate(() => {
       const t = document.body.innerText;
-      const next = (t.match(/下次拆[\s\S]{0,12}?(\d+)[\s\S]{0,4}?层/) || [])[1];
+      const next = (t.match(/最多拆[\s\S]{0,12}?(\d+)[\s\S]{0,4}?层/) || [])[1];
       const explain = /本次请求 \d+ 层，模型实际给出 \d+ 层/.test(t);
       return { next: next ? Number(next) : null, explain };
     });
@@ -362,29 +362,109 @@ async function main() {
       const changed = afterResplit.some((src) => !beforeResplit.includes(src));
       check('第二次拿到的是新产物（不是把上一轮原样端回来）', changed,
         `旧 ${beforeResplit.length} 张 / 新 ${afterResplit.length} 张`);
+      // 2026-08-11 用户反馈：「我重新生成新的图层时候，他居然将原来的清理掉了？」
+      // 重拆是「右边再多一份」，不是「覆盖这一份」。上一轮的产物必须一张不少地还在。
+      const survived = beforeResplit.filter((src) => afterResplit.includes(src));
+      check('重拆没有删掉上一轮的结果（两份并排可比较）',
+        beforeResplit.length > 0 && survived.length === beforeResplit.length,
+        `上一轮 ${beforeResplit.length} 张，重拆后仍在 ${survived.length} 张`);
     } else {
       check('图层面板里能找到「重新拆分」', false, '按钮不存在');
     }
 
-    // ---- 刷新后 Frame 不塌：同一 Frame 里的图块必须等大
+    // ---- 副本落在原图右侧，原图原封不动
+    // 只取画布元素（data-canvas-key）。用 img 会把图层面板里的预览缩略图一起算进来——
+    // 那是面板不是画布，混在一起会得出「画布上多了一组幽灵图层」的错误结论（实测栽过两轮）。
+    const worldRects = await page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 40 && r.height > 40)
+      .map((r) => ({ x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }))
+      .sort((a, b) => a.x - b.x));
+    // 原图必须还在：它是那颗没被切过的西瓜，用来和副本对照。
+    // 判据取「最左边那块的面积应当明显大于最小的那块」不成立（原图可能被裁块超过），
+    // 所以直接看横向是不是分成了两簇：原图一簇、副本一簇，且两簇不相交。
+    const spanLeft = Math.min(...worldRects.map((r) => r.x));
+    const spanRight = Math.max(...worldRects.map((r) => r.x + r.w));
+    const gapAt = (() => {
+      const sorted = [...worldRects].sort((a, b) => a.x - b.x);
+      let edge = -Infinity;
+      for (const r of sorted) {
+        if (edge !== -Infinity && r.x > edge + 8) return { edge, next: r.x };
+        edge = Math.max(edge, r.x + r.w);
+      }
+      return null;
+    })();
+    check('画布上分成「原图 + 右侧副本」两簇，原图没被盖住也没被删',
+      !!gapAt && spanRight - spanLeft > 0,
+      gapAt ? `两簇之间留白 ${Math.round(gapAt.next - gapAt.edge)}px` : `只有一簇：${JSON.stringify(worldRects)}`);
+
+    // ---- 面板：自然语言拆法入口必须在（层数不再是唯一选择）
+    await ensurePanelOpen(page);
+    const intentBox = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('input')]
+        .find((i) => /想怎么拆/.test(i.placeholder || ''));
+      return el ? { ok: true, placeholder: el.placeholder } : { ok: false, placeholder: '' };
+    });
+    check('图层面板有自然语言拆法输入框', intentBox.ok, intentBox.placeholder);
+    const modelLine = await page.evaluate(() => /本组由 .+ 拆分/.test(document.body.innerText));
+    check('图层面板显示本组由哪个模型拆分', modelLine);
+
+    // ---- 刷新后排版不塌
+    // 先等画布静止：裁剪落位是异步的（读图 → 量包围盒 → 上传裁剪结果 → 回写），
+    // 还在动的时候拍快照，比的就不是同一个状态。连续两次尺寸签名一致才算稳。
+    const sizeSignature = () => page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 60 && r.height > 60)
+      .map((r) => `${Math.round(r.width)}x${Math.round(r.height)}`)
+      .sort().join('|'));
+    let settled = '';
+    for (let i = 0; i < 45; i += 1) {
+      const a = await sizeSignature();
+      await page.waitForTimeout(2000);
+      const b = await sizeSignature();
+      if (a === b && b) { settled = b; break; }
+    }
+    check('裁剪落位会收敛（画布不会一直在动）', !!settled, settled ? `稳定于 ${settled}` : '90s 内未静止');
+    // 落盘是 debounce 的，静止之后再给它一个窗口，别把「还没写完」误判成「写丢了」。
+    await page.waitForTimeout(6000);
+    const beforeReloadRects = await page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 60 && r.height > 60)
+      .map((r) => ({ w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.x), y: Math.round(r.y) })));
+    // 诊断（不是判据）：刷新前后各打一份「这张图是谁、地址长什么样」，
+    // 丢东西的时候能一眼看出丢的是哪一组、以及它的 src 是资产地址还是模型直链。
+    const dumpImages = () => page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
+      .map((el) => ({ r: el.getBoundingClientRect(), el }))
+      .filter((x) => x.r.width > 40 && x.r.height > 40)
+      .map((x) => `${Math.round(x.r.width)}x${Math.round(x.r.height)} @${Math.round(x.r.x)}`
+        + ` group=${x.el.getAttribute('data-layer-group') || '-'}`
+        + ` idx=${x.el.getAttribute('data-layer-index') || '-'}`
+        + ` role=${x.el.getAttribute('data-layer-role') || '-'}`
+        + ` st=${x.el.getAttribute('data-layer-status') || '-'}`));
+    console.log('  [诊断] 刷新前：\n    ' + (await dumpImages()).join('\n    '));
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(14000);
     await esc(page);
     const reloadShot = await shot(page, 'after-reload');
-    const rects = await page.evaluate(() => [...document.querySelectorAll('img')]
-      .map((i) => i.getBoundingClientRect())
+    const rects = await page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
+      .map((el) => el.getBoundingClientRect())
       .filter((r) => r.width > 60 && r.height > 60)
       .map((r) => ({ w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.x), y: Math.round(r.y) })));
+    // 刷新前后每块的尺寸必须一模一样。
+    // 判据不能写成「所有图块等大」——那是上一版的错误模型（各层都是满幅方块）。
+    // 现在每块都被裁成自己的最小非透明外接矩形，本来就该各不相同；
+    // 真正要防的是「尺寸没落盘，刷新后被 onLoad 的 natural 尺寸覆盖」。
+    const sizeKey = (list) => list.map((r) => `${r.w}x${r.h}`).sort().join('|');
+    check('刷新后每块尺寸与刷新前一致（排版真的落盘了）',
+      rects.length >= 2 && sizeKey(rects) === sizeKey(beforeReloadRects),
+      `刷新前 ${sizeKey(beforeReloadRects)} / 刷新后 ${sizeKey(rects)}（见 ${reloadShot}）`);
+    // 「最小非透明外接矩形」的可核对判据：各部件尺寸不该全都一样——
+    // 全都一样就说明根本没裁，每块仍是满幅方块（2026-08-11 用户圈图指出的正是这个）。
+    console.log('  [诊断] 刷新后：\n    ' + (await dumpImages()).join('\n    '));
     const uniqueSizes = [...new Set(rects.map((r) => `${r.w}x${r.h}`))];
-    check('刷新后同一 Frame 内图块等大（不塌成碎块）',
-      rects.length >= 2 && uniqueSizes.length === 1,
-      `尺寸集合 ${JSON.stringify(uniqueSizes)}（见 ${reloadShot}）`);
-    // 用户心智：拆完还是原来那张图，只是每块能单独挪。所以各部件必须**落在同一个位置**，
-    // 而不是摊成一排——摊开等于让用户自己再拼一次。
-    const uniquePositions = [...new Set(rects.map((r) => `${r.x},${r.y}`))];
-    check('各部件叠在原位（不是摊开成一排）',
-      rects.length >= 2 && uniquePositions.length === 1,
-      `位置集合 ${JSON.stringify(uniquePositions)}`);
+    check('部件被裁成最小非透明外接矩形（不是清一色满幅方块）',
+      uniqueSizes.length >= 2,
+      `尺寸集合 ${JSON.stringify(uniqueSizes)}`);
 
     // ---- 导出 PSD：层名互不相同，文件非空
     await ensurePanelOpen(page);

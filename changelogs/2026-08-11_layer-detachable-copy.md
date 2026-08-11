@@ -7,3 +7,6 @@
 | feat | prd-admin | 图层面板显示本组实际由哪个模型拆分（来自网关解析结果，拿不到就不显示） |
 | fix | prd-api | 分层任务不再拼接工作区风格提示词——分层的 prompt 是拆法指令，拼画风等于让模型重画 |
 | test | prd-admin | 补接线守卫：透明裁剪必须接到画布、重拆不许删旧结果、原图按 layerSourceKey 反查 |
+| fix | prd-admin | 画布自动落盘撞到 800ms 频控时改期重试，不再直接丢弃（丢了就再没人来救，最后一次改动可能永远不落盘） |
+| chore | prd-admin | 画布元素补 data-canvas-key/layer-group/layer-index 结构标记，供端到端冒烟直接判结构 |
+| test | prd-agent | 冒烟判据改为按画布元素统计（此前用 img 会把图层面板缩略图算成画布元素，误判出「幽灵图层组」） |
