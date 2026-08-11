@@ -191,8 +191,9 @@ export async function listVisualSizes(modelName?: string): Promise<string[]> {
 
     const info = res.data;
 
-    // isAdaptive 表示尺寸由 prompt 决定，不应展示尺寸选择器，返回空列表
-    if (info.isAdaptive) return [];
+    // 只有“尺寸语义不适用”的模型才隐藏选择器。
+    // 自适应模型仍可让用户选尺寸，由后端适配器把结构化尺寸写进 prompt。
+    if (info.sizesNotApplicable) return [];
 
     const byResolution = info.sizesByResolution;
     if (!byResolution || typeof byResolution !== 'object') return FALLBACK_SIZES;
