@@ -59,7 +59,8 @@ appCallerCode 是业务用途，逻辑模型 PublicId 是应用选择，真实�
 | 逻辑模型 | Offering | 协议 | 典型用途 |
 |---|---|---|---|
 | `image2` | OpenAI 直连 | OpenAI Images | 主上游 |
-| `image2` | OpenRouter | OpenAI Chat 多模态 | 备用上游 |
+| `image2` | OpenRouter（专用生图模型） | `openrouter-image`：OpenRouter 专用 Images API | 备用上游 |
+| `image2` | OpenRouter（多模态模型） | `openrouter`：OpenAI Chat 多模态 | 备用上游 |
 | `nanobanana-2` | Google 直连 | Gemini `generateContent` | 主上游 |
 | `nanobanana-2` | 兼容平台代理 | OpenAI Images 或 Exchange | 备用上游 |
 
