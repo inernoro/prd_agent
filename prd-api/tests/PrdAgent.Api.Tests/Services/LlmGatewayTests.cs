@@ -2447,7 +2447,7 @@ public class LlmGatewayTests
             {
                 Prompt = "draw a portrait poster",
                 Count = 1,
-                Size = "768x1024",
+                Size = "1536x2048",
             },
         }, resolution);
 
@@ -2456,6 +2456,9 @@ public class LlmGatewayTests
         Assert.Equal(
             "3:4",
             body["generationConfig"]?["imageConfig"]?["aspectRatio"]?.GetValue<string>());
+        Assert.Equal(
+            "2K",
+            body["generationConfig"]?["imageConfig"]?["imageSize"]?.GetValue<string>());
         Assert.False(body.ContainsKey("image_config"));
     }
 

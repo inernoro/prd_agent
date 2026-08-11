@@ -1804,6 +1804,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ImageSizeControlCapabilityState capability,
         string? requestedSize)
     {
+        var existingGoogleImageSize = body?["generationConfig"]?["imageConfig"]?["imageSize"]
+            is JsonValue imageSizeValue
+            && imageSizeValue.TryGetValue<string>(out var imageSizeText)
+                ? imageSizeText
+                : null;
         RemoveImageSizeFields(body, multipartFields);
         if (!capability.UseField || string.IsNullOrWhiteSpace(capability.FieldFormat)) return;
 
@@ -1830,6 +1835,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     {
                         var googleImageConfig = generationConfig["imageConfig"] as JsonObject ?? new JsonObject();
                         googleImageConfig["aspectRatio"] = aspectRatio;
+                        var (_, computedImageSize) = LLM.Adapters.GooglePlatformAdapter.ParseSizeToGoogleParams(normalizedSize);
+                        googleImageConfig["imageSize"] = string.IsNullOrWhiteSpace(existingGoogleImageSize)
+                            ? computedImageSize
+                            : existingGoogleImageSize;
                         generationConfig["imageConfig"] = googleImageConfig;
                     }
                     else
