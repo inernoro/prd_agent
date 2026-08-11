@@ -57,13 +57,25 @@ test('同一运行和提交可以复用既有视觉计划继续补证', () => {
     commit: 'a'.repeat(40),
     captureStartedAt: '2026-08-11T14:00:00.000Z',
     environments: ['cds', 'production'],
+    scope: 'full',
     slots: [{ slotId: 'CDS-VISUAL-IDENTITY-01' }],
   };
-  const identity = { runId: 'stsmk-current', commit: 'a'.repeat(40), environments: ['cds', 'production'] };
+  const identity = { runId: 'stsmk-current', commit: 'a'.repeat(40), environments: ['cds', 'production'], scope: 'full' };
   assert.equal(canReuseVisualPlan(plan, identity), true);
   assert.equal(canReuseVisualPlan({ ...plan, runId: 'stsmk-old' }, identity), false);
   assert.equal(canReuseVisualPlan({ ...plan, commit: 'b'.repeat(40) }, identity), false);
   assert.equal(canReuseVisualPlan({ ...plan, environments: ['cds'] }, identity), false);
+  assert.equal(canReuseVisualPlan({ ...plan, scope: 'production-read-only', slots: [] }, identity), false);
+  assert.equal(canReuseVisualPlan({
+    ...plan,
+    environments: ['production'],
+    scope: 'production-read-only',
+    slots: [],
+  }, {
+    ...identity,
+    environments: ['production'],
+    scope: 'production-read-only',
+  }), true);
 });
 
 test('执行结果使用审核人可读状态且不被进程退出码覆盖', () => {
@@ -117,6 +129,7 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
     caseId: 'FILE-002',
     status: 'pass',
     title: '上传后 cleanup 清理测试数据',
+    tags: ['cleanup'],
     error: '',
     retryCount: 1,
     hadFailedAttempt: true,
@@ -129,6 +142,7 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
     caseId: 'COMMON-001',
     status: 'pass',
     title: '专用前缀资源可创建、回读并清理',
+    tags: ['cleanup'],
     error: '',
     retryCount: 1,
     hadFailedAttempt: true,
@@ -136,6 +150,18 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   }]);
   assert.equal(chineseCleanupGate.restricted, true);
   assert.match(chineseCleanupGate.reasons.join('；'), /COMMON-001/);
+
+  const metadataOnlyCleanupGate = evaluateProductionSafetyGate({ status: 'executed' }, [{
+    caseId: 'FILE-003',
+    status: 'pass',
+    title: '大文件上传期间持续显示文件名和百分比',
+    tags: ['cleanup'],
+    retryCount: 1,
+    hadFailedAttempt: true,
+    attemptErrors: ['Expected 500 to be 204'],
+  }]);
+  assert.equal(metadataOnlyCleanupGate.restricted, true);
+  assert.match(metadataOnlyCleanupGate.reasons.join('；'), /FILE-003/);
 
   assert.equal(evaluateProductionSafetyGate({ status: 'executed' }, [{ status: 'pass' }]).restricted, false);
   const filteredGate = evaluateProductionSafetyGate(
@@ -191,9 +217,17 @@ test('正式环境只读模式只对账安全门实际执行的健康检查', ()
 
 test('功能与视觉结论取更严格结果', () => {
   assert.equal(foldVisualGateVerdict('pass', { verdict: '通过' }), 'pass');
+  assert.equal(foldVisualGateVerdict('pass', { verdict: '不适用' }), 'pass');
   assert.equal(foldVisualGateVerdict('pass', { verdict: '不通过', statusCounts: {} }), 'conditional');
   assert.equal(foldVisualGateVerdict('pass', { verdict: '不通过', statusCounts: { 不通过: 1 } }), 'fail');
   assert.equal(foldVisualGateVerdict('fail', { verdict: '通过' }), 'fail');
+});
+
+test('所有持久化清理用例都必须声明清理元数据', () => {
+  const source = readFileSync('e2e/specs/stable-smoke.spec.ts', 'utf8');
+  assert.equal((source.match(/finally \{/g) || []).length, (source.match(/tag: '@cleanup'/g) || []).length);
+  assert.match(source, /\[FILE-003\][\s\S]*?tag: '@cleanup'/);
+  assert.match(source, /\[REC-004\]\[REC-005\]\[REC-010\][\s\S]*?tag: '@cleanup'/);
 });
 
 test('只有归档输出中的 HTTPS 深链可以进入通知', () => {

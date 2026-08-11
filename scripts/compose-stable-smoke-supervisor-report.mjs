@@ -325,7 +325,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
         ? 'conditional'
         : 'pass';
   const visualStatusMatch = String(visualGateMarkdown).match(/状态结果\s*\|\s*通过\s*\d+，不通过\s*(\d+)，需补证\s*\d+，需干预\s*(\d+)/);
-  const visualGateVerdict = !visualGateMarkdown || /结论：通过/.test(visualGate.lead)
+  const visualGateVerdict = !visualGateMarkdown || /结论：(通过|不适用)/.test(visualGate.lead)
     ? 'pass'
     : visualStatusMatch && Number(visualStatusMatch[1]) === 0 && Number(visualStatusMatch[2]) === 0
       ? 'conditional'

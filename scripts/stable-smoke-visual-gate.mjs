@@ -488,6 +488,34 @@ export function validateVisualEvidence(
 }
 
 export function renderVisualGateReport(result) {
+  if (result.verdict === '不适用') {
+    return [
+      '# 视觉验收覆盖门禁',
+      '',
+      '结论：不适用',
+      '',
+      '## 主管先看',
+      '',
+      '| 项目 | 结果 | 说明 |',
+      '|---|---|---|',
+      `| 能否继续只读健康检查 | 可以 | ${result.scopeReason} |`,
+      '| 完整视觉验收 | 未执行 | 本轮不宣称视觉通过；需要完整结论时执行 CDS 或双环境全量稳定冒烟 |',
+      '| 状态结果 | 通过 0，不通过 0，需补证 0，需干预 0 | 本轮没有视觉验收位 |',
+      '',
+      '## 模块覆盖',
+      '',
+      '| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 可审核证据 | 状态结果 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |',
+      '|---|---|---|---:|---:|---:|---|---|---|---|',
+      '| 正式环境只读健康检查 | 不适用 | 登录页 → 系统健康检查 | 0 | 0/0 | 无视觉验收位 | 0/0 | 无 | 不适用 | 不适用 |',
+      '',
+      '## 需处理事项',
+      '',
+      '| 模块 | 问题 | 关闭条件 |',
+      '|---|---|---|',
+      '| 无 | 无 | 本轮只读健康检查不要求视觉取证 |',
+      '',
+    ].join('\n');
+  }
   const allEvidence = result.modules.flatMap((module) => module.evidenceRows.map((item) => ({
     ...item,
     moduleId: module.id,
@@ -606,6 +634,19 @@ export function renderVisualGateReport(result) {
 }
 
 export function renderVisualTechnicalAppendix(result, { manifestPath = '', catalogPath = '' } = {}) {
+  if (result.verdict === '不适用') {
+    return [
+      '# 视觉验收技术附录',
+      '',
+      '本轮视觉门禁不适用。',
+      '',
+      `- 范围：${result.scope}`,
+      `- 原因：${result.scopeReason}`,
+      '- 视觉证据：0/0',
+      '- 约束：该结论只允许正式环境只读健康检查，不代表完整视觉验收通过。',
+      '',
+    ].join('\n');
+  }
   const lines = [
     '# 视觉验收技术附录',
     '',
@@ -657,7 +698,31 @@ async function main() {
     throw new Error('本轮视觉计划缺少有效的 runId、commit 或 captureStartedAt，拒绝复用旧证据');
   }
   const environments = normalizeVisualEnvironments(readArg(argv, '--environments'));
-  const result = validateVisualEvidence(catalog, manifest, environments, plan);
+  if (plan.scope === 'production-read-only'
+      && (environments.length !== 1 || environments[0] !== 'production')) {
+    throw new Error('正式环境只读视觉范围只能用于 production-only 运行');
+  }
+  const result = plan.scope === 'production-read-only'
+    ? {
+        schemaVersion: plan.schemaVersion,
+        environments,
+        runId: plan.runId,
+        commit: plan.commit,
+        captureStartedAt: plan.captureStartedAt,
+        scope: plan.scope,
+        scopeReason: plan.scopeReason,
+        verdict: '不适用',
+        screenshotFloor: 0,
+        screenshotCount: 0,
+        collectedScreenshotCount: 0,
+        rawScreenshotCount: 0,
+        duplicateNames: [],
+        statusCounts: {},
+        passedModules: 0,
+        blockingModules: 0,
+        modules: [],
+      }
+    : validateVisualEvidence(catalog, manifest, environments, plan);
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
   const outputTechnicalMd = readArg(argv, '--output-technical-md');
@@ -670,7 +735,7 @@ async function main() {
     }), 'utf8');
   }
   process.stdout.write(`${JSON.stringify({ verdict: result.verdict, screenshots: result.screenshotCount, floor: result.screenshotFloor, passedModules: result.passedModules, modules: result.modules.length })}\n`);
-  if (result.verdict !== '通过') process.exitCode = 2;
+  if (!['通过', '不适用'].includes(result.verdict)) process.exitCode = 2;
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

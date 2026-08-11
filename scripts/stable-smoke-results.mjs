@@ -25,6 +25,7 @@ export function collectPlaywrightCases(report, environment) {
             caseId: match[1].toUpperCase(),
             environment,
             title: spec.title,
+            tags: Array.isArray(spec.tags) ? [...spec.tags] : [],
             status,
             durationMs: results.reduce((sum, item) => sum + (item.duration || 0), 0),
             error: finalResult?.error?.message || '',

@@ -39,6 +39,23 @@ test('本轮视觉计划固化运行标识、提交和取证开始时间', () =>
   assert.match(report, /取证开始：2026-08-11T14:00:00.000Z/);
 });
 
+test('正式环境只读健康检查不生成无关的完整视觉矩阵', () => {
+  const plan = buildVisualPlan(catalog, ['production'], {
+    runId: 'stsmk-production-read-only',
+    commit: 'a'.repeat(40),
+    captureStartedAt: '2026-08-11T14:00:00.000Z',
+    scope: 'production-read-only',
+  });
+  assert.equal(plan.schemaVersion, '3.0');
+  assert.equal(plan.scope, 'production-read-only');
+  assert.equal(plan.plannedScreenshotTarget, 0);
+  assert.deepEqual(plan.modules, []);
+  assert.deepEqual(plan.slots, []);
+  const report = renderVisualPlan(plan);
+  assert.match(report, /完整视觉门禁不适用/);
+  assert.match(report, /不代表完整视觉验收通过/);
+});
+
 test('单图和多图视觉各有18条且覆盖产品主题与双设备', () => {
   const plan = buildVisualPlan(catalog);
   for (const moduleId of ['single-image-creation', 'multi-image-creation']) {

@@ -19,6 +19,7 @@ test('从 Playwright 报告提取 caseId 和最终结果', () => {
     suites: [{
       specs: [{
         title: '[CORE-001] 首页可用',
+        tags: ['cleanup'],
         tests: [{ results: [{ status: 'failed', duration: 10 }, { status: 'passed', duration: 20 }] }],
       }],
     }],
@@ -27,6 +28,7 @@ test('从 Playwright 报告提取 caseId 和最终结果', () => {
     caseId: 'CORE-001',
     environment: 'cds',
     title: '[CORE-001] 首页可用',
+    tags: ['cleanup'],
     status: 'pass',
     durationMs: 30,
     error: '',

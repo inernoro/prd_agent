@@ -473,14 +473,15 @@ export function buildExecutionRecord(environment, execution) {
   };
 }
 
-export function canReuseVisualPlan(plan, { runId, commit, environments }) {
+export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 'full' }) {
   const expectedEnvironments = [...environments].sort();
   const actualEnvironments = Array.isArray(plan?.environments) ? [...plan.environments].sort() : [];
   return plan?.schemaVersion === '3.0'
     && String(plan.runId || '') === String(runId || '')
     && String(plan.commit || '') === String(commit || '')
+    && String(plan.scope || 'full') === String(scope || 'full')
     && Number.isFinite(Date.parse(String(plan.captureStartedAt || '')))
-    && plan.slots?.length > 0
+    && (scope === 'production-read-only' ? plan.slots?.length === 0 : plan.slots?.length > 0)
     && JSON.stringify(actualEnvironments) === JSON.stringify(expectedEnvironments);
 }
 
@@ -497,12 +498,9 @@ export function enforceExecutionVerdict(summary, executions) {
 }
 
 export function evaluateProductionSafetyGate(cdsExecution, cdsRows = [], cdsWasFiltered = false) {
-  const cleanupCaseIds = new Set(['COMMON-001', 'COMMON-004', 'REC-012', 'FILE-010', 'PARSE-008', 'VIDEO-010', 'LIT-010', 'VIS-010']);
   const hazardousFailures = cdsRows.filter((row) => {
     const attemptErrors = Array.isArray(row.attemptErrors) ? row.attemptErrors.join(' ') : '';
-    const caseIds = String(row.caseId || '').match(/[A-Z]+-\d+/gi) || [];
-    const isCleanupCase = caseIds.some((caseId) => cleanupCaseIds.has(caseId.toUpperCase()))
-      || /清理|\bcleanup\b/i.test(String(row.title || ''));
+    const isCleanupCase = Array.isArray(row.tags) && row.tags.includes('cleanup');
     const isCleanupHazard = isCleanupCase || /\bP0\b|数据污染|清理失败|pollution/i.test(
       `${row.error || ''} ${attemptErrors}`,
     );
@@ -546,7 +544,7 @@ export function selectCoverageCaseIds(requiredCaseIds, userGrep, selected, produ
 
 export function foldVisualGateVerdict(functionalVerdict, visualResult) {
   if (functionalVerdict === 'fail') return 'fail';
-  if (visualResult?.verdict === '通过') return functionalVerdict;
+  if (visualResult?.verdict === '通过' || visualResult?.verdict === '不适用') return functionalVerdict;
   const statusCounts = visualResult?.statusCounts || {};
   return (statusCounts['不通过'] || 0) > 0 || (statusCounts['需干预'] || 0) > 0
     ? 'fail'
@@ -960,6 +958,13 @@ async function main() {
     values.STABLE_SMOKE_COMMIT = String(plan?.commit || '').trim();
     if (!values.STABLE_SMOKE_COMMIT) throw new Error('稳定冒烟计划缺少待验收提交，拒绝生成无版本绑定的视觉证据');
 
+    const executions = [];
+    const grep = options.read('--grep');
+    let productionSafetyGate = initializeProductionSafetyGate(selected);
+    const visualScope = selected.length === 1 && selected[0] === 'production' && productionSafetyGate.restricted
+      ? 'production-read-only'
+      : 'full';
+
     const visualPlanPath = resolve(runDir, 'visual-plan.json');
     const visualPlanMarkdownPath = resolve(runDir, 'visual-plan.md');
     const existingVisualPlan = readJson(visualPlanPath);
@@ -967,6 +972,7 @@ async function main() {
       runId,
       commit: values.STABLE_SMOKE_COMMIT,
       environments: selected,
+      scope: visualScope,
     });
     const visualCaptureStartedAt = new Date().toISOString();
     const visualPlanResult = reuseVisualPlan ? { status: 0 } : command('node', [
@@ -977,12 +983,10 @@ async function main() {
       '--run-id', runId,
       '--commit', values.STABLE_SMOKE_COMMIT,
       '--capture-started-at', visualCaptureStartedAt,
+      '--scope', visualScope,
     ]);
     if (visualPlanResult.status !== 0) throw new Error('视觉取证计划生成失败，拒绝发布无逐项证据的报告');
 
-    const executions = [];
-    const grep = options.read('--grep');
-    let productionSafetyGate = initializeProductionSafetyGate(selected);
     for (const environment of selected) {
       if (environment === 'production' && selected.includes('cds')) {
         const cdsExecution = executions.find((execution) => execution.environment === 'cds');

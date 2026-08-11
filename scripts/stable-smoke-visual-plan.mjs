@@ -36,6 +36,27 @@ function environmentLabel(environment) {
 
 export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity = {}) {
   const environments = normalizeVisualEnvironments(requestedEnvironments);
+  const scope = String(runIdentity.scope || 'full').trim() || 'full';
+  const runId = String(runIdentity.runId || '').trim();
+  const commit = String(runIdentity.commit || '').trim();
+  const captureStartedAt = String(runIdentity.captureStartedAt || '').trim();
+  const hasRunIdentity = Boolean(runId && commit && captureStartedAt);
+  if (scope === 'production-read-only') {
+    return {
+      schemaVersion: hasRunIdentity ? '3.0' : environments.length > 0 ? '2.0' : '1.0',
+      name: catalog.name,
+      scope,
+      scopeReason: '正式环境单独运行仅执行只读健康检查，不进入需要截图取证的业务创作页面',
+      environments,
+      runId: runId || undefined,
+      commit: commit || undefined,
+      captureStartedAt: captureStartedAt || undefined,
+      plannedScreenshotTarget: 0,
+      modules: [],
+      slots: [],
+    };
+  }
+  if (scope !== 'full') throw new Error(`不支持的视觉取证范围：${scope}`);
   const planEnvironments = environments.length > 0 ? environments : [''];
   const slots = [];
   for (const environment of planEnvironments) {
@@ -94,13 +115,10 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
   if (slots.length !== expectedFloor || slots.length !== expectedTarget) {
     throw new Error(`视觉计划共 ${slots.length} 项，与双环境展开后的全局下限 ${expectedFloor} 或计划 ${expectedTarget} 不一致`);
   }
-  const runId = String(runIdentity.runId || '').trim();
-  const commit = String(runIdentity.commit || '').trim();
-  const captureStartedAt = String(runIdentity.captureStartedAt || '').trim();
-  const hasRunIdentity = Boolean(runId && commit && captureStartedAt);
   return {
     schemaVersion: hasRunIdentity ? '3.0' : environments.length > 0 ? '2.0' : '1.0',
     name: catalog.name,
+    scope,
     environments,
     runId: runId || undefined,
     commit: commit || undefined,
@@ -117,6 +135,28 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
 }
 
 export function renderVisualPlan(plan) {
+  if (plan.scope === 'production-read-only') {
+    return [
+      '# 核心业务视觉取证执行清单',
+      '',
+      `运行标识：${plan.runId}`,
+      `提交版本：${plan.commit}`,
+      `取证开始：${plan.captureStartedAt}`,
+      '',
+      '计划：0 张。本轮为正式环境只读健康检查，不进入业务创作页面，完整视觉门禁不适用。',
+      '',
+      '## 主管覆盖摘要',
+      '',
+      '| 范围 | 当前状态 | 是否需干预 | 说明 |',
+      '|---|---|---|---|',
+      `| 正式环境只读健康检查 | 不适用 | 否 | ${plan.scopeReason}；本结论不代表完整视觉验收通过 |`,
+      '',
+      '## 逐模块视觉取证任务',
+      '',
+      `本轮无视觉取证任务。原因：${plan.scopeReason}。需要完整视觉结论时，执行 CDS 或双环境全量稳定冒烟。`,
+      '',
+    ].join('\n');
+  }
   const lines = [
     '# 核心业务视觉取证执行清单',
     '',
@@ -162,6 +202,7 @@ async function main() {
     runId: readArg(argv, '--run-id'),
     commit: readArg(argv, '--commit'),
     captureStartedAt: readArg(argv, '--capture-started-at'),
+    scope: readArg(argv, '--scope', 'full'),
   });
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');

@@ -432,7 +432,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(secondBody.error?.message || '');
   });
 
-  test('[CORE-008][REG-tutorial-progress-001] 历史空进度用户可完成教程且重复提交幂等', async ({ page, request }) => {
+  test('[CORE-008][REG-tutorial-progress-001] 历史空进度用户可完成教程且重复提交幂等', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/document-store');
     const sourceId = 'document-store-page-guide';
     const resetProgress = async () => {
@@ -487,7 +487,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(afterReload).toBe(beforeReload);
   });
 
-  test('[COMMON-001] 专用前缀资源可创建、回读并清理', async ({ page, request }) => {
+  test('[COMMON-001] 专用前缀资源可创建、回读并清理', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request);
     const title = `stsmk-${Date.now()}-common`;
     let workspaceId = '';
@@ -519,7 +519,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-001][FILE-002][FILE-004][FILE-005][FILE-006][FILE-007][FILE-009][FILE-010][REG-file-001] 文件格式、错误、下载、重复与清理', async ({ page, request }) => {
+  test('[FILE-001][FILE-002][FILE-004][FILE-005][FILE-006][FILE-007][FILE-009][FILE-010][REG-file-001] 文件格式、错误、下载、重复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/transcript-agent');
     const runKey = `stsmk-${Date.now()}`;
     let storeId = '';
@@ -611,7 +611,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-003] 大文件上传期间持续显示文件名和百分比', async ({ page, request }) => {
+  test('[FILE-003] 大文件上传期间持续显示文件名和百分比', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(90_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
@@ -650,7 +650,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[LIT-001] 文学作品可新建、保存、刷新回读并清理', async ({ page, request }) => {
+  test('[LIT-001] 文学作品可新建、保存、刷新回读并清理', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `stsmk-${Date.now()}-文学作品`;
     const article = '稳定冒烟文学创作基准正文。';
@@ -690,7 +690,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[LIT-002][LIT-005][LIT-008][LIT-010] 文学配图标记流式生成、保存恢复与清理', async ({ page, request }) => {
+  test('[LIT-002][LIT-005][LIT-008][LIT-010] 文学配图标记流式生成、保存恢复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `stsmk-${Date.now()}-文学流式创作`;
@@ -758,7 +758,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[LIT-009] 移动端可输入标题、创建作品并进入编辑页', async ({ page, request }) => {
+  test('[LIT-009] 移动端可输入标题、创建作品并进入编辑页', { tag: '@cleanup' }, async ({ page, request }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-移动文学`;
@@ -799,7 +799,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(body.error?.message || '');
   });
 
-  test('[VIDEO-004][VIDEO-007][VIDEO-008][REG-video-001] 最短视频真实生成、播放文件校验与下载', async ({ page, request }) => {
+  test('[VIDEO-004][VIDEO-007][VIDEO-008][REG-video-001] 最短视频真实生成、播放文件校验与下载', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(420_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const models = await readEnvelope<Array<{
@@ -893,7 +893,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-003][REC-007][REC-012] 音频上传、真实转写、回读与清理', async ({ page, request }) => {
+  test('[REC-003][REC-007][REC-012] 音频上传、真实转写、回读与清理', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/transcript-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-audio`;
@@ -950,7 +950,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-004][REC-005][REC-010] 录音分片可恢复、重复完成幂等且无重复条目', async ({ page, request }) => {
+  test('[REC-004][REC-005][REC-010] 录音分片可恢复、重复完成幂等且无重复条目', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     let storeId = '';
@@ -1199,7 +1199,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(await interactive.count()).toBeGreaterThan(0);
   });
 
-  test('[MVIS-012] 移动端参考图、尺寸、输入和移除操作均可触达', async ({ page, request }, testInfo) => {
+  test('[MVIS-012] 移动端参考图、尺寸、输入和移除操作均可触达', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-mobile-layout');
     try {
@@ -1229,7 +1229,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][VIS-002][VIS-004][VIS-005][VIS-007][VIS-010] 文生图真实产物、SSE 恢复、进度布局与清理', async ({ page, request }, testInfo) => {
+  test('[CORE-004][VIS-002][VIS-004][VIS-005][VIS-007][VIS-010] 文生图真实产物、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
@@ -1314,7 +1314,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图引用真实生成、恢复与清理', async ({ page, request }, testInfo) => {
+  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图引用真实生成、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
@@ -1403,7 +1403,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-003][MVIS-004][MVIS-005][MVIS-006] 多图重排、删除、重复与超限行为明确', async ({ page, request }, testInfo) => {
+  test('[MVIS-003][MVIS-004][MVIS-005][MVIS-006] 多图重排、删除、重复与超限行为明确', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-boundaries');
@@ -1452,7 +1452,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-007] 损坏引用指出具体图片并保留其他输入', async ({ page, request }, testInfo) => {
+  test('[MVIS-007] 损坏引用指出具体图片并保留其他输入', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-broken-reference');
