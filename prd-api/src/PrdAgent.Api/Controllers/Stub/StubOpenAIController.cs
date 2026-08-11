@@ -408,7 +408,10 @@ public class StubOpenAIController : ControllerBase
     public IActionResult Embeddings([FromBody] StubEmbeddingRequest request)
     {
         var model = (request?.Model ?? "stub-embedding").Trim();
-        var inputs = request?.ReadInputs() ?? new List<string>();
+        // 非法元素（空串 / 非字符串）整体拒绝，不过滤——过滤会让后续元素前移一位，
+        // 按 index 归位的客户端就会把向量安到错误的原文上。理由见 TryReadInputs。
+        if (request == null || !request.TryReadInputs(out var inputs))
+            return BadRequest(new { error = new { message = "input 必须是非空字符串或非空字符串数组", type = "invalid_request_error" } });
         if (inputs.Count == 0)
             return BadRequest(new { error = new { message = "input 不能为空", type = "invalid_request_error" } });
 
@@ -1102,24 +1105,37 @@ public sealed class StubEmbeddingRequest
     public string? Model { get; set; }
     public JsonElement Input { get; set; }
 
-    public List<string> ReadInputs()
+    /// <summary>
+    /// 摊平 input。**不过滤、不跳过**：数组里有空串或非字符串元素时整体判非法，
+    /// 由调用方回 400。
+    ///
+    /// 过滤会让后面的元素**整体前移一位**——`["a", "", "c"]` 过滤后 "c" 拿到 index 1，
+    /// 而它在调用方眼里是 index 2。任何按 index 归位的 OpenAI 兼容客户端都会把向量
+    /// 安到错误的原文上，且全程不报错。这正是 EmbeddingService 那边「空白输入整批拒绝、
+    /// 不做过滤」的同一条理由，stub 必须保持同样的语义，否则用它跑出来的端到端自测
+    /// 会掩盖真实供应商上同样的错位。
+    /// </summary>
+    public bool TryReadInputs(out List<string> inputs)
     {
-        var result = new List<string>();
+        inputs = new List<string>();
         if (Input.ValueKind == JsonValueKind.String)
         {
             var s = Input.GetString();
-            if (!string.IsNullOrWhiteSpace(s)) result.Add(s!);
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            inputs.Add(s!);
+            return true;
         }
-        else if (Input.ValueKind == JsonValueKind.Array)
+
+        if (Input.ValueKind != JsonValueKind.Array) return false;
+
+        foreach (var item in Input.EnumerateArray())
         {
-            foreach (var item in Input.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.String) continue;
-                var s = item.GetString();
-                if (!string.IsNullOrWhiteSpace(s)) result.Add(s!);
-            }
+            if (item.ValueKind != JsonValueKind.String) return false;
+            var s = item.GetString();
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            inputs.Add(s!);
         }
-        return result;
+        return true;
     }
 }
 
