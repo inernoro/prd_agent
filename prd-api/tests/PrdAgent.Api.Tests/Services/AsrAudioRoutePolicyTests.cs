@@ -87,14 +87,13 @@ public class AsrAudioRoutePolicyTests
         AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(
             startInfo.ArgumentList,
             "/tmp/source.m4a",
-            "/tmp/normalized.wav",
-            AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes + 1);
+            "/tmp/normalized.wav");
 
-        var fileSizeIndex = startInfo.ArgumentList.IndexOf("-fs");
-        fileSizeIndex.ShouldBeGreaterThanOrEqualTo(0);
-        startInfo.ArgumentList[fileSizeIndex + 1].ShouldBe(
-            (AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes + 1).ToString());
-        startInfo.ArgumentList[^1].ShouldBe("/tmp/normalized.wav");
+        startInfo.ArgumentList.ShouldNotContain("-fs");
+        AsrAudioNormalizationPolicy.IsNormalizedAudioWithinLimit(
+            AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes - 1).ShouldBeTrue();
+        AsrAudioNormalizationPolicy.IsNormalizedAudioWithinLimit(
+            AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes).ShouldBeFalse();
         AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds.ShouldBeGreaterThan(2000);
         AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds.ShouldBeLessThan(2200);
     }

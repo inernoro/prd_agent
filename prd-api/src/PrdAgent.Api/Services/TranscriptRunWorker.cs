@@ -619,15 +619,14 @@ public class TranscriptRunWorker : BackgroundService
             AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(
                 startInfo.ArgumentList,
                 inputPath,
-                outputPath,
-                AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes + 1);
+                outputPath);
             using var process = System.Diagnostics.Process.Start(startInfo)
                 ?? throw new InvalidOperationException("音频处理服务启动失败");
             var stderrTask = process.StandardError.ReadToEndAsync();
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             try
             {
-                await process.WaitForExitAsync(processingToken);
+                await WaitForBoundedOutputAsync(process, outputPath, processingToken);
             }
             catch (OperationCanceledException) when (processingToken.IsCancellationRequested)
             {
@@ -641,7 +640,7 @@ public class TranscriptRunWorker : BackgroundService
             if (process.ExitCode != 0)
                 throw new InvalidOperationException($"音频格式转换失败，退出码 {process.ExitCode}: {stderr}");
             var normalizedLength = new FileInfo(outputPath).Length;
-            if (normalizedLength > AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes)
+            if (!AsrAudioNormalizationPolicy.IsNormalizedAudioWithinLimit(normalizedLength))
             {
                 throw new InvalidOperationException(
                     $"音频规范化后超过 {AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes} 字节限制");
@@ -653,6 +652,27 @@ public class TranscriptRunWorker : BackgroundService
             try { if (File.Exists(inputPath)) File.Delete(inputPath); } catch { }
             try { if (File.Exists(outputPath)) File.Delete(outputPath); } catch { }
         }
+    }
+
+    private static async Task WaitForBoundedOutputAsync(
+        System.Diagnostics.Process process,
+        string outputPath,
+        CancellationToken processingToken)
+    {
+        var exitTask = process.WaitForExitAsync(processingToken);
+        while (!exitTask.IsCompleted)
+        {
+            if (File.Exists(outputPath)
+                && !AsrAudioNormalizationPolicy.IsNormalizedAudioWithinLimit(new FileInfo(outputPath).Length))
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+                throw new InvalidOperationException(
+                    $"音频规范化后超过 {AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes} 字节限制");
+            }
+            await Task.WhenAny(exitTask, Task.Delay(25, processingToken));
+        }
+        await exitTask;
     }
 
     private static async Task<double?> ProbeAudioDurationSecondsAsync(
@@ -681,7 +701,16 @@ public class TranscriptRunWorker : BackgroundService
         if (process == null) return null;
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync(processingToken);
+        try
+        {
+            await process.WaitForExitAsync(processingToken);
+        }
+        catch (OperationCanceledException) when (processingToken.IsCancellationRequested)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None);
+            throw;
+        }
         var stdout = await stdoutTask;
         await stderrTask;
         if (process.ExitCode != 0) return null;

@@ -31,6 +31,8 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
+        _database.GetCollection<BsonDocument>("console_sso_tickets");
     public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
     public IMongoCollection<GroupMember> GroupMembers => _database.GetCollection<GroupMember>("groupmembers");
     // PRD 文档长期存储（原文 + 解析结构）

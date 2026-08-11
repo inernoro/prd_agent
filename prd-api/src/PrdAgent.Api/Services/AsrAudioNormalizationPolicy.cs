@@ -16,12 +16,13 @@ internal static class AsrAudioNormalizationPolicy
     internal const long MaxNormalizedAudioBytes = 64L * 1024 * 1024;
     internal static double MaxNormalizedDurationSeconds =>
         (MaxNormalizedAudioBytes - 44d) / (NormalizedSampleRate * NormalizedBytesPerSample);
+    internal static bool IsNormalizedAudioWithinLimit(long length) =>
+        length >= 0 && length < MaxNormalizedAudioBytes;
 
     internal static void ConfigureFfmpegArguments(
         Collection<string> arguments,
         string inputPath,
-        string outputPath,
-        long? maxOutputBytes = null)
+        string outputPath)
     {
         string[] values =
         {
@@ -34,11 +35,6 @@ internal static class AsrAudioNormalizationPolicy
         };
         foreach (var value in values)
             arguments.Add(value);
-        if (maxOutputBytes is > 0)
-        {
-            arguments.Add("-fs");
-            arguments.Add(maxOutputBytes.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        }
         arguments.Add(outputPath);
     }
 }

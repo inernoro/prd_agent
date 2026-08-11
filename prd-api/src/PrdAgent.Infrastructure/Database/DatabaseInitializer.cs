@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -30,6 +31,30 @@ public class DatabaseInitializer
         await EnsureBuiltInGuideSkillsAsync();
         await EnsureShortcutTemplateAsync();
         await EnsureShortcutExpirationsAsync();
+        await EnsureConsoleSsoTicketIndexesAsync();
+    }
+
+    internal static IReadOnlyList<CreateIndexModel<BsonDocument>> BuildConsoleSsoTicketIndexes() =>
+    [
+        new(
+            Builders<BsonDocument>.IndexKeys.Ascending("CodeHash"),
+            new CreateIndexOptions
+            {
+                Name = "uniq_console_sso_tickets_code_hash",
+                Unique = true,
+            }),
+        new(
+            Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+            new CreateIndexOptions
+            {
+                Name = "ttl_console_sso_tickets_expires_at",
+                ExpireAfter = TimeSpan.Zero,
+            }),
+    ];
+
+    private async Task EnsureConsoleSsoTicketIndexesAsync()
+    {
+        await _db.ConsoleSsoTickets.Indexes.CreateManyAsync(BuildConsoleSsoTicketIndexes());
     }
 
     private async Task EnsureAdminUserAsync()

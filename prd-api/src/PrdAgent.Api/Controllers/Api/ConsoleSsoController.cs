@@ -21,7 +21,6 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class ConsoleSsoController : ControllerBase
 {
     private static readonly TimeSpan TicketLifetime = TimeSpan.FromSeconds(60);
-    private const string TicketCollectionName = "console_sso_tickets";
     private const string TicketPurpose = "external-console-login";
     private readonly MongoDbContext _db;
     private readonly IConfiguration _configuration;
@@ -84,7 +83,7 @@ public sealed class ConsoleSsoController : ControllerBase
 
         var now = DateTime.UtcNow;
         var code = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-        var tickets = _db.Database.GetCollection<BsonDocument>(TicketCollectionName);
+        var tickets = _db.ConsoleSsoTickets;
         await tickets.InsertOneAsync(new BsonDocument
         {
             { "_id", Guid.NewGuid().ToString("N") },
@@ -125,7 +124,7 @@ public sealed class ConsoleSsoController : ControllerBase
         }
 
         var now = DateTime.UtcNow;
-        var tickets = _db.Database.GetCollection<BsonDocument>(TicketCollectionName);
+        var tickets = _db.ConsoleSsoTickets;
         var ticket = await tickets.FindOneAndUpdateAsync(
             Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("CodeHash", Hash(request.Code)),

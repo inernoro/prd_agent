@@ -23,7 +23,6 @@ namespace PrdAgent.Api.Controllers;
 [Route("api/v1/auth/synthetic")]
 public sealed class SyntheticLoginController : ControllerBase
 {
-    private const string TicketCollectionName = "console_sso_tickets";
     private const string TicketPurpose = "stable-smoke-login";
     private const int DefaultTicketSeconds = 180;
     private const int MinTicketSeconds = 60;
@@ -100,7 +99,7 @@ public sealed class SyntheticLoginController : ControllerBase
         var expiresAt = now.AddSeconds(lifetimeSeconds);
         var code = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var ticketId = Guid.NewGuid().ToString("N");
-        var tickets = _db.Database.GetCollection<BsonDocument>(TicketCollectionName);
+        var tickets = _db.ConsoleSsoTickets;
         await tickets.InsertOneAsync(new BsonDocument
         {
             { "_id", ticketId },
@@ -153,7 +152,7 @@ public sealed class SyntheticLoginController : ControllerBase
         }
 
         var now = DateTime.UtcNow;
-        var tickets = _db.Database.GetCollection<BsonDocument>(TicketCollectionName);
+        var tickets = _db.ConsoleSsoTickets;
         var ticket = await tickets.FindOneAndUpdateAsync(
             Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("CodeHash", Hash(request.Code.Trim())),
