@@ -4210,9 +4210,7 @@ public class GatewayDataDomainGuardTests
         // 成员：不能删自己、只有 owner 能删 owner、不能删掉最后一个活跃 owner。
         // 最后一条走 TenantOwnerAuthority.TryRemoveAsync 的原子判定，
         // 且摘牌后若删除失败必须补回去——否则 owner 名单会凭空少一位。
-        var memberDeleteStart = console.IndexOf("app.MapDelete(\"/gw/members/{id}\"", StringComparison.Ordinal);
-        Assert.True(memberDeleteStart > 0, "成员删除端点应当存在");
-        var memberDelete = console[memberDeleteStart..(memberDeleteStart + 4000)];
+        var memberDelete = EndpointBody(console, "app.MapDelete(\"/gw/members/{id}\"");
         Assert.Contains("SELF_MEMBERSHIP_CHANGE_FORBIDDEN", memberDelete);
         Assert.Contains("OWNER_REQUIRED", memberDelete);
         Assert.Contains("TenantOwnerAuthority.TryRemoveAsync", memberDelete);
@@ -4226,9 +4224,7 @@ public class GatewayDataDomainGuardTests
         // 用户建的东西一律不级联——级联写错不可逆，「先自己清干净再删」可逆。
         // 唯一的例外是系统自己铺的脚手架（空的托管默认池 + 池类型指针）：它们由平台在开租户时
         // 自动创建、用户删不掉（当前默认池不许删），算进「非空」就会让成功分支永远走不到。
-        var tenantDeleteStart = console.IndexOf("app.MapDelete(\"/gw/tenants/{id}\"", StringComparison.Ordinal);
-        Assert.True(tenantDeleteStart > 0, "租户删除端点应当存在");
-        var tenantDelete = console[tenantDeleteStart..(tenantDeleteStart + 4000)];
+        var tenantDelete = EndpointBody(console, "app.MapDelete(\"/gw/tenants/{id}\"");
         Assert.Contains("TENANT_SCOPE_MISMATCH", tenantDelete);
         Assert.Contains("INTERNAL_TENANT", tenantDelete);
         Assert.Contains("TENANT_NOT_EMPTY", tenantDelete);
@@ -4260,23 +4256,17 @@ public class GatewayDataDomainGuardTests
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
 
         // 删模型：占用清单要同时报「池把它当成员」和「逻辑模型把它当 offering 上游」
-        var modelDeleteStart = console.IndexOf("app.MapDelete(\"/gw/models/{id}\"", StringComparison.Ordinal);
-        Assert.True(modelDeleteStart > 0, "模型删除端点应当存在");
-        var modelDelete = console[modelDeleteStart..(modelDeleteStart + 2500)];
+        var modelDelete = EndpointBody(console, "app.MapDelete(\"/gw/models/{id}\"");
         Assert.Contains("blockers.TotalCount > 0", modelDelete);
         Assert.Contains("blockers.LogicalModels", modelDelete);
 
         // 删交换所：图层能力就是靠 TargetKind=exchange 的 offering 装起来的，只查池会整条漏掉
-        var exchangeDeleteStart = console.IndexOf("app.MapDelete(\"/gw/exchanges/{id}\"", StringComparison.Ordinal);
-        Assert.True(exchangeDeleteStart > 0, "交换所删除端点应当存在");
-        var exchangeDelete = console[exchangeDeleteStart..(exchangeDeleteStart + 2500)];
+        var exchangeDelete = EndpointBody(console, "app.MapDelete(\"/gw/exchanges/{id}\"");
         Assert.Contains("CollectOfferingHolderNamesAsync(http, gwModelOfferings, gwLogicalModels, \"exchange\", id)", exchangeDelete);
 
         // 合并：丢弃重复模型之前必须先把 offering 改指到留下来的那条同名模型，
         // 否则合并的净效果是「把一条能用的 offering 变成指向已删模型」
-        var mergeStart = console.IndexOf("app.MapPost(\"/gw/platforms/{id}/merge-into/{targetId}\"", StringComparison.Ordinal);
-        Assert.True(mergeStart > 0, "上游合并端点应当存在");
-        var merge = console[mergeStart..(mergeStart + 3500)];
+        var merge = EndpointBody(console, "app.MapPost(\"/gw/platforms/{id}/merge-into/{targetId}\"");
         var repointAt = merge.IndexOf("RepointOfferingsAsync(", StringComparison.Ordinal);
         var dropAt = merge.IndexOf("result.ModelsDropped++", StringComparison.Ordinal);
         Assert.True(repointAt > 0, "合并必须改指被丢弃模型上的 offering");
@@ -4295,9 +4285,7 @@ public class GatewayDataDomainGuardTests
     public void PlatformRename_KeepsNormalizedNameInSync()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
-        var start = console.IndexOf("app.MapPut(\"/gw/platforms/{id}\"", StringComparison.Ordinal);
-        Assert.True(start > 0, "上游编辑端点应当存在");
-        var update = console[start..(start + 3000)];
+        var update = EndpointBody(console, "app.MapPut(\"/gw/platforms/{id}\"");
 
         Assert.Contains("Set(\"NameNormalized\", normalized)", update);
         // 归一口径必须与创建路径一致（GatewayConfigurationProvisioning：Trim + ToLowerInvariant）
@@ -4344,6 +4332,23 @@ public class GatewayDataDomainGuardTests
         Assert.True(
             orphans.Count == 0,
             $"api.ts 有 {orphans.Count} 个导出没有任何调用点，功能建了一半：{string.Join("、", orphans)}");
+    }
+
+    /// <summary>
+    /// 从端点定义切到它自己的收尾（`}).RequireAuthorization(...)` 那一行），而不是取固定字符数。
+    ///
+    /// 固定字符数的窗口会随着端点变长而悄悄把尾部断言切到窗口外——本仓库刚踩过：
+    /// 往租户删除里加了几行，「必须挂 TenantOwner」这条断言就落到 4000 字之外报了「找不到」，
+    /// 报的是缺失，实际是窗口太窄。判据的边界要跟着被判对象走，不能是一个拍出来的数字。
+    /// </summary>
+    private static string EndpointBody(string source, string anchor)
+    {
+        var start = source.IndexOf(anchor, StringComparison.Ordinal);
+        Assert.True(start > 0, $"找不到端点：{anchor}");
+        var end = source.IndexOf("}).Require", start, StringComparison.Ordinal);
+        Assert.True(end > start, $"端点没有收尾的授权声明：{anchor}");
+        var lineEnd = source.IndexOf('\n', end);
+        return source[start..(lineEnd < 0 ? source.Length : lineEnd)];
     }
 
     private static string ReadRepoFile(string relativePath)
