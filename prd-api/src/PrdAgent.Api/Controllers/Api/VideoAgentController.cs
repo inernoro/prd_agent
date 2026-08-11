@@ -199,13 +199,15 @@ public class VideoAgentController : ControllerBase
 
         if (result.Success && !string.IsNullOrWhiteSpace(result.JobId))
         {
+            var now = DateTime.UtcNow;
             var ownership = new DirectVideoJobOwnership
             {
                 AppKey = AppKey,
                 OwnerAdminId = GetAdminId(),
                 JobId = result.JobId,
                 Model = result.ActualModel ?? req.Model,
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = now,
+                ExpiresAt = now.Add(DirectVideoJobOwnership.Retention),
             };
             var recoveryToken = CreateDirectVideoJobRecoveryToken(ownership);
             var ownershipPersisted = await TryPersistDirectVideoJobOwnershipAsync(ownership);
@@ -272,6 +274,21 @@ public class VideoAgentController : ControllerBase
             $"video-{jobId}.mp4");
     }
 
+    [HttpDelete("videogen-direct/{jobId}")]
+    public async Task<IActionResult> DeleteDirectVideoJob(
+        string jobId,
+        CancellationToken ct)
+    {
+        var ownerAdminId = GetAdminId();
+        await _db.DirectVideoJobOwnerships.DeleteOneAsync(
+            item => item.AppKey == AppKey
+                    && item.JobId == jobId
+                    && item.OwnerAdminId == ownerAdminId,
+            ct);
+        // 删除不存在的本人记录也返回成功，便于 finally 和调度器安全重试。
+        return Ok(ApiResponse<object>.Ok(new { cleaned = true }));
+    }
+
     private async Task<DirectVideoJobOwnership?> FindOwnedDirectVideoJobAsync(
         string jobId,
         string? recoveryToken)
@@ -327,7 +344,7 @@ public class VideoAgentController : ControllerBase
             ownership.OwnerAdminId,
             ownership.JobId,
             ownership.Model,
-            DateTime.UtcNow.AddDays(7));
+            ownership.ExpiresAt);
         return _directVideoJobProtector.Protect(JsonSerializer.Serialize(payload, JsonOptions));
     }
 
@@ -360,6 +377,7 @@ public class VideoAgentController : ControllerBase
                 JobId = payload.JobId,
                 Model = payload.Model,
                 CreatedAt = DateTime.UtcNow,
+                ExpiresAt = payload.ExpiresAt,
             };
             return true;
         }

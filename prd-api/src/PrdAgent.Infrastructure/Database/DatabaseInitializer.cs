@@ -32,6 +32,7 @@ public class DatabaseInitializer
         await EnsureShortcutTemplateAsync();
         await EnsureShortcutExpirationsAsync();
         await EnsureConsoleSsoTicketIndexesAsync();
+        await EnsureDirectVideoJobOwnershipIndexesAsync();
     }
 
     internal static IReadOnlyList<CreateIndexModel<BsonDocument>> BuildConsoleSsoTicketIndexes() =>
@@ -55,6 +56,37 @@ public class DatabaseInitializer
     private async Task EnsureConsoleSsoTicketIndexesAsync()
     {
         await _db.ConsoleSsoTickets.Indexes.CreateManyAsync(BuildConsoleSsoTicketIndexes());
+    }
+
+    internal static IReadOnlyList<CreateIndexModel<DirectVideoJobOwnership>> BuildDirectVideoJobOwnershipIndexes() =>
+    [
+        new(
+            Builders<DirectVideoJobOwnership>.IndexKeys
+                .Ascending(item => item.AppKey)
+                .Ascending(item => item.JobId),
+            new CreateIndexOptions
+            {
+                Name = "uniq_direct_video_job_app_job",
+                Unique = true,
+            }),
+        new(
+            Builders<DirectVideoJobOwnership>.IndexKeys.Ascending(item => item.ExpiresAt),
+            new CreateIndexOptions
+            {
+                Name = "ttl_direct_video_job_expires_at",
+                ExpireAfter = TimeSpan.Zero,
+            }),
+    ];
+
+    private async Task EnsureDirectVideoJobOwnershipIndexesAsync()
+    {
+        // 历史记录没有 ExpiresAt；先补齐，确保新增 TTL 索引也能治理存量。
+        await _db.DirectVideoJobOwnerships.UpdateManyAsync(
+            Builders<DirectVideoJobOwnership>.Filter.Exists(nameof(DirectVideoJobOwnership.ExpiresAt), false),
+            Builders<DirectVideoJobOwnership>.Update.Set(
+                item => item.ExpiresAt,
+                DateTime.UtcNow.Add(DirectVideoJobOwnership.Retention)));
+        await _db.DirectVideoJobOwnerships.Indexes.CreateManyAsync(BuildDirectVideoJobOwnershipIndexes());
     }
 
     private async Task EnsureAdminUserAsync()

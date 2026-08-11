@@ -380,12 +380,15 @@ public class VideoExportTask
 [BsonIgnoreExtraElements]
 public class DirectVideoJobOwnership
 {
+    public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string AppKey { get; set; } = "video-agent";
     public string OwnerAdminId { get; set; } = string.Empty;
     public string JobId { get; set; } = string.Empty;
     public string? Model { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.Add(Retention);
 }
 
 public class VideoModelOption

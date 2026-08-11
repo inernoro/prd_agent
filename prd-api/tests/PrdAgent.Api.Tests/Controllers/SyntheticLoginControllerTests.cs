@@ -3,8 +3,11 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
+using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using Xunit;
 
@@ -98,7 +101,9 @@ public sealed class SyntheticLoginControllerTests
         Assert.Equal(2, indexes.Count);
         var rendered = indexes.Select(index => new
         {
-            Keys = index.Keys.Render(BsonDocumentSerializer.Instance, BsonSerializer.SerializerRegistry),
+            Keys = index.Keys.Render(new RenderArgs<BsonDocument>(
+                BsonDocumentSerializer.Instance,
+                BsonSerializer.SerializerRegistry)),
             index.Options.Name,
             index.Options.Unique,
             index.Options.ExpireAfter,
@@ -110,6 +115,31 @@ public sealed class SyntheticLoginControllerTests
         Assert.Contains(rendered, index =>
             index.Keys == new BsonDocument("ExpiresAt", 1)
             && index.Name == "ttl_console_sso_tickets_expires_at"
+            && index.ExpireAfter == TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void DirectVideoIndexes_ShouldProvideUniqueOwnershipAndExpiryCleanup()
+    {
+        var indexes = DatabaseInitializer.BuildDirectVideoJobOwnershipIndexes();
+
+        Assert.Equal(2, indexes.Count);
+        var rendered = indexes.Select(index => new
+        {
+            Keys = index.Keys.Render(new RenderArgs<DirectVideoJobOwnership>(
+                BsonSerializer.SerializerRegistry.GetSerializer<DirectVideoJobOwnership>(),
+                BsonSerializer.SerializerRegistry)),
+            index.Options.Name,
+            index.Options.Unique,
+            index.Options.ExpireAfter,
+        }).ToList();
+        Assert.Contains(rendered, index =>
+            index.Keys == new BsonDocument { { "AppKey", 1 }, { "JobId", 1 } }
+            && index.Name == "uniq_direct_video_job_app_job"
+            && index.Unique == true);
+        Assert.Contains(rendered, index =>
+            index.Keys == new BsonDocument("ExpiresAt", 1)
+            && index.Name == "ttl_direct_video_job_expires_at"
             && index.ExpireAfter == TimeSpan.Zero);
     }
 

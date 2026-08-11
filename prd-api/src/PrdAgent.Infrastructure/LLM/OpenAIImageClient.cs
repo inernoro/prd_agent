@@ -84,6 +84,46 @@ public class OpenAIImageClient : IImageGenerationClient
         return stableModelId;
     }
 
+    internal static (string EndpointPath, JsonObject Body) BuildOpenRouterImageRequest(
+        string model,
+        string prompt,
+        int count,
+        string? normalizedSize,
+        IEnumerable<string>? imageReferences,
+        bool isAdaptiveModel)
+    {
+        var body = new JsonObject
+        {
+            ["model"] = model,
+            ["prompt"] = prompt,
+        };
+
+        // 自适应模型由提示词和上游能力决定输出规格，n / size 会被部分供应商拒绝。
+        if (!isAdaptiveModel)
+        {
+            body["n"] = Math.Clamp(count, 1, 10);
+            if (!string.IsNullOrWhiteSpace(normalizedSize))
+                body["size"] = normalizedSize;
+        }
+
+        var references = new JsonArray();
+        foreach (var image in imageReferences ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(image)) continue;
+            var dataUri = image.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                ? image
+                : $"data:image/png;base64,{image}";
+            references.Add(new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = dataUri }
+            });
+        }
+        if (references.Count > 0) body["input_references"] = references;
+
+        return ("images", body);
+    }
+
 
     /// <summary>
     /// 统一图片生成入口：文生图 / 图生图 / 多图生图由 images 参数自动决定。
@@ -518,28 +558,13 @@ public class OpenAIImageClient : IImageGenerationClient
                 // Gateway 会基于 canonical request 为每条 Offering 重新构建，确保故障切换时协议不串线。
                 else if (isOpenRouterImageApi)
                 {
-                    var imageBody = new JsonObject
-                    {
-                        ["model"] = effectiveModelName,
-                        ["prompt"] = prompt,
-                        ["n"] = Math.Clamp(n, 1, 10),
-                    };
-                    if (!string.IsNullOrWhiteSpace(requestedSizeNorm))
-                        imageBody["size"] = requestedSizeNorm;
-                    if (initImageBase64 != null)
-                    {
-                        var dataUri = initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
-                            ? initImageBase64
-                            : $"data:image/png;base64,{initImageBase64}";
-                        imageBody["input_references"] = new JsonArray
-                        {
-                            new JsonObject
-                            {
-                                ["type"] = "image_url",
-                                ["image_url"] = new JsonObject { ["url"] = dataUri }
-                            }
-                        };
-                    }
+                    var openRouterRequest = BuildOpenRouterImageRequest(
+                        effectiveModelName,
+                        prompt,
+                        n,
+                        requestedSizeNorm,
+                        initImageBase64 == null ? [] : [initImageBase64],
+                        isAdaptiveModel);
 
                     _logger.LogInformation(
                         "[OpenAIImageClient] OpenRouter 专用图片请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
@@ -552,8 +577,8 @@ public class OpenAIImageClient : IImageGenerationClient
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
                         CanonicalImageRequest = canonicalImageRequest,
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
-                        EndpointPath = "images",
-                        RequestBody = imageBody,
+                        EndpointPath = openRouterRequest.EndpointPath,
+                        RequestBody = openRouterRequest.Body,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
                         Context = new GatewayRequestContext
@@ -1315,6 +1340,13 @@ public class OpenAIImageClient : IImageGenerationClient
         var effectiveModelName = resolution.ActualModel!;
         var platformIdForLog = resolution.ActualPlatformId;
         var platformNameForLog = resolution.ActualPlatformName;
+        var visionPlatformType = resolution.PlatformType?.Trim().ToLowerInvariant();
+        var visionWireProtocol = string.IsNullOrWhiteSpace(resolution.Protocol)
+            ? visionPlatformType
+            : resolution.Protocol.Trim().ToLowerInvariant();
+        if (string.Equals(visionWireProtocol, "unknown", StringComparison.OrdinalIgnoreCase))
+            visionWireProtocol = null;
+        var isOpenRouterImageApi = visionWireProtocol is "openrouter-image" or "openrouter-images";
         var canonicalImageRequest = new GatewayCanonicalImageRequest
         {
             Prompt = prompt,
@@ -1498,7 +1530,6 @@ public class OpenAIImageClient : IImageGenerationClient
         }
 
         // Google 原生路径：多图也用 generateContent 格式（inline_data parts）
-        var visionPlatformType = resolution.PlatformType?.ToLowerInvariant();
         if (visionPlatformType == "google" || visionPlatformType == "gemini")
         {
             try
@@ -1725,14 +1756,40 @@ public class OpenAIImageClient : IImageGenerationClient
 
         try
         {
-            // 构建 Gateway 请求 - 使用 SendRawWithResolutionAsync 发送到 chat/completions
-            var requestBody = JsonNode.Parse(requestJson)?.AsObject() ?? new JsonObject();
+            JsonObject requestBody;
+            string endpointPath;
+            if (isOpenRouterImageApi)
+            {
+                var requestParams = ImageGenModelAdapterRegistry.BuildRequestParams(
+                    effectiveModelName,
+                    canonicalImageRequest.Size);
+                var openRouterRequest = BuildOpenRouterImageRequest(
+                    effectiveModelName,
+                    prompt,
+                    canonicalImageRequest.Count,
+                    canonicalImageRequest.Size,
+                    canonicalImageRequest.Images,
+                    requestParams.HasAdapter && requestParams.IsAdaptive);
+                requestBody = openRouterRequest.Body;
+                endpointPath = openRouterRequest.EndpointPath;
+                _logger.LogInformation(
+                    "[OpenAIImageClient] OpenRouter 专用多图请求: AppCallerCode={AppCallerCode}, ImageCount={Count}, Model={Model}",
+                    appCallerCode,
+                    imageRefs.Count,
+                    effectiveModelName);
+            }
+            else
+            {
+                requestBody = JsonNode.Parse(requestJson)?.AsObject() ?? new JsonObject();
+                endpointPath = "chat/completions";
+            }
+
             var gatewayRequest = new GatewayRawRequest
             {
                 AppCallerCode = appCallerCode,
                 ModelType = "generation",
                 ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                EndpointPath = "/v1/chat/completions",
+                EndpointPath = endpointPath,
                 RequestBody = requestBody,
                 IsMultipart = false,
                 CanonicalImageRequest = canonicalImageRequest,

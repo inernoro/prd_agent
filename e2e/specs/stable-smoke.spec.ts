@@ -785,59 +785,82 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       .sort((left, right) => (left.pricePerCall ?? Number.MAX_SAFE_INTEGER) - (right.pricePerCall ?? Number.MAX_SAFE_INTEGER));
     expect(available.length, '没有可用的视频生成模型').toBeGreaterThan(0);
     const model = available[0];
-    const submit = await page.request.post('/api/video-agent/videogen-direct', {
-      headers: authHeaders(token),
-      data: {
-        model: model.id,
-        prompt: '固定镜头，一只蓝色陶瓷杯放在纯白桌面上，柔和自然光，不要文字，不要人物',
-        aspectRatio: model.aspectRatios?.includes('16:9') ? '16:9' : model.aspectRatios?.[0],
-        resolution: model.resolutions?.includes('720p') ? '720p' : model.resolutions?.[0],
-        durationSeconds: Math.min(...(model.durations?.length ? model.durations : [5])),
-        generateAudio: false,
-      },
-    });
-    const submitted = await readEnvelope<{
-      success: boolean;
-      jobId?: string;
-      actualModel?: string;
-      errorMessage?: string;
-      recoveryToken?: string;
-    }>(submit);
-    expect(submitted.success, submitted.errorMessage || '视频任务提交失败').toBe(true);
-    expect(submitted.jobId).toBeTruthy();
-    expect(submitted.recoveryToken).toBeTruthy();
-    const recoveryQuery = `?recoveryToken=${encodeURIComponent(submitted.recoveryToken!)}`;
-
-    const startedAt = Date.now();
-    let videoUrl = '';
-    while (Date.now() - startedAt < 360_000) {
-      const status = await readEnvelope<{
-        status: string;
-        videoUrl?: string;
-        errorMessage?: string;
-        isCompleted: boolean;
-        isFailed: boolean;
-      }>(await page.request.get(`/api/video-agent/videogen-direct/status/${encodeURIComponent(submitted.jobId!)}${recoveryQuery}`, {
+    let directJobId = '';
+    let recoveryToken = '';
+    try {
+      const submit = await page.request.post('/api/video-agent/videogen-direct', {
         headers: authHeaders(token),
-      }));
-      if (status.isFailed) {
-        expectUserReadable(status.errorMessage || '视频生成失败，请稍后重试或切换模型');
-        throw new Error(status.errorMessage || '视频生成失败，请稍后重试或切换模型');
+        data: {
+          model: model.id,
+          prompt: '固定镜头，一只蓝色陶瓷杯放在纯白桌面上，柔和自然光，不要文字，不要人物',
+          aspectRatio: model.aspectRatios?.includes('16:9') ? '16:9' : model.aspectRatios?.[0],
+          resolution: model.resolutions?.includes('720p') ? '720p' : model.resolutions?.[0],
+          durationSeconds: Math.min(...(model.durations?.length ? model.durations : [5])),
+          generateAudio: false,
+        },
+      });
+      const submitted = await readEnvelope<{
+        success: boolean;
+        jobId?: string;
+        actualModel?: string;
+        errorMessage?: string;
+        recoveryToken?: string;
+      }>(submit);
+      directJobId = submitted.jobId || '';
+      recoveryToken = submitted.recoveryToken || '';
+      expect(submitted.success, submitted.errorMessage || '视频任务提交失败').toBe(true);
+      expect(submitted.jobId).toBeTruthy();
+      expect(submitted.recoveryToken).toBeTruthy();
+      const recoveryQuery = `?recoveryToken=${encodeURIComponent(recoveryToken)}`;
+
+      const startedAt = Date.now();
+      let videoUrl = '';
+      while (Date.now() - startedAt < 360_000) {
+        const status = await readEnvelope<{
+          status: string;
+          videoUrl?: string;
+          errorMessage?: string;
+          isCompleted: boolean;
+          isFailed: boolean;
+        }>(await page.request.get(`/api/video-agent/videogen-direct/status/${encodeURIComponent(directJobId)}${recoveryQuery}`, {
+          headers: authHeaders(token),
+        }));
+        if (status.isFailed) {
+          expectUserReadable(status.errorMessage || '视频生成失败，请稍后重试或切换模型');
+          throw new Error(status.errorMessage || '视频生成失败，请稍后重试或切换模型');
+        }
+        if (status.isCompleted) {
+          videoUrl = status.videoUrl || '';
+          break;
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
       }
-      if (status.isCompleted) {
-        videoUrl = status.videoUrl || '';
-        break;
+      expect(videoUrl, '视频任务完成后必须返回成片标识').toBeTruthy();
+      const video = await page.request.get(`/api/video-agent/videogen-direct/content/${encodeURIComponent(directJobId)}${recoveryQuery}`, {
+        headers: authHeaders(token),
+        timeout: 180_000,
+      });
+      expect(video.ok()).toBe(true);
+      expect(video.headers()['content-type'] || '').toMatch(/^video\//);
+      expect((await video.body()).byteLength).toBeGreaterThan(1024);
+    } finally {
+      if (directJobId) {
+        const cleanup = await page.request.delete(
+          `/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}`,
+          { headers: authHeaders(token) },
+        );
+        const cleanupBody = await cleanup.json() as ApiEnvelope<{ cleaned: boolean }>;
+        expect(cleanup.ok(), cleanupBody.error?.message || '视频冒烟任务清理失败').toBe(true);
+        expect(cleanupBody.data.cleaned).toBe(true);
+        const cleanupAgain = await page.request.delete(
+          `/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}`,
+          { headers: authHeaders(token) },
+        );
+        const cleanupAgainBody = await cleanupAgain.json() as ApiEnvelope<{ cleaned: boolean }>;
+        expect(cleanupAgain.ok(), cleanupAgainBody.error?.message || '视频冒烟任务重复清理失败').toBe(true);
+        expect(cleanupAgainBody.data.cleaned).toBe(true);
       }
-      await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
     }
-    expect(videoUrl, '视频任务完成后必须返回成片标识').toBeTruthy();
-    const video = await page.request.get(`/api/video-agent/videogen-direct/content/${encodeURIComponent(submitted.jobId!)}${recoveryQuery}`, {
-      headers: authHeaders(token),
-      timeout: 180_000,
-    });
-    expect(video.ok()).toBe(true);
-    expect(video.headers()['content-type'] || '').toMatch(/^video\//);
-    expect((await video.body()).byteLength).toBeGreaterThan(1024);
   });
 
   test('[REC-003][REC-007][REC-012] 音频上传、真实转写、回读与清理', async ({ page, request }) => {
