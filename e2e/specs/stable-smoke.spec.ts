@@ -681,7 +681,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }>(await page.request.post('/api/users', {
         headers: {
           ...authHeaders(adminToken),
-          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-restricted-user`,
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-restricted-user-${username}`,
         },
         data: {
           username,
@@ -694,7 +694,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(created.username).toBe(username);
 
       const authz = await readEnvelope<{
-        effectivePermissions: string[];
+        effectiveSystemRoleKey: string;
+        permDeny: string[];
       }>(await page.request.put(`/api/authz/users/${restrictedUserId}/authz`, {
         headers: authHeaders(adminToken),
         data: {
@@ -703,7 +704,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           permDeny: ['users.read', 'users.write'],
         },
       }));
-      expect(authz.effectivePermissions).not.toContain('users.read');
+      expect(authz.effectiveSystemRoleKey).toBe('none');
+      expect(authz.permDeny).toEqual(expect.arrayContaining(['users.read', 'users.write']));
 
       const login = await readEnvelope<{
         accessToken: string;
@@ -1467,10 +1469,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(run.status).toBe('done');
       expect((run.transcriptText || '').trim().length).toBeGreaterThan(10);
       expect(run.outputEntryId).toBe(entryId);
-      const persisted = await readEnvelope<Array<{ id: string }>>(
+      const persisted = await readEnvelope<{ items: Array<{ id: string }> }>(
         await page.request.get(`/api/document-store/stores/${storeId}/entries`, { headers: authHeaders(token) }),
       );
-      expect(persisted.map((item) => item.id)).toContain(entryId);
+      expect(persisted.items.map((item) => item.id)).toContain(entryId);
     } finally {
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
