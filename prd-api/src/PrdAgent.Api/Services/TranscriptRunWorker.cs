@@ -254,10 +254,12 @@ public class TranscriptRunWorker : BackgroundService
         // 下载音频文件
         using var httpClient = new HttpClient();
         var sourceBytes = await httpClient.GetByteArrayAsync(item.FileUrl, processingToken);
+        var sourceByteCount = sourceBytes.Length;
         var audioBytes = await NormalizeAudioAsync(sourceBytes, processingToken);
+        sourceBytes = Array.Empty<byte>();
         _logger.LogInformation(
             "[transcript-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes}",
-            sourceBytes.Length,
+            sourceByteCount,
             audioBytes.Length);
 
         await UpdateProgress(db, run, 30);
@@ -582,6 +584,11 @@ public class TranscriptRunWorker : BackgroundService
             return "没有识别到有效语音。请确认录音中有人声且音量清晰，然后重新上传；原始音频已保留。";
         }
 
+        if (message.Contains("规范化后超过", StringComparison.OrdinalIgnoreCase))
+        {
+            return "音频时长超过单次转写上限，请裁剪或分段后重新上传；原始音频已保留。";
+        }
+
         return "语音转写暂时失败。请稍后重试或换一段清晰音频；原始音频已保留，不需要重新录制。";
     }
 
@@ -594,6 +601,14 @@ public class TranscriptRunWorker : BackgroundService
         await File.WriteAllBytesAsync(inputPath, sourceBytes, processingToken);
         try
         {
+            var durationSeconds = await ProbeAudioDurationSecondsAsync(inputPath, processingToken);
+            if (durationSeconds is > 0
+                && durationSeconds > AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds)
+            {
+                throw new InvalidOperationException(
+                    $"音频规范化后超过 {AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes} 字节限制");
+            }
+
             var startInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "ffmpeg",
@@ -601,7 +616,11 @@ public class TranscriptRunWorker : BackgroundService
                 RedirectStandardError = true,
                 UseShellExecute = false
             };
-            AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(startInfo.ArgumentList, inputPath, outputPath);
+            AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(
+                startInfo.ArgumentList,
+                inputPath,
+                outputPath,
+                AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes + 1);
             using var process = System.Diagnostics.Process.Start(startInfo)
                 ?? throw new InvalidOperationException("音频处理服务启动失败");
             var stderrTask = process.StandardError.ReadToEndAsync();
@@ -621,6 +640,12 @@ public class TranscriptRunWorker : BackgroundService
             await stdoutTask;
             if (process.ExitCode != 0)
                 throw new InvalidOperationException($"音频格式转换失败，退出码 {process.ExitCode}: {stderr}");
+            var normalizedLength = new FileInfo(outputPath).Length;
+            if (normalizedLength > AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes)
+            {
+                throw new InvalidOperationException(
+                    $"音频规范化后超过 {AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes} 字节限制");
+            }
             return await File.ReadAllBytesAsync(outputPath, processingToken);
         }
         finally
@@ -628,5 +653,44 @@ public class TranscriptRunWorker : BackgroundService
             try { if (File.Exists(inputPath)) File.Delete(inputPath); } catch { }
             try { if (File.Exists(outputPath)) File.Delete(outputPath); } catch { }
         }
+    }
+
+    private static async Task<double?> ProbeAudioDurationSecondsAsync(
+        string inputPath,
+        CancellationToken processingToken)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "ffprobe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        foreach (var argument in new[]
+        {
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            inputPath
+        })
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(startInfo);
+        if (process == null) return null;
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync(processingToken);
+        var stdout = await stdoutTask;
+        await stderrTask;
+        if (process.ExitCode != 0) return null;
+        return double.TryParse(
+            stdout.Trim(),
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var duration)
+            ? duration
+            : null;
     }
 }

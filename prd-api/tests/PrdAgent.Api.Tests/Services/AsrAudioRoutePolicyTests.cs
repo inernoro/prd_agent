@@ -79,6 +79,26 @@ public class AsrAudioRoutePolicyTests
         AsrAudioNormalizationPolicy.MinimumDurationSeconds.ShouldBe(15);
     }
 
+    [Fact]
+    public void ConfigureFfmpegArguments_ShouldBoundTranscriptNormalizationBeforeMaterialization()
+    {
+        var startInfo = new ProcessStartInfo();
+
+        AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(
+            startInfo.ArgumentList,
+            "/tmp/source.m4a",
+            "/tmp/normalized.wav",
+            AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes + 1);
+
+        var fileSizeIndex = startInfo.ArgumentList.IndexOf("-fs");
+        fileSizeIndex.ShouldBeGreaterThanOrEqualTo(0);
+        startInfo.ArgumentList[fileSizeIndex + 1].ShouldBe(
+            (AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes + 1).ToString());
+        startInfo.ArgumentList[^1].ShouldBe("/tmp/normalized.wav");
+        AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds.ShouldBeGreaterThan(2000);
+        AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds.ShouldBeLessThan(2200);
+    }
+
     [Theory]
     [InlineData("openai/gpt-4o-audio-preview", "openai-compatible", "google", true)]
     [InlineData("google/gemini-audio", "openrouter", "gemini", true)]

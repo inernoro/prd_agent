@@ -52,7 +52,17 @@ internal static class ImageGenerationUserError
                 "图片生成等待超时，请稍后重试。");
         }
 
-        if (ContainsAny(text, "content policy", "safety policy", "moderation", "blocked by safety", "unsafe content"))
+        if (ContainsAny(
+                text,
+                "content policy",
+                "content_policy",
+                "content_filter",
+                "safety policy",
+                "safety system",
+                "moderation",
+                "blocked by safety",
+                "blocked for safety",
+                "unsafe content"))
         {
             return new Result(
                 ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,

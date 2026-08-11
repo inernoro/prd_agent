@@ -12,6 +12,8 @@ public class ImageGenerationUserErrorTests
     [InlineData(429, "rate limit exceeded", ErrorCodes.RATE_LIMITED)]
     [InlineData(408, "upstream timeout", ErrorCodes.IMAGE_GEN_TIMEOUT)]
     [InlineData(400, "blocked by safety policy", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
+    [InlineData(403, "content_policy_violation", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
+    [InlineData(403, "content_filter", ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)]
     [InlineData(500, "provider internal error", ErrorCodes.IMAGE_GEN_UNAVAILABLE)]
     public void Classify_ShouldReturnUserReadableMessageWithoutRawDiagnostic(
         int statusCode,

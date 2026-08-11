@@ -202,6 +202,28 @@ test('数量、状态、路径和方法全部绑定后才通过', () => {
   assert.equal(result.modules[0].coveredStateCount, 2);
 });
 
+test('缺少自动检查或人工视觉结论时不得通过视觉门禁', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({ name: '入口图', sha256: 'missing-manual', manualStatus: '' }),
+    evidence({ name: '结果图', sha256: 'missing-automated', automatedStatus: '', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+
+  assert.equal(result.verdict, '不通过');
+  assert.equal(result.screenshotCount, 0);
+  assert.match(result.modules[0].fieldErrors.join('；'), /manualStatus|automatedStatus/);
+});
+
+test('视觉门禁采用声明、自动检查与人工结论中的最严格状态', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({ name: '入口图', sha256: 'automated-failed', automatedStatus: '不通过' }),
+    evidence({ name: '结果图', sha256: 'manual-conditional', manualStatus: '部分通过', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+
+  assert.equal(result.modules[0].evidenceRows[0].status, '不通过');
+  assert.equal(result.modules[0].evidenceRows[1].status, '部分通过');
+  assert.equal(result.verdict, '不通过');
+});
+
 test('双环境门禁要求每个环境分别提供唯一证据', () => {
   const cdsOnly = [
     evidence({ name: 'CDS 入口', environment: 'cds', slotId: 'CDS-VISUAL-VISUAL-01', breadcrumb: 'CDS 环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 入口' }),

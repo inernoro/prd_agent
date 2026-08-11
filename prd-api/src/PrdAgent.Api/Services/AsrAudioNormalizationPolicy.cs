@@ -11,11 +11,17 @@ internal static class AsrAudioNormalizationPolicy
 {
     internal const int MinimumDurationSeconds = 15;
     internal const string ShortClipPaddingFilter = "apad=whole_dur=15";
+    internal const int NormalizedSampleRate = 16000;
+    internal const int NormalizedBytesPerSample = 2;
+    internal const long MaxNormalizedAudioBytes = 64L * 1024 * 1024;
+    internal static double MaxNormalizedDurationSeconds =>
+        (MaxNormalizedAudioBytes - 44d) / (NormalizedSampleRate * NormalizedBytesPerSample);
 
     internal static void ConfigureFfmpegArguments(
         Collection<string> arguments,
         string inputPath,
-        string outputPath)
+        string outputPath,
+        long? maxOutputBytes = null)
     {
         string[] values =
         {
@@ -25,9 +31,14 @@ internal static class AsrAudioNormalizationPolicy
             "-ac", "1",
             "-ar", "16000",
             "-acodec", "pcm_s16le",
-            outputPath,
         };
         foreach (var value in values)
             arguments.Add(value);
+        if (maxOutputBytes is > 0)
+        {
+            arguments.Add("-fs");
+            arguments.Add(maxOutputBytes.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        arguments.Add(outputPath);
     }
 }

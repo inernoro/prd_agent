@@ -39,6 +39,23 @@ function environmentLabel(environment) {
   return '未区分环境';
 }
 
+const VISUAL_STATUS_SEVERITY = new Map([
+  ['通过', 0],
+  ['部分通过', 1],
+  ['需补证', 2],
+  ['未执行', 3],
+  ['需干预', 4],
+  ['不通过', 5],
+]);
+
+function strictestVisualStatus(...statuses) {
+  return statuses.reduce((strictest, status) => (
+    (VISUAL_STATUS_SEVERITY.get(status) ?? -1) > (VISUAL_STATUS_SEVERITY.get(strictest) ?? -1)
+      ? status
+      : strictest
+  ), '通过');
+}
+
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_PNG_DECODED_BYTES = 256 * 1024 * 1024;
 const PNG_CHANNELS = new Map([[0, 1], [2, 3], [3, 1], [4, 2], [6, 4]]);
@@ -153,6 +170,9 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
     'methodAnchor',
     'breadcrumb',
   ])];
+  for (const field of ['automatedStatus', 'manualStatus']) {
+    if (!requiredFields.includes(field)) requiredFields.push(field);
+  }
   if (environments.length > 0 && !requiredFields.includes('environment')) requiredFields.push('environment');
   const allowedTypes = new Set(catalog.allowedTestTypes || ['冒烟', '功能', '视觉', '回归']);
   const allowedStatuses = new Set(catalog.statusVocabulary || ['通过', '不通过', '部分通过', '未执行', '需补证', '需干预']);
@@ -272,6 +292,13 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
         fieldErrors.push(message);
         itemErrors.push(message);
       }
+      for (const field of ['automatedStatus', 'manualStatus']) {
+        if (item[field] && !allowedStatuses.has(item[field])) {
+          const message = `${item.name || '未命名截图'} 的 ${field} 不合法`;
+          fieldErrors.push(message);
+          itemErrors.push(message);
+        }
+      }
       if (item.theme && !allowedThemes.has(item.theme)) {
         const message = `${item.name || '未命名截图'} 的 theme 不合法`;
         fieldErrors.push(message);
@@ -285,6 +312,11 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
       if (itemErrors.length === 0 && primaryState) {
         stateEvidence.get(stateEvidenceKey).push(item.name || '未命名截图');
       }
+      const effectiveStatus = strictestVisualStatus(
+        String(item.status || ''),
+        String(item.automatedStatus || ''),
+        String(item.manualStatus || ''),
+      );
       evidenceRows.push({
         slotId: evidenceSlotId || '未绑定',
         scenario: plannedSlot?.scenario || '未绑定',
@@ -295,7 +327,7 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
         primaryState: primaryState || '未绑定',
         testType: item.testType || '未绑定',
         declaredStatus: item.status || '未绑定',
-        status: itemErrors.length > 0 ? '需干预' : item.status,
+        status: itemErrors.length > 0 ? '需干预' : effectiveStatus,
         automatedStatus: item.automatedStatus || '未记录',
         manualStatus: item.manualStatus || '未记录',
         breadcrumb: item.breadcrumb || '未绑定',
@@ -318,10 +350,10 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
     const missingSlots = plannedSlots
       .filter((slot) => !evidenceBySlot.has(slot.slotId))
       .map((slot) => ({ slotId: slot.slotId, scenario: slot.scenario, breadcrumb: slot.breadcrumb }));
-    const failedEvidence = evidence.filter((item) => item.status === '不通过');
-    const interventionEvidence = evidence.filter((item) => item.status === '需干预');
-    const incompleteEvidence = evidence.filter((item) => item.status !== '通过');
     const qualifiedEvidence = evidenceRows.filter((item) => item.errors.length === 0);
+    const failedEvidence = evidenceRows.filter((item) => item.status === '不通过');
+    const interventionEvidence = evidenceRows.filter((item) => item.status === '需干预');
+    const incompleteEvidence = evidenceRows.filter((item) => item.status !== '通过');
     const statusCounts = Object.fromEntries(
       [...new Set(qualifiedEvidence.map((item) => item.status))]
         .map((status) => [status, qualifiedEvidence.filter((item) => item.status === status).length]),

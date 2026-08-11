@@ -155,6 +155,24 @@ export function resolveCdsPreviewUrls(
   };
 }
 
+export function requireAuthoritativeCdsAddress(blockers = []) {
+  if (blockers.length > 0) {
+    throw new Error(`CDS 权威预览地址校验未通过，拒绝使用缓存地址开测：${blockers.join('；')}`);
+  }
+}
+
+export function buildReportVerificationArgs(reportUrl, runId, commit, screenshotCount) {
+  if (!runId || !commit) throw new Error('验收报告验证缺少当前 runId 或固定 commit');
+  return [
+    '.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs',
+    reportUrl,
+    '核心业务稳定冒烟',
+    String(Math.max(1, screenshotCount || 0)),
+    runId,
+    commit,
+  ];
+}
+
 export function validateEnvironmentConfig(name, values) {
   const prefix = name === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
   const errors = [];
@@ -557,8 +575,7 @@ export async function deliverUnhandledFailure(argv, error) {
       ? ['production']
       : ['cds', 'production'];
   const reason = error instanceof Error ? error.message : '未知执行异常';
-  const rawReportUrl = readLooseArg(argv, '--report-url');
-  const providedReportUrl = isHttpsReportUrl(rawReportUrl) ? rawReportUrl : '';
+  const providedReportUrl = '';
   const notificationCenterUrl = `${productionBaseUrl}/?panel=notifications`;
   const summaryDocument = buildUnhandledFailureSummary({
     runId,
@@ -658,8 +675,7 @@ export async function deliverLockedRun(argv, dependencies = {}) {
     : argv.includes('--production-only')
       ? ['production']
       : ['cds', 'production'];
-  const rawReportUrl = readLooseArg(argv, '--report-url');
-  const providedReportUrl = isHttpsReportUrl(rawReportUrl) ? rawReportUrl : '';
+  const providedReportUrl = '';
   const notificationCenterUrl = `${productionBaseUrl}/?panel=notifications`;
   const summaryDocument = buildLockedRunSummary({ runId, selected, reportUrl: providedReportUrl });
   const commandFn = dependencies.commandFn || command;
@@ -847,6 +863,7 @@ async function main() {
   }
 
   try {
+    if (selected.includes('cds')) requireAuthoritativeCdsAddress(cdsAddressBlockers);
     if (selected.includes('cds')
       && !options.has('--dry-run')
       && cdsAddressBlockers.length === 0
@@ -1060,12 +1077,12 @@ async function main() {
     }
 
     if (reportUrl && !options.has('--dry-run')) {
-      const verifyOpen = command('node', [
-        '.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs',
+      const verifyOpen = command('node', buildReportVerificationArgs(
         reportUrl,
-        '核心业务稳定冒烟',
-        String(Math.max(1, visualResult.screenshotCount || 0)),
-      ], { env: { ...process.env, ...values } });
+        runId,
+        String(plan?.commit || ''),
+        visualResult.screenshotCount,
+      ), { env: { ...process.env, ...values } });
       if (verifyOpen.status === 0) {
         summaryDocument.archive.verifyOpen = 'passed';
       } else {

@@ -17,6 +17,7 @@ const { chromium } = require(PW);
 const url = process.argv[2];
 const mustText = process.argv[3] || '';
 const minImg = parseInt(process.argv[4] || '1', 10);
+const requiredTexts = process.argv.slice(5).map((value) => value.trim()).filter(Boolean);
 if (!url) { console.error('用法: node verify-open.mjs <shareUrl> "<必现文字>" [最少图片数]'); process.exit(64); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const maxAttempts = Math.max(1, parseInt(process.env.VERIFY_OPEN_MAX_ATTEMPTS || '3', 10) || 3);
@@ -72,7 +73,8 @@ async function waitForRenderedContent(text, minImages) {
   while (Date.now() < deadline) {
     snapshot = await inspectRenderedContent();
     const hasText = text ? snapshot.text.includes(text) : snapshot.text.trim().length > 200;
-    if (hasText && snapshot.imgCount >= minImages) return snapshot;
+    const hasRequiredTexts = requiredTexts.every((required) => snapshot.text.includes(required));
+    if (hasText && hasRequiredTexts && snapshot.imgCount >= minImages) return snapshot;
     await sleep(500);
   }
   return snapshot;
@@ -92,13 +94,14 @@ async function runAttempt(attempt) {
   const txt = finalRendered.text || rendered.text;
   const imgCount = Math.max(finalRendered.imgCount, rendered.imgCount);
   const hasText = mustText ? txt.includes(mustText) : txt.length > 200;
+  const hasRequiredTexts = requiredTexts.every((required) => txt.includes(required));
   const okImg = imgCount >= minImg;
   // 死页判定只在「内容没渲染出来」时才有意义：报告正文完全可能合法地包含
   // "不存在 / 已失效" 等词（如缺陷描述、整改记录），全文扫词会把正常报告误杀。
   // 故仅当 必现文字未命中 或 图片数不达标 时，才用关键词区分"死页"与"内容缺失"。
   const deadKeywordHit = ['暂无可预览', '未对外开放', '页面不存在', '链接已失效', '无权访问', '404'].some((k) => txt.includes(k));
-  const dead = (!hasText || !okImg) && deadKeywordHit;
-  return { attempt, hasText, imgCount, minImg, dead, ok: !dead && hasText && okImg };
+  const dead = (!hasText || !hasRequiredTexts || !okImg) && deadKeywordHit;
+  return { attempt, hasText, hasRequiredTexts, imgCount, minImg, dead, ok: !dead && hasText && hasRequiredTexts && okImg };
 }
 
 let code = 2;
@@ -108,7 +111,7 @@ try {
     try {
       const result = await runAttempt(attempt);
       attempts.push(result);
-      console.log(`  第${attempt}次：必现文字命中=${result.hasText}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
+      console.log(`  第${attempt}次：标题命中=${result.hasText}  当前运行标识命中=${result.hasRequiredTexts}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
       if (result.ok) {
         code = 0;
         if (attempt > 1) {

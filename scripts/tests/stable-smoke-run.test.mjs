@@ -25,6 +25,8 @@ import {
   resolveRuntimeExpectation,
   resolveServiceRuntimeCommits,
   resolveCdsPreviewUrls,
+  requireAuthoritativeCdsAddress,
+  buildReportVerificationArgs,
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
   validateProductionReadOnlyConfig,
@@ -131,8 +133,11 @@ test('只有归档输出中的 HTTPS 深链可以进入通知', () => {
 
 test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 MAP 通知', () => {
   const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  const verifyOpenSource = readFileSync('.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs', 'utf8');
   assert.match(source, /scripts\/stable-smoke-visual-plan\.mjs/);
   assert.match(source, /scripts\/stable-smoke-visual-gate\.mjs/);
+  assert.match(source, /buildReportVerificationArgs/);
+  assert.match(verifyOpenSource, /requiredTexts\.every/);
   assert.match(source, /scripts\/compose-stable-smoke-supervisor-report\.mjs/);
   assert.match(source, /create-visual-test-to-kb\/scripts\/archive_report\.py/);
   assert.match(source, /create-visual-test-to-kb\/scripts\/verify-open\.mjs/);
@@ -249,6 +254,25 @@ test('CDS 地址始终来自 preview-url 并拒绝过期缓存', () => {
     () => resolveCdsPreviewUrls('https://stale.example', '', authoritative),
     /缓存地址与当前分支权威地址不一致/,
   );
+});
+
+test('CDS 权威地址解析失败时普通执行也必须熔断', () => {
+  assert.throws(
+    () => requireAuthoritativeCdsAddress(['CDS 主应用缓存地址与当前分支权威地址不一致']),
+    /拒绝使用缓存地址开测/,
+  );
+  assert.doesNotThrow(() => requireAuthoritativeCdsAddress([]));
+});
+
+test('人工提供的验收报告必须同时绑定当前 runId 与固定 commit', () => {
+  const args = buildReportVerificationArgs(
+    'https://cds.example/reports?report=1',
+    'stable-smoke-20260811-001',
+    '1234567890abcdef',
+    296,
+  );
+  assert.deepEqual(args.slice(-2), ['stable-smoke-20260811-001', '1234567890abcdef']);
+  assert.equal(args[3], '296');
 });
 
 test('超过时限但进程仍存活的互斥锁不得被第二轮删除', () => {
