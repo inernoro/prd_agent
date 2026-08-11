@@ -58,6 +58,64 @@ public class VisualAgentGatewayModelListTests
     }
 
     [Fact]
+    public async Task GetAdapterInfo_WhenLogicalModelIsOnlyAuthorizedForImg2Img_ShouldExposeUpstreamControl()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway
+            .Setup(x => x.ResolveRequiredLogicalModelAsync(
+                It.IsAny<string>(),
+                "generation",
+                "img2img-only-model",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string appCallerCode, string _, string _, CancellationToken _) =>
+                appCallerCode == "visual-agent.image.img2img::generation"
+                    ? new GatewayModelResolution
+                    {
+                        Success = true,
+                        ResolutionType = "LogicalModel",
+                        LogicalModelPublicId = "img2img-only-model",
+                        ActualModel = "vendor/img2img-only-model",
+                        ActualPlatformName = "Vendor",
+                        ParameterCapabilities = new Dictionary<string, bool>
+                        {
+                            ["image_size.prompt"] = true,
+                        },
+                    }
+                    : new GatewayModelResolution
+                    {
+                        Success = false,
+                        ResolutionType = "NotFound",
+                    });
+        var controller = CreateController(gateway.Object);
+
+        var action = await controller.GetAdapterInfo("img2img-only-model", CancellationToken.None);
+
+        var response = action.ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeOfType<ApiResponse<object>>();
+        response.Success.ShouldBeTrue();
+        var data = JsonNode.Parse(JsonSerializer.Serialize(response.Data))!.AsObject();
+        data["matched"]!.GetValue<bool>().ShouldBeTrue();
+        data["isAdaptive"]!.GetValue<bool>().ShouldBeTrue();
+        data["sizeControl"]!["source"]!.GetValue<string>().ShouldBe("upstream-model");
+        data["sizeControl"]!["mode"]!.GetValue<string>().ShouldBe("prompt");
+        gateway.Verify(x => x.ResolveRequiredLogicalModelAsync(
+            "visual-agent.image.text2img::generation",
+            "generation",
+            "img2img-only-model",
+            It.IsAny<CancellationToken>()), Times.Once);
+        gateway.Verify(x => x.ResolveRequiredLogicalModelAsync(
+            "visual-agent.image.img2img::generation",
+            "generation",
+            "img2img-only-model",
+            It.IsAny<CancellationToken>()), Times.Once);
+        gateway.Verify(x => x.ResolveRequiredLogicalModelAsync(
+            "visual-agent.image.vision::generation",
+            "generation",
+            "img2img-only-model",
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetImageGenModels_ShouldReturnGatewayRegistryPoolMembers()
     {
         var gateway = new Mock<ILlmGateway>();

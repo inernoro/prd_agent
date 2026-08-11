@@ -54,6 +54,13 @@ public class ImageGenController : ControllerBase
         public const string VisionGen = "visual-agent.image.vision::generation";
     }
 
+    private static readonly string[] ImageGenAppCallerCodes =
+    [
+        AppCallerCodes.Text2Img,
+        AppCallerCodes.Img2Img,
+        AppCallerCodes.VisionGen,
+    ];
+
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public ImageGenController(
@@ -99,13 +106,12 @@ public class ImageGenController : ControllerBase
     [HttpGet("models")]
     public async Task<IActionResult> GetImageGenModels(CancellationToken ct)
     {
-        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img, AppCallerCodes.VisionGen };
         const string modelType = "generation";
 
         var seen = new HashSet<string>();
         var merged = new List<ModelPoolForAppResult>();
 
-        foreach (var code in codes)
+        foreach (var code in ImageGenAppCallerCodes)
         {
             var pools = (await _gateway.GetAvailablePoolsAsync(code, modelType, ct))
                 .Select(pool => MapAvailablePool(pool, modelType));
@@ -431,12 +437,24 @@ public class ImageGenController : ControllerBase
         var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
         // 尺寸传输方式属于实际上游模型，即使公开模型名恰好命中旧适配表，也要先解析
         // 当前路由，避免静态兼容配置遮住控制台显式声明的字段或提示词能力。
-        var runtimeResolution = await _gateway.ResolveRequiredLogicalModelAsync(
-            AppCallerCodes.Text2Img,
-            "generation",
-            requestedModelId,
-            ct);
-        if (runtimeResolution.Success && !string.IsNullOrWhiteSpace(runtimeResolution.ActualModel))
+        GatewayModelResolution? runtimeResolution = null;
+        // 模型列表合并了三类生图调用方；适配信息也必须在同一授权范围内解析，不能固定按
+        // 文生图查询，否则仅授权给图生图或多图生成的模型会错误回退到旧适配信息。
+        foreach (var appCallerCode in ImageGenAppCallerCodes)
+        {
+            var candidate = await _gateway.ResolveRequiredLogicalModelAsync(
+                appCallerCode,
+                "generation",
+                requestedModelId,
+                ct);
+            if (candidate.Success)
+            {
+                runtimeResolution = candidate;
+                break;
+            }
+        }
+
+        if (runtimeResolution?.Success == true && !string.IsNullOrWhiteSpace(runtimeResolution.ActualModel))
         {
             adapterModelId = runtimeResolution.ActualModel.Trim();
             adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
