@@ -137,6 +137,8 @@ export interface CanvasImageItem {
   fontSize?: number;
   textColor?: string;
   /** AI 语义分层 Frame 元数据。图层本身仍是可独立编辑的普通图片。 */
+  /** 通用编组标识（Cmd+G / Cmd+Shift+G）。 */
+  frameId?: string;
   layerGroupId?: string;
   layerSourceKey?: string;
   layerIndex?: number;
@@ -198,7 +200,9 @@ export function isRemoteImageSrc(src: string): boolean {
  * - 对于 image 类型，如果有 assetId 或远程 src 或是占位状态（running/error），则保存
  * - 对于 data:/blob: 本地图片，跳过并计入 skippedLocalOnlyImages
  */
-const LAYER_CONTENT_KINDS: readonly LayerContentKind[] = ['layer', 'empty', 'flat', 'source-reference'];
+// 枚举扩展要逐层接线（.claude/rules/enum-ripple-audit.md）：漏了这里，
+// 新增的归类会在刷新后被判成非法值静默丢掉，那一行的事实就消失了。
+const LAYER_CONTENT_KINDS: readonly LayerContentKind[] = ['layer', 'empty', 'solid', 'flat', 'source-reference'];
 
 /** 读回数字字段：非有限值一律当没存过，绝不把 NaN 当坐标用。 */
 function finiteOrUndefined(value: unknown): number | undefined {
@@ -264,6 +268,7 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
         // 分层归属必须落盘：不存的话刷新后 Frame 散架、图层退化成一堆散图，
         // 「复用已有图层」判不出来，导出 PSD 会再调一次模型。
         ext: {
+          frameId: it.frameId,
           layerGroupId: it.layerGroupId,
           layerSourceKey: it.layerSourceKey,
           layerIndex: it.layerIndex,
@@ -387,6 +392,11 @@ export function persistedV1ToCanvas(
         refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
         // 恢复持久化的 runId，用于刷新页面后同步状态
         runId: isPlaceholder && el.runId ? String(el.runId).trim() || undefined : undefined,
+        // 旧数据没有 frameId：用 layerGroupId 补一次，否则升级后既有分层组的 Frame 会整个消失。
+        // 只在读回时补，写出去之后就是独立字段，解组才能真的把它抹掉。
+        frameId: typeof ext.frameId === 'string' && ext.frameId
+          ? ext.frameId
+          : (typeof ext.layerGroupId === 'string' ? ext.layerGroupId : undefined),
         layerGroupId: typeof ext.layerGroupId === 'string' ? ext.layerGroupId : undefined,
         layerSourceKey: typeof ext.layerSourceKey === 'string' ? ext.layerSourceKey : undefined,
         layerIndex: typeof ext.layerIndex === 'number' && Number.isFinite(ext.layerIndex) ? ext.layerIndex : undefined,

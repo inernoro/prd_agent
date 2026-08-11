@@ -30,7 +30,7 @@
 
 import { computeAlphaBounds, TRIM_SCAN_MAX_SIDE, type LayerBounds } from './layerTrim';
 
-export type LayerContentKind = 'layer' | 'empty' | 'flat' | 'source-reference';
+export type LayerContentKind = 'layer' | 'empty' | 'solid' | 'flat' | 'source-reference';
 
 /**
  * 近乎空层的覆盖率上限（0.1%）。
@@ -60,6 +60,24 @@ export const SOURCE_REFERENCE_MAX_DIFF = 6;
  */
 export const FLAT_STDEV_MAX = 10;
 export const FLAT_COLOR_BUCKETS_MAX = 16;
+
+/**
+ * 「单一实色填充」——比 flat 更严的一档，可以放心自动隐藏。
+ *
+ * 为什么要分出这一档：flat 之所以只标注不隐藏，是因为真实背景层也近乎纯色
+ * （实测 stdev 4.6 / 10 个色桶），自动隐藏它等于把画面掀掉。但模型为了凑够 num_layers
+ * 而补出来的垃圾层是**真·一种颜色**——纯黑方块、纯白方块，stdev≈0、色桶就 1 个。
+ * 两者差着一个数量级，中间留得下一条安全的线。
+ *
+ * 阈值取 stdev ≤ 2、色桶 ≤ 2：距实测背景层（4.6 / 10）还有一倍以上余量，
+ * 距真正的实色块（0 / 1）也有余量。判错的后果仍然可纠正——面板照样列出这一行，
+ * 写明「单一实色，已默认隐藏」，点一下眼睛就能开回来。
+ *
+ * 2026-08-11 用户截图：拆 4 层，其中一层是纯黑方块；此前一次是纯白方块。
+ * 它们覆盖率 100%（不透明），只看 alpha 的空层判据结构上就抓不到。
+ */
+export const SOLID_STDEV_MAX = 2;
+export const SOLID_COLOR_BUCKETS_MAX = 2;
 
 /** 判定用的采样边长。缩到这么小才逐像素比，避免大图逐像素扫卡住主线程。 */
 export const ANALYSIS_SAMPLE_SIZE = 48;
@@ -174,6 +192,8 @@ export function classifyLayerContent(input: {
 
   const stdev = Number.isFinite(input.stdev) ? input.stdev! : Number.POSITIVE_INFINITY;
   const colorBuckets = Number.isFinite(input.colorBuckets) ? input.colorBuckets! : Number.POSITIVE_INFINITY;
+  // 先判更严的那一档：单一实色几乎必然是模型为凑层数补的垃圾层，可以自动隐藏。
+  if (stdev <= SOLID_STDEV_MAX && colorBuckets <= SOLID_COLOR_BUCKETS_MAX) return 'solid';
   if (stdev <= FLAT_STDEV_MAX && colorBuckets <= FLAT_COLOR_BUCKETS_MAX) return 'flat';
 
   return 'layer';
@@ -186,7 +206,7 @@ export function classifyLayerContent(input: {
  * flat 只在面板上标出来，关不关由用户点。
  */
 export function isHiddenByDefault(kind: LayerContentKind): boolean {
-  return kind === 'empty' || kind === 'source-reference';
+  return kind === 'empty' || kind === 'solid' || kind === 'source-reference';
 }
 
 /**
@@ -202,9 +222,10 @@ export function describeLayerContent(kind: LayerContentKind, coverage?: number):
   const pct = Number.isFinite(coverage) ? formatCoverage(coverage!) : '';
   const head = pct ? `覆盖 ${pct}` : '';
   const tail = kind === 'empty' ? '几乎空层，已默认隐藏'
-    : kind === 'source-reference' ? '整张原图，不参与合成'
-      : kind === 'flat' ? '近乎纯色，可能是空白层'
-        : '内容层';
+    : kind === 'solid' ? '单一实色填充，已默认隐藏'
+      : kind === 'source-reference' ? '整张原图，不参与合成'
+        : kind === 'flat' ? '近乎纯色，可能是空白层'
+          : '内容层';
   return head ? `${head} · ${tail}` : tail;
 }
 

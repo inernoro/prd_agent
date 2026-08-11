@@ -247,3 +247,45 @@ describe('采样 → 判定 → 回写这条链本身', () => {
     expect(verdicts[0]!.kind).toBe('layer');
   });
 });
+
+describe('单一实色填充层（模型为凑层数补的垃圾层）', () => {
+  /** 造一张 N×N 的纯色不透明图。 */
+  function solid(r: number, g: number, b: number): Uint8ClampedArray {
+    const n = ANALYSIS_SAMPLE_SIZE;
+    const data = new Uint8ClampedArray(n * n * 4);
+    for (let o = 0; o < data.length; o += 4) {
+      data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255;
+    }
+    return data;
+  }
+
+  it('【关键】纯黑方块判成 solid 并默认隐藏', () => {
+    // 2026-08-11 用户截图：拆 4 层，其中一层是纯黑方块占着位置。
+    // 它覆盖率 100%（不透明），只看 alpha 的空层判据结构上就抓不到。
+    const stats = computeContentStats(solid(0, 0, 0));
+    const kind = classifyLayerContent({ ...stats, sourceDifference: 999 });
+    expect(kind).toBe('solid');
+    expect(isHiddenByDefault(kind)).toBe(true);
+  });
+
+  it('纯白方块同理', () => {
+    const stats = computeContentStats(solid(255, 255, 255));
+    expect(classifyLayerContent({ ...stats, sourceDifference: 999 })).toBe('solid');
+  });
+
+  it('【关键】真实背景层不许被误判成 solid（误判等于把画面掀掉）', () => {
+    // 实测背景层 stdev 4.6 / 10 个色桶，必须落在 flat 而不是 solid。
+    const background = decodeFixture(REAL_LAYER_FIXTURE_BASE64.layer0);
+    const stats = computeContentStats(background);
+    const kind = classifyLayerContent({ ...stats, sourceDifference: 18.3 });
+    expect(kind).not.toBe('solid');
+    expect(isHiddenByDefault(kind)).toBe(false);
+  });
+
+  it('真实内容层也不会被误判', () => {
+    for (const key of ['layer1', 'layer2', 'layer3'] as const) {
+      const stats = computeContentStats(decodeFixture(REAL_LAYER_FIXTURE_BASE64[key]));
+      expect(classifyLayerContent({ ...stats, sourceDifference: 80 })).toBe('layer');
+    }
+  });
+});

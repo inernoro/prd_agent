@@ -478,6 +478,97 @@ export async function createLayeredPsdBlob(input: {
   return new Blob([buffer], { type: 'image/vnd.adobe.photoshop' });
 }
 
+export type FramePsdElement = {
+  name: string;
+  source: string;
+  sha256?: string | null;
+  /** 元素在画布世界坐标里的位置与尺寸。 */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  opacity?: number;
+  hidden?: boolean;
+};
+
+/**
+ * 把一个 Frame（任意一组画布元素）导成分层 PSD。
+ *
+ * 和 AI 分层那条路的区别只有一处：那边每层本来就是与原图等大的满幅图，这边每个元素
+ * 各在画布上占一小块。所以这里先按 Frame 的包围盒开一张透明画布，把每个元素画到它
+ * 该在的位置，再交给**同一个** buildLayeredPsdDocument——裁剪、逐层包围盒、图层组结构
+ * 全部复用，不另写一套（否则两条导出路迟早在「层怎么写」上漂移）。
+ *
+ * 用户诉求（2026-08-11）：「有 frame 的情况下可以直接在 frame 上下载 psd」。
+ */
+export async function createFramePsdBlob(input: {
+  width: number;
+  height: number;
+  /** 元素坐标相对于哪一点（Frame 左上角的世界坐标）。 */
+  originX: number;
+  originY: number;
+  elements: FramePsdElement[];
+}): Promise<Blob> {
+  const width = Math.max(1, Math.round(input.width));
+  const height = Math.max(1, Math.round(input.height));
+  if (input.elements.length === 0) throw new Error('这个 Frame 里没有可导出的元素');
+
+  const layers: PsdLayerInput[] = [];
+  for (const element of input.elements) {
+    const image = await loadImageData(element.source, undefined, {
+      label: element.name,
+      sha256: element.sha256,
+    });
+    layers.push({
+      name: element.name,
+      image: drawIntoCanvasFrame(image, {
+        width,
+        height,
+        x: Math.round(element.x - input.originX),
+        y: Math.round(element.y - input.originY),
+        w: Math.max(1, Math.round(element.w)),
+        h: Math.max(1, Math.round(element.h)),
+      }),
+      opacity: element.opacity,
+      hidden: element.hidden,
+    });
+  }
+
+  // 参考层用「全部元素拍平」的结果，而不是某一张原图——普通编组没有「原图」这个概念。
+  const flattened = compositePixelLayers(
+    layers.filter((layer) => layer.hidden !== true).map((layer) => layer.image),
+    width,
+    height,
+  );
+  const document = buildLayeredPsdDocument({ source: flattened, layers });
+  const { writePsd } = await import('ag-psd');
+  const buffer = writePsd(document, { noBackground: true, trimImageData: true });
+  return new Blob([buffer], { type: 'image/vnd.adobe.photoshop' });
+}
+
+/** 把一张图按给定位置与尺寸画进 width×height 的透明画布，返回整幅 RGBA。 */
+function drawIntoCanvasFrame(
+  image: PixelData,
+  at: { width: number; height: number; x: number; y: number; w: number; h: number },
+): PixelData {
+  const source = document.createElement('canvas');
+  source.width = image.width;
+  source.height = image.height;
+  const sourceContext = source.getContext('2d');
+  if (!sourceContext) throw new Error('浏览器不支持 canvas，无法导出 PSD');
+  sourceContext.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
+
+  const target = document.createElement('canvas');
+  target.width = at.width;
+  target.height = at.height;
+  const context = target.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('浏览器不支持 canvas，无法导出 PSD');
+  context.clearRect(0, 0, at.width, at.height);
+  context.drawImage(source, at.x, at.y, at.w, at.h);
+  const data = context.getImageData(0, 0, at.width, at.height);
+  return { width: at.width, height: at.height, data: data.data };
+}
+
 /**
  * 按图层面板当前的显隐 / 不透明度 / 叠放次序拍平成一张 PNG。
  * 「所见即所得」的那个「所得」：面板上看到的合成预览就是这张图。

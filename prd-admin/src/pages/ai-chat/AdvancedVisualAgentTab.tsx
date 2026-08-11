@@ -68,9 +68,11 @@ import {
 } from '@/lib/visualAgentPromptUtils';
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { glassToolbar } from '@/lib/glassStyles';
 import {
   checkLayerSourcesReadable,
   createCompositePngBlob,
+  createFramePsdBlob,
   createLayeredPsdBlob,
   decomposeImageToLayers,
   downloadBlob,
@@ -223,6 +225,8 @@ type CanvasImageItem = {
   textColor?: string;
 
   // AI 语义分层 Frame。图层仍是普通图片，可单独选择、编辑、移动和复用。
+  /** 通用编组标识（Cmd+G 编组 / Cmd+Shift+G 解组）。AI 分层落地时与 layerGroupId 同值。 */
+  frameId?: string;
   layerGroupId?: string;
   layerSourceKey?: string;
   layerIndex?: number;
@@ -2349,6 +2353,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         userResized: true,
         refId: maxRefId + index + 1,
         ...layout.placements[index]!,
+        frameId: groupId,
         layerGroupId: groupId,
         layerSourceKey: sourceItem.key,
         layerIndex: index + 1,
@@ -2715,6 +2720,132 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     })),
     [layerPanelLayers],
   );
+
+  /**
+   * 把一组画布元素导成分层 PSD。
+   *
+   * 两个入口共用它：Frame 头部的「导出 PSD」（成员 = 该 Frame 的元素），
+   * 以及多选之后的导出（成员 = 选中的元素）。用户要的是「自由一些」——
+   * 有 Frame 就在 Frame 上导，没 Frame 就框几个直接导，不必先编组。
+   */
+  const exportElementsAsPsd = useCallback(async (keys: string[], label: string) => {
+    const wanted = new Set(keys);
+    const members = (canvasRef.current ?? []).filter((item) => wanted.has(item.key)
+      && (item.kind ?? 'image') === 'image'
+      && !!item.src
+      && item.status === 'done');
+    if (members.length === 0) {
+      toast.error('导出失败', '这一组里没有可导出的图片元素（生成中或失败的不算）。');
+      return;
+    }
+    const originX = Math.min(...members.map((item) => Number(item.x ?? 0)));
+    const originY = Math.min(...members.map((item) => Number(item.y ?? 0)));
+    const right = Math.max(...members.map((item) => Number(item.x ?? 0) + Number(item.w ?? 0)));
+    const bottom = Math.max(...members.map((item) => Number(item.y ?? 0) + Number(item.h ?? 0)));
+
+    const loadingId = toast.loading('正在组装 PSD', `正在把 ${members.length} 个元素写成分层 PSD。`);
+    try {
+      const blob = await createFramePsdBlob({
+        width: Math.round(right - originX),
+        height: Math.round(bottom - originY),
+        originX,
+        originY,
+        // 画布上层级越靠后越在上面；PSD 图层组内同样是后写的在上，顺序天然一致。
+        elements: members.map((item, index) => ({
+          name: `${String(index + 1).padStart(2, '0')} · ${cleanDisplayTitle(item.prompt || '') || '元素'}`.slice(0, 60),
+          source: item.src,
+          sha256: item.sha256 || item.originalSha256 || null,
+          x: Number(item.x ?? 0),
+          y: Number(item.y ?? 0),
+          w: Number(item.w ?? 0),
+          h: Number(item.h ?? 0),
+          opacity: item.layerOpacity,
+          hidden: item.layerHidden === true,
+        })),
+      });
+      downloadLayeredPsd(blob, label || 'frame');
+      toast.success('PSD 已生成', `包含 ${members.length} 个可编辑图层，每层各自带包围盒。`, 6000);
+    } catch (error) {
+      toast.error('PSD 导出失败', error instanceof Error ? error.message : 'PSD 写入失败', 6000);
+    } finally {
+      toast.dismiss(loadingId);
+    }
+  }, []);
+
+  /** 多选打包 ZIP：每个元素一张 PNG，文件名带序号，解压后顺序一眼可读。 */
+  const exportSelectionAsZip = useCallback(async () => {
+    const wanted = new Set(selectedKeysRef.current ?? []);
+    const members = (canvasRef.current ?? []).filter((item) => wanted.has(item.key)
+      && (item.kind ?? 'image') === 'image' && !!item.src && item.status === 'done');
+    if (members.length === 0) {
+      toast.error('打包失败', '选中的元素里没有可打包的图片。');
+      return;
+    }
+    try {
+      await exportAllAsZip(
+        members.map((item, index) => ({
+          src: item.src,
+          filename: `${String(index + 1).padStart(2, '0')}-${cleanDisplayTitle(item.prompt || '') || '元素'}`.slice(0, 60),
+        })),
+        '选中元素',
+        'png',
+      );
+    } catch (error) {
+      toast.error('打包失败', error instanceof Error ? error.message : 'ZIP 打包失败', 6000);
+    }
+  }, []);
+
+  const exportFrameAsPsd = useCallback((frameId: string, label: string) => {
+    const members = (canvasRef.current ?? []).filter((item) => item.frameId === frameId).map((item) => item.key);
+    return exportElementsAsPsd(members, label);
+  }, [exportElementsAsPsd]);
+
+  /** Cmd/Ctrl+A：全选画布元素。没有它，「多选几个一起编组 / 导出」就无从谈起。 */
+  const selectAllOnCanvas = useCallback(() => {
+    const keys = (canvasRef.current ?? []).map((item) => item.key);
+    if (keys.length === 0) return;
+    setSelectionWithoutChip(keys);
+  }, [setSelectionWithoutChip]);
+
+  /**
+   * Cmd+G 编组 / Cmd+Shift+G 解组（对齐 Figma 的肌肉记忆）。
+   *
+   * 编组只写 frameId 这一个字段，不动坐标、不动层级、不动任何产物血缘：
+   * 「框在一起」是组织意图，随时可以撤，撤了之后各元素还是它自己。
+   * 解组同理只抹 frameId——AI 分层产物的 layerGroupId 保留，
+   * 所以解完组再重新编组，它还认得出自己是同一次分层的产物。
+   */
+  const groupSelection = useCallback(() => {
+    const keys = selectedKeysRef.current ?? [];
+    if (keys.length < 2) {
+      toast.info('选中至少两个元素再编组', '选中多个元素后按 Cmd/Ctrl+G 把它们框成一个 Frame。');
+      return;
+    }
+    const frameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const inGroup = new Set(keys);
+    setCanvas((previous) => previous.map((item) => inGroup.has(item.key) ? { ...item, frameId } : item));
+    toast.success('已编组', `${keys.length} 个元素已框成一个 Frame，Cmd/Ctrl+Shift+G 可解组。`, 4000);
+  }, []);
+
+  const ungroupSelection = useCallback(() => {
+    const keys = new Set(selectedKeysRef.current ?? []);
+    if (keys.size === 0) return;
+    const items = canvasRef.current ?? [];
+    // 选中任意一个成员就解散它所在的整个 Frame——Figma 就是这个行为，
+    // 不需要用户先把一组元素全选中。
+    const frameIds = new Set(items
+      .filter((item) => keys.has(item.key) && String(item.frameId ?? '').trim())
+      .map((item) => String(item.frameId)));
+    if (frameIds.size === 0) {
+      toast.info('选中的元素不在任何 Frame 里', '先用 Cmd/Ctrl+G 编组，再用 Cmd/Ctrl+Shift+G 解组。');
+      return;
+    }
+    setCanvas((previous) => previous.map((item) => item.frameId && frameIds.has(item.frameId)
+      ? { ...item, frameId: undefined }
+      : item));
+    setLayerPanelGroupId((current) => (current && frameIds.has(current) ? null : current));
+    toast.success('已解组', `${frameIds.size} 个 Frame 已拆开，元素本身没有任何变化。`, 4000);
+  }, []);
 
   /** 切换摆放方式：就地把这一组图层重新摆一遍，不重新生成。 */
   const applyLayerLayout = useCallback((groupId: string, mode: 'stacked' | 'spread') => {
@@ -6156,6 +6287,29 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const is2 = e.key === '2' || e.code === 'Digit2';
       const isBracketRight = e.key === ']' || e.code === 'BracketRight';
       const isBracketLeft = e.key === '[' || e.code === 'BracketLeft';
+      const isG = e.key === 'g' || e.key === 'G' || e.code === 'KeyG';
+      const isA = e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
+
+      // Cmd/Ctrl+A: 全选画布元素（Figma 同款；没有它就没法「选几个一起编组/导出」）
+      if (isMod && !e.shiftKey && !e.altKey && isA) {
+        e.preventDefault();
+        selectAllOnCanvas();
+        return;
+      }
+
+      // Cmd/Ctrl+Shift+G: 解组（Figma 同款）
+      if (isMod && e.shiftKey && !e.altKey && isG) {
+        e.preventDefault();
+        ungroupSelection();
+        return;
+      }
+
+      // Cmd/Ctrl+G: 编组
+      if (isMod && !e.shiftKey && !e.altKey && isG) {
+        e.preventDefault();
+        groupSelection();
+        return;
+      }
 
       // Cmd/Ctrl+Shift+]: 置于顶层
       if (isMod && e.shiftKey && !e.altKey && isBracketRight) {
@@ -6209,7 +6363,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const opts = { capture: true } as const;
     window.addEventListener('keydown', onDown, opts);
     return () => window.removeEventListener('keydown', onDown, opts);
-  }, [fitToAll, fitToSelection, zoomTo100, layerMoveUp, layerMoveDown, layerBringToFront, layerSendToBack]);
+  }, [fitToAll, fitToSelection, zoomTo100, layerMoveUp, layerMoveDown, layerBringToFront, layerSendToBack,
+    groupSelection, ungroupSelection, selectAllOnCanvas]);
 
   const focusKeyRef = useRef<{
     key: string;
@@ -7282,15 +7437,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   const frameScreenW = frame.w * zoom;
                   const compactHeadline = frameScreenW < 420;
                   const iconOnlyButton = frameScreenW < 260;
+                  const isAiFrame = frame.kind === 'ai-layers';
                   const fullHeadline = layering
                     ? (layering.total
                         ? `Frame · ${layering.phase} · ${layering.completed ?? 0}/${layering.total}`
                         : `Frame · ${layering.phase}`)
-                    : `Frame · AI 分层 · ${frame.layerKeys.length} 个图层`;
+                    : isAiFrame
+                      ? `Frame · AI 分层 · ${frame.layerKeys.length} 个图层`
+                      : `Frame · ${frame.layerKeys.length} 个元素`;
                   const headline = compactHeadline
                     ? (layering
                         ? (layering.total ? `分层中 ${layering.completed ?? 0}/${layering.total}` : '分层中')
-                        : `${frame.layerKeys.length} 层`)
+                        : isAiFrame ? `${frame.layerKeys.length} 层` : `${frame.layerKeys.length} 个`)
                     : fullHeadline;
                   // 文字区留出按钮的位置，超出就截断——绝不允许压到按钮底下。
                   const buttonReserveScreen = iconOnlyButton ? 34 : 92;
@@ -7340,13 +7498,23 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         transform: 'scale(var(--invZoom))',
                         transformOrigin: 'right top',
                       }}
-                      // 导出入口收进图层面板：那里能先看清叠放和显隐，再决定导什么。
-                      title="打开图层面板：排顺序、开关图层、导出 PSD / 合成 PNG / ZIP"
+                      // AI 分层框的导出入口收进图层面板：那里能先看清叠放和显隐，再决定导什么。
+                      // 普通编组没有图层语义，直接给「导出 PSD」——每个成员一层，
+                      // 这正是用户要的「有 frame 就能直接下 PSD」。
+                      title={isAiFrame
+                        ? '打开图层面板：排顺序、开关图层、导出 PSD / 合成 PNG / ZIP'
+                        : '把这个 Frame 里的元素导出成一个分层 PSD'}
                       onPointerDown={(event) => event.stopPropagation()}
-                      onClick={() => setLayerPanelGroupId((current) => current === frame.id ? null : frame.id)}
+                      onClick={() => {
+                        if (isAiFrame) {
+                          setLayerPanelGroupId((current) => current === frame.id ? null : frame.id);
+                          return;
+                        }
+                        void exportFrameAsPsd(frame.id, frame.name);
+                      }}
                     >
-                      <Layers size={13} />
-                      {iconOnlyButton ? null : '图层面板'}
+                      {isAiFrame ? <Layers size={13} /> : <Download size={13} />}
+                      {iconOnlyButton ? null : (isAiFrame ? '图层面板' : '导出 PSD')}
                     </button>
                   </div>
                   );
@@ -7572,11 +7740,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               <ImageQuickActionBar
                                 actions={mergedQuickActions}
                                 onAction={handleQuickAction}
-                                onLayer={() => void decomposeImageIntoFrame({
-                                  key: it.key,
-                                  src: it.src,
-                                  prompt: it.prompt || '图片',
-                                })}
+                                onLayer={(intent) => {
+                                  // 记住这次的拆法：面板里「重新拆分」默认沿用它，不用再打一遍。
+                                  updateLayerIntentPref(intent);
+                                  void decomposeImageIntoFrame({
+                                    key: it.key,
+                                    src: it.src,
+                                    prompt: it.prompt || '图片',
+                                    intent,
+                                  });
+                                }}
+                                defaultLayerIntent={layerIntentPref}
                                 layering={layeringProgress?.sourceKey === it.key}
                                 onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
                                 onOpenConfig={() => setQuickActionDialogOpen(true)}
@@ -7668,6 +7842,61 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 onSelfCheck={() => void handleLayerPanelSelfCheck()}
                 onClose={() => setLayerPanelGroupId(null)}
               />
+            ) : null}
+
+            {/* 多选浮条：编组与导出必须**看得见**，不能只藏在快捷键里。
+                快捷键给熟手省事，浮条让第一次用的人知道「原来可以这么做」
+                （guided-exploration：陌生页面 3 秒内知道下一步点哪）。 */}
+            {selectedKeys.length >= 2 ? (
+              <div
+                className="absolute left-1/2 -translate-x-1/2 bottom-6 z-40 pointer-events-auto flex items-center gap-1 rounded-[12px] px-1.5 h-[38px]"
+                style={{ ...glassToolbar }}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="px-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {`已选 ${selectedKeys.length} 个`}
+                </span>
+                <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                <button
+                  type="button"
+                  className="h-[28px] px-2 rounded-[7px] text-[12px] font-medium inline-flex items-center gap-1.5 hover-bg-soft"
+                  style={{ color: 'var(--text-primary)' }}
+                  title="把选中的元素框成一个 Frame（⌘/Ctrl+G）"
+                  onClick={groupSelection}
+                >
+                  <Layers size={14} />
+                  编组
+                </button>
+                <button
+                  type="button"
+                  className="h-[28px] px-2 rounded-[7px] text-[12px] font-medium inline-flex items-center gap-1.5 hover-bg-soft"
+                  style={{ color: 'var(--text-primary)' }}
+                  title="解散选中元素所在的 Frame（⌘/Ctrl+Shift+G）"
+                  onClick={ungroupSelection}
+                >
+                  解组
+                </button>
+                <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                <button
+                  type="button"
+                  className="h-[28px] px-2 rounded-[7px] text-[12px] font-medium inline-flex items-center gap-1.5 hover-bg-soft"
+                  style={{ color: 'var(--text-primary)' }}
+                  title="把选中的元素导成一个分层 PSD，每个元素一层"
+                  onClick={() => void exportElementsAsPsd(selectedKeys, '选中元素')}
+                >
+                  <Download size={14} />
+                  PSD
+                </button>
+                <button
+                  type="button"
+                  className="h-[28px] px-2 rounded-[7px] text-[12px] font-medium inline-flex items-center gap-1.5 hover-bg-soft"
+                  style={{ color: 'var(--text-primary)' }}
+                  title="把选中的元素逐个打包成 PNG"
+                  onClick={() => void exportSelectionAsZip()}
+                >
+                  ZIP
+                </button>
+              </div>
             ) : null}
 
             {/* 交互层：选中生成器时显示快捷输入（可输入/可删除/可发送）

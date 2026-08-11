@@ -227,6 +227,19 @@ async function main() {
     check('画布上能找到「AI 分层」入口', await layerBtn.count() > 0);
     if (!(await layerBtn.count())) throw new Error('没有分层入口，后续判据无从谈起');
     await layerBtn.click({ force: true });
+    // 点「AI 分层」不该直接开拆，要先给用户说话的机会（用户原话：点完就拆了，
+    // 根本没有输入自然语言的地方）。但也不能变慢——输入框自动聚焦、回车即开拆。
+    await page.waitForTimeout(800);
+    const intentInput = page.locator('[data-testid="layer-intent-input"]').first();
+    const hasIntentBubble = await intentInput.count() > 0;
+    check('点「AI 分层」先弹出拆法输入（不是点完就闷头开拆）', hasIntentBubble);
+    if (hasIntentBubble) {
+      const focused = await page.evaluate(() =>
+        document.activeElement?.getAttribute('data-testid') === 'layer-intent-input');
+      check('拆法输入框自动聚焦（回车即开拆，不比以前慢）', focused);
+      await intentInput.fill('把人物和背景分开');
+      await intentInput.press('Enter');
+    }
 
     // ---- 等待态：三个头部元素不许互相压住（纯几何判据，肉眼看图容易漏）
     // 必须**跨缩放档位**测：这些标签用 scale(1/zoom) 反向放大以保持屏幕尺寸恒定，
@@ -510,6 +523,41 @@ async function main() {
     } else {
       check('图层面板里能找到「导出分层 PSD」', false, '按钮不存在');
     }
+
+    // ---- Frame 基础功能：Cmd+G 编组 / Cmd+Shift+G 解组（对齐 Figma）
+    await esc(page);
+    const frameCount = () => page.evaluate(() => new Set([...document.querySelectorAll('[data-canvas-key]')]
+      .map((el) => el.getAttribute('data-layer-group'))
+      .filter(Boolean)).size);
+    const framesBefore = await frameCount();
+    // 全选 → 解组：两个 AI 分层组都应该被拆开
+    // 键盘快捷键只在「鼠标悬在画布上或焦点在画布内」时生效，所以先把鼠标移到画布中间。
+    await page.mouse.move(700, 500);
+    await page.mouse.click(700, 500);
+    await page.waitForTimeout(400);
+    await page.mouse.move(700, 500);
+    await page.keyboard.press('Control+a');
+    await page.waitForTimeout(800);
+    const selectedCount = await page.evaluate(() => {
+      const m = document.body.innerText.match(/已选 (\d+) 个/);
+      return m ? Number(m[1]) : 0;
+    });
+    check('Cmd/Ctrl+A 能全选画布元素', selectedCount >= 2, `已选 ${selectedCount} 个`);
+    await page.keyboard.press('Control+Shift+G');
+    await page.waitForTimeout(1500);
+    const framesAfterUngroup = await page.evaluate(() =>
+      document.body.innerText.includes('已解组'));
+    check('Cmd/Ctrl+Shift+G 能解组（Frame 被拆开）', framesAfterUngroup,
+      `解组前有 ${framesBefore} 组`);
+    await page.keyboard.press('Control+g');
+    await page.waitForTimeout(1500);
+    const grouped = await page.evaluate(() => document.body.innerText.includes('已编组'));
+    check('Cmd/Ctrl+G 能把选中的元素编成一个 Frame', grouped);
+    const multiBar = await page.evaluate(() => /已选 \d+ 个/.test(document.body.innerText));
+    check('多选时出现浮条（编组/解组/导出不只藏在快捷键里）', multiBar);
+    await esc(page);
+    await page.waitForTimeout(800);
+
 
     check('运行期间没有 401/403（读图与接口的凭据都带上了）',
       !consoleErrors.some((t) => /401|403|Unauthorized|Forbidden/.test(t)),

@@ -1,6 +1,15 @@
 export type SemanticLayerRole = 'source' | 'layer';
 
 export type SemanticLayerMetadata = {
+  /**
+   * 通用编组标识（Figma 心智的 Frame）。
+   *
+   * 和 layerGroupId 分开是有意的：layerGroupId 说「这是哪一次分层的产物」，
+   * 是产物血缘，解组不该把它抹掉；frameId 说「这些东西现在被框在一起」，
+   * 是用户的组织意图，随时可以 Cmd+G / Cmd+Shift+G 改。
+   * AI 分层落地时两者初值相同，之后各走各的。
+   */
+  frameId?: string;
   layerGroupId?: string;
   layerSourceKey?: string;
   layerIndex?: number;
@@ -38,6 +47,15 @@ export type SemanticLayerFrame = {
   sourceKey: string;
   name: string;
   layerKeys: string[];
+  /**
+   * ai-layers = 由一次 AI 分层产出（能开图层面板、能导出 PSD 图层组）；
+   * group = 用户自己 Cmd+G 框起来的一堆元素。
+   * 两者的 Frame 外观一致，但能做的事不同，所以必须区分——
+   * 给一个普通编组显示「图层面板」按钮，点开是空的。
+   */
+  kind: 'ai-layers' | 'group';
+  /** ai-layers 才有：这一组图层属于哪一次分层。 */
+  layerGroupId?: string;
   x: number;
   y: number;
   w: number;
@@ -157,7 +175,7 @@ export function planSemanticLayerFrame(
    * 新的分层一律由 {@link planLayeredCopyRect} 先挑好空地再传进来。
    */
   copy?: SemanticLayerPlacement,
-): { frame: Omit<SemanticLayerFrame, 'id' | 'sourceKey' | 'name' | 'layerKeys'>; placements: SemanticLayerPlacement[] } {
+): { frame: { x: number; y: number; w: number; h: number }; placements: SemanticLayerPlacement[] } {
   const count = Math.max(1, Math.min(10, Math.round(layerCount)));
   const sourceX = Number.isFinite(source.x) ? Number(source.x) : 0;
   const sourceY = Number.isFinite(source.y) ? Number(source.y) : 0;
@@ -262,14 +280,15 @@ export function collectSemanticLayerFrames(items: SemanticLayerCanvasItem[]): Se
   for (const item of items) byKey.set(item.key, item);
   const layers = new Map<string, SemanticLayerCanvasItem[]>();
 
+  // 只按 frameId 分组。解组就是把 frameId 抹掉，所以这里**不能**再拿 layerGroupId 兜底——
+  // 兜底会让「解组」对 AI 分层组完全失效（框还在，用户以为快捷键坏了）。
+  // 旧数据没有 frameId，在读回时已由持久化层补成 layerGroupId。
   for (const item of items) {
-    const groupId = String(item.layerGroupId ?? '').trim();
-    if (!groupId) continue;
-    if (item.layerRole === 'layer') {
-      const bucket = layers.get(groupId) ?? [];
-      bucket.push(item);
-      layers.set(groupId, bucket);
-    }
+    const frameId = String(item.frameId ?? '').trim();
+    if (!frameId) continue;
+    const bucket = layers.get(frameId) ?? [];
+    bucket.push(item);
+    layers.set(frameId, bucket);
   }
 
   const frames: SemanticLayerFrame[] = [];
@@ -280,13 +299,20 @@ export function collectSemanticLayerFrames(items: SemanticLayerCanvasItem[]): Se
     const minY = Math.min(...sorted.map((item) => Number.isFinite(item.y) ? Number(item.y) : 0));
     const maxX = Math.max(...sorted.map((item) => (Number.isFinite(item.x) ? Number(item.x) : 0) + positive(item.w, 320)));
     const maxY = Math.max(...sorted.map((item) => (Number.isFinite(item.y) ? Number(item.y) : 0) + positive(item.h, 320)));
-    const sourceKey = String(sorted[0]?.layerSourceKey ?? '').trim();
+    const aiLayers = sorted.filter((item) => item.layerRole === 'layer');
+    const isAi = aiLayers.length > 0;
+    const sourceKey = String(aiLayers[0]?.layerSourceKey ?? '').trim();
     const source = sourceKey ? byKey.get(sourceKey) : undefined;
+    const layerGroupId = String(aiLayers[0]?.layerGroupId ?? '').trim();
 
     frames.push({
       id: groupId,
+      kind: isAi ? 'ai-layers' : 'group',
+      layerGroupId: isAi ? (layerGroupId || undefined) : undefined,
       sourceKey: source?.key || sourceKey,
-      name: String(source?.prompt || 'AI 分层').trim() || 'AI 分层',
+      name: isAi
+        ? (String(source?.prompt || 'AI 分层').trim() || 'AI 分层')
+        : `${sorted.length} 个元素`,
       layerKeys: sorted.map((item) => item.key),
       x: minX - FRAME_PADDING,
       y: minY - FRAME_HEADER - FRAME_PADDING,

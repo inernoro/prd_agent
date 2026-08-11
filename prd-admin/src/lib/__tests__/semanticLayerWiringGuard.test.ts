@@ -96,6 +96,41 @@ describe('分层内容判定的接线', () => {
     expect(code).toMatch(/planSemanticLayerFrame\(sourceItem,\s*count,\s*layerLayoutMode,\s*copyRect\)/);
   });
 
+  it('【关键】Cmd+G 编组 / Cmd+Shift+G 解组真的接上了键盘', () => {
+    // 这两条只写函数不接键盘，等于没做——而且删掉接线全量测试照样绿（形状 2）。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    expect(code).toMatch(/isMod && e\.shiftKey && !e\.altKey && isG/);
+    expect(code).toMatch(/isMod && !e\.shiftKey && !e\.altKey && isG/);
+    expect(code).toMatch(/groupSelection\(\)/);
+    expect(code).toMatch(/ungroupSelection\(\)/);
+    // 解组必须真的能撤掉 Frame：frameId 抹掉即可，且收集 Frame 时不许再拿 layerGroupId 兜底，
+    // 兜底会让解组对 AI 分层组完全失效（框还在，用户以为快捷键坏了）。
+    expect(read('src/lib/semanticLayerFrame.ts')).not.toMatch(/item\.frameId \?\? item\.layerGroupId/);
+  });
+
+  it('【关键】Frame 与多选都能直接导出 PSD', () => {
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    expect(code).toMatch(/exportFrameAsPsd\(frame\.id/);
+    expect(code).toMatch(/exportElementsAsPsd\(selectedKeys/);
+    expect(code).toMatch(/exportSelectionAsZip\(\)/);
+    // 通用 Frame 导出必须复用同一个 PSD 写层实现，不许另写一套。
+    expect(read('src/lib/layeredPsd.ts')).toMatch(/buildLayeredPsdDocument\(\{ source: flattened, layers \}\)/);
+  });
+
+  it('【关键】点「AI 分层」要先给用户说话的机会', () => {
+    // 2026-08-11 原话：「由于我点击之后就开拆了，所以没有输入自然语言的地方」。
+    const bar = read('src/components/visual-agent/ImageQuickActionBar.tsx');
+    expect(bar).toContain('LayerIntentBubble');
+    expect(bar).toMatch(/setLayerIntentOpen\(\(open\) => !open\)/);
+    // 但不能因此变慢：输入框自动聚焦、回车即开拆。
+    expect(bar).toMatch(/inputRef\.current\?\.focus\(\)/);
+    expect(bar).toMatch(/e\.key === 'Enter'[\s\S]{0,80}onSubmit\(value\.trim\(\)\)/);
+    // 意图要真的传到分层调用上，不能只存在输入框里。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    expect(code).toMatch(/onLayer=\{\(intent\) =>/);
+    expect(code).toMatch(/intent,/);
+  });
+
   it('【关键】透明裁剪必须接到画布上，不能只在导出时生效', () => {
     // 这条守卫是补上一次的漏：boundsToCanvasRect 建好了、单测全绿，却全仓无人调用
     // （形状 2：建了一半）。于是画布上每个部件仍是满幅方块，用户圈图指出「这才是

@@ -71,8 +71,8 @@ describe('semantic layer frame', () => {
   it('rebuilds a frame from independently movable persisted layers', () => {
     const frames = collectSemanticLayerFrames([
       { key: 'source', prompt: '海报' },
-      { key: 'layer-2', x: 500, y: 250, w: 200, h: 100, layerGroupId: 'group-1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 2 },
-      { key: 'layer-1', x: 250, y: 250, w: 200, h: 100, layerGroupId: 'group-1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
+      { key: 'layer-2', x: 500, y: 250, w: 200, h: 100, frameId: 'group-1', layerGroupId: 'group-1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 2 },
+      { key: 'layer-1', x: 250, y: 250, w: 200, h: 100, frameId: 'group-1', layerGroupId: 'group-1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
     ]);
 
     expect(frames).toHaveLength(1);
@@ -87,8 +87,8 @@ describe('semantic layer frame', () => {
     // 早先按「原图身上打的组号」找，拆第二次就把第一组的原图指针指没了。
     const frames = collectSemanticLayerFrames([
       { key: 'source', prompt: '海报' },
-      { key: 'a1', x: 0, y: 0, w: 100, h: 100, layerGroupId: 'g1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
-      { key: 'b1', x: 500, y: 0, w: 100, h: 100, layerGroupId: 'g2', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
+      { key: 'a1', x: 0, y: 0, w: 100, h: 100, frameId: 'g1', layerGroupId: 'g1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
+      { key: 'b1', x: 500, y: 0, w: 100, h: 100, frameId: 'g2', layerGroupId: 'g2', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
     ]);
     expect(frames).toHaveLength(2);
     for (const frame of frames) {
