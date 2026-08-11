@@ -23,7 +23,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
     private readonly IReadOnlyList<string> _compatibleOwnerIds;
     private readonly string _instanceId;
     private readonly bool _canAdoptLegacyRuns;
-    private readonly bool _canAdoptLegacyBranchOwners;
+    private readonly IReadOnlyList<string> _retiredLegacyOwnerIds;
 
     public TranscriptRunWatchdog(
         IServiceScopeFactory scopeFactory,
@@ -39,7 +39,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
         _compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(config);
         _instanceId = InstanceIdentity.Get(config);
         _canAdoptLegacyRuns = DeploymentAuthority.CanAdoptLegacyTranscriptRuns(config);
-        _canAdoptLegacyBranchOwners = DeploymentAuthority.CanAdoptLegacyBranchOwners(config);
+        _retiredLegacyOwnerIds = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(config);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -75,7 +75,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
                 nameof(TranscriptRun.OwnerInstanceId),
                 _compatibleOwnerIds,
                 includeUnowned: true,
-                includeLegacyBranchOnlyOwners: _canAdoptLegacyBranchOwners)
+                retiredLegacyOwnerIds: _retiredLegacyOwnerIds)
             : ownedProcessingRuns;
 
         // 当前部署只处理自己的超时 run；历史无 owner 的 processing run 仅由显式获权的

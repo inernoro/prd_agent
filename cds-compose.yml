@@ -266,6 +266,7 @@ services:
       # 不使用容器或 commit，既隔离正式环境，也保证滚动部署连续消费。
       Deployment__Identity: "prd-agent:cds"
       Deployment__AdoptLegacyBranchOwners: "false"
+      Deployment__RetiredLegacyBranchOwnerIds: ""
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"

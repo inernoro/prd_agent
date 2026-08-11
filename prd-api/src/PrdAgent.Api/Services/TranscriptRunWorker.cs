@@ -94,7 +94,7 @@ public class TranscriptRunWorker : BackgroundService
             nameof(TranscriptRun.OwnerInstanceId),
             compatibleOwnerIds,
             includeUnowned: true,
-            includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
+            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration));
         var adoptableLegacyRun = Builders<TranscriptRun>.Filter.And(
             Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.LegacyQueued),
             legacyOwnerScope);

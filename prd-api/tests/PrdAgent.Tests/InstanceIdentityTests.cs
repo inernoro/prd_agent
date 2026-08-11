@@ -45,20 +45,24 @@ public sealed class InstanceIdentityTests
     }
 
     [Fact]
-    public void GetCompatibleOwnerIds_LegacyOwnersForEveryBranchAreOwnedOnlyByAuthorizedProduction()
+    public void GetCompatibleOwnerIds_OnlyIncludesExplicitlyRetiredLegacyOwner()
     {
         var cds = BuildConfiguration("prd-agent:cds", "main", "Production", cdsProjectId: "prd-agent");
         var production = BuildConfiguration(
-            "prd-agent:production", "main", "Production", adoptLegacyBranchOwners: true);
+            "prd-agent:production", "main", "Production",
+            adoptLegacyBranchOwners: true,
+            retiredLegacyBranchOwnerIds: "main");
         var featureProduction = BuildConfiguration(
-            "prd-agent:production", "codex/example", "Production", adoptLegacyBranchOwners: true);
+            "prd-agent:production", "codex/example", "Production",
+            adoptLegacyBranchOwners: true,
+            retiredLegacyBranchOwnerIds: "main");
 
         Assert.Equal(["prd-agent:cds::main"], InstanceIdentity.GetCompatibleOwnerIds(cds));
         Assert.Equal(
             ["prd-agent:production::main", "main"],
             InstanceIdentity.GetCompatibleOwnerIds(production));
         Assert.Equal(
-            ["prd-agent:production::codex/example", "codex/example"],
+            ["prd-agent:production::codex/example"],
             InstanceIdentity.GetCompatibleOwnerIds(featureProduction));
     }
 
@@ -68,7 +72,8 @@ public sealed class InstanceIdentityTests
         string? environment,
         string? revision = null,
         string? cdsProjectId = null,
-        bool? adoptLegacyBranchOwners = null)
+        bool? adoptLegacyBranchOwners = null,
+        string? retiredLegacyBranchOwnerIds = null)
         => new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -78,6 +83,7 @@ public sealed class InstanceIdentityTests
                 ["Changelog:GitCommit"] = revision,
                 ["CDS_PROJECT_ID"] = cdsProjectId,
                 ["Deployment:AdoptLegacyBranchOwners"] = adoptLegacyBranchOwners?.ToString(),
+                ["Deployment:RetiredLegacyBranchOwnerIds"] = retiredLegacyBranchOwnerIds,
             })
             .Build();
 }

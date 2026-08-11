@@ -52,10 +52,19 @@ public class DeploymentAuthorityTests
         DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
         {
             ["Deployment:AdoptLegacyBranchOwners"] = "true",
-        })).ShouldBeTrue();
+        })).ShouldBeFalse();
+        var authorized = Build(new()
+        {
+            ["Deployment:AdoptLegacyBranchOwners"] = "true",
+            ["Deployment:RetiredLegacyBranchOwnerIds"] = "main,codex/retired-preview,main",
+        });
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(authorized).ShouldBeTrue();
+        DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(authorized)
+            .ShouldBe(["main", "codex/retired-preview"]);
         DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
         {
             ["Deployment:AdoptLegacyBranchOwners"] = "true",
+            ["Deployment:RetiredLegacyBranchOwnerIds"] = "main",
             ["CDS_PROJECT_ID"] = "50bf3eac3d02",
         })).ShouldBeFalse();
     }

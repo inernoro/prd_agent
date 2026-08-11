@@ -20,6 +20,7 @@ public static class DeploymentAuthority
 {
     public const string AdoptLegacyTranscriptRunsKey = "Transcript:AdoptLegacyUnownedRuns";
     public const string AdoptLegacyBranchOwnersKey = "Deployment:AdoptLegacyBranchOwners";
+    public const string RetiredLegacyBranchOwnerIdsKey = "Deployment:RetiredLegacyBranchOwnerIds";
 
     /// <summary>
     /// 显式开关。设为 "true"/"false" 时优先于自动判定：
@@ -66,13 +67,24 @@ public static class DeploymentAuthority
            && !IsCdsBranchPreview(configuration);
 
     /// <summary>
-    /// 部署域上线前的“仅分支名” owner 必须由一个显式获权的正式部署迁移。
-    /// 对每个分支都执行同一规则，CDS 预览即使误配开关也不能参与。
+    /// 部署域上线前的“仅分支名” owner 必须由一个显式获权的正式部署迁移，
+    /// 且只允许接管明确登记为已退役的 owner。不能用“没有部署域分隔符”推断分支已停止。
     /// </summary>
     public static bool CanAdoptLegacyBranchOwners(IConfiguration configuration)
-        => bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
-           && enabled
-           && !IsCdsBranchPreview(configuration);
+        => GetRetiredLegacyBranchOwnerIds(configuration).Count > 0;
+
+    public static IReadOnlyList<string> GetRetiredLegacyBranchOwnerIds(IConfiguration configuration)
+    {
+        if (!bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
+            || !enabled
+            || IsCdsBranchPreview(configuration))
+            return [];
+        return (configuration[RetiredLegacyBranchOwnerIdsKey] ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(owner => !owner.Contains("::", StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
 
     /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。

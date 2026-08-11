@@ -31,8 +31,10 @@ public static class InstanceIdentity
     {
         var current = Get(config);
         var legacyBranch = Normalize(config["Changelog:GitHubBranch"], "main");
-        var canAdoptLegacy = DeploymentAuthority.CanAdoptLegacyBranchOwners(config);
-        return canAdoptLegacy && !legacyBranch.Equals(current, StringComparison.Ordinal)
+        var retiredLegacyOwners = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(config);
+        return DeploymentAuthority.CanAdoptLegacyBranchOwners(config)
+            && retiredLegacyOwners.Contains(legacyBranch, StringComparer.Ordinal)
+            && !legacyBranch.Equals(current, StringComparison.Ordinal)
             ? [current, legacyBranch]
             : [current];
     }

@@ -308,12 +308,18 @@ public class TranscriptAgentController : ControllerBase
         var lastResult = "";
         var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-        // 轮询直到完成/失败（每秒检查一次，最多10分钟）
+        // 轮询直到完成/失败。不能使用固定 10 分钟上限：ASR 会在候选之间切换，
+        // 处理期限可长于单次模型超时；自然 EOF 会被前端误判为任务完成。
+        // 卡死任务由 TranscriptRunWatchdog 写入 failed 终态，本流随后发送 error。
         var heartbeatCounter = 0;
-        for (var i = 0; i < 600 && !ct.IsCancellationRequested; i++)
+        while (!ct.IsCancellationRequested)
         {
             run = await _db.TranscriptRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(ct);
-            if (run == null) break;
+            if (run == null)
+            {
+                await SendSseEvent("error", new { error = "转录任务不存在或已被清理，请重新发起转录" });
+                break;
+            }
 
             // 进度变化时推送
             if (run.Progress != lastProgress || run.Status != lastStatus)

@@ -1141,6 +1141,7 @@ public class GatewayDataDomainGuardTests
         var shortVideoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ShortVideoMaterialWorker.cs");
         var legacyOwnerScope = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/LegacyOwnerScope.cs");
         var authority = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Security/DeploymentAuthority.cs");
+        var transcriptController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/TranscriptAgentController.cs");
         var cdsCompose = ReadRepoFile("cds-compose.yml");
         var productionCompose = ReadRepoFile("docker-compose.yml");
 
@@ -1154,13 +1155,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Filter.Or(scopedForCurrentInstance, adoptableLegacyRun)", worker);
         Assert.Contains("AdoptLegacyTranscriptRunsKey", authority);
         Assert.Contains("AdoptLegacyBranchOwnersKey", authority);
+        Assert.Contains("RetiredLegacyBranchOwnerIdsKey", authority);
         Assert.Contains("DeploymentAuthority.CanAdoptLegacyBranchOwners(config)", ReadRepoFile("prd-api/src/PrdAgent.Api/Services/InstanceIdentity.cs"));
         Assert.Contains("Transcript__AdoptLegacyUnownedRuns: \"false\"", cdsCompose);
         Assert.Contains("Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-true}", productionCompose);
         Assert.Contains("Deployment__Identity: \"prd-agent:cds\"", cdsCompose);
         Assert.Contains("Deployment__AdoptLegacyBranchOwners: \"false\"", cdsCompose);
+        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds: \"\"", cdsCompose);
         Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
-        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}", productionCompose);
+        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-false}", productionCompose);
+        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-}", productionCompose);
         Assert.True(
             cdsCompose.Split("command -v ffmpeg", StringSplitOptions.None).Length - 1 >= 3,
             "CDS API 的 dev、static 与默认源码命令都必须在启动前保证 ffmpeg 可用");
@@ -1171,15 +1175,18 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("DeploymentAuthority.CanAdoptLegacyTranscriptRuns(config)", watchdog);
         Assert.Contains("LegacyOwnerScope.Build<TranscriptRun>", watchdog);
         Assert.Contains(".Set(r => r.OwnerInstanceId, _instanceId)", watchdog);
-        Assert.Contains("BranchOnlyOwnerPattern = \"^(?!.*::).+$\"", legacyOwnerScope);
-        Assert.Contains("var canAdoptLegacyBranchOwners = DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration)", recordingWorker);
-        Assert.Contains("adoptLegacyBranchOnlyOwners: canAdoptLegacyBranchOwners", recordingWorker);
+        Assert.DoesNotContain("BranchOnlyOwnerPattern", legacyOwnerScope);
+        Assert.Contains("Filter.In(ownerField, retiredLegacyOwnerIds)", legacyOwnerScope);
+        Assert.Contains("var retiredLegacyOwnerIds = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration)", recordingWorker);
+        Assert.Contains("retiredLegacyOwnerIds: retiredLegacyOwnerIds", recordingWorker);
         Assert.Contains("LegacyOwnerScope.Build<DocumentStoreAgentRun>", documentWorker);
         Assert.Contains("LegacyOwnerScope.Build<ShortVideoMaterialRun>", shortVideoWorker);
         Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", documentWorker);
         Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", shortVideoWorker);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config)", watchdog);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)", worker);
+        Assert.Contains("while (!ct.IsCancellationRequested)", transcriptController);
+        Assert.DoesNotContain("i < 600", transcriptController);
         Assert.Contains("OwnedProcessingRun(run)", worker);
         Assert.Contains("candidate.ToGatewayResolution(),\n                    processingToken", worker);
         Assert.Contains("public const string LegacyQueued = \"queued\"", model);

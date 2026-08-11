@@ -431,9 +431,12 @@ public sealed class DocumentRecordingArchiveWorkerTests
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
         const string historicalOwner = "codex/retired-preview";
+        const string activeOwner = "codex/active-preview";
         const string currentOwner = "prd-agent:production::main";
         await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
             Session("historical-owner-session", historicalOwner, DocumentRecordingArchiveStatus.Pending));
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            Session("active-owner-session", activeOwner, DocumentRecordingArchiveStatus.Pending));
 
         var cdsClaim = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
             fixture.Db.DocumentRecordingUploadSessions,
@@ -442,7 +445,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             DateTime.UtcNow,
             CancellationToken.None,
             ["prd-agent:cds::main"],
-            adoptLegacyBranchOnlyOwners: false);
+            retiredLegacyOwnerIds: []);
         cdsClaim.ShouldBeNull();
 
         var productionClaim = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
@@ -452,7 +455,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             DateTime.UtcNow,
             CancellationToken.None,
             [currentOwner, "main"],
-            adoptLegacyBranchOnlyOwners: true);
+            retiredLegacyOwnerIds: [historicalOwner]);
 
         productionClaim.ShouldNotBeNull();
         productionClaim!.OwnerInstanceId.ShouldBe(currentOwner);
@@ -461,6 +464,10 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 .Find(session => session.Id == productionClaim.Id)
                 .SingleAsync())
             .OwnerInstanceId.ShouldBe(currentOwner);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(session => session.Id == "active-owner-session")
+                .SingleAsync())
+            .OwnerInstanceId.ShouldBe(activeOwner);
     }
 
     [Fact]

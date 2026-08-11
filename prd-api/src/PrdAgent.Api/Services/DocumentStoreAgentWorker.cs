@@ -54,7 +54,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                 nameof(DocumentStoreAgentRun.OwnerInstanceId),
                 compatibleOwnerIds,
                 includeUnowned: true,
-                includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
+                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration));
             // 回收范围 = 本实例 Running + 历史无主 Running（OwnerInstanceId 空）。
             // 无主 Running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
             // 这些 run 的容器一旦退出就永远没人回收、永远卡 running。把无主 Running 一并
@@ -195,7 +195,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             nameof(DocumentStoreAgentRun.OwnerInstanceId),
             compatibleOwnerIds,
             includeUnowned: true,
-            includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
+            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration));
         var filter = Builders<DocumentStoreAgentRun>.Filter.And(
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
             Builders<DocumentStoreAgentRun>.Filter.Or(
