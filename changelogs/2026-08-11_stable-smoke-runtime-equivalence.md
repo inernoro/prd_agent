@@ -269,3 +269,5 @@
 | test | stable-smoke | 视频任务清理后使用旧恢复凭证复查必须返回不可访问 |
 | fix | stable-smoke | 正式环境单独 dry-run 与预检仅要求只读健康检查配置 |
 | fix | prd-admin | 米多 SSO 已停用错误明确引导改用其他登录方式或联系管理员 |
+| fix | prd-api/prd-admin | 文学配图流在模型响应前推送并展示用户可见阶段，合成验收附件使用受控对象并随条目清理 |
+| test | stable-smoke | 严格验证两秒内可见文学进度、三图引用顺序和文件原始对象清理 |

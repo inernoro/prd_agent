@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Net.WebSockets;
@@ -9,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -66,6 +68,8 @@ public class DocumentStoreController : ControllerBase
     private static readonly TimeSpan RecordingCleanupStaleLease = TimeSpan.FromMinutes(10);
     private const int RecordingOrphanChunkScanLimit = 500;
     private const int RecordingExpiredCleanupBatchSize = 500;
+
+    private sealed record StoredUploadAsset(StoredAsset Asset, string? StorageKey);
 
     /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
     private const int ViewDedupWindowMinutes = 30;
@@ -621,6 +625,23 @@ public class DocumentStoreController : ControllerBase
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId).ToListAsync();
         var documentIds = entries.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
         var attachmentIds = entries.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
+        var attachments = attachmentIds.Count == 0
+            ? new List<Attachment>()
+            : await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync();
+
+        // 合成验收上传写入受控 _it Key。必须先确认删除范围外没有引用，再删除真实对象；
+        // 任何存储失败都在数据库级联前熔断，保留可重试记录，不能留下无法追踪的孤儿文件。
+        try
+        {
+            await DeleteUnreferencedStoredAssetsAsync(attachments, attachmentIds, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[document-store] Store asset cleanup failed before cascade: store={StoreId}", storeId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.Fail(
+                "DOCUMENT_ASSET_CLEANUP_FAILED",
+                "文件清理暂时未完成，请稍后重试删除"));
+        }
 
         // 2) 级联清理关联数据（顺序不敏感，失败任何一步都不回滚——MongoDB 无事务）
         var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => e.StoreId == storeId);
@@ -1056,6 +1077,21 @@ public class DocumentStoreController : ControllerBase
         var targets = await _db.DocumentEntries.Find(e => idsToDelete.Contains(e.Id)).ToListAsync();
         var documentIds = targets.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
         var attachmentIds = targets.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
+        var attachments = attachmentIds.Count == 0
+            ? new List<Attachment>()
+            : await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync();
+
+        try
+        {
+            await DeleteUnreferencedStoredAssetsAsync(attachments, attachmentIds, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[document-store] Entry asset cleanup failed before cascade: entry={EntryId}", entryId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.Fail(
+                "DOCUMENT_ASSET_CLEANUP_FAILED",
+                "文件清理暂时未完成，请稍后重试删除"));
+        }
 
         // 级联清理
         var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => idsToDelete.Contains(e.Id));
@@ -2292,11 +2328,13 @@ public class DocumentStoreController : ControllerBase
                     audioBytes,
                     parentId: null,
                     CancellationToken.None,
-                    storedAsset: new StoredAsset(
-                        string.Empty,
-                        interruptedAttachment.Url,
-                        interruptedAttachment.Size,
-                        interruptedAttachment.MimeType),
+                    storedAsset: new StoredUploadAsset(
+                        new StoredAsset(
+                            string.Empty,
+                            interruptedAttachment.Url,
+                            interruptedAttachment.Size,
+                            interruptedAttachment.MimeType),
+                        interruptedAttachment.StorageKey),
                     recordingSessionId: sessionId);
                 interruptedCompletedEntry = rebuilt.Entry;
             }
@@ -2397,7 +2435,7 @@ public class DocumentStoreController : ControllerBase
                         sessionId),
             }));
         }
-        StoredAsset recordingAsset;
+        StoredUploadAsset recordingAsset;
         try
         {
             // 降级判定只包住对象存储调用。附件、条目、计数或活动日志在存储成功后
@@ -3465,15 +3503,16 @@ public class DocumentStoreController : ControllerBase
             string? parentId,
             CancellationToken cancellationToken,
             int assetSaveAttempts = 1,
-            StoredAsset? storedAsset = null,
+            StoredUploadAsset? storedAsset = null,
             string? recordingSessionId = null)
     {
-        var stored = storedAsset ?? await SaveUploadedAssetAsync(
+        var storedUpload = storedAsset ?? await SaveUploadedAssetAsync(
             fileName,
             mime,
             bytes,
             cancellationToken,
             assetSaveAttempts);
+        var stored = storedUpload.Asset;
 
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))
@@ -3491,6 +3530,7 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = bytes.LongLength,
             Url = stored.Url,
+            StorageKey = storedUpload.StorageKey,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
@@ -3580,7 +3620,7 @@ public class DocumentStoreController : ControllerBase
         return (entry, attachment, documentId, stored.Url);
     }
 
-    private async Task<StoredAsset> SaveUploadedAssetAsync(
+    private async Task<StoredUploadAsset> SaveUploadedAssetAsync(
         string fileName,
         string mime,
         byte[] bytes,
@@ -3593,9 +3633,24 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
-                return await _assetStorage.SaveAsync(
-                    bytes, mime, cancellationToken,
-                    domain: "prd-agent", type: "doc", fileName: fileName);
+                if (FederatedConsoleSessionPolicy.IsSynthetic(User))
+                {
+                    var extension = Regex.IsMatch(Path.GetExtension(fileName), @"^\.[a-zA-Z0-9]{1,10}$")
+                        ? Path.GetExtension(fileName).ToLowerInvariant()
+                        : ".bin";
+                    var key = $"_it/stable-smoke-document/{Guid.NewGuid():N}{extension}";
+                    await _assetStorage.UploadToKeyAsync(key, bytes, mime, cancellationToken);
+                    var sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                    return new StoredUploadAsset(
+                        new StoredAsset(sha256, _assetStorage.BuildUrlForKey(key), bytes.LongLength, mime),
+                        key);
+                }
+
+                return new StoredUploadAsset(
+                    await _assetStorage.SaveAsync(
+                        bytes, mime, cancellationToken,
+                        domain: "prd-agent", type: "doc", fileName: fileName),
+                    null);
             }
             catch (Exception ex) when (attempt < attempts && IsAssetStorageFailure(ex))
             {
@@ -3608,6 +3663,28 @@ public class DocumentStoreController : ControllerBase
             }
         }
         throw new InvalidOperationException("资产存储重试未返回结果");
+    }
+
+    private async Task DeleteUnreferencedStoredAssetsAsync(
+        IReadOnlyCollection<Attachment> attachments,
+        IReadOnlyCollection<string> attachmentIdsToDelete,
+        CancellationToken cancellationToken)
+    {
+        var excludedAttachmentIds = attachmentIdsToDelete.ToArray();
+        foreach (var storageKey in attachments
+                     .Select(a => a.StorageKey)
+                     .Where(key => !string.IsNullOrWhiteSpace(key))
+                     .Select(key => key!)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            var otherReferenceCount = await _db.Attachments.CountDocumentsAsync(
+                a => a.StorageKey == storageKey && !excludedAttachmentIds.Contains(a.AttachmentId),
+                cancellationToken: cancellationToken);
+            if (otherReferenceCount == 0)
+            {
+                await _assetStorage.DeleteByKeyAsync(storageKey, cancellationToken);
+            }
+        }
     }
 
     private static bool IsAssetStorageFailure(Exception ex)
@@ -3646,6 +3723,9 @@ public class DocumentStoreController : ControllerBase
         // 否则每次替换都把上一版正文 + Attachment 记录变成永久孤儿（删条目时只按新 id 清理，清不到历史版本）
         var oldAttachmentId = entry.AttachmentId;
         var oldDocumentId = entry.DocumentId;
+        var oldAttachment = string.IsNullOrWhiteSpace(oldAttachmentId)
+            ? null
+            : await _db.Attachments.Find(a => a.AttachmentId == oldAttachmentId).FirstOrDefaultAsync(ct);
 
         var mime = InferMime(file.ContentType, file.FileName);
 
@@ -3656,7 +3736,8 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: file.FileName);
+        var storedUpload = await SaveUploadedAssetAsync(file.FileName, mime, bytes, ct, assetSaveAttempts: 1);
+        var stored = storedUpload.Asset;
 
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))
@@ -3671,6 +3752,7 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = file.Length,
             Url = stored.Url,
+            StorageKey = storedUpload.StorageKey,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
@@ -3760,6 +3842,13 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
+                if (oldAttachment != null)
+                {
+                    await DeleteUnreferencedStoredAssetsAsync(
+                        new[] { oldAttachment },
+                        new[] { oldAttachmentId },
+                        CancellationToken.None);
+                }
                 await _db.Attachments.DeleteOneAsync(a => a.AttachmentId == oldAttachmentId, CancellationToken.None);
             }
             catch (Exception ex)

@@ -1411,6 +1411,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       };
 
       for await (const chunk of stream) {
+        // 服务端在模型首 token 前推送阶段消息，立即替换静止等待态。
+        if (chunk.type === 'progress' && chunk.message) {
+          setRawMarkerOutput(chunk.message);
+          continue;
+        }
+
         // ====== 思考过程：实时追加显示 ======
         if (chunk.type === 'thinking' && chunk.text) {
           setThinkingContent((prev) => prev + chunk.text);

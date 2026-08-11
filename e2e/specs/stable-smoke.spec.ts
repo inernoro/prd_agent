@@ -148,6 +148,13 @@ type ImageRunDetail = {
     total: number;
     done: number;
     failed: number;
+    imageRefs?: Array<{
+      refId: number;
+      assetSha256: string;
+      url: string;
+      label: string;
+      role?: string;
+    }>;
   };
   items: Array<{
     status: string;
@@ -524,6 +531,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const runKey = `stsmk-${Date.now()}`;
     let storeId = '';
     const createdEntryIds: string[] = [];
+    const createdFileUrls: string[] = [];
     try {
       const createStore = await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -553,6 +561,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         });
         const uploaded = await readEnvelope<{ entry: { id: string; title: string }; fileUrl: string }>(upload);
         createdEntryIds.push(uploaded.entry.id);
+        createdFileUrls.push(uploaded.fileUrl);
         expect(uploaded.entry.title).toContain('中文样本');
         expect(uploaded.fileUrl).toBeTruthy();
 
@@ -574,9 +583,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         headers: authHeaders(token),
         multipart: { file: { name: `${runKey}-中文样本.txt`, mimeType: 'text/plain', buffer: Buffer.from(expectedText, 'utf8') } },
       });
-      const duplicateData = await readEnvelope<{ entry: { id: string } }>(duplicate);
+      const duplicateData = await readEnvelope<{ entry: { id: string }; fileUrl: string }>(duplicate);
       expect(createdEntryIds).not.toContain(duplicateData.entry.id);
       createdEntryIds.push(duplicateData.entry.id);
+      createdFileUrls.push(duplicateData.fileUrl);
 
       const corrupt = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
         headers: authHeaders(token),
@@ -606,6 +616,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(missing.status()).toBe(404);
         for (const entryId of createdEntryIds) {
           expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+        for (const fileUrl of createdFileUrls) {
+          await expect.poll(async () => {
+            const separator = fileUrl.includes('?') ? '&' : '?';
+            return (await page.request.get(`${fileUrl}${separator}cleanup=${Date.now()}`)).status();
+          }, {
+            message: `删除知识库后原始文件必须同步清理：${fileUrl}`,
+            timeout: 15_000,
+          }).toBe(404);
         }
       }
     }
@@ -724,10 +743,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             insertionMode: 'anchor',
           }),
         });
-        if (!response.ok || !response.body) return { ok: false, firstChunkMs: -1, chunkCount: 0, text: await response.text() };
+        if (!response.ok || !response.body) {
+          return { ok: false, firstChunkMs: -1, firstVisibleProgressMs: -1, chunkCount: 0, text: await response.text() };
+        }
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let firstChunkMs = -1;
+        let firstVisibleProgressMs = -1;
         let chunkCount = 0;
         let text = '';
         while (true) {
@@ -736,12 +758,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           if (firstChunkMs < 0) firstChunkMs = performance.now() - startedAt;
           chunkCount += 1;
           text += decoder.decode(value, { stream: true });
+          if (firstVisibleProgressMs < 0
+            && /"type"\s*:\s*"(?:progress|thinking|delta|status)"/i.test(text)) {
+            firstVisibleProgressMs = performance.now() - startedAt;
+          }
         }
-        return { ok: true, firstChunkMs, chunkCount, text };
+        return { ok: true, firstChunkMs, firstVisibleProgressMs, chunkCount, text };
       }, { id: workspaceId, accessToken: token, content: article });
       expect(streamed.ok, streamed.text).toBe(true);
       expect(streamed.firstChunkMs).toBeGreaterThanOrEqual(0);
-      expect(streamed.firstChunkMs).toBeLessThan(30_000);
+      expect(streamed.firstVisibleProgressMs, '文学创作必须在两秒内出现用户可见进度，心跳不计入').toBeGreaterThanOrEqual(0);
+      expect(streamed.firstVisibleProgressMs).toBeLessThan(2_000);
       expect(streamed.chunkCount).toBeGreaterThan(1);
       expect(streamed.text).toMatch(/(?:delta|done|complete|marker)/i);
 
@@ -1336,6 +1363,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       };
       const first = await uploadAsset(solidPngDataUrl(35, 90, 190), 'blue-reference');
       const second = await uploadAsset(solidPngDataUrl(235, 190, 55), 'yellow-reference');
+      const third = await uploadAsset(solidPngDataUrl(210, 55, 75), 'red-reference');
 
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) });
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
@@ -1345,8 +1373,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-multi-run` },
         data: {
-          prompt: '参考 @img1 的蓝色与 @img2 的黄色，生成一个左右双色的极简包装盒，纯白背景，不要文字',
-          userMessageContent: '参考 @img1 和 @img2 生成一个蓝黄双色包装盒',
+          prompt: '参考 @img1 的蓝色、@img2 的黄色与 @img3 的红色，生成一个三色分区的极简包装盒，纯白背景，不要文字',
+          userMessageContent: '按顺序参考 @img1、@img2 和 @img3 生成一个蓝黄红三色包装盒',
           targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-multi-target`,
           platformId: 'logical-model',
           modelId: pool!.code,
@@ -1355,6 +1383,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           imageRefs: [
             { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
             { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
+            { refId: 3, assetSha256: third.asset.sha256, url: third.asset.url, label: '红色参考', role: 'reference' },
           ],
           x: 0,
           y: 0,
@@ -1367,12 +1396,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const completed = await waitForImageRun(page, token, runId);
       await assertImageArtifact(page, completed.detail);
       const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}?includeItems=true`, { headers: authHeaders(token) });
-      expect((await readEnvelope<ImageRunDetail>(afterRefresh)).run.status).toBe('Completed');
+      const restoredRun = (await readEnvelope<ImageRunDetail>(afterRefresh)).run;
+      expect(restoredRun.status).toBe('Completed');
+      expect(restoredRun.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
+        { refId: 1, label: '蓝色参考', role: 'target' },
+        { refId: 2, label: '黄色参考', role: 'style' },
+        { refId: 3, label: '红色参考', role: 'reference' },
+      ]);
 
       const messages = await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/messages`, { headers: authHeaders(token) });
       const messageText = JSON.stringify((await messages.json() as ApiEnvelope<unknown>).data);
       expect(messageText).toContain('@img1');
       expect(messageText).toContain('@img2');
+      expect(messageText).toContain('@img3');
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissVisualTutorial(page);

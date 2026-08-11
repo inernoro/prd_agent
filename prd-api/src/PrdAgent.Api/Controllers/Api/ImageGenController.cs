@@ -1877,6 +1877,14 @@ public class ImageGenController : ControllerBase
                 run.ModelGroupName,
                 run.Size,
                 run.ResponseFormat,
+                imageRefs = run.ImageRefs?.Select(imageRef => new
+                {
+                    imageRef.RefId,
+                    imageRef.AssetSha256,
+                    imageRef.Url,
+                    imageRef.Label,
+                    imageRef.Role
+                }),
                 run.MaxConcurrency,
                 run.Total,
                 run.Done,

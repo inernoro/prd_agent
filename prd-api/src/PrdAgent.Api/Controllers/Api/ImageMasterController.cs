@@ -2404,6 +2404,17 @@ public class ImageMasterController : ControllerBase
 
         try
         {
+            // 先给浏览器一个用户可见阶段事件，再进入模型解析。模型首 token 可能受排队、
+            // 冷启动影响；不能让用户在此期间只看到静止加载或仅收到不可见心跳。
+            var preparingData = JsonSerializer.Serialize(new
+            {
+                type = "progress",
+                stage = "preparing",
+                message = "正在准备文章配图标记"
+            }, JsonOptions);
+            await Response.WriteAsync($"data: {preparingData}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
             // 用户指定的模型作为 expectedModel 提示 Gateway 调度
             var userModelId = (request?.ModelId ?? string.Empty).Trim();
