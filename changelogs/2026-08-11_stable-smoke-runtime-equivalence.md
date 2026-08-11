@@ -124,6 +124,7 @@
 | fix | prd-api | 视频终态任务新增所有权受控清理，回收独占成片、导出记录及可选空项目 |
 | fix | stable-smoke | 按 CDS 与正式环境矩阵策略生成独立执行范围，阻止正式环境运行 CDS 专属破坏用例 |
 | test | stable-smoke | 拆分网关健康重置和多图异常输入用例，并增加禁止项组合用例回归守卫 |
+| fix | prd-admin | 米多星球 SSO 自动创建账号失败时保留稍后重试的恢复动作 |
 | fix | stable-smoke | 环境模板的合成账号和白名单名称与凭据注册表保持一致 |
 | test | prd-api/stable-smoke | 增加 ASR 候选顺序与单环境复测成功判定回归覆盖 |
 | fix | stable-smoke | grep 定向补跑只对账表达式选择的用例，避免其他计划项误记未执行 |
