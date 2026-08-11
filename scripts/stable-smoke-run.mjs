@@ -11,6 +11,7 @@ import {
   selectRequiredCaseIds,
   summarizeCoverage,
 } from './stable-smoke-results.mjs';
+import { renderVisualPlan } from './stable-smoke-visual-plan.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -24,6 +25,7 @@ const valueOptions = new Set([
   '--env-file',
   '--grep',
   '--visual-manifest',
+  '--production-visual-manifest',
   '--report-url',
 ]);
 const flagOptions = new Set(['--force-unlock', '--cds-only', '--production-only', '--dry-run', '--preflight', '--help']);
@@ -44,6 +46,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --env-file <路径>    指定本地凭据兼容文件
   --grep <表达式>      只运行匹配的 Playwright 用例
   --visual-manifest <路径> 指定本轮真人浏览器视觉取证 manifest；完整运行必填
+  --production-visual-manifest <路径> 指定 CDS 门禁通过后采集的正式环境视觉 manifest
   --report-url <地址>  使用已归档的 HTTPS 验收报告地址；缺省时自动归档到 CDS 验收中心
   --force-unlock       仅在确认原进程已结束或锁损坏时清理遗留互斥锁
   --help               显示本说明
@@ -578,13 +581,60 @@ export function buildAffectedNotificationTargets({ rows, plan, runId, verdict, v
 export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 'full' }) {
   const expectedEnvironments = [...environments].sort();
   const actualEnvironments = Array.isArray(plan?.environments) ? [...plan.environments].sort() : [];
+  const hasEnvironmentOrigins = scope === 'production-read-only' || expectedEnvironments.every((environment) => (
+    Boolean(plan?.environmentOrigins?.[environment])
+    && plan?.slots?.filter((slot) => slot.environment === environment)
+      .every((slot) => slot.pageOrigin === plan.environmentOrigins[environment])
+  ));
   return plan?.schemaVersion === '3.0'
     && String(plan.runId || '') === String(runId || '')
     && String(plan.commit || '') === String(commit || '')
     && String(plan.scope || 'full') === String(scope || 'full')
     && Number.isFinite(Date.parse(String(plan.captureStartedAt || '')))
     && (scope === 'production-read-only' ? plan.slots?.length === 0 : plan.slots?.length > 0)
+    && hasEnvironmentOrigins
     && JSON.stringify(actualEnvironments) === JSON.stringify(expectedEnvironments);
+}
+
+export function validateProductionVisualUnlock(record, { runId, commit }) {
+  const reasons = [];
+  if (record?.status !== 'unlocked') reasons.push('正式环境视觉门禁尚未解锁');
+  if (String(record?.runId || '') !== String(runId || '')) reasons.push('正式环境视觉解锁记录不属于本轮运行');
+  if (String(record?.commit || '') !== String(commit || '')) reasons.push('正式环境视觉解锁记录不属于本轮提交');
+  if (record?.cdsFunctionalGate !== 'pass') reasons.push('CDS 功能与清理门禁未通过');
+  if (record?.cdsVisualVerdict !== '通过') reasons.push('CDS 视觉门禁未通过');
+  if (!Number.isFinite(Date.parse(String(record?.unlockedAt || '')))) reasons.push('正式环境视觉解锁时间无效');
+  return { valid: reasons.length === 0, reasons };
+}
+
+export function mergeVisualPlans(cdsPlan, productionPlan) {
+  if (!cdsPlan || !productionPlan) throw new Error('合并视觉计划需要 CDS 与正式环境两个计划');
+  if (cdsPlan.runId !== productionPlan.runId || cdsPlan.commit !== productionPlan.commit) {
+    throw new Error('CDS 与正式环境视觉计划不属于同一轮运行和提交');
+  }
+  const slots = [...(cdsPlan.slots || []), ...(productionPlan.slots || [])];
+  const moduleIds = [...new Set([...(cdsPlan.modules || []), ...(productionPlan.modules || [])].map((item) => item.id))];
+  return {
+    schemaVersion: '3.0',
+    name: cdsPlan.name || productionPlan.name,
+    scope: 'full',
+    environments: ['cds', 'production'],
+    runId: cdsPlan.runId,
+    commit: cdsPlan.commit,
+    captureStartedAt: cdsPlan.captureStartedAt,
+    environmentOrigins: { ...(cdsPlan.environmentOrigins || {}), ...(productionPlan.environmentOrigins || {}) },
+    plannedScreenshotTarget: slots.length,
+    modules: moduleIds.map((id) => {
+      const rows = [...(cdsPlan.modules || []), ...(productionPlan.modules || [])].filter((item) => item.id === id);
+      return {
+        id,
+        name: rows[0]?.name || id,
+        breadcrumb: rows[0]?.breadcrumb || '',
+        planned: rows.reduce((sum, item) => sum + Number(item.planned || 0), 0),
+      };
+    }),
+    slots,
+  };
 }
 
 export function enforceExecutionVerdict(summary, executions) {
@@ -1209,7 +1259,9 @@ async function main() {
       ? 'production-read-only'
       : 'full';
     const requestedVisualManifest = options.read('--visual-manifest');
+    const requestedProductionVisualManifest = options.read('--production-visual-manifest');
     const productionReadOnlyVisual = visualScope === 'production-read-only';
+    const initialVisualEnvironments = selected.includes('cds') ? ['cds'] : selected;
 
     const visualPlanPath = resolve(runDir, 'visual-plan.json');
     const visualPlanMarkdownPath = resolve(runDir, 'visual-plan.md');
@@ -1217,7 +1269,7 @@ async function main() {
     const reuseVisualPlan = existsSync(visualPlanMarkdownPath) && canReuseVisualPlan(existingVisualPlan, {
       runId,
       commit: values.STABLE_SMOKE_COMMIT,
-      environments: selected,
+      environments: initialVisualEnvironments,
       scope: visualScope,
     });
     const visualCaptureStartedAt = new Date().toISOString();
@@ -1225,11 +1277,13 @@ async function main() {
       'scripts/stable-smoke-visual-plan.mjs',
       '--output-json', visualPlanPath,
       '--output-md', visualPlanMarkdownPath,
-      '--environments', selected.join(','),
+      '--environments', initialVisualEnvironments.join(','),
       '--run-id', runId,
       '--commit', values.STABLE_SMOKE_COMMIT,
       '--capture-started-at', visualCaptureStartedAt,
       '--scope', visualScope,
+      '--cds-origin', values.STABLE_SMOKE_CDS_BASE_URL || '',
+      '--production-origin', productionBaseUrl,
     ]);
     if (visualPlanResult.status !== 0) throw new Error('视觉取证计划生成失败，拒绝发布无逐项证据的报告');
 
@@ -1260,12 +1314,42 @@ async function main() {
     if (!productionReadOnlyVisual && !requestedVisualManifest) {
       throw new Error(
         `完整稳定冒烟缺少本轮视觉取证清单。请先使用 runId ${runId} 执行 --dry-run 生成视觉计划，`
-        + '再按 visual-plan.json 运行 /验收 浏览器取证，并通过 --visual-manifest 显式传入 manifest.json。',
+        + '再按 visual-plan.json 运行 /验收 浏览器取证，并通过 --visual-manifest 显式传入 CDS manifest.json。',
       );
     }
     if (requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))) {
       throw new Error(`指定的视觉取证清单不存在：${resolve(requestedVisualManifest)}`);
     }
+    if (requestedProductionVisualManifest && !existsSync(resolve(requestedProductionVisualManifest))) {
+      throw new Error(`指定的正式环境视觉取证清单不存在：${resolve(requestedProductionVisualManifest)}`);
+    }
+
+    const runVisualGate = ({ manifestPath, planPath: gatePlanPath, prefix, environments }) => {
+      const outputJson = resolve(runDir, `${prefix}.json`);
+      const outputMarkdown = resolve(runDir, `${prefix}.md`);
+      const outputTechnical = resolve(runDir, `${prefix}-technical.md`);
+      clearVisualGateOutputs([outputJson, outputMarkdown, outputTechnical]);
+      const execution = command('node', [
+        'scripts/stable-smoke-visual-gate.mjs',
+        '--manifest', manifestPath,
+        '--plan', gatePlanPath,
+        '--output-json', outputJson,
+        '--output-md', outputMarkdown,
+        '--output-technical-md', outputTechnical,
+        '--environments', environments.join(','),
+      ]);
+      const result = readJson(outputJson);
+      const exitCode = execution.status ?? 1;
+      if (!result || !visualGateExecutionMatchesResult(exitCode, result)) {
+        throw new Error('视觉证据门禁执行状态与本轮结论不一致，拒绝复用历史结果');
+      }
+      return { result, exitCode, outputJson, outputMarkdown, outputTechnical };
+    };
+
+    const productionVisualPlanPath = resolve(runDir, 'visual-plan-production.json');
+    const productionVisualPlanMarkdownPath = resolve(runDir, 'visual-plan-production.md');
+    const productionVisualUnlockPath = resolve(runDir, 'production-visual-unlock.json');
+    let cdsVisualGate = null;
 
     for (const environment of selected) {
       if (environment === 'production' && selected.includes('cds')) {
@@ -1279,6 +1363,86 @@ async function main() {
           Boolean(grep),
           plannedCaseIdsForEnvironment(plan, 'cds'),
         );
+        cdsVisualGate = runVisualGate({
+          manifestPath: resolve(requestedVisualManifest),
+          planPath: visualPlanPath,
+          prefix: 'cds-visual-gate',
+          environments: ['cds'],
+        });
+        if (cdsVisualGate.result.verdict !== '通过') {
+          productionSafetyGate = {
+            restricted: true,
+            mode: 'read-only',
+            grep: productionReadOnlyGrep,
+            reasons: [
+              ...productionSafetyGate.reasons,
+              'CDS 视觉门禁未通过，正式环境视觉计划不会生成',
+            ],
+          };
+        }
+
+        if (!productionSafetyGate.restricted && cdsVisualGate.result.verdict === '通过') {
+          const existingUnlock = readJson(productionVisualUnlockPath);
+          const existingProductionPlan = readJson(productionVisualPlanPath);
+          const reusableUnlock = validateProductionVisualUnlock(existingUnlock, {
+            runId,
+            commit: values.STABLE_SMOKE_COMMIT,
+          }).valid && canReuseVisualPlan(existingProductionPlan, {
+            runId,
+            commit: values.STABLE_SMOKE_COMMIT,
+            environments: ['production'],
+            scope: 'full',
+          });
+          if (!reusableUnlock) {
+            const unlockedAt = new Date().toISOString();
+            const productionVisualPlanResult = command('node', [
+              'scripts/stable-smoke-visual-plan.mjs',
+              '--output-json', productionVisualPlanPath,
+              '--output-md', productionVisualPlanMarkdownPath,
+              '--environments', 'production',
+              '--run-id', runId,
+              '--commit', values.STABLE_SMOKE_COMMIT,
+              '--capture-started-at', unlockedAt,
+              '--scope', 'full',
+              '--production-origin', productionBaseUrl,
+            ]);
+            if (productionVisualPlanResult.status !== 0) {
+              throw new Error('正式环境视觉取证计划生成失败');
+            }
+            writeFileSync(productionVisualUnlockPath, `${JSON.stringify({
+              status: 'unlocked',
+              runId,
+              commit: values.STABLE_SMOKE_COMMIT,
+              unlockedAt,
+              cdsFunctionalGate: 'pass',
+              cdsVisualVerdict: '通过',
+              productionVisualPlanPath,
+            }, null, 2)}\n`, 'utf8');
+          }
+
+          if (!requestedProductionVisualManifest) {
+            const stagedSummary = {
+              runId,
+              verdict: 'awaiting-production-visual',
+              commit: values.STABLE_SMOKE_COMMIT,
+              executions,
+              productionSafetyGate,
+              cdsVisual: { verdict: cdsVisualGate.result.verdict, manifestPath: resolve(requestedVisualManifest) },
+              productionVisualUnlock: readJson(productionVisualUnlockPath),
+              archive: { status: 'pending-production-visual', reportUrl: '' },
+              notification: { status: 'skipped', reason: '等待正式环境视觉取证，不属于测试失败' },
+            };
+            writeFileSync(resolve(runDir, 'summary.json'), `${JSON.stringify(stagedSummary, null, 2)}\n`, 'utf8');
+            process.stdout.write(`${JSON.stringify({
+              runId,
+              runDir,
+              verdict: stagedSummary.verdict,
+              productionVisualPlanPath,
+              next: '按正式环境视觉计划取证后，用同一 runId 增加 --production-visual-manifest 再次运行',
+            })}\n`);
+            return;
+          }
+        }
       }
       const errors = environment === 'production' && productionSafetyGate.restricted
         ? validateProductionReadOnlyConfig(values)
@@ -1326,31 +1490,50 @@ async function main() {
     const coverageSummary = summarizeCoverage(rows, plan?.verdict || 'conditional');
     const functionalSummary = enforceExecutionVerdict(coverageSummary, executions);
     const emptyVisualManifestPath = resolve(runDir, 'visual-manifest.json');
-    const visualManifestPath = requestedVisualManifest
+    let visualManifestPath = requestedVisualManifest
       ? resolve(requestedVisualManifest)
       : emptyVisualManifestPath;
     if (productionReadOnlyVisual && !existsSync(visualManifestPath)) {
       writeFileSync(visualManifestPath, '[]\n', 'utf8');
     }
-    const visualGatePath = resolve(runDir, 'visual-gate.json');
-    const visualGateMarkdownPath = resolve(runDir, 'visual-gate.md');
-    const visualTechnicalPath = resolve(runDir, 'visual-technical-appendix.md');
-    clearVisualGateOutputs([visualGatePath, visualGateMarkdownPath, visualTechnicalPath]);
-    const visualGateExecution = command('node', [
-      'scripts/stable-smoke-visual-gate.mjs',
-      '--manifest', visualManifestPath,
-      '--plan', visualPlanPath,
-      '--output-json', visualGatePath,
-      '--output-md', visualGateMarkdownPath,
-      '--output-technical-md', visualTechnicalPath,
-      '--environments', selected.join(','),
-    ]);
-    const visualResult = readJson(visualGatePath);
-    if (!visualResult) throw new Error('视觉证据门禁未产生可读取结论');
-    const visualGateExitCode = visualGateExecution.status ?? 1;
-    if (!visualGateExecutionMatchesResult(visualGateExitCode, visualResult)) {
-      throw new Error('视觉证据门禁执行状态与本轮结论不一致，拒绝复用历史结果');
+    let visualPlanForGatePath = visualPlanPath;
+    let visualPlanForReportPath = visualPlanMarkdownPath;
+    let visualGateEnvironments = initialVisualEnvironments;
+    if (selected.includes('cds') && selected.includes('production') && !productionSafetyGate.restricted) {
+      const unlock = readJson(productionVisualUnlockPath);
+      const unlockValidation = validateProductionVisualUnlock(unlock, {
+        runId,
+        commit: values.STABLE_SMOKE_COMMIT,
+      });
+      if (!unlockValidation.valid) {
+        throw new Error(`正式环境视觉取证未通过 CDS 前置门禁：${unlockValidation.reasons.join('；')}`);
+      }
+      const productionPlan = readJson(productionVisualPlanPath);
+      const combinedPlan = mergeVisualPlans(readJson(visualPlanPath), productionPlan);
+      visualPlanForGatePath = resolve(runDir, 'visual-plan-combined.json');
+      visualPlanForReportPath = resolve(runDir, 'visual-plan-combined.md');
+      writeFileSync(visualPlanForGatePath, `${JSON.stringify(combinedPlan, null, 2)}\n`, 'utf8');
+      writeFileSync(visualPlanForReportPath, `${renderVisualPlan(combinedPlan)}\n`, 'utf8');
+      const cdsManifest = readJson(resolve(requestedVisualManifest));
+      const productionManifest = readJson(resolve(requestedProductionVisualManifest));
+      if (!Array.isArray(cdsManifest) || !Array.isArray(productionManifest)) {
+        throw new Error('CDS 或正式环境视觉 manifest 不是有效数组');
+      }
+      visualManifestPath = resolve(runDir, 'visual-manifest-combined.json');
+      writeFileSync(visualManifestPath, `${JSON.stringify([...cdsManifest, ...productionManifest], null, 2)}\n`, 'utf8');
+      visualGateEnvironments = ['cds', 'production'];
     }
+    const finalVisualGate = runVisualGate({
+      manifestPath: visualManifestPath,
+      planPath: visualPlanForGatePath,
+      prefix: 'visual-gate',
+      environments: visualGateEnvironments,
+    });
+    const visualGatePath = finalVisualGate.outputJson;
+    const visualGateMarkdownPath = finalVisualGate.outputMarkdown;
+    const visualTechnicalPath = finalVisualGate.outputTechnical;
+    const visualResult = finalVisualGate.result;
+    const visualGateExitCode = finalVisualGate.exitCode;
     const summary = {
       ...functionalSummary,
       verdict: foldVisualGateVerdict(functionalSummary.verdict, visualResult),
@@ -1413,7 +1596,7 @@ async function main() {
       '--functional', functionalSupervisorPath,
       '--visual', visualGateMarkdownPath,
       '--visual-gate', visualGateMarkdownPath,
-      '--visual-plan', visualPlanMarkdownPath,
+      '--visual-plan', visualPlanForReportPath,
       '--technical-url', './technical-appendix.md',
       '--output', supervisorPath,
     ]);

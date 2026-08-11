@@ -14,4 +14,6 @@ test('visual harness persists the unique acceptance slot id in the manifest reco
   assert.match(source, /runId:\s*runId\s*\|\|\s*process\.env\.STABLE_SMOKE_RUN_ID\s*\|\|\s*undefined,/);
   assert.match(source, /commit:\s*commit\s*\|\|\s*process\.env\.STABLE_SMOKE_COMMIT\s*\|\|\s*undefined,/);
   assert.match(source, /capturedAt:\s*new Date\(\)\.toISOString\(\),/);
+  assert.match(source, /pageOrigin\s*=\s*new URL\(actualPageUrl\)\.origin/);
+  assert.match(source, /pageOrigin,/);
 });

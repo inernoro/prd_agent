@@ -108,6 +108,16 @@ test('矩阵解析保留双环境原始策略并按模块只取一条轮换用�
       return counts;
     }, new Map());
   assert.ok([...selectedRotationByModule.values()].every((count) => count === 1));
+  const plan = buildPlan({
+    catalog,
+    changedFiles: [],
+    activeRegressions: regressions,
+    matrixCases,
+    mode: 'scheduled',
+    commit: 'rotation-seed',
+  });
+  assert.equal(plan.matrixPolicies['VIS-004'].productionRotation, 'within-case');
+  assert.equal(plan.matrixPolicies['VIS-006'].productionRotation, 'case');
 });
 
 test('正式环境禁止项不得混入可被正式环境选中的组合用例', () => {

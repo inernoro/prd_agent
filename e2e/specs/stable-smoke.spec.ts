@@ -1626,11 +1626,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
       const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
       expect(pool, '没有可用的文生图逻辑模型').toBeTruthy();
-      const requested = [
+      const allRequested = [
         { size: '1024x1024', orientation: 'square', prompt: '方形产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
         { size: '1536x1024', orientation: 'landscape', prompt: '横版产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
         { size: '1024x1536', orientation: 'portrait', prompt: '竖版产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
       ] as const;
+      const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
+      const rotationSeed = requiredEnv('STABLE_SMOKE_COMMIT');
+      const rotationIndex = [...rotationSeed]
+        .reduce((sum, character) => sum + character.charCodeAt(0), 0) % allRequested.length;
+      const requested = production ? [allRequested[rotationIndex]] : allRequested;
       const create = await page.request.post('/api/visual-agent/image-gen/runs', {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-ratio-matrix` },
         data: {
@@ -1646,10 +1651,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       runId = (await readEnvelope<{ runId: string }>(create)).runId;
       const completed = await waitForImageRun(page, token, runId, 240_000);
       expect(completed.detail.run.status).toBe('Completed');
-      expect(completed.detail.run.total).toBe(3);
-      expect(completed.detail.run.done).toBe(3);
+      expect(completed.detail.run.total).toBe(requested.length);
+      expect(completed.detail.run.done).toBe(requested.length);
       expect(completed.detail.run.failed).toBe(0);
-      expect(completed.detail.items).toHaveLength(3);
+      expect(completed.detail.items).toHaveLength(requested.length);
       for (const [index, item] of completed.detail.items.entries()) {
         expect(item.requestedSize, `第 ${index + 1} 张必须保留请求尺寸`).toBe(requested[index].size);
         const dimensions = await decodeGeneratedImageDimensions(page, item);

@@ -76,10 +76,38 @@ export function reconcileCaseCoverage(
   environmentRows,
   environments = ['cds', 'production'],
 ) {
-  const rowsByKey = new Map(environmentRows.map((row) => [
-    `${row.environment}:${String(row.caseId).toUpperCase()}`,
-    row,
-  ]));
+  const rowsByKey = new Map();
+  const statusSeverity = new Map([['pass', 0], ['not-run', 1], ['fail', 2]]);
+  for (const row of environmentRows) {
+    const key = `${row.environment}:${String(row.caseId).toUpperCase()}`;
+    const existing = rowsByKey.get(key);
+    if (!existing) {
+      rowsByKey.set(key, { ...row });
+      continue;
+    }
+    const strictest = (statusSeverity.get(row.status) ?? -1) > (statusSeverity.get(existing.status) ?? -1)
+      ? row
+      : existing;
+    const messages = [...new Set([
+      existing.error,
+      row.error,
+      ...(existing.attemptErrors || []),
+      ...(row.attemptErrors || []),
+    ].filter(Boolean))];
+    rowsByKey.set(key, {
+      ...strictest,
+      title: [...new Set([existing.title, row.title].filter(Boolean))].join(' / '),
+      tags: [...new Set([...(existing.tags || []), ...(row.tags || [])])],
+      durationMs: (existing.durationMs || 0) + (row.durationMs || 0),
+      error: messages.join('；'),
+      retryCount: (existing.retryCount || 0) + (row.retryCount || 0),
+      hadFailedAttempt: existing.hadFailedAttempt === true
+        || row.hadFailedAttempt === true
+        || existing.status === 'fail'
+        || row.status === 'fail',
+      attemptErrors: messages,
+    });
+  }
   const reconciled = [];
 
   for (const environment of environments) {

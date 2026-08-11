@@ -616,6 +616,13 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }).catch(() => null);
+  const actualPageUrl = page.url();
+  let pageOrigin;
+  try {
+    pageOrigin = new URL(actualPageUrl).origin;
+  } catch {
+    pageOrigin = undefined;
+  }
   const rec = {
     name,
     caption,
@@ -623,6 +630,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     runId: runId || process.env.STABLE_SMOKE_RUN_ID || undefined,
     commit: commit || process.env.STABLE_SMOKE_COMMIT || undefined,
     capturedAt: new Date().toISOString(),
+    pageOrigin,
     annotated,
     overview,
     viewport,

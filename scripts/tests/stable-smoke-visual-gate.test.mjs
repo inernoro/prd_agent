@@ -228,6 +228,40 @@ test('视觉证据必须绑定本轮运行、提交和取证时间', () => {
   assert.match(stale.modules[0].fieldErrors.join('；'), /runId|commit|capturedAt/);
 });
 
+test('环境标签不能替代浏览器实际页面 origin', () => {
+  const plan = buildVisualPlan(catalog, ['production'], {
+    runId: 'stsmk-origin',
+    commit: 'a'.repeat(40),
+    captureStartedAt: '2026-08-11T14:00:00.000Z',
+    environmentOrigins: { production: 'https://map.ebcone.net' },
+  });
+  const rows = [
+    evidence({
+      name: '正式入口',
+      environment: 'production',
+      pageOrigin: 'https://cds-preview.example.test',
+      slotId: 'PRODUCTION-VISUAL-VISUAL-01',
+      breadcrumb: '正式环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 入口',
+    }),
+    evidence({
+      name: '正式结果',
+      sha256: 'production-origin-result',
+      environment: 'production',
+      pageOrigin: 'https://cds-preview.example.test',
+      slotId: 'PRODUCTION-VISUAL-VISUAL-02',
+      primaryState: '结果',
+      coverageStates: ['结果'],
+      testType: '视觉',
+      theme: 'dark',
+      breadcrumb: '正式环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 结果',
+    }),
+  ];
+
+  const result = validateVisualEvidence(catalog, rows, ['production'], plan, new Date('2026-08-11T14:05:00.000Z'));
+  assert.equal(result.verdict, '不通过');
+  assert.match(result.modules[0].fieldErrors.join('；'), /实际页面 origin 与验收环境不一致/);
+});
+
 test('缺少自动检查或人工视觉结论时不得通过视觉门禁', () => {
   const result = validateVisualEvidence(catalog, [
     evidence({ name: '入口图', sha256: 'missing-manual', manualStatus: '' }),

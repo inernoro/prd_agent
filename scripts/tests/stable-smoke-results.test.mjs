@@ -107,6 +107,26 @@ test('双环境不同必跑集合不会被重新做笛卡尔积', () => {
   assert.ok(rows.every((row) => row.status === 'pass'));
 });
 
+test('同一 caseId 多条证据保留最严格结果和全部失败诊断', () => {
+  const rows = reconcileCaseCoverage(['CORE-005'], [
+    {
+      caseId: 'CORE-005', environment: 'cds', title: '首页告警', status: 'fail',
+      durationMs: 10, error: '首页显示内部错误', retryCount: 0,
+    },
+    {
+      caseId: 'CORE-005', environment: 'cds', title: '无效生图', status: 'pass',
+      durationMs: 20, error: '', retryCount: 0,
+    },
+  ], ['cds']);
+
+  assert.equal(rows[0].status, 'fail');
+  assert.match(rows[0].title, /首页告警/);
+  assert.match(rows[0].title, /无效生图/);
+  assert.match(rows[0].error, /首页显示内部错误/);
+  assert.deepEqual(rows[0].attemptErrors, ['首页显示内部错误']);
+  assert.equal(rows[0].durationMs, 30);
+});
+
 test('单环境复测只对账运行器实际选择的环境', () => {
   const cdsRows = reconcileCaseCoverage(['CORE-001'], [{
     caseId: 'CORE-001', environment: 'cds', title: 'ok', status: 'pass', durationMs: 1, error: '', retryCount: 0,

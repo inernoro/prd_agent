@@ -22,6 +22,7 @@ import {
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
   initializeProductionSafetyGate,
+  mergeVisualPlans,
   extractArchivedReportUrl,
   foldVisualGateVerdict,
   isValidationOnlyPath,
@@ -39,6 +40,7 @@ import {
   selectCoverageCaseIdsByEnvironment,
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
+  validateProductionVisualUnlock,
   validateProductionReadOnlyConfig,
   validateSelectedEnvironmentConfig,
   visualGateExecutionMatchesResult,
@@ -191,8 +193,12 @@ test('同一运行和提交可以复用既有视觉计划继续补证', () => {
     commit: 'a'.repeat(40),
     captureStartedAt: '2026-08-11T14:00:00.000Z',
     environments: ['cds', 'production'],
+    environmentOrigins: { cds: 'https://cds.example.test', production: 'https://map.ebcone.net' },
     scope: 'full',
-    slots: [{ slotId: 'CDS-VISUAL-IDENTITY-01' }],
+    slots: [
+      { slotId: 'CDS-VISUAL-IDENTITY-01', environment: 'cds', pageOrigin: 'https://cds.example.test' },
+      { slotId: 'PRODUCTION-VISUAL-IDENTITY-01', environment: 'production', pageOrigin: 'https://map.ebcone.net' },
+    ],
   };
   const identity = { runId: 'stsmk-current', commit: 'a'.repeat(40), environments: ['cds', 'production'], scope: 'full' };
   assert.equal(canReuseVisualPlan(plan, identity), true);
@@ -200,6 +206,7 @@ test('同一运行和提交可以复用既有视觉计划继续补证', () => {
   assert.equal(canReuseVisualPlan({ ...plan, commit: 'b'.repeat(40) }, identity), false);
   assert.equal(canReuseVisualPlan({ ...plan, environments: ['cds'] }, identity), false);
   assert.equal(canReuseVisualPlan({ ...plan, scope: 'production-read-only', slots: [] }, identity), false);
+  assert.equal(canReuseVisualPlan({ ...plan, environmentOrigins: {} }, identity), false);
   assert.equal(canReuseVisualPlan({
     ...plan,
     environments: ['production'],
@@ -210,6 +217,55 @@ test('同一运行和提交可以复用既有视觉计划继续补证', () => {
     environments: ['production'],
     scope: 'production-read-only',
   }), true);
+});
+
+test('正式环境视觉解锁同时绑定 CDS 功能门禁、视觉门禁、运行和提交', () => {
+  const unlock = {
+    status: 'unlocked',
+    runId: 'stsmk-current',
+    commit: 'a'.repeat(40),
+    unlockedAt: '2026-08-12T01:00:00.000Z',
+    cdsFunctionalGate: 'pass',
+    cdsVisualVerdict: '通过',
+  };
+  assert.deepEqual(validateProductionVisualUnlock(unlock, {
+    runId: 'stsmk-current',
+    commit: 'a'.repeat(40),
+  }), { valid: true, reasons: [] });
+  assert.equal(validateProductionVisualUnlock({ ...unlock, cdsVisualVerdict: '不通过' }, {
+    runId: 'stsmk-current',
+    commit: 'a'.repeat(40),
+  }).valid, false);
+  assert.equal(validateProductionVisualUnlock({ ...unlock, commit: 'b'.repeat(40) }, {
+    runId: 'stsmk-current',
+    commit: 'a'.repeat(40),
+  }).valid, false);
+});
+
+test('双环境视觉计划合并时保留各环境独立取证起点和 origin', () => {
+  const cdsPlan = {
+    runId: 'stsmk-current', commit: 'a'.repeat(40), captureStartedAt: '2026-08-12T01:00:00.000Z',
+    environmentOrigins: { cds: 'https://cds.example.test' },
+    modules: [{ id: 'visual', name: '视觉创作', breadcrumb: '首页 → 视觉创作', planned: 1 }],
+    slots: [{ slotId: 'CDS-VISUAL-01', captureStartedAt: '2026-08-12T01:00:00.000Z' }],
+  };
+  const productionPlan = {
+    runId: 'stsmk-current', commit: 'a'.repeat(40), captureStartedAt: '2026-08-12T02:00:00.000Z',
+    environmentOrigins: { production: 'https://map.ebcone.net' },
+    modules: [{ id: 'visual', name: '视觉创作', breadcrumb: '首页 → 视觉创作', planned: 1 }],
+    slots: [{ slotId: 'PRODUCTION-VISUAL-01', captureStartedAt: '2026-08-12T02:00:00.000Z' }],
+  };
+  const merged = mergeVisualPlans(cdsPlan, productionPlan);
+  assert.equal(merged.plannedScreenshotTarget, 2);
+  assert.equal(merged.modules[0].planned, 2);
+  assert.deepEqual(merged.environmentOrigins, {
+    cds: 'https://cds.example.test',
+    production: 'https://map.ebcone.net',
+  });
+  assert.deepEqual(merged.slots.map((slot) => slot.captureStartedAt), [
+    '2026-08-12T01:00:00.000Z',
+    '2026-08-12T02:00:00.000Z',
+  ]);
 });
 
 test('执行结果使用审核人可读状态且不被进程退出码覆盖', () => {
@@ -477,7 +533,7 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /'--run-id', runId/);
   assert.match(source, /'--commit', values\.STABLE_SMOKE_COMMIT/);
   assert.match(source, /'--capture-started-at', visualCaptureStartedAt/);
-  assert.match(source, /'--plan', visualPlanPath/);
+  assert.match(source, /'--plan', gatePlanPath/);
   assert.match(source, /buildReportVerificationArgs/);
   assert.match(verifyOpenSource, /requiredTexts\.every/);
   assert.match(source, /scripts\/compose-stable-smoke-supervisor-report\.mjs/);
@@ -488,11 +544,16 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.doesNotMatch(source, /if \(!existsSync\(visualManifestPath\)\) writeFileSync\(visualManifestPath, '\[\]\\n'/);
   assert.match(automationPrompt, /--dry-run --run-id <runId>/);
   assert.match(automationPrompt, /\/验收/);
-  assert.match(automationPrompt, /--visual-manifest <manifest\.json绝对路径>/);
+  assert.match(automationPrompt, /--visual-manifest <CDS manifest\.json绝对路径>/);
+  assert.match(automationPrompt, /--production-visual-manifest <正式环境 manifest\.json绝对路径>/);
+  assert.match(source, /visual-plan-production\.json/);
+  assert.match(source, /production-visual-unlock\.json/);
   assert.match(source, /requiredCaseIdsByEnvironment/);
   assert.match(source, /buildEnvironmentGrep/);
   assert.match(automationPrompt, /人工 `--grep` 只能取本环境允许集合的交集/);
-  assert.equal((source.match(/'--environments', selected\.join\(','\)/g) || []).length, 3);
+  assert.match(source, /initialVisualEnvironments = selected\.includes\('cds'\) \? \['cds'\] : selected/);
+  assert.ok(source.indexOf('evaluateProductionSafetyGate(') < source.indexOf("'visual-plan-production.json'"));
+  assert.ok(source.indexOf('cdsVisualGate.result.verdict') < source.indexOf('const productionVisualPlanResult'));
   assert.match(source, /summaryDocument\.notification\.status === 'delivery-failed'/);
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
 });

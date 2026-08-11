@@ -55,6 +55,11 @@ function rotationOnlyPolicy(policy) {
   return /^轮换$/.test(String(policy || '').trim());
 }
 
+function withinCaseRotationPolicy(policy) {
+  const normalized = String(policy || '').trim();
+  return /轮换/.test(normalized) && !rotationOnlyPolicy(normalized);
+}
+
 function deterministicRotationIndex(seed, count) {
   if (count <= 1) return 0;
   let hash = 0;
@@ -188,6 +193,11 @@ export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCase
     matrixPolicies: Object.fromEntries(normalizedMatrixCases.map((item) => [item.caseId, {
       cds: item.cdsPolicy,
       production: item.productionPolicy,
+      productionRotation: rotationOnlyPolicy(item.productionPolicy)
+        ? 'case'
+        : withinCaseRotationPolicy(item.productionPolicy)
+          ? 'within-case'
+          : 'none',
     }])),
     featureLines: selected,
   };

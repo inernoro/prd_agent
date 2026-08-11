@@ -34,12 +34,25 @@ function environmentLabel(environment) {
   return environment === 'cds' ? 'CDS 环境' : '正式环境';
 }
 
+function normalizeOrigin(value) {
+  if (!value) return '';
+  try {
+    return new URL(String(value)).origin;
+  } catch {
+    throw new Error(`视觉取证环境地址无效：${value}`);
+  }
+}
+
 export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity = {}) {
   const environments = normalizeVisualEnvironments(requestedEnvironments);
   const scope = String(runIdentity.scope || 'full').trim() || 'full';
   const runId = String(runIdentity.runId || '').trim();
   const commit = String(runIdentity.commit || '').trim();
   const captureStartedAt = String(runIdentity.captureStartedAt || '').trim();
+  const environmentOrigins = Object.fromEntries(environments.map((environment) => [
+    environment,
+    normalizeOrigin(runIdentity.environmentOrigins?.[environment]),
+  ]).filter(([, origin]) => origin));
   const hasRunIdentity = Boolean(runId && commit && captureStartedAt);
   if (scope === 'production-read-only') {
     return {
@@ -51,6 +64,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
       runId: runId || undefined,
       commit: commit || undefined,
       captureStartedAt: captureStartedAt || undefined,
+      environmentOrigins,
       plannedScreenshotTarget: 0,
       modules: [],
       slots: [],
@@ -83,6 +97,8 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           expectedProof: `页面处于“${state}”状态，关键内容和操作完整可见`,
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
+          pageOrigin: environmentOrigins[environment] || undefined,
+          captureStartedAt: captureStartedAt || undefined,
         });
       }
       for (const extra of module.additionalEvidenceSlots || []) {
@@ -101,6 +117,8 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           expectedProof: extra.expectedProof,
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
+          pageOrigin: environmentOrigins[environment] || undefined,
+          captureStartedAt: captureStartedAt || undefined,
         });
       }
       const moduleSlots = slots.filter((slot) => slot.moduleId === module.id && slot.environment === (environment || undefined));
@@ -123,6 +141,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
     runId: runId || undefined,
     commit: commit || undefined,
     captureStartedAt: captureStartedAt || undefined,
+    environmentOrigins,
     plannedScreenshotTarget: slots.length,
     modules: (catalog.modules || []).map((module) => ({
       id: module.id,
@@ -203,6 +222,10 @@ async function main() {
     commit: readArg(argv, '--commit'),
     captureStartedAt: readArg(argv, '--capture-started-at'),
     scope: readArg(argv, '--scope', 'full'),
+    environmentOrigins: {
+      cds: readArg(argv, '--cds-origin'),
+      production: readArg(argv, '--production-origin'),
+    },
   });
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');

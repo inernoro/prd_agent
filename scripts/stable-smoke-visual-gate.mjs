@@ -194,7 +194,6 @@ export function validateVisualEvidence(
   const expectedRunId = String(plan.runId || '').trim();
   const expectedCommit = String(plan.commit || '').trim();
   const captureStartedAt = String(plan.captureStartedAt || '').trim();
-  const captureStartedAtMs = Date.parse(captureStartedAt);
   const validationNowMs = validationNow instanceof Date ? validationNow.getTime() : Date.parse(validationNow);
 
   for (const row of rows) {
@@ -243,6 +242,10 @@ export function validateVisualEvidence(
       const capturedAt = String(item.capturedAt || '').trim();
       const capturedAtMs = Date.parse(capturedAt);
       const plannedSlot = plannedSlotById.get(evidenceSlotId);
+      const expectedCaptureStartedAt = String(plannedSlot?.captureStartedAt || captureStartedAt).trim();
+      const expectedCaptureStartedAtMs = Date.parse(expectedCaptureStartedAt);
+      const evidencePageOrigin = String(item.pageOrigin || '').trim();
+      const expectedPageOrigin = String(plannedSlot?.pageOrigin || '').trim();
       if (expectedRunId && evidenceRunId && evidenceRunId !== expectedRunId) {
         const message = `${item.name || '未命名截图'} 的 runId 不属于本轮视觉计划`;
         fieldErrors.push(message);
@@ -257,7 +260,7 @@ export function validateVisualEvidence(
         const message = `${item.name || '未命名截图'} 的 capturedAt 不是有效时间`;
         fieldErrors.push(message);
         itemErrors.push(message);
-      } else if (capturedAt && Number.isFinite(captureStartedAtMs) && capturedAtMs < captureStartedAtMs) {
+      } else if (capturedAt && Number.isFinite(expectedCaptureStartedAtMs) && capturedAtMs < expectedCaptureStartedAtMs) {
         const message = `${item.name || '未命名截图'} 的 capturedAt 早于本轮取证开始时间`;
         fieldErrors.push(message);
         itemErrors.push(message);
@@ -268,6 +271,15 @@ export function validateVisualEvidence(
       }
       if (environments.length > 0 && evidenceEnvironment && !environments.includes(evidenceEnvironment)) {
         const message = `${item.name || '未命名截图'} 的 environment 不在本轮验收环境中`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      }
+      if (expectedPageOrigin && !evidencePageOrigin) {
+        const message = `${item.name || '未命名截图'} 缺少由浏览器实际页面记录的 pageOrigin`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      } else if (expectedPageOrigin && evidencePageOrigin !== expectedPageOrigin) {
+        const message = `${item.name || '未命名截图'} 的实际页面 origin 与验收环境不一致`;
         fieldErrors.push(message);
         itemErrors.push(message);
       }
@@ -363,6 +375,7 @@ export function validateVisualEvidence(
         runId: evidenceRunId,
         commit: evidenceCommit,
         capturedAt,
+        pageOrigin: evidencePageOrigin,
         environment: evidenceEnvironment,
         caption: item.caption || '未说明证明内容',
         coverageStates: states,
