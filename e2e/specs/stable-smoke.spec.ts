@@ -657,9 +657,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-002][CORE-003] 合成会话刷新恢复且匿名请求被隔离', async ({ page, request }) => {
-    const token = await loginAndReadToken(page, request, '/');
-    const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(token) });
+  test('[CORE-002][CORE-003] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
+    const adminToken = await loginAndReadToken(page, request, '/');
+    const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(adminToken) });
     expect(allowed.ok()).toBe(true);
 
     const anonymous = await request.get('/api/authz/me');
@@ -670,6 +670,113 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await expect(page.locator('body')).not.toContainText('请重新登录');
     const afterReload = await readStableAuthSnapshot(page);
     expect(afterReload).toBe(beforeReload);
+
+    const username = `stsmk_noauth_${Date.now().toString(36)}`;
+    const password = `StsmkOnly_${Date.now()}_A9`;
+    let restrictedUserId = '';
+    try {
+      const created = await readEnvelope<{
+        userId: string;
+        username: string;
+      }>(await page.request.post('/api/users', {
+        headers: {
+          ...authHeaders(adminToken),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-restricted-user`,
+        },
+        data: {
+          username,
+          password,
+          displayName: '稳定冒烟受限用户',
+          role: 'DEV',
+        },
+      }));
+      restrictedUserId = created.userId;
+      expect(created.username).toBe(username);
+
+      const authz = await readEnvelope<{
+        effectivePermissions: string[];
+      }>(await page.request.put(`/api/authz/users/${restrictedUserId}/authz`, {
+        headers: authHeaders(adminToken),
+        data: {
+          systemRoleKey: 'none',
+          permAllow: [],
+          permDeny: ['users.read', 'users.write'],
+        },
+      }));
+      expect(authz.effectivePermissions).not.toContain('users.read');
+
+      const login = await readEnvelope<{
+        accessToken: string;
+        refreshToken: string;
+        sessionKey: string;
+        user: {
+          userId: string;
+          username: string;
+          displayName: string;
+          role: string;
+        };
+      }>(await request.post('/api/v1/auth/login', {
+        data: { username, password, clientType: 'desktop' },
+      }));
+      const restrictedToken = login.accessToken;
+      const restrictedMe = await readEnvelope<{
+        effectivePermissions: string[];
+        isRoot: boolean;
+        permissionFingerprint: string;
+        cdnBaseUrl?: string;
+      }>(await request.get('/api/authz/me', { headers: authHeaders(restrictedToken) }));
+      expect(restrictedMe.isRoot).toBe(false);
+      expect(restrictedMe.effectivePermissions).not.toContain('users.read');
+      const restrictedMenu = await readEnvelope<{
+        items: Array<{ path: string }>;
+      }>(await request.get('/api/authz/menu-catalog', { headers: authHeaders(restrictedToken) }));
+      expect(restrictedMenu.items.map((item) => item.path)).not.toContain('/users');
+
+      await page.evaluate(({ loginState, me }) => {
+        window.localStorage.setItem('prd-admin-auth', JSON.stringify({
+          state: {
+            isAuthenticated: true,
+            user: loginState.user,
+            token: loginState.accessToken,
+            refreshToken: loginState.refreshToken,
+            sessionKey: loginState.sessionKey,
+            permissions: me.effectivePermissions,
+            permissionsLoaded: true,
+            isRoot: false,
+            menuCatalog: [],
+            menuCatalogLoaded: false,
+            cdnBaseUrl: me.cdnBaseUrl || '',
+            permFingerprint: me.permissionFingerprint || '',
+          },
+          version: 0,
+        }));
+      }, { loginState: login, me: restrictedMe });
+      await page.goto('/', { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('a[href="/users"]')).toHaveCount(0);
+
+      const directApi = await request.get('/api/users', { headers: authHeaders(restrictedToken) });
+      expect(directApi.status()).toBe(403);
+      await page.goto('/users', { waitUntil: 'domcontentloaded' });
+      await expect(page.getByText('无权限访问', { exact: true })).toBeVisible();
+      await expect(page.getByText('缺少权限：users.read', { exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: '用户管理' })).toHaveCount(0);
+    } finally {
+      if (restrictedUserId) {
+        const expired = await page.request.post(`/api/users/${restrictedUserId}/force-expire`, {
+          headers: authHeaders(adminToken),
+          data: { targets: ['admin', 'desktop'] },
+        });
+        expect(expired.ok(), '受限用户会话回收失败').toBe(true);
+        const deleted = await page.request.post('/api/users/bulk-delete', {
+          headers: authHeaders(adminToken),
+          data: { userIds: [restrictedUserId] },
+        });
+        expect((await readEnvelope<{ deletedCount: number }>(deleted)).deletedCount).toBe(1);
+        expect((await page.request.get(`/api/users/${restrictedUserId}`, {
+          headers: authHeaders(adminToken),
+        })).status()).toBe(404);
+      }
+    }
   });
 
   test('[COMMON-001] 专用前缀资源可创建、回读并清理', { tag: '@cleanup' }, async ({ page, request }) => {
@@ -1276,59 +1383,107 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-003][REC-007][REC-012] 音频上传、真实转写、回读与清理', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[REC-003][REC-007][REC-012] 页面选择音频、显示阶段、真实转写、回读与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
-    const token = await loginAndReadToken(page, request, '/transcript-agent');
+    const token = await loginAndReadToken(page, request, '/document-store');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-audio`;
-    let workspaceId = '';
-    let itemId = '';
+    let storeId = '';
+    let entryId = '';
     let runId = '';
     try {
-      const created = await page.request.post('/api/transcript-agent/workspaces', {
+      const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
-        data: { title },
-      });
-      expect(created.ok()).toBe(true);
-      workspaceId = ((await created.json()) as { id: string }).id;
+        data: { name: title, description: '稳定冒烟真实录音转录，执行后自动清理', isPublic: false },
+      }));
+      storeId = store.id;
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByText(title, { exact: true })).toBeVisible({ timeout: 30_000 });
 
-      const uploaded = await page.request.post(`/api/transcript-agent/workspaces/${workspaceId}/items/upload`, {
-        headers: authHeaders(token),
-        multipart: {
-          file: {
-            name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-speech.m4a`,
-            mimeType: 'audio/mp4',
-            buffer: speechFixture,
-          },
-        },
+      const uploadPath = `/api/document-store/stores/${storeId}/upload`;
+      let releaseUpload: (() => void) | undefined;
+      let markUploadIntercepted: (() => void) | undefined;
+      const uploadIntercepted = new Promise<void>((resolve) => { markUploadIntercepted = resolve; });
+      await page.route(`**${uploadPath}`, async (route) => {
+        await new Promise<void>((resolve) => {
+          releaseUpload = resolve;
+          markUploadIntercepted?.();
+        });
+        await route.continue();
       });
-      expect(uploaded.ok(), await uploaded.text()).toBe(true);
-      const uploadBody = await uploaded.json() as { item: { id: string; fileName: string }; runId: string };
-      itemId = uploadBody.item.id;
-      runId = uploadBody.runId;
-      expect(uploadBody.item.fileName).toContain('speech.m4a');
-
-      const completed = await waitForTranscriptRun(page, token, runId);
-      expect(completed.statuses.length).toBeGreaterThanOrEqual(2);
-      expect(completed.run.progress).toBeGreaterThanOrEqual(90);
-
-      const items = await page.request.get(`/api/transcript-agent/workspaces/${workspaceId}/items`, {
-        headers: authHeaders(token),
+      const uploadResponsePromise = page.waitForResponse((response) => (
+        response.url().includes(uploadPath) && response.request().method() === 'POST'
+      ));
+      const transcribeResponsePromise = page.waitForResponse((response) => (
+        /\/api\/document-store\/entries\/[^/]+\/transcribe(?:\?|$)/.test(response.url())
+        && response.request().method() === 'POST'
+      ));
+      const fileName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-speech.m4a`;
+      const setFile = page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+        name: fileName,
+        mimeType: 'audio/mp4',
+        buffer: speechFixture,
       });
-      const item = ((await items.json()) as Array<{
-        id: string;
-        transcribeStatus: string;
-        segments?: Array<{ text: string }>;
-      }>).find((candidate) => candidate.id === itemId);
-      expect(item?.transcribeStatus).toBe('completed');
-      expect((item?.segments || []).map((segment) => segment.text).join(' ').trim().length).toBeGreaterThan(10);
+      await uploadIntercepted;
+      await expect(page.getByText(fileName, { exact: true })).toBeVisible();
+      const uploadStep = page.getByTestId('transcribe-step-upload');
+      await expect(uploadStep).toHaveAttribute('data-state', 'active');
+      await expect(page.getByText('正在上传录音', { exact: true })).toBeVisible();
+      await expect(page.getByText(/^\d+%$/).first()).toBeVisible();
+      await testInfo.attach('recording-upload-stage', { body: await page.screenshot(), contentType: 'image/png' });
+
+      releaseUpload?.();
+      await setFile;
+      const uploadResponse = await uploadResponsePromise;
+      const uploadBody = await uploadResponse.json() as ApiEnvelope<{
+        entry: { id: string; title: string };
+      }>;
+      expect(uploadResponse.ok(), uploadBody.error?.message || '录音上传失败').toBe(true);
+      expect(uploadBody.success, uploadBody.error?.message || '录音上传失败').toBe(true);
+      const uploaded = uploadBody.data;
+      entryId = uploaded.entry.id;
+      expect(uploaded.entry.title).toContain('speech');
+      await page.unroute(`**${uploadPath}`);
+
+      const transcribeResponse = await transcribeResponsePromise;
+      const transcribeBody = await transcribeResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(transcribeResponse.ok(), transcribeBody.error?.message || '启动录音转录失败').toBe(true);
+      expect(transcribeBody.success, transcribeBody.error?.message || '启动录音转录失败').toBe(true);
+      runId = transcribeBody.data.runId;
+      const transcribeStep = page.getByTestId('transcribe-step-transcribe');
+      await expect(transcribeStep).toHaveAttribute('data-state', 'active', { timeout: 30_000 });
+      await testInfo.attach('recording-transcribe-stage', { body: await page.screenshot(), contentType: 'image/png' });
+
+      await expect(page.getByText(/录音和原文已保存|查看转录笔记/).first()).toBeVisible({ timeout: 180_000 });
+      await expect(uploadStep).toHaveAttribute('data-state', 'done');
+      await expect(transcribeStep).toHaveAttribute('data-state', 'done');
+      await expect(page.getByTestId('transcribe-step-save')).toHaveAttribute('data-state', 'done');
+      await testInfo.attach('recording-saved-stage', { body: await page.screenshot(), contentType: 'image/png' });
+
+      const run = await readEnvelope<{
+        status: string;
+        transcriptText?: string;
+        outputEntryId?: string;
+      }>(await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) }));
+      expect(run.status).toBe('done');
+      expect((run.transcriptText || '').trim().length).toBeGreaterThan(10);
+      expect(run.outputEntryId).toBe(entryId);
+      const persisted = await readEnvelope<Array<{ id: string }>>(
+        await page.request.get(`/api/document-store/stores/${storeId}/entries`, { headers: authHeaders(token) }),
+      );
+      expect(persisted.map((item) => item.id)).toContain(entryId);
     } finally {
-      if (itemId) await page.request.delete(`/api/transcript-agent/items/${itemId}`, { headers: authHeaders(token) });
-      if (workspaceId) {
-        const deleted = await page.request.delete(`/api/transcript-agent/workspaces/${workspaceId}`, {
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
           headers: authHeaders(token),
         });
-        expect(deleted.status()).toBe(204);
-        expect((await page.request.get(`/api/transcript-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        if (entryId) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+        if (runId) {
+          expect((await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
       }
     }
   });

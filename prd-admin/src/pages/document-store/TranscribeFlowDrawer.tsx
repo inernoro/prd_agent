@@ -441,7 +441,12 @@ export function TranscribeFlowDrawer({
         className={`space-y-2.5 ${running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : ''}`}
         style={running ? { background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' } : undefined}>
         {steps.map((s) => (
-          <div key={s.key} className="flex items-center gap-2.5">
+          <div
+            key={s.key}
+            data-testid={`transcribe-step-${s.key}`}
+            data-state={s.state}
+            aria-current={s.state === 'active' ? 'step' : undefined}
+            className="flex items-center gap-2.5">
             <StepIcon state={s.state} />
             <div className="min-w-0">
               <span
