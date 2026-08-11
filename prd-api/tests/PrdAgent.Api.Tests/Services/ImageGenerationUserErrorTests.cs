@@ -1,5 +1,6 @@
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -39,5 +40,22 @@ public class ImageGenerationUserErrorTests
         Assert.Equal(ErrorCodes.IMAGE_GEN_UNAVAILABLE, result.Code);
         Assert.Contains("没有返回可用图片", result.Message);
         Assert.Contains("请重试", result.Message);
+    }
+
+    [Fact]
+    public void FromGateway_ShouldPreserveQuotaCodeAndAdministratorRecoveryAction()
+    {
+        var result = ImageGenerationUserError.FromGateway(new GatewayRawResponse
+        {
+            Success = false,
+            StatusCode = 429,
+            ErrorCode = GatewayQuotaAlertPolicy.QuotaErrorCode,
+            ErrorMessage = "Key limit exceeded"
+        });
+
+        Assert.Equal(GatewayQuotaAlertPolicy.QuotaErrorCode, result.Code);
+        Assert.Equal(GatewayQuotaAlertPolicy.UserReadableQuotaMessage, result.Message);
+        Assert.Contains("管理员需要检查服务额度或切换可用配置", result.Message);
+        Assert.DoesNotContain("Key limit", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

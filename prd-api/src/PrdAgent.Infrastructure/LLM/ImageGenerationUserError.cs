@@ -12,7 +12,19 @@ internal static class ImageGenerationUserError
     internal readonly record struct Result(string Code, string Message);
 
     internal static Result FromGateway(GatewayRawResponse response)
-        => Classify(response.StatusCode, response.ErrorMessage ?? response.Content);
+    {
+        if (string.Equals(
+                response.ErrorCode,
+                GatewayQuotaAlertPolicy.QuotaErrorCode,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return new Result(
+                GatewayQuotaAlertPolicy.QuotaErrorCode,
+                GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
+        }
+
+        return Classify(response.StatusCode, response.ErrorMessage ?? response.Content);
+    }
 
     internal static Result FromException(Exception exception)
         => exception switch

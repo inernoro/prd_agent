@@ -309,11 +309,27 @@ test('超过时限但进程仍存活的互斥锁不得被第二轮删除', () =>
   }
 });
 
-test('强制解锁只能清理已确认死亡或损坏的锁', () => {
+test('互斥锁发布时已经包含完整 owner，不暴露空锁窗口', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-atomic-lock-'));
+  const lockPath = resolve(directory, '.stable-smoke.lock');
+  try {
+    assert.equal(acquireLock(lockPath), true);
+    assert.equal(readFileSync(lockPath, 'utf8'), `${process.pid}\n`);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('无效锁先保留 owner 发布宽限期，超时后才允许强制清理', () => {
   const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-force-unlock-'));
   const lockPath = resolve(directory, '.stable-smoke.lock');
   try {
     writeFileSync(lockPath, 'not-a-pid\n', { mode: 0o600 });
+    assert.equal(removeStaleLockIfSafe(lockPath), false);
+    assert.equal(existsSync(lockPath), true);
+
+    const afterOwnerPublishGrace = new Date(Date.now() - 60_000);
+    utimesSync(lockPath, afterOwnerPublishGrace, afterOwnerPublishGrace);
     assert.equal(removeStaleLockIfSafe(lockPath), true);
     assert.equal(existsSync(lockPath), false);
   } finally {

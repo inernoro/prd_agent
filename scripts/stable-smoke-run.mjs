@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -757,10 +758,20 @@ export async function deliverLockedRun(argv, dependencies = {}) {
 
 export function removeStaleLockIfSafe(lockPath) {
   if (!existsSync(lockPath)) return true;
-  let stale = Date.now() - statSync(lockPath).mtimeMs > 3 * 60 * 60 * 1000;
+  let observed;
+  try {
+    observed = statSync(lockPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return true;
+    throw error;
+  }
+  const ageMs = Date.now() - observed.mtimeMs;
+  let stale = ageMs > 3 * 60 * 60 * 1000;
   try {
     const pid = Number(readFileSync(lockPath, 'utf8').trim());
-    if (!Number.isInteger(pid) || pid <= 0) stale = true;
+    // open('wx') 与写入 PID 之间存在极短窗口；新建的空文件必须先视为活锁，
+    // 避免第二个执行器误删后并发进入写入型稳定冒烟。
+    if (!Number.isInteger(pid) || pid <= 0) stale = ageMs > 30_000;
     else {
       try {
         process.kill(pid, 0);
@@ -770,23 +781,35 @@ export function removeStaleLockIfSafe(lockPath) {
       }
     }
   } catch {
-    stale = true;
+    stale = ageMs > 30_000;
   }
   if (!stale) return false;
-  unlinkSync(lockPath);
+  try {
+    const current = statSync(lockPath);
+    if (current.dev !== observed.dev
+      || current.ino !== observed.ino
+      || current.mtimeMs !== observed.mtimeMs
+      || current.size !== observed.size) return false;
+    unlinkSync(lockPath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
   return true;
 }
 
 export function acquireLock(lockPath) {
   removeStaleLockIfSafe(lockPath);
+  const candidatePath = `${lockPath}.${process.pid}.${randomUUID()}.candidate`;
   try {
-    const fd = openSync(lockPath, 'wx', 0o600);
-    writeFileSync(fd, `${process.pid}\n`, 'utf8');
-    closeSync(fd);
+    // 先完整写入候选文件，再以 hard link 原子发布锁；其他执行器永远看不到空锁。
+    writeFileSync(candidatePath, `${process.pid}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    linkSync(candidatePath, lockPath);
     return true;
   } catch (error) {
     if (error?.code === 'EEXIST') return false;
     throw error;
+  } finally {
+    if (existsSync(candidatePath)) unlinkSync(candidatePath);
   }
 }
 

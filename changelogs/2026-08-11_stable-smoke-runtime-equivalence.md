@@ -193,3 +193,6 @@
 | fix | stable-smoke | 强制解锁仍校验锁 owner 存活状态，禁止并发启动第二轮写入测试 |
 | fix | prd-api | 权威正式部署回收历史无 owner 的超时处理中转写任务并同步失败状态 |
 | test | prd-api/stable-smoke | 增加强制解锁活锁保护与历史处理中任务迁移回归守卫 |
+| fix | stable-smoke | 为新建互斥锁保留 owner 写入宽限期，消除空锁文件被并发执行器误删的竞态 |
+| fix | prd-api | 生图额度耗尽保留网关分类与管理员恢复指引，不再退化为普通限流提示 |
+| test | prd-api/stable-smoke | 增加新锁发布竞态与生图额度恢复指引回归覆盖 |
