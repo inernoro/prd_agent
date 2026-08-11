@@ -258,7 +258,7 @@ const validationOnlyPrefixes = [
   '.agents/skills/',
   '.claude/skills/create-visual-test-to-kb/',
   '.claude/skills/stable-smoke/',
-  '.codex/',
+  '.Codex/',
   'changelogs/',
   'doc/',
   'e2e/',

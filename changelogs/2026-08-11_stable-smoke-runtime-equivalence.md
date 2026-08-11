@@ -202,3 +202,5 @@
 | test | stable-smoke | 增加 e2e 路径复用已验证业务镜像的版本门禁覆盖 |
 | fix | prd-admin | 头像生成图片失效时保留业务错误码并明确引导用户重新生成预览 |
 | test | prd-admin | 增加生成图片失效恢复文案与头像编辑器错误码传递回归覆盖 |
+| fix | stable-smoke | 按仓库真实大小写识别 .Codex 规则目录，避免 Linux 上规则变更误阻塞版本等价 |
+| test | stable-smoke | 增加 .Codex 规则路径大小写敏感回归覆盖 |

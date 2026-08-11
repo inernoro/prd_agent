@@ -475,6 +475,7 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
   };
   const files = [
     '.claude/skills/stable-smoke/reference/regression-ledger.md',
+    '.Codex/rules/user-readable-errors.md',
     'e2e/specs/stable-smoke.spec.ts',
     'scripts/stable-smoke-visual-gate.mjs',
     'scripts/tests/stable-smoke-visual-gate.test.mjs',
@@ -482,6 +483,7 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
   ];
   assert.equal(deployedRuntimeCommit(branch), deployedCommit);
   assert.equal(files.every(isValidationOnlyPath), true);
+  assert.equal(isValidationOnlyPath('.codex/rules/user-readable-errors.md'), false);
   const expectation = resolveRuntimeExpectation(branch, expectedCommit, files);
   assert.deepEqual(evaluateCdsReadiness(branch, expectedCommit, expectation), {
     ready: true,
