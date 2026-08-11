@@ -1,6 +1,6 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v2.7 | **日期**：2026-07-18 | **状态**：开发中
+> **版本**：v2.8 | **日期**：2026-08-11 | **状态**：开发中
 
 **一句话**：网关与模型池的债务总表，含协议路由收口与多次生产取证记录。
 **谁该读**：接手网关的工程师；做发布判断的人。
@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 21 / in-progress: 4 / paid: 22 / 总计: 47
+当前 open: 22 / in-progress: 4 / paid: 22 / 总计: 48
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -20,6 +20,7 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-11-member-shortname-login-mismatch | medium | 2026-08-11 | 管理员创建成员时填写账号短名，系统成功保存为“租户短名.账号短名”；新成员若继续使用刚填写的短名登录，会看到“用户名或密码错误”。成员创建页称其为“账号短名”，登录页却只要求“用户名”，没有明确必须输入完整登录账号，导致用户误判密码或账号创建失败 | 任何独立 Gateway 成员首次使用管理员提供的账号登录时 | open | 创建成功提示和成员列表应明确标注并支持复制“完整登录账号”，登录页应展示完整账号示例；是否兼容短名登录必须先证明跨租户同名不会产生歧义、串租户或账号枚举风险 |
 | 2026-07-16-tenant-aggregate-hard-limit | medium | 2026-07-16 | 当前请求硬限制位于 appCaller 月预算、appCaller RPM 与 service key RPM；用量页能按 TenantId 汇总，但 `LlmGwTenant` 没有跨 appCaller 的月预算或速率字段，因此不存在单独的租户总硬上限 | 外部客户合同要求整个租户共享一个强制总预算或总速率，且不能只靠覆盖全部 appCaller 达成时 | paid | 已新增租户总月预算、单次原子预占和总 RPM；serving 以租户账本与分钟窗口跨 appCaller 原子执行，并与 appCaller 层同时返回限流头；控制台、并发/跨租户测试和权威教程同步更新。 |
 | 2026-07-14-tenant-provision-crash-consistency | high | 2026-07-14 | 租户和成员创建已对可捕获写异常执行补偿，并按 slug 或成员目标支持幂等重放；成员关键变更也会先写入包含 TenantId 的 pending 审计意图，再执行业务写入并完成审计。但 standalone Mongo 无多文档事务，进程在多次写入之间硬退出时仍可能留下半成品引用，或留下已完成业务但尚未收口的 pending 审计 | 开放匿名租户注册、控制台改为多副本，出现 provisioning 残留或 pending 审计告警前 | paid | 租户、成员和 owner 边界写入先登记带精确对象 ID、租约和 generation 的恢复操作；启动与 30 秒循环会 fencing 接管过期 pending/repairing 操作，回滚半成品或完成已提交的 owner 变更。Mongo 故障注入测试覆盖租户/成员硬退出和修复器二次退出接管 |
 | 2026-07-14-owner-mutation-lease-fencing | high | 2026-07-14 | 最后一个 owner 保护已使用租户级 30 秒租约和 membership version CAS 串行化常规并发；若一次 owner 变更停顿超过租约且另一实例接管，旧持有者仍可能在过期后继续提交不同 membership 的写入，租约 token 尚未形成跨文档 fencing | 控制台多副本运行、owner 变更可能超过 30 秒，或开放外部组织自主管理前 | paid | 移除可过期的进程锁；租户文档现在保存 active owner membership 权威集合和递增 fencing generation，移除 owner 使用单文档原子条件要求集合长度大于 1。并发移除测试证明两名 owner 只会成功移除一名；硬退出时 owner 权限按权威集合 fail-closed，并由恢复操作收口 membership |
