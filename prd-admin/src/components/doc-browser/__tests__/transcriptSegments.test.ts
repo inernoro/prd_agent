@@ -142,22 +142,17 @@ describe('buildTranscriptWordCloud', () => {
     expect(cloud.some(item => item.word.includes('的'))).toBe(false);
   });
 
-  it('虚词字表不吃真词：含 在/下/会 的实词必须留下', () => {
-    // 这三个字刻意没收进 FUNCTION_CHARS，因为它们能组成真实实词。
+  it('虚词字表不吃真词：含 在/会 的实词必须留下', () => {
+    // 这些字刻意没收进 FUNCTION_CHARS，因为它们能组成真实实词。
     const cloud = buildTranscriptWordCloud([
-      { start: 0, end: 3, text: '存在。下单。会议。' },
-      { start: 3, end: 6, text: '存在。下单。会议。' },
+      { start: 0, end: 3, text: '存在。会议。存在。会议。' },
     ]);
-    for (const word of ['存在', '下单', '会议']) {
+    for (const word of ['存在', '会议']) {
       expect(cloud.some(item => item.word === word)).toBe(true);
     }
   });
 
   it('判不出边界的不收：只在一个固定长串里出现过的组合一律丢掉', () => {
-    // 「存在下单会议」每个双字窗频次相同，中间的「下单」左邻永远是「在」、
-    // 右舍永远是「会」，也从没顶过句子头尾——凭现有信息判不出它和「在下」谁是词。
-    // 验收要求是「无法确定边界时不收录」，所以整段中间部分都不进词云；
-    // 顶着头尾的「存在」「会议」有边界证据，留下。
     const cloud = buildTranscriptWordCloud([
       { start: 0, end: 3, text: '存在下单会议，存在下单会议' },
     ]);
@@ -168,30 +163,41 @@ describe('buildTranscriptWordCloud', () => {
     }
   });
 
-  it('同一个词换个上下文出现，就有了边界证据，能收回来', () => {
-    // 上一条里判不出的「下单」，只要在别处以不同前后文出现过，多样性证据就成立。
+  it('已知边界：词典里没有的词会整个丢掉（精度换召回，是有意的）', () => {
+    // Intl.Segmenter 查的是 ICU 词典，「下单」不在里面，会被切成单字，
+    // 而单字一律不进词云。代价是这类词看不到，换来的是绝不会端出半截词——
+    // 验收判据是「无法确定边界时不收录」，这个方向是有意选的。
+    // 这条用例把损失钉成已知项：它变红说明分词器换了，得重新评估召回。
     const cloud = buildTranscriptWordCloud([
-      { start: 0, end: 3, text: '存在下单会议，存在下单会议' },
-      { start: 3, end: 6, text: '他要下单了，赶紧下单吧' },
+      { start: 0, end: 3, text: '他要下单了，赶紧下单吧' },
     ]);
-    expect(cloud.some(item => item.word === '下单')).toBe(true);
+    expect(cloud.some(item => item.word === '下单')).toBe(false);
+    // 但绝不能因此冒出「要下」「单了」这种骑在词缝上的东西
+    for (const fragment of ['要下', '单了', '紧下']) {
+      expect(cloud.some(item => item.word === fragment)).toBe(false);
+    }
   });
 
-  it('抢座按全文频次排序：高频词先占字，碎片抢不到座', () => {
-    // 「参考图」滑出 参考 / 考图。参考在别处还出现过，全文频次更高，
-    // 先占住字，考图就没座了——这正是真实转写里 考图/如说/后第 那批的成因。
+  it('验收点名的半截词一个都不许出现', () => {
+    // 2026-08-11 外部验收两轮点名：规优 / 看一 / 下常 / 后第 / 考图 / 如说。
+    // 前三版靠统计判据都拦不住「看一」——它在真实语料里两侧都有变化
+    // （你看一下 / 我看一下、看一下 / 看一眼），统计上和真词无法区分。
     const cloud = buildTranscriptWordCloud([
-      { start: 0, end: 3, text: '参考图。参考图。参考。参考。' },
+      { start: 0, end: 3, text: '我们看一下常规优化，你看一下这个效果，我看一下那个效果' },
+      { start: 3, end: 6, text: '参考图要更新，参考图很重要，比如说这个背包，比如说那个背包' },
     ]);
-    expect(cloud.some(item => item.word === '参考')).toBe(true);
-    expect(cloud.some(item => item.word === '考图')).toBe(false);
+    for (const fragment of ['规优', '看一', '下常', '后第', '考图', '如说']) {
+      expect(cloud.some(item => item.word === fragment)).toBe(false);
+    }
+    expect(cloud.some(item => item.word === '效果')).toBe(true);
+    expect(cloud.some(item => item.word === '背包')).toBe(true);
   });
 
   it('按频次降序，第一个就是全场最常提到的（展示层的权重基准）', () => {
     const cloud = buildTranscriptWordCloud([
-      { start: 0, end: 2, text: '排期排期排期，另外说说预算预算' },
+      { start: 0, end: 3, text: '预算预算预算，另外说说效果效果' },
     ]);
-    expect(cloud[0]).toEqual({ word: '排期', count: 3 });
+    expect(cloud[0]).toEqual({ word: '预算', count: 3 });
     expect(cloud.every((item, index) => index === 0 || item.count <= cloud[index - 1].count)).toBe(true);
   });
 });
