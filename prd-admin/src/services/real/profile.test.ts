@@ -99,4 +99,26 @@ describe('generateMyAvatarPreview', () => {
     expect(result.error?.message).toBe('头像生成服务暂时不可用，请稍后重试。');
     expect(result.error?.message).not.toContain('token');
   });
+
+  it('关闭编辑器后停止后续轮询请求', async () => {
+    mockedApiRequest.mockResolvedValueOnce({
+      success: true,
+      data: { runId: 'run-cancel', status: 'queued', stage: '正在排队' },
+      error: null,
+    });
+    const controller = new AbortController();
+
+    const resultPromise = generateMyAvatarPreview({
+      prompt: '改成手绘风格',
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    controller.abort();
+    await vi.runAllTimersAsync();
+
+    const result = await resultPromise;
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('AVATAR_GENERATION_CANCELLED');
+    expect(mockedApiRequest).toHaveBeenCalledTimes(1);
+  });
 });

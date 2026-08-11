@@ -46,6 +46,12 @@ public class ProfileController : ControllerBase
 
     private string GetCurrentUserId() => this.GetRequiredUserId();
 
+    private bool HasPermission(string permission)
+    {
+        var permissions = User.FindAll("permissions").Select(claim => claim.Value).ToHashSet(StringComparer.Ordinal);
+        return permissions.Contains(permission) || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
     private string? BuildAvatarUrl(User user)
         => AvatarUrlBuilder.Build(_cfg, user);
 
@@ -202,6 +208,15 @@ public class ProfileController : ControllerBase
         [FromBody] CreateAvatarGenerationRunRequest request,
         CancellationToken ct)
     {
+        if (!HasPermission(AdminPermissionCatalog.VisualAgentUse))
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    ErrorCodes.PERMISSION_DENIED,
+                    "当前账号没有视觉创作权限，请联系管理员开通后重试。"));
+        }
+
         var currentUserId = GetCurrentUserId();
         var prompt = (request?.Prompt ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(prompt))

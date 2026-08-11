@@ -17,8 +17,19 @@ type AvatarGenerationRun = {
 const AVATAR_GENERATION_POLL_INTERVAL_MS = 800;
 const AVATAR_GENERATION_MAX_POLLS = 750;
 
-function waitForNextPoll(): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, AVATAR_GENERATION_POLL_INTERVAL_MS));
+function waitForNextPoll(signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timeoutId = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(true);
+    }, AVATAR_GENERATION_POLL_INTERVAL_MS);
+    const onAbort = () => {
+      globalThis.clearTimeout(timeoutId);
+      resolve(false);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl: string; assetSha256: string }> {
@@ -30,11 +41,18 @@ function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl
       error: { code: normalized || 'AVATAR_SOURCE_UNAVAILABLE', message: '当前头像无法用于生成，请重新上传一张清晰图片后重试。' },
     };
   }
-  if (normalized === 'UNAUTHORIZED' || normalized === 'PERMISSION_DENIED') {
+  if (normalized === 'UNAUTHORIZED') {
     return {
       success: false,
       data: null,
       error: { code: normalized, message: '当前登录状态无法修改头像，请重新登录后重试。' },
+    };
+  }
+  if (normalized === 'PERMISSION_DENIED') {
+    return {
+      success: false,
+      data: null,
+      error: { code: normalized, message: '当前账号没有视觉创作权限，请联系管理员开通后重试。' },
     };
   }
   return {
@@ -94,6 +112,7 @@ export async function updateMyAvatar(
 export async function generateMyAvatarPreview(input: {
   prompt: string;
   onProgress?: (stage: string) => void;
+  signal?: AbortSignal;
 }): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }>> {
   const prompt = input.prompt.trim();
   if (!prompt) {
@@ -104,7 +123,9 @@ export async function generateMyAvatarPreview(input: {
     method: 'POST',
     body: { prompt },
     timeoutMs: 20_000,
+    signal: input.signal,
   });
+  if (input.signal?.aborted) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
   if (!created.success) return avatarGenerationFailure(created.error?.code);
 
   const runId = String(created.data.runId ?? '').trim();
@@ -112,11 +133,12 @@ export async function generateMyAvatarPreview(input: {
   input.onProgress?.(created.data.stage || '正在排队');
 
   for (let poll = 0; poll < AVATAR_GENERATION_MAX_POLLS; poll += 1) {
-    await waitForNextPoll();
+    if (!await waitForNextPoll(input.signal)) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
     const current = await apiRequest<AvatarGenerationRun>(
       api.profile.avatarGenerationRun(encodeURIComponent(runId)),
-      { method: 'GET', timeoutMs: 15_000 },
+      { method: 'GET', timeoutMs: 15_000, signal: input.signal },
     );
+    if (input.signal?.aborted) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
     if (!current.success) return avatarGenerationFailure(current.error?.code);
 
     input.onProgress?.(current.data.stage || '正在生成头像');

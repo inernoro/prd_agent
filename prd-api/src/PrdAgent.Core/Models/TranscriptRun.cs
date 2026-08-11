@@ -48,6 +48,9 @@ public class TranscriptRun
 
 public static class TranscriptRunStatuses
 {
+    /// <summary>部署隔离上线前创建的无归属任务，仅供新 Worker 原子接管迁移。</summary>
+    public const string LegacyQueued = "queued";
+
     /// <summary>
     /// 带部署实例归属的新队列状态。旧版本 Worker 只领取 queued，因此无法抢走
     /// 新版本创建的任务；当前 Worker 再按 OwnerInstanceId 做第二层隔离。

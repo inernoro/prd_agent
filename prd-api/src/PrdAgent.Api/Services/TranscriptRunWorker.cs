@@ -84,16 +84,24 @@ public class TranscriptRunWorker : BackgroundService
 
         // CDS 的所有预览分支共用 MongoDB。只领取当前部署创建的任务，禁止其他分支
         // 或主干旧版本抢走后按不同模型协议执行。
-        var filter = Builders<TranscriptRun>.Filter.And(
+        var scopedForCurrentInstance = Builders<TranscriptRun>.Filter.And(
             Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued),
             Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId));
+        var unownedLegacyRun = Builders<TranscriptRun>.Filter.And(
+            Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.LegacyQueued),
+            Builders<TranscriptRun>.Filter.Or(
+                Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
+                Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, string.Empty),
+                Builders<TranscriptRun>.Filter.Exists(nameof(TranscriptRun.OwnerInstanceId), false)));
+        var filter = Builders<TranscriptRun>.Filter.Or(scopedForCurrentInstance, unownedLegacyRun);
         var update = Builders<TranscriptRun>.Update
             .Set(r => r.Status, "processing")
             .Set(r => r.OwnerInstanceId, instanceId)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
         var options = new FindOneAndUpdateOptions<TranscriptRun, TranscriptRun>
         {
-            ReturnDocument = ReturnDocument.After
+            ReturnDocument = ReturnDocument.After,
+            Sort = Builders<TranscriptRun>.Sort.Ascending(r => r.CreatedAt)
         };
         var run = await db.TranscriptRuns.FindOneAndUpdateAsync(filter, update, options);
 

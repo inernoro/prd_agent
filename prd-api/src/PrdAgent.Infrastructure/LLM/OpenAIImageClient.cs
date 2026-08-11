@@ -912,11 +912,12 @@ public class OpenAIImageClient : IImageGenerationClient
 
                     if (bytes == null || bytes.Length == 0) continue;
 
+                    StoredAsset? storedGoogle = null;
                     try
                     {
-                        var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
+                        storedGoogle = await _assetStorage.SaveAsync(bytes, outMime, ct,
                             domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        var displayUrl = stored.Url;
+                        var displayUrl = storedGoogle.Url;
 
                         if (wmConfigGoogle != null)
                         {
@@ -935,14 +936,36 @@ public class OpenAIImageClient : IImageGenerationClient
 
                         googleGenImages[i].Url = displayUrl;
                         googleGenImages[i].Base64 = null;
-                        googleGenImages[i].OriginalUrl = stored.Url;
-                        googleGenImages[i].OriginalSha256 = stored.Sha256;
-                        cosInfosGoogle.Add(new { index = i, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
+                        googleGenImages[i].OriginalUrl = storedGoogle.Url;
+                        googleGenImages[i].OriginalSha256 = storedGoogle.Sha256;
+                        cosInfosGoogle.Add(new { index = i, url = storedGoogle.Url, sha256 = storedGoogle.Sha256, mime = storedGoogle.Mime, sizeBytes = storedGoogle.SizeBytes });
                     }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "[Google] COS 上传失败（index={Index}），回退 base64 内联返回", i);
                         // COS 上传失败时保留 base64，让前端仍能显示图片
+                    }
+
+                    if (storedGoogle != null)
+                    {
+                        var googleSize = NormalizeSizeString(size ?? requestedSizeRaw);
+                        var googleHasDimensions = TryParseSize(googleSize, out var googleWidth, out var googleHeight);
+                        await _db.UploadArtifacts.InsertOneAsync(new UploadArtifact
+                        {
+                            Id = Guid.NewGuid().ToString("N"),
+                            RequestId = requestId,
+                            Kind = "output_image",
+                            CreatedByAdminId = createdByAdminId,
+                            Prompt = prompt,
+                            RelatedInputIds = inputArtifactIds.Count > 0 ? inputArtifactIds.ToList() : null,
+                            Sha256 = storedGoogle.Sha256,
+                            Mime = storedGoogle.Mime,
+                            Width = googleHasDimensions ? googleWidth : 0,
+                            Height = googleHasDimensions ? googleHeight : 0,
+                            SizeBytes = storedGoogle.SizeBytes,
+                            CosUrl = storedGoogle.Url,
+                            CreatedAt = DateTime.UtcNow
+                        }, cancellationToken: ct);
                     }
                 }
 

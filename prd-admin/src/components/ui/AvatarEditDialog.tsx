@@ -37,6 +37,7 @@ export function AvatarEditDialog(props: {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const generationIdRef = useRef(0);
+  const generationAbortRef = useRef<AbortController | null>(null);
 
   const aiEnabled = Boolean(props.enableAiEdit);
 
@@ -56,6 +57,8 @@ export function AvatarEditDialog(props: {
     setPrompt('');
     releaseGeneratedPreview();
   }, [props.open, props.avatarFileName]);
+
+  useEffect(() => () => generationAbortRef.current?.abort(), []);
 
   useEffect(() => {
     if (!generating) return;
@@ -77,6 +80,8 @@ export function AvatarEditDialog(props: {
 
   const closeDialog = () => {
     generationIdRef.current += 1;
+    generationAbortRef.current?.abort();
+    generationAbortRef.current = null;
     setGenerating(false);
     setGenerationStage('');
     props.onOpenChange(false);
@@ -119,6 +124,9 @@ export function AvatarEditDialog(props: {
     }
 
     const generationId = ++generationIdRef.current;
+    generationAbortRef.current?.abort();
+    const generationAbort = new AbortController();
+    generationAbortRef.current = generationAbort;
     releaseGeneratedPreview();
     setGenerating(true);
     setGenerationStage('正在排队');
@@ -130,8 +138,10 @@ export function AvatarEditDialog(props: {
       onProgress: (stage) => {
         if (generationIdRef.current === generationId) setGenerationStage(stage);
       },
+      signal: generationAbort.signal,
     });
     if (generationIdRef.current !== generationId) return;
+    generationAbortRef.current = null;
     setGenerating(false);
     setGenerationStage('');
 

@@ -1604,14 +1604,8 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        if (_fileContentExtractor.IsSupported(mime)
-            && string.IsNullOrWhiteSpace(_fileContentExtractor.Extract(bytes, mime, file.FileName)))
-        {
-            return BadRequest(ApiResponse<object>.Fail(
-                ErrorCodes.INVALID_FORMAT,
-                "没有从该文件中读取到内容，请检查文件是否损坏或为空，然后重新上传"));
-        }
-
+        // 可解析格式也可能是合法的纯图片 PDF 或无文本 Office 文件。
+        // 正文为空时仍按附件保存，不能把“没有可提取文本”误判为文件损坏。
         var stored = await CreateUploadedDocumentEntryAsync(
             store, userId, userName, avatarFileName, file.FileName, mime, bytes, parentId, ct);
 
@@ -3660,14 +3654,6 @@ public class DocumentStoreController : ControllerBase
         {
             await file.CopyToAsync(ms, ct);
             bytes = ms.ToArray();
-        }
-
-        if (_fileContentExtractor.IsSupported(mime)
-            && string.IsNullOrWhiteSpace(_fileContentExtractor.Extract(bytes, mime, file.FileName)))
-        {
-            return BadRequest(ApiResponse<object>.Fail(
-                ErrorCodes.INVALID_FORMAT,
-                "没有从该文件中读取到内容，请检查文件是否损坏或为空，然后重新上传"));
         }
 
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: file.FileName);

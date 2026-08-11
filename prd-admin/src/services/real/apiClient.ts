@@ -237,6 +237,7 @@ export async function apiRequest<T>(
     emptyResponseData?: T;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    signal?: AbortSignal;
   }
 ): Promise<ApiResponse<T>> {
   return await apiRequestInner<T>(path, options, false);
@@ -251,6 +252,7 @@ async function apiRequestInner<T>(
     emptyResponseData?: T;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    signal?: AbortSignal;
   } | undefined,
   didRefresh: boolean
 ): Promise<ApiResponse<T>> {
@@ -289,12 +291,22 @@ async function apiRequestInner<T>(
 
   let res: Response;
   const timeoutMs = options?.timeoutMs;
-  const timeoutController = typeof timeoutMs === 'number' && timeoutMs > 0
+  const externalSignal = options?.signal;
+  const timeoutController = (typeof timeoutMs === 'number' && timeoutMs > 0) || externalSignal
     ? new AbortController()
     : null;
-  const timeoutId = timeoutController
+  const abortFromExternal = () => timeoutController?.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) abortFromExternal();
+    else externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+  }
+  const timeoutId = timeoutController && typeof timeoutMs === 'number' && timeoutMs > 0
     ? globalThis.setTimeout(() => timeoutController.abort(), timeoutMs)
     : null;
+  const releaseAbortResources = () => {
+    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
+  };
   try {
     res = await fetch(url, {
       method,
@@ -303,7 +315,10 @@ async function apiRequestInner<T>(
       ...(timeoutController ? { signal: timeoutController.signal } : {}),
     });
   } catch (e) {
-    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    releaseAbortResources();
+    if (externalSignal?.aborted) {
+      return fail('CANCELLED', '操作已取消。') as unknown as ApiResponse<T>;
+    }
     if (timeoutController?.signal.aborted) {
       return fail('TIMEOUT', '本次等待超时，请稍后重试。') as unknown as ApiResponse<T>;
     }
@@ -318,7 +333,7 @@ async function apiRequestInner<T>(
   checkPermissionFingerprint(res);
 
   if (res.status === 204) {
-    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    releaseAbortResources();
     const data = (options?.emptyResponseData ?? (true as unknown)) as T;
     return ok(data);
   }
@@ -327,12 +342,15 @@ async function apiRequestInner<T>(
   try {
     text = await res.text();
   } catch {
+    if (externalSignal?.aborted) {
+      return fail('CANCELLED', '操作已取消。') as unknown as ApiResponse<T>;
+    }
     if (timeoutController?.signal.aborted) {
       return fail('TIMEOUT', '本次等待超时，请稍后重试。') as unknown as ApiResponse<T>;
     }
     return fail('NETWORK_ERROR', '网络连接中断，请检查网络后重试。') as unknown as ApiResponse<T>;
   } finally {
-    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    releaseAbortResources();
   }
   const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
   const maybeHtml = contentType.includes('text/html') || /^\s*</.test(text) || /<html/i.test(text);
@@ -344,7 +362,7 @@ async function apiRequestInner<T>(
   }
 
   // 处理 401 未授权：清除认证状态并跳转登录页
-  if (res.status === 401) {
+  if (res.status === 401 && auth) {
     // 先尝试 refresh 一次（仅 admin 端），成功则重试本次请求
     if (!didRefresh && (options?.auth ?? true)) {
       const okRefresh = await tryRefreshAdminToken();
@@ -363,7 +381,7 @@ async function apiRequestInner<T>(
   if (isApiResponseLike(json)) {
     // 处理业务层面的 UNAUTHORIZED 错误（如 token 过期）
     const err = getApiErrorLike((json as { error: unknown }).error);
-    if (!json.success && err?.code === 'UNAUTHORIZED') {
+    if (!json.success && err?.code === 'UNAUTHORIZED' && auth) {
       if (!didRefresh && (options?.auth ?? true)) {
         const okRefresh = await tryRefreshAdminToken();
         if (okRefresh) {

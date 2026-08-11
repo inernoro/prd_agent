@@ -19,6 +19,34 @@ public class ProfileAvatarGenerationContractTests
     }
 
     [Fact]
+    public void ProfileAvatarGeneration_MustEnforceVisualCreationPermissionOnServer()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
+
+        Assert.Contains("HasPermission(AdminPermissionCatalog.VisualAgentUse)", source);
+        Assert.Contains("StatusCodes.Status403Forbidden", source);
+        Assert.Contains("ErrorCodes.PERMISSION_DENIED", source);
+        Assert.Contains("请联系管理员开通后重试", source);
+    }
+
+    [Fact]
+    public void GoogleAvatarGeneration_MustPersistTraceableOutputArtifact()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs"));
+
+        var googleBranchStart = source.IndexOf("var isGoogleResponse", StringComparison.Ordinal);
+        var standardBranchStart = source.IndexOf("var images = new List<ImageGenImage>();", googleBranchStart, StringComparison.Ordinal);
+        Assert.True(googleBranchStart >= 0 && standardBranchStart > googleBranchStart);
+        var googleBranch = source[googleBranchStart..standardBranchStart];
+        Assert.Contains("UploadArtifacts.InsertOneAsync(new UploadArtifact", googleBranch);
+        Assert.Contains("RequestId = requestId", googleBranch);
+        Assert.Contains("CreatedByAdminId = createdByAdminId", googleBranch);
+        Assert.Contains("Kind = \"output_image\"", googleBranch);
+    }
+
+    [Fact]
     public void ProfileAvatarGeneration_MustNotExposeWorkerDiagnosticToUser()
     {
         var source = File.ReadAllText(LocateRepoFile(

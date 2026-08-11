@@ -45,4 +45,14 @@ describe('toUserReadableErrorMessage', () => {
 
     expect(message).toBe('文件格式不受支持，请更换文件后重试。');
   });
+
+  it('权限不足时提示联系管理员而不是要求重新登录', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'PERMISSION_DENIED', message: 'forbidden' },
+      options,
+    );
+
+    expect(message).toBe('当前账号没有执行此操作的权限，请联系管理员开通后重试。');
+    expect(message).not.toContain('重新登录');
+  });
 });

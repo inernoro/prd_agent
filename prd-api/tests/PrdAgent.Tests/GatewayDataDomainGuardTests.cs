@@ -1103,9 +1103,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("OwnerInstanceId = InstanceIdentity.Get(_config)", controller);
         Assert.Contains("Status = TranscriptRunStatuses.ScopedQueued", controller);
         Assert.Contains("Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued)", worker);
+        Assert.Contains("Filter.Eq(r => r.Status, TranscriptRunStatuses.LegacyQueued)", worker);
+        Assert.Contains("Filter.Exists(nameof(TranscriptRun.OwnerInstanceId), false)", worker);
+        Assert.Contains("Filter.Or(scopedForCurrentInstance, unownedLegacyRun)", worker);
+        Assert.Contains("Sort.Ascending(r => r.CreatedAt)", worker);
         Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, instanceId)", worker);
         Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, _instanceId)", watchdog);
-        Assert.DoesNotContain("Filter.Eq(r => r.Status, \"queued\")", worker);
+        Assert.Contains("public const string LegacyQueued = \"queued\"", model);
     }
 
     [Fact]

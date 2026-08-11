@@ -73,8 +73,11 @@ function isSafeUserMessage(message: string): boolean {
 function classifiedMessage(code: string, recoveryMessage: string): string | null {
   const normalized = code.trim().toUpperCase();
   if (!normalized) return null;
-  if (normalized === 'UNAUTHORIZED' || normalized === 'PERMISSION_DENIED') {
+  if (normalized === 'UNAUTHORIZED') {
     return '当前登录状态无法完成此操作，请重新登录后重试。';
+  }
+  if (normalized === 'PERMISSION_DENIED') {
+    return '当前账号没有执行此操作的权限，请联系管理员开通后重试。';
   }
   if (normalized === 'RATE_LIMITED') {
     return '当前请求较多，请稍后重试。';

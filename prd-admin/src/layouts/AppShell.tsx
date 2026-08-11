@@ -46,6 +46,7 @@ import {
   GraduationCap,
   Droplets,
   ExternalLink,
+  MoreHorizontal,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -1428,10 +1429,10 @@ export default function AppShell() {
                 style={{ background: 'var(--nested-block-bg)' }}
               />
 
-              <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
+              <div className={cn('relative flex items-center', collapsed ? 'flex-col justify-center gap-1' : 'gap-3')}>
                 {/* 头像直接打开编辑器，用户名保留用户菜单入口。 */}
                 <DropdownMenu.Root>
-                  <div className={cn('flex items-center', collapsed ? '' : 'gap-3 flex-1 min-w-0')}>
+                  <div className={cn('flex items-center', collapsed ? 'flex-col gap-1' : 'gap-3 flex-1 min-w-0')}>
                     <button
                       type="button"
                       onClick={() => setAvatarOpen(true)}
@@ -1454,6 +1455,19 @@ export default function AppShell() {
                         />
                       </AvatarProgressRing>
                     </button>
+
+                    {collapsed && (
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className="flex h-7 w-8 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          aria-label="打开用户菜单"
+                          title="用户菜单"
+                        >
+                          <MoreHorizontal size={16} />
+                        </button>
+                      </DropdownMenu.Trigger>
+                    )}
 
                     {/* 用户信息（仅展开时显示，点击后打开用户菜单） */}
                     {!collapsed && (
