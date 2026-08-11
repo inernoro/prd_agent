@@ -476,6 +476,7 @@ import {
   applyGeneratedMyAvatar as applyGeneratedMyAvatarReal,
   generateMyAvatarPreview as generateMyAvatarPreviewReal,
   getPendingMyAvatarGenerationRunId as getPendingMyAvatarGenerationRunIdReal,
+  hasRecoverableMyAvatarGeneration as hasRecoverableMyAvatarGenerationReal,
   resumeMyAvatarPreview as resumeMyAvatarPreviewReal,
   uploadMyAvatar as uploadMyAvatarReal,
   updateMyAvatar as updateMyAvatarReal,
@@ -1028,6 +1029,7 @@ export const updateMyAvatar = withAuth(updateMyAvatarReal);
 export const generateMyAvatarPreview = withAuth(generateMyAvatarPreviewReal);
 export const resumeMyAvatarPreview = withAuth(resumeMyAvatarPreviewReal);
 export const getPendingMyAvatarGenerationRunId = getPendingMyAvatarGenerationRunIdReal;
+export const hasRecoverableMyAvatarGeneration = hasRecoverableMyAvatarGenerationReal;
 export const applyGeneratedMyAvatar = withAuth(applyGeneratedMyAvatarReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);

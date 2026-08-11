@@ -255,3 +255,4 @@
 | fix | prd-admin | 补齐米多星球 SSO 未配置与绑定占用的管理员恢复动作 |
 | test | prd-admin/stable-smoke | 增加 CDS 必测覆盖缺口与米多绑定错误回归覆盖 |
 | fix | prd-admin | 头像生成完成后保留可恢复预览，直到应用或被新头像替代 |
+| fix | prd-admin | 头像创建请求关闭或刷新后使用幂等记录自动恢复已接受任务 |

@@ -4,6 +4,7 @@ import {
   applyGeneratedMyAvatar,
   generateMyAvatarPreview,
   getPendingMyAvatarGenerationRunId,
+  hasRecoverableMyAvatarGeneration,
   resumeMyAvatarPreview,
   uploadMyAvatar,
 } from '@/services/real/profile';
@@ -117,6 +118,71 @@ describe('generateMyAvatarPreview', () => {
     const retryKey = mockedApiRequest.mock.calls[1]?.[1]?.headers?.['Idempotency-Key'];
     expect(firstKey).toBeTruthy();
     expect(retryKey).toBe(firstKey);
+  });
+
+  it('创建请求结果不确定时重新打开可自动用原幂等键恢复任务', async () => {
+    const sha = '9'.repeat(64);
+    mockedApiRequest
+      .mockResolvedValueOnce({
+        success: false,
+        data: null,
+        error: { code: 'TIMEOUT', message: '请求超时' },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { runId: 'run-auto-resume', status: 'queued', stage: '正在排队' },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          status: 'completed',
+          stage: '生成完成',
+          previewUrl: 'https://assets.example/auto-resumed-avatar.png',
+          assetSha256: sha,
+        },
+        error: null,
+      });
+
+    const firstResult = await generateMyAvatarPreview({ prompt: '恢复这次创建请求' });
+    const firstKey = mockedApiRequest.mock.calls[0]?.[1]?.headers?.['Idempotency-Key'];
+    expect(firstResult.success).toBe(false);
+    expect(hasRecoverableMyAvatarGeneration()).toBe(true);
+
+    const resumedResult = resumeMyAvatarPreview({});
+    await vi.runAllTimersAsync();
+
+    await expect(resumedResult).resolves.toEqual({
+      success: true,
+      data: { previewUrl: 'https://assets.example/auto-resumed-avatar.png', assetSha256: sha },
+      error: null,
+    });
+    expect(mockedApiRequest.mock.calls[1]?.[1]?.headers?.['Idempotency-Key']).toBe(firstKey);
+    expect(getPendingMyAvatarGenerationRunId()).toBe('run-auto-resume');
+  });
+
+  it('创建已被服务端接受时先保存任务引用再响应关闭取消', async () => {
+    mockedApiRequest.mockImplementationOnce(() => new Promise((resolve) => {
+      globalThis.setTimeout(() => resolve({
+        success: true,
+        data: { runId: 'run-accepted-before-close', status: 'queued', stage: '正在排队' },
+        error: null,
+      }), 50);
+    }));
+    const controller = new AbortController();
+
+    const resultPromise = generateMyAvatarPreview({
+      prompt: '创建期间关闭弹窗',
+      signal: controller.signal,
+    });
+    controller.abort();
+    await vi.runAllTimersAsync();
+
+    const result = await resultPromise;
+    expect(result.error?.code).toBe('AVATAR_GENERATION_CANCELLED');
+    expect(getPendingMyAvatarGenerationRunId()).toBe('run-accepted-before-close');
+    expect(hasRecoverableMyAvatarGeneration()).toBe(true);
+    expect(mockedApiRequest.mock.calls[0]?.[1]?.signal).toBeUndefined();
   });
 
   it('浏览器拒绝会话存储时仍完成已创建头像任务', async () => {

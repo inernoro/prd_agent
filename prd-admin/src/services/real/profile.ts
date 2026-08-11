@@ -20,6 +20,11 @@ const AVATAR_GENERATION_MAX_POLLS = 750;
 const AVATAR_GENERATION_STORAGE_PREFIX = 'prd-admin:avatar-generation-run:';
 const AVATAR_GENERATION_CREATION_STORAGE_PREFIX = 'prd-admin:avatar-generation-create:';
 
+type PendingAvatarGenerationCreation = {
+  prompt: string;
+  idempotencyKey: string;
+};
+
 function avatarGenerationStorageKey(): string | null {
   const userId = String(useAuthStore.getState().user?.userId ?? '').trim();
   return userId ? `${AVATAR_GENERATION_STORAGE_PREFIX}${userId}` : null;
@@ -36,23 +41,25 @@ function newAvatarGenerationIdempotencyKey(): string {
   return `profile-avatar-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
 }
 
-function getOrCreateAvatarGenerationIdempotencyKey(prompt: string): string {
+function getPendingAvatarGenerationCreation(): PendingAvatarGenerationCreation | null {
   const storageKey = avatarGenerationCreationStorageKey();
-  if (storageKey) {
-    try {
-      const pending = JSON.parse(globalThis.sessionStorage?.getItem(storageKey) || 'null') as {
-        prompt?: string;
-        idempotencyKey?: string;
-      } | null;
-      if (pending?.prompt === prompt && pending.idempotencyKey?.trim()) {
-        return pending.idempotencyKey.trim();
-      }
-    } catch {
-      // 损坏的会话记录会在下面被新记录覆盖。
-    }
+  if (!storageKey) return null;
+  try {
+    const pending = JSON.parse(globalThis.sessionStorage?.getItem(storageKey) || 'null') as Partial<PendingAvatarGenerationCreation> | null;
+    const prompt = String(pending?.prompt ?? '').trim();
+    const idempotencyKey = String(pending?.idempotencyKey ?? '').trim();
+    return prompt && idempotencyKey ? { prompt, idempotencyKey } : null;
+  } catch {
+    return null;
   }
+}
+
+function getOrCreateAvatarGenerationIdempotencyKey(prompt: string): string {
+  const pending = getPendingAvatarGenerationCreation();
+  if (pending?.prompt === prompt) return pending.idempotencyKey;
 
   const idempotencyKey = newAvatarGenerationIdempotencyKey();
+  const storageKey = avatarGenerationCreationStorageKey();
   if (storageKey) {
     try {
       globalThis.sessionStorage?.setItem(storageKey, JSON.stringify({ prompt, idempotencyKey }));
@@ -108,6 +115,10 @@ export function getPendingMyAvatarGenerationRunId(): string | null {
   } catch {
     return null;
   }
+}
+
+export function hasRecoverableMyAvatarGeneration(): boolean {
+  return Boolean(getPendingMyAvatarGenerationRunId() || getPendingAvatarGenerationCreation());
 }
 
 function waitForNextPoll(signal?: AbortSignal): Promise<boolean> {
@@ -280,20 +291,36 @@ export async function generateMyAvatarPreview(input: {
   }
 
   const idempotencyKey = getOrCreateAvatarGenerationIdempotencyKey(prompt);
+  return createAndWaitForMyAvatarPreview(prompt, idempotencyKey, input);
+}
+
+async function createAndWaitForMyAvatarPreview(
+  prompt: string,
+  idempotencyKey: string,
+  input: {
+    onProgress?: (stage: string) => void;
+    signal?: AbortSignal;
+  },
+): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }>> {
   const created = await apiRequest<AvatarGenerationRun>(api.profile.avatarGenerationRuns(), {
     method: 'POST',
     body: { prompt },
     headers: { 'Idempotency-Key': idempotencyKey },
     timeoutMs: 20_000,
-    signal: input.signal,
   });
-  if (input.signal?.aborted) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
-  if (!created.success) return avatarGenerationFailure(created.error?.code);
+  if (!created.success) {
+    const code = String(created.error?.code ?? '').trim().toUpperCase();
+    if (!['TIMEOUT', 'NETWORK_ERROR', 'REQUEST_CANCELLED'].includes(code)) {
+      forgetAvatarGenerationCreation(idempotencyKey);
+    }
+    return avatarGenerationFailure(created.error?.code);
+  }
 
   const runId = String(created.data.runId ?? '').trim();
   if (!runId) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
   forgetAvatarGenerationCreation(idempotencyKey);
   rememberAvatarGenerationRun(runId);
+  if (input.signal?.aborted) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
   input.onProgress?.(created.data.stage || '正在排队');
 
   return waitForMyAvatarPreview(runId, input);
@@ -305,9 +332,17 @@ export async function resumeMyAvatarPreview(input: {
   signal?: AbortSignal;
 }): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }>> {
   const runId = String(input.runId || getPendingMyAvatarGenerationRunId() || '').trim();
-  if (!runId) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
-  rememberAvatarGenerationRun(runId);
   input.onProgress?.('正在恢复头像生成任务');
+  if (!runId) {
+    const pendingCreation = getPendingAvatarGenerationCreation();
+    if (!pendingCreation) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
+    return createAndWaitForMyAvatarPreview(
+      pendingCreation.prompt,
+      pendingCreation.idempotencyKey,
+      input,
+    );
+  }
+  rememberAvatarGenerationRun(runId);
   return waitForMyAvatarPreview(runId, input);
 }
 

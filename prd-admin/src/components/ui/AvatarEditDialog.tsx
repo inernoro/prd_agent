@@ -9,7 +9,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   applyGeneratedMyAvatar,
   generateMyAvatarPreview,
-  getPendingMyAvatarGenerationRunId,
+  hasRecoverableMyAvatarGeneration,
   resumeMyAvatarPreview,
   uploadUserAvatar,
 } from '@/services';
@@ -70,8 +70,7 @@ export function AvatarEditDialog(props: {
 
   useEffect(() => {
     if (!props.open || !aiEnabled) return;
-    const runId = getPendingMyAvatarGenerationRunId();
-    if (!runId) return;
+    if (!hasRecoverableMyAvatarGeneration()) return;
 
     const generationId = ++generationIdRef.current;
     generationAbortRef.current?.abort();
@@ -83,7 +82,6 @@ export function AvatarEditDialog(props: {
     setError(null);
 
     void resumeMyAvatarPreview({
-      runId,
       signal: generationAbort.signal,
       onProgress: (stage) => {
         if (generationIdRef.current === generationId) setGenerationStage(stage);

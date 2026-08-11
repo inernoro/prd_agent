@@ -26,4 +26,10 @@ describe('头像持久化单次写入契约', () => {
     expect(dialogSource).toContain('请重新生成预览后再应用。');
     expect(dialogSource).not.toContain("throw new Error(response.error?.message || '替换头像失败')");
   });
+
+  it('重新打开弹窗时同时恢复已知任务和创建响应丢失的任务', () => {
+    expect(dialogSource).toContain('hasRecoverableMyAvatarGeneration()');
+    expect(dialogSource).toContain('resumeMyAvatarPreview({');
+    expect(dialogSource).not.toContain('if (!runId) return;');
+  });
 });
