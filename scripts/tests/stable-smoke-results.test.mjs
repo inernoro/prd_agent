@@ -91,6 +91,22 @@ test('计划要求但没有证据的用例必须标记 not-run', () => {
   assert.equal(summarizeCoverage(rows).verdict, 'conditional');
 });
 
+test('双环境不同必跑集合不会被重新做笛卡尔积', () => {
+  const rows = reconcileCaseCoverage({
+    cds: ['REC-006'],
+    production: ['CORE-001'],
+  }, [
+    { caseId: 'REC-006', environment: 'cds', status: 'pass' },
+    { caseId: 'CORE-001', environment: 'production', status: 'pass' },
+  ], ['cds', 'production']);
+
+  assert.deepEqual(rows.map((row) => `${row.environment}:${row.caseId}`), [
+    'cds:REC-006',
+    'production:CORE-001',
+  ]);
+  assert.ok(rows.every((row) => row.status === 'pass'));
+});
+
 test('单环境复测只对账运行器实际选择的环境', () => {
   const cdsRows = reconcileCaseCoverage(['CORE-001'], [{
     caseId: 'CORE-001', environment: 'cds', title: 'ok', status: 'pass', durationMs: 1, error: '', retryCount: 0,

@@ -254,6 +254,7 @@ public class VideoGenSceneVersion
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string VideoUrl { get; set; } = string.Empty;
+    public string? AssetSha256 { get; set; }
     public string? JobId { get; set; }
     public string? Model { get; set; }
     public string Prompt { get; set; } = string.Empty;
@@ -317,6 +318,9 @@ public class VideoGenRun
     /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
 
+    /// <summary>最终视频在资产存储中的内容哈希，用于所有权校验后的单对象清理。</summary>
+    public string? VideoAssetSha256 { get; set; }
+
     /// <summary>最近一次独立导出任务 ID。</summary>
     public string? LatestExportTaskId { get; set; }
 
@@ -358,6 +362,11 @@ public class VideoGenRun
     /// </summary>
     public bool ForceFullShadowSample { get; set; }
 }
+
+public sealed record DeleteVideoGenRunResult(
+    bool Deleted,
+    bool ProjectDeleted,
+    int ArtifactsDeleted);
 
 [BsonIgnoreExtraElements]
 public class VideoExportTask

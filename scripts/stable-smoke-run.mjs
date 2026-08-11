@@ -473,6 +473,47 @@ function runPlaywright(environment, values, runDir, grep = '') {
   return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
 }
 
+const smokeCaseIdPattern = /((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|REG-[a-z0-9-]+)-\d+)/gi;
+
+function grepCaseIds(grepExpression) {
+  return [...String(grepExpression || '').replaceAll('\\', '').matchAll(smokeCaseIdPattern)]
+    .map((match) => match[1].toUpperCase());
+}
+
+function caseIdsToGrep(caseIds) {
+  const unique = [...new Map(caseIds.map((caseId) => [
+    String(caseId).toUpperCase(),
+    String(caseId),
+  ])).values()];
+  return unique.length > 0 ? unique.map((caseId) => `\\[${caseId}\\]`).join('|') : '(?!)';
+}
+
+export function buildEnvironmentGrep(caseIds, userGrep = '') {
+  const policyGrep = caseIdsToGrep(caseIds);
+  if (!userGrep) return policyGrep;
+  const requested = grepCaseIds(userGrep);
+  if (requested.length > 0) {
+    const allowed = new Map(caseIds.map((caseId) => [String(caseId).toUpperCase(), String(caseId)]));
+    return caseIdsToGrep(requested.flatMap((caseId) => allowed.has(caseId) ? [allowed.get(caseId)] : []));
+  }
+  return `(?=.*(?:${policyGrep}))(?:${userGrep})`;
+}
+
+function plannedCaseIdsForEnvironment(plan, environment) {
+  return plan?.requiredCaseIdsByEnvironment?.[environment] || plan?.requiredCaseIds || [];
+}
+
+function selectedCaseIdsForEnvironment(plan, environment, userGrep, discoveredRows = []) {
+  const planned = plannedCaseIdsForEnvironment(plan, environment);
+  if (!userGrep) return [...planned];
+  const requested = grepCaseIds(userGrep);
+  const allowed = new Map(planned.map((caseId) => [String(caseId).toUpperCase(), String(caseId)]));
+  if (requested.length > 0) {
+    return [...new Set(requested)].flatMap((caseId) => allowed.has(caseId) ? [allowed.get(caseId)] : []);
+  }
+  return selectRequiredCaseIds(planned, userGrep, discoveredRows);
+}
+
 export function buildExecutionRecord(environment, execution) {
   return {
     ...execution,
@@ -612,6 +653,9 @@ export function initializeProductionSafetyGate(selected) {
 }
 
 export function buildDryRunSummary({ runId, plan, selected, envFileLoaded, productionSafetyGate }) {
+  const plannedEnvironmentCases = selected.reduce((sum, environment) => (
+    sum + plannedCaseIdsForEnvironment(plan, environment).length
+  ), 0);
   return {
     runId,
     verdict: 'dry-run',
@@ -631,7 +675,7 @@ export function buildDryRunSummary({ runId, plan, selected, envFileLoaded, produ
       verdict: 'not-run',
       passed: 0,
       failed: 0,
-      notRun: plan?.requiredCaseIds?.length || 0,
+      notRun: plannedEnvironmentCases,
       reason: 'dry-run 只校验配置并生成计划，不执行功能和视觉结果门禁',
     },
     archive: { status: 'skipped-dry-run', reportUrl: '' },
@@ -645,6 +689,28 @@ export function selectCoverageCaseIds(requiredCaseIds, userGrep, selected, produ
     && productionSafetyGate.restricted;
   const effectiveGrep = productionOnlyReadOnly ? productionSafetyGate.grep : userGrep;
   return selectRequiredCaseIds(requiredCaseIds, effectiveGrep, discoveredRows);
+}
+
+export function selectCoverageCaseIdsByEnvironment(
+  plan,
+  userGrep,
+  selected,
+  productionSafetyGate,
+  discoveredRows = [],
+) {
+  return Object.fromEntries(selected.map((environment) => {
+    const environmentRows = discoveredRows.filter((row) => row.environment === environment);
+    const productionOnlyReadOnly = selected.length === 1
+      && environment === 'production'
+      && productionSafetyGate.restricted;
+    const effectiveGrep = productionOnlyReadOnly ? productionSafetyGate.grep : userGrep;
+    return [environment, selectedCaseIdsForEnvironment(
+      plan,
+      environment,
+      effectiveGrep,
+      environmentRows,
+    )];
+  }));
 }
 
 export function foldVisualGateVerdict(functionalVerdict, visualResult) {
@@ -1211,7 +1277,7 @@ async function main() {
           cdsExecution,
           cdsRows,
           Boolean(grep),
-          plan?.requiredCaseIds || [],
+          plannedCaseIdsForEnvironment(plan, 'cds'),
         );
       }
       const errors = environment === 'production' && productionSafetyGate.restricted
@@ -1228,12 +1294,18 @@ async function main() {
         });
         continue;
       }
+      const policyGrep = buildEnvironmentGrep(
+        plannedCaseIdsForEnvironment(plan, environment),
+        grep,
+      );
       const effectiveGrep = environment === 'production' && productionSafetyGate.restricted
         ? productionSafetyGate.grep
-        : grep;
+        : policyGrep;
       const execution = runPlaywright(environment, values, runDir, effectiveGrep);
       executions.push({
         ...buildExecutionRecord(environment, execution),
+        grep: effectiveGrep,
+        requiredCaseIds: plannedCaseIdsForEnvironment(plan, environment),
         policy: environment === 'production' ? productionSafetyGate.mode : 'full',
         gateReasons: environment === 'production' ? productionSafetyGate.reasons : [],
       });
@@ -1243,8 +1315,8 @@ async function main() {
       if (!execution.resultPath) return [];
       return collectPlaywrightCases(readJson(execution.resultPath), execution.environment);
     });
-    const requiredCaseIds = selectCoverageCaseIds(
-      plan?.requiredCaseIds || [],
+    const requiredCaseIds = selectCoverageCaseIdsByEnvironment(
+      plan,
       grep,
       selected,
       productionSafetyGate,

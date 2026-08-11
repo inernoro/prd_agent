@@ -82,8 +82,11 @@ export function reconcileCaseCoverage(
   ]));
   const reconciled = [];
 
-  for (const caseId of requiredCaseIds) {
-    for (const environment of environments) {
+  for (const environment of environments) {
+    const environmentCaseIds = Array.isArray(requiredCaseIds)
+      ? requiredCaseIds
+      : requiredCaseIds?.[environment] || [];
+    for (const caseId of environmentCaseIds) {
       const evidence = rowsByKey.get(`${environment}:${String(caseId).toUpperCase()}`);
       reconciled.push(evidence ? { ...evidence, caseId } : {
         caseId,

@@ -7,6 +7,7 @@ import {
   acquireLock,
   applyCredentialRegistry,
   buildExecutionRecord,
+  buildEnvironmentGrep,
   buildDryRunSummary,
   buildAffectedNotificationTargets,
   buildStableSmokeArchiveCommand,
@@ -35,6 +36,7 @@ import {
   requireAuthoritativeCdsAddress,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
+  selectCoverageCaseIdsByEnvironment,
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
   validateProductionReadOnlyConfig,
@@ -64,6 +66,10 @@ test('dry-run 只产出计划摘要且不宣称功能或视觉验收通过', () 
       catalogVersion: '2026.08',
       commit: 'a'.repeat(40),
       requiredCaseIds: ['CORE-001', 'VISUAL-001'],
+      requiredCaseIdsByEnvironment: {
+        cds: ['CORE-001'],
+        production: ['VISUAL-001'],
+      },
     },
     selected: ['cds', 'production'],
     envFileLoaded: true,
@@ -76,6 +82,40 @@ test('dry-run 只产出计划摘要且不宣称功能或视觉验收通过', () 
   assert.deepEqual(summary.executions.map((item) => item.status), ['dry-run', 'dry-run']);
   assert.equal(summary.archive.status, 'skipped-dry-run');
   assert.equal(summary.notification.status, 'skipped');
+});
+
+test('双环境执行范围按各自矩阵取交集且正式环境不能点名越权用例', () => {
+  const plan = {
+    requiredCaseIds: ['CORE-001', 'REC-006', 'VIDEO-004'],
+    requiredCaseIdsByEnvironment: {
+      cds: ['CORE-001', 'REC-006', 'VIDEO-004'],
+      production: ['CORE-001', 'VIDEO-004'],
+    },
+  };
+  assert.equal(
+    buildEnvironmentGrep(plan.requiredCaseIdsByEnvironment.production),
+    '\\[CORE-001\\]|\\[VIDEO-004\\]',
+  );
+  assert.equal(
+    buildEnvironmentGrep(plan.requiredCaseIdsByEnvironment.production, '\\[REC-006\\]'),
+    '(?!)',
+  );
+  assert.equal(
+    buildEnvironmentGrep(['REG-user-error-001'], '\\[reg-user-error-001\\]'),
+    '\\[REG-user-error-001\\]',
+  );
+  assert.deepEqual(
+    selectCoverageCaseIdsByEnvironment(
+      plan,
+      '',
+      ['cds', 'production'],
+      { restricted: false, grep: '' },
+    ),
+    {
+      cds: ['CORE-001', 'REC-006', 'VIDEO-004'],
+      production: ['CORE-001', 'VIDEO-004'],
+    },
+  );
 });
 
 test('失败、未执行和重试用例逐项形成带用例与追踪号的通知目标', () => {
@@ -449,6 +489,9 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(automationPrompt, /--dry-run --run-id <runId>/);
   assert.match(automationPrompt, /\/验收/);
   assert.match(automationPrompt, /--visual-manifest <manifest\.json绝对路径>/);
+  assert.match(source, /requiredCaseIdsByEnvironment/);
+  assert.match(source, /buildEnvironmentGrep/);
+  assert.match(automationPrompt, /人工 `--grep` 只能取本环境允许集合的交集/);
   assert.equal((source.match(/'--environments', selected\.join\(','\)/g) || []).length, 3);
   assert.match(source, /summaryDocument\.notification\.status === 'delivery-failed'/);
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
@@ -489,6 +532,21 @@ IGNORED-KEY=value
     STABLE_SMOKE_CDS_USER: 'stsmk_cds',
     STABLE_SMOKE_CDS_AI_ACCESS_KEY: 'literal-value',
   });
+});
+
+test('环境模板账号与凭据注册表保持一致', () => {
+  const template = readFileSync('.env.template', 'utf8');
+  const registry = JSON.parse(readFileSync(
+    '.claude/skills/stable-smoke/reference/credential-registry.json',
+    'utf8',
+  ));
+  const values = Object.fromEntries(registry.localBindings
+    .filter((item) => item.value)
+    .map((item) => [item.envKey, item.value]));
+  assert.match(template, new RegExp(`STABLE_SMOKE_CDS_USER=${values.STABLE_SMOKE_CDS_USER}\\b`));
+  assert.match(template, new RegExp(`STABLE_SMOKE_PROD_USER=${values.STABLE_SMOKE_PROD_USER}\\b`));
+  assert.match(template, /SYNTHETIC_LOGIN_ALLOWED_USERS=stsmk_cds,stsmk_prod\b/);
+  assert.doesNotMatch(template, /stsmk_(?:cds|prod)_admin/);
 });
 
 test('双环境凭据缺失时前置检查明确阻断', () => {

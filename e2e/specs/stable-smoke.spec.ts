@@ -599,7 +599,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-001][FILE-002][FILE-004][FILE-005][FILE-006][FILE-007][FILE-009][FILE-010][REG-file-001] 文件格式、错误、下载、重复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[FILE-001][FILE-002][FILE-006][FILE-007][FILE-009][FILE-010] 文件格式、下载、重复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/transcript-agent');
     const runKey = `stsmk-${Date.now()}`;
     let storeId = '';
@@ -614,13 +614,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       storeId = store.id;
 
       const expectedText = `${runKey} 中文文件解析基准内容`;
-      const fixtures = [
+      const allFixtures = [
         { suffix: 'txt', mime: 'text/plain', buffer: Buffer.from(expectedText, 'utf8'), expected: expectedText },
         { suffix: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: docxFixture(expectedText), expected: expectedText },
         { suffix: 'pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', buffer: pptxFixture(expectedText), expected: expectedText },
         { suffix: 'xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: readFileSync(resolve(specDir, '../../prd-admin/public/templates/product-agent-feature-catalog-test.xlsx')), expected: '' },
         { suffix: 'pdf', mime: 'application/pdf', buffer: readFileSync(resolve(specDir, '../../doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.pdf')), expected: '' },
       ];
+      const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
+      const rotationSeed = requiredEnv('STABLE_SMOKE_COMMIT');
+      const rotationOffset = [...rotationSeed].reduce((sum, character) => sum + character.charCodeAt(0), 0) % allFixtures.length;
+      const fixtures = production
+        ? [allFixtures[rotationOffset], allFixtures[(rotationOffset + 1) % allFixtures.length]]
+        : allFixtures;
       for (const fixture of fixtures) {
         const upload = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
           headers: authHeaders(token),
@@ -661,21 +667,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       createdEntryIds.push(duplicateData.entry.id);
       createdFileUrls.push(duplicateData.fileUrl);
 
-      const corrupt = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
-        headers: authHeaders(token),
-        multipart: { file: { name: `${runKey}-损坏.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from('not-a-docx') } },
-      });
-      const corruptBody = await corrupt.json() as ApiEnvelope<never>;
-      expect(corrupt.status()).toBe(400);
-      expectUserReadable(corruptBody.error?.message || '');
-
-      const empty = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
-        headers: authHeaders(token),
-        multipart: { file: { name: `${runKey}-空文件.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(0) } },
-      });
-      const emptyBody = await empty.json() as ApiEnvelope<never>;
-      expect(empty.status()).toBe(400);
-      expectUserReadable(emptyBody.error?.message || '');
     } finally {
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
@@ -699,6 +690,59 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             timeout: 15_000,
           }).toBe(404);
         }
+      }
+    }
+  });
+
+  test('[FILE-004] CDS 损坏文档只返回可恢复提示且不留条目', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动上传损坏文档');
+    const token = await loginAndReadToken(page, request, '/transcript-agent');
+    const runKey = `stsmk-${Date.now()}-corrupt`;
+    let storeId = '';
+    try {
+      const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: runKey, description: '损坏文件前置拒绝测试', isPublic: false },
+      }));
+      storeId = store.id;
+      const corrupt = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
+        headers: authHeaders(token),
+        multipart: { file: { name: `${runKey}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: Buffer.from('not-a-docx') } },
+      });
+      const corruptBody = await corrupt.json() as ApiEnvelope<never>;
+      expect(corrupt.status()).toBe(400);
+      expectUserReadable(corruptBody.error?.message || '');
+    } finally {
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+  test('[FILE-005][REG-file-001] 空文件在解析前被拒绝且不留条目', { tag: '@cleanup' }, async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/transcript-agent');
+    const runKey = `stsmk-${Date.now()}-empty`;
+    let storeId = '';
+    try {
+      const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: runKey, description: '空文件前置拒绝测试', isPublic: false },
+      }));
+      storeId = store.id;
+      const empty = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
+        headers: authHeaders(token),
+        multipart: { file: { name: `${runKey}.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(0) } },
+      });
+      const emptyBody = await empty.json() as ApiEnvelope<never>;
+      expect(empty.status()).toBe(400);
+      expectUserReadable(emptyBody.error?.message || '');
+    } finally {
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
     }
   });
@@ -899,7 +943,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(body.error?.message || '');
   });
 
-  test('[VIDEO-004][VIDEO-007][VIDEO-008][REG-video-001] 从页面生成最短无音频视频并解码成片', async ({ page, request }) => {
+  test('[VIDEO-004][VIDEO-007][VIDEO-008][VIDEO-010][REG-video-001] 从页面生成最短无音频视频并解码成片', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(420_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const models = await readEnvelope<Array<{
@@ -919,6 +963,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const selectedResolution = model.resolutions?.includes('720p') ? '720p' : model.resolutions?.[0] || '720p';
     const prompt = '固定镜头，一只蓝色陶瓷杯放在纯白桌面上，柔和自然光，不要文字，不要人物';
     let runId = '';
+    let projectId = '';
+    let generatedVideoUrl = '';
     try {
       await page.getByRole('button', { name: /单镜直出/ }).click();
       await page.getByLabel('项目名称').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-video`);
@@ -957,9 +1003,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           currentPhase?: string;
           phaseProgress?: number;
           generateAudio?: boolean;
+          projectId?: string;
         }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, {
           headers: authHeaders(token),
         }));
+        projectId = status.projectId || projectId;
         const stage = page.getByTestId('video-generation-stage');
         if (await stage.isVisible().catch(() => false)) visibleStages.add((await stage.innerText()).trim());
         const progress = page.getByTestId('video-generation-progress');
@@ -976,6 +1024,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
       }
       expect(videoUrl, '视频任务完成后必须返回成片标识').toBeTruthy();
+      generatedVideoUrl = videoUrl;
       await expect(page.locator('video'), '完成后页面必须显示可播放视频').toBeVisible({ timeout: 30_000 });
       await expect(page.getByText('已完成', { exact: true }).first(), '页面必须显示生成完成阶段').toBeVisible();
       visibleStages.add('已完成');
@@ -1022,9 +1071,48 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       if (runId) {
         const current = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
         if (current.ok()) {
-          const state = await current.json() as ApiEnvelope<{ status: string }>;
+          let state = await current.json() as ApiEnvelope<{ status: string; projectId?: string }>;
+          projectId = state.data?.projectId || projectId;
           if (!/Completed|Failed|Cancelled/i.test(state.data?.status || '')) {
             await page.request.post(`/api/video-agent/runs/${encodeURIComponent(runId)}/cancel`, { headers: authHeaders(token) });
+            const cancelStartedAt = Date.now();
+            while (Date.now() - cancelStartedAt < 30_000) {
+              await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+              const refreshed = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
+              if (!refreshed.ok()) break;
+              state = await refreshed.json() as ApiEnvelope<{ status: string; projectId?: string }>;
+              projectId = state.data?.projectId || projectId;
+              if (/Completed|Failed|Cancelled/i.test(state.data?.status || '')) break;
+            }
+          }
+          const cleanup = await page.request.delete(
+            `/api/video-agent/runs/${encodeURIComponent(runId)}?deleteEmptyProject=true`,
+            { headers: authHeaders(token) },
+          );
+          const cleanupBody = await cleanup.json() as ApiEnvelope<{
+            deleted: boolean;
+            projectDeleted: boolean;
+            artifactsDeleted: number;
+          }>;
+          expect(cleanup.ok(), cleanupBody.error?.message || '视频任务清理失败').toBe(true);
+          expect(cleanupBody.data.deleted).toBe(true);
+          expect(cleanupBody.data.projectDeleted, '页面新建的空视频项目必须随任务回收').toBe(true);
+          if (generatedVideoUrl) expect(cleanupBody.data.artifactsDeleted).toBeGreaterThanOrEqual(1);
+          expect((await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) })).status()).toBe(404);
+          if (projectId) {
+            expect((await page.request.get(`/api/video-agent/projects/${encodeURIComponent(projectId)}`, { headers: authHeaders(token) })).status()).toBe(404);
+          }
+          if (generatedVideoUrl) {
+            let artifactStatus = 200;
+            const deleteStartedAt = Date.now();
+            while (Date.now() - deleteStartedAt < 30_000) {
+              const separator = generatedVideoUrl.includes('?') ? '&' : '?';
+              const artifact = await page.request.get(`${generatedVideoUrl}${separator}cleanup=${Date.now()}`);
+              artifactStatus = artifact.status();
+              if (!artifact.ok()) break;
+              await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+            }
+            expect(artifactStatus, '视频任务删除后生成文件仍可访问').toBeGreaterThanOrEqual(400);
           }
         }
       }
@@ -1157,16 +1245,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-001][REC-002][REC-006] 现场录音自动开始、暂停继续且静音会在上传前拦截', async ({ page, request, context }) => {
+  test('[REC-001][REC-002] 现场录音自动开始且暂停继续不丢状态', async ({ page, request, context }) => {
     test.setTimeout(90_000);
     await context.grantPermissions(['microphone']);
-    await page.addInitScript(() => {
-      const analyser = window.AnalyserNode?.prototype;
-      if (!analyser) return;
-      analyser.getByteTimeDomainData = function getSilentTimeDomainData(target: Uint8Array) {
-        target.fill(128);
-      };
-    });
     await page.setViewportSize({ width: 390, height: 844 });
     await loginAndReadToken(page, request, '/document-store?quickRecord=1');
 
@@ -1185,6 +1266,26 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await expect(page.getByText('录音中', { exact: true })).toBeVisible();
     await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe(pausedAt);
 
+    await page.getByRole('button', { name: '取消录音' }).click();
+    await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
+  });
+
+  test('[REC-006] CDS 静音录音在上传前给出明确恢复动作', async ({ page, request, context }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动运行静音录音');
+    test.setTimeout(90_000);
+    await context.grantPermissions(['microphone']);
+    await page.addInitScript(() => {
+      const analyser = window.AnalyserNode?.prototype;
+      if (!analyser) return;
+      analyser.getByteTimeDomainData = function getSilentTimeDomainData(target: Uint8Array) {
+        target.fill(128);
+      };
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await loginAndReadToken(page, request, '/document-store?quickRecord=1');
+
+    await expect(page.getByText('录音中', { exact: true })).toBeVisible({ timeout: 20_000 });
+    await page.waitForTimeout(1_500);
     await page.getByRole('button', { name: '结束录音并转成文字' }).click();
     await expect(page.getByText('整段录音几乎没有检测到声音，转录很可能失败。请确认麦克风没有静音。')).toBeVisible();
     await page.getByRole('button', { name: '放弃本次录音' }).click();
@@ -1216,7 +1317,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[GW-001][GW-002][GW-003][GW-004][GW-005][GW-006][GW-007][GW-008][GW-009][REG-llmgw-auth-001][REG-asr-routing-001] 网关配置、路由与日志可由专用身份审计', async ({ request }) => {
+  test('[GW-001][GW-002][GW-003][GW-004][GW-005][GW-007][GW-008][GW-009][REG-llmgw-auth-001][REG-asr-routing-001] 网关配置、路由与日志可由专用身份审计', async ({ request }) => {
     const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
     const login = await request.post(`${baseUrl}/gw/auth/login`, {
       data: {
@@ -1298,6 +1399,69 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(model.modelId).toBeTruthy();
       expect(model.platformId).toBeTruthy();
       expect(model.priority).toBeGreaterThan(0);
+    }
+  });
+
+  test('[GW-006] 路由配置变化后健康状态清零且原配置可恢复', async ({ request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动修改网关路由配置');
+    const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+    const login = await request.post(`${baseUrl}/gw/auth/login`, {
+      data: {
+        username: requiredEnv('STABLE_SMOKE_GW_USER'),
+        password: requiredEnv('STABLE_SMOKE_GW_PASSWORD'),
+      },
+    });
+    const loginBody = await login.json() as ApiEnvelope<{ token: string }>;
+    expect(login.ok(), loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
+    expect(loginBody.success, loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
+    const headers = { Authorization: `Bearer ${loginBody.data.token}` };
+    const logicalResponse = await request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers });
+    const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: Array<{
+      id: string;
+      offerings: Array<{
+        id: string;
+        endpointPath?: string;
+        enabled: boolean;
+      }>;
+    }> }>;
+    expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取网关路由配置').toBe(true);
+    const logical = logicalBody.data.items.find((item) => item.offerings.some((offering) => offering.enabled));
+    const offering = logical?.offerings.find((item) => item.enabled);
+    expect(logical && offering, 'CDS 网关需要至少一条可恢复的启用 Offering').toBeTruthy();
+
+    const originalEndpoint = offering?.endpointPath || '';
+    const probeEndpoint = originalEndpoint === 'stable-smoke-health-reset-probe'
+      ? 'stable-smoke-health-reset-probe-alt'
+      : 'stable-smoke-health-reset-probe';
+    let changed = false;
+    try {
+      const update = await request.put(`${baseUrl}/gw/logical-models/${logical!.id}/offerings/${offering!.id}`, {
+        headers,
+        data: { endpointPath: probeEndpoint },
+      });
+      changed = update.ok();
+      const updateBody = await update.json() as ApiEnvelope<{
+        endpointPath?: string;
+        healthStatus: number;
+        consecutiveFailures: number;
+        consecutiveSuccesses: number;
+      }>;
+      expect(update.ok(), updateBody.error?.message || '无法验证路由变化后的健康状态清零').toBe(true);
+      expect(updateBody.data.endpointPath).toBe(probeEndpoint);
+      expect(updateBody.data.healthStatus).toBe(0);
+      expect(updateBody.data.consecutiveFailures).toBe(0);
+      expect(updateBody.data.consecutiveSuccesses).toBe(0);
+    } finally {
+      if (changed) {
+        const restore = await request.put(`${baseUrl}/gw/logical-models/${logical!.id}/offerings/${offering!.id}`, {
+          headers,
+          data: { endpointPath: originalEndpoint },
+        });
+        const restoreBody = await restore.json() as ApiEnvelope<{ endpointPath?: string; healthStatus: number }>;
+        expect(restore.ok(), restoreBody.error?.message || '网关路由配置恢复失败，需要立即人工处理').toBe(true);
+        expect(restoreBody.data.endpointPath || '').toBe(originalEndpoint);
+        expect(restoreBody.data.healthStatus).toBe(0);
+      }
     }
   });
 
@@ -1650,7 +1814,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-003][MVIS-004][MVIS-005][MVIS-006] 多图重排、删除、重复与超限行为明确', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[MVIS-003][MVIS-004] 多图重排与删除后引用顺序正确', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-boundaries');
@@ -1679,15 +1843,36 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(chips).toHaveCount(0);
       await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
 
+      await testInfo.attach('multi-image-reorder-delete', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-reorder-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+    }
+  });
+
+  test('[MVIS-005][MVIS-006] 多图重复与超限输入给出明确行为', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动运行重复和超限图片输入');
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'multi-image-boundaries');
+    const png = Buffer.from(solidPngDataUrl(45, 120, 210, 32).split(',')[1]!, 'base64');
+    const file = (name: string) => ({ name, mimeType: 'image/png', buffer: png });
+    try {
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissVisualTutorial(page);
+      const picker = page.locator('input[type="file"][accept="image/*"]');
+
       await picker.setInputFiles([file('dup1.png'), file('dup2.png')]);
-      await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
+      await expect(page.getByTestId('canvas-image')).toHaveCount(2, { timeout: 30_000 });
       await expect(page.getByText('已把 2 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。')).toBeVisible();
       await expect(page.locator('[data-testid="canvas-image"][alt="dup1.png"]')).toHaveCount(1);
       await expect(page.locator('[data-testid="canvas-image"][alt="dup2.png"]')).toHaveCount(1);
 
       await picker.setInputFiles(Array.from({ length: 21 }, (_, index) => file(`limit-${String(index + 1).padStart(2, '0')}.png`)));
       await expect(page.getByText('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加')).toBeVisible();
-      await expect(page.getByTestId('canvas-image')).toHaveCount(23, { timeout: 60_000 });
+      await expect(page.getByTestId('canvas-image')).toHaveCount(22, { timeout: 60_000 });
       await expect(page.locator('[data-testid="canvas-image"][alt="limit-21.png"]')).toHaveCount(0);
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await testInfo.attach('multi-image-boundaries', { body: await page.screenshot(), contentType: 'image/png' });
@@ -1700,6 +1885,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[MVIS-007] 损坏引用指出具体图片并保留其他输入', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动运行损坏图片引用');
     test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-broken-reference');

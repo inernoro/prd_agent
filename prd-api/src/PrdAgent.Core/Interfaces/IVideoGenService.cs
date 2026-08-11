@@ -31,6 +31,14 @@ public interface IVideoGenService
     /// <summary>请求取消任务</summary>
     Task<bool> CancelRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
 
+    /// <summary>删除终态任务及其不再被引用的生成产物；可同时回收仅属于该任务的空项目。</summary>
+    Task<DeleteVideoGenRunResult?> DeleteRunAsync(
+        string runId,
+        string ownerAdminId,
+        bool deleteEmptyProject = false,
+        string? appKey = null,
+        CancellationToken ct = default);
+
     /// <summary>统计指定用户今日在指定 appKey 下的视频生成次数</summary>
     Task<long> CountTodayRunsAsync(string ownerAdminId, string appKey, CancellationToken ct = default);
 

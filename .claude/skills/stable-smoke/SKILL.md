@@ -1,6 +1,6 @@
 ---
 name: stable-smoke
-version: 1.8.0
+version: 1.9.0
 description: Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".
 ---
 
@@ -64,6 +64,7 @@ description: Runs a recurring dual-environment synthetic regression suite for cr
 19. 视觉报告必须生成逐张证据账本。每张图都要显示所属模块、唯一主验收状态、冒烟/功能/视觉/回归类型、自动检查、人工视觉、严格结论、主题、设备、真实面包屑、证明内容、截图跳转和测试方法跳转；一张图不能替多个主状态核销。任一字段缺失时该图不计入可审核证据，模块视觉状态为未执行或需干预。
 20. 全面视觉复测的可审核证据硬下限为 148 张，按十个模块分别核算；单图视觉创作和多图视觉创作各不少于 18 张。主管报告必须给出每个模块的采集文件数、可审核证据数、计划数、状态结果和“查看全部截图”链接，禁止只展示每模块首图让审核者误以为只有十几张。
 21. 完整 `/稳测` 禁止直接用空 manifest 进入视觉门禁。必须先用固定 runId 执行 `--dry-run` 生成本轮 `visual-plan.json`，再调用 `/验收` 的真人浏览器 harness 逐项取证，最后把同一 runId、同一 commit 的 `manifest.json` 通过 `--visual-manifest` 显式交给主运行器。缺少清单或路径不存在时必须在业务旅程开始前阻断；只有正式环境单独只读检查可使用空清单并判定视觉不适用。
+22. 双环境矩阵必须保留每个 caseId 的 CDS 与正式环境策略，分别生成必跑集合、grep 和覆盖账本。正式环境不得执行标记为“不主动”“不改正式配置”的用例；仅标记为“轮换”的用例按模块和固定 commit 确定性选择一条。用户定向 grep 只能缩小本环境允许集合，不能越权重新加入 CDS 专属故障或计费动作。
 
 ## 每轮工作流
 

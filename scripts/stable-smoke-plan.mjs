@@ -31,9 +31,58 @@ export function parseActiveRegressions(markdown) {
 }
 
 export function parseMatrixCaseIds(markdown) {
-  return [...new Set([...markdown.matchAll(
-    /^\|\s*((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW)-\d+)\s*\|/gm,
-  )].map((match) => match[1]))];
+  return parseMatrixCases(markdown).map((item) => item.caseId);
+}
+
+export function parseMatrixCases(markdown) {
+  return markdown.split('\n').flatMap((line) => {
+    if (!/^\|\s*(?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW)-\d+\s*\|/.test(line)) return [];
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length < 5) return [];
+    return [{
+      caseId: cells[0],
+      cdsPolicy: cells[3],
+      productionPolicy: cells[4],
+    }];
+  });
+}
+
+function policySkipsActiveExecution(policy) {
+  return /不主动|不改正式配置/.test(String(policy || ''));
+}
+
+function rotationOnlyPolicy(policy) {
+  return /^轮换$/.test(String(policy || '').trim());
+}
+
+function deterministicRotationIndex(seed, count) {
+  if (count <= 1) return 0;
+  let hash = 0;
+  for (const character of String(seed || 'stable-smoke')) hash = ((hash * 31) + character.charCodeAt(0)) >>> 0;
+  return hash % count;
+}
+
+export function selectMatrixCasesByEnvironment(matrixCases, commit = '') {
+  const cds = matrixCases
+    .filter((item) => !policySkipsActiveExecution(item.cdsPolicy))
+    .map((item) => item.caseId);
+  const production = matrixCases
+    .filter((item) => !policySkipsActiveExecution(item.productionPolicy)
+      && !rotationOnlyPolicy(item.productionPolicy))
+    .map((item) => item.caseId);
+  const rotatingByModule = new Map();
+  for (const item of matrixCases.filter((row) => rotationOnlyPolicy(row.productionPolicy))) {
+    const module = item.caseId.split('-')[0];
+    if (!rotatingByModule.has(module)) rotatingByModule.set(module, []);
+    rotatingByModule.get(module).push(item.caseId);
+  }
+  for (const [module, caseIds] of rotatingByModule) {
+    production.push(caseIds[deterministicRotationIndex(`${commit}:${module}`, caseIds.length)]);
+  }
+  return {
+    cds: [...new Set(cds)].sort(),
+    production: [...new Set(production)].sort(),
+  };
 }
 
 export function validateCatalog(catalog) {
@@ -87,7 +136,7 @@ function gitCommit() {
   return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCaseIds = [], mode, commit }) {
+export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCases = [], matrixCaseIds = [], mode, commit }) {
   const catalogErrors = validateCatalog(catalog);
   const { selected, unmappedFiles } = selectFeatureLines(catalog, changedFiles, activeRegressions, mode);
   const incomplete = selected.filter((feature) => feature.automationStatus === 'planned');
@@ -96,14 +145,35 @@ export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCase
     : incomplete.length > 0
       ? 'conditional'
       : 'pass';
+  const normalizedMatrixCases = matrixCases.length > 0
+    ? matrixCases
+    : matrixCaseIds.map((caseId) => ({ caseId, cdsPolicy: '必跑', productionPolicy: '必跑' }));
+  const matrixSelection = selectMatrixCasesByEnvironment(normalizedMatrixCases, commit);
+  const matrixById = new Map(normalizedMatrixCases.map((item) => [item.caseId, item]));
   const selectedCaseIds = selected.flatMap((feature) => [...feature.requiredCaseIds, ...(feature.regressionCaseIds || [])]);
+  const selectedForEnvironment = (environment) => selectedCaseIds.filter((caseId) => {
+    const matrixCase = matrixById.get(caseId);
+    if (!matrixCase) return true;
+    return matrixSelection[environment].includes(caseId);
+  });
+  const requiredCaseIdsByEnvironment = {
+    cds: [...new Set([
+      ...(mode === 'scheduled' ? matrixSelection.cds : []),
+      ...selectedForEnvironment('cds'),
+      ...activeRegressions,
+    ])].sort(),
+    production: [...new Set([
+      ...(mode === 'scheduled' ? matrixSelection.production : []),
+      ...selectedForEnvironment('production'),
+      ...activeRegressions,
+    ])].sort(),
+  };
   const requiredCaseIds = [...new Set([
-    ...(mode === 'scheduled' ? matrixCaseIds : []),
-    ...selectedCaseIds,
-    ...activeRegressions,
+    ...requiredCaseIdsByEnvironment.cds,
+    ...requiredCaseIdsByEnvironment.production,
   ])].sort();
   return {
-    schemaVersion: '1.0',
+    schemaVersion: '1.1',
     generatedAt: new Date().toISOString(),
     mode,
     commit,
@@ -114,6 +184,11 @@ export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCase
     unmappedFiles,
     activeRegressions,
     requiredCaseIds,
+    requiredCaseIdsByEnvironment,
+    matrixPolicies: Object.fromEntries(normalizedMatrixCases.map((item) => [item.caseId, {
+      cds: item.cdsPolicy,
+      production: item.productionPolicy,
+    }])),
     featureLines: selected,
   };
 }
@@ -127,7 +202,9 @@ export function renderPlanMarkdown(plan) {
     `- 模式：${plan.mode}`,
     `- 固定版本：${plan.commit}`,
     `- 生成功能线：${plan.featureLines.length}`,
-    `- 必跑用例：${plan.requiredCaseIds.length}`,
+    `- 必跑用例并集：${plan.requiredCaseIds.length}`,
+    `- CDS 环境：${plan.requiredCaseIdsByEnvironment?.cds?.length || 0}`,
+    `- 正式环境：${plan.requiredCaseIdsByEnvironment?.production?.length || 0}`,
     '',
     '| 功能线 | 等级 | 面包屑 | CDS 环境 | 正式环境 | 自动化现状 | 回滚 |',
     '|---|---|---|---|---|---|---|',
@@ -162,8 +239,8 @@ async function main() {
   const changedFiles = explicitFiles.length > 0 ? explicitFiles : mode === 'changed' ? gitChangedFiles(base, head) : [];
   const catalog = loadCatalog(catalogPath);
   const activeRegressions = parseActiveRegressions(readFileSync(ledgerPath, 'utf8'));
-  const matrixCaseIds = parseMatrixCaseIds(readFileSync(matrixPath, 'utf8'));
-  const plan = buildPlan({ catalog, changedFiles, activeRegressions, matrixCaseIds, mode, commit: gitCommit() });
+  const matrixCases = parseMatrixCases(readFileSync(matrixPath, 'utf8'));
+  const plan = buildPlan({ catalog, changedFiles, activeRegressions, matrixCases, mode, commit: gitCommit() });
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
   if (outputJson) writeFileSync(outputJson, `${JSON.stringify(plan, null, 2)}\n`, 'utf8');

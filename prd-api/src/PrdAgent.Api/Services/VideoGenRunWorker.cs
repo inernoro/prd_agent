@@ -345,6 +345,7 @@ public class VideoGenRunWorker : BackgroundService
                 await PublishEventAsync(run.Id, "phase.changed", new { phase = "downloading", progress = 95 });
 
                 string finalUrl;
+                string finalSha256;
                 try
                 {
                     var dl = await client.DownloadVideoBytesAsync(
@@ -362,6 +363,7 @@ public class VideoGenRunWorker : BackgroundService
                         playbackBytes, dl.ContentType ?? "video/mp4", CancellationToken.None,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
                     finalUrl = stored.Url;
+                    finalSha256 = stored.Sha256;
 
                     _logger.LogInformation("VideoGen 视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
                         run.Id, finalUrl, stored.SizeBytes);
@@ -378,6 +380,7 @@ public class VideoGenRunWorker : BackgroundService
                     Builders<VideoGenRun>.Update
                         .Set(x => x.Status, VideoGenRunStatus.Completed)
                         .Set(x => x.VideoAssetUrl, finalUrl)
+                        .Set(x => x.VideoAssetSha256, finalSha256)
                         .Set(x => x.DirectVideoCost, status.Cost)
                         .Set(x => x.CurrentPhase, "completed")
                         .Set(x => x.PhaseProgress, 100)
@@ -986,6 +989,7 @@ public class VideoGenRunWorker : BackgroundService
                     var version = new VideoGenSceneVersion
                     {
                         VideoUrl = stored.Url,
+                        AssetSha256 = stored.Sha256,
                         JobId = submittedJobId,
                         Model = actualModel,
                         Prompt = scene.Prompt,
@@ -1373,6 +1377,7 @@ public class VideoGenRunWorker : BackgroundService
                 Builders<VideoGenRun>.Update
                     .Set(x => x.Status, VideoGenRunStatus.Completed)
                     .Set(x => x.VideoAssetUrl, stored.Url)
+                    .Set(x => x.VideoAssetSha256, stored.Sha256)
                     .Set(x => x.DirectVideoCost, totalCost)
                     .Set(x => x.ExportErrorMessage, (string?)null)
                     .Set(x => x.ExportedAt, DateTime.UtcNow)

@@ -107,7 +107,10 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                   && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal)
+            ? new[] { "mp4" }
+            : new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var ext in exts)
         {
             if (!string.IsNullOrWhiteSpace(d) && !string.IsNullOrWhiteSpace(t))
@@ -129,7 +132,10 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                   && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal)
+            ? new[] { "mp4" }
+            : new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var ext in exts)
         {
             try
@@ -142,6 +148,12 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             }
             catch (Exception ex)
             {
+                if (ext == "mp4"
+                    && string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                    && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+                {
+                    throw;
+                }
                 _logger.LogWarning(ex, "R2 deleteBySha failed. sha={Sha}", sha);
             }
         }
@@ -497,6 +509,11 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         if (AssetStorageDeletePolicy.IsVersionedUserAvatarKey(normalizedKey, _prefix))
         {
             reason = "superseded_avatar";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedVideoKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_video";
             return true;
         }
         if (!_enableSafeDelete) { reason = "disabled"; return false; }

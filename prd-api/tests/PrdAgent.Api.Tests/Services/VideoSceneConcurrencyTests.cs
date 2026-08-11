@@ -18,6 +18,48 @@ namespace PrdAgent.Api.Tests.Services;
 public class VideoSceneConcurrencyTests
 {
     [Fact]
+    public async Task DeleteCompletedRun_ShouldRemoveOwnedArtifactRunExportAndEmptyProject()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var project = await service.CreateProjectAsync(
+            "video-agent",
+            test.OwnerId,
+            new CreateVideoProjectRequest { Title = "稳定冒烟视频", SourceMarkdown = "测试" });
+        var sha = new string('a', 64);
+        var run = NewRun("delete-completed", test.OwnerId, SceneItemStatus.Done);
+        run.ProjectId = project.Id;
+        run.Status = VideoGenRunStatus.Completed;
+        run.VideoAssetUrl = "https://assets.example/video-agent/video/test.mp4";
+        run.VideoAssetSha256 = sha;
+        await test.SaveRunAsync(run);
+        await test.Context.VideoProjects.UpdateOneAsync(
+            item => item.Id == project.Id,
+            Builders<VideoProject>.Update.Set(item => item.LatestRunId, run.Id));
+        await test.Context.VideoExportTasks.InsertOneAsync(new VideoExportTask
+        {
+            ProjectId = project.Id,
+            RunId = run.Id,
+            OwnerAdminId = test.OwnerId,
+        });
+
+        var result = await service.DeleteRunAsync(run.Id, test.OwnerId, deleteEmptyProject: true, appKey: run.AppKey);
+
+        result.ShouldNotBeNull();
+        result.Deleted.ShouldBeTrue();
+        result.ProjectDeleted.ShouldBeTrue();
+        result.ArtifactsDeleted.ShouldBe(1);
+        (await test.Context.VideoGenRuns.CountDocumentsAsync(item => item.Id == run.Id)).ShouldBe(0);
+        (await test.Context.VideoExportTasks.CountDocumentsAsync(item => item.RunId == run.Id)).ShouldBe(0);
+        (await test.Context.VideoProjects.CountDocumentsAsync(item => item.Id == project.Id)).ShouldBe(0);
+        test.AssetStorage.Verify(storage => storage.DeleteByShaAsync(
+            sha,
+            It.IsAny<CancellationToken>(),
+            AppDomainPaths.DomainVideoAgent,
+            AppDomainPaths.TypeVideo), Times.Once);
+    }
+
+    [Fact]
     public async Task ConcurrentQueueRequests_ShouldOnlyTransitionOnce_AndNeverClearAnExistingClaim()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
@@ -276,6 +318,7 @@ public class VideoSceneConcurrencyTests
 
         public MongoDbContext Context { get; }
         public Mock<IOpenRouterVideoClient> VideoClient { get; }
+        public Mock<IAssetStorage> AssetStorage => _assetStorage;
         public string OwnerId { get; }
 
         public Task SaveRunAsync(VideoGenRun run) => Context.VideoGenRuns.InsertOneAsync(run);
@@ -318,6 +361,7 @@ public class VideoSceneConcurrencyTests
         public VideoGenService CreateService() => new(
             Context,
             _runStore.Object,
+            _assetStorage.Object,
             new LLMRequestContextAccessor(),
             NullLogger<VideoGenService>.Instance);
 

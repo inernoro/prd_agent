@@ -728,6 +728,40 @@ public class VideoAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(true));
     }
 
+    /// <summary>删除当前用户的终态视频任务及其独占生成产物。</summary>
+    [HttpDelete("runs/{runId}")]
+    public async Task<IActionResult> DeleteRun(
+        string runId,
+        [FromQuery] bool deleteEmptyProject = false,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await _videoGenService.DeleteRunAsync(
+                runId,
+                GetAdminId(),
+                deleteEmptyProject,
+                AppKey,
+                ct);
+            return result == null
+                ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"))
+                : Ok(ApiResponse<DeleteVideoGenRunResult>.Ok(result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("任务仍在生成", StringComparison.Ordinal))
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "视频任务清理失败: runId={RunId}", runId);
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(
+                    "VIDEO_CLEANUP_FAILED",
+                    "视频任务暂时未能全部清理，请稍后重试；系统会按当前任务记录继续补齐清理"));
+        }
+    }
+
     // 注：原 srt / narration / script 下载端点已移除——这些都是分镜流程产物。
     // 直出视频结果直接用 run.VideoAssetUrl 作为外链下载即可。
 
