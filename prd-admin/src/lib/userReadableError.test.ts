@@ -143,6 +143,8 @@ describe('toUserReadableErrorMessage', () => {
     ['SSO_PROVIDER_DISABLED', 'SSO 提供方尚未启用，请联系管理员启用后重试。'],
     ['SSO_AUTHORIZE_INVALID', 'SSO 授权参数无效，请返回模型网关重新发起登录。'],
     ['SSO_ADMIN_REQUIRED', '当前账号不是管理员，无法进入外部控制台，请使用管理员账号登录后重试。'],
+    ['MAP_SSO_BROWSER_SESSION_REQUIRED', '当前会话不能进入模型网关，请先通过管理后台登录后重试。'],
+    ['MAP_ADMIN_REQUIRED', '当前账号不是管理员，无法进入模型网关，请使用管理员账号登录后重试。'],
   ])('为 SSO 授权错误 %s 提供对应恢复动作', (code, expected) => {
     const message = toUserReadableErrorMessage(
       { code, message: '不应直接展示的服务端文案' },
@@ -151,6 +153,19 @@ describe('toUserReadableErrorMessage', () => {
 
     expect(message).toBe(expected);
     expect(message).not.toContain(options.fallbackMessage);
+  });
+
+  it('平台模型列表变化后保留刷新和级联删除恢复动作', () => {
+    const message = toUserReadableErrorMessage(
+      {
+        code: 'HAS_MODELS',
+        message: '该平台下有3个模型，无法删除。如需级联删除，请添加 ?cascade=true 参数',
+      },
+      options,
+    );
+
+    expect(message).toBe('该平台下仍有模型，请刷新页面确认后选择级联删除，或先移除模型再重试。');
+    expect(message).not.toMatch(/cascade|参数/);
   });
 
   it.each([
