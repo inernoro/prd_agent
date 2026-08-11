@@ -133,9 +133,15 @@ select:focus-visible {
   cursor: not-allowed;
 }
 
-/* 原生下拉框可读性（Windows/Edge 常见：暗色页面 + 白底下拉导致白字看不清） */
+/* 原生下拉框可读性（Windows/Edge 常见：暗色页面 + 白底下拉导致白字看不清）。
+   元素级 color-scheme 会压过 tokens.css 在 [data-theme="light"] 上声明的 light，
+   所以浅色主题必须显式翻回来，否则米白页面里插一块黑底白字的原生 option 弹层。 */
 select {
   color-scheme: dark;
+}
+
+[data-theme="light"] select {
+  color-scheme: light;
 }
 
 /* 让 option/optgroup 尽量随 color-scheme 自适应（Canvas/CanvasText 会随暗色方案变化） */

@@ -77,7 +77,7 @@ export function InlineCommentComposer({
         transform: `translateY(${-scrollDy}px)`,
         borderRadius: 14,
         padding: 12,
-        background: 'linear-gradient(180deg, rgba(30,28,46,0.97), rgba(20,19,28,0.98))',
+        background: 'var(--overlay-panel-bg)',
         border: '1px solid rgba(168,85,247,0.4)',
         boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)',
         backdropFilter: 'blur(40px)',

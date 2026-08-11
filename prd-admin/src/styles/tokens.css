@@ -72,6 +72,14 @@
   --toast-accent-error: #ef4444;
   --toast-accent-info: #3b82f6;
   --toast-accent-warning: #fb923c;
+
+  /* 浮层面板底（Popover / Drawer / HoverCard / 划词浮层 / 兜底卡）。
+     与 --panel 的区别：--panel 底部只有 0.78 alpha，飘在正文上会透字；
+     浮层必须近实心。所有「浮在内容之上的面板」统一消费这两个，不要各写各的深色。 */
+  --overlay-panel-bg: linear-gradient(180deg, rgba(30, 28, 46, 0.97), rgba(20, 19, 28, 0.98));
+  --overlay-panel-solid: rgba(24, 24, 30, 0.96);
+  /* PageHeader 内嵌 tab 组的凹槽底 */
+  --tab-container-bg: rgba(0, 0, 0, 0.32);
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
   /* Glass 组件变量（与 prd-desktop 对齐） */
@@ -501,6 +509,11 @@
   --toast-accent-error: #b91c1c;
   --toast-accent-info: #1d4ed8;
   --toast-accent-warning: #c2410c;
+
+  /* 浮层在浅色下走暖纸色，且保持近实心 —— 半透明深色叠在纸面上就是「白底浮暗卡」。 */
+  --overlay-panel-bg: linear-gradient(180deg, #FCFAF7 0%, #F4F0E9 100%);
+  --overlay-panel-solid: #F8F5EF;
+  --tab-container-bg: rgba(26, 26, 31, 0.06);
 
   --glass-bg: rgba(248, 245, 239, 0.94);
   --glass-bg-strong: #F8F5EF;

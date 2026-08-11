@@ -155,7 +155,7 @@ export function InlineCommentMargin({
         width,
         height: variant === 'sheet' ? '100%' : undefined,
         borderLeft: variant === 'side' ? '1px solid var(--border-subtle)' : undefined,
-        background: variant === 'sheet' ? 'rgba(24,24,30,0.96)' : 'var(--nested-block-bg)',
+        background: variant === 'sheet' ? 'var(--overlay-panel-solid)' : 'var(--nested-block-bg)',
       }}
     >
       <div className="flex items-center justify-between px-3.5 py-3 flex-none border-b border-b-token-subtle" >

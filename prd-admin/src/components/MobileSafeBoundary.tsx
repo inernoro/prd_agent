@@ -119,7 +119,7 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
         <div
           className="w-full max-w-lg rounded-2xl p-5"
           style={{
-            background: 'rgba(24, 24, 30, 0.9)',
+            background: 'var(--overlay-panel-solid)',
             border: '1px solid rgba(255, 80, 80, 0.25)',
             color: 'var(--text-primary, #f7f7fb)',
           }}

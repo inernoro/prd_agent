@@ -3096,7 +3096,7 @@ export function DocBrowser({
           height: sidebarAsMobileDrawer ? '100dvh' : undefined,
           maxHeight: sidebarAsMobileDrawer ? '100dvh' : undefined,
           borderRadius: sidebarAsMobileDrawer ? 0 : undefined,
-          background: sidebarAsMobileDrawer ? 'rgba(22,22,28,0.96)' : undefined,
+          background: sidebarAsMobileDrawer ? 'var(--overlay-panel-solid)' : undefined,
           backdropFilter: sidebarAsMobileDrawer ? 'blur(22px) saturate(160%)' : undefined,
           WebkitBackdropFilter: sidebarAsMobileDrawer ? 'blur(22px) saturate(160%)' : undefined,
           boxShadow: sidebarAsMobileDrawer ? '28px 0 64px rgba(0,0,0,0.45)' : undefined,

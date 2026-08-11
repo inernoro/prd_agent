@@ -158,7 +158,7 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
           {/* Popover */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className="border border-token-subtle" style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, width: 360, maxHeight: 'min(520px, calc(100vh - 100px))', minHeight: 0, zIndex: 1100, display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, rgba(20, 22, 30, 0.96), rgba(15, 16, 20, 0.96))', borderRadius: 16, boxShadow: '0 20px 60px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(20px)', overflow: 'hidden' }}
+            className="border border-token-subtle" style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, width: 360, maxHeight: 'min(520px, calc(100vh - 100px))', minHeight: 0, zIndex: 1100, display: 'flex', flexDirection: 'column', background: 'var(--overlay-panel-bg)', borderRadius: 16, boxShadow: '0 20px 60px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(20px)', overflow: 'hidden' }}
           >
             {/* Header */}
             <div

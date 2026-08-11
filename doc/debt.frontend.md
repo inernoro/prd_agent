@@ -176,6 +176,46 @@
 - 已清偿：海鲜市场半高/迷你密度卡（用户截图病灶）、底部 TabBar、快速创建抽屉、
   百宝箱移动版（AS_COLOR_LIGHT + useAppStoreColors）、我的/通知页
 
+### 浮层/提示层浅色审计（2026-08-11，60 agent 编排 + 逐条对抗性验证）
+
+起因：用户报浅色主题下 Toast「替换成功」深底深字不可读（实测对比度 1.11:1）。根因是
+`glassStyles.ts` 的 `glassToast()` 把底层写死成深色 rgba，而正文走 `--text-primary`
+（浅色下是深色字）——**面写死、字跟主题走**的混搭。举一反三扫全仓，扫出 54 条、
+对抗性验证存活 44 条（10 条判假阳性驳回，含 1 条 `InlineCommentOverlay` 死代码路径）。
+
+**本轮已清偿**：Toast 底层与语义前景（新增 `--toast-bg-base` / `--toast-accent-*`）；
+浮层面板族统一到新增的 `--overlay-panel-bg` / `--overlay-panel-solid`
+（TipsDrawer、TipCard bubble、ChangelogBell popover、划词 AI/批注/配图三浮层、
+InlineCommentMargin sheet、WikilinkHoverCard、WikilinkAutocomplete、DocBrowser 移动抽屉、
+MobileSafeBoundary 兜底卡、AutomationRulesPage 手动触发弹层）；PageHeader tab 凹槽
+（`--tab-container-bg`）；Tooltip 箭头；代码块/Mermaid 源码统一到 `--nested-block-bg`；
+原生 `select` 的浅色 `color-scheme`。
+
+**未清偿（本轮显式不做，避免一个 PR 无限扩范围）**：
+
+| 优先级 | 位置 | 浅色下的表现 | 不在本轮的原因 |
+|---|---|---|---|
+| P1 | `styles/motion.css:555` `.model-map-chip` 族 | 模型地图弹窗六个能力位的模型名是 86% 白字压象牙白底，整张图只剩连线 | CSS 层，需连带核对该弹窗整体配色 |
+| P1 | `styles/motion.css:926` `.sa-cancelHint` | 取消图标 55% 白压浅底几乎隐形，用户不知道长任务可取消 | 同上 |
+| P1 | `styles/surface.css:3216 / 3316` `.mkt-qc-*-primary` | 海鲜市场「创建 Key」「复制」按钮淡蓝字压近白底，糊成空白色块 | 依赖 `--surface-action-primary-*` 两个 token 的浅色定义缺失，要先补 token |
+| P1 | `pages/video-agent/videoConsole.css:478` | 分镜生成信息值仍是硬编码淡灰 `#c6cdd4`，面已随 token 变亮 | 半迁移残留，需整文件回填 |
+| P1 | `prd-desktop` `SystemNoticeOverlay:11` / `UpdateNotification:73` | `bg-black/40` 等分支方向反了（浅色拿黑底），层内白字无 `dark:` 分支 | **prd-desktop 全仓无 `data-theme` 机制**，要先定「桌面端要不要浅色」再动，属产品决策 |
+| P1 | `llmgw/web` `logsHelpers.ts:270` `deriveLifecycle()` | 生命周期 chip 前景写死暗色主题亮色，浅色下对比 1.5–1.7:1 | 网关观测台独立配色体系，需单独定 token 层 |
+| P2 | `styles/base.css:106` `.prd-field` | 输入框白 7% 填充 + 白 18% 边框在浅底全部隐形，控件「消失」 | 150+ 处消费方，改动面过大，需单独 PR + 全量视觉回归 |
+| P2 | `styles/surface.css:628 / 686` 百宝箱筛选条与分段控件 | 白 6%/19% 面与边隐形，选中态几乎分不出来 | 同上，成组改 |
+| P2 | `llmgw/web` `logsHelpers.ts:235`、`GenerationDetailsDrawer.tsx:350` | 协议/保真度 chip 同型 | 同 llmgw 条 |
+| P2/P3 | `prd-desktop` `PostUpdateSummaryModal:171`、`DefectListPage:465/482` | 深卡浮在浅页 / 白 2% 面不可见 | 同 prd-desktop 条 |
+
+**守卫判据的已知缺口**（`themeHardcodeRatchet.test.ts`，本轮已补两条，其余待办）：
+
+- 已补：扫描范围加 `.ts`（此前只扫 `.tsx`，配色 SSOT `glassStyles.ts` 从未被扫过）；
+  新增「深色 rgba 当背景」计数，且判据按**声明的值**取而不是按行取（按行判会被 Prettier
+  折行绕过，`TipCard.tsx` 的深色气泡底正是这样漏网的）。
+- 待补：3 位 hex（`#111`）、`hsl()` / `oklch()` / `color-mix()` 等价写法不认；
+  深色阈值卡死在感知亮度 0.15，`#292929`(0.161)、`#1f2937`(0.156) 这类中深灰整段落在判据外；
+  **CSS 文件完全不在扫描范围**（基线 289 条无一个 `.css`），上表 P1 里的 motion/surface/
+  videoConsole 三条正是因此从未被拦住。
+
 ### 已完成（本轮）
 
 - `mobileThemeStore`（localStorage 持久化，浅色默认）+ 首页右上角明暗切换按钮

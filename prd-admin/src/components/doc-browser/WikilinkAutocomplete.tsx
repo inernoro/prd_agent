@@ -208,13 +208,13 @@ export function WikilinkAutocomplete({ textareaRef, value, storeId, onInsert }: 
         left,
         top,
         width: dropdownW,
-        background: 'rgba(36,36,52,0.97)',
+        background: 'var(--overlay-panel-solid)',
         backdropFilter: 'blur(10px)',
         border: '1px solid rgba(124,156,255,0.35)',
         borderRadius: 10,
         boxShadow: '0 10px 28px rgba(0,0,0,0.55)',
         zIndex: 9500,
-        color: '#fff',
+        color: 'var(--text-primary)',
         fontSize: 13,
         overflow: 'hidden',
       }}
@@ -256,7 +256,7 @@ export function WikilinkAutocomplete({ textareaRef, value, storeId, onInsert }: 
             borderBottom: idx < items.length - 1 ? '1px solid var(--border-subtle)' : 'none',
           }}
         >
-          <div style={{ fontWeight: 500, color: '#fff', marginBottom: 2 }}>{it.title}</div>
+          <div style={{ fontWeight: 500, color: 'var(--text-primary)', marginBottom: 2 }}>{it.title}</div>
           {it.summary && (
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
               {it.summary}

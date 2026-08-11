@@ -64,8 +64,7 @@ export function TipCard({
   const baseStyle: React.CSSProperties =
     variant === 'bubble'
       ? {
-          background:
-            'linear-gradient(180deg, rgba(22,22,30,0.96), rgba(14,15,20,0.98))',
+          background: 'var(--overlay-panel-bg)',
           border: `1px solid ${accent.replace(/,\s*0?\.\d+\)/, ', 0.3)')}`,
           borderRadius: 14,
           padding: '14px 16px',

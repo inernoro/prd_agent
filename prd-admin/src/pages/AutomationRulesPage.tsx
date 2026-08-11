@@ -782,7 +782,7 @@ export default function AutomationRulesPage() {
       {triggerRuleId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}
           onClick={(e) => { if (e.target === e.currentTarget) setTriggerRuleId(null); }}>
-          <div className="w-[400px] max-w-[calc(100vw-2rem)] rounded-[16px] p-5 space-y-3 border border-token-subtle" style={{ ...glassPopoverCompact, background: 'rgba(25,25,30,0.95)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+          <div className="w-[400px] max-w-[calc(100vw-2rem)] rounded-[16px] p-5 space-y-3 border border-token-subtle" style={{ ...glassPopoverCompact, background: 'var(--overlay-panel-solid)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="text-sm font-semibold">手动触发</div>
             <input value={triggerTitle} onChange={(e) => setTriggerTitle(e.target.value)}
               placeholder="标题（可选）" className={inputCls} style={inputStyle} />

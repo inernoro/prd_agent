@@ -115,7 +115,7 @@ export const glassOverlay: React.CSSProperties = {
  * Tab 内嵌容器（PageHeader 中的 tab 按钮组）
  */
 export const glassTabContainer: React.CSSProperties = {
-  background: 'rgba(0, 0, 0, 0.32)',
+  background: 'var(--tab-container-bg)',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
   boxShadow: 'var(--shadow-glass-tab)',
   backdropFilter: 'blur(8px)',

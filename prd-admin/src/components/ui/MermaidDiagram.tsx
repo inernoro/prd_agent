@@ -141,7 +141,7 @@ export function MermaidDiagram({ code }: { code: string }) {
       {(showSource || status === 'error') && (
         <pre
           className="text-[11.5px] overflow-x-auto border-t border-t-token-subtle"
-          style={{ margin: 0, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', whiteSpace: 'pre' }}
+          style={{ margin: 0, padding: '10px 14px', background: 'var(--nested-block-bg)', color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', whiteSpace: 'pre' }}
         >
           {code}
         </pre>

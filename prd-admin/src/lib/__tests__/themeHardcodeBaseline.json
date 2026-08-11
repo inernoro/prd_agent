@@ -92,52 +92,22 @@
   "/components/doc-browser/DocBrowser.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 4
+    "darkRgbaBg": 3
   },
   "/components/doc-browser/DocumentStoreBrowser.tsx": {
     "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0
   },
-  "/components/doc-browser/InlineCommentComposer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2
-  },
-  "/components/doc-browser/InlineCommentMargin.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1
-  },
   "/components/doc-browser/InlineCommentOverlay.tsx": {
     "whiteAlpha": 0,
     "darkHex": 3,
-    "darkRgbaBg": 2
-  },
-  "/components/doc-browser/SelectionAiPopover.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2
-  },
-  "/components/doc-browser/SelectionImagePopover.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2
+    "darkRgbaBg": 0
   },
   "/components/doc-browser/VersionHistoryModal.tsx": {
     "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 1
-  },
-  "/components/doc-browser/WikilinkAutocomplete.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1
-  },
-  "/components/doc-browser/WikilinkHoverCard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2
   },
   "/components/effects/CssRainBackground.tsx": {
     "whiteAlpha": 0,
@@ -197,7 +167,7 @@
   "/components/login/XAiBackdrop.tsx": {
     "whiteAlpha": 20,
     "darkHex": 3,
-    "darkRgbaBg": 0
+    "darkRgbaBg": 3
   },
   "/components/marketplace/MarketplaceCard.tsx": {
     "whiteAlpha": 1,
@@ -227,12 +197,12 @@
   "/components/MobileCompatGate.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 1
+    "darkRgbaBg": 2
   },
   "/components/MobileSafeBoundary.tsx": {
     "whiteAlpha": 0,
     "darkHex": 1,
-    "darkRgbaBg": 2
+    "darkRgbaBg": 1
   },
   "/components/model/PlatformAvailableModelsDialog.tsx": {
     "whiteAlpha": 1,
@@ -277,12 +247,12 @@
   "/components/showcase/LiteraryCard.tsx": {
     "whiteAlpha": 4,
     "darkHex": 8,
-    "darkRgbaBg": 1
+    "darkRgbaBg": 5
   },
   "/components/showcase/ShowcaseGallery.tsx": {
     "whiteAlpha": 10,
     "darkHex": 7,
-    "darkRgbaBg": 1
+    "darkRgbaBg": 5
   },
   "/components/showcase/SubmissionCard.tsx": {
     "whiteAlpha": 4,
@@ -364,15 +334,10 @@
     "darkHex": 0,
     "darkRgbaBg": 1
   },
-  "/components/ui/MarkdownContent.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2
-  },
   "/components/ui/MermaidDiagram.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
-    "darkRgbaBg": 2
+    "darkRgbaBg": 1
   },
   "/components/ui/MobileTabBar.tsx": {
     "whiteAlpha": 0,
@@ -385,11 +350,6 @@
     "darkRgbaBg": 1
   },
   "/components/ui/UpdateTimeline.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1
-  },
-  "/components/ui/UserProfilePopover.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1
@@ -412,7 +372,7 @@
   "/components/visual-agent/ImageQuickEditInput.tsx": {
     "whiteAlpha": 3,
     "darkHex": 0,
-    "darkRgbaBg": 0
+    "darkRgbaBg": 2
   },
   "/components/visual-agent/MaskPaintCanvas.tsx": {
     "whiteAlpha": 17,
@@ -467,7 +427,7 @@
   "/components/weekly-poster/WeeklyPosterModal.tsx": {
     "whiteAlpha": 47,
     "darkHex": 11,
-    "darkRgbaBg": 15
+    "darkRgbaBg": 19
   },
   "/layouts/AppShell.tsx": {
     "whiteAlpha": 1,
@@ -487,7 +447,7 @@
   "/lib/glassStyles.ts": {
     "whiteAlpha": 20,
     "darkHex": 0,
-    "darkRgbaBg": 8
+    "darkRgbaBg": 12
   },
   "/lib/marketplaceTypes.tsx": {
     "whiteAlpha": 2,
@@ -572,7 +532,7 @@
   "/pages/arena/ArenaPage.tsx": {
     "whiteAlpha": 39,
     "darkHex": 2,
-    "darkRgbaBg": 12
+    "darkRgbaBg": 14
   },
   "/pages/AssetsManagePage.tsx": {
     "whiteAlpha": 0,
@@ -627,7 +587,7 @@
   "/pages/cds-agent/CdsAgentPage.tsx": {
     "whiteAlpha": 178,
     "darkHex": 5,
-    "darkRgbaBg": 96
+    "darkRgbaBg": 97
   },
   "/pages/channel-trace-agent/ImportPasswordModal.tsx": {
     "whiteAlpha": 0,
@@ -682,12 +642,12 @@
   "/pages/document-store/DocApplyDiffModal.tsx": {
     "whiteAlpha": 2,
     "darkHex": 0,
-    "darkRgbaBg": 4
+    "darkRgbaBg": 7
   },
   "/pages/document-store/DocumentGalaxyView.tsx": {
     "whiteAlpha": 49,
     "darkHex": 9,
-    "darkRgbaBg": 13
+    "darkRgbaBg": 14
   },
   "/pages/document-store/DocumentStorePage.tsx": {
     "whiteAlpha": 4,
@@ -704,15 +664,20 @@
     "darkHex": 0,
     "darkRgbaBg": 1
   },
+  "/pages/document-store/ReaderPanel.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 1
+  },
   "/pages/document-store/RecordAudioSheet.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
-    "darkRgbaBg": 3
+    "darkRgbaBg": 6
   },
   "/pages/document-store/ReprocessChatDrawer.tsx": {
     "whiteAlpha": 4,
     "darkHex": 0,
-    "darkRgbaBg": 7
+    "darkRgbaBg": 13
   },
   "/pages/document-store/ShortVideoMaterialDialog.tsx": {
     "whiteAlpha": 0,
@@ -727,7 +692,7 @@
   "/pages/document-store/SubtitleGenerationDrawer.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 3
+    "darkRgbaBg": 8
   },
   "/pages/document-store/SyncCenterDialog.tsx": {
     "whiteAlpha": 0,
@@ -742,7 +707,7 @@
   "/pages/document-store/TranscribeFlowDrawer.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
-    "darkRgbaBg": 3
+    "darkRgbaBg": 6
   },
   "/pages/document-store/UniverseGraphPage.tsx": {
     "whiteAlpha": 1,
@@ -807,17 +772,17 @@
   "/pages/home/components/ProductMockup.tsx": {
     "whiteAlpha": 11,
     "darkHex": 11,
-    "darkRgbaBg": 1
+    "darkRgbaBg": 2
   },
   "/pages/home/components/StaticBackdrop.tsx": {
     "whiteAlpha": 3,
     "darkHex": 2,
-    "darkRgbaBg": 0
+    "darkRgbaBg": 2
   },
   "/pages/home/LandingPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 2,
-    "darkRgbaBg": 0
+    "darkRgbaBg": 3
   },
   "/pages/home/sections/AgentGrid.tsx": {
     "whiteAlpha": 5,
@@ -857,7 +822,7 @@
   "/pages/home/sections/SignatureCinema.tsx": {
     "whiteAlpha": 1,
     "darkHex": 3,
-    "darkRgbaBg": 0
+    "darkRgbaBg": 1
   },
   "/pages/home/sections/StatsStrip.tsx": {
     "whiteAlpha": 1,
@@ -927,7 +892,7 @@
   "/pages/literary-agent/LiteraryAgentWorkspaceListPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 13,
-    "darkRgbaBg": 1
+    "darkRgbaBg": 5
   },
   "/pages/LlmLogsPage.tsx": {
     "whiteAlpha": 5,
@@ -1022,7 +987,7 @@
   "/pages/PortfolioShowcasePage.tsx": {
     "whiteAlpha": 31,
     "darkHex": 3,
-    "darkRgbaBg": 4
+    "darkRgbaBg": 5
   },
   "/pages/pr-review/PrRawContentModal.tsx": {
     "whiteAlpha": 0,
@@ -1207,7 +1172,7 @@
   "/pages/public-profile/PlazaCard.tsx": {
     "whiteAlpha": 0,
     "darkHex": 8,
-    "darkRgbaBg": 0
+    "darkRgbaBg": 4
   },
   "/pages/public-profile/profileBackgrounds.ts": {
     "whiteAlpha": 1,
@@ -1227,7 +1192,7 @@
   "/pages/report-agent/components/MyRecordsListPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
-    "darkRgbaBg": 3
+    "darkRgbaBg": 4
   },
   "/pages/report-agent/components/ReportCommentComposer.tsx": {
     "whiteAlpha": 0,
@@ -1252,7 +1217,7 @@
   "/pages/report-agent/components/RichTextMarkdownContent.tsx": {
     "whiteAlpha": 2,
     "darkHex": 0,
-    "darkRgbaBg": 0
+    "darkRgbaBg": 2
   },
   "/pages/report-agent/components/TeamDashboard.tsx": {
     "whiteAlpha": 0,
@@ -1349,11 +1314,6 @@
     "darkHex": 0,
     "darkRgbaBg": 1
   },
-  "/pages/UsersPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1
-  },
   "/pages/video-agent/VideoGenDirectPanel.tsx": {
     "whiteAlpha": 1,
     "darkHex": 3,
@@ -1372,7 +1332,7 @@
   "/pages/visual-agent/VisualAgentWorkspaceEditorPage.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 0
+    "darkRgbaBg": 1
   },
   "/pages/visual-agent/VisualAgentWorkspaceListPage.tsx": {
     "whiteAlpha": 2,
@@ -1382,17 +1342,17 @@
   "/pages/visual-storyboard/VisualStoryboardPage.tsx": {
     "whiteAlpha": 14,
     "darkHex": 0,
-    "darkRgbaBg": 6
+    "darkRgbaBg": 7
   },
   "/pages/WebPagesPage.tsx": {
     "whiteAlpha": 3,
     "darkHex": 0,
-    "darkRgbaBg": 4
+    "darkRgbaBg": 7
   },
   "/pages/weekly-poster/PosterDesignerPage.tsx": {
     "whiteAlpha": 97,
     "darkHex": 14,
-    "darkRgbaBg": 16
+    "darkRgbaBg": 20
   },
   "/pages/weekly-poster/WeeklyPosterEditorPage.tsx": {
     "whiteAlpha": 0,
@@ -1402,7 +1362,7 @@
   "/pages/weekly-poster/WeeklyPosterWizardPage.tsx": {
     "whiteAlpha": 7,
     "darkHex": 1,
-    "darkRgbaBg": 3
+    "darkRgbaBg": 4
   },
   "/pages/workflow-agent/ArtifactPreviewModal.tsx": {
     "whiteAlpha": 1,

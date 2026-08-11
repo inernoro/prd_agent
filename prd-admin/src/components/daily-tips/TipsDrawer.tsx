@@ -490,8 +490,7 @@ export function TipsDrawer() {
           width: 360,
           maxHeight: 'min(360px, calc(100vh - 120px))',
           borderRadius: 18,
-          background:
-            'linear-gradient(180deg, rgba(24,22,34,0.96), rgba(16,16,22,0.97))',
+          background: 'var(--overlay-panel-bg)',
           border: '1px solid rgba(196,181,253,0.20)',
           backdropFilter: 'blur(22px) saturate(140%)',
           WebkitBackdropFilter: 'blur(22px) saturate(140%)',

@@ -47,13 +47,14 @@ const HEX_RE = /#[0-9a-fA-F]{6}\b/g;
 /** 任意 rgb/rgba，取三个通道判明暗。 */
 const RGB_RE = /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*[,)]/g;
 /**
- * 「这一行在写背景」的上下文判据。
- * 只数背景色：阴影/描边/滤镜里的深色 rgba 在两个主题下都成立（投影本来就该是暗的），
- * 一刀切会把 467 处合法投影全打成违例，判据就废了。
+ * 背景类声明的**起点**。只数背景色：阴影/描边/滤镜里的深色 rgba 在两个主题下都成立
+ * （投影本来就该是暗的），一刀切会把 400+ 处合法投影全打成违例，判据就废了。
+ *
+ * 判据按「声明的值」取，不按行取 —— 第一版按行判，Prettier 一折行
+ * （`background:` 在上一行、`rgba(...)` 在下一行）就整条漏判，
+ * daily-tips/TipCard.tsx 的深色气泡底正是这样躲过去的。
  */
-const BG_CONTEXT_RE = /background|backgroundColor|backgroundImage|bg-\[|--[a-z-]*bg[a-z-]*\s*:/i;
-/** 阴影行整行豁免（boxShadow / textShadow / drop-shadow / --shadow-*）。 */
-const SHADOW_LINE_RE = /shadow/i;
+const BG_DECL_RE = /(?:background(?:Color|Image)?\s*:|--[a-z-]*bg[a-z-]*\s*:|bg-\[)/gi;
 
 /** 感知亮度 < 0.15 视为深色（#101113 ≈ 0.07 命中；#14b8c4 ≈ 0.60 不命中）。 */
 function isDark(r: number, g: number, b: number): boolean {
@@ -68,14 +69,32 @@ function isDarkHex(hex: string): boolean {
   );
 }
 
-/** 深色 rgba 被当作背景写死的处数（逐行判上下文）。 */
+/**
+ * 从声明起点截出这条声明的值：按括号深度推进，遇到深度 0 的 `;`（CSS）、
+ * `,`（JS 对象下一属性）或未配对的 `)` / `]` 收尾。
+ * 这样 `linear-gradient(180deg, a, b)` 里的逗号不会误截断，跨行也照样吃进来。
+ */
+function declValue(src: string, start: number): string {
+  let depth = 0;
+  const limit = Math.min(src.length, start + 400);
+  for (let i = start; i < limit; i += 1) {
+    const ch = src[i];
+    if (ch === '(' || ch === '[') depth += 1;
+    else if (ch === ')' || ch === ']') {
+      if (depth === 0) return src.slice(start, i);
+      depth -= 1;
+    } else if (depth === 0 && (ch === ';' || ch === ',')) return src.slice(start, i);
+  }
+  return src.slice(start, limit);
+}
+
+/** 深色 rgba 被当作背景写死的处数（按声明的值判，不按行判）。 */
 function countDarkRgbaBg(content: string): number {
   let count = 0;
-  for (const line of content.split('\n')) {
-    if (SHADOW_LINE_RE.test(line)) continue;
-    if (!BG_CONTEXT_RE.test(line)) continue;
-    for (const m of line.matchAll(RGB_RE)) {
-      if (isDark(Number(m[1]), Number(m[2]), Number(m[3]))) count += 1;
+  for (const m of content.matchAll(BG_DECL_RE)) {
+    const value = declValue(content, (m.index ?? 0) + m[0].length);
+    for (const hit of value.matchAll(RGB_RE)) {
+      if (isDark(Number(hit[1]), Number(hit[2]), Number(hit[3]))) count += 1;
     }
   }
   return count;
