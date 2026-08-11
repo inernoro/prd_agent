@@ -134,6 +134,24 @@ public class EmbeddingService : IEmbeddingService
     /// 一旦上游乱序就是"A 的向量记在 B 名下"——检索永远给错答案且不报错。
     /// </summary>
     /// <summary>
+    /// 读取向量的一个分量：必须是数字、有限（非 NaN / 非无穷）、且落在 float 能表示的范围内。
+    /// 其余一律判假，由调用方整批拒绝——绝不用 0 兜底。
+    /// </summary>
+    private static bool TryReadComponent(JsonNode? node, out float value)
+    {
+        value = 0f;
+        if (node is not JsonValue jv) return false;
+        if (!jv.TryGetValue(out double d)) return false;
+        if (double.IsNaN(d) || double.IsInfinity(d)) return false;
+
+        var f = (float)d;
+        if (float.IsNaN(f) || float.IsInfinity(f)) return false;
+
+        value = f;
+        return true;
+    }
+
+    /// <summary>
     /// 读取 data[i].index：只接受「无小数部分、落在 Int32 内」的 JSON 数字。
     /// 字符串 / null / 小数 / 超界一律判假，由调用方整批拒绝。
     /// </summary>
@@ -203,9 +221,20 @@ public class EmbeddingService : IEmbeddingService
                         $"向量模型对 index {idx} 返回了两条向量，已整批拒绝");
             }
 
+            // 每个分量都必须是有限的数字。
+            //
+            // `?? 0d` 会把 JSON null 悄悄变成 0——一条掺了零的向量看起来完全正常，
+            // 写进库、算余弦、返回结果，全程不报错，只是这一条永远检索得不准，
+            // 而且事后从库里认不出来它是坏的。字符串 / 布尔 / 对象则会让
+            // GetValue<double>() 直接抛，穿透到 JSON 解析的 catch 之外。
+            // 两种都按整批拒绝处理：一条脏向量的代价远高于一次失败重试。
             var vec = new float[arr.Count];
             for (var i = 0; i < arr.Count; i++)
-                vec[i] = (float)(arr[i]?.GetValue<double>() ?? 0d);
+            {
+                if (!TryReadComponent(arr[i], out vec[i]))
+                    return EmbeddingBatch.Fail("UPSTREAM_ERROR",
+                        $"向量第 {i + 1} 个分量不是有限数字（{Truncate(arr[i]?.ToJsonString() ?? "null", 30)}），已整批拒绝");
+            }
             slots[idx] = vec;
         }
 

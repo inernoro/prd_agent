@@ -130,6 +130,40 @@ public class EmbeddingResponseParseTests
         Assert.Equal(9f, batch.Vectors[1][0]);
     }
 
+    /// <summary>
+    /// 核心用例：向量分量不是有限数字时整批拒绝，**不能用 0 兜底、也不能抛**。
+    ///
+    /// `?? 0d` 会把 JSON null 悄悄变成 0——一条掺了零的向量看起来完全正常，写进库、
+    /// 算余弦、返回结果，全程不报错，只是这一条永远检索得不准，事后还认不出来它是坏的。
+    /// 字符串 / 布尔 / 对象则会让 GetValue&lt;double&gt;() 抛到 JSON 解析的 catch 之外。
+    /// </summary>
+    [Theory]
+    [InlineData("[1.0,null]")]
+    [InlineData("[1.0,\"x\"]")]
+    [InlineData("[1.0,true]")]
+    [InlineData("[1.0,{}]")]
+    [InlineData("[1.0,[]]")]
+    [InlineData("[1.0,1e400]")]
+    public void 分量不是有限数字时整批拒绝(string embedding)
+    {
+        var json = $"{{\"data\":[{{\"index\":0,\"embedding\":{embedding}}}]}}";
+
+        var batch = EmbeddingService.ParseOpenAiEmbeddings(json, 1, Res("bge-m3"));
+
+        Assert.False(batch.Success);
+        Assert.Equal("UPSTREAM_ERROR", batch.ErrorCode);
+    }
+
+    [Fact]
+    public void 合法分量_含负数与整数写法_正常接受()
+    {
+        var json = "{\"data\":[{\"index\":0,\"embedding\":[-0.5,0,1,2.25]}]}";
+        var batch = EmbeddingService.ParseOpenAiEmbeddings(json, 1, Res("bge-m3"));
+
+        Assert.True(batch.Success);
+        Assert.Equal(new[] { -0.5f, 0f, 1f, 2.25f }, batch.Vectors[0]);
+    }
+
     [Fact]
     public void 条数不足时整批拒绝()
     {
