@@ -525,11 +525,20 @@ public static class GatewayConfigurationProvisioning
     public static (string Mode, string? FieldFormat) MapImageSizeControl(
         IEnumerable<BsonDocument> capabilities)
     {
-        var enabled = capabilities
-            .Where(x => x.TryGetValue("Value", out var value) && value.IsBoolean && value.AsBoolean)
-            .Select(x => NormalizeParameterCapabilityName(
-                x.TryGetValue("Type", out var type) && type.IsString ? type.AsString : null))
-            .Where(x => !string.IsNullOrWhiteSpace(x))
+        // 与运行时 ExtractParameterCapabilities 保持相同的有序覆盖语义：先规范化别名，
+        // 再让后出现的布尔值覆盖同名能力，不能提前丢弃 false。
+        var normalized = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var capability in capabilities)
+        {
+            if (!capability.TryGetValue("Value", out var value) || !value.IsBoolean) continue;
+            var name = NormalizeParameterCapabilityName(
+                capability.TryGetValue("Type", out var type) && type.IsString ? type.AsString : null);
+            if (!string.IsNullOrWhiteSpace(name)) normalized[name] = value.AsBoolean;
+        }
+
+        var enabled = normalized
+            .Where(x => x.Value)
+            .Select(x => x.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (enabled.Contains("image_size.none")) return ("none", null);
         var usePrompt = enabled.Contains("image_size.prompt");

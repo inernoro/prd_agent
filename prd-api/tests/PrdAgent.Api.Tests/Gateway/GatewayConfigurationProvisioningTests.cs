@@ -248,6 +248,24 @@ public sealed class GatewayConfigurationProvisioningTests
         result.FieldFormat.ShouldBe("aspect_ratio");
     }
 
+    [Theory]
+    [InlineData(true, false, "inherit")]
+    [InlineData(false, true, "none")]
+    public void ImageSizeControlMapping_LaterAliasValueOverridesEarlierValue(
+        bool canonicalValue,
+        bool aliasValue,
+        string expectedMode)
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "parameter:image_size.none", ["Value"] = canonicalValue },
+            new BsonDocument { ["Type"] = "param.image_size.none", ["Value"] = aliasValue },
+        ]);
+
+        result.Mode.ShouldBe(expectedMode);
+        result.FieldFormat.ShouldBeNull();
+    }
+
     [Fact]
     public void ContainsImageSizeControlCapability_RecognizesReservedNamespaceAliases()
     {
