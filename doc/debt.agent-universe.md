@@ -46,6 +46,7 @@
 | 转派身份台账在进程内存 | 工具回调只带 runId，一次性转派的 runId→发起人映射存在进程内（`ChatAgentOneOffRunRegistry`，15 分钟 TTL）。多副本部署时回调打到别的实例会查不到、工具拒绝执行。当前部署形态是「一个作用域一个容器」（与 `ReconcileInterruptedTurnsAsync` 前提一致），成立；横向扩容前必须换成共享存储。 |
 | 视觉体只覆盖文生图 | 通用体的出图走 `chat_generate_image`（与视觉创作同一条平台流水线），故视觉体刻意未登记为转派工具，避免两把同功能工具让路由随机化。视觉体独有的 img2img / describe_image / compose 尚无对应工具，只能显式选中/@ 使用。 |
 | 通用体依赖外部运行时 | 对话运行时是外部 sidecar（`ClaudeSdkExecutor:Sidecars`），默认配置为空。未配置时 capabilities 下发 `available=false` + 原因，抽屉不默认选它、如实提示手动挑——但这意味着**未配置 sidecar 的部署上，「不必选智能体」这个体验拿不到**。 |
+| root 破窗账户用不了转派 | root 直接点专业智能体可以用（中间件认 `isRoot` claim 放行），但**经通用体转派会被拒**（`agent_permission_denied`）。根因：root 按设计不落库（`AuthController` 就地构造 `UserId="root"`，注释写明「不落库」），而转派的权限判据 `GetEffectivePermissionsAsync(userId, isRoot:false)` 要查 `Users` 集合，查不到就是空权限。工具回调来自 sidecar、不带发起人的 claims，所以这里拿不到 `isRoot`。**为什么没在本 PR 修**：要修得把「这一轮的发起人是不是 root」这个授权信号存进 runId 台账（`ChatAgentOneOffRunRegistry` / 会话记录）再在回调侧取出——等于新开一条跨进程的授权传播通道，而 runId 可猜的话就是提权面。影响面：一个破窗账户少一条便捷路径，fail-closed 且有明确报错，不是静默错答。要修需先定「授权信号怎么在 run 台账里防伪」。 |
 
 ## 三、需用户判断业务逻辑的分叉
 

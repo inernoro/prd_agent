@@ -7167,7 +7167,18 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
         return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "没有需要修改的字段"), jsonOptions, 400);
 
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
-    await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
+    try
+    {
+        await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Combine(updates));
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        // 上面的重名预检和这次写入之间有窗口：两个请求同时把不同上游改成同一个名字时，
+        // 双方都能过预检，最后由 (TenantId, NameNormalized) 唯一索引挡下一个。
+        // 不接住就成 500，而这条链路对外承诺的是 409 DUPLICATE_PLATFORM——
+        // 索引才是重名的最终判据，预检只是提前告知，两者必须报同一件事。
+        return Json(ApiEnvelope<PlatformItem>.Fail("DUPLICATE_PLATFORM", "当前租户已存在同名 Provider"), jsonOptions, 409);
+    }
     changes.Add("authority", "llm_gateway");
     await WriteOperationAuditAsync(
         operationAudits, http,

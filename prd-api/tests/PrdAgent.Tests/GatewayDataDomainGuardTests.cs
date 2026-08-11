@@ -4360,6 +4360,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("name.ToLowerInvariant()", ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs"));
         // 改成一个已存在的名字要按重名拒绝，而不是让唯一索引抛出去变成 500
         Assert.Contains("DUPLICATE_PLATFORM", update);
+        // 预检和写入之间有窗口：并发改名双方都能过预检，最后由唯一索引挡下一个。
+        // 只有预检没有 catch，那一个就成 500——同一件事对外报两种结果。
+        // 这里要求这条路径自己接住 DuplicateKey，而不是依赖调用方少并发。
+        var duplicateCatch = update.IndexOf("ServerErrorCategory.DuplicateKey", StringComparison.Ordinal);
+        Assert.True(duplicateCatch > 0, "改名端点没有接住唯一索引的重名冲突，并发改名会变成 500");
+        Assert.Contains("DUPLICATE_PLATFORM", update[duplicateCatch..]);
     }
 
     /// <summary>

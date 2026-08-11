@@ -1,6 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  advanceTranscriptLexicon,
   buildRecordingQuestionPrompt,
   buildRecordingQuestionTranscript,
   recordingCitationMatchesTimeline,
@@ -147,5 +151,84 @@ describe('TranscriptKaraoke unified playback', () => {
     );
     // 正文里只有两句真转录，来源行不该以「一句话」的形态出现在可点击行里
     expect(html).not.toContain('>&gt; 说话人来源');
+  });
+});
+
+describe('词典整表替换：连着添加两个词不能把前一个抹掉', () => {
+  const base = { terms: ['旧词'], system: ['系统旧词'], mine: ['我的旧词'], muted: ['屏蔽词'], canManageSystem: true };
+
+  it('个人词典连加两次，第二次提交的入参必须带上第一次的词', () => {
+    const afterFirst = advanceTranscriptLexicon(base, '甲方', 'mine');
+    const afterSecond = advanceTranscriptLexicon(afterFirst, '尾款', 'mine');
+
+    // 第二次真正发出去的是 afterSecond.mine（写端点整表替换）
+    expect(afterSecond.mine).toContain('甲方');
+    expect(afterSecond.mine).toContain('尾款');
+    expect(afterSecond.mine).toContain('我的旧词');
+    // 屏蔽词不属于这次改动，必须原样带回去，不能被顺手清空
+    expect(afterSecond.muted).toEqual(['屏蔽词']);
+  });
+
+  it('系统词典连加两次，第二次不能拿旧表覆盖掉所有人共用的第一个词', () => {
+    const afterFirst = advanceTranscriptLexicon(base, '验收单', 'system');
+    const afterSecond = advanceTranscriptLexicon(afterFirst, '质保金', 'system');
+
+    expect(afterSecond.system).toContain('验收单');
+    expect(afterSecond.system).toContain('质保金');
+    expect(afterSecond.system).toContain('系统旧词');
+  });
+
+  it('加到哪个作用域就只动哪一张表，另一张原样', () => {
+    const afterMine = advanceTranscriptLexicon(base, '甲方', 'mine');
+    expect(afterMine.system).toEqual(['系统旧词']);
+
+    const afterSystem = advanceTranscriptLexicon(base, '验收单', 'system');
+    expect(afterSystem.mine).toEqual(['我的旧词']);
+
+    // 词云读的是合并后的 terms，两种作用域都要立刻反映，不必等刷新
+    expect(afterMine.terms).toContain('甲方');
+    expect(afterSystem.terms).toContain('验收单');
+  });
+
+  it('重复添加同一个词不产生重复项', () => {
+    const once = advanceTranscriptLexicon(base, '甲方', 'mine');
+    const twice = advanceTranscriptLexicon(once, '甲方', 'mine');
+    expect(twice.mine.filter(x => x === '甲方')).toHaveLength(1);
+  });
+});
+
+/**
+ * 上面那组只证明「算得对」，证明不了「组件真的这么用」——把 setLexicon 那行删掉，
+ * 上面四条依然全绿（形状 2：链路只建一半，删掉不会红）。所以这里守的是调用顺序本身。
+ */
+describe('词典写入接线守卫：顺序不对就等于没修', () => {
+  const source = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'TranscriptKaraoke.tsx'),
+    'utf8',
+  );
+  const start = source.indexOf('const addLexiconTerm = async');
+  const body = source.slice(start, source.indexOf('\n  };', start));
+
+  it('提交入参与本地推进走同一条判据', () => {
+    expect(start).toBeGreaterThan(0);
+    // 两处各算一遍就会漂移，必须都从 advanceTranscriptLexicon 出
+    expect(body.match(/advanceTranscriptLexicon\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it('写成功后先把本地表推进到刚提交的那一版，再去刷新', () => {
+    const ok = body.indexOf('if (!res.success) return;');
+    const advance = body.indexOf('setLexicon(prev =>');
+    const refresh = body.indexOf('await getTranscriptLexicon()');
+    expect(ok).toBeGreaterThan(0);
+    expect(advance).toBeGreaterThan(ok);
+    expect(refresh).toBeGreaterThan(advance);
+  });
+
+  it('解锁发生在刷新之后，刷新期间不许再提交', () => {
+    const refresh = body.indexOf('await getTranscriptLexicon()');
+    const unlock = body.indexOf('setSavingLexicon(false)');
+    expect(refresh).toBeGreaterThan(0);
+    // 刷新还没回来就解锁，用户此刻再加一个词发出去的就是过期的整表
+    expect(unlock).toBeGreaterThan(refresh);
   });
 });

@@ -56,6 +56,37 @@ export function recordingCitationMatchesTimeline(
   ));
 }
 
+export interface TranscriptLexiconState {
+  terms: string[];
+  system: string[];
+  mine: string[];
+  muted: string[];
+  canManageSystem: boolean;
+}
+
+/**
+ * 添加一个词条之后，本地这张词典表应该长成什么样。
+ *
+ * 词典的写端点是**整表替换**：提交什么就是什么，服务端不做合并。所以下一次提交的
+ * 入参必须从「上一次已经写成功的那一版」算起。如果本地表还停在写前的旧版
+ * （比如刷新用的 GET 慢了或失败了），第二次添加就会拿旧表整表覆盖，把刚存进去的词
+ * 静默抹掉——系统级抹的是所有人共用的那张表。
+ *
+ * 提出来单独放的原因：这段是数据丢失的那一半，可以脱离组件直接断言。
+ */
+export function advanceTranscriptLexicon(
+  prev: TranscriptLexiconState,
+  term: string,
+  scope: 'mine' | 'system',
+): TranscriptLexiconState {
+  return {
+    ...prev,
+    terms: [...new Set([...prev.terms, term])],
+    system: scope === 'system' ? [...new Set([...prev.system, term])] : prev.system,
+    mine: scope === 'system' ? prev.mine : [...new Set([...prev.mine, term])],
+  };
+}
+
 /**
  * 转录跟读播放器（歌词滚轮）——音频原始内容页的"小巧思"：
  * 播放时当前句居中高亮、上下句渐隐（苹果滚轮 / 音乐歌词心智），说的话和文字对得上；
@@ -144,25 +175,33 @@ export function TranscriptKaraoke({
     const term = lexiconDraft.trim();
     if (!term || term.length < 2 || savingLexicon) return;
     // 词典还没读回来就不许提交：写端点是**整表替换**，此时 lexicon 为 null，
-    // 下面的 `?? []` 会把「已有词条」当成空表发出去——一次添加就抹掉此前存的全部个人词与屏蔽词，
+    // 拿不到已有词条就只能发一张空表出去——一次添加就抹掉此前存的全部个人词与屏蔽词，
     // 系统级更狠（那是所有人共用的一张表）。这不是保守，是这条链路的写语义决定的。
     if (!lexicon) return;
     setSavingLexicon(true);
-    const res = scope === 'system'
-      ? await updateSystemTranscriptLexicon([...new Set([...lexicon.system, term])])
-      : await updateTranscriptLexicon([...new Set([...lexicon.mine, term])], lexicon.muted);
-    setSavingLexicon(false);
-    if (!res.success) return;
-    setLexiconDraft('');
-    const refreshed = await getTranscriptLexicon();
-    if (refreshed.success) {
-      setLexicon({
-        terms: refreshed.data.terms,
-        system: refreshed.data.system,
-        mine: refreshed.data.mine,
-        muted: refreshed.data.muted,
-        canManageSystem: refreshed.data.canManageSystem,
-      });
+    try {
+      // 提交什么、本地推进成什么，走同一条判据，避免两处各算一遍再漂移
+      const next = advanceTranscriptLexicon(lexicon, term, scope);
+      const res = scope === 'system'
+        ? await updateSystemTranscriptLexicon(next.system)
+        : await updateTranscriptLexicon(next.mine, lexicon.muted);
+      if (!res.success) return;
+      setLexiconDraft('');
+      // 写成功后立刻把本地这张表推进到「刚提交的那一版」，不等刷新回来。
+      // 配合下面 finally 里才解锁，慢刷新和刷新失败两种情况都不会留下过期的表。
+      setLexicon(prev => (prev ? advanceTranscriptLexicon(prev, term, scope) : prev));
+      const refreshed = await getTranscriptLexicon();
+      if (refreshed.success) {
+        setLexicon({
+          terms: refreshed.data.terms,
+          system: refreshed.data.system,
+          mine: refreshed.data.mine,
+          muted: refreshed.data.muted,
+          canManageSystem: refreshed.data.canManageSystem,
+        });
+      }
+    } finally {
+      setSavingLexicon(false);
     }
   };
   const speakers = useMemo(
