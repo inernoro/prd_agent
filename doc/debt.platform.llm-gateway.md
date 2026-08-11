@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 21 / in-progress: 4 / paid: 22 / 总计: 47
+当前 open: 22 / in-progress: 4 / paid: 22 / 总计: 48
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -599,6 +599,7 @@
 | ID | 严重度 | 状态 | 事实与收口条件 |
 |---|---|---|---|
 | `2026-07-17-sirius-dns-certificate` | P1 | blocked | `sirius.ebcone.net` 的公共权威 DNS 为 NXDOMAIN。现有腾讯云 COS 凭据调用 DNSPod `DescribeRecordList` 返回 `OperationDenied.NoPermissionToOperateDomain`，不能创建记录；正式 `map.ebcone.net` 证书 SAN 只包含自身，也不能复用。域名管理员需创建指向 `43.136.77.61` 的 A 记录，随后为 `sirius.ebcone.net` 单独签证书，套用 `llmgw/deploy/public-domain.nginx.example.conf`，经 `nginx -t`、reload、根页/实际资源/双健康/四协议无 key 401 和登录后真实数据复验后才可关闭。不得把仓库模板或 HTTP Host 预检写成“HTTPS 已上线”。 |
+| `2026-08-11-claimed-map-resource-resurrects-on-delete` | P1 | open | 内部租户删掉一条**从 MAP 认领来的**平台/模型/池/交换所后，它会重新出现。认领只是把同一个 `_id` 复制进 `gwPlatforms`（`claimed["SourceCollection"]="llmplatforms"`），MAP 原行原封不动；而列表是 `gwDocs ∪ mapDocs.Where(_id 不在 gwIds)`——GW 那份就是靠同 `_id` **遮住**了 MAP 那份。删掉 GW 副本 = 撤掉遮罩，MAP 原行立刻回到列表，且 ModelResolver 仍可能回落到它按旧配置调用。影响面：仅内部租户、且仅限「认领自 MAP」的资源；GW 原生资源的删除不受影响，已实机验证过。<br>**为什么本 PR 不修**：两条修法都是新语义类别——(a) 连 MAP 原行一起删，等于让网关控制台跨权威边界删 MAP 权威集合的数据，与「只能删已认领到 GW 的，MAP 来源请先认领」这条既有边界直接冲突；(b) 引入 tombstone / 抑制标记，且**列表与解析两条路径都要认它**，是一套新的可见性机制。按规则 5.5 属 B 类，需产品决策「删一条认领资源到底该是什么语义」，不由 Reviewer 单独授权。（2026-08-11 PR #1359 Review 七轮提出，触发范围熔断）|
 | `2026-07-17-cds-dataprotection-persistence` | P2 | open | CDS main 的 Console API 启动日志提示 `/root/.aspnet/DataProtection-Keys` 不持久且未配置 XML encryptor。当前 Gateway JWT 使用独立 `LlmGwJwt__Secret`，尚未发现会话故障；但若后续引入 ASP.NET DataProtection cookie、临时令牌或受保护载荷，容器替换会使旧数据失效。收口前应先盘点真实消费点，再决定挂载受限 volume 或显式禁用未使用能力，不能仅为消除 warning 保存明文 key。 |
 
 测试环境“真实数据”已经通过控制台正常链路形成，不能把密钥明文、生产租户快照或前端硬编码示例当作修复。若 CDS Mongo 被重建，恢复方式是使用独立测试租户从 Quickstart 创建 appCaller 和 tenant-scoped key，再对公开假上游发送请求；禁止复用生产 key，禁止批量调用付费模型。
