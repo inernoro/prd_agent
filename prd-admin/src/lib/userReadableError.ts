@@ -73,6 +73,8 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['SSO_AUTHORIZE_INVALID', 'SSO 授权参数无效，请返回模型网关重新发起登录。'],
   ['SSO_ADMIN_REQUIRED', '当前账号不是管理员，无法进入外部控制台，请使用管理员账号登录后重试。'],
   ['SSO_BINDING_DUPLICATED', '米多星球账号绑定不唯一，请联系管理员处理。'],
+  ['MIDUO_SSO_NOT_CONFIGURED', '米多星球 SSO 尚未配置，请先在系统设置中配置 appCode 后重试。'],
+  ['SSO_BINDING_EXISTS', '该米多星球绑定值已被其他用户使用，请先解除原绑定或更换绑定值后重试。'],
   ['MAP_SSO_BROWSER_SESSION_REQUIRED', '当前会话不能进入模型网关，请先通过管理后台登录后重试。'],
   ['MAP_ADMIN_REQUIRED', '当前账号不是管理员，无法进入模型网关，请使用管理员账号登录后重试。'],
   ['PASSWORD_MISMATCH', '两次输入的密码不一致，请重新输入。'],

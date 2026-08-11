@@ -497,7 +497,12 @@ export function enforceExecutionVerdict(summary, executions) {
   };
 }
 
-export function evaluateProductionSafetyGate(cdsExecution, cdsRows = [], cdsWasFiltered = false) {
+export function evaluateProductionSafetyGate(
+  cdsExecution,
+  cdsRows = [],
+  cdsWasFiltered = false,
+  requiredCaseIds = [],
+) {
   const hazardousFailures = cdsRows.filter((row) => {
     const attemptErrors = Array.isArray(row.attemptErrors) ? row.attemptErrors.join(' ') : '';
     const isCleanupCase = Array.isArray(row.tags) && row.tags.includes('cleanup');
@@ -507,7 +512,15 @@ export function evaluateProductionSafetyGate(cdsExecution, cdsRows = [], cdsWasF
     return isCleanupHazard && (row.status === 'fail' || row.hadFailedAttempt === true || row.retryCount > 0);
   });
   const processFailed = !cdsExecution || !['executed', 'dry-run'].includes(cdsExecution.status);
-  const restricted = cdsWasFiltered || processFailed || hazardousFailures.length > 0;
+  const passingCaseIds = new Set(cdsRows
+    .filter((row) => row.status === 'pass')
+    .map((row) => String(row.caseId || '').toUpperCase()));
+  const incompleteRequiredCaseIds = [...new Set(requiredCaseIds.map((caseId) => String(caseId).toUpperCase()))]
+    .filter((caseId) => !passingCaseIds.has(caseId));
+  const restricted = cdsWasFiltered
+    || processFailed
+    || hazardousFailures.length > 0
+    || incompleteRequiredCaseIds.length > 0;
   return {
     restricted,
     mode: restricted ? 'read-only' : 'full',
@@ -515,6 +528,9 @@ export function evaluateProductionSafetyGate(cdsExecution, cdsRows = [], cdsWasF
     reasons: [
       ...(cdsWasFiltered ? ['CDS 仅执行了筛选用例，未满足正式环境写入所需的全量验证'] : []),
       ...(processFailed ? [`CDS 全量测试未完成（${cdsExecution?.status || 'missing'}）`] : []),
+      ...(incompleteRequiredCaseIds.length > 0 ? [
+        `CDS 必测覆盖不完整：${incompleteRequiredCaseIds.length} 项没有通过证据（${incompleteRequiredCaseIds.slice(0, 5).join('、')}${incompleteRequiredCaseIds.length > 5 ? ' 等' : ''}）`,
+      ] : []),
       ...hazardousFailures.map((row) => row.status === 'fail'
         ? `${row.caseId || '未编号用例'}：CDS 出现高危失败`
         : `${row.caseId || '未编号用例'}：CDS 清理类用例重试后通过，无法确认首次尝试未留下数据`),
@@ -1114,7 +1130,12 @@ async function main() {
         const cdsRows = cdsExecution?.resultPath
           ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds')
           : [];
-        productionSafetyGate = evaluateProductionSafetyGate(cdsExecution, cdsRows, Boolean(grep));
+        productionSafetyGate = evaluateProductionSafetyGate(
+          cdsExecution,
+          cdsRows,
+          Boolean(grep),
+          plan?.requiredCaseIds || [],
+        );
       }
       const errors = environment === 'production' && productionSafetyGate.restricted
         ? validateProductionReadOnlyConfig(values)

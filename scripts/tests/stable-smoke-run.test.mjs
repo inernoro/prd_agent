@@ -190,6 +190,26 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   assert.match(metadataOnlyCleanupGate.reasons.join('；'), /FILE-003/);
 
   assert.equal(evaluateProductionSafetyGate({ status: 'executed' }, [{ status: 'pass' }]).restricted, false);
+  const incompleteCoverageGate = evaluateProductionSafetyGate(
+    { status: 'executed' },
+    [{ caseId: 'CORE-001', status: 'pass' }],
+    false,
+    ['CORE-001', 'REC-003'],
+  );
+  assert.equal(incompleteCoverageGate.restricted, true);
+  assert.match(incompleteCoverageGate.reasons.join('；'), /REC-003/);
+  assert.equal(evaluateProductionSafetyGate(
+    { status: 'executed' },
+    [{ caseId: 'CORE-001', status: 'pass' }, { caseId: 'REC-003', status: 'pass' }],
+    false,
+    ['CORE-001', 'REC-003'],
+  ).restricted, false);
+  assert.equal(evaluateProductionSafetyGate(
+    { status: 'executed' },
+    [{ caseId: 'CORE-001', status: 'fail' }],
+    false,
+    ['CORE-001'],
+  ).restricted, true);
   const filteredGate = evaluateProductionSafetyGate(
     { status: 'executed' },
     [{ caseId: 'IMG-001', status: 'pass' }],
