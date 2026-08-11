@@ -166,6 +166,66 @@ type ImageRunDetail = {
   }>;
 };
 
+type IsoBox = {
+  type: string;
+  dataStart: number;
+  end: number;
+};
+
+function readIsoBoxes(buffer: Buffer, start = 0, end = buffer.length) {
+  const boxes: IsoBox[] = [];
+  let offset = start;
+  while (offset + 8 <= end) {
+    let size = buffer.readUInt32BE(offset);
+    const type = buffer.toString('ascii', offset + 4, offset + 8);
+    let headerSize = 8;
+    if (size === 1) {
+      if (offset + 16 > end) throw new Error(`MP4 ${type} 扩展头不完整`);
+      const extended = buffer.readBigUInt64BE(offset + 8);
+      if (extended > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`MP4 ${type} 数据块过大`);
+      size = Number(extended);
+      headerSize = 16;
+    } else if (size === 0) {
+      size = end - offset;
+    }
+    if (size < headerSize || offset + size > end) throw new Error(`MP4 ${type} 数据块长度无效`);
+    boxes.push({ type, dataStart: offset + headerSize, end: offset + size });
+    offset += size;
+  }
+  if (offset !== end) throw new Error('MP4 容器末尾存在不完整数据');
+  return boxes;
+}
+
+function inspectMp4(buffer: Buffer) {
+  const top = readIsoBoxes(buffer);
+  const moov = top.find((box) => box.type === 'moov');
+  expect(top.some((box) => box.type === 'ftyp'), '视频缺少 MP4 文件类型头').toBe(true);
+  expect(top.some((box) => box.type === 'mdat'), '视频缺少 MP4 媒体数据').toBe(true);
+  expect(moov, '视频缺少 MP4 元数据').toBeTruthy();
+  const moovChildren = readIsoBoxes(buffer, moov!.dataStart, moov!.end);
+  const mvhd = moovChildren.find((box) => box.type === 'mvhd');
+  expect(mvhd, '视频缺少 MP4 时长元数据').toBeTruthy();
+  const version = buffer[mvhd!.dataStart];
+  const timescaleOffset = mvhd!.dataStart + (version === 1 ? 20 : 12);
+  const durationOffset = mvhd!.dataStart + (version === 1 ? 24 : 16);
+  const timescale = buffer.readUInt32BE(timescaleOffset);
+  const durationUnits = version === 1
+    ? Number(buffer.readBigUInt64BE(durationOffset))
+    : buffer.readUInt32BE(durationOffset);
+  const handlers = moovChildren
+    .filter((box) => box.type === 'trak')
+    .flatMap((track) => readIsoBoxes(buffer, track.dataStart, track.end))
+    .filter((box) => box.type === 'mdia')
+    .flatMap((media) => readIsoBoxes(buffer, media.dataStart, media.end))
+    .filter((box) => box.type === 'hdlr')
+    .map((handler) => buffer.toString('ascii', handler.dataStart + 8, handler.dataStart + 12));
+  return {
+    durationSeconds: timescale > 0 ? durationUnits / timescale : 0,
+    videoTracks: handlers.filter((handler) => handler === 'vide').length,
+    audioTracks: handlers.filter((handler) => handler === 'soun').length,
+  };
+}
+
 function crc32(input: Buffer) {
   let crc = 0xffffffff;
   for (const byte of input) {
@@ -309,6 +369,19 @@ async function assertImageArtifact(page: Page, detail: ImageRunDetail) {
   } else {
     expect(Buffer.from(item.base64 || '', 'base64').byteLength).toBeGreaterThan(512);
   }
+}
+
+async function decodeGeneratedImageDimensions(page: Page, item: ImageRunDetail['items'][number]) {
+  const source = item.url || (item.base64?.startsWith('data:')
+    ? item.base64
+    : item.base64 ? `data:image/png;base64,${item.base64}` : '');
+  expect(source, '图片任务完成后必须返回可解码产物').toBeTruthy();
+  return page.evaluate(async (src) => {
+    const image = new Image();
+    image.src = src;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  }, source);
 }
 
 async function waitForTranscriptRun(page: Page, token: string, runId: string, timeoutMs = 180_000) {
@@ -826,7 +899,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(body.error?.message || '');
   });
 
-  test('[VIDEO-004][VIDEO-007][VIDEO-008][REG-video-001] 最短视频真实生成、播放文件校验与下载', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[VIDEO-004][VIDEO-007][VIDEO-008][REG-video-001] 从页面生成最短无音频视频并解码成片', async ({ page, request }) => {
     test.setTimeout(420_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const models = await readEnvelope<Array<{
@@ -842,87 +915,118 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       .sort((left, right) => (left.pricePerCall ?? Number.MAX_SAFE_INTEGER) - (right.pricePerCall ?? Number.MAX_SAFE_INTEGER));
     expect(available.length, '没有可用的视频生成模型').toBeGreaterThan(0);
     const model = available[0];
-    let directJobId = '';
-    let recoveryToken = '';
+    const selectedAspect = model.aspectRatios?.includes('16:9') ? '16:9' : model.aspectRatios?.[0] || '16:9';
+    const selectedResolution = model.resolutions?.includes('720p') ? '720p' : model.resolutions?.[0] || '720p';
+    const prompt = '固定镜头，一只蓝色陶瓷杯放在纯白桌面上，柔和自然光，不要文字，不要人物';
+    let runId = '';
     try {
-      const submit = await page.request.post('/api/video-agent/videogen-direct', {
-        headers: authHeaders(token),
-        data: {
-          model: model.id,
-          prompt: '固定镜头，一只蓝色陶瓷杯放在纯白桌面上，柔和自然光，不要文字，不要人物',
-          aspectRatio: model.aspectRatios?.includes('16:9') ? '16:9' : model.aspectRatios?.[0],
-          resolution: model.resolutions?.includes('720p') ? '720p' : model.resolutions?.[0],
-          durationSeconds: Math.min(...(model.durations?.length ? model.durations : [5])),
-          generateAudio: false,
-        },
-      });
-      const submitted = await readEnvelope<{
-        success: boolean;
-        jobId?: string;
-        actualModel?: string;
-        errorMessage?: string;
-        recoveryToken?: string;
-      }>(submit);
-      directJobId = submitted.jobId || '';
-      recoveryToken = submitted.recoveryToken || '';
-      expect(submitted.success, submitted.errorMessage || '视频任务提交失败').toBe(true);
-      expect(submitted.jobId).toBeTruthy();
-      expect(submitted.recoveryToken).toBeTruthy();
-      const recoveryQuery = `?recoveryToken=${encodeURIComponent(recoveryToken)}`;
+      await page.getByRole('button', { name: /单镜直出/ }).click();
+      await page.getByLabel('项目名称').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-video`);
+      await page.getByLabel('文学稿内容').fill(prompt);
+      await page.getByRole('button', { name: '设置', exact: true }).click();
+      const settings = page.getByRole('region', { name: '生成设置' });
+      await settings.getByLabel('视频模型').selectOption(model.id);
+      await settings.getByLabel('画幅').selectOption(selectedAspect);
+      await settings.getByLabel('单镜时长').selectOption(String(Math.min(...(model.durations?.length ? model.durations : [5]))));
+      await settings.getByLabel('分辨率').selectOption(selectedResolution);
+      const audioToggle = settings.getByRole('checkbox', { name: '同步音频' });
+      if (await audioToggle.isChecked()) await audioToggle.uncheck();
+      await expect(audioToggle, '稳定冒烟必须明确关闭视频音轨').not.toBeChecked();
 
+      const createResponse = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/video-agent/runs'
+      ));
+      await page.getByRole('button', { name: '生成这段视频', exact: true }).click();
+      const createRunResponse = await createResponse;
+      const createRunBody = await createRunResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(createRunResponse.ok(), createRunBody.error?.message || '页面提交视频任务失败').toBe(true);
+      expect(createRunBody.success, createRunBody.error?.message || '页面提交视频任务失败').toBe(true);
+      runId = createRunBody.data.runId;
+      expect(runId).toBeTruthy();
+
+      const visibleStages = new Set<string>();
+      const visibleProgress = new Set<string>();
       const startedAt = Date.now();
       let videoUrl = '';
       while (Date.now() - startedAt < 360_000) {
         const status = await readEnvelope<{
           status: string;
-          videoUrl?: string;
+          videoAssetUrl?: string;
           errorMessage?: string;
-          isCompleted: boolean;
-          isFailed: boolean;
-        }>(await page.request.get(`/api/video-agent/videogen-direct/status/${encodeURIComponent(directJobId)}${recoveryQuery}`, {
+          currentPhase?: string;
+          phaseProgress?: number;
+          generateAudio?: boolean;
+        }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, {
           headers: authHeaders(token),
         }));
-        if (status.isFailed) {
+        const stage = page.getByTestId('video-generation-stage');
+        if (await stage.isVisible().catch(() => false)) visibleStages.add((await stage.innerText()).trim());
+        const progress = page.getByTestId('video-generation-progress');
+        if (await progress.isVisible().catch(() => false)) visibleProgress.add((await progress.innerText()).trim());
+        if (/Failed|Cancelled/i.test(status.status)) {
           expectUserReadable(status.errorMessage || '视频生成失败，请稍后重试或切换模型');
           throw new Error(status.errorMessage || '视频生成失败，请稍后重试或切换模型');
         }
-        if (status.isCompleted) {
-          videoUrl = status.videoUrl || '';
+        if (/Completed/i.test(status.status)) {
+          expect(status.generateAudio, '视频任务必须保存无音频配置').toBe(false);
+          videoUrl = status.videoAssetUrl || '';
           break;
         }
         await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
       }
       expect(videoUrl, '视频任务完成后必须返回成片标识').toBeTruthy();
-      const video = await page.request.get(`/api/video-agent/videogen-direct/content/${encodeURIComponent(directJobId)}${recoveryQuery}`, {
-        headers: authHeaders(token),
-        timeout: 180_000,
+      await expect(page.locator('video'), '完成后页面必须显示可播放视频').toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText('已完成', { exact: true }).first(), '页面必须显示生成完成阶段').toBeVisible();
+      visibleStages.add('已完成');
+      await expect(page.getByRole('link', { name: '下载 MP4' }).first(), '完成后页面必须显示下载入口').toBeVisible();
+      const browserMedia = await page.locator('video').evaluate(async (element) => {
+        const video = element as HTMLVideoElement;
+        if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+          await new Promise<void>((resolveLoaded, rejectLoaded) => {
+            const timer = window.setTimeout(() => rejectLoaded(new Error('视频元数据加载超时')), 30_000);
+            video.addEventListener('loadedmetadata', () => { window.clearTimeout(timer); resolveLoaded(); }, { once: true });
+            video.addEventListener('error', () => { window.clearTimeout(timer); rejectLoaded(new Error('视频无法解码')); }, { once: true });
+            video.load();
+          });
+        }
+        video.muted = true;
+        await video.play();
+        await new Promise<void>((resolveFrame) => {
+          if ('requestVideoFrameCallback' in video) {
+            video.requestVideoFrameCallback(() => resolveFrame());
+          } else {
+            window.setTimeout(resolveFrame, 500);
+          }
+        });
+        video.pause();
+        return { duration: video.duration, width: video.videoWidth, height: video.videoHeight };
       });
+      expect(browserMedia.duration, '浏览器解码后视频时长必须大于零').toBeGreaterThan(0);
+      expect(browserMedia.width, '浏览器必须解码出有效视频画面').toBeGreaterThan(0);
+      expect(browserMedia.height, '浏览器必须解码出有效视频画面').toBeGreaterThan(0);
+
+      const video = await page.request.get(videoUrl, { timeout: 180_000 });
       expect(video.ok()).toBe(true);
-      expect(video.headers()['content-type'] || '').toMatch(/^video\//);
-      expect((await video.body()).byteLength).toBeGreaterThan(1024);
+      expect(video.headers()['content-type'] || '').toMatch(/^video\/mp4/i);
+      expect(new URL(videoUrl).pathname).toMatch(/\.mp4$/i);
+      const videoBytes = await video.body();
+      expect(videoBytes.byteLength).toBeGreaterThan(1024);
+      const container = inspectMp4(videoBytes);
+      expect(container.durationSeconds, 'MP4 容器声明的时长必须大于零').toBeGreaterThan(0);
+      expect(container.videoTracks, 'MP4 必须包含视频轨').toBeGreaterThan(0);
+      expect(container.audioTracks, 'generateAudio=false 时 MP4 不得包含音轨').toBe(0);
+      expect(visibleStages.size, `页面只出现了这些视频阶段：${[...visibleStages].join('、')}`).toBeGreaterThanOrEqual(2);
+      expect(visibleProgress.size, '生成过程中页面必须至少显示一个真实进度值').toBeGreaterThanOrEqual(1);
     } finally {
-      if (directJobId) {
-        const cleanup = await page.request.delete(
-          `/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}?recoveryToken=${encodeURIComponent(recoveryToken)}`,
-          { headers: authHeaders(token) },
-        );
-        const cleanupBody = await cleanup.json() as ApiEnvelope<{ cleaned: boolean }>;
-        expect(cleanup.ok(), cleanupBody.error?.message || '视频冒烟任务清理失败').toBe(true);
-        expect(cleanupBody.data.cleaned).toBe(true);
-        const revokedStatus = await page.request.get(
-          `/api/video-agent/videogen-direct/status/${encodeURIComponent(directJobId)}?recoveryToken=${encodeURIComponent(recoveryToken)}`,
-          { headers: authHeaders(token) },
-        );
-        const revokedStatusBody = await revokedStatus.json() as ApiEnvelope<never>;
-        expect(revokedStatus.status(), '已清理视频任务的旧恢复凭证必须失效').toBe(404);
-        expect(revokedStatusBody.success).toBe(false);
-        const cleanupAgain = await page.request.delete(
-          `/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}?recoveryToken=${encodeURIComponent(recoveryToken)}`,
-          { headers: authHeaders(token) },
-        );
-        const cleanupAgainBody = await cleanupAgain.json() as ApiEnvelope<{ cleaned: boolean }>;
-        expect(cleanupAgain.ok(), cleanupAgainBody.error?.message || '视频冒烟任务重复清理失败').toBe(true);
-        expect(cleanupAgainBody.data.cleaned).toBe(true);
+      if (runId) {
+        const current = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
+        if (current.ok()) {
+          const state = await current.json() as ApiEnvelope<{ status: string }>;
+          if (!/Completed|Failed|Cancelled/i.test(state.data?.status || '')) {
+            await page.request.post(`/api/video-agent/runs/${encodeURIComponent(runId)}/cancel`, { headers: authHeaders(token) });
+          }
+        }
       }
     }
   });
@@ -1263,7 +1367,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][VIS-002][VIS-004][VIS-005][VIS-007][VIS-010] 文生图真实产物、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[CORE-004][VIS-002][VIS-005][VIS-007][VIS-010] 文生图真实产物、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
@@ -1348,11 +1452,76 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[VIS-004] 方形、横版与竖版三画幅均生成真实比例产物', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.setTimeout(300_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'single-image-ratio-matrix');
+    let runId = '';
+    try {
+      const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) });
+      const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
+      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
+      expect(pool, '没有可用的文生图逻辑模型').toBeTruthy();
+      const requested = [
+        { size: '1024x1024', orientation: 'square', prompt: '方形产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
+        { size: '1536x1024', orientation: 'landscape', prompt: '横版产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
+        { size: '1024x1536', orientation: 'portrait', prompt: '竖版产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
+      ] as const;
+      const create = await page.request.post('/api/visual-agent/image-gen/runs', {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-ratio-matrix` },
+        data: {
+          platformId: 'logical-model',
+          modelId: pool!.code,
+          responseFormat: 'url',
+          maxConcurrency: 1,
+          workspaceId: workspace.id,
+          appKey: 'visual-agent',
+          items: requested.map((item) => ({ prompt: item.prompt, count: 1, size: item.size })),
+        },
+      });
+      runId = (await readEnvelope<{ runId: string }>(create)).runId;
+      const completed = await waitForImageRun(page, token, runId, 240_000);
+      expect(completed.detail.run.status).toBe('Completed');
+      expect(completed.detail.run.total).toBe(3);
+      expect(completed.detail.run.done).toBe(3);
+      expect(completed.detail.run.failed).toBe(0);
+      expect(completed.detail.items).toHaveLength(3);
+      for (const [index, item] of completed.detail.items.entries()) {
+        expect(item.requestedSize, `第 ${index + 1} 张必须保留请求尺寸`).toBe(requested[index].size);
+        const dimensions = await decodeGeneratedImageDimensions(page, item);
+        expect(dimensions.width).toBeGreaterThan(0);
+        expect(dimensions.height).toBeGreaterThan(0);
+        const ratio = dimensions.width / dimensions.height;
+        if (requested[index].orientation === 'square') expect(Math.abs(ratio - 1)).toBeLessThan(0.08);
+        if (requested[index].orientation === 'landscape') expect(ratio).toBeGreaterThan(1.2);
+        if (requested[index].orientation === 'portrait') expect(ratio).toBeLessThan(0.8);
+      }
+    } finally {
+      if (runId) {
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        if (current.ok()) {
+          const state = await current.json() as ApiEnvelope<ImageRunDetail>;
+          if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
+          }
+        }
+      }
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-ratio-delete` },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      if (runId) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
   test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图引用真实生成、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
-    let runId = '';
+    const runIds: string[] = [];
     try {
       const uploadAsset = async (data: string, suffix: string) => {
         const response = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
@@ -1370,32 +1539,67 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
       expect(pool, '没有可用的多图视觉逻辑模型').toBeTruthy();
 
-      const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-multi-run` },
-        data: {
-          prompt: '参考 @img1 的蓝色、@img2 的黄色与 @img3 的红色，生成一个三色分区的极简包装盒，纯白背景，不要文字',
-          userMessageContent: '按顺序参考 @img1、@img2 和 @img3 生成一个蓝黄红三色包装盒',
-          targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-multi-target`,
-          platformId: 'logical-model',
-          modelId: pool!.code,
-          size: '1024x1024',
-          responseFormat: 'url',
-          imageRefs: [
-            { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
-            { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
-            { refId: 3, assetSha256: third.asset.sha256, url: third.asset.url, label: '红色参考', role: 'reference' },
-          ],
-          x: 0,
-          y: 0,
-          w: 1001,
-          h: 1001,
-        },
-      });
-      runId = (await readEnvelope<{ runId: string }>(create)).runId;
+      const createMultiRun = async (
+        suffix: string,
+        prompt: string,
+        userMessageContent: string,
+        imageRefs: Array<{ refId: number; assetSha256: string; url: string; label: string; role: string }>,
+      ) => {
+        const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}` },
+          data: {
+            prompt,
+            userMessageContent,
+            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-target`,
+            platformId: 'logical-model',
+            modelId: pool!.code,
+            size: '1024x1024',
+            responseFormat: 'url',
+            imageRefs,
+            x: 0,
+            y: runIds.length * 1040,
+            w: 1001,
+            h: 1001,
+          },
+        });
+        const createdRunId = (await readEnvelope<{ runId: string }>(create)).runId;
+        runIds.push(createdRunId);
+        return createdRunId;
+      };
 
-      const completed = await waitForImageRun(page, token, runId);
+      const twoRunId = await createMultiRun(
+        'two-reference-run',
+        '参考 @img1 的蓝色主体与 @img2 的黄色风格，生成一个蓝黄双色极简包装盒，纯白背景，不要文字',
+        '按顺序参考 @img1 和 @img2 生成一个蓝黄双色包装盒',
+        [
+          { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
+          { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
+        ],
+      );
+      const twoCompleted = await waitForImageRun(page, token, twoRunId);
+      await assertImageArtifact(page, twoCompleted.detail);
+      const restoredTwo = (await readEnvelope<ImageRunDetail>(
+        await page.request.get(`/api/visual-agent/image-gen/runs/${twoRunId}?includeItems=true`, { headers: authHeaders(token) }),
+      )).run;
+      expect(restoredTwo.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
+        { refId: 1, label: '蓝色参考', role: 'target' },
+        { refId: 2, label: '黄色参考', role: 'style' },
+      ]);
+
+      const threeRunId = await createMultiRun(
+        'three-reference-run',
+        '参考 @img1 的蓝色、@img2 的黄色与 @img3 的红色，生成一个三色分区的极简包装盒，纯白背景，不要文字',
+        '按顺序参考 @img1、@img2 和 @img3 生成一个蓝黄红三色包装盒',
+        [
+          { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
+          { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
+          { refId: 3, assetSha256: third.asset.sha256, url: third.asset.url, label: '红色参考', role: 'reference' },
+        ],
+      );
+
+      const completed = await waitForImageRun(page, token, threeRunId);
       await assertImageArtifact(page, completed.detail);
-      const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}?includeItems=true`, { headers: authHeaders(token) });
+      const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) });
       const restoredRun = (await readEnvelope<ImageRunDetail>(afterRefresh)).run;
       expect(restoredRun.status).toBe('Completed');
       expect(restoredRun.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
@@ -1426,7 +1630,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(await page.locator('textarea:visible, [contenteditable="true"]:visible').count()).toBeGreaterThan(0);
       await testInfo.attach('multi-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
-      if (runId) {
+      for (const runId of runIds) {
         const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
         if (current.ok()) {
           const state = await current.json() as ApiEnvelope<ImageRunDetail>;
@@ -1440,7 +1644,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-multi-delete` },
       });
       expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
-      if (runId) {
+      for (const runId of runIds) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
     }

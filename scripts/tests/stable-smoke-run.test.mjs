@@ -379,7 +379,11 @@ test('视觉门禁执行前清除旧结果且只接受匹配的退出状态', ()
 
 test('所有持久化清理用例都必须声明清理元数据', () => {
   const source = readFileSync('e2e/specs/stable-smoke.spec.ts', 'utf8');
-  assert.equal((source.match(/finally \{/g) || []).length, (source.match(/tag: '@cleanup'/g) || []).length);
+  const starts = [...source.matchAll(/\n  test\(/g)].map((match) => match.index);
+  const blocks = starts.map((start, index) => source.slice(start, starts[index + 1] ?? source.length));
+  const cleanupBlocks = blocks.filter((block) => block.includes("tag: '@cleanup'"));
+  assert.ok(cleanupBlocks.length > 0);
+  assert.ok(cleanupBlocks.every((block) => block.includes('finally {')));
   assert.match(source, /\[FILE-003\][\s\S]*?tag: '@cleanup'/);
   assert.match(source, /\[REC-004\]\[REC-005\]\[REC-010\][\s\S]*?tag: '@cleanup'/);
 });
@@ -426,6 +430,7 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
 
 test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 MAP 通知', () => {
   const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  const automationPrompt = readFileSync('.claude/skills/stable-smoke/reference/local-automation-prompt.md', 'utf8');
   const verifyOpenSource = readFileSync('.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs', 'utf8');
   assert.match(source, /scripts\/stable-smoke-visual-plan\.mjs/);
   assert.match(source, /scripts\/stable-smoke-visual-gate\.mjs/);
@@ -439,6 +444,11 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /create-visual-test-to-kb\/scripts\/archive_report\.py/);
   assert.match(source, /create-visual-test-to-kb\/scripts\/verify-open\.mjs/);
   assert.match(source, /scripts\/stable-smoke-notify\.mjs/);
+  assert.match(source, /完整稳定冒烟缺少本轮视觉取证清单/);
+  assert.doesNotMatch(source, /if \(!existsSync\(visualManifestPath\)\) writeFileSync\(visualManifestPath, '\[\]\\n'/);
+  assert.match(automationPrompt, /--dry-run --run-id <runId>/);
+  assert.match(automationPrompt, /\/验收/);
+  assert.match(automationPrompt, /--visual-manifest <manifest\.json绝对路径>/);
   assert.equal((source.match(/'--environments', selected\.join\(','\)/g) || []).length, 3);
   assert.match(source, /summaryDocument\.notification\.status === 'delivery-failed'/);
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);

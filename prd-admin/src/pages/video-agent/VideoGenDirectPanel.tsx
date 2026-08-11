@@ -208,7 +208,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
           ) : isActive ? (
             <div className="flex flex-col items-center gap-4 text-token-primary px-6 text-center">
               <MapSpinner size={32} />
-              <div className="text-base font-medium">{progressText}</div>
+              <div className="text-base font-medium" data-testid="video-generation-stage">{progressText}</div>
               <div className="w-64 h-1.5 rounded-full overflow-hidden bg-token-nested" >
                 <div
                   className="h-full transition-all duration-500"
@@ -217,6 +217,9 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                     background: 'linear-gradient(90deg, #ec4899 0%, #a855f7 100%)',
                   }}
                 />
+              </div>
+              <div className="text-xs text-token-muted" data-testid="video-generation-progress">
+                {Math.max(0, Math.min(100, currentRun?.phaseProgress ?? 0))}%
               </div>
               <div className="text-xs text-token-muted">
                 任务 ID：{currentRun?.id.slice(0, 12)}…

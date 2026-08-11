@@ -43,7 +43,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --output-root <路径> 指定本地产物目录
   --env-file <路径>    指定本地凭据兼容文件
   --grep <表达式>      只运行匹配的 Playwright 用例
-  --visual-manifest <路径> 指定真人浏览器视觉取证 manifest；缺失时视觉门禁明确判失败
+  --visual-manifest <路径> 指定本轮真人浏览器视觉取证 manifest；完整运行必填
   --report-url <地址>  使用已归档的 HTTPS 验收报告地址；缺省时自动归档到 CDS 验收中心
   --force-unlock       仅在确认原进程已结束或锁损坏时清理遗留互斥锁
   --help               显示本说明
@@ -1142,6 +1142,8 @@ async function main() {
     const visualScope = selected.length === 1 && selected[0] === 'production' && productionSafetyGate.restricted
       ? 'production-read-only'
       : 'full';
+    const requestedVisualManifest = options.read('--visual-manifest');
+    const productionReadOnlyVisual = visualScope === 'production-read-only';
 
     const visualPlanPath = resolve(runDir, 'visual-plan.json');
     const visualPlanMarkdownPath = resolve(runDir, 'visual-plan.md');
@@ -1187,6 +1189,16 @@ async function main() {
         notification: summaryDocument.notification,
       })}\n`);
       return;
+    }
+
+    if (!productionReadOnlyVisual && !requestedVisualManifest) {
+      throw new Error(
+        `完整稳定冒烟缺少本轮视觉取证清单。请先使用 runId ${runId} 执行 --dry-run 生成视觉计划，`
+        + '再按 visual-plan.json 运行 /验收 浏览器取证，并通过 --visual-manifest 显式传入 manifest.json。',
+      );
+    }
+    if (requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))) {
+      throw new Error(`指定的视觉取证清单不存在：${resolve(requestedVisualManifest)}`);
     }
 
     for (const environment of selected) {
@@ -1241,12 +1253,13 @@ async function main() {
     const rows = reconcileCaseCoverage(requiredCaseIds, environmentRows, selected);
     const coverageSummary = summarizeCoverage(rows, plan?.verdict || 'conditional');
     const functionalSummary = enforceExecutionVerdict(coverageSummary, executions);
-    const requestedVisualManifest = options.read('--visual-manifest');
     const emptyVisualManifestPath = resolve(runDir, 'visual-manifest.json');
-    const visualManifestPath = requestedVisualManifest && existsSync(resolve(requestedVisualManifest))
+    const visualManifestPath = requestedVisualManifest
       ? resolve(requestedVisualManifest)
       : emptyVisualManifestPath;
-    if (!existsSync(visualManifestPath)) writeFileSync(visualManifestPath, '[]\n', 'utf8');
+    if (productionReadOnlyVisual && !existsSync(visualManifestPath)) {
+      writeFileSync(visualManifestPath, '[]\n', 'utf8');
+    }
     const visualGatePath = resolve(runDir, 'visual-gate.json');
     const visualGateMarkdownPath = resolve(runDir, 'visual-gate.md');
     const visualTechnicalPath = resolve(runDir, 'visual-technical-appendix.md');
@@ -1277,7 +1290,7 @@ async function main() {
         modules: visualResult.modules?.length || 0,
         gateExitCode: visualGateExitCode,
         manifestPath: visualManifestPath,
-        requestedManifestMissing: Boolean(requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))),
+        requestedManifestMissing: false,
       },
     };
     const summaryPath = resolve(runDir, 'summary.json');
