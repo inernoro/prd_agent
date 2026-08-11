@@ -119,3 +119,5 @@
 | fix | prd-api | 后台任务所有权加入稳定部署域，隔离同名分支的 CDS 与正式环境并保持滚动发布连续性 |
 | fix | stable-smoke | 单环境报告将未选择环境明确标记为 not-selected，不再误报通过 |
 | test | prd-api/stable-smoke | 增加部署身份隔离、滚动发布稳定性与单环境报告状态回归测试 |
+| fix | prd-api | 首个图片请求保留模型适配后的参数，仅在备用 Offering 协议变化时重建请求体 |
+| test | prd-api | 增加自适应图片模型参数删除与跨协议备用路由回归测试 |

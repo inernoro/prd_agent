@@ -1740,6 +1740,63 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenFirstImageRequestIsAlreadyAdapted_ShouldPreserveRemovedParameters()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-adaptive-image",
+            OfferingTargetKind = "model",
+            ActualModel = "gpt-image-2-all",
+            ActualPlatformId = "adaptive-platform",
+            ActualPlatformName = "Adaptive Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://adaptive.example.com/v1",
+            ApiKey = "adaptive-key",
+        };
+        var http = new SequenceHttpClientFactory(
+            (200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new TrackingModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            EndpointPath = "images/generations",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "gpt-image-2-all",
+                ["prompt"] = "draw a clean icon",
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a clean icon",
+                Count = 4,
+                Size = "1536x1024",
+                ResponseFormat = "b64_json",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal("gpt-image-2-all", body["model"]?.GetValue<string>());
+        Assert.Equal("draw a clean icon", body["prompt"]?.GetValue<string>());
+        Assert.Null(body["size"]);
+        Assert.Null(body["n"]);
+        Assert.Null(body["response_format"]);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenLogicalImageOfferingReturnsNotFound_ShouldTryNextOffering()
     {
         var googleCandidate = new ModelResolutionResult

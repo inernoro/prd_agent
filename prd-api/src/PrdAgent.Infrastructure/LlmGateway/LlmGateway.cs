@@ -1311,8 +1311,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         out RawHttpRequestBuildResult? result)
     {
         result = null;
-        if (request.CanonicalImageRequest is not null)
-            request = RebuildCanonicalImageRequest(request, resolution);
         var isExchange = resolution.IsExchange;
         var adapter = isExchange ? null : GetAdapterForResolution(resolution);
         string endpoint;
@@ -1610,6 +1608,47 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         };
     }
 
+    private static GatewayRawRequest PrepareCanonicalImageRequestForResolution(
+        GatewayRawRequest source,
+        ModelResolutionResult? currentResolution,
+        ModelResolutionResult targetResolution)
+    {
+        if (source.CanonicalImageRequest is null)
+            return source;
+
+        var hasPreparedWireRequest = source.IsMultipart || source.RequestBody is not null;
+        if (!hasPreparedWireRequest
+            || currentResolution is not null
+            && !string.Equals(
+                CanonicalImageWireProtocol(currentResolution),
+                CanonicalImageWireProtocol(targetResolution),
+                StringComparison.Ordinal))
+        {
+            return RebuildCanonicalImageRequest(source, targetResolution);
+        }
+
+        return source;
+    }
+
+    private static string CanonicalImageWireProtocol(ModelResolutionResult resolution)
+    {
+        if (resolution.IsExchange)
+            return $"exchange:{resolution.ExchangeTransformerType?.Trim().ToLowerInvariant()}";
+
+        var protocol = string.IsNullOrWhiteSpace(resolution.Protocol)
+            ? resolution.PlatformType
+            : resolution.Protocol;
+        var normalized = protocol?.Trim().ToLowerInvariant();
+        if (normalized is "google" or "gemini" or "gemini-compatible") return "google";
+        if (normalized is "openrouter-image" or "openrouter-images") return "openrouter-image";
+        if (normalized == "openrouter"
+            || (resolution.ApiUrl?.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            return "openrouter-chat";
+        }
+        return normalized ?? "openai";
+    }
+
     private static string EnsureImageDataUri(string value)
         => value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? value : $"data:image/png;base64,{value}";
 
@@ -1655,12 +1694,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
-            // 首次选中的 Offering 也必须从 canonical 图片请求重建。
-            // 旧实现只在回退时重建，导致 openrouter-image 配置正确仍先请求旧 Endpoint。
-            if (request.CanonicalImageRequest is not null)
-            {
-                request = RebuildCanonicalImageRequest(request, resolution);
-            }
+            // 上游调用方已经按首个 Offering 完成模型级参数适配时必须原样保留；仅 canonical
+            // 请求没有 wire body 时才在此补建。跨 Offering 切换则只在协议变化时重建。
+            request = PrepareCanonicalImageRequestForResolution(request, null, resolution);
 
             var gatewayResolution = resolution.ToGatewayResolution();
             var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
@@ -1672,8 +1708,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var candidate = resolution.RetryCandidates[0];
                     candidate.RetryCandidates = resolution.RetryCandidates.Skip(1).ToList();
-                    var rebuiltRequest = RebuildCanonicalImageRequest(request, candidate);
-                    return await ExecuteRawWithResolutionAsync(rebuiltRequest, candidate, startedAt, ct);
+                    var candidateRequest = PrepareCanonicalImageRequestForResolution(request, resolution, candidate);
+                    return await ExecuteRawWithResolutionAsync(candidateRequest, candidate, startedAt, ct);
                 }
                 return GatewayRawResponse.Fail(concurrency.ErrorCode, admissionMessage, 429);
             }
@@ -1942,6 +1978,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     $"previous candidate failed with HTTP {(int)response.StatusCode}");
                 response.Dispose();
 
+                request = PrepareCanonicalImageRequestForResolution(request, resolution, nextResolution);
                 var buildError = TryBuildRawHttpRequest(request, nextResolution, out var nextBuild);
                 resolution = nextResolution;
                 gatewayResolution = resolution.ToGatewayResolution();
