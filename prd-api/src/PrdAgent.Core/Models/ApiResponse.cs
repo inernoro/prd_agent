@@ -80,6 +80,7 @@ public static class ErrorCodes
     
     // 用户相关
     public const string USER_NOT_FOUND = "USER_NOT_FOUND";
+    public const string TEAM_LEADER_TRANSFER_REQUIRED = "TEAM_LEADER_TRANSFER_REQUIRED";
 
     // 群组相关
     public const string GROUP_NOT_FOUND = "GROUP_NOT_FOUND";

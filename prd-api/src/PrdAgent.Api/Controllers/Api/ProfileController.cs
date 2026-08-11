@@ -11,6 +11,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using SixLabors.ImageSharp;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -87,6 +88,54 @@ public class ProfileController : ControllerBase
             "webp" => "image/webp",
             _ => "application/octet-stream"
         };
+    }
+
+    internal static (bool ok, string? ext, string? mime) ValidateAvatarImageBytes(
+        byte[] bytes,
+        string? requestedExt,
+        string? claimedMime)
+    {
+        if (bytes.Length == 0)
+            return (false, null, null);
+
+        try
+        {
+            var format = Image.DetectFormat(bytes);
+            if (format == null)
+                return (false, null, null);
+
+            using var image = Image.Load(bytes);
+            if (image.Width <= 0 || image.Height <= 0)
+                return (false, null, null);
+
+            var actualExt = GuessAvatarImageExtFromMime(format.DefaultMimeType);
+            if (actualExt == null)
+                return (false, null, null);
+
+            var normalizedRequestedExt = NormalizeAvatarImageExt(requestedExt);
+            if (!string.IsNullOrWhiteSpace(requestedExt) && normalizedRequestedExt == null)
+                return (false, null, null);
+            if (normalizedRequestedExt != null
+                && !string.Equals(normalizedRequestedExt, actualExt, StringComparison.Ordinal))
+                return (false, null, null);
+
+            var normalizedClaimedMime = (claimedMime ?? string.Empty).Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(normalizedClaimedMime)
+                && normalizedClaimedMime != "application/octet-stream"
+                && !string.Equals(
+                    GuessAvatarImageExtFromMime(normalizedClaimedMime),
+                    actualExt,
+                    StringComparison.Ordinal))
+            {
+                return (false, null, null);
+            }
+
+            return (true, actualExt, GuessAvatarMimeFromExt(actualExt));
+        }
+        catch
+        {
+            return (false, null, null);
+        }
     }
 
     private static string BuildVersionedAvatarFileName(string userId, string ext, ReadOnlySpan<byte> bytes)
@@ -258,18 +307,6 @@ public class ProfileController : ControllerBase
         if (file.Length > MaxAvatarUploadBytes)
             return StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "文件过大"));
 
-        var ext = NormalizeAvatarImageExt(Path.GetExtension(file.FileName ?? string.Empty));
-        var mime = (file.ContentType ?? string.Empty).Trim();
-        if (ext == null)
-            ext = GuessAvatarImageExtFromMime(mime);
-        if (ext == null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片格式：png/jpg/gif/webp"));
-
-        if (string.IsNullOrWhiteSpace(mime) || mime == "application/octet-stream")
-            mime = GuessAvatarMimeFromExt(ext);
-        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片上传"));
-
         byte[] bytes;
         await using (var ms = new MemoryStream())
         {
@@ -278,6 +315,19 @@ public class ProfileController : ControllerBase
         }
         if (bytes.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 内容为空"));
+
+        var validation = ValidateAvatarImageBytes(
+            bytes,
+            Path.GetExtension(file.FileName ?? string.Empty),
+            file.ContentType);
+        if (!validation.ok || validation.ext == null || validation.mime == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "图片内容损坏，或实际格式与文件名、类型不一致，请重新选择图片后上传。"));
+        }
+        var ext = validation.ext;
+        var mime = validation.mime;
 
         var avatarFileName = BuildVersionedAvatarFileName(currentUserId, ext, bytes);
 
@@ -585,10 +635,14 @@ public class ProfileController : ControllerBase
             return StatusCode(StatusCodes.Status413PayloadTooLarge,
                 ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "生成图片过大，无法作为头像"));
 
-        var mime = string.IsNullOrWhiteSpace(found.Value.mime) ? artifact.Mime : found.Value.mime;
-        var ext = GuessAvatarImageExtFromMime(mime);
-        if (ext == null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "生成图片格式不受支持"));
+        var validation = ValidateAvatarImageBytes(
+            found.Value.bytes,
+            null,
+            string.IsNullOrWhiteSpace(found.Value.mime) ? artifact.Mime : found.Value.mime);
+        if (!validation.ok || validation.ext == null || validation.mime == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "生成图片格式不受支持或内容损坏"));
+        var ext = validation.ext;
+        var mime = validation.mime;
 
         var avatarFileName = BuildVersionedAvatarFileName(currentUserId, ext, found.Value.bytes);
         var (ok, err) = ValidateAvatarFileName(avatarFileName);

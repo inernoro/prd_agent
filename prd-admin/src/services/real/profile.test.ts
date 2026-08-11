@@ -519,4 +519,27 @@ describe('uploadMyAvatar', () => {
     expect(result.success).toBe(true);
     expect(getPendingMyAvatarGenerationRunId()).toBeNull();
   });
+
+  it('直接上传新头像成功后清理尚未返回任务号的创建记录', async () => {
+    sessionStorage.setItem('prd-admin:avatar-generation-create:user-1', JSON.stringify({
+      prompt: '已经被手动上传替代',
+      idempotencyKey: 'profile-avatar-superseded-creation',
+    }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      status: 200,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        success: true,
+        data: { userId: 'user-1', avatarFileName: 'uploaded-avatar.png' },
+        error: null,
+      })),
+    }));
+
+    const result = await uploadMyAvatar({
+      file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
+    });
+
+    expect(result.success).toBe(true);
+    expect(sessionStorage.getItem('prd-admin:avatar-generation-create:user-1')).toBeNull();
+    expect(hasRecoverableMyAvatarGeneration()).toBe(false);
+  });
 });

@@ -196,6 +196,7 @@ describe('toUserReadableErrorMessage', () => {
     ['QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度后重试。'],
     ['LLM_QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。'],
     ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],
+    ['TEAM_LEADER_TRANSFER_REQUIRED', '团队负责人不能直接退出，请先在成员管理中将负责人移交给其他成员。'],
   ])('为稳定业务错误 %s 使用已登记文案而不是通用输入提示', (code, expected) => {
     const message = toUserReadableErrorMessage(
       { code, message: 'HTTP 500 provider traceId=secret' },

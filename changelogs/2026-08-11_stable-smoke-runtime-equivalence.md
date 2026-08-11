@@ -258,3 +258,6 @@
 | fix | prd-admin | 头像创建请求关闭或刷新后使用幂等记录自动恢复已接受任务 |
 | fix | prd-api | 内容安全拒绝统一复用规范分类且不重试、不隔离健康图片 Offering |
 | fix | stable-smoke | 标题正则筛选按 Playwright 实际发现用例对账，避免无关用例误报未执行 |
+| fix | prd-api/prd-admin | 团队负责人退出使用稳定冲突码并明确引导先移交负责人 |
+| fix | prd-admin | 手动上传头像后同时清理未完成创建记录，禁止恢复已被替代任务 |
+| security | prd-api | 头像替换前解码校验真实图片格式并核对扩展名与 MIME |

@@ -192,6 +192,7 @@ function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl
  */
 export async function uploadMyAvatar(input: { file: File }): Promise<ApiResponse<AdminUserAvatarUploadResponse>> {
   const retainedRunId = getPendingMyAvatarGenerationRunId();
+  const retainedCreationKey = getPendingAvatarGenerationCreation()?.idempotencyKey;
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -225,6 +226,7 @@ export async function uploadMyAvatar(input: { file: File }): Promise<ApiResponse
       const parsed = JSON.parse(text) as ApiResponse<AdminUserAvatarUploadResponse>;
       if (parsed.success) {
         if (retainedRunId) forgetAvatarGenerationRun(retainedRunId);
+        if (retainedCreationKey) forgetAvatarGenerationCreation(retainedCreationKey);
         return parsed;
       }
       const code = parsed.error?.code || 'AVATAR_UPLOAD_FAILED';
@@ -399,10 +401,12 @@ export async function applyGeneratedMyAvatar(
   assetSha256: string,
 ): Promise<ApiResponse<AdminUserAvatarUploadResponse>> {
   const retainedRunId = getPendingMyAvatarGenerationRunId();
+  const retainedCreationKey = getPendingAvatarGenerationCreation()?.idempotencyKey;
   const response = await apiRequest<AdminUserAvatarUploadResponse>(api.profile.avatarApplyGenerated(), {
     method: 'POST',
     body: { assetSha256 },
   });
   if (response.success && retainedRunId) forgetAvatarGenerationRun(retainedRunId);
+  if (response.success && retainedCreationKey) forgetAvatarGenerationCreation(retainedCreationKey);
   return response;
 }
