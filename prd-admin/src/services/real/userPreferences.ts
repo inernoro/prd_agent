@@ -54,6 +54,47 @@ async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
   });
 }
 
+/**
+ * 转录词云的生效词典：系统级 ∪ 个人补充 − 个人屏蔽。
+ * 合并在后端做，这里只消费结果——前端不维护业务数据映射表。
+ */
+export type TranscriptLexicon = {
+  /** 已经合并好、可直接喂给分词的词表 */
+  terms: string[];
+  system: string[];
+  mine: string[];
+  muted: string[];
+  /** 当前用户能不能改系统表（settings.write）。前端据此决定显不显示那个入口 */
+  canManageSystem: boolean;
+};
+
+export async function getTranscriptLexicon(): Promise<ApiResponse<TranscriptLexicon>> {
+  return apiRequest<TranscriptLexicon>(api.dashboard.userPreferences.transcriptLexicon());
+}
+
+/** 只改个人词典与个人屏蔽；系统级那张表是管理员的，不在这里动。 */
+export async function updateTranscriptLexicon(
+  terms: string[],
+  muted: string[],
+): Promise<ApiResponse<void>> {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.transcriptLexicon(), {
+    method: 'PUT',
+    body: { terms, muted },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+}
+
+/** 更新系统级词典（全局，所有人默认引用）。需要 settings.write，没权限会 403。 */
+export async function updateSystemTranscriptLexicon(terms: string[]): Promise<ApiResponse<void>> {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.transcriptLexiconSystem(), {
+    method: 'PUT',
+    body: { terms },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+}
+
 /** 更新置顶的知识库 ID 列表（用户级，跨设备/重登录保持） */
 export async function updateDocumentStorePins(documentStorePinnedIds: string[]): Promise<ApiResponse<void>> {
   const res = await apiRequest<void>(api.dashboard.userPreferences.docStorePins(), {

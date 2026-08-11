@@ -193,6 +193,38 @@ describe('buildTranscriptWordCloud', () => {
     expect(cloud.some(item => item.word === '背包')).toBe(true);
   });
 
+  it('词典能把通用分词器丢掉的专有名词捞回来', () => {
+    // 换 Intl.Segmenter 后，ICU 词典不收人名，「泽坤」整个消失——
+    // 而会上被反复叫到的人名恰恰是高价值信息（2026-08-11 外部验收实测）。
+    const segments = [{ start: 0, end: 3, text: '泽坤说要下单，泽坤又说排期紧张，泽坤再确认一次' }];
+    expect(buildTranscriptWordCloud(segments).some(item => item.word === '泽坤')).toBe(false);
+    expect(buildTranscriptWordCloud(segments, 18, ['泽坤']).some(item => item.word === '泽坤')).toBe(true);
+  });
+
+  it('词典只做「加」不做「猜」：不会因此冒出半截词', () => {
+    // 词典命中的整词先被切走，剩下的才交给 Segmenter。
+    // 所以补词典不会把已经治好的滑窗碎片问题带回来。
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: '泽坤看一下常规优化，泽坤看一下这个效果，泽坤说效果不错' }],
+      18,
+      ['泽坤'],
+    );
+    expect(cloud.some(item => item.word === '泽坤')).toBe(true);
+    for (const fragment of ['看一', '规优', '坤看']) {
+      expect(cloud.some(item => item.word === fragment)).toBe(false);
+    }
+  });
+
+  it('长词优先：不会被更短的词典词抢先切走', () => {
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: '张三丰来了，张三丰走了' }],
+      18,
+      ['张三', '张三丰'],
+    );
+    expect(cloud.some(item => item.word === '张三丰')).toBe(true);
+    expect(cloud.some(item => item.word === '张三')).toBe(false);
+  });
+
   it('按频次降序，第一个就是全场最常提到的（展示层的权重基准）', () => {
     const cloud = buildTranscriptWordCloud([
       { start: 0, end: 3, text: '预算预算预算，另外说说效果效果' },

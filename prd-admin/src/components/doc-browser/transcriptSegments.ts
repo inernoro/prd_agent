@@ -197,17 +197,43 @@ const STOP_WORDS = new Set([
  * 极旧浏览器没有 Intl.Segmenter 时中文词云会退化为空，英文词仍然统计
  * （详见 doc/debt.knowledge-base.md）。
  */
-export function buildTranscriptWordCloud(segments: TranscriptSegment[], limit = 18): Array<{ word: string; count: number }> {
+export function buildTranscriptWordCloud(
+  segments: TranscriptSegment[],
+  limit = 18,
+  /**
+   * 词典：通用分词器不认识、但必须完整保留的词（人名、产品名、团队黑话）。
+   * 它只做「加」不做「猜」——先把词典命中的整词切走，剩下的才交给 Segmenter，
+   * 所以不会引入新的边界猜测，也就不会把已经治好的半截词问题带回来。
+   */
+  dictionary: readonly string[] = [],
+): Array<{ word: string; count: number }> {
   const source = segments.map(segment => segment.text).join(' ');
   const counts = new Map<string, number>();
   const bump = (word: string) => counts.set(word, (counts.get(word) ?? 0) + 1);
 
   for (const token of source.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? []) bump(token.toLowerCase());
 
+  // 说话人名也算词典的一部分，但那是调用方拼进来的：这里只认收到的这一份。
+  // 长词优先，避免「张三丰」被更短的「张三」抢先切走。
+  const terms = [...new Set(dictionary.map(x => x.trim()).filter(x => x.length >= 2))]
+    .sort((a, b) => b.length - a.length);
+  let remainder = source;
+  for (const term of terms) {
+    let hits = 0;
+    // 逐个吃掉，同时统计次数；切走之后那段字不再参与后续分词
+    for (;;) {
+      const at = remainder.indexOf(term);
+      if (at < 0) break;
+      hits += 1;
+      remainder = `${remainder.slice(0, at)}\u0000${remainder.slice(at + term.length)}`;
+    }
+    for (let i = 0; i < hits; i += 1) bump(term);
+  }
+
   const SegmenterCtor = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
   if (SegmenterCtor) {
     const segmenter = new SegmenterCtor('zh-Hans', { granularity: 'word' });
-    for (const piece of segmenter.segment(source)) {
+    for (const piece of segmenter.segment(remainder)) {
       if (!piece.isWordLike) continue;
       const word = piece.segment.trim();
       // 单字进不了词云：它既没有语义信息量，也是 Segmenter 切不准时的残渣。

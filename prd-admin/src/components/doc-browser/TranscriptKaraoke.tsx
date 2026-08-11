@@ -14,6 +14,7 @@ import {
   parseSpeakerSourceNote,
 } from '@/components/doc-browser/transcriptSegments';
 import { streamDirectChat } from '@/services/real/aiToolbox';
+import { getTranscriptLexicon, updateSystemTranscriptLexicon, updateTranscriptLexicon } from '@/services/real/userPreferences';
 
 export function buildRecordingQuestionPrompt(noteMd: string, question: string): string {
   return [
@@ -110,7 +111,56 @@ export function TranscriptKaraoke({
   const timelineSegments = synced ? segments : estimatedSegments.length > 0 ? estimatedSegments : segments;
   const followEnabled = synced || estimatedSegments.length > 1;
   const estimated = !synced && estimatedSegments.length > 1;
-  const wordCloud = useMemo(() => buildTranscriptWordCloud(segments), [segments]);
+  // 词典三层，合并后喂给分词：
+  //   L0 本篇说话人名 —— 零配置。ICU 词典不收人名，会上被反复叫到的人恰恰是高价值信息，
+  //      而这批名字笔记里本来就有（[说话人] 标签），不需要任何人去维护。
+  //   L1 系统级 —— 管理员维护的全局表，所有人默认引用。
+  //   L2 个人补充 —— 自己加的，可以单独屏蔽系统表里对自己是噪音的词。
+  // L1/L2 的合并在后端做，前端只消费结果。
+  const [lexicon, setLexicon] = useState<{ terms: string[]; system: string[]; mine: string[]; muted: string[]; canManageSystem: boolean } | null>(null);
+  const [lexiconDraft, setLexiconDraft] = useState('');
+  const [lexiconOpen, setLexiconOpen] = useState(false);
+  const [savingLexicon, setSavingLexicon] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void getTranscriptLexicon().then((res) => {
+      if (!alive || !res.success) return;
+      setLexicon({ terms: res.data.terms, system: res.data.system, mine: res.data.mine, muted: res.data.muted, canManageSystem: res.data.canManageSystem });
+    });
+    return () => { alive = false; };
+  }, []);
+  const dictionary = useMemo(() => {
+    const speakerNames = segments
+      .map(segment => segment.speaker?.trim())
+      .filter((name): name is string => !!name && name.length >= 2);
+    return [...new Set([...speakerNames, ...(lexicon?.terms ?? [])])];
+  }, [segments, lexicon]);
+  const wordCloud = useMemo(
+    () => buildTranscriptWordCloud(segments, 18, dictionary),
+    [segments, dictionary],
+  );
+
+  const addLexiconTerm = async (scope: 'mine' | 'system') => {
+    const term = lexiconDraft.trim();
+    if (!term || term.length < 2 || savingLexicon) return;
+    setSavingLexicon(true);
+    const res = scope === 'system'
+      ? await updateSystemTranscriptLexicon([...new Set([...(lexicon?.system ?? []), term])])
+      : await updateTranscriptLexicon([...new Set([...(lexicon?.mine ?? []), term])], lexicon?.muted ?? []);
+    setSavingLexicon(false);
+    if (!res.success) return;
+    setLexiconDraft('');
+    const refreshed = await getTranscriptLexicon();
+    if (refreshed.success) {
+      setLexicon({
+        terms: refreshed.data.terms,
+        system: refreshed.data.system,
+        mine: refreshed.data.mine,
+        muted: refreshed.data.muted,
+        canManageSystem: refreshed.data.canManageSystem,
+      });
+    }
+  };
   const speakers = useMemo(
     () => [...new Set(segments.map(segment => segment.speaker).filter((value): value is string => Boolean(value)))],
     [segments],
@@ -328,6 +378,55 @@ export function TranscriptKaraoke({
                   );
                 })}
               </div>
+              {/*
+                词典入口就放在词云下面：发现「某个词该在却不在」正是在看这一屏的时候。
+                逼用户跑去设置页再回来是绕路（anti-detour.md）。
+                说话人名不用在这里加——它们已经自动进词典了。
+              */}
+              {onSaveNote ? (
+                <div className="mt-2">
+                  {lexiconOpen ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        value={lexiconDraft}
+                        onChange={event => setLexiconDraft(event.target.value)}
+                        onKeyDown={event => { if (event.key === 'Enter') void addLexiconTerm('mine'); }}
+                        placeholder="例如：人名、产品名、团队黑话"
+                        aria-label="补充词条"
+                        className="h-9 min-w-0 flex-1 rounded-[8px] px-2 text-[12px] text-token-primary outline-none"
+                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                      />
+                      <button
+                        type="button"
+                        disabled={savingLexicon || lexiconDraft.trim().length < 2}
+                        onClick={() => void addLexiconTerm('mine')}
+                        className="min-h-9 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
+                        style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)' }}
+                      >
+                        {savingLexicon ? '保存中' : '加入我的词典'}
+                      </button>
+                      {/* 有设置写权限的人才看得到这个：没权限却给入口，点了只会拿到 403 */}
+                      {lexicon?.canManageSystem ? (
+                        <button
+                          type="button"
+                          disabled={savingLexicon || lexiconDraft.trim().length < 2}
+                          onClick={() => void addLexiconTerm('system')}
+                          className="min-h-9 rounded-[8px] px-3 text-[11px] disabled:opacity-50"
+                          style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                          title="加进全局词典，所有人默认引用"
+                        >
+                          加入系统词典
+                        </button>
+                      ) : null}
+                      <button type="button" onClick={() => setLexiconOpen(false)} className="min-h-9 px-2 text-[11px] text-token-muted">收起</button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setLexiconOpen(true)} className="min-h-9 text-[11px] text-token-muted">
+                      少了某个词？通用分词器不认识人名和黑话，可以补进词典
+                    </button>
+                  )}
+                </div>
+              ) : null}
             </div>
           )}
         </section>
