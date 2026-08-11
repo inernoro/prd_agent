@@ -551,6 +551,22 @@ export function foldVisualGateVerdict(functionalVerdict, visualResult) {
     : 'conditional';
 }
 
+export function clearVisualGateOutputs(paths) {
+  for (const path of paths) {
+    try {
+      unlinkSync(path);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
+export function visualGateExecutionMatchesResult(exitCode, visualResult) {
+  if (!['通过', '不适用', '不通过'].includes(visualResult?.verdict)) return false;
+  const expectedExitCode = ['通过', '不适用'].includes(visualResult.verdict) ? 0 : 2;
+  return exitCode === expectedExitCode;
+}
+
 export function extractArchivedReportUrl(output) {
   for (const line of String(output || '').split(/\r?\n/).reverse()) {
     try {
@@ -1046,6 +1062,7 @@ async function main() {
     const visualGatePath = resolve(runDir, 'visual-gate.json');
     const visualGateMarkdownPath = resolve(runDir, 'visual-gate.md');
     const visualTechnicalPath = resolve(runDir, 'visual-technical-appendix.md');
+    clearVisualGateOutputs([visualGatePath, visualGateMarkdownPath, visualTechnicalPath]);
     const visualGateExecution = command('node', [
       'scripts/stable-smoke-visual-gate.mjs',
       '--manifest', visualManifestPath,
@@ -1057,6 +1074,10 @@ async function main() {
     ]);
     const visualResult = readJson(visualGatePath);
     if (!visualResult) throw new Error('视觉证据门禁未产生可读取结论');
+    const visualGateExitCode = visualGateExecution.status ?? 1;
+    if (!visualGateExecutionMatchesResult(visualGateExitCode, visualResult)) {
+      throw new Error('视觉证据门禁执行状态与本轮结论不一致，拒绝复用历史结果');
+    }
     const summary = {
       ...functionalSummary,
       verdict: foldVisualGateVerdict(functionalSummary.verdict, visualResult),
@@ -1066,7 +1087,7 @@ async function main() {
         floor: visualResult.screenshotFloor,
         passedModules: visualResult.passedModules,
         modules: visualResult.modules?.length || 0,
-        gateExitCode: visualGateExecution.status ?? 1,
+        gateExitCode: visualGateExitCode,
         manifestPath: visualManifestPath,
         requestedManifestMissing: Boolean(requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))),
       },

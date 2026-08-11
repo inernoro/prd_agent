@@ -234,6 +234,42 @@ describe('generateMyAvatarPreview', () => {
     expect(result.error?.message).not.toMatch(/provider|diagnostic/i);
   });
 
+  it.each([
+    {
+      expectedCode: 'AVATAR_GENERATION_NOT_FOUND',
+      pollResponse: {
+        success: false as const,
+        data: null,
+        error: { code: 'AVATAR_GENERATION_NOT_FOUND', message: '任务不存在' },
+      },
+    },
+    {
+      expectedCode: 'AVATAR_RESULT_UNAVAILABLE',
+      pollResponse: {
+        success: true as const,
+        data: { status: 'completed' as const, stage: '生成完成' },
+        error: null,
+      },
+    },
+  ])('任务或结果不可恢复时明确引导重新生成：$expectedCode', async ({ expectedCode, pollResponse }) => {
+    mockedApiRequest
+      .mockResolvedValueOnce({
+        success: true,
+        data: { runId: `run-${expectedCode}`, status: 'queued', stage: '正在排队' },
+        error: null,
+      })
+      .mockResolvedValueOnce(pollResponse);
+
+    const resultPromise = generateMyAvatarPreview({ prompt: '改成手绘风格' });
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe(expectedCode);
+    expect(result.error?.message).toBe('这次头像生成任务或结果已失效，请重新生成头像。');
+    expect(result.error?.message).not.toContain('稍后');
+  });
+
   it('关闭编辑器后停止后续轮询请求', async () => {
     mockedApiRequest.mockResolvedValueOnce({
       success: true,

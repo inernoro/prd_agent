@@ -148,6 +148,13 @@ function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl
       error: { code: normalized, message: '当前账号没有视觉创作权限，请联系管理员开通后重试。' },
     };
   }
+  if (normalized === 'AVATAR_GENERATION_NOT_FOUND' || normalized === 'AVATAR_RESULT_UNAVAILABLE') {
+    return {
+      success: false,
+      data: null,
+      error: { code: normalized, message: '这次头像生成任务或结果已失效，请重新生成头像。' },
+    };
+  }
   if (['IMAGE_GEN_REQUEST_REJECTED', 'LLM_QUOTA_EXCEEDED', 'QUOTA_EXCEEDED', 'RATE_LIMITED', 'IMAGE_GEN_TIMEOUT', 'IMAGE_GEN_UNAVAILABLE'].includes(normalized)) {
     return {
       success: false,

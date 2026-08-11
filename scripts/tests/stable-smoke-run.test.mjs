@@ -10,6 +10,7 @@ import {
   buildLockedRunSummary,
   buildUnhandledFailureSummary,
   canReuseVisualPlan,
+  clearVisualGateOutputs,
   deliverLockedRun,
   deliverUnhandledFailure,
   deployedRuntimeCommit,
@@ -34,6 +35,7 @@ import {
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
   validateProductionReadOnlyConfig,
+  visualGateExecutionMatchesResult,
 } from '../stable-smoke-run.mjs';
 
 test('运行器帮助和预检参数不会误启动正式测试', () => {
@@ -221,6 +223,25 @@ test('功能与视觉结论取更严格结果', () => {
   assert.equal(foldVisualGateVerdict('pass', { verdict: '不通过', statusCounts: {} }), 'conditional');
   assert.equal(foldVisualGateVerdict('pass', { verdict: '不通过', statusCounts: { 不通过: 1 } }), 'fail');
   assert.equal(foldVisualGateVerdict('fail', { verdict: '通过' }), 'fail');
+});
+
+test('视觉门禁执行前清除旧结果且只接受匹配的退出状态', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-visual-output-'));
+  const paths = ['visual-gate.json', 'visual-gate.md', 'visual-technical-appendix.md']
+    .map((name) => resolve(directory, name));
+  try {
+    for (const path of paths) writeFileSync(path, '历史通过结果', 'utf8');
+    clearVisualGateOutputs(paths);
+    assert.ok(paths.every((path) => !existsSync(path)));
+    assert.equal(visualGateExecutionMatchesResult(0, { verdict: '通过' }), true);
+    assert.equal(visualGateExecutionMatchesResult(0, { verdict: '不适用' }), true);
+    assert.equal(visualGateExecutionMatchesResult(2, { verdict: '不通过' }), true);
+    assert.equal(visualGateExecutionMatchesResult(1, { verdict: '通过' }), false);
+    assert.equal(visualGateExecutionMatchesResult(0, { verdict: '不通过' }), false);
+    assert.equal(visualGateExecutionMatchesResult(2, { verdict: '历史结论' }), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('所有持久化清理用例都必须声明清理元数据', () => {
