@@ -203,13 +203,12 @@ export async function validateEnvironmentIdentities(environment, values, fetchFn
   const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
   const label = environment === 'cds' ? 'CDS 环境' : '正式环境';
   const blockers = [];
-  const requestOptions = { signal: AbortSignal.timeout(10_000) };
 
   try {
     const response = await fetchFn(
       `${withoutTrailingSlash(values[`${prefix}_BASE_URL`])}/api/v1/auth/synthetic/ticket`,
       {
-        ...requestOptions,
+        signal: AbortSignal.timeout(10_000),
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -231,7 +230,7 @@ export async function validateEnvironmentIdentities(environment, values, fetchFn
     const response = await fetchFn(
       `${withoutTrailingSlash(values[`${prefix}_GW_BASE_URL`])}/gw/auth/login`,
       {
-        ...requestOptions,
+        signal: AbortSignal.timeout(10_000),
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

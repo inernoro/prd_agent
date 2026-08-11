@@ -187,3 +187,6 @@
 | fix | stable-smoke | 正式环境单独运行时强制降级为只读健康检查，写入旅程必须先通过同轮 CDS 验证 |
 | fix | llmgw | 环境权威管理员口令拒绝页面改密，避免重启后口令回退和会话失效 |
 | test | llmgw/stable-smoke | 增加正式环境单跑安全门与权威管理员改密拒绝回归守卫 |
+| fix | prd-api | 图片 Offering 返回请求超时时累计健康失败，避免故障路由持续占据首选 |
+| fix | stable-smoke | 主应用与网关身份预检分别使用独立超时窗口，避免后一个探测被提前取消 |
+| test | prd-api/stable-smoke | 增加图片超时健康计分与身份探测独立时限回归覆盖 |

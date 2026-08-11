@@ -365,6 +365,7 @@ test('预检实际验证主应用与网关身份且不泄露凭据', async () =>
   assert.equal(calls[0].url, 'https://app.example/api/v1/auth/synthetic/ticket');
   assert.equal(calls[1].url, 'https://gateway.example/gw/auth/login');
   assert.equal(calls[0].options.headers['X-AI-Access-Key'], 'main-secret');
+  assert.notEqual(calls[0].options.signal, calls[1].options.signal);
   assert.deepEqual(JSON.parse(calls[1].options.body), {
     username: 'gateway-user',
     password: 'gateway-secret',

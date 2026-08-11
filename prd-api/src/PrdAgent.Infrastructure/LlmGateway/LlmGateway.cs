@@ -299,6 +299,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
             return _modelResolver.RecordUnavailableAsync(resolution, ct);
 
+        // 408 表示 Provider 在时限内没有完成请求，属于服务健康失败而不是用户输入错误。
+        // 保留回退能力并累计健康失败，避免持续把超时 Offering 排在首位。
+        if (statusCode == 408)
+            return _modelResolver.RecordFailureAsync(resolution, ct);
+
         // 其余 4xx 是本次请求级拒绝（尺寸、参考图、mask、限流等），不能累计为
         // Offering 健康失败，否则同类用户输入连续出现会把健康路由错误下线。
         if (statusCode is >= 400 and <= 499)

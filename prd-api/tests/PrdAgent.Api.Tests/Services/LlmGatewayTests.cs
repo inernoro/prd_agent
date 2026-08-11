@@ -2230,6 +2230,46 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenImageOfferingTimesOut_ShouldRecordHealthFailure()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-timeout",
+            OfferingTargetKind = "model",
+            ActualModel = "image-model-timeout",
+            ActualPlatformId = "platform-timeout",
+            ActualPlatformName = "Provider Timeout",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-timeout.example.com",
+            ApiKey = "sk-timeout",
+        };
+        var http = new SequenceHttpClientFactory((408, "{\"error\":{\"message\":\"request timed out\"}}"));
+        var resolver = new TrackingModelResolver();
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            RequiredLogicalModelPublicId = "image2",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw an image",
+                Images = ["data:image/png;base64,aW1hZ2U="],
+            },
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Empty(resolver.UnavailableOfferingIds);
+        Assert.Equal(["offering-timeout"], resolver.FailedOfferingIds);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
     {
         var legacyResolution = new GatewayModelResolution
