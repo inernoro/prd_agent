@@ -78,8 +78,17 @@ describe('canUseSrcDocPreview', () => {
     expect(canUseSrcDocPreview('<script src="https://cdn.example.com/a.js"></script>')).toBe(true);
   });
 
-  it('内联 module 脚本可以走 srcDoc（没有跨域请求）', () => {
-    expect(canUseSrcDocPreview('<script type="module">console.log(1)</script>')).toBe(true);
+  /**
+   * 内联 module 也不走 srcDoc（review 第二轮改判）。
+   *
+   * 原先按「有没有 src」区分，认为内联 module 不发跨域请求。可
+   * `<script type="module">import './app.js'</script>` 里的那条 import 同样是按 CORS
+   * 模式发的模块请求，在不透明源下照样被拦、照样白屏。与其继续追着「哪种 module 会发
+   * 跨域请求」逐条补（每补一条就是下一次漏判的温床），不如认所有 module。
+   */
+  it('内联 module 脚本也不走 srcDoc —— 里面的 import 同样按 CORS 模式取', () => {
+    expect(canUseSrcDocPreview('<script type="module">console.log(1)</script>')).toBe(false);
+    expect(canUseSrcDocPreview(`<script type="module">import './app.js'</script>`)).toBe(false);
   });
 
   it('外链 module 脚本不能走 srcDoc —— 不透明源下会因缺 CORS 被拦成白屏', () => {
@@ -108,7 +117,7 @@ describe('canUseSrcDocPreview', () => {
    * 这就是 predicate-and-wiring-discipline 形状 1：语义相同、写法不同 → 判据翻转。
    */
   describe('属性写法的等价形式', () => {
-    const externalModuleForms = [
+    const moduleForms = [
       '<script type=module src=/assets/app.js></script>',
       "<script type='module' src='/assets/app.js'></script>",
       '<script type="module" src=/assets/app.js></script>',
@@ -118,14 +127,14 @@ describe('canUseSrcDocPreview', () => {
       '<script src=/assets/app.js type=module></script>',
       '<script defer type=module src=/a.js></script>',
       '<script type="module" crossorigin src=/assets/index-DkZ1s.js></script>',
+      '<script type=module>console.log(1)</script>',         // 内联 module，同样不放行
     ];
 
-    it.each(externalModuleForms)('识别为外链 module，不走 srcDoc：%s', (html) => {
+    it.each(moduleForms)('识别为 module，不走 srcDoc：%s', (html) => {
       expect(canUseSrcDocPreview(html)).toBe(false);
     });
 
     const safeForms = [
-      '<script type=module>console.log(1)</script>',        // 内联 module，无跨域请求
       '<script src=/a.js></script>',                         // 经典脚本，跨域不需要 CORS
       '<script type=text/javascript src=/a.js></script>',
       '<script type=modulepreload href=/a.js></script>',     // 不是 module，别误伤
@@ -215,14 +224,41 @@ describe('withPreviewBase', () => {
     ['<head><base target="_blank" href="./"></head>', DIR],
   ];
 
+  function baseHrefs(html: string): string[] {
+    return [...html.matchAll(/<base\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/gi)]
+      .map((m) => m[1] ?? m[2] ?? m[3] ?? '');
+  }
+
   it.each(relativeForms)('相对 base 必须按站点地址重解析：%s', (html, expected) => {
     const out = withPreviewBase(html, SITE);
-    expect(out).toContain(`<base href="${expected}">`);
     // 关键断言：产物里不能再有任何相对 base —— 只要还剩一个，srcDoc 下就会解析到 MAP 自己身上
-    const hrefs = [...out.matchAll(/<base\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/gi)]
-      .map((m) => m[1] ?? m[2] ?? m[3] ?? '');
-    expect(hrefs.length).toBeGreaterThan(0);
-    for (const h of hrefs) expect(h).toMatch(/^https:\/\/cfi\.example\.org\//);
+    const hrefs = baseHrefs(out);
+    expect(hrefs).toEqual([expected]);
+  });
+
+  /**
+   * 有 base 标签但没写 href（review 第二轮抓出）。
+   *
+   * `<base target="_blank">` 是完全合法的写法。原实现的正则要求 href 必须存在，
+   * 匹配不上就走到「有 base 就原样返回」那一支——既不改写也不注入，而注释写的却是
+   * 「当作没有，照常注入」：代码与它自己的说明相反。后果是这类页面在 srcDoc 下
+   * 所有相对资源都解析到 MAP 的分享页，整页丢样式丢脚本。
+   */
+  it('有 base 但没写 href：必须补上站点目录，且保留原有属性', () => {
+    const out = withPreviewBase('<head><base target="_blank"></head>', SITE);
+    expect(baseHrefs(out)).toEqual([DIR]);
+    expect(out).toContain('target="_blank"');
+    expect(out.match(/<base\b/gi)?.length).toBe(1);
+  });
+
+  it('href 为空串也当作没写', () => {
+    expect(baseHrefs(withPreviewBase('<head><base href=""></head>', SITE))).toEqual([DIR]);
+  });
+
+  it('改写相对 base 时保留同标签上的其它属性', () => {
+    const out = withPreviewBase('<head><base target="_blank" href="./"></head>', SITE);
+    expect(baseHrefs(out)).toEqual([DIR]);
+    expect(out).toContain('target="_blank"');
   });
 
   it('相对 base 改写后不新增第二个 base 标签', () => {
