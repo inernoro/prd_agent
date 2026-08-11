@@ -36,7 +36,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
 选项：
   --preflight          只检查双环境地址、身份和 CDS 部署状态，不启动测试
   --cds-only           只运行 CDS 环境
-  --production-only    只运行正式环境
+  --production-only    只运行正式环境只读健康检查；写入旅程必须先在同一轮完成 CDS 验证
   --dry-run            生成计划并检查凭据，不执行业务旅程
   --run-id <值>        指定本轮稳定冒烟标识
   --output-root <路径> 指定本地产物目录
@@ -505,6 +505,18 @@ export function evaluateProductionSafetyGate(cdsExecution, cdsRows = []) {
   };
 }
 
+export function initializeProductionSafetyGate(selected) {
+  if (selected.includes('production') && !selected.includes('cds')) {
+    return {
+      restricted: true,
+      mode: 'read-only',
+      grep: productionReadOnlyGrep,
+      reasons: ['本轮未执行 CDS 全量测试，正式环境仅允许只读健康检查'],
+    };
+  }
+  return { restricted: false, mode: 'full', grep: '', reasons: [] };
+}
+
 export function foldVisualGateVerdict(functionalVerdict, visualResult) {
   if (functionalVerdict === 'fail') return 'fail';
   if (visualResult?.verdict === '通过') return functionalVerdict;
@@ -900,7 +912,7 @@ async function main() {
 
     const executions = [];
     const grep = options.read('--grep');
-    let productionSafetyGate = { restricted: false, mode: 'full', grep: '', reasons: [] };
+    let productionSafetyGate = initializeProductionSafetyGate(selected);
     for (const environment of selected) {
       if (environment === 'production' && selected.includes('cds')) {
         const cdsExecution = executions.find((execution) => execution.environment === 'cds');

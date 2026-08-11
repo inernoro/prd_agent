@@ -861,6 +861,24 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
     }
+    if (envAuthorityAdmin && string.Equals(user.Username, AdminUser, StringComparison.Ordinal))
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "auth.change_password",
+            targetType: "llmgw_console_user",
+            targetId: user.Id,
+            targetName: user.Username,
+            success: false,
+            reason: "PASSWORD_MANAGED_BY_DEPLOYMENT");
+        return Json(
+            ApiEnvelope<ChangePasswordResultDto>.Fail(
+                "PASSWORD_MANAGED_BY_DEPLOYMENT",
+                "该管理员口令由部署配置统一管理，当前页面不能修改。请联系系统管理员更新后重新登录。"),
+            jsonOptions,
+            statusCode: 409);
+    }
     if (!PasswordHasher.Verify(oldPwd, user.PasswordHash))
     {
         await WriteOperationAuditAsync(

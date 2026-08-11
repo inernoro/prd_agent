@@ -141,7 +141,7 @@ const lines = [
           : '环境执行报告缺失';
     const command = targetEnvironment === 'cds'
       ? 'node scripts/stable-smoke-run.mjs --cds-only'
-      : 'node scripts/stable-smoke-run.mjs --production-only';
+      : 'node scripts/stable-smoke-run.mjs';
     return `| ${targetEnvironment === 'cds' ? 'CDS 环境' : '正式环境'} | ${environmentRows.length} | ${environmentRows.length - environmentNotRun.length} | ${environmentRows.filter((row) => row.status === 'pass').length} | ${environmentRows.filter((row) => row.status === 'fail').length} | ${environmentNotRun.length} | ${blocker} | \`${command}\` |`;
   }),
   '',

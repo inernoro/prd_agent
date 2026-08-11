@@ -182,7 +182,9 @@ test('未执行账本区分自动化缺口与正式环境身份阻塞', () => {
   assert.match(ledger[0].command, /--cds-only/);
   assert.equal(ledger[1].reasonCode, 'environment-report-missing');
   assert.match(ledger[1].reason, /正式环境专用合成身份/);
-  assert.match(ledger[1].command, /--production-only/);
+  assert.match(ledger[1].command, /配齐双环境凭据/);
+  assert.match(ledger[1].command, /同轮 CDS 验证/);
+  assert.doesNotMatch(ledger[1].command, /--production-only/);
 });
 
 test('正式环境已有报告但缺步骤时给正式环境补跑命令', () => {
@@ -190,7 +192,8 @@ test('正式环境已有报告但缺步骤时给正式环境补跑命令', () =>
     { caseId: 'VIDEO-001', environment: 'production', status: 'not-run' },
   ], { cds: true, production: true });
   assert.equal(ledger[0].reasonCode, 'automation-case-missing');
-  assert.match(ledger[0].command, /--production-only/);
+  assert.match(ledger[0].command, /stable-smoke-run\.mjs --grep/);
+  assert.doesNotMatch(ledger[0].command, /--production-only/);
   assert.doesNotMatch(ledger[0].command, /--cds-only/);
 });
 

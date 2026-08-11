@@ -184,3 +184,6 @@
 | fix | prd-api | 多图生图按 Offering 协议走 OpenRouter 专用图片端点并统一自适应模型参数裁剪 |
 | fix | prd-api | 直出视频任务归属增加即时清理接口与七日到期清理，治理定期冒烟存量 |
 | test | prd-api/stable-smoke | 增加 OpenRouter 多图请求、自适应参数和视频冒烟清理回归覆盖 |
+| fix | stable-smoke | 正式环境单独运行时强制降级为只读健康检查，写入旅程必须先通过同轮 CDS 验证 |
+| fix | llmgw | 环境权威管理员口令拒绝页面改密，避免重启后口令回退和会话失效 |
+| test | llmgw/stable-smoke | 增加正式环境单跑安全门与权威管理员改密拒绝回归守卫 |

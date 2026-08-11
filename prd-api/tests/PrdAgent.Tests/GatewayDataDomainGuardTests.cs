@@ -558,6 +558,17 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void EnvironmentAuthority_RejectsInteractiveAdminPasswordChanges()
+    {
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("envAuthorityAdmin && string.Equals(user.Username, AdminUser, StringComparison.Ordinal)", consoleProgram);
+        Assert.Contains("PASSWORD_MANAGED_BY_DEPLOYMENT", consoleProgram);
+        Assert.Contains("该管理员口令由部署配置统一管理，当前页面不能修改。请联系系统管理员更新后重新登录。", consoleProgram);
+        Assert.Contains("statusCode: 409", consoleProgram);
+    }
+
+    [Fact]
     public void TenantBoundaryPropagation_PreservesVerifiedTenantAndInternalLogFallback()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");

@@ -15,6 +15,7 @@ import {
   enforceExecutionVerdict,
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
+  initializeProductionSafetyGate,
   extractArchivedReportUrl,
   foldVisualGateVerdict,
   isValidationOnlyPath,
@@ -113,6 +114,21 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   assert.deepEqual(validateProductionReadOnlyConfig({
     STABLE_SMOKE_PROD_BASE_URL: 'https://wrong.example',
   }), ['正式环境只读健康检查地址必须固定为 https://map.ebcone.net']);
+});
+
+test('正式环境单独运行时默认禁止业务写入', () => {
+  assert.deepEqual(initializeProductionSafetyGate(['production']), {
+    restricted: true,
+    mode: 'read-only',
+    grep: '\\[CORE-001\\]',
+    reasons: ['本轮未执行 CDS 全量测试，正式环境仅允许只读健康检查'],
+  });
+  assert.deepEqual(initializeProductionSafetyGate(['cds', 'production']), {
+    restricted: false,
+    mode: 'full',
+    grep: '',
+    reasons: [],
+  });
 });
 
 test('功能与视觉结论取更严格结果', () => {

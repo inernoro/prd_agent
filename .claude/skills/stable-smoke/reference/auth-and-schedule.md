@@ -77,7 +77,7 @@ Codex 桌面端创建本地自动化 `stable-smoke-48h`：
 node scripts/stable-smoke-run.mjs --preflight
 ```
 
-只检查 CDS 环境与正式环境的权威地址、身份和部署版本，不创建测试资源、不调用创作模型。只查 CDS 环境时增加 `--cds-only`，只查正式环境时增加 `--production-only`。预检失败必须输出审核者可执行的阻塞项，禁止展示代码堆栈；参数不确定时运行 `node scripts/stable-smoke-run.mjs --help`。
+只检查 CDS 环境与正式环境的权威地址、身份和部署版本，不创建测试资源、不调用创作模型。只查 CDS 环境时增加 `--cds-only`，只查正式环境时增加 `--production-only`。非预检模式下，`--production-only` 永远只执行正式环境只读健康检查；任何正式环境写入旅程必须在同一轮先完成 CDS 验证。预检失败必须输出审核者可执行的阻塞项，禁止展示代码堆栈；参数不确定时运行 `node scripts/stable-smoke-run.mjs --help`。
 
 ## 每轮报告
 

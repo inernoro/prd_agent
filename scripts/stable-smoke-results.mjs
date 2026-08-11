@@ -104,11 +104,11 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
         : isProduction
           ? '正式环境专用合成身份未通过预检，因此没有生成正式环境执行报告。'
           : 'CDS 环境执行报告缺失，无法判断该 caseId 是否实际运行。';
-      const environmentFlag = isProduction ? '--production-only' : '--cds-only';
+      const environmentFlag = isProduction ? '' : '--cds-only';
       const command = reportAvailable
-        ? `先在 e2e/specs/stable-smoke.spec.ts 实现 [${row.caseId}]，再运行 node scripts/stable-smoke-run.mjs ${environmentFlag} --grep "\\[${row.caseId}\\]"`
+        ? `先在 e2e/specs/stable-smoke.spec.ts 实现 [${row.caseId}]，再运行 node scripts/stable-smoke-run.mjs${environmentFlag ? ` ${environmentFlag}` : ''} --grep "\\[${row.caseId}\\]"`
         : isProduction
-          ? '在 Keychain 配齐 STABLE_SMOKE_PROD_* 后运行 node scripts/stable-smoke-run.mjs --production-only'
+          ? '在 Keychain 配齐双环境凭据后运行 node scripts/stable-smoke-run.mjs；正式环境写入旅程必须先通过同轮 CDS 验证'
           : '修复 CDS 身份或部署预检后运行 node scripts/stable-smoke-run.mjs --cds-only';
       return {
         ...row,
