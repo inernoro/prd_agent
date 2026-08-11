@@ -87,7 +87,10 @@ function renderCombinedExecutiveSummary(functionalLead, visualGateLeadContent) {
     : '详见逐项功能账本';
   const visualStatus = rowValue('状态结果');
   const visualEvidence = rowValue('可审核证据');
-  const canRelease = rowValue('能否发布') === '可以';
+  const functionalPassed = functionalMatch
+    ? Number(functionalMatch[3]) === 0 && Number(functionalMatch[4]) === 0
+    : !/不通过|部分通过/.test(functionalLead);
+  const canRelease = functionalPassed && rowValue('能否发布') === '可以';
   return [
     '## 主管先看',
     '',
@@ -264,9 +267,25 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   const visualPlanSections = visualPlan.sections.filter((section) => section.title === '逐模块视觉取证任务');
   const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
   const visualGateModules = visualGate.sections.find((section) => section.title === '模块覆盖');
-  const inferredVerdict = /不通过/.test(functional.lead)
+  const functionalCounts = functional.lead.match(/共\s*\d+\s*项，\d+\s*项通过、(\d+)\s*项不通过、(\d+)\s*项未执行/);
+  const functionalVerdict = functionalCounts
+    ? Number(functionalCounts[1]) > 0
+      ? 'fail'
+      : Number(functionalCounts[2]) > 0 ? 'conditional' : 'pass'
+    : /不通过/.test(functional.lead)
+      ? 'fail'
+      : /部分通过/.test(functional.lead)
+        ? 'conditional'
+        : 'pass';
+  const visualStatusMatch = String(visualGateMarkdown).match(/状态结果\s*\|\s*通过\s*\d+，不通过\s*(\d+)，需补证\s*\d+，需干预\s*(\d+)/);
+  const visualGateVerdict = !visualGateMarkdown || /结论：通过/.test(visualGate.lead)
+    ? 'pass'
+    : visualStatusMatch && Number(visualStatusMatch[1]) === 0 && Number(visualStatusMatch[2]) === 0
+      ? 'conditional'
+      : 'fail';
+  const inferredVerdict = functionalVerdict === 'fail' || visualGateVerdict === 'fail'
     ? 'fail'
-    : /部分通过/.test(functional.lead)
+    : functionalVerdict === 'conditional' || visualGateVerdict === 'conditional'
       ? 'conditional'
       : 'pass';
   const output = [functional.lead, '', `Verdict: ${inferredVerdict}`, ''];

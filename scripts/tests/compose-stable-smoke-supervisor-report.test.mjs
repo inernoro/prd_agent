@@ -149,6 +149,21 @@ test('功能报告缺少主管先看时自动生成双账本首屏', () => {
   assert.ok(report.indexOf('## 主管先看') < report.indexOf('## 主管验收总览'));
 });
 
+test('功能通过但视觉门禁未通过时主管报告不得判通过', () => {
+  const functional = '# 功能报告\n\n> 主管结论：通过。共 2 项，2 项通过、0 项不通过、0 项未执行。\n\n## 主管验收总览\n\n功能均通过';
+  const visualGate = '# 视觉门禁\n\n结论：不通过\n\n## 主管先看\n\n| 项目 | 结果 | 说明 |\n|---|---|---|\n| 能否发布 | 不可以 | 缺少证据 |';
+  const report = composeSupervisorReport(functional, visualGate, visualGate);
+  assert.match(report, /Verdict: fail/);
+  assert.match(report, /\| 能否发布 \| 不可以 \|/);
+});
+
+test('视觉只有缺证而没有产品失败时主管报告判为有条件通过', () => {
+  const functional = '# 功能报告\n\n> 主管结论：通过。共 2 项，2 项通过、0 项不通过、0 项未执行。\n\n## 主管验收总览\n\n功能均通过';
+  const visualGate = '# 视觉门禁\n\n结论：不通过\n\n## 主管先看\n\n| 项目 | 结果 | 说明 |\n|---|---|---|\n| 能否发布 | 不可以 | 缺少证据 |\n| 状态结果 | 通过 0，不通过 0，需补证 0，需干预 0 | 尚未取证 |';
+  const report = composeSupervisorReport(functional, visualGate, visualGate);
+  assert.match(report, /Verdict: conditional/);
+});
+
 test('主管报告把技术术语翻译为审核人可读文案', () => {
   const functional = `# 报告\n\n共 1 项，1 项通过、0 项不通过、0 项未执行。\n\n## 逐项验收账本\n\n| 路径 | 断言 |\n|---|---|\n| SSE → Offering → Provider → Endpoint | requestId 可追踪，token 有效，未出现 HTTP2 协议错误 |`;
   const visual = '# 视觉\n';

@@ -17,8 +17,16 @@ const defaultOutputRoot = '/tmp/prd-agent-stable-smoke';
 const productionBaseUrl = 'https://map.ebcone.net';
 const credentialRegistryPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/credential-registry.json');
 
-const valueOptions = new Set(['--run-id', '--output-root', '--env-file', '--grep']);
+const valueOptions = new Set([
+  '--run-id',
+  '--output-root',
+  '--env-file',
+  '--grep',
+  '--visual-manifest',
+  '--report-url',
+]);
 const flagOptions = new Set(['--force-unlock', '--cds-only', '--production-only', '--dry-run', '--preflight', '--help']);
+export const productionReadOnlyGrep = '\\[CORE-001\\]';
 
 export const runnerHelpText = `稳定冒烟本地运行器
 
@@ -34,6 +42,8 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --output-root <路径> 指定本地产物目录
   --env-file <路径>    指定本地凭据兼容文件
   --grep <表达式>      只运行匹配的 Playwright 用例
+  --visual-manifest <路径> 指定真人浏览器视觉取证 manifest；缺失时视觉门禁明确判失败
+  --report-url <地址>  使用已归档的 HTTPS 验收报告地址；缺省时自动归档到 CDS 验收中心
   --force-unlock       清理遗留互斥锁后运行
   --help               显示本说明
 `;
@@ -150,6 +160,13 @@ export function validateEnvironmentConfig(name, values) {
     errors.push('正式环境地址必须固定为 https://map.ebcone.net');
   }
   return errors;
+}
+
+export function validateProductionReadOnlyConfig(values) {
+  const baseUrl = values.STABLE_SMOKE_PROD_BASE_URL?.replace(/\/+$/, '');
+  return baseUrl === productionBaseUrl
+    ? []
+    : ['正式环境只读健康检查地址必须固定为 https://map.ebcone.net'];
 }
 
 function withoutTrailingSlash(value) {
@@ -301,6 +318,14 @@ function readJson(path) {
   }
 }
 
+function readJsonFromText(text) {
+  try {
+    return JSON.parse(String(text || '').trim());
+  } catch {
+    return null;
+  }
+}
+
 export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation = {}) {
   const runtimeCommit = runtimeExpectation.runtimeCommit || expectedCommit;
   const runtimeEquivalent = runtimeExpectation.runtimeEquivalent === true;
@@ -429,6 +454,44 @@ export function enforceExecutionVerdict(summary, executions) {
     verdict: 'fail',
     executionFailures,
   };
+}
+
+export function evaluateProductionSafetyGate(cdsExecution, cdsRows = []) {
+  const hazardousFailures = cdsRows.filter((row) => row.status === 'fail' && (
+    /\bP0\b|数据污染|清理失败|\bcleanup\b|pollution/i.test(`${row.title || ''} ${row.error || ''}`)
+  ));
+  const processFailed = !cdsExecution || !['executed', 'dry-run'].includes(cdsExecution.status);
+  const restricted = processFailed || hazardousFailures.length > 0;
+  return {
+    restricted,
+    mode: restricted ? 'read-only' : 'full',
+    grep: restricted ? productionReadOnlyGrep : '',
+    reasons: [
+      ...(processFailed ? [`CDS 全量测试未完成（${cdsExecution?.status || 'missing'}）`] : []),
+      ...hazardousFailures.map((row) => `${row.caseId || '未编号用例'}：CDS 出现高危失败`),
+    ],
+  };
+}
+
+export function foldVisualGateVerdict(functionalVerdict, visualResult) {
+  if (functionalVerdict === 'fail') return 'fail';
+  if (visualResult?.verdict === '通过') return functionalVerdict;
+  const statusCounts = visualResult?.statusCounts || {};
+  return (statusCounts['不通过'] || 0) > 0 || (statusCounts['需干预'] || 0) > 0
+    ? 'fail'
+    : 'conditional';
+}
+
+export function extractArchivedReportUrl(output) {
+  for (const line of String(output || '').split(/\r?\n/).reverse()) {
+    try {
+      const parsed = JSON.parse(line);
+      if (typeof parsed?.deeplink === 'string' && /^https:\/\//.test(parsed.deeplink)) return parsed.deeplink;
+    } catch {
+      // 归档脚本还会输出人类提示，只解析其中的 JSON 结果行。
+    }
+  }
+  return '';
 }
 
 function buildRunId() {
@@ -576,20 +639,53 @@ async function main() {
     if (planResult.status !== 0) throw new Error('稳定冒烟计划生成失败，请检查业务功能台账和未映射变更');
     const plan = readJson(planPath);
 
+    const visualPlanPath = resolve(runDir, 'visual-plan.json');
+    const visualPlanMarkdownPath = resolve(runDir, 'visual-plan.md');
+    const visualPlanResult = command('node', [
+      'scripts/stable-smoke-visual-plan.mjs',
+      '--output-json', visualPlanPath,
+      '--output-md', visualPlanMarkdownPath,
+    ]);
+    if (visualPlanResult.status !== 0) throw new Error('视觉取证计划生成失败，拒绝发布无逐项证据的报告');
+
     const executions = [];
     const grep = options.read('--grep');
+    let productionSafetyGate = { restricted: false, mode: 'full', grep: '', reasons: [] };
     for (const environment of selected) {
-      const errors = validateEnvironmentConfig(environment, values);
+      if (environment === 'production' && selected.includes('cds')) {
+        const cdsExecution = executions.find((execution) => execution.environment === 'cds');
+        const cdsRows = cdsExecution?.resultPath
+          ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds')
+          : [];
+        productionSafetyGate = evaluateProductionSafetyGate(cdsExecution, cdsRows);
+      }
+      const errors = environment === 'production' && productionSafetyGate.restricted
+        ? validateProductionReadOnlyConfig(values)
+        : validateEnvironmentConfig(environment, values);
       if (errors.length > 0) {
-        executions.push({ environment, status: 'blocked', missing: errors, resultPath: '' });
+        executions.push({
+          environment,
+          status: 'blocked',
+          missing: errors,
+          resultPath: '',
+          policy: environment === 'production' ? productionSafetyGate.mode : 'full',
+          gateReasons: environment === 'production' ? productionSafetyGate.reasons : [],
+        });
         continue;
       }
       if (options.has('--dry-run')) {
         executions.push({ environment, status: 'dry-run', missing: [], resultPath: '' });
         continue;
       }
-      const execution = runPlaywright(environment, values, runDir, grep);
-      executions.push(buildExecutionRecord(environment, execution));
+      const effectiveGrep = environment === 'production' && productionSafetyGate.restricted
+        ? productionSafetyGate.grep
+        : grep;
+      const execution = runPlaywright(environment, values, runDir, effectiveGrep);
+      executions.push({
+        ...buildExecutionRecord(environment, execution),
+        policy: environment === 'production' ? productionSafetyGate.mode : 'full',
+        gateReasons: environment === 'production' ? productionSafetyGate.reasons : [],
+      });
     }
 
     const environmentRows = executions.flatMap((execution) => {
@@ -599,26 +695,64 @@ async function main() {
     const requiredCaseIds = selectRequiredCaseIds(plan?.requiredCaseIds || [], grep);
     const rows = reconcileCaseCoverage(requiredCaseIds, environmentRows, selected);
     const coverageSummary = summarizeCoverage(rows, plan?.verdict || 'conditional');
-    const summary = enforceExecutionVerdict(coverageSummary, executions);
+    const functionalSummary = enforceExecutionVerdict(coverageSummary, executions);
+    const requestedVisualManifest = options.read('--visual-manifest');
+    const emptyVisualManifestPath = resolve(runDir, 'visual-manifest.json');
+    const visualManifestPath = requestedVisualManifest && existsSync(resolve(requestedVisualManifest))
+      ? resolve(requestedVisualManifest)
+      : emptyVisualManifestPath;
+    if (!existsSync(visualManifestPath)) writeFileSync(visualManifestPath, '[]\n', 'utf8');
+    const visualGatePath = resolve(runDir, 'visual-gate.json');
+    const visualGateMarkdownPath = resolve(runDir, 'visual-gate.md');
+    const visualTechnicalPath = resolve(runDir, 'visual-technical-appendix.md');
+    const visualGateExecution = command('node', [
+      'scripts/stable-smoke-visual-gate.mjs',
+      '--manifest', visualManifestPath,
+      '--output-json', visualGatePath,
+      '--output-md', visualGateMarkdownPath,
+      '--output-technical-md', visualTechnicalPath,
+    ]);
+    const visualResult = readJson(visualGatePath);
+    if (!visualResult) throw new Error('视觉证据门禁未产生可读取结论');
+    const summary = {
+      ...functionalSummary,
+      verdict: foldVisualGateVerdict(functionalSummary.verdict, visualResult),
+      visual: {
+        verdict: visualResult.verdict,
+        screenshots: visualResult.screenshotCount,
+        floor: visualResult.screenshotFloor,
+        passedModules: visualResult.passedModules,
+        modules: visualResult.modules?.length || 0,
+        gateExitCode: visualGateExecution.status ?? 1,
+        manifestPath: visualManifestPath,
+        requestedManifestMissing: Boolean(requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))),
+      },
+    };
     const summaryPath = resolve(runDir, 'summary.json');
-    writeFileSync(summaryPath, `${JSON.stringify({
+    const summaryDocument = {
       runId,
       verdict: summary.verdict,
       catalogVersion: plan?.catalogVersion,
       commit: plan?.commit,
       envFileLoaded: local.loaded,
       executions,
+      productionSafetyGate,
       coverage: summary,
-    }, null, 2)}\n`, 'utf8');
+      archive: { status: 'pending', reportUrl: '' },
+      notification: { status: 'pending' },
+    };
+    writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
 
+    const functionalReportPath = resolve(runDir, 'report.md');
+    const functionalSupervisorPath = resolve(runDir, 'functional-supervisor-report.md');
     const renderArgs = [
       'scripts/render-stable-smoke-report.mjs',
       '--plan', planPath,
       '--cds-input', resolve(runDir, 'cds-results.json'),
       '--production-input', resolve(runDir, 'production-results.json'),
-      '--output', resolve(runDir, 'report.md'),
-      '--supervisor-output', resolve(runDir, 'supervisor-report.md'),
-      '--technical-url', './report.md',
+      '--output', functionalReportPath,
+      '--supervisor-output', functionalSupervisorPath,
+      '--technical-url', './technical-appendix.md',
       '--cds-url', values.STABLE_SMOKE_CDS_BASE_URL || '',
       '--production-url', productionBaseUrl,
       '--run-id', runId,
@@ -630,8 +764,140 @@ async function main() {
     const render = command('node', renderArgs);
     if (render.status !== 0) throw new Error('稳定冒烟报告生成失败');
 
-    process.stdout.write(`${JSON.stringify({ runId, runDir, verdict: summary.verdict, coverage: summary })}\n`);
-    if (summary.verdict !== 'pass') process.exitCode = 2;
+    const technicalPath = resolve(runDir, 'technical-appendix.md');
+    writeFileSync(
+      technicalPath,
+      `${readFileSync(functionalReportPath, 'utf8').trim()}\n\n${readFileSync(visualTechnicalPath, 'utf8').trim()}\n`,
+      'utf8',
+    );
+    const supervisorPath = resolve(runDir, 'supervisor-report.md');
+    const compose = command('node', [
+      'scripts/compose-stable-smoke-supervisor-report.mjs',
+      '--functional', functionalSupervisorPath,
+      '--visual', visualGateMarkdownPath,
+      '--visual-gate', visualGateMarkdownPath,
+      '--visual-plan', visualPlanMarkdownPath,
+      '--technical-url', './technical-appendix.md',
+      '--output', supervisorPath,
+    ]);
+    if (compose.status !== 0) throw new Error('功能与视觉主管报告合并失败');
+
+    const archiveReportPath = resolve(runDir, 'archive-report.md');
+    const prepareArchive = command('node', [
+      'scripts/prepare-stable-smoke-archive-report.mjs',
+      '--report', supervisorPath,
+      '--manifest', visualManifestPath,
+      '--output', archiveReportPath,
+    ]);
+    if (prepareArchive.status !== 0) throw new Error('验收归档报告准备失败');
+
+    let reportUrl = options.read('--report-url');
+    if (reportUrl) {
+      summaryDocument.archive = { status: 'provided', reportUrl };
+    } else if (!options.has('--dry-run')) {
+      const branchResult = command('git', ['branch', '--show-current']);
+      const commitResult = command('git', ['rev-parse', 'HEAD']);
+      const archive = command('python3', [
+        '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py',
+        '--config', '.claude/skills/create-visual-test-to-kb/acceptance.config.json',
+        '--target', `核心业务稳定冒烟 ${runId}`,
+        '--report-kind', '发布验收',
+        '--title-focus', '核心业务稳定冒烟',
+        '--module', '稳定冒烟',
+        '--type', '每48小时复测',
+        '--folder-path', `稳定冒烟/${new Date().toISOString().slice(0, 7)}`,
+        '--verdict', summary.verdict,
+        '--tier', 'L2',
+        '--report-md', archiveReportPath,
+        '--manifest', visualManifestPath,
+        '--branch', String(branchResult.stdout || '').trim(),
+        '--commit', String(commitResult.stdout || '').trim(),
+      ], { env: { ...process.env, ...values } });
+      reportUrl = archive.status === 0 ? extractArchivedReportUrl(archive.stdout) : '';
+      summaryDocument.archive = reportUrl
+        ? { status: 'archived', reportUrl }
+        : {
+            status: 'failed',
+            reportUrl: '',
+            error: String(archive.stderr || archive.stdout || 'CDS 归档没有返回报告地址').trim().slice(0, 500),
+          };
+    } else {
+      summaryDocument.archive = { status: 'skipped-dry-run', reportUrl: '' };
+    }
+
+    if (reportUrl && !options.has('--dry-run')) {
+      const verifyOpen = command('node', [
+        '.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs',
+        reportUrl,
+        '核心业务稳定冒烟',
+        String(Math.max(1, visualResult.screenshotCount || 0)),
+      ], { env: { ...process.env, ...values } });
+      if (verifyOpen.status === 0) {
+        summaryDocument.archive.verifyOpen = 'passed';
+      } else {
+        summaryDocument.archive = {
+          ...summaryDocument.archive,
+          status: 'verification-failed',
+          verifyOpen: 'failed',
+          error: String(verifyOpen.stderr || verifyOpen.stdout || '归档报告打开验证失败').trim().slice(0, 500),
+        };
+        reportUrl = '';
+      }
+    }
+
+    if (['failed', 'verification-failed'].includes(summaryDocument.archive.status)) {
+      summaryDocument.notification = {
+        status: 'delivery-failed',
+        error: '验收报告在线归档失败，通知不得引用本地路径或不存在的证据地址',
+      };
+    } else if (summary.verdict === 'pass' || options.has('--dry-run')) {
+      summaryDocument.notification = {
+        status: 'skipped',
+        reason: options.has('--dry-run') ? 'dry-run 不发送通知' : '通过只归档，不发送通知',
+      };
+    } else if (!reportUrl) {
+      summaryDocument.notification = {
+        status: 'delivery-failed',
+        error: '验收报告尚未形成可访问的 HTTPS 归档地址，按通知契约拒绝发送无证据通知',
+      };
+    } else {
+      const notification = command('node', [
+        'scripts/stable-smoke-notify.mjs',
+        '--verdict', summary.verdict,
+        '--run-id', runId,
+        '--environment', selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、'),
+        '--module', '整轮',
+        '--recovery', '先处理主管报告中的失败、未执行和视觉缺证项，再按相同 runId 补跑并核对清理结果。',
+        '--report-url', reportUrl,
+      ], {
+        env: {
+          ...process.env,
+          ...values,
+          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || productionBaseUrl,
+        },
+      });
+      summaryDocument.notification = notification.status === 0
+        ? { status: 'sent', result: readJsonFromText(notification.stdout) }
+        : {
+            status: 'delivery-failed',
+            error: String(notification.stderr || notification.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
+          };
+    }
+    if (summaryDocument.notification.status === 'delivery-failed') {
+      summaryDocument.verdict = 'fail';
+      summaryDocument.deliveryFailure = '非通过报告未能完成“在线归档后定向通知”的交付闭环';
+    }
+    writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
+
+    process.stdout.write(`${JSON.stringify({
+      runId,
+      runDir,
+      verdict: summaryDocument.verdict,
+      coverage: summary,
+      archive: summaryDocument.archive,
+      notification: summaryDocument.notification,
+    })}\n`);
+    if (summaryDocument.verdict !== 'pass') process.exitCode = 2;
   } finally {
     try {
       unlinkSync(lockPath);

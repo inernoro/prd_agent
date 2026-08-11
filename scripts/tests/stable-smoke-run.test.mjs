@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -10,6 +10,9 @@ import {
   deployedRuntimeCommit,
   enforceExecutionVerdict,
   evaluateCdsReadiness,
+  evaluateProductionSafetyGate,
+  extractArchivedReportUrl,
+  foldVisualGateVerdict,
   isValidationOnlyPath,
   parseEnvFile,
   parseRunnerArgs,
@@ -18,6 +21,7 @@ import {
   resolveServiceRuntimeCommits,
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
+  validateProductionReadOnlyConfig,
 } from '../stable-smoke-run.mjs';
 
 test('运行器帮助和预检参数不会误启动正式测试', () => {
@@ -64,6 +68,55 @@ test('Playwright 进程失败必须覆盖用例行通过结论', () => {
     failed: 0,
     executionFailures: ['production'],
   });
+});
+
+test('CDS 失败后正式环境只能执行只读健康检查', () => {
+  const processGate = evaluateProductionSafetyGate({ status: 'failed' }, []);
+  assert.equal(processGate.restricted, true);
+  assert.equal(processGate.mode, 'read-only');
+  assert.equal(processGate.grep, '\\[CORE-001\\]');
+
+  const cleanupGate = evaluateProductionSafetyGate({ status: 'executed' }, [{
+    caseId: 'FILE-001',
+    status: 'fail',
+    title: '文件处理',
+    error: 'cleanup 清理失败',
+  }]);
+  assert.equal(cleanupGate.restricted, true);
+  assert.match(cleanupGate.reasons.join('；'), /FILE-001/);
+
+  assert.equal(evaluateProductionSafetyGate({ status: 'executed' }, [{ status: 'pass' }]).restricted, false);
+  assert.equal(evaluateProductionSafetyGate({ status: 'blocked' }, []).restricted, true);
+  assert.deepEqual(validateProductionReadOnlyConfig({
+    STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net/',
+  }), []);
+  assert.deepEqual(validateProductionReadOnlyConfig({
+    STABLE_SMOKE_PROD_BASE_URL: 'https://wrong.example',
+  }), ['正式环境只读健康检查地址必须固定为 https://map.ebcone.net']);
+});
+
+test('功能与视觉结论取更严格结果', () => {
+  assert.equal(foldVisualGateVerdict('pass', { verdict: '通过' }), 'pass');
+  assert.equal(foldVisualGateVerdict('pass', { verdict: '不通过', statusCounts: {} }), 'conditional');
+  assert.equal(foldVisualGateVerdict('pass', { verdict: '不通过', statusCounts: { 不通过: 1 } }), 'fail');
+  assert.equal(foldVisualGateVerdict('fail', { verdict: '通过' }), 'fail');
+});
+
+test('只有归档输出中的 HTTPS 深链可以进入通知', () => {
+  const output = '正在归档\n{"mode":"cds","deeplink":"https://cds.example/reports?report=1"}\n归档完成\n';
+  assert.equal(extractArchivedReportUrl(output), 'https://cds.example/reports?report=1');
+  assert.equal(extractArchivedReportUrl('{"deeplink":"file:///tmp/report"}'), '');
+});
+
+test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 MAP 通知', () => {
+  const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  assert.match(source, /scripts\/stable-smoke-visual-plan\.mjs/);
+  assert.match(source, /scripts\/stable-smoke-visual-gate\.mjs/);
+  assert.match(source, /scripts\/compose-stable-smoke-supervisor-report\.mjs/);
+  assert.match(source, /create-visual-test-to-kb\/scripts\/archive_report\.py/);
+  assert.match(source, /create-visual-test-to-kb\/scripts\/verify-open\.mjs/);
+  assert.match(source, /scripts\/stable-smoke-notify\.mjs/);
+  assert.match(source, /summaryDocument\.notification\.status === 'delivery-failed'/);
 });
 
 test('环境文件解析不执行 shell 内容', () => {
