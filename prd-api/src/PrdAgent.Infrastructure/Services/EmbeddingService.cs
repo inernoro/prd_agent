@@ -28,6 +28,11 @@ public class EmbeddingService : IEmbeddingService
         _logger = logger;
     }
 
+    /// <remarks>
+    /// 这条只做解析、不向上游发任何东西、也不写库，所以照常尊重调用方的 ct——
+    /// server-authority 管的是「已经发出去、可能已计费的调用不许被被动断开取消」，
+    /// 把一次纯查询也禁掉属于过度修正。真正发出去的那条在 EmbedAsync 里，用 None。
+    /// </remarks>
     public async Task<string?> ResolveActiveModelAsync(string appCallerCode, CancellationToken ct = default)
     {
         try

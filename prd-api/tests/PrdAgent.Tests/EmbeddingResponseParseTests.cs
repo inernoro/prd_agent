@@ -97,9 +97,13 @@ public class EmbeddingResponseParseTests
     /// 原实现直接 GetValue&lt;int&gt;()，只 catch 了 JSON 解析本身；字符串 / null / 小数
     /// 会让异常一路穿透成未处理的服务异常或批任务失败。一个不兼容的供应商应答不该把调用方打崩。
     /// </summary>
+    /// <remarks>
+    /// 不含 JSON `null`：`JsonObject["index"]` 对「字段值是 null」和「字段不存在」
+    /// 返回的都是 C# null，在这一层物理上区分不了。把显式 null 当成缺省、走按序补位，
+    /// 是可接受的语义（补位本身是安全的，越界才危险），故不在此断言。
+    /// </remarks>
     [Theory]
     [InlineData("\"0\"")]
-    [InlineData("null")]
     [InlineData("0.5")]
     [InlineData("99999999999999999999")]
     [InlineData("true")]
@@ -185,15 +189,20 @@ public class EmbeddingServiceWiringGuardTests
     /// 上游可能已经受理并计费，取消只会让重试重复付一遍钱，而结果谁也没拿到。
     /// </summary>
     [Fact]
-    public void 网关调用必须用None而不是转发调用方的ct()
+    public void 真正发出去的那条调用必须用None而不是转发调用方的ct()
     {
+        // 只看 EmbedAsync 这一段。ResolveActiveModelAsync 只解析「当前配的是哪个模型」、
+        // 不向上游发任何东西、也不写库，取消它没有代价——把它一并禁掉是过度修正
+        // （上一轮在预览那条线上刚犯过一次同样的错）。
         var src = Source();
+        var body = src[src.IndexOf("public async Task<EmbeddingBatch> EmbedAsync", StringComparison.Ordinal)..];
+        Assert.NotEqual(string.Empty, body);
 
-        Assert.Contains("ResolveModelAsync(appCallerCode, ModelTypes.Embedding, ct: CancellationToken.None)", src);
-        Assert.Contains("}, resolution, CancellationToken.None);", src);
-        // 反向：不许再出现「把 ct 转发进网关」的写法
-        Assert.DoesNotContain("ModelTypes.Embedding, ct: ct)", src);
-        Assert.DoesNotContain("}, resolution, ct);", src);
+        Assert.Contains("ResolveModelAsync(appCallerCode, ModelTypes.Embedding, ct: CancellationToken.None)", body);
+        Assert.Contains("}, resolution, CancellationToken.None);", body);
+        // 反向：发送路径上不许再出现「把 ct 转发进网关」的写法
+        Assert.DoesNotContain("ModelTypes.Embedding, ct: ct)", body);
+        Assert.DoesNotContain("}, resolution, ct);", body);
     }
 
     /// <summary>
