@@ -51,6 +51,33 @@ const USER_MESSAGE_ALLOWLIST = new Map<string, ReadonlySet<string>>([
   ])],
 ]);
 
+const USER_FACING_CODE_MESSAGES = new Map<string, string>([
+  ['INVALID_CREDENTIALS', '用户名或密码错误，请检查后重新登录。'],
+  ['USERNAME_EXISTS', '用户名已存在，请更换用户名后重试。'],
+  ['INVALID_INVITE_CODE', '邀请码无效或已使用，请更换邀请码后重试。'],
+  ['ACCOUNT_DISABLED', '账号已被禁用，请联系管理员处理。'],
+  ['PASSWORD_LOGIN_DISABLED', '当前环境已禁用密码登录，请使用 SSO 登录。'],
+  ['PASSWORD_MISMATCH', '两次输入的密码不一致，请重新输入。'],
+  ['WEAK_PASSWORD', '新密码不符合强度要求，请按页面规则调整后重试。'],
+  ['USER_NOT_FOUND', '用户不存在，请返回后重新选择。'],
+  ['SYNTHETIC_LOGIN_DISABLED', '合成测试登录未启用，请由管理员开启后重新生成入口。'],
+  ['SYNTHETIC_LOGIN_ACCOUNT_NOT_ALLOWED', '当前账号不是合成测试专用账号，请更换已授权账号后重试。'],
+  ['SYNTHETIC_LOGIN_RETURN_URL_INVALID', '目标页面必须是当前站点内的有效路径，请修改后重试。'],
+  ['SYNTHETIC_LOGIN_ACCOUNT_UNAVAILABLE', '合成测试账号不可用，请检查账号状态后重新生成入口。'],
+  ['SYNTHETIC_LOGIN_TICKET_INVALID', '一次性登录入口已失效，请重新生成后再试。'],
+]);
+
+function registeredUserFacingMessage(code: string, message: string): string | null {
+  const normalized = code.trim().toUpperCase();
+  if (normalized === 'ACCOUNT_LOCKED') {
+    const seconds = message.match(/^账号已被锁定，请在\s+(\d{1,6})\s+秒后重试。?$/)?.[1];
+    return seconds
+      ? `账号已被锁定，请在 ${seconds} 秒后重试。`
+      : '账号已被锁定，请稍后重试。';
+  }
+  return USER_FACING_CODE_MESSAGES.get(normalized) ?? null;
+}
+
 function extractErrorLike(value: unknown): { code?: string; message?: string } {
   if (!value) return {};
   if (value instanceof Error) return { message: value.message };
@@ -129,6 +156,8 @@ export function toUserReadableErrorMessage(
   if (classified) return classified;
 
   const message = extracted.message?.trim() || '';
+  const registered = registeredUserFacingMessage(code, message);
+  if (registered) return registered;
   if (isSafeUserMessage(message, code)) {
     return messageContainsRecovery(message)
       ? message

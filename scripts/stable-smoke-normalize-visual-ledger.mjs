@@ -59,6 +59,7 @@ export function normalizeVisualLedger(rows) {
       status: finalStatus,
       automatedStatus: row.automatedStatus || '未记录',
       manualStatus: row.manualStatus || '未记录',
+      environment: row.environment || sourceEvidence.environment,
       theme: row.theme,
       viewportClass: row.viewportClass,
       methodAnchor: row.methodAnchor,

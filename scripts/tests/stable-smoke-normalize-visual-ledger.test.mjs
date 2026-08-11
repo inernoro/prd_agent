@@ -14,6 +14,7 @@ test('人工与自动结果分栏并由严格结论进入视觉门禁', () => {
     automatedStatus: '通过',
     manualStatus: '不通过',
     finalStatus: '不通过',
+    environment: 'cds',
     theme: 'dark',
     viewportClass: 'desktop',
     methodAnchor: '#visual-method-identity-profile',
@@ -26,6 +27,7 @@ test('人工与自动结果分栏并由严格结论进入视觉门禁', () => {
   assert.equal(row.automatedStatus, '通过');
   assert.equal(row.manualStatus, '不通过');
   assert.equal(row.status, '不通过');
+  assert.equal(row.environment, 'cds');
   assert.deepEqual(row.coverageStates, ['登录']);
   assert.equal(row.caption, '按钮被遮挡');
 });
@@ -64,6 +66,7 @@ test('复制后的截图继承原始取证清单中的真实移动端元数据',
     isMobile: true,
     mobilePathId: 'visual-mobile',
     mobileStage: 'result',
+    environment: 'production',
   }]));
   try {
     const [row] = normalizeVisualLedger([{
@@ -85,6 +88,7 @@ test('复制后的截图继承原始取证清单中的真实移动端元数据',
     assert.equal(row.isMobile, true);
     assert.equal(row.mobilePathId, 'visual-mobile');
     assert.equal(row.mobileStage, 'result');
+    assert.equal(row.environment, 'production');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

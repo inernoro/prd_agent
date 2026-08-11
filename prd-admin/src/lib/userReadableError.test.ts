@@ -91,4 +91,33 @@ describe('toUserReadableErrorMessage', () => {
     expect(credential).toBe('文件上传未完成，请检查文件后重新上传。');
     expect(`${connection} ${credential}`).not.toMatch(/ECONNREFUSED|10\.0\.0\.5|API key|sk-/i);
   });
+
+  it('为已登记认证错误保留明确的结果和恢复动作', () => {
+    const locked = toUserReadableErrorMessage(
+      { code: 'ACCOUNT_LOCKED', message: '账号已被锁定，请在 73 秒后重试' },
+      options,
+    );
+    const sso = toUserReadableErrorMessage(
+      { code: 'PASSWORD_LOGIN_DISABLED', message: '当前环境已禁用密码登录，请使用 SSO 登录' },
+      options,
+    );
+    const expiredTicket = toUserReadableErrorMessage(
+      { code: 'SYNTHETIC_LOGIN_TICKET_INVALID', message: '一次性登录入口已失效，请重新生成后再试' },
+      options,
+    );
+
+    expect(locked).toBe('账号已被锁定，请在 73 秒后重试。');
+    expect(sso).toBe('当前环境已禁用密码登录，请使用 SSO 登录。');
+    expect(expiredTicket).toBe('一次性登录入口已失效，请重新生成后再试。');
+  });
+
+  it('账号锁定错误只提取受约束的等待秒数', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'ACCOUNT_LOCKED', message: '账号已被锁定，请在 10 秒后重试，traceId=secret' },
+      options,
+    );
+
+    expect(message).toBe('账号已被锁定，请稍后重试。');
+    expect(message).not.toContain('traceId');
+  });
 });
