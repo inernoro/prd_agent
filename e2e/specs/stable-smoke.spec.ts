@@ -361,12 +361,42 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   test('[CORE-001] 首页与入口静态资源可用', async ({ page }) => {
     const resourceFailures: string[] = [];
     page.on('response', (item) => {
-      if (/\.(?:js|css)(?:\?|$)/.test(item.url()) && item.status() >= 500) resourceFailures.push(item.url());
+      const url = new URL(item.url());
+      if (url.origin === new URL(page.url()).origin
+        && /\.(?:js|css)$/.test(url.pathname)
+        && !item.ok()) {
+        resourceFailures.push(`${item.status()} ${item.url()}`);
+      }
     });
     const response = await page.goto('/', { waitUntil: 'domcontentloaded' });
-    expect(response?.status()).toBeLessThan(500);
-    await expect(page.locator('body')).not.toBeEmpty();
+    expect(response?.status(), '首页 HTML 必须成功返回').toBe(200);
+    expect(response?.headers()['content-type'], '首页必须返回 HTML').toContain('text/html');
     await page.waitForTimeout(1_500);
+
+    const entryAssets = await page.locator('script[src], link[rel="stylesheet"][href]').evaluateAll((elements) => (
+      elements
+        .map((element) => element instanceof HTMLScriptElement ? element.src : (element as HTMLLinkElement).href)
+        .filter((value) => {
+          const url = new URL(value);
+          return url.origin === window.location.origin && /\.(?:js|css)$/.test(url.pathname);
+        })
+    ));
+    expect(entryAssets.some((url) => new URL(url).pathname.endsWith('.js')), '首页缺少入口 JS').toBe(true);
+    expect(entryAssets.some((url) => new URL(url).pathname.endsWith('.css')), '首页缺少入口 CSS').toBe(true);
+
+    for (const assetUrl of entryAssets) {
+      const asset = await page.request.get(assetUrl);
+      expect(asset.status(), `入口资源不可用：${assetUrl}`).toBe(200);
+      expect((await asset.body()).byteLength, `入口资源为空：${assetUrl}`).toBeGreaterThan(0);
+      const contentType = asset.headers()['content-type'] || '';
+      if (new URL(assetUrl).pathname.endsWith('.js')) {
+        expect(contentType, `入口 JS 类型错误：${assetUrl}`).toMatch(/javascript/i);
+      } else {
+        expect(contentType, `入口 CSS 类型错误：${assetUrl}`).toMatch(/text\/css/i);
+      }
+    }
+
+    await expect(page.locator('#root'), '入口脚本必须成功渲染应用根节点').not.toBeEmpty();
     expect(resourceFailures).toEqual([]);
   });
 

@@ -196,3 +196,5 @@
 | fix | stable-smoke | 为新建互斥锁保留 owner 写入宽限期，消除空锁文件被并发执行器误删的竞态 |
 | fix | prd-api | 生图额度耗尽保留网关分类与管理员恢复指引，不再退化为普通限流提示 |
 | test | prd-api/stable-smoke | 增加新锁发布竞态与生图额度恢复指引回归覆盖 |
+| fix | stable-smoke | 正式环境只读健康检查要求首页 HTML 与入口 JS/CSS 均返回成功且内容非空 |
+| test | e2e | CORE-001 增加入口资源状态、内容类型、内容长度与应用根节点渲染断言 |
