@@ -296,9 +296,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (IsContentPolicyDenial(statusCode, responseBody))
             return Task.CompletedTask;
 
-        return ShouldQuarantineRawProviderResponse(statusCode, responseBody, request)
-            ? _modelResolver.RecordUnavailableAsync(resolution, ct)
-            : _modelResolver.RecordFailureAsync(resolution, ct);
+        if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
+            return _modelResolver.RecordUnavailableAsync(resolution, ct);
+
+        // 其余 4xx 是本次请求级拒绝（尺寸、参考图、mask、限流等），不能累计为
+        // Offering 健康失败，否则同类用户输入连续出现会把健康路由错误下线。
+        if (statusCode is >= 400 and <= 499)
+            return Task.CompletedTask;
+
+        return _modelResolver.RecordFailureAsync(resolution, ct);
     }
 
     private static bool IsAutoModelPolicy(GatewayRequest request)

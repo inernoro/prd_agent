@@ -2184,6 +2184,51 @@ public class LlmGatewayTests
         Assert.Empty(resolver.FailedOfferingIds);
     }
 
+    [Theory]
+    [InlineData(400, "invalid image size")]
+    [InlineData(422, "invalid mask image")]
+    [InlineData(429, "rate limited")]
+    public async Task SendRawWithResolutionAsync_WhenRequestLevel4xxOccurs_ShouldNotDamageRouteHealth(
+        int statusCode,
+        string message)
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-a",
+            OfferingTargetKind = "model",
+            ActualModel = "image-model-a",
+            ActualPlatformId = "platform-a",
+            ActualPlatformName = "Provider A",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-a.example.com",
+            ApiKey = "sk-a",
+        };
+        var http = new SequenceHttpClientFactory((statusCode, $"{{\"error\":{{\"message\":\"{message}\"}}}}"));
+        var resolver = new TrackingModelResolver();
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            RequiredLogicalModelPublicId = "image2",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw an image",
+                Images = ["data:image/png;base64,aW1hZ2U="],
+            },
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Empty(resolver.UnavailableOfferingIds);
+        Assert.Empty(resolver.FailedOfferingIds);
+    }
+
     [Fact]
     public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
     {

@@ -404,21 +404,42 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[CORE-008][REG-tutorial-progress-001] 历史空进度用户可完成教程且重复提交幂等', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/document-store');
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const response = await page.request.post('/api/daily-tips/seed-document-store-page-guide/mark-learned', {
+    const sourceId = 'document-store-page-guide';
+    const resetProgress = async () => {
+      const response = await page.request.delete(`/api/daily-tips/testing/learned/${sourceId}`, {
         headers: authHeaders(token),
       });
-      const body = await response.json() as ApiEnvelope<{
-        learned: { sourceId: string; version: number; tier: string };
-      }>;
-      expect(response.status(), body.error?.message || '教程完成状态保存失败').toBe(200);
-      expect(body.success, body.error?.message || '教程完成状态保存失败').toBe(true);
-      expect(body.data.learned.sourceId).toBe('document-store-page-guide');
-    }
-    const progress = await readEnvelope<{
+      const body = await response.json() as ApiEnvelope<{ reset: boolean; sourceId: string }>;
+      expect(response.status(), body.error?.message || '教程测试进度清理失败').toBe(200);
+      expect(body.success, body.error?.message || '教程测试进度清理失败').toBe(true);
+      expect(body.data).toEqual({ reset: true, sourceId });
+    };
+
+    await resetProgress();
+    const emptyProgress = await readEnvelope<{
       items: Array<{ sourceId: string; learned: boolean }>;
     }>(await page.request.get('/api/daily-tips/progress', { headers: authHeaders(token) }));
-    expect(progress.items.find((item) => item.sourceId === 'document-store-page-guide')?.learned).toBe(true);
+    expect(emptyProgress.items.find((item) => item.sourceId === sourceId)?.learned).toBe(false);
+
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await page.request.post('/api/daily-tips/seed-document-store-page-guide/mark-learned', {
+          headers: authHeaders(token),
+        });
+        const body = await response.json() as ApiEnvelope<{
+          learned: { sourceId: string; version: number; tier: string };
+        }>;
+        expect(response.status(), body.error?.message || '教程完成状态保存失败').toBe(200);
+        expect(body.success, body.error?.message || '教程完成状态保存失败').toBe(true);
+        expect(body.data.learned.sourceId).toBe(sourceId);
+      }
+      const progress = await readEnvelope<{
+        items: Array<{ sourceId: string; learned: boolean }>;
+      }>(await page.request.get('/api/daily-tips/progress', { headers: authHeaders(token) }));
+      expect(progress.items.find((item) => item.sourceId === sourceId)?.learned).toBe(true);
+    } finally {
+      await resetProgress();
+    }
   });
 
   test('[CORE-002][CORE-003] 合成会话刷新恢复且匿名请求被隔离', async ({ page, request }) => {

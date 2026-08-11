@@ -389,6 +389,41 @@ public sealed class DailyTipsController : ControllerBase
     }
 
     /// <summary>
+    /// 合成测试专用：清理当前合成用户的一条官方教程进度，以便每轮都从真实空状态复测。
+    /// 普通登录会话不可调用，也不能操作其他用户。
+    /// </summary>
+    [HttpDelete("testing/learned/{sourceId}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> ResetSyntheticLearnedProgress(
+        [FromRoute] string sourceId,
+        CancellationToken ct = default)
+    {
+        if (!string.Equals(User.FindFirst("authType")?.Value, "synthetic-test", StringComparison.Ordinal))
+            return Forbid();
+
+        var normalizedSourceId = sourceId.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedSourceId)
+            || !BuildDefaultTips(DateTime.UtcNow).Any(t => t.SourceId == normalizedSourceId))
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "官方教程不存在，请刷新教程目录后重试"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId && u.LearnedTips == null,
+            Builders<User>.Update.Set(u => u.LearnedTips, new List<UserLearnedTip>()),
+            cancellationToken: ct);
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId,
+            Builders<User>.Update.PullFilter(u => u.LearnedTips!,
+                Builders<UserLearnedTip>.Filter.Eq(l => l.SourceId, normalizedSourceId)),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { reset = true, sourceId = normalizedSourceId }));
+    }
+
+    /// <summary>
     /// 学习进度:返回当前用户对全部「官方教程」(code seed 里带多步 Steps 的引导)的完成情况,
     /// 供头像进度环 + 学习中心页消费。onboarding(*-page-guide)计入掌握度分母;
     /// task(其它带步骤的快捷教程)与 update(*-update-*)一并返回但不计入掌握度。

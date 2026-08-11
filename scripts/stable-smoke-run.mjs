@@ -500,12 +500,21 @@ export function extractArchivedReportUrl(output) {
   for (const line of String(output || '').split(/\r?\n/).reverse()) {
     try {
       const parsed = JSON.parse(line);
-      if (typeof parsed?.deeplink === 'string' && /^https:\/\//.test(parsed.deeplink)) return parsed.deeplink;
+      if (typeof parsed?.deeplink === 'string' && isHttpsReportUrl(parsed.deeplink)) return parsed.deeplink;
     } catch {
       // 归档脚本还会输出人类提示，只解析其中的 JSON 结果行。
     }
   }
   return '';
+}
+
+export function isHttpsReportUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'https:' && !url.username && !url.password;
+  } catch {
+    return false;
+  }
 }
 
 function buildRunId() {
@@ -548,7 +557,8 @@ export async function deliverUnhandledFailure(argv, error) {
       ? ['production']
       : ['cds', 'production'];
   const reason = error instanceof Error ? error.message : '未知执行异常';
-  const providedReportUrl = readLooseArg(argv, '--report-url');
+  const rawReportUrl = readLooseArg(argv, '--report-url');
+  const providedReportUrl = isHttpsReportUrl(rawReportUrl) ? rawReportUrl : '';
   const notificationCenterUrl = `${productionBaseUrl}/?panel=notifications`;
   const summaryDocument = buildUnhandledFailureSummary({
     runId,
@@ -648,7 +658,8 @@ export async function deliverLockedRun(argv, dependencies = {}) {
     : argv.includes('--production-only')
       ? ['production']
       : ['cds', 'production'];
-  const providedReportUrl = readLooseArg(argv, '--report-url');
+  const rawReportUrl = readLooseArg(argv, '--report-url');
+  const providedReportUrl = isHttpsReportUrl(rawReportUrl) ? rawReportUrl : '';
   const notificationCenterUrl = `${productionBaseUrl}/?panel=notifications`;
   const summaryDocument = buildLockedRunSummary({ runId, selected, reportUrl: providedReportUrl });
   const commandFn = dependencies.commandFn || command;
@@ -755,6 +766,10 @@ async function main() {
     return;
   }
   const runId = options.read('--run-id', buildRunId());
+  const providedReportUrl = options.read('--report-url');
+  if (providedReportUrl && !isHttpsReportUrl(providedReportUrl)) {
+    throw new Error('验收报告地址必须是无内嵌凭据的 HTTPS 在线深链');
+  }
   const outputRoot = resolve(options.read('--output-root', defaultOutputRoot));
   const runDir = resolve(outputRoot, runId);
   const envPath = resolve(options.read('--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
@@ -1010,7 +1025,7 @@ async function main() {
     ]);
     if (prepareArchive.status !== 0) throw new Error('验收归档报告准备失败');
 
-    let reportUrl = options.read('--report-url');
+    let reportUrl = providedReportUrl;
     if (reportUrl) {
       summaryDocument.archive = { status: 'provided', reportUrl };
     } else if (!options.has('--dry-run')) {

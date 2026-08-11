@@ -18,6 +18,7 @@ import {
   extractArchivedReportUrl,
   foldVisualGateVerdict,
   isValidationOnlyPath,
+  isHttpsReportUrl,
   parseEnvFile,
   parseRunnerArgs,
   runnerHelpText,
@@ -123,6 +124,9 @@ test('只有归档输出中的 HTTPS 深链可以进入通知', () => {
   const output = '正在归档\n{"mode":"cds","deeplink":"https://cds.example/reports?report=1"}\n归档完成\n';
   assert.equal(extractArchivedReportUrl(output), 'https://cds.example/reports?report=1');
   assert.equal(extractArchivedReportUrl('{"deeplink":"file:///tmp/report"}'), '');
+  assert.equal(isHttpsReportUrl('https://cds.example/reports?report=1'), true);
+  assert.equal(isHttpsReportUrl('http://cds.example/reports?report=1'), false);
+  assert.equal(isHttpsReportUrl('https://user:secret@cds.example/reports?report=1'), false);
 });
 
 test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 MAP 通知', () => {

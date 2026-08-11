@@ -168,3 +168,7 @@
 | fix | stable-smoke | CDS 测试地址每轮强制通过 preview-url 解析并拒绝与当前分支冲突的本地缓存 |
 | ops | stable-smoke | 定时任务因活跃互斥锁跳过时持久化条件结论并定向发送 MAP 通知 |
 | test | stable-smoke | 增加清理重试熔断、CDS 地址权威解析和重叠调度通知永久回归覆盖 |
+| fix | prd-api | 图片请求级四百段响应不再累计模型路由健康失败，配置与能力错误仍保持隔离 |
+| security | prd-api | 教程空进度复测清理接口仅允许短期合成会话操作当前用户自身数据 |
+| fix | stable-smoke | 人工验收报告地址必须为无内嵌凭据的 HTTPS 在线深链 |
+| test | prd-api/stable-smoke | 增加图片请求级错误、验收地址协议与教程空状态清理永久回归覆盖 |
