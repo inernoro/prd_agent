@@ -1,3 +1,4 @@
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using Xunit;
@@ -451,6 +452,37 @@ public class ModelResolverTests
 
         Assert.True(result.Success);
         Assert.Equal("image-model", result.ActualModel);
+        Assert.NotNull(result.ParameterCapabilities);
+        Assert.True(result.ParameterCapabilities!["seed"]);
+        Assert.DoesNotContain(result.ParameterCapabilities.Keys, key =>
+            key.StartsWith("image_size.", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ExchangePoolCapability_ShouldIgnorePersistedSizeControlSnapshot()
+    {
+        var model = new ModelGroupItem
+        {
+            ModelId = "exchange-image-model",
+            PlatformId = "exchange-1",
+            Capabilities =
+            [
+                new() { Type = "parameter:seed", Source = "pool", Value = true },
+                new() { Type = "parameter:image_size.none", Source = "legacy-snapshot", Value = true },
+                new() { Type = "param.image_size.field.size", Source = "legacy-snapshot", Value = true },
+            ],
+        };
+        var group = new ModelGroup { Id = "pool-exchange", Name = "Exchange Pool", Code = "exchange-pool" };
+        var exchange = new ModelExchange
+        {
+            Id = "exchange-1",
+            Name = "Exchange",
+            TargetUrl = "https://exchange.example.com/v1",
+        };
+
+        var result = ModelResolutionResult.FromExchangePool(
+            "DefaultPool", "image2", model, group, exchange, "test-key");
+
         Assert.NotNull(result.ParameterCapabilities);
         Assert.True(result.ParameterCapabilities!["seed"]);
         Assert.DoesNotContain(result.ParameterCapabilities.Keys, key =>

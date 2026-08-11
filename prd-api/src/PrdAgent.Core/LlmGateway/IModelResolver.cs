@@ -496,7 +496,7 @@ public class ModelResolutionResult
             SupportsStructuredOutput = StructuredOutputCapability(model),
             SupportsLogprobs = LogprobsCapability(model),
             SupportsParallelToolCalls = ParallelToolCallsCapability(model),
-            ParameterCapabilities = ExtractParameterCapabilities(model.Capabilities),
+            ParameterCapabilities = ExtractExchangePoolParameterCapabilities(model.Capabilities),
             InputPricePerMillion = model.InputPricePerMillion,
             OutputPricePerMillion = model.OutputPricePerMillion,
             PricePerCall = model.PricePerCall,
@@ -748,6 +748,11 @@ public class ModelResolutionResult
         }
         return result.Count == 0 ? null : result;
     }
+
+    private static Dictionary<string, bool>? ExtractExchangePoolParameterCapabilities(
+        IEnumerable<LLMModelCapability>? capabilities)
+        => ExtractParameterCapabilities(capabilities?.Where(capability =>
+            !ImageSizeControlCapabilities.IsSizeControlCapability(capability.Type)));
 
     private static string? ParameterCapabilityName(string? type)
         => ParameterCapabilityTypes.GetParameterName(type);
