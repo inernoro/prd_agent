@@ -51,6 +51,11 @@ function requiredEnv(name: string) {
   return value;
 }
 
+function syntheticLoginCode(loginUrl: string) {
+  const url = new URL(loginUrl, 'https://stable-smoke.invalid');
+  return new URLSearchParams(url.hash.replace(/^#/, '')).get('code');
+}
+
 async function issueTicket(request: APIRequestContext, returnUrl: string) {
   const response = await request.post('/api/v1/auth/synthetic/ticket', {
     headers: {
@@ -62,7 +67,8 @@ async function issueTicket(request: APIRequestContext, returnUrl: string) {
   const body = await response.json() as TicketResponse;
   expect(response.status(), body.error?.message || '生成合成登录入口失败').toBe(200);
   expect(body.success, body.error?.message || '生成合成登录入口失败').toBe(true);
-  expect(body.data?.loginUrl).toMatch(/^\/synthetic-login\?code=/);
+  expect(body.data?.loginUrl).toMatch(/^\/synthetic-login#code=/);
+  expect(syntheticLoginCode(body.data?.loginUrl || '')).toBeTruthy();
   return body.data?.loginUrl || '';
 }
 
@@ -378,7 +384,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[CORE-007] 一次性票据只能消费一次且会话不可续期', async ({ request }) => {
     const ticket = await issueTicketDetails(request, '/');
-    const code = new URL(ticket.loginUrl!, 'https://stable-smoke.invalid').searchParams.get('code');
+    const code = syntheticLoginCode(ticket.loginUrl!);
     expect(code).toBeTruthy();
 
     const first = await request.post('/api/v1/auth/synthetic/exchange', { data: { code } });

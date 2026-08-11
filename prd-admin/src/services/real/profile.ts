@@ -1,6 +1,7 @@
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 import { apiRequest } from '@/services/real/apiClient';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import type { ApiResponse } from '@/types/api';
 import type { AdminUserAvatarUploadResponse } from '@/services/contracts/userAvatarUpload';
 
@@ -170,15 +171,43 @@ export async function uploadMyAvatar(input: { file: File }): Promise<ApiResponse
     ? `${rawBase}${api.profile.avatarUpload()}`
     : api.profile.avatarUpload();
 
-  const res = await fetch(url, { method: 'POST', headers, body: fd });
-  const text = await res.text();
   try {
-    return JSON.parse(text) as ApiResponse<AdminUserAvatarUploadResponse>;
-  } catch {
+    const res = await fetch(url, { method: 'POST', headers, body: fd });
+    const text = await res.text();
+    try {
+      const parsed = JSON.parse(text) as ApiResponse<AdminUserAvatarUploadResponse>;
+      if (parsed.success) return parsed;
+      const code = parsed.error?.code || 'AVATAR_UPLOAD_FAILED';
+      return {
+        ...parsed,
+        error: {
+          code,
+          message: toUserReadableErrorMessage(parsed.error, {
+            code,
+            fallbackMessage: '头像上传未完成',
+            recoveryMessage: '请检查图片后重新上传。',
+          }),
+        },
+      };
+    } catch {
+      return {
+        success: false,
+        data: null,
+        error: { code: 'INVALID_FORMAT', message: '头像上传未完成，请稍后重新上传。' },
+      } as ApiResponse<AdminUserAvatarUploadResponse>;
+    }
+  } catch (error) {
     return {
       success: false,
       data: null,
-      error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${res.status}）` },
+      error: {
+        code: 'NETWORK_ERROR',
+        message: toUserReadableErrorMessage(error, {
+          code: 'NETWORK_ERROR',
+          fallbackMessage: '头像上传未完成',
+          recoveryMessage: '请检查网络后重新上传。',
+        }),
+      },
     } as ApiResponse<AdminUserAvatarUploadResponse>;
   }
 }

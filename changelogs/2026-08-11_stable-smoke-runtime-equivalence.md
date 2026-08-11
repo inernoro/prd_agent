@@ -128,3 +128,6 @@
 | fix | prd-api | 头像幂等任务使用确定性主键并补齐唯一索引定义，关闭并发重复创建窗口 |
 | fix | stable-smoke | Playwright 进程异常退出强制整轮与主管报告判定不通过 |
 | test | prd-api/prd-admin/stable-smoke | 补齐合成登录传输、头像并发幂等和冒烟进程异常回归测试 |
+| fix | stable-smoke | 合成登录冒烟同步从 URL fragment 读取一次性码，恢复双环境业务旅程 |
+| fix | prd-admin | 头像上传网络失败和异常响应统一转换为带恢复动作的用户可读错误 |
+| test | prd-admin/stable-smoke | 增加头像上传网络异常回归并校验合成登录 fragment 契约 |

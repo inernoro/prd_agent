@@ -4,6 +4,7 @@ import {
   generateMyAvatarPreview,
   getPendingMyAvatarGenerationRunId,
   resumeMyAvatarPreview,
+  uploadMyAvatar,
 } from '@/services/real/profile';
 
 vi.mock('@/services/real/apiClient', () => ({ apiRequest: vi.fn() }));
@@ -229,5 +230,44 @@ describe('generateMyAvatarPreview', () => {
     });
     expect(mockedApiRequest.mock.calls[0]?.[0]).toBe('/api/profile/avatar/generation-runs/run-resume');
     expect(getPendingMyAvatarGenerationRunId()).toBeNull();
+  });
+});
+
+describe('uploadMyAvatar', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('把网络层失败映射为带恢复动作的用户可读错误', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const result = await uploadMyAvatar({
+      file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
+    });
+
+    expect(result).toEqual({
+      success: false,
+      data: null,
+      error: {
+        code: 'NETWORK_ERROR',
+        message: '服务暂时不可用，请检查网络后重新上传。',
+      },
+    });
+    expect(result.error?.message).not.toContain('Failed to fetch');
+  });
+
+  it('不向用户显示无法解析的 HTTP 响应诊断', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      text: vi.fn().mockResolvedValue('<html>Bad Gateway</html>'),
+    }));
+
+    const result = await uploadMyAvatar({
+      file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
+    });
+
+    expect(result.error).toEqual({
+      code: 'INVALID_FORMAT',
+      message: '头像上传未完成，请稍后重新上传。',
+    });
   });
 });
