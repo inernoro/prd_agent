@@ -29,6 +29,28 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
 }
 
 /**
+ * 这个站点有没有「可以取回来的 HTML 正文」。
+ *
+ * 光看入口是不是 .html 不够：PDF / 视频 / Markdown 包装站的入口**也是** index.html，
+ * 只是那层壳子里没有正文，正文代理对任何非空 wrappedAssetType 一律拒绝。
+ * 前端不看这个字段就会去问、拿回一个预期之内的拒绝，然后在一个本来显示得好好的
+ * 直链预览上盖一条错误角标——用户看到的是「这页出错了」，其实什么事都没有。
+ *
+ * 判据故意宽松：只要声明了任何包装类型就跳过，而不是逐个列举 pdf/video/markdown。
+ * 后端将来多一种包装形态，这里不用跟着改（形状 1：判据别比它该管的范围窄）。
+ */
+export function hasFetchableHtml(site: {
+  siteUrl: string;
+  entryFile?: string;
+  pdfAssetUrl?: string;
+  wrappedAssetType?: string | null;
+}): boolean {
+  if (site.pdfAssetUrl) return false;
+  if (site.wrappedAssetType) return false;
+  return isHtmlEntry(site.siteUrl, site.entryFile);
+}
+
+/**
  * 这份 HTML 能不能安全地走 srcDoc 预览。
  *
  * srcDoc 路径刻意不给 allow-same-origin（否则用户上传的任意 HTML 就拿到 MAP 同源能力），
@@ -283,7 +305,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
     const site = data?.sites.length === 1 ? data.sites[0] : null;
-    if (!site || !token || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
+    if (!site || !token || !hasFetchableHtml(site)) {
       setEmbeddedHtml(null);
       setEmbeddedHtmlError(null);
       setEmbeddedHtmlLoading(false);

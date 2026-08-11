@@ -429,4 +429,14 @@ public class SharedSiteInfo
     /// PDF Viewer 接管；否则嵌套 iframe + sandbox 会被 Chrome 屏蔽。
     /// </summary>
     public string? PdfAssetUrl { get; set; }
+
+    /// <summary>
+    /// 包装资产类型（pdf / video / markdown …），普通 HTML 站为 null。
+    ///
+    /// 前端要靠它判断「这个站点有没有可读的 HTML 正文」。包装站的入口同样是 index.html，
+    /// 光看 entryFile 分不出来；而正文代理对任何非空包装类型都会拒绝，
+    /// 前端不知情就会拿一个「预期之内的拒绝」当失败，在一个本来显示正常的直链预览上
+    /// 盖一条错误角标。
+    /// </summary>
+    public string? WrappedAssetType { get; set; }
 }

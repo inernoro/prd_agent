@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canUseSrcDocPreview, shouldMaskDirectPreview, withPreviewBase, PREVIEW_MASK_TIMEOUT_MS } from './ShareViewPage';
+import { canUseSrcDocPreview, hasFetchableHtml, shouldMaskDirectPreview, withPreviewBase, PREVIEW_MASK_TIMEOUT_MS } from './ShareViewPage';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHARE_VIEW = path.join(HERE, 'ShareViewPage.tsx');
@@ -266,5 +266,38 @@ describe('withPreviewBase', () => {
     expect(out.match(/<base\b/gi)?.length).toBe(1);
     // 位置要保持：base 仍在 title 之前（<head> 里的先后顺序会影响它之后的相对 URL）
     expect(out.indexOf('<base')).toBeLessThan(out.indexOf('<title>'));
+  });
+});
+
+/**
+ * 只有「真的有 HTML 正文」的站点才去取原文。
+ *
+ * 由 review 第二轮（#1356）抓出：PDF / 视频 / Markdown 包装站的入口**也是** index.html，
+ * 只有 pdfAssetUrl 会被挡掉；视频与 Markdown 壳子照样发起代理请求，而后端对任何非空
+ * wrappedAssetType 一律拒绝。前端把这个预期之内的拒绝当成失败，在一个本来显示正常的
+ * 直链预览上盖一条错误角标——用户看到「这页出错了」，其实什么事都没有。
+ */
+describe('hasFetchableHtml', () => {
+  const html = { siteUrl: 'https://cfi.example.org/s/a/index.html', entryFile: 'index.html' };
+
+  it('普通 HTML 站要取正文', () => {
+    expect(hasFetchableHtml(html)).toBe(true);
+  });
+
+  it.each(['pdf', 'video', 'markdown', 'PDF', 'audio'])('包装站一律不取正文：%s', (type) => {
+    expect(hasFetchableHtml({ ...html, wrappedAssetType: type })).toBe(false);
+  });
+
+  it('PDF 直链站不取正文', () => {
+    expect(hasFetchableHtml({ ...html, pdfAssetUrl: 'https://cfi.example.org/s/a/x.pdf' })).toBe(false);
+  });
+
+  it('入口不是 html 的不取正文', () => {
+    expect(hasFetchableHtml({ siteUrl: 'https://cfi.example.org/s/a/main.txt', entryFile: 'main.txt' })).toBe(false);
+  });
+
+  it('空 / null 包装类型当普通站处理', () => {
+    expect(hasFetchableHtml({ ...html, wrappedAssetType: null })).toBe(true);
+    expect(hasFetchableHtml({ ...html, wrappedAssetType: '' })).toBe(true);
   });
 });

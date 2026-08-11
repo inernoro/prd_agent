@@ -484,6 +484,8 @@ export interface SharedSiteInfo {
   // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
   // 不能走 siteUrl + sandbox 嵌套——会被 Chrome 屏蔽 PDF Viewer。
   pdfAssetUrl?: string;
+  /** 包装资产类型（pdf / video / markdown …），普通 HTML 站为空。包装站没有可读正文 */
+  wrappedAssetType?: string | null;
 }
 
 export interface ShareViewData {
