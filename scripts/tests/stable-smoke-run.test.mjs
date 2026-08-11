@@ -108,6 +108,15 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   assert.match(flakyCleanupGate.reasons.join('；'), /重试后通过/);
 
   assert.equal(evaluateProductionSafetyGate({ status: 'executed' }, [{ status: 'pass' }]).restricted, false);
+  const filteredGate = evaluateProductionSafetyGate(
+    { status: 'executed' },
+    [{ caseId: 'IMG-001', status: 'pass' }],
+    true,
+  );
+  assert.equal(filteredGate.restricted, true);
+  assert.equal(filteredGate.mode, 'read-only');
+  assert.equal(filteredGate.grep, '\\[CORE-001\\]');
+  assert.match(filteredGate.reasons.join('；'), /仅执行了筛选用例/);
   assert.equal(evaluateProductionSafetyGate({ status: 'blocked' }, []).restricted, true);
   assert.deepEqual(validateProductionReadOnlyConfig({
     STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net/',

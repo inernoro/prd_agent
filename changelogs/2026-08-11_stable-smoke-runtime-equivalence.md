@@ -208,3 +208,6 @@
 | fix | prd-api | 图片 Offering 的额度耗尽型 429 累计健康失败，普通限流仍保持请求级处理 |
 | fix | prd-api | 权威正式部署原子接管历史预览分支遗留的录音、转写、文档和短视频任务，CDS 保持隔离 |
 | test | prd-api/stable-smoke | 增加入口顺序、额度耗尽健康计分和历史分支 owner 迁移回归覆盖 |
+| fix | stable-smoke | CDS 使用筛选用例复测时正式环境固定保持只读，禁止子集通过提升写入门禁 |
+| fix | prd-admin | 登记模型额度耗尽错误码并明确提示管理员补充额度或切换可用配置 |
+| test | prd-admin/stable-smoke | 增加 CDS 筛选安全门与模型额度恢复文案回归覆盖 |

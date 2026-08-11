@@ -89,6 +89,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['PLAN_TITLE_DUPLICATE', '已存在同名计划，请修改标题后重试。'],
   ['STALE_UPDATE', '内容已被其他操作更新，请刷新页面后重新提交。'],
   ['QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度后重试。'],
+  ['LLM_QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。'],
   ['SHARE_EXPIRED', '分享入口已过期，请联系分享者重新生成。'],
   ['SHARE_REVOKED', '分享入口已被撤销，请联系分享者重新生成。'],
   ['DUPLICATE', '相同内容已存在，请刷新确认或修改后重试。'],

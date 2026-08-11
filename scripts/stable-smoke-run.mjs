@@ -484,7 +484,7 @@ export function enforceExecutionVerdict(summary, executions) {
   };
 }
 
-export function evaluateProductionSafetyGate(cdsExecution, cdsRows = []) {
+export function evaluateProductionSafetyGate(cdsExecution, cdsRows = [], cdsWasFiltered = false) {
   const hazardousFailures = cdsRows.filter((row) => {
     const attemptErrors = Array.isArray(row.attemptErrors) ? row.attemptErrors.join(' ') : '';
     const isCleanupHazard = /\bP0\b|数据污染|清理失败|\bcleanup\b|pollution/i.test(
@@ -493,12 +493,13 @@ export function evaluateProductionSafetyGate(cdsExecution, cdsRows = []) {
     return isCleanupHazard && (row.status === 'fail' || row.hadFailedAttempt === true || row.retryCount > 0);
   });
   const processFailed = !cdsExecution || !['executed', 'dry-run'].includes(cdsExecution.status);
-  const restricted = processFailed || hazardousFailures.length > 0;
+  const restricted = cdsWasFiltered || processFailed || hazardousFailures.length > 0;
   return {
     restricted,
     mode: restricted ? 'read-only' : 'full',
     grep: restricted ? productionReadOnlyGrep : '',
     reasons: [
+      ...(cdsWasFiltered ? ['CDS 仅执行了筛选用例，未满足正式环境写入所需的全量验证'] : []),
       ...(processFailed ? [`CDS 全量测试未完成（${cdsExecution?.status || 'missing'}）`] : []),
       ...hazardousFailures.map((row) => row.status === 'fail'
         ? `${row.caseId || '未编号用例'}：CDS 出现高危失败`
@@ -952,7 +953,7 @@ async function main() {
         const cdsRows = cdsExecution?.resultPath
           ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds')
           : [];
-        productionSafetyGate = evaluateProductionSafetyGate(cdsExecution, cdsRows);
+        productionSafetyGate = evaluateProductionSafetyGate(cdsExecution, cdsRows, Boolean(grep));
       }
       const errors = environment === 'production' && productionSafetyGate.restricted
         ? validateProductionReadOnlyConfig(values)
