@@ -22,6 +22,7 @@ import {
   isHttpsReportUrl,
   parseEnvFile,
   parseRunnerArgs,
+  removeStaleLockIfSafe,
   runnerHelpText,
   resolveRuntimeExpectation,
   resolveServiceRuntimeCommits,
@@ -299,8 +300,22 @@ test('超过时限但进程仍存活的互斥锁不得被第二轮删除', () =>
     const old = new Date(Date.now() - 4 * 60 * 60 * 1000);
     utimesSync(lockPath, old, old);
 
+    assert.equal(removeStaleLockIfSafe(lockPath), false);
+    assert.equal(existsSync(lockPath), true);
     assert.equal(acquireLock(lockPath), false);
     assert.equal(existsSync(lockPath), true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('强制解锁只能清理已确认死亡或损坏的锁', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-force-unlock-'));
+  const lockPath = resolve(directory, '.stable-smoke.lock');
+  try {
+    writeFileSync(lockPath, 'not-a-pid\n', { mode: 0o600 });
+    assert.equal(removeStaleLockIfSafe(lockPath), true);
+    assert.equal(existsSync(lockPath), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -44,7 +44,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --grep <表达式>      只运行匹配的 Playwright 用例
   --visual-manifest <路径> 指定真人浏览器视觉取证 manifest；缺失时视觉门禁明确判失败
   --report-url <地址>  使用已归档的 HTTPS 验收报告地址；缺省时自动归档到 CDS 验收中心
-  --force-unlock       清理遗留互斥锁后运行
+  --force-unlock       仅在确认原进程已结束或锁损坏时清理遗留互斥锁
   --help               显示本说明
 `;
 
@@ -755,25 +755,30 @@ export async function deliverLockedRun(argv, dependencies = {}) {
   return { runDir, summaryPath, blockedPath, summary: summaryDocument };
 }
 
-export function acquireLock(lockPath) {
-  if (existsSync(lockPath)) {
-    let stale = Date.now() - statSync(lockPath).mtimeMs > 3 * 60 * 60 * 1000;
-    try {
-      const pid = Number(readFileSync(lockPath, 'utf8').trim());
-      if (!Number.isInteger(pid) || pid <= 0) stale = true;
-      else {
-        try {
-          process.kill(pid, 0);
-          stale = false;
-        } catch (error) {
-          stale = error?.code === 'ESRCH';
-        }
+export function removeStaleLockIfSafe(lockPath) {
+  if (!existsSync(lockPath)) return true;
+  let stale = Date.now() - statSync(lockPath).mtimeMs > 3 * 60 * 60 * 1000;
+  try {
+    const pid = Number(readFileSync(lockPath, 'utf8').trim());
+    if (!Number.isInteger(pid) || pid <= 0) stale = true;
+    else {
+      try {
+        process.kill(pid, 0);
+        stale = false;
+      } catch (error) {
+        stale = error?.code === 'ESRCH';
       }
-    } catch {
-      stale = true;
     }
-    if (stale) unlinkSync(lockPath);
+  } catch {
+    stale = true;
   }
+  if (!stale) return false;
+  unlinkSync(lockPath);
+  return true;
+}
+
+export function acquireLock(lockPath) {
+  removeStaleLockIfSafe(lockPath);
   try {
     const fd = openSync(lockPath, 'wx', 0o600);
     writeFileSync(fd, `${process.pid}\n`, 'utf8');
@@ -866,7 +871,11 @@ async function main() {
 
   mkdirSync(outputRoot, { recursive: true });
   mkdirSync(runDir, { recursive: true });
-  if (options.has('--force-unlock') && existsSync(lockPath)) unlinkSync(lockPath);
+  if (options.has('--force-unlock') && !removeStaleLockIfSafe(lockPath)) {
+    await deliverLockedRun(argv);
+    process.exitCode = 2;
+    return;
+  }
   if (!acquireLock(lockPath)) {
     await deliverLockedRun(argv);
     process.exitCode = 2;

@@ -190,3 +190,6 @@
 | fix | prd-api | 图片 Offering 返回请求超时时累计健康失败，避免故障路由持续占据首选 |
 | fix | stable-smoke | 主应用与网关身份预检分别使用独立超时窗口，避免后一个探测被提前取消 |
 | test | prd-api/stable-smoke | 增加图片超时健康计分与身份探测独立时限回归覆盖 |
+| fix | stable-smoke | 强制解锁仍校验锁 owner 存活状态，禁止并发启动第二轮写入测试 |
+| fix | prd-api | 权威正式部署回收历史无 owner 的超时处理中转写任务并同步失败状态 |
+| test | prd-api/stable-smoke | 增加强制解锁活锁保护与历史处理中任务迁移回归守卫 |

@@ -1153,6 +1153,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", worker);
         Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, run.OwnerInstanceId)", worker);
         Assert.Contains("Filter.In(r => r.OwnerInstanceId, _compatibleOwnerIds)", watchdog);
+        Assert.Contains("DeploymentAuthority.CanAdoptLegacyTranscriptRuns(config)", watchdog);
+        Assert.Contains("Filter.Exists(nameof(TranscriptRun.OwnerInstanceId), false)", watchdog);
+        Assert.Contains("Filter.Or(ownedProcessingRuns, unownedLegacyProcessingRuns)", watchdog);
+        Assert.Contains(".Set(r => r.OwnerInstanceId, _instanceId)", watchdog);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config)", watchdog);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)", worker);
         Assert.Contains("OwnedProcessingRun(run)", worker);
