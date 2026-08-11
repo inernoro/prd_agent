@@ -57,6 +57,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
@@ -1070,6 +1071,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
+  // 移动端沉浸阅读：DocBrowser 接管了 AppShell 顶栏（文档标题 + 返回），
+  // 本页店头行（库名 · 文档数 · 同步 · 分享）整行让位给正文（2026-08-10 用户确认交互）
+  const readerImmersive = useReaderChromeStore((s) => !!s.override);
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const currentUserId = useAuthStore(state => state.user?.userId ?? null);
   const [store, setStore] = useState<DocumentStore | null>(null);
@@ -2167,6 +2171,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           e.target.value = '';
         }} />
 
+      {!(isMobile && readerImmersive) && (
       <TabBar
         title={
           <div className="flex items-center gap-2">
@@ -2402,6 +2407,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           </div>
         }
       />
+      )}
 
       {/* 全局拖拽遮罩 */}
       {dragging && (
@@ -2436,6 +2442,27 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
         <DocBrowser
           entries={entries}
+          immersiveOnMobile
+          // 移动端沉浸阅读时店头行隐藏——空间信息与「分享」收进阅读区「更多」菜单（2026-08-10 demo 确认）
+          readerMenuExtra={isMobile ? (
+            <>
+              <div
+                className="px-2.5 pt-1 pb-2 mb-1 text-[11px] truncate"
+                style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-faint)' }}
+                title={store.name}
+              >
+                {store.name} · {entries.filter(e => e.sourceType !== 'github_directory').length} 个文档
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShareDialog(true)}
+                className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary transition-colors"
+              >
+                <Share2 size={13} className="flex-shrink-0 text-token-muted" />
+                <span className="truncate">分享</span>
+              </button>
+            </>
+          ) : undefined}
           tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
           onTagColorsChange={(next) => {
             // 乐观更新本地立刻反映；服务器保存走 single-flight 队列。
