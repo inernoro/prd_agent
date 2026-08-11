@@ -314,7 +314,8 @@ export function SemanticLayerPanel({
                   type="button"
                   className="shrink-0 w-6 h-6 rounded-[6px] inline-flex items-center justify-center hover-bg-soft disabled:opacity-30"
                   style={{ color: 'var(--text-secondary)' }}
-                  title="单独下载这一层的透明 PNG"
+                  title="单独下载这一层的透明 PNG（已裁成最小非透明矩形）"
+                  data-testid="layer-download"
                   disabled={!layer.src}
                   onClick={(event) => {
                     event.stopPropagation();

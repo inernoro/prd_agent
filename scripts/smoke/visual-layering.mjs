@@ -524,6 +524,50 @@ async function main() {
       check('图层面板里能找到「导出分层 PSD」', false, '按钮不存在');
     }
 
+    // ---- 单层 PNG 下载必须是裁剪版（这条欠了两轮，靠逻辑推导不算数）
+    await ensurePanelOpen(page);
+    // 必须挑**覆盖率最低**那一层来验证裁剪。
+    // 随便挑一层是站不住的：背景层覆盖率 100%，它的最小非透明矩形本来就等于整幅，
+    // 拿它当样本，无论裁没裁都会「通过」——那是恒成立的证据，等于没测
+    //（第一版就这么自己骗了自己一次，见 predicate-and-wiring-discipline 形状 8）。
+    const sparsest = await page.evaluate(() => {
+      const buttons = [...document.querySelectorAll('[data-testid="layer-download"]')];
+      let best = { index: -1, coverage: Infinity };
+      buttons.forEach((button, index) => {
+        const row = button.closest('div')?.parentElement?.parentElement;
+        const text = row?.textContent || '';
+        const m = text.match(/覆盖\s*([\d.]+)%/);
+        const coverage = m ? Number(m[1]) : Infinity;
+        if (coverage < best.coverage) best = { index, coverage };
+      });
+      return best;
+    });
+    check('能找到一个覆盖率明显不足 100% 的图层来验证裁剪',
+      sparsest.index >= 0 && sparsest.coverage < 90,
+      `第 ${sparsest.index + 1} 个下载按钮，覆盖 ${sparsest.coverage}%`);
+    if (sparsest.index >= 0 && sparsest.coverage < 90) {
+      const pngWait = page.waitForEvent('download', { timeout: 120000 });
+      await page.locator('[data-testid="layer-download"]').nth(sparsest.index).click({ force: true });
+      try {
+        const pngFile = path.join(OUT, 'layer.png');
+        await (await pngWait).saveAs(pngFile);
+        const buf = fs.readFileSync(pngFile);
+        // PNG 的 IHDR 固定在第 16 字节起：宽高各 4 字节大端。不引库，直接读。
+        const isPng = buf.length > 24 && buf.subarray(1, 4).toString('ascii') === 'PNG';
+        const pw = isPng ? buf.readUInt32BE(16) : 0;
+        const ph = isPng ? buf.readUInt32BE(20) : 0;
+        check('单层 PNG 能下载且是真 PNG', isPng && buf.length > 1000, `${buf.length} bytes`);
+        // 模型返回的图层是 640² 满幅；一个覆盖率只有个位数/十几的部件，
+        // 裁完面积必然远小于整幅。用面积比判，比单看某一边更难蒙混。
+        const areaRatio = pw > 0 && ph > 0 ? (pw * ph) / (640 * 640) : 1;
+        check('单层 PNG 是裁剪版（面积显著小于整幅，不是没裁过的满幅图）',
+          isPng && areaRatio < 0.8,
+          `${pw}x${ph}，占整幅 ${(areaRatio * 100).toFixed(1)}%（该层覆盖 ${sparsest.coverage}%）`);
+      } catch (error) {
+        check('单层 PNG 能下载且是真 PNG', false, String(error).slice(0, 120));
+      }
+    }
+
     // ---- Frame 基础功能：Cmd+G 编组 / Cmd+Shift+G 解组（对齐 Figma）
     await esc(page);
     const frameCount = () => page.evaluate(() => new Set([...document.querySelectorAll('[data-canvas-key]')]

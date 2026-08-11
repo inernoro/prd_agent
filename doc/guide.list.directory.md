@@ -314,6 +314,7 @@
 - [团队动态 · 债务台账](./debt.team-activity.md) `debt.team-activity`
 - [视频生成 Agent · 债务台账](./debt.video-agent.md) `debt.video-agent`
 - [视觉创作 · 债务台账](./debt.visual-agent.md) `debt.visual-agent`
+- [视觉创作 · AI 分层 · 验收债务台账](./debt.visual-agent.layering.md) `debt.visual-agent.layering`
 - [网页托管 · 债务台账](./debt.web-hosting.md) `debt.web-hosting`
 - [工作流 · 债务台账](./debt.workflow-agent.md) `debt.workflow-agent`
 
