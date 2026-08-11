@@ -250,14 +250,13 @@ public class TranscriptRunWorker : BackgroundService
 
         // 请求形状必须随模型协议构建：豆包异步只接受 JSON base64，多模态音频走
         // chat input_audio，Whisper 与豆包流式走标准 WAV multipart。
-        var isChatAudio = AsrAudioRoutePolicy.ShouldUseChatAudio(
-            resolution.ActualModel,
-            resolution.Protocol,
-            resolution.PlatformType);
-        GatewayRawRequest BuildRawRequest(int validationAttempt)
+        GatewayRawRequest BuildRawRequest(
+            ModelResolutionResult candidate,
+            int validationAttempt,
+            bool isChatAudio)
         {
-            if (resolution.IsExchange
-                && string.Equals(resolution.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
+            if (candidate.IsExchange
+                && string.Equals(candidate.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
             {
                 return new GatewayRawRequest
                 {
@@ -282,7 +281,7 @@ public class TranscriptRunWorker : BackgroundService
                     EndpointPath = "/v1/chat/completions",
                     RequestBody = new JsonObject
                     {
-                        ["model"] = resolution.ActualModel,
+                        ["model"] = candidate.ActualModel,
                         ["modalities"] = new JsonArray("text"),
                         ["temperature"] = 0,
                         ["messages"] = new JsonArray
@@ -319,7 +318,7 @@ public class TranscriptRunWorker : BackgroundService
                 IsMultipart = true,
                 MultipartFields = new Dictionary<string, object>
                 {
-                    ["model"] = resolution.ActualModel ?? "whisper-1",
+                    ["model"] = candidate.ActualModel ?? "whisper-1",
                     ["response_format"] = "verbose_json",
                     ["timestamp_granularities[]"] = "segment"
                 },
@@ -332,39 +331,72 @@ public class TranscriptRunWorker : BackgroundService
             };
         }
 
-        var maxValidationAttempts = isChatAudio ? 4 : 1;
         GatewayRawResponse? rawResp = null;
         string? validatedChatText = null;
-        for (var validationAttempt = 1; validationAttempt <= maxValidationAttempts; validationAttempt++)
+        var selectedIsChatAudio = false;
+        var candidates = TranscriptAsrCandidatePolicy.SelectCandidates(resolution);
+        for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
-            var rawRequest = BuildRawRequest(validationAttempt);
-            rawResp = await gateway.SendRawWithResolutionAsync(
-                rawRequest,
-                resolution.ToGatewayResolution(),
-                CancellationToken.None);
+            var candidate = candidates[candidateIndex];
+            var candidateIsChatAudio = AsrAudioRoutePolicy.ShouldUseChatAudio(
+                candidate.ActualModel,
+                candidate.Protocol,
+                candidate.PlatformType);
+            selectedIsChatAudio = candidateIsChatAudio;
+            var maxValidationAttempts = candidateIsChatAudio
+                ? TranscriptAsrCandidatePolicy.ChatValidationAttemptsPerCandidate
+                : 1;
 
-            if (rawResp?.Success != true || rawResp.Content == null)
-                break;
-
-            if (!isChatAudio)
-                break;
-
-            var candidateText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
-            var isNoSpeech = candidateText?.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase) == true;
-            var isAssistantReply = !string.IsNullOrWhiteSpace(candidateText)
-                && PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.LooksLikeAssistantReply(candidateText);
-            if (!string.IsNullOrWhiteSpace(candidateText) && !isNoSpeech && !isAssistantReply)
+            // 语义降级必须按候选协议重新构建请求。单次发送不携带后续候选，
+            // 避免 Gateway 用 chat-audio 请求体重试 Whisper 或 Exchange。
+            candidate.RetryCandidates = null;
+            for (var validationAttempt = 1; validationAttempt <= maxValidationAttempts; validationAttempt++)
             {
-                validatedChatText = candidateText.Trim();
-                break;
+                var rawRequest = BuildRawRequest(candidate, validationAttempt, candidateIsChatAudio);
+                rawResp = await gateway.SendRawWithResolutionAsync(
+                    rawRequest,
+                    candidate.ToGatewayResolution(),
+                    CancellationToken.None);
+
+                if (rawResp?.Success != true || rawResp.Content == null)
+                    break;
+
+                if (!candidateIsChatAudio)
+                {
+                    break;
+                }
+
+                var candidateText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
+                var isNoSpeech = candidateText?.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase) == true;
+                var isAssistantReply = !string.IsNullOrWhiteSpace(candidateText)
+                    && PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.LooksLikeAssistantReply(candidateText);
+                if (!string.IsNullOrWhiteSpace(candidateText) && !isNoSpeech && !isAssistantReply)
+                {
+                    validatedChatText = candidateText.Trim();
+                    break;
+                }
+
+                _logger.LogWarning(
+                    "[transcript-agent] 音频模型返回无效文本，已拒绝写入并继续校验: RunId={RunId}, Candidate={Candidate}, CandidateIndex={CandidateIndex}, Attempt={Attempt}, IsNoSpeech={IsNoSpeech}, IsAssistantReply={IsAssistantReply}",
+                    run.Id,
+                    candidate.ActualModel,
+                    candidateIndex + 1,
+                    validationAttempt,
+                    isNoSpeech,
+                    isAssistantReply);
             }
 
-            _logger.LogWarning(
-                "[transcript-agent] 音频模型返回无效文本，已拒绝写入并继续校验: RunId={RunId}, Attempt={Attempt}, IsNoSpeech={IsNoSpeech}, IsAssistantReply={IsAssistantReply}",
-                run.Id,
-                validationAttempt,
-                isNoSpeech,
-                isAssistantReply);
+            if (validatedChatText != null || (rawResp?.Success == true && !candidateIsChatAudio))
+                break;
+
+            if (candidateIndex < candidates.Count - 1)
+            {
+                _logger.LogWarning(
+                    "[transcript-agent] ASR 候选未产生有效转写，自动切换: RunId={RunId}, Candidate={Candidate}, NextCandidate={NextCandidate}",
+                    run.Id,
+                    candidate.ActualModel,
+                    candidates[candidateIndex + 1].ActualModel);
+            }
         }
 
         await UpdateProgress(db, run.Id, 50);
@@ -385,7 +417,7 @@ public class TranscriptRunWorker : BackgroundService
             segments.Clear();
             segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = validatedChatText });
         }
-        else if (segments.Count == 0 && !isChatAudio)
+        else if (segments.Count == 0 && !selectedIsChatAudio)
         {
             var text = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
             if (!string.IsNullOrWhiteSpace(text)

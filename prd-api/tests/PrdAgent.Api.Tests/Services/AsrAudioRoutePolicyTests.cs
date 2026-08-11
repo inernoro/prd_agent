@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using PrdAgent.Api.Services;
+using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
 using Xunit;
 
@@ -7,6 +8,36 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class AsrAudioRoutePolicyTests
 {
+    [Fact]
+    public void SelectCandidates_ShouldUsePrecomputedDistinctFallbacksInOrder()
+    {
+        var duplicate = new ModelResolutionResult
+        {
+            Success = true,
+            OfferingId = "offering-primary",
+            ActualModel = "primary",
+        };
+        var backup = new ModelResolutionResult
+        {
+            Success = true,
+            OfferingId = "offering-backup",
+            ActualModel = "backup",
+        };
+        var primary = new ModelResolutionResult
+        {
+            Success = true,
+            OfferingId = "offering-primary",
+            ActualModel = "primary",
+            RetryCandidates = [duplicate, backup],
+        };
+
+        var candidates = TranscriptAsrCandidatePolicy.SelectCandidates(primary);
+
+        candidates.Select(candidate => candidate.ActualModel)
+            .ShouldBe(new[] { "primary", "backup" });
+        TranscriptAsrCandidatePolicy.ChatValidationAttemptsPerCandidate.ShouldBe(4);
+    }
+
     [Fact]
     public void ConfigureFfmpegArguments_ShouldPadShortClipsWithoutTruncatingLongAudio()
     {

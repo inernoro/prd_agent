@@ -36,12 +36,15 @@ export function collectPlaywrightCases(report, environment) {
   return rows;
 }
 
-export function reconcileCaseCoverage(requiredCaseIds, environmentRows) {
+export function reconcileCaseCoverage(
+  requiredCaseIds,
+  environmentRows,
+  environments = ['cds', 'production'],
+) {
   const rowsByKey = new Map(environmentRows.map((row) => [
     `${row.environment}:${String(row.caseId).toUpperCase()}`,
     row,
   ]));
-  const environments = ['cds', 'production'];
   const reconciled = [];
 
   for (const caseId of requiredCaseIds) {

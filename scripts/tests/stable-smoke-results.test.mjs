@@ -81,6 +81,20 @@ test('计划要求但没有证据的用例必须标记 not-run', () => {
   assert.equal(summarizeCoverage(rows).verdict, 'conditional');
 });
 
+test('单环境复测只对账运行器实际选择的环境', () => {
+  const cdsRows = reconcileCaseCoverage(['CORE-001'], [{
+    caseId: 'CORE-001', environment: 'cds', title: 'ok', status: 'pass', durationMs: 1, error: '', retryCount: 0,
+  }], ['cds']);
+  const productionRows = reconcileCaseCoverage(['CORE-001'], [{
+    caseId: 'CORE-001', environment: 'production', title: 'ok', status: 'pass', durationMs: 1, error: '', retryCount: 0,
+  }], ['production']);
+
+  assert.deepEqual(cdsRows.map((row) => row.environment), ['cds']);
+  assert.deepEqual(productionRows.map((row) => row.environment), ['production']);
+  assert.equal(summarizeCoverage(cdsRows).verdict, 'pass');
+  assert.equal(summarizeCoverage(productionRows).verdict, 'pass');
+});
+
 test('未执行账本区分自动化缺口与正式环境身份阻塞', () => {
   const ledger = buildNotRunLedger([
     { caseId: 'REC-001', environment: 'cds', status: 'not-run' },

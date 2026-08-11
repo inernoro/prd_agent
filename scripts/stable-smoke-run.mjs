@@ -518,7 +518,7 @@ async function main() {
       if (!execution.resultPath) return [];
       return collectPlaywrightCases(readJson(execution.resultPath), execution.environment);
     });
-    const rows = reconcileCaseCoverage(plan?.requiredCaseIds || [], environmentRows);
+    const rows = reconcileCaseCoverage(plan?.requiredCaseIds || [], environmentRows, selected);
     const summary = summarizeCoverage(rows, plan?.verdict || 'conditional');
     writeFileSync(resolve(runDir, 'summary.json'), `${JSON.stringify({
       runId,
@@ -542,6 +542,7 @@ async function main() {
       '--production-url', productionBaseUrl,
       '--run-id', runId,
       '--base-url-configured', 'true',
+      '--environments', selected.join(','),
     ]);
     if (render.status !== 0) throw new Error('稳定冒烟报告生成失败');
 

@@ -25,6 +25,13 @@ const cdsUrl = readArg('--cds-url');
 const productionUrl = readArg('--production-url', 'https://map.ebcone.net');
 const matrixInput = readArg('--matrix', '.claude/skills/stable-smoke/reference/test-matrix.md');
 const environment = readArg('--environment', 'unknown');
+const selectedEnvironments = readArg('--environments', 'cds,production')
+  .split(',')
+  .map((item) => item.trim())
+  .filter((item) => item === 'cds' || item === 'production');
+const environmentDescription = environment !== 'unknown'
+  ? environment
+  : selectedEnvironments.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、');
 const runId = readArg('--run-id', `stsmk-${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12)}`);
 const baseUrlConfigured = readArg('--base-url-configured', 'false') === 'true';
 
@@ -51,7 +58,11 @@ const evidenceRows = [
   ...collectPlaywrightCases(cdsReport, 'cds'),
   ...collectPlaywrightCases(productionReport, 'production'),
 ];
-const rows = reconcileCaseCoverage(plan?.requiredCaseIds || [], evidenceRows);
+const rows = reconcileCaseCoverage(
+  plan?.requiredCaseIds || [],
+  evidenceRows,
+  selectedEnvironments.length > 0 ? selectedEnvironments : ['cds', 'production'],
+);
 const summary = summarizeCoverage(rows, plan?.verdict || 'conditional');
 const notRunLedger = buildNotRunLedger(rows, {
   cds: Boolean(cdsReport),
@@ -83,7 +94,7 @@ const lines = [
   '',
   '## 3. 环境与版本',
   '',
-  `- 环境：${environment === 'unknown' ? 'CDS 环境与正式环境' : environment}`,
+  `- 环境：${environmentDescription || '未选择'}`,
   `- runId：${runId}`,
   `- 地址配置：${baseUrlConfigured ? '已注入' : '缺失'}`,
   `- 执行时间：${new Date().toISOString()}`,

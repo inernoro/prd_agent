@@ -110,3 +110,6 @@
 | fix | stable-smoke | 按组件构建范围验收 CDS 新镜像与安全复用镜像 |
 | test | prd-api | 增加内容安全隔离、历史队列权威和 CDS ffmpeg 回归测试 |
 | test | stable-smoke | 增加组件复用、陈旧组件拒绝和源码模式版本门禁回归测试 |
+| fix | prd-api | 录音语义校验耗尽后按预计算候选切换备用 ASR Offering |
+| fix | stable-smoke | 单环境稳定冒烟只对账实际选择的 CDS 或正式环境，避免虚构未执行项 |
+| test | prd-api/stable-smoke | 增加 ASR 候选顺序与单环境复测成功判定回归覆盖 |
