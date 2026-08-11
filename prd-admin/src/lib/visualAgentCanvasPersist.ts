@@ -269,6 +269,11 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
         // 「复用已有图层」判不出来，导出 PSD 会再调一次模型。
         ext: {
           frameId: it.frameId,
+          // 迁移标记：说明这条记录是「知道 frameId 这个字段」的版本写出来的。
+          // 有它，读回时 frameId 缺失就是**真的没有编组**（用户解过组）；
+          // 没有它才说明是旧数据，需要拿 layerGroupId 补一次。
+          // 不区分这两者的后果：解组后刷新，Frame 会原地复活（冒烟实测）。
+          frameMigrated: true,
           layerGroupId: it.layerGroupId,
           layerSourceKey: it.layerSourceKey,
           layerIndex: it.layerIndex,
@@ -393,10 +398,13 @@ export function persistedV1ToCanvas(
         // 恢复持久化的 runId，用于刷新页面后同步状态
         runId: isPlaceholder && el.runId ? String(el.runId).trim() || undefined : undefined,
         // 旧数据没有 frameId：用 layerGroupId 补一次，否则升级后既有分层组的 Frame 会整个消失。
-        // 只在读回时补，写出去之后就是独立字段，解组才能真的把它抹掉。
+        // 但**只对旧数据补**——新版本写出来的记录带 frameMigrated，此时 frameId 缺失
+        // 意味着用户真的解过组，再补一次等于让 Frame 在刷新后复活（冒烟实测抓到）。
         frameId: typeof ext.frameId === 'string' && ext.frameId
           ? ext.frameId
-          : (typeof ext.layerGroupId === 'string' ? ext.layerGroupId : undefined),
+          : (ext.frameMigrated === true
+              ? undefined
+              : (typeof ext.layerGroupId === 'string' ? ext.layerGroupId : undefined)),
         layerGroupId: typeof ext.layerGroupId === 'string' ? ext.layerGroupId : undefined,
         layerSourceKey: typeof ext.layerSourceKey === 'string' ? ext.layerSourceKey : undefined,
         layerIndex: typeof ext.layerIndex === 'number' && Number.isFinite(ext.layerIndex) ? ext.layerIndex : undefined,

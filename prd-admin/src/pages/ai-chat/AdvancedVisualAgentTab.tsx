@@ -69,6 +69,7 @@ import {
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
 import { glassToolbar } from '@/lib/glassStyles';
+import { canvasSaveCooldownRemaining, CANVAS_SAVE_DEBOUNCE_MS } from '@/lib/canvasSaveSchedule';
 import {
   checkLayerSourcesReadable,
   createCompositePngBlob,
@@ -3610,12 +3611,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       if (json === lastSavedJsonRef.current) return;
 
       const now = Date.now();
-      // 距上次落盘不足 800ms 就**改期**，绝不直接放弃。
+      // 距上次落盘不足冷却时间就**改期**，绝不直接放弃。
       // 早先这里是 `return`：这次改动就此消失，而后面若没有新的画布变化，
-      // 再也没有人来救它。分层收尾时会连着刷好几次画布（点亮图层 → 裁剪落位 →
-      // 内容判定），最后一批正好撞进这个窗口，于是「刚拆完立刻刷新，整组图层
-      // 凭空消失」（2026-08-11 冒烟实测：重拆后刷新，第二组 4 个部件全没了）。
-      const cooldown = 800 - (now - lastSaveAtRef.current);
+      // 再也没有人来救它。时序判断抽在 canvasSaveSchedule 里，那边有单测钉着。
+      const cooldown = canvasSaveCooldownRemaining({ now, lastSavedAt: lastSaveAtRef.current });
       if (cooldown > 0) {
         canvasSaveTimerRef.current = window.setTimeout(runSave, cooldown);
         return;
@@ -3644,7 +3643,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       });
     };
 
-    canvasSaveTimerRef.current = window.setTimeout(runSave, 1200);
+    canvasSaveTimerRef.current = window.setTimeout(runSave, CANVAS_SAVE_DEBOUNCE_MS);
 
     return () => {
       if (canvasSaveTimerRef.current != null) {
@@ -6800,6 +6799,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     // 而不是靠图片尺寸倒猜。倒猜过一次，猜错了整整两轮
                     //（2026-08-11：把「多出一组幽灵图层」误读成「排版没落盘」）。
                     data-canvas-key={it.key}
+                    data-frame-id={it.frameId || undefined}
                     data-layer-group={it.layerGroupId || undefined}
                     data-layer-index={typeof it.layerIndex === 'number' ? it.layerIndex : undefined}
                     data-layer-role={it.layerRole || undefined}

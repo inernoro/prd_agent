@@ -776,3 +776,40 @@ describe('VisualAgent Canvas 持久化测试', () => {
     });
   });
 });
+
+describe('编组的落盘与读回（Cmd+G / Cmd+Shift+G）', () => {
+  const item = (over: Record<string, unknown> = {}) => ({
+    key: 'k1', createdAt: 1, prompt: 'p', src: '/api/x.png', status: 'done' as const,
+    kind: 'image' as const, assetId: 'a1', x: 0, y: 0, w: 10, h: 10, ...over,
+  });
+
+  it('编组写得进也读得回', () => {
+    const saved = canvasToPersistedV1([item({ frameId: 'f1' })]);
+    const { canvas } = persistedV1ToCanvas(saved.state, []);
+    expect(canvas[0]!.frameId).toBe('f1');
+  });
+
+  it('【关键】解组之后刷新，Frame 不许复活', () => {
+    // 真实缺陷（2026-08-11 冒烟抓到）：读回时无条件用 layerGroupId 补 frameId，
+    // 于是「解组」在下一次刷新后被撤销——用户会以为快捷键坏了。
+    // 新版本写出的记录带迁移标记，此时 frameId 缺失 = 真的解过组。
+    const saved = canvasToPersistedV1([item({ frameId: undefined, layerGroupId: 'g1', layerRole: 'layer' as const })]);
+    const { canvas } = persistedV1ToCanvas(saved.state, []);
+    expect(canvas[0]!.frameId).toBeUndefined();
+    // 产物血缘不受影响：解组不该让它忘记自己出自哪一次分层。
+    expect(canvas[0]!.layerGroupId).toBe('g1');
+  });
+
+  it('旧数据（没有迁移标记）仍然靠 layerGroupId 补出 Frame', () => {
+    // 升级前存下来的画布没有 frameId 字段；不补的话既有分层组的 Frame 会整个消失。
+    const legacy = {
+      schemaVersion: 1 as const,
+      elements: [{
+        id: 'k1', kind: 'image' as const, x: 0, y: 0, w: 10, h: 10, assetId: 'a1', src: '/api/x.png',
+        ext: { layerGroupId: 'g1', layerRole: 'layer' },
+      }],
+    };
+    const { canvas } = persistedV1ToCanvas(legacy, []);
+    expect(canvas[0]!.frameId).toBe('g1');
+  });
+});

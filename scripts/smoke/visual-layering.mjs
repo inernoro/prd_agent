@@ -568,6 +568,51 @@ async function main() {
       }
     }
 
+    // ---- 浅色主题：不做「好不好看」的主观判断，只判「读不读得清」
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+    await page.waitForTimeout(2500);
+    const contrast = await page.evaluate(() => {
+      const lum = (rgb) => {
+        const [r, g, b] = rgb.map((v) => {
+          const c = v / 255;
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const parse = (value) => {
+        const m = String(value).match(/rgba?\(([^)]+)\)/);
+        if (!m) return null;
+        const parts = m[1].split(',').map((n) => Number(n.trim()));
+        if (parts.length >= 4 && parts[3] === 0) return null; // 全透明，继续往上找
+        return parts.slice(0, 3);
+      };
+      // 往上找第一个不透明背景，这才是文字真正贴着的那块底色。
+      const backdropOf = (el) => {
+        let node = el;
+        while (node && node !== document.documentElement) {
+          const bg = parse(getComputedStyle(node).backgroundColor);
+          if (bg) return bg;
+          node = node.parentElement;
+        }
+        return parse(getComputedStyle(document.body).backgroundColor) || [255, 255, 255];
+      };
+      const target = [...document.querySelectorAll('div,span')]
+        .find((el) => /覆盖\s*[\d.]+%/.test(el.textContent || '') && el.children.length === 0);
+      if (!target) return { ok: false, reason: '浅色主题下找不到图层事实行' };
+      const fg = parse(getComputedStyle(target).color) || [0, 0, 0];
+      const bg = backdropOf(target);
+      const l1 = lum(fg);
+      const l2 = lum(bg);
+      const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      return { ok: true, ratio: Math.round(ratio * 100) / 100, fg, bg };
+    });
+    check('浅色主题下图层面板的文字读得清（对比度 ≥ 3:1）',
+      contrast.ok && contrast.ratio >= 3,
+      contrast.ok ? `对比度 ${contrast.ratio}:1（字 ${contrast.fg} / 底 ${contrast.bg}）` : contrast.reason);
+    await page.evaluate(() => document.documentElement.removeAttribute('data-theme'));
+    await esc(page);
+    await page.waitForTimeout(800);
+
     // ---- Frame 基础功能：Cmd+G 编组 / Cmd+Shift+G 解组（对齐 Figma）
     await esc(page);
     const frameCount = () => page.evaluate(() => new Set([...document.querySelectorAll('[data-canvas-key]')]
@@ -599,8 +644,88 @@ async function main() {
     check('Cmd/Ctrl+G 能把选中的元素编成一个 Frame', grouped);
     const multiBar = await page.evaluate(() => /已选 \d+ 个/.test(document.body.innerText));
     check('多选时出现浮条（编组/解组/导出不只藏在快捷键里）', multiBar);
+
+    // ---- 编组要能扛住刷新（否则「编了组」只是这一屏的错觉）
+    await page.waitForTimeout(9000); // 落盘是 debounce 的，给它写完
+    const framedBefore = await page.evaluate(() => new Set([...document.querySelectorAll('[data-frame-id]')]
+      .map((el) => el.getAttribute('data-frame-id'))).size);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(14000);
     await esc(page);
+    const framedAfter = await page.evaluate(() => new Set([...document.querySelectorAll('[data-frame-id]')]
+      .map((el) => el.getAttribute('data-frame-id'))).size);
+    check('刷新后编组还在（frameId 真的落盘了）',
+      framedBefore > 0 && framedAfter === framedBefore,
+      `刷新前 ${framedBefore} 组 / 刷新后 ${framedAfter} 组`);
+
+    // ---- 多选导出：PSD 与 ZIP（Frame 头部的导出走同一个 exportElementsAsPsd）
+    await page.mouse.move(700, 500);
+    await page.keyboard.press('Control+a');
     await page.waitForTimeout(800);
+    const psdBtn = page.locator('button:has-text("PSD")').last();
+    if (await psdBtn.count()) {
+      const wait = page.waitForEvent('download', { timeout: 300000 });
+      await psdBtn.click({ force: true });
+      try {
+        const file = path.join(OUT, 'frame.psd');
+        await (await wait).saveAs(file);
+        const { readPsd } = await import(path.join(REPO, 'prd-admin/node_modules/ag-psd/dist/index.js'));
+        // 在 Node 里解像素需要 canvas；包围盒在图层记录里，跳过像素照样判得了。
+        const parsed = readPsd(fs.readFileSync(file), { skipLayerImageData: true, skipCompositeImageData: true, skipThumbnail: true });
+        const group = (parsed?.children ?? []).find((child) => Array.isArray(child.children));
+        const kids = group?.children ?? [];
+        // 每个元素一层，且各自带自己的包围盒——不是每层都铺满整张画布。
+        const bounded = kids.filter((l) => (l.right ?? 0) - (l.left ?? 0) > 0
+          && ((l.right - l.left) < (parsed.width ?? 0) || (l.bottom - l.top) < (parsed.height ?? 0)));
+        check('多选导出的 PSD 能反读且是真分层', kids.length >= 2, `层数 ${kids.length}`);
+        check('多选 PSD 每层各自带包围盒（不是层层满幅）',
+          bounded.length >= Math.max(1, kids.length - 1),
+          `有界 ${bounded.length}/${kids.length}，画布 ${parsed.width}x${parsed.height}`);
+      } catch (error) {
+        check('多选导出的 PSD 能反读且是真分层', false, String(error).slice(0, 140));
+      }
+    } else {
+      check('多选浮条里能找到「PSD」', false, '按钮不存在');
+    }
+
+    const zipBtn = page.locator('button:has-text("ZIP")').last();
+    if (await zipBtn.count()) {
+      const wait = page.waitForEvent('download', { timeout: 300000 });
+      await zipBtn.click({ force: true });
+      try {
+        const file = path.join(OUT, 'frame.zip');
+        await (await wait).saveAs(file);
+        const buf = fs.readFileSync(file);
+        // ZIP 每个条目以 PK\x03\x04 开头，数一数就知道打了几张，不用引库。
+        let entries = 0;
+        for (let i = 0; i + 3 < buf.length; i += 1) {
+          if (buf[i] === 0x50 && buf[i + 1] === 0x4b && buf[i + 2] === 0x03 && buf[i + 3] === 0x04) entries += 1;
+        }
+        check('多选 ZIP 能下载且里面不止一张图',
+          buf.subarray(0, 2).toString('ascii') === 'PK' && entries >= 2,
+          `${buf.length} bytes / ${entries} 个条目`);
+      } catch (error) {
+        check('多选 ZIP 能下载且里面不止一张图', false, String(error).slice(0, 140));
+      }
+    } else {
+      check('多选浮条里能找到「ZIP」', false, '按钮不存在');
+    }
+
+    // ---- 解组也要扛住刷新：解完再刷新，Frame 不许复活
+    await page.mouse.move(700, 500);
+    await page.keyboard.press('Control+a');
+    await page.waitForTimeout(600);
+    await page.keyboard.press('Control+Shift+G');
+    await page.waitForTimeout(9000);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(14000);
+    await esc(page);
+    const framedAfterUngroup = await page.evaluate(() => new Set([...document.querySelectorAll('[data-frame-id]')]
+      .map((el) => el.getAttribute('data-frame-id'))).size);
+    check('解组后刷新，Frame 不会复活（解组是真落盘了）',
+      framedAfterUngroup === 0,
+      `刷新后仍有 ${framedAfterUngroup} 组`);
+
 
 
     check('运行期间没有 401/403（读图与接口的凭据都带上了）',
