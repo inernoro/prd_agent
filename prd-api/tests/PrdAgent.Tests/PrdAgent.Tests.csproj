@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <Compile Include="..\..\..\llmgw\console-api\Organization\MembershipPolicy.cs" Link="Gateway\MembershipPolicy.cs" />
+    <Compile Include="..\..\..\llmgw\console-api\Governance\OfferingRoutingChangePolicy.cs" Link="Gateway\OfferingRoutingChangePolicy.cs" />
   </ItemGroup>
 
 </Project>

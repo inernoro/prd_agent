@@ -142,6 +142,9 @@ export function validateEnvironmentConfig(name, values) {
   if (!values[`${prefix}_BASE_URL`]) errors.push(`${prefix}_BASE_URL`);
   if (!values[`${prefix}_AI_ACCESS_KEY`]) errors.push(`${prefix}_AI_ACCESS_KEY`);
   if (!values[`${prefix}_USER`]) errors.push(`${prefix}_USER`);
+  if (!values[`${prefix}_GW_BASE_URL`]) errors.push(`${prefix}_GW_BASE_URL`);
+  if (!values[`${prefix}_GW_USER`]) errors.push(`${prefix}_GW_USER`);
+  if (!values[`${prefix}_GW_PASSWORD`]) errors.push(`${prefix}_GW_PASSWORD`);
   if (name === 'production' && values[`${prefix}_BASE_URL`]?.replace(/\/+$/, '') !== productionBaseUrl) {
     errors.push('正式环境地址必须固定为 https://map.ebcone.net');
   }

@@ -60,12 +60,30 @@ test('双环境凭据缺失时前置检查明确阻断', () => {
     'STABLE_SMOKE_CDS_BASE_URL',
     'STABLE_SMOKE_CDS_AI_ACCESS_KEY',
     'STABLE_SMOKE_CDS_USER',
+    'STABLE_SMOKE_CDS_GW_BASE_URL',
+    'STABLE_SMOKE_CDS_GW_USER',
+    'STABLE_SMOKE_CDS_GW_PASSWORD',
   ]);
   assert.deepEqual(validateEnvironmentConfig('production', {
     STABLE_SMOKE_PROD_BASE_URL: 'https://wrong.example',
     STABLE_SMOKE_PROD_AI_ACCESS_KEY: 'secret',
     STABLE_SMOKE_PROD_USER: 'stsmk',
+    STABLE_SMOKE_PROD_GW_BASE_URL: 'https://gateway.example',
+    STABLE_SMOKE_PROD_GW_USER: 'gateway-user',
+    STABLE_SMOKE_PROD_GW_PASSWORD: 'gateway-password',
   }), ['正式环境地址必须固定为 https://map.ebcone.net']);
+});
+
+test('主应用凭据齐全但网关凭据缺失时仍阻断开测', () => {
+  assert.deepEqual(validateEnvironmentConfig('cds', {
+    STABLE_SMOKE_CDS_BASE_URL: 'https://app.example',
+    STABLE_SMOKE_CDS_AI_ACCESS_KEY: 'secret',
+    STABLE_SMOKE_CDS_USER: 'stable-smoke',
+  }), [
+    'STABLE_SMOKE_CDS_GW_BASE_URL',
+    'STABLE_SMOKE_CDS_GW_USER',
+    'STABLE_SMOKE_CDS_GW_PASSWORD',
+  ]);
 });
 
 test('凭据登记表只在环境变量缺失时读取 Keychain', () => {
