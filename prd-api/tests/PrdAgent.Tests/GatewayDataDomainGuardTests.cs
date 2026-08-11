@@ -4369,6 +4369,42 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 改上游类型不能把「继承协议」的模型悄悄换掉报文协议。
+    ///
+    /// 合并端点已经为同一条不变量挡了跨类型改嫁（PLATFORM_TYPE_MISMATCH），但改类型是
+    /// 另一条通往同一后果的路：模型 Protocol 为空表示继承所属上游
+    /// （运行时 `IsNullOrWhiteSpace(Protocol) ? PlatformType : Protocol`），
+    /// 把上游 openai 改成 claude，这批模型之后全按错协议发出去。一处挡了另一处没挡，
+    /// 等于这条不变量只在一半路径上成立。
+    /// </summary>
+    [Fact]
+    public void PlatformTypeChange_BlockedWhileModelsInheritProtocol()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var update = EndpointBody(console, "app.MapPut(\"/gw/platforms/{id}\"");
+
+        Assert.Contains("PLATFORM_TYPE_LOCKED", update);
+
+        // 判据必须真的按「继承」取模型：只看 PlatformId 会把显式写了协议的也算进去（过宽），
+        // 只判某一种空值写法则会漏掉另外两种（过窄，形状 1）。三种空值形态都要认。
+        var guardAt = update.IndexOf("PLATFORM_TYPE_LOCKED", StringComparison.Ordinal);
+        var guard = update[..guardAt];
+        Assert.Contains("Exists(\"Protocol\", false)", guard);
+        Assert.Contains("Eq(\"Protocol\", BsonNull.Value)", guard);
+        Assert.Contains("Eq(\"Protocol\", \"\")", guard);
+
+        // 只在类型真的变了时才挡：空上游、或名下模型都显式写了协议的，改类型无人受影响
+        Assert.Contains("string.Equals(currentType, type, StringComparison.Ordinal)", guard);
+
+        // 报的条数必须来自全量计数：名字列表是截断的，拿它的长度当条数会把 50 个说成 5 个，
+        // 用户照着提示改完那 5 个再来，还是被挡。
+        Assert.Contains("CountDocumentsAsync(inheritingFilter)", guard);
+        var message = update[guardAt..];
+        Assert.Contains("{inheritingCount} 个模型", message);
+        Assert.DoesNotContain("{names.Count} 个模型", message);
+    }
+
+    /// <summary>
     /// 反断头通用守卫：api.ts 里导出的每个函数都必须有人调用。
     ///
     /// 形状 2（链路只建到一半）在本仓库的具体形态就是「后端加了端点、api.ts 加了函数、

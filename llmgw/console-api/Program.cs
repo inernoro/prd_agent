@@ -7135,6 +7135,45 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
         var type = body.PlatformType.Trim().ToLowerInvariant();
         if (type is not ("openai" or "claude"))
             return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "接口类型只支持 openai 或 claude"), jsonOptions, 400);
+
+        // 改类型等于改这条上游名下「继承协议」那批模型的报文协议——与合并端点挡的是同一件事：
+        // 模型的 Protocol 允许为空表示继承所属上游（运行时
+        // `string.IsNullOrWhiteSpace(Protocol) ? PlatformType : Protocol`），
+        // 所以把 openai 改成 claude，这批本来能用的模型之后全按错协议发出去。
+        // 判据只挡真正会被牵连的那部分：类型确实变了、且确实有模型在继承。
+        // 空上游、或名下模型都显式写了 Protocol 的，改类型无人受影响，照常放行。
+        var currentType = (doc.AsNullableString("PlatformType") ?? string.Empty).Trim().ToLowerInvariant();
+        if (!string.Equals(currentType, type, StringComparison.Ordinal))
+        {
+            var pfb = Builders<BsonDocument>.Filter;
+            var inheritingFilter = TenantAccess.Filter(http, pfb.And(
+                pfb.Eq("PlatformId", id),
+                pfb.Or(
+                    pfb.Exists("Protocol", false),
+                    pfb.Eq("Protocol", BsonNull.Value),
+                    pfb.Eq("Protocol", ""))));
+            // 报的条数必须是真实条数：只数一次全量，名字另取前几个用于提示。
+            // 拿「截断后的列表长度」当条数会把 50 个说成 20 个，用户照着改完还是被挡。
+            var inheritingCount = (int)await gwModels.CountDocumentsAsync(inheritingFilter);
+            if (inheritingCount > 0)
+            {
+                var names = (await gwModels.Find(inheritingFilter).Limit(5).ToListAsync())
+                    .Select(m => m.AsNullableString("ModelName") ?? m.AsNullableString("Name") ?? m.GetStringOrEmpty("_id"))
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .ToList();
+                return Json(
+                    ApiEnvelope<PlatformItem>.Fail(
+                        "PLATFORM_TYPE_LOCKED",
+                        $"这条上游下有 {inheritingCount} 个模型没写协议、跟着上游走，改类型会把它们的报文协议一起换掉"
+                        + $"（{string.Join("、", names)}{(inheritingCount > names.Count ? " 等" : "")}）。"
+                        + "先给这些模型显式写上协议，再改上游类型。"),
+                    jsonOptions,
+                    409);
+            }
+        }
+
+        // 类型没变时照旧原样写回（等值写入无副作用），免得「打开表单没改类型直接保存」
+        // 从原来的成功变成「没有需要修改的字段」——这条判据只该挡危险的类型迁移，不该改别的行为。
         updates.Add(Builders<BsonDocument>.Update.Set("PlatformType", type));
         changes.Add("platformType", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableString("PlatformType")) }, { "to", type } });
     }
