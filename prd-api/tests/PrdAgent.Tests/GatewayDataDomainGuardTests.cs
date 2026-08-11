@@ -4415,9 +4415,17 @@ public class GatewayDataDomainGuardTests
         // 只在类型真的变了时才挡：空上游、或名下模型都显式写了协议的，改类型无人受影响
         Assert.Contains("string.Equals(currentType, type, StringComparison.Ordinal)", guard);
 
-        // 报的条数必须来自全量计数：名字列表是截断的，拿它的长度当条数会把 50 个说成 5 个，
+        // 判据取的模型集合必须与**路由能解析到的**那一套一致。认领自 MAP 的平台，名下模型
+        // 可能还只存在于 MAP 的 models 集合里（池成员端点对内部租户会回退过去），
+        // 那批模型 Protocol 为空一样继承本平台类型。只数 gwModels 就是形状 1：换个存放位置就漏。
+        Assert.Contains("models.Find(", guard);
+        Assert.Contains("internalTenantId", guard);
+        // MAP 侧要排掉被 GW 同 _id 遮住的那些（认领是把同一个 _id 复制过来，GW 为准）
+        Assert.Contains("gwIdsUnderPlatform", guard);
+
+        // 报的条数必须是两边合计：名字列表是截断的，拿它的长度当条数会把 50 个说成 5 个，
         // 用户照着提示改完那 5 个再来，还是被挡。
-        Assert.Contains("CountDocumentsAsync(inheritingFilter)", guard);
+        Assert.Contains("gwInheriting.Count + mapInheriting.Count", guard);
         var message = update[guardAt..];
         Assert.Contains("{inheritingCount} 个模型", message);
         Assert.DoesNotContain("{names.Count} 个模型", message);

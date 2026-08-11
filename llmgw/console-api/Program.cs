@@ -7146,18 +7146,40 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
         if (!string.Equals(currentType, type, StringComparison.Ordinal))
         {
             var pfb = Builders<BsonDocument>.Filter;
-            var inheritingFilter = TenantAccess.Filter(http, pfb.And(
-                pfb.Eq("PlatformId", id),
-                pfb.Or(
-                    pfb.Exists("Protocol", false),
-                    pfb.Eq("Protocol", BsonNull.Value),
-                    pfb.Eq("Protocol", ""))));
-            // 报的条数必须是真实条数：只数一次全量，名字另取前几个用于提示。
-            // 拿「截断后的列表长度」当条数会把 50 个说成 20 个，用户照着改完还是被挡。
-            var inheritingCount = (int)await gwModels.CountDocumentsAsync(inheritingFilter);
+            var noProtocol = pfb.Or(
+                pfb.Exists("Protocol", false),
+                pfb.Eq("Protocol", BsonNull.Value),
+                pfb.Eq("Protocol", ""));
+            var inheritingFilter = TenantAccess.Filter(http, pfb.And(pfb.Eq("PlatformId", id), noProtocol));
+
+            // 判据取的模型集合必须与**路由能解析到的**那一套一致，否则守卫看不见的那部分照样被换协议。
+            // 认领自 MAP 的平台，名下模型可能还只存在于 MAP 的 models 集合里：池成员端点
+            // （`gwModels.Find(...) ?? (内部租户 ? models.Find(...) : null)`）会回退过去，
+            // ModelResolver 再把这条 MAP 模型和 GW 平台凑成一对——Protocol 为空一样继承本平台的类型。
+            // 只数 gwModels 就是形状 1（判据比它该管的范围窄）：换个存放位置就漏。
+            // _id 同时存在于两边时以 GW 为准（认领是把同一个 _id 复制过来），所以 MAP 侧要排掉被遮住的。
+            var gwInheriting = await gwModels.Find(inheritingFilter).ToListAsync();
+            var mapInheriting = new List<BsonDocument>();
+            if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+            {
+                var gwIdsUnderPlatform = (await gwModels
+                        .Find(TenantAccess.Filter(http, pfb.Eq("PlatformId", id)))
+                        .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                        .ToListAsync())
+                    .Select(m => m.GetStringOrEmpty("_id"))
+                    .ToHashSet(StringComparer.Ordinal);
+                mapInheriting = (await models.Find(pfb.And(pfb.Eq("PlatformId", id), noProtocol)).ToListAsync())
+                    .Where(m => !gwIdsUnderPlatform.Contains(m.GetStringOrEmpty("_id")))
+                    .ToList();
+            }
+
+            // 报的条数必须是真实条数：先合出全量，名字另取前几个用于提示。
+            // 拿「截断后的列表长度」当条数会把 50 个说成 5 个，用户照着改完还是被挡。
+            var inheritingCount = gwInheriting.Count + mapInheriting.Count;
             if (inheritingCount > 0)
             {
-                var names = (await gwModels.Find(inheritingFilter).Limit(5).ToListAsync())
+                var names = gwInheriting.Concat(mapInheriting)
+                    .Take(5)
                     .Select(m => m.AsNullableString("ModelName") ?? m.AsNullableString("Name") ?? m.GetStringOrEmpty("_id"))
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .ToList();
