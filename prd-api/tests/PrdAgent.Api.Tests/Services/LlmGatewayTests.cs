@@ -1969,6 +1969,12 @@ public class LlmGatewayTests
             AppCallerCode = "visual-agent.image.text2img::generation",
             ModelType = "generation",
             ExpectedModel = "custom-image",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "legacy-model",
+                ["prompt"] = "legacy prompt",
+                ["size"] = "768x1024",
+            },
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
                 Prompt = "draw a poster",
@@ -2027,6 +2033,7 @@ public class LlmGatewayTests
             },
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
+                PreserveCallerWireRequest = true,
                 Prompt = "draw a poster",
                 Count = 1,
                 Size = "1024x1024",
@@ -2039,6 +2046,65 @@ public class LlmGatewayTests
         Assert.Equal("1024x1536", body["size"]?.GetValue<string>());
         Assert.NotNull(body["modalities"]);
         Assert.False(body.ContainsKey("prompt"));
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenInitialMultipartHasNoneCapability_ShouldRemoveLegacySizeField()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "custom-image-edit",
+            ActualModel = "vendor/image-edit-model",
+            ActualPlatformId = "provider-1",
+            ActualPlatformName = "Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com/v1",
+            ApiKey = "test-key",
+            ParameterCapabilities = new Dictionary<string, bool>
+            {
+                ["image_size.none"] = true,
+            },
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.edit::generation",
+            ModelType = "generation",
+            ExpectedModel = "custom-image-edit",
+            EndpointPath = "images/edits",
+            IsMultipart = true,
+            MultipartFields = new Dictionary<string, object>
+            {
+                ["prompt"] = "legacy prompt",
+                ["size"] = "768x1024",
+            },
+            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+            {
+                ["image"] = ("input.png", new byte[] { 1, 2, 3 }, "image/png"),
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "edit the poster",
+                Count = 1,
+                Size = "768x1024",
+                Images = ["aW1hZ2U="],
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var body = Assert.Single(http.RequestBodies);
+        Assert.Contains("edit the poster", body);
+        Assert.DoesNotContain("name=size", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("name=\"size\"", body, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -421,6 +421,42 @@ public class ModelResolverTests
         Assert.False(result.ParameterCapabilities.ContainsKey("image_size.none"));
     }
 
+    [Fact]
+    public async Task PoolModelCapability_WhenUpstreamInheritsSizeControl_ShouldIgnoreStalePoolSnapshot()
+    {
+        var platform = CreatePlatform("plat-1", "OpenAI", "openai");
+        var pool = CreateModelGroup(
+            "pool-image", "Image Pool", "generation",
+            isDefault: true, priority: 0,
+            ("plat-1", "image-model", ModelHealthStatus.Healthy));
+        pool.Models[0].Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "image_generation", Source = "user", Value = true },
+            new() { Type = "param.image_size.prompt", Source = "legacy-snapshot", Value = true },
+            new() { Type = "parameter:image_size.field.size", Source = "legacy-snapshot", Value = true },
+            new() { Type = "parameter:seed", Source = "pool", Value = true },
+        };
+        var modelConfig = CreateLegacyModel("image-model", "plat-1", "generation");
+        modelConfig.Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "image_generation", Source = "user", Value = true },
+        };
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithModelGroup(pool)
+            .WithLegacyModel(modelConfig, "sk-test");
+
+        var result = await resolver.ResolveAsync("visual-agent.image::generation", "generation");
+
+        Assert.True(result.Success);
+        Assert.Equal("image-model", result.ActualModel);
+        Assert.NotNull(result.ParameterCapabilities);
+        Assert.True(result.ParameterCapabilities!["seed"]);
+        Assert.DoesNotContain(result.ParameterCapabilities.Keys, key =>
+            key.StartsWith("image_size.", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Theory]
     [InlineData("gemini", "claude", "gemini", "protocol-from-pool-item")]
     [InlineData(null, "claude", "claude", "protocol-from-model")]

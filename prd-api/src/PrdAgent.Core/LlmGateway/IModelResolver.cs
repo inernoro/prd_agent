@@ -711,21 +711,17 @@ public class ModelResolutionResult
 
     private static IEnumerable<LLMModelCapability>? EffectiveCapabilities(ModelGroupItem model, LLMModel? modelConfig)
     {
-        // 上游模型能力是最终事实；池成员/逻辑模型能力可以覆盖同名项，但不能让非空的用途列表
-        // 把上游字段能力整组遮掉。否则逻辑模型路由后会丢失 image_size 等实际模型契约。
+        // 上游模型能力是最终事实。池成员仍可补充普通能力，但只要已解析到真实模型配置，
+        // image_size 保留命名空间就只从该模型读取；模型切回 inherit 后也不能让旧池快照回流。
         var merged = new Dictionary<string, LLMModelCapability>(StringComparer.OrdinalIgnoreCase);
-        var upstreamHasImageSizeControl = modelConfig?.Capabilities?.Any(capability =>
-            !string.IsNullOrWhiteSpace(capability.Type)
-            && capability.Type.StartsWith("parameter:image_size.", StringComparison.OrdinalIgnoreCase)) == true;
         foreach (var capability in modelConfig?.Capabilities ?? [])
         {
             if (!string.IsNullOrWhiteSpace(capability.Type)) merged[capability.Type] = capability;
         }
         foreach (var capability in model.Capabilities ?? [])
         {
-            if (!string.IsNullOrWhiteSpace(capability.Type)
-                && upstreamHasImageSizeControl
-                && capability.Type.StartsWith("parameter:image_size.", StringComparison.OrdinalIgnoreCase))
+            if (modelConfig is not null
+                && ImageSizeControlCapabilities.IsSizeControlCapability(capability.Type))
                 continue;
             if (!string.IsNullOrWhiteSpace(capability.Type)) merged[capability.Type] = capability;
         }
@@ -754,19 +750,7 @@ public class ModelResolutionResult
     }
 
     private static string? ParameterCapabilityName(string? type)
-    {
-        if (string.IsNullOrWhiteSpace(type)) return null;
-        var normalized = type.Trim();
-        foreach (var prefix in new[] { "parameter:", "parameter.", "param:", "param." })
-        {
-            if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                var name = normalized[prefix.Length..].Trim();
-                return name.Length == 0 ? null : name;
-            }
-        }
-        return null;
-    }
+        => ParameterCapabilityTypes.GetParameterName(type);
 }
 
 /// <summary>

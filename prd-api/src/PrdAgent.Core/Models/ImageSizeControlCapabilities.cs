@@ -32,6 +32,25 @@ public sealed class ImageSizeControlCapabilityState
     public bool SizesNotApplicable => Mode == ImageSizeControlModes.None;
 }
 
+/// <summary>参数能力类型的有限前缀兼容规则。</summary>
+public static class ParameterCapabilityTypes
+{
+    private static readonly string[] Prefixes = ["parameter:", "parameter.", "param:", "param."];
+
+    public static string? GetParameterName(string? type)
+    {
+        if (string.IsNullOrWhiteSpace(type)) return null;
+        var normalized = type.Trim();
+        foreach (var prefix in Prefixes)
+        {
+            if (!normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            var name = normalized[prefix.Length..].Trim();
+            return name.Length == 0 ? null : name;
+        }
+        return null;
+    }
+}
+
 /// <summary>
 /// 尺寸控制能力编码。沿用既有 parameter:* 能力矩阵，避免再造一份与模型配置漂移的旁路表。
 /// </summary>
@@ -44,7 +63,6 @@ public static class ImageSizeControlCapabilities
     public const string AspectRatioFieldType = "parameter:image_size.field.aspect_ratio";
     public const string ImageConfigAspectRatioFieldType = "parameter:image_size.field.image_config_aspect_ratio";
 
-    private const string TypePrefix = "parameter:image_size.";
     private const string ParameterPrefix = "image_size.";
 
     public static readonly IReadOnlySet<string> SupportedModes = new HashSet<string>(StringComparer.Ordinal)
@@ -65,8 +83,8 @@ public static class ImageSizeControlCapabilities
     };
 
     public static bool IsSizeControlCapability(string? type)
-        => !string.IsNullOrWhiteSpace(type)
-           && type.Trim().StartsWith(TypePrefix, StringComparison.OrdinalIgnoreCase);
+        => ParameterCapabilityTypes.GetParameterName(type)?
+            .StartsWith(ParameterPrefix, StringComparison.OrdinalIgnoreCase) == true;
 
     public static IReadOnlyList<string> BuildCapabilityTypes(string mode, string? fieldFormat)
     {
@@ -98,8 +116,9 @@ public static class ImageSizeControlCapabilities
         var parameters = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         foreach (var capability in capabilities)
         {
-            if (!IsSizeControlCapability(capability.Type)) continue;
-            parameters[capability.Type.Trim()["parameter:".Length..]] = capability.Value;
+            var parameterName = ParameterCapabilityTypes.GetParameterName(capability.Type);
+            if (parameterName?.StartsWith(ParameterPrefix, StringComparison.OrdinalIgnoreCase) != true) continue;
+            parameters[parameterName] = capability.Value;
         }
         return Parse(parameters);
     }

@@ -1669,10 +1669,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             : (1024, 1024);
     }
 
-    private static bool CanonicalImageRequestNeedsInitialBuild(GatewayRawRequest request)
-        => !request.IsMultipart
-           && (request.RequestBody is null || request.RequestBody.Count == 0);
-
     private static string EnsureImageDataUri(string value)
         => value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? value : $"data:image/png;base64,{value}";
 
@@ -1714,10 +1710,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         CancellationToken ct,
         bool rebuildCanonicalImageRequest = false)
     {
-        // canonical 只负责补齐尚未构建的初始 wire 请求，以及切换到另一个上游时按新协议重建。
-        // 同一上游的端点/尺寸重试已经由调用方算好，不能在发送阶段用原始 canonical 值覆盖。
+        // 首次发送必须按最终解析到的上游能力重建，即使调用方已经预构建了 JSON 或 multipart。
+        // 只有调用方显式标记的同一上游端点/尺寸重试才保留已改写的 wire 请求；切换 Provider
+        // candidate 时 rebuildCanonicalImageRequest 会强制按新协议重建。
         if (request.CanonicalImageRequest is not null
-            && (rebuildCanonicalImageRequest || CanonicalImageRequestNeedsInitialBuild(request)))
+            && (rebuildCanonicalImageRequest || !request.CanonicalImageRequest.PreserveCallerWireRequest))
             request = RebuildCanonicalImageRequest(request, resolution);
 
         string? logId = null;

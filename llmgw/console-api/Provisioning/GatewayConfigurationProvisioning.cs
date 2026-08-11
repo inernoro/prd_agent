@@ -56,7 +56,9 @@ public sealed record NormalizedExchangeDraft(
 
 public static class GatewayConfigurationProvisioning
 {
-    private const string ImageSizeCapabilityPrefix = "parameter:image_size.";
+    private const string ImageSizeParameterPrefix = "image_size.";
+    private static readonly string[] ParameterCapabilityPrefixes =
+        ["parameter:", "parameter.", "param:", "param."];
     private static readonly HashSet<string> SupportedImageSizeControlModes =
     [
         "inherit", "field", "prompt", "field_and_prompt", "none",
@@ -448,8 +450,17 @@ public static class GatewayConfigurationProvisioning
     }
 
     public static bool IsImageSizeControlCapability(string? type)
-        => !string.IsNullOrWhiteSpace(type)
-           && type.Trim().StartsWith(ImageSizeCapabilityPrefix, StringComparison.OrdinalIgnoreCase);
+    {
+        if (string.IsNullOrWhiteSpace(type)) return false;
+        var normalized = type.Trim();
+        foreach (var prefix in ParameterCapabilityPrefixes)
+        {
+            if (!normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            return normalized[prefix.Length..].Trim()
+                .StartsWith(ImageSizeParameterPrefix, StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
+    }
 
     public static bool TryNormalizeBulkCapabilityType(
         string? rawType,

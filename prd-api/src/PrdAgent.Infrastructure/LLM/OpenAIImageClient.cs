@@ -364,6 +364,21 @@ public class OpenAIImageClient : IImageGenerationClient
             Images = string.IsNullOrWhiteSpace(initImageBase64) ? new List<string>() : new List<string> { initImageBase64 },
             MaskBase64 = maskBase64,
         };
+        var preserveCallerWireRequest = false;
+
+        GatewayCanonicalImageRequest CanonicalForCurrentSend()
+            => preserveCallerWireRequest
+                ? new GatewayCanonicalImageRequest
+                {
+                    PreserveCallerWireRequest = true,
+                    Prompt = canonicalImageRequest.Prompt,
+                    Count = canonicalImageRequest.Count,
+                    Size = canonicalImageRequest.Size,
+                    ResponseFormat = canonicalImageRequest.ResponseFormat,
+                    Images = canonicalImageRequest.Images,
+                    MaskBase64 = canonicalImageRequest.MaskBase64,
+                }
+                : canonicalImageRequest;
         
         // 使用平台适配器构建请求
         object reqObj;
@@ -466,7 +481,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         RequestBody = exchangeBody,
                         IsMultipart = false,
@@ -501,7 +516,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
@@ -556,7 +571,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = "images",
                         RequestBody = orImageBody,
@@ -622,7 +637,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = "chat/completions",
                         RequestBody = orBody,
@@ -674,7 +689,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         RequestBody = requestBody,
@@ -763,7 +778,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         IsMultipart = true,
@@ -786,6 +801,9 @@ public class OpenAIImageClient : IImageGenerationClient
             }
 
             gatewayResp = await SendViaGatewayAsync(ct);
+            // 此后的 SendViaGatewayAsync 都是同一上游内的端点或尺寸重试，调用方构建的
+            // EndpointPath / RequestBody / multipart 字段必须原样保留。
+            preserveCallerWireRequest = true;
 
             // OpenRouter 兜底：部分平台（OpenRouter 等）图片生成不走 /images/generations，而是 chat/completions+modalities。
             // 仅当该端点「不存在/不支持」（404 Not Found / 405 Method Not Allowed / 501 Not Implemented）时，

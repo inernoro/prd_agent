@@ -215,6 +215,9 @@ public sealed class GatewayConfigurationProvisioningTests
     [Theory]
     [InlineData("parameter:image_size.none")]
     [InlineData(" PARAMETER:IMAGE_SIZE.FIELD.SIZE ")]
+    [InlineData("parameter.image_size.prompt")]
+    [InlineData("param:image_size.field.aspect_ratio")]
+    [InlineData("param.image_size.field.width_height")]
     public void BulkCapabilityType_ReservesImageSizeNamespaceForDedicatedEndpoint(string capabilityType)
     {
         GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
