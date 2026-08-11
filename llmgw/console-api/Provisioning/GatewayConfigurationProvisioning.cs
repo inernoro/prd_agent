@@ -451,6 +451,20 @@ public static class GatewayConfigurationProvisioning
         => !string.IsNullOrWhiteSpace(type)
            && type.Trim().StartsWith(ImageSizeCapabilityPrefix, StringComparison.OrdinalIgnoreCase);
 
+    public static bool TryNormalizeBulkCapabilityType(
+        string? rawType,
+        out string type,
+        out string error)
+    {
+        type = rawType?.Trim() ?? string.Empty;
+        error = string.Empty;
+        if (type.Length == 0) return Fail("capability.type 不能为空", out error);
+        if (type.Length > 120) return Fail("capability.type 长度超出限制", out error);
+        if (IsImageSizeControlCapability(type))
+            return Fail("图片尺寸控制能力必须通过专用接口维护", out error);
+        return true;
+    }
+
     public static IReadOnlyList<BsonDocument> BuildImageSizeCapabilityDocuments(string mode, string? fieldFormat)
     {
         var types = new List<string>();

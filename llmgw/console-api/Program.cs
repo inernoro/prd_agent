@@ -6985,10 +6985,10 @@ app.MapPost("/gw/models/capabilities/bulk-update", async (HttpContext http, [Fro
     foreach (var capability in body.Capabilities ?? new List<ModelCapabilityItem>())
     {
         if (capability is null) continue;
-        var type = capability.Type.Trim();
+        if (!GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
+                capability.Type, out var type, out var capabilityTypeError))
+            return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", capabilityTypeError), jsonOptions, 400);
         var source = string.IsNullOrWhiteSpace(capability.Source) ? "user" : capability.Source.Trim();
-        if (type.Length == 0) return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "capability.type 不能为空"), jsonOptions, 400);
-        if (type.Length > 120) return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "capability.type 长度超出限制"), jsonOptions, 400);
         if (source.Length > 40) return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "capability.source 长度超出限制"), jsonOptions, 400);
         capabilityPatches.Add(new BsonDocument
         {

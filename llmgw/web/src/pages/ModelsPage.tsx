@@ -566,6 +566,9 @@ export function ModelsPage() {
                   const key = boolChip(m.hasKey, '已配置', '继承平台');
                   const caps = m.capabilities.filter((c) => c.value).slice(0, 4);
                   const provider = m.platformId ? platformById.get(m.platformId) : undefined;
+                  const isImageGeneration = m.isImageGen
+                    || m.capabilities.some((capability) => capability.value
+                      && capability.type.toLowerCase() === 'image_generation');
                   return (
                     <tr key={m.id}>
                       <td style={td}>
@@ -617,7 +620,7 @@ export function ModelsPage() {
                         <span style={{ display: 'inline-flex', gap: GAP.tight, flexWrap: 'wrap' }}>
                           {caps.length ? caps.map((c) => <Chip key={`${m.id}:${c.type}`} label={c.type} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                         </span>
-                        {m.isImageGen ? (
+                        {isImageGeneration ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, marginTop: GAP.tight, minWidth: 210 }}>
                             <span style={HINT_TEXT}>尺寸：{imageSizeControlLabel(m.imageSizeControlMode ?? 'inherit', m.imageSizeFieldFormat)}</span>
                             {canWrite && m.authority === 'llm_gateway' ? (

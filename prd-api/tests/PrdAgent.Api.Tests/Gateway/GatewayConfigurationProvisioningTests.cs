@@ -212,6 +212,26 @@ public sealed class GatewayConfigurationProvisioningTests
         error.ShouldContain("图片生成模型");
     }
 
+    [Theory]
+    [InlineData("parameter:image_size.none")]
+    [InlineData(" PARAMETER:IMAGE_SIZE.FIELD.SIZE ")]
+    public void BulkCapabilityType_ReservesImageSizeNamespaceForDedicatedEndpoint(string capabilityType)
+    {
+        GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
+            capabilityType, out _, out var error).ShouldBeFalse();
+
+        error.ShouldContain("专用接口");
+    }
+
+    [Fact]
+    public void BulkCapabilityType_NormalizesOrdinaryCapability()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
+            " vision ", out var type, out var error).ShouldBeTrue(error);
+
+        type.ShouldBe("vision");
+    }
+
     [Fact]
     public void Exchange_RequiresCommunicationKeyAndAtLeastOneUniqueModelMapping()
     {
