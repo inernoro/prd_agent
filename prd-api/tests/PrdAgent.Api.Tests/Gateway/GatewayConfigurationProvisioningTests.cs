@@ -263,6 +263,20 @@ public sealed class GatewayConfigurationProvisioningTests
     }
 
     [Fact]
+    public void ImageSizeControlMapping_IgnoresMissingAndNonBooleanValues()
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "parameter:image_size.none" },
+            new BsonDocument { ["Type"] = "parameter:image_size.prompt", ["Value"] = "true" },
+            new BsonDocument { ["Type"] = "parameter:image_size.field.size", ["Value"] = false },
+        ]);
+
+        result.Mode.ShouldBe("inherit");
+        result.FieldFormat.ShouldBeNull();
+    }
+
+    [Fact]
     public void Exchange_RequiresCommunicationKeyAndAtLeastOneUniqueModelMapping()
     {
         var missingKey = new CreateExchangeRequest

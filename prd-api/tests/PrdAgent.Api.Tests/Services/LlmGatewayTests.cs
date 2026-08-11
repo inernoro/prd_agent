@@ -2014,6 +2014,85 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenProviderCandidateUsesMultipart_ShouldPreserveAllImagesAndMask()
+    {
+        var candidate = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-candidate",
+            OfferingTargetKind = "model",
+            ActualModel = "candidate-image-model",
+            ActualPlatformId = "candidate-platform",
+            ActualPlatformName = "Candidate",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://candidate.example.com/v1",
+            ApiKey = "candidate-key",
+        };
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-primary",
+            OfferingTargetKind = "model",
+            ActualModel = "primary-chat-image-model",
+            ActualPlatformId = "primary-platform",
+            ActualPlatformName = "Primary",
+            PlatformType = "openai",
+            Protocol = "openrouter",
+            ApiUrl = "https://primary.example.com/v1",
+            ApiKey = "primary-key",
+            RetryCandidates = [candidate],
+        };
+        var http = new SequenceHttpClientFactory(
+            (404, "{\"error\":{\"message\":\"model unavailable\"}}"),
+            (200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            EndpointPath = "chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray(new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = "combine the references",
+                }),
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "combine the references",
+                Count = 1,
+                Size = "1024x1024",
+                Images = ["AQID", "BAUG"],
+                MaskBase64 = "BwgJ",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal(2, http.RequestBodies.Count);
+        var candidateBody = http.RequestBodies[1];
+        Assert.Contains("input-1.png", candidateBody);
+        Assert.Contains("input-2.png", candidateBody);
+        Assert.Contains("mask.png", candidateBody);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_UsesUpstreamModelSizeCapabilityBeforeLegacyAdapterTable()
     {
         var resolution = new GatewayModelResolution

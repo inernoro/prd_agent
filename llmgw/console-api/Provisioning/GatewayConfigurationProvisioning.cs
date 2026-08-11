@@ -520,7 +520,7 @@ public static class GatewayConfigurationProvisioning
         IEnumerable<BsonDocument> capabilities)
     {
         var enabled = capabilities
-            .Where(x => !x.TryGetValue("Value", out var value) || !value.IsBoolean || value.AsBoolean)
+            .Where(x => x.TryGetValue("Value", out var value) && value.IsBoolean && value.AsBoolean)
             .Select(x => NormalizeParameterCapabilityName(
                 x.TryGetValue("Type", out var type) && type.IsString ? type.AsString : null))
             .Where(x => !string.IsNullOrWhiteSpace(x))

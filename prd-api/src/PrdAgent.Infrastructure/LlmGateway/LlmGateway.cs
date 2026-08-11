@@ -1519,25 +1519,42 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 body = JsonNode.Parse(adapter.SerializeRequest(built.RequestBody))?.AsObject() ?? new JsonObject();
                 endpointPath = "images/generations";
             }
-            else if (TryDecodeCanonicalImage(images[0], out var bytes, out var mimeType))
+            else
             {
-                var effectiveSize = adapter.NormalizeSize(spec.Size);
-                var adapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
-                var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
-                if (adapterConfig?.SupportsResponseFormat == false) effectiveFormat = null;
-                isMultipart = true;
-                endpointPath = "images/edits";
-                multipartFields = new Dictionary<string, object>
+                var decodedImages = new List<(byte[] Bytes, string MimeType)>();
+                foreach (var image in images)
                 {
-                    ["prompt"] = effectivePrompt,
-                    ["n"] = Math.Max(1, spec.Count),
-                };
-                if (!string.IsNullOrWhiteSpace(effectiveSize)) multipartFields["size"] = effectiveSize;
-                if (!string.IsNullOrWhiteSpace(effectiveFormat)) multipartFields["response_format"] = effectiveFormat;
-                multipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                    if (TryDecodeCanonicalImage(image, out var imageBytes, out var imageMimeType))
+                        decodedImages.Add((imageBytes, imageMimeType));
+                }
+                if (decodedImages.Count > 0)
                 {
-                    ["image"] = ("input.png", bytes, mimeType),
-                };
+                    var effectiveSize = adapter.NormalizeSize(spec.Size);
+                    var adapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
+                    var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
+                    if (adapterConfig?.SupportsResponseFormat == false) effectiveFormat = null;
+                    isMultipart = true;
+                    endpointPath = "images/edits";
+                    multipartFields = new Dictionary<string, object>
+                    {
+                        ["prompt"] = effectivePrompt,
+                        ["n"] = Math.Max(1, spec.Count),
+                    };
+                    if (!string.IsNullOrWhiteSpace(effectiveSize)) multipartFields["size"] = effectiveSize;
+                    if (!string.IsNullOrWhiteSpace(effectiveFormat)) multipartFields["response_format"] = effectiveFormat;
+                    multipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>();
+                    for (var index = 0; index < decodedImages.Count; index++)
+                    {
+                        var fieldName = decodedImages.Count == 1 ? "image" : $"image[{index}]";
+                        var fileName = decodedImages.Count == 1 ? "input.png" : $"input-{index + 1}.png";
+                        multipartFiles[fieldName] = (fileName, decodedImages[index].Bytes, decodedImages[index].MimeType);
+                    }
+                    if (!string.IsNullOrWhiteSpace(spec.MaskBase64)
+                        && TryDecodeCanonicalImage(spec.MaskBase64, out var maskBytes, out var maskMimeType))
+                    {
+                        multipartFiles["mask"] = ("mask.png", maskBytes, maskMimeType);
+                    }
+                }
             }
         }
 
