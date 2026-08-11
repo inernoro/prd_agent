@@ -71,7 +71,12 @@ public class EmbeddingService : IEmbeddingService
             return EmbeddingBatch.Fail("EMPTY_INPUT", $"单批最多 {MaxBatchSize} 条，请分批调用");
 
         // ── 算 ──
-        var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.Embedding, ct: ct);
+        //
+        // 解析与发送都走 CancellationToken.None，不转发调用方的 ct。
+        // server-authority 规则：客户端被动断开（或 worker 关停令牌触发）不得取消已经发出去的
+        // 模型调用——上游可能已经受理并计费，取消只会让下一次重试重复付一遍钱，而结果谁也没拿到。
+        // 入参的 ct 保留在签名里，供调用方做「排队阶段」的编排取消，不往网关里传。
+        var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.Embedding, ct: CancellationToken.None);
         if (resolution is not { Success: true })
         {
             // 这里的失败绝大多数是"根本没配 embedding 模型"。必须如实往上报，
@@ -100,7 +105,7 @@ public class EmbeddingService : IEmbeddingService
                 UserId = userId,
             },
             RequestBody = body,
-        }, resolution, ct);
+        }, resolution, CancellationToken.None);
 
         if (!raw.Success || string.IsNullOrWhiteSpace(raw.Content))
         {
@@ -110,7 +115,11 @@ public class EmbeddingService : IEmbeddingService
                 $"向量模型调用失败（HTTP {raw.StatusCode}）");
         }
 
-        return ParseOpenAiEmbeddings(raw.Content!, input.Count, resolution);
+        // 贴标签用**真正成功的那个候选**，不是发之前算出来的那个。
+        // 网关在候选可重试失败时会换一个模型再发；这时 raw.Resolution 才是算出这批向量的模型。
+        // 拿 pre-send 的 resolution 贴，就是「B 算的向量记成 A 名下」——存进库之后
+        // 兼容性检查会拿两个不同向量空间当同一个比，检索静默出错且事后分辨不出来。
+        return ParseOpenAiEmbeddings(raw.Content!, input.Count, raw.Resolution ?? resolution);
     }
 
     /// <summary>
@@ -119,6 +128,23 @@ public class EmbeddingService : IEmbeddingService
     /// 按 index 归位而不是按返回顺序：规范允许乱序返回，真按数组顺序对回原文，
     /// 一旦上游乱序就是"A 的向量记在 B 名下"——检索永远给错答案且不报错。
     /// </summary>
+    /// <summary>
+    /// 读取 data[i].index：只接受「无小数部分、落在 Int32 内」的 JSON 数字。
+    /// 字符串 / null / 小数 / 超界一律判假，由调用方整批拒绝。
+    /// </summary>
+    private static bool TryReadIndex(JsonNode node, out int value)
+    {
+        value = -1;
+        if (node is not JsonValue jv) return false;
+        if (jv.TryGetValue(out int i)) { value = i; return true; }
+        if (jv.TryGetValue(out double d) && d >= int.MinValue && d <= int.MaxValue && Math.Abs(d % 1) < double.Epsilon)
+        {
+            value = (int)d;
+            return true;
+        }
+        return false;
+    }
+
     internal static EmbeddingBatch ParseOpenAiEmbeddings(
         string content, int expectedCount, GatewayModelResolution resolution)
     {
@@ -157,7 +183,13 @@ public class EmbeddingService : IEmbeddingService
             }
             else
             {
-                idx = indexNode.GetValue<int>();
+                // 只有「合法整数」才走 index 路径。字符串、null、小数、超出 Int32 的值
+                // 都会让 GetValue<int>() 抛异常——而这里只 catch 了 JSON 解析本身，
+                // 异常会一路穿透成未处理的服务异常 / 批任务失败，而不是一条 UPSTREAM_ERROR。
+                // 一个不兼容的供应商应答不该把调用方打崩。
+                if (!TryReadIndex(indexNode, out idx))
+                    return EmbeddingBatch.Fail("UPSTREAM_ERROR",
+                        $"向量模型返回的 index 不是整数（{Truncate(indexNode.ToJsonString(), 40)}），已整批拒绝");
                 if (idx < 0 || idx >= expectedCount)
                     return EmbeddingBatch.Fail("UPSTREAM_ERROR",
                         $"向量模型返回了越界的 index {idx}（本批共 {expectedCount} 条），已整批拒绝");
