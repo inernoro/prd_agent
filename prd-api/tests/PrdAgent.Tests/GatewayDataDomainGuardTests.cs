@@ -4113,6 +4113,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("platformId?: string;", ReadRepoFile("llmgw/web/src/lib/types.ts"));
         Assert.Contains("initialQueryValue('platformId')", logsView);
         Assert.Contains("/logs?platformId=", page);
+        // 请求页与会话页共用同一份筛选参数：只有一边收 platformId 的话，用户从深链进来切到
+        // 会话页，界面上筛选还亮着、列的却是所有平台的会话——筛选条件在说谎。
+        // 判据钉「每个吃这份筛选的端点都要把 platformId 传进同一个 BuildFilter」。
+        foreach (var endpoint in new[] { "app.MapGet(\"/gw/logs\"", "app.MapGet(\"/gw/logs/sessions\"" })
+        {
+            var body = EndpointBody(console, endpoint);
+            Assert.Contains("platformId", body);
+            Assert.Contains("BuildFilter(", body);
+            var call = body[body.IndexOf("BuildFilter(", StringComparison.Ordinal)..];
+            Assert.True(
+                call.Contains("platformId)", StringComparison.Ordinal)
+                || call.Contains("platformId: platformId", StringComparison.Ordinal),
+                $"{endpoint} 没把 platformId 传进 BuildFilter，平台筛选会在这一页失效");
+        }
 
         // 4) 改得动 / 并得了——「只能建不能改、不能并」正是垃圾堆积的上游成因
         Assert.Contains("app.MapPut(\"/gw/platforms/{id}\"", console);
@@ -4301,6 +4315,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("member[\"ModelId\"] = survivorModelId", merge);
         // 扫池的过滤也要认这一类：成员可能只有 ModelId 命中、PlatformId 早就不是源平台
         Assert.Contains("fb.In(\"ModelId\", survivorByDroppedModelId.Keys)", merge);
+        // 三种别名都要进 survivor 表：加成员端点按 Or(_id, ModelName, Name) 认模型，
+        // 落库时把调用方给的原样写进 ModelId，所以成员里存的可能是名字而不是 _id。
+        // 只记 _id 的话，存名字的成员改完 PlatformId 就断在这里——运行时那三个 Eq
+        // 大小写敏感，「GPT-4o」匹配不上幸存者「gpt-4o」。
+        Assert.Contains("AsNullableString(\"ModelName\")", merge);
+        Assert.Contains("AsNullableString(\"Name\")", merge);
+        Assert.Contains("survivorByDroppedModelId.ContainsKey(alias)", merge);
 
         // 「同名」必须按归一名判，不能按大小写敏感的原名：模型身份的唯一索引建在
         // ModelNameNormalized 上，按原名比会把 GPT-4o 与 gpt-4o 当成两个模型，

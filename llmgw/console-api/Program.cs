@@ -2350,13 +2350,16 @@ app.MapGet("/gw/logs/sessions", async (
     string? model, string? status, string? provider, string? appCallerCode, string? transport, string? requestType,
     string? sourceSystem, string? ingressProtocol, string? modelPolicy, string? releaseCommit,
     string? runId, string? requestId, string? sessionId, string? modelPoolId,
-    string? serviceKeyId, string? clientCode, string? environment) =>
+    string? serviceKeyId, string? clientCode, string? environment, string? platformId) =>
 {
     var p = page is > 0 ? page.Value : 1;
     var ps = pageSize is > 0 and <= 500 ? pageSize.Value : 50;
 
     var (fromUtc, toUtc) = ResolveRange(from, to, defaultDays: 7);
-    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, view: "logical"));
+    // platformId 必须跟着传：前端会话页与请求页共用同一份筛选参数，
+    // 这里不收的话，用户从平台行「查看日志」深链进来切到会话页，
+    // 界面上平台筛选还亮着，列出来的却是所有平台的会话——筛选条件在说谎。
+    var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, view: "logical", platformId: platformId));
 
     var docs = await logs.Find(filter)
         .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
@@ -7322,8 +7325,21 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             var (repointed, deduped) = await RepointOfferingsAsync(http, gwModelOfferings, modelId, survivorId);
             result.OfferingsRepointed += repointed;
             result.OfferingsDeduped += deduped;
-            // 记下来，等池成员也改完再删（见上面的顺序说明）
-            if (modelId.Length > 0 && survivorId.Length > 0) survivorByDroppedModelId[modelId] = survivorId;
+            // 记下来，等池成员也改完再删（见上面的顺序说明）。
+            // **三种写法都要记**：加成员端点按 `Or(_id, ModelName, Name)` 认模型，随后
+            // `member["ModelId"] = modelId` 把调用方给的**原样**落库，所以成员里存的可能是
+            // _id，也可能是模型名。只记 _id 的话，存名字的那些成员在这里查不到 —— 只改了
+            // PlatformId，模型却被删了，而运行时那三个 Eq 是大小写敏感的，
+            // 「GPT-4o」再也匹配不上幸存者「gpt-4o」，成员就此解析不到。
+            if (survivorId.Length > 0)
+            {
+                foreach (var alias in new[] { modelId, model.AsNullableString("ModelName"), model.AsNullableString("Name") })
+                {
+                    if (string.IsNullOrWhiteSpace(alias)) continue;
+                    // 先到先得：同一个别名不该指向两个幸存者，真撞上时保持确定性
+                    if (!survivorByDroppedModelId.ContainsKey(alias)) survivorByDroppedModelId[alias] = survivorId;
+                }
+            }
             droppedModelFilters.Add(modelFilter);
             result.ModelsDropped++;
             continue;
@@ -7338,7 +7354,7 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     }
 
     // 2) 池成员改指：同一个池里若目标已在，就不能留两条同 (modelId, platformId)，去重。
-    //    两个字段都要改：PlatformId 指向目标，ModelId 若记的是被丢弃那条的 _id 也要换成幸存者的。
+    //    两个字段都要改：PlatformId 指向目标，ModelId 若记的是被丢弃那条（_id 或模型名）也要换成幸存者的。
     //    只改一半留下的成员看起来正常（平台存在、模型名对得上），实际按 _id 解析直接落空。
     var poolFilter = survivorByDroppedModelId.Count > 0
         ? fb.Or(
@@ -7361,7 +7377,8 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             {
                 member = new BsonDocument(member);
                 if (pointsAtSourcePlatform) member["PlatformId"] = targetId;
-                // 成员记的是被丢弃那条模型的 _id：那份文档已经不存在了，必须换成留下来的同名模型
+                // 成员记的是被丢弃那条模型的 _id 或模型名：那份文档已经不存在了，
+                // 必须换成留下来的同名模型的 _id（顺带把名字写法归一成 _id，运行时按 _id 认得更稳）
                 if (pointsAtDroppedModel) member["ModelId"] = survivorModelId;
                 // 改指之后健康位得重算：它记录的是「在源上游那边」的历史，对目标不成立
                 member["HealthStatus"] = 0;
