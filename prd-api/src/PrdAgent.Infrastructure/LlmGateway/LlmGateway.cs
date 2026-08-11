@@ -248,15 +248,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string? responseBody,
         GatewayRawRequest request)
     {
-        var canonical = request.CanonicalImageRequest;
-        if (canonical is null || string.IsNullOrWhiteSpace(canonical.Prompt))
-            return false;
-
         if (IsContentPolicyDenial(statusCode, responseBody))
             return false;
 
+        // 凭据、授权、模型和 Endpoint 的确定性错误与请求类型无关。ASR、视频等非图片
+        // Raw 请求同样必须隔离故障 Offering，避免每个后续用户都重复命中同一坏路由。
         if (statusCode is >= 401 and <= 404)
             return true;
+
+        var canonical = request.CanonicalImageRequest;
+        if (canonical is null || string.IsNullOrWhiteSpace(canonical.Prompt))
+            return false;
 
         if (statusCode != 400)
             return false;

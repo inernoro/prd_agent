@@ -312,7 +312,7 @@ async function createAndWaitForMyAvatarPreview(
   });
   if (!created.success) {
     const code = String(created.error?.code ?? '').trim().toUpperCase();
-    if (!['TIMEOUT', 'NETWORK_ERROR', 'REQUEST_CANCELLED'].includes(code)) {
+    if (!['TIMEOUT', 'NETWORK_ERROR', 'DISCONNECTED', 'REQUEST_CANCELLED'].includes(code)) {
       forgetAvatarGenerationCreation(idempotencyKey);
     }
     return avatarGenerationFailure(created.error?.code);

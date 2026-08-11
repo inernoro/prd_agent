@@ -169,6 +169,7 @@ type ImageRunDetail = {
 type GatewayOffering = {
   id: string;
   targetId: string;
+  protocol?: string | null;
   endpointPath?: string | null;
   enabled: boolean;
   priority: number;
@@ -193,9 +194,13 @@ type GatewayLogItem = {
   status: string;
   statusCode?: number | null;
   isFallback?: boolean | null;
+  protocol?: string | null;
 };
 
 type GatewayLogDetail = GatewayLogItem & {
+  requestBodyRedacted?: string | null;
+  answerText?: string | null;
+  imageSuccessCount?: number | null;
   providerAttempts: Array<{
     order: number;
     provider?: string | null;
@@ -1969,7 +1974,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-010][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图引用真实生成、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] OpenRouter 专用多图协议真实生成、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
@@ -1988,8 +1993,24 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) });
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
-      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
-      expect(pool, '没有可用的多图视觉逻辑模型').toBeTruthy();
+      const healthyPoolCodes = new Set(pools
+        .filter((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')))
+        .map((item) => item.code));
+      const gateway = await loginGateway(request);
+      const logicalModels = await readEnvelope<{ items: GatewayLogicalModel[] }>(
+        await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers }),
+      );
+      const dedicatedLogical = logicalModels.items.find((item) => (
+        item.enabled
+        && item.routingStrategy === 'priority'
+        && healthyPoolCodes.has(item.publicId)
+        && item.offerings
+          .filter((offering) => offering.enabled)
+          .sort((left, right) => left.priority - right.priority)[0]?.protocol === 'openrouter-image'
+      ));
+      expect(dedicatedLogical, '没有配置以 openrouter-image 为主路的可用多图逻辑模型').toBeTruthy();
+      const pool = pools.find((item) => item.code === dedicatedLogical!.publicId);
+      expect(pool, 'OpenRouter 多图逻辑模型未进入业务模型目录').toBeTruthy();
 
       const createMultiRun = async (
         suffix: string,
@@ -2030,6 +2051,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       );
       const twoCompleted = await waitForImageRun(page, token, twoRunId);
       await assertImageArtifact(page, twoCompleted.detail);
+      const protocolLog = await waitForGatewayLog(request, `${twoRunId}-0-0`);
+      expect(protocolLog.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
+      expect(protocolLog.protocol).toBe('openrouter-image');
+      expect(protocolLog.requestBodyRedacted || '').toMatch(/"input_references"\s*:\s*\[(?!\s*\])/);
+      expect(protocolLog.imageSuccessCount || 0).toBeGreaterThan(0);
+      expect(protocolLog.answerText || '').toMatch(/"data"\s*:\s*\[/);
+      expect(protocolLog.answerText || '').not.toMatch(/input must have at least|chat\/completions|modalities/i);
       const restoredTwo = (await readEnvelope<ImageRunDetail>(
         await page.request.get(`/api/visual-agent/image-gen/runs/${twoRunId}?includeItems=true`, { headers: authHeaders(token) }),
       )).run;
@@ -2169,6 +2197,83 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-boundaries-delete` },
       });
       expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+    }
+  });
+
+  test('[MVIS-010] 多图引用失败只显示结果与恢复动作', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(180_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'multi-image-readable-error');
+    let runId = '';
+    try {
+      const valid = await readEnvelope<{ asset: { sha256: string; url: string } }>(
+        await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
+          headers: {
+            ...authHeaders(token),
+            'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-readable-valid-ref`,
+          },
+          data: { data: solidPngDataUrl(35, 90, 190), width: 256, height: 256, prompt: '有效参考图' },
+        }),
+      );
+      const pools = await readEnvelope<ImageModelPool[]>(
+        await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) }),
+      );
+      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
+      expect(pool, '没有可用的多图视觉逻辑模型').toBeTruthy();
+      const prompt = '参考 @img1 和 @img2 生成一张构图测试图';
+      const created = await readEnvelope<{ runId: string }>(
+        await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+          headers: {
+            ...authHeaders(token),
+            'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-readable-error-run`,
+          },
+          data: {
+            prompt,
+            userMessageContent: prompt,
+            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-readable-error-target`,
+            platformId: 'logical-model',
+            modelId: pool!.code,
+            size: '1024x1024',
+            responseFormat: 'url',
+            imageRefs: [
+              { refId: 1, assetSha256: valid.asset.sha256, url: valid.asset.url, label: '有效参考图', role: 'target' },
+              { refId: 2, assetSha256: 'e'.repeat(64), url: '', label: '不可用参考图', role: 'style' },
+            ],
+            x: 0,
+            y: 0,
+            w: 1001,
+            h: 1001,
+          },
+        }),
+      );
+      runId = created.runId;
+      const terminal = await waitForImageRun(page, token, runId);
+      expect(terminal.detail.run.status).toBe('Failed');
+      const errorMessage = terminal.detail.items[0]?.errorMessage || '';
+      expect(errorMessage).toContain('@img2');
+      expect(errorMessage).toContain('其他输入已保留');
+      expectUserReadable(errorMessage);
+      expect(errorMessage).not.toMatch(/HTTP|token|provider|offering|endpoint|protocol|stack|exception/i);
+
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissVisualTutorial(page);
+      const visibleError = page.getByText(/参考图 @img2 无法使用/);
+      await expect(visibleError).toBeVisible({ timeout: 30_000 });
+      await expect(visibleError).toContainText('其他输入已保留');
+      await testInfo.attach('multi-image-readable-error', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: {
+          ...authHeaders(token),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-readable-error-delete`,
+        },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      if (runId) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token),
+        })).status()).toBe(404);
+      }
     }
   });
 

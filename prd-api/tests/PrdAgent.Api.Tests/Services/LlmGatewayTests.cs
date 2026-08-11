@@ -2101,6 +2101,32 @@ public class LlmGatewayTests
     }
 
     [Theory]
+    [InlineData(401, "invalid credentials")]
+    [InlineData(402, "payment required")]
+    [InlineData(403, "access denied")]
+    [InlineData(404, "model not found")]
+    public void ShouldQuarantineRawProviderResponse_WhenNonImageOfferingIsDeterministicallyInvalid_ShouldReturnTrue(
+        int statusCode,
+        string message)
+    {
+        var request = new GatewayRawRequest
+        {
+            AppCallerCode = "transcript-agent.audio::asr",
+            ModelType = "asr",
+            RequestBody = new JsonObject { ["audio"] = "fixture" },
+        };
+
+        Assert.True(LlmGateway.ShouldQuarantineRawProviderResponse(
+            statusCode,
+            $"{{\"error\":{{\"message\":\"{message}\"}}}}",
+            request));
+        Assert.False(LlmGateway.ShouldQuarantineRawProviderResponse(
+            400,
+            "{\"error\":{\"message\":\"invalid audio payload\"}}",
+            request));
+    }
+
+    [Theory]
     [InlineData(400, "content_policy_violation")]
     [InlineData(403, "content_filter")]
     [InlineData(403, "moderation_blocked")]

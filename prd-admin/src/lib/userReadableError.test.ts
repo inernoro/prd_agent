@@ -201,6 +201,7 @@ describe('toUserReadableErrorMessage', () => {
     ['TEAM_LEADER_TRANSFER_REQUIRED', '团队负责人不能直接退出，请先在成员管理中将负责人移交给其他成员。'],
     ['INVALID_CONFIG', '模型配置不完整，请先在模型平台补充 API 地址和密钥后再测试。'],
     ['DUPLICATE_MODEL', '该模型名称已存在，请刷新模型列表后确认；如需新增，请改用其他模型名称。'],
+    ['DOCUMENT_ASSET_CLEANUP_FAILED', '文件清理暂时未完成，请稍后重试删除。'],
   ])('为稳定业务错误 %s 使用已登记文案而不是通用输入提示', (code, expected) => {
     const message = toUserReadableErrorMessage(
       { code, message: 'HTTP 500 provider traceId=secret' },

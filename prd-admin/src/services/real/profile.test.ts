@@ -120,6 +120,45 @@ describe('generateMyAvatarPreview', () => {
     expect(retryKey).toBe(firstKey);
   });
 
+  it('创建请求断线后保留原幂等键，重新打开可恢复已计费任务', async () => {
+    const sha = '7'.repeat(64);
+    mockedApiRequest
+      .mockResolvedValueOnce({
+        success: false,
+        data: null,
+        error: { code: 'DISCONNECTED', message: '网络连接已中断，请检查网络后重试。' },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { runId: 'run-disconnected-recovered', status: 'queued', stage: '正在排队' },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          status: 'completed',
+          stage: '生成完成',
+          previewUrl: 'https://assets.example/disconnected-recovered.png',
+          assetSha256: sha,
+        },
+        error: null,
+      });
+
+    const firstResult = await generateMyAvatarPreview({ prompt: '断线后恢复头像任务' });
+    const firstKey = mockedApiRequest.mock.calls[0]?.[1]?.headers?.['Idempotency-Key'];
+    expect(firstResult.success).toBe(false);
+    expect(hasRecoverableMyAvatarGeneration()).toBe(true);
+
+    const resumedResult = resumeMyAvatarPreview({});
+    await vi.runAllTimersAsync();
+    await expect(resumedResult).resolves.toEqual({
+      success: true,
+      data: { previewUrl: 'https://assets.example/disconnected-recovered.png', assetSha256: sha },
+      error: null,
+    });
+    expect(mockedApiRequest.mock.calls[1]?.[1]?.headers?.['Idempotency-Key']).toBe(firstKey);
+  });
+
   it('创建请求结果不确定时重新打开可自动用原幂等键恢复任务', async () => {
     const sha = '9'.repeat(64);
     mockedApiRequest

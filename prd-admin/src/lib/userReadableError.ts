@@ -57,6 +57,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['NOT_FOUND', '目标内容不存在或已被删除，请返回后刷新列表。'],
   ['CONTENT_EMPTY', '提交内容为空，请输入内容后重试。'],
   ['DOCUMENT_NOT_FOUND', '目标文档不存在或已被删除，请返回后刷新列表。'],
+  ['DOCUMENT_ASSET_CLEANUP_FAILED', '文件清理暂时未完成，请稍后重试删除。'],
   ['SESSION_NOT_FOUND', '当前会话不存在或已失效，请返回后重新打开。'],
   ['SESSION_EXPIRED', '当前会话已过期，请返回后重新打开。'],
   ['INVALID_CREDENTIALS', '用户名或密码错误，请检查后重新登录。'],
