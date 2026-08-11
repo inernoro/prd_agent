@@ -857,6 +857,7 @@ public class MongoDbContext
                 new CreateIndexOptions<ImageGenRun>
                 {
                     Name = "uniq_image_gen_runs_owner_idem",
+                    Unique = true,
                     // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
                     PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
                 }));

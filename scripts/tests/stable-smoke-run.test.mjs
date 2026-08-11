@@ -4,6 +4,7 @@ import {
   applyCredentialRegistry,
   buildExecutionRecord,
   deployedRuntimeCommit,
+  enforceExecutionVerdict,
   evaluateCdsReadiness,
   isValidationOnlyPath,
   parseEnvFile,
@@ -41,6 +42,23 @@ test('执行结果使用审核人可读状态且不被进程退出码覆盖', ()
     missing: [],
   });
   assert.equal(buildExecutionRecord('production', { status: 0 }).status, 'executed');
+});
+
+test('Playwright 进程失败必须覆盖用例行通过结论', () => {
+  const summary = enforceExecutionVerdict(
+    { verdict: 'pass', passed: 12, failed: 0 },
+    [
+      { environment: 'cds', status: 'executed' },
+      { environment: 'production', status: 'failed' },
+    ],
+  );
+
+  assert.deepEqual(summary, {
+    verdict: 'fail',
+    passed: 12,
+    failed: 0,
+    executionFailures: ['production'],
+  });
 });
 
 test('环境文件解析不执行 shell 内容', () => {

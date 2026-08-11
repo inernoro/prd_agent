@@ -37,6 +37,7 @@ const environmentDescription = environment !== 'unknown'
   : selectedEnvironments.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、');
 const runId = readArg('--run-id', `stsmk-${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12)}`);
 const baseUrlConfigured = readArg('--base-url-configured', 'false') === 'true';
+const executionSummaryInput = readArg('--execution-summary');
 
 function readJson(path) {
   if (!path) return null;
@@ -49,6 +50,7 @@ function readJson(path) {
 
 const cdsReport = readJson(cdsInput);
 const productionReport = readJson(productionInput);
+const executionSummary = readJson(executionSummaryInput);
 
 let plan;
 try {
@@ -66,7 +68,13 @@ const rows = reconcileCaseCoverage(
   evidenceRows,
   selectedEnvironments.length > 0 ? selectedEnvironments : ['cds', 'production'],
 );
-const summary = summarizeCoverage(rows, plan?.verdict || 'conditional');
+const coverageSummary = summarizeCoverage(rows, plan?.verdict || 'conditional');
+const executionFailures = Array.isArray(executionSummary?.coverage?.executionFailures)
+  ? executionSummary.coverage.executionFailures
+  : [];
+const summary = executionFailures.length > 0
+  ? { ...coverageSummary, verdict: 'fail', executionFailures }
+  : coverageSummary;
 const notRunLedger = buildNotRunLedger(rows, {
   cds: Boolean(cdsReport),
   production: Boolean(productionReport),
@@ -103,6 +111,7 @@ const lines = [
   `- 执行时间：${new Date().toISOString()}`,
   `- 业务台账版本：${plan?.catalogVersion || '缺失'}`,
   `- 固定 commit：${plan?.commit || '缺失'}`,
+  `- 进程级失败环境：${executionFailures.length > 0 ? executionFailures.join('、') : '无'}`,
   '',
   '## 4. 身份与安全边界',
   '',
@@ -204,4 +213,5 @@ writeFileSync(supervisorOutput, renderSupervisorReport({
   technicalUrl,
   cdsUrl,
   productionUrl,
+  executionFailures,
 }), 'utf8');

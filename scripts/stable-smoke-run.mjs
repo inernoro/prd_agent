@@ -360,6 +360,18 @@ export function buildExecutionRecord(environment, execution) {
   };
 }
 
+export function enforceExecutionVerdict(summary, executions) {
+  const executionFailures = executions
+    .filter((execution) => execution.status === 'failed')
+    .map((execution) => execution.environment);
+  if (executionFailures.length === 0) return summary;
+  return {
+    ...summary,
+    verdict: 'fail',
+    executionFailures,
+  };
+}
+
 function buildRunId() {
   const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 12);
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -521,8 +533,10 @@ async function main() {
     });
     const requiredCaseIds = selectRequiredCaseIds(plan?.requiredCaseIds || [], grep);
     const rows = reconcileCaseCoverage(requiredCaseIds, environmentRows, selected);
-    const summary = summarizeCoverage(rows, plan?.verdict || 'conditional');
-    writeFileSync(resolve(runDir, 'summary.json'), `${JSON.stringify({
+    const coverageSummary = summarizeCoverage(rows, plan?.verdict || 'conditional');
+    const summary = enforceExecutionVerdict(coverageSummary, executions);
+    const summaryPath = resolve(runDir, 'summary.json');
+    writeFileSync(summaryPath, `${JSON.stringify({
       runId,
       verdict: summary.verdict,
       catalogVersion: plan?.catalogVersion,
@@ -545,6 +559,7 @@ async function main() {
       '--run-id', runId,
       '--base-url-configured', 'true',
       '--environments', selected.join(','),
+      '--execution-summary', summaryPath,
     ];
     if (grep) renderArgs.push('--grep', grep);
     const render = command('node', renderArgs);

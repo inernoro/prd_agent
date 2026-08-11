@@ -135,6 +135,7 @@ export function renderSupervisorReport({
   technicalUrl = './report.md',
   cdsUrl = '',
   productionUrl = 'https://map.ebcone.net',
+  executionFailures = [],
 }) {
   const matrix = parseTestMatrix(matrixMarkdown);
   const gapByKey = new Map(notRunLedger.map((row) => [`${row.environment}:${row.caseId}`, row]));
@@ -149,7 +150,9 @@ export function renderSupervisorReport({
     fail: metadata.filter((row) => row.status === 'fail').length,
     notRun: metadata.filter((row) => row.status === 'not-run').length,
   };
-  const verdict = counts.fail > 0 ? '不通过' : counts.notRun > 0 ? '部分通过' : '通过';
+  const verdict = executionFailures.length > 0 || counts.fail > 0
+    ? '不通过'
+    : counts.notRun > 0 ? '部分通过' : '通过';
   const managerIntervention = productionNotRun.length > 0 ? '需要：确认正式验收身份可用' : '不需要：由团队闭环剩余项';
   const methods = [...new Map(metadata.map((row) => [row.caseId, row])).values()];
 
@@ -174,9 +177,10 @@ export function renderSupervisorReport({
     '| 优先级 | 环境 | 影响项 | 当前结果 | 负责人 | 关闭条件 |',
     '|---|---|---:|---|---|---|',
     ...(counts.fail > 0 ? [`| P1 | CDS | ${counts.fail} 项 | 真实业务失败 | 相关业务负责人 | 修复后相同验收项通过，并加入永久回归 |`] : []),
+    ...(executionFailures.length > 0 ? [`| P1 | ${executionFailures.map(environmentLabel).join('、')} | ${executionFailures.length} 个执行进程 | Playwright 进程异常退出 | 质量负责人 | 修复全局初始化、清理或报告器错误后整轮重跑通过 |`] : []),
     ...(immediate.filter((row) => row.status === 'not-run').length > 0 ? [`| P1 | CDS | ${immediate.filter((row) => row.status === 'not-run').length} 项 | 自动化步骤未执行 | 质量负责人和相关业务负责人 | 下方每项均获得真实通过或失败证据 |`] : []),
     ...(productionNotRun.length > 0 ? [`| P1 | 正式环境 | ${productionNotRun.length} 项 | 正式合成身份未就绪 | 身份与权限负责人 | 正式身份预检通过并完成同一套验收项 |`] : []),
-    ...(abnormal.length === 0 ? ['| 无 | 双环境 | 0 项 | 全部通过 | 无需干预 | 保持每 48 小时复测 |'] : []),
+    ...(abnormal.length === 0 && executionFailures.length === 0 ? ['| 无 | 双环境 | 0 项 | 全部通过 | 无需干预 | 保持每 48 小时复测 |'] : []),
     '',
     '## 业务功能线与面包屑',
     '',

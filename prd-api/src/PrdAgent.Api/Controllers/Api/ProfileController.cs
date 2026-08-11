@@ -153,6 +153,13 @@ public class ProfileController : ControllerBase
         return new { runId = run.Id, status, stage };
     }
 
+    private static string BuildAvatarGenerationRunId(string userId, string idempotencyKey)
+    {
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{ProfileAvatarRunAppKey}\0{userId.Trim()}\0{idempotencyKey.Trim()}"))).ToLowerInvariant();
+        return $"avatar-{fingerprint[..32]}";
+    }
+
     /// <summary>
     /// 上传并更新当前用户自己的头像
     /// </summary>
@@ -323,6 +330,10 @@ public class ProfileController : ControllerBase
 
         var run = new ImageGenRun
         {
+            // 幂等请求使用确定性 _id：即使 DBA 唯一索引尚未完成迁移，并发插入也由 Mongo 主键唯一性兜底。
+            Id = string.IsNullOrWhiteSpace(idempotencyKey)
+                ? Guid.NewGuid().ToString("N")
+                : BuildAvatarGenerationRunId(currentUserId, idempotencyKey),
             OwnerAdminId = currentUserId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,

@@ -40,6 +40,20 @@ public sealed class SyntheticLoginControllerTests
     }
 
     [Fact]
+    public void LoginUrl_ShouldCarryOneTimeCodeOnlyInFragment()
+    {
+        var loginUrl = Invoke<string>(
+            "BuildLoginUrl",
+            "one-time-code",
+            "/visual-agent?tab=recent");
+
+        Assert.StartsWith("/synthetic-login#", loginUrl);
+        Assert.DoesNotContain("/synthetic-login?", loginUrl);
+        Assert.Contains("code=one-time-code", loginUrl);
+        Assert.Contains("returnUrl=%2Fvisual-agent%3Ftab%3Drecent", loginUrl);
+    }
+
+    [Fact]
     public void TicketIssuance_ShouldRequireAiSuperAccessScheme()
     {
         var method = typeof(SyntheticLoginController).GetMethod(nameof(SyntheticLoginController.IssueTicket));

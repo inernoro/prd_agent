@@ -124,3 +124,7 @@
 | fix | prd-api | 图片 Offering 回退时按候选模型重新适配请求字段，头像任务创建支持部署隔离的幂等重试 |
 | fix | prd-admin | 头像创建请求超时后复用会话幂等键，避免重复创建计费任务 |
 | test | prd-api/prd-admin | 增加同协议自适应模型回退与头像创建超时重试回归测试 |
+| security | prd-api/prd-admin | 合成登录一次性码改由 URL fragment 传递，避免进入代理请求日志 |
+| fix | prd-api | 头像幂等任务使用确定性主键并补齐唯一索引定义，关闭并发重复创建窗口 |
+| fix | stable-smoke | Playwright 进程异常退出强制整轮与主管报告判定不通过 |
+| test | prd-api/prd-admin/stable-smoke | 补齐合成登录传输、头像并发幂等和冒烟进程异常回归测试 |

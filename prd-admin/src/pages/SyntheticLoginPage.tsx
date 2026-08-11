@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getAdminAuthzMe, loginWithSyntheticTicket } from '@/services';
@@ -22,11 +22,18 @@ function normalizeReturnUrl(value: string | null) {
   return path;
 }
 
+export function parseSyntheticLoginFragment(hash: string) {
+  if (!hash.startsWith('#')) return { ticket: '', returnUrl: '/' };
+  const params = new URLSearchParams(hash.slice(1));
+  return {
+    ticket: params.get('code') || '',
+    returnUrl: normalizeReturnUrl(params.get('returnUrl')),
+  };
+}
+
 export default function SyntheticLoginPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const ticket = useMemo(() => searchParams.get('code') || '', [searchParams]);
-  const returnUrl = useMemo(() => normalizeReturnUrl(searchParams.get('returnUrl')), [searchParams]);
+  const [{ ticket, returnUrl }] = useState(() => parseSyntheticLoginFragment(window.location.hash));
   const [error, setError] = useState('');
   const setAuth = useAuthStore((state) => state.login);
   const setTokens = useAuthStore((state) => state.setTokens);

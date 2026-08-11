@@ -52,3 +52,19 @@ test('主管报告把异常提前并保留全量逐项账本', () => {
   assert.doesNotMatch(report, /\| VIS-003 \|/);
   assert.doesNotMatch(report, /node scripts|e2e\/|curl /);
 });
+
+test('用例行通过但 Playwright 进程失败时主管结论仍是不通过', () => {
+  const report = renderSupervisorReport({
+    plan,
+    matrixMarkdown: matrix,
+    runId: 'stsmk-process-failure',
+    rows: [
+      { caseId: 'CORE-001', environment: 'cds', status: 'pass', durationMs: 10, error: '' },
+    ],
+    executionFailures: ['cds'],
+  });
+
+  assert.match(report, /主管结论：不通过/);
+  assert.match(report, /Playwright 进程异常退出/);
+  assert.doesNotMatch(report, /总体结论 \| 通过/);
+});

@@ -40,9 +40,17 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("DeploymentScope.ScopeIdempotencyKey($\"{ProfileAvatarRunAppKey}::", source);
         Assert.Contains("x.IdempotencyKey == idempotencyKey", source);
         Assert.Contains("IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey", source);
+        Assert.Contains("BuildAvatarGenerationRunId(currentUserId, idempotencyKey)", source);
         Assert.Contains("ServerErrorCategory.DuplicateKey", source);
         Assert.Contains("BuildAvatarGenerationAccepted(existingRun)", source);
         Assert.Contains("return new { runId = run.Id, status, stage };", source);
+
+        var databaseSource = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs"));
+        var indexStart = databaseSource.IndexOf("uniq_image_gen_runs_owner_idem", StringComparison.Ordinal);
+        Assert.True(indexStart >= 0);
+        var indexDefinition = databaseSource[indexStart..Math.Min(databaseSource.Length, indexStart + 500)];
+        Assert.Contains("Unique = true", indexDefinition);
     }
 
     [Fact]

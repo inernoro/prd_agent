@@ -115,13 +115,7 @@ public sealed class SyntheticLoginController : ControllerBase
             { "ConsumedAt", BsonNull.Value },
         }, cancellationToken: ct);
 
-        var loginUrl = QueryHelpers.AddQueryString(
-            "/synthetic-login",
-            new Dictionary<string, string?>
-            {
-                ["code"] = code,
-                ["returnUrl"] = returnUrl,
-            });
+        var loginUrl = BuildLoginUrl(code, returnUrl);
         _logger.LogWarning(
             "Synthetic login ticket issued. ticketId={TicketId}, username={Username}, expiresAt={ExpiresAt}, requestId={RequestId}",
             ticketId,
@@ -265,6 +259,9 @@ public sealed class SyntheticLoginController : ControllerBase
 
     private static int NormalizeTicketSeconds(int? requestedSeconds) =>
         Math.Clamp(requestedSeconds ?? DefaultTicketSeconds, MinTicketSeconds, MaxTicketSeconds);
+
+    private static string BuildLoginUrl(string code, string returnUrl) =>
+        $"/synthetic-login#code={Uri.EscapeDataString(code)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
 
     private static bool TryNormalizeReturnUrl(string? raw, out string returnUrl)
     {
