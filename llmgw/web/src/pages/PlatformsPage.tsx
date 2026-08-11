@@ -136,7 +136,9 @@ export function PlatformsPage() {
     setKeyEditId(null);
     setEditDraft({
       name: p.name,
-      platformType: p.platformType || 'openai',
+      // 原样带上，不要 || 'openai' 兜底：认领自 MAP 的上游可能是 openrouter / google
+      // 这类存量类型，兜底成 openai 等于在用户没点过类型选择器的情况下悄悄给它改了协议。
+      platformType: p.platformType || '',
       apiUrl: p.apiUrl || '',
       maxConcurrency: p.maxConcurrency,
       remark: p.remark || '',
@@ -146,7 +148,14 @@ export function PlatformsPage() {
   async function saveEdit(p: PlatformItem) {
     setBusyId(p.id);
     setToast(null);
-    const res = await updatePlatform(p.id, editDraft);
+    // 类型没改就不提交这个字段：更新端点只收 openai / claude，而存量类型（openrouter / google 等）
+    // 原样回传会被 INVALID_INPUT 挡下——用户只想改个名字，却被要求先把上游重新分类。
+    // 端点把 null 当「这个字段不改」，所以省掉即可。
+    const typeChanged = (editDraft.platformType ?? '') !== (p.platformType || '');
+    const res = await updatePlatform(p.id, {
+      ...editDraft,
+      platformType: typeChanged ? editDraft.platformType : undefined,
+    });
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
@@ -531,9 +540,17 @@ export function PlatformsPage() {
                           />
                           <select
                             aria-label="接口类型"
-                            value={editDraft.platformType ?? 'openai'}
+                            value={editDraft.platformType ?? ''}
                             onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
                             style={inputStyle}>
+                            {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
+                                用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
+                            {editDraft.platformType
+                              && !['openai', 'claude'].includes(editDraft.platformType) ? (
+                                <option value={editDraft.platformType}>
+                                  {editDraft.platformType}（存量类型）
+                                </option>
+                              ) : null}
                             <option value="openai">openai</option>
                             <option value="claude">claude</option>
                           </select>

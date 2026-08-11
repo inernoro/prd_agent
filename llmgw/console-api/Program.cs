@@ -7384,6 +7384,43 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
         var members = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
         var kept = new BsonArray();
         var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        // 这条成员是不是本次合并要改写的（源平台上的，或指向被丢弃模型的）
+        bool BelongsToMerge(BsonDocument m)
+        {
+            var pid = m.GetStringOrEmpty("PlatformId");
+            var mid = m.GetStringOrEmpty("ModelId");
+            // 名字命中只在源平台上算数，而那种情况第一个条件已经覆盖，不必再列一遍
+            return string.Equals(pid, id, StringComparison.Ordinal)
+                || survivorByDroppedModelId.ContainsKey(mid);
+        }
+
+        // 规范化键：与下面算 key 的口径必须一致，否则「谁占了这个键」判不准
+        string CanonicalKey(string platformId, string modelId)
+        {
+            if (string.Equals(platformId, targetId, StringComparison.Ordinal)
+                && modelId.Length > 0
+                && targetModelIdByName.TryGetValue(modelId.Trim().ToLowerInvariant(), out var canonical)
+                && canonical.Length > 0)
+                modelId = canonical;
+            return $"{platformId}\n{modelId}";
+        }
+
+        // 冲突时保留**目标那条**，不是数组里排前面那条。
+        // 合并的语义是把源并进目标：目标成员的 Priority / Protocol / 定价 / 能力 / 健康历史
+        // 都是用户为这个平台配好的现成配置；源那条只是要被吸收掉的。若源在数组里靠前
+        // （比如 Priority 更小），按「先到先得」就会用源的配置把目标那条顶掉——
+        // 静默换掉一整条成员的配置，比留两条重复更糟。
+        // 所以先扫一遍，记下**不属于本次合并**的成员占住了哪些键。
+        var keysOwnedByExistingMembers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in members)
+        {
+            if (!raw.IsBsonDocument) continue;
+            var existing = raw.AsBsonDocument;
+            if (BelongsToMerge(existing)) continue;
+            keysOwnedByExistingMembers.Add(
+                CanonicalKey(existing.GetStringOrEmpty("PlatformId"), existing.GetStringOrEmpty("ModelId")));
+        }
         foreach (var raw in members)
         {
             if (!raw.IsBsonDocument) { kept.Add(raw); continue; }
@@ -7423,19 +7460,19 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             // 归一**只对已经落在目标平台的成员做**：模型名只在一条上游内唯一，跨平台同名是
             // 两个不同模型，而键里本来就带 PlatformId，天然把它们隔开——不能再犯上一轮
             // 「拿名字做全局匹配」的错。
-            var memberPlatformId = member.GetStringOrEmpty("PlatformId");
-            var memberModelKey = member.GetStringOrEmpty("ModelId");
-            if (string.Equals(memberPlatformId, targetId, StringComparison.Ordinal)
-                && memberModelKey.Length > 0
-                && targetModelIdByName.TryGetValue(memberModelKey.Trim().ToLowerInvariant(), out var canonicalModelId)
-                && canonicalModelId.Length > 0)
+            var key = CanonicalKey(member.GetStringOrEmpty("PlatformId"), member.GetStringOrEmpty("ModelId"));
+
+            // 目标优先：源那条撞上本来就在的成员时，丢的是源，不是目标。
+            if (isSource && keysOwnedByExistingMembers.Contains(key))
             {
-                memberModelKey = canonicalModelId;
+                result.PoolMembersDeduped++;
+                continue;
             }
-            var key = $"{memberPlatformId}\n{memberModelKey}";
             if (!seen.Add(key))
             {
-                if (isSource) result.PoolMembersDeduped++;
+                // 走到这里被丢掉的一定是本次合并带进来的那条（目标侧的键已经在上面挡住了），
+                // 所以计数不会漏——原先按 isSource 记数会在「被丢的是目标」时少算一条。
+                result.PoolMembersDeduped++;
                 continue;
             }
             if (isSource) result.PoolMembersRepointed++;

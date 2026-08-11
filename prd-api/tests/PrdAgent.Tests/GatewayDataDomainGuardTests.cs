@@ -4344,9 +4344,16 @@ public class GatewayDataDomainGuardTests
         // (目标平台, "gpt-4o") 是同一个模型的两条成员，字面不同会被当成两条留下来，
         // 加权选择就把这个模型的权重算了两遍。归一只对落在目标平台的成员做——
         // 跨平台同名是两个不同模型，键里本来就带 PlatformId 隔开。
-        Assert.Contains("targetModelIdByName.TryGetValue(memberModelKey", merge);
         var dedupDense = new string(merge.Where(c => !char.IsWhiteSpace(c)).ToArray());
-        Assert.Contains("string.Equals(memberPlatformId,targetId,StringComparison.Ordinal)", dedupDense);
+        Assert.Contains("stringCanonicalKey(stringplatformId,stringmodelId)", dedupDense);
+        Assert.Contains("string.Equals(platformId,targetId,StringComparison.Ordinal)", dedupDense);
+
+        // 冲突时保留**目标那条**，不是数组里排前面那条。合并是把源并进目标，目标成员的
+        // Priority / Protocol / 定价 / 能力 / 健康历史都是用户为这个平台配好的；源那条只是要被吸收掉的。
+        // 按「先到先得」的话，源在数组里靠前就会把目标那条顶掉——静默换掉一整条成员的配置，
+        // 比留两条重复更糟。所以必须先扫出「本来就在的成员」占了哪些键。
+        Assert.Contains("keysOwnedByExistingMembers", merge);
+        Assert.Contains("isSource&&keysOwnedByExistingMembers.Contains(key)", dedupDense);
 
         // 名字命中必须**与**「这条成员本来就在源平台」取合取，不能只是恰好写在附近。
         // 去空白后断言这个合取本身：`pointsAtSourcePlatform` 在旧版里也出现在附近
