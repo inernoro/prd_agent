@@ -249,6 +249,17 @@ public sealed class GatewayConfigurationProvisioningTests
     }
 
     [Fact]
+    public void ContainsImageSizeControlCapability_RecognizesReservedNamespaceAliases()
+    {
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["seed", "parameter:image_size.none"]).ShouldBeTrue();
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["param.image_size.field.size"]).ShouldBeTrue();
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["image_generation", "parameter:seed"]).ShouldBeFalse();
+    }
+
+    [Fact]
     public void HasEnabledCapability_RequiresBooleanTrueValue()
     {
         GatewayConfigurationProvisioning.HasEnabledCapability(

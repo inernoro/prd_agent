@@ -96,7 +96,10 @@ export function ModelPoolsPage() {
       if (typeRes.success) setPoolTypes(typeRes.data);
       const exchangeCandidates = exchangeRes.success ? toExchangeModelCandidates(exchangeRes.data.items) : [];
       setModels([...(modelRes.success ? modelRes.data.items : []), ...exchangeCandidates]);
-      if (parameterRes.success) setParameterMeta(parameterRes.data.items);
+      if (parameterRes.success) {
+        setParameterMeta(parameterRes.data.items.filter((item) =>
+          !isImageSizeControlParameter(`parameter:${item.name}`)));
+      }
     });
     return () => {
       alive = false;
@@ -315,6 +318,10 @@ export function ModelPoolsPage() {
       setToast('优先级必须是正整数');
       return;
     }
+    if (containsImageSizeControlParameter(draft.parameterCapabilities)) {
+      setToast('图片尺寸能力请在模型高级配置中维护，不能写入模型池成员');
+      return;
+    }
     setBusyId(pool.id);
     setToast(null);
     const res = await upsertPoolModel(pool.id, {
@@ -371,9 +378,13 @@ export function ModelPoolsPage() {
       setToast('优先级必须是正整数');
       return;
     }
+    const parameterCapabilities = memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities);
+    if (containsImageSizeControlParameter(parameterCapabilities)) {
+      setToast('图片尺寸能力请在模型高级配置中维护，不能写入模型池成员');
+      return;
+    }
     setBusyId(key);
     setToast(null);
-    const parameterCapabilities = memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities);
     const res = await upsertPoolModel(pool.id, {
       modelId: member.modelId,
       platformId: member.platformId,
@@ -1286,12 +1297,15 @@ function emptyBulkImportDraft(): PoolBulkImportDraft {
 }
 
 function mergeParameterCapabilities(base: ModelCapability[], text: string): ModelCapability[] {
-  const parsed = parseParameterCapabilities(text);
+  const parsed = parseParameterCapabilities(text).filter((capability) =>
+    !isImageSizeControlParameter(capability.type));
   const next = base.filter((cap) => parameterCapabilityName(cap.type) === null);
   const byName = new Map<string, ModelCapability>();
   for (const capability of base) {
     const name = parameterCapabilityName(capability.type);
-    if (name) byName.set(name.toLowerCase(), capability);
+    if (name && !isImageSizeControlParameter(capability.type)) {
+      byName.set(name.toLowerCase(), capability);
+    }
   }
   for (const capability of parsed) {
     const name = parameterCapabilityName(capability.type);
@@ -1322,7 +1336,7 @@ function parameterCapabilityText(capabilities: ModelCapability[]) {
   return capabilities
     .map((capability) => {
       const name = parameterCapabilityName(capability.type);
-      if (!name) return null;
+      if (!name || isImageSizeControlParameter(capability.type)) return null;
       return capability.value ? name : `${name}=false`;
     })
     .filter((x): x is string => x !== null)
@@ -1338,6 +1352,15 @@ function parameterCapabilityName(type: string) {
     }
   }
   return null;
+}
+
+function isImageSizeControlParameter(type: string) {
+  return parameterCapabilityName(type)?.toLowerCase().startsWith('image_size.') === true;
+}
+
+function containsImageSizeControlParameter(text: string) {
+  return parseParameterCapabilities(text).some((capability) =>
+    isImageSizeControlParameter(capability.type));
 }
 
 function normalizeParameterName(value: string) {

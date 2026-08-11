@@ -453,6 +453,9 @@ public static class GatewayConfigurationProvisioning
         => NormalizeParameterCapabilityName(type)?
             .StartsWith(ImageSizeParameterPrefix, StringComparison.OrdinalIgnoreCase) == true;
 
+    public static bool ContainsImageSizeControlCapability(IEnumerable<string?> capabilityTypes)
+        => capabilityTypes.Any(IsImageSizeControlCapability);
+
     public static bool HasEnabledCapability(
         IEnumerable<BsonDocument> capabilities,
         params string[] capabilityTypes)

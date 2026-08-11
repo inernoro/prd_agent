@@ -8168,6 +8168,13 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
     var managedAppendOnly = IsManagedAppendOnlyPool(pool);
     if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    if (GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            body.Capabilities?.Select(capability => capability?.Type) ?? []))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INVALID_INPUT",
+            "图片尺寸能力只能在模型高级配置中维护，不能写入模型池成员"), jsonOptions, 400);
+    }
 
     var modelId = (body.ModelId ?? string.Empty).Trim();
     var platformId = (body.PlatformId ?? string.Empty).Trim();
