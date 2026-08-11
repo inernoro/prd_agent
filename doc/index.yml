@@ -310,6 +310,7 @@ docs:
   debt.video-agent: "视频生成 Agent · 债务台账"
   debt.visual-agent: "视觉创作 · 债务台账"
   debt.web-hosting: "网页托管 · 债务台账"
+  plan.web-hosting.preview-and-ask: "网页托管 · 预览修复与向我提问 · 三 PR 拆分看板"
   debt.workflow-agent: "工作流 · 债务台账"
 
   # 七、报告与周报

@@ -204,6 +204,27 @@ public interface IHostedSiteService
 
     /// <summary>删除评论（作者本人或站点 owner）。无权 / 不存在返回 false。</summary>
     Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 经分享链接解析出一个可读取正文的站点（公开访问路径）。校验分享门禁（撤销 / 过期 / 可见性 / 密码），
+    /// 与 ListCommentsByShareAsync 同一套判定源。siteId 为空取分享首站点；指定时必须属于该分享。
+    /// 供预览页取回站点入口 HTML 用（浏览器直接 fetch 托管域名会被 CORS 拦掉，必须走服务端同源代理）。
+    /// </summary>
+    Task<ShareSiteResolveResult> ResolveShareSiteAsync(
+        string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default);
+}
+
+/// <summary>分享链接解析结果：拿到站点，或拿到一个可映射成 HTTP 状态的门禁错误。</summary>
+public class ShareSiteResolveResult
+{
+    public HostedSite? Site { get; set; }
+
+    public string? Error { get; set; }
+    public int HttpStatus { get; set; } = 200;
+    /// <summary>错误码：not_found / expired / VISIBILITY_DENIED / UNAUTHORIZED / rate_limited</summary>
+    public string? ErrorCode { get; set; }
+    /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试</summary>
+    public int? RetryAfterSeconds { get; set; }
 }
 
 public class HostedSiteCommentDto

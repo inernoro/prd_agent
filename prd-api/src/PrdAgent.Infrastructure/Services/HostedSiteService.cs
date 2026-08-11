@@ -378,18 +378,17 @@ public class HostedSiteService : IHostedSiteService
         var normalizedType = string.IsNullOrWhiteSpace(wrappedAssetType)
             ? null : wrappedAssetType.Trim().ToLowerInvariant();
 
-        await _db.HostedSites.UpdateOneAsync(
-            x => x.Id == siteId,
-            Builders<HostedSite>.Update
-                .Set(x => x.EntryFile, entryFile)
-                .Set(x => x.SiteUrl, siteUrl)
-                .Set(x => x.Files, siteFiles)
-                .Set(x => x.TotalSize, totalSize)
-                .Set(x => x.WrappedAssetType, normalizedType)
-                .Set(x => x.UpdatedAt, now)
-                .Set(x => x.ContentVersion, now)
-                .Set(x => x.SlideNavCompatVersion, SlideNavVersion), // 重传内容已注入当前版垫片
-            cancellationToken: ct);
+        var update = Builders<HostedSite>.Update
+            .Set(x => x.EntryFile, entryFile)
+            .Set(x => x.SiteUrl, siteUrl)
+            .Set(x => x.Files, siteFiles)
+            .Set(x => x.TotalSize, totalSize)
+            .Set(x => x.WrappedAssetType, normalizedType)
+            .Set(x => x.UpdatedAt, now)
+            .Set(x => x.ContentVersion, now)
+            .Set(x => x.SlideNavCompatVersion, SlideNavVersion); // 重传内容已注入当前版垫片
+
+        await _db.HostedSites.UpdateOneAsync(x => x.Id == siteId, update, cancellationToken: ct);
 
         // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
         // 原地覆盖，不能删——否则会删掉刚写入的文件。
@@ -2870,6 +2869,38 @@ public class HostedSiteService : IHostedSiteService
     }
 
     /// <summary>
+    /// 经分享链接解析出一个可读取正文的站点。门禁**完全复用** ResolveShareForCommentAsync
+    /// （撤销 / 过期 / 可见性 / 密码 + 滑动窗口限流），不另写一套判定，避免两份判据日后漂移。
+    /// </summary>
+    public async Task<ShareSiteResolveResult> ResolveShareSiteAsync(
+        string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default)
+    {
+        var (sites, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
+        if (err is { } e)
+            return new ShareSiteResolveResult
+            {
+                Error = e.Error,
+                HttpStatus = e.HttpStatus,
+                ErrorCode = e.ErrorCode,
+                RetryAfterSeconds = e.RetryAfter,
+            };
+
+        if (sites.Count == 0)
+            return new ShareSiteResolveResult { Error = "分享链接没有可访问的站点", HttpStatus = 404, ErrorCode = "not_found" };
+
+        // siteId 为空取首站点；指定时必须在本分享的站点集合内，否则等同不存在
+        // （不能让持有任意分享 token 的人拿它去读别人的站点）。
+        var site = string.IsNullOrWhiteSpace(siteId)
+            ? sites[0]
+            : sites.FirstOrDefault(s => s.Id == siteId);
+
+        if (site == null)
+            return new ShareSiteResolveResult { Error = "站点不属于该分享链接", HttpStatus = 404, ErrorCode = "not_found" };
+
+        return new ShareSiteResolveResult { Site = site };
+    }
+
+    /// <summary>
     /// 评论专用分享门禁：撤销 / 过期 / 可见性 / 密码。复用 EnforceShareVisibilityAsync（与 ViewShareAsync 同款）；
     /// 密码仅校验不动滑动窗口（防爆破由 view 端点承担）。通过后内联解析分享目标站点。
     /// </summary>
@@ -2881,8 +2912,17 @@ public class HostedSiteService : IHostedSiteService
         if (share == null || share.IsRevoked)
             return (empty, ("分享链接不存在", 404, "not_found", null));
 
-        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
+        // 过期判定必须走 ShouldRejectExpiredShare，与 ViewShareAsync 同一把尺子。
+        //
+        // 这里原本是裸的 ExpiresAt 比较，漏掉了 visit 链接的豁免：历史遗留的 Purpose="visit"
+        // 链接带着一个早已过去的 ExpiresAt，ViewShareAsync 会放行并顺手治好它，
+        // 而这条路径直接判过期。后果是同一条链接「页面打得开、正文代理和提问却说已过期」——
+        // 判据抄成两份之后各自漂移的典型（predicate-and-wiring-discipline 形状 3）。
+        if (ShouldRejectExpiredShare(share, DateTime.UtcNow))
             return (empty, ("分享链接已过期", 400, "expired", null));
+
+        // 与 ViewShareAsync 一样顺手治愈：不然每次访问都要再走一遍豁免分支
+        await HealVisitShareIfNeededAsync(share, ct);
 
         var visForbid = await EnforceShareVisibilityAsync(share, viewerUserId, ct);
         if (visForbid is { } vf)

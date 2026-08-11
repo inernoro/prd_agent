@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
-import { listShareComments } from '@/services/real/webPages';
+import { listShareComments, getShareSiteContent } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
@@ -28,9 +28,120 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
   return /\.html?$/i.test(target);
 }
 
-function withPreviewBase(html: string, siteUrl: string) {
-  if (/<base\b/i.test(html)) return html;
+/**
+ * 这份 HTML 能不能安全地走 srcDoc 预览。
+ *
+ * srcDoc 路径刻意不给 allow-same-origin（否则用户上传的任意 HTML 就拿到 MAP 同源能力），
+ * 代价是文档处于**不透明源**。经典 `<script src>` 跨域不需要 CORS，照常能加载；
+ * 但 `<script type="module">` 是按 CORS 模式取的——而托管域名不返回
+ * Access-Control-Allow-Origin（正是本文件到处在说的那件事），模块脚本会被浏览器拦掉。
+ *
+ * 后果很具体：Vite/webpack 打包出来的 SPA 入口恰恰是 `<script type="module" src="...">`，
+ * 走 srcDoc 会白屏。这类站点必须留在直链 iframe 上——直链是同源加载，模块脚本没问题。
+ *
+ * 所以判据是「有没有外链的模块脚本」，而不是「是不是 HTML」。
+ * 内联的 `<script type="module">`（没有 src）不受影响，不必排除。
+ */
+export function canUseSrcDocPreview(html: string): boolean {
+  if (!html) return false;
+  return !hasExternalModuleScript(html);
+}
+
+/**
+ * 有没有「外链的模块脚本」。
+ *
+ * 这里**逐个属性解析**而不是拿一条正则去撞整段标签。第一版写的是
+ * `type\s*=\s*["']module["']`，要求引号必须存在——而 `<script type=module src=...>`
+ * 是完全合法的 HTML，于是这类页面被判成「可以走 srcDoc」，进去之后模块脚本因缺 CORS
+ * 被拦，白屏。判据比它该管的范围窄，正是 predicate-and-wiring-discipline 形状 1：
+ * 语义相同、写法不同的输入让判据翻转。
+ *
+ * 属性值三种合法写法（双引号 / 单引号 / 不带引号）都要认，属性顺序与大小写也不能挑。
+ */
+function hasExternalModuleScript(html: string): boolean {
+  // 只取 <script ...> 的开标签部分，逐个解析里面的属性
+  const openTags = html.match(/<script\b[^>]*>/gi);
+  if (!openTags) return false;
+
+  for (const tag of openTags) {
+    const attrs = parseAttributes(tag);
+    if (attrs.type === 'module' && attrs.src) return true;
+  }
+  return false;
+}
+
+/** 解析标签里的属性；值支持双引号、单引号、无引号三种写法，键统一小写。 */
+function parseAttributes(tag: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // 去掉开头的 `<script` 与结尾的 `>`，只留属性区
+  const body = tag.replace(/^<\s*script\b/i, '').replace(/\/?>$/, '');
+  const re = /([^\s=/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+)))?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const key = m[1].toLowerCase();
+    if (!key) continue;
+    const value = (m[2] ?? m[3] ?? m[4] ?? '').trim().toLowerCase();
+    out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * 取回原文期间，那层「正在准备预览...」的白色遮罩最多盖多久。
+ *
+ * 遮罩本身是为了避免「先闪一下直链 iframe、再跳成 srcDoc」的跳变，但它是**不透明全屏**的：
+ * 底下的直链 iframe 其实一直在加载，代理慢或不可达时，一个本来能正常显示的页面会被白屏
+ * 盖住整个 HTTP 超时。这正是本 PR 要修的那个毛病（超时不等于坏了，别拿遮罩盖住已经画出来
+ * 的页面）——在自己新加的遮罩上重犯一次就说不过去了。所以给它一个短窗口，到点必让位。
+ */
+export const PREVIEW_MASK_TIMEOUT_MS = 1500;
+
+/**
+ * 该不该用遮罩盖住直链 iframe。抽成纯函数是为了能被测到「加载永远不结束时遮罩必须让位」。
+ *
+ * 三个条件缺一不可：确实在取原文、还没拿到可用的 srcDoc、短窗口没到点。
+ */
+export function shouldMaskDirectPreview(opts: {
+  loading: boolean;
+  hasSrcDoc: boolean;
+  maskExpired: boolean;
+}): boolean {
+  return opts.loading && !opts.hasSrcDoc && !opts.maskExpired;
+}
+
+/**
+ * 已有的 `<base href>` 是不是相对值（`./` `/assets/` `../` 这类）。
+ *
+ * 相对 base 在直链 iframe 里没问题——文档 URL 就是托管域名，解析出来还是托管域名。
+ * 但注进 srcDoc 之后文档 URL 变成了**MAP 的分享页地址**，同一个 `./` 会解析到
+ * `/s/wp/{token}/`，于是页面的脚本、样式、链接全都去 MAP 上找，一个都取不到。
+ * 上传通道本身会把根相对的 href 改写成 `./`，所以这类站点在真实数据里很常见。
+ *
+ * 判据只认「能不能独立成立的绝对地址」：带协议（http:、https:、data:）或协议相对（//）
+ * 才算绝对，其余一律要按 siteUrl 重解析一次。
+ */
+function isAbsoluteBaseHref(href: string): boolean {
+  const v = href.trim();
+  if (!v) return false;
+  return v.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(v);
+}
+
+export function withPreviewBase(html: string, siteUrl: string) {
   const baseHref = new URL('.', siteUrl).toString();
+
+  const existing = html.match(/<base\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))[^>]*>/i);
+  if (existing) {
+    const href = existing[1] ?? existing[2] ?? existing[3] ?? '';
+    if (isAbsoluteBaseHref(href)) return html;
+    // 相对 base：按站点地址重解析成绝对值，再原地替换整个 <base> 标签。
+    // 保留原标签的位置（在 <head> 里的先后顺序会影响它之后的相对 URL 如何解析）。
+    const resolved = new URL(href.trim() || '.', baseHref).toString();
+    return html.replace(existing[0], `<base href="${escapeHtmlAttr(resolved)}">`);
+  }
+
+  // 有 <base> 但没写 href（合法但没有意义）：当作没有，照常注入
+  if (/<base\b/i.test(html)) return html;
+
   const baseTag = `<base href="${escapeHtmlAttr(baseHref)}">`;
   if (/<head\b[^>]*>/i.test(html)) {
     return html.replace(/<head\b([^>]*)>/i, `<head$1>${baseTag}`);
@@ -67,6 +178,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [commentCount, setCommentCount] = useState<number | null>(null);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
   const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
+  /** 遮罩的短窗口是否已到点。到点后不再遮挡底下的直链 iframe，见 PREVIEW_MASK_TIMEOUT_MS */
+  const [previewMaskExpired, setPreviewMaskExpired] = useState(false);
+  /** 直链 iframe 是否已经露给用户看过（遮罩到点即为真）。异步回调读它，不读 state */
+  const exposedDirectRef = useRef(false);
+  /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
+  const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -146,32 +263,61 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     return () => { alive = false; };
   }, [token, password, data]);
 
+  // 取回入口 HTML 走**服务端同源代理**（getShareSiteContent），不是浏览器直接 fetch(site.siteUrl)。
+  // 托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧跨域 fetch 一律被拦，
+  // 于是 srcDoc 分支永远拿不到内容、静默退化成「Chrome 里只绘制空白」的直链 iframe——
+  // 这就是「三个网页无法预览」的根因之一。改回浏览器 fetch 会让这条兜底再次变成死代码，
+  // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
     const site = data?.sites.length === 1 ? data.sites[0] : null;
-    if (!site || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
+    if (!site || !token || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
       setEmbeddedHtml(null);
+      setEmbeddedHtmlError(null);
       setEmbeddedHtmlLoading(false);
+      setPreviewMaskExpired(false);
       return;
     }
 
     let alive = true;
     setEmbeddedHtml(null);
+    setEmbeddedHtmlError(null);
     setEmbeddedHtmlLoading(true);
-    fetch(site.siteUrl, { credentials: 'omit' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const html = await res.text();
-        if (alive) setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(html, site.siteUrl) });
+    // 遮罩只挡一小会儿。到点后即便原文还没回来，也把底下的直链 iframe 露出来——
+    // 它多半已经把页面画好了，继续盖着就是拿「可能更好的预览」换「确定看不见」。
+    setPreviewMaskExpired(false);
+    // 同一个「到点了」要被两处读：渲染读 state，异步回调读 ref。
+    // 回调闭包里的 state 是发起那一刻的旧值，永远看不到超时后的 true。
+    exposedDirectRef.current = false;
+    const maskTimer = window.setTimeout(() => {
+      if (!alive) return;
+      exposedDirectRef.current = true;
+      setPreviewMaskExpired(true);
+    }, PREVIEW_MASK_TIMEOUT_MS);
+    getShareSiteContent(token, site.id, password || undefined)
+      .then((res) => {
+        if (!alive) return;
+        if (res.success && res.data?.html) {
+          // 遮罩已经让位 = 直链 iframe 已经在用户眼前跑起来了。此时再换成 srcDoc，
+          // 对浏览器就是换一个文档：滚动位置、表单里敲的字、PPT 翻到第几页全部清零。
+          // 代理最慢可以拖到 20s 才回来，那时候用户早就在用这个页面了——
+          // 「可能更好的预览」不值一次当面重载，迟到就直接丢弃。
+          if (exposedDirectRef.current) return;
+          setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) });
+          return;
+        }
+        // 取不回原文时仍回退直链 iframe（多数情况仍能显示），但把原因显式说出来，
+        // 不再静默吞掉——用户至少知道「为什么这页可能是空白的」。
+        setEmbeddedHtmlError(res.error?.message || '未能取回网页原文，已回退直接加载');
       })
       .catch(() => {
-        if (alive) setEmbeddedHtml(null);
+        if (alive) setEmbeddedHtmlError('未能取回网页原文，已回退直接加载');
       })
       .finally(() => {
         if (alive) setEmbeddedHtmlLoading(false);
       });
 
-    return () => { alive = false; };
-  }, [data]);
+    return () => { alive = false; window.clearTimeout(maskTimer); };
+  }, [data, token, password]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -425,7 +571,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
     const site = data.sites[0];
-    const iframeHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    // 打包型 SPA（入口是外链 module 脚本）必须留在直链 iframe：srcDoc 的不透明源会让
+    // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
+    const fetchedHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    const iframeHtml = fetchedHtml && canUseSrcDocPreview(fetchedHtml) ? fetchedHtml : null;
     return (
       <div
         ref={singleViewRef}
@@ -527,7 +676,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               : 'allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen'}
             allowFullScreen
           />
-          {embeddedHtmlLoading && !iframeHtml && (
+          {/* 遮罩是为了避免「先闪直链、再跳 srcDoc」的跳变，但它不透明且全屏：代理慢或不可达时
+              会把底下那个其实已经渲染好的直链页面白屏盖住整个 HTTP 超时。所以只挡一小会儿，
+              到点让位——判据抽在 shouldMaskDirectPreview，守卫见 ShareViewPage.preview.test.ts。 */}
+          {shouldMaskDirectPreview({
+            loading: embeddedHtmlLoading,
+            hasSrcDoc: !!iframeHtml,
+            maskExpired: previewMaskExpired,
+          }) && (
             <div style={{
               position: 'absolute',
               inset: 0,
@@ -539,6 +695,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               fontSize: 14,
             }}>
               正在准备预览...
+            </div>
+          )}
+          {/* 取回原文失败：不遮住 iframe（页面多半仍能直接加载出来），只在角落把原因说清楚。
+              静默吞掉失败正是「明明打不开、却不知道为什么」的来源。 */}
+          {embeddedHtmlError && !iframeHtml && !embeddedHtmlLoading && (
+            <div style={{
+              position: 'absolute',
+              left: 12,
+              bottom: 12,
+              maxWidth: 'min(420px, calc(100% - 24px))',
+              padding: '6px 10px',
+              borderRadius: 8,
+              background: 'rgba(17,17,17,0.82)',
+              color: 'rgba(255,255,255,0.86)',
+              fontSize: 12,
+              lineHeight: 1.5,
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+            }}>
+              {embeddedHtmlError}
             </div>
           )}
         </div>
