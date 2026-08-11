@@ -780,9 +780,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       jobId?: string;
       actualModel?: string;
       errorMessage?: string;
+      recoveryToken?: string;
     }>(submit);
     expect(submitted.success, submitted.errorMessage || '视频任务提交失败').toBe(true);
     expect(submitted.jobId).toBeTruthy();
+    expect(submitted.recoveryToken).toBeTruthy();
+    const recoveryQuery = `?recoveryToken=${encodeURIComponent(submitted.recoveryToken!)}`;
 
     const startedAt = Date.now();
     let videoUrl = '';
@@ -793,7 +796,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         errorMessage?: string;
         isCompleted: boolean;
         isFailed: boolean;
-      }>(await page.request.get(`/api/video-agent/videogen-direct/status/${encodeURIComponent(submitted.jobId!)}`, {
+      }>(await page.request.get(`/api/video-agent/videogen-direct/status/${encodeURIComponent(submitted.jobId!)}${recoveryQuery}`, {
         headers: authHeaders(token),
       }));
       if (status.isFailed) {
@@ -807,8 +810,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
     }
     expect(videoUrl, '视频任务完成后必须返回成片标识').toBeTruthy();
-    const modelQuery = submitted.actualModel ? `?model=${encodeURIComponent(submitted.actualModel)}` : '';
-    const video = await page.request.get(`/api/video-agent/videogen-direct/content/${encodeURIComponent(submitted.jobId!)}${modelQuery}`, {
+    const video = await page.request.get(`/api/video-agent/videogen-direct/content/${encodeURIComponent(submitted.jobId!)}${recoveryQuery}`, {
       headers: authHeaders(token),
       timeout: 180_000,
     });

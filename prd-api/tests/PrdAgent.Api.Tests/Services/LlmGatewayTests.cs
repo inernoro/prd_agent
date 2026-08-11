@@ -2101,10 +2101,12 @@ public class LlmGatewayTests
     }
 
     [Theory]
-    [InlineData("Your request was rejected by the safety system due to content policy.")]
-    [InlineData("content_policy_violation")]
-    [InlineData("Image blocked by safety policy")]
-    public void ShouldQuarantineRawProviderResponse_WhenContentPolicyRejectsImage_ShouldReturnFalse(string message)
+    [InlineData(400, "content_policy_violation")]
+    [InlineData(403, "Your request was rejected by the safety system due to content policy.")]
+    [InlineData(422, "Image blocked by safety policy")]
+    public void ShouldQuarantineRawProviderResponse_WhenContentPolicyRejectsImage_ShouldReturnFalse(
+        int statusCode,
+        string message)
     {
         var request = new GatewayRawRequest
         {
@@ -2118,8 +2120,9 @@ public class LlmGatewayTests
         };
 
         var responseBody = $"{{\"error\":{{\"message\":\"{message}\"}}}}";
-        Assert.True(LlmGateway.IsContentPolicyDenial(403, responseBody));
-        Assert.False(LlmGateway.ShouldQuarantineRawProviderResponse(403, responseBody, request));
+        Assert.True(LlmGateway.IsContentPolicyDenial(statusCode, responseBody));
+        Assert.Equal(statusCode == 403, LlmGateway.ShouldRetryRawProviderResponse(statusCode, responseBody, request));
+        Assert.False(LlmGateway.ShouldQuarantineRawProviderResponse(statusCode, responseBody, request));
     }
 
     [Fact]

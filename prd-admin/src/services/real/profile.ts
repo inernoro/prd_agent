@@ -74,7 +74,7 @@ function forgetAvatarGenerationCreation(idempotencyKey: string): void {
       globalThis.sessionStorage.removeItem(storageKey);
     }
   } catch {
-    globalThis.sessionStorage?.removeItem(storageKey);
+    // 会话存储被浏览器策略禁用时，读写都会抛错；清理失败只降级本次恢复能力。
   }
 }
 

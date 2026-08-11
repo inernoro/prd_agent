@@ -116,6 +116,48 @@ describe('generateMyAvatarPreview', () => {
     expect(retryKey).toBe(firstKey);
   });
 
+  it('浏览器拒绝会话存储时仍完成已创建头像任务', async () => {
+    const availableSessionStorage = globalThis.sessionStorage;
+    const storageDenied = () => { throw new DOMException('Access denied', 'SecurityError'); };
+    vi.stubGlobal('sessionStorage', {
+      get length() { return storageDenied(); },
+      clear: storageDenied,
+      getItem: storageDenied,
+      key: storageDenied,
+      removeItem: storageDenied,
+      setItem: storageDenied,
+    } as Storage);
+    const sha = 'd'.repeat(64);
+    mockedApiRequest
+      .mockResolvedValueOnce({
+        success: true,
+        data: { runId: 'run-storage-denied', status: 'queued', stage: '正在排队' },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          status: 'completed',
+          stage: '生成完成',
+          previewUrl: 'https://assets.example/storage-denied.png',
+          assetSha256: sha,
+        },
+        error: null,
+      });
+
+    try {
+      const resultPromise = generateMyAvatarPreview({ prompt: '改成手绘风格' });
+      await vi.runAllTimersAsync();
+      await expect(resultPromise).resolves.toEqual({
+        success: true,
+        data: { previewUrl: 'https://assets.example/storage-denied.png', assetSha256: sha },
+        error: null,
+      });
+    } finally {
+      vi.stubGlobal('sessionStorage', availableSessionStorage);
+    }
+  });
+
   it('把代理层错误转换成用户可理解的恢复动作', async () => {
     mockedApiRequest.mockResolvedValueOnce({
       success: false,

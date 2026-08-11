@@ -271,7 +271,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     internal static bool IsContentPolicyDenial(int statusCode, string? responseBody)
     {
-        if (statusCode != 403 || string.IsNullOrWhiteSpace(responseBody))
+        if (statusCode is < 400 or > 499 || string.IsNullOrWhiteSpace(responseBody))
             return false;
 
         var message = TryExtractErrorMessage(responseBody) ?? string.Empty;

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -28,6 +29,7 @@ public class VideoAgentController : ControllerBase
     private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<VideoAgentController> _logger;
+    private readonly IDataProtector _directVideoJobProtector;
 
     private const string AppKey = "video-agent";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -39,6 +41,7 @@ public class VideoAgentController : ControllerBase
         IModelPoolQueryService modelPoolQuery,
         IOpenRouterVideoClient videoClient,
         ILLMRequestContextAccessor llmRequestContext,
+        IDataProtectionProvider dataProtectionProvider,
         ILogger<VideoAgentController> logger)
     {
         _videoGenService = videoGenService;
@@ -48,6 +51,8 @@ public class VideoAgentController : ControllerBase
         _videoClient = videoClient;
         _llmRequestContext = llmRequestContext;
         _logger = logger;
+        _directVideoJobProtector = dataProtectionProvider.CreateProtector(
+            "PrdAgent.VideoAgent.DirectJobOwnership.v1");
     }
 
     private readonly IOpenRouterVideoClient _videoClient;
@@ -194,23 +199,38 @@ public class VideoAgentController : ControllerBase
 
         if (result.Success && !string.IsNullOrWhiteSpace(result.JobId))
         {
-            await _db.DirectVideoJobOwnerships.InsertOneAsync(new DirectVideoJobOwnership
+            var ownership = new DirectVideoJobOwnership
             {
                 AppKey = AppKey,
                 OwnerAdminId = GetAdminId(),
                 JobId = result.JobId,
                 Model = result.ActualModel ?? req.Model,
                 CreatedAt = DateTime.UtcNow,
-            }, cancellationToken: CancellationToken.None);
+            };
+            var recoveryToken = CreateDirectVideoJobRecoveryToken(ownership);
+            var ownershipPersisted = await TryPersistDirectVideoJobOwnershipAsync(ownership);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                result.Success,
+                result.JobId,
+                result.ActualModel,
+                result.Cost,
+                result.ErrorMessage,
+                RecoveryToken = recoveryToken,
+                OwnershipPersisted = ownershipPersisted,
+            }));
         }
 
         return Ok(ApiResponse<object>.Ok(new { result.Success, result.JobId, result.ActualModel, result.Cost, result.ErrorMessage }));
     }
 
     [HttpGet("videogen-direct/status/{jobId}")]
-    public async Task<IActionResult> VideoGenDirectStatus(string jobId, CancellationToken ct)
+    public async Task<IActionResult> VideoGenDirectStatus(
+        string jobId,
+        [FromQuery] string? recoveryToken,
+        CancellationToken ct)
     {
-        var ownership = await FindOwnedDirectVideoJobAsync(jobId);
+        var ownership = await FindOwnedDirectVideoJobAsync(jobId, recoveryToken);
         if (ownership == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
 
@@ -222,9 +242,10 @@ public class VideoAgentController : ControllerBase
     [HttpGet("videogen-direct/content/{jobId}")]
     public async Task<IActionResult> DownloadDirectVideo(
         string jobId,
+        [FromQuery] string? recoveryToken,
         CancellationToken ct)
     {
-        var ownership = await FindOwnedDirectVideoJobAsync(jobId);
+        var ownership = await FindOwnedDirectVideoJobAsync(jobId, recoveryToken);
         if (ownership == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
 
@@ -251,14 +272,109 @@ public class VideoAgentController : ControllerBase
             $"video-{jobId}.mp4");
     }
 
-    private async Task<DirectVideoJobOwnership?> FindOwnedDirectVideoJobAsync(string jobId)
+    private async Task<DirectVideoJobOwnership?> FindOwnedDirectVideoJobAsync(
+        string jobId,
+        string? recoveryToken)
     {
         if (string.IsNullOrWhiteSpace(jobId)) return null;
         var ownerAdminId = GetAdminId();
-        return await _db.DirectVideoJobOwnerships
-            .Find(item => item.JobId == jobId && item.OwnerAdminId == ownerAdminId && item.AppKey == AppKey)
-            .FirstOrDefaultAsync(CancellationToken.None);
+        try
+        {
+            var persisted = await _db.DirectVideoJobOwnerships
+                .Find(item => item.JobId == jobId && item.OwnerAdminId == ownerAdminId && item.AppKey == AppKey)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (persisted != null) return persisted;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "直出视频归属读取失败，将尝试签名恢复 jobId={JobId}", jobId);
+        }
+
+        if (!TryReadDirectVideoJobRecoveryToken(recoveryToken, jobId, ownerAdminId, out var recovered))
+            return null;
+
+        await TryPersistDirectVideoJobOwnershipAsync(recovered);
+        return recovered;
     }
+
+    private async Task<bool> TryPersistDirectVideoJobOwnershipAsync(DirectVideoJobOwnership ownership)
+    {
+        try
+        {
+            await _db.DirectVideoJobOwnerships.ReplaceOneAsync(
+                item => item.AppKey == ownership.AppKey
+                        && item.JobId == ownership.JobId
+                        && item.OwnerAdminId == ownership.OwnerAdminId,
+                ownership,
+                new ReplaceOptions { IsUpsert = true },
+                CancellationToken.None);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "直出视频已由上游受理，但归属记录暂未写入；客户端可用签名凭证恢复 jobId={JobId}",
+                ownership.JobId);
+            return false;
+        }
+    }
+
+    private string CreateDirectVideoJobRecoveryToken(DirectVideoJobOwnership ownership)
+    {
+        var payload = new DirectVideoJobRecoveryPayload(
+            ownership.AppKey,
+            ownership.OwnerAdminId,
+            ownership.JobId,
+            ownership.Model,
+            DateTime.UtcNow.AddDays(7));
+        return _directVideoJobProtector.Protect(JsonSerializer.Serialize(payload, JsonOptions));
+    }
+
+    private bool TryReadDirectVideoJobRecoveryToken(
+        string? recoveryToken,
+        string jobId,
+        string ownerAdminId,
+        out DirectVideoJobOwnership ownership)
+    {
+        ownership = null!;
+        if (string.IsNullOrWhiteSpace(recoveryToken)) return false;
+        try
+        {
+            var payload = JsonSerializer.Deserialize<DirectVideoJobRecoveryPayload>(
+                _directVideoJobProtector.Unprotect(recoveryToken),
+                JsonOptions);
+            if (payload == null
+                || payload.ExpiresAt <= DateTime.UtcNow
+                || !string.Equals(payload.AppKey, AppKey, StringComparison.Ordinal)
+                || !string.Equals(payload.OwnerAdminId, ownerAdminId, StringComparison.Ordinal)
+                || !string.Equals(payload.JobId, jobId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            ownership = new DirectVideoJobOwnership
+            {
+                AppKey = payload.AppKey,
+                OwnerAdminId = payload.OwnerAdminId,
+                JobId = payload.JobId,
+                Model = payload.Model,
+                CreatedAt = DateTime.UtcNow,
+            };
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private sealed record DirectVideoJobRecoveryPayload(
+        string AppKey,
+        string OwnerAdminId,
+        string JobId,
+        string? Model,
+        DateTime ExpiresAt);
 
     /// <summary>
     /// 创建视频生成任务（仅保存输入，Worker 自动开始分镜生成）
