@@ -267,6 +267,142 @@ export async function validateEnvironmentIdentities(environment, values, fetchFn
   return blockers;
 }
 
+export function decodeJwtPayload(token) {
+  const encoded = String(token || '').split('.')[1];
+  if (!encoded) throw new Error('网关登录响应缺少可解析的会话载荷');
+  const normalized = encoded.replaceAll('-', '+').replaceAll('_', '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+}
+
+async function readGatewayLoginSnapshot(values, fetchFn = globalThis.fetch) {
+  const baseUrl = withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL);
+  const response = await fetchFn(`${baseUrl}/gw/auth/login`, {
+    signal: AbortSignal.timeout(10_000),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: values.STABLE_SMOKE_CDS_GW_USER,
+      password: values.STABLE_SMOKE_CDS_GW_PASSWORD,
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok
+    || payload?.success !== true
+    || !payload?.data?.token
+    || payload?.data?.mustChangePassword !== false) {
+    throw new Error('CDS 网关固定管理员账号登录失败');
+  }
+  const claims = decodeJwtPayload(payload.data.token);
+  const securityVersion = String(claims.user_security_version || '').trim();
+  if (!securityVersion) throw new Error('CDS 网关管理员会话缺少安全版本声明');
+  return { token: payload.data.token, securityVersion };
+}
+
+export function canReuseGatewayPersistenceProbe(record, { runId, commit }) {
+  const deploymentRunIds = new Set((record?.attempts || []).map((attempt) => attempt.deploymentRunId));
+  return record?.status === 'pass'
+    && record?.runId === runId
+    && record?.commit === commit
+    && Array.isArray(record?.attempts)
+    && record.attempts.length === 2
+    && deploymentRunIds.size === 2
+    && !deploymentRunIds.has(undefined)
+    && !deploymentRunIds.has('')
+    && record.attempts.every((attempt, index) => (
+      attempt.sequence === index + 1
+      && attempt.deploymentReady === true
+      && attempt.oldSessionAccepted === true
+      && attempt.freshLoginAccepted === true
+      && attempt.securityVersionStable === true
+    ));
+}
+
+export async function runCdsGatewayPersistenceProbe({
+  recordPath,
+  runId,
+  commit,
+  values,
+  commandFn = command,
+  waitFn = waitForCdsDeployment,
+  fetchFn = globalThis.fetch,
+}) {
+  const existing = readJson(recordPath);
+  if (canReuseGatewayPersistenceProbe(existing, { runId, commit })) return existing;
+
+  const initial = await readGatewayLoginSnapshot(values, fetchFn);
+  const branchIdResult = commandFn('python3', [
+    '.claude/skills/cds/cli/cdscli.py',
+    'branch-id',
+  ]);
+  const branchIdPayload = readJsonFromText(branchIdResult.stdout);
+  const branchId = branchIdPayload?.data?.branchId;
+  if (branchIdResult.status !== 0 || !branchId) {
+    throw new Error('CDS 权威分支标识读取失败，无法执行网关连续部署验证');
+  }
+  const attempts = [];
+  const deploymentRunIds = new Set();
+  for (let sequence = 1; sequence <= 2; sequence += 1) {
+    const deployment = commandFn('python3', [
+      '.claude/skills/cds/cli/cdscli.py',
+      'branch', 'deploy', branchId,
+      '--timeout', '900',
+    ]);
+    if (deployment.status !== 0) {
+      throw new Error(`CDS 第 ${sequence} 次固定版本重新部署失败`);
+    }
+    const deploymentPayload = readJsonFromText(deployment.stdout);
+    const deploymentData = deploymentPayload?.data || deploymentPayload;
+    const deploymentRunId = String(deploymentData?.deploymentRunId || '').trim();
+    if (!deploymentRunId || deploymentData?.deploymentRunStatus !== 'running') {
+      throw new Error(`CDS 第 ${sequence} 次重新部署缺少独立且完成的 DeploymentRun 证据`);
+    }
+    if (deploymentRunIds.has(deploymentRunId)) {
+      throw new Error('CDS 两次重新部署返回了同一个 DeploymentRun，拒绝误记为两次重启');
+    }
+    deploymentRunIds.add(deploymentRunId);
+    const readiness = await waitFn(commit);
+    const oldSession = await fetchFn(
+      `${withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL)}/gw/auth/context`,
+      {
+        signal: AbortSignal.timeout(10_000),
+        headers: { Authorization: `Bearer ${initial.token}` },
+      },
+    );
+    if (!oldSession.ok) {
+      throw new Error(`CDS 第 ${sequence} 次重新部署后旧网关会话失效`);
+    }
+    const fresh = await readGatewayLoginSnapshot(values, fetchFn);
+    if (fresh.securityVersion !== initial.securityVersion) {
+      throw new Error(`CDS 第 ${sequence} 次重新部署后管理员安全版本发生漂移`);
+    }
+    attempts.push({
+      sequence,
+      checkedAt: new Date().toISOString(),
+      deploymentRunId,
+      deploymentReady: readiness.ready === true,
+      versionId: readiness.versionId || '',
+      runtimeCommit: readiness.runtimeCommit || readiness.commit || '',
+      oldSessionAccepted: true,
+      freshLoginAccepted: true,
+      securityVersionStable: true,
+      securityVersion: fresh.securityVersion,
+    });
+  }
+
+  const record = {
+    schemaVersion: '1.0',
+    status: 'pass',
+    caseId: 'GW-009',
+    runId,
+    commit,
+    checkedAt: new Date().toISOString(),
+    attempts,
+  };
+  writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  return record;
+}
+
 const validationOnlyPrefixes = [
   '.agents/skills/',
   '.claude/skills/create-visual-test-to-kb/',
@@ -524,6 +660,22 @@ export function buildExecutionRecord(environment, execution) {
     status: execution.status === 0 ? 'executed' : 'failed',
     missing: [],
   };
+}
+
+function gatewayPersistenceEvidenceRow(record) {
+  if (record?.status !== 'pass') return [];
+  return [{
+    caseId: 'GW-009',
+    environment: 'cds',
+    title: '[GW-009] 固定管理员账号连续两次重新部署后保持可用',
+    tags: ['deployment-evidence'],
+    status: 'pass',
+    durationMs: 0,
+    error: '',
+    retryCount: 0,
+    hadFailedAttempt: false,
+    attemptErrors: [],
+  }];
 }
 
 function notificationEnvironmentLabel(environment) {
@@ -1254,6 +1406,18 @@ async function main() {
 
     const executions = [];
     const grep = options.read('--grep');
+    let gatewayPersistenceProbe = null;
+    const cdsSelectedCaseIds = selectedCaseIdsForEnvironment(plan, 'cds', grep);
+    if (selected.includes('cds')
+      && cdsSelectedCaseIds.includes('GW-009')
+      && !options.has('--dry-run')) {
+      gatewayPersistenceProbe = await runCdsGatewayPersistenceProbe({
+        recordPath: resolve(runDir, 'cds-gateway-persistence.json'),
+        runId,
+        commit: values.STABLE_SMOKE_COMMIT,
+        values,
+      });
+    }
     let productionSafetyGate = initializeProductionSafetyGate(selected);
     const visualScope = selected.length === 1 && selected[0] === 'production' && productionSafetyGate.restricted
       ? 'production-read-only'
@@ -1357,6 +1521,7 @@ async function main() {
         const cdsRows = cdsExecution?.resultPath
           ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds')
           : [];
+        cdsRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
         productionSafetyGate = evaluateProductionSafetyGate(
           cdsExecution,
           cdsRows,
@@ -1479,6 +1644,7 @@ async function main() {
       if (!execution.resultPath) return [];
       return collectPlaywrightCases(readJson(execution.resultPath), execution.environment);
     });
+    environmentRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
     const requiredCaseIds = selectCoverageCaseIdsByEnvironment(
       plan,
       grep,

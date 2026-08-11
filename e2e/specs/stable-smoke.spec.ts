@@ -166,6 +166,53 @@ type ImageRunDetail = {
   }>;
 };
 
+type GatewayOffering = {
+  id: string;
+  targetId: string;
+  endpointPath?: string | null;
+  enabled: boolean;
+  priority: number;
+};
+
+type GatewayLogicalModel = {
+  id: string;
+  publicId: string;
+  modelType: string;
+  routingStrategy: string;
+  enabled: boolean;
+  offerings: GatewayOffering[];
+};
+
+type GatewayLogItem = {
+  id: string;
+  requestId: string;
+  logicalModelPublicId?: string | null;
+  offeringId?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  status: string;
+  statusCode?: number | null;
+  isFallback?: boolean | null;
+};
+
+type GatewayLogDetail = GatewayLogItem & {
+  providerAttempts: Array<{
+    order: number;
+    provider?: string | null;
+    model?: string | null;
+    status: string;
+    statusCode?: number | null;
+    error?: string | null;
+  }>;
+  routerTrace: {
+    logicalModelPublicId?: string | null;
+    offeringId?: string | null;
+    isFallback: boolean;
+    steps: Array<{ order: number; stage: string; status: string }>;
+  };
+  error?: string | null;
+};
+
 type IsoBox = {
   type: string;
   dataStart: number;
@@ -353,6 +400,59 @@ async function waitForImageRun(page: Page, token: string, runId: string, timeout
   throw new Error(`图片生成等待超时，请检查任务 ${runId} 的运行状态`);
 }
 
+async function loginGateway(request: APIRequestContext) {
+  const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+  const login = await request.post(`${baseUrl}/gw/auth/login`, {
+    data: {
+      username: requiredEnv('STABLE_SMOKE_GW_USER'),
+      password: requiredEnv('STABLE_SMOKE_GW_PASSWORD'),
+    },
+  });
+  const body = await login.json() as ApiEnvelope<{ token: string; mustChangePassword: boolean }>;
+  expect(login.ok(), body.error?.message || '模型网关专用账号登录失败').toBe(true);
+  expect(body.success, body.error?.message || '模型网关专用账号登录失败').toBe(true);
+  expect(body.data.token).toBeTruthy();
+  expect(body.data.mustChangePassword).toBe(false);
+  return {
+    baseUrl,
+    headers: { Authorization: `Bearer ${body.data.token}` },
+  };
+}
+
+async function waitForGatewayLog(
+  request: APIRequestContext,
+  requestId: string,
+  timeoutMs = 30_000,
+) {
+  const gateway = await loginGateway(request);
+  let matched: GatewayLogItem | undefined;
+  await expect.poll(async () => {
+    const response = await request.get(
+      `${gateway.baseUrl}/gw/logs?requestId=${encodeURIComponent(requestId)}&pageSize=10`,
+      { headers: gateway.headers },
+    );
+    if (!response.ok()) return '';
+    const body = await response.json() as ApiEnvelope<{ items: GatewayLogItem[] }>;
+    matched = body.success
+      ? body.data.items.find((item) => item.requestId === requestId)
+      : undefined;
+    return matched && !/running|pending/i.test(matched.status) ? matched.id : '';
+  }, {
+    message: `等待网关按 requestId 写入审计日志：${requestId}`,
+    timeout: timeoutMs,
+    intervals: [500, 1_000, 2_000],
+  }).not.toBe('');
+
+  const detailResponse = await request.get(`${gateway.baseUrl}/gw/logs/${matched!.id}`, {
+    headers: gateway.headers,
+  });
+  const detailBody = await detailResponse.json() as ApiEnvelope<GatewayLogDetail>;
+  expect(detailResponse.ok(), detailBody.error?.message || '网关请求日志详情不可用').toBe(true);
+  expect(detailBody.success, detailBody.error?.message || '网关请求日志详情不可用').toBe(true);
+  expect(detailBody.data.requestId).toBe(requestId);
+  return detailBody.data;
+}
+
 async function assertImageArtifact(page: Page, detail: ImageRunDetail) {
   expect(detail.run.status).toBe('Completed');
   expect(detail.run.done).toBe(detail.run.total);
@@ -480,7 +580,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(resourceFailures).toEqual([]);
   });
 
-  test('[CORE-006][REG-user-error-001] 首页告警不泄漏上游技术细节', async ({ page, request }) => {
+  test('[REG-user-error-001] 首页告警不泄漏上游技术细节', async ({ page, request }) => {
     const notificationsLoaded = page.waitForResponse(
       (response) => new URL(response.url()).pathname === '/api/dashboard/notifications',
       { timeout: 15_000 },
@@ -826,7 +926,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[LIT-002][LIT-005][LIT-008][LIT-010] 文学配图标记流式生成、保存恢复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[LIT-002][LIT-005][LIT-010] 文学配图标记流式生成、保存恢复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `stsmk-${Date.now()}-文学流式创作`;
@@ -897,6 +997,58 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally {
       if (workspaceId) {
         const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) });
+        expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      }
+    }
+  });
+
+  test('[LIT-008] 长文达到验收基线后保存和回读均不静默截断', { tag: '@cleanup' }, async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
+    const expectedLength = production ? 4_096 : 64_000;
+    const prefix = '稳定冒烟长文边界开篇。\n';
+    const suffix = '\n稳定冒烟长文边界收尾。';
+    const unit = '这一段用于验证文学作品在保存、刷新和回读时不会被静默截断。';
+    const middle = unit.repeat(Math.ceil(expectedLength / unit.length)).slice(
+      0,
+      expectedLength - prefix.length - suffix.length,
+    );
+    const article = `${prefix}${middle}${suffix}`;
+    const title = `stsmk-${Date.now()}-文学长文边界`;
+    let workspaceId = '';
+    expect(article.length).toBe(expectedLength);
+
+    try {
+      const created = await readEnvelope<{ workspace: { id: string } }>(
+        await page.request.post('/api/literary-agent/workspaces', {
+          headers: authHeaders(token),
+          data: { title, scenarioType: 'article-illustration' },
+        }),
+      );
+      workspaceId = created.workspace.id;
+      const updated = await readEnvelope<{ workspace: { articleContent: string } }>(
+        await page.request.put(`/api/literary-agent/workspaces/${workspaceId}`, {
+          headers: authHeaders(token),
+          data: { title, articleContent: article },
+        }),
+      );
+      expect(updated.workspace.articleContent.length).toBe(expectedLength);
+      expect(updated.workspace.articleContent).toBe(article);
+
+      const detail = await readEnvelope<{ workspace: { articleContent: string } }>(
+        await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, {
+          headers: authHeaders(token),
+        }),
+      );
+      expect(detail.workspace.articleContent.length).toBe(expectedLength);
+      expect(detail.workspace.articleContent.startsWith(prefix)).toBe(true);
+      expect(detail.workspace.articleContent.endsWith(suffix)).toBe(true);
+      expect(detail.workspace.articleContent).toBe(article);
+    } finally {
+      if (workspaceId) {
+        const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, {
+          headers: authHeaders(token),
+        });
         expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
       }
     }
@@ -1317,20 +1469,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[GW-001][GW-002][GW-003][GW-004][GW-005][GW-007][GW-008][GW-009][REG-llmgw-auth-001][REG-asr-routing-001] 网关配置、路由与日志可由专用身份审计', async ({ request }) => {
-    const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
-    const login = await request.post(`${baseUrl}/gw/auth/login`, {
-      data: {
-        username: requiredEnv('STABLE_SMOKE_GW_USER'),
-        password: requiredEnv('STABLE_SMOKE_GW_PASSWORD'),
-      },
-    });
-    const loginBody = await login.json() as ApiEnvelope<{ token: string; mustChangePassword: boolean }>;
-    expect(login.ok(), loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
-    expect(loginBody.success, loginBody.error?.message || '模型网关专用账号登录失败').toBe(true);
-    expect(loginBody.data.token).toBeTruthy();
-    expect(loginBody.data.mustChangePassword).toBe(false);
-    const headers = { Authorization: `Bearer ${loginBody.data.token}` };
+  test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
+    const { baseUrl, headers } = await loginGateway(request);
 
     const [context, models, logicalModels, health, authority, logs, poolTypes, asrPools] = await Promise.all([
       request.get(`${baseUrl}/gw/auth/context`, { headers }),
@@ -1465,6 +1605,136 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[CORE-006][GW-007] CDS 主路故障切换、全路故障提示与 requestId 日志可追踪', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不主动注入网关故障，只在发布门禁观察自然切换');
+    test.setTimeout(360_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const gateway = await loginGateway(request);
+    const logicalResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
+      headers: gateway.headers,
+    });
+    const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+    expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取网关逻辑模型').toBe(true);
+
+    const pools = await readEnvelope<ImageModelPool[]>(
+      await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) }),
+    );
+    const availableCodes = new Set(
+      pools
+        .filter((pool) => pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')))
+        .map((pool) => pool.code),
+    );
+    const logical = logicalBody.data.items.find((item) => (
+      item.enabled
+      && item.routingStrategy === 'priority'
+      && availableCodes.has(item.publicId)
+      && item.offerings.filter((offering) => offering.enabled).length >= 2
+      && new Set(item.offerings.filter((offering) => offering.enabled).map((offering) => offering.targetId)).size >= 2
+    ));
+    expect(logical, 'CDS 需要至少一个带主备 Offering 的可用文生图逻辑模型').toBeTruthy();
+    const offerings = logical!.offerings
+      .filter((offering) => offering.enabled)
+      .sort((left, right) => left.priority - right.priority);
+    const originals = new Map(offerings.map((offering) => [offering.id, offering.endpointPath || '']));
+    const { workspace } = await createVisualWorkspace(page, token, 'gateway-failover');
+    const runIds: string[] = [];
+
+    const updateEndpoint = async (offering: GatewayOffering, endpointPath: string) => {
+      const response = await request.put(
+        `${gateway.baseUrl}/gw/logical-models/${logical!.id}/offerings/${offering.id}`,
+        { headers: gateway.headers, data: { endpointPath } },
+      );
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `Offering ${offering.id} 更新失败`).toBe(true);
+      expect(body.success, body.error?.message || `Offering ${offering.id} 更新失败`).toBe(true);
+      expect(body.data.endpointPath || '').toBe(endpointPath);
+    };
+    const createProbeRun = async (suffix: string) => {
+      const response = await page.request.post('/api/visual-agent/image-gen/runs', {
+        headers: {
+          ...authHeaders(token),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}`,
+        },
+        data: {
+          platformId: 'logical-model',
+          modelId: logical!.publicId,
+          responseFormat: 'url',
+          maxConcurrency: 1,
+          workspaceId: workspace.id,
+          appKey: 'visual-agent',
+          items: [{
+            prompt: '一枚放在纯白背景上的蓝色圆形徽章，产品摄影，不要文字',
+            count: 1,
+            size: '1024x1024',
+          }],
+        },
+      });
+      const run = await readEnvelope<{ runId: string }>(response);
+      runIds.push(run.runId);
+      return run.runId;
+    };
+
+    try {
+      await updateEndpoint(offerings[0], `stable-smoke-primary-failure/${Date.now()}`);
+      const failoverRunId = await createProbeRun('primary-failure');
+      const failoverResult = await waitForImageRun(page, token, failoverRunId, 240_000);
+      expect(failoverResult.detail.run.status).toBe('Completed');
+      await assertImageArtifact(page, failoverResult.detail);
+      const failoverLog = await waitForGatewayLog(request, `${failoverRunId}-0-0`);
+      expect(failoverLog.logicalModelPublicId).toBe(logical!.publicId);
+      expect(failoverLog.providerAttempts.length).toBeGreaterThanOrEqual(2);
+      expect(failoverLog.providerAttempts[0].status).toBe('failed');
+      expect(failoverLog.providerAttempts.at(-1)?.status).toBe('succeeded');
+      expect(
+        `${failoverLog.providerAttempts[0].provider}:${failoverLog.providerAttempts[0].model}`,
+      ).not.toBe(
+        `${failoverLog.providerAttempts.at(-1)?.provider}:${failoverLog.providerAttempts.at(-1)?.model}`,
+      );
+
+      await updateEndpoint(offerings[0], originals.get(offerings[0].id) || '');
+      for (const [index, offering] of offerings.entries()) {
+        await updateEndpoint(offering, `stable-smoke-all-failure/${Date.now()}-${index}`);
+      }
+      const failedRunId = await createProbeRun('all-failure');
+      const failedResult = await waitForImageRun(page, token, failedRunId, 240_000);
+      expect(failedResult.detail.run.status).toBe('Failed');
+      expect(failedResult.detail.run.failed).toBe(1);
+      expect(failedResult.detail.items).toHaveLength(1);
+      const userMessage = failedResult.detail.items[0].errorMessage || '';
+      expectUserReadable(userMessage);
+      expect(userMessage).not.toMatch(/HTTP|token|provider|endpoint|stack|openrouter/i);
+
+      const failedRequestId = `${failedRunId}-0-0`;
+      const failedLog = await waitForGatewayLog(request, failedRequestId);
+      expect(failedLog.requestId).toBe(failedRequestId);
+      expect(failedLog.status).toBe('failed');
+      expect(failedLog.providerAttempts.length).toBeGreaterThanOrEqual(2);
+      expect(failedLog.providerAttempts.every((attempt) => attempt.status === 'failed')).toBe(true);
+      expect(failedLog.logicalModelPublicId).toBe(logical!.publicId);
+      expect(failedLog.routerTrace.logicalModelPublicId).toBe(logical!.publicId);
+    } finally {
+      const restoreResults = await Promise.allSettled(offerings.map((offering) => (
+        updateEndpoint(offering, originals.get(offering.id) || '')
+      )));
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: {
+          ...authHeaders(token),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-gateway-failover-delete`,
+        },
+      });
+      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      for (const runId of runIds) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token),
+        })).status()).toBe(404);
+      }
+      expect(
+        restoreResults.filter((result) => result.status === 'rejected'),
+        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint',
+      ).toEqual([]);
+    }
+  });
+
   test('[CORE-005][VIS-008][REG-visual-error-001] 无效生图请求返回用户可读错误', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const response = await page.request.post('/api/visual-agent/image-gen/runs', {
@@ -1531,7 +1801,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][VIS-002][VIS-005][VIS-007][VIS-010] 文生图真实产物、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010] 文生图真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
@@ -1584,6 +1854,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(stream.headers()['content-type'] || '').toContain('text/event-stream');
       expect(await stream.text()).toMatch(/(?:keepalive|progress|completed|done)/i);
       await assertImageArtifact(page, completed.detail);
+      const gatewayLog = await waitForGatewayLog(request, `${runId}-0-0`);
+      expect(gatewayLog.logicalModelPublicId, '真实生图日志必须记录逻辑模型').toBe(pool!.code);
+      expect(gatewayLog.offeringId, '真实生图日志必须记录实际 Offering').toBeTruthy();
+      expect(gatewayLog.provider, '真实生图日志必须记录实际 Provider').toBeTruthy();
+      expect(gatewayLog.model, '真实生图日志必须记录实际上游模型').toBeTruthy();
+      expect(gatewayLog.status).toMatch(/completed|success|succeeded/i);
+      expect(gatewayLog.statusCode || 0).toBeGreaterThanOrEqual(200);
+      expect(gatewayLog.statusCode || 0).toBeLessThan(300);
+      expect(gatewayLog.providerAttempts.length).toBeGreaterThan(0);
+      expect(gatewayLog.providerAttempts.at(-1)?.status).toMatch(/completed|success|succeeded/i);
+      expect(gatewayLog.routerTrace.logicalModelPublicId).toBe(pool!.code);
+      expect(gatewayLog.routerTrace.offeringId).toBeTruthy();
+      expect(gatewayLog.routerTrace.steps.length).toBeGreaterThan(0);
       await page.reload({ waitUntil: 'domcontentloaded' });
       const generatedImage = page.getByTestId('canvas-image').first();
       await expect(generatedImage, '任务完成并刷新后画布必须恢复真实图片').toBeVisible({ timeout: 30_000 });

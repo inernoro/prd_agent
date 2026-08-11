@@ -13,11 +13,13 @@ import {
   buildStableSmokeArchiveCommand,
   buildLockedRunSummary,
   buildUnhandledFailureSummary,
+  canReuseGatewayPersistenceProbe,
   canReuseVisualPlan,
   clearVisualGateOutputs,
   deliverLockedRun,
   deliverUnhandledFailure,
   deployedRuntimeCommit,
+  decodeJwtPayload,
   enforceExecutionVerdict,
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
@@ -35,6 +37,7 @@ import {
   resolveServiceRuntimeCommits,
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
+  runCdsGatewayPersistenceProbe,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
   selectCoverageCaseIdsByEnvironment,
@@ -45,6 +48,11 @@ import {
   validateSelectedEnvironmentConfig,
   visualGateExecutionMatchesResult,
 } from '../stable-smoke-run.mjs';
+
+function gatewayToken(securityVersion = '7') {
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ user_security_version: securityVersion })}.signature`;
+}
 
 test('运行器帮助和预检参数不会误启动正式测试', () => {
   const parsed = parseRunnerArgs(['--preflight', '--cds-only', '--grep', '\\[REC-003\\]']);
@@ -84,6 +92,79 @@ test('dry-run 只产出计划摘要且不宣称功能或视觉验收通过', () 
   assert.deepEqual(summary.executions.map((item) => item.status), ['dry-run', 'dry-run']);
   assert.equal(summary.archive.status, 'skipped-dry-run');
   assert.equal(summary.notification.status, 'skipped');
+});
+
+test('网关连续部署证据要求两次就绪、旧会话可用和安全版本稳定', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-gateway-persistence-'));
+  const recordPath = resolve(directory, 'probe.json');
+  const token = gatewayToken();
+  let deployments = 0;
+  const values = {
+    STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example.test',
+    STABLE_SMOKE_CDS_GW_USER: 'admin',
+    STABLE_SMOKE_CDS_GW_PASSWORD: 'secret',
+  };
+  const commandFn = (_program, args) => {
+    if (args.includes('branch-id')) {
+      return { status: 0, stdout: JSON.stringify({ data: { branchId: 'prd-agent-branch' } }) };
+    }
+    deployments += 1;
+    return {
+      status: 0,
+      stdout: JSON.stringify({
+        data: {
+          deploymentRunId: `deployment-run-${deployments}`,
+          deploymentRunStatus: 'running',
+        },
+      }),
+    };
+  };
+  const fetchFn = async (url) => {
+    if (String(url).endsWith('/gw/auth/login')) {
+      return new Response(JSON.stringify({
+        success: true,
+        data: { token, mustChangePassword: false },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (String(url).endsWith('/gw/auth/context')) {
+      return new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
+    }
+    return new Response('', { status: 404 });
+  };
+
+  try {
+    assert.equal(decodeJwtPayload(token).user_security_version, '7');
+    const record = await runCdsGatewayPersistenceProbe({
+      recordPath,
+      runId: 'stsmk-gateway',
+      commit: 'a'.repeat(40),
+      values,
+      commandFn,
+      waitFn: async () => ({ ready: true, versionId: `version-${deployments}`, runtimeCommit: 'a'.repeat(40) }),
+      fetchFn,
+    });
+    assert.equal(deployments, 2);
+    assert.equal(canReuseGatewayPersistenceProbe(record, {
+      runId: 'stsmk-gateway',
+      commit: 'a'.repeat(40),
+    }), true);
+    assert.deepEqual(record.attempts.map((attempt) => attempt.sequence), [1, 2]);
+    assert.ok(record.attempts.every((attempt) => attempt.oldSessionAccepted && attempt.securityVersionStable));
+    assert.doesNotMatch(readFileSync(recordPath, 'utf8'), /secret|signature/);
+
+    await runCdsGatewayPersistenceProbe({
+      recordPath,
+      runId: 'stsmk-gateway',
+      commit: 'a'.repeat(40),
+      values,
+      commandFn,
+      waitFn: async () => ({ ready: true }),
+      fetchFn,
+    });
+    assert.equal(deployments, 2);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('双环境执行范围按各自矩阵取交集且正式环境不能点名越权用例', () => {
