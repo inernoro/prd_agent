@@ -1399,6 +1399,8 @@ public class HostedSiteService : IHostedSiteService
             FileCount = s.Files.Count,
             CoverImageUrl = s.CoverImageUrl,
             PdfAssetUrl = TryBuildPdfAssetUrl(s),
+            // 前端据此跳过「取正文」——包装站没有可读的 HTML 正文，问了必被拒
+            WrappedAssetType = s.WrappedAssetType,
         }).ToList();
 
         await _db.HostedSites.UpdateManyAsync(

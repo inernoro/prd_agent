@@ -31,6 +31,28 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
 }
 
 /**
+ * 这个站点有没有「可以取回来的 HTML 正文」。
+ *
+ * 光看入口是不是 .html 不够：PDF / 视频 / Markdown 包装站的入口**也是** index.html，
+ * 只是那层壳子里没有正文，正文代理对任何非空 wrappedAssetType 一律拒绝。
+ * 前端不看这个字段就会去问、拿回一个预期之内的拒绝，然后在一个本来显示得好好的
+ * 直链预览上盖一条错误角标——用户看到的是「这页出错了」，其实什么事都没有。
+ *
+ * 判据故意宽松：只要声明了任何包装类型就跳过，而不是逐个列举 pdf/video/markdown。
+ * 后端将来多一种包装形态，这里不用跟着改（形状 1：判据别比它该管的范围窄）。
+ */
+export function hasFetchableHtml(site: {
+  siteUrl: string;
+  entryFile?: string;
+  pdfAssetUrl?: string;
+  wrappedAssetType?: string | null;
+}): boolean {
+  if (site.pdfAssetUrl) return false;
+  if (site.wrappedAssetType) return false;
+  return isHtmlEntry(site.siteUrl, site.entryFile);
+}
+
+/**
  * 这份 HTML 能不能安全地走 srcDoc 预览。
  *
  * srcDoc 路径刻意不给 allow-same-origin（否则用户上传的任意 HTML 就拿到 MAP 同源能力），
@@ -41,33 +63,38 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
  * 后果很具体：Vite/webpack 打包出来的 SPA 入口恰恰是 `<script type="module" src="...">`，
  * 走 srcDoc 会白屏。这类站点必须留在直链 iframe 上——直链是同源加载，模块脚本没问题。
  *
- * 所以判据是「有没有外链的模块脚本」，而不是「是不是 HTML」。
- * 内联的 `<script type="module">`（没有 src）不受影响，不必排除。
+ * 所以判据是「有没有模块脚本」，而不是「是不是 HTML」。内联的 module 也算——
+ * 它里面的 `import` 同样按 CORS 模式取，理由见 hasModuleScript。
  */
 export function canUseSrcDocPreview(html: string): boolean {
   if (!html) return false;
-  return !hasExternalModuleScript(html);
+  return !hasModuleScript(html);
 }
 
 /**
- * 有没有「外链的模块脚本」。
+ * 有没有模块脚本（任何一种）。
  *
- * 这里**逐个属性解析**而不是拿一条正则去撞整段标签。第一版写的是
- * `type\s*=\s*["']module["']`，要求引号必须存在——而 `<script type=module src=...>`
- * 是完全合法的 HTML，于是这类页面被判成「可以走 srcDoc」，进去之后模块脚本因缺 CORS
- * 被拦，白屏。判据比它该管的范围窄，正是 predicate-and-wiring-discipline 形状 1：
- * 语义相同、写法不同的输入让判据翻转。
+ * 判据经过两次收窄失败，现在取**最保守**的形态：只要页面上有 `type="module"` 的 script，
+ * 无论外链还是内联，一律不走 srcDoc。
+ *
+ * 第一版写 `type\s*=\s*["']module["']`，硬要求引号存在——而 `<script type=module src=...>`
+ * 是合法 HTML，这类页面被判成安全，进去白屏。改成逐属性解析后仍然漏一类：
+ * 内联的 `<script type="module">import './app.js'</script>` 没有 `src`，被判成安全，
+ * 可那条 `import` 同样是按 CORS 模式发的模块请求，在不透明源下照样被拦，照样白屏。
+ *
+ * 与其继续追着「哪种 module 会发跨域请求」逐条补（每补一条就是下一次漏判的温床），
+ * 不如认所有 module。代价很小：真正自包含、不 import 任何东西的内联 module 页面会
+ * 退回直链 iframe——而直链本来就能正常显示，只是拿不到 srcDoc 那点额外好处。
  *
  * 属性值三种合法写法（双引号 / 单引号 / 不带引号）都要认，属性顺序与大小写也不能挑。
  */
-function hasExternalModuleScript(html: string): boolean {
+function hasModuleScript(html: string): boolean {
   // 只取 <script ...> 的开标签部分，逐个解析里面的属性
   const openTags = html.match(/<script\b[^>]*>/gi);
   if (!openTags) return false;
 
   for (const tag of openTags) {
-    const attrs = parseAttributes(tag);
-    if (attrs.type === 'module' && attrs.src) return true;
+    if (parseAttributes(tag).type === 'module') return true;
   }
   return false;
 }
@@ -131,18 +158,26 @@ function isAbsoluteBaseHref(href: string): boolean {
 export function withPreviewBase(html: string, siteUrl: string) {
   const baseHref = new URL('.', siteUrl).toString();
 
-  const existing = html.match(/<base\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))[^>]*>/i);
-  if (existing) {
-    const href = existing[1] ?? existing[2] ?? existing[3] ?? '';
-    if (isAbsoluteBaseHref(href)) return html;
-    // 相对 base：按站点地址重解析成绝对值，再原地替换整个 <base> 标签。
-    // 保留原标签的位置（在 <head> 里的先后顺序会影响它之后的相对 URL 如何解析）。
-    const resolved = new URL(href.trim() || '.', baseHref).toString();
-    return html.replace(existing[0], `<base href="${escapeHtmlAttr(resolved)}">`);
-  }
+  // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。
+  // 合成一条正则要求 href 必须存在，会让 `<base target="_blank">` 这种「有标签、没 href」
+  // 的页面整个漏过去：不改写，也不注入，相对资源在 srcDoc 下全部解析到 MAP 的分享页。
+  const tag = html.match(/<base\b[^>]*>/i)?.[0];
+  if (tag) {
+    const hrefAttr = tag.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/i);
+    const href = hrefAttr ? (hrefAttr[1] ?? hrefAttr[2] ?? hrefAttr[3] ?? '') : null;
 
-  // 有 <base> 但没写 href（合法但没有意义）：当作没有，照常注入
-  if (/<base\b/i.test(html)) return html;
+    // 已经是绝对地址：人家指的就是别处，不该动
+    if (href !== null && isAbsoluteBaseHref(href)) return html;
+
+    // 相对值按站点地址重解析；压根没写 href 就直接补上站点目录。
+    // 原地改写而不是另插一个 <base>：浏览器只认第一个 base，追加的那个不生效。
+    // 其余属性（target 等）原样保留。
+    const resolved = href ? new URL(href.trim() || '.', baseHref).toString() : baseHref;
+    const rewritten = hrefAttr
+      ? tag.replace(hrefAttr[0], `href="${escapeHtmlAttr(resolved)}"`)
+      : tag.replace(/^<\s*base\b/i, (m) => `${m} href="${escapeHtmlAttr(resolved)}"`);
+    return html.replace(tag, rewritten);
+  }
 
   const baseTag = `<base href="${escapeHtmlAttr(baseHref)}">`;
   if (/<head\b[^>]*>/i.test(html)) {
@@ -273,7 +308,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
     const site = data?.sites.length === 1 ? data.sites[0] : null;
-    if (!site || !token || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
+    if (!site || !token || !hasFetchableHtml(site)) {
       setEmbeddedHtml(null);
       setEmbeddedHtmlError(null);
       setEmbeddedHtmlLoading(false);

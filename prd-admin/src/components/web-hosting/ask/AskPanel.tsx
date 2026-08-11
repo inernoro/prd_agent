@@ -135,8 +135,13 @@ export default function AskPanel({
         )}
       </div>
 
-      {/* 消息区 */}
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+      {/* 消息区。
+          minHeight:0 不能省——flex 子元素的默认 min-height 是 auto，内容一多它就不肯收缩，
+          overflow 没机会触发，输入区被顶出面板（frontend-modal.md 第 3 条硬约束）。 */}
+      <div
+        ref={scrollRef}
+        style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 14 }}
+      >
         {messages.length === 0 && (
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
             {welcome?.trim() || `关于「${title}」，有什么想了解的？`}

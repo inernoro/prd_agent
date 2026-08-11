@@ -77,16 +77,25 @@ export function SitePreview({ url, className, style }: { url: string; className?
   // 到点仍未 onLoad（多为新上传对象 CDN 传播中导致 iframe 一直 pending）就重挂重试。
   // attempt 达到 MAX_RETRIES 后本 effect 提前返回、不再起定时器 → 最后一次挂载的
   // iframe 不会被打断，慢页可继续加载直到 onLoad，不会因超时被永久卡在占位符。
-  // revealed 也要止住重试：页面在 1.2s 内画出来了、只是某个子资源把 load 吊着——这正是
-  // 本次要修的 Google Fonts 场景。此时若继续按 12s / 20s 重挂，attempt 变化会换掉 iframe 的
-  // key，React 把**已经显示出来的**文档整个替换两次：闪白 + 脚本重跑。重挂本是为了救
-  // 「一直没画出来」，画出来了就没有可救的了。真失败仍由 onError 兜。
+  // 停止重试的信号只能是 loaded，**不能**是 revealed。
+  //
+  // 上一轮 review 指出「已经画出来了还重挂会闪白」，我据此把 revealed 也加进了这个守卫，
+  // 那是过度修正：revealed 是**纯时间**的（挂载 1.2s 后无条件置真），它不证明页面画出来了。
+  // 于是 CDN 传播中那种「导航一直 pending、既不 load 也不 error」的情形——正是本组件
+  // 当初加重试要救的那一种——会在第一个 12s 窗口到来之前就被这个守卫掐掉，自愈彻底失效，
+  // 用户看到的是一块**空白**瓦片（比地球占位符更糟：它看起来像是内容，其实什么都没有）。
+  //
+  // 两条意见在物理上互斥：跨域 iframe 没有任何「画出来了没有」的信号可读，
+  // 我们区分不了「画好了但 load 被吊住」与「一直 pending」。取舍按后果严重度定：
+  //   继续重挂  → 已画出的页面最多闪两次（MAX_RETRIES=2），仍能看
+  //   停止重挂  → pending 的页面永远救不回来，永久空白
+  // 所以恢复只看 loaded。闪烁记为已知边界，见 doc/debt.web-hosting.md 第 21 条。
   useEffect(() => {
-    if (!inView || loaded || revealed || attempt >= MAX_RETRIES) return;
+    if (!inView || loaded || attempt >= MAX_RETRIES) return;
     const delay = RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
     const timer = setTimeout(() => setAttempt((a) => a + 1), delay);
     return () => clearTimeout(timer);
-  }, [inView, loaded, revealed, attempt]);
+  }, [inView, loaded, attempt]);
 
   // 首绘窗口：进入视口后给 iframe 一段时间自己画，到点即淡入，不再等 load 事件。
   // 重挂（attempt 变化）会重开一次窗口，但**不回退 revealed**——已经显示出来的画面不该再被
