@@ -7315,7 +7315,7 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     foreach (var droppedFilter in droppedModelFilters)
         await gwModels.DeleteOneAsync(droppedFilter);
 
-    // 3) 引用清空后再删源。这里复用同一条占用判据，避免「合并漏了什么却照删」
+    // 4) 引用清空后再删源。这里复用同一条占用判据，避免「合并漏了什么却照删」
     var leftovers = await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId);
     if (leftovers.TotalCount == 0)
     {
