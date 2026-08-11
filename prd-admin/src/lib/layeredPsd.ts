@@ -23,6 +23,19 @@ const LAYERING_PROMPT =
   'Decompose this image into semantically distinct editable RGBA layers. Preserve composition and transparent edges.';
 
 /**
+ * 把用户自己的话拼进分层提示词。
+ *
+ * 层数表达不了「我就想把人物和风景分开」这种意图：选 2 层完全可能拆出「人物 + 冰淇淋」
+ * （2026-08-10 用户原话）。所以意图是主入口，层数只是附带的期望值。
+ * 用户的话原样附在后面，不改写、不翻译——改写就等于替他做决定（最小惊讶）。
+ */
+export function buildLayeringPrompt(intent?: string | null): string {
+  const wish = String(intent ?? '').trim();
+  if (!wish) return LAYERING_PROMPT;
+  return `${LAYERING_PROMPT}\nUser intent for how to split (follow it): ${wish}`;
+}
+
+/**
  * 语义分层。
  *
  * 走异步任务而不是同步端点：分层模型本身要二三十秒，实测两次都稳定卡在 30.7 秒后 504——
@@ -43,6 +56,8 @@ export async function decomposeImageToLayers(input: {
    * 重拆时传一个变化的值，让它落到不同的 run 上。
    */
   attempt?: string | number;
+  /** 用自然语言说的拆法，会原样附进提示词。 */
+  intent?: string | null;
   signal?: AbortSignal;
   /** 等待期的可见进度：分层要跑几十秒，静止的「加载中」超过 2 秒就是体验缺陷。 */
   onProgress?: (progress: { phase: string; completed: number; total: number }) => void;
@@ -51,6 +66,8 @@ export async function decomposeImageToLayers(input: {
    * 只报进度是不够的——用户要看的是图层本身在长出来，不是一句「已生成 2/4」。
    */
   onLayer?: (layer: { index: number; url: string }) => void;
+  /** 本次实际落到的模型；后端解析出来才回调，报不出来就不回调。 */
+  onModel?: (model: string) => void;
 }): Promise<ApiResponse<ImageGenGenerateResponse>> {
   const layerCount = Math.max(1, Math.min(10, Math.round(input.layerCount ?? 4)));
   const sourceSha256 = String(input.sourceSha256 ?? '').trim();
@@ -66,7 +83,7 @@ export async function decomposeImageToLayers(input: {
     input: {
       operation: 'layering',
       layerCount,
-      prompt: LAYERING_PROMPT,
+      prompt: buildLayeringPrompt(input.intent),
       targetKey: input.targetKey,
       responseFormat: 'url',
       imageRefs: [{ refId: 1, assetSha256: sourceSha256, url: sourceUrl, label: '待分层原图' }],
@@ -83,6 +100,7 @@ export async function decomposeImageToLayers(input: {
     signal: input.signal,
     onProgress: input.onProgress,
     onLayer: input.onLayer,
+    onModel: input.onModel,
   });
   if (!images.success) return images;
   if (images.data!.images.length === 0) {
@@ -103,6 +121,7 @@ async function collectLayeringRunImages(input: {
   signal?: AbortSignal;
   onProgress?: (progress: { phase: string; completed: number; total: number }) => void;
   onLayer?: (layer: { index: number; url: string }) => void;
+  onModel?: (model: string) => void;
 }): Promise<ApiResponse<ImageGenGenerateResponse>> {
   const { runId, total } = input;
   const collected = new Map<number, ImageGenImage>();
@@ -129,6 +148,10 @@ async function collectLayeringRunImages(input: {
           return;
         }
         const type = String(payload.type ?? '');
+        // 谁拆的这一组，用户有权知道（ai-model-visibility）。只报后端解析出来的真值，
+        // 报不出来就整行不显示——不许前端写死一个模型名冒充。
+        const resolvedModel = String(payload.modelId ?? payload.logicalModelPublicId ?? '').trim();
+        if (resolvedModel) input.onModel?.(resolvedModel);
         if (type === 'imageDone') {
           const url = String(payload.asset?.originalUrl || payload.asset?.url || payload.originalUrl || payload.url || '').trim();
           if (!url) return;

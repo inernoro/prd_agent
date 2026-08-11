@@ -83,8 +83,30 @@ describe('分层内容判定的接线', () => {
     expect(code).not.toMatch(/已复用/);
     expect(code).not.toMatch(/无需再次调用模型/);
     expect(code).not.toMatch(/分层结果已在画布中/);
-    // 重拆前必须先把上一轮的图层清干净，否则两轮结果会叠在一起。
-    expect(tab).toMatch(/candidate\.layerSourceKey === sourceItem\.key && candidate\.layerRole === 'layer'/);
+  });
+
+  it('【关键】重拆不许删掉上一轮的结果，也不许改动原图', () => {
+    // 2026-08-11 用户反馈：「我重新生成新的图层时候，他居然将原来的清理掉了？这是bug吗」——是。
+    // 每次分层都是在右边多长出一份副本；原图与既往副本都必须原封不动。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    expect(code).not.toMatch(/previous\.filter\(\(candidate\) => !\(\s*candidate\.layerSourceKey/);
+    expect(code).not.toMatch(/layerRole: 'source' as const/);
+    // 落位必须先挑一块空地，而不是拿原图那块矩形当锚点。
+    expect(code).toMatch(/planLayeredCopyRect\(\{\s*source:\s*sourceItem,\s*occupied:\s*canvasRef\.current\s*\}\)/);
+    expect(code).toMatch(/planSemanticLayerFrame\(sourceItem,\s*count,\s*layerLayoutMode,\s*copyRect\)/);
+  });
+
+  it('【关键】透明裁剪必须接到画布上，不能只在导出时生效', () => {
+    // 这条守卫是补上一次的漏：boundsToCanvasRect 建好了、单测全绿，却全仓无人调用
+    // （形状 2：建了一半）。于是画布上每个部件仍是满幅方块，用户圈图指出「这才是
+    // 非透明最小矩形」。判据必须盯住「产物真的被裁了」+「落位用的是包围盒」。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    expect(code).toMatch(/trimLayerToContent\(/);
+    expect(code).toMatch(/boundsToCanvasRect\(\{/);
+    // 裁剪后的像素要作为新资产上传，否则画布框变小了、图还是满幅，会被压扁。
+    expect(code).toMatch(/data:\s*trimmed\.dataUrl/);
+    // 全透明层如实标注，不静默丢弃也不当普通层摆上去。
+    expect(code).toMatch(/layerContentKind:\s*'empty' as const/);
   });
 });
 
@@ -120,6 +142,9 @@ describe('画布持久化只许有一份实现', () => {
       'layerGroupId', 'layerSourceKey', 'layerIndex', 'layerRole',
       'layerHidden', 'layerOpacity', 'layerZ',
       'layerContentKind', 'layerCoverage', 'layerRequestedCount', 'userResized',
+      // 原位（最小外接矩形）必须落盘：不存的话刷新后从「平铺」切回「原位」就放不回去了。
+      'layerHomeX', 'layerHomeY', 'layerHomeW', 'layerHomeH',
+      'layerModel', 'layerIntent',
     ]) {
       const writes = persist.match(new RegExp(`${field}[:,]`, 'g')) ?? [];
       expect(writes.length, `${field} 应同时出现在写入与读回两侧`).toBeGreaterThanOrEqual(2);

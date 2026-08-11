@@ -58,6 +58,14 @@ export type SemanticLayerPanelProps = {
   layoutMode?: 'stacked' | 'spread';
   onLayoutModeChange?: (mode: 'stacked' | 'spread') => void;
   onLayerCountChange: (value: number) => void;
+  /**
+   * 用自己的话说想怎么拆。这是主入口，层数是次要提示——
+   * 「我就想把人物和风景分开」用数字表达不了（2026-08-10 用户原话）。
+   */
+  intent?: string;
+  onIntentChange?: (value: string) => void;
+  /** 上一次分层实际落到的模型；拿不到就不显示，绝不编一个。 */
+  usedModel?: string;
   onResplit: () => void;
   selectedKey?: string;
   onSelect: (key: string) => void;
@@ -107,6 +115,9 @@ export function SemanticLayerPanel({
   layoutMode = 'stacked',
   onLayoutModeChange,
   onLayerCountChange,
+  intent = '',
+  onIntentChange,
+  usedModel,
   onResplit,
   selectedKey,
   onSelect,
@@ -421,9 +432,35 @@ export function SemanticLayerPanel({
             {`本次请求 ${requestedLayerCount} 层，模型实际给出 ${layers.length} 层（层数由模型决定，只能是期望值）`}
           </div>
         )}
-        {/* 层数就地可调：不为一个参数开配置面板（奥卡姆），但也不写死 4 */}
+        {/* 主入口：用自己的话说想怎么拆。
+            层数是个很难做的决定——「我想把人物和风景分开」翻译成数字很可能拆出
+            「人物 + 冰淇淋」（2026-08-10 用户原话）。所以这里放在层数**上面**，
+            留空就交给模型自己判断，不强迫用户先想清楚要几层。 */}
+        <div className="flex flex-col gap-1">
+          <input
+            type="text"
+            value={intent}
+            maxLength={200}
+            disabled={!!busy}
+            placeholder="想怎么拆？例如：把人物和风景分开（可留空）"
+            className="h-8 px-2 rounded-[8px] text-[11px] outline-none disabled:opacity-40"
+            style={{
+              color: 'var(--text-primary)',
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border-default)',
+            }}
+            onChange={(event) => onIntentChange?.(event.target.value)}
+          />
+          {/* 有根才写：模型名来自本次分层的解析结果，拿不到就整行不出现，不编。 */}
+          {usedModel ? (
+            <div className="text-[10px] leading-4 truncate" style={{ color: 'var(--text-muted)' }} title={usedModel}>
+              {`本组由 ${usedModel} 拆分`}
+            </div>
+          ) : null}
+        </div>
+        {/* 层数退居次要提示：仍可调，但它不再是唯一的表达方式 */}
         <div className="h-7 flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-          <span className="shrink-0">下次拆</span>
+          <span className="shrink-0">最多拆</span>
           <button
             type="button"
             className="w-5 h-5 rounded-[5px] inline-flex items-center justify-center hover-bg-soft disabled:opacity-30"
@@ -451,7 +488,7 @@ export function SemanticLayerPanel({
             className="ml-auto h-6 px-2 rounded-[6px] inline-flex items-center gap-1 hover-bg-soft disabled:opacity-40"
             style={{ color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
             disabled={!!busy}
-            title="用当前层数重新拆一次"
+            title="按当前拆法再拆一次，结果落在右边新的一份副本上，不覆盖这一份"
             onClick={onResplit}
           >
             <RefreshCw size={11} />

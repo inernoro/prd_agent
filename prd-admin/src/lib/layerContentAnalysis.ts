@@ -28,6 +28,8 @@
  * 用户看得见、点一下能纠正，绝不静默剔除。
  */
 
+import { computeAlphaBounds, TRIM_SCAN_MAX_SIDE, type LayerBounds } from './layerTrim';
+
 export type LayerContentKind = 'layer' | 'empty' | 'flat' | 'source-reference';
 
 /**
@@ -284,6 +286,106 @@ export async function sampleLayerRgba(
   source: string,
   sha256?: string | null,
 ): Promise<Uint8ClampedArray | null> {
+  return withLayerImage(source, sha256, (image) => drawToRgba(image, ANALYSIS_SAMPLE_SIZE, ANALYSIS_SAMPLE_SIZE));
+}
+
+export type TrimmedLayer = {
+  /** 整幅全透明：模型给了一层但里面什么都没有。调用方必须如实标注，不能当普通层摆上去。 */
+  empty: boolean;
+  /** 相对图层图像的包围盒（按 scanWidth/scanHeight 的坐标系）。empty 时为 null。 */
+  bounds: LayerBounds | null;
+  scanWidth: number;
+  scanHeight: number;
+  /** 裁剪后的 PNG（data URL），按原始分辨率裁，不降质。empty 时为空串。 */
+  dataUrl: string;
+  /** 裁剪后的像素尺寸。 */
+  width: number;
+  height: number;
+};
+
+/**
+ * 把一张满幅图层裁成**最小非透明外接矩形**，并给出裁剪后的 PNG。
+ *
+ * 这是「部件是透明裁剪后的最小矩形」的真正落地：只算出包围盒是不够的，
+ * 必须让**产物本身**变成那个矩形——否则画布上框住的仍是一整张满是空气的方图，
+ * 想拖 logo 却按到一大片透明（2026-08-11 用户圈图指出）。
+ *
+ * 包围盒在降采样后的坐标系里算（上限 TRIM_SCAN_MAX_SIDE），但裁剪按**原始分辨率**做，
+ * 所以不会掉清晰度；边缘按比例外扩 1 像素，避免降采样的取整把羽化边切掉一线。
+ */
+export async function trimLayerToContent(
+  source: string,
+  sha256?: string | null,
+): Promise<TrimmedLayer | null> {
+  return withLayerImage(source, sha256, (image) => {
+    const naturalW = image.naturalWidth || image.width;
+    const naturalH = image.naturalHeight || image.height;
+    if (!naturalW || !naturalH) return null;
+    const side = Math.max(naturalW, naturalH);
+    const scale = side > TRIM_SCAN_MAX_SIDE ? TRIM_SCAN_MAX_SIDE / side : 1;
+    const scanWidth = Math.max(1, Math.round(naturalW * scale));
+    const scanHeight = Math.max(1, Math.round(naturalH * scale));
+
+    const rgba = drawToRgba(image, scanWidth, scanHeight);
+    if (!rgba) return null;
+    const bounds = computeAlphaBounds(rgba, scanWidth, scanHeight);
+    if (!bounds) {
+      return { empty: true, bounds: null, scanWidth, scanHeight, dataUrl: '', width: 0, height: 0 };
+    }
+
+    // 换算回原始分辨率，并各留 1 个扫描像素的余量（降采样取整可能吃掉最外一线羽化）。
+    const sx = naturalW / scanWidth;
+    const sy = naturalH / scanHeight;
+    const left = Math.max(0, Math.floor((bounds.left - 1) * sx));
+    const top = Math.max(0, Math.floor((bounds.top - 1) * sy));
+    const right = Math.min(naturalW, Math.ceil((bounds.right + 1) * sx));
+    const bottom = Math.min(naturalH, Math.ceil((bounds.bottom + 1) * sy));
+    const width = Math.max(1, right - left);
+    const height = Math.max(1, bottom - top);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, left, top, width, height, 0, 0, width, height);
+    return {
+      empty: false,
+      // 把包围盒也换算成原始分辨率坐标，调用方据此算画布落位，口径与裁剪完全一致。
+      bounds: { left, top, right, bottom, width, height },
+      scanWidth: naturalW,
+      scanHeight: naturalH,
+      dataUrl: canvas.toDataURL('image/png'),
+      width,
+      height,
+    };
+  });
+}
+
+/** 把图画进指定尺寸的离屏 canvas 并取 RGBA。 */
+function drawToRgba(image: HTMLImageElement, width: number, height: number): Uint8ClampedArray | null {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  context.clearRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+  return context.getImageData(0, 0, width, height).data;
+}
+
+/**
+ * 读图 → 解码 → 交给回调用，用完立刻释放。
+ *
+ * 抽成一份是因为判定与裁剪只在「拿到图之后做什么」这一处不同；抄成两份迟早在鉴权、
+ * CORS、对象地址解析上漂移（.claude/rules/predicate-and-wiring-discipline.md 形状 3）。
+ */
+async function withLayerImage<T>(
+  source: string,
+  sha256: string | null | undefined,
+  consume: (image: HTMLImageElement) => T | null,
+): Promise<T | null> {
   const { resolveReadableImageUrl, readableImageFetchHeaders } = await import('./layeredPsd');
   const url = resolveReadableImageUrl(source, sha256);
   if (!url) return null;
@@ -302,14 +404,7 @@ export async function sampleLayerRgba(
         image.onerror = () => reject(new Error('decode failed'));
         image.src = objectUrl;
       });
-      const canvas = document.createElement('canvas');
-      canvas.width = ANALYSIS_SAMPLE_SIZE;
-      canvas.height = ANALYSIS_SAMPLE_SIZE;
-      const context = canvas.getContext('2d', { willReadFrequently: true });
-      if (!context) return null;
-      context.clearRect(0, 0, ANALYSIS_SAMPLE_SIZE, ANALYSIS_SAMPLE_SIZE);
-      context.drawImage(image, 0, 0, ANALYSIS_SAMPLE_SIZE, ANALYSIS_SAMPLE_SIZE);
-      return context.getImageData(0, 0, ANALYSIS_SAMPLE_SIZE, ANALYSIS_SAMPLE_SIZE).data;
+      return consume(image);
     } finally {
       URL.revokeObjectURL(objectUrl);
     }

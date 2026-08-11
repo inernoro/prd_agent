@@ -102,35 +102,83 @@ export function computeHorizontalClampShift({
  */
 export type SemanticLayerLayoutMode = 'stacked' | 'spread';
 
+/**
+ * 给这次分层挑一块**空地**：原图右侧、与原图等大、不压住画布上任何既有元素。
+ *
+ * 这是「可拆解副本」的落位规则，也是用户口述的第一步——「点击分层 → 在当前图片右侧
+ * 创建一个同等大小的新图片 → 再开始生成」。两条都不能省：
+ *
+ * - **原图必须原封不动**。副本盖在原图上（哪怕像素一致）会让用户失去参照，
+ *   也让「拆坏了重来」变成不可能。
+ * - **同一张图拆多次要各占一块地**。第二次拆不是「覆盖第一次」，而是右边再多一个副本；
+ *   两次结果并排，用户才能比较着挑（2026-08-11 反馈：「我重新生成新的图层时候，
+ *   他居然将原来的清理掉了？」）。
+ *
+ * 找法很朴素：从原图右侧第一格起，一格一格往右挪，直到这一格不与任何既有元素相交。
+ * 上限 24 格是防呆——真挪不动就落在最后一格上，宁可重叠也不能死循环。
+ */
+export function planLayeredCopyRect(input: {
+  source: Pick<SemanticLayerCanvasItem, 'x' | 'y' | 'w' | 'h'>;
+  /** 画布上所有已占位的元素（含原图自己，它天然会挡住第 0 格）。 */
+  occupied: ReadonlyArray<Pick<SemanticLayerCanvasItem, 'x' | 'y' | 'w' | 'h'>>;
+  gap?: number;
+}): SemanticLayerPlacement {
+  const sourceX = Number.isFinite(input.source.x) ? Number(input.source.x) : 0;
+  const sourceY = Number.isFinite(input.source.y) ? Number(input.source.y) : 0;
+  const w = Math.round(positive(input.source.w, 1024));
+  const h = Math.round(positive(input.source.h, 1024));
+  const gap = Number.isFinite(input.gap) && (input.gap as number) > 0 ? Math.round(input.gap as number) : SOURCE_GAP;
+  const y = Math.round(sourceY);
+
+  const boxes = input.occupied
+    .map((item) => ({
+      x: Number.isFinite(item.x) ? Number(item.x) : 0,
+      y: Number.isFinite(item.y) ? Number(item.y) : 0,
+      w: positive(item.w, 0),
+      h: positive(item.h, 0),
+    }))
+    .filter((box) => box.w > 0 && box.h > 0);
+
+  const intersects = (x: number) => boxes.some((box) => (
+    x + w > box.x && box.x + box.w > x && y + h > box.y && box.y + box.h > y
+  ));
+
+  let x = Math.round(sourceX + w + gap);
+  for (let step = 0; step < 24 && intersects(x); step += 1) x += w + gap;
+  return { x, y, w, h };
+}
+
 export function planSemanticLayerFrame(
   source: Pick<SemanticLayerCanvasItem, 'x' | 'y' | 'w' | 'h'>,
   layerCount: number,
   mode: SemanticLayerLayoutMode = 'stacked',
+  /**
+   * 副本落在哪。不传就退回「原地」——只有旧数据的兼容路径会走到，
+   * 新的分层一律由 {@link planLayeredCopyRect} 先挑好空地再传进来。
+   */
+  copy?: SemanticLayerPlacement,
 ): { frame: Omit<SemanticLayerFrame, 'id' | 'sourceKey' | 'name' | 'layerKeys'>; placements: SemanticLayerPlacement[] } {
   const count = Math.max(1, Math.min(10, Math.round(layerCount)));
   const sourceX = Number.isFinite(source.x) ? Number(source.x) : 0;
   const sourceY = Number.isFinite(source.y) ? Number(source.y) : 0;
   const sourceW = positive(source.w, 1024);
   const sourceH = positive(source.h, 1024);
-  const cardW = Math.round(sourceW);
-  const cardH = Math.round(sourceH);
+  const baseX = copy ? Math.round(copy.x) : Math.round(sourceX);
+  const baseY = copy ? Math.round(copy.y) : Math.round(sourceY);
+  const cardW = Math.round(copy ? positive(copy.w, sourceW) : sourceW);
+  const cardH = Math.round(copy ? positive(copy.h, sourceH) : sourceH);
 
   if (mode === 'stacked') {
-    // 每一块都落在原图那块矩形上：叠起来就是原图。
-    // Frame 框住的也正是原图那块，头部标签靠它给出「这是一组分层」的提示。
+    // 每一块都落在副本那块矩形上：叠起来就和原图一模一样。
+    // Frame 框住的也正是副本那块，头部标签靠它给出「这是一组分层」的提示。
     return {
-      frame: { x: Math.round(sourceX), y: Math.round(sourceY), w: cardW, h: cardH },
-      placements: Array.from({ length: count }, () => ({
-        x: Math.round(sourceX),
-        y: Math.round(sourceY),
-        w: cardW,
-        h: cardH,
-      })),
+      frame: { x: baseX, y: baseY, w: cardW, h: cardH },
+      placements: Array.from({ length: count }, () => ({ x: baseX, y: baseY, w: cardW, h: cardH })),
     };
   }
 
-  const frameX = Math.round(sourceX + sourceW + SOURCE_GAP);
-  const frameY = Math.round(sourceY);
+  const frameX = baseX;
+  const frameY = baseY;
   const frameW = FRAME_PADDING * 2 + count * cardW + (count - 1) * CARD_GAP;
   const frameH = FRAME_HEADER + FRAME_PADDING * 2 + cardH;
 
@@ -208,13 +256,15 @@ function compareStackOrder(a: ExportableLayerCandidate, b: ExportableLayerCandid
 
 /** 根据可独立移动的图层重新计算 Frame 边界，刷新后也能恢复。 */
 export function collectSemanticLayerFrames(items: SemanticLayerCanvasItem[]): SemanticLayerFrame[] {
-  const sources = new Map<string, SemanticLayerCanvasItem>();
+  // 原图按 key 反查，**不**靠「原图身上打了哪个 groupId」——一张图可以被拆很多次，
+  // 身上只能记住最后一个组，前面几组的原图指针就全指错了。
+  const byKey = new Map<string, SemanticLayerCanvasItem>();
+  for (const item of items) byKey.set(item.key, item);
   const layers = new Map<string, SemanticLayerCanvasItem[]>();
 
   for (const item of items) {
     const groupId = String(item.layerGroupId ?? '').trim();
     if (!groupId) continue;
-    if (item.layerRole === 'source') sources.set(groupId, item);
     if (item.layerRole === 'layer') {
       const bucket = layers.get(groupId) ?? [];
       bucket.push(item);
@@ -230,11 +280,12 @@ export function collectSemanticLayerFrames(items: SemanticLayerCanvasItem[]): Se
     const minY = Math.min(...sorted.map((item) => Number.isFinite(item.y) ? Number(item.y) : 0));
     const maxX = Math.max(...sorted.map((item) => (Number.isFinite(item.x) ? Number(item.x) : 0) + positive(item.w, 320)));
     const maxY = Math.max(...sorted.map((item) => (Number.isFinite(item.y) ? Number(item.y) : 0) + positive(item.h, 320)));
-    const source = sources.get(groupId);
+    const sourceKey = String(sorted[0]?.layerSourceKey ?? '').trim();
+    const source = sourceKey ? byKey.get(sourceKey) : undefined;
 
     frames.push({
       id: groupId,
-      sourceKey: source?.key || sorted[0]?.layerSourceKey || '',
+      sourceKey: source?.key || sourceKey,
       name: String(source?.prompt || 'AI 分层').trim() || 'AI 分层',
       layerKeys: sorted.map((item) => item.key),
       x: minX - FRAME_PADDING,

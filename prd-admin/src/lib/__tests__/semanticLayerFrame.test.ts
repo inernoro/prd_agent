@@ -1,25 +1,68 @@
 import { describe, expect, it } from 'vitest';
-import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
+import {
+  collectSemanticLayerFrames,
+  computeHorizontalClampShift,
+  planLayeredCopyRect,
+  planSemanticLayerFrame,
+  selectExportableLayers,
+} from '@/lib/semanticLayerFrame';
+
+describe('可拆解副本落在哪', () => {
+  const source = { x: 100, y: 200, w: 1000, h: 500 };
+
+  it('【关键】副本落在原图右侧，与原图等大，绝不盖在原图身上', () => {
+    // 用户口述的步骤（2026-08-11）：「点击分层 → 创建一个新的同等大小的图片在当前图片的
+    // 右侧 → 然后开始生成」。盖在原图上就没有参照物了，也就谈不上「表观上和参考图一致」。
+    const rect = planLayeredCopyRect({ source, occupied: [source] });
+    expect(rect.y).toBe(200);
+    expect(rect.w).toBe(1000);
+    expect(rect.h).toBe(500);
+    expect(rect.x).toBeGreaterThanOrEqual(1100);
+  });
+
+  it('【关键】再拆一次要另找一块空地，不许压住上一次的结果', () => {
+    // 2026-08-11 反馈：「我重新生成新的图层时候，他居然将原来的清理掉了？这是bug吗」——是。
+    // 正确行为是右边再多一份，两份并排让用户比较着挑。
+    const first = planLayeredCopyRect({ source, occupied: [source] });
+    const second = planLayeredCopyRect({ source, occupied: [source, first] });
+    expect(second.x).toBeGreaterThanOrEqual(first.x + first.w);
+  });
+
+  it('原图右边本来就有别的东西时继续往右找', () => {
+    const blocker = { x: 1100, y: 200, w: 1000, h: 500 };
+    const rect = planLayeredCopyRect({ source, occupied: [source, blocker] });
+    expect(rect.x).toBeGreaterThanOrEqual(blocker.x + blocker.w);
+  });
+
+  it('挪不动时也必须收敛，不能死循环', () => {
+    // 造一排堵到天边的元素：函数必须在有限步内返回，宁可重叠也不能挂住主线程。
+    const wall = Array.from({ length: 200 }, (_, i) => ({ x: 1100 + i * 1100, y: 200, w: 1000, h: 500 }));
+    const rect = planLayeredCopyRect({ source, occupied: [source, ...wall] });
+    expect(Number.isFinite(rect.x)).toBe(true);
+  });
+});
 
 describe('semantic layer frame', () => {
-  it('【默认】拆完各部件叠回原位，画面看起来和原图一样', () => {
+  it('【默认】各部件叠在副本那块地上，副本看起来就是原图', () => {
     // 用户心智（2026-08-10）：「分层之后不应该展开，而是还在原来的位置」——
     // 多数时候只是想把 logo 挪一点，摊开成一排等于让用户自己再拼一次。
     const source = { x: 100, y: 200, w: 1000, h: 500 };
-    const result = planSemanticLayerFrame(source, 4);
+    const copy = { x: 1220, y: 200, w: 1000, h: 500 };
+    const result = planSemanticLayerFrame(source, 4, 'stacked', copy);
 
     expect(result.placements).toHaveLength(4);
     for (const placement of result.placements) {
-      expect(placement).toEqual({ x: 100, y: 200, w: 1000, h: 500 });
+      expect(placement).toEqual(copy);
     }
-    // Frame 框住的就是原图那块，不额外占地方
-    expect(result.frame).toEqual({ x: 100, y: 200, w: 1000, h: 500 });
+    // Frame 框住的就是副本那块，不额外占地方
+    expect(result.frame).toEqual(copy);
   });
 
   it('spread 视图才铺开成一排，且每块仍按原图尺寸', () => {
-    const result = planSemanticLayerFrame({ x: 100, y: 200, w: 1000, h: 500 }, 4, 'spread');
+    const copy = { x: 1220, y: 200, w: 1000, h: 500 };
+    const result = planSemanticLayerFrame({ x: 100, y: 200, w: 1000, h: 500 }, 4, 'spread', copy);
 
-    expect(result.frame.x).toBeGreaterThan(1100);
+    expect(result.frame.x).toBe(1220);
     expect(result.placements).toHaveLength(4);
     expect(result.placements[0].w / result.placements[0].h).toBe(2);
     expect(new Set(result.placements.map((item) => `${item.x}:${item.y}`)).size).toBe(4);
@@ -27,7 +70,7 @@ describe('semantic layer frame', () => {
 
   it('rebuilds a frame from independently movable persisted layers', () => {
     const frames = collectSemanticLayerFrames([
-      { key: 'source', prompt: '海报', layerGroupId: 'group-1', layerRole: 'source' },
+      { key: 'source', prompt: '海报' },
       { key: 'layer-2', x: 500, y: 250, w: 200, h: 100, layerGroupId: 'group-1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 2 },
       { key: 'layer-1', x: 250, y: 250, w: 200, h: 100, layerGroupId: 'group-1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
     ]);
@@ -37,6 +80,21 @@ describe('semantic layer frame', () => {
     expect(frames[0].name).toBe('海报');
     expect(frames[0].layerKeys).toEqual(['layer-1', 'layer-2']);
     expect(frames[0].w).toBeGreaterThan(450);
+  });
+
+  it('【关键】原图被拆过两次时，两个 Frame 各自指回同一张原图', () => {
+    // 原图身上只能记住一个 groupId，所以原图必须靠图层的 layerSourceKey 反查。
+    // 早先按「原图身上打的组号」找，拆第二次就把第一组的原图指针指没了。
+    const frames = collectSemanticLayerFrames([
+      { key: 'source', prompt: '海报' },
+      { key: 'a1', x: 0, y: 0, w: 100, h: 100, layerGroupId: 'g1', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
+      { key: 'b1', x: 500, y: 0, w: 100, h: 100, layerGroupId: 'g2', layerSourceKey: 'source', layerRole: 'layer', layerIndex: 1 },
+    ]);
+    expect(frames).toHaveLength(2);
+    for (const frame of frames) {
+      expect(frame.sourceKey).toBe('source');
+      expect(frame.name).toBe('海报');
+    }
   });
 
   it('keeps the selected-image toolbar inside the visible canvas', () => {

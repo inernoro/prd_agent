@@ -25,9 +25,15 @@ const GLOBAL_CSS = `
   will-change:background-position;
   animation:gen-sweep-move 1.5s linear infinite;}
 @keyframes gen-sweep-move{to{background-position:-220% 0, 0 0}}
+/* 宽度必须除以 invZoom，否则计时条会「涨」出卡片被裁掉。
+   推导：布局宽 L 经 scale(1/zoom) 之后的屏幕宽恒为 L，而卡片的屏幕宽是 cardW*zoom；
+   zoom 越小卡片越窄、计时条却纹丝不动，zoom<0.78 时它就比卡片还宽，
+   撞上 .gen-sweep 的 overflow:hidden 直接被切一半（2026-08-11 用户截图里「预计 ~55」被切）。
+   写成 88%/invZoom 之后屏幕宽 = 0.88*cardW*zoom，永远是卡片的 88%。
+   min-width 必须去掉——它会把这个上限重新顶穿。 */
 .gen-sweep__bar{position:absolute;left:50%;bottom:10%;
   transform:translateX(-50%) scale(var(--invZoom, 1));transform-origin:center bottom;
-  width:78%;min-width:140px;max-width:340px;display:flex;flex-direction:column;gap:6px;
+  width:min(calc(88% / var(--invZoom, 1)), 340px);max-width:340px;display:flex;flex-direction:column;gap:6px;
   background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);
   border-radius:14px;padding:8px 11px;backdrop-filter:blur(4px)}
 .gen-sweep__row{display:flex;justify-content:space-between;gap:10px;font-size:11px;font-weight:800;line-height:1;color:rgba(255,255,255,0.86)}
@@ -47,7 +53,17 @@ function ensureStyles() {
   document.head.appendChild(el);
 }
 
-export function GenSweepLoader({ createdAt, className }: { createdAt?: number; className?: string }) {
+export function GenSweepLoader({ createdAt, className, screenW, screenH }: {
+  createdAt?: number;
+  className?: string;
+  /**
+   * 卡片此刻在**屏幕上**的尺寸（世界尺寸 × zoom）。
+   * 传了就据此决定还显不显示计时条：卡片本身还没计时条大的时候，
+   * 它不是信息而是遮挡（低缩放下三个反缩放标签必然互相压，冒烟实测）。
+   */
+  screenW?: number;
+  screenH?: number;
+}) {
   ensureStyles();
   const [now, setNow] = useState(() => Date.now());
   // 兜底起点固定在挂载时刻（不随每秒 now 漂移）：createdAt 缺失时若用 now 当起点，elapsed 恒为 0。
@@ -65,9 +81,14 @@ export function GenSweepLoader({ createdAt, className }: { createdAt?: number; c
   const overtime = elapsedMs > estMs;
   const pct = Math.min(95, Math.round((elapsedMs / estMs) * 100));
 
+  // 没传屏幕尺寸的老调用方保持原样显示；传了就按「装得下才显示」判断。
+  const showBar = typeof screenW !== 'number' || typeof screenH !== 'number'
+    || (screenW >= 200 && screenH >= 120);
+
   return (
     <div className={`gen-sweep${className ? ` ${className}` : ''}`}>
       <div className="gen-sweep__fill" />
+      {!showBar ? null : (
       <div className="gen-sweep__bar">
         <div className="gen-sweep__row">
           <span>已耗时 {elapsedS}s</span>
@@ -79,6 +100,7 @@ export function GenSweepLoader({ createdAt, className }: { createdAt?: number; c
           <div className={`gen-sweep__pct${overtime ? ' gen-sweep__pct--over' : ''}`} style={{ width: `${pct}%` }} />
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -151,8 +151,17 @@ export interface CanvasImageItem {
   layerContentKind?: LayerContentKind;
   /** 不透明像素占比 0–1。 */
   layerCoverage?: number;
-  /** 本次向模型请求的层数（只挂在 source 上）。层数是期望值，实到几层由模型决定。 */
+  /** 本次向模型请求的层数。层数是期望值，实到几层由模型决定。 */
   layerRequestedCount?: number;
+  /** 这一块在可拆解副本里的原位（最小非透明外接矩形）；从平铺切回原位靠它。 */
+  layerHomeX?: number;
+  layerHomeY?: number;
+  layerHomeW?: number;
+  layerHomeH?: number;
+  /** 本次分层实际落到的模型。 */
+  layerModel?: string;
+  /** 用户这次用自然语言说的拆法。 */
+  layerIntent?: string;
 }
 
 export interface ImageAsset {
@@ -190,6 +199,11 @@ export function isRemoteImageSrc(src: string): boolean {
  * - 对于 data:/blob: 本地图片，跳过并计入 skippedLocalOnlyImages
  */
 const LAYER_CONTENT_KINDS: readonly LayerContentKind[] = ['layer', 'empty', 'flat', 'source-reference'];
+
+/** 读回数字字段：非有限值一律当没存过，绝不把 NaN 当坐标用。 */
+function finiteOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
 
 function isLayerContentKind(value: unknown): value is LayerContentKind {
   return typeof value === 'string' && (LAYER_CONTENT_KINDS as readonly string[]).includes(value);
@@ -260,6 +274,12 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
           layerContentKind: it.layerContentKind,
           layerCoverage: it.layerCoverage,
           layerRequestedCount: it.layerRequestedCount,
+          layerHomeX: it.layerHomeX,
+          layerHomeY: it.layerHomeY,
+          layerHomeW: it.layerHomeW,
+          layerHomeH: it.layerHomeH,
+          layerModel: it.layerModel,
+          layerIntent: it.layerIntent,
           // 尺寸是不是已由排版决定，必须落盘：不存的话刷新后 img.onLoad 会拿 natural 尺寸
           // 覆盖 w/h，同一个 Frame 里等大对齐的图层塌成大小不一的碎块（2026-08-10 实测截图）。
           userResized: it.userResized === true ? true : undefined,
@@ -381,6 +401,12 @@ export function persistedV1ToCanvas(
         layerRequestedCount: typeof ext.layerRequestedCount === 'number' && Number.isFinite(ext.layerRequestedCount)
           ? ext.layerRequestedCount
           : undefined,
+        layerHomeX: finiteOrUndefined(ext.layerHomeX),
+        layerHomeY: finiteOrUndefined(ext.layerHomeY),
+        layerHomeW: finiteOrUndefined(ext.layerHomeW),
+        layerHomeH: finiteOrUndefined(ext.layerHomeH),
+        layerModel: typeof ext.layerModel === 'string' ? ext.layerModel : undefined,
+        layerIntent: typeof ext.layerIntent === 'string' ? ext.layerIntent : undefined,
         // 分层 Frame 里的图层尺寸由排版决定，不能被 onLoad 的 natural 尺寸覆盖。
         // 存量数据没有这个字段，靠 layerRole 兜底；但必须真的存下过尺寸才敢锁，
         // 否则没尺寸又不让 onLoad 填，卡片会渲染成 0。

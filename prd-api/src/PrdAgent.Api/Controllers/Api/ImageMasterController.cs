@@ -1553,8 +1553,15 @@ public class ImageMasterController : ControllerBase
                 ? prompt[imageGenPrefix.Length..].Trim()
                 : prompt;
 
+            // 语义分层：MAP 只认 LLMGW 发布的通用能力标识，不感知上游平台与具体模型。
+            // 这个判定必须**最先**算出来：既要在模型必填校验之前（否则分层请求会先被
+            // 「必须提供模型」挡掉），也要在风格提示词拼接之前——分层的 prompt 是拆法指令，
+            // 把画风要求拼进去等于让模型去「按这个风格重画」，不是拆图。
+            var isLayering = string.Equals(
+                (request?.Operation ?? string.Empty).Trim(), "layering", StringComparison.OrdinalIgnoreCase);
+
             // 风格统一：若 workspace 设置了 StylePrompt，自动拼接到用户 prompt 后面
-            var stylePrompt = (ws.StylePrompt ?? string.Empty).Trim();
+            var stylePrompt = isLayering ? string.Empty : (ws.StylePrompt ?? string.Empty).Trim();
             if (!string.IsNullOrWhiteSpace(stylePrompt))
             {
                 prompt = $"{prompt}\n\n风格要求：{stylePrompt}";
@@ -1563,12 +1570,6 @@ public class ImageMasterController : ControllerBase
 
             var targetKey = (request?.TargetKey ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(targetKey)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "targetKey 不能为空"));
-
-            // 语义分层：MAP 只认 LLMGW 发布的通用能力标识，不感知上游平台与具体模型。
-            // 这个判定必须在模型必填校验之前算出来——否则分层请求会先被「必须提供模型」挡掉，
-            // 后面清空 picker 字段的代码永远走不到，异步分层这条链路等于没接上。
-            var isLayering = string.Equals(
-                (request?.Operation ?? string.Empty).Trim(), "layering", StringComparison.OrdinalIgnoreCase);
 
             // 模型：configModelId 或 platformId+modelId
             var cfgModelId = (request?.ConfigModelId ?? string.Empty).Trim();

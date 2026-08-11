@@ -90,9 +90,17 @@ import {
   buildLayerContentVerdicts,
   describeLayerContent,
   sampleLayerRgba,
+  trimLayerToContent,
   type LayerContentKind,
 } from '@/lib/layerContentAnalysis';
-import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
+import { boundsToCanvasRect } from '@/lib/layerTrim';
+import {
+  collectSemanticLayerFrames,
+  computeHorizontalClampShift,
+  planLayeredCopyRect,
+  planSemanticLayerFrame,
+  selectExportableLayers,
+} from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import {
@@ -229,8 +237,23 @@ type CanvasImageItem = {
   layerContentKind?: LayerContentKind;
   /** 不透明像素占比 0–1，面板每行显示它——这是把各层区分开的最直接事实。 */
   layerCoverage?: number;
-  /** 本次向模型请求的层数（只挂在 source 上）。层数是期望值，实到几层由模型决定。 */
+  /** 本次向模型请求的层数。层数是期望值，实到几层由模型决定。 */
   layerRequestedCount?: number;
+  /**
+   * 这一块的「原位」——即它在可拆解副本里的最小非透明外接矩形。
+   *
+   * 用户把它拖走之后，x/y 就不再是原位了；从「平铺展开」切回「原位叠放」时必须靠这组
+   * 数字把它放回去。存四个数而不是重新量一遍，是因为量像素是异步的，
+   * 切换视图不能卡在读图上。
+   */
+  layerHomeX?: number;
+  layerHomeY?: number;
+  layerHomeW?: number;
+  layerHomeH?: number;
+  /** 本次分层实际落到的模型（网关解析结果）。用户有权知道这一层是谁拆的。 */
+  layerModel?: string;
+  /** 用户这次用自然语言说的拆法；空表示没指定，由模型自行判断。 */
+  layerIntent?: string;
 };
 
 /**
@@ -1128,6 +1151,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const next = clampLayerCount(value);
     setLayerCountPref(next);
     try { localStorage.setItem('prdAdmin.visualAgent.layerCount', String(next)); } catch { /* 存不下不影响本次使用 */ }
+  }, []);
+  /**
+   * 用自己的话说想怎么拆（「把人物和风景分开」）。
+   *
+   * 层数不该是唯一入口——「我就想把人物和冰淇淋分开」用数字根本表达不了，
+   * 选 2 层很可能拆出人物和冰淇淋而不是人物和风景（2026-08-10 用户原话）。
+   * 所以自然语言是主入口，层数退居可选提示。纯 UI 偏好，按 no-localstorage 例外清单可落 localStorage。
+   */
+  const [layerIntentPref, setLayerIntentPref] = useState<string>(() => {
+    try { return localStorage.getItem('prdAdmin.visualAgent.layerIntent') ?? ''; }
+    catch { return ''; }
+  });
+  const updateLayerIntentPref = useCallback((value: string) => {
+    const next = String(value ?? '').slice(0, 200);
+    setLayerIntentPref(next);
+    try { localStorage.setItem('prdAdmin.visualAgent.layerIntent', next); } catch { /* 存不下不影响本次使用 */ }
   }, []);
   const [layerExportBusy, setLayerExportBusy] = useState<string | null>(null);
   // 分层完成后要把 Frame 收进视野，但视角函数定义在下面，用 ref 打通前后引用顺序。
@@ -2226,6 +2265,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     prompt: string;
     /** 重拆标记：同样的层数再拆一次要落到新的 run 上，否则命中幂等键原样返回上次结果。 */
     attempt?: string | number;
+    /** 用自己的话说的拆法；不传就用面板里当前那句。 */
+    intent?: string;
   }): Promise<Array<{ name: string; source: string }> | null> => {
     if (layeringRunningRef.current) {
       toast.info('分层进行中', '已经有一张图片在拆分图层，等它完成再试。');
@@ -2287,12 +2328,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       0,
     );
     const requestedLayerCount = clampLayerCount(layerCountPref);
+    const layerIntent = String(input.intent ?? layerIntentPref ?? '').trim();
+    // 副本落在原图右侧的第一块空地上。原图不动、也不藏——用户要的是「原图还在，
+    // 右边多出一个看起来一模一样、但可以拆的副本」（西瓜切了很多刀，外观分毫不变）。
+    const copyRect = planLayeredCopyRect({ source: sourceItem, occupied: canvasRef.current });
     const layerKeyAt = (index: number) => `${groupId}_layer_${index + 1}`;
     // 图层的 prompt 只保留来源信息；显示名由序号决定，不再把序号拼进这串文字
     // ——拼进去会被显示层的 60 字截断切掉，四层退化成同一串（2026-08-07 实测）。
     const layerPromptAt = () => String(input.prompt || '图片');
     const buildPlaceholders = (count: number): CanvasImageItem[] => {
-      const layout = planSemanticLayerFrame(sourceItem, count, layerLayoutMode);
+      const layout = planSemanticLayerFrame(sourceItem, count, layerLayoutMode, copyRect);
       return Array.from({ length: count }, (_, index) => ({
         key: layerKeyAt(index),
         createdAt: createdAt + index,
@@ -2308,6 +2353,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         layerSourceKey: sourceItem.key,
         layerIndex: index + 1,
         layerRole: 'layer' as const,
+        // 请求层数与拆法意图挂在图层身上，不挂原图——一张图可以被拆很多次，
+        // 挂在原图上只记得住最后一次，前面几组的面板就会显示别人的参数。
+        layerRequestedCount: requestedLayerCount,
+        layerIntent: layerIntent || undefined,
       }));
     };
 
@@ -2334,26 +2383,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       });
     };
 
-    setCanvas((previous) => {
-      // 重拆前把这张图上一轮的图层整组撤掉——包括已经出图的那些。
-      // 原位叠放之后新旧两组会摞在同一个位置，不清就是一团糊。
-      const cleaned = previous.filter((candidate) => !(
-        candidate.layerSourceKey === sourceItem.key && candidate.layerRole === 'layer'
-      ));
-      return cleaned.map((candidate) => candidate.key === sourceItem.key
-        ? {
-            ...candidate,
-            // 上一轮结束时把原图隐藏了；重拆期间先放出来，不然画布上一片空白。
-            layerHidden: false,
-            layerGroupId: groupId,
-            layerSourceKey: sourceItem.key,
-            layerIndex: 0,
-            layerRole: 'source' as const,
-            // 记下「这次要了几层」，面板才能解释实到层数为什么不等于它。
-            layerRequestedCount: requestedLayerCount,
-          }
-        : candidate);
-    });
+    // 原图**一个字段都不动**：不打组号、不改角色、更不隐藏。
+    // 它就是那颗没被切过的西瓜，永远留在原地当参照；每次分层只是在右边多长出一个副本。
+    // （2026-08-11 反馈：「我重新生成新的图层时候，他居然将原来的清理掉了？这是bug吗」
+    //  ——是。旧实现把原图打上最新的组号、把上一组图层整组删掉，两者都是这次一并撤掉的。）
     ensureSlots(1);
     setNextRefId(maxRefId + requestedLayerCount + 1);
     // 组装台跟着一起开：拆分的下一步就是排图层，别让用户拆完还要自己找面板在哪。
@@ -2377,11 +2410,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         source,
         sourceSha256: readySha,
         layerCount: requestedLayerCount,
+        intent: layerIntent,
         // 每次点击都是一次真实重拆：不带变化的标记会命中上一轮的幂等键，原样返回旧结果。
         attempt: input.attempt ?? `${createdAt}`,
         // 分层要跑几十秒，等待期必须一直有东西在动（禁止静止的「加载中」）。
         onProgress: ({ phase, completed, total }) =>
           setLayeringProgress({ sourceKey: sourceItem.key, groupId, phase, completed, total }),
+        // 谁拆的这一组要落到图层身上：换了模型再拆一次，两组各自记着自己的模型，
+        // 用户才比较得出「哪个模型拆得更合心意」（这也是「兼容多个分层模型」的可见面）。
+        onModel: (model) => setCanvas((previous) => previous.map((candidate) => candidate.layerGroupId === groupId
+          && candidate.layerRole === 'layer'
+          ? { ...candidate, layerModel: model }
+          : candidate)),
         // 出一层点亮一张占位卡。此时用的是模型直出地址，落资产后再换成资产地址。
         onLayer: ({ index, url }) => {
           if (!url || index < 0 || index >= 10) return;
@@ -2439,7 +2479,72 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               syncError: null,
             }
           : candidate));
-        layerSources.push({ name, source: asset.url });
+        // ---- 透明裁剪：把满幅图层裁成最小非透明外接矩形，并让**产物本身**变成那个矩形。
+        // 只算包围盒不裁产物是不够的（那正是上一版的漏）：画布上框住的仍是一整张满是
+        // 空气的方图，想拖 logo 却按到一大片透明（2026-08-11 用户圈图指出）。
+        // 裁不动 / 读不到都如实回落成满幅，绝不猜。
+        let placed = { x: copyRect.x, y: copyRect.y, w: copyRect.w, h: copyRect.h };
+        let trimmedAsset: { url: string; id: string; sha256?: string; width?: number; height?: number } | null = null;
+        let emptyLayer = false;
+        const trimmed = await trimLayerToContent(asset.url, asset.sha256);
+        if (trimmed?.empty) {
+          // 模型返回了一层，但里面一个不透明像素都没有。这种层不该出现在画布上，
+          // 但也不能静默吞掉——标成空层、默认隐藏，面板照样列出来让用户看见。
+          emptyLayer = true;
+        } else if (trimmed?.bounds && trimmed.dataUrl) {
+          const cropUpload = await uploadVisualAgentWorkspaceAsset({
+            id: workspaceId,
+            data: trimmed.dataUrl,
+            prompt: layerPromptAt(),
+            idempotencyKey: `semantic_layer_trim_${sourceItem.key}_${index}_${createdAt}`,
+          });
+          if (cropUpload.success) {
+            const cropped = cropUpload.data.asset;
+            trimmedAsset = {
+              url: cropped.url ?? '',
+              id: cropped.id,
+              sha256: cropped.sha256,
+              width: cropped.width,
+              height: cropped.height,
+            };
+            placed = boundsToCanvasRect({
+              bounds: trimmed.bounds,
+              layerWidth: trimmed.scanWidth,
+              layerHeight: trimmed.scanHeight,
+              canvasX: copyRect.x,
+              canvasY: copyRect.y,
+              canvasW: copyRect.w,
+              canvasH: copyRect.h,
+            });
+          }
+        }
+
+        setCanvas((previous) => previous.map((candidate) => candidate.key === layerKeyAt(index)
+          ? {
+              ...candidate,
+              ...(trimmedAsset?.url
+                ? {
+                    src: trimmedAsset.url,
+                    assetId: trimmedAsset.id,
+                    sha256: trimmedAsset.sha256,
+                    naturalW: trimmedAsset.width,
+                    naturalH: trimmedAsset.height,
+                  }
+                : {}),
+              x: placed.x,
+              y: placed.y,
+              w: placed.w,
+              h: placed.h,
+              // 原位记在身上：拖走之后要放得回来，切换摆法也靠它。
+              layerHomeX: placed.x,
+              layerHomeY: placed.y,
+              layerHomeW: placed.w,
+              layerHomeH: placed.h,
+              ...(emptyLayer ? { layerContentKind: 'empty' as const, layerHidden: true } : {}),
+            }
+          : candidate));
+
+        layerSources.push({ name, source: trimmedAsset?.url || asset.url });
         // 判定要用的地址与 sha 在这里就是确定的，当场记下来。
         // 早先是等循环跑完再去 canvasRef 里捞——而 setCanvas 还没刷进 ref，
         // 最后一层捞到的仍是模型直出的跨域直链且没有 sha；对象存储不给 CORS 头，
@@ -2470,23 +2575,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }));
       })();
 
-      // 各部件已经叠回原位，原图退居参考：不隐藏的话，关掉某一层看到的是原图而不是透明，
-      // 用户会以为「关了没反应」。原图仍在画布上（可随时打开），也仍会写进 PSD 的隐藏参考层。
-      setCanvas((previous) => previous.map((candidate) => candidate.key === sourceItem.key
-        ? { ...candidate, layerHidden: true }
-        : candidate));
-
       setSelectionWithoutChip([layerKeyAt(0)]);
-      // 拆完把原图那块收进视野（避开右侧面板）。默认原位叠放，所以要看的就是原来那块。
-      const framed = planSemanticLayerFrame(sourceItem, remoteLayers.length, layerLayoutMode).frame;
+      // 拆完把「原图 + 副本」一起收进视野（避开右侧面板）：用户要做的第一件事就是
+      // 两边对照——副本表观上和原图一模一样，区别只在它可以被拆开。
+      const left = Math.min(Number(sourceItem.x ?? 0), copyRect.x);
+      const right = Math.max(Number(sourceItem.x ?? 0) + Number(sourceItem.w ?? copyRect.w), copyRect.x + copyRect.w);
       animateCameraToFitRectRef.current?.(
-        { x: framed.x - 40, y: framed.y - 40, w: framed.w + 80, h: framed.h + 80 },
+        { x: left - 40, y: copyRect.y - 80, w: right - left + 80, h: copyRect.h + 160 },
         { maxZoom: 1, rightInset: LAYER_PANEL_RESERVED_WIDTH },
       );
+      const emptyCount = canvasRef.current.filter((candidate) => candidate.layerGroupId === groupId
+        && candidate.layerContentKind === 'empty').length;
       toast.success(
         'AI 分层完成',
-        `${layerSources.length} 个部件已叠回原位，画面看起来没变，但每一块现在都能单独选中、拖动。`
-        + '想逐块检视可在图层面板切「平铺展开」。',
+        `原图右侧多了一个可拆解副本：表观上和原图一致，但每一块都能单独选中、拖动。`
+        + (emptyCount > 0 ? `模型这次多给了 ${emptyCount} 个空层，已标注并隐藏。` : ''),
         7000,
       );
       return layerSources;
@@ -2515,8 +2618,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const groupId = String(item?.layerGroupId ?? '').trim();
     // 同一 layerIndex 可能并存「原始图层」和「快捷编辑后的新版本」，只导出最新那版。
     const cachedLayers = selectExportableLayers(canvasRef.current, groupId);
-    const cachedSource = groupId
-      ? canvasRef.current.find((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'source')
+    // 原图按 layerSourceKey 反查（一张图能被拆多次，原图身上只记得住最后一个组号）。
+    const cachedSourceKey = String(cachedLayers[0]?.layerSourceKey ?? '').trim();
+    const cachedSource = cachedSourceKey
+      ? canvasRef.current.find((candidate) => candidate.key === cachedSourceKey)
       : item;
     const source = String(cachedSource?.originalSrc || cachedSource?.src || input.src || '').trim();
     if (!source) {
@@ -2579,12 +2684,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     [canvas, layerPanelGroupId],
   );
 
-  const layerPanelSource = useMemo(
-    () => (layerPanelGroupId
-      ? canvas.find((candidate) => candidate.layerGroupId === layerPanelGroupId && candidate.layerRole === 'source')
-      : undefined),
-    [canvas, layerPanelGroupId],
-  );
+  // 原图靠图层身上的 layerSourceKey 反查，**不**靠「原图身上打了哪个组号」——
+  // 一张图能被拆很多次，原图身上只记得住最后一个组号，早先那几组就全指到别人身上了。
+  const layerPanelSource = useMemo(() => {
+    if (!layerPanelGroupId) return undefined;
+    const sourceKey = String(layerPanelLayers[0]?.layerSourceKey ?? '').trim();
+    return sourceKey ? canvas.find((candidate) => candidate.key === sourceKey) : undefined;
+  }, [canvas, layerPanelGroupId, layerPanelLayers]);
 
   const layerPanelModel = useMemo<SemanticLayerPanelLayer[]>(
     () => layerPanelLayers.map((layer, index) => ({
@@ -2615,11 +2721,42 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setLayerLayoutMode(mode);
     try { localStorage.setItem('prdAdmin.visualAgent.layerLayout', mode); } catch { /* 偏好写不进去不影响功能 */ }
     const items = canvasRef.current;
-    const source = items.find((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'source');
-    if (!source) return;
     const layers = selectExportableLayers(items, groupId, { includeEmpty: true });
     if (layers.length === 0) return;
-    const { placements } = planSemanticLayerFrame(source, layers.length, mode);
+
+    if (mode === 'stacked') {
+      // 回原位 = 各自回到自己的最小外接矩形，**不是**都摊平成同一个大方块。
+      // 用 layerHome*（分层时量好的）而不是现场重量：量像素是异步的，切视图不能卡在读图上。
+      setCanvas((previous) => previous.map((candidate) => {
+        if (candidate.layerGroupId !== groupId || candidate.layerRole !== 'layer') return candidate;
+        if (![candidate.layerHomeX, candidate.layerHomeY, candidate.layerHomeW, candidate.layerHomeH]
+          .every((value) => typeof value === 'number' && Number.isFinite(value))) return candidate;
+        return {
+          ...candidate,
+          x: candidate.layerHomeX,
+          y: candidate.layerHomeY,
+          w: candidate.layerHomeW,
+          h: candidate.layerHomeH,
+          userResized: true,
+        };
+      }));
+      return;
+    }
+
+    // 摊开：按副本那块地为起点排一排。副本的位置由本组图层的原位并集决定。
+    const homes = layers
+      .map((layer) => ({ x: layer.layerHomeX, y: layer.layerHomeY, w: layer.layerHomeW, h: layer.layerHomeH }))
+      .filter((home) => [home.x, home.y, home.w, home.h].every((v) => typeof v === 'number' && Number.isFinite(v)));
+    const anchor = homes.length > 0
+      ? {
+          x: Math.min(...homes.map((home) => home.x!)),
+          y: Math.min(...homes.map((home) => home.y!)),
+          w: Math.max(...homes.map((home) => home.x! + home.w!)) - Math.min(...homes.map((home) => home.x!)),
+          h: Math.max(...homes.map((home) => home.y! + home.h!)) - Math.min(...homes.map((home) => home.y!)),
+        }
+      : null;
+    if (!anchor) return;
+    const { placements } = planSemanticLayerFrame(anchor, layers.length, mode, anchor);
     const placementByKey = new Map(layers.map((layer, index) => [layer.key, placements[index]!]));
     setCanvas((previous) => previous.map((candidate) => {
       const placement = placementByKey.get(candidate.key);
@@ -6750,27 +6887,28 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           boxShadow: 'none',
                         }}
                       >
-                        {/* 贴左下角而不是右上角：右上角是 Frame 的「图层面板」按钮、
-                            正上方是 Frame 头部，三者都用 scale(1/zoom) 保持屏幕尺寸恒定，
-                            缩小时必然叠在一起（冒烟实测 35% 起就撞）。卡片在屏幕上太小时
-                            直接不显示——那个尺寸下它只会盖住产物本身。 */}
+                        {/* 贴**左上角**：右上角是 Frame 的「图层面板」按钮、正上方是 Frame 头部、
+                            正下方是计时条，四者都用 scale(1/zoom) 保持屏幕尺寸恒定，
+                            凑一起必然互相压（2026-08-11 用户截图：徽章正压在进度条上）。
+                            左上角是这张卡里唯一没人占的角。卡片在屏幕上太小时直接不显示——
+                            那个尺寸下它只会盖住产物本身。 */}
                         {h * zoom >= 90 && (
                           <div
-                            className="absolute left-3 bottom-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
+                            className="absolute left-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
                             style={{
                               background: 'rgba(0,0,0,0.28)',
                               border: '1px solid rgba(255,255,255,0.10)',
                               color: 'rgba(255,255,255,0.78)',
                               // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
                               transform: 'scale(var(--invZoom))',
-                              transformOrigin: 'left bottom',
+                              transformOrigin: 'left top',
                             }}
                             title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
                           >
                             {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
                           </div>
                         )}
-                        <GenSweepLoader createdAt={it.createdAt} />
+                        <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} />
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">
@@ -7471,10 +7609,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 busy={!!layerExportBusy}
                 busyText={layerExportBusy || undefined}
                 layerCount={layerCountPref}
-                requestedLayerCount={layerPanelSource?.layerRequestedCount}
+                // 请求层数 / 拆法 / 模型都挂在图层身上，不挂原图——一张图能被拆多次，
+                // 挂原图上只记得住最后一次，面板会显示别组的参数。
+                requestedLayerCount={layerPanelLayers[0]?.layerRequestedCount}
+                usedModel={layerPanelLayers.find((layer) => !!layer.layerModel)?.layerModel}
                 layoutMode={layerLayoutMode}
                 onLayoutModeChange={(mode) => { if (layerPanelGroupId) applyLayerLayout(layerPanelGroupId, mode); }}
                 onLayerCountChange={updateLayerCountPref}
+                intent={layerIntentPref}
+                onIntentChange={updateLayerIntentPref}
                 onResplit={() => {
                   const sourceItem = layerPanelSource;
                   if (!sourceItem) return;
