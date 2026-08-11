@@ -6518,6 +6518,317 @@ app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformR
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(document)), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
+// ---------------------------------------------------------------------------
+// 上游预设 + 连通性自测 + 模型发现导入
+//
+// 见 .claude/rules/minimal-user-input.md：Provider 的地址/协议/并发是系统本来就知道的，
+// 不该让用户去搜供应商文档；密钥填完之后，模型清单与价格是上游查得到的，不该让用户照抄。
+// 同一条规则还规定了连带义务——最小输入必须配当场自测、结果可见、失败给下一步，
+// 否则就退化成「蒙着眼睛少填几个字」。下面三个端点就是这三件事。
+// ---------------------------------------------------------------------------
+
+// 探测上游用的 HttpClient：超时压到 15s，避免一个不通的地址把控制台请求挂住。
+var upstreamProbeHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+
+// 一次导入的模型数上限。聚合型上游（OpenRouter）能列出几百个模型，全勾下来会把
+// 模型列表冲垮，也让后面的模型池选型无从下手；分批导入是刻意的摩擦。
+const int MaxImportBatch = 200;
+
+app.MapGet("/gw/provider-presets", (HttpContext http) =>
+{
+    var items = ProviderPresets.All.Select(p => new ProviderPresetItem
+    {
+        Key = p.Key,
+        Name = p.Name,
+        PlatformType = p.PlatformType,
+        ApiUrl = p.ApiUrl,
+        ProviderId = p.ProviderId,
+        MaxConcurrency = p.MaxConcurrency,
+        KeyConsoleUrl = p.KeyConsoleUrl,
+        KeyPrefixHint = p.KeyPrefixHint,
+        SupportsModelDiscovery = p.SupportsModelDiscovery,
+        SupportsUpstreamPricing = p.SupportsUpstreamPricing,
+        Summary = p.Summary,
+        SearchTerms = p.SearchTerms.ToList(),
+    }).ToList();
+    return Json(ApiEnvelope<ProviderPresetsData>.Ok(new ProviderPresetsData { Items = items }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 连通性自测：拿已保存的密钥去打一次上游的模型列表，回报成败 + 耗时 + 可执行的下一步。
+// 只读，不改任何配置；探测地址一并回给用户核对（他填错 baseUrl 时这一行就是答案）。
+app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var doc = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<PlatformTestResult>.Fail("NOT_FOUND", "Provider 不存在或不属于当前租户"), jsonOptions, 404);
+
+    var apiUrl = doc.AsNullableString("ApiUrl") ?? string.Empty;
+    var platformType = doc.GetStringOrEmpty("PlatformType");
+    var probeUrl = ProviderPresets.ResolveModelsUrl(apiUrl);
+
+    if (string.IsNullOrWhiteSpace(apiUrl))
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "NO_API_URL",
+            Message = "这个 Provider 没有配 API 地址", NextStep = "在高级选项里补上 API 地址后再测",
+        }), jsonOptions);
+
+    var keyResult = GwApiKeyCrypto.Decrypt(doc.AsNullableString("ApiKeyEncrypted"), config);
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, probeUrl);
+        if (keyResult.Success && keyResult.PlainText.Length > 0)
+        {
+            // Claude 原生协议用 x-api-key，OpenAI 兼容用 Bearer。判错的话会拿到 401，
+            // 那正是我们要如实报出来的信息，不做静默双发。
+            if (string.Equals(platformType, "claude", StringComparison.OrdinalIgnoreCase))
+            {
+                req.Headers.TryAddWithoutValidation("x-api-key", keyResult.PlainText);
+                req.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+            }
+            else
+            {
+                req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {keyResult.PlainText}");
+            }
+        }
+
+        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+        sw.Stop();
+        var status = (int)resp.StatusCode;
+        int? modelCount = null;
+        if (resp.IsSuccessStatusCode)
+        {
+            try
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                var arr = System.Text.Json.Nodes.JsonNode.Parse(body)?["data"] as System.Text.Json.Nodes.JsonArray;
+                modelCount = arr?.Count;
+            }
+            catch (System.Text.Json.JsonException) { /* 通了就够了，解析不出来不影响结论 */ }
+        }
+
+        var (kind, message, nextStep) = status switch
+        {
+            >= 200 and < 300 => ((string?)null,
+                modelCount is null ? "上游可达，密钥被接受" : $"上游可达，密钥被接受，返回 {modelCount} 个模型",
+                (string?)null),
+            401 or 403 => ("UNAUTHORIZED", $"上游拒绝了这个密钥（HTTP {status}）",
+                "去 Provider 控制台确认密钥有效、没过期、有调用权限，然后用「更新密钥」重填"),
+            404 => ("NOT_FOUND", $"地址不对，上游说没有这个接口（HTTP {status}）",
+                "多半是 API 地址填错了。在高级选项里核对地址，或改用内置预设"),
+            429 => ("RATE_LIMITED", "上游限流（HTTP 429）",
+                "密钥本身是通的，稍后再测；如果持续限流，检查上游账号的速率配额"),
+            >= 500 => ("UPSTREAM_ERROR", $"上游服务异常（HTTP {status}）", "上游的问题，过一会儿再测"),
+            _ => ("UNEXPECTED_STATUS", $"上游返回了意料之外的状态（HTTP {status}）", "把这个状态码提供给上游支持，或核对地址"),
+        };
+
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = resp.IsSuccessStatusCode, HttpStatus = status, ElapsedMs = sw.ElapsedMilliseconds,
+            ProbedUrl = probeUrl, ModelCount = modelCount, FailureKind = kind, Message = message, NextStep = nextStep,
+        }), jsonOptions);
+    }
+    catch (TaskCanceledException)
+    {
+        sw.Stop();
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ElapsedMs = sw.ElapsedMilliseconds, ProbedUrl = probeUrl, FailureKind = "TIMEOUT",
+            Message = "15 秒内没有响应", NextStep = "检查地址是否可从网关容器访问；本地部署的上游要用容器能解析的主机名",
+        }), jsonOptions);
+    }
+    catch (HttpRequestException ex)
+    {
+        sw.Stop();
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ElapsedMs = sw.ElapsedMilliseconds, ProbedUrl = probeUrl, FailureKind = "NETWORK",
+            Message = $"连不上：{ex.Message}", NextStep = "确认域名可解析、端口可达、出网策略放行了这个域名",
+        }), jsonOptions);
+    }
+}).RequireAuthorization("ConfigWrite");
+
+// 拉上游模型清单：用户不该照着供应商文档往输入框里抄模型名。
+// 用途按标识推断（拿不准就留空），价格只认上游自己给的（不内置价目表，见 ProviderPresets.ReadPricing）。
+app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string id) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var doc = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("NOT_FOUND", "Provider 不存在或不属于当前租户"), jsonOptions, 404);
+
+    var apiUrl = doc.AsNullableString("ApiUrl") ?? string.Empty;
+    var probeUrl = ProviderPresets.ResolveModelsUrl(apiUrl);
+    if (string.IsNullOrWhiteSpace(apiUrl))
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("NO_API_URL", "这个 Provider 没有配 API 地址"), jsonOptions, 400);
+    if (string.Equals(doc.GetStringOrEmpty("PlatformType"), "claude", StringComparison.OrdinalIgnoreCase))
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("DISCOVERY_UNSUPPORTED",
+            "Claude 原生协议没有模型列表接口，请手动添加模型"), jsonOptions, 400);
+
+    var keyResult = GwApiKeyCrypto.Decrypt(doc.AsNullableString("ApiKeyEncrypted"), config);
+    string body;
+    try
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, probeUrl);
+        if (keyResult.Success && keyResult.PlainText.Length > 0)
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {keyResult.PlainText}");
+        using var resp = await upstreamProbeHttp.SendAsync(req);
+        if (!resp.IsSuccessStatusCode)
+            return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_" + (int)resp.StatusCode,
+                $"上游返回 HTTP {(int)resp.StatusCode}，先点「测试连接」看具体原因"), jsonOptions, 502);
+        body = await resp.Content.ReadAsStringAsync();
+    }
+    catch (TaskCanceledException)
+    {
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("TIMEOUT", "拉取模型清单超时（15 秒）"), jsonOptions, 504);
+    }
+    catch (HttpRequestException ex)
+    {
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("NETWORK", $"连不上上游：{ex.Message}"), jsonOptions, 502);
+    }
+
+    System.Text.Json.Nodes.JsonArray? dataArray;
+    try
+    {
+        dataArray = System.Text.Json.Nodes.JsonNode.Parse(body)?["data"] as System.Text.Json.Nodes.JsonArray;
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_SHAPE", "上游返回的不是合法 JSON"), jsonOptions, 502);
+    }
+    if (dataArray is null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_SHAPE",
+            "上游返回里没有 data 数组，这个地址可能不是 OpenAI 兼容的模型列表接口"), jsonOptions, 502);
+
+    var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
+        .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
+        .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var items = new List<UpstreamModelItem>();
+    foreach (var node in dataArray)
+    {
+        if (node is not System.Text.Json.Nodes.JsonObject obj) continue;
+        var modelId = (obj["id"] as System.Text.Json.Nodes.JsonValue)?.ToString();
+        if (string.IsNullOrWhiteSpace(modelId)) continue;
+        var pricing = ProviderPresets.ReadPricing(obj);
+        items.Add(new UpstreamModelItem
+        {
+            ModelId = modelId,
+            DisplayName = (obj["name"] as System.Text.Json.Nodes.JsonValue)?.ToString(),
+            InferredCapabilities = ProviderPresets.InferCapabilities(modelId).ToList(),
+            InputPricePerMillion = pricing?.InputPricePerMillion,
+            OutputPricePerMillion = pricing?.OutputPricePerMillion,
+            PricePerCall = pricing?.PricePerCall,
+            PriceCurrency = pricing?.Currency,
+            PriceSource = pricing is null ? null : "upstream",
+            AlreadyImported = existing.Contains(modelId),
+        });
+    }
+
+    var data = new UpstreamModelsData
+    {
+        ProbedUrl = probeUrl,
+        Total = items.Count,
+        AlreadyImportedCount = items.Count(x => x.AlreadyImported),
+        PricingProvided = items.Any(x => x.PriceSource is not null),
+        Items = items.OrderBy(x => x.ModelId, StringComparer.OrdinalIgnoreCase).ToList(),
+    };
+    return Json(ApiEnvelope<UpstreamModelsData>.Ok(data), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 批量导入选中的上游模型。已存在的同名模型跳过而不是覆盖——导入是补齐动作，
+// 不该悄悄改掉用户手工调过的用途或价格。
+app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string id, [FromBody] ImportUpstreamModelsRequest? body) =>
+{
+    var entries = body?.Models?.Where(m => !string.IsNullOrWhiteSpace(m.ModelId)).ToList() ?? new List<ImportUpstreamModelEntry>();
+    if (entries.Count == 0)
+        return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail("INVALID_INPUT", "没有选中任何模型"), jsonOptions, 400);
+    if (entries.Count > MaxImportBatch)
+        return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail("TOO_MANY",
+            $"一次最多导入 {MaxImportBatch} 个模型，请分批"), jsonOptions, 400);
+
+    var fb = Builders<BsonDocument>.Filter;
+    var platform = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (platform is null)
+        return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail("NOT_FOUND", "Provider 不存在或不属于当前租户"), jsonOptions, 404);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
+        .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
+        .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var result = new ImportUpstreamModelsResult { Requested = entries.Count };
+    var now = DateTime.UtcNow;
+    foreach (var entry in entries)
+    {
+        var modelId = entry.ModelId!.Trim();
+        if (existing.Contains(modelId))
+        {
+            result.Skipped++;
+            result.SkippedModelIds.Add(modelId);
+            continue;
+        }
+
+        var caps = (entry.Capabilities ?? ProviderPresets.InferCapabilities(modelId).ToList())
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var doc = new BsonDocument
+        {
+            { "_id", $"gw-model-{Guid.NewGuid():N}" },
+            { "TenantId", tenantId },
+            { "PlatformId", id },
+            { "ModelName", modelId },
+            { "Name", modelId },
+            { "Enabled", true },
+            { "Priority", 100 },
+            { "Authority", "llm_gateway" },
+            { "SourceCollection", "llmgw_models" },
+            { "CreatedAt", now },
+            { "UpdatedAt", now },
+            { "Capabilities", new BsonArray(caps.Select(c => new BsonDocument
+                {
+                    { "Type", c },
+                    // source=inferred 让界面能区分「系统推断的」和「用户勾的」，
+                    // 对应 minimal-user-input.md 的第 3 条：自动填的值必须可见可改。
+                    { "Source", "inferred" },
+                    { "Value", true },
+                })) },
+        };
+        if (entry.InputPricePerMillion is not null) doc["InputPricePerMillion"] = entry.InputPricePerMillion.Value;
+        if (entry.OutputPricePerMillion is not null) doc["OutputPricePerMillion"] = entry.OutputPricePerMillion.Value;
+        if (entry.PricePerCall is not null) doc["PricePerCall"] = entry.PricePerCall.Value;
+        if (!string.IsNullOrWhiteSpace(entry.PriceCurrency)) doc["PriceCurrency"] = entry.PriceCurrency;
+
+        await gwModels.InsertOneAsync(doc);
+        existing.Add(modelId);
+        result.Created++;
+        result.CreatedModelIds.Add(modelId);
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "platform.models.import",
+        targetType: "llmgw_platform",
+        targetId: id,
+        targetName: platform.GetStringOrEmpty("Name"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "requested", result.Requested },
+            { "created", result.Created },
+            { "skipped", result.Skipped },
+        });
+
+    return Json(ApiEnvelope<ImportUpstreamModelsResult>.Ok(result), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
 // 创建模型：Provider 必须属于当前租户；缺少模型 key 时继承 Provider key。
 // 创建成功后只调用现有默认池注册表做 append-only 补齐：匹配则追加，不匹配则保持不变。
 app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest? body) =>

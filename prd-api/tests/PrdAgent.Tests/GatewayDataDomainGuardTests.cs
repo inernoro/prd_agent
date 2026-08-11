@@ -3106,6 +3106,39 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"PRD_AGENT_API_IMAGE\": os.environ.get(\"RESTORE_PRD_AGENT_API_IMAGE\", \"\")", restore);
     }
 
+    /// <summary>
+    /// 控制台探测上游用的地址推导，必须与网关真实调用用的是同一条「baseUrl 是否自带版本号」判据。
+    ///
+    /// 两边漂移的后果特别阴：控制台「测试连接」打的是 A 地址、说通了，业务真调用走 B 地址却 404。
+    /// 用户拿到的是一个绿灯 + 一个不工作的 Provider，而两处单独看都没错
+    /// （predicate-and-wiring-discipline 形状 3）。console-api 是独立工程、引用不到网关那份代码，
+    /// 只能从源码上钉死。
+    /// </summary>
+    [Fact]
+    public void ProviderPresets_VersionSuffixPredicateMatchesGatewayAdapter()
+    {
+        var adapter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/Adapters/OpenAIGatewayAdapter.cs");
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+
+        const string pattern = @"/(api/)?v\d+$";
+        Assert.Contains(pattern, adapter);
+        Assert.Contains(pattern, presets);
+    }
+
+    /// <summary>
+    /// 价格只许来自上游。内置价目表会过时，而过时的价格比没有价格更危险——它看起来是真的，
+    /// 成本报表照算，没人会去核对（no-rootless-tree.md）。
+    /// </summary>
+    [Fact]
+    public void ProviderPresets_DoesNotShipABuiltinPriceTable()
+    {
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+
+        Assert.Contains("ReadPricing", presets);
+        Assert.DoesNotContain("PriceTable", presets);
+        Assert.DoesNotContain("BuiltinPricing", presets);
+    }
+
     [Fact]
     public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
     {

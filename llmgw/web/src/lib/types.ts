@@ -622,6 +622,70 @@ export type CreatePlatformRequest = {
   remark?: string;
 };
 
+// ── 内置上游预设 / 连通性自测 / 模型发现（minimal-user-input.md）──
+// 这些类型的唯一数据源是后端 /gw/provider-presets，前端不另维护一份上游清单。
+export type ProviderPresetItem = {
+  key: string;
+  name: string;
+  platformType: 'openai' | 'claude';
+  apiUrl: string;
+  providerId?: string | null;
+  maxConcurrency: number;
+  keyConsoleUrl: string;
+  keyPrefixHint: string;
+  supportsModelDiscovery: boolean;
+  supportsUpstreamPricing: boolean;
+  summary: string;
+  searchTerms: string[];
+};
+export type ProviderPresetsData = { items: ProviderPresetItem[] };
+
+export type PlatformTestResult = {
+  reachable: boolean;
+  httpStatus?: number | null;
+  elapsedMs: number;
+  probedUrl: string;
+  modelCount?: number | null;
+  failureKind?: string | null;
+  message: string;
+  nextStep?: string | null;
+};
+
+export type UpstreamModelItem = {
+  modelId: string;
+  displayName?: string | null;
+  inferredCapabilities: string[];
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+  priceSource?: string | null;
+  alreadyImported: boolean;
+};
+export type UpstreamModelsData = {
+  probedUrl: string;
+  total: number;
+  alreadyImportedCount: number;
+  pricingProvided: boolean;
+  items: UpstreamModelItem[];
+};
+
+export type ImportUpstreamModelEntry = {
+  modelId: string;
+  capabilities?: string[];
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+};
+export type ImportUpstreamModelsResult = {
+  requested: number;
+  created: number;
+  skipped: number;
+  skippedModelIds: string[];
+  createdModelIds: string[];
+};
+
 // ── 模型（无密钥，仅 hasKey）──
 export type ModelCapability = { type: string; source: string; value: boolean };
 export type ParameterCapabilityMetaItem = {

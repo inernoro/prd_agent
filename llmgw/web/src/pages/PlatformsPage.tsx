@@ -2,9 +2,10 @@
 // 密钥明文只随创建/轮换请求发送，列表永远只展示 hasKey。
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled } from '@/lib/api';
-import type { CreatePlatformRequest, PlatformItem } from '@/lib/types';
-import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
+import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatformApiKey, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection } from '@/lib/api';
+import type { CreatePlatformRequest, PlatformItem, PlatformTestResult, ProviderPresetItem, UpstreamModelsData } from '@/lib/types';
+import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
+import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
@@ -32,6 +33,12 @@ export function PlatformsPage() {
     apiKey: '',
     maxConcurrency: 20,
   });
+  // 内置上游预设：选一个就把地址/协议/并发一次性带出来（minimal-user-input.md）
+  const [presets, setPresets] = useState<ProviderPresetItem[]>([]);
+  const [preset, setPreset] = useState<ProviderPresetItem | null>(null);
+  // 接完之后的两件交代：能不能通、上游有哪些模型
+  const [testResult, setTestResult] = useState<Record<string, PlatformTestResult>>({});
+  const [discovery, setDiscovery] = useState<{ platformId: string; data: UpstreamModelsData } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -43,10 +50,47 @@ export function PlatformsPage() {
       }
       else setError(res.error?.message || '加载失败');
     });
+    getProviderPresets().then((res) => {
+      if (alive && res.success) setPresets(res.data.items);
+    });
     return () => {
       alive = false;
     };
   }, []);
+
+  /** 选中预设 = 一次性填好所有系统知道的字段，用户只剩密钥要填。 */
+  function applyPreset(next: ProviderPresetItem | null) {
+    setPreset(next);
+    setDraft((value) => next
+      ? {
+        ...value,
+        name: next.name,
+        platformType: next.platformType,
+        apiUrl: next.apiUrl,
+        providerId: next.providerId || undefined,
+        maxConcurrency: next.maxConcurrency,
+      }
+      // 取消选中回到自定义：只清掉预设带来的地址，用户已经敲的密钥不动
+      : { ...value, name: '', apiUrl: '', providerId: undefined });
+  }
+
+  async function runTest(p: PlatformItem) {
+    setBusyId(p.id);
+    setToast(null);
+    const res = await testPlatformConnection(p.id);
+    setBusyId(null);
+    if (res.success) setTestResult((prev) => ({ ...prev, [p.id]: res.data }));
+    else setToast(res.error?.message || '测试失败');
+  }
+
+  async function openDiscovery(p: PlatformItem) {
+    setBusyId(p.id);
+    setToast(null);
+    const res = await getUpstreamModels(p.id);
+    setBusyId(null);
+    if (res.success) setDiscovery({ platformId: p.id, data: res.data });
+    else setToast(res.error?.message || '拉取模型清单失败');
+  }
 
   async function submitCreate(event: React.FormEvent) {
     event.preventDefault();
@@ -61,8 +105,41 @@ export function PlatformsPage() {
     }
     setItems((prev) => [...(prev || []), res.data]);
     setDraft({ name: '', platformType: 'openai', apiUrl: '', apiKey: '', maxConcurrency: 20 });
+    setPreset(null);
     setShowCreate(false);
-    setToast(`Provider「${res.data.name}」已保存，通讯密钥已加密，可继续添加模型`);
+    setToast(`Provider「${res.data.name}」已保存。正在测试连接…`);
+    // 保存完立刻自测一次：最小输入的连带义务是「当场知道对不对」，
+    // 不能等到业务真去调模型时才发现密钥是错的。
+    const test = await testPlatformConnection(res.data.id);
+    if (test.success) {
+      setTestResult((prev) => ({ ...prev, [res.data.id]: test.data }));
+      setToast(test.data.reachable
+        ? `Provider「${res.data.name}」已保存，连接正常，可以拉取模型清单了`
+        : `Provider「${res.data.name}」已保存，但连接测试没通过，见下方提示`);
+      if (test.data.reachable) await openDiscovery(res.data);
+    } else {
+      setToast(`Provider「${res.data.name}」已保存（自动测试没跑起来，可在列表里手动点「测试连接」）`);
+    }
+  }
+
+  async function runImport(platformId: string, selected: UpstreamModelsData['items']) {
+    setBusyId(platformId);
+    setToast(null);
+    const res = await importUpstreamModels(platformId, selected.map((m) => ({
+      modelId: m.modelId,
+      capabilities: m.inferredCapabilities,
+      inputPricePerMillion: m.inputPricePerMillion,
+      outputPricePerMillion: m.outputPricePerMillion,
+      pricePerCall: m.pricePerCall,
+      priceCurrency: m.priceCurrency,
+    })));
+    setBusyId(null);
+    if (!res.success) {
+      setToast(res.error?.message || '导入失败');
+      return;
+    }
+    setToast(`已导入 ${res.data.created} 个模型${res.data.skipped > 0 ? `，跳过 ${res.data.skipped} 个已存在的` : ''}`);
+    setDiscovery(null);
   }
 
   async function toggle(p: PlatformItem) {
@@ -170,13 +247,10 @@ export function PlatformsPage() {
         <div style={{ maxWidth: 720 }}>
           <h1>Provider（模型供应方）</h1>
           <p>
-            Provider 告诉网关“去哪里调用模型”。这里保存的是供应方地址和供应方通讯密钥；它不是给业务应用使用的 <code>gwk_</code> 接入密钥。
+            选平台、填密钥即可接入；这里存的是供应方密钥，不是业务应用用的 <code>gwk_</code> 接入密钥。
           </p>
           <div style={{ marginTop: 6, ...HINT_TEXT }}>
-            第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
-          </div>
-          <div style={{ marginTop: 6, ...HINT_TEXT }}>
-            fal.ai 等原生接口不属于 OpenAI 或 Claude Provider。图片分层请到 <Link className="lg-text-link" to="/exchanges#image-layering">Exchange 一键接入</Link>。
+            fal.ai 等原生接口不走这里，图片分层请到 <Link className="lg-text-link" to="/exchanges#image-layering">Exchange 一键接入</Link>。
           </div>
         </div>
         {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
@@ -185,41 +259,71 @@ export function PlatformsPage() {
       </header>
       {showCreate && canWrite ? (
         <section style={createCardStyle}>
-          <form onSubmit={submitCreate} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>名称</span>
-              <input required value={draft.name} onChange={(e) => setDraft((value) => ({ ...value, name: e.target.value }))} placeholder="例如：教程假上游" style={formInputStyle} />
+          {/* 第一步：选平台。地址、协议、并发都由预设带出来，用户不必去搜供应商文档。 */}
+          <ProviderPresetPicker presets={presets} selectedKey={preset?.key ?? null} onSelect={applyPreset} />
+
+          <form onSubmit={submitCreate} style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+            {/* 第二步：填密钥。这是唯一一个系统无从得知、必须由用户提供的字段。 */}
+            <label style={{ ...fieldStyle, maxWidth: 520 }}>
+              <span style={labelStyle}>
+                {preset ? `${preset.name} 的通讯密钥` : 'Provider 通讯密钥'}
+                {preset?.keyConsoleUrl ? (
+                  <a href={preset.keyConsoleUrl} target="_blank" rel="noreferrer noopener" style={keyLinkStyle}>去这里领密钥</a>
+                ) : null}
+              </span>
+              <input
+                required={!preset || preset.keyConsoleUrl !== ''}
+                type="password"
+                autoComplete="new-password"
+                value={draft.apiKey}
+                onChange={(e) => setDraft((value) => ({ ...value, apiKey: e.target.value }))}
+                placeholder={preset?.keyPrefixHint ? `以 ${preset.keyPrefixHint} 开头` : '只保存加密结果，不会回显'}
+                style={formInputStyle}
+              />
             </label>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>接口类型</span>
-              <select value={draft.platformType} onChange={(e) => setDraft((value) => ({ ...value, platformType: e.target.value as CreatePlatformRequest['platformType'] }))} style={formInputStyle}>
-                <option value="openai">OpenAI 兼容</option>
-                <option value="claude">Claude 兼容</option>
-              </select>
-            </label>
-            <label style={{ ...fieldStyle, gridColumn: '1 / -1' }}>
-              <span style={labelStyle}>API 地址</span>
-              <input required type="url" value={draft.apiUrl} onChange={(e) => setDraft((value) => ({ ...value, apiUrl: e.target.value }))} placeholder="https://provider.example.com/v1" style={formInputStyle} />
-            </label>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>Provider 通讯密钥</span>
-              <input required type="password" autoComplete="new-password" value={draft.apiKey} onChange={(e) => setDraft((value) => ({ ...value, apiKey: e.target.value }))} placeholder="必填，只保存加密结果" style={formInputStyle} />
-            </label>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>最大并发</span>
-              <input required type="number" min={1} max={10000} value={draft.maxConcurrency ?? 20} onChange={(e) => setDraft((value) => ({ ...value, maxConcurrency: Number(e.target.value) }))} style={formInputStyle} />
-            </label>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>供应方标识（可选）</span>
-              <input value={draft.providerId || ''} onChange={(e) => setDraft((value) => ({ ...value, providerId: e.target.value }))} placeholder="用于费用或日志归类" style={formInputStyle} />
-            </label>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>备注（可选）</span>
-              <input value={draft.remark || ''} onChange={(e) => setDraft((value) => ({ ...value, remark: e.target.value }))} placeholder="例如：仅供教程测试" style={formInputStyle} />
-            </label>
-            <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Button type="submit" variant="primary" size="sm" disabled={createBusy}>{createBusy ? '保存中…' : '保存并继续添加模型'}</Button>
-              <span style={HINT_TEXT}>保存后列表只显示“已配置”，不会回显密钥。</span>
+            {keyPrefixWarning(preset, draft.apiKey) ? (
+              <InlineAlert tone="info">{keyPrefixWarning(preset, draft.apiKey)}</InlineAlert>
+            ) : null}
+
+            {/* 其余字段都有正确默认值，收进高级区；用户想改 baseUrl 也在这里改。 */}
+            <details open={!preset}>
+              <summary style={advancedSummaryStyle}>
+                高级：名称、API 地址、并发{preset ? `（已按「${preset.name}」填好，通常不用动）` : '（自定义上游必须填地址）'}
+              </summary>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10, marginTop: 10 }}>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>名称</span>
+                  <input required value={draft.name} onChange={(e) => setDraft((value) => ({ ...value, name: e.target.value }))} placeholder="例如：教程假上游" style={formInputStyle} />
+                </label>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>接口类型</span>
+                  <select value={draft.platformType} onChange={(e) => setDraft((value) => ({ ...value, platformType: e.target.value as CreatePlatformRequest['platformType'] }))} style={formInputStyle}>
+                    <option value="openai">OpenAI 兼容</option>
+                    <option value="claude">Claude 兼容</option>
+                  </select>
+                </label>
+                <label style={{ ...fieldStyle, gridColumn: '1 / -1' }}>
+                  <span style={labelStyle}>API 地址</span>
+                  <input required type="url" value={draft.apiUrl} onChange={(e) => setDraft((value) => ({ ...value, apiUrl: e.target.value }))} placeholder="https://provider.example.com/v1" style={formInputStyle} />
+                </label>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>最大并发</span>
+                  <input required type="number" min={1} max={10000} value={draft.maxConcurrency ?? 20} onChange={(e) => setDraft((value) => ({ ...value, maxConcurrency: Number(e.target.value) }))} style={formInputStyle} />
+                </label>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>供应方标识（可选）</span>
+                  <input value={draft.providerId || ''} onChange={(e) => setDraft((value) => ({ ...value, providerId: e.target.value }))} placeholder="用于费用或日志归类" style={formInputStyle} />
+                </label>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>备注（可选）</span>
+                  <input value={draft.remark || ''} onChange={(e) => setDraft((value) => ({ ...value, remark: e.target.value }))} placeholder="例如：仅供教程测试" style={formInputStyle} />
+                </label>
+              </div>
+            </details>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Button type="submit" variant="primary" size="sm" disabled={createBusy}>{createBusy ? '保存中…' : '保存并测试连接'}</Button>
+              <span style={HINT_TEXT}>保存后自动测连接，通了直接列出上游模型。</span>
             </div>
           </form>
         </section>
@@ -227,6 +331,29 @@ export function PlatformsPage() {
       {!canWrite ? <ReadOnlyNotice /> : null}
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
+      ) : null}
+      {/* 自测结果与模型清单挂在表格上方：接完之后「通没通、上游有什么」必须看得见。 */}
+      {Object.entries(testResult).map(([platformId, result]) => {
+        const owner = items.find((x) => x.id === platformId);
+        return (
+          <div key={platformId} style={{ flexShrink: 0 }}>
+            <div style={{ ...HINT_TEXT, marginBottom: 4 }}>{owner?.name || platformId} 的连接测试</div>
+            <TestResultBar result={result} />
+          </div>
+        );
+      })}
+      {discovery ? (
+        <section style={{ ...createCardStyle, flexShrink: 0 }}>
+          <div style={{ marginBottom: 10, fontWeight: 600 }}>
+            {items.find((x) => x.id === discovery.platformId)?.name || discovery.platformId} 的上游模型
+          </div>
+          <UpstreamModelPicker
+            data={discovery.data}
+            busy={busyId === discovery.platformId}
+            onImport={(selected) => void runImport(discovery.platformId, selected)}
+            onCancel={() => setDiscovery(null)}
+          />
+        </section>
       ) : null}
       {items.length > 0 && canWrite ? (
         <details style={{ flexShrink: 0 }}>
@@ -272,7 +399,7 @@ export function PlatformsPage() {
                         buttonLabel="查看接口"
                         kicker="Provider 接口预览"
                         title={p.name}
-                        summary="从当前页确认网关会把模型请求发往哪里、采用哪种兼容协议，以及这条上游连接是否具备通讯密钥。预览本身不会访问供应方。"
+                        summary="确认网关把请求发往哪里、用哪种协议、是否已有密钥。预览不访问供应方。"
                         status={[
                           { label: p.enabled ? '已启用' : '已停用', tone: p.enabled ? 'good' : 'warning' },
                           { label: p.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: p.hasKey ? 'good' : 'warning' },
@@ -335,6 +462,14 @@ export function PlatformsPage() {
                         <>
                           {p.authority === 'llm_gateway' ? (
                             <>
+                              {/* 加了密钥之后必须能当场验证、能看到上游有什么模型，
+                                  否则用户只知道「存下了」，不知道「对不对、下一步干嘛」。 */}
+                              <Button size="sm" variant="ghost" disabled={busyId === p.id || !p.hasKey} onClick={() => void runTest(p)} title={p.hasKey ? '用已保存的密钥打一次上游' : '先配置密钥'}>
+                                测试连接
+                              </Button>
+                              <Button size="sm" variant="ghost" disabled={busyId === p.id || !p.hasKey || p.platformType === 'claude'} onClick={() => void openDiscovery(p)} title={p.platformType === 'claude' ? 'Claude 原生协议没有模型列表接口' : '从上游拉取模型清单并勾选导入'}>
+                                查看模型
+                              </Button>
                               <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => { setKeyEditId(p.id); setKeyValue(''); }}>
                                 更新密钥
                               </Button>
@@ -393,6 +528,21 @@ const checkStyle: React.CSSProperties = {
   gap: 6,
   fontSize: 'var(--fs-secondary)',
   color: 'var(--text-secondary)',
+};
+
+
+const keyLinkStyle: React.CSSProperties = {
+  marginLeft: 8,
+  fontSize: 'var(--fs-caption)',
+  fontWeight: 400,
+  color: 'var(--accent-primary)',
+};
+
+const advancedSummaryStyle: React.CSSProperties = {
+  cursor: 'pointer',
+  fontSize: 'var(--fs-secondary)',
+  color: 'var(--text-secondary)',
+  padding: '4px 2px',
 };
 
 const createCardStyle: React.CSSProperties = {
