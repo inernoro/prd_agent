@@ -77,12 +77,16 @@ export function SitePreview({ url, className, style }: { url: string; className?
   // 到点仍未 onLoad（多为新上传对象 CDN 传播中导致 iframe 一直 pending）就重挂重试。
   // attempt 达到 MAX_RETRIES 后本 effect 提前返回、不再起定时器 → 最后一次挂载的
   // iframe 不会被打断，慢页可继续加载直到 onLoad，不会因超时被永久卡在占位符。
+  // revealed 也要止住重试：页面在 1.2s 内画出来了、只是某个子资源把 load 吊着——这正是
+  // 本次要修的 Google Fonts 场景。此时若继续按 12s / 20s 重挂，attempt 变化会换掉 iframe 的
+  // key，React 把**已经显示出来的**文档整个替换两次：闪白 + 脚本重跑。重挂本是为了救
+  // 「一直没画出来」，画出来了就没有可救的了。真失败仍由 onError 兜。
   useEffect(() => {
-    if (!inView || loaded || attempt >= MAX_RETRIES) return;
+    if (!inView || loaded || revealed || attempt >= MAX_RETRIES) return;
     const delay = RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
     const timer = setTimeout(() => setAttempt((a) => a + 1), delay);
     return () => clearTimeout(timer);
-  }, [inView, loaded, attempt]);
+  }, [inView, loaded, revealed, attempt]);
 
   // 首绘窗口：进入视口后给 iframe 一段时间自己画，到点即淡入，不再等 load 事件。
   // 重挂（attempt 变化）会重开一次窗口，但**不回退 revealed**——已经显示出来的画面不该再被
