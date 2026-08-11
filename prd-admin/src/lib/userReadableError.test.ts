@@ -65,6 +65,16 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除。');
   });
 
+  it('视觉项目不存在时引导返回并刷新项目列表', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'WORKSPACE_NOT_FOUND', message: 'workspace missing' },
+      options,
+    );
+
+    expect(message).toBe('当前视觉项目不存在或已被删除，请返回项目列表并刷新后重新打开。');
+    expect(message).not.toContain(options.fallbackMessage);
+  });
+
   it.each([
     ['HAS_SPECIAL_MODELS', '以下模型被设置为系统模型，请先取消设置后再删除平台：主模型(生图模型)'],
     ['HAS_MODEL_POOL_REFS', '平台下的模型被以下模型池引用，请先从模型池移除：默认视觉池、备用视觉池'],

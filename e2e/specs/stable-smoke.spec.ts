@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -275,6 +276,36 @@ function inspectMp4(buffer: Buffer) {
     durationSeconds: timescale > 0 ? durationUnits / timescale : 0,
     videoTracks: handlers.filter((handler) => handler === 'vide').length,
     audioTracks: handlers.filter((handler) => handler === 'soun').length,
+  };
+}
+
+function inspectDeterministicPauseResumeWav(buffer: Buffer) {
+  expect(buffer.subarray(0, 4).toString('ascii')).toBe('RIFF');
+  expect(buffer.subarray(8, 12).toString('ascii')).toBe('WAVE');
+  expect(buffer.subarray(36, 40).toString('ascii')).toBe('data');
+  const sampleRate = buffer.readUInt32LE(24);
+  const dataLength = buffer.readUInt32LE(40);
+  expect(sampleRate).toBe(8_000);
+  expect(dataLength).toBe(buffer.length - 44);
+  const samples = new Int16Array(
+    buffer.buffer,
+    buffer.byteOffset + 44,
+    dataLength / Int16Array.BYTES_PER_ELEMENT,
+  );
+  const estimateFrequency = (start: number, end: number) => {
+    let crossings = 0;
+    let previous = samples[start] ?? 0;
+    for (let index = start + 1; index < end; index += 1) {
+      const current = samples[index] ?? 0;
+      if ((previous < 0 && current >= 0) || (previous >= 0 && current < 0)) crossings += 1;
+      previous = current;
+    }
+    return crossings * sampleRate / (2 * (end - start));
+  };
+  const middle = Math.floor(samples.length / 2);
+  return {
+    beforePauseHz: estimateFrequency(0, middle),
+    afterResumeHz: estimateFrequency(middle, samples.length),
   };
 }
 
@@ -722,7 +753,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }>(await request.post('/api/v1/auth/login', {
         data: { username, password, clientType: 'desktop' },
       }));
-      const restrictedToken = login.accessToken;
+      await page.waitForTimeout(1_100);
+      const renewed = await readEnvelope<{
+        accessToken: string;
+        refreshToken: string;
+        sessionKey: string;
+        user: { userId: string; username: string };
+      }>(await request.post('/api/v1/auth/refresh', {
+        data: {
+          refreshToken: login.refreshToken,
+          userId: login.user.userId,
+          clientType: 'desktop',
+          sessionKey: login.sessionKey,
+        },
+      }));
+      expect(renewed.accessToken).not.toBe(login.accessToken);
+      expect(renewed.refreshToken).toBe(login.refreshToken);
+      expect(renewed.sessionKey).toBe(login.sessionKey);
+      expect(renewed.user).toMatchObject({ userId: restrictedUserId, username });
+      const restrictedToken = renewed.accessToken;
       const restrictedMe = await readEnvelope<{
         effectivePermissions: string[];
         isRoot: boolean;
@@ -754,7 +803,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           },
           version: 0,
         }));
-      }, { loginState: login, me: restrictedMe });
+      }, { loginState: { ...login, ...renewed }, me: restrictedMe });
       await page.goto('/', { waitUntil: 'domcontentloaded' });
       await expect(page.locator('a[href="/users"]')).toHaveCount(0);
 
@@ -1561,29 +1610,187 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-001][REC-002] 现场录音自动开始且暂停继续不丢状态', async ({ page, request, context }) => {
-    test.setTimeout(90_000);
+  test('[REC-001][REC-002] 现场录音自动开始且暂停继续保留前后音频', { tag: '@cleanup' }, async ({ page, request, context }) => {
+    test.setTimeout(120_000);
     await context.grantPermissions(['microphone']);
     await page.setViewportSize({ width: 390, height: 844 });
-    await loginAndReadToken(page, request, '/document-store?quickRecord=1');
+    await page.addInitScript(() => {
+      class DeterministicMediaRecorder extends EventTarget {
+        static isTypeSupported() { return false; }
 
-    await expect(page.getByText('录音中', { exact: true }), '进入快捷录音后必须自动开始').toBeVisible({ timeout: 20_000 });
-    const timer = page.getByText(/^\d{2}:\d{2}$/).first();
-    await expect(timer).toBeVisible();
-    await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe('00:00');
+        readonly stream: MediaStream;
+        readonly mimeType = 'audio/wav';
+        readonly audioBitsPerSecond = 128_000;
+        readonly videoBitsPerSecond = 0;
+        state: RecordingState = 'inactive';
+        ondataavailable: ((event: BlobEvent) => void) | null = null;
+        onstop: ((event: Event) => void) | null = null;
+        onstart: ((event: Event) => void) | null = null;
+        onpause: ((event: Event) => void) | null = null;
+        onresume: ((event: Event) => void) | null = null;
+        onerror: ((event: Event) => void) | null = null;
+        private pausedOnce = false;
+        private resumedOnce = false;
 
-    await page.getByRole('button', { name: '暂停录音' }).click();
-    await expect(page.getByText('已暂停', { exact: true })).toBeVisible();
-    const pausedAt = await timer.textContent();
-    await page.waitForTimeout(1_200);
-    expect(await timer.textContent(), '暂停期间计时不得继续增长').toBe(pausedAt);
+        constructor(stream: MediaStream) {
+          super();
+          this.stream = stream;
+        }
 
-    await page.getByRole('button', { name: '继续录音' }).click();
-    await expect(page.getByText('录音中', { exact: true })).toBeVisible();
-    await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe(pausedAt);
+        start() {
+          this.state = 'recording';
+          this.onstart?.(new Event('start'));
+        }
 
-    await page.getByRole('button', { name: '取消录音' }).click();
-    await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
+        pause() {
+          this.pausedOnce = true;
+          this.state = 'paused';
+          this.onpause?.(new Event('pause'));
+        }
+
+        resume() {
+          this.resumedOnce = true;
+          this.state = 'recording';
+          this.onresume?.(new Event('resume'));
+        }
+
+        requestData() {}
+
+        stop() {
+          if (this.state === 'inactive') return;
+          this.state = 'inactive';
+          const sampleRate = 8_000;
+          const segmentSamples = 3_200;
+          const frequencies = this.pausedOnce && this.resumedOnce ? [440, 880] : [440];
+          const sampleCount = segmentSamples * frequencies.length;
+          const wav = new ArrayBuffer(44 + sampleCount * 2);
+          const view = new DataView(wav);
+          const writeAscii = (offset: number, value: string) => {
+            for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+          };
+          writeAscii(0, 'RIFF');
+          view.setUint32(4, 36 + sampleCount * 2, true);
+          writeAscii(8, 'WAVE');
+          writeAscii(12, 'fmt ');
+          view.setUint32(16, 16, true);
+          view.setUint16(20, 1, true);
+          view.setUint16(22, 1, true);
+          view.setUint32(24, sampleRate, true);
+          view.setUint32(28, sampleRate * 2, true);
+          view.setUint16(32, 2, true);
+          view.setUint16(34, 16, true);
+          writeAscii(36, 'data');
+          view.setUint32(40, sampleCount * 2, true);
+          frequencies.forEach((frequency, segmentIndex) => {
+            for (let index = 0; index < segmentSamples; index += 1) {
+              const sample = Math.round(12_000 * Math.sin(2 * Math.PI * frequency * index / sampleRate));
+              view.setInt16(44 + (segmentIndex * segmentSamples + index) * 2, sample, true);
+            }
+          });
+          const blob = new Blob([wav], { type: 'audio/wav' });
+          queueMicrotask(() => {
+            this.ondataavailable?.({ data: blob } as BlobEvent);
+            this.onstop?.(new Event('stop'));
+          });
+        }
+      }
+      Object.defineProperty(window, 'MediaRecorder', {
+        configurable: true,
+        value: DeterministicMediaRecorder,
+      });
+      const analyser = window.AnalyserNode?.prototype;
+      if (analyser) {
+        analyser.getByteTimeDomainData = function getAudibleTimeDomainData(target: Uint8Array) {
+          for (let index = 0; index < target.length; index += 1) target[index] = index % 2 === 0 ? 96 : 160;
+        };
+      }
+    });
+
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const storeTitle = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-pause-resume`;
+    const capturedChunks: Buffer[] = [];
+    let storeId = '';
+    let sessionId = '';
+    let entryId = '';
+    let runId = '';
+    try {
+      const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: storeTitle, description: '稳定冒烟暂停继续音频边界，执行后自动清理', isPublic: false },
+      }));
+      storeId = store.id;
+      await page.route('**/api/document-store/recording-uploads/*/chunks/*', async (route) => {
+        const body = route.request().postDataBuffer();
+        if (body) capturedChunks.push(Buffer.from(body));
+        await route.continue();
+      });
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}&quickRecord=1`, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByText('录音中', { exact: true }), '进入快捷录音后必须自动开始').toBeVisible({ timeout: 20_000 });
+      const destination = page.locator('select:visible').filter({
+        has: page.locator(`option[value="${storeId}"]`),
+      }).first();
+      await expect(destination).toBeVisible();
+      if (await destination.inputValue() !== storeId) await destination.selectOption(storeId);
+      await expect(destination).toHaveValue(storeId);
+      const timer = page.getByText(/^\d{2}:\d{2}$/).first();
+      await expect(timer).toBeVisible();
+      await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe('00:00');
+
+      await page.getByRole('button', { name: '暂停录音' }).click();
+      await expect(page.getByText('已暂停', { exact: true })).toBeVisible();
+      const pausedAt = await timer.textContent();
+      await page.waitForTimeout(1_200);
+      expect(await timer.textContent(), '暂停期间计时不得继续增长').toBe(pausedAt);
+
+      await page.getByRole('button', { name: '继续录音' }).click();
+      await expect(page.getByText('录音中', { exact: true })).toBeVisible();
+      await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe(pausedAt);
+
+      const completionPromise = page.waitForResponse((response) => (
+        /\/api\/document-store\/recording-uploads\/[^/]+\/complete$/.test(new URL(response.url()).pathname)
+        && response.request().method() === 'POST'
+      ), { timeout: 60_000 });
+      await page.getByRole('button', { name: '结束录音并转成文字' }).click();
+      const completionResponse = await completionPromise;
+      const completionBody = await completionResponse.json() as ApiEnvelope<{
+        entry: { id: string; storeId: string };
+        sessionId: string;
+        deferredTranscriptionRunId?: string | null;
+      }>;
+      expect(completionResponse.ok(), completionBody.error?.message || '现场录音保存失败').toBe(true);
+      expect(completionBody.success, completionBody.error?.message || '现场录音保存失败').toBe(true);
+      entryId = completionBody.data.entry.id;
+      expect(completionBody.data.entry.storeId).toBe(storeId);
+      sessionId = completionBody.data.sessionId;
+      runId = completionBody.data.deferredTranscriptionRunId || '';
+      expect(capturedChunks.length, '暂停继续录音必须上传至少一个媒体分片').toBeGreaterThan(0);
+      const tones = inspectDeterministicPauseResumeWav(Buffer.concat(capturedChunks));
+      expect(tones.beforePauseHz).toBeGreaterThan(420);
+      expect(tones.beforePauseHz).toBeLessThan(460);
+      expect(tones.afterResumeHz).toBeGreaterThan(850);
+      expect(tones.afterResumeHz).toBeLessThan(910);
+      const persisted = await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) });
+      expect(persisted.ok(), '暂停前后音频上传后必须形成可回读条目').toBe(true);
+    } finally {
+      if (sessionId) {
+        await page.request.delete(`/api/document-store/recording-uploads/${sessionId}`, {
+          headers: authHeaders(token),
+        }).catch(() => undefined);
+      }
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
+          headers: authHeaders(token),
+        });
+        expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        if (entryId) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+        if (runId) {
+          expect((await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+      }
+    }
   });
 
   test('[REC-006] CDS 静音录音在上传前给出明确恢复动作', async ({ page, request, context }) => {
@@ -2293,14 +2500,32 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-boundaries');
-    const png = Buffer.from(solidPngDataUrl(45, 120, 210, 32).split(',')[1]!, 'base64');
-    const file = (name: string) => ({ name, mimeType: 'image/png', buffer: png });
+    const file = (name: string, red: number, green: number, blue: number) => ({
+      name,
+      mimeType: 'image/png',
+      buffer: Buffer.from(solidPngDataUrl(red, green, blue, 32).split(',')[1]!, 'base64'),
+    });
+    let runId = '';
     try {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissVisualTutorial(page);
       const picker = page.locator('input[type="file"][accept="image/*"]');
-      await picker.setInputFiles([file('a.png'), file('b.png'), file('c.png')]);
+      const aFile = file('a.png', 220, 45, 60);
+      const bFile = file('b.png', 35, 115, 225);
+      const cFile = file('c.png', 45, 185, 90);
+      const aSha256 = createHash('sha256').update(aFile.buffer).digest('hex');
+      const bSha256 = createHash('sha256').update(bFile.buffer).digest('hex');
+      const cSha256 = createHash('sha256').update(cFile.buffer).digest('hex');
+      await picker.setInputFiles([aFile, bFile, cFile]);
       await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
+      await expect.poll(async () => {
+        const detail = await readEnvelope<{ assets: Array<{ sha256: string }> }>(
+          await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail?assetLimit=20`, {
+            headers: authHeaders(token),
+          }),
+        );
+        return detail.assets.map((asset) => asset.sha256).sort();
+      }, { timeout: 30_000 }).toEqual([aSha256, bSha256, cSha256].sort());
 
       await page.locator('[data-tour-id="visual-editor-canvas"]').click({ position: { x: 180, y: 180 } });
       await page.locator('[title="b.png"]').click();
@@ -2311,19 +2536,70 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(chipLabels[0]).toContain('b.png');
       expect(chipLabels[1]).toContain('a.png');
 
+      const createResponsePromise = page.waitForResponse((response) => (
+        new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`
+        && response.request().method() === 'POST'
+      ));
+      const composer = page.locator('[contenteditable="true"]').last();
+      await expect(composer).toBeVisible();
+      await composer.click();
+      await page.keyboard.insertText('严格按第1张图再第2张图的顺序生成一个双色方块');
+      await expect(chips).toHaveCount(2);
+      await composer.press('Enter');
+      const createResponse = await createResponsePromise;
+      const createBody = await createResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(createResponse.ok(), createBody.error?.message || '重排引用生成请求失败').toBe(true);
+      expect(createBody.success, createBody.error?.message || '重排引用生成请求失败').toBe(true);
+      runId = createBody.data.runId;
+      const submitted = createResponse.request().postDataJSON() as {
+        imageRefs?: Array<{ refId: number; assetSha256: string; url: string; label: string }>;
+      };
+      expect(submitted.imageRefs).toHaveLength(2);
+      expect(submitted.imageRefs?.map((ref) => ref.assetSha256)).toEqual([bSha256, aSha256]);
+      expect(submitted.imageRefs?.map((ref) => ref.label)).toEqual(['第1张图', '第2张图']);
+      const persistedRun = (await readEnvelope<ImageRunDetail>(
+        await page.request.get(`/api/visual-agent/image-gen/runs/${runId}?includeItems=true`, { headers: authHeaders(token) }),
+      )).run;
+      expect(persistedRun.imageRefs?.map((ref) => ref.assetSha256)).toEqual([bSha256, aSha256]);
+      const cancelled = await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
+        headers: authHeaders(token),
+      });
+      expect([200, 409]).toContain(cancelled.status());
+      const terminal = await waitForImageRun(page, token, runId, 180_000);
+      expect(terminal.detail.run.status).toMatch(/Completed|Failed|Cancelled/i);
+
+      await page.locator('[title="b.png"]').click();
+      await page.locator('[title="a.png"]').click({ modifiers: ['Shift'] });
+
       await page.getByRole('button', { name: '删除选中' }).click();
       await expect(page.getByText('确认删除选中的 2 项？')).toBeVisible();
       await page.getByRole('button', { name: '删除', exact: true }).click();
-      await expect(page.getByTestId('canvas-image')).toHaveCount(1);
       await expect(chips).toHaveCount(0);
       await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
+      await expect(page.locator('[title="c.png"]')).toBeVisible();
 
       await testInfo.attach('multi-image-reorder-delete', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
+      if (runId) {
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        if (current.ok()) {
+          const detail = await current.json() as ApiEnvelope<ImageRunDetail>;
+          if (!/Completed|Failed|Cancelled/i.test(detail.data?.run?.status || '')) {
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await waitForImageRun(page, token, runId, 180_000);
+          }
+        }
+      }
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-reorder-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      const deleteBody = await deleted.json() as ApiEnvelope<{ deleted: boolean }>;
+      expect(deleted.ok(), deleteBody.error?.message || '多图验收项目清理失败').toBe(true);
+      expect(deleteBody.success, deleteBody.error?.message || '多图验收项目清理失败').toBe(true);
+      expect(deleteBody.data.deleted).toBe(true);
+      if (runId) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
     }
   });
 
