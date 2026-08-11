@@ -4268,6 +4268,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("gwModelPoolTypes.DeleteManyAsync(tenantFilter)", tenantDelete);
         Assert.Contains("tenant.delete", tenantDelete);
         Assert.Contains("RequireAuthorization(\"TenantOwner\")", tenantDelete);
+
+        // 收尾顺序：**会毁掉「还能重试」这个能力的那一步必须最后做**（同合并那条纪律）。
+        // 本端点要 TenantOwner 才进得来，而 ResolveAsync 查不到 active 成员关系就返回 null，
+        // 所以毁掉重试能力的是删成员关系，不是删租户。先删成员再删租户的话，卡在中间
+        // 就是「租户还在、没人进得来、连重试都不行」，只能上数据库手工救。
+        // 先删租户则相反：ResolveAsync 查不到 active 租户同样返回 null，剩下的成员关系
+        // 只是指向已不存在租户的惰性残留，清不掉也不挡人。
+        var tenantGone = tenantDelete.IndexOf("tenants.DeleteOneAsync", StringComparison.Ordinal);
+        var membershipsGone = tenantDelete.IndexOf("memberships.DeleteManyAsync", StringComparison.Ordinal);
+        Assert.True(tenantGone > 0, "租户删除端点没有删租户本身");
+        Assert.True(membershipsGone > 0, "租户删除端点没有清理成员关系");
+        Assert.True(
+            tenantGone < membershipsGone,
+            "删租户必须排在删成员关系之前：反过来一旦中途失败，租户还在而最后一个 owner 已经进不来，连重试删除都做不到");
         Assert.Contains("export function deleteTenant(", api);
         Assert.Contains("removeTenant", page);
         // 租户没了，绑在它上面的会话也就没了：必须正规登出，不能留一个指向空租户的 token

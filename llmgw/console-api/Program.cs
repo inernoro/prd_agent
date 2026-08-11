@@ -1177,11 +1177,20 @@ app.MapDelete("/gw/tenants/{id}", async (HttpContext http, string id) =>
     var poolsRemoved = (await gwModelPools.DeleteManyAsync(tenantFilter)).DeletedCount;
     var poolTypesRemoved = (await gwModelPoolTypes.DeleteManyAsync(tenantFilter)).DeletedCount;
     var teamsRemoved = (await teams.DeleteManyAsync(x => x.TenantId == id)).DeletedCount;
+
+    // 顺序同合并那条纪律：**会毁掉「还能重试」这个能力的那一步，必须放到最后**。
+    // 这里毁掉重试能力的不是删租户，而是删成员关系——本端点要 TenantOwner 才进得来，
+    // 而 TenantAccess.ResolveAsync 查不到 active 成员关系就返回 null。
+    // 所以先删成员、后删租户的话，一旦卡在中间：租户还在、最后一个 owner 的成员关系没了，
+    // 谁都再也进不来这个租户，连重试删除都不行，只能上数据库手工救。
+    // 反过来先删租户：ResolveAsync 查不到 active 租户同样返回 null（不抛异常），
+    // 剩下的成员关系与 users.TenantIds 只是指向一个已不存在租户的惰性残留，
+    // 清理失败也不会挡住任何人——失败形态从「锁死」变成「留几行无害垃圾」。
+    await tenants.DeleteOneAsync(x => x.Id == id);
     await memberships.DeleteManyAsync(x => x.TenantId == id);
     await users.UpdateManyAsync(
         Builders<LlmGwUser>.Filter.AnyEq(x => x.TenantIds, id),
         Builders<LlmGwUser>.Update.Pull(x => x.TenantIds, id).Set(x => x.UpdatedAt, DateTime.UtcNow));
-    await tenants.DeleteOneAsync(x => x.Id == id);
     await WriteOperationAuditAsync(operationAudits, http, "tenant.delete", "llmgw_tenant", id, tenant.Name, true, null,
         new BsonDocument
         {
