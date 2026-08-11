@@ -237,6 +237,26 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
       `[data-theme="light"] 的 --toast-bg-base 必须是浅色，当前 ${light}`,
     ).toBeGreaterThan(0.7);
 
+    // 语义前景（图标 / 动作按钮文字）同样双写：浅色档必须比暗色档更深，
+    // 否则 500 档饱和色落在暖纸底上不到 3:1。
+    for (const kind of ['success', 'error', 'info', 'warning'] as const) {
+      const readAccent = (selector: string) => {
+        const start = tokens.indexOf(`${selector} {`);
+        const end = tokens.indexOf('\n}', start);
+        const block = tokens.slice(start, end === -1 ? undefined : end);
+        const hits = [...block.matchAll(new RegExp(`--toast-accent-${kind}:\\s*([^;]+);`, 'g'))];
+        return hits.length ? hits[hits.length - 1][1].trim() : null;
+      };
+      const darkAccent = readAccent(':root');
+      const lightAccent = readAccent('[data-theme="light"]');
+      expect(darkAccent, `:root 缺少 --toast-accent-${kind}`).not.toBeNull();
+      expect(lightAccent, `[data-theme="light"] 缺少 --toast-accent-${kind}`).not.toBeNull();
+      expect(
+        luminanceOf(lightAccent as string),
+        `--toast-accent-${kind} 浅色档(${lightAccent})必须比暗色档(${darkAccent})更深，否则浅色 Toast 上看不清`,
+      ).toBeLessThan(luminanceOf(darkAccent as string));
+    }
+
     // glassToast 必须消费这个 token，而不是自己写死一层底。
     const glass = fs.readFileSync(path.join(SRC_DIR, 'lib/glassStyles.ts'), 'utf8');
     const toastFn = glass.slice(glass.indexOf('export const glassToast'), glass.indexOf('export const glassBadge'));

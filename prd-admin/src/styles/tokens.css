@@ -66,6 +66,12 @@
   /* Toast 底层：浮层飘在任意内容之上，必须自带不透明底，不能靠页面背景兜底。
      它与 --glass-bg-* 语义不同（那是叠在页面底色上的一层薄玻璃），故单独成 token 双写。 */
   --toast-bg-base: rgba(8, 10, 16, 0.94);
+  /* Toast 语义前景（图标 + 动作按钮文字）。暗色下用 500 档；浅色下必须压到 700 档，
+     否则 500 档饱和色落在暖纸底上只有 1.9:1，非文本元素连 3:1 都不到。 */
+  --toast-accent-success: #22c55e;
+  --toast-accent-error: #ef4444;
+  --toast-accent-info: #3b82f6;
+  --toast-accent-warning: #fb923c;
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
   /* Glass 组件变量（与 prd-desktop 对齐） */
@@ -491,6 +497,10 @@
   --glass-border: rgba(26, 26, 31, 0.14);
   /* 浅色下 Toast 底层必须也是暖纸色，否则语义色叠在深底上 + 深色正文 = 不可读。 */
   --toast-bg-base: rgba(252, 250, 247, 0.97);
+  --toast-accent-success: #15803d;
+  --toast-accent-error: #b91c1c;
+  --toast-accent-info: #1d4ed8;
+  --toast-accent-warning: #c2410c;
 
   --glass-bg: rgba(248, 245, 239, 0.94);
   --glass-bg-strong: #F8F5EF;
