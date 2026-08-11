@@ -645,6 +645,7 @@ async function main() {
       'scripts/stable-smoke-visual-plan.mjs',
       '--output-json', visualPlanPath,
       '--output-md', visualPlanMarkdownPath,
+      '--environments', selected.join(','),
     ]);
     if (visualPlanResult.status !== 0) throw new Error('视觉取证计划生成失败，拒绝发布无逐项证据的报告');
 
@@ -711,6 +712,7 @@ async function main() {
       '--output-json', visualGatePath,
       '--output-md', visualGateMarkdownPath,
       '--output-technical-md', visualTechnicalPath,
+      '--environments', selected.join(','),
     ]);
     const visualResult = readJson(visualGatePath);
     if (!visualResult) throw new Error('视觉证据门禁未产生可读取结论');

@@ -116,6 +116,7 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /create-visual-test-to-kb\/scripts\/archive_report\.py/);
   assert.match(source, /create-visual-test-to-kb\/scripts\/verify-open\.mjs/);
   assert.match(source, /scripts\/stable-smoke-notify\.mjs/);
+  assert.equal((source.match(/'--environments', selected\.join\(','\)/g) || []).length, 3);
   assert.match(source, /summaryDocument\.notification\.status === 'delivery-failed'/);
 });
 

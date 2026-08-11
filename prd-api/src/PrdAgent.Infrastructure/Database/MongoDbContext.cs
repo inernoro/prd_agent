@@ -263,6 +263,7 @@ public class MongoDbContext
     public IMongoCollection<VideoProject> VideoProjects => _database.GetCollection<VideoProject>("video_projects");
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
     public IMongoCollection<VideoExportTask> VideoExportTasks => _database.GetCollection<VideoExportTask>("video_export_tasks");
+    public IMongoCollection<DirectVideoJobOwnership> DirectVideoJobOwnerships => _database.GetCollection<DirectVideoJobOwnership>("direct_video_job_ownerships");
 
     // MD 转网页 PPT 生成运行记录（server-authority：刷新可重连/查看）
     public IMongoCollection<MdToPptRun> MdToPptRuns => _database.GetCollection<MdToPptRun>("md_to_ppt_runs");
@@ -1800,6 +1801,20 @@ public class MongoDbContext
             PeerNodes.Indexes.CreateOne(new CreateIndexModel<PeerNode>(
                 Builders<PeerNode>.IndexKeys.Ascending(x => x.RemoteNodeId),
                 new CreateIndexOptions { Name = "uniq_peer_nodes_remote_node_id", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // 直出视频上游任务只能归属一个业务身份，防止重复映射绕过下载归属校验。
+        try
+        {
+            DirectVideoJobOwnerships.Indexes.CreateOne(new CreateIndexModel<DirectVideoJobOwnership>(
+                Builders<DirectVideoJobOwnership>.IndexKeys
+                    .Ascending(x => x.AppKey)
+                    .Ascending(x => x.JobId),
+                new CreateIndexOptions { Name = "uniq_direct_video_job_app_job", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {

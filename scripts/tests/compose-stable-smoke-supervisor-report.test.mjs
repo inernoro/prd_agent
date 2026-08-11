@@ -179,3 +179,39 @@ test('主管报告使用真实技术附录链接替换占位地址', () => {
   assert.doesNotMatch(report, /example\.invalid/);
   assert.match(report, /https:\/\/cds\.example\/reports\?id=1/);
 });
+
+test('视觉门禁报告会合成满足归档准入字段的主管总览', () => {
+  const functional = `# 功能报告
+
+> 主管结论：部分通过。共 4 项，2 项通过、0 项不通过、2 项未执行。
+
+## 主管验收总览
+
+| 项目 | 结果 | 主管动作 |
+|---|---|---|
+| 总体结论 | 部分通过 | 补测 |
+
+## 业务功能线与面包屑
+
+| 模块 | 真实业务路径 | CDS | 正式环境 | 是否需干预 |
+|---|---|---|---|---|
+| 视觉创作 | 首页 → 视觉创作 → 结果 | 通过（2 通过，0 失败，0 未执行） | 部分通过（0 通过，0 失败，2 未执行） | 是 |
+`;
+  const gate = `# 视觉门禁
+
+结论：不通过
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 可审核证据 | 状态结果 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|---|
+| 视觉创作 | 部分通过 | 首页 → 视觉创作 → 结果 | 2 | 2/4 | 通过 2 | 2/4 | 正式环境缺证 | [查看](#visual-ledger-visual) | [查看](#visual-method-visual) |
+`;
+  const report = composeSupervisorReport(functional, gate, gate);
+  const overview = report.match(/^## 主管验收总览\n(?:(?!^##\s)[\s\S])*/m)?.[0] || '';
+  for (const header of ['模块', '真实面包屑', '冒烟', '功能', '视觉', '最高问题', '是否需干预', '查看步骤', '查看截图', '查看缺陷', '关联测试方法']) {
+    assert.match(overview, new RegExp(header));
+  }
+  assert.match(overview, /\| 视觉创作 \| 首页 → 视觉创作 → 结果 \| 部分通过 \| 部分通过 \| 部分通过 \| P2 \| 是 \|/);
+  assert.equal((overview.match(/\[查看\]\(/g) || []).length, 4);
+});

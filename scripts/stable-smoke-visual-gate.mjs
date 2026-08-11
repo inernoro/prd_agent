@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { inflateSync } from 'node:zlib';
-import { buildVisualPlan } from './stable-smoke-visual-plan.mjs';
+import { buildVisualPlan, normalizeVisualEnvironments } from './stable-smoke-visual-plan.mjs';
 
 const DEFAULT_CATALOG = '.claude/skills/stable-smoke/reference/visual-evidence-catalog.json';
 
@@ -31,6 +31,12 @@ function interventionLabel(status) {
   if (status === '需补证' || status === '未执行') return '是：质量负责人补齐证据';
   if (status === '需干预') return '是：模块负责人确认产品能力或补齐入口';
   return '是：模块负责人修复后复测';
+}
+
+function environmentLabel(environment) {
+  if (environment === 'cds') return 'CDS 环境';
+  if (environment === 'production') return '正式环境';
+  return '未区分环境';
 }
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -138,14 +144,16 @@ function inspectEvidenceFile(row) {
   return { hash, error: '' };
 }
 
-export function validateVisualEvidence(catalog, manifest) {
-  const requiredFields = catalog.evidenceItemRequiredFields || [
+export function validateVisualEvidence(catalog, manifest, requestedEnvironments = []) {
+  const environments = normalizeVisualEnvironments(requestedEnvironments);
+  const requiredFields = [...(catalog.evidenceItemRequiredFields || [
     'coverageStates',
     'testType',
     'status',
     'methodAnchor',
     'breadcrumb',
-  ];
+  ])];
+  if (environments.length > 0 && !requiredFields.includes('environment')) requiredFields.push('environment');
   const allowedTypes = new Set(catalog.allowedTestTypes || ['冒烟', '功能', '视觉', '回归']);
   const allowedStatuses = new Set(catalog.statusVocabulary || ['通过', '不通过', '部分通过', '未执行', '需补证', '需干预']);
   const allowedThemes = new Set(catalog.allowedThemes || ['light', 'dark']);
@@ -155,7 +163,7 @@ export function validateVisualEvidence(catalog, manifest) {
   const seenHashes = new Set();
   const uniqueRows = [];
   const duplicateNames = [];
-  const plan = buildVisualPlan(catalog);
+  const plan = buildVisualPlan(catalog, environments);
 
   for (const row of rows) {
     const integrity = fileIntegrity.get(row);
@@ -174,7 +182,9 @@ export function validateVisualEvidence(catalog, manifest) {
     const plannedSlotById = new Map(plannedSlots.map((slot) => [slot.slotId, slot]));
     const evidenceBySlot = new Map();
     const fieldErrors = [];
-    const stateEvidence = new Map(module.requiredStates.map((state) => [state, []]));
+    const stateEvidence = new Map((environments.length > 0 ? environments : ['']).flatMap((environment) => (
+      module.requiredStates.map((state) => [`${environment}:${state}`, []])
+    )));
 
     const evidenceRows = [];
     for (const item of evidence) {
@@ -194,8 +204,14 @@ export function validateVisualEvidence(catalog, manifest) {
       }
       const states = normalizeStates(item.coverageStates);
       const primaryState = String(item.primaryState || '').trim();
+      const evidenceEnvironment = String(item.environment || '').trim();
       const evidenceSlotId = String(item.slotId || '').trim();
       const plannedSlot = plannedSlotById.get(evidenceSlotId);
+      if (environments.length > 0 && evidenceEnvironment && !environments.includes(evidenceEnvironment)) {
+        const message = `${item.name || '未命名截图'} 的 environment 不在本轮验收环境中`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      }
       if (evidenceSlotId && !plannedSlot) {
         const message = `${item.name || '未命名截图'} 使用了目录外验收位“${evidenceSlotId}”`;
         fieldErrors.push(message);
@@ -212,6 +228,7 @@ export function validateVisualEvidence(catalog, manifest) {
       if (plannedSlot) {
         const expectedBindings = [
           ['primaryState', primaryState, plannedSlot.primaryState],
+          ['environment', evidenceEnvironment, plannedSlot.environment || ''],
           ['testType', String(item.testType || ''), plannedSlot.testType],
           ['theme', String(item.theme || ''), plannedSlot.theme],
           ['viewportClass', String(item.viewportClass || ''), plannedSlot.viewportClass],
@@ -226,7 +243,8 @@ export function validateVisualEvidence(catalog, manifest) {
           }
         }
       }
-      if (primaryState && !stateEvidence.has(primaryState)) {
+      const stateEvidenceKey = `${environments.length > 0 ? evidenceEnvironment : ''}:${primaryState}`;
+      if (primaryState && !stateEvidence.has(stateEvidenceKey)) {
         const message = `${item.name || '未命名截图'} 的主状态“${primaryState}”不在模块目录中`;
         fieldErrors.push(message);
         itemErrors.push(message);
@@ -237,7 +255,7 @@ export function validateVisualEvidence(catalog, manifest) {
         itemErrors.push(message);
       }
       for (const state of states) {
-        if (!stateEvidence.has(state)) {
+        if (!stateEvidence.has(`${environments.length > 0 ? evidenceEnvironment : ''}:${state}`)) {
           const message = `${item.name || '未命名截图'} 使用了目录外状态“${state}”`;
           fieldErrors.push(message);
           itemErrors.push(message);
@@ -265,12 +283,13 @@ export function validateVisualEvidence(catalog, manifest) {
         itemErrors.push(message);
       }
       if (itemErrors.length === 0 && primaryState) {
-        stateEvidence.get(primaryState).push(item.name || '未命名截图');
+        stateEvidence.get(stateEvidenceKey).push(item.name || '未命名截图');
       }
       evidenceRows.push({
         slotId: evidenceSlotId || '未绑定',
         scenario: plannedSlot?.scenario || '未绑定',
         name: item.name || '未命名截图',
+        environment: evidenceEnvironment,
         caption: item.caption || '未说明证明内容',
         coverageStates: states,
         primaryState: primaryState || '未绑定',
@@ -291,7 +310,11 @@ export function validateVisualEvidence(catalog, manifest) {
 
     const missingStates = [...stateEvidence.entries()]
       .filter(([, names]) => names.length === 0)
-      .map(([state]) => state);
+      .map(([state]) => {
+        const [environment, ...stateParts] = state.split(':');
+        const stateName = stateParts.join(':');
+        return environments.length > 0 ? `${environmentLabel(environment)}：${stateName}` : stateName;
+      });
     const missingSlots = plannedSlots
       .filter((slot) => !evidenceBySlot.has(slot.slotId))
       .map((slot) => ({ slotId: slot.slotId, scenario: slot.scenario, breadcrumb: slot.breadcrumb }));
@@ -303,11 +326,25 @@ export function validateVisualEvidence(catalog, manifest) {
       [...new Set(qualifiedEvidence.map((item) => item.status))]
         .map((status) => [status, qualifiedEvidence.filter((item) => item.status === status).length]),
     );
-    const qualifiedThemes = new Set(qualifiedEvidence.map((item) => item.theme));
-    const qualifiedViewportClasses = new Set(qualifiedEvidence.map((item) => item.viewportClass));
-    const missingThemes = (module.requiredThemes || []).filter((theme) => !qualifiedThemes.has(theme));
-    const missingViewportClasses = (module.requiredViewportClasses || []).filter((viewport) => !qualifiedViewportClasses.has(viewport));
-    const floorPassed = qualifiedEvidence.length >= module.uniqueScreenshotFloor;
+    const evidenceEnvironments = environments.length > 0 ? environments : [''];
+    const missingThemes = evidenceEnvironments.flatMap((environment) => {
+      const qualifiedThemes = new Set(qualifiedEvidence
+        .filter((item) => !environment || item.environment === environment)
+        .map((item) => item.theme));
+      return (module.requiredThemes || [])
+        .filter((theme) => !qualifiedThemes.has(theme))
+        .map((theme) => environment ? `${environmentLabel(environment)}：${theme}` : theme);
+    });
+    const missingViewportClasses = evidenceEnvironments.flatMap((environment) => {
+      const qualifiedViewportClasses = new Set(qualifiedEvidence
+        .filter((item) => !environment || item.environment === environment)
+        .map((item) => item.viewportClass));
+      return (module.requiredViewportClasses || [])
+        .filter((viewport) => !qualifiedViewportClasses.has(viewport))
+        .map((viewport) => environment ? `${environmentLabel(environment)}：${viewport}` : viewport);
+    });
+    const moduleScreenshotFloor = module.uniqueScreenshotFloor * evidenceEnvironments.length;
+    const floorPassed = qualifiedEvidence.length >= moduleScreenshotFloor;
     const metadataPassed = fieldErrors.length === 0;
     const statePassed = missingStates.length === 0 && missingSlots.length === 0 && missingThemes.length === 0 && missingViewportClasses.length === 0;
     const verdict = qualifiedEvidence.length === 0
@@ -327,12 +364,12 @@ export function validateVisualEvidence(catalog, manifest) {
       id: module.id,
       name: module.name,
       breadcrumb: module.breadcrumb,
-      screenshotFloor: module.uniqueScreenshotFloor,
+      screenshotFloor: moduleScreenshotFloor,
       collectedScreenshotCount: evidence.length,
       screenshotCount: qualifiedEvidence.length,
       invalidEvidenceCount: evidenceRows.length - qualifiedEvidence.length,
-      requiredStateCount: module.requiredStates.length,
-      coveredStateCount: module.requiredStates.length - missingStates.length,
+      requiredStateCount: module.requiredStates.length * evidenceEnvironments.length,
+      coveredStateCount: module.requiredStates.length * evidenceEnvironments.length - missingStates.length,
       missingStates,
       missingSlots,
       missingThemes,
@@ -356,9 +393,12 @@ export function validateVisualEvidence(catalog, manifest) {
       .map((status) => [status, allQualifiedEvidence.filter((item) => item.status === status).length]),
   );
   return {
-    schemaVersion: '1.0',
+    schemaVersion: environments.length > 0 ? '2.0' : '1.0',
+    environments,
     verdict: blockingModules.length === 0 && duplicateNames.length === 0 ? '通过' : '不通过',
-    screenshotFloor: catalog.uniqueScreenshotFloor || modules.reduce((sum, module) => sum + module.screenshotFloor, 0),
+    screenshotFloor: catalog.uniqueScreenshotFloor
+      ? catalog.uniqueScreenshotFloor * (environments.length > 0 ? environments.length : 1)
+      : modules.reduce((sum, module) => sum + module.screenshotFloor, 0),
     screenshotCount: modules.reduce((sum, module) => sum + module.screenshotCount, 0),
     collectedScreenshotCount: uniqueRows.length,
     rawScreenshotCount: rows.length,
@@ -401,10 +441,10 @@ export function renderVisualGateReport(result) {
     '',
     `## 需处理的 ${abnormalStateCount} 项异常`,
     '',
-    '| 优先级 | 模块 | 验收状态 | 测试类型 | 详细测试路径 | 严格结论 | 需要什么干预 | 查看截图 | 测试方法 |',
-    '|---|---|---|---|---|---|---|---|---|',
-    ...interventionEvidence.map((item) => `| ${item.status === '不通过' ? 'P1' : 'P2'} | ${escapeCell(item.moduleName)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.status)} | ${escapeCell(item.errors.join('；') || item.caption)}；${escapeCell(interventionLabel(item.status))} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
-    ...(interventionEvidence.length === 0 ? ['| 无 | 全部模块 | 全部状态 | 视觉 | 全部路径 | 通过 | 无需干预 | 已完成 | 已完成 |'] : []),
+    '| 优先级 | 环境 | 模块 | 验收状态 | 测试类型 | 详细测试路径 | 严格结论 | 需要什么干预 | 查看截图 | 测试方法 |',
+    '|---|---|---|---|---|---|---|---|---|---|',
+    ...interventionEvidence.map((item) => `| ${item.status === '不通过' ? 'P1' : 'P2'} | ${environmentLabel(item.environment)} | ${escapeCell(item.moduleName)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.status)} | ${escapeCell(item.errors.join('；') || item.caption)}；${escapeCell(interventionLabel(item.status))} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+    ...(interventionEvidence.length === 0 ? ['| 无 | 全部环境 | 全部模块 | 全部状态 | 视觉 | 全部路径 | 通过 | 无需干预 | 已完成 | 已完成 |'] : []),
     '',
     '## 模块覆盖',
     '',
@@ -451,10 +491,10 @@ export function renderVisualGateReport(result) {
       `<a id="visual-ledger-${module.id}"></a>`,
       `### ${module.name} · ${module.screenshotCount}/${module.screenshotFloor} 张可审核`,
       '',
-      '| 序号 | 验收场景 | 主验收状态 | 类型 | 自动检查 | 人工视觉 | 严格结论 | 是否需干预 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
-      '|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|',
-      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${escapeCell(item.scenario)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.automatedStatus)} | ${escapeCell(item.manualStatus)} | ${escapeCell(item.status)} | ${escapeCell(interventionLabel(item.status))} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
-      ...(module.evidenceRows.length === 0 ? ['| 0 | 无 | 未执行 | 未执行 | 未记录 | 未记录 | 未执行 | 是：质量负责人补齐证据 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
+      '| 序号 | 环境 | 验收场景 | 主验收状态 | 类型 | 自动检查 | 人工视觉 | 严格结论 | 是否需干预 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
+      '|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${environmentLabel(item.environment)} | ${escapeCell(item.scenario)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.automatedStatus)} | ${escapeCell(item.manualStatus)} | ${escapeCell(item.status)} | ${escapeCell(interventionLabel(item.status))} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+      ...(module.evidenceRows.length === 0 ? ['| 0 | 未取证 | 无 | 未执行 | 未执行 | 未记录 | 未记录 | 未执行 | 是：质量负责人补齐证据 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
       '',
     ]),
     '## 视觉证据图片',
@@ -511,9 +551,9 @@ export function renderVisualTechnicalAppendix(result, { manifestPath = '', catal
     '',
     '## 逐证据定位信息',
     '',
-    '| 模块 | 验收位 | 主状态 | 严格结论 | 图片文件 | 元数据错误 |',
-    '|---|---|---|---|---|---|',
-    ...result.modules.flatMap((module) => module.evidenceRows.map((item) => `| ${escapeCell(module.name)} | ${escapeCell(item.slotId)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.status)} | ${escapeCell(item.path || '未绑定')} | ${escapeCell(item.errors.join('；') || '无')} |`)),
+    '| 环境 | 模块 | 验收位 | 主状态 | 严格结论 | 图片文件 | 元数据错误 |',
+    '|---|---|---|---|---|---|---|',
+    ...result.modules.flatMap((module) => module.evidenceRows.map((item) => `| ${environmentLabel(item.environment)} | ${escapeCell(module.name)} | ${escapeCell(item.slotId)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.status)} | ${escapeCell(item.path || '未绑定')} | ${escapeCell(item.errors.join('；') || '无')} |`)),
     '',
     '## 补跑方式',
     '',
@@ -533,7 +573,8 @@ async function main() {
   if (!manifestPath) throw new Error('必须提供 --manifest <截图清单>');
   const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
   const manifest = JSON.parse(readFileSync(resolve(manifestPath), 'utf8'));
-  const result = validateVisualEvidence(catalog, manifest);
+  const environments = normalizeVisualEnvironments(readArg(argv, '--environments'));
+  const result = validateVisualEvidence(catalog, manifest, environments);
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
   const outputTechnicalMd = readArg(argv, '--output-technical-md');

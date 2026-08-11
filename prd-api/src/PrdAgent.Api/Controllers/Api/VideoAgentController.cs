@@ -192,34 +192,53 @@ public class VideoAgentController : ControllerBase
             UserId = GetAdminId()
         }, ct);
 
+        if (result.Success && !string.IsNullOrWhiteSpace(result.JobId))
+        {
+            await _db.DirectVideoJobOwnerships.InsertOneAsync(new DirectVideoJobOwnership
+            {
+                AppKey = AppKey,
+                OwnerAdminId = GetAdminId(),
+                JobId = result.JobId,
+                Model = result.ActualModel ?? req.Model,
+                CreatedAt = DateTime.UtcNow,
+            }, cancellationToken: CancellationToken.None);
+        }
+
         return Ok(ApiResponse<object>.Ok(new { result.Success, result.JobId, result.ActualModel, result.Cost, result.ErrorMessage }));
     }
 
     [HttpGet("videogen-direct/status/{jobId}")]
     public async Task<IActionResult> VideoGenDirectStatus(string jobId, CancellationToken ct)
     {
+        var ownership = await FindOwnedDirectVideoJobAsync(jobId);
+        if (ownership == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
+
         var status = await _videoClient.GetStatusAsync(
-            AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, expectedModel: null, ct: ct);
+            AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, expectedModel: ownership.Model, ct: ct);
         return Ok(ApiResponse<object>.Ok(new { status.Status, status.VideoUrl, status.Cost, status.ErrorMessage, status.IsCompleted, status.IsFailed }));
     }
 
     [HttpGet("videogen-direct/content/{jobId}")]
     public async Task<IActionResult> DownloadDirectVideo(
         string jobId,
-        [FromQuery] string? model,
         CancellationToken ct)
     {
+        var ownership = await FindOwnedDirectVideoJobAsync(jobId);
+        if (ownership == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
+
         var downloaded = await _videoClient.DownloadVideoBytesAsync(
             AppCallerRegistry.VideoAgent.VideoGen.Generate,
             jobId,
-            expectedModel: model,
+            expectedModel: ownership.Model,
             ct: ct);
         if (!downloaded.Success || downloaded.Bytes == null || downloaded.Bytes.Length == 0)
         {
             _logger.LogWarning(
                 "直出视频下载失败 jobId={JobId} model={Model} reason={Reason}",
                 jobId,
-                model,
+                ownership.Model,
                 downloaded.ErrorMessage);
             return BadRequest(ApiResponse<object>.Fail(
                 ErrorCodes.LLM_ERROR,
@@ -230,6 +249,15 @@ public class VideoAgentController : ControllerBase
             downloaded.Bytes,
             downloaded.ContentType ?? "video/mp4",
             $"video-{jobId}.mp4");
+    }
+
+    private async Task<DirectVideoJobOwnership?> FindOwnedDirectVideoJobAsync(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId)) return null;
+        var ownerAdminId = GetAdminId();
+        return await _db.DirectVideoJobOwnerships
+            .Find(item => item.JobId == jobId && item.OwnerAdminId == ownerAdminId && item.AppKey == AppKey)
+            .FirstOrDefaultAsync(CancellationToken.None);
     }
 
     /// <summary>

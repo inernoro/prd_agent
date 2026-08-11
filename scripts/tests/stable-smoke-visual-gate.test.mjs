@@ -202,6 +202,27 @@ test('数量、状态、路径和方法全部绑定后才通过', () => {
   assert.equal(result.modules[0].coveredStateCount, 2);
 });
 
+test('双环境门禁要求每个环境分别提供唯一证据', () => {
+  const cdsOnly = [
+    evidence({ name: 'CDS 入口', environment: 'cds', slotId: 'CDS-VISUAL-VISUAL-01', breadcrumb: 'CDS 环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 入口' }),
+    evidence({ name: 'CDS 结果', sha256: 'cds-result', environment: 'cds', slotId: 'CDS-VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: 'CDS 环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ];
+  const cdsResult = validateVisualEvidence(catalog, cdsOnly, ['cds', 'production']);
+  assert.equal(cdsResult.verdict, '不通过');
+  assert.equal(cdsResult.screenshotFloor, 4);
+  assert.ok(cdsResult.modules[0].missingSlots.every((slot) => slot.slotId.startsWith('PRODUCTION-')));
+
+  const both = [
+    ...cdsOnly,
+    evidence({ name: '正式入口', sha256: 'production-entry', environment: 'production', slotId: 'PRODUCTION-VISUAL-VISUAL-01', breadcrumb: '正式环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 入口' }),
+    evidence({ name: '正式结果', sha256: 'production-result', environment: 'production', slotId: 'PRODUCTION-VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '正式环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ];
+  const result = validateVisualEvidence(catalog, both, ['cds', 'production']);
+  assert.equal(result.verdict, '通过');
+  assert.equal(result.screenshotCount, 4);
+  assert.deepEqual(result.environments, ['cds', 'production']);
+});
+
 test('缺少测试方法与面包屑时不能通过', () => {
   const result = validateVisualEvidence(catalog, [
     evidence({ name: '入口图', sha256: 'hash-a', methodAnchor: '' }),

@@ -251,6 +251,49 @@ export function synchronizeVisualOverview(overviewContent, gateModuleContent) {
   return String(overviewContent).replace(/(?:^\|.*\|$\n?){3,}/m, `${tableLines.join('\n')}\n`);
 }
 
+function strictFunctionalStatus(row, headers) {
+  const selected = ['CDS', '正式环境']
+    .map((name) => row[headers.indexOf(name)] || '')
+    .filter((value) => value && value !== '未选择');
+  if (selected.some((value) => value.startsWith('不通过'))) return '不通过';
+  if (selected.some((value) => value.startsWith('部分通过'))) return '部分通过';
+  if (selected.length > 0 && selected.every((value) => value.startsWith('通过'))) return '通过';
+  return '未执行';
+}
+
+export function synthesizeReviewerOverview(functionalModuleContent, gateModuleContent) {
+  const functionalTable = parseMarkdownTable(functionalModuleContent);
+  const gateTable = parseMarkdownTable(gateModuleContent);
+  if (!gateTable) return '';
+  const gateRows = visualCoverageRows(gateModuleContent);
+  const functionalRows = functionalTable
+    ? new Map(functionalTable.rows.map((row) => [row[functionalTable.headers.indexOf('模块')], row]))
+    : new Map();
+  const lines = [
+    '## 主管验收总览',
+    '',
+    '| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |',
+    '|---|---|---|---|---|---|---|---|---|---|---|',
+    ...gateRows.map((gateRow) => {
+      const module = gateRow['模块'];
+      const functionalRow = functionalRows.get(module);
+      const functionalStatus = functionalRow && functionalTable
+        ? strictFunctionalStatus(functionalRow, functionalTable.headers)
+        : '未执行';
+      const rawVisualStatus = gateRow['视觉结论'] || '未执行';
+      const visualStatus = rawVisualStatus === '需干预' ? '部分通过' : rawVisualStatus;
+      const statuses = [functionalStatus, visualStatus];
+      const severity = statuses.includes('不通过') ? 'P1' : statuses.some((status) => status !== '通过') ? 'P2' : '无';
+      const intervention = severity === '无' ? '否' : '是';
+      const screenshots = gateRow['查看全部截图'] || '[查看](#逐张视觉证据账本)';
+      const method = gateRow['测试方法'] || '[查看](#视觉测试方法)';
+      return `| ${module} | ${gateRow['真实面包屑']} | ${functionalStatus} | ${functionalStatus} | ${visualStatus} | ${severity} | ${intervention} | [查看](#逐模块视觉取证任务) | ${screenshots} | [查看](#视觉异常证据索引) | ${method} |`;
+    }),
+    '',
+  ];
+  return lines.join('\n');
+}
+
 export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visualGateMarkdown = '', visualPlanMarkdown = '', technicalUrl = '') {
   const functional = parseReportSections(functionalMarkdown);
   const visual = parseReportSections(visualMarkdown);
@@ -267,6 +310,10 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   const visualPlanSections = visualPlan.sections.filter((section) => section.title === '逐模块视觉取证任务');
   const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
   const visualGateModules = visualGate.sections.find((section) => section.title === '模块覆盖');
+  const functionalModules = functional.sections.find((section) => section.title === '业务功能线与面包屑');
+  const reviewerOverview = visualOverview
+    ? synchronizeVisualOverview(visualOverview.content, visualGateModules?.content)
+    : synthesizeReviewerOverview(functionalModules?.content || '', visualGateModules?.content || '');
   const functionalCounts = functional.lead.match(/共\s*\d+\s*项，\d+\s*项通过、(\d+)\s*项不通过、(\d+)\s*项未执行/);
   const functionalVerdict = functionalCounts
     ? Number(functionalCounts[1]) > 0
@@ -303,11 +350,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
       continue;
     }
     if (section.title === '主管验收总览') {
-      if (visualOverview) {
-        output.push(synchronizeVisualOverview(visualOverview.content, visualGateModules?.content), '');
-      } else {
-        output.push(section.content, '');
-      }
+      output.push(reviewerOverview || section.content, '');
       continue;
     }
     if (section.title === '关联测试方法') {

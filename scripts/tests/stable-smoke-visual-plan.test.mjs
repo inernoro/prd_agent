@@ -14,6 +14,16 @@ test('视觉取证计划逐模块展开为148条有路径的任务', () => {
   assert.ok(plan.slots.every((slot) => slot.primaryState && slot.expectedProof && slot.methodAnchor));
 });
 
+test('双环境视觉计划展开为296个互不复用的环境验收位', () => {
+  const plan = buildVisualPlan(catalog, ['cds', 'production']);
+  assert.equal(plan.schemaVersion, '2.0');
+  assert.equal(plan.plannedScreenshotTarget, 296);
+  assert.equal(plan.slots.filter((slot) => slot.environment === 'cds').length, 148);
+  assert.equal(plan.slots.filter((slot) => slot.environment === 'production').length, 148);
+  assert.equal(new Set(plan.slots.map((slot) => slot.slotId)).size, 296);
+  assert.ok(plan.slots.every((slot) => slot.slotId.startsWith(`${slot.environment.toUpperCase()}-VISUAL-`)));
+});
+
 test('单图和多图视觉各有18条且覆盖产品主题与双设备', () => {
   const plan = buildVisualPlan(catalog);
   for (const moduleId of ['single-image-creation', 'multi-image-creation']) {

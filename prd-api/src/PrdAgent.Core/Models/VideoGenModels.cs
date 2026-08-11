@@ -377,6 +377,17 @@ public class VideoExportTask
     public DateTime? EndedAt { get; set; }
 }
 
+[BsonIgnoreExtraElements]
+public class DirectVideoJobOwnership
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AppKey { get; set; } = "video-agent";
+    public string OwnerAdminId { get; set; } = string.Empty;
+    public string JobId { get; set; } = string.Empty;
+    public string? Model { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class VideoModelOption
 {
     public string Id { get; set; } = string.Empty;
