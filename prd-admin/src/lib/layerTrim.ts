@@ -23,8 +23,37 @@ export type LayerBounds = {
   height: number;
 };
 
-/** alpha 高于此值才算「有内容」，与内容判定用同一口径，滤掉羽化边缘的极淡像素。 */
+/** alpha 高于此值才算「这里有东西」。用来判断整幅是不是全透明。 */
 export const TRIM_ALPHA_THRESHOLD = 8;
+
+/**
+ * 求包围盒时的「实墨」阈值。
+ *
+ * 为什么不能沿用 8：模型返回的图层常带一层几乎看不见的雾（alpha 十几、二十，
+ * 散布在整幅上）。按 alpha>8 求包围盒，几粒雾就把框撑到整幅——
+ * 文字层的选中框比字大一大圈（2026-08-11 用户圈图指出），
+ * 近乎空的层还会变成一个占满画布的空盒子。
+ *
+ * 64 约等于 25% 不透明度：低于它的像素肉眼几乎看不见，不该决定部件的边界。
+ * 求不出实墨时会回落到 TRIM_ALPHA_THRESHOLD，所以「整层都很淡但确实有内容」
+ * 不会被误杀成空层——只是框会松一点，那是正确的取舍。
+ */
+export const TRIM_INK_ALPHA_THRESHOLD = 64;
+
+/**
+ * 求「实墨」包围盒：先按实墨阈值找，找不到再回落到「有东西」阈值。
+ *
+ * 分两档而不是简单调高阈值，是为了让两种情形都成立：
+ * 有实墨时框贴着实墨走；整层都很淡时仍然框得住它，而不是判成空层丢掉。
+ */
+export function computeInkBounds(
+  data: ArrayLike<number>,
+  width: number,
+  height: number,
+): LayerBounds | null {
+  return computeAlphaBounds(data, width, height, TRIM_INK_ALPHA_THRESHOLD)
+    ?? computeAlphaBounds(data, width, height, TRIM_ALPHA_THRESHOLD);
+}
 
 /**
  * 求 RGBA 里不透明像素的包围盒。

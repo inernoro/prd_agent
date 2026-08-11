@@ -131,6 +131,28 @@ describe('分层内容判定的接线', () => {
     expect(code).toMatch(/intent,/);
   });
 
+  it('【关键】Frame 头部是可以整组拖走的抓手', () => {
+    // 2026-08-11 用户标注：「图层要能选中一起拖拽」。叠放之后各部件精确重合，
+    // 逐个 shift 点选很别扭，Frame 头部才是那个自然的抓手。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    expect(code).toMatch(/data-frame-handle=\{frame\.id\}/);
+    // 必须真的接进既有的多选拖拽机制（keys 传整组），而不是另写一套只挪一个。
+    expect(code).toMatch(/dragItemsRef\.current = \{[\s\S]{0,420}keys,\n/);
+    expect(code).toMatch(/const keys = frame\.layerKeys;/);
+  });
+
+  it('【关键】等待动效不许用 background-position 百分比做循环', () => {
+    // 那个百分比是相对「容器宽 - 背景宽」算的，背景比容器宽时分母为负，
+    // 一圈走的距离和平铺周期对不上，每圈结尾都要跳一下
+    //（2026-08-11 用户原话：每次进行到最后一点总是抽搐一下）。
+    const loader = read('src/components/ui/GenSweepLoader.tsx');
+    expect(loader).not.toMatch(/animation:gen-sweep-move[\s\S]{0,200}background-position/);
+    expect(loader).toMatch(/@keyframes gen-sweep-move\{from\{transform:translate3d/);
+    // 两端都要完全移出容器，接缝才在画面外。
+    expect(loader).toMatch(/translate3d\(-1[0-9]{2}%,0,0\)/);
+    expect(loader).toMatch(/prefers-reduced-motion/);
+  });
+
   it('【关键】透明裁剪必须接到画布上，不能只在导出时生效', () => {
     // 这条守卫是补上一次的漏：boundsToCanvasRect 建好了、单测全绿，却全仓无人调用
     // （形状 2：建了一半）。于是画布上每个部件仍是满幅方块，用户圈图指出「这才是

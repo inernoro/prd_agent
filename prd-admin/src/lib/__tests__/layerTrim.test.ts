@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { boundsToCanvasRect, computeAlphaBounds, cropRgba } from '@/lib/layerTrim';
+import {
+  boundsToCanvasRect,
+  computeAlphaBounds,
+  computeInkBounds,
+  cropRgba,
+  TRIM_INK_ALPHA_THRESHOLD,
+} from '@/lib/layerTrim';
 import { ANALYSIS_SAMPLE_SIZE } from '@/lib/layerContentAnalysis';
 import { decodeFixture, REAL_LAYER_FIXTURE_BASE64 } from './fixtures/realLayerPixels';
 
@@ -122,5 +128,48 @@ describe('真实产物上的裁剪效果', () => {
     // 最稀疏那层省得最多
     const sparse = computeAlphaBounds(layers.点缀层, N, N)!;
     expect(sparse.width * sparse.height).toBeLessThan(N * N * 0.85);
+  });
+});
+
+describe('实墨包围盒：几粒看不见的雾不该撑大框', () => {
+  /** 在 w×h 画布上：一块实墨 + 四角各一粒极淡的雾。 */
+  function inkWithHaze(w: number, h: number, ink: { x: number; y: number; w: number; h: number }) {
+    const data = new Uint8ClampedArray(w * h * 4);
+    const put = (x: number, y: number, a: number) => {
+      const o = (y * w + x) * 4;
+      data[o] = 200; data[o + 1] = 200; data[o + 2] = 200; data[o + 3] = a;
+    };
+    for (let y = ink.y; y < ink.y + ink.h; y += 1) {
+      for (let x = ink.x; x < ink.x + ink.w; x += 1) put(x, y, 255);
+    }
+    // 四角的雾：alpha 20，肉眼几乎看不见，但高于「有东西」的阈值 8
+    put(0, 0, 20); put(w - 1, 0, 20); put(0, h - 1, 20); put(w - 1, h - 1, 20);
+    return data;
+  }
+
+  it('【关键】按实墨求框只框住墨，按老阈值求框会被雾撑到整幅', () => {
+    // 这正是用户圈出来的现象：文字层的选中框比字大一大圈。
+    const data = inkWithHaze(40, 40, { x: 12, y: 14, w: 10, h: 6 });
+    const loose = computeAlphaBounds(data, 40, 40)!;
+    expect(loose).toMatchObject({ left: 0, top: 0, width: 40, height: 40 });
+
+    const ink = computeInkBounds(data, 40, 40)!;
+    expect(ink).toMatchObject({ left: 12, top: 14, width: 10, height: 6 });
+  });
+
+  it('整层都很淡时回落到宽松阈值，不会判成空层丢掉', () => {
+    const data = new Uint8ClampedArray(20 * 20 * 4);
+    for (let y = 5; y < 9; y += 1) {
+      for (let x = 5; x < 9; x += 1) {
+        const o = (y * 20 + x) * 4;
+        data[o + 3] = 30; // 低于实墨阈值，但确实有内容
+      }
+    }
+    expect(computeAlphaBounds(data, 20, 20, TRIM_INK_ALPHA_THRESHOLD)).toBeNull();
+    expect(computeInkBounds(data, 20, 20)).toMatchObject({ left: 5, top: 5, width: 4, height: 4 });
+  });
+
+  it('整幅真的全透明时仍然返回 null', () => {
+    expect(computeInkBounds(new Uint8ClampedArray(8 * 8 * 4), 8, 8)).toBeNull();
   });
 });

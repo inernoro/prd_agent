@@ -10,6 +10,8 @@ import {
   describeLayerContent,
   formatCoverage,
   isHiddenByDefault,
+  computeInkCoverage,
+  EMPTY_INK_COVERAGE_MAX,
 } from '@/lib/layerContentAnalysis';
 import {
   aiLayerDisplayName,
@@ -287,5 +289,58 @@ describe('单一实色填充层（模型为凑层数补的垃圾层）', () => {
       const stats = computeContentStats(decodeFixture(REAL_LAYER_FIXTURE_BASE64[key]));
       expect(classifyLayerContent({ ...stats, sourceDifference: 80 })).toBe('layer');
     }
+  });
+});
+
+describe('一层看不见的雾也算空层', () => {
+  /** 整幅铺满 alpha=20 的雾：老口径覆盖率 100%，但一处看得见的墨都没有。 */
+  function haze(alpha: number): Uint8ClampedArray {
+    const n = ANALYSIS_SAMPLE_SIZE;
+    const data = new Uint8ClampedArray(n * n * 4);
+    for (let o = 0; o < data.length; o += 4) {
+      data[o] = 180; data[o + 1] = 180; data[o + 2] = 180; data[o + 3] = alpha;
+    }
+    return data;
+  }
+
+  it('【关键】整幅淡雾判成空层（老口径会当它是正常内容层，在画布上变成一个空盒子）', () => {
+    const data = haze(20);
+    const stats = computeContentStats(data);
+    // 老口径：alpha>8 就算数，覆盖率接近满
+    expect(stats.coverage).toBeGreaterThan(0.9);
+    // 新口径：一处实墨都没有
+    expect(computeInkCoverage(data)).toBe(0);
+    expect(classifyLayerContent({
+      coverage: stats.coverage,
+      inkCoverage: computeInkCoverage(data),
+      stdev: stats.stdev,
+      colorBuckets: stats.colorBuckets,
+      sourceDifference: 999,
+    })).toBe('empty');
+  });
+
+  it('【关键】真实内容层不会被这条新判据误杀', () => {
+    // 判行为，不判我拍脑袋的余量倍数。
+    // 实测最稀疏那层（覆盖 7.2%）的实墨覆盖率 1.78%，是空层线 0.2% 的 8.9 倍——
+    // 余量够，但没到一个数量级，所以这条断言盯的是「归类结果」而不是倍数。
+    for (const key of ['layer1', 'layer2', 'layer3'] as const) {
+      const data = decodeFixture(REAL_LAYER_FIXTURE_BASE64[key]);
+      const stats = computeContentStats(data);
+      const ink = computeInkCoverage(data);
+      expect(ink).toBeGreaterThan(EMPTY_INK_COVERAGE_MAX);
+      expect(classifyLayerContent({
+        coverage: stats.coverage,
+        inkCoverage: ink,
+        stdev: stats.stdev,
+        colorBuckets: stats.colorBuckets,
+        sourceDifference: 80,
+      })).toBe('layer');
+    }
+  });
+
+  it('不传实墨覆盖率时保持旧行为（旧调用方不受影响）', () => {
+    const data = haze(20);
+    const stats = computeContentStats(data);
+    expect(classifyLayerContent({ coverage: stats.coverage, sourceDifference: 999 })).not.toBe('empty');
   });
 });

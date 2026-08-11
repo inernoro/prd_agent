@@ -568,6 +568,36 @@ async function main() {
       }
     }
 
+    // ---- 拖 Frame 头部 = 整组一起走（用户标注：图层要能选中一起拖拽）
+    const handle = page.locator('[data-frame-handle]').first();
+    if (await handle.count()) {
+      const before = await page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
+        .map((el) => ({ k: el.getAttribute('data-canvas-key'), r: el.getBoundingClientRect() }))
+        .map((x) => ({ k: x.k, x: Math.round(x.r.x), y: Math.round(x.r.y) })));
+      const box = await handle.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 60, { steps: 12 });
+      await page.mouse.up();
+      await page.waitForTimeout(1200);
+      const after = await page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
+        .map((el) => ({ k: el.getAttribute('data-canvas-key'), r: el.getBoundingClientRect() }))
+        .map((x) => ({ k: x.k, x: Math.round(x.r.x), y: Math.round(x.r.y) })));
+      const moved = after.filter((a) => {
+        const b = before.find((item) => item.k === a.k);
+        return b && (Math.abs(a.x - b.x) > 20 || Math.abs(a.y - b.y) > 20);
+      });
+      // 整组一起走：动的应当不止一个，且它们的位移一致（真的是「一起」而不是各挪各的）。
+      const deltas = new Set(moved.map((a) => {
+        const b = before.find((item) => item.k === a.k);
+        return `${a.x - b.x},${a.y - b.y}`;
+      }));
+      check('拖 Frame 头部能带着整组一起走', moved.length >= 2 && deltas.size === 1,
+        `动了 ${moved.length} 个，位移集合 ${JSON.stringify([...deltas])}`);
+    } else {
+      check('Frame 头部是可拖拽的抓手', false, '找不到 data-frame-handle');
+    }
+
     // ---- 浅色主题：不做「好不好看」的主观判断，只判「读不读得清」
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
     await page.waitForTimeout(2500);

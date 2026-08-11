@@ -7467,15 +7467,44 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       boxShadow: '0 0 0 1px rgba(var(--accent-primary-rgb), 0.06) inset',
                     }}
                   >
+                    {/* 抓头部就能整组拖走（Figma 心智：拖 Frame = 拖它的全部子元素）。
+                        叠放之后各部件精确重合，想「一起挪」靠逐个 shift 点选很别扭，
+                        Frame 头部才是那个自然的抓手（2026-08-11 用户标注：「图层要能选中一起拖拽」）。 */}
                     <div
                       role={layering ? 'status' : undefined}
                       aria-live={layering ? 'polite' : undefined}
                       className="absolute left-3 top-2 min-w-0 flex items-center gap-2 overflow-hidden"
+                      data-frame-handle={frame.id}
                       style={{
                         color: 'var(--text-primary)',
                         transform: 'scale(var(--invZoom))',
                         transformOrigin: 'left top',
                         maxWidth: headlineMaxWidth,
+                        pointerEvents: 'auto',
+                        cursor: 'move',
+                      }}
+                      title="拖这里可以整组移动"
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        const keys = frame.layerKeys;
+                        if (keys.length === 0) return;
+                        setSelectionWithoutChip(keys);
+                        const base: Record<string, { x: number; y: number }> = {};
+                        for (const key of keys) {
+                          const found = canvasRef.current.find((candidate) => candidate.key === key);
+                          base[key] = { x: found?.x ?? 0, y: found?.y ?? 0 };
+                        }
+                        dragItemsRef.current = {
+                          active: true,
+                          confirmed: false,
+                          pointerId: event.pointerId,
+                          startClientX: event.clientX,
+                          startClientY: event.clientY,
+                          keys,
+                          base,
+                        };
+                        (stageRef.current as HTMLDivElement | null)?.setPointerCapture(event.pointerId);
+                        event.preventDefault();
                       }}
                     >
                       <Layers size={15} className={`shrink-0 ${layering ? 'animate-pulse' : ''}`} />

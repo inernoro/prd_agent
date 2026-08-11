@@ -17,14 +17,21 @@ import { getGenAvgMs } from '@/lib/genTiming';
 const STYLE_ID = 'gen-sweep-loader-styles';
 const GLOBAL_CSS = `
 .gen-sweep{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none}
+/* 静止的斜纹底：不参与动画，避免和流光共用一个 background-position。 */
 .gen-sweep__fill{position:absolute;inset:0;
-  background:
-    linear-gradient(100deg, transparent 28%, rgba(129,140,248,0.20) 50%, transparent 72%),
-    repeating-linear-gradient(45deg, rgba(255,255,255,0.022) 0 12px, transparent 12px 24px);
-  background-size:220% 100%, auto;
-  will-change:background-position;
-  animation:gen-sweep-move 1.5s linear infinite;}
-@keyframes gen-sweep-move{to{background-position:-220% 0, 0 0}}
+  background:repeating-linear-gradient(45deg, rgba(255,255,255,0.022) 0 12px, transparent 12px 24px);}
+/* 流光单独一层，用 transform 扫过去。
+   旧写法动的是 background-position 的百分比——CSS 里这个百分比是相对
+   「容器宽 - 背景宽」算的，220% 的背景让分母变成负数，一个周期走的距离
+   和一个平铺周期对不上，于是每圈结尾都要「跳」一下回到起点（用户原话：
+   每次进行到最后一点总是抽搐一下）。改成 transform 平移，且两端都完全移出
+   容器（-120% → 220%），重新开始那一帧在画面外，看不见接缝。 */
+.gen-sweep__glare{position:absolute;top:0;bottom:0;left:0;width:60%;
+  background:linear-gradient(100deg, transparent 0%, rgba(129,140,248,0.20) 50%, transparent 100%);
+  will-change:transform;
+  animation:gen-sweep-move 1.6s linear infinite;}
+@keyframes gen-sweep-move{from{transform:translate3d(-120%,0,0)}to{transform:translate3d(220%,0,0)}}
+@media (prefers-reduced-motion: reduce){.gen-sweep__glare{animation:none;opacity:.35;transform:translate3d(50%,0,0)}}
 /* 宽度必须除以 invZoom，否则计时条会「涨」出卡片被裁掉。
    推导：布局宽 L 经 scale(1/zoom) 之后的屏幕宽恒为 L，而卡片的屏幕宽是 cardW*zoom；
    zoom 越小卡片越窄、计时条却纹丝不动，zoom<0.78 时它就比卡片还宽，
@@ -88,6 +95,7 @@ export function GenSweepLoader({ createdAt, className, screenW, screenH }: {
   return (
     <div className={`gen-sweep${className ? ` ${className}` : ''}`}>
       <div className="gen-sweep__fill" />
+      <div className="gen-sweep__glare" />
       {!showBar ? null : (
       <div className="gen-sweep__bar">
         <div className="gen-sweep__row">

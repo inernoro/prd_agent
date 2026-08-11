@@ -28,7 +28,7 @@
  * 用户看得见、点一下能纠正，绝不静默剔除。
  */
 
-import { computeAlphaBounds, TRIM_SCAN_MAX_SIDE, type LayerBounds } from './layerTrim';
+import { computeInkBounds, TRIM_INK_ALPHA_THRESHOLD, TRIM_SCAN_MAX_SIDE, type LayerBounds } from './layerTrim';
 
 export type LayerContentKind = 'layer' | 'empty' | 'solid' | 'flat' | 'source-reference';
 
@@ -78,6 +78,29 @@ export const FLAT_COLOR_BUCKETS_MAX = 16;
  */
 export const SOLID_STDEV_MAX = 2;
 export const SOLID_COLOR_BUCKETS_MAX = 2;
+
+/**
+ * 「实墨」覆盖率的空层线。
+ *
+ * 只看 alpha>8 的覆盖率抓不到这一类：模型返回的层常带一层几乎看不见的雾
+ * （alpha 十几二十、散布整幅），按老口径覆盖率能到百分之几，于是被当成正常内容层，
+ * 在画布上变成一个占满画布的空盒子（2026-08-11 用户圈图：「还是有透明的」）。
+ *
+ * 改看**实墨**（alpha ≥ 64，约 25% 不透明度，肉眼开始看得见）的覆盖率：
+ * 低于 0.2% 就判空。实测最稀疏的有效图层实墨覆盖率在 5% 以上，离这条线很远。
+ */
+export const EMPTY_INK_COVERAGE_MAX = 0.002;
+
+/** 实墨像素占比：alpha ≥ TRIM_INK_ALPHA_THRESHOLD 才算数。 */
+export function computeInkCoverage(data: ArrayLike<number>): number {
+  const total = Math.floor(data.length / 4);
+  if (total <= 0) return 0;
+  let ink = 0;
+  for (let offset = 3; offset < data.length; offset += 4) {
+    if ((data[offset] ?? 0) >= TRIM_INK_ALPHA_THRESHOLD) ink += 1;
+  }
+  return ink / total;
+}
 
 /** 判定用的采样边长。缩到这么小才逐像素比，避免大图逐像素扫卡住主线程。 */
 export const ANALYSIS_SAMPLE_SIZE = 48;
@@ -176,12 +199,18 @@ export function computeMeanAbsDifference(a: ArrayLike<number>, b: ArrayLike<numb
  */
 export function classifyLayerContent(input: {
   coverage: number;
+  /** 实墨覆盖率；不传就只按老口径判（旧调用方保持原行为）。 */
+  inkCoverage?: number;
   stdev?: number;
   colorBuckets?: number;
   sourceDifference: number | null;
 }): LayerContentKind {
   const coverage = Number.isFinite(input.coverage) ? input.coverage : 0;
   if (coverage <= EMPTY_COVERAGE_MAX) return 'empty';
+  // 一层几乎看不见的雾：老口径的覆盖率不低，但没有一处是看得见的墨。
+  if (Number.isFinite(input.inkCoverage) && (input.inkCoverage as number) <= EMPTY_INK_COVERAGE_MAX) {
+    return 'empty';
+  }
 
   const diff = input.sourceDifference;
   if (diff !== null && Number.isFinite(diff)
@@ -287,6 +316,7 @@ export async function buildLayerContentVerdicts(input: {
     const stats = computeContentStats(rgba);
     const kind = classifyLayerContent({
       coverage: stats.coverage,
+      inkCoverage: computeInkCoverage(rgba),
       stdev: stats.stdev,
       colorBuckets: stats.colorBuckets,
       sourceDifference: sourceRgba ? computeMeanAbsDifference(rgba, sourceRgba) : null,
@@ -349,7 +379,8 @@ export async function trimLayerToContent(
 
     const rgba = drawToRgba(image, scanWidth, scanHeight);
     if (!rgba) return null;
-    const bounds = computeAlphaBounds(rgba, scanWidth, scanHeight);
+    // 按「实墨」求框：几粒几乎看不见的雾不该决定部件边界（文字层的框比字大一圈就是这么来的）。
+    const bounds = computeInkBounds(rgba, scanWidth, scanHeight);
     if (!bounds) {
       return { empty: true, bounds: null, scanWidth, scanHeight, dataUrl: '', width: 0, height: 0 };
     }
