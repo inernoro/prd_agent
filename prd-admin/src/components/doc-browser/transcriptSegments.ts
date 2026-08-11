@@ -210,6 +210,11 @@ export function buildTranscriptWordCloud(
   const source = segments.map(segment => segment.text).join(' ');
   const counts = new Map<string, number>();
   const bump = (word: string) => counts.set(word, (counts.get(word) ?? 0) + 1);
+  // 词典命中的词单独记一份：下面那两道通用过滤（停用词 / 二字虚词）是给「猜出来的词」用的，
+  // 不该盖过用户或说话人标签**显式指定**的词。真实会踩到的例子：产品名「个推」带了虚词字「个」，
+  // 人名「那英」带了「那」——两者都会被通用过滤悄悄丢掉，而 L0 说话人层的全部意义
+  // 就是零配置把这类人名捞回来。加了词却看不见，等于这个入口是假的。
+  const dictionaryWords = new Set<string>();
 
   // 三条通道（词典 / 英文 / Segmenter）必须依次从**剩下的**文本里取词，词典排在最前。
   // 顺序反了同一段字会被数两遍：英文词典项先被英文通道数一次、再被词典数一次，次数翻倍；
@@ -231,6 +236,7 @@ export function buildTranscriptWordCloud(
         new RegExp(`(?<![A-Za-z0-9-])${escaped}(?![A-Za-z0-9-])`, 'gi'),
         () => { hits += 1; return ' '; },
       );
+      if (hits > 0) dictionaryWords.add(term.toLowerCase());
       for (let i = 0; i < hits; i += 1) bump(term.toLowerCase());
       continue;
     }
@@ -241,6 +247,7 @@ export function buildTranscriptWordCloud(
       hits += 1;
       remainder = `${remainder.slice(0, at)}\u0000${remainder.slice(at + term.length)}`;
     }
+    if (hits > 0) dictionaryWords.add(term);
     for (let i = 0; i < hits; i += 1) bump(term);
   }
 
@@ -261,9 +268,12 @@ export function buildTranscriptWordCloud(
   }
 
   return [...counts.entries()]
-    .filter(([word, count]) => count >= 2                        // 只出现一次的不叫「反复提到」
-      && !STOP_WORDS.has(word)
-      && !(word.length === 2 && Array.from(word).some(char => FUNCTION_CHARS.has(char))))
+    // 「只出现一次的不叫反复提到」对谁都成立，词典词也不例外——词云讲的是这场反复提到什么，
+    // 不是把词典列一遍。但停用词与二字虚词这两道是**猜词**的护栏，显式指定的词不受它们管。
+    .filter(([word, count]) => count >= 2
+      && (dictionaryWords.has(word)
+        || (!STOP_WORDS.has(word)
+          && !(word.length === 2 && Array.from(word).some(char => FUNCTION_CHARS.has(char))))))
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'))
     .slice(0, limit)
     .map(([word, count]) => ({ word, count }));

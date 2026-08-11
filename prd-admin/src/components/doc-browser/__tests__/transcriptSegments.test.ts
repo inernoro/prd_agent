@@ -215,6 +215,44 @@ describe('buildTranscriptWordCloud', () => {
     }
   });
 
+  it('显式加进词典的词，不该被「猜词」的通用护栏丢掉', () => {
+    // 两道通用过滤（停用词 / 二字里含虚词字）是给 Segmenter 猜出来的词用的护栏。
+    // 真实会踩到的：产品名「个推」带虚词字「个」，人名「那英」带「那」。
+    // 用户加了词却在词云里看不见 = 那个补词入口是假的；
+    // L0 说话人层零配置捞人名的整个意义也在这里断掉。
+    const gt = [{ start: 0, end: 3, text: '个推的推送到了，个推那边确认过，个推再测一次' }];
+    expect(buildTranscriptWordCloud(gt).some(item => item.word === '个推')).toBe(false);
+    expect(buildTranscriptWordCloud(gt, 18, ['个推']).some(item => item.word === '个推')).toBe(true);
+
+    // 说话人名走的是同一条词典通道（调用方把说话人拼进 dictionary）
+    const na = [{ start: 0, end: 3, text: '那英说要下单，那英又说排期紧张，那英再确认一次' }];
+    expect(buildTranscriptWordCloud(na, 18, ['那英']).some(item => item.word === '那英')).toBe(true);
+  });
+
+  it('豁免只给词典词，没加词典的二字虚词组合仍然被挡住', () => {
+    // 上一条的豁免不能顺手把护栏整个拆了：没进词典的「这个」「那个」还得挡住，
+    // 否则词云会重新被虚词灌满。
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: '这个方案那个方案，这个再看看，那个再等等' }],
+      18,
+      [],
+    );
+    for (const noise of ['这个', '那个']) {
+      expect(cloud.some(item => item.word === noise)).toBe(false);
+    }
+  });
+
+  it('词典词仍然要「反复提到」才进词云：只说一次不算', () => {
+    // 豁免的是猜词护栏，不是「反复提到」这个定义本身——
+    // 词云讲的是这场反复提到什么，不是把词典列一遍。
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: '个推只被提到这一次' }],
+      18,
+      ['个推'],
+    );
+    expect(cloud.some(item => item.word === '个推')).toBe(false);
+  });
+
   it('长词优先：不会被更短的词典词抢先切走', () => {
     const cloud = buildTranscriptWordCloud(
       [{ start: 0, end: 3, text: '张三丰来了，张三丰走了' }],
