@@ -26,6 +26,22 @@ test('通知始终定向用户并包含证据和恢复动作', () => {
   assert.equal(payload.source, 'stable-smoke');
 });
 
+test('执行链异常可以把动作改为打开通知中心', () => {
+  const payload = buildNotificationPayload({
+    verdict: 'fail',
+    runId: 'fatal-run',
+    environment: 'CDS 环境、正式环境',
+    module: '稳定冒烟执行链',
+    recovery: '按失败摘要恢复后重试。',
+    reportUrl: 'https://map.ebcone.net/?panel=notifications',
+    targetUserId: 'user-1',
+    actionLabel: '打开通知中心',
+  });
+
+  assert.equal(payload.actionLabel, '打开通知中心');
+  assert.equal(payload.actionUrl, 'https://map.ebcone.net/?panel=notifications');
+});
+
 test('缺少目标用户时拒绝全局通知', () => {
   assert.ok(validateNotificationOptions({ ...base, targetUserId: '' }).some((item) => item.includes('拒绝发送全局通知')));
 });

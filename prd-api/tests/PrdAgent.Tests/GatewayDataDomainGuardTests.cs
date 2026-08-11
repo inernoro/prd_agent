@@ -549,10 +549,12 @@ public class GatewayDataDomainGuardTests
         var passwordPolicy = ReadRepoFile("llmgw/console-api/Auth/GwPasswordPolicy.cs");
 
         Assert.Contains("public const int MinimumLength = 12", passwordPolicy);
+        Assert.Contains("Environment.GetEnvironmentVariable(\"LLMGW_ADMIN_PASSWORD\")?.Trim()", consoleProgram);
         Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd)", consoleProgram);
         Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
         Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
         Assert.DoesNotContain("envAuthorityAdmin && (string.IsNullOrWhiteSpace(adminBootstrapPwd)", consoleProgram);
+        Assert.DoesNotContain("adminBootstrapPwd!.Trim()", consoleProgram);
     }
 
     [Fact]

@@ -67,4 +67,28 @@ describe('toUserReadableErrorMessage', () => {
     expect(protocolMessage).toBe('文件上传未完成，请检查文件后重新上传。');
     expect(`${networkMessage} ${protocolMessage}`).not.toMatch(/fetch|HTTP|provider|model|protocol/i);
   });
+
+  it('已知错误码携带未登记文案时也不直接展示', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'INVALID_FORMAT', message: '文件内部处理失败，请联系服务负责人。' },
+      options,
+    );
+
+    expect(message).toBe('文件上传未完成，请检查文件后重新上传。');
+  });
+
+  it('显式允许的错误码仍会屏蔽网络地址和密钥', () => {
+    const connection = toUserReadableErrorMessage(
+      { code: 'VALIDATION_ERROR', message: 'connect ECONNREFUSED 10.0.0.5:443' },
+      options,
+    );
+    const credential = toUserReadableErrorMessage(
+      { code: 'INVALID_FORMAT', message: 'invalid API key sk-example-secret' },
+      options,
+    );
+
+    expect(connection).toBe('文件上传未完成，请检查文件后重新上传。');
+    expect(credential).toBe('文件上传未完成，请检查文件后重新上传。');
+    expect(`${connection} ${credential}`).not.toMatch(/ECONNREFUSED|10\.0\.0\.5|API key|sk-/i);
+  });
 });

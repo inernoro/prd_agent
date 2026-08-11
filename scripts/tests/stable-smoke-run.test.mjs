@@ -7,6 +7,8 @@ import {
   acquireLock,
   applyCredentialRegistry,
   buildExecutionRecord,
+  buildUnhandledFailureSummary,
+  deliverUnhandledFailure,
   deployedRuntimeCommit,
   enforceExecutionVerdict,
   evaluateCdsReadiness,
@@ -118,6 +120,31 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /scripts\/stable-smoke-notify\.mjs/);
   assert.equal((source.match(/'--environments', selected\.join\(','\)/g) || []).length, 3);
   assert.match(source, /summaryDocument\.notification\.status === 'delivery-failed'/);
+  assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
+});
+
+test('未捕获异常会持久化失败摘要并进入失败交付路径', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-fatal-'));
+  try {
+    const result = await deliverUnhandledFailure([
+      '--run-id', 'fatal-test',
+      '--output-root', directory,
+      '--env-file', resolve(directory, 'missing.env'),
+      '--dry-run',
+    ], new Error('视觉证据门禁未产生可读取结论'));
+    const summary = JSON.parse(readFileSync(result.summaryPath, 'utf8'));
+
+    const expected = buildUnhandledFailureSummary({
+      runId: 'fatal-test',
+      selected: ['cds', 'production'],
+      reason: '视觉证据门禁未产生可读取结论',
+    });
+    assert.deepEqual({ ...summary, notification: expected.notification }, expected);
+    assert.equal(summary.notification.status, 'skipped');
+    assert.equal(summary.verdict, 'fail');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('环境文件解析不执行 shell 内容', () => {

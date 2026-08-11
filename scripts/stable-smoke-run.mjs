@@ -500,6 +500,111 @@ function buildRunId() {
   return `stsmk-${stamp}-${suffix}`;
 }
 
+function readLooseArg(argv, name, fallback = '') {
+  const index = argv.indexOf(name);
+  const value = index >= 0 ? argv[index + 1] : '';
+  return value && !value.startsWith('--') ? value : fallback;
+}
+
+export function buildUnhandledFailureSummary({ runId, selected, reason, reportUrl = '' }) {
+  return {
+    runId,
+    verdict: 'fail',
+    phase: 'runner-exception',
+    environments: selected,
+    failure: {
+      reason,
+      recovery: '修复异常阶段后，使用相同 runId 重新执行稳定冒烟并核对新报告。',
+    },
+    archive: reportUrl
+      ? { status: 'provided', reportUrl }
+      : { status: 'unavailable', reportUrl: '', reason: '执行链异常发生在在线报告归档完成之前' },
+    notification: { status: 'pending' },
+  };
+}
+
+export async function deliverUnhandledFailure(argv, error) {
+  const requestedRunId = readLooseArg(argv, '--run-id');
+  const runId = /^[a-z0-9._-]+$/i.test(requestedRunId) ? requestedRunId : buildRunId();
+  let outputRoot = resolve(readLooseArg(argv, '--output-root', defaultOutputRoot));
+  let runDir = resolve(outputRoot, runId);
+  const selected = argv.includes('--cds-only')
+    ? ['cds']
+    : argv.includes('--production-only')
+      ? ['production']
+      : ['cds', 'production'];
+  const reason = error instanceof Error ? error.message : '未知执行异常';
+  const providedReportUrl = readLooseArg(argv, '--report-url');
+  const notificationCenterUrl = `${productionBaseUrl}/?panel=notifications`;
+  const summaryDocument = buildUnhandledFailureSummary({
+    runId,
+    selected,
+    reason,
+    reportUrl: providedReportUrl,
+  });
+
+  try {
+    mkdirSync(runDir, { recursive: true });
+  } catch {
+    outputRoot = resolve(defaultOutputRoot);
+    runDir = resolve(outputRoot, runId);
+    mkdirSync(runDir, { recursive: true });
+  }
+  const summaryPath = resolve(runDir, 'summary.json');
+  if (argv.includes('--dry-run')) {
+    summaryDocument.notification = { status: 'skipped', reason: 'dry-run 不发送通知' };
+  } else {
+    try {
+      const envPath = resolve(readLooseArg(argv, '--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
+      let local = { loaded: false, values: {} };
+      try {
+        local = loadLocalEnvironment(envPath);
+      } catch (credentialError) {
+        summaryDocument.credentialWarning = credentialError instanceof Error
+          ? credentialError.message
+          : '本地凭据文件读取失败';
+      }
+      const registry = readJson(credentialRegistryPath) || {};
+      const values = applyCredentialRegistry({ ...local.values, ...process.env }, registry, readKeychainSecret);
+      const notification = command('node', [
+        'scripts/stable-smoke-notify.mjs',
+        '--verdict', 'fail',
+        '--run-id', runId,
+        '--environment', selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、'),
+        '--module', '稳定冒烟执行链',
+        '--recovery', '稳定冒烟异常终止。请先处理执行摘要中的失败阶段，再使用相同 runId 重新执行并核对验收报告。',
+        '--report-url', providedReportUrl || notificationCenterUrl,
+        '--action-label', providedReportUrl ? '查看验收证据' : '打开通知中心',
+      ], {
+        env: {
+          ...process.env,
+          ...values,
+          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || productionBaseUrl,
+        },
+      });
+      summaryDocument.notification = notification.status === 0
+        ? {
+            status: 'sent',
+            result: readJsonFromText(notification.stdout),
+            actionUrl: providedReportUrl || notificationCenterUrl,
+          }
+        : {
+            status: 'delivery-failed',
+            error: String(notification.stderr || notification.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
+          };
+    } catch (deliveryError) {
+      summaryDocument.notification = {
+        status: 'delivery-failed',
+        error: deliveryError instanceof Error ? deliveryError.message : 'MAP 通知发送失败',
+      };
+    }
+  }
+  writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
+  process.stdout.write(`${JSON.stringify({ runId, runDir, verdict: 'fail', notification: summaryDocument.notification })}\n`);
+  process.stderr.write(`稳定冒烟异常终止，失败摘要已保存：${reason}\n`);
+  return { runDir, summaryPath, summary: summaryDocument };
+}
+
 export function acquireLock(lockPath) {
   if (existsSync(lockPath)) {
     let stale = Date.now() - statSync(lockPath).mtimeMs > 3 * 60 * 60 * 1000;
@@ -913,7 +1018,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     await main();
   } catch (error) {
-    process.stderr.write(`稳定冒烟未启动：${error instanceof Error ? error.message : '未知错误'}\n`);
+    await deliverUnhandledFailure(process.argv.slice(2), error);
     process.exitCode = 2;
   }
 }

@@ -25,7 +25,7 @@ export function buildNotificationPayload(options) {
     message: detail,
     level: isTest ? 'info' : options.verdict === 'fail' ? 'error' : 'warning',
     targetUserId: options.targetUserId,
-    actionLabel: '查看验收证据',
+    actionLabel: options.actionLabel || '查看验收证据',
     actionUrl: options.reportUrl,
     actionKind: 'open-url',
     section: 'admin',
@@ -89,6 +89,7 @@ async function main() {
     requestId: readArg(argv, '--request-id'),
     recovery: readArg(argv, '--recovery'),
     reportUrl: readArg(argv, '--report-url'),
+    actionLabel: readArg(argv, '--action-label', '查看验收证据'),
     isTest: argv.includes('--test'),
   };
   const result = await sendNotification(options);

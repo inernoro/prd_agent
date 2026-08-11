@@ -59,6 +59,7 @@ export async function launch(cfg, opts = {}) {
     configuredMobile: Boolean(opts.isMobile),
     deviceName: opts.isMobile ? (opts.deviceName || 'custom-mobile') : 'desktop',
     mobilePathId: opts.mobilePathId || null,
+    targetEnvironment: opts.environment || null,
   });
   // v1.0（issue #605 二.2 / 楼上一致共识）：默认挂上 console/network/pageerror 自动捕获——
   // 这是"人眼扫静态图永远漏的维度"，最该让机器补。driver 无需手动开，launch 即装。
@@ -93,6 +94,7 @@ export async function createMobileContext(browser, cfg, opts = {}) {
     configuredMobile: true,
     deviceName,
     mobilePathId: opts.mobilePathId || 'mobile-primary',
+    targetEnvironment: opts.environment || null,
   });
   attachAutoCapture(page, { ...(opts.autoCapture || {}), _session: session });
   return { ctx, page };
@@ -527,6 +529,7 @@ async function validateShot(page, path, expectText, allowBlockingOverlay = false
  *   - theme: light 或 dark；不传时从页面主题自动识别
  *   - methodAnchor: 报告内关联测试方法锚点
  *   - breadcrumb: 从入口到当前状态的真实页面操作路径
+ *   - environment: cds 或 production；不传时继承 launch/createMobileContext 的同名选项
  *   - failureEvidence: 当前图是否专门证明一个真实失败；只能用于 conditional/fail 报告
  *   - failureReason: failureEvidence=true 时必须说明失败事实，归档门禁会核对
  *   - allowBlockingOverlay: 当前截图本来就在验收全屏弹窗或教程遮罩；默认 false
@@ -550,6 +553,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     theme,
     methodAnchor,
     breadcrumb,
+    environment: targetEnvironment,
     failureEvidence = false,
     failureReason,
     allowBlockingOverlay = false,
@@ -593,9 +597,9 @@ export async function shot(page, outDir, name, caption, opts = {}) {
 
   const viewport = page.viewportSize();
   const touchPoints = await page.evaluate(() => Number(navigator.maxTouchPoints || 0)).catch(() => 0);
-  const environment = pageEnvironments.get(page) || {};
+  const pageEnvironment = pageEnvironments.get(page) || {};
   const isMobile = Boolean(
-    environment.configuredMobile
+    pageEnvironment.configuredMobile
     && viewport
     && viewport.width <= 480
     && touchPoints >= 1,
@@ -617,8 +621,8 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     viewport,
     touchPoints,
     isMobile,
-    deviceName: environment.deviceName || null,
-    mobilePathId: mobilePathId || environment.mobilePathId || null,
+    deviceName: pageEnvironment.deviceName || null,
+    mobilePathId: mobilePathId || pageEnvironment.mobilePathId || null,
     mobileStage: mobileStage || null,
     module: module || null,
     slotId: slotId || null,
@@ -631,6 +635,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     viewportClass: isMobile ? 'mobile' : 'desktop',
     methodAnchor: methodAnchor || undefined,
     breadcrumb: breadcrumb || undefined,
+    environment: targetEnvironment || pageEnvironment.targetEnvironment || undefined,
     failureEvidence: Boolean(failureEvidence),
     failureReason: failureReason || null,
     allowBlockingOverlay: Boolean(allowBlockingOverlay),
