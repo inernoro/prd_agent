@@ -262,6 +262,9 @@ services:
     environment:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
       ASPNETCORE_ENVIRONMENT: Development
+      # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId。固定为 CDS，
+      # 不使用容器或 commit，既隔离正式环境，也保证滚动部署连续消费。
+      Deployment__Identity: "prd-agent:cds"
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"

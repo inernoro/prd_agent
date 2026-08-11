@@ -1113,6 +1113,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("AdoptLegacyTranscriptRunsKey", authority);
         Assert.Contains("Transcript__AdoptLegacyUnownedRuns: \"false\"", cdsCompose);
         Assert.Contains("Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-true}", productionCompose);
+        Assert.Contains("Deployment__Identity: \"prd-agent:cds\"", cdsCompose);
+        Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
         Assert.True(
             cdsCompose.Split("command -v ffmpeg", StringSplitOptions.None).Length - 1 >= 3,
             "CDS API 的 dev、static 与默认源码命令都必须在启动前保证 ffmpeg 可用");

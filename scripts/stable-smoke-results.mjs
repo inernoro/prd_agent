@@ -49,6 +49,14 @@ export function selectRequiredCaseIds(requiredCaseIds, grepExpression = '') {
   return [...new Set(requested)].map((caseId) => requiredByNormalizedId.get(caseId) || caseId);
 }
 
+export function environmentResultLabel(rows, selected = true) {
+  if (!selected) return 'not-selected';
+  if (rows.length === 0) return 'conditional';
+  if (rows.some((row) => row.status === 'fail')) return 'fail';
+  if (rows.some((row) => row.status === 'not-run')) return 'conditional';
+  return 'pass';
+}
+
 export function reconcileCaseCoverage(
   requiredCaseIds,
   environmentRows,

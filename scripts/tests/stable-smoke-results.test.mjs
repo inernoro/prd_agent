@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   buildNotRunLedger,
   collectPlaywrightCases,
+  environmentResultLabel,
   reconcileCaseCoverage,
   selectRequiredCaseIds,
   summarizeCoverage,
@@ -105,6 +110,55 @@ test('grep 单用例复测只对账表达式中选择的 caseId', () => {
     ['REC-003', 'REG-user-error-001'],
   );
   expectCaseIds(selectRequiredCaseIds(required, '头像生成'), required);
+});
+
+test('单环境复测不会把未选择环境标记为通过', () => {
+  const passedRows = [{ caseId: 'CORE-001', environment: 'cds', status: 'pass' }];
+
+  assert.equal(environmentResultLabel(passedRows, true), 'pass');
+  assert.equal(environmentResultLabel([], false), 'not-selected');
+  assert.equal(environmentResultLabel([], true), 'conditional');
+});
+
+test('单环境技术报告明确展示另一环境未选择', () => {
+  const runDirectory = mkdtempSync(join(tmpdir(), 'stable-smoke-report-'));
+  try {
+    const planPath = join(runDirectory, 'plan.json');
+    const cdsResultPath = join(runDirectory, 'cds.json');
+    const reportPath = join(runDirectory, 'report.md');
+    const supervisorPath = join(runDirectory, 'supervisor.md');
+    writeFileSync(planPath, JSON.stringify({
+      verdict: 'pass',
+      requiredCaseIds: ['CORE-001'],
+      featureLines: [],
+    }));
+    writeFileSync(cdsResultPath, JSON.stringify({
+      suites: [{
+        specs: [{
+          title: '[CORE-001] 首页可用',
+          tests: [{ results: [{ status: 'passed', duration: 10 }] }],
+        }],
+      }],
+    }));
+
+    const result = spawnSync(process.execPath, [
+      'scripts/render-stable-smoke-report.mjs',
+      '--plan', planPath,
+      '--cds-input', cdsResultPath,
+      '--production-input', join(runDirectory, 'production-missing.json'),
+      '--output', reportPath,
+      '--supervisor-output', supervisorPath,
+      '--environments', 'cds',
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr);
+    const report = readFileSync(reportPath, 'utf8');
+    assert.match(report, /\| CORE \| pass \| not-selected \|/);
+    assert.match(report, /\| 正式环境 \| 0 \| 0 \| 0 \| 0 \| 0 \| 未选择 \| 本轮未选择 \|/);
+    assert.doesNotMatch(report, /\| CORE \| pass \| pass \|/);
+  } finally {
+    rmSync(runDirectory, { recursive: true, force: true });
+  }
 });
 
 function expectCaseIds(actual, expected) {

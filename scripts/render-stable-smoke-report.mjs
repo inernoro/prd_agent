@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import {
   buildNotRunLedger,
   collectPlaywrightCases,
+  environmentResultLabel,
   reconcileCaseCoverage,
   selectRequiredCaseIds,
   summarizeCoverage,
@@ -116,6 +117,9 @@ const lines = [
   '| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |',
   '|---|---:|---:|---:|---:|---:|---|---|',
   ...['cds', 'production'].map((targetEnvironment) => {
+    if (!selectedEnvironments.includes(targetEnvironment)) {
+      return `| ${targetEnvironment === 'cds' ? 'CDS 环境' : '正式环境'} | 0 | 0 | 0 | 0 | 0 | 未选择 | 本轮未选择 |`;
+    }
     const environmentRows = rows.filter((row) => row.environment === targetEnvironment);
     const environmentNotRun = environmentRows.filter((row) => row.status === 'not-run');
     const reportAvailable = targetEnvironment === 'cds' ? Boolean(cdsReport) : Boolean(productionReport);
@@ -147,8 +151,9 @@ const lines = [
   ...[...grouped.entries()].map(([module, moduleRows]) => {
     const cdsRows = moduleRows.filter((row) => row.environment === 'cds');
     const prodRows = moduleRows.filter((row) => row.environment === 'production');
-    const label = (items) => items.some((row) => row.status === 'fail') ? 'fail' : items.some((row) => row.status === 'not-run') ? 'conditional' : 'pass';
-    return `| ${module} | ${label(cdsRows)} | ${label(prodRows)} | ${moduleRows.length} | ${moduleRows.filter((row) => row.status === 'fail').length} | ${moduleRows.filter((row) => row.status === 'not-run').length} | ${(moduleRows.reduce((sum, row) => sum + row.durationMs, 0) / 1000).toFixed(2)}s |`;
+    const cdsLabel = environmentResultLabel(cdsRows, selectedEnvironments.includes('cds'));
+    const productionLabel = environmentResultLabel(prodRows, selectedEnvironments.includes('production'));
+    return `| ${module} | ${cdsLabel} | ${productionLabel} | ${moduleRows.length} | ${moduleRows.filter((row) => row.status === 'fail').length} | ${moduleRows.filter((row) => row.status === 'not-run').length} | ${(moduleRows.reduce((sum, row) => sum + row.durationMs, 0) / 1000).toFixed(2)}s |`;
   }),
 ];
 
@@ -177,7 +182,7 @@ lines.push(
   '',
   '## 7. 双环境差异',
   '',
-  `CDS 执行报告：${cdsReport ? '已读取' : '缺失'}；正式环境执行报告：${productionReport ? '已读取' : '缺失'}。任一环境或必跑用例缺少证据时，整轮最多为 conditional。`,
+  `CDS 执行报告：${cdsReport ? '已读取' : selectedEnvironments.includes('cds') ? '缺失' : '本轮未选择'}；正式环境执行报告：${productionReport ? '已读取' : selectedEnvironments.includes('production') ? '缺失' : '本轮未选择'}。选中环境的任一必跑用例缺少证据时，整轮最多为 conditional；未选择环境不计入本轮结论。`,
   '',
   '## 8. 清理结果',
   '',

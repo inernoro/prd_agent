@@ -30,6 +30,7 @@
   <ItemGroup>
     <Compile Include="..\..\..\llmgw\console-api\Organization\MembershipPolicy.cs" Link="Gateway\MembershipPolicy.cs" />
     <Compile Include="..\..\..\llmgw\console-api\Governance\OfferingRoutingChangePolicy.cs" Link="Gateway\OfferingRoutingChangePolicy.cs" />
+    <Compile Include="..\..\src\PrdAgent.Api\Services\InstanceIdentity.cs" Link="Services\InstanceIdentity.cs" />
   </ItemGroup>
 
 </Project>
