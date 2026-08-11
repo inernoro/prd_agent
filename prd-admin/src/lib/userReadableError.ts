@@ -180,6 +180,12 @@ function classifiedMessage(code: string, recoveryMessage: string): string | null
   if (normalized === 'TIMEOUT') {
     return '本次等待超时，请稍后重试。';
   }
+  if (normalized === 'SHORT_VIDEO_INTERRUPTED') {
+    return '短视频解析因服务重启而中断，请重新解析。';
+  }
+  if (normalized === 'SHORT_VIDEO_TIMEOUT') {
+    return '短视频解析等待超时，请重新解析。';
+  }
   if (normalized === 'DOCUMENT_TOO_LARGE' || normalized === 'FILE_TOO_LARGE') {
     return '文件超过当前大小限制，请缩小文件后重新上传。';
   }

@@ -107,6 +107,10 @@ public static class ErrorCodes
     public const string IMAGE_GEN_REQUEST_REJECTED = "IMAGE_GEN_REQUEST_REJECTED";
     public const string IMAGE_GEN_TIMEOUT = "IMAGE_GEN_TIMEOUT";
 
+    // 短视频后台任务相关
+    public const string SHORT_VIDEO_INTERRUPTED = "SHORT_VIDEO_INTERRUPTED";
+    public const string SHORT_VIDEO_TIMEOUT = "SHORT_VIDEO_TIMEOUT";
+
     public const string PLAN_TITLE_DUPLICATE = "PLAN_TITLE_DUPLICATE";
 
     /// <summary>乐观锁失败：客户端提交时数据已被他人覆盖（HTTP 409）</summary>

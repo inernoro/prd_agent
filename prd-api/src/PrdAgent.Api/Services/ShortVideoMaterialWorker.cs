@@ -85,6 +85,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.OwnerInstanceId, instanceId)
+                    .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -129,6 +130,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.OwnerInstanceId, instanceId)
+                    .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_TIMEOUT)
                     .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -152,6 +154,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 r => r.Id == _currentRunId && r.Status == "running",
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, message)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -180,6 +183,8 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 ownerScope),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
+                .Set(r => r.ErrorCode, (string?)null)
+                .Set(r => r.ErrorMessage, (string?)null)
                 // 认领时盖上本实例归属（领取历史无主任务后必须打主，否则崩溃重启兜底匹配不到、永卡 running，Bugbot Medium）
                 .Set(r => r.OwnerInstanceId, instanceId)
                 .Set(r => r.UpdatedAt, DateTime.UtcNow),
@@ -207,6 +212,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             if (latest != null)
             {
                 latest.Status = "failed";
+                latest.ErrorCode = ErrorCodes.INTERNAL_ERROR;
                 latest.ErrorMessage = ex.Message;
                 ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, ex.Message);
                 latest.UpdatedAt = DateTime.UtcNow;

@@ -20,6 +20,16 @@ function documentUploadFailureMessage(value: unknown): string {
   });
 }
 
+export function classifyDocumentUploadFailure(status: number, responseText: string) {
+  if (status === 413) {
+    return {
+      code: 'DOCUMENT_TOO_LARGE',
+      message: documentUploadFailureMessage({ code: 'DOCUMENT_TOO_LARGE', message: responseText }),
+    };
+  }
+  return { code: 'UPLOAD_FAILED', message: documentUploadFailureMessage(responseText) };
+}
+
 export const createDocumentStoreReal: CreateDocumentStoreContract = async (input) => {
   return await apiRequest(api.documentStore.stores.create(), {
     method: 'POST',
@@ -227,7 +237,7 @@ export async function uploadDocumentFile(storeId: string, file: File): Promise<i
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    return { success: false, data: null as never, error: { code: 'UPLOAD_FAILED', message: documentUploadFailureMessage(text) } };
+    return { success: false, data: null as never, error: classifyDocumentUploadFailure(res.status, text) };
   }
   return await res.json();
 }
@@ -269,7 +279,7 @@ export async function uploadDocumentFileWithProgress(
       resolve({
         success: false,
         data: null as never,
-        error: { code: 'UPLOAD_FAILED', message: documentUploadFailureMessage(xhr.responseText) },
+        error: classifyDocumentUploadFailure(xhr.status, xhr.responseText),
       });
     };
     xhr.onerror = () => resolve({

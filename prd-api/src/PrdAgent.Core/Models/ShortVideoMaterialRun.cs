@@ -69,6 +69,9 @@ public class ShortVideoMaterialRun
     /// <summary>时间轴片段条目 ID（旧运行记录兼容字段，不再默认生成）</summary>
     public string? TimelineEntryId { get; set; }
 
+    /// <summary>稳定错误分类，供客户端选择正确恢复动作；诊断细节仍只写 ErrorMessage。</summary>
+    public string? ErrorCode { get; set; }
+
     /// <summary>错误信息</summary>
     public string? ErrorMessage { get; set; }
 

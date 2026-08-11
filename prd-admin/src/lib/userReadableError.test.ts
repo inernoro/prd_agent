@@ -204,4 +204,11 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe(expected);
     expect(message).not.toMatch(/HTTP|provider|traceId/i);
   });
+
+  it.each([
+    ['SHORT_VIDEO_INTERRUPTED', '短视频解析因服务重启而中断，请重新解析。'],
+    ['SHORT_VIDEO_TIMEOUT', '短视频解析等待超时，请重新解析。'],
+  ])('为短视频后台失败分类 %s 保留重新解析动作', (code, expected) => {
+    expect(toUserReadableErrorMessage({ code, message: '内部诊断不得展示' }, options)).toBe(expected);
+  });
 });
