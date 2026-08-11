@@ -268,16 +268,66 @@ export function resolveMention(
 }
 
 /**
- * Esc 该收哪一层。
+ * 浮层栈的状态机（选择器 / 新建面板 / 抽屉本身）。
  *
- * 抽成纯函数是因为「按 Esc 关掉最上面那层」是一条分支判断，
- * 藏在 keydown 回调里既测不到、也很容易在加新浮层时忘记补一支。
+ * 为什么是状态机而不是一个 Esc 分支函数：上一版就是分支函数
+ * `resolveEscapeAction({createAgentOpen, pickerOpen})`，单测传的是
+ * `{createAgentOpen:true, pickerOpen:true}`——**组件里根本产生不了这个状态**，
+ * 因为「打开新建面板」那一下会把 pickerOpen 置 false。于是单测全绿，
+ * 真人按 Esc 却回不到选择器，直接从新建面板掉回抽屉。
+ * （2026-08-11 验收实测，形状 4a：断言的是辅助函数，不是真实的层叠。）
+ *
+ * 现在把「打开新建面板时记住选择器开着、关掉时还回去」也纳进同一份状态，
+ * 并且只留这一个入口——组件不再各自 setXxx，测试驱动的就是真实转移序列。
  */
-export function resolveEscapeAction(state: { createAgentOpen: boolean; pickerOpen: boolean }):
-  'close-create-agent' | 'close-picker' | 'close-drawer' {
-  if (state.createAgentOpen) return 'close-create-agent';
-  if (state.pickerOpen) return 'close-picker';
-  return 'close-drawer';
+export type ChatLayerState = {
+  pickerOpen: boolean;
+  createAgentOpen: boolean;
+  /** 进新建面板前选择器是不是开着的；退出时按它还原 */
+  pickerResumes: boolean;
+};
+
+export const INITIAL_CHAT_LAYERS: ChatLayerState = {
+  pickerOpen: false,
+  createAgentOpen: false,
+  pickerResumes: false,
+};
+
+export type ChatLayerEvent =
+  | 'toggle-picker'
+  | 'close-picker'
+  | 'open-create-agent'
+  | 'close-create-agent'
+  | 'escape';
+
+export function reduceChatLayers(state: ChatLayerState, event: ChatLayerEvent): {
+  next: ChatLayerState;
+  closeDrawer: boolean;
+} {
+  const closeCreate = (): ChatLayerState => ({
+    pickerOpen: state.pickerResumes,
+    createAgentOpen: false,
+    pickerResumes: false,
+  });
+  switch (event) {
+    case 'toggle-picker':
+      return { next: { ...state, pickerOpen: !state.pickerOpen }, closeDrawer: false };
+    case 'close-picker':
+      return { next: { ...state, pickerOpen: false }, closeDrawer: false };
+    case 'open-create-agent':
+      return {
+        next: { pickerOpen: false, createAgentOpen: true, pickerResumes: state.pickerOpen },
+        closeDrawer: false,
+      };
+    case 'close-create-agent':
+      return { next: closeCreate(), closeDrawer: false };
+    case 'escape':
+      if (state.createAgentOpen) return { next: closeCreate(), closeDrawer: false };
+      if (state.pickerOpen) return { next: { ...state, pickerOpen: false }, closeDrawer: false };
+      return { next: state, closeDrawer: true };
+    default:
+      return { next: state, closeDrawer: false };
+  }
 }
 
 /**
@@ -606,9 +656,24 @@ export function ReprocessChatDrawer({
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
-  const [showCreateAgent, setShowCreateAgent] = useState(false);
+  // 浮层栈只有这一份状态 + 一个 dispatch。散着 setXxx 正是上一版的病根：
+  // 「打开新建面板」那一处顺手把选择器关了，Esc 就再也回不去。
+  const [layers, setLayers] = useState<ChatLayerState>(INITIAL_CHAT_LAYERS);
+  // onClose 放 ref：dispatchLayer 要在 setState 更新函数里调它，
+  // 直接闭包会把旧的 onClose 钉死在 useCallback 里。
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  const dispatchLayer = useCallback((event: ChatLayerEvent) => {
+    setLayers((current) => {
+      const { next, closeDrawer } = reduceChatLayers(current, event);
+      if (closeDrawer) onCloseRef.current?.();
+      return next;
+    });
+  }, []);
+  const showCreateAgent = layers.createAgentOpen;
+  const pickerOpen = layers.pickerOpen;
   const [active, setActive] = useState<ActiveAgent>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
+
   // 智能体能力契约（后端 SSOT 下发）：决定哪些 builtin 智能体可选 + 各自交互形态
   const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
   // 通用智能体（后端下发，含运行时可用性 + 头像条要展示的专家清单）。
@@ -722,7 +787,7 @@ export function ReprocessChatDrawer({
     // toolbox/kbAgent 数据（Bugbot #2 八轮 Low）
     setToolboxItems([]);
     setKbAgents([]);
-    setPickerOpen(false);
+    dispatchLayer('close-picker');
     setLoadingDoc(true);
     setLoadingAgents(true);
 
@@ -974,12 +1039,12 @@ export function ReprocessChatDrawer({
     const handler = (e: MouseEvent) => {
       if (!pickerBtnRef.current?.contains(e.target as Node)) {
         const dropdown = document.getElementById('reprocess-agent-picker-dropdown');
-        if (dropdown && !dropdown.contains(e.target as Node)) setPickerOpen(false);
+        if (dropdown && !dropdown.contains(e.target as Node)) dispatchLayer('close-picker');
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [pickerOpen]);
+  }, [pickerOpen, dispatchLayer]);
 
   useEffect(() => {
     if (!initialInput || initialInputAppliedRef.current) return;
@@ -1459,7 +1524,7 @@ export function ReprocessChatDrawer({
         '现在需要手动挑一个智能体',
         general?.unavailableReason ?? '通用智能体暂时不可用，点上方选择器挑一个',
       );
-      setPickerOpen(true);
+      dispatchLayer('toggle-picker');
       return;
     }
     if (decision.mentioned) setActive(decision.target);
@@ -1484,7 +1549,7 @@ export function ReprocessChatDrawer({
       }
       setVisualInitialPrompt(buildLiteraryIllustrationPrompt(outgoingText, entryTitle, docContent));
       setLiteraryImageMode(true);
-      setPickerOpen(false);
+      dispatchLayer('close-picker');
       setError(null);
       setInput('');
       return;
@@ -1499,7 +1564,7 @@ export function ReprocessChatDrawer({
     void sendMessage(outgoingText, invoker, active2);
   }, [
     input, active, general, toolboxItems,
-    loadingDoc, docLoadError, entryTitle, docContent, sendMessage, runShortVideoTool,
+    loadingDoc, docLoadError, entryTitle, docContent, sendMessage, runShortVideoTool, dispatchLayer,
   ]);
 
   // 开启全新对话：清空当前对话 + 清掉本文档的持久化（保留已选智能体，方便直接再问）
@@ -1532,25 +1597,25 @@ export function ReprocessChatDrawer({
     if (item.id === SHORT_VIDEO_TOOLBOX_ITEM.id) {
       setActive({ kind: 'shortVideoTool' });
       setLiteraryImageMode(false);
-      setPickerOpen(false);
+      dispatchLayer('close-picker');
       setError(null);
       requestAnimationFrame(() => inputRef.current?.focus());
       return;
     }
     setActive({ kind: 'toolbox', item });
     setLiteraryImageMode(false);
-    setPickerOpen(false);
+    dispatchLayer('close-picker');
     setError(null);
     requestAnimationFrame(() => inputRef.current?.focus());
-  }, []);
+  }, [dispatchLayer]);
 
   const pickKbAgent = useCallback((agent: ReprocessAgent) => {
     setActive({ kind: 'kbAgent', agent });
     setLiteraryImageMode(false);
-    setPickerOpen(false);
+    dispatchLayer('close-picker');
     setError(null);
     requestAnimationFrame(() => inputRef.current?.focus());
-  }, []);
+  }, [dispatchLayer]);
 
   const handleCreateAgent = useCallback(async (in_: {
     label: string; description: string; systemPrompt: string;
@@ -1685,7 +1750,7 @@ export function ReprocessChatDrawer({
       // 业务归属保持文学创作；底层走 /api/literary-agent/image-gen，不切换到 visual-agent。
       setVisualInitialPrompt(content.slice(0, 2000));
       setLiteraryImageMode(true);
-      setPickerOpen(false);
+      dispatchLayer('close-picker');
       return;
     }
     if (actionKey === 'create-defect') {
@@ -1698,7 +1763,7 @@ export function ReprocessChatDrawer({
       }
       toast.success('缺陷已创建', `「${res.data?.defect?.title || '新缺陷'}」已建入缺陷库，可去缺陷管理指派/处理`);
     }
-  }, []);
+  }, [dispatchLayer]);
 
   // 视觉创作 mini 面板：把生成的配图写回文档（追加到文末）
   const insertVisualToDoc = useCallback(async (markdown: string) => {
@@ -1825,15 +1890,12 @@ export function ReprocessChatDrawer({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      const action = resolveEscapeAction({ createAgentOpen: showCreateAgent, pickerOpen });
       e.stopPropagation();
-      if (action === 'close-create-agent') setShowCreateAgent(false);
-      else if (action === 'close-picker') setPickerOpen(false);
-      else onClose();
+      dispatchLayer('escape');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showCreateAgent, pickerOpen, onClose]);
+  }, [dispatchLayer]);
 
   const modal = (
     <motion.div
@@ -1900,14 +1962,14 @@ export function ReprocessChatDrawer({
           toolboxItems={toolboxItems}
           activeAgentKey={active?.kind === 'toolbox' ? active.item.agentKey : undefined}
           disabled={isBusy}
-          onPick={(item) => { setActive({ kind: 'toolbox', item }); setPickerOpen(false); }}
+          onPick={(item) => { setActive({ kind: 'toolbox', item }); dispatchLayer('close-picker'); }}
         />
 
         {/* 智能体选择器（精简版 - 顶部下拉） */}
         <div className="px-5 pt-3 pb-3 shrink-0 relative">
           <button
             ref={pickerBtnRef}
-            onClick={() => setPickerOpen((v) => !v)}
+            onClick={() => dispatchLayer('toggle-picker')}
             disabled={loadingAgents || (!!docLoadError && !isShortVideoMode)}
             className="w-full flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 transition-all disabled:opacity-60"
             style={{
@@ -2013,7 +2075,7 @@ export function ReprocessChatDrawer({
                           : (general.unavailableReason ?? '运行时暂时不可用')}
                         active={active?.kind === 'general'}
                         disabled={isBusy || !general.available}
-                        onClick={() => { setActive({ kind: 'general' }); setPickerOpen(false); }}
+                        onClick={() => { setActive({ kind: 'general' }); dispatchLayer('close-picker'); }}
                       />
                     </DropdownSection>
                   )}
@@ -2075,7 +2137,7 @@ export function ReprocessChatDrawer({
                     ))}
 
                     <button
-                      onClick={() => { setShowCreateAgent(true); setPickerOpen(false); }}
+                      onClick={() => { dispatchLayer('open-create-agent'); }}
                       className="w-full flex items-center gap-2.5 px-3 py-2.5 hover-bg-soft transition-colors text-left border-t border-t-token-subtle"
 
                     >
@@ -2141,10 +2203,10 @@ export function ReprocessChatDrawer({
         <AnimatePresence>
           {showCreateAgent && (
             <CreateAgentModal
-              onClose={() => setShowCreateAgent(false)}
+              onClose={() => dispatchLayer('close-create-agent')}
               onSubmit={async (in_) => {
                 const ok = await handleCreateAgent(in_);
-                if (ok) setShowCreateAgent(false);
+                if (ok) dispatchLayer('close-create-agent');
               }}
             />
           )}

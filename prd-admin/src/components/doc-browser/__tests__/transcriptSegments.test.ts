@@ -153,20 +153,28 @@ describe('buildTranscriptWordCloud', () => {
     }
   });
 
-  it('连着不带标点的实词长串，中间那个词也留得住', () => {
-    // 「存在下单会议」一口气 6 个字，每个双字窗频次都相同。
-    // 靠词形猜的判据在这里必然吃掉中间的「下单」（它左右都有不更少见的邻居）；
-    // 按位置抢座就没这个问题：存在占 0-1，在下想占 1-2 被挡，下单占 2-3，
-    // 单会被挡，会议占 4-5。三个真词全留下，两个碎片全丢。
+  it('判不出边界的不收：只在一个固定长串里出现过的组合一律丢掉', () => {
+    // 「存在下单会议」每个双字窗频次相同，中间的「下单」左邻永远是「在」、
+    // 右舍永远是「会」，也从没顶过句子头尾——凭现有信息判不出它和「在下」谁是词。
+    // 验收要求是「无法确定边界时不收录」，所以整段中间部分都不进词云；
+    // 顶着头尾的「存在」「会议」有边界证据，留下。
     const cloud = buildTranscriptWordCloud([
       { start: 0, end: 3, text: '存在下单会议，存在下单会议' },
     ]);
-    for (const word of ['存在', '下单', '会议']) {
-      expect(cloud.some(item => item.word === word)).toBe(true);
+    expect(cloud.some(item => item.word === '存在')).toBe(true);
+    expect(cloud.some(item => item.word === '会议')).toBe(true);
+    for (const undecidable of ['在下', '下单', '单会']) {
+      expect(cloud.some(item => item.word === undecidable)).toBe(false);
     }
-    for (const fragment of ['在下', '单会']) {
-      expect(cloud.some(item => item.word === fragment)).toBe(false);
-    }
+  });
+
+  it('同一个词换个上下文出现，就有了边界证据，能收回来', () => {
+    // 上一条里判不出的「下单」，只要在别处以不同前后文出现过，多样性证据就成立。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '存在下单会议，存在下单会议' },
+      { start: 3, end: 6, text: '他要下单了，赶紧下单吧' },
+    ]);
+    expect(cloud.some(item => item.word === '下单')).toBe(true);
   });
 
   it('抢座按全文频次排序：高频词先占字，碎片抢不到座', () => {

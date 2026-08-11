@@ -182,18 +182,18 @@ const STOP_WORDS = new Set([
 /**
  * 整场录音的轻量词频；不依赖网络，打开结果页即可用。
  *
- * 中文没有空格，这里按 2 字滑窗切。滑窗必然产出「交付 + 质量 → 付质」这种骑在
- * 两个真词中间的碎片——STOP_WORDS 里的 的实 / 时原 / 来的 就是过去一个个手工
- * 补进去的同类货，补不完。
+ * 中文没有空格，这里按 2 字滑窗切。滑窗必然产出「常规优化 → 规优」这种骑在词缝上的
+ * 半截词，治它试过三条路，前两条都被真实语料打回来了：
+ *   1) 按词形猜锚点 —— 把真词「质量」顶掉了（频次相同时谁先排到由排序决定）
+ *   2) 按位置抢座 —— 平局时位置靠前的先占，「我们看一下常规优化」里 我们 占住 0-1，
+ *      整条链相位就错开，抢到座的全是 看一/下常/规优
  *
- * 治法是**按位置抢座**而不是按词形猜：滑窗时记下每个组合出现在第几个字上，
- * 然后频次高的先占字、同频次的位置靠前的先占；两个字里只要有一个被占过，
- * 这个组合就是骑在别人身上的碎片，直接丢。
- *   「交付质量」→ 交付 占住 0-1，付质 想占 1-2 但 1 被占了，质量 占住 2-3。
- * 停用词也要参与抢座（虽然自己不显示），否则「一个东西」里的「个东」没人挡。
+ * 现在用的是第三条：**看上下文多不多样**。真词会出现在不同的前后文里，或者顶在
+ * 句子的头尾；半截词永远卡在同一个长串中间，左邻右舍从头到尾只有一种。
+ * 判不出来的一律不收——词云宁可少几个词，也不能端出半截词。
  *
- * 这一步解决的是「哪些是词」；至于「哪些词值得显示」，交给下面的停用词 +
- * 虚词字 + 至少出现两次三道闸。
+ * 位置抢座保留在多样性判定之后：它解决的是「参考 / 考图 都过了多样性关，
+ * 但它们在同一段字上重叠」这种情况，让频次高的那个占住字。
  */
 export function buildTranscriptWordCloud(segments: TranscriptSegment[], limit = 18): Array<{ word: string; count: number }> {
   const source = segments.map(segment => segment.text).join(' ');
@@ -205,17 +205,53 @@ export function buildTranscriptWordCloud(segments: TranscriptSegment[], limit = 
 
   const runs = (source.match(/[\u3400-\u9fff]{2,}/g) ?? []).map(run => Array.from(run));
   const occurrences: Array<{ word: string; run: number; at: number }> = [];
+  // 每个双字组合见过哪些左邻右舍。顶到句子头尾也算一种「邻居」——
+  // 一个词能起头或收尾，本身就是它是个完整词的证据。
+  const leftContexts = new Map<string, Set<string>>();
+  const rightContexts = new Map<string, Set<string>>();
+  const add = (index: Map<string, Set<string>>, word: string, context: string) => {
+    const seen = index.get(word) ?? new Set<string>();
+    seen.add(context);
+    index.set(word, seen);
+  };
   runs.forEach((chars, run) => {
-    for (let at = 0; at + 1 < chars.length; at += 1) occurrences.push({ word: chars[at] + chars[at + 1], run, at });
+    for (let at = 0; at + 1 < chars.length; at += 1) {
+      const word = chars[at] + chars[at + 1];
+      occurrences.push({ word, run, at });
+      add(leftContexts, word, at === 0 ? '\u0000起' : chars[at - 1]);
+      add(rightContexts, word, at + 2 >= chars.length ? '\u0000止' : chars[at + 2]);
+    }
   });
-  // 抢座的排序依据是**全文频次**（含停用词），不是抢完之后的频次
+  // 证据分三档。档位比频次更要紧——先按证据强弱排，同档再比频次。
+  //   2 = 左邻或右舍见过两种以上，这是真词最硬的证据（同一个词出现在不同上下文里）
+  //   1 = 只顶到过句子头尾，能起头/收尾说明它像个完整词，但不如上一条硬
+  //   0 = 既没多样性也没顶过头尾，只会卡在同一个长串中间 —— 半截词，直接丢
+  const evidence = (word: string): number => {
+    if ((leftContexts.get(word)?.size ?? 0) > 1 || (rightContexts.get(word)?.size ?? 0) > 1) return 2;
+    if (leftContexts.get(word)?.has('\u0000起') || rightContexts.get(word)?.has('\u0000止')) return 1;
+    return 0;
+  };
+
   const frequency = new Map<string, number>();
   for (const item of occurrences) frequency.set(item.word, (frequency.get(item.word) ?? 0) + 1);
 
+  // 「看一下」这种三字串：看一 顶着开头、一下 顶着结尾，证据档位和频次全都一样，
+  // 谁是词谁是半截凭现有信息判不出来。这种一律两个都不收——
+  // 词云少一个词没关系，端出「看一」这种半截词才是缺陷。
+  const isAmbiguous = (item: { word: string; run: number; at: number }) => evidence(item.word) === 1
+    && occurrences.some(rival => rival.run === item.run
+      && Math.abs(rival.at - item.at) === 1
+      && rival.word !== item.word
+      && evidence(rival.word) === 1
+      && frequency.get(rival.word) === frequency.get(item.word));
+
   const taken = new Set<string>();
-  const ordered = [...occurrences].sort((a, b) => (frequency.get(b.word)! - frequency.get(a.word)!)
-    || a.run - b.run
-    || a.at - b.at);
+  const ordered = occurrences
+    .filter(item => evidence(item.word) > 0 && !isAmbiguous(item))
+    .sort((a, b) => (evidence(b.word) - evidence(a.word))
+      || (frequency.get(b.word)! - frequency.get(a.word)!)
+      || a.run - b.run
+      || a.at - b.at);
   for (const item of ordered) {
     const left = `${item.run}:${item.at}`;
     const right = `${item.run}:${item.at + 1}`;
