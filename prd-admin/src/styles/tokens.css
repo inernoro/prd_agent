@@ -80,6 +80,10 @@
   --overlay-panel-solid: rgba(24, 24, 30, 0.96);
   /* PageHeader 内嵌 tab 组的凹槽底 */
   --tab-container-bg: rgba(0, 0, 0, 0.32);
+  /* Tooltip 气泡与箭头同源。不能复用 --glass-bg-end：那个值在暗色是 3% 白、
+     靠 backdrop blur 才成形，而箭头是 SVG fill 吃不到 blur，会直接消失。 */
+  --tooltip-bg: rgba(20, 20, 24, 0.95);
+  --tooltip-border: rgba(255, 255, 255, 0.12);
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
 
   /* Glass 组件变量（与 prd-desktop 对齐） */
@@ -514,6 +518,8 @@
   --overlay-panel-bg: linear-gradient(180deg, #FCFAF7 0%, #F4F0E9 100%);
   --overlay-panel-solid: #F8F5EF;
   --tab-container-bg: rgba(26, 26, 31, 0.06);
+  --tooltip-bg: rgba(248, 245, 239, 0.98);
+  --tooltip-border: rgba(26, 26, 31, 0.14);
 
   --glass-bg: rgba(248, 245, 239, 0.94);
   --glass-bg-strong: #F8F5EF;

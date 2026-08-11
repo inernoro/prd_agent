@@ -64,8 +64,8 @@ export const glassSidebar: React.CSSProperties = {
  * Tooltip — 紧凑、高不透明度、小模糊
  */
 export const glassTooltip: React.CSSProperties = {
-  background: 'var(--glass-bg-end, rgba(20, 20, 24, 0.95))',
-  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'var(--tooltip-bg)',
+  border: '1px solid var(--tooltip-border)',
   boxShadow: 'var(--shadow-glass-tooltip)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',

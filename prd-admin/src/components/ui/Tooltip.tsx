@@ -67,7 +67,7 @@ export function Tooltip({
             <TooltipPrimitive.Arrow
               width={12}
               height={6}
-              style={{ fill: 'var(--glass-bg-end)' }}
+              style={{ fill: 'var(--tooltip-bg)' }}
             />
           </TooltipPrimitive.Content>
         </TooltipPrimitive.Portal>

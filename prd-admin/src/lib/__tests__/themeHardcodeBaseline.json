@@ -445,9 +445,9 @@
     "darkRgbaBg": 0
   },
   "/lib/glassStyles.ts": {
-    "whiteAlpha": 20,
+    "whiteAlpha": 19,
     "darkHex": 0,
-    "darkRgbaBg": 12
+    "darkRgbaBg": 11
   },
   "/lib/marketplaceTypes.tsx": {
     "whiteAlpha": 2,
