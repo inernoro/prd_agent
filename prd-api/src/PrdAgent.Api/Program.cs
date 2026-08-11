@@ -314,6 +314,8 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+// 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();

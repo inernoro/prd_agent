@@ -1298,9 +1298,19 @@ public class ModelResolver : IModelResolver
         return candidates.Count == 0 ? [] : [candidates[0]];
     }
 
+    /// <summary>
+    /// 这些模型类型在专属池不可用时必须**失败关闭**，不许降级到 legacy 直连兜底。
+    ///
+    /// 判据是「拿错模型会不会静默产出垃圾」：
+    ///   - VideoGen / Asr：拿 chat 模型去生成视频/转写，请求形状根本不对，会炸——但炸得晚且难懂
+    ///   - Embedding：**最危险的一个**。拿 chat 模型走 /embeddings，要么 404，要么某些
+    ///     兼容层真的回一串数字。后者会写进向量库，余弦照算、不报任何错，只是检索结果全是噪音；
+    ///     而且这批脏向量与正确向量混在同一个集合里，事后极难分辨。宁可当场拒绝。
+    /// </summary>
     internal static bool ShouldFailClosedWhenDedicatedPoolUnavailable(string modelType)
         => string.Equals(modelType, ModelTypes.VideoGen, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(modelType, ModelTypes.Asr, StringComparison.OrdinalIgnoreCase);
+           || string.Equals(modelType, ModelTypes.Asr, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(modelType, ModelTypes.Embedding, StringComparison.OrdinalIgnoreCase);
 
     private async Task<GatewayRegistryLookup> TryGetGatewayRegistryGroupsAsync(
         string appCallerCode,

@@ -356,6 +356,9 @@ public class MongoDbContext
     public IMongoCollection<HostedSiteComment> HostedSiteComments => _database.GetCollection<HostedSiteComment>("hosted_site_comments");
     public IMongoCollection<WebFolder> WebFolders => _database.GetCollection<WebFolder>("web_folders");
 
+    // 知识库语义检索：文档切块向量
+    public IMongoCollection<DocumentEmbedding> DocumentEmbeddings => _database.GetCollection<DocumentEmbedding>("document_embeddings");
+
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
