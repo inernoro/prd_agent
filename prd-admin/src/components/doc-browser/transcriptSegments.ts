@@ -211,15 +211,29 @@ export function buildTranscriptWordCloud(
   const counts = new Map<string, number>();
   const bump = (word: string) => counts.set(word, (counts.get(word) ?? 0) + 1);
 
-  for (const token of source.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? []) bump(token.toLowerCase());
-
+  // 三条通道（词典 / 英文 / Segmenter）必须依次从**剩下的**文本里取词，词典排在最前。
+  // 顺序反了同一段字会被数两遍：英文词典项先被英文通道数一次、再被词典数一次，次数翻倍；
+  // 大小写不一致时还会裂成两个词条（kubernetes 与 Kubernetes 各占一格，谁都不显眼）。
+  //
   // 说话人名也算词典的一部分，但那是调用方拼进来的：这里只认收到的这一份。
   // 长词优先，避免「张三丰」被更短的「张三」抢先切走。
   const terms = [...new Set(dictionary.map(x => x.trim()).filter(x => x.length >= 2))]
     .sort((a, b) => b.length - a.length);
   let remainder = source;
   for (const term of terms) {
+    // 纯 ASCII 词按词边界匹配并忽略大小写：正文写 kubernetes、词典写 Kubernetes 是同一个词，
+    // 而「rate」不该从「rateLimit」中间挖走一块（中文没有词边界，仍走逐个吃掉）。
+    const asciiTerm = /^[A-Za-z0-9-]+$/.test(term);
     let hits = 0;
+    if (asciiTerm) {
+      const escaped = term.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+      remainder = remainder.replace(
+        new RegExp(`(?<![A-Za-z0-9-])${escaped}(?![A-Za-z0-9-])`, 'gi'),
+        () => { hits += 1; return ' '; },
+      );
+      for (let i = 0; i < hits; i += 1) bump(term.toLowerCase());
+      continue;
+    }
     // 逐个吃掉，同时统计次数；切走之后那段字不再参与后续分词
     for (;;) {
       const at = remainder.indexOf(term);
@@ -229,6 +243,9 @@ export function buildTranscriptWordCloud(
     }
     for (let i = 0; i < hits; i += 1) bump(term);
   }
+
+  // 英文词：扫的是词典切剩下的文本，不是原文——词典命中的那几段已经被换成占位符了
+  for (const token of remainder.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? []) bump(token.toLowerCase());
 
   const SegmenterCtor = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
   if (SegmenterCtor) {

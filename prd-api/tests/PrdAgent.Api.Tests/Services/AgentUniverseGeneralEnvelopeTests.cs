@@ -54,6 +54,40 @@ public class AgentUniverseGeneralEnvelopeTests
         ChatAgentEventTypes.TextDelta.ShouldBe("text_delta");
         ChatAgentEventTypes.ToolStarted.ShouldBe("tool_started");
         ChatAgentEventTypes.ToolFinished.ShouldBe("tool_finished");
+        ChatAgentEventTypes.Done.ShouldBe("done");
         ChatAgentEventTypes.Error.ShouldBe("error");
+    }
+
+    [Fact]
+    public void 运行时只在终态给定稿全文时_必须把它当正文补发()
+    {
+        // 攒完了一次性给全文的运行时：不补发 = 用户看到一个字都没有的空回答
+        AgentUniverseController.ShouldEmitFinalText(streamedAnyText: false, finalText: "结论是这样")
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void 已经流过增量就不许再补发_本信封的_text_是追加语义()
+    {
+        // 边跑边发增量的运行时：补发等于把整段答案原样贴第二遍
+        AgentUniverseController.ShouldEmitFinalText(streamedAnyText: true, finalText: "结论是这样")
+            .ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void 终态没带定稿全文时不补发空白(string? finalText)
+    {
+        AgentUniverseController.ShouldEmitFinalText(streamedAnyText: false, finalText).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 终态载荷的字段名与对话路径一致_都是_text()
+    {
+        // 对话路径 TranslateOneOff 把 Done 译成 { text = evt.FinalText }。
+        // 这里读的必须是同一个字段名，读错就退化成「永远没有定稿全文」——不报错，只是不出字。
+        AgentUniverseController.ExtractTextDelta("""{"text":"定稿全文"}""").ShouldBe("定稿全文");
     }
 }

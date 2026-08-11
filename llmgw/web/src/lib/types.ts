@@ -643,6 +643,9 @@ export type PlatformMergeResult = {
   modelsDropped: number;
   poolMembersRepointed: number;
   poolMembersDeduped: number;
+  /** 被丢弃的重复模型上挂着的 offering，改指到留下来那条同名模型的条数 */
+  offeringsRepointed: number;
+  offeringsDeduped: number;
   sourceDeleted: boolean;
 };
 export type PlatformsData = { items: PlatformItem[]; total: number };

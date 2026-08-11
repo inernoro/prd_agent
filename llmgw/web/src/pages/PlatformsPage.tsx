@@ -198,7 +198,8 @@ export function PlatformsPage() {
     if (reload.success) setItems(reload.data.items);
     setToast(
       `已并入「${target.name}」：模型改嫁 ${r.modelsMoved}、去重 ${r.modelsDropped}，`
-      + `池成员改指 ${r.poolMembersRepointed}、去重 ${r.poolMembersDeduped}`
+      + `池成员改指 ${r.poolMembersRepointed}、去重 ${r.poolMembersDeduped}，`
+      + `逻辑模型 offering 改指 ${r.offeringsRepointed}、去重 ${r.offeringsDeduped}`
       + (r.sourceDeleted ? '，源上游已删除' : '，源上游仍有残留引用未删除'),
     );
   }

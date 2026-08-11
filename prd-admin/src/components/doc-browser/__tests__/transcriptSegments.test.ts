@@ -225,6 +225,40 @@ describe('buildTranscriptWordCloud', () => {
     expect(cloud.some(item => item.word === '张三')).toBe(false);
   });
 
+  it('英文词典项的次数是真实出现次数，不因为词典而翻倍', () => {
+    // 词典与英文两条通道扫的若都是原文，同一个英文词会被各数一遍。
+    // 判据是「数字对不对」而不是「在不在」：翻倍的词会被顶到词云最前面，
+    // 结论句里那句「这场反复提到的是 X（N 次）」直接报错数。
+    const segments = [{ start: 0, end: 3, text: 'kubernetes 扩容，kubernetes 排期，kubernetes 上线' }];
+    const withDictionary = buildTranscriptWordCloud(segments, 18, ['kubernetes']);
+    const without = buildTranscriptWordCloud(segments);
+    expect(withDictionary.find(item => item.word === 'kubernetes')?.count).toBe(3);
+    expect(without.find(item => item.word === 'kubernetes')?.count).toBe(3);
+  });
+
+  it('大小写不同不裂成两个词条', () => {
+    // 词典写 Kubernetes、正文写 kubernetes，是同一个词，必须并成一格
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: 'Kubernetes 扩容，kubernetes 排期，KUBERNETES 上线' }],
+      18,
+      ['Kubernetes'],
+    );
+    const hits = cloud.filter(item => item.word.toLowerCase() === 'kubernetes');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].count).toBe(3);
+  });
+
+  it('英文词典项按词边界匹配，不从更长的词中间挖走一块', () => {
+    // 词典有 rate 时，rateLimit 不该被拆成 rate + Limit
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: 'rateLimit 配置，rateLimit 生效' }],
+      18,
+      ['rate'],
+    );
+    expect(cloud.find(item => item.word === 'ratelimit')?.count).toBe(2);
+    expect(cloud.some(item => item.word === 'rate')).toBe(false);
+  });
+
   it('按频次降序，第一个就是全场最常提到的（展示层的权重基准）', () => {
     const cloud = buildTranscriptWordCloud([
       { start: 0, end: 3, text: '预算预算预算，另外说说效果效果' },

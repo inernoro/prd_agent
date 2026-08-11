@@ -4223,19 +4223,88 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("removeMember", page);
 
         // 租户：只能删当前会话所在的租户、内置租户不许删、非空不许删。
-        // 刻意不做级联——级联写错不可逆，「先自己清干净再删」可逆。
+        // 用户建的东西一律不级联——级联写错不可逆，「先自己清干净再删」可逆。
+        // 唯一的例外是系统自己铺的脚手架（空的托管默认池 + 池类型指针）：它们由平台在开租户时
+        // 自动创建、用户删不掉（当前默认池不许删），算进「非空」就会让成功分支永远走不到。
         var tenantDeleteStart = console.IndexOf("app.MapDelete(\"/gw/tenants/{id}\"", StringComparison.Ordinal);
         Assert.True(tenantDeleteStart > 0, "租户删除端点应当存在");
         var tenantDelete = console[tenantDeleteStart..(tenantDeleteStart + 4000)];
         Assert.Contains("TENANT_SCOPE_MISMATCH", tenantDelete);
         Assert.Contains("INTERNAL_TENANT", tenantDelete);
         Assert.Contains("TENANT_NOT_EMPTY", tenantDelete);
+        // 阻挡计数必须排掉空的托管默认池，否则 Pools == 0 不可达
+        Assert.Contains("ManagedByRegistry", tenantDelete);
+        Assert.Contains("PoolMemberCount(d) == 0", tenantDelete);
+        // 池删了，指着它的类型文档也要删——否则留下一条指向已删池的 DefaultPoolId
+        Assert.Contains("gwModelPoolTypes.DeleteManyAsync(tenantFilter)", tenantDelete);
         Assert.Contains("tenant.delete", tenantDelete);
         Assert.Contains("RequireAuthorization(\"TenantOwner\")", tenantDelete);
         Assert.Contains("export function deleteTenant(", api);
         Assert.Contains("removeTenant", page);
         // 租户没了，绑在它上面的会话也就没了：必须正规登出，不能留一个指向空租户的 token
         Assert.Contains("logout();", page);
+    }
+
+    /// <summary>
+    /// offering 是第二类引用，而且是唯一按 _id 单键指过去的那一类。
+    ///
+    /// 池成员按 (modelId, platformId) 复合定位、随处可见，写判据时很难忘；
+    /// 逻辑模型的 offering 藏在另一张集合里，删掉目标它不会报错、不会变红，
+    /// 只会在路由时静默解析不到——正是本 PR 的删除闸门要消灭的那种残留，
+    /// 却在第一版里被三条路径同时漏掉（删模型 / 删交换所 / 合并时丢弃重复模型）。
+    /// 所以这三条路径必须各自走同一个共享判定源，任何一条改回去都在这里变红。
+    /// </summary>
+    [Fact]
+    public void DeletesAndMerges_NeverOrphanLogicalModelOfferings()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 删模型：占用清单要同时报「池把它当成员」和「逻辑模型把它当 offering 上游」
+        var modelDeleteStart = console.IndexOf("app.MapDelete(\"/gw/models/{id}\"", StringComparison.Ordinal);
+        Assert.True(modelDeleteStart > 0, "模型删除端点应当存在");
+        var modelDelete = console[modelDeleteStart..(modelDeleteStart + 2500)];
+        Assert.Contains("blockers.TotalCount > 0", modelDelete);
+        Assert.Contains("blockers.LogicalModels", modelDelete);
+
+        // 删交换所：图层能力就是靠 TargetKind=exchange 的 offering 装起来的，只查池会整条漏掉
+        var exchangeDeleteStart = console.IndexOf("app.MapDelete(\"/gw/exchanges/{id}\"", StringComparison.Ordinal);
+        Assert.True(exchangeDeleteStart > 0, "交换所删除端点应当存在");
+        var exchangeDelete = console[exchangeDeleteStart..(exchangeDeleteStart + 2500)];
+        Assert.Contains("CollectOfferingHolderNamesAsync(http, gwModelOfferings, gwLogicalModels, \"exchange\", id)", exchangeDelete);
+
+        // 合并：丢弃重复模型之前必须先把 offering 改指到留下来的那条同名模型，
+        // 否则合并的净效果是「把一条能用的 offering 变成指向已删模型」
+        var mergeStart = console.IndexOf("app.MapPost(\"/gw/platforms/{id}/merge-into/{targetId}\"", StringComparison.Ordinal);
+        Assert.True(mergeStart > 0, "上游合并端点应当存在");
+        var merge = console[mergeStart..(mergeStart + 3500)];
+        var repointAt = merge.IndexOf("RepointOfferingsAsync(", StringComparison.Ordinal);
+        var dropAt = merge.IndexOf("result.ModelsDropped++", StringComparison.Ordinal);
+        Assert.True(repointAt > 0, "合并必须改指被丢弃模型上的 offering");
+        Assert.True(dropAt > 0 && repointAt < dropAt, "改指必须发生在丢弃模型之前，否则先删后改指等于改指到空气");
+
+        // 共享判定源：TargetKind 缺省的存量文档必须按 model 处理，漏判等于漏掉一整批存量引用
+        Assert.Contains("fb.Exists(\"TargetKind\", false)", console);
+    }
+
+    /// <summary>
+    /// 改名必须同步归一名。唯一索引与重名判定读的都是 NameNormalized，
+    /// 只改 Name 会让「看到的名字」和「判定用的名字」分家：当场不报错，
+    /// 下一次改名或新建才炸，且报的是索引冲突而不是「重名」。
+    /// </summary>
+    [Fact]
+    public void PlatformRename_KeepsNormalizedNameInSync()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = console.IndexOf("app.MapPut(\"/gw/platforms/{id}\"", StringComparison.Ordinal);
+        Assert.True(start > 0, "上游编辑端点应当存在");
+        var update = console[start..(start + 3000)];
+
+        Assert.Contains("Set(\"NameNormalized\", normalized)", update);
+        // 归一口径必须与创建路径一致（GatewayConfigurationProvisioning：Trim + ToLowerInvariant）
+        Assert.Contains("name.ToLowerInvariant()", update);
+        Assert.Contains("name.ToLowerInvariant()", ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs"));
+        // 改成一个已存在的名字要按重名拒绝，而不是让唯一索引抛出去变成 500
+        Assert.Contains("DUPLICATE_PLATFORM", update);
     }
 
     /// <summary>

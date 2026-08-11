@@ -396,6 +396,10 @@ public class AgentUniverseController : ControllerBase
                 h.Content))
             .ToList();
 
+        // 有没有真的流出过正文。运行时可以只在 Done 里给定稿全文而一个增量都不发
+        // （对话路径与 CapsuleExecutor 都按「给了定稿就以定稿为准」处理），
+        // 这里若把 Done 整条丢掉，那种运行时下用户看到的就是一个字都没有的空回答。
+        var streamedAnyText = false;
         try
         {
             // CancellationToken.None：客户端断开不取消服务器任务（server-authority）
@@ -408,7 +412,21 @@ public class AgentUniverseController : ControllerBase
                     case ChatAgentEventTypes.TextDelta:
                         var delta = ExtractTextDelta(evt.PayloadJson);
                         if (!string.IsNullOrEmpty(delta))
+                        {
+                            streamedAnyText = true;
                             await WriteSseEventAsync("text", new { content = delta });
+                        }
+                        break;
+
+                    // 定稿全文：只在一个增量都没流出来时补发。
+                    // 流过增量就不补——本信封的 text 事件是追加语义，补发等于把整段答案再贴一遍。
+                    case ChatAgentEventTypes.Done:
+                        var finalText = ExtractTextDelta(evt.PayloadJson);
+                        if (ShouldEmitFinalText(streamedAnyText, finalText))
+                        {
+                            streamedAnyText = true;
+                            await WriteSseEventAsync("text", new { content = finalText });
+                        }
                         break;
 
                     // 工具卡（含转派给专业智能体）原样透出：等待期屏幕上要有推进感，
@@ -446,6 +464,16 @@ public class AgentUniverseController : ControllerBase
     /// </summary>
     internal static string? ExtractTextDelta(string payloadJson)
         => ReadJsonString(payloadJson, "text");
+
+    /// <summary>
+    /// 收到终态的定稿全文时，要不要把它当正文补发一次。
+    ///
+    /// 只有「一个增量都没流出来」才补。运行时分两类：一类边跑边发增量、终态只是收尾；
+    /// 另一类攒完了在终态一次性给全文。本信封的 text 事件是**追加**语义，
+    /// 对前一类补发会把整段答案贴两遍，对后一类不补发则用户看到空白。
+    /// </summary>
+    internal static bool ShouldEmitFinalText(bool streamedAnyText, string? finalText)
+        => !streamedAnyText && !string.IsNullOrWhiteSpace(finalText);
 
     /// <summary>从事件载荷里取一个字符串字段，取不到返回 null（不抛，不猜）。</summary>
     private static string? ReadJsonString(string payloadJson, string field)

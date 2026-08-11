@@ -936,11 +936,16 @@ public sealed class PlatformDeleteBlockers
     public int TotalCount => Models.Count + Pools.Count;
 }
 
-/// <summary>删除模型前的占用清单：哪些模型池还把它当成员。</summary>
+/// <summary>
+/// 删除模型前的占用清单：哪些模型池还把它当成员，哪些逻辑模型还把它当上游 offering。
+/// 两类引用的定位方式不同（池成员按 (modelId, platformId) 复合，offering 按 _id 单键），
+/// 只查一类就会漏掉另一类，留下一条指向已删模型、解析不到又不报错的 offering。
+/// </summary>
 public sealed class ModelDeleteBlockers
 {
     public List<string> Pools { get; set; } = new();
-    public int TotalCount => Pools.Count;
+    public List<string> LogicalModels { get; set; } = new();
+    public int TotalCount => Pools.Count + LogicalModels.Count;
 }
 
 /// <summary>
@@ -955,11 +960,12 @@ public sealed class PoolDeleteBlockers
     public int TotalCount => AppCallers.Count + (IsCurrentDefault ? 1 : 0);
 }
 
-/// <summary>删除交换所前的占用清单：哪些模型池成员还指着它。</summary>
+/// <summary>删除交换所前的占用清单：哪些模型池成员还指着它，哪些逻辑模型还把它当 offering 上游。</summary>
 public sealed class ExchangeDeleteBlockers
 {
     public List<string> Pools { get; set; } = new();
-    public int TotalCount => Pools.Count;
+    public List<string> LogicalModels { get; set; } = new();
+    public int TotalCount => Pools.Count + LogicalModels.Count;
 }
 
 /// <summary>删除团队前的占用清单：成员、接入密钥、appCaller 三类引用。</summary>
@@ -1017,6 +1023,10 @@ public sealed class PlatformMergeResult
     public int PoolMembersRepointed { get; set; }
     /// <summary>因为目标已在同一个池里而合并掉的重复池成员数。</summary>
     public int PoolMembersDeduped { get; set; }
+    /// <summary>被丢弃的重复模型上挂着的 offering，改指到目标同名模型的条数。</summary>
+    public int OfferingsRepointed { get; set; }
+    /// <summary>改指后会和同一逻辑模型下已有 offering 撞车，因而合并掉的条数。</summary>
+    public int OfferingsDeduped { get; set; }
     public bool SourceDeleted { get; set; }
 }
 public sealed class CreatePlatformRequest

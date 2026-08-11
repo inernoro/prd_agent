@@ -1136,12 +1136,20 @@ app.MapDelete("/gw/tenants/{id}", async (HttpContext http, string id) =>
         return Json(ApiEnvelope<TenantDeleteBlockers>.Fail("TENANT_NOT_FOUND", "租户不存在"), jsonOptions, 404);
 
     var tenantFilter = Builders<BsonDocument>.Filter.Eq("TenantId", id);
+    // 开租户时平台会按池类型注册表自动铺一批默认池（ManagedByRegistry + IsDefaultForType），
+    // 而「当前默认池不许删」——两条规则叠在一起，Pools == 0 永远不成立，这个端点的成功分支
+    // 从落地那天起就走不到。空的托管默认池是系统自己铺的脚手架，不算「租户里还有内容」：
+    // 它跟着租户一起删。装了成员的仍然算内容，必须先把成员摘干净。
+    var tenantPools = await gwModelPools.Find(tenantFilter).ToListAsync();
+    var residentPools = tenantPools
+        .Where(d => !(d.AsNullableBool("ManagedByRegistry") == true && PoolMemberCount(d) == 0))
+        .ToList();
     var blockers = new TenantDeleteBlockers
     {
         OtherMembers = (int)await memberships.CountDocumentsAsync(x => x.TenantId == id && x.UserId != access.UserId),
         Platforms = (int)await gwPlatforms.CountDocumentsAsync(tenantFilter),
         Models = (int)await gwModels.CountDocumentsAsync(tenantFilter),
-        Pools = (int)await gwModelPools.CountDocumentsAsync(tenantFilter),
+        Pools = residentPools.Count,
         Exchanges = (int)await gwModelExchanges.CountDocumentsAsync(tenantFilter),
         LogicalModels = (int)await gwLogicalModels.CountDocumentsAsync(tenantFilter),
         ServiceKeys = (int)await serviceKeys.CountDocumentsAsync(tenantFilter),
@@ -1163,7 +1171,11 @@ app.MapDelete("/gw/tenants/{id}", async (HttpContext http, string id) =>
             jsonOptions, 409);
     }
 
-    // 到这里租户已经是空的：只剩自己的成员关系与若干没人引用的团队。
+    // 到这里租户已经是空的：只剩自己的成员关系、没人引用的团队，以及系统自动铺的空默认池。
+    // 后两者都是开租户时自动建的脚手架，跟着租户一起收走；池删了，指着它的类型文档也必须删，
+    // 否则留下一条指向已删池的 DefaultPoolId（正是本 PR 一直在消灭的那种悬空引用）。
+    var poolsRemoved = (await gwModelPools.DeleteManyAsync(tenantFilter)).DeletedCount;
+    var poolTypesRemoved = (await gwModelPoolTypes.DeleteManyAsync(tenantFilter)).DeletedCount;
     var teamsRemoved = (await teams.DeleteManyAsync(x => x.TenantId == id)).DeletedCount;
     await memberships.DeleteManyAsync(x => x.TenantId == id);
     await users.UpdateManyAsync(
@@ -1175,6 +1187,8 @@ app.MapDelete("/gw/tenants/{id}", async (HttpContext http, string id) =>
         {
             { "slug", ToBsonAuditValue(tenant.Slug) },
             { "teamsRemoved", teamsRemoved },
+            { "managedPoolsRemoved", poolsRemoved },
+            { "poolTypesRemoved", poolTypesRemoved },
         });
     return Json(ApiEnvelope<TenantDeleteBlockers>.Ok(new TenantDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("TenantOwner");
@@ -7077,7 +7091,22 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
         var name = body.Name.Trim();
         if (name.Length == 0) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "平台名称不能为空"), jsonOptions, 400);
         if (name.Length > 120) return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_INPUT", "平台名称长度超出限制"), jsonOptions, 400);
+        // 唯一索引建在 (TenantId, NameNormalized) 上，重名判定也读它。只改 Name 会让两者分家：
+        // 列表显示新名字，重名判定与索引仍按旧名走，下次改名/新建才炸，报的还是索引冲突而不是「重名」。
+        // 归一口径必须与创建路径一致（GatewayConfigurationProvisioning：Trim + ToLowerInvariant）。
+        var normalized = name.ToLowerInvariant();
+        var tenantIdForName = TenantAccess.GetRequired(http).TenantId;
+        var nfb = Builders<BsonDocument>.Filter;
+        var duplicateName = nfb.And(
+            nfb.Eq("TenantId", tenantIdForName),
+            nfb.Ne("_id", id),
+            nfb.Or(
+                nfb.Eq("NameNormalized", normalized),
+                nfb.Regex("Name", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(name)}$", "i"))));
+        if (await gwPlatforms.Find(duplicateName).AnyAsync())
+            return Json(ApiEnvelope<PlatformItem>.Fail("DUPLICATE_PLATFORM", "当前租户已存在同名 Provider"), jsonOptions, 409);
         updates.Add(Builders<BsonDocument>.Update.Set("Name", name));
+        updates.Add(Builders<BsonDocument>.Update.Set("NameNormalized", normalized));
         changes.Add("name", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableString("Name")) }, { "to", name } });
     }
     if (body.PlatformType is not null)
@@ -7147,17 +7176,23 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     var result = new PlatformMergeResult { SourceId = id, TargetId = targetId };
     var fb = Builders<BsonDocument>.Filter;
 
-    // 1) 模型改嫁：目标已有同名（ModelName）就删掉源上的重复，否则整条改绑过去
-    var targetModelNames = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", targetId))).ToListAsync())
-        .Select(d => d.AsNullableString("ModelName") ?? string.Empty)
-        .Where(x => x.Length > 0)
-        .ToHashSet(StringComparer.Ordinal);
+    // 1) 模型改嫁：目标已有同名（ModelName）就删掉源上的重复，否则整条改绑过去。
+    //    被丢弃的那条上可能挂着 offering（逻辑模型按 _id 指过来），删之前必须先改指到留下来的同名模型，
+    //    否则合并的净效果是「把一条能用的 offering 变成指向已删模型」——正是合并本来要消除的那种残留。
+    var targetModelIdByName = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", targetId))).ToListAsync())
+        .Where(d => !string.IsNullOrWhiteSpace(d.AsNullableString("ModelName")))
+        .GroupBy(d => d.AsNullableString("ModelName")!, StringComparer.Ordinal)
+        .ToDictionary(g => g.Key, g => g.First().GetStringOrEmpty("_id"), StringComparer.Ordinal);
     foreach (var model in await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
     {
         var modelName = model.AsNullableString("ModelName") ?? string.Empty;
-        var modelFilter = TenantAccess.Filter(http, fb.Eq("_id", model.GetStringOrEmpty("_id")));
-        if (modelName.Length > 0 && targetModelNames.Contains(modelName))
+        var modelId = model.GetStringOrEmpty("_id");
+        var modelFilter = TenantAccess.Filter(http, fb.Eq("_id", modelId));
+        if (modelName.Length > 0 && targetModelIdByName.TryGetValue(modelName, out var survivorId))
         {
+            var (repointed, deduped) = await RepointOfferingsAsync(http, gwModelOfferings, modelId, survivorId);
+            result.OfferingsRepointed += repointed;
+            result.OfferingsDeduped += deduped;
             await gwModels.DeleteOneAsync(modelFilter);
             result.ModelsDropped++;
             continue;
@@ -7165,7 +7200,9 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
         await gwModels.UpdateOneAsync(modelFilter, Builders<BsonDocument>.Update
             .Set("PlatformId", targetId)
             .Set("UpdatedAt", DateTime.UtcNow));
-        if (modelName.Length > 0) targetModelNames.Add(modelName);
+        // 改嫁过去的模型 _id 不变，offering 自然还指着它；但它从此代表这个名字，
+        // 后面再遇到同名的源模型就该合并到它身上
+        if (modelName.Length > 0) targetModelIdByName[modelName] = modelId;
         result.ModelsMoved++;
     }
 
@@ -7223,6 +7260,8 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             { "modelsDropped", result.ModelsDropped },
             { "poolMembersRepointed", result.PoolMembersRepointed },
             { "poolMembersDeduped", result.PoolMembersDeduped },
+            { "offeringsRepointed", result.OfferingsRepointed },
+            { "offeringsDeduped", result.OfferingsDeduped },
             { "sourceDeleted", result.SourceDeleted },
         });
     return Json(ApiEnvelope<PlatformMergeResult>.Ok(result), jsonOptions);
@@ -7286,13 +7325,19 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
     if (doc is null)
         return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型；MAP 来源模型请先认领"), jsonOptions, 409);
 
-    var blockers = await CollectModelDeleteBlockersAsync(http, doc, gwModelPools, modelGroups, internalTenantId);
-    if (blockers.Pools.Count > 0)
+    var blockers = await CollectModelDeleteBlockersAsync(
+        http, doc, gwModelPools, modelGroups, gwModelOfferings, gwLogicalModels, internalTenantId);
+    if (blockers.TotalCount > 0)
     {
+        var parts = new List<string>();
+        if (blockers.Pools.Count > 0)
+            parts.Add($"模型池 {blockers.Pools.Count} 个（{string.Join("、", blockers.Pools.Take(5))}{(blockers.Pools.Count > 5 ? " 等" : "")}）把它当成员");
+        if (blockers.LogicalModels.Count > 0)
+            parts.Add($"逻辑模型 {blockers.LogicalModels.Count} 个（{string.Join("、", blockers.LogicalModels.Take(5))}{(blockers.LogicalModels.Count > 5 ? " 等" : "")}）把它当 offering 上游");
         return Json(
             ApiEnvelope<ModelDeleteBlockers>.Fail(
                 "MODEL_IN_USE",
-                $"还有模型池 {blockers.Pools.Count} 个（{string.Join("、", blockers.Pools.Take(5))}{(blockers.Pools.Count > 5 ? " 等" : "")}）在用这个模型，先把成员摘掉再删",
+                $"还有 {string.Join("；", parts)}，先把这些引用摘掉再删",
                 blockers),
             jsonOptions,
             409);
@@ -7668,13 +7713,21 @@ app.MapDelete("/gw/exchanges/{id}", async (HttpContext http, string id) =>
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .Distinct(StringComparer.Ordinal)
         .ToList();
-    if (blocking.Count > 0)
+    // 池成员之外还有第二类引用：逻辑模型的 offering 直接按 _id 指着交换所（TargetKind=exchange）。
+    // 图层能力就是这么装的——只查池会把它整条漏掉，删完 offering 变成指向空气。
+    var holders = await CollectOfferingHolderNamesAsync(http, gwModelOfferings, gwLogicalModels, "exchange", id);
+    if (blocking.Count > 0 || holders.Count > 0)
     {
-        var blockers = new ExchangeDeleteBlockers { Pools = blocking };
+        var blockers = new ExchangeDeleteBlockers { Pools = blocking, LogicalModels = holders };
+        var parts = new List<string>();
+        if (blocking.Count > 0)
+            parts.Add($"模型池 {blocking.Count} 个（{string.Join("、", blocking.Take(5))}{(blocking.Count > 5 ? " 等" : "")}）把它当成员");
+        if (holders.Count > 0)
+            parts.Add($"逻辑模型 {holders.Count} 个（{string.Join("、", holders.Take(5))}{(holders.Count > 5 ? " 等" : "")}）把它当 offering 上游");
         return Json(
             ApiEnvelope<ExchangeDeleteBlockers>.Fail(
                 "EXCHANGE_IN_USE",
-                $"还有模型池 {blocking.Count} 个（{string.Join("、", blocking.Take(5))}{(blocking.Count > 5 ? " 等" : "")}）在用这个交换所，先把成员摘掉再删",
+                $"还有 {string.Join("；", parts)}，先把这些引用摘掉再删",
                 blockers),
             jsonOptions, 409);
     }
@@ -11067,6 +11120,10 @@ static bool IsManagedAppendOnlyPool(BsonDocument pool)
        && pool.AsNullableBool("AppendOnly") == true
        && string.Equals(pool.AsNullableString("PoolRole"), "default", StringComparison.OrdinalIgnoreCase);
 
+/// <summary>池里挂了几个成员。字段缺失或形状不对一律当 0，不抛。</summary>
+static int PoolMemberCount(BsonDocument pool)
+    => pool.TryGetValue("Models", out var members) && members.IsBsonArray ? members.AsBsonArray.Count : 0;
+
 static FilterDefinition<BsonDocument> PoolVersionGuard(FilterDefinitionBuilder<BsonDocument> fb, BsonDocument pool)
 {
     var version = pool.AsNullableLong("Version") ?? 0;
@@ -11384,6 +11441,8 @@ static async Task<ModelDeleteBlockers> CollectModelDeleteBlockersAsync(
     BsonDocument modelDoc,
     IMongoCollection<BsonDocument> gwPools,
     IMongoCollection<BsonDocument> mapPools,
+    IMongoCollection<BsonDocument> gwOfferings,
+    IMongoCollection<BsonDocument> gwLogicalModels,
     string internalTenantId)
 {
     var fb = Builders<BsonDocument>.Filter;
@@ -11412,7 +11471,91 @@ static async Task<ModelDeleteBlockers> CollectModelDeleteBlockersAsync(
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.Ordinal)
             .ToList(),
+        LogicalModels = await CollectOfferingHolderNamesAsync(
+            http, gwOfferings, gwLogicalModels, "model", modelDoc.GetStringOrEmpty("_id")),
     };
+}
+
+/// <summary>
+/// 把指向 fromModelId 的 offering 改指到 toModelId。
+/// 同一个逻辑模型下若已经有指向 toModelId 的 offering，改指会撞上「同逻辑模型同目标只许一条」，
+/// 这时删掉源那条（它与留下的那条等价），返回 (改指数, 合并掉的数)。
+/// </summary>
+static async Task<(int Repointed, int Deduped)> RepointOfferingsAsync(
+    HttpContext http,
+    IMongoCollection<BsonDocument> gwOfferings,
+    string fromModelId,
+    string toModelId)
+{
+    if (string.IsNullOrWhiteSpace(fromModelId) || string.IsNullOrWhiteSpace(toModelId)
+        || string.Equals(fromModelId, toModelId, StringComparison.Ordinal))
+        return (0, 0);
+    var fb = Builders<BsonDocument>.Filter;
+    var kindFilter = fb.Or(fb.Eq("TargetKind", "model"), fb.Exists("TargetKind", false), fb.Eq("TargetKind", BsonNull.Value));
+    var docs = await gwOfferings
+        .Find(TenantAccess.Filter(http, fb.And(kindFilter, fb.Eq("TargetId", fromModelId))))
+        .ToListAsync();
+    var repointed = 0;
+    var deduped = 0;
+    foreach (var doc in docs)
+    {
+        var logicalId = doc.GetStringOrEmpty("LogicalModelId");
+        var selfFilter = TenantAccess.Filter(http, fb.Eq("_id", doc.GetStringOrEmpty("_id")));
+        var collides = await gwOfferings.Find(TenantAccess.Filter(http, fb.And(
+            fb.Eq("LogicalModelId", logicalId), kindFilter, fb.Eq("TargetId", toModelId)))).AnyAsync();
+        if (collides)
+        {
+            await gwOfferings.DeleteOneAsync(selfFilter);
+            deduped++;
+            continue;
+        }
+        await gwOfferings.UpdateOneAsync(selfFilter, Builders<BsonDocument>.Update
+            .Set("TargetKind", "model")
+            .Set("TargetId", toModelId)
+            // 健康位记的是「在被删那条上游上」的历史，对留下来的这条不成立
+            .Set("HealthStatus", 0)
+            .Set("ConsecutiveFailures", 0)
+            .Set("ConsecutiveSuccesses", 0)
+            .Set("UpdatedAt", DateTime.UtcNow));
+        repointed++;
+    }
+    return (repointed, deduped);
+}
+
+/// <summary>
+/// 谁把这个上游（模型或交换所）挂成了 offering。offering 只按 _id 单键定位目标，
+/// 目标删了它不会报错，只会在路由时静默解析不到——所以删除前必须先问这一句。
+/// 返回的是逻辑模型的人话名字：运维要去解绑的是那几个逻辑模型，不是 offering 的 hex id。
+/// </summary>
+static async Task<List<string>> CollectOfferingHolderNamesAsync(
+    HttpContext http,
+    IMongoCollection<BsonDocument> gwOfferings,
+    IMongoCollection<BsonDocument> gwLogicalModels,
+    string targetKind,
+    string targetId)
+{
+    if (string.IsNullOrWhiteSpace(targetId)) return new List<string>();
+    var fb = Builders<BsonDocument>.Filter;
+    // TargetKind 缺省视作 model：早期文档没写这个字段，漏判就等于漏掉一整批存量引用
+    var kindFilter = string.Equals(targetKind, "model", StringComparison.Ordinal)
+        ? fb.Or(fb.Eq("TargetKind", "model"), fb.Exists("TargetKind", false), fb.Eq("TargetKind", BsonNull.Value))
+        : fb.Eq("TargetKind", targetKind);
+    var offeringDocs = await gwOfferings
+        .Find(TenantAccess.Filter(http, fb.And(kindFilter, fb.Eq("TargetId", targetId))))
+        .ToListAsync();
+    if (offeringDocs.Count == 0) return new List<string>();
+
+    var logicalIds = offeringDocs
+        .Select(d => d.GetStringOrEmpty("LogicalModelId"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+    var nameById = (await gwLogicalModels.Find(TenantAccess.Filter(http, fb.In("_id", logicalIds))).ToListAsync())
+        .ToDictionary(d => d.GetStringOrEmpty("_id"), d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    return logicalIds
+        .Select(x => nameById.TryGetValue(x, out var name) && !string.IsNullOrWhiteSpace(name) ? name : x)
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
 }
 
 /// <summary>
