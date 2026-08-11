@@ -25,7 +25,8 @@ export function AvatarEditDialog(props: {
   username?: string | null;
   userType?: string | null;
   avatarFileName?: string | null;
-  onSave: (avatarFileName: string | null) => Promise<void>;
+  /** 上传或生成头像已由服务端持久化；这里只同步调用方的本地视图状态。 */
+  onPersisted: (avatar: AdminUserAvatarUploadResponse) => void;
   /** 自定义上传函数（用于自服务场景，绕过 users.write 权限） */
   onUpload?: (file: File) => Promise<ApiResponse<AdminUserAvatarUploadResponse>>;
   /** 仅用于当前用户自己的头像弹窗；管理员修改他人头像时不展示 AI 操作。 */
@@ -149,7 +150,7 @@ export function AvatarEditDialog(props: {
       const fileName = String(response.data?.avatarFileName || '').trim();
       if (!fileName) throw new Error('上传返回为空');
       setAvatarFileName(fileName);
-      await props.onSave(fileName);
+      props.onPersisted({ ...response.data, avatarFileName: fileName });
       closeDialog();
     } catch (uploadError) {
       setError(toUserReadableErrorMessage(uploadError, {
@@ -214,7 +215,7 @@ export function AvatarEditDialog(props: {
       const fileName = String(response.data?.avatarFileName || '').trim();
       if (!fileName) throw new Error('替换头像返回为空');
       setAvatarFileName(fileName);
-      await props.onSave(fileName);
+      props.onPersisted({ ...response.data, avatarFileName: fileName });
       closeDialog();
     } catch (applyError) {
       setError(toUserReadableErrorMessage(applyError, {

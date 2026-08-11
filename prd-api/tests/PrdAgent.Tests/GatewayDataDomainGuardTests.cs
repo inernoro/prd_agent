@@ -517,8 +517,9 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("tenantId:", organizationPage);
         Assert.Contains("新口令至少 12 位", changePasswordPage);
         Assert.DoesNotContain("admin/admin", changePasswordPage);
-        Assert.Contains("if (newPwd.Length < 12)", consoleProgram);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
         Assert.Contains("\"WEAK_PASSWORD\", \"新口令至少 12 位\"", consoleProgram);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
         Assert.Contains("body.ExpectedVersion != membership.Version", consoleProgram);
         Assert.Contains("x.Version == previousVersion", consoleProgram);
         Assert.Contains("DEVELOPER_TEAM_REQUIRED", consoleProgram);
@@ -539,6 +540,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("^[a-z0-9][a-z0-9._-]{2,47}$", membershipPolicy);
         Assert.Contains("teamIds.All(activeTeamIds.Contains)", membershipPolicy);
         Assert.Contains("MaxCanonicalUsernameLength = 128", membershipPolicy);
+    }
+
+    [Fact]
+    public void EnvironmentAuthority_UsesTheSamePasswordPolicyAsInteractiveAccounts()
+    {
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var passwordPolicy = ReadRepoFile("llmgw/console-api/Auth/GwPasswordPolicy.cs");
+
+        Assert.Contains("public const int MinimumLength = 12", passwordPolicy);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd)", consoleProgram);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
+        Assert.DoesNotContain("envAuthorityAdmin && (string.IsNullOrWhiteSpace(adminBootstrapPwd)", consoleProgram);
     }
 
     [Fact]

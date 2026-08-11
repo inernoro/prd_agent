@@ -76,7 +76,7 @@ import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
-import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
+import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
@@ -1765,14 +1765,10 @@ export default function AppShell() {
             })}
             enableAiEdit={canAiEditAvatar}
             onUpload={async (file) => uploadMyAvatar({ file })}
-            onSave={async (avatarFileName) => {
-              if (!user?.userId) return;
-              const res = await updateMyAvatar(avatarFileName);
-              if (!res.success) throw new Error(res.error?.message || '保存失败');
-              // 同时更新 avatarFileName 和 avatarUrl，确保左下角头像立即更新
+            onPersisted={(avatar) => {
               patchUser({
-                avatarFileName: avatarFileName ?? null,
-                avatarUrl: res.data?.avatarUrl ?? null
+                avatarFileName: avatar.avatarFileName ?? null,
+                avatarUrl: avatar.avatarUrl ?? null,
               });
             }}
           />

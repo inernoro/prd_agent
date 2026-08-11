@@ -201,10 +201,10 @@ var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw,
 var envAuthorityRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_ENV_AUTHORITY") ?? string.Empty).Trim();
 var envAuthorityAdmin = new[] { "1", "true", "yes", "on" }.Contains(envAuthorityRaw, StringComparer.OrdinalIgnoreCase);
 var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
-if (envAuthorityAdmin && (string.IsNullOrWhiteSpace(adminBootstrapPwd) || adminBootstrapPwd.Trim() == DefaultAdminPwd))
+if (envAuthorityAdmin && (!GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd) || adminBootstrapPwd!.Trim() == DefaultAdminPwd))
 {
     throw new InvalidOperationException(
-        "LLMGW_ADMIN_ENV_AUTHORITY 已启用，但 LLMGW_ADMIN_PASSWORD 未配置或仍为默认弱口令。" +
+        $"LLMGW_ADMIN_ENV_AUTHORITY 已启用，但 LLMGW_ADMIN_PASSWORD 未达到至少 {GwPasswordPolicy.MinimumLength} 位的口令规则或仍为默认弱口令。" +
         "请先配置独立强口令；服务拒绝以不可用的破窗账户启动。");
 }
 var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
@@ -839,7 +839,7 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令与新口令不能为空"), jsonOptions);
     }
-    if (newPwd.Length < 12)
+    if (!GwPasswordPolicy.MeetsMinimumLength(newPwd))
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", "新口令至少 12 位"), jsonOptions);
     }
@@ -1419,7 +1419,7 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
     }
 
     var initialPassword = body.InitialPassword ?? string.Empty;
-    if (initialPassword.Length < 12)
+    if (!GwPasswordPolicy.MeetsMinimumLength(initialPassword))
         return Json(ApiEnvelope<object>.Fail("INVALID_PASSWORD", "新用户初始密码至少 12 位"), jsonOptions, 400);
     memberUser = new LlmGwUser
     {

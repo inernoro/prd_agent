@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { inflateSync } from 'node:zlib';
 import { buildVisualPlan } from './stable-smoke-visual-plan.mjs';
 
 const DEFAULT_CATALOG = '.claude/skills/stable-smoke/reference/visual-evidence-catalog.json';
@@ -32,6 +33,89 @@ function interventionLabel(status) {
   return '是：模块负责人修复后复测';
 }
 
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const MAX_PNG_DECODED_BYTES = 256 * 1024 * 1024;
+const PNG_CHANNELS = new Map([[0, 1], [2, 3], [3, 1], [4, 2], [6, 4]]);
+const PNG_BIT_DEPTHS = new Map([
+  [0, new Set([1, 2, 4, 8, 16])],
+  [2, new Set([8, 16])],
+  [3, new Set([1, 2, 4, 8])],
+  [4, new Set([8, 16])],
+  [6, new Set([8, 16])],
+]);
+
+function crc32(content) {
+  let crc = 0xffffffff;
+  for (const byte of content) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function decodePngScreenshot(content) {
+  if (content.length < 33 || !content.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    throw new Error('截图必须是有效的 PNG 文件');
+  }
+
+  let offset = PNG_SIGNATURE.length;
+  let ihdr = null;
+  let sawIend = false;
+  const idatChunks = [];
+  while (offset < content.length) {
+    if (offset + 12 > content.length) throw new Error('PNG 数据块不完整');
+    const length = content.readUInt32BE(offset);
+    const chunkEnd = offset + 12 + length;
+    if (chunkEnd > content.length) throw new Error('PNG 数据块长度无效');
+    const type = content.subarray(offset + 4, offset + 8);
+    const data = content.subarray(offset + 8, offset + 8 + length);
+    const declaredCrc = content.readUInt32BE(offset + 8 + length);
+    if (crc32(Buffer.concat([type, data])) !== declaredCrc) throw new Error('PNG 数据块校验失败');
+    const typeName = type.toString('ascii');
+    if (typeName === 'IHDR') {
+      if (ihdr || length !== 13 || offset !== PNG_SIGNATURE.length) throw new Error('PNG 图片头无效');
+      ihdr = {
+        width: data.readUInt32BE(0),
+        height: data.readUInt32BE(4),
+        bitDepth: data[8],
+        colorType: data[9],
+        compression: data[10],
+        filter: data[11],
+        interlace: data[12],
+      };
+    } else if (typeName === 'IDAT') {
+      if (!ihdr || sawIend) throw new Error('PNG 像素数据顺序无效');
+      idatChunks.push(data);
+    } else if (typeName === 'IEND') {
+      if (length !== 0 || !ihdr || idatChunks.length === 0) throw new Error('PNG 结束块无效');
+      sawIend = true;
+      offset = chunkEnd;
+      break;
+    }
+    offset = chunkEnd;
+  }
+
+  if (!ihdr || !sawIend || offset !== content.length) throw new Error('PNG 文件未完整结束');
+  const allowedDepths = PNG_BIT_DEPTHS.get(ihdr.colorType);
+  if (!ihdr.width || !ihdr.height || !allowedDepths?.has(ihdr.bitDepth)
+      || ihdr.compression !== 0 || ihdr.filter !== 0 || ihdr.interlace !== 0) {
+    throw new Error('PNG 图片参数不受支持');
+  }
+  const channels = PNG_CHANNELS.get(ihdr.colorType);
+  const rowBytes = Math.ceil((ihdr.width * channels * ihdr.bitDepth) / 8);
+  const expectedBytes = (rowBytes + 1) * ihdr.height;
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes > MAX_PNG_DECODED_BYTES) {
+    throw new Error('PNG 解码尺寸超过验收上限');
+  }
+  const decoded = inflateSync(Buffer.concat(idatChunks), { maxOutputLength: expectedBytes + 1 });
+  if (decoded.length !== expectedBytes) throw new Error('PNG 像素数据长度无效');
+  for (let row = 0; row < ihdr.height; row += 1) {
+    if (decoded[row * (rowBytes + 1)] > 4) throw new Error('PNG 行过滤器无效');
+  }
+}
+
 function inspectEvidenceFile(row) {
   const declared = String(row.sha256 || '').trim();
   const path = String(row.path || '').trim();
@@ -45,6 +129,11 @@ function inspectEvidenceFile(row) {
   const hash = createHash('sha256').update(content).digest('hex');
   if (declared && declared.toLowerCase() !== hash) {
     return { hash, error: `${row.name || '未命名截图'} 的 sha256 与实际截图文件不一致` };
+  }
+  try {
+    decodePngScreenshot(content);
+  } catch {
+    return { hash, error: `${row.name || '未命名截图'} 不是可解码的 PNG 截图，请重新采集` };
   }
   return { hash, error: '' };
 }

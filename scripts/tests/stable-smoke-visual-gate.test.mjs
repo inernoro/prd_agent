@@ -4,6 +4,7 @@ import test, { after } from 'node:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import { renderVisualGateReport, renderVisualTechnicalAppendix, validateVisualEvidence } from '../stable-smoke-visual-gate.mjs';
 
 const catalog = {
@@ -30,16 +31,52 @@ const evidenceRoot = mkdtempSync(join(tmpdir(), 'visual-gate-fixtures-'));
 let evidenceSequence = 0;
 after(() => rmSync(evidenceRoot, { recursive: true, force: true }));
 
+function crc32(content) {
+  let crc = 0xffffffff;
+  for (const byte of content) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+  const name = Buffer.from(type, 'ascii');
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  name.copy(chunk, 4);
+  data.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([name, data])), 8 + data.length);
+  return chunk;
+}
+
+function pngFixture(seed) {
+  const color = createHash('sha256').update(String(seed)).digest().subarray(0, 3);
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(1, 0);
+  header.writeUInt32BE(1, 4);
+  header.set([8, 6, 0, 0, 0], 8);
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(Buffer.from([0, ...color, 255]))),
+    pngChunk('IEND'),
+  ]);
+}
+
 function evidence(overrides = {}) {
   const hasExplicitPath = Object.prototype.hasOwnProperty.call(overrides, 'path');
   const contentKey = String(overrides.sha256 ?? 'hash-a');
   const path = hasExplicitPath
     ? overrides.path
     : join(evidenceRoot, `evidence-${String(evidenceSequence += 1).padStart(3, '0')}.png`);
-  if (!hasExplicitPath) writeFileSync(path, contentKey);
+  const content = pngFixture(contentKey);
+  if (!hasExplicitPath) writeFileSync(path, content);
   const sha256 = hasExplicitPath
     ? overrides.sha256
-    : createHash('sha256').update(contentKey).digest('hex');
+    : createHash('sha256').update(content).digest('hex');
   return {
     name: '入口图',
     module: '视觉创作',
@@ -84,8 +121,9 @@ test('未声明哈希时从截图文件计算并拒绝重复证据', () => {
   const dir = mkdtempSync(join(tmpdir(), 'visual-gate-'));
   const first = join(dir, 'first.png');
   const second = join(dir, 'second.png');
-  writeFileSync(first, 'same-image');
-  writeFileSync(second, 'same-image');
+  const content = pngFixture('same-image');
+  writeFileSync(first, content);
+  writeFileSync(second, content);
   try {
     const result = validateVisualEvidence(catalog, [
       evidence({ name: '入口图', sha256: '', path: first }),
@@ -123,6 +161,36 @@ test('声明哈希与实际截图不一致时不能形成可审核证据', () =>
   assert.equal(result.verdict, '不通过');
   assert.equal(result.modules[0].invalidEvidenceCount, 1);
   assert.match(result.modules[0].fieldErrors.join('；'), /sha256 与实际截图文件不一致/);
+});
+
+test('任意文本即使扩展名和声明哈希正确也不能冒充截图', () => {
+  const screenshot = join(evidenceRoot, 'fake.png');
+  const content = Buffer.from('not-an-image');
+  writeFileSync(screenshot, content);
+  const result = validateVisualEvidence(catalog, [
+    evidence({ path: screenshot, sha256: createHash('sha256').update(content).digest('hex') }),
+    evidence({ name: '结果图', sha256: 'hash-b', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+
+  assert.equal(result.verdict, '不通过');
+  assert.equal(result.modules[0].invalidEvidenceCount, 1);
+  assert.match(result.modules[0].fieldErrors.join('；'), /不是可解码的 PNG 截图/);
+});
+
+test('像素压缩数据损坏的 PNG 不能形成可审核证据', () => {
+  const screenshot = join(evidenceRoot, 'corrupt.png');
+  const content = pngFixture('corrupt');
+  const idatOffset = content.indexOf(Buffer.from('IDAT')) + 4;
+  content[idatOffset] ^= 0xff;
+  writeFileSync(screenshot, content);
+  const result = validateVisualEvidence(catalog, [
+    evidence({ path: screenshot, sha256: createHash('sha256').update(content).digest('hex') }),
+    evidence({ name: '结果图', sha256: 'hash-b', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+
+  assert.equal(result.verdict, '不通过');
+  assert.equal(result.modules[0].invalidEvidenceCount, 1);
+  assert.match(result.modules[0].fieldErrors.join('；'), /不是可解码的 PNG 截图/);
 });
 
 test('数量、状态、路径和方法全部绑定后才通过', () => {
