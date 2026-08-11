@@ -80,6 +80,8 @@ public class AgentUniverseController : ControllerBase
     public IActionResult Capabilities()
     {
         var runtime = _chatAgent.GetRuntimeStatus();
+        var generalAccess = ResolveGeneralAvailability(
+            runtime.Available, runtime.Reason, HasPermission(AdminPermissionCatalog.ChatAgentUse));
         return Ok(ApiResponse<object>.Ok(new
         {
             capabilities = AgentCapabilityRegistry.All,
@@ -90,9 +92,9 @@ public class AgentUniverseController : ControllerBase
                 description = "直接说要做什么就行。该找哪个专业智能体，它自己会判断。",
                 icon = "Sparkles",
                 accent = "#D97757",
-                // 真探测：运行时没配就如实说，不给用户一个点了没反应的入口
-                available = runtime.Available,
-                unavailableReason = runtime.Reason,
+                // 真探测：运行时没配、或这个账号没权限，都如实说，不给用户一个点了必然失败的入口
+                available = generalAccess.Available,
+                unavailableReason = generalAccess.Reason,
                 // 头像条上要展示谁 + 悬浮说什么，全部来自能力契约，前端不另维护一份
                 delegates = AgentCapabilityRegistry.All.Select(c => new
                 {
@@ -473,6 +475,25 @@ public class AgentUniverseController : ControllerBase
     /// </summary>
     internal static string? ExtractTextDelta(string payloadJson)
         => ReadJsonString(payloadJson, "text");
+
+    /// <summary>
+    /// 通用体对**这个账号**到底可不可用，以及不可用时说什么。
+    ///
+    /// 判据必须同时含运行时健康与调用权限：`RunGeneralAgentAsync` 的门是
+    /// `chat-agent.use`，能力清单只看运行时的话，没这个权限的账号会看到一个「可用」的
+    /// 通用体——抽屉据此把它选成默认收件人、放开无文档输入，然后每一次发送都被
+    /// PERMISSION_DENIED 打回，等于给了一个点了必然失败的入口。
+    ///
+    /// 缺权限时优先报权限：运行时配没配对这个用户不构成可行动信息，
+    /// 「找管理员开权限」才是他能去做的事。
+    /// </summary>
+    internal static (bool Available, string? Reason) ResolveGeneralAvailability(
+        bool runtimeAvailable, string? runtimeReason, bool hasChatAgentPermission)
+    {
+        if (!hasChatAgentPermission)
+            return (false, $"需要「通用智能体」权限（{AdminPermissionCatalog.ChatAgentUse}），当前账号未开通，请联系管理员。");
+        return (runtimeAvailable, runtimeReason);
+    }
 
     /// <summary>
     /// 收到终态的定稿全文时，要不要把它当正文补发一次。

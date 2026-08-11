@@ -1,5 +1,6 @@
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using Shouldly;
 using Xunit;
 
@@ -81,6 +82,37 @@ public class AgentUniverseGeneralEnvelopeTests
     public void 终态没带定稿全文时不补发空白(string? finalText)
     {
         AgentUniverseController.ShouldEmitFinalText(streamedAnyText: false, finalText).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 没有调用权限时通用体必须报不可用_否则抽屉会默认选一个点了必然失败的入口()
+    {
+        var (available, reason) = AgentUniverseController.ResolveGeneralAvailability(
+            runtimeAvailable: true, runtimeReason: null, hasChatAgentPermission: false);
+
+        available.ShouldBeFalse();
+        // 缺权限时要报权限，不能报运行时——运行时配没配对这个用户不是可行动信息
+        reason.ShouldNotBeNull();
+        reason!.ShouldContain(AdminPermissionCatalog.ChatAgentUse);
+    }
+
+    [Fact]
+    public void 有权限但运行时没配时如实报运行时原因()
+    {
+        var (available, reason) = AgentUniverseController.ResolveGeneralAvailability(
+            runtimeAvailable: false, runtimeReason: "未配置 sidecar", hasChatAgentPermission: true);
+
+        available.ShouldBeFalse();
+        reason.ShouldBe("未配置 sidecar");
+    }
+
+    [Fact]
+    public void 权限与运行时都就绪才算可用()
+    {
+        AgentUniverseController.ResolveGeneralAvailability(true, null, true).Available.ShouldBeTrue();
+        // 两个条件各自缺一个都不可用——少判一个就是给出必然失败的入口
+        AgentUniverseController.ResolveGeneralAvailability(false, "没配", true).Available.ShouldBeFalse();
+        AgentUniverseController.ResolveGeneralAvailability(true, null, false).Available.ShouldBeFalse();
     }
 
     [Fact]
