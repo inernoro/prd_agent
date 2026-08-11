@@ -111,4 +111,26 @@ public class EmbeddingVectorTests
         // 对照组：chat 拿错模型顶多是回答风格变了，用户看得见，不属于静默污染
         Assert.False(ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(ModelTypes.Chat));
     }
+
+    /// <summary>
+    /// 上面那条判据只在「认定有专属绑定」时才被查。所以绑定判据本身写窄一格，
+    /// 整条失败关闭就等于没有——这是 predicate-and-wiring-discipline 形状 1。
+    ///
+    /// 具体窄法：拿「按 id 查回来的池数量 > 0」当「有绑定」。绑定的池被删掉时查回 0 条，
+    /// 于是判成「没绑定」，解析继续往默认池 / expectedModel 直连 / legacy 走，
+    /// embedding 照样能拿到 chat 模型——正是失败关闭要拦的那一种情况。
+    /// </summary>
+    [Fact]
+    public void 绑定的池被删掉后仍算有专属绑定()
+    {
+        // 配置里绑了两个池 id，但库里一个都查不到（被删 / 跨库迁移遗留）
+        Assert.True(ModelResolver.HasDedicatedBinding(new[] { "pool-已删除", "pool-也没了" }));
+    }
+
+    [Fact]
+    public void 压根没绑定才算没有专属绑定()
+    {
+        Assert.False(ModelResolver.HasDedicatedBinding(null));
+        Assert.False(ModelResolver.HasDedicatedBinding(Array.Empty<string>()));
+    }
 }

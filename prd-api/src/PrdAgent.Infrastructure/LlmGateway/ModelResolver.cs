@@ -165,8 +165,11 @@ public class ModelResolver : IModelResolver
             var requirement = appCaller.ModelRequirements
                 .FirstOrDefault(r => r.ModelType == modelType);
 
-            if (requirement?.ModelGroupIds?.Count > 0)
+            if (HasDedicatedBinding(requirement?.ModelGroupIds))
             {
+                // 绑定看配置、不看查询结果，判据见 HasDedicatedBinding 的注释。
+                hasDedicatedBinding = true;
+
                 // ========== 第二步：查找专属模型池 ==========
                 candidateGroups = await _db.ModelGroups
                     .Find(g => requirement.ModelGroupIds.Contains(g.Id))
@@ -176,7 +179,6 @@ public class ModelResolver : IModelResolver
                 if (candidateGroups.Count > 0)
                 {
                     resolutionType = "DedicatedPool";
-                    hasDedicatedBinding = true;
                     _logger.LogDebug(
                         "[ModelResolver] 找到专属模型池: AppCallerCode={Code}, PoolCount={Count}, PoolNames={Names}",
                         appCallerCode, candidateGroups.Count,
@@ -1307,6 +1309,19 @@ public class ModelResolver : IModelResolver
     ///     兼容层真的回一串数字。后者会写进向量库，余弦照算、不报任何错，只是检索结果全是噪音；
     ///     而且这批脏向量与正确向量混在同一个集合里，事后极难分辨。宁可当场拒绝。
     /// </summary>
+    /// <summary>
+    /// 「这个 AppCaller 有没有专属池绑定」的唯一判据：只看**配置里绑了没有**，
+    /// 不看那些池现在还查不查得到。
+    ///
+    /// 绑定的池被删掉时，按 id 查回来是 0 条。若据此认定「没有专属绑定」，
+    /// 上面的失败关闭判据（embedding / video-gen / asr）就整条失效——绑定明明在、
+    /// 池没了，解析却一路降级到默认池、expectedModel 直连乃至 legacy，
+    /// embedding 会拿到 chat 模型，写出一批从库里认不出来的垃圾向量。
+    /// 绑定存在而池不可用，恰恰是该判据要拦的那一种，不是它的例外。
+    /// </summary>
+    internal static bool HasDedicatedBinding(IReadOnlyCollection<string>? boundGroupIds)
+        => boundGroupIds is { Count: > 0 };
+
     internal static bool ShouldFailClosedWhenDedicatedPoolUnavailable(string modelType)
         => string.Equals(modelType, ModelTypes.VideoGen, StringComparison.OrdinalIgnoreCase)
            || string.Equals(modelType, ModelTypes.Asr, StringComparison.OrdinalIgnoreCase)
@@ -1751,8 +1766,11 @@ public class InMemoryModelResolver : IModelResolver
             var requirement = appCaller.ModelRequirements
                 .FirstOrDefault(r => r.ModelType == modelType);
 
-            if (requirement?.ModelGroupIds?.Count > 0)
+            if (ModelResolver.HasDedicatedBinding(requirement?.ModelGroupIds))
             {
+                // 与生产 ModelResolver 共用同一个判据函数，不再各判一次。
+                hasDedicatedBinding = true;
+
                 // Step 2: 专属模型池
                 candidateGroups = _modelGroups
                     .Where(g => requirement.ModelGroupIds.Contains(g.Id))
@@ -1762,7 +1780,6 @@ public class InMemoryModelResolver : IModelResolver
                 if (candidateGroups.Count > 0)
                 {
                     resolutionType = "DedicatedPool";
-                    hasDedicatedBinding = true;
                 }
             }
         }

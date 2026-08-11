@@ -190,6 +190,41 @@ public class EmbeddingResponseParseTests
         Assert.Equal("UPSTREAM_ERROR", batch.ErrorCode);
     }
 
+    /// <summary>
+    /// 形状不对的合法 JSON 不许打崩调用方。
+    ///
+    /// JsonNode 的字符串索引器在数组/标量上是**抛 InvalidOperationException**，不是返回 null，
+    /// 而解析函数只 catch 了 JsonException。所以「200 + 合法 JSON + 根不是对象」这种应答
+    /// 会穿透成未处理异常，而不是本函数承诺的 UPSTREAM_ERROR。
+    /// 这与已修的 index/分量两条同族：都是「不兼容的上游应答」该整批拒绝、不该炸。
+    /// </summary>
+    [Theory]
+    [InlineData("[1,2,3]", "根是数组")]
+    [InlineData("\"ok\"", "根是字符串")]
+    [InlineData("42", "根是数字")]
+    [InlineData("null", "根是 null")]
+    public void 根不是对象时整批拒绝而不是抛异常(string content, string 场景)
+    {
+        var batch = EmbeddingService.ParseOpenAiEmbeddings(content, 1, Res("m"));
+
+        Assert.False(batch.Success, 场景);
+        Assert.Equal("UPSTREAM_ERROR", batch.ErrorCode);
+    }
+
+    /// <summary>
+    /// 同理：data 数组里混进标量元素时，取 item["embedding"] 也会抛。
+    /// 跳过这类元素即可——凑不齐 expectedCount 条会在循环末尾被整批拒掉。
+    /// </summary>
+    [Fact]
+    public void data里混进标量元素时整批拒绝而不是抛异常()
+    {
+        var batch = EmbeddingService.ParseOpenAiEmbeddings(
+            "{\"data\":[1,\"two\",null]}", 2, Res("m"));
+
+        Assert.False(batch.Success);
+        Assert.Equal("UPSTREAM_ERROR", batch.ErrorCode);
+    }
+
     [Fact]
     public void 贴的模型名来自传进来的那个resolution()
     {
@@ -254,4 +289,5 @@ public class EmbeddingServiceWiringGuardTests
         Assert.Contains("raw.Resolution ?? resolution", src);
         Assert.DoesNotContain("ParseOpenAiEmbeddings(raw.Content!, input.Count, resolution)", src);
     }
+
 }

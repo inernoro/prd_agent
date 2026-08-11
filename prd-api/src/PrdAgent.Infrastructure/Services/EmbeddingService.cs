@@ -181,14 +181,21 @@ public class EmbeddingService : IEmbeddingService
             return EmbeddingBatch.Fail("UPSTREAM_ERROR", "向量模型返回的不是合法 JSON");
         }
 
-        var data = root?["data"] as JsonArray;
+        // 必须先判成 JsonObject 再取键：JsonNode 的字符串索引器在数组/标量上是**抛异常**
+        // 而不是返回 null，而这里只 catch 了 JSON 解析本身。上游回 `[1,2,3]` 或 `"ok"`
+        // 这类合法 JSON 但形状不对的应答时，异常会穿透成未处理的服务异常——正是本函数
+        // 承诺要避免的那件事（不兼容的应答只该变成 UPSTREAM_ERROR，不该打崩调用方）。
+        var data = (root as JsonObject)?["data"] as JsonArray;
         if (data == null || data.Count == 0)
             return EmbeddingBatch.Fail("UPSTREAM_ERROR", "向量模型返回里没有 data 数组");
 
         var slots = new float[expectedCount][];
         foreach (var item in data)
         {
-            if (item?["embedding"] is not JsonArray arr) continue;
+            // 同理：data 里混进标量元素时 item["embedding"] 也会抛。跳过即可——
+            // 循环末尾的完整性检查会把「凑不齐 expectedCount 条」整批拒掉。
+            if (item is not JsonObject obj) continue;
+            if (obj["embedding"] is not JsonArray arr) continue;
 
             // index 缺省（字段不存在）才退回"按出现顺序"填第一个空位。
             //
@@ -196,7 +203,7 @@ public class EmbeddingService : IEmbeddingService
             // 把它当"没给"塞进第一个空位，等于**猜**它属于哪条原文——猜错就是
             // 「A 的向量记在 B 名下」，写进库之后余弦照算、不报错，检索永远给错答案。
             // 整批拒绝，不猜。
-            var indexNode = item["index"];
+            var indexNode = obj["index"];
             int idx;
             if (indexNode == null)
             {
