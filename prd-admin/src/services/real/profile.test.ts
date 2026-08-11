@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiRequest } from '@/services/real/apiClient';
 import {
+  applyGeneratedMyAvatar,
   generateMyAvatarPreview,
   getPendingMyAvatarGenerationRunId,
   resumeMyAvatarPreview,
@@ -14,14 +15,15 @@ vi.mock('@/stores/authStore', () => ({
 
 const mockedApiRequest = vi.mocked(apiRequest);
 const sessionValues = new Map<string, string>();
-vi.stubGlobal('sessionStorage', {
+const testSessionStorage = {
   get length() { return sessionValues.size; },
   clear: () => sessionValues.clear(),
   getItem: (key: string) => sessionValues.get(key) ?? null,
   key: (index: number) => [...sessionValues.keys()][index] ?? null,
   removeItem: (key: string) => { sessionValues.delete(key); },
   setItem: (key: string, value: string) => { sessionValues.set(key, String(value)); },
-} satisfies Storage);
+} satisfies Storage;
+vi.stubGlobal('sessionStorage', testSessionStorage);
 
 describe('generateMyAvatarPreview', () => {
   beforeEach(() => {
@@ -74,6 +76,7 @@ describe('generateMyAvatarPreview', () => {
     expect(mockedApiRequest.mock.calls[0]?.[0]).toBe('/api/profile/avatar/generation-runs');
     expect(mockedApiRequest.mock.calls[0]?.[1]?.headers?.['Idempotency-Key']).toMatch(/^profile-avatar-/);
     expect(mockedApiRequest.mock.calls.some(([path]) => String(path).includes('/api/visual-agent/image-gen/generate'))).toBe(false);
+    expect(getPendingMyAvatarGenerationRunId()).toBe('run-1');
   });
 
   it('创建请求超时后以同一幂等键重试，避免重复生成计费任务', async () => {
@@ -316,7 +319,7 @@ describe('generateMyAvatarPreview', () => {
     expect(getPendingMyAvatarGenerationRunId()).toBe('run-waiting');
   });
 
-  it('重新打开编辑器时恢复未完成任务并在完成后清理记录', async () => {
+  it('重新打开编辑器时恢复任务并在完成后保留结果引用', async () => {
     sessionStorage.setItem('prd-admin:avatar-generation-run:user-1', 'run-resume');
     const sha = 'b'.repeat(64);
     mockedApiRequest.mockResolvedValueOnce({
@@ -339,11 +342,45 @@ describe('generateMyAvatarPreview', () => {
       error: null,
     });
     expect(mockedApiRequest.mock.calls[0]?.[0]).toBe('/api/profile/avatar/generation-runs/run-resume');
+    expect(getPendingMyAvatarGenerationRunId()).toBe('run-resume');
+  });
+
+  it('应用生成头像成功后才清理已保留的结果引用', async () => {
+    sessionStorage.setItem('prd-admin:avatar-generation-run:user-1', 'run-applied');
+    mockedApiRequest.mockResolvedValueOnce({
+      success: true,
+      data: { userId: 'user-1', avatarFileName: 'generated-avatar.png' },
+      error: null,
+    });
+
+    const result = await applyGeneratedMyAvatar('e'.repeat(64));
+
+    expect(result.success).toBe(true);
+    expect(mockedApiRequest.mock.calls[0]?.[0]).toBe('/api/profile/avatar/apply-generated');
     expect(getPendingMyAvatarGenerationRunId()).toBeNull();
+  });
+
+  it('应用生成头像失败时保留结果引用供用户重试', async () => {
+    sessionStorage.setItem('prd-admin:avatar-generation-run:user-1', 'run-apply-retry');
+    mockedApiRequest.mockResolvedValueOnce({
+      success: false,
+      data: null,
+      error: { code: 'IMAGE_ASSET_NOT_FOUND', message: '结果暂不可用' },
+    });
+
+    const result = await applyGeneratedMyAvatar('f'.repeat(64));
+
+    expect(result.success).toBe(false);
+    expect(getPendingMyAvatarGenerationRunId()).toBe('run-apply-retry');
   });
 });
 
 describe('uploadMyAvatar', () => {
+  beforeEach(() => {
+    sessionValues.clear();
+    vi.stubGlobal('sessionStorage', testSessionStorage);
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -396,5 +433,24 @@ describe('uploadMyAvatar', () => {
       code: 'INVALID_FORMAT',
       message: '头像上传未完成，请稍后重新上传。',
     });
+  });
+
+  it('直接上传新头像成功后清理被替代的生成结果引用', async () => {
+    sessionStorage.setItem('prd-admin:avatar-generation-run:user-1', 'run-superseded-by-upload');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      status: 200,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        success: true,
+        data: { userId: 'user-1', avatarFileName: 'uploaded-avatar.png' },
+        error: null,
+      })),
+    }));
+
+    const result = await uploadMyAvatar({
+      file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
+    });
+
+    expect(result.success).toBe(true);
+    expect(getPendingMyAvatarGenerationRunId()).toBeNull();
   });
 });

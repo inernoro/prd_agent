@@ -254,3 +254,4 @@
 | fix | stable-smoke | 正式环境写入门禁要求 CDS 全部必测用例均有通过证据，缺项时保持只读 |
 | fix | prd-admin | 补齐米多星球 SSO 未配置与绑定占用的管理员恢复动作 |
 | test | prd-admin/stable-smoke | 增加 CDS 必测覆盖缺口与米多绑定错误回归覆盖 |
+| fix | prd-admin | 头像生成完成后保留可恢复预览，直到应用或被新头像替代 |

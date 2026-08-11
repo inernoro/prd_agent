@@ -180,6 +180,7 @@ function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl
  * 自服务：上传当前用户自己的头像（仅需 access 权限）
  */
 export async function uploadMyAvatar(input: { file: File }): Promise<ApiResponse<AdminUserAvatarUploadResponse>> {
+  const retainedRunId = getPendingMyAvatarGenerationRunId();
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -211,7 +212,10 @@ export async function uploadMyAvatar(input: { file: File }): Promise<ApiResponse
     }
     try {
       const parsed = JSON.parse(text) as ApiResponse<AdminUserAvatarUploadResponse>;
-      if (parsed.success) return parsed;
+      if (parsed.success) {
+        if (retainedRunId) forgetAvatarGenerationRun(retainedRunId);
+        return parsed;
+      }
       const code = parsed.error?.code || 'AVATAR_UPLOAD_FAILED';
       return {
         ...parsed,
@@ -334,7 +338,6 @@ async function waitForMyAvatarPreview(
       const previewUrl = String(current.data.previewUrl ?? '').trim();
       const assetSha256 = String(current.data.assetSha256 ?? '').trim().toLowerCase();
       if (previewUrl && /^[a-f0-9]{64}$/.test(assetSha256)) {
-        forgetAvatarGenerationRun(runId);
         return { success: true, data: { previewUrl, assetSha256 }, error: null };
       }
       forgetAvatarGenerationRun(runId);
@@ -360,8 +363,11 @@ async function waitForMyAvatarPreview(
 export async function applyGeneratedMyAvatar(
   assetSha256: string,
 ): Promise<ApiResponse<AdminUserAvatarUploadResponse>> {
-  return apiRequest<AdminUserAvatarUploadResponse>(api.profile.avatarApplyGenerated(), {
+  const retainedRunId = getPendingMyAvatarGenerationRunId();
+  const response = await apiRequest<AdminUserAvatarUploadResponse>(api.profile.avatarApplyGenerated(), {
     method: 'POST',
     body: { assetSha256 },
   });
+  if (response.success && retainedRunId) forgetAvatarGenerationRun(retainedRunId);
+  return response;
 }
