@@ -20,4 +20,10 @@ describe('头像持久化单次写入契约', () => {
     expect(accountSettingsSource).not.toContain('updateMyAvatar');
     expect(usersPageSource).not.toContain('updateUserAvatar');
   });
+
+  it('生成图片失效时保留错误码并指导重新生成预览', () => {
+    expect(dialogSource).toContain('code: response.error.code');
+    expect(dialogSource).toContain('请重新生成预览后再应用。');
+    expect(dialogSource).not.toContain("throw new Error(response.error?.message || '替换头像失败')");
+  });
 });

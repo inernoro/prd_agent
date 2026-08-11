@@ -142,6 +142,7 @@ describe('toUserReadableErrorMessage', () => {
     ['SHARE_EXPIRED', '分享入口已过期，请联系分享者重新生成。'],
     ['STALE_UPDATE', '内容已被其他操作更新，请刷新页面后重新提交。'],
     ['QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度后重试。'],
+    ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],
   ])('为稳定业务错误 %s 使用已登记文案而不是通用输入提示', (code, expected) => {
     const message = toUserReadableErrorMessage(
       { code, message: 'HTTP 500 provider traceId=secret' },

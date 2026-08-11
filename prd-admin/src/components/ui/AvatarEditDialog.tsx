@@ -211,7 +211,14 @@ export function AvatarEditDialog(props: {
     setError(null);
     try {
       const response = await applyGeneratedMyAvatar(generatedAssetSha256);
-      if (!response.success) throw new Error(response.error?.message || '替换头像失败');
+      if (!response.success) {
+        setError(toUserReadableErrorMessage(response.error, {
+          code: response.error.code,
+          fallbackMessage: '头像替换未完成',
+          recoveryMessage: '请重新生成预览后再应用。',
+        }));
+        return;
+      }
       const fileName = String(response.data?.avatarFileName || '').trim();
       if (!fileName) throw new Error('替换头像返回为空');
       setAvatarFileName(fileName);
