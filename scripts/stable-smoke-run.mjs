@@ -473,6 +473,58 @@ export function buildExecutionRecord(environment, execution) {
   };
 }
 
+function notificationEnvironmentLabel(environment) {
+  return environment === 'cds' ? 'CDS 环境' : environment === 'production' ? '正式环境' : '双环境';
+}
+
+function notificationModuleLabel(row, plan) {
+  const caseId = String(row.caseId || '').toUpperCase();
+  const labels = (plan?.featureLines || [])
+    .filter((feature) => [...(feature.requiredCaseIds || []), ...(feature.regressionCaseIds || [])]
+      .some((id) => String(id).toUpperCase() === caseId))
+    .map((feature) => String(feature.label || '').trim())
+    .filter(Boolean);
+  if (labels.length > 0) return [...new Set(labels)].join(' / ');
+  const title = String(row.title || '').replace(/\[[^\]]+\]/g, '').trim();
+  return title || '稳定冒烟执行项';
+}
+
+function notificationRequestId(row, runId) {
+  const diagnosticText = [row.error, ...(row.attemptErrors || [])].filter(Boolean).join(' ');
+  const match = diagnosticText.match(/\brequest(?:id)?\s*[:=]\s*([a-z0-9._-]{4,128})/i);
+  return match?.[1] || `${runId}:${row.environment || 'all'}:${row.caseId || 'run'}`;
+}
+
+export function buildAffectedNotificationTargets({ rows, plan, runId, verdict, visualResult }) {
+  const targets = rows
+    .filter((row) => row.status !== 'pass' || Number(row.retryCount || 0) > 0)
+    .map((row) => ({
+      environment: notificationEnvironmentLabel(row.environment),
+      module: notificationModuleLabel(row, plan),
+      caseId: String(row.caseId || 'RUN-GATE'),
+      requestId: notificationRequestId(row, runId),
+      recovery: row.status === 'not-run'
+        ? `补齐 ${row.environment}:${row.caseId} 的执行条件后，按相同 runId 定向补跑并核对报告。`
+        : row.status === 'pass'
+          ? `核对 ${row.environment}:${row.caseId} 首次失败是否留下副作用，再按相同 runId 复测。`
+          : `处理 ${row.environment}:${row.caseId} 的失败原因后，按相同 runId 定向补跑并核对清理结果。`,
+    }));
+
+  if (targets.length === 0 && verdict !== 'pass') {
+    const visualBlocked = visualResult?.verdict && !['通过', '不适用'].includes(visualResult.verdict);
+    targets.push({
+      environment: '双环境',
+      module: visualBlocked ? '视觉验收' : '稳定冒烟整轮门禁',
+      caseId: visualBlocked ? 'VISUAL-GATE' : 'RUN-GATE',
+      requestId: `${runId}:${visualBlocked ? 'visual' : 'run'}-gate`,
+      recovery: visualBlocked
+        ? '补齐视觉证据并重新执行视觉门禁，再按相同 runId 核对归档报告。'
+        : '处理主管报告中的有条件结论后，按相同 runId 补跑并核对报告。',
+    });
+  }
+  return targets;
+}
+
 export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 'full' }) {
   const expectedEnvironments = [...environments].sort();
   const actualEnvironments = Array.isArray(plan?.environments) ? [...plan.environments].sort() : [];
@@ -1347,26 +1399,47 @@ async function main() {
         error: '验收报告尚未形成可访问的 HTTPS 归档地址，按通知契约拒绝发送无证据通知',
       };
     } else {
-      const notification = command('node', [
-        'scripts/stable-smoke-notify.mjs',
-        '--verdict', summary.verdict,
-        '--run-id', runId,
-        '--environment', selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、'),
-        '--module', '整轮',
-        '--recovery', '先处理主管报告中的失败、未执行和视觉缺证项，再按相同 runId 补跑并核对清理结果。',
-        '--report-url', reportUrl,
-      ], {
-        env: {
-          ...process.env,
-          ...values,
-          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || productionBaseUrl,
-        },
+      const notificationTargets = buildAffectedNotificationTargets({
+        rows,
+        plan,
+        runId,
+        verdict: summary.verdict,
+        visualResult,
       });
-      summaryDocument.notification = notification.status === 0
-        ? { status: 'sent', result: readJsonFromText(notification.stdout) }
+      const notificationResults = notificationTargets.map((target) => {
+        const delivery = command('node', [
+          'scripts/stable-smoke-notify.mjs',
+          '--verdict', summary.verdict,
+          '--run-id', runId,
+          '--environment', target.environment,
+          '--module', target.module,
+          '--case-id', target.caseId,
+          '--request-id', target.requestId,
+          '--recovery', target.recovery,
+          '--report-url', reportUrl,
+        ], {
+          env: {
+            ...process.env,
+            ...values,
+            STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || productionBaseUrl,
+          },
+        });
+        return {
+          ...target,
+          status: delivery.status === 0 ? 'sent' : 'delivery-failed',
+          result: delivery.status === 0 ? readJsonFromText(delivery.stdout) : undefined,
+          error: delivery.status === 0
+            ? undefined
+            : String(delivery.stderr || delivery.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
+        };
+      });
+      const failedNotifications = notificationResults.filter((item) => item.status === 'delivery-failed');
+      summaryDocument.notification = failedNotifications.length === 0
+        ? { status: 'sent', count: notificationResults.length, results: notificationResults }
         : {
             status: 'delivery-failed',
-            error: String(notification.stderr || notification.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
+            error: `${failedNotifications.length}/${notificationResults.length} 条失败或有条件用例通知未送达`,
+            results: notificationResults,
           };
     }
     if (summaryDocument.notification.status === 'delivery-failed') {

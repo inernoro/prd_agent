@@ -41,13 +41,24 @@ public sealed class AdminNotificationEventService
         var message = NormalizeNullableText(request.Message, 1000);
         var level = NormalizeText(request.Level, "info", 32);
         if (!AllowedLevels.Contains(level)) level = "info";
+        var targetUserId = NormalizeNullableText(request.TargetUserId, 128);
+        if (!string.IsNullOrWhiteSpace(targetUserId))
+        {
+            var targetExists = await _db.Users.Find(user =>
+                    user.UserId == targetUserId
+                    && user.Status == UserStatus.Active
+                    && user.UserType == UserType.Human)
+                .AnyAsync(ct);
+            if (!targetExists)
+                throw new InvalidOperationException("通知目标用户不存在或不可用，请更新目标用户 ID 后重试");
+        }
 
         var now = DateTime.UtcNow;
         var key = BuildEventKey(source, request.DedupKey);
         var notification = new AdminNotification
         {
             Key = key,
-            TargetUserId = NormalizeNullableText(request.TargetUserId, 128),
+            TargetUserId = targetUserId,
             Title = title,
             Message = message,
             Level = level,

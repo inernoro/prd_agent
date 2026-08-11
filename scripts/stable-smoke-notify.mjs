@@ -29,7 +29,9 @@ export function buildNotificationPayload(options) {
     actionUrl: options.reportUrl,
     actionKind: 'open-url',
     section: 'admin',
-    dedupKey: isTest ? 'stable-smoke-channel-test' : `${options.runId}:${options.environment}:${options.module || 'all'}`,
+    dedupKey: isTest
+      ? 'stable-smoke-channel-test'
+      : `${options.runId}:${options.environment}:${options.caseId || 'run'}:${options.module || 'all'}`,
     expiresInDays: isTest ? 3 : 30,
   };
 }
@@ -70,7 +72,11 @@ export async function sendNotification(options, fetchImpl = fetch) {
     const message = body?.error?.message || 'MAP 暂时没有接收稳定冒烟通知';
     throw new Error(`${message}。报告已经保留，请修复通知配置后按相同 runId 补发。`);
   }
-  return { sent: true, created: body?.data?.created === true, notificationId: body?.data?.notification?.id || '' };
+  const notification = body?.data?.notification;
+  if (!notification?.id || notification.targetUserId !== options.targetUserId) {
+    throw new Error('MAP 没有确认通知已写入指定用户。报告已经保留，请核对目标用户后按相同 runId 补发。');
+  }
+  return { sent: true, created: body?.data?.created === true, notificationId: notification.id };
 }
 
 async function main() {

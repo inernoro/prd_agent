@@ -366,6 +366,23 @@ describe('uploadMyAvatar', () => {
     expect(result.error?.message).not.toContain('Failed to fetch');
   });
 
+  it('把代理或服务端提前返回的 413 归类为头像文件过大', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      status: 413,
+      text: vi.fn().mockResolvedValue('<html>request entity too large</html>'),
+    }));
+
+    const result = await uploadMyAvatar({
+      file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
+    });
+
+    expect(result.error).toEqual({
+      code: 'DOCUMENT_TOO_LARGE',
+      message: '文件超过当前大小限制，请缩小文件后重新上传。',
+    });
+    expect(result.error?.message).not.toMatch(/html|request entity/i);
+  });
+
   it('不向用户显示无法解析的 HTTP 响应诊断', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       text: vi.fn().mockResolvedValue('<html>Bad Gateway</html>'),

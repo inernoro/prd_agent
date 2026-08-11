@@ -606,6 +606,14 @@ public sealed class AdminPushNotificationServiceTests
                 testDb.Context,
                 new AdminPushDispatchSignal(),
                 NullLogger<AdminNotificationEventService>.Instance);
+            await testDb.Context.Users.InsertOneAsync(new User
+            {
+                UserId = "u1",
+                Username = "notification-target",
+                DisplayName = "通知目标",
+                Status = UserStatus.Active,
+                UserType = UserType.Human,
+            });
 
             await testDb.Context.AdminPushSubscriptions.InsertManyAsync(
             [
@@ -719,6 +727,38 @@ public sealed class AdminPushNotificationServiceTests
 
             var voice = http.Requests.Single(x => QueryHelpers.ParseQuery(x.Uri.Query)["group"] == "MAP System-用户之声");
             Assert.Equal(imageUrl, QueryHelpers.ParseQuery(voice.Uri.Query)["image"]);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task EventService_RejectsUnavailableTargetUserBeforePersisting()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+
+        try
+        {
+            var events = new AdminNotificationEventService(
+                testDb.Context,
+                new AdminPushDispatchSignal(),
+                NullLogger<AdminNotificationEventService>.Instance);
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => events.CreateAsync(
+                new AdminNotificationEventRequest
+                {
+                    Source = "stable-smoke",
+                    Title = "稳定冒烟失败",
+                    TargetUserId = "deleted-user",
+                    DedupKey = "run-1:case-1",
+                },
+                "admin",
+                CancellationToken.None));
+
+            Assert.Contains("目标用户不存在或不可用", error.Message);
+            Assert.Equal(0, await testDb.Context.AdminNotifications.CountDocumentsAsync(_ => true));
         }
         finally
         {

@@ -77,6 +77,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['SSO_BINDING_EXISTS', '该米多星球绑定值已被其他用户使用，请先解除原绑定或更换绑定值后重试。'],
   ['MAP_SSO_BROWSER_SESSION_REQUIRED', '当前会话不能进入模型网关，请先通过管理后台登录后重试。'],
   ['MAP_ADMIN_REQUIRED', '当前账号不是管理员，无法进入模型网关，请使用管理员账号登录后重试。'],
+  ['SYNTHETIC_SESSION_FEDERATION_FORBIDDEN', '合成测试会话不能进入外部控制台，请使用真人管理员账号登录后重试。'],
   ['PASSWORD_MISMATCH', '两次输入的密码不一致，请重新输入。'],
   ['WEAK_PASSWORD', '新密码不符合强度要求，请按页面规则调整后重试。'],
   ['USER_NOT_FOUND', '用户不存在，请返回后重新选择。'],

@@ -8,6 +8,7 @@ import {
   applyCredentialRegistry,
   buildExecutionRecord,
   buildDryRunSummary,
+  buildAffectedNotificationTargets,
   buildStableSmokeArchiveCommand,
   buildLockedRunSummary,
   buildUnhandledFailureSummary,
@@ -74,6 +75,72 @@ test('dry-run 只产出计划摘要且不宣称功能或视觉验收通过', () 
   assert.deepEqual(summary.executions.map((item) => item.status), ['dry-run', 'dry-run']);
   assert.equal(summary.archive.status, 'skipped-dry-run');
   assert.equal(summary.notification.status, 'skipped');
+});
+
+test('失败、未执行和重试用例逐项形成带用例与追踪号的通知目标', () => {
+  const targets = buildAffectedNotificationTargets({
+    runId: 'stsmk-notify',
+    verdict: 'fail',
+    plan: {
+      featureLines: [{
+        label: '多图视觉创作',
+        requiredCaseIds: ['MVIS-001', 'MVIS-002'],
+      }],
+    },
+    rows: [
+      {
+        caseId: 'MVIS-001',
+        environment: 'cds',
+        title: '[MVIS-001] 双参考图生成',
+        status: 'fail',
+        retryCount: 0,
+        error: '调用失败 requestId=req-mvis-001',
+        attemptErrors: [],
+      },
+      {
+        caseId: 'MVIS-002',
+        environment: 'production',
+        title: '[MVIS-002] 多图排序',
+        status: 'not-run',
+        retryCount: 0,
+        error: '',
+        attemptErrors: [],
+      },
+      {
+        caseId: 'CORE-001',
+        environment: 'cds',
+        title: '[CORE-001] 首页可用',
+        status: 'pass',
+        retryCount: 0,
+        error: '',
+        attemptErrors: [],
+      },
+    ],
+  });
+
+  assert.equal(targets.length, 2);
+  assert.deepEqual(targets.map((item) => item.caseId), ['MVIS-001', 'MVIS-002']);
+  assert.equal(targets[0].module, '多图视觉创作');
+  assert.equal(targets[0].requestId, 'req-mvis-001');
+  assert.equal(targets[1].requestId, 'stsmk-notify:production:MVIS-002');
+});
+
+test('只有视觉门禁不通过时仍生成可追踪的视觉通知目标', () => {
+  const targets = buildAffectedNotificationTargets({
+    runId: 'stsmk-visual',
+    verdict: 'conditional',
+    plan: {},
+    rows: [],
+    visualResult: { verdict: '缺少证据' },
+  });
+
+  assert.deepEqual(targets, [{
+    environment: '双环境',
+    module: '视觉验收',
+    caseId: 'VISUAL-GATE',
+    requestId: 'stsmk-visual:visual-gate',
+    recovery: '补齐视觉证据并重新执行视觉门禁，再按相同 runId 核对归档报告。',
+  }]);
 });
 
 test('同一运行和提交可以复用既有视觉计划继续补证', () => {

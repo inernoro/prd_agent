@@ -195,6 +195,20 @@ export async function uploadMyAvatar(input: { file: File }): Promise<ApiResponse
   try {
     const res = await fetch(url, { method: 'POST', headers, body: fd });
     const text = await res.text();
+    if (res.status === 413) {
+      return {
+        success: false,
+        data: null,
+        error: {
+          code: 'DOCUMENT_TOO_LARGE',
+          message: toUserReadableErrorMessage({ code: 'DOCUMENT_TOO_LARGE' }, {
+            code: 'DOCUMENT_TOO_LARGE',
+            fallbackMessage: '头像上传未完成',
+            recoveryMessage: '请缩小图片后重新上传。',
+          }),
+        },
+      };
+    }
     try {
       const parsed = JSON.parse(text) as ApiResponse<AdminUserAvatarUploadResponse>;
       if (parsed.success) return parsed;

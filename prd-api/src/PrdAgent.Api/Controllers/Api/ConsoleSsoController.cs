@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -58,6 +59,14 @@ public sealed class ConsoleSsoController : ControllerBase
         [FromBody] ConsoleSsoAuthorizeRequest request,
         CancellationToken ct)
     {
+        if (FederatedConsoleSessionPolicy.IsSynthetic(User))
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    "SYNTHETIC_SESSION_FEDERATION_FORBIDDEN",
+                    "合成测试会话不能进入外部控制台，请使用真人管理员会话登录"));
+        }
         var config = await ReadConfigAsync(ct);
         if (!config.Enabled)
         {
@@ -155,10 +164,7 @@ public sealed class ConsoleSsoController : ControllerBase
     private async Task<(string Subject, string Username, string DisplayName, string? Email)?> ResolveAdminIdentityAsync(
         CancellationToken ct)
     {
-        var clientType = User.FindFirst("clientType")?.Value;
-        var sessionKey = User.FindFirst("sessionKey")?.Value;
-        if (!string.Equals(clientType, "admin", StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(sessionKey))
+        if (!FederatedConsoleSessionPolicy.IsEligibleBrowserSession(User))
         {
             return null;
         }

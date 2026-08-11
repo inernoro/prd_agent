@@ -24,6 +24,7 @@ test('通知始终定向用户并包含证据和恢复动作', () => {
   assert.equal(payload.actionUrl, base.reportUrl);
   assert.match(payload.message, /CDS 回滚/);
   assert.equal(payload.source, 'stable-smoke');
+  assert.match(payload.dedupKey, /REG-multi-image-001/);
 });
 
 test('执行链异常可以把动作改为打开通知中心', () => {
@@ -57,7 +58,7 @@ test('失败结果调用 MAP 站内通知接口且不包含其他通知通道', 
   let captured;
   const result = await sendNotification(base, async (url, init) => {
     captured = { url: String(url), init, body: JSON.parse(init.body) };
-    return new Response(JSON.stringify({ success: true, data: { created: true, notification: { id: 'n-1' } } }), {
+    return new Response(JSON.stringify({ success: true, data: { created: true, notification: { id: 'n-1', targetUserId: 'target-user-id' } } }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -67,4 +68,17 @@ test('失败结果调用 MAP 站内通知接口且不包含其他通知通道', 
   assert.equal(captured.init.headers['X-AI-Impersonate'], 'stsmk_admin');
   assert.equal(captured.body.targetUserId, 'target-user-id');
   assert.equal(JSON.stringify(captured).toLowerCase().includes('slack'), false);
+});
+
+test('服务端未确认目标用户时不得把接口成功误报为送达', async () => {
+  await assert.rejects(
+    sendNotification(base, async () => new Response(JSON.stringify({
+      success: true,
+      data: { created: true, notification: { id: 'n-1', targetUserId: 'deleted-user' } },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })),
+    /没有确认通知已写入指定用户/,
+  );
 });

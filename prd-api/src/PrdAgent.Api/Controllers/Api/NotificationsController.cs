@@ -156,6 +156,7 @@ public sealed class NotificationsController : ControllerBase
                     n.ActionUrl,
                     n.ActionKind,
                     n.Source,
+                    n.TargetUserId,
                     section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section),
                     sectionLabel = AdminNotificationSections.Label(AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section)),
                     sourceLabel = AdminNotificationSourceCatalog.ResolveSourceLabel(n.Source),
