@@ -58,6 +58,8 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId；滚动发布期间保持不变。
       - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
+      # 旧版仅分支名 owner 只允许一个正式部署迁移；CDS 固定关闭同一能力。
+      - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379

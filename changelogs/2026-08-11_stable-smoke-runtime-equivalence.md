@@ -144,3 +144,6 @@
 | fix | stable-smoke | 视觉证据门禁实际解码 PNG 数据并拒绝文本伪装、损坏或不完整截图 |
 | fix | llmgw | 环境权威管理员口令复用本地账号至少十二位的统一强度规则 |
 | test | llmgw/stable-smoke | 增加弱环境口令与伪造损坏截图永久回归守卫 |
+| fix | prd-api | ASR 全流程增加早于看门狗的服务端截止时间、重试心跳和处理权条件写入 |
+| fix | prd-api | 所有分支的旧 owner 仅允许显式获权的正式部署迁移，CDS 固定拒绝接管 |
+| test | prd-api | 增加 ASR 截止时间与功能分支跨环境旧 owner 隔离回归测试 |

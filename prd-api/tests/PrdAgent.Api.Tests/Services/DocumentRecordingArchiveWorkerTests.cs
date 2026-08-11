@@ -405,7 +405,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
         const string legacyOwner = "codex/example";
-        const string currentOwner = "prd-agent:cds::codex/example";
+        const string currentOwner = "prd-agent:production::codex/example";
         await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
             Session("legacy-owner-session", legacyOwner, DocumentRecordingArchiveStatus.Pending));
 

@@ -19,6 +19,7 @@ namespace PrdAgent.Infrastructure.Security;
 public static class DeploymentAuthority
 {
     public const string AdoptLegacyTranscriptRunsKey = "Transcript:AdoptLegacyUnownedRuns";
+    public const string AdoptLegacyBranchOwnersKey = "Deployment:AdoptLegacyBranchOwners";
 
     /// <summary>
     /// 显式开关。设为 "true"/"false" 时优先于自动判定：
@@ -61,6 +62,15 @@ public static class DeploymentAuthority
     /// </summary>
     public static bool CanAdoptLegacyTranscriptRuns(IConfiguration configuration)
         => bool.TryParse(configuration[AdoptLegacyTranscriptRunsKey], out var enabled)
+           && enabled
+           && !IsCdsBranchPreview(configuration);
+
+    /// <summary>
+    /// 部署域上线前的“仅分支名” owner 必须由一个显式获权的正式部署迁移。
+    /// 对每个分支都执行同一规则，CDS 预览即使误配开关也不能参与。
+    /// </summary>
+    public static bool CanAdoptLegacyBranchOwners(IConfiguration configuration)
+        => bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
            && enabled
            && !IsCdsBranchPreview(configuration);
 

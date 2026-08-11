@@ -23,16 +23,15 @@ public static class InstanceIdentity
     }
 
     /// <summary>
-    /// 返回当前部署可兼容接管的 owner。部署域上线前 owner 只有分支名；非 main 分支
-    /// 可由同分支新 Worker 原子迁移，legacy main 因 CDS 与正式环境历史共名，只允许
-    /// 非 CDS 的权威部署接管，避免两个环境争抢共享 Mongo 中的同一批任务。
+    /// 返回当前部署可兼容接管的 owner。部署域上线前 owner 只有分支名；无论 main
+    /// 还是功能分支，都只允许显式获权的正式部署原子迁移，避免 CDS 与正式环境争抢
+    /// 共享 Mongo 中的同一批任务。
     /// </summary>
     public static IReadOnlyList<string> GetCompatibleOwnerIds(IConfiguration config)
     {
         var current = Get(config);
         var legacyBranch = Normalize(config["Changelog:GitHubBranch"], "main");
-        var canAdoptLegacy = !legacyBranch.Equals("main", StringComparison.OrdinalIgnoreCase)
-                             || !DeploymentAuthority.IsCdsBranchPreview(config);
+        var canAdoptLegacy = DeploymentAuthority.CanAdoptLegacyBranchOwners(config);
         return canAdoptLegacy && !legacyBranch.Equals(current, StringComparison.Ordinal)
             ? [current, legacyBranch]
             : [current];

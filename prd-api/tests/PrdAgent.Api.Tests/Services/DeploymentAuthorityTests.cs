@@ -46,6 +46,21 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
+    public void LegacyBranchOwnerAdoption_RequiresOneExplicitNonCdsAuthority()
+    {
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new())).ShouldBeFalse();
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
+        {
+            ["Deployment:AdoptLegacyBranchOwners"] = "true",
+        })).ShouldBeTrue();
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
+        {
+            ["Deployment:AdoptLegacyBranchOwners"] = "true",
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
     public void ExplicitFalse_OverridesProductionAuthority()
     {
         var config = Build(new() { ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false" });

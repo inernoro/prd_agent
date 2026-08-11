@@ -1125,16 +1125,25 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("DeploymentAuthority.CanAdoptLegacyTranscriptRuns(configuration)", worker);
         Assert.Contains("Filter.Or(scopedForCurrentInstance, unownedLegacyRun)", worker);
         Assert.Contains("AdoptLegacyTranscriptRunsKey", authority);
+        Assert.Contains("AdoptLegacyBranchOwnersKey", authority);
+        Assert.Contains("DeploymentAuthority.CanAdoptLegacyBranchOwners(config)", ReadRepoFile("prd-api/src/PrdAgent.Api/Services/InstanceIdentity.cs"));
         Assert.Contains("Transcript__AdoptLegacyUnownedRuns: \"false\"", cdsCompose);
         Assert.Contains("Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-true}", productionCompose);
         Assert.Contains("Deployment__Identity: \"prd-agent:cds\"", cdsCompose);
+        Assert.Contains("Deployment__AdoptLegacyBranchOwners: \"false\"", cdsCompose);
         Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
+        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}", productionCompose);
         Assert.True(
             cdsCompose.Split("command -v ffmpeg", StringSplitOptions.None).Length - 1 >= 3,
             "CDS API 的 dev、static 与默认源码命令都必须在启动前保证 ffmpeg 可用");
         Assert.Contains("Sort.Ascending(r => r.CreatedAt)", worker);
-        Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, instanceId)", worker);
-        Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, _instanceId)", watchdog);
+        Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", worker);
+        Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, run.OwnerInstanceId)", worker);
+        Assert.Contains("Filter.In(r => r.OwnerInstanceId, _compatibleOwnerIds)", watchdog);
+        Assert.Contains("TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config)", watchdog);
+        Assert.Contains("TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)", worker);
+        Assert.Contains("OwnedProcessingRun(run)", worker);
+        Assert.Contains("candidate.ToGatewayResolution(),\n                    processingToken", worker);
         Assert.Contains("public const string LegacyQueued = \"queued\"", model);
     }
 

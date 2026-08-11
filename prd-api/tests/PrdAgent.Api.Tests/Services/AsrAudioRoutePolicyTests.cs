@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
@@ -36,6 +37,28 @@ public class AsrAudioRoutePolicyTests
         candidates.Select(candidate => candidate.ActualModel)
             .ShouldBe(new[] { "primary", "backup" });
         TranscriptAsrCandidatePolicy.ChatValidationAttemptsPerCandidate.ShouldBe(4);
+    }
+
+    [Theory]
+    [InlineData(null, 1800, 1680)]
+    [InlineData(300, 300, 180)]
+    [InlineData(9999, 7200, 7080)]
+    public void AsrProcessingDeadline_AlwaysEndsBeforeTheWatchdog(
+        int? configuredSeconds,
+        int expectedWatchdogSeconds,
+        int expectedAsrSeconds)
+    {
+        var values = new Dictionary<string, string?>();
+        if (configuredSeconds.HasValue)
+            values[TranscriptRunTimingPolicy.WatchdogTimeoutKey] = configuredSeconds.Value.ToString();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+
+        TranscriptRunTimingPolicy.ResolveWatchdogTimeout(configuration).TotalSeconds
+            .ShouldBe(expectedWatchdogSeconds);
+        TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration).TotalSeconds
+            .ShouldBe(expectedAsrSeconds);
+        TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)
+            .ShouldBeLessThan(TranscriptRunTimingPolicy.ResolveWatchdogTimeout(configuration));
     }
 
     [Fact]

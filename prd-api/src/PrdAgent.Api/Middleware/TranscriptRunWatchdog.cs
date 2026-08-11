@@ -30,9 +30,8 @@ public sealed class TranscriptRunWatchdog : BackgroundService
         _logger = logger;
 
         var intervalSec = config.GetValue<int?>("TRANSCRIPT_WATCHDOG_INTERVAL_SECONDS") ?? 120;
-        var timeoutSec = config.GetValue<int?>("TRANSCRIPT_WATCHDOG_TIMEOUT_SECONDS") ?? 1800;
         _interval = TimeSpan.FromSeconds(Math.Clamp(intervalSec, 30, 600));
-        _timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec, 300, 7200));
+        _timeout = TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config);
         _compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(config);
     }
 

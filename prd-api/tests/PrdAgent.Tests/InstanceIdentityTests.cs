@@ -35,25 +35,31 @@ public sealed class InstanceIdentityTests
     }
 
     [Fact]
-    public void GetCompatibleOwnerIds_AdoptsLegacyOwnerForTheSameFeatureBranch()
+    public void GetCompatibleOwnerIds_CdsNeverAdoptsLegacyOwnerForAFeatureBranch()
     {
         var configuration = BuildConfiguration("prd-agent:cds", "codex/example", "Production", cdsProjectId: "prd-agent");
 
         Assert.Equal(
-            ["prd-agent:cds::codex/example", "codex/example"],
+            ["prd-agent:cds::codex/example"],
             InstanceIdentity.GetCompatibleOwnerIds(configuration));
     }
 
     [Fact]
-    public void GetCompatibleOwnerIds_LegacyMainIsOwnedOnlyByProduction()
+    public void GetCompatibleOwnerIds_LegacyOwnersForEveryBranchAreOwnedOnlyByAuthorizedProduction()
     {
         var cds = BuildConfiguration("prd-agent:cds", "main", "Production", cdsProjectId: "prd-agent");
-        var production = BuildConfiguration("prd-agent:production", "main", "Production");
+        var production = BuildConfiguration(
+            "prd-agent:production", "main", "Production", adoptLegacyBranchOwners: true);
+        var featureProduction = BuildConfiguration(
+            "prd-agent:production", "codex/example", "Production", adoptLegacyBranchOwners: true);
 
         Assert.Equal(["prd-agent:cds::main"], InstanceIdentity.GetCompatibleOwnerIds(cds));
         Assert.Equal(
             ["prd-agent:production::main", "main"],
             InstanceIdentity.GetCompatibleOwnerIds(production));
+        Assert.Equal(
+            ["prd-agent:production::codex/example", "codex/example"],
+            InstanceIdentity.GetCompatibleOwnerIds(featureProduction));
     }
 
     private static IConfiguration BuildConfiguration(
@@ -61,7 +67,8 @@ public sealed class InstanceIdentityTests
         string? branch,
         string? environment,
         string? revision = null,
-        string? cdsProjectId = null)
+        string? cdsProjectId = null,
+        bool? adoptLegacyBranchOwners = null)
         => new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -70,6 +77,7 @@ public sealed class InstanceIdentityTests
                 ["ASPNETCORE_ENVIRONMENT"] = environment,
                 ["Changelog:GitCommit"] = revision,
                 ["CDS_PROJECT_ID"] = cdsProjectId,
+                ["Deployment:AdoptLegacyBranchOwners"] = adoptLegacyBranchOwners?.ToString(),
             })
             .Build();
 }
