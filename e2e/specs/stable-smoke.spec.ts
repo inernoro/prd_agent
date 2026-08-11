@@ -695,16 +695,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const authz = await readEnvelope<{
         effectiveSystemRoleKey: string;
+        permAllow: string[];
         permDeny: string[];
       }>(await page.request.put(`/api/authz/users/${restrictedUserId}/authz`, {
         headers: authHeaders(adminToken),
         data: {
           systemRoleKey: 'none',
-          permAllow: [],
+          permAllow: ['access'],
           permDeny: ['users.read', 'users.write'],
         },
       }));
       expect(authz.effectiveSystemRoleKey).toBe('none');
+      expect(authz.permAllow).toContain('access');
       expect(authz.permDeny).toEqual(expect.arrayContaining(['users.read', 'users.write']));
 
       const login = await readEnvelope<{
