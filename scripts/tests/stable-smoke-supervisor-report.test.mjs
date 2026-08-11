@@ -68,3 +68,19 @@ test('用例行通过但 Playwright 进程失败时主管结论仍是不通过',
   assert.match(report, /Playwright 进程异常退出/);
   assert.doesNotMatch(report, /总体结论 \| 通过/);
 });
+
+test('单环境执行时主管模块表明确标记另一环境未选择', () => {
+  const report = renderSupervisorReport({
+    plan,
+    matrixMarkdown: matrix,
+    runId: 'stsmk-cds-only',
+    rows: [
+      { caseId: 'CORE-001', environment: 'cds', status: 'pass', durationMs: 10, error: '' },
+    ],
+    selectedEnvironments: ['cds'],
+  });
+
+  assert.match(report, /身份与访问 .* 通过（1 通过，0 失败，0 未执行） \| 未选择 \|/);
+  assert.doesNotMatch(report, /未选择.*通过（0 通过，0 失败，0 未执行）/);
+  assert.doesNotMatch(report, /\| 无 \| 双环境 \|/);
+});

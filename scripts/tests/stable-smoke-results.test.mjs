@@ -156,6 +156,9 @@ test('单环境技术报告明确展示另一环境未选择', () => {
     assert.match(report, /\| CORE \| pass \| not-selected \|/);
     assert.match(report, /\| 正式环境 \| 0 \| 0 \| 0 \| 0 \| 0 \| 未选择 \| 本轮未选择 \|/);
     assert.doesNotMatch(report, /\| CORE \| pass \| pass \|/);
+    const supervisor = readFileSync(supervisorPath, 'utf8');
+    assert.match(supervisor, /\| 未映射功能线 \| 关键业务 \| 通过（1 通过，0 失败，0 未执行） \| 未选择 \|/);
+    assert.doesNotMatch(supervisor, /正式环境.*通过（0 通过，0 失败，0 未执行）/);
   } finally {
     rmSync(runDirectory, { recursive: true, force: true });
   }

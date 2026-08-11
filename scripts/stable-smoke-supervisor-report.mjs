@@ -117,7 +117,8 @@ function moduleRows(metadata) {
   return [...modules.values()];
 }
 
-function resultCell(rows, environment) {
+function resultCell(rows, environment, selectedEnvironments) {
+  if (!selectedEnvironments.has(environment)) return '未选择';
   const selected = rows.filter((row) => row.environment === environment);
   const failed = selected.filter((row) => row.status === 'fail').length;
   const notRun = selected.filter((row) => row.status === 'not-run').length;
@@ -136,10 +137,15 @@ export function renderSupervisorReport({
   cdsUrl = '',
   productionUrl = 'https://map.ebcone.net',
   executionFailures = [],
+  selectedEnvironments = [],
 }) {
   const matrix = parseTestMatrix(matrixMarkdown);
   const gapByKey = new Map(notRunLedger.map((row) => [`${row.environment}:${row.caseId}`, row]));
   const metadata = rows.map((row) => buildMetadata(plan, matrix, row));
+  const selectedEnvironmentSet = new Set(selectedEnvironments.length > 0
+    ? selectedEnvironments
+    : metadata.map((row) => row.environment));
+  const environmentScopeLabel = [...selectedEnvironmentSet].map(environmentLabel).join('、') || '未选择环境';
   const abnormal = metadata.filter((row) => row.status !== 'pass');
   const immediate = abnormal.filter((row) => row.status === 'fail' || row.environment === 'cds');
   const productionNotRun = abnormal.filter((row) => row.environment === 'production' && row.status === 'not-run');
@@ -180,7 +186,7 @@ export function renderSupervisorReport({
     ...(executionFailures.length > 0 ? [`| P1 | ${executionFailures.map(environmentLabel).join('、')} | ${executionFailures.length} 个执行进程 | Playwright 进程异常退出 | 质量负责人 | 修复全局初始化、清理或报告器错误后整轮重跑通过 |`] : []),
     ...(immediate.filter((row) => row.status === 'not-run').length > 0 ? [`| P1 | CDS | ${immediate.filter((row) => row.status === 'not-run').length} 项 | 自动化步骤未执行 | 质量负责人和相关业务负责人 | 下方每项均获得真实通过或失败证据 |`] : []),
     ...(productionNotRun.length > 0 ? [`| P1 | 正式环境 | ${productionNotRun.length} 项 | 正式合成身份未就绪 | 身份与权限负责人 | 正式身份预检通过并完成同一套验收项 |`] : []),
-    ...(abnormal.length === 0 && executionFailures.length === 0 ? ['| 无 | 双环境 | 0 项 | 全部通过 | 无需干预 | 保持每 48 小时复测 |'] : []),
+    ...(abnormal.length === 0 && executionFailures.length === 0 ? [`| 无 | ${environmentScopeLabel} | 0 项 | 全部通过 | 无需干预 | 保持每 48 小时复测 |`] : []),
     '',
     '## 业务功能线与面包屑',
     '',
@@ -188,7 +194,7 @@ export function renderSupervisorReport({
     '|---|---|---|---|---|',
     ...moduleRows(metadata).map((module) => {
       const needsIntervention = module.rows.some((row) => row.status !== 'pass') ? '是' : '否';
-      return `| ${escapeCell(module.label)} | ${escapeCell(module.breadcrumb)} | ${resultCell(module.rows, 'cds')} | ${resultCell(module.rows, 'production')} | ${needsIntervention} |`;
+      return `| ${escapeCell(module.label)} | ${escapeCell(module.breadcrumb)} | ${resultCell(module.rows, 'cds', selectedEnvironmentSet)} | ${resultCell(module.rows, 'production', selectedEnvironmentSet)} | ${needsIntervention} |`;
     }),
     '',
     '## 未通过与未执行逐项清单',
@@ -205,7 +211,7 @@ export function renderSupervisorReport({
       return `| ${environmentLabel(row.environment)} | ${escapeCell(row.featureLabel)} | ${escapeCell(row.scenario)} | ${row.testType} | ${escapeCell(row.breadcrumb)} | ${row.statusLabel} | ${escapeCell(reason)} | ${row.owner} | [查看](#${row.methodAnchor}) |`;
     }),
     ...(productionNotRun.length > 0 ? [`| 正式环境 | 全部计划模块 | ${productionNotRun.length} 项 | 冒烟、功能与回归 | 正式合成身份 → 同一验收账本 → 真实业务路径 | 未执行 | 共用身份前置未完成；每项明细保留在下方完整账本 | 身份与权限负责人 | [查看正式环境方法](#正式环境统一执行方法) |`] : []),
-    ...(abnormal.length === 0 ? ['| 双环境 | 全部模块 | 无 | 无 | 全部业务路径 | 通过 | 无异常项 | 无需干预 | [查看完整方法](#关联测试方法) |'] : []),
+    ...(abnormal.length === 0 ? [`| ${environmentScopeLabel} | 全部模块 | 无 | 无 | 全部业务路径 | 通过 | 无异常项 | 无需干预 | [查看完整方法](#关联测试方法) |`] : []),
     '',
     '## 逐项验收账本',
     '',

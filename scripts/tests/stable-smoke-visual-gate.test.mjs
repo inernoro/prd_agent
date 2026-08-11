@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { createHash } from 'node:crypto';
+import test, { after } from 'node:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,12 +26,25 @@ const catalog = {
   }],
 };
 
-function evidence(overrides) {
+const evidenceRoot = mkdtempSync(join(tmpdir(), 'visual-gate-fixtures-'));
+let evidenceSequence = 0;
+after(() => rmSync(evidenceRoot, { recursive: true, force: true }));
+
+function evidence(overrides = {}) {
+  const hasExplicitPath = Object.prototype.hasOwnProperty.call(overrides, 'path');
+  const contentKey = String(overrides.sha256 ?? 'hash-a');
+  const path = hasExplicitPath
+    ? overrides.path
+    : join(evidenceRoot, `evidence-${String(evidenceSequence += 1).padStart(3, '0')}.png`);
+  if (!hasExplicitPath) writeFileSync(path, contentKey);
+  const sha256 = hasExplicitPath
+    ? overrides.sha256
+    : createHash('sha256').update(contentKey).digest('hex');
   return {
     name: '入口图',
     module: '视觉创作',
     slotId: 'VISUAL-VISUAL-01',
-    sha256: 'hash-a',
+    sha256,
     primaryState: '入口',
     coverageStates: ['入口'],
     testType: '冒烟',
@@ -39,10 +53,12 @@ function evidence(overrides) {
     manualStatus: '通过',
     methodAnchor: '#visual-method-visual',
     breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 入口',
-    path: '/tmp/visual-evidence.png',
+    path,
     theme: 'light',
     viewportClass: 'desktop',
     ...overrides,
+    path,
+    sha256,
   };
 }
 
@@ -82,6 +98,33 @@ test('未声明哈希时从截图文件计算并拒绝重复证据', () => {
   }
 });
 
+test('截图文件缺失时即使声明哈希也不能形成可审核证据', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({
+      path: join(evidenceRoot, 'missing.png'),
+      sha256: 'a'.repeat(64),
+    }),
+    evidence({ name: '结果图', sha256: 'hash-b', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+
+  assert.equal(result.verdict, '不通过');
+  assert.equal(result.modules[0].invalidEvidenceCount, 1);
+  assert.match(result.modules[0].fieldErrors.join('；'), /截图文件不存在或无法读取/);
+});
+
+test('声明哈希与实际截图不一致时不能形成可审核证据', () => {
+  const screenshot = join(evidenceRoot, 'tampered.png');
+  writeFileSync(screenshot, 'actual-image');
+  const result = validateVisualEvidence(catalog, [
+    evidence({ path: screenshot, sha256: 'b'.repeat(64) }),
+    evidence({ name: '结果图', sha256: 'hash-b', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+
+  assert.equal(result.verdict, '不通过');
+  assert.equal(result.modules[0].invalidEvidenceCount, 1);
+  assert.match(result.modules[0].fieldErrors.join('；'), /sha256 与实际截图文件不一致/);
+});
+
 test('数量、状态、路径和方法全部绑定后才通过', () => {
   const result = validateVisualEvidence(catalog, [
     evidence({ name: '入口图', sha256: 'hash-a' }),
@@ -114,7 +157,7 @@ test('主管报告逐张列出结果、面包屑、截图和测试方法', () =>
   assert.match(report, /\[查看\]\(#fig-结果图\)/);
   assert.match(report, /\[查看\]\(#visual-method-visual\)/);
   assert.match(report, /## 视觉证据图片/);
-  assert.match(report, /!\[视觉创作-结果\]\(<\/tmp\/visual-evidence.png>\)/);
+  assert.match(report, /!\[视觉创作-结果\]\(<.*visual-gate-fixtures-.*\/evidence-\d+\.png>\)/);
   assert.match(report, /## 视觉测试方法/);
 });
 

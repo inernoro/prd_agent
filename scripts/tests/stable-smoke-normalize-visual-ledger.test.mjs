@@ -30,6 +30,25 @@ test('人工与自动结果分栏并由严格结论进入视觉门禁', () => {
   assert.equal(row.caption, '按钮被遮挡');
 });
 
+test('最终状态缺失或误填通过时仍采用自动与人工中的更严格结论', () => {
+  const rows = normalizeVisualLedger([
+    {
+      slotId: 'VISUAL-IDENTITY-PROFILE-01',
+      automatedStatus: '不通过',
+      manualStatus: '通过',
+    },
+    {
+      slotId: 'VISUAL-IDENTITY-PROFILE-02',
+      automatedStatus: '通过',
+      manualStatus: '不通过',
+      finalStatus: '通过',
+    },
+  ]);
+
+  assert.deepEqual(rows.map((row) => row.status), ['不通过', '不通过']);
+  assert.deepEqual(rows.map((row) => row.failureEvidence), [true, true]);
+});
+
 test('复制后的截图继承原始取证清单中的真实移动端元数据', () => {
   const root = mkdtempSync(join(tmpdir(), 'visual-normalize-'));
   const sourceDir = join(root, 'source');

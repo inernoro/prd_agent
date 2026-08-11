@@ -214,4 +214,5 @@ writeFileSync(supervisorOutput, renderSupervisorReport({
   cdsUrl,
   productionUrl,
   executionFailures,
+  selectedEnvironments,
 }), 'utf8');

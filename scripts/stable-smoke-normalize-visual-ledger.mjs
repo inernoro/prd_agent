@@ -13,6 +13,25 @@ function screenshotName(row, index) {
   return `${String(index + 1).padStart(3, '0')}-${stem}`;
 }
 
+const STATUS_SEVERITY = new Map([
+  ['未记录', 0],
+  ['通过', 10],
+  ['部分通过', 20],
+  ['未执行', 30],
+  ['需补证', 40],
+  ['需干预', 50],
+  ['不通过', 60],
+]);
+
+function strictVisualStatus(row) {
+  const candidates = [row.finalStatus, row.status, row.automatedStatus, row.manualStatus]
+    .map((value) => String(value || '').trim())
+    .filter((value) => STATUS_SEVERITY.has(value) && value !== '未记录');
+  if (candidates.length === 0) return '';
+  return candidates.reduce((strictest, current) =>
+    STATUS_SEVERITY.get(current) > STATUS_SEVERITY.get(strictest) ? current : strictest);
+}
+
 export function normalizeVisualLedger(rows) {
   if (!Array.isArray(rows)) throw new Error('视觉台账必须是数组');
   return rows.map((row, index) => {
@@ -29,7 +48,7 @@ export function normalizeVisualLedger(rows) {
       }
     }
     const primaryState = String(row.primaryState || '').trim();
-    const finalStatus = String(row.finalStatus || row.status || '').trim();
+    const finalStatus = strictVisualStatus(row);
     return {
       name: screenshotName(row, index),
       module: row.module,

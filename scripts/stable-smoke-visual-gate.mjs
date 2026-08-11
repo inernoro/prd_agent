@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -32,12 +32,21 @@ function interventionLabel(status) {
   return '是：模块负责人修复后复测';
 }
 
-function evidenceHash(row) {
+function inspectEvidenceFile(row) {
   const declared = String(row.sha256 || '').trim();
-  if (declared) return declared;
   const path = String(row.path || '').trim();
-  if (!path || !existsSync(path)) return '';
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
+  if (!path) return { hash: '', error: `${row.name || '未命名截图'} 缺少可读取的截图文件` };
+  let content;
+  try {
+    content = readFileSync(path);
+  } catch {
+    return { hash: '', error: `${row.name || '未命名截图'} 的截图文件不存在或无法读取` };
+  }
+  const hash = createHash('sha256').update(content).digest('hex');
+  if (declared && declared.toLowerCase() !== hash) {
+    return { hash, error: `${row.name || '未命名截图'} 的 sha256 与实际截图文件不一致` };
+  }
+  return { hash, error: '' };
 }
 
 export function validateVisualEvidence(catalog, manifest) {
@@ -53,13 +62,15 @@ export function validateVisualEvidence(catalog, manifest) {
   const allowedThemes = new Set(catalog.allowedThemes || ['light', 'dark']);
   const allowedViewportClasses = new Set(catalog.allowedViewportClasses || ['desktop', 'mobile']);
   const rows = Array.isArray(manifest) ? manifest : [];
+  const fileIntegrity = new Map(rows.map((row) => [row, inspectEvidenceFile(row)]));
   const seenHashes = new Set();
   const uniqueRows = [];
   const duplicateNames = [];
   const plan = buildVisualPlan(catalog);
 
   for (const row of rows) {
-    const hash = evidenceHash(row);
+    const integrity = fileIntegrity.get(row);
+    const hash = integrity?.error ? '' : integrity?.hash || '';
     if (hash && seenHashes.has(hash)) {
       duplicateNames.push(String(row.name || '未命名截图'));
       continue;
@@ -79,6 +90,11 @@ export function validateVisualEvidence(catalog, manifest) {
     const evidenceRows = [];
     for (const item of evidence) {
       const itemErrors = [];
+      const integrityError = fileIntegrity.get(item)?.error;
+      if (integrityError) {
+        fieldErrors.push(integrityError);
+        itemErrors.push(integrityError);
+      }
       for (const field of requiredFields) {
         const value = item[field];
         if (value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)) {

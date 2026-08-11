@@ -131,3 +131,7 @@
 | fix | stable-smoke | 合成登录冒烟同步从 URL fragment 读取一次性码，恢复双环境业务旅程 |
 | fix | prd-admin | 头像上传网络失败和异常响应统一转换为带恢复动作的用户可读错误 |
 | test | prd-admin/stable-smoke | 增加头像上传网络异常回归并校验合成登录 fragment 契约 |
+| fix | stable-smoke | 视觉门禁强制读取截图并核对实际哈希，缺失或篡改证据不得通过 |
+| fix | stable-smoke | 视觉结论采用自动、人工和声明结果中的最严格状态 |
+| fix | stable-smoke | 单环境主管报告将另一环境明确标记为未选择 |
+| test | stable-smoke | 增加截图完整性、视觉严格结论和单环境主管报告永久回归 |
