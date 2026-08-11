@@ -117,6 +117,8 @@
 | 23 | `SetAskConfigAsync` 里没有把「站点形态是否支持提问」写进同一次条件更新：Controller 先读一次形态、再无条件写；若这中间另一个请求把站点重传成视频，写入会把 `AskEnabled=true` 落到一个已不支持的站点上，已发出去的分享挂着必定 422 的入口 | PR #1358 第三轮 review 提出，判断成立；属并发窄窗（要两个请求交错），按两轮熔断规则记账 | 把形态判据下沉进 `SetAskConfigAsync`，与启用动作放进同一个条件更新（filter 里带上 `WrappedAssetType` 约束） |
 | 24 | 追问时面板顶部仍显示上一条回答的模型与平台，直到新的 `model` 事件到达才刷新；若新请求在此之前失败，错误的模型归属会一直留着 | PR #1358 第三轮 review 提出，判断成立；违反 `ai-model-visibility` 的「实时」要求，但不影响功能 | 每次发起提问先清空 model，或把 model 绑到单条消息而不是整个面板 |
 | 25 | 网关路由到推理型模型时，提问请求没有开上游的 reasoning 透传（`IncludeThinking=false`、body 里也没有 reasoning 开关），模型可能思考几十秒而面板只有心跳文案 | PR #1358 第四轮 review 提出，判断成立；`llm-gateway` 规则写明 OpenRouter 默认不转发 reasoning，要显式要两个字段。属体验补齐、跨模块，按熔断规则记账 | 请求体加 `include_reasoning` + `reasoning.exclude=false`，服务层 `IncludeThinking=true`，SSE 补一类 thinking 事件，前端渲染 |
+| 26 | 正文快照的文件数上限是「入口文件 + 其余 12 个」而不是「总共 12 个」：入口先单独加进去，`Take(MaxFilesPerSite)` 再取 12，实际会下载解析 13 个；且恰好在「入口 + 12」这个边界上被丢弃数算成 0，超限本身也看不出来 | PR #1358 第四轮 review 提出，判断成立。是一个有界的 off-by-one（单文件体积上限与总量上限仍然生效），不属可阻塞类别，按两轮熔断规则记账 | 选取时把入口从配额里先扣掉，丢弃数也按扣除后的余额算 |
+| 27 | 分享面板挑开场问题时用的是**大小写敏感**的去重，而后端 `AskOpeningQuestions.Normalize` 落库前按大小写不敏感去重。用户挑了只有大小写不同的两条，界面显示两条、存下去只剩一条，且不提示 | PR #1358 第四轮 review 提出，判断成立。属「设了没生效」的静默丢弃，与已修的题库上限同族，但触发要用户刻意挑大小写变体 | 前端 add / toggle / 选中态三处统一改成与后端一致的大小写不敏感比较，判定收进 `askTypes` 唯一函数 |
 
 ### 已修复（closed）
 
