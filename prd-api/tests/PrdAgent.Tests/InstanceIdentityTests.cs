@@ -34,11 +34,34 @@ public sealed class InstanceIdentityTests
         Assert.Equal("prd-agent:development::codex/example", InstanceIdentity.Get(configuration));
     }
 
+    [Fact]
+    public void GetCompatibleOwnerIds_AdoptsLegacyOwnerForTheSameFeatureBranch()
+    {
+        var configuration = BuildConfiguration("prd-agent:cds", "codex/example", "Production", cdsProjectId: "prd-agent");
+
+        Assert.Equal(
+            ["prd-agent:cds::codex/example", "codex/example"],
+            InstanceIdentity.GetCompatibleOwnerIds(configuration));
+    }
+
+    [Fact]
+    public void GetCompatibleOwnerIds_LegacyMainIsOwnedOnlyByProduction()
+    {
+        var cds = BuildConfiguration("prd-agent:cds", "main", "Production", cdsProjectId: "prd-agent");
+        var production = BuildConfiguration("prd-agent:production", "main", "Production");
+
+        Assert.Equal(["prd-agent:cds::main"], InstanceIdentity.GetCompatibleOwnerIds(cds));
+        Assert.Equal(
+            ["prd-agent:production::main", "main"],
+            InstanceIdentity.GetCompatibleOwnerIds(production));
+    }
+
     private static IConfiguration BuildConfiguration(
         string? deploymentIdentity,
         string? branch,
         string? environment,
-        string? revision = null)
+        string? revision = null,
+        string? cdsProjectId = null)
         => new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -46,6 +69,7 @@ public sealed class InstanceIdentityTests
                 ["Changelog:GitHubBranch"] = branch,
                 ["ASPNETCORE_ENVIRONMENT"] = environment,
                 ["Changelog:GitCommit"] = revision,
+                ["CDS_PROJECT_ID"] = cdsProjectId,
             })
             .Build();
 }

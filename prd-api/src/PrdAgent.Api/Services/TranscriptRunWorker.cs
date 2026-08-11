@@ -83,12 +83,13 @@ public class TranscriptRunWorker : BackgroundService
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
         var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
         var instanceId = InstanceIdentity.Get(configuration);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
 
         // CDS 的所有预览分支共用 MongoDB。只领取当前部署创建的任务，禁止其他分支
         // 或主干旧版本抢走后按不同模型协议执行。
         var scopedForCurrentInstance = Builders<TranscriptRun>.Filter.And(
             Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued),
-            Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId));
+            Builders<TranscriptRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds));
         var unownedLegacyRun = Builders<TranscriptRun>.Filter.And(
             Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.LegacyQueued),
             Builders<TranscriptRun>.Filter.Or(

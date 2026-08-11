@@ -27,11 +27,12 @@ const RECOVERY_WORDS = [
 
 const INTERNAL_DIAGNOSTIC_PATTERNS = [
   /\bHTTP\s*\d{3}\b/i,
-  /\b(?:traceId|requestId|runId|provider|offering|endpoint|token|stack|exception)\b/i,
+  /\b(?:traceId|requestId|runId|provider|offering|endpoint|model|protocol|token|stack|exception)\b/i,
   /\/api\//i,
   /<!doctype|<html|<body/i,
   /input must have at least/i,
   /unexpected token/i,
+  /failed to fetch|networkerror|load failed/i,
   /system\.(?:invalidoperation|exception)/i,
 ];
 

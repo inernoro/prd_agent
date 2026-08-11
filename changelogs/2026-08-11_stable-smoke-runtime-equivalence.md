@@ -135,3 +135,7 @@
 | fix | stable-smoke | 视觉结论采用自动、人工和声明结果中的最严格状态 |
 | fix | stable-smoke | 单环境主管报告将另一环境明确标记为未选择 |
 | test | stable-smoke | 增加截图完整性、视觉严格结论和单环境主管报告永久回归 |
+| fix | prd-admin | 头像上传与替换回调异常统一经过用户可读错误映射，屏蔽网络和模型协议诊断 |
+| fix | stable-smoke | 存活进程持有的稳定冒烟锁不再因文件年龄被误删，预检实际验证双环境主应用和网关身份 |
+| fix | prd-api | 后台任务兼容接管部署身份升级前的分支 owner，并将认领任务迁移到当前部署域 |
+| test | prd-api/prd-admin/stable-smoke | 增加旧 owner 兼容、存活锁、真实身份预检和头像异常脱敏回归测试 |

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import test from 'node:test';
 import {
+  acquireLock,
   applyCredentialRegistry,
   buildExecutionRecord,
   deployedRuntimeCommit,
@@ -13,6 +17,7 @@ import {
   resolveRuntimeExpectation,
   resolveServiceRuntimeCommits,
   validateEnvironmentConfig,
+  validateEnvironmentIdentities,
 } from '../stable-smoke-run.mjs';
 
 test('运行器帮助和预检参数不会误启动正式测试', () => {
@@ -121,6 +126,71 @@ test('凭据登记表只在环境变量缺失时读取 Keychain', () => {
   assert.equal(values.STABLE_SMOKE_CDS_USER, 'explicit-user');
   assert.equal(values.STABLE_SMOKE_CDS_AI_ACCESS_KEY, 'secret-value');
   assert.deepEqual(calls, [['cds-key', 'stable-smoke']]);
+});
+
+test('超过时限但进程仍存活的互斥锁不得被第二轮删除', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-lock-'));
+  const lockPath = resolve(directory, '.stable-smoke.lock');
+  try {
+    writeFileSync(lockPath, `${process.pid}\n`, { mode: 0o600 });
+    const old = new Date(Date.now() - 4 * 60 * 60 * 1000);
+    utimesSync(lockPath, old, old);
+
+    assert.equal(acquireLock(lockPath), false);
+    assert.equal(existsSync(lockPath), true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('预检实际验证主应用与网关身份且不泄露凭据', async () => {
+  const values = {
+    STABLE_SMOKE_CDS_BASE_URL: 'https://app.example/',
+    STABLE_SMOKE_CDS_AI_ACCESS_KEY: 'main-secret',
+    STABLE_SMOKE_CDS_USER: 'stable-smoke',
+    STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example/',
+    STABLE_SMOKE_CDS_GW_USER: 'gateway-user',
+    STABLE_SMOKE_CDS_GW_PASSWORD: 'gateway-secret',
+  };
+  const calls = [];
+  const fetchFn = async (url, options) => {
+    calls.push({ url, options });
+    if (String(url).endsWith('/api/v1/auth/synthetic/ticket')) {
+      return { ok: true, json: async () => ({ success: true, data: { loginUrl: '/synthetic-login#code=test' } }) };
+    }
+    return { ok: true, json: async () => ({ success: true, data: { token: 'token', mustChangePassword: false } }) };
+  };
+
+  assert.deepEqual(await validateEnvironmentIdentities('cds', values, fetchFn), []);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://app.example/api/v1/auth/synthetic/ticket');
+  assert.equal(calls[1].url, 'https://gateway.example/gw/auth/login');
+  assert.equal(calls[0].options.headers['X-AI-Access-Key'], 'main-secret');
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    username: 'gateway-user',
+    password: 'gateway-secret',
+  });
+});
+
+test('预检身份失败只返回审核人可读阻塞项', async () => {
+  const values = {
+    STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net',
+    STABLE_SMOKE_PROD_AI_ACCESS_KEY: 'main-secret',
+    STABLE_SMOKE_PROD_USER: 'stable-smoke',
+    STABLE_SMOKE_PROD_GW_BASE_URL: 'https://gateway.example',
+    STABLE_SMOKE_PROD_GW_USER: 'gateway-user',
+    STABLE_SMOKE_PROD_GW_PASSWORD: 'gateway-secret',
+  };
+  const fetchFn = async (url) => String(url).includes('/synthetic/ticket')
+    ? { ok: false, json: async () => ({ error: { message: 'HTTP 401 provider token' } }) }
+    : { ok: true, json: async () => ({ success: true, data: { token: '', mustChangePassword: true } }) };
+
+  const blockers = await validateEnvironmentIdentities('production', values, fetchFn);
+  assert.deepEqual(blockers, [
+    '正式环境主应用自动化身份校验未通过',
+    '正式环境模型网关自动化身份校验未通过',
+  ]);
+  assert.doesNotMatch(blockers.join(' '), /HTTP|provider|token|secret|gateway-user/i);
 });
 
 test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移', () => {

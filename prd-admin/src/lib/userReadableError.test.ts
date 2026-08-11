@@ -55,4 +55,16 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('当前账号没有执行此操作的权限，请联系管理员开通后重试。');
     expect(message).not.toContain('重新登录');
   });
+
+  it('屏蔽浏览器网络错误和模型协议诊断', () => {
+    const networkMessage = toUserReadableErrorMessage(new TypeError('Failed to fetch'), options);
+    const protocolMessage = toUserReadableErrorMessage(
+      new Error('HTTP 502 provider image model protocol mismatch'),
+      options,
+    );
+
+    expect(networkMessage).toBe('文件上传未完成，请检查文件后重新上传。');
+    expect(protocolMessage).toBe('文件上传未完成，请检查文件后重新上传。');
+    expect(`${networkMessage} ${protocolMessage}`).not.toMatch(/fetch|HTTP|provider|model|protocol/i);
+  });
 });

@@ -5256,6 +5256,7 @@ public class DocumentStoreController : ControllerBase
         // 按 UserId 过滤：GetAgentRun / StreamAgentRun 都要求 run.UserId == 调用者，
         // 团队库里复用别人创建的 run 会让调用者立刻 404 丢失状态/SSE（Codex P2）。
         var selfInstanceId = InstanceIdentity.Get(_config);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(_config);
 
         // 归一化本次请求的整理方式：仅当在途 run 的风格与本次完全一致才复用，否则新建。
         // 否则「后台跑默认转录时点会议纪要快捷键」会复用默认 run，笔记出错风格（Codex P2）。
@@ -5301,7 +5302,7 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
                 styleMatch,
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
             return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
@@ -5825,6 +5826,7 @@ public class DocumentStoreController : ControllerBase
         // 团队库另一成员若复用到别人的 runId 会立刻 404 无法跟进度（Codex P2）；
         // 任务幂等，两个成员同时发起各跑一遍无害（第二遍 linksAdded=0）。
         var selfInstanceId = InstanceIdentity.Get(_config);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(_config);
 
         // (1) 原子认领历史无主的 queued run（仅认领自己发起的）
         var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
@@ -5849,7 +5851,7 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.AutoLink),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
             return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));

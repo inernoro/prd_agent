@@ -68,11 +68,13 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             // 容器退出后永远没人回收、永卡 running。一并回收是一次性过渡兜底（上线后新 run
             // 认领即打主，不再产生无主 running）。代价：若另一实例此刻在跑某个无主 running 会被
             // 误判失败——但无主 = 旧代码遗留，归属本不可分辨，过渡期代价可接受（Bugbot Medium）。
-            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var instanceId = InstanceIdentity.Get(configuration);
+            var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
             var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
                 Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
                     Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
@@ -103,7 +105,9 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var instanceId = InstanceIdentity.Get(configuration);
+            var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
             var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
             var current = _currentRunId ?? "";
             var filter = Builders<ShortVideoMaterialRun>.Filter.And(
@@ -111,7 +115,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
                 Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
                     Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
             var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
@@ -155,12 +159,14 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         var processor = scope.ServiceProvider.GetRequiredService<ShortVideoMaterialProcessor>();
 
         // 定向消费：只领取属于本实例（或历史无主）的 queued 任务，避免共享 Mongo 下多容器互抢。
-        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var instanceId = InstanceIdentity.Get(configuration);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
             Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
                 Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<ShortVideoMaterialRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
                     Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
             Builders<ShortVideoMaterialRun>.Update

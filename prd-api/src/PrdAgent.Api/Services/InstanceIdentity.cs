@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -19,6 +20,22 @@ public static class InstanceIdentity
         var environment = Normalize(config["ASPNETCORE_ENVIRONMENT"], "unknown").ToLowerInvariant();
         var deploymentIdentity = Normalize(config["Deployment:Identity"], $"prd-agent:{environment}");
         return $"{deploymentIdentity}::{branch}";
+    }
+
+    /// <summary>
+    /// 返回当前部署可兼容接管的 owner。部署域上线前 owner 只有分支名；非 main 分支
+    /// 可由同分支新 Worker 原子迁移，legacy main 因 CDS 与正式环境历史共名，只允许
+    /// 非 CDS 的权威部署接管，避免两个环境争抢共享 Mongo 中的同一批任务。
+    /// </summary>
+    public static IReadOnlyList<string> GetCompatibleOwnerIds(IConfiguration config)
+    {
+        var current = Get(config);
+        var legacyBranch = Normalize(config["Changelog:GitHubBranch"], "main");
+        var canAdoptLegacy = !legacyBranch.Equals("main", StringComparison.OrdinalIgnoreCase)
+                             || !DeploymentAuthority.IsCdsBranchPreview(config);
+        return canAdoptLegacy && !legacyBranch.Equals(current, StringComparison.Ordinal)
+            ? [current, legacyBranch]
+            : [current];
     }
 
     private static string Normalize(string? value, string fallback)

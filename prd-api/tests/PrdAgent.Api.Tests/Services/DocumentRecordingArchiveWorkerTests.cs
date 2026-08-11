@@ -401,6 +401,32 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task ArchiveClaim_ShouldMigrateCompatibleLegacyOwnerToCurrentDeployment()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        const string legacyOwner = "codex/example";
+        const string currentOwner = "prd-agent:cds::codex/example";
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            Session("legacy-owner-session", legacyOwner, DocumentRecordingArchiveStatus.Pending));
+
+        var claimed = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            currentOwner,
+            "current-lease",
+            DateTime.UtcNow,
+            CancellationToken.None,
+            [currentOwner, legacyOwner]);
+
+        claimed.ShouldNotBeNull();
+        claimed!.OwnerInstanceId.ShouldBe(currentOwner);
+        claimed.ArchiveLeaseId.ShouldBe("current-lease");
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(session => session.Id == claimed.Id)
+                .SingleAsync())
+            .OwnerInstanceId.ShouldBe(currentOwner);
+    }
+
+    [Fact]
     public async Task LegacyUnownedArchive_ShouldBeAdoptedByOnlyOneExplicitRequester()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();

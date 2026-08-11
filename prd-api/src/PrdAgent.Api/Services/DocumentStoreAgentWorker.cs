@@ -46,7 +46,9 @@ public class DocumentStoreAgentWorker : BackgroundService
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             // 只回收【本实例】残留的 Running——共享 Mongo 下，不能把别的分支/主干正在处理的
             // Running 任务误判成"崩溃残留"标记失败（定向消费，见 InstanceIdentity）。
-            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var instanceId = InstanceIdentity.Get(configuration);
+            var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
             // 回收范围 = 本实例 Running + 历史无主 Running（OwnerInstanceId 空）。
             // 无主 Running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
             // 这些 run 的容器一旦退出就永远没人回收、永远卡 running。把无主 Running 一并
@@ -56,7 +58,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             var recoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Running),
                 Builders<DocumentStoreAgentRun>.Filter.Or(
-                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                    Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
             var automaticRetryBudgetFilter = DocumentRecordingArchiveWorker
@@ -181,7 +183,9 @@ public class DocumentStoreAgentWorker : BackgroundService
 
         // 原子拾取一个 queued 任务（按创建时间）——定向消费：只领取属于本实例的任务，
         // 外加历史无主（OwnerInstanceId 空）的任务做兼容，避免共享 Mongo 下多容器互抢（见 InstanceIdentity）。
-        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var instanceId = InstanceIdentity.Get(configuration);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
         var filter = Builders<DocumentStoreAgentRun>.Filter.And(
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
             Builders<DocumentStoreAgentRun>.Filter.Or(
@@ -192,7 +196,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                     r => r.AutomaticRetryNextAt,
                     DateTime.UtcNow)),
             Builders<DocumentStoreAgentRun>.Filter.Or(
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
         var update = Builders<DocumentStoreAgentRun>.Update

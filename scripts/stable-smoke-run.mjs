@@ -152,6 +152,65 @@ export function validateEnvironmentConfig(name, values) {
   return errors;
 }
 
+function withoutTrailingSlash(value) {
+  return String(value || '').replace(/\/+$/, '');
+}
+
+export async function validateEnvironmentIdentities(environment, values, fetchFn = globalThis.fetch) {
+  const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
+  const label = environment === 'cds' ? 'CDS 环境' : '正式环境';
+  const blockers = [];
+  const requestOptions = { signal: AbortSignal.timeout(10_000) };
+
+  try {
+    const response = await fetchFn(
+      `${withoutTrailingSlash(values[`${prefix}_BASE_URL`])}/api/v1/auth/synthetic/ticket`,
+      {
+        ...requestOptions,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-AI-Access-Key': values[`${prefix}_AI_ACCESS_KEY`],
+          'X-AI-Impersonate': values[`${prefix}_USER`],
+        },
+        body: JSON.stringify({ returnUrl: '/', expiresInSeconds: 60 }),
+      },
+    );
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.success !== true || !payload?.data?.loginUrl) {
+      blockers.push(`${label}主应用自动化身份校验未通过`);
+    }
+  } catch {
+    blockers.push(`${label}主应用自动化身份无法连接`);
+  }
+
+  try {
+    const response = await fetchFn(
+      `${withoutTrailingSlash(values[`${prefix}_GW_BASE_URL`])}/gw/auth/login`,
+      {
+        ...requestOptions,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: values[`${prefix}_GW_USER`],
+          password: values[`${prefix}_GW_PASSWORD`],
+        }),
+      },
+    );
+    const payload = await response.json().catch(() => null);
+    if (!response.ok
+      || payload?.success !== true
+      || !payload?.data?.token
+      || payload?.data?.mustChangePassword !== false) {
+      blockers.push(`${label}模型网关自动化身份校验未通过`);
+    }
+  } catch {
+    blockers.push(`${label}模型网关自动化身份无法连接`);
+  }
+
+  return blockers;
+}
+
 const validationOnlyPrefixes = [
   '.agents/skills/',
   '.claude/skills/create-visual-test-to-kb/',
@@ -378,7 +437,7 @@ function buildRunId() {
   return `stsmk-${stamp}-${suffix}`;
 }
 
-function acquireLock(lockPath) {
+export function acquireLock(lockPath) {
   if (existsSync(lockPath)) {
     let stale = Date.now() - statSync(lockPath).mtimeMs > 3 * 60 * 60 * 1000;
     try {
@@ -387,8 +446,9 @@ function acquireLock(lockPath) {
       else {
         try {
           process.kill(pid, 0);
+          stale = false;
         } catch (error) {
-          if (error?.code === 'ESRCH') stale = true;
+          stale = error?.code === 'ESRCH';
         }
       }
     } catch {
@@ -453,6 +513,11 @@ async function main() {
     if (missing.length > 0) preflightBlockers.push(`${environment === 'cds' ? 'CDS 环境' : '正式环境'}缺少：${missing.join('、')}`);
   }
   if (options.has('--preflight')) {
+    for (const environment of selected) {
+      if (validateEnvironmentConfig(environment, values).length === 0) {
+        preflightBlockers.push(...await validateEnvironmentIdentities(environment, values));
+      }
+    }
     if (selected.includes('cds')
       && cdsAddressBlockers.length === 0
       && validateEnvironmentConfig('cds', values).length === 0) {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ImagePlus, RefreshCw, Upload, Wand2 } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -151,7 +152,10 @@ export function AvatarEditDialog(props: {
       await props.onSave(fileName);
       closeDialog();
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : '上传失败');
+      setError(toUserReadableErrorMessage(uploadError, {
+        fallbackMessage: '头像上传未完成',
+        recoveryMessage: '请检查图片和网络后重新上传。',
+      }));
     } finally {
       setUploading(false);
     }
@@ -213,7 +217,10 @@ export function AvatarEditDialog(props: {
       await props.onSave(fileName);
       closeDialog();
     } catch (applyError) {
-      setError(applyError instanceof Error ? applyError.message : '替换头像失败');
+      setError(toUserReadableErrorMessage(applyError, {
+        fallbackMessage: '头像替换未完成',
+        recoveryMessage: '请稍后重试。',
+      }));
     } finally {
       setUploading(false);
     }
