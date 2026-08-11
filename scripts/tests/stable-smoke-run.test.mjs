@@ -9,6 +9,7 @@ import {
   buildExecutionRecord,
   buildLockedRunSummary,
   buildUnhandledFailureSummary,
+  canReuseVisualPlan,
   deliverLockedRun,
   deliverUnhandledFailure,
   deployedRuntimeCommit,
@@ -46,6 +47,22 @@ test('运行器拒绝未知参数、缺值和冲突环境', () => {
   assert.throws(() => parseRunnerArgs(['--unknown']), /不支持的参数/);
   assert.throws(() => parseRunnerArgs(['--grep']), /必须提供值/);
   assert.throws(() => parseRunnerArgs(['--cds-only', '--production-only']), /不能同时使用/);
+});
+
+test('同一运行和提交可以复用既有视觉计划继续补证', () => {
+  const plan = {
+    schemaVersion: '3.0',
+    runId: 'stsmk-current',
+    commit: 'a'.repeat(40),
+    captureStartedAt: '2026-08-11T14:00:00.000Z',
+    environments: ['cds', 'production'],
+    slots: [{ slotId: 'CDS-VISUAL-IDENTITY-01' }],
+  };
+  const identity = { runId: 'stsmk-current', commit: 'a'.repeat(40), environments: ['cds', 'production'] };
+  assert.equal(canReuseVisualPlan(plan, identity), true);
+  assert.equal(canReuseVisualPlan({ ...plan, runId: 'stsmk-old' }, identity), false);
+  assert.equal(canReuseVisualPlan({ ...plan, commit: 'b'.repeat(40) }, identity), false);
+  assert.equal(canReuseVisualPlan({ ...plan, environments: ['cds'] }, identity), false);
 });
 
 test('执行结果使用审核人可读状态且不被进程退出码覆盖', () => {
@@ -162,6 +179,10 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   const verifyOpenSource = readFileSync('.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs', 'utf8');
   assert.match(source, /scripts\/stable-smoke-visual-plan\.mjs/);
   assert.match(source, /scripts\/stable-smoke-visual-gate\.mjs/);
+  assert.match(source, /'--run-id', runId/);
+  assert.match(source, /'--commit', values\.STABLE_SMOKE_COMMIT/);
+  assert.match(source, /'--capture-started-at', visualCaptureStartedAt/);
+  assert.match(source, /'--plan', visualPlanPath/);
   assert.match(source, /buildReportVerificationArgs/);
   assert.match(verifyOpenSource, /requiredTexts\.every/);
   assert.match(source, /scripts\/compose-stable-smoke-supervisor-report\.mjs/);

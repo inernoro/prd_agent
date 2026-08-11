@@ -202,6 +202,9 @@
 | test | stable-smoke | 增加 e2e 路径复用已验证业务镜像的版本门禁覆盖 |
 | fix | prd-admin | 头像生成图片失效时保留业务错误码并明确引导用户重新生成预览 |
 | test | prd-admin | 增加生成图片失效恢复文案与头像编辑器错误码传递回归覆盖 |
+| fix | stable-smoke | 将每张视觉证据绑定本轮运行标识、待验收提交与采集时间，拒绝复用历史截图通过门禁 |
+| test | stable-smoke | 增加视觉证据跨运行、跨提交和早于取证窗口的永久回归覆盖 |
+| fix | create-visual-test-to-kb | 浏览器取证清单自动记录运行标识、提交版本和截图采集时间 |
 | fix | stable-smoke | 按仓库真实大小写识别 .Codex 规则目录，避免 Linux 上规则变更误阻塞版本等价 |
 | test | stable-smoke | 增加 .Codex 规则路径大小写敏感回归覆盖 |
 | fix | stable-smoke | CDS 主应用与模型网关按权威入口顺序解析，禁止根据域名文本猜测服务类型 |

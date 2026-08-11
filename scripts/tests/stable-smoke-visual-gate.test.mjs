@@ -6,11 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { renderVisualGateReport, renderVisualTechnicalAppendix, validateVisualEvidence } from '../stable-smoke-visual-gate.mjs';
+import { buildVisualPlan } from '../stable-smoke-visual-plan.mjs';
 
 const catalog = {
   statusVocabulary: ['通过', '不通过', '部分通过', '未执行', '需干预'],
   allowedTestTypes: ['冒烟', '功能', '视觉', '回归'],
-  evidenceItemRequiredFields: ['slotId', 'primaryState', 'coverageStates', 'testType', 'status', 'theme', 'viewportClass', 'methodAnchor', 'breadcrumb', 'path'],
+  evidenceItemRequiredFields: ['runId', 'commit', 'capturedAt', 'slotId', 'primaryState', 'coverageStates', 'testType', 'status', 'theme', 'viewportClass', 'methodAnchor', 'breadcrumb', 'path'],
   allowedThemes: ['light', 'dark'],
   allowedViewportClasses: ['desktop', 'mobile'],
   uniqueScreenshotFloor: 2,
@@ -80,6 +81,9 @@ function evidence(overrides = {}) {
   return {
     name: '入口图',
     module: '视觉创作',
+    runId: 'stsmk-current',
+    commit: 'a'.repeat(40),
+    capturedAt: '2026-08-11T14:00:30.000Z',
     slotId: 'VISUAL-VISUAL-01',
     sha256,
     primaryState: '入口',
@@ -200,6 +204,28 @@ test('数量、状态、路径和方法全部绑定后才通过', () => {
   ]);
   assert.equal(result.verdict, '通过');
   assert.equal(result.modules[0].coveredStateCount, 2);
+});
+
+test('视觉证据必须绑定本轮运行、提交和取证时间', () => {
+  const plan = buildVisualPlan(catalog, [], {
+    runId: 'stsmk-current',
+    commit: 'a'.repeat(40),
+    captureStartedAt: '2026-08-11T14:00:00.000Z',
+  });
+  const valid = validateVisualEvidence(catalog, [
+    evidence({ name: '入口图', sha256: 'current-entry' }),
+    evidence({ name: '结果图', sha256: 'current-result', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ], [], plan, new Date('2026-08-11T14:05:00.000Z'));
+  assert.equal(valid.verdict, '通过');
+  assert.equal(valid.schemaVersion, '3.0');
+
+  const stale = validateVisualEvidence(catalog, [
+    evidence({ name: '旧运行入口', sha256: 'stale-entry', runId: 'stsmk-old', capturedAt: '2026-08-11T13:59:59.000Z' }),
+    evidence({ name: '错误提交结果', sha256: 'wrong-commit', commit: 'b'.repeat(40), slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ], [], plan, new Date('2026-08-11T14:05:00.000Z'));
+  assert.equal(stale.verdict, '不通过');
+  assert.equal(stale.screenshotCount, 0);
+  assert.match(stale.modules[0].fieldErrors.join('；'), /runId|commit|capturedAt/);
 });
 
 test('缺少自动检查或人工视觉结论时不得通过视觉门禁', () => {

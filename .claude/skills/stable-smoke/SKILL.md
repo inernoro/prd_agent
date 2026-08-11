@@ -159,11 +159,11 @@ Stable Smoke Progress:
 视觉证据归档前必须执行：
 
 ```text
-node scripts/stable-smoke-visual-plan.mjs --output-json <visual-plan.json> --output-md <visual-plan.md>
-node scripts/stable-smoke-visual-gate.mjs --manifest <manifest.json> --output-json <visual-gate.json> --output-md <visual-gate.md>
+node scripts/stable-smoke-visual-plan.mjs --output-json <visual-plan.json> --output-md <visual-plan.md> --run-id <runId> --commit <commit> --capture-started-at <ISO时间>
+node scripts/stable-smoke-visual-gate.mjs --plan <visual-plan.json> --manifest <manifest.json> --output-json <visual-gate.json> --output-md <visual-gate.md>
 ```
 
-先生成 148 条逐项取证任务，再由浏览器取证逐行核销。门禁非零退出时，主管报告必须把对应模块标为“不通过 / 部分通过 / 未执行 / 需干预”，不得用采集文件数量覆盖关键状态缺口。合并报告时必须把 `visual-gate.md` 的模块覆盖、逐张视觉证据账本和视觉测试方法一并写入主管报告。
+先生成 148 条逐项取证任务，再由浏览器取证逐行核销。每张截图必须从取证 harness 自动写入与视觉计划一致的 `runId`、`commit` 和 `capturedAt`；旧运行、旧提交、早于本轮取证起点或未来时间的截图不得计入。需要在首轮报告后补齐真人证据时，使用相同 `--run-id` 复跑，运行器会在提交与环境均未变化时保留原视觉计划和取证起点；提交或环境变化时必须开启新一轮。门禁非零退出时，主管报告必须把对应模块标为“不通过 / 部分通过 / 未执行 / 需干预”，不得用采集文件数量覆盖关键状态缺口。合并报告时必须把 `visual-gate.md` 的模块覆盖、逐张视觉证据账本和视觉测试方法一并写入主管报告。
 
 ```markdown
 # 稳定冒烟报告 · {runId}

@@ -60,6 +60,9 @@ test('复制后的截图继承原始取证清单中的真实移动端元数据',
   writeFileSync(join(sourceDir, 'manifest.json'), JSON.stringify([{
     name: 'mobile-state',
     path: sourceScreenshot,
+    runId: 'stsmk-current',
+    commit: 'a'.repeat(40),
+    capturedAt: '2026-08-11T14:00:30.000Z',
     annotated: true,
     viewport: { width: 390, height: 664 },
     touchPoints: 1,
@@ -89,6 +92,9 @@ test('复制后的截图继承原始取证清单中的真实移动端元数据',
     assert.equal(row.mobilePathId, 'visual-mobile');
     assert.equal(row.mobileStage, 'result');
     assert.equal(row.environment, 'production');
+    assert.equal(row.runId, 'stsmk-current');
+    assert.equal(row.commit, 'a'.repeat(40));
+    assert.equal(row.capturedAt, '2026-08-11T14:00:30.000Z');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

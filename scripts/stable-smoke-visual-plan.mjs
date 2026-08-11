@@ -34,7 +34,7 @@ function environmentLabel(environment) {
   return environment === 'cds' ? 'CDS 环境' : '正式环境';
 }
 
-export function buildVisualPlan(catalog, requestedEnvironments = []) {
+export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity = {}) {
   const environments = normalizeVisualEnvironments(requestedEnvironments);
   const planEnvironments = environments.length > 0 ? environments : [''];
   const slots = [];
@@ -94,10 +94,17 @@ export function buildVisualPlan(catalog, requestedEnvironments = []) {
   if (slots.length !== expectedFloor || slots.length !== expectedTarget) {
     throw new Error(`视觉计划共 ${slots.length} 项，与双环境展开后的全局下限 ${expectedFloor} 或计划 ${expectedTarget} 不一致`);
   }
+  const runId = String(runIdentity.runId || '').trim();
+  const commit = String(runIdentity.commit || '').trim();
+  const captureStartedAt = String(runIdentity.captureStartedAt || '').trim();
+  const hasRunIdentity = Boolean(runId && commit && captureStartedAt);
   return {
-    schemaVersion: environments.length > 0 ? '2.0' : '1.0',
+    schemaVersion: hasRunIdentity ? '3.0' : environments.length > 0 ? '2.0' : '1.0',
     name: catalog.name,
     environments,
+    runId: runId || undefined,
+    commit: commit || undefined,
+    captureStartedAt: captureStartedAt || undefined,
     plannedScreenshotTarget: slots.length,
     modules: (catalog.modules || []).map((module) => ({
       id: module.id,
@@ -113,6 +120,12 @@ export function renderVisualPlan(plan) {
   const lines = [
     '# 核心业务视觉取证执行清单',
     '',
+    ...(plan.runId ? [
+      `运行标识：${plan.runId}`,
+      `提交版本：${plan.commit}`,
+      `取证开始：${plan.captureStartedAt}`,
+      '',
+    ] : []),
     `计划：${plan.plannedScreenshotTarget} 张可审核证据。每一行必须得到一张唯一截图或明确标为不通过、未执行；不得合并核销。`,
     '',
     '## 主管覆盖摘要',
@@ -145,7 +158,11 @@ async function main() {
   const argv = process.argv.slice(2);
   const catalog = JSON.parse(readFileSync(resolve(readArg(argv, '--catalog', DEFAULT_CATALOG)), 'utf8'));
   const environments = normalizeVisualEnvironments(readArg(argv, '--environments'));
-  const plan = buildVisualPlan(catalog, environments);
+  const plan = buildVisualPlan(catalog, environments, {
+    runId: readArg(argv, '--run-id'),
+    commit: readArg(argv, '--commit'),
+    captureStartedAt: readArg(argv, '--capture-started-at'),
+  });
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
   if (outputJson) writeFileSync(resolve(outputJson), `${JSON.stringify(plan, null, 2)}\n`, 'utf8');

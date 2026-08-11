@@ -450,6 +450,7 @@ function runPlaywright(environment, values, runDir, grep = '') {
     STABLE_SMOKE_GW_USER: values[`${prefix}_GW_USER`] || '',
     STABLE_SMOKE_GW_PASSWORD: values[`${prefix}_GW_PASSWORD`] || '',
     STABLE_SMOKE_RUN_ID: values.STABLE_SMOKE_RUN_ID,
+    STABLE_SMOKE_COMMIT: values.STABLE_SMOKE_COMMIT,
     STABLE_SMOKE_RUN: '1',
     STABLE_SMOKE_JSON_OUTPUT: resultPath,
     STABLE_SMOKE_HTML_OUTPUT: htmlPath,
@@ -470,6 +471,17 @@ export function buildExecutionRecord(environment, execution) {
     status: execution.status === 0 ? 'executed' : 'failed',
     missing: [],
   };
+}
+
+export function canReuseVisualPlan(plan, { runId, commit, environments }) {
+  const expectedEnvironments = [...environments].sort();
+  const actualEnvironments = Array.isArray(plan?.environments) ? [...plan.environments].sort() : [];
+  return plan?.schemaVersion === '3.0'
+    && String(plan.runId || '') === String(runId || '')
+    && String(plan.commit || '') === String(commit || '')
+    && Number.isFinite(Date.parse(String(plan.captureStartedAt || '')))
+    && plan.slots?.length > 0
+    && JSON.stringify(actualEnvironments) === JSON.stringify(expectedEnvironments);
 }
 
 export function enforceExecutionVerdict(summary, executions) {
@@ -933,14 +945,26 @@ async function main() {
     ]);
     if (planResult.status !== 0) throw new Error('稳定冒烟计划生成失败，请检查业务功能台账和未映射变更');
     const plan = readJson(planPath);
+    values.STABLE_SMOKE_COMMIT = String(plan?.commit || '').trim();
+    if (!values.STABLE_SMOKE_COMMIT) throw new Error('稳定冒烟计划缺少待验收提交，拒绝生成无版本绑定的视觉证据');
 
     const visualPlanPath = resolve(runDir, 'visual-plan.json');
     const visualPlanMarkdownPath = resolve(runDir, 'visual-plan.md');
-    const visualPlanResult = command('node', [
+    const existingVisualPlan = readJson(visualPlanPath);
+    const reuseVisualPlan = existsSync(visualPlanMarkdownPath) && canReuseVisualPlan(existingVisualPlan, {
+      runId,
+      commit: values.STABLE_SMOKE_COMMIT,
+      environments: selected,
+    });
+    const visualCaptureStartedAt = new Date().toISOString();
+    const visualPlanResult = reuseVisualPlan ? { status: 0 } : command('node', [
       'scripts/stable-smoke-visual-plan.mjs',
       '--output-json', visualPlanPath,
       '--output-md', visualPlanMarkdownPath,
       '--environments', selected.join(','),
+      '--run-id', runId,
+      '--commit', values.STABLE_SMOKE_COMMIT,
+      '--capture-started-at', visualCaptureStartedAt,
     ]);
     if (visualPlanResult.status !== 0) throw new Error('视觉取证计划生成失败，拒绝发布无逐项证据的报告');
 
@@ -1004,6 +1028,7 @@ async function main() {
     const visualGateExecution = command('node', [
       'scripts/stable-smoke-visual-gate.mjs',
       '--manifest', visualManifestPath,
+      '--plan', visualPlanPath,
       '--output-json', visualGatePath,
       '--output-md', visualGateMarkdownPath,
       '--output-technical-md', visualTechnicalPath,

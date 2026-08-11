@@ -6,6 +6,7 @@ import { inflateSync } from 'node:zlib';
 import { buildVisualPlan, normalizeVisualEnvironments } from './stable-smoke-visual-plan.mjs';
 
 const DEFAULT_CATALOG = '.claude/skills/stable-smoke/reference/visual-evidence-catalog.json';
+const MAX_CAPTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function readArg(argv, name, fallback = '') {
   const index = argv.indexOf(name);
@@ -161,7 +162,13 @@ function inspectEvidenceFile(row) {
   return { hash, error: '' };
 }
 
-export function validateVisualEvidence(catalog, manifest, requestedEnvironments = []) {
+export function validateVisualEvidence(
+  catalog,
+  manifest,
+  requestedEnvironments = [],
+  expectedPlan = null,
+  validationNow = new Date(),
+) {
   const environments = normalizeVisualEnvironments(requestedEnvironments);
   const requiredFields = [...(catalog.evidenceItemRequiredFields || [
     'coverageStates',
@@ -183,7 +190,12 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
   const seenHashes = new Set();
   const uniqueRows = [];
   const duplicateNames = [];
-  const plan = buildVisualPlan(catalog, environments);
+  const plan = expectedPlan || buildVisualPlan(catalog, environments);
+  const expectedRunId = String(plan.runId || '').trim();
+  const expectedCommit = String(plan.commit || '').trim();
+  const captureStartedAt = String(plan.captureStartedAt || '').trim();
+  const captureStartedAtMs = Date.parse(captureStartedAt);
+  const validationNowMs = validationNow instanceof Date ? validationNow.getTime() : Date.parse(validationNow);
 
   for (const row of rows) {
     const integrity = fileIntegrity.get(row);
@@ -226,7 +238,34 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
       const primaryState = String(item.primaryState || '').trim();
       const evidenceEnvironment = String(item.environment || '').trim();
       const evidenceSlotId = String(item.slotId || '').trim();
+      const evidenceRunId = String(item.runId || '').trim();
+      const evidenceCommit = String(item.commit || '').trim();
+      const capturedAt = String(item.capturedAt || '').trim();
+      const capturedAtMs = Date.parse(capturedAt);
       const plannedSlot = plannedSlotById.get(evidenceSlotId);
+      if (expectedRunId && evidenceRunId && evidenceRunId !== expectedRunId) {
+        const message = `${item.name || '未命名截图'} 的 runId 不属于本轮视觉计划`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      }
+      if (expectedCommit && evidenceCommit && evidenceCommit !== expectedCommit) {
+        const message = `${item.name || '未命名截图'} 的 commit 不属于本轮待验收版本`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      }
+      if (capturedAt && !Number.isFinite(capturedAtMs)) {
+        const message = `${item.name || '未命名截图'} 的 capturedAt 不是有效时间`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      } else if (capturedAt && Number.isFinite(captureStartedAtMs) && capturedAtMs < captureStartedAtMs) {
+        const message = `${item.name || '未命名截图'} 的 capturedAt 早于本轮取证开始时间`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      } else if (capturedAt && Number.isFinite(validationNowMs) && capturedAtMs > validationNowMs + MAX_CAPTURE_CLOCK_SKEW_MS) {
+        const message = `${item.name || '未命名截图'} 的 capturedAt 晚于当前时间，无法作为本轮证据`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      }
       if (environments.length > 0 && evidenceEnvironment && !environments.includes(evidenceEnvironment)) {
         const message = `${item.name || '未命名截图'} 的 environment 不在本轮验收环境中`;
         fieldErrors.push(message);
@@ -321,6 +360,9 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
         slotId: evidenceSlotId || '未绑定',
         scenario: plannedSlot?.scenario || '未绑定',
         name: item.name || '未命名截图',
+        runId: evidenceRunId,
+        commit: evidenceCommit,
+        capturedAt,
         environment: evidenceEnvironment,
         caption: item.caption || '未说明证明内容',
         coverageStates: states,
@@ -425,8 +467,11 @@ export function validateVisualEvidence(catalog, manifest, requestedEnvironments 
       .map((status) => [status, allQualifiedEvidence.filter((item) => item.status === status).length]),
   );
   return {
-    schemaVersion: environments.length > 0 ? '2.0' : '1.0',
+    schemaVersion: expectedRunId && expectedCommit && captureStartedAt ? '3.0' : environments.length > 0 ? '2.0' : '1.0',
     environments,
+    runId: expectedRunId || undefined,
+    commit: expectedCommit || undefined,
+    captureStartedAt: captureStartedAt || undefined,
     verdict: blockingModules.length === 0 && duplicateNames.length === 0 ? '通过' : '不通过',
     screenshotFloor: catalog.uniqueScreenshotFloor
       ? catalog.uniqueScreenshotFloor * (environments.length > 0 ? environments.length : 1)
@@ -603,10 +648,16 @@ async function main() {
   const catalogPath = resolve(readArg(argv, '--catalog', DEFAULT_CATALOG));
   const manifestPath = readArg(argv, '--manifest');
   if (!manifestPath) throw new Error('必须提供 --manifest <截图清单>');
+  const planPath = readArg(argv, '--plan');
+  if (!planPath) throw new Error('必须提供 --plan <本轮视觉计划>');
   const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
   const manifest = JSON.parse(readFileSync(resolve(manifestPath), 'utf8'));
+  const plan = JSON.parse(readFileSync(resolve(planPath), 'utf8'));
+  if (!plan.runId || !plan.commit || !plan.captureStartedAt || !Number.isFinite(Date.parse(plan.captureStartedAt))) {
+    throw new Error('本轮视觉计划缺少有效的 runId、commit 或 captureStartedAt，拒绝复用旧证据');
+  }
   const environments = normalizeVisualEnvironments(readArg(argv, '--environments'));
-  const result = validateVisualEvidence(catalog, manifest, environments);
+  const result = validateVisualEvidence(catalog, manifest, environments, plan);
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
   const outputTechnicalMd = readArg(argv, '--output-technical-md');

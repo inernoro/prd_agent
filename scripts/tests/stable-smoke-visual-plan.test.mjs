@@ -24,6 +24,21 @@ test('双环境视觉计划展开为296个互不复用的环境验收位', () =>
   assert.ok(plan.slots.every((slot) => slot.slotId.startsWith(`${slot.environment.toUpperCase()}-VISUAL-`)));
 });
 
+test('本轮视觉计划固化运行标识、提交和取证开始时间', () => {
+  const plan = buildVisualPlan(catalog, ['cds'], {
+    runId: 'stsmk-20260811',
+    commit: 'a'.repeat(40),
+    captureStartedAt: '2026-08-11T14:00:00.000Z',
+  });
+  assert.equal(plan.schemaVersion, '3.0');
+  assert.equal(plan.runId, 'stsmk-20260811');
+  assert.equal(plan.commit, 'a'.repeat(40));
+  assert.equal(plan.captureStartedAt, '2026-08-11T14:00:00.000Z');
+  const report = renderVisualPlan(plan);
+  assert.match(report, /运行标识：stsmk-20260811/);
+  assert.match(report, /取证开始：2026-08-11T14:00:00.000Z/);
+});
+
 test('单图和多图视觉各有18条且覆盖产品主题与双设备', () => {
   const plan = buildVisualPlan(catalog);
   for (const moduleId of ['single-image-creation', 'multi-image-creation']) {

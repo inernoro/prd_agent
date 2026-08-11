@@ -52,6 +52,9 @@ export function normalizeVisualLedger(rows) {
     return {
       name: screenshotName(row, index),
       module: row.module,
+      runId: row.runId || sourceEvidence.runId,
+      commit: row.commit || sourceEvidence.commit,
+      capturedAt: row.capturedAt || sourceEvidence.capturedAt,
       slotId: row.slotId,
       primaryState,
       coverageStates: primaryState ? [primaryState] : [],

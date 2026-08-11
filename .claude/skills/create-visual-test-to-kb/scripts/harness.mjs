@@ -530,6 +530,8 @@ async function validateShot(page, path, expectText, allowBlockingOverlay = false
  *   - methodAnchor: 报告内关联测试方法锚点
  *   - breadcrumb: 从入口到当前状态的真实页面操作路径
  *   - environment: cds 或 production；不传时继承 launch/createMobileContext 的同名选项
+ *   - runId: 本轮稳定冒烟运行标识；不传时读取 STABLE_SMOKE_RUN_ID
+ *   - commit: 本轮待验收提交；不传时读取 STABLE_SMOKE_COMMIT
  *   - failureEvidence: 当前图是否专门证明一个真实失败；只能用于 conditional/fail 报告
  *   - failureReason: failureEvidence=true 时必须说明失败事实，归档门禁会核对
  *   - allowBlockingOverlay: 当前截图本来就在验收全屏弹窗或教程遮罩；默认 false
@@ -554,6 +556,8 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     methodAnchor,
     breadcrumb,
     environment: targetEnvironment,
+    runId,
+    commit,
     failureEvidence = false,
     failureReason,
     allowBlockingOverlay = false,
@@ -616,6 +620,9 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     name,
     caption,
     path,
+    runId: runId || process.env.STABLE_SMOKE_RUN_ID || undefined,
+    commit: commit || process.env.STABLE_SMOKE_COMMIT || undefined,
+    capturedAt: new Date().toISOString(),
     annotated,
     overview,
     viewport,
