@@ -7,6 +7,7 @@ import {
   acquireLock,
   applyCredentialRegistry,
   buildExecutionRecord,
+  buildDryRunSummary,
   buildLockedRunSummary,
   buildUnhandledFailureSummary,
   canReuseVisualPlan,
@@ -50,6 +51,28 @@ test('运行器拒绝未知参数、缺值和冲突环境', () => {
   assert.throws(() => parseRunnerArgs(['--unknown']), /不支持的参数/);
   assert.throws(() => parseRunnerArgs(['--grep']), /必须提供值/);
   assert.throws(() => parseRunnerArgs(['--cds-only', '--production-only']), /不能同时使用/);
+});
+
+test('dry-run 只产出计划摘要且不宣称功能或视觉验收通过', () => {
+  const productionSafetyGate = initializeProductionSafetyGate(['cds', 'production']);
+  const summary = buildDryRunSummary({
+    runId: 'dry-run-test',
+    plan: {
+      catalogVersion: '2026.08',
+      commit: 'a'.repeat(40),
+      requiredCaseIds: ['CORE-001', 'VISUAL-001'],
+    },
+    selected: ['cds', 'production'],
+    envFileLoaded: true,
+    productionSafetyGate,
+  });
+
+  assert.equal(summary.verdict, 'dry-run');
+  assert.equal(summary.coverage.verdict, 'not-run');
+  assert.equal(summary.coverage.notRun, 2);
+  assert.deepEqual(summary.executions.map((item) => item.status), ['dry-run', 'dry-run']);
+  assert.equal(summary.archive.status, 'skipped-dry-run');
+  assert.equal(summary.notification.status, 'skipped');
 });
 
 test('同一运行和提交可以复用既有视觉计划继续补证', () => {

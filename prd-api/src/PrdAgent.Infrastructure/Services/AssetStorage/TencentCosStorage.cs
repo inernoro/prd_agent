@@ -788,6 +788,14 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             return true;
         }
 
+        // 自服务头像使用用户哈希和内容哈希组成的单对象键；只允许精确删除该形态，
+        // 不允许删除头像目录、旧式文件名或任何前缀集合。
+        if (AssetStorageDeletePolicy.IsVersionedUserAvatarKey(normalizedKey, _prefix))
+        {
+            reason = "superseded_avatar";
+            return true;
+        }
+
         // 2) 受控删除：默认关闭；开启后仅允许 domain/type 白名单前缀
         if (!_enableSafeDelete)
         {
@@ -1044,4 +1052,3 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return null;
     }
 }
-

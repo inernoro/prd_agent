@@ -494,6 +494,11 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
     private bool IsSafeDeleteAllowed(string normalizedKey, out string reason)
     {
         if (IsItTestKey(normalizedKey)) { reason = "_it"; return true; }
+        if (AssetStorageDeletePolicy.IsVersionedUserAvatarKey(normalizedKey, _prefix))
+        {
+            reason = "superseded_avatar";
+            return true;
+        }
         if (!_enableSafeDelete) { reason = "disabled"; return false; }
         if (_safeDeleteAllowPrefixes.Length == 0) { reason = "empty_allowlist"; return false; }
 

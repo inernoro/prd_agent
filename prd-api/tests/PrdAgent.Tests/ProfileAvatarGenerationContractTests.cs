@@ -1,4 +1,5 @@
 using Xunit;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Tests;
 
@@ -51,6 +52,17 @@ public class ProfileAvatarGenerationContractTests
         Assert.True(indexStart >= 0);
         var indexDefinition = databaseSource[indexStart..Math.Min(databaseSource.Length, indexStart + 500)];
         Assert.Contains("Unique = true", indexDefinition);
+
+        var catalogSource = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
+        var catalogIndexStart = catalogSource.IndexOf(
+            "ensureTightenedUniqueIndex(\"image_gen_runs\"",
+            StringComparison.Ordinal);
+        Assert.True(catalogIndexStart >= 0);
+        var catalogIndexDefinition = catalogSource[
+            catalogIndexStart..Math.Min(catalogSource.Length, catalogIndexStart + 600)];
+        Assert.Contains("uniq_image_gen_runs_owner_idem", catalogIndexDefinition);
+        Assert.Contains("[],\n  true", catalogIndexDefinition);
+        Assert.Contains("replaceLegacyUniqueIndex(collectionName, collection, existing, keys, options)", catalogSource);
     }
 
     [Fact]
@@ -93,7 +105,23 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("BuildVersionedAvatarFileName(currentUserId, ext, bytes)", source);
         Assert.Contains("BuildVersionedAvatarFileName(currentUserId, ext, found.Value.bytes)", source);
         Assert.Contains("SHA256.HashData(bytes)", source);
+        Assert.Contains("FindOneAndUpdateAsync", source);
+        Assert.Contains("DeleteSupersededAvatarAsync", source);
+        Assert.Contains("DeleteByKeyAsync", source);
         Assert.DoesNotContain("$\"{usernameLower}.{ext}\"", source);
+    }
+
+    [Theory]
+    [InlineData("icon/backups/head/u-0123456789ab-0123456789abcdef01234567.png", true)]
+    [InlineData("data/icon/backups/head/u-0123456789ab-0123456789abcdef01234567.webp", true)]
+    [InlineData("icon/backups/head/u-0123456789ab-0123456789abcdef01234567.exe", false)]
+    [InlineData("icon/backups/head/legacy-avatar.png", false)]
+    [InlineData("icon/backups/head/", false)]
+    [InlineData("icon/backups/head/u-0123456789ab-0123456789abcdef01234567.png/extra", false)]
+    public void AvatarDeletePolicy_MustOnlyAllowExactVersionedObject(string key, bool expected)
+    {
+        var prefix = key.StartsWith("data/", StringComparison.Ordinal) ? "data" : null;
+        Assert.Equal(expected, AssetStorageDeletePolicy.IsVersionedUserAvatarKey(key, prefix));
     }
 
     private static string LocateRepoFile(string relativePath)

@@ -71,7 +71,7 @@ function replaceLegacyUniqueIndex(collectionName, collection, existing, keys, op
   }
 }
 
-function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinitions = []) {
+function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinitions = [], replaceNonUnique = false) {
   const collection = db.getCollection(collectionName)
   const collectionExists = db.getCollectionInfos({ name: collectionName }).length > 0
   const existing = collectionExists
@@ -95,6 +95,14 @@ function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinit
 
     if (existing.unique === true) {
       collection.createIndex(keys, options)
+      return
+    }
+
+    // Certain historical catalogs created a same-name non-unique index. For those
+    // indexes, explicitly replace the definition after duplicate inspection instead
+    // of relying on createIndex/collMod to mutate immutable index options.
+    if (replaceNonUnique) {
+      replaceLegacyUniqueIndex(collectionName, collection, existing, keys, options)
       return
     }
 
@@ -346,7 +354,9 @@ ensureTightenedUniqueIndex("image_gen_runs",
     name: "uniq_image_gen_runs_owner_idem",
     unique: true,
     partialFilterExpression: { "IdempotencyKey": { $type: "string" } }
-  }
+  },
+  [],
+  true
 )
 
 // collection: image_gen_run_items

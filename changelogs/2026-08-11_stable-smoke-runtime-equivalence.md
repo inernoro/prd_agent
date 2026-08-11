@@ -238,3 +238,7 @@
 | fix | stable-smoke | 视觉门禁执行前清除同一运行的旧结果，并要求进程退出状态与本轮结论严格匹配 |
 | fix | prd-admin | 头像任务不存在或结果产物失效时明确引导重新生成，不再提示无效等待 |
 | test | prd-admin/stable-smoke | 增加视觉门禁崩溃防假绿与头像不可恢复状态的永久回归覆盖 |
+| fix | prd-api | 唯一索引升级先查重并显式替换旧定义，头像切换后原子回收本人旧版本对象 |
+| fix | prd-admin | 登记内容状态变化的刷新重试恢复动作 |
+| fix | stable-smoke | dry-run 在配置与计划校验后提前结束，不再误入功能和视觉结果门禁 |
+| test | prd-api/prd-admin/stable-smoke | 增加索引迁移、头像删除边界、状态错误与 dry-run 结论回归覆盖 |

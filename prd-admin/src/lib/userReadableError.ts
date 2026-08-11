@@ -94,6 +94,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['IMAGE_GEN_TIMEOUT', '图片生成等待超时，请稍后查看结果或重新生成。'],
   ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],
   ['PLAN_TITLE_DUPLICATE', '已存在同名计划，请修改标题后重试。'],
+  ['INVALID_STATE', '内容状态已发生变化，请刷新页面确认后重试。'],
   ['STALE_UPDATE', '内容已被其他操作更新，请刷新页面后重新提交。'],
   ['QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度后重试。'],
   ['LLM_QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。'],

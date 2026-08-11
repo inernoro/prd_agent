@@ -853,22 +853,15 @@ public class MongoDbContext
         ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
             Builders<ImageGenRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt)));
         // 幂等键：同一 admin 下唯一（只对存在 IdempotencyKey 的文档生效）
-        try
-        {
-            ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
-                Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
-                new CreateIndexOptions<ImageGenRun>
-                {
-                    Name = "uniq_image_gen_runs_owner_idem",
-                    Unique = true,
-                    // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
-                    PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
-                }));
-        }
-        catch (MongoCommandException ex) when (IsIndexConflict(ex))
-        {
-            // ignore
-        }
+        ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
+            Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
+            new CreateIndexOptions<ImageGenRun>
+            {
+                Name = "uniq_image_gen_runs_owner_idem",
+                Unique = true,
+                // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
+                PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
+            }));
 
         // ImageGenRunItems：按 runId + (itemIndex,imageIndex) 唯一；按 owner + runId 查询
         ImageGenRunItems.Indexes.CreateOne(new CreateIndexModel<ImageGenRunItem>(

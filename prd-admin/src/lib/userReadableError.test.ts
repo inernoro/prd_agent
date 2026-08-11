@@ -187,6 +187,7 @@ describe('toUserReadableErrorMessage', () => {
   it.each([
     ['SESSION_EXPIRED', '当前会话已过期，请返回后重新打开。'],
     ['SHARE_EXPIRED', '分享入口已过期，请联系分享者重新生成。'],
+    ['INVALID_STATE', '内容状态已发生变化，请刷新页面确认后重试。'],
     ['STALE_UPDATE', '内容已被其他操作更新，请刷新页面后重新提交。'],
     ['QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度后重试。'],
     ['LLM_QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。'],

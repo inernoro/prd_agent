@@ -99,6 +99,57 @@ public class ProfileController : ControllerBase
         return $"u-{ownerHash}-{contentHash}.{ext}";
     }
 
+    private static string BuildAvatarOwnerPrefix(string userId)
+    {
+        var ownerHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes((userId ?? string.Empty).Trim())))
+            .ToLowerInvariant()[..12];
+        return $"u-{ownerHash}-";
+    }
+
+    private async Task<User?> ReplaceAvatarFileNameAsync(
+        string userId,
+        string? avatarFileName,
+        CancellationToken ct)
+    {
+        return await _db.Users.FindOneAndUpdateAsync<User, User>(
+            u => u.UserId == userId,
+            Builders<User>.Update.Set(u => u.AvatarFileName, avatarFileName),
+            new FindOneAndUpdateOptions<User, User> { ReturnDocument = ReturnDocument.Before },
+            ct);
+    }
+
+    private async Task DeleteSupersededAvatarAsync(
+        string userId,
+        string? previousFileName,
+        string? currentFileName)
+    {
+        var previous = (previousFileName ?? string.Empty).Trim().ToLowerInvariant();
+        var current = (currentFileName ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(previous)
+            || string.Equals(previous, current, StringComparison.Ordinal)
+            || !previous.StartsWith(BuildAvatarOwnerPrefix(userId), StringComparison.Ordinal)
+            || !AssetStorageDeletePolicy.IsVersionedUserAvatarKey(
+                $"{AvatarUrlBuilder.AvatarPathPrefix}/{previous}"))
+        {
+            return;
+        }
+
+        var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{previous}";
+        try
+        {
+            await _assetStorage.DeleteByKeyAsync(objectKey, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Superseded self-service avatar cleanup failed. userId={UserId} file={File}",
+                userId,
+                previous);
+        }
+    }
+
     private static (bool ok, string? error) ValidateAvatarFileName(string? avatarFileName)
     {
         if (string.IsNullOrWhiteSpace(avatarFileName)) return (true, null);
@@ -235,8 +286,8 @@ public class ProfileController : ControllerBase
         await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
 
         var now = DateTime.UtcNow;
-        var update = Builders<User>.Update.Set(u => u.AvatarFileName, avatarFileName);
-        await _db.Users.UpdateOneAsync(u => u.UserId == currentUserId, update, cancellationToken: ct);
+        var previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
+        await DeleteSupersededAvatarAsync(currentUserId, previousUser?.AvatarFileName, avatarFileName);
 
         user.AvatarFileName = avatarFileName;
         var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);
@@ -546,10 +597,8 @@ public class ProfileController : ControllerBase
 
         var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
         await _assetStorage.UploadToKeyAsync(objectKey, found.Value.bytes, mime, ct);
-        await _db.Users.UpdateOneAsync(
-            u => u.UserId == currentUserId,
-            Builders<User>.Update.Set(u => u.AvatarFileName, avatarFileName),
-            cancellationToken: ct);
+        var previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
+        await DeleteSupersededAvatarAsync(currentUserId, previousUser?.AvatarFileName, avatarFileName);
 
         user.AvatarFileName = avatarFileName;
         var now = DateTime.UtcNow;
@@ -589,8 +638,8 @@ public class ProfileController : ControllerBase
         var (ok, err) = ValidateAvatarFileName(fileName);
         if (!ok) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "头像文件名不合法"));
 
-        var updateDef = Builders<User>.Update.Set(u => u.AvatarFileName, fileName);
-        await _db.Users.UpdateOneAsync(u => u.UserId == currentUserId, updateDef, cancellationToken: ct);
+        var previousUser = await ReplaceAvatarFileNameAsync(currentUserId, fileName, ct);
+        await DeleteSupersededAvatarAsync(currentUserId, previousUser?.AvatarFileName, fileName);
 
         user.AvatarFileName = fileName;
         var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);

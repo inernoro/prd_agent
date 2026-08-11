@@ -38,7 +38,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --preflight          只检查双环境地址、身份和 CDS 部署状态，不启动测试
   --cds-only           只运行 CDS 环境
   --production-only    只运行正式环境只读健康检查；写入旅程必须先在同一轮完成 CDS 验证
-  --dry-run            生成计划并检查凭据，不执行业务旅程
+  --dry-run            生成计划并检查凭据，不执行业务旅程、结果门禁、归档或通知
   --run-id <值>        指定本轮稳定冒烟标识
   --output-root <路径> 指定本地产物目录
   --env-file <路径>    指定本地凭据兼容文件
@@ -534,6 +534,34 @@ export function initializeProductionSafetyGate(selected) {
   return { restricted: false, mode: 'full', grep: '', reasons: [] };
 }
 
+export function buildDryRunSummary({ runId, plan, selected, envFileLoaded, productionSafetyGate }) {
+  return {
+    runId,
+    verdict: 'dry-run',
+    catalogVersion: plan?.catalogVersion,
+    commit: plan?.commit,
+    envFileLoaded,
+    executions: selected.map((environment) => ({
+      environment,
+      status: 'dry-run',
+      missing: [],
+      resultPath: '',
+      policy: environment === 'production' ? productionSafetyGate.mode : 'full',
+      gateReasons: environment === 'production' ? productionSafetyGate.reasons : [],
+    })),
+    productionSafetyGate,
+    coverage: {
+      verdict: 'not-run',
+      passed: 0,
+      failed: 0,
+      notRun: plan?.requiredCaseIds?.length || 0,
+      reason: 'dry-run 只校验配置并生成计划，不执行功能和视觉结果门禁',
+    },
+    archive: { status: 'skipped-dry-run', reportUrl: '' },
+    notification: { status: 'skipped', reason: 'dry-run 不发送通知' },
+  };
+}
+
 export function selectCoverageCaseIds(requiredCaseIds, userGrep, selected, productionSafetyGate) {
   const productionOnlyReadOnly = selected.length === 1
     && selected[0] === 'production'
@@ -1003,6 +1031,30 @@ async function main() {
     ]);
     if (visualPlanResult.status !== 0) throw new Error('视觉取证计划生成失败，拒绝发布无逐项证据的报告');
 
+    if (options.has('--dry-run')) {
+      if (preflightBlockers.length > 0) {
+        throw new Error(`dry-run 配置检查未通过：${preflightBlockers.join('；')}`);
+      }
+      const summaryPath = resolve(runDir, 'summary.json');
+      const summaryDocument = buildDryRunSummary({
+        runId,
+        plan,
+        selected,
+        envFileLoaded: local.loaded,
+        productionSafetyGate,
+      });
+      writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
+      process.stdout.write(`${JSON.stringify({
+        runId,
+        runDir,
+        verdict: summaryDocument.verdict,
+        coverage: summaryDocument.coverage,
+        archive: summaryDocument.archive,
+        notification: summaryDocument.notification,
+      })}\n`);
+      return;
+    }
+
     for (const environment of selected) {
       if (environment === 'production' && selected.includes('cds')) {
         const cdsExecution = executions.find((execution) => execution.environment === 'cds');
@@ -1023,10 +1075,6 @@ async function main() {
           policy: environment === 'production' ? productionSafetyGate.mode : 'full',
           gateReasons: environment === 'production' ? productionSafetyGate.reasons : [],
         });
-        continue;
-      }
-      if (options.has('--dry-run')) {
-        executions.push({ environment, status: 'dry-run', missing: [], resultPath: '' });
         continue;
       }
       const effectiveGrep = environment === 'production' && productionSafetyGate.restricted

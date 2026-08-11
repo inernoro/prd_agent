@@ -3,6 +3,33 @@ namespace PrdAgent.Infrastructure.Services.AssetStorage;
 public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime);
 
 /// <summary>
+/// 允许存储实现回收严格受约束的自服务头像单对象，不扩大通用安全删除白名单。
+/// </summary>
+public static class AssetStorageDeletePolicy
+{
+    private const string AvatarPathPrefix = "icon/backups/head/";
+
+    public static bool IsVersionedUserAvatarKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        if (!normalized.StartsWith(AvatarPathPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+        var fileName = normalized[AvatarPathPrefix.Length..];
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            fileName,
+            @"^u-[0-9a-f]{12}-[0-9a-f]{24}\.(png|jpg|gif|webp)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+}
+
+/// <summary>
 /// 暴露运行时实际选择的存储实现，供就绪检查核对环境合同。
 /// 只返回提供商名称，不暴露 bucket、endpoint 或凭据。
 /// </summary>
@@ -74,4 +101,3 @@ public interface IAssetStorage
     /// </summary>
     string BuildSiteKey(string siteId, string filePath);
 }
-
