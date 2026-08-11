@@ -8,6 +8,7 @@ import type { CreatePlatformRequest, PlatformItem, UpdatePlatformRequest } from 
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
@@ -15,6 +16,7 @@ import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL, TOOLB
 export function PlatformsPage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { confirm, promptText } = useDialogs();
   const [items, setItems] = useState<PlatformItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -116,7 +118,7 @@ export function PlatformsPage() {
   }
 
   async function clearApiKey(p: PlatformItem) {
-    if (!window.confirm(`清除「${p.name}」的 GW 平台密钥？`)) return;
+    if (!await confirm({ title: `清除「${p.name}」的 GW 平台密钥？`, description: '清除后这条上游会退回「未配置密钥」，用它的模型将无法调用。', tone: 'danger', confirmLabel: '清除密钥' })) return;
     setBusyId(p.id);
     setToast(null);
     const res = await deletePlatformApiKey(p.id);
@@ -168,9 +170,13 @@ export function PlatformsPage() {
       return;
     }
     const listed = candidates.map((x, i) => `${i + 1}. ${x.name}（${x.apiUrl || '无地址'}）`).join('\n');
-    const picked = window.prompt(
-      `把「${source.name}」并入哪一条？\n它名下的模型与池成员会改指到目标，重复的会被去重，随后源上游被删除。\n\n${listed}\n\n输入序号：`,
-    );
+    const picked = await promptText({
+      title: `把「${source.name}」并入哪一条？`,
+      description: `它名下的模型与池成员会改指到目标，重复的会被去重，随后源上游被删除。\n\n${listed}`,
+      inputLabel: '输入目标序号',
+      placeholder: '1',
+      confirmLabel: '下一步',
+    });
     if (picked === null) return;
     const index = Number(picked.trim()) - 1;
     const target = candidates[index];
@@ -178,7 +184,7 @@ export function PlatformsPage() {
       setToast('序号无效，已取消合并');
       return;
     }
-    if (!window.confirm(`确认把「${source.name}」并入「${target.name}」？源上游会被删除。`)) return;
+    if (!await confirm({ title: `确认把「${source.name}」并入「${target.name}」？`, description: '源上游会被删除，无法撤销。', tone: 'danger', confirmLabel: '合并' })) return;
     setBusyId(source.id);
     setToast(null);
     const res = await mergePlatformInto(source.id, target.id);
@@ -205,9 +211,14 @@ export function PlatformsPage() {
    * 服务端再查一次引用，被占用就带清单拒绝——这里把清单原样端给用户，让他知道先摘哪几个。
    */
   async function removePlatform(p: PlatformItem) {
-    const typed = window.prompt(
-      `删除上游「${p.name}」（${p.apiUrl || '无地址'}）。\n删除后这条上游的地址与密钥一并消失，无法撤销。\n确认请输入平台名：`,
-    );
+    const typed = await promptText({
+      title: `删除上游「${p.name}」`,
+      description: `${p.apiUrl || '无地址'}\n删除后这条上游的地址与密钥一并消失，无法撤销。`,
+      inputLabel: '确认请输入平台名',
+      requireExact: p.name,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
     if (typed === null) return;
     if (typed.trim() !== p.name) {
       setToast('输入的平台名不一致，已取消删除');
@@ -236,7 +247,7 @@ export function PlatformsPage() {
       return;
     }
     const scope = bulkOnlyMissing ? '缺失密钥的 GW 平台' : '全部 GW 平台';
-    if (!window.confirm(`批量更新${scope}密钥？`)) return;
+    if (!await confirm({ title: `批量更新${scope}密钥？`, description: '这会覆盖范围内每一条的现有密钥。', tone: 'danger', confirmLabel: '批量更新' })) return;
     setBusyId('bulk-platform-api-key');
     setToast(null);
     const res = await bulkRotateApiKeys({

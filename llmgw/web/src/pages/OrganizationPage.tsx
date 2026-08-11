@@ -28,6 +28,7 @@ import {
   updateMember,
 } from '@/lib/api';
 import type { CreateMemberRequest, OrganizationData, UpdateMemberRequest } from '@/lib/types';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { invalidateOnboardingCache } from '@/lib/onboarding';
 import { Button, Card, Chip, InlineAlert, SectionLoader } from '@/components/ui';
@@ -85,6 +86,7 @@ export function OrganizationPage() {
   const currentRole = sessionTenant?.role ?? 'viewer';
   const canManage = canUseCapability(sessionTenant?.role, 'organizationWrite');
   const canCreateTenant = canUseCapability(sessionTenant?.role, 'tenantOwner');
+  const { confirm, promptText } = useDialogs();
 
   const load = useCallback(async () => {
     setError(null);
@@ -98,7 +100,7 @@ export function OrganizationPage() {
   // 后端一直有 PUT /gw/teams/{id}，但前端从没给过入口 —— 团队名一旦打错就永远改不回来。
   // 这是断头自检里唯一一条 A 类（后端有能力、前端无入口），补在团队 chip 上。
   const renameTeam = async (team: OrganizationData['teams'][number]) => {
-    const next = window.prompt(`把团队“${team.name}”改成什么名字？`, team.name);
+    const next = await promptText({ title: `把团队“${team.name}”改成什么名字？`, inputLabel: '新的团队名称', defaultValue: team.name, confirmLabel: '改名' });
     if (next === null) return;
     const name = next.trim();
     if (name.length < 2) { setError('团队名称至少 2 个字符'); return; }
@@ -117,7 +119,7 @@ export function OrganizationPage() {
   // 团队删掉后引用方不会报错，只会被当成「没有范围」——所以后端先查三类引用，
   // 这里把它报回来的原文原样端出去，运维才知道该先解哪一个。
   const removeTeam = async (team: OrganizationData['teams'][number]) => {
-    if (!window.confirm(`删除团队“${team.name}”？成员、接入密钥、appCaller 只要还引用它就会被拒绝。`)) return;
+    if (!await confirm({ title: `删除团队“${team.name}”？`, description: '成员、接入密钥、appCaller 只要还引用它就会被拒绝。', tone: 'danger', confirmLabel: '删除' })) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -134,7 +136,14 @@ export function OrganizationPage() {
   // 前端只在按钮可见性上先挡掉前两条，最后一条只有服务端知道。
   const removeMember = async (member: MemberItem) => {
     const label = member.displayName || member.username || member.userId;
-    const typed = window.prompt(`把“${label}”移出本租户？账号本身保留，租户内的角色与团队归属会消失，无法撤销。\n确认请输入成员账号：`, '');
+    const typed = await promptText({
+      title: `把“${label}”移出本租户？`,
+      description: '账号本身保留，租户内的角色与团队归属会消失，无法撤销。',
+      inputLabel: '确认请输入成员账号',
+      requireExact: member.username || member.userId,
+      tone: 'danger',
+      confirmLabel: '移出',
+    });
     if (typed === null) return;
     if (typed.trim() !== (member.username || member.userId)) { setError('输入的账号不一致，已取消删除'); return; }
     setBusy(true);
@@ -152,9 +161,14 @@ export function OrganizationPage() {
   // 删成功后当前会话所在的租户就没了，只能回登录页重新选租户。
   const removeTenant = async () => {
     if (!data?.tenant) return;
-    const typed = window.prompt(
-      `删除租户“${data.tenant.name}”。\n只有完全清空的租户能删：上游、模型、模型池、交换所、逻辑模型、接入密钥、appCaller、其他成员都必须为零。\n删除后当前会话失效，需要重新登录。\n确认请输入租户 slug：`,
-    );
+    const typed = await promptText({
+      title: `删除租户“${data.tenant.name}”`,
+      description: '只有完全清空的租户能删：上游、模型、模型池、交换所、逻辑模型、接入密钥、appCaller、其他成员都必须为零。\n删除后当前会话失效，需要重新登录。',
+      inputLabel: '确认请输入租户 slug',
+      requireExact: data.tenant.slug,
+      tone: 'danger',
+      confirmLabel: '删除租户',
+    });
     if (typed === null) return;
     if (typed.trim() !== data.tenant.slug) { setError('输入的 slug 不一致，已取消删除'); return; }
     setBusy(true);
@@ -405,6 +419,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
   const [memberInitialPassword, setMemberInitialPassword] = useState('');
   const [memberRole, setMemberRole] = useState<MemberRole>((member?.role as MemberRole) ?? 'viewer');
   const [status, setStatus] = useState<'active' | 'disabled'>(member?.status === 'disabled' ? 'disabled' : 'active');
+  const { confirm } = useDialogs();
   const [memberTeamIds, setMemberTeamIds] = useState<string[]>(member?.teamIds ?? []);
   const [busy, setBusy] = useState(false);
 
@@ -454,7 +469,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
 
   const invalidate = async () => {
     if (!member) return;
-    if (!window.confirm(`让“${who}”的现有登录立即失效？`)) return;
+    if (!await confirm({ title: `让“${who}”的现有登录立即失效？`, description: '该成员需要重新登录。', tone: 'danger', confirmLabel: '强制重新登录' })) return;
     setBusy(true);
     setFailure(null);
     const response = await invalidateMemberSessions(member.id);

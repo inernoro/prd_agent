@@ -38,6 +38,7 @@ import type {
 } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -51,6 +52,7 @@ const labelStyle: React.CSSProperties = FIELD_LABEL;
 export function LogicalModelsPage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { promptText } = useDialogs();
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
@@ -178,9 +180,14 @@ export function LogicalModelsPage() {
   // Offering 是逻辑模型自己的下挂路由，没有别处引用，所以删除是连带删而不是阻挡。
   // 但连带删对运维是「一次点击删掉 N 条」，必须先把 N 报出来再让他确认。
   async function removeLogical(item: LogicalModelItem) {
-    const typed = window.prompt(
-      `删除逻辑模型「${item.name}」（${item.publicId}）。\n它名下 ${item.offerings.length} 条 Offering 会一并删除，无法撤销。\n确认请输入 publicId：`,
-    );
+    const typed = await promptText({
+      title: `删除逻辑模型「${item.name}」`,
+      description: `${item.publicId}\n它名下 ${item.offerings.length} 条 Offering 会一并删除，无法撤销。`,
+      inputLabel: '确认请输入 publicId',
+      requireExact: item.publicId,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
     if (typed === null) return;
     if (typed.trim() !== item.publicId) { failNotice('输入的 publicId 不一致，已取消删除'); return; }
     setBusy(item.id);

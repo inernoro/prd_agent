@@ -19,6 +19,7 @@ import type { ExchangeItem, ModelCapability, ModelItem, ModelPool, ParameterCapa
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { healthChip } from '@/components/poolsHelpers';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { BODY_TEXT, FIELD_INPUT, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
@@ -65,6 +66,7 @@ export function ModelPoolsPage() {
   const { tenant } = useAuth();
   const navigate = useNavigate();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { confirm, promptText } = useDialogs();
   const [pools, setPools] = useState<ModelPool[] | null>(null);
   const [poolTypes, setPoolTypes] = useState<PoolTypesData | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
@@ -137,9 +139,14 @@ export function ModelPoolsPage() {
   // 因为前者要先改默认、后者要先解绑，补救动作不一样，合并成一句会让运维不知道先做哪个。
   async function removePool(pool: ModelPool) {
     const label = pool.name || pool.code || pool.id;
-    const typed = window.prompt(
-      `删除模型池「${label}」。\n它的 ${pool.models.length} 个成员配置一并消失，无法撤销。\n确认请输入模型池名称：`,
-    );
+    const typed = await promptText({
+      title: `删除模型池「${label}」`,
+      description: `它的 ${pool.models.length} 个成员配置一并消失，无法撤销。`,
+      inputLabel: '确认请输入模型池名称',
+      requireExact: label,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
     if (typed === null) return;
     if (typed.trim() !== label) { setToast('输入的名称不一致，已取消删除'); return; }
     setBusyId(pool.id);
@@ -362,7 +369,7 @@ export function ModelPoolsPage() {
       setToast('最大数量必须是正整数');
       return;
     }
-    if (!window.confirm(`批量导入「${pool.name}」的模型池成员？`)) return;
+    if (!await confirm({ title: `批量导入「${pool.name}」的模型池成员？`, description: '按当前筛选把匹配的模型追加进这个池。', confirmLabel: '批量导入' })) return;
     setBusyId(`pool-bulk-import:${pool.id}`);
     setToast(null);
     const res = await bulkImportPoolModels(pool.id, {

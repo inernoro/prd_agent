@@ -6,6 +6,7 @@ import { bulkUpdateGatewayAppCallers, deleteAppCaller, getGatewayAppCallers, get
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
 import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 
@@ -75,6 +76,7 @@ export function AppCallersPage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'appCallerWrite');
   const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
+  const { confirm, promptText } = useDialogs();
   const [searchParams] = useSearchParams();
   const focusedAppCallerCode = (searchParams.get('focus') || '').replace(/^G-/, '');
   const [data, setData] = useState<GatewayAppCallersData | null>(null);
@@ -233,9 +235,14 @@ export function AppCallersPage() {
   // appCaller 是被动发现的：删掉它，下一条同 code 的请求会把它重新登记回来。
   // 所以这里删的是「治理配置」不是「调用权限」，确认文案必须说清，免得运维以为删了就断流。
   const removeItem = async (item: GatewayAppCaller) => {
-    const typed = window.prompt(
-      `删除 appCaller「${item.appCallerCode}」的注册与治理配置（模型池绑定、预算、限流一并消失）。\n它只是被动发现的登记，下一次同名调用会重新出现，但配置不会回来。\n确认请输入 appCallerCode：`,
-    );
+    const typed = await promptText({
+      title: `删除 appCaller「${item.appCallerCode}」`,
+      description: '它的注册与治理配置（模型池绑定、预算、限流）一并消失。\n这只是被动发现的登记，下一次同名调用会重新出现，但配置不会回来。',
+      inputLabel: '确认请输入 appCallerCode',
+      requireExact: item.appCallerCode,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
     if (typed === null) return;
     if (typed.trim() !== item.appCallerCode) {
       setActionError('输入的 appCallerCode 不一致，已取消删除');
@@ -257,7 +264,7 @@ export function AppCallersPage() {
 
   const applyBulkGovernance = async () => {
     if (!hasBulkFilter || !hasBulkUpdate || bulkSaving) return;
-    const confirmed = window.confirm(`按当前筛选批量更新 ${data.total} 个 appCaller？`);
+    const confirmed = await confirm({ title: `按当前筛选批量更新 ${data.total} 个 appCaller？`, description: '范围内每一条的治理配置都会被改写。', tone: 'danger', confirmLabel: '批量更新' });
     if (!confirmed) return;
     setBulkSaving(true);
     setActionError(null);
