@@ -213,6 +213,8 @@
 | fix | prd-api | ASR 非对话候选返回空成功时继续尝试后备模型 |
 | fix | prd-api/prd-admin | 工作区生成中禁止删除时保留取消任务与等待结束的恢复动作 |
 | test | prd-api/prd-admin | 增加内容过滤、空转写候选和生成中删除冲突回归覆盖 |
+| fix | prd-admin | 平台删除受系统模型或模型池引用阻塞时保留受影响名称和对应恢复动作 |
+| test | prd-admin | 增加平台删除两类结构化业务错误的用户可读回归覆盖 |
 | fix | stable-smoke | 按仓库真实大小写识别 .Codex 规则目录，避免 Linux 上规则变更误阻塞版本等价 |
 | test | stable-smoke | 增加 .Codex 规则路径大小写敏感回归覆盖 |
 | fix | stable-smoke | CDS 主应用与模型网关按权威入口顺序解析，禁止根据域名文本猜测服务类型 |

@@ -65,6 +65,15 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除。');
   });
 
+  it.each([
+    ['HAS_SPECIAL_MODELS', '以下模型被设置为系统模型，请先取消设置后再删除平台：主模型(生图模型)'],
+    ['HAS_MODEL_POOL_REFS', '平台下的模型被以下模型池引用，请先从模型池移除：默认视觉池、备用视觉池'],
+  ])('平台删除阻塞时保留受影响名称和恢复动作：%s', (code, backendMessage) => {
+    const message = toUserReadableErrorMessage({ code, message: backendMessage }, options);
+
+    expect(message).toBe(backendMessage);
+  });
+
   it('屏蔽浏览器网络错误和模型协议诊断', () => {
     const networkMessage = toUserReadableErrorMessage(new TypeError('Failed to fetch'), options);
     const protocolMessage = toUserReadableErrorMessage(

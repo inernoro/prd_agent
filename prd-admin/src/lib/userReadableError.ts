@@ -23,6 +23,8 @@ const RECOVERY_WORDS = [
   '登录',
   '联系管理员',
   '返回',
+  '取消',
+  '移除',
 ];
 
 const INTERNAL_DIAGNOSTIC_PATTERNS = [
@@ -139,7 +141,14 @@ function messageContainsRecovery(message: string): boolean {
 function isSafeUserMessage(message: string, code: string): boolean {
   const text = message.trim();
   const normalizedCode = code.trim().toUpperCase();
-  if (!USER_MESSAGE_ALLOWLIST.get(normalizedCode)?.has(text)) return false;
+  const isStructuredBusinessMessage = (
+    normalizedCode === 'HAS_SPECIAL_MODELS'
+      && /^以下模型被设置为系统模型，请先取消设置后再删除平台：.{1,200}$/u.test(text)
+  ) || (
+    normalizedCode === 'HAS_MODEL_POOL_REFS'
+      && /^平台下的模型被以下模型池引用，请先从模型池移除：.{1,200}$/u.test(text)
+  );
+  if (!USER_MESSAGE_ALLOWLIST.get(normalizedCode)?.has(text) && !isStructuredBusinessMessage) return false;
   if (!text || text.length > 320) return false;
   if (/^[{[]/.test(text)) return false;
   if (!/[\u3400-\u9fff]/u.test(text)) return false;
