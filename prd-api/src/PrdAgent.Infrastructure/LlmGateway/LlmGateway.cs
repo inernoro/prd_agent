@@ -1396,12 +1396,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // 上游模型能力优先于 MAP 静态兼容表。只有存量模型尚未配置 image_size 能力时，
         // 才回退到旧适配表，避免新增模型继续依赖按名称猜测。
         var upstreamSizeControl = ImageSizeControlCapabilities.Parse(resolution.ParameterCapabilities);
+        var basePrompt = ImageGenRequestBuilder.RemoveSizePromptDirective(spec.Prompt);
         string effectivePrompt;
         if (upstreamSizeControl.IsConfigured)
         {
-            effectivePrompt = upstreamSizeControl.UsePrompt
-                ? ImageGenRequestBuilder.ApplyConfiguredSizePrompt(spec.Prompt, spec.Size)
-                : spec.Prompt;
+            // 先以无尺寸指令的业务提示构建候选 wire；最终尺寸必须从候选适配器
+            // 已归一化的 wire 中读取，再统一应用 field / prompt，避免两者不一致。
+            effectivePrompt = basePrompt;
         }
         else
         {
@@ -1410,7 +1411,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 spec.Size);
             var finalAdapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
             effectivePrompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt(
-                spec.Prompt,
+                basePrompt,
                 finalRequestParams,
                 finalAdapterConfig);
         }
@@ -1542,7 +1543,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         if (upstreamSizeControl.IsConfigured)
         {
-            ApplyConfiguredImageSizeControl(body, multipartFields, upstreamSizeControl, spec.Size);
+            var effectiveSize = ResolveEffectiveImageSizeFromWire(
+                body,
+                multipartFields,
+                spec.Size,
+                resolution.ActualModel);
+            ApplyConfiguredImageSizeControl(body, multipartFields, upstreamSizeControl, effectiveSize);
+            ApplyConfiguredSizePromptToWire(
+                body,
+                multipartFields,
+                basePrompt,
+                effectiveSize,
+                upstreamSizeControl.UsePrompt);
         }
 
         if (!resolution.IsExchange && !string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath))
@@ -1583,17 +1595,22 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var multipartFields = source.MultipartFields is null
             ? null
             : new Dictionary<string, object>(source.MultipartFields, StringComparer.Ordinal);
+        var effectiveSize = ResolveEffectiveImageSizeFromWire(
+            body,
+            multipartFields,
+            source.CanonicalImageRequest!.Size,
+            resolution.ActualModel);
         ApplyConfiguredImageSizeControl(
             body,
             multipartFields,
             capability,
-            source.CanonicalImageRequest!.Size);
+            effectiveSize);
 
         var promptUpdated = ApplyConfiguredSizePromptToWire(
                 body,
                 multipartFields,
                 source.CanonicalImageRequest.Prompt,
-                source.CanonicalImageRequest.Size,
+                effectiveSize,
                 capability.UsePrompt);
         if (capability.UsePrompt && !promptUpdated)
         {
@@ -1706,6 +1723,79 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
         }
         return false;
+    }
+
+    private static string? ResolveEffectiveImageSizeFromWire(
+        JsonObject? body,
+        Dictionary<string, object>? multipartFields,
+        string? fallbackSize,
+        string? actualModel)
+    {
+        static string? NormalizeSizeValue(object? value)
+        {
+            var raw = value?.ToString();
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            var parts = raw.Split(
+                new[] { 'x', 'X' },
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length == 2
+                   && int.TryParse(parts[0], out var width)
+                   && int.TryParse(parts[1], out var height)
+                   && width > 0
+                   && height > 0
+                ? $"{width}x{height}"
+                : null;
+        }
+
+        static int? ReadPositiveInt(object? value)
+        {
+            try
+            {
+                var number = Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+                return number > 0 ? number : null;
+            }
+            catch (Exception) when (value is not null)
+            {
+                return null;
+            }
+        }
+
+        var bodySize = body?["size"] is JsonValue bodySizeValue
+            && bodySizeValue.TryGetValue<string>(out var bodySizeText)
+            ? NormalizeSizeValue(bodySizeText)
+            : null;
+        if (bodySize is not null) return bodySize;
+
+        var bodyWidth = body?["width"] is JsonValue bodyWidthValue
+            ? ReadPositiveInt(bodyWidthValue.ToString())
+            : null;
+        var bodyHeight = body?["height"] is JsonValue bodyHeightValue
+            ? ReadPositiveInt(bodyHeightValue.ToString())
+            : null;
+        if (bodyWidth.HasValue && bodyHeight.HasValue)
+            return $"{bodyWidth.Value}x{bodyHeight.Value}";
+
+        if (multipartFields is not null)
+        {
+            if (multipartFields.TryGetValue("size", out var multipartSize))
+            {
+                var normalizedMultipartSize = NormalizeSizeValue(multipartSize);
+                if (normalizedMultipartSize is not null) return normalizedMultipartSize;
+            }
+            var multipartWidth = multipartFields.TryGetValue("width", out var widthValue)
+                ? ReadPositiveInt(widthValue)
+                : null;
+            var multipartHeight = multipartFields.TryGetValue("height", out var heightValue)
+                ? ReadPositiveInt(heightValue)
+                : null;
+            if (multipartWidth.HasValue && multipartHeight.HasValue)
+                return $"{multipartWidth.Value}x{multipartHeight.Value}";
+        }
+
+        var adapterSize = ImageGenModelAdapterRegistry.BuildRequestParams(actualModel, fallbackSize).Adaptation.Size;
+        return NormalizeSizeValue(adapterSize)
+               ?? NormalizeSizeValue(fallbackSize)
+               ?? fallbackSize;
     }
 
     private static void ApplyConfiguredImageSizeControl(

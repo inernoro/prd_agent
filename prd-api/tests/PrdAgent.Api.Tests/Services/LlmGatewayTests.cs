@@ -1937,6 +1937,83 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenProviderCandidateDisablesSize_ShouldRemovePreviousDirective()
+    {
+        var candidate = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-candidate",
+            OfferingTargetKind = "model",
+            ActualModel = "candidate-image-model",
+            ActualPlatformId = "candidate-platform",
+            ActualPlatformName = "Candidate",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://candidate.example.com/v1",
+            ApiKey = "candidate-key",
+            ParameterCapabilities = new Dictionary<string, bool>
+            {
+                ["image_size.none"] = true,
+            },
+        };
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-primary",
+            OfferingTargetKind = "model",
+            ActualModel = "primary-image-model",
+            ActualPlatformId = "primary-platform",
+            ActualPlatformName = "Primary",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://primary.example.com/v1",
+            ApiKey = "primary-key",
+            RetryCandidates = [candidate],
+        };
+        var legacyPrompt = "[输出尺寸要求 / OUTPUT SIZE，最高优先级] 目标画布 768x1024，严格宽高比 3:4，竖版 / portrait。不要改变画幅。\ndraw a poster";
+        var http = new SequenceHttpClientFactory(
+            (404, "{\"error\":{\"message\":\"model unavailable\"}}"),
+            (200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            RequestBody = new JsonObject
+            {
+                ["prompt"] = legacyPrompt,
+                ["size"] = "768x1024",
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = legacyPrompt,
+                Count = 1,
+                Size = "768x1024",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal(2, http.RequestBodies.Count);
+        var candidateBody = JsonNode.Parse(http.RequestBodies[1])!.AsObject();
+        Assert.Equal("draw a poster", candidateBody["prompt"]?.GetValue<string>());
+        Assert.False(candidateBody.ContainsKey("size"));
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_UsesUpstreamModelSizeCapabilityBeforeLegacyAdapterTable()
     {
         var resolution = new GatewayModelResolution
@@ -1990,6 +2067,57 @@ public class LlmGatewayTests
             "[输出尺寸要求 / OUTPUT SIZE，最高优先级]",
             body["prompt"]?.GetValue<string>());
         Assert.Equal("vendor/new-image-model", body["model"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenExplicitFieldOverridesAdapter_ShouldKeepEffectiveWireSize()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "dall-e-3",
+            ActualModel = "dall-e-3",
+            ActualPlatformId = "provider-1",
+            ActualPlatformName = "Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com/v1",
+            ApiKey = "test-key",
+            ParameterCapabilities = new Dictionary<string, bool>
+            {
+                ["image_size.field.size"] = true,
+            },
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "dall-e-3",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "dall-e-3",
+                ["prompt"] = "draw a poster",
+                ["size"] = "1024x1792",
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a poster",
+                Count = 1,
+                Size = "768x1024",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal("1024x1792", body["size"]?.GetValue<string>());
     }
 
     [Fact]
