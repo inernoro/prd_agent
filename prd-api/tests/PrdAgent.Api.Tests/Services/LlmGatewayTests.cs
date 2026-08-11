@@ -2102,6 +2102,7 @@ public class LlmGatewayTests
 
     [Theory]
     [InlineData(400, "content_policy_violation")]
+    [InlineData(403, "content_filter")]
     [InlineData(403, "Your request was rejected by the safety system due to content policy.")]
     [InlineData(422, "Image blocked by safety policy")]
     public void ShouldQuarantineRawProviderResponse_WhenContentPolicyRejectsImage_ShouldReturnFalse(

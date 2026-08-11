@@ -278,6 +278,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var diagnostic = $"{message}\n{responseBody}";
         return diagnostic.Contains("content policy", StringComparison.OrdinalIgnoreCase)
                || diagnostic.Contains("content_policy", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("content filter", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("content_filter", StringComparison.OrdinalIgnoreCase)
                || diagnostic.Contains("safety policy", StringComparison.OrdinalIgnoreCase)
                || diagnostic.Contains("safety system", StringComparison.OrdinalIgnoreCase)
                || diagnostic.Contains("blocked for safety", StringComparison.OrdinalIgnoreCase)

@@ -521,7 +521,7 @@ public class ImageMasterController : ControllerBase
                 or ImageGenRunStatus.Running))
         {
             return Conflict(ApiResponse<object>.Fail(
-                ErrorCodes.INVALID_FORMAT,
+                ErrorCodes.WORKSPACE_GENERATION_ACTIVE,
                 "该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除"));
         }
         var imageRunIds = imageRuns.Select(x => x.Id).ToArray();

@@ -114,6 +114,7 @@ public static class ErrorCodes
 
     // 配额相关
     public const string QUOTA_EXCEEDED = "QUOTA_EXCEEDED";
+    public const string WORKSPACE_GENERATION_ACTIVE = "WORKSPACE_GENERATION_ACTIVE";
 
     // 分享相关
     public const string SHARE_EXPIRED = "SHARE_EXPIRED";

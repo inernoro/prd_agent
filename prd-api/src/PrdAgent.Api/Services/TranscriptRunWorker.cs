@@ -351,6 +351,7 @@ public class TranscriptRunWorker : BackgroundService
 
         GatewayRawResponse? rawResp = null;
         string? validatedChatText = null;
+        List<TranscriptSegment>? validatedNonChatSegments = null;
         var selectedIsChatAudio = false;
         var candidates = TranscriptAsrCandidatePolicy.SelectCandidates(resolution);
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
@@ -384,6 +385,28 @@ public class TranscriptRunWorker : BackgroundService
 
                 if (!candidateIsChatAudio)
                 {
+                    var candidateSegments = ParseWhisperSegments(rawResp.Content);
+                    if (candidateSegments.Count == 0)
+                    {
+                        var nonChatText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
+                        if (!string.IsNullOrWhiteSpace(nonChatText)
+                            && !nonChatText.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+                        {
+                            candidateSegments.Add(new TranscriptSegment { Start = 0, End = 0, Text = nonChatText.Trim() });
+                        }
+                    }
+                    if (candidateSegments.Count > 0)
+                    {
+                        validatedNonChatSegments = candidateSegments;
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "[transcript-agent] 非对话音频模型返回空或无效转写，自动尝试下一候选: RunId={RunId}, Candidate={Candidate}, CandidateIndex={CandidateIndex}",
+                            run.Id,
+                            candidate.ActualModel,
+                            candidateIndex + 1);
+                    }
                     break;
                 }
 
@@ -407,7 +430,7 @@ public class TranscriptRunWorker : BackgroundService
                     isAssistantReply);
             }
 
-            if (validatedChatText != null || (rawResp?.Success == true && !candidateIsChatAudio))
+            if (validatedChatText != null || validatedNonChatSegments != null)
                 break;
 
             if (candidateIndex < candidates.Count - 1)
@@ -432,7 +455,7 @@ public class TranscriptRunWorker : BackgroundService
 
         await UpdateProgress(db, run, 80);
 
-        var segments = ParseWhisperSegments(rawResp.Content);
+        var segments = validatedNonChatSegments ?? ParseWhisperSegments(rawResp.Content);
         if (!string.IsNullOrWhiteSpace(validatedChatText))
         {
             segments.Clear();

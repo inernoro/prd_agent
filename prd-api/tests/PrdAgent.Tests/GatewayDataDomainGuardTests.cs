@@ -1119,6 +1119,17 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void TranscriptRunWorker_RejectsEmptyNonChatSuccessBeforeAcceptingCandidate()
+    {
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs");
+
+        Assert.Contains("validatedNonChatSegments", worker);
+        Assert.Contains("candidateSegments.Count > 0", worker);
+        Assert.Contains("非对话音频模型返回空或无效转写，自动尝试下一候选", worker);
+        Assert.Contains("validatedChatText != null || validatedNonChatSegments != null", worker);
+    }
+
+    [Fact]
     public void TranscriptRuns_AreConsumedOnlyByTheirCreatingDeployment()
     {
         var model = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/TranscriptRun.cs");

@@ -209,6 +209,10 @@
 | fix | prd-api | 头像任务失败时从持久化生成项映射内容检查、额度、限流和超时等稳定分类 |
 | fix | prd-admin | 头像生成按稳定错误分类展示对应恢复动作并继续屏蔽上游诊断 |
 | test | prd-api/prd-admin/stable-smoke | 增加中文清理用例重试和头像分类失败恢复的永久回归覆盖 |
+| fix | llmgw | 内容过滤拒绝不再重试或隔离健康生图路由 |
+| fix | prd-api | ASR 非对话候选返回空成功时继续尝试后备模型 |
+| fix | prd-api/prd-admin | 工作区生成中禁止删除时保留取消任务与等待结束的恢复动作 |
+| test | prd-api/prd-admin | 增加内容过滤、空转写候选和生成中删除冲突回归覆盖 |
 | fix | stable-smoke | 按仓库真实大小写识别 .Codex 规则目录，避免 Linux 上规则变更误阻塞版本等价 |
 | test | stable-smoke | 增加 .Codex 规则路径大小写敏感回归覆盖 |
 | fix | stable-smoke | CDS 主应用与模型网关按权威入口顺序解析，禁止根据域名文本猜测服务类型 |

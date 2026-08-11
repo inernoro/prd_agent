@@ -56,6 +56,15 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).not.toContain('重新登录');
   });
 
+  it('工作区仍在生成时保留取消任务的恢复动作', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'WORKSPACE_GENERATION_ACTIVE', message: 'internal detail' },
+      options,
+    );
+
+    expect(message).toBe('该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除。');
+  });
+
   it('屏蔽浏览器网络错误和模型协议诊断', () => {
     const networkMessage = toUserReadableErrorMessage(new TypeError('Failed to fetch'), options);
     const protocolMessage = toUserReadableErrorMessage(
