@@ -18,6 +18,8 @@ namespace PrdAgent.Infrastructure.Security;
 /// </summary>
 public static class DeploymentAuthority
 {
+    public const string AdoptLegacyTranscriptRunsKey = "Transcript:AdoptLegacyUnownedRuns";
+
     /// <summary>
     /// 显式开关。设为 "true"/"false" 时优先于自动判定：
     /// 生产强制权威可写 true；某个分支想临时接管全局告警可写 true；反之写 false 彻底静默。
@@ -52,6 +54,15 @@ public static class DeploymentAuthority
     /// </summary>
     public static bool IsCdsBranchPreview(IConfiguration configuration)
         => string.IsNullOrWhiteSpace(ReadFirst(configuration, "CDS_PROJECT_ID")) is false;
+
+    /// <summary>
+    /// 历史无归属转写队列只能由显式获权的正式部署接管。CDS 预览即使误配开关也不能参与，
+    /// 避免多个分支使用不同代码和模型配置争抢同一批共享库任务。
+    /// </summary>
+    public static bool CanAdoptLegacyTranscriptRuns(IConfiguration configuration)
+        => bool.TryParse(configuration[AdoptLegacyTranscriptRunsKey], out var enabled)
+           && enabled
+           && !IsCdsBranchPreview(configuration);
 
     /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。

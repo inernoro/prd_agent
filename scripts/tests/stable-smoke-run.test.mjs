@@ -10,6 +10,7 @@ import {
   parseRunnerArgs,
   runnerHelpText,
   resolveRuntimeExpectation,
+  resolveServiceRuntimeCommits,
   validateEnvironmentConfig,
 } from '../stable-smoke-run.mjs';
 
@@ -127,6 +128,7 @@ test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移'
     runtimeCommit: commit,
     runtimeEquivalent: false,
     validationOnlyChanges: [],
+    serviceRuntimeCommits: {},
   });
   branch.services.admin.status = 'stopped';
   branch.deployRuntime.drift.hasDrift = true;
@@ -169,6 +171,10 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
     runtimeCommit: deployedCommit,
     runtimeEquivalent: true,
     validationOnlyChanges: files,
+    serviceRuntimeCommits: {
+      api: deployedCommit,
+      admin: deployedCommit,
+    },
   });
 });
 
@@ -182,4 +188,70 @@ test('业务运行时代码变化不得借用旧镜像通过版本门禁', () =>
   const expectation = resolveRuntimeExpectation(branch, '2222222', ['prd-api/src/Program.cs']);
   assert.equal(expectation.runtimeEquivalent, false);
   assert.equal(expectation.runtimeCommit, '2222222');
+});
+
+test('组件级构建允许未受影响服务复用各自上一版镜像', () => {
+  const previousCommit = '1111111';
+  const expectedCommit = '2222222';
+  const branch = {
+    status: 'running',
+    commitSha: expectedCommit,
+    ciTargetSha: expectedCommit,
+    ciImageStatus: 'ready',
+    lastDeployDispatchCommitSha: expectedCommit,
+    currentVersionId: 'dv-component-reuse',
+    deployRuntime: { drift: { hasDrift: false } },
+    services: {
+      api: { profileId: 'api-prd-agent', status: 'running', deployedMode: 'express', deployedImage: `registry/api:sha-${previousCommit}` },
+      admin: { profileId: 'admin-prd-agent', status: 'running', deployedMode: 'express', deployedImage: `registry/admin:sha-${expectedCommit}` },
+    },
+  };
+  const changedFilesByCommit = { [previousCommit]: ['prd-admin/src/App.tsx'] };
+  const serviceRuntimeCommits = resolveServiceRuntimeCommits(branch, expectedCommit, changedFilesByCommit);
+  const expectation = resolveRuntimeExpectation(branch, expectedCommit, [], changedFilesByCommit);
+
+  assert.deepEqual(serviceRuntimeCommits, { api: previousCommit, admin: expectedCommit });
+  assert.equal(evaluateCdsReadiness(branch, expectedCommit, expectation).ready, true);
+});
+
+test('组件级构建拒绝复用包含本组件代码差异的旧镜像', () => {
+  const previousCommit = '1111111';
+  const expectedCommit = '2222222';
+  const branch = {
+    status: 'running',
+    commitSha: expectedCommit,
+    ciTargetSha: expectedCommit,
+    ciImageStatus: 'ready',
+    lastDeployDispatchCommitSha: expectedCommit,
+    currentVersionId: 'dv-stale-api',
+    deployRuntime: { drift: { hasDrift: false } },
+    services: {
+      api: { profileId: 'api-prd-agent', status: 'running', deployedMode: 'express', deployedImage: `registry/api:sha-${previousCommit}` },
+    },
+  };
+  const changedFilesByCommit = { [previousCommit]: ['prd-api/src/Program.cs'] };
+  const expectation = resolveRuntimeExpectation(branch, expectedCommit, [], changedFilesByCommit);
+  const readiness = evaluateCdsReadiness(branch, expectedCommit, expectation);
+
+  assert.equal(readiness.ready, false);
+  assert.ok(readiness.reasons.some((reason) => reason.includes('api-prd-agent 尚未切换')));
+});
+
+test('CDS 源码模式以分支提交和运行状态验收而不要求 SHA 镜像', () => {
+  const expectedCommit = '2222222';
+  const branch = {
+    status: 'running',
+    commitSha: expectedCommit,
+    ciTargetSha: expectedCommit,
+    ciImageStatus: 'ready',
+    lastDeployDispatchCommitSha: expectedCommit,
+    currentVersionId: 'dv-source',
+    deployRuntime: { drift: { hasDrift: false } },
+    services: {
+      api: { profileId: 'api-prd-agent', status: 'running', deployedMode: 'static', deployedImage: 'mcr.microsoft.com/dotnet/sdk:8.0' },
+    },
+  };
+
+  const readiness = evaluateCdsReadiness(branch, expectedCommit, resolveRuntimeExpectation(branch, expectedCommit));
+  assert.equal(readiness.ready, true);
 });

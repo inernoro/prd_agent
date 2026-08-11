@@ -104,3 +104,9 @@
 | fix | llmgw | 仅在 Offering 路由配置实际变化时重置隔离健康状态 |
 | fix | stable-smoke | 开跑前完整校验网关地址和破窗账户凭据 |
 | test | llmgw | 增加 Offering 编辑器重复提交与真实路由变更回归测试 |
+| fix | prd-api | 内容安全拒绝不再损伤图片 Offering 健康状态 |
+| fix | prd-api | 历史无归属转写任务仅由显式获权的正式部署接管 |
+| fix | cds | CDS API 源码部署启动前自动保证 ffmpeg 可用 |
+| fix | stable-smoke | 按组件构建范围验收 CDS 新镜像与安全复用镜像 |
+| test | prd-api | 增加内容安全隔离、历史队列权威和 CDS ffmpeg 回归测试 |
+| test | stable-smoke | 增加组件复用、陈旧组件拒绝和源码模式版本门禁回归测试 |

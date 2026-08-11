@@ -1958,6 +1958,87 @@ public class LlmGatewayTests
             request));
     }
 
+    [Theory]
+    [InlineData("Your request was rejected by the safety system due to content policy.")]
+    [InlineData("content_policy_violation")]
+    [InlineData("Image blocked by safety policy")]
+    public void ShouldQuarantineRawProviderResponse_WhenContentPolicyRejectsImage_ShouldReturnFalse(string message)
+    {
+        var request = new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw an image",
+                Images = ["data:image/png;base64,aW1hZ2U="],
+            },
+        };
+
+        var responseBody = $"{{\"error\":{{\"message\":\"{message}\"}}}}";
+        Assert.True(LlmGateway.IsContentPolicyDenial(403, responseBody));
+        Assert.False(LlmGateway.ShouldQuarantineRawProviderResponse(403, responseBody, request));
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenContentPolicyRejectsAllCandidates_ShouldNotDamageRouteHealth()
+    {
+        var retryCandidate = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-b",
+            OfferingTargetKind = "model",
+            ActualModel = "image-model-b",
+            ActualPlatformId = "platform-b",
+            ActualPlatformName = "Provider B",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-b.example.com",
+            ApiKey = "sk-b",
+        };
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-a",
+            OfferingTargetKind = "model",
+            ActualModel = "image-model-a",
+            ActualPlatformId = "platform-a",
+            ActualPlatformName = "Provider A",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-a.example.com",
+            ApiKey = "sk-a",
+            RetryCandidates = [retryCandidate],
+        };
+        const string denial = "{\"error\":{\"message\":\"Request blocked by safety policy\"}}";
+        var http = new SequenceHttpClientFactory((403, denial), (403, denial));
+        var resolver = new TrackingModelResolver();
+        var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            RequiredLogicalModelPublicId = "image2",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw an image",
+                Images = ["data:image/png;base64,aW1hZ2U="],
+            },
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal(2, http.RequestUris.Count);
+        Assert.Empty(resolver.UnavailableOfferingIds);
+        Assert.Empty(resolver.FailedOfferingIds);
+    }
+
     [Fact]
     public async Task SendRawWithResolutionAsync_WhenRequiredLogicalModelIsLost_ShouldRejectLegacyFallback()
     {
@@ -2811,6 +2892,7 @@ internal sealed class TrackingModelResolver : IModelResolver
 {
     public List<string> SuccessfulOfferingIds { get; } = [];
     public List<string> UnavailableOfferingIds { get; } = [];
+    public List<string> FailedOfferingIds { get; } = [];
 
     public Task<ModelResolutionResult> ResolveAsync(
         string appCallerCode,
@@ -2835,7 +2917,11 @@ internal sealed class TrackingModelResolver : IModelResolver
     }
 
     public Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
-        => Task.CompletedTask;
+    {
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId))
+            FailedOfferingIds.Add(resolution.OfferingId);
+        return Task.CompletedTask;
+    }
 
     public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
     {

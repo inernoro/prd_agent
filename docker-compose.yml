@@ -113,6 +113,8 @@ services:
       # 经 gateway nginx 在两个 serving 实例间负载均衡；不再把 MAP 固定到单实例。
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
+      # 仅正式权威部署接管上线前遗留的无归属转写任务；CDS 预览在 cds-compose.yml 中固定关闭。
+      - Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-true}
     # 重要：此 API 容器建议只读，避免任何本地落盘
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘

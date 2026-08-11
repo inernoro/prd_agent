@@ -42,6 +42,8 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (热重载)"
       command: >-
+        if ! command -v ffmpeg >/dev/null 2>&1; then
+        apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
         cd prd-api &&
         dotnet restore &&
         dotnet build --no-restore &&
@@ -51,6 +53,8 @@ x-cds-deploy-modes:
       # 每次部署前清掉 bin/obj，强制干净编译：dotnet 增量构建在 CDS 共享 worktree 下偶发
       # "撒谎"（源码改了却复用旧 DLL），清空后从零编译可彻底避免发布出不含最新改动的二进制。
       command: >-
+        if ! command -v ffmpeg >/dev/null 2>&1; then
+        apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
         cd prd-api &&
         rm -rf src/PrdAgent.Api/bin src/PrdAgent.Api/obj
         src/PrdAgent.Core/bin src/PrdAgent.Core/obj
@@ -243,6 +247,8 @@ services:
     ports:
       - "5000"
     command: >-
+      if ! command -v ffmpeg >/dev/null 2>&1; then
+      apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
       cd prd-api &&
       rm -rf src/PrdAgent.Api/obj src/PrdAgent.Api/bin
       src/PrdAgent.Core/obj src/PrdAgent.Core/bin
@@ -280,6 +286,8 @@ services:
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       LlmGateway__Readiness__RequireAssetProbe: "false"
+      # 历史无归属队列只允许正式权威部署接管；所有 CDS 预览固定关闭。
+      Transcript__AdoptLegacyUnownedRuns: "false"
       LlmGateway__Retention__ApplyChanges: "false"
       LlmGateway__Retention__EnableTtlIndexes: "false"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明

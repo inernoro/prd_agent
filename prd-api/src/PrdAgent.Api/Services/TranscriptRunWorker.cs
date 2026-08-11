@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Helpers;
 
 namespace PrdAgent.Api.Services;
@@ -80,7 +81,8 @@ public class TranscriptRunWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
-        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var instanceId = InstanceIdentity.Get(configuration);
 
         // CDS 的所有预览分支共用 MongoDB。只领取当前部署创建的任务，禁止其他分支
         // 或主干旧版本抢走后按不同模型协议执行。
@@ -93,7 +95,9 @@ public class TranscriptRunWorker : BackgroundService
                 Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                 Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, string.Empty),
                 Builders<TranscriptRun>.Filter.Exists(nameof(TranscriptRun.OwnerInstanceId), false)));
-        var filter = Builders<TranscriptRun>.Filter.Or(scopedForCurrentInstance, unownedLegacyRun);
+        var filter = DeploymentAuthority.CanAdoptLegacyTranscriptRuns(configuration)
+            ? Builders<TranscriptRun>.Filter.Or(scopedForCurrentInstance, unownedLegacyRun)
+            : scopedForCurrentInstance;
         var update = Builders<TranscriptRun>.Update
             .Set(r => r.Status, "processing")
             .Set(r => r.OwnerInstanceId, instanceId)

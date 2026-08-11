@@ -249,6 +249,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (canonical is null || string.IsNullOrWhiteSpace(canonical.Prompt))
             return false;
 
+        if (IsContentPolicyDenial(statusCode, responseBody))
+            return false;
+
         if (statusCode is >= 401 and <= 404)
             return true;
 
@@ -266,15 +269,37 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
            || message.Contains("unsupported output modality", StringComparison.OrdinalIgnoreCase)
            || message.Contains("unsupported modalities", StringComparison.OrdinalIgnoreCase);
 
+    internal static bool IsContentPolicyDenial(int statusCode, string? responseBody)
+    {
+        if (statusCode != 403 || string.IsNullOrWhiteSpace(responseBody))
+            return false;
+
+        var message = TryExtractErrorMessage(responseBody) ?? string.Empty;
+        var diagnostic = $"{message}\n{responseBody}";
+        return diagnostic.Contains("content policy", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("content_policy", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("safety policy", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("safety system", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("blocked for safety", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("blocked by safety", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("content moderation", StringComparison.OrdinalIgnoreCase)
+               || diagnostic.Contains("responsible ai policy", StringComparison.OrdinalIgnoreCase);
+    }
+
     private Task RecordRawProviderFailureAsync(
         ModelResolutionResult resolution,
         int statusCode,
         string? responseBody,
         GatewayRawRequest request,
         CancellationToken ct)
-        => ShouldQuarantineRawProviderResponse(statusCode, responseBody, request)
+    {
+        if (IsContentPolicyDenial(statusCode, responseBody))
+            return Task.CompletedTask;
+
+        return ShouldQuarantineRawProviderResponse(statusCode, responseBody, request)
             ? _modelResolver.RecordUnavailableAsync(resolution, ct)
             : _modelResolver.RecordFailureAsync(resolution, ct);
+    }
 
     private static bool IsAutoModelPolicy(GatewayRequest request)
         => string.Equals(request.Context?.ModelPolicy, "auto", StringComparison.OrdinalIgnoreCase);

@@ -31,6 +31,21 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
+    public void LegacyTranscriptAdoption_RequiresExplicitProductionAuthority()
+    {
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new())).ShouldBeFalse();
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["Transcript:AdoptLegacyUnownedRuns"] = "true",
+        })).ShouldBeTrue();
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["Transcript:AdoptLegacyUnownedRuns"] = "true",
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
     public void ExplicitFalse_OverridesProductionAuthority()
     {
         var config = Build(new() { ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false" });

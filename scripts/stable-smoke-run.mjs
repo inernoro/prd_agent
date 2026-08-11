@@ -183,7 +183,37 @@ export function deployedRuntimeCommit(branch) {
   return commits.size === 1 ? [...commits][0] : '';
 }
 
-export function resolveRuntimeExpectation(branch, expectedCommit, changedFiles = []) {
+const serviceBuildScopes = [
+  { matches: (name) => name.startsWith('llmgw-serve'), paths: ['llmgw/serving/', 'prd-api/', '.github/workflows/branch-image.yml'] },
+  { matches: (name) => name.startsWith('llmgw-web'), paths: ['llmgw/web/', 'prd-api/', '.github/workflows/branch-image.yml'] },
+  { matches: (name) => name.startsWith('llmgw'), paths: ['llmgw/console-api/', 'prd-api/', '.github/workflows/branch-image.yml'] },
+  { matches: (name) => name.startsWith('admin'), paths: ['prd-admin/', '.github/workflows/branch-image.yml'] },
+  { matches: (name) => name.startsWith('api'), paths: ['prd-api/', '.github/workflows/branch-image.yml'] },
+];
+
+function deployedImageCommit(service) {
+  return String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})$/i)?.[1] || '';
+}
+
+function serviceNeedsCurrentCommit(serviceName, changedFiles) {
+  const scope = serviceBuildScopes.find((candidate) => candidate.matches(serviceName));
+  if (!scope || !Array.isArray(changedFiles)) return true;
+  return changedFiles.some((path) => scope.paths.some((prefix) => (
+    prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix
+  )));
+}
+
+export function resolveServiceRuntimeCommits(branch, expectedCommit, changedFilesByCommit = {}) {
+  return Object.fromEntries(Object.entries(branch?.services || {}).map(([key, service]) => {
+    const serviceName = String(service?.profileId || key).toLowerCase();
+    const deployedCommit = deployedImageCommit(service);
+    if (!deployedCommit || deployedCommit === expectedCommit) return [key, expectedCommit];
+    const changedFiles = changedFilesByCommit[deployedCommit];
+    return [key, serviceNeedsCurrentCommit(serviceName, changedFiles) ? expectedCommit : deployedCommit];
+  }));
+}
+
+export function resolveRuntimeExpectation(branch, expectedCommit, changedFiles = [], changedFilesByCommit = {}) {
   const deployedCommit = deployedRuntimeCommit(branch);
   const runtimeEquivalent = Boolean(
     deployedCommit
@@ -191,11 +221,15 @@ export function resolveRuntimeExpectation(branch, expectedCommit, changedFiles =
     && changedFiles.length > 0
     && changedFiles.every(isValidationOnlyPath),
   );
+  const runtimeCommit = runtimeEquivalent ? deployedCommit : expectedCommit;
   return {
     expectedCommit,
-    runtimeCommit: runtimeEquivalent ? deployedCommit : expectedCommit,
+    runtimeCommit,
     runtimeEquivalent,
     validationOnlyChanges: runtimeEquivalent ? [...changedFiles] : [],
+    serviceRuntimeCommits: runtimeEquivalent
+      ? Object.fromEntries(Object.keys(branch?.services || {}).map((key) => [key, runtimeCommit]))
+      : resolveServiceRuntimeCommits(branch, expectedCommit, changedFilesByCommit),
   };
 }
 
@@ -210,6 +244,7 @@ function readJson(path) {
 export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation = {}) {
   const runtimeCommit = runtimeExpectation.runtimeCommit || expectedCommit;
   const runtimeEquivalent = runtimeExpectation.runtimeEquivalent === true;
+  const serviceRuntimeCommits = runtimeExpectation.serviceRuntimeCommits || {};
   const reasons = [];
   const services = Object.values(branch?.services || {});
   if (branch?.status !== 'running') reasons.push(`分支状态为 ${branch?.status || 'unknown'}`);
@@ -219,10 +254,12 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
   if (branch?.lastDeployDispatchCommitSha !== runtimeCommit) reasons.push('CDS 尚未对运行时目标提交完成部署调度');
   if (branch?.deployRuntime?.drift?.hasDrift) reasons.push('CDS 服务存在版本漂移');
   if (services.length === 0) reasons.push('CDS 未返回任何业务服务');
-  for (const service of services) {
+  for (const [serviceKey, service] of Object.entries(branch?.services || {})) {
     const serviceName = service.profileId || service.containerName || '未知服务';
     if (service.status !== 'running') reasons.push(`${serviceName} 未运行`);
-    if (!String(service.deployedImage || '').endsWith(`:sha-${runtimeCommit}`)) {
+    const expectedServiceCommit = serviceRuntimeCommits[serviceKey] || runtimeCommit;
+    const sourceMode = service.deployedMode && service.deployedMode !== 'express';
+    if (!sourceMode && !String(service.deployedImage || '').endsWith(`:sha-${expectedServiceCommit}`)) {
       reasons.push(`${serviceName} 尚未切换到运行时目标镜像`);
     }
   }
@@ -234,19 +271,31 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
     runtimeCommit,
     runtimeEquivalent,
     validationOnlyChanges: runtimeExpectation.validationOnlyChanges || [],
+    serviceRuntimeCommits,
   };
 }
 
 function runtimeExpectationForBranch(branch, expectedCommit) {
-  const deployedCommit = deployedRuntimeCommit(branch);
-  if (!deployedCommit || deployedCommit === expectedCommit) {
-    return resolveRuntimeExpectation(branch, expectedCommit);
+  const deployedCommits = [...new Set(Object.values(branch?.services || {})
+    .map(deployedImageCommit)
+    .filter((commit) => commit && commit !== expectedCommit))];
+  const changedFilesByCommit = {};
+  for (const deployedCommit of deployedCommits) {
+    const diffResult = command('git', ['diff', '--name-only', `${deployedCommit}..${expectedCommit}`]);
+    if (diffResult.status === 0) {
+      changedFilesByCommit[deployedCommit] = String(diffResult.stdout || '')
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
   }
-  const diffResult = command('git', ['diff', '--name-only', `${deployedCommit}..${expectedCommit}`]);
-  const changedFiles = diffResult.status === 0
-    ? String(diffResult.stdout || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
-    : [];
-  return resolveRuntimeExpectation(branch, expectedCommit, changedFiles);
+  const uniformDeployedCommit = deployedRuntimeCommit(branch);
+  return resolveRuntimeExpectation(
+    branch,
+    expectedCommit,
+    uniformDeployedCommit ? changedFilesByCommit[uniformDeployedCommit] || [] : [],
+    changedFilesByCommit,
+  );
 }
 
 function readCdsBranchStatus() {

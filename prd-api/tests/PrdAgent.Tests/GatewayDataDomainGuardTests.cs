@@ -1098,6 +1098,9 @@ public class GatewayDataDomainGuardTests
         var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/TranscriptAgentController.cs");
         var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs");
         var watchdog = ReadRepoFile("prd-api/src/PrdAgent.Api/Middleware/TranscriptRunWatchdog.cs");
+        var authority = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Security/DeploymentAuthority.cs");
+        var cdsCompose = ReadRepoFile("cds-compose.yml");
+        var productionCompose = ReadRepoFile("docker-compose.yml");
 
         Assert.Contains("public string OwnerInstanceId { get; set; }", model);
         Assert.Contains("OwnerInstanceId = InstanceIdentity.Get(_config)", controller);
@@ -1105,7 +1108,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued)", worker);
         Assert.Contains("Filter.Eq(r => r.Status, TranscriptRunStatuses.LegacyQueued)", worker);
         Assert.Contains("Filter.Exists(nameof(TranscriptRun.OwnerInstanceId), false)", worker);
+        Assert.Contains("DeploymentAuthority.CanAdoptLegacyTranscriptRuns(configuration)", worker);
         Assert.Contains("Filter.Or(scopedForCurrentInstance, unownedLegacyRun)", worker);
+        Assert.Contains("AdoptLegacyTranscriptRunsKey", authority);
+        Assert.Contains("Transcript__AdoptLegacyUnownedRuns: \"false\"", cdsCompose);
+        Assert.Contains("Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-true}", productionCompose);
+        Assert.True(
+            cdsCompose.Split("command -v ffmpeg", StringSplitOptions.None).Length - 1 >= 3,
+            "CDS API 的 dev、static 与默认源码命令都必须在启动前保证 ffmpeg 可用");
         Assert.Contains("Sort.Ascending(r => r.CreatedAt)", worker);
         Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, instanceId)", worker);
         Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, _instanceId)", watchdog);
