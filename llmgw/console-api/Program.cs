@@ -7306,11 +7306,33 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     // 这里若按大小写敏感的原名比，源上的 GPT-4o 与目标上的 gpt-4o 会被当成两个模型 →
     // 走「改绑过去」→ 撞唯一索引抛异常，而此时前面的模型与 offering 已经改完了，
     // 留下一个改了一半的合并。
-    var targetModelIdByName = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", targetId))).ToListAsync())
+    var targetModels = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", targetId))).ToListAsync();
+    var targetModelIdByName = targetModels
         .Select(d => (Key: NormalizedModelKey(d), Id: d.GetStringOrEmpty("_id")))
         .Where(x => x.Key.Length > 0)
         .GroupBy(x => x.Key, StringComparer.Ordinal)
         .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.Ordinal);
+
+    // 上面那张表回答的是「源模型和目标模型算不算同一个」，键只取一个归一名（NormalizedModelKey
+    // 优先 ModelName），那是模型**身份**的口径，不该乱动。
+    // 下面这张是另一件事：把池成员写的 ModelId 归一成模型 _id，用来算去重键。
+    // 加成员端点 _id / ModelName / Name 三种都收并原样落库，所以这里必须把目标平台上
+    // **每一种能被接受的写法**都指到同一个 _id；只索引 ModelName 的话，
+    // 用 Name 别名建的目标成员算出来的键仍与幸存者 _id 不同，两条重复成员照样并存。
+    var canonicalTargetModelIdByAlias = new Dictionary<string, string>(StringComparer.Ordinal);
+    void IndexTargetModelAliases(BsonDocument model)
+    {
+        var canonicalId = model.GetStringOrEmpty("_id");
+        if (canonicalId.Length == 0) return;
+        foreach (var alias in new[] { model.AsNullableString("ModelName"), model.AsNullableString("Name") })
+        {
+            if (string.IsNullOrWhiteSpace(alias)) continue;
+            var aliasKey = alias.Trim().ToLowerInvariant();
+            if (aliasKey.Length > 0 && !canonicalTargetModelIdByAlias.ContainsKey(aliasKey))
+                canonicalTargetModelIdByAlias[aliasKey] = canonicalId;
+        }
+    }
+    foreach (var targetModel in targetModels) IndexTargetModelAliases(targetModel);
     // 被丢弃模型的 _id → 留下来那条的 _id。池成员的 ModelId 可以是 _id（加成员端点
     // 同时接受 _id / ModelName / Name），只改成员的 PlatformId 会留下
     //「目标平台 + 已删模型 _id」这种解析不到的组合，而且它不再指向源平台，
@@ -7368,6 +7390,9 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
         // 改嫁过去的模型 _id 不变，offering 自然还指着它；但它从此代表这个名字，
         // 后面再遇到同名的源模型就该合并到它身上（同样按归一名登记）
         if (modelKey.Length > 0) targetModelIdByName[modelKey] = modelId;
+        // 改嫁过去之后它就是目标平台上的模型了，别名也要进归一表，
+        // 否则池里用它的名字写的成员算不出规范键
+        IndexTargetModelAliases(model);
         result.ModelsMoved++;
     }
 
@@ -7400,7 +7425,7 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
         {
             if (string.Equals(platformId, targetId, StringComparison.Ordinal)
                 && modelId.Length > 0
-                && targetModelIdByName.TryGetValue(modelId.Trim().ToLowerInvariant(), out var canonical)
+                && canonicalTargetModelIdByAlias.TryGetValue(modelId.Trim().ToLowerInvariant(), out var canonical)
                 && canonical.Length > 0)
                 modelId = canonical;
             return $"{platformId}\n{modelId}";
@@ -7478,9 +7503,29 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             if (isSource) result.PoolMembersRepointed++;
             kept.Add(member);
         }
-        await gwModelPools.UpdateOneAsync(
-            TenantAccess.Filter(http, fb.Eq("_id", pool.GetStringOrEmpty("_id"))),
-            Builders<BsonDocument>.Update.Set("Models", kept).Set("UpdatedAt", DateTime.UtcNow));
+        // 版本闸：池的每一处写入都带 PoolVersionGuard + Inc(Version)，全仓八个写点都这么写，
+        // 只有这里没带——那正是「同一条不变量只在一部分路径上成立」。
+        // 不带的后果有两个方向：合并可能盖掉一次已经把版本推进过的并发改动；
+        // 反过来，一个在合并前读到版本 N 的操作，合并后仍能通过它的版本闸，
+        // 把陈旧的 Models 数组整个写回去——那会让指向源平台或已删模型的成员在删除之后复活，
+        // 而合并这边还报成功。
+        // 冲突就 409：本合并被设计成中断可重放（被丢弃的模型直到引用全改完才删），
+        // 所以让调用方重跑一次是安全且明确的，不需要在这里发明重试语义。
+        var poolWrite = await gwModelPools.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                TenantAccess.Filter(http, fb.Eq("_id", pool.GetStringOrEmpty("_id"))),
+                PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
+                PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)),
+            Builders<BsonDocument>.Update
+                .Set("Models", kept)
+                .Set("UpdatedAt", DateTime.UtcNow)
+                .Inc("Version", 1));
+        if (poolWrite.ModifiedCount != 1)
+            return Json(
+                ApiEnvelope<PlatformMergeResult>.Fail(
+                    "POOL_CONCURRENTLY_MODIFIED",
+                    "合并期间有模型池正在变更，已中止。这次合并可以直接重跑：被丢弃的模型要等引用全部改完才会删。"),
+                jsonOptions, 409);
     }
 
     // 3) 引用全部改指完，现在才删被丢弃的重复模型。

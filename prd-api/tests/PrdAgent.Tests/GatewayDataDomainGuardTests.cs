@@ -4355,6 +4355,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("keysOwnedByExistingMembers", merge);
         Assert.Contains("isSource&&keysOwnedByExistingMembers.Contains(key)", dedupDense);
 
+        // 归一表必须收目标平台上**每一种能被接受的写法**（ModelName 与 Name）。
+        // 只索引 ModelName 的话，用 Name 别名建的目标成员算出来的键仍与幸存者 _id 不同，
+        // 两条指向同一模型的成员照样并存。注意这与 targetModelIdByName 是两件事：
+        // 那张表回答「算不算同一个模型」（身份口径），不能顺手一起放宽。
+        Assert.Contains("canonicalTargetModelIdByAlias", merge);
+        Assert.Contains("IndexTargetModelAliases", merge);
+
+        // 池的每一处写入都要带版本闸 + 递增，全仓其它八个写点都这么写；
+        // 少这一处就意味着合并能盖掉并发改动，或让读到旧版本的操作在合并后把陈旧成员写回来。
+        Assert.Contains("PoolVersionGuard(Builders<BsonDocument>.Filter, pool)", merge);
+        Assert.Contains("POOL_CONCURRENTLY_MODIFIED", merge);
+        Assert.Contains(".Inc(\"Version\", 1)", merge);
+
         // 名字命中必须**与**「这条成员本来就在源平台」取合取，不能只是恰好写在附近。
         // 去空白后断言这个合取本身：`pointsAtSourcePlatform` 在旧版里也出现在附近
         // （它就声明在上一行），按距离判会在出问题的那版上照样绿——那种断言是假证据。
