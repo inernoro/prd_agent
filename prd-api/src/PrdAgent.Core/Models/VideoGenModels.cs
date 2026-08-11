@@ -389,6 +389,7 @@ public class DirectVideoJobOwnership
     public string? Model { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.Add(Retention);
+    public DateTime? RevokedAt { get; set; }
 }
 
 public class VideoModelOption

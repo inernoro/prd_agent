@@ -876,14 +876,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally {
       if (directJobId) {
         const cleanup = await page.request.delete(
-          `/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}`,
+          `/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}?recoveryToken=${encodeURIComponent(recoveryToken)}`,
           { headers: authHeaders(token) },
         );
         const cleanupBody = await cleanup.json() as ApiEnvelope<{ cleaned: boolean }>;
         expect(cleanup.ok(), cleanupBody.error?.message || '视频冒烟任务清理失败').toBe(true);
         expect(cleanupBody.data.cleaned).toBe(true);
+        const revokedStatus = await page.request.get(
+          `/api/video-agent/videogen-direct/status/${encodeURIComponent(directJobId)}?recoveryToken=${encodeURIComponent(recoveryToken)}`,
+          { headers: authHeaders(token) },
+        );
+        const revokedStatusBody = await revokedStatus.json() as ApiEnvelope<never>;
+        expect(revokedStatus.status(), '已清理视频任务的旧恢复凭证必须失效').toBe(404);
+        expect(revokedStatusBody.success).toBe(false);
         const cleanupAgain = await page.request.delete(
-          `/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}`,
+          `/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}?recoveryToken=${encodeURIComponent(recoveryToken)}`,
           { headers: authHeaders(token) },
         );
         const cleanupAgainBody = await cleanupAgain.json() as ApiEnvelope<{ cleaned: boolean }>;

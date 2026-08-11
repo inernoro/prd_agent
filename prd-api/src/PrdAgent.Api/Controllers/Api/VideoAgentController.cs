@@ -277,15 +277,64 @@ public class VideoAgentController : ControllerBase
     [HttpDelete("videogen-direct/{jobId}")]
     public async Task<IActionResult> DeleteDirectVideoJob(
         string jobId,
+        [FromQuery] string? recoveryToken,
         CancellationToken ct)
     {
         var ownerAdminId = GetAdminId();
-        await _db.DirectVideoJobOwnerships.DeleteOneAsync(
-            item => item.AppKey == AppKey
-                    && item.JobId == jobId
-                    && item.OwnerAdminId == ownerAdminId,
-            ct);
-        // 删除不存在的本人记录也返回成功，便于 finally 和调度器安全重试。
+        DirectVideoJobOwnership? ownership;
+        try
+        {
+            ownership = await _db.DirectVideoJobOwnerships
+                .Find(item => item.AppKey == AppKey
+                              && item.JobId == jobId
+                              && item.OwnerAdminId == ownerAdminId)
+                .FirstOrDefaultAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "直出视频清理前无法读取归属记录 jobId={JobId}", jobId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "视频任务暂时无法清理，请稍后重试"));
+        }
+
+        if (ownership == null
+            && !TryReadDirectVideoJobRecoveryToken(recoveryToken, jobId, ownerAdminId, out ownership))
+        {
+            // 不存在且没有本人有效恢复凭证时保持幂等，不为无法证明归属的任务创建墓碑。
+            return Ok(ApiResponse<object>.Ok(new { cleaned = true }));
+        }
+
+        var revokedAt = DateTime.UtcNow;
+        var tombstoneExpiresAt = ownership.ExpiresAt > revokedAt
+            ? ownership.ExpiresAt
+            : revokedAt.Add(DirectVideoJobOwnership.Retention);
+        try
+        {
+            var update = Builders<DirectVideoJobOwnership>.Update
+                .Set(item => item.RevokedAt, revokedAt)
+                .Set(item => item.ExpiresAt, tombstoneExpiresAt)
+                .SetOnInsert(item => item.Id, ownership.Id)
+                .SetOnInsert(item => item.AppKey, ownership.AppKey)
+                .SetOnInsert(item => item.OwnerAdminId, ownership.OwnerAdminId)
+                .SetOnInsert(item => item.JobId, ownership.JobId)
+                .SetOnInsert(item => item.Model, ownership.Model)
+                .SetOnInsert(item => item.CreatedAt, ownership.CreatedAt);
+            await _db.DirectVideoJobOwnerships.UpdateOneAsync(
+                item => item.AppKey == AppKey
+                        && item.JobId == jobId
+                        && item.OwnerAdminId == ownerAdminId,
+                update,
+                new UpdateOptions { IsUpsert = true },
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "直出视频清理撤销凭证失败 jobId={JobId}", jobId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "视频任务暂时无法清理，请稍后重试"));
+        }
+
+        // 撤销墓碑保留到恢复凭证过期，重复清理仍然安全成功。
         return Ok(ApiResponse<object>.Ok(new { cleaned = true }));
     }
 
@@ -300,32 +349,49 @@ public class VideoAgentController : ControllerBase
             var persisted = await _db.DirectVideoJobOwnerships
                 .Find(item => item.JobId == jobId && item.OwnerAdminId == ownerAdminId && item.AppKey == AppKey)
                 .FirstOrDefaultAsync(CancellationToken.None);
-            if (persisted != null) return persisted;
+            if (persisted != null) return persisted.RevokedAt.HasValue ? null : persisted;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "直出视频归属读取失败，将尝试签名恢复 jobId={JobId}", jobId);
+            _logger.LogWarning(ex, "直出视频归属读取失败，无法安全确认恢复凭证是否已撤销 jobId={JobId}", jobId);
+            return null;
         }
 
         if (!TryReadDirectVideoJobRecoveryToken(recoveryToken, jobId, ownerAdminId, out var recovered))
             return null;
 
-        await TryPersistDirectVideoJobOwnershipAsync(recovered);
-        return recovered;
+        var ownershipRestored = await TryPersistDirectVideoJobOwnershipAsync(recovered);
+        return ownershipRestored ? recovered : null;
     }
 
     private async Task<bool> TryPersistDirectVideoJobOwnershipAsync(DirectVideoJobOwnership ownership)
     {
         try
         {
-            await _db.DirectVideoJobOwnerships.ReplaceOneAsync(
+            var update = Builders<DirectVideoJobOwnership>.Update
+                .Set(item => item.Model, ownership.Model)
+                .Set(item => item.ExpiresAt, ownership.ExpiresAt)
+                .SetOnInsert(item => item.Id, ownership.Id)
+                .SetOnInsert(item => item.AppKey, ownership.AppKey)
+                .SetOnInsert(item => item.OwnerAdminId, ownership.OwnerAdminId)
+                .SetOnInsert(item => item.JobId, ownership.JobId)
+                .SetOnInsert(item => item.CreatedAt, ownership.CreatedAt);
+            await _db.DirectVideoJobOwnerships.UpdateOneAsync(
                 item => item.AppKey == ownership.AppKey
                         && item.JobId == ownership.JobId
-                        && item.OwnerAdminId == ownership.OwnerAdminId,
-                ownership,
-                new ReplaceOptions { IsUpsert = true },
+                        && item.OwnerAdminId == ownership.OwnerAdminId
+                        && item.RevokedAt == null,
+                update,
+                new UpdateOptions { IsUpsert = true },
                 CancellationToken.None);
             return true;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            _logger.LogWarning(
+                "直出视频恢复凭证已被撤销，拒绝重建归属记录 jobId={JobId}",
+                ownership.JobId);
+            return false;
         }
         catch (Exception ex)
         {
