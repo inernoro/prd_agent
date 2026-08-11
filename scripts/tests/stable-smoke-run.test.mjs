@@ -38,6 +38,7 @@ import {
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
   validateProductionReadOnlyConfig,
+  validateSelectedEnvironmentConfig,
   visualGateExecutionMatchesResult,
 } from '../stable-smoke-run.mjs';
 
@@ -308,6 +309,21 @@ test('正式环境单独运行时默认禁止业务写入', () => {
     grep: '',
     reasons: [],
   });
+});
+
+test('正式环境单独 dry-run 只校验只读健康检查地址', () => {
+  assert.deepEqual(validateSelectedEnvironmentConfig('production', ['production'], {
+    STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net',
+  }), []);
+  assert.deepEqual(validateSelectedEnvironmentConfig('production', ['cds', 'production'], {
+    STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net',
+  }), [
+    'STABLE_SMOKE_PROD_AI_ACCESS_KEY',
+    'STABLE_SMOKE_PROD_USER',
+    'STABLE_SMOKE_PROD_GW_BASE_URL',
+    'STABLE_SMOKE_PROD_GW_USER',
+    'STABLE_SMOKE_PROD_GW_PASSWORD',
+  ]);
 });
 
 test('正式环境只读模式只对账安全门实际执行的健康检查', () => {

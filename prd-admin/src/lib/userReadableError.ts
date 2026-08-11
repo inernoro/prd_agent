@@ -70,6 +70,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['ACCOUNT_DISABLED', '账号已被禁用，请联系管理员处理。'],
   ['PASSWORD_LOGIN_DISABLED', '当前环境已禁用密码登录，请使用 SSO 登录。'],
   ['SSO_PROVIDER_DISABLED', 'SSO 提供方尚未启用，请联系管理员启用后重试。'],
+  ['SSO_DISABLED', '当前 SSO 登录已停用，请改用页面上的其他登录方式，或联系管理员处理。'],
   ['SSO_AUTHORIZE_INVALID', 'SSO 授权参数无效，请返回模型网关重新发起登录。'],
   ['SSO_ADMIN_REQUIRED', '当前账号不是管理员，无法进入外部控制台，请使用管理员账号登录后重试。'],
   ['SSO_BINDING_DUPLICATED', '米多星球账号绑定不唯一，请联系管理员处理。'],

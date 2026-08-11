@@ -197,6 +197,15 @@ export function validateProductionReadOnlyConfig(values) {
     : ['正式环境只读健康检查地址必须固定为 https://map.ebcone.net'];
 }
 
+export function validateSelectedEnvironmentConfig(environment, selected, values) {
+  const productionReadOnly = environment === 'production'
+    && selected.length === 1
+    && selected[0] === 'production';
+  return productionReadOnly
+    ? validateProductionReadOnlyConfig(values)
+    : validateEnvironmentConfig(environment, values);
+}
+
 function withoutTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '');
 }
@@ -1049,12 +1058,16 @@ async function main() {
   }
   values.STABLE_SMOKE_PROD_BASE_URL = values.STABLE_SMOKE_PROD_BASE_URL || productionBaseUrl;
   for (const environment of selected) {
-    const missing = validateEnvironmentConfig(environment, values);
+    const missing = validateSelectedEnvironmentConfig(environment, selected, values);
     if (missing.length > 0) preflightBlockers.push(`${environment === 'cds' ? 'CDS 环境' : '正式环境'}缺少：${missing.join('、')}`);
   }
   if (options.has('--preflight')) {
     for (const environment of selected) {
-      if (validateEnvironmentConfig(environment, values).length === 0) {
+      const productionReadOnly = environment === 'production'
+        && selected.length === 1
+        && selected[0] === 'production';
+      if (!productionReadOnly
+        && validateSelectedEnvironmentConfig(environment, selected, values).length === 0) {
         preflightBlockers.push(...await validateEnvironmentIdentities(environment, values));
       }
     }

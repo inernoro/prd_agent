@@ -267,3 +267,5 @@
 | fix | prd-admin | 重复模型错误明确引导刷新列表或更换模型名称 |
 | security | prd-api | 直出视频清理写入撤销墓碑并阻止旧恢复凭证重建任务归属 |
 | test | stable-smoke | 视频任务清理后使用旧恢复凭证复查必须返回不可访问 |
+| fix | stable-smoke | 正式环境单独 dry-run 与预检仅要求只读健康检查配置 |
+| fix | prd-admin | 米多 SSO 已停用错误明确引导改用其他登录方式或联系管理员 |
