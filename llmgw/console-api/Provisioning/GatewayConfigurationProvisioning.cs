@@ -456,17 +456,17 @@ public static class GatewayConfigurationProvisioning
     public static bool HasEnabledCapability(
         IEnumerable<BsonDocument> capabilities,
         params string[] capabilityTypes)
-        => capabilities.Any(capability =>
-        {
-            if (!capability.TryGetValue("Type", out var typeValue)
-                || !typeValue.IsString
-                || !capabilityTypes.Any(capabilityType =>
-                    string.Equals(typeValue.AsString, capabilityType, StringComparison.OrdinalIgnoreCase)))
-            {
-                return false;
-            }
-            return capability.TryGetValue("Value", out var value) && value.IsBoolean && value.AsBoolean;
-        });
+    {
+        var wanted = new HashSet<string>(capabilityTypes, StringComparer.OrdinalIgnoreCase);
+        var capability = capabilities.FirstOrDefault(item =>
+            item.TryGetValue("Type", out var typeValue)
+            && typeValue.IsString
+            && wanted.Contains(typeValue.AsString));
+        return capability is not null
+               && capability.TryGetValue("Value", out var value)
+               && value.IsBoolean
+               && value.AsBoolean;
+    }
 
     public static string? NormalizeParameterCapabilityName(string? type)
     {

@@ -569,8 +569,8 @@ export function ModelsPage() {
                   const caps = m.capabilities.filter((c) => c.value).slice(0, 4);
                   const provider = m.platformId ? platformById.get(m.platformId) : undefined;
                   const isImageGeneration = m.isImageGen
-                    || m.capabilities.some((capability) => capability.value
-                      && IMAGE_GENERATION_CAPABILITY_TYPES.has(capability.type.toLowerCase()));
+                    || m.capabilities.find((capability) =>
+                      IMAGE_GENERATION_CAPABILITY_TYPES.has(capability.type.toLowerCase()))?.value === true;
                   return (
                     <tr key={m.id}>
                       <td style={td}>

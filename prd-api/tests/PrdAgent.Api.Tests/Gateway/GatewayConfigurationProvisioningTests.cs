@@ -270,6 +270,18 @@ public sealed class GatewayConfigurationProvisioningTests
         [
             new BsonDocument { ["Type"] = "image", ["Value"] = true },
         ], "image_generation", "text_to_image", "image").ShouldBeTrue();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+            new BsonDocument { ["Type"] = "image", ["Value"] = true },
+        ], "image_generation", "text_to_image", "image").ShouldBeFalse();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image", ["Value"] = true },
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+        ], "image_generation", "text_to_image", "image").ShouldBeTrue();
     }
 
     [Fact]
