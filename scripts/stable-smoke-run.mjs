@@ -261,6 +261,7 @@ const validationOnlyPrefixes = [
   '.codex/',
   'changelogs/',
   'doc/',
+  'e2e/',
   'scripts/tests/',
 ];
 

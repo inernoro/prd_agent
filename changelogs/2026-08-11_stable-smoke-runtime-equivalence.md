@@ -198,3 +198,5 @@
 | test | prd-api/stable-smoke | 增加新锁发布竞态与生图额度恢复指引回归覆盖 |
 | fix | stable-smoke | 正式环境只读健康检查要求首页 HTML 与入口 JS/CSS 均返回成功且内容非空 |
 | test | e2e | CORE-001 增加入口资源状态、内容类型、内容长度与应用根节点渲染断言 |
+| fix | stable-smoke | 将 e2e 验收脚本纳入纯验收版本等价范围，避免误要求重建未变化的业务镜像 |
+| test | stable-smoke | 增加 e2e 路径复用已验证业务镜像的版本门禁覆盖 |

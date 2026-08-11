@@ -475,6 +475,7 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
   };
   const files = [
     '.claude/skills/stable-smoke/reference/regression-ledger.md',
+    'e2e/specs/stable-smoke.spec.ts',
     'scripts/stable-smoke-visual-gate.mjs',
     'scripts/tests/stable-smoke-visual-gate.test.mjs',
     'changelogs/2026-08-05_stable-smoke.md',
