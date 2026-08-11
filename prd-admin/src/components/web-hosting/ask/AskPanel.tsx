@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LogIn, Send, Sparkles, X } from 'lucide-react';
 import { StreamingText } from '@/components/streaming/StreamingText';
+import { AskMarkdown } from './AskMarkdown';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { ASK_ERROR_CODES, ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
@@ -195,7 +196,14 @@ export default function AskPanel({
                 {m.error ? (
                   <span style={{ color: 'var(--accent-primary)' }}>{m.error}</span>
                 ) : (
-                  <StreamingText text={m.content} streaming={!!m.streaming} markdown />
+                  <StreamingText
+                    text={m.content}
+                    streaming={!!m.streaming}
+                    markdown
+                    // 没有 renderMarkdown 的话 StreamingText 不会切到 markdown 视图，
+                    // 完成后的答案会把 **加粗**、列表、链接的原始语法裸露出来
+                    renderMarkdown={(c) => <AskMarkdown content={c} />}
+                  />
                 )}
               </div>
             )}

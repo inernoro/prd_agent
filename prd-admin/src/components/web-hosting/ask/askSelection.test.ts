@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from './askTypes';
 
 /**
@@ -92,5 +95,40 @@ describe('addAskPick / toggleAskPick', () => {
   it('取消一条之后又能加一条', () => {
     const afterRemove = toggleAskPick(full, '一');
     expect(addAskPick(afterRemove, '五')).toEqual(['二', '三', '四', '五']);
+  });
+});
+
+/**
+ * 完成后的答案必须真的按 markdown 渲染。
+ *
+ * 由 review 第一轮（#1358）抓出：`StreamingText` 的最终 markdown 视图要求
+ * `markdown` **和** `renderMarkdown` 同时给到（`showFinalMarkdown = markdown && !streaming && !!renderMarkdown`），
+ * 只传 `markdown` 会静默退回纯文本，`**加粗**`、列表、链接以原始语法裸露在气泡里。
+ *
+ * 这条接线删掉之后没有任何行为测试会红——它是形状 2（建了一半的接线），
+ * 所以按源码守住：AskPanel 里的 StreamingText 必须带 renderMarkdown。
+ */
+describe('提问答案的 markdown 接线', () => {
+  const source = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), 'AskPanel.tsx'),
+    'utf8',
+  );
+
+  it('StreamingText 必须同时给 markdown 与 renderMarkdown', () => {
+    const call = source.slice(source.indexOf('<StreamingText'));
+    const end = call.indexOf('/>');
+    expect(end).toBeGreaterThan(-1);
+    const props = call.slice(0, end);
+    expect(props).toMatch(/\bmarkdown\b/);
+    expect(props).toMatch(/renderMarkdown=/);
+  });
+
+  it('渲染器不放行原始 HTML —— 答案的输入里有用户上传的网页正文，等于间接可控', () => {
+    const md = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), 'AskMarkdown.tsx'),
+      'utf8',
+    );
+    expect(md).toContain('rehypeSanitize');
+    expect(md).not.toMatch(/rehypePlugins=\{\[[^\]]*rehypeRaw/);
   });
 });
