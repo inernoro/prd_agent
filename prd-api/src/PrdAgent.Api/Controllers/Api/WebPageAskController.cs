@@ -184,6 +184,18 @@ public class WebPageAskController : ControllerBase
             return;
         }
 
+        // 合集分享一律不许提问 —— 这条**必须在执行路径上再判一次**。
+        //
+        // 展示路径（ShareViewResult.Ask）已经按同一判据不返回入口，但「前端不显示」
+        // 不是访问控制：拿着合集 token 的人可以直接 POST 里面某个开了提问的 siteId，
+        // 一路走到付费的模型调用。策略存在却只接了展示那一半，正是
+        // predicate-and-wiring-discipline 形状 2（建了一半的接线）。
+        if (AskAccessPolicy.IsCollectionShare(resolved.Share?.ShareType))
+        {
+            await WriteJsonErrorAsync(403, "ASK_DISABLED", "合集分享暂不支持提问");
+            return;
+        }
+
         var site = resolved.Site!;
         if (!site.AskEnabled)
         {

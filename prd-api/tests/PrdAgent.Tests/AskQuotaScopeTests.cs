@@ -77,3 +77,34 @@ public class AskQuotaClientIpGuardTests
         Assert.DoesNotContain("HttpContext.GetRealClientIp()", src);
     }
 }
+
+/// <summary>
+/// 合集分享的执行路径守卫。
+///
+/// 展示路径不返回提问入口 ≠ 访问控制：拿着合集 token 的人可以直接 POST 里面某个
+/// 开了提问的 siteId，一路走到付费的模型调用。策略存在却只接了展示那一半，
+/// 正是 predicate-and-wiring-discipline 形状 2。删掉这道判定不会有任何行为测试变红。
+/// </summary>
+public class AskCollectionGateWiringGuardTests
+{
+    [Fact]
+    public void 提问流端点必须在执行前挡掉合集分享()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        var path = Path.Combine(dir!.FullName,
+            "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs");
+        Assert.True(File.Exists(path), $"未找到被守文件：{path}");
+        var src = File.ReadAllText(path);
+
+        var gate = src.IndexOf("AskAccessPolicy.IsCollectionShare(resolved.Share?.ShareType)", StringComparison.Ordinal);
+        Assert.True(gate > 0, "分享提问端点缺少合集判定");
+
+        // 必须挡在真正开跑之前，而不是记一笔了事
+        var run = src.IndexOf("RunAskAsync(site, req, viewerUserId, shareToken: token)", StringComparison.Ordinal);
+        Assert.True(run > gate, "合集判定必须出现在 RunAskAsync 之前");
+    }
+}

@@ -34,6 +34,17 @@ public static class AskAccessPolicy
         => sharedSiteCount == 1 && siteAskEnabled;
 
     /// <summary>
+    /// 这条分享链接是不是「合集」。合集一律不开放提问——一条链接对着多个站点，
+    /// 上下文该取哪一个没有答案，一期不做。
+    ///
+    /// 判据看的是**分享类型**，不是「现在还剩几个站点」。站点被删除时不会从
+    /// 链接的 SiteIds 里摘掉，于是一条合集链接可能只剩一个存活站点；按数量判会
+    /// 让它突然变成单站点分享、把付费的提问入口暴露出来。类型是创建时定死的，不会漂。
+    /// </summary>
+    public static bool IsCollectionShare(string? shareType)
+        => string.Equals(shareType?.Trim(), "collection", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// 这个站点为什么不能开提问；null = 可以开。
     ///
     /// 唯一判定源。快照服务据此拒绝取正文，配置接口据此拒绝打开开关，配置面板据此
@@ -47,4 +58,15 @@ public static class AskAccessPolicy
         => string.Equals(wrappedAssetType, "video", StringComparison.OrdinalIgnoreCase)
             ? "这是一个视频页面，没有可供阅读的文字内容，暂不支持提问。"
             : null;
+
+    /// <summary>面板欢迎语的存储上限。展示文案，超长截断而不是拒绝。</summary>
+    public const int MaxWelcomeLength = 200;
+
+    /// <summary>规范化欢迎语：去首尾空白、截到 <see cref="MaxWelcomeLength"/>；空白返回 null。</summary>
+    public static string? TrimWelcome(string? welcome)
+    {
+        var v = welcome?.Trim();
+        if (string.IsNullOrEmpty(v)) return null;
+        return v.Length <= MaxWelcomeLength ? v : v[..MaxWelcomeLength];
+    }
 }

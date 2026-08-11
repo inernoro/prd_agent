@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Plus, Trash2, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { getSiteAskConfig, updateSiteAskConfig, type SiteAskConfig } from '@/services/real/webPages';
+import { ASK_MAX_WELCOME_LENGTH } from './askTypes';
 
 interface Props {
   siteId: string;
@@ -156,6 +157,9 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
                 value={welcome}
                 onChange={(e) => setWelcome(e.target.value)}
                 rows={2}
+                // 与后端同一个上限。后端超长是截断（展示文案，截短不改变行为），
+                // 这里把边界前移到打字时，用户不会写完一大段才发现被砍
+                maxLength={ASK_MAX_WELCOME_LENGTH}
                 placeholder={`关于「${siteTitle}」，有什么想了解的？`}
                 style={inputStyle}
               />

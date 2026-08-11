@@ -58,6 +58,13 @@ export const ASK_MAX_QUESTION_LENGTH = 500;
  * 挑的这份就是要显示的那份，所以卡的是展示上限。挑超了后端也存不下，
  * 与其让第 N+1 条静默消失，不如在选的时候就挡住。
  */
+/**
+ * 欢迎语存储上限，与后端 AskAccessPolicy.MaxWelcomeLength 一致。
+ * 后端超长是**截断**（展示文案，截短不改变行为），这里把边界前移到打字时，
+ * 用户不会写完一大段才发现被砍。
+ */
+export const ASK_MAX_WELCOME_LENGTH = 200;
+
 export const ASK_MAX_DISPLAY = 4;
 
 /**

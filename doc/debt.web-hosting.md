@@ -116,6 +116,7 @@
 | 22 | 站内预览弹窗的「加载较慢」角标是固定黑底 + `text-token-secondary`，浅色主题下文字与底色对比度不足 | PR #1356 第三轮 review 提出，判断成立；属样式问题，不影响功能，按两轮熔断规则记账不就地改 | 改为主题感知的 surface/text 配对，或给这块固定深色面板套上既有的深色 token 上下文 |
 | 23 | `SetAskConfigAsync` 里没有把「站点形态是否支持提问」写进同一次条件更新：Controller 先读一次形态、再无条件写；若这中间另一个请求把站点重传成视频，写入会把 `AskEnabled=true` 落到一个已不支持的站点上，已发出去的分享挂着必定 422 的入口 | PR #1358 第三轮 review 提出，判断成立；属并发窄窗（要两个请求交错），按两轮熔断规则记账 | 把形态判据下沉进 `SetAskConfigAsync`，与启用动作放进同一个条件更新（filter 里带上 `WrappedAssetType` 约束） |
 | 24 | 追问时面板顶部仍显示上一条回答的模型与平台，直到新的 `model` 事件到达才刷新；若新请求在此之前失败，错误的模型归属会一直留着 | PR #1358 第三轮 review 提出，判断成立；违反 `ai-model-visibility` 的「实时」要求，但不影响功能 | 每次发起提问先清空 model，或把 model 绑到单条消息而不是整个面板 |
+| 25 | 网关路由到推理型模型时，提问请求没有开上游的 reasoning 透传（`IncludeThinking=false`、body 里也没有 reasoning 开关），模型可能思考几十秒而面板只有心跳文案 | PR #1358 第四轮 review 提出，判断成立；`llm-gateway` 规则写明 OpenRouter 默认不转发 reasoning，要显式要两个字段。属体验补齐、跨模块，按熔断规则记账 | 请求体加 `include_reasoning` + `reasoning.exclude=false`，服务层 `IncludeThinking=true`，SSE 补一类 thinking 事件，前端渲染 |
 
 ### 已修复（closed）
 

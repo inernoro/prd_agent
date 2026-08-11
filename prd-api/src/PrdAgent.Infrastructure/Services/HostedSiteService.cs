@@ -1408,11 +1408,17 @@ public class HostedSiteService : IHostedSiteService
             Builders<HostedSite>.Update.Inc(x => x.ViewCount, 1),
             cancellationToken: ct);
 
-        // 一期只有单站点分享暴露提问入口，判据见 AskAccessPolicy.ShouldExposeAskOnShare
-        var askSite = sites.Count == 1
+        // 一期只有单站点分享暴露提问入口。
+        //
+        // 先按**分享类型**挡住合集：站点被删时不会从链接的 SiteIds 里摘掉，一条合集链接
+        // 可能只剩一个存活站点；只按 sites.Count 判会让它突然变成「单站点分享」、
+        // 把付费的提问入口暴露出来。类型是创建时定死的，不会随数据漂移。
+        var isCollection = AskAccessPolicy.IsCollectionShare(share.ShareType);
+        var askSite = !isCollection && sites.Count == 1
             ? rawSites.FirstOrDefault(s => s.Id == sites[0].Id)
             : null;
-        var exposeAsk = AskAccessPolicy.ShouldExposeAskOnShare(sites.Count, askSite?.AskEnabled ?? false);
+        var exposeAsk = !isCollection
+            && AskAccessPolicy.ShouldExposeAskOnShare(sites.Count, askSite?.AskEnabled ?? false);
 
         return new ShareViewResult
         {
@@ -2756,7 +2762,12 @@ public class HostedSiteService : IHostedSiteService
 
         var questions = AskOpeningQuestions.Normalize(update.SuggestedQuestions);
         var dailyLimit = update.DailyLimit < 0 ? 0 : update.DailyLimit;
-        var welcome = string.IsNullOrWhiteSpace(update.Welcome) ? null : update.Welcome.Trim();
+        // 欢迎语要落库、而且随**每一次公开分享视图**返回，不设上限的话一段几 MB 的粘贴
+        // 既能撑爆这次更新，也会让之后每个访客都多下载一遍。截断而不是拒绝：
+        // 这是展示文案，不是语义参数，截短不会让功能行为变错。
+        var welcome = string.IsNullOrWhiteSpace(update.Welcome)
+            ? null
+            : AskAccessPolicy.TrimWelcome(update.Welcome);
 
         await _db.HostedSites.UpdateOneAsync(
             s => s.Id == siteId,

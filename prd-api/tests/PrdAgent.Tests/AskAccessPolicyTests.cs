@@ -129,4 +129,49 @@ public class AskAccessPolicyTests
         // （后端 PUT 只在 req.Enabled 为 true 时才查这个判据）
         Assert.Null(AskAccessPolicy.UnsupportedReason("html"));
     }
+
+    // ── 合集分享：判据看类型，不看剩几个站点 ──────────────────
+
+    /// <summary>
+    /// 核心用例：合集判据必须看**分享类型**，不能看「现在还剩几个站点」。
+    ///
+    /// 由 review 抓出：站点被删除时不会从链接的 SiteIds 里摘掉，于是一条合集链接
+    /// 可能只剩一个存活站点。只按数量判会让它突然变成「单站点分享」，把付费的提问
+    /// 入口暴露出来。类型是创建时定死的，不会随数据漂移。
+    /// </summary>
+    [Fact]
+    public void 合集按类型判定_与剩余站点数无关()
+    {
+        Assert.True(AskAccessPolicy.IsCollectionShare("collection"));
+        Assert.True(AskAccessPolicy.IsCollectionShare("Collection"));
+        Assert.True(AskAccessPolicy.IsCollectionShare("  collection  "));
+    }
+
+    [Fact]
+    public void 单站点分享不是合集()
+    {
+        Assert.False(AskAccessPolicy.IsCollectionShare("single"));
+        Assert.False(AskAccessPolicy.IsCollectionShare(null));
+        Assert.False(AskAccessPolicy.IsCollectionShare(""));
+    }
+
+    // ── 欢迎语长度 ────────────────────────────────────────────
+
+    [Fact]
+    public void 欢迎语超长截断而不是拒绝()
+    {
+        var huge = new string('欢', AskAccessPolicy.MaxWelcomeLength + 500);
+        var trimmed = AskAccessPolicy.TrimWelcome(huge);
+
+        Assert.NotNull(trimmed);
+        Assert.Equal(AskAccessPolicy.MaxWelcomeLength, trimmed!.Length);
+    }
+
+    [Fact]
+    public void 欢迎语正常长度原样保留_空白归null()
+    {
+        Assert.Equal("欢迎提问", AskAccessPolicy.TrimWelcome("  欢迎提问  "));
+        Assert.Null(AskAccessPolicy.TrimWelcome(null));
+        Assert.Null(AskAccessPolicy.TrimWelcome("   "));
+    }
 }
