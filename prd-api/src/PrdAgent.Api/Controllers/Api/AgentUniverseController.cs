@@ -429,6 +429,15 @@ public class AgentUniverseController : ControllerBase
                         }
                         break;
 
+                    // 思考过程：同样是「等待期屏幕上要有变化」的一部分（CLAUDE.md 规则 #6）。
+                    // 长推理阶段没有 text 也没有工具事件，丢掉它就只剩一个静止的等待态。
+                    // 字段名要翻成本信封的 content——和 text 一样，名字对上了字段没对上等于没接线。
+                    case ChatAgentEventTypes.Thinking:
+                        var thinking = ExtractTextDelta(evt.PayloadJson);
+                        if (!string.IsNullOrEmpty(thinking))
+                            await WriteSseEventAsync("thinking", new { content = thinking });
+                        break;
+
                     // 工具卡（含转派给专业智能体）原样透出：等待期屏幕上要有推进感，
                     // 不能只留一个转圈（CLAUDE.md 规则 #6）。
                     case ChatAgentEventTypes.ToolStarted:

@@ -158,6 +158,8 @@ type ChatMessage = {
   outboundActions?: AgentOutboundAction[];
   /** 通用智能体这一轮用了哪些工具 / 转派给了谁。等待期靠它给推进感，不能只留转圈 */
   tools?: AgentToolCard[];
+  /** 模型的思考过程（运行时支持时才有）。长推理阶段里它是唯一在动的真实内容 */
+  thinking?: string;
   streaming?: boolean;
   /** 流式阶段：thinking / streaming / done */
   phase?: 'thinking' | 'streaming' | 'done' | 'error';
@@ -365,13 +367,14 @@ export function resolveOutgoingTarget(params: {
     };
   }
   if (active) return { target: active, text, mentioned: false, blocked: null };
+  // 没选收件人但通用体可用 —— 这就是「不必先挑智能体」的兑现点，直接发给它。
+  //
+  // 原先这里返回 target: null（只把 blocked 清掉），而调用方按 `!decision.target` 当失败处理、
+  // 弹出手动选择器。于是在「默认收件人副作用还没跑完」和「刚移除当前收件人」这两个窗口里，
+  // 「可选」会悄悄退化回「必选」，而且提示语还是「通用智能体暂时不可用」——它明明可用。
+  if (generalAvailable) return { target: { kind: 'general' }, text, mentioned: false, blocked: null };
   // 没选、通用体又不可用 —— 这时候才轮到要求用户手动挑，并且要说清是「运行时不可用」
-  return {
-    target: null,
-    text,
-    mentioned: false,
-    blocked: generalAvailable ? null : 'no-recipient',
-  };
+  return { target: null, text, mentioned: false, blocked: 'no-recipient' };
 }
 
 const FOCUSED_TOOLBOX_IDS = [
@@ -1126,12 +1129,15 @@ export function ReprocessChatDrawer({
       toast.warning('请稍候', '文档还在加载');
       return;
     }
-    if (docLoadError) {
+    const cap = capabilityForAgent(agent);
+    const isGeneral = agent?.kind === 'general';
+    // 「文档没有可读正文」也走 docLoadError，所以这道闸必须放在认出通用体之后——
+    // 放在前面的话，下面那条「通用体不卡空文档」的豁免在空文档场景里根本到不了，
+    // 等于写了一条永远不生效的豁免（正是它要解决的那个场景被挡在门外）。
+    if (docLoadError && !isGeneral) {
       toast.warning('无法调用', docLoadError);
       return;
     }
-    const cap = capabilityForAgent(agent);
-    const isGeneral = agent?.kind === 'general';
     const isGeneration = cap?.invokeMode === 'generation';
     // 百宝箱自定义智能体（用户自建，type!=='builtin'）也走统一 invoke 信封（custom:{id}）。
     // 它的 systemPrompt 由后端实时读库，新建任意自定义智能体即可立刻接入，无需改代码。
@@ -1183,6 +1189,14 @@ export function ReprocessChatDrawer({
         m.id === asstMsgId
           ? { ...m, content: m.content + chunk, phase: 'streaming' }
           : m));
+      scrollToBottom();
+    };
+    // 思考过程：运行时给了就展示。长推理阶段除了秒数在跳，屏幕上没有别的真实内容，
+    // 而这段文字是「模型此刻在想什么」——比一个计数器有信息量得多（CLAUDE.md 规则 #6）。
+    const onThinking = (chunk: string) => {
+      if (!isOwnedByCurrentEntry()) return;
+      setMessages((prev) => prev.map((m) =>
+        m.id === asstMsgId ? { ...m, thinking: (m.thinking ?? '') + chunk } : m));
       scrollToBottom();
     };
     const onError = (msg: string) => {
@@ -1249,6 +1263,7 @@ export function ReprocessChatDrawer({
         history: isGeneration ? undefined : (history.length > 0 ? history : undefined),
         onStart,
         onText,
+        onThinking,
         onArtifact: (art) => {
           if (!isOwnedByCurrentEntry()) return;
           setMessages((prev) => prev.map((m) =>
@@ -1812,6 +1827,12 @@ export function ReprocessChatDrawer({
   const isLiteraryImageActive = literaryImageMode && active?.kind === 'toolbox' && active.item.agentKey === 'literary-agent';
   const isImagePanelActive = isGenerationActive || isLiteraryImageActive;
 
+  // 「文档没有可读正文」也走 docLoadError，而通用体本来就不拿文档当输入——用户可能只是想问一句话。
+  // 所以这道闸对通用体不成立：否则输入框在空文档上被禁用，那条「通用体不卡空文档」的豁免
+  // 连被执行的机会都没有（写了等于没写）。没选收件人但通用体可用时同理，因为这一轮就会发给它。
+  const generalAnswersWithoutDoc = active?.kind === 'general' || (!active && !!general?.available);
+  const docGateBlocksInput = !!docLoadError && !isShortVideoMode && !generalAnswersWithoutDoc;
+
   // 把图片成果物以 Markdown 形式写回文档（替换/追加/另存为新文档）
   const handleApplyArtifact = useCallback(async (
     art: AgentArtifact, mode: 'replace' | 'append' | 'new',
@@ -1970,7 +1991,7 @@ export function ReprocessChatDrawer({
           <button
             ref={pickerBtnRef}
             onClick={() => dispatchLayer('toggle-picker')}
-            disabled={loadingAgents || (!!docLoadError && !isShortVideoMode)}
+            disabled={loadingAgents || docGateBlocksInput}
             className="w-full flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 transition-all disabled:opacity-60"
             style={{
               background: active
@@ -2356,7 +2377,7 @@ export function ReprocessChatDrawer({
                             }」，Enter 发送`
                           : '先选个智能体，然后输入指令'
               }
-              disabled={isBusy || (!!docLoadError && !isShortVideoMode)}
+              disabled={isBusy || docGateBlocksInput}
               rows={2}
               className="prd-field flex-1 resize-none rounded-[10px] px-3 py-2 text-[12px] outline-none disabled:opacity-60"
             />
@@ -2364,7 +2385,7 @@ export function ReprocessChatDrawer({
               variant="primary"
               size="sm"
               className="!h-auto self-stretch px-4 shrink-0"
-              disabled={isBusy || !input.trim() || (!!docLoadError && !isShortVideoMode)}
+              disabled={isBusy || !input.trim() || docGateBlocksInput}
               onClick={handleSendInput}
             >
               {isBusy
@@ -2757,6 +2778,24 @@ function MessageBubble({
             </span>
           )}
         </div>
+        {/* 思考过程：正文还没开始出字时它是屏幕上唯一真实在动的内容。
+            正文一来就收起——它是过程不是产物，不该跟答案抢主视觉。 */}
+        {msg.thinking && !msg.content && (
+          <div
+            className="mb-2 rounded-[9px] px-2.5 py-1.5 text-[11px] whitespace-pre-wrap"
+            style={{
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-faint)',
+              color: 'var(--text-muted)',
+              maxHeight: 132,
+              minHeight: 0,
+              overflowY: 'auto',
+              overscrollBehavior: 'contain',
+            }}
+          >
+            {msg.thinking}
+          </div>
+        )}
         {(msg.tools?.length ?? 0) > 0 && (
           <div className="mb-2 flex flex-col gap-1.5">
             {(msg.tools ?? []).map((card, index) => (

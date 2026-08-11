@@ -48,11 +48,17 @@ describe('resolveOutgoingTarget', () => {
     expect(r.blocked).toBe('mention-without-instruction');
   });
 
-  it('通用体可用但用户没选：不拦——这正是「不必先挑」的兑现', () => {
-    // active 为 null 由「默认收件人」effect 在渲染层补成 general；
-    // 决策层此时不许抢先弹「请先选择智能体」，否则那条 effect 还没跑完就被打断。
+  it('通用体可用但用户没选：直接发给通用体——这正是「不必先挑」的兑现', () => {
+    // 只断言 blocked 为空是不够的：调用方是按 `!decision.target` 判失败的，
+    // 所以 target 必须真的是通用体。这条用例原先只测了一半，
+    // 于是「target 仍是 null」这个洞在决策层测试全绿的情况下活了下来：
+    // 默认收件人 effect 还没跑完、或刚移除当前收件人的那个窗口里，
+    // 「可选」会退化回「必选」，还会弹一句「通用智能体暂时不可用」——它明明可用。
     const r = resolveOutgoingTarget({ ...base, input: '帮我理一下', active: null });
     expect(r.blocked).toBeNull();
+    expect(r.target).toEqual({ kind: 'general' });
+    expect(r.text).toBe('帮我理一下');
+    expect(r.mentioned).toBe(false);
   });
 
   it('通用体不可用且没选：这时才要求手动挑，且理由是运行时不可用', () => {

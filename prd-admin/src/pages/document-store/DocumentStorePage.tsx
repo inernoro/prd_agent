@@ -1249,6 +1249,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 最近一次转录失败的说明（按当前选中条目）。null = 没失败过或已被新一轮覆盖。
   const [transcribeFailure, setTranscribeFailure] = useState<{ reason: string; at: string | null } | null>(null);
+  // 在途轮询的 effect 只依赖 runId 列表（不能把选中项塞进 deps，否则每次切条目都重建定时器），
+  // 所以「这条失败 run 是不是当前这篇的」得靠 ref 取当下值，闭包里的旧值会张冠李戴。
+  const selectedEntryIdRef = useRef<string | undefined>(selectedEntryId);
+  useEffect(() => { selectedEntryIdRef.current = selectedEntryId; }, [selectedEntryId]);
 
   // 刷新不能抹掉服务端正在执行的转录/整理任务。选中文档恢复后，从服务端权威 run
   // 重新接回轮询；再补一次短延迟确认，覆盖首屏请求与 worker 认领并发的窗口。
@@ -1703,6 +1707,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         } else if (st === 'failed') {
           revealCompletedTranscribeRunsRef.current.delete(runId);
           toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
+          // 失败说明也要落到常驻的失败卡上，不能只弹一条会自己消失的 toast。
+          // 只有 toast 的话，它消失之后页面又变回「跑过但装作没跑过」——正是这张卡要治的病；
+          // 原先只有「重新选中条目 / 刷新页面」那条恢复路径才会填这个 state。
+          if (res.data.sourceEntryId && res.data.sourceEntryId === selectedEntryIdRef.current) {
+            setTranscribeFailure(describeFailedTranscription(res.data));
+          }
         }
       }
     }, 5000);
