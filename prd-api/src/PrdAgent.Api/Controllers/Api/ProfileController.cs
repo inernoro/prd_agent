@@ -132,6 +132,27 @@ public class ProfileController : ControllerBase
         };
     }
 
+    private static object BuildAvatarGenerationAccepted(ImageGenRun run)
+    {
+        var status = run.Status switch
+        {
+            ImageGenRunStatus.Completed => "completed",
+            ImageGenRunStatus.Failed => "failed",
+            ImageGenRunStatus.Cancelled => "cancelled",
+            ImageGenRunStatus.Running => "running",
+            _ => "queued"
+        };
+        var stage = status switch
+        {
+            "completed" => "生成完成",
+            "failed" => "生成未完成",
+            "cancelled" => "生成已取消",
+            "running" => "正在生成头像",
+            _ => "正在排队"
+        };
+        return new { runId = run.Id, status, stage };
+    }
+
     /// <summary>
     /// 上传并更新当前用户自己的头像
     /// </summary>
@@ -218,6 +239,25 @@ public class ProfileController : ControllerBase
         }
 
         var currentUserId = GetCurrentUserId();
+        var rawIdempotencyKey = (Request.Headers["Idempotency-Key"].FirstOrDefault() ?? string.Empty).Trim();
+        if (rawIdempotencyKey.Length > 160) rawIdempotencyKey = rawIdempotencyKey[..160];
+        var idempotencyKey = string.IsNullOrWhiteSpace(rawIdempotencyKey)
+            ? string.Empty
+            : DeploymentScope.ScopeIdempotencyKey($"{ProfileAvatarRunAppKey}::{rawIdempotencyKey}");
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            var existingRun = await _db.ImageGenRuns
+                .Find(x => x.OwnerAdminId == currentUserId
+                           && x.AppKey == ProfileAvatarRunAppKey
+                           && x.IdempotencyKey == idempotencyKey)
+                .FirstOrDefaultAsync(ct);
+            if (existingRun != null)
+            {
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationAccepted(existingRun)));
+            }
+        }
+
         var prompt = (request?.Prompt ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(prompt))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "请描述想怎么修改头像"));
@@ -304,10 +344,30 @@ public class ProfileController : ControllerBase
             AppKey = ProfileAvatarRunAppKey,
             AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img,
             InitImageAssetSha256 = sourceAsset.Sha256,
+            IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey,
             CreatedAt = DateTime.UtcNow
         };
 
-        await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        try
+        {
+            await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        }
+        catch (MongoWriteException exception) when (
+            exception.WriteError?.Category == ServerErrorCategory.DuplicateKey
+            && !string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            var existingRun = await _db.ImageGenRuns
+                .Find(x => x.OwnerAdminId == currentUserId
+                           && x.AppKey == ProfileAvatarRunAppKey
+                           && x.IdempotencyKey == idempotencyKey)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (existingRun != null)
+            {
+                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationAccepted(existingRun)));
+            }
+            throw;
+        }
         _logger.LogInformation(
             "Profile avatar generation run created. userId={UserId} runId={RunId}",
             currentUserId,

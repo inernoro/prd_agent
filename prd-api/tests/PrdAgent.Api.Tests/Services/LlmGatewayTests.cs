@@ -1797,6 +1797,91 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenSameProtocolFallbackUsesAdaptiveModel_ShouldReapplyModelParameters()
+    {
+        var adaptiveCandidate = new ModelResolutionResult
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-adaptive",
+            OfferingTargetKind = "model",
+            ActualModel = "gpt-image-2-all",
+            ActualPlatformId = "adaptive-platform",
+            ActualPlatformName = "Adaptive Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://adaptive.example.com/v1",
+            ApiKey = "adaptive-key",
+        };
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-standard",
+            OfferingTargetKind = "model",
+            ActualModel = "gpt-image-1",
+            ActualPlatformId = "standard-platform",
+            ActualPlatformName = "Standard Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://standard.example.com/v1",
+            ApiKey = "standard-key",
+            RetryCandidates = [adaptiveCandidate],
+        };
+        var http = new SequenceHttpClientFactory(
+            (404, "{\"error\":{\"message\":\"model not found\"}}"),
+            (200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new TrackingModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            EndpointPath = "images/generations",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "gpt-image-1",
+                ["prompt"] = "draw a clean icon",
+                ["n"] = 4,
+                ["size"] = "1536x1024",
+                ["response_format"] = "b64_json",
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a clean icon",
+                Count = 4,
+                Size = "1536x1024",
+                ResponseFormat = "b64_json",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Equal(2, http.RequestBodies.Count);
+        var firstBody = JsonNode.Parse(http.RequestBodies[0])!.AsObject();
+        Assert.Equal("gpt-image-1", firstBody["model"]?.GetValue<string>());
+        Assert.Equal(4, firstBody["n"]?.GetValue<int>());
+        Assert.Equal("1536x1024", firstBody["size"]?.GetValue<string>());
+        Assert.Equal("b64_json", firstBody["response_format"]?.GetValue<string>());
+        var fallbackBody = JsonNode.Parse(http.RequestBodies[1])!.AsObject();
+        Assert.Equal("gpt-image-2-all", fallbackBody["model"]?.GetValue<string>());
+        Assert.Equal("draw a clean icon", fallbackBody["prompt"]?.GetValue<string>());
+        Assert.Null(fallbackBody["n"]);
+        Assert.Null(fallbackBody["size"]);
+        Assert.Null(fallbackBody["response_format"]);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenLogicalImageOfferingReturnsNotFound_ShouldTryNextOffering()
     {
         var googleCandidate = new ModelResolutionResult

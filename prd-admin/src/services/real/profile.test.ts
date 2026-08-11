@@ -71,7 +71,48 @@ describe('generateMyAvatarPreview', () => {
     });
     expect(stages).toEqual(['正在排队', '正在生成头像', '生成完成']);
     expect(mockedApiRequest.mock.calls[0]?.[0]).toBe('/api/profile/avatar/generation-runs');
+    expect(mockedApiRequest.mock.calls[0]?.[1]?.headers?.['Idempotency-Key']).toMatch(/^profile-avatar-/);
     expect(mockedApiRequest.mock.calls.some(([path]) => String(path).includes('/api/visual-agent/image-gen/generate'))).toBe(false);
+  });
+
+  it('创建请求超时后以同一幂等键重试，避免重复生成计费任务', async () => {
+    const sha = 'c'.repeat(64);
+    mockedApiRequest
+      .mockResolvedValueOnce({
+        success: false,
+        data: null,
+        error: { code: 'TIMEOUT', message: '请求超时' },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { runId: 'run-recovered', status: 'queued', stage: '正在排队' },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          status: 'completed',
+          stage: '生成完成',
+          previewUrl: 'https://assets.example/recovered-avatar.png',
+          assetSha256: sha,
+        },
+        error: null,
+      });
+
+    const firstResult = await generateMyAvatarPreview({ prompt: '改成手绘风格' });
+    expect(firstResult.success).toBe(false);
+    const firstKey = mockedApiRequest.mock.calls[0]?.[1]?.headers?.['Idempotency-Key'];
+
+    const retryPromise = generateMyAvatarPreview({ prompt: '改成手绘风格' });
+    await vi.runAllTimersAsync();
+    await expect(retryPromise).resolves.toEqual({
+      success: true,
+      data: { previewUrl: 'https://assets.example/recovered-avatar.png', assetSha256: sha },
+      error: null,
+    });
+    const retryKey = mockedApiRequest.mock.calls[1]?.[1]?.headers?.['Idempotency-Key'];
+    expect(firstKey).toBeTruthy();
+    expect(retryKey).toBe(firstKey);
   });
 
   it('把代理层错误转换成用户可理解的恢复动作', async () => {

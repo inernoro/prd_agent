@@ -1474,6 +1474,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var spec = source.CanonicalImageRequest!;
         var protocol = string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol;
         var normalizedProtocol = protocol?.Trim().ToLowerInvariant();
+        var modelAdapter = LLM.ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
+        var isAdaptiveModel = modelAdapter?.SizeConstraintType == LLM.SizeConstraintTypes.Adaptive;
         var images = spec.Images.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
         JsonObject? body = null;
         Dictionary<string, object>? multipartFields = null;
@@ -1483,8 +1485,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         if (resolution.IsExchange)
         {
-            body = new JsonObject { ["prompt"] = spec.Prompt, ["n"] = Math.Max(1, spec.Count) };
-            if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
+            body = new JsonObject { ["prompt"] = spec.Prompt };
+            if (!isAdaptiveModel)
+            {
+                body["n"] = Math.Max(1, spec.Count);
+                if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
+            }
             if (images.Count > 0)
             {
                 var imageUrls = new JsonArray();
@@ -1506,9 +1512,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 ["model"] = resolution.ActualModel,
                 ["prompt"] = spec.Prompt,
-                ["n"] = Math.Clamp(spec.Count, 1, 10),
             };
-            if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
+            if (!isAdaptiveModel)
+            {
+                body["n"] = Math.Clamp(spec.Count, 1, 10);
+                if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
+            }
             if (images.Count > 0)
             {
                 var references = new JsonArray();
@@ -1557,24 +1566,32 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var adapter = LLM.Adapters.ImageGenPlatformAdapterFactory.GetAdapter(
                 resolution.ApiUrl, resolution.ActualModel, normalizedProtocol);
-            var effectiveSize = adapter.NormalizeSize(spec.Size);
-            var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
             if (images.Count == 0)
             {
-                var requestObject = adapter.BuildGenerationRequest(
-                    resolution.ActualModel!, spec.Prompt, Math.Max(1, spec.Count), effectiveSize, effectiveFormat);
-                body = JsonNode.Parse(adapter.SerializeRequest(requestObject))?.AsObject() ?? new JsonObject();
+                var built = LLM.ImageGenRequestBuilder.BuildStandardGeneration(
+                    resolution.ActualModel!,
+                    spec.Prompt,
+                    Math.Max(1, spec.Count),
+                    spec.Size,
+                    spec.ResponseFormat,
+                    adapter);
+                body = JsonNode.Parse(adapter.SerializeRequest(built.RequestBody))?.AsObject() ?? new JsonObject();
+                if (isAdaptiveModel) body.Remove("n");
                 endpointPath = "images/generations";
             }
             else if (TryDecodeCanonicalImage(images[0], out var bytes, out var mimeType))
             {
+                var effectiveSize = isAdaptiveModel ? null : adapter.NormalizeSize(spec.Size);
+                var effectiveFormat = modelAdapter?.SupportsResponseFormat == false
+                    ? null
+                    : adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
                 isMultipart = true;
                 endpointPath = "images/edits";
                 multipartFields = new Dictionary<string, object>
                 {
                     ["prompt"] = spec.Prompt,
-                    ["n"] = Math.Max(1, spec.Count),
                 };
+                if (!isAdaptiveModel) multipartFields["n"] = Math.Max(1, spec.Count);
                 if (!string.IsNullOrWhiteSpace(effectiveSize)) multipartFields["size"] = effectiveSize;
                 if (!string.IsNullOrWhiteSpace(effectiveFormat)) multipartFields["response_format"] = effectiveFormat;
                 multipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
@@ -1617,36 +1634,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return source;
 
         var hasPreparedWireRequest = source.IsMultipart || source.RequestBody is not null;
-        if (!hasPreparedWireRequest
-            || currentResolution is not null
-            && !string.Equals(
-                CanonicalImageWireProtocol(currentResolution),
-                CanonicalImageWireProtocol(targetResolution),
-                StringComparison.Ordinal))
-        {
-            return RebuildCanonicalImageRequest(source, targetResolution);
-        }
-
-        return source;
-    }
-
-    private static string CanonicalImageWireProtocol(ModelResolutionResult resolution)
-    {
-        if (resolution.IsExchange)
-            return $"exchange:{resolution.ExchangeTransformerType?.Trim().ToLowerInvariant()}";
-
-        var protocol = string.IsNullOrWhiteSpace(resolution.Protocol)
-            ? resolution.PlatformType
-            : resolution.Protocol;
-        var normalized = protocol?.Trim().ToLowerInvariant();
-        if (normalized is "google" or "gemini" or "gemini-compatible") return "google";
-        if (normalized is "openrouter-image" or "openrouter-images") return "openrouter-image";
-        if (normalized == "openrouter"
-            || (resolution.ApiUrl?.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase) ?? false))
-        {
-            return "openrouter-chat";
-        }
-        return normalized ?? "openai";
+        return hasPreparedWireRequest && currentResolution is null
+            ? source
+            : RebuildCanonicalImageRequest(source, targetResolution);
     }
 
     private static string EnsureImageDataUri(string value)

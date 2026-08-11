@@ -31,6 +31,21 @@ public class ProfileAvatarGenerationContractTests
     }
 
     [Fact]
+    public void ProfileAvatarGeneration_MustReuseRunForScopedIdempotencyKey()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
+
+        Assert.Contains("Request.Headers[\"Idempotency-Key\"]", source);
+        Assert.Contains("DeploymentScope.ScopeIdempotencyKey($\"{ProfileAvatarRunAppKey}::", source);
+        Assert.Contains("x.IdempotencyKey == idempotencyKey", source);
+        Assert.Contains("IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey", source);
+        Assert.Contains("ServerErrorCategory.DuplicateKey", source);
+        Assert.Contains("BuildAvatarGenerationAccepted(existingRun)", source);
+        Assert.Contains("return new { runId = run.Id, status, stage };", source);
+    }
+
+    [Fact]
     public void GoogleAvatarGeneration_MustPersistTraceableOutputArtifact()
     {
         var source = File.ReadAllText(LocateRepoFile(

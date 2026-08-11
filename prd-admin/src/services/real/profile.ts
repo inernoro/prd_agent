@@ -17,10 +17,64 @@ type AvatarGenerationRun = {
 const AVATAR_GENERATION_POLL_INTERVAL_MS = 800;
 const AVATAR_GENERATION_MAX_POLLS = 750;
 const AVATAR_GENERATION_STORAGE_PREFIX = 'prd-admin:avatar-generation-run:';
+const AVATAR_GENERATION_CREATION_STORAGE_PREFIX = 'prd-admin:avatar-generation-create:';
 
 function avatarGenerationStorageKey(): string | null {
   const userId = String(useAuthStore.getState().user?.userId ?? '').trim();
   return userId ? `${AVATAR_GENERATION_STORAGE_PREFIX}${userId}` : null;
+}
+
+function avatarGenerationCreationStorageKey(): string | null {
+  const userId = String(useAuthStore.getState().user?.userId ?? '').trim();
+  return userId ? `${AVATAR_GENERATION_CREATION_STORAGE_PREFIX}${userId}` : null;
+}
+
+function newAvatarGenerationIdempotencyKey(): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  if (randomUuid) return `profile-avatar-${randomUuid}`;
+  return `profile-avatar-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+function getOrCreateAvatarGenerationIdempotencyKey(prompt: string): string {
+  const storageKey = avatarGenerationCreationStorageKey();
+  if (storageKey) {
+    try {
+      const pending = JSON.parse(globalThis.sessionStorage?.getItem(storageKey) || 'null') as {
+        prompt?: string;
+        idempotencyKey?: string;
+      } | null;
+      if (pending?.prompt === prompt && pending.idempotencyKey?.trim()) {
+        return pending.idempotencyKey.trim();
+      }
+    } catch {
+      // 损坏的会话记录会在下面被新记录覆盖。
+    }
+  }
+
+  const idempotencyKey = newAvatarGenerationIdempotencyKey();
+  if (storageKey) {
+    try {
+      globalThis.sessionStorage?.setItem(storageKey, JSON.stringify({ prompt, idempotencyKey }));
+    } catch {
+      // 会话存储不可用时仍由服务端唯一索引保护单次已携带的请求。
+    }
+  }
+  return idempotencyKey;
+}
+
+function forgetAvatarGenerationCreation(idempotencyKey: string): void {
+  const storageKey = avatarGenerationCreationStorageKey();
+  if (!storageKey) return;
+  try {
+    const pending = JSON.parse(globalThis.sessionStorage?.getItem(storageKey) || 'null') as {
+      idempotencyKey?: string;
+    } | null;
+    if (pending?.idempotencyKey === idempotencyKey) {
+      globalThis.sessionStorage.removeItem(storageKey);
+    }
+  } catch {
+    globalThis.sessionStorage?.removeItem(storageKey);
+  }
 }
 
 function rememberAvatarGenerationRun(runId: string): void {
@@ -157,9 +211,11 @@ export async function generateMyAvatarPreview(input: {
     return { success: false, data: null, error: { code: 'CONTENT_EMPTY', message: '请描述想怎么修改头像' } };
   }
 
+  const idempotencyKey = getOrCreateAvatarGenerationIdempotencyKey(prompt);
   const created = await apiRequest<AvatarGenerationRun>(api.profile.avatarGenerationRuns(), {
     method: 'POST',
     body: { prompt },
+    headers: { 'Idempotency-Key': idempotencyKey },
     timeoutMs: 20_000,
     signal: input.signal,
   });
@@ -168,6 +224,7 @@ export async function generateMyAvatarPreview(input: {
 
   const runId = String(created.data.runId ?? '').trim();
   if (!runId) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
+  forgetAvatarGenerationCreation(idempotencyKey);
   rememberAvatarGenerationRun(runId);
   input.onProgress?.(created.data.stage || '正在排队');
 
