@@ -7,7 +7,9 @@ import {
   acquireLock,
   applyCredentialRegistry,
   buildExecutionRecord,
+  buildLockedRunSummary,
   buildUnhandledFailureSummary,
+  deliverLockedRun,
   deliverUnhandledFailure,
   deployedRuntimeCommit,
   enforceExecutionVerdict,
@@ -21,6 +23,7 @@ import {
   runnerHelpText,
   resolveRuntimeExpectation,
   resolveServiceRuntimeCommits,
+  resolveCdsPreviewUrls,
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
   validateProductionReadOnlyConfig,
@@ -86,6 +89,18 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   }]);
   assert.equal(cleanupGate.restricted, true);
   assert.match(cleanupGate.reasons.join('；'), /FILE-001/);
+
+  const flakyCleanupGate = evaluateProductionSafetyGate({ status: 'executed' }, [{
+    caseId: 'FILE-002',
+    status: 'pass',
+    title: '上传后 cleanup 清理测试数据',
+    error: '',
+    retryCount: 1,
+    hadFailedAttempt: true,
+    attemptErrors: ['清理失败'],
+  }]);
+  assert.equal(flakyCleanupGate.restricted, true);
+  assert.match(flakyCleanupGate.reasons.join('；'), /重试后通过/);
 
   assert.equal(evaluateProductionSafetyGate({ status: 'executed' }, [{ status: 'pass' }]).restricted, false);
   assert.equal(evaluateProductionSafetyGate({ status: 'blocked' }, []).restricted, true);
@@ -209,6 +224,29 @@ test('凭据登记表只在环境变量缺失时读取 Keychain', () => {
   assert.deepEqual(calls, [['cds-key', 'stable-smoke']]);
 });
 
+test('CDS 地址始终来自 preview-url 并拒绝过期缓存', () => {
+  const authoritative = () => ({
+    status: 0,
+    stdout: 'https://branch.example/\nhttps://branch-llmgw.example/\n',
+  });
+  assert.deepEqual(resolveCdsPreviewUrls('', '', authoritative), {
+    appUrl: 'https://branch.example',
+    gatewayUrl: 'https://branch-llmgw.example',
+  });
+  assert.deepEqual(resolveCdsPreviewUrls(
+    'https://branch.example/',
+    'https://branch-llmgw.example/',
+    authoritative,
+  ), {
+    appUrl: 'https://branch.example',
+    gatewayUrl: 'https://branch-llmgw.example',
+  });
+  assert.throws(
+    () => resolveCdsPreviewUrls('https://stale.example', '', authoritative),
+    /缓存地址与当前分支权威地址不一致/,
+  );
+});
+
 test('超过时限但进程仍存活的互斥锁不得被第二轮删除', () => {
   const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-lock-'));
   const lockPath = resolve(directory, '.stable-smoke.lock');
@@ -219,6 +257,42 @@ test('超过时限但进程仍存活的互斥锁不得被第二轮删除', () =>
 
     assert.equal(acquireLock(lockPath), false);
     assert.equal(existsSync(lockPath), true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('互斥锁阻塞的定时任务仍持久化有条件结论并发送 MAP 通知', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-locked-'));
+  const calls = [];
+  try {
+    const result = await deliverLockedRun([
+      '--run-id', 'locked-test',
+      '--output-root', directory,
+      '--cds-only',
+    ], {
+      values: {},
+      commandFn: (name, args) => {
+        calls.push({ name, args });
+        return { status: 0, stdout: '{"sent":true}\n', stderr: '' };
+      },
+    });
+    const summary = JSON.parse(readFileSync(result.summaryPath, 'utf8'));
+    assert.deepEqual(
+      buildLockedRunSummary({ runId: 'locked-test', selected: ['cds'] }).archive,
+      summary.archive,
+    );
+    assert.equal(summary.verdict, 'conditional');
+    assert.equal(summary.notification.status, 'sent');
+    assert.equal(existsSync(result.blockedPath), true);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args.slice(0, 5), [
+      'scripts/stable-smoke-notify.mjs',
+      '--verdict',
+      'conditional',
+      '--run-id',
+      'locked-test',
+    ]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

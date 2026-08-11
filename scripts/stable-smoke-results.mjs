@@ -11,6 +11,10 @@ export function collectPlaywrightCases(report, environment) {
         const results = (spec.tests || []).flatMap((item) => item.results || []);
         const finalResult = results.at(-1);
         const rawStatus = finalResult?.status || 'not-run';
+        const priorResults = results.slice(0, -1);
+        const attemptErrors = results
+          .map((item) => item?.error?.message || '')
+          .filter(Boolean);
         const status = rawStatus === 'passed'
           ? 'pass'
           : rawStatus === 'skipped' || rawStatus === 'not-run'
@@ -25,6 +29,8 @@ export function collectPlaywrightCases(report, environment) {
             durationMs: results.reduce((sum, item) => sum + (item.duration || 0), 0),
             error: finalResult?.error?.message || '',
             retryCount: Math.max(0, results.length - 1),
+            hadFailedAttempt: priorResults.some((item) => !['passed', 'skipped'].includes(item?.status)),
+            attemptErrors,
           });
         }
       }

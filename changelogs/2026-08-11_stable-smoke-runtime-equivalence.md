@@ -164,3 +164,7 @@
 | fix | prd-admin | 为认证与合成登录错误建立显式用户可读注册表，保留安全的结果说明和恢复动作 |
 | fix | stable-smoke | 视觉台账标准化保留当前环境并支持从原始取证清单继承环境标识 |
 | test | prd-admin/stable-smoke | 增加认证错误脱敏与双环境视觉台账继承永久回归覆盖 |
+| fix | stable-smoke | 清理类用例发生重试即禁止正式环境写入，避免首次失败残留数据被最终通过掩盖 |
+| fix | stable-smoke | CDS 测试地址每轮强制通过 preview-url 解析并拒绝与当前分支冲突的本地缓存 |
+| ops | stable-smoke | 定时任务因活跃互斥锁跳过时持久化条件结论并定向发送 MAP 通知 |
+| test | stable-smoke | 增加清理重试熔断、CDS 地址权威解析和重叠调度通知永久回归覆盖 |

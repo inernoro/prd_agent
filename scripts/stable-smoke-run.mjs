@@ -127,23 +127,31 @@ function readKeychainSecret(service, account) {
   return result.status === 0 ? String(result.stdout || '').trim() : '';
 }
 
-export function resolveCdsPreviewUrls(explicitUrl = '', explicitGatewayUrl = '') {
-  if (explicitUrl && explicitGatewayUrl) {
-    return {
-      appUrl: explicitUrl.replace(/\/+$/, ''),
-      gatewayUrl: explicitGatewayUrl.replace(/\/+$/, ''),
-    };
-  }
-  const result = command('python3', ['.claude/skills/cds/cli/cdscli.py', '--human', 'preview-url']);
+export function resolveCdsPreviewUrls(
+  explicitUrl = '',
+  explicitGatewayUrl = '',
+  previewReader = () => command('python3', ['.claude/skills/cds/cli/cdscli.py', '--human', 'preview-url']),
+) {
+  const result = previewReader();
   if (result.status !== 0) throw new Error('CDS 权威预览地址读取失败，请修复项目凭据或部署状态后重试');
   const urls = String(result.stdout || '').match(/https:\/\/[^\s]+/g) || [];
   const appUrl = urls.find((url) => !/llmgw/i.test(url));
   const gatewayUrl = urls.find((url) => /llmgw/i.test(url));
   if (!appUrl) throw new Error('CDS 未返回主应用预览地址，拒绝本地推算');
   if (!gatewayUrl) throw new Error('CDS 未返回模型网关预览地址，拒绝本地推算');
+  const authoritativeAppUrl = appUrl.replace(/\/+$/, '');
+  const authoritativeGatewayUrl = gatewayUrl.replace(/\/+$/, '');
+  const cachedAppUrl = explicitUrl.replace(/\/+$/, '');
+  const cachedGatewayUrl = explicitGatewayUrl.replace(/\/+$/, '');
+  if (cachedAppUrl && cachedAppUrl !== authoritativeAppUrl) {
+    throw new Error('CDS 主应用缓存地址与当前分支权威地址不一致，请更新本地凭据配置后重试');
+  }
+  if (cachedGatewayUrl && cachedGatewayUrl !== authoritativeGatewayUrl) {
+    throw new Error('CDS 模型网关缓存地址与当前分支权威地址不一致，请更新本地凭据配置后重试');
+  }
   return {
-    appUrl: (explicitUrl || appUrl).replace(/\/+$/, ''),
-    gatewayUrl: (explicitGatewayUrl || gatewayUrl).replace(/\/+$/, ''),
+    appUrl: authoritativeAppUrl,
+    gatewayUrl: authoritativeGatewayUrl,
   };
 }
 
@@ -457,9 +465,13 @@ export function enforceExecutionVerdict(summary, executions) {
 }
 
 export function evaluateProductionSafetyGate(cdsExecution, cdsRows = []) {
-  const hazardousFailures = cdsRows.filter((row) => row.status === 'fail' && (
-    /\bP0\b|数据污染|清理失败|\bcleanup\b|pollution/i.test(`${row.title || ''} ${row.error || ''}`)
-  ));
+  const hazardousFailures = cdsRows.filter((row) => {
+    const attemptErrors = Array.isArray(row.attemptErrors) ? row.attemptErrors.join(' ') : '';
+    const isCleanupHazard = /\bP0\b|数据污染|清理失败|\bcleanup\b|pollution/i.test(
+      `${row.title || ''} ${row.error || ''} ${attemptErrors}`,
+    );
+    return isCleanupHazard && (row.status === 'fail' || row.hadFailedAttempt === true || row.retryCount > 0);
+  });
   const processFailed = !cdsExecution || !['executed', 'dry-run'].includes(cdsExecution.status);
   const restricted = processFailed || hazardousFailures.length > 0;
   return {
@@ -468,7 +480,9 @@ export function evaluateProductionSafetyGate(cdsExecution, cdsRows = []) {
     grep: restricted ? productionReadOnlyGrep : '',
     reasons: [
       ...(processFailed ? [`CDS 全量测试未完成（${cdsExecution?.status || 'missing'}）`] : []),
-      ...hazardousFailures.map((row) => `${row.caseId || '未编号用例'}：CDS 出现高危失败`),
+      ...hazardousFailures.map((row) => row.status === 'fail'
+        ? `${row.caseId || '未编号用例'}：CDS 出现高危失败`
+        : `${row.caseId || '未编号用例'}：CDS 清理类用例重试后通过，无法确认首次尝试未留下数据`),
     ],
   };
 }
@@ -605,6 +619,104 @@ export async function deliverUnhandledFailure(argv, error) {
   return { runDir, summaryPath, summary: summaryDocument };
 }
 
+export function buildLockedRunSummary({ runId, selected, reportUrl = '' }) {
+  return {
+    runId,
+    verdict: 'conditional',
+    phase: 'runner-locked',
+    environments: selected,
+    reason: '已有稳定冒烟正在运行，本次定时复测未重复启动。',
+    recovery: '等待当前稳定冒烟结束并核对其验收报告；若当前任务没有完成，请使用本次 runId 补跑。',
+    archive: reportUrl
+      ? { status: 'provided', reportUrl }
+      : {
+          status: 'delegated-active-run',
+          reportUrl: '',
+          reason: '本次没有重复执行测试，验收证据由持有互斥锁的当前任务归档。',
+        },
+    notification: { status: 'pending' },
+  };
+}
+
+export async function deliverLockedRun(argv, dependencies = {}) {
+  const requestedRunId = readLooseArg(argv, '--run-id');
+  const runId = /^[a-z0-9._-]+$/i.test(requestedRunId) ? requestedRunId : buildRunId();
+  const outputRoot = resolve(readLooseArg(argv, '--output-root', defaultOutputRoot));
+  const runDir = resolve(outputRoot, runId);
+  const selected = argv.includes('--cds-only')
+    ? ['cds']
+    : argv.includes('--production-only')
+      ? ['production']
+      : ['cds', 'production'];
+  const providedReportUrl = readLooseArg(argv, '--report-url');
+  const notificationCenterUrl = `${productionBaseUrl}/?panel=notifications`;
+  const summaryDocument = buildLockedRunSummary({ runId, selected, reportUrl: providedReportUrl });
+  const commandFn = dependencies.commandFn || command;
+
+  mkdirSync(runDir, { recursive: true });
+  if (argv.includes('--dry-run')) {
+    summaryDocument.notification = { status: 'skipped', reason: 'dry-run 不发送通知' };
+  } else {
+    try {
+      const envPath = resolve(readLooseArg(argv, '--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
+      const local = dependencies.values
+        ? { loaded: true, values: dependencies.values }
+        : loadLocalEnvironment(envPath);
+      const registry = readJson(credentialRegistryPath) || {};
+      const values = applyCredentialRegistry(
+        { ...local.values, ...process.env },
+        registry,
+        dependencies.secretReader || readKeychainSecret,
+      );
+      const actionUrl = providedReportUrl || notificationCenterUrl;
+      const notification = commandFn('node', [
+        'scripts/stable-smoke-notify.mjs',
+        '--verdict', 'conditional',
+        '--run-id', runId,
+        '--environment', selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、'),
+        '--module', '稳定冒烟调度',
+        '--recovery', summaryDocument.recovery,
+        '--report-url', actionUrl,
+        '--action-label', providedReportUrl ? '查看验收证据' : '打开通知中心',
+      ], {
+        env: {
+          ...process.env,
+          ...values,
+          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || productionBaseUrl,
+        },
+      });
+      summaryDocument.notification = notification.status === 0
+        ? { status: 'sent', result: readJsonFromText(notification.stdout), actionUrl }
+        : {
+            status: 'delivery-failed',
+            error: String(notification.stderr || notification.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
+          };
+    } catch (deliveryError) {
+      summaryDocument.notification = {
+        status: 'delivery-failed',
+        error: deliveryError instanceof Error ? deliveryError.message : 'MAP 通知发送失败',
+      };
+    }
+  }
+  if (summaryDocument.notification.status === 'delivery-failed') {
+    summaryDocument.verdict = 'fail';
+    summaryDocument.deliveryFailure = '重叠执行结果未能送达指定用户';
+  }
+  const summaryPath = resolve(runDir, 'summary.json');
+  const blockedPath = resolve(runDir, 'blocked.json');
+  const serialized = `${JSON.stringify(summaryDocument, null, 2)}\n`;
+  writeFileSync(summaryPath, serialized, 'utf8');
+  writeFileSync(blockedPath, serialized, 'utf8');
+  process.stdout.write(`${JSON.stringify({
+    runId,
+    runDir,
+    verdict: summaryDocument.verdict,
+    archive: summaryDocument.archive,
+    notification: summaryDocument.notification,
+  })}\n`);
+  return { runDir, summaryPath, blockedPath, summary: summaryDocument };
+}
+
 export function acquireLock(lockPath) {
   if (existsSync(lockPath)) {
     let stale = Date.now() - statSync(lockPath).mtimeMs > 3 * 60 * 60 * 1000;
@@ -714,7 +826,7 @@ async function main() {
   mkdirSync(runDir, { recursive: true });
   if (options.has('--force-unlock') && existsSync(lockPath)) unlinkSync(lockPath);
   if (!acquireLock(lockPath)) {
-    writeFileSync(resolve(runDir, 'blocked.json'), `${JSON.stringify({ verdict: 'conditional', reason: '已有稳定冒烟正在运行' }, null, 2)}\n`);
+    await deliverLockedRun(argv);
     process.exitCode = 2;
     return;
   }

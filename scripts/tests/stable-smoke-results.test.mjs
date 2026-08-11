@@ -31,6 +31,8 @@ test('从 Playwright 报告提取 caseId 和最终结果', () => {
     durationMs: 30,
     error: '',
     retryCount: 1,
+    hadFailedAttempt: true,
+    attemptErrors: [],
   }]);
 });
 
