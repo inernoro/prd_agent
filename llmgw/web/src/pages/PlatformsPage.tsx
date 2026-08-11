@@ -164,9 +164,16 @@ export function PlatformsPage() {
    * 中间漏一步就留下指向已删平台的池成员，看起来正常、实际解析不到。
    */
   async function mergeInto(source: PlatformItem) {
-    const candidates = (items || []).filter((x) => x.id !== source.id && x.authority === 'llm_gateway');
+    // 接口类型不同的不列为候选：没写 Protocol 的模型继承所属上游的类型，
+    // 合过去等于把它们的报文协议换掉。服务端也会拒（PLATFORM_TYPE_MISMATCH），
+    // 但让用户先选了再被拒是白走一趟——不该出现在选项里。
+    const candidates = (items || []).filter((x) => (
+      x.id !== source.id
+      && x.authority === 'llm_gateway'
+      && (x.platformType ?? '') === (source.platformType ?? '')
+    ));
     if (candidates.length === 0) {
-      setToast('没有可合并的目标上游');
+      setToast(`没有可合并的目标上游（只能并入接口类型同为 ${source.platformType || '未设置'} 的上游）`);
       return;
     }
     const listed = candidates.map((x, i) => `${i + 1}. ${x.name}（${x.apiUrl || '无地址'}）`).join('\n');

@@ -4292,6 +4292,29 @@ public class GatewayDataDomainGuardTests
         // 归一口径与创建路径同源，且存量文档缺字段时不许退回大小写敏感的原名
         Assert.Contains("model.AsNullableString(\"ModelNameNormalized\")", console);
         Assert.Contains("raw.ToLowerInvariant()", console);
+
+        // 删被丢弃的模型必须排在**所有**引用改指之后。合并跨四个集合、没有事务，
+        // 中途失败不能回滚，只能让它「中断也可重放」：模型还在就能重新算出同一张 survivor 表
+        // 接着改；先删的话那些 _id 永久查不回来，重试只会留下解析不到的池成员。
+        var dropAt2 = merge.IndexOf("foreach (var droppedFilter in droppedModelFilters)", StringComparison.Ordinal);
+        var poolWriteAt = merge.IndexOf("gwModelPools.UpdateOneAsync", StringComparison.Ordinal);
+        Assert.True(dropAt2 > 0, "被丢弃模型的删除应当收拢成一处");
+        Assert.True(poolWriteAt > 0 && dropAt2 > poolWriteAt, "删模型必须排在池成员改指之后");
+        // 只许有这一处删除：循环体内直接删就又回到「先删后改指」了
+        Assert.Equal(1, merge.Split("gwModels.DeleteOneAsync", StringSplitOptions.None).Length - 1);
+
+        // 接口类型不同不许合并：模型的 Protocol 允许为空表示「继承所属上游」
+        // （运行时 `IsNullOrWhiteSpace(Protocol) ? PlatformType : Protocol`），
+        // 把 openai 上游的模型合到 claude 上游，等于把那批模型的报文协议悄悄换掉。
+        Assert.Contains("PLATFORM_TYPE_MISMATCH", merge);
+        Assert.True(
+            merge.IndexOf("PLATFORM_TYPE_MISMATCH", StringComparison.Ordinal)
+            < merge.IndexOf("gwModels.UpdateOneAsync", StringComparison.Ordinal),
+            "类型不匹配必须在任何写操作之前就拒绝，不能改了一半才发现");
+        // 这条判据的根据：运行时确实按「没写 Protocol 就用 PlatformType」解析
+        Assert.Contains(
+            "string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol",
+            ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
     }
 
     /// <summary>

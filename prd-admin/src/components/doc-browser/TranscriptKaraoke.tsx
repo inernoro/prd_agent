@@ -143,10 +143,14 @@ export function TranscriptKaraoke({
   const addLexiconTerm = async (scope: 'mine' | 'system') => {
     const term = lexiconDraft.trim();
     if (!term || term.length < 2 || savingLexicon) return;
+    // 词典还没读回来就不许提交：写端点是**整表替换**，此时 lexicon 为 null，
+    // 下面的 `?? []` 会把「已有词条」当成空表发出去——一次添加就抹掉此前存的全部个人词与屏蔽词，
+    // 系统级更狠（那是所有人共用的一张表）。这不是保守，是这条链路的写语义决定的。
+    if (!lexicon) return;
     setSavingLexicon(true);
     const res = scope === 'system'
-      ? await updateSystemTranscriptLexicon([...new Set([...(lexicon?.system ?? []), term])])
-      : await updateTranscriptLexicon([...new Set([...(lexicon?.mine ?? []), term])], lexicon?.muted ?? []);
+      ? await updateSystemTranscriptLexicon([...new Set([...lexicon.system, term])])
+      : await updateTranscriptLexicon([...new Set([...lexicon.mine, term])], lexicon.muted);
     setSavingLexicon(false);
     if (!res.success) return;
     setLexiconDraft('');
@@ -409,7 +413,7 @@ export function TranscriptKaraoke({
                       />
                       <button
                         type="button"
-                        disabled={savingLexicon || lexiconDraft.trim().length < 2}
+                        disabled={!lexicon || savingLexicon || lexiconDraft.trim().length < 2}
                         onClick={() => void addLexiconTerm('mine')}
                         className="min-h-9 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
                         style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)' }}
@@ -420,7 +424,7 @@ export function TranscriptKaraoke({
                       {lexicon?.canManageSystem ? (
                         <button
                           type="button"
-                          disabled={savingLexicon || lexiconDraft.trim().length < 2}
+                          disabled={!lexicon || savingLexicon || lexiconDraft.trim().length < 2}
                           onClick={() => void addLexiconTerm('system')}
                           className="min-h-9 rounded-[8px] px-3 text-[11px] disabled:opacity-50"
                           style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}

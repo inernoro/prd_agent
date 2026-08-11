@@ -7194,6 +7194,22 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     if (source is null) return Json(ApiEnvelope<PlatformMergeResult>.Fail("NOT_GW_AUTHORITY", "源上游必须是已认领到 GW 的平台"), jsonOptions, 409);
     if (target is null) return Json(ApiEnvelope<PlatformMergeResult>.Fail("NOT_GW_AUTHORITY", "目标上游必须是已认领到 GW 的平台"), jsonOptions, 409);
 
+    // 接口类型不同的两条上游不许合并。模型的 Protocol 允许为空表示「继承所属上游」
+    // （运行时 `string.IsNullOrWhiteSpace(Protocol) ? PlatformType : Protocol`），
+    // 所以把 openai 上游的模型改嫁到 claude 上游，等于把那批模型的报文协议悄悄换掉——
+    // 合并成功、源被删掉，之后这批模型全部按错协议发出去。这不是数据残留，是把能用的改成不能用的。
+    var sourceType = (source.AsNullableString("PlatformType") ?? string.Empty).Trim().ToLowerInvariant();
+    var targetType = (target.AsNullableString("PlatformType") ?? string.Empty).Trim().ToLowerInvariant();
+    if (!string.Equals(sourceType, targetType, StringComparison.Ordinal))
+    {
+        return Json(
+            ApiEnvelope<PlatformMergeResult>.Fail(
+                "PLATFORM_TYPE_MISMATCH",
+                $"接口类型不同不能合并：源是 {(sourceType.Length > 0 ? sourceType : "未设置")}，目标是 {(targetType.Length > 0 ? targetType : "未设置")}。"
+                + "没有显式指定协议的模型会继承所属上游的类型，合过去等于把它们的报文协议换掉。"),
+            jsonOptions, 409);
+    }
+
     var result = new PlatformMergeResult { SourceId = id, TargetId = targetId };
     var fb = Builders<BsonDocument>.Filter;
 
@@ -7215,7 +7231,15 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     // 同时接受 _id / ModelName / Name），只改成员的 PlatformId 会留下
     //「目标平台 + 已删模型 _id」这种解析不到的组合，而且它不再指向源平台，
     // 连删源平台前的占用复查都查不到它。所以这张表必须带到第 2 步去。
+    //
+    // 顺序很要紧：**先把引用全部改指完，最后才删被丢弃的模型**。
+    // 这个合并跨四个集合、没有事务，中途失败无法回滚，所以只能让它「中断也可重放」：
+    // 被丢弃的模型只要还在，重跑就能重新算出同一张 survivor 表、把剩下的引用接着改完；
+    // 反过来先删模型的话，一旦在改池成员之前挂掉，那些 _id 就永久查不回来了——
+    // 重试只会看到「源平台名下已无此模型」，于是只改 PlatformId，留下一条解析不到的成员，
+    // 而且它已经不指向源平台，连删源平台前的占用复查都发现不了。
     var survivorByDroppedModelId = new Dictionary<string, string>(StringComparer.Ordinal);
+    var droppedModelFilters = new List<FilterDefinition<BsonDocument>>();
     foreach (var model in await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
     {
         var modelKey = NormalizedModelKey(model);
@@ -7226,8 +7250,9 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             var (repointed, deduped) = await RepointOfferingsAsync(http, gwModelOfferings, modelId, survivorId);
             result.OfferingsRepointed += repointed;
             result.OfferingsDeduped += deduped;
-            await gwModels.DeleteOneAsync(modelFilter);
+            // 记下来，等池成员也改完再删（见上面的顺序说明）
             if (modelId.Length > 0 && survivorId.Length > 0) survivorByDroppedModelId[modelId] = survivorId;
+            droppedModelFilters.Add(modelFilter);
             result.ModelsDropped++;
             continue;
         }
@@ -7284,6 +7309,11 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             TenantAccess.Filter(http, fb.Eq("_id", pool.GetStringOrEmpty("_id"))),
             Builders<BsonDocument>.Update.Set("Models", kept).Set("UpdatedAt", DateTime.UtcNow));
     }
+
+    // 3) 引用全部改指完，现在才删被丢弃的重复模型。
+    //    在此之前挂掉都是可重放的：模型还在，重跑能重新算出同一张 survivor 表接着改。
+    foreach (var droppedFilter in droppedModelFilters)
+        await gwModels.DeleteOneAsync(droppedFilter);
 
     // 3) 引用清空后再删源。这里复用同一条占用判据，避免「合并漏了什么却照删」
     var leftovers = await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId);
