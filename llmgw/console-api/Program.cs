@@ -7313,7 +7313,13 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
     // 反过来先删模型的话，一旦在改池成员之前挂掉，那些 _id 就永久查不回来了——
     // 重试只会看到「源平台名下已无此模型」，于是只改 PlatformId，留下一条解析不到的成员，
     // 而且它已经不指向源平台，连删源平台前的占用复查都发现不了。
+    // 两张表刻意分开，因为**两种键能声称的范围不一样**：
+    //   _id  —— 全局唯一，成员的 ModelId 等于它，就一定是指这条被丢弃的模型，跨平台匹配也成立。
+    //   模型名 —— 只在一条上游内唯一。别的平台底下同样有个叫 gpt-4o 的成员是常态，
+    //             拿名字去全局匹配会把与本次合并无关的成员也改掉（改 ModelId 却不改 PlatformId，
+    //             正好造出一对解析不到的组合）。所以名字只在「这条成员本来就挂在源平台」时才算数。
     var survivorByDroppedModelId = new Dictionary<string, string>(StringComparer.Ordinal);
+    var survivorByDroppedModelName = new Dictionary<string, string>(StringComparer.Ordinal);
     var droppedModelFilters = new List<FilterDefinition<BsonDocument>>();
     foreach (var model in await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
     {
@@ -7331,13 +7337,16 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             // _id，也可能是模型名。只记 _id 的话，存名字的那些成员在这里查不到 —— 只改了
             // PlatformId，模型却被删了，而运行时那三个 Eq 是大小写敏感的，
             // 「GPT-4o」再也匹配不上幸存者「gpt-4o」，成员就此解析不到。
+            // 但两种键分表存：见上面「两种键能声称的范围不一样」。
             if (survivorId.Length > 0)
             {
-                foreach (var alias in new[] { modelId, model.AsNullableString("ModelName"), model.AsNullableString("Name") })
+                if (modelId.Length > 0 && !survivorByDroppedModelId.ContainsKey(modelId))
+                    survivorByDroppedModelId[modelId] = survivorId;
+                foreach (var alias in new[] { model.AsNullableString("ModelName"), model.AsNullableString("Name") })
                 {
                     if (string.IsNullOrWhiteSpace(alias)) continue;
                     // 先到先得：同一个别名不该指向两个幸存者，真撞上时保持确定性
-                    if (!survivorByDroppedModelId.ContainsKey(alias)) survivorByDroppedModelId[alias] = survivorId;
+                    if (!survivorByDroppedModelName.ContainsKey(alias)) survivorByDroppedModelName[alias] = survivorId;
                 }
             }
             droppedModelFilters.Add(modelFilter);
@@ -7371,7 +7380,19 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             if (!raw.IsBsonDocument) { kept.Add(raw); continue; }
             var member = raw.AsBsonDocument;
             var pointsAtSourcePlatform = string.Equals(member.GetStringOrEmpty("PlatformId"), id, StringComparison.Ordinal);
-            var pointsAtDroppedModel = survivorByDroppedModelId.TryGetValue(member.GetStringOrEmpty("ModelId"), out var survivorModelId);
+            var memberModelId = member.GetStringOrEmpty("ModelId");
+            // _id 命中：跨平台也算数，_id 全局唯一，不会误伤别人
+            var pointsAtDroppedModel = survivorByDroppedModelId.TryGetValue(memberModelId, out var survivorModelId);
+            // 名字命中：**只认挂在源平台的成员**。模型名只在一条上游内唯一，
+            // 别的平台底下也有个叫 gpt-4o 的成员是常态——那条与本次合并无关，
+            // 碰它就会把它的 ModelId 改成目标平台的幸存者、PlatformId 却仍是原平台，
+            // 亲手造出一对解析不到的组合。
+            if (!pointsAtDroppedModel && pointsAtSourcePlatform
+                && survivorByDroppedModelName.TryGetValue(memberModelId, out var survivorByName))
+            {
+                pointsAtDroppedModel = true;
+                survivorModelId = survivorByName;
+            }
             var isSource = pointsAtSourcePlatform || pointsAtDroppedModel;
             if (isSource)
             {

@@ -4315,13 +4315,25 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("member[\"ModelId\"] = survivorModelId", merge);
         // 扫池的过滤也要认这一类：成员可能只有 ModelId 命中、PlatformId 早就不是源平台
         Assert.Contains("fb.In(\"ModelId\", survivorByDroppedModelId.Keys)", merge);
-        // 三种别名都要进 survivor 表：加成员端点按 Or(_id, ModelName, Name) 认模型，
-        // 落库时把调用方给的原样写进 ModelId，所以成员里存的可能是名字而不是 _id。
-        // 只记 _id 的话，存名字的成员改完 PlatformId 就断在这里——运行时那三个 Eq
-        // 大小写敏感，「GPT-4o」匹配不上幸存者「gpt-4o」。
+        // 三种别名都要认：加成员端点按 Or(_id, ModelName, Name) 认模型，落库时把调用方给的
+        // 原样写进 ModelId，所以成员里存的可能是名字而不是 _id。只记 _id 的话，存名字的成员
+        // 改完 PlatformId 就断在这里——运行时那三个 Eq 大小写敏感，「GPT-4o」匹配不上「gpt-4o」。
         Assert.Contains("AsNullableString(\"ModelName\")", merge);
         Assert.Contains("AsNullableString(\"Name\")", merge);
-        Assert.Contains("survivorByDroppedModelId.ContainsKey(alias)", merge);
+        // 但**两种键必须分表**，因为能声称的范围不一样：_id 全局唯一，跨平台匹配也成立；
+        // 模型名只在一条上游内唯一，别的平台底下同样有 gpt-4o 是常态。
+        // 合成一张表拿名字全局匹配，会把无关平台的成员也改掉（改 ModelId 不改 PlatformId），
+        // 亲手造出一对解析不到的组合——这正是「判据太窄」被修过头成「判据太宽」。
+        Assert.Contains("survivorByDroppedModelName", merge);
+        Assert.Contains("survivorByDroppedModelName.ContainsKey(alias)", merge);
+        // 名字命中必须**与**「这条成员本来就在源平台」取合取，不能只是恰好写在附近。
+        // 去空白后断言这个合取本身：`pointsAtSourcePlatform` 在旧版里也出现在附近
+        // （它就声明在上一行），按距离判会在出问题的那版上照样绿——那种断言是假证据。
+        var mergeDense = new string(merge.Where(c => !char.IsWhiteSpace(c)).ToArray());
+        Assert.Contains("pointsAtSourcePlatform&&survivorByDroppedModelName.TryGetValue", mergeDense);
+        // 全局 In 过滤只许用 _id 那张表：名字键放进去就是全局匹配
+        Assert.Contains("fb.In(\"ModelId\", survivorByDroppedModelId.Keys)", merge);
+        Assert.DoesNotContain("fb.In(\"ModelId\", survivorByDroppedModelName.Keys)", merge);
 
         // 「同名」必须按归一名判，不能按大小写敏感的原名：模型身份的唯一索引建在
         // ModelNameNormalized 上，按原名比会把 GPT-4o 与 gpt-4o 当成两个模型，
