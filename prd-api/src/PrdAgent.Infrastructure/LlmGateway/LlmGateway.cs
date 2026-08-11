@@ -1589,9 +1589,18 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     body["aspect_ratio"] = aspectRatio;
                     break;
                 case ImageSizeFieldFormats.ImageConfigAspectRatio:
-                    var imageConfig = body["image_config"] as JsonObject ?? new JsonObject();
-                    imageConfig["aspect_ratio"] = aspectRatio;
-                    body["image_config"] = imageConfig;
+                    if (body["generationConfig"] is JsonObject generationConfig)
+                    {
+                        var googleImageConfig = generationConfig["imageConfig"] as JsonObject ?? new JsonObject();
+                        googleImageConfig["aspectRatio"] = aspectRatio;
+                        generationConfig["imageConfig"] = googleImageConfig;
+                    }
+                    else
+                    {
+                        var imageConfig = body["image_config"] as JsonObject ?? new JsonObject();
+                        imageConfig["aspect_ratio"] = aspectRatio;
+                        body["image_config"] = imageConfig;
+                    }
                     break;
             }
         }
@@ -1660,6 +1669,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             : (1024, 1024);
     }
 
+    private static bool CanonicalImageRequestNeedsInitialBuild(GatewayRawRequest request)
+        => !request.IsMultipart
+           && (request.RequestBody is null || request.RequestBody.Count == 0);
+
     private static string EnsureImageDataUri(string value)
         => value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ? value : $"data:image/png;base64,{value}";
 
@@ -1698,11 +1711,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRawRequest request,
         ModelResolutionResult resolution,
         DateTime startedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool rebuildCanonicalImageRequest = false)
     {
-        // 正常发送与每一次故障切换都必须在最终上游已确定后重建 wire 请求。
-        // 过去只有并发准入失败分支会重建，预解析直发会把 canonical 请求丢成仅含 model 的空 body。
-        if (request.CanonicalImageRequest is not null)
+        // canonical 只负责补齐尚未构建的初始 wire 请求，以及切换到另一个上游时按新协议重建。
+        // 同一上游的端点/尺寸重试已经由调用方算好，不能在发送阶段用原始 canonical 值覆盖。
+        if (request.CanonicalImageRequest is not null
+            && (rebuildCanonicalImageRequest || CanonicalImageRequestNeedsInitialBuild(request)))
             request = RebuildCanonicalImageRequest(request, resolution);
 
         string? logId = null;
@@ -1722,7 +1737,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var candidate = resolution.RetryCandidates[0];
                     candidate.RetryCandidates = resolution.RetryCandidates.Skip(1).ToList();
-                    return await ExecuteRawWithResolutionAsync(request, candidate, startedAt, ct);
+                    return await ExecuteRawWithResolutionAsync(
+                        request, candidate, startedAt, ct, rebuildCanonicalImageRequest: true);
                 }
                 return GatewayRawResponse.Fail(concurrency.ErrorCode, admissionMessage, 429);
             }
