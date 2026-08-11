@@ -163,13 +163,13 @@ export function requireAuthoritativeCdsAddress(blockers = []) {
   }
 }
 
-export function buildReportVerificationArgs(reportUrl, runId, commit, screenshotCount) {
+export function buildReportVerificationArgs(reportUrl, runId, commit, screenshotCount, visualRequired = true) {
   if (!runId || !commit) throw new Error('验收报告验证缺少当前 runId 或固定 commit');
   return [
     '.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs',
     reportUrl,
     '核心业务稳定冒烟',
-    String(Math.max(1, screenshotCount || 0)),
+    String(visualRequired ? Math.max(1, screenshotCount || 0) : 0),
     runId,
     commit,
   ];
@@ -597,6 +597,8 @@ export function visualGateExecutionMatchesResult(exitCode, visualResult) {
 
 export function extractArchivedReportUrl(output) {
   for (const line of String(output || '').split(/\r?\n/).reverse()) {
+    const humanDeeplink = line.match(/直达:\s*(https:\/\/\S+)/)?.[1];
+    if (humanDeeplink && isHttpsReportUrl(humanDeeplink)) return humanDeeplink;
     try {
       const parsed = JSON.parse(line);
       if (typeof parsed?.deeplink === 'string' && isHttpsReportUrl(parsed.deeplink)) return parsed.deeplink;
@@ -605,6 +607,57 @@ export function extractArchivedReportUrl(output) {
     }
   }
   return '';
+}
+
+export function buildStableSmokeArchiveCommand({
+  productionReadOnly,
+  runId,
+  verdict,
+  reportPath,
+  manifestPath,
+  branch,
+  commit,
+  folderPath,
+}) {
+  if (productionReadOnly) {
+    return {
+      program: 'python3',
+      contract: 'functional-read-only',
+      args: [
+        '.claude/skills/cds/cli/cdscli.py',
+        '--human',
+        'report', 'create',
+        '--title', `核心业务稳定冒烟 ${runId}`,
+        '--html-file', reportPath,
+        '--format', 'md',
+        '--folder-path', folderPath,
+        '--verdict', verdict,
+        '--tier', 'P0 只读冒烟',
+        '--branch', branch,
+        '--commit', commit,
+      ],
+    };
+  }
+  return {
+    program: 'python3',
+    contract: 'visual-l2',
+    args: [
+      '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py',
+      '--config', '.claude/skills/create-visual-test-to-kb/acceptance.config.json',
+      '--target', `核心业务稳定冒烟 ${runId}`,
+      '--report-kind', '发布验收',
+      '--title-focus', '核心业务稳定冒烟',
+      '--module', '稳定冒烟',
+      '--type', '每48小时复测',
+      '--folder-path', folderPath,
+      '--verdict', verdict,
+      '--tier', 'L2',
+      '--report-md', reportPath,
+      '--manifest', manifestPath,
+      '--branch', branch,
+      '--commit', commit,
+    ],
+  };
 }
 
 export function isHttpsReportUrl(value) {
@@ -1204,30 +1257,29 @@ async function main() {
     if (prepareArchive.status !== 0) throw new Error('验收归档报告准备失败');
 
     let reportUrl = providedReportUrl;
+    const productionReadOnlyArchive = visualScope === 'production-read-only'
+      && visualResult.verdict === '不适用';
     if (reportUrl) {
       summaryDocument.archive = { status: 'provided', reportUrl };
     } else if (!options.has('--dry-run')) {
       const branchResult = command('git', ['branch', '--show-current']);
       const commitResult = command('git', ['rev-parse', 'HEAD']);
-      const archive = command('python3', [
-        '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py',
-        '--config', '.claude/skills/create-visual-test-to-kb/acceptance.config.json',
-        '--target', `核心业务稳定冒烟 ${runId}`,
-        '--report-kind', '发布验收',
-        '--title-focus', '核心业务稳定冒烟',
-        '--module', '稳定冒烟',
-        '--type', '每48小时复测',
-        '--folder-path', `稳定冒烟/${new Date().toISOString().slice(0, 7)}`,
-        '--verdict', summary.verdict,
-        '--tier', 'L2',
-        '--report-md', archiveReportPath,
-        '--manifest', visualManifestPath,
-        '--branch', String(branchResult.stdout || '').trim(),
-        '--commit', String(commitResult.stdout || '').trim(),
-      ], { env: { ...process.env, ...values } });
+      const archiveCommand = buildStableSmokeArchiveCommand({
+        productionReadOnly: productionReadOnlyArchive,
+        runId,
+        verdict: summary.verdict,
+        reportPath: archiveReportPath,
+        manifestPath: visualManifestPath,
+        branch: String(branchResult.stdout || '').trim(),
+        commit: String(commitResult.stdout || '').trim(),
+        folderPath: `稳定冒烟/${new Date().toISOString().slice(0, 7)}`,
+      });
+      const archive = command(archiveCommand.program, archiveCommand.args, {
+        env: { ...process.env, ...values },
+      });
       reportUrl = archive.status === 0 ? extractArchivedReportUrl(archive.stdout) : '';
       summaryDocument.archive = reportUrl
-        ? { status: 'archived', reportUrl }
+        ? { status: 'archived', reportUrl, contract: archiveCommand.contract }
         : {
             status: 'failed',
             reportUrl: '',
@@ -1243,6 +1295,7 @@ async function main() {
         runId,
         String(plan?.commit || ''),
         visualResult.screenshotCount,
+        !productionReadOnlyArchive,
       ), { env: { ...process.env, ...values } });
       if (verifyOpen.status === 0) {
         summaryDocument.archive.verifyOpen = 'passed';

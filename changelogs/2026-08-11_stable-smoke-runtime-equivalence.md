@@ -242,3 +242,6 @@
 | fix | prd-admin | 登记内容状态变化的刷新重试恢复动作 |
 | fix | stable-smoke | dry-run 在配置与计划校验后提前结束，不再误入功能和视觉结果门禁 |
 | test | prd-api/prd-admin/stable-smoke | 增加索引迁移、头像删除边界、状态错误与 dry-run 结论回归覆盖 |
+| fix | stable-smoke | 正式环境只读健康检查改用无截图功能归档合同，不再误触 L2 视觉证据门禁 |
+| fix | prd-admin | 米多星球 SSO 绑定重复时保留联系管理员的恢复动作 |
+| test | prd-admin/stable-smoke | 增加 SSO 重复绑定与正式只读无截图归档回归覆盖 |

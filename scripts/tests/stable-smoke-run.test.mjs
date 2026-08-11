@@ -8,6 +8,7 @@ import {
   applyCredentialRegistry,
   buildExecutionRecord,
   buildDryRunSummary,
+  buildStableSmokeArchiveCommand,
   buildLockedRunSummary,
   buildUnhandledFailureSummary,
   canReuseVisualPlan,
@@ -278,9 +279,40 @@ test('只有归档输出中的 HTTPS 深链可以进入通知', () => {
   const output = '正在归档\n{"mode":"cds","deeplink":"https://cds.example/reports?report=1"}\n归档完成\n';
   assert.equal(extractArchivedReportUrl(output), 'https://cds.example/reports?report=1');
   assert.equal(extractArchivedReportUrl('{"deeplink":"file:///tmp/report"}'), '');
+  assert.equal(
+    extractArchivedReportUrl('[OK] 已创建报告 12345678\n  直达: https://cds.example/reports?report=1\n'),
+    'https://cds.example/reports?report=1',
+  );
   assert.equal(isHttpsReportUrl('https://cds.example/reports?report=1'), true);
   assert.equal(isHttpsReportUrl('http://cds.example/reports?report=1'), false);
   assert.equal(isHttpsReportUrl('https://user:secret@cds.example/reports?report=1'), false);
+});
+
+test('正式环境只读运行使用无截图归档合同且打开验证不要求图片', () => {
+  const archive = buildStableSmokeArchiveCommand({
+    productionReadOnly: true,
+    runId: 'read-only-test',
+    verdict: 'pass',
+    reportPath: '/tmp/report.md',
+    manifestPath: '/tmp/empty-manifest.json',
+    branch: 'codex/review',
+    commit: 'a'.repeat(40),
+    folderPath: '稳定冒烟/2026-08',
+  });
+  assert.equal(archive.contract, 'functional-read-only');
+  assert.equal(archive.args.includes('archive_report.py'), false);
+  assert.equal(archive.args.includes('report'), true);
+  assert.equal(archive.args.includes('P0 只读冒烟'), true);
+  assert.equal(archive.args.includes('/tmp/empty-manifest.json'), false);
+
+  const verifyArgs = buildReportVerificationArgs(
+    'https://cds.example/reports?report=1',
+    'read-only-test',
+    'a'.repeat(40),
+    0,
+    false,
+  );
+  assert.equal(verifyArgs[3], '0');
 });
 
 test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 MAP 通知', () => {
