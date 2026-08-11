@@ -128,8 +128,22 @@ public class WebPageAskController : ControllerBase
     // 提问：站内（登录）与分享（可匿名）两个入口
     // ──────────────────────────────────────────────
 
+    /// <summary>
+    /// 提问请求体的字节上限。
+    ///
+    /// 历史预算（8 条 × 2000 字 / 总 6000 字）是在**模型绑定之后**才生效的，而绑定本身
+    /// 已经把整个 body 读进内存并解析成对象了。分享路径是匿名可达的，拿一个公开分享 token
+    /// 就能反复投递接近 Kestrel 全局上限的大 body，并发几路就是一条现成的内存耗尽路径。
+    /// 所以要在**读之前**先按字节卡住。
+    ///
+    /// 取值：6000 字总预算按 UTF-8 最坏 4 字节/字算是 24KB，问题本身 500 字，
+    /// 再留出 JSON 结构与转义的余量，64KB 足够宽松，同时远小于全局上限。
+    /// </summary>
+    private const long AskRequestBodyLimitBytes = 64 * 1024;
+
     /// <summary>站内提问（登录用户对自己有权访问的站点）。</summary>
     [HttpPost("{siteId}/ask/stream")]
+    [RequestSizeLimit(AskRequestBodyLimitBytes)]
     public async Task AskStream(string siteId, [FromBody] AskStreamRequest req)
     {
         var userId = this.GetRequiredUserId();
@@ -154,6 +168,7 @@ public class WebPageAskController : ControllerBase
     /// <summary>经分享链接提问（匿名或登录，取决于站点的 AllowAnonymous 开关）。</summary>
     [HttpPost("shares/view/{token}/ask/stream")]
     [AllowAnonymous]
+    [RequestSizeLimit(AskRequestBodyLimitBytes)]
     public async Task AskStreamByShare(string token, [FromBody] AskStreamRequest req)
     {
         var viewerUserId = User.Identity?.IsAuthenticated == true ? this.GetRequiredUserId() : null;

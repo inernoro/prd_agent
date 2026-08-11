@@ -132,3 +132,24 @@ describe('提问答案的 markdown 接线', () => {
     expect(md).not.toMatch(/rehypePlugins=\{\[[^\]]*rehypeRaw/);
   });
 });
+
+/**
+ * 手机端输入区必须避开手势条。
+ *
+ * 由 review 第二轮（#1358）抓出：面板在手机端铺满视口，而 app 开了 viewport-fit=cover，
+ * 不补 safe-area 内边距的话输入框与发送键会落进 iPhone 的手势条区域——主操作被挡。
+ * 右下角 launcher 早就这么写了，面板漏了。删掉之后没有任何行为测试会红，故按源码守。
+ */
+describe('提问面板的手机端安全区', () => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+
+  it('输入区在手机端补 safe-area-inset-bottom', () => {
+    const panel = fs.readFileSync(path.join(dir, 'AskPanel.tsx'), 'utf8');
+    expect(panel).toMatch(/paddingBottom:\s*isMobile\s*\?[^\n]*safe-area-inset-bottom/);
+  });
+
+  it('右下角 launcher 同样补（两处用同一套写法，别只改一处）', () => {
+    const widget = fs.readFileSync(path.join(dir, 'AskWidget.tsx'), 'utf8');
+    expect(widget).toContain('safe-area-inset-bottom');
+  });
+});

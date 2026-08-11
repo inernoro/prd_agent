@@ -225,8 +225,18 @@ export default function AskPanel({
         )}
       </div>
 
-      {/* 输入区 */}
-      <div style={{ padding: 12, borderTop: '1px solid var(--border-faint)', flexShrink: 0 }}>
+      {/* 输入区。
+          手机端面板铺满视口，而 app 开了 viewport-fit=cover——不补安全区内边距的话，
+          输入框和发送键会落进 iPhone 的手势条区域，主操作被挡住或点不准。
+          与右下角 launcher 用同一套写法（AskWidget 已经这么做了）。 */}
+      <div
+        style={{
+          padding: 12,
+          paddingBottom: isMobile ? 'calc(12px + env(safe-area-inset-bottom, 0px))' : 12,
+          borderTop: '1px solid var(--border-faint)',
+          flexShrink: 0,
+        }}
+      >
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
           <textarea
             value={draft}
