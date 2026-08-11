@@ -10879,27 +10879,7 @@ static ModelItem MapModel(BsonDocument d)
 }
 
 static (string Mode, string? FieldFormat) MapImageSizeControl(IEnumerable<BsonDocument> capabilities)
-{
-    var enabled = capabilities
-        .Where(x => x.AsNullableBool("Value") != false)
-        .Select(x => x.AsNullableString("Type"))
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-    if (enabled.Contains("parameter:image_size.none")) return ("none", null);
-    var usePrompt = enabled.Contains("parameter:image_size.prompt");
-    var fieldFormat = enabled.Contains("parameter:image_size.field.image_config_aspect_ratio")
-        ? "image_config.aspect_ratio"
-        : enabled.Contains("parameter:image_size.field.aspect_ratio")
-            ? "aspect_ratio"
-            : enabled.Contains("parameter:image_size.field.width_height")
-                ? "width_height"
-                : enabled.Contains("parameter:image_size.field.size")
-                    ? "size"
-                    : null;
-    return fieldFormat is null
-        ? (usePrompt ? "prompt" : "inherit", null)
-        : (usePrompt ? "field_and_prompt" : "field", fieldFormat);
-}
+    => GatewayConfigurationProvisioning.MapImageSizeControl(capabilities);
 
 static bool IsSafeOfferingEndpointPath(string? value)
 {

@@ -121,6 +121,17 @@ public static class ImageGenRequestBuilder
         return ApplyAdaptiveSizePrompt(prompt, requestParams, configuredAdapter);
     }
 
+    /// <summary>移除由尺寸适配器写入首行的受控尺寸指令，保留原始业务提示词。</summary>
+    public static string RemoveSizePromptDirective(string prompt)
+    {
+        var safePrompt = prompt ?? string.Empty;
+        var trimmedPrompt = safePrompt.TrimStart();
+        if (!trimmedPrompt.StartsWith(AdaptiveSizePromptMarker, StringComparison.Ordinal))
+            return safePrompt;
+        var lineBreak = trimmedPrompt.IndexOf('\n');
+        return lineBreak < 0 ? string.Empty : trimmedPrompt[(lineBreak + 1)..];
+    }
+
     /// <summary>
     /// 构建"标准 OpenAI 兼容 / Volces"协议下的文生图上游请求体。
     /// 一次性完成：尺寸归一化 → 尺寸参数格式（size / width+height / aspect_ratio / none）→ 参数重命名 → 请求体拼装。
@@ -138,7 +149,8 @@ public static class ImageGenRequestBuilder
         int n,
         string? requestedSize,
         string? responseFormat,
-        IImageGenPlatformAdapter platformAdapter)
+        IImageGenPlatformAdapter platformAdapter,
+        bool applyAdaptiveSizePrompt = true)
     {
         // 1. 尺寸归一化 + 尺寸参数格式 + 参数重命名（SSOT：Registry）
         var reqParams = ImageGenModelAdapterRegistry.BuildRequestParams(
@@ -168,7 +180,9 @@ public static class ImageGenRequestBuilder
         //    自适应模型显式置空，避免被注入到请求体。
         var sizeForBody = isAdaptive ? null : NormalizedSizeForBody(reqParams, requestedSize);
         var normalizedSize = platformAdapter.NormalizeSize(sizeForBody);
-        var effectivePrompt = ApplyAdaptiveSizePrompt(prompt, reqParams, adapterConfig);
+        var effectivePrompt = applyAdaptiveSizePrompt
+            ? ApplyAdaptiveSizePrompt(prompt, reqParams, adapterConfig)
+            : prompt;
 
         // 5. 由平台适配器拼装最终请求体（OpenAI 兼容 / Volces 等）
         var requestBody = platformAdapter.BuildGenerationRequest(

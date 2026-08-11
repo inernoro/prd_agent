@@ -1505,17 +1505,25 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var adapter = LLM.Adapters.ImageGenPlatformAdapterFactory.GetAdapter(
                 resolution.ApiUrl, resolution.ActualModel, normalizedProtocol);
-            var effectiveSize = adapter.NormalizeSize(spec.Size);
-            var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
             if (images.Count == 0)
             {
-                var requestObject = adapter.BuildGenerationRequest(
-                    resolution.ActualModel!, effectivePrompt, Math.Max(1, spec.Count), effectiveSize, effectiveFormat);
-                body = JsonNode.Parse(adapter.SerializeRequest(requestObject))?.AsObject() ?? new JsonObject();
+                var built = ImageGenRequestBuilder.BuildStandardGeneration(
+                    resolution.ActualModel!,
+                    effectivePrompt,
+                    Math.Max(1, spec.Count),
+                    spec.Size,
+                    spec.ResponseFormat,
+                    adapter,
+                    applyAdaptiveSizePrompt: false);
+                body = JsonNode.Parse(adapter.SerializeRequest(built.RequestBody))?.AsObject() ?? new JsonObject();
                 endpointPath = "images/generations";
             }
             else if (TryDecodeCanonicalImage(images[0], out var bytes, out var mimeType))
             {
+                var effectiveSize = adapter.NormalizeSize(spec.Size);
+                var adapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
+                var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
+                if (adapterConfig?.SupportsResponseFormat == false) effectiveFormat = null;
                 isMultipart = true;
                 endpointPath = "images/edits";
                 multipartFields = new Dictionary<string, object>
@@ -1542,6 +1550,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         return new GatewayRawRequest
         {
+            CanonicalImageRequest = spec,
+            RequiredLogicalModelPublicId = source.RequiredLogicalModelPublicId,
             AppCallerCode = source.AppCallerCode,
             ModelType = source.ModelType,
             ExpectedModel = source.ExpectedModel,
@@ -1552,13 +1562,150 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             IsMultipart = isMultipart,
             MultipartFields = multipartFields,
             MultipartFiles = multipartFiles,
+            MultipartFileRefs = multipartFiles is null ? source.MultipartFileRefs : null,
             HttpMethod = source.HttpMethod,
             ExtraHeaders = source.ExtraHeaders,
             TimeoutSeconds = source.TimeoutSeconds,
             ExpectBinaryResponse = source.ExpectBinaryResponse,
             Context = source.Context,
-            CanonicalImageRequest = spec,
         };
+    }
+
+    private static GatewayRawRequest ApplyResolvedImageSizeControlToBuiltRequest(
+        GatewayRawRequest source,
+        ModelResolutionResult resolution)
+    {
+        var capability = ImageSizeControlCapabilities.Parse(resolution.ParameterCapabilities);
+        if (!HasBuiltImageWireRequest(source)) return RebuildCanonicalImageRequest(source, resolution);
+        if (!capability.IsConfigured) return source;
+
+        var body = source.RequestBody?.DeepClone().AsObject();
+        var multipartFields = source.MultipartFields is null
+            ? null
+            : new Dictionary<string, object>(source.MultipartFields, StringComparer.Ordinal);
+        ApplyConfiguredImageSizeControl(
+            body,
+            multipartFields,
+            capability,
+            source.CanonicalImageRequest!.Size);
+
+        var promptUpdated = ApplyConfiguredSizePromptToWire(
+                body,
+                multipartFields,
+                source.CanonicalImageRequest.Prompt,
+                source.CanonicalImageRequest.Size,
+                capability.UsePrompt);
+        if (capability.UsePrompt && !promptUpdated)
+        {
+            return RebuildCanonicalImageRequest(source, resolution);
+        }
+
+        return CopyRawRequestWithWire(source, body, multipartFields);
+    }
+
+    private static bool HasBuiltImageWireRequest(GatewayRawRequest request)
+        => request.IsMultipart
+            ? request.MultipartFields is not null
+              || request.MultipartFiles is not null
+              || request.MultipartFileRefs is not null
+            : request.RequestBody is { Count: > 0 };
+
+    private static GatewayRawRequest CopyRawRequestWithWire(
+        GatewayRawRequest source,
+        JsonObject? body,
+        Dictionary<string, object>? multipartFields)
+        => new()
+        {
+            CanonicalImageRequest = source.CanonicalImageRequest,
+            RequiredLogicalModelPublicId = source.RequiredLogicalModelPublicId,
+            AppCallerCode = source.AppCallerCode,
+            ModelType = source.ModelType,
+            EndpointPath = source.EndpointPath,
+            ExpectedModel = source.ExpectedModel,
+            PinnedPlatformId = source.PinnedPlatformId,
+            PinnedModelId = source.PinnedModelId,
+            RequestBody = body,
+            IsMultipart = source.IsMultipart,
+            MultipartFields = multipartFields,
+            MultipartFiles = source.MultipartFiles,
+            MultipartFileRefs = source.MultipartFileRefs,
+            HttpMethod = source.HttpMethod,
+            ExtraHeaders = source.ExtraHeaders,
+            TimeoutSeconds = source.TimeoutSeconds,
+            ExpectBinaryResponse = source.ExpectBinaryResponse,
+            Context = source.Context,
+        };
+
+    private static bool ApplyConfiguredSizePromptToWire(
+        JsonObject? body,
+        Dictionary<string, object>? multipartFields,
+        string fallbackPrompt,
+        string? requestedSize,
+        bool usePrompt)
+    {
+        string Transform(string? prompt)
+        {
+            var originalPrompt = ImageGenRequestBuilder.RemoveSizePromptDirective(
+                string.IsNullOrWhiteSpace(prompt) ? fallbackPrompt : prompt);
+            return usePrompt
+                ? ImageGenRequestBuilder.ApplyConfiguredSizePrompt(originalPrompt, requestedSize)
+                : originalPrompt;
+        }
+
+        if (multipartFields is not null
+            && multipartFields.TryGetValue("prompt", out var multipartPrompt))
+        {
+            multipartFields["prompt"] = Transform(multipartPrompt?.ToString());
+            return true;
+        }
+        if (body is null) return false;
+        if (body["prompt"] is JsonValue promptValue
+            && promptValue.TryGetValue<string>(out var topLevelPrompt))
+        {
+            body["prompt"] = Transform(topLevelPrompt);
+            return true;
+        }
+        if (body["messages"] is JsonArray messages)
+        {
+            foreach (var message in messages.OfType<JsonObject>())
+            {
+                if (message["role"] is JsonValue roleValue
+                    && roleValue.TryGetValue<string>(out var role)
+                    && !string.Equals(role, "user", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (message["content"] is JsonValue contentValue
+                    && contentValue.TryGetValue<string>(out var contentPrompt))
+                {
+                    message["content"] = Transform(contentPrompt);
+                    return true;
+                }
+                if (message["content"] is not JsonArray contentParts) continue;
+                foreach (var part in contentParts.OfType<JsonObject>())
+                {
+                    if (part["text"] is not JsonValue textValue
+                        || !textValue.TryGetValue<string>(out var textPrompt)) continue;
+                    part["text"] = Transform(textPrompt);
+                    return true;
+                }
+            }
+        }
+        if (body["contents"] is JsonArray contents)
+        {
+            foreach (var content in contents.OfType<JsonObject>())
+            {
+                if (content["parts"] is not JsonArray parts) continue;
+                foreach (var part in parts.OfType<JsonObject>())
+                {
+                    if (part["text"] is not JsonValue textValue
+                        || !textValue.TryGetValue<string>(out var textPrompt)) continue;
+                    part["text"] = Transform(textPrompt);
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static void ApplyConfiguredImageSizeControl(
@@ -1634,6 +1781,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             body.Remove("width");
             body.Remove("height");
             body.Remove("aspect_ratio");
+            body.Remove("aspectRatio");
             body.Remove("resolution");
             if (body["image_config"] is JsonObject imageConfig)
             {
@@ -1653,6 +1801,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         multipartFields.Remove("width");
         multipartFields.Remove("height");
         multipartFields.Remove("aspect_ratio");
+        multipartFields.Remove("aspectRatio");
         multipartFields.Remove("resolution");
         multipartFields.Remove("image_config.aspect_ratio");
     }
@@ -1710,12 +1859,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         CancellationToken ct,
         bool rebuildCanonicalImageRequest = false)
     {
-        // 首次发送必须按最终解析到的上游能力重建，即使调用方已经预构建了 JSON 或 multipart。
-        // 只有调用方显式标记的同一上游端点/尺寸重试才保留已改写的 wire 请求；切换 Provider
-        // candidate 时 rebuildCanonicalImageRequest 会强制按新协议重建。
-        if (request.CanonicalImageRequest is not null
-            && (rebuildCanonicalImageRequest || !request.CanonicalImageRequest.PreserveCallerWireRequest))
-            request = RebuildCanonicalImageRequest(request, resolution);
+        // 同一上游沿用调用方通过 ImageGenRequestBuilder 算好的 wire 请求，再叠加显式 image_size 能力；
+        // 这样 inherit 不会丢失旧适配器的字段重命名/response_format 约束，端点与尺寸重试也会重新
+        // 应用显式能力。只有切换 Provider candidate 或调用方未提供 wire 请求时才完整重建。
+        if (request.CanonicalImageRequest is not null)
+        {
+            request = rebuildCanonicalImageRequest
+                ? RebuildCanonicalImageRequest(request, resolution)
+                : ApplyResolvedImageSizeControlToBuiltRequest(request, resolution);
+        }
 
         string? logId = null;
         GatewayProviderConcurrencyLease? providerLease = null;

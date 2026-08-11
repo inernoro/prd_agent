@@ -364,21 +364,18 @@ public class OpenAIImageClient : IImageGenerationClient
             Images = string.IsNullOrWhiteSpace(initImageBase64) ? new List<string>() : new List<string> { initImageBase64 },
             MaskBase64 = maskBase64,
         };
-        var preserveCallerWireRequest = false;
+        var canonicalSizeForSend = requestedSizeNorm;
 
         GatewayCanonicalImageRequest CanonicalForCurrentSend()
-            => preserveCallerWireRequest
-                ? new GatewayCanonicalImageRequest
-                {
-                    PreserveCallerWireRequest = true,
-                    Prompt = canonicalImageRequest.Prompt,
-                    Count = canonicalImageRequest.Count,
-                    Size = canonicalImageRequest.Size,
-                    ResponseFormat = canonicalImageRequest.ResponseFormat,
-                    Images = canonicalImageRequest.Images,
-                    MaskBase64 = canonicalImageRequest.MaskBase64,
-                }
-                : canonicalImageRequest;
+            => new()
+            {
+                Prompt = canonicalImageRequest.Prompt,
+                Count = canonicalImageRequest.Count,
+                Size = canonicalSizeForSend,
+                ResponseFormat = canonicalImageRequest.ResponseFormat,
+                Images = canonicalImageRequest.Images,
+                MaskBase64 = canonicalImageRequest.MaskBase64,
+            };
         
         // 使用平台适配器构建请求
         object reqObj;
@@ -801,9 +798,6 @@ public class OpenAIImageClient : IImageGenerationClient
             }
 
             gatewayResp = await SendViaGatewayAsync(ct);
-            // 此后的 SendViaGatewayAsync 都是同一上游内的端点或尺寸重试，调用方构建的
-            // EndpointPath / RequestBody / multipart 字段必须原样保留。
-            preserveCallerWireRequest = true;
 
             // OpenRouter 兜底：部分平台（OpenRouter 等）图片生成不走 /images/generations，而是 chat/completions+modalities。
             // 仅当该端点「不存在/不支持」（404 Not Found / 405 Method Not Allowed / 501 Not Implemented）时，
@@ -837,6 +831,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     if (!string.IsNullOrEmpty(suggestedSize))
                     {
                         SetRequestedSizeForRetry(reqObj, initImageBase64, suggestedSize);
+                        canonicalSizeForSend = NormalizeSizeString(suggestedSize);
                         gatewayResp = await SendViaGatewayAsync(ct);
                     }
                 }
@@ -872,6 +867,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     if (!string.Equals(NormalizeSizeString(currentSize), NormalizeSizeString(chosenStr), StringComparison.OrdinalIgnoreCase))
                     {
                         SetRequestedSizeForRetry(reqObj, initImageBase64, chosenStr);
+                        canonicalSizeForSend = NormalizeSizeString(chosenStr);
                         gatewayResp = await SendViaGatewayAsync(ct);
                     }
                 }

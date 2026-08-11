@@ -2007,6 +2007,84 @@ public class LlmGatewayTests
             Protocol = "openai",
             ApiUrl = "https://provider.example.com/v1",
             ApiKey = "test-key",
+            ParameterCapabilities = new Dictionary<string, bool>
+            {
+                ["image_size.prompt"] = true,
+                ["image_size.field.size"] = true,
+            },
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "custom-image",
+            EndpointPath = "chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray(
+                    new JsonObject
+                    {
+                        ["role"] = "system",
+                        ["content"] = "keep this system instruction unchanged",
+                    },
+                    new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["content"] = "[输出尺寸要求 / OUTPUT SIZE，最高优先级] 目标画布 1024x1024，严格宽高比 1:1，正方形 / square。不要改变画幅。\ndraw a poster",
+                    }),
+                ["modalities"] = new JsonArray("image", "text"),
+                ["size"] = "1024x1536",
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a poster",
+                Count = 1,
+                Size = "1024x1536",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Contains("chat/completions", Assert.Single(http.RequestUris));
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.True(
+            body["size"]?.GetValue<string>() == "1024x1536",
+            body.ToJsonString());
+        Assert.NotNull(body["modalities"]);
+        Assert.False(body.ContainsKey("prompt"));
+        Assert.Equal(
+            "keep this system instruction unchanged",
+            body["messages"]?[0]?["content"]?.GetValue<string>());
+        Assert.StartsWith(
+            "[输出尺寸要求 / OUTPUT SIZE，最高优先级]",
+            body["messages"]?[1]?["content"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenRetryUsesNoneCapability_ShouldRemoveLegacySizeControls()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "custom-image",
+            ActualModel = "vendor/image-model",
+            ActualPlatformId = "provider-1",
+            ActualPlatformName = "Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com/v1",
+            ApiKey = "test-key",
+            ParameterCapabilities = new Dictionary<string, bool>
+            {
+                ["image_size.none"] = true,
+            },
         };
         var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
         var gateway = new LlmGateway(
@@ -2026,26 +2104,123 @@ public class LlmGatewayTests
                 ["messages"] = new JsonArray(new JsonObject
                 {
                     ["role"] = "user",
-                    ["content"] = "draw a poster",
+                    ["content"] = "[输出尺寸要求 / OUTPUT SIZE，最高优先级] 目标画布 1024x1536，严格宽高比 2:3，竖版 / portrait。不要改变画幅。\ndraw a poster",
                 }),
                 ["modalities"] = new JsonArray("image", "text"),
                 ["size"] = "1024x1536",
+                ["image_config"] = new JsonObject { ["aspect_ratio"] = "2:3" },
             },
             CanonicalImageRequest = new GatewayCanonicalImageRequest
             {
-                PreserveCallerWireRequest = true,
                 Prompt = "draw a poster",
                 Count = 1,
-                Size = "1024x1024",
+                Size = "1024x1536",
             },
         }, resolution);
 
         Assert.True(response.Success, response.ErrorMessage);
         Assert.Contains("chat/completions", Assert.Single(http.RequestUris));
         var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
-        Assert.Equal("1024x1536", body["size"]?.GetValue<string>());
-        Assert.NotNull(body["modalities"]);
-        Assert.False(body.ContainsKey("prompt"));
+        Assert.False(body.ContainsKey("size"));
+        Assert.False(body.ContainsKey("image_config"));
+        Assert.Equal("draw a poster", body["messages"]?[0]?["content"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenInitialRequestInherits_ShouldPreserveLegacyAdapterWireFields()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "flux-custom",
+            ActualModel = "flux-custom",
+            ActualPlatformId = "provider-1",
+            ActualPlatformName = "Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com/v1",
+            ApiKey = "test-key",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "flux-custom",
+            RequestBody = new JsonObject
+            {
+                ["model"] = "flux-custom",
+                ["prompt"] = "draw a poster",
+                ["width"] = 768,
+                ["height"] = 1024,
+                ["guidance_scale"] = 3.5,
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a poster",
+                Count = 1,
+                Size = "768x1024",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.Equal(768, body["width"]?.GetValue<int>());
+        Assert.Equal(1024, body["height"]?.GetValue<int>());
+        Assert.Equal(3.5, body["guidance_scale"]?.GetValue<double>());
+        Assert.False(body.ContainsKey("size"));
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenCanonicalOnlyInheritsKnownModel_ShouldUseRegistryContract()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "gpt-image-1.5-preview",
+            ActualModel = "gpt-image-1.5-preview",
+            ActualPlatformId = "provider-1",
+            ActualPlatformName = "Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com/v1",
+            ApiKey = "test-key",
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.text2img::generation",
+            ModelType = "generation",
+            ExpectedModel = "gpt-image-1.5-preview",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "draw a poster",
+                Count = 1,
+                Size = "1024x1536",
+                ResponseFormat = "b64_json",
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var body = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+        Assert.True(
+            body["size"]?.GetValue<string>() == "1024x1536",
+            body.ToJsonString());
+        Assert.False(body.ContainsKey("response_format"));
     }
 
     [Fact]
@@ -2102,7 +2277,7 @@ public class LlmGatewayTests
 
         Assert.True(response.Success, response.ErrorMessage);
         var body = Assert.Single(http.RequestBodies);
-        Assert.Contains("edit the poster", body);
+        Assert.Contains("legacy prompt", body);
         Assert.DoesNotContain("name=size", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("name=\"size\"", body, StringComparison.OrdinalIgnoreCase);
     }

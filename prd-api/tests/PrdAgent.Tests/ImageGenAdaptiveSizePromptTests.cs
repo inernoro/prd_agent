@@ -52,6 +52,19 @@ public class ImageGenAdaptiveSizePromptTests
     }
 
     [Fact]
+    public void RemoveSizePromptDirective_WhenControlledDirectiveExists_RestoresBusinessPrompt()
+    {
+        var configured = ImageGenRequestBuilder.ApplyConfiguredSizePrompt("生成横版主视觉", "1344x768");
+
+        var restored = ImageGenRequestBuilder.RemoveSizePromptDirective(configured);
+
+        Assert.Equal("生成横版主视觉", restored);
+        Assert.Equal(
+            "普通提示词",
+            ImageGenRequestBuilder.RemoveSizePromptDirective("普通提示词"));
+    }
+
+    [Fact]
     public void ApplyAdaptiveSizePrompt_NativeSizeModel_DoesNotChangePrompt()
     {
         var requestParams = ImageGenModelAdapterRegistry.BuildRequestParams("dall-e-3", "1024x1792");

@@ -450,16 +450,20 @@ public static class GatewayConfigurationProvisioning
     }
 
     public static bool IsImageSizeControlCapability(string? type)
+        => NormalizeParameterCapabilityName(type)?
+            .StartsWith(ImageSizeParameterPrefix, StringComparison.OrdinalIgnoreCase) == true;
+
+    public static string? NormalizeParameterCapabilityName(string? type)
     {
-        if (string.IsNullOrWhiteSpace(type)) return false;
+        if (string.IsNullOrWhiteSpace(type)) return null;
         var normalized = type.Trim();
         foreach (var prefix in ParameterCapabilityPrefixes)
         {
             if (!normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
-            return normalized[prefix.Length..].Trim()
-                .StartsWith(ImageSizeParameterPrefix, StringComparison.OrdinalIgnoreCase);
+            var name = normalized[prefix.Length..].Trim();
+            return name.Length == 0 ? null : name;
         }
-        return false;
+        return null;
     }
 
     public static bool TryNormalizeBulkCapabilityType(
@@ -498,6 +502,31 @@ public static class GatewayConfigurationProvisioning
             ["Source"] = "user",
             ["Value"] = true,
         }).ToList();
+    }
+
+    public static (string Mode, string? FieldFormat) MapImageSizeControl(
+        IEnumerable<BsonDocument> capabilities)
+    {
+        var enabled = capabilities
+            .Where(x => !x.TryGetValue("Value", out var value) || !value.IsBoolean || value.AsBoolean)
+            .Select(x => NormalizeParameterCapabilityName(
+                x.TryGetValue("Type", out var type) && type.IsString ? type.AsString : null))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (enabled.Contains("image_size.none")) return ("none", null);
+        var usePrompt = enabled.Contains("image_size.prompt");
+        var fieldFormat = enabled.Contains("image_size.field.image_config_aspect_ratio")
+            ? "image_config.aspect_ratio"
+            : enabled.Contains("image_size.field.aspect_ratio")
+                ? "aspect_ratio"
+                : enabled.Contains("image_size.field.width_height")
+                    ? "width_height"
+                    : enabled.Contains("image_size.field.size")
+                        ? "size"
+                        : null;
+        return fieldFormat is null
+            ? (usePrompt ? "prompt" : "inherit", null)
+            : (usePrompt ? "field_and_prompt" : "field", fieldFormat);
     }
 
     public static bool TryNormalizeImageSizeControl(

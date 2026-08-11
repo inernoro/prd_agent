@@ -585,12 +585,6 @@ public class GatewayRawRequest
 
 public sealed class GatewayCanonicalImageRequest
 {
-    /// <summary>
-    /// 同一上游内的端点或尺寸重试已经由调用方改写 wire 请求时置为 true。
-    /// 首次发送必须保持 false，让 Gateway 按最终解析到的上游能力构建请求；
-    /// Gateway 切换 Provider candidate 时仍会忽略本标记并按新协议重建。
-    /// </summary>
-    public bool PreserveCallerWireRequest { get; init; }
     public string Prompt { get; init; } = string.Empty;
     public int Count { get; init; } = 1;
     public string? Size { get; init; }

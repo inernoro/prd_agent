@@ -236,6 +236,19 @@ public sealed class GatewayConfigurationProvisioningTests
     }
 
     [Fact]
+    public void ImageSizeControlMapping_NormalizesSupportedParameterAliases()
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "param.image_size.prompt", ["Value"] = true },
+            new BsonDocument { ["Type"] = "parameter.image_size.field.aspect_ratio", ["Value"] = true },
+        ]);
+
+        result.Mode.ShouldBe("field_and_prompt");
+        result.FieldFormat.ShouldBe("aspect_ratio");
+    }
+
+    [Fact]
     public void Exchange_RequiresCommunicationKeyAndAtLeastOneUniqueModelMapping()
     {
         var missingKey = new CreateExchangeRequest
