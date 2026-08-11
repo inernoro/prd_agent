@@ -73,6 +73,19 @@ describe('分层内容判定的接线', () => {
     expect(tab).toMatch(/attempt:\s*Date\.now\(\)/);
     expect(read('src/lib/layeredPsd.ts')).toMatch(/attemptSuffix\(input\.attempt\)/);
   });
+
+  it('同一张图可以反复拆：不许再有「已有图层就直接复用」的短路', () => {
+    // 用户原话：「不应该绑定，我想拆多次，这应该没问题啊」。
+    // 旧实现在发起前先看画布上有没有该原图的图层，有就弹「已复用 N 个可编辑图层，
+    // 无需再次调用模型」直接 return——于是同一张图这辈子只能拆一次。
+    // 只看会执行的行——注释里写着「当初为什么删掉它」，那段说明本身不该让守卫变红。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    expect(code).not.toMatch(/已复用/);
+    expect(code).not.toMatch(/无需再次调用模型/);
+    expect(code).not.toMatch(/分层结果已在画布中/);
+    // 重拆前必须先把上一轮的图层清干净，否则两轮结果会叠在一起。
+    expect(tab).toMatch(/candidate\.layerSourceKey === sourceItem\.key && candidate\.layerRole === 'layer'/);
+  });
 });
 
 describe('读图必须带登录凭据', () => {

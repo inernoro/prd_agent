@@ -83,6 +83,23 @@ const esc = async (page, times = 2) => {
   for (let i = 0; i < times; i += 1) { await page.keyboard.press('Escape'); await page.waitForTimeout(400); }
 };
 
+/**
+ * 打开图层面板，且**只在它没开的时候点**。
+ * 「图层面板」是个 toggle：分层跑完面板会自己展开，这时再点一下等于把它关掉，
+ * 后面找「重新拆分」就永远找不到（第一版冒烟正是这么把三条重拆判据跳过去的）。
+ * 判据取面板内部的按钮是否可见，而不是我们自己记的状态——记的状态会和真实 UI 漂移。
+ */
+const ensurePanelOpen = async (page, marker = '重新拆分') => {
+  const inside = page.locator(`button:has-text("${marker}")`).first();
+  if (await inside.count() && await inside.isVisible().catch(() => false)) return true;
+  const entry = page.locator('button:has-text("图层面板")').first();
+  if (!(await entry.count())) return false;
+  const box = await entry.boundingBox();
+  if (box) await page.mouse.click(box.x + 12, box.y + box.height / 2);
+  await page.waitForTimeout(2500);
+  return (await inside.count()) > 0;
+};
+
 /** 两个矩形是否重叠（留 1px 容差，避免相邻边被判成重叠）。 */
 export function rectsOverlap(a, b, tolerance = 1) {
   if (!a || !b) return false;
@@ -318,6 +335,37 @@ async function main() {
     });
     check('层数控件有值', countText.next !== null, `下次拆 ${countText.next} 层`);
 
+    // ---- 同一张图必须能反复拆：再点一次要真的重跑模型，不许拿旧结果搪塞
+    const beforeResplit = await page.evaluate(() => [...document.querySelectorAll('img')]
+      .map((i) => i.src).filter((src) => /assets|cfi\./.test(src)));
+    // 走图层面板的「重新拆分」——叠放之后原图被压在最底下，点画布中心命中的是最上面
+    // 那一层，等于拿一个图层去再拆（分辨率也会跟着那层走）。重拆的正规入口在面板里。
+    await ensurePanelOpen(page);
+    const layerAgain = page.locator('button:has-text("重新拆分")').first();
+    if (await layerAgain.count()) {
+      await layerAgain.click({ force: true });
+      await page.waitForTimeout(4000);
+      const reusedToast = await page.evaluate(() => /已复用|无需再次调用模型/.test(document.body.innerText));
+      check('再次分层不会被「已复用」短路挡住', !reusedToast);
+      // 等第二轮真的出结果
+      const until = Date.now() + 480000;
+      let second = false;
+      while (Date.now() < until) {
+        const body = await page.evaluate(() => document.body.innerText);
+        if (/覆盖\s*[\d.]+%|覆盖 不足/.test(body) && !/生成中/.test(body)) { second = true; break; }
+        await page.waitForTimeout(5000);
+      }
+      await shot(page, second ? 'second-split' : 'second-split-timeout');
+      check('第二次分层能跑完并出结果', second);
+      const afterResplit = await page.evaluate(() => [...document.querySelectorAll('img')]
+        .map((i) => i.src).filter((src) => /assets|cfi\./.test(src)));
+      const changed = afterResplit.some((src) => !beforeResplit.includes(src));
+      check('第二次拿到的是新产物（不是把上一轮原样端回来）', changed,
+        `旧 ${beforeResplit.length} 张 / 新 ${afterResplit.length} 张`);
+    } else {
+      check('图层面板里能找到「重新拆分」', false, '按钮不存在');
+    }
+
     // ---- 刷新后 Frame 不塌：同一 Frame 里的图块必须等大
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(14000);
@@ -339,12 +387,7 @@ async function main() {
       `位置集合 ${JSON.stringify(uniquePositions)}`);
 
     // ---- 导出 PSD：层名互不相同，文件非空
-    const panelBtn = page.locator('button:has-text("图层面板")').first();
-    if (await panelBtn.count()) {
-      const bb = await panelBtn.boundingBox();
-      if (bb) await page.mouse.click(bb.x + 12, bb.y + bb.height / 2);
-      await page.waitForTimeout(3000);
-    }
+    await ensurePanelOpen(page);
     const exportBtn = page.locator('button:has-text("导出分层 PSD")').first();
     if (await exportBtn.count()) {
       const download = page.waitForEvent('download', { timeout: 300000 });
@@ -372,8 +415,9 @@ async function main() {
         check('导出的 PSD 能被反读回来（不是只有个文件头）', !!parsed, parseError);
         check('PSD 是真分层：可编辑图层组里有多层',
           psdLayers.length >= 2, `层数 ${psdLayers.length}`);
-        check('PSD 画布尺寸 = 原图尺寸（各块拼回去就是原图）',
-          !!parsed && parsed.width > 0 && parsed.height > 0,
+        // 原图是 1024x1024 的 fixture；导出比它小就是掉分辨率，不能只判「大于 0」。
+        check('PSD 画布尺寸 = 原图尺寸（不许掉分辨率）',
+          !!parsed && parsed.width >= 1024 && parsed.height >= 1024,
           parsed ? `${parsed.width}x${parsed.height}` : '');
         check('每层都有自己的包围盒（不是每层都铺满整张画布）',
           sized.length >= 2 && fullCanvas.length < psdLayers.length,

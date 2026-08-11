@@ -2242,23 +2242,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return null;
     }
 
-    const existingGroupId = String(sourceItem.layerGroupId ?? '').trim();
-    // 只有「真出了图」的图层才算分层结果：上一轮失败留下的空占位不能挡住重试。
-    const existingLayers = existingGroupId
-      ? canvasRef.current.filter((candidate) => candidate.layerGroupId === existingGroupId
-        && candidate.layerRole === 'layer'
-        && !!candidate.src)
-      : [];
-    if (existingLayers.length > 0) {
-      setSelectionWithoutChip([existingLayers[0]!.key]);
-      setLayerPanelGroupId(existingGroupId);
-      toast.info('分层结果已在画布中', `已复用 ${existingLayers.length} 个可编辑图层，无需再次调用模型。`);
-      return existingLayers.map((layer, index) => ({
-        name: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
-        source: layer.src,
-      }));
-    }
-
+    // 同一张图可以反复拆——拆几次都行。
+    // 早先这里有个「已有图层就直接复用、不再调模型」的短路，本意是省一次调用，
+    // 实际把重拆整个堵死了：用户想换个拆法（换层数、换意图）点下去只会看到
+    // 「已复用 N 个可编辑图层」，模型根本没跑（2026-08-10 用户反馈：「不应该绑定，
+    // 我想拆多次」）。省调用不该以「不让用户重来」为代价——它本来也不是用户要的。
     const source = String(sourceItem.originalSrc || input.src || '').trim();
     if (!source) {
       toast.error('AI 分层失败', '当前图片没有可读取的原图');
@@ -2347,14 +2335,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     };
 
     setCanvas((previous) => {
+      // 重拆前把这张图上一轮的图层整组撤掉——包括已经出图的那些。
+      // 原位叠放之后新旧两组会摞在同一个位置，不清就是一团糊。
       const cleaned = previous.filter((candidate) => !(
-        candidate.layerSourceKey === sourceItem.key
-        && candidate.layerRole === 'layer'
-        && !candidate.src
+        candidate.layerSourceKey === sourceItem.key && candidate.layerRole === 'layer'
       ));
       return cleaned.map((candidate) => candidate.key === sourceItem.key
         ? {
             ...candidate,
+            // 上一轮结束时把原图隐藏了；重拆期间先放出来，不然画布上一片空白。
+            layerHidden: false,
             layerGroupId: groupId,
             layerSourceKey: sourceItem.key,
             layerIndex: 0,
@@ -2387,7 +2377,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         source,
         sourceSha256: readySha,
         layerCount: requestedLayerCount,
-        attempt: input.attempt,
+        // 每次点击都是一次真实重拆：不带变化的标记会命中上一轮的幂等键，原样返回旧结果。
+        attempt: input.attempt ?? `${createdAt}`,
         // 分层要跑几十秒，等待期必须一直有东西在动（禁止静止的「加载中」）。
         onProgress: ({ phase, completed, total }) =>
           setLayeringProgress({ sourceKey: sourceItem.key, groupId, phase, completed, total }),
