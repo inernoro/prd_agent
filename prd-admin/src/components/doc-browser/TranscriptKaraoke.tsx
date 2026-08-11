@@ -349,11 +349,20 @@ export function TranscriptKaraoke({
             现在字号/底色/边框/字重全部由 count 相对最大值决定，并把次数直接写在词上（不再藏 title），
             开头先给一句结论，让人一眼知道「这场到底在反复讲什么」而不是自己读一排词去数。
           */}
-          {wordCloud.length > 0 && (
+          {(wordCloud.length > 0 || onSaveNote) && (
             <div className="mt-3">
-              <p className="text-[11px] leading-relaxed text-token-muted">
-                这场反复提到的是 <strong className="font-semibold text-token-secondary">{wordCloud[0].word}</strong>（{wordCloud[0].count} 次）；点任意一个词看它出现在哪几处
-              </p>
+              {wordCloud.length > 0 ? (
+                <p className="text-[11px] leading-relaxed text-token-muted">
+                  这场反复提到的是 <strong className="font-semibold text-token-secondary">{wordCloud[0].word}</strong>（{wordCloud[0].count} 次）；点任意一个词看它出现在哪几处
+                </p>
+              ) : (
+                // 词云为空恰恰是最需要补词典的时刻：多半是人名/黑话被通用分词器切成了单字。
+                // 把补词入口一起藏起来，用户就没有任何办法让词云长出来（形状 8：写了一个到不了的入口）。
+                <p className="text-[11px] leading-relaxed text-token-muted">
+                  没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。
+                </p>
+              )}
+              {wordCloud.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
                 {wordCloud.map(({ word, count }) => {
                   const weight = count / wordCloud[0].count;
@@ -378,10 +387,12 @@ export function TranscriptKaraoke({
                   );
                 })}
               </div>
+              )}
               {/*
                 词典入口就放在词云下面：发现「某个词该在却不在」正是在看这一屏的时候。
                 逼用户跑去设置页再回来是绕路（anti-detour.md）。
                 说话人名不用在这里加——它们已经自动进词典了。
+                **它不跟着词云一起隐藏**：词云为空正是最需要补词的场景。
               */}
               {onSaveNote ? (
                 <div className="mt-2">
@@ -422,7 +433,9 @@ export function TranscriptKaraoke({
                     </div>
                   ) : (
                     <button type="button" onClick={() => setLexiconOpen(true)} className="min-h-9 text-[11px] text-token-muted">
-                      少了某个词？通用分词器不认识人名和黑话，可以补进词典
+                      {wordCloud.length > 0
+                        ? '少了某个词？通用分词器不认识人名和黑话，可以补进词典'
+                        : '补一个词进词典试试'}
                     </button>
                   )}
                 </div>

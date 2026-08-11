@@ -1049,8 +1049,13 @@ public class SubtitleGenerationProcessor
     /// 同一批句子原样复制给两个人。这种切分不含任何信息，却会让界面言之凿凿地
     /// 显示「两位说话人」，正是「说话人推断是真的吗」要防的那种编造。
     ///
-    /// 判据保守：只有当两个说话人的内容集合**完全相同**时才判为编造。
-    /// 真实对话里两个人不会说出一字不差的同一批句子；而复读式幻觉必然命中。
+    /// 判据要求**整份切分**都是同一批内容的复制（每个说话人的内容集合彼此完全相同），
+    /// 而不是「任意两个人撞上就算」。
+    ///
+    /// 为什么不能按「任意一对相同」判：三人及以上的真实录音里，完全可能有两位只应了同样的
+    /// 一声「嗯」「对」，而第三位讲了实质内容。此时那两位撞车恰恰不是复读式幻觉——第三组
+    /// 内容正好证明模型没在整份复制。而调用方拿到 true 会把**整份**多人切分丢掉、退回单说话人，
+    /// 于是一份真实的三人切分因为两句附和就被判死。（形状 1：判据比它该管的范围宽。）
     /// </summary>
     internal static bool HasHallucinatedSpeakerSplit(IReadOnlyList<SubtitleSegment> segments)
     {
@@ -1068,15 +1073,17 @@ public class SubtitleGenerationProcessor
             .Where(x => x.Content.Count > 0)
             .ToList();
 
-        for (var i = 0; i < bySpeaker.Count; i++)
+        // 少于两组说不上「复制」；这条不该由本判据拦（多人判定由调用方的 CountSpeakers 负责）
+        if (bySpeaker.Count < 2) return false;
+
+        // 整份都是同一批内容才算编造：只要有任意一组与第一组不同，就说明模型确实区分了内容，
+        // 那份切分即便有两个人撞车也不该整份丢掉。
+        var first = bySpeaker[0].Content;
+        for (var i = 1; i < bySpeaker.Count; i++)
         {
-            for (var j = i + 1; j < bySpeaker.Count; j++)
-            {
-                if (bySpeaker[i].Content.SequenceEqual(bySpeaker[j].Content, StringComparer.Ordinal))
-                    return true;
-            }
+            if (!bySpeaker[i].Content.SequenceEqual(first, StringComparer.Ordinal)) return false;
         }
-        return false;
+        return true;
     }
 
     private static int CountSpeakers(IEnumerable<SubtitleSegment> segments)

@@ -69,6 +69,36 @@ public class ChatAudioDiarizationTrustTests
     }
 
     [Fact]
+    public void 三人里两位只应了同样一声不算编造_不许把整份切分丢掉()
+    {
+        // 判据管的是「整份都是同一批内容的复制」。三人及以上的真实录音里，
+        // 完全可能有两位只应了同样的一声「嗯」，而第三位讲了实质内容——
+        // 第三组内容恰恰证明模型没在整份复制。
+        // 判成编造的代价不是「忽略这一对」，而是调用方把**整份**多人切分丢掉、退回单说话人：
+        // 一份真实的三人对话因为两句附和就被判死。
+        var segments = SubtitleGenerationProcessor.ParseChatAudioSpeakerSegments("""
+[说话人1] 嗯
+[说话人2] 嗯
+[说话人3] 那这版就按上周定的口径改，周四之前给我
+""");
+
+        SubtitleGenerationProcessor.HasHallucinatedSpeakerSplit(segments).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 三个说话人全是同一批内容时仍判为编造()
+    {
+        // 收紧判据不能把真正的复读式幻觉放过去：全部说话人内容一致时照样判编造
+        var segments = SubtitleGenerationProcessor.ParseChatAudioSpeakerSegments("""
+[说话人1] 今天是个好日子
+[说话人2] 今天是个好日子
+[说话人3] 今天是个好日子
+""");
+
+        SubtitleGenerationProcessor.HasHallucinatedSpeakerSplit(segments).ShouldBeTrue();
+    }
+
+    [Fact]
     public void 标点与空白差异不影响编造判定()
     {
         // 复读式幻觉常带轻微标点差异，判据必须归一化后再比，否则一个逗号就绕过去了
