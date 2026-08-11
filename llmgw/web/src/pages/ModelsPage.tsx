@@ -32,6 +32,8 @@ import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP, INSET_PADDING } from '@/lib/surface';
 import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
+const IMAGE_GENERATION_CAPABILITY_TYPES = new Set(['image_generation', 'text_to_image', 'image']);
+
 export function ModelsPage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
@@ -568,7 +570,7 @@ export function ModelsPage() {
                   const provider = m.platformId ? platformById.get(m.platformId) : undefined;
                   const isImageGeneration = m.isImageGen
                     || m.capabilities.some((capability) => capability.value
-                      && capability.type.toLowerCase() === 'image_generation');
+                      && IMAGE_GENERATION_CAPABILITY_TYPES.has(capability.type.toLowerCase()));
                   return (
                     <tr key={m.id}>
                       <td style={td}>

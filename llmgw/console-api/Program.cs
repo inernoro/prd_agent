@@ -6719,7 +6719,11 @@ app.MapPut("/gw/models/{id}/image-size-control", async (
         ? cv.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList()
         : new List<BsonDocument>();
     var isImageGeneration = doc.AsNullableBool("IsImageGen") == true
-                            || GatewayConfigurationProvisioning.HasEnabledCapability(currentCaps, "image_generation");
+                            || GatewayConfigurationProvisioning.HasEnabledCapability(
+                                currentCaps,
+                                "image_generation",
+                                "text_to_image",
+                                "image");
     if (mode != "inherit" && !isImageGeneration)
         return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "只有图片生成模型可以配置图片尺寸控制能力"), jsonOptions, 400);
 
