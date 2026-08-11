@@ -110,7 +110,7 @@
 | `pr_review_items` | `PrReviewItem` | PR 审查工作台的用户级记录（owner/repo/number + 嵌入式 Snapshot + 私人笔记） | `(userId, updatedAt desc)`；`(userId, owner, repo, number)` 唯一 |
 | `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
 | `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
-| `document_embeddings` | `DocumentEmbedding` | 知识库文档切块向量（float32 二进制 + 算它的模型标识与维度；跨模型同维度判为不兼容） | 待建：`(scopeId, model)`；`(entryId, chunkIndex)` 唯一。索引未创建，见 no-auto-index 规则，交 DBA |
+| `document_embeddings` | `DocumentEmbedding` | 知识库文档切块向量（`Vector` 为 float32 二进制，随向量存 `Model` / `Dimension`，跨模型同维度判为不兼容；`DeploymentSlug` 隔离分支预览与生产，二者共用同一个 Mongo） | 待建：`(storeId, deploymentSlug, model)` 检索用；`(entryId, chunkIndex, deploymentSlug)` 唯一——**唯一键必须带部署作用域**，否则分支预览与生产的同一篇文档会撞键。索引未创建，见 no-auto-index 规则，交 DBA |
 | `document_stores` | `DocumentStore` | 知识库（文档空间）主记录：名称/描述/tags/是否公开/主文档/置顶/点赞收藏计数 | （未显式创建额外索引；owner 查询走 `OwnerId`） |
 | `document_entries` | `DocumentEntry` | 知识库内的文档条目：文件/文件夹/订阅源；含 `sourceType`(upload/subscription/github_directory)、同步字段（`SyncIntervalMinutes` / `LastSyncAt` / `IsPaused` / `ContentHash` / `LastETag` / `LastChangedAt`）、软链到 `ParsedPrd.Id` / `attachments.Id` | （未显式创建额外索引；按 `StoreId`、`ParentId` 查询） |
 | `document_sync_logs` | `DocumentSyncLog` | 知识库订阅同步日志（**只记录 change / error 事件**，无变化不落库）。GitHub 目录类型含 `FileChanges: [{path, action}]` | （按 `EntryId`、`SyncedAt desc` 查询） |

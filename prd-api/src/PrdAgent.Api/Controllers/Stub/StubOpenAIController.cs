@@ -404,12 +404,28 @@ public class StubOpenAIController : ControllerBase
     /// （所以"暗号命中"和"跨库隔离"这类断言是真的在考检索，而不是在考随机数）。
     /// </summary>
     [HttpPost("v1/embeddings")]
+    [RequestSizeLimit(StubEmbeddingBodyLimitBytes)]
     public IActionResult Embeddings([FromBody] StubEmbeddingRequest request)
     {
         var model = (request?.Model ?? "stub-embedding").Trim();
         var inputs = request?.ReadInputs() ?? new List<string>();
         if (inputs.Count == 0)
             return BadRequest(new { error = new { message = "input 不能为空", type = "invalid_request_error" } });
+
+        // 这条路由在生产是**公开代理、且没有鉴权**的（整个 Stub 控制器都是）。
+        // 一次 POST 里塞一个装着几万条短字符串的紧凑数组，请求体本身可能只有几 MB，
+        // 却会在这里放大成「每条一个 256 维向量 + 各自序列化」——几百 MB 级的分配，
+        // 按请求数计的限流拦不住这种「单次放大」。所以在造向量**之前**先按条数与总字符卡住。
+        if (inputs.Count > MaxStubEmbeddingInputs)
+            return BadRequest(new { error = new { message = $"input 最多 {MaxStubEmbeddingInputs} 条", type = "invalid_request_error" } });
+
+        var totalChars = 0L;
+        foreach (var t in inputs)
+        {
+            totalChars += t?.Length ?? 0;
+            if (totalChars > MaxStubEmbeddingTotalChars)
+                return BadRequest(new { error = new { message = $"input 总字符数最多 {MaxStubEmbeddingTotalChars}", type = "invalid_request_error" } });
+        }
 
         var dim = StubEmbeddingDimension;
         var data = new List<object>(inputs.Count);
@@ -431,6 +447,15 @@ public class StubOpenAIController : ControllerBase
             usage = new { prompt_tokens = inputs.Sum(t => t.Length), total_tokens = inputs.Sum(t => t.Length) },
         });
     }
+
+    /// <summary>Stub 向量化的请求体字节上限。远小于全局上限，卡在模型绑定之前。</summary>
+    private const long StubEmbeddingBodyLimitBytes = 512 * 1024;
+
+    /// <summary>单次最多几条输入。与真实供应商的批量上限同量级，够自测用。</summary>
+    private const int MaxStubEmbeddingInputs = 256;
+
+    /// <summary>单次输入总字符上限。防「条数不多但每条极长」绕过条数闸。</summary>
+    private const int MaxStubEmbeddingTotalChars = 200_000;
 
     /// <summary>Stub 向量维度。取 256：够区分，又不至于让测试数据体积失控。</summary>
     private const int StubEmbeddingDimension = 256;
