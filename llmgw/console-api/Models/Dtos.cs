@@ -1000,6 +1000,15 @@ public sealed class LogicalModelDeleteResult
     public int OfferingsDeleted { get; set; }
 }
 
+/// <summary>
+/// 删除 appCaller 的结果：它名下的提示词策略版本是从属子项，跟着一起删。
+/// 报条数而不是静默删——删的是会改写系统提示词的治理配置，事后必须能核对删掉了什么。
+/// </summary>
+public sealed class AppCallerDeleteResult
+{
+    public int PromptPolicyVersionsDeleted { get; set; }
+}
+
 /// <summary>编辑上游：只改这几项；密钥走独立的轮换端点，不混在这里。</summary>
 public sealed class UpdatePlatformRequest
 {

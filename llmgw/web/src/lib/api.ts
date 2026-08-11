@@ -56,6 +56,7 @@ import type {
   PoolDeleteBlockers,
   ExchangeDeleteBlockers,
   LogicalModelDeleteResult,
+  AppCallerDeleteResult,
   UpdatePlatformRequest,
   PlatformMergeResult,
   ModelItem,
@@ -800,8 +801,9 @@ export function deleteLogicalModel(id: string): Promise<ApiResponse<LogicalModel
   return apiRequest<LogicalModelDeleteResult>(`/logical-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 /** 删除 appCaller 登记。删除后该 code 再来调用会被当成未注册拒绝。 */
-export function deleteAppCaller(id: string): Promise<ApiResponse<unknown>> {
-  return apiRequest<unknown>(`/app-callers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+/** 删除 appCaller。名下的提示词策略版本是从属子项，跟着一起删，条数在返回里。 */
+export function deleteAppCaller(id: string): Promise<ApiResponse<AppCallerDeleteResult>> {
+  return apiRequest<AppCallerDeleteResult>(`/app-callers/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 /** 删除交换所。仍被池成员引用时返回 409 + EXCHANGE_IN_USE。 */
 export function deleteExchange(id: string): Promise<ApiResponse<ExchangeDeleteBlockers>> {

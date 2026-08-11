@@ -237,7 +237,7 @@ export function AppCallersPage() {
   const removeItem = async (item: GatewayAppCaller) => {
     const typed = await promptText({
       title: `删除 appCaller「${item.appCallerCode}」`,
-      description: '它的注册与治理配置（模型池绑定、预算、限流）一并消失。\n这只是被动发现的登记，下一次同名调用会重新出现，但配置不会回来。',
+      description: '它的注册与治理配置（模型池绑定、预算、限流）一并消失，名下的提示词策略版本也会一起删掉。\n这只是被动发现的登记，下一次同名调用会重新出现，但配置不会回来。',
       inputLabel: '确认请输入 appCallerCode',
       requireExact: item.appCallerCode,
       tone: 'danger',
@@ -259,7 +259,12 @@ export function AppCallersPage() {
     }
     setExpandedId((prev) => (prev === item.id ? null : prev));
     setData((prev) => (prev ? { ...prev, items: prev.items.filter((x) => x.id !== item.id), total: Math.max(0, prev.total - 1) } : prev));
-    setActionNotice(`已删除 appCaller「${item.appCallerCode}」`);
+    // 连带删掉的提示词策略要报出来：它会改写系统提示词，删了却不说等于静默改行为
+    const policies = res.data?.promptPolicyVersionsDeleted ?? 0;
+    setActionNotice(
+      `已删除 appCaller「${item.appCallerCode}」`
+      + (policies > 0 ? `，连带删除提示词策略 ${policies} 版` : ''),
+    );
   };
 
   const applyBulkGovernance = async () => {

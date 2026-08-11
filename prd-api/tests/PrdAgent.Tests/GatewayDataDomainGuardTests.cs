@@ -4274,6 +4274,40 @@ public class GatewayDataDomainGuardTests
 
         // 共享判定源：TargetKind 缺省的存量文档必须按 model 处理，漏判等于漏掉一整批存量引用
         Assert.Contains("fb.Exists(\"TargetKind\", false)", console);
+
+        // 池成员的 ModelId 可以是模型 _id（加成员端点同时接受 _id / ModelName / Name）。
+        // 只改 PlatformId 会留下「目标平台 + 已删模型 _id」——平台在、模型名对得上，
+        // 按 _id 解析却直接落空，而且它不再指向源平台，连删源平台前的复查都查不到它。
+        Assert.Contains("survivorByDroppedModelId", merge);
+        Assert.Contains("member[\"ModelId\"] = survivorModelId", merge);
+        // 扫池的过滤也要认这一类：成员可能只有 ModelId 命中、PlatformId 早就不是源平台
+        Assert.Contains("fb.In(\"ModelId\", survivorByDroppedModelId.Keys)", merge);
+    }
+
+    /// <summary>
+    /// 提示词策略是 appCaller 的从属子项，必须跟着一起删。
+    ///
+    /// 它只能从 `/gw/app-callers/{id}/prompt-policy` 建、没有独立入口，
+    /// 运行时（`GatewayPromptPolicyApplier`）却按 (TenantId, AppCallerCode, RequestType) 选中它，
+    /// **完全不看 appCaller 注册文档**。只删注册行的话策略照样在改写系统提示词；
+    /// 而 appCaller 是被下一次真实调用被动重建的，重建之后老提示词就这么回来了——
+    /// 与确认弹窗承诺的「配置不会回来」正好相反。
+    /// </summary>
+    [Fact]
+    public void DeletingAppCaller_AlsoRemovesItsPromptPolicies()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var applier = ReadRepoFile("llmgw/serving/GatewayPromptPolicyApplier.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
+
+        // 运行时的选中判据不含 appCaller 文档：这就是「只删注册行不够」的根据
+        Assert.Contains("fb.Eq(\"AppCallerCode\", request.AppCallerCode.Trim().ToLowerInvariant())", applier);
+
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/app-callers/{id}\"");
+        Assert.Contains("promptPolicies.DeleteManyAsync", delete);
+        Assert.Contains("promptPolicyVersionsDeleted", delete);
+        // 删了几版必须报出来：它会改写系统提示词，静默删等于静默改行为
+        Assert.Contains("promptPolicyVersionsDeleted", page);
     }
 
     /// <summary>

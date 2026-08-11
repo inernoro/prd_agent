@@ -71,6 +71,7 @@
 | — | img2img / compose | `VisualAgentAdapter` 的 img2img/compose 仍占位；信封已能传 `imageUrls`，待接通 |
 | — | video-agent | 无可单轮跑的真实组件（视频是长任务 Run/Worker），未登记，单独波次 |
 | — | 多轮上下文 | 如需 chat 多轮，改适配器或信封侧聚合历史 |
+| — | 信封缺替换语义 | 本信封的 `text` 事件是**追加**语义，会话路径却是「终态给了定稿全文就以定稿为准」（`ChatAgentService` 收到 `Done.FinalText` 会清空累积增量重写）。当前只补了「一个增量都没流出来时把定稿当正文发一次」，够治「用户看到空回答」；但运行时若在终态**修订**已流出的草稿，这里仍以增量为准，与会话路径不一致。要对齐得给信封加替换语义（新事件 + 前端从追加改成可替换渲染），涉及 `ReprocessChatDrawer` 与 `VisualCreationMiniPanel` 两个消费方。目前没有任何在用运行时被观察到会修订草稿，故先记账不做（2026-08-11 PR #1359 Review 二轮提出） |
 
 ## 五、验收标准（用户硬性要求：通过才算数）
 

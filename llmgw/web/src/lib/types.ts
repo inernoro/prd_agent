@@ -627,6 +627,8 @@ export type PoolDeleteBlockers = { isCurrentDefault: boolean; appCallers: string
 export type ExchangeDeleteBlockers = { pools: string[]; totalCount: number };
 /** 删除逻辑模型的结果：名下 offering 作为从属子项一并删除。 */
 export type LogicalModelDeleteResult = { offeringsDeleted: number };
+/** 删 appCaller 连带删掉的提示词策略版本数（0 表示它本来就没配过策略）。 */
+export type AppCallerDeleteResult = { promptPolicyVersionsDeleted: number };
 /** 编辑上游：只改这几项，密钥走独立的轮换端点。 */
 export type UpdatePlatformRequest = {
   name?: string;

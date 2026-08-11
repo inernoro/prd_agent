@@ -4579,7 +4579,24 @@ app.MapDelete("/gw/app-callers/{id}", async (HttpContext http, string id) =>
 {
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
     var doc = await gwAppCallers.Find(filter).FirstOrDefaultAsync();
-    if (doc is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", $"appCaller 不存在：{id}"), jsonOptions, 404);
+    if (doc is null) return Json(ApiEnvelope<AppCallerDeleteResult>.Fail("NOT_FOUND", $"appCaller 不存在：{id}"), jsonOptions, 404);
+
+    // 提示词策略是这个 appCaller 的从属子项：它只能从 /gw/app-callers/{id}/prompt-policy 建、
+    // 没有独立入口，运行时却按 (TenantId, AppCallerCode, RequestType) 选中它——完全不看注册文档。
+    // 所以只删注册行的话，策略照样在生效；而 appCaller 是被下一次真实调用被动重建的，
+    // 重建之后老提示词就这么回来了，和确认弹窗说的「删掉不会回来」正好相反。跟着一起删。
+    var access = TenantAccess.GetRequired(http);
+    var appCallerCode = doc.GetStringOrEmpty("AppCallerCode").Trim().ToLowerInvariant();
+    var requestType = doc.GetStringOrEmpty("RequestType").Trim().ToLowerInvariant();
+    var policiesDeleted = 0L;
+    if (appCallerCode.Length > 0)
+    {
+        var policyFilter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
+            Builders<BsonDocument>.Filter.Eq("AppCallerCode", appCallerCode),
+            Builders<BsonDocument>.Filter.Eq("RequestType", requestType));
+        policiesDeleted = (await promptPolicies.DeleteManyAsync(policyFilter)).DeletedCount;
+    }
 
     await gwAppCallers.DeleteOneAsync(filter);
     await WriteOperationAuditAsync(
@@ -4591,8 +4608,12 @@ app.MapDelete("/gw/app-callers/{id}", async (HttpContext http, string id) =>
             { "code", ToBsonAuditValue(doc.AsNullableString("Code") ?? doc.AsNullableString("AppCallerCode")) },
             { "title", ToBsonAuditValue(doc.AsNullableString("Title")) },
             { "modelPoolId", ToBsonAuditValue(doc.AsNullableString("ModelPoolId")) },
+            // 连带删了几版提示词策略要留痕：删的是治理配置，事后要能核对删掉了什么
+            { "promptPolicyVersionsDeleted", policiesDeleted },
         });
-    return Json(ApiEnvelope<object>.Ok(new { }), jsonOptions);
+    return Json(
+        ApiEnvelope<AppCallerDeleteResult>.Ok(new AppCallerDeleteResult { PromptPolicyVersionsDeleted = (int)policiesDeleted }),
+        jsonOptions);
 }).RequireAuthorization("AppCallerWrite");
 
 app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody] UpdateGatewayAppCallerRequest body) =>
@@ -7183,6 +7204,11 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
         .Where(d => !string.IsNullOrWhiteSpace(d.AsNullableString("ModelName")))
         .GroupBy(d => d.AsNullableString("ModelName")!, StringComparer.Ordinal)
         .ToDictionary(g => g.Key, g => g.First().GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    // 被丢弃模型的 _id → 留下来那条的 _id。池成员的 ModelId 可以是 _id（加成员端点
+    // 同时接受 _id / ModelName / Name），只改成员的 PlatformId 会留下
+    //「目标平台 + 已删模型 _id」这种解析不到的组合，而且它不再指向源平台，
+    // 连删源平台前的占用复查都查不到它。所以这张表必须带到第 2 步去。
+    var survivorByDroppedModelId = new Dictionary<string, string>(StringComparer.Ordinal);
     foreach (var model in await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
     {
         var modelName = model.AsNullableString("ModelName") ?? string.Empty;
@@ -7194,6 +7220,7 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
             result.OfferingsRepointed += repointed;
             result.OfferingsDeduped += deduped;
             await gwModels.DeleteOneAsync(modelFilter);
+            if (modelId.Length > 0 && survivorId.Length > 0) survivorByDroppedModelId[modelId] = survivorId;
             result.ModelsDropped++;
             continue;
         }
@@ -7206,8 +7233,14 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
         result.ModelsMoved++;
     }
 
-    // 2) 池成员改指：同一个池里若目标已在，就不能留两条同 (modelId, platformId)，去重
-    var poolFilter = fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", id));
+    // 2) 池成员改指：同一个池里若目标已在，就不能留两条同 (modelId, platformId)，去重。
+    //    两个字段都要改：PlatformId 指向目标，ModelId 若记的是被丢弃那条的 _id 也要换成幸存者的。
+    //    只改一半留下的成员看起来正常（平台存在、模型名对得上），实际按 _id 解析直接落空。
+    var poolFilter = survivorByDroppedModelId.Count > 0
+        ? fb.Or(
+            fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", id)),
+            fb.ElemMatch<BsonDocument>("Models", fb.In("ModelId", survivorByDroppedModelId.Keys)))
+        : fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", id));
     foreach (var pool in await gwModelPools.Find(TenantAccess.Filter(http, poolFilter)).ToListAsync())
     {
         var members = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
@@ -7217,10 +7250,15 @@ app.MapPost("/gw/platforms/{id}/merge-into/{targetId}", async (HttpContext http,
         {
             if (!raw.IsBsonDocument) { kept.Add(raw); continue; }
             var member = raw.AsBsonDocument;
-            var isSource = string.Equals(member.GetStringOrEmpty("PlatformId"), id, StringComparison.Ordinal);
+            var pointsAtSourcePlatform = string.Equals(member.GetStringOrEmpty("PlatformId"), id, StringComparison.Ordinal);
+            var pointsAtDroppedModel = survivorByDroppedModelId.TryGetValue(member.GetStringOrEmpty("ModelId"), out var survivorModelId);
+            var isSource = pointsAtSourcePlatform || pointsAtDroppedModel;
             if (isSource)
             {
-                member = new BsonDocument(member) { ["PlatformId"] = targetId };
+                member = new BsonDocument(member);
+                if (pointsAtSourcePlatform) member["PlatformId"] = targetId;
+                // 成员记的是被丢弃那条模型的 _id：那份文档已经不存在了，必须换成留下来的同名模型
+                if (pointsAtDroppedModel) member["ModelId"] = survivorModelId;
                 // 改指之后健康位得重算：它记录的是「在源上游那边」的历史，对目标不成立
                 member["HealthStatus"] = 0;
                 member["ConsecutiveFailures"] = 0;
