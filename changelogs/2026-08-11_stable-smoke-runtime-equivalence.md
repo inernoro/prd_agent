@@ -113,3 +113,6 @@
 | fix | prd-api | 录音语义校验耗尽后按预计算候选切换备用 ASR Offering |
 | fix | stable-smoke | 单环境稳定冒烟只对账实际选择的 CDS 或正式环境，避免虚构未执行项 |
 | test | prd-api/stable-smoke | 增加 ASR 候选顺序与单环境复测成功判定回归覆盖 |
+| fix | stable-smoke | grep 定向补跑只对账表达式选择的用例，避免其他计划项误记未执行 |
+| fix | prd-admin | 头像生成任务在会话内保留运行标识，重开编辑器自动恢复轮询和结果 |
+| test | prd-admin/stable-smoke | 增加头像任务恢复与 grep 定向复测回归覆盖 |

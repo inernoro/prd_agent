@@ -5,7 +5,13 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { applyGeneratedMyAvatar, generateMyAvatarPreview, uploadUserAvatar } from '@/services';
+import {
+  applyGeneratedMyAvatar,
+  generateMyAvatarPreview,
+  getPendingMyAvatarGenerationRunId,
+  resumeMyAvatarPreview,
+  uploadUserAvatar,
+} from '@/services';
 import type { ApiResponse } from '@/types/api';
 import type { AdminUserAvatarUploadResponse } from '@/services/contracts/userAvatarUpload';
 
@@ -59,6 +65,46 @@ export function AvatarEditDialog(props: {
   }, [props.open, props.avatarFileName]);
 
   useEffect(() => () => generationAbortRef.current?.abort(), []);
+
+  useEffect(() => {
+    if (!props.open || !aiEnabled) return;
+    const runId = getPendingMyAvatarGenerationRunId();
+    if (!runId) return;
+
+    const generationId = ++generationIdRef.current;
+    generationAbortRef.current?.abort();
+    const generationAbort = new AbortController();
+    generationAbortRef.current = generationAbort;
+    setGenerating(true);
+    setGenerationStage('正在恢复头像生成任务');
+    setElapsedSeconds(0);
+    setError(null);
+
+    void resumeMyAvatarPreview({
+      runId,
+      signal: generationAbort.signal,
+      onProgress: (stage) => {
+        if (generationIdRef.current === generationId) setGenerationStage(stage);
+      },
+    }).then((response) => {
+      if (generationIdRef.current !== generationId) return;
+      generationAbortRef.current = null;
+      setGenerating(false);
+      setGenerationStage('');
+      if (!response.success) {
+        setError(response.error?.message || '头像生成任务恢复失败，请稍后重试');
+        return;
+      }
+      setGeneratedAssetSha256(response.data.assetSha256);
+      setGeneratedUrl(response.data.previewUrl);
+    });
+
+    return () => {
+      if (generationIdRef.current === generationId) generationIdRef.current += 1;
+      generationAbort.abort();
+      if (generationAbortRef.current === generationAbort) generationAbortRef.current = null;
+    };
+  }, [aiEnabled, props.open]);
 
   useEffect(() => {
     if (!generating) return;

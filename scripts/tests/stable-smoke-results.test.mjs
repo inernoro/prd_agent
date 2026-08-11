@@ -4,6 +4,7 @@ import {
   buildNotRunLedger,
   collectPlaywrightCases,
   reconcileCaseCoverage,
+  selectRequiredCaseIds,
   summarizeCoverage,
   userReadableError,
 } from '../stable-smoke-results.mjs';
@@ -94,6 +95,21 @@ test('单环境复测只对账运行器实际选择的环境', () => {
   assert.equal(summarizeCoverage(cdsRows).verdict, 'pass');
   assert.equal(summarizeCoverage(productionRows).verdict, 'pass');
 });
+
+test('grep 单用例复测只对账表达式中选择的 caseId', () => {
+  const required = ['CORE-001', 'REC-003', 'REG-user-error-001'];
+
+  expectCaseIds(selectRequiredCaseIds(required, '\\[REC-003\\]'), ['REC-003']);
+  expectCaseIds(
+    selectRequiredCaseIds(required, '\\[REC-003\\]|\\[REG-user-error-001\\]'),
+    ['REC-003', 'REG-user-error-001'],
+  );
+  expectCaseIds(selectRequiredCaseIds(required, '头像生成'), required);
+});
+
+function expectCaseIds(actual, expected) {
+  assert.deepEqual(actual, expected);
+}
 
 test('未执行账本区分自动化缺口与正式环境身份阻塞', () => {
   const ledger = buildNotRunLedger([

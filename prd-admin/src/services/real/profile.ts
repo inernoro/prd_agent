@@ -16,6 +16,44 @@ type AvatarGenerationRun = {
 
 const AVATAR_GENERATION_POLL_INTERVAL_MS = 800;
 const AVATAR_GENERATION_MAX_POLLS = 750;
+const AVATAR_GENERATION_STORAGE_PREFIX = 'prd-admin:avatar-generation-run:';
+
+function avatarGenerationStorageKey(): string | null {
+  const userId = String(useAuthStore.getState().user?.userId ?? '').trim();
+  return userId ? `${AVATAR_GENERATION_STORAGE_PREFIX}${userId}` : null;
+}
+
+function rememberAvatarGenerationRun(runId: string): void {
+  const key = avatarGenerationStorageKey();
+  if (!key) return;
+  try {
+    globalThis.sessionStorage?.setItem(key, runId);
+  } catch {
+    // 浏览器禁用会话存储时仍允许本次前台轮询继续。
+  }
+}
+
+function forgetAvatarGenerationRun(runId: string): void {
+  const key = avatarGenerationStorageKey();
+  if (!key) return;
+  try {
+    if (globalThis.sessionStorage?.getItem(key) === runId) {
+      globalThis.sessionStorage.removeItem(key);
+    }
+  } catch {
+    // 会话存储不可用时无需影响头像结果。
+  }
+}
+
+export function getPendingMyAvatarGenerationRunId(): string | null {
+  const key = avatarGenerationStorageKey();
+  if (!key) return null;
+  try {
+    return globalThis.sessionStorage?.getItem(key)?.trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 function waitForNextPoll(signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return Promise.resolve(false);
@@ -130,7 +168,31 @@ export async function generateMyAvatarPreview(input: {
 
   const runId = String(created.data.runId ?? '').trim();
   if (!runId) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
+  rememberAvatarGenerationRun(runId);
   input.onProgress?.(created.data.stage || '正在排队');
+
+  return waitForMyAvatarPreview(runId, input);
+}
+
+export async function resumeMyAvatarPreview(input: {
+  runId?: string | null;
+  onProgress?: (stage: string) => void;
+  signal?: AbortSignal;
+}): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }>> {
+  const runId = String(input.runId || getPendingMyAvatarGenerationRunId() || '').trim();
+  if (!runId) return avatarGenerationFailure('AVATAR_GENERATION_NOT_FOUND');
+  rememberAvatarGenerationRun(runId);
+  input.onProgress?.('正在恢复头像生成任务');
+  return waitForMyAvatarPreview(runId, input);
+}
+
+async function waitForMyAvatarPreview(
+  runId: string,
+  input: {
+    onProgress?: (stage: string) => void;
+    signal?: AbortSignal;
+  },
+): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }>> {
 
   for (let poll = 0; poll < AVATAR_GENERATION_MAX_POLLS; poll += 1) {
     if (!await waitForNextPoll(input.signal)) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
@@ -139,18 +201,26 @@ export async function generateMyAvatarPreview(input: {
       { method: 'GET', timeoutMs: 15_000, signal: input.signal },
     );
     if (input.signal?.aborted) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
-    if (!current.success) return avatarGenerationFailure(current.error?.code);
+    if (!current.success) {
+      if (String(current.error?.code ?? '').trim().toUpperCase() === 'AVATAR_GENERATION_NOT_FOUND') {
+        forgetAvatarGenerationRun(runId);
+      }
+      return avatarGenerationFailure(current.error?.code);
+    }
 
     input.onProgress?.(current.data.stage || '正在生成头像');
     if (current.data.status === 'completed') {
       const previewUrl = String(current.data.previewUrl ?? '').trim();
       const assetSha256 = String(current.data.assetSha256 ?? '').trim().toLowerCase();
       if (previewUrl && /^[a-f0-9]{64}$/.test(assetSha256)) {
+        forgetAvatarGenerationRun(runId);
         return { success: true, data: { previewUrl, assetSha256 }, error: null };
       }
+      forgetAvatarGenerationRun(runId);
       return avatarGenerationFailure('AVATAR_RESULT_UNAVAILABLE');
     }
     if (current.data.status === 'failed' || current.data.status === 'cancelled') {
+      forgetAvatarGenerationRun(runId);
       return avatarGenerationFailure(current.data.errorCode);
     }
   }
@@ -160,7 +230,7 @@ export async function generateMyAvatarPreview(input: {
     data: null,
     error: {
       code: 'AVATAR_GENERATION_WAITING',
-      message: '头像生成仍在继续，请稍后重新打开头像编辑器查看或重试。',
+      message: '头像生成仍在继续，稍后重新打开头像编辑器会自动恢复当前任务。',
     },
   };
 }

@@ -3,6 +3,7 @@ import {
   buildNotRunLedger,
   collectPlaywrightCases,
   reconcileCaseCoverage,
+  selectRequiredCaseIds,
   summarizeCoverage,
   userReadableError,
 } from './stable-smoke-results.mjs';
@@ -25,6 +26,7 @@ const cdsUrl = readArg('--cds-url');
 const productionUrl = readArg('--production-url', 'https://map.ebcone.net');
 const matrixInput = readArg('--matrix', '.claude/skills/stable-smoke/reference/test-matrix.md');
 const environment = readArg('--environment', 'unknown');
+const grepExpression = readArg('--grep');
 const selectedEnvironments = readArg('--environments', 'cds,production')
   .split(',')
   .map((item) => item.trim())
@@ -59,7 +61,7 @@ const evidenceRows = [
   ...collectPlaywrightCases(productionReport, 'production'),
 ];
 const rows = reconcileCaseCoverage(
-  plan?.requiredCaseIds || [],
+  selectRequiredCaseIds(plan?.requiredCaseIds || [], grepExpression),
   evidenceRows,
   selectedEnvironments.length > 0 ? selectedEnvironments : ['cds', 'production'],
 );

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   collectPlaywrightCases,
   reconcileCaseCoverage,
+  selectRequiredCaseIds,
   summarizeCoverage,
 } from './stable-smoke-results.mjs';
 
@@ -518,7 +519,8 @@ async function main() {
       if (!execution.resultPath) return [];
       return collectPlaywrightCases(readJson(execution.resultPath), execution.environment);
     });
-    const rows = reconcileCaseCoverage(plan?.requiredCaseIds || [], environmentRows, selected);
+    const requiredCaseIds = selectRequiredCaseIds(plan?.requiredCaseIds || [], grep);
+    const rows = reconcileCaseCoverage(requiredCaseIds, environmentRows, selected);
     const summary = summarizeCoverage(rows, plan?.verdict || 'conditional');
     writeFileSync(resolve(runDir, 'summary.json'), `${JSON.stringify({
       runId,
@@ -530,7 +532,7 @@ async function main() {
       coverage: summary,
     }, null, 2)}\n`, 'utf8');
 
-    const render = command('node', [
+    const renderArgs = [
       'scripts/render-stable-smoke-report.mjs',
       '--plan', planPath,
       '--cds-input', resolve(runDir, 'cds-results.json'),
@@ -543,7 +545,9 @@ async function main() {
       '--run-id', runId,
       '--base-url-configured', 'true',
       '--environments', selected.join(','),
-    ]);
+    ];
+    if (grep) renderArgs.push('--grep', grep);
+    const render = command('node', renderArgs);
     if (render.status !== 0) throw new Error('稳定冒烟报告生成失败');
 
     process.stdout.write(`${JSON.stringify({ runId, runDir, verdict: summary.verdict, coverage: summary })}\n`);

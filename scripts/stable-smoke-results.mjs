@@ -36,6 +36,19 @@ export function collectPlaywrightCases(report, environment) {
   return rows;
 }
 
+export function selectRequiredCaseIds(requiredCaseIds, grepExpression = '') {
+  const normalizedExpression = String(grepExpression).replaceAll('\\', '');
+  const requested = [...normalizedExpression.matchAll(CASE_ID_PATTERN)]
+    .map((match) => match[1].toUpperCase());
+  if (requested.length === 0) return [...requiredCaseIds];
+
+  const requiredByNormalizedId = new Map(requiredCaseIds.map((caseId) => [
+    String(caseId).toUpperCase(),
+    caseId,
+  ]));
+  return [...new Set(requested)].map((caseId) => requiredByNormalizedId.get(caseId) || caseId);
+}
+
 export function reconcileCaseCoverage(
   requiredCaseIds,
   environmentRows,

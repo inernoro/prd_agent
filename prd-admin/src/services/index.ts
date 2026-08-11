@@ -472,7 +472,14 @@ import {
 } from '@/services/real/desktopAssets';
 import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/avatarAssets';
 import { uploadUserAvatar as uploadUserAvatarReal } from '@/services/real/userAvatarUpload';
-import { applyGeneratedMyAvatar as applyGeneratedMyAvatarReal, generateMyAvatarPreview as generateMyAvatarPreviewReal, uploadMyAvatar as uploadMyAvatarReal, updateMyAvatar as updateMyAvatarReal } from '@/services/real/profile';
+import {
+  applyGeneratedMyAvatar as applyGeneratedMyAvatarReal,
+  generateMyAvatarPreview as generateMyAvatarPreviewReal,
+  getPendingMyAvatarGenerationRunId as getPendingMyAvatarGenerationRunIdReal,
+  resumeMyAvatarPreview as resumeMyAvatarPreviewReal,
+  uploadMyAvatar as uploadMyAvatarReal,
+  updateMyAvatar as updateMyAvatarReal,
+} from '@/services/real/profile';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
 import {
   listHomepageAssets as listHomepageAssetsReal,
@@ -1019,6 +1026,8 @@ export const uploadUserAvatar: UploadUserAvatarContract = withAuth(uploadUserAva
 export const uploadMyAvatar = withAuth(uploadMyAvatarReal);
 export const updateMyAvatar = withAuth(updateMyAvatarReal);
 export const generateMyAvatarPreview = withAuth(generateMyAvatarPreviewReal);
+export const resumeMyAvatarPreview = withAuth(resumeMyAvatarPreviewReal);
+export const getPendingMyAvatarGenerationRunId = getPendingMyAvatarGenerationRunIdReal;
 export const applyGeneratedMyAvatar = withAuth(applyGeneratedMyAvatarReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
