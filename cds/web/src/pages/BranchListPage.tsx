@@ -3576,6 +3576,7 @@ export function BranchListPage(): JSX.Element {
             if (state.previewMode === 'simple') return simplePreviewUrl(state.config);
             return multiPreviewUrl(target, state.config);
           })()}
+          previewMode={state.status === 'ok' ? state.previewMode : 'multi'}
           initialResourceId={detailDrawerResourceFocus?.resourceId || null}
           initialResourceDetailTab={detailDrawerResourceFocus?.detailTab || null}
           branchStatus={(() => {
