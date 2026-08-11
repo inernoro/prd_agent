@@ -75,7 +75,11 @@ public class ProfileAvatarGenerationContractTests
         var source = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
 
-        Assert.Contains("BuildAvatarGenerationFailure(run.Status)", source);
+        Assert.Contains("BuildAvatarGenerationFailure(run.Status, itemErrorCode)", source);
+        Assert.Contains("_db.ImageGenRunItems", source);
+        Assert.Contains("itemErrorCode = failedItem?.ErrorCode", source);
+        Assert.Contains("\"IMAGE_GEN_REQUEST_REJECTED\" or \"CONTENT_REJECTED\"", source);
+        Assert.Contains("\"LLM_QUOTA_EXCEEDED\" or \"QUOTA_EXCEEDED\"", source);
         Assert.Contains("头像生成暂时未完成，请稍后重试", source);
         Assert.DoesNotContain("item.ErrorMessage", source);
     }

@@ -110,7 +110,7 @@ public class ProfileController : ControllerBase
         return (true, null);
     }
 
-    private static object BuildAvatarGenerationFailure(ImageGenRunStatus status)
+    private static object BuildAvatarGenerationFailure(ImageGenRunStatus status, string? itemErrorCode = null)
     {
         if (status == ImageGenRunStatus.Cancelled)
         {
@@ -123,12 +123,38 @@ public class ProfileController : ControllerBase
             };
         }
 
+        var failure = MapAvatarGenerationFailure(itemErrorCode);
         return new
         {
             status = "failed",
             stage = "生成未完成",
-            errorCode = "AVATAR_GENERATION_FAILED",
-            errorMessage = "头像生成暂时未完成，请稍后重试；如持续出现，请重新上传一张清晰头像。"
+            errorCode = failure.errorCode,
+            errorMessage = failure.errorMessage
+        };
+    }
+
+    private static (string errorCode, string errorMessage) MapAvatarGenerationFailure(string? itemErrorCode)
+    {
+        return (itemErrorCode ?? string.Empty).Trim().ToUpperInvariant() switch
+        {
+            "IMAGE_GEN_REQUEST_REJECTED" or "CONTENT_REJECTED" or "INVALID_FORMAT" => (
+                "IMAGE_GEN_REQUEST_REJECTED",
+                "这次描述或参考图未通过检查，请调整描述或更换参考图后重试。"),
+            "LLM_QUOTA_EXCEEDED" or "QUOTA_EXCEEDED" => (
+                "LLM_QUOTA_EXCEEDED",
+                "当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。"),
+            "RATE_LIMITED" => (
+                "RATE_LIMITED",
+                "当前生图请求较多，请稍后重试。"),
+            "IMAGE_GEN_TIMEOUT" => (
+                "IMAGE_GEN_TIMEOUT",
+                "图片生成等待超时，请稍后查看结果或重新生成。"),
+            "IMAGE_GEN_UNAVAILABLE" => (
+                "IMAGE_GEN_UNAVAILABLE",
+                "当前生图服务暂时不可用，请稍后重新生成。"),
+            _ => (
+                "AVATAR_GENERATION_FAILED",
+                "头像生成暂时未完成，请稍后重试；如持续出现，请重新上传一张清晰头像。")
         };
     }
 
@@ -413,7 +439,20 @@ public class ProfileController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("AVATAR_GENERATION_NOT_FOUND", "没有找到这次头像生成任务，请重新生成。"));
 
         if (run.Status is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
-            return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationFailure(run.Status)));
+        {
+            string? itemErrorCode = null;
+            if (run.Status == ImageGenRunStatus.Failed)
+            {
+                var failedItem = await _db.ImageGenRunItems
+                    .Find(x => x.RunId == run.Id
+                               && x.OwnerAdminId == currentUserId
+                               && x.Status == ImageGenRunItemStatus.Error)
+                    .SortByDescending(x => x.EndedAt)
+                    .FirstOrDefaultAsync(ct);
+                itemErrorCode = failedItem?.ErrorCode;
+            }
+            return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationFailure(run.Status, itemErrorCode)));
+        }
 
         if (run.Status != ImageGenRunStatus.Completed)
         {

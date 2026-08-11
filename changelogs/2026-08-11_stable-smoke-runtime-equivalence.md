@@ -205,6 +205,10 @@
 | fix | stable-smoke | 将每张视觉证据绑定本轮运行标识、待验收提交与采集时间，拒绝复用历史截图通过门禁 |
 | test | stable-smoke | 增加视觉证据跨运行、跨提交和早于取证窗口的永久回归覆盖 |
 | fix | create-visual-test-to-kb | 浏览器取证清单自动记录运行标识、提交版本和截图采集时间 |
+| fix | stable-smoke | 按清理用例身份识别重试风险，防止首次清理失败后错误解锁正式环境写入 |
+| fix | prd-api | 头像任务失败时从持久化生成项映射内容检查、额度、限流和超时等稳定分类 |
+| fix | prd-admin | 头像生成按稳定错误分类展示对应恢复动作并继续屏蔽上游诊断 |
+| test | prd-api/prd-admin/stable-smoke | 增加中文清理用例重试和头像分类失败恢复的永久回归覆盖 |
 | fix | stable-smoke | 按仓库真实大小写识别 .Codex 规则目录，避免 Linux 上规则变更误阻塞版本等价 |
 | test | stable-smoke | 增加 .Codex 规则路径大小写敏感回归覆盖 |
 | fix | stable-smoke | CDS 主应用与模型网关按权威入口顺序解析，禁止根据域名文本猜测服务类型 |

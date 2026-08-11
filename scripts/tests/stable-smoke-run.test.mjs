@@ -124,6 +124,18 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   assert.equal(flakyCleanupGate.restricted, true);
   assert.match(flakyCleanupGate.reasons.join('；'), /重试后通过/);
 
+  const chineseCleanupGate = evaluateProductionSafetyGate({ status: 'executed' }, [{
+    caseId: 'COMMON-001',
+    status: 'pass',
+    title: '专用前缀资源可创建、回读并清理',
+    error: '',
+    retryCount: 1,
+    hadFailedAttempt: true,
+    attemptErrors: ['Expected 500 to be 204'],
+  }]);
+  assert.equal(chineseCleanupGate.restricted, true);
+  assert.match(chineseCleanupGate.reasons.join('；'), /COMMON-001/);
+
   assert.equal(evaluateProductionSafetyGate({ status: 'executed' }, [{ status: 'pass' }]).restricted, false);
   const filteredGate = evaluateProductionSafetyGate(
     { status: 'executed' },

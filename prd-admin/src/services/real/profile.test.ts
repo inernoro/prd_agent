@@ -202,6 +202,38 @@ describe('generateMyAvatarPreview', () => {
     expect(result.error?.message).not.toContain('token');
   });
 
+  it.each([
+    ['IMAGE_GEN_REQUEST_REJECTED', '图片生成请求未被接受，请调整描述或素材后重试。'],
+    ['LLM_QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。'],
+    ['IMAGE_GEN_TIMEOUT', '图片生成等待超时，请稍后查看结果或重新生成。'],
+  ])('保留头像生成失败分类并给出对应恢复动作：%s', async (errorCode, expectedMessage) => {
+    mockedApiRequest
+      .mockResolvedValueOnce({
+        success: true,
+        data: { runId: `run-${errorCode}`, status: 'queued', stage: '正在排队' },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          status: 'failed',
+          stage: '生成未完成',
+          errorCode,
+          errorMessage: 'raw provider diagnostic',
+        },
+        error: null,
+      });
+
+    const resultPromise = generateMyAvatarPreview({ prompt: '改成手绘风格' });
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe(errorCode);
+    expect(result.error?.message).toBe(expectedMessage);
+    expect(result.error?.message).not.toMatch(/provider|diagnostic/i);
+  });
+
   it('关闭编辑器后停止后续轮询请求', async () => {
     mockedApiRequest.mockResolvedValueOnce({
       success: true,

@@ -497,10 +497,14 @@ export function enforceExecutionVerdict(summary, executions) {
 }
 
 export function evaluateProductionSafetyGate(cdsExecution, cdsRows = [], cdsWasFiltered = false) {
+  const cleanupCaseIds = new Set(['COMMON-001', 'COMMON-004', 'REC-012', 'FILE-010', 'PARSE-008', 'VIDEO-010', 'LIT-010', 'VIS-010']);
   const hazardousFailures = cdsRows.filter((row) => {
     const attemptErrors = Array.isArray(row.attemptErrors) ? row.attemptErrors.join(' ') : '';
-    const isCleanupHazard = /\bP0\b|数据污染|清理失败|\bcleanup\b|pollution/i.test(
-      `${row.title || ''} ${row.error || ''} ${attemptErrors}`,
+    const caseIds = String(row.caseId || '').match(/[A-Z]+-\d+/gi) || [];
+    const isCleanupCase = caseIds.some((caseId) => cleanupCaseIds.has(caseId.toUpperCase()))
+      || /清理|\bcleanup\b/i.test(String(row.title || ''));
+    const isCleanupHazard = isCleanupCase || /\bP0\b|数据污染|清理失败|pollution/i.test(
+      `${row.error || ''} ${attemptErrors}`,
     );
     return isCleanupHazard && (row.status === 'fail' || row.hadFailedAttempt === true || row.retryCount > 0);
   });
