@@ -273,6 +273,18 @@ test('CDS 地址始终来自 preview-url 并拒绝过期缓存', () => {
   );
 });
 
+test('CDS 地址按权威入口顺序解析而不猜测域名中的服务名称', () => {
+  const authoritative = () => ({
+    status: 0,
+    stdout: 'https://llmgw-feature.example/\nhttps://gateway.example/\n',
+  });
+
+  assert.deepEqual(resolveCdsPreviewUrls('', '', authoritative), {
+    appUrl: 'https://llmgw-feature.example',
+    gatewayUrl: 'https://gateway.example',
+  });
+});
+
 test('CDS 权威地址解析失败时普通执行也必须熔断', () => {
   assert.throws(
     () => requireAuthoritativeCdsAddress(['CDS 主应用缓存地址与当前分支权威地址不一致']),

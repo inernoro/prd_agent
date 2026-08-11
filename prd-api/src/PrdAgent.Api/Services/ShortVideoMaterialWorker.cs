@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -71,16 +72,19 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
             var instanceId = InstanceIdentity.Get(configuration);
             var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+            var ownerScope = LegacyOwnerScope.Build<ShortVideoMaterialRun>(
+                nameof(ShortVideoMaterialRun.OwnerInstanceId),
+                compatibleOwnerIds,
+                includeUnowned: true,
+                includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
             var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
-                Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+                ownerScope);
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 recoverFilter,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -108,20 +112,23 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
             var instanceId = InstanceIdentity.Get(configuration);
             var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+            var ownerScope = LegacyOwnerScope.Build<ShortVideoMaterialRun>(
+                nameof(ShortVideoMaterialRun.OwnerInstanceId),
+                compatibleOwnerIds,
+                includeUnowned: true,
+                includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
             var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
             var current = _currentRunId ?? "";
             var filter = Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
                 Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
-                Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+                ownerScope);
             var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 filter,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -162,13 +169,15 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
         var instanceId = InstanceIdentity.Get(configuration);
         var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+        var ownerScope = LegacyOwnerScope.Build<ShortVideoMaterialRun>(
+            nameof(ShortVideoMaterialRun.OwnerInstanceId),
+            compatibleOwnerIds,
+            includeUnowned: true,
+            includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
             Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
-                Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
+                ownerScope),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
                 // 认领时盖上本实例归属（领取历史无主任务后必须打主，否则崩溃重启兜底匹配不到、永卡 running，Bugbot Medium）

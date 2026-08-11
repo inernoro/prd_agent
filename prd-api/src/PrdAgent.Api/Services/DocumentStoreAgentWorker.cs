@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -49,6 +50,11 @@ public class DocumentStoreAgentWorker : BackgroundService
             var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
             var instanceId = InstanceIdentity.Get(configuration);
             var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+            var ownerScope = LegacyOwnerScope.Build<DocumentStoreAgentRun>(
+                nameof(DocumentStoreAgentRun.OwnerInstanceId),
+                compatibleOwnerIds,
+                includeUnowned: true,
+                includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
             // 回收范围 = 本实例 Running + 历史无主 Running（OwnerInstanceId 空）。
             // 无主 Running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
             // 这些 run 的容器一旦退出就永远没人回收、永远卡 running。把无主 Running 一并
@@ -57,10 +63,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             // 旧代码遗留，归属本就不可分辨，这个过渡期代价可接受（Bugbot Medium）。
             var recoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Running),
-                Builders<DocumentStoreAgentRun>.Filter.Or(
-                    Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
-                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+                ownerScope);
             var automaticRetryBudgetFilter = DocumentRecordingArchiveWorker
                 .BuildDeferredTranscriptionAutomaticRetryBudgetFilter();
             var deferredRecoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
@@ -83,6 +86,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                     .Set(r => r.EndedAt, null)
                     .Set(r => r.StartedAt, null)
                     .Set(r => r.AutomaticRetryNextAt, null)
+                    .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(
                         r => r.AutomaticRetryReason,
                         DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
@@ -92,6 +96,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                 recoverFilter,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                    .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(r => r.ErrorMessage, "服务重启，任务被中断")
                     .Set(r => r.EndedAt, restartAt),
                 cancellationToken: CancellationToken.None);
@@ -186,6 +191,11 @@ public class DocumentStoreAgentWorker : BackgroundService
         var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
         var instanceId = InstanceIdentity.Get(configuration);
         var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+        var ownerScope = LegacyOwnerScope.Build<DocumentStoreAgentRun>(
+            nameof(DocumentStoreAgentRun.OwnerInstanceId),
+            compatibleOwnerIds,
+            includeUnowned: true,
+            includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
         var filter = Builders<DocumentStoreAgentRun>.Filter.And(
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
             Builders<DocumentStoreAgentRun>.Filter.Or(
@@ -195,10 +205,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                 Builders<DocumentStoreAgentRun>.Filter.Lte(
                     r => r.AutomaticRetryNextAt,
                     DateTime.UtcNow)),
-            Builders<DocumentStoreAgentRun>.Filter.Or(
-                Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+            ownerScope);
         var update = Builders<DocumentStoreAgentRun>.Update
             .Set(r => r.Status, DocumentStoreRunStatus.Running)
             // 认领时盖上本实例归属：领取历史无主任务后必须打主，否则本实例崩溃重启时

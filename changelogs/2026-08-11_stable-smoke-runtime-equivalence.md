@@ -204,3 +204,7 @@
 | test | prd-admin | 增加生成图片失效恢复文案与头像编辑器错误码传递回归覆盖 |
 | fix | stable-smoke | 按仓库真实大小写识别 .Codex 规则目录，避免 Linux 上规则变更误阻塞版本等价 |
 | test | stable-smoke | 增加 .Codex 规则路径大小写敏感回归覆盖 |
+| fix | stable-smoke | CDS 主应用与模型网关按权威入口顺序解析，禁止根据域名文本猜测服务类型 |
+| fix | prd-api | 图片 Offering 的额度耗尽型 429 累计健康失败，普通限流仍保持请求级处理 |
+| fix | prd-api | 权威正式部署原子接管历史预览分支遗留的录音、转写、文档和短视频任务，CDS 保持隔离 |
+| test | prd-api/stable-smoke | 增加入口顺序、额度耗尽健康计分和历史分支 owner 迁移回归覆盖 |

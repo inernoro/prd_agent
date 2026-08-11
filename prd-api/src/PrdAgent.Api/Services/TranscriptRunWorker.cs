@@ -90,14 +90,16 @@ public class TranscriptRunWorker : BackgroundService
         var scopedForCurrentInstance = Builders<TranscriptRun>.Filter.And(
             Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued),
             Builders<TranscriptRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds));
-        var unownedLegacyRun = Builders<TranscriptRun>.Filter.And(
+        var legacyOwnerScope = LegacyOwnerScope.Build<TranscriptRun>(
+            nameof(TranscriptRun.OwnerInstanceId),
+            compatibleOwnerIds,
+            includeUnowned: true,
+            includeLegacyBranchOnlyOwners: DeploymentAuthority.CanAdoptLegacyBranchOwners(configuration));
+        var adoptableLegacyRun = Builders<TranscriptRun>.Filter.And(
             Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.LegacyQueued),
-            Builders<TranscriptRun>.Filter.Or(
-                Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, string.Empty),
-                Builders<TranscriptRun>.Filter.Exists(nameof(TranscriptRun.OwnerInstanceId), false)));
+            legacyOwnerScope);
         var filter = DeploymentAuthority.CanAdoptLegacyTranscriptRuns(configuration)
-            ? Builders<TranscriptRun>.Filter.Or(scopedForCurrentInstance, unownedLegacyRun)
+            ? Builders<TranscriptRun>.Filter.Or(scopedForCurrentInstance, adoptableLegacyRun)
             : scopedForCurrentInstance;
         var update = Builders<TranscriptRun>.Update
             .Set(r => r.Status, "processing")

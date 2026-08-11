@@ -299,6 +299,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
             return _modelResolver.RecordUnavailableAsync(resolution, ct);
 
+        // 部分供应商用 429 insufficient_quota 表示额度耗尽。它不是普通请求限流，
+        // 应累计 Offering 健康失败以触发路由回退；明确的 rate limit 仍由下方 4xx 分支忽略。
+        if (IsQuotaExceeded(statusCode, responseBody))
+            return _modelResolver.RecordFailureAsync(resolution, ct);
+
         // 408 表示 Provider 在时限内没有完成请求，属于服务健康失败而不是用户输入错误。
         // 保留回退能力并累计健康失败，避免持续把超时 Offering 排在首位。
         if (statusCode == 408)

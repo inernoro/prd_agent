@@ -136,8 +136,9 @@ export function resolveCdsPreviewUrls(
   const result = previewReader();
   if (result.status !== 0) throw new Error('CDS 权威预览地址读取失败，请修复项目凭据或部署状态后重试');
   const urls = String(result.stdout || '').match(/https:\/\/[^\s]+/g) || [];
-  const appUrl = urls.find((url) => !/llmgw/i.test(url));
-  const gatewayUrl = urls.find((url) => /llmgw/i.test(url));
+  // preview-url 的公开入口顺序是权威契约：第一个为主应用，第二个为模型网关。
+  // 不能从域名文本猜服务类型，分支名本身可能包含 llmgw，网关域名也未必包含该词。
+  const [appUrl, gatewayUrl] = urls;
   if (!appUrl) throw new Error('CDS 未返回主应用预览地址，拒绝本地推算');
   if (!gatewayUrl) throw new Error('CDS 未返回模型网关预览地址，拒绝本地推算');
   const authoritativeAppUrl = appUrl.replace(/\/+$/, '');

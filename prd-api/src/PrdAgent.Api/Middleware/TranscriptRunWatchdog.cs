@@ -23,6 +23,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
     private readonly IReadOnlyList<string> _compatibleOwnerIds;
     private readonly string _instanceId;
     private readonly bool _canAdoptLegacyRuns;
+    private readonly bool _canAdoptLegacyBranchOwners;
 
     public TranscriptRunWatchdog(
         IServiceScopeFactory scopeFactory,
@@ -38,6 +39,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
         _compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(config);
         _instanceId = InstanceIdentity.Get(config);
         _canAdoptLegacyRuns = DeploymentAuthority.CanAdoptLegacyTranscriptRuns(config);
+        _canAdoptLegacyBranchOwners = DeploymentAuthority.CanAdoptLegacyBranchOwners(config);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -68,12 +70,12 @@ public sealed class TranscriptRunWatchdog : BackgroundService
         var deadline = DateTime.UtcNow - _timeout;
 
         var ownedProcessingRuns = Builders<TranscriptRun>.Filter.In(r => r.OwnerInstanceId, _compatibleOwnerIds);
-        var unownedLegacyProcessingRuns = Builders<TranscriptRun>.Filter.Or(
-            Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-            Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, string.Empty),
-            Builders<TranscriptRun>.Filter.Exists(nameof(TranscriptRun.OwnerInstanceId), false));
         var ownerScope = _canAdoptLegacyRuns
-            ? Builders<TranscriptRun>.Filter.Or(ownedProcessingRuns, unownedLegacyProcessingRuns)
+            ? LegacyOwnerScope.Build<TranscriptRun>(
+                nameof(TranscriptRun.OwnerInstanceId),
+                _compatibleOwnerIds,
+                includeUnowned: true,
+                includeLegacyBranchOnlyOwners: _canAdoptLegacyBranchOwners)
             : ownedProcessingRuns;
 
         // 当前部署只处理自己的超时 run；历史无 owner 的 processing run 仅由显式获权的
