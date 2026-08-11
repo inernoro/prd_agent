@@ -82,6 +82,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['WEAK_PASSWORD', '新密码不符合强度要求，请按页面规则调整后重试。'],
   ['USER_NOT_FOUND', '用户不存在，请返回后重新选择。'],
   ['TEAM_LEADER_TRANSFER_REQUIRED', '团队负责人不能直接退出，请先在成员管理中将负责人移交给其他成员。'],
+  ['INVALID_CONFIG', '模型配置不完整，请先在模型平台补充 API 地址和密钥后再测试。'],
   ['SYNTHETIC_LOGIN_DISABLED', '合成测试登录未启用，请由管理员开启后重新生成入口。'],
   ['SYNTHETIC_LOGIN_ACCOUNT_NOT_ALLOWED', '当前账号不是合成测试专用账号，请更换已授权账号后重试。'],
   ['SYNTHETIC_LOGIN_RETURN_URL_INVALID', '目标页面必须是当前站点内的有效路径，请修改后重试。'],
