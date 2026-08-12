@@ -12,12 +12,17 @@ public class ProfileAvatarGenerationContractTests
             "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
 
         Assert.Contains("[HttpPost(\"avatar/generation-runs\")]", source);
-        Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", source);
+        Assert.Contains("Status = ImageGenRunStatus.Cancelled", source);
+        Assert.Contains("Builders<ImageGenRun>.Update.Set(x => x.Status, ImageGenRunStatus.ScopedQueued)", source);
         Assert.Contains("AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img", source);
-        Assert.Contains("InitImageAssetSha256 = sourceAsset.Sha256", source);
+        Assert.Contains("InitImageAssetSha256 = sourceSha256", source);
         Assert.Contains("$\"generated-image:{sourceSha256}\"", source);
         Assert.Contains("ErrorCodes.AVATAR_PROMPT_TOO_LONG", source);
         Assert.Contains("InsertOneAsync(run, cancellationToken: CancellationToken.None)", source);
+        Assert.True(
+            source.IndexOf("InsertOneAsync(run", StringComparison.Ordinal)
+            < source.IndexOf("_assetStorage.SaveAsync", StringComparison.Ordinal));
+        Assert.Contains("QueueRunCleanup(run.Id, currentUserId)", source);
         Assert.DoesNotContain("RequestAborted", source);
     }
 

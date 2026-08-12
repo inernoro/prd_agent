@@ -44,6 +44,7 @@ describe('generateMyAvatarPreview', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it('创建后台任务并等待可追溯的预览资产', async () => {
@@ -123,6 +124,28 @@ describe('generateMyAvatarPreview', () => {
       error: null,
     });
     expect(stages).toEqual(['正在排队', '正在生成头像', '生成完成']);
+    expect(mockedApiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('头像状态流跟随独立 API 域名和路径前缀', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.com/platform/');
+    mockedApiRequest.mockResolvedValueOnce({
+      success: true,
+      data: { runId: 'run-prefixed', status: 'queued', stage: '正在排队' },
+      error: null,
+    });
+    mockedConnectSse.mockImplementationOnce(async ({ url, onEvent }) => {
+      expect(url).toBe('https://api.example.com/platform/api/profile/avatar/generation-runs/run-prefixed/stream');
+      onEvent({
+        event: 'status',
+        data: JSON.stringify({ status: 'failed', stage: '生成未完成', errorCode: 'IMAGE_GEN_UNAVAILABLE' }),
+      });
+      return { success: true };
+    });
+
+    const result = await generateMyAvatarPreview({ prompt: '验证独立 API 状态流' });
+
+    expect(result.success).toBe(false);
     expect(mockedApiRequest).toHaveBeenCalledTimes(1);
   });
 

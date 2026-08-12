@@ -343,3 +343,4 @@
 | fix | prd-api | 头像切换与旧对象清理共用按用户跨实例租约，避免切回头像时被并发删除 |
 | fix | prd-api/prd-admin | 头像生成改用脱敏 SSE 状态流，断线时再低频轮询，减少重复请求与数据库读取 |
 | fix | prd-api/prd-admin | CDS 新版本接管同分支旧 revision 的头像任务，并补齐 TAPD 凭据失效恢复指引 |
+| fix | prd-api/prd-admin | 头像状态流遵循 API 基址配置，并在写入源图前持久化可恢复的清理意图 |

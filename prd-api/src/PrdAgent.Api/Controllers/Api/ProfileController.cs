@@ -266,7 +266,7 @@ public class ProfileController : ControllerBase
         {
             ImageGenRunStatus.Completed => "completed",
             ImageGenRunStatus.Failed => "failed",
-            ImageGenRunStatus.Cancelled => "cancelled",
+            ImageGenRunStatus.Cancelled when run.EndedAt != null => "cancelled",
             ImageGenRunStatus.Running => "running",
             _ => "queued"
         };
@@ -286,7 +286,8 @@ public class ProfileController : ControllerBase
         string currentUserId,
         CancellationToken ct)
     {
-        if (run.Status is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
+        if (run.Status == ImageGenRunStatus.Failed
+            || (run.Status == ImageGenRunStatus.Cancelled && run.EndedAt != null))
         {
             string? itemErrorCode = null;
             if (run.Status == ImageGenRunStatus.Failed)
@@ -541,19 +542,6 @@ public class ProfileController : ControllerBase
         }
 
         var sourceSha256 = Convert.ToHexString(SHA256.HashData(avatarBytes)).ToLowerInvariant();
-        await using var sourceAssetLease = await VideoAssetMutationLease.AcquireAsync(
-            _db,
-            $"generated-image:{sourceSha256}",
-            CancellationToken.None);
-        var sourceAsset = await _assetStorage.SaveAsync(
-            avatarBytes,
-            GuessAvatarMimeFromExt(ext),
-            CancellationToken.None,
-            domain: AppDomainPaths.DomainVisualAgent,
-            type: AppDomainPaths.TypeImg,
-            fileName: avatarFileName,
-            extensionHint: $".{ext}");
-
         var run = new ImageGenRun
         {
             // 幂等请求使用确定性 _id：即使 DBA 唯一索引尚未完成迁移，并发插入也由 Mongo 主键唯一性兜底。
@@ -561,7 +549,9 @@ public class ProfileController : ControllerBase
                 ? Guid.NewGuid().ToString("N")
                 : BuildAvatarGenerationRunId(currentUserId, idempotencyKey),
             OwnerAdminId = currentUserId,
-            Status = ImageGenRunStatus.ScopedQueued,
+            // 先以不可认领状态持久化清理意图，再写对象存储，最后原子激活队列。
+            // 若保存或激活失败，终态 run 仍能让清理服务发现并回收可能已写入的源对象。
+            Status = ImageGenRunStatus.Cancelled,
             DeploymentSlug = DeploymentScope.Current,
             ModelResolutionType = null,
             Size = "1024x1024",
@@ -580,7 +570,7 @@ public class ProfileController : ControllerBase
             Total = 1,
             AppKey = ProfileAvatarRunAppKey,
             AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img,
-            InitImageAssetSha256 = sourceAsset.Sha256,
+            InitImageAssetSha256 = sourceSha256,
             IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey,
             CreatedAt = DateTime.UtcNow
         };
@@ -603,6 +593,56 @@ public class ProfileController : ControllerBase
                 PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
                 return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationAccepted(existingRun)));
             }
+            throw;
+        }
+
+        await using var sourceAssetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{sourceSha256}",
+            CancellationToken.None);
+        try
+        {
+            await _assetStorage.SaveAsync(
+                avatarBytes,
+                GuessAvatarMimeFromExt(ext),
+                CancellationToken.None,
+                domain: AppDomainPaths.DomainVisualAgent,
+                type: AppDomainPaths.TypeImg,
+                fileName: avatarFileName,
+                extensionHint: $".{ext}");
+
+            var activation = await _db.ImageGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id
+                     && x.OwnerAdminId == currentUserId
+                     && x.AppKey == ProfileAvatarRunAppKey
+                     && x.Status == ImageGenRunStatus.Cancelled
+                     && x.EndedAt == null,
+                Builders<ImageGenRun>.Update.Set(x => x.Status, ImageGenRunStatus.ScopedQueued),
+                cancellationToken: CancellationToken.None);
+            if (activation.ModifiedCount != 1)
+            {
+                throw new InvalidOperationException("Avatar generation run could not be activated.");
+            }
+            run.Status = ImageGenRunStatus.ScopedQueued;
+        }
+        catch
+        {
+            try
+            {
+                await _db.ImageGenRuns.UpdateOneAsync(
+                    x => x.Id == run.Id && x.Status == ImageGenRunStatus.Cancelled,
+                    Builders<ImageGenRun>.Update.Set(x => x.EndedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+            }
+            catch (Exception cleanupIntentException)
+            {
+                _logger.LogError(
+                    cleanupIntentException,
+                    "Avatar source cleanup intent finalization failed. userId={UserId} runId={RunId}",
+                    currentUserId,
+                    run.Id);
+            }
+            _avatarGenerationCleanup.QueueRunCleanup(run.Id, currentUserId);
             throw;
         }
         _logger.LogInformation(

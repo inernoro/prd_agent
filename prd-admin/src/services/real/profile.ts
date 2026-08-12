@@ -195,6 +195,12 @@ function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl
   };
 }
 
+function profileApiUrl(path: string): string {
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  if (!rawBase) return path;
+  return `${rawBase}/${path.replace(/^\/+/, '')}`;
+}
+
 /**
  * 自服务：上传当前用户自己的头像（仅需 access 权限）
  */
@@ -208,10 +214,7 @@ export async function uploadMyAvatar(input: { file: File }): Promise<ApiResponse
   const fd = new FormData();
   fd.append('file', input.file);
 
-  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
-  const url = rawBase
-    ? `${rawBase}${api.profile.avatarUpload()}`
-    : api.profile.avatarUpload();
+  const url = profileApiUrl(api.profile.avatarUpload());
 
   try {
     const res = await fetch(url, { method: 'POST', headers, body: fd });
@@ -438,7 +441,7 @@ async function streamMyAvatarPreview(
 
   try {
     const result = await connectSse({
-      url: api.profile.avatarGenerationRunStream(encodeURIComponent(runId)),
+      url: profileApiUrl(api.profile.avatarGenerationRunStream(encodeURIComponent(runId))),
       method: 'GET',
       signal: streamController.signal,
       onEvent: (event) => {
