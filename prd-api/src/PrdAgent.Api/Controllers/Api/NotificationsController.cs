@@ -143,17 +143,10 @@ public sealed class NotificationsController : ControllerBase
             User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value,
             "1",
             StringComparison.Ordinal);
-        if (!string.IsNullOrWhiteSpace(request.TargetUsername))
+        var configuredTarget = _configuration["StableSmokeAuthentication:NotificationTargetUsername"]?.Trim();
+        if (isStableSmoke)
         {
-            if (!isStableSmoke || !string.IsNullOrWhiteSpace(request.TargetUserId))
-            {
-                return BadRequest(ApiResponse<object>.Fail(
-                    ErrorCodes.INVALID_FORMAT,
-                    "通知目标只能使用一种定位方式，请检查后重试"));
-            }
-            var configuredTarget = _configuration["StableSmokeAuthentication:NotificationTargetUsername"]?.Trim();
-            if (string.IsNullOrWhiteSpace(configuredTarget)
-                || !string.Equals(request.TargetUsername.Trim(), configuredTarget, StringComparison.OrdinalIgnoreCase))
+            if (!IsStableSmokeNotificationTargetAllowed(request, configuredTarget))
             {
                 return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(
                     ErrorCodes.PERMISSION_DENIED,
@@ -171,6 +164,12 @@ public sealed class NotificationsController : ControllerBase
                     "固定通知账号不存在或不可用，请由管理员修复账号后重试"));
             }
             request.TargetUserId = target.UserId;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.TargetUsername))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "通知目标只能使用用户标识，请检查后重试"));
         }
 
         var userId = this.GetRequiredUserId();
@@ -209,6 +208,17 @@ public sealed class NotificationsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
     }
+
+    internal static bool IsStableSmokeNotificationTargetAllowed(
+        AdminNotificationEventRequest request,
+        string? configuredTarget)
+        => !string.IsNullOrWhiteSpace(configuredTarget)
+           && string.IsNullOrWhiteSpace(request.TargetUserId)
+           && !string.IsNullOrWhiteSpace(request.TargetUsername)
+           && string.Equals(
+               request.TargetUsername.Trim(),
+               configuredTarget.Trim(),
+               StringComparison.OrdinalIgnoreCase);
 
     [HttpPost("{id}/handle")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]

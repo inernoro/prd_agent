@@ -1184,9 +1184,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds: \"\"", cdsCompose);
         Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc: \"\"", cdsCompose);
         Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
-        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-false}", productionCompose);
-        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-}", productionCompose);
-        Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-}", productionCompose);
+        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}", productionCompose);
+        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}", productionCompose);
+        Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-2026-08-12T19:20:00Z}", productionCompose);
+        Assert.Contains("SYNTHETIC_LOGIN_ENABLED: \"true\"", cdsCompose);
         Assert.Contains("Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-}", productionCompose);
         Assert.True(
             cdsCompose.Split("command -v ffmpeg", StringSplitOptions.None).Length - 1 >= 3,
@@ -1214,6 +1215,23 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("OwnedProcessingRun(run)", worker);
         Assert.Contains("candidate.ToGatewayResolution(),\n                    processingToken", worker);
         Assert.Contains("public const string LegacyQueued = \"queued\"", model);
+    }
+
+    [Fact]
+    public void OfferingRouteEdits_CreateImmutableReplacementForAcceptedAsyncJobs()
+    {
+        var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("model-offering.route-replaced", consoleApi);
+        Assert.Contains("SupersedesOfferingId", consoleApi);
+        Assert.Contains("SupersededByOfferingId", consoleApi);
+        Assert.Contains("replacement[\"Enabled\"] = false", consoleApi);
+        Assert.Contains("Builders<BsonDocument>.Update.Set(\"Enabled\", true)", consoleApi);
+        Assert.Contains("OFFERING_ACTIVATION_FAILED", consoleApi);
+        Assert.Contains(".Where(x => !x.Contains(\"SupersededByOfferingId\"))", consoleApi);
+        Assert.True(
+            consoleApi.IndexOf("await gwModelOfferings.InsertOneAsync(replacement)", StringComparison.Ordinal)
+            < consoleApi.IndexOf(".Set(\"SupersededByOfferingId\", replacementId)", StringComparison.Ordinal));
     }
 
     [Fact]

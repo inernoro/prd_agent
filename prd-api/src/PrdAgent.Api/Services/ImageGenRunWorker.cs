@@ -27,10 +27,8 @@ public class ImageGenRunWorker : BackgroundService
     private readonly IRunEventStore _runStore;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IConfiguration _config;
-    private readonly TimeSpan _retiredAvatarRunStaleAfter;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-    internal static readonly TimeSpan DefaultRetiredAvatarRunStaleAfter = TimeSpan.FromMinutes(20);
 
     private static bool IsRegisteredImageGenAppCaller(string? appCallerCode)
     {
@@ -83,11 +81,6 @@ public class ImageGenRunWorker : BackgroundService
         _logger = logger;
         _llmRequestContext = llmRequestContext;
         _config = config;
-        _retiredAvatarRunStaleAfter = TimeSpan.FromMinutes(Math.Clamp(
-            config.GetValue<int?>("ProfileAvatar:RetiredRunStaleMinutes")
-                ?? (int)DefaultRetiredAvatarRunStaleAfter.TotalMinutes,
-            15,
-            120));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -212,8 +205,7 @@ public class ImageGenRunWorker : BackgroundService
             $"^{System.Text.RegularExpressions.Regex.Escape(durableScope)}(?:::revision::.+)?$");
         var filter = BuildRetiredAvatarRunFilter(
             currentScope,
-            scopePattern,
-            DateTime.UtcNow - _retiredAvatarRunStaleAfter);
+            scopePattern);
         var update = Builders<ImageGenRun>.Update
             .Set(x => x.Status, ImageGenRunStatus.Running)
             .Set(x => x.StartedAt, DateTime.UtcNow)
@@ -228,15 +220,11 @@ public class ImageGenRunWorker : BackgroundService
 
     internal static FilterDefinition<ImageGenRun> BuildRetiredAvatarRunFilter(
         string currentScope,
-        MongoDB.Bson.BsonRegularExpression durableScopePattern,
-        DateTime staleRunningBeforeUtc)
+        MongoDB.Bson.BsonRegularExpression durableScopePattern)
     {
-        var reclaimableStatus = Builders<ImageGenRun>.Filter.Or(
-            Builders<ImageGenRun>.Filter.Eq(x => x.Status, ImageGenRunStatus.ScopedQueued),
-            Builders<ImageGenRun>.Filter.And(
-                Builders<ImageGenRun>.Filter.Eq(x => x.Status, ImageGenRunStatus.Running),
-                Builders<ImageGenRun>.Filter.Lte(x => x.StartedAt, staleRunningBeforeUtc)));
-        return reclaimableStatus
+        // 旧 revision 的排队任务从未调用上游，可以安全接管；Running 可能仍在执行最长一小时的
+        // 付费生成，没有可续期租约就不能证明原 Worker 已停止，因此绝不按 StartedAt 猜测并重跑。
+        return Builders<ImageGenRun>.Filter.Eq(x => x.Status, ImageGenRunStatus.ScopedQueued)
                & Builders<ImageGenRun>.Filter.Ne(x => x.CancelRequested, true)
                & Builders<ImageGenRun>.Filter.Eq(x => x.AppKey, ProfileAvatarGenerationCleanupService.AppKey)
                & Builders<ImageGenRun>.Filter.Ne(x => x.DeploymentSlug, currentScope)

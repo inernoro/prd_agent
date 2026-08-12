@@ -278,6 +278,8 @@ services:
       Deployment__AdoptLegacyBranchOwners: "false"
       Deployment__RetiredLegacyBranchOwnerIds: ""
       Deployment__LegacyOwnerCreatedBeforeUtc: ""
+      # CDS 自动验收永久入口：仍需通过仓库登记的 RSA 公钥签名，显式开关可独立熔断。
+      SYNTHETIC_LOGIN_ENABLED: "true"
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"

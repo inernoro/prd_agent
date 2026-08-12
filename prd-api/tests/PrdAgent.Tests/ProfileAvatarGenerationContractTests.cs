@@ -51,6 +51,9 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("BuildAvatarGenerationRunId(currentUserId, idempotencyKey)", source);
         Assert.Contains("ServerErrorCategory.DuplicateKey", source);
         Assert.Contains("BuildAvatarGenerationAccepted(existingRun)", source);
+        Assert.Contains("RecoverProvisionalAvatarRunAsync(existingRun, currentUserId)", source);
+        Assert.Contains("TryReadByShaAsync(", source);
+        Assert.Contains("DeleteOneAsync(", source);
         Assert.Contains("return new { runId = run.Id, status, stage };", source);
 
         var databaseSource = File.ReadAllText(LocateRepoFile(
@@ -125,7 +128,9 @@ public class ProfileAvatarGenerationContractTests
         Assert.DoesNotContain("AVATAR_GENERATION_POLL_INTERVAL_MS = 800", frontend);
         Assert.Contains("ClaimRetiredAvatarRunAsync", worker);
         Assert.Contains("ImageGenRunStatus.Running", worker);
-        Assert.Contains("Builders<ImageGenRun>.Filter.Lte(x => x.StartedAt", worker);
+        Assert.Contains("Builders<ImageGenRun>.Filter.Eq(x => x.Status, ImageGenRunStatus.ScopedQueued)", worker);
+        Assert.DoesNotContain("Builders<ImageGenRun>.Filter.Lte(x => x.StartedAt", worker);
+        Assert.Contains("没有可续期租约就不能证明原 Worker 已停止", worker);
         Assert.Contains("DeploymentScope.CurrentDurable", worker);
         Assert.Contains("ProfileAvatarGenerationCleanupService.AppKey", worker);
         Assert.Contains("catch (ObjectDisposedException)", controller);

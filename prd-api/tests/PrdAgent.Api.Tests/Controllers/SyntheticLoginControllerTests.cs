@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers;
 using Xunit;
@@ -89,6 +90,26 @@ public sealed class SyntheticLoginControllerTests
             "IsAllowedUser",
             "stable-smoke-user",
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "stable-smoke-user" }));
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("false", false)]
+    [InlineData("true", true)]
+    public void SyntheticLogin_ShouldRequireExplicitEnableFlag(string? enabled, bool expected)
+    {
+        using var rsa = RSA.Create(2048);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["SYNTHETIC_LOGIN_ENABLED"] = enabled,
+                ["StableSmoke:PublicKeys:0:Id"] = "test-key",
+                ["StableSmoke:PublicKeys:0:Username"] = "stable-smoke-user",
+                ["StableSmoke:PublicKeys:0:PublicKey"] = Convert.ToBase64String(rsa.ExportSubjectPublicKeyInfo()),
+            })
+            .Build();
+
+        Assert.Equal(expected, Invoke<bool>("IsEnabled", configuration));
     }
 
     [Fact]

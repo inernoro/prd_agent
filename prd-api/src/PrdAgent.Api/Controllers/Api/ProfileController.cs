@@ -366,6 +366,56 @@ public class ProfileController : ControllerBase
         return $"avatar-{fingerprint[..32]}";
     }
 
+    private async Task<ImageGenRun?> RecoverProvisionalAvatarRunAsync(
+        ImageGenRun existingRun,
+        string currentUserId)
+    {
+        if (existingRun.Status != ImageGenRunStatus.Cancelled || existingRun.EndedAt != null)
+            return existingRun;
+
+        var sourceSha256 = (existingRun.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (sourceSha256.Length == 64)
+        {
+            await using var sourceAssetLease = await VideoAssetMutationLease.AcquireAsync(
+                _db,
+                $"generated-image:{sourceSha256}",
+                CancellationToken.None);
+            var source = await _assetStorage.TryReadByShaAsync(
+                sourceSha256,
+                CancellationToken.None,
+                domain: AppDomainPaths.DomainVisualAgent,
+                type: AppDomainPaths.TypeImg);
+            if (source.HasValue && source.Value.bytes.Length > 0)
+            {
+                await _db.ImageGenRuns.UpdateOneAsync(
+                    x => x.Id == existingRun.Id
+                         && x.OwnerAdminId == currentUserId
+                         && x.AppKey == ProfileAvatarRunAppKey
+                         && x.Status == ImageGenRunStatus.Cancelled
+                         && x.EndedAt == null,
+                    Builders<ImageGenRun>.Update.Set(x => x.Status, ImageGenRunStatus.ScopedQueued),
+                    cancellationToken: CancellationToken.None);
+                return await _db.ImageGenRuns
+                    .Find(x => x.Id == existingRun.Id)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            }
+        }
+
+        // 进程若在源图写入前退出，临时 run 没有可执行输入。仅删除仍处于同一临时态的记录，
+        // 让当前幂等重试以同一确定性 ID 重新创建；并发首请求若已经激活则不会被删除。
+        var deleted = await _db.ImageGenRuns.DeleteOneAsync(
+            x => x.Id == existingRun.Id
+                 && x.OwnerAdminId == currentUserId
+                 && x.AppKey == ProfileAvatarRunAppKey
+                 && x.Status == ImageGenRunStatus.Cancelled
+                 && x.EndedAt == null,
+            CancellationToken.None);
+        if (deleted.DeletedCount == 1) return null;
+        return await _db.ImageGenRuns
+            .Find(x => x.Id == existingRun.Id)
+            .FirstOrDefaultAsync(CancellationToken.None);
+    }
+
     /// <summary>
     /// 上传并更新当前用户自己的头像
     /// </summary>
@@ -495,8 +545,16 @@ public class ProfileController : ControllerBase
                 .FirstOrDefaultAsync(ct);
             if (existingRun != null)
             {
-                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
-                return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationAccepted(existingRun)));
+                existingRun = await RecoverProvisionalAvatarRunAsync(existingRun, currentUserId);
+                if (existingRun == null)
+                {
+                    // 临时 run 尚未写入源图，已安全移除；继续按同一幂等键重新创建。
+                }
+                else
+                {
+                    PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                    return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationAccepted(existingRun)));
+                }
             }
         }
 
@@ -603,10 +661,21 @@ public class ProfileController : ControllerBase
                 .FirstOrDefaultAsync(CancellationToken.None);
             if (existingRun != null)
             {
-                PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
-                return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationAccepted(existingRun)));
+                existingRun = await RecoverProvisionalAvatarRunAsync(existingRun, currentUserId);
+                if (existingRun == null)
+                {
+                    await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+                }
+                else
+                {
+                    PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
+                    return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationAccepted(existingRun)));
+                }
             }
-            throw;
+            else
+            {
+                throw;
+            }
         }
 
         await using var sourceAssetLease = await VideoAssetMutationLease.AcquireAsync(

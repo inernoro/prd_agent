@@ -58,11 +58,11 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId；滚动发布期间保持不变。
       - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
-      # 旧 owner 接管是显式的一次性迁移：必须同时给退役名单与 UTC 创建截止时间。
-      # 截止时间之后由仍在线旧容器创建的新任务不会进入生产 worker。
-      - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-false}
-      - Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-}
-      - Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-}
+      # 首次引入部署域时，生产默认接管固定截止线前由旧 main owner 创建的任务。
+      # 截止线之后由仍在线旧容器创建的新任务不会进入生产 worker；显式 false 可紧急关闭。
+      - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}
+      - Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}
+      - Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-2026-08-12T19:20:00Z}
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379

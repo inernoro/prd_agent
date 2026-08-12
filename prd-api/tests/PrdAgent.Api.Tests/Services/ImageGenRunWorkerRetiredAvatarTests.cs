@@ -11,19 +11,15 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class ImageGenRunWorkerRetiredAvatarTests
 {
     [Fact]
-    public void BuildRetiredAvatarRunFilter_ReclaimsOnlyQueuedOrSufficientlyStaleRunningRuns()
+    public void BuildRetiredAvatarRunFilter_ReclaimsOnlyQueuedRuns()
     {
-        var cutoff = new DateTime(2026, 8, 12, 8, 0, 0, DateTimeKind.Utc);
         var rendered = Render(ImageGenRunWorker.BuildRetiredAvatarRunFilter(
             "prd-agent::branch::revision::new",
-            new BsonRegularExpression("^prd-agent::branch(?:::revision::.+)?$"),
-            cutoff));
+            new BsonRegularExpression("^prd-agent::branch(?:::revision::.+)?$")));
 
         rendered.ShouldContain($"\"Status\" : {(int)ImageGenRunStatus.ScopedQueued}");
-        rendered.ShouldContain($"\"Status\" : {(int)ImageGenRunStatus.Running}");
-        rendered.ShouldContain(nameof(ImageGenRun.StartedAt));
-        rendered.ShouldContain("$lte");
-        rendered.ShouldContain("2026-08-12T08:00:00Z");
+        rendered.ShouldNotContain($"\"Status\" : {(int)ImageGenRunStatus.Running}");
+        rendered.ShouldNotContain(nameof(ImageGenRun.StartedAt));
         rendered.ShouldContain(ProfileAvatarGenerationCleanupService.AppKey);
         rendered.ShouldContain("prd-agent::branch::revision::new");
     }

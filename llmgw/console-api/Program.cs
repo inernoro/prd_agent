@@ -3110,7 +3110,12 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为 1 到 1000000"), jsonOptions, 400);
     if (!IsSafeOfferingEndpointPath(body?.EndpointPath))
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
-    var duplicate = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", id), fb.Eq("TargetKind", targetKind), fb.Eq("TargetId", targetId));
+    var duplicate = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("LogicalModelId", id),
+        fb.Eq("TargetKind", targetKind),
+        fb.Eq("TargetId", targetId),
+        fb.Not(fb.Exists("SupersededByOfferingId")));
     if (await gwModelOfferings.Find(duplicate).AnyAsync())
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("DUPLICATE_OFFERING", "该上游已绑定到此逻辑模型"), jsonOptions, 409);
 
@@ -3145,6 +3150,7 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
 
 app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId, [FromBody] UpdateModelOfferingRequest? body) =>
 {
+    var fb = Builders<BsonDocument>.Filter;
     if (body is null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "缺少更新内容"), jsonOptions, 400);
     if (body.MaxConcurrency is < 0 or > 10000)
@@ -3158,6 +3164,10 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
     var existing = await gwModelOfferings.Find(filter).FirstOrDefaultAsync();
     if (existing is null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+    if (existing.Contains("SupersededByOfferingId"))
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            "OFFERING_SUPERSEDED",
+            "该 Offering 已有新版本，请刷新后编辑当前版本"), jsonOptions, 409);
     var updates = new List<UpdateDefinition<BsonDocument>>();
     if (body.UpstreamModelId is not null) updates.Add(SetOrUnset("UpstreamModelId", body.UpstreamModelId));
     if (body.Protocol is not null) updates.Add(SetOrUnset("Protocol", body.Protocol.ToLowerInvariant()));
@@ -3179,11 +3189,96 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         body.EndpointPath);
     if (routingConfigurationChanged)
     {
-        // 历史失败属于旧路由配置。修正协议、Endpoint 或上游模型后立即恢复待验证状态，
-        // 避免正确配置仍被旧的 unavailable 状态永久隔离。
-        updates.Add(Builders<BsonDocument>.Update.Set("HealthStatus", 0));
-        updates.Add(Builders<BsonDocument>.Update.Set("ConsecutiveFailures", 0));
-        updates.Add(Builders<BsonDocument>.Update.Set("ConsecutiveSuccesses", 0));
+        // Offering ID 是已受理异步任务的持久化路由身份，协议、Endpoint 与上游模型不得原地改写。
+        // 生成一个新 Offering 给后续任务使用；旧 Offering 退出新任务调度，但仍保留原路由，
+        // 使已经付费提交的视频任务在 worker 重启后仍能按旧 ID 轮询和下载。
+        var now = DateTime.UtcNow;
+        var replacementId = $"gw-offering-{Guid.NewGuid():N}";
+        var replacement = existing.DeepClone().AsBsonDocument;
+        replacement["_id"] = replacementId;
+        ApplyModelOfferingUpdate(replacement, body);
+        replacement["Enabled"] = false;
+        replacement["HealthStatus"] = 0;
+        replacement["ConsecutiveFailures"] = 0;
+        replacement["ConsecutiveSuccesses"] = 0;
+        replacement["SupersedesOfferingId"] = offeringId;
+        replacement["CreatedAt"] = now;
+        replacement["UpdatedAt"] = now;
+        replacement.Remove("SupersededByOfferingId");
+        replacement.Remove("SupersededAt");
+
+        await gwModelOfferings.InsertOneAsync(replacement);
+        var retirementFilter = fb.And(filter, fb.Not(fb.Exists("SupersededByOfferingId")));
+        var retired = await gwModelOfferings.FindOneAndUpdateAsync(
+            retirementFilter,
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("SupersededByOfferingId", replacementId)
+                .Set("SupersededAt", now)
+                .Set("UpdatedAt", now),
+            new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+        if (retired is null)
+        {
+            await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "OFFERING_EDIT_CONFLICT",
+                "该 Offering 已被其他管理员更新，请刷新后重试"), jsonOptions, 409);
+        }
+
+        var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
+        if (replacementEnabled)
+        {
+            var activated = await gwModelOfferings.UpdateOneAsync(
+                TenantAccess.Filter(http, fb.Eq("_id", replacementId)),
+                Builders<BsonDocument>.Update.Set("Enabled", true));
+            if (activated.ModifiedCount != 1)
+            {
+                await gwModelOfferings.UpdateOneAsync(
+                    TenantAccess.Filter(http, fb.And(
+                        fb.Eq("_id", offeringId),
+                        fb.Eq("SupersededByOfferingId", replacementId))),
+                    Builders<BsonDocument>.Update
+                        .Set("Enabled", true)
+                        .Unset("SupersededByOfferingId")
+                        .Unset("SupersededAt")
+                        .Set("UpdatedAt", DateTime.UtcNow));
+                await gwModelOfferings.DeleteOneAsync(
+                    TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+                return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                    "OFFERING_ACTIVATION_FAILED",
+                    "新路由未能启用，原 Offering 已恢复，请重试"), jsonOptions, 503);
+            }
+            replacement["Enabled"] = true;
+        }
+
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            "model-offering.route-replaced",
+            "llmgw_model_offering",
+            replacementId,
+            replacement.GetStringOrEmpty("TargetId"),
+            true,
+            null,
+            new BsonDocument
+            {
+                { "logicalModelId", logicalId },
+                { "supersededOfferingId", offeringId },
+                { "fieldCount", changedFieldCount },
+                { "healthReset", true },
+            });
+        var logicalForReplacement = await gwLogicalModels.Find(
+            TenantAccess.Filter(http, fb.Eq("_id", logicalId))).FirstOrDefaultAsync();
+        var replacementModels = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+        var replacementExchanges = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+        var replacementPlatforms = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+        return Json(ApiEnvelope<ModelOfferingItem>.Ok(MapLogicalModel(
+            logicalForReplacement!,
+            new List<BsonDocument> { replacement },
+            replacementModels,
+            replacementExchanges,
+            replacementPlatforms).Offerings.Single()), jsonOptions);
     }
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
     var updated = await gwModelOfferings.FindOneAndUpdateAsync(filter, Builders<BsonDocument>.Update.Combine(updates),
@@ -12636,6 +12731,33 @@ static bool IsSafeOfferingEndpointPath(string? value)
            && !path.Any(char.IsControl);
 }
 
+static void ApplyModelOfferingUpdate(BsonDocument document, UpdateModelOfferingRequest body)
+{
+    SetOrRemove("UpstreamModelId", body.UpstreamModelId);
+    SetOrRemove("Protocol", body.Protocol?.ToLowerInvariant());
+    SetOrRemove("EndpointPath", body.EndpointPath);
+    if (body.Priority is not null) document["Priority"] = Math.Clamp(body.Priority.Value, 0, 10000);
+    if (body.Weight is not null) document["Weight"] = Math.Clamp(body.Weight.Value, 1, 10000);
+    if (body.MaxConcurrency is not null)
+    {
+        if (body.MaxConcurrency > 0) document["MaxConcurrency"] = body.MaxConcurrency.Value;
+        else document.Remove("MaxConcurrency");
+    }
+    if (body.RateLimitPerMinute is not null)
+    {
+        if (body.RateLimitPerMinute > 0) document["RateLimitPerMinute"] = body.RateLimitPerMinute.Value;
+        else document.Remove("RateLimitPerMinute");
+    }
+    SetOrRemove("Notes", body.Notes);
+
+    void SetOrRemove(string field, string? value)
+    {
+        if (value is null) return;
+        if (string.IsNullOrWhiteSpace(value)) document.Remove(field);
+        else document[field] = value.Trim();
+    }
+}
+
 static LogicalModelItem MapLogicalModel(
     BsonDocument logical,
     IReadOnlyCollection<BsonDocument> offeringDocs,
@@ -12652,6 +12774,7 @@ static LogicalModelItem MapLogicalModel(
         .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
     var offerings = offeringDocs
         .Where(x => string.Equals(x.GetStringOrEmpty("LogicalModelId"), logicalId, StringComparison.Ordinal))
+        .Where(x => !x.Contains("SupersededByOfferingId"))
         .OrderBy(x => x.AsNullableInt("Priority") ?? 100)
         .Select(x =>
         {

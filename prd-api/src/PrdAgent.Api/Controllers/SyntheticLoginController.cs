@@ -245,8 +245,7 @@ public sealed class SyntheticLoginController : ControllerBase
     }
 
     private static bool IsEnabled(IConfiguration configuration) =>
-        IsTruthy(configuration["SyntheticLogin:Enabled"] ?? configuration["SYNTHETIC_LOGIN_ENABLED"])
-        || StableSmokeAuthenticationHandler.ReadKeys(configuration).Any(item => item.IsComplete);
+        IsTruthy(configuration["SyntheticLogin:Enabled"] ?? configuration["SYNTHETIC_LOGIN_ENABLED"]);
 
     private static IReadOnlySet<string> ReadAllowedUsers(IConfiguration configuration) =>
         (configuration["SyntheticLogin:AllowedUsers"]
