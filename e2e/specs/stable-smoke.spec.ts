@@ -1558,11 +1558,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let storeId = '';
     let sessionId = '';
     let entryId = '';
+    const storeName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-recording-recovery`;
     try {
       storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: {
-          name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-recording-recovery`,
+          name: storeName,
           description: '稳定冒烟录音后台恢复，执行后自动清理',
           isPublic: false,
         },
@@ -1627,11 +1628,20 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         audioBase64: speechFixture.toString('base64'),
       });
 
+      await page.goto('/document-store', { waitUntil: 'domcontentloaded' });
+      const storeCardHeading = page.getByRole('heading', { name: storeName, exact: true });
+      await expect(storeCardHeading).toBeVisible({ timeout: 30_000 });
+      const spotlightDismissPanel = page.locator('[aria-label="关闭高亮引导"]:visible').first();
+      if (await spotlightDismissPanel.isVisible().catch(() => false)) {
+        await spotlightDismissPanel.click({ position: { x: 2, y: 2 } });
+        await expect(page.locator('[aria-label="关闭高亮引导"]')).toHaveCount(0);
+      }
       const recoveredResponsePromise = page.waitForResponse((response) => (
         new URL(response.url()).pathname === `/api/document-store/recording-uploads/${sessionId}/complete`
         && response.request().method() === 'POST'
       ), { timeout: 60_000 });
-      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await storeCardHeading.click();
+      await expect(page).toHaveURL(new RegExp(`\\?store=${storeId}(?:&|$)`));
       const recoveredResponse = await recoveredResponsePromise;
       const recoveredBody = await recoveredResponse.json() as ApiEnvelope<{
         entry: { id: string; storeId: string };
