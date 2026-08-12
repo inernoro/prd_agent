@@ -1272,7 +1272,12 @@ a:focus-visible {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 22px 24px;
+  /* 底部多留一条 72px 的净空，专门让开右下角固定的「提交缺陷」浮标
+     （BugReportDialog 的 launcher：right/bottom 16px、z-index 1100、约 40px 高）。
+     不留的话，页面最底部那一行的按钮会被它盖住——验收时的原话是「反馈浮层遮挡底部按钮」，
+     和 chief-designer-usability 第三原则点名过的「发送按钮被 FAB 遮住」是同一种。
+     浮标是全局固定的，页面各自去躲它躲不干净，只能在这里一次性把它的落点让出来。 */
+  padding: 22px 24px 72px;
   overflow: hidden;
 }
 
