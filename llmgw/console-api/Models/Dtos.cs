@@ -1609,3 +1609,120 @@ public sealed class BugReportListData
     public List<BugReportItem> Items { get; set; } = new();
     public bool ForwardConfigured { get; set; }
 }
+
+// ---------------------------------------------------------------------------
+// 上游预设 / 连通性自测 / 模型发现（minimal-user-input.md）
+// ---------------------------------------------------------------------------
+
+/// <summary>一条内置上游预设。用户选它 = 一次性拿到地址、协议、并发的正确默认值。</summary>
+public sealed class ProviderPresetItem
+{
+    public string Key { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string PlatformType { get; set; } = string.Empty;
+    public string ApiUrl { get; set; } = string.Empty;
+    public string? ProviderId { get; set; }
+    public int MaxConcurrency { get; set; }
+    /// <summary>去哪里领密钥。空字符串表示这个上游不需要密钥（本地部署）。</summary>
+    public string KeyConsoleUrl { get; set; } = string.Empty;
+    /// <summary>密钥常见前缀，用于填错时给一句「看起来不像这个平台的密钥」。</summary>
+    public string KeyPrefixHint { get; set; } = string.Empty;
+    public bool SupportsModelDiscovery { get; set; }
+    public bool SupportsUpstreamPricing { get; set; }
+    public string Summary { get; set; } = string.Empty;
+    /// <summary>搜索用的别名（中英文、拼音），前端只做过滤不做翻译。</summary>
+    public List<string> SearchTerms { get; set; } = new();
+
+    /// <summary>不校验密钥的本地/自建上游给的占位密钥；需要真密钥的上游为空串。</summary>
+    public string KeylessPlaceholder { get; set; } = string.Empty;
+}
+
+public sealed class ProviderPresetsData
+{
+    public List<ProviderPresetItem> Items { get; set; } = new();
+}
+
+/// <summary>连通性自测结果。失败时 nextStep 必须给出可执行的下一步，不许只说「失败」。</summary>
+public sealed class PlatformTestResult
+{
+    public bool Reachable { get; set; }
+    public int? HttpStatus { get; set; }
+    public long ElapsedMs { get; set; }
+    /// <summary>探测实际打的地址，让用户能核对是不是自己想的那个。</summary>
+    public string ProbedUrl { get; set; } = string.Empty;
+    public int? ModelCount { get; set; }
+    public string? FailureKind { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string? NextStep { get; set; }
+}
+
+/// <summary>上游返回的一个模型，外加系统替用户推断出来的用途与价格。</summary>
+public sealed class UpstreamModelItem
+{
+    public string ModelId { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    /// <summary>系统按模型标识推断的用途；推断不出来就是空数组，由用户勾选。</summary>
+    public List<string> InferredCapabilities { get; set; } = new();
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    /// <summary>价格来源：upstream = 上游给的；null = 上游没给，界面要如实说「未提供」。</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>该模型标识是否已经在本租户登记过，避免重复导入。</summary>
+    public bool AlreadyImported { get; set; }
+}
+
+public sealed class UpstreamModelsData
+{
+    public string ProbedUrl { get; set; } = string.Empty;
+    public int Total { get; set; }
+    public int AlreadyImportedCount { get; set; }
+    public bool PricingProvided { get; set; }
+
+    /// <summary>
+    /// 上游实际返回了多少个模型——**仅在被截断时非空**。
+    /// 截断必须让用户看见，否则他会以为面板里这些就是全部（no silent caps）。
+    /// </summary>
+    public int? TruncatedFromTotal { get; set; }
+
+    /// <summary>
+    /// 这份清单与价格是什么时候从上游拉回来的（服务端时间）。
+    /// minimal-user-input 第 2 条要求拉回来的值必须标「来源与时间」——面板可能开着不动，
+    /// 用户得能分辨手上这份报价是刚拉的还是半小时前的，否则会照着过期价格做导入决定。
+    /// </summary>
+    public DateTime FetchedAt { get; set; }
+
+    public List<UpstreamModelItem> Items { get; set; } = new();
+}
+
+/// <summary>批量导入：只带模型标识，用途与价格由服务端按发现结果补齐，前端可覆盖。</summary>
+public sealed class ImportUpstreamModelsRequest
+{
+    public List<ImportUpstreamModelEntry>? Models { get; set; }
+}
+
+public sealed class ImportUpstreamModelEntry
+{
+    public string? ModelId { get; set; }
+    public List<string>? Capabilities { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+}
+
+public sealed class ImportUpstreamModelsResult
+{
+    public int Requested { get; set; }
+    public int Created { get; set; }
+    public int Skipped { get; set; }
+    public List<string> SkippedModelIds { get; set; } = new();
+    public List<string> CreatedModelIds { get; set; } = new();
+
+    /// <summary>默认模型池同步是否失败。true 时模型已入库但不会被池路由选中，前端必须如实告知而不是报全绿。</summary>
+    public bool PoolSyncFailed { get; set; }
+
+    /// <summary>需要额外告诉用户的话（目前只有池同步失败时非空）。</summary>
+    public string? Message { get; set; }
+}

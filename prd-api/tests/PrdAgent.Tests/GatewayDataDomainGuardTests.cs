@@ -3131,6 +3131,373 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 控制台探测上游用的地址推导，必须与网关真实调用用的是同一条「baseUrl 是否自带版本号」判据。
+    ///
+    /// 两边漂移的后果特别阴：控制台「测试连接」打的是 A 地址、说通了，业务真调用走 B 地址却 404。
+    /// 用户拿到的是一个绿灯 + 一个不工作的 Provider，而两处单独看都没错
+    /// （predicate-and-wiring-discipline 形状 3）。console-api 是独立工程、引用不到网关那份代码，
+    /// 只能从源码上钉死。
+    /// </summary>
+    [Fact]
+    public void ProviderPresets_VersionSuffixPredicateMatchesGatewayAdapter()
+    {
+        var adapter = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/Adapters/OpenAIGatewayAdapter.cs");
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+
+        const string pattern = @"/(api/)?v\d+$";
+        Assert.Contains(pattern, adapter);
+        Assert.Contains(pattern, presets);
+    }
+
+    /// <summary>
+    /// 价格只许来自上游。内置价目表会过时，而过时的价格比没有价格更危险——它看起来是真的，
+    /// 成本报表照算，没人会去核对（no-rootless-tree.md）。
+    /// </summary>
+    [Fact]
+    public void ProviderPresets_DoesNotShipABuiltinPriceTable()
+    {
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+
+        Assert.Contains("ReadPricing", presets);
+        Assert.DoesNotContain("PriceTable", presets);
+        Assert.DoesNotContain("BuiltinPricing", presets);
+    }
+
+    /// <summary>
+    /// 每个预设都必须给用户一条**真能走通**的拿密钥路径：要么指向供应商的密钥控制台，
+    /// 要么自带占位密钥由系统替他填。
+    ///
+    /// 由验收抓出：Ollama 预设的介绍写着「默认无需密钥」，而
+    /// GatewayConfigurationProvisioning 照旧拒空密钥 —— 用户照文案留空就被拦下，
+    /// 只能自己瞎填一个值才能过。这是 predicate-and-wiring-discipline 形状 8：
+    /// 拿一份**在真实校验下不成立**的声明当成「已经支持」的证据。
+    /// 文案不是判据，能不能保存才是。
+    /// </summary>
+    [Fact]
+    public void ProviderPresets_每个预设都要有一条走得通的密钥路径()
+    {
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+        var listStart = presets.IndexOf("public static IReadOnlyList<ProviderPreset> All", StringComparison.Ordinal);
+        Assert.True(listStart > 0, "预设清单的位置变了，守卫要跟着改");
+        var body = presets[listStart..];
+
+        // 每条形如：new("key", "名称", "type", "url", "provider", N,
+        //            "密钥控制台 URL", "前缀", bool, bool,
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            body,
+            "new\\(\"(?<key>[^\"]+)\",[^\\n]*\\n\\s*\"(?<console>[^\"]*)\",");
+        Assert.True(matches.Count >= 10, $"只解析到 {matches.Count} 条预设，正则与源码格式对不上了");
+
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            var key = match.Groups["key"].Value;
+            var hasKeyConsole = match.Groups["console"].Value.Trim().Length > 0;
+
+            // 这一条预设的文本范围：从它自己开始，到下一条 new( 之前
+            var from = match.Index;
+            var nextNew = body.IndexOf("new(\"", from + 5, StringComparison.Ordinal);
+            var entry = nextNew > 0 ? body[from..nextNew] : body[from..];
+            var hasPlaceholder = entry.Contains("KeylessPlaceholder:", StringComparison.Ordinal);
+
+            Assert.True(
+                hasKeyConsole || hasPlaceholder,
+                $"预设「{key}」既没给密钥控制台地址、也没给占位密钥，用户填不出一个能保存的值");
+
+            // 声称不校验密钥，就必须真的能空手保存 —— 靠占位密钥兑现，而不是靠一句文案
+            var claimsKeyless = entry.Contains("不校验密钥", StringComparison.Ordinal)
+                || entry.Contains("无需密钥", StringComparison.Ordinal)
+                || entry.Contains("不需要密钥", StringComparison.Ordinal);
+            Assert.False(
+                claimsKeyless && !hasPlaceholder,
+                $"预设「{key}」的介绍声称不用密钥，但没有 KeylessPlaceholder 兜底，用户照文案留空会被后端拒绝");
+        }
+    }
+
+    /// <summary>
+    /// 单批导入上限在前后端各有一份。两份漂移的后果很具体：前端默认勾的比后端肯收的多，
+    /// 用户点「导入」必吃 400，而两边单独看都没错（predicate-and-wiring-discipline 形状 3）。
+    ///
+    /// 由 review 抓出：OpenRouter 一次返回四百多个模型，第一版 defaultSelection 全勾，
+    /// 默认路径本身就是坏的——得手动取消几百行才能继续。
+    /// </summary>
+    [Fact]
+    public void 导入上限_前后端必须是同一个数且前端默认选中受它约束()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var web = ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx");
+
+        var serverLimit = System.Text.RegularExpressions.Regex.Match(server, @"MaxImportBatch\s*=\s*(\d+)");
+        var webLimit = System.Text.RegularExpressions.Regex.Match(web, @"MAX_IMPORT_BATCH\s*=\s*(\d+)");
+        Assert.True(serverLimit.Success, "后端的单批导入上限常量不见了");
+        Assert.True(webLimit.Success, "前端没有声明单批导入上限，默认全选会撞后端 400");
+        Assert.Equal(serverLimit.Groups[1].Value, webLimit.Groups[1].Value);
+
+        // 默认选中必须真的截断，而不是只声明了个常量放着不用
+        Assert.Contains("slice(0, MAX_IMPORT_BATCH)", web);
+    }
+
+    /// <summary>
+    /// 批量导入完必须把模型同步进托管默认池——单模型端点一直这么做。
+    /// 漏掉的话模型只是躺在集合里、不进任何池，池路由选不到：
+    /// 用户看到「已导入 N 个」，业务侧却依旧调不通（形状 2）。
+    /// </summary>
+    [Fact]
+    public void 批量导入上游模型后必须同步默认模型池()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var importStart = server.IndexOf("/gw/platforms/{id}/models/import", StringComparison.Ordinal);
+        Assert.True(importStart > 0, "批量导入端点不见了");
+        // 端点体到下一个 MapPost 之前
+        var next = server.IndexOf("app.MapPost(", importStart, StringComparison.Ordinal);
+        var body = next > 0 ? server[importStart..next] : server[importStart..];
+
+        Assert.Contains("EnsureGatewayModelPoolTypesAsync", body);
+        // 同步失败要如实告知，不能吞掉后照报全绿
+        Assert.Contains("PoolSyncFailed", body);
+    }
+
+    /// <summary>
+    /// 「测试连接」的绿灯必须代表「这个 Provider 真能用」，不能只代表「HTTP 是 2xx」。
+    ///
+    /// 地址指到网站首页、前面挡着登录代理、对方是 SPA 全路径 fallback——统统回 200，
+    /// body 却是 HTML。只看状态码就会给出绿灯 + 一个不工作的 Provider，
+    /// 正是这条测试本身要防的那种假象（形状 8：拿不成立的证据当成立）。
+    /// </summary>
+    [Fact]
+    public void 测试连接不得只凭状态码判可达()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var probeStart = server.IndexOf("/gw/platforms/{id}/test", StringComparison.Ordinal);
+        Assert.True(probeStart > 0, "测试连接端点不见了");
+        var next = server.IndexOf("app.MapGet(", probeStart, StringComparison.Ordinal);
+        var body = next > 0 ? server[probeStart..next] : server[probeStart..];
+
+        Assert.Contains("shapeMismatch", body);
+        // 裸的 Reachable = IsSuccessStatusCode 就是事故写法
+        Assert.DoesNotContain("Reachable = resp.IsSuccessStatusCode,", body);
+    }
+
+    /// <summary>
+    /// 两个新端点都会拿着用户填的地址向外发请求，等于新开了一个出口。
+    /// 外部租户必须过与外部 Exchange 同一道内网地址校验，否则 owner 只要把地址填成
+    /// 127.0.0.1 / 10.x / 169.254.169.254，就能拿控制台容器当跳板扫内网和云元数据。
+    /// 探针客户端还必须关掉自动重定向——校验只对最初那个地址成立，跟随 302 就把它绕过去了。
+    /// </summary>
+    [Fact]
+    public void 上游探测端点必须过内网地址校验且不跟随重定向()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("AllowAutoRedirect = false", server);
+        Assert.Contains("ValidateProviderProbeTargetAsync", server);
+
+        foreach (var route in new[] { "/gw/platforms/{id}/test", "/gw/platforms/{id}/upstream-models" })
+        {
+            var start = server.IndexOf(route, StringComparison.Ordinal);
+            Assert.True(start > 0, $"端点 {route} 不见了");
+            var next = server.IndexOf("app.Map", start + route.Length, StringComparison.Ordinal);
+            var body = next > 0 ? server[start..next] : server[start..];
+            Assert.True(
+                body.Contains("ValidateProviderProbeTargetAsync", StringComparison.Ordinal),
+                $"{route} 会向用户填的地址发请求却没过内网校验");
+        }
+    }
+
+    /// <summary>
+    /// 停用的 Provider 不许批量导入模型——与单模型端点一致。
+    /// 不拦会走进静默坑：模型建出来了，但池同步会把「Provider 已停用」的模型排除**且不抛异常**，
+    /// 于是 PoolSyncFailed 仍是 false、请求报成功，而这批模型对池路由根本不可见。
+    /// </summary>
+    [Fact]
+    public void 停用的_Provider_不许导入模型()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = server.IndexOf("/gw/platforms/{id}/models/import", StringComparison.Ordinal);
+        Assert.True(start > 0, "批量导入端点不见了");
+        var next = server.IndexOf("app.MapPost(", start, StringComparison.Ordinal);
+        var body = next > 0 ? server[start..next] : server[start..];
+
+        Assert.Contains("PLATFORM_DISABLED", body);
+    }
+
+    /// <summary>
+    /// 从上游拉回来的值必须同时标来源与时间（minimal-user-input 第 2 条）。
+    /// 只标来源不标时间时，面板开着不动的用户分不清手上这份报价是刚拉的还是很久以前的，
+    /// 会照着过期价格做导入决定。
+    /// </summary>
+    /// <summary>
+    /// 探测客户端必须在**真正建立连接的那一刻**校验对端 IP。
+    ///
+    /// 只在发请求前查一次 DNS 是不够的：HttpClient 连接时会再解析一次，控制着 rebinding
+    /// 域名的租户可以让第一次返回公网地址、第二次返回 127.0.0.1 或 169.254.169.254，
+    /// 前面那道校验就白做了（形状 6：判据读到的不是真正生效的那个值）。
+    /// 放进 ConnectCallback 就没有窗口——被校验的地址和被连接的地址是同一个。
+    /// </summary>
+    [Fact]
+    public void 探测客户端必须在连接时校验对端地址()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("ConnectCallback", server);
+        Assert.Contains("IsSafeExternalExchangeAddress", server);
+        // 整条探测（含读 body）要共用一个超时预算：ResponseHeadersRead 下
+        // HttpClient.Timeout 只覆盖到响应头，body 挂住就没人管了
+        Assert.Contains("probeCts.Token", server);
+        Assert.Contains("discoveryCts.Token", server);
+    }
+
+    /// <summary>
+    /// 批量导入不走 TryNormalizeModel，但校验口径必须与它同源——判定函数收在
+    /// GatewayConfigurationProvisioning，两条入库路径共用一份。各写一份必然漂移：
+    /// 直连调用能把任意用途名、负价格、超长标识塞进来，用途还会被池同步当成合法类型参与路由。
+    /// </summary>
+    [Fact]
+    public void 批量导入的校验口径必须与单模型端点同源()
+    {
+        var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
+        Assert.Contains("IsSupportedModelType", provisioning);
+        Assert.Contains("IsValidPrice", provisioning);
+        Assert.Contains("IsSupportedCurrency", provisioning);
+        // 长度上限只许有一个字面量来源
+        Assert.Contains("MaxModelNameLength", provisioning);
+
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = server.IndexOf("/gw/platforms/{id}/models/import", StringComparison.Ordinal);
+        var next = server.IndexOf("app.MapPost(", start, StringComparison.Ordinal);
+        var body = next > 0 ? server[start..next] : server[start..];
+
+        // 端点校验的是**存储层能力名**，用的是 IsSupportedCapabilityCode；
+        // 断言成 IsSupportedModelType 会无条件红——守卫必须断言实现真正用的那个判据。
+        Assert.Contains("IsSupportedCapabilityCode", body);
+        Assert.Contains("IsValidPrice", body);
+        Assert.Contains("MaxModelNameLength", body);
+        // 池同步的触发条件不能写成「这次新建了几个」——同步失败后重试全是 Skipped，
+        // Created 归零，同步块被跳过，我们自己那句「稍后重试导入」就成了空话
+        Assert.Contains("result.Created > 0 || result.Skipped > 0", body);
+    }
+
+    /// <summary>
+    /// 用途名与**存储层能力名**是两套词汇（`generation` -> `image_generation`），
+    /// 映射只许有一份。拿用途白名单去校验存储名，会把推断出的 image_generation /
+    /// video_generation 整批静默丢掉——生图与视频模型带着空用途入库，还照样默认勾选
+    /// （形状 1：判据比它该管的范围窄）。
+    /// </summary>
+    [Fact]
+    public void 推断出的每个用途都必须能通过导入端的校验()
+    {
+        var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+
+        // 用途白名单
+        var typesBlock = System.Text.RegularExpressions.Regex.Match(
+            provisioning, @"SupportedModelTypes\s*=\s*\[(?<body>.*?)\]",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(typesBlock.Success, "用途白名单不见了");
+        var types = System.Text.RegularExpressions.Regex.Matches(typesBlock.Groups["body"].Value, "\"([a-z-]+)\"")
+            .Select(m => m.Groups[1].Value).ToHashSet();
+        Assert.True(types.Count >= 10, $"只解析到 {types.Count} 个用途");
+
+        // 映射（用途 -> 存储层能力名），与 ToCapabilityCode 同源
+        string ToCode(string t) => t switch
+        {
+            "generation" => "image_generation",
+            "long-context" => "long_context",
+            "video-gen" => "video_generation",
+            "audio-gen" => "audio_generation",
+            _ => t,
+        };
+        var codes = types.Select(ToCode).ToHashSet();
+
+        // 推断可能产出的每一个值
+        var inferred = System.Text.RegularExpressions.Regex.Matches(presets, @"caps\.Add\(""([a-z_]+)""\)")
+            .Select(m => m.Groups[1].Value).ToHashSet();
+        Assert.True(inferred.Count >= 5, $"只解析到 {inferred.Count} 个推断用途");
+
+        var dropped = inferred.Where(c => !codes.Contains(c)).ToList();
+        Assert.True(dropped.Count == 0, "这些推断出的用途过不了导入端校验，会被静默丢掉：" + string.Join("、", dropped));
+
+        // 映射必须只有一份
+        Assert.Contains("ToCapabilityCode", provisioning);
+        Assert.Contains("IsSupportedCapabilityCode", provisioning);
+        Assert.Contains("IsSupportedCapabilityCode", ReadRepoFile("llmgw/console-api/Program.cs"));
+    }
+
+    /// <summary>
+    /// 上游返回的字段形状不可信，解析必须先确认类型再索引。
+    ///
+    /// JsonNode 对非对象节点做 node["x"] 会抛 InvalidOperationException，
+    /// 而 pricing 是个非标准扩展、谁都能把它写成字符串或数组。那一抛会穿过只接
+    /// JsonException 的 catch，把「查看模型」整条请求变成 500——一个模型的字段形状
+    /// 不合口味，整份清单就拉不出来。同一个坑在 EmbeddingService 解析 data 时踩过一次。
+    ///
+    /// 顺带钉住条目上限：字节上限管不住条目数，几十万个小对象照样塞得进 8MB。
+    /// </summary>
+    [Fact]
+    public void 上游清单解析必须先判类型且条目有上限()
+    {
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+        // 裸 modelNode?["pricing"] 直接索引就是事故写法
+        Assert.Contains("as JsonObject", presets);
+        Assert.DoesNotContain("var pricing = modelNode?[\"pricing\"];", presets);
+
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        // 同一个坑的第三处：根节点不是对象（上游直接回 [] 或回个标量）时，
+        // Parse(body)?["data"] 抛的同样是 InvalidOperationException，而「查看模型」端点
+        // 只 catch JsonException —— 整条请求变 500，而不是它自己声称会给的 UPSTREAM_SHAPE。
+        // 必须先 as JsonObject 再索引，转型失败自然落进「没有 data 数组」分支。
+        Assert.DoesNotContain("JsonNode.Parse(body)?[\"data\"]", server);
+        Assert.Contains("MaxDiscoveredModels", server);
+        Assert.Contains("Take(MaxDiscoveredModels)", server);
+        // 截断不许静默：得让用户看见上游原本有多少
+        Assert.Contains("TruncatedFromTotal", server);
+        Assert.Contains("TruncatedFromTotal", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
+        Assert.Contains("truncatedFromTotal", ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx"));
+    }
+
+    /// <summary>
+    /// 换 Provider 必须重挂模型选择器。勾选集是 useState 的初始值，只在挂载时算一次；
+    /// 开着 A 的清单再点 B 的「查看模型」时组件不卸载，A 的勾选原样留着，
+    /// 撞上同名模型就会把用户没勾过的选择导进 B。key 一改，React 才会重建这个组件。
+    /// </summary>
+    [Fact]
+    public void 换_Provider_必须重挂上游模型选择器()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+        var start = page.IndexOf("<UpstreamModelPicker", StringComparison.Ordinal);
+        Assert.True(start > 0, "上游模型选择器不见了");
+        var end = page.IndexOf("/>", start, StringComparison.Ordinal);
+        Assert.True(end > start, "上游模型选择器的 JSX 没闭合，守卫切不出它的 props");
+        Assert.Contains("key={discovery.platformId}", page[start..end]);
+    }
+
+    [Fact]
+    public void 上游拉回来的清单必须带拉取时间()
+    {
+        Assert.Contains("FetchedAt", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
+        Assert.Contains("FetchedAt = DateTime.UtcNow", ReadRepoFile("llmgw/console-api/Program.cs"));
+        Assert.Contains("formatFetchedAt", ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx"));
+    }
+
+    /// <summary>
+    /// 导入的模型必须写 ModelNameNormalized。唯一索引带 PartialFilterExpression，
+    /// 只覆盖这个字段是字符串的文档——不写就等于这批模型不参与唯一约束，
+    /// 两个并发导入各自算出同一份 existing 快照后双双插入，同名模型重复。
+    /// </summary>
+    [Fact]
+    public void 导入的模型必须参与唯一索引()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = server.IndexOf("/gw/platforms/{id}/models/import", StringComparison.Ordinal);
+        Assert.True(start > 0, "批量导入端点不见了");
+        var next = server.IndexOf("app.MapPost(", start, StringComparison.Ordinal);
+        var body = next > 0 ? server[start..next] : server[start..];
+
+        Assert.Contains("ModelNameNormalized", body);
+        // 并发撞唯一索引要按「已存在」吞掉，不能整批失败
+        Assert.Contains("DuplicateKey", body);
+    }
+
+    /// <summary>
     /// 凡是把 HostedSite 交给前端的公开方法，都必须挂上派生字段（目前是 PdfAssetUrl）。
     ///
     /// 上一轮我按判断挑了七条「前端会用到的」路径去挂，review 立刻找出漏掉的

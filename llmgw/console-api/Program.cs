@@ -6818,6 +6818,550 @@ app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformR
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(document, config, revealFingerprint: true)), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
+// ---------------------------------------------------------------------------
+// 上游预设 + 连通性自测 + 模型发现导入
+//
+// 见 .claude/rules/minimal-user-input.md：Provider 的地址/协议/并发是系统本来就知道的，
+// 不该让用户去搜供应商文档；密钥填完之后，模型清单与价格是上游查得到的，不该让用户照抄。
+// 同一条规则还规定了连带义务——最小输入必须配当场自测、结果可见、失败给下一步，
+// 否则就退化成「蒙着眼睛少填几个字」。下面三个端点就是这三件事。
+// ---------------------------------------------------------------------------
+
+// 探测上游用的 HttpClient：超时压到 15s，避免一个不通的地址把控制台请求挂住。
+// 探针专用 HttpClient。三道门，缺一道都能被绕过：
+//
+// 1. **关掉自动重定向**：校验只对最初那个地址成立，跟随 302 等于把已校验目标换成
+//    一个没校验过的地址。重定向会如实变成一个 3xx 回给用户，比静默跟过去更透明。
+// 2. **在 ConnectCallback 里校验真正要连的那个 IP**。只在发请求前查一次 DNS 是不够的：
+//    HttpClient 连接时会**再解析一次**，控制着 rebinding 域名的租户可以让第一次返回公网
+//    地址、第二次返回 127.0.0.1 或 169.254.169.254，前面那道校验就白做了
+//    （predicate-and-wiring-discipline 形状 6：判据读到的不是真正生效的那个值）。
+//    放在这里就没有窗口——被校验的地址和被连接的地址是同一个。
+// 3. 是否强制这道门由请求自己带（内部租户的本地上游预设本来就要指向内网，见下）。
+var blockPrivateProbeTargets = new HttpRequestOptionsKey<bool>("BlockPrivateProbeTargets");
+var upstreamProbeHttp = new HttpClient(new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    ConnectCallback = async (context, ct) =>
+    {
+        var enforce = context.InitialRequestMessage.Options.TryGetValue(blockPrivateProbeTargets, out var flag) && flag;
+        var host = context.DnsEndPoint.Host;
+        var addresses = IPAddress.TryParse(host, out var literal)
+            ? new[] { literal }
+            : await Dns.GetHostAddressesAsync(host, ct);
+
+        if (enforce)
+        {
+            addresses = addresses.Where(GatewayConfigurationProvisioning.IsSafeExternalExchangeAddress).ToArray();
+            if (addresses.Length == 0)
+                throw new HttpRequestException("目标解析到了内网、回环或云元数据地址，已拒绝连接");
+        }
+        if (addresses.Length == 0)
+            throw new HttpRequestException("目标域名解析不到任何地址");
+
+        var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(addresses, context.DnsEndPoint.Port, ct);
+            return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    },
+})
+{
+    Timeout = TimeSpan.FromSeconds(15),
+};
+
+/// <summary>
+/// 外部租户的 Provider 探测目标必须先过内网地址校验，口径与外部 Exchange 完全一致
+/// （复用 ValidateExternalExchangeTargetAsync）。
+///
+/// 不加的话，外部租户的 owner 只要把 Provider 地址填成 127.0.0.1 / 10.x / 169.254.169.254，
+/// 就能借「测试连接」和「查看模型」两个端点，拿控制台容器当跳板扫内网和云元数据。
+/// 这两个端点是本次新增的，等于新开了一个出口，必须补上同一道门。
+///
+/// 内部租户不受此限：本地上游预设（Ollama / vLLM）本来就要指向内网，
+/// 这条豁免与 Exchange 侧的既有策略同源，不是本次新开的口子。
+async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, CancellationToken ct)
+{
+    if (TenantAccess.GetRequired(http).TenantId == internalTenantId) return null;
+    return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct);
+}
+
+// 一次导入的模型数上限。聚合型上游（OpenRouter）能列出几百个模型，全勾下来会把
+// 模型列表冲垮，也让后面的模型池选型无从下手；分批导入是刻意的摩擦。
+const int MaxImportBatch = 200;
+
+// 上游响应体读取上限。模型清单再大也就几百 KB，8 MB 是宽松到不会误伤的天花板。
+const int MaxUpstreamBodyBytes = 8 * 1024 * 1024;
+
+// 一次发现最多展示多少个模型。聚合型上游（OpenRouter）目前四百多个，2000 是宽松到
+// 不会误伤真实上游、又能挡住「几十万个小对象」那种病态响应的天花板。
+const int MaxDiscoveredModels = 2000;
+
+app.MapGet("/gw/provider-presets", (HttpContext http) =>
+{
+    var items = ProviderPresets.All.Select(p => new ProviderPresetItem
+    {
+        Key = p.Key,
+        Name = p.Name,
+        PlatformType = p.PlatformType,
+        ApiUrl = p.ApiUrl,
+        ProviderId = p.ProviderId,
+        MaxConcurrency = p.MaxConcurrency,
+        KeyConsoleUrl = p.KeyConsoleUrl,
+        KeyPrefixHint = p.KeyPrefixHint,
+        SupportsModelDiscovery = p.SupportsModelDiscovery,
+        SupportsUpstreamPricing = p.SupportsUpstreamPricing,
+        Summary = p.Summary,
+        SearchTerms = p.SearchTerms.ToList(),
+        KeylessPlaceholder = p.KeylessPlaceholder,
+    }).ToList();
+    return Json(ApiEnvelope<ProviderPresetsData>.Ok(new ProviderPresetsData { Items = items }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 连通性自测：拿已保存的密钥去打一次上游的模型列表，回报成败 + 耗时 + 可执行的下一步。
+// 只读，不改任何配置；探测地址一并回给用户核对（他填错 baseUrl 时这一行就是答案）。
+app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var doc = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<PlatformTestResult>.Fail("NOT_FOUND", "Provider 不存在或不属于当前租户"), jsonOptions, 404);
+
+    var apiUrl = doc.AsNullableString("ApiUrl") ?? string.Empty;
+    var platformType = doc.GetStringOrEmpty("PlatformType");
+    var probeUrl = ProviderPresets.ResolveModelsUrl(apiUrl);
+
+    if (string.IsNullOrWhiteSpace(apiUrl))
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "NO_API_URL",
+            Message = "这个 Provider 没有配 API 地址", NextStep = "在高级选项里补上 API 地址后再测",
+        }), jsonOptions);
+
+    var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    if (probeTargetError is not null)
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "UNSAFE_TARGET_URL",
+            Message = probeTargetError, NextStep = "把 API 地址改成公网可达的上游域名",
+        }), jsonOptions);
+
+    var keyResult = GwApiKeyCrypto.Decrypt(doc.AsNullableString("ApiKeyEncrypted"), config);
+    // 库里存了密文却解不出来（密钥轮换过、或密文损坏）——这时候**绝不能**当成「没配密钥」继续裸奔。
+    // 裸奔请求打到一个不要求鉴权的 /models 上会拿到合法的 data 数组，于是报「密钥被接受」绿灯，
+    // 而业务真去调用时根本取不出这把钥匙。这个仓库为这件事付过代价：轮换 CDS_JWT_SECRET
+    // 打哑了全部平台密钥，静默 401 两小时无人察觉（cross-project-isolation 通道 2）。
+    // 「测试连接」存在的全部意义就是别让这种事再静默发生，所以这里必须先失败。
+    var hasStoredKey = !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted"));
+    if (hasStoredKey && !keyResult.Success)
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "KEY_UNREADABLE",
+            Message = "这个 Provider 存着密钥，但当前服务解不开它（多半是加密密钥换过，或密文损坏）",
+            NextStep = "用「更新密钥」重新填一次原始密钥；若是刚轮换过加密密钥，存量密文都需要重填",
+        }), jsonOptions);
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, probeUrl);
+        if (keyResult.Success && keyResult.PlainText.Length > 0)
+        {
+            // Claude 原生协议用 x-api-key，OpenAI 兼容用 Bearer。判错的话会拿到 401，
+            // 那正是我们要如实报出来的信息，不做静默双发。
+            if (string.Equals(platformType, "claude", StringComparison.OrdinalIgnoreCase))
+            {
+                req.Headers.TryAddWithoutValidation("x-api-key", keyResult.PlainText);
+                req.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
+            }
+            else
+            {
+                req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {keyResult.PlainText}");
+            }
+        }
+
+        // 外部租户强制内网校验；内部租户豁免（本地上游预设本来就要指向内网）
+        req.Options.Set(blockPrivateProbeTargets, TenantAccess.GetRequired(http).TenantId != internalTenantId);
+
+        // 整条探测（含读 body）共用一个 15 秒预算。
+        // HttpClient.Timeout 在 ResponseHeadersRead 下只覆盖到响应头到达为止：
+        // 上游先回头、再把 body 挂住慢慢流，下面这个读就没人管了，
+        // 「保存后自动测一次」会挂死并占住一个控制台请求。
+        using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
+        sw.Stop();
+        var status = (int)resp.StatusCode;
+        int? modelCount = null;
+        if (resp.IsSuccessStatusCode)
+        {
+            try
+            {
+                var body = await ReadUpstreamBodyAsync(resp, MaxUpstreamBodyBytes, probeCts.Token);
+                var probeRoot = System.Text.Json.Nodes.JsonNode.Parse(body) as System.Text.Json.Nodes.JsonObject;
+                var arr = probeRoot?["data"] as System.Text.Json.Nodes.JsonArray;
+                modelCount = arr?.Count;
+            }
+            // 不是 JSON、或体积超限中止 —— 都留 modelCount = null，交给下面的形状判据判成不可达。
+            // 超限本身就说明这个地址回的不是模型清单，报「形状不对」比报 500 更贴近真相。
+            catch (System.Text.Json.JsonException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        // 200 不等于「这个地址能用」。
+        //
+        // 地址填错、前面挡着一层登录代理、或者对方是个 SPA 把所有路径都 fallback 到 index.html——
+        // 这些情况统统回 200，只是 body 是 HTML 或别的 JSON。第一版只要 IsSuccessStatusCode
+        // 就报「密钥被接受」并亮绿灯，而紧接着的「查看模型」必然拿不到东西：
+        // 用户拿到一个绿灯 + 一个不工作的 Provider，正是这条测试要防的那种假象。
+        // 探针打的就是 /models，那就要求它长得像 /models 该有的样子（有 data 数组）。
+        //
+        // Claude 原生协议没有模型列表接口，探针本来就不指望拿到 data，豁免。
+        var expectsModelList = !string.Equals(platformType, "claude", StringComparison.OrdinalIgnoreCase);
+        var shapeMismatch = resp.IsSuccessStatusCode && expectsModelList && modelCount is null;
+
+        var (kind, message, nextStep) = shapeMismatch
+            ? ((string?)"BAD_PAYLOAD_SHAPE",
+               $"上游回了 HTTP {status}，但返回内容不是模型列表（没有 data 数组）",
+               (string?)"多半是 API 地址指错了地方（比如指到了网站首页或登录页）。在高级选项里核对地址，或改用内置预设")
+            : status switch
+        {
+            // 探针打的是 /models，它证明的只有「这个地址连得上、而且能读出模型列表」。
+            // 不少 OpenAI 兼容上游的 /models 是公开的、或者干脆忽略 Authorization 头，
+            // 换句话说：拿一把错密钥照样能拿到 200 + data 数组，真正推理时才 401。
+            // 所以这里只能说读到了什么，不能替上游宣布「密钥被接受」——
+            // 那是一句探针根本没验证过的话（no-rootless-tree：不声明验不了的能力）。
+            >= 200 and < 300 => ((string?)null,
+                modelCount is null ? "上游可达，模型列表能读到" : $"上游可达，读到 {modelCount} 个模型",
+                (string?)"读得到模型列表不等于密钥一定有效——有些上游的列表接口不校验密钥。要确认密钥能用，导入模型后发一次真实调用"),
+            401 or 403 => ("UNAUTHORIZED", $"上游拒绝了这个密钥（HTTP {status}）",
+                "去 Provider 控制台确认密钥有效、没过期、有调用权限，然后用「更新密钥」重填"),
+            404 => ("NOT_FOUND", $"地址不对，上游说没有这个接口（HTTP {status}）",
+                "多半是 API 地址填错了。在高级选项里核对地址，或改用内置预设"),
+            429 => ("RATE_LIMITED", "上游限流（HTTP 429）",
+                "密钥本身是通的，稍后再测；如果持续限流，检查上游账号的速率配额"),
+            >= 500 => ("UPSTREAM_ERROR", $"上游服务异常（HTTP {status}）", "上游的问题，过一会儿再测"),
+            _ => ("UNEXPECTED_STATUS", $"上游返回了意料之外的状态（HTTP {status}）", "把这个状态码提供给上游支持，或核对地址"),
+        };
+
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            // 形状不对就不算可达——绿灯必须代表「这个 Provider 真能用」
+            Reachable = resp.IsSuccessStatusCode && !shapeMismatch, HttpStatus = status, ElapsedMs = sw.ElapsedMilliseconds,
+            ProbedUrl = probeUrl, ModelCount = modelCount, FailureKind = kind, Message = message, NextStep = nextStep,
+        }), jsonOptions);
+    }
+    catch (TaskCanceledException)
+    {
+        sw.Stop();
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ElapsedMs = sw.ElapsedMilliseconds, ProbedUrl = probeUrl, FailureKind = "TIMEOUT",
+            Message = "15 秒内没有响应", NextStep = "检查地址是否可从网关容器访问；本地部署的上游要用容器能解析的主机名",
+        }), jsonOptions);
+    }
+    catch (HttpRequestException ex)
+    {
+        sw.Stop();
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ElapsedMs = sw.ElapsedMilliseconds, ProbedUrl = probeUrl, FailureKind = "NETWORK",
+            Message = $"连不上：{ex.Message}", NextStep = "确认域名可解析、端口可达、出网策略放行了这个域名",
+        }), jsonOptions);
+    }
+}).RequireAuthorization("ConfigWrite");
+
+// 拉上游模型清单：用户不该照着供应商文档往输入框里抄模型名。
+// 用途按标识推断（拿不准就留空），价格只认上游自己给的（不内置价目表，见 ProviderPresets.ReadPricing）。
+app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string id) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var doc = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("NOT_FOUND", "Provider 不存在或不属于当前租户"), jsonOptions, 404);
+
+    var apiUrl = doc.AsNullableString("ApiUrl") ?? string.Empty;
+    var probeUrl = ProviderPresets.ResolveModelsUrl(apiUrl);
+    if (string.IsNullOrWhiteSpace(apiUrl))
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("NO_API_URL", "这个 Provider 没有配 API 地址"), jsonOptions, 400);
+    if (string.Equals(doc.GetStringOrEmpty("PlatformType"), "claude", StringComparison.OrdinalIgnoreCase))
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("DISCOVERY_UNSUPPORTED",
+            "Claude 原生协议没有模型列表接口，请手动添加模型"), jsonOptions, 400);
+
+    // 与「测试连接」同一道门：这条也会拿着用户填的地址向外发请求，不补上就等于留了个后门
+    var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    if (discoveryTargetError is not null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("UNSAFE_TARGET_URL", discoveryTargetError), jsonOptions, 400);
+
+    var keyResult = GwApiKeyCrypto.Decrypt(doc.AsNullableString("ApiKeyEncrypted"), config);
+    // 与「测试连接」同一道门：解不开密钥就别裸奔发请求，拉回来的清单会让人误以为这条上游是通的
+    if (!string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) && !keyResult.Success)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail(
+            "KEY_UNREADABLE",
+            "这个 Provider 存着密钥，但当前服务解不开它，请先用「更新密钥」重新填一次"), jsonOptions, 409);
+
+    string body;
+    try
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, probeUrl);
+        if (keyResult.Success && keyResult.PlainText.Length > 0)
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {keyResult.PlainText}");
+        // 与「测试连接」同款：外部租户强制内网校验，整条请求（含读 body）共用一个 15 秒预算
+        req.Options.Set(blockPrivateProbeTargets, TenantAccess.GetRequired(http).TenantId != internalTenantId);
+        using var discoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, discoveryCts.Token);
+        if (!resp.IsSuccessStatusCode)
+            return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_" + (int)resp.StatusCode,
+                $"上游返回 HTTP {(int)resp.StatusCode}，先点「测试连接」看具体原因"), jsonOptions, 502);
+        body = await ReadUpstreamBodyAsync(resp, MaxUpstreamBodyBytes, discoveryCts.Token);
+    }
+    catch (TaskCanceledException)
+    {
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("TIMEOUT", "拉取模型清单超时（15 秒）"), jsonOptions, 504);
+    }
+    catch (HttpRequestException ex)
+    {
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("NETWORK", $"连不上上游：{ex.Message}"), jsonOptions, 502);
+    }
+    catch (InvalidOperationException ex)
+    {
+        // 响应体超限：如实告诉用户地址多半指错了，而不是让它冒充一个 500
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_TOO_LARGE", ex.Message), jsonOptions, 502);
+    }
+
+    System.Text.Json.Nodes.JsonArray? dataArray;
+    try
+    {
+        // 先转 JsonObject 再索引：根节点是数组或标量时（上游直接回一个 [] 、或回个字符串），
+        // node["data"] 抛的是 InvalidOperationException 而不是 JsonException，会穿过下面这个 catch
+        // 变成 500。转型失败得到 null，正好落进后面的「没有 data 数组」分支，报 UPSTREAM_SHAPE。
+        var root = System.Text.Json.Nodes.JsonNode.Parse(body) as System.Text.Json.Nodes.JsonObject;
+        dataArray = root?["data"] as System.Text.Json.Nodes.JsonArray;
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_SHAPE", "上游返回的不是合法 JSON"), jsonOptions, 502);
+    }
+    if (dataArray is null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_SHAPE",
+            "上游返回里没有 data 数组，这个地址可能不是 OpenAI 兼容的模型列表接口"), jsonOptions, 502);
+
+    var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
+        .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
+        .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    // 8MB 的字节上限管不住**条目数**：几十万个 {"id":"x"} 这样的小对象照样塞得进那个预算，
+    // 而下面这个循环会把每一条都物化成对象、再排序、再序列化，前端还要不做虚拟化地全渲染一遍——
+    // 一次「查看模型」就能吃掉可观的共享内存并把用户浏览器冻住。限量必须按条目再来一道。
+    //
+    // 截断不静默：真发生时如实告诉用户「上游给了 N 个，只展示前 M 个」，
+    // 而不是让他以为这就是全部（no silent caps）。
+    var truncatedFrom = dataArray.Count > MaxDiscoveredModels ? dataArray.Count : (int?)null;
+
+    var items = new List<UpstreamModelItem>();
+    foreach (var node in dataArray.Take(MaxDiscoveredModels))
+    {
+        if (node is not System.Text.Json.Nodes.JsonObject obj) continue;
+        var modelId = (obj["id"] as System.Text.Json.Nodes.JsonValue)?.ToString();
+        if (string.IsNullOrWhiteSpace(modelId)) continue;
+        var pricing = ProviderPresets.ReadPricing(obj);
+        items.Add(new UpstreamModelItem
+        {
+            ModelId = modelId,
+            DisplayName = (obj["name"] as System.Text.Json.Nodes.JsonValue)?.ToString(),
+            InferredCapabilities = ProviderPresets.InferCapabilities(modelId).ToList(),
+            InputPricePerMillion = pricing?.InputPricePerMillion,
+            OutputPricePerMillion = pricing?.OutputPricePerMillion,
+            PricePerCall = pricing?.PricePerCall,
+            PriceCurrency = pricing?.Currency,
+            PriceSource = pricing is null ? null : "upstream",
+            AlreadyImported = existing.Contains(modelId),
+        });
+    }
+
+    var data = new UpstreamModelsData
+    {
+        ProbedUrl = probeUrl,
+        Total = items.Count,
+        AlreadyImportedCount = items.Count(x => x.AlreadyImported),
+        PricingProvided = items.Any(x => x.PriceSource is not null),
+        TruncatedFromTotal = truncatedFrom,
+        FetchedAt = DateTime.UtcNow,
+        Items = items.OrderBy(x => x.ModelId, StringComparer.OrdinalIgnoreCase).ToList(),
+    };
+    return Json(ApiEnvelope<UpstreamModelsData>.Ok(data), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 批量导入选中的上游模型。已存在的同名模型跳过而不是覆盖——导入是补齐动作，
+// 不该悄悄改掉用户手工调过的用途或价格。
+app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string id, [FromBody] ImportUpstreamModelsRequest? body) =>
+{
+    var entries = body?.Models?.Where(m => !string.IsNullOrWhiteSpace(m.ModelId)).ToList() ?? new List<ImportUpstreamModelEntry>();
+    if (entries.Count == 0)
+        return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail("INVALID_INPUT", "没有选中任何模型"), jsonOptions, 400);
+    if (entries.Count > MaxImportBatch)
+        return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail("TOO_MANY",
+            $"一次最多导入 {MaxImportBatch} 个模型，请分批"), jsonOptions, 400);
+
+    var fb = Builders<BsonDocument>.Filter;
+    var platform = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (platform is null)
+        return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail("NOT_FOUND", "Provider 不存在或不属于当前租户"), jsonOptions, 404);
+
+    // 与单模型端点（POST /gw/models）保持一致：停用的 Provider 不许加模型。
+    // 不拦的话会走进一个静默坑：模型文档建出来了，但 EnsureGatewayModelPoolTypesAsync
+    // 会把「Provider 已停用」的模型排除在池同步之外**且不抛异常**，于是 PoolSyncFailed 仍是 false、
+    // 请求报成功，而这批模型对池路由根本不可见；重新启用 Provider 也不会补跑同步。
+    if (platform.AsNullableBool("Enabled") == false)
+        return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail(
+            "PLATFORM_DISABLED", "Provider 已停用，请先启用后再导入模型"), jsonOptions, 409);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
+        .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
+        .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var result = new ImportUpstreamModelsResult { Requested = entries.Count };
+    var now = DateTime.UtcNow;
+    foreach (var entry in entries)
+    {
+        var modelId = entry.ModelId!.Trim();
+        if (existing.Contains(modelId))
+        {
+            result.Skipped++;
+            result.SkippedModelIds.Add(modelId);
+            continue;
+        }
+
+        // 这条端点不走 TryNormalizeModel（那是给单模型表单用的），但**校验口径必须同源**，
+        // 否则直连调用或旧版前端能把任意用途名、负价格、超长标识塞进来：
+        // 用途会被池同步当成合法类型参与路由，负价格会进成本核算。
+        // 判定函数收在 GatewayConfigurationProvisioning，两条入库路径共用一份，防漂移。
+        if (modelId.Length > GatewayConfigurationProvisioning.MaxModelNameLength)
+        {
+            result.Skipped++;
+            result.SkippedModelIds.Add(modelId);
+            continue;
+        }
+
+        var caps = (entry.Capabilities ?? ProviderPresets.InferCapabilities(modelId).ToList())
+            // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
+            // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
+            // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
+            .Where(c => GatewayConfigurationProvisioning.IsSupportedCapabilityCode(c))
+            .Select(c => c.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (!GatewayConfigurationProvisioning.IsValidPrice(entry.InputPricePerMillion)
+            || !GatewayConfigurationProvisioning.IsValidPrice(entry.OutputPricePerMillion)
+            || !GatewayConfigurationProvisioning.IsValidPrice(entry.PricePerCall)
+            || !GatewayConfigurationProvisioning.IsSupportedCurrency(entry.PriceCurrency))
+        {
+            return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail(
+                "INVALID_INPUT", $"模型「{modelId}」的价格或币种不合法（价格不能为负，币种只支持 CNY / USD）"), jsonOptions, 400);
+        }
+
+        var doc = new BsonDocument
+        {
+            { "_id", $"gw-model-{Guid.NewGuid():N}" },
+            { "TenantId", tenantId },
+            { "PlatformId", id },
+            { "ModelName", modelId },
+            // 唯一索引 uniq_llmgw_model_tenant_platform_name_normalized 带
+            // PartialFilterExpression：只覆盖 ModelNameNormalized 是字符串的文档。
+            // 不写这个字段 = 这批模型不参与唯一约束，两个并发导入各自算出同一份 existing 快照后
+            // 双双插入，同名模型就重复了。口径与 TryNormalizeModel 一致（ToLowerInvariant）。
+            { "ModelNameNormalized", modelId.ToLowerInvariant() },
+            { "Name", modelId },
+            { "Enabled", true },
+            { "Priority", 100 },
+            { "Authority", "llm_gateway" },
+            { "SourceCollection", "llmgw_models" },
+            { "CreatedAt", now },
+            { "UpdatedAt", now },
+            { "Capabilities", new BsonArray(caps.Select(c => new BsonDocument
+                {
+                    { "Type", c },
+                    // source=inferred 让界面能区分「系统推断的」和「用户勾的」，
+                    // 对应 minimal-user-input.md 的第 3 条：自动填的值必须可见可改。
+                    { "Source", "inferred" },
+                    { "Value", true },
+                })) },
+        };
+        if (entry.InputPricePerMillion is not null) doc["InputPricePerMillion"] = entry.InputPricePerMillion.Value;
+        if (entry.OutputPricePerMillion is not null) doc["OutputPricePerMillion"] = entry.OutputPricePerMillion.Value;
+        if (entry.PricePerCall is not null) doc["PricePerCall"] = entry.PricePerCall.Value;
+        if (!string.IsNullOrWhiteSpace(entry.PriceCurrency)) doc["PriceCurrency"] = entry.PriceCurrency;
+
+        try
+        {
+            await gwModels.InsertOneAsync(doc);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 并发导入撞上唯一索引：对方已经建好了，按「已存在」计，不算失败
+            result.Skipped++;
+            result.SkippedModelIds.Add(modelId);
+            existing.Add(modelId);
+            continue;
+        }
+        existing.Add(modelId);
+        result.Created++;
+        result.CreatedModelIds.Add(modelId);
+    }
+
+    // 导入完必须把新模型同步进托管默认池——单模型端点（POST /gw/models）一直这么做。
+    // 漏掉的话，批量导入的模型只是躺在 llmgw_models 里，不进任何池，正常池路由压根选不到它们：
+    // 用户点完「导入 N 个」看到成功提示，业务侧却依旧调不通（predicate-and-wiring-discipline 形状 2）。
+    //
+    // 与单模型端点的差别：那边同步失败会把刚插入的那一条删掉再报错；这里是批量，
+    // 已插入的模型本身是有效配置（用户可以手动加进池），全删掉反而更糟。
+    // 所以如实降级——照常返回创建结果，但把「池没同步上、去哪补」写进响应，不谎报全绿。
+    // 条件是「这次请求点名的模型现在都在库里」，不是「这次新建了几个」。
+    // 写成 Created > 0 的后果我自己的失败文案就踩了：同步失败时我们刻意保留已插入的模型，
+    // 并告诉用户「稍后重试导入」——可重试时那些模型全部命中 Skipped、Created 归零，
+    // 这个块直接被跳过，池成员永远补不回来。又是一句用户照做也没用的话。
+    if (result.Created > 0 || result.Skipped > 0)
+    {
+        try
+        {
+            await EnsureGatewayModelPoolTypesAsync(
+                gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms,
+                models, platforms, tenantId, internalTenantId, appendModels: true);
+        }
+        catch
+        {
+            result.PoolSyncFailed = true;
+            result.Message = "模型已导入，但默认模型池同步失败，这批模型暂时不会被池路由选中；可在「模型池」页面手动补齐或稍后重试导入。";
+        }
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "platform.models.import",
+        targetType: "llmgw_platform",
+        targetId: id,
+        targetName: platform.GetStringOrEmpty("Name"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "requested", result.Requested },
+            { "created", result.Created },
+            { "skipped", result.Skipped },
+        });
+
+    return Json(ApiEnvelope<ImportUpstreamModelsResult>.Ok(result), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
 // 创建模型：Provider 必须属于当前租户；缺少模型 key 时继承 Provider key。
 // 创建成功后只调用现有默认池注册表做 append-only 补齐：匹配则追加，不匹配则保持不变。
 app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest? body) =>
@@ -10038,6 +10582,28 @@ static async Task WriteLoginAuditAsync(
     {
         Console.Error.WriteLine($"[LlmGw] login audit write failed: {ex.Message}");
     }
+}
+
+/// <summary>
+/// 有上限地读上游响应体。
+///
+/// 15 秒超时只管**时长**不管**字节数**：一个 ConfigWrite 租户把 Provider 指向自己控制的
+/// 公网服务器，回一个飞快的超大响应，就能把共享的控制台进程内存吃干——限时拦不住限量。
+/// 所以边流边数，超过上限直接掐断并如实报错，而不是先 ReadAsStringAsync 把整棵 JSON 树读进内存。
+/// </summary>
+static async Task<string> ReadUpstreamBodyAsync(HttpResponseMessage resp, int maxBytes, CancellationToken ct)
+{
+    await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+    var buffer = new byte[8192];
+    using var ms = new MemoryStream();
+    int read;
+    while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+    {
+        if (ms.Length + read > maxBytes)
+            throw new InvalidOperationException($"上游响应体超过 {maxBytes / 1024 / 1024} MB 上限，已中止读取");
+        ms.Write(buffer, 0, read);
+    }
+    return System.Text.Encoding.UTF8.GetString(ms.ToArray());
 }
 
 static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct)

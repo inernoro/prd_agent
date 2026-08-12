@@ -112,6 +112,11 @@ import type {
   PromptPolicyPreview,
   PromptPolicyVersion,
   AvailableTenant,
+  ProviderPresetsData,
+  PlatformTestResult,
+  UpstreamModelsData,
+  ImportUpstreamModelEntry,
+  ImportUpstreamModelsResult,
 } from './types';
 import { getDefaultApiBase } from './runtimeBase';
 import { setPlatformMapHome } from './mapNavigation';
@@ -575,6 +580,18 @@ export function getPlatforms(): Promise<ApiResponse<PlatformsData>> {
 }
 export function createPlatform(req: CreatePlatformRequest): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>('/platforms', { method: 'POST', body: req });
+}
+export function getProviderPresets(): Promise<ApiResponse<ProviderPresetsData>> {
+  return apiRequest<ProviderPresetsData>('/provider-presets');
+}
+export function testPlatformConnection(id: string): Promise<ApiResponse<PlatformTestResult>> {
+  return apiRequest<PlatformTestResult>(`/platforms/${id}/test`, { method: 'POST' });
+}
+export function getUpstreamModels(id: string): Promise<ApiResponse<UpstreamModelsData>> {
+  return apiRequest<UpstreamModelsData>(`/platforms/${id}/upstream-models`);
+}
+export function importUpstreamModels(id: string, models: ImportUpstreamModelEntry[]): Promise<ApiResponse<ImportUpstreamModelsResult>> {
+  return apiRequest<ImportUpstreamModelsResult>(`/platforms/${id}/models/import`, { method: 'POST', body: { models } });
 }
 export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
   return apiRequest<ModelsData>('/models', {
