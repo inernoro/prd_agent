@@ -51,6 +51,13 @@ import type {
   ShadowData,
   ModelPool,
   PlatformItem,
+  PlatformDeleteBlockers,
+  ModelDeleteBlockers,
+  PoolDeleteBlockers,
+  ExchangeDeleteBlockers,
+  LogicalModelDeleteResult,
+  AppCallerDeleteResult,
+  UpdatePlatformRequest,
   ModelItem,
   CreatePlatformRequest,
   CreateModelRequest,
@@ -94,6 +101,9 @@ import type {
   OrganizationData,
   CreatedTenant,
   CreatedTeam,
+  TeamDeleteBlockers,
+  TenantDeleteBlockers,
+  TeamUpdateResult,
   CreateMemberRequest,
   CreatedMember,
   UpdateMemberRequest,
@@ -784,6 +794,58 @@ export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiRes
 }
 export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
+}
+/** 删除模型池。是当前默认池或仍有 appCaller 绑定时返回 409 + POOL_IN_USE。 */
+export function deletePool(id: string): Promise<ApiResponse<PoolDeleteBlockers>> {
+  return apiRequest<PoolDeleteBlockers>(`/pools/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除逻辑模型。名下 offering 是从属子项，跟着一起删，返回删除条数。 */
+export function deleteLogicalModel(id: string): Promise<ApiResponse<LogicalModelDeleteResult>> {
+  return apiRequest<LogicalModelDeleteResult>(`/logical-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除 appCaller 登记。删除后该 code 再来调用会被当成未注册拒绝。 */
+/** 删除 appCaller。名下的提示词策略版本是从属子项，跟着一起删，条数在返回里。 */
+export function deleteAppCaller(id: string): Promise<ApiResponse<AppCallerDeleteResult>> {
+  return apiRequest<AppCallerDeleteResult>(`/app-callers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除交换所。仍被池成员引用时返回 409 + EXCHANGE_IN_USE。 */
+export function deleteExchange(id: string): Promise<ApiResponse<ExchangeDeleteBlockers>> {
+  return apiRequest<ExchangeDeleteBlockers>(`/exchanges/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除团队。仍被成员/密钥/appCaller 引用时返回 409 + TEAM_IN_USE。 */
+export function deleteTeam(id: string): Promise<ApiResponse<TeamDeleteBlockers>> {
+  return apiRequest<TeamDeleteBlockers>(`/teams/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除成员关系。不能删自己，不能删掉最后一个活跃 owner。 */
+export function deleteMember(id: string): Promise<ApiResponse<unknown>> {
+  return apiRequest<unknown>(`/members/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/** 删除当前租户。刻意只删空租户，剩余内容会原样列在返回体里。 */
+export function deleteTenant(id: string): Promise<ApiResponse<TenantDeleteBlockers>> {
+  return apiRequest<TenantDeleteBlockers>(`/tenants/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/**
+ * 改团队名。后端一直有这个端点，前端此前没有入口——团队能建不能改名。
+ * 注意返回体里**没有** name：后端只回 id + updated + 三个连带影响计数，
+ * 所以调用方要报新名字得用自己传进去的那个，不能读 data.name（那是 undefined）。
+ */
+export function updateTeam(id: string, name: string): Promise<ApiResponse<TeamUpdateResult>> {
+  return apiRequest<TeamUpdateResult>(`/teams/${encodeURIComponent(id)}`, { method: 'PUT', body: { name } });
+}
+/** 编辑上游（名称/类型/地址/并发/备注）。密钥不在这里改，走 rotatePlatformApiKey。 */
+export function updatePlatform(id: string, req: UpdatePlatformRequest): Promise<ApiResponse<PlatformItem>> {
+  return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+/** 删除模型。被池引用时返回 409 + MODEL_IN_USE，data 里带占用的池名。 */
+export function deleteModel(id: string): Promise<ApiResponse<ModelDeleteBlockers>> {
+  return apiRequest<ModelDeleteBlockers>(`/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+/**
+ * 删除整条上游。被引用时后端返回 409 + PLATFORM_IN_USE，
+ * data 里带占用清单（哪些模型、哪些池还挂着），照着摘干净才能删。
+ */
+export function deletePlatform(id: string): Promise<ApiResponse<PlatformDeleteBlockers>> {
+  return apiRequest<PlatformDeleteBlockers>(`/platforms/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });

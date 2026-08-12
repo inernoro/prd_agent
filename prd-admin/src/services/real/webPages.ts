@@ -41,6 +41,11 @@ export interface HostedSite {
   publishedAt?: string | null;
   /** 是否允许被评论（默认 true，owner 可关闭） */
   commentsEnabled?: boolean;
+  /** 是否开放「向我提问」。默认 false —— 提问烧 token，存量站点不会被顺带打开 */
+  askEnabled?: boolean;
+  /** 站点级开场问题题库（分享时可从中挑几条） */
+  askSuggestedQuestions?: string[];
+  askAllowAnonymous?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -171,6 +176,17 @@ function joinUrl(base: string, path: string) {
   const p = path.replace(/^\/+/, '');
   if (!b) return `/${p}`;
   return `${b}/${p}`;
+}
+
+/**
+ * 把 `/api/...` 拼成实际要请求的地址。
+ *
+ * 走 apiRequest 的调用不用管这件事，但**裸 fetch 必须自己拼**——SSE 和 FormData 都绕开了
+ * apiRequest。后端与前端分开部署时（VITE_API_BASE_URL 指向另一个域），相对路径会打到
+ * 前端自己身上，拿回一个 404 或者一坨 HTML 而不是事件流。
+ */
+export function buildApiUrl(path: string) {
+  return joinUrl(getApiBaseUrl(), path);
 }
 
 // ─── Upload (FormData) ───
@@ -431,6 +447,13 @@ export async function createShareLink(data: {
   visibility?: 'owner-only' | 'logged-in' | 'public';
   /** 是否分配数字短链 /s/{seq}。默认 false：只发 /s/wp/{token} 长链，不污染 short_links */
   allocateShortLink?: boolean;
+  /**
+   * 本条分享链接自选的开场问题。三态，**不要**在调用前把 undefined 兜成 []：
+   *   不传   = 沿用站点题库
+   *   []     = 这条链接不显示开场问题
+   *   非空   = 只显示这几条
+   */
+  askSuggestedQuestions?: string[];
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -484,6 +507,8 @@ export interface SharedSiteInfo {
   // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
   // 不能走 siteUrl + sandbox 嵌套——会被 Chrome 屏蔽 PDF Viewer。
   pdfAssetUrl?: string;
+  /** 包装资产类型（pdf / video / markdown …），普通 HTML 站为空。包装站没有可读正文 */
+  wrappedAssetType?: string | null;
 }
 
 export interface ShareViewData {
@@ -494,6 +519,20 @@ export interface ShareViewData {
   createdBy?: string;
   createdByName?: string;
   sites: SharedSiteInfo[];
+  /**
+   * 「向我提问」呈现配置。开关关闭时后端返回 null，前端据此不渲染入口。
+   * openingQuestions 已由后端把「分享自选 / 站点题库」两层三态取舍完毕，
+   * 前端**不要**再自己合并一遍（那正是判据分裂的起点）。
+   */
+  ask?: ShareAskInfo | null;
+}
+
+export interface ShareAskInfo {
+  siteId: string;
+  enabled: boolean;
+  allowAnonymous: boolean;
+  welcome?: string | null;
+  openingQuestions: string[];
 }
 
 export async function viewShare(token: string, password?: string): Promise<ApiResponse<ShareViewData>> {
@@ -616,6 +655,33 @@ export async function listShareComments(token: string, password?: string): Promi
   }
 }
 
+/**
+ * 经分享链接读取站点入口 HTML 原文（无需登录）。走服务端同源代理，**不要**改回浏览器直接
+ * fetch(site.siteUrl)：托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧 fetch
+ * 必被 CORS 拦掉，srcDoc 预览会永远拿不到内容而静默退化成「Chrome 里只绘制空白」的直链 iframe。
+ * 守卫见 ShareViewPage.preview.test.ts。
+ */
+export async function getShareSiteContent(
+  token: string,
+  siteId?: string,
+  password?: string,
+): Promise<ApiResponse<{ siteId: string; title: string; contentType: string; siteUrl: string; html: string }>> {
+  const params = new URLSearchParams();
+  if (siteId) params.set('siteId', siteId);
+  if (password) params.set('password', password);
+  const q = params.toString() ? `?${params.toString()}` : '';
+  const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/content${q}`);
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(url, { headers });
+    return (await res.json()) as ApiResponse<{ siteId: string; title: string; contentType: string; siteUrl: string; html: string }>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
+  }
+}
+
 /** 经分享链接发表评论（需登录） */
 export async function addShareComment(token: string, content: string, password?: string): Promise<ApiResponse<HostedSiteCommentDto>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
@@ -630,4 +696,47 @@ export async function deleteSiteComment(commentId: string): Promise<ApiResponse<
   return apiRequest(`/api/web-pages/comments/${encodeURIComponent(commentId)}`, {
     method: 'DELETE',
   });
+}
+
+// ─── 向我提问 ───
+
+/** 站点提问配置（owner 视角） */
+export interface SiteAskConfig {
+  siteId: string;
+  enabled: boolean;
+  welcome?: string | null;
+  /** 站点级题库；分享时可从中挑几条 */
+  suggestedQuestions: string[];
+  allowAnonymous: boolean;
+  /** 0 = 用系统默认 */
+  dailyLimit: number;
+  updatedAt?: string | null;
+  /** 题库最多存几条（服务端 SSOT，前端不自己定）。这是**存储**上限，不是展示上限 */
+  maxQuestions: number;
+  /** 一条分享面板最多显示几条（题库比它大，分享时挑子集） */
+  maxDisplay?: number;
+  /** 这个站点形态支不支持提问（视频包装站没有正文，开了每个访客都会吃 422） */
+  supported?: boolean;
+  /** 不支持的原因，直接展示给 owner */
+  unsupportedReason?: string | null;
+  maxQuestionLength: number;
+}
+
+/** 读站点的提问配置 */
+export async function getSiteAskConfig(siteId: string): Promise<ApiResponse<SiteAskConfig>> {
+  return apiRequest(api.webPages.askConfig(siteId));
+}
+
+/** 写站点的提问配置（仅 owner / editor） */
+export async function updateSiteAskConfig(
+  siteId: string,
+  config: {
+    enabled: boolean;
+    welcome?: string | null;
+    suggestedQuestions: string[];
+    allowAnonymous: boolean;
+    dailyLimit: number;
+  },
+): Promise<ApiResponse<SiteAskConfig>> {
+  return apiRequest(api.webPages.askConfig(siteId), { method: 'PUT', body: config });
 }

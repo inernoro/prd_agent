@@ -79,6 +79,7 @@
 - [CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计](./design.cds.self-hosting.md) `design.cds.self-hosting`
 - [CDS 技能版本与更新架构 · 设计](./design.cds.skill-version-update.md) `design.cds.skill-version-update`
 - [CDS 绝对可视化一键部署 · 设计](./design.cds.visual-deploy.md) `design.cds.visual-deploy`
+- [CDS 多 Web 入口治理 · 设计](./design.cds.web-entry.md) `design.cds.web-entry`
 - [CDS 总体架构 · 设计](./design.cds.md) `design.cds`
 - [多通道适配器 · 设计](./design.channel-agent.adapter.md) `design.channel-agent.adapter`
 - [每日小贴士 / 路径式教程系统 · 设计](./design.daily-tips.md) `design.daily-tips`
@@ -185,6 +186,7 @@
 - [CDS ORM 接入 · 指南](./guide.cds.orm-support.md) `guide.cds.orm-support`
 - [从零开始使用 CDS · 指南](./guide.cds.tutorial.md) `guide.cds.tutorial`
 - [CDS 列表视图  拓扑视图 功能对齐 · 指南](./guide.cds.view-parity.md) `guide.cds.view-parity`
+- [CDS 多 Web 入口配置与验收 · 指南](./guide.cds.web-entry.md) `guide.cds.web-entry`
 - [CDS Web 迁移运行手册 · 指南](./guide.cds.web-migration-runbook.md) `guide.cds.web-migration-runbook`
 - [缺陷管理 Agent 使用 · 指南](./guide.defect-agent.md) `guide.defect-agent`
 - [基础设施 Sandbox Agent · 指南](./guide.infra-sandbox-agent.md) `guide.infra-sandbox-agent`
@@ -260,6 +262,7 @@
 - [CDS 高可用运行验证 · 计划](./plan.cds.resilience-rollout.md) `plan.cds.resilience-rollout`
 - [CDS 当前工作看板 · 计划](./plan.cds.status.md) `plan.cds.status`
 - [CDS Legacy 前端退场 · 计划](./plan.cds.web-migration.md) `plan.cds.web-migration`
+- [网页托管 · 预览修复与向我提问 · 三 PR 拆分看板](./plan.web-hosting.preview-and-ask.md) `plan.web-hosting.preview-and-ask`
 - [每日小贴士场景统一与过时检测 · 计划](./plan.daily-tips.scenarios-and-staleness.md) `plan.daily-tips.scenarios-and-staleness`
 - [Desktop 资产中心 · 计划](./plan.desktop.asset-features.md) `plan.desktop.asset-features`
 - [抖音与 TikTok 真订阅闭环 · 计划](./plan.emergence.tiktok-douyin-poster.md) `plan.emergence.tiktok-douyin-poster`
@@ -299,6 +302,7 @@
 - [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
 - [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
+- [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
 - [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
 - [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`
 - [平台基础设施杂项 · 债务台账](./debt.platform.md) `debt.platform`

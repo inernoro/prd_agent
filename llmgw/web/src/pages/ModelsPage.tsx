@@ -21,12 +21,13 @@
 // Provider 内联预览的按钮文案。改那处措辞会让 CI 的 dotnet test 变红，动手前先读那个测试。
 // （此处刻意不复制该字面量：注释里再抄一份，会让守卫在 UI 文案被删后仍然误判通过。）
 import { useEffect, useMemo, useState } from 'react';
-import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled, updateModelImageSizeControl } from '@/lib/api';
+import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled, updateModelImageSizeControl } from '@/lib/api';
 import type { CreateModelRequest, ImageSizeControlMode, ImageSizeFieldFormat, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { FormGrid, HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP, INSET_PADDING } from '@/lib/surface';
@@ -37,6 +38,7 @@ const IMAGE_GENERATION_CAPABILITY_TYPES = new Set(['image_generation', 'text_to_
 export function ModelsPage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { confirm, promptText } = useDialogs();
   const [items, setItems] = useState<ModelItem[] | null>(null);
   const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
   const [capabilityTemplates, setCapabilityTemplates] = useState<ParameterCapabilityTemplateItem[]>([]);
@@ -188,6 +190,29 @@ export function ModelsPage() {
     }
   }
 
+  // 删除模型。后端会先查它还在不在池成员里——直接删掉在服务的模型，
+  // 池会保留一条指向不存在模型的成员，路由时静默降级而不是报错，最难查。
+  async function removeModel(m: ModelItem) {
+    const label = m.modelName || m.name || m.id;
+    const typed = await promptText({
+      title: `删除模型「${label}」`,
+      description: '它的配置与密钥一并消失，无法撤销。',
+      inputLabel: '确认请输入模型标识',
+      requireExact: label,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== label) { setToast('输入的模型标识不一致，已取消删除'); return; }
+    setBusyId(m.id);
+    setToast(null);
+    const res = await deleteModel(m.id);
+    setBusyId(null);
+    if (!res.success) { setToast(res.error?.message || '删除失败'); return; }
+    setItems((prev) => (prev ? prev.filter((x) => x.id !== m.id) : prev));
+    setToast(`已删除模型「${label}」`);
+  }
+
   async function claimModel(m: ModelItem) {
     setBusyId(m.id);
     setToast(null);
@@ -222,7 +247,7 @@ export function ModelsPage() {
   }
 
   async function clearApiKey(m: ModelItem) {
-    if (!window.confirm(`清除「${m.modelName || m.name}」的 GW 模型密钥？`)) return;
+    if (!await confirm({ title: `清除「${m.modelName || m.name}」的 GW 模型密钥？`, description: '清除后这个模型会退回继承平台密钥。', tone: 'danger', confirmLabel: '清除密钥' })) return;
     setBusyId(m.id);
     setToast(null);
     const res = await deleteModelApiKey(m.id);
@@ -247,7 +272,7 @@ export function ModelsPage() {
     }
     const filterText = platformId ? `当前平台${enabledOnly ? '且启用' : ''}的 GW 模型` : `${enabledOnly ? '启用的 ' : ''}GW 模型`;
     const scope = bulkOnlyMissing ? `缺失密钥的${filterText}` : `全部${filterText}`;
-    if (!window.confirm(`批量更新${scope}密钥？`)) return;
+    if (!await confirm({ title: `批量更新${scope}密钥？`, description: '这会覆盖范围内每一条的现有密钥。', tone: 'danger', confirmLabel: '批量更新' })) return;
     setBusyId('bulk-model-api-key');
     setToast(null);
     const res = await bulkRotateApiKeys({
@@ -286,7 +311,7 @@ export function ModelsPage() {
       return;
     }
     const scope = platformId ? `当前平台${enabledOnly ? '且启用' : ''}的模型` : `${enabledOnly ? '启用的 ' : ''}全部平台模型`;
-    if (!window.confirm(`批量维护${scope}能力？`)) return;
+    if (!await confirm({ title: `批量维护${scope}能力？`, description: '范围内每个模型的能力标记都会被改写。', tone: 'danger', confirmLabel: '批量维护' })) return;
     setBusyId('bulk-model-capabilities');
     setToast(null);
     const res = await bulkUpdateModelCapabilities({
@@ -703,6 +728,11 @@ export function ModelsPage() {
                               <Button size="sm" variant={m.enabled ? 'ghost' : 'primary'} disabled={busyId === m.id} onClick={() => void toggle(m)}>
                                 {busyId === m.id ? '处理中…' : m.enabled ? '停用' : '启用'}
                               </Button>
+                              {m.authority === 'llm_gateway' ? (
+                                <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => void removeModel(m)}>
+                                  删除
+                                </Button>
+                              ) : null}
                             </>
                           )}
                         </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}

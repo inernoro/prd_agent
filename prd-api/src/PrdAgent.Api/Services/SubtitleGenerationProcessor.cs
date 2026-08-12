@@ -938,7 +938,9 @@ public class SubtitleGenerationProcessor
                             : speakerNode.GetRawText()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            start, end, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             // 没有 segments 数组就用 text 兜底
@@ -1015,8 +1017,14 @@ public class SubtitleGenerationProcessor
             if (ContainsExplicitSpeakerLabel(diarized.Text))
             {
                 var parsed = ParseChatAudioSpeakerSegments(diarized.Text);
-                if (CountSpeakers(parsed) > 1)
+                if (CountSpeakers(parsed) > 1 && !HasHallucinatedSpeakerSplit(parsed))
                     return parsed;
+
+                if (CountSpeakers(parsed) > 1)
+                    _logger.LogWarning(
+                        "[doc-store-agent] chat 音频角色增强给出的切分不含信息（不同说话人内容完全相同），"
+                        + "按未切分处理 run={RunId}",
+                        run.Id);
             }
 
             _logger.LogWarning(
@@ -1032,6 +1040,50 @@ public class SubtitleGenerationProcessor
         }
 
         return new List<SubtitleSegment> { new(0, 0, transcript, "说话人1") };
+    }
+
+    /// <summary>
+    /// 这份「切分」是不是模型编出来的。
+    ///
+    /// 真实发生过：一段单人录音，模型返回 说话人1 说了 A、B，说话人2 也说了 A、B——
+    /// 同一批句子原样复制给两个人。这种切分不含任何信息，却会让界面言之凿凿地
+    /// 显示「两位说话人」，正是「说话人推断是真的吗」要防的那种编造。
+    ///
+    /// 判据要求**整份切分**都是同一批内容的复制（每个说话人的内容集合彼此完全相同），
+    /// 而不是「任意两个人撞上就算」。
+    ///
+    /// 为什么不能按「任意一对相同」判：三人及以上的真实录音里，完全可能有两位只应了同样的
+    /// 一声「嗯」「对」，而第三位讲了实质内容。此时那两位撞车恰恰不是复读式幻觉——第三组
+    /// 内容正好证明模型没在整份复制。而调用方拿到 true 会把**整份**多人切分丢掉、退回单说话人，
+    /// 于是一份真实的三人切分因为两句附和就被判死。（形状 1：判据比它该管的范围宽。）
+    /// </summary>
+    internal static bool HasHallucinatedSpeakerSplit(IReadOnlyList<SubtitleSegment> segments)
+    {
+        static string Normalize(string? text) =>
+            new string((text ?? string.Empty).Where(ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch)).ToArray());
+
+        var bySpeaker = segments
+            .Where(s => !string.IsNullOrWhiteSpace(s.SpeakerId))
+            .GroupBy(s => s.SpeakerId!, StringComparer.Ordinal)
+            .Select(g => new
+            {
+                Speaker = g.Key,
+                Content = g.Select(s => Normalize(s.Text)).Where(t => t.Length > 0).OrderBy(t => t, StringComparer.Ordinal).ToList(),
+            })
+            .Where(x => x.Content.Count > 0)
+            .ToList();
+
+        // 少于两组说不上「复制」；这条不该由本判据拦（多人判定由调用方的 CountSpeakers 负责）
+        if (bySpeaker.Count < 2) return false;
+
+        // 整份都是同一批内容才算编造：只要有任意一组与第一组不同，就说明模型确实区分了内容，
+        // 那份切分即便有两个人撞车也不该整份丢掉。
+        var first = bySpeaker[0].Content;
+        for (var i = 1; i < bySpeaker.Count; i++)
+        {
+            if (!bySpeaker[i].Content.SequenceEqual(first, StringComparer.Ordinal)) return false;
+        }
+        return true;
     }
 
     private static int CountSpeakers(IEnumerable<SubtitleSegment> segments)
@@ -1209,13 +1261,20 @@ public class SubtitleGenerationProcessor
         var segments = new List<SubtitleSegment>();
         string? activeSpeaker = null;
         var activeText = new StringBuilder();
+        // 见过第一条说话人标签之前，攒下的都是模型的开场白（「好的，我会根据不同声音…」），
+        // 不是录音内容。此前它会被当成一个无说话人的段落 flush 进产物，
+        // 直接出现在用户看到的转录全文里。
+        var sawSpeaker = false;
 
         void Flush()
         {
             var content = activeText.ToString().Trim();
-            if (!string.IsNullOrWhiteSpace(content))
-                segments.Add(new SubtitleSegment(0, 0, content, activeSpeaker));
             activeText.Clear();
+            if (string.IsNullOrWhiteSpace(content)) return;
+            if (string.IsNullOrWhiteSpace(activeSpeaker) && sawSpeaker) return;
+            segments.Add(new SubtitleSegment(
+                0, 0, content, activeSpeaker,
+                string.IsNullOrWhiteSpace(activeSpeaker) ? null : SpeakerSources.Model));
         }
 
         foreach (var rawLine in text.Replace("\r", string.Empty, StringComparison.Ordinal).Split('\n'))
@@ -1226,6 +1285,10 @@ public class SubtitleGenerationProcessor
             var parsed = TryParseSpeakerLine(line);
             if (parsed != null)
             {
+                // 顺序要紧：先立起 sawSpeaker 再 Flush。
+                // 反过来写的话，第一次 Flush（冲的正是开场白）看到的 sawSpeaker 还是 false，
+                // 开场白照样被放行——这条顺序错误就是被本文件配套用例抓出来的。
+                sawSpeaker = true;
                 Flush();
                 activeSpeaker = parsed.Value.Speaker;
                 activeText.Append(parsed.Value.Text);
@@ -1370,7 +1433,9 @@ public class SubtitleGenerationProcessor
                         ? speakerNode.GetString()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            start, end, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             if (segments.Count == 0 && root.TryGetProperty("text", out var normalizedText))
@@ -1392,7 +1457,9 @@ public class SubtitleGenerationProcessor
                         ? speakerNode.ToString()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            startMs / 1000.0, endMs / 1000.0, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             // 兜底：从 result.text 取整段文本（无时间戳）
@@ -1632,7 +1699,40 @@ public class SubtitleGenerationProcessor
     }
 }
 
-public record SubtitleSegment(double StartSec, double EndSec, string Text, string? SpeakerId = null);
+public record SubtitleSegment(
+    double StartSec,
+    double EndSec,
+    string Text,
+    string? SpeakerId = null,
+    string? SpeakerSource = null);
+
+/// <summary>
+/// 说话人标签是怎么来的。三条路径的可信度差一个量级，UI 必须能分辨——
+/// 否则「上游原生识别」和「本地按语速比例推算」在界面上长得一模一样，
+/// 用户没有任何线索判断该不该信（no-rootless-tree / expectation-management）。
+///
+/// 判据只有一条：**谁产出这批 segment，谁在产出处盖戳**。禁止事后从别处猜来源。
+/// </summary>
+public static class SpeakerSources
+{
+    /// <summary>上游 ASR 直接返回的说话人字段（豆包 speaker / speaker_id、Whisper 兼容 speaker）。</summary>
+    public const string Native = "native";
+
+    /// <summary>多模态音频模型重听整段音频后按声音切分的结果——真听了，但仍是模型判断。</summary>
+    public const string Model = "model";
+
+    /// <summary>本地声纹兜底：分簇来自真实声学特征，每句归属按字数比例摊到语音段上。</summary>
+    public const string Local = "local";
+
+    /// <summary>供 Markdown 笔记展示的人话说明。产出端只盖 key，说明文案在这里统一维护。</summary>
+    public static string? Describe(string? source) => source switch
+    {
+        Native => "原生识别 · 由语音识别服务直接返回，逐句归属可信",
+        Model => "模型重听 · 音频模型重新听完整段后按声音切分，属模型判断",
+        Local => "声纹估算 · 本地按声纹分出几种声音是真实声学结果，但每句归谁是按语速比例推算的，可能与实际不符",
+        _ => null,
+    };
+}
 
 /// <summary>
 /// 字幕生成 ASR 阶段失败时抛出的异常，携带可观测的 diagnostic 数据，

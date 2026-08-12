@@ -2,12 +2,14 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
-import { listShareComments } from '@/services/real/webPages';
+import { listShareComments, getShareSiteContent } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
+import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;
@@ -28,9 +30,155 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
   return /\.html?$/i.test(target);
 }
 
-function withPreviewBase(html: string, siteUrl: string) {
-  if (/<base\b/i.test(html)) return html;
+/**
+ * 这个站点有没有「可以取回来的 HTML 正文」。
+ *
+ * 光看入口是不是 .html 不够：PDF / 视频 / Markdown 包装站的入口**也是** index.html，
+ * 只是那层壳子里没有正文，正文代理对任何非空 wrappedAssetType 一律拒绝。
+ * 前端不看这个字段就会去问、拿回一个预期之内的拒绝，然后在一个本来显示得好好的
+ * 直链预览上盖一条错误角标——用户看到的是「这页出错了」，其实什么事都没有。
+ *
+ * 判据故意宽松：只要声明了任何包装类型就跳过，而不是逐个列举 pdf/video/markdown。
+ * 后端将来多一种包装形态，这里不用跟着改（形状 1：判据别比它该管的范围窄）。
+ */
+export function hasFetchableHtml(site: {
+  siteUrl: string;
+  entryFile?: string;
+  pdfAssetUrl?: string;
+  wrappedAssetType?: string | null;
+}): boolean {
+  if (site.pdfAssetUrl) return false;
+  if (site.wrappedAssetType) return false;
+  return isHtmlEntry(site.siteUrl, site.entryFile);
+}
+
+/**
+ * 这份 HTML 能不能安全地走 srcDoc 预览。
+ *
+ * srcDoc 路径刻意不给 allow-same-origin（否则用户上传的任意 HTML 就拿到 MAP 同源能力），
+ * 代价是文档处于**不透明源**。经典 `<script src>` 跨域不需要 CORS，照常能加载；
+ * 但 `<script type="module">` 是按 CORS 模式取的——而托管域名不返回
+ * Access-Control-Allow-Origin（正是本文件到处在说的那件事），模块脚本会被浏览器拦掉。
+ *
+ * 后果很具体：Vite/webpack 打包出来的 SPA 入口恰恰是 `<script type="module" src="...">`，
+ * 走 srcDoc 会白屏。这类站点必须留在直链 iframe 上——直链是同源加载，模块脚本没问题。
+ *
+ * 所以判据是「有没有模块脚本」，而不是「是不是 HTML」。内联的 module 也算——
+ * 它里面的 `import` 同样按 CORS 模式取，理由见 hasModuleScript。
+ */
+export function canUseSrcDocPreview(html: string): boolean {
+  if (!html) return false;
+  return !hasModuleScript(html);
+}
+
+/**
+ * 有没有模块脚本（任何一种）。
+ *
+ * 判据经过两次收窄失败，现在取**最保守**的形态：只要页面上有 `type="module"` 的 script，
+ * 无论外链还是内联，一律不走 srcDoc。
+ *
+ * 第一版写 `type\s*=\s*["']module["']`，硬要求引号存在——而 `<script type=module src=...>`
+ * 是合法 HTML，这类页面被判成安全，进去白屏。改成逐属性解析后仍然漏一类：
+ * 内联的 `<script type="module">import './app.js'</script>` 没有 `src`，被判成安全，
+ * 可那条 `import` 同样是按 CORS 模式发的模块请求，在不透明源下照样被拦，照样白屏。
+ *
+ * 与其继续追着「哪种 module 会发跨域请求」逐条补（每补一条就是下一次漏判的温床），
+ * 不如认所有 module。代价很小：真正自包含、不 import 任何东西的内联 module 页面会
+ * 退回直链 iframe——而直链本来就能正常显示，只是拿不到 srcDoc 那点额外好处。
+ *
+ * 属性值三种合法写法（双引号 / 单引号 / 不带引号）都要认，属性顺序与大小写也不能挑。
+ */
+function hasModuleScript(html: string): boolean {
+  // 只取 <script ...> 的开标签部分，逐个解析里面的属性
+  const openTags = html.match(/<script\b[^>]*>/gi);
+  if (!openTags) return false;
+
+  for (const tag of openTags) {
+    if (parseAttributes(tag).type === 'module') return true;
+  }
+  return false;
+}
+
+/** 解析标签里的属性；值支持双引号、单引号、无引号三种写法，键统一小写。 */
+function parseAttributes(tag: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // 去掉开头的 `<script` 与结尾的 `>`，只留属性区
+  const body = tag.replace(/^<\s*script\b/i, '').replace(/\/?>$/, '');
+  const re = /([^\s=/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+)))?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const key = m[1].toLowerCase();
+    if (!key) continue;
+    const value = (m[2] ?? m[3] ?? m[4] ?? '').trim().toLowerCase();
+    out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * 取回原文期间，那层「正在准备预览...」的白色遮罩最多盖多久。
+ *
+ * 遮罩本身是为了避免「先闪一下直链 iframe、再跳成 srcDoc」的跳变，但它是**不透明全屏**的：
+ * 底下的直链 iframe 其实一直在加载，代理慢或不可达时，一个本来能正常显示的页面会被白屏
+ * 盖住整个 HTTP 超时。这正是本 PR 要修的那个毛病（超时不等于坏了，别拿遮罩盖住已经画出来
+ * 的页面）——在自己新加的遮罩上重犯一次就说不过去了。所以给它一个短窗口，到点必让位。
+ */
+export const PREVIEW_MASK_TIMEOUT_MS = 1500;
+
+/**
+ * 该不该用遮罩盖住直链 iframe。抽成纯函数是为了能被测到「加载永远不结束时遮罩必须让位」。
+ *
+ * 三个条件缺一不可：确实在取原文、还没拿到可用的 srcDoc、短窗口没到点。
+ */
+export function shouldMaskDirectPreview(opts: {
+  loading: boolean;
+  hasSrcDoc: boolean;
+  maskExpired: boolean;
+}): boolean {
+  return opts.loading && !opts.hasSrcDoc && !opts.maskExpired;
+}
+
+/**
+ * 已有的 `<base href>` 是不是相对值（`./` `/assets/` `../` 这类）。
+ *
+ * 相对 base 在直链 iframe 里没问题——文档 URL 就是托管域名，解析出来还是托管域名。
+ * 但注进 srcDoc 之后文档 URL 变成了**MAP 的分享页地址**，同一个 `./` 会解析到
+ * `/s/wp/{token}/`，于是页面的脚本、样式、链接全都去 MAP 上找，一个都取不到。
+ * 上传通道本身会把根相对的 href 改写成 `./`，所以这类站点在真实数据里很常见。
+ *
+ * 判据只认「能不能独立成立的绝对地址」：带协议（http:、https:、data:）或协议相对（//）
+ * 才算绝对，其余一律要按 siteUrl 重解析一次。
+ */
+function isAbsoluteBaseHref(href: string): boolean {
+  const v = href.trim();
+  if (!v) return false;
+  return v.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(v);
+}
+
+export function withPreviewBase(html: string, siteUrl: string) {
   const baseHref = new URL('.', siteUrl).toString();
+
+  // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。
+  // 合成一条正则要求 href 必须存在，会让 `<base target="_blank">` 这种「有标签、没 href」
+  // 的页面整个漏过去：不改写，也不注入，相对资源在 srcDoc 下全部解析到 MAP 的分享页。
+  const tag = html.match(/<base\b[^>]*>/i)?.[0];
+  if (tag) {
+    const hrefAttr = tag.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/i);
+    const href = hrefAttr ? (hrefAttr[1] ?? hrefAttr[2] ?? hrefAttr[3] ?? '') : null;
+
+    // 已经是绝对地址：人家指的就是别处，不该动
+    if (href !== null && isAbsoluteBaseHref(href)) return html;
+
+    // 相对值按站点地址重解析；压根没写 href 就直接补上站点目录。
+    // 原地改写而不是另插一个 <base>：浏览器只认第一个 base，追加的那个不生效。
+    // 其余属性（target 等）原样保留。
+    const resolved = href ? new URL(href.trim() || '.', baseHref).toString() : baseHref;
+    const rewritten = hrefAttr
+      ? tag.replace(hrefAttr[0], `href="${escapeHtmlAttr(resolved)}"`)
+      : tag.replace(/^<\s*base\b/i, (m) => `${m} href="${escapeHtmlAttr(resolved)}"`);
+    return html.replace(tag, rewritten);
+  }
+
   const baseTag = `<base href="${escapeHtmlAttr(baseHref)}">`;
   if (/<head\b[^>]*>/i.test(html)) {
     return html.replace(/<head\b([^>]*)>/i, `<head$1>${baseTag}`);
@@ -49,6 +197,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const navigate = useNavigate();
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const currentUserId = useAuthStore(s => s.user?.userId);
+  const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,6 +216,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [commentCount, setCommentCount] = useState<number | null>(null);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
   const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
+  /** 遮罩的短窗口是否已到点。到点后不再遮挡底下的直链 iframe，见 PREVIEW_MASK_TIMEOUT_MS */
+  const [previewMaskExpired, setPreviewMaskExpired] = useState(false);
+  /** 直链 iframe 是否已经露给用户看过（遮罩到点即为真）。异步回调读它，不读 state */
+  const exposedDirectRef = useRef(false);
+  /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
+  const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -146,32 +301,61 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     return () => { alive = false; };
   }, [token, password, data]);
 
+  // 取回入口 HTML 走**服务端同源代理**（getShareSiteContent），不是浏览器直接 fetch(site.siteUrl)。
+  // 托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧跨域 fetch 一律被拦，
+  // 于是 srcDoc 分支永远拿不到内容、静默退化成「Chrome 里只绘制空白」的直链 iframe——
+  // 这就是「三个网页无法预览」的根因之一。改回浏览器 fetch 会让这条兜底再次变成死代码，
+  // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
     const site = data?.sites.length === 1 ? data.sites[0] : null;
-    if (!site || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
+    if (!site || !token || !hasFetchableHtml(site)) {
       setEmbeddedHtml(null);
+      setEmbeddedHtmlError(null);
       setEmbeddedHtmlLoading(false);
+      setPreviewMaskExpired(false);
       return;
     }
 
     let alive = true;
     setEmbeddedHtml(null);
+    setEmbeddedHtmlError(null);
     setEmbeddedHtmlLoading(true);
-    fetch(site.siteUrl, { credentials: 'omit' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const html = await res.text();
-        if (alive) setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(html, site.siteUrl) });
+    // 遮罩只挡一小会儿。到点后即便原文还没回来，也把底下的直链 iframe 露出来——
+    // 它多半已经把页面画好了，继续盖着就是拿「可能更好的预览」换「确定看不见」。
+    setPreviewMaskExpired(false);
+    // 同一个「到点了」要被两处读：渲染读 state，异步回调读 ref。
+    // 回调闭包里的 state 是发起那一刻的旧值，永远看不到超时后的 true。
+    exposedDirectRef.current = false;
+    const maskTimer = window.setTimeout(() => {
+      if (!alive) return;
+      exposedDirectRef.current = true;
+      setPreviewMaskExpired(true);
+    }, PREVIEW_MASK_TIMEOUT_MS);
+    getShareSiteContent(token, site.id, password || undefined)
+      .then((res) => {
+        if (!alive) return;
+        if (res.success && res.data?.html) {
+          // 遮罩已经让位 = 直链 iframe 已经在用户眼前跑起来了。此时再换成 srcDoc，
+          // 对浏览器就是换一个文档：滚动位置、表单里敲的字、PPT 翻到第几页全部清零。
+          // 代理最慢可以拖到 20s 才回来，那时候用户早就在用这个页面了——
+          // 「可能更好的预览」不值一次当面重载，迟到就直接丢弃。
+          if (exposedDirectRef.current) return;
+          setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) });
+          return;
+        }
+        // 取不回原文时仍回退直链 iframe（多数情况仍能显示），但把原因显式说出来，
+        // 不再静默吞掉——用户至少知道「为什么这页可能是空白的」。
+        setEmbeddedHtmlError(res.error?.message || '未能取回网页原文，已回退直接加载');
       })
       .catch(() => {
-        if (alive) setEmbeddedHtml(null);
+        if (alive) setEmbeddedHtmlError('未能取回网页原文，已回退直接加载');
       })
       .finally(() => {
         if (alive) setEmbeddedHtmlLoading(false);
       });
 
-    return () => { alive = false; };
-  }, [data]);
+    return () => { alive = false; window.clearTimeout(maskTimer); };
+  }, [data, token, password]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -425,7 +609,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
     const site = data.sites[0];
-    const iframeHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    // 打包型 SPA（入口是外链 module 脚本）必须留在直链 iframe：srcDoc 的不透明源会让
+    // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
+    const fetchedHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    const iframeHtml = fetchedHtml && canUseSrcDocPreview(fetchedHtml) ? fetchedHtml : null;
     return (
       <div
         ref={singleViewRef}
@@ -440,34 +627,41 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         }}
       >
         {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏 */}
-        <div className="border-b border-b-token-subtle" style={{ padding: '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />
+        <div className="border-b border-b-token-subtle" style={{ padding: isMobile ? '6px 10px' : '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
+          {/* 标题区必须可收缩（minWidth:0 + 省略号），否则手机端它会把右侧按钮挤扁 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+            <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" style={{ flexShrink: 0 }} />
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
-            <span style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>
+            <span style={{ color: '#fff', fontSize: isMobile ? 13 : 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {data.title || site.title}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
+              这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 2 : 12, flexShrink: 0 }}>
             {!site.pdfAssetUrl && (
               <button
                 onClick={togglePresentFullscreen}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : '4px 10px', borderRadius: 6, border: 'none', background: isMobile ? 'transparent' : 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
                 title="全屏演示（Esc 退出）"
+                aria-label="全屏演示"
               >
-                {isFullscreen ? <Minimize size={12} /> : <Maximize size={12} />}
-                全屏演示
+                {isFullscreen ? <Minimize size={isMobile ? 15 : 12} /> : <Maximize size={isMobile ? 15 : 12} />}
+                {!isMobile && '全屏演示'}
               </button>
             )}
             {!isOwner && (
               <button
                 onClick={handleSave}
                 disabled={saving || saveStatus !== 'idle'}
+                title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                aria-label="保存到我的托管"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 4,
-                  padding: '4px 10px', borderRadius: 6, border: 'none',
+                  padding: isMobile ? '6px 8px' : '4px 10px', borderRadius: 6, border: 'none',
                   fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-                  background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
+                  background: isMobile ? 'transparent'
+                    : saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
                     : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
                     : 'rgba(59, 130, 246, 0.15)',
                   color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
@@ -477,15 +671,15 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 }}
               >
                 {saving ? (
-                  <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
+                  <><div style={{ ...styles.miniSpinner }} /> {!isMobile && '保存中...'}</>
                 ) : saveStatus === 'saved' ? (
-                  <><Check size={12} /> 已保存</>
+                  <><Check size={isMobile ? 15 : 12} /> {!isMobile && '已保存'}</>
                 ) : saveStatus === 'already' ? (
-                  <><Check size={12} /> 你已经保存过了</>
+                  <><Check size={isMobile ? 15 : 12} /> {!isMobile && '你已经保存过了'}</>
                 ) : !isAuthenticated ? (
-                  <><LogIn size={12} /> 登录并保存</>
+                  <><LogIn size={isMobile ? 15 : 12} /> {!isMobile && '登录并保存'}</>
                 ) : (
-                  <><Download size={12} /> 保存到我的托管</>
+                  <><Download size={isMobile ? 15 : 12} /> {!isMobile && '保存到我的托管'}</>
                 )}
               </button>
             )}
@@ -493,20 +687,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               href={site.pdfAssetUrl || site.siteUrl}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
+              title="新窗口打开"
+              aria-label="新窗口打开"
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : 0, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
             >
-              <ExternalLink size={12} />
-              新窗口打开
+              <ExternalLink size={isMobile ? 15 : 12} />
+              {!isMobile && '新窗口打开'}
             </a>
             {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
                 浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
             {token && (
               <button
                 onClick={() => setShowComments(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
+                title="评论"
+                aria-label="评论"
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
               >
-                <MessageSquare size={12} />
-                评论{commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}
+                <MessageSquare size={isMobile ? 15 : 12} />
+                {isMobile
+                  ? (commentCount != null && commentCount > 0 ? commentCount : '')
+                  : `评论${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
               </button>
             )}
           </div>
@@ -527,7 +727,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               : 'allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen'}
             allowFullScreen
           />
-          {embeddedHtmlLoading && !iframeHtml && (
+          {/* 遮罩是为了避免「先闪直链、再跳 srcDoc」的跳变，但它不透明且全屏：代理慢或不可达时
+              会把底下那个其实已经渲染好的直链页面白屏盖住整个 HTTP 超时。所以只挡一小会儿，
+              到点让位——判据抽在 shouldMaskDirectPreview，守卫见 ShareViewPage.preview.test.ts。 */}
+          {shouldMaskDirectPreview({
+            loading: embeddedHtmlLoading,
+            hasSrcDoc: !!iframeHtml,
+            maskExpired: previewMaskExpired,
+          }) && (
             <div style={{
               position: 'absolute',
               inset: 0,
@@ -539,6 +746,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               fontSize: 14,
             }}>
               正在准备预览...
+            </div>
+          )}
+          {/* 取回原文失败：不遮住 iframe（页面多半仍能直接加载出来），只在角落把原因说清楚。
+              静默吞掉失败正是「明明打不开、却不知道为什么」的来源。 */}
+          {embeddedHtmlError && !iframeHtml && !embeddedHtmlLoading && (
+            <div style={{
+              position: 'absolute',
+              left: 12,
+              bottom: 12,
+              maxWidth: 'min(420px, calc(100% - 24px))',
+              padding: '6px 10px',
+              borderRadius: 8,
+              background: 'rgba(17,17,17,0.82)',
+              color: 'rgba(255,255,255,0.86)',
+              fontSize: 12,
+              lineHeight: 1.5,
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+            }}>
+              {embeddedHtmlError}
             </div>
           )}
         </div>
@@ -574,6 +801,19 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               </div>
             </aside>
           </>
+        )}
+
+        {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
+            开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
+        {token && data.ask?.enabled && (
+          <AskWidget
+            source={{ mode: 'share', token, siteId: data.ask.siteId, password: password || undefined }}
+            title={site.title || data.title || '这个页面'}
+            welcome={data.ask.welcome}
+            openingQuestions={data.ask.openingQuestions ?? []}
+            allowAnonymous={data.ask.allowAnonymous}
+            hidden={isFullscreen || showComments}
+          />
         )}
       </div>
     );

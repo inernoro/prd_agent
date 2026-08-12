@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { confirmServiceKeyClientCutover, createServiceKey, getGatewayAppCallers, getLegacyKeyCutover, getServiceKeys, revokeServiceKey, updateLegacyKeyCutover } from '@/lib/api';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { invalidateOnboardingCache } from '@/lib/onboarding';
 import type { CreatedServiceKey, LegacyKeyCutoverData, ServiceKeyItem } from '@/lib/types';
@@ -48,6 +49,7 @@ function ScopeHelp() {
 
 export function ServiceKeysPage() {
   const { tenant } = useAuth();
+  const { confirm } = useDialogs();
   const isInternalTenant = tenant?.isInternal === true;
   const canManageLegacyCutover = canUseCapability(tenant?.role, 'configWrite');
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
@@ -152,7 +154,7 @@ export function ServiceKeysPage() {
   };
 
   const revoke = async (item: ServiceKeyItem) => {
-    if (!window.confirm(`撤销接入密钥「${item.name}」？`)) return;
+    if (!await confirm({ title: `撤销接入密钥「${item.name}」？`, description: '撤销后使用它的客户端会立即收到 401。', tone: 'danger', confirmLabel: '撤销' })) return;
     setBusyId(item.id);
     const res = await revokeServiceKey(item.id);
     setBusyId(null);
@@ -175,7 +177,7 @@ export function ServiceKeysPage() {
   };
 
   const confirmClientCutover = async (item: ServiceKeyItem) => {
-    if (!window.confirm(`确认「${item.name}」的客户端已经全部切换到新密钥？`)) return;
+    if (!await confirm({ title: `确认「${item.name}」的客户端已经全部切换到新密钥？`, description: '确认后旧密钥进入可撤销状态。', confirmLabel: '已全部切换' })) return;
     setBusyId(item.id);
     const res = await confirmServiceKeyClientCutover(item.id);
     setBusyId(null);
@@ -247,7 +249,7 @@ export function ServiceKeysPage() {
 
   const saveLegacyCutover = async () => {
     if (!canManageLegacyCutover || !legacyDeadline) return;
-    if (legacyStatus === 'revoked' && !window.confirm('确认撤销 legacy shared key？撤销后旧 key 将立即返回 401，且必须已有 scoped key 双 key 观测。')) return;
+    if (legacyStatus === 'revoked' && !await confirm({ title: '确认撤销 legacy shared key？', description: '撤销后旧 key 将立即返回 401，且必须已有 scoped key 双 key 观测。', tone: 'danger', confirmLabel: '撤销' })) return;
     setLegacyBusy(true);
     const res = await updateLegacyKeyCutover({
       status: legacyStatus,

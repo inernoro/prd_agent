@@ -62,6 +62,17 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         @"^/api/web-pages/[^/]+/comments(-enabled)?/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // 站点「向我提问」路由（siteId 同样在路径中段，PublicRoutes 的 StartsWith 命中不了）：
+    //   - /api/web-pages/{siteId}/ask/stream   站内提问（SSE）
+    //   - /api/web-pages/{siteId}/ask/config   提问配置读(GET)/写(PUT)
+    // 与上面评论路由同款理由：这些端点在 service 层自鉴权（SetAskConfigAsync 只放行 owner/editor，
+    // 提问走 GetByIdAsync 的 owner+团队成员校验），不该再叠加 WebPagesWrite 管理权限位，
+    // 否则团队成员对自己有权访问的站点提问会被中间件提前拦成 403。
+    // 这里只豁免「管理权限检查」，[Authorize] 登录要求与业务层鉴权全部保留。
+    private static readonly Regex SiteAskRoute = new(
+        @"^/api/web-pages/[^/]+/ask/(stream|config)/?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     // 知识库跨环境同步的「令牌端点」：被对端环境用 X-Sync-Token（非登录 JWT）调用，
     // storeId 在路径中段，前缀匹配命中不了。这三条在 DocumentStoreSyncController 内做令牌鉴权
     // （ResolveTokenStoreAsync 校验 store.SyncToken），故须从管理权限闸门豁免，否则会被
@@ -211,6 +222,11 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         }
         // 站点维度评论列表/发表（siteId 在路径中段，前缀匹配命中不了）
         if (SiteCommentRoute.IsMatch(path))
+        {
+            return true;
+        }
+        // 站点「向我提问」（siteId 在路径中段，同上）
+        if (SiteAskRoute.IsMatch(path))
         {
             return true;
         }

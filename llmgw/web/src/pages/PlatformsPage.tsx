@@ -1,12 +1,14 @@
 // Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
-// 密钥明文只随创建/轮换请求发送，列表永远只展示 hasKey。
-import { useEffect, useState } from 'react';
+// 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
+// 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
+import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled } from '@/lib/api';
-import type { CreatePlatformRequest, PlatformItem } from '@/lib/types';
+import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled, updatePlatform } from '@/lib/api';
+import type { CreatePlatformRequest, PlatformItem, UpdatePlatformRequest } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
@@ -14,10 +16,14 @@ import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL, TOOLB
 export function PlatformsPage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { confirm, promptText } = useDialogs();
   const [items, setItems] = useState<PlatformItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keyEditId, setKeyEditId] = useState<string | null>(null);
+  // 行内编辑：只在展开的那一行生效，避免整页进「编辑模式」
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<UpdatePlatformRequest>({});
   const [keyValue, setKeyValue] = useState('');
   const [bulkKeyValue, setBulkKeyValue] = useState('');
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
@@ -112,7 +118,7 @@ export function PlatformsPage() {
   }
 
   async function clearApiKey(p: PlatformItem) {
-    if (!window.confirm(`清除「${p.name}」的 GW 平台密钥？`)) return;
+    if (!await confirm({ title: `清除「${p.name}」的 GW 平台密钥？`, description: '清除后这条上游会退回「未配置密钥」，用它的模型将无法调用。', tone: 'danger', confirmLabel: '清除密钥' })) return;
     setBusyId(p.id);
     setToast(null);
     const res = await deletePlatformApiKey(p.id);
@@ -123,6 +129,74 @@ export function PlatformsPage() {
     } else {
       setToast(res.error?.message || '操作失败');
     }
+  }
+
+  function beginEdit(p: PlatformItem) {
+    setEditId(p.id);
+    setKeyEditId(null);
+    setEditDraft({
+      name: p.name,
+      // 原样带上，不要 || 'openai' 兜底：认领自 MAP 的上游可能是 openrouter / google
+      // 这类存量类型，兜底成 openai 等于在用户没点过类型选择器的情况下悄悄给它改了协议。
+      platformType: p.platformType || '',
+      apiUrl: p.apiUrl || '',
+      maxConcurrency: p.maxConcurrency,
+      remark: p.remark || '',
+    });
+  }
+
+  async function saveEdit(p: PlatformItem) {
+    setBusyId(p.id);
+    setToast(null);
+    // 类型没改就不提交这个字段：更新端点只收 openai / claude，而存量类型（openrouter / google 等）
+    // 原样回传会被 INVALID_INPUT 挡下——用户只想改个名字，却被要求先把上游重新分类。
+    // 端点把 null 当「这个字段不改」，所以省掉即可。
+    const typeChanged = (editDraft.platformType ?? '') !== (p.platformType || '');
+    const res = await updatePlatform(p.id, {
+      ...editDraft,
+      platformType: typeChanged ? editDraft.platformType : undefined,
+    });
+    setBusyId(null);
+    if (res.success) {
+      setItems((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? res.data : x)) : prev));
+      setEditId(null);
+      setToast(`已保存「${res.data.name}」`);
+    } else {
+      setToast(res.error?.message || '保存失败');
+    }
+  }
+
+  /**
+   * 删除整条上游。
+   *
+   * 两道闸：确认框要求敲平台名（删错一条正在服务的上游，代价是整条链路静默失联，
+   * 而池成员按 (modelId, platformId) 定位、平台没了它们仍在，看起来正常、实际解析不到）；
+   * 服务端再查一次引用，被占用就带清单拒绝——这里把清单原样端给用户，让他知道先摘哪几个。
+   */
+  async function removePlatform(p: PlatformItem) {
+    const typed = await promptText({
+      title: `删除上游「${p.name}」`,
+      description: `${p.apiUrl || '无地址'}\n删除后这条上游的地址与密钥一并消失，无法撤销。`,
+      inputLabel: '确认请输入平台名',
+      requireExact: p.name,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== p.name) {
+      setToast('输入的平台名不一致，已取消删除');
+      return;
+    }
+    setBusyId(p.id);
+    setToast(null);
+    const res = await deletePlatform(p.id);
+    setBusyId(null);
+    if (res.success) {
+      setItems((prev) => (prev ? prev.filter((x) => x.id !== p.id) : prev));
+      setToast(`已删除上游「${p.name}」`);
+      return;
+    }
+    setToast(res.error?.message || '删除失败');
   }
 
   async function applyBulkApiKey() {
@@ -136,7 +210,7 @@ export function PlatformsPage() {
       return;
     }
     const scope = bulkOnlyMissing ? '缺失密钥的 GW 平台' : '全部 GW 平台';
-    if (!window.confirm(`批量更新${scope}密钥？`)) return;
+    if (!await confirm({ title: `批量更新${scope}密钥？`, description: '这会覆盖范围内每一条的现有密钥。', tone: 'danger', confirmLabel: '批量更新' })) return;
     setBusyId('bulk-platform-api-key');
     setToast(null);
     const res = await bulkRotateApiKeys({
@@ -262,9 +336,15 @@ export function PlatformsPage() {
           <tbody>
             {items.map((p) => {
               const en = boolChip(p.enabled, '启用', '停用');
-              const key = boolChip(p.hasKey, '已配置', '未配置');
+              // 密文在库但解不开（多半轮换过 ApiKeyCrypto:Secret）不能显示成「已配置」——
+              // 那会让人以为这条上游能用，实际每次调用都会失败
+              const key = p.keyStatus === 'unreadable'
+                ? { label: '解不开', color: 'var(--semantic-warning-text, #b45309)', bg: 'rgba(180,83,9,0.14)' }
+                : boolChip(p.hasKey, '已配置', '未配置');
               return (
-                <tr key={p.id}>
+                // 一行可能渲染两个兄弟节点（数据行 + 展开的编辑行），列表里的 Fragment 必须带 key
+                <Fragment key={p.id}>
+                <tr>
                   <td style={td}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                       <span style={{ fontWeight: 600 }}>{p.name}</span>
@@ -272,7 +352,7 @@ export function PlatformsPage() {
                         buttonLabel="查看接口"
                         kicker="Provider 接口预览"
                         title={p.name}
-                        summary="从当前页确认网关会把模型请求发往哪里、采用哪种兼容协议，以及这条上游连接是否具备通讯密钥。预览本身不会访问供应方。"
+                        summary="确认网关把请求发往哪里、用哪种协议、这条上游有没有密钥。预览不访问供应方。"
                         status={[
                           { label: p.enabled ? '已启用' : '已停用', tone: p.enabled ? 'good' : 'warning' },
                           { label: p.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: p.hasKey ? 'good' : 'warning' },
@@ -311,9 +391,21 @@ export function PlatformsPage() {
                     )}
                   </td>
                   <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
-                  <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
+                  <td style={td}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                      <Chip label={key.label} color={key.color} bg={key.bg} />
+                      {/* 指纹：同名同 URL 的两条上游只有密钥不同时，这是唯一能分清谁是谁的线索 */}
+                      {p.keyFingerprint ? (
+                        <code
+                          style={{ fontSize: 'var(--fs-tertiary)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}
+                          title="密钥指纹（头尾各留几位，中间打码），用于分辨是哪一把，不是完整密钥">
+                          {p.keyFingerprint}
+                        </code>
+                      ) : null}
+                    </div>
+                  </td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                    {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       {keyEditId === p.id ? (
                         <>
                           <input
@@ -349,14 +441,94 @@ export function PlatformsPage() {
                               {busyId === p.id ? '处理中…' : '导入到平台'}
                             </Button>
                           )}
+                          {p.authority === 'llm_gateway' ? (
+                            <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => beginEdit(p)}>
+                              编辑
+                            </Button>
+                          ) : null}
                           <Button size="sm" variant={p.enabled ? 'ghost' : 'primary'} disabled={busyId === p.id} onClick={() => void toggle(p)}>
                             {busyId === p.id ? '处理中…' : p.enabled ? '停用' : '启用'}
                           </Button>
+                          {/* 这条上游到底有没有在被调、报什么错——不看日志答不上来 */}
+                          <Link
+                            className="lg-secondary-action"
+                            style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
+                            to={`/logs?platformId=${encodeURIComponent(p.id)}`}>
+                            查看日志
+                          </Link>
+                          {p.authority === 'llm_gateway' ? (
+                            <>
+                              <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void removePlatform(p)}>
+                                删除
+                              </Button>
+                            </>
+                          ) : null}
                         </>
                       )}
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
+                {editId === p.id ? (
+                  <tr>
+                    {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
+                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={8}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
+                          <input
+                            aria-label="平台名称"
+                            value={editDraft.name ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
+                            placeholder="名称"
+                            style={{ ...inputStyle, width: 150 }}
+                          />
+                          <select
+                            aria-label="接口类型"
+                            value={editDraft.platformType ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
+                            style={inputStyle}>
+                            {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
+                                用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
+                            {editDraft.platformType
+                              && !['openai', 'claude'].includes(editDraft.platformType) ? (
+                                <option value={editDraft.platformType}>
+                                  {editDraft.platformType}（存量类型）
+                                </option>
+                              ) : null}
+                            <option value="openai">openai</option>
+                            <option value="claude">claude</option>
+                          </select>
+                          <input
+                            aria-label="API 地址"
+                            value={editDraft.apiUrl ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
+                            placeholder="https://…"
+                            style={{ ...inputStyle, width: 240 }}
+                          />
+                          <input
+                            aria-label="并发"
+                            type="number"
+                            value={editDraft.maxConcurrency ?? 0}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
+                            style={{ ...inputStyle, width: 80 }}
+                          />
+                          <input
+                            aria-label="备注"
+                            value={editDraft.remark ?? ''}
+                            onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
+                            placeholder="备注"
+                            style={{ ...inputStyle, width: 160 }}
+                          />
+                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
+                            保存
+                          </Button>
+                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => setEditId(null)}>
+                            取消
+                          </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
           </tbody>

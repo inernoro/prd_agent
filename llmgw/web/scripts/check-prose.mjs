@@ -32,6 +32,11 @@ const PARAGRAPH_MIN_CJK = 24;
 // 收纳解释的组件——区间内的文字不计入预算。
 const OUTLET_COMPONENTS = ['HelpPopover', 'DetailsBlock'];
 
+// 确认弹窗的文案同理不是常驻文字：只有点了破坏性操作才会看到它，
+// 和 HelpPopover「点了才看」是同一类。2026-08-11 把原生 window.confirm/prompt
+// 换成站内弹窗后，这些 title/description 被当成正文数进了预算，属于误报。
+const OUTLET_CALLS = ['confirm', 'promptText'];
+
 /**
  * 存量欠账（棘轮）。数值 = 2026-07-29 迁移组织页时的**实测值**，不是拍脑袋留的余量：
  * 已经超标的页面只许往下降，不许再涨；迁移完一页就删掉对应条目。
@@ -44,12 +49,12 @@ const BUDGETS = [
   // 本轮范围外的页面（用户点名的 10 页不含它们），按当前实测值封顶，只减不增。
   // 数值偏大是因为 2026-07-29 加宽了口径：此前只数 `>文本<`，把正文搬进常量数组即可绕过，
   // 学习中心旧版就是靠 TOPICS 数组藏了约 750 汉字。加宽后这些页面的真实文字量才显形。
-  { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 299, reason: '本轮范围外，按加宽口径后的实测值封顶' },
+  { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 303, reason: '本轮范围外，按加宽口径后的实测值封顶；2026-08-10 +4 是两处「删除」按钮文案（桌面行与移动卡各一），按钮标签属控件可供性不是正文，但守卫的 `>文本<` 口径分辨不出，只能计入' },
   { file: 'pages/PlatformsPage.tsx', maxParagraphs: 3, maxCjk: 300, reason: '本轮范围外，按加宽口径后的实测值封顶' },
   // Exchange 已迁移，常驻 JSX 正文为 0 段；超出的字来自 transformerType 等选项常量，
   // 它们实际渲染在 HelpPopover 里，但守卫看不出常量最终落到哪个出口（已知边界）。
-  { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 420, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置' },
-  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 433, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案' },
+  { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置；2026-08-10 +1 是新增的「删除」按钮文案（与图标同段，只多算一个汉字）' },
+  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 435, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案；2026-08-10 +2 是模型池详情抽屉里新增的「删除」按钮文案' },
   { file: 'pages/QuickstartPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '四协议接入片段常量属产品内容，且部分渲染在 HelpPopover 内' },
 ];
 
@@ -76,6 +81,35 @@ function maskOutlets(source) {
   return out;
 }
 
+/**
+ * 屏蔽确认弹窗调用的参数对象。
+ * 必须数括号配对而不是用非贪婪正则：文案里带模板插值
+ * （`${p.apiUrl || '无地址'}`），里面就有右花括号，正则会提前收口。
+ */
+function maskDialogCalls(source) {
+  const chars = source.split('');
+  for (const name of OUTLET_CALLS) {
+    const opener = new RegExp(`\\b${name}\\(\\{`, 'g');
+    let match;
+    const text = chars.join('');
+    while ((match = opener.exec(text)) !== null) {
+      let depth = 0;
+      let i = match.index + match[0].length - 1;
+      for (; i < chars.length; i += 1) {
+        if (chars[i] === '{') depth += 1;
+        else if (chars[i] === '}') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      for (let k = match.index; k <= Math.min(i, chars.length - 1); k += 1) {
+        if (chars[k] !== '\n') chars[k] = ' ';
+      }
+    }
+  }
+  return chars.join('');
+}
+
 /** 屏蔽 {/* prose-ok: 理由 *\/} 之后紧邻的一段（同样必须写理由）。 */
 function maskPragmas(source) {
   return source.replace(/\{\s*\/\*\s*prose-ok:[^*]*\*\/\s*\}\s*(<[^>]*>)?([^<]*)/g, (match) => blank(match));
@@ -98,6 +132,7 @@ for (const full of walk(SRC)) {
     // 注释里的中文不是界面文字。
     source = source.replace(/\/\*[^]*?\*\//g, blank).replace(/^[ \t]*\/\/.*$/gm, blank);
     source = maskOutlets(source);
+    source = maskDialogCalls(source);
 
     // JSX 文本节点候选：`>...<` 之间的内容。
     // 只保留含汉字的 —— TS 泛型（Record<string, X>）和比较运算永远不含汉字，

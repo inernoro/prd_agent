@@ -314,6 +314,12 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+// 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
+
+// 网页托管「向我提问」：站点正文快照（喂给模型的上下文）+ 配额闸（保护 owner 的 token 预算）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteContentSnapshotService, PrdAgent.Infrastructure.Services.SiteContentSnapshotService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAskQuotaService, PrdAgent.Infrastructure.Services.AskQuotaService>();
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
@@ -1296,6 +1302,10 @@ builder.Services.Configure<PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentO
         PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOptions.SectionName));
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentTurnQueue,
     PrdAgent.Infrastructure.Services.ChatAgent.InMemoryChatAgentTurnQueue>();
+// 一次性转派的 runId → 发起人台账。必须是 Singleton：工具回调是另一条 HTTP 请求进来的，
+// Scoped 的话回调那一侧永远拿到一个空台账，工具会全部因「没有用户身份」而拒绝执行。
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentOneOffRunRegistry,
+    PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOneOffRunRegistry>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IChatAgentService,
     PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatAgentTurnWorker>();
@@ -1333,6 +1343,20 @@ builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker>();
 builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.CdsSidecarSyncService>();
+
+// 把已登记 ToolName 的专业智能体各包成一把工具，交给通用对话智能体自己转派
+// （用户不必先挑智能体）。名单来自 AgentCapabilityRegistry.Delegatable，这里不另抄一份——
+// 契约里新增一个可转派智能体，工具自动就位，不会出现「登记了但没人接线」。
+// 必须在 AgentToolRegistry 之前注册：它构造时会把这些 IAgentTool 一并收进去。
+foreach (var delegatable in PrdAgent.Core.Models.AgentUniverse.AgentCapabilityRegistry.Delegatable)
+{
+    var capability = delegatable;
+    builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.AgentTools.IAgentTool>(sp =>
+        new PrdAgent.Api.Services.Toolbox.AgentDelegateTool(
+            capability,
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ILogger<PrdAgent.Api.Services.Toolbox.AgentDelegateTool>>()));
+}
 
 // Agent Tools 注册表 + 反向调用入口（sidecar 收到 tool_use 后回调主服务）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,

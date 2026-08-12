@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PrdAgent.Core.Models.AgentUniverse;
 
 namespace PrdAgent.Infrastructure.Services.ChatAgent;
 
@@ -38,25 +39,51 @@ public static class ChatAgentToolPresentation
         return tool[(lastSeparator + 2)..];
     }
 
-    /// <summary>工具卡上给用户看的名字。用产物语言，不用函数名。</summary>
-    public static string ToolLabel(string? tool) => NormalizeToolName(tool) switch
+    /// <summary>
+    /// 工具卡上给用户看的名字。用产物语言，不用函数名。
+    /// 转派类工具（把专业智能体包成的那几把）不在这里列名单——名字直接取能力契约，
+    /// 否则契约里改了智能体名字、这里还挂着旧名（形状 3：判据分裂成两份各自漂移）。
+    /// </summary>
+    public static string ToolLabel(string? tool)
     {
-        "chat_generate_image" => "生成图片",
-        "chat_save_note" => "写入知识库",
-        "kb_search" => "检索知识库",
-        "kb_read" => "读取知识库",
-        var other => other ?? "工具",
-    };
+        var name = NormalizeToolName(tool);
+        var delegated = FindDelegatedCapability(name);
+        if (delegated != null) return delegated.Name;
+
+        return name switch
+        {
+            "chat_generate_image" => "生成图片",
+            "chat_save_note" => "写入知识库",
+            "kb_search" => "检索知识库",
+            "kb_read" => "读取知识库",
+            var other => other ?? "工具",
+        };
+    }
 
     /// <summary>工具卡的阶段名。等待期屏幕上要有推进感，不能是一个转圈。</summary>
-    public static string[] ToolSteps(string? tool) => NormalizeToolName(tool) switch
+    public static string[] ToolSteps(string? tool)
     {
-        "chat_generate_image" => new[] { "排队", "模型出图", "写入素材库" },
-        "chat_save_note" => new[] { "整理内容", "选定空间", "写入并建链接" },
-        "kb_search" => new[] { "理解问题", "检索" },
-        "kb_read" => new[] { "定位条目", "读取原文" },
-        _ => new[] { "执行" },
-    };
+        var name = NormalizeToolName(tool);
+        var delegated = FindDelegatedCapability(name);
+        if (delegated != null)
+            return new[] { $"转交{delegated.Name}", "它正在处理", "带回结果" };
+
+        return name switch
+        {
+            "chat_generate_image" => new[] { "排队", "模型出图", "写入素材库" },
+            "chat_save_note" => new[] { "整理内容", "选定空间", "写入并建链接" },
+            "kb_search" => new[] { "理解问题", "检索" },
+            "kb_read" => new[] { "定位条目", "读取原文" },
+            _ => new[] { "执行" },
+        };
+    }
+
+    /// <summary>裸工具名 → 被它包起来的那个智能体能力（不是转派工具则为 null）。</summary>
+    private static AgentCapability? FindDelegatedCapability(string? bareToolName) =>
+        string.IsNullOrWhiteSpace(bareToolName)
+            ? null
+            : AgentCapabilityRegistry.Delegatable
+                .FirstOrDefault(c => string.Equals(c.ToolName, bareToolName, StringComparison.Ordinal));
 
     /// <summary>
     /// 工具结果翻成前端能直接画的载荷：成败、产物（图片地址 / 知识库条目）、人话说明。
@@ -95,6 +122,9 @@ public static class ChatAgentToolPresentation
                         title = t.GetString();
                     if (root.TryGetProperty("total", out var tot) && tot.ValueKind == JsonValueKind.Number)
                         message = $"命中 {tot.GetInt32()} 条";
+                    // 转派结果：把「这是谁做的」摆到卡上。用户没挑智能体，更要看得见是谁接的活。
+                    if (root.TryGetProperty("agent", out var ag) && ag.ValueKind == JsonValueKind.String)
+                        message = $"由「{ag.GetString()}」完成";
                 }
             }
             catch (JsonException)

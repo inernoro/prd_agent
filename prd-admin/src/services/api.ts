@@ -359,6 +359,8 @@ export const api = {
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
       homeLauncher: () => '/api/dashboard/user-preferences/home-launcher',
       docStorePins: () => '/api/dashboard/user-preferences/doc-store-pins',
+      transcriptLexicon: () => '/api/dashboard/user-preferences/transcript-lexicon',
+      transcriptLexiconSystem: () => '/api/dashboard/user-preferences/transcript-lexicon/system',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -1239,6 +1241,13 @@ export const api = {
     renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
     shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
+    // 分享 token 域的正文代理：托管域名不返回 ACAO，浏览器直接 fetch 必被 CORS 拦，
+    // 预览页要拿原文注入 srcDoc 只能走服务端同源代理
+    shareContent: (token: string) => `/api/web-pages/shares/view/${token}/content`,
+    // 「向我提问」
+    askConfig: (siteId: string) => `/api/web-pages/${siteId}/ask/config`,
+    askStream: (siteId: string) => `/api/web-pages/${siteId}/ask/stream`,
+    askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
   },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {

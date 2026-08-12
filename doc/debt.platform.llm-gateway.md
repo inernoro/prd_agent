@@ -1,6 +1,6 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v2.7 | **日期**：2026-07-18 | **状态**：开发中
+> **版本**：v2.8 | **日期**：2026-08-11 | **状态**：开发中
 
 **一句话**：网关与模型池的债务总表，含协议路由收口与多次生产取证记录。
 **谁该读**：接手网关的工程师；做发布判断的人。
@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 21 / in-progress: 4 / paid: 22 / 总计: 47
+当前 open: 22 / in-progress: 4 / paid: 22 / 总计: 48
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -20,6 +20,7 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-11-member-shortname-login-mismatch | medium | 2026-08-11 | 管理员创建成员时填写账号短名，系统成功保存为“租户短名.账号短名”；新成员若继续使用刚填写的短名登录，会看到“用户名或密码错误”。成员创建页称其为“账号短名”，登录页却只要求“用户名”，没有明确必须输入完整登录账号，导致用户误判密码或账号创建失败 | 任何独立 Gateway 成员首次使用管理员提供的账号登录时 | open | 创建成功提示和成员列表应明确标注并支持复制“完整登录账号”，登录页应展示完整账号示例；是否兼容短名登录必须先证明跨租户同名不会产生歧义、串租户或账号枚举风险 |
 | 2026-07-16-tenant-aggregate-hard-limit | medium | 2026-07-16 | 当前请求硬限制位于 appCaller 月预算、appCaller RPM 与 service key RPM；用量页能按 TenantId 汇总，但 `LlmGwTenant` 没有跨 appCaller 的月预算或速率字段，因此不存在单独的租户总硬上限 | 外部客户合同要求整个租户共享一个强制总预算或总速率，且不能只靠覆盖全部 appCaller 达成时 | paid | 已新增租户总月预算、单次原子预占和总 RPM；serving 以租户账本与分钟窗口跨 appCaller 原子执行，并与 appCaller 层同时返回限流头；控制台、并发/跨租户测试和权威教程同步更新。 |
 | 2026-07-14-tenant-provision-crash-consistency | high | 2026-07-14 | 租户和成员创建已对可捕获写异常执行补偿，并按 slug 或成员目标支持幂等重放；成员关键变更也会先写入包含 TenantId 的 pending 审计意图，再执行业务写入并完成审计。但 standalone Mongo 无多文档事务，进程在多次写入之间硬退出时仍可能留下半成品引用，或留下已完成业务但尚未收口的 pending 审计 | 开放匿名租户注册、控制台改为多副本，出现 provisioning 残留或 pending 审计告警前 | paid | 租户、成员和 owner 边界写入先登记带精确对象 ID、租约和 generation 的恢复操作；启动与 30 秒循环会 fencing 接管过期 pending/repairing 操作，回滚半成品或完成已提交的 owner 变更。Mongo 故障注入测试覆盖租户/成员硬退出和修复器二次退出接管 |
 | 2026-07-14-owner-mutation-lease-fencing | high | 2026-07-14 | 最后一个 owner 保护已使用租户级 30 秒租约和 membership version CAS 串行化常规并发；若一次 owner 变更停顿超过租约且另一实例接管，旧持有者仍可能在过期后继续提交不同 membership 的写入，租约 token 尚未形成跨文档 fencing | 控制台多副本运行、owner 变更可能超过 30 秒，或开放外部组织自主管理前 | paid | 移除可过期的进程锁；租户文档现在保存 active owner membership 权威集合和递增 fencing generation，移除 owner 使用单文档原子条件要求集合长度大于 1。并发移除测试证明两名 owner 只会成功移除一名；硬退出时 owner 权限按权威集合 fail-closed，并由恢复操作收口 membership |
@@ -599,6 +600,9 @@
 | ID | 严重度 | 状态 | 事实与收口条件 |
 |---|---|---|---|
 | `2026-07-17-sirius-dns-certificate` | P1 | blocked | `sirius.ebcone.net` 的公共权威 DNS 为 NXDOMAIN。现有腾讯云 COS 凭据调用 DNSPod `DescribeRecordList` 返回 `OperationDenied.NoPermissionToOperateDomain`，不能创建记录；正式 `map.ebcone.net` 证书 SAN 只包含自身，也不能复用。域名管理员需创建指向 `43.136.77.61` 的 A 记录，随后为 `sirius.ebcone.net` 单独签证书，套用 `llmgw/deploy/public-domain.nginx.example.conf`，经 `nginx -t`、reload、根页/实际资源/双健康/四协议无 key 401 和登录后真实数据复验后才可关闭。不得把仓库模板或 HTTP Host 预检写成“HTTPS 已上线”。 |
+| `2026-08-11-claimed-map-resource-resurrects-on-delete` | P1 | open | 内部租户删掉一条**从 MAP 认领来的**平台/模型/池/交换所后，它会重新出现。认领只是把同一个 `_id` 复制进 `gwPlatforms`（`claimed["SourceCollection"]="llmplatforms"`），MAP 原行原封不动；而列表是 `gwDocs ∪ mapDocs.Where(_id 不在 gwIds)`——GW 那份就是靠同 `_id` **遮住**了 MAP 那份。删掉 GW 副本 = 撤掉遮罩，MAP 原行立刻回到列表，且 ModelResolver 仍可能回落到它按旧配置调用。影响面：仅内部租户、且仅限「认领自 MAP」的资源；GW 原生资源的删除不受影响，已实机验证过。<br>**用户已拍板（2026-08-11）**：取「撤销认领、退回 MAP 只读」——删除认领资源 = 放弃 GW 管辖权，那条回到「MAP 有、GW 只读」状态，列表里仍可见但不可改；**不跨系统删 MAP 原件**。落地时按钮文案应从「删除」改为「撤销认领」，并提示「这条来自 MAP，如需彻底移除请到 MAP 处理」——现在表现成删除才是「删了又回来」的根源。<br>**原分析保留**：两条修法都是新语义类别——(a) 连 MAP 原行一起删，等于让网关控制台跨权威边界删 MAP 权威集合的数据，与「只能删已认领到 GW 的，MAP 来源请先认领」这条既有边界直接冲突；(b) 引入 tombstone / 抑制标记，且**列表与解析两条路径都要认它**，是一套新的可见性机制。按规则 5.5 属 B 类，需产品决策「删一条认领资源到底该是什么语义」，不由 Reviewer 单独授权。（2026-08-11 PR #1359 Review 七轮提出，触发范围熔断）|
+| `2026-08-11-platform-merge-split-out` | P2 | open | **上游合并（`POST /gw/platforms/{id}/merge-into/{targetId}`）已从 PR #1359 拆出**，代码原样保存在分支 `claude/llmgw-platform-merge-followup`，含端点本体、`RepointOfferingsAsync` / `NormalizedModelKey` 两个专用辅助、前端「合并到…」入口与全部合并守卫。<br>**为什么拆**：20 轮自动 Review 里有 9 轮打在这一个端点上，且开发过程中自己引入过两次回归（别名表做成全局匹配改坏无关平台的成员；归一去重让目标成员被源顶掉）。它也是这批功能里唯一带「跨四个集合、无事务、中断需重跑」告警的。删除能力、上游编辑、改类型闸、站内确认弹窗都不依赖它，先合那些价值更高、风险更低。<br>**续做时的已知边界**（都已在那条分支上修好，重开 PR 时要连测试一起带上）：offering 与池成员的 `ModelId` 必须一起改指；按归一名判同名；接口类型不同直接拒；删被丢弃模型必须排在所有改指之后（可重放）；别名匹配分表（`_id` 全局、模型名只在源平台内）；去重目标优先且按「最终指向哪个模型」算键；写池要带 `PoolVersionGuard` + `Inc(Version)`。<br>**仍未解决**：整个合并没有事务，中断可重放但不原子。（2026-08-11 用户决定「缩小 PR 先合」）|
+| `2026-08-11-delete-check-to-delete-race` | P2 | open | 删模型（及同形状的删交换所 / 删池 / **删逻辑模型时级联删它名下的 offering**）是「先查引用、再删」两步非原子：查完阻挡清单之后、`DeleteOneAsync` 之前，若并发有人新建 offering 或 upsert 池成员正好指到这个模型，那次写入会成功，随后删除照常执行，留下一条指向已不存在对象的引用——正是本 PR 花了几轮堵的那类静默残留，只不过发生在时间窗里。<br>**为什么本 PR 不修**：三条候选修法（Mongo 事务 / 删前先打 `Deleting` 标记再扫 / 把引用创建与删除串行化）都要引入这条链路上从未有过的新语义（分布式事务或两阶段删除状态机），且会牵动所有写引用的端点一起认那个中间态。按规则 5.5 属 B 类。当前控制台是低并发管理面（管理员手工操作），撞上这个窗口需要两个管理员同秒操作同一个模型，因此优先级定 P2 而非 P1。<br>逻辑模型那一路是同一形状的镜像：建 offering 会先校验父逻辑模型存在，若这次校验落在删逻辑模型的 `DeleteManyAsync` 之后、父文档删除之前，插进来的 offering 就永久成孤儿。修法与上同（事务 / 删除中标记 / 串行化），故合并记在这一条，不另开条目。（2026-08-11 PR #1359 Review 十一轮提出，十二轮补入逻辑模型镜像）|
 | `2026-07-17-cds-dataprotection-persistence` | P2 | open | CDS main 的 Console API 启动日志提示 `/root/.aspnet/DataProtection-Keys` 不持久且未配置 XML encryptor。当前 Gateway JWT 使用独立 `LlmGwJwt__Secret`，尚未发现会话故障；但若后续引入 ASP.NET DataProtection cookie、临时令牌或受保护载荷，容器替换会使旧数据失效。收口前应先盘点真实消费点，再决定挂载受限 volume 或显式禁用未使用能力，不能仅为消除 warning 保存明文 key。 |
 
 测试环境“真实数据”已经通过控制台正常链路形成，不能把密钥明文、生产租户快照或前端硬编码示例当作修复。若 CDS Mongo 被重建，恢复方式是使用独立测试租户从 Quickstart 创建 appCaller 和 tenant-scoped key，再对公开假上游发送请求；禁止复用生产 key，禁止批量调用付费模型。
