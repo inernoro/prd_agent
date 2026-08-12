@@ -3203,6 +3203,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const canvasSaveResponsePromise = page.waitForResponse((response) => (
         new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/canvas`
         && response.request().method() === 'PUT'
+        && String(response.request().headers()['idempotency-key'] || '').startsWith('delete_')
       ));
       await page.getByRole('button', { name: '删除选中' }).click();
       await expect(page.getByText('确认删除选中的 2 项？')).toBeVisible();

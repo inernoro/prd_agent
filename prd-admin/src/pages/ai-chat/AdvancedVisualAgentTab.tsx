@@ -2683,18 +2683,45 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         )
       );
 
-      // 先乐观删除 UI
-      setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
+      // 同步更新 state 与 ref。自动保存、生成回调和删除确认都读取 canvasRef；若只更新
+      // React state，删除后的首个保存可能仍把旧元素写回服务端，刷新后图片会复活。
+      const nextCanvas = (canvasRef.current ?? []).filter((it) => !set.has(it.key));
+      canvasRef.current = nextCanvas;
+      setCanvas(nextCanvas);
       clearSelectionWithChips();
 
-      if (assetIds.length === 0) return;
-      const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
-      // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
-      const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
-      if (realFailed) {
-        toast.error(realFailed.error?.message || '删除失败');
-        await reloadWorkspace();
+      if (assetIds.length > 0) {
+        const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
+        // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
+        const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
+        if (realFailed) {
+          toast.error(realFailed.error?.message || '删除失败');
+          await reloadWorkspace();
+          return;
+        }
       }
+
+      // 资产删除成功后立即持久化同一份删除后快照，不依赖 debounce 的时序。这样接口成功、
+      // 画布保存与刷新恢复三者形成一个可等待的完成点。
+      if (canvasSaveTimerRef.current != null) {
+        window.clearTimeout(canvasSaveTimerRef.current);
+        canvasSaveTimerRef.current = null;
+      }
+      const built = canvasToPersistedV1(nextCanvas);
+      const json = JSON.stringify(built.state);
+      const saved = await saveVisualAgentWorkspaceCanvas({
+        id: workspaceId,
+        schemaVersion: PERSIST_SCHEMA_VERSION,
+        payloadJson: json,
+        idempotencyKey: `delete_${Date.now()}`,
+      });
+      if (!saved.success) {
+        toast.error(saved.error?.message || '图片已删除，但画布同步失败，正在重新加载');
+        await reloadWorkspace();
+        return;
+      }
+      lastSavedJsonRef.current = json;
+      lastSaveAtRef.current = Date.now();
     },
     [reloadWorkspace, workspaceId, clearSelectionWithChips]
   );
