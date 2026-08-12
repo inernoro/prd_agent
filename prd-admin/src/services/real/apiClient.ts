@@ -249,6 +249,112 @@ export interface ApiDownloadedFile {
   contentType: string;
 }
 
+export async function apiMultipartRequest<T>(
+  path: string,
+  options: {
+    method?: 'POST' | 'PUT' | 'PATCH';
+    createFormData: () => FormData;
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+  },
+): Promise<ApiResponse<T>> {
+  return apiMultipartRequestInner(path, options, false);
+}
+
+async function apiMultipartRequestInner<T>(
+  path: string,
+  options: {
+    method?: 'POST' | 'PUT' | 'PATCH';
+    createFormData: () => FormData;
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+  },
+  didRefresh: boolean,
+): Promise<ApiResponse<T>> {
+  const authStore = useAuthStore.getState();
+  if (!authStore.token) {
+    return fail('UNAUTHORIZED', '当前尚未登录，请登录后重试。') as unknown as ApiResponse<T>;
+  }
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    Authorization: `Bearer ${authStore.token}`,
+    'X-Client': 'admin',
+    'X-Client-Base-Url': window.location.origin,
+    ...options.headers,
+  };
+  const appName = resolveAdminAppName();
+  if (appName) headers['X-App-Name'] = appName;
+
+  let response: Response;
+  try {
+    response = await fetch(joinUrl(getApiBaseUrl(), path), {
+      method: options.method ?? 'POST',
+      headers,
+      body: options.createFormData(),
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (options.signal?.aborted) {
+      return fail('CANCELLED', '操作已取消。') as unknown as ApiResponse<T>;
+    }
+    return fail(
+      isDisconnectedError(error) ? 'DISCONNECTED' : 'NETWORK_ERROR',
+      '网络连接异常，请检查网络后重试。',
+    ) as unknown as ApiResponse<T>;
+  }
+  checkPermissionFingerprint(response);
+
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return fail('NETWORK_ERROR', '网络连接中断，请检查网络后重试。') as unknown as ApiResponse<T>;
+  }
+  const parsed = await tryParseJson(text);
+  const parsedError = isApiResponseLike(parsed)
+    ? getApiErrorLike((parsed as { error: unknown }).error)
+    : null;
+  const unauthorized = response.status === 401
+    || (isApiResponseLike(parsed) && parsed.success === false && parsedError?.code === 'UNAUTHORIZED');
+  if (unauthorized) {
+    if (!didRefresh && await tryRefreshAdminToken()) {
+      // FormData 不可假定可重放；重试时必须调用工厂重新构造 body。
+      return apiMultipartRequestInner(path, options, true);
+    }
+    const latestAuth = useAuthStore.getState();
+    if (latestAuth.isAuthenticated) {
+      latestAuth.logout();
+      window.location.href = '/login';
+    }
+  }
+
+  if (response.status === 413) {
+    return fail('DOCUMENT_TOO_LARGE', '文件超过当前大小限制，请缩小文件后重新上传。') as unknown as ApiResponse<T>;
+  }
+  if (isApiResponseLike(parsed)) {
+    if (parsed.success) return parsed as ApiResponse<T>;
+    const code = parsedError?.code || 'UNKNOWN';
+    return fail(code, toUserReadableErrorMessage(parsedError, {
+      code,
+      fallbackMessage: '上传未完成',
+      recoveryMessage: '请检查文件后重试。',
+    })) as unknown as ApiResponse<T>;
+  }
+  if (!response.ok) {
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    const classified = classifyNonContractHttpError({
+      status: response.status,
+      statusText: response.statusText,
+      path,
+      maybeHtml: contentType.includes('text/html') || /^\s*</.test(text),
+      contentType,
+    });
+    return fail(classified.code, classified.message) as unknown as ApiResponse<T>;
+  }
+  return fail('INVALID_FORMAT', '服务返回格式异常，请稍后重试。') as unknown as ApiResponse<T>;
+}
+
 function readDownloadFileName(header: string | null, fallback: string) {
   if (!header) return fallback;
   const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1];

@@ -71,7 +71,7 @@ function replaceLegacyUniqueIndex(collectionName, collection, existing, keys, op
   }
 }
 
-function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinitions = [], replaceNonUnique = false) {
+function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinitions = []) {
   const collection = db.getCollection(collectionName)
   const collectionExists = db.getCollectionInfos({ name: collectionName }).length > 0
   const existing = collectionExists
@@ -98,14 +98,8 @@ function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinit
       return
     }
 
-    // Certain historical catalogs created a same-name non-unique index. For those
-    // indexes, explicitly replace the definition after duplicate inspection instead
-    // of relying on createIndex/collMod to mutate immutable index options.
-    if (replaceNonUnique) {
-      replaceLegacyUniqueIndex(collectionName, collection, existing, keys, options)
-      return
-    }
-
+    // prepareUnique 在现有索引仍在保护写入时阻止新的重复键；
+    // 不允许先 drop 再 create，否则在索引替换窗口会放进新重复数据。
     try {
       db.runCommand({
         collMod: collectionName,
@@ -370,9 +364,7 @@ ensureTightenedUniqueIndex("image_gen_runs",
     name: "uniq_image_gen_runs_owner_idem",
     unique: true,
     partialFilterExpression: { "IdempotencyKey": { $type: "string" } }
-  },
-  [],
-  true
+  }
 )
 
 // collection: image_gen_run_items

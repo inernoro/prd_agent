@@ -1,6 +1,6 @@
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
-import { apiRequest } from '@/services/real/apiClient';
+import { apiMultipartRequest, apiRequest } from '@/services/real/apiClient';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import { connectSse } from '@/lib/useSseStream';
 import type { ApiResponse } from '@/types/api';
@@ -207,72 +207,37 @@ function profileApiUrl(path: string): string {
 export async function uploadMyAvatar(input: { file: File }): Promise<ApiResponse<AdminUserAvatarUploadResponse>> {
   const retainedRunId = getPendingMyAvatarGenerationRunId();
   const retainedCreationKey = getPendingAvatarGenerationCreation()?.idempotencyKey;
-  const token = useAuthStore.getState().token;
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const fd = new FormData();
-  fd.append('file', input.file);
-
-  const url = profileApiUrl(api.profile.avatarUpload());
-
-  try {
-    const res = await fetch(url, { method: 'POST', headers, body: fd });
-    const text = await res.text();
-    if (res.status === 413) {
-      return {
-        success: false,
-        data: null,
-        error: {
-          code: 'DOCUMENT_TOO_LARGE',
-          message: toUserReadableErrorMessage({ code: 'DOCUMENT_TOO_LARGE' }, {
-            code: 'DOCUMENT_TOO_LARGE',
-            fallbackMessage: '头像上传未完成',
-            recoveryMessage: '请缩小图片后重新上传。',
-          }),
-        },
-      };
-    }
-    try {
-      const parsed = JSON.parse(text) as ApiResponse<AdminUserAvatarUploadResponse>;
-      if (parsed.success) {
-        if (retainedRunId) forgetAvatarGenerationRun(retainedRunId);
-        if (retainedCreationKey) forgetAvatarGenerationCreation(retainedCreationKey);
-        return parsed;
-      }
-      const code = parsed.error?.code || 'AVATAR_UPLOAD_FAILED';
-      return {
-        ...parsed,
-        error: {
-          code,
-          message: toUserReadableErrorMessage(parsed.error, {
-            code,
-            fallbackMessage: '头像上传未完成',
-            recoveryMessage: '请检查图片后重新上传。',
-          }),
-        },
-      };
-    } catch {
-      return {
-        success: false,
-        data: null,
-        error: { code: 'INVALID_FORMAT', message: '头像上传未完成，请稍后重新上传。' },
-      } as ApiResponse<AdminUserAvatarUploadResponse>;
-    }
-  } catch (error) {
-    return {
-      success: false,
-      data: null,
-      error: {
-        code: 'NETWORK_ERROR',
-        message: toUserReadableErrorMessage(error, {
-          code: 'NETWORK_ERROR',
-          fallbackMessage: '头像上传未完成',
-          recoveryMessage: '请检查网络后重新上传。',
-        }),
-      },
-    } as ApiResponse<AdminUserAvatarUploadResponse>;
+  const result = await apiMultipartRequest<AdminUserAvatarUploadResponse>(api.profile.avatarUpload(), {
+    createFormData: () => {
+      const formData = new FormData();
+      formData.append('file', input.file);
+      return formData;
+    },
+  });
+  if (result.success) {
+    if (retainedRunId) forgetAvatarGenerationRun(retainedRunId);
+    if (retainedCreationKey) forgetAvatarGenerationCreation(retainedCreationKey);
+    return result;
   }
+  const code = result.error?.code || 'AVATAR_UPLOAD_FAILED';
+  const recoveryMessage = code === 'DOCUMENT_TOO_LARGE'
+    ? '请缩小图片后重新上传。'
+    : code === 'NETWORK_ERROR' || code === 'DISCONNECTED'
+      ? '请检查网络后重新上传。'
+      : code === 'INVALID_FORMAT'
+        ? '请稍后重新上传。'
+        : '请检查图片后重新上传。';
+  return {
+    ...result,
+    error: {
+      code,
+      message: toUserReadableErrorMessage(result.error, {
+        code,
+        fallbackMessage: '头像上传未完成',
+        recoveryMessage,
+      }),
+    },
+  } as ApiResponse<AdminUserAvatarUploadResponse>;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiRequest } from '@/services/real/apiClient';
+import { apiMultipartRequest, apiRequest } from '@/services/real/apiClient';
 import { connectSse } from '@/lib/useSseStream';
 import {
   applyGeneratedMyAvatar,
@@ -10,13 +10,17 @@ import {
   uploadMyAvatar,
 } from '@/services/real/profile';
 
-vi.mock('@/services/real/apiClient', () => ({ apiRequest: vi.fn() }));
+vi.mock('@/services/real/apiClient', () => ({
+  apiRequest: vi.fn(),
+  apiMultipartRequest: vi.fn(),
+}));
 vi.mock('@/lib/useSseStream', () => ({ connectSse: vi.fn() }));
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: { getState: () => ({ token: 'test-token', user: { userId: 'user-1' } }) },
 }));
 
 const mockedApiRequest = vi.mocked(apiRequest);
+const mockedApiMultipartRequest = vi.mocked(apiMultipartRequest);
 const mockedConnectSse = vi.mocked(connectSse);
 const sessionValues = new Map<string, string>();
 const testSessionStorage = {
@@ -599,6 +603,7 @@ describe('generateMyAvatarPreview', () => {
 describe('uploadMyAvatar', () => {
   beforeEach(() => {
     sessionValues.clear();
+    mockedApiMultipartRequest.mockReset();
     vi.stubGlobal('sessionStorage', testSessionStorage);
   });
 
@@ -607,7 +612,11 @@ describe('uploadMyAvatar', () => {
   });
 
   it('把网络层失败映射为带恢复动作的用户可读错误', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    mockedApiMultipartRequest.mockResolvedValue({
+      success: false,
+      data: null,
+      error: { code: 'NETWORK_ERROR', message: '网络连接异常，请检查网络后重试。' },
+    });
 
     const result = await uploadMyAvatar({
       file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
@@ -625,10 +634,11 @@ describe('uploadMyAvatar', () => {
   });
 
   it('把代理或服务端提前返回的 413 归类为头像文件过大', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      status: 413,
-      text: vi.fn().mockResolvedValue('<html>request entity too large</html>'),
-    }));
+    mockedApiMultipartRequest.mockResolvedValue({
+      success: false,
+      data: null,
+      error: { code: 'DOCUMENT_TOO_LARGE', message: '文件超过当前大小限制，请缩小文件后重新上传。' },
+    });
 
     const result = await uploadMyAvatar({
       file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
@@ -642,9 +652,11 @@ describe('uploadMyAvatar', () => {
   });
 
   it('不向用户显示无法解析的 HTTP 响应诊断', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue('<html>Bad Gateway</html>'),
-    }));
+    mockedApiMultipartRequest.mockResolvedValue({
+      success: false,
+      data: null,
+      error: { code: 'INVALID_FORMAT', message: '服务返回格式异常' },
+    });
 
     const result = await uploadMyAvatar({
       file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
@@ -658,14 +670,11 @@ describe('uploadMyAvatar', () => {
 
   it('直接上传新头像成功后清理被替代的生成结果引用', async () => {
     sessionStorage.setItem('prd-admin:avatar-generation-run:user-1', 'run-superseded-by-upload');
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      status: 200,
-      text: vi.fn().mockResolvedValue(JSON.stringify({
-        success: true,
-        data: { userId: 'user-1', avatarFileName: 'uploaded-avatar.png' },
-        error: null,
-      })),
-    }));
+    mockedApiMultipartRequest.mockResolvedValue({
+      success: true,
+      data: { userId: 'user-1', avatarFileName: 'uploaded-avatar.png' },
+      error: null,
+    });
 
     const result = await uploadMyAvatar({
       file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),
@@ -680,14 +689,11 @@ describe('uploadMyAvatar', () => {
       prompt: '已经被手动上传替代',
       idempotencyKey: 'profile-avatar-superseded-creation',
     }));
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      status: 200,
-      text: vi.fn().mockResolvedValue(JSON.stringify({
-        success: true,
-        data: { userId: 'user-1', avatarFileName: 'uploaded-avatar.png' },
-        error: null,
-      })),
-    }));
+    mockedApiMultipartRequest.mockResolvedValue({
+      success: true,
+      data: { userId: 'user-1', avatarFileName: 'uploaded-avatar.png' },
+      error: null,
+    });
 
     const result = await uploadMyAvatar({
       file: new File(['avatar'], 'avatar.png', { type: 'image/png' }),

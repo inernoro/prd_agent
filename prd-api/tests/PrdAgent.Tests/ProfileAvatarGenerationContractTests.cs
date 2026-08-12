@@ -68,7 +68,8 @@ public class ProfileAvatarGenerationContractTests
         var catalogIndexDefinition = catalogSource[
             catalogIndexStart..Math.Min(catalogSource.Length, catalogIndexStart + 600)];
         Assert.Contains("uniq_image_gen_runs_owner_idem", catalogIndexDefinition);
-        Assert.Contains("[],\n  true", catalogIndexDefinition);
+        Assert.DoesNotContain("[],\n  true", catalogIndexDefinition);
+        Assert.Contains("prepareUnique: true", catalogSource);
         Assert.Contains("replaceLegacyUniqueIndex(collectionName, collection, existing, keys, options)", catalogSource);
     }
 
