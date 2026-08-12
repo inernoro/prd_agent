@@ -171,15 +171,51 @@ public class ImageGenRunWorker : BackgroundService
         // 生产作用域为 null——Mongo 的 Eq null 同时匹配「字段为 null」与「字段缺失」，
         // 天然兼容本字段上线前的存量 run（仍由生产 worker 消化，行为不变）。
         // 第一层 fencing 是 ScopedQueued：旧 Worker 只认识 Queued，永远不会看见新任务。
-        // 第二层 fencing 是 DeploymentSlug：即使两个新 Worker 共用 Mongo，也只有同 revision 能认领。
+        // 第二层 fencing 是 DeploymentSlug：正常只允许同 revision 认领；仅头像任务允许当前
+        // revision 在精确队列为空后接管同分支旧 revision，且原子 claim 仍防止重复执行。
         var scoped = await ClaimNextRunByStatusAsync(ImageGenRunStatus.ScopedQueued, ct);
         if (scoped != null) return scoped;
+
+        // 头像编辑任务由浏览器持有 runId 并跨页面恢复；CDS 在入队后滚动到新 commit 时，
+        // 新 Worker 必须接管同项目同分支旧 revision 的排队任务，否则会永久停在 queued。
+        // 只为 profile-avatar 放宽到稳定分支作用域；其他任务仍保留精确 revision fencing。
+        var retiredAvatarRun = await ClaimRetiredAvatarRunAsync(ct);
+        if (retiredAvatarRun != null) return retiredAvatarRun;
 
         // 仅生产作用域继续消化升级前遗留的 Queued。预览环境禁止碰 legacy Queued，
         // 否则仍可能与尚未升级的兄弟分支 Worker 竞争。
         return DeploymentScope.Current == null
             ? await ClaimNextRunByStatusAsync(ImageGenRunStatus.Queued, ct)
             : null;
+    }
+
+    private async Task<ImageGenRun?> ClaimRetiredAvatarRunAsync(CancellationToken ct)
+    {
+        var durableScope = DeploymentScope.CurrentDurable;
+        var currentScope = DeploymentScope.Current;
+        if (string.IsNullOrWhiteSpace(durableScope)
+            || string.IsNullOrWhiteSpace(currentScope))
+        {
+            return null;
+        }
+
+        var scopePattern = new MongoDB.Bson.BsonRegularExpression(
+            $"^{System.Text.RegularExpressions.Regex.Escape(durableScope)}(?:::revision::.+)?$");
+        var filter = Builders<ImageGenRun>.Filter.Eq(x => x.Status, ImageGenRunStatus.ScopedQueued)
+                     & Builders<ImageGenRun>.Filter.Ne(x => x.CancelRequested, true)
+                     & Builders<ImageGenRun>.Filter.Eq(x => x.AppKey, ProfileAvatarGenerationCleanupService.AppKey)
+                     & Builders<ImageGenRun>.Filter.Ne(x => x.DeploymentSlug, currentScope)
+                     & Builders<ImageGenRun>.Filter.Regex(x => x.DeploymentSlug, scopePattern);
+        var update = Builders<ImageGenRun>.Update
+            .Set(x => x.Status, ImageGenRunStatus.Running)
+            .Set(x => x.StartedAt, DateTime.UtcNow)
+            .Set(x => x.DeploymentSlug, currentScope);
+        var options = new FindOneAndUpdateOptions<ImageGenRun, ImageGenRun>
+        {
+            Sort = Builders<ImageGenRun>.Sort.Ascending(x => x.CreatedAt),
+            ReturnDocument = ReturnDocument.After
+        };
+        return await _db.ImageGenRuns.FindOneAndUpdateAsync(filter, update, options, ct);
     }
 
     private async Task<ImageGenRun?> ClaimNextRunByStatusAsync(ImageGenRunStatus pendingStatus, CancellationToken ct)

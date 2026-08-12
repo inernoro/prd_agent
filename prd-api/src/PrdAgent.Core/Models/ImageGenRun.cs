@@ -20,7 +20,8 @@ public class ImageGenRun
 
     /// <summary>
     /// 入队时所在部署的作用域（分支预览 = 项目 + 分支 + commit revision，生产 = null；
-    /// 取值链见 DeploymentScope.Current）。worker 只认领同作用域的 run，
+    /// 取值链见 DeploymentScope.Current）。worker 默认只认领同作用域的 run；头像任务
+    /// 可由同项目同分支的新 revision 接管，并在 claim 时改写为当前精确作用域，
     /// 防止共享 Mongo 下兄弟部署或同分支残留旧 revision 抢单并用旧代码执行
     /// （见 DeploymentScope 注释与 cross-project-isolation 规则通道 8）。
     /// 不设默认值：由入队点显式盖戳，避免存量文档反序列化被误染。

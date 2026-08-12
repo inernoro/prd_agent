@@ -109,6 +109,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],
   ['AVATAR_NOT_FOUND', '头像文件已失效，请重新上传或生成后再试。'],
   ['AVATAR_STORAGE_UNAVAILABLE', '头像存储暂时不可用，原头像未变更，请稍后重试。'],
+  ['TAPD_AUTH_INVALID', 'TAPD 登录凭据已失效，请刷新并替换 TAPD Cookie 后重试。'],
   ['PLAN_TITLE_DUPLICATE', '已存在同名计划，请修改标题后重试。'],
   ['INVALID_STATE', '内容状态已发生变化，请刷新页面确认后重试。'],
   ['STALE_UPDATE', '内容已被其他操作更新，请刷新页面后重新提交。'],

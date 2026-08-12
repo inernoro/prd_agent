@@ -20,4 +20,12 @@ public sealed class DeploymentScopeTests
     {
         Assert.Equal(expected, DeploymentScope.Compose(projectId, branch, revision));
     }
+
+    [Fact]
+    public void Compose_DurableBranchScopeOmitsRevision()
+    {
+        Assert.Equal(
+            "prd-agent::codex/feature",
+            DeploymentScope.Compose("prd-agent", "codex/feature", revision: null));
+    }
 }

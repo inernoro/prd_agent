@@ -106,6 +106,8 @@ public class ProfileAvatarGenerationContractTests
             "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
         var frontend = File.ReadAllText(LocateRepoFile(
             "prd-admin/src/services/real/profile.ts"));
+        var worker = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs"));
 
         Assert.Contains("avatar/generation-runs/{runId}/stream", controller);
         Assert.Contains("RunKinds.ImageGen", controller);
@@ -115,6 +117,9 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("avatarGenerationRunStream", frontend);
         Assert.Contains("SSE 被代理或旧版本服务阻断时才降级轮询", frontend);
         Assert.DoesNotContain("AVATAR_GENERATION_POLL_INTERVAL_MS = 800", frontend);
+        Assert.Contains("ClaimRetiredAvatarRunAsync", worker);
+        Assert.Contains("DeploymentScope.CurrentDurable", worker);
+        Assert.Contains("ProfileAvatarGenerationCleanupService.AppKey", worker);
     }
 
     [Fact]
