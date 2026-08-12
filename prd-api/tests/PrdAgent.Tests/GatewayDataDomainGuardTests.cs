@@ -3189,6 +3189,70 @@ public class GatewayDataDomainGuardTests
         }
     }
 
+    /// <summary>
+    /// 单批导入上限在前后端各有一份。两份漂移的后果很具体：前端默认勾的比后端肯收的多，
+    /// 用户点「导入」必吃 400，而两边单独看都没错（predicate-and-wiring-discipline 形状 3）。
+    ///
+    /// 由 review 抓出：OpenRouter 一次返回四百多个模型，第一版 defaultSelection 全勾，
+    /// 默认路径本身就是坏的——得手动取消几百行才能继续。
+    /// </summary>
+    [Fact]
+    public void 导入上限_前后端必须是同一个数且前端默认选中受它约束()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var web = ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx");
+
+        var serverLimit = System.Text.RegularExpressions.Regex.Match(server, @"MaxImportBatch\s*=\s*(\d+)");
+        var webLimit = System.Text.RegularExpressions.Regex.Match(web, @"MAX_IMPORT_BATCH\s*=\s*(\d+)");
+        Assert.True(serverLimit.Success, "后端的单批导入上限常量不见了");
+        Assert.True(webLimit.Success, "前端没有声明单批导入上限，默认全选会撞后端 400");
+        Assert.Equal(serverLimit.Groups[1].Value, webLimit.Groups[1].Value);
+
+        // 默认选中必须真的截断，而不是只声明了个常量放着不用
+        Assert.Contains("slice(0, MAX_IMPORT_BATCH)", web);
+    }
+
+    /// <summary>
+    /// 批量导入完必须把模型同步进托管默认池——单模型端点一直这么做。
+    /// 漏掉的话模型只是躺在集合里、不进任何池，池路由选不到：
+    /// 用户看到「已导入 N 个」，业务侧却依旧调不通（形状 2）。
+    /// </summary>
+    [Fact]
+    public void 批量导入上游模型后必须同步默认模型池()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var importStart = server.IndexOf("/gw/platforms/{id}/models/import", StringComparison.Ordinal);
+        Assert.True(importStart > 0, "批量导入端点不见了");
+        // 端点体到下一个 MapPost 之前
+        var next = server.IndexOf("app.MapPost(", importStart, StringComparison.Ordinal);
+        var body = next > 0 ? server[importStart..next] : server[importStart..];
+
+        Assert.Contains("EnsureGatewayModelPoolTypesAsync", body);
+        // 同步失败要如实告知，不能吞掉后照报全绿
+        Assert.Contains("PoolSyncFailed", body);
+    }
+
+    /// <summary>
+    /// 「测试连接」的绿灯必须代表「这个 Provider 真能用」，不能只代表「HTTP 是 2xx」。
+    ///
+    /// 地址指到网站首页、前面挡着登录代理、对方是 SPA 全路径 fallback——统统回 200，
+    /// body 却是 HTML。只看状态码就会给出绿灯 + 一个不工作的 Provider，
+    /// 正是这条测试本身要防的那种假象（形状 8：拿不成立的证据当成立）。
+    /// </summary>
+    [Fact]
+    public void 测试连接不得只凭状态码判可达()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var probeStart = server.IndexOf("/gw/platforms/{id}/test", StringComparison.Ordinal);
+        Assert.True(probeStart > 0, "测试连接端点不见了");
+        var next = server.IndexOf("app.MapGet(", probeStart, StringComparison.Ordinal);
+        var body = next > 0 ? server[probeStart..next] : server[probeStart..];
+
+        Assert.Contains("shapeMismatch", body);
+        // 裸的 Reachable = IsSuccessStatusCode 就是事故写法
+        Assert.DoesNotContain("Reachable = resp.IsSuccessStatusCode,", body);
+    }
+
     [Fact]
     public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
     {

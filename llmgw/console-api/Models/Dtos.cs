@@ -1582,4 +1582,10 @@ public sealed class ImportUpstreamModelsResult
     public int Skipped { get; set; }
     public List<string> SkippedModelIds { get; set; } = new();
     public List<string> CreatedModelIds { get; set; } = new();
+
+    /// <summary>默认模型池同步是否失败。true 时模型已入库但不会被池路由选中，前端必须如实告知而不是报全绿。</summary>
+    public bool PoolSyncFailed { get; set; }
+
+    /// <summary>需要额外告诉用户的话（目前只有池同步失败时非空）。</summary>
+    public string? Message { get; set; }
 }

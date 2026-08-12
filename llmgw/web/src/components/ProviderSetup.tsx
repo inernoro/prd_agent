@@ -147,6 +147,9 @@ export function UpstreamModelPicker({
   const visible = onlyNew ? data.items.filter((m) => !m.alreadyImported) : data.items;
   const selectable = visible.filter((m) => !m.alreadyImported);
   const selectedCount = selectable.filter((m) => selected.has(m.modelId)).length;
+  // 用户可以手动继续勾，勾过上限就在按钮上拦住并说清怎么办，别等服务端甩个 400 回来
+  const overBatchLimit = selectedCount > MAX_IMPORT_BATCH;
+  const eligibleCount = data.items.filter((m) => !m.alreadyImported && m.inferredCapabilities.length > 0).length;
 
   function toggle(modelId: string) {
     setSelected((prev) => {
@@ -217,22 +220,42 @@ export function UpstreamModelPicker({
         <Button
           variant="primary"
           size="sm"
-          disabled={busy || selectedCount === 0}
+          disabled={busy || selectedCount === 0 || overBatchLimit}
           onClick={() => onImport(selectable.filter((m) => selected.has(m.modelId)))}
         >
           {busy ? <Spinner size={14} /> : null}
           {busy ? '导入中…' : `导入选中的 ${selectedCount} 个模型`}
         </Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={onCancel}>关闭</Button>
-        <span style={HINT_TEXT}>默认只勾了「未导入且系统认得出用途」的；用途待定的建议先别导，导进来也参与不了模型池选型。</span>
+        {overBatchLimit ? (
+          <span style={HINT_TEXT}>一次最多导入 {MAX_IMPORT_BATCH} 个，请取消一些再导，剩下的分批来。</span>
+        ) : (
+          <span style={HINT_TEXT}>
+            默认只勾了「未导入且系统认得出用途」的；用途待定的建议先别导，导进来也参与不了模型池选型。
+            {eligibleCount > MAX_IMPORT_BATCH ? `这个上游可导的有 ${eligibleCount} 个，超过单批上限，已先勾前 ${MAX_IMPORT_BATCH} 个，导完再来一轮。` : ''}
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-/** 默认选中：未导入 + 推断出了用途。判据独立成函数，便于单测钉住。 */
+/**
+ * 服务端一次最多导入多少个（`MaxImportBatch`，Program.cs）。超出直接 400。
+ * 前端必须知道这个数——不知道就会出现「默认全勾好、一点就失败」。
+ */
+export const MAX_IMPORT_BATCH = 200;
+
+/**
+ * 默认选中：未导入 + 推断出了用途，**并且不超过单批上限**。
+ *
+ * 上限这一截是必须的：OpenRouter 这类聚合方一次返回四百多个模型，全勾上再点导入
+ * 必然撞 400，用户得手动取消几百行才能继续——默认路径本身就是坏的。
+ * 判据独立成函数，便于单测钉住。
+ */
 export function defaultSelection(items: UpstreamModelItem[]): Set<string> {
-  return new Set(items.filter((m) => !m.alreadyImported && m.inferredCapabilities.length > 0).map((m) => m.modelId));
+  const eligible = items.filter((m) => !m.alreadyImported && m.inferredCapabilities.length > 0);
+  return new Set(eligible.slice(0, MAX_IMPORT_BATCH).map((m) => m.modelId));
 }
 
 export function formatPrice(m: UpstreamModelItem): string {

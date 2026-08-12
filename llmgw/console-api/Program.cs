@@ -6607,10 +6607,26 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
                 var arr = System.Text.Json.Nodes.JsonNode.Parse(body)?["data"] as System.Text.Json.Nodes.JsonArray;
                 modelCount = arr?.Count;
             }
-            catch (System.Text.Json.JsonException) { /* 通了就够了，解析不出来不影响结论 */ }
+            catch (System.Text.Json.JsonException) { /* 不是 JSON，留 null，由下面的形状判据处理 */ }
         }
 
-        var (kind, message, nextStep) = status switch
+        // 200 不等于「这个地址能用」。
+        //
+        // 地址填错、前面挡着一层登录代理、或者对方是个 SPA 把所有路径都 fallback 到 index.html——
+        // 这些情况统统回 200，只是 body 是 HTML 或别的 JSON。第一版只要 IsSuccessStatusCode
+        // 就报「密钥被接受」并亮绿灯，而紧接着的「查看模型」必然拿不到东西：
+        // 用户拿到一个绿灯 + 一个不工作的 Provider，正是这条测试要防的那种假象。
+        // 探针打的就是 /models，那就要求它长得像 /models 该有的样子（有 data 数组）。
+        //
+        // Claude 原生协议没有模型列表接口，探针本来就不指望拿到 data，豁免。
+        var expectsModelList = !string.Equals(platformType, "claude", StringComparison.OrdinalIgnoreCase);
+        var shapeMismatch = resp.IsSuccessStatusCode && expectsModelList && modelCount is null;
+
+        var (kind, message, nextStep) = shapeMismatch
+            ? ((string?)"BAD_PAYLOAD_SHAPE",
+               $"上游回了 HTTP {status}，但返回内容不是模型列表（没有 data 数组）",
+               (string?)"多半是 API 地址指错了地方（比如指到了网站首页或登录页）。在高级选项里核对地址，或改用内置预设")
+            : status switch
         {
             >= 200 and < 300 => ((string?)null,
                 modelCount is null ? "上游可达，密钥被接受" : $"上游可达，密钥被接受，返回 {modelCount} 个模型",
@@ -6627,7 +6643,8 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
 
         return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
         {
-            Reachable = resp.IsSuccessStatusCode, HttpStatus = status, ElapsedMs = sw.ElapsedMilliseconds,
+            // 形状不对就不算可达——绿灯必须代表「这个 Provider 真能用」
+            Reachable = resp.IsSuccessStatusCode && !shapeMismatch, HttpStatus = status, ElapsedMs = sw.ElapsedMilliseconds,
             ProbedUrl = probeUrl, ModelCount = modelCount, FailureKind = kind, Message = message, NextStep = nextStep,
         }), jsonOptions);
     }
@@ -6810,6 +6827,28 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         existing.Add(modelId);
         result.Created++;
         result.CreatedModelIds.Add(modelId);
+    }
+
+    // 导入完必须把新模型同步进托管默认池——单模型端点（POST /gw/models）一直这么做。
+    // 漏掉的话，批量导入的模型只是躺在 llmgw_models 里，不进任何池，正常池路由压根选不到它们：
+    // 用户点完「导入 N 个」看到成功提示，业务侧却依旧调不通（predicate-and-wiring-discipline 形状 2）。
+    //
+    // 与单模型端点的差别：那边同步失败会把刚插入的那一条删掉再报错；这里是批量，
+    // 已插入的模型本身是有效配置（用户可以手动加进池），全删掉反而更糟。
+    // 所以如实降级——照常返回创建结果，但把「池没同步上、去哪补」写进响应，不谎报全绿。
+    if (result.Created > 0)
+    {
+        try
+        {
+            await EnsureGatewayModelPoolTypesAsync(
+                gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms,
+                models, platforms, tenantId, internalTenantId, appendModels: true);
+        }
+        catch
+        {
+            result.PoolSyncFailed = true;
+            result.Message = "模型已导入，但默认模型池同步失败，这批模型暂时不会被池路由选中；可在「模型池」页面手动补齐或稍后重试导入。";
+        }
     }
 
     await WriteOperationAuditAsync(

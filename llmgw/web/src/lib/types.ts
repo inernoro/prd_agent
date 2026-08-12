@@ -686,6 +686,9 @@ export type ImportUpstreamModelsResult = {
   skipped: number;
   skippedModelIds: string[];
   createdModelIds: string[];
+  /** 模型已入库但没进默认池：池路由选不到它们，必须如实告知 */
+  poolSyncFailed?: boolean;
+  message?: string;
 };
 
 // ── 模型（无密钥，仅 hasKey）──

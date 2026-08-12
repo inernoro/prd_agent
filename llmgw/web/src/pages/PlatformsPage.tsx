@@ -142,7 +142,9 @@ export function PlatformsPage() {
       setToast(res.error?.message || '导入失败');
       return;
     }
-    setToast(`已导入 ${res.data.created} 个模型${res.data.skipped > 0 ? `，跳过 ${res.data.skipped} 个已存在的` : ''}`);
+    // 池同步失败时后端会如实回传：模型入库了但池路由选不到，不能报成全绿
+    const base = `已导入 ${res.data.created} 个模型${res.data.skipped > 0 ? `，跳过 ${res.data.skipped} 个已存在的` : ''}`;
+    setToast(res.data.poolSyncFailed && res.data.message ? `${base}。${res.data.message}` : base);
     setDiscovery(null);
   }
 
