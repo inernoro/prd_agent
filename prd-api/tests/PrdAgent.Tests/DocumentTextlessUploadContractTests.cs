@@ -37,6 +37,28 @@ public class DocumentTextlessUploadContractTests
     }
 
     [Fact]
+    public void AttachmentDownload_MustReadLocalRelativeUrlsThroughAssetStorage()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs"));
+        var endpointStart = controller.IndexOf(
+            "public async Task<IActionResult> DownloadEntryAttachment",
+            StringComparison.Ordinal);
+        var endpointEnd = controller.IndexOf(
+            "public async Task<IActionResult> CreativePublishEntry",
+            endpointStart,
+            StringComparison.Ordinal);
+        var endpoint = controller[endpointStart..endpointEnd];
+
+        Assert.Contains("TryGetLocalAssetStorageKey", endpoint);
+        Assert.Contains("_assetStorage.TryDownloadBytesAsync(localStorageKey", endpoint);
+        Assert.Contains("EnsureSafeHttpUrlAsync", endpoint);
+        Assert.True(
+            endpoint.IndexOf("TryGetLocalAssetStorageKey", StringComparison.Ordinal)
+            < endpoint.IndexOf("EnsureSafeHttpUrlAsync", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void StableSmoke_MustProveVisibleLiteraryProgressAndThreeImageReferences()
     {
         var imageMaster = File.ReadAllText(LocateRepoFile(

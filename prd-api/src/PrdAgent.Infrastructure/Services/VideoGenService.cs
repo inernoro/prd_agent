@@ -645,34 +645,6 @@ public class VideoGenService : IVideoGenService
                     && task.AppKey == run.AppKey,
             cleanupToken);
 
-        foreach (var artifact in artifacts)
-        {
-            await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
-                _db,
-                $"generated-video:{artifact.Sha256}",
-                cleanupToken);
-            var referenceFilters = new List<FilterDefinition<VideoGenRun>>
-            {
-                fb.Eq(x => x.VideoAssetSha256, artifact.Sha256),
-                fb.Eq("Scenes.Versions.AssetSha256", artifact.Sha256),
-            };
-            foreach (var url in artifact.Urls)
-            {
-                referenceFilters.Add(fb.Eq(x => x.VideoAssetUrl, url));
-                referenceFilters.Add(fb.Eq("Scenes.Versions.VideoUrl", url));
-            }
-            var sharedReferenceCount = await _db.VideoGenRuns.CountDocumentsAsync(
-                fb.Ne(x => x.Id, run.Id) & fb.Or(referenceFilters),
-                cancellationToken: cleanupToken);
-            if (sharedReferenceCount > 0) continue;
-            await _assetStorage.DeleteByShaAsync(
-                artifact.Sha256,
-                cleanupToken,
-                domain: AppDomainPaths.DomainVideoAgent,
-                type: AppDomainPaths.TypeVideo);
-            deletedArtifacts++;
-        }
-
         var projectDeleted = false;
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
         {
@@ -725,6 +697,45 @@ public class VideoGenService : IVideoGenService
                         .Set(item => item.UpdatedAt, DateTime.UtcNow),
                     cancellationToken: cleanupToken);
             }
+        }
+
+        foreach (var artifact in artifacts)
+        {
+            await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                _db,
+                $"generated-video:{artifact.Sha256}",
+                cleanupToken);
+            var referenceFilters = new List<FilterDefinition<VideoGenRun>>
+            {
+                fb.Eq(x => x.VideoAssetSha256, artifact.Sha256),
+                fb.Eq("Scenes.Versions.AssetSha256", artifact.Sha256),
+            };
+            foreach (var url in artifact.Urls)
+            {
+                referenceFilters.Add(fb.Eq(x => x.VideoAssetUrl, url));
+                referenceFilters.Add(fb.Eq("Scenes.Versions.VideoUrl", url));
+            }
+            var sharedReferenceCount = await _db.VideoGenRuns.CountDocumentsAsync(
+                fb.Ne(x => x.Id, run.Id) & fb.Or(referenceFilters),
+                cancellationToken: cleanupToken);
+            var projectReferenceFilters = new List<FilterDefinition<VideoProject>>();
+            foreach (var url in artifact.Urls)
+            {
+                projectReferenceFilters.Add(Builders<VideoProject>.Filter.Eq("TimelineTracks.Clips.AssetUrl", url));
+                projectReferenceFilters.Add(Builders<VideoProject>.Filter.Eq("Assets.Url", url));
+            }
+            var projectReferenceCount = projectReferenceFilters.Count == 0
+                ? 0
+                : await _db.VideoProjects.CountDocumentsAsync(
+                    Builders<VideoProject>.Filter.Or(projectReferenceFilters),
+                    cancellationToken: cleanupToken);
+            if (sharedReferenceCount > 0 || projectReferenceCount > 0) continue;
+            await _assetStorage.DeleteByShaAsync(
+                artifact.Sha256,
+                cleanupToken,
+                domain: AppDomainPaths.DomainVideoAgent,
+                type: AppDomainPaths.TypeVideo);
+            deletedArtifacts++;
         }
 
         // run 自身就是可恢复的删除墓碑。只有项目清理或 LatestRunId 修复成功后才删除它；

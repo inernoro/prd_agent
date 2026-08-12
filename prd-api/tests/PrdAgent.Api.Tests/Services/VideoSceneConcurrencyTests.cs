@@ -59,6 +59,57 @@ public class VideoSceneConcurrencyTests
             AppDomainPaths.TypeVideo), Times.Once);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DeleteCompletedRun_ShouldPreserveArtifactReferencedByProject(
+        bool useTimelineReference)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var project = await service.CreateProjectAsync(
+            "video-agent",
+            test.OwnerId,
+            new CreateVideoProjectRequest { Title = "引用保留测试", SourceMarkdown = "测试" });
+        var sha = new string('b', 64);
+        const string assetUrl = "https://assets.example/video-agent/video/shared.mp4";
+        var run = NewRun("delete-referenced", test.OwnerId, SceneItemStatus.Done);
+        run.ProjectId = project.Id;
+        run.Status = VideoGenRunStatus.Completed;
+        run.VideoAssetUrl = assetUrl;
+        run.VideoAssetSha256 = sha;
+        await test.SaveRunAsync(run);
+
+        if (useTimelineReference)
+        {
+            project.TimelineTracks.First(track => track.Type == VideoTrackType.Video).Clips.Add(
+                new VideoTimelineClip { AssetUrl = assetUrl });
+        }
+        else
+        {
+            project.Assets.Add(new VideoProjectAsset { Url = assetUrl, Name = "共享视频" });
+        }
+        project.LatestRunId = run.Id;
+        await test.Context.VideoProjects.ReplaceOneAsync(item => item.Id == project.Id, project);
+
+        var result = await service.DeleteRunAsync(
+            run.Id,
+            test.OwnerId,
+            deleteEmptyProject: false,
+            appKey: run.AppKey);
+
+        result.ShouldNotBeNull();
+        result.Deleted.ShouldBeTrue();
+        result.ProjectDeleted.ShouldBeFalse();
+        result.ArtifactsDeleted.ShouldBe(0);
+        (await test.Context.VideoProjects.CountDocumentsAsync(item => item.Id == project.Id)).ShouldBe(1);
+        test.AssetStorage.Verify(storage => storage.DeleteByShaAsync(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>()), Times.Never);
+    }
+
     [Fact]
     public async Task ConcurrentQueueRequests_ShouldOnlyTransitionOnce_AndNeverClearAnExistingClaim()
     {

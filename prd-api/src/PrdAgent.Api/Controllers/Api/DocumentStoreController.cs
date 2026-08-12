@@ -72,6 +72,30 @@ public class DocumentStoreController : ControllerBase
 
     private sealed record StoredUploadAsset(StoredAsset Asset, string? StorageKey);
 
+    private static string? TryGetLocalAssetStorageKey(string? url)
+    {
+        var value = (url ?? string.Empty).Trim();
+        const string prefix = "/local-assets/";
+        if (!value.StartsWith(prefix, StringComparison.Ordinal)) return null;
+
+        var encodedKey = value[prefix.Length..];
+        var suffixIndex = encodedKey.IndexOfAny(['?', '#']);
+        if (suffixIndex >= 0) encodedKey = encodedKey[..suffixIndex];
+        try
+        {
+            var segments = encodedKey
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(Uri.UnescapeDataString)
+                .ToArray();
+            if (segments.Length == 0 || segments.Any(segment => segment is "." or "..")) return null;
+            return string.Join('/', segments);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
     private const int ViewDedupWindowMinutes = 30;
 
@@ -3959,11 +3983,19 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
-                var safeUri = await _urlValidator.EnsureSafeHttpUrlAsync(attachment.Url, "文档附件地址", ct);
-                var client = _httpClientFactory.CreateClient("SafeOutbound");
-                using var response = await client.GetAsync(safeUri, HttpCompletionOption.ResponseHeadersRead, ct);
-                if (response.IsSuccessStatusCode)
-                    bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                var localStorageKey = TryGetLocalAssetStorageKey(attachment.Url);
+                if (!string.IsNullOrWhiteSpace(localStorageKey))
+                {
+                    bytes = await _assetStorage.TryDownloadBytesAsync(localStorageKey, ct);
+                }
+                else
+                {
+                    var safeUri = await _urlValidator.EnsureSafeHttpUrlAsync(attachment.Url, "文档附件地址", ct);
+                    var client = _httpClientFactory.CreateClient("SafeOutbound");
+                    using var response = await client.GetAsync(safeUri, HttpCompletionOption.ResponseHeadersRead, ct);
+                    if (response.IsSuccessStatusCode)
+                        bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

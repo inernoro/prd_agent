@@ -88,6 +88,48 @@ public class ImageMasterController : ControllerBase
 
     private string GetAdminId() => this.GetRequiredUserId();
 
+    private async Task<bool> TryDeleteUnreferencedGeneratedImageAsync(
+        string? sha256,
+        CancellationToken ct,
+        IReadOnlyCollection<string>? excludedRunIds = null,
+        IReadOnlyCollection<string>? excludedArtifactIds = null)
+    {
+        var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(sha)) return false;
+
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{sha}",
+            ct);
+
+        var imageAssetFilter = Builders<ImageAsset>.Filter.Or(
+            Builders<ImageAsset>.Filter.Eq(item => item.Sha256, sha),
+            Builders<ImageAsset>.Filter.Eq(item => item.OriginalSha256, sha));
+        if (await _db.ImageAssets.CountDocumentsAsync(imageAssetFilter, cancellationToken: ct) > 0)
+            return false;
+
+        var artifactFilter = Builders<UploadArtifact>.Filter.Eq(item => item.Sha256, sha);
+        if (excludedArtifactIds is { Count: > 0 })
+            artifactFilter &= Builders<UploadArtifact>.Filter.Nin(item => item.Id, excludedArtifactIds);
+        if (await _db.UploadArtifacts.CountDocumentsAsync(artifactFilter, cancellationToken: ct) > 0)
+            return false;
+
+        var runFilter = Builders<ImageGenRun>.Filter.Or(
+            Builders<ImageGenRun>.Filter.Eq(item => item.InitImageAssetSha256, sha),
+            Builders<ImageGenRun>.Filter.Eq("ImageRefs.AssetSha256", sha));
+        if (excludedRunIds is { Count: > 0 })
+            runFilter &= Builders<ImageGenRun>.Filter.Nin(item => item.Id, excludedRunIds);
+        if (await _db.ImageGenRuns.CountDocumentsAsync(runFilter, cancellationToken: ct) > 0)
+            return false;
+
+        await _assetStorage.DeleteByShaAsync(
+            sha,
+            ct,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg);
+        return true;
+    }
+
     private async Task<ImageMasterWorkspace?> GetWorkspaceIfAllowedAsync(string workspaceId, string adminId, CancellationToken ct)
     {
         var wid = (workspaceId ?? string.Empty).Trim();
@@ -410,11 +452,7 @@ public class ImageMasterController : ControllerBase
                 {
                     try
                     {
-                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
-                        if (remain <= 0)
-                        {
-                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        }
+                        await TryDeleteUnreferencedGeneratedImageAsync(a.Sha256, ct);
                     }
                     catch
                     {
@@ -538,18 +576,10 @@ public class ImageMasterController : ControllerBase
         {
             try
             {
-                await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
-                    _db,
-                    $"generated-image:{a.Sha256}",
-                    ct);
-                var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
-                var uploadArtifactRefs = await _db.UploadArtifacts.CountDocumentsAsync(
-                    x => x.Sha256 == a.Sha256,
-                    cancellationToken: ct);
-                if (remain <= 0 && uploadArtifactRefs <= 0)
-                {
-                    await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                }
+                await TryDeleteUnreferencedGeneratedImageAsync(
+                    a.Sha256,
+                    ct,
+                    excludedRunIds: imageRunIds);
             }
             catch
             {
@@ -575,23 +605,11 @@ public class ImageMasterController : ControllerBase
                          .Where(x => !string.IsNullOrWhiteSpace(x))
                          .Distinct(StringComparer.Ordinal))
             {
-                await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
-                    _db,
-                    $"generated-image:{sha}",
-                    ct);
-                var otherArtifactFilter = Builders<UploadArtifact>.Filter.And(
-                    Builders<UploadArtifact>.Filter.Eq(x => x.Sha256, sha),
-                    Builders<UploadArtifact>.Filter.Nin(x => x.Id, runArtifactIds));
-                var otherArtifactRefs = await _db.UploadArtifacts.CountDocumentsAsync(otherArtifactFilter, cancellationToken: ct);
-                var imageAssetRefs = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == sha, cancellationToken: ct);
-                if (otherArtifactRefs == 0 && imageAssetRefs == 0)
-                {
-                    await _assetStorage.DeleteByShaAsync(
-                        sha!,
-                        ct,
-                        domain: AppDomainPaths.DomainVisualAgent,
-                        type: AppDomainPaths.TypeImg);
-                }
+                await TryDeleteUnreferencedGeneratedImageAsync(
+                    sha,
+                    ct,
+                    excludedRunIds: imageRunIds,
+                    excludedArtifactIds: runArtifactIds);
             }
 
             if (runArtifactIds.Length > 0)
@@ -1455,11 +1473,7 @@ public class ImageMasterController : ControllerBase
                     // 若新旧 sha 相同，底层文件仍会被新记录引用，禁止删除物理文件
                     if (!string.Equals(old.Sha256, stored.Sha256, StringComparison.OrdinalIgnoreCase))
                     {
-                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == old.Sha256, cancellationToken: ct);
-                        if (remain <= 0)
-                        {
-                            await _assetStorage.DeleteByShaAsync(old.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        }
+                        await TryDeleteUnreferencedGeneratedImageAsync(old.Sha256, ct);
                     }
                 }
                 catch
@@ -1988,14 +2002,10 @@ public class ImageMasterController : ControllerBase
 
         await _db.ImageAssets.DeleteOneAsync(x => x.Id == aid && x.WorkspaceId == wid, ct);
 
-        // 当 sha 在全库不再被任何 ImageAssets 引用时才删除底层文件
+        // 仅当 sha 不再被资产、上传记录或生图任务引用时才删除底层文件。
         try
         {
-            var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == asset.Sha256, cancellationToken: ct);
-            if (remain <= 0)
-            {
-                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-            }
+            await TryDeleteUnreferencedGeneratedImageAsync(asset.Sha256, ct);
         }
         catch
         {
@@ -2270,11 +2280,10 @@ public class ImageMasterController : ControllerBase
 
         await _db.ImageAssets.DeleteOneAsync(x => x.Id == aid && x.OwnerUserId == adminId, ct);
 
-        // 当 sha 在全库不再被任何 ImageAssets 引用时才删除底层文件，避免误删共享内容。
+        // 仅当 sha 不再被任何持久化记录引用时才删除底层文件，避免误删共享内容。
         try
         {
-            var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == asset.Sha256, cancellationToken: ct);
-            if (remain <= 0)
+            if (await TryDeleteUnreferencedGeneratedImageAsync(asset.Sha256, ct))
             {
                 _logger.LogInformation(
                     "ImageMaster deleting physical asset. adminId={AdminId} assetId={AssetId} sha={Sha} url={Url} domain={Domain} type={Type}",
@@ -2284,7 +2293,6 @@ public class ImageMasterController : ControllerBase
                     asset.Url,
                     AppDomainPaths.DomainVisualAgent,
                     AppDomainPaths.TypeImg);
-                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
             }
         }
         catch (Exception ex)
@@ -2720,11 +2728,7 @@ public class ImageMasterController : ControllerBase
                 {
                     try
                     {
-                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: CancellationToken.None);
-                        if (remain <= 0)
-                        {
-                            await _assetStorage.DeleteByShaAsync(a.Sha256, CancellationToken.None, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        }
+                        await TryDeleteUnreferencedGeneratedImageAsync(a.Sha256, CancellationToken.None);
                     }
                     catch
                     {

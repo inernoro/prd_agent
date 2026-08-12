@@ -45,6 +45,9 @@ public class GeneratedVideoCleanupContractTests
         Assert.Contains("GetAdminId()", controller);
         Assert.Contains("DeleteByShaAsync", service);
         Assert.Contains("sharedReferenceCount", service);
+        Assert.Contains("projectReferenceCount", service);
+        Assert.Contains("TimelineTracks.Clips.AssetUrl", service);
+        Assert.Contains("Assets.Url", service);
         Assert.Contains("DeletionRequestedAt", service);
         Assert.Contains("DeletionArtifacts", service);
         Assert.Contains("VideoAssetMutationLease.AcquireAsync", service);
