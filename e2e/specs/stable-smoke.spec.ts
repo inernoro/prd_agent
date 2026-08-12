@@ -1574,7 +1574,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           response.request().method() === 'GET'
           && new URL(response.url()).pathname === `/api/video-agent/runs/${encodeURIComponent(runId)}/download`
         )),
-        page.waitForEvent('download'),
+        // 页面会先完整读取 MP4 为 Blob，再触发浏览器下载事件；真实视频不能沿用 10 秒默认时限。
+        page.waitForEvent('download', { timeout: 90_000 }),
         downloadButton.click(),
       ]);
       expect(downloadResponse.ok(), '视频下载端点必须成功返回').toBe(true);
