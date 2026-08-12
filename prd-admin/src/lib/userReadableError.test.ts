@@ -46,6 +46,19 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('文件格式不受支持，请更换文件后重试。');
   });
 
+  it.each([
+    ['文档标题不能为空', '文档标题不能为空，请检查文件后重新上传。'],
+    ['文档标题最长 200 字符', '文档标题最长 200 字符，请检查文件后重新上传。'],
+    ['请选择要上传的文件', '请选择要上传的文件'],
+  ])('INVALID_FORMAT 保留可直接纠正的字段校验：%s', (backendMessage, expected) => {
+    const message = toUserReadableErrorMessage(
+      { code: 'INVALID_FORMAT', message: backendMessage },
+      options,
+    );
+
+    expect(message).toBe(expected);
+  });
+
   it('权限不足时提示联系管理员而不是要求重新登录', () => {
     const message = toUserReadableErrorMessage(
       { code: 'PERMISSION_DENIED', message: 'forbidden' },

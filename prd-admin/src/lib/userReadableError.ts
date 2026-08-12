@@ -168,6 +168,15 @@ function messageContainsRecovery(message: string): boolean {
   return RECOVERY_WORDS.some((word) => message.includes(word));
 }
 
+function isActionableInvalidFormatMessage(message: string, code: string): boolean {
+  if (code.trim().toUpperCase() !== 'INVALID_FORMAT') return false;
+  // INVALID_FORMAT 是历史通用校验码，只保留不含技术标识、能直接指出输入问题的短中文提示。
+  // “解析失败 / 服务异常 / 内部处理”等结果仍交给统一兜底，避免泄漏实现细节。
+  if (/[A-Za-z]/u.test(message)) return false;
+  if (/(?:服务|内部|上游|响应|返回格式|处理失败|解析失败|异常|负责人)/u.test(message)) return false;
+  return /(?:不能为空|不能同时为空|不能超过|不得超过|最长|长度|过长|过大|至少|最多|仅支持|不支持|格式不正确|格式无效|不合法|无效|请选择|请上传|请提供|请填写|缺少|必须|不允许|未选择|不存在)/u.test(message);
+}
+
 function isSafeUserMessage(message: string, code: string): boolean {
   const text = message.trim();
   const normalizedCode = code.trim().toUpperCase();
@@ -193,6 +202,7 @@ function isSafeUserMessage(message: string, code: string): boolean {
   // 这样新增端点不会被通用输入提示覆盖，同时仍禁止透传异常和上游原文。
   return isExplicitlyAllowed
     || isStructuredBusinessMessage
+    || isActionableInvalidFormatMessage(text, normalizedCode)
     || (!isRegisteredCode
       && isStableContractCode
       && !containsUnregisteredTechnicalIdentifier
