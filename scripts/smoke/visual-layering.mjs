@@ -478,16 +478,44 @@ async function main() {
         }
       }
 
-      // 等第二轮真的出结果
+      /**
+       * 等第二轮真的出结果——只看**这一组自己**的图层状态。
+       *
+       * 旧写法读整页文本，命中「覆盖 X%」就算跑完。但那串文字第一组也有：真机实测
+       * （2026-08-12 第 4 次跑）第二组只落了 1 块占位卡、卡在 running，这条判据照样
+       * 判绿，靠的是第一组的面板行。一个不会红的证据比没有证据更糟，所以改成按
+       * data-frame-id 圈定本组，要求本组至少 2 块、且没有一块还在 running。
+       */
+      const liveGroupState = async () => (liveFrameId ? page.evaluate((fid) => {
+        const items = [...document.querySelectorAll('[data-canvas-key]')]
+          .filter((el) => el.getAttribute('data-frame-id') === fid);
+        const statusOf = (el) => el.getAttribute('data-layer-status') || '';
+        return {
+          total: items.length,
+          done: items.filter((el) => statusOf(el) === 'done').length,
+          running: items.filter((el) => statusOf(el) === 'running').length,
+          error: items.filter((el) => statusOf(el) === 'error').length,
+        };
+      }, liveFrameId) : null);
       const until = Date.now() + 480000;
       let second = false;
+      let lastState = null;
       while (Date.now() < until) {
-        const body = await page.evaluate(() => document.body.innerText);
-        if (/覆盖\s*[\d.]+%|覆盖 不足/.test(body) && !/生成中/.test(body)) { second = true; break; }
+        lastState = await liveGroupState();
+        if (lastState) {
+          if (lastState.total >= 2 && lastState.running === 0) { second = lastState.done === lastState.total; break; }
+        } else {
+          // 连新 Frame 都没认出来时退回整页文本判断，并在 detail 里说明证明力较弱。
+          const body = await page.evaluate(() => document.body.innerText);
+          if (/覆盖\s*[\d.]+%|覆盖 不足/.test(body) && !/生成中/.test(body)) { second = true; break; }
+        }
         await page.waitForTimeout(5000);
       }
       await shot(page, second ? 'second-split' : 'second-split-timeout');
-      check('第二次分层能跑完并出结果', second);
+      check('第二次分层能跑完并出结果', second,
+        lastState
+          ? `本组 ${lastState.total} 块：done ${lastState.done} / running ${lastState.running} / error ${lastState.error}`
+          : '（未认出新 Frame，退回整页文本判断，证明力弱）');
 
       if (midSplitDrag) {
         const final = await frameOrigin(midSplitDrag.frameId);
