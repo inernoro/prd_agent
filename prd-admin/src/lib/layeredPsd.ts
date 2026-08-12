@@ -72,9 +72,13 @@ export async function decomposeImageToLayers(input: {
   const layerCount = Math.max(1, Math.min(10, Math.round(input.layerCount ?? 4)));
   const sourceSha256 = String(input.sourceSha256 ?? '').trim();
   const sourceUrl = /^https:\/\//i.test(input.source) ? input.source : '';
-  if (!sourceSha256 && !sourceUrl) {
-    // 异步任务由 Worker 在后台读取原图，没有前端这次请求的 body 可用，
-    // 因此原图必须已经落盘（有 sha256）或有可直取的 URL。
+  if (!sourceSha256) {
+    // 异步任务由 Worker 在后台读取原图，没有前端这次请求的 body 可用，因此原图必须已经落盘。
+    // 这里**只认 sha**：Worker 的参考图加载对没有 sha 的条目是直接 continue 跳过的
+    //（ImageGenRunWorker「if (IsNullOrWhiteSpace(resolvedRef.AssetSha256)) continue」），
+    // 所以「有 https 直链就能拆」这条兜底从来没成立过——放行只会让用户在几十秒后
+    // 收到一句没头没尾的 IMAGE_REF_UNAVAILABLE，而不是当场知道「等图同步完再来」。
+    // 不假装拥有并不具备的能力（.claude/rules/no-rootless-tree.md），Codex PR #1363 P2。
     return failed('INVALID_FORMAT', '原图尚未保存，请先等待图片同步完成再分层');
   }
 
@@ -193,7 +197,6 @@ async function collectLayeringRunImages(input: {
       // 流断了才走到这里：补回来的图层同样要点亮画布，否则占位卡会一直空着。
       if (isNewSlot) input.onLayer?.({ index: slot, url });
     }
-    if (collected.size > 0) return succeeded({ images: sortedImages(collected) });
     const status = res.data.run.status;
     if (status === 'Failed' || status === 'Cancelled') {
       const failedItem = (res.data.items ?? []).find((item) => item.errorMessage);
@@ -201,6 +204,15 @@ async function collectLayeringRunImages(input: {
         'RUN_FAILED',
         status === 'Cancelled' ? '分层已取消' : (failedItem?.errorMessage || streamFailure || '分层失败'),
       );
+    }
+    // 只有跑到终态才认「就这些了」。
+    // 原来是「捞到几张就算成功」，而 SSE 重试耗尽时 run 完全可能还是 Queued/Running：
+    // 调用方据此判定完成、清掉剩下的占位卡、也不再跟这条 run，于是 Worker 随后落的
+    // 图层永远到不了画布——用户看到的是「说好 4 层只出了 2 层，刷新也回不来」
+    // （Codex PR #1363 P1）。模型少给几层是另一回事：那时 run 是 Completed，照收。
+    if (status === 'Completed') {
+      if (collected.size > 0) return succeeded({ images: sortedImages(collected) });
+      return failed('RUN_FAILED', streamFailure || '分层完成但没有返回任何图层');
     }
     return failed('RUN_PENDING', '分层仍在后台进行，稍后可在画布中查看结果');
   }
@@ -639,7 +651,11 @@ export async function checkLayerSourcesReadable(input: {
     const url = resolveReadableImageUrl(target.source, target.sha256);
     if (!url) return { name: target.name, url, ok: false, detail: '没有可读取的地址' };
     try {
-      const response = await fetch(url, { mode: 'cors' });
+      // 必须带凭据：有 sha 时 resolveReadableImageUrl 返回的是 [Authorize] 的同源资产端点，
+      // 裸 fetch 拿 401，于是「导出前自检」会把每一层都报成不可读，而真正的导出路径
+      // （loadImageData）用了 readableImageFetchHeaders，其实是好的——自检比被检的还不准
+      // （Codex PR #1363 P2）。三条读图路必须走同一个取头函数，守卫见 semanticLayerWiringGuard。
+      const response = await fetch(url, { mode: 'cors', headers: readableImageFetchHeaders(url) });
       if (!response.ok) return { name: target.name, url, ok: false, detail: `HTTP ${response.status}` };
       const type = response.headers.get('content-type') || '';
       if (type && !type.startsWith('image/')) {

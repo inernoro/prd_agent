@@ -675,8 +675,13 @@ async function main() {
         const psdLayers = group?.children ?? [];
         const names = new Set(psdLayers.map((l) => String(l.name ?? '')));
         const sized = psdLayers.filter((l) => (l.right ?? 0) - (l.left ?? 0) > 0 && (l.bottom ?? 0) - (l.top ?? 0) > 0);
-        const fullCanvas = psdLayers.filter((l) => (l.right ?? 0) - (l.left ?? 0) >= (parsed?.width ?? 0)
-          && (l.bottom ?? 0) - (l.top ?? 0) >= (parsed?.height ?? 0));
+        // 「满幅」要留容差：拉伸过的层因为边缘一两列近透明，包围盒会算成 1022x1022，
+        // 而判据写成 >= 1024 就把它当成「有界」放过去了。真机实测正是这样漏掉一条 P1：
+        // 覆盖 14% 的层在 PSD 里占 1021x1024，冒烟却报「满幅 2」判绿（Codex PR #1363 P1）。
+        // 判据太窄的典型形态——差一像素就翻转结论（.claude/rules 形状 1）。
+        const nearlyFull = (span, full) => full > 0 && span >= full * 0.98;
+        const fullCanvas = psdLayers.filter((l) => nearlyFull((l.right ?? 0) - (l.left ?? 0), parsed?.width ?? 0)
+          && nearlyFull((l.bottom ?? 0) - (l.top ?? 0), parsed?.height ?? 0));
         check('导出的 PSD 能被反读回来（不是只有个文件头）', !!parsed, parseError);
         check('PSD 是真分层：可编辑图层组里有多层',
           psdLayers.length >= 2, `层数 ${psdLayers.length}`);
@@ -886,8 +891,10 @@ async function main() {
         const group = (parsed?.children ?? []).find((child) => Array.isArray(child.children));
         const kids = group?.children ?? [];
         // 每个元素一层，且各自带自己的包围盒——不是每层都铺满整张画布。
+        // 同上：留 2% 容差，别让 1022/1024 这种「其实就是满幅」的读数冒充「有界」。
+        const smallerThan = (span, full) => full > 0 && span < full * 0.98;
         const bounded = kids.filter((l) => (l.right ?? 0) - (l.left ?? 0) > 0
-          && ((l.right - l.left) < (parsed.width ?? 0) || (l.bottom - l.top) < (parsed.height ?? 0)));
+          && (smallerThan(l.right - l.left, parsed.width ?? 0) || smallerThan(l.bottom - l.top, parsed.height ?? 0)));
         check('多选导出的 PSD 能反读且是真分层', kids.length >= 2, `层数 ${kids.length}`);
         check('多选 PSD 每层各自带包围盒（不是层层满幅）',
           bounded.length >= Math.max(1, kids.length - 1),

@@ -209,6 +209,43 @@ describe('读图必须带登录凭据', () => {
   it('只给同源地址加 Bearer，跨域外链不许带凭据', () => {
     expect(psd).toMatch(/if \(!sameOrigin\) return \{\};/);
   });
+
+  it('【关键】三条读图路一条都不许漏掉取头函数', () => {
+    // 原来只守住 loadImageData 与内容判定两条，导出前自检那条是裸 fetch，
+    // 于是自检对每一层都报 401 不可读，而真正的导出其实是好的——自检比被检的还不准
+    // （Codex PR #1363 P2）。判据改为「本文件里所有 fetch 都带 readableImageFetchHeaders」，
+    // 这样以后新增第四条读图路漏了也会红（形状 3：判据分裂后各自漂移）。
+    const bare = psd.split('\n').filter((line) => /\bfetch\(/.test(line) && !/readableImageFetchHeaders/.test(line));
+    expect(bare, `这些 fetch 没带凭据：\n${bare.join('\n')}`).toEqual([]);
+  });
+});
+
+describe('分层导出取满幅原件', () => {
+  const tab = read(TAB);
+
+  it('【关键】导出用满幅版，不是画布上那张裁剪版', () => {
+    // 裁剪是给画布用的（好抓好拖）；导出链路按原图尺寸对齐叠放，喂裁剪版会被
+    // 拉伸铺满整张画布。实测：覆盖 14% 的层在 PSD 里占到 1021x1024（Codex PR #1363 P1）。
+    expect(tab).toMatch(/source: layer\.originalSrc \|\| layer\.src/);
+    expect(tab).toMatch(/sha256: layer\.originalSha256 \|\| layer\.sha256/);
+    // 裁剪时必须把满幅原件留下来，否则上面两行取到的还是裁剪版。
+    expect(tab).toMatch(/originalSrc: asset\.url/);
+    expect(tab).toMatch(/originalSha256: asset\.sha256/);
+    // 还要落盘：不存的话刷新之后导出悄悄退回错的那版（snapshot-fallback）。
+    // 这里不套用「数出现次数」那套启发式——持久化键 layerOriginalSrc 与运行时字段
+    // originalSrc 名字不一样，计数会把「写了也读了」误判成漏读。直接分别断言两侧。
+    const persist = read(PERSIST);
+    expect(persist).toMatch(/layerOriginalSrc: it\.originalSrc/);
+    expect(persist).toMatch(/layerOriginalSha256: it\.originalSha256/);
+    expect(persist).toMatch(/originalSrc: typeof ext\.layerOriginalSrc === 'string'/);
+    expect(persist).toMatch(/originalSha256: typeof ext\.layerOriginalSha256 === 'string'/);
+  });
+
+  it('【关键】编辑产物要继承 frameId，否则它不算 Frame 成员', () => {
+    // 编组身份只认 frameId（layerGroupId 兜底已去掉，否则解组后刷新会复活）。
+    // 少带这一个字段，编辑产物在画布上看得见，Frame 导出与包围盒却仍按原图层算。
+    expect(tab).toMatch(/frameId: sourceItem\.frameId,\s*\n\s*layerGroupId: sourceItem\.layerGroupId/);
+  });
 });
 
 describe('画布持久化只许有一份实现', () => {

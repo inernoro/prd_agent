@@ -256,11 +256,17 @@ public class ImageGenRunWorker : BackgroundService
         }
 
         // 统一限制：最多 20 张
+        // 分层是例外：它的 Count 是「拆几层」而不是「生成几张」，上限与网关一致是 10。
+        // 按普通生图的 5 夹一刀，请求 6-10 层时 run.Total 会被改写成 5，而每落一层
+        // Done 就 +1，最终出现 Total=5 / Done=8 这种自相矛盾的记录，runStart.total
+        // 推给前端的分母也是错的（Codex PR #1363 P2）。
+        var isLayering = IsLayeringRun(run);
         var total = 0;
         for (var i = 0; i < items.Count; i++)
         {
-            var c = items[i].Count <= 0 ? 1 : items[i].Count;
-            if (c > 5) c = 5;
+            var c = isLayering
+                ? ResolveLayerCount(items[i])
+                : (items[i].Count <= 0 ? 1 : Math.Min(5, items[i].Count));
             total += c;
         }
         if (total > 20)
@@ -869,7 +875,11 @@ public class ImageGenRunWorker : BackgroundService
 
         // 兜底：失败/取消时把对应画布占位从 running 翻成 error（成功路径已由 TryPatchWorkspaceCanvasAsync 回填）。
         // 否则后端失败但画布元素永远停在 running，前端"预计 1024×1024"占位永久转圈，且看门狗/对账之外没有第二道闸。
+        // 分层同样排除：它的 TargetCanvasKey 是原图，失败时把原图翻成 error 比不翻更糟
+        // （用户会看到那颗完好的西瓜变成一个红色失败卡）。分层自己的占位由前端按
+        // {groupId}_layer_N 翻错，见 decomposeImageIntoFrame 的失败分支。
         if (nextStatus is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled
+            && !IsLayeringRun(run)
             && !string.IsNullOrWhiteSpace(run.WorkspaceId)
             && !string.IsNullOrWhiteSpace(run.TargetCanvasKey))
         {
@@ -1326,6 +1336,14 @@ public class ImageGenRunWorker : BackgroundService
 
     private async Task TryPatchWorkspaceCanvasAsync(ImageGenRun run, ImageAsset asset, CancellationToken ct)
     {
+        // 分层没有「一个目标元素等着被回填」这回事。
+        // 它的 TargetCanvasKey 指的是**原图**（幂等键与对账都要认它），而产物是 N 个新图层，
+        // 由前端按 {groupId}_layer_N 自己落位。若照常回填，第一层就会把画布上持久化的原图
+        // 替换成那一层——前端靠随后的整画布保存把它盖回去，所以界面上看不出来；但只要标签页
+        // 在防抖保存之前关掉，重新打开就会发现「那颗没被切过的西瓜」不见了。
+        // 这正违反本功能的核心不变量：原图必须原封不动（Codex PR #1363 P1）。
+        if (IsLayeringRun(run)) return;
+
         var wid = (run.WorkspaceId ?? string.Empty).Trim();
         var key = (run.TargetCanvasKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(key)) return;

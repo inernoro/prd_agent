@@ -2543,6 +2543,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     sha256: trimmedAsset.sha256,
                     naturalW: trimmedAsset.width,
                     naturalH: trimmedAsset.height,
+                    // 满幅原件留一份：画布上要的是裁好的小块（好抓、好拖），
+                    // 但导出要的是满幅——PSD 与合成 PNG 把每层按原图尺寸对齐叠放，
+                    // 喂裁剪版进去会被拉伸铺满整张画布（Codex PR #1363 P1，实测
+                    // 覆盖 14% 的那层在 PSD 里占到 1021x1024）。
+                    // buildLayeredPsdDocument 本来就会按 alpha 包围盒把每层裁紧，
+                    // 所以喂满幅既位置正确、每层又仍是紧包围盒，两头都不亏。
+                    originalSrc: asset.url,
+                    originalSha256: asset.sha256,
                   }
                 : {}),
               x: placed.x,
@@ -2985,8 +2993,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       .filter((layer) => !!layer.src)
       .map((layer, index) => ({
         name: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
-        source: layer.src,
-        sha256: layer.sha256 || layer.originalSha256 || null,
+        // 导出取**满幅**那一版：裁剪版是给画布用的，导出链路按原图尺寸对齐叠放，
+        // 喂裁剪版会被拉伸铺满（Codex PR #1363 P1）。没裁过的层两者是同一个值。
+        source: layer.originalSrc || layer.src,
+        sha256: layer.originalSha256 || layer.sha256 || null,
         opacity: layer.layerOpacity,
         hidden: layer.layerHidden === true,
       }));
@@ -5196,6 +5206,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           // 这样生成还在跑或失败时（src 为空）导出会自动回落到原图层。
           ...(sourceItem.layerRole === 'layer' && sourceItem.layerGroupId
             ? {
+                // frameId 也要继承：编组身份现在只认 frameId（layerGroupId 的兜底已被去掉，
+                // 否则解组后刷新 Frame 会复活）。少带这一个字段，编辑产物就不算 Frame 成员——
+                // 画布上看得见，Frame 导出与包围盒却仍按原图层算，编辑结果静默丢失；
+                // 而且新记录带着 frameMigrated 落盘，读回时会被当成「用户主动解过组」
+                // 而不是「漏了」（Codex PR #1363 P1）。
+                frameId: sourceItem.frameId,
                 layerGroupId: sourceItem.layerGroupId,
                 layerSourceKey: sourceItem.layerSourceKey,
                 layerIndex: sourceItem.layerIndex,
