@@ -433,8 +433,15 @@ public sealed class DocumentRecordingArchiveWorkerTests
         const string historicalOwner = "codex/retired-preview";
         const string activeOwner = "codex/active-preview";
         const string currentOwner = "prd-agent:production::main";
+        var historicalCreatedAt = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        var adoptionCutoff = historicalCreatedAt.AddDays(1);
+        var historicalSession = Session(
+            "historical-owner-session",
+            historicalOwner,
+            DocumentRecordingArchiveStatus.Pending);
+        historicalSession.CreatedAt = historicalCreatedAt;
         await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
-            Session("historical-owner-session", historicalOwner, DocumentRecordingArchiveStatus.Pending));
+            historicalSession);
         await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
             Session("active-owner-session", activeOwner, DocumentRecordingArchiveStatus.Pending));
 
@@ -455,7 +462,8 @@ public sealed class DocumentRecordingArchiveWorkerTests
             DateTime.UtcNow,
             CancellationToken.None,
             [currentOwner, "main"],
-            retiredLegacyOwnerIds: [historicalOwner]);
+            retiredLegacyOwnerIds: [historicalOwner],
+            legacyOwnerCreatedBeforeUtc: adoptionCutoff);
 
         productionClaim.ShouldNotBeNull();
         productionClaim!.OwnerInstanceId.ShouldBe(currentOwner);

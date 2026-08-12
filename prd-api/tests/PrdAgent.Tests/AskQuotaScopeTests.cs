@@ -64,7 +64,8 @@ public class AskQuotaClientIpGuardTests
     public void 匿名配额必须用防滥用IP而不是统计IP()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))
+                           && !File.Exists(Path.Combine(dir.FullName, ".git")))
             dir = dir.Parent;
         Assert.NotNull(dir); // 找不到仓库根就让用例红，而不是静默跳过
 
@@ -91,7 +92,8 @@ public class AskCollectionGateWiringGuardTests
     public void 提问流端点必须在执行前挡掉合集分享()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))
+                           && !File.Exists(Path.Combine(dir.FullName, ".git")))
             dir = dir.Parent;
         Assert.NotNull(dir);
 

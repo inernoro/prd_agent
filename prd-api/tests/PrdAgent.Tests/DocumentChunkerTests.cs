@@ -120,7 +120,8 @@ public class DocumentChunkerTests
     private static string LocateSource(string relative)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))
+                           && !File.Exists(Path.Combine(dir.FullName, ".git")))
             dir = dir.Parent;
         Assert.NotNull(dir); // 找不到仓库根就让用例红，而不是静默跳过
         var path = Path.Combine(dir!.FullName, relative.Replace('/', Path.DirectorySeparatorChar));

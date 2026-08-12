@@ -268,6 +268,8 @@
 | fix | stable-smoke | 正式环境只读健康检查改用无截图功能归档合同，不再误触 L2 视觉证据门禁 |
 | fix | prd-admin | 米多星球 SSO 绑定重复时保留联系管理员的恢复动作 |
 | test | prd-admin/stable-smoke | 增加 SSO 重复绑定与正式只读无截图归档回归覆盖 |
+| test | prd-api | 修复网关字段转发守卫的注释解析误报，并补齐历史归档接管用例的时间授权边界 |
+| test | prd-api | 源码守卫兼容普通仓库与 Git worktree 两种元数据形态，恢复本地完整回归能力 |
 | fix | stable-smoke | 正式环境写入门禁要求 CDS 全部必测用例均有通过证据，缺项时保持只读 |
 | fix | prd-admin | 补齐米多星球 SSO 未配置与绑定占用的管理员恢复动作 |
 | test | prd-admin/stable-smoke | 增加 CDS 必测覆盖缺口与米多绑定错误回归覆盖 |
