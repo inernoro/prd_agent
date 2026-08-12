@@ -494,6 +494,7 @@ public class GatewayDataDomainGuardTests
         var accessRules = ReadRepoFile("llmgw/web/src/lib/access.ts");
         var changePasswordPage = ReadRepoFile("llmgw/web/src/pages/ChangePasswordPage.tsx");
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var localPasswordPolicy = ReadRepoFile("llmgw/console-api/Auth/LocalPasswordPolicy.cs");
         var membershipPolicy = ReadRepoFile("llmgw/console-api/Organization/MembershipPolicy.cs");
 
         Assert.Contains("export function createMember", webApi);
@@ -518,9 +519,16 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("tenantId:", organizationPage);
         Assert.Contains("新口令至少 12 位", changePasswordPage);
         Assert.DoesNotContain("admin/admin", changePasswordPage);
-        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
-        Assert.Contains("\"WEAK_PASSWORD\", \"新口令至少 12 位\"", consoleProgram);
+        // 口令长度下限改由 LocalPasswordPolicy 单点权威（改密、设置口令、登录名校验
+        // 三处共用），Program.cs 不再内联那个 12。判据跟着改成「走没走共享判定源 +
+        // 那个源上的值是不是 12」——比原来钉死一行字面量更强：既挡住有人把下限改小，
+        // 也挡住有人绕开策略类再写一遍自己的判断（.claude/rules 形状 3/4a）。
+        Assert.Contains("LocalPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
+        Assert.Contains("\"WEAK_PASSWORD\"", consoleProgram);
+        Assert.Contains("新口令至少 {LocalPasswordPolicy.MinPasswordLength} 位", consoleProgram);
+        Assert.Contains("public const int MinPasswordLength = GwPasswordPolicy.MinimumLength;", localPasswordPolicy);
         Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
+        Assert.Contains("PASSWORD_MANAGED_BY_DEPLOYMENT", consoleProgram);
         Assert.Contains("body.ExpectedVersion != membership.Version", consoleProgram);
         Assert.Contains("x.Version == previousVersion", consoleProgram);
         Assert.Contains("DEVELOPER_TEAM_REQUIRED", consoleProgram);
@@ -548,12 +556,15 @@ public class GatewayDataDomainGuardTests
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var passwordPolicy = ReadRepoFile("llmgw/console-api/Auth/GwPasswordPolicy.cs");
+        var localPasswordPolicy = ReadRepoFile("llmgw/console-api/Auth/LocalPasswordPolicy.cs");
 
         Assert.Contains("public const int MinimumLength = 12", passwordPolicy);
         Assert.Contains("Environment.GetEnvironmentVariable(\"LLMGW_ADMIN_PASSWORD\")?.Trim()", consoleProgram);
         Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd)", consoleProgram);
-        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
+        Assert.Contains("LocalPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
         Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
+        Assert.Contains("public const int MinPasswordLength = GwPasswordPolicy.MinimumLength;", localPasswordPolicy);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(password)", localPasswordPolicy);
         Assert.DoesNotContain("envAuthorityAdmin && (string.IsNullOrWhiteSpace(adminBootstrapPwd)", consoleProgram);
         Assert.DoesNotContain("adminBootstrapPwd!.Trim()", consoleProgram);
     }
