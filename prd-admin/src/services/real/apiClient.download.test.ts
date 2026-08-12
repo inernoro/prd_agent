@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiDownload } from './apiClient';
+import { apiDownload, resolveApiUrl } from './apiClient';
 
 const { authState } = vi.hoisted(() => ({
   authState: {} as Record<string, unknown>,
@@ -14,6 +14,13 @@ describe('apiDownload', () => {
     for (const key of Object.keys(authState)) delete authState[key];
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it('原生下载地址复用带路径前缀的独立 API 基址', () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.test/platform/');
+
+    expect(resolveApiUrl('/api/video-download'))
+      .toBe('https://api.example.test/platform/api/video-download');
   });
 
   it('访问令牌过期时刷新一次并用新令牌重试下载', async () => {

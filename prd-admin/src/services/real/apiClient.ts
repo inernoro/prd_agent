@@ -17,6 +17,11 @@ function getApiBaseUrl() {
   return raw.trim().replace(/\/+$/, '');
 }
 
+/** 为原生表单等不能走 apiRequest 的浏览器请求复用同一 API 基址。 */
+export function resolveApiUrl(path: string): string {
+  return joinUrl(getApiBaseUrl(), path);
+}
+
 /**
  * 根据当前页面 URL 路径前缀，自动识别所属应用身份。
  * 用于在每次 API 请求中设置 X-App-Name 头，便于后端按应用维度做日志/统计/权限区分。
@@ -201,7 +206,7 @@ async function doRefreshAdminToken(): Promise<boolean> {
 
   if (!authStore.isAuthenticated || !token || !refreshToken || !sessionKey || !userId) return false;
 
-  const url = joinUrl(getApiBaseUrl(), api.auth.refresh());
+  const url = resolveApiUrl(api.auth.refresh());
   const body = JSON.stringify({
     refreshToken,
     userId,
@@ -288,7 +293,7 @@ async function apiMultipartRequestInner<T>(
 
   let response: Response;
   try {
-    response = await fetch(joinUrl(getApiBaseUrl(), path), {
+    response = await fetch(resolveApiUrl(path), {
       method: options.method ?? 'POST',
       headers,
       body: options.createFormData(),
@@ -387,7 +392,7 @@ export async function apiDownload(
 
   let response: Response;
   try {
-    response = await fetch(joinUrl(getApiBaseUrl(), path), { headers });
+    response = await fetch(resolveApiUrl(path), { headers });
   } catch {
     throw new Error('网络连接异常，请检查网络后重试。');
   }
@@ -436,7 +441,7 @@ async function apiRequestInner<T>(
   didRefresh: boolean
 ): Promise<ApiResponse<T>> {
   const method = options?.method ?? 'GET';
-  const url = joinUrl(getApiBaseUrl(), path);
+  const url = resolveApiUrl(path);
 
   const headers: Record<string, string> = {
     Accept: 'application/json',

@@ -17,6 +17,7 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
+import { resolveApiUrl } from '@/services/real/apiClient';
 import {
   createVideoGenRunReal,
   createVideoGenDownloadTicketReal,
@@ -92,7 +93,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
       const form = document.createElement('form');
       form.method = 'POST';
-      form.action = '/api/video-download';
+      form.action = resolveApiUrl('/api/video-download');
       form.style.display = 'none';
       const ticketInput = document.createElement('input');
       ticketInput.type = 'hidden';
