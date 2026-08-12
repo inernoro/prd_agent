@@ -42,6 +42,39 @@ describe('layered PSD export', () => {
     expect(Array.from(document.imageData?.data ?? [])).toEqual([128, 0, 127, 255]);
   });
 
+  it('【关键】PSD 层序与合成顺序一致：写在最后的那层既压住下面、又排在 children 末尾', () => {
+    // 这条把「层序」和「谁压住谁」绑在一起，防止有人按「ag-psd children 是 top-to-bottom」
+    // 去反转 semanticLayers（2026-08-12 有 review 这样建议过，核查后不成立：
+    // ag-psd 的 children 与 PSD 层记录段同序，而层记录段按 bottom-first 存储，
+    // writer/reader 全程无 reverse）。反转之后 Photoshop 里的层序会和嵌入的
+    // 合成预览正好相反——而这两者本来必须是同一件事。
+    //
+    // 不写成「children 等于某个字面数组」是有意的：那种断言只钉住写法，
+    // 钉不住语义。这里断言的是「合成图呈现哪一层的颜色，哪一层就该排在末尾」。
+    const bottom = pixels(255, 0, 0);   // 不透明红
+    const top = pixels(0, 0, 255);      // 不透明蓝，完全盖住红
+    const document = buildLayeredPsdDocument({
+      source: pixels(0, 0, 0),
+      layers: [
+        { name: '下层', image: bottom },
+        { name: '上层', image: top },
+      ],
+    });
+
+    // 合成图取到的是「上层」的蓝——证明 input.layers 是自下而上。
+    expect(Array.from(document.imageData?.data ?? [])).toEqual([0, 0, 255, 255]);
+
+    const parsed = readPsd(writePsd(document, { noBackground: true }), {
+      skipLayerImageData: true,
+      skipCompositeImageData: true,
+      skipThumbnail: true,
+    });
+    const names = parsed.children?.[0]?.children?.map((layer) => layer.name) ?? [];
+    // 盖住别人的那一层必须排在末尾（bottom-first），与合成结果同一个方向。
+    expect(names[names.length - 1]).toBe('上层');
+    expect(names[0]).toBe('下层');
+  });
+
   it('keeps a hidden layer in the PSD but out of the flattened preview', () => {
     // 图层面板关掉眼睛 = 不参与合成；但图层本身仍要写进 PSD，
     // 否则用户在 Photoshop 里想把它打开时会发现层根本不在。

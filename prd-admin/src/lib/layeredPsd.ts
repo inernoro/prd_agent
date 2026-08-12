@@ -347,6 +347,13 @@ export function buildLayeredPsdDocument(input: {
       {
         name: 'AI 可编辑图层',
         opened: true,
+        // 顺序**不要反转**。ag-psd 的 children 与 PSD 层记录段同序，而层记录段按
+        // bottom-first 存储（addChildren 顺次 push 进 layers，writer/reader 全程无
+        // 任何 reverse；README 的 noBackground 注释也把 children[0] 称作 bottom layer）。
+        // input.layers 本身就是自下而上，直接映射即与合成图一致。
+        // 2026-08-12 有 review 建议按「children 是 top-to-bottom」反转——那条不成立，
+        // 照做会让 Photoshop 里的层序与嵌入的合成预览正好相反。
+        // 判据钉在 layeredPsd.test.ts 的「PSD 层序与合成顺序一致」。
         children: semanticLayers,
       },
       {

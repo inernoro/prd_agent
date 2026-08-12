@@ -2794,6 +2794,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         : '正在识别内容…',
       note: undefined,
       src: layer.src,
+      // 合成预览要满幅那一版，理由见 SemanticLayerPanelLayer.compositeSrc。
+      // 和两个导出入口取的是同一个值——这条不变量到此有四个出口，全部走满幅。
+      compositeSrc: layer.originalSrc || layer.src,
       pending: layer.status === 'running',
       failed: layer.status === 'error',
       hidden: layer.layerHidden === true,

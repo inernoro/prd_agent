@@ -194,6 +194,7 @@ describe('分层产物内容判定（真实产物像素）', () => {
         name: aiLayerDisplayName(index),
         subtitle: describeLayerContent(classifyReal(data), stats.coverage),
         src: 'x',
+        compositeSrc: 'x',
         opacity: 1,
       });
     });

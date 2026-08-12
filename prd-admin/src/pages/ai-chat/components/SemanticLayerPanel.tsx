@@ -25,7 +25,17 @@ export type SemanticLayerPanelLayer = {
   subtitle?: string;
   /** 附注：这一层被判成了什么（近乎空层 / 整张原图）。普通图层为空串。 */
   note?: string;
+  /** 缩略图用：画布上那张裁剪版，小图列表里看得清内容。 */
   src: string;
+  /**
+   * 合成预览用：**满幅**那一版（没裁过时与 src 同值）。
+   *
+   * 预览把每层铺满同一个框来叠，这个「铺满」只有在每层都是满幅、
+   * 彼此坐标系一致时才成立。喂裁剪版进去，覆盖 9.5% 的那层会被放大居中，
+   * 预览与画布、与导出三方对不上——而这块的承诺恰恰是「改一处这里立刻变」。
+   * 同一条不变量的第四个出口（Codex PR #1363 P1）。
+   */
+  compositeSrc: string;
   /** 生成中的占位层：没有图，只占位子。 */
   pending?: boolean;
   failed?: boolean;
@@ -202,10 +212,10 @@ export function SemanticLayerPanel({
             </div>
           ) : (
             layers.map((layer) => (
-              layer.src && !layer.hidden ? (
+              layer.compositeSrc && !layer.hidden ? (
                 <img
                   key={`composite_${layer.key}`}
-                  src={layer.src}
+                  src={layer.compositeSrc}
                   alt={layer.name}
                   className="absolute inset-0 w-full h-full"
                   style={{ objectFit: 'contain', opacity: layer.opacity }}
