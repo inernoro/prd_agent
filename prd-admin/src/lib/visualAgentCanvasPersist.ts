@@ -172,6 +172,7 @@ export interface CanvasImageItem {
   layerModel?: string;
   /** 用户这次用自然语言说的拆法。 */
   layerIntent?: string;
+  layerLayout?: 'stacked' | 'spread';
   /** 裁剪前的满幅原件：画布用裁剪版，导出必须用这一版。 */
   layerOriginalSrc?: string;
   layerOriginalSha256?: string;
@@ -301,6 +302,7 @@ export function canvasToPersistedV1(items: CanvasImageItem[]): {
           layerHomeH: it.layerHomeH,
           layerModel: it.layerModel,
           layerIntent: it.layerIntent,
+          layerLayout: it.layerLayout,
           // 裁剪前的满幅原件。画布显示裁剪版，导出必须用满幅版（按原图尺寸对齐叠放，
           // 喂裁剪版会被拉伸铺满整张画布）。不落盘的话，刷新之后导出就悄悄退回错的那版
           // ——正是 snapshot-fallback 那条规则说的「快照有、兜底没有」。
@@ -441,6 +443,7 @@ export function persistedV1ToCanvas(
         layerHomeH: finiteOrUndefined(ext.layerHomeH),
         layerModel: typeof ext.layerModel === 'string' ? ext.layerModel : undefined,
         layerIntent: typeof ext.layerIntent === 'string' ? ext.layerIntent : undefined,
+        layerLayout: ext.layerLayout === 'spread' ? 'spread' : (ext.layerLayout === 'stacked' ? 'stacked' : undefined),
         originalSrc: typeof ext.layerOriginalSrc === 'string' ? ext.layerOriginalSrc : undefined,
         originalSha256: typeof ext.layerOriginalSha256 === 'string' ? ext.layerOriginalSha256 : undefined,
         // 分层 Frame 里的图层尺寸由排版决定，不能被 onLoad 的 natural 尺寸覆盖。

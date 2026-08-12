@@ -260,6 +260,8 @@ type CanvasImageItem = {
   layerModel?: string;
   /** 用户这次用自然语言说的拆法；空表示没指定，由模型自行判断。 */
   layerIntent?: string;
+  /** 这一组当前的摆法。必须按组存，不能靠几何反推——见 spreadLayerGroupIds 处的说明。 */
+  layerLayout?: 'stacked' | 'spread';
 };
 
 /**
@@ -2381,6 +2383,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         ...layout.placements[index]!,
         frameId: groupId,
         layerGroupId: groupId,
+        // 摆法按组存：几何反推不出来（叠放态每层各在自己的最小矩形上）。
+        layerLayout: layerLayoutMode,
         layerSourceKey: sourceItem.key,
         layerIndex: index + 1,
         layerRole: 'layer' as const,
@@ -2678,8 +2682,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 否则「面板上看到的」和「下载下来的」是两个东西。
     let layerSources: LayerSourceInput[] = cachedLayers.map((layer, index) => ({
       name: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
-      source: layer.src,
-      sha256: layer.sha256 || layer.originalSha256 || null,
+      // 和图层面板那条导出口径**必须一致**：取满幅那一版。裁剪版是给画布用的，
+      // 导出链路按原图尺寸对齐叠放，喂裁剪版会被拉伸铺满、位置也错。
+      // 我上一轮只改了面板那个入口，右键菜单这个入口漏了——同一个毛病、第二个入口
+      // （Codex PR #1363 P1）。没裁过的层两者是同一个值。
+      source: layer.originalSrc || layer.src,
+      sha256: layer.originalSha256 || layer.sha256 || null,
       opacity: layer.layerOpacity,
       hidden: layer.layerHidden === true,
     }));
@@ -2925,6 +2933,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           .every((value) => typeof value === 'number' && Number.isFinite(value))) return candidate;
         return {
           ...candidate,
+          layerLayout: 'stacked' as const,
           x: candidate.layerHomeX,
           y: candidate.layerHomeY,
           w: candidate.layerHomeW,
@@ -2952,7 +2961,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const placementByKey = new Map(layers.map((layer, index) => [layer.key, placements[index]!]));
     setCanvas((previous) => previous.map((candidate) => {
       const placement = placementByKey.get(candidate.key);
-      return placement ? { ...candidate, ...placement, userResized: true } : candidate;
+      return placement ? { ...candidate, ...placement, layerLayout: 'spread' as const, userResized: true } : candidate;
     }));
   }, []);
 
@@ -2992,27 +3001,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 摊开时各块不重叠所以看不出来，一叠起来整幅就只剩最上层 + 一片棋盘。
    */
   /**
-   * 哪些组**实际上**是摊开的——按几何算，不看那个全局偏好。
+   * 哪些组是摊开的——读**按组存下来的摆法**，不靠几何反推。
    *
-   * `layerLayoutMode` 是一个全局值，而切换摆法只会重排当前选中的那一组。画布上存在
-   * 两个分层 Frame 时，把 A 切成平铺会让 B 也被当成平铺渲染：B 其实还在原位叠放，
-   * 于是它每一层都铺上不透明棋盘格，把下面的层盖住，面板显示的摆法也是错的
-   * （Codex PR #1363 P1）。
+   * 我上一版用「图层坐标是否散开」来推，那是错的：原位叠放的组在裁剪之后，每一层本来
+   * 就各自回到自己的最小外接矩形（applyLayerLayout 的 stacked 分支写得很清楚——
+   * 「各自回到自己的最小外接矩形，不是都摊平成同一个大方块」），坐标天然互不相同。
+   * 于是几乎每个拆完的组都会被判成「平铺」，每层都铺上不透明棋盘格盖住下面的层，
+   * 面板还显示「平铺展开」——比我当初要修的那个 bug 影响面更大（Codex PR #1363 P1）。
    *
-   * 与其再存一份「每组的摆法」并想办法让它和几何保持同步，不如直接从几何推：
-   * 原位叠放的组，所有图层共用同一个原点；只要坐标散开了，它就是平铺。
-   * 这样标志位和真实位置永远不可能打架——打架正是这个缺陷的成因。
+   * 当初选几何推断是想躲开「标志位和真实状态漂移」，但前提没验：我没确认过叠放态的
+   * 几何长什么样。写的时候只有 applyLayerLayout 一个地方改摆法，按组存就够稳。
    */
   const spreadLayerGroupIds = useMemo(() => {
-    const origins = new Map<string, Set<string>>();
+    const spread = new Set<string>();
     for (const item of canvas) {
       if (item.layerRole !== 'layer' || !item.layerGroupId) continue;
-      if (!Number.isFinite(item.x as number) || !Number.isFinite(item.y as number)) continue;
-      const seen = origins.get(item.layerGroupId) ?? new Set<string>();
-      seen.add(`${Math.round(Number(item.x))}:${Math.round(Number(item.y))}`);
-      origins.set(item.layerGroupId, seen);
+      if (item.layerLayout === 'spread') spread.add(item.layerGroupId);
     }
-    return new Set([...origins.entries()].filter(([, seen]) => seen.size > 1).map(([groupId]) => groupId));
+    return spread;
   }, [canvas]);
 
   const bottomStackedLayerKeys = useMemo(() => {
