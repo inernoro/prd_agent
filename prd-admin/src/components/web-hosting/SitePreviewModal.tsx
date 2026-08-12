@@ -7,6 +7,7 @@ import { setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
+import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
 const SLOW_HINT_MS = 8000;
@@ -48,6 +49,10 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // 能不能把 PDF 直接丢给浏览器原生阅读器，问的是**浏览器有没有这个能力**，
+  // 既不是弹窗多大，也不是视口宽度——768px 断点会把 iPad、横屏手机、平板 WebView
+  // 一并算成桌面，它们照样白屏。判据见 supportsNativePdfViewer。
+  const previewSource = resolveSitePreviewSource(site, { nativePdfViewer: supportsNativePdfViewer() });
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
@@ -80,7 +85,8 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   }, []);
 
   const handleOpenExternal = () => {
-    window.open(site.siteUrl, '_blank');
+    // 与 iframe 同源同 URL：PDF 站在新窗口里也直接给原始 PDF，和 ShareViewPage 顶栏一致
+    window.open(previewSource.src, '_blank');
   };
 
   const handleToggleCommentsEnabled = async () => {
@@ -198,7 +204,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             )}
             <iframe
               ref={iframeRef}
-              src={site.siteUrl}
+              src={previewSource.src}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {
@@ -212,7 +218,12 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
                 setLoading(false);
                 setErrored(true);
               }}
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals"
+              // 直连 PDF 时不加 sandbox：文档是浏览器原生 PDF 阅读器接管的静态资源，不是用户上传的可执行 HTML，
+              // 而 sandbox 会在部分 Chrome 版本里把内置阅读器一起屏蔽掉（"此页面已被 Chrome 屏蔽"）。
+              // 跨域这一层隔离仍在（PDF 来自托管域名，拿不到 MAP 的同源能力）。
+              sandbox={previewSource.usingNativePdfViewer
+                ? undefined
+                : 'allow-scripts allow-same-origin allow-popups allow-forms allow-modals'}
               title={site.title}
             />
           </div>
