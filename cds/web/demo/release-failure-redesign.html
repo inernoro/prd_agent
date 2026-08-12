@@ -1,0 +1,1204 @@
+<title>发布失败诊断改版</title>
+
+<style>
+/* ─────────────────────────────────────────────────────────────
+   页面自身的 token（浅色为基准，三态主题：bare :root / prefers / [data-theme]）
+   mock 面板的 token 另有一套，见下方 .cds 作用域——它要独立于阅读者主题，
+   才能就地演示 CDS 的双主题契约。
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --page-bg: #f2ece5;
+  --page-panel: #fffdfb;
+  --page-sunken: #e8e0d6;
+  --page-ink: #23201b;
+  --page-ink-soft: #6b6459;
+  --page-ink-faint: #918a7e;
+  --page-rule: #ddd4c8;
+  --page-rule-soft: #e7e0d6;
+  --page-accent: #d2600a;
+  --page-accent-soft: rgba(210, 96, 10, 0.1);
+  --page-bad: #c0392f;
+  --page-good: #0f8a5f;
+  --page-shadow: 0 1px 2px rgba(50, 38, 24, 0.05), 0 12px 32px -18px rgba(50, 38, 24, 0.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page-bg: #131518;
+    --page-panel: #1b1e22;
+    --page-sunken: #0e1013;
+    --page-ink: #e7e4df;
+    --page-ink-soft: #9d9a94;
+    --page-ink-faint: #74716b;
+    --page-rule: #2c3037;
+    --page-rule-soft: #23262b;
+    --page-accent: #ff8a3d;
+    --page-accent-soft: rgba(255, 138, 61, 0.12);
+    --page-bad: #f0665c;
+    --page-good: #3ec99a;
+    --page-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px -20px rgba(0, 0, 0, 0.7);
+  }
+}
+:root[data-theme="dark"] {
+  --page-bg: #131518;
+  --page-panel: #1b1e22;
+  --page-sunken: #0e1013;
+  --page-ink: #e7e4df;
+  --page-ink-soft: #9d9a94;
+  --page-ink-faint: #74716b;
+  --page-rule: #2c3037;
+  --page-rule-soft: #23262b;
+  --page-accent: #ff8a3d;
+  --page-accent-soft: rgba(255, 138, 61, 0.12);
+  --page-bad: #f0665c;
+  --page-good: #3ec99a;
+  --page-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px -20px rgba(0, 0, 0, 0.7);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--page-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 40px 24px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+/* ── 页眉 ───────────────────────────────────────────────── */
+.masthead { display: flex; flex-direction: column; gap: 14px; }
+
+.eyebrow {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--page-ink-faint);
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-weight: 650;
+  text-wrap: balance;
+}
+
+.thesis {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 16.5px;
+  color: var(--page-ink-soft);
+}
+
+.thesis strong { color: var(--page-ink); font-weight: 600; }
+
+.source-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding-top: 4px;
+  font-size: 12px;
+  color: var(--page-ink-faint);
+}
+.source-line span { display: inline-flex; gap: 6px; }
+.source-line b { font-weight: 500; color: var(--page-ink-soft); }
+
+/* ── 章节标题 ───────────────────────────────────────────── */
+.section { display: flex; flex-direction: column; gap: 18px; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--page-rule);
+}
+.section-head h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+.section-head p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--page-ink-faint);
+}
+
+/* ── 根因卡 ─────────────────────────────────────────────── */
+.causes {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(255px, 1fr));
+}
+
+.cause {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px 16px 15px;
+  border: 1px solid var(--page-rule);
+  border-left: 3px solid var(--page-bad);
+  border-radius: 10px;
+  background: var(--page-panel);
+  box-shadow: var(--page-shadow);
+}
+.cause-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--page-ink-faint);
+}
+.cause-num {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--page-bad);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.cause h3 { margin: 0; font-size: 14.5px; font-weight: 620; line-height: 1.4; }
+.cause p { margin: 0; font-size: 13px; color: var(--page-ink-soft); }
+.cause code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--page-sunken);
+  color: var(--page-ink-soft);
+}
+
+/* ── A/B 控制条 ─────────────────────────────────────────── */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--page-rule);
+  border-radius: 999px;
+  background: var(--page-sunken);
+}
+.segmented button {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  padding: 7px 18px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--page-ink-soft);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 550;
+  transition: background 140ms ease, color 140ms ease;
+}
+.segmented button[aria-pressed="true"] {
+  background: var(--page-panel);
+  color: var(--page-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.segmented button:focus-visible,
+.ghost-btn:focus-visible { outline: 2px solid var(--page-accent); outline-offset: 2px; }
+
+.control-right { display: inline-flex; align-items: center; gap: 10px; }
+
+.ghost-btn {
+  appearance: none;
+  cursor: pointer;
+  padding: 7px 14px;
+  border: 1px solid var(--page-rule);
+  border-radius: 999px;
+  background: var(--page-panel);
+  color: var(--page-ink-soft);
+  font: inherit;
+  font-size: 13px;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.ghost-btn:hover { color: var(--page-ink); border-color: var(--page-ink-faint); }
+
+.hint { font-size: 12px; color: var(--page-ink-faint); }
+
+/* ── mock 外框 ──────────────────────────────────────────── */
+.device {
+  border: 1px solid var(--page-rule);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--page-shadow);
+}
+.device-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--page-sunken);
+  border-bottom: 1px solid var(--page-rule);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--page-ink-faint);
+}
+.device-verdict { letter-spacing: 0.04em; text-transform: none; font-size: 11.5px; }
+.device-verdict[data-tone="bad"] { color: var(--page-bad); }
+.device-verdict[data-tone="good"] { color: var(--page-good); }
+
+.stage { position: relative; }
+.stage > [hidden] { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .stage > .cds { animation: fade 220ms ease both; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CDS mock 作用域：token 双主题各写全一套，与页面主题解耦。
+   取值对齐 cds/web/src/index.css 的 surface / hairline / primary。
+   ───────────────────────────────────────────────────────────── */
+.cds {
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 18px;
+  background: hsl(var(--surface-base));
+  color: hsl(var(--fg));
+}
+.cds[data-cds-theme="dark"] {
+  --surface-base: 222 14% 6%;
+  --surface-raised: 222 12% 13%;
+  --surface-sunken: 222 16% 4%;
+  --hairline: 222 10% 18%;
+  --hairline-strong: 222 10% 26%;
+  --fg: 240 6% 90%;
+  --fg-muted: 240 4% 60%;
+  --primary: 24 100% 60%;
+  --primary-fg: 0 0% 100%;
+  --bad: 0 70% 58%;
+  --good: 158 64% 45%;
+  --warn: 38 92% 55%;
+}
+.cds[data-cds-theme="light"] {
+  --surface-base: 30 28% 96%;
+  --surface-raised: 0 0% 100%;
+  --surface-sunken: 30 24% 91%;
+  --hairline: 30 15% 84%;
+  --hairline-strong: 30 12% 70%;
+  --fg: 24 20% 15%;
+  --fg-muted: 24 10% 40%;
+  --primary: 24 90% 50%;
+  --primary-fg: 0 0% 100%;
+  --bad: 0 65% 46%;
+  --good: 158 70% 30%;
+  --warn: 32 80% 38%;
+}
+
+.cds-card {
+  border: 1px solid hsl(var(--hairline));
+  border-radius: 10px;
+  background: hsl(var(--surface-raised));
+  overflow: hidden;
+}
+.cds-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid hsl(var(--hairline));
+}
+.cds-card-head h4 { margin: 0; font-size: 13px; font-weight: 620; }
+.cds-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 12px; color: hsl(var(--primary));
+}
+.cds-link:hover { text-decoration: underline; }
+
+/* run 行 */
+.cds-run {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: hsl(var(--bad) / 0.07);
+}
+.led {
+  margin-top: 5px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: hsl(var(--bad));
+  box-shadow: 0 0 0 3px hsl(var(--bad) / 0.22);
+}
+.cds-run-title { font-size: 13px; font-weight: 550; }
+.cds-run-meta {
+  display: flex; flex-wrap: wrap; gap: 3px 10px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: hsl(var(--fg-muted));
+}
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11.5px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.chip[data-tone="bad"] { background: hsl(var(--bad) / 0.14); color: hsl(var(--bad)); }
+.chip[data-tone="good"] { background: hsl(var(--good) / 0.14); color: hsl(var(--good)); }
+.chip[data-tone="warn"] { background: hsl(var(--warn) / 0.16); color: hsl(var(--warn)); }
+.chip[data-tone="muted"] {
+  background: hsl(var(--surface-sunken));
+  border-color: hsl(var(--hairline));
+  color: hsl(var(--fg-muted));
+}
+
+.btn {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font: inherit; font-size: 12.5px; font-weight: 550;
+  white-space: nowrap;
+}
+.btn[data-kind="primary"] { background: hsl(var(--primary)); color: hsl(var(--primary-fg)); }
+.btn[data-kind="outline"] {
+  background: hsl(var(--surface-raised));
+  border-color: hsl(var(--hairline-strong));
+  color: hsl(var(--fg));
+}
+.btn svg { width: 14px; height: 14px; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.cds-detail {
+  padding: 16px 14px;
+  border-top: 1px solid hsl(var(--hairline));
+  background: hsl(var(--surface-sunken) / 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── 现状复刻：结论位被整段 stderr 占满 ─────────────────── */
+.verdict-old {
+  border: 1px solid hsl(var(--hairline));
+  border-left: 3px solid hsl(var(--bad));
+  border-radius: 10px;
+  background: hsl(var(--surface-raised));
+  padding: 16px;
+  position: relative;
+}
+.verdict-old .blob {
+  margin: 10px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.verdict-old .tail {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: hsl(var(--fg-muted));
+}
+.old-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+}
+@media (max-width: 900px) { .old-grid { grid-template-columns: minmax(0, 1fr); } }
+.old-block {
+  border: 1px solid hsl(var(--hairline));
+  border-radius: 10px;
+  background: hsl(var(--surface-raised));
+  padding: 14px;
+}
+.old-block h5 { margin: 0 0 6px; font-size: 13px; font-weight: 620; }
+.old-block p { margin: 0; font-size: 12.5px; color: hsl(var(--fg-muted)); }
+
+/* 指差标记 */
+.marker {
+  position: absolute;
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: hsl(var(--bad));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 0 0 3px hsl(var(--surface-raised));
+}
+.marked { outline: 1.5px dashed hsl(var(--bad) / 0.65); outline-offset: 3px; border-radius: 6px; }
+.stage[data-annotate="off"] .marker { display: none; }
+.stage[data-annotate="off"] .marked { outline: 0; }
+
+/* ── 改版 ───────────────────────────────────────────────── */
+.verdict-new {
+  border: 1px solid hsl(var(--hairline));
+  border-left: 3px solid hsl(var(--bad));
+  border-radius: 10px;
+  background: hsl(var(--surface-raised));
+  padding: 15px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.verdict-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.verdict-id {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  font-size: 11.5px; color: hsl(var(--fg-muted));
+}
+.verdict-line {
+  margin: 6px 0 0;
+  font-size: 17px;
+  font-weight: 620;
+  line-height: 1.4;
+  letter-spacing: -0.005em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.verdict-meta { margin: 5px 0 0; font-size: 11.5px; color: hsl(var(--fg-muted)); }
+.impact {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: hsl(var(--good) / 0.1);
+  border: 1px solid hsl(var(--good) / 0.28);
+  font-size: 12.5px;
+}
+.impact b { color: hsl(var(--good)); font-weight: 620; }
+.impact span { color: hsl(var(--fg-muted)); }
+
+/* 步骤轨 */
+.steps {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid hsl(var(--hairline));
+  border-radius: 10px;
+  background: hsl(var(--surface-raised));
+  overflow: hidden;
+}
+.step {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid hsl(var(--hairline));
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.step:last-child { border-right: 0; }
+.step-name { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 550; }
+.step-name svg { width: 13px; height: 13px; flex: none; }
+.step-note { font-size: 11px; color: hsl(var(--fg-muted)); }
+.step[data-state="done"] .step-name { color: hsl(var(--good)); }
+.step[data-state="failed"] { background: hsl(var(--bad) / 0.1); }
+.step[data-state="failed"] .step-name { color: hsl(var(--bad)); }
+.step[data-state="skipped"] .step-name { color: hsl(var(--fg-muted)); }
+@media (max-width: 760px) {
+  .steps { flex-direction: column; }
+  .step { border-right: 0; border-bottom: 1px solid hsl(var(--hairline)); }
+  .step:last-child { border-bottom: 0; }
+}
+
+.new-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+}
+@media (max-width: 900px) { .new-grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* 判据表 */
+.facts { display: flex; flex-direction: column; }
+.fact {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 14px;
+  border-bottom: 1px solid hsl(var(--hairline));
+  align-items: baseline;
+}
+.fact:last-child { border-bottom: 0; }
+.fact-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: hsl(var(--fg-muted));
+}
+.fact-val { font-size: 12.5px; min-width: 0; }
+.url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  word-break: break-all;
+  line-height: 1.7;
+}
+.url mark {
+  background: hsl(var(--bad) / 0.2);
+  color: hsl(var(--bad));
+  border-radius: 3px;
+  padding: 1px 2px;
+  font-weight: 600;
+}
+.fact-note { display: block; margin-top: 3px; font-size: 11.5px; color: hsl(var(--fg-muted)); }
+
+/* 推断块 */
+.guess {
+  border: 1px dashed hsl(var(--warn) / 0.5);
+  background: hsl(var(--warn) / 0.08);
+  border-radius: 10px;
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.guess-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 620; }
+.guess p { margin: 0; font-size: 12.5px; color: hsl(var(--fg-muted)); }
+.guess ol { margin: 2px 0 0; padding-left: 18px; font-size: 12.5px; color: hsl(var(--fg-muted)); }
+.guess li { margin-bottom: 3px; }
+.guess code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  background: hsl(var(--surface-sunken));
+  padding: 1px 5px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+/* 数据格 */
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile {
+  border: 1px solid hsl(var(--hairline));
+  border-radius: 9px;
+  background: hsl(var(--surface-sunken) / 0.6);
+  padding: 10px 12px;
+  min-width: 0;
+}
+.tile-k {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--fg-muted));
+}
+.tile-v {
+  margin-top: 3px;
+  font-size: 15px;
+  font-weight: 620;
+  font-variant-numeric: tabular-nums;
+}
+.tile-v small { font-size: 11.5px; font-weight: 450; color: hsl(var(--fg-muted)); }
+
+/* 日志折叠 */
+details.logs { border: 1px solid hsl(var(--hairline)); border-radius: 10px; background: hsl(var(--surface-raised)); overflow: hidden; }
+details.logs > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+details.logs > summary::-webkit-details-marker { display: none; }
+details.logs > summary:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: -2px; }
+.log-pane {
+  margin: 0;
+  border-top: 1px solid hsl(var(--hairline));
+  background: hsl(var(--surface-sunken));
+  padding: 10px 0;
+  max-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+  padding: 1px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.log-n { color: hsl(var(--fg-muted) / 0.7); text-align: right; user-select: none; }
+.log-row[data-lv="err"] .log-t { color: hsl(var(--bad)); }
+.log-row[data-lv="warn"] .log-t { color: hsl(var(--warn)); }
+.log-row[data-lv="dim"] .log-t { color: hsl(var(--fg-muted)); }
+.log-fold {
+  margin: 4px 12px;
+  padding: 4px 10px;
+  border: 1px dashed hsl(var(--hairline-strong));
+  border-radius: 6px;
+  font-size: 11px;
+  color: hsl(var(--fg-muted));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── 改动清单表 ─────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; border: 1px solid var(--page-rule); border-radius: 12px; background: var(--page-panel); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; }
+th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--page-rule-soft); vertical-align: top; }
+th {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--page-ink-faint);
+  font-weight: 500;
+  background: var(--page-sunken);
+}
+tbody tr:last-child td { border-bottom: 0; }
+td { font-size: 13px; }
+td.what { font-weight: 550; width: 27%; }
+td.why { color: var(--page-ink-soft); }
+td.where { width: 26%; }
+td.where code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--page-ink-soft);
+  word-break: break-all;
+}
+.pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: var(--page-accent-soft);
+  color: var(--page-accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── 边界 ───────────────────────────────────────────────── */
+.scope {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+.scope-card {
+  border: 1px solid var(--page-rule);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--page-panel);
+}
+.scope-card h3 { margin: 0 0 8px; font-size: 13.5px; font-weight: 620; }
+.scope-card ul { margin: 0; padding-left: 17px; font-size: 13px; color: var(--page-ink-soft); }
+.scope-card li { margin-bottom: 5px; }
+
+footer {
+  border-top: 1px solid var(--page-rule);
+  padding-top: 18px;
+  font-size: 12.5px;
+  color: var(--page-ink-faint);
+}
+footer p { margin: 0 0 4px; }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <div class="eyebrow">CDS 发布中心 · 最近发布 · 失败诊断</div>
+    <h1>发布失败诊断改版</h1>
+    <p class="thesis">
+      截图里那一屏难看，根子不在配色，在于<strong>结论位被塞进了一整段 stderr</strong>。
+      <code class="mono">FailureDiagnosis</code> 的 headline 设计成「一句话结论」，但当日志里没有结构化门禁报告时
+      它退化成 <code class="mono">errorLines[0]</code>——一条内嵌 19 行 stderr 尾巴的复合错误串，
+      被 17px 粗体、换行折叠地铺成八行文字墙。改版把这一屏拆成四层：结论、影响面、判据、原文。
+    </p>
+    <div class="source-line">
+      <span><b>样本</b> rel_9759ead9be9405e3</span>
+      <span><b>提交</b> 53dcf3c · main</span>
+      <span><b>结果</b> 发布失败 · 耗时 38s</span>
+      <span><b>现状代码</b> cds/web/src/pages/release-center/FailureDiagnosis.tsx</span>
+    </div>
+  </header>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>四条根因</h2>
+      <p>每条都能在截图里指出来，编号对应 demo 现状态上的标记</p>
+    </div>
+    <div class="causes">
+      <article class="cause">
+        <div class="cause-tag"><span class="cause-num">1</span>信息层级</div>
+        <h3>结论位承载了整段原始日志</h3>
+        <p>没有门禁 JSON 时 headline 取 <code>errorLines[0]</code>，而这条 error 本身就带着
+          <code>--- stderr(tail) ---</code> 的 19 行尾巴。一句话的位置装了 1418 个字符。</p>
+      </article>
+      <article class="cause">
+        <div class="cause-tag"><span class="cause-num">2</span>排版错配</div>
+        <h3>日志被当成散文排版</h3>
+        <p>日志靠换行传达结构，<code>&lt;h3&gt;</code> 里换行全被折叠成空格，17px 粗体让每个字都在喊。
+          既不像结论，也不像日志。</p>
+      </article>
+      <article class="cause">
+        <div class="cause-tag"><span class="cause-num">3</span>轻重倒置</div>
+        <h3>最该看的那句被压成灰色小字</h3>
+        <p>「目标仍在 06efeb6，未切换到本次版本」= 生产没受影响，是失败时用户最想先确认的事，
+          现在挂在文字墙下面 11px 的一行尾巴里。</p>
+      </article>
+      <article class="cause">
+        <div class="cause-tag"><span class="cause-num">4</span>噪音未收敛</div>
+        <h3>五条一模一样的重试告警各占一行</h3>
+        <p>curl 的 retry 告警逐字重复五遍，把屏幕吃掉三分之一；真正有信息量的是下载地址和 404 这两件事。</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Demo</h2>
+      <p>同一条真实失败记录，两种渲染</p>
+    </div>
+
+    <div class="controls">
+      <div class="segmented" role="group" aria-label="切换现状与改版">
+        <button type="button" id="btn-before" aria-pressed="false">现状复刻</button>
+        <button type="button" id="btn-after" aria-pressed="true">改版</button>
+      </div>
+      <div class="control-right">
+        <span class="hint" id="hint">按 <kbd class="mono">1</kbd> / <kbd class="mono">2</kbd> 切换</span>
+        <button type="button" class="ghost-btn" id="btn-annotate">隐藏标记</button>
+        <button type="button" class="ghost-btn" id="btn-theme">切到白天主题</button>
+      </div>
+    </div>
+
+    <div class="device">
+      <div class="device-bar">
+        <span id="device-label">改版 · 深色主题</span>
+        <span class="device-verdict" data-tone="good" id="device-verdict">结论在第一行，原文在折叠区</span>
+      </div>
+
+      <div class="stage" id="stage" data-annotate="on">
+
+        <!-- ══════════ 现状复刻 ══════════ -->
+        <div class="cds" data-cds-theme="dark" id="panel-before" hidden>
+          <div class="cds-card">
+            <div class="cds-card-head">
+              <h4>最近发布</h4>
+              <button type="button" class="cds-link">查看全部 37 次</button>
+            </div>
+
+            <div class="cds-run">
+              <span class="led"></span>
+              <div>
+                <div class="cds-run-title">Merge pull request #1346 from inernoro/codex/fix-def-2026-0190-web-upload-feedback</div>
+                <div class="cds-run-meta">
+                  <span class="mono">53dcf3c</span><span>main</span><span>user</span>
+                  <span>2026/8/10 15:07:07</span><span>耗时 38s</span>
+                  <span class="chip" data-tone="bad">发布失败</span>
+                </div>
+              </div>
+              <div class="btn-row">
+                <button type="button" class="btn" data-kind="outline">收起诊断</button>
+                <button type="button" class="btn" data-kind="outline">日志</button>
+              </div>
+            </div>
+
+            <div class="cds-detail">
+              <div class="verdict-old">
+                <span class="marker" style="top:-10px;left:-10px;">1</span>
+                <span class="marker" style="top:64px;right:-10px;">2</span>
+                <span class="marker" style="top:196px;left:-10px;">4</span>
+                <div class="cds-run-meta" style="margin-top:0">
+                  <span class="chip" data-tone="bad">发布失败</span>
+                  <span class="chip" data-tone="muted">MAP 正式环境受管发布</span>
+                  <span class="mono">rel_9759ead9be9405e3</span>
+                </div>
+                <p class="blob marked">执行项目发布命令失败: ssh exec exit=22 --- stderr(tail) --- ... [truncated, kept last 19 lines / 1418 chars] Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 4 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 3 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 2 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 --- stdout(tail) --- AppCaller governance: already configured Downloading immutable admin artifact with resume: https://git.miduo.org/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</p>
+                <p class="tail">
+                  <span class="marked" style="display:inline-block">2026/8/10 15:07:07 由 user 触发 · commit 53dcf3c · 耗时 38s · 目标仍在 06efeb6，未切换到本次版本</span>
+                  <span class="marker" style="position:relative;top:5px;left:6px;display:inline-grid;box-shadow:none;">3</span>
+                </p>
+                <div class="btn-row" style="margin-top:12px">
+                  <button type="button" class="btn" data-kind="primary">修好后重试</button>
+                  <button type="button" class="btn" data-kind="outline">回滚到历史版本</button>
+                </div>
+              </div>
+
+              <div class="old-grid">
+                <div class="old-block">
+                  <h5>失败判据</h5>
+                  <p>这次发布的日志里没有结构化的门禁报告，只能给出 error 级日志原文。如果远端脚本本身会打 JSON 结论，确认它走的是 stdout 且没有被上层截断。</p>
+                </div>
+                <div class="old-block">
+                  <h5>步骤</h5>
+                  <p>历史记录，仅按日志还原大致阶段。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══════════ 改版 ══════════ -->
+        <div class="cds" data-cds-theme="dark" id="panel-after">
+          <div class="cds-card">
+            <div class="cds-card-head">
+              <h4>最近发布</h4>
+              <button type="button" class="cds-link">查看全部 37 次</button>
+            </div>
+
+            <div class="cds-run">
+              <span class="led"></span>
+              <div>
+                <div class="cds-run-title">Merge pull request #1346 from inernoro/codex/fix-def-2026-0190-web-upload-feedback</div>
+                <div class="cds-run-meta">
+                  <span class="mono">53dcf3c</span><span>main</span><span>user</span>
+                  <span>2026/8/10 15:07:07</span><span>耗时 38s</span>
+                  <span class="chip" data-tone="bad">发布失败</span>
+                </div>
+              </div>
+              <div class="btn-row">
+                <button type="button" class="btn" data-kind="outline">收起诊断</button>
+                <button type="button" class="btn" data-kind="outline">日志</button>
+              </div>
+            </div>
+
+            <div class="cds-detail">
+
+              <!-- 第一层：一句话结论 + 操作 -->
+              <div class="verdict-new">
+                <div class="verdict-top">
+                  <div style="min-width:0">
+                    <div class="verdict-id">
+                      <span class="chip" data-tone="bad">发布失败</span>
+                      <span class="chip" data-tone="muted">MAP 正式环境受管发布</span>
+                      <span class="mono">rel_9759ead9be9405e3</span>
+                    </div>
+                    <h3 class="verdict-line">拉取 admin 产物失败：下载地址返回 404，重试 5 次后放弃</h3>
+                    <p class="verdict-meta">2026/8/10 15:07:07 · user 触发 · commit 53dcf3c · 耗时 38s · 死在第 2 步「拉取产物」</p>
+                  </div>
+                  <div class="btn-row">
+                    <button type="button" class="btn" data-kind="primary">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+                      修好后重试
+                    </button>
+                    <button type="button" class="btn" data-kind="outline">回滚到历史版本</button>
+                    <button type="button" class="btn" data-kind="outline">复制诊断</button>
+                  </div>
+                </div>
+
+                <!-- 第二层：影响面，失败时第一个要确认的事 -->
+                <div class="impact">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:hsl(var(--good));flex:none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                  <b>生产未受影响</b>
+                  <span>正式环境仍在 06efeb6，本次版本一次都没有切上去；回滚按钮此刻不是必需的。</span>
+                </div>
+              </div>
+
+              <!-- 第三层：死在哪一步 -->
+              <div class="steps">
+                <div class="step" data-state="done">
+                  <span class="step-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    1 发布前检查
+                  </span>
+                  <span class="step-note">AppCaller 治理已配置</span>
+                </div>
+                <div class="step" data-state="failed">
+                  <span class="step-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    2 拉取产物
+                  </span>
+                  <span class="step-note">curl 退出码 22 · 404 × 5</span>
+                </div>
+                <div class="step" data-state="skipped">
+                  <span class="step-name">3 部署容器</span>
+                  <span class="step-note">未执行</span>
+                </div>
+                <div class="step" data-state="skipped">
+                  <span class="step-name">4 切换版本</span>
+                  <span class="step-note">未执行</span>
+                </div>
+                <div class="step" data-state="skipped">
+                  <span class="step-name">5 健康检查</span>
+                  <span class="step-note">未执行</span>
+                </div>
+              </div>
+
+              <!-- 第四层：判据与原文 -->
+              <div class="new-grid">
+                <div class="col">
+                  <div class="cds-card">
+                    <div class="cds-card-head">
+                      <h4>判据 · 从日志提取</h4>
+                      <span class="chip" data-tone="muted">4 条事实</span>
+                    </div>
+                    <div class="facts">
+                      <div class="fact">
+                        <span class="fact-key">下载地址</span>
+                        <span class="fact-val">
+                          <span class="url"><mark>https://git.miduo.org/</mark>https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</span>
+                          <span class="fact-note">高亮段之后紧跟着一个完整 URL，同一个地址里出现了两次 <span class="mono">https://</span>。</span>
+                        </span>
+                      </div>
+                      <div class="fact">
+                        <span class="fact-key">HTTP</span>
+                        <span class="fact-val">404 <span class="fact-note">5 次请求全部 404，间隔 2s；不是超时也不是 5xx，重试不会变好。</span></span>
+                      </div>
+                      <div class="fact">
+                        <span class="fact-key">退出码</span>
+                        <span class="fact-val">22 <span class="fact-note">curl 的 22 = 服务端返回 &gt;= 400；ssh exec 把它原样带回来。</span></span>
+                      </div>
+                      <div class="fact">
+                        <span class="fact-key">产物</span>
+                        <span class="fact-val" style="min-width:0">
+                          <span class="url">prd-admin-dist-sha-53dcf3ce…d6.zip</span>
+                          <span class="fact-note">sha 与本次 commit 53dcf3c 一致，取的是对的那一版。</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="guess">
+                    <div class="guess-head">
+                      <span class="chip" data-tone="warn">推断</span>
+                      镜像前缀被拼到了绝对 URL 前面
+                    </div>
+                    <p>下载地址的形状符合「前缀 + 完整 URL」的拼接错误。这是从地址形状推出来的，日志里没有直说，所以标为推断而不是结论。要证实它，二选一：</p>
+                    <ol>
+                      <li>在目标机上 <code>curl -I</code> 去掉前缀后的地址，看是否 200；</li>
+                      <li>查发布脚本里拼这条 URL 的那一行，确认前缀变量是否应当只在相对路径下参与拼接。</li>
+                    </ol>
+                  </div>
+                </div>
+
+                <div class="col">
+                  <div class="tiles">
+                    <div class="tile"><div class="tile-k">失败步骤</div><div class="tile-v">拉取产物</div></div>
+                    <div class="tile"><div class="tile-k">退出码</div><div class="tile-v">22</div></div>
+                    <div class="tile"><div class="tile-k">重试</div><div class="tile-v">5 <small>次全 404</small></div></div>
+                    <div class="tile"><div class="tile-k">耗时</div><div class="tile-v">38 <small>s</small></div></div>
+                  </div>
+
+                  <details class="logs" open>
+                    <summary>
+                      <span>原始日志</span>
+                      <span class="chip" data-tone="muted">19 行 · 已折叠 8 行重复</span>
+                    </summary>
+                    <p style="margin:0;padding:7px 14px;border-top:1px solid hsl(var(--hairline));font-size:11px;color:hsl(var(--fg-muted))">
+                      实现里默认收起，这里展开是为了让你看清行号、级别着色与重复行折叠的样子。
+                    </p>
+                    <div class="log-pane">
+                      <div class="log-row" data-lv="dim"><span class="log-n">01</span><span class="log-t">[15:06:29] INFO  connect: ssh user@prod-map</span></div>
+                      <div class="log-row" data-lv="dim"><span class="log-n">02</span><span class="log-t">[15:06:31] INFO  AppCaller governance: already configured</span></div>
+                      <div class="log-row" data-lv="dim"><span class="log-n">03</span><span class="log-t">[15:06:31] INFO  Downloading immutable admin artifact with resume:</span></div>
+                      <div class="log-row" data-lv="dim"><span class="log-n">04</span><span class="log-t">           https://git.miduo.org/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</span></div>
+                      <div class="log-row" data-lv="warn"><span class="log-n">05</span><span class="log-t">[15:06:33] WARN  curl: (22) The requested URL returned error: 404</span></div>
+                      <div class="log-row" data-lv="warn"><span class="log-n">06</span><span class="log-t">[15:06:33] WARN  Problem (retrying all errors). Will retry in 2 seconds. 4 retries left.</span></div>
+                      <div class="log-fold">
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></svg>
+                        同样的两行又重复了 4 轮（3 / 2 / 1 / 0 retries left）· 展开
+                      </div>
+                      <div class="log-row" data-lv="err"><span class="log-n">15</span><span class="log-t">[15:07:05] ERROR curl: (22) The requested URL returned error: 404</span></div>
+                      <div class="log-row" data-lv="err"><span class="log-n">16</span><span class="log-t">[15:07:07] ERROR 执行项目发布命令失败: ssh exec exit=22</span></div>
+                      <div class="log-row" data-lv="dim"><span class="log-n">17</span><span class="log-t">[15:07:07] INFO  未执行版本切换，目标保持 06efeb6</span></div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>改动清单</h2>
+      <p>按「先止血、再增强」排序，上面三条不依赖任何新接口</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>改什么</th><th>为什么</th><th>落在哪</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="what"><span class="pill">止血</span> headline 强制单行化</td>
+            <td class="why">取 error 首句、剥掉 <code class="mono">--- stderr(tail) ---</code> 之后的整段尾巴，配 <code class="mono">line-clamp-2</code> 兜底。不管解析成不成功，结论位都不许出现整段日志。</td>
+            <td class="where"><code>lib/releaseDiagnosis.ts</code><br><code>FailureDiagnosis.tsx:55</code></td>
+          </tr>
+          <tr>
+            <td class="what"><span class="pill">止血</span> 影响面提到结论卡里</td>
+            <td class="why">「目标仍在 06efeb6」= 生产没被动过，是失败后第一个要确认的事实。从 11px 灰色尾巴升级成独立一条绿色状态条。</td>
+            <td class="where"><code>FailureDiagnosis.tsx:61</code></td>
+          </tr>
+          <tr>
+            <td class="what"><span class="pill">止血</span> 重复日志行折叠</td>
+            <td class="why">现有 <code class="mono">dedupeKeepOrder</code> 只去重完全相同的行，curl 的重试告警因为「N retries left」不同而全部逃逸。改成模式归并并显示计数。</td>
+            <td class="where"><code>lib/releaseDiagnosis.ts</code></td>
+          </tr>
+          <tr>
+            <td class="what">新增失败形状识别器</td>
+            <td class="why">照 <code class="mono">parseDiskGuardShortfall</code> 的写法，再加一个「产物下载失败」识别器：认出 curl 退出码、HTTP 状态与下载地址，产出结构化判据而不是一段文本。</td>
+            <td class="where"><code>lib/releaseDiagnosis.ts</code></td>
+          </tr>
+          <tr>
+            <td class="what">判据卡支持无门禁报告的情形</td>
+            <td class="why">现在没有 JSON 门禁就整块退化成一段说明文字。识别器给出的事实同样能填进这张表，用户不必区分「有没有门禁」。</td>
+            <td class="where"><code>FailureDiagnosis.tsx:116</code></td>
+          </tr>
+          <tr>
+            <td class="what">推断与事实分开表述</td>
+            <td class="why">「镜像前缀拼错」是从地址形状推出来的，必须带「推断」标记 + 两条证实路径，不能写成结论。<code class="mono">explainGateCheck</code> 的沉默纪律扩展到这里。</td>
+            <td class="where"><code>lib/releaseDiagnosis.ts</code></td>
+          </tr>
+          <tr>
+            <td class="what">步骤条改横向、标出死点</td>
+            <td class="why">现有竖排步骤在右栏最下面，看不出「死在第几步、后面有没有执行」。横向轨把「2/5 失败、3-5 未执行」压进一行。</td>
+            <td class="where"><code>FailureDiagnosis.tsx:137</code></td>
+          </tr>
+          <tr>
+            <td class="what">原始日志带行号与级别着色</td>
+            <td class="why">日志区改成 <code class="mono">whitespace-pre-wrap</code> + 行号 + error/warn 分色，默认折叠。原文一行不删，但不许再抢首屏。</td>
+            <td class="where"><code>FailureDiagnosis.tsx:181</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>边界</h2>
+      <p>这版方案刻意不做的事</p>
+    </div>
+    <div class="scope">
+      <div class="scope-card">
+        <h3>不改后端接口</h3>
+        <ul>
+          <li>全部信息都从 <code class="mono">run.logs</code> 里现有的行提取，不新增字段、不新增端点。</li>
+          <li>识别不出来时如实说「未能提取结构化判据」，退回原文列表，不编造原因。</li>
+        </ul>
+      </div>
+      <div class="scope-card">
+        <h3>不做通用日志解析器</h3>
+        <ul>
+          <li>只加「产物下载失败」一种形状，和磁盘护栏一样是精确匹配。</li>
+          <li>不为了覆盖率把 WARN 全当噪音——那等于关掉一整类真实告警。</li>
+        </ul>
+      </div>
+      <div class="scope-card">
+        <h3>不碰颜色系统</h3>
+        <ul>
+          <li>demo 里所有颜色取自 <code class="mono">cds/web/src/index.css</code> 现有 token，双主题各写全一套。</li>
+          <li>红色只用于状态标识（左侧竖条、chip、失败步骤底色），正文一律常规前景色。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>demo 数据取自 rel_9759ead9be9405e3 的真实失败记录；日志行为按截图中的 stderr/stdout 尾部还原，未做美化。</p>
+    <p>「推断」块中的镜像前缀结论尚未在目标机上证实，按未证实处理。</p>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var stage = document.getElementById('stage');
+  var before = document.getElementById('panel-before');
+  var after = document.getElementById('panel-after');
+  var btnBefore = document.getElementById('btn-before');
+  var btnAfter = document.getElementById('btn-after');
+  var btnTheme = document.getElementById('btn-theme');
+  var btnAnnotate = document.getElementById('btn-annotate');
+  var label = document.getElementById('device-label');
+  var verdict = document.getElementById('device-verdict');
+
+  var view = 'after';
+  var cdsTheme = 'dark';
+  var annotate = true;
+
+  function themeName() { return cdsTheme === 'dark' ? '深色主题' : '白天主题'; }
+
+  function render() {
+    var isBefore = view === 'before';
+    before.hidden = !isBefore;
+    after.hidden = isBefore;
+    btnBefore.setAttribute('aria-pressed', String(isBefore));
+    btnAfter.setAttribute('aria-pressed', String(!isBefore));
+    before.setAttribute('data-cds-theme', cdsTheme);
+    after.setAttribute('data-cds-theme', cdsTheme);
+    stage.setAttribute('data-annotate', annotate && isBefore ? 'on' : 'off');
+    btnAnnotate.hidden = !isBefore;
+    btnAnnotate.textContent = annotate ? '隐藏标记' : '显示标记';
+    btnTheme.textContent = cdsTheme === 'dark' ? '切到白天主题' : '切到深色主题';
+    label.textContent = (isBefore ? '现状复刻' : '改版') + ' · ' + themeName();
+    verdict.textContent = isBefore
+      ? '结论位是 1418 字符的 stderr，操作按钮在八行之后'
+      : '结论在第一行，原文在折叠区';
+    verdict.setAttribute('data-tone', isBefore ? 'bad' : 'good');
+  }
+
+  btnBefore.addEventListener('click', function () { view = 'before'; render(); });
+  btnAfter.addEventListener('click', function () { view = 'after'; render(); });
+  btnTheme.addEventListener('click', function () {
+    cdsTheme = cdsTheme === 'dark' ? 'light' : 'dark';
+    render();
+  });
+  btnAnnotate.addEventListener('click', function () { annotate = !annotate; render(); });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    var tag = (event.target && event.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (event.key === '1') { view = 'before'; render(); }
+    if (event.key === '2') { view = 'after'; render(); }
+  });
+
+  render();
+})();
+</script>
