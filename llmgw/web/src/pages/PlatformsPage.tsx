@@ -60,6 +60,7 @@ export function PlatformsPage() {
 
   /** 选中预设 = 一次性填好所有系统知道的字段，用户只剩密钥要填。 */
   function applyPreset(next: ProviderPresetItem | null) {
+    const switchingProvider = (next?.key ?? null) !== (preset?.key ?? null);
     setPreset(next);
     setDraft((value) => next
       ? {
@@ -69,13 +70,15 @@ export function PlatformsPage() {
         apiUrl: next.apiUrl,
         providerId: next.providerId || undefined,
         maxConcurrency: next.maxConcurrency,
-        // 本地/自建上游不校验密钥，但网关的 Provider 记录把密钥当必填不变量。
-        // 系统自己知道该填什么就替他填（minimal-user-input），别让他对着一个
-        // 「写着无需密钥、留空却被拒」的输入框卡住。已经敲过的密钥不覆盖。
-        apiKey: next.keylessPlaceholder && !value.apiKey ? next.keylessPlaceholder : value.apiKey,
+        // 密钥是**跟着供应商走**的，换了供应商就必须重来：
+        // 选 Ollama 会填入占位值 "ollama"，此时改选 OpenAI，若沿用旧值，那个被掩码遮住的
+        // 占位值会满足必填校验，用户就这么建出一个密钥根本不对的 OpenAI Provider。
+        // 所以换供应商 = 清空后按新预设重填（免密钥的填占位值，需要真密钥的留空让用户敲）；
+        // 只有重选同一个预设才保留他已经敲进去的东西。
+        apiKey: switchingProvider ? (next.keylessPlaceholder || '') : value.apiKey,
       }
-      // 取消选中回到自定义：只清掉预设带来的地址，用户已经敲的密钥不动
-      : { ...value, name: '', apiUrl: '', providerId: undefined });
+      // 取消选中回到自定义：地址清掉；密钥同理，之前那个是给上一个供应商用的
+      : { ...value, name: '', apiUrl: '', providerId: undefined, apiKey: switchingProvider ? '' : value.apiKey });
   }
 
   async function runTest(p: PlatformItem) {
@@ -221,19 +224,20 @@ export function PlatformsPage() {
         delete next[p.id];
         return next;
       });
-      const extra = res.data.deletedModels > 0 ? `，同时删除了 ${res.data.deletedModels} 个模型` : '';
-      setToast(`已删除 Provider「${p.name}」${extra}`);
+      const bits: string[] = [];
+      if (res.data.deletedModels > 0) bits.push(`${res.data.deletedModels} 个模型`);
+      if (res.data.removedPoolMembers > 0) bits.push(`${res.data.removedPoolMembers} 个模型池里的成员位`);
+      setToast(`已删除 Provider「${p.name}」${bits.length > 0 ? `，同时清理了 ${bits.join('、')}` : ''}`);
       return;
     }
-    // 名下有模型：后端把「有几个」写在消息里，这里就地再确认一次，让用户真能删掉。
+    // 名下有模型或被池引用：后端把「有几个、在哪些池」写在消息里，这里就地再确认一次。
     // 不做默认级联——连坐删除不可逆，必须有一次显式点头。
     if (res.error?.code === 'PLATFORM_HAS_MODELS') {
-      if (window.confirm(`${res.error.message}\n\n确认后这些模型会一并删除，无法撤销。`)) {
+      if (window.confirm(`${res.error.message}\n\n确认后这些内容会一并删除，无法撤销。`)) {
         await removePlatform(p, true);
       }
       return;
     }
-    // 被模型池引用等其它拒绝：消息里已写清被谁引用，原样透出
     setToast(res.error?.message || '删除失败');
   }
 

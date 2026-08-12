@@ -800,12 +800,18 @@ export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformIt
 }
 /**
  * 彻底删除 Provider。
- * 名下有模型时后端返回 409 让前端二次确认；`withModels` 为 true 表示用户已确认连模型一起删。
- * 被模型池引用则一律拒绝（先从池里移除，删掉会留下解析不了的悬空成员）。
+ * 名下有模型、或被模型池引用时后端返回 409 让前端二次确认；
+ * `withModels` 为 true 表示用户已确认连同模型与池中成员位一起删。
  */
-export function deletePlatform(id: string, withModels = false): Promise<ApiResponse<{ deletedModels: number }>> {
+export function deletePlatform(
+  id: string,
+  withModels = false,
+): Promise<ApiResponse<{ deletedModels: number; removedPoolMembers: number }>> {
   const q = withModels ? '?withModels=true' : '';
-  return apiRequest<{ deletedModels: number }>(`/platforms/${encodeURIComponent(id)}${q}`, { method: 'DELETE' });
+  return apiRequest<{ deletedModels: number; removedPoolMembers: number }>(
+    `/platforms/${encodeURIComponent(id)}${q}`,
+    { method: 'DELETE' },
+  );
 }
 export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });

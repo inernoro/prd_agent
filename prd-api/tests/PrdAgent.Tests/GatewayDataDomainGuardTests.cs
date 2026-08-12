@@ -3296,6 +3296,41 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("ElemMatch<BsonDocument>(\"Models\"", body);
         Assert.DoesNotContain("ElemMatch<BsonDocument>(\"Members\"", body);
+
+        // 级联必须自己把池里的成员位摘掉。托管默认池是 append-only，
+        // /gw/pools/{id}/models 拒绝移除成员——而那些成员正是导入时自动同步进去的。
+        // 只拦不清的话，「先从池里移除」又是一句用户做不到的话，删除功能等于不存在。
+        Assert.Contains("PullFilter<BsonDocument>(\"Models\"", body);
+    }
+
+    /// <summary>
+    /// 停用的 Provider 不许批量导入模型——与单模型端点一致。
+    /// 不拦会走进静默坑：模型建出来了，但池同步会把「Provider 已停用」的模型排除**且不抛异常**，
+    /// 于是 PoolSyncFailed 仍是 false、请求报成功，而这批模型对池路由根本不可见。
+    /// </summary>
+    [Fact]
+    public void 停用的_Provider_不许导入模型()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = server.IndexOf("/gw/platforms/{id}/models/import", StringComparison.Ordinal);
+        Assert.True(start > 0, "批量导入端点不见了");
+        var next = server.IndexOf("app.MapPost(", start, StringComparison.Ordinal);
+        var body = next > 0 ? server[start..next] : server[start..];
+
+        Assert.Contains("PLATFORM_DISABLED", body);
+    }
+
+    /// <summary>
+    /// 从上游拉回来的值必须同时标来源与时间（minimal-user-input 第 2 条）。
+    /// 只标来源不标时间时，面板开着不动的用户分不清手上这份报价是刚拉的还是很久以前的，
+    /// 会照着过期价格做导入决定。
+    /// </summary>
+    [Fact]
+    public void 上游拉回来的清单必须带拉取时间()
+    {
+        Assert.Contains("FetchedAt", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
+        Assert.Contains("FetchedAt = DateTime.UtcNow", ReadRepoFile("llmgw/console-api/Program.cs"));
+        Assert.Contains("formatFetchedAt", ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx"));
     }
 
     /// <summary>

@@ -177,7 +177,11 @@ export function UpstreamModelPicker({
           <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
           只看未导入
         </label>
-        <span style={{ marginLeft: 'auto', ...HINT_TEXT, fontFamily: 'var(--font-mono)' }}>{data.probedUrl}</span>
+        {/* 来源 + 时间一起给：面板可能开着不动，用户得能分辨手上这份报价是刚拉的还是很久以前的
+            （minimal-user-input 第 2 条：拉回来的值要标来源与时间） */}
+        <span style={{ marginLeft: 'auto', ...HINT_TEXT, fontFamily: 'var(--font-mono)' }}>
+          {data.probedUrl} · {formatFetchedAt(data.fetchedAt)}
+        </span>
       </div>
 
       <div style={modelListStyle}>
@@ -256,6 +260,20 @@ export const MAX_IMPORT_BATCH = 200;
 export function defaultSelection(items: UpstreamModelItem[]): Set<string> {
   const eligible = items.filter((m) => !m.alreadyImported && m.inferredCapabilities.length > 0);
   return new Set(eligible.slice(0, MAX_IMPORT_BATCH).map((m) => m.modelId));
+}
+
+/** 拉取时间的可读表达。拿不到就如实说「时间未知」，不编一个当前时间冒充新鲜度。 */
+export function formatFetchedAt(iso: string | undefined, now: Date = new Date()): string {
+  if (!iso) return '拉取时间未知';
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '拉取时间未知';
+  const seconds = Math.max(0, Math.round((now.getTime() - at.getTime()) / 1000));
+  if (seconds < 60) return '刚刚拉取';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前拉取`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} 小时前拉取`;
+  return `${at.toLocaleDateString()} 拉取`;
 }
 
 export function formatPrice(m: UpstreamModelItem): string {

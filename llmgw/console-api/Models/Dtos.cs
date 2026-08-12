@@ -1556,6 +1556,14 @@ public sealed class UpstreamModelsData
     public int Total { get; set; }
     public int AlreadyImportedCount { get; set; }
     public bool PricingProvided { get; set; }
+
+    /// <summary>
+    /// 这份清单与价格是什么时候从上游拉回来的（服务端时间）。
+    /// minimal-user-input 第 2 条要求拉回来的值必须标「来源与时间」——面板可能开着不动，
+    /// 用户得能分辨手上这份报价是刚拉的还是半小时前的，否则会照着过期价格做导入决定。
+    /// </summary>
+    public DateTime FetchedAt { get; set; }
+
     public List<UpstreamModelItem> Items { get; set; } = new();
 }
 
