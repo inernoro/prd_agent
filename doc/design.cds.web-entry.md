@@ -150,6 +150,7 @@ flowchart LR
 - [CDS 多 Web 入口配置与验收](./guide.cds.web-entry.md)：人和 Agent 的实际操作步骤。
 - [CDS 部署验收](./guide.cds.deploy-acceptance.md)：部署完成后的通用验收要求。
 - [CDS 技能版本与更新架构](./design.cds.skill-version-update.md)：技能规则如何随版本发布。
+- `changelogs/2026-08-10_cds-web-entry-review.md`（简单预览与完整详情页入口地址/展示契约修复、Web 服务名结构化角色识别）
 
 ## 十二、实现来源
 
