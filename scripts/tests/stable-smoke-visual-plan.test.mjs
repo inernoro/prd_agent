@@ -42,7 +42,13 @@ test('本轮视觉计划固化运行标识、提交和取证开始时间', () =>
   assert.ok(plan.slots.filter((slot) => slot.moduleId !== 'image-model-routing')
     .every((slot) => slot.pageOrigin === 'https://preview.example.test'));
   assert.ok(plan.slots.filter((slot) => slot.moduleId === 'image-model-routing')
+    .filter((slot) => ['前台选择', '真实调用'].includes(slot.scenario))
+    .every((slot) => slot.pageOrigin === 'https://preview.example.test' && slot.entryPath === '/visual-agent'));
+  assert.ok(plan.slots.filter((slot) => slot.moduleId === 'image-model-routing')
+    .filter((slot) => !['前台选择', '真实调用'].includes(slot.scenario))
     .every((slot) => slot.pageOrigin === 'https://gateway-preview.example.test'));
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '登录')?.entryPath, '/login');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '调用日志对应')?.entryPath, '/logs');
   const report = renderVisualPlan(plan);
   assert.match(report, /运行标识：stsmk-20260811/);
   assert.match(report, /取证开始：2026-08-11T14:00:00.000Z/);

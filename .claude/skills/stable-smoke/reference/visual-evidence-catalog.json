@@ -154,7 +154,25 @@
       "name": "图片模型路由与切换",
       "originKind": "gateway",
       "breadcrumb": "LLMGW 登录 → 逻辑模型 → Offering → 路由配置 → 前台选择 → 调用日志",
-      "entryPath": "/",
+      "entryPath": "/logical-models",
+      "stateBindings": {
+        "登录": {
+          "originKind": "gateway",
+          "entryPath": "/login"
+        },
+        "前台选择": {
+          "originKind": "app",
+          "entryPath": "/visual-agent"
+        },
+        "真实调用": {
+          "originKind": "app",
+          "entryPath": "/visual-agent"
+        },
+        "调用日志对应": {
+          "originKind": "gateway",
+          "entryPath": "/logs"
+        }
+      },
       "uniqueScreenshotFloor": 12,
       "requiredThemes": ["light", "dark"],
       "requiredViewportClasses": ["desktop"],

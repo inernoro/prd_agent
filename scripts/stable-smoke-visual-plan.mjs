@@ -43,6 +43,17 @@ function normalizeOrigin(value) {
   }
 }
 
+function resolveSlotBinding(module, state, environmentOrigins, gatewayEnvironmentOrigins, environment) {
+  const binding = module.stateBindings?.[state] || {};
+  const originKind = binding.originKind || module.originKind || 'app';
+  return {
+    pageOrigin: originKind === 'gateway'
+      ? gatewayEnvironmentOrigins[environment]
+      : environmentOrigins[environment],
+    entryPath: binding.entryPath || module.entryPath,
+  };
+}
+
 export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity = {}) {
   const environments = normalizeVisualEnvironments(requestedEnvironments);
   const scope = String(runIdentity.scope || 'full').trim() || 'full';
@@ -98,9 +109,13 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
         : breadcrumb;
       for (const [index, state] of (module.requiredStates || []).entries()) {
         const viewportClass = stateViewport(module, state);
-        const pageOrigin = module.originKind === 'gateway'
-          ? gatewayEnvironmentOrigins[environment]
-          : environmentOrigins[environment];
+        const binding = resolveSlotBinding(
+          module,
+          state,
+          environmentOrigins,
+          gatewayEnvironmentOrigins,
+          environment,
+        );
         slots.push({
           slotId: qualifySlotId(slotId(module.id, sequence++)),
           environment: environment || undefined,
@@ -116,15 +131,19 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           expectedProof: `页面处于“${state}”状态，关键内容和操作完整可见`,
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
-          pageOrigin: pageOrigin || undefined,
-          entryPath: module.entryPath,
+          pageOrigin: binding.pageOrigin || undefined,
+          entryPath: binding.entryPath,
           captureStartedAt: captureStartedAt || undefined,
         });
       }
       for (const extra of module.additionalEvidenceSlots || []) {
-        const pageOrigin = module.originKind === 'gateway'
-          ? gatewayEnvironmentOrigins[environment]
-          : environmentOrigins[environment];
+        const binding = resolveSlotBinding(
+          module,
+          extra.label,
+          environmentOrigins,
+          gatewayEnvironmentOrigins,
+          environment,
+        );
         slots.push({
           slotId: qualifySlotId(slotId(module.id, sequence++)),
           environment: environment || undefined,
@@ -140,8 +159,8 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           expectedProof: extra.expectedProof,
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
-          pageOrigin: pageOrigin || undefined,
-          entryPath: module.entryPath,
+          pageOrigin: binding.pageOrigin || undefined,
+          entryPath: binding.entryPath,
           captureStartedAt: captureStartedAt || undefined,
         });
       }
