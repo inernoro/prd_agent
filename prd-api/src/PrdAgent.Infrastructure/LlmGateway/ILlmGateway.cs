@@ -194,6 +194,15 @@ public class AvailableModelPool
     /// 池内模型列表
     /// </summary>
     public List<PoolModelInfo> Models { get; init; } = new();
+
+    /// <summary>近七天有耗时记录的请求平均耗时。</summary>
+    public long? AverageDurationMs { get; init; }
+
+    /// <summary>最近最多十次请求的样本数。</summary>
+    public int RecentTenRequests { get; init; }
+
+    /// <summary>最近最多十次请求成功率；没有样本时为空。</summary>
+    public decimal? RecentTenSuccessRatePercent { get; init; }
 }
 
 /// <summary>

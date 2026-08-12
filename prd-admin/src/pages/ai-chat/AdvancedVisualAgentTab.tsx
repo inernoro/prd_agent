@@ -1274,10 +1274,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [directPrompt, setDirectPrompt] = useState(false);
   const [directPromptReady, setDirectPromptReady] = useState(false);
   const effectiveModel = useMemo(() => {
-    const byId = modelPrefModelId ? enabledImageModels.find((m) => m.id === modelPrefModelId) ?? null : null;
+    const byId = modelPrefModelId ? allImageGenModels.find((m) => m.id === modelPrefModelId) ?? null : null;
     if (modelPrefAuto) return serverDefaultModel;
     return byId ?? serverDefaultModel;
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
+  }, [allImageGenModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
   // 尺寸选项（后端按分辨率分组返回，前端直接使用，无需转换）
   type SizeOption = { size: string; aspectRatio: string };
@@ -2549,19 +2549,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, [directPrompt, directPromptKey, directPromptReady]);
 
-  // 如果手动选中的模型被后端删除（模型池中不存在），自动回退到”自动”
+  // 只有模型池从目录中删除时才回到自动；健康异常只做建议，不剥夺用户选择。
   // 重要：必须等模型池加载完成后再判断，否则空数组会误判用户选择
   useEffect(() => {
     if (modelsLoading) return;
     if (modelPrefAuto) return;
     if (!modelPrefModelId) return;
-    if (enabledImageModels.length === 0) return;
-    const ok = enabledImageModels.some((m) => m.id === modelPrefModelId);
+    if (allImageGenModels.length === 0) return;
+    const ok = allImageGenModels.some((m) => m.id === modelPrefModelId);
     if (!ok) {
       setModelPrefAuto(true);
       setModelPrefModelId('');
     }
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
+  }, [allImageGenModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
 
   // 启动时：加载 workspace 并回放历史消息+画布（workspaceId 为稳定主键）
   useEffect(() => {
@@ -7249,7 +7249,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
                                       background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
                                     }}
-                                    disabled={disabled}
                                     onClick={() => {
                                       setModelPrefAuto(false);
                                       setModelPrefModelId(m.id);
@@ -7279,7 +7278,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                           )}
                                         </div>
                                         <div className="mt-0.5 truncate text-[11px] text-token-muted">
-                                          {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : sourceLabel)}
+                                          {m.subtitle || (disabled ? '当前不建议使用，可继续选择' : sourceLabel)}
                                         </div>
                                       </div>
                                       <div className="ml-auto shrink-0">
@@ -8359,8 +8358,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         </div>
 
                         <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
-                          {enabledImageModels.length === 0 ? (
-                            <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
+                          {allImageGenModels.length === 0 ? (
+                            <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed var(--border-subtle)' }}>
                               {modelsError ? (
                                 <>
                                   <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
@@ -8371,7 +8370,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                           ) : (
                             <div className="space-y-1.5">
-                              {enabledImageModels.map((m) => {
+                              {allImageGenModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
                                   const meta = getImageModelMeta(m);
                                   return (
@@ -8380,9 +8379,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       type="button"
                                       className="group w-full text-left rounded-[14px] px-3 py-2.5 transition-all"
                                       style={{
-                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid rgba(255,255,255,0.08)',
-                                        background: picked ? 'rgba(250,204,21,0.07)' : 'rgba(255,255,255,0.02)',
+                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid var(--border-subtle)',
+                                        background: picked ? 'rgba(250,204,21,0.07)' : 'var(--nested-block-bg)',
                                         boxShadow: picked ? '0 0 0 3px rgba(250,204,21,0.08)' : 'none',
+                                        opacity: m.enabled ? 1 : 0.72,
                                       }}
                                       onClick={() => {
                                         setModelPrefAuto(false);
@@ -8396,7 +8396,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                           className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full transition-colors"
                                           style={{
                                             background: picked ? 'rgba(250,204,21,0.95)' : 'transparent',
-                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid rgba(255,255,255,0.22)',
+                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid var(--border-subtle)',
                                             color: picked ? '#1a1a1a' : 'transparent',
                                           }}
                                           aria-label={picked ? '已选择' : '未选择'}

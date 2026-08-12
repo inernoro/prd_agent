@@ -1,18 +1,18 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v2.8 | **日期**：2026-08-12 | **状态**：开发中
+> **版本**：v2.9 | **日期**：2026-08-12 | **状态**：开发中
 
 **一句话**：网关与模型池的债务总表，含协议路由收口与多次生产取证记录。
 **谁该读**：接手网关的工程师；做发布判断的人。
 **读完能做什么**：查清某条债务的状态与对应证据。
 
 ---
-> **关联设计**：[design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
-> **整改计划**：[plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)
+> **关联设计**：[LLM Gateway 统一调用](./design.platform.llm-gateway.md)、[AppCaller 模型池选择与池内调度](./design.platform.model-pool.md)、[LLM 网关与模型池统一](./design.platform.llm-gateway.unification.md)
+> **整改计划**：[LLM Gateway 故障隔离与恢复](./plan.platform.llm-gateway.resilience.md)、[LLM 网关旧路径物理退场](./plan.platform.llm-gateway.full-cutover.md)
 
 ## 总览
 
-当前 open: 22 / in-progress: 4 / paid: 22 / 总计: 48
+当前 open: 19 / in-progress: 8 / paid: 21 / 总计: 48
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -20,7 +20,10 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
-| 2026-08-12-unavailable-pool-no-passive-half-open | critical | 2026-08-12 | 模型成员连续失败后会进入 `Unavailable`，Resolver 随即永久排除该成员；但健康恢复只发生在一次成功请求之后，导致成员没有机会通过真实流量恢复。控制台也没有恢复或切换入口。生产不能用 CDS 或定时生图探测兜底，因为主动调用会消耗供应商额度 | 任一 generation 上游连续失败并被熔断时 | open | 2026-08-12 已临时把 5 个生图 appCaller 审计化切到健康 Gemini 池，并上线基于既有请求日志的故障/恢复站内信，整个止血与通知链不产生模型探测。长期完成条件：数据面按池自动切健康候选；冷却后只放行有严格令牌桶的真实业务请求进入半开，不创建合成付费请求；成功自动回池、失败指数退避；站内信提供带预览、审计和回滚的一键切池，但通知中心不得成为自动恢复前置依赖。 |
+| 2026-08-12-unavailable-pool-no-passive-half-open | critical | 2026-08-12 | 模型成员连续失败后会进入 `Unavailable`，Resolver 随即永久排除该成员；但健康恢复只发生在一次成功请求之后，导致成员没有机会通过真实流量恢复。控制台也没有恢复或切换入口。生产不能用 CDS 或定时生图探测兜底，因为主动调用会消耗供应商额度 | 任一 generation 上游连续失败并被熔断时 | in-progress | 已实现冷却后由真实请求原子领取半开租约，人工恢复也只授予半开资格，不直接改成健康；成功和失败会清理租约，默认探测服务保持关闭。单元与全量非集成回归通过。尚欠指数退避、多实例并发故障演练和生产证据，完成前不得标为 paid。 |
+| 2026-08-12-appcaller-single-pool-binding | critical | 2026-08-12 | 当前 GW AppCaller 只有单值 `ModelPoolId`，无法表达“多个获准池 + 一个默认池 + 跨池代选默认关闭”。MAP 因此不能从 AppCaller 配置取得完整业务模型集合，紧急切默认池还会把模型目录压缩成一个选项 | 任一 AppCaller 需要向用户提供多个可选模型池，或值班人切换默认池时 | in-progress | 已增加获准池集合、默认池和跨池开关，控制台支持多池编辑，旧单值迁移会补成严格单池且默认禁止跨池。尚欠临时授权失效时间、生产数据迁移与回滚演练。 |
+| 2026-08-12-explicit-selection-can-bypass-pool-boundary | critical | 2026-08-12 | 显式 expected model / 逻辑模型解析发生在 AppCaller 单池边界之前，逻辑目录或额外池搜索可能使命中的执行目标不属于当前 AppCaller 绑定池。现有语义不能证明“用户选池 A，默认绝不执行池 B” | MAP 允许用户显式选择模型，或逻辑目录存在多个模型时 | in-progress | 严格配置已先校验池授权并跳过逻辑目录旁路；默认仅保留所选池，显式开启时按获准集合顺序代选，未知选择 fail-closed。4 条严格路由与半开合同测试通过。尚欠真实 Serving 请求的请求池与实际池审计验收。 |
+| 2026-08-12-map-catalog-and-health-advice-coupled | high | 2026-08-12 | MAP 模型列表当前复用 Resolver 的“可用池”投影，目录会随路由绑定和健康变化收缩；视觉创作推荐文案仍有前端硬编码，也没有平均耗时、最近 10 次成功率、样本数和更新时间。局部上游故障因此可能表现为模型消失或整个选择器不可恢复 | 任一可选模型池故障、默认池切换或目录接口短时失败时 | in-progress | MAP 已按池生成单一业务模型身份，展示平均耗时与最近 10 次成功率；不健康池保留在选择器中并允许用户坚持，5 条前端合同测试通过。尚欠目录最近成功快照、陈旧标记、指标更新时间和生产页面验收。 |
 | 2026-07-16-tenant-aggregate-hard-limit | medium | 2026-07-16 | 当前请求硬限制位于 appCaller 月预算、appCaller RPM 与 service key RPM；用量页能按 TenantId 汇总，但 `LlmGwTenant` 没有跨 appCaller 的月预算或速率字段，因此不存在单独的租户总硬上限 | 外部客户合同要求整个租户共享一个强制总预算或总速率，且不能只靠覆盖全部 appCaller 达成时 | paid | 已新增租户总月预算、单次原子预占和总 RPM；serving 以租户账本与分钟窗口跨 appCaller 原子执行，并与 appCaller 层同时返回限流头；控制台、并发/跨租户测试和权威教程同步更新。 |
 | 2026-07-14-tenant-provision-crash-consistency | high | 2026-07-14 | 租户和成员创建已对可捕获写异常执行补偿，并按 slug 或成员目标支持幂等重放；成员关键变更也会先写入包含 TenantId 的 pending 审计意图，再执行业务写入并完成审计。但 standalone Mongo 无多文档事务，进程在多次写入之间硬退出时仍可能留下半成品引用，或留下已完成业务但尚未收口的 pending 审计 | 开放匿名租户注册、控制台改为多副本，出现 provisioning 残留或 pending 审计告警前 | paid | 租户、成员和 owner 边界写入先登记带精确对象 ID、租约和 generation 的恢复操作；启动与 30 秒循环会 fencing 接管过期 pending/repairing 操作，回滚半成品或完成已提交的 owner 变更。Mongo 故障注入测试覆盖租户/成员硬退出和修复器二次退出接管 |
 | 2026-07-14-owner-mutation-lease-fencing | high | 2026-07-14 | 最后一个 owner 保护已使用租户级 30 秒租约和 membership version CAS 串行化常规并发；若一次 owner 变更停顿超过租约且另一实例接管，旧持有者仍可能在过期后继续提交不同 membership 的写入，租约 token 尚未形成跨文档 fencing | 控制台多副本运行、owner 变更可能超过 30 秒，或开放外部组织自主管理前 | paid | 移除可过期的进程锁；租户文档现在保存 active owner membership 权威集合和递增 fencing generation，移除 owner 使用单文档原子条件要求集合长度大于 1。并发移除测试证明两名 owner 只会成功移除一名；硬退出时 owner 权限按权威集合 fail-closed，并由恢复操作收口 membership |

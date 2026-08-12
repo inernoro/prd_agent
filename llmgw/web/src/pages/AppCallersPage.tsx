@@ -20,7 +20,9 @@ const DRIFT_FILTERS = [
 ];
 type Draft = {
   status: string;
-  modelPoolId: string;
+  allowedModelPoolIds: string[];
+  defaultModelPoolId: string;
+  allowCrossPoolFallback: boolean;
   modelPolicy: string;
   parameterPolicy: string;
   owner: string;
@@ -190,7 +192,9 @@ export function AppCallersPage() {
 
   const getDraft = (item: GatewayAppCaller): Draft => drafts[item.id] ?? {
     status: item.status || 'discovered',
-    modelPoolId: item.modelPoolId || '',
+    allowedModelPoolIds: item.allowedModelPoolIds?.length ? item.allowedModelPoolIds : (item.modelPoolId ? [item.modelPoolId] : []),
+    defaultModelPoolId: item.defaultModelPoolId || item.modelPoolId || '',
+    allowCrossPoolFallback: item.allowCrossPoolFallback ?? false,
     modelPolicy: item.modelPolicy || 'auto',
     parameterPolicy: item.parameterPolicy || 'default-drop',
     owner: item.owner || '',
@@ -209,7 +213,9 @@ export function AppCallersPage() {
     setActionNotice(null);
     const res = await updateGatewayAppCaller(item.id, {
       status: draft.status,
-      modelPoolId: draft.modelPoolId,
+      allowedModelPoolIds: draft.allowedModelPoolIds,
+      defaultModelPoolId: draft.defaultModelPoolId,
+      allowCrossPoolFallback: draft.allowCrossPoolFallback,
       modelPolicy: draft.modelPolicy,
       parameterPolicy: draft.parameterPolicy,
       owner: draft.owner,
@@ -405,6 +411,59 @@ function FilterSelect({ label, value, options, onChange, style }: { label: strin
   );
 }
 
+function ModelPoolContractFields({
+  compatiblePools,
+  draft,
+  selectStyle,
+  canWrite,
+  onDraft,
+}: {
+  compatiblePools: ModelPool[];
+  draft: Draft;
+  selectStyle: React.CSSProperties;
+  canWrite: boolean;
+  onDraft: (patch: Partial<Draft>) => void;
+}) {
+  const selectedPools = compatiblePools.filter((pool) => draft.allowedModelPoolIds.includes(pool.id));
+  return (
+    <>
+      <label>选池
+        <select
+          multiple
+          size={Math.min(5, Math.max(2, compatiblePools.length))}
+          disabled={!canWrite}
+          value={draft.allowedModelPoolIds}
+          onChange={(event) => {
+            const allowedModelPoolIds = Array.from(event.currentTarget.selectedOptions, (option) => option.value);
+            const defaultModelPoolId = allowedModelPoolIds.includes(draft.defaultModelPoolId)
+              ? draft.defaultModelPoolId
+              : (allowedModelPoolIds[0] || '');
+            onDraft({
+              allowedModelPoolIds,
+              defaultModelPoolId,
+              allowCrossPoolFallback: allowedModelPoolIds.length > 1 ? draft.allowCrossPoolFallback : false,
+              modelPolicy: allowedModelPoolIds.length ? 'pool' : draft.modelPolicy,
+            });
+          }}
+          style={{ ...selectStyle, height: 'auto', minHeight: 72 }}
+        >
+          {compatiblePools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name || pool.code || pool.id}</option>)}
+        </select>
+      </label>
+      <label>默认池
+        <select disabled={!canWrite || selectedPools.length === 0} value={draft.defaultModelPoolId} onChange={(event) => onDraft({ defaultModelPoolId: event.target.value })} style={selectStyle}>
+          <option value="">未设置</option>
+          {selectedPools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name || pool.code || pool.id}</option>)}
+        </select>
+      </label>
+      <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <input type="checkbox" disabled={!canWrite || selectedPools.length < 2} checked={draft.allowCrossPoolFallback} onChange={(event) => onDraft({ allowCrossPoolFallback: event.target.checked })} />
+        跨池回退
+      </label>
+    </>
+  );
+}
+
 function AppCallerRow({
   item,
   td,
@@ -434,12 +493,13 @@ function AppCallerRow({
 }) {
   const chip = statusChip(item.status);
   const compatiblePools = pools.filter((p) => !item.requestType || p.modelType.toLowerCase() === item.requestType.toLowerCase());
-  const selectedPool = compatiblePools.find((pool) => pool.id === draft.modelPoolId);
+  const selectedPool = compatiblePools.find((pool) => pool.id === draft.defaultModelPoolId);
+  const selectedPoolCount = draft.allowedModelPoolIds.length;
   const observedPolicy = [item.lastObservedModelPolicy, item.lastObservedModelPoolId].filter(Boolean).join(' / ');
   const observedParameter = item.lastObservedParameterPolicy ? `参数 ${item.lastObservedParameterPolicy}` : '';
   const observedIngressProtocols = item.observedIngressProtocols?.length ? item.observedIngressProtocols : (item.ingressProtocol ? [item.ingressProtocol] : []);
   const routeDrift = Boolean(item.lastObservedModelPolicy && item.lastObservedModelPolicy !== item.modelPolicy)
-    || Boolean(item.lastObservedModelPoolId && item.lastObservedModelPoolId !== item.modelPoolId);
+    || Boolean(item.lastObservedModelPoolId && !draft.allowedModelPoolIds.includes(item.lastObservedModelPoolId));
   const parameterDrift = Boolean(item.lastObservedParameterPolicy && item.lastObservedParameterPolicy !== item.parameterPolicy);
   return (
     <>
@@ -447,7 +507,7 @@ function AppCallerRow({
         <td style={td}><div className="lg-app-caller-identity"><code>{item.appCallerCode}</code><span>{item.title || '未填写标题'} · {item.sourceSystem || '未知来源'}</span></div></td>
         <td style={td}><Chip label={chip.label} color={chip.color} bg={chip.bg} /></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{requestTypeLabelForTable(item.requestType)}</strong><span>{observedIngressProtocols.join('、') || '未观察到协议'}</span></div></td>
-        <td style={td}><div className="lg-app-caller-stack"><strong>{selectedPool?.name || item.modelPoolId || '未绑定模型池'}</strong><span>{modelPolicyLabel(item.modelPolicy || 'auto')} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
+        <td style={td}><div className="lg-app-caller-stack"><strong>{selectedPool?.name || item.modelPoolId || '未绑定模型池'}{selectedPoolCount > 1 ? ` 等 ${selectedPoolCount} 个` : ''}</strong><span>{modelPolicyLabel(item.modelPolicy || 'auto')} · {item.allowCrossPoolFallback ? '跨池开' : '跨池关'} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{item.owner || '未指定负责人'}</strong><span>{formatGovernanceSummary(item)}</span></div></td>
         <td style={td}><div className="lg-app-caller-recent"><TraceLinks item={item} /><span>{item.totalSeen} 次 · {fmtTime(item.lastSeenAt)}</span></div></td>
         <td style={td}><div className="lg-app-caller-row-actions"><Button size="sm" variant="ghost" onClick={onToggle}>{expanded ? '收起' : canWrite ? '配置' : '查看'}</Button>{canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`}>提示词策略</Link> : null}</div></td>
@@ -457,7 +517,7 @@ function AppCallerRow({
           <div className="lg-app-caller-editor-heading"><div><strong>{canWrite ? '配置路由与治理' : '路由与治理详情'}</strong><span>复杂配置集中在当前 appCaller 内，不影响列表阅读。保存后下一条请求生效。</span></div>{selectedPool ? <EntityPreviewDrawer buttonLabel="预览模型池" kicker="appCaller 关联的模型池" title={selectedPool.name || selectedPool.code || selectedPool.id} summary={`“${item.appCallerCode}”会从这个池的可用成员中选择实际上游。`} status={[{ label: poolHealthLabel(selectedPool.health), tone: selectedPool.health === 'healthy' ? 'good' : 'warning' }, { label: selectedPool.isDefaultForType ? `${selectedPool.modelType} 默认池` : '专用模型池' }, { label: `${selectedPool.models.length} 个模型成员` }]} sections={[{ title: '路由角色', fields: [{ label: '模型类型', value: selectedPool.modelType || '未配置' }, { label: '选择策略', value: poolStrategyLabel(selectedPool.strategyType) }, { label: '池优先级', value: selectedPool.priority }, { label: '绑定 appCaller', value: `${selectedPool.boundAppCallerCount ?? 0} 个` }] }, { title: '候选模型', description: '按优先级展示前六个成员。', fields: selectedPool.models.slice().sort((a, b) => a.priority - b.priority).slice(0, 6).map((model) => ({ label: model.modelId, value: `${model.healthStatusLabel || '状态未知'} · 优先级 ${model.priority}${model.protocol ? ` · ${model.protocol}` : ''}` })) }, { title: '最近运行', fields: [{ label: '近 7 天请求', value: selectedPool.recentRequests ?? 0 }, { label: '成功率', value: selectedPool.recentSuccessRatePercent == null ? '暂无数据' : `${selectedPool.recentSuccessRatePercent}%` }, { label: '健康成员', value: `${selectedPool.healthyMembers ?? 0} 个` }, { label: '不可用成员', value: `${selectedPool.unavailableMembers ?? 0} 个` }] }]} /> : null}</div>
           <div className="lg-app-caller-editor-grid">
             <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</select></label>
-            <label>模型池<select disabled={!canWrite} value={draft.modelPoolId} onChange={(e) => onDraft({ modelPoolId: e.target.value, modelPolicy: e.target.value ? 'pool' : draft.modelPolicy })} style={selectStyle}><option value="">未绑定</option>{compatiblePools.map((p) => <option key={p.id} value={p.id}>{p.name || p.code || p.id}</option>)}</select></label>
+            <ModelPoolContractFields compatiblePools={compatiblePools} draft={draft} selectStyle={selectStyle} canWrite={canWrite} onDraft={onDraft} />
             <label>模型策略<select disabled={!canWrite} value={draft.modelPolicy} onChange={(e) => onDraft({ modelPolicy: e.target.value })} style={selectStyle}>{MODEL_POLICIES.map((x) => <option key={x} value={x}>{modelPolicyLabel(x)}</option>)}</select></label>
             <label>参数策略<select disabled={!canWrite} value={draft.parameterPolicy} onChange={(e) => onDraft({ parameterPolicy: e.target.value })} style={selectStyle}>{PARAMETER_POLICIES.map((x) => <option key={x} value={x}>{parameterPolicyLabel(x)}</option>)}</select></label>
             <label>负责人<input disabled={!canWrite} value={draft.owner} onChange={(e) => onDraft({ owner: e.target.value })} placeholder="例如 platform-team" /></label>
@@ -500,10 +560,10 @@ function AppCallerMobileCard({
 }) {
   const chip = statusChip(item.status);
   const compatiblePools = pools.filter((pool) => !item.requestType || pool.modelType.toLowerCase() === item.requestType.toLowerCase());
-  const selectedPool = compatiblePools.find((pool) => pool.id === draft.modelPoolId);
+  const selectedPool = compatiblePools.find((pool) => pool.id === draft.defaultModelPoolId);
   const observedIngressProtocols = item.observedIngressProtocols?.length ? item.observedIngressProtocols : (item.ingressProtocol ? [item.ingressProtocol] : []);
   const routeDrift = Boolean(item.lastObservedModelPolicy && item.lastObservedModelPolicy !== item.modelPolicy)
-    || Boolean(item.lastObservedModelPoolId && item.lastObservedModelPoolId !== item.modelPoolId)
+    || Boolean(item.lastObservedModelPoolId && !draft.allowedModelPoolIds.includes(item.lastObservedModelPoolId))
     || Boolean(item.lastObservedParameterPolicy && item.lastObservedParameterPolicy !== item.parameterPolicy);
   return (
     <article className="lg-app-caller-mobile-card">
@@ -513,7 +573,7 @@ function AppCallerMobileCard({
       </div>
       <dl className="lg-app-caller-mobile-facts">
         <div><dt>调用方式</dt><dd>{requestTypeLabelForTable(item.requestType)}<small>{observedIngressProtocols.join('、') || '未观察到协议'}</small></dd></div>
-        <div><dt>当前路由</dt><dd>{selectedPool?.name || item.modelPoolId || '未绑定模型池'}<small>{modelPolicyLabel(item.modelPolicy || 'auto')} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</small>{routeDrift ? <small className="lg-app-caller-warning">配置与最近请求不一致</small> : null}</dd></div>
+        <div><dt>当前路由</dt><dd>{selectedPool?.name || item.modelPoolId || '未绑定模型池'}{draft.allowedModelPoolIds.length > 1 ? ` 等 ${draft.allowedModelPoolIds.length} 个` : ''}<small>{modelPolicyLabel(item.modelPolicy || 'auto')} · {draft.allowCrossPoolFallback ? '跨池开' : '跨池关'} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</small>{routeDrift ? <small className="lg-app-caller-warning">配置与最近请求不一致</small> : null}</dd></div>
         <div><dt>治理</dt><dd>{item.owner || '未指定负责人'}<small>{formatGovernanceSummary(item)}</small></dd></div>
         <div><dt>最近请求</dt><dd><TraceLinks item={item} /><small>{item.totalSeen} 次 · {fmtTime(item.lastSeenAt)}</small></dd></div>
       </dl>
@@ -526,7 +586,7 @@ function AppCallerMobileCard({
         {selectedPool ? <div className="lg-app-caller-mobile-pool"><span>当前模型池</span><strong>{selectedPool.name || selectedPool.code || selectedPool.id}</strong><small>{poolHealthLabel(selectedPool.health)} · {selectedPool.models.length} 个模型成员</small></div> : null}
         <div className="lg-app-caller-editor-grid">
           <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</select></label>
-          <label>模型池<select disabled={!canWrite} value={draft.modelPoolId} onChange={(e) => onDraft({ modelPoolId: e.target.value, modelPolicy: e.target.value ? 'pool' : draft.modelPolicy })} style={selectStyle}><option value="">未绑定</option>{compatiblePools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name || pool.code || pool.id}</option>)}</select></label>
+          <ModelPoolContractFields compatiblePools={compatiblePools} draft={draft} selectStyle={selectStyle} canWrite={canWrite} onDraft={onDraft} />
           <label>模型策略<select disabled={!canWrite} value={draft.modelPolicy} onChange={(e) => onDraft({ modelPolicy: e.target.value })} style={selectStyle}>{MODEL_POLICIES.map((x) => <option key={x} value={x}>{modelPolicyLabel(x)}</option>)}</select></label>
           <label>参数策略<select disabled={!canWrite} value={draft.parameterPolicy} onChange={(e) => onDraft({ parameterPolicy: e.target.value })} style={selectStyle}>{PARAMETER_POLICIES.map((x) => <option key={x} value={x}>{parameterPolicyLabel(x)}</option>)}</select></label>
           <label>负责人<input disabled={!canWrite} value={draft.owner} onChange={(e) => onDraft({ owner: e.target.value })} placeholder="例如 platform-team" /></label>

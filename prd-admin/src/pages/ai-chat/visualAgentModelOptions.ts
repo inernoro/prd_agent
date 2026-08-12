@@ -12,6 +12,9 @@ export type VisualAgentModelOption = Model & {
   recommended?: boolean;
   poolCode?: string;
   poolName?: string;
+  recentTenRequests?: number;
+  recentTenSuccessRatePercent?: number | null;
+  averageDurationMs?: number | null;
 };
 
 export type VisualResultModelMeta = {
@@ -38,30 +41,24 @@ export function resolveVisualResultModelLabel(
   ).trim();
 }
 
-const IMAGE_MODEL_LABELS: Record<string, string> = {
-  'openai/gpt-image-2': 'OpenAI GPT Image 2',
-  'google/gemini-3.1-flash-image': 'Google Nano Banana 2',
-  'google/gemini-3.1-flash-lite-image': 'Google Nano Banana 2 Lite',
-};
-
-function modelLabel(modelId: string): string {
-  return IMAGE_MODEL_LABELS[modelId.trim().toLowerCase()] ?? modelId;
-}
-
 export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualAgentModelOption[] {
-  return pools.flatMap((pool) => {
+  return pools.map((pool) => {
     const members = pool.models ?? [];
-    return members.map((member) => ({
-      id: `pool_${pool.id}::${member.platformId}::${member.modelId}`,
-      name: members.length === 1 ? pool.name : modelLabel(member.modelId),
-      modelName: member.modelId,
-      actualModelId: member.modelId,
-      platformId: member.platformId,
-      enabled: member.healthStatus === 'Healthy' || member.healthStatus === 'Degraded',
+    const preferredMember = members.find((member) => member.healthStatus === 'Healthy')
+      ?? members.find((member) => member.healthStatus === 'Degraded')
+      ?? members[0];
+    const logicalModel = pool.resolutionType === 'LogicalModel';
+    return {
+      id: `pool_${pool.id}`,
+      name: pool.name,
+      modelName: logicalModel ? (preferredMember?.modelId || pool.code) : pool.id,
+      actualModelId: preferredMember?.modelId,
+      platformId: logicalModel ? 'logical-model' : 'model-pool',
+      enabled: members.some((member) => member.healthStatus === 'Healthy' || member.healthStatus === 'Degraded'),
       isMain: false,
       isImageGen: true,
       enablePromptCache: false,
-      priority: pool.priority * 1000 + member.priority,
+      priority: pool.priority * 1000 + (preferredMember?.priority ?? 0),
       resolutionType: pool.resolutionType,
       isDedicated: pool.isDedicated,
       isDefault: pool.isDefault,
@@ -69,6 +66,13 @@ export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualA
       description: pool.description,
       poolCode: pool.code,
       poolName: pool.name,
-    }));
+      recentTenRequests: pool.recentTenRequests,
+      recentTenSuccessRatePercent: pool.recentTenSuccessRatePercent,
+      averageDurationMs: pool.averageDurationMs,
+      subtitle: [
+        pool.averageDurationMs == null ? null : `平均 ${(pool.averageDurationMs / 1000).toFixed(1)} 秒`,
+        pool.recentTenSuccessRatePercent == null ? null : `近 ${pool.recentTenRequests ?? 0} 次成功率 ${pool.recentTenSuccessRatePercent}%`,
+      ].filter(Boolean).join(' · '),
+    };
   });
 }

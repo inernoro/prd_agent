@@ -715,10 +715,18 @@ public sealed class UpsertPoolModelRequest
     public string? PriceCurrency { get; set; }
     public List<ModelCapabilityItem>? Capabilities { get; set; }
 }
+public sealed class RecoverPoolModelRequest
+{
+    public string? ModelId { get; set; }
+    public string? PlatformId { get; set; }
+}
 public sealed class UpdateGatewayAppCallerRequest
 {
     public string? Status { get; set; }
     public string? ModelPoolId { get; set; }
+    public List<string>? AllowedModelPoolIds { get; set; }
+    public string? DefaultModelPoolId { get; set; }
+    public bool? AllowCrossPoolFallback { get; set; }
     public string? ModelPolicy { get; set; }
     public string? ParameterPolicy { get; set; }
     public string? Owner { get; set; }
@@ -865,6 +873,9 @@ public sealed class PoolItem
     public long RecentSucceeded { get; set; }
     public long RecentFailed { get; set; }
     public decimal? RecentSuccessRatePercent { get; set; }
+    public long? AverageDurationMs { get; set; }
+    public int RecentTenRequests { get; set; }
+    public decimal? RecentTenSuccessRatePercent { get; set; }
     public string? LastRequestAt { get; set; }
     public int TrafficWindowHours { get; set; } = 168;
     public string Health { get; set; } = "empty";
@@ -1260,6 +1271,9 @@ public sealed class GatewayAppCallerItem
     public string? Title { get; set; }
     public string Status { get; set; } = "";
     public string? ModelPoolId { get; set; }
+    public List<string> AllowedModelPoolIds { get; set; } = new();
+    public string? DefaultModelPoolId { get; set; }
+    public bool AllowCrossPoolFallback { get; set; }
     public string? ModelPolicy { get; set; }
     public string? ParameterPolicy { get; set; }
     public string? LastObservedModelPoolId { get; set; }

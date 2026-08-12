@@ -837,6 +837,12 @@ export function bulkImportPoolModels(id: string, req: BulkImportPoolModelsReques
 export function upsertPoolModel(id: string, req: UpsertPoolModelRequest): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, { method: 'PUT', body: req });
 }
+export function recoverPoolModel(id: string, modelId: string, platformId: string): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models/recover`, {
+    method: 'POST',
+    body: { modelId, platformId },
+  });
+}
 export function removePoolModel(id: string, modelId: string, platformId?: string): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, {
     method: 'DELETE',

@@ -38,6 +38,9 @@ public class ModelPoolForAppResult
     public bool IsDefault { get; set; }
     /// <summary>是否为传统配置模型</summary>
     public bool IsLegacy { get; set; }
+    public long? AverageDurationMs { get; set; }
+    public int RecentTenRequests { get; set; }
+    public decimal? RecentTenSuccessRatePercent { get; set; }
 }
 
 /// <summary>

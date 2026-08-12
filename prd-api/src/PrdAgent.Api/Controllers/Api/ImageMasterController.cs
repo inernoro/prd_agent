@@ -1642,11 +1642,13 @@ public class ImageMasterController : ControllerBase
                 LogicalModelPublicId = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                     ? modelId
                     : null,
-                // 用户显式选择优先。逻辑模型只携带稳定 PublicId，真实上游由 Gateway 决定；
-                // 兼容旧 picker 的 platformId + modelId 仍记为 DirectModel。
+                // 用户选择模型池时只保存池身份，交给 Gateway 做池内调度；逻辑模型仍携带稳定 PublicId。
+                // 只有兼容旧 picker 的真实 platformId + modelId 才记为 DirectModel。
                 ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                     ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
-                    : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
+                    : string.Equals(platformId, "model-pool", StringComparison.OrdinalIgnoreCase)
+                        ? null
+                        : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
                 Size = size,
                 ResponseFormat = responseFormat,
                 MaxConcurrency = 1,

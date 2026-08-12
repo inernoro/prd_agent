@@ -6,12 +6,14 @@ import {
   Download,
   Paperclip,
 } from 'lucide-react';
-import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications } from '@/services';
+import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
+import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
+import { toast } from '@/lib/toast';
 
 /* ── 通知色调背景（iOS 语义色轻底，双主题通用；卡片边框/徽章走 registry 的 accent） ── */
 const TONE_BG: Record<string, string> = {
@@ -81,9 +83,10 @@ export default function MobileNotificationsPage() {
   const openNotification = useCallback(async (item: AdminNotificationItem) => {
     const url = item.actionUrl;
     if (!url) return;
+    const isLlmGatewayAction = item.actionKind === 'llm-gateway';
     // 外部链接（actionKind=external 或绝对 URL）必须在用户点击的同步栈内打开，
     // 否则 await 之后丢失用户手势激活，会被移动端浏览器拦截弹窗。
-    const isExternal = item.actionKind === 'external' || /^https?:\/\//i.test(url);
+    const isExternal = !isLlmGatewayAction && (item.actionKind === 'external' || /^https?:\/\//i.test(url));
     if (isExternal) window.open(url, '_blank', 'noopener,noreferrer');
     setHandlingIds((s) => new Set(s).add(item.id));
     const res = await handleAdminNotification(item.id);
@@ -92,7 +95,21 @@ export default function MobileNotificationsPage() {
       setNotifications((prev) =>
         prev.map((n) => (n.id === item.id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
       );
-      if (!isExternal) navigate(url);
+      if (isLlmGatewayAction) {
+        const ticket = await createLlmGatewaySsoTicket();
+        if (!ticket.success) {
+          toast.error('模型网关暂时无法打开', ticket.error?.message);
+          return;
+        }
+        const resolution = resolveLlmGatewaySso(ticket.data.code, ticket.data.console, url);
+        if (!resolution.ok) {
+          toast.error('模型网关暂时无法打开', resolution.message);
+          return;
+        }
+        window.location.assign(resolution.href);
+      } else if (!isExternal) {
+        navigate(url);
+      }
     }
   }, [navigate]);
 

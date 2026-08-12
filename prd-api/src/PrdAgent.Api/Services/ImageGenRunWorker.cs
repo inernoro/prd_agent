@@ -1664,6 +1664,12 @@ public class ImageGenRunWorker : BackgroundService
             var expectedModelCode = frontendExpectedModelId;
             var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct: ct);
 
+            if (resolved is null || !resolved.Success)
+            {
+                throw new InvalidOperationException(
+                    resolved?.ErrorMessage ?? $"模型池调度未返回结果: {expectedModelCode ?? "(未指定)"}");
+            }
+
             if (resolved != null)
             {
                 var parsedType = ModelResolutionTypeMapper.Parse(resolved.ResolutionType);
@@ -1680,6 +1686,12 @@ public class ImageGenRunWorker : BackgroundService
         }
         catch (Exception ex)
         {
+            if (string.Equals(frontendExpectedPlatformId, "model-pool", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"用户选择的模型池调度失败，未执行跨池外直连: {frontendExpectedModelId ?? "(未指定)"}",
+                    ex);
+            }
             _logger.LogWarning(ex, "[视觉创作-专属模型匹配] 通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用前端指定的模型", appCallerCode);
         }
 

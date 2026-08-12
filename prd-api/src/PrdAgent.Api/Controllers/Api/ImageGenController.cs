@@ -189,7 +189,10 @@ public class ImageGenController : ControllerBase
             ResolutionType = pool.ResolutionType,
             IsDedicated = pool.IsDedicated,
             IsDefault = pool.IsDefault,
-            IsLegacy = false
+            IsLegacy = false,
+            AverageDurationMs = pool.AverageDurationMs,
+            RecentTenRequests = pool.RecentTenRequests,
+            RecentTenSuccessRatePercent = pool.RecentTenSuccessRatePercent,
         };
     }
 
@@ -1779,7 +1782,9 @@ public class ImageGenController : ControllerBase
             // 用户显式选择优先：同 ImageMasterController.CreateWorkspaceImageGenRun。
             ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                 ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
-                : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
+                : string.Equals(platformId, "model-pool", StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
             Size = size,
             ResponseFormat = responseFormat,
             MaxConcurrency = maxConc,
