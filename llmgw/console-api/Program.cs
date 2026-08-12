@@ -7031,9 +7031,14 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
                (string?)"多半是 API 地址指错了地方（比如指到了网站首页或登录页）。在高级选项里核对地址，或改用内置预设")
             : status switch
         {
+            // 探针打的是 /models，它证明的只有「这个地址连得上、而且能读出模型列表」。
+            // 不少 OpenAI 兼容上游的 /models 是公开的、或者干脆忽略 Authorization 头，
+            // 换句话说：拿一把错密钥照样能拿到 200 + data 数组，真正推理时才 401。
+            // 所以这里只能说读到了什么，不能替上游宣布「密钥被接受」——
+            // 那是一句探针根本没验证过的话（no-rootless-tree：不声明验不了的能力）。
             >= 200 and < 300 => ((string?)null,
-                modelCount is null ? "上游可达，密钥被接受" : $"上游可达，密钥被接受，返回 {modelCount} 个模型",
-                (string?)null),
+                modelCount is null ? "上游可达，模型列表能读到" : $"上游可达，读到 {modelCount} 个模型",
+                (string?)"读得到模型列表不等于密钥一定有效——有些上游的列表接口不校验密钥。要确认密钥能用，导入模型后发一次真实调用"),
             401 or 403 => ("UNAUTHORIZED", $"上游拒绝了这个密钥（HTTP {status}）",
                 "去 Provider 控制台确认密钥有效、没过期、有调用权限，然后用「更新密钥」重填"),
             404 => ("NOT_FOUND", $"地址不对，上游说没有这个接口（HTTP {status}）",
