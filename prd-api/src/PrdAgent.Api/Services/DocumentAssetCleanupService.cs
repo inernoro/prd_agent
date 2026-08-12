@@ -15,8 +15,11 @@ namespace PrdAgent.Api.Services;
 public sealed class DocumentAssetCleanupService : BackgroundService
 {
     internal const string ManagedKeyPrefix = "_it/stable-smoke-document/";
+    internal const string PendingUploadPurpose = "pending-upload";
+    internal const string DeleteAfterUnlinkPurpose = "delete-after-unlink";
     private static readonly TimeSpan ScanInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan CleanupLease = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan PendingUploadGrace = TimeSpan.FromMinutes(15);
     private readonly Channel<bool> _wakeQueue = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
     {
         FullMode = BoundedChannelFullMode.DropWrite,
@@ -56,14 +59,49 @@ public sealed class DocumentAssetCleanupService : BackgroundService
                     .SetOnInsert(candidate => candidate.Id, taskId)
                     .SetOnInsert(candidate => candidate.StorageKey, storageKey)
                     .SetOnInsert(candidate => candidate.AttemptCount, 0)
-                    .SetOnInsert(candidate => candidate.NextAttemptAt, now)
                     .SetOnInsert(candidate => candidate.CreatedAt, now)
+                    .Set(candidate => candidate.Purpose, DeleteAfterUnlinkPurpose)
+                    .Set(candidate => candidate.NextAttemptAt, now)
                     .Set(candidate => candidate.UpdatedAt, now),
                 new UpdateOptions { IsUpsert = true },
                 ct);
         }
 
         _wakeQueue.Writer.TryWrite(true);
+    }
+
+    /// <summary>
+    /// 对象写入前先登记回滚意图。宽限期覆盖附件、正文和条目的正常写入；
+    /// 若进程中断，后台仍能在确认没有有效条目引用后回收对象。
+    /// </summary>
+    public Task TrackPendingUploadAsync(string storageKey, CancellationToken ct)
+    {
+        if (!IsManagedStorageKey(storageKey))
+            throw new InvalidOperationException("Pending document upload must use a managed test key.");
+
+        var now = DateTime.UtcNow;
+        var taskId = BuildTaskId(storageKey);
+        return _db.DocumentAssetCleanupTasks.UpdateOneAsync(
+            candidate => candidate.Id == taskId,
+            Builders<DocumentAssetCleanupTask>.Update
+                .SetOnInsert(candidate => candidate.Id, taskId)
+                .SetOnInsert(candidate => candidate.StorageKey, storageKey)
+                .SetOnInsert(candidate => candidate.AttemptCount, 0)
+                .SetOnInsert(candidate => candidate.CreatedAt, now)
+                .Set(candidate => candidate.Purpose, PendingUploadPurpose)
+                .Set(candidate => candidate.NextAttemptAt, now + PendingUploadGrace)
+                .Set(candidate => candidate.UpdatedAt, now),
+            new UpdateOptions { IsUpsert = true },
+            ct);
+    }
+
+    public Task MarkUploadCommittedAsync(string? storageKey, CancellationToken ct)
+    {
+        if (!IsManagedStorageKey(storageKey)) return Task.CompletedTask;
+        var taskId = BuildTaskId(storageKey!);
+        return _db.DocumentAssetCleanupTasks.DeleteOneAsync(
+            candidate => candidate.Id == taskId && candidate.Purpose == PendingUploadPurpose,
+            ct);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -135,10 +173,31 @@ public sealed class DocumentAssetCleanupService : BackgroundService
                 return true;
             }
 
-            var referenceCount = await _db.Attachments.CountDocumentsAsync(
-                attachment => attachment.StorageKey == task.StorageKey,
-                cancellationToken: ct);
-            if (referenceCount > 0)
+            var purpose = string.IsNullOrWhiteSpace(task.Purpose)
+                ? DeleteAfterUnlinkPurpose
+                : task.Purpose;
+            var attachments = await _db.Attachments
+                .Find(attachment => attachment.StorageKey == task.StorageKey)
+                .Project(attachment => attachment.AttachmentId)
+                .ToListAsync(ct);
+            if (purpose == PendingUploadPurpose && attachments.Count > 0)
+            {
+                var hasCommittedEntry = await _db.DocumentEntries.CountDocumentsAsync(
+                    entry => entry.AttachmentId != null && attachments.Contains(entry.AttachmentId),
+                    cancellationToken: ct) > 0;
+                if (hasCommittedEntry)
+                {
+                    await _db.DocumentAssetCleanupTasks.DeleteOneAsync(candidate => candidate.Id == task.Id, ct);
+                    return true;
+                }
+
+                // 附件已写但条目未提交：回滚仅属于受控合成上传的孤儿附件。
+                await _db.Attachments.DeleteManyAsync(
+                    attachment => attachments.Contains(attachment.AttachmentId),
+                    ct);
+                attachments.Clear();
+            }
+            if (attachments.Count > 0)
             {
                 await RescheduleAsync(task, ScanInterval, ct);
                 return false;

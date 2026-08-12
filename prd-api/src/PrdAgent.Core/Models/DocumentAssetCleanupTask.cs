@@ -10,6 +10,7 @@ public sealed class DocumentAssetCleanupTask
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string StorageKey { get; set; } = string.Empty;
+    public string Purpose { get; set; } = string.Empty;
     public int AttemptCount { get; set; }
     public DateTime NextAttemptAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastAttemptAt { get; set; }

@@ -31,4 +31,11 @@ public sealed class DocumentAssetCleanupPolicyTests
         first.ShouldNotBe(second);
         first.Length.ShouldBe(64);
     }
+
+    [Fact]
+    public void CleanupPurposes_KeepUploadRollbackSeparateFromUnlinkDeletion()
+    {
+        DocumentAssetCleanupService.PendingUploadPurpose.ShouldBe("pending-upload");
+        DocumentAssetCleanupService.DeleteAfterUnlinkPurpose.ShouldBe("delete-after-unlink");
+    }
 }

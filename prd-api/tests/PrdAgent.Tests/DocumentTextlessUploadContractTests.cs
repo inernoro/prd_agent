@@ -33,10 +33,19 @@ public class DocumentTextlessUploadContractTests
         Assert.Contains("_documentAssetCleanup.TrackPendingAsync(attachments", controller);
         Assert.Contains("DocumentAssetCleanupTasks.UpdateOneAsync", cleanupService);
         Assert.Contains("new UpdateOptions { IsUpsert = true }", cleanupService);
-        Assert.Contains("_db.Attachments.CountDocumentsAsync", cleanupService);
+        Assert.Contains("TrackPendingUploadAsync(key, cancellationToken)", controller);
+        Assert.True(
+            controller.IndexOf("TrackPendingUploadAsync(key, cancellationToken)", StringComparison.Ordinal)
+            < controller.IndexOf("UploadToKeyAsync(key, bytes, mime, cancellationToken)", StringComparison.Ordinal));
+        Assert.Contains("MarkUploadCommittedAsync", controller);
+        Assert.Contains("PendingUploadPurpose", cleanupService);
+        Assert.Contains("DeleteAfterUnlinkPurpose", cleanupService);
+        Assert.Contains("hasCommittedEntry", cleanupService);
+        Assert.Contains(".Project(attachment => attachment.AttachmentId)", cleanupService);
+        Assert.Contains("entry => entry.AttachmentId != null && attachments.Contains(entry.AttachmentId)", cleanupService);
         Assert.Contains("_assetStorage.DeleteByKeyAsync(task.StorageKey", cleanupService);
         Assert.True(
-            cleanupService.IndexOf("_db.Attachments.CountDocumentsAsync", StringComparison.Ordinal)
+            cleanupService.IndexOf(".Project(attachment => attachment.AttachmentId)", StringComparison.Ordinal)
             < cleanupService.IndexOf("_assetStorage.DeleteByKeyAsync(task.StorageKey", StringComparison.Ordinal));
         var deleteStore = controller[
             controller.IndexOf("public async Task<IActionResult> DeleteStore", StringComparison.Ordinal)..

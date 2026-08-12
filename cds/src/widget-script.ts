@@ -490,16 +490,18 @@ export function buildWidgetScript(
   }
 
   function defaultWidgetLeft(){
-    // Desktop previews commonly reserve a 64px fixed rail on the left. Keep the
-    // CDS badge outside that rail so it cannot intercept profile/navigation clicks.
-    return window.innerWidth<=640?12:76;
+    // Desktop sidebars vary between collapsed and expanded widths. Anchor the
+    // preview controls in the right-side safe area instead of guessing a left rail.
+    return window.innerWidth<=640?12:Math.max(12,window.innerWidth-492);
   }
 
   var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};
   var dragState=null;
+  var widgetWasDragged=false;
 
   function onMouseDown(e){
     if(e.target.closest('button'))return;
+    widgetWasDragged=true;
     dragState={mx:e.clientX,my:e.clientY,px:pos.x,py:pos.y};
     e.preventDefault();
   }
@@ -511,6 +513,13 @@ export function buildWidgetScript(
     root.style.bottom=pos.y+'px';
   });
   document.addEventListener('mouseup',function(){dragState=null;});
+  window.addEventListener('resize',function(){
+    if(widgetWasDragged)return;
+    pos.x=defaultWidgetLeft();
+    pos.y=defaultWidgetBottom();
+    root.style.left=pos.x+'px';
+    root.style.bottom=pos.y+'px';
+  });
 
   // ── Render ──
   function render(){

@@ -3648,6 +3648,18 @@ public class DocumentStoreController : ControllerBase
         if (entryCreated)
             await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
 
+        try
+        {
+            await _documentAssetCleanup.MarkUploadCommittedAsync(
+                storedUpload.StorageKey,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 条目已经建立有效引用；后台会据此识别上传已提交并移除待回滚任务。
+            _logger.LogWarning(ex, "[document-store] 上传提交后清理意图撤销延迟 entry={EntryId}", entry.Id);
+        }
+
         return (entry, attachment, documentId, stored.Url);
     }
 
@@ -3670,6 +3682,7 @@ public class DocumentStoreController : ControllerBase
                         ? Path.GetExtension(fileName).ToLowerInvariant()
                         : ".bin";
                     var key = $"_it/stable-smoke-document/{Guid.NewGuid():N}{extension}";
+                    await _documentAssetCleanup.TrackPendingUploadAsync(key, cancellationToken);
                     await _assetStorage.UploadToKeyAsync(key, bytes, mime, cancellationToken);
                     var sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                     return new StoredUploadAsset(

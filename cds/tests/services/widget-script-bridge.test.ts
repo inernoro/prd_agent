@@ -30,9 +30,12 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};');
   });
 
-  it('keeps the preview widget outside the common desktop navigation rail', () => {
+  it('keeps the preview widget in a right-side safe area outside expanded navigation', () => {
     const script = buildWidgetScript('branch-a', 'branch/a');
     expect(script).toContain('function defaultWidgetLeft(){');
-    expect(script).toContain('return window.innerWidth<=640?12:76;');
+    expect(script).toContain('return window.innerWidth<=640?12:Math.max(12,window.innerWidth-492);');
+    expect(script).toContain('var widgetWasDragged=false;');
+    expect(script).toContain("window.addEventListener('resize'");
+    expect(script).toContain('if(widgetWasDragged)return;');
   });
 });
