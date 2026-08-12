@@ -559,6 +559,62 @@ public class ModelResolver : IModelResolver
     }
 
     /// <inheritdoc />
+    public async Task<ModelResolutionResult> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        var requiredOfferingId = (offeringId ?? string.Empty).Trim();
+        if (_gatewayDb is null || string.IsNullOrWhiteSpace(requiredOfferingId))
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "缺少可恢复的 Offering 路由");
+        }
+
+        var offerings = _gatewayDb.Context.Database
+            .GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        var offering = await offerings.Find(Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, requiredOfferingId),
+                // 健康状态只控制新任务调度。已经被上游受理的任务仍必须回到原 Offering
+                // 查询状态和下载结果，否则一次健康降级就会让已付费任务永久失联。
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true)))
+            .FirstOrDefaultAsync(ct);
+        if (offering is null)
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "视频任务原上游当前不可用，请稍后重试或重新生成");
+        }
+
+        var logicalModels = _gatewayDb.Context.Database
+            .GetCollection<GatewayLogicalModel>("llmgw_logical_models");
+        var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Id, offering.LogicalModelId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType)))
+            .FirstOrDefaultAsync(ct);
+        if (logical is null || !SupportsAppCallerScenario(logical, appCallerCode))
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "视频任务原模型路由已失效，请重新生成");
+        }
+
+        var resolved = await TryBuildLogicalOfferingResolutionAsync(
+            logical,
+            offering,
+            logical.PublicId,
+            ct);
+        return resolved ?? ModelResolutionResult.NotFound(
+            requiredOfferingId,
+            "视频任务原上游配置已失效，请重新生成");
+    }
+
+    /// <inheritdoc />
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,
         string modelType,

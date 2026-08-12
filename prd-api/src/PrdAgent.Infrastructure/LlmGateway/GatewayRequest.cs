@@ -477,6 +477,12 @@ public class GatewayRawRequest
     public string? RequiredLogicalModelPublicId { get; init; }
 
     /// <summary>
+    /// 跨进程异步任务恢复时锁定提交成功的 Offering。该值只用于网关内部精确恢复，
+    /// 不携带凭据，也不能由公开兼容端点直接指定。
+    /// </summary>
+    public string? RequiredOfferingId { get; init; }
+
+    /// <summary>
     /// 应用调用标识（必填）
     /// </summary>
     public required string AppCallerCode { get; init; }

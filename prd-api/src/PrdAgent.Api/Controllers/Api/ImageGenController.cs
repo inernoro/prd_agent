@@ -1900,6 +1900,60 @@ public class ImageGenController : ControllerBase
     }
 
     /// <summary>
+    /// 下载当前用户已生成的图片。对象存储通常与管理端跨域，浏览器不会执行跨域链接的 download 语义，
+    /// 因此只允许代理数据库中属于当前用户且已经完成的精确结果 URL。
+    /// </summary>
+    [HttpGet("download")]
+    public async Task<IActionResult> DownloadGeneratedImage([FromQuery] string url, CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        var normalizedUrl = (url ?? string.Empty).Trim();
+        if (!Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片地址无效，请刷新作品后重试"));
+        }
+
+        var ownedItem = await _db.ImageGenRunItems
+            .Find(item => item.OwnerAdminId == adminId
+                          && item.Status == ImageGenRunItemStatus.Done
+                          && item.Url == normalizedUrl)
+            .SortByDescending(item => item.EndedAt)
+            .FirstOrDefaultAsync(ct);
+        if (ownedItem == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "图片不存在或无权下载"));
+        }
+
+        var storageKey = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/'));
+        var bytes = await _assetStorage.TryDownloadBytesAsync(storageKey, ct);
+        if (bytes == null || bytes.Length == 0)
+        {
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片暂时无法下载，请稍后重试"));
+        }
+
+        var mime = Path.GetExtension(uri.AbsolutePath).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            ".gif" => "image/gif",
+            ".avif" => "image/avif",
+            _ => string.Empty,
+        };
+        if (string.IsNullOrWhiteSpace(mime))
+        {
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片内容无效，请重新生成后再试"));
+        }
+
+        return File(bytes, mime);
+    }
+
+    /// <summary>
     /// 订阅生图任务事件（SSE）：支持 afterSeq 断线续传
     /// </summary>
     [HttpGet("runs/{runId}/stream")]

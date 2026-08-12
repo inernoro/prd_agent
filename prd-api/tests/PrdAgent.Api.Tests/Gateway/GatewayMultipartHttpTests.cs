@@ -15,6 +15,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -84,8 +85,52 @@ public class GatewayMultipartHttpTests
         captured.ShouldNotBeNull();
         captured!.ExpectedModel.ShouldBe("nanobanana-2");
         captured.RequiredLogicalModelPublicId.ShouldBe("nanobanana-2");
+        captured.RequiredOfferingId.ShouldBeNull();
         captured.CanonicalImageRequest.ShouldNotBeNull();
         captured.CanonicalImageRequest!.Prompt.ShouldBe("draw a yellow circle");
+    }
+
+    [Fact]
+    public async Task HttpClient_AsyncFollowUp_PreservesRequiredOfferingId()
+    {
+        GatewayRawRequest? captured = null;
+        var handler = new CapturingHandler(async request =>
+        {
+            captured = JsonSerializer.Deserialize<GatewayRawRequest>(
+                await request.Content!.ReadAsStringAsync(),
+                PascalJson);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(
+                    new GatewayRawResponse { Success = true, StatusCode = 200, Content = "ok" },
+                    options: PascalJson),
+            };
+        });
+        var client = new HttpLlmGatewayClient(
+            new SingleClientFactory(new HttpClient(handler)),
+            Config("http://llmgw.test"),
+            NullLogger<HttpLlmGatewayClient>.Instance);
+
+        await client.SendRawWithResolutionAsync(
+            new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                ModelType = ModelTypes.VideoGen,
+                RequiredOfferingId = "offering-backup",
+                EndpointPath = "/videos/job-1",
+                HttpMethod = "GET",
+            },
+            new GatewayModelResolution
+            {
+                Success = true,
+                LogicalModelPublicId = "video2",
+                OfferingId = "offering-backup",
+                ActualModel = "video-backup",
+            });
+
+        captured.ShouldNotBeNull();
+        captured!.RequiredOfferingId.ShouldBe("offering-backup");
+        captured.RequiredLogicalModelPublicId.ShouldBe("video2");
     }
 
     [Fact]

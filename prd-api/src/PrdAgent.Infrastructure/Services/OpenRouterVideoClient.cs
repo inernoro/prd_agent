@@ -141,8 +141,10 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         double? cost = ReadCost(doc);
 
-        // 缓存解析结果供后续轮询复用（同一 Scoped 实例负责 submit + N 次 poll）
-        _submitResolution = resolution;
+        // 发送阶段可能切换到备用 Offering；后续轮询必须跟随真正成功的路由，
+        // 不能继续使用提交前的首选解析结果。
+        var effectiveResolution = rawResp.Resolution ?? resolution;
+        _submitResolution = effectiveResolution;
         _submitAppCallerCode = request.AppCallerCode;
 
         return new OpenRouterVideoSubmitResult
@@ -150,15 +152,24 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             Success = true,
             JobId = jobId,
             Cost = cost,
-            ActualModel = resolution.ActualModel,
+            ActualModel = effectiveResolution.ActualModel,
+            OfferingId = effectiveResolution.OfferingId,
             ActualDurationSeconds = actualDuration,
         };
     }
 
-    public async Task<OpenRouterVideoStatus> GetStatusAsync(
+    public Task<OpenRouterVideoStatus> GetStatusAsync(
         string appCallerCode,
         string jobId,
         string? expectedModel = null,
+        CancellationToken ct = default)
+        => GetStatusForOfferingAsync(appCallerCode, jobId, expectedModel, null, ct);
+
+    public async Task<OpenRouterVideoStatus> GetStatusForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        string? expectedModel,
+        string? offeringId,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(jobId))
@@ -168,9 +179,14 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         // 优先复用 SubmitAsync 已算好的解析结果，避免每次轮询都查一次 DB
         // 仅在 appCallerCode 匹配时复用缓存，防止跨上下文重用错误的解析结果
-        var statusResolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
+        var statusResolution = (_submitResolution?.Success == true
+                                && _submitAppCallerCode == appCallerCode
+                                && (string.IsNullOrWhiteSpace(offeringId)
+                                    || string.Equals(_submitResolution.OfferingId, offeringId, StringComparison.Ordinal)))
             ? _submitResolution
-            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
+            : !string.IsNullOrWhiteSpace(offeringId)
+                ? await _gateway.ResolveOfferingAsync(appCallerCode, ModelTypes.VideoGen, offeringId, ct)
+                : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
         if (!statusResolution.Success)
             return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = statusResolution.ErrorMessage };
 
@@ -184,6 +200,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         var rawResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
+            RequiredOfferingId = offeringId,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.VideoGen,
             EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}",
@@ -227,26 +244,40 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         };
     }
 
-    public async Task<OpenRouterVideoDownload> DownloadVideoBytesAsync(
+    public Task<OpenRouterVideoDownload> DownloadVideoBytesAsync(
         string appCallerCode,
         string jobId,
         int urlIndex = 0,
         string? expectedModel = null,
+        CancellationToken ct = default)
+        => DownloadVideoBytesForOfferingAsync(appCallerCode, jobId, urlIndex, expectedModel, null, ct);
+
+    public async Task<OpenRouterVideoDownload> DownloadVideoBytesForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex,
+        string? expectedModel,
+        string? offeringId,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             return new OpenRouterVideoDownload { Success = false, ErrorMessage = "jobId 不能为空" };
 
         // 复用已有 resolution，避免重复查 DB
-        var resolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
+        var resolution = (_submitResolution?.Success == true
+                          && _submitAppCallerCode == appCallerCode
+                          && (string.IsNullOrWhiteSpace(offeringId)
+                              || string.Equals(_submitResolution.OfferingId, offeringId, StringComparison.Ordinal)))
             ? _submitResolution
-            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
+            : !string.IsNullOrWhiteSpace(offeringId)
+                ? await _gateway.ResolveOfferingAsync(appCallerCode, ModelTypes.VideoGen, offeringId, ct)
+                : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
         if (!resolution.Success)
             return new OpenRouterVideoDownload { Success = false, ErrorMessage = resolution.ErrorMessage };
 
         if (IsVolcengineVideoResolution(resolution))
         {
-            var status = await GetStatusAsync(appCallerCode, jobId, expectedModel, ct);
+            var status = await GetStatusForOfferingAsync(appCallerCode, jobId, expectedModel, offeringId, ct);
             if (!status.IsCompleted || string.IsNullOrWhiteSpace(status.VideoUrl))
             {
                 return new OpenRouterVideoDownload
@@ -263,6 +294,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         // 通过 Gateway 走，自动注入 ApiKey + base URL
         var rawResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
+            RequiredOfferingId = offeringId,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.VideoGen,
             EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}/content?index={urlIndex}",

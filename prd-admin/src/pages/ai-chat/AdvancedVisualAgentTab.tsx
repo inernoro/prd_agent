@@ -118,6 +118,7 @@ import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
 import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
 import { autoSubmitImages } from '@/services/real/submissions';
+import { downloadGeneratedImage } from '@/lib/generatedImageDownload';
 
 type CanvasImageItem = {
   key: string;
@@ -729,52 +730,6 @@ async function copyToClipboard(text: string) {
   }
 }
 
-async function downloadImage(src: string, filename: string) {
-  const safe = String(filename || 'image')
-    .trim()
-    .replaceAll('/', '-')
-    .replaceAll('\\', '-')
-    .replaceAll(':', '-')
-    .replaceAll('*', '-')
-    .replaceAll('?', '-')
-    .replaceAll('"', '-')
-    .replaceAll('<', '-')
-    .replaceAll('>', '-')
-    .replaceAll('|', '-')
-    .slice(0, 80);
-
-  const finalName = safe ? `${safe}.png` : 'image.png';
-
-  try {
-    // 使用 fetch + blob 方式下载，解决跨域图片无法直接下载的问题
-    const response = await fetch(src, { mode: 'cors' });
-    if (!response.ok) throw new Error('Fetch failed');
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = finalName;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    // 延迟释放 blob URL
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-  } catch {
-    // 如果 fetch 失败（如 CORS 问题），回退到直接下载方式
-    const a = document.createElement('a');
-    a.href = src;
-    a.download = finalName;
-    a.rel = 'noopener';
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-}
-
 async function copyImageToClipboard(src: string) {
   if (!src) return;
   try {
@@ -854,7 +809,7 @@ async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     } catch {
       // fallback
-      void downloadImage(src, safe);
+      void downloadGeneratedImage(src, safe);
     }
     return;
   }
@@ -896,7 +851,7 @@ async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   } catch {
-    void downloadImage(src, safe);
+    void downloadGeneratedImage(src, safe);
   }
 }
 
@@ -6849,7 +6804,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               <ImageQuickActionBar
                                 actions={mergedQuickActions}
                                 onAction={handleQuickAction}
-                                onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
+                                onDownload={() => void downloadGeneratedImage(it.src, it.prompt || 'image')}
                                 onOpenConfig={() => setQuickActionDialogOpen(true)}
                                 onInpaint={() => {
                                   if (it.status !== 'done' || !it.src) {
@@ -8630,7 +8585,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
                   void downloadAllAsZip(items, `visual-agent_${Date.now()}`);
                 } else {
-                  void downloadImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
+                  void downloadGeneratedImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
                 }
                 setImgContextMenu((p) => ({ ...p, open: false }));
               }}
@@ -8883,7 +8838,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         content={
           <div className="h-full min-h-0 flex flex-col">
             <div className="flex items-center justify-end gap-2 pb-2">
-              <Button variant="secondary" size="sm" onClick={() => void downloadImage(preview.src, preview.prompt || 'image')} disabled={!preview.src}>
+              <Button variant="secondary" size="sm" onClick={() => void downloadGeneratedImage(preview.src, preview.prompt || 'image')} disabled={!preview.src}>
                 <Download size={16} />
                 下载
               </Button>

@@ -8,6 +8,7 @@ import { Copy, Download, Maximize2, Square, Wand2 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '@/lib/toast';
+import { downloadGeneratedImage } from '@/lib/generatedImageDownload';
 
 type ImageItem = {
   key: string;
@@ -88,28 +89,6 @@ async function copyImageToClipboard(src: string) {
   } catch {
     // ignore
   }
-}
-
-async function downloadImage(src: string, filename: string) {
-  const safe = String(filename || 'image')
-    .trim()
-    .replaceAll('/', '-')
-    .replaceAll('\\', '-')
-    .replaceAll(':', '-')
-    .replaceAll('*', '-')
-    .replaceAll('?', '-')
-    .replaceAll('"', '-')
-    .replaceAll('<', '-')
-    .replaceAll('>', '-')
-    .replaceAll('|', '-')
-    .slice(0, 80);
-  const a = document.createElement('a');
-  a.href = src;
-  a.download = safe ? `${safe}.png` : 'image.png';
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
 }
 
 export default function ImageGenPanel() {
@@ -580,7 +559,7 @@ export default function ImageGenPanel() {
                               ].join(' ')}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                void downloadImage(src, it.prompt || 'image');
+                                void downloadGeneratedImage(src, it.prompt || 'image');
                               }}
                               aria-label="下载图片"
                               title="下载图片"
@@ -714,7 +693,7 @@ export default function ImageGenPanel() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => void downloadImage(imagePreview.src, imagePreview.prompt || imagePreview.title || 'image')}
+                onClick={() => void downloadGeneratedImage(imagePreview.src, imagePreview.prompt || imagePreview.title || 'image')}
                 disabled={!imagePreview.src}
               >
                 <Download size={16} />
@@ -774,5 +753,4 @@ export default function ImageGenPanel() {
     </div>
   );
 }
-
 

@@ -327,6 +327,7 @@ public class VideoGenRunWorker : BackgroundService
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.DirectVideoModel, submitResult.ActualModel ?? run.DirectVideoModel)
+                .Set(x => x.DirectVideoOfferingId, submitResult.OfferingId)
                 .Set(x => x.DirectDuration, submitResult.ActualDurationSeconds ?? run.DirectDuration)
                 .Set(x => x.TotalDurationSeconds, submitResult.ActualDurationSeconds ?? run.TotalDurationSeconds)
                 .Set(x => x.DirectVideoJobId, submitResult.JobId)
@@ -358,8 +359,18 @@ public class VideoGenRunWorker : BackgroundService
             OpenRouterVideoStatus status;
             try
             {
-                status = await client.GetStatusAsync(
-                    appCallerCode, submitResult.JobId!, submitResult.ActualModel, CancellationToken.None);
+                status = string.IsNullOrWhiteSpace(submitResult.OfferingId)
+                    ? await client.GetStatusAsync(
+                        appCallerCode,
+                        submitResult.JobId!,
+                        submitResult.ActualModel,
+                        CancellationToken.None)
+                    : await client.GetStatusForOfferingAsync(
+                        appCallerCode,
+                        submitResult.JobId!,
+                        submitResult.ActualModel,
+                        submitResult.OfferingId,
+                        CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -386,8 +397,20 @@ public class VideoGenRunWorker : BackgroundService
                 string finalUrl;
                 try
                 {
-                    var dl = await client.DownloadVideoBytesAsync(
-                        appCallerCode, submitResult.JobId!, 0, submitResult.ActualModel, CancellationToken.None);
+                    var dl = string.IsNullOrWhiteSpace(submitResult.OfferingId)
+                        ? await client.DownloadVideoBytesAsync(
+                            appCallerCode,
+                            submitResult.JobId!,
+                            0,
+                            submitResult.ActualModel,
+                            CancellationToken.None)
+                        : await client.DownloadVideoBytesForOfferingAsync(
+                            appCallerCode,
+                            submitResult.JobId!,
+                            0,
+                            submitResult.ActualModel,
+                            submitResult.OfferingId,
+                            CancellationToken.None);
                     if (!dl.Success || dl.Bytes == null || dl.Bytes.Length == 0)
                     {
                         await FailRunAsync(run, "DOWNLOAD_FAILED",
@@ -980,6 +1003,7 @@ public class VideoGenRunWorker : BackgroundService
                         .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
                         .Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId)
                         .Set($"Scenes.{sceneIdx}.Model", submitResult.ActualModel ?? scene.Model ?? run.DirectVideoModel)
+                        .Set($"Scenes.{sceneIdx}.OfferingId", submitResult.OfferingId)
                         .Set($"Scenes.{sceneIdx}.Duration", submitResult.ActualDurationSeconds ?? scene.Duration ?? run.DirectDuration)
                         .Set($"Scenes.{sceneIdx}.RenderLeaseId", claimId)
                         .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", DateTime.UtcNow + SceneRenderLease),
@@ -987,6 +1011,7 @@ public class VideoGenRunWorker : BackgroundService
                 if (submitted.ModifiedCount != 1) return;
                 submittedJobId = submitResult.JobId;
                 actualModel = submitResult.ActualModel ?? sceneModel;
+                scene.OfferingId = submitResult.OfferingId;
                 actualDuration = submitResult.ActualDurationSeconds ?? actualDuration;
                 expectedJobId = submittedJobId;
             }
@@ -1006,15 +1031,37 @@ public class VideoGenRunWorker : BackgroundService
             {
                 if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
-                var status = await client.GetStatusAsync(
-                    appCallerCode, submittedJobId, actualModel, CancellationToken.None);
+                var status = string.IsNullOrWhiteSpace(scene.OfferingId)
+                    ? await client.GetStatusAsync(
+                        appCallerCode,
+                        submittedJobId,
+                        actualModel,
+                        CancellationToken.None)
+                    : await client.GetStatusForOfferingAsync(
+                        appCallerCode,
+                        submittedJobId,
+                        actualModel,
+                        scene.OfferingId,
+                        CancellationToken.None);
                 if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
                 if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
                 {
                     // 下载到 COS
-                    var dl = await client.DownloadVideoBytesAsync(
-                        appCallerCode, submittedJobId, 0, actualModel, CancellationToken.None);
+                    var dl = string.IsNullOrWhiteSpace(scene.OfferingId)
+                        ? await client.DownloadVideoBytesAsync(
+                            appCallerCode,
+                            submittedJobId,
+                            0,
+                            actualModel,
+                            CancellationToken.None)
+                        : await client.DownloadVideoBytesForOfferingAsync(
+                            appCallerCode,
+                            submittedJobId,
+                            0,
+                            actualModel,
+                            scene.OfferingId,
+                            CancellationToken.None);
                     if (!dl.Success || dl.Bytes == null)
                     {
                         await MarkSceneErrorAsync(

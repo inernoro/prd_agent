@@ -22,6 +22,15 @@ public interface IOpenRouterVideoClient
         string? expectedModel = null,
         CancellationToken ct = default);
 
+    /// <summary>按提交阶段记录的 Offering 精确恢复任务状态。</summary>
+    Task<OpenRouterVideoStatus> GetStatusForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        string? expectedModel,
+        string? offeringId,
+        CancellationToken ct = default)
+        => GetStatusAsync(appCallerCode, jobId, expectedModel, ct);
+
     /// <summary>
     /// 下载视频 mp4 二进制（OpenRouter URL 需 API Key 鉴权，浏览器无法直接播放，
     /// 必须由后端下载后转存到 COS）
@@ -36,6 +45,16 @@ public interface IOpenRouterVideoClient
         int urlIndex = 0,
         string? expectedModel = null,
         CancellationToken ct = default);
+
+    /// <summary>按提交阶段记录的 Offering 精确恢复并下载视频。</summary>
+    Task<OpenRouterVideoDownload> DownloadVideoBytesForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex,
+        string? expectedModel,
+        string? offeringId,
+        CancellationToken ct = default)
+        => DownloadVideoBytesAsync(appCallerCode, jobId, urlIndex, expectedModel, ct);
 }
 
 public class OpenRouterVideoSubmitRequest
@@ -92,6 +111,8 @@ public class OpenRouterVideoSubmitResult
     public double? Cost { get; set; }
     /// <summary>实际使用的模型 id（Gateway 解析结果）</summary>
     public string? ActualModel { get; set; }
+    /// <summary>实际完成提交的 Offering ID，供异步轮询和下载精确恢复上游。</summary>
+    public string? OfferingId { get; set; }
     /// <summary>按实际模型能力归一化后的生成时长。</summary>
     public int? ActualDurationSeconds { get; set; }
 }

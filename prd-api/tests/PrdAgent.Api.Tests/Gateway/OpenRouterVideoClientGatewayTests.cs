@@ -115,6 +115,59 @@ public class OpenRouterVideoClientGatewayTests
     }
 
     [Fact]
+    public async Task ProviderRetry_ShouldPersistAndReuseSuccessfulOffering()
+    {
+        var initial = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelPublicId = "video2",
+            OfferingId = "offering-primary",
+            ActualModel = "video-primary",
+        };
+        var successful = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelPublicId = "video2",
+            OfferingId = "offering-backup",
+            ActualModel = "video-backup",
+        };
+        var gateway = new CapturingGateway(initial, successful);
+        var client = new OpenRouterVideoClient(
+            gateway,
+            new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            NullLogger<OpenRouterVideoClient>.Instance);
+
+        var submit = await client.SubmitAsync(new OpenRouterVideoSubmitRequest
+        {
+            AppCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            Model = "video2",
+            Prompt = "生成视频",
+        });
+        submit.ActualModel.ShouldBe("video-backup");
+        submit.OfferingId.ShouldBe("offering-backup");
+
+        await client.GetStatusForOfferingAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            submit.JobId!,
+            submit.ActualModel,
+            submit.OfferingId);
+        gateway.RawCalls[1].Resolution.ShouldBe(successful);
+
+        var restartedClient = new OpenRouterVideoClient(
+            gateway,
+            new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            NullLogger<OpenRouterVideoClient>.Instance);
+        await restartedClient.GetStatusForOfferingAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            submit.JobId!,
+            submit.ActualModel,
+            submit.OfferingId);
+        gateway.OfferingResolveCalls.ShouldContain("offering-backup");
+    }
+
+    [Fact]
     public async Task VolcengineVideoExchange_ShouldUseGatewayStatusAndDownloadSignedUrl()
     {
         var gateway = new CapturingGateway(new GatewayModelResolution
@@ -194,14 +247,19 @@ public class OpenRouterVideoClientGatewayTests
         {
         }
 
-        public CapturingGateway(GatewayModelResolution resolution)
+        public CapturingGateway(
+            GatewayModelResolution resolution,
+            GatewayModelResolution? submitResponseResolution = null)
         {
             Resolution = resolution;
+            SubmitResponseResolution = submitResponseResolution;
         }
 
         public GatewayModelResolution Resolution { get; }
+        public GatewayModelResolution? SubmitResponseResolution { get; }
 
         public List<(string AppCallerCode, string ModelType, string? ExpectedModel)> ResolveCalls { get; } = [];
+        public List<string> OfferingResolveCalls { get; } = [];
         public List<(GatewayRawRequest Request, GatewayModelResolution Resolution)> RawCalls { get; } = [];
 
         public Task<GatewayModelResolution> ResolveModelAsync(
@@ -214,6 +272,16 @@ public class OpenRouterVideoClientGatewayTests
         {
             ResolveCalls.Add((appCallerCode, modelType, expectedModel));
             return Task.FromResult(Resolution);
+        }
+
+        public Task<GatewayModelResolution> ResolveOfferingAsync(
+            string appCallerCode,
+            string modelType,
+            string offeringId,
+            CancellationToken ct = default)
+        {
+            OfferingResolveCalls.Add(offeringId);
+            return Task.FromResult(SubmitResponseResolution ?? Resolution);
         }
 
         public Task<GatewayRawResponse> SendRawWithResolutionAsync(
@@ -253,6 +321,7 @@ public class OpenRouterVideoClientGatewayTests
                     Success = true,
                     StatusCode = 200,
                     ContentType = "application/json",
+                    Resolution = SubmitResponseResolution,
                     Content = """
                               {"id":"job-123","usage":{"cost":0.12}}
                               """,

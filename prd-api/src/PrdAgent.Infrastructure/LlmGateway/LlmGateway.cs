@@ -1180,6 +1180,19 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 409);
         }
 
+
+        if (!string.IsNullOrWhiteSpace(request.RequiredOfferingId)
+            && !string.Equals(
+                request.RequiredOfferingId.Trim(),
+                resolution.OfferingId?.Trim(),
+                StringComparison.Ordinal))
+        {
+            return GatewayRawResponse.Fail(
+                "OFFERING_RESOLUTION_MISMATCH",
+                "异步任务原上游路由无法恢复，请重新生成",
+                409);
+        }
+
         // 将 GatewayModelResolution 转回 ModelResolutionResult 以复用内部执行逻辑
         // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
         var internalResolution = new ModelResolutionResult
@@ -2707,6 +2720,31 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
 
         var result = await _modelResolver.ResolveAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        return result.ToGatewayResolution();
+    }
+
+    /// <inheritdoc />
+    public async Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
+        {
+            return new GatewayModelResolution
+            {
+                Success = false,
+                ErrorMessage = error,
+                ResolutionType = "NotFound",
+            };
+        }
+
+        var result = await _modelResolver.ResolveOfferingAsync(
+            appCallerCode,
+            modelType,
+            offeringId,
+            ct);
         return result.ToGatewayResolution();
     }
 

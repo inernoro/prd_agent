@@ -212,6 +212,9 @@ public class VideoGenScene
     /// <summary>本镜使用的 OpenRouter 模型 id（留空 = 跟随 Run.DirectVideoModel）</summary>
     public string? Model { get; set; }
 
+    /// <summary>本镜提交成功的 Offering ID，用于 worker 重启后精确恢复上游。</summary>
+    public string? OfferingId { get; set; }
+
     /// <summary>本镜时长（秒，留空 = 跟随 Run.DirectDuration）</summary>
     public int? Duration { get; set; }
 
@@ -299,6 +302,8 @@ public class VideoGenRun
     // ─── OpenRouter 默认参数（direct 直接用；storyboard 作为分镜默认值） ───
 
     public string? DirectVideoModel { get; set; }
+    /// <summary>direct 模式提交成功的 Offering ID，用于轮询与下载精确恢复上游。</summary>
+    public string? DirectVideoOfferingId { get; set; }
     public string? DirectAspectRatio { get; set; }
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
@@ -413,6 +418,7 @@ public class DirectVideoJobOwnership
     public string OwnerAdminId { get; set; } = string.Empty;
     public string JobId { get; set; } = string.Empty;
     public string? Model { get; set; }
+    public string? OfferingId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.Add(Retention);
     public DateTime? RevokedAt { get; set; }

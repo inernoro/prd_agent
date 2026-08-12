@@ -1477,6 +1477,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let projectId = '';
     let generatedVideoUrl = '';
     try {
+      await page.getByRole('button', { name: '新项目', exact: true }).click();
       await page.getByRole('button', { name: /单镜直出/ }).click();
       await page.getByLabel('项目名称').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-video`);
       await page.getByLabel('文学稿内容').fill(prompt);
@@ -2908,11 +2909,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       page.on('request', recordCreateRequest);
       await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissVisualTutorial(page);
-      await expect(page.getByTestId('generation-progress').first(), '刷新后必须恢复同一任务的生成进度').toBeVisible({ timeout: 30_000 });
+      await expect.poll(async () => {
+        if (await page.getByTestId('generation-progress').first().isVisible().catch(() => false)) return 'progress';
+        return (await readEnvelope<ImageRunDetail>(
+          await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) }),
+        )).run.status;
+      }, {
+        message: '刷新后必须恢复同一任务的生成进度或已经完成的结果',
+        timeout: 30_000,
+      }).toMatch(/progress|Completed/i);
       const restoredActive = (await readEnvelope<ImageRunDetail>(
         await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) }),
       )).run;
-      expect(restoredActive.status, '刷新完成后原三图任务仍应处于活动状态').toMatch(/Queued|Running/i);
+      expect(restoredActive.status, '刷新完成后原三图任务必须仍可恢复').toMatch(/Queued|Running|Completed/i);
       expect(restoredActive.id).toBe(threeRunId);
       expect(restoredActive.imageRefs?.map((item) => item.assetSha256)).toEqual([
         first.asset.sha256,
@@ -2921,6 +2930,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       ]);
       expect(createRequestsDuringRestore, '刷新恢复不得偷偷创建新的生图任务').toEqual([]);
       page.off('request', recordCreateRequest);
+
+      if (/Completed/i.test(restoredActive.status)) {
+        await expect(page.getByTestId('canvas-image').first(), '刷新期间完成时页面必须恢复生成结果').toBeVisible({ timeout: 30_000 });
+      } else {
+        await expect(page.getByTestId('generation-progress').first(), '任务仍在运行时页面必须恢复生成进度').toBeVisible();
+      }
 
       const completed = await waitForImageRun(page, token, threeRunId);
       await assertImageArtifact(page, completed.detail);

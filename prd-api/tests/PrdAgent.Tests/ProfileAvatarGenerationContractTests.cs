@@ -76,10 +76,11 @@ public class ProfileAvatarGenerationContractTests
         var standardBranchStart = source.IndexOf("var images = new List<ImageGenImage>();", googleBranchStart, StringComparison.Ordinal);
         Assert.True(googleBranchStart >= 0 && standardBranchStart > googleBranchStart);
         var googleBranch = source[googleBranchStart..standardBranchStart];
-        Assert.Contains("UploadArtifacts.InsertOneAsync(new UploadArtifact", googleBranch);
-        Assert.Contains("RequestId = requestId", googleBranch);
-        Assert.Contains("CreatedByAdminId = createdByAdminId", googleBranch);
-        Assert.Contains("Kind = \"output_image\"", googleBranch);
+        Assert.Contains("SaveGeneratedOutputAsync(", googleBranch);
+        Assert.Contains("UploadArtifacts.InsertOneAsync(new UploadArtifact", source);
+        Assert.Contains("RequestId = requestId", source);
+        Assert.Contains("CreatedByAdminId = createdByAdminId", source);
+        Assert.Contains("Kind = \"output_image\"", source);
     }
 
     [Fact]
@@ -110,6 +111,25 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("DeleteSupersededAvatarAsync", source);
         Assert.Contains("DeleteByKeyAsync", source);
         Assert.DoesNotContain("$\"{usernameLower}.{ext}\"", source);
+    }
+
+    [Fact]
+    public void ProfileAvatarFilenameUpdate_MustValidateOwnedObjectBeforeDatabaseMutation()
+    {
+        var source = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
+        var endpointStart = source.IndexOf("public async Task<IActionResult> UpdateMyAvatar", StringComparison.Ordinal);
+        var endpointEnd = source.IndexOf("[HttpPatch(\"public-page\")]", endpointStart, StringComparison.Ordinal);
+        Assert.True(endpointStart >= 0 && endpointEnd > endpointStart);
+        var endpoint = source[endpointStart..endpointEnd];
+
+        Assert.Contains("fileName.StartsWith(BuildAvatarOwnerPrefix(currentUserId)", endpoint);
+        Assert.Contains("await _assetStorage.ExistsAsync(objectKey, ct)", endpoint);
+        Assert.True(
+            endpoint.IndexOf("ExistsAsync", StringComparison.Ordinal)
+            < endpoint.IndexOf("ReplaceAvatarFileNameAsync", StringComparison.Ordinal));
+        Assert.DoesNotContain("DeleteSupersededAvatarAsync", endpoint);
+        Assert.Contains("头像文件不存在，请重新上传或生成后再试", endpoint);
     }
 
     [Theory]

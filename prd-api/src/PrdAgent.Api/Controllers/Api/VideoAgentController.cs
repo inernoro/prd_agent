@@ -210,6 +210,7 @@ public class VideoAgentController : ControllerBase
                 OwnerAdminId = GetAdminId(),
                 JobId = result.JobId,
                 Model = result.ActualModel ?? req.Model,
+                OfferingId = result.OfferingId,
                 CreatedAt = now,
                 ExpiresAt = now.Add(DirectVideoJobOwnership.Retention),
             };
@@ -240,8 +241,18 @@ public class VideoAgentController : ControllerBase
         if (ownership == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
 
-        var status = await _videoClient.GetStatusAsync(
-            AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, expectedModel: ownership.Model, ct: ct);
+        var status = string.IsNullOrWhiteSpace(ownership.OfferingId)
+            ? await _videoClient.GetStatusAsync(
+                AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                jobId,
+                ownership.Model,
+                ct)
+            : await _videoClient.GetStatusForOfferingAsync(
+                AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                jobId,
+                ownership.Model,
+                ownership.OfferingId,
+                ct);
         return Ok(ApiResponse<object>.Ok(new { status.Status, status.VideoUrl, status.Cost, status.ErrorMessage, status.IsCompleted, status.IsFailed }));
     }
 
@@ -255,11 +266,19 @@ public class VideoAgentController : ControllerBase
         if (ownership == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
 
-        var downloaded = await _videoClient.DownloadVideoBytesAsync(
-            AppCallerRegistry.VideoAgent.VideoGen.Generate,
-            jobId,
-            expectedModel: ownership.Model,
-            ct: ct);
+        var downloaded = string.IsNullOrWhiteSpace(ownership.OfferingId)
+            ? await _videoClient.DownloadVideoBytesAsync(
+                AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                jobId,
+                expectedModel: ownership.Model,
+                ct: ct)
+            : await _videoClient.DownloadVideoBytesForOfferingAsync(
+                AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                jobId,
+                0,
+                ownership.Model,
+                ownership.OfferingId,
+                ct);
         if (!downloaded.Success || downloaded.Bytes == null || downloaded.Bytes.Length == 0)
         {
             _logger.LogWarning(
@@ -322,6 +341,7 @@ public class VideoAgentController : ControllerBase
                 .SetOnInsert(item => item.OwnerAdminId, ownership.OwnerAdminId)
                 .SetOnInsert(item => item.JobId, ownership.JobId)
                 .SetOnInsert(item => item.Model, ownership.Model)
+                .SetOnInsert(item => item.OfferingId, ownership.OfferingId)
                 .SetOnInsert(item => item.CreatedAt, ownership.CreatedAt);
             await _db.DirectVideoJobOwnerships.UpdateOneAsync(
                 item => item.AppKey == AppKey
@@ -374,6 +394,7 @@ public class VideoAgentController : ControllerBase
         {
             var update = Builders<DirectVideoJobOwnership>.Update
                 .Set(item => item.Model, ownership.Model)
+                .Set(item => item.OfferingId, ownership.OfferingId)
                 .Set(item => item.ExpiresAt, ownership.ExpiresAt)
                 .SetOnInsert(item => item.Id, ownership.Id)
                 .SetOnInsert(item => item.AppKey, ownership.AppKey)
@@ -414,6 +435,7 @@ public class VideoAgentController : ControllerBase
             ownership.OwnerAdminId,
             ownership.JobId,
             ownership.Model,
+            ownership.OfferingId,
             ownership.ExpiresAt);
         return _directVideoJobProtector.Protect(JsonSerializer.Serialize(payload, JsonOptions));
     }
@@ -446,6 +468,7 @@ public class VideoAgentController : ControllerBase
                 OwnerAdminId = payload.OwnerAdminId,
                 JobId = payload.JobId,
                 Model = payload.Model,
+                OfferingId = payload.OfferingId,
                 CreatedAt = DateTime.UtcNow,
                 ExpiresAt = payload.ExpiresAt,
             };
@@ -462,6 +485,7 @@ public class VideoAgentController : ControllerBase
         string OwnerAdminId,
         string JobId,
         string? Model,
+        string? OfferingId,
         DateTime ExpiresAt);
 
     /// <summary>

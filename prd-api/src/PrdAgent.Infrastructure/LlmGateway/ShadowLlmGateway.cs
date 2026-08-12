@@ -267,6 +267,17 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ct);
     }
 
+    public Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        // Offering 是独立 Gateway 配置域中的稳定路由身份；恢复时必须回到权威网关，
+        // 不能在 MAP 旧模型池中按同名模型猜测。
+        return _http.ResolveOfferingAsync(appCallerCode, modelType, offeringId, ct);
+    }
+
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode, string modelType, CancellationToken ct = default)
     {
@@ -530,6 +541,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         CanonicalImageRequest = request.CanonicalImageRequest,
         RequiredLogicalModelPublicId = request.RequiredLogicalModelPublicId,
+        RequiredOfferingId = request.RequiredOfferingId,
         AppCallerCode = request.AppCallerCode,
         ModelType = request.ModelType,
         EndpointPath = request.EndpointPath,
