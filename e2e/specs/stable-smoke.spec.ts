@@ -2343,14 +2343,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const probeEndpoint = originalEndpoint === 'stable-smoke-health-reset-probe'
       ? 'stable-smoke-health-reset-probe-alt'
       : 'stable-smoke-health-reset-probe';
+    let currentOfferingId = offering!.id;
     let changed = false;
     try {
-      const update = await request.put(`${baseUrl}/gw/logical-models/${logical!.id}/offerings/${offering!.id}`, {
+      const update = await request.put(`${baseUrl}/gw/logical-models/${logical!.id}/offerings/${currentOfferingId}`, {
         headers,
         data: { endpointPath: probeEndpoint },
       });
-      changed = update.ok();
       const updateBody = await update.json() as ApiEnvelope<{
+        id: string;
         endpointPath?: string;
         healthStatus: number;
         consecutiveFailures: number;
@@ -2361,9 +2362,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(updateBody.data.healthStatus).toBe(0);
       expect(updateBody.data.consecutiveFailures).toBe(0);
       expect(updateBody.data.consecutiveSuccesses).toBe(0);
+      currentOfferingId = updateBody.data.id;
+      changed = true;
     } finally {
       if (changed) {
-        const restore = await request.put(`${baseUrl}/gw/logical-models/${logical!.id}/offerings/${offering!.id}`, {
+        const restore = await request.put(`${baseUrl}/gw/logical-models/${logical!.id}/offerings/${currentOfferingId}`, {
           headers,
           data: { endpointPath: originalEndpoint },
         });
@@ -2427,7 +2430,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         && upstreamIds.has(offering.targetId)
       ))
       .sort((left, right) => left.priority - right.priority);
-    const originals = new Map(offerings.map((offering) => [offering.id, {
+    const originals = new Map(offerings.map((offering) => [offering, {
       endpointPath: offering.endpointPath || '',
       priority: offering.priority,
     }]));
@@ -2445,6 +2448,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(body.success, body.error?.message || `Offering ${offering.id} 更新失败`).toBe(true);
       expect(body.data.endpointPath || '').toBe(endpointPath);
       expect(body.data.priority).toBe(priority);
+      Object.assign(offering, body.data);
     };
     const updateStrategy = async (routingStrategy: string) => {
       const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${logical!.id}`, {
@@ -2483,7 +2487,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     try {
       await updateStrategy('priority');
       for (const [index, offering] of offerings.entries()) {
-        await updateOffering(offering, originals.get(offering.id)!.endpointPath, (index + 1) * 10);
+        await updateOffering(offering, originals.get(offering)!.endpointPath, (index + 1) * 10);
         offering.priority = (index + 1) * 10;
       }
       await updateOffering(offerings[0], `stable-smoke-primary-failure/${Date.now()}`, offerings[0].priority);
@@ -2502,7 +2506,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         `${failoverLog.providerAttempts.at(-1)?.provider}:${failoverLog.providerAttempts.at(-1)?.model}`,
       );
 
-      await updateOffering(offerings[0], originals.get(offerings[0].id)!.endpointPath, offerings[0].priority);
+      await updateOffering(offerings[0], originals.get(offerings[0])!.endpointPath, offerings[0].priority);
       for (const [index, offering] of offerings.entries()) {
         await updateOffering(offering, `stable-smoke-all-failure/${Date.now()}-${index}`, offering.priority);
       }
@@ -2527,8 +2531,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const restoreResults = await Promise.allSettled(offerings.map((offering) => (
         updateOffering(
           offering,
-          originals.get(offering.id)!.endpointPath,
-          originals.get(offering.id)!.priority,
+          originals.get(offering)!.endpointPath,
+          originals.get(offering)!.priority,
         )
       )));
       const strategyRestore = await Promise.allSettled([updateStrategy(originalStrategy)]);

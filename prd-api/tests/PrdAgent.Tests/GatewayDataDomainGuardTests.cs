@@ -1225,13 +1225,18 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("model-offering.route-replaced", consoleApi);
         Assert.Contains("SupersedesOfferingId", consoleApi);
         Assert.Contains("SupersededByOfferingId", consoleApi);
+        Assert.Contains("pending:{replacementId}", consoleApi);
         Assert.Contains("replacement[\"Enabled\"] = false", consoleApi);
-        Assert.Contains("Builders<BsonDocument>.Update.Set(\"Enabled\", true)", consoleApi);
-        Assert.Contains("OFFERING_ACTIVATION_FAILED", consoleApi);
+        Assert.Contains("OFFERING_PROMOTION_FAILED", consoleApi);
         Assert.Contains(".Where(x => !x.Contains(\"SupersededByOfferingId\"))", consoleApi);
         Assert.True(
             consoleApi.IndexOf("await gwModelOfferings.InsertOneAsync(replacement)", StringComparison.Ordinal)
             < consoleApi.IndexOf(".Set(\"SupersededByOfferingId\", replacementId)", StringComparison.Ordinal));
+
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        Assert.Contains("EnsureOfferingIdentityIndexAsync", initializer);
+        Assert.Contains(".Ascending(\"SupersededByOfferingId\")", initializer);
+        Assert.Contains("Offering 唯一索引升级为版本感知结构", initializer);
     }
 
     [Fact]

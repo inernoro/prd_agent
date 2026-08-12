@@ -3202,9 +3202,10 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         replacement["ConsecutiveFailures"] = 0;
         replacement["ConsecutiveSuccesses"] = 0;
         replacement["SupersedesOfferingId"] = offeringId;
+        var stagingMarker = $"pending:{replacementId}";
+        replacement["SupersededByOfferingId"] = stagingMarker;
         replacement["CreatedAt"] = now;
         replacement["UpdatedAt"] = now;
-        replacement.Remove("SupersededByOfferingId");
         replacement.Remove("SupersededAt");
 
         await gwModelOfferings.InsertOneAsync(replacement);
@@ -3227,30 +3228,33 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         }
 
         var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
-        if (replacementEnabled)
+        var promoted = await gwModelOfferings.UpdateOneAsync(
+            TenantAccess.Filter(http, fb.And(
+                fb.Eq("_id", replacementId),
+                fb.Eq("SupersededByOfferingId", stagingMarker))),
+            Builders<BsonDocument>.Update
+                .Unset("SupersededByOfferingId")
+                .Set("Enabled", replacementEnabled)
+                .Set("UpdatedAt", DateTime.UtcNow));
+        if (promoted.ModifiedCount != 1)
         {
-            var activated = await gwModelOfferings.UpdateOneAsync(
-                TenantAccess.Filter(http, fb.Eq("_id", replacementId)),
-                Builders<BsonDocument>.Update.Set("Enabled", true));
-            if (activated.ModifiedCount != 1)
-            {
-                await gwModelOfferings.UpdateOneAsync(
-                    TenantAccess.Filter(http, fb.And(
-                        fb.Eq("_id", offeringId),
-                        fb.Eq("SupersededByOfferingId", replacementId))),
-                    Builders<BsonDocument>.Update
-                        .Set("Enabled", true)
-                        .Unset("SupersededByOfferingId")
-                        .Unset("SupersededAt")
-                        .Set("UpdatedAt", DateTime.UtcNow));
-                await gwModelOfferings.DeleteOneAsync(
-                    TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
-                return Json(ApiEnvelope<ModelOfferingItem>.Fail(
-                    "OFFERING_ACTIVATION_FAILED",
-                    "新路由未能启用，原 Offering 已恢复，请重试"), jsonOptions, 503);
-            }
-            replacement["Enabled"] = true;
+            await gwModelOfferings.UpdateOneAsync(
+                TenantAccess.Filter(http, fb.And(
+                    fb.Eq("_id", offeringId),
+                    fb.Eq("SupersededByOfferingId", replacementId))),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", replacementEnabled)
+                    .Unset("SupersededByOfferingId")
+                    .Unset("SupersededAt")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "OFFERING_PROMOTION_FAILED",
+                "新路由未能接管流量，原 Offering 已恢复，请重试"), jsonOptions, 503);
         }
+        replacement.Remove("SupersededByOfferingId");
+        replacement["Enabled"] = replacementEnabled;
 
         await WriteOperationAuditAsync(
             operationAudits,

@@ -167,6 +167,8 @@
 | fix | stable-smoke | 存活进程持有的稳定冒烟锁不再因文件年龄被误删，预检实际验证双环境主应用和网关身份 |
 | fix | prd-api | 后台任务兼容接管部署身份升级前的分支 owner，并将认领任务迁移到当前部署域 |
 | test | prd-api/prd-admin/stable-smoke | 增加旧 owner 兼容、存活锁、真实身份预检和头像异常脱敏回归测试 |
+| fix | llmgw | Offering 不可变路由版本改用版本感知唯一索引和分阶段接管，避免编辑路由触发重复键错误 |
+| test | stable-smoke | 路由变更与恢复始终跟踪最新 Offering 版本，防止稳测继续操作已退役配置 |
 | fix | prd-admin | 头像上传和生成应用成功后直接同步服务端结果，移除重复持久化请求及其假失败状态 |
 | test | prd-admin | 增加本人、账户设置和管理员头像单次持久化契约回归测试 |
 | fix | stable-smoke | 视觉证据门禁实际解码 PNG 数据并拒绝文本伪装、损坏或不完整截图 |

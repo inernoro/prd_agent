@@ -287,11 +287,9 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("ModelType").Ascending("Enabled").Ascending("DisplayOrder"),
                 new CreateIndexOptions { Name = "idx_llmgw_logical_model_tenant_type_enabled_order" }),
         }, ct);
+        await EnsureOfferingIdentityIndexAsync(ct);
         await CreateBsonIndexesAsync("llmgw_model_offerings", new[]
         {
-            new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("LogicalModelId").Ascending("TargetKind").Ascending("TargetId"),
-                new CreateIndexOptions { Name = "uniq_llmgw_offering_tenant_logical_target", Unique = true }),
             new CreateIndexModel<BsonDocument>(
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("LogicalModelId").Ascending("Enabled").Ascending("HealthStatus").Ascending("Priority"),
                 new CreateIndexOptions { Name = "idx_llmgw_offering_tenant_logical_route" }),
@@ -498,6 +496,34 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
         }, cancellationToken: ct);
 
         _logger.LogInformation("[LlmGatewayData] 非破坏性治理索引已就绪；TTL 索引由 lifecycle worker 在持久化 dry-run 后启用");
+    }
+
+    private async Task EnsureOfferingIdentityIndexAsync(CancellationToken ct)
+    {
+        const string indexName = "uniq_llmgw_offering_tenant_logical_target";
+        var collection = _data.Database.GetCollection<BsonDocument>("llmgw_model_offerings");
+        var indexes = await (await collection.Indexes.ListAsync(ct)).ToListAsync(ct);
+        var current = indexes.FirstOrDefault(x => x.GetValue("name", "").AsString == indexName);
+        var currentKey = current?.GetValue("key", new BsonDocument()).AsBsonDocument;
+        if (currentKey?.Contains("SupersededByOfferingId") == true)
+            return;
+
+        if (current is not null)
+        {
+            await collection.Indexes.DropOneAsync(indexName, ct);
+            _logger.LogInformation(
+                "[LlmGatewayData] Offering 唯一索引升级为版本感知结构 index={Index}",
+                indexName);
+        }
+
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys
+                .Ascending("TenantId")
+                .Ascending("LogicalModelId")
+                .Ascending("TargetKind")
+                .Ascending("TargetId")
+                .Ascending("SupersededByOfferingId"),
+            new CreateIndexOptions { Name = indexName, Unique = true }), cancellationToken: ct);
     }
 
     public async Task EnsureRetentionTtlIndexesAsync(CancellationToken ct)
