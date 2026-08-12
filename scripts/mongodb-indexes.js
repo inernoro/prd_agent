@@ -155,10 +155,30 @@ db.direct_video_job_ownerships.updateMany(
   { "ExpiresAt": { $exists: false } },
   { $set: { "ExpiresAt": directVideoOwnershipRetentionExpiresAt } }
 )
-db.direct_video_job_ownerships.createIndex(
-  { "AppKey": 1, "JobId": 1 },
-  { name: "uniq_direct_video_job_app_job", unique: true }
+db.direct_video_job_ownerships.updateMany(
+  { "JobNamespace": { $exists: false } },
+  [{
+    $set: {
+      "JobNamespace": {
+        $cond: [
+          { $and: [{ $ne: ["$OfferingId", null] }, { $ne: ["$OfferingId", ""] }] },
+          { $concat: ["offering:", "$OfferingId"] },
+          { $concat: ["model:", { $ifNull: ["$Model", "unknown"] }] }
+        ]
+      }
+    }
+  }]
 )
+db.direct_video_job_ownerships.createIndex(
+  { "AppKey": 1, "JobNamespace": 1, "JobId": 1 },
+  { name: "uniq_direct_video_job_app_namespace_job", unique: true }
+)
+const legacyDirectVideoJobIndex = db.direct_video_job_ownerships.getIndexes()
+  .find(index => index.name === "uniq_direct_video_job_app_job")
+if (legacyDirectVideoJobIndex) {
+  // 新命名空间唯一索引已成功建立后才移除旧索引，全程无无保护写入窗口。
+  db.direct_video_job_ownerships.dropIndex(legacyDirectVideoJobIndex.name)
+}
 db.direct_video_job_ownerships.createIndex(
   { "ExpiresAt": 1 },
   { name: "ttl_direct_video_job_expires_at", expireAfterSeconds: 0 }

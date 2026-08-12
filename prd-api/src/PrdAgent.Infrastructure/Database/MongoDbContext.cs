@@ -1804,14 +1804,15 @@ public class MongoDbContext
             // ignore
         }
 
-        // 直出视频上游任务只能归属一个业务身份，防止重复映射绕过下载归属校验。
+        // 直出视频上游任务在 Offering 命名空间内只能归属一个业务身份。
         try
         {
             DirectVideoJobOwnerships.Indexes.CreateOne(new CreateIndexModel<DirectVideoJobOwnership>(
                 Builders<DirectVideoJobOwnership>.IndexKeys
                     .Ascending(x => x.AppKey)
+                    .Ascending(x => x.JobNamespace)
                     .Ascending(x => x.JobId),
-                new CreateIndexOptions { Name = "uniq_direct_video_job_app_job", Unique = true }));
+                new CreateIndexOptions { Name = "uniq_direct_video_job_app_namespace_job", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {

@@ -217,6 +217,9 @@ public class VideoAgentController : ControllerBase
                 CreatedAt = now,
                 ExpiresAt = now.Add(DirectVideoJobOwnership.Retention),
             };
+            ownership.JobNamespace = DirectVideoJobOwnership.BuildJobNamespace(
+                ownership.OfferingId,
+                ownership.Model);
             var recoveryToken = CreateDirectVideoJobRecoveryToken(ownership);
             var ownershipPersisted = await TryPersistDirectVideoJobOwnershipAsync(ownership);
             return Ok(ApiResponse<object>.Ok(new
@@ -307,14 +310,28 @@ public class VideoAgentController : ControllerBase
         CancellationToken ct)
     {
         var ownerAdminId = GetAdminId();
+        var hasRecoveryOwnership = TryReadDirectVideoJobRecoveryToken(
+            recoveryToken,
+            jobId,
+            ownerAdminId,
+            out var recoveryOwnership);
         DirectVideoJobOwnership? ownership;
         try
         {
-            ownership = await _db.DirectVideoJobOwnerships
-                .Find(item => item.AppKey == AppKey
-                              && item.JobId == jobId
-                              && item.OwnerAdminId == ownerAdminId)
-                .FirstOrDefaultAsync(ct);
+            var ownershipFilter = Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.AppKey, AppKey)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.JobId, jobId)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.OwnerAdminId, ownerAdminId);
+            if (hasRecoveryOwnership)
+            {
+                ownershipFilter &= Builders<DirectVideoJobOwnership>.Filter.Eq(
+                    item => item.JobNamespace,
+                    recoveryOwnership.JobNamespace);
+            }
+            var candidates = await _db.DirectVideoJobOwnerships
+                .Find(ownershipFilter)
+                .Limit(hasRecoveryOwnership ? 1 : 2)
+                .ToListAsync(ct);
+            ownership = candidates.Count == 1 ? candidates[0] : null;
         }
         catch (Exception ex)
         {
@@ -323,12 +340,12 @@ public class VideoAgentController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "视频任务暂时无法清理，请稍后重试"));
         }
 
-        if (ownership == null
-            && !TryReadDirectVideoJobRecoveryToken(recoveryToken, jobId, ownerAdminId, out ownership))
+        if (ownership == null && !hasRecoveryOwnership)
         {
             // 不存在且没有本人有效恢复凭证时保持幂等，不为无法证明归属的任务创建墓碑。
             return Ok(ApiResponse<object>.Ok(new { cleaned = true }));
         }
+        ownership ??= recoveryOwnership;
 
         var revokedAt = DateTime.UtcNow;
         var tombstoneExpiresAt = ownership.ExpiresAt > revokedAt
@@ -343,12 +360,14 @@ public class VideoAgentController : ControllerBase
                 .SetOnInsert(item => item.AppKey, ownership.AppKey)
                 .SetOnInsert(item => item.OwnerAdminId, ownership.OwnerAdminId)
                 .SetOnInsert(item => item.JobId, ownership.JobId)
+                .SetOnInsert(item => item.JobNamespace, ownership.JobNamespace)
                 .SetOnInsert(item => item.Model, ownership.Model)
                 .SetOnInsert(item => item.OfferingId, ownership.OfferingId)
                 .SetOnInsert(item => item.CreatedAt, ownership.CreatedAt);
             await _db.DirectVideoJobOwnerships.UpdateOneAsync(
                 item => item.AppKey == AppKey
                         && item.JobId == jobId
+                        && item.JobNamespace == ownership.JobNamespace
                         && item.OwnerAdminId == ownerAdminId,
                 update,
                 new UpdateOptions { IsUpsert = true },
@@ -371,12 +390,32 @@ public class VideoAgentController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(jobId)) return null;
         var ownerAdminId = GetAdminId();
+        var hasRecoveryOwnership = TryReadDirectVideoJobRecoveryToken(
+            recoveryToken,
+            jobId,
+            ownerAdminId,
+            out var recovered);
         try
         {
-            var persisted = await _db.DirectVideoJobOwnerships
-                .Find(item => item.JobId == jobId && item.OwnerAdminId == ownerAdminId && item.AppKey == AppKey)
-                .FirstOrDefaultAsync(CancellationToken.None);
-            if (persisted != null) return persisted.RevokedAt.HasValue ? null : persisted;
+            var ownershipFilter = Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.JobId, jobId)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.OwnerAdminId, ownerAdminId)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.AppKey, AppKey);
+            if (hasRecoveryOwnership)
+            {
+                ownershipFilter &= Builders<DirectVideoJobOwnership>.Filter.Eq(
+                    item => item.JobNamespace,
+                    recovered.JobNamespace);
+            }
+            var candidates = await _db.DirectVideoJobOwnerships
+                .Find(ownershipFilter)
+                .Limit(hasRecoveryOwnership ? 1 : 2)
+                .ToListAsync(CancellationToken.None);
+            if (candidates.Count == 1)
+            {
+                var persisted = candidates[0];
+                return persisted.RevokedAt.HasValue ? null : persisted;
+            }
+            if (candidates.Count > 1) return null;
         }
         catch (Exception ex)
         {
@@ -384,7 +423,7 @@ public class VideoAgentController : ControllerBase
             return null;
         }
 
-        if (!TryReadDirectVideoJobRecoveryToken(recoveryToken, jobId, ownerAdminId, out var recovered))
+        if (!hasRecoveryOwnership)
             return null;
 
         var ownershipRestored = await TryPersistDirectVideoJobOwnershipAsync(recovered);
@@ -398,6 +437,7 @@ public class VideoAgentController : ControllerBase
             var update = Builders<DirectVideoJobOwnership>.Update
                 .Set(item => item.Model, ownership.Model)
                 .Set(item => item.OfferingId, ownership.OfferingId)
+                .Set(item => item.JobNamespace, ownership.JobNamespace)
                 .Set(item => item.ExpiresAt, ownership.ExpiresAt)
                 .SetOnInsert(item => item.Id, ownership.Id)
                 .SetOnInsert(item => item.AppKey, ownership.AppKey)
@@ -407,6 +447,7 @@ public class VideoAgentController : ControllerBase
             await _db.DirectVideoJobOwnerships.UpdateOneAsync(
                 item => item.AppKey == ownership.AppKey
                         && item.JobId == ownership.JobId
+                        && item.JobNamespace == ownership.JobNamespace
                         && item.OwnerAdminId == ownership.OwnerAdminId
                         && item.RevokedAt == null,
                 update,
@@ -475,6 +516,9 @@ public class VideoAgentController : ControllerBase
                 CreatedAt = DateTime.UtcNow,
                 ExpiresAt = payload.ExpiresAt,
             };
+            ownership.JobNamespace = DirectVideoJobOwnership.BuildJobNamespace(
+                ownership.OfferingId,
+                ownership.Model);
             return true;
         }
         catch

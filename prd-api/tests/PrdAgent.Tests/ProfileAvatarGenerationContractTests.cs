@@ -227,7 +227,8 @@ public class ProfileAvatarGenerationContractTests
         Assert.True(
             endpoint.IndexOf("ExistsAsync", StringComparison.Ordinal)
             < endpoint.IndexOf("ReplaceAvatarFileNameAsync", StringComparison.Ordinal));
-        Assert.DoesNotContain("DeleteSupersededAvatarAsync", endpoint);
+        Assert.Contains("DeleteSupersededAvatarAsync", endpoint);
+        Assert.Contains("previousUser.AvatarFileName", endpoint);
         Assert.Contains("头像文件不存在，请重新上传或生成后再试", endpoint);
     }
 

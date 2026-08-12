@@ -417,11 +417,24 @@ public class DirectVideoJobOwnership
     public string AppKey { get; set; } = "video-agent";
     public string OwnerAdminId { get; set; } = string.Empty;
     public string JobId { get; set; } = string.Empty;
+    /// <summary>
+    /// 上游任务命名空间：优先使用 Offering，历史无 Offering 任务回退到模型。
+    /// Provider 本地 JobId 不是全局唯一，必须与本字段联合定位。
+    /// </summary>
+    public string JobNamespace { get; set; } = string.Empty;
     public string? Model { get; set; }
     public string? OfferingId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.Add(Retention);
     public DateTime? RevokedAt { get; set; }
+
+    public static string BuildJobNamespace(string? offeringId, string? model)
+    {
+        var offering = (offeringId ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(offering)) return $"offering:{offering}";
+        var normalizedModel = (model ?? string.Empty).Trim();
+        return $"model:{(string.IsNullOrWhiteSpace(normalizedModel) ? "unknown" : normalizedModel)}";
+    }
 }
 
 public class VideoModelOption

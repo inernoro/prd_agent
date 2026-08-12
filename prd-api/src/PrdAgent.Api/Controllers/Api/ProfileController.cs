@@ -917,48 +917,55 @@ public class ProfileController : ControllerBase
         var (ok, err) = ValidateAvatarFileName(fileName);
         if (!ok) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "头像文件名不合法"));
 
-        await using var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
-            _db,
-            ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId),
-            ct);
-        if (!string.IsNullOrWhiteSpace(fileName))
+        User? previousUser;
+        await using (var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
+                         _db,
+                         ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId),
+                         ct))
         {
-            if (!fileName.StartsWith(
-                    ProfileAvatarObjectCleanupPolicy.BuildOwnerPrefix(currentUserId),
-                    StringComparison.Ordinal))
+            if (!string.IsNullOrWhiteSpace(fileName))
             {
-                return BadRequest(ApiResponse<object>.Fail(
-                    ErrorCodes.INVALID_FORMAT,
-                    "该头像不属于当前用户，请重新上传或生成后再试"));
+                if (!fileName.StartsWith(
+                        ProfileAvatarObjectCleanupPolicy.BuildOwnerPrefix(currentUserId),
+                        StringComparison.Ordinal))
+                {
+                    return BadRequest(ApiResponse<object>.Fail(
+                        ErrorCodes.INVALID_FORMAT,
+                        "该头像不属于当前用户，请重新上传或生成后再试"));
+                }
+
+                var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{fileName}";
+                bool avatarExists;
+                try
+                {
+                    avatarExists = await _assetStorage.ExistsAsync(objectKey, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Self-service avatar object validation failed. userId={UserId}", currentUserId);
+                    return StatusCode(
+                        StatusCodes.Status503ServiceUnavailable,
+                        ApiResponse<object>.Fail(
+                            "AVATAR_STORAGE_UNAVAILABLE",
+                            "头像存储暂时不可用，原头像未变更，请稍后重试"));
+                }
+
+                if (!avatarExists)
+                {
+                    return NotFound(ApiResponse<object>.Fail(
+                        "AVATAR_NOT_FOUND",
+                        "头像文件不存在，请重新上传或生成后再试"));
+                }
             }
 
-            var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{fileName}";
-            bool avatarExists;
-            try
-            {
-                avatarExists = await _assetStorage.ExistsAsync(objectKey, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Self-service avatar object validation failed. userId={UserId}", currentUserId);
-                return StatusCode(
-                    StatusCodes.Status503ServiceUnavailable,
-                    ApiResponse<object>.Fail(
-                        "AVATAR_STORAGE_UNAVAILABLE",
-                        "头像存储暂时不可用，原头像未变更，请稍后重试"));
-            }
-
-            if (!avatarExists)
-            {
-                return NotFound(ApiResponse<object>.Fail(
-                    "AVATAR_NOT_FOUND",
-                    "头像文件不存在，请重新上传或生成后再试"));
-            }
+            previousUser = await ReplaceAvatarFileNameAsync(currentUserId, fileName, ct);
         }
-
-        // 这个兼容端点只切换到已经存在的本人头像，不能在未验证新对象时删除旧对象。
-        // 上传和生成应用端点在新对象落盘后负责清理被替换的旧版本。
-        await ReplaceAvatarFileNameAsync(currentUserId, fileName, ct);
+        if (previousUser == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        await DeleteSupersededAvatarAsync(
+            currentUserId,
+            previousUser.AvatarFileName,
+            fileName);
 
         user.AvatarFileName = fileName;
         var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);
