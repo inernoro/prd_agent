@@ -99,6 +99,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['LLM_ERROR', '智能处理未完成，请稍后重试。'],
   ['INTERNAL_ERROR', '服务处理未完成，请稍后重试。'],
   ['PRD_COMMENT_NOT_FOUND', '目标评论不存在或已被删除，请刷新页面后重试。'],
+  ['NO_PRD_DOCUMENT', '当前群组尚未绑定 PRD 文档，请先在群组设置中绑定后重试。'],
   ['WORKSPACE_NOT_FOUND', '当前视觉项目不存在或已被删除，请返回项目列表并刷新后重新打开。'],
   ['IMAGE_GEN_RUN_NOT_FOUND', '图片生成任务不存在或已失效，请重新发起生成。'],
   ['IMAGE_GEN_UNAVAILABLE', '图片生成服务暂时不可用，请稍后重新生成。'],

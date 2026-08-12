@@ -224,6 +224,7 @@ describe('toUserReadableErrorMessage', () => {
     ['DUPLICATE_MODEL', '该模型名称已存在，请刷新模型列表后确认；如需新增，请改用其他模型名称。'],
     ['DUPLICATE_NAME', '该名称已存在，请刷新列表后确认；如需新增，请改用其他名称。'],
     ['DOCUMENT_ASSET_CLEANUP_FAILED', '文件清理暂时未完成，请稍后重试删除。'],
+    ['NO_PRD_DOCUMENT', '当前群组尚未绑定 PRD 文档，请先在群组设置中绑定后重试。'],
   ])('为稳定业务错误 %s 使用已登记文案而不是通用输入提示', (code, expected) => {
     const message = toUserReadableErrorMessage(
       { code, message: 'HTTP 500 provider traceId=secret' },
