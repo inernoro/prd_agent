@@ -101,7 +101,8 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       form.appendChild(ticketInput);
       document.body.appendChild(form);
       form.submit();
-      form.remove();
+      // Chromium 会把刚提交就移除的表单视为已取消导航；等待下载请求启动后再清理。
+      window.setTimeout(() => form.remove(), 60_000);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '视频下载失败，请稍后重试');
     } finally {
