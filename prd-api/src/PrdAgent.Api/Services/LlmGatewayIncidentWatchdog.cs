@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -21,6 +22,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
     private readonly ILogger<LlmGatewayIncidentWatchdog> _logger;
     private readonly TimeSpan _interval;
     private readonly TimeSpan _lookback;
+    private readonly bool _canPublishNotifications;
 
     public LlmGatewayIncidentWatchdog(
         LlmGatewayDataContext gatewayDb,
@@ -33,6 +35,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         _mapDb = mapDb;
         _pushSignal = pushSignal;
         _logger = logger;
+        _canPublishNotifications = CanPublishNotifications(configuration);
         _interval = TimeSpan.FromSeconds(Math.Clamp(
             configuration.GetValue("LlmGateway:IncidentWatchdog:IntervalSeconds", 30), 10, 300));
         _lookback = TimeSpan.FromMinutes(Math.Clamp(
@@ -41,6 +44,13 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!_canPublishNotifications)
+        {
+            _logger.LogInformation(
+                "[LlmGatewayIncidentWatchdog] 当前为非权威部署，跳过共享管理员通知写入");
+            return;
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -59,6 +69,9 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             await Task.Delay(_interval, stoppingToken);
         }
     }
+
+    internal static bool CanPublishNotifications(IConfiguration configuration)
+        => DeploymentAuthority.IsAuthoritativeDeployment(configuration);
 
     internal async Task SweepOnceAsync(CancellationToken ct)
     {
