@@ -1,6 +1,7 @@
 namespace PrdAgent.Infrastructure.Services.AssetStorage;
 
 public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime);
+public record AssetReadHandle(Stream Content, string Mime, long? Length);
 
 /// <summary>
 /// 允许存储实现回收严格受约束的自服务头像单对象，不扩大通用安全删除白名单。
@@ -90,6 +91,16 @@ public interface IAssetStorage
     /// 按 sha256 读取 bytes（用于本地存储或兼容旧数据）。
     /// </summary>
     Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null);
+
+    /// <summary>
+    /// 按 sha256 打开顺序读取流。用于大文件响应，避免把完整对象装入托管内存。
+    /// 不支持原生流的远端实现可返回 null，由调用方使用受控 HTTP 流式代理。
+    /// </summary>
+    Task<AssetReadHandle?> TryOpenReadByShaAsync(
+        string sha256,
+        CancellationToken ct,
+        string? domain = null,
+        string? type = null) => Task.FromResult<AssetReadHandle?>(null);
 
     /// <summary>
     /// 按 sha256 删除底层对象（若实现支持）。

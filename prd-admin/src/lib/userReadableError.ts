@@ -107,6 +107,8 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['IMAGE_GEN_REQUEST_REJECTED', '图片生成请求未被接受，请调整描述或素材后重试。'],
   ['IMAGE_GEN_TIMEOUT', '图片生成等待超时，请稍后查看结果或重新生成。'],
   ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],
+  ['AVATAR_NOT_FOUND', '头像文件已失效，请重新上传或生成后再试。'],
+  ['AVATAR_STORAGE_UNAVAILABLE', '头像存储暂时不可用，原头像未变更，请稍后重试。'],
   ['PLAN_TITLE_DUPLICATE', '已存在同名计划，请修改标题后重试。'],
   ['INVALID_STATE', '内容状态已发生变化，请刷新页面确认后重试。'],
   ['STALE_UPDATE', '内容已被其他操作更新，请刷新页面后重新提交。'],

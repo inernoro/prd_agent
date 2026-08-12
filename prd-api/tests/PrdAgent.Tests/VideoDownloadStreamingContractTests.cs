@@ -1,0 +1,75 @@
+using Xunit;
+using PrdAgent.Infrastructure.Services.AssetStorage;
+
+namespace PrdAgent.Tests;
+
+public class VideoDownloadStreamingContractTests
+{
+    [Fact]
+    public void VideoDownload_MustStreamWithoutMaterializingCompleteMp4()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/VideoDownloadController.cs"));
+        var storageContract = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/IAssetStorage.cs"));
+        var localStorage = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/LocalAssetStorage.cs"));
+
+        Assert.DoesNotContain("TryReadByShaAsync", controller);
+        Assert.Contains("TryOpenReadByShaAsync", controller);
+        Assert.Contains("HttpCompletionOption.ResponseHeadersRead", controller);
+        Assert.Contains("CopyToAsync(Response.Body", controller);
+        Assert.Contains("enableRangeProcessing: true", controller);
+        Assert.Contains("Task<AssetReadHandle?> TryOpenReadByShaAsync", storageContract);
+        Assert.Contains("FileOptions.Asynchronous | FileOptions.SequentialScan", localStorage);
+    }
+
+    [Fact]
+    public async Task LocalAssetStorage_MustReturnFileStreamForLargeAssetReads()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"video-stream-{Guid.NewGuid():N}");
+        try
+        {
+            var storage = new LocalAssetStorage(directory);
+            var bytes = new byte[2 * 1024 * 1024];
+            Random.Shared.NextBytes(bytes);
+            var stored = await storage.SaveAsync(
+                bytes,
+                "video/mp4",
+                CancellationToken.None,
+                domain: AppDomainPaths.DomainVideoAgent,
+                type: AppDomainPaths.TypeVideo,
+                extensionHint: ".mp4");
+
+            var opened = await storage.TryOpenReadByShaAsync(
+                stored.Sha256,
+                CancellationToken.None,
+                domain: AppDomainPaths.DomainVideoAgent,
+                type: AppDomainPaths.TypeVideo);
+
+            Assert.NotNull(opened);
+            await using var content = opened.Content;
+            Assert.IsType<FileStream>(content);
+            Assert.Equal(bytes.LongLength, opened.Length);
+            var prefix = new byte[64];
+            Assert.Equal(prefix.Length, await content.ReadAsync(prefix));
+            Assert.Equal(bytes.AsSpan(0, prefix.Length).ToArray(), prefix);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static string LocateRepoFile(string relativePath)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, relativePath);
+            if (File.Exists(candidate)) return candidate;
+            dir = dir.Parent;
+        }
+        throw new FileNotFoundException($"Cannot locate repository file: {relativePath}");
+    }
+}

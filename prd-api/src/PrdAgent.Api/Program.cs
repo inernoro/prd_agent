@@ -664,6 +664,13 @@ builder.Services.AddHttpClient("AssetStorageReadiness", client =>
     client.DefaultRequestHeaders.CacheControl =
         new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
 });
+builder.Services.AddHttpClient("AssetStorageStream", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+});
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();

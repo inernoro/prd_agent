@@ -219,6 +219,8 @@ describe('toUserReadableErrorMessage', () => {
     ['QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度后重试。'],
     ['LLM_QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。'],
     ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],
+    ['AVATAR_NOT_FOUND', '头像文件已失效，请重新上传或生成后再试。'],
+    ['AVATAR_STORAGE_UNAVAILABLE', '头像存储暂时不可用，原头像未变更，请稍后重试。'],
     ['TEAM_LEADER_TRANSFER_REQUIRED', '团队负责人不能直接退出，请先在成员管理中将负责人移交给其他成员。'],
     ['INVALID_CONFIG', '模型配置不完整，请先在模型平台补充 API 地址和密钥后再测试。'],
     ['DUPLICATE_MODEL', '该模型名称已存在，请刷新模型列表后确认；如需新增，请改用其他模型名称。'],

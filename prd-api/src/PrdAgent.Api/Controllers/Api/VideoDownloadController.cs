@@ -23,22 +23,25 @@ public sealed class VideoDownloadController : ControllerBase
     private readonly IVideoGenService _videoGenService;
     private readonly IAssetStorage _assetStorage;
     private readonly IDataProtector _ticketProtector;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public VideoDownloadController(
         IVideoGenService videoGenService,
         IAssetStorage assetStorage,
-        IDataProtectionProvider dataProtectionProvider)
+        IDataProtectionProvider dataProtectionProvider,
+        IHttpClientFactory httpClientFactory)
     {
         _videoGenService = videoGenService;
         _assetStorage = assetStorage;
         _ticketProtector = dataProtectionProvider.CreateProtector(VideoDownloadTicket.ProtectorPurpose);
+        _httpClientFactory = httpClientFactory;
     }
 
     [AllowAnonymous]
     [HttpPost]
     [Consumes("application/x-www-form-urlencoded")]
     [Produces("video/mp4")]
-    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Download([FromForm] string? ticket, CancellationToken ct)
     {
@@ -60,19 +63,53 @@ public sealed class VideoDownloadController : ControllerBase
                 "视频文件暂时不可用，请返回视频页面重新生成后下载"));
         }
 
-        var asset = await _assetStorage.TryReadByShaAsync(
+        var localAsset = await _assetStorage.TryOpenReadByShaAsync(
             run.VideoAssetSha256,
             ct,
             domain: AppDomainPaths.DomainVideoAgent,
             type: AppDomainPaths.TypeVideo);
-        if (asset == null || asset.Value.bytes.Length == 0)
+        if (localAsset != null)
+        {
+            return File(
+                localAsset.Content,
+                "video/mp4",
+                $"video-{run.Id}.mp4",
+                enableRangeProcessing: true);
+        }
+
+        var assetUrl = _assetStorage.TryBuildUrlBySha(
+            run.VideoAssetSha256,
+            "video/mp4",
+            domain: AppDomainPaths.DomainVideoAgent,
+            type: AppDomainPaths.TypeVideo);
+        if (!Uri.TryCreate(assetUrl, UriKind.Absolute, out var assetUri)
+            || (assetUri.Scheme != Uri.UriSchemeHttps && assetUri.Scheme != Uri.UriSchemeHttp))
         {
             return NotFound(ApiResponse<object>.Fail(
                 ErrorCodes.NOT_FOUND,
                 "视频文件暂时不可用，请返回视频页面重新生成后下载"));
         }
 
-        return File(asset.Value.bytes, "video/mp4", $"video-{run.Id}.mp4");
+        using var upstream = await _httpClientFactory
+            .CreateClient("AssetStorageStream")
+            .GetAsync(assetUri, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!upstream.IsSuccessStatusCode)
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请返回视频页面重新生成后下载"));
+        }
+
+        Response.ContentType = "video/mp4";
+        Response.ContentLength = upstream.Content.Headers.ContentLength;
+        Response.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+        {
+            FileName = $"video-{run.Id}.mp4",
+            FileNameStar = $"video-{run.Id}.mp4",
+        }.ToString();
+        await using var stream = await upstream.Content.ReadAsStreamAsync(ct);
+        await stream.CopyToAsync(Response.Body, 128 * 1024, ct);
+        return new EmptyResult();
     }
 
     private VideoDownloadTicket? ReadTicket(string? ticket)
