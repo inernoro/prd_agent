@@ -85,6 +85,17 @@ public class OpenAIImageClient : IImageGenerationClient
         return stableModelId;
     }
 
+    internal static bool ResolveEffectiveIsAdaptive(
+        GatewayModelResolution? resolution,
+        string? modelId)
+    {
+        var sizeControl = ImageSizeControlCapabilities.Parse(resolution?.ParameterCapabilities);
+        if (sizeControl.IsConfigured) return sizeControl.UsePrompt;
+
+        var adapter = ImageGenModelAdapterRegistry.TryMatch(modelId);
+        return adapter?.SizeConstraintType == SizeConstraintTypes.Adaptive;
+    }
+
 
     /// <summary>
     /// 统一图片生成入口：文生图 / 图生图 / 多图生图由 images 参数自动决定。
@@ -986,6 +997,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         RequestedSize = requestedSizeRaw,
                         EffectiveSize = requestedSizeRaw,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
@@ -1235,6 +1247,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     EffectiveSize = effectiveSize,
                     SizeAdjusted = sizeAdjusted,
                     RatioAdjusted = ratioAdjusted,
+                    IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     SizeAdjustmentNote = sizeAdjusted && !string.IsNullOrWhiteSpace(requestedSizeRaw) && !string.IsNullOrWhiteSpace(effectiveSize)
                         ? $"本次尺寸替换：{requestedSizeRaw} -> {effectiveSize}"
                         : null
@@ -1492,7 +1505,8 @@ public class OpenAIImageClient : IImageGenerationClient
                     Meta = new ImageGenResultMeta
                     {
                         RequestedSize = size,
-                        EffectiveSize = size
+                        EffectiveSize = size,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
@@ -1640,7 +1654,8 @@ public class OpenAIImageClient : IImageGenerationClient
                     Meta = new ImageGenResultMeta
                     {
                         RequestedSize = size,
-                        EffectiveSize = size
+                        EffectiveSize = size,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
@@ -1899,7 +1914,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 Meta = new ImageGenResultMeta
                 {
                     RequestedSize = size,
-                    EffectiveSize = size
+                    EffectiveSize = size,
+                    IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                 }
             });
         }
@@ -2833,6 +2849,7 @@ public class ImageGenResultMeta
     public string? EffectiveSize { get; set; }
     public bool SizeAdjusted { get; set; }
     public bool RatioAdjusted { get; set; }
+    public bool? IsAdaptive { get; set; }
     public string? SizeAdjustmentNote { get; set; }
 }
 

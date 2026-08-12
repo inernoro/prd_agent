@@ -42,7 +42,7 @@ import {
   getUserPreferences,
   updateLiteraryAgentPreferences,
   optimizeLiteraryPrompt,
-  getAdapterInfoByModelName,
+  getVisualAgentAdapterInfo,
   // 海鲜市场 API
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
@@ -616,6 +616,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
   const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
+  const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
@@ -894,12 +895,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const modelName = effectiveModel?.actualModelId || imageGenModel?.modelName;
     if (!modelName) {
       setSizesByResolutionForPicker(defaultSizesByResolution);
+      setCurrentModelSizesNotApplicable(false);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const res = await getAdapterInfoByModelName(modelName);
+        const res = await getVisualAgentAdapterInfo(modelName);
         if (cancelled) return;
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
@@ -911,11 +913,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           // 适配器返回了有效尺寸则使用，否则 fallback 到默认
           const hasAny = resolved['1k'].length > 0 || resolved['2k'].length > 0 || resolved['4k'].length > 0;
           setSizesByResolutionForPicker(hasAny ? resolved : defaultSizesByResolution);
+          setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);
         } else {
           setSizesByResolutionForPicker(defaultSizesByResolution);
+          setCurrentModelSizesNotApplicable(false);
         }
       } catch {
-        if (!cancelled) setSizesByResolutionForPicker(defaultSizesByResolution);
+        if (!cancelled) {
+          setSizesByResolutionForPicker(defaultSizesByResolution);
+          setCurrentModelSizesNotApplicable(false);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -3462,26 +3469,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <Sparkles size={12} />
                   生成
                 </Button>
-                <BatchSizePicker
-                  sizesByResolution={sizesByResolutionForPicker}
-                  disabled={isBusy || markerRunItems.length === 0}
-                  onApply={(size) => {
-                    setMarkerRunItems((prev) =>
-                      prev.map((x) => ({
-                        ...x,
-                        planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size },
-                      }))
-                    );
-                    // 持久化所有 marker 的尺寸到后端
-                    for (const item of markerRunItems) {
-                      const planItem = item.planItem || { prompt: item.draftText || item.markerText, count: 1 };
-                      void updateMarkerStatus(item.markerIndex, {
-                        planItem: { prompt: planItem.prompt, count: planItem.count ?? 1, size },
-                      });
-                    }
-                    toast.success('批量修改尺寸', `已将 ${markerRunItems.length} 张配图尺寸统一更新`);
-                  }}
-                />
+                {!currentModelSizesNotApplicable && (
+                  <BatchSizePicker
+                    sizesByResolution={sizesByResolutionForPicker}
+                    disabled={isBusy || markerRunItems.length === 0}
+                    onApply={(size) => {
+                      setMarkerRunItems((prev) =>
+                        prev.map((x) => ({
+                          ...x,
+                          planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size },
+                        }))
+                      );
+                      // 持久化所有 marker 的尺寸到后端
+                      for (const item of markerRunItems) {
+                        const planItem = item.planItem || { prompt: item.draftText || item.markerText, count: 1 };
+                        void updateMarkerStatus(item.markerIndex, {
+                          planItem: { prompt: planItem.prompt, count: planItem.count ?? 1, size },
+                        });
+                      }
+                      toast.success('批量修改尺寸', `已将 ${markerRunItems.length} 张配图尺寸统一更新`);
+                    }}
+                  />
+                )}
                 <Button
                   size="xs"
                   variant="secondary"
@@ -3731,24 +3740,26 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           配图 {idx + 1}
                         </span>
                         <div className="flex items-center gap-1.5">
-                          <ImageSizePicker
-                            sizesByResolution={sizesByResolutionForPicker}
-                            value={it.planItem?.size || '1024x1024'}
-                            onChange={(s) => {
-                              const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
-                              setMarkerRunItems((prev) =>
-                                prev.map((x) =>
-                                  x.markerIndex === it.markerIndex
-                                    ? { ...x, planItem: updatedPlanItem }
-                                    : x
-                                )
-                              );
-                              void updateMarkerStatus(it.markerIndex, {
-                                planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
-                              });
-                            }}
-                            disabled={it.status === 'running' || it.status === 'parsing'}
-                          />
+                          {!currentModelSizesNotApplicable && (
+                            <ImageSizePicker
+                              sizesByResolution={sizesByResolutionForPicker}
+                              value={it.planItem?.size || '1024x1024'}
+                              onChange={(s) => {
+                                const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
+                                setMarkerRunItems((prev) =>
+                                  prev.map((x) =>
+                                    x.markerIndex === it.markerIndex
+                                      ? { ...x, planItem: updatedPlanItem }
+                                      : x
+                                  )
+                                );
+                                void updateMarkerStatus(it.markerIndex, {
+                                  planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
+                                });
+                              }}
+                              disabled={it.status === 'running' || it.status === 'parsing'}
+                            />
+                          )}
                           <div
                             className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
                             style={{

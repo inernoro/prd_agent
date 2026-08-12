@@ -270,6 +270,7 @@ public class ImageGenRunWorker : BackgroundService
 
         // 推送实际使用的模型信息（前端用此覆盖原本"前端选中的模型"展示）
         var startAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
+        var startIsAdaptive = await ResolveRunIsAdaptiveAsync(run, preAppCallerCode!, ct);
         await AppendEventAsync(run, "run", new
         {
             type = "runStart",
@@ -281,7 +282,7 @@ public class ImageGenRunWorker : BackgroundService
             modelGroupName = run.ModelGroupName,
             modelGroupId = run.ModelGroupId,
             resolutionType = run.ModelResolutionType?.ToString(),
-            isAdaptive = startAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
+            isAdaptive = startIsAdaptive,
             adapterDisplayName = startAdapter?.DisplayName,
             size = run.Size,
             responseFormat = run.ResponseFormat
@@ -753,7 +754,8 @@ public class ImageGenRunWorker : BackgroundService
                         var doneImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
                         var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
                         var doneAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
-                        var doneIsAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive;
+                        var doneIsAdaptive = meta?.IsAdaptive
+                            ?? (doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive);
                         var doneDisplayModel = run.LogicalModelPublicId ?? run.ModelGroupName;
                         // 持久化的 GEN_DONE 必须带上实际模型 / 真实出图尺寸 / 自适应标记，
                         // 否则刷新后从 DB 重放时这些字段丢失，徽标会回退到"请求尺寸 + 池名"而显示错误。
@@ -777,7 +779,7 @@ public class ImageGenRunWorker : BackgroundService
                             modelId = run.ModelId,
                             logicalModelPublicId = run.LogicalModelPublicId,
                             modelGroupName = run.ModelGroupName,
-                            isAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
+                            isAdaptive = doneIsAdaptive,
                             platformId = run.PlatformId,
                             base64,
                             url,
@@ -1740,5 +1742,46 @@ public class ImageGenRunWorker : BackgroundService
         run.LogicalModelPublicId = logicalModelPublicId;
 
         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
+    }
+
+    private async Task<bool> ResolveRunIsAdaptiveAsync(
+        ImageGenRun run,
+        string appCallerCode,
+        CancellationToken ct)
+    {
+        var fallback = ImageGenModelAdapterRegistry.TryMatch(run.ModelId)?.SizeConstraintType
+            == SizeConstraintTypes.Adaptive;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
+            var requiredLogicalModel = ResolveExplicitLogicalModelPublicId(run);
+            var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
+                ? await gateway.ResolveRequiredLogicalModelAsync(
+                    appCallerCode,
+                    "generation",
+                    requiredLogicalModel,
+                    ct)
+                : await gateway.ResolveModelAsync(
+                    appCallerCode,
+                    "generation",
+                    run.ModelId,
+                    ct: ct);
+            if (!resolution.Success) return fallback;
+
+            var resolvedFallback = ImageGenModelAdapterRegistry.TryMatch(
+                    resolution.ActualModel ?? run.ModelId)?.SizeConstraintType
+                == SizeConstraintTypes.Adaptive;
+            var sizeControl = ImageSizeControlCapabilities.Parse(resolution.ParameterCapabilities);
+            return sizeControl.IsConfigured ? sizeControl.UsePrompt : resolvedFallback;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "[生图尺寸能力] 解析运行事件尺寸模式失败，回退静态适配器: runId={RunId}",
+                run.Id);
+            return fallback;
+        }
     }
 }

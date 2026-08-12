@@ -1826,6 +1826,19 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             && imageSizeValue.TryGetValue<string>(out var imageSizeText)
                 ? imageSizeText
                 : null;
+        var existingResolution = body?["resolution"]?.DeepClone();
+        var existingAspectRatio = body?["aspect_ratio"] is JsonValue aspectRatioValue
+            && aspectRatioValue.TryGetValue<string>(out var aspectRatioText)
+                ? aspectRatioText
+                : null;
+        var existingMultipartResolution = multipartFields is not null
+            && multipartFields.TryGetValue("resolution", out var multipartResolution)
+                ? multipartResolution
+                : null;
+        var existingMultipartAspectRatio = multipartFields is not null
+            && multipartFields.TryGetValue("aspect_ratio", out var multipartAspectRatio)
+                ? multipartAspectRatio?.ToString()
+                : null;
         RemoveImageSizeFields(body, multipartFields);
         if (!capability.UseField || string.IsNullOrWhiteSpace(capability.FieldFormat)) return;
 
@@ -1845,7 +1858,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     body["height"] = height;
                     break;
                 case ImageSizeFieldFormats.AspectRatio:
-                    body["aspect_ratio"] = aspectRatio;
+                    body["aspect_ratio"] = string.IsNullOrWhiteSpace(existingAspectRatio)
+                        ? aspectRatio
+                        : existingAspectRatio;
+                    if (existingResolution is not null) body["resolution"] = existingResolution;
                     break;
                 case ImageSizeFieldFormats.ImageConfigAspectRatio:
                     if (body["generationConfig"] is JsonObject generationConfig)
@@ -1880,7 +1896,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     multipartFields["height"] = height;
                     break;
                 case ImageSizeFieldFormats.AspectRatio:
-                    multipartFields["aspect_ratio"] = aspectRatio;
+                    multipartFields["aspect_ratio"] = string.IsNullOrWhiteSpace(existingMultipartAspectRatio)
+                        ? aspectRatio
+                        : existingMultipartAspectRatio;
+                    if (existingMultipartResolution is not null)
+                        multipartFields["resolution"] = existingMultipartResolution;
                     break;
                 case ImageSizeFieldFormats.ImageConfigAspectRatio:
                     multipartFields["image_config.aspect_ratio"] = aspectRatio;
