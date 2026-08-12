@@ -37,6 +37,10 @@ public class GeneratedVideoCleanupContractTests
         Assert.Contains("[HttpDelete(\"runs/{runId}\")]", controller);
         Assert.Contains("[HttpGet(\"runs/{runId}/download\")]", controller);
         Assert.Contains("TryReadByShaAsync", controller);
+        Assert.Contains("EnsureVideoAssetShaAsync", controller);
+        Assert.Contains("_db.AssetRegistry", controller);
+        Assert.Contains("item.Url == run.VideoAssetUrl", controller);
+        Assert.Contains("item.VideoAssetSha256 == null", controller);
         Assert.Contains("$\"video-{run.Id}.mp4\"", controller);
         Assert.Contains("GetAdminId()", controller);
         Assert.Contains("DeleteByShaAsync", service);

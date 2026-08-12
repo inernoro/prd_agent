@@ -572,15 +572,22 @@ public class VideoAgentController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
-        if (run.Status != VideoGenRunStatus.Completed || string.IsNullOrWhiteSpace(run.VideoAssetSha256))
+        if (run.Status != VideoGenRunStatus.Completed)
         {
             return BadRequest(ApiResponse<object>.Fail(
                 ErrorCodes.INVALID_FORMAT,
                 "视频尚未生成完成，请等待完成后再下载"));
         }
 
+        if (!await EnsureVideoAssetShaAsync(run, ct))
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请重新生成后再下载"));
+        }
+
         var asset = await _assetStorage.TryReadByShaAsync(
-            run.VideoAssetSha256,
+            run.VideoAssetSha256!,
             ct,
             domain: AppDomainPaths.DomainVideoAgent,
             type: AppDomainPaths.TypeVideo);
@@ -609,11 +616,18 @@ public class VideoAgentController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
-        if (run.Status != VideoGenRunStatus.Completed || string.IsNullOrWhiteSpace(run.VideoAssetSha256))
+        if (run.Status != VideoGenRunStatus.Completed)
         {
             return BadRequest(ApiResponse<object>.Fail(
                 ErrorCodes.INVALID_FORMAT,
                 "视频尚未生成完成，请等待完成后再下载"));
+        }
+
+        if (!await EnsureVideoAssetShaAsync(run, ct))
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请重新生成后再下载"));
         }
 
         var payload = new VideoDownloadTicket(
@@ -628,6 +642,46 @@ public class VideoAgentController : ControllerBase
             ticket,
             fileName = $"video-{run.Id}.mp4",
         }));
+    }
+
+    private async Task<bool> EnsureVideoAssetShaAsync(VideoGenRun run, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(run.VideoAssetSha256)) return true;
+        if (string.IsNullOrWhiteSpace(run.VideoAssetUrl)) return false;
+
+        var registry = await _db.AssetRegistry
+            .Find(item => item.Operation == "write"
+                          && item.Url == run.VideoAssetUrl
+                          && item.Domain == AppDomainPaths.DomainVideoAgent
+                          && item.Type == AppDomainPaths.TypeVideo
+                          && item.Sha256 != null)
+            .SortByDescending(item => item.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        var sha256 = registry?.Sha256?.Trim();
+        if (string.IsNullOrWhiteSpace(sha256)
+            || sha256.Length != 64
+            || sha256.Any(character => !Uri.IsHexDigit(character)))
+        {
+            return false;
+        }
+
+        var asset = await _assetStorage.TryReadByShaAsync(
+            sha256,
+            ct,
+            domain: AppDomainPaths.DomainVideoAgent,
+            type: AppDomainPaths.TypeVideo);
+        if (asset == null || asset.Value.bytes.Length == 0) return false;
+
+        await _db.VideoGenRuns.UpdateOneAsync(
+            item => item.Id == run.Id
+                    && item.OwnerAdminId == run.OwnerAdminId
+                    && item.VideoAssetUrl == run.VideoAssetUrl
+                    && item.VideoAssetSha256 == null,
+            Builders<VideoGenRun>.Update.Set(item => item.VideoAssetSha256, sha256),
+            cancellationToken: CancellationToken.None);
+        run.VideoAssetSha256 = sha256;
+        _logger.LogInformation("已从资产登记簿回填视频摘要: runId={RunId}", run.Id);
+        return true;
     }
 
 

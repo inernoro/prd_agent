@@ -1569,22 +1569,29 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(browserMedia.width, '浏览器必须解码出有效视频画面').toBeGreaterThan(0);
       expect(browserMedia.height, '浏览器必须解码出有效视频画面').toBeGreaterThan(0);
 
-      const [ticketResponse, downloadResponse, download] = await Promise.all([
-        page.waitForResponse((response) => (
-          response.request().method() === 'POST'
-          && new URL(response.url()).pathname === `/api/video-agent/runs/${encodeURIComponent(runId)}/download-ticket`
-        )),
-        page.waitForResponse((response) => (
-          response.request().method() === 'POST'
-          && new URL(response.url()).pathname === '/api/video-download'
-        )),
-        page.waitForEvent('download'),
-        downloadButton.click(),
+      const ticketResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/video-agent/runs/${encodeURIComponent(runId)}/download-ticket`
+      ));
+      // 附件导航会触发 download 而不进入页面 response 事件；用 request 证明真实表单提交。
+      const downloadRequestPromise = page.waitForRequest((request) => (
+        request.method() === 'POST'
+        && new URL(request.url()).pathname === '/api/video-download'
+      ));
+      const downloadPromise = page.waitForEvent('download');
+      await downloadButton.click();
+
+      const ticketResponse = await ticketResponsePromise;
+      const ticketBody = await ticketResponse.json() as ApiEnvelope<{ ticket: string; fileName: string }>;
+      expect(ticketResponse.ok(), ticketBody.error?.message || '视频下载凭据签发失败').toBe(true);
+      expect(ticketBody.success, ticketBody.error?.message || '视频下载凭据签发失败').toBe(true);
+      expect(ticketBody.data.ticket, '视频下载凭据不能为空').toBeTruthy();
+
+      const [downloadRequest, download] = await Promise.all([
+        downloadRequestPromise,
+        downloadPromise,
       ]);
-      expect(ticketResponse.ok(), '视频下载凭据必须成功签发').toBe(true);
-      expect(downloadResponse.ok(), '视频下载端点必须成功返回').toBe(true);
-      expect(downloadResponse.headers()['content-type'] || '').toMatch(/^video\/mp4/i);
-      expect(downloadResponse.headers()['content-disposition'] || '').toContain(`video-${runId}.mp4`);
+      expect(downloadRequest.postData() || '', '视频下载请求必须携带短时凭据').toContain('ticket=');
       expect(await download.failure(), '浏览器下载过程不得失败').toBeNull();
       expect(download.suggestedFilename()).toBe(`video-${runId}.mp4`);
       const downloadedPath = await download.path();
