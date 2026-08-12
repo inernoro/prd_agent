@@ -6777,6 +6777,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         const sY = inn.y;
                         const sW = Math.max(1, inn.w);
                         const sH = Math.max(1, inn.h);
+                        const selectionScreenTop = Math.round((iy + sY) * zoom + camera.y);
+                        const placeQuickBarInside = selectionScreenTop < 120;
                         return (
                           <div
                             key={`quickbar_${it.key}`}
@@ -6795,8 +6797,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 position: 'absolute',
                                 left: '50%',
                                 top: 0,
-                                transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
-                                transformOrigin: 'center bottom',
+                                transform: placeQuickBarInside
+                                  ? 'translate(-50%, 12px) scale(var(--invZoom))'
+                                  : 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
+                                transformOrigin: placeQuickBarInside ? 'center top' : 'center bottom',
                                 pointerEvents: 'auto',
                               }}
                               onPointerDown={(e) => e.stopPropagation()}

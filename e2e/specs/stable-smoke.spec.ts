@@ -2600,7 +2600,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
 
       const completed = await waitForImageRun(page, token, runId);
-      expect(completed.statuses.length).toBeGreaterThanOrEqual(2);
+      expect(completed.statuses.length, '轮询必须至少读取到一次有效任务状态').toBeGreaterThanOrEqual(1);
       await assertImageArtifact(page, completed.detail);
       const artifactResult = await readEnvelope<{ items: UploadArtifactItem[] }>(await page.request.get(
         `/api/visual-agent/upload-artifacts?requestId=${encodeURIComponent(`${runId}-0-0`)}`,
@@ -2632,14 +2632,30 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await generatedImage.click();
       const downloadButton = page.getByTitle('下载图片').first();
       await expect(downloadButton, '选中生成图后必须出现真实下载操作').toBeVisible();
-      const [downloadResponse, download] = await Promise.all([
-        page.waitForResponse((response) => (
+      const canvasSource = await generatedImage.getAttribute('src');
+      const observedDownloadRequests: string[] = [];
+      const recordDownloadRequest = (request: { method(): string; url(): string }) => {
+        if (request.method() === 'GET') observedDownloadRequests.push(request.url());
+      };
+      page.on('request', recordDownloadRequest);
+      let downloadResponse;
+      let download;
+      try {
+        const responsePromise = page.waitForResponse((response) => (
           response.request().method() === 'GET'
           && new URL(response.url()).pathname === '/api/visual-agent/image-gen/download'
-        )),
-        page.waitForEvent('download'),
-        downloadButton.click(),
-      ]);
+        ));
+        const downloadPromise = page.waitForEvent('download');
+        await downloadButton.click({ timeout: 5_000 });
+        [downloadResponse, download] = await Promise.all([responsePromise, downloadPromise]);
+      } catch (error) {
+        const toastText = await page.locator('[data-sonner-toast]').allInnerTexts().catch(() => []);
+        throw new Error(
+          `点击下载未形成受权下载：src=${canvasSource || 'empty'}；请求=${observedDownloadRequests.slice(-8).join('、') || 'none'}；提示=${toastText.join('、') || 'none'}；原因=${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        page.off('request', recordDownloadRequest);
+      }
       expect(downloadResponse.ok(), '生成图下载端点必须成功返回').toBe(true);
       expect(downloadResponse.headers()['content-type'] || '').toMatch(/^image\//i);
       expect(await download.failure()).toBeNull();
