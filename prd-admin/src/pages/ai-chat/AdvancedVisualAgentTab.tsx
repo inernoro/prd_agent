@@ -1163,16 +1163,27 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    *
    * 层数不该是唯一入口——「我就想把人物和冰淇淋分开」用数字根本表达不了，
    * 选 2 层很可能拆出人物和冰淇淋而不是人物和风景（2026-08-10 用户原话）。
-   * 所以自然语言是主入口，层数退居可选提示。纯 UI 偏好，按 no-localstorage 例外清单可落 localStorage。
+   * 所以自然语言是主入口，层数退居可选提示。
+   *
+   * 存 sessionStorage，**不能**跟层数/摆法一样进 localStorage。我原来把它一并归成
+   * 「纯 UI 偏好」是自己给自己开脱：层数是个数字、摆法是个枚举，旧值无害；而这行字是
+   * **用户写的、会被当成模型输入去跑一次要花钱的调用**。落 localStorage 就会跨登出留存，
+   * 共用浏览器时下一个账号打开面板，默认拆法是上一个人写的内容，还会静默改变他那次
+   * 付费调用的结果——内容跨账号泄漏 + 结果被悄悄改（Codex PR #1363 P1）。
+   * no-localstorage 的默认档就是 sessionStorage，这里回到默认档。
    */
   const [layerIntentPref, setLayerIntentPref] = useState<string>(() => {
-    try { return localStorage.getItem('prdAdmin.visualAgent.layerIntent') ?? ''; }
+    try { return sessionStorage.getItem('prdAdmin.visualAgent.layerIntent') ?? ''; }
     catch { return ''; }
   });
   const updateLayerIntentPref = useCallback((value: string) => {
     const next = String(value ?? '').slice(0, 200);
     setLayerIntentPref(next);
-    try { localStorage.setItem('prdAdmin.visualAgent.layerIntent', next); } catch { /* 存不下不影响本次使用 */ }
+    try { sessionStorage.setItem('prdAdmin.visualAgent.layerIntent', next); } catch { /* 存不下不影响本次使用 */ }
+  }, []);
+  // 一次性清掉旧版留在 localStorage 里的那份，否则老用户的浏览器里它会一直躺着。
+  useEffect(() => {
+    try { localStorage.removeItem('prdAdmin.visualAgent.layerIntent'); } catch { /* 清不掉就算了 */ }
   }, []);
   const [layerExportBusy, setLayerExportBusy] = useState<string | null>(null);
   // 分层完成后要把 Frame 收进视野，但视角函数定义在下面，用 ref 打通前后引用顺序。
@@ -2959,6 +2970,30 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 棋盘底纹带的是不透明底色，每块都铺的话上面那张会把下面全盖住——
    * 摊开时各块不重叠所以看不出来，一叠起来整幅就只剩最上层 + 一片棋盘。
    */
+  /**
+   * 哪些组**实际上**是摊开的——按几何算，不看那个全局偏好。
+   *
+   * `layerLayoutMode` 是一个全局值，而切换摆法只会重排当前选中的那一组。画布上存在
+   * 两个分层 Frame 时，把 A 切成平铺会让 B 也被当成平铺渲染：B 其实还在原位叠放，
+   * 于是它每一层都铺上不透明棋盘格，把下面的层盖住，面板显示的摆法也是错的
+   * （Codex PR #1363 P1）。
+   *
+   * 与其再存一份「每组的摆法」并想办法让它和几何保持同步，不如直接从几何推：
+   * 原位叠放的组，所有图层共用同一个原点；只要坐标散开了，它就是平铺。
+   * 这样标志位和真实位置永远不可能打架——打架正是这个缺陷的成因。
+   */
+  const spreadLayerGroupIds = useMemo(() => {
+    const origins = new Map<string, Set<string>>();
+    for (const item of canvas) {
+      if (item.layerRole !== 'layer' || !item.layerGroupId) continue;
+      if (!Number.isFinite(item.x as number) || !Number.isFinite(item.y as number)) continue;
+      const seen = origins.get(item.layerGroupId) ?? new Set<string>();
+      seen.add(`${Math.round(Number(item.x))}:${Math.round(Number(item.y))}`);
+      origins.set(item.layerGroupId, seen);
+    }
+    return new Set([...origins.entries()].filter(([, seen]) => seen.size > 1).map(([groupId]) => groupId));
+  }, [canvas]);
+
   const bottomStackedLayerKeys = useMemo(() => {
     const bottom = new Map<string, { key: string; z: number }>();
     for (const item of canvas) {
@@ -7210,8 +7245,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             className={`w-full h-full relative ${it.syncStatus === 'pending' ? 'prd-upload-wave' : ''}`}
                             // 分层产物是 RGBA：直接摆在深色画布上看着就是一张黑图，
                             // 铺棋盘格才看得出「这一层是透明的」。
+                            // 用「这一组实际是不是摊开的」判，不用全局偏好——
+                            // 全局值会让另一个仍在叠放的组整组铺上不透明棋盘格。
                             style={it.layerRole === 'layer'
-                              && (layerLayoutMode === 'spread' || bottomStackedLayerKeys.has(it.key))
+                              && ((it.layerGroupId ? spreadLayerGroupIds.has(it.layerGroupId) : false)
+                                || bottomStackedLayerKeys.has(it.key))
                               ? { ...CANVAS_CHECKERBOARD, borderRadius: 14 }
                               : undefined}
                           >
@@ -7904,7 +7942,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 // 挂原图上只记得住最后一次，面板会显示别组的参数。
                 requestedLayerCount={layerPanelLayers[0]?.layerRequestedCount}
                 usedModel={layerPanelLayers.find((layer) => !!layer.layerModel)?.layerModel}
-                layoutMode={layerLayoutMode}
+                // 面板显示这一组**实际**的摆法，不显示全局偏好：两个 Frame 时全局值
+                // 只对最后操作的那一组成立，另一组会显示成错的。
+                layoutMode={layerPanelGroupId && spreadLayerGroupIds.has(layerPanelGroupId) ? 'spread' : 'stacked'}
                 onLayoutModeChange={(mode) => { if (layerPanelGroupId) applyLayerLayout(layerPanelGroupId, mode); }}
                 onLayerCountChange={updateLayerCountPref}
                 intent={layerIntentPref}
