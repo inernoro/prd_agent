@@ -110,6 +110,14 @@ export interface CanvasImageItem {
   kind?: 'image' | 'generator' | 'shape' | 'text';
   assetId?: string;
   sha256?: string;
+  /**
+   * 裁剪前的满幅原件。画布显示裁剪版（好抓好拖），导出必须用满幅版——
+   * 导出链路按原图尺寸对齐叠放，喂裁剪版会被拉伸铺满整张画布。
+   * 这两个字段在画布页的同名类型上早就有，这里是持久化模块自己的一份结构定义，
+   * 少声明就落不了盘（也正是本次 tsc 抓到的三处报错）。
+   */
+  originalSrc?: string;
+  originalSha256?: string;
   syncStatus?: 'pending' | 'synced' | 'failed';
   syncError?: string | null;
   x?: number;
