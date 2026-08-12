@@ -987,8 +987,18 @@ public class ModelResolver : IModelResolver
         }
 
         var requiredCapability = RequiredCapabilityForAppCaller(appCallerCode);
-        return requiredCapability is null
-               || logical.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase);
+        if (requiredCapability is null
+            || logical.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var hasScenarioCapabilities = logical.Capabilities.Any(x =>
+            x.Equals("text2img", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("img2img", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("vision_generation", StringComparison.OrdinalIgnoreCase));
+        return !hasScenarioCapabilities
+               && logical.Capabilities.Contains("image_generation", StringComparer.OrdinalIgnoreCase);
     }
 
     private static string? RequiredCapabilityForAppCaller(string appCallerCode)

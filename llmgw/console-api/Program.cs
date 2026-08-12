@@ -26,6 +26,7 @@ using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
 using PrdAgent.LlmGw.Organization;
 using PrdAgent.LlmGw.Provisioning;
+using PrdAgent.LlmGw.LogicalModels;
 using PrdAgent.LlmGw.Security;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -253,6 +254,9 @@ var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cos
 var costImportScopeLocks = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
 var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
 var legacyKeyUsage = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_usage");
+await LogicalModelCapabilityPolicy.BackfillLegacyGenerationModelsAsync(
+    gwLogicalModels,
+    CancellationToken.None);
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
 await EnsureInternalTenantAsync(
     users,
@@ -2423,7 +2427,7 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
     var now = DateTime.UtcNow;
     var id = $"gw-logical-{Guid.NewGuid():N}";
-    var capabilities = (body?.Capabilities ?? new()).Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+    var capabilities = LogicalModelCapabilityPolicy.Normalize(modelType, body?.Capabilities);
     var appCallers = (body?.AllowedAppCallerCodes ?? new()).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     var document = new BsonDocument
     {
@@ -2466,7 +2470,12 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     }
     if (body.Capabilities is not null)
     {
-        var capabilities = body.Capabilities.Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        var existing = await gwLogicalModels.Find(
+                TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+            .Project(Builders<BsonDocument>.Projection.Include("ModelType"))
+            .FirstOrDefaultAsync();
+        var existingModelType = existing?.GetStringOrEmpty("ModelType") ?? string.Empty;
+        var capabilities = LogicalModelCapabilityPolicy.Normalize(existingModelType, body.Capabilities);
         updates.Add(Builders<BsonDocument>.Update.Set("Capabilities", new BsonArray(capabilities)));
     }
     if (body.AllowedAppCallerCodes is not null)

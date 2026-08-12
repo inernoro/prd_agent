@@ -21,7 +21,8 @@ public class ModelResolverScenarioCapabilityTests
 
         Assert.True(ModelResolver.SupportsAppCallerScenario(logical, appCallerCode));
 
-        logical.Capabilities = ["image_generation", "image_layering"];
+        var differentScenario = requiredCapability == "text2img" ? "img2img" : "text2img";
+        logical.Capabilities = ["image_generation", differentScenario];
         Assert.False(ModelResolver.SupportsAppCallerScenario(logical, appCallerCode));
     }
 
@@ -37,6 +38,33 @@ public class ModelResolverScenarioCapabilityTests
         Assert.False(ModelResolver.SupportsAppCallerScenario(
             logical,
             "visual-agent.image.text2img::generation"));
+    }
+
+    [Theory]
+    [InlineData("visual-agent.image.text2img::generation")]
+    [InlineData("visual-agent.image.img2img::generation")]
+    [InlineData("visual-agent.image.vision::generation")]
+    public void LegacyGenericImageCapability_RemainsCompatibleUntilBackfill(string appCallerCode)
+    {
+        var logical = new GatewayLogicalModel
+        {
+            Capabilities = ["image_generation"],
+        };
+
+        Assert.True(ModelResolver.SupportsAppCallerScenario(logical, appCallerCode));
+    }
+
+    [Fact]
+    public void AnyExplicitImageScenario_DisablesLegacyGenericFallback()
+    {
+        var logical = new GatewayLogicalModel
+        {
+            Capabilities = ["image_generation", "text2img"],
+        };
+
+        Assert.False(ModelResolver.SupportsAppCallerScenario(
+            logical,
+            "visual-agent.image.img2img::generation"));
     }
 
     [Fact]

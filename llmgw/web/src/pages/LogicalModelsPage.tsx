@@ -46,6 +46,11 @@ const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
 };
 const labelStyle: React.CSSProperties = FIELD_LABEL;
+const DEFAULT_IMAGE_GENERATION_CAPABILITIES = ['image_generation', 'text2img', 'img2img', 'vision_generation'];
+
+function defaultImageGenerationCapabilities() {
+  return [...DEFAULT_IMAGE_GENERATION_CAPABILITIES];
+}
 
 export function LogicalModelsPage() {
   const { tenant } = useAuth();
@@ -64,7 +69,7 @@ export function LogicalModelsPage() {
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState<CreateLogicalModelRequest>({
-    publicId: '', name: '', modelType: 'generation', capabilities: ['image_generation'],
+    publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(),
     allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100,
   });
   const [offeringDraft, setOfferingDraft] = useState<CreateModelOfferingRequest>({
@@ -107,7 +112,7 @@ export function LogicalModelsPage() {
     setBusy(null);
     if (!res.success) { failNotice(res.error?.message || '创建失败'); return; }
     setItems((prev) => [...(prev || []), res.data]);
-    setDraft({ publicId: '', name: '', modelType: 'generation', capabilities: ['image_generation'], allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100 });
+    setDraft({ publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(), allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100 });
     setCreateOpen(false);
     okNotice(`逻辑模型「${res.data.name}」已创建，请继续添加至少一个上游 Offering`);
   }
@@ -243,7 +248,12 @@ export function LogicalModelsPage() {
                   </select>
                 </label>
                 <label style={labelStyle}>
-                  <span>能力，逗号分隔</span>
+                  <span>
+                    能力，逗号分隔
+                    <HelpPopover label="图片生成场景能力">
+                      图片生成默认覆盖文生图、图生图和视觉参考生成；删除某个细分能力即可限制对应场景。
+                    </HelpPopover>
+                  </span>
                   <input value={draft.capabilities.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, capabilities: e.target.value.split(',') }))} style={inputStyle} />
                 </label>
                 <label style={labelStyle}>
