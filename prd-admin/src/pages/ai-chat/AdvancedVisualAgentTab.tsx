@@ -2635,7 +2635,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       layeringRunningRef.current = false;
       setLayeringProgress(null);
     }
-  }, [layerCountPref, layerLayoutMode, setSelectionWithoutChip, workspaceId]);
+    // layerIntentPref 必须进依赖：函数体内用它兜底（input.intent ?? layerIntentPref），
+    // 漏掉就会把上一次的拆法带进这次调用。调用方另有显式传参，这里是第二道保险。
+  }, [layerCountPref, layerIntentPref, layerLayoutMode, setSelectionWithoutChip, workspaceId]);
 
   const exportAiLayeredPsd = useCallback(async (input: {
     key: string;
@@ -7550,7 +7552,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className={`absolute right-3 top-2 pointer-events-auto h-7 rounded-[8px] inline-flex items-center gap-1.5 text-[11px] font-semibold transition-colors hover-bg-soft ${iconOnlyButton ? 'w-7 justify-center px-0' : 'px-2.5'}`}
                       style={{
                         color: 'var(--text-primary)',
-                        background: layerPanelGroupId === frame.id
+                        // 高亮判据与上面的 panelKey 同源，否则面板开着按钮却不高亮。
+                        background: layerPanelGroupId === (frame.layerGroupId || frame.id)
                           ? 'rgba(var(--accent-primary-rgb), 0.20)'
                           : 'var(--panel-solid)',
                         border: '1px solid rgba(var(--accent-primary-rgb), 0.28)',
@@ -7566,7 +7569,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={() => {
                         if (isAiFrame) {
-                          setLayerPanelGroupId((current) => current === frame.id ? null : frame.id);
+                          // 面板按 layerGroupId 选图层（那是产物血统，解组不丢），
+                          // 而 frame.id 是编组意图——用户解组再编组之后它变成新的 frame_*，
+                          // 拿它去选会选出 0 层，面板的 length > 0 渲染门就让面板打不开
+                          // （Codex PR #1363 P1）。这正是我把两个 id 拆开时留下的口子。
+                          const panelKey = frame.layerGroupId || frame.id;
+                          setLayerPanelGroupId((current) => current === panelKey ? null : panelKey);
                           return;
                         }
                         void exportFrameAsPsd(frame.id, frame.name);
@@ -7880,6 +7888,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     // 「重新拆分」必须真的再跑一次：不带这个标记会命中上一次的幂等键，
                     // 原样返回旧图层，用户看到的是「点了没反应」。
                     attempt: Date.now(),
+                    // 拆法要显式传当前值，不能靠 decomposeImageIntoFrame 的闭包去读。
+                    // 那个回调按 [layerCountPref, layerLayoutMode, ...] 记忆化，用户只改了
+                    // 输入框里的拆法、没动层数时回调不会重建，闭包里还是上一次的文字——
+                    // 于是这次**花钱的**模型调用拿到的是旧拆法，而屏幕上明明写着新的
+                    // （Codex PR #1363 P1）。
+                    intent: layerIntentPref,
                   });
                 }}
                 selectedKey={selectedKeys.length === 1 ? selectedKeys[0] : undefined}
