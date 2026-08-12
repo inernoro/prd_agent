@@ -988,6 +988,17 @@ public class ModelResolver : IModelResolver
             return false;
         }
 
+        // 图片分层不是普通的文生图、图生图或多图生成。即使历史配置曾误加这些能力，
+        // 也只能由专用 appCaller 调用，避免它进入通用模型选择器后把普通生图请求发给
+        // 必须携带输入图片的分层协议。
+        if (logical.Capabilities.Contains("image_layering", StringComparer.OrdinalIgnoreCase))
+        {
+            return string.Equals(
+                appCallerCode,
+                AppCallerRegistry.VisualAgent.Image.Layering,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
         var requiredCapability = RequiredCapabilityForAppCaller(appCallerCode);
         if (requiredCapability is null
             || logical.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase))
@@ -998,7 +1009,8 @@ public class ModelResolver : IModelResolver
         var hasScenarioCapabilities = logical.Capabilities.Any(x =>
             x.Equals("text2img", StringComparison.OrdinalIgnoreCase)
             || x.Equals("img2img", StringComparison.OrdinalIgnoreCase)
-            || x.Equals("vision_generation", StringComparison.OrdinalIgnoreCase));
+            || x.Equals("vision_generation", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("image_layering", StringComparison.OrdinalIgnoreCase));
         return !hasScenarioCapabilities
                && logical.Capabilities.Contains("image_generation", StringComparer.OrdinalIgnoreCase);
     }

@@ -11,6 +11,8 @@ public class DocumentTextlessUploadContractTests
             "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs"));
 
         Assert.DoesNotContain("没有从该文件中读取到内容", source);
+        Assert.Contains("FileContentExtractor.IsStructurallyValid(bytes, mime)", source);
+        Assert.Contains("文件无法解析，请确认文件未损坏并重新选择", source);
         Assert.Contains("if (!string.IsNullOrWhiteSpace(extractedText))", source);
         Assert.Contains("AttachmentId = attachment.AttachmentId", source);
     }
@@ -56,6 +58,9 @@ public class DocumentTextlessUploadContractTests
         Assert.True(
             deleteStore.IndexOf("TrackPendingAsync", StringComparison.Ordinal)
             < deleteStore.IndexOf("DocumentEntries.DeleteManyAsync", StringComparison.Ordinal));
+        Assert.True(
+            deleteStore.LastIndexOf("TrackPendingAsync", StringComparison.Ordinal)
+            > deleteStore.IndexOf("Attachments.DeleteManyAsync", StringComparison.Ordinal));
         Assert.True(
             deleteEntry.IndexOf("TrackPendingAsync", StringComparison.Ordinal)
             < deleteEntry.IndexOf("DocumentEntries.DeleteManyAsync", StringComparison.Ordinal));

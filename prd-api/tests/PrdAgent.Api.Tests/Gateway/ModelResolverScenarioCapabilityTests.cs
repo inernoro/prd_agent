@@ -67,6 +67,24 @@ public class ModelResolverScenarioCapabilityTests
             "visual-agent.image.img2img::generation"));
     }
 
+    [Theory]
+    [InlineData("visual-agent.image.text2img::generation")]
+    [InlineData("visual-agent.image.img2img::generation")]
+    [InlineData("visual-agent.image.vision::generation")]
+    public void ImageLayeringCapability_NeverEntersGeneralGenerationScenarios(string appCallerCode)
+    {
+        var logical = new GatewayLogicalModel
+        {
+            // 包含历史误配置的通用能力，仍必须由分层专用 appCaller 隔离。
+            Capabilities = ["image_generation", "image_layering", "text2img", "img2img", "vision_generation"],
+        };
+
+        Assert.False(ModelResolver.SupportsAppCallerScenario(logical, appCallerCode));
+        Assert.True(ModelResolver.SupportsAppCallerScenario(
+            logical,
+            AppCallerRegistry.VisualAgent.Image.Layering));
+    }
+
     [Fact]
     public void NonImageCaller_DoesNotGainAnInventedCapabilityRequirement()
     {

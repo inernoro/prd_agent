@@ -710,6 +710,19 @@ public class DocumentStoreController : ControllerBase
             attachmentsDeleted = res.DeletedCount;
         }
 
+        // TrackPendingAsync 可能先唤醒 Worker，而附件当时仍存在，任务会被租约推迟两分钟。
+        // 引用解除后把同一批任务重新设为立即到期并再次唤醒，确保删除接口返回后对象及时消失。
+        try
+        {
+            await _documentAssetCleanup.TrackPendingAsync(attachments, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 首次登记的持久化任务仍会在租约到期后兜底执行；数据库级联已经完成，不能把
+            // 实际成功的删除伪装成失败，也不能要求用户重复删除一个已不存在的空间。
+            _logger.LogWarning(ex, "[document-store] Store asset cleanup wake deferred after unlink: store={StoreId}", storeId);
+        }
+
         // 3) 最后删 store 自身
         await _db.DocumentStores.DeleteOneAsync(s => s.Id == storeId);
 
@@ -1670,6 +1683,13 @@ public class DocumentStoreController : ControllerBase
         {
             await file.CopyToAsync(ms, ct);
             bytes = ms.ToArray();
+        }
+
+        if (!FileContentExtractor.IsStructurallyValid(bytes, mime))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "文件无法解析，请确认文件未损坏并重新选择"));
         }
 
         // 可解析格式也可能是合法的纯图片 PDF 或无文本 Office 文件。

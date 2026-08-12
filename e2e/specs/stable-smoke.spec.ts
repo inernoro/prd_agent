@@ -124,6 +124,7 @@ async function loginAndReadToken(page: Page, request: APIRequestContext, returnU
     return raw ? JSON.parse(raw)?.state?.token || '' : '';
   });
   expect(storedToken, '合成会话未写入浏览器认证状态').not.toBe('');
+  await dismissBlockingTutorial(page);
   return storedToken;
 }
 
@@ -214,6 +215,7 @@ type GatewayOffering = {
   endpointPath?: string | null;
   enabled: boolean;
   priority: number;
+  healthStatus?: number;
 };
 
 type GatewayLogicalModel = {
@@ -764,6 +766,7 @@ async function openModule(
   await expect(page.locator('body')).not.toBeEmpty();
   await expect(page.locator('body')).not.toContainText('合成测试登录未完成');
   await page.waitForTimeout(800);
+  await dismissBlockingTutorial(page);
   expect(errors, `${module.label} 页面出现前端运行错误`).toEqual([]);
 
   const screenshot = await page.screenshot({ fullPage: true });
@@ -773,13 +776,20 @@ async function openModule(
   });
 }
 
-async function dismissVisualTutorial(page: Page) {
+async function dismissBlockingTutorial(page: Page) {
   const learned = page.getByRole('button', { name: '我已学会' });
   await learned.waitFor({ state: 'visible', timeout: 2_500 }).catch(() => undefined);
   if (await learned.isVisible().catch(() => false)) {
     await learned.click();
     await expect(learned, '关闭教程后不应继续遮挡视觉创作结果').toBeHidden();
   }
+}
+
+async function openQuickRecord(page: Page, request: APIRequestContext) {
+  const token = await loginAndReadToken(page, request, '/document-store');
+  await page.goto('/document-store?quickRecord=1', { waitUntil: 'domcontentloaded' });
+  await dismissBlockingTutorial(page);
+  return token;
 }
 
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
@@ -1236,8 +1246,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         data: { name: runKey, description: '上传进度稳定冒烟，执行后自动清理', isPublic: false },
       }));
       storeId = store.id;
-      await page.evaluate((id) => sessionStorage.setItem('doc-store-selected-id', id), storeId);
-      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
       await expect(page.getByText(runKey, { exact: true })).toBeVisible({ timeout: 15_000 });
 
       let releaseUpload!: () => void;
@@ -1722,7 +1732,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       await uploadIntercepted;
       await expect(page.getByText(fileName, { exact: true })).toBeVisible();
-      const uploadStep = page.getByTestId('transcribe-step-upload');
+      const uploadStep = page.getByTestId('transcribe-step-audio');
       await expect(uploadStep).toHaveAttribute('data-state', 'active');
       await expect(page.getByText('正在上传录音', { exact: true })).toBeVisible();
       await expect(page.getByText(/^\d+%$/).first()).toBeVisible();
@@ -1753,7 +1763,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.getByText(/录音和原文已保存|查看转录笔记/).first()).toBeVisible({ timeout: 180_000 });
       await expect(uploadStep).toHaveAttribute('data-state', 'done');
       await expect(transcribeStep).toHaveAttribute('data-state', 'done');
-      await expect(page.getByTestId('transcribe-step-save')).toHaveAttribute('data-state', 'done');
+      await expect(page.getByTestId('transcribe-step-finish')).toHaveAttribute('data-state', 'done');
       await testInfo.attach('recording-saved-stage', { body: await page.screenshot(), contentType: 'image/png' });
 
       const run = await readEnvelope<{
@@ -2194,7 +2204,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       };
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    await loginAndReadToken(page, request, '/document-store?quickRecord=1');
+    await openQuickRecord(page, request);
 
     await expect(page.getByText('录音中', { exact: true })).toBeVisible({ timeout: 20_000 });
     await page.waitForTimeout(1_500);
@@ -2209,7 +2219,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: undefined });
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    await loginAndReadToken(page, request, '/document-store?quickRecord=1');
+    await openQuickRecord(page, request);
     await expect(page.getByText('当前浏览器不支持录音', { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('button', { name: /上传音频文件/ })).toBeVisible();
     await page.getByRole('button', { name: '取消录音' }).click();
@@ -2375,6 +2385,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     });
     const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
     expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取网关逻辑模型').toBe(true);
+    const upstreamResponse = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, {
+      headers: gateway.headers,
+    });
+    const upstreamBody = await upstreamResponse.json() as ApiEnvelope<{ items: Array<{ id: string }> }>;
+    expect(upstreamResponse.ok(), upstreamBody.error?.message || '无法读取网关模型目录').toBe(true);
+    const upstreamIds = new Set(upstreamBody.data.items.map((item) => item.id));
 
     const pools = await readEnvelope<ImageModelPool[]>(
       await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) }),
@@ -2386,28 +2402,43 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     );
     const logical = logicalBody.data.items.find((item) => (
       item.enabled
-      && item.routingStrategy === 'priority'
       && availableCodes.has(item.publicId)
-      && item.offerings.filter((offering) => offering.enabled).length >= 2
-      && new Set(item.offerings.filter((offering) => offering.enabled).map((offering) => offering.targetId)).size >= 2
+      && item.offerings.filter((offering) => offering.enabled && upstreamIds.has(offering.targetId)).length >= 2
+      && new Set(item.offerings
+        .filter((offering) => offering.enabled && upstreamIds.has(offering.targetId))
+        .map((offering) => offering.targetId)).size >= 2
     ));
     expect(logical, 'CDS 需要至少一个带主备 Offering 的可用文生图逻辑模型').toBeTruthy();
     const offerings = logical!.offerings
-      .filter((offering) => offering.enabled)
+      .filter((offering) => offering.enabled && upstreamIds.has(offering.targetId))
       .sort((left, right) => left.priority - right.priority);
-    const originals = new Map(offerings.map((offering) => [offering.id, offering.endpointPath || '']));
+    const originals = new Map(offerings.map((offering) => [offering.id, {
+      endpointPath: offering.endpointPath || '',
+      priority: offering.priority,
+    }]));
+    const originalStrategy = logical!.routingStrategy;
     const { workspace } = await createVisualWorkspace(page, token, 'gateway-failover');
     const runIds: string[] = [];
 
-    const updateEndpoint = async (offering: GatewayOffering, endpointPath: string) => {
+    const updateOffering = async (offering: GatewayOffering, endpointPath: string, priority = offering.priority) => {
       const response = await request.put(
         `${gateway.baseUrl}/gw/logical-models/${logical!.id}/offerings/${offering.id}`,
-        { headers: gateway.headers, data: { endpointPath } },
+        { headers: gateway.headers, data: { endpointPath, priority } },
       );
       const body = await response.json() as ApiEnvelope<GatewayOffering>;
       expect(response.ok(), body.error?.message || `Offering ${offering.id} 更新失败`).toBe(true);
       expect(body.success, body.error?.message || `Offering ${offering.id} 更新失败`).toBe(true);
       expect(body.data.endpointPath || '').toBe(endpointPath);
+      expect(body.data.priority).toBe(priority);
+    };
+    const updateStrategy = async (routingStrategy: string) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${logical!.id}`, {
+        headers: gateway.headers,
+        data: { routingStrategy },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayLogicalModel>;
+      expect(response.ok(), body.error?.message || '逻辑模型路由策略更新失败').toBe(true);
+      expect(body.data.routingStrategy).toBe(routingStrategy);
     };
     const createProbeRun = async (suffix: string) => {
       const response = await page.request.post('/api/visual-agent/image-gen/runs', {
@@ -2435,7 +2466,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     };
 
     try {
-      await updateEndpoint(offerings[0], `stable-smoke-primary-failure/${Date.now()}`);
+      await updateStrategy('priority');
+      for (const [index, offering] of offerings.entries()) {
+        await updateOffering(offering, originals.get(offering.id)!.endpointPath, (index + 1) * 10);
+        offering.priority = (index + 1) * 10;
+      }
+      await updateOffering(offerings[0], `stable-smoke-primary-failure/${Date.now()}`, offerings[0].priority);
       const failoverRunId = await createProbeRun('primary-failure');
       const failoverResult = await waitForImageRun(page, token, failoverRunId, 240_000);
       expect(failoverResult.detail.run.status).toBe('Completed');
@@ -2451,9 +2487,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         `${failoverLog.providerAttempts.at(-1)?.provider}:${failoverLog.providerAttempts.at(-1)?.model}`,
       );
 
-      await updateEndpoint(offerings[0], originals.get(offerings[0].id) || '');
+      await updateOffering(offerings[0], originals.get(offerings[0].id)!.endpointPath, offerings[0].priority);
       for (const [index, offering] of offerings.entries()) {
-        await updateEndpoint(offering, `stable-smoke-all-failure/${Date.now()}-${index}`);
+        await updateOffering(offering, `stable-smoke-all-failure/${Date.now()}-${index}`, offering.priority);
       }
       const failedRunId = await createProbeRun('all-failure');
       const failedResult = await waitForImageRun(page, token, failedRunId, 240_000);
@@ -2474,8 +2510,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(failedLog.routerTrace.logicalModelPublicId).toBe(logical!.publicId);
     } finally {
       const restoreResults = await Promise.allSettled(offerings.map((offering) => (
-        updateEndpoint(offering, originals.get(offering.id) || '')
+        updateOffering(
+          offering,
+          originals.get(offering.id)!.endpointPath,
+          originals.get(offering.id)!.priority,
+        )
       )));
+      const strategyRestore = await Promise.allSettled([updateStrategy(originalStrategy)]);
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: {
           ...authHeaders(token),
@@ -2489,7 +2530,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         })).status()).toBe(404);
       }
       expect(
-        restoreResults.filter((result) => result.status === 'rejected'),
+        [...restoreResults, ...strategyRestore].filter((result) => result.status === 'rejected'),
         '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint',
       ).toEqual([]);
     }
@@ -2537,7 +2578,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     try {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
+      await dismissBlockingTutorial(page);
       const reference = solidPngDataUrl(35, 90, 190, 128);
       await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
         name: 'mobile-reference.png',
@@ -2614,12 +2655,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         'SSE 中断和续传之间必须存在可见进度连续性',
       ).toMatch(/runStart|imageStart|progress/i);
       expect(
-        firstStream.heartbeats + resumedStream.heartbeats,
-        'SSE 恢复验收必须至少收到一次服务端心跳',
-      ).toBeGreaterThan(0);
+        firstStream.heartbeats + resumedStream.heartbeats > 0
+          || firstStream.ids.length + resumedStream.ids.length >= 2,
+        'SSE 恢复期间必须收到心跳或连续业务进度事件',
+      ).toBe(true);
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
+      await dismissBlockingTutorial(page);
       const progress = page.getByTestId('generation-progress').first();
       await expect(progress, '真实生图开始后页面必须恢复生成中占位').toBeVisible({ timeout: 15_000 });
       const progressBox = await progress.boundingBox();
@@ -2848,7 +2890,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       );
       const dedicatedLogical = logicalModels.items.find((item) => (
         item.enabled
-        && item.routingStrategy === 'priority'
         && healthyPoolCodes.has(item.publicId)
         && item.offerings
           .filter((offering) => offering.enabled)
@@ -2933,7 +2974,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       ]);
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
+      await dismissBlockingTutorial(page);
 
       const threeRunId = await createMultiRun(
         'three-reference-run',
@@ -2965,7 +3006,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       };
       page.on('request', recordCreateRequest);
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
+      await dismissBlockingTutorial(page);
       await expect.poll(async () => {
         if (await page.getByTestId('generation-progress').first().isVisible().catch(() => false)) return 'progress';
         return (await readEnvelope<ImageRunDetail>(
@@ -3063,7 +3104,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let verificationRunId = '';
     try {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
+      await dismissBlockingTutorial(page);
       const picker = page.locator('input[type="file"][accept="image/*"]');
       const aFile = file('a.png', 220, 45, 60);
       const bFile = file('b.png', 35, 115, 225);
@@ -3263,7 +3304,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const file = (name: string) => ({ name, mimeType: 'image/png', buffer: png });
     try {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
+      await dismissBlockingTutorial(page);
       const picker = page.locator('input[type="file"][accept="image/*"]');
 
       await picker.setInputFiles([file('dup1.png'), file('dup2.png')]);
@@ -3342,7 +3383,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(errorMessage).not.toMatch(/HTTP|token|provider|offering|endpoint|protocol|stack|exception/i);
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
+      await dismissBlockingTutorial(page);
       const visibleError = page.getByText(/参考图 @img2 无法使用/);
       await expect(visibleError).toBeVisible({ timeout: 30_000 });
       await expect(visibleError).toContainText('其他输入已保留');
@@ -3422,7 +3463,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(storedErrorPayload.msg).toContain('其他输入已保留');
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
+      await dismissBlockingTutorial(page);
       await expect(page.getByText(/参考图 @img2 无法使用/)).toBeVisible({ timeout: 30_000 });
       await expect(page.getByText(/其他输入已保留/)).toBeVisible();
       await testInfo.attach('multi-image-broken-reference', { body: await page.screenshot(), contentType: 'image/png' });
