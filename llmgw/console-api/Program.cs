@@ -6896,6 +6896,9 @@ async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string ap
 // 模型列表冲垮，也让后面的模型池选型无从下手；分批导入是刻意的摩擦。
 const int MaxImportBatch = 200;
 
+// 上游响应体读取上限。模型清单再大也就几百 KB，8 MB 是宽松到不会误伤的天花板。
+const int MaxUpstreamBodyBytes = 8 * 1024 * 1024;
+
 app.MapGet("/gw/provider-presets", (HttpContext http) =>
 {
     var items = ProviderPresets.All.Select(p => new ProviderPresetItem
@@ -6981,11 +6984,14 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
         {
             try
             {
-                var body = await resp.Content.ReadAsStringAsync(probeCts.Token);
+                var body = await ReadUpstreamBodyAsync(resp, MaxUpstreamBodyBytes, probeCts.Token);
                 var arr = System.Text.Json.Nodes.JsonNode.Parse(body)?["data"] as System.Text.Json.Nodes.JsonArray;
                 modelCount = arr?.Count;
             }
-            catch (System.Text.Json.JsonException) { /* 不是 JSON，留 null，由下面的形状判据处理 */ }
+            // 不是 JSON、或体积超限中止 —— 都留 modelCount = null，交给下面的形状判据判成不可达。
+            // 超限本身就说明这个地址回的不是模型清单，报「形状不对」比报 500 更贴近真相。
+            catch (System.Text.Json.JsonException) { }
+            catch (InvalidOperationException) { }
         }
 
         // 200 不等于「这个地址能用」。
@@ -7082,7 +7088,7 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         if (!resp.IsSuccessStatusCode)
             return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_" + (int)resp.StatusCode,
                 $"上游返回 HTTP {(int)resp.StatusCode}，先点「测试连接」看具体原因"), jsonOptions, 502);
-        body = await resp.Content.ReadAsStringAsync(discoveryCts.Token);
+        body = await ReadUpstreamBodyAsync(resp, MaxUpstreamBodyBytes, discoveryCts.Token);
     }
     catch (TaskCanceledException)
     {
@@ -7091,6 +7097,11 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
     catch (HttpRequestException ex)
     {
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("NETWORK", $"连不上上游：{ex.Message}"), jsonOptions, 502);
+    }
+    catch (InvalidOperationException ex)
+    {
+        // 响应体超限：如实告诉用户地址多半指错了，而不是让它冒充一个 500
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_TOO_LARGE", ex.Message), jsonOptions, 502);
     }
 
     System.Text.Json.Nodes.JsonArray? dataArray;
@@ -10528,6 +10539,28 @@ static async Task WriteLoginAuditAsync(
     {
         Console.Error.WriteLine($"[LlmGw] login audit write failed: {ex.Message}");
     }
+}
+
+/// <summary>
+/// 有上限地读上游响应体。
+///
+/// 15 秒超时只管**时长**不管**字节数**：一个 ConfigWrite 租户把 Provider 指向自己控制的
+/// 公网服务器，回一个飞快的超大响应，就能把共享的控制台进程内存吃干——限时拦不住限量。
+/// 所以边流边数，超过上限直接掐断并如实报错，而不是先 ReadAsStringAsync 把整棵 JSON 树读进内存。
+/// </summary>
+static async Task<string> ReadUpstreamBodyAsync(HttpResponseMessage resp, int maxBytes, CancellationToken ct)
+{
+    await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+    var buffer = new byte[8192];
+    using var ms = new MemoryStream();
+    int read;
+    while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+    {
+        if (ms.Length + read > maxBytes)
+            throw new InvalidOperationException($"上游响应体超过 {maxBytes / 1024 / 1024} MB 上限，已中止读取");
+        ms.Write(buffer, 0, read);
+    }
+    return System.Text.Encoding.UTF8.GetString(ms.ToArray());
 }
 
 static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct)

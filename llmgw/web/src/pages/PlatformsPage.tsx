@@ -594,11 +594,6 @@ export function PlatformsPage() {
                                   清除密钥
                                 </Button>
                               ) : null}
-                              {/* 接错的上游、试完的测试 Provider 得能真删掉，不然共享库里越积越多。
-                                  后端有引用就拒绝并说清被谁引用，这里不做二次判断，只负责问一句。 */}
-                              <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void removePlatform(p)} title="从网关配置里彻底删除这个 Provider">
-                                删除
-                              </Button>
                             </>
                           ) : (
                             <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void claimPlatform(p)}>

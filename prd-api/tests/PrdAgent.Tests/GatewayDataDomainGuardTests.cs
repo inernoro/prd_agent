@@ -3366,7 +3366,9 @@ public class GatewayDataDomainGuardTests
         var next = server.IndexOf("app.MapPost(", start, StringComparison.Ordinal);
         var body = next > 0 ? server[start..next] : server[start..];
 
-        Assert.Contains("IsSupportedModelType", body);
+        // 端点校验的是**存储层能力名**，用的是 IsSupportedCapabilityCode；
+        // 断言成 IsSupportedModelType 会无条件红——守卫必须断言实现真正用的那个判据。
+        Assert.Contains("IsSupportedCapabilityCode", body);
         Assert.Contains("IsValidPrice", body);
         Assert.Contains("MaxModelNameLength", body);
         // 池同步的触发条件不能写成「这次新建了几个」——同步失败后重试全是 Skipped，
