@@ -135,16 +135,69 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
             return;
         }
 
+        var task = await PersistAvatarObjectCleanupIntentAsync(
+            userId,
+            normalizedPreviousFileName,
+            objectKey,
+            attemptCount: 1,
+            ct);
+        await TryDeleteAvatarObjectAsync(task, ct);
+    }
+
+    /// <summary>
+    /// 在写入新的版本化头像前先持久化清理意图。如果对象写入后请求取消或
+    /// Mongo 切换失败，后台清理仍能找到这个未被用户引用的对象。
+    /// </summary>
+    public async Task TrackPendingAvatarObjectAsync(
+        string userId,
+        string avatarFileName,
+        CancellationToken ct)
+    {
+        if (!ProfileAvatarObjectCleanupPolicy.TryBuildObjectKey(
+                userId,
+                avatarFileName,
+                currentFileName: null,
+                out var normalizedFileName,
+                out var objectKey))
+        {
+            throw new InvalidOperationException("Pending avatar object must use the versioned owner key format.");
+        }
+
+        await PersistAvatarObjectCleanupIntentAsync(
+            userId,
+            normalizedFileName,
+            objectKey,
+            attemptCount: 0,
+            ct);
+    }
+
+    public Task CancelPendingAvatarObjectCleanupAsync(
+        string userId,
+        string avatarFileName,
+        CancellationToken ct)
+    {
+        var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName.Trim().ToLowerInvariant()}";
+        var taskId = ProfileAvatarObjectCleanupPolicy.BuildTaskId(userId, objectKey);
+        return _db.ProfileAvatarObjectCleanupTasks.DeleteOneAsync(x => x.Id == taskId, ct);
+    }
+
+    private async Task<ProfileAvatarObjectCleanupTask> PersistAvatarObjectCleanupIntentAsync(
+        string userId,
+        string normalizedFileName,
+        string objectKey,
+        int attemptCount,
+        CancellationToken ct)
+    {
         var now = DateTime.UtcNow;
         var task = new ProfileAvatarObjectCleanupTask
         {
             Id = ProfileAvatarObjectCleanupPolicy.BuildTaskId(userId, objectKey),
             UserId = userId.Trim(),
-            PreviousFileName = normalizedPreviousFileName,
+            PreviousFileName = normalizedFileName,
             ObjectKey = objectKey,
-            AttemptCount = 1,
-            LastAttemptAt = now,
-            NextAttemptAt = now + ObjectCleanupLease,
+            AttemptCount = attemptCount,
+            LastAttemptAt = attemptCount > 0 ? now : null,
+            NextAttemptAt = attemptCount > 0 ? now + ObjectCleanupLease : now,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -153,7 +206,7 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
             task,
             new ReplaceOptions { IsUpsert = true },
             ct);
-        await TryDeleteAvatarObjectAsync(task, ct);
+        return task;
     }
 
     internal async Task<int> CleanupPendingAvatarObjectsAsync(DateTime now, CancellationToken ct)

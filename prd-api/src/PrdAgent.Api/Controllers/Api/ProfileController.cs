@@ -419,9 +419,22 @@ public class ProfileController : ControllerBase
                          ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId),
                          ct))
         {
+            await _avatarGenerationCleanup.TrackPendingAvatarObjectAsync(
+                currentUserId,
+                avatarFileName,
+                CancellationToken.None);
             await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
             previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
+            if (previousUser != null)
+            {
+                await _avatarGenerationCleanup.CancelPendingAvatarObjectCleanupAsync(
+                    currentUserId,
+                    avatarFileName,
+                    CancellationToken.None);
+            }
         }
+        if (previousUser == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
         await DeleteSupersededAvatarAsync(currentUserId, previousUser?.AvatarFileName, avatarFileName);
 
         var now = DateTime.UtcNow;
@@ -780,6 +793,10 @@ public class ProfileController : ControllerBase
         {
             // 浏览器关闭或切换页面时正常结束流。
         }
+        catch (ObjectDisposedException)
+        {
+            // 浏览器或反向代理已释放响应流，属于正常断连。
+        }
     }
 
     /// <summary>
@@ -838,9 +855,22 @@ public class ProfileController : ControllerBase
                          ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId),
                          ct))
         {
+            await _avatarGenerationCleanup.TrackPendingAvatarObjectAsync(
+                currentUserId,
+                avatarFileName,
+                CancellationToken.None);
             await _assetStorage.UploadToKeyAsync(objectKey, found.Value.bytes, mime, ct);
             previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
+            if (previousUser != null)
+            {
+                await _avatarGenerationCleanup.CancelPendingAvatarObjectCleanupAsync(
+                    currentUserId,
+                    avatarFileName,
+                    CancellationToken.None);
+            }
         }
+        if (previousUser == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
         await DeleteSupersededAvatarAsync(currentUserId, previousUser?.AvatarFileName, avatarFileName);
 
         var sourceRunId = TryGetAvatarGenerationRunId(artifact.RequestId);

@@ -345,3 +345,4 @@
 | fix | prd-api/prd-admin | CDS 新版本接管同分支旧 revision 的头像任务，并补齐 TAPD 凭据失效恢复指引 |
 | fix | prd-api/prd-admin | 头像状态流遵循 API 基址配置，并在写入源图前持久化可恢复的清理意图 |
 | fix | prd-api | 管理员头像变更复用版本化对象清理，并将旧 owner 接管收敛为带创建截止线的一次性迁移 |
+| fix | prd-api | 回收旧版本遗留的头像生成任务，并在对象写入前持久化头像清理意图 |

@@ -123,8 +123,11 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("SSE 被代理或旧版本服务阻断时才降级轮询", frontend);
         Assert.DoesNotContain("AVATAR_GENERATION_POLL_INTERVAL_MS = 800", frontend);
         Assert.Contains("ClaimRetiredAvatarRunAsync", worker);
+        Assert.Contains("ImageGenRunStatus.Running", worker);
+        Assert.Contains("Builders<ImageGenRun>.Filter.Lte(x => x.StartedAt", worker);
         Assert.Contains("DeploymentScope.CurrentDurable", worker);
         Assert.Contains("ProfileAvatarGenerationCleanupService.AppKey", worker);
+        Assert.Contains("catch (ObjectDisposedException)", controller);
     }
 
     [Fact]
@@ -141,6 +144,8 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("FindOneAndUpdateAsync", source);
         Assert.Contains("DeleteSupersededAvatarAsync", source);
         Assert.Contains("TrackAndTryDeleteSupersededAvatarAsync", source);
+        Assert.Contains("TrackPendingAvatarObjectAsync", source);
+        Assert.Contains("CancelPendingAvatarObjectCleanupAsync", source);
         Assert.Contains("ProfileAvatarObjectCleanupTasks.ReplaceOneAsync", cleanup);
         Assert.Contains("DeleteByKeyAsync", cleanup);
         Assert.DoesNotContain("$\"{usernameLower}.{ext}\"", source);
@@ -166,6 +171,8 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("await CleanupExpiredAsync(now, stoppingToken)", cleanup);
         Assert.Contains("await CleanupPendingAvatarObjectsAsync(now, stoppingToken)", cleanup);
         Assert.Contains("ProfileAvatarObjectCleanupTasks.ReplaceOneAsync", cleanup);
+        Assert.Contains("TrackPendingAvatarObjectAsync", cleanup);
+        Assert.Contains("PersistAvatarObjectCleanupIntentAsync", cleanup);
         Assert.Contains("FindOneAndUpdateAsync", cleanup);
         Assert.Contains("NextAttemptAt", cleanup);
         Assert.Contains("await _assetStorage.DeleteByKeyAsync(task.ObjectKey, ct)", cleanup);
