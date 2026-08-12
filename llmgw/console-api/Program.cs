@@ -1108,7 +1108,14 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
         return Json(ApiEnvelope<LoginResultDto>.Fail("TENANT_ACCESS_DENIED", "无权切换到该租户"), jsonOptions, 403);
 
     await users.UpdateOneAsync(x => x.Id == user.Id, Builders<LlmGwUser>.Update.Set(x => x.DefaultTenantId, tenant.Id).Set(x => x.UpdatedAt, DateTime.UtcNow));
-    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership);
+    // 换租户是**续期**，会话血统不变：fed_session 必须原样带过去。
+    // 丢掉它的后果正好打在本次新增的功能上——一键登录进来、还没设过口令的人切一次租户，
+    // /gw/auth/account 就会改口说「要先填当前口令」，而那个口令是建号时随机生成的、
+    // 没人知道，于是「忘了口令可以靠 SSO 自救」这条路当场断掉，直到重新走一次 MAP 登录。
+    // 改密那条路（上面 Issue(..., federatedSession: fromFederatedSession)）早就是这么做的，
+    // 这里漏了同一个判断（Codex PR #1363 P2）。
+    var switchFromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
+    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership, federatedSession: switchFromFederatedSession);
     return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
     {
         Token = token,

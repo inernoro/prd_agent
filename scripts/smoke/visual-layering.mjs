@@ -954,6 +954,13 @@ async function main() {
   } catch (error) {
     await shot(page, 'failure').catch(() => {});
     console.error(`\n[中断] ${String(error).slice(0, 300)}`);
+    // 中断必须**记一条失败**，不能只打印。
+    // 否则异常发生在任何断言变红之前时 failed.length 是 0，脚本以 0 退出，
+    // 调用方把「整条链路压根没跑」读成「全过」。实测发生过：某轮登录超时，
+    // 打印了「[中断] TimeoutError」和「0/0 通过」，退出码仍是 0（Codex PR #1363 P1）。
+    // 与本 PR 里那条「满幅」窄判据、以及我把空 tsc 输出当成绿灯是同一个错误：
+    // 没有红信号不等于有绿信号。
+    check('冒烟完整跑完（没有中途中断）', false, String(error).slice(0, 200));
     await browser.close().catch(() => {});
   }
 

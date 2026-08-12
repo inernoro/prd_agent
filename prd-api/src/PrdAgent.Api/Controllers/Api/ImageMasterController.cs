@@ -1708,6 +1708,12 @@ public class ImageMasterController : ControllerBase
             }
 
             // 服务器权威性：后端自动保存 User 消息到 image_master_messages
+            // 分层除外：它的 prompt 是一句内部英文指令（Decompose this image into...），
+            // 且没有生图前缀，清洗兜底原样保留 —— 刷新工作区就会在可见对话里冒出一张
+            // 看不懂的英文卡片。Worker 侧的 SaveWorkspaceMessageAsync 早就为此对分层
+            // 直接返回 null，这条创建路径漏了同一个判断（Codex PR #1363 P2）。
+            if (!isLayering)
+            {
             try
             {
                 // 优先使用前端传入的完整用户消息（含标签/引用）。
@@ -1734,6 +1740,7 @@ public class ImageMasterController : ControllerBase
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[CreateWorkspaceImageGenRun] 保存 User 消息失败: workspace={WorkspaceId}", wid);
+            }
             }
 
             return Ok(ApiResponse<object>.Ok(new { runId = run.Id }));
