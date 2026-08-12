@@ -4168,6 +4168,25 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void AcceptedVideoJobs_ResolveTheirRetainedOfferingAfterControlPlaneDisable()
+    {
+        var resolver = ReadRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var lifecycleStart = resolver.IndexOf(
+            "public async Task<ModelResolutionResult> ResolveOfferingAsync",
+            StringComparison.Ordinal);
+        var lifecycleEnd = resolver.IndexOf(
+            "public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync",
+            lifecycleStart,
+            StringComparison.Ordinal);
+        Assert.True(lifecycleStart >= 0 && lifecycleEnd > lifecycleStart);
+        var lifecycle = resolver[lifecycleStart..lifecycleEnd];
+
+        Assert.DoesNotContain("Filter.Eq(x => x.Enabled, true)", lifecycle);
+        Assert.Contains("requireEnabled: false", lifecycle);
+    }
+
+    [Fact]
     public void GatewayCredentialRotation_RecoversAffectedOfferingHealth()
     {
         var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");

@@ -1942,7 +1942,8 @@ public class ImageGenController : ControllerBase
                 .FirstOrDefaultAsync(ct);
         }
         ImageAsset? imageAsset = null;
-        if (outputArtifact == null)
+        if (outputArtifact == null
+            || (ownedItem != null && string.IsNullOrWhiteSpace(ownedItem.DisplaySha256)))
         {
             imageAsset = await _db.ImageAssets
                 .Find(asset => asset.OwnerUserId == adminId
@@ -1956,7 +1957,11 @@ public class ImageGenController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "图片不存在或无权下载"));
         }
 
-        var sha256 = outputArtifact?.Sha256
+        // 精确下载当前展示 URL 对应的对象。水印结果不能回退到同一请求登记的原图 SHA，
+        // 否则“下载”会在不提示用户的情况下移除水印。
+        var sha256 = ownedItem?.DisplaySha256
+                     ?? (imageAsset?.Url == normalizedUrl ? imageAsset.DisplaySha256 : null)
+                     ?? outputArtifact?.Sha256
                      ?? imageAsset?.OriginalSha256
                      ?? imageAsset?.Sha256;
         if (string.IsNullOrWhiteSpace(sha256))
@@ -1966,10 +1971,20 @@ public class ImageGenController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片暂时无法下载，请稍后重试"));
         }
 
+        var originalSha256 = outputArtifact?.Sha256
+                             ?? imageAsset?.OriginalSha256
+                             ?? imageAsset?.Sha256;
+        var selectedDisplaySha256 = ownedItem?.DisplaySha256
+                                    ?? (imageAsset?.Url == normalizedUrl ? imageAsset.DisplaySha256 : null);
+        var assetDomain = !string.IsNullOrWhiteSpace(selectedDisplaySha256)
+                          && string.Equals(sha256, selectedDisplaySha256, StringComparison.OrdinalIgnoreCase)
+                          && !string.Equals(sha256, originalSha256, StringComparison.OrdinalIgnoreCase)
+            ? AppDomainPaths.DomainWatermark
+            : AppDomainPaths.DomainVisualAgent;
         var stored = await _assetStorage.TryReadByShaAsync(
             sha256,
             ct,
-            domain: AppDomainPaths.DomainVisualAgent,
+            domain: assetDomain,
             type: AppDomainPaths.TypeImg);
         if (stored == null || stored.Value.bytes.Length == 0)
         {

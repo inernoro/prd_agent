@@ -18,6 +18,7 @@ public class OpenRouterVideoClientGatewayTests
         var client = new OpenRouterVideoClient(
             gateway,
             new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            new AllowingUrlValidator(),
             NullLogger<OpenRouterVideoClient>.Instance);
 
         var submit = await client.SubmitAsync(new OpenRouterVideoSubmitRequest
@@ -118,6 +119,7 @@ public class OpenRouterVideoClientGatewayTests
         var client = new OpenRouterVideoClient(
             gateway,
             new SingleClientFactory(http),
+            new AllowingUrlValidator(),
             NullLogger<OpenRouterVideoClient>.Instance);
 
         await using var opened = await client.OpenVideoStreamForOfferingAsync(
@@ -144,6 +146,7 @@ public class OpenRouterVideoClientGatewayTests
         var client = new OpenRouterVideoClient(
             gateway,
             new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            new AllowingUrlValidator(),
             NullLogger<OpenRouterVideoClient>.Instance);
 
         var status = await client.GetStatusAsync(
@@ -184,6 +187,7 @@ public class OpenRouterVideoClientGatewayTests
         var client = new OpenRouterVideoClient(
             gateway,
             new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            new AllowingUrlValidator(),
             NullLogger<OpenRouterVideoClient>.Instance);
 
         var submit = await client.SubmitAsync(new OpenRouterVideoSubmitRequest
@@ -205,6 +209,7 @@ public class OpenRouterVideoClientGatewayTests
         var restartedClient = new OpenRouterVideoClient(
             gateway,
             new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            new AllowingUrlValidator(),
             NullLogger<OpenRouterVideoClient>.Instance);
         await restartedClient.GetStatusForOfferingAsync(
             AppCallerRegistry.VideoAgent.VideoGen.Generate,
@@ -248,6 +253,7 @@ public class OpenRouterVideoClientGatewayTests
         var client = new OpenRouterVideoClient(
             gateway,
             new SingleClientFactory(downloadHttp),
+            new AllowingUrlValidator(),
             NullLogger<OpenRouterVideoClient>.Instance);
 
         var submit = await client.SubmitAsync(new OpenRouterVideoSubmitRequest
@@ -276,6 +282,85 @@ public class OpenRouterVideoClientGatewayTests
         gateway.RawCalls[1].Request.RequestBody!["task_id"]!.GetValue<string>().ShouldBe("cgt-123");
         gateway.RawCalls[2].Request.RequestBody!["task_id"]!.GetValue<string>().ShouldBe("cgt-123");
     }
+
+    [Fact]
+    public async Task ProviderVideoRedirects_ShouldValidateEveryHopBeforeDownload()
+    {
+        var gateway = new CapturingGateway(VolcengineResolution());
+        var requestCount = 0;
+        var downloadHttp = new HttpClient(new CapturingHandler(_ =>
+        {
+            requestCount++;
+            return Task.FromResult(requestCount == 1
+                ? new HttpResponseMessage(HttpStatusCode.Redirect)
+                {
+                    Headers = { Location = new Uri("https://cdn.example.test/final.mp4") },
+                }
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([7, 6, 5]),
+                });
+        }));
+        var validator = new AllowingUrlValidator();
+        var client = new OpenRouterVideoClient(
+            gateway,
+            new SingleClientFactory(downloadHttp),
+            validator,
+            NullLogger<OpenRouterVideoClient>.Instance);
+
+        var download = await client.DownloadVideoBytesAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            "cgt-123");
+
+        download.Success.ShouldBeTrue(download.ErrorMessage);
+        requestCount.ShouldBe(2);
+        validator.ValidatedUrls.ShouldBe([
+            "https://tos.example.test/video.mp4",
+            "https://cdn.example.test/final.mp4",
+        ]);
+    }
+
+    [Fact]
+    public async Task ProviderVideoUrlRejectedBySafetyPolicy_ShouldNotReachHttpClient()
+    {
+        var gateway = new CapturingGateway(VolcengineResolution());
+        var requestCount = 0;
+        var client = new OpenRouterVideoClient(
+            gateway,
+            new SingleClientFactory(new HttpClient(new CapturingHandler(_ =>
+            {
+                requestCount++;
+                throw new InvalidOperationException("不应发送请求");
+            }))),
+            new RejectingUrlValidator(),
+            NullLogger<OpenRouterVideoClient>.Instance);
+
+        var download = await client.DownloadVideoBytesAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            "cgt-123");
+
+        download.Success.ShouldBeFalse();
+        download.ErrorMessage.ShouldBe("视频下载地址不可用，请稍后重试或重新生成");
+        requestCount.ShouldBe(0);
+    }
+
+    private static GatewayModelResolution VolcengineResolution() => new()
+    {
+        Success = true,
+        ResolutionType = "DedicatedPool",
+        ActualModel = "doubao-seedance-2-0-fast-260128",
+        ActualPlatformId = "exchange-volc-video",
+        ActualPlatformName = "Exchange:火山方舟 Seedance 视频生成",
+        PlatformType = "exchange",
+        Protocol = "exchange",
+        ApiUrl = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
+        ApiKey = "ark-test",
+        IsExchange = true,
+        ExchangeId = "exchange-volc-video",
+        ExchangeName = "火山方舟 Seedance 视频生成",
+        ExchangeTransformerType = "volcengine-video",
+        ExchangeAuthScheme = "Bearer",
+    };
 
     private sealed class CapturingGateway : ILlmGateway
     {
@@ -434,6 +519,28 @@ public class OpenRouterVideoClientGatewayTests
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => _handler(request);
+    }
+
+    private sealed class AllowingUrlValidator : ISafeOutboundUrlValidator
+    {
+        public List<string> ValidatedUrls { get; } = [];
+
+        public Task<Uri> EnsureSafeHttpUrlAsync(string? url, string purpose, CancellationToken ct = default)
+        {
+            var value = url ?? throw new InvalidOperationException(purpose);
+            ValidatedUrls.Add(value);
+            return Task.FromResult(new Uri(value, UriKind.Absolute));
+        }
+
+        public bool IsSafeAddress(IPAddress address) => true;
+    }
+
+    private sealed class RejectingUrlValidator : ISafeOutboundUrlValidator
+    {
+        public Task<Uri> EnsureSafeHttpUrlAsync(string? url, string purpose, CancellationToken ct = default)
+            => throw new InvalidOperationException("blocked");
+
+        public bool IsSafeAddress(IPAddress address) => false;
     }
 
     private sealed class SingleClientFactory : IHttpClientFactory

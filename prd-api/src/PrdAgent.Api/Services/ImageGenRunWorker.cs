@@ -805,22 +805,30 @@ public class ImageGenRunWorker : BackgroundService
                         // 从生成结果中提取原图信息（无水印版）
                         var originalUrl = first?.OriginalUrl;
                         var originalSha256 = first?.OriginalSha256;
+                        var displaySha256 = first?.DisplaySha256;
 
                         // ImageMaster：若绑定 workspace，则把结果落到资产（COS）并回填画布元素（避免断线/关闭导致丢失）
                         ImageAsset? persisted = null;
                         if (!string.IsNullOrWhiteSpace(run.WorkspaceId))
                         {
-                            persisted = await TryPersistToImageMasterAsync(run, curPrompt, reqSize, effSize, base64, url, originalUrl, originalSha256, assetStorage, ct);
+                            persisted = await TryPersistToImageMasterAsync(
+                                run, curPrompt, reqSize, effSize, base64, url,
+                                originalUrl, originalSha256, displaySha256, assetStorage, ct);
                             if (persisted != null)
                             {
                                 url = persisted.Url;
                                 originalUrl = persisted.OriginalUrl;
                                 originalSha256 = persisted.OriginalSha256;
+                                displaySha256 = persisted.DisplaySha256;
                                 base64 = null;
                             }
                         }
 
-                        await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Done, base64, url, revisedPrompt, null, null, ct, effSize, sizeAdjusted, ratioAdjusted);
+                        await UpsertRunItemAsync(
+                            run, curItemIndex, imageIndex, curPrompt, reqSize,
+                            ImageGenRunItemStatus.Done, base64, url, revisedPrompt,
+                            null, null, ct, effSize, sizeAdjusted, ratioAdjusted,
+                            displaySha256);
                         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Done, 1), cancellationToken: ct);
                         // 服务器权威性：后端自动保存 Assistant 消息到 image_master_messages
                         var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
@@ -857,12 +865,14 @@ public class ImageGenRunWorker : BackgroundService
                             url,
                             originalUrl,
                             originalSha256,
+                            displaySha256,
                             revisedPrompt,
                             asset = persisted == null ? null : new
                             {
                                 id = persisted.Id,
                                 sha256 = persisted.Sha256,
                                 url = persisted.Url,
+                                displaySha256 = persisted.DisplaySha256,
                                 originalUrl = persisted.OriginalUrl,
                                 originalSha256 = persisted.OriginalSha256
                             },
@@ -1083,7 +1093,8 @@ public class ImageGenRunWorker : BackgroundService
         CancellationToken ct,
         string? effectiveSize = null,
         bool? sizeAdjusted = null,
-        bool? ratioAdjusted = null)
+        bool? ratioAdjusted = null,
+        string? displaySha256 = null)
     {
         var now = DateTime.UtcNow;
         // 不依赖 unique 索引：以确定性 Id 防并发重复插入（仅依赖 _id 唯一）
@@ -1116,6 +1127,7 @@ public class ImageGenRunWorker : BackgroundService
 
         if (base64 != null) update = update.Set(x => x.Base64, base64);
         if (url != null) update = update.Set(x => x.Url, url);
+        if (displaySha256 != null) update = update.Set(x => x.DisplaySha256, displaySha256);
         if (revisedPrompt != null) update = update.Set(x => x.RevisedPrompt, revisedPrompt);
 
         if (errorCode != null) update = update.Set(x => x.ErrorCode, errorCode);
@@ -1185,6 +1197,7 @@ public class ImageGenRunWorker : BackgroundService
         string? url,
         string? originalUrl,
         string? originalSha256,
+        string? displaySha256,
         IAssetStorage assetStorage,
         CancellationToken ct)
     {
@@ -1214,6 +1227,7 @@ public class ImageGenRunWorker : BackgroundService
                 url,
                 assetUrl,
                 assetSha256,
+                displaySha256,
                 assetMime,
                 assetSizeBytes,
                 ct);
@@ -1247,6 +1261,7 @@ public class ImageGenRunWorker : BackgroundService
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
         assetUrl = stored.Url;
+        displaySha256 = stored.Sha256;
         assetSizeBytes = stored.SizeBytes;
         if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("生成图片存储摘要校验失败");
@@ -1259,6 +1274,7 @@ public class ImageGenRunWorker : BackgroundService
             url,
             assetUrl,
             assetSha256,
+            displaySha256,
             assetMime,
             assetSizeBytes,
             ct);
@@ -1272,6 +1288,7 @@ public class ImageGenRunWorker : BackgroundService
         string? url,
         string assetUrl,
         string assetSha256,
+        string? displaySha256,
         string assetMime,
         long assetSizeBytes,
         CancellationToken ct)
@@ -1288,6 +1305,7 @@ public class ImageGenRunWorker : BackgroundService
             OwnerUserId = adminId,
             WorkspaceId = wid,
             Sha256 = assetSha256,
+            DisplaySha256 = string.IsNullOrWhiteSpace(displaySha256) ? assetSha256 : displaySha256,
             Mime = assetMime,
             SizeBytes = assetSizeBytes,
             Url = url ?? assetUrl,  // 展示用（有水印时是 watermark URL，无水印时是 imagemaster URL）

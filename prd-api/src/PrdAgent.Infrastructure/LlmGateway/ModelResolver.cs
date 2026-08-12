@@ -577,10 +577,9 @@ public class ModelResolver : IModelResolver
             .GetCollection<GatewayModelOffering>("llmgw_model_offerings");
         var offering = await offerings.Find(Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, requiredOfferingId),
-                // 健康状态只控制新任务调度。已经被上游受理的任务仍必须回到原 Offering
-                // 查询状态和下载结果，否则一次健康降级就会让已付费任务永久失联。
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true)))
+                // Enabled 和健康状态只控制新任务调度。已经被上游受理的任务仍必须
+                // 回到持久化的原 Offering 查询状态和下载结果。
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, requiredOfferingId)))
             .FirstOrDefaultAsync(ct);
         if (offering is null)
         {
@@ -594,7 +593,6 @@ public class ModelResolver : IModelResolver
         var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.Id, offering.LogicalModelId),
-                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true),
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType)))
             .FirstOrDefaultAsync(ct);
         if (logical is null || !SupportsAppCallerScenario(logical, appCallerCode))
@@ -608,7 +606,8 @@ public class ModelResolver : IModelResolver
             logical,
             offering,
             logical.PublicId,
-            ct);
+            ct,
+            requireEnabled: false);
         return resolved ?? ModelResolutionResult.NotFound(
             requiredOfferingId,
             "视频任务原上游配置已失效，请重新生成");
@@ -1046,7 +1045,8 @@ public class ModelResolver : IModelResolver
         GatewayLogicalModel logical,
         GatewayModelOffering offering,
         string expectedModel,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool requireEnabled = true)
     {
         var capabilities = logical.Capabilities.Select(type => new LLMModelCapability
         {
@@ -1076,10 +1076,12 @@ public class ModelResolver : IModelResolver
 
         if (string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
         {
+            var exchangeFilter = Builders<ModelExchange>.Filter.Eq(x => x.Id, offering.TargetId);
+            if (requireEnabled)
+                exchangeFilter &= Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true);
             var exchange = await FindGatewayOwnedExchangeAsync(
-                Builders<ModelExchange>.Filter.And(
-                    Builders<ModelExchange>.Filter.Eq(x => x.Id, offering.TargetId),
-                    Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true)), ct);
+                exchangeFilter,
+                ct);
             if (exchange is null) return null;
             item.PlatformId = exchange.Id;
             if (string.IsNullOrWhiteSpace(item.ModelId))
@@ -1092,13 +1094,19 @@ public class ModelResolver : IModelResolver
         }
 
         var modelCollection = _gatewayDb!.Context.Database.GetCollection<LLMModel>("llmgw_models");
-        var model = await modelCollection.Find(Builders<LLMModel>.Filter.And(
-                Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
-                Builders<LLMModel>.Filter.Eq(x => x.Id, offering.TargetId),
-                Builders<LLMModel>.Filter.Eq(x => x.Enabled, true)))
+        var modelFilter = Builders<LLMModel>.Filter.And(
+            Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
+            Builders<LLMModel>.Filter.Eq(x => x.Id, offering.TargetId));
+        if (requireEnabled)
+            modelFilter &= Builders<LLMModel>.Filter.Eq(x => x.Enabled, true);
+        var model = await modelCollection.Find(modelFilter)
             .FirstOrDefaultAsync(ct);
         if (model is null || string.IsNullOrWhiteSpace(model.PlatformId)) return null;
-        var platform = await FindGatewayOwnedOrMapPlatformAsync(model.PlatformId, true, ct, allowMapFallback: false);
+        var platform = await FindGatewayOwnedOrMapPlatformAsync(
+            model.PlatformId,
+            requireEnabled,
+            ct,
+            allowMapFallback: false);
         if (platform is null) return null;
 
         item.PlatformId = platform.Id;

@@ -25,8 +25,19 @@ public class GeneratedImageDownloadAuthorizationContractTests
         Assert.Contains("var ownedRequestId = $\"{ownedItem.RunId}-{ownedItem.ItemIndex}-{ownedItem.ImageIndex}\"", action);
         Assert.Contains("artifact.RequestId == ownedRequestId", action);
         Assert.Contains("asset.OwnerUserId == adminId", action);
+        Assert.Contains("var sha256 = ownedItem?.DisplaySha256", action);
+        Assert.Contains("imageAsset?.Url == normalizedUrl ? imageAsset.DisplaySha256", action);
+        Assert.Contains("? AppDomainPaths.DomainWatermark", action);
+        Assert.Contains("domain: assetDomain", action);
         Assert.Contains("ownedItem == null && outputArtifact == null && imageAsset == null", action);
         Assert.DoesNotContain("if (ownedItem == null)\n        {\n            return NotFound", action);
+
+        var imageClient = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs"));
+        var worker = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs"));
+        Assert.Contains("displaySha256 = watermarkedStored.Sha256", imageClient);
+        Assert.Contains("DisplaySha256 = string.IsNullOrWhiteSpace(displaySha256)", worker);
     }
 
     private static string LocateRepoFile(string relativePath)

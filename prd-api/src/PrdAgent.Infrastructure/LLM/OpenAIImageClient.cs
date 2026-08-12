@@ -953,6 +953,7 @@ public class OpenAIImageClient : IImageGenerationClient
                             googleHasDimensions ? googleHeight : 0,
                             ct);
                         var displayUrl = storedGoogle.Url;
+                        var displaySha256 = storedGoogle.Sha256;
 
                         if (wmConfigGoogle != null)
                         {
@@ -962,6 +963,7 @@ public class OpenAIImageClient : IImageGenerationClient
                                 var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
                                     domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                                 displayUrl = wmStored.Url;
+                                displaySha256 = wmStored.Sha256;
                             }
                             catch (Exception ex)
                             {
@@ -970,6 +972,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         }
 
                         googleGenImages[i].Url = displayUrl;
+                        googleGenImages[i].DisplaySha256 = displaySha256;
                         googleGenImages[i].Base64 = null;
                         googleGenImages[i].OriginalUrl = storedGoogle.Url;
                         googleGenImages[i].OriginalSha256 = storedGoogle.Sha256;
@@ -1184,6 +1187,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 // 2. 默认展示原图 URL
                 var displayUrl = stored.Url;
+                var displaySha256 = stored.Sha256;
 
                 // 3. 如果有水印配置，生成水印图保存到 watermark 目录（仅用于展示）
                 if (watermarkConfig != null)
@@ -1194,6 +1198,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
                         var watermarkedStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                         displayUrl = watermarkedStored.Url;
+                        displaySha256 = watermarkedStored.Sha256;
                     }
                     catch (Exception ex)
                     {
@@ -1204,6 +1209,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 // 4. Url = 展示用（有水印时是 watermark 目录，无水印时是 imagemaster 目录）
                 //    OriginalUrl/OriginalSha256 = 原图（imagemaster 目录），用于参考图查找
                 images[i].Url = displayUrl;
+                images[i].DisplaySha256 = displaySha256;
                 images[i].Base64 = null;
                 images[i].OriginalUrl = stored.Url;
                 images[i].OriginalSha256 = stored.Sha256;
@@ -1470,6 +1476,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         outputHasDimensions ? outputHeight : 0,
                         ct);
                     var displayUrl = stored.Url;
+                    var displaySha256 = stored.Sha256;
 
                     if (wmConfig != null)
                     {
@@ -1479,6 +1486,7 @@ public class OpenAIImageClient : IImageGenerationClient
                             var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
                                 domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                             displayUrl = wmStored.Url;
+                            displaySha256 = wmStored.Sha256;
                         }
                         catch (Exception ex)
                         {
@@ -1487,6 +1495,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     }
 
                     images[i].Url = displayUrl;
+                    images[i].DisplaySha256 = displaySha256;
                     images[i].Base64 = null;
                     images[i].OriginalUrl = stored.Url;
                     images[i].OriginalSha256 = stored.Sha256;
@@ -1615,6 +1624,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         outputHasDimensions ? outputHeight : 0,
                         ct);
                     var displayUrl = stored.Url;
+                    var displaySha256 = stored.Sha256;
 
                     if (wmConfig != null)
                     {
@@ -1624,6 +1634,7 @@ public class OpenAIImageClient : IImageGenerationClient
                             var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
                                 domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                             displayUrl = wmStored.Url;
+                            displaySha256 = wmStored.Sha256;
                         }
                         catch (Exception ex)
                         {
@@ -1632,6 +1643,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     }
 
                     images[i].Url = displayUrl;
+                    images[i].DisplaySha256 = displaySha256;
                     images[i].Base64 = null;
                     images[i].OriginalUrl = stored.Url;
                     images[i].OriginalSha256 = stored.Sha256;
@@ -1892,6 +1904,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 // 2. 默认展示原图 URL
                 var displayUrl = stored.Url;
+                var displaySha256 = stored.Sha256;
 
                 // 3. 如果有水印配置，生成水印图
                 if (watermarkConfig != null)
@@ -1901,6 +1914,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
                         var watermarkedStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                         displayUrl = watermarkedStored.Url;
+                        displaySha256 = watermarkedStored.Sha256;
                     }
                     catch (Exception ex)
                     {
@@ -1910,6 +1924,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 // 更新图片对象
                 images[i].Url = displayUrl;
+                images[i].DisplaySha256 = displaySha256;
                 images[i].Base64 = null;
                 images[i].OriginalUrl = stored.Url;
                 images[i].OriginalSha256 = stored.Sha256;
@@ -2898,6 +2913,8 @@ public class ImageGenImage
     public int Index { get; set; }
     public string? Base64 { get; set; }
     public string? Url { get; set; }
+    /// <summary>展示图 SHA256；启用水印时指向水印对象，否则与 OriginalSha256 相同。</summary>
+    public string? DisplaySha256 { get; set; }
     /// <summary>base64 图片的 MIME（如 image/jpeg / image/webp）。来源于 data URL 头，落库时据此设 outMime，避免 JPEG/WebP 被当 png 存（Bugbot review）。</summary>
     public string? Mime { get; set; }
     public string? RevisedPrompt { get; set; }

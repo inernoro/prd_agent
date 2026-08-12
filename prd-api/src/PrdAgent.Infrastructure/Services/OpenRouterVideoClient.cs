@@ -16,6 +16,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 {
     private readonly ILlmGateway _gateway;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly ILogger<OpenRouterVideoClient> _logger;
     // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
     private GatewayModelResolution? _submitResolution;
@@ -24,10 +25,12 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
     public OpenRouterVideoClient(
         ILlmGateway gateway,
         IHttpClientFactory httpClientFactory,
+        ISafeOutboundUrlValidator urlValidator,
         ILogger<OpenRouterVideoClient> logger)
     {
         _gateway = gateway;
         _httpClientFactory = httpClientFactory;
+        _urlValidator = urlValidator;
         _logger = logger;
     }
 
@@ -371,54 +374,32 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         string appCallerCode,
         CancellationToken ct)
     {
-        if (!Uri.TryCreate(videoUrl, UriKind.Absolute, out var uri)
-            || uri.Scheme is not ("http" or "https"))
-            return OpenRouterVideoStream.Fail("视频下载地址无效，请返回视频页面重新生成");
-
-        var http = _httpClientFactory.CreateClient();
-        http.Timeout = TimeSpan.FromSeconds(120);
-        var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        HttpResponseMessage? response = null;
-        if (!string.IsNullOrWhiteSpace(apiKey))
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        if (uri.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase))
-        {
-            request.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
-            request.Headers.TryAddWithoutValidation("X-OpenRouter-Title", $"G-{appCallerCode}");
-        }
-
         try
         {
-            response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (!response.IsSuccessStatusCode)
+            var opened = await SendSafeVideoGetAsync(videoUrl, apiKey, appCallerCode, ct);
+            if (!opened.Response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
                     "视频流打开失败 status={StatusCode} host={Host}",
-                    (int)response.StatusCode,
-                    uri.Host);
-                response.Dispose();
-                request.Dispose();
-                http.Dispose();
+                    (int)opened.Response.StatusCode,
+                    opened.Uri.Host);
+                opened.Dispose();
                 return OpenRouterVideoStream.Fail("视频已经生成，但下载服务暂时不可用，请稍后重试");
             }
 
-            var stream = await response.Content.ReadAsStreamAsync(ct);
-            var owner = new VideoStreamRequestOwner(http, request, response);
-            var upstreamContentType = response.Content.Headers.ContentType?.MediaType;
+            var stream = await opened.Response.Content.ReadAsStreamAsync(ct);
+            var upstreamContentType = opened.Response.Content.Headers.ContentType?.MediaType;
             return OpenRouterVideoStream.Ok(
                 stream,
                 upstreamContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true
                     ? upstreamContentType
                     : "video/mp4",
-                response.Content.Headers.ContentLength,
-                owner);
+                opened.Response.Content.Headers.ContentLength,
+                opened);
         }
         catch (Exception ex)
         {
-            response?.Dispose();
-            request.Dispose();
-            http.Dispose();
-            _logger.LogWarning(ex, "视频流连接异常 host={Host}", uri.Host);
+            _logger.LogWarning(ex, "视频流连接或地址校验异常");
             return OpenRouterVideoStream.Fail("视频下载连接中断，请稍后重试");
         }
     }
@@ -439,43 +420,46 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         return $"{baseUrl}/v1{(endpointPath.StartsWith('/') ? "" : "/")}{endpointPath}";
     }
 
-    private sealed class VideoStreamRequestOwner(
-        HttpClient http,
-        HttpRequestMessage request,
-        HttpResponseMessage response) : IDisposable
+    private sealed class SafeVideoResponse : IDisposable
     {
+        private readonly HttpClient _http;
+        private readonly HttpRequestMessage _request;
+
+        public SafeVideoResponse(
+            HttpClient http,
+            HttpRequestMessage request,
+            HttpResponseMessage response,
+            Uri uri)
+        {
+            _http = http;
+            _request = request;
+            Response = response;
+            Uri = uri;
+        }
+
+        public HttpResponseMessage Response { get; }
+        public Uri Uri { get; }
+
         public void Dispose()
         {
-            response.Dispose();
-            request.Dispose();
-            http.Dispose();
+            Response.Dispose();
+            _request.Dispose();
+            _http.Dispose();
         }
     }
 
     private async Task<OpenRouterVideoDownload> DownloadSignedVideoUrlAsync(string videoUrl, CancellationToken ct)
     {
-        if (!Uri.TryCreate(videoUrl, UriKind.Absolute, out var uri)
-            || uri.Scheme is not ("http" or "https"))
-        {
-            return new OpenRouterVideoDownload
-            {
-                Success = false,
-                ErrorMessage = "视频结果 URL 非法，无法下载。"
-            };
-        }
-
         try
         {
-            using var http = _httpClientFactory.CreateClient();
-            http.Timeout = TimeSpan.FromSeconds(120);
-            using var resp = await http.GetAsync(uri, ct);
-            var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
-            if (!resp.IsSuccessStatusCode || bytes.Length == 0)
+            using var opened = await SendSafeVideoGetAsync(videoUrl, null, string.Empty, ct);
+            var bytes = await opened.Response.Content.ReadAsByteArrayAsync(ct);
+            if (!opened.Response.IsSuccessStatusCode || bytes.Length == 0)
             {
                 return new OpenRouterVideoDownload
                 {
                     Success = false,
-                    ErrorMessage = $"视频签名 URL 下载失败: HTTP {(int)resp.StatusCode}"
+                    ErrorMessage = "视频已经生成，但下载服务暂时不可用，请稍后重试"
                 };
             }
 
@@ -483,18 +467,90 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             {
                 Success = true,
                 Bytes = bytes,
-                ContentType = resp.Content.Headers.ContentType?.MediaType ?? "video/mp4",
+                ContentType = opened.Response.Content.Headers.ContentType?.MediaType ?? "video/mp4",
             };
         }
         catch (Exception ex)
         {
+            _logger.LogWarning(ex, "视频签名地址下载或安全校验失败");
             return new OpenRouterVideoDownload
             {
                 Success = false,
-                ErrorMessage = $"视频签名 URL 下载异常: {ex.Message}"
+                ErrorMessage = "视频下载地址不可用，请稍后重试或重新生成"
             };
         }
     }
+
+    private async Task<SafeVideoResponse> SendSafeVideoGetAsync(
+        string videoUrl,
+        string? apiKey,
+        string appCallerCode,
+        CancellationToken ct)
+    {
+        var isProviderReturnedUrl = string.IsNullOrWhiteSpace(apiKey);
+        var current = isProviderReturnedUrl
+            ? await _urlValidator.EnsureSafeHttpUrlAsync(videoUrl, "视频下载地址", ct)
+            : Uri.TryCreate(videoUrl, UriKind.Absolute, out var configuredEndpoint)
+              && configuredEndpoint.Scheme is "http" or "https"
+                ? configuredEndpoint
+                : throw new InvalidOperationException("视频下载地址格式无效");
+        // 供应商返回的 URL 使用禁止自动重定向且带 DNS 绑定校验的专用客户端。
+        // 管理员配置的 Gateway 端点保持既有客户端，以兼容受控内网部署。
+        var http = _httpClientFactory.CreateClient(isProviderReturnedUrl ? "SafeOutbound" : string.Empty);
+        http.Timeout = TimeSpan.FromSeconds(120);
+
+        try
+        {
+            for (var redirectCount = 0; redirectCount <= 5; redirectCount++)
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, current);
+                if (!string.IsNullOrWhiteSpace(apiKey))
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                if (current.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase))
+                {
+                    request.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
+                    request.Headers.TryAddWithoutValidation("X-OpenRouter-Title", $"G-{appCallerCode}");
+                }
+
+                var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                if (!IsRedirect(response.StatusCode) || response.Headers.Location is null)
+                    return new SafeVideoResponse(http, request, response, current);
+
+                // 认证下载端点不跨地址转发凭据；供应商签名 URL 的每一跳都重新做 DNS/IP 校验。
+                if (!string.IsNullOrWhiteSpace(apiKey) || redirectCount == 5)
+                {
+                    response.Dispose();
+                    request.Dispose();
+                    throw new InvalidOperationException("视频下载地址重定向不可用");
+                }
+
+                var redirected = response.Headers.Location.IsAbsoluteUri
+                    ? response.Headers.Location
+                    : new Uri(current, response.Headers.Location);
+                response.Dispose();
+                request.Dispose();
+                current = await _urlValidator.EnsureSafeHttpUrlAsync(
+                    redirected.ToString(),
+                    "视频下载重定向地址",
+                    ct);
+            }
+        }
+        catch
+        {
+            http.Dispose();
+            throw;
+        }
+
+        http.Dispose();
+        throw new InvalidOperationException("视频下载地址重定向次数过多");
+    }
+
+    private static bool IsRedirect(System.Net.HttpStatusCode statusCode)
+        => statusCode is System.Net.HttpStatusCode.MovedPermanently
+            or System.Net.HttpStatusCode.Redirect
+            or System.Net.HttpStatusCode.RedirectMethod
+            or System.Net.HttpStatusCode.TemporaryRedirect
+            or System.Net.HttpStatusCode.PermanentRedirect;
 
     private static bool IsVolcengineVideoResolution(GatewayModelResolution resolution)
         => resolution.IsExchange
