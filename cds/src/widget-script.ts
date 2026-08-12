@@ -499,6 +499,17 @@ export function buildWidgetScript(
   var dragState=null;
   var widgetWasDragged=false;
 
+  function setWidgetPosition(x,y){
+    var widgetWidth=Math.max(180,root.offsetWidth||0);
+    var widgetHeight=Math.max(50,root.offsetHeight||0);
+    var maxX=Math.max(0,window.innerWidth-widgetWidth);
+    var maxY=Math.max(0,window.innerHeight-widgetHeight);
+    pos.x=Math.max(0,Math.min(maxX,x));
+    pos.y=Math.max(0,Math.min(maxY,y));
+    root.style.left=pos.x+'px';
+    root.style.bottom=pos.y+'px';
+  }
+
   function onMouseDown(e){
     if(e.target.closest('button'))return;
     widgetWasDragged=true;
@@ -507,18 +518,17 @@ export function buildWidgetScript(
   }
   document.addEventListener('mousemove',function(e){
     if(!dragState)return;
-    pos.x=Math.max(0,Math.min(window.innerWidth-180,dragState.px+(e.clientX-dragState.mx)));
-    pos.y=Math.max(0,Math.min(window.innerHeight-50,dragState.py-(e.clientY-dragState.my)));
-    root.style.left=pos.x+'px';
-    root.style.bottom=pos.y+'px';
+    setWidgetPosition(
+      dragState.px+(e.clientX-dragState.mx),
+      dragState.py-(e.clientY-dragState.my));
   });
   document.addEventListener('mouseup',function(){dragState=null;});
   window.addEventListener('resize',function(){
-    if(widgetWasDragged)return;
-    pos.x=defaultWidgetLeft();
-    pos.y=defaultWidgetBottom();
-    root.style.left=pos.x+'px';
-    root.style.bottom=pos.y+'px';
+    if(widgetWasDragged){
+      setWidgetPosition(pos.x,pos.y);
+      return;
+    }
+    setWidgetPosition(defaultWidgetLeft(),defaultWidgetBottom());
   });
 
   // ── Render ──

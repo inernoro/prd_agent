@@ -36,6 +36,10 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('return window.innerWidth<=640?12:Math.max(12,window.innerWidth-492);');
     expect(script).toContain('var widgetWasDragged=false;');
     expect(script).toContain("window.addEventListener('resize'");
-    expect(script).toContain('if(widgetWasDragged)return;');
+    expect(script).toContain('function setWidgetPosition(x,y){');
+    expect(script).toContain('var widgetWidth=Math.max(180,root.offsetWidth||0);');
+    expect(script).toContain('var widgetHeight=Math.max(50,root.offsetHeight||0);');
+    expect(script).toContain('setWidgetPosition(pos.x,pos.y);');
+    expect(script).not.toContain('if(widgetWasDragged)return;');
   });
 });
