@@ -114,16 +114,20 @@ var mapSsoLifetime = mapSsoLifetimeMinutes > 0
 var mapSsoLifetimeIsHardDeadline = mapSsoLifetimeMinutes > 0;
 builder.Services.AddSingleton(gwJwt);
 
-// 联邦会话续签该用多长时效：受硬截止约束时取当前 token 的剩余时间，否则不限制。
-// 取不到 exp 就回落成配置值本身——绝不静默给满。
-static TimeSpan? FederatedReissueLifetime(HttpContext http, bool hardDeadline, TimeSpan configured)
+// 联邦会话续签的**绝对**到期时刻：原样沿用当前 token 的 exp，一秒都不往后挪。
+//
+// 上一版返回的是「剩余时长」，栽在 Issue 的 5 分钟下限上：只剩 2 分钟会被抬成 5 分钟，
+// 每 2 分钟续一次就能无限续命。所以这里必须给绝对时刻，由 Issue 走 absoluteExpiresAt
+// 分支绕开那个下限（Codex PR #1364 P1 第二轮）。
+//
+// 取不到 exp 返回 null，调用方据此**拒绝续签**而不是给满——读不出截止时刻时，
+// 唯一安全的动作是不发新 token。
+static DateTime? FederatedHardDeadline(HttpContext http, bool hardDeadline)
 {
     if (!hardDeadline) return null;
     var raw = http.User.FindFirst("exp")?.Value;
-    if (!long.TryParse(raw, out var unix)) return configured;
-    var remaining = DateTimeOffset.FromUnixTimeSeconds(unix) - DateTimeOffset.UtcNow;
-    // Issue 内部有 5 分钟下限兜底，这里只保证不把到期时间往后推。
-    return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMinutes(1);
+    if (!long.TryParse(raw, out var unix)) return null;
+    return DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime;
 }
 
 // ── 鉴权 ──
@@ -1003,11 +1007,12 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     var tenant = membership is null ? null : await tenants.Find(x => x.Id == tenantAccess.TenantId && x.Status == "active").FirstOrDefaultAsync();
     if (tenant is null || membership is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("TENANT_ACCESS_DENIED", "租户成员关系已失效"), jsonOptions, 403);
-    // 联邦会话续签不得把到期时间往后推，理由见 FederatedReissueLifetime。
-    var reissueLifetime = fromFederatedSession
-        ? FederatedReissueLifetime(http, mapSsoLifetimeIsHardDeadline, mapSsoLifetime)
-        : null;
-    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership, reissueLifetime, federatedSession: fromFederatedSession);
+    // 联邦会话续签不得把到期时间往后推，理由见 FederatedHardDeadline。
+    var reissueDeadline = FederatedHardDeadline(http, fromFederatedSession && mapSsoLifetimeIsHardDeadline);
+    if (fromFederatedSession && mapSsoLifetimeIsHardDeadline && reissueDeadline is null)
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("SESSION_DEADLINE_UNKNOWN", "会话到期时间不可读，请重新登录后再试"), jsonOptions, 401);
+    var (token, expiresAt) = gwJwt.Issue(
+        changedUser, tenant, membership, federatedSession: fromFederatedSession, absoluteExpiresAt: reissueDeadline);
     var data = new ChangePasswordResultDto
     {
         Token = token,
@@ -1138,10 +1143,11 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
     // 改密那条路（上面 Issue(..., federatedSession: fromFederatedSession)）早就是这么做的，
     // 这里漏了同一个判断（Codex PR #1363 P2）。
     var switchFromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
-    var switchReissueLifetime = switchFromFederatedSession
-        ? FederatedReissueLifetime(http, mapSsoLifetimeIsHardDeadline, mapSsoLifetime)
-        : null;
-    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership, switchReissueLifetime, federatedSession: switchFromFederatedSession);
+    var switchDeadline = FederatedHardDeadline(http, switchFromFederatedSession && mapSsoLifetimeIsHardDeadline);
+    if (switchFromFederatedSession && mapSsoLifetimeIsHardDeadline && switchDeadline is null)
+        return Json(ApiEnvelope<LoginResultDto>.Fail("SESSION_DEADLINE_UNKNOWN", "会话到期时间不可读，请重新登录后再试"), jsonOptions, 401);
+    var (token, expiresAt) = gwJwt.Issue(
+        user, tenant, membership, federatedSession: switchFromFederatedSession, absoluteExpiresAt: switchDeadline);
     return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
     {
         Token = token,

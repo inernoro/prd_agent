@@ -56,13 +56,29 @@ public sealed class GwJwt
         LlmGwTenant? tenant = null,
         LlmGwMembership? membership = null,
         TimeSpan? lifetime = null,
-        bool federatedSession = false)
+        bool federatedSession = false,
+        DateTime? absoluteExpiresAt = null)
     {
         var now = DateTime.UtcNow;
-        var requestedLifetime = lifetime ?? _lifetime;
-        var effectiveLifetime = requestedLifetime > _lifetime ? _lifetime : requestedLifetime;
-        if (effectiveLifetime < TimeSpan.FromMinutes(5)) effectiveLifetime = TimeSpan.FromMinutes(5);
-        var expires = now.Add(effectiveLifetime);
+        DateTime expires;
+        if (absoluteExpiresAt is { } hardDeadline)
+        {
+            // 硬截止：到期时刻是**给定的那个绝对时刻**，一秒都不许往后挪。
+            // 不能走下面那条 lifetime 路——那里有 5 分钟下限兜底，会把「只剩 2 分钟」
+            // 抬成 5 分钟；每 2 分钟续一次就能让联邦会话连同它带的免旧口令特权
+            // 无限续命（Codex PR #1364 P1 第二轮：我上一版以为这个下限无害，
+            // 在注释里写了「只保证不往后推」却没验，正是它把洞留下了）。
+            // 仍然不许超过常规上限（防止传进来一个离谱的远期时刻）。
+            var ceiling = now.Add(_lifetime);
+            expires = hardDeadline > ceiling ? ceiling : hardDeadline;
+        }
+        else
+        {
+            var requestedLifetime = lifetime ?? _lifetime;
+            var effectiveLifetime = requestedLifetime > _lifetime ? _lifetime : requestedLifetime;
+            if (effectiveLifetime < TimeSpan.FromMinutes(5)) effectiveLifetime = TimeSpan.FromMinutes(5);
+            expires = now.Add(effectiveLifetime);
+        }
 
         var claims = new List<Claim>
         {

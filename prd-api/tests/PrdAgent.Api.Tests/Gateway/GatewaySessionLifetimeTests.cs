@@ -132,4 +132,39 @@ public sealed class GatewaySessionLifetimeTests
 
         jwt.TryRenew(ReadPrincipal(jwt, token), DateTime.UtcNow.AddHours(13)).ShouldNotBeNull();
     }
+
+    [Fact]
+    public void Issue_WithAbsoluteDeadline_IsNotLiftedByTheFiveMinuteFloor()
+    {
+        // 这条钉的是那个 5 分钟下限**不许**作用在硬截止上。
+        //
+        // 联邦会话（fed_session）带着「免旧口令改密」的特权，它的边界就是到期时刻。
+        // 续签走 lifetime 时，下限会把「只剩 2 分钟」抬成 5 分钟——每 2 分钟续一次
+        // 就能把特权无限续下去。所以硬截止必须原样落在 exp 上，一秒都不许往后挪
+        // （Codex PR #1364 P1 第二轮；我上一版误以为这个下限无害，正是它把洞留下的）。
+        var jwt = new GwJwt(Secret, Issuer, lifetimeDays: 7, renewAfterHours: 24);
+        var deadline = DateTime.UtcNow.AddMinutes(2);
+
+        var (token, expiresAt) = jwt.Issue(
+            BuildUser(), BuildTenant(), BuildMembership(), federatedSession: true, absoluteExpiresAt: deadline);
+
+        // 允许一秒级误差（JWT 的 exp 精度到秒），但绝不允许被抬到 5 分钟。
+        expiresAt.ShouldBeLessThan(DateTime.UtcNow.AddMinutes(3));
+        var exp = ReadPrincipal(jwt, token).FindFirst(JwtRegisteredClaimNames.Exp)!.Value;
+        var expUtc = DateTimeOffset.FromUnixTimeSeconds(long.Parse(exp)).UtcDateTime;
+        (expUtc - deadline).Duration().ShouldBeLessThan(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public void Issue_WithoutAbsoluteDeadline_StillFloorsShortLifetimes()
+    {
+        // 反面：不传硬截止时，原来的 5 分钟下限行为保持不变——
+        // 上一条不是把下限删了，而是让它不作用在硬截止那条路上。
+        var jwt = new GwJwt(Secret, Issuer, lifetimeDays: 7, renewAfterHours: 24);
+
+        var (_, expiresAt) = jwt.Issue(
+            BuildUser(), BuildTenant(), BuildMembership(), lifetime: TimeSpan.FromMinutes(2));
+
+        expiresAt.ShouldBeGreaterThan(DateTime.UtcNow.AddMinutes(4));
+    }
 }
