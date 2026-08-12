@@ -247,12 +247,14 @@ async function main() {
     await page.waitForTimeout(3000);
     const measureOverlap = () => page.evaluate(() => {
       const rect = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
-      const byText = (re) => [...document.querySelectorAll('span,div,button')]
-        .filter((el) => re.test((el.textContent || '').trim()) && el.getBoundingClientRect().width > 0)
-        .sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)[0];
-      const headline = byText(/^Frame · /);
-      const panelBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '图层面板');
-      const badge = byText(/^图层分离中$/);
+      // 按稳定钩子找，**不按文字找**。
+      // 这三个标签在低倍下会按档收起（Frame 头部 <420px 换成短文案、按钮 <260px 只剩图标），
+      // 那正是产品用来避免互相压住的手段。靠文字找的话，一收起选择器就失配，那几档
+      // 等于没测——而低倍恰恰是最容易撞的区间（用户当初就是 12% 的截图）。
+      const visible = (el) => el && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0;
+      const headline = [...document.querySelectorAll('[data-frame-handle]')].find(visible);
+      const panelBtn = [...document.querySelectorAll('[data-testid="frame-panel-button"]')].find(visible);
+      const badge = [...document.querySelectorAll('[data-testid="frame-layering-badge"]')].find(visible);
       const named = [['Frame 头部', headline], ['图层面板按钮', panelBtn], ['图层分离中标记', badge]]
         .filter(([, el]) => el)
         .map(([name, el]) => ({ name, rect: rect(el) }));
@@ -314,7 +316,8 @@ async function main() {
         ? `重叠档位：${bad.map((r) => `${r.zoom}%(${r.hits.join('、')})`).join('；')}`
         : incomplete.length
           ? `控件缺席，这一档等于没测：${incomplete.map((r) => `${r.zoom}%缺[${r.missing.join('、')}]`).join('；')}`
-            + `（多半是分层在测完之前就跑完了，等待态消失——重跑或缩短缩放循环，别把它当通过）`
+            + `（改用稳定钩子取元素之后，缺席就是真的没渲染——不要再当成「分层提前跑完」放过；`
+            + `第一版按文字找，低倍下标签一收起就失配，那几档静默没测，正是这条判据要防的事）`
           : `测过 ${overlapReport.map((r) => `${r.zoom}%`).join('/')}，三个控件每档都在场（见 ${waitingShot}）`,
     );
 

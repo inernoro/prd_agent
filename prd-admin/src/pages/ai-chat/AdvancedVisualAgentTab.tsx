@@ -7186,6 +7186,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               transformOrigin: 'left top',
                             }}
                             title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
+                            // 低倍下这些标签的文字会按档收起，冒烟不能靠文字找它们
+                            // （靠文字找 = 一收起就找不到 = 那一档静默没测）。
+                            data-testid={it.layerRole === 'layer' ? 'frame-layering-badge' : undefined}
                           >
                             {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
                           </div>
@@ -7657,6 +7660,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         ? '打开图层面板：排顺序、开关图层、导出 PSD / 合成 PNG / ZIP'
                         : '把这个 Frame 里的元素导出成一个分层 PSD'}
                       onPointerDown={(event) => event.stopPropagation()}
+                      // 同上：iconOnlyButton 会把文字整个去掉，冒烟必须按钩子找。
+                      data-testid="frame-panel-button"
                       onClick={() => {
                         if (isAiFrame) {
                           // 面板按 layerGroupId 选图层（那是产物血统，解组不丢），
