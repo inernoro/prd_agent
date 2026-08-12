@@ -1681,6 +1681,12 @@ public sealed class UpstreamModelsData
     public bool PricingProvided { get; set; }
 
     /// <summary>
+    /// 上游实际返回了多少个模型——**仅在被截断时非空**。
+    /// 截断必须让用户看见，否则他会以为面板里这些就是全部（no silent caps）。
+    /// </summary>
+    public int? TruncatedFromTotal { get; set; }
+
+    /// <summary>
     /// 这份清单与价格是什么时候从上游拉回来的（服务端时间）。
     /// minimal-user-input 第 2 条要求拉回来的值必须标「来源与时间」——面板可能开着不动，
     /// 用户得能分辨手上这份报价是刚拉的还是半小时前的，否则会照着过期价格做导入决定。

@@ -3422,6 +3422,33 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("IsSupportedCapabilityCode", ReadRepoFile("llmgw/console-api/Program.cs"));
     }
 
+    /// <summary>
+    /// 上游返回的字段形状不可信，解析必须先确认类型再索引。
+    ///
+    /// JsonNode 对非对象节点做 node["x"] 会抛 InvalidOperationException，
+    /// 而 pricing 是个非标准扩展、谁都能把它写成字符串或数组。那一抛会穿过只接
+    /// JsonException 的 catch，把「查看模型」整条请求变成 500——一个模型的字段形状
+    /// 不合口味，整份清单就拉不出来。同一个坑在 EmbeddingService 解析 data 时踩过一次。
+    ///
+    /// 顺带钉住条目上限：字节上限管不住条目数，几十万个小对象照样塞得进 8MB。
+    /// </summary>
+    [Fact]
+    public void 上游清单解析必须先判类型且条目有上限()
+    {
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+        // 裸 modelNode?["pricing"] 直接索引就是事故写法
+        Assert.Contains("as JsonObject", presets);
+        Assert.DoesNotContain("var pricing = modelNode?[\"pricing\"];", presets);
+
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("MaxDiscoveredModels", server);
+        Assert.Contains("Take(MaxDiscoveredModels)", server);
+        // 截断不许静默：得让用户看见上游原本有多少
+        Assert.Contains("TruncatedFromTotal", server);
+        Assert.Contains("TruncatedFromTotal", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
+        Assert.Contains("truncatedFromTotal", ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx"));
+    }
+
     [Fact]
     public void 上游拉回来的清单必须带拉取时间()
     {

@@ -6899,6 +6899,10 @@ const int MaxImportBatch = 200;
 // 上游响应体读取上限。模型清单再大也就几百 KB，8 MB 是宽松到不会误伤的天花板。
 const int MaxUpstreamBodyBytes = 8 * 1024 * 1024;
 
+// 一次发现最多展示多少个模型。聚合型上游（OpenRouter）目前四百多个，2000 是宽松到
+// 不会误伤真实上游、又能挡住「几十万个小对象」那种病态响应的天花板。
+const int MaxDiscoveredModels = 2000;
+
 app.MapGet("/gw/provider-presets", (HttpContext http) =>
 {
     var items = ProviderPresets.All.Select(p => new ProviderPresetItem
@@ -7142,8 +7146,16 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         .Where(x => x.Length > 0)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    // 8MB 的字节上限管不住**条目数**：几十万个 {"id":"x"} 这样的小对象照样塞得进那个预算，
+    // 而下面这个循环会把每一条都物化成对象、再排序、再序列化，前端还要不做虚拟化地全渲染一遍——
+    // 一次「查看模型」就能吃掉可观的共享内存并把用户浏览器冻住。限量必须按条目再来一道。
+    //
+    // 截断不静默：真发生时如实告诉用户「上游给了 N 个，只展示前 M 个」，
+    // 而不是让他以为这就是全部（no silent caps）。
+    var truncatedFrom = dataArray.Count > MaxDiscoveredModels ? dataArray.Count : (int?)null;
+
     var items = new List<UpstreamModelItem>();
-    foreach (var node in dataArray)
+    foreach (var node in dataArray.Take(MaxDiscoveredModels))
     {
         if (node is not System.Text.Json.Nodes.JsonObject obj) continue;
         var modelId = (obj["id"] as System.Text.Json.Nodes.JsonValue)?.ToString();
@@ -7169,6 +7181,7 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         Total = items.Count,
         AlreadyImportedCount = items.Count(x => x.AlreadyImported),
         PricingProvided = items.Any(x => x.PriceSource is not null),
+        TruncatedFromTotal = truncatedFrom,
         FetchedAt = DateTime.UtcNow,
         Items = items.OrderBy(x => x.ModelId, StringComparer.OrdinalIgnoreCase).ToList(),
     };

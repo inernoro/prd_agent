@@ -243,7 +243,12 @@ public static class ProviderPresets
     /// </summary>
     public static UpstreamPricing? ReadPricing(JsonNode? modelNode)
     {
-        var pricing = modelNode?["pricing"];
+        // 必须先确认它是对象再按属性名索引。JsonNode 对非对象节点做 node["x"] 会抛
+        // InvalidOperationException——而上游的 pricing 是个非标准扩展，谁都可以把它写成
+        // 字符串或数组。那一抛会穿过外面只接 JsonException 的 catch，把「查看模型」整条
+        // 请求变成 HTTP 500：一个模型的字段形状不合口味，整份清单就拉不出来了。
+        // 同一个坑我在 EmbeddingService 解析 data 时刚踩过一次，这里不该再踩。
+        var pricing = modelNode?["pricing"] as JsonObject;
         if (pricing is null) return null;
 
         var input = ReadPerToken(pricing["prompt"] ?? pricing["input"]);

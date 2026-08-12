@@ -163,7 +163,10 @@ export function UpstreamModelPicker({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: 600 }}>上游共 {data.total} 个模型</span>
+        <span style={{ fontWeight: 600 }}>
+          上游共 {data.truncatedFromTotal ?? data.total} 个模型
+          {data.truncatedFromTotal ? `（过多，只展示前 ${data.total} 个）` : ''}
+        </span>
         <span style={HINT_TEXT}>已导入 {data.alreadyImportedCount} 个</span>
         <Chip
           label={data.pricingProvided ? '价格取自上游' : '上游未提供价格'}

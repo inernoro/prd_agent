@@ -695,6 +695,8 @@ export type UpstreamModelsData = {
   total: number;
   alreadyImportedCount: number;
   pricingProvided: boolean;
+  /** 上游实际返回了多少个——仅在被截断时非空，必须显示出来 */
+  truncatedFromTotal?: number | null;
   /** 这份清单与价格的拉取时间（服务端 UTC）。面板可能开着不动，用户要能分辨新鲜度 */
   fetchedAt: string;
   items: UpstreamModelItem[];
