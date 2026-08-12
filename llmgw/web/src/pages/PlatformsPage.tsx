@@ -2,7 +2,7 @@
 // 密钥明文只随创建/轮换请求发送，列表永远只展示 hasKey。
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatformApiKey, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection } from '@/lib/api';
+import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection } from '@/lib/api';
 import type { CreatePlatformRequest, PlatformItem, PlatformTestResult, ProviderPresetItem, UpstreamModelsData } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
 import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
@@ -69,6 +69,10 @@ export function PlatformsPage() {
         apiUrl: next.apiUrl,
         providerId: next.providerId || undefined,
         maxConcurrency: next.maxConcurrency,
+        // 本地/自建上游不校验密钥，但网关的 Provider 记录把密钥当必填不变量。
+        // 系统自己知道该填什么就替他填（minimal-user-input），别让他对着一个
+        // 「写着无需密钥、留空却被拒」的输入框卡住。已经敲过的密钥不覆盖。
+        apiKey: next.keylessPlaceholder && !value.apiKey ? next.keylessPlaceholder : value.apiKey,
       }
       // 取消选中回到自定义：只清掉预设带来的地址，用户已经敲的密钥不动
       : { ...value, name: '', apiUrl: '', providerId: undefined });
@@ -202,6 +206,26 @@ export function PlatformsPage() {
     }
   }
 
+  async function removePlatform(p: PlatformItem) {
+    if (!window.confirm(`彻底删除 Provider「${p.name}」？删除后它的地址与密钥都不再保留。`)) return;
+    setBusyId(p.id);
+    setToast(null);
+    const res = await deletePlatform(p.id);
+    setBusyId(null);
+    if (res.success) {
+      setItems((prev) => (prev ? prev.filter((x) => x.id !== p.id) : prev));
+      setTestResult((prev) => {
+        const next = { ...prev };
+        delete next[p.id];
+        return next;
+      });
+      setToast(`已删除 Provider「${p.name}」`);
+    } else {
+      // 后端拒绝时消息里已经写清「被谁引用、还剩几个」，原样透出即可
+      setToast(res.error?.message || '删除失败');
+    }
+  }
+
   async function applyBulkApiKey() {
     const apiKey = bulkKeyValue.trim();
     if (!apiKey) {
@@ -281,6 +305,12 @@ export function PlatformsPage() {
                 style={formInputStyle}
               />
             </label>
+            {preset?.keylessPlaceholder ? (
+              <InlineAlert tone="info">
+                这个上游不校验密钥，已替你填好占位值「{preset.keylessPlaceholder}」，直接保存即可；
+                自建服务真开了 --api-key 就改成真密钥。
+              </InlineAlert>
+            ) : null}
             {keyPrefixWarning(preset, draft.apiKey) ? (
               <InlineAlert tone="info">{keyPrefixWarning(preset, draft.apiKey)}</InlineAlert>
             ) : null}
@@ -478,6 +508,11 @@ export function PlatformsPage() {
                                   清除密钥
                                 </Button>
                               ) : null}
+                              {/* 接错的上游、试完的测试 Provider 得能真删掉，不然共享库里越积越多。
+                                  后端有引用就拒绝并说清被谁引用，这里不做二次判断，只负责问一句。 */}
+                              <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void removePlatform(p)} title="从网关配置里彻底删除这个 Provider">
+                                删除
+                              </Button>
                             </>
                           ) : (
                             <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void claimPlatform(p)}>

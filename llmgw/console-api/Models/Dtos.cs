@@ -1509,6 +1509,9 @@ public sealed class ProviderPresetItem
     public string Summary { get; set; } = string.Empty;
     /// <summary>搜索用的别名（中英文、拼音），前端只做过滤不做翻译。</summary>
     public List<string> SearchTerms { get; set; } = new();
+
+    /// <summary>不校验密钥的本地/自建上游给的占位密钥；需要真密钥的上游为空串。</summary>
+    public string KeylessPlaceholder { get; set; } = string.Empty;
 }
 
 public sealed class ProviderPresetsData

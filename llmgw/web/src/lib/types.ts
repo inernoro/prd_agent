@@ -637,6 +637,8 @@ export type ProviderPresetItem = {
   supportsUpstreamPricing: boolean;
   summary: string;
   searchTerms: string[];
+  /** 非空 = 该上游不校验密钥，前端替用户预填这个占位值 */
+  keylessPlaceholder?: string;
 };
 export type ProviderPresetsData = { items: ProviderPresetItem[] };
 

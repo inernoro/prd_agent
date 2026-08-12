@@ -6550,6 +6550,7 @@ app.MapGet("/gw/provider-presets", (HttpContext http) =>
         SupportsUpstreamPricing = p.SupportsUpstreamPricing,
         Summary = p.Summary,
         SearchTerms = p.SearchTerms.ToList(),
+        KeylessPlaceholder = p.KeylessPlaceholder,
     }).ToList();
     return Json(ApiEnvelope<ProviderPresetsData>.Ok(new ProviderPresetsData { Items = items }), jsonOptions);
 }).RequireAuthorization("LogsRead");
@@ -7086,6 +7087,54 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// Provider 删除。
+//
+// 在此之前 Provider 只能停用 + 清密钥，记录永远留在库里：接错一个上游、建一个测试 Provider，
+// 都会在共享 Mongo 里变成永久噪音（验收智能体的原话是「测试 Provider 没有删除入口」）。
+//
+// 刻意**不做级联**：模型、模型池成员都可能挂在这个 Provider 上，静默连坐删掉是不可逆的。
+// 有引用就拒绝，并把「被谁引用、还剩几个」直接说出来，让用户知道下一步该清哪里
+// （expectation-management：失败要给得出可执行的下一步）。
+app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var filter = TenantAccess.Filter(http, fb.Eq("_id", id));
+    var doc = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
+    if (doc is null) return Json(ApiEnvelope<object>.Fail("NOT_GW_AUTHORITY", "请先将平台认领到 GW，再在 GW 中删除"), jsonOptions, 409);
+
+    var modelCount = await gwModels.CountDocumentsAsync(TenantAccess.Filter(http, fb.Eq("PlatformId", id)));
+    if (modelCount > 0)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "PLATFORM_HAS_MODELS",
+            $"这个 Provider 名下还有 {modelCount} 个模型，先移除模型再删除 Provider。"), jsonOptions, 409);
+    }
+
+    var referencingPools = await gwModelPools
+        .Find(TenantAccess.Filter(http, fb.ElemMatch<BsonDocument>("Members", fb.Eq("PlatformId", id))))
+        .Project(Builders<BsonDocument>.Projection.Include("Name")).ToListAsync();
+    if (referencingPools.Count > 0)
+    {
+        var names = string.Join("、", referencingPools.Take(3).Select(p => p.AsNullableString("Name") ?? p.GetStringOrEmpty("_id")));
+        return Json(ApiEnvelope<object>.Fail(
+            "PLATFORM_IN_USE",
+            $"还有 {referencingPools.Count} 个模型池引用着它（{names}），先从池里移除再删除。"), jsonOptions, 409);
+    }
+
+    await gwPlatforms.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "platform.delete",
+        targetType: "llmgw_platform",
+        targetId: id,
+        targetName: doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument { { "authority", "llm_gateway" } });
+    return Json(ApiEnvelope<object>.Ok(new { }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 平台密钥删除：只允许清理 GW 权威平台的密钥，MAP 来源平台必须先认领。

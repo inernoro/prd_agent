@@ -798,6 +798,10 @@ export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiRes
 export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
 }
+/** 彻底删除 Provider。后端在名下还有模型 / 被模型池引用时会 409 并说清被谁引用，不做级联。 */
+export function deletePlatform(id: string): Promise<ApiResponse<Record<string, never>>> {
+  return apiRequest<Record<string, never>>(`/platforms/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
 export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
 }

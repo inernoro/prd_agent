@@ -3139,6 +3139,56 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("BuiltinPricing", presets);
     }
 
+    /// <summary>
+    /// 每个预设都必须给用户一条**真能走通**的拿密钥路径：要么指向供应商的密钥控制台，
+    /// 要么自带占位密钥由系统替他填。
+    ///
+    /// 由验收抓出：Ollama 预设的介绍写着「默认无需密钥」，而
+    /// GatewayConfigurationProvisioning 照旧拒空密钥 —— 用户照文案留空就被拦下，
+    /// 只能自己瞎填一个值才能过。这是 predicate-and-wiring-discipline 形状 8：
+    /// 拿一份**在真实校验下不成立**的声明当成「已经支持」的证据。
+    /// 文案不是判据，能不能保存才是。
+    /// </summary>
+    [Fact]
+    public void ProviderPresets_每个预设都要有一条走得通的密钥路径()
+    {
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+        var listStart = presets.IndexOf("public static IReadOnlyList<ProviderPreset> All", StringComparison.Ordinal);
+        Assert.True(listStart > 0, "预设清单的位置变了，守卫要跟着改");
+        var body = presets[listStart..];
+
+        // 每条形如：new("key", "名称", "type", "url", "provider", N,
+        //            "密钥控制台 URL", "前缀", bool, bool,
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            body,
+            "new\\(\"(?<key>[^\"]+)\",[^\\n]*\\n\\s*\"(?<console>[^\"]*)\",");
+        Assert.True(matches.Count >= 10, $"只解析到 {matches.Count} 条预设，正则与源码格式对不上了");
+
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            var key = match.Groups["key"].Value;
+            var hasKeyConsole = match.Groups["console"].Value.Trim().Length > 0;
+
+            // 这一条预设的文本范围：从它自己开始，到下一条 new( 之前
+            var from = match.Index;
+            var nextNew = body.IndexOf("new(\"", from + 5, StringComparison.Ordinal);
+            var entry = nextNew > 0 ? body[from..nextNew] : body[from..];
+            var hasPlaceholder = entry.Contains("KeylessPlaceholder:", StringComparison.Ordinal);
+
+            Assert.True(
+                hasKeyConsole || hasPlaceholder,
+                $"预设「{key}」既没给密钥控制台地址、也没给占位密钥，用户填不出一个能保存的值");
+
+            // 声称不校验密钥，就必须真的能空手保存 —— 靠占位密钥兑现，而不是靠一句文案
+            var claimsKeyless = entry.Contains("不校验密钥", StringComparison.Ordinal)
+                || entry.Contains("无需密钥", StringComparison.Ordinal)
+                || entry.Contains("不需要密钥", StringComparison.Ordinal);
+            Assert.False(
+                claimsKeyless && !hasPlaceholder,
+                $"预设「{key}」的介绍声称不用密钥，但没有 KeylessPlaceholder 兜底，用户照文案留空会被后端拒绝");
+        }
+    }
+
     [Fact]
     public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
     {

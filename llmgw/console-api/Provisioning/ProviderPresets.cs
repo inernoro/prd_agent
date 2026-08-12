@@ -25,7 +25,20 @@ public sealed record ProviderPreset(
     bool SupportsModelDiscovery,
     bool SupportsUpstreamPricing,
     string Summary,
-    string[] SearchTerms);
+    string[] SearchTerms,
+    /// <summary>
+    /// 本地/自建这类**不校验密钥**的上游，填一个占位密钥值；需要真密钥的上游为空串。
+    ///
+    /// 为什么不是「让密钥变成非必填」：网关的 Provider 记录把密钥当必填不变量
+    /// （GatewayConfigurationProvisioning 会拒空），放开它要动的是所有上游的校验面。
+    /// 而 Ollama / vLLM 的 OpenAI 兼容接口本来就忽略 Authorization 头，占位值填什么都能通——
+    /// 这正是 minimal-user-input 说的「系统自己知道的值不该摆成输入框」：系统替他填，
+    /// 他仍可覆盖（自建服务真开了 --api-key 时）。
+    ///
+    /// 第一版只在 Summary 里写「默认无需密钥」，判据却照旧拒空，用户照着文案留空就被拦下
+    /// （predicate-and-wiring-discipline 形状 8：拿一份不成立的声明当证据）。
+    /// </summary>
+    string KeylessPlaceholder = "");
 
 public static class ProviderPresets
 {
@@ -117,13 +130,15 @@ public static class ProviderPresets
 
         new("ollama", "Ollama（本地）", "openai", "http://host.docker.internal:11434/v1", "ollama", 4,
             "", "", true, false,
-            "本地跑的开源模型。默认无需密钥，地址按你的部署改（高级选项里）。",
-            new[] { "ollama", "本地", "local", "离线" }),
+            "本地跑的开源模型。不校验密钥，已替你填好占位值；地址按你的部署改（高级选项里）。",
+            new[] { "ollama", "本地", "local", "离线" },
+            KeylessPlaceholder: "ollama"),
 
         new("vllm", "vLLM / 自建 OpenAI 兼容服务", "openai", "http://host.docker.internal:8000/v1", "vllm", 8,
             "", "", true, false,
-            "自建推理服务。地址一定要按你的部署改（高级选项里）。",
-            new[] { "vllm", "自建", "sglang", "lmdeploy", "tgi" }),
+            "自建推理服务。默认不校验密钥，已填占位值；开了 --api-key 就改成真密钥。地址一定要按你的部署改（高级选项里）。",
+            new[] { "vllm", "自建", "sglang", "lmdeploy", "tgi" },
+            KeylessPlaceholder: "local"),
     };
 
     public static ProviderPreset? Find(string? key)
