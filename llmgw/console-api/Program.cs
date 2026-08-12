@@ -7260,13 +7260,14 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (!GatewayConfigurationProvisioning.IsValidPrice(entry.InputPricePerMillion)
-            || !GatewayConfigurationProvisioning.IsValidPrice(entry.OutputPricePerMillion)
-            || !GatewayConfigurationProvisioning.IsValidPrice(entry.PricePerCall)
-            || !GatewayConfigurationProvisioning.IsSupportedCurrency(entry.PriceCurrency))
+        // 价格与币种必须成对判：有价无币种落库后会被 NormalizeModelPoolPriceCurrency 默认成 CNY，
+        // 一条 USD 报价就被当 CNY 计费。判据与单模型表单同源，不在这里再拆成几个独立条件。
+        if (!GatewayConfigurationProvisioning.IsValidPriceCurrencyPair(
+                entry.InputPricePerMillion, entry.OutputPricePerMillion, entry.PricePerCall,
+                entry.PriceCurrency, out var priceError))
         {
             return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail(
-                "INVALID_INPUT", $"模型「{modelId}」的价格或币种不合法（价格不能为负，币种只支持 CNY / USD）"), jsonOptions, 400);
+                "INVALID_INPUT", $"模型「{modelId}」的价格或币种不合法：{priceError}"), jsonOptions, 400);
         }
 
         var doc = new BsonDocument

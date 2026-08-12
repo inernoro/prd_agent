@@ -64,11 +64,41 @@ public static class GatewayConfigurationProvisioning
     public static bool IsSupportedModelType(string? modelType)
         => !string.IsNullOrWhiteSpace(modelType) && SupportedModelTypes.Contains(modelType.Trim().ToLowerInvariant());
 
-    /// <summary>价格与币种的校验口径，同样对两条入库路径共用（负价格进不了成本核算）。</summary>
-    public static bool IsValidPrice(decimal? price) => price is null or >= 0;
+    /// <summary>
+    /// 价格与币种是**一对不变量**，必须一起判：有价就必须有 CNY/USD，无价就不许单独给币种。
+    ///
+    /// 上一版把它拆成 IsValidPrice + IsSupportedCurrency 两个各自独立的判据交给批量导入用，
+    /// 而 IsSupportedCurrency 对空值一律放行——于是「有价、无币种」这一半在导入路径上根本判不出来。
+    /// 落库后 IModelResolver.NormalizeModelPoolPriceCurrency 会把缺失币种默认成 CNY，
+    /// 一条 USD 报价就被当成 CNY 计费。UI 走不到（ReadPricing 总会带上币种），
+    /// 直连调用或旧版前端走得到。
+    ///
+    /// 这就是形状 3：同一个判断被抄成两份，然后各自漂移——而抄的人是我，
+    /// 当时还在注释里写了「校验口径必须是同一份」。所以这里不再留两个半判据给人拼，
+    /// 只留这一个成对判据，单模型表单与批量导入都调它。
+    /// </summary>
+    public static bool IsValidPriceCurrencyPair(
+        decimal? inputPricePerMillion, decimal? outputPricePerMillion, decimal? pricePerCall,
+        string? currency, out string error)
+    {
+        error = string.Empty;
+        var prices = new[] { inputPricePerMillion, outputPricePerMillion, pricePerCall };
+        if (prices.Any(x => x is < 0)) { error = "价格不能为负数"; return false; }
 
-    public static bool IsSupportedCurrency(string? currency)
-        => string.IsNullOrWhiteSpace(currency) || currency.Trim().ToUpperInvariant() is "CNY" or "USD";
+        var hasPrice = prices.Any(x => x is not null);
+        var normalized = currency?.Trim().ToUpperInvariant();
+        if (hasPrice && normalized is not ("CNY" or "USD"))
+        {
+            error = "填写价格时必须选择 CNY 或 USD";
+            return false;
+        }
+        if (!hasPrice && !string.IsNullOrWhiteSpace(normalized))
+        {
+            error = "没有填写价格时不要单独选择币种";
+            return false;
+        }
+        return true;
+    }
 
     /// <summary>模型名长度上限，与 TryNormalizeModel 同源。</summary>
     public const int MaxModelNameLength = 240;
@@ -238,14 +268,12 @@ public static class GatewayConfigurationProvisioning
         if (maxConcurrency is < 0 or > 10000) return Fail("最大并发必须在 0 到 10000 之间", out error);
         if (request.MaxTokens is < 1 or > 10000000) return Fail("最大 Token 数必须在 1 到 10000000 之间", out error);
 
-        var prices = new[] { request.InputPricePerMillion, request.OutputPricePerMillion, request.PricePerCall };
-        if (prices.Any(x => x is < 0)) return Fail("价格不能为负数", out error);
-        var hasPrice = prices.Any(x => x is not null);
+        // 价格与币种走唯一那份成对判据，别在这里再抄一遍（上一次抄出的那份漏了「有价无币种」）。
+        if (!IsValidPriceCurrencyPair(
+                request.InputPricePerMillion, request.OutputPricePerMillion, request.PricePerCall,
+                request.PriceCurrency, out var priceError))
+            return Fail(priceError, out error);
         var currency = request.PriceCurrency?.Trim().ToUpperInvariant();
-        if (hasPrice && currency is not ("CNY" or "USD"))
-            return Fail("填写价格时必须选择 CNY 或 USD", out error);
-        if (!hasPrice && !string.IsNullOrWhiteSpace(currency))
-            return Fail("没有填写价格时不要单独选择币种", out error);
 
         var remark = TrimToNull(request.Remark, 1000, "备注", out error);
         if (error.Length > 0) return false;
@@ -267,7 +295,9 @@ public static class GatewayConfigurationProvisioning
             request.InputPricePerMillion,
             request.OutputPricePerMillion,
             request.PricePerCall,
-            hasPrice ? currency : null,
+            // 上面那条成对判据已经保证「没填价格就不会有币种」，所以这里不必再算一次 hasPrice：
+            // 空币种直接落 null，非空的必然是它放行过的 CNY / USD。
+            string.IsNullOrWhiteSpace(currency) ? null : currency,
             remark);
         return true;
     }

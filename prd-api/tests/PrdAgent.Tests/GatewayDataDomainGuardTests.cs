@@ -3356,8 +3356,16 @@ public class GatewayDataDomainGuardTests
     {
         var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
         Assert.Contains("IsSupportedModelType", provisioning);
-        Assert.Contains("IsValidPrice", provisioning);
-        Assert.Contains("IsSupportedCurrency", provisioning);
+        // 价格与币种必须是**一个成对判据**，不能拆成两个各自独立的半判据：
+        // 拆开之后「有价、无币种」这一半没人管，落库被默认成 CNY，USD 报价按 CNY 计费。
+        Assert.Contains("IsValidPriceCurrencyPair", provisioning);
+        // 禁的是那半个判据的**声明**，不是行文——上面那段注释正讲着它的历史，
+        // 断言裸标识符会让守卫无条件变红（本 PR 已经栽过一次这种恒红守卫）。
+        Assert.DoesNotContain("bool IsSupportedCurrency(", provisioning);
+        Assert.DoesNotContain("bool IsValidPrice(", provisioning);
+        // 成对判据只许有一份实现——TryNormalizeModel 不得把这条不变量再抄一遍。
+        // 数的是错误文案出现次数：抄一遍必然把它一起抄过去。
+        Assert.Equal(1, provisioning.Split("填写价格时必须选择 CNY 或 USD").Length - 1);
         // 长度上限只许有一个字面量来源
         Assert.Contains("MaxModelNameLength", provisioning);
 
@@ -3369,7 +3377,7 @@ public class GatewayDataDomainGuardTests
         // 端点校验的是**存储层能力名**，用的是 IsSupportedCapabilityCode；
         // 断言成 IsSupportedModelType 会无条件红——守卫必须断言实现真正用的那个判据。
         Assert.Contains("IsSupportedCapabilityCode", body);
-        Assert.Contains("IsValidPrice", body);
+        Assert.Contains("IsValidPriceCurrencyPair", body);
         Assert.Contains("MaxModelNameLength", body);
         // 池同步的触发条件不能写成「这次新建了几个」——同步失败后重试全是 Skipped，
         // Created 归零，同步块被跳过，我们自己那句「稍后重试导入」就成了空话
