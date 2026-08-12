@@ -156,6 +156,20 @@ public sealed class GatewaySessionLifetimeTests
     }
 
     [Fact]
+    public void Issue_WithElapsedAbsoluteDeadline_ThrowsInsteadOfBuildingAnInvalidToken()
+    {
+        // 鉴权配了 1 分钟 ClockSkew，token 过期后一分钟内仍能通过校验，
+        // 于是 exp 有可能已经在过去。直接拿去签发会因为 expires <= notBefore 抛异常，
+        // 而改密那条路上此时口令已经落库——用户会拿到「改成功了但是 500」。
+        // 正确的兜底是：调用方在写入之前就拒绝，这里只负责不造非法 token（Codex PR #1364 P2）。
+        var jwt = new GwJwt(Secret, Issuer);
+
+        Should.Throw<ArgumentOutOfRangeException>(() => jwt.Issue(
+            BuildUser(), BuildTenant(), BuildMembership(),
+            federatedSession: true, absoluteExpiresAt: DateTime.UtcNow.AddSeconds(-30)));
+    }
+
+    [Fact]
     public void Issue_WithoutAbsoluteDeadline_StillFloorsShortLifetimes()
     {
         // 反面：不传硬截止时，原来的 5 分钟下限行为保持不变——

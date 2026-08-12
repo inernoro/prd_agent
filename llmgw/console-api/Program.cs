@@ -120,14 +120,20 @@ builder.Services.AddSingleton(gwJwt);
 // 每 2 分钟续一次就能无限续命。所以这里必须给绝对时刻，由 Issue 走 absoluteExpiresAt
 // 分支绕开那个下限（Codex PR #1364 P1 第二轮）。
 //
-// 取不到 exp 返回 null，调用方据此**拒绝续签**而不是给满——读不出截止时刻时，
-// 唯一安全的动作是不发新 token。
+// 取不到 exp、或 exp 已经过去，都返回 null，调用方据此**拒绝续签**而不是给满——
+// 读不出截止时刻、或截止时刻已到时，唯一安全的动作都是不发新 token。
+//
+// 「已经过去」这一支不是假想输入：JwtBearer 配了 1 分钟 ClockSkew（见下方鉴权配置），
+// token 过期后一分钟内仍然能通过鉴权。此时 exp 在过去，若直接拿去签发，
+// JwtSecurityToken 会因为 expires <= notBefore 抛异常（Codex PR #1364 P2）。
+// 上一版我只 clamp 了「太远的未来」，没管「已经过去」——又是只覆盖了一个方向。
 static DateTime? FederatedHardDeadline(HttpContext http, bool hardDeadline)
 {
     if (!hardDeadline) return null;
     var raw = http.User.FindFirst("exp")?.Value;
     if (!long.TryParse(raw, out var unix)) return null;
-    return DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime;
+    var deadline = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime;
+    return deadline > DateTime.UtcNow ? deadline : null;
 }
 
 // ── 鉴权 ──
@@ -893,6 +899,18 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", $"新口令至少 {LocalPasswordPolicy.MinPasswordLength} 位"), jsonOptions);
     }
 
+    // 硬截止的联邦会话：**在任何写入之前**就把「到期时间不可读 / 已经过期」挡掉。
+    // 放到最后再签发是不行的：那时口令、用户名、SecurityVersion 都已经落库，
+    // 签发失败只能回 500，而用户的会话恰恰被这次改密作废了——改成功了却拿到 500，
+    // 还得重新登录（Codex PR #1364 P2）。
+    if (http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1"
+        && mapSsoLifetimeIsHardDeadline
+        && FederatedHardDeadline(http, true) is null)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail(
+            "SESSION_EXPIRED", "会话已到期或到期时间不可读，请重新登录后再试"), jsonOptions, 401);
+    }
+
     // 从 token 的 sub（用户 Id）定位账号，避免依赖可变的用户名。
     var userId = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
         ?? http.User.FindFirst("sub")?.Value;
@@ -1135,6 +1153,14 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
         || !TenantOwnerAuthority.IsEffectiveOwner(tenant, membership))
         return Json(ApiEnvelope<LoginResultDto>.Fail("TENANT_ACCESS_DENIED", "无权切换到该租户"), jsonOptions, 403);
 
+    // 同上：先挡住到期/不可读，再写默认租户。否则写完才发现签不出 token，
+    // 用户的默认租户已经被改掉，却只拿到一个错误。
+    var switchFromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
+    var switchDeadline = FederatedHardDeadline(http, switchFromFederatedSession && mapSsoLifetimeIsHardDeadline);
+    if (switchFromFederatedSession && mapSsoLifetimeIsHardDeadline && switchDeadline is null)
+        return Json(ApiEnvelope<LoginResultDto>.Fail(
+            "SESSION_EXPIRED", "会话已到期或到期时间不可读，请重新登录后再试"), jsonOptions, 401);
+
     await users.UpdateOneAsync(x => x.Id == user.Id, Builders<LlmGwUser>.Update.Set(x => x.DefaultTenantId, tenant.Id).Set(x => x.UpdatedAt, DateTime.UtcNow));
     // 换租户是**续期**，会话血统不变：fed_session 必须原样带过去。
     // 丢掉它的后果正好打在本次新增的功能上——一键登录进来、还没设过口令的人切一次租户，
@@ -1142,10 +1168,6 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
     // 没人知道，于是「忘了口令可以靠 SSO 自救」这条路当场断掉，直到重新走一次 MAP 登录。
     // 改密那条路（上面 Issue(..., federatedSession: fromFederatedSession)）早就是这么做的，
     // 这里漏了同一个判断（Codex PR #1363 P2）。
-    var switchFromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
-    var switchDeadline = FederatedHardDeadline(http, switchFromFederatedSession && mapSsoLifetimeIsHardDeadline);
-    if (switchFromFederatedSession && mapSsoLifetimeIsHardDeadline && switchDeadline is null)
-        return Json(ApiEnvelope<LoginResultDto>.Fail("SESSION_DEADLINE_UNKNOWN", "会话到期时间不可读，请重新登录后再试"), jsonOptions, 401);
     var (token, expiresAt) = gwJwt.Issue(
         user, tenant, membership, federatedSession: switchFromFederatedSession, absoluteExpiresAt: switchDeadline);
     return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
