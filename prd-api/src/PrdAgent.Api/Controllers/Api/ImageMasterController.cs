@@ -1614,16 +1614,27 @@ public class ImageMasterController : ControllerBase
 
             // 关键：先把”占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）
             // 使用 displayPrompt（不含生图意图前缀），避免前缀泄漏到 UI 展示
-            await UpsertWorkspaceCanvasPlaceholderAsync(
-                workspaceId: wid,
-                ownerUserId: ws.OwnerUserId,
-                targetKey: targetKey,
-                prompt: displayPrompt,
-                x: request?.X,
-                y: request?.Y,
-                w: request?.W,
-                h: request?.H,
-                ct: ct);
+            //
+            // 分层不走这条。这个占位写入是按 targetKey 找到那个元素、把它就地改成
+            // kind=generator / status=running——单图生成时 targetKey 就是那张待生成的图，
+            // 改它天经地义；但分层的 targetKey 是**原图**，改它等于把用户的原图变成一个
+            // 转圈的占位符。本 PR 已经关掉了分层的完成态回填（那条同样按 targetKey 找，
+            // 会把原图替换成某个图层），于是这一笔再没人撤销：页签在防抖落盘前关掉，
+            // 原图就永久以「running 的 generator」存在库里（Codex PR #1363 P1）。
+            // 分层的占位卡由前端自己按 {groupId}_layer_N 建，原图必须原封不动。
+            if (!isLayering)
+            {
+                await UpsertWorkspaceCanvasPlaceholderAsync(
+                    workspaceId: wid,
+                    ownerUserId: ws.OwnerUserId,
+                    targetKey: targetKey,
+                    prompt: displayPrompt,
+                    x: request?.X,
+                    y: request?.Y,
+                    w: request?.W,
+                    h: request?.H,
+                    ct: ct);
+            }
 
             // 转换多图引用（新架构）
             List<PrdAgent.Core.Models.MultiImage.ImageRefInput>? imageRefs = null;
