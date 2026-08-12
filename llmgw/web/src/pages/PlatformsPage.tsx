@@ -208,11 +208,11 @@ export function PlatformsPage() {
     }
   }
 
-  async function removePlatform(p: PlatformItem) {
-    if (!window.confirm(`彻底删除 Provider「${p.name}」？删除后它的地址与密钥都不再保留。`)) return;
+  async function removePlatform(p: PlatformItem, withModels = false) {
+    if (!withModels && !window.confirm(`彻底删除 Provider「${p.name}」？删除后它的地址与密钥都不再保留。`)) return;
     setBusyId(p.id);
     setToast(null);
-    const res = await deletePlatform(p.id);
+    const res = await deletePlatform(p.id, withModels);
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.filter((x) => x.id !== p.id) : prev));
@@ -221,11 +221,20 @@ export function PlatformsPage() {
         delete next[p.id];
         return next;
       });
-      setToast(`已删除 Provider「${p.name}」`);
-    } else {
-      // 后端拒绝时消息里已经写清「被谁引用、还剩几个」，原样透出即可
-      setToast(res.error?.message || '删除失败');
+      const extra = res.data.deletedModels > 0 ? `，同时删除了 ${res.data.deletedModels} 个模型` : '';
+      setToast(`已删除 Provider「${p.name}」${extra}`);
+      return;
     }
+    // 名下有模型：后端把「有几个」写在消息里，这里就地再确认一次，让用户真能删掉。
+    // 不做默认级联——连坐删除不可逆，必须有一次显式点头。
+    if (res.error?.code === 'PLATFORM_HAS_MODELS') {
+      if (window.confirm(`${res.error.message}\n\n确认后这些模型会一并删除，无法撤销。`)) {
+        await removePlatform(p, true);
+      }
+      return;
+    }
+    // 被模型池引用等其它拒绝：消息里已写清被谁引用，原样透出
+    setToast(res.error?.message || '删除失败');
   }
 
   async function applyBulkApiKey() {

@@ -6528,7 +6528,29 @@ app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformR
 // ---------------------------------------------------------------------------
 
 // 探测上游用的 HttpClient：超时压到 15s，避免一个不通的地址把控制台请求挂住。
-var upstreamProbeHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+// 探针专用 HttpClient。**关掉自动重定向**：校验只对最初那个地址成立，
+// 跟随 302 等于把已校验目标换成一个没校验过的地址，内网探测的门就从这里溜进去。
+// 重定向本身会如实变成一个 3xx 状态码回给用户，比静默跟过去更透明。
+var upstreamProbeHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+{
+    Timeout = TimeSpan.FromSeconds(15),
+};
+
+/// <summary>
+/// 外部租户的 Provider 探测目标必须先过内网地址校验，口径与外部 Exchange 完全一致
+/// （复用 ValidateExternalExchangeTargetAsync）。
+///
+/// 不加的话，外部租户的 owner 只要把 Provider 地址填成 127.0.0.1 / 10.x / 169.254.169.254，
+/// 就能借「测试连接」和「查看模型」两个端点，拿控制台容器当跳板扫内网和云元数据。
+/// 这两个端点是本次新增的，等于新开了一个出口，必须补上同一道门。
+///
+/// 内部租户不受此限：本地上游预设（Ollama / vLLM）本来就要指向内网，
+/// 这条豁免与 Exchange 侧的既有策略同源，不是本次新开的口子。
+async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, CancellationToken ct)
+{
+    if (TenantAccess.GetRequired(http).TenantId == internalTenantId) return null;
+    return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct);
+}
 
 // 一次导入的模型数上限。聚合型上游（OpenRouter）能列出几百个模型，全勾下来会把
 // 模型列表冲垮，也让后面的模型池选型无从下手；分批导入是刻意的摩擦。
@@ -6573,6 +6595,14 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
         {
             Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "NO_API_URL",
             Message = "这个 Provider 没有配 API 地址", NextStep = "在高级选项里补上 API 地址后再测",
+        }), jsonOptions);
+
+    var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    if (probeTargetError is not null)
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "UNSAFE_TARGET_URL",
+            Message = probeTargetError, NextStep = "把 API 地址改成公网可达的上游域名",
         }), jsonOptions);
 
     var keyResult = GwApiKeyCrypto.Decrypt(doc.AsNullableString("ApiKeyEncrypted"), config);
@@ -6684,6 +6714,11 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
     if (string.Equals(doc.GetStringOrEmpty("PlatformType"), "claude", StringComparison.OrdinalIgnoreCase))
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("DISCOVERY_UNSUPPORTED",
             "Claude 原生协议没有模型列表接口，请手动添加模型"), jsonOptions, 400);
+
+    // 与「测试连接」同一道门：这条也会拿着用户填的地址向外发请求，不补上就等于留了个后门
+    var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    if (discoveryTargetError is not null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("UNSAFE_TARGET_URL", discoveryTargetError), jsonOptions, 400);
 
     var keyResult = GwApiKeyCrypto.Decrypt(doc.AsNullableString("ApiKeyEncrypted"), config);
     string body;
@@ -6802,6 +6837,11 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             { "TenantId", tenantId },
             { "PlatformId", id },
             { "ModelName", modelId },
+            // 唯一索引 uniq_llmgw_model_tenant_platform_name_normalized 带
+            // PartialFilterExpression：只覆盖 ModelNameNormalized 是字符串的文档。
+            // 不写这个字段 = 这批模型不参与唯一约束，两个并发导入各自算出同一份 existing 快照后
+            // 双双插入，同名模型就重复了。口径与 TryNormalizeModel 一致（ToLowerInvariant）。
+            { "ModelNameNormalized", modelId.ToLowerInvariant() },
             { "Name", modelId },
             { "Enabled", true },
             { "Priority", 100 },
@@ -6823,7 +6863,18 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         if (entry.PricePerCall is not null) doc["PricePerCall"] = entry.PricePerCall.Value;
         if (!string.IsNullOrWhiteSpace(entry.PriceCurrency)) doc["PriceCurrency"] = entry.PriceCurrency;
 
-        await gwModels.InsertOneAsync(doc);
+        try
+        {
+            await gwModels.InsertOneAsync(doc);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 并发导入撞上唯一索引：对方已经建好了，按「已存在」计，不算失败
+            result.Skipped++;
+            result.SkippedModelIds.Add(modelId);
+            existing.Add(modelId);
+            continue;
+        }
         existing.Add(modelId);
         result.Created++;
         result.CreatedModelIds.Add(modelId);
@@ -7136,23 +7187,34 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
 // 刻意**不做级联**：模型、模型池成员都可能挂在这个 Provider 上，静默连坐删掉是不可逆的。
 // 有引用就拒绝，并把「被谁引用、还剩几个」直接说出来，让用户知道下一步该清哪里
 // （expectation-management：失败要给得出可执行的下一步）。
-app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
+app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool withModels = false) =>
 {
     var fb = Builders<BsonDocument>.Filter;
     var filter = TenantAccess.Filter(http, fb.Eq("_id", id));
     var doc = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<object>.Fail("NOT_GW_AUTHORITY", "请先将平台认领到 GW，再在 GW 中删除"), jsonOptions, 409);
 
-    var modelCount = await gwModels.CountDocumentsAsync(TenantAccess.Filter(http, fb.Eq("PlatformId", id)));
-    if (modelCount > 0)
+    // 名下模型：默认拦住，但必须给一条**用户真能执行**的出路。
+    //
+    // 第一版只回「先移除模型再删除」——而这个产品里根本没有删 GW 模型的入口
+    // （只有 /gw/models/{id}/api-key），那句指令是无根之木：照着做做不到，
+    // Provider 一旦被用过就永远删不掉。所以把出路做出来：withModels=true 显式级联。
+    // 仍然不默认级联——静默连坐删除不可逆，必须由用户在弹窗里再确认一次。
+    var modelFilter = TenantAccess.Filter(http, fb.Eq("PlatformId", id));
+    var modelCount = await gwModels.CountDocumentsAsync(modelFilter);
+    if (modelCount > 0 && !withModels)
     {
         return Json(ApiEnvelope<object>.Fail(
             "PLATFORM_HAS_MODELS",
-            $"这个 Provider 名下还有 {modelCount} 个模型，先移除模型再删除 Provider。"), jsonOptions, 409);
+            $"这个 Provider 名下还有 {modelCount} 个模型。确认要连同这些模型一起删除吗？"), jsonOptions, 409);
     }
 
+    // 成员数组叫 Models，不叫 Members——全仓其它地方（池成员端点、健康判定、导入）都用 Models。
+    // 第一版写成 Members：字段不存在，查询恒返回空，这条保护从落地起就没生效过，
+    // Provider 被删掉、池里留下解析不了的悬空成员，而日志里一切正常
+    // （predicate-and-wiring-discipline 形状 6：判据读到的不是真正生效的那个值）。
     var referencingPools = await gwModelPools
-        .Find(TenantAccess.Filter(http, fb.ElemMatch<BsonDocument>("Members", fb.Eq("PlatformId", id))))
+        .Find(TenantAccess.Filter(http, fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", id))))
         .Project(Builders<BsonDocument>.Projection.Include("Name")).ToListAsync();
     if (referencingPools.Count > 0)
     {
@@ -7160,6 +7222,14 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
         return Json(ApiEnvelope<object>.Fail(
             "PLATFORM_IN_USE",
             $"还有 {referencingPools.Count} 个模型池引用着它（{names}），先从池里移除再删除。"), jsonOptions, 409);
+    }
+
+    // 顺序要紧：池引用检查已经过了（池里没有指向这个 Provider 的成员），此时删模型才安全。
+    var deletedModels = 0L;
+    if (modelCount > 0)
+    {
+        var del = await gwModels.DeleteManyAsync(modelFilter);
+        deletedModels = del.DeletedCount;
     }
 
     await gwPlatforms.DeleteOneAsync(filter);
@@ -7172,8 +7242,8 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
         targetName: doc.AsNullableString("Name"),
         success: true,
         reason: null,
-        changes: new BsonDocument { { "authority", "llm_gateway" } });
-    return Json(ApiEnvelope<object>.Ok(new { }), jsonOptions);
+        changes: new BsonDocument { { "authority", "llm_gateway" }, { "deletedModels", deletedModels } });
+    return Json(ApiEnvelope<object>.Ok(new { deletedModels }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 平台密钥删除：只允许清理 GW 权威平台的密钥，MAP 来源平台必须先认领。

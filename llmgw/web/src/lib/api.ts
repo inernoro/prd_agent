@@ -798,9 +798,14 @@ export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiRes
 export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
 }
-/** 彻底删除 Provider。后端在名下还有模型 / 被模型池引用时会 409 并说清被谁引用，不做级联。 */
-export function deletePlatform(id: string): Promise<ApiResponse<Record<string, never>>> {
-  return apiRequest<Record<string, never>>(`/platforms/${encodeURIComponent(id)}`, { method: 'DELETE' });
+/**
+ * 彻底删除 Provider。
+ * 名下有模型时后端返回 409 让前端二次确认；`withModels` 为 true 表示用户已确认连模型一起删。
+ * 被模型池引用则一律拒绝（先从池里移除，删掉会留下解析不了的悬空成员）。
+ */
+export function deletePlatform(id: string, withModels = false): Promise<ApiResponse<{ deletedModels: number }>> {
+  const q = withModels ? '?withModels=true' : '';
+  return apiRequest<{ deletedModels: number }>(`/platforms/${encodeURIComponent(id)}${q}`, { method: 'DELETE' });
 }
 export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });

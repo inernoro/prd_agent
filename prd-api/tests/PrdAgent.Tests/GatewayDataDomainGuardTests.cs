@@ -3253,6 +3253,70 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("Reachable = resp.IsSuccessStatusCode,", body);
     }
 
+    /// <summary>
+    /// 两个新端点都会拿着用户填的地址向外发请求，等于新开了一个出口。
+    /// 外部租户必须过与外部 Exchange 同一道内网地址校验，否则 owner 只要把地址填成
+    /// 127.0.0.1 / 10.x / 169.254.169.254，就能拿控制台容器当跳板扫内网和云元数据。
+    /// 探针客户端还必须关掉自动重定向——校验只对最初那个地址成立，跟随 302 就把它绕过去了。
+    /// </summary>
+    [Fact]
+    public void 上游探测端点必须过内网地址校验且不跟随重定向()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("AllowAutoRedirect = false", server);
+        Assert.Contains("ValidateProviderProbeTargetAsync", server);
+
+        foreach (var route in new[] { "/gw/platforms/{id}/test", "/gw/platforms/{id}/upstream-models" })
+        {
+            var start = server.IndexOf(route, StringComparison.Ordinal);
+            Assert.True(start > 0, $"端点 {route} 不见了");
+            var next = server.IndexOf("app.Map", start + route.Length, StringComparison.Ordinal);
+            var body = next > 0 ? server[start..next] : server[start..];
+            Assert.True(
+                body.Contains("ValidateProviderProbeTargetAsync", StringComparison.Ordinal),
+                $"{route} 会向用户填的地址发请求却没过内网校验");
+        }
+    }
+
+    /// <summary>
+    /// 删除 Provider 的池引用检查必须查 Models 数组——全仓其它地方（池成员端点、健康判定、
+    /// 导入）都用这个名字。第一版写成 Members：字段不存在，查询恒返回空，
+    /// 保护从落地起就没生效过，Provider 被删掉、池里留下解析不了的悬空成员，日志毫无异常
+    /// （形状 6：判据读到的不是真正生效的那个值）。
+    /// </summary>
+    [Fact]
+    public void 删除_Provider_的池引用检查必须查真实的成员字段()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = server.IndexOf("app.MapDelete(\"/gw/platforms/{id}\"", StringComparison.Ordinal);
+        Assert.True(start > 0, "Provider 删除端点不见了");
+        var next = server.IndexOf("app.Map", start + 20, StringComparison.Ordinal);
+        var body = next > 0 ? server[start..next] : server[start..];
+
+        Assert.Contains("ElemMatch<BsonDocument>(\"Models\"", body);
+        Assert.DoesNotContain("ElemMatch<BsonDocument>(\"Members\"", body);
+    }
+
+    /// <summary>
+    /// 导入的模型必须写 ModelNameNormalized。唯一索引带 PartialFilterExpression，
+    /// 只覆盖这个字段是字符串的文档——不写就等于这批模型不参与唯一约束，
+    /// 两个并发导入各自算出同一份 existing 快照后双双插入，同名模型重复。
+    /// </summary>
+    [Fact]
+    public void 导入的模型必须参与唯一索引()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = server.IndexOf("/gw/platforms/{id}/models/import", StringComparison.Ordinal);
+        Assert.True(start > 0, "批量导入端点不见了");
+        var next = server.IndexOf("app.MapPost(", start, StringComparison.Ordinal);
+        var body = next > 0 ? server[start..next] : server[start..];
+
+        Assert.Contains("ModelNameNormalized", body);
+        // 并发撞唯一索引要按「已存在」吞掉，不能整批失败
+        Assert.Contains("DuplicateKey", body);
+    }
+
     [Fact]
     public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
     {
