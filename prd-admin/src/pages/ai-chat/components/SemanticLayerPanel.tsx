@@ -64,7 +64,7 @@ export type SemanticLayerPanelProps = {
    */
   intent?: string;
   onIntentChange?: (value: string) => void;
-  /** 上一次分层实际落到的模型；拿不到就不显示，绝不编一个。 */
+  /** 上一次分层落到的模型或能力标识；拿不到就不显示，绝不编一个。 */
   usedModel?: string;
   onResplit: () => void;
   selectedKey?: string;
@@ -86,6 +86,17 @@ export type SemanticLayerPanelProps = {
  * 抽成纯函数是为了它可测：这一行的职责是「把各图层区分开」，
  * 上一版把只有一个值的来源文本放进来，三行显示同一串字，等于白占一行。
  */
+/**
+ * 这串是能力标识还是模型名？
+ *
+ * 分层走「按能力路由」：MAP 只认 image-layering 这个稳定标识，真实上游由网关决定。
+ * 两者长得都像一串 id，含义却完全不同——把能力当模型名显示，等于给用户一个
+ * 他无法据以判断的假事实。
+ */
+export function isCapabilityId(value: string): boolean {
+  return /^image-layering$/i.test(String(value ?? '').trim());
+}
+
 export function layerRowSecondaryText(layer: SemanticLayerPanelLayer): string {
   if (layer.pending) return '生成中';
   if (layer.failed) return '未生成';
@@ -452,16 +463,21 @@ export function SemanticLayerPanel({
             }}
             onChange={(event) => onIntentChange?.(event.target.value)}
           />
-          {/* 有根才写：模型名来自本次分层的解析结果，拿不到就整行不出现，不编。 */}
+          {/* 有根才写。这里拿到的多半是**能力标识**而不是模型名——分层的真实上游由独立网关
+              按健康度路由，MAP 按设计不感知（capability-is-not-model）。所以只能如实说
+              「走了哪条能力」，不能把 image-layering 这种 id 摆出来冒充模型名
+              （2026-08-11 用户截图里就是「本组由 image-layering 拆分」，等于没说）。 */}
           {usedModel ? (
             <div className="text-[10px] leading-4 truncate" style={{ color: 'var(--text-muted)' }} title={usedModel}>
-              {`本组由 ${usedModel} 拆分`}
+              {isCapabilityId(usedModel)
+                ? `本组走「${usedModel}」能力路由，具体模型由网关决定`
+                : `本组由 ${usedModel} 拆分`}
             </div>
           ) : null}
         </div>
         {/* 层数退居次要提示：仍可调，但它不再是唯一的表达方式 */}
         <div className="h-7 flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-          <span className="shrink-0">最多拆</span>
+          <span className="shrink-0">期望拆</span>
           <button
             type="button"
             className="w-5 h-5 rounded-[5px] inline-flex items-center justify-center hover-bg-soft disabled:opacity-30"

@@ -17,21 +17,28 @@ import { getGenAvgMs } from '@/lib/genTiming';
 const STYLE_ID = 'gen-sweep-loader-styles';
 const GLOBAL_CSS = `
 .gen-sweep{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none}
-/* 静止的斜纹底：不参与动画，避免和流光共用一个 background-position。 */
+/* 底：一层几乎看不见的斜纹 + 一层极淡的竖向渐变，给「有东西在酝酿」的质感。 */
 .gen-sweep__fill{position:absolute;inset:0;
-  background:repeating-linear-gradient(45deg, rgba(255,255,255,0.022) 0 12px, transparent 12px 24px);}
-/* 流光单独一层，用 transform 扫过去。
-   旧写法动的是 background-position 的百分比——CSS 里这个百分比是相对
-   「容器宽 - 背景宽」算的，220% 的背景让分母变成负数，一个周期走的距离
-   和一个平铺周期对不上，于是每圈结尾都要「跳」一下回到起点（用户原话：
-   每次进行到最后一点总是抽搐一下）。改成 transform 平移，且两端都完全移出
-   容器（-120% → 220%），重新开始那一帧在画面外，看不见接缝。 */
-.gen-sweep__glare{position:absolute;top:0;bottom:0;left:0;width:60%;
-  background:linear-gradient(100deg, transparent 0%, rgba(129,140,248,0.20) 50%, transparent 100%);
+  background:
+    linear-gradient(180deg, rgba(129,140,248,0.05) 0%, transparent 45%, rgba(129,140,248,0.04) 100%),
+    repeating-linear-gradient(45deg, rgba(255,255,255,0.014) 0 14px, transparent 14px 28px);}
+/* 流光：宽而软的一道柔光，不是一条亮带。
+   上一版是 60% 宽、峰值 0.20 的三段渐变，边缘硬、亮度跳，扫过去像一把尺子在刮
+   （2026-08-11 用户原话：这个版本的流光太丑了吧）。这一版拉到 92% 宽、峰值 0.10、
+   五段渐变把两侧化开，周期放慢到 2.8s，整体更像光线缓缓掠过表面。
+   仍然用 transform 平移（不是 background-position 百分比），两端完全移出容器，
+   所以循环处没有接缝、不会抽搐。 */
+.gen-sweep__glare{position:absolute;top:-10%;bottom:-10%;left:0;width:92%;
+  background:linear-gradient(108deg,
+    transparent 0%,
+    rgba(148,163,255,0.015) 22%,
+    rgba(165,180,252,0.10) 50%,
+    rgba(148,163,255,0.015) 78%,
+    transparent 100%);
   will-change:transform;
-  animation:gen-sweep-move 1.6s linear infinite;}
-@keyframes gen-sweep-move{from{transform:translate3d(-120%,0,0)}to{transform:translate3d(220%,0,0)}}
-@media (prefers-reduced-motion: reduce){.gen-sweep__glare{animation:none;opacity:.35;transform:translate3d(50%,0,0)}}
+  animation:gen-sweep-move 2.8s linear infinite;}
+@keyframes gen-sweep-move{from{transform:translate3d(-110%,0,0)}to{transform:translate3d(210%,0,0)}}
+@media (prefers-reduced-motion: reduce){.gen-sweep__glare{animation:none;opacity:.5;transform:translate3d(5%,0,0)}}
 /* 宽度必须除以 invZoom，否则计时条会「涨」出卡片被裁掉。
    推导：布局宽 L 经 scale(1/zoom) 之后的屏幕宽恒为 L，而卡片的屏幕宽是 cardW*zoom；
    zoom 越小卡片越窄、计时条却纹丝不动，zoom<0.78 时它就比卡片还宽，

@@ -141,6 +141,18 @@ describe('分层内容判定的接线', () => {
     expect(code).toMatch(/const keys = frame\.layerKeys;/);
   });
 
+  it('【关键】不许把能力标识当模型名显示，也不许承诺做不到的层数上限', () => {
+    // 2026-08-11 用户截图：面板写着「本组由 image-layering 拆分」——那是能力标识不是模型，
+    // 用户据此判断不了任何东西；旁边还写着「最多拆 3 层」而模型实际给了 4 层。
+    const panel = read(PANEL);
+    expect(panel).toContain('export function isCapabilityId');
+    expect(panel).toMatch(/isCapabilityId\(usedModel\)/);
+    expect(panel).toMatch(/能力路由，具体模型由网关决定/);
+    // 「最多」是个做不到的承诺，层数只能是期望值。
+    expect(panel).not.toMatch(/>最多拆</);
+    expect(panel).toMatch(/>期望拆</);
+  });
+
   it('【关键】等待动效不许用 background-position 百分比做循环', () => {
     // 那个百分比是相对「容器宽 - 背景宽」算的，背景比容器宽时分母为负，
     // 一圈走的距离和平铺周期对不上，每圈结尾都要跳一下

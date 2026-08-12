@@ -342,7 +342,7 @@ async function main() {
     // ---- 层数：面板显示的数字必须能解释实到层数
     const countText = await page.evaluate(() => {
       const t = document.body.innerText;
-      const next = (t.match(/最多拆[\s\S]{0,12}?(\d+)[\s\S]{0,4}?层/) || [])[1];
+      const next = (t.match(/期望拆[\s\S]{0,12}?(\d+)[\s\S]{0,4}?层/) || [])[1];
       const explain = /本次请求 \d+ 层，模型实际给出 \d+ 层/.test(t);
       return { next: next ? Number(next) : null, explain };
     });
@@ -419,8 +419,17 @@ async function main() {
       return el ? { ok: true, placeholder: el.placeholder } : { ok: false, placeholder: '' };
     });
     check('图层面板有自然语言拆法输入框', intentBox.ok, intentBox.placeholder);
-    const modelLine = await page.evaluate(() => /本组由 .+ 拆分/.test(document.body.innerText));
-    check('图层面板显示本组由哪个模型拆分', modelLine);
+    // 这里能拿到的多半是能力标识（image-layering），不是模型名。判据只认「如实说清是哪一条」，
+    // 不认「把能力 id 摆出来当模型名」——后者是假事实，用户据此判断不了任何东西。
+    const modelLine = await page.evaluate(() => ({
+      honest: /本组走「.+」能力路由，具体模型由网关决定|本组由 .+ 拆分/.test(document.body.innerText),
+      fake: /本组由 image-layering 拆分/.test(document.body.innerText),
+    }));
+    check('图层面板如实说明本组走了哪条能力/模型', modelLine.honest && !modelLine.fake,
+      modelLine.fake ? '把能力标识 image-layering 当模型名显示了' : '');
+    // 「最多拆 N 层」是个做不到的承诺：模型可能给得更多（实测请求 3 层给了 4 层）。
+    const capWording = await page.evaluate(() => /最多拆/.test(document.body.innerText));
+    check('层数文案不承诺做不到的上限', !capWording, capWording ? '仍写着「最多拆」' : '');
 
     // ---- 刷新后排版不塌
     // 先等画布静止：裁剪落位是异步的（读图 → 量包围盒 → 上传裁剪结果 → 回写），
