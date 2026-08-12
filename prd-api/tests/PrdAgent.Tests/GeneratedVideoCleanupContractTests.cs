@@ -32,9 +32,12 @@ public class GeneratedVideoCleanupContractTests
         var service = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/Services/VideoGenService.cs"));
 
-        Assert.Contains(".Set(x => x.VideoAssetSha256, finalSha256)", worker);
+        Assert.Contains(".Set(x => x.VideoAssetSha256, stored.Sha256)", worker);
         Assert.Contains("AssetSha256 = stored.Sha256", worker);
         Assert.Contains("[HttpDelete(\"runs/{runId}\")]", controller);
+        Assert.Contains("[HttpGet(\"runs/{runId}/download\")]", controller);
+        Assert.Contains("TryReadByShaAsync", controller);
+        Assert.Contains("$\"video-{run.Id}.mp4\"", controller);
         Assert.Contains("GetAdminId()", controller);
         Assert.Contains("DeleteByShaAsync", service);
         Assert.Contains("sharedReferenceCount", service);

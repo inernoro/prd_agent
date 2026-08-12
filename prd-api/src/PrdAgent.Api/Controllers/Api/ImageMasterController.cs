@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Servers;
 using PrdAgent.Core.Interfaces;
@@ -538,7 +539,10 @@ public class ImageMasterController : ControllerBase
             try
             {
                 var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
-                if (remain <= 0)
+                var uploadArtifactRefs = await _db.UploadArtifacts.CountDocumentsAsync(
+                    x => x.Sha256 == a.Sha256,
+                    cancellationToken: ct);
+                if (remain <= 0 && uploadArtifactRefs <= 0)
                 {
                     await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                 }
@@ -549,16 +553,51 @@ public class ImageMasterController : ControllerBase
             }
         }
 
-        // 4) 删除该工作区的已结束生图任务及其明细和持久化事件，避免测试工作区或普通
-        // 用户工作区删除后留下无法访问的孤儿任务。运行中的任务已在上方阻止删除。
+        // 4) 先清理生图请求产生的 UploadArtifacts 和底层对象，再删除运行归属。requestId
+        // 固定为 {runId}-{itemIndex}-{imageIndex}；若先删 run，就会丢失唯一可追踪的所有权链。
         if (imageRunIds.Length > 0)
         {
+            var artifactFilters = imageRunIds
+                .Select(runId => Builders<UploadArtifact>.Filter.Regex(
+                    x => x.RequestId,
+                    new BsonRegularExpression($"^{Regex.Escape(runId)}-\\d+-\\d+$")))
+                .ToArray();
+            var runArtifactFilter = Builders<UploadArtifact>.Filter.Or(artifactFilters);
+            var runArtifacts = await _db.UploadArtifacts.Find(runArtifactFilter).ToListAsync(ct);
+            var runArtifactIds = runArtifacts.Select(x => x.Id).ToArray();
+
+            foreach (var sha in runArtifacts
+                         .Select(x => x.Sha256?.Trim().ToLowerInvariant())
+                         .Where(x => !string.IsNullOrWhiteSpace(x))
+                         .Distinct(StringComparer.Ordinal))
+            {
+                var otherArtifactFilter = Builders<UploadArtifact>.Filter.And(
+                    Builders<UploadArtifact>.Filter.Eq(x => x.Sha256, sha),
+                    Builders<UploadArtifact>.Filter.Nin(x => x.Id, runArtifactIds));
+                var otherArtifactRefs = await _db.UploadArtifacts.CountDocumentsAsync(otherArtifactFilter, cancellationToken: ct);
+                var imageAssetRefs = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == sha, cancellationToken: ct);
+                if (otherArtifactRefs == 0 && imageAssetRefs == 0)
+                {
+                    await _assetStorage.DeleteByShaAsync(
+                        sha!,
+                        ct,
+                        domain: AppDomainPaths.DomainVisualAgent,
+                        type: AppDomainPaths.TypeImg);
+                }
+            }
+
+            if (runArtifactIds.Length > 0)
+            {
+                await _db.UploadArtifacts.DeleteManyAsync(x => runArtifactIds.Contains(x.Id), ct);
+            }
+
+            // 5) 产物清理完成后才删除任务明细、事件和 run，保留失败后的可重试归属链。
             await _db.ImageGenRunItems.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
             await _db.ImageGenRunEvents.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
             await _db.ImageGenRuns.DeleteManyAsync(x => imageRunIds.Contains(x.Id), ct);
         }
 
-        // 5) 删除 workspace
+        // 6) 删除 workspace
         await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == wid, ct);
 
         var payload = new { deleted = true };

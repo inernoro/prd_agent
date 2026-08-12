@@ -1145,6 +1145,7 @@ export const api = {
       list: () => '/api/video-agent/runs',
       create: () => '/api/video-agent/runs',
       byId: (runId: string) => `/api/video-agent/runs/${runId}`,
+      download: (runId: string) => `/api/video-agent/runs/${runId}/download`,
       cancel: (runId: string) => `/api/video-agent/runs/${runId}/cancel`,
       stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
       export: (runId: string) => `/api/video-agent/runs/${runId}/export`,

@@ -1255,6 +1255,25 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void WorkspaceDeletion_CleansGeneratedArtifactsBeforeRemovingRunOwnership()
+    {
+        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var collectArtifacts = controller.IndexOf("var runArtifacts = await _db.UploadArtifacts.Find", StringComparison.Ordinal);
+        var referenceCheck = controller.IndexOf("var otherArtifactRefs = await _db.UploadArtifacts.CountDocumentsAsync", StringComparison.Ordinal);
+        var deleteObject = controller.IndexOf("await _assetStorage.DeleteByShaAsync(", collectArtifacts, StringComparison.Ordinal);
+        var deleteArtifactRecords = controller.IndexOf("await _db.UploadArtifacts.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
+        var deleteRun = controller.IndexOf("await _db.ImageGenRuns.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
+
+        Assert.True(collectArtifacts >= 0, "工作区删除必须先按 runId 收集生成产物");
+        Assert.True(referenceCheck > collectArtifacts, "删除对象前必须检查其他产物引用");
+        Assert.Contains("var uploadArtifactRefs = await _db.UploadArtifacts.CountDocumentsAsync", controller);
+        Assert.Contains("var imageAssetRefs = await _db.ImageAssets.CountDocumentsAsync", controller);
+        Assert.True(deleteObject > referenceCheck, "引用检查通过后才能删除底层对象");
+        Assert.True(deleteArtifactRecords > deleteObject, "底层对象处理完成后才能删除产物记录");
+        Assert.True(deleteRun > deleteArtifactRecords, "必须最后删除 run，避免清理失败后失去归属链");
+    }
+
+    [Fact]
     public void ExecDep_RequiresReleaseGateBeforeFullHttpOrCanaryMode()
     {
         var script = ReadRepoFile("exec_dep.sh");

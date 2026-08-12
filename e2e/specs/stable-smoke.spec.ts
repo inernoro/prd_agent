@@ -152,6 +152,7 @@ type ImageModelPool = {
 
 type ImageRunDetail = {
   run: {
+    id: string;
     status: string;
     total: number;
     done: number;
@@ -166,12 +167,25 @@ type ImageRunDetail = {
   };
   items: Array<{
     status: string;
+    prompt?: string;
     requestedSize?: string;
     effectiveSize?: string;
     base64?: string;
     url?: string;
     errorMessage?: string;
   }>;
+};
+
+type UploadArtifactItem = {
+  id: string;
+  requestId: string;
+  kind: string;
+  sha256: string;
+  mime: string;
+  width: number;
+  height: number;
+  sizeBytes: number;
+  cosUrl: string;
 };
 
 type GatewayOffering = {
@@ -512,6 +526,123 @@ async function assertImageArtifact(page: Page, detail: ImageRunDetail) {
   } else {
     expect(Buffer.from(item.base64 || '', 'base64').byteLength).toBeGreaterThan(512);
   }
+}
+
+function detectImageMime(buffer: Buffer) {
+  if (buffer.length >= 24 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+    return 'image/png';
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF'
+      && buffer.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp';
+  }
+  throw new Error('下载文件不是受支持的 PNG、JPEG 或 WebP 图片');
+}
+
+function extensionForImageMime(mime: string) {
+  if (mime === 'image/png') return '.png';
+  if (mime === 'image/jpeg') return '.jpg';
+  if (mime === 'image/webp') return '.webp';
+  return '';
+}
+
+async function decodeDownloadedImageDimensions(page: Page, buffer: Buffer, mime: string) {
+  return page.evaluate(async ({ base64, contentType }) => {
+    const image = new Image();
+    image.src = `data:${contentType};base64,${base64}`;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  }, { base64: buffer.toString('base64'), contentType: mime });
+}
+
+async function probeImageRunSse(
+  page: Page,
+  token: string,
+  runId: string,
+  afterSeq: number,
+  stopMode: 'active' | 'next',
+) {
+  return page.evaluate(async ({ streamPath, bearer, resumeAfter, mode }) => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 30_000);
+    const ids: number[] = [];
+    const eventTypes: string[] = [];
+    let heartbeats = 0;
+    let contentType = '';
+    let stoppedAfterActiveEvent = false;
+    let buffer = '';
+
+    try {
+      const response = await fetch(`${streamPath}?afterSeq=${resumeAfter}`, {
+        headers: { Authorization: `Bearer ${bearer}`, Accept: 'text/event-stream' },
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      contentType = response.headers.get('content-type') || '';
+      if (!response.ok || !response.body) {
+        return { ok: false, status: response.status, contentType, ids, eventTypes, heartbeats, stoppedAfterActiveEvent };
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let shouldStop = false;
+      while (!shouldStop) {
+        const chunk = await reader.read();
+        buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done }).replaceAll('\r\n', '\n');
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          if (frame.startsWith(':')) {
+            heartbeats += 1;
+          } else {
+            const lines = frame.split('\n');
+            const id = Number(lines.find((line) => line.startsWith('id:'))?.slice(3).trim() || 0);
+            const data = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+            let eventType = lines.find((line) => line.startsWith('event:'))?.slice(6).trim() || '';
+            let status = '';
+            try {
+              const payload = JSON.parse(data) as { type?: unknown; status?: unknown };
+              eventType = String(payload.type || eventType);
+              status = String(payload.status || '');
+            } catch {
+              // SSE 数据不一定都是 JSON；event 名仍可用于连续性判断。
+            }
+            if (id > 0) ids.push(id);
+            if (eventType) eventTypes.push(eventType);
+            const active = /runStart|imageStart|progress/i.test(eventType) || /Queued|Running/i.test(status);
+            if (id > resumeAfter && (mode === 'next' || active)) {
+              stoppedAfterActiveEvent = active;
+              shouldStop = true;
+              break;
+            }
+          }
+          boundary = buffer.indexOf('\n\n');
+        }
+        if (chunk.done) break;
+      }
+      if (shouldStop) {
+        controller.abort();
+        await reader.cancel().catch(() => undefined);
+      }
+      return { ok: true, status: response.status, contentType, ids, eventTypes, heartbeats, stoppedAfterActiveEvent };
+    } catch (error) {
+      if (controller.signal.aborted && ids.length > 0) {
+        return { ok: true, status: 200, contentType, ids, eventTypes, heartbeats, stoppedAfterActiveEvent };
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, {
+    streamPath: `/api/visual-agent/image-gen/runs/${runId}/stream`,
+    bearer: token,
+    resumeAfter: afterSeq,
+    mode: stopMode,
+  });
 }
 
 async function decodeGeneratedImageDimensions(page: Page, item: ImageRunDetail['items'][number]) {
@@ -1356,7 +1487,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.locator('video'), '完成后页面必须显示可播放视频').toBeVisible({ timeout: 30_000 });
       await expect(page.getByText('已完成', { exact: true }).first(), '页面必须显示生成完成阶段').toBeVisible();
       visibleStages.add('已完成');
-      await expect(page.getByRole('link', { name: '下载 MP4' }).first(), '完成后页面必须显示下载入口').toBeVisible();
+      const downloadButton = page.getByRole('button', { name: '下载 MP4' }).first();
+      await expect(downloadButton, '完成后页面必须显示下载入口').toBeVisible();
       const browserMedia = await page.locator('video').evaluate(async (element) => {
         const video = element as HTMLVideoElement;
         if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
@@ -1383,11 +1515,23 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(browserMedia.width, '浏览器必须解码出有效视频画面').toBeGreaterThan(0);
       expect(browserMedia.height, '浏览器必须解码出有效视频画面').toBeGreaterThan(0);
 
-      const video = await page.request.get(videoUrl, { timeout: 180_000 });
-      expect(video.ok()).toBe(true);
-      expect(video.headers()['content-type'] || '').toMatch(/^video\/mp4/i);
+      const [downloadResponse, download] = await Promise.all([
+        page.waitForResponse((response) => (
+          response.request().method() === 'GET'
+          && new URL(response.url()).pathname === `/api/video-agent/runs/${encodeURIComponent(runId)}/download`
+        )),
+        page.waitForEvent('download'),
+        downloadButton.click(),
+      ]);
+      expect(downloadResponse.ok(), '视频下载端点必须成功返回').toBe(true);
+      expect(downloadResponse.headers()['content-type'] || '').toMatch(/^video\/mp4/i);
+      expect(downloadResponse.headers()['content-disposition'] || '').toContain(`video-${runId}.mp4`);
+      expect(await download.failure(), '浏览器下载过程不得失败').toBeNull();
+      expect(download.suggestedFilename()).toBe(`video-${runId}.mp4`);
+      const downloadedPath = await download.path();
+      expect(downloadedPath, '浏览器必须落下真实 MP4 文件').toBeTruthy();
       expect(new URL(videoUrl).pathname).toMatch(/\.mp4$/i);
-      const videoBytes = await video.body();
+      const videoBytes = readFileSync(downloadedPath!);
       expect(videoBytes.byteLength).toBeGreaterThan(1024);
       const container = inspectMp4(videoBytes);
       expect(container.durationSeconds, 'MP4 容器声明的时长必须大于零').toBeGreaterThan(0);
@@ -2332,7 +2476,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
+    const generationPrompt = '一枚放在纯白背景上的蓝色陶瓷杯，产品摄影，柔和自然光，不要文字';
     let runId = '';
+    let generatedArtifacts: UploadArtifactItem[] = [];
     try {
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) });
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
@@ -2342,7 +2488,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-run` },
         data: {
-          prompt: '一枚放在纯白背景上的蓝色陶瓷杯，产品摄影，柔和自然光，不要文字',
+          prompt: generationPrompt,
           userMessageContent: '生成一枚纯白背景上的蓝色陶瓷杯',
           targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-target`,
           platformId: 'logical-model',
@@ -2358,10 +2504,27 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const created = await readEnvelope<{ runId: string }>(create);
       runId = created.runId;
 
-      const streamPromise = page.request.get(`/api/visual-agent/image-gen/runs/${runId}/stream`, {
-        headers: authHeaders(token),
-        timeout: 180_000,
-      });
+      const firstStream = await probeImageRunSse(page, token, runId, 0, 'active');
+      expect(firstStream.ok).toBe(true);
+      expect(firstStream.contentType).toContain('text/event-stream');
+      expect(firstStream.stoppedAfterActiveEvent, '首次 SSE 必须在非终态事件后主动断开').toBe(true);
+      expect(firstStream.ids.length).toBeGreaterThan(0);
+      const lastObservedSeq = Math.max(...firstStream.ids);
+      const activeRun = await readEnvelope<ImageRunDetail>(await page.request.get(
+        `/api/visual-agent/image-gen/runs/${runId}?includeItems=true&includeImages=false`,
+        { headers: authHeaders(token) },
+      ));
+      expect(activeRun.run.status, 'SSE 中断必须发生在任务仍处于活跃状态时').toMatch(/Queued|Running/i);
+
+      const resumedStream = await probeImageRunSse(page, token, runId, lastObservedSeq, 'next');
+      expect(resumedStream.ok).toBe(true);
+      expect(resumedStream.contentType).toContain('text/event-stream');
+      expect(resumedStream.ids.some((seq) => seq > lastObservedSeq), '续传必须从 afterSeq 之后收到新事件').toBe(true);
+      expect(
+        [...firstStream.eventTypes, ...resumedStream.eventTypes].join(','),
+        'SSE 中断和续传之间必须存在可见进度连续性',
+      ).toMatch(/runStart|imageStart|progress/i);
+
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissVisualTutorial(page);
       const progress = page.getByTestId('generation-progress').first();
@@ -2376,11 +2539,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const completed = await waitForImageRun(page, token, runId);
       expect(completed.statuses.length).toBeGreaterThanOrEqual(2);
-      const stream = await streamPromise;
-      expect(stream.ok()).toBe(true);
-      expect(stream.headers()['content-type'] || '').toContain('text/event-stream');
-      expect(await stream.text()).toMatch(/(?:keepalive|progress|completed|done)/i);
       await assertImageArtifact(page, completed.detail);
+      const artifactResult = await readEnvelope<{ items: UploadArtifactItem[] }>(await page.request.get(
+        `/api/visual-agent/upload-artifacts?requestId=${encodeURIComponent(`${runId}-0-0`)}`,
+        { headers: authHeaders(token) },
+      ));
+      generatedArtifacts = artifactResult.items.filter((item) => item.kind === 'output_image');
+      expect(generatedArtifacts.length, '真实生图必须登记可清理的输出产物').toBeGreaterThan(0);
       const gatewayLog = await waitForGatewayLog(request, `${runId}-0-0`);
       expect(gatewayLog.logicalModelPublicId, '真实生图日志必须记录逻辑模型').toBe(pool!.code);
       expect(gatewayLog.offeringId, '真实生图日志必须记录实际 Offering').toBeTruthy();
@@ -2402,6 +2567,27 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { message: '画布图片必须完成浏览器解码', timeout: 30_000 },
       ).toBeGreaterThan(0);
       await generatedImage.evaluate((image) => (image as HTMLImageElement).decode());
+      await generatedImage.click();
+      const downloadButton = page.getByTitle('下载图片').first();
+      await expect(downloadButton, '选中生成图后必须出现真实下载操作').toBeVisible();
+      const [download] = await Promise.all([
+        page.waitForEvent('download'),
+        downloadButton.click(),
+      ]);
+      expect(await download.failure()).toBeNull();
+      const downloadedPath = await download.path();
+      expect(downloadedPath, '浏览器必须产生可读取的下载文件').toBeTruthy();
+      const downloadedBytes = readFileSync(downloadedPath!);
+      expect(downloadedBytes.byteLength).toBeGreaterThan(512);
+      const downloadedMime = detectImageMime(downloadedBytes);
+      const expectedExtension = extensionForImageMime(downloadedMime);
+      expect(download.suggestedFilename()).toContain('蓝色陶瓷杯');
+      expect(download.suggestedFilename().toLowerCase().endsWith(expectedExtension)).toBe(true);
+      expect(generatedArtifacts.some((artifact) => artifact.mime === downloadedMime)).toBe(true);
+      const downloadedDimensions = await decodeDownloadedImageDimensions(page, downloadedBytes, downloadedMime);
+      const requestedDimensions = String(completed.detail.items[0].requestedSize || '').split('x').map(Number);
+      expect(downloadedDimensions).toEqual({ width: requestedDimensions[0], height: requestedDimensions[1] });
+      await testInfo.attach('single-image-download', { body: downloadedBytes, contentType: downloadedMime });
       await page.waitForTimeout(500);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
@@ -2422,6 +2608,26 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
       if (runId) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+      for (const artifact of generatedArtifacts) {
+        const remaining = await readEnvelope<{ items: UploadArtifactItem[] }>(await page.request.get(
+          `/api/visual-agent/upload-artifacts?requestId=${encodeURIComponent(artifact.requestId)}`,
+          { headers: authHeaders(token) },
+        ));
+        expect(remaining.items.some((item) => item.id === artifact.id), '工作区删除后不得残留生成产物记录').toBe(false);
+        await expect.poll(async () => {
+          try {
+            const separator = artifact.cosUrl.includes('?') ? '&' : '?';
+            const response = await page.request.get(`${artifact.cosUrl}${separator}deletedProbe=${Date.now()}`);
+            return response.status();
+          } catch {
+            return 0;
+          }
+        }, {
+          message: `工作区删除后底层生成对象必须不可访问：${artifact.sha256}`,
+          timeout: 20_000,
+          intervals: [500, 1_000, 2_000],
+        }).not.toBe(200);
       }
     }
   });
@@ -2509,9 +2715,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         });
         return readEnvelope<{ asset: { sha256: string; url: string } }>(response);
       };
-      const first = await uploadAsset(solidPngDataUrl(35, 90, 190), 'blue-reference');
-      const second = await uploadAsset(solidPngDataUrl(235, 190, 55), 'yellow-reference');
-      const third = await uploadAsset(solidPngDataUrl(210, 55, 75), 'red-reference');
+      const blueReferenceData = solidPngDataUrl(35, 90, 190);
+      const yellowReferenceData = solidPngDataUrl(235, 190, 55);
+      const redReferenceData = solidPngDataUrl(210, 55, 75);
+      const first = await uploadAsset(blueReferenceData, 'blue-reference');
+      const second = await uploadAsset(yellowReferenceData, 'yellow-reference');
+      const third = await uploadAsset(redReferenceData, 'red-reference');
 
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) });
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
@@ -2562,6 +2771,23 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         return createdRunId;
       };
 
+      const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
+        const log = await waitForGatewayLog(request, `${runId}-0-0`);
+        expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
+        expect(log.protocol).toBe('openrouter-image');
+        const requestBody = JSON.parse(log.requestBodyRedacted || '{}') as {
+          input_references?: Array<{ type?: string; image_url?: { url?: string } }>;
+        };
+        const wireReferences = requestBody.input_references || [];
+        expect(wireReferences, '网关请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
+        expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
+        expect(wireReferences.map((item) => item.image_url?.url)).toEqual(expectedDataUrls);
+        expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
+        expect(log.answerText || '').toMatch(/"data"\s*:\s*\[/);
+        expect(log.answerText || '').not.toMatch(/input must have at least|chat\/completions|modalities/i);
+        return log;
+      };
+
       const twoRunId = await createMultiRun(
         'two-reference-run',
         '参考 @img1 的蓝色主体与 @img2 的黄色风格，生成一个蓝黄双色极简包装盒，纯白背景，不要文字',
@@ -2573,13 +2799,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       );
       const twoCompleted = await waitForImageRun(page, token, twoRunId);
       await assertImageArtifact(page, twoCompleted.detail);
-      const protocolLog = await waitForGatewayLog(request, `${twoRunId}-0-0`);
-      expect(protocolLog.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
-      expect(protocolLog.protocol).toBe('openrouter-image');
-      expect(protocolLog.requestBodyRedacted || '').toMatch(/"input_references"\s*:\s*\[(?!\s*\])/);
-      expect(protocolLog.imageSuccessCount || 0).toBeGreaterThan(0);
-      expect(protocolLog.answerText || '').toMatch(/"data"\s*:\s*\[/);
-      expect(protocolLog.answerText || '').not.toMatch(/input must have at least|chat\/completions|modalities/i);
+      await assertWireReferences(twoRunId, [blueReferenceData, yellowReferenceData]);
       const restoredTwo = (await readEnvelope<ImageRunDetail>(
         await page.request.get(`/api/visual-agent/image-gen/runs/${twoRunId}?includeItems=true`, { headers: authHeaders(token) }),
       )).run;
@@ -2587,6 +2807,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { refId: 1, label: '蓝色参考', role: 'target' },
         { refId: 2, label: '黄色参考', role: 'style' },
       ]);
+
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissVisualTutorial(page);
 
       const threeRunId = await createMultiRun(
         'three-reference-run',
@@ -2599,8 +2822,43 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         ],
       );
 
+      const activeBeforeRefresh = (await readEnvelope<ImageRunDetail>(
+        await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) }),
+      )).run;
+      expect(activeBeforeRefresh.status, '刷新动作必须发生在三图任务仍在运行时').toMatch(/Queued|Running/i);
+      expect(activeBeforeRefresh.imageRefs?.map((item) => item.assetSha256)).toEqual([
+        first.asset.sha256,
+        second.asset.sha256,
+        third.asset.sha256,
+      ]);
+
+      const createRequestsDuringRestore: string[] = [];
+      const recordCreateRequest = (requestItem: import('@playwright/test').Request) => {
+        if (requestItem.method() === 'POST'
+          && new URL(requestItem.url()).pathname.endsWith(`/workspaces/${workspace.id}/image-gen/runs`)) {
+          createRequestsDuringRestore.push(requestItem.url());
+        }
+      };
+      page.on('request', recordCreateRequest);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissVisualTutorial(page);
+      await expect(page.getByTestId('generation-progress').first(), '刷新后必须恢复同一任务的生成进度').toBeVisible({ timeout: 30_000 });
+      const restoredActive = (await readEnvelope<ImageRunDetail>(
+        await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) }),
+      )).run;
+      expect(restoredActive.status, '刷新完成后原三图任务仍应处于活动状态').toMatch(/Queued|Running/i);
+      expect(restoredActive.id).toBe(threeRunId);
+      expect(restoredActive.imageRefs?.map((item) => item.assetSha256)).toEqual([
+        first.asset.sha256,
+        second.asset.sha256,
+        third.asset.sha256,
+      ]);
+      expect(createRequestsDuringRestore, '刷新恢复不得偷偷创建新的生图任务').toEqual([]);
+      page.off('request', recordCreateRequest);
+
       const completed = await waitForImageRun(page, token, threeRunId);
       await assertImageArtifact(page, completed.detail);
+      await assertWireReferences(threeRunId, [blueReferenceData, yellowReferenceData, redReferenceData]);
       const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) });
       const restoredRun = (await readEnvelope<ImageRunDetail>(afterRefresh)).run;
       expect(restoredRun.status).toBe('Completed');
@@ -2616,9 +2874,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(messageText).toContain('@img2');
       expect(messageText).toContain('@img3');
 
-      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissVisualTutorial(page);
-      const generatedImage = page.getByTestId('canvas-image').first();
+      const generatedImage = page.getByTestId('canvas-image').last();
       await expect(generatedImage, '多图生成完成后页面必须恢复真实图片').toBeVisible({ timeout: 30_000 });
       await expect.poll(
         () => generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),

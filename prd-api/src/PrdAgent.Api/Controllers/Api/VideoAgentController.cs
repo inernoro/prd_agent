@@ -9,6 +9,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -28,6 +29,7 @@ public class VideoAgentController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoAgentController> _logger;
     private readonly IDataProtector _directVideoJobProtector;
 
@@ -41,6 +43,7 @@ public class VideoAgentController : ControllerBase
         IModelPoolQueryService modelPoolQuery,
         IOpenRouterVideoClient videoClient,
         ILLMRequestContextAccessor llmRequestContext,
+        IAssetStorage assetStorage,
         IDataProtectionProvider dataProtectionProvider,
         ILogger<VideoAgentController> logger)
     {
@@ -50,6 +53,7 @@ public class VideoAgentController : ControllerBase
         _modelPoolQuery = modelPoolQuery;
         _videoClient = videoClient;
         _llmRequestContext = llmRequestContext;
+        _assetStorage = assetStorage;
         _logger = logger;
         _directVideoJobProtector = dataProtectionProvider.CreateProtector(
             "PrdAgent.VideoAgent.DirectJobOwnership.v1");
@@ -524,6 +528,43 @@ public class VideoAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
         return Ok(ApiResponse<VideoGenRun>.Ok(run));
+    }
+
+    /// <summary>
+    /// 下载当前用户已完成的视频产物。
+    /// 通过受鉴权的业务端点返回稳定文件名，避免前端直接打开对象存储链接。
+    /// </summary>
+    [HttpGet("runs/{runId}/download")]
+    [Produces("video/mp4")]
+    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DownloadRun(string runId, CancellationToken ct)
+    {
+        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), ct: ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+
+        if (run.Status != VideoGenRunStatus.Completed || string.IsNullOrWhiteSpace(run.VideoAssetSha256))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "视频尚未生成完成，请等待完成后再下载"));
+        }
+
+        var asset = await _assetStorage.TryReadByShaAsync(
+            run.VideoAssetSha256,
+            ct,
+            domain: AppDomainPaths.DomainVideoAgent,
+            type: AppDomainPaths.TypeVideo);
+        if (asset == null || asset.Value.bytes.Length == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请重新生成后再下载"));
+        }
+
+        return File(asset.Value.bytes, "video/mp4", $"video-{run.Id}.mp4");
     }
 
 

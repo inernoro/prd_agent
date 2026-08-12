@@ -19,6 +19,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
   createVideoGenRunReal,
+  downloadVideoGenRunReal,
   getVideoGenRunReal,
 } from '@/services/real/videoAgent';
 import {
@@ -63,6 +64,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
   const [currentRun, setCurrentRun] = useState<VideoGenRun | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 清理轮询
@@ -78,6 +80,26 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
   const isActive = currentRun && ['Queued', 'Rendering'].includes(currentRun.status);
   const isCompleted = currentRun?.status === 'Completed' && !!currentRun.videoAssetUrl;
   const isFailed = currentRun?.status === 'Failed' || currentRun?.status === 'Cancelled';
+
+  const handleDownload = useCallback(async () => {
+    if (!currentRun?.id || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const file = await downloadVideoGenRunReal(currentRun.id);
+      const url = URL.createObjectURL(file.blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '视频下载失败，请稍后重试');
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [currentRun?.id, isDownloading]);
 
   const startPolling = useCallback((runId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -432,15 +454,14 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               </Button>
             )}
             {isCompleted && currentRun?.videoAssetUrl && (
-              <a
-                href={currentRun.videoAssetUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg"
-                style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDownload}
+                disabled={isDownloading}
               >
-                <Download size={12} /> 下载 MP4
-              </a>
+                <Download size={12} /> {isDownloading ? '下载中…' : '下载 MP4'}
+              </Button>
             )}
 
             {/* 主按钮 */}
@@ -489,15 +510,14 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               </Button>
             )}
             {isCompleted && currentRun?.videoAssetUrl && (
-              <a
-                href={currentRun.videoAssetUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg"
-                style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDownload}
+                disabled={isDownloading}
               >
-                <Download size={12} /> 下载 MP4
-              </a>
+                <Download size={12} /> {isDownloading ? '下载中…' : '下载 MP4'}
+              </Button>
             )}
           </div>
         )}

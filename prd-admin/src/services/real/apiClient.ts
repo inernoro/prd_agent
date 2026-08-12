@@ -243,6 +243,79 @@ export async function apiRequest<T>(
   return await apiRequestInner<T>(path, options, false);
 }
 
+export interface ApiDownloadedFile {
+  blob: Blob;
+  fileName: string;
+  contentType: string;
+}
+
+function readDownloadFileName(header: string | null, fallback: string) {
+  if (!header) return fallback;
+  const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8.replace(/^"|"$/g, ''));
+    } catch {
+      return fallback;
+    }
+  }
+  return header.match(/filename="?([^";]+)"?/i)?.[1] || fallback;
+}
+
+export async function apiDownload(
+  path: string,
+  fallbackFileName: string,
+  didRefresh = false,
+): Promise<ApiDownloadedFile> {
+  const authStore = useAuthStore.getState();
+  if (!authStore.token) throw new Error('当前尚未登录，请登录后重试。');
+
+  const headers: Record<string, string> = {
+    Accept: 'application/octet-stream',
+    Authorization: `Bearer ${authStore.token}`,
+    'X-Client': 'admin',
+    'X-Client-Base-Url': window.location.origin,
+  };
+  const appName = resolveAdminAppName();
+  if (appName) headers['X-App-Name'] = appName;
+
+  let response: Response;
+  try {
+    response = await fetch(joinUrl(getApiBaseUrl(), path), { headers });
+  } catch {
+    throw new Error('网络连接异常，请检查网络后重试。');
+  }
+  checkPermissionFingerprint(response);
+
+  if (response.status === 401) {
+    if (!didRefresh && await tryRefreshAdminToken()) {
+      return apiDownload(path, fallbackFileName, true);
+    }
+    const latestAuth = useAuthStore.getState();
+    if (latestAuth.isAuthenticated) {
+      latestAuth.logout();
+      window.location.href = '/login';
+    }
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+    const code = body?.error?.code || 'DOWNLOAD_FAILED';
+    throw new Error(toUserReadableErrorMessage(body?.error, {
+      code,
+      fallbackMessage: '文件下载未完成',
+      recoveryMessage: '请稍后重试。',
+    }));
+  }
+
+  const blob = await response.blob();
+  if (blob.size === 0) throw new Error('下载文件为空，请稍后重试。');
+  return {
+    blob,
+    fileName: readDownloadFileName(response.headers.get('content-disposition'), fallbackFileName),
+    contentType: response.headers.get('content-type') || blob.type || 'application/octet-stream',
+  };
+}
+
 async function apiRequestInner<T>(
   path: string,
   options: {
