@@ -152,6 +152,7 @@
     {
       "id": "image-model-routing",
       "name": "图片模型路由与切换",
+      "originKind": "gateway",
       "breadcrumb": "LLMGW 登录 → 逻辑模型 → Offering → 路由配置 → 前台选择 → 调用日志",
       "entryPath": "/",
       "uniqueScreenshotFloor": 12,

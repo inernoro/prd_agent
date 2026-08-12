@@ -53,7 +53,22 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
     environment,
     normalizeOrigin(runIdentity.environmentOrigins?.[environment]),
   ]).filter(([, origin]) => origin));
+  const gatewayEnvironmentOrigins = Object.fromEntries(environments.map((environment) => [
+    environment,
+    normalizeOrigin(runIdentity.gatewayEnvironmentOrigins?.[environment]),
+  ]).filter(([, origin]) => origin));
   const hasRunIdentity = Boolean(runId && commit && captureStartedAt);
+  if (hasRunIdentity) {
+    for (const environment of environments) {
+      if (!environmentOrigins[environment]) {
+        throw new Error(`${environmentLabel(environment)}主应用视觉取证地址未配置`);
+      }
+      if ((catalog.modules || []).some((module) => module.originKind === 'gateway')
+          && !gatewayEnvironmentOrigins[environment]) {
+        throw new Error(`${environmentLabel(environment)}模型网关视觉取证地址未配置`);
+      }
+    }
+  }
   if (scope === 'production-read-only') {
     return {
       schemaVersion: hasRunIdentity ? '3.0' : environments.length > 0 ? '2.0' : '1.0',
@@ -65,6 +80,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
       commit: commit || undefined,
       captureStartedAt: captureStartedAt || undefined,
       environmentOrigins,
+      gatewayEnvironmentOrigins,
       plannedScreenshotTarget: 0,
       modules: [],
       slots: [],
@@ -82,6 +98,9 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
         : breadcrumb;
       for (const [index, state] of (module.requiredStates || []).entries()) {
         const viewportClass = stateViewport(module, state);
+        const pageOrigin = module.originKind === 'gateway'
+          ? gatewayEnvironmentOrigins[environment]
+          : environmentOrigins[environment];
         slots.push({
           slotId: qualifySlotId(slotId(module.id, sequence++)),
           environment: environment || undefined,
@@ -97,12 +116,15 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           expectedProof: `页面处于“${state}”状态，关键内容和操作完整可见`,
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
-          pageOrigin: environmentOrigins[environment] || undefined,
+          pageOrigin: pageOrigin || undefined,
           entryPath: module.entryPath,
           captureStartedAt: captureStartedAt || undefined,
         });
       }
       for (const extra of module.additionalEvidenceSlots || []) {
+        const pageOrigin = module.originKind === 'gateway'
+          ? gatewayEnvironmentOrigins[environment]
+          : environmentOrigins[environment];
         slots.push({
           slotId: qualifySlotId(slotId(module.id, sequence++)),
           environment: environment || undefined,
@@ -118,7 +140,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           expectedProof: extra.expectedProof,
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
-          pageOrigin: environmentOrigins[environment] || undefined,
+          pageOrigin: pageOrigin || undefined,
           entryPath: module.entryPath,
           captureStartedAt: captureStartedAt || undefined,
         });
@@ -144,6 +166,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
     commit: commit || undefined,
     captureStartedAt: captureStartedAt || undefined,
     environmentOrigins,
+    gatewayEnvironmentOrigins,
     plannedScreenshotTarget: slots.length,
     modules: (catalog.modules || []).map((module) => ({
       id: module.id,
@@ -228,6 +251,10 @@ async function main() {
     environmentOrigins: {
       cds: readArg(argv, '--cds-origin'),
       production: readArg(argv, '--production-origin'),
+    },
+    gatewayEnvironmentOrigins: {
+      cds: readArg(argv, '--cds-gateway-origin'),
+      production: readArg(argv, '--production-gateway-origin'),
     },
   });
   const outputJson = readArg(argv, '--output-json');

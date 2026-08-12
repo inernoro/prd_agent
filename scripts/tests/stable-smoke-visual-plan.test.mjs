@@ -32,16 +32,29 @@ test('本轮视觉计划固化运行标识、提交和取证开始时间', () =>
     commit: 'a'.repeat(40),
     captureStartedAt: '2026-08-11T14:00:00.000Z',
     environmentOrigins: { cds: 'https://preview.example.test/path' },
+    gatewayEnvironmentOrigins: { cds: 'https://gateway-preview.example.test/path' },
   });
   assert.equal(plan.schemaVersion, '3.0');
   assert.equal(plan.runId, 'stsmk-20260811');
   assert.equal(plan.commit, 'a'.repeat(40));
   assert.equal(plan.captureStartedAt, '2026-08-11T14:00:00.000Z');
   assert.deepEqual(plan.environmentOrigins, { cds: 'https://preview.example.test' });
-  assert.ok(plan.slots.every((slot) => slot.pageOrigin === 'https://preview.example.test'));
+  assert.ok(plan.slots.filter((slot) => slot.moduleId !== 'image-model-routing')
+    .every((slot) => slot.pageOrigin === 'https://preview.example.test'));
+  assert.ok(plan.slots.filter((slot) => slot.moduleId === 'image-model-routing')
+    .every((slot) => slot.pageOrigin === 'https://gateway-preview.example.test'));
   const report = renderVisualPlan(plan);
   assert.match(report, /运行标识：stsmk-20260811/);
   assert.match(report, /取证开始：2026-08-11T14:00:00.000Z/);
+});
+
+test('网关模块必须绑定独立网关入口，缺失时拒绝生成伪证据计划', () => {
+  assert.throws(() => buildVisualPlan(catalog, ['cds'], {
+    runId: 'stsmk-gateway-origin',
+    commit: 'a'.repeat(40),
+    captureStartedAt: '2026-08-13T00:00:00.000Z',
+    environmentOrigins: { cds: 'https://preview.example.test' },
+  }), /模型网关视觉取证地址未配置/);
 });
 
 test('正式环境只读健康检查不生成无关的完整视觉矩阵', () => {
@@ -50,6 +63,8 @@ test('正式环境只读健康检查不生成无关的完整视觉矩阵', () =>
     commit: 'a'.repeat(40),
     captureStartedAt: '2026-08-11T14:00:00.000Z',
     scope: 'production-read-only',
+    environmentOrigins: { production: 'https://map.example.test' },
+    gatewayEnvironmentOrigins: { production: 'https://gateway.example.test' },
   });
   assert.equal(plan.schemaVersion, '3.0');
   assert.equal(plan.scope, 'production-read-only');

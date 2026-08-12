@@ -1466,7 +1466,9 @@ async function main() {
       '--capture-started-at', visualCaptureStartedAt,
       '--scope', visualScope,
       '--cds-origin', values.STABLE_SMOKE_CDS_BASE_URL || '',
+      '--cds-gateway-origin', values.STABLE_SMOKE_CDS_GW_BASE_URL || '',
       '--production-origin', productionBaseUrl,
+      '--production-gateway-origin', values.STABLE_SMOKE_PROD_GW_BASE_URL || '',
     ]);
     if (visualPlanResult.status !== 0) throw new Error('视觉取证计划生成失败，拒绝发布无逐项证据的报告');
 
