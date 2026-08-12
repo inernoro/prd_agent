@@ -19,8 +19,14 @@
 
 export interface SitePreviewSourceInput {
   siteUrl: string;
-  /** 后端对 PDF 包装站给出的原始 PDF 直链；非包装站为空 */
-  pdfAssetUrl?: string;
+  /**
+   * 后端对 PDF 包装站给出的原始 PDF 直链；非包装站为 undefined。
+   *
+   * 写成**必填属性**（而不是 `pdfAssetUrl?:`）是刻意的：可选属性会让「传进来的对象压根没有这个字段」
+   * 静默通过类型检查——这正是第一版的病，判据在、数据不在，站内大预览的绕壳分支永远走不到。
+   * 必填之后，调用方的类型里少了这个字段就直接编译不过，比任何源码扫描守卫都硬。
+   */
+  pdfAssetUrl: string | undefined;
 }
 
 export interface SitePreviewSource {

@@ -16,7 +16,7 @@ function stripComments(code: string): string {
 }
 
 describe('resolveSitePreviewSource', () => {
-  const html = { siteUrl: 'https://cfi.example.org/s/a/index.html' };
+  const html = { siteUrl: 'https://cfi.example.org/s/a/index.html', pdfAssetUrl: undefined };
   const pdf = { siteUrl: 'https://cfi.example.org/s/b/index.html', pdfAssetUrl: 'https://cfi.example.org/s/b/x.pdf?v=1' };
 
   it('普通站点恒走入口 URL', () => {
@@ -62,6 +62,36 @@ describe('站内大预览的 PDF 接线', () => {
   it('iframe 的 src 来自共享判定源，而不是直接写 site.siteUrl', () => {
     expect(source).toContain('resolveSitePreviewSource');
     expect(source).not.toMatch(/src=\{\s*site\.siteUrl\s*\}/);
+  });
+
+  /**
+   * 第一版只断言「调用了判定源」，于是漏掉了真正致命的一环：判定源收到的 pdfAssetUrl
+   * 恒为 undefined（那个字段只挂在 SharedSiteInfo 上，站内列表根本不下发），
+   * 整条修复空转，而这条源码扫描守卫照样全绿。
+   *
+   * 传输面现在由**类型系统**兜底：SitePreviewSourceInput.pdfAssetUrl 是必填属性，
+   * HostedSite 少了它就编译不过。这里再钉一道，防止有人把它改回可选。
+   */
+  it('判定源的 pdfAssetUrl 必须是必填属性，可选会让「数据没送到」静默通过', () => {
+    const helper = stripComments(fs.readFileSync(path.join(HERE, 'sitePreviewSource.ts'), 'utf8'));
+    expect(helper).toMatch(/pdfAssetUrl:\s*string\s*\|\s*undefined/);
+    expect(helper).not.toMatch(/pdfAssetUrl\?:/);
+  });
+
+  it('后端把 pdfAssetUrl 下发给了站内列表用的 HostedSite', () => {
+    const types = stripComments(fs.readFileSync(path.join(HERE, '../../services/real/webPages.ts'), 'utf8'));
+    const hostedSite = types.match(/export interface HostedSite\b[\s\S]*?\n}/);
+    expect(hostedSite).not.toBeNull();
+    expect(hostedSite![0]).toContain('pdfAssetUrl');
+  });
+
+  /**
+   * 能不能用原生 PDF 阅读器是**运行环境**决定的，不是弹窗尺寸决定的。
+   * 写死 true 会让移动端 WebView 拿到裸 PDF 直接白屏——正是壳子存在的理由。
+   */
+  it('原生阅读器可用性接的是响应式信号，不是写死的 true', () => {
+    expect(source).toContain('useIsMobile');
+    expect(source).not.toMatch(/nativePdfViewer:\s*true/);
   });
 });
 

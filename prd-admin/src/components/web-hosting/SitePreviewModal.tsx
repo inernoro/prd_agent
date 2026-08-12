@@ -8,6 +8,7 @@ import CommentsSection from './CommentsSection';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource } from './sitePreviewSource';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
 const SLOW_HINT_MS = 8000;
@@ -49,9 +50,11 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  // 站内预览弹窗是桌面端 admin 的 90vw x 90vh 大窗，浏览器原生 PDF 阅读器一定可用，
-  // 所以 PDF 包装站直接加载原始 PDF、绕开那个依赖 cdn.jsdelivr.net 的壳子（判据见 sitePreviewSource.ts）。
-  const previewSource = resolveSitePreviewSource(site, { nativePdfViewer: true });
+  // 能不能把 PDF 直接丢给浏览器原生阅读器，取决于**运行环境**，不取决于这个弹窗有多大。
+  // 移动 Safari / 微信 WebView 在 iframe 里根本渲染不了 PDF，绕开壳子等于白屏——
+  // 那正是壳子存在的理由。所以判据接的是真实的响应式信号，不是「90vw 大窗必然是桌面」这种假设。
+  const isMobile = useIsMobile();
+  const previewSource = resolveSitePreviewSource(site, { nativePdfViewer: !isMobile });
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;

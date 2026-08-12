@@ -212,7 +212,7 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 上传托管站点 {SiteId}: {Title}, 1 个文件, {TotalSize} bytes",
             userId, siteId, site.Title, site.TotalSize);
 
-        return site;
+        return AttachDerivedFields(site);
     }
 
     public async Task<HostedSite> CreateFromZipAsync(
@@ -255,7 +255,7 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 上传托管站点 {SiteId}: {Title}, {FileCount} 个文件, {TotalSize} bytes",
             userId, siteId, site.Title, result.Files.Count, result.TotalSize);
 
-        return site;
+        return AttachDerivedFields(site);
     }
 
     public async Task<HostedSite> CreateFromContentAsync(
@@ -303,7 +303,7 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
             userId, site.SourceType, siteId, site.Title);
 
-        return site;
+        return AttachDerivedFields(site);
     }
 
     // ─────────────────────────────────────────────
@@ -406,7 +406,7 @@ public class HostedSiteService : IHostedSiteService
             catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
         }
 
-        return (await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!;
+        return AttachDerivedFields((await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!);
     }
 
     // ─────────────────────────────────────────────
@@ -427,7 +427,7 @@ public class HostedSiteService : IHostedSiteService
             var role = await ResolveSiteRoleAsync(site, userId, ct);
             if (role == null) return null;
         }
-        return site;
+        return AttachDerivedFields(site);
     }
 
     public async Task<(List<HostedSite> Items, long Total)> ListAsync(
@@ -506,7 +506,7 @@ public class HostedSiteService : IHostedSiteService
             .Sort(sortDef).Skip(skip).Limit(limit)
             .ToListAsync(ct);
 
-        return (items, total);
+        return (AttachDerivedFields(items), total);
     }
 
     public async Task<List<string>> ListFoldersAsync(string userId, CancellationToken ct)
@@ -572,7 +572,7 @@ public class HostedSiteService : IHostedSiteService
                 updated.SharedTeamIds, TeamAppKey.WebHosting, userId,
                 TeamActivityAction.SiteUpdated, "site", updated.Id, updated.Title, ct);
         }
-        return updated;
+        return AttachDerivedFields(updated);
     }
 
     public async Task<bool> DeleteAsync(string siteId, string userId, CancellationToken ct)
@@ -1452,6 +1452,28 @@ public class HostedSiteService : IHostedSiteService
     //
     // 只看 marker，不依赖 ZIP 文件形状——避免把"用户上传的 custom landing.html + report.pdf"
     // 这种 2 文件普通 ZIP 误判为包装站（Codex P2 反复抓到，PR #612）。
+    /// <summary>
+    /// 把不入库的派生字段挂到要交给前端的实体上。目前只有 PdfAssetUrl。
+    ///
+    /// 站内大预览要绕开依赖第三方 CDN 的 PDF.js 壳子、直接把原始 PDF 交给浏览器原生阅读器，
+    /// 就必须拿到这个直链；而它此前只出现在分享视图的 SharedSiteInfo 上，站内列表压根收不到，
+    /// 于是那条「绕开壳子」的分支永远走不到（predicate-and-wiring-discipline 形状 2）。
+    ///
+    /// **新增任何「把 HostedSite 交给前端」的路径都必须调它**，否则那条路径上的 PDF 站又会退回壳子。
+    /// 守卫见 HostedSitePdfAssetWiringTests。
+    /// </summary>
+    internal HostedSite AttachDerivedFields(HostedSite site)
+    {
+        site.PdfAssetUrl = TryBuildPdfAssetUrl(site);
+        return site;
+    }
+
+    internal List<HostedSite> AttachDerivedFields(List<HostedSite> sites)
+    {
+        foreach (var s in sites) AttachDerivedFields(s);
+        return sites;
+    }
+
     private string? TryBuildPdfAssetUrl(HostedSite site)
         => IsPdfWrapperSite(site, out var pdf)
             ? AppendVersion(_storage.BuildUrlForKey(pdf!.CosKey), EffectiveContentVersion(site))

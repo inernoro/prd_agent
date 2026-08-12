@@ -295,23 +295,28 @@ public class WebPagesController : ControllerBase
             function loadScript(src){
               return new Promise(function(resolve, reject){
                 var s = document.createElement("script");
-                var settled = false;
-                function done(fn){ return function(){ if(settled){ return; } settled = true; fn(); }; }
-                // onerror 不够：CDN 域名在部分网络里是**挂起**而不是快速失败，脚本请求既不 load
-                // 也不 error，下面的 catch 分支永远走不到，页面就永久停在「正在加载 PDF…」的转圈上。
-                // 必须自己上闹钟，让降级下载链一定能露出来（CLAUDE.md §6 禁止空白等待）。
-                var timer = setTimeout(done(reject), 12000);
-                s.onload = done(function(){ clearTimeout(timer); resolve(); });
-                s.onerror = done(function(){ clearTimeout(timer); reject(); });
+                s.src = src; s.onload = resolve; s.onerror = reject;
                 document.head.appendChild(s);
               });
             }
-            loadScript(CDN + "pdf.min.js").then(function(){
+            // 闹钟必须罩住**整条初始化链**，不能只罩第一个 script。
+            // 只罩第一个的话：pdf.min.js 命中缓存秒回、闹钟被清掉，接着 pdf.worker.min.js 挂起，
+            // getDocument 的 promise 就永远悬着，既不 resolve 也不 reject，catch 走不到，
+            // 页面照旧永久停在「正在加载 PDF…」——承诺的兜底等于没有。
+            // CDN 域名在部分网络里是挂起而不是快速失败，所以 onerror 一个信号靠不住。
+            var deadline = new Promise(function(_, reject){
+              setTimeout(function(){ reject(new Error("timeout")); }, 20000);
+            });
+            var ready = loadScript(CDN + "pdf.min.js").then(function(){
               var lib = window.pdfjsLib || window["pdfjs-dist/build/pdf"];
               if(!lib){ throw new Error("pdfjs not loaded"); }
               lib.GlobalWorkerOptions.workerSrc = CDN + "pdf.worker.min.js";
               return lib.getDocument({ url: PDF_URL }).promise;
-            }).then(function(pdf){
+            });
+            // 闹钟只罩到「文档就绪」为止，**不罩逐页渲染**。罩住渲染的话，大 PDF 慢慢画超过
+            // 20s 就会在已经画出来的页面上盖一条「加载失败」——那正是 #1356 本来要修的那种谎报。
+            Promise.race([ready, deadline]).catch(function(){ fail("PDF 在线预览加载失败。"); });
+            ready.then(function(pdf){
               if(statusEl){ statusEl.style.display = "none"; }
               var maxBitmapPixels = 16777216;
               var dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 3);
@@ -345,6 +350,7 @@ public class WebPagesController : ControllerBase
               }
               return chain;
             }).catch(function(){
+              // 渲染阶段自己出错仍要如实告知（此时 race 那条可能早已 resolve）
               fail("PDF 在线预览加载失败。");
             });
           })();
