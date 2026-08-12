@@ -4283,6 +4283,34 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 删 appCaller 会连带删掉它名下的提示词策略（不连带删，策略仍在生效、appCaller
+    /// 被下一次调用被动重建，老提示词就回来了）。但这个端点只要 AppCallerWrite，
+    /// 而提示词策略的读/写/回滚三个端点都要 ConfigWrite——内置 Developer 角色
+    /// 恰好有前者没有后者，级联下去等于让它抹掉一批自己看都看不到的治理配置。
+    ///
+    /// 所以有策略要连带删时必须另外要求 ConfigWrite。这里钉住三件事：连带删存在、
+    /// 权限判据存在、且判据排在真正的删除之前（排在后面等于先删后问）。
+    /// </summary>
+    [Fact]
+    public void AppCallerDelete_RequiresConfigWriteBeforeCascadingPromptPolicies()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var body = EndpointBody(console, "app.MapDelete(\"/gw/app-callers/{id}\"");
+
+        Assert.Contains("promptPolicies.DeleteManyAsync", body);
+        Assert.Contains("LlmGwPermissions.ConfigWrite", body);
+        Assert.Contains("PROMPT_POLICY_REQUIRES_CONFIG_WRITE", body);
+
+        var gateAt = body.IndexOf("LlmGwPermissions.ConfigWrite", StringComparison.Ordinal);
+        var deleteAt = body.IndexOf("promptPolicies.DeleteManyAsync", StringComparison.Ordinal);
+        Assert.True(gateAt > 0 && gateAt < deleteAt, "权限判据必须排在级联删除之前");
+
+        // 判据要基于「真的有策略要删」，否则没有策略的 appCaller 也被拦下来，
+        // 等于把 Developer 的正常删除权一起收走了
+        Assert.Contains("CountDocumentsAsync", body);
+    }
+
+    /// <summary>
     /// 内部租户的池视图是「GW 自有池 + 未影子化的 MAP 池」两段拼起来的，
     /// 三个删除闸门就必须都按这个口径查占用，少一个就漏一类。
     ///

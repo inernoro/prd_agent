@@ -4607,6 +4607,29 @@ app.MapDelete("/gw/app-callers/{id}", async (HttpContext http, string id) =>
             Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId),
             Builders<BsonDocument>.Filter.Eq("AppCallerCode", appCallerCode),
             Builders<BsonDocument>.Filter.Eq("RequestType", requestType));
+
+        // 这个端点只要 AppCallerWrite，而提示词策略的读/写/回滚三个端点都要 ConfigWrite——
+        // 内置 Developer 角色恰好有前者、没有后者。级联删下去，Developer 就能抹掉一批
+        // 自己连看都看不到的治理配置。
+        // 也不能改成「没权限就留着策略不删」：那正是本次要修的原始缺陷——策略还在生效，
+        // appCaller 被下一次真实调用被动重建，老提示词就这么回来了，与确认弹窗的承诺相反。
+        // 所以有策略要连带删时，就要求调用方同时具备 ConfigWrite，否则明确拒绝并说清找谁。
+        var pendingPolicies = await promptPolicies.CountDocumentsAsync(policyFilter);
+        if (pendingPolicies > 0 && !TenantAccess.HasPermission(http.User, LlmGwPermissions.ConfigWrite))
+        {
+            await WriteOperationAuditAsync(
+                operationAudits, http,
+                action: "app-caller.delete", targetType: "llmgw_app_caller", targetId: id,
+                targetName: doc.AsNullableString("AppCallerCode"), success: false,
+                reason: "PROMPT_POLICY_REQUIRES_CONFIG_WRITE", changes: null);
+            return Json(
+                ApiEnvelope<AppCallerDeleteResult>.Fail(
+                    "PROMPT_POLICY_REQUIRES_CONFIG_WRITE",
+                    $"这个 appCaller 名下还有 {pendingPolicies} 个提示词策略版本，删除会连带删掉它们，"
+                    + "需要配置写入权限（config:write）。请让有该权限的管理员来删，或先请其清空策略。"),
+                jsonOptions, 403);
+        }
+
         policiesDeleted = (await promptPolicies.DeleteManyAsync(policyFilter)).DeletedCount;
     }
 

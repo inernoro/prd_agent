@@ -152,14 +152,21 @@ export function TranscriptKaraoke({
   const [lexiconDraft, setLexiconDraft] = useState('');
   const [lexiconOpen, setLexiconOpen] = useState(false);
   const [savingLexicon, setSavingLexicon] = useState(false);
+  // 读失败必须留痕并给重试：写端点是整表替换，所以 lexicon 为 null 时下面会一律拒绝提交。
+  // 那个 fail-closed 是对的（防止拿空表覆盖掉已存的词），但它把「读失败」变成了死胡同——
+  // 输入框和按钮还在，点了却永远没反应，除非整个组件重挂。读失败要说出来，并让人能自己重试。
+  const [lexiconError, setLexiconError] = useState(false);
+  const [lexiconReloadKey, setLexiconReloadKey] = useState(0);
   useEffect(() => {
     let alive = true;
+    setLexiconError(false);
     void getTranscriptLexicon().then((res) => {
-      if (!alive || !res.success) return;
+      if (!alive) return;
+      if (!res.success) { setLexiconError(true); return; }
       setLexicon({ terms: res.data.terms, system: res.data.system, mine: res.data.mine, muted: res.data.muted, canManageSystem: res.data.canManageSystem });
-    });
+    }).catch(() => { if (alive) setLexiconError(true); });
     return () => { alive = false; };
-  }, []);
+  }, [lexiconReloadKey]);
   const dictionary = useMemo(() => {
     const speakerNames = segments
       .map(segment => segment.speaker?.trim())
@@ -439,7 +446,20 @@ export function TranscriptKaraoke({
               */}
               {onSaveNote ? (
                 <div className="mt-2">
-                  {lexiconOpen ? (
+                  {lexiconOpen && lexiconError ? (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span style={{ color: 'var(--text-secondary)' }}>词典没读出来，现在加词会覆盖掉已存的，所以先不让加。</span>
+                      <button
+                        type="button"
+                        onClick={() => setLexiconReloadKey(k => k + 1)}
+                        className="min-h-9 rounded-[8px] px-3 font-semibold"
+                        style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)' }}
+                      >
+                        重试
+                      </button>
+                      <button type="button" onClick={() => setLexiconOpen(false)} className="min-h-9 px-2 text-token-muted">收起</button>
+                    </div>
+                  ) : lexiconOpen ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <input
                         value={lexiconDraft}
