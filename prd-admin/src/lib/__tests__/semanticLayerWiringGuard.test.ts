@@ -241,6 +241,28 @@ describe('分层导出取满幅原件', () => {
     expect(persist).toMatch(/originalSha256: typeof ext\.layerOriginalSha256 === 'string'/);
   });
 
+  it('【关键】现拆现导那条分支也取满幅——三个出口一个都不许漏', () => {
+    // 这一条是上一版守卫漏掉的那个出口。上一版逐个列举「我知道的导出入口」，
+    // 于是第三个入口（画布还没有图层时右键导出 → 先拆再导，吃的是 decomposeImageIntoFrame
+    // 的返回值）一路全绿地喂着裁剪版（Codex PR #1363 P1 第二次指同一件事）。
+    // 教训是守不变量、不守清单：凡是喂给 PSD 的层地址，一律必须是满幅那一版。
+    expect(tab).toMatch(/layerSources\.push\(\{ name, source: asset\.url/);
+    // 反向锁死：退回裁剪版就红。没有这一条，把上面那行改回去仍然全绿。
+    expect(tab).not.toMatch(/source: trimmedAsset\?\.url/);
+  });
+
+  it('【关键】裁剪落位读的是「裁完那一刻」的组原点，不是裁之前的', () => {
+    // 裁剪要解码整张图、裁完还要上传，这两拍之间用户完全可能把 Frame 拖走。
+    // 组原点若在 await 之前读，这一层就按拖走之前的坐标落位——和用户报的
+    // 「拖走了图层还回原位渲染」同一个症状，只是窗口更窄（Codex PR #1363 P2）。
+    // 判据是源码顺序：读原点必须排在裁剪那次 await 之后。
+    const trimAwait = tab.indexOf('await trimLayerToContent(');
+    const readOrigin = tab.indexOf('const anchorRect = currentRect();');
+    expect(trimAwait).toBeGreaterThan(0);
+    expect(readOrigin).toBeGreaterThan(0);
+    expect(readOrigin).toBeGreaterThan(trimAwait);
+  });
+
   it('【关键】编辑产物要继承 frameId，否则它不算 Frame 成员', () => {
     // 编组身份只认 frameId（layerGroupId 兜底已去掉，否则解组后刷新会复活）。
     // 少带这一个字段，编辑产物在画布上看得见，Frame 导出与包围盒却仍按原图层算。

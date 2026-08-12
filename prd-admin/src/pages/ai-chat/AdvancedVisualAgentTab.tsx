@@ -2479,7 +2479,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 以模型实际返回的张数为准收口：多的座位撤掉，少的补上。
       ensureSlots(remoteLayers.length);
 
-      const layerSources: Array<{ name: string; source: string }> = [];
+      // 带上 sha：导出前的可读性自检与读图都优先走同源资产地址绕开对象存储的 CORS，
+      // 只给 url 会让「现拆现导」这条分支退回裸 fetch 模型直链。
+      const layerSources: LayerSourceInput[] = [];
       // 判定用的样本清单：地址与 sha 都取自上传返回值，不再回头去画布上捞（会读到未刷新的旧值）。
       const layerSamples: Array<{ key: string; src: string; sha256?: string | null }> = [];
       for (let index = 0; index < remoteLayers.length; index += 1) {
@@ -2520,8 +2522,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         // 只算包围盒不裁产物是不够的（那正是上一版的漏）：画布上框住的仍是一整张满是
         // 空气的方图，想拖 logo 却按到一大片透明（2026-08-11 用户圈图指出）。
         // 裁不动 / 读不到都如实回落成满幅，绝不猜。
-        const anchorRect = currentRect();
-        let placed = { x: anchorRect.x, y: anchorRect.y, w: anchorRect.w, h: anchorRect.h };
         let trimmedAsset: { url: string; id: string; sha256?: string; width?: number; height?: number } | null = null;
         let emptyLayer = false;
         const trimmed = await trimLayerToContent(asset.url, asset.sha256);
@@ -2545,16 +2545,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               width: cropped.width,
               height: cropped.height,
             };
-            placed = boundsToCanvasRect({
-              bounds: trimmed.bounds,
-              layerWidth: trimmed.scanWidth,
-              layerHeight: trimmed.scanHeight,
-              canvasX: anchorRect.x,
-              canvasY: anchorRect.y,
-              canvasW: anchorRect.w,
-              canvasH: anchorRect.h,
-            });
           }
+        }
+        // 位置在**所有 await 之后**才读。裁剪要解码整张图、裁完还要上传，这两拍加起来
+        // 是肉眼可见的一段时间，用户完全可能正好在这期间把 Frame 拖走。
+        // 早先这一句在裁剪之前，于是这一层会按拖走**之前**的坐标落位——
+        // 和用户报的「拖走了图层还回原位渲染」是同一个症状，只是窗口更窄
+        // （Codex PR #1363 P2）。读得越晚越准，没有理由提前读。
+        const anchorRect = currentRect();
+        let placed = { x: anchorRect.x, y: anchorRect.y, w: anchorRect.w, h: anchorRect.h };
+        if (trimmedAsset && trimmed?.bounds) {
+          placed = boundsToCanvasRect({
+            bounds: trimmed.bounds,
+            layerWidth: trimmed.scanWidth,
+            layerHeight: trimmed.scanHeight,
+            canvasX: anchorRect.x,
+            canvasY: anchorRect.y,
+            canvasW: anchorRect.w,
+            canvasH: anchorRect.h,
+          });
         }
 
         setCanvas((previous) => previous.map((candidate) => candidate.key === layerKeyAt(index)
@@ -2590,7 +2599,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             }
           : candidate));
 
-        layerSources.push({ name, source: trimmedAsset?.url || asset.url });
+        // 这个数组只有一个去处：右键「导出分层 PSD」时画布上还没有图层，先拆再导，
+        // 拿的就是它（见 decomposeImageIntoFrame 的返回值）。导出链路按原图尺寸对齐叠放，
+        // 必须给**满幅**那一版——裁剪版是给画布用的，喂进去会被拉伸铺满、位置也错。
+        // 同一个毛病的第三个出口：图层面板导出、右键菜单的缓存分支都已改过，
+        // 这条「现拆现导」的分支漏了（Codex PR #1363 P1 第二次指同一件事）。
+        layerSources.push({ name, source: asset.url, sha256: asset.sha256 ?? null });
         // 判定要用的地址与 sha 在这里就是确定的，当场记下来。
         // 早先是等循环跑完再去 canvasRef 里捞——而 setCanvas 还没刷进 ref，
         // 最后一层捞到的仍是模型直出的跨域直链且没有 sha；对象存储不给 CORS 头，
