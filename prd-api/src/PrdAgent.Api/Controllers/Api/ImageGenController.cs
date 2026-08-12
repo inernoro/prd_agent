@@ -1925,32 +1925,55 @@ public class ImageGenController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "图片不存在或无权下载"));
         }
 
-        var storageKey = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/'));
-        var bytes = await _assetStorage.TryDownloadBytesAsync(storageKey, ct);
-        if (bytes == null || bytes.Length == 0)
+        // 公网 URL 的 path 可能包含 CDN 基础路径，不能据此反推对象存储 key。
+        // 只从当前用户已有的产物登记中解析内容哈希，再按视觉创作业务域读取对象。
+        var outputArtifact = await _db.UploadArtifacts
+            .Find(artifact => artifact.CreatedByAdminId == adminId
+                              && artifact.Kind == "output_image"
+                              && artifact.CosUrl == normalizedUrl)
+            .SortByDescending(artifact => artifact.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        ImageAsset? imageAsset = null;
+        if (outputArtifact == null)
+        {
+            imageAsset = await _db.ImageAssets
+                .Find(asset => asset.OwnerUserId == adminId
+                               && (asset.Url == normalizedUrl || asset.OriginalUrl == normalizedUrl))
+                .SortByDescending(asset => asset.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var sha256 = outputArtifact?.Sha256
+                     ?? imageAsset?.OriginalSha256
+                     ?? imageAsset?.Sha256;
+        if (string.IsNullOrWhiteSpace(sha256))
         {
             return StatusCode(
                 StatusCodes.Status502BadGateway,
                 ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片暂时无法下载，请稍后重试"));
         }
 
-        var mime = Path.GetExtension(uri.AbsolutePath).ToLowerInvariant() switch
+        var stored = await _assetStorage.TryReadByShaAsync(
+            sha256,
+            ct,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg);
+        if (stored == null || stored.Value.bytes.Length == 0)
         {
-            ".png" => "image/png",
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".webp" => "image/webp",
-            ".gif" => "image/gif",
-            ".avif" => "image/avif",
-            _ => string.Empty,
-        };
-        if (string.IsNullOrWhiteSpace(mime))
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片暂时无法下载，请稍后重试"));
+        }
+
+        var mime = stored.Value.mime.Trim();
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
         {
             return StatusCode(
                 StatusCodes.Status502BadGateway,
                 ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片内容无效，请重新生成后再试"));
         }
 
-        return File(bytes, mime);
+        return File(stored.Value.bytes, mime);
     }
 
     /// <summary>

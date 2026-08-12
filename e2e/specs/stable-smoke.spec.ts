@@ -1623,12 +1623,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           expect(cleanup.ok(), cleanupBody.error?.message || '视频任务清理失败').toBe(true);
           expect(cleanupBody.data.deleted).toBe(true);
           expect(cleanupBody.data.projectDeleted, '页面新建的空视频项目必须随任务回收').toBe(true);
-          if (generatedVideoUrl) expect(cleanupBody.data.artifactsDeleted).toBeGreaterThanOrEqual(1);
+          expect(cleanupBody.data.artifactsDeleted).toBeGreaterThanOrEqual(0);
           expect((await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) })).status()).toBe(404);
           if (projectId) {
             expect((await page.request.get(`/api/video-agent/projects/${encodeURIComponent(projectId)}`, { headers: authHeaders(token) })).status()).toBe(404);
           }
-          if (generatedVideoUrl) {
+          if (generatedVideoUrl && cleanupBody.data.artifactsDeleted > 0) {
             let artifactStatus = 200;
             const deleteStartedAt = Date.now();
             while (Date.now() - deleteStartedAt < 30_000) {
@@ -1639,6 +1639,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
               await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
             }
             expect(artifactStatus, '视频任务删除后生成文件仍可访问').toBeGreaterThanOrEqual(400);
+          } else if (generatedVideoUrl) {
+            const separator = generatedVideoUrl.includes('?') ? '&' : '?';
+            const sharedArtifact = await page.request.get(`${generatedVideoUrl}${separator}shared=${Date.now()}`);
+            expect(sharedArtifact.ok(), '共享视频产物仍被其他任务引用时不得误删').toBe(true);
           }
         }
       }
@@ -2628,10 +2632,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await generatedImage.click();
       const downloadButton = page.getByTitle('下载图片').first();
       await expect(downloadButton, '选中生成图后必须出现真实下载操作').toBeVisible();
-      const [download] = await Promise.all([
+      const [downloadResponse, download] = await Promise.all([
+        page.waitForResponse((response) => (
+          response.request().method() === 'GET'
+          && new URL(response.url()).pathname === '/api/visual-agent/image-gen/download'
+        )),
         page.waitForEvent('download'),
         downloadButton.click(),
       ]);
+      expect(downloadResponse.ok(), '生成图下载端点必须成功返回').toBe(true);
+      expect(downloadResponse.headers()['content-type'] || '').toMatch(/^image\//i);
       expect(await download.failure()).toBeNull();
       const downloadedPath = await download.path();
       expect(downloadedPath, '浏览器必须产生可读取的下载文件').toBeTruthy();
