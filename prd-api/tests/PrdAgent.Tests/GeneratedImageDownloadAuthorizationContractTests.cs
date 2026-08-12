@@ -22,6 +22,8 @@ public class GeneratedImageDownloadAuthorizationContractTests
         Assert.Contains("artifact.CreatedByAdminId == adminId", action);
         Assert.Contains("artifact.Kind == \"output_image\"", action);
         Assert.Contains("artifact.CosUrl == normalizedUrl", action);
+        Assert.Contains("var ownedRequestId = $\"{ownedItem.RunId}-{ownedItem.ItemIndex}-{ownedItem.ImageIndex}\"", action);
+        Assert.Contains("artifact.RequestId == ownedRequestId", action);
         Assert.Contains("asset.OwnerUserId == adminId", action);
         Assert.Contains("ownedItem == null && outputArtifact == null && imageAsset == null", action);
         Assert.DoesNotContain("if (ownedItem == null)\n        {\n            return NotFound", action);

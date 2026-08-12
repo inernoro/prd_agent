@@ -1929,6 +1929,18 @@ public class ImageGenController : ControllerBase
                               && artifact.CosUrl == normalizedUrl)
             .SortByDescending(artifact => artifact.CreatedAt)
             .FirstOrDefaultAsync(ct);
+        if (outputArtifact == null && ownedItem != null)
+        {
+            // 带水印运行项保存展示 URL，而 UploadArtifact 保存原图 URL。
+            // 由本人已完成运行项的确定性请求 ID 关联原图登记，兼容已有历史数据。
+            var ownedRequestId = $"{ownedItem.RunId}-{ownedItem.ItemIndex}-{ownedItem.ImageIndex}";
+            outputArtifact = await _db.UploadArtifacts
+                .Find(artifact => artifact.CreatedByAdminId == adminId
+                                  && artifact.Kind == "output_image"
+                                  && artifact.RequestId == ownedRequestId)
+                .SortByDescending(artifact => artifact.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
         ImageAsset? imageAsset = null;
         if (outputArtifact == null)
         {
