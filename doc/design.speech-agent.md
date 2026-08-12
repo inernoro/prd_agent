@@ -120,4 +120,3 @@ Deck 是聚合根。节点必须同时按 deck ID 与节点 ID 查询，所有 d
 - [doc/debt.speech-agent.md](./debt.speech-agent.md)
 - [doc/rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)
 - `doc/rule.platform.server-authority.md`
-- `changelogs/2026-08-11_recording-quality-and-llmgw-deletion.md`（说话人来源标注/来源如实展示、开场白与编造切分判据收紧、转录失败与重试如实展示）

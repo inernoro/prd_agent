@@ -96,6 +96,8 @@
 
 - [design.emergence.explorer.md](./design.emergence.explorer.md) — 涌现探索器（文档空间的消费者）
 - [design.knowledge-base.multi-doc.md](./design.knowledge-base.multi-doc.md) — 桌面端多文档知识库（同一文档基础设施的另一个消费者）
+- [debt.knowledge-base.md](./debt.knowledge-base.md) — 录音/转录/说话人来源的完整台账（本节不重复记）
+- `changelogs/2026-08-11_recording-quality-and-llmgw-deletion.md`（转录笔记标注说话人来源、录音结果页来源如实展示、开场白与编造切分判据收紧、转录失败与重试如实展示）
 
 ## 七、知识库卡片置顶（2026-06-16）
 
