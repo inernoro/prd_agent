@@ -55,6 +55,16 @@ public interface IOpenRouterVideoClient
         string? offeringId,
         CancellationToken ct = default)
         => DownloadVideoBytesAsync(appCallerCode, jobId, urlIndex, expectedModel, ct);
+
+    /// <summary>打开视频响应流，供 HTTP 下载端点边读边写，避免把整段视频保留在托管内存。</summary>
+    Task<OpenRouterVideoStream> OpenVideoStreamForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex,
+        string? expectedModel,
+        string? offeringId,
+        CancellationToken ct = default)
+        => Task.FromResult(OpenRouterVideoStream.Fail("当前视频客户端暂不支持流式下载"));
 }
 
 public class OpenRouterVideoSubmitRequest
@@ -143,4 +153,55 @@ public class OpenRouterVideoDownload
     public byte[]? Bytes { get; set; }
     public string? ContentType { get; set; }
     public string? ErrorMessage { get; set; }
+}
+
+/// <summary>由调用方释放的视频响应流。</summary>
+public sealed class OpenRouterVideoStream : IAsyncDisposable
+{
+    private IDisposable? _owner;
+
+    private OpenRouterVideoStream(
+        bool success,
+        Stream? content,
+        string? contentType,
+        long? contentLength,
+        string? errorMessage,
+        IDisposable? owner)
+    {
+        Success = success;
+        Content = content;
+        ContentType = contentType;
+        ContentLength = contentLength;
+        ErrorMessage = errorMessage;
+        _owner = owner;
+    }
+
+    public bool Success { get; }
+    public Stream? Content { get; }
+    public string? ContentType { get; }
+    public long? ContentLength { get; }
+    public string? ErrorMessage { get; }
+
+    public static OpenRouterVideoStream Ok(
+        Stream content,
+        string? contentType,
+        long? contentLength,
+        IDisposable owner)
+        => new(true, content, contentType, contentLength, null, owner);
+
+    public static OpenRouterVideoStream Fail(string message)
+        => new(false, null, null, null, message, null);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (Content != null)
+                await Content.DisposeAsync();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _owner, null)?.Dispose();
+        }
+    }
 }

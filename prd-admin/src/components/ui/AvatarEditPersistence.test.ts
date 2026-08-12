@@ -27,6 +27,16 @@ describe('头像持久化单次写入契约', () => {
     expect(dialogSource).not.toContain("throw new Error(response.error?.message || '替换头像失败')");
   });
 
+  it('上传失败时保留服务端错误码并给出可执行的恢复提示', () => {
+    const uploadBranch = dialogSource.slice(
+      dialogSource.indexOf('const uploadAndSave'),
+      dialogSource.indexOf('const onChooseFile'),
+    );
+    expect(uploadBranch).toContain('code: response.error.code');
+    expect(uploadBranch).toContain('请检查图片格式、大小和网络后重新上传。');
+    expect(uploadBranch).not.toContain("throw new Error(response.error?.message || '上传失败')");
+  });
+
   it('重新打开弹窗时同时恢复已知任务和创建响应丢失的任务', () => {
     expect(dialogSource).toContain('hasRecoverableMyAvatarGeneration()');
     expect(dialogSource).toContain('resumeMyAvatarPreview({');

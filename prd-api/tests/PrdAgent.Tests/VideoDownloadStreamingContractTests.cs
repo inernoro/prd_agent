@@ -25,6 +25,25 @@ public class VideoDownloadStreamingContractTests
     }
 
     [Fact]
+    public void DirectVideoDownload_MustUseHeadersOnlyUpstreamAndStreamToResponse()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs"));
+        var client = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Services/OpenRouterVideoClient.cs"));
+
+        var actionStart = controller.IndexOf("DownloadDirectVideo(", StringComparison.Ordinal);
+        var actionEnd = controller.IndexOf("[HttpDelete(\"videogen-direct/{jobId}\")]", actionStart, StringComparison.Ordinal);
+        Assert.True(actionStart >= 0 && actionEnd > actionStart);
+        var action = controller[actionStart..actionEnd];
+
+        Assert.Contains("OpenVideoStreamForOfferingAsync", action);
+        Assert.Contains("CopyToAsync(Response.Body", action);
+        Assert.DoesNotContain("DownloadVideoBytes", action);
+        Assert.Contains("HttpCompletionOption.ResponseHeadersRead", client);
+    }
+
+    [Fact]
     public async Task LocalAssetStorage_MustReturnFileStreamForLargeAssetReads()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"video-stream-{Guid.NewGuid():N}");

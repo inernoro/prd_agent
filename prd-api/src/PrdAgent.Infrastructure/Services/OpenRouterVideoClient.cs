@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -323,6 +324,132 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             Bytes = rawResp.BinaryContent,
             ContentType = "video/mp4",
         };
+    }
+
+    public async Task<OpenRouterVideoStream> OpenVideoStreamForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex,
+        string? expectedModel,
+        string? offeringId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return OpenRouterVideoStream.Fail("视频任务标识为空，请返回视频页面重新打开任务");
+
+        var resolution = (_submitResolution?.Success == true
+                          && _submitAppCallerCode == appCallerCode
+                          && (string.IsNullOrWhiteSpace(offeringId)
+                              || string.Equals(_submitResolution.OfferingId, offeringId, StringComparison.Ordinal)))
+            ? _submitResolution
+            : !string.IsNullOrWhiteSpace(offeringId)
+                ? await _gateway.ResolveOfferingAsync(appCallerCode, ModelTypes.VideoGen, offeringId, ct)
+                : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
+        if (!resolution.Success)
+            return OpenRouterVideoStream.Fail(resolution.ErrorMessage ?? "视频下载路由暂时不可用，请稍后重试");
+
+        if (IsVolcengineVideoResolution(resolution))
+        {
+            var status = await GetStatusForOfferingAsync(appCallerCode, jobId, expectedModel, offeringId, ct);
+            if (!status.IsCompleted || string.IsNullOrWhiteSpace(status.VideoUrl))
+                return OpenRouterVideoStream.Fail(status.ErrorMessage ?? "视频仍在生成中，请稍后重试");
+            return await OpenHttpVideoStreamAsync(status.VideoUrl, null, appCallerCode, ct);
+        }
+
+        if (string.IsNullOrWhiteSpace(resolution.ApiUrl) || string.IsNullOrWhiteSpace(resolution.ApiKey))
+            return OpenRouterVideoStream.Fail("视频下载服务配置不完整，请联系管理员检查模型配置");
+
+        var endpoint = BuildEndpointFromPath(
+            resolution.ApiUrl,
+            $"/videos/{Uri.EscapeDataString(jobId)}/content?index={urlIndex}");
+        return await OpenHttpVideoStreamAsync(endpoint, resolution.ApiKey, appCallerCode, ct);
+    }
+
+    private async Task<OpenRouterVideoStream> OpenHttpVideoStreamAsync(
+        string videoUrl,
+        string? apiKey,
+        string appCallerCode,
+        CancellationToken ct)
+    {
+        if (!Uri.TryCreate(videoUrl, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https"))
+            return OpenRouterVideoStream.Fail("视频下载地址无效，请返回视频页面重新生成");
+
+        var http = _httpClientFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(120);
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        HttpResponseMessage? response = null;
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        if (uri.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase))
+        {
+            request.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
+            request.Headers.TryAddWithoutValidation("X-OpenRouter-Title", $"G-{appCallerCode}");
+        }
+
+        try
+        {
+            response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "视频流打开失败 status={StatusCode} host={Host}",
+                    (int)response.StatusCode,
+                    uri.Host);
+                response.Dispose();
+                request.Dispose();
+                http.Dispose();
+                return OpenRouterVideoStream.Fail("视频已经生成，但下载服务暂时不可用，请稍后重试");
+            }
+
+            var stream = await response.Content.ReadAsStreamAsync(ct);
+            var owner = new VideoStreamRequestOwner(http, request, response);
+            var upstreamContentType = response.Content.Headers.ContentType?.MediaType;
+            return OpenRouterVideoStream.Ok(
+                stream,
+                upstreamContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true
+                    ? upstreamContentType
+                    : "video/mp4",
+                response.Content.Headers.ContentLength,
+                owner);
+        }
+        catch (Exception ex)
+        {
+            response?.Dispose();
+            request.Dispose();
+            http.Dispose();
+            _logger.LogWarning(ex, "视频流连接异常 host={Host}", uri.Host);
+            return OpenRouterVideoStream.Fail("视频下载连接中断，请稍后重试");
+        }
+    }
+
+    private static string BuildEndpointFromPath(string apiUrl, string endpointPath)
+    {
+        var baseUrl = apiUrl.TrimEnd('/');
+        var hasVersionSuffix = System.Text.RegularExpressions.Regex.IsMatch(
+            baseUrl,
+            @"/(api/)?v\d+$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (hasVersionSuffix)
+        {
+            if (endpointPath.StartsWith("/v1/", StringComparison.OrdinalIgnoreCase))
+                endpointPath = endpointPath[3..];
+            return $"{baseUrl}{(endpointPath.StartsWith('/') ? "" : "/")}{endpointPath}";
+        }
+        return $"{baseUrl}/v1{(endpointPath.StartsWith('/') ? "" : "/")}{endpointPath}";
+    }
+
+    private sealed class VideoStreamRequestOwner(
+        HttpClient http,
+        HttpRequestMessage request,
+        HttpResponseMessage response) : IDisposable
+    {
+        public void Dispose()
+        {
+            response.Dispose();
+            request.Dispose();
+            http.Dispose();
+        }
     }
 
     private async Task<OpenRouterVideoDownload> DownloadSignedVideoUrlAsync(string videoUrl, CancellationToken ct)

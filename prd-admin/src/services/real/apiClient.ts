@@ -182,7 +182,7 @@ function checkPermissionFingerprint(res: Response): void {
 // 去重：多个并发 401 共享同一个 refresh 请求，避免 refresh 风暴
 let inflightRefresh: Promise<boolean> | null = null;
 
-async function tryRefreshAdminToken(): Promise<boolean> {
+export async function tryRefreshAdminToken(): Promise<boolean> {
   if (inflightRefresh) return inflightRefresh;
   inflightRefresh = doRefreshAdminToken();
   try {

@@ -144,7 +144,14 @@ export function AvatarEditDialog(props: {
       const response = props.onUpload
         ? await props.onUpload(file)
         : await uploadUserAvatar({ userId: props.userId!, file });
-      if (!response.success) throw new Error(response.error?.message || '上传失败');
+      if (!response.success) {
+        setError(toUserReadableErrorMessage(response.error, {
+          code: response.error.code,
+          fallbackMessage: '头像上传未完成',
+          recoveryMessage: '请检查图片格式、大小和网络后重新上传。',
+        }));
+        return;
+      }
       const fileName = String(response.data?.avatarFileName || '').trim();
       if (!fileName) throw new Error('上传返回为空');
       setAvatarFileName(fileName);

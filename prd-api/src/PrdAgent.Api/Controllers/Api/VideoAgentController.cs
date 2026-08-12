@@ -272,20 +272,14 @@ public class VideoAgentController : ControllerBase
         if (ownership == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
 
-        var downloaded = string.IsNullOrWhiteSpace(ownership.OfferingId)
-            ? await _videoClient.DownloadVideoBytesAsync(
-                AppCallerRegistry.VideoAgent.VideoGen.Generate,
-                jobId,
-                expectedModel: ownership.Model,
-                ct: ct)
-            : await _videoClient.DownloadVideoBytesForOfferingAsync(
-                AppCallerRegistry.VideoAgent.VideoGen.Generate,
-                jobId,
-                0,
-                ownership.Model,
-                ownership.OfferingId,
-                ct);
-        if (!downloaded.Success || downloaded.Bytes == null || downloaded.Bytes.Length == 0)
+        await using var downloaded = await _videoClient.OpenVideoStreamForOfferingAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            jobId,
+            0,
+            ownership.Model,
+            ownership.OfferingId,
+            ct);
+        if (!downloaded.Success || downloaded.Content == null)
         {
             _logger.LogWarning(
                 "直出视频下载失败 jobId={JobId} model={Model} reason={Reason}",
@@ -297,10 +291,15 @@ public class VideoAgentController : ControllerBase
                 "视频已经生成，但暂时无法下载，请稍后重试或切换模型"));
         }
 
-        return File(
-            downloaded.Bytes,
-            downloaded.ContentType ?? "video/mp4",
-            $"video-{jobId}.mp4");
+        Response.ContentType = downloaded.ContentType ?? "video/mp4";
+        Response.ContentLength = downloaded.ContentLength;
+        Response.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+        {
+            FileName = $"video-{jobId}.mp4",
+            FileNameStar = $"video-{jobId}.mp4",
+        }.ToString();
+        await downloaded.Content.CopyToAsync(Response.Body, 128 * 1024, ct);
+        return new EmptyResult();
     }
 
     [HttpDelete("videogen-direct/{jobId}")]

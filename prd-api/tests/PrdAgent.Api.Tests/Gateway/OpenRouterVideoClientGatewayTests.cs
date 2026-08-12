@@ -91,6 +91,53 @@ public class OpenRouterVideoClientGatewayTests
     }
 
     [Fact]
+    public async Task DirectDownload_ShouldExposeAuthenticatedResponseStreamWithoutGatewayBuffering()
+    {
+        var gateway = new CapturingGateway();
+        var requestCount = 0;
+        var http = new HttpClient(new CapturingHandler(request =>
+        {
+            requestCount++;
+            request.RequestUri!.ToString().ShouldBe("https://openrouter.ai/api/v1/videos/job-123/content?index=0");
+            request.Headers.Authorization!.Scheme.ShouldBe("Bearer");
+            request.Headers.Authorization.Parameter.ShouldBe("sk-test");
+            request.Headers.GetValues("X-OpenRouter-Title").Single()
+                .ShouldBe($"G-{AppCallerRegistry.VideoAgent.VideoGen.Generate}");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new MemoryStream([4, 3, 2, 1]))
+                {
+                    Headers =
+                    {
+                        ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json"),
+                        ContentLength = 4,
+                    },
+                },
+            });
+        }));
+        var client = new OpenRouterVideoClient(
+            gateway,
+            new SingleClientFactory(http),
+            NullLogger<OpenRouterVideoClient>.Instance);
+
+        await using var opened = await client.OpenVideoStreamForOfferingAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            "job-123",
+            0,
+            "openrouter/test-video",
+            null);
+
+        opened.Success.ShouldBeTrue(opened.ErrorMessage);
+        opened.ContentType.ShouldBe("video/mp4");
+        opened.ContentLength.ShouldBe(4);
+        using var copy = new MemoryStream();
+        await opened.Content!.CopyToAsync(copy);
+        copy.ToArray().ShouldBe([4, 3, 2, 1]);
+        requestCount.ShouldBe(1);
+        gateway.RawCalls.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task RestartedPollingClient_ShouldResolveStatusAndDownloadWithRecordedModel()
     {
         var gateway = new CapturingGateway();
