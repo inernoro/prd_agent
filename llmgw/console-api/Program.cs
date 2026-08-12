@@ -105,7 +105,40 @@ var mapSsoLifetimeMinutes = config.GetValue<int>("LlmGwJwt:MapSsoLifetimeMinutes
 var mapSsoLifetime = mapSsoLifetimeMinutes > 0
     ? TimeSpan.FromMinutes(mapSsoLifetimeMinutes)
     : gwJwt.Lifetime;
+// 显式配置了收紧，就意味着「这条联邦会话必须在某个固定时刻死掉」。
+// 续签时必须按**剩余**时效签，不能重新给满：否则 15 分钟的 SSO 会话
+// 设一次口令、或切一次租户，就换成多天的 token，而 fed_session 带着的
+// 免旧口令特权会一起延长——反复调用甚至能无限续命（Codex PR #1364 P1）。
+// 没配置（默认与普通会话同为 7 天）时保持原样，续签照常给满，
+// 不动「用过就自动延长」的既有体验。
+// 只有**真的收紧了**才算硬截止。配成 >= 常规时长时 Issue 会把它 cap 回 _lifetime，
+// 于是 TryRenew 的「originalLifetime < _lifetime 才跳过」判据认不出它，中间件照常滑动续期，
+// fed_session 跟着无限延长——那样这个 flag 就是个假承诺（Codex PR #1364 P2）。
+// 判据跟着实际效果走，而不是跟着「配了没配」走。
+var mapSsoLifetimeIsHardDeadline = mapSsoLifetimeMinutes > 0 && mapSsoLifetime < gwJwt.Lifetime;
 builder.Services.AddSingleton(gwJwt);
+
+// 联邦会话续签的**绝对**到期时刻：原样沿用当前 token 的 exp，一秒都不往后挪。
+//
+// 上一版返回的是「剩余时长」，栽在 Issue 的 5 分钟下限上：只剩 2 分钟会被抬成 5 分钟，
+// 每 2 分钟续一次就能无限续命。所以这里必须给绝对时刻，由 Issue 走 absoluteExpiresAt
+// 分支绕开那个下限（Codex PR #1364 P1 第二轮）。
+//
+// 取不到 exp、或 exp 已经过去，都返回 null，调用方据此**拒绝续签**而不是给满——
+// 读不出截止时刻、或截止时刻已到时，唯一安全的动作都是不发新 token。
+//
+// 「已经过去」这一支不是假想输入：JwtBearer 配了 1 分钟 ClockSkew（见下方鉴权配置），
+// token 过期后一分钟内仍然能通过鉴权。此时 exp 在过去，若直接拿去签发，
+// JwtSecurityToken 会因为 expires <= notBefore 抛异常（Codex PR #1364 P2）。
+// 上一版我只 clamp 了「太远的未来」，没管「已经过去」——又是只覆盖了一个方向。
+static DateTime? FederatedHardDeadline(HttpContext http, bool hardDeadline)
+{
+    if (!hardDeadline) return null;
+    var raw = http.User.FindFirst("exp")?.Value;
+    if (!long.TryParse(raw, out var unix)) return null;
+    var deadline = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime;
+    return deadline > DateTime.UtcNow ? deadline : null;
+}
 
 // ── 鉴权 ──
 builder.Services
@@ -700,16 +733,27 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 
         var externalSubjectId = $"map:{mapUserId}";
         var gwUser = await users.Find(x => x.IdentityProvider == "map" && x.ExternalSubjectId == externalSubjectId).FirstOrDefaultAsync();
+
+        // 登录名默认跟 MAP 一致：一键登录进来的人不该被迫记住第二个名字。
+        // 取不到（不合法字符集、或已被别人占用）才退回自动名，并在账号页如实说明为什么。
+        var preferredUsername = LocalPasswordPolicy.TryNormalizeUsername(mapUsername, out var normalizedMapUsername, out _)
+            ? normalizedMapUsername
+            : null;
+        var preferredTaken = preferredUsername is not null
+            && await users.Find(x => x.Username == preferredUsername
+                                     && (x.IdentityProvider != "map" || x.ExternalSubjectId != externalSubjectId)).AnyAsync();
+        var fallbackUsername = $"map-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mapUserId))).ToLowerInvariant()[..16]}";
+
         if (gwUser is null)
         {
-            var stableUserHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mapUserId))).ToLowerInvariant();
             var createdUser = new LlmGwUser
             {
                 Id = Guid.NewGuid().ToString("N"),
-                Username = $"map-{stableUserHash[..16]}",
+                Username = preferredUsername is not null && !preferredTaken ? preferredUsername : fallbackUsername,
                 DisplayName = mapDisplayName.Length > 0 ? mapDisplayName : mapUsername,
                 IdentityProvider = "map",
                 ExternalSubjectId = externalSubjectId,
+                ExternalUsername = mapUsername,
                 PasswordHash = PasswordHasher.Hash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(48))),
                 IsActive = true,
                 MustChangePassword = false,
@@ -732,11 +776,35 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
                 if (gwUser is null) throw;
             }
         }
+        else if (preferredUsername is not null
+                 && !preferredTaken
+                 && gwUser.Username.StartsWith(LocalPasswordPolicy.ReservedUsernamePrefix, StringComparison.Ordinal))
+        {
+            // 存量自愈：早先建的号还叫自动名，而 MAP 用户名此刻可用，就地改过来。
+            // 判据用保留前缀而不是别的标记——那个命名空间真人拿不到，落在里面必然是自动生成的。
+            // 改名不影响身份关联：绑定走 ExternalSubjectId，从来不依赖用户名。
+            try
+            {
+                var renamed = await users.FindOneAndUpdateAsync(
+                    Builders<LlmGwUser>.Filter.And(
+                        Builders<LlmGwUser>.Filter.Eq(x => x.Id, gwUser.Id),
+                        Builders<LlmGwUser>.Filter.Eq(x => x.Username, gwUser.Username)),
+                    Builders<LlmGwUser>.Update.Set(x => x.Username, preferredUsername),
+                    new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+                if (renamed is not null) gwUser = renamed;
+            }
+            catch (Exception ex) when (IsDuplicateKey(ex))
+            {
+                // 查到可用与真正写入之间被人抢先。保持自动名，账号页会提示改名。
+            }
+        }
 
         gwUser = await users.FindOneAndUpdateAsync(
             Builders<LlmGwUser>.Filter.Eq(x => x.Id, gwUser.Id),
             Builders<LlmGwUser>.Update
                 .Set(x => x.DisplayName, mapDisplayName.Length > 0 ? mapDisplayName : mapUsername)
+                // MAP 那边改了名要跟着刷新，否则账号页给的建议值是过期的。
+                .Set(x => x.ExternalUsername, mapUsername)
                 .Set(x => x.IsActive, true)
                 .Set(x => x.MustChangePassword, false)
                 .Set(x => x.DefaultTenantId, tenant.Id)
@@ -792,7 +860,7 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 
         // MAP 联邦会话默认与普通会话同为 7 天（LlmGwJwt:MapSsoLifetimeMinutes 可收紧）；
         // 再次从 MAP 点击仍会原子吊销该用户旧 Gateway 会话。
-        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, mapSsoLifetime);
+        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, mapSsoLifetime, federatedSession: true);
         return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
         {
             Token = token,
@@ -818,21 +886,33 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 // ───────────────────────────── 改密（需鉴权，mcp token 也可）─────────────────────────────
 // 首登强制改密：校验旧口令 → 写新哈希 → 清 MustChangePassword → 重新签发不带 mcp 的 token。
 // 用普通 RequireAuthorization（不走 LogsRead 策略），使 mcp=1 的 token 能在此改密后解锁日志。
+//
+// 同一条路径也承担「联邦账号首次认领本地口令」：MAP 一键登录建的号，用户名与口令都是自动生成的，
+// 没人知道旧口令。是否豁免旧口令由 LocalPasswordPolicy 单点判定，写口令仍然只有这一处实现。
 app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] ChangePasswordRequestDto req) =>
 {
     var oldPwd = req.OldPassword ?? "";
     var newPwd = req.NewPassword ?? "";
-    if (oldPwd.Length == 0 || newPwd.Length == 0)
+    var requestedUsername = (req.Username ?? "").Trim();
+    if (newPwd.Length == 0)
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令与新口令不能为空"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "新口令不能为空"), jsonOptions);
     }
-    if (newPwd.Length < 12)
+    if (newPwd.Length < LocalPasswordPolicy.MinPasswordLength)
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", "新口令至少 12 位"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", $"新口令至少 {LocalPasswordPolicy.MinPasswordLength} 位"), jsonOptions);
     }
-    if (newPwd == oldPwd)
+
+    // 硬截止的联邦会话：**在任何写入之前**就把「到期时间不可读 / 已经过期」挡掉。
+    // 放到最后再签发是不行的：那时口令、用户名、SecurityVersion 都已经落库，
+    // 签发失败只能回 500，而用户的会话恰恰被这次改密作废了——改成功了却拿到 500，
+    // 还得重新登录（Codex PR #1364 P2）。
+    if (http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1"
+        && mapSsoLifetimeIsHardDeadline
+        && FederatedHardDeadline(http, true) is null)
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("SAME_PASSWORD", "新口令不能与旧口令相同"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail(
+            "SESSION_EXPIRED", "会话已到期或到期时间不可读，请重新登录后再试"), jsonOptions, 401);
     }
 
     // 从 token 的 sub（用户 Id）定位账号，避免依赖可变的用户名。
@@ -848,7 +928,37 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
     }
-    if (!PasswordHasher.Verify(oldPwd, user.PasswordHash))
+
+    // 会话来源参与判定：从 MAP 一键登录进来的人此刻就能再走一遍 SSO，
+    // 要求旧口令拦不住任何人，只会把忘记口令的本人锁死。
+    var fromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
+    var requiresOldPassword = LocalPasswordPolicy.RequiresOldPassword(
+        user.IdentityProvider, user.PasswordChangedByUser, fromFederatedSession);
+    if (requiresOldPassword && oldPwd.Length == 0)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令不能为空"), jsonOptions);
+    }
+    if (requiresOldPassword && newPwd == oldPwd)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("SAME_PASSWORD", "新口令不能与旧口令相同"), jsonOptions);
+    }
+
+    var newUsername = user.Username;
+    if (requestedUsername.Length > 0)
+    {
+        if (!LocalPasswordPolicy.TryNormalizeUsername(requestedUsername, out var normalizedUsername, out var usernameError))
+        {
+            return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_USERNAME", usernameError!), jsonOptions);
+        }
+        if (!string.Equals(normalizedUsername, user.Username, StringComparison.Ordinal)
+            && await users.Find(u => u.Username == normalizedUsername).AnyAsync())
+        {
+            return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("USERNAME_TAKEN", "该登录名已被占用"), jsonOptions);
+        }
+        newUsername = normalizedUsername;
+    }
+
+    if (requiresOldPassword && !PasswordHasher.Verify(oldPwd, user.PasswordHash))
     {
         await WriteOperationAuditAsync(
             operationAudits,
@@ -866,21 +976,42 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     var wasPasswordChangedByUser = user.PasswordChangedByUser;
     var update = Builders<LlmGwUser>.Update
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
+        .Set(u => u.Username, newUsername)
         .Set(u => u.MustChangePassword, false)
         // 标记为真人认领：默认模式下重启不再自愈回 admin/admin，保住用户新口令。
+        // 联邦账号一旦认领，下次改密就回到常规的旧口令校验。
         .Set(u => u.PasswordChangedByUser, true)
         .Inc(u => u.SecurityVersion, 1)
         .Set(u => u.UpdatedAt, DateTime.UtcNow);
-    var changedUser = await users.FindOneAndUpdateAsync(
-        Builders<LlmGwUser>.Filter.And(
-            Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
-            Builders<LlmGwUser>.Filter.Eq(u => u.IsActive, true),
-            Builders<LlmGwUser>.Filter.Eq(u => u.SecurityVersion, user.SecurityVersion),
-            Builders<LlmGwUser>.Filter.Eq(u => u.PasswordHash, user.PasswordHash)),
-        update,
-        new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+    LlmGwUser? changedUser;
+    try
+    {
+        changedUser = await users.FindOneAndUpdateAsync(
+            Builders<LlmGwUser>.Filter.And(
+                Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
+                Builders<LlmGwUser>.Filter.Eq(u => u.IsActive, true),
+                Builders<LlmGwUser>.Filter.Eq(u => u.SecurityVersion, user.SecurityVersion),
+                Builders<LlmGwUser>.Filter.Eq(u => u.PasswordHash, user.PasswordHash)),
+            update,
+            new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+    }
+    catch (Exception ex) when (IsDuplicateKey(ex))
+    {
+        // 上面的占用查询与这次写入之间有窗口，唯一索引才是权威。
+        // 两种异常都要接：findAndModify 走 MongoCommandException，普通写入走 MongoWriteException。
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("USERNAME_TAKEN", "该登录名已被占用"), jsonOptions);
+    }
     if (changedUser is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("PASSWORD_CHANGE_CONFLICT", "账号口令已被其他操作更新，请重新登录"), jsonOptions, 409);
+    var auditChanges = new BsonDocument
+    {
+        { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
+        { "passwordChangedByUser", new BsonDocument { { "from", wasPasswordChangedByUser }, { "to", true } } },
+        // 免旧口令的首次认领要在审计里留痕，否则事后分不清「验过旧口令」和「凭会话认领」。
+        { "oldPasswordVerified", requiresOldPassword },
+    };
+    if (!string.Equals(newUsername, user.Username, StringComparison.Ordinal))
+        auditChanges.Add("username", new BsonDocument { { "from", user.Username }, { "to", newUsername } });
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -890,11 +1021,7 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         targetName: user.Username,
         success: true,
         reason: null,
-        changes: new BsonDocument
-        {
-            { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
-            { "passwordChangedByUser", new BsonDocument { { "from", wasPasswordChangedByUser }, { "to", true } } },
-        });
+        changes: auditChanges);
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
     var tenantAccess = TenantAccess.GetRequired(http);
@@ -902,7 +1029,27 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     var tenant = membership is null ? null : await tenants.Find(x => x.Id == tenantAccess.TenantId && x.Status == "active").FirstOrDefaultAsync();
     if (tenant is null || membership is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("TENANT_ACCESS_DENIED", "租户成员关系已失效"), jsonOptions, 403);
-    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership);
+    // 联邦会话续签不得把到期时间往后推，理由见 FederatedHardDeadline。
+    // 前面已经在**任何写入之前**挡过一次；但从那次检查到这里要经过定位账号、
+    // PBKDF2、写库、写审计，硬截止完全可能正好落在这段时间里（TOCTOU）。
+    // 此时口令**已经改成功了**，绝不能回一个「失败」——用户会拿着旧口令反复重试，
+    // 而旧口令已经不好使了。如实说：改成功了，会话到期了，请重新登录（Codex PR #1364 P2）。
+    var needsHardDeadline = fromFederatedSession && mapSsoLifetimeIsHardDeadline;
+    var reissueDeadline = FederatedHardDeadline(http, needsHardDeadline);
+    if (needsHardDeadline && reissueDeadline is null)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Ok(new ChangePasswordResultDto
+        {
+            Token = string.Empty,
+            Username = changedUser.Username,
+            DisplayName = string.IsNullOrEmpty(changedUser.DisplayName) ? changedUser.Username : changedUser.DisplayName,
+            IdentityProvider = changedUser.IdentityProvider,
+            Tenant = ToTenantSession(tenant, membership),
+            RequiresRelogin = true,
+        }), jsonOptions);
+    }
+    var (token, expiresAt) = gwJwt.Issue(
+        changedUser, tenant, membership, federatedSession: fromFederatedSession, absoluteExpiresAt: reissueDeadline);
     var data = new ChangePasswordResultDto
     {
         Token = token,
@@ -913,6 +1060,59 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         Tenant = ToTenantSession(tenant, membership),
     };
     return Json(ApiEnvelope<ChangePasswordResultDto>.Ok(data), jsonOptions);
+}).RequireAuthorization();
+
+// 「账号与安全」页的数据源：告诉用户自己的登录名是什么、有没有可用的本地口令。
+// 一键登录进来的人此前无处得知这两件事，于是「网关有口令但登不进去」。
+// 与改密同为普通 RequireAuthorization：任何角色都必须能管自己的凭据。
+app.MapGet("/gw/auth/account", async (HttpContext http) =>
+{
+    var userId = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        ?? http.User.FindFirst("sub")?.Value;
+    if (string.IsNullOrEmpty(userId))
+        return Json(ApiEnvelope<AccountProfileDto>.Fail("UNAUTHORIZED", "无效的登录态"), jsonOptions, statusCode: 401);
+
+    var user = await users.Find(u => u.Id == userId).FirstOrDefaultAsync();
+    if (user is null || !user.IsActive)
+        return Json(ApiEnvelope<AccountProfileDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
+
+    var access = TenantAccess.GetRequired(http);
+    var requiresOld = LocalPasswordPolicy.RequiresOldPassword(
+        user.IdentityProvider,
+        user.PasswordChangedByUser,
+        http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1");
+
+    // 建议登录名 = 外部身份那边的登录名。只在它与当前用户名不同时才有意义；
+    // 被别人占用时也要返回，好让页面说清「为什么你不能用自己那个名字」。
+    string? suggestedUsername = null;
+    var suggestedTaken = false;
+    if (LocalPasswordPolicy.TryNormalizeUsername(user.ExternalUsername, out var normalizedExternal, out _)
+        && !string.Equals(normalizedExternal, user.Username, StringComparison.Ordinal))
+    {
+        suggestedUsername = normalizedExternal;
+        suggestedTaken = await users.Find(x => x.Username == normalizedExternal && x.Id != user.Id).AnyAsync();
+    }
+
+    return Json(ApiEnvelope<AccountProfileDto>.Ok(new AccountProfileDto
+    {
+        Username = user.Username,
+        DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
+        IdentityProvider = user.IdentityProvider,
+        HasLocalPassword = LocalPasswordPolicy.HasUsablePassword(user.IdentityProvider, user.PasswordChangedByUser),
+        RequiresOldPassword = requiresOld,
+        UsernameIsGenerated = user.Username.StartsWith(LocalPasswordPolicy.ReservedUsernamePrefix, StringComparison.Ordinal),
+        SuggestedUsername = suggestedUsername,
+        SuggestedUsernameTaken = suggestedTaken,
+        MinPasswordLength = LocalPasswordPolicy.MinPasswordLength,
+        Tenant = new TenantSessionDto
+        {
+            Id = access.TenantId,
+            Name = access.TenantName,
+            IsInternal = access.IsInternalTenant,
+            Role = access.Role,
+            TeamIds = access.TeamIds.ToList(),
+        },
+    }), jsonOptions);
 }).RequireAuthorization();
 
 app.MapGet("/gw/auth/context", (HttpContext http) =>
@@ -972,8 +1172,29 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
         || !TenantOwnerAuthority.IsEffectiveOwner(tenant, membership))
         return Json(ApiEnvelope<LoginResultDto>.Fail("TENANT_ACCESS_DENIED", "无权切换到该租户"), jsonOptions, 403);
 
+    // 同上：先挡住到期/不可读，再写默认租户。否则写完才发现签不出 token，
+    // 用户的默认租户已经被改掉，却只拿到一个错误。
+    var switchFromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
+    var switchDeadline = FederatedHardDeadline(http, switchFromFederatedSession && mapSsoLifetimeIsHardDeadline);
+    if (switchFromFederatedSession && mapSsoLifetimeIsHardDeadline && switchDeadline is null)
+        return Json(ApiEnvelope<LoginResultDto>.Fail(
+            "SESSION_EXPIRED", "会话已到期或到期时间不可读，请重新登录后再试"), jsonOptions, 401);
+
     await users.UpdateOneAsync(x => x.Id == user.Id, Builders<LlmGwUser>.Update.Set(x => x.DefaultTenantId, tenant.Id).Set(x => x.UpdatedAt, DateTime.UtcNow));
-    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership);
+    // 换租户是**续期**，会话血统不变：fed_session 必须原样带过去。
+    // 丢掉它的后果正好打在本次新增的功能上——一键登录进来、还没设过口令的人切一次租户，
+    // /gw/auth/account 就会改口说「要先填当前口令」，而那个口令是建号时随机生成的、
+    // 没人知道，于是「忘了口令可以靠 SSO 自救」这条路当场断掉，直到重新走一次 MAP 登录。
+    // 改密那条路（上面 Issue(..., federatedSession: fromFederatedSession)）早就是这么做的，
+    // 这里漏了同一个判断（Codex PR #1363 P2）。
+    // 写库到这里之间同样有 TOCTOU 窗口，重新读一次；这里改的只是「默认租户」这种偏好，
+    // 不是凭据，所以回 401 让用户重登即可，不需要像改密那样特殊措辞。
+    switchDeadline = FederatedHardDeadline(http, switchFromFederatedSession && mapSsoLifetimeIsHardDeadline);
+    if (switchFromFederatedSession && mapSsoLifetimeIsHardDeadline && switchDeadline is null)
+        return Json(ApiEnvelope<LoginResultDto>.Fail(
+            "SESSION_EXPIRED", "会话已到期，请重新登录后再试"), jsonOptions, 401);
+    var (token, expiresAt) = gwJwt.Issue(
+        user, tenant, membership, federatedSession: switchFromFederatedSession, absoluteExpiresAt: switchDeadline);
     return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
     {
         Token = token,
@@ -13218,6 +13439,15 @@ static BsonDocument PromptPolicyAuditChanges(BsonDocument doc) => new()
 };
 
 // 统一 JSON 输出（带信封 + 指定状态码）。
+// 唯一索引冲突的统一判定：findAndModify 走 MongoCommandException，普通写入走 MongoWriteException，
+// 两条路径的错误码都是 11000。分散着各判一次迟早漏一条，所以只在这里判。
+static bool IsDuplicateKey(Exception ex) => ex switch
+{
+    MongoCommandException command => command.Code == 11000,
+    MongoWriteException write => write.WriteError?.Category == ServerErrorCategory.DuplicateKey,
+    _ => false,
+};
+
 static IResult Json<T>(T value, JsonSerializerOptions options, int statusCode = 200)
     => Results.Json(value, options, statusCode: statusCode);
 

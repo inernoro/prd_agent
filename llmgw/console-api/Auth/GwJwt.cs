@@ -43,18 +43,51 @@ public sealed class GwJwt
 
     public SymmetricSecurityKey SigningKey => new(_key);
 
+    /// <summary>
+    /// 这个会话是不是刚由外部身份提供方（MAP 一键登录）证明过身份。
+    /// 用于口令自助：持有这种会话的人此刻就能再走一次 SSO，要求旧口令拦不住任何人，
+    /// 只会把忘记口令的本人永久锁在外面。用口令登录得到的会话不带这个标记。
+    /// </summary>
+    public const string FederatedSessionClaim = "fed_session";
+
     /// <summary>签发 token，返回 (token, 过期时间 UTC)。</summary>
     public (string Token, DateTime ExpiresAt) Issue(
         LlmGwUser user,
         LlmGwTenant? tenant = null,
         LlmGwMembership? membership = null,
-        TimeSpan? lifetime = null)
+        TimeSpan? lifetime = null,
+        bool federatedSession = false,
+        DateTime? absoluteExpiresAt = null)
     {
         var now = DateTime.UtcNow;
-        var requestedLifetime = lifetime ?? _lifetime;
-        var effectiveLifetime = requestedLifetime > _lifetime ? _lifetime : requestedLifetime;
-        if (effectiveLifetime < TimeSpan.FromMinutes(5)) effectiveLifetime = TimeSpan.FromMinutes(5);
-        var expires = now.Add(effectiveLifetime);
+        DateTime expires;
+        if (absoluteExpiresAt is { } hardDeadline)
+        {
+            // 硬截止：到期时刻是**给定的那个绝对时刻**，一秒都不许往后挪。
+            // 不能走下面那条 lifetime 路——那里有 5 分钟下限兜底，会把「只剩 2 分钟」
+            // 抬成 5 分钟；每 2 分钟续一次就能让联邦会话连同它带的免旧口令特权
+            // 无限续命（Codex PR #1364 P1 第二轮：我上一版以为这个下限无害，
+            // 在注释里写了「只保证不往后推」却没验，正是它把洞留下了）。
+            // 已经过去的截止时刻不能签：expires <= notBefore 会让 JwtSecurityToken 抛异常。
+            // 调用方必须在**任何写入之前**就把这种会话挡掉（见 Program.cs 的 FederatedHardDeadline），
+            // 走到这里还是过去时刻就是接线错误，明确抛出来，不要悄悄造一个非法 token。
+            if (hardDeadline <= now)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(absoluteExpiresAt), hardDeadline,
+                    "硬截止已过期，调用方应当拒绝续签而不是签发 token。");
+            }
+            // 仍然不许超过常规上限（防止传进来一个离谱的远期时刻）。
+            var ceiling = now.Add(_lifetime);
+            expires = hardDeadline > ceiling ? ceiling : hardDeadline;
+        }
+        else
+        {
+            var requestedLifetime = lifetime ?? _lifetime;
+            var effectiveLifetime = requestedLifetime > _lifetime ? _lifetime : requestedLifetime;
+            if (effectiveLifetime < TimeSpan.FromMinutes(5)) effectiveLifetime = TimeSpan.FromMinutes(5);
+            expires = now.Add(effectiveLifetime);
+        }
 
         var claims = new List<Claim>
         {
@@ -67,6 +100,12 @@ public sealed class GwJwt
         if (!string.IsNullOrWhiteSpace(user.IdentityProvider))
         {
             claims.Add(new Claim("identity_provider", user.IdentityProvider));
+        }
+
+        // 只有经 SSO 换来的会话才带这个标记；续期会原样带过去（会话血统不变）。
+        if (federatedSession)
+        {
+            claims.Add(new Claim(FederatedSessionClaim, "1"));
         }
 
         // 首登强制改密：带 mcp=1 的 token 只能调 /gw/auth/change-password，服务端策略门（LogsRead）拒绝

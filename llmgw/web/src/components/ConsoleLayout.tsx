@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Boxes, Building2, ChevronDown, CircleDollarSign, Cpu, FileClock, Layers3,
   Check, ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
-  ShieldCheck, Shuffle, Sun, Tags, X,
+  ShieldCheck, Shuffle, Sun, Tags, UserRound, X,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getAvailableTenants, setSession, switchTenant } from '@/lib/api';
@@ -181,6 +181,9 @@ export function ConsoleLayout() {
                   <Activity size={15} />返回 MAP<ExternalLink className="lg-user-menu-end-icon" size={14} />
                 </button>
               ) : null}
+              {/* 断头修复：此前菜单里没有任何入口能设置网关口令，一键登录进来的人
+                  既不知道自己的登录名，也无处改密。这一项对所有角色常驻。 */}
+              <NavLink to="/account"><UserRound size={15} />账号与安全</NavLink>
               <button type="button" onClick={toggleTheme}>{theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}{theme === 'dark' ? '切换浅色' : '切换深色'}</button>
               <button type="button" onClick={logout}><LogOut size={15} />退出登录</button>
             </div>

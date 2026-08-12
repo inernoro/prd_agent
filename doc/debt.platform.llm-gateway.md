@@ -72,6 +72,125 @@
 | 2026-07-08-video-shadow-cost-cap | high | 2026-07-08 | LLM Gateway 生产 shadow 取证期曾批量触发视频生成真实入口，成功 submit 会产生真实供应商成本；后续余额不足/通道不可用只说明供应链阻断，不代表前序成功请求没有计费 | 任何生产 seed/canary 同时启用 `--include-video-direct`、`--include-visual-video-direct`、视频 poll/download 或提高 `--iterations` 时 | in-progress | 已在 `scripts/llmgw-map-shadow-seed.py` 增加默认 `--max-video-submits=3` 与 `--allow-high-cost-video` 显式解除闸门；视频能力暂缓期间，非视频 release gate 必须使用 scoped 过滤，不再为了全量门槛重复打视频供应商。2026-07-08 只读取证：`visual-agent.videogen::video-gen` 近期 http 成功 418 次，`video-agent.videogen::video-gen` http 成功 39 次，失败 7 次，失败集中在 APIyi 无通道、Ark 404、火山方舟 overdue balance 和模型池不可用。 |
 | 2026-07-07-prod-video-asr-upstream-unavailable | critical | 2026-07-07 | 生产 video/ASR raw 发布 gate 仍未闭合：`video-agent.videogen::video-gen` 绑定池不可用；APIyi `alibaba/wan-2.6`、`bytedance/seedance-2.0-fast` 均返回 no available channels；豆包 ASR 已补池并可解析，但真实 raw seed 返回 `Invalid X-Api-Key` | 全量 `LLMGW_MODE=http`、`canary-video-asr`、或宣称视频/ASR/字幕已迁移成功 | open | 已备份 `/root/backups/llmgw-prod-before-video-asr-evidence-20260707T070525+0800`、`/root/backups/llmgw-prod-before-restore-shadow-sample-20260707T073402+0800`、`/root/backups/llmgw-prod-before-video-reprobe-20260707T074011+0800`、`/root/backups/llmgw-prod-before-asr-pool-bootstrap-20260707T080433+0800`、`/root/backups/llmgw-prod-before-asr-seed-20260707T081332+0800`。生产仍为 `LlmGateway__Mode=shadow`、`LlmGateway__ShadowFullSamplePercent=1`、allowlist 空。2026-07-07 已用 `scripts/llmgw-prod-asr-pool-bootstrap.sh` 新增 `asr_doubao_bigmodel_pool` 并绑定四个 ASR caller：`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`、`video-agent.v2d.transcribe::asr`、`video-agent.video-to-text::asr`。新版 upstream readiness 取证：四个 ASR caller 均解析为 DedicatedPool `doubao-asr-bigmodel` / `Exchange:豆包 ASR (BigModel)` / `protocol=exchange` / `Healthy`；视频仍返回“模型池内所有模型不可用”。同日备份后跑真实 MAP seed：`seed[1].session_chat` 成功，`seed[1].transcript_asr` 与 `seed[1].document_store_subtitle_asr` 均失败，错误为豆包 ASR `code=45000010, message=Invalid X-Api-Key`，证据文件在生产 `/tmp/llmgw-asr-seed-after-bootstrap.json`。只读 provider config audit 报告在生产 `/tmp/llmgw-provider-config-audit.json`：ASR key 可解密、长度 36、UUID 单 key 形态、`TargetAuthScheme=XApiKey` 合理；失败项为 no Healthy video-gen model 以及两个 ASR seed 失败。此前短时把原视频池健康恢复为 Healthy 且采样提到 100% 后跑 `--include-video-direct`，真实业务入口仍失败：`video direct upstream failed ... HTTP 404`，raw shadow `httpFail=5`。下一步必须补可用视频渠道和有效豆包 ASR key/resourceId，并重跑 `scripts/llmgw-prod-provider-config-audit.py --seed-evidence-json <new-seed>` 与 `scripts/llmgw-map-shadow-seed.py --include-video-direct --include-transcript-asr --include-document-store-subtitle-asr`，得到 `raw` allMatch 且 httpFail=0 后才可进入 video-asr 灰度。 |
 
+## 网关账号自助（2026-08-06 修复 + 剩余边界）
+
+网关是独立账号体系，但账号的钥匙此前配不出来：MAP 一键登录自动建号时，用户名取 `map-{哈希}`、
+口令取随机 48 字节，两个值没有任何人知道；改密端点又无条件校验旧口令；控制台的用户菜单里
+也没有任何入口能走到改密。三处叠加的结果是「网关明明有口令，却登不进去，也改不了」——
+用户 2026-08-06 直接把它称为断头设计。
+
+本次修复：新增「账号与安全」页（用户菜单常驻入口，任何角色可进），展示登录名与口令状态；
+由 MAP 一键登录换来的会话，设置口令时豁免旧口令——持有这种会话的人此刻就能再走一遍
+一键登录，要求旧口令拦不住任何人，却是忘记口令时唯一的回家路。豁免挂在**会话来源**上而不是
+账号属性上：用口令登录得到的会话一律照常校验，否则被盗会话就能直接改密。同时允许把自动
+用户名改成记得住的，否则设了口令也不知道用什么登录。判定收敛在 `LocalPasswordPolicy` 一处，
+接线由源码守卫钉住。
+
+一个差点埋进去的二次断头：最初的豁免条件是「联邦账号且从未设置过口令」，于是用户一旦设了
+口令又忘掉，就会第二次被锁在外面——和这次要修的形状一模一样。改为按会话来源判定才真正闭合。
+
+登录名默认跟随 MAP：自动名 `map-{哈希}` 是实现细节泄漏到用户身上，既然身份从 MAP 来，
+名字就该一致。建号即用 MAP 用户名，不合法或被占用才退回自动名；存量账号在下次一键登录时
+就地自愈；冲突不闷声退回，账号页明说是哪个名字被占了。
+
+真实环境验证（2026-08-06，用一次性测试账号跑通三条分支后清理）：
+
+| 分支 | 观察到的结果 |
+| --- | --- |
+| 建号即用 MAP 名 | 新用户首次一键登录，网关登录名等于其 MAP 用户名，未出现自动名 |
+| 冲突退回 + 说清原因 | 名字被占时退回自动名，账号接口返回建议名与「已被占用」标记 |
+| 占用解除后自愈 | 腾出名字后再次一键登录，自动改名成 MAP 用户名 |
+
+安全边界同批验证：一键登录会话免旧口令、口令登录会话必须填旧口令、匿名访问 401，三条全部成立。
+
+### 剩余边界（2026-08-12 收口，等后续验收）
+
+**一、硬截止机制建议收成最简形态（P1，设计问题不是某一行的问题）**
+
+`LlmGwJwt:MapSsoLifetimeMinutes` 允许把联邦会话收紧到任意分钟数。这个「任意」要同时和三样东西
+正确交互：`GwJwt.Issue` 的 5 分钟下限、`TryRenew` 的滑动续期判据、两个续签端点（改密 / 切租户）。
+本轮连续四次修复，**每一次的缺陷都是上一次修复引入的**，且全部出自这三处交互：
+
+1. 续签不传 lifetime → 15 分钟会话换成多天 token，`fed_session` 特权跟着延长
+2. 改传剩余时长 → 被 5 分钟下限抬高，每 2 分钟续一次即可无限续命
+3. 改传绝对时刻 → 没管「已经过去」的输入，`expires <= notBefore` 抛异常，而口令已落库
+4. 加了写入前预检 → 仍有 TOCTOU 窗口；且配置 ≥ 常规时长时 flag 是个假承诺
+
+第五个缺陷（初次签发仍走 lifetime 重载，配 1–4 分钟时被下限抬高）说明问题在设计不在实现——
+再补下去只是把下一个洞挪个位置。**建议二选一或都要**：
+
+- 配置**钳到 ≥5 分钟**并在启动日志明说。5 分钟下限从「隐形抬高」变成显式契约，第 5 类问题不存在。
+- 收紧的联邦会话**一律不参与任何续签**：改密照常成功，只是不发新 token、要求重登。
+  这样 `absoluteExpiresAt` 参数可以整个删掉，三处交互塌成一处——签发时用配置时长，此后没有第二条路径。
+
+采纳后本轮四次修复的大部分代码可以删除，而不是继续叠加。
+
+**二、初次签发未走绝对截止（P2，属于上一条的一个实例）**
+
+`MapSsoLifetimeMinutes` 配 1–4 分钟时，`/gw/auth/map-sso` 的初次签发走的仍是 lifetime 重载，
+被 5 分钟下限抬高；只有续签路径用了 `absoluteExpiresAt`。若采纳「配置钳到 ≥5 分钟」，此条自动消失。
+
+**三、首次建号的用户名竞态未重试（P2）**
+
+可用性查询与插入之间，另一个账号可能抢占 `preferredUsername`。此时唯一索引抛的重复键异常与
+「同一外部主体并发插入」同形，当前只按外部主体回查，回查不到就把一张本来有效的 SSO 票据标成
+`provisioning_failed`。应在该分支上用 `fallbackUsername` 重试建号（非竞态的冲突路径已经这么做了）。
+判据：「查询后、插入前被抢占，仍能用兜底名建号成功」。
+
+**四、bootstrap 管理员可以给自己改名，重启后会凭空多出一个特权账号（P1，安全相关）**
+
+本 PR 新增的改名能力**没有限制账号类型**：`/gw/auth/change-password` 的改名分支只做格式规范化与占用检查，
+任何已认证用户都能改自己的登录名，包括 `LLMGW_ADMIN_USER` 指定的 bootstrap 管理员。
+（控制台页面当前只在「自动生成的名字」或「有 MAP 建议名」时才显示输入框，本地管理员看不到该字段，
+但**端点本身是开放的**——UI 藏起来不等于关掉了。）
+
+后果链：bootstrap 管理员改名 → 下次进程启动 `SeedAdminAsync` 按 `Username == LLMGW_ADMIN_USER` 查不到 →
+**插入一个全新的管理员**，口令取 env 配置值或默认口令（默认口令时 `MustChangePassword=true`）→
+`EnsureInternalTenantAsync` 给它授予 owner 成员资格。等于系统里凭空多出一个特权账号，
+凭据是环境变量里的那个、或众所周知的默认值。
+
+修法二选一：
+- **禁止 bootstrap 账号改名**（一个条件即可，最省事、语义也最清楚）；
+- 或者让 bootstrap 发现改用**不可变身份**（固定 id / 专门的标记字段）而不是 `Username` 去找账号。
+
+判据：「把 bootstrap 管理员改名后重启，不得出现第二个管理员账号」。
+
+**四之二、自助改名不受租户命名空间约束，可抢占别的租户未来的规范名（P2，与第四条同根）**
+
+`/gw/members` 给本地成员的登录名是有规范的：`MembershipPolicy.TryCanonicalizeUsername` 把它规范成
+`<租户slug>.<短名>`。但本 PR 新增的自助改名只做全局格式校验与占用检查，接受任意裸用户名。
+于是 A 租户的成员可以把自己改成 `victim.alice`——那正是 B 租户将来给 alice 开号时会用的规范名；
+用户名索引是全局唯一的，B 租户后续开号就会撞 `USERNAME_UNAVAILABLE`，且看不出是被谁占的。
+
+与第四条是**同一个根**：改名能力落地时没有回答「谁能改」「能改成什么」这两个问题，
+只做了格式与占用。修法应一并考虑：本地账号的改名限制在其所属租户命名空间内，
+联邦账号另走一套（它的名字来自外部身份，本就不属于租户命名空间）。
+
+**四之三、改密成功但需重登的提示可能来不及被看见（P2）**
+
+我为「提交后才到期」做的那条 `requiresRelogin` 提示，前提是页面还在。但这条提示恰恰只在
+**到期时刻已经过去**时才出现，而 `AuthProvider` 会按同一个时间戳调度 `expireSession`，
+`RequireAuth` 随即把 `/account` 重定向到登录页——时钟正常同步时，那个定时器很可能在用户读到之前
+就把页面换掉了。等于我修好了「不撒谎」，却没保证「话能被听见」。
+修法：把这条终态提示做成跨登出/跳转仍然存活的东西（登录页可读的一次性提示），
+或者干脆渲染在受认证保护的路由之外。
+
+**五、改密续签仍有一个微秒级 TOCTOU（P2）**
+
+`FederatedHardDeadline` 检查与 `gwJwt.Issue` 之间若正好跨过硬截止，`Issue` 会抛
+`ArgumentOutOfRangeException`，而此时口令、用户名、SecurityVersion、审计都已提交——用户拿到 500，
+但改密其实成功了。窗口极窄（两行之间），但方向和第「二」条同源：**提交之后的失败必须表达成
+「成功 + 需要重登」，不能表达成失败**。修法是让签发把「已过期」作为一种可返回的结果而不是异常，
+由提交后的路径统一转成 `RequiresRelogin`。
+
+剩余边界（尚未偿还）：
+
+| 边界 | 说明 |
+| --- | --- |
+| 网关账号只能停用不能删除 | 组织页与 API 都只有创建与改状态，没有删除端点。自测或临时账号做完只能置 disabled，长期会在共享库里积累残骸（本轮自测已留下 4 个）。补删除端点前，任何自动化测试都不要批量建号 |
+| 独立口令账号忘记口令无自助路径 | 联邦账号可以从 MAP 一键登录回来重设（那次跳转已证明身份）；纯独立口令账号（如种子 admin）没有找回路径，也没有 Owner 重置他人口令的入口——组织页只在**新建**成员时能设初始口令。内部工具可接受，对外开放前须补 |
+| 登录名唯一性依赖唯一索引 | 占用检查与写入之间有窗口，靠 11000 兜底返回 USERNAME_TAKEN；若该集合尚未建唯一索引，并发改名可能撞出重名（索引由 DBA 手动创建，见 no-auto-index 规则） |
+
 ## 最新协议路由债务收口（2026-07-09）
 
 - `ProviderAttempts` 已从静态候选快照推进到结果快照：日志完成路径会写入最终发送 attempt 的 `statusCode`、`durationMs`、`error`、`endedAt`，控制台详情 API 和详情抽屉同步展示。
