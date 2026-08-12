@@ -1237,6 +1237,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const DEFAULT_ZOOM = 0.5;
 
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState<{ message: string; requestId?: string | null } | null>(null);
   // 统一模型目录。新配置返回逻辑模型；没有逻辑目录时兼容返回旧模型池投影。
   const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
@@ -2746,10 +2747,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   useEffect(() => {
     setModelsLoading(true);
+    setModelsError(null);
     // 通过视觉创作专属端点获取逻辑模型目录；旧环境由后端提供模型池兼容投影。
     getVisualAgentImageGenModels()
       .then((poolsRes) => {
-        if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
+        if (poolsRes.success) {
+          setImageGenPools(poolsRes.data ?? []);
+          return;
+        }
+        setImageGenPools([]);
+        setModelsError({
+          message: poolsRes.error?.message || '模型网关暂时不可用，请稍后重试。',
+          requestId: poolsRes.error?.requestId,
+        });
       })
       .finally(() => setModelsLoading(false));
   }, []);
@@ -7597,7 +7607,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </button>
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
-                            {allImageGenModels
+                            {allImageGenModels.length === 0 ? (
+                              <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
+                                {modelsError ? (
+                                  <>
+                                    <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
+                                    <div className="mt-1">{modelsError.message}</div>
+                                    {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
+                                  </>
+                                ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                              </div>
+                            ) : allImageGenModels
                               .slice()
                               .sort(
                                 (a, b) =>
@@ -8740,7 +8760,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
                           {enabledImageModels.length === 0 ? (
                             <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
-                              暂无启用的生图模型（可在“模型管理”中开启）
+                              {modelsError ? (
+                                <>
+                                  <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
+                                  <div className="mt-1 leading-relaxed">{modelsError.message}</div>
+                                  {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
+                                </>
+                              ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
                             </div>
                           ) : (
                             <div className="space-y-1.5">

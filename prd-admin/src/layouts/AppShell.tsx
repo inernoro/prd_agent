@@ -608,14 +608,14 @@ export default function AppShell() {
     [adminNotifications, personalNotifications]
   );
 
-  const openLlmGateway = useCallback(async () => {
+  const openLlmGateway = useCallback(async (returnTo?: string) => {
     if (gatewayOpening || user?.role !== 'ADMIN') return;
     setGatewayOpening(true);
     const result = await createLlmGatewaySsoTicket();
     if (result.success) {
       // 票据签发成功后仍可能没有可去的入口（例如预览分支名过长时，平台不会发布网关子域）。
       // 那与凭据无关，必须报出服务端给的真实原因，否则会把人引向「是不是被封号了」的错误方向。
-      const resolution = resolveLlmGatewaySso(result.data.code, result.data.console);
+      const resolution = resolveLlmGatewaySso(result.data.code, result.data.console, returnTo);
       if (resolution.ok) {
         window.location.assign(resolution.href);
         return;
@@ -644,9 +644,10 @@ export default function AppShell() {
     }
   }, []);
 
-  const handleNotification = useCallback(async (id: string, actionUrl?: string | null) => {
+  const handleNotification = useCallback(async (id: string, actionUrl?: string | null, actionKind?: string | null) => {
+    const isLlmGatewayAction = actionKind === 'llm-gateway';
     // 外部链接（绝对 URL）必须在用户点击的同步栈内打开，避免 await 之后丢失手势激活被浏览器拦截弹窗
-    const isExternal = !!actionUrl && /^https?:\/\//i.test(actionUrl);
+    const isExternal = !isLlmGatewayAction && !!actionUrl && /^https?:\/\//i.test(actionUrl);
     if (isExternal) window.open(actionUrl!, '_blank', 'noopener,noreferrer');
     // 乐观更新：立即从本地状态移除，同时加入 dismiss 黑名单，count 即时 -1
     setHandlingId(id);
@@ -660,12 +661,16 @@ export default function AppShell() {
     try {
       const res = await handleAdminNotification(id);
       // 站内路由跳转在 handle 成功后进行（SPA navigate 不受手势激活限制）
-      if (res.success && actionUrl && !isExternal) navigate(actionUrl);
+      if (res.success && actionUrl && isLlmGatewayAction) {
+        await openLlmGateway(actionUrl);
+      } else if (res.success && actionUrl && !isExternal) {
+        navigate(actionUrl);
+      }
     } finally {
       setHandlingId(null);
       await loadNotifications({ silent: true });
     }
-  }, [loadNotifications, navigate]);
+  }, [loadNotifications, navigate, openLlmGateway]);
 
   const handleAllNotifications = useCallback(async () => {
     setHandlingAll(true);
@@ -1018,7 +1023,7 @@ export default function AppShell() {
                     disabled={handlingId === toastNotification.id}
                     className="px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover-bg-soft active:scale-[0.97] disabled:opacity-60"
                     style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
-                    onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
+                    onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl, toastNotification.actionKind)}
                   >
                     {toastNotification.actionLabel || '查看详情'}
                   </button>
@@ -1915,7 +1920,7 @@ export default function AppShell() {
                                     type="button"
                                     className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover-bg-soft active:scale-[0.97]"
                                     style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
-                                    onClick={() => handleNotification(item.id, item.actionUrl)}
+                                    onClick={() => handleNotification(item.id, item.actionUrl, item.actionKind)}
                                   >
                                     {item.actionLabel || '去处理'}
                                   </button>
