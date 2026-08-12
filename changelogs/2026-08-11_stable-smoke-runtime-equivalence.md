@@ -293,3 +293,4 @@
 | fix | stable-smoke | 视觉专属回归改由视觉门禁核销，不再阻塞 Playwright 功能覆盖 |
 | fix | prd-api | 文档附件下载保留原始中文文件名和扩展名 |
 | test | stable-smoke | 补齐录音后台恢复生命周期和中文附件实际下载名证据 |
+| fix | visual-acceptance | 验收清单同步记录自动检查与人工视觉结论，可直接进入稳定冒烟视觉门禁 |

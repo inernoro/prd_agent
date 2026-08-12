@@ -16,4 +16,6 @@ test('visual harness persists the unique acceptance slot id in the manifest reco
   assert.match(source, /capturedAt:\s*new Date\(\)\.toISOString\(\),/);
   assert.match(source, /pageOrigin\s*=\s*new URL\(actualPageUrl\)\.origin/);
   assert.match(source, /pageOrigin,/);
+  assert.match(source, /automatedStatus:\s*warnings\.length\s*>\s*0\s*\?\s*'不通过'\s*:\s*automatedStatus\s*\|\|\s*'通过',/);
+  assert.match(source, /manualStatus:\s*manualStatus\s*\|\|\s*status\s*\|\|\s*undefined,/);
 });

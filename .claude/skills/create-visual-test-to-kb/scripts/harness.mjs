@@ -526,6 +526,8 @@ async function validateShot(page, path, expectText, allowBlockingOverlay = false
  *   - coverageStates: 当前截图证明的标准状态数组，供全面视觉覆盖门禁逐项核对
  *   - testType: 冒烟、功能、视觉或回归
  *   - status: 通过、不通过、部分通过、未执行或需干预
+ *   - automatedStatus: 自动检查结论；不传时由截图 warning 推导
+ *   - manualStatus: 人工视觉结论；不传时沿用调用方声明的 status
  *   - theme: light 或 dark；不传时从页面主题自动识别
  *   - methodAnchor: 报告内关联测试方法锚点
  *   - breadcrumb: 从入口到当前状态的真实页面操作路径
@@ -552,6 +554,8 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     coverageStates,
     testType,
     status,
+    automatedStatus,
+    manualStatus,
     theme,
     methodAnchor,
     breadcrumb,
@@ -646,6 +650,8 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     coverageStates: Array.isArray(coverageStates) ? coverageStates : undefined,
     testType: testType || undefined,
     status: status || undefined,
+    automatedStatus: warnings.length > 0 ? '不通过' : automatedStatus || '通过',
+    manualStatus: manualStatus || status || undefined,
     theme: resolvedTheme || undefined,
     viewportClass: isMobile ? 'mobile' : 'desktop',
     methodAnchor: methodAnchor || undefined,
