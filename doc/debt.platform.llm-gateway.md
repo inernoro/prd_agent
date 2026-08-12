@@ -130,6 +130,32 @@
 `provisioning_failed`。应在该分支上用 `fallbackUsername` 重试建号（非竞态的冲突路径已经这么做了）。
 判据：「查询后、插入前被抢占，仍能用兜底名建号成功」。
 
+**四、bootstrap 管理员可以给自己改名，重启后会凭空多出一个特权账号（P1，安全相关）**
+
+本 PR 新增的改名能力**没有限制账号类型**：`/gw/auth/change-password` 的改名分支只做格式规范化与占用检查，
+任何已认证用户都能改自己的登录名，包括 `LLMGW_ADMIN_USER` 指定的 bootstrap 管理员。
+（控制台页面当前只在「自动生成的名字」或「有 MAP 建议名」时才显示输入框，本地管理员看不到该字段，
+但**端点本身是开放的**——UI 藏起来不等于关掉了。）
+
+后果链：bootstrap 管理员改名 → 下次进程启动 `SeedAdminAsync` 按 `Username == LLMGW_ADMIN_USER` 查不到 →
+**插入一个全新的管理员**，口令取 env 配置值或默认口令（默认口令时 `MustChangePassword=true`）→
+`EnsureInternalTenantAsync` 给它授予 owner 成员资格。等于系统里凭空多出一个特权账号，
+凭据是环境变量里的那个、或众所周知的默认值。
+
+修法二选一：
+- **禁止 bootstrap 账号改名**（一个条件即可，最省事、语义也最清楚）；
+- 或者让 bootstrap 发现改用**不可变身份**（固定 id / 专门的标记字段）而不是 `Username` 去找账号。
+
+判据：「把 bootstrap 管理员改名后重启，不得出现第二个管理员账号」。
+
+**五、改密续签仍有一个微秒级 TOCTOU（P2）**
+
+`FederatedHardDeadline` 检查与 `gwJwt.Issue` 之间若正好跨过硬截止，`Issue` 会抛
+`ArgumentOutOfRangeException`，而此时口令、用户名、SecurityVersion、审计都已提交——用户拿到 500，
+但改密其实成功了。窗口极窄（两行之间），但方向和第「二」条同源：**提交之后的失败必须表达成
+「成功 + 需要重登」，不能表达成失败**。修法是让签发把「已过期」作为一种可返回的结果而不是异常，
+由提交后的路径统一转成 `RequiresRelogin`。
+
 剩余边界（尚未偿还）：
 
 | 边界 | 说明 |
