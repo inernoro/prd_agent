@@ -295,7 +295,14 @@ public class WebPagesController : ControllerBase
             function loadScript(src){
               return new Promise(function(resolve, reject){
                 var s = document.createElement("script");
-                s.src = src; s.onload = resolve; s.onerror = reject;
+                var settled = false;
+                function done(fn){ return function(){ if(settled){ return; } settled = true; fn(); }; }
+                // onerror 不够：CDN 域名在部分网络里是**挂起**而不是快速失败，脚本请求既不 load
+                // 也不 error，下面的 catch 分支永远走不到，页面就永久停在「正在加载 PDF…」的转圈上。
+                // 必须自己上闹钟，让降级下载链一定能露出来（CLAUDE.md §6 禁止空白等待）。
+                var timer = setTimeout(done(reject), 12000);
+                s.onload = done(function(){ clearTimeout(timer); resolve(); });
+                s.onerror = done(function(){ clearTimeout(timer); reject(); });
                 document.head.appendChild(s);
               });
             }

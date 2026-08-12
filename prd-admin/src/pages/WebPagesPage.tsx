@@ -48,6 +48,7 @@ import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
+import AskConfigDrawer from '@/components/web-hosting/ask/AskConfigDrawer';
 import { createPortal } from 'react-dom';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
@@ -424,6 +425,9 @@ export default function WebPagesPage() {
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
   // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
+  // 提问设置：站点卡「更多设置」直达。原先只有大预览顶栏的齿轮一个入口，
+  // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
+  const [askConfigSite, setAskConfigSite] = useState<HostedSite | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [showDesktopFilters, setShowDesktopFilters] = useState(false);
 
@@ -777,6 +781,7 @@ export default function WebPagesPage() {
             onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
             onMove={() => setMovingSite(site)}
             onComments={() => setCommentSite(site)}
+            onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
           />
         ))}
       </div>
@@ -796,6 +801,7 @@ export default function WebPagesPage() {
             onQrCode={() => setQrSite(site)}
             onTogglePublic={() => handleMakePublic(site)}
             onComments={() => setCommentSite(site)}
+            onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
           />
         ))}
       </div>
@@ -1638,6 +1644,20 @@ export default function WebPagesPage() {
         />
       )}
 
+      {/* 提问设置：站点卡「更多设置 → 提问设置」直达，不必先打开大预览再找齿轮 */}
+      {askConfigSite && (
+        <AskConfigDrawer
+          siteId={askConfigSite.id}
+          siteTitle={askConfigSite.title}
+          onClose={() => setAskConfigSite(null)}
+          onSaved={(cfg) => {
+            // 与评论开关同一处理：回填列表，避免关掉再开退回旧值
+            setSites((prev) => prev.map((x) => (x.id === askConfigSite.id ? { ...x, askEnabled: cfg.enabled } : x)));
+            setAskConfigSite((prev) => (prev ? { ...prev, askEnabled: cfg.enabled } : prev));
+          }}
+        />
+      )}
+
       {movingSite && (
         <MoveSiteDialog
           site={movingSite}
@@ -2267,7 +2287,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
+export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments, onAskConfig }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -2285,6 +2305,8 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
   onReplaceFile: (file: File) => void;
   onMove?: () => void;
   onComments?: () => void;
+  /** 提问设置抽屉；仅 canEdit 时传入 */
+  onAskConfig?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
@@ -2446,6 +2468,9 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
                   : null,
                 onComments
                   ? { label: '评论管理', icon: <MessageSquare size={13} />, onClick: onComments }
+                  : null,
+                onAskConfig
+                  ? { label: '提问设置', icon: <MessageCircleQuestion size={13} />, onClick: onAskConfig }
                   : null,
                 onViewers
                   ? { label: '访客', icon: <Eye size={13} />, onClick: onViewers }
@@ -2622,7 +2647,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -2634,6 +2659,8 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onQrCode: () => void;
   onTogglePublic: () => void;
   onComments?: () => void;
+  /** 提问设置抽屉；仅 canEdit 时传入 */
+  onAskConfig?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
@@ -2753,6 +2780,9 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
               : null,
             onComments
               ? { label: '评论管理', icon: <MessageSquare size={13} />, onClick: onComments }
+              : null,
+            onAskConfig
+              ? { label: '提问设置', icon: <MessageCircleQuestion size={13} />, onClick: onAskConfig }
               : null,
             c.canDelete
               ? { label: '删除', icon: <Trash2 size={13} />, onClick: onDelete, danger: true }
