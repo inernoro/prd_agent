@@ -418,7 +418,7 @@ public class ProfileController : ControllerBase
         if (string.IsNullOrWhiteSpace(prompt))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "请描述想怎么修改头像"));
         if (prompt.Length > 500)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "头像修改描述不能超过 500 字"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.AVATAR_PROMPT_TOO_LONG, "头像修改描述不能超过 500 字"));
 
         var user = await _db.Users.Find(u => u.UserId == currentUserId).FirstOrDefaultAsync(ct);
         if (user == null)

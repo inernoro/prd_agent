@@ -1,14 +1,8 @@
 using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
-using MongoDB.Bson.Serialization.Serializers;
-using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers;
-using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Database;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Controllers;
@@ -96,51 +90,39 @@ public sealed class SyntheticLoginControllerTests
     [Fact]
     public void TicketIndexes_ShouldProvideUniqueHashLookupAndExpiryCleanup()
     {
-        var indexes = DatabaseInitializer.BuildConsoleSsoTicketIndexes();
+        var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
+        var startup = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Database/DatabaseInitializer.cs"));
 
-        Assert.Equal(2, indexes.Count);
-        var rendered = indexes.Select(index => new
-        {
-            Keys = index.Keys.Render(new RenderArgs<BsonDocument>(
-                BsonDocumentSerializer.Instance,
-                BsonSerializer.SerializerRegistry)),
-            index.Options.Name,
-            index.Options.Unique,
-            index.Options.ExpireAfter,
-        }).ToList();
-        Assert.Contains(rendered, index =>
-            index.Keys == new BsonDocument("CodeHash", 1)
-            && index.Name == "uniq_console_sso_tickets_code_hash"
-            && index.Unique == true);
-        Assert.Contains(rendered, index =>
-            index.Keys == new BsonDocument("ExpiresAt", 1)
-            && index.Name == "ttl_console_sso_tickets_expires_at"
-            && index.ExpireAfter == TimeSpan.Zero);
+        Assert.Contains("uniq_console_sso_tickets_code_hash", catalog);
+        Assert.Contains("ttl_console_sso_tickets_expires_at", catalog);
+        Assert.DoesNotContain("EnsureConsoleSsoTicketIndexesAsync", startup);
     }
 
     [Fact]
     public void DirectVideoIndexes_ShouldProvideUniqueOwnershipAndExpiryCleanup()
     {
-        var indexes = DatabaseInitializer.BuildDirectVideoJobOwnershipIndexes();
+        var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
+        var startup = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Database/DatabaseInitializer.cs"));
 
-        Assert.Equal(2, indexes.Count);
-        var rendered = indexes.Select(index => new
+        Assert.Contains("db.direct_video_job_ownerships.updateMany", catalog);
+        Assert.Contains("uniq_direct_video_job_app_job", catalog);
+        Assert.Contains("ttl_direct_video_job_expires_at", catalog);
+        Assert.DoesNotContain("EnsureDirectVideoJobOwnershipIndexesAsync", startup);
+    }
+
+    private static string LocateRepoFile(string relativePath)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
         {
-            Keys = index.Keys.Render(new RenderArgs<DirectVideoJobOwnership>(
-                BsonSerializer.SerializerRegistry.GetSerializer<DirectVideoJobOwnership>(),
-                BsonSerializer.SerializerRegistry)),
-            index.Options.Name,
-            index.Options.Unique,
-            index.Options.ExpireAfter,
-        }).ToList();
-        Assert.Contains(rendered, index =>
-            index.Keys == new BsonDocument { { "AppKey", 1 }, { "JobId", 1 } }
-            && index.Name == "uniq_direct_video_job_app_job"
-            && index.Unique == true);
-        Assert.Contains(rendered, index =>
-            index.Keys == new BsonDocument("ExpiresAt", 1)
-            && index.Name == "ttl_direct_video_job_expires_at"
-            && index.ExpireAfter == TimeSpan.Zero);
+            var candidate = Path.Combine(dir.FullName, relativePath);
+            if (File.Exists(candidate)) return candidate;
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException($"Cannot locate repository file: {relativePath}");
     }
 
     private static T Invoke<T>(string name, params object?[] args)

@@ -107,6 +107,7 @@ public static class ErrorCodes
     public const string IMAGE_GEN_UNAVAILABLE = "IMAGE_GEN_UNAVAILABLE";
     public const string IMAGE_GEN_REQUEST_REJECTED = "IMAGE_GEN_REQUEST_REJECTED";
     public const string IMAGE_GEN_TIMEOUT = "IMAGE_GEN_TIMEOUT";
+    public const string AVATAR_PROMPT_TOO_LONG = "AVATAR_PROMPT_TOO_LONG";
 
     // 短视频后台任务相关
     public const string SHORT_VIDEO_INTERRUPTED = "SHORT_VIDEO_INTERRUPTED";

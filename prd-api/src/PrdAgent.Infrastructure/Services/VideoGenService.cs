@@ -552,7 +552,9 @@ public class VideoGenService : IVideoGenService
     public async Task<VideoGenRun?> GetRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
     {
         var fb = Builders<VideoGenRun>.Filter;
-        var filter = fb.Eq(x => x.Id, runId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId);
+        var filter = fb.Eq(x => x.Id, runId)
+                     & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                     & fb.Eq(x => x.DeletionRequestedAt, null);
         if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
         return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
     }
@@ -563,7 +565,8 @@ public class VideoGenService : IVideoGenService
         skip = Math.Max(skip, 0);
 
         var fb = Builders<VideoGenRun>.Filter;
-        var filter = fb.Eq(x => x.OwnerAdminId, ownerAdminId);
+        var filter = fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                     & fb.Eq(x => x.DeletionRequestedAt, null);
         if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
 
         var sort = Builders<VideoGenRun>.Sort.Descending(x => x.CreatedAt);
@@ -593,16 +596,61 @@ public class VideoGenService : IVideoGenService
         string? appKey = null,
         CancellationToken ct = default)
     {
-        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct);
+        await using var runDeletionLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"run-delete:{runId}",
+            ct);
+        var fb = Builders<VideoGenRun>.Filter;
+        var ownedFilter = fb.Eq(x => x.Id, runId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId);
+        if (appKey != null) ownedFilter &= fb.Eq(x => x.AppKey, appKey);
+
+        var run = await _db.VideoGenRuns.Find(ownedFilter).FirstOrDefaultAsync(ct);
         if (run == null) return null;
         if (run.Status is not (VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled))
             throw new InvalidOperationException("任务仍在生成，请先取消并等待任务结束后再删除");
 
-        var artifacts = CollectGeneratedVideoArtifacts(run);
+        if (run.DeletionRequestedAt == null)
+        {
+            var snapshot = CollectGeneratedVideoArtifacts(run)
+                .Select(artifact => new VideoGenDeletionArtifact
+                {
+                    Sha256 = artifact.Sha256,
+                    Urls = artifact.Urls.ToList(),
+                })
+                .ToList();
+            run = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+                ownedFilter & fb.Eq(x => x.DeletionRequestedAt, null),
+                Builders<VideoGenRun>.Update
+                    .Set(x => x.DeletionRequestedAt, DateTime.UtcNow)
+                    .Set(x => x.DeletionArtifacts, snapshot),
+                new FindOneAndUpdateOptions<VideoGenRun>
+                {
+                    ReturnDocument = ReturnDocument.After,
+                },
+                ct) ?? await _db.VideoGenRuns.Find(ownedFilter).FirstOrDefaultAsync(ct);
+            if (run == null) return null;
+        }
+
+        // 删除意图已经持久化；此后不再受请求断开影响，崩溃时由 VideoGenRunWorker 继续清理。
+        var cleanupToken = CancellationToken.None;
+        var artifacts = run.DeletionArtifacts
+            .Select(artifact => new GeneratedVideoArtifact(artifact.Sha256, artifact.Urls))
+            .ToList();
         var deletedArtifacts = 0;
-        var fb = Builders<VideoGenRun>.Filter;
+
+        // 先清理依赖记录；任一步失败时，持久化删除标记仍保留，底层视频对象尚未被触碰。
+        await _db.VideoExportTasks.DeleteManyAsync(
+            task => task.RunId == run.Id
+                    && task.OwnerAdminId == ownerAdminId
+                    && task.AppKey == run.AppKey,
+            cleanupToken);
+
         foreach (var artifact in artifacts)
         {
+            await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                _db,
+                $"generated-video:{artifact.Sha256}",
+                cleanupToken);
             var referenceFilters = new List<FilterDefinition<VideoGenRun>>
             {
                 fb.Eq(x => x.VideoAssetSha256, artifact.Sha256),
@@ -615,42 +663,35 @@ public class VideoGenService : IVideoGenService
             }
             var sharedReferenceCount = await _db.VideoGenRuns.CountDocumentsAsync(
                 fb.Ne(x => x.Id, run.Id) & fb.Or(referenceFilters),
-                cancellationToken: ct);
+                cancellationToken: cleanupToken);
             if (sharedReferenceCount > 0) continue;
             await _assetStorage.DeleteByShaAsync(
                 artifact.Sha256,
-                ct,
+                cleanupToken,
                 domain: AppDomainPaths.DomainVideoAgent,
                 type: AppDomainPaths.TypeVideo);
             deletedArtifacts++;
         }
 
-        await _db.VideoExportTasks.DeleteManyAsync(
-            task => task.RunId == run.Id
-                    && task.OwnerAdminId == ownerAdminId
-                    && task.AppKey == run.AppKey,
-            ct);
         var deleted = await _db.VideoGenRuns.DeleteOneAsync(
-            fb.Eq(x => x.Id, run.Id)
-            & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
-            & fb.Eq(x => x.AppKey, run.AppKey),
-            ct);
+            ownedFilter & fb.Ne(x => x.DeletionRequestedAt, null),
+            cleanupToken);
         if (deleted.DeletedCount != 1) return null;
 
         var projectDeleted = false;
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
         {
-            var project = await GetProjectAsync(run.ProjectId, ownerAdminId, appKey, ct);
+            var project = await GetProjectAsync(run.ProjectId, ownerAdminId, appKey, cleanupToken);
             var remainingRuns = await _db.VideoGenRuns.CountDocumentsAsync(
                 item => item.ProjectId == run.ProjectId
                         && item.OwnerAdminId == ownerAdminId
                         && item.AppKey == run.AppKey,
-                cancellationToken: ct);
+                cancellationToken: cleanupToken);
             var remainingExports = await _db.VideoExportTasks.CountDocumentsAsync(
                 task => task.ProjectId == run.ProjectId
                         && task.OwnerAdminId == ownerAdminId
                         && task.AppKey == run.AppKey,
-                cancellationToken: ct);
+                cancellationToken: cleanupToken);
             if (deleteEmptyProject
                 && project != null
                 && project.Assets.Count == 0
@@ -661,7 +702,7 @@ public class VideoGenService : IVideoGenService
                     item => item.Id == run.ProjectId
                             && item.OwnerAdminId == ownerAdminId
                             && item.AppKey == run.AppKey,
-                    ct);
+                    cleanupToken);
                 projectDeleted = projectResult.DeletedCount == 1;
             }
             else if (project?.LatestRunId == run.Id)
@@ -675,7 +716,7 @@ public class VideoGenService : IVideoGenService
                         .Unset(item => item.LatestExportTaskId)
                         .Set(item => item.Status, VideoProjectStatus.Draft)
                         .Set(item => item.UpdatedAt, DateTime.UtcNow),
-                    cancellationToken: ct);
+                    cancellationToken: cleanupToken);
             }
         }
 

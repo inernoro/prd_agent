@@ -154,6 +154,22 @@ db.console_sso_tickets.createIndex(
   { name: "ttl_console_sso_tickets_expires_at", expireAfterSeconds: 0 }
 )
 
+// collection: direct_video_job_ownerships
+// 旧记录在维护窗口补齐七天到期时间；新写入由模型直接设置 ExpiresAt。
+const directVideoOwnershipRetentionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+db.direct_video_job_ownerships.updateMany(
+  { "ExpiresAt": { $exists: false } },
+  { $set: { "ExpiresAt": directVideoOwnershipRetentionExpiresAt } }
+)
+db.direct_video_job_ownerships.createIndex(
+  { "AppKey": 1, "JobId": 1 },
+  { name: "uniq_direct_video_job_app_job", unique: true }
+)
+db.direct_video_job_ownerships.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "ttl_direct_video_job_expires_at", expireAfterSeconds: 0 }
+)
+
 // collection: system_roles
 db.system_roles.createIndex({ "Key": 1 })
 

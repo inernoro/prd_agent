@@ -65,6 +65,17 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除。');
   });
 
+  it('重复订阅时引导返回列表查看已有内容而不是继续重试', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'ALREADY_EXISTS', message: '该目录已订阅 (ID: internal-entry-id)' },
+      options,
+    );
+
+    expect(message).toBe('相同内容已存在，请返回列表刷新并查看已有内容。');
+    expect(message).not.toContain('internal-entry-id');
+    expect(message).not.toContain(options.fallbackMessage);
+  });
+
   it('视觉项目不存在时引导返回并刷新项目列表', () => {
     const message = toUserReadableErrorMessage(
       { code: 'WORKSPACE_NOT_FOUND', message: 'workspace missing' },

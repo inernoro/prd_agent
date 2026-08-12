@@ -138,6 +138,13 @@ function waitForNextPoll(signal?: AbortSignal): Promise<boolean> {
 
 function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl: string; assetSha256: string }> {
   const normalized = String(code ?? '').trim().toUpperCase();
+  if (normalized === 'AVATAR_PROMPT_TOO_LONG') {
+    return {
+      success: false,
+      data: null,
+      error: { code: normalized, message: '头像修改描述不能超过 500 字，请缩短描述后重试。' },
+    };
+  }
   if (normalized === 'CONTENT_EMPTY' || normalized === 'INVALID_FORMAT' || normalized === 'AVATAR_SOURCE_UNAVAILABLE') {
     return {
       success: false,
@@ -290,6 +297,9 @@ export async function generateMyAvatarPreview(input: {
   const prompt = input.prompt.trim();
   if (!prompt) {
     return { success: false, data: null, error: { code: 'CONTENT_EMPTY', message: '请描述想怎么修改头像' } };
+  }
+  if (prompt.length > 500) {
+    return avatarGenerationFailure('AVATAR_PROMPT_TOO_LONG');
   }
 
   const idempotencyKey = getOrCreateAvatarGenerationIdempotencyKey(prompt);

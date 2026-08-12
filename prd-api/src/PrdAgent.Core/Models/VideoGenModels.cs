@@ -357,10 +357,27 @@ public class VideoGenRun
     public string? ErrorMessage { get; set; }
 
     /// <summary>
+    /// 删除请求的持久化标记。设置后该任务不再对普通查询可见，失败重试只继续清理，不再恢复播放。
+    /// </summary>
+    public DateTime? DeletionRequestedAt { get; set; }
+
+    /// <summary>后台恢复清理最近一次领取时间；失败任务超过退避窗口后可再次领取。</summary>
+    public DateTime? DeletionCleanupAttemptedAt { get; set; }
+
+    /// <summary>删除开始前固化的生成视频对象清单，保证中途失败后仍可幂等续作。</summary>
+    public List<VideoGenDeletionArtifact> DeletionArtifacts { get; set; } = new();
+
+    /// <summary>
     /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
     /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
     /// </summary>
     public bool ForceFullShadowSample { get; set; }
+}
+
+public sealed class VideoGenDeletionArtifact
+{
+    public string Sha256 { get; set; } = string.Empty;
+    public List<string> Urls { get; set; } = new();
 }
 
 public sealed record DeleteVideoGenRunResult(

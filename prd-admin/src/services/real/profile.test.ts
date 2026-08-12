@@ -320,6 +320,16 @@ describe('generateMyAvatarPreview', () => {
     expect(result.error?.message).not.toMatch(/HTTP|Provider|token|image-gen/i);
   });
 
+  it('描述超过限制时提示缩短描述而不是重新上传头像', async () => {
+    const result = await generateMyAvatarPreview({ prompt: '字'.repeat(501) });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('AVATAR_PROMPT_TOO_LONG');
+    expect(result.error?.message).toBe('头像修改描述不能超过 500 字，请缩短描述后重试。');
+    expect(result.error?.message).not.toContain('上传');
+    expect(mockedApiRequest).not.toHaveBeenCalled();
+  });
+
   it('不向用户透传上游图片错误', async () => {
     mockedApiRequest
       .mockResolvedValueOnce({

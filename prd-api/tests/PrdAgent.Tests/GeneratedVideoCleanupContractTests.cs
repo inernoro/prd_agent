@@ -38,6 +38,21 @@ public class GeneratedVideoCleanupContractTests
         Assert.Contains("GetAdminId()", controller);
         Assert.Contains("DeleteByShaAsync", service);
         Assert.Contains("sharedReferenceCount", service);
+        Assert.Contains("DeletionRequestedAt", service);
+        Assert.Contains("DeletionArtifacts", service);
+        Assert.Contains("VideoAssetMutationLease.AcquireAsync", service);
+        Assert.Contains("VideoAssetMutationLease.AcquireAsync", worker);
+        Assert.Contains("ResumePendingDeletionAsync", worker);
+        Assert.Contains("DeletionCleanupAttemptedAt", worker);
+        Assert.Contains("var cleanupToken = CancellationToken.None", service);
+        Assert.True(
+            service.IndexOf("DeletionRequestedAt", StringComparison.Ordinal)
+            < service.IndexOf("DeleteByShaAsync", StringComparison.Ordinal),
+            "删除生成视频对象前必须先持久化删除标记和清理清单");
+        Assert.True(
+            service.IndexOf("VideoExportTasks.DeleteManyAsync", StringComparison.Ordinal)
+            < service.IndexOf("DeleteByShaAsync", StringComparison.Ordinal),
+            "删除生成视频对象前必须先清理依赖记录，失败时保留可恢复对象");
         Assert.Contains("deleteEmptyProject", service);
     }
 

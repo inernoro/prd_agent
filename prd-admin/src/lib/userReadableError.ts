@@ -115,6 +115,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['SHARE_EXPIRED', '分享入口已过期，请联系分享者重新生成。'],
   ['SHARE_REVOKED', '分享入口已被撤销，请联系分享者重新生成。'],
   ['DUPLICATE', '相同内容已存在，请刷新确认或修改后重试。'],
+  ['ALREADY_EXISTS', '相同内容已存在，请返回列表刷新并查看已有内容。'],
   ['TEMPLATE_VALIDATION_FAILED', '提交内容不符合模板要求，请按页面提示补全后重试。'],
 ]);
 

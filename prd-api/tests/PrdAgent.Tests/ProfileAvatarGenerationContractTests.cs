@@ -15,6 +15,7 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", source);
         Assert.Contains("AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img", source);
         Assert.Contains("InitImageAssetSha256 = sourceAsset.Sha256", source);
+        Assert.Contains("ErrorCodes.AVATAR_PROMPT_TOO_LONG", source);
         Assert.Contains("InsertOneAsync(run, cancellationToken: CancellationToken.None)", source);
         Assert.DoesNotContain("RequestAborted", source);
     }
