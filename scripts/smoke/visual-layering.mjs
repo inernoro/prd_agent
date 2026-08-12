@@ -359,11 +359,42 @@ async function main() {
     const frameHandleIds = () => page.evaluate(() => [...document.querySelectorAll('[data-frame-handle]')]
       .map((el) => el.getAttribute('data-frame-handle')).filter(Boolean));
     const framesBeforeResplit = await frameHandleIds();
-    const frameRects = (frameId) => page.evaluate((fid) => [...document.querySelectorAll('[data-canvas-key]')]
-      .filter((el) => el.getAttribute('data-frame-id') === fid)
-      .map((el) => el.getBoundingClientRect())
-      .filter((r) => r.width > 20 && r.height > 20)
-      .map((r) => ({ x: Math.round(r.x), y: Math.round(r.y) })), frameId);
+    /**
+     * 这一组落在**世界坐标**的哪里（读 style.left/top，不读 getBoundingClientRect）。
+     *
+     * 屏幕坐标在这条判据上是错的：分层跑完会做一次视角适配，镜头一动，同一个元素的
+     * 屏幕坐标就变了。第一版拿屏幕坐标比，量到的是「镜头移动」而不是「图层落位」
+     * （实测：拖前拖后都是 1265，跑完变 859——那 406px 全是镜头的功劳）。
+     */
+    const frameOrigin = (frameId) => page.evaluate((fid) => {
+      const points = [...document.querySelectorAll('[data-canvas-key]')]
+        .filter((el) => el.getAttribute('data-frame-id') === fid)
+        .map((el) => ({ x: parseFloat(el.style.left), y: parseFloat(el.style.top) }))
+        .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+      if (!points.length) return null;
+      return {
+        count: points.length,
+        x: Math.round(Math.min(...points.map((p) => p.x))),
+        y: Math.round(Math.min(...points.map((p) => p.y))),
+      };
+    }, frameId);
+    /** 关掉图层面板：它盖住右侧约 310px，新副本正落在那一带，抓手会被它挡住。 */
+    const ensurePanelClosed = async () => {
+      const inside = page.locator('button:has-text("重新拆分")').first();
+      if (!(await inside.count()) || !(await inside.isVisible().catch(() => false))) return;
+      const entry = page.locator('button:has-text("图层面板")').first();
+      if (!(await entry.count())) return;
+      const box = await entry.boundingBox();
+      if (box) await page.mouse.click(box.x + 12, box.y + box.height / 2);
+      await page.waitForTimeout(1200);
+    };
+    /** 把画布缩放到「适配」，否则新副本在原图右侧，多半已经滑出视口，鼠标点了个空。 */
+    const fitCanvas = async () => {
+      const fit = page.locator('button:has-text("适配")').first();
+      if (!(await fit.count())) return;
+      await fit.click({ force: true });
+      await page.waitForTimeout(1500);
+    };
     let midSplitDrag = null;
     if (await layerAgain.count()) {
       await layerAgain.click({ force: true });
@@ -387,12 +418,21 @@ async function main() {
       if (!liveFrameId) {
         check('拆分途中能认出新开的 Frame（拖走判据的前提）', false, '120s 内没出现新的 Frame 抓手');
       } else {
-        const rectsBeforeDrag = await frameRects(liveFrameId);
+        // 新副本落在原图右侧，多半已经滑出视口，而右侧那一带还压着图层面板——
+        // 不先收面板 + 适配，鼠标会点在面板上或者干脆点空，拖出来位移是 0
+        //（实测栽过一轮：拖前拖后世界坐标一模一样）。
+        await ensurePanelClosed();
+        await fitCanvas();
+        const before = await frameOrigin(liveFrameId);
         const handleBox = await page.locator(`[data-frame-handle="${liveFrameId}"]`).first()
           .boundingBox().catch(() => null);
-        if (!handleBox || rectsBeforeDrag.length === 0) {
+        const inViewport = handleBox
+          && handleBox.x >= 0 && handleBox.y >= 0
+          && handleBox.x + handleBox.width <= 1600 && handleBox.y + handleBox.height <= 950;
+        if (!before || !inViewport) {
           check('拆分途中能抓住新 Frame 的头部', false,
-            `抓手 ${handleBox ? '有' : '无'}，组内元素 ${rectsBeforeDrag.length} 个`);
+            `组内元素 ${before ? before.count : 0} 个，抓手 ${handleBox ? JSON.stringify(handleBox) : '不存在'}`
+              + `${handleBox && !inViewport ? '（在视口外，拖不到）' : ''}`);
         } else {
           // 往右下拖：向右只会拉大与原图那一簇的间距，不会破坏后面的「两簇」判据。
           const dx = 180;
@@ -402,24 +442,26 @@ async function main() {
           await page.mouse.move(handleBox.x + handleBox.width / 2 + dx,
             handleBox.y + handleBox.height / 2 + dy, { steps: 14 });
           await page.mouse.up();
-          await page.waitForTimeout(1200);
-          const rectsAfterDrag = await frameRects(liveFrameId);
-          const minX = (list) => Math.min(...list.map((r) => r.x));
-          const minY = (list) => Math.min(...list.map((r) => r.y));
-          const shiftedX = minX(rectsAfterDrag) - minX(rectsBeforeDrag);
-          const shiftedY = minY(rectsAfterDrag) - minY(rectsBeforeDrag);
+          await page.waitForTimeout(1500);
+          const after = await frameOrigin(liveFrameId);
+          // 屏幕位移换算成世界位移要除以缩放，这里不去读缩放值——只判「真的往右下动了、
+          // 而且动的量不是零头」。具体动了多少写进 detail，供人工核对。
+          const worldDx = after ? after.x - before.x : 0;
+          const worldDy = after ? after.y - before.y : 0;
           check('拆分途中拖 Frame，它当场就跟着走了',
-            Math.abs(shiftedX - dx) < 40 && Math.abs(shiftedY - dy) < 40,
-            `期望位移约 (${dx},${dy})，实到 (${shiftedX},${shiftedY})`);
+            worldDx > 200 && worldDy > 100,
+            `世界坐标从 (${before.x},${before.y}) 移到 (${after ? after.x : '?'},${after ? after.y : '?'})，`
+              + `位移 (${worldDx},${worldDy})`);
           await shot(page, 'dragged-mid-split');
-          // 记下「拖之后的落脚点」和「原来的落脚点」，等这一轮跑完再回来对账。
-          midSplitDrag = {
-            frameId: liveFrameId,
-            homeX: minX(rectsBeforeDrag),
-            movedX: minX(rectsAfterDrag),
-            countAtDrag: rectsAfterDrag.length,
-            dx,
-          };
+          if (after && worldDx > 200) {
+            // 记下「拖之后的落脚点」和「原来的落脚点」，等这一轮跑完再回来对账。
+            midSplitDrag = {
+              frameId: liveFrameId,
+              home: before,
+              moved: after,
+              countAtDrag: after.count,
+            };
+          }
         }
       }
 
@@ -435,19 +477,20 @@ async function main() {
       check('第二次分层能跑完并出结果', second);
 
       if (midSplitDrag) {
-        const finalRects = await frameRects(midSplitDrag.frameId);
-        const finalMinX = finalRects.length ? Math.min(...finalRects.map((r) => r.x)) : NaN;
-        // 判据一：这一组没有一块退回到原来那个位置（回退即 bug 复现）。
-        const strayed = finalRects.filter((r) => Math.abs(r.x - midSplitDrag.homeX) < midSplitDrag.dx / 2);
-        // 判据二：拖之后确实又有图层落进来了——否则上面那条等于没测。
-        const grew = finalRects.length > midSplitDrag.countAtDrag;
+        const final = await frameOrigin(midSplitDrag.frameId);
+        // 全组在拖动时一起右移，之后到达的图层都从组原点起算（裁剪只会让它更靠右），
+        // 所以这一组的最左世界坐标必须仍贴着「拖之后的原点」。若有任何一块按开跑时的
+        // 坐标落位，最左值会掉回「原来的原点」——那正是用户看到的 bug。
+        const tolerance = 40;
+        const landedAtMoved = !!final && final.x >= midSplitDrag.moved.x - tolerance;
+        // 这条判据没有空跑的保证：拖走之后确实又有图层落进来了。
+        const grew = !!final && final.count > midSplitDrag.countAtDrag;
         check('拖走之后到达的图层落在新位置，不回到最初那块地',
-          finalRects.length > 0 && strayed.length === 0
-            && Math.abs(finalMinX - midSplitDrag.movedX) < 60,
-          `原位 x=${midSplitDrag.homeX}，拖后 x=${midSplitDrag.movedX}，最终最左 x=${finalMinX}`
-            + `${strayed.length ? `，有 ${strayed.length} 块退回原位` : ''}`);
+          landedAtMoved,
+          `世界坐标：原位 x=${midSplitDrag.home.x}，拖后 x=${midSplitDrag.moved.x}，`
+            + `跑完最左 x=${final ? final.x : '组消失了'}`);
         check('拖走之后确实还有图层继续到达（这条判据没有空跑）', grew,
-          `拖走时 ${midSplitDrag.countAtDrag} 块，跑完 ${finalRects.length} 块`);
+          `拖走时 ${midSplitDrag.countAtDrag} 块，跑完 ${final ? final.count : 0} 块`);
       }
       const afterResplit = await page.evaluate(() => [...document.querySelectorAll('img')]
         .map((i) => i.src).filter((src) => /assets|cfi\./.test(src)));
