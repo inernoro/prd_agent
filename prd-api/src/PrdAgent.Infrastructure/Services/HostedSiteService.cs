@@ -212,7 +212,7 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 上传托管站点 {SiteId}: {Title}, 1 个文件, {TotalSize} bytes",
             userId, siteId, site.Title, site.TotalSize);
 
-        return AttachDerivedFields(site);
+        return AttachDerivedFields(site)!;
     }
 
     public async Task<HostedSite> CreateFromZipAsync(
@@ -255,7 +255,7 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 上传托管站点 {SiteId}: {Title}, {FileCount} 个文件, {TotalSize} bytes",
             userId, siteId, site.Title, result.Files.Count, result.TotalSize);
 
-        return AttachDerivedFields(site);
+        return AttachDerivedFields(site)!;
     }
 
     public async Task<HostedSite> CreateFromContentAsync(
@@ -303,7 +303,7 @@ public class HostedSiteService : IHostedSiteService
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
             userId, site.SourceType, siteId, site.Title);
 
-        return AttachDerivedFields(site);
+        return AttachDerivedFields(site)!;
     }
 
     // ─────────────────────────────────────────────
@@ -406,7 +406,7 @@ public class HostedSiteService : IHostedSiteService
             catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
         }
 
-        return AttachDerivedFields((await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!);
+        return AttachDerivedFields((await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!)!;
     }
 
     // ─────────────────────────────────────────────
@@ -677,7 +677,7 @@ public class HostedSiteService : IHostedSiteService
         }
 
         site.SharedTeamIds = sanitized;
-        return site;
+        return AttachDerivedFields(site);
     }
 
     public async Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct)
@@ -768,7 +768,7 @@ public class HostedSiteService : IHostedSiteService
 
         _logger.LogInformation("用户 {UserId} 将站点 {SourceId} 复制进团队 {TeamId} 为新站点 {NewId}（{FileCount} 个文件, {TotalSize} bytes）",
             userId, siteId, teamId, newSiteId, newFiles.Count, totalSize);
-        return copy;
+        return AttachDerivedFields(copy)!;
     }
 
     // ─────────────────────────────────────────────
@@ -793,27 +793,27 @@ public class HostedSiteService : IHostedSiteService
             update = update.Set(x => x.PublishedAt, now);
 
         await _db.HostedSites.UpdateOneAsync(x => x.Id == siteId, update, cancellationToken: ct);
-        return await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+        return AttachDerivedFields(await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct));
     }
 
     public async Task<List<HostedSite>> ListPublicByUserIdAsync(string ownerUserId, int limit, CancellationToken ct)
     {
         if (limit <= 0 || limit > 200) limit = 60;
-        return await _db.HostedSites
+        return AttachDerivedFields(await _db.HostedSites
             .Find(x => x.OwnerUserId == ownerUserId && x.Visibility == "public")
             .Sort(Builders<HostedSite>.Sort.Descending(x => x.PublishedAt).Descending(x => x.UpdatedAt))
             .Limit(limit)
-            .ToListAsync(ct);
+            .ToListAsync(ct));
     }
 
     public async Task<List<HostedSite>> ListAllByUserIdAsync(string ownerUserId, int limit, CancellationToken ct)
     {
         if (limit <= 0 || limit > 200) limit = 60;
-        return await _db.HostedSites
+        return AttachDerivedFields(await _db.HostedSites
             .Find(x => x.OwnerUserId == ownerUserId)
             .Sort(Builders<HostedSite>.Sort.Descending(x => x.UpdatedAt))
             .Limit(limit)
-            .ToListAsync(ct);
+            .ToListAsync(ct));
     }
 
     // ─────────────────────────────────────────────
@@ -1462,8 +1462,9 @@ public class HostedSiteService : IHostedSiteService
     /// **新增任何「把 HostedSite 交给前端」的路径都必须调它**，否则那条路径上的 PDF 站又会退回壳子。
     /// 守卫见 HostedSitePdfAssetWiringTests。
     /// </summary>
-    internal HostedSite AttachDerivedFields(HostedSite site)
+    internal HostedSite? AttachDerivedFields(HostedSite? site)
     {
+        if (site is null) return null;
         site.PdfAssetUrl = TryBuildPdfAssetUrl(site);
         return site;
     }
@@ -2759,7 +2760,7 @@ public class HostedSiteService : IHostedSiteService
             cancellationToken: ct);
 
         site.CommentsEnabled = enabled;
-        return site;
+        return AttachDerivedFields(site);
     }
 
     /// <summary>
@@ -2811,7 +2812,7 @@ public class HostedSiteService : IHostedSiteService
         site.AskDailyLimit = dailyLimit;
         site.AskConfigUpdatedAt = DateTime.UtcNow;
         site.AskConfigUpdatedBy = userId;
-        return site;
+        return AttachDerivedFields(site);
     }
 
     public async Task<SiteCommentsResult?> ListCommentsBySiteAsync(string siteId, string viewerUserId, CancellationToken ct = default)

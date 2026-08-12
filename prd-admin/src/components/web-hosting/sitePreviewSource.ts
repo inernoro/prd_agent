@@ -36,6 +36,26 @@ export interface SitePreviewSource {
   usingNativePdfViewer: boolean;
 }
 
+/**
+ * 这个浏览器能不能在 iframe 里用内置阅读器渲染 PDF。
+ *
+ * 判据必须是**能力信号**，不是视口宽度。第一版用 `useIsMobile()`（768px 断点）代替能力，
+ * 于是 iPad、横屏手机、平板 WebView 全被算成桌面，照样会拿到裸 PDF 白屏——
+ * 而壳子存在的理由正是这些客户端（predicate-and-wiring-discipline 形状 1：
+ * 判据比它该管的范围窄，换个等价场景就翻转）。
+ *
+ * `navigator.pdfViewerEnabled` 是 HTML 规范里就为这件事定义的字段：浏览器是否具备
+ * 内置 PDF 阅读器。iOS Safari 与各类嵌入式 WebView 报 false，桌面 Chrome/Firefox/Safari 报 true。
+ *
+ * 取不到这个字段（老浏览器）时**一律当作不支持**：走壳子最多是多依赖一次 CDN，
+ * 走错方向则是彻底白屏，两种代价不对等。
+ */
+export function supportsNativePdfViewer(
+  nav: { pdfViewerEnabled?: boolean } = typeof navigator === 'undefined' ? {} : navigator,
+): boolean {
+  return nav.pdfViewerEnabled === true;
+}
+
 export function resolveSitePreviewSource(
   site: SitePreviewSourceInput,
   options: { nativePdfViewer: boolean },

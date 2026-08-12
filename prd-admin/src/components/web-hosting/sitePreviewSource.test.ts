@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveSitePreviewSource } from './sitePreviewSource';
+import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -89,9 +89,29 @@ describe('站内大预览的 PDF 接线', () => {
    * 能不能用原生 PDF 阅读器是**运行环境**决定的，不是弹窗尺寸决定的。
    * 写死 true 会让移动端 WebView 拿到裸 PDF 直接白屏——正是壳子存在的理由。
    */
-  it('原生阅读器可用性接的是响应式信号，不是写死的 true', () => {
-    expect(source).toContain('useIsMobile');
+  it('原生阅读器可用性接的是能力信号，不是写死的 true、也不是视口宽度', () => {
+    expect(source).toContain('supportsNativePdfViewer');
     expect(source).not.toMatch(/nativePdfViewer:\s*true/);
+    // 768px 断点会把 iPad / 横屏手机 / 平板 WebView 一并算成桌面，它们照样白屏
+    expect(source).not.toContain('useIsMobile');
+  });
+});
+
+/**
+ * 能力探测本身的判据。宽度不是能力——这一族用例把「换个等价场景就翻转」的窄判据钉死。
+ */
+describe('supportsNativePdfViewer', () => {
+  it('浏览器自称有内置 PDF 阅读器才算有', () => {
+    expect(supportsNativePdfViewer({ pdfViewerEnabled: true })).toBe(true);
+  });
+
+  it('自称没有就是没有', () => {
+    expect(supportsNativePdfViewer({ pdfViewerEnabled: false })).toBe(false);
+  });
+
+  it('拿不到这个信号时保守当作没有——走壳子最多多依赖一次 CDN，走错方向是彻底白屏', () => {
+    expect(supportsNativePdfViewer({})).toBe(false);
+    expect(supportsNativePdfViewer({ pdfViewerEnabled: undefined })).toBe(false);
   });
 });
 

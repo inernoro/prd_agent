@@ -3106,6 +3106,46 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"PRD_AGENT_API_IMAGE\": os.environ.get(\"RESTORE_PRD_AGENT_API_IMAGE\", \"\")", restore);
     }
 
+    /// <summary>
+    /// 凡是把 HostedSite 交给前端的公开方法，都必须挂上派生字段（目前是 PdfAssetUrl）。
+    ///
+    /// 上一轮我按判断挑了七条「前端会用到的」路径去挂，review 立刻找出漏掉的
+    /// SetVisibilityAsync：用户把 PDF 站发布/取消公开后，前端用那个响应整条替换列表项，
+    /// 于是刚打开的大预览又退回依赖 CDN 的壳子——靠人挑路径本身就是形状 3 的温床。
+    /// 改成全覆盖，并且用这条守卫钉住：新增第 15 条路径而忘了挂，CI 直接红。
+    /// </summary>
+    [Fact]
+    public void 交付给前端的每条_HostedSite_路径都要挂上派生字段()
+    {
+        var src = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs");
+        var lines = src.Split('\n');
+
+        var starts = new List<int>();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (System.Text.RegularExpressions.Regex.IsMatch(
+                    lines[i], @"public async Task<(HostedSite\??|List<HostedSite>|\(List<HostedSite>)"))
+                starts.Add(i);
+        }
+        Assert.True(starts.Count >= 10, $"只解析到 {starts.Count} 个公开方法，正则与源码格式对不上了");
+
+        var missing = new List<string>();
+        for (var k = 0; k < starts.Count; k++)
+        {
+            var from = starts[k];
+            var to = k + 1 < starts.Count ? starts[k + 1] : lines.Length;
+            var body = string.Join("\n", lines[from..to]);
+            if (!body.Contains("AttachDerivedFields", StringComparison.Ordinal))
+            {
+                var name = System.Text.RegularExpressions.Regex.Match(lines[from], @"Task<[^>]*>+\s*(\w+)");
+                missing.Add(name.Success ? name.Groups[1].Value : lines[from].Trim());
+            }
+        }
+
+        Assert.True(missing.Count == 0,
+            "这些方法把 HostedSite 交给了前端却没挂派生字段，PDF 站在这些路径上会退回壳子：" + string.Join("、", missing));
+    }
+
     [Fact]
     public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
     {

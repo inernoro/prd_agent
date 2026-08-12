@@ -5,3 +5,5 @@
 | fix | prd-api | 站内列表下发 pdfAssetUrl，此前只有分享视图有，站内大预览的绕壳分支永远走不到 |
 | fix | prd-admin | 原生 PDF 阅读器可用性改接响应式信号，移动端仍走壳子 |
 | fix | prd-api | PDF 壳子的超时闹钟改罩整条初始化链，worker 挂起时也能降级 |
+| fix | prd-api | 全部 14 条交付 HostedSite 的路径统一挂派生字段，发布/取消公开后不再退回壳子 |
+| fix | prd-admin | PDF 原生阅读器改用 navigator.pdfViewerEnabled 能力探测，不再按 768px 断点猜 |

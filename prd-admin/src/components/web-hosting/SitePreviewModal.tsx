@@ -7,8 +7,7 @@ import { setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
-import { resolveSitePreviewSource } from './sitePreviewSource';
-import { useIsMobile } from '@/hooks/useBreakpoint';
+import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
 const SLOW_HINT_MS = 8000;
@@ -50,11 +49,10 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  // 能不能把 PDF 直接丢给浏览器原生阅读器，取决于**运行环境**，不取决于这个弹窗有多大。
-  // 移动 Safari / 微信 WebView 在 iframe 里根本渲染不了 PDF，绕开壳子等于白屏——
-  // 那正是壳子存在的理由。所以判据接的是真实的响应式信号，不是「90vw 大窗必然是桌面」这种假设。
-  const isMobile = useIsMobile();
-  const previewSource = resolveSitePreviewSource(site, { nativePdfViewer: !isMobile });
+  // 能不能把 PDF 直接丢给浏览器原生阅读器，问的是**浏览器有没有这个能力**，
+  // 既不是弹窗多大，也不是视口宽度——768px 断点会把 iPad、横屏手机、平板 WebView
+  // 一并算成桌面，它们照样白屏。判据见 supportsNativePdfViewer。
+  const previewSource = resolveSitePreviewSource(site, { nativePdfViewer: supportsNativePdfViewer() });
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
