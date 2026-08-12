@@ -7,3 +7,5 @@
 | fix | prd-api | PDF 壳子的超时闹钟改罩整条初始化链，worker 挂起时也能降级 |
 | fix | prd-api | 全部 14 条交付 HostedSite 的路径统一挂派生字段，发布/取消公开后不再退回壳子 |
 | fix | prd-admin | PDF 原生阅读器改用 navigator.pdfViewerEnabled 能力探测，不再按 768px 断点猜 |
+| fix | prd-api | 派生字段守卫改按真实成员边界切片，此前吞进辅助函数定义导致守卫不会红 |
+| docs | prd-api | 网页托管教程第 12 步补上「更多 → 提问设置」的指路 |
