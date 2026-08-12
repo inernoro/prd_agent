@@ -44,6 +44,12 @@ export type ChangePasswordResult = {
   expiresAt?: string | null;
   identityProvider?: string | null;
   tenant?: TenantSession | null;
+  /**
+   * 口令确实改成功了，但会话在这中间到期了，服务端签不出新 token。
+   * 这种情况后端回的是 success（不是失败）——报失败会让用户拿着已经作废的旧口令反复重试。
+   * 前端要做的是：告诉他改成功了，然后请他重新登录。
+   */
+  requiresRelogin?: boolean;
 };
 
 /** 「账号与安全」页的数据源：我的登录名是什么、有没有可用的本地口令、改密要不要填旧口令。 */

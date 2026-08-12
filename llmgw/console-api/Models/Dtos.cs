@@ -84,6 +84,12 @@ public sealed class ChangePasswordResultDto
     public string? ExpiresAt { get; init; }
     public string? IdentityProvider { get; init; }
     public TenantSessionDto? Tenant { get; init; }
+
+    /// <summary>
+    /// 口令确实改成功了，但会话在这中间到期了，签不出新 token——前端应提示重新登录。
+    /// 这种情形不能报失败：报失败会让用户拿着**已经作废的旧口令**反复重试。
+    /// </summary>
+    public bool RequiresRelogin { get; init; }
 }
 
 /// <summary>

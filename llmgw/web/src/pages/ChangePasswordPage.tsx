@@ -14,6 +14,8 @@ export function ChangePasswordPage() {
   const [confirm, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 「改成功了但会话到期」——既不是失败也不能直接进首页，单独一种终态。
+  const [notice, setNotice] = useState<string | null>(null);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,6 +40,16 @@ export function ChangePasswordPage() {
     const res = await changePassword({ oldPassword, newPassword });
     setSubmitting(false);
     if (res.success) {
+      // 「改成功了但会话到期」后端回的是 success + requiresRelogin（报失败会让用户
+      // 拿着已经作废的旧口令反复重试）。此时不能跳首页——会话已经没了，
+      // 跳过去只会被路由守卫弹回登录页，用户完全不知道口令到底改没改。
+      if (res.data?.requiresRelogin) {
+        // 不能在这里直接 logout：一登出路由守卫立刻把页面换成登录页，
+        // 这条「到底改没改成功」的提示用户一眼都看不到。留在原地告诉他，
+        // 由他点「退出登录」离开。
+        setNotice('口令已修改成功。原会话已到期，请用新口令重新登录。');
+        return;
+      }
       navigate('/', { replace: true });
     } else {
       setError(res.error?.message || '改密失败，请重试');
@@ -159,6 +171,20 @@ export function ChangePasswordPage() {
               onChange={(e) => setConfirm(e.target.value)}
             />
           </label>
+
+          {notice ? (
+            <div
+              style={{
+                fontSize: 'var(--fs-caption)',
+                color: 'var(--ok)',
+                background: 'var(--ok-bg)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '8px 10px',
+              }}
+            >
+              {notice}
+            </div>
+          ) : null}
 
           {error ? (
             <div

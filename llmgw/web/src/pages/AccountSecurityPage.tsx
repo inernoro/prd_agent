@@ -16,7 +16,7 @@ import { CARD_BODY, GAP } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE } from '@/lib/typography';
 
 export function AccountSecurityPage() {
-  const { changePassword } = useAuth();
+  const { changePassword, logout } = useAuth();
   const [profile, setProfile] = useState<AccountProfile | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -27,6 +27,8 @@ export function AccountSecurityPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // 口令改成功了、但会话在这中间到期：既不是失败也不是普通成功，单独一种终态。
+  const [reloginNotice, setReloginNotice] = useState(false);
 
   const load = useCallback(async () => {
     const res = await getAccountProfile();
@@ -72,6 +74,17 @@ export function AccountSecurityPage() {
     });
     setSubmitting(false);
     if (!res.success) return setError(res.error?.message || '设置失败，请重试');
+
+    // 后端把「改成功了但会话到期」回成 success + requiresRelogin，
+    // 因为报失败会让用户拿着**已经作废的旧口令**反复重试。这里要如实转述这件事，
+    // 而且不能再调 load()——会话已经没了，那一发必然 401，反而把成功盖成一个错误。
+    if (res.data?.requiresRelogin) {
+      setOldPassword('');
+      setNewPassword('');
+      setConfirm('');
+      setReloginNotice(true);
+      return;
+    }
 
     setOldPassword('');
     setNewPassword('');
@@ -202,7 +215,21 @@ export function AccountSecurityPage() {
               </FormGrid>
 
               {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-              {done && !error ? (
+              {reloginNotice ? (
+                <InlineAlert tone="ok">
+                  <Check size={14} style={{ verticalAlign: -2 }} /> 口令已修改成功。原会话已到期，请重新登录后使用新口令。
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    style={{ marginLeft: 8 }}
+                    onClick={() => logout()}
+                  >
+                    去登录
+                  </Button>
+                </InlineAlert>
+              ) : null}
+              {done && !error && !reloginNotice ? (
                 <InlineAlert tone="ok">
                   <Check size={14} style={{ verticalAlign: -2 }} /> 已生效，下次可用「{profile.username}」直接登录网关。
                 </InlineAlert>
