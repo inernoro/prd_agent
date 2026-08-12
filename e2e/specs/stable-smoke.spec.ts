@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -3032,7 +3032,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[MVIS-003][MVIS-004] 多图重排与删除后引用顺序正确', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
-    test.setTimeout(240_000);
+    test.setTimeout(300_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-boundaries');
     const file = (name: string, red: number, green: number, blue: number) => ({
@@ -3041,6 +3041,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       buffer: Buffer.from(solidPngDataUrl(red, green, blue, 32).split(',')[1]!, 'base64'),
     });
     let runId = '';
+    let verificationRunId = '';
     try {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissVisualTutorial(page);
@@ -3061,6 +3062,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         );
         return detail.assets.map((asset) => asset.sha256).sort();
       }, { timeout: 30_000 }).toEqual([aSha256, bSha256, cSha256].sort());
+      const uploadedDetail = await readEnvelope<{
+        assets: Array<{ id: string; sha256: string; url: string }>;
+      }>(await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail?assetLimit=20`, {
+        headers: authHeaders(token),
+      }));
+      const deletedAssets = uploadedDetail.assets.filter((asset) => [aSha256, bSha256].includes(asset.sha256));
+      expect(deletedAssets).toHaveLength(2);
 
       await page.locator('[data-tour-id="visual-editor-canvas"]').click({ position: { x: 180, y: 180 } });
       await page.locator('[title="b.png"]').click();
@@ -3106,6 +3114,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.locator('[title="b.png"]').click();
       await page.locator('[title="a.png"]').click({ modifiers: ['Shift'] });
 
+      const deleteResponses: Response[] = [];
+      const captureDeleteResponse = (response: Response) => {
+        const url = new URL(response.url());
+        if (
+          response.request().method() === 'DELETE'
+          && url.pathname.startsWith(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets/`)
+        ) {
+          deleteResponses.push(response);
+        }
+      };
+      page.on('response', captureDeleteResponse);
+      const canvasSaveResponsePromise = page.waitForResponse((response) => (
+        new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/canvas`
+        && response.request().method() === 'PUT'
+      ));
       await page.getByRole('button', { name: '删除选中' }).click();
       await expect(page.getByText('确认删除选中的 2 项？')).toBeVisible();
       await page.getByRole('button', { name: '删除', exact: true }).click();
@@ -3113,15 +3136,89 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
       await expect(page.locator('[title="c.png"]')).toBeVisible();
 
+      await expect.poll(() => deleteResponses.length, { timeout: 30_000 }).toBe(2);
+      page.off('response', captureDeleteResponse);
+      for (const response of deleteResponses) {
+        const body = await response.json() as ApiEnvelope<{ deleted: boolean }>;
+        expect(response.ok(), body.error?.message || '多图资产删除失败').toBe(true);
+        expect(body.success, body.error?.message || '多图资产删除失败').toBe(true);
+        expect(body.data.deleted).toBe(true);
+      }
+      expect(deleteResponses.map((response) => new URL(response.url()).pathname).sort()).toEqual(
+        deletedAssets.map((asset) => `/api/visual-agent/image-master/workspaces/${workspace.id}/assets/${asset.id}`).sort(),
+      );
+
+      const canvasSaveResponse = await canvasSaveResponsePromise;
+      const canvasSaveBody = await canvasSaveResponse.json() as ApiEnvelope<{ canvas: { payloadJson: string } }>;
+      expect(canvasSaveResponse.ok(), canvasSaveBody.error?.message || '删除后画布保存失败').toBe(true);
+      expect(canvasSaveBody.success, canvasSaveBody.error?.message || '删除后画布保存失败').toBe(true);
+      const savedPayload = canvasSaveBody.data.canvas.payloadJson;
+      for (const asset of deletedAssets) {
+        expect(savedPayload).not.toContain(asset.id);
+        expect(savedPayload).not.toContain(asset.sha256);
+        expect(savedPayload).not.toContain(asset.url);
+      }
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
+      await expect(page.locator('[title="c.png"]')).toBeVisible({ timeout: 30_000 });
+      const reloadedDetail = await readEnvelope<{
+        assets: Array<{ id: string; sha256: string; url: string }>;
+        canvas: { payloadJson: string } | null;
+      }>(await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail?assetLimit=20`, {
+        headers: authHeaders(token),
+      }));
+      const reloadedAssetShas = reloadedDetail.assets.map((asset) => asset.sha256);
+      expect(reloadedAssetShas).toContain(cSha256);
+      expect(reloadedAssetShas).not.toContain(aSha256);
+      expect(reloadedAssetShas).not.toContain(bSha256);
+      for (const asset of deletedAssets) {
+        expect(reloadedDetail.canvas?.payloadJson || '').not.toContain(asset.id);
+        expect(reloadedDetail.canvas?.payloadJson || '').not.toContain(asset.sha256);
+        expect(reloadedDetail.canvas?.payloadJson || '').not.toContain(asset.url);
+      }
+
+      await page.locator('[title="c.png"]').click();
+      const verificationChips = page.locator('.image-chip-node');
+      await expect(verificationChips).toHaveCount(1);
+      const verificationCreateResponsePromise = page.waitForResponse((response) => (
+        new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`
+        && response.request().method() === 'POST'
+      ));
+      const verificationComposer = page.locator('[contenteditable="true"]').last();
+      await verificationComposer.click();
+      await page.keyboard.insertText('仅根据当前绿色方块生成一张图片');
+      await verificationComposer.press('Enter');
+      const verificationCreateResponse = await verificationCreateResponsePromise;
+      const verificationCreateBody = await verificationCreateResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(verificationCreateResponse.ok(), verificationCreateBody.error?.message || '删除后引用验证请求失败').toBe(true);
+      expect(verificationCreateBody.success, verificationCreateBody.error?.message || '删除后引用验证请求失败').toBe(true);
+      verificationRunId = verificationCreateBody.data.runId;
+      const verificationRequestText = verificationCreateResponse.request().postData() || '';
+      const verificationSubmitted = verificationCreateResponse.request().postDataJSON() as {
+        imageRefs?: Array<{ assetSha256: string; url: string; label: string }>;
+      };
+      expect(verificationSubmitted.imageRefs?.map((ref) => ref.assetSha256)).toEqual([cSha256]);
+      for (const asset of deletedAssets) {
+        expect(verificationRequestText).not.toContain(asset.id);
+        expect(verificationRequestText).not.toContain(asset.sha256);
+        expect(verificationRequestText).not.toContain(asset.url);
+      }
+      const verificationCancelled = await page.request.post(`/api/visual-agent/image-gen/runs/${verificationRunId}/cancel`, {
+        headers: authHeaders(token),
+      });
+      expect([200, 409]).toContain(verificationCancelled.status());
+      await waitForImageRun(page, token, verificationRunId, 180_000);
+
       await testInfo.attach('multi-image-reorder-delete', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
-      if (runId) {
-        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+      for (const cleanupRunId of [runId, verificationRunId].filter(Boolean)) {
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${cleanupRunId}`, { headers: authHeaders(token) });
         if (current.ok()) {
           const detail = await current.json() as ApiEnvelope<ImageRunDetail>;
           if (!/Completed|Failed|Cancelled/i.test(detail.data?.run?.status || '')) {
-            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
-            await waitForImageRun(page, token, runId, 180_000);
+            await page.request.post(`/api/visual-agent/image-gen/runs/${cleanupRunId}/cancel`, { headers: authHeaders(token) });
+            await waitForImageRun(page, token, cleanupRunId, 180_000);
           }
         }
       }
@@ -3132,8 +3229,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(deleted.ok(), deleteBody.error?.message || '多图验收项目清理失败').toBe(true);
       expect(deleteBody.success, deleteBody.error?.message || '多图验收项目清理失败').toBe(true);
       expect(deleteBody.data.deleted).toBe(true);
-      if (runId) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      for (const cleanupRunId of [runId, verificationRunId].filter(Boolean)) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${cleanupRunId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
     }
   });
