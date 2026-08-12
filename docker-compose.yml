@@ -58,10 +58,11 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId；滚动发布期间保持不变。
       - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
-      # 首次升级默认接管旧版 main owner，避免发布时遗留正在执行的后台任务；
-      # CDS compose 独立固定禁用，完成首轮生产迁移后可显式改为 false 并清空退役名单。
-      - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}
-      - Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}
+      # 旧 owner 接管是显式的一次性迁移：必须同时给退役名单与 UTC 创建截止时间。
+      # 截止时间之后由仍在线旧容器创建的新任务不会进入生产 worker。
+      - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-false}
+      - Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-}
+      - Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-}
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379
@@ -119,8 +120,9 @@ services:
       # 经 gateway nginx 在两个 serving 实例间负载均衡；不再把 MAP 固定到单实例。
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
-      # 仅正式权威部署接管上线前遗留的无归属转写任务；CDS 预览在 cds-compose.yml 中固定关闭。
-      - Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-true}
+      # 无归属转写任务只能由正式权威部署做一次性迁移；
+      # 必须同时开启本开关并配置 LEGACY_OWNER_CREATED_BEFORE_UTC，CDS 预览固定关闭。
+      - Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-false}
     # 重要：此 API 容器建议只读，避免任何本地落盘
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘

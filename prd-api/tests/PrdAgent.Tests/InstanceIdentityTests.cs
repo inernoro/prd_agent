@@ -45,7 +45,7 @@ public sealed class InstanceIdentityTests
     }
 
     [Fact]
-    public void GetCompatibleOwnerIds_OnlyIncludesExplicitlyRetiredLegacyOwner()
+    public void GetCompatibleOwnerIds_NeverMixesLegacyOwnerIntoCurrentScope()
     {
         var cds = BuildConfiguration("prd-agent:cds", "main", "Production", cdsProjectId: "prd-agent");
         var production = BuildConfiguration(
@@ -59,7 +59,7 @@ public sealed class InstanceIdentityTests
 
         Assert.Equal(["prd-agent:cds::main"], InstanceIdentity.GetCompatibleOwnerIds(cds));
         Assert.Equal(
-            ["prd-agent:production::main", "main"],
+            ["prd-agent:production::main"],
             InstanceIdentity.GetCompatibleOwnerIds(production));
         Assert.Equal(
             ["prd-agent:production::codex/example"],

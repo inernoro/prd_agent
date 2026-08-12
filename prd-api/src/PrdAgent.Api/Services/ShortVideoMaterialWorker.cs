@@ -76,7 +76,8 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 nameof(ShortVideoMaterialRun.OwnerInstanceId),
                 compatibleOwnerIds,
                 includeUnowned: true,
-                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration));
+                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+                legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
             var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
                 ownerScope);
@@ -117,7 +118,8 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 nameof(ShortVideoMaterialRun.OwnerInstanceId),
                 compatibleOwnerIds,
                 includeUnowned: true,
-                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration));
+                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+                legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
             var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
             var current = _currentRunId ?? "";
             var filter = Builders<ShortVideoMaterialRun>.Filter.And(
@@ -176,7 +178,8 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             nameof(ShortVideoMaterialRun.OwnerInstanceId),
             compatibleOwnerIds,
             includeUnowned: true,
-            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration));
+            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+            legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
             Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),

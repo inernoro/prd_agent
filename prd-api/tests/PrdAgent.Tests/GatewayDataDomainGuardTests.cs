@@ -1156,15 +1156,18 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("AdoptLegacyTranscriptRunsKey", authority);
         Assert.Contains("AdoptLegacyBranchOwnersKey", authority);
         Assert.Contains("RetiredLegacyBranchOwnerIdsKey", authority);
-        Assert.Contains("DeploymentAuthority.CanAdoptLegacyBranchOwners(config)", ReadRepoFile("prd-api/src/PrdAgent.Api/Services/InstanceIdentity.cs"));
+        Assert.Contains("LegacyOwnerCreatedBeforeUtcKey", authority);
+        Assert.DoesNotContain("GetRetiredLegacyBranchOwnerIds", ReadRepoFile("prd-api/src/PrdAgent.Api/Services/InstanceIdentity.cs"));
         Assert.Contains("Transcript__AdoptLegacyUnownedRuns: \"false\"", cdsCompose);
-        Assert.Contains("Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-true}", productionCompose);
         Assert.Contains("Deployment__Identity: \"prd-agent:cds\"", cdsCompose);
         Assert.Contains("Deployment__AdoptLegacyBranchOwners: \"false\"", cdsCompose);
         Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds: \"\"", cdsCompose);
+        Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc: \"\"", cdsCompose);
         Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
-        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}", productionCompose);
-        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}", productionCompose);
+        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-false}", productionCompose);
+        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-}", productionCompose);
+        Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-}", productionCompose);
+        Assert.Contains("Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-false}", productionCompose);
         Assert.True(
             cdsCompose.Split("command -v ffmpeg", StringSplitOptions.None).Length - 1 >= 3,
             "CDS API 的 dev、static 与默认源码命令都必须在启动前保证 ffmpeg 可用");
@@ -1177,6 +1180,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Set(r => r.OwnerInstanceId, _instanceId)", watchdog);
         Assert.DoesNotContain("BranchOnlyOwnerPattern", legacyOwnerScope);
         Assert.Contains("Filter.In(ownerField, retiredLegacyOwnerIds)", legacyOwnerScope);
+        Assert.Contains("Filter.Lte(\"CreatedAt\", legacyOwnerCreatedBeforeUtc.Value)", legacyOwnerScope);
         Assert.Contains("var retiredLegacyOwnerIds = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration)", recordingWorker);
         Assert.Contains("retiredLegacyOwnerIds: retiredLegacyOwnerIds", recordingWorker);
         Assert.Contains("LegacyOwnerScope.Build<DocumentStoreAgentRun>", documentWorker);

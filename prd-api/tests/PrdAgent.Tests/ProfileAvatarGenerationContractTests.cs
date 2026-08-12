@@ -176,7 +176,15 @@ public class ProfileAvatarGenerationContractTests
             controller.Split(
                 "ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId)",
                 StringSplitOptions.None).Length - 1);
-        Assert.Contains("ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(userId)", adminUsers);
+        Assert.True(
+            adminUsers.Split(
+                "ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey",
+                StringSplitOptions.None).Length - 1 >= 2);
+        Assert.True(
+            adminUsers.Split(
+                "TrackAndTryDeleteSupersededAvatarAsync",
+                StringSplitOptions.None).Length - 1 >= 2);
+        Assert.Contains("ReturnDocument = ReturnDocument.Before", adminUsers);
         Assert.True(
             cleanup.IndexOf("BuildUserMutationLeaseKey(task.UserId)", StringComparison.Ordinal)
             < cleanup.IndexOf("var currentAvatarFileName", StringComparison.Ordinal));

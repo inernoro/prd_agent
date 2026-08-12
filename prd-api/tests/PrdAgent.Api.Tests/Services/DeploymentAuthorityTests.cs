@@ -37,6 +37,11 @@ public class DeploymentAuthorityTests
         DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
         {
             ["Transcript:AdoptLegacyUnownedRuns"] = "true",
+        })).ShouldBeFalse();
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["Transcript:AdoptLegacyUnownedRuns"] = "true",
+            ["Deployment:LegacyOwnerCreatedBeforeUtc"] = "2026-01-01T00:00:00Z",
         })).ShouldBeTrue();
         DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
         {
@@ -57,14 +62,24 @@ public class DeploymentAuthorityTests
         {
             ["Deployment:AdoptLegacyBranchOwners"] = "true",
             ["Deployment:RetiredLegacyBranchOwnerIds"] = "main,codex/retired-preview,main",
+            ["Deployment:LegacyOwnerCreatedBeforeUtc"] = "2026-01-01T00:00:00Z",
         });
         DeploymentAuthority.CanAdoptLegacyBranchOwners(authorized).ShouldBeTrue();
         DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(authorized)
             .ShouldBe(["main", "codex/retired-preview"]);
+        DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(authorized)
+            .ShouldBe(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
         DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
         {
             ["Deployment:AdoptLegacyBranchOwners"] = "true",
             ["Deployment:RetiredLegacyBranchOwnerIds"] = "main",
+            ["Deployment:LegacyOwnerCreatedBeforeUtc"] = "2999-01-01T00:00:00Z",
+        })).ShouldBeFalse();
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
+        {
+            ["Deployment:AdoptLegacyBranchOwners"] = "true",
+            ["Deployment:RetiredLegacyBranchOwnerIds"] = "main",
+            ["Deployment:LegacyOwnerCreatedBeforeUtc"] = "2026-01-01T00:00:00Z",
             ["CDS_PROJECT_ID"] = "50bf3eac3d02",
         })).ShouldBeFalse();
     }

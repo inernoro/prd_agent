@@ -68,6 +68,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         var instanceId = InstanceIdentity.Get(configuration);
         var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
         var retiredLegacyOwnerIds = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration);
+        var legacyOwnerCreatedBeforeUtc = DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration);
         var now = DateTime.UtcNow;
 
         await ReleaseStaleOwnedArchiveLeasesAsync(
@@ -76,7 +77,8 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             now,
             CancellationToken.None,
             compatibleOwnerIds,
-            retiredLegacyOwnerIds);
+            retiredLegacyOwnerIds,
+            legacyOwnerCreatedBeforeUtc);
         if (now >= _nextExpiredCleanupAt)
         {
             // 清理失败不能阻断归档主队列，也不能每 15 秒无索引扫一次集合。先推进
@@ -112,7 +114,8 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             instanceId,
             CancellationToken.None,
             compatibleOwnerIds: compatibleOwnerIds,
-            retiredLegacyOwnerIds: retiredLegacyOwnerIds);
+            retiredLegacyOwnerIds: retiredLegacyOwnerIds,
+            legacyOwnerCreatedBeforeUtc: legacyOwnerCreatedBeforeUtc);
         if (recoveredRuns > 0)
         {
             _logger.LogInformation(
@@ -128,7 +131,8 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             now,
             CancellationToken.None,
             compatibleOwnerIds,
-            retiredLegacyOwnerIds);
+            retiredLegacyOwnerIds,
+            legacyOwnerCreatedBeforeUtc);
         if (session == null)
             return;
 
@@ -329,13 +333,15 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         DateTime now,
         CancellationToken cancellationToken,
         IReadOnlyCollection<string>? compatibleOwnerIds = null,
-        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null)
+        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null,
+        DateTime? legacyOwnerCreatedBeforeUtc = null)
     {
         var ownerScope = LegacyOwnerScope.Build<DocumentRecordingUploadSession>(
             nameof(DocumentRecordingUploadSession.OwnerInstanceId),
             compatibleOwnerIds ?? [instanceId],
             includeUnowned: false,
-            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? []);
+            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? [],
+            legacyOwnerCreatedBeforeUtc: legacyOwnerCreatedBeforeUtc);
         var released = await sessions.UpdateManyAsync(
             Builders<DocumentRecordingUploadSession>.Filter.And(
                 ownerScope,
@@ -361,13 +367,15 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         DateTime now,
         CancellationToken cancellationToken,
         IReadOnlyCollection<string>? compatibleOwnerIds = null,
-        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null)
+        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null,
+        DateTime? legacyOwnerCreatedBeforeUtc = null)
     {
         var ownerScope = LegacyOwnerScope.Build<DocumentRecordingUploadSession>(
             nameof(DocumentRecordingUploadSession.OwnerInstanceId),
             compatibleOwnerIds ?? [instanceId],
             includeUnowned: false,
-            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? []);
+            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? [],
+            legacyOwnerCreatedBeforeUtc: legacyOwnerCreatedBeforeUtc);
         var dueFilter = Builders<DocumentRecordingUploadSession>.Filter.And(
             ownerScope,
             Builders<DocumentRecordingUploadSession>.Filter.Eq(
@@ -686,14 +694,16 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         CancellationToken cancellationToken,
         int limit = 25,
         IReadOnlyCollection<string>? compatibleOwnerIds = null,
-        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null)
+        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null,
+        DateTime? legacyOwnerCreatedBeforeUtc = null)
     {
         var acceptedOwnerIds = compatibleOwnerIds ?? [ownerInstanceId];
         var ownerScope = LegacyOwnerScope.Build<DocumentRecordingUploadSession>(
             nameof(DocumentRecordingUploadSession.OwnerInstanceId),
             acceptedOwnerIds,
             includeUnowned: false,
-            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? []);
+            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? [],
+            legacyOwnerCreatedBeforeUtc: legacyOwnerCreatedBeforeUtc);
         var candidates = await sessions
             .Find(Builders<DocumentRecordingUploadSession>.Filter.And(
                 ownerScope,

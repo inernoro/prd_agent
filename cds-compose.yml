@@ -267,6 +267,7 @@ services:
       Deployment__Identity: "prd-agent:cds"
       Deployment__AdoptLegacyBranchOwners: "false"
       Deployment__RetiredLegacyBranchOwnerIds: ""
+      Deployment__LegacyOwnerCreatedBeforeUtc: ""
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"

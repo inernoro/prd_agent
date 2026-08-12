@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Configuration;
-using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -23,20 +22,12 @@ public static class InstanceIdentity
     }
 
     /// <summary>
-    /// 返回当前部署可兼容接管的 owner。部署域上线前 owner 只有分支名；无论 main
-    /// 还是功能分支，都只允许显式获权的正式部署原子迁移，避免 CDS 与正式环境争抢
-    /// 共享 Mongo 中的同一批任务。
+    /// 返回当前部署的稳定 owner。旧分支 owner 不能放进普通兼容范围，否则仍在线的旧
+    /// 容器可无限投递新任务；存量接管统一由 LegacyOwnerScope 按创建时间截止线处理。
     /// </summary>
     public static IReadOnlyList<string> GetCompatibleOwnerIds(IConfiguration config)
     {
-        var current = Get(config);
-        var legacyBranch = Normalize(config["Changelog:GitHubBranch"], "main");
-        var retiredLegacyOwners = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(config);
-        return DeploymentAuthority.CanAdoptLegacyBranchOwners(config)
-            && retiredLegacyOwners.Contains(legacyBranch, StringComparer.Ordinal)
-            && !legacyBranch.Equals(current, StringComparison.Ordinal)
-            ? [current, legacyBranch]
-            : [current];
+        return [Get(config)];
     }
 
     private static string Normalize(string? value, string fallback)

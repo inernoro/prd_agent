@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using System.Globalization;
 
 namespace PrdAgent.Infrastructure.Security;
 
@@ -21,6 +22,7 @@ public static class DeploymentAuthority
     public const string AdoptLegacyTranscriptRunsKey = "Transcript:AdoptLegacyUnownedRuns";
     public const string AdoptLegacyBranchOwnersKey = "Deployment:AdoptLegacyBranchOwners";
     public const string RetiredLegacyBranchOwnerIdsKey = "Deployment:RetiredLegacyBranchOwnerIds";
+    public const string LegacyOwnerCreatedBeforeUtcKey = "Deployment:LegacyOwnerCreatedBeforeUtc";
 
     /// <summary>
     /// 显式开关。设为 "true"/"false" 时优先于自动判定：
@@ -64,20 +66,23 @@ public static class DeploymentAuthority
     public static bool CanAdoptLegacyTranscriptRuns(IConfiguration configuration)
         => bool.TryParse(configuration[AdoptLegacyTranscriptRunsKey], out var enabled)
            && enabled
-           && !IsCdsBranchPreview(configuration);
+           && !IsCdsBranchPreview(configuration)
+           && GetLegacyOwnerCreatedBeforeUtc(configuration) != null;
 
     /// <summary>
     /// 部署域上线前的“仅分支名” owner 必须由一个显式获权的正式部署迁移，
     /// 且只允许接管明确登记为已退役的 owner。不能用“没有部署域分隔符”推断分支已停止。
     /// </summary>
     public static bool CanAdoptLegacyBranchOwners(IConfiguration configuration)
-        => GetRetiredLegacyBranchOwnerIds(configuration).Count > 0;
+        => GetRetiredLegacyBranchOwnerIds(configuration).Count > 0
+           && GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration) != null;
 
     public static IReadOnlyList<string> GetRetiredLegacyBranchOwnerIds(IConfiguration configuration)
     {
         if (!bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
             || !enabled
-            || IsCdsBranchPreview(configuration))
+            || IsCdsBranchPreview(configuration)
+            || GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration) == null)
             return [];
         return (configuration[RetiredLegacyBranchOwnerIdsKey] ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -85,6 +90,32 @@ public static class DeploymentAuthority
             .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
+
+    /// <summary>
+    /// 旧 owner 接管只允许覆盖上线前已经存在的记录。缺少或无法解析 UTC 截止时间时，
+    /// 所有旧 owner 接管均关闭，避免仍在线的旧预览容器持续向生产投递新任务。
+    /// </summary>
+    public static DateTime? GetLegacyOwnerCreatedBeforeUtc(IConfiguration configuration)
+    {
+        if (IsCdsBranchPreview(configuration)) return null;
+        var raw = configuration[LegacyOwnerCreatedBeforeUtcKey];
+        if (!DateTimeOffset.TryParse(
+                raw,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return null;
+        }
+        return parsed.UtcDateTime <= DateTime.UtcNow ? parsed.UtcDateTime : null;
+    }
+
+    public static DateTime? GetRetiredLegacyBranchOwnerCreatedBeforeUtc(IConfiguration configuration)
+        => bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
+           && enabled
+           && !IsCdsBranchPreview(configuration)
+            ? GetLegacyOwnerCreatedBeforeUtc(configuration)
+            : null;
 
     /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。
