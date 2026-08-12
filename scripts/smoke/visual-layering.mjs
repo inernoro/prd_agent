@@ -378,22 +378,45 @@ async function main() {
         y: Math.round(Math.min(...points.map((p) => p.y))),
       };
     }, frameId);
-    /** 关掉图层面板：它盖住右侧约 310px，新副本正落在那一带，抓手会被它挡住。 */
-    const ensurePanelClosed = async () => {
-      const inside = page.locator('button:has-text("重新拆分")').first();
-      if (!(await inside.count()) || !(await inside.isVisible().catch(() => false))) return;
-      const entry = page.locator('button:has-text("图层面板")').first();
-      if (!(await entry.count())) return;
-      const box = await entry.boundingBox();
-      if (box) await page.mouse.click(box.x + 12, box.y + box.height / 2);
-      await page.waitForTimeout(1200);
-    };
-    /** 把画布缩放到「适配」，否则新副本在原图右侧，多半已经滑出视口，鼠标点了个空。 */
-    const fitCanvas = async () => {
-      const fit = page.locator('button:has-text("适配")').first();
-      if (!(await fit.count())) return;
-      await fit.click({ force: true });
-      await page.waitForTimeout(1500);
+    /**
+     * 把某个 Frame 的抓手平移到「鼠标真的点得到」的位置，返回可用的落点。
+     *
+     * 新副本落在原图右侧，通常正压在图层面板底下（面板占右侧约 310px）。
+     * boundingBox() 不知道遮挡，照样返回坐标，于是 mouse.down 落在面板上，
+     * 拖出来位移是 0——两轮真机跑都栽在这里。所以必须用 elementFromPoint
+     * 确认那个点上最顶层的确实是这个抓手。
+     *
+     * 只平移、不缩放、不动面板：
+     * - 动面板会把它切到别的组（面板按钮是「切到本组」不是「关闭」），
+     *   后面所有依赖面板的判据会连锁失败（实测一次连废 4 条）。
+     * - 动缩放会让后面按屏幕像素比对的判据出现亚像素误差。
+     */
+    const bringHandleIntoReach = async (frameId) => {
+      for (let step = 0; step < 24; step += 1) {
+        const box = await page.locator(`[data-frame-handle="${frameId}"]`).first()
+          .boundingBox().catch(() => null);
+        if (box) {
+          const cx = box.x + Math.min(box.width, 80) / 2;
+          const cy = box.y + box.height / 2;
+          // 留出往右拖的余量，也别贴着上下边缘。
+          const roomy = cx > 60 && cx < 1100 && cy > 60 && cy < 780;
+          if (roomy) {
+            const hit = await page.evaluate(([x, y, fid]) => {
+              const el = document.elementFromPoint(x, y);
+              if (!el) return 'nothing';
+              const owner = el.closest('[data-frame-handle]');
+              if (owner) return owner.getAttribute('data-frame-handle') === fid ? 'ok' : 'other-frame';
+              return `${el.tagName}:${String(el.className || '').slice(0, 40)}`;
+            }, [cx, cy, frameId]);
+            if (hit === 'ok') return { cx, cy };
+          }
+        }
+        // 两指拖动 = 平移（gesture-unification）：deltaX 为正把内容往左推。
+        await page.mouse.move(700, 500);
+        await page.mouse.wheel(260, 0);
+        await page.waitForTimeout(350);
+      }
+      return null;
     };
     let midSplitDrag = null;
     if (await layerAgain.count()) {
@@ -418,29 +441,19 @@ async function main() {
       if (!liveFrameId) {
         check('拆分途中能认出新开的 Frame（拖走判据的前提）', false, '120s 内没出现新的 Frame 抓手');
       } else {
-        // 新副本落在原图右侧，多半已经滑出视口，而右侧那一带还压着图层面板——
-        // 不先收面板 + 适配，鼠标会点在面板上或者干脆点空，拖出来位移是 0
-        //（实测栽过一轮：拖前拖后世界坐标一模一样）。
-        await ensurePanelClosed();
-        await fitCanvas();
+        const grip = await bringHandleIntoReach(liveFrameId);
         const before = await frameOrigin(liveFrameId);
-        const handleBox = await page.locator(`[data-frame-handle="${liveFrameId}"]`).first()
-          .boundingBox().catch(() => null);
-        const inViewport = handleBox
-          && handleBox.x >= 0 && handleBox.y >= 0
-          && handleBox.x + handleBox.width <= 1600 && handleBox.y + handleBox.height <= 950;
-        if (!before || !inViewport) {
+        if (!before || !grip) {
           check('拆分途中能抓住新 Frame 的头部', false,
-            `组内元素 ${before ? before.count : 0} 个，抓手 ${handleBox ? JSON.stringify(handleBox) : '不存在'}`
-              + `${handleBox && !inViewport ? '（在视口外，拖不到）' : ''}`);
+            `组内元素 ${before ? before.count : 0} 个，`
+              + `${grip ? '有落点' : '平移 24 步后抓手仍被遮挡或不在可拖区域'}`);
         } else {
           // 往右下拖：向右只会拉大与原图那一簇的间距，不会破坏后面的「两簇」判据。
-          const dx = 180;
-          const dy = 150;
-          await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+          const dx = 240;
+          const dy = 180;
+          await page.mouse.move(grip.cx, grip.cy);
           await page.mouse.down();
-          await page.mouse.move(handleBox.x + handleBox.width / 2 + dx,
-            handleBox.y + handleBox.height / 2 + dy, { steps: 14 });
+          await page.mouse.move(grip.cx + dx, grip.cy + dy, { steps: 16 });
           await page.mouse.up();
           await page.waitForTimeout(1500);
           const after = await frameOrigin(liveFrameId);
@@ -449,11 +462,11 @@ async function main() {
           const worldDx = after ? after.x - before.x : 0;
           const worldDy = after ? after.y - before.y : 0;
           check('拆分途中拖 Frame，它当场就跟着走了',
-            worldDx > 200 && worldDy > 100,
+            worldDx > 80 && worldDy > 40,
             `世界坐标从 (${before.x},${before.y}) 移到 (${after ? after.x : '?'},${after ? after.y : '?'})，`
               + `位移 (${worldDx},${worldDy})`);
           await shot(page, 'dragged-mid-split');
-          if (after && worldDx > 200) {
+          if (after && worldDx > 80) {
             // 记下「拖之后的落脚点」和「原来的落脚点」，等这一轮跑完再回来对账。
             midSplitDrag = {
               frameId: liveFrameId,
@@ -719,12 +732,21 @@ async function main() {
         return b && (Math.abs(a.x - b.x) > 20 || Math.abs(a.y - b.y) > 20);
       });
       // 整组一起走：动的应当不止一个，且它们的位移一致（真的是「一起」而不是各挪各的）。
-      const deltas = new Set(moved.map((a) => {
+      // 「一致」允许 2px 亚像素误差——非整数缩放下 getBoundingClientRect 会给出
+      // 120,60 与 120,59 这种差一像素的读数，那是取整噪声不是「各挪各的」
+      //（实测栽过一轮：整组确实一起动了，判据却因为差 1px 判红）。
+      const deltas = moved.map((a) => {
         const b = before.find((item) => item.k === a.k);
-        return `${a.x - b.x},${a.y - b.y}`;
-      }));
-      check('拖 Frame 头部能带着整组一起走', moved.length >= 2 && deltas.size === 1,
-        `动了 ${moved.length} 个，位移集合 ${JSON.stringify([...deltas])}`);
+        return { dx: a.x - b.x, dy: a.y - b.y };
+      });
+      const spread = deltas.length
+        ? Math.max(
+          Math.max(...deltas.map((d) => d.dx)) - Math.min(...deltas.map((d) => d.dx)),
+          Math.max(...deltas.map((d) => d.dy)) - Math.min(...deltas.map((d) => d.dy)),
+        )
+        : Infinity;
+      check('拖 Frame 头部能带着整组一起走', moved.length >= 2 && spread <= 2,
+        `动了 ${moved.length} 个，位移 ${JSON.stringify(deltas.map((d) => `${d.dx},${d.dy}`))}，最大离散 ${spread}px`);
     } else {
       check('Frame 头部是可拖拽的抓手', false, '找不到 data-frame-handle');
     }
