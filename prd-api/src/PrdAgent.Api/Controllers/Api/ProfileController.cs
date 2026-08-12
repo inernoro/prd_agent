@@ -329,12 +329,18 @@ public class ProfileController : ControllerBase
 
         var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
 
-        await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
-
-        var now = DateTime.UtcNow;
-        var previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
+        User? previousUser;
+        await using (var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
+                         _db,
+                         ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId),
+                         ct))
+        {
+            await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
+            previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
+        }
         await DeleteSupersededAvatarAsync(currentUserId, previousUser?.AvatarFileName, avatarFileName);
 
+        var now = DateTime.UtcNow;
         user.AvatarFileName = avatarFileName;
         var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);
 
@@ -660,8 +666,15 @@ public class ProfileController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "头像文件名不合法"));
 
         var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
-        await _assetStorage.UploadToKeyAsync(objectKey, found.Value.bytes, mime, ct);
-        var previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
+        User? previousUser;
+        await using (var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
+                         _db,
+                         ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId),
+                         ct))
+        {
+            await _assetStorage.UploadToKeyAsync(objectKey, found.Value.bytes, mime, ct);
+            previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
+        }
         await DeleteSupersededAvatarAsync(currentUserId, previousUser?.AvatarFileName, avatarFileName);
 
         var sourceRunId = TryGetAvatarGenerationRunId(artifact.RequestId);
@@ -708,6 +721,10 @@ public class ProfileController : ControllerBase
         var (ok, err) = ValidateAvatarFileName(fileName);
         if (!ok) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "头像文件名不合法"));
 
+        await using var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId),
+            ct);
         if (!string.IsNullOrWhiteSpace(fileName))
         {
             if (!fileName.StartsWith(

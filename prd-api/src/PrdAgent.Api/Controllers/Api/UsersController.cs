@@ -12,6 +12,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
@@ -493,6 +494,10 @@ public class UsersController : ControllerBase
         var (ok2, err2) = ValidateAvatarFileName(fileName);
         if (!ok2) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err2 ?? "头像文件名不合法"));
 
+        await using var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(userId),
+            ct);
         var update = Builders<User>.Update.Set(u => u.AvatarFileName, fileName);
         await _db.Users.UpdateOneAsync(u => u.UserId == userId, update, cancellationToken: ct);
 

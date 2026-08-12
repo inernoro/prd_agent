@@ -125,6 +125,8 @@ public class ProfileAvatarGenerationContractTests
             "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
         var cleanup = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Api/Services/ProfileAvatarGenerationCleanupService.cs"));
+        var adminUsers = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/UsersController.cs"));
         var program = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Api/Program.cs"));
 
@@ -140,6 +142,16 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("NextAttemptAt", cleanup);
         Assert.Contains("await _assetStorage.DeleteByKeyAsync(task.ObjectKey, ct)", cleanup);
         Assert.Contains("currentAvatarFileName", cleanup);
+        Assert.Contains("BuildUserMutationLeaseKey(task.UserId)", cleanup);
+        Assert.Equal(
+            3,
+            controller.Split(
+                "ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId)",
+                StringSplitOptions.None).Length - 1);
+        Assert.Contains("ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(userId)", adminUsers);
+        Assert.True(
+            cleanup.IndexOf("BuildUserMutationLeaseKey(task.UserId)", StringComparison.Ordinal)
+            < cleanup.IndexOf("var currentAvatarFileName", StringComparison.Ordinal));
         Assert.Contains("while (!ct.IsCancellationRequested)", cleanup);
         Assert.Contains("Builders<ImageGenRun>.Filter.Nin(x => x.Id, failedRunIds)", cleanup);
         Assert.Contains("failedRunIds.Add(candidate.Id)", cleanup);
@@ -163,7 +175,11 @@ public class ProfileAvatarGenerationContractTests
         var endpoint = source[endpointStart..endpointEnd];
 
         Assert.Contains("ProfileAvatarObjectCleanupPolicy.BuildOwnerPrefix(currentUserId)", endpoint);
+        Assert.Contains("ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(currentUserId)", endpoint);
         Assert.Contains("await _assetStorage.ExistsAsync(objectKey, ct)", endpoint);
+        Assert.True(
+            endpoint.IndexOf("BuildUserMutationLeaseKey", StringComparison.Ordinal)
+            < endpoint.IndexOf("ExistsAsync", StringComparison.Ordinal));
         Assert.True(
             endpoint.IndexOf("ExistsAsync", StringComparison.Ordinal)
             < endpoint.IndexOf("ReplaceAvatarFileNameAsync", StringComparison.Ordinal));

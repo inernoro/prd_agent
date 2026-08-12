@@ -49,4 +49,15 @@ public sealed class ProfileAvatarObjectCleanupPolicyTests
         first.ShouldBe(second);
         first.Length.ShouldBe(32);
     }
+
+    [Fact]
+    public void UserMutationLeaseKey_IsStableAndDoesNotExposeUserId()
+    {
+        var first = ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey("User-1");
+        var second = ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey("User-1");
+
+        first.ShouldBe(second);
+        first.ShouldStartWith("profile-avatar-user:");
+        first.ShouldNotContain("User-1");
+    }
 }

@@ -201,6 +201,10 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
                 return true;
             }
 
+            await using var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
+                _db,
+                ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(task.UserId),
+                ct);
             var currentAvatarFileName = await _db.Users
                 .Find(x => x.UserId == task.UserId)
                 .Project(x => x.AvatarFileName)
@@ -415,6 +419,14 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
 
 public static class ProfileAvatarObjectCleanupPolicy
 {
+    public static string BuildUserMutationLeaseKey(string userId)
+    {
+        var ownerHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes((userId ?? string.Empty).Trim())))
+            .ToLowerInvariant();
+        return $"profile-avatar-user:{ownerHash}";
+    }
+
     public static string BuildOwnerPrefix(string userId)
     {
         var ownerHash = Convert.ToHexString(
