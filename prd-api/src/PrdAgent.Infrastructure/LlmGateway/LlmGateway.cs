@@ -251,10 +251,20 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (IsContentPolicyDenial(statusCode, responseBody))
             return false;
 
-        // 凭据、授权、模型和 Endpoint 的确定性错误与请求类型无关。ASR、视频等非图片
-        // Raw 请求同样必须隔离故障 Offering，避免每个后续用户都重复命中同一坏路由。
-        if (statusCode is >= 401 and <= 404)
+        // 凭据、付费和授权错误与请求类型无关。ASR、视频等非图片 Raw 请求同样必须隔离
+        // 故障 Offering，避免每个后续用户都重复命中同一坏路由。
+        if (statusCode is >= 401 and <= 403)
             return true;
+
+        // 404 既可能表示模型/Endpoint 配错，也可能只是本次视频任务已过期。只有响应明确指向
+        // Offering 配置时才永久隔离；资源级 404 只结束或切换本次请求，不能影响其他用户。
+        if (statusCode == 404)
+        {
+            var notFoundMessage = TryExtractErrorMessage(responseBody ?? string.Empty)
+                ?? responseBody
+                ?? string.Empty;
+            return IsOfferingConfigurationNotFound(notFoundMessage);
+        }
 
         var canonical = request.CanonicalImageRequest;
         if (canonical is null || string.IsNullOrWhiteSpace(canonical.Prompt))
@@ -273,6 +283,22 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
            || message.Contains("does not support image generation", StringComparison.OrdinalIgnoreCase)
            || message.Contains("unsupported output modality", StringComparison.OrdinalIgnoreCase)
            || message.Contains("unsupported modalities", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOfferingConfigurationNotFound(string message)
+    {
+        var identifiesMissingResource = message.Contains("not found", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("no such", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("unknown", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("not supported", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("unsupported", StringComparison.OrdinalIgnoreCase);
+        if (!identifiesMissingResource)
+            return false;
+
+        return message.Contains("model", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("endpoint", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("route", StringComparison.OrdinalIgnoreCase);
+    }
 
     internal static bool IsContentPolicyDenial(int statusCode, string? responseBody)
     {

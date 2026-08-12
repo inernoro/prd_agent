@@ -17,6 +17,19 @@ function normalizeStates(value) {
   return Array.isArray(value) ? [...new Set(value.map((item) => String(item).trim()).filter(Boolean))] : [];
 }
 
+function normalizePagePath(value) {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith('/')) return '';
+  const path = raw.split(/[?#]/, 1)[0].replace(/\/{2,}/g, '/');
+  return path.length > 1 ? path.replace(/\/+$/, '') : path;
+}
+
+function pagePathMatchesEntry(actualPath, entryPath) {
+  if (!actualPath || !entryPath) return false;
+  if (entryPath === '/') return actualPath === '/';
+  return actualPath === entryPath || actualPath.startsWith(`${entryPath}/`);
+}
+
 function evidenceAnchor(name) {
   const sequence = String(name).match(/^(\d{3})-/)?.[1];
   if (sequence) return `#fig-${sequence}`;
@@ -246,6 +259,8 @@ export function validateVisualEvidence(
       const expectedCaptureStartedAtMs = Date.parse(expectedCaptureStartedAt);
       const evidencePageOrigin = String(item.pageOrigin || '').trim();
       const expectedPageOrigin = String(plannedSlot?.pageOrigin || '').trim();
+      const evidencePagePath = normalizePagePath(item.pagePath);
+      const expectedEntryPath = normalizePagePath(plannedSlot?.entryPath);
       if (expectedRunId && evidenceRunId && evidenceRunId !== expectedRunId) {
         const message = `${item.name || '未命名截图'} 的 runId 不属于本轮视觉计划`;
         fieldErrors.push(message);
@@ -280,6 +295,15 @@ export function validateVisualEvidence(
         itemErrors.push(message);
       } else if (expectedPageOrigin && evidencePageOrigin !== expectedPageOrigin) {
         const message = `${item.name || '未命名截图'} 的实际页面 origin 与验收环境不一致`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      }
+      if (expectedEntryPath && !evidencePagePath) {
+        const message = `${item.name || '未命名截图'} 缺少由浏览器实际页面记录的 pagePath`;
+        fieldErrors.push(message);
+        itemErrors.push(message);
+      } else if (expectedEntryPath && !pagePathMatchesEntry(evidencePagePath, expectedEntryPath)) {
+        const message = `${item.name || '未命名截图'} 的实际页面路径不属于验收模块入口`;
         fieldErrors.push(message);
         itemErrors.push(message);
       }
@@ -376,6 +400,7 @@ export function validateVisualEvidence(
         commit: evidenceCommit,
         capturedAt,
         pageOrigin: evidencePageOrigin,
+        pagePath: evidencePagePath,
         environment: evidenceEnvironment,
         caption: item.caption || '未说明证明内容',
         coverageStates: states,

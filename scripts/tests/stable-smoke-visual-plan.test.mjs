@@ -12,6 +12,8 @@ test('视觉取证计划逐模块展开为148条有路径的任务', () => {
   assert.equal(plan.slots.length, 148);
   assert.ok(plan.slots.every((slot) => slot.breadcrumb.split('→').length >= 4));
   assert.ok(plan.slots.every((slot) => slot.primaryState && slot.expectedProof && slot.methodAnchor));
+  assert.ok(plan.slots.every((slot) => slot.entryPath?.startsWith('/')));
+  assert.ok(plan.slots.filter((slot) => slot.moduleId === 'single-image-creation').every((slot) => slot.entryPath === '/visual-agent'));
 });
 
 test('双环境视觉计划展开为296个互不复用的环境验收位', () => {

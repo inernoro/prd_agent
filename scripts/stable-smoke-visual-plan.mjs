@@ -98,6 +98,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
           pageOrigin: environmentOrigins[environment] || undefined,
+          entryPath: module.entryPath,
           captureStartedAt: captureStartedAt || undefined,
         });
       }
@@ -118,6 +119,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
           pageOrigin: environmentOrigins[environment] || undefined,
+          entryPath: module.entryPath,
           captureStartedAt: captureStartedAt || undefined,
         });
       }
@@ -147,6 +149,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
       id: module.id,
       name: module.name,
       breadcrumb: module.breadcrumb,
+      entryPath: module.entryPath,
       planned: slots.filter((slot) => slot.moduleId === module.id).length,
     })),
     slots,

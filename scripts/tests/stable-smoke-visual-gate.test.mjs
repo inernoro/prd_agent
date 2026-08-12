@@ -11,7 +11,7 @@ import { buildVisualPlan } from '../stable-smoke-visual-plan.mjs';
 const catalog = {
   statusVocabulary: ['通过', '不通过', '部分通过', '未执行', '需干预'],
   allowedTestTypes: ['冒烟', '功能', '视觉', '回归'],
-  evidenceItemRequiredFields: ['runId', 'commit', 'capturedAt', 'slotId', 'primaryState', 'coverageStates', 'testType', 'status', 'theme', 'viewportClass', 'methodAnchor', 'breadcrumb', 'path'],
+  evidenceItemRequiredFields: ['runId', 'commit', 'capturedAt', 'slotId', 'primaryState', 'coverageStates', 'testType', 'status', 'theme', 'viewportClass', 'methodAnchor', 'breadcrumb', 'pagePath', 'path'],
   allowedThemes: ['light', 'dark'],
   allowedViewportClasses: ['desktop', 'mobile'],
   uniqueScreenshotFloor: 2,
@@ -20,6 +20,7 @@ const catalog = {
     id: 'visual',
     name: '视觉创作',
     breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果',
+    entryPath: '/visual-agent',
     uniqueScreenshotFloor: 2,
     requiredStates: ['入口', '结果'],
     requiredThemes: ['light', 'dark'],
@@ -92,6 +93,7 @@ function evidence(overrides = {}) {
     status: '通过',
     automatedStatus: '通过',
     manualStatus: '通过',
+    pagePath: '/visual-agent',
     methodAnchor: '#visual-method-visual',
     breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 入口',
     path,
@@ -260,6 +262,45 @@ test('环境标签不能替代浏览器实际页面 origin', () => {
   const result = validateVisualEvidence(catalog, rows, ['production'], plan, new Date('2026-08-11T14:05:00.000Z'));
   assert.equal(result.verdict, '不通过');
   assert.match(result.modules[0].fieldErrors.join('；'), /实际页面 origin 与验收环境不一致/);
+});
+
+test('同源错误页面不能冒充目标模块视觉证据', () => {
+  const plan = buildVisualPlan(catalog, ['cds'], {
+    runId: 'stsmk-path',
+    commit: 'a'.repeat(40),
+    captureStartedAt: '2026-08-11T14:00:00.000Z',
+    environmentOrigins: { cds: 'https://preview.example.test' },
+  });
+  const rows = [
+    evidence({
+      name: '错误入口',
+      environment: 'cds',
+      pageOrigin: 'https://preview.example.test',
+      pagePath: '/',
+      runId: 'stsmk-path',
+      slotId: 'CDS-VISUAL-VISUAL-01',
+      breadcrumb: 'CDS 环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 入口',
+    }),
+    evidence({
+      name: '错误结果',
+      sha256: 'wrong-page-result',
+      environment: 'cds',
+      pageOrigin: 'https://preview.example.test',
+      pagePath: '/video-agent',
+      runId: 'stsmk-path',
+      slotId: 'CDS-VISUAL-VISUAL-02',
+      primaryState: '结果',
+      coverageStates: ['结果'],
+      testType: '视觉',
+      theme: 'dark',
+      breadcrumb: 'CDS 环境 → 首页 → 视觉创作 → 生成进度 → 图片结果 → 结果',
+    }),
+  ];
+
+  const result = validateVisualEvidence(catalog, rows, ['cds'], plan, new Date('2026-08-11T14:05:00.000Z'));
+  assert.equal(result.verdict, '不通过');
+  assert.equal(result.modules[0].invalidEvidenceCount, 2);
+  assert.match(result.modules[0].fieldErrors.join('；'), /实际页面路径不属于验收模块入口/);
 });
 
 test('缺少自动检查或人工视觉结论时不得通过视觉门禁', () => {

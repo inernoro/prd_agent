@@ -2127,6 +2127,28 @@ public class LlmGatewayTests
     }
 
     [Theory]
+    [InlineData("/videos/job-expired", "video job not found")]
+    [InlineData("/videos/job-expired/content", "requested video does not exist")]
+    [InlineData("/videos/job-expired", "not found")]
+    public void ShouldQuarantineRawProviderResponse_WhenVideoResourceIsMissing_ShouldReturnFalse(
+        string endpointPath,
+        string message)
+    {
+        var request = new GatewayRawRequest
+        {
+            AppCallerCode = "video-agent.video::generation",
+            ModelType = "video",
+            EndpointPath = endpointPath,
+            RequestBody = new JsonObject(),
+        };
+
+        Assert.False(LlmGateway.ShouldQuarantineRawProviderResponse(
+            404,
+            $"{{\"error\":{{\"message\":\"{message}\"}}}}",
+            request));
+    }
+
+    [Theory]
     [InlineData(400, "content_policy_violation")]
     [InlineData(403, "content_filter")]
     [InlineData(403, "moderation_blocked")]

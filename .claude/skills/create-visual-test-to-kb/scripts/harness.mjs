@@ -622,10 +622,14 @@ export async function shot(page, outDir, name, caption, opts = {}) {
   }).catch(() => null);
   const actualPageUrl = page.url();
   let pageOrigin;
+  let pagePath;
   try {
-    pageOrigin = new URL(actualPageUrl).origin;
+    const parsedPageUrl = new URL(actualPageUrl);
+    pageOrigin = parsedPageUrl.origin;
+    pagePath = parsedPageUrl.pathname;
   } catch {
     pageOrigin = undefined;
+    pagePath = undefined;
   }
   const rec = {
     name,
@@ -635,6 +639,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     commit: commit || process.env.STABLE_SMOKE_COMMIT || undefined,
     capturedAt: new Date().toISOString(),
     pageOrigin,
+    pagePath,
     annotated,
     overview,
     viewport,

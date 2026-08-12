@@ -5,7 +5,7 @@
   "regressionCaseIds": ["REG-visual-evidence-001"],
   "statusVocabulary": ["通过", "不通过", "部分通过", "未执行", "需补证", "需干预"],
   "allowedTestTypes": ["冒烟", "功能", "视觉", "回归"],
-  "evidenceItemRequiredFields": ["runId", "commit", "capturedAt", "slotId", "primaryState", "coverageStates", "testType", "status", "theme", "viewportClass", "methodAnchor", "breadcrumb", "path"],
+  "evidenceItemRequiredFields": ["runId", "commit", "capturedAt", "slotId", "primaryState", "coverageStates", "testType", "status", "theme", "viewportClass", "methodAnchor", "breadcrumb", "pagePath", "path"],
   "allowedThemes": ["light", "dark"],
   "allowedViewportClasses": ["desktop", "mobile"],
   "plannedScreenshotTarget": 148,
