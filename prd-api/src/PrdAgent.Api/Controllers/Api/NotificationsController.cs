@@ -20,15 +20,18 @@ public sealed class NotificationsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly AdminPushNotificationService _pushService;
     private readonly AdminNotificationEventService _eventService;
+    private readonly IConfiguration _configuration;
 
     public NotificationsController(
         MongoDbContext db,
         AdminPushNotificationService pushService,
-        AdminNotificationEventService eventService)
+        AdminNotificationEventService eventService,
+        IConfiguration configuration)
     {
         _db = db;
         _pushService = pushService;
         _eventService = eventService;
+        _configuration = configuration;
     }
 
     [HttpGet]
@@ -136,6 +139,40 @@ public sealed class NotificationsController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权创建管理员通知事件"));
         }
 
+        var isStableSmoke = string.Equals(
+            User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value,
+            "1",
+            StringComparison.Ordinal);
+        if (!string.IsNullOrWhiteSpace(request.TargetUsername))
+        {
+            if (!isStableSmoke || !string.IsNullOrWhiteSpace(request.TargetUserId))
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    "通知目标只能使用一种定位方式，请检查后重试"));
+            }
+            var configuredTarget = _configuration["StableSmokeAuthentication:NotificationTargetUsername"]?.Trim();
+            if (string.IsNullOrWhiteSpace(configuredTarget)
+                || !string.Equals(request.TargetUsername.Trim(), configuredTarget, StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(
+                    ErrorCodes.PERMISSION_DENIED,
+                    "稳定冒烟通知目标未获授权，请由管理员更新固定通知账号后重试"));
+            }
+            var target = await _db.Users
+                .Find(user => user.Username == configuredTarget
+                    && user.Status == UserStatus.Active
+                    && user.UserType == UserType.Human)
+                .FirstOrDefaultAsync(ct);
+            if (target is null)
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    "固定通知账号不存在或不可用，请由管理员修复账号后重试"));
+            }
+            request.TargetUserId = target.UserId;
+        }
+
         var userId = this.GetRequiredUserId();
         try
         {
@@ -212,6 +249,8 @@ public sealed class NotificationsController : ControllerBase
     private bool HasAdminNotificationEventPermission()
     {
         if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal))
+            return true;
+        if (string.Equals(User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value, "1", StringComparison.Ordinal))
             return true;
 
         var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);

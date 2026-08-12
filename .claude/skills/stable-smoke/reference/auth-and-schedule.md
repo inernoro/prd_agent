@@ -54,8 +54,10 @@ scripts/stable-smoke-login.sh \
 | 环境 | 地址 | AI 密钥 | 专用账号 |
 |---|---|---|---|
 | CDS | `preview-url` 返回的当前主分支入口；`STABLE_SMOKE_CDS_BASE_URL` 只作本地显式固定值 | `STABLE_SMOKE_CDS_AI_ACCESS_KEY` | `STABLE_SMOKE_CDS_USER` |
-| 正式 | `STABLE_SMOKE_PROD_BASE_URL=https://map.ebcone.net` | `STABLE_SMOKE_PROD_AI_ACCESS_KEY` | `STABLE_SMOKE_PROD_USER` |
-| MAP 通知 | `STABLE_SMOKE_NOTIFY_BASE_URL=https://map.ebcone.net`、`STABLE_SMOKE_NOTIFY_SOURCE` | `STABLE_SMOKE_NOTIFY_AI_ACCESS_KEY` | `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID` |
+| 正式 | `STABLE_SMOKE_PROD_BASE_URL=https://map.ebcone.net` | `STABLE_SMOKE_PROD_SIGNING_KEY_ID` + `STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_PROD_USER` |
+| MAP 通知 | `STABLE_SMOKE_NOTIFY_BASE_URL=https://map.ebcone.net`、`STABLE_SMOKE_NOTIFY_SOURCE` | `STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID` + `STABLE_SMOKE_NOTIFY_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID`；首次可用服务端固定的 `STABLE_SMOKE_NOTIFY_TARGET_USERNAME` 安全解析 |
+
+正式环境默认使用 RSA-PSS 签名式破窗：服务端只保存公钥，私钥只存在自动化执行机安全凭据库。签名绑定请求方法、路径、正文哈希、账号、时间戳与一次性 nonce；时间窗口为两分钟，nonce 使用数据库唯一约束防重放；签名认证只允许合成登录票据和定向通知两个端点。旧的全局 `AI_ACCESS_KEY` 仅作存量兼容，不再作为正式环境稳定冒烟的首选凭据。
 
 本地兼容文件必须是 `.env.stable-smoke.local`，该名称已被 `.env.*.local` 忽略规则覆盖。文件权限应为仅当前用户可读。CDS 环境和正式环境使用不同 AI 密钥与不同专用账号。目标用户 ID 必须配置，脚本拒绝降级成全局通知。生产 API 尚未发布 `stable-smoke` 来源前，`STABLE_SMOKE_NOTIFY_SOURCE` 使用 `system-alert`；发布后切为 `stable-smoke`。
 

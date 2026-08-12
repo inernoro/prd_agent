@@ -12,6 +12,7 @@ import {
   summarizeCoverage,
 } from './stable-smoke-results.mjs';
 import { renderVisualPlan } from './stable-smoke-visual-plan.mjs';
+import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -182,7 +183,14 @@ export function validateEnvironmentConfig(name, values) {
   const prefix = name === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
   const errors = [];
   if (!values[`${prefix}_BASE_URL`]) errors.push(`${prefix}_BASE_URL`);
-  if (!values[`${prefix}_AI_ACCESS_KEY`]) errors.push(`${prefix}_AI_ACCESS_KEY`);
+  const hasLegacyKey = Boolean(values[`${prefix}_AI_ACCESS_KEY`]);
+  const hasSignature = Boolean(
+    values[`${prefix}_SIGNING_KEY_ID`]
+    && values[`${prefix}_SIGNING_PRIVATE_KEY`],
+  );
+  if (!hasLegacyKey && !hasSignature) {
+    errors.push(`${prefix}_AI_ACCESS_KEY 或 ${prefix}_SIGNING_KEY_ID + ${prefix}_SIGNING_PRIVATE_KEY`);
+  }
   if (!values[`${prefix}_USER`]) errors.push(`${prefix}_USER`);
   if (!values[`${prefix}_GW_BASE_URL`]) errors.push(`${prefix}_GW_BASE_URL`);
   if (!values[`${prefix}_GW_USER`]) errors.push(`${prefix}_GW_USER`);
@@ -219,17 +227,26 @@ export async function validateEnvironmentIdentities(environment, values, fetchFn
   const blockers = [];
 
   try {
+    const ticketUrl = `${withoutTrailingSlash(values[`${prefix}_BASE_URL`])}/api/v1/auth/synthetic/ticket`;
+    const ticketBody = JSON.stringify({ returnUrl: '/', expiresInSeconds: 60 });
     const response = await fetchFn(
-      `${withoutTrailingSlash(values[`${prefix}_BASE_URL`])}/api/v1/auth/synthetic/ticket`,
+      ticketUrl,
       {
         signal: AbortSignal.timeout(10_000),
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-AI-Access-Key': values[`${prefix}_AI_ACCESS_KEY`],
-          'X-AI-Impersonate': values[`${prefix}_USER`],
+          ...buildStableSmokeAuthHeaders({
+            method: 'POST',
+            url: ticketUrl,
+            body: ticketBody,
+            username: values[`${prefix}_USER`],
+            aiAccessKey: values[`${prefix}_AI_ACCESS_KEY`],
+            keyId: values[`${prefix}_SIGNING_KEY_ID`],
+            privateKey: values[`${prefix}_SIGNING_PRIVATE_KEY`],
+          }),
         },
-        body: JSON.stringify({ returnUrl: '/', expiresInSeconds: 60 }),
+        body: ticketBody,
       },
     );
     const payload = await response.json().catch(() => null);
@@ -592,6 +609,8 @@ function runPlaywright(environment, values, runDir, grep = '') {
     ...values,
     E2E_BASE_URL: values[`${prefix}_BASE_URL`],
     STABLE_SMOKE_AI_ACCESS_KEY: values[`${prefix}_AI_ACCESS_KEY`],
+    STABLE_SMOKE_SIGNING_KEY_ID: values[`${prefix}_SIGNING_KEY_ID`] || '',
+    STABLE_SMOKE_SIGNING_PRIVATE_KEY: values[`${prefix}_SIGNING_PRIVATE_KEY`] || '',
     STABLE_SMOKE_USER: values[`${prefix}_USER`],
     STABLE_SMOKE_ENVIRONMENT: environment,
     STABLE_SMOKE_GW_BASE_URL: values[`${prefix}_GW_BASE_URL`] || '',

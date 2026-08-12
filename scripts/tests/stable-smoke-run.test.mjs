@@ -495,7 +495,7 @@ test('正式环境单独 dry-run 只校验只读健康检查地址', () => {
   assert.deepEqual(validateSelectedEnvironmentConfig('production', ['cds', 'production'], {
     STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net',
   }), [
-    'STABLE_SMOKE_PROD_AI_ACCESS_KEY',
+    'STABLE_SMOKE_PROD_AI_ACCESS_KEY 或 STABLE_SMOKE_PROD_SIGNING_KEY_ID + STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY',
     'STABLE_SMOKE_PROD_USER',
     'STABLE_SMOKE_PROD_GW_BASE_URL',
     'STABLE_SMOKE_PROD_GW_USER',
@@ -695,7 +695,7 @@ test('环境模板账号与凭据注册表保持一致', () => {
 test('双环境凭据缺失时前置检查明确阻断', () => {
   assert.deepEqual(validateEnvironmentConfig('cds', {}), [
     'STABLE_SMOKE_CDS_BASE_URL',
-    'STABLE_SMOKE_CDS_AI_ACCESS_KEY',
+    'STABLE_SMOKE_CDS_AI_ACCESS_KEY 或 STABLE_SMOKE_CDS_SIGNING_KEY_ID + STABLE_SMOKE_CDS_SIGNING_PRIVATE_KEY',
     'STABLE_SMOKE_CDS_USER',
     'STABLE_SMOKE_CDS_GW_BASE_URL',
     'STABLE_SMOKE_CDS_GW_USER',

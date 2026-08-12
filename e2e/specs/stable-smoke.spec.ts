@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
+import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 
 type BusinessCatalog = {
   featureLines: Array<{
@@ -58,12 +59,21 @@ function syntheticLoginCode(loginUrl: string) {
 }
 
 async function issueTicket(request: APIRequestContext, returnUrl: string) {
+  const bodyText = JSON.stringify({ returnUrl, expiresInSeconds: 180 });
   const response = await request.post('/api/v1/auth/synthetic/ticket', {
     headers: {
-      'X-AI-Access-Key': requiredEnv('STABLE_SMOKE_AI_ACCESS_KEY'),
-      'X-AI-Impersonate': requiredEnv('STABLE_SMOKE_USER'),
+      'Content-Type': 'application/json',
+      ...buildStableSmokeAuthHeaders({
+        method: 'POST',
+        url: '/api/v1/auth/synthetic/ticket',
+        body: bodyText,
+        username: requiredEnv('STABLE_SMOKE_USER'),
+        aiAccessKey: process.env.STABLE_SMOKE_AI_ACCESS_KEY?.trim(),
+        keyId: process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim(),
+        privateKey: process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim(),
+      }),
     },
-    data: { returnUrl, expiresInSeconds: 180 },
+    data: bodyText,
   });
   const body = await response.json() as TicketResponse;
   expect(response.status(), body.error?.message || '生成合成登录入口失败').toBe(200);
@@ -74,12 +84,21 @@ async function issueTicket(request: APIRequestContext, returnUrl: string) {
 }
 
 async function issueTicketDetails(request: APIRequestContext, returnUrl: string) {
+  const bodyText = JSON.stringify({ returnUrl, expiresInSeconds: 180 });
   const response = await request.post('/api/v1/auth/synthetic/ticket', {
     headers: {
-      'X-AI-Access-Key': requiredEnv('STABLE_SMOKE_AI_ACCESS_KEY'),
-      'X-AI-Impersonate': requiredEnv('STABLE_SMOKE_USER'),
+      'Content-Type': 'application/json',
+      ...buildStableSmokeAuthHeaders({
+        method: 'POST',
+        url: '/api/v1/auth/synthetic/ticket',
+        body: bodyText,
+        username: requiredEnv('STABLE_SMOKE_USER'),
+        aiAccessKey: process.env.STABLE_SMOKE_AI_ACCESS_KEY?.trim(),
+        keyId: process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim(),
+        privateKey: process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim(),
+      }),
     },
-    data: { returnUrl, expiresInSeconds: 180 },
+    data: bodyText,
   });
   const body = await response.json() as TicketResponse;
   expect(response.status(), body.error?.message || '生成合成登录入口失败').toBe(200);

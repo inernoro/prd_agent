@@ -182,6 +182,7 @@ public sealed class AdminNotificationEventRequest
     public string? Message { get; set; }
     public string? Level { get; set; }
     public string? TargetUserId { get; set; }
+    public string? TargetUsername { get; set; }
     public string? ActionLabel { get; set; }
     public string? ActionUrl { get; set; }
     public string? ActionKind { get; set; }

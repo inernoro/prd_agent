@@ -50,7 +50,8 @@ public sealed class SyntheticLoginController : ControllerBase
     }
 
     [HttpPost("ticket")]
-    [Authorize(AuthenticationSchemes = AiAccessKeyAuthenticationHandler.SchemeName)]
+    [Authorize(AuthenticationSchemes =
+        AiAccessKeyAuthenticationHandler.SchemeName + "," + StableSmokeAuthenticationHandler.SchemeName)]
     [ProducesResponseType(typeof(ApiResponse<SyntheticLoginTicketResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> IssueTicket(
         [FromBody] SyntheticLoginTicketRequest request,
@@ -244,13 +245,17 @@ public sealed class SyntheticLoginController : ControllerBase
     }
 
     private static bool IsEnabled(IConfiguration configuration) =>
-        IsTruthy(configuration["SyntheticLogin:Enabled"] ?? configuration["SYNTHETIC_LOGIN_ENABLED"]);
+        IsTruthy(configuration["SyntheticLogin:Enabled"] ?? configuration["SYNTHETIC_LOGIN_ENABLED"])
+        || StableSmokeAuthenticationHandler.ReadKeys(configuration).Any(item => item.IsComplete);
 
     private static IReadOnlySet<string> ReadAllowedUsers(IConfiguration configuration) =>
         (configuration["SyntheticLogin:AllowedUsers"]
             ?? configuration["SYNTHETIC_LOGIN_ALLOWED_USERS"]
             ?? string.Empty)
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Concat(StableSmokeAuthenticationHandler.ReadKeys(configuration)
+            .Where(item => item.IsComplete)
+            .Select(item => item.Username))
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     private static bool IsAllowedUser(string? username, IReadOnlySet<string> allowedUsers) =>

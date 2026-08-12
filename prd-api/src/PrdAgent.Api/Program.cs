@@ -880,6 +880,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options => { })
     .AddScheme<PrdAgent.Api.Authentication.AiAccessKeyAuthenticationOptions, PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler>(
         PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        options => { })
+    .AddScheme<PrdAgent.Api.Authentication.StableSmokeAuthenticationOptions, PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler>(
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName,
         options => { });
 
 builder.Services.AddAuthorization(options =>
@@ -888,7 +891,8 @@ builder.Services.AddAuthorization(options =>
     options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
         JwtBearerDefaults.AuthenticationScheme,
         "ApiKey",
-        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName)
+        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
         .Build();
 });

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { buildNotificationPayload, sendNotification, validateNotificationOptions } from '../stable-smoke-notify.mjs';
 
 const base = {
@@ -68,6 +69,34 @@ test('失败结果调用 MAP 站内通知接口且不包含其他通知通道', 
   assert.equal(captured.init.headers['X-AI-Impersonate'], 'stsmk_admin');
   assert.equal(captured.body.targetUserId, 'target-user-id');
   assert.equal(JSON.stringify(captured).toLowerCase().includes('slack'), false);
+});
+
+test('签名通知使用固定用户名且接受服务端解析后的真实用户 ID', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  let captured;
+  const result = await sendNotification({
+    ...base,
+    accessKey: '',
+    targetUserId: '',
+    targetUsername: 'admin',
+    signingKeyId: 'prod-rsa-2026-08',
+    signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+  }, async (url, init) => {
+    captured = { url: String(url), init, body: JSON.parse(init.body) };
+    return new Response(JSON.stringify({
+      success: true,
+      data: { created: true, notification: { id: 'n-2', targetUserId: 'admin-user-id' } },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  });
+
+  assert.equal(result.targetUserId, 'admin-user-id');
+  assert.equal(captured.body.targetUsername, 'admin');
+  assert.equal(captured.body.targetUserId, undefined);
+  assert.equal(captured.init.headers['X-Stable-Smoke-Key-Id'], 'prod-rsa-2026-08');
+  assert.equal(captured.init.headers['X-AI-Access-Key'], undefined);
 });
 
 test('服务端未确认目标用户时不得把接口成功误报为送达', async () => {

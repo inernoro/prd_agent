@@ -8,7 +8,8 @@ minutes="3"
 open_page="false"
 
 usage() {
-  echo "用法: AI_ACCESS_KEY=... scripts/stable-smoke-login.sh --base <地址> --user <专用账号> [--return-url <站内路径>] [--minutes 1-5] [--open]"
+  echo "用法: scripts/stable-smoke-login.sh --base <地址> --user <专用账号> [--return-url <站内路径>] [--minutes 1-5] [--open]"
+  echo "鉴权二选一: AI_ACCESS_KEY；或 STABLE_SMOKE_SIGNING_KEY_ID + STABLE_SMOKE_SIGNING_PRIVATE_KEY"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -45,8 +46,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$base_url" || -z "$username" || -z "${AI_ACCESS_KEY:-}" ]]; then
-  echo "缺少地址、专用账号或 AI_ACCESS_KEY，请补齐后重试。" >&2
+if [[ -z "$base_url" || -z "$username" ]]; then
+  echo "缺少地址或专用账号，请补齐后重试。" >&2
   usage >&2
   exit 2
 fi
@@ -69,14 +70,48 @@ payload=$(jq -cn \
 response_file=$(mktemp)
 trap 'rm -f "$response_file"' EXIT
 
+auth_headers=()
+if [[ -n "${AI_ACCESS_KEY:-}" ]]; then
+  auth_headers+=(
+    -H "X-AI-Access-Key: $AI_ACCESS_KEY"
+    -H "X-AI-Impersonate: $username"
+  )
+else
+  signing_private_key="${STABLE_SMOKE_SIGNING_PRIVATE_KEY:-}"
+  signing_key_id="${STABLE_SMOKE_SIGNING_KEY_ID:-}"
+  if [[ -z "$signing_private_key" && "$base_url" == "https://map.ebcone.net" ]] && command -v security >/dev/null 2>&1; then
+    signing_private_key=$(security find-generic-password \
+      -s prd-agent.stable-smoke.prod.signing-private-key \
+      -a stable-smoke \
+      -w 2>/dev/null || true)
+    signing_key_id="${signing_key_id:-prod-rsa-2026-08}"
+  fi
+  if [[ -z "$signing_private_key" || -z "$signing_key_id" ]]; then
+    echo "缺少稳定冒烟签名凭据，请配置安全凭据库或环境变量后重试。" >&2
+    exit 2
+  fi
+  signed_headers=$(STABLE_SMOKE_SIGNING_KEY_ID="$signing_key_id" \
+    STABLE_SMOKE_SIGNING_PRIVATE_KEY="$signing_private_key" \
+    node scripts/stable-smoke-signature.mjs \
+      --method POST \
+      --url "$base_url/api/v1/auth/synthetic/ticket" \
+      --body "$payload" \
+      --username "$username")
+  auth_headers+=(
+    -H "X-Stable-Smoke-Key-Id: $(jq -r '.["X-Stable-Smoke-Key-Id"]' <<<"$signed_headers")"
+    -H "X-Stable-Smoke-Timestamp: $(jq -r '.["X-Stable-Smoke-Timestamp"]' <<<"$signed_headers")"
+    -H "X-Stable-Smoke-Nonce: $(jq -r '.["X-Stable-Smoke-Nonce"]' <<<"$signed_headers")"
+    -H "X-Stable-Smoke-Signature: $(jq -r '.["X-Stable-Smoke-Signature"]' <<<"$signed_headers")"
+  )
+fi
+
 status=$(curl -sS \
   -o "$response_file" \
   -w '%{http_code}' \
   -X POST "$base_url/api/v1/auth/synthetic/ticket" \
   -H 'Accept: application/json' \
   -H 'Content-Type: application/json' \
-  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
-  -H "X-AI-Impersonate: $username" \
+  "${auth_headers[@]}" \
   --data "$payload")
 
 if [[ "$status" != "200" ]] || [[ "$(jq -r '.success // false' "$response_file")" != "true" ]]; then

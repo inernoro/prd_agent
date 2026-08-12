@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Authentication;
@@ -54,14 +56,16 @@ public sealed class SyntheticLoginControllerTests
     }
 
     [Fact]
-    public void TicketIssuance_ShouldRequireAiSuperAccessScheme()
+    public void TicketIssuance_ShouldRequireAiOrStableSmokeScheme()
     {
         var method = typeof(SyntheticLoginController).GetMethod(nameof(SyntheticLoginController.IssueTicket));
 
         Assert.NotNull(method);
         var authorize = method.GetCustomAttribute<AuthorizeAttribute>();
         Assert.NotNull(authorize);
-        Assert.Equal(AiAccessKeyAuthenticationHandler.SchemeName, authorize.AuthenticationSchemes);
+        Assert.Equal(
+            AiAccessKeyAuthenticationHandler.SchemeName + "," + StableSmokeAuthenticationHandler.SchemeName,
+            authorize.AuthenticationSchemes);
     }
 
     [Fact]
@@ -85,6 +89,59 @@ public sealed class SyntheticLoginControllerTests
             "IsAllowedUser",
             "stable-smoke-user",
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "stable-smoke-user" }));
+    }
+
+    [Fact]
+    public void StableSmokeSignature_ShouldVerifyCanonicalBodyAndRejectMutation()
+    {
+        using var rsa = RSA.Create(2048);
+        var publicKey = Convert.ToBase64String(rsa.ExportSubjectPublicKeyInfo());
+        var canonical = StableSmokeAuthenticationHandler.BuildCanonicalRequest(
+            "POST",
+            "/api/v1/auth/synthetic/ticket",
+            1_786_547_200,
+            "nonce_for_test_1234567890",
+            "stsmk_prod",
+            "{\"returnUrl\":\"/\",\"expiresInSeconds\":60}");
+        var signature = rsa.SignData(
+            Encoding.UTF8.GetBytes(canonical),
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pss);
+
+        Assert.True(StableSmokeAuthenticationHandler.VerifySignature(publicKey, canonical, signature));
+        var mutatedCanonical = StableSmokeAuthenticationHandler.BuildCanonicalRequest(
+            "POST",
+            "/api/v1/auth/synthetic/ticket",
+            1_786_547_200,
+            "nonce_for_test_1234567890",
+            "stsmk_prod",
+            "{\"returnUrl\":\"/users\",\"expiresInSeconds\":60}");
+        Assert.False(StableSmokeAuthenticationHandler.VerifySignature(
+            publicKey,
+            mutatedCanonical,
+            signature));
+    }
+
+    [Theory]
+    [InlineData("POST", "/api/v1/auth/synthetic/ticket", true)]
+    [InlineData("POST", "/api/dashboard/notifications/events", true)]
+    [InlineData("GET", "/api/v1/auth/synthetic/ticket", false)]
+    [InlineData("POST", "/api/users", false)]
+    public void StableSmokeSignature_ShouldBeEndpointScoped(string method, string path, bool expected)
+    {
+        Assert.Equal(expected, StableSmokeAuthenticationHandler.IsAllowedRequest(method, path));
+    }
+
+    [Fact]
+    public void StableSmokePublicRegistry_ShouldContainNoPrivateKeyMaterial()
+    {
+        var settings = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/appsettings.json"));
+
+        Assert.Contains("prod-rsa-2026-08", settings);
+        Assert.Contains("map.ebcone.net", settings);
+        Assert.DoesNotContain("PRIVATE KEY", settings, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SigningPrivateKey", settings, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -816,6 +816,41 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public async Task NotificationsController_StableSmoke_ShouldResolveConfiguredTargetUsername()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+
+        try
+        {
+            await testDb.Context.Users.InsertOneAsync(new User
+            {
+                UserId = "admin-user-id",
+                Username = "admin",
+                DisplayName = "管理员",
+                Status = UserStatus.Active,
+                UserType = UserType.Human,
+            });
+            var controller = CreateNotificationsController(testDb.Context, "stable-smoke-user", stableSmoke: true);
+
+            var result = await controller.CreateEvent(new AdminNotificationEventRequest
+            {
+                Source = "stable-smoke",
+                Title = "稳定冒烟失败",
+                TargetUsername = "admin",
+                DedupKey = "run-target-username",
+            }, CancellationToken.None);
+
+            Assert.IsType<OkObjectResult>(result);
+            var notification = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
+            Assert.Equal("admin-user-id", notification.TargetUserId);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public void NotificationsController_QuotaHistory_ShouldHideProviderDiagnostics()
     {
         var presentation = NotificationsController.ToUserReadablePresentation(new AdminNotification
@@ -954,7 +989,10 @@ public sealed class AdminPushNotificationServiceTests
             NullLogger<AdminPushNotificationService>.Instance);
     }
 
-    private static NotificationsController CreateNotificationsController(MongoDbContext db, string userId)
+    private static NotificationsController CreateNotificationsController(
+        MongoDbContext db,
+        string userId,
+        bool stableSmoke = false)
     {
         var push = CreateService(db, new RecordingHttpClientFactory(HttpStatusCode.OK));
         var events = new AdminNotificationEventService(
@@ -962,16 +1000,24 @@ public sealed class AdminPushNotificationServiceTests
             new AdminPushDispatchSignal(),
             NullLogger<AdminNotificationEventService>.Instance);
 
-        return new NotificationsController(db, push, events)
+        var claims = new List<Claim>
+        {
+            new("sub", userId),
+        };
+        if (stableSmoke)
+        {
+            claims.Add(new Claim(
+                PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess,
+                "1"));
+        }
+
+        return new NotificationsController(db, push, events, TestConfiguration)
         {
             ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
                 {
-                    User = new ClaimsPrincipal(new ClaimsIdentity(
-                    [
-                        new Claim("sub", userId),
-                    ], "test")),
+                    User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test")),
                 },
             },
         };
@@ -981,6 +1027,7 @@ public sealed class AdminPushNotificationServiceTests
         .AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["App:FrontendBaseUrl"] = "https://admin-push-bark-protocol-codex-prd-agent.miduo.org",
+            ["StableSmokeAuthentication:NotificationTargetUsername"] = "admin",
         })
         .Build();
 
