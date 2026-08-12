@@ -1688,7 +1688,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     startClientX: number;
     startClientY: number;
     keys: string[];
-    base: Record<string, { x: number; y: number }>;
+    /**
+     * 拖拽起点。除了当前位置，还要记住「原位」(layerHome*)——
+     * 那是切回原位叠放 / 平铺展开时的锚点，拖动必须让它跟着走。
+     */
+    base: Record<string, { x: number; y: number; homeX?: number; homeY?: number }>;
   }>({ active: false, confirmed: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
   // 双指捏合进行中标志：捏合期间 React 侧 pointerdown 处理器（框选/元素拖拽/resize）必须让位，
   // 否则第二根手指的同一事件会在原生监听清理后又被委托处理器重新武装（Codex review P2）
@@ -6593,7 +6597,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   prev.map((it) => {
                     if (!set.has(it.key)) return it;
                     const b = drag.base[it.key] ?? { x: it.x ?? 0, y: it.y ?? 0 };
-                    return { ...it, x: b.x + dx, y: b.y + dy };
+                    const moved = { ...it, x: b.x + dx, y: b.y + dy };
+                    // 原位要跟着一起走。它是「原位叠放 / 平铺展开」互切时的锚点，
+                    // 只挪 x/y 不挪原位的话，拖完再切一次摆法整组就弹回拖之前那块地；
+                    // 若这个 Frame 是在生成途中被拖走的，先到的图层记的是旧原位、
+                    // 后到的记的是新原位，切摆法还会把一组图层撕到两个地方去
+                    // （Codex PR #1363 P1）。这正是用户报的「图层回到最初 Frame 位置」
+                    // 换一条路径重现——落位那条我已经修了，这条是同一个病的另一半。
+                    if (Number.isFinite(b.homeX as number) && Number.isFinite(b.homeY as number)) {
+                      moved.layerHomeX = (b.homeX as number) + dx;
+                      moved.layerHomeY = (b.homeY as number) + dy;
+                    }
+                    return moved;
                   })
                 );
                 e.preventDefault();
@@ -6938,10 +6953,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         }
                       }
                       // 开始拖拽（多选整体移动）
-                      const base: Record<string, { x: number; y: number }> = {};
+                      const base: Record<string, { x: number; y: number; homeX?: number; homeY?: number }> = {};
                       for (const k of nextKeys) {
                         const found = canvas.find((x) => x.key === k);
-                        base[k] = { x: found?.x ?? 0, y: found?.y ?? 0 };
+                        base[k] = {
+                          x: found?.x ?? 0,
+                          y: found?.y ?? 0,
+                          homeX: found?.layerHomeX,
+                          homeY: found?.layerHomeY,
+                        };
                       }
                       dragItemsRef.current = {
                         active: true,
@@ -7222,10 +7242,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 objectFit: 'contain',
                                 borderRadius: 14,
                                 // 图层面板改的显隐/不透明度在画布上也要看得见，
-                                // 否则面板和画布是两套真相。隐藏层不移除、只压暗——
-                                // 卡片凭空消失比看不清更让人以为东西丢了。
+                                // 否则面板和画布是两套真相。
+                                //
+                                // 隐藏层的**像素必须真的不画**（0 而不是 0.18）：导出的合成 PNG 和
+                                // PSD 都把隐藏层完全排除，画布再留 18% 就成了「所见 ≠ 所得」；
+                                // 而空层/实色层是默认隐藏的，那 18% 会给「表观和原图一致」的副本
+                                // 蒙上一层底色，正好毁掉本功能的核心承诺（Codex PR #1363 P1）。
+                                // 「卡片不能凭空消失」的顾虑由外层卡片承担——边框、选中框、
+                                // 图层面板那一行都还在，元素照样选得中、拖得动。
                                 opacity: it.layerRole === 'layer'
-                                  ? (it.layerHidden ? 0.18 : (typeof it.layerOpacity === 'number' ? it.layerOpacity : 1))
+                                  ? (it.layerHidden ? 0 : (typeof it.layerOpacity === 'number' ? it.layerOpacity : 1))
                                   : 1,
                                 // 选中态由“蓝色描边+角点”统一表达（避免光晕不明显）
                                 filter: 'none',
@@ -7521,10 +7547,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         const keys = frame.layerKeys;
                         if (keys.length === 0) return;
                         setSelectionWithoutChip(keys);
-                        const base: Record<string, { x: number; y: number }> = {};
+                        const base: Record<string, { x: number; y: number; homeX?: number; homeY?: number }> = {};
                         for (const key of keys) {
                           const found = canvasRef.current.find((candidate) => candidate.key === key);
-                          base[key] = { x: found?.x ?? 0, y: found?.y ?? 0 };
+                          base[key] = {
+                            x: found?.x ?? 0,
+                            y: found?.y ?? 0,
+                            homeX: found?.layerHomeX,
+                            homeY: found?.layerHomeY,
+                          };
                         }
                         dragItemsRef.current = {
                           active: true,
