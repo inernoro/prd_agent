@@ -115,7 +115,7 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
             ImageGenRunStatus.Failed,
             ImageGenRunStatus.Cancelled
         };
-        var filter = Builders<ImageGenRun>.Filter.And(
+        var expiredFilter = Builders<ImageGenRun>.Filter.And(
             Builders<ImageGenRun>.Filter.Eq(x => x.AppKey, AppKey),
             Builders<ImageGenRun>.Filter.In(x => x.Status, terminalStatuses),
             Builders<ImageGenRun>.Filter.Or(
@@ -123,17 +123,34 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
                 Builders<ImageGenRun>.Filter.And(
                     Builders<ImageGenRun>.Filter.Eq(x => x.EndedAt, null),
                     Builders<ImageGenRun>.Filter.Lte(x => x.CreatedAt, cutoff))));
-        var candidates = await _db.ImageGenRuns
-            .Find(filter)
-            .SortBy(x => x.CreatedAt)
-            .Limit(CleanupBatchSize)
-            .Project(x => new { x.Id, x.OwnerAdminId })
-            .ToListAsync(ct);
-
         var cleaned = 0;
-        foreach (var candidate in candidates)
+        var failedRunIds = new HashSet<string>(StringComparer.Ordinal);
+        while (!ct.IsCancellationRequested)
         {
-            if (await CleanupRunAsync(candidate.Id, candidate.OwnerAdminId, ct)) cleaned++;
+            var filter = failedRunIds.Count == 0
+                ? expiredFilter
+                : Builders<ImageGenRun>.Filter.And(
+                    expiredFilter,
+                    Builders<ImageGenRun>.Filter.Nin(x => x.Id, failedRunIds));
+            var candidates = await _db.ImageGenRuns
+                .Find(filter)
+                .SortBy(x => x.CreatedAt)
+                .Limit(CleanupBatchSize)
+                .Project(x => new { x.Id, x.OwnerAdminId })
+                .ToListAsync(ct);
+            if (candidates.Count == 0) break;
+
+            foreach (var candidate in candidates)
+            {
+                if (await CleanupRunAsync(candidate.Id, candidate.OwnerAdminId, ct))
+                {
+                    cleaned++;
+                }
+                else
+                {
+                    failedRunIds.Add(candidate.Id);
+                }
+            }
         }
         return cleaned;
     }

@@ -130,6 +130,10 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("while (_cleanupQueue.Reader.TryRead", cleanup);
         Assert.Contains("DefaultRetention = TimeSpan.FromHours(24)", cleanup);
         Assert.Contains("await CleanupExpiredAsync(now, stoppingToken)", cleanup);
+        Assert.Contains("while (!ct.IsCancellationRequested)", cleanup);
+        Assert.Contains("Builders<ImageGenRun>.Filter.Nin(x => x.Id, failedRunIds)", cleanup);
+        Assert.Contains("failedRunIds.Add(candidate.Id)", cleanup);
+        Assert.Contains("if (candidates.Count == 0) break", cleanup);
         Assert.Contains("otherArtifactRefs == 0 && imageAssetRefs == 0 && otherRunRefs == 0", cleanup);
         Assert.Contains("ImageRefs.AssetSha256", cleanup);
         Assert.Contains("ImageGenRunItems.DeleteManyAsync", cleanup);
