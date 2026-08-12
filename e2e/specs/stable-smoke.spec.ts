@@ -2403,14 +2403,29 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const logical = logicalBody.data.items.find((item) => (
       item.enabled
       && availableCodes.has(item.publicId)
-      && item.offerings.filter((offering) => offering.enabled && upstreamIds.has(offering.targetId)).length >= 2
+      && item.offerings.filter((offering) => (
+        offering.enabled
+        && offering.healthStatus !== 2
+        && upstreamIds.has(offering.targetId)
+      )).length >= 2
       && new Set(item.offerings
-        .filter((offering) => offering.enabled && upstreamIds.has(offering.targetId))
+        .filter((offering) => (
+          offering.enabled
+          && offering.healthStatus !== 2
+          && upstreamIds.has(offering.targetId)
+        ))
         .map((offering) => offering.targetId)).size >= 2
     ));
-    expect(logical, 'CDS 需要至少一个带主备 Offering 的可用文生图逻辑模型').toBeTruthy();
+    expect(
+      logical,
+      'CDS 需要至少一个带两个不同、真实存在且未被隔离上游的文生图逻辑模型，才能执行故障切换验收',
+    ).toBeTruthy();
     const offerings = logical!.offerings
-      .filter((offering) => offering.enabled && upstreamIds.has(offering.targetId))
+      .filter((offering) => (
+        offering.enabled
+        && offering.healthStatus !== 2
+        && upstreamIds.has(offering.targetId)
+      ))
       .sort((left, right) => left.priority - right.priority);
     const originals = new Map(offerings.map((offering) => [offering.id, {
       endpointPath: offering.endpointPath || '',
