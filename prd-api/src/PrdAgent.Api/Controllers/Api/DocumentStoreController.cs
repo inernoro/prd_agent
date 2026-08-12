@@ -44,6 +44,7 @@ public class DocumentStoreController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IRunEventStore _runEventStore;
     private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
     private readonly DocStoreServices.MentionService _mentions;
@@ -86,6 +87,7 @@ public class DocumentStoreController : ControllerBase
         IDocumentService documentService,
         IRunEventStore runEventStore,
         ISafeOutboundUrlValidator urlValidator,
+        IHttpClientFactory httpClientFactory,
         ITeamService teams,
         ITeamActivityService teamActivity,
         DocStoreServices.MentionService mentions,
@@ -107,6 +109,7 @@ public class DocumentStoreController : ControllerBase
         _documentService = documentService;
         _runEventStore = runEventStore;
         _urlValidator = urlValidator;
+        _httpClientFactory = httpClientFactory;
         _teams = teams;
         _teamActivity = teamActivity;
         _mentions = mentions;
@@ -3929,6 +3932,60 @@ public class DocumentStoreController : ControllerBase
             fileUrl,
             hasContent = !string.IsNullOrEmpty(content),
         }));
+    }
+
+    /// <summary>下载条目原始附件，并以原始文件名返回。</summary>
+    [HttpGet("entries/{entryId}/download")]
+    public async Task<IActionResult> DownloadEntryAttachment(string entryId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null || string.IsNullOrWhiteSpace(entry.AttachmentId))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档没有可下载的原始文件"));
+
+        var attachment = await _db.Attachments
+            .Find(item => item.AttachmentId == entry.AttachmentId)
+            .FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档没有可下载的原始文件"));
+
+        byte[]? bytes = null;
+        if (!string.IsNullOrWhiteSpace(attachment.StorageKey))
+        {
+            bytes = await _assetStorage.TryDownloadBytesAsync(attachment.StorageKey, ct);
+        }
+        else if (!string.IsNullOrWhiteSpace(attachment.Url))
+        {
+            try
+            {
+                var safeUri = await _urlValidator.EnsureSafeHttpUrlAsync(attachment.Url, "文档附件地址", ct);
+                var client = _httpClientFactory.CreateClient("SafeOutbound");
+                using var response = await client.GetAsync(safeUri, HttpCompletionOption.ResponseHeadersRead, ct);
+                if (response.IsSuccessStatusCode)
+                    bytes = await response.Content.ReadAsByteArrayAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[document-store] Attachment download failed: entry={EntryId}", entryId);
+            }
+        }
+
+        if (bytes == null || bytes.Length == 0)
+            return NotFound(ApiResponse<object>.Fail(
+                "ASSET_NOT_FOUND",
+                "原始文件已不可用，请重新上传该文件后再下载"));
+
+        var fileName = Path.GetFileName(attachment.FileName);
+        if (string.IsNullOrWhiteSpace(fileName)) fileName = "document.bin";
+        var mime = string.IsNullOrWhiteSpace(attachment.MimeType)
+            ? "application/octet-stream"
+            : attachment.MimeType;
+        return File(bytes, mime, fileName);
     }
 
     /// <summary>把知识库条目一键生成海报/教程/文案 HTML，并发布到网页托管。</summary>

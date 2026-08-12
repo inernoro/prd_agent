@@ -562,7 +562,8 @@ test('所有持久化清理用例都必须声明清理元数据', () => {
   assert.ok(cleanupBlocks.length > 0);
   assert.ok(cleanupBlocks.every((block) => block.includes('finally {')));
   assert.match(source, /\[FILE-003\][\s\S]*?tag: '@cleanup'/);
-  assert.match(source, /\[REC-004\]\[REC-005\]\[REC-010\][\s\S]*?tag: '@cleanup'/);
+  assert.match(source, /\[REC-004\]\[REC-005\][\s\S]*?tag: '@cleanup'/);
+  assert.match(source, /\[REC-010\][\s\S]*?tag: '@cleanup'/);
 });
 
 test('只有归档输出中的 HTTPS 深链可以进入通知', () => {

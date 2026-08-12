@@ -2,6 +2,7 @@
   "schemaVersion": "1.0",
   "name": "核心业务全面视觉验收目录",
   "purpose": "为每48小时稳定复测、发布前验收和缺陷回归提供模块级视觉证据预算，防止少量入口截图冒充全面通过。",
+  "regressionCaseIds": ["REG-visual-evidence-001"],
   "statusVocabulary": ["通过", "不通过", "部分通过", "未执行", "需补证", "需干预"],
   "allowedTestTypes": ["冒烟", "功能", "视觉", "回归"],
   "evidenceItemRequiredFields": ["runId", "commit", "capturedAt", "slotId", "primaryState", "coverageStates", "testType", "status", "theme", "viewportClass", "methodAnchor", "breadcrumb", "path"],

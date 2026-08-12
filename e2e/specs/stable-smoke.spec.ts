@@ -137,6 +137,13 @@ function expectUserReadable(message: string) {
   expect(message).toMatch(/请|重试|检查|选择|重新|稍后/);
 }
 
+function downloadFileName(contentDisposition: string) {
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
+  if (utf8?.[1]) return decodeURIComponent(utf8[1]);
+  const basic = /filename="?([^";]+)"?/i.exec(contentDisposition);
+  return basic?.[1] || '';
+}
+
 type ImageModelPool = {
   id: string;
   code: string;
@@ -893,11 +900,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         ? [allFixtures[rotationOffset], allFixtures[(rotationOffset + 1) % allFixtures.length]]
         : allFixtures;
       for (const fixture of fixtures) {
+        const expectedFileName = `${runKey}-中文样本.${fixture.suffix}`;
         const upload = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
           headers: authHeaders(token),
           multipart: {
             file: {
-              name: `${runKey}-中文样本.${fixture.suffix}`,
+              name: expectedFileName,
               mimeType: fixture.mime,
               buffer: fixture.buffer,
             },
@@ -917,9 +925,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect((content.content || '').trim().length).toBeGreaterThan(5);
         if (fixture.expected) expect(content.content).toContain(fixture.expected);
 
-        const original = await page.request.get(uploaded.fileUrl);
+        const original = await page.request.get(`/api/document-store/entries/${uploaded.entry.id}/download`, {
+          headers: authHeaders(token),
+        });
         expect(original.ok()).toBe(true);
         expect(original.headers()['content-type'] || '').toContain(fixture.mime.split(';')[0]);
+        expect(downloadFileName(original.headers()['content-disposition'] || '')).toBe(expectedFileName);
         expect((await original.body()).byteLength).toBe(fixture.buffer.byteLength);
       }
 
@@ -1541,7 +1552,142 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-004][REC-005][REC-010] 录音分片可恢复、重复完成幂等且无重复条目', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[REC-004][REC-005] 路由离开后从保险箱恢复同一后台录音', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.setTimeout(120_000);
+    const token = await loginAndReadToken(page, request, '/');
+    let storeId = '';
+    let sessionId = '';
+    let entryId = '';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: {
+          name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-recording-recovery`,
+          description: '稳定冒烟录音后台恢复，执行后自动清理',
+          isPublic: false,
+        },
+      }))).id;
+      sessionId = (await readEnvelope<{ sessionId: string }>(await page.request.post(
+        `/api/document-store/stores/${storeId}/recording-uploads`,
+        {
+          headers: authHeaders(token),
+          data: { fileName: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-恢复录音.m4a`, mimeType: 'audio/mp4' },
+        },
+      ))).sessionId;
+
+      const midpoint = Math.ceil(speechFixture.length / 2);
+      const chunks = [speechFixture.subarray(0, midpoint), speechFixture.subarray(midpoint)];
+      for (let index = 0; index < chunks.length; index += 1) {
+        const appended = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/chunks/${index}`, {
+          headers: { ...authHeaders(token), 'Content-Type': 'application/octet-stream' },
+          data: chunks[index],
+        });
+        expect(appended.ok()).toBe(true);
+      }
+
+      const vaultId = `rec-recovery-${Date.now()}`;
+      await page.evaluate(async ({ id, store, serverSession, audioBase64 }) => {
+        await new Promise<void>((resolveSeed, rejectSeed) => {
+          const open = indexedDB.open('map-recording-vault', 1);
+          open.onupgradeneeded = () => {
+            const db = open.result;
+            if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'id' });
+            if (!db.objectStoreNames.contains('chunks')) {
+              const chunkStore = db.createObjectStore('chunks', { autoIncrement: true });
+              chunkStore.createIndex('sessionId', 'sessionId', { unique: false });
+            }
+          };
+          open.onerror = () => rejectSeed(open.error);
+          open.onsuccess = () => {
+            const db = open.result;
+            const transaction = db.transaction(['meta', 'chunks'], 'readwrite');
+            transaction.objectStore('meta').put({
+              id,
+              mime: 'audio/mp4',
+              startedAt: Date.now(),
+              storeId: store,
+              serverUploadSessionId: serverSession,
+            });
+            const binary = atob(audioBase64);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+            transaction.objectStore('chunks').add({
+              sessionId: id,
+              blob: new Blob([bytes], { type: 'audio/mp4' }),
+            });
+            transaction.oncomplete = () => { db.close(); resolveSeed(); };
+            transaction.onerror = () => { db.close(); rejectSeed(transaction.error); };
+            transaction.onabort = () => { db.close(); rejectSeed(transaction.error); };
+          };
+        });
+      }, {
+        id: vaultId,
+        store: storeId,
+        serverSession: sessionId,
+        audioBase64: speechFixture.toString('base64'),
+      });
+
+      const recoveredResponsePromise = page.waitForResponse((response) => (
+        new URL(response.url()).pathname === `/api/document-store/recording-uploads/${sessionId}/complete`
+        && response.request().method() === 'POST'
+      ), { timeout: 60_000 });
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      const recoveredResponse = await recoveredResponsePromise;
+      const recoveredBody = await recoveredResponse.json() as ApiEnvelope<{
+        entry: { id: string; storeId: string };
+        reused?: boolean;
+      }>;
+      expect(recoveredResponse.ok(), recoveredBody.error?.message || '后台录音恢复失败').toBe(true);
+      expect(recoveredBody.success, recoveredBody.error?.message || '后台录音恢复失败').toBe(true);
+      entryId = recoveredBody.data.entry.id;
+      expect(recoveredBody.data.entry.storeId).toBe(storeId);
+      await expect(page.getByText('后台录音已完成', { exact: true })).toBeVisible({ timeout: 30_000 });
+
+      const entries = await readEnvelope<{ items: Array<{ id: string }> }>(
+        await page.request.get(`/api/document-store/stores/${storeId}/entries`, { headers: authHeaders(token) }),
+      );
+      expect(entries.items.filter((item) => item.id === entryId)).toHaveLength(1);
+      const vaultMetaCount = await page.evaluate(async () => new Promise<number>((resolveCount) => {
+        const open = indexedDB.open('map-recording-vault', 1);
+        open.onerror = () => resolveCount(-1);
+        open.onsuccess = () => {
+          const db = open.result;
+          const requestCount = db.transaction('meta', 'readonly').objectStore('meta').count();
+          requestCount.onsuccess = () => { db.close(); resolveCount(requestCount.result); };
+          requestCount.onerror = () => { db.close(); resolveCount(-1); };
+        };
+      }));
+      expect(vaultMetaCount).toBe(0);
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(page.getByText('发现未完成的录音', { exact: true })).toHaveCount(0);
+      const repeated = await readEnvelope<{
+        entry: { id: string };
+        reused: boolean;
+      }>(await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
+        headers: authHeaders(token),
+      }));
+      expect(repeated.entry.id).toBe(entryId);
+      expect(repeated.reused).toBe(true);
+    } finally {
+      if (sessionId) {
+        await page.request.delete(`/api/document-store/recording-uploads/${sessionId}`, {
+          headers: authHeaders(token),
+        }).catch(() => undefined);
+      }
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
+          headers: authHeaders(token),
+        });
+        expect([200, 204]).toContain(deleted.status());
+        if (entryId) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+      }
+    }
+  });
+
+  test('[REC-010] 录音分片重复完成幂等且无重复条目', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     let storeId = '';

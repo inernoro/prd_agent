@@ -8,6 +8,7 @@ const repoRoot = resolve(scriptDir, '..');
 export const defaultCatalogPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/business-function-catalog.json');
 export const defaultLedgerPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/regression-ledger.md');
 export const defaultMatrixPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/test-matrix.md');
+export const defaultVisualCatalogPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/visual-evidence-catalog.json');
 
 function readArg(argv, name, fallback = '') {
   const index = argv.indexOf(name);
@@ -20,6 +21,11 @@ function readRepeatedArgs(argv, name) {
 
 export function loadCatalog(path = defaultCatalogPath) {
   return JSON.parse(readFileSync(path, 'utf8'));
+}
+
+export function loadVisualRegressionCaseIds(path = defaultVisualCatalogPath) {
+  const catalog = JSON.parse(readFileSync(path, 'utf8'));
+  return Array.isArray(catalog.regressionCaseIds) ? catalog.regressionCaseIds : [];
 }
 
 export function parseActiveRegressions(markdown) {
@@ -141,7 +147,16 @@ function gitCommit() {
   return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
 }
 
-export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCases = [], matrixCaseIds = [], mode, commit }) {
+export function buildPlan({
+  catalog,
+  changedFiles,
+  activeRegressions,
+  visualRegressionCaseIds = [],
+  matrixCases = [],
+  matrixCaseIds = [],
+  mode,
+  commit,
+}) {
   const catalogErrors = validateCatalog(catalog);
   const { selected, unmappedFiles } = selectFeatureLines(catalog, changedFiles, activeRegressions, mode);
   const incomplete = selected.filter((feature) => feature.automationStatus === 'planned');
@@ -155,6 +170,9 @@ export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCase
     : matrixCaseIds.map((caseId) => ({ caseId, cdsPolicy: '必跑', productionPolicy: '必跑' }));
   const matrixSelection = selectMatrixCasesByEnvironment(normalizedMatrixCases, commit);
   const matrixById = new Map(normalizedMatrixCases.map((item) => [item.caseId, item]));
+  const visualRegressionSet = new Set(visualRegressionCaseIds);
+  const functionalRegressions = activeRegressions.filter((caseId) => !visualRegressionSet.has(caseId));
+  const visualRegressions = activeRegressions.filter((caseId) => visualRegressionSet.has(caseId));
   const selectedCaseIds = selected.flatMap((feature) => [...feature.requiredCaseIds, ...(feature.regressionCaseIds || [])]);
   const selectedForEnvironment = (environment) => selectedCaseIds.filter((caseId) => {
     const matrixCase = matrixById.get(caseId);
@@ -165,12 +183,12 @@ export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCase
     cds: [...new Set([
       ...(mode === 'scheduled' ? matrixSelection.cds : []),
       ...selectedForEnvironment('cds'),
-      ...activeRegressions,
+      ...functionalRegressions,
     ])].sort(),
     production: [...new Set([
       ...(mode === 'scheduled' ? matrixSelection.production : []),
       ...selectedForEnvironment('production'),
-      ...activeRegressions,
+      ...functionalRegressions,
     ])].sort(),
   };
   const requiredCaseIds = [...new Set([
@@ -188,6 +206,8 @@ export function buildPlan({ catalog, changedFiles, activeRegressions, matrixCase
     changedFiles,
     unmappedFiles,
     activeRegressions,
+    functionalRegressions,
+    visualRegressions,
     requiredCaseIds,
     requiredCaseIdsByEnvironment,
     matrixPolicies: Object.fromEntries(normalizedMatrixCases.map((item) => [item.caseId, {
@@ -242,6 +262,7 @@ async function main() {
   const catalogPath = resolve(readArg(argv, '--catalog', defaultCatalogPath));
   const ledgerPath = resolve(readArg(argv, '--ledger', defaultLedgerPath));
   const matrixPath = resolve(readArg(argv, '--matrix', defaultMatrixPath));
+  const visualCatalogPath = resolve(readArg(argv, '--visual-catalog', defaultVisualCatalogPath));
   const mode = readArg(argv, '--mode', 'scheduled');
   const base = readArg(argv, '--base');
   const head = readArg(argv, '--head', 'HEAD');
@@ -250,7 +271,16 @@ async function main() {
   const catalog = loadCatalog(catalogPath);
   const activeRegressions = parseActiveRegressions(readFileSync(ledgerPath, 'utf8'));
   const matrixCases = parseMatrixCases(readFileSync(matrixPath, 'utf8'));
-  const plan = buildPlan({ catalog, changedFiles, activeRegressions, matrixCases, mode, commit: gitCommit() });
+  const visualRegressionCaseIds = loadVisualRegressionCaseIds(visualCatalogPath);
+  const plan = buildPlan({
+    catalog,
+    changedFiles,
+    activeRegressions,
+    visualRegressionCaseIds,
+    matrixCases,
+    mode,
+    commit: gitCommit(),
+  });
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
   if (outputJson) writeFileSync(outputJson, `${JSON.stringify(plan, null, 2)}\n`, 'utf8');

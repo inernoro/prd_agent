@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildPlan,
   loadCatalog,
+  loadVisualRegressionCaseIds,
   parseActiveRegressions,
   parseMatrixCaseIds,
   parseMatrixCases,
@@ -21,6 +22,7 @@ const regressions = parseActiveRegressions(ledger);
 const matrix = readFileSync(resolve(repoRoot, '.claude/skills/stable-smoke/reference/test-matrix.md'), 'utf8');
 const matrixCaseIds = parseMatrixCaseIds(matrix);
 const matrixCases = parseMatrixCases(matrix);
+const visualRegressionCaseIds = loadVisualRegressionCaseIds();
 
 test('业务功能台账具备发布门禁所需字段', () => {
   assert.deepEqual(validateCatalog(catalog), []);
@@ -51,6 +53,7 @@ test('未登记的核心代码变更不能静默通过', () => {
     catalog,
     changedFiles: ['prd-api/src/UnknownFeature/NewController.cs'],
     activeRegressions: regressions,
+    visualRegressionCaseIds,
     mode: 'changed',
     commit: 'test-commit',
   });
@@ -75,13 +78,17 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
     catalog,
     changedFiles: [],
     activeRegressions: regressions,
+    visualRegressionCaseIds,
     matrixCases,
     mode: 'scheduled',
     commit: 'test-commit',
   });
   const selected = selectMatrixCasesByEnvironment(matrixCases, 'test-commit');
-  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...regressions]));
-  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.production), new Set([...selected.production, ...regressions]));
+  const functionalRegressions = regressions.filter((caseId) => !visualRegressionCaseIds.includes(caseId));
+  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
+  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.production), new Set([...selected.production, ...functionalRegressions]));
+  assert.deepEqual(plan.visualRegressions, ['REG-visual-evidence-001']);
+  assert.ok(!plan.requiredCaseIds.includes('REG-visual-evidence-001'));
   assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REC-006'));
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('REC-006'));
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('FILE-004'));
@@ -112,6 +119,7 @@ test('矩阵解析保留双环境原始策略并按模块只取一条轮换用�
     catalog,
     changedFiles: [],
     activeRegressions: regressions,
+    visualRegressionCaseIds,
     matrixCases,
     mode: 'scheduled',
     commit: 'rotation-seed',
