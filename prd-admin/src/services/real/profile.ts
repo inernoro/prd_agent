@@ -2,6 +2,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 import { apiRequest } from '@/services/real/apiClient';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
+import { connectSse } from '@/lib/useSseStream';
 import type { ApiResponse } from '@/types/api';
 import type { AdminUserAvatarUploadResponse } from '@/services/contracts/userAvatarUpload';
 
@@ -15,8 +16,8 @@ type AvatarGenerationRun = {
   errorMessage?: string | null;
 };
 
-const AVATAR_GENERATION_POLL_INTERVAL_MS = 800;
-const AVATAR_GENERATION_MAX_POLLS = 750;
+const AVATAR_GENERATION_FALLBACK_POLL_INTERVAL_MS = 3_000;
+const AVATAR_GENERATION_FALLBACK_MAX_POLLS = 200;
 const AVATAR_GENERATION_STORAGE_PREFIX = 'prd-admin:avatar-generation-run:';
 const AVATAR_GENERATION_CREATION_STORAGE_PREFIX = 'prd-admin:avatar-generation-create:';
 
@@ -127,7 +128,7 @@ function waitForNextPoll(signal?: AbortSignal): Promise<boolean> {
     const timeoutId = globalThis.setTimeout(() => {
       signal?.removeEventListener('abort', onAbort);
       resolve(true);
-    }, AVATAR_GENERATION_POLL_INTERVAL_MS);
+    }, AVATAR_GENERATION_FALLBACK_POLL_INTERVAL_MS);
     const onAbort = () => {
       globalThis.clearTimeout(timeoutId);
       resolve(false);
@@ -368,8 +369,12 @@ async function waitForMyAvatarPreview(
     signal?: AbortSignal;
   },
 ): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }>> {
+  const streamed = await streamMyAvatarPreview(runId, input);
+  if (streamed) return streamed;
+  if (input.signal?.aborted) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
 
-  for (let poll = 0; poll < AVATAR_GENERATION_MAX_POLLS; poll += 1) {
+  // SSE 被代理或旧版本服务阻断时才降级轮询，避免正常生成期间重复读取 HTTP 与 MongoDB。
+  for (let poll = 0; poll < AVATAR_GENERATION_FALLBACK_MAX_POLLS; poll += 1) {
     if (!await waitForNextPoll(input.signal)) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
     const current = await apiRequest<AvatarGenerationRun>(
       api.profile.avatarGenerationRun(encodeURIComponent(runId)),
@@ -383,20 +388,8 @@ async function waitForMyAvatarPreview(
       return avatarGenerationFailure(current.error?.code);
     }
 
-    input.onProgress?.(current.data.stage || '正在生成头像');
-    if (current.data.status === 'completed') {
-      const previewUrl = String(current.data.previewUrl ?? '').trim();
-      const assetSha256 = String(current.data.assetSha256 ?? '').trim().toLowerCase();
-      if (previewUrl && /^[a-f0-9]{64}$/.test(assetSha256)) {
-        return { success: true, data: { previewUrl, assetSha256 }, error: null };
-      }
-      forgetAvatarGenerationRun(runId);
-      return avatarGenerationFailure('AVATAR_RESULT_UNAVAILABLE');
-    }
-    if (current.data.status === 'failed' || current.data.status === 'cancelled') {
-      forgetAvatarGenerationRun(runId);
-      return avatarGenerationFailure(current.data.errorCode);
-    }
+    const terminal = resolveAvatarGenerationState(runId, current.data, input.onProgress);
+    if (terminal) return terminal;
   }
 
   return {
@@ -407,6 +400,67 @@ async function waitForMyAvatarPreview(
       message: '头像生成仍在继续，稍后重新打开头像编辑器会自动恢复当前任务。',
     },
   };
+}
+
+function resolveAvatarGenerationState(
+  runId: string,
+  current: AvatarGenerationRun,
+  onProgress?: (stage: string) => void,
+): ApiResponse<{ previewUrl: string; assetSha256: string }> | null {
+  onProgress?.(current.stage || '正在生成头像');
+  if (current.status === 'completed') {
+    const previewUrl = String(current.previewUrl ?? '').trim();
+    const assetSha256 = String(current.assetSha256 ?? '').trim().toLowerCase();
+    if (previewUrl && /^[a-f0-9]{64}$/.test(assetSha256)) {
+      return { success: true, data: { previewUrl, assetSha256 }, error: null };
+    }
+    forgetAvatarGenerationRun(runId);
+    return avatarGenerationFailure('AVATAR_RESULT_UNAVAILABLE');
+  }
+  if (current.status === 'failed' || current.status === 'cancelled') {
+    forgetAvatarGenerationRun(runId);
+    return avatarGenerationFailure(current.errorCode);
+  }
+  return null;
+}
+
+async function streamMyAvatarPreview(
+  runId: string,
+  input: {
+    onProgress?: (stage: string) => void;
+    signal?: AbortSignal;
+  },
+): Promise<ApiResponse<{ previewUrl: string; assetSha256: string }> | null> {
+  const streamController = new AbortController();
+  const onAbort = () => streamController.abort();
+  input.signal?.addEventListener('abort', onAbort, { once: true });
+  let terminal: ApiResponse<{ previewUrl: string; assetSha256: string }> | null = null;
+
+  try {
+    const result = await connectSse({
+      url: api.profile.avatarGenerationRunStream(encodeURIComponent(runId)),
+      method: 'GET',
+      signal: streamController.signal,
+      onEvent: (event) => {
+        if (event.event !== 'status' || !event.data || terminal) return;
+        try {
+          const current = JSON.parse(event.data) as AvatarGenerationRun;
+          terminal = resolveAvatarGenerationState(runId, current, input.onProgress);
+          if (terminal) streamController.abort();
+        } catch {
+          // 单帧损坏时等待下一帧；连接失败或结束后仍会走低频轮询兜底。
+        }
+      },
+    });
+    if (terminal) return terminal;
+    if (input.signal?.aborted) return avatarGenerationFailure('AVATAR_GENERATION_CANCELLED');
+    if (!result.success) return null;
+    // 非终态流意外结束时降级轮询，避免代理截断导致任务永久卡住。
+    return null;
+  } finally {
+    input.signal?.removeEventListener('abort', onAbort);
+    streamController.abort();
+  }
 }
 
 /** 将本人刚生成的视觉资产设为头像。服务端会再次校验资产归属。 */

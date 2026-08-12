@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -7,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -31,7 +33,9 @@ public class ProfileController : ControllerBase
     private readonly ILogger<ProfileController> _logger;
     private readonly IConfiguration _cfg;
     private readonly IAssetStorage _assetStorage;
+    private readonly IRunEventStore _runStore;
     private readonly ProfileAvatarGenerationCleanupService _avatarGenerationCleanup;
+    private static readonly JsonSerializerOptions AvatarSseJsonOptions = new(JsonSerializerDefaults.Web);
 
     private const long MaxAvatarUploadBytes = 5 * 1024 * 1024; // 5MB
     private const int MaxAvatarDimension = 8192;
@@ -43,12 +47,14 @@ public class ProfileController : ControllerBase
         ILogger<ProfileController> logger,
         IConfiguration cfg,
         IAssetStorage assetStorage,
+        IRunEventStore runStore,
         ProfileAvatarGenerationCleanupService avatarGenerationCleanup)
     {
         _db = db;
         _logger = logger;
         _cfg = cfg;
         _assetStorage = assetStorage;
+        _runStore = runStore;
         _avatarGenerationCleanup = avatarGenerationCleanup;
     }
 
@@ -273,6 +279,83 @@ public class ProfileController : ControllerBase
             _ => "正在排队"
         };
         return new { runId = run.Id, status, stage };
+    }
+
+    private async Task<(object payload, bool terminal)> BuildAvatarGenerationStatusAsync(
+        ImageGenRun run,
+        string currentUserId,
+        CancellationToken ct)
+    {
+        if (run.Status is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
+        {
+            string? itemErrorCode = null;
+            if (run.Status == ImageGenRunStatus.Failed)
+            {
+                var failedItem = await _db.ImageGenRunItems
+                    .Find(x => x.RunId == run.Id
+                               && x.OwnerAdminId == currentUserId
+                               && x.Status == ImageGenRunItemStatus.Error)
+                    .SortByDescending(x => x.EndedAt)
+                    .FirstOrDefaultAsync(ct);
+                itemErrorCode = failedItem?.ErrorCode;
+            }
+            return (BuildAvatarGenerationFailure(run.Status, itemErrorCode), true);
+        }
+
+        if (run.Status != ImageGenRunStatus.Completed)
+        {
+            var stage = run.Status == ImageGenRunStatus.Running ? "正在生成头像" : "正在排队";
+            return (new
+            {
+                status = run.Status == ImageGenRunStatus.Running ? "running" : "queued",
+                stage,
+                done = run.Done,
+                total = Math.Max(1, run.Total)
+            }, false);
+        }
+
+        var requestId = $"{run.Id}-0-0";
+        var artifact = await _db.UploadArtifacts
+            .Find(x => x.CreatedByAdminId == currentUserId
+                       && x.Kind == "output_image"
+                       && x.RequestId == requestId)
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (artifact == null
+            || string.IsNullOrWhiteSpace(artifact.CosUrl)
+            || artifact.Sha256.Length != 64)
+        {
+            _logger.LogWarning(
+                "Profile avatar run completed without usable artifact. userId={UserId} runId={RunId}",
+                currentUserId,
+                run.Id);
+            return (new
+            {
+                status = "failed",
+                stage = "生成未完成",
+                errorCode = "AVATAR_RESULT_UNAVAILABLE",
+                errorMessage = "头像已经生成，但预览暂时无法读取，请稍后重新生成。"
+            }, true);
+        }
+
+        return (new
+        {
+            status = "completed",
+            stage = "生成完成",
+            previewUrl = artifact.CosUrl,
+            assetSha256 = artifact.Sha256
+        }, true);
+    }
+
+    private async Task WriteAvatarStatusSseAsync(string? id, string dataJson, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(id))
+        {
+            await Response.WriteAsync($"id: {id}\n", ct);
+        }
+        await Response.WriteAsync("event: status\n", ct);
+        await Response.WriteAsync($"data: {dataJson}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
     }
 
     private static string BuildAvatarGenerationRunId(string userId, string idempotencyKey)
@@ -555,65 +638,108 @@ public class ProfileController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail("AVATAR_GENERATION_NOT_FOUND", "没有找到这次头像生成任务，请重新生成。"));
 
-        if (run.Status is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
+        var state = await BuildAvatarGenerationStatusAsync(run, currentUserId, ct);
+        return Ok(ApiResponse<object>.Ok(state.payload));
+    }
+
+    /// <summary>
+    /// 流式订阅本人头像生成进度。只推送用户可理解状态，不暴露模型、供应商或上游诊断。
+    /// </summary>
+    [HttpGet("avatar/generation-runs/{runId}/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamAvatarGenerationRun(
+        string runId,
+        [FromQuery] long afterSeq = 0,
+        CancellationToken ct = default)
+    {
+        var currentUserId = GetCurrentUserId();
+        var normalizedRunId = (runId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalizedRunId))
         {
-            string? itemErrorCode = null;
-            if (run.Status == ImageGenRunStatus.Failed)
-            {
-                var failedItem = await _db.ImageGenRunItems
-                    .Find(x => x.RunId == run.Id
-                               && x.OwnerAdminId == currentUserId
-                               && x.Status == ImageGenRunItemStatus.Error)
-                    .SortByDescending(x => x.EndedAt)
-                    .FirstOrDefaultAsync(ct);
-                itemErrorCode = failedItem?.ErrorCode;
-            }
-            return Ok(ApiResponse<object>.Ok(BuildAvatarGenerationFailure(run.Status, itemErrorCode)));
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(
+                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务编号不能为空"),
+                cancellationToken: ct);
+            return;
         }
 
-        if (run.Status != ImageGenRunStatus.Completed)
-        {
-            var stage = run.Status == ImageGenRunStatus.Running ? "正在生成头像" : "正在排队";
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                status = run.Status == ImageGenRunStatus.Running ? "running" : "queued",
-                stage,
-                done = run.Done,
-                total = Math.Max(1, run.Total)
-            }));
-        }
-
-        var requestId = $"{run.Id}-0-0";
-        var artifact = await _db.UploadArtifacts
-            .Find(x => x.CreatedByAdminId == currentUserId
-                       && x.Kind == "output_image"
-                       && x.RequestId == requestId)
-            .SortByDescending(x => x.CreatedAt)
+        var run = await _db.ImageGenRuns
+            .Find(x => x.Id == normalizedRunId
+                       && x.OwnerAdminId == currentUserId
+                       && x.AppKey == ProfileAvatarRunAppKey)
             .FirstOrDefaultAsync(ct);
-        if (artifact == null
-            || string.IsNullOrWhiteSpace(artifact.CosUrl)
-            || artifact.Sha256.Length != 64)
+        if (run == null)
         {
-            _logger.LogWarning(
-                "Profile avatar run completed without usable artifact. userId={UserId} runId={RunId}",
-                currentUserId,
-                run.Id);
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                status = "failed",
-                stage = "生成未完成",
-                errorCode = "AVATAR_RESULT_UNAVAILABLE",
-                errorMessage = "头像已经生成，但预览暂时无法读取，请稍后重新生成。"
-            }));
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            await Response.WriteAsJsonAsync(
+                ApiResponse<object>.Fail("AVATAR_GENERATION_NOT_FOUND", "没有找到这次头像生成任务，请重新生成。"),
+                cancellationToken: ct);
+            return;
         }
 
-        return Ok(ApiResponse<object>.Ok(new
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+        afterSeq = Math.Max(0, afterSeq);
+
+        try
         {
-            status = "completed",
-            stage = "生成完成",
-            previewUrl = artifact.CosUrl,
-            assetSha256 = artifact.Sha256
-        }));
+            var state = await BuildAvatarGenerationStatusAsync(run, currentUserId, ct);
+            var lastStateJson = JsonSerializer.Serialize(state.payload, AvatarSseJsonOptions);
+            await WriteAvatarStatusSseAsync(id: null, lastStateJson, ct);
+            if (state.terminal) return;
+
+            var lastKeepAliveAt = DateTime.UtcNow;
+            var nextReconcileAt = DateTime.UtcNow.AddSeconds(10);
+            while (!ct.IsCancellationRequested)
+            {
+                var events = await _runStore.GetEventsAsync(
+                    RunKinds.ImageGen,
+                    normalizedRunId,
+                    afterSeq,
+                    limit: 120,
+                    ct);
+                if (events.Count > 0)
+                {
+                    afterSeq = events[^1].Seq;
+                }
+
+                var now = DateTime.UtcNow;
+                if (events.Count > 0 || now >= nextReconcileAt)
+                {
+                    run = await _db.ImageGenRuns
+                        .Find(x => x.Id == normalizedRunId
+                                   && x.OwnerAdminId == currentUserId
+                                   && x.AppKey == ProfileAvatarRunAppKey)
+                        .FirstOrDefaultAsync(ct);
+                    if (run == null) return;
+
+                    state = await BuildAvatarGenerationStatusAsync(run, currentUserId, ct);
+                    var stateJson = JsonSerializer.Serialize(state.payload, AvatarSseJsonOptions);
+                    if (!string.Equals(stateJson, lastStateJson, StringComparison.Ordinal))
+                    {
+                        await WriteAvatarStatusSseAsync(afterSeq > 0 ? afterSeq.ToString() : null, stateJson, ct);
+                        lastStateJson = stateJson;
+                        lastKeepAliveAt = now;
+                    }
+                    if (state.terminal) return;
+                    nextReconcileAt = now.AddSeconds(10);
+                }
+
+                if ((now - lastKeepAliveAt).TotalSeconds >= 10)
+                {
+                    await Response.WriteAsync(": keepalive\n\n", ct);
+                    await Response.Body.FlushAsync(ct);
+                    lastKeepAliveAt = now;
+                }
+                await Task.Delay(650, ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 浏览器关闭或切换页面时正常结束流。
+        }
     }
 
     /// <summary>

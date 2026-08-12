@@ -337,6 +337,7 @@ export const api = {
     avatarApplyGenerated: () => '/api/profile/avatar/apply-generated',
     avatarGenerationRuns: () => '/api/profile/avatar/generation-runs',
     avatarGenerationRun: (runId: string) => `/api/profile/avatar/generation-runs/${runId}`,
+    avatarGenerationRunStream: (runId: string) => `/api/profile/avatar/generation-runs/${runId}/stream`,
     publicPage: () => '/api/profile/public-page',
   },
 

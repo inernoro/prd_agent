@@ -100,6 +100,24 @@ public class ProfileAvatarGenerationContractTests
     }
 
     [Fact]
+    public void ProfileAvatarGeneration_MustStreamSanitizedStatusWithPollingFallback()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
+        var frontend = File.ReadAllText(LocateRepoFile(
+            "prd-admin/src/services/real/profile.ts"));
+
+        Assert.Contains("avatar/generation-runs/{runId}/stream", controller);
+        Assert.Contains("RunKinds.ImageGen", controller);
+        Assert.Contains("BuildAvatarGenerationStatusAsync", controller);
+        Assert.Contains("event: status", controller);
+        Assert.Contains("connectSse", frontend);
+        Assert.Contains("avatarGenerationRunStream", frontend);
+        Assert.Contains("SSE 被代理或旧版本服务阻断时才降级轮询", frontend);
+        Assert.DoesNotContain("AVATAR_GENERATION_POLL_INTERVAL_MS = 800", frontend);
+    }
+
+    [Fact]
     public void ProfileAvatarPersistence_MustChangePublicObjectKeyWhenContentChanges()
     {
         var source = File.ReadAllText(LocateRepoFile(

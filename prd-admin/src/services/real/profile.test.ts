@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiRequest } from '@/services/real/apiClient';
+import { connectSse } from '@/lib/useSseStream';
 import {
   applyGeneratedMyAvatar,
   generateMyAvatarPreview,
@@ -10,11 +11,13 @@ import {
 } from '@/services/real/profile';
 
 vi.mock('@/services/real/apiClient', () => ({ apiRequest: vi.fn() }));
+vi.mock('@/lib/useSseStream', () => ({ connectSse: vi.fn() }));
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: { getState: () => ({ token: 'test-token', user: { userId: 'user-1' } }) },
 }));
 
 const mockedApiRequest = vi.mocked(apiRequest);
+const mockedConnectSse = vi.mocked(connectSse);
 const sessionValues = new Map<string, string>();
 const testSessionStorage = {
   get length() { return sessionValues.size; },
@@ -29,6 +32,12 @@ vi.stubGlobal('sessionStorage', testSessionStorage);
 describe('generateMyAvatarPreview', () => {
   beforeEach(() => {
     mockedApiRequest.mockReset();
+    mockedConnectSse.mockReset();
+    mockedConnectSse.mockResolvedValue({
+      success: false,
+      errorCode: 'NETWORK_ERROR',
+      errorMessage: '测试环境未建立 SSE',
+    });
     sessionStorage.clear();
     vi.useFakeTimers();
   });
@@ -78,6 +87,43 @@ describe('generateMyAvatarPreview', () => {
     expect(mockedApiRequest.mock.calls[0]?.[1]?.headers?.['Idempotency-Key']).toMatch(/^profile-avatar-/);
     expect(mockedApiRequest.mock.calls.some(([path]) => String(path).includes('/api/visual-agent/image-gen/generate'))).toBe(false);
     expect(getPendingMyAvatarGenerationRunId()).toBe('run-1');
+  });
+
+  it('优先通过本人头像状态流接收进度并完成预览', async () => {
+    const sha = '6'.repeat(64);
+    mockedApiRequest.mockResolvedValueOnce({
+      success: true,
+      data: { runId: 'run-stream', status: 'queued', stage: '正在排队' },
+      error: null,
+    });
+    mockedConnectSse.mockImplementationOnce(async ({ url, onEvent }) => {
+      expect(url).toBe('/api/profile/avatar/generation-runs/run-stream/stream');
+      onEvent({ event: 'status', data: JSON.stringify({ status: 'running', stage: '正在生成头像' }) });
+      onEvent({
+        event: 'status',
+        data: JSON.stringify({
+          status: 'completed',
+          stage: '生成完成',
+          previewUrl: 'https://assets.example/stream-avatar.png',
+          assetSha256: sha,
+        }),
+      });
+      return { success: true };
+    });
+
+    const stages: string[] = [];
+    const result = await generateMyAvatarPreview({
+      prompt: '通过状态流生成头像',
+      onProgress: (stage) => stages.push(stage),
+    });
+
+    expect(result).toEqual({
+      success: true,
+      data: { previewUrl: 'https://assets.example/stream-avatar.png', assetSha256: sha },
+      error: null,
+    });
+    expect(stages).toEqual(['正在排队', '正在生成头像', '生成完成']);
+    expect(mockedApiRequest).toHaveBeenCalledTimes(1);
   });
 
   it('创建请求超时后以同一幂等键重试，避免重复生成计费任务', async () => {
