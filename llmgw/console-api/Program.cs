@@ -6949,6 +6949,20 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
         }), jsonOptions);
 
     var keyResult = GwApiKeyCrypto.Decrypt(doc.AsNullableString("ApiKeyEncrypted"), config);
+    // 库里存了密文却解不出来（密钥轮换过、或密文损坏）——这时候**绝不能**当成「没配密钥」继续裸奔。
+    // 裸奔请求打到一个不要求鉴权的 /models 上会拿到合法的 data 数组，于是报「密钥被接受」绿灯，
+    // 而业务真去调用时根本取不出这把钥匙。这个仓库为这件事付过代价：轮换 CDS_JWT_SECRET
+    // 打哑了全部平台密钥，静默 401 两小时无人察觉（cross-project-isolation 通道 2）。
+    // 「测试连接」存在的全部意义就是别让这种事再静默发生，所以这里必须先失败。
+    var hasStoredKey = !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted"));
+    if (hasStoredKey && !keyResult.Success)
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "KEY_UNREADABLE",
+            Message = "这个 Provider 存着密钥，但当前服务解不开它（多半是加密密钥换过，或密文损坏）",
+            NextStep = "用「更新密钥」重新填一次原始密钥；若是刚轮换过加密密钥，存量密文都需要重填",
+        }), jsonOptions);
+
     var sw = System.Diagnostics.Stopwatch.StartNew();
     try
     {
@@ -7075,6 +7089,12 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("UNSAFE_TARGET_URL", discoveryTargetError), jsonOptions, 400);
 
     var keyResult = GwApiKeyCrypto.Decrypt(doc.AsNullableString("ApiKeyEncrypted"), config);
+    // 与「测试连接」同一道门：解不开密钥就别裸奔发请求，拉回来的清单会让人误以为这条上游是通的
+    if (!string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) && !keyResult.Success)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail(
+            "KEY_UNREADABLE",
+            "这个 Provider 存着密钥，但当前服务解不开它，请先用「更新密钥」重新填一次"), jsonOptions, 409);
+
     string body;
     try
     {
