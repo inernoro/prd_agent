@@ -7692,6 +7692,18 @@ app.MapDelete("/gw/exchanges/{id}", async (HttpContext http, string id) =>
         return Json(ApiEnvelope<ExchangeDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的交换所"), jsonOptions, 409);
 
     var pools = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
+    // 内部租户的池视图里还有一批没被影子化的 MAP 池（/gw/pools 就是这么端出来的），
+    // 而运行时解析 __exchange__ 成员时 ModelResolver 优先认 GW 自有交换所——
+    // 只扫 GW 池的话，这类 MAP 池会在交换所被删后静默解析不到上游。
+    // 删模型 / 删平台早就把 MAP 池一起算进占用清单了，这里对齐同一口径。
+    if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+    {
+        // 粗筛与下面的判据同口径：能拦住删除的成员，PlatformId 必然是这两个值之一。
+        var mapCandidates = Builders<BsonDocument>.Filter.ElemMatch<BsonDocument>(
+            "Models",
+            Builders<BsonDocument>.Filter.In("PlatformId", new[] { id, "__exchange__" }));
+        pools.AddRange(await modelGroups.Find(mapCandidates).ToListAsync());
+    }
     var blocking = pools
         .Where(pool => (pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray())
             .Where(x => x.IsBsonDocument)

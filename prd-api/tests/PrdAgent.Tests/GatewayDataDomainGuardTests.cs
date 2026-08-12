@@ -4283,6 +4283,41 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 内部租户的池视图是「GW 自有池 + 未影子化的 MAP 池」两段拼起来的，
+    /// 三个删除闸门就必须都按这个口径查占用，少一个就漏一类。
+    ///
+    /// 交换所那条最容易漏：它的判据要跑 GatewayExchangeSupportsModel 这个 C# 谓词，
+    /// 写法和另外两条的 Mongo ElemMatch 不一样，于是第一版只扫了 GW 池。
+    /// 而运行时 ModelResolver 解析 __exchange__ 成员时优先认 GW 自有交换所——
+    /// 删掉它，那条 MAP 池成员就地解析不到上游，且删除时一句告警都没有。
+    /// </summary>
+    [Fact]
+    public void AllDeleteGates_CountMapPoolsForInternalTenant()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 删模型 / 删平台：共享判定源里按 isInternal 把 MAP 池并进候选
+        var collector = MethodBody(console, "static async Task<ModelDeleteBlockers> CollectModelDeleteBlockersAsync");
+        Assert.Contains("isInternal", collector);
+        Assert.Contains("mapPools.Find(memberFilter)", collector);
+
+        var platformCollector = MethodBody(console, "static async Task<PlatformDeleteBlockers> CollectPlatformDeleteBlockersAsync");
+        Assert.Contains("mapPools", platformCollector);
+
+        // 删交换所：判据在端点内联（要跑 C# 谓词），同样必须并进 MAP 池
+        var exchangeDelete = EndpointBody(console, "app.MapDelete(\"/gw/exchanges/{id}\"");
+        Assert.Contains("internalTenantId", exchangeDelete);
+        Assert.Contains("modelGroups.Find(", exchangeDelete);
+        // 粗筛必须覆盖判据认的两种 PlatformId，少一个等于把那一类重新漏掉
+        Assert.Contains("new[] { id, \"__exchange__\" }", exchangeDelete);
+        // 且粗筛必须发生在判据之前——顺序反了就是先判后补，补进来的没人看
+        Assert.True(
+            exchangeDelete.IndexOf("modelGroups.Find(", StringComparison.Ordinal)
+            < exchangeDelete.IndexOf("var blocking = pools", StringComparison.Ordinal),
+            "MAP 池必须在 blocking 判据之前并入候选");
+    }
+
+    /// <summary>
     /// offering 是第二类引用，而且是唯一按 _id 单键指过去的那一类。
     ///
     /// 池成员按 (modelId, platformId) 复合定位、随处可见，写判据时很难忘；
@@ -4458,6 +4493,31 @@ public class GatewayDataDomainGuardTests
         Assert.True(end > start, $"端点没有收尾的授权声明：{anchor}");
         var lineEnd = source.IndexOf('\n', end);
         return source[start..(lineEnd < 0 ? source.Length : lineEnd)];
+    }
+
+    /// <summary>
+    /// 取一个静态方法的方法体。端点靠 "}).Require" 收尾，静态方法没有那个锚，
+    /// 所以按大括号配平找终点——找错了会把后面的方法一起吃进来，断言就形同虚设。
+    /// </summary>
+    private static string MethodBody(string source, string signature)
+    {
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start > 0, $"找不到方法：{signature}");
+        var open = source.IndexOf('{', source.IndexOf('\n', start));
+        Assert.True(open > start, $"方法没有方法体：{signature}");
+        var depth = 0;
+        for (var i = open; i < source.Length; i++)
+        {
+            if (source[i] == '{') depth++;
+            else if (source[i] == '}')
+            {
+                depth--;
+                if (depth == 0) return source[start..(i + 1)];
+            }
+        }
+
+        Assert.Fail($"方法大括号不配平：{signature}");
+        return string.Empty;
     }
 
     private static string ReadRepoFile(string relativePath)

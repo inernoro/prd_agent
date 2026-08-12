@@ -102,3 +102,5 @@
 | test | prd-api | 补改类型守卫；以及吃这份筛选的每个日志端点都要把 platformId 传进同一个 BuildFilter |
 | chore | llmgw | 上游合并功能从本 PR 拆出到 claude/llmgw-platform-merge-followup 分支，删除/编辑/改类型闸/确认弹窗均不依赖它 |
 | docs | prd-agent | 记账合并拆出的原因与续做边界；并把「删掉认领自 MAP 的资源」的语义拍板为「撤销认领、退回只读」 |
+| fix | llmgw | 删交换所把内部租户的 MAP 池一起算进占用清单：/gw/pools 本就端出未影子化的 MAP 池，运行时解析 __exchange__ 成员又优先认 GW 自有交换所，只扫 GW 池会让这类池在交换所被删后静默解析不到上游（删模型/删平台早已这么兜，这里对齐） |
+| test | prd-api | 补三个删除闸门的 MAP 池口径一致守卫，并加 MethodBody 取静态方法体的辅助 |
