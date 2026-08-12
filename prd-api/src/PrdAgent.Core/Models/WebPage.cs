@@ -67,6 +67,19 @@ public class HostedSite
     /// <summary>封面图 URL</summary>
     public string? CoverImageUrl { get; set; }
 
+    /// <summary>
+    /// PDF 包装站的原始 PDF 直链。不入库（由 CosKey + ContentVersion 算出），只在返回给前端前挂上。
+    ///
+    /// 存在的理由：上传 .pdf 会被包成「index.html 壳子 + 原 PDF」，壳子用 PDF.js 把 PDF 画成 canvas
+    /// （移动端 WebView 在 iframe 里渲染不了 PDF，只能这么做），但壳子依赖第三方 CDN。桌面端要绕开壳子
+    /// 直接交给浏览器原生阅读器，就得拿到这个直链。
+    ///
+    /// 此前它只出现在分享视图的 SharedSiteInfo 上，站内列表拿不到，于是站内大预览的「绕开壳子」
+    /// 分支永远走不到——判据在、数据不在（predicate-and-wiring-discipline 形状 2）。
+    /// </summary>
+    [BsonIgnore]
+    public string? PdfAssetUrl { get; set; }
+
     // ── 所有权 ──
 
     /// <summary>所属用户 ID</summary>

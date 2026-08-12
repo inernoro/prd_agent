@@ -3130,6 +3130,61 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"PRD_AGENT_API_IMAGE\": os.environ.get(\"RESTORE_PRD_AGENT_API_IMAGE\", \"\")", restore);
     }
 
+    /// <summary>
+    /// 凡是把 HostedSite 交给前端的公开方法，都必须挂上派生字段（目前是 PdfAssetUrl）。
+    ///
+    /// 上一轮我按判断挑了七条「前端会用到的」路径去挂，review 立刻找出漏掉的
+    /// SetVisibilityAsync：用户把 PDF 站发布/取消公开后，前端用那个响应整条替换列表项，
+    /// 于是刚打开的大预览又退回依赖 CDN 的壳子——靠人挑路径本身就是形状 3 的温床。
+    /// 改成全覆盖，并用这条守卫钉住：新增路径而忘了挂，CI 直接红。
+    ///
+    /// 切片边界必须是**下一个成员声明**，不能是「下一个返回 HostedSite 的方法」。
+    /// 后者是第一版的写法，也被 review 抓了：最后几个方法的切片会一路吞到文件末尾，
+    /// 把 AttachDerivedFields 的**定义**本身算成一次调用——去掉 ListAllByUserIdAsync
+    /// 自己的包装，守卫照样全绿。一个不会红的守卫比没有守卫更糟（形状 4）。
+    /// </summary>
+    [Fact]
+    public void 交付给前端的每条_HostedSite_路径都要挂上派生字段()
+    {
+        var src = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs");
+        var lines = src.Split('\n');
+
+        // 类成员一律在 4 空格缩进上声明；方法体内的局部函数缩进更深，不会被误当成边界。
+        static bool IsMemberDeclaration(string line)
+            => System.Text.RegularExpressions.Regex.IsMatch(line, @"^    (public|private|internal|protected)\b");
+
+        static bool ReturnsHostedSite(string line)
+            => System.Text.RegularExpressions.Regex.IsMatch(
+                line, @"public async Task<(HostedSite\??|List<HostedSite>|\(List<HostedSite>)");
+
+        var memberStarts = new List<int>();
+        for (var i = 0; i < lines.Length; i++)
+            if (IsMemberDeclaration(lines[i])) memberStarts.Add(i);
+        Assert.True(memberStarts.Count > 20, $"只解析到 {memberStarts.Count} 个成员声明，正则与源码格式对不上了");
+
+        var checkedCount = 0;
+        var missing = new List<string>();
+        for (var k = 0; k < memberStarts.Count; k++)
+        {
+            var from = memberStarts[k];
+            if (!ReturnsHostedSite(lines[from])) continue;
+            checkedCount++;
+
+            // 只看**这一个方法自己的**方法体：到下一个成员声明为止
+            var to = k + 1 < memberStarts.Count ? memberStarts[k + 1] : lines.Length;
+            var body = string.Join("\n", lines[from..to]);
+            if (!body.Contains("AttachDerivedFields(", StringComparison.Ordinal))
+            {
+                var name = System.Text.RegularExpressions.Regex.Match(lines[from], @"Task<[^>]*>+\s*(\w+)");
+                missing.Add(name.Success ? name.Groups[1].Value : lines[from].Trim());
+            }
+        }
+
+        Assert.True(checkedCount >= 10, $"只检查到 {checkedCount} 个交付方法，边界解析出问题了");
+        Assert.True(missing.Count == 0,
+            "这些方法把 HostedSite 交给了前端却没挂派生字段，PDF 站在这些路径上会退回壳子：" + string.Join("、", missing));
+    }
+
     [Fact]
     public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
     {

@@ -24,6 +24,16 @@ export interface HostedSite {
   /** 自动包装的资产类型 ("pdf" / "video" / "markdown" / undefined=非包装站)；用于区分用户上传的"index.html + .pdf" 与系统自动包装的 PDF 壳子 */
   wrappedAssetType?: string;
   siteUrl: string;
+  /**
+   * PDF 包装站的原始 PDF 直链（后端算出，不入库）。
+   *
+   * 刻意写成**必填**而不是 `pdfAssetUrl?: string`：站内大预览要靠它绕开依赖第三方 CDN 的
+   * PDF.js 壳子，而这个字段此前只挂在 SharedSiteInfo 上，站内列表根本收不到——判据在、数据不在，
+   * 大预览的「绕开壳子」分支永远走不到，源码扫描型守卫还看不出来。
+   * 声明成必填后，只要后端哪天不再下发、或有人把它从这个接口删掉，
+   * resolveSitePreviewSource 的调用点会直接编译不过（predicate-and-wiring-discipline 形状 2）。
+   */
+  pdfAssetUrl: string | undefined;
   files: HostedSiteFile[];
   totalSize: number;
   tags: string[];
