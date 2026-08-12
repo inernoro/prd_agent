@@ -100,6 +100,7 @@ import { boundsToCanvasRect } from '@/lib/layerTrim';
 import {
   collectSemanticLayerFrames,
   computeHorizontalClampShift,
+  createLiveGroupOrigin,
   planLayeredCopyRect,
   planSemanticLayerFrame,
   selectExportableLayers,
@@ -2337,12 +2338,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 副本落在原图右侧的第一块空地上。原图不动、也不藏——用户要的是「原图还在，
     // 右边多出一个看起来一模一样、但可以拆的副本」（西瓜切了很多刀，外观分毫不变）。
     const copyRect = planLayeredCopyRect({ source: sourceItem, occupied: canvasRef.current });
+    // 这一组**此刻**落在哪。copyRect 只在开跑那一刻成立，用户可能中途把 Frame 拖走；
+    // 后到的图层必须跟着走，判据与理由见 createLiveGroupOrigin。
+    const readLiveRect = createLiveGroupOrigin(groupId, copyRect);
+    const currentRect = () => readLiveRect(canvasRef.current);
     const layerKeyAt = (index: number) => `${groupId}_layer_${index + 1}`;
     // 图层的 prompt 只保留来源信息；显示名由序号决定，不再把序号拼进这串文字
     // ——拼进去会被显示层的 60 字截断切掉，四层退化成同一串（2026-08-07 实测）。
     const layerPromptAt = () => String(input.prompt || '图片');
     const buildPlaceholders = (count: number): CanvasImageItem[] => {
-      const layout = planSemanticLayerFrame(sourceItem, count, layerLayoutMode, copyRect);
+      const layout = planSemanticLayerFrame(sourceItem, count, layerLayoutMode, currentRect());
       return Array.from({ length: count }, (_, index) => ({
         key: layerKeyAt(index),
         createdAt: createdAt + index,
@@ -2378,8 +2383,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           || candidate.layerRole !== 'layer'
           || seatByKey.has(candidate.key));
         const existing = new Set(survivors.map((candidate) => candidate.key));
-        // 已有的卡只挪位置、不动内容；缺的补上。
-        const repositioned = survivors.map((candidate) => {
+        // 叠放模式下所有座位本来就是同一个点，**不要**去吸附已有卡片——
+        // 那一步会把用户中途拖走的整组硬拉回最初那块地（用户实测到的现象）。
+        // 平铺模式的座位随层数变化，才需要重排。
+        const repositioned = layerLayoutMode !== 'spread' ? survivors : survivors.map((candidate) => {
           const seat = seatByKey.get(candidate.key);
           return seat && candidate.layerRole === 'layer'
             ? { ...candidate, x: seat.x, y: seat.y, w: seat.w, h: seat.h }
@@ -2489,7 +2496,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         // 只算包围盒不裁产物是不够的（那正是上一版的漏）：画布上框住的仍是一整张满是
         // 空气的方图，想拖 logo 却按到一大片透明（2026-08-11 用户圈图指出）。
         // 裁不动 / 读不到都如实回落成满幅，绝不猜。
-        let placed = { x: copyRect.x, y: copyRect.y, w: copyRect.w, h: copyRect.h };
+        const anchorRect = currentRect();
+        let placed = { x: anchorRect.x, y: anchorRect.y, w: anchorRect.w, h: anchorRect.h };
         let trimmedAsset: { url: string; id: string; sha256?: string; width?: number; height?: number } | null = null;
         let emptyLayer = false;
         const trimmed = await trimLayerToContent(asset.url, asset.sha256);
@@ -2517,10 +2525,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               bounds: trimmed.bounds,
               layerWidth: trimmed.scanWidth,
               layerHeight: trimmed.scanHeight,
-              canvasX: copyRect.x,
-              canvasY: copyRect.y,
-              canvasW: copyRect.w,
-              canvasH: copyRect.h,
+              canvasX: anchorRect.x,
+              canvasY: anchorRect.y,
+              canvasW: anchorRect.w,
+              canvasH: anchorRect.h,
             });
           }
         }
@@ -2584,10 +2592,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       setSelectionWithoutChip([layerKeyAt(0)]);
       // 拆完把「原图 + 副本」一起收进视野（避开右侧面板）：用户要做的第一件事就是
       // 两边对照——副本表观上和原图一模一样，区别只在它可以被拆开。
-      const left = Math.min(Number(sourceItem.x ?? 0), copyRect.x);
-      const right = Math.max(Number(sourceItem.x ?? 0) + Number(sourceItem.w ?? copyRect.w), copyRect.x + copyRect.w);
+      const finalRect = currentRect();
+      const left = Math.min(Number(sourceItem.x ?? 0), finalRect.x);
+      const right = Math.max(Number(sourceItem.x ?? 0) + Number(sourceItem.w ?? finalRect.w), finalRect.x + finalRect.w);
       animateCameraToFitRectRef.current?.(
-        { x: left - 40, y: copyRect.y - 80, w: right - left + 80, h: copyRect.h + 160 },
+        { x: left - 40, y: finalRect.y - 80, w: right - left + 80, h: finalRect.h + 160 },
         { maxZoom: 1, rightInset: LAYER_PANEL_RESERVED_WIDTH },
       );
       const emptyCount = canvasRef.current.filter((candidate) => candidate.layerGroupId === groupId

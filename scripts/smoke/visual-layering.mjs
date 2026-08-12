@@ -355,11 +355,74 @@ async function main() {
     // 那一层，等于拿一个图层去再拆（分辨率也会跟着那层走）。重拆的正规入口在面板里。
     await ensurePanelOpen(page);
     const layerAgain = page.locator('button:has-text("重新拆分")').first();
+    // 拖走判据要认「这一轮新开的那个 Frame」，所以先记下开跑前已有哪些抓手。
+    const frameHandleIds = () => page.evaluate(() => [...document.querySelectorAll('[data-frame-handle]')]
+      .map((el) => el.getAttribute('data-frame-handle')).filter(Boolean));
+    const framesBeforeResplit = await frameHandleIds();
+    const frameRects = (frameId) => page.evaluate((fid) => [...document.querySelectorAll('[data-canvas-key]')]
+      .filter((el) => el.getAttribute('data-frame-id') === fid)
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 20 && r.height > 20)
+      .map((r) => ({ x: Math.round(r.x), y: Math.round(r.y) })), frameId);
+    let midSplitDrag = null;
     if (await layerAgain.count()) {
       await layerAgain.click({ force: true });
       await page.waitForTimeout(4000);
       const reusedToast = await page.evaluate(() => /已复用|无需再次调用模型/.test(document.body.innerText));
       check('再次分层不会被「已复用」短路挡住', !reusedToast);
+
+      // ---- 【关键】拆分途中把 Frame 拖走，后到的图层必须跟着落到新位置
+      // 2026-08-11 用户实测：「在拆分进行时，我把正在渲染的拆分 frame 移动到了另一个地方，
+      // 我忽然发现，拆分的图层居然在最开始的 frame 位置渲染」。根因是落位坐标在开跑那一刻
+      // 就按 copyRect 定死了。判据必须在「还有图层没到」的时候拖——拖完就没人再落位的话，
+      // 这条断言撤掉修复也不会红（形状 4：永远绿的测试）。所以下面同时断言「拖之后确实
+      // 又有图层到达」，没到达就判失败而不是放行。
+      let liveFrameId = null;
+      const findUntil = Date.now() + 120000;
+      while (Date.now() < findUntil) {
+        const fresh = (await frameHandleIds()).filter((id) => !framesBeforeResplit.includes(id));
+        if (fresh.length) { liveFrameId = fresh[0]; break; }
+        await page.waitForTimeout(1500);
+      }
+      if (!liveFrameId) {
+        check('拆分途中能认出新开的 Frame（拖走判据的前提）', false, '120s 内没出现新的 Frame 抓手');
+      } else {
+        const rectsBeforeDrag = await frameRects(liveFrameId);
+        const handleBox = await page.locator(`[data-frame-handle="${liveFrameId}"]`).first()
+          .boundingBox().catch(() => null);
+        if (!handleBox || rectsBeforeDrag.length === 0) {
+          check('拆分途中能抓住新 Frame 的头部', false,
+            `抓手 ${handleBox ? '有' : '无'}，组内元素 ${rectsBeforeDrag.length} 个`);
+        } else {
+          // 往右下拖：向右只会拉大与原图那一簇的间距，不会破坏后面的「两簇」判据。
+          const dx = 180;
+          const dy = 150;
+          await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+          await page.mouse.down();
+          await page.mouse.move(handleBox.x + handleBox.width / 2 + dx,
+            handleBox.y + handleBox.height / 2 + dy, { steps: 14 });
+          await page.mouse.up();
+          await page.waitForTimeout(1200);
+          const rectsAfterDrag = await frameRects(liveFrameId);
+          const minX = (list) => Math.min(...list.map((r) => r.x));
+          const minY = (list) => Math.min(...list.map((r) => r.y));
+          const shiftedX = minX(rectsAfterDrag) - minX(rectsBeforeDrag);
+          const shiftedY = minY(rectsAfterDrag) - minY(rectsBeforeDrag);
+          check('拆分途中拖 Frame，它当场就跟着走了',
+            Math.abs(shiftedX - dx) < 40 && Math.abs(shiftedY - dy) < 40,
+            `期望位移约 (${dx},${dy})，实到 (${shiftedX},${shiftedY})`);
+          await shot(page, 'dragged-mid-split');
+          // 记下「拖之后的落脚点」和「原来的落脚点」，等这一轮跑完再回来对账。
+          midSplitDrag = {
+            frameId: liveFrameId,
+            homeX: minX(rectsBeforeDrag),
+            movedX: minX(rectsAfterDrag),
+            countAtDrag: rectsAfterDrag.length,
+            dx,
+          };
+        }
+      }
+
       // 等第二轮真的出结果
       const until = Date.now() + 480000;
       let second = false;
@@ -370,6 +433,22 @@ async function main() {
       }
       await shot(page, second ? 'second-split' : 'second-split-timeout');
       check('第二次分层能跑完并出结果', second);
+
+      if (midSplitDrag) {
+        const finalRects = await frameRects(midSplitDrag.frameId);
+        const finalMinX = finalRects.length ? Math.min(...finalRects.map((r) => r.x)) : NaN;
+        // 判据一：这一组没有一块退回到原来那个位置（回退即 bug 复现）。
+        const strayed = finalRects.filter((r) => Math.abs(r.x - midSplitDrag.homeX) < midSplitDrag.dx / 2);
+        // 判据二：拖之后确实又有图层落进来了——否则上面那条等于没测。
+        const grew = finalRects.length > midSplitDrag.countAtDrag;
+        check('拖走之后到达的图层落在新位置，不回到最初那块地',
+          finalRects.length > 0 && strayed.length === 0
+            && Math.abs(finalMinX - midSplitDrag.movedX) < 60,
+          `原位 x=${midSplitDrag.homeX}，拖后 x=${midSplitDrag.movedX}，最终最左 x=${finalMinX}`
+            + `${strayed.length ? `，有 ${strayed.length} 块退回原位` : ''}`);
+        check('拖走之后确实还有图层继续到达（这条判据没有空跑）', grew,
+          `拖走时 ${midSplitDrag.countAtDrag} 块，跑完 ${finalRects.length} 块`);
+      }
       const afterResplit = await page.evaluate(() => [...document.querySelectorAll('img')]
         .map((i) => i.src).filter((src) => /assets|cfi\./.test(src)));
       const changed = afterResplit.some((src) => !beforeResplit.includes(src));

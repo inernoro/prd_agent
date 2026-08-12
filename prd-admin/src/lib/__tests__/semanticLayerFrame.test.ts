@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectSemanticLayerFrames,
   computeHorizontalClampShift,
+  createLiveGroupOrigin,
   planLayeredCopyRect,
   planSemanticLayerFrame,
   selectExportableLayers,
@@ -39,6 +40,60 @@ describe('可拆解副本落在哪', () => {
     const wall = Array.from({ length: 200 }, (_, i) => ({ x: 1100 + i * 1100, y: 200, w: 1000, h: 500 }));
     const rect = planLayeredCopyRect({ source, occupied: [source, ...wall] });
     expect(Number.isFinite(rect.x)).toBe(true);
+  });
+});
+
+describe('拆分途中把 Frame 拖走', () => {
+  const seed = { x: 1220, y: 200, w: 1000, h: 500 };
+  const placeholder = (over: Record<string, unknown> = {}) => ({
+    layerGroupId: 'g1',
+    layerRole: 'layer' as const,
+    x: 1220,
+    y: 200,
+    ...over,
+  });
+
+  it('【关键】拖走之后到达的图层落在新位置，不回到开跑时那块地', () => {
+    // 2026-08-11 用户实测：「在拆分进行时，我把正在渲染的拆分 frame 移动到了另一个地方，
+    // 拆分的图层居然在最开始的 frame 位置渲染」。开跑时挑的空地只在那一刻成立。
+    const read = createLiveGroupOrigin('g1', seed);
+    expect(read([placeholder()])).toEqual(seed);
+    // 用户把整组拖到 (2600, 900)：还没裁剪的占位卡跟着走，它就是新的组原点。
+    const moved = read([placeholder({ x: 2600, y: 900 })]);
+    expect(moved.x).toBe(2600);
+    expect(moved.y).toBe(900);
+    // 尺寸不该被拖动改掉。
+    expect(moved.w).toBe(1000);
+    expect(moved.h).toBe(500);
+  });
+
+  it('全部裁剪完锚点消失后，保留最后读到的位置而不是跳回原点', () => {
+    // 收尾的视角适配在所有图层都裁完之后跑；那时组里已经没有未裁剪的占位卡，
+    // 若退回种子值，镜头会飞回最初那块空地（用户看到的就是「拖了个寂寞」）。
+    const read = createLiveGroupOrigin('g1', seed);
+    read([placeholder({ x: 2600, y: 900 })]);
+    const afterTrim = read([placeholder({ x: 2610, y: 915, layerHomeX: 2600 })]);
+    expect(afterTrim.x).toBe(2600);
+    expect(afterTrim.y).toBe(900);
+  });
+
+  it('已裁剪的图层不能当锚点——它的坐标是内容包围盒，不是组原点', () => {
+    const read = createLiveGroupOrigin('g1', seed);
+    expect(read([placeholder({ x: 1350, y: 260, layerHomeX: 1220 })])).toEqual(seed);
+  });
+
+  it('只认本组的图层，别的组和原图都不算', () => {
+    const read = createLiveGroupOrigin('g1', seed);
+    expect(read([
+      placeholder({ layerGroupId: 'g2', x: 9000, y: 9000 }),
+      placeholder({ layerRole: 'source', x: 100, y: 200 }),
+    ])).toEqual(seed);
+  });
+
+  it('坐标缺失或不是有限数时不采纳，维持上一次的位置', () => {
+    const read = createLiveGroupOrigin('g1', seed);
+    expect(read([placeholder({ x: undefined, y: undefined })])).toEqual(seed);
+    expect(read([placeholder({ x: Number.NaN, y: 900 })])).toEqual(seed);
   });
 });
 

@@ -93,7 +93,23 @@ describe('分层内容判定的接线', () => {
     expect(code).not.toMatch(/layerRole: 'source' as const/);
     // 落位必须先挑一块空地，而不是拿原图那块矩形当锚点。
     expect(code).toMatch(/planLayeredCopyRect\(\{\s*source:\s*sourceItem,\s*occupied:\s*canvasRef\.current\s*\}\)/);
-    expect(code).toMatch(/planSemanticLayerFrame\(sourceItem,\s*count,\s*layerLayoutMode,\s*copyRect\)/);
+  });
+
+  it('【关键】拆分途中把 Frame 拖走，后到的图层要跟着走', () => {
+    // 2026-08-11 用户实测：「在拆分进行时，我把正在渲染的拆分 frame 移动到了另一个地方，
+    // 拆分的图层居然在最开始的 frame 位置渲染」。根因是落位坐标在开跑那一刻由
+    // planLayeredCopyRect 定死，几十秒后到达的图层仍照着它落地。
+    // 判据盯住「落位三处都读实时原点」——这条线断掉，纯函数单测一个都不会红（形状 2）。
+    const code = tab.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+    expect(code).toMatch(/createLiveGroupOrigin\(groupId,\s*copyRect\)/);
+    expect(code).toMatch(/const currentRect = \(\) => readLiveRect\(canvasRef\.current\)/);
+    // 三处落位：铺占位卡、裁剪后回写、收尾对镜头。任一处漏掉都会把那一部分拽回原地。
+    expect(code).toMatch(/planSemanticLayerFrame\(sourceItem,\s*count,\s*layerLayoutMode,\s*currentRect\(\)\)/);
+    expect(code).toMatch(/const anchorRect = currentRect\(\);/);
+    expect(code).toMatch(/const finalRect = currentRect\(\);/);
+    // 回归钉子：copyRect 只许当种子，不许再直接拿去落位。
+    expect(code).not.toMatch(/planSemanticLayerFrame\([^)]*copyRect\)/);
+    expect(code).not.toMatch(/canvasX:\s*copyRect\./);
   });
 
   it('【关键】Cmd+G 编组 / Cmd+Shift+G 解组真的接上了键盘', () => {

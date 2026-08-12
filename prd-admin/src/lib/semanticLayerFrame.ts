@@ -166,6 +166,37 @@ export function planLayeredCopyRect(input: {
   return { x, y, w, h };
 }
 
+/**
+ * 追踪一组图层「此刻」落在哪。
+ *
+ * {@link planLayeredCopyRect} 挑的空地只在开跑那一刻成立，但生成要几十秒，用户完全可能
+ * 中途把这个 Frame 拖到别处。后续到达的图层若还按开跑时的坐标落位，就会跑回最初那块地上
+ * 渲染（2026-08-11 用户实测：拆分途中把 Frame 移走，图层仍在原位置渲染）。
+ *
+ * 锚点取「还没被裁剪的占位卡」：它精确落在这一组的原点上，用户拖整组时它跟着走。
+ * 全部裁完后锚点消失，此时保留最后一次读到的值——所以返回的是有记忆的读取器，
+ * 而不是每次现算的纯查询，否则收尾的视角适配会跳回最初那块地。
+ */
+export type LiveGroupOriginCandidate = SemanticLayerMetadata & {
+  x?: number;
+  y?: number;
+  /** 有值 = 这一层已按内容裁剪过，它的坐标是裁剪后的落点，不再代表组原点。 */
+  layerHomeX?: number;
+};
+
+export function createLiveGroupOrigin(groupId: string, seed: SemanticLayerPlacement) {
+  let current: SemanticLayerPlacement = { ...seed };
+  return (items: ReadonlyArray<LiveGroupOriginCandidate>): SemanticLayerPlacement => {
+    const anchor = items.find((candidate) => candidate.layerGroupId === groupId
+      && candidate.layerRole === 'layer'
+      && !Number.isFinite(candidate.layerHomeX as number));
+    if (anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
+      current = { ...current, x: Number(anchor.x), y: Number(anchor.y) };
+    }
+    return current;
+  };
+}
+
 export function planSemanticLayerFrame(
   source: Pick<SemanticLayerCanvasItem, 'x' | 'y' | 'w' | 'h'>,
   layerCount: number,
