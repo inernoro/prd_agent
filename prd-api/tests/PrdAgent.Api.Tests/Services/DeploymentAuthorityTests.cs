@@ -31,9 +31,17 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
-    public void LegacyTranscriptAdoption_RequiresExplicitProductionAuthority()
+    public void LegacyTranscriptAdoption_UsesOneBoundedAuthorityPerEnvironment()
     {
-        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new())).ShouldBeFalse();
+        var production = Build(new());
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(production).ShouldBeTrue();
+        DeploymentAuthority.GetLegacyTranscriptCreatedBeforeUtc(production)
+            .ShouldBe(DeploymentAuthority.LegacyTranscriptRolloutCreatedBeforeUtc);
+
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["Transcript:AdoptLegacyUnownedRuns"] = "false",
+        })).ShouldBeFalse();
         DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
         {
             ["Transcript:AdoptLegacyUnownedRuns"] = "true",
@@ -45,8 +53,13 @@ public class DeploymentAuthorityTests
         })).ShouldBeTrue();
         DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
         {
-            ["Transcript:AdoptLegacyUnownedRuns"] = "true",
             ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "main",
+        })).ShouldBeTrue();
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "codex/self-avatar-edit",
         })).ShouldBeFalse();
     }
 

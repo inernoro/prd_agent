@@ -303,7 +303,8 @@ services:
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       LlmGateway__Readiness__RequireAssetProbe: "false"
       # 历史无归属队列只允许正式权威部署接管；所有 CDS 预览固定关闭。
-      Transcript__AdoptLegacyUnownedRuns: "false"
+      # 只有 CDS main 会执行代码内固定截止线的一次性迁移，功能分支永不接管共享旧队列。
+      Transcript__AdoptLegacyUnownedRuns: ""
       LlmGateway__Retention__ApplyChanges: "false"
       LlmGateway__Retention__EnableTtlIndexes: "false"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明

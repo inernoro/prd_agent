@@ -23,6 +23,12 @@ public static class DeploymentAuthority
     public const string AdoptLegacyBranchOwnersKey = "Deployment:AdoptLegacyBranchOwners";
     public const string RetiredLegacyBranchOwnerIdsKey = "Deployment:RetiredLegacyBranchOwnerIds";
     public const string LegacyOwnerCreatedBeforeUtcKey = "Deployment:LegacyOwnerCreatedBeforeUtc";
+    private const string GitHubBranchKey = "Changelog:GitHubBranch";
+
+    // scoped_queued 在该时刻前已完成全链路上线。这个固定截止线只用于接管旧版
+    // queued 记录，不能随容器启动时间向后滑动，否则仍在线旧版本可以持续投递。
+    public static readonly DateTime LegacyTranscriptRolloutCreatedBeforeUtc =
+        new(2026, 8, 12, 19, 20, 0, DateTimeKind.Utc);
 
     /// <summary>
     /// 显式开关。设为 "true"/"false" 时优先于自动判定：
@@ -60,14 +66,47 @@ public static class DeploymentAuthority
         => string.IsNullOrWhiteSpace(ReadFirst(configuration, "CDS_PROJECT_ID")) is false;
 
     /// <summary>
-    /// 历史无归属转写队列只能由显式获权的正式部署接管。CDS 预览即使误配开关也不能参与，
-    /// 避免多个分支使用不同代码和模型配置争抢同一批共享库任务。
+    /// 历史无归属转写队列由每个环境唯一的迁移权威接管：正式环境本身，或 CDS 的 main。
+    /// 未显式配置时只迁移固定发布截止线之前的记录；显式 true 必须另配截止线，
+    /// 显式 false 可关闭迁移。CDS 功能分支永不参与，避免多分支争抢共享库任务。
     /// </summary>
     public static bool CanAdoptLegacyTranscriptRuns(IConfiguration configuration)
-        => bool.TryParse(configuration[AdoptLegacyTranscriptRunsKey], out var enabled)
-           && enabled
-           && !IsCdsBranchPreview(configuration)
-           && GetLegacyOwnerCreatedBeforeUtc(configuration) != null;
+        => GetLegacyTranscriptCreatedBeforeUtc(configuration) != null;
+
+    public static DateTime? GetLegacyTranscriptCreatedBeforeUtc(IConfiguration configuration)
+    {
+        if (!IsLegacyTranscriptMigrationAuthority(configuration)) return null;
+
+        var configured = configuration[AdoptLegacyTranscriptRunsKey];
+        if (bool.TryParse(configured, out var enabled))
+            return enabled ? GetLegacyOwnerCreatedBeforeUtcAllowingCdsMain(configuration) : null;
+
+        return LegacyTranscriptRolloutCreatedBeforeUtc;
+    }
+
+    private static bool IsLegacyTranscriptMigrationAuthority(IConfiguration configuration)
+    {
+        if (!IsCdsBranchPreview(configuration)) return true;
+        return string.Equals(
+            ReadFirst(configuration, GitHubBranchKey),
+            "main",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DateTime? GetLegacyOwnerCreatedBeforeUtcAllowingCdsMain(IConfiguration configuration)
+    {
+        var raw = configuration[LegacyOwnerCreatedBeforeUtcKey];
+        if (!DateTimeOffset.TryParse(
+                raw,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return null;
+        }
+
+        return parsed.UtcDateTime <= DateTime.UtcNow ? parsed.UtcDateTime : null;
+    }
 
     /// <summary>
     /// 部署域上线前的“仅分支名” owner 必须由一个显式获权的正式部署迁移，

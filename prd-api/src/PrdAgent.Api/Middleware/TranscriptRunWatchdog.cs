@@ -41,7 +41,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
         _instanceId = InstanceIdentity.Get(config);
         _canAdoptLegacyRuns = DeploymentAuthority.CanAdoptLegacyTranscriptRuns(config);
         _retiredLegacyOwnerIds = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(config);
-        _legacyOwnerCreatedBeforeUtc = DeploymentAuthority.GetLegacyOwnerCreatedBeforeUtc(config);
+        _legacyOwnerCreatedBeforeUtc = DeploymentAuthority.GetLegacyTranscriptCreatedBeforeUtc(config);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
