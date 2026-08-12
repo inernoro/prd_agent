@@ -43,12 +43,20 @@ public sealed class GwJwt
 
     public SymmetricSecurityKey SigningKey => new(_key);
 
+    /// <summary>
+    /// 这个会话是不是刚由外部身份提供方（MAP 一键登录）证明过身份。
+    /// 用于口令自助：持有这种会话的人此刻就能再走一次 SSO，要求旧口令拦不住任何人，
+    /// 只会把忘记口令的本人永久锁在外面。用口令登录得到的会话不带这个标记。
+    /// </summary>
+    public const string FederatedSessionClaim = "fed_session";
+
     /// <summary>签发 token，返回 (token, 过期时间 UTC)。</summary>
     public (string Token, DateTime ExpiresAt) Issue(
         LlmGwUser user,
         LlmGwTenant? tenant = null,
         LlmGwMembership? membership = null,
-        TimeSpan? lifetime = null)
+        TimeSpan? lifetime = null,
+        bool federatedSession = false)
     {
         var now = DateTime.UtcNow;
         var requestedLifetime = lifetime ?? _lifetime;
@@ -67,6 +75,12 @@ public sealed class GwJwt
         if (!string.IsNullOrWhiteSpace(user.IdentityProvider))
         {
             claims.Add(new Claim("identity_provider", user.IdentityProvider));
+        }
+
+        // 只有经 SSO 换来的会话才带这个标记；续期会原样带过去（会话血统不变）。
+        if (federatedSession)
+        {
+            claims.Add(new Claim(FederatedSessionClaim, "1"));
         }
 
         // 首登强制改密：带 mcp=1 的 token 只能调 /gw/auth/change-password，服务端策略门（LogsRead）拒绝

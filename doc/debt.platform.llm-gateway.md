@@ -65,6 +65,45 @@
 | 2026-07-08-video-shadow-cost-cap | high | 2026-07-08 | LLM Gateway 生产 shadow 取证期曾批量触发视频生成真实入口，成功 submit 会产生真实供应商成本；后续余额不足/通道不可用只说明供应链阻断，不代表前序成功请求没有计费 | 任何生产 seed/canary 同时启用 `--include-video-direct`、`--include-visual-video-direct`、视频 poll/download 或提高 `--iterations` 时 | in-progress | 已在 `scripts/llmgw-map-shadow-seed.py` 增加默认 `--max-video-submits=3` 与 `--allow-high-cost-video` 显式解除闸门；视频能力暂缓期间，非视频 release gate 必须使用 scoped 过滤，不再为了全量门槛重复打视频供应商。2026-07-08 只读取证：`visual-agent.videogen::video-gen` 近期 http 成功 418 次，`video-agent.videogen::video-gen` http 成功 39 次，失败 7 次，失败集中在 APIyi 无通道、Ark 404、火山方舟 overdue balance 和模型池不可用。 |
 | 2026-07-07-prod-video-asr-upstream-unavailable | critical | 2026-07-07 | 生产 video/ASR raw 发布 gate 仍未闭合：`video-agent.videogen::video-gen` 绑定池不可用；APIyi `alibaba/wan-2.6`、`bytedance/seedance-2.0-fast` 均返回 no available channels；豆包 ASR 已补池并可解析，但真实 raw seed 返回 `Invalid X-Api-Key` | 全量 `LLMGW_MODE=http`、`canary-video-asr`、或宣称视频/ASR/字幕已迁移成功 | open | 已备份 `/root/backups/llmgw-prod-before-video-asr-evidence-20260707T070525+0800`、`/root/backups/llmgw-prod-before-restore-shadow-sample-20260707T073402+0800`、`/root/backups/llmgw-prod-before-video-reprobe-20260707T074011+0800`、`/root/backups/llmgw-prod-before-asr-pool-bootstrap-20260707T080433+0800`、`/root/backups/llmgw-prod-before-asr-seed-20260707T081332+0800`。生产仍为 `LlmGateway__Mode=shadow`、`LlmGateway__ShadowFullSamplePercent=1`、allowlist 空。2026-07-07 已用 `scripts/llmgw-prod-asr-pool-bootstrap.sh` 新增 `asr_doubao_bigmodel_pool` 并绑定四个 ASR caller：`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`、`video-agent.v2d.transcribe::asr`、`video-agent.video-to-text::asr`。新版 upstream readiness 取证：四个 ASR caller 均解析为 DedicatedPool `doubao-asr-bigmodel` / `Exchange:豆包 ASR (BigModel)` / `protocol=exchange` / `Healthy`；视频仍返回“模型池内所有模型不可用”。同日备份后跑真实 MAP seed：`seed[1].session_chat` 成功，`seed[1].transcript_asr` 与 `seed[1].document_store_subtitle_asr` 均失败，错误为豆包 ASR `code=45000010, message=Invalid X-Api-Key`，证据文件在生产 `/tmp/llmgw-asr-seed-after-bootstrap.json`。只读 provider config audit 报告在生产 `/tmp/llmgw-provider-config-audit.json`：ASR key 可解密、长度 36、UUID 单 key 形态、`TargetAuthScheme=XApiKey` 合理；失败项为 no Healthy video-gen model 以及两个 ASR seed 失败。此前短时把原视频池健康恢复为 Healthy 且采样提到 100% 后跑 `--include-video-direct`，真实业务入口仍失败：`video direct upstream failed ... HTTP 404`，raw shadow `httpFail=5`。下一步必须补可用视频渠道和有效豆包 ASR key/resourceId，并重跑 `scripts/llmgw-prod-provider-config-audit.py --seed-evidence-json <new-seed>` 与 `scripts/llmgw-map-shadow-seed.py --include-video-direct --include-transcript-asr --include-document-store-subtitle-asr`，得到 `raw` allMatch 且 httpFail=0 后才可进入 video-asr 灰度。 |
 
+## 网关账号自助（2026-08-06 修复 + 剩余边界）
+
+网关是独立账号体系，但账号的钥匙此前配不出来：MAP 一键登录自动建号时，用户名取 `map-{哈希}`、
+口令取随机 48 字节，两个值没有任何人知道；改密端点又无条件校验旧口令；控制台的用户菜单里
+也没有任何入口能走到改密。三处叠加的结果是「网关明明有口令，却登不进去，也改不了」——
+用户 2026-08-06 直接把它称为断头设计。
+
+本次修复：新增「账号与安全」页（用户菜单常驻入口，任何角色可进），展示登录名与口令状态；
+由 MAP 一键登录换来的会话，设置口令时豁免旧口令——持有这种会话的人此刻就能再走一遍
+一键登录，要求旧口令拦不住任何人，却是忘记口令时唯一的回家路。豁免挂在**会话来源**上而不是
+账号属性上：用口令登录得到的会话一律照常校验，否则被盗会话就能直接改密。同时允许把自动
+用户名改成记得住的，否则设了口令也不知道用什么登录。判定收敛在 `LocalPasswordPolicy` 一处，
+接线由源码守卫钉住。
+
+一个差点埋进去的二次断头：最初的豁免条件是「联邦账号且从未设置过口令」，于是用户一旦设了
+口令又忘掉，就会第二次被锁在外面——和这次要修的形状一模一样。改为按会话来源判定才真正闭合。
+
+登录名默认跟随 MAP：自动名 `map-{哈希}` 是实现细节泄漏到用户身上，既然身份从 MAP 来，
+名字就该一致。建号即用 MAP 用户名，不合法或被占用才退回自动名；存量账号在下次一键登录时
+就地自愈；冲突不闷声退回，账号页明说是哪个名字被占了。
+
+真实环境验证（2026-08-06，用一次性测试账号跑通三条分支后清理）：
+
+| 分支 | 观察到的结果 |
+| --- | --- |
+| 建号即用 MAP 名 | 新用户首次一键登录，网关登录名等于其 MAP 用户名，未出现自动名 |
+| 冲突退回 + 说清原因 | 名字被占时退回自动名，账号接口返回建议名与「已被占用」标记 |
+| 占用解除后自愈 | 腾出名字后再次一键登录，自动改名成 MAP 用户名 |
+
+安全边界同批验证：一键登录会话免旧口令、口令登录会话必须填旧口令、匿名访问 401，三条全部成立。
+
+剩余边界（尚未偿还）：
+
+| 边界 | 说明 |
+| --- | --- |
+| 网关账号只能停用不能删除 | 组织页与 API 都只有创建与改状态，没有删除端点。自测或临时账号做完只能置 disabled，长期会在共享库里积累残骸（本轮自测已留下 4 个）。补删除端点前，任何自动化测试都不要批量建号 |
+| 独立口令账号忘记口令无自助路径 | 联邦账号可以从 MAP 一键登录回来重设（那次跳转已证明身份）；纯独立口令账号（如种子 admin）没有找回路径，也没有 Owner 重置他人口令的入口——组织页只在**新建**成员时能设初始口令。内部工具可接受，对外开放前须补 |
+| 登录名唯一性依赖唯一索引 | 占用检查与写入之间有窗口，靠 11000 兜底返回 USERNAME_TAKEN；若该集合尚未建唯一索引，并发改名可能撞出重名（索引由 DBA 手动创建，见 no-auto-index 规则） |
+
 ## 最新协议路由债务收口（2026-07-09）
 
 - `ProviderAttempts` 已从静态候选快照推进到结果快照：日志完成路径会写入最终发送 attempt 的 `statusCode`、`durationMs`、`error`、`endedAt`，控制台详情 API 和详情抽屉同步展示。

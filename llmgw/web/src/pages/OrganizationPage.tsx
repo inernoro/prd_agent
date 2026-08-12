@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { KeyRound, Plus, RefreshCw, RotateCcw, Save, UserPlus, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import {
   createMember,
   createTeam,
@@ -228,9 +229,17 @@ export function OrganizationPage() {
                             {editable ? (
                               <Button size="sm" variant="ghost" onClick={() => setDrawer({ mode: 'edit', member })}>编辑</Button>
                             ) : (
-                              <span style={{ ...HINT_TEXT, whiteSpace: 'nowrap' }}>
-                                {selfLocked ? '不能在这里修改自己' : ownerLocked ? '只有 Owner 可以修改 Owner' : '只读'}
-                              </span>
+                              // 「不能在这里修改自己」原本是条死路：成员区确实不该改自己的角色，
+                              // 但用户真正想改的口令当时也无处可去。指到账号页，路才通。
+                              selfLocked ? (
+                                <Link to="/account" style={{ ...HINT_TEXT, whiteSpace: 'nowrap', color: 'var(--accent)' }}>
+                                  管自己的口令去「账号与安全」
+                                </Link>
+                              ) : (
+                                <span style={{ ...HINT_TEXT, whiteSpace: 'nowrap' }}>
+                                  {ownerLocked ? '只有 Owner 可以修改 Owner' : '只读'}
+                                </span>
+                              )
                             )}
                           </td>
                         </tr>
