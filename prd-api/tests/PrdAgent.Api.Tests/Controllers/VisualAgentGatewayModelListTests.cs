@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
@@ -72,5 +73,48 @@ public class VisualAgentGatewayModelListTests
             It.IsAny<string>(),
             "generation",
             It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task GetImageGenModels_WhenGatewayUnavailable_ShouldReturnStructured503()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway
+            .Setup(x => x.GetAvailablePoolsAsync(
+                It.IsAny<string>(),
+                "generation",
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("serving down"));
+
+        var controller = new ImageGenController(
+            null!,
+            null!,
+            null!,
+            gateway.Object,
+            null!,
+            NullLogger<ImageGenController>.Instance,
+            null!,
+            null!,
+            null!,
+            null!,
+            null!)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { TraceIdentifier = "trace-model-list-503" },
+            },
+        };
+
+        var action = await controller.GetImageGenModels(CancellationToken.None);
+
+        var result = action.ShouldBeOfType<ObjectResult>();
+        result.StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable);
+        var response = result.Value.ShouldBeOfType<ApiResponse<List<ModelPoolForAppResult>>>();
+        response.Success.ShouldBeFalse();
+        response.Error.ShouldNotBeNull();
+        response.Error.Code.ShouldBe("LLM_GATEWAY_UNAVAILABLE");
+        response.Error.RequestId.ShouldBe("trace-model-list-503");
+        response.Error.Source.ShouldBe("llm-gateway");
+        response.Error.Message.ShouldNotContain("serving down");
     }
 }

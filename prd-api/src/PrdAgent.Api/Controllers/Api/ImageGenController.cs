@@ -102,17 +102,32 @@ public class ImageGenController : ControllerBase
         var seen = new HashSet<string>();
         var merged = new List<ModelPoolForAppResult>();
 
-        foreach (var code in codes)
+        try
         {
-            var pools = (await _gateway.GetAvailablePoolsAsync(code, modelType, ct))
-                .Select(pool => MapAvailablePool(pool, modelType));
-            foreach (var pool in pools)
+            foreach (var code in codes)
             {
-                if (seen.Add(pool.Id))
+                var pools = (await _gateway.GetAvailablePoolsAsync(code, modelType, ct))
+                    .Select(pool => MapAvailablePool(pool, modelType));
+                foreach (var pool in pools)
                 {
-                    merged.Add(pool);
+                    if (seen.Add(pool.Id))
+                    {
+                        merged.Add(pool);
+                    }
                 }
             }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+        {
+            var requestId = HttpContext.TraceIdentifier;
+            _logger.LogWarning(ex,
+                "[ImageGenModels] LLM Gateway 模型目录读取失败 RequestId={RequestId}", requestId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<List<ModelPoolForAppResult>>.Fail(
+                    "LLM_GATEWAY_UNAVAILABLE",
+                    "模型网关暂时不可用，系统已记录故障并通知管理员。请稍后重试。",
+                    requestId: requestId,
+                    source: "llm-gateway"));
         }
 
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(merged));

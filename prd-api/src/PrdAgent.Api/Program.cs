@@ -143,6 +143,7 @@ builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.LlmGatewayIncidentWatchdog>();
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
