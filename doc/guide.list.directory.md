@@ -359,3 +359,4 @@
 - [CDS Forwarder 替代蓝绿部署收尾（grandfather 保留） · 报告](./report.cds.forwarder-success.md) `report.cds.forwarder-success`
 - [CDS Self-Update 时间体系审视（grandfather 保留） · 报告](./report.cds.self-update-timing-audit.md) `report.cds.self-update-timing-audit`
 - [网关测试矩阵全量报告（grandfather 保留） · 报告](./report.gw-test-matrix.md) `report.gw-test-matrix`
+- [LLM Gateway 故障隔离与恢复 · 测试环境验收报告](./report.platform.llm-gateway.resilience-acceptance.md) `report.platform.llm-gateway.resilience-acceptance`
