@@ -62,6 +62,25 @@ public class VideoDownloadStreamingContractTests
     }
 
     [Fact]
+    public void VideoAgentRunEndpoints_MustPreserveApplicationBoundary()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs"));
+        var downloadController = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/VideoDownloadController.cs"));
+
+        Assert.DoesNotContain("appKey: null", controller);
+        Assert.DoesNotContain("GetRunAsync(runId, GetAdminId(), ct:", controller);
+        Assert.DoesNotContain("GetRunAsync(runId, ownerAdminId, ct:", controller);
+        Assert.DoesNotContain("GetRunAsync(runId, adminId, ct:", controller);
+        Assert.DoesNotContain("CancelRunAsync(runId, GetAdminId(), ct:", controller);
+        Assert.Contains("new VideoDownloadTicket(\n            run.Id,\n            ownerAdminId,\n            AppKey,", controller);
+        Assert.Contains("payload.AppKey,\n            ct", downloadController);
+        Assert.Contains("payload.AppKey, VideoDownloadTicket.ExpectedAppKey", downloadController);
+        Assert.Contains("PrdAgent.VideoAgent.DownloadTicket.v2", downloadController);
+    }
+
+    [Fact]
     public async Task LocalAssetStorage_MustReturnFileStreamForLargeAssetReads()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"video-stream-{Guid.NewGuid():N}");

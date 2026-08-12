@@ -35,7 +35,7 @@ public class VideoAgentController : ControllerBase
     private readonly IDataProtector _directVideoJobProtector;
     private readonly IDataProtector _videoDownloadTicketProtector;
 
-    private const string AppKey = "video-agent";
+    private const string AppKey = VideoDownloadTicket.ExpectedAppKey;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public VideoAgentController(
@@ -567,7 +567,7 @@ public class VideoAgentController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> ListRuns([FromQuery] int limit = 20, [FromQuery] int skip = 0, CancellationToken ct = default)
     {
-        var (total, items) = await _videoGenService.ListRunsAsync(GetAdminId(), appKey: null, limit, skip, ct);
+        var (total, items) = await _videoGenService.ListRunsAsync(GetAdminId(), AppKey, limit, skip, ct);
 
         var lite = items.Select(r => new
         {
@@ -600,7 +600,7 @@ public class VideoAgentController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetRun(string runId, CancellationToken ct)
     {
-        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), ct: ct);
+        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), AppKey, ct);
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
@@ -618,7 +618,7 @@ public class VideoAgentController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DownloadRun(string runId, CancellationToken ct)
     {
-        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), ct: ct);
+        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), AppKey, ct);
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
@@ -696,7 +696,7 @@ public class VideoAgentController : ControllerBase
     public async Task<IActionResult> CreateRunDownloadTicket(string runId, CancellationToken ct)
     {
         var ownerAdminId = GetAdminId();
-        var run = await _videoGenService.GetRunAsync(runId, ownerAdminId, ct: ct);
+        var run = await _videoGenService.GetRunAsync(runId, ownerAdminId, AppKey, ct);
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
@@ -717,6 +717,7 @@ public class VideoAgentController : ControllerBase
         var payload = new VideoDownloadTicket(
             run.Id,
             ownerAdminId,
+            AppKey,
             DateTime.UtcNow.Add(VideoDownloadTicket.Lifetime));
         var ticket = _videoDownloadTicketProtector.Protect(
             JsonSerializer.Serialize(payload, JsonOptions));
@@ -770,7 +771,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            await _videoGenService.UpdateSceneAsync(runId, GetAdminId(), sceneIndex, request, ct: ct);
+            await _videoGenService.UpdateSceneAsync(runId, GetAdminId(), sceneIndex, request, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -784,7 +785,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            await _videoGenService.RegenerateSceneAsync(runId, GetAdminId(), sceneIndex, ct: ct);
+            await _videoGenService.RegenerateSceneAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -798,7 +799,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            await _videoGenService.RenderSceneAsync(runId, GetAdminId(), sceneIndex, ct: ct);
+            await _videoGenService.RenderSceneAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -816,7 +817,7 @@ public class VideoAgentController : ControllerBase
         try
         {
             var count = await _videoGenService.RenderScenesAsync(
-                runId, GetAdminId(), request?.SceneIndexes, ct: ct);
+                runId, GetAdminId(), request?.SceneIndexes, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(new { count }));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -832,7 +833,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            await _videoGenService.ReorderScenesAsync(runId, GetAdminId(), request.SceneIndexes, ct: ct);
+            await _videoGenService.ReorderScenesAsync(runId, GetAdminId(), request.SceneIndexes, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message)); }
@@ -851,7 +852,7 @@ public class VideoAgentController : ControllerBase
         try
         {
             await _videoGenService.ActivateSceneVersionAsync(
-                runId, GetAdminId(), sceneIndex, versionId, ct: ct);
+                runId, GetAdminId(), sceneIndex, versionId, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message)); }
@@ -865,7 +866,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            var task = await _videoGenService.RequestExportAsync(runId, GetAdminId(), ct: ct);
+            var task = await _videoGenService.RequestExportAsync(runId, GetAdminId(), AppKey, ct);
             return Ok(ApiResponse<VideoExportTask>.Ok(task));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -892,7 +893,7 @@ public class VideoAgentController : ControllerBase
         var adminId = GetAdminId();
         runId = (runId ?? string.Empty).Trim();
 
-        var run = await _videoGenService.GetRunAsync(runId, adminId, ct: cancellationToken);
+        var run = await _videoGenService.GetRunAsync(runId, adminId, AppKey, cancellationToken);
         if (run == null)
         {
             await WriteEventAsync(null, "error",
@@ -925,7 +926,7 @@ public class VideoAgentController : ControllerBase
             }
             else
             {
-                run = await _videoGenService.GetRunAsync(runId, adminId, ct: cancellationToken);
+                run = await _videoGenService.GetRunAsync(runId, adminId, AppKey, cancellationToken);
                 if (run == null) break;
                 if ((DateTime.UtcNow - lastHeartbeatAt).TotalSeconds >= 2)
                 {
@@ -956,7 +957,7 @@ public class VideoAgentController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> CancelRun(string runId, CancellationToken ct)
     {
-        var found = await _videoGenService.CancelRunAsync(runId, GetAdminId(), ct: ct);
+        var found = await _videoGenService.CancelRunAsync(runId, GetAdminId(), AppKey, ct);
         if (!found)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 

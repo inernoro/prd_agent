@@ -46,14 +46,20 @@ public sealed class VideoDownloadController : ControllerBase
     public async Task<IActionResult> Download([FromForm] string? ticket, CancellationToken ct)
     {
         var payload = ReadTicket(ticket);
-        if (payload == null || payload.ExpiresAt <= DateTime.UtcNow)
+        if (payload == null
+            || payload.ExpiresAt <= DateTime.UtcNow
+            || !string.Equals(payload.AppKey, VideoDownloadTicket.ExpectedAppKey, StringComparison.Ordinal))
         {
             return NotFound(ApiResponse<object>.Fail(
                 ErrorCodes.NOT_FOUND,
                 "下载凭据已失效，请返回视频页面重新点击下载"));
         }
 
-        var run = await _videoGenService.GetRunAsync(payload.RunId, payload.OwnerAdminId, ct: ct);
+        var run = await _videoGenService.GetRunAsync(
+            payload.RunId,
+            payload.OwnerAdminId,
+            payload.AppKey,
+            ct);
         if (run == null
             || run.Status != VideoGenRunStatus.Completed
             || string.IsNullOrWhiteSpace(run.VideoAssetSha256))
@@ -131,8 +137,10 @@ public sealed class VideoDownloadController : ControllerBase
 internal sealed record VideoDownloadTicket(
     string RunId,
     string OwnerAdminId,
+    string AppKey,
     DateTime ExpiresAt)
 {
-    internal const string ProtectorPurpose = "PrdAgent.VideoAgent.DownloadTicket.v1";
+    internal const string ExpectedAppKey = "video-agent";
+    internal const string ProtectorPurpose = "PrdAgent.VideoAgent.DownloadTicket.v2";
     internal static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(2);
 }
