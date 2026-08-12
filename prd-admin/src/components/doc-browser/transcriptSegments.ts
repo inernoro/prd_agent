@@ -113,6 +113,32 @@ export function replaceTranscriptSegmentText(md: string, index: number, nextText
   return head + updated.join('\n');
 }
 
+/**
+ * 说话人来源（后端 SubtitleFormatter.FormatSpeakerSourceNote 写进笔记的那一行）。
+ * key 用来决定展示口吻，text 直接来自笔记——文案只有后端一份，前端不再抄一遍。
+ */
+export type SpeakerSourceNote = {
+  /** native=上游原生识别 / model=音频模型重听 / local=本地声纹估算 */
+  key: 'native' | 'model' | 'local';
+  /** 给人读的说明，原样来自笔记 */
+  text: string;
+  /** 是否属于「估算」——本地声纹的逐句归属是按语速比例推的，必须提醒 */
+  estimated: boolean;
+};
+
+const SPEAKER_SOURCE_RE = /^>\s*说话人来源：(native|model|local)\s*·\s*(.+)$/m;
+
+/**
+ * 读出笔记里的说话人来源。没有这一行 = 单人录音或旧笔记，返回 null（不猜、不兜底）。
+ */
+export function parseSpeakerSourceNote(md: string): SpeakerSourceNote | null {
+  if (!md) return null;
+  const match = SPEAKER_SOURCE_RE.exec(md);
+  if (!match) return null;
+  const key = match[1] as SpeakerSourceNote['key'];
+  return { key, text: match[2].trim(), estimated: key !== 'native' };
+}
+
 /** 批量修改说话人显示名，保留时间戳和正文。 */
 export function renameTranscriptSpeaker(md: string, currentName: string, nextName: string): string {
   const current = currentName.trim();
@@ -131,28 +157,123 @@ export function renameTranscriptSpeaker(md: string, currentName: string, nextNam
   }).join('\n');
 }
 
+/**
+ * 虚词字：这些字几乎不会出现在「值得进词云的双字实词」里。
+ *
+ * 由来：2026-08-10 拿真实转写的词云一看，18 个词里 6 个是半截词
+ * （个东 / 的就 / 个动 / 个就 / 后呢 / 它是）。它们躲过滑窗碎片规则的原因很具体——
+ * 那条规则要靠左右两侧的真词当锚点，而「一个 / 这个 / 就是」这些锚点本身是停用词，
+ * 早在建索引前就被删了，碎片于是变成无锚点的孤儿活了下来。
+ * 与其继续给锚点打补丁，不如直接判字：含虚词字的双字组合本来就没有进词云的价值。
+ *
+ * 刻意不收的字：在（存在/实在）、上下（下单/上线）、会能要给对到最更再去看好说，
+ * 它们都能组成真实实词，收进来会误伤。宁可漏掉几个噪音，不可吃掉真词。
+ */
+const FUNCTION_CHARS = new Set(Array.from(
+  '的了是就都而与或着也很呢吧吗啊嗯哦把被让但又才只已之其此该每些什么嘛哈呀咯个们我你他她它这那不没咱',
+));
+
 const STOP_WORDS = new Set([
   '我们', '你们', '他们', '这个', '那个', '然后', '就是', '因为', '所以', '如果', '可以',
   '还是', '没有', '一个', '什么', '怎么', '现在', '觉得', '进行', '已经', '需要', '不是',
   '原文', '录音', '实时', '刚刚', '这是', '下来', '来的', '的实', '时原',
 ]);
 
-/** 整场录音的轻量词频；不依赖网络，打开结果页即可用。 */
-export function buildTranscriptWordCloud(segments: TranscriptSegment[], limit = 18): Array<{ word: string; count: number }> {
+/**
+ * 整场录音的轻量词频。
+ *
+ * 分词用 V8 自带的 Intl.Segmenter（词典分词，零依赖、零网络）。
+ *
+ * 为什么不再用 2 字滑窗：滑窗必然产出骑在词缝上的半截词（交付+质量→付质，
+ * 参考+图→考图，看+一下→看一）。前后改过三版判据——按词形猜锚点、按位置抢座、
+ * 按上下文多样性——每一版都被真实语料打回来：
+ *   「看一」在真实转写里两侧都有变化（你看一下 / 我看一下、看一下 / 看一眼），
+ *   靠频次和上下文统计根本区分不出它和真词。这是方法的天花板，不是参数没调好。
+ * Intl.Segmenter 查的是词典，直接不产生这类切分：
+ *   我们看一下常规优化 → 我们 | 看一下 | 常规 | 优 | 化
+ *   交付质量重要      → 交付 | 质量 | 重要
+ *
+ * 已知边界：Segmenter 也会切出单字（常规优化 → 常规|优|化），单字一律不进词云；
+ * 极旧浏览器没有 Intl.Segmenter 时中文词云会退化为空，英文词仍然统计
+ * （详见 doc/debt.knowledge-base.md）。
+ */
+export function buildTranscriptWordCloud(
+  segments: TranscriptSegment[],
+  limit = 18,
+  /**
+   * 词典：通用分词器不认识、但必须完整保留的词（人名、产品名、团队黑话）。
+   * 它只做「加」不做「猜」——先把词典命中的整词切走，剩下的才交给 Segmenter，
+   * 所以不会引入新的边界猜测，也就不会把已经治好的半截词问题带回来。
+   */
+  dictionary: readonly string[] = [],
+): Array<{ word: string; count: number }> {
   const source = segments.map(segment => segment.text).join(' ');
-  const englishTokens = source.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? [];
-  const chineseTokens = (source.match(/[\u3400-\u9fff]{2,}/g) ?? []).flatMap((sequence) => {
-    const chars = Array.from(sequence);
-    return chars.slice(0, -1).map((_, index) => chars.slice(index, index + 2).join(''));
-  });
-  const tokens = [...englishTokens, ...chineseTokens];
   const counts = new Map<string, number>();
-  tokens.forEach((token) => {
-    const word = token.toLowerCase();
-    if (STOP_WORDS.has(word)) return;
-    counts.set(word, (counts.get(word) ?? 0) + 1);
-  });
+  const bump = (word: string) => counts.set(word, (counts.get(word) ?? 0) + 1);
+  // 词典命中的词单独记一份：下面那两道通用过滤（停用词 / 二字虚词）是给「猜出来的词」用的，
+  // 不该盖过用户或说话人标签**显式指定**的词。真实会踩到的例子：产品名「个推」带了虚词字「个」，
+  // 人名「那英」带了「那」——两者都会被通用过滤悄悄丢掉，而 L0 说话人层的全部意义
+  // 就是零配置把这类人名捞回来。加了词却看不见，等于这个入口是假的。
+  const dictionaryWords = new Set<string>();
+
+  // 三条通道（词典 / 英文 / Segmenter）必须依次从**剩下的**文本里取词，词典排在最前。
+  // 顺序反了同一段字会被数两遍：英文词典项先被英文通道数一次、再被词典数一次，次数翻倍；
+  // 大小写不一致时还会裂成两个词条（kubernetes 与 Kubernetes 各占一格，谁都不显眼）。
+  //
+  // 说话人名也算词典的一部分，但那是调用方拼进来的：这里只认收到的这一份。
+  // 长词优先，避免「张三丰」被更短的「张三」抢先切走。
+  const terms = [...new Set(dictionary.map(x => x.trim()).filter(x => x.length >= 2))]
+    .sort((a, b) => b.length - a.length);
+  let remainder = source;
+  for (const term of terms) {
+    // 纯 ASCII 词按词边界匹配并忽略大小写：正文写 kubernetes、词典写 Kubernetes 是同一个词，
+    // 而「rate」不该从「rateLimit」中间挖走一块（中文没有词边界，仍走逐个吃掉）。
+    const asciiTerm = /^[A-Za-z0-9-]+$/.test(term);
+    let hits = 0;
+    if (asciiTerm) {
+      const escaped = term.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+      remainder = remainder.replace(
+        new RegExp(`(?<![A-Za-z0-9-])${escaped}(?![A-Za-z0-9-])`, 'gi'),
+        () => { hits += 1; return ' '; },
+      );
+      if (hits > 0) dictionaryWords.add(term.toLowerCase());
+      for (let i = 0; i < hits; i += 1) bump(term.toLowerCase());
+      continue;
+    }
+    // 逐个吃掉，同时统计次数；切走之后那段字不再参与后续分词
+    for (;;) {
+      const at = remainder.indexOf(term);
+      if (at < 0) break;
+      hits += 1;
+      remainder = `${remainder.slice(0, at)}\u0000${remainder.slice(at + term.length)}`;
+    }
+    if (hits > 0) dictionaryWords.add(term);
+    for (let i = 0; i < hits; i += 1) bump(term);
+  }
+
+  // 英文词：扫的是词典切剩下的文本，不是原文——词典命中的那几段已经被换成占位符了
+  for (const token of remainder.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? []) bump(token.toLowerCase());
+
+  const SegmenterCtor = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+  if (SegmenterCtor) {
+    const segmenter = new SegmenterCtor('zh-Hans', { granularity: 'word' });
+    for (const piece of segmenter.segment(remainder)) {
+      if (!piece.isWordLike) continue;
+      const word = piece.segment.trim();
+      // 单字进不了词云：它既没有语义信息量，也是 Segmenter 切不准时的残渣。
+      // 英文已在上面按单独规则统计过，这里只收中文。
+      if (word.length < 2 || !/^[\u3400-\u9fff]+$/.test(word)) continue;
+      bump(word);
+    }
+  }
+
   return [...counts.entries()]
+    // 「只出现一次的不叫反复提到」对谁都成立，词典词也不例外——词云讲的是这场反复提到什么，
+    // 不是把词典列一遍。但停用词与二字虚词这两道是**猜词**的护栏，显式指定的词不受它们管。
+    .filter(([word, count]) => count >= 2
+      && (dictionaryWords.has(word)
+        || (!STOP_WORDS.has(word)
+          && !(word.length === 2 && Array.from(word).some(char => FUNCTION_CHARS.has(char))))))
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh'))
     .slice(0, limit)
     .map(([word, count]) => ({ word, count }));

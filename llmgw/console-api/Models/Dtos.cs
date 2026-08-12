@@ -11,6 +11,14 @@ public sealed class ApiEnvelope<T>
 
     public static ApiEnvelope<T> Fail(string code, string message) =>
         new() { Success = false, Data = default, Error = new ApiErrorBody { Code = code, Message = message } };
+
+    /// <summary>
+    /// 带数据的失败。用于「拒绝了，但要告诉调用方拒绝的依据」——
+    /// 例如删除被引用挡下时，把占用清单一起回去，前端才能把「先摘哪几个」列出来，
+    /// 而不是只甩一句「删不了」让人自己猜。
+    /// </summary>
+    public static ApiEnvelope<T> Fail(string code, string message, T data) =>
+        new() { Success = false, Data = data, Error = new ApiErrorBody { Code = code, Message = message } };
 }
 
 public sealed class ApiErrorBody
@@ -904,7 +912,113 @@ public sealed class PlatformItem
     public string SourceCollection { get; set; } = "llmplatforms"; public string Authority { get; set; } = "map";
     public string? ClaimedAt { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// 密钥指纹：只保留头尾各几位，中间打码（如 sk-or-v1…9c2a）。
+    /// 存在的理由是两条上游可以同名同 URL、只有 key 不同——只回 hasKey 时运维分不出谁是谁，
+    /// 也就没法判断该换哪一把。仅在调用方具备 ConfigWrite 时下发，其余一律 null。
+    /// 明文永不外泄，这里也永远不是完整密钥。
+    /// </summary>
+    public string? KeyFingerprint { get; set; }
+
+    /// <summary>密钥可读性：missing（没配）/ ok（能解开）/ unreadable（密文在但当前密钥解不开，多半是换过 ApiKeyCrypto:Secret）。</summary>
+    public string KeyStatus { get; set; } = "missing";
 }
+
+/// <summary>
+/// 删除上游前的占用清单：谁还在引用它。空 = 可安全删除。
+/// 交换所（exchanges）自带上游地址与密钥、不绑平台，所以不在这张表里。
+/// </summary>
+public sealed class PlatformDeleteBlockers
+{
+    public List<string> Models { get; set; } = new();
+    public List<string> Pools { get; set; } = new();
+    public int TotalCount => Models.Count + Pools.Count;
+}
+
+/// <summary>
+/// 删除模型前的占用清单：哪些模型池还把它当成员，哪些逻辑模型还把它当上游 offering。
+/// 两类引用的定位方式不同（池成员按 (modelId, platformId) 复合，offering 按 _id 单键），
+/// 只查一类就会漏掉另一类，留下一条指向已删模型、解析不到又不报错的 offering。
+/// </summary>
+public sealed class ModelDeleteBlockers
+{
+    public List<string> Pools { get; set; } = new();
+    public List<string> LogicalModels { get; set; } = new();
+    public int TotalCount => Pools.Count + LogicalModels.Count;
+}
+
+/// <summary>
+/// 删除模型池前的占用清单。
+/// 「是某个类型的当前默认池」单列一条：它不是别人引用了你，而是删掉之后那个类型没有默认可用，
+/// 属于同样必须先解决、但解决方式完全不同的一类阻挡。
+/// </summary>
+public sealed class PoolDeleteBlockers
+{
+    public bool IsCurrentDefault { get; set; }
+    public List<string> AppCallers { get; set; } = new();
+    public int TotalCount => AppCallers.Count + (IsCurrentDefault ? 1 : 0);
+}
+
+/// <summary>删除交换所前的占用清单：哪些模型池成员还指着它，哪些逻辑模型还把它当 offering 上游。</summary>
+public sealed class ExchangeDeleteBlockers
+{
+    public List<string> Pools { get; set; } = new();
+    public List<string> LogicalModels { get; set; } = new();
+    public int TotalCount => Pools.Count + LogicalModels.Count;
+}
+
+/// <summary>删除团队前的占用清单：成员、接入密钥、appCaller 三类引用。</summary>
+public sealed class TeamDeleteBlockers
+{
+    public List<string> Members { get; set; } = new();
+    public int ServiceKeys { get; set; }
+    public int AppCallers { get; set; }
+    public int TotalCount => Members.Count + ServiceKeys + AppCallers;
+}
+
+/// <summary>
+/// 删除租户前的剩余内容清单。租户删除刻意不做级联，所以这张清单同时就是
+/// 「还要自己清掉什么」的待办：每一项非零都会挡下删除。
+/// </summary>
+public sealed class TenantDeleteBlockers
+{
+    public int OtherMembers { get; set; }
+    public int Platforms { get; set; }
+    public int Models { get; set; }
+    public int Pools { get; set; }
+    public int Exchanges { get; set; }
+    public int LogicalModels { get; set; }
+    public int ServiceKeys { get; set; }
+    public int AppCallers { get; set; }
+    public int TotalCount => OtherMembers + Platforms + Models + Pools + Exchanges + LogicalModels + ServiceKeys + AppCallers;
+}
+
+/// <summary>删除逻辑模型的结果：它名下的 offering 是从属子项，跟着一起删。</summary>
+public sealed class LogicalModelDeleteResult
+{
+    public int OfferingsDeleted { get; set; }
+}
+
+/// <summary>
+/// 删除 appCaller 的结果：它名下的提示词策略版本是从属子项，跟着一起删。
+/// 报条数而不是静默删——删的是会改写系统提示词的治理配置，事后必须能核对删掉了什么。
+/// </summary>
+public sealed class AppCallerDeleteResult
+{
+    public int PromptPolicyVersionsDeleted { get; set; }
+}
+
+/// <summary>编辑上游：只改这几项；密钥走独立的轮换端点，不混在这里。</summary>
+public sealed class UpdatePlatformRequest
+{
+    public string? Name { get; set; }
+    public string? PlatformType { get; set; }
+    public string? ApiUrl { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public string? Remark { get; set; }
+}
+
 public sealed class CreatePlatformRequest
 {
     public string? Name { get; set; }
@@ -930,6 +1044,8 @@ public sealed class ModelItem
     public string? ClaimedAt { get; set; }
     public long CallCount { get; set; } public long SuccessCount { get; set; } public long FailCount { get; set; } public long TotalDuration { get; set; }
     public List<ModelCapabilityItem> Capabilities { get; set; } = new();
+    public string ImageSizeControlMode { get; set; } = "inherit";
+    public string? ImageSizeFieldFormat { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
@@ -943,6 +1059,8 @@ public sealed class CreateModelRequest
     public string? ModelName { get; set; }
     public string? Protocol { get; set; }
     public List<string> Capabilities { get; set; } = new();
+    public string? ImageSizeControlMode { get; set; }
+    public string? ImageSizeFieldFormat { get; set; }
     public string? ApiKey { get; set; }
     public int? Timeout { get; set; }
     public int? MaxRetries { get; set; }
@@ -953,6 +1071,11 @@ public sealed class CreateModelRequest
     public decimal? PricePerCall { get; set; }
     public string? PriceCurrency { get; set; }
     public string? Remark { get; set; }
+}
+public sealed class UpdateModelImageSizeControlRequest
+{
+    public string? Mode { get; set; }
+    public string? FieldFormat { get; set; }
 }
 public sealed class CreateModelResult
 {
