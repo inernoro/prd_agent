@@ -940,8 +940,18 @@ public class OpenAIImageClient : IImageGenerationClient
                     StoredAsset? storedGoogle = null;
                     try
                     {
-                        storedGoogle = await _assetStorage.SaveAsync(bytes, outMime, ct,
-                            domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                        var googleSize = NormalizeSizeString(size ?? requestedSizeRaw);
+                        var googleHasDimensions = TryParseSize(googleSize, out var googleWidth, out var googleHeight);
+                        storedGoogle = await SaveGeneratedOutputAsync(
+                            bytes,
+                            outMime,
+                            requestId,
+                            createdByAdminId,
+                            prompt,
+                            inputArtifactIds,
+                            googleHasDimensions ? googleWidth : 0,
+                            googleHasDimensions ? googleHeight : 0,
+                            ct);
                         var displayUrl = storedGoogle.Url;
 
                         if (wmConfigGoogle != null)
@@ -971,27 +981,6 @@ public class OpenAIImageClient : IImageGenerationClient
                         // COS 上传失败时保留 base64，让前端仍能显示图片
                     }
 
-                    if (storedGoogle != null)
-                    {
-                        var googleSize = NormalizeSizeString(size ?? requestedSizeRaw);
-                        var googleHasDimensions = TryParseSize(googleSize, out var googleWidth, out var googleHeight);
-                        await _db.UploadArtifacts.InsertOneAsync(new UploadArtifact
-                        {
-                            Id = Guid.NewGuid().ToString("N"),
-                            RequestId = requestId,
-                            Kind = "output_image",
-                            CreatedByAdminId = createdByAdminId,
-                            Prompt = prompt,
-                            RelatedInputIds = inputArtifactIds.Count > 0 ? inputArtifactIds.ToList() : null,
-                            Sha256 = storedGoogle.Sha256,
-                            Mime = storedGoogle.Mime,
-                            Width = googleHasDimensions ? googleWidth : 0,
-                            Height = googleHasDimensions ? googleHeight : 0,
-                            SizeBytes = storedGoogle.SizeBytes,
-                            CosUrl = storedGoogle.Url,
-                            CreatedAt = DateTime.UtcNow
-                        }, cancellationToken: ct);
-                    }
                 }
 
                 _logger.LogInformation("[Google] 生图成功: ImageCount={Count}, COS={CosCount}", googleGenImages.Count, cosInfosGoogle.Count);
@@ -1179,8 +1168,19 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
-                // 1. 原图保存到 visual-agent 目录（核心数据，不会删除）
-                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                var sizeStr = NormalizeSizeString(size);
+                var okDim = TryParseSize(sizeStr, out var w0, out var h0);
+                // 原图写入和 UploadArtifact 登记共用每 SHA 租约，避免工作区清理在两步之间删掉对象。
+                var stored = await SaveGeneratedOutputAsync(
+                    bytes,
+                    outMime,
+                    requestId,
+                    createdByAdminId,
+                    prompt,
+                    inputArtifactIds,
+                    okDim ? w0 : 0,
+                    okDim ? h0 : 0,
+                    ct);
 
                 // 2. 默认展示原图 URL
                 var displayUrl = stored.Url;
@@ -1207,27 +1207,6 @@ public class OpenAIImageClient : IImageGenerationClient
                 images[i].Base64 = null;
                 images[i].OriginalUrl = stored.Url;
                 images[i].OriginalSha256 = stored.Sha256;
-
-                // 尺寸：优先使用本次请求最终 size（若解析失败则为 0）
-                var sizeStr = NormalizeSizeString(size);
-                var okDim = TryParseSize(sizeStr, out var w0, out var h0);
-                var output = new UploadArtifact
-                {
-                    Id = Guid.NewGuid().ToString("N"),
-                    RequestId = requestId,
-                    Kind = "output_image",
-                    CreatedByAdminId = createdByAdminId,
-                    Prompt = prompt,
-                    RelatedInputIds = inputArtifactIds.Count > 0 ? inputArtifactIds.ToList() : null,
-                    Sha256 = stored.Sha256,
-                    Mime = stored.Mime,
-                    Width = okDim ? w0 : 0,
-                    Height = okDim ? h0 : 0,
-                    SizeBytes = stored.SizeBytes,
-                    CosUrl = stored.Url,
-                    CreatedAt = DateTime.UtcNow
-                };
-                await _db.UploadArtifacts.InsertOneAsync(output, cancellationToken: ct);
 
                 // 写一份用于 LLM 日志摘要展示（不宜过大）
                 cosInfos.Add(new { index = images[i].Index, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
@@ -1321,6 +1300,9 @@ public class OpenAIImageClient : IImageGenerationClient
         var ctx = _ctxAccessor?.Current;
         var requestId = (ctx?.RequestId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
+        var createdByAdminId = ctx?.UserId ?? "system";
+        var outputSize = NormalizeSizeString(size);
+        var outputHasDimensions = TryParseSize(outputSize, out var outputWidth, out var outputHeight);
 
         // 通过 Gateway 解析模型调度
         var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
@@ -1482,8 +1464,11 @@ public class OpenAIImageClient : IImageGenerationClient
 
                     if (bytes == null || bytes.Length == 0) continue;
 
-                    var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
-                        domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                    var stored = await SaveGeneratedOutputAsync(
+                        bytes, outMime, requestId, createdByAdminId, prompt, [],
+                        outputHasDimensions ? outputWidth : 0,
+                        outputHasDimensions ? outputHeight : 0,
+                        ct);
                     var displayUrl = stored.Url;
 
                     if (wmConfig != null)
@@ -1624,8 +1609,11 @@ public class OpenAIImageClient : IImageGenerationClient
 
                     if (bytes == null || bytes.Length == 0) continue;
 
-                    var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
-                        domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                    var stored = await SaveGeneratedOutputAsync(
+                        bytes, outMime, requestId, createdByAdminId, prompt, [],
+                        outputHasDimensions ? outputWidth : 0,
+                        outputHasDimensions ? outputHeight : 0,
+                        ct);
                     var displayUrl = stored.Url;
 
                     if (wmConfig != null)
@@ -1896,8 +1884,11 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
-                // 1. 原图保存到 visual-agent 目录
-                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                var stored = await SaveGeneratedOutputAsync(
+                    bytes, outMime, requestId, createdByAdminId, prompt, [],
+                    outputHasDimensions ? outputWidth : 0,
+                    outputHasDimensions ? outputHeight : 0,
+                    ct);
 
                 // 2. 默认展示原图 URL
                 var displayUrl = stored.Url;
@@ -1953,6 +1944,47 @@ public class OpenAIImageClient : IImageGenerationClient
             _logger.LogError(ex, "[Vision API] 未知错误");
             return UserFailure(ImageGenerationUserError.FromException(ex));
         }
+    }
+
+    private async Task<StoredAsset> SaveGeneratedOutputAsync(
+        byte[] bytes,
+        string mime,
+        string requestId,
+        string createdByAdminId,
+        string prompt,
+        IReadOnlyCollection<string> relatedInputIds,
+        int width,
+        int height,
+        CancellationToken ct)
+    {
+        var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var lease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{sha}",
+            ct);
+        var stored = await _assetStorage.SaveAsync(
+            bytes,
+            mime,
+            ct,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg);
+        await _db.UploadArtifacts.InsertOneAsync(new UploadArtifact
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            RequestId = requestId,
+            Kind = "output_image",
+            CreatedByAdminId = createdByAdminId,
+            Prompt = prompt,
+            RelatedInputIds = relatedInputIds.Count > 0 ? relatedInputIds.ToList() : null,
+            Sha256 = stored.Sha256,
+            Mime = stored.Mime,
+            Width = width,
+            Height = height,
+            SizeBytes = stored.SizeBytes,
+            CosUrl = stored.Url,
+            CreatedAt = DateTime.UtcNow,
+        }, cancellationToken: ct);
+        return stored;
     }
 
     private static ApiResponse<ImageGenResult> UserFailure(ImageGenerationUserError.Result error)

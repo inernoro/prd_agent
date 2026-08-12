@@ -673,17 +673,13 @@ public class VideoGenService : IVideoGenService
             deletedArtifacts++;
         }
 
-        var deleted = await _db.VideoGenRuns.DeleteOneAsync(
-            ownedFilter & fb.Ne(x => x.DeletionRequestedAt, null),
-            cleanupToken);
-        if (deleted.DeletedCount != 1) return null;
-
         var projectDeleted = false;
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
         {
             var project = await GetProjectAsync(run.ProjectId, ownerAdminId, appKey, cleanupToken);
             var remainingRuns = await _db.VideoGenRuns.CountDocumentsAsync(
-                item => item.ProjectId == run.ProjectId
+                item => item.Id != run.Id
+                        && item.ProjectId == run.ProjectId
                         && item.OwnerAdminId == ownerAdminId
                         && item.AppKey == run.AppKey,
                 cancellationToken: cleanupToken);
@@ -692,6 +688,17 @@ public class VideoGenService : IVideoGenService
                         && task.OwnerAdminId == ownerAdminId
                         && task.AppKey == run.AppKey,
                 cancellationToken: cleanupToken);
+            _logger.LogInformation(
+                "VideoGen 项目清理判定: runId={RunId}, projectId={ProjectId}, requested={Requested}, projectFound={ProjectFound}, assetCount={AssetCount}, remainingRuns={RemainingRuns}, remainingExports={RemainingExports}, runAppKey={RunAppKey}, projectAppKey={ProjectAppKey}",
+                run.Id,
+                run.ProjectId,
+                deleteEmptyProject,
+                project != null,
+                project?.Assets.Count ?? -1,
+                remainingRuns,
+                remainingExports,
+                run.AppKey,
+                project?.AppKey ?? "missing");
             if (deleteEmptyProject
                 && project != null
                 && project.Assets.Count == 0
@@ -719,6 +726,13 @@ public class VideoGenService : IVideoGenService
                     cancellationToken: cleanupToken);
             }
         }
+
+        // run 自身就是可恢复的删除墓碑。只有项目清理或 LatestRunId 修复成功后才删除它；
+        // 上述任一步异常时 worker 仍能依据 DeletionRequestedAt 继续完成清理。
+        var deleted = await _db.VideoGenRuns.DeleteOneAsync(
+            ownedFilter & fb.Ne(x => x.DeletionRequestedAt, null),
+            cleanupToken);
+        if (deleted.DeletedCount != 1) return null;
 
         return new DeleteVideoGenRunResult(true, projectDeleted, deletedArtifacts);
     }

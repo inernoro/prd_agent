@@ -426,11 +426,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 视频域只允许删除内容寻址的单个 mp4；其他域保持原有扩展兼容范围。
-        var exts = string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
-                   && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal)
-            ? new[] { "mp4" }
-            : new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = CandidateExtensions(d, t);
         foreach (var ext in exts)
         {
             try
@@ -470,6 +466,17 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var ext = MimeToExt(mime);
         var key = BuildObjectKey(d, t, sha, ext);
         return BuildPublicUrl(key);
+    }
+
+    private static string[] CandidateExtensions(string? domain, string? type)
+    {
+        if (string.Equals(domain, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+            return ["mp4"];
+        if (string.Equals(domain, AppDomainPaths.DomainVisualAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeImg, StringComparison.Ordinal))
+            return ["png", "jpg", "jpeg", "webp", "gif"];
+        return ["png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt"];
     }
 
     public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)

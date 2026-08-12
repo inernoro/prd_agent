@@ -37,6 +37,51 @@ public class GeneratedImageCleanupContractTests
         Assert.Contains("owned_generated_image", cos);
     }
 
+    [Fact]
+    public void GeneratedImageCleanup_ShouldOnlyProbeImageExtensions()
+    {
+        foreach (var relativePath in new[]
+                 {
+                     "prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/CloudflareR2Storage.cs",
+                     "prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs",
+                 })
+        {
+            var source = File.ReadAllText(LocateRepoFile(relativePath));
+            var visualBranch = source.IndexOf(
+                "string.Equals(domain, AppDomainPaths.DomainVisualAgent",
+                StringComparison.Ordinal);
+            var genericBranch = source.IndexOf(
+                "return [\"png\", \"jpg\", \"jpeg\", \"webp\", \"gif\", \"ttf\"",
+                visualBranch,
+                StringComparison.Ordinal);
+            Assert.True(visualBranch >= 0 && genericBranch > visualBranch);
+            var generatedImageBranch = source[visualBranch..genericBranch];
+            Assert.Contains("return [\"png\", \"jpg\", \"jpeg\", \"webp\", \"gif\"]", generatedImageBranch);
+            Assert.DoesNotContain("ttf", generatedImageBranch);
+            Assert.DoesNotContain("txt", generatedImageBranch);
+        }
+    }
+
+    [Fact]
+    public void GeneratedImageWriteAndCleanup_ShouldShareTheSamePerShaLease()
+    {
+        var writer = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs"));
+        var cleanup = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs"));
+
+        Assert.Contains("$\"generated-image:{sha}\"", writer);
+        Assert.Contains("SaveGeneratedOutputAsync", writer);
+        var helper = writer[writer.IndexOf(
+            "private async Task<StoredAsset> SaveGeneratedOutputAsync",
+            StringComparison.Ordinal)..];
+        Assert.True(
+            helper.IndexOf("VideoAssetMutationLease.AcquireAsync", StringComparison.Ordinal)
+            < helper.IndexOf("_assetStorage.SaveAsync", StringComparison.Ordinal));
+        Assert.Contains("$\"generated-image:{sha}\"", cleanup);
+        Assert.Contains("$\"generated-image:{a.Sha256}\"", cleanup);
+    }
+
     private static string LocateRepoFile(string relativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

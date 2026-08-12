@@ -528,6 +528,51 @@ async function assertImageArtifact(page: Page, detail: ImageRunDetail) {
   }
 }
 
+async function readGeneratedImageBytes(page: Page, detail: ImageRunDetail) {
+  const item = detail.items[0];
+  if (item.url) {
+    const response = await page.request.get(item.url);
+    expect(response.ok(), '生成图片对象必须可读取').toBe(true);
+    return { bytes: await response.body(), mime: response.headers()['content-type'] || 'image/png' };
+  }
+  return { bytes: Buffer.from(item.base64 || '', 'base64'), mime: 'image/png' };
+}
+
+async function measureReferenceColorCoverage(page: Page, detail: ImageRunDetail) {
+  const { bytes, mime } = await readGeneratedImageBytes(page, detail);
+  return page.evaluate(async ({ base64, contentType }) => {
+    const image = new Image();
+    image.src = `data:${contentType};base64,${base64}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.min(image.naturalWidth, 512);
+    canvas.height = Math.min(image.naturalHeight, 512);
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('浏览器无法读取生成图片像素');
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let blue = 0;
+    let yellow = 0;
+    let red = 0;
+    let visible = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      if (pixels[index + 3] < 32) continue;
+      visible += 1;
+      if (b > 100 && b > r * 1.3 && b > g * 1.15) blue += 1;
+      if (r > 120 && g > 95 && b < Math.min(r, g) * 0.72) yellow += 1;
+      if (r > 120 && r > g * 1.35 && r > b * 1.25) red += 1;
+    }
+    return {
+      blue: blue / Math.max(1, visible),
+      yellow: yellow / Math.max(1, visible),
+      red: red / Math.max(1, visible),
+    };
+  }, { base64: bytes.toString('base64'), contentType: mime });
+}
+
 function detectImageMime(buffer: Buffer) {
   if (buffer.length >= 24 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
     return 'image/png';
@@ -573,6 +618,7 @@ async function probeImageRunSse(
     let heartbeats = 0;
     let contentType = '';
     let stoppedAfterActiveEvent = false;
+    let receivedNextEvent = false;
     let buffer = '';
 
     try {
@@ -598,6 +644,7 @@ async function probeImageRunSse(
           buffer = buffer.slice(boundary + 2);
           if (frame.startsWith(':')) {
             heartbeats += 1;
+            if (mode === 'next' && receivedNextEvent) shouldStop = true;
           } else {
             const lines = frame.split('\n');
             const id = Number(lines.find((line) => line.startsWith('id:'))?.slice(3).trim() || 0);
@@ -614,8 +661,13 @@ async function probeImageRunSse(
             if (id > 0) ids.push(id);
             if (eventType) eventTypes.push(eventType);
             const active = /runStart|imageStart|progress/i.test(eventType) || /Queued|Running/i.test(status);
-            if (id > resumeAfter && (mode === 'next' || active)) {
+            if (id > resumeAfter) receivedNextEvent = true;
+            if (id > resumeAfter && mode === 'active' && active) {
               stoppedAfterActiveEvent = active;
+              shouldStop = true;
+              break;
+            }
+            if (mode === 'next' && receivedNextEvent && heartbeats > 0) {
               shouldStop = true;
               break;
             }
@@ -2525,6 +2577,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         [...firstStream.eventTypes, ...resumedStream.eventTypes].join(','),
         'SSE 中断和续传之间必须存在可见进度连续性',
       ).toMatch(/runStart|imageStart|progress/i);
+      expect(
+        firstStream.heartbeats + resumedStream.heartbeats,
+        'SSE 恢复验收必须至少收到一次服务端心跳',
+      ).toBeGreaterThan(0);
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissVisualTutorial(page);
@@ -2780,9 +2836,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           input_references?: Array<{ type?: string; image_url?: { url?: string } }>;
         };
         const wireReferences = requestBody.input_references || [];
+        const expectedRedactedUrls = expectedDataUrls.map((dataUrl) => {
+          const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+          expect(match, '测试参考图必须是合法的 Base64 data URL').toBeTruthy();
+          const digest = createHash('sha256').update(Buffer.from(match![2], 'base64')).digest('hex');
+          return `[BASE64_IMAGE:${digest}:${match![1]}]`;
+        });
         expect(wireReferences, '网关请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
         expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
-        expect(wireReferences.map((item) => item.image_url?.url)).toEqual(expectedDataUrls);
+        expect(wireReferences.map((item) => item.image_url?.url)).toEqual(expectedRedactedUrls);
         expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
         expect(log.answerText || '').toMatch(/"data"\s*:\s*\[/);
         expect(log.answerText || '').not.toMatch(/input must have at least|chat\/completions|modalities/i);
@@ -2791,8 +2853,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const twoRunId = await createMultiRun(
         'two-reference-run',
-        '参考 @img1 的蓝色主体与 @img2 的黄色风格，生成一个蓝黄双色极简包装盒，纯白背景，不要文字',
-        '按顺序参考 @img1 和 @img2 生成一个蓝黄双色包装盒',
+        '只从 @img1 和 @img2 读取各自主色，不要自行改色；将两种参考主色分别用于极简包装盒的左右面板，纯白背景，不要文字',
+        '按顺序参考 @img1 和 @img2 的原始主色生成双色包装盒',
         [
           { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
           { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
@@ -2800,6 +2862,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       );
       const twoCompleted = await waitForImageRun(page, token, twoRunId);
       await assertImageArtifact(page, twoCompleted.detail);
+      const twoColorCoverage = await measureReferenceColorCoverage(page, twoCompleted.detail);
+      expect(twoColorCoverage.blue, '@img1 未对两图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
+      expect(twoColorCoverage.yellow, '@img2 未对两图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
       await assertWireReferences(twoRunId, [blueReferenceData, yellowReferenceData]);
       const restoredTwo = (await readEnvelope<ImageRunDetail>(
         await page.request.get(`/api/visual-agent/image-gen/runs/${twoRunId}?includeItems=true`, { headers: authHeaders(token) }),
@@ -2814,8 +2879,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const threeRunId = await createMultiRun(
         'three-reference-run',
-        '参考 @img1 的蓝色、@img2 的黄色与 @img3 的红色，生成一个三色分区的极简包装盒，纯白背景，不要文字',
-        '按顺序参考 @img1、@img2 和 @img3 生成一个蓝黄红三色包装盒',
+        '只从 @img1、@img2 和 @img3 读取各自主色，不要自行改色；将三种参考主色分别用于极简包装盒的三个清晰分区，纯白背景，不要文字',
+        '按顺序参考 @img1、@img2 和 @img3 的原始主色生成三分区包装盒',
         [
           { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
           { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
@@ -2859,6 +2924,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const completed = await waitForImageRun(page, token, threeRunId);
       await assertImageArtifact(page, completed.detail);
+      const threeColorCoverage = await measureReferenceColorCoverage(page, completed.detail);
+      expect(threeColorCoverage.blue, '@img1 未对三图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
+      expect(threeColorCoverage.yellow, '@img2 未对三图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
+      expect(threeColorCoverage.red, '@img3 未对三图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
       await assertWireReferences(threeRunId, [blueReferenceData, yellowReferenceData, redReferenceData]);
       const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) });
       const restoredRun = (await readEnvelope<ImageRunDetail>(afterRefresh)).run;

@@ -538,6 +538,10 @@ public class ImageMasterController : ControllerBase
         {
             try
             {
+                await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                    _db,
+                    $"generated-image:{a.Sha256}",
+                    ct);
                 var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
                 var uploadArtifactRefs = await _db.UploadArtifacts.CountDocumentsAsync(
                     x => x.Sha256 == a.Sha256,
@@ -571,6 +575,10 @@ public class ImageMasterController : ControllerBase
                          .Where(x => !string.IsNullOrWhiteSpace(x))
                          .Distinct(StringComparer.Ordinal))
             {
+                await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                    _db,
+                    $"generated-image:{sha}",
+                    ct);
                 var otherArtifactFilter = Builders<UploadArtifact>.Filter.And(
                     Builders<UploadArtifact>.Filter.Eq(x => x.Sha256, sha),
                     Builders<UploadArtifact>.Filter.Nin(x => x.Id, runArtifactIds));

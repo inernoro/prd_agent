@@ -1163,8 +1163,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Deployment__AdoptLegacyBranchOwners: \"false\"", cdsCompose);
         Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds: \"\"", cdsCompose);
         Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
-        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-false}", productionCompose);
-        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-}", productionCompose);
+        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}", productionCompose);
+        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}", productionCompose);
         Assert.True(
             cdsCompose.Split("command -v ffmpeg", StringSplitOptions.None).Length - 1 >= 3,
             "CDS API 的 dev、static 与默认源码命令都必须在启动前保证 ffmpeg 可用");
@@ -4161,6 +4161,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct)", catalog);
         Assert.Contains("if (!hasResolvableOffering)", catalog);
         Assert.DoesNotContain("availableIds.Contains", catalog);
+    }
+
+    [Fact]
+    public void GatewayCredentialRotation_RecoversAffectedOfferingHealth()
+    {
+        var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("ResetOfferingsAfterCredentialChangeAsync", consoleApi);
+        Assert.Contains("http, \"platform\", [id], gwModels, gwModelOfferings", consoleApi);
+        Assert.Contains("http, \"model\", [id], gwModels, gwModelOfferings", consoleApi);
+        Assert.Contains("http, \"exchange\", [id], gwModels, gwModelOfferings", consoleApi);
+        Assert.Contains("http, objectType, matchedTargetIds, gwModels, gwModelOfferings", consoleApi);
+        Assert.Contains(".Set(\"HealthStatus\", 0)", consoleApi);
+        Assert.Contains(".Set(\"ConsecutiveFailures\", 0)", consoleApi);
     }
 
     private static string ReadRepoFile(string relativePath)

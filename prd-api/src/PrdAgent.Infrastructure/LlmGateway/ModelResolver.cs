@@ -816,11 +816,8 @@ public class ModelResolver : IModelResolver
         var result = new List<AvailableModelPool>();
         foreach (var logical in logicalModels)
         {
-            if (logical.AllowedAppCallerCodes.Count > 0
-                && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
-            {
+            if (!SupportsAppCallerScenario(logical, appCallerCode))
                 continue;
-            }
 
             if (!offeringsByLogicalModel.TryGetValue(logical.Id, out var logicalOfferings))
                 continue;
@@ -890,11 +887,10 @@ public class ModelResolver : IModelResolver
         if (logical is null)
             return null;
 
-        if (logical.AllowedAppCallerCodes.Count > 0
-            && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
+        if (!SupportsAppCallerScenario(logical, appCallerCode))
         {
             return ModelResolutionResult.NotFound(expectedModel,
-                $"逻辑模型未授权给当前 appCaller: model={logical.PublicId}, appCaller={appCallerCode}");
+                $"逻辑模型不支持当前 appCaller 场景: model={logical.PublicId}, appCaller={appCallerCode}");
         }
 
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
@@ -924,6 +920,30 @@ public class ModelResolver : IModelResolver
         if (resolved.Count > 1)
             selected.RetryCandidates = resolved.Skip(1).ToList();
         return selected;
+    }
+
+    internal static bool SupportsAppCallerScenario(GatewayLogicalModel logical, string appCallerCode)
+    {
+        if (logical.AllowedAppCallerCodes.Count > 0
+            && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var requiredCapability = RequiredCapabilityForAppCaller(appCallerCode);
+        return requiredCapability is null
+               || logical.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? RequiredCapabilityForAppCaller(string appCallerCode)
+    {
+        if (appCallerCode.EndsWith(".text2img::generation", StringComparison.OrdinalIgnoreCase))
+            return "text2img";
+        if (appCallerCode.EndsWith(".img2img::generation", StringComparison.OrdinalIgnoreCase))
+            return "img2img";
+        if (appCallerCode.EndsWith(".vision::generation", StringComparison.OrdinalIgnoreCase))
+            return "vision_generation";
+        return null;
     }
 
     private List<GatewayModelOffering> OrderLogicalOfferings(

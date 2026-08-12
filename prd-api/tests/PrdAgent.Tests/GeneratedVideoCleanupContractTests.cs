@@ -56,6 +56,11 @@ public class GeneratedVideoCleanupContractTests
             service.IndexOf("VideoExportTasks.DeleteManyAsync", StringComparison.Ordinal)
             < service.IndexOf("DeleteByShaAsync", StringComparison.Ordinal),
             "删除生成视频对象前必须先清理依赖记录，失败时保留可恢复对象");
+        Assert.True(
+            service.IndexOf("var projectDeleted = false", StringComparison.Ordinal)
+            < service.LastIndexOf("VideoGenRuns.DeleteOneAsync", StringComparison.Ordinal),
+            "项目清理完成前必须保留带 DeletionRequestedAt 的 run 墓碑供 worker 重试");
+        Assert.Contains("item.Id != run.Id", service);
         Assert.Contains("deleteEmptyProject", service);
     }
 

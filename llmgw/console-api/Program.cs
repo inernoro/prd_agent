@@ -6538,6 +6538,8 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
     await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("ApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "platform", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -6551,6 +6553,7 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
@@ -6567,6 +6570,8 @@ app.MapDelete("/gw/platforms/{id}/api-key", async (HttpContext http, string id) 
     await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("ApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "platform", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -6580,6 +6585,7 @@ app.MapDelete("/gw/platforms/{id}/api-key", async (HttpContext http, string id) 
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh)), jsonOptions);
@@ -6649,6 +6655,8 @@ app.MapPut("/gw/models/{id}/api-key", async (HttpContext http, string id, [FromB
     await gwModels.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("ApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "model", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -6662,6 +6670,7 @@ app.MapPut("/gw/models/{id}/api-key", async (HttpContext http, string id, [FromB
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModels.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
@@ -6678,6 +6687,8 @@ app.MapDelete("/gw/models/{id}/api-key", async (HttpContext http, string id) =>
     await gwModels.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("ApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "model", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -6691,6 +6702,7 @@ app.MapDelete("/gw/models/{id}/api-key", async (HttpContext http, string id) =>
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModels.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
@@ -7078,6 +7090,8 @@ app.MapPut("/gw/exchanges/{id}/api-key", async (HttpContext http, string id, [Fr
     await gwModelExchanges.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("TargetApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "exchange", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -7091,6 +7105,7 @@ app.MapPut("/gw/exchanges/{id}/api-key", async (HttpContext http, string id, [Fr
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModelExchanges.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions);
@@ -7107,6 +7122,8 @@ app.MapDelete("/gw/exchanges/{id}/api-key", async (HttpContext http, string id) 
     await gwModelExchanges.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("TargetApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "exchange", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -7120,6 +7137,7 @@ app.MapDelete("/gw/exchanges/{id}/api-key", async (HttpContext http, string id) 
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModelExchanges.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions);
@@ -7219,7 +7237,11 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
     }
 
     var targetFilter = TenantAccess.Filter(http, filters.Count == 0 ? fb.Empty : fb.And(filters));
-    var matchedCount = await targetCollection.CountDocumentsAsync(targetFilter);
+    var matchedTargets = await targetCollection.Find(targetFilter)
+        .Project(Builders<BsonDocument>.Projection.Include("_id"))
+        .ToListAsync();
+    var matchedTargetIds = matchedTargets.Select(item => item.GetStringOrEmpty("_id")).ToList();
+    var matchedCount = matchedTargetIds.Count;
     var skippedCount = ids.Count > 0 ? Math.Max(0, ids.Count - matchedCount) : 0;
     if (matchedCount == 0)
     {
@@ -7237,6 +7259,8 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
     var updateResult = await targetCollection.UpdateManyAsync(targetFilter, Builders<BsonDocument>.Update
         .Set(encryptedField, encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, objectType, matchedTargetIds, gwModels, gwModelOfferings);
     var result = new BulkRotateApiKeysResult
     {
         ObjectType = objectType,
@@ -7262,6 +7286,7 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
             { "matchedCount", matchedCount },
             { "modifiedCount", updateResult.ModifiedCount },
             { "skippedCount", skippedCount },
+            { "offeringsReset", resetOfferingCount },
             { "hasKey", new BsonDocument { { "to", true } } },
             { "authority", "llm_gateway" },
         });
@@ -11325,6 +11350,47 @@ static string? NormalizeCommitFilter(string? value)
     if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
         trimmed = trimmed[4..];
     return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
+}
+
+static async Task<long> ResetOfferingsAfterCredentialChangeAsync(
+    HttpContext http,
+    string objectType,
+    IEnumerable<string> changedIds,
+    IMongoCollection<BsonDocument> gatewayModels,
+    IMongoCollection<BsonDocument> offerings)
+{
+    var ids = changedIds
+        .Where(id => !string.IsNullOrWhiteSpace(id))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+    if (ids.Count == 0) return 0;
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var targetKind = objectType;
+    var targetIds = ids;
+    if (string.Equals(objectType, "platform", StringComparison.Ordinal))
+    {
+        targetKind = "model";
+        var modelDocs = await gatewayModels.Find(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                Builders<BsonDocument>.Filter.In("PlatformId", ids)))
+            .Project(Builders<BsonDocument>.Projection.Include("_id"))
+            .ToListAsync();
+        targetIds = modelDocs.Select(item => item.GetStringOrEmpty("_id")).ToList();
+    }
+    if (targetIds.Count == 0) return 0;
+
+    var filter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("TargetKind", targetKind),
+        Builders<BsonDocument>.Filter.In("TargetId", targetIds));
+    var update = Builders<BsonDocument>.Update
+        .Set("HealthStatus", 0)
+        .Set("ConsecutiveFailures", 0)
+        .Set("ConsecutiveSuccesses", 0)
+        .Set("UpdatedAt", DateTime.UtcNow);
+    var result = await offerings.UpdateManyAsync(filter, update);
+    return result.ModifiedCount;
 }
 
 static async Task RunGatewayRecoveryLoopAsync(
