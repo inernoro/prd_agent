@@ -2312,7 +2312,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         return String(latest?.originalSha256 || latest?.sha256 || '').trim() || null;
       };
       const existing = readSha();
-      if (existing || /^https:\/\//i.test(source)) return existing;
+      // 只有「已经有 sha」才提前返回。
+      // 这里原来还放行 https 外链——那是「有直链就能拆」还成立时的写法；分层现在一律
+      // 要求原图已落盘（Worker 读参考图只认 sha），再放行等于让还在同步的 https 图
+      // 一秒都不等就报错，而不是像文案承诺的那样等它同步完（Codex PR #1363 P2）。
+      // 这一条是我上一版「要求 sha」改动带出来的回归，一并修掉。
+      if (existing) return existing;
 
       setLayeringProgress({
         sourceKey: sourceItem.key,

@@ -134,7 +134,13 @@ export function AccountSecurityPage() {
             </div>
             <form onSubmit={submit} style={{ display: 'grid', gap: GAP.section }}>
               <FormGrid>
-                {profile.usernameIsGenerated || !federated ? (
+                {/* 有建议登录名时也要放出这个输入框：MAP 那边改了名的老联邦账号
+                    usernameIsGenerated 是 false（自动改名只认 map-... 那种生成名），
+                    照原条件会把输入框连同建议一起藏掉，用户守着旧网关用户名却没有任何
+                    入口改成新的 MAP 名（Codex PR #1363 P2）。
+                    suggestedUsername 只在「与当前用户名不同」时才由后端下发，
+                    所以这一条不会平白多出一个输入框。 */}
+                {profile.usernameIsGenerated || !federated || !!profile.suggestedUsername ? (
                   <label style={{ display: 'grid', gap: 4 }}>
                     <span style={FIELD_LABEL}>登录名</span>
                     <input

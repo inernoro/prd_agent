@@ -185,9 +185,24 @@ async function collectLayeringRunImages(input: {
   if (collected.size >= total) return succeeded({ images: sortedImages(collected) });
   if (input.signal?.aborted) return failed('CANCELLED', '已取消');
 
-  report('正在确认分层结果');
-  const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
-  if (res.success && res.data?.run) {
+  // SSE 断了不等于任务停了：run 是服务器权威的，Worker 会继续把它跑完。
+  //
+  // 所以这里**轮询到终态**，而不是查一次就走。分层的产物不会被后端回填进画布
+  //（那条回填的目标是原图，会把原图顶掉，已在本 PR 关掉），因此前端一旦不再跟这条
+  // run，之后落的图层就永远到不了画布，也没有第二条对账路径——「说好 4 层只出了 2 层，
+  // 刷新也回不来」（Codex PR #1363 P1）。
+  //
+  // 这一条同时纠正我上一版的过度修正：上一版把「非终态」直接判失败，调用方会把剩下的
+  // 占位卡全翻成错误并停止跟踪，等于用另一种方式制造了同样的孤儿图层。
+  report('连接中断，正在后台确认分层进度');
+  const pollDeadline = Date.now() + 300000;
+  let lastRun: { status: string; errorMessage?: string } | null = null;
+  for (;;) {
+    if (input.signal?.aborted) return failed('CANCELLED', '已取消');
+    const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+    if (!res.success || !res.data?.run) {
+      return failed('RUN_FAILED', streamFailure || '分层失败，请重试');
+    }
     for (const item of res.data.items ?? []) {
       const url = String(item.url ?? '').trim();
       if (!url) continue;
@@ -197,26 +212,30 @@ async function collectLayeringRunImages(input: {
       // 流断了才走到这里：补回来的图层同样要点亮画布，否则占位卡会一直空着。
       if (isNewSlot) input.onLayer?.({ index: slot, url });
     }
-    const status = res.data.run.status;
-    if (status === 'Failed' || status === 'Cancelled') {
-      const failedItem = (res.data.items ?? []).find((item) => item.errorMessage);
-      return failed(
-        'RUN_FAILED',
-        status === 'Cancelled' ? '分层已取消' : (failedItem?.errorMessage || streamFailure || '分层失败'),
-      );
-    }
-    // 只有跑到终态才认「就这些了」。
-    // 原来是「捞到几张就算成功」，而 SSE 重试耗尽时 run 完全可能还是 Queued/Running：
-    // 调用方据此判定完成、清掉剩下的占位卡、也不再跟这条 run，于是 Worker 随后落的
-    // 图层永远到不了画布——用户看到的是「说好 4 层只出了 2 层，刷新也回不来」
-    // （Codex PR #1363 P1）。模型少给几层是另一回事：那时 run 是 Completed，照收。
-    if (status === 'Completed') {
-      if (collected.size > 0) return succeeded({ images: sortedImages(collected) });
-      return failed('RUN_FAILED', streamFailure || '分层完成但没有返回任何图层');
-    }
-    return failed('RUN_PENDING', '分层仍在后台进行，稍后可在画布中查看结果');
+    const status = String(res.data.run.status ?? '');
+    lastRun = { status, errorMessage: (res.data.items ?? []).find((item) => item.errorMessage)?.errorMessage ?? undefined };
+    if (collected.size >= total) return succeeded({ images: sortedImages(collected) });
+    if (status === 'Completed' || status === 'Failed' || status === 'Cancelled') break;
+    if (Date.now() > pollDeadline) break;
+    report(`分层仍在后台进行，已拿到 ${collected.size}/${total} 个图层`);
+    await new Promise((resolve) => setTimeout(resolve, 5000));
   }
-  return failed('RUN_FAILED', streamFailure || '分层失败，请重试');
+
+  const finalStatus = lastRun?.status ?? '';
+  if (finalStatus === 'Failed' || finalStatus === 'Cancelled') {
+    return failed(
+      'RUN_FAILED',
+      finalStatus === 'Cancelled' ? '分层已取消' : (lastRun?.errorMessage || streamFailure || '分层失败'),
+    );
+  }
+  // 跑到终态才认「就这些了」；模型少给几层属于正常，那时 run 是 Completed。
+  if (finalStatus === 'Completed') {
+    if (collected.size > 0) return succeeded({ images: sortedImages(collected) });
+    return failed('RUN_FAILED', streamFailure || '分层完成但没有返回任何图层');
+  }
+  // 轮询到超时仍未终态：把已经拿到的算数（它们已经点亮在画布上），如实说还有没到的。
+  if (collected.size > 0) return succeeded({ images: sortedImages(collected) });
+  return failed('RUN_PENDING', '分层仍在后台进行，稍后可在画布中查看结果');
 }
 
 function sortedImages(collected: Map<number, ImageGenImage>): ImageGenImage[] {
