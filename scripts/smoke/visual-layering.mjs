@@ -270,9 +270,13 @@ async function main() {
     // 缩小：直接对画布发 ctrl+滚轮（与 gesture-unification 约定的缩放手势一致），
     // 不依赖没有文字的工具条按钮——按钮顺序一变，脚本就会静默点到「放大」，
     // 那样这条判据永远测不到低倍档（第一版就踩了这个，50% 一路点到 66%）。
+    // 只发 ctrl+滚轮这一下。原来前面还多发了一次**不带修饰键**的滚轮，
+    // 而按 gesture-unification 的约定，不带修饰键的滚轮是「平移」不是「缩放」——
+    // 14 轮下来把画布推走了几千世界像素，控件飘出视口。旧的宽松判据把找不到的控件
+    // 过滤掉，正好把这个跑偏藏住了（detail 里打印的又是第一档的 present，看不出后面
+    // 已经在掉控件）。上一条判据收紧之后，这个坑就会直接现形（Codex PR #1363 P2）。
     const zoomOut = async () => {
       await page.mouse.move(700, 500);
-      await page.mouse.wheel(0, 260, { });
       await page.keyboard.down('Control');
       await page.mouse.wheel(0, 260);
       await page.keyboard.up('Control');
