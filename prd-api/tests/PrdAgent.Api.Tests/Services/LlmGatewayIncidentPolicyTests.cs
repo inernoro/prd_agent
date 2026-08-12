@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using Shouldly;
@@ -7,6 +8,27 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class LlmGatewayIncidentPolicyTests
 {
+    [Fact]
+    public void ProductionDeployment_ShouldPublishIncidentNotifications()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+
+        LlmGatewayIncidentWatchdog.CanPublishNotifications(configuration).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CdsBranchPreview_ShouldNotWriteSharedIncidentNotifications()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CDS_PROJECT_ID"] = "preview-project",
+            })
+            .Build();
+
+        LlmGatewayIncidentWatchdog.CanPublishNotifications(configuration).ShouldBeFalse();
+    }
+
     [Fact]
     public void LatestUpstreamFailure_ShouldCreateOneDeduplicatedFailureSignal()
     {
