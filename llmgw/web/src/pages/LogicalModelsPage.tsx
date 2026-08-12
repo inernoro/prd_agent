@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   createLogicalModel,
   createModelOffering,
+  deleteLogicalModel,
   getExchanges,
   getLogicalModels,
   getModels,
@@ -37,6 +38,7 @@ import type {
 } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -50,6 +52,7 @@ const labelStyle: React.CSSProperties = FIELD_LABEL;
 export function LogicalModelsPage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { promptText } = useDialogs();
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
@@ -174,6 +177,28 @@ export function LogicalModelsPage() {
     setItems((prev) => prev?.map((x) => x.id === item.id ? { ...x, enabled: res.data.enabled } : x) || null);
   }
 
+  // Offering 是逻辑模型自己的下挂路由，没有别处引用，所以删除是连带删而不是阻挡。
+  // 但连带删对运维是「一次点击删掉 N 条」，必须先把 N 报出来再让他确认。
+  async function removeLogical(item: LogicalModelItem) {
+    const typed = await promptText({
+      title: `删除逻辑模型「${item.name}」`,
+      description: `${item.publicId}\n它名下 ${item.offerings.length} 条 Offering 会一并删除，无法撤销。`,
+      inputLabel: '确认请输入 publicId',
+      requireExact: item.publicId,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== item.publicId) { failNotice('输入的 publicId 不一致，已取消删除'); return; }
+    setBusy(item.id);
+    setNotice(null);
+    const res = await deleteLogicalModel(item.id);
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '删除失败'); return; }
+    setItems((prev) => prev?.filter((x) => x.id !== item.id) || null);
+    okNotice(`已删除「${item.name}」，连带 ${res.data.offeringsDeleted} 条 Offering`);
+  }
+
   async function toggleOffering(logical: LogicalModelItem, offeringId: string, enabled: boolean) {
     setBusy(offeringId);
     const res = await setModelOfferingEnabled(logical.id, offeringId, !enabled);
@@ -286,7 +311,7 @@ export function LogicalModelsPage() {
               </div>
               {canWrite ? <div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}>
                 <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}><option value="priority">优先级与故障切换</option><option value="weighted">权重负载均衡</option></select>
-                <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
+                <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
               </div> : null}
             </div>
 

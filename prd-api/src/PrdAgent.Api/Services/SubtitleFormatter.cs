@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
 
@@ -25,6 +26,8 @@ public static class SubtitleFormatter
         sb.Append("> 来源：").Append(sourceTitle)
           .Append(" · 生成时间：").Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm"))
           .AppendLine();
+        var subtitleSpeakerNote = FormatSpeakerSourceNote(segments);
+        if (subtitleSpeakerNote != null) sb.AppendLine(subtitleSpeakerNote);
         sb.AppendLine();
 
         sb.Append(FormatSegmentsBody(segments));
@@ -56,8 +59,42 @@ public static class SubtitleFormatter
 
         sb.AppendLine("## 转录全文");
         sb.AppendLine();
+        var speakerSourceNote = FormatSpeakerSourceNote(segments);
+        if (speakerSourceNote != null)
+        {
+            sb.AppendLine(speakerSourceNote);
+            sb.AppendLine();
+        }
         sb.Append(FormatSegmentsBody(segments));
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// 说话人来源说明行。三条产出路径可信度差一个量级，界面上却长得一模一样，
+    /// 用户没法判断该不该信——所以来源必须随笔记一起落盘，而不是只活在服务端日志里。
+    ///
+    /// 只在**真的分出了多个说话人**、且所有带说话人的分段来源一致时才写：
+    /// 单人录音无所谓来源；来源不一致说明这批分段被混合改写过，此时任何单一结论都是编的，
+    /// 宁可不写（形状 6：判据要取真正生效的那个值，取不到就别下结论）。
+    ///
+    /// 格式 `> 说话人来源：{key} · {说明}`：key 给程序判定，说明给人读，两者同源不分裂。
+    /// </summary>
+    internal static string? FormatSpeakerSourceNote(IReadOnlyList<SubtitleSegment> segments)
+    {
+        var labelled = segments.Where(s => !string.IsNullOrWhiteSpace(s.SpeakerId)).ToList();
+        if (labelled.Select(s => s.SpeakerId).Distinct(StringComparer.Ordinal).Count() < 2)
+            return null;
+
+        var sources = labelled
+            .Select(s => s.SpeakerSource)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (sources.Count != 1) return null;
+
+        var description = SpeakerSources.Describe(sources[0]);
+        return description == null
+            ? null
+            : $"{TranscribeNoteText.SpeakerSourcePrefix}{sources[0]} · {description}";
     }
 
     /// <summary>ASR 分段正文：有时间戳时逐段带 **[mm:ss - mm:ss]**，全 0 时按纯段落输出。</summary>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, MessageSquareText, Search, UserRound, X } from 'lucide-react';
+import { Check, Info, MessageSquareText, Search, UserRound, X } from 'lucide-react';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import {
   parseTranscriptSegments,
@@ -11,8 +11,10 @@ import {
   renameTranscriptSpeaker,
   buildTranscriptWordCloud,
   parseRecordingAnswerParts,
+  parseSpeakerSourceNote,
 } from '@/components/doc-browser/transcriptSegments';
 import { streamDirectChat } from '@/services/real/aiToolbox';
+import { getTranscriptLexicon, updateSystemTranscriptLexicon, updateTranscriptLexicon } from '@/services/real/userPreferences';
 
 export function buildRecordingQuestionPrompt(noteMd: string, question: string): string {
   return [
@@ -52,6 +54,37 @@ export function recordingCitationMatchesTimeline(
   return Number.isFinite(start) && segments.some(segment => (
     segment.start >= 0 && start >= segment.start && start <= Math.max(segment.start, segment.end)
   ));
+}
+
+export interface TranscriptLexiconState {
+  terms: string[];
+  system: string[];
+  mine: string[];
+  muted: string[];
+  canManageSystem: boolean;
+}
+
+/**
+ * 添加一个词条之后，本地这张词典表应该长成什么样。
+ *
+ * 词典的写端点是**整表替换**：提交什么就是什么，服务端不做合并。所以下一次提交的
+ * 入参必须从「上一次已经写成功的那一版」算起。如果本地表还停在写前的旧版
+ * （比如刷新用的 GET 慢了或失败了），第二次添加就会拿旧表整表覆盖，把刚存进去的词
+ * 静默抹掉——系统级抹的是所有人共用的那张表。
+ *
+ * 提出来单独放的原因：这段是数据丢失的那一半，可以脱离组件直接断言。
+ */
+export function advanceTranscriptLexicon(
+  prev: TranscriptLexiconState,
+  term: string,
+  scope: 'mine' | 'system',
+): TranscriptLexiconState {
+  return {
+    ...prev,
+    terms: [...new Set([...prev.terms, term])],
+    system: scope === 'system' ? [...new Set([...prev.system, term])] : prev.system,
+    mine: scope === 'system' ? prev.mine : [...new Set([...prev.mine, term])],
+  };
 }
 
 /**
@@ -109,11 +142,75 @@ export function TranscriptKaraoke({
   const timelineSegments = synced ? segments : estimatedSegments.length > 0 ? estimatedSegments : segments;
   const followEnabled = synced || estimatedSegments.length > 1;
   const estimated = !synced && estimatedSegments.length > 1;
-  const wordCloud = useMemo(() => buildTranscriptWordCloud(segments), [segments]);
+  // 词典三层，合并后喂给分词：
+  //   L0 本篇说话人名 —— 零配置。ICU 词典不收人名，会上被反复叫到的人恰恰是高价值信息，
+  //      而这批名字笔记里本来就有（[说话人] 标签），不需要任何人去维护。
+  //   L1 系统级 —— 管理员维护的全局表，所有人默认引用。
+  //   L2 个人补充 —— 自己加的，可以单独屏蔽系统表里对自己是噪音的词。
+  // L1/L2 的合并在后端做，前端只消费结果。
+  const [lexicon, setLexicon] = useState<{ terms: string[]; system: string[]; mine: string[]; muted: string[]; canManageSystem: boolean } | null>(null);
+  const [lexiconDraft, setLexiconDraft] = useState('');
+  const [lexiconOpen, setLexiconOpen] = useState(false);
+  const [savingLexicon, setSavingLexicon] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void getTranscriptLexicon().then((res) => {
+      if (!alive || !res.success) return;
+      setLexicon({ terms: res.data.terms, system: res.data.system, mine: res.data.mine, muted: res.data.muted, canManageSystem: res.data.canManageSystem });
+    });
+    return () => { alive = false; };
+  }, []);
+  const dictionary = useMemo(() => {
+    const speakerNames = segments
+      .map(segment => segment.speaker?.trim())
+      .filter((name): name is string => !!name && name.length >= 2);
+    return [...new Set([...speakerNames, ...(lexicon?.terms ?? [])])];
+  }, [segments, lexicon]);
+  const wordCloud = useMemo(
+    () => buildTranscriptWordCloud(segments, 18, dictionary),
+    [segments, dictionary],
+  );
+
+  const addLexiconTerm = async (scope: 'mine' | 'system') => {
+    const term = lexiconDraft.trim();
+    if (!term || term.length < 2 || savingLexicon) return;
+    // 词典还没读回来就不许提交：写端点是**整表替换**，此时 lexicon 为 null，
+    // 拿不到已有词条就只能发一张空表出去——一次添加就抹掉此前存的全部个人词与屏蔽词，
+    // 系统级更狠（那是所有人共用的一张表）。这不是保守，是这条链路的写语义决定的。
+    if (!lexicon) return;
+    setSavingLexicon(true);
+    try {
+      // 提交什么、本地推进成什么，走同一条判据，避免两处各算一遍再漂移
+      const next = advanceTranscriptLexicon(lexicon, term, scope);
+      const res = scope === 'system'
+        ? await updateSystemTranscriptLexicon(next.system)
+        : await updateTranscriptLexicon(next.mine, lexicon.muted);
+      if (!res.success) return;
+      setLexiconDraft('');
+      // 写成功后立刻把本地这张表推进到「刚提交的那一版」，不等刷新回来。
+      // 配合下面 finally 里才解锁，慢刷新和刷新失败两种情况都不会留下过期的表。
+      setLexicon(prev => (prev ? advanceTranscriptLexicon(prev, term, scope) : prev));
+      const refreshed = await getTranscriptLexicon();
+      if (refreshed.success) {
+        setLexicon({
+          terms: refreshed.data.terms,
+          system: refreshed.data.system,
+          mine: refreshed.data.mine,
+          muted: refreshed.data.muted,
+          canManageSystem: refreshed.data.canManageSystem,
+        });
+      }
+    } finally {
+      setSavingLexicon(false);
+    }
+  };
   const speakers = useMemo(
     () => [...new Set(segments.map(segment => segment.speaker).filter((value): value is string => Boolean(value)))],
     [segments],
   );
+  // 说话人是原生识别来的还是本地声纹估算来的，可信度差一个量级。
+  // 不标出来的话两者在界面上完全一样，用户没有任何线索判断该不该信。
+  const speakerSource = useMemo(() => parseSpeakerSourceNote(noteMd), [noteMd]);
   const searchMatches = useMemo(() => {
     const normalized = keyword.trim().toLocaleLowerCase();
     if (!normalized) return [];
@@ -278,11 +375,114 @@ export function TranscriptKaraoke({
             </div>
           )}
 
-          {wordCloud.length > 0 && (
-            <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
-              {wordCloud.map(({ word, count }, index) => (
-                <button key={word} type="button" onClick={() => setKeyword(word)} className="min-h-9 rounded-full px-3" style={{ fontSize: `${Math.max(11, 15 - index * 0.2)}px`, background: 'rgba(168,85,247,0.08)', color: 'var(--text-secondary)', border: '1px solid rgba(168,85,247,0.14)' }} title={`出现 ${count} 次，点击检索`}>{word}</button>
-              ))}
+          {speakerSource && (
+            <p
+              className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed"
+              style={{ color: speakerSource.estimated ? 'var(--semantic-warning-text)' : 'var(--text-muted)' }}
+            >
+              <Info size={12} className="mt-0.5 shrink-0" />
+              <span>{speakerSource.text}</span>
+            </p>
+          )}
+
+          {/*
+            词云的权重必须按「出现几次」映射，不能按排名。旧写法是 15 - index*0.2：
+            18 个词从 15px 递减到 11.4px，肉眼分不出；而且排名相邻的两个词就算一个说了 30 次、
+            一个说了 3 次也一样大——等于把唯一有信息量的那一维抹平了，剩下一排一模一样的药丸。
+            现在字号/底色/边框/字重全部由 count 相对最大值决定，并把次数直接写在词上（不再藏 title），
+            开头先给一句结论，让人一眼知道「这场到底在反复讲什么」而不是自己读一排词去数。
+          */}
+          {(wordCloud.length > 0 || onSaveNote) && (
+            <div className="mt-3">
+              {wordCloud.length > 0 ? (
+                <p className="text-[11px] leading-relaxed text-token-muted">
+                  这场反复提到的是 <strong className="font-semibold text-token-secondary">{wordCloud[0].word}</strong>（{wordCloud[0].count} 次）；点任意一个词看它出现在哪几处
+                </p>
+              ) : (
+                // 词云为空恰恰是最需要补词典的时刻：多半是人名/黑话被通用分词器切成了单字。
+                // 把补词入口一起藏起来，用户就没有任何办法让词云长出来（形状 8：写了一个到不了的入口）。
+                <p className="text-[11px] leading-relaxed text-token-muted">
+                  没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。
+                </p>
+              )}
+              {wordCloud.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
+                {wordCloud.map(({ word, count }) => {
+                  const weight = count / wordCloud[0].count;
+                  return (
+                    <button
+                      key={word}
+                      type="button"
+                      onClick={() => setKeyword(word)}
+                      className="min-h-9 rounded-full px-3"
+                      style={{
+                        fontSize: `${Math.round((12 + weight * 7) * 2) / 2}px`,
+                        fontWeight: weight >= 0.6 ? 600 : 400,
+                        background: `rgba(168,85,247,${(0.06 + weight * 0.16).toFixed(3)})`,
+                        color: weight >= 0.45 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        border: `1px solid rgba(168,85,247,${(0.12 + weight * 0.26).toFixed(3)})`,
+                      }}
+                      title={`出现 ${count} 次，点击检索`}
+                    >
+                      {word}
+                      <span className="ml-1 text-[10px] font-normal tabular-nums opacity-60">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              )}
+              {/*
+                词典入口就放在词云下面：发现「某个词该在却不在」正是在看这一屏的时候。
+                逼用户跑去设置页再回来是绕路（anti-detour.md）。
+                说话人名不用在这里加——它们已经自动进词典了。
+                **它不跟着词云一起隐藏**：词云为空正是最需要补词的场景。
+              */}
+              {onSaveNote ? (
+                <div className="mt-2">
+                  {lexiconOpen ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        value={lexiconDraft}
+                        onChange={event => setLexiconDraft(event.target.value)}
+                        onKeyDown={event => { if (event.key === 'Enter') void addLexiconTerm('mine'); }}
+                        placeholder="例如：人名、产品名、团队黑话"
+                        aria-label="补充词条"
+                        className="h-9 min-w-0 flex-1 rounded-[8px] px-2 text-[12px] text-token-primary outline-none"
+                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!lexicon || savingLexicon || lexiconDraft.trim().length < 2}
+                        onClick={() => void addLexiconTerm('mine')}
+                        className="min-h-9 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
+                        style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)' }}
+                      >
+                        {savingLexicon ? '保存中' : '加入我的词典'}
+                      </button>
+                      {/* 有设置写权限的人才看得到这个：没权限却给入口，点了只会拿到 403 */}
+                      {lexicon?.canManageSystem ? (
+                        <button
+                          type="button"
+                          disabled={!lexicon || savingLexicon || lexiconDraft.trim().length < 2}
+                          onClick={() => void addLexiconTerm('system')}
+                          className="min-h-9 rounded-[8px] px-3 text-[11px] disabled:opacity-50"
+                          style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                          title="加进全局词典，所有人默认引用"
+                        >
+                          加入系统词典
+                        </button>
+                      ) : null}
+                      <button type="button" onClick={() => setLexiconOpen(false)} className="min-h-9 px-2 text-[11px] text-token-muted">收起</button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setLexiconOpen(true)} className="min-h-9 text-[11px] text-token-muted">
+                      {wordCloud.length > 0
+                        ? '少了某个词？通用分词器不认识人名和黑话，可以补进词典'
+                        : '补一个词进词典试试'}
+                    </button>
+                  )}
+                </div>
+              ) : null}
             </div>
           )}
         </section>

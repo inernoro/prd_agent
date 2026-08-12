@@ -471,6 +471,8 @@ function observedProvider(item: LlmLogListItem, requestedName: string): Platform
     maxConcurrency: 0,
     remark: '该 Provider 仅在运行日志中被观察到，不是当前租户的可编辑 Provider 配置。页面展示可验证的运行事实，不补造连接、密钥或并发配置。',
     hasKey: false,
+    // 这条 Provider 是从运行日志里观察到的，不是可编辑配置，本来就没有密钥可谈
+    keyStatus: 'missing',
     sourceCollection: 'llmrequestlogs',
     authority: 'runtime_observed',
     createdAt: null,

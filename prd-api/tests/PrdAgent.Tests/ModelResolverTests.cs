@@ -1,3 +1,4 @@
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using Xunit;
@@ -384,6 +385,108 @@ public class ModelResolverTests
         Assert.False(result.SupportsFunctionCalling);
         Assert.NotNull(result.ParameterCapabilities);
         Assert.False(result.ParameterCapabilities!["seed"]);
+    }
+
+    [Fact]
+    public async Task PoolModelCapability_WhenPoolHasOtherCapabilities_ShouldMergeUpstreamSizeControl()
+    {
+        var platform = CreatePlatform("plat-1", "OpenAI", "openai");
+        var pool = CreateModelGroup(
+            "pool-image", "Image Pool", "generation",
+            isDefault: true, priority: 0,
+            ("plat-1", "image-model", ModelHealthStatus.Healthy));
+        pool.Models[0].Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "image_generation", Source = "user", Value = true },
+            new() { Type = "parameter:image_size.none", Source = "legacy-snapshot", Value = true }
+        };
+        var modelConfig = CreateLegacyModel("image-model", "plat-1", "generation");
+        modelConfig.Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "parameter:image_size.prompt", Source = "user", Value = true },
+            new() { Type = "parameter:image_size.field.aspect_ratio", Source = "user", Value = true }
+        };
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithModelGroup(pool)
+            .WithLegacyModel(modelConfig, "sk-test");
+
+        var result = await resolver.ResolveAsync("visual-agent.image::generation", "generation");
+
+        Assert.True(result.Success);
+        Assert.Equal("image-model", result.ActualModel);
+        Assert.NotNull(result.ParameterCapabilities);
+        Assert.True(result.ParameterCapabilities!["image_size.prompt"]);
+        Assert.True(result.ParameterCapabilities["image_size.field.aspect_ratio"]);
+        Assert.False(result.ParameterCapabilities.ContainsKey("image_size.none"));
+    }
+
+    [Fact]
+    public async Task PoolModelCapability_WhenUpstreamInheritsSizeControl_ShouldIgnoreStalePoolSnapshot()
+    {
+        var platform = CreatePlatform("plat-1", "OpenAI", "openai");
+        var pool = CreateModelGroup(
+            "pool-image", "Image Pool", "generation",
+            isDefault: true, priority: 0,
+            ("plat-1", "image-model", ModelHealthStatus.Healthy));
+        pool.Models[0].Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "image_generation", Source = "user", Value = true },
+            new() { Type = "param.image_size.prompt", Source = "legacy-snapshot", Value = true },
+            new() { Type = "parameter:image_size.field.size", Source = "legacy-snapshot", Value = true },
+            new() { Type = "parameter:seed", Source = "pool", Value = true },
+        };
+        var modelConfig = CreateLegacyModel("image-model", "plat-1", "generation");
+        modelConfig.Capabilities = new List<LLMModelCapability>
+        {
+            new() { Type = "image_generation", Source = "user", Value = true },
+        };
+
+        var resolver = new InMemoryModelResolver()
+            .WithPlatform(platform, "sk-test")
+            .WithModelGroup(pool)
+            .WithLegacyModel(modelConfig, "sk-test");
+
+        var result = await resolver.ResolveAsync("visual-agent.image::generation", "generation");
+
+        Assert.True(result.Success);
+        Assert.Equal("image-model", result.ActualModel);
+        Assert.NotNull(result.ParameterCapabilities);
+        Assert.True(result.ParameterCapabilities!["seed"]);
+        Assert.DoesNotContain(result.ParameterCapabilities.Keys, key =>
+            key.StartsWith("image_size.", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ExchangePoolCapability_ShouldIgnorePersistedSizeControlSnapshot()
+    {
+        var model = new ModelGroupItem
+        {
+            ModelId = "exchange-image-model",
+            PlatformId = "exchange-1",
+            Capabilities =
+            [
+                new() { Type = "parameter:seed", Source = "pool", Value = true },
+                new() { Type = "parameter:image_size.none", Source = "legacy-snapshot", Value = true },
+                new() { Type = "param.image_size.field.size", Source = "legacy-snapshot", Value = true },
+            ],
+        };
+        var group = new ModelGroup { Id = "pool-exchange", Name = "Exchange Pool", Code = "exchange-pool" };
+        var exchange = new ModelExchange
+        {
+            Id = "exchange-1",
+            Name = "Exchange",
+            TargetUrl = "https://exchange.example.com/v1",
+        };
+
+        var result = ModelResolutionResult.FromExchangePool(
+            "DefaultPool", "image2", model, group, exchange, "test-key");
+
+        Assert.NotNull(result.ParameterCapabilities);
+        Assert.True(result.ParameterCapabilities!["seed"]);
+        Assert.DoesNotContain(result.ParameterCapabilities.Keys, key =>
+            key.StartsWith("image_size.", StringComparison.OrdinalIgnoreCase));
     }
 
     [Theory]

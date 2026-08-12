@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -1108,6 +1109,29 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("run.DeploymentSlug", imageController);
         Assert.Contains("显式逻辑模型跳过 MAP 模型池调度", imageWorker);
         Assert.Contains(".Set(x => x.ModelResolutionType, ModelResolutionType.LogicalModel)", imageWorker);
+    }
+
+    [Fact]
+    public void LiteraryIllustrationPicker_UsesCapabilityAwareSizeMetadataForEveryPicker()
+    {
+        var editor = ReadRepoFile("prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx");
+
+        Assert.Contains("getVisualAgentAdapterInfo,", editor);
+        Assert.Contains("const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable]", editor);
+        Assert.Contains("setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);", editor);
+        Assert.Equal(2, editor.Split("!currentModelSizesNotApplicable && (", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
+    public void ImageRunEvents_UseResolvedSizeCapabilityInsteadOfOnlyTheLegacyAdapter()
+    {
+        var imageWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        var imageClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+
+        Assert.Contains("var startIsAdaptive = await ResolveRunIsAdaptiveAsync", imageWorker);
+        Assert.Contains("var doneIsAdaptive = meta?.IsAdaptive", imageWorker);
+        Assert.Contains("isAdaptive = doneIsAdaptive", imageWorker);
+        Assert.Contains("IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName)", imageClient);
     }
 
     [Fact]
@@ -4122,6 +4146,456 @@ public class GatewayDataDomainGuardTests
             liveEndpoint.IndexOf("GatewayHttpEndpoints.OpenContextScope", StringComparison.Ordinal)
             < liveEndpoint.IndexOf("orchestrator.ExecuteAsync", StringComparison.Ordinal),
             "实时 ASR 必须先把已验证租户打开为请求上下文，再解析和访问该租户的模型供应商");
+    }
+
+    /// <summary>
+    /// 上游治理三件套：删得掉、认得出、查得到。
+    ///
+    /// 这三条都是「删掉之后测试仍全绿」的接线，只会安静地退化成
+    /// 「垃圾平台清不掉 / 两条同名上游分不清谁是谁 / 出了事翻不到这条上游的日志」，
+    /// 所以逐条钉死，别指望下一个人记得。
+    /// </summary>
+    [Fact]
+    public void PlatformGovernance_CanDeleteIdentifyAndTraceUpstreams()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var crypto = ReadRepoFile("llmgw/console-api/Security/GwApiKeyCrypto.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+        var logsView = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+
+        // 1) 删得掉——但必须先查占用，否则池成员会挂着一条不存在的平台静默失联
+        Assert.Contains("app.MapDelete(\"/gw/platforms/{id}\"", console);
+        Assert.Contains("CollectPlatformDeleteBlockersAsync", console);
+        Assert.Contains("PLATFORM_IN_USE", console);
+        Assert.Contains("platform.delete", console);
+        Assert.Contains("ElemMatch<BsonDocument>(\"Models\"", console);
+        Assert.Contains("export function deletePlatform(", api);
+        Assert.Contains("removePlatform", page);
+
+        // 2) 认得出——只给指纹，且必须有 ConfigWrite 才下发；明文任何时候都不许出现在响应里
+        Assert.Contains("public static string Fingerprint(", crypto);
+        Assert.Contains("public string? KeyFingerprint", dtos);
+        Assert.Contains("LlmGwPermissions.ConfigWrite", console);
+        Assert.Contains("revealFingerprint", console);
+        Assert.Contains("keyFingerprint", page);
+        // 明文解出来只有一个去处：喂给 Fingerprint。多出任何一处引用都可能是把整把 key 塞进了响应。
+        Assert.Contains("GwApiKeyCrypto.Fingerprint(decrypted.PlainText)", console);
+        Assert.Equal(
+            1,
+            console.Split("decrypted.PlainText").Length - 1);
+
+        // 3) 查得到——按 PlatformId 精确过滤（provider 会重名，本仓库真出现过同名同 URL 两条上游）
+        Assert.Contains("fb.Eq(\"PlatformId\", platformId.Trim())", console);
+        Assert.Contains("platformId?: string;", ReadRepoFile("llmgw/web/src/lib/types.ts"));
+        Assert.Contains("initialQueryValue('platformId')", logsView);
+        Assert.Contains("/logs?platformId=", page);
+        // 请求页与会话页共用同一份筛选参数：只有一边收 platformId 的话，用户从深链进来切到
+        // 会话页，界面上筛选还亮着、列的却是所有平台的会话——筛选条件在说谎。
+        // 判据钉「每个吃这份筛选的端点都要把 platformId 传进同一个 BuildFilter」。
+        foreach (var endpoint in new[] { "app.MapGet(\"/gw/logs\"", "app.MapGet(\"/gw/logs/sessions\"" })
+        {
+            var body = EndpointBody(console, endpoint);
+            Assert.Contains("platformId", body);
+            Assert.Contains("BuildFilter(", body);
+            var call = body[body.IndexOf("BuildFilter(", StringComparison.Ordinal)..];
+            Assert.True(
+                call.Contains("platformId)", StringComparison.Ordinal)
+                || call.Contains("platformId: platformId", StringComparison.Ordinal),
+                $"{endpoint} 没把 platformId 传进 BuildFilter，平台筛选会在这一页失效");
+        }
+
+        // 4) 改得动 / 并得了——「只能建不能改、不能并」正是垃圾堆积的上游成因
+        Assert.Contains("app.MapPut(\"/gw/platforms/{id}\"", console);
+        Assert.Contains("platform.update", console);
+        Assert.Contains("export function updatePlatform(", api);
+        Assert.Contains("beginEdit", page);
+
+        // 5) 模型也删得掉——平台删除要求先清模型引用，没有这个端点那条路径根本走不通
+        Assert.Contains("app.MapDelete(\"/gw/models/{id}\"", console);
+        Assert.Contains("MODEL_IN_USE", console);
+        Assert.Contains("model.delete", console);
+        Assert.Contains("export function deleteModel(", api);
+    }
+
+    /// <summary>
+    /// 默认池不能被自己的坏状态锁死。
+    ///
+    /// 真实死锁：默认池成员全部掉成 Unavailable 后，「必须留一个可用成员」这条守卫
+    /// 把删除／覆盖／重新声明全部挡下——唯一能救回池子的动作，被池子当前的坏状态挡在门外。
+    /// 判据取的是变更前的状态，却用来 gate 那个会改变该状态的变更。
+    /// </summary>
+    [Fact]
+    public void DefaultPoolGuard_DoesNotBlockTheOnlyActionThatCanRepairIt()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 改动前就已经零可用成员时不再拦：拦不住任何损害，只会把修复一起挡掉
+        var guardStart = console.IndexOf("static async Task<string?> ValidateDefaultGatewayPoolMembersAsync", StringComparison.Ordinal);
+        Assert.True(guardStart > 0, "默认池守卫函数应当存在");
+        var guardBody = console[guardStart..(guardStart + 2000)];
+        Assert.Contains("HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool)", guardBody);
+
+        // 显式重新声明成员必须重置健康位。旧写法把 HealthStatus 塞在「仅新成员」的初始化块里，
+        // existing 会把陈旧的 Unavailable 一路带回去；现在改成空构造 + 无条件重置。
+        // 断言这一行的存在，等于断言不会退回旧写法。
+        Assert.Contains("existing is not null ? new BsonDocument(existing) : new BsonDocument();", console);
+    }
+
+    /// <summary>
+    /// 「建得出、删不掉」是垃圾堆积的系统性成因。
+    ///
+    /// 断头自检（2026-08-10）扫出 7 类资源只有创建没有删除：模型池、交换所、逻辑模型、
+    /// appCaller、池成员、团队、租户。本测试钉住其中已补齐的五条删除链路——
+    /// 每条都要求「后端端点 + 审计动作 + 前端 api 函数 + 页面调用点」四段齐全，
+    /// 缺任何一段这条能力就是断头的，而少任何一段都不会让别的测试变红。
+    /// </summary>
+    [Fact]
+    public void GatewayResources_ThatCanBeCreated_CanAlsoBeDeleted()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+
+        // 端点路径 / 审计动作 / api 函数 / 页面文件 / 页面里的调用点
+        var links = new[]
+        {
+            ("app.MapDelete(\"/gw/pools/{id}\"", "pool.delete", "export function deletePool(", "llmgw/web/src/pages/ModelPoolsPage.tsx", "deletePool("),
+            ("app.MapDelete(\"/gw/logical-models/{id}\"", "logical-model.delete", "export function deleteLogicalModel(", "llmgw/web/src/pages/LogicalModelsPage.tsx", "deleteLogicalModel("),
+            ("app.MapDelete(\"/gw/app-callers/{id}\"", "app_caller.delete", "export function deleteAppCaller(", "llmgw/web/src/pages/AppCallersPage.tsx", "deleteAppCaller("),
+            ("app.MapDelete(\"/gw/exchanges/{id}\"", "exchange.delete", "export function deleteExchange(", "llmgw/web/src/pages/ExchangesPage.tsx", "deleteExchange("),
+            ("app.MapDelete(\"/gw/models/{id}\"", "model.delete", "export function deleteModel(", "llmgw/web/src/pages/ModelsPage.tsx", "deleteModel("),
+        };
+
+        foreach (var (endpoint, auditAction, apiExport, pagePath, pageCall) in links)
+        {
+            Assert.Contains(endpoint, console);
+            Assert.Contains(auditAction, console);
+            Assert.Contains(apiExport, api);
+            Assert.Contains(pageCall, ReadRepoFile(pagePath));
+        }
+
+        // 删除阻挡：删掉一个还在被引用的对象，引用方不会报错，只会在路由时静默降级。
+        // 所以每条删除都必须先查引用并把阻挡原因报回去，而不是「删了再说」。
+        Assert.Contains("POOL_IN_USE", console);
+        Assert.Contains("EXCHANGE_IN_USE", console);
+        Assert.Contains("MODEL_IN_USE", console);
+        // 逻辑模型没有阻挡：Offering 是它自己的下挂路由，别处不引用，所以是连带删。
+        // 但连带删必须把删掉几条报回去——否则运维点一次删掉 N 条却毫无感知。
+        Assert.Contains("OfferingsDeleted", console);
+        Assert.Contains("offeringsDeleted", ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx"));
+        // 交换所被池成员引用有两种写法（直指 id / __exchange__ 别名），只查一种会漏判成「没人用」
+        Assert.Contains("__exchange__", console);
+        // 模型池删除的两类阻挡语义不同，必须分开报：改默认 vs 解绑 appCaller，补救动作不一样
+        Assert.Contains("IsCurrentDefault", console);
+    }
+
+    /// <summary>
+    /// 组织三件（团队 / 成员 / 租户）的删除。它们和网关资源不同：删错了丢的是「谁能进来」，
+    /// 补不回来。所以每一条都要求额外的归属校验，且这些校验必须写在服务端——
+    /// 前端按钮可见性只是提示，绕过它的人正是最需要被挡住的那个。
+    /// </summary>
+    [Fact]
+    public void OrganizationDeletes_CarryTheirOwnershipGuards()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var page = ReadRepoFile("llmgw/web/src/pages/OrganizationPage.tsx");
+
+        // 团队：三类引用（成员 / 接入密钥 / appCaller）任一存在就不许删。
+        // 团队被删后引用方不会报错，只会被权限判定当成「没有范围」，所以必须拦在删除前。
+        Assert.Contains("app.MapDelete(\"/gw/teams/{id}\"", console);
+        Assert.Contains("TEAM_IN_USE", console);
+        Assert.Contains("team.delete", console);
+        Assert.Contains("export function deleteTeam(", api);
+        Assert.Contains("removeTeam", page);
+        // 阻挡清单报 userId 等于没报——运维看着一串 hex 不知道去找谁解绑。必须解成账号名。
+        Assert.Contains("nameById.TryGetValue(x, out var name)", console);
+
+        // 成员：不能删自己、只有 owner 能删 owner、不能删掉最后一个活跃 owner。
+        // 最后一条走 TenantOwnerAuthority.TryRemoveAsync 的原子判定，
+        // 且摘牌后若删除失败必须补回去——否则 owner 名单会凭空少一位。
+        var memberDelete = EndpointBody(console, "app.MapDelete(\"/gw/members/{id}\"");
+        Assert.Contains("SELF_MEMBERSHIP_CHANGE_FORBIDDEN", memberDelete);
+        Assert.Contains("OWNER_REQUIRED", memberDelete);
+        Assert.Contains("TenantOwnerAuthority.TryRemoveAsync", memberDelete);
+        Assert.Contains("OwnerRemovalResult.LastOwner", memberDelete);
+        Assert.Contains("TenantOwnerAuthority.RestoreAsync", memberDelete);
+        Assert.Contains("membership.delete", memberDelete);
+        Assert.Contains("export function deleteMember(", api);
+        Assert.Contains("removeMember", page);
+
+        // 租户：只能删当前会话所在的租户、内置租户不许删、非空不许删。
+        // 用户建的东西一律不级联——级联写错不可逆，「先自己清干净再删」可逆。
+        // 唯一的例外是系统自己铺的脚手架（空的托管默认池 + 池类型指针）：它们由平台在开租户时
+        // 自动创建、用户删不掉（当前默认池不许删），算进「非空」就会让成功分支永远走不到。
+        var tenantDelete = EndpointBody(console, "app.MapDelete(\"/gw/tenants/{id}\"");
+        Assert.Contains("TENANT_SCOPE_MISMATCH", tenantDelete);
+        Assert.Contains("INTERNAL_TENANT", tenantDelete);
+        Assert.Contains("TENANT_NOT_EMPTY", tenantDelete);
+        // 阻挡计数必须排掉空的托管默认池，否则 Pools == 0 不可达
+        Assert.Contains("ManagedByRegistry", tenantDelete);
+        Assert.Contains("PoolMemberCount(d) == 0", tenantDelete);
+        // 池删了，指着它的类型文档也要删——否则留下一条指向已删池的 DefaultPoolId
+        Assert.Contains("gwModelPoolTypes.DeleteManyAsync(tenantFilter)", tenantDelete);
+        Assert.Contains("tenant.delete", tenantDelete);
+        Assert.Contains("RequireAuthorization(\"TenantOwner\")", tenantDelete);
+
+        // 收尾顺序：**会毁掉「还能重试」这个能力的那一步必须最后做**（同合并那条纪律）。
+        // 本端点要 TenantOwner 才进得来，而 ResolveAsync 查不到 active 成员关系就返回 null，
+        // 所以毁掉重试能力的是删成员关系，不是删租户。先删成员再删租户的话，卡在中间
+        // 就是「租户还在、没人进得来、连重试都不行」，只能上数据库手工救。
+        // 先删租户则相反：ResolveAsync 查不到 active 租户同样返回 null，剩下的成员关系
+        // 只是指向已不存在租户的惰性残留，清不掉也不挡人。
+        var tenantGone = tenantDelete.IndexOf("tenants.DeleteOneAsync", StringComparison.Ordinal);
+        var membershipsGone = tenantDelete.IndexOf("memberships.DeleteManyAsync", StringComparison.Ordinal);
+        Assert.True(tenantGone > 0, "租户删除端点没有删租户本身");
+        Assert.True(membershipsGone > 0, "租户删除端点没有清理成员关系");
+        Assert.True(
+            tenantGone < membershipsGone,
+            "删租户必须排在删成员关系之前：反过来一旦中途失败，租户还在而最后一个 owner 已经进不来，连重试删除都做不到");
+        Assert.Contains("export function deleteTenant(", api);
+        Assert.Contains("removeTenant", page);
+        // 租户没了，绑在它上面的会话也就没了：必须正规登出，不能留一个指向空租户的 token
+        Assert.Contains("logout();", page);
+    }
+
+    /// <summary>
+    /// 内部租户的池视图是「GW 自有池 + 未影子化的 MAP 池」两段拼起来的，
+    /// 三个删除闸门就必须都按这个口径查占用，少一个就漏一类。
+    ///
+    /// 交换所那条最容易漏：它的判据要跑 GatewayExchangeSupportsModel 这个 C# 谓词，
+    /// 写法和另外两条的 Mongo ElemMatch 不一样，于是第一版只扫了 GW 池。
+    /// 而运行时 ModelResolver 解析 __exchange__ 成员时优先认 GW 自有交换所——
+    /// 删掉它，那条 MAP 池成员就地解析不到上游，且删除时一句告警都没有。
+    /// </summary>
+    [Fact]
+    public void AllDeleteGates_CountMapPoolsForInternalTenant()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 删模型 / 删平台：共享判定源里按 isInternal 把 MAP 池并进候选
+        var collector = MethodBody(console, "static async Task<ModelDeleteBlockers> CollectModelDeleteBlockersAsync");
+        Assert.Contains("isInternal", collector);
+        Assert.Contains("mapPools.Find(memberFilter)", collector);
+
+        var platformCollector = MethodBody(console, "static async Task<PlatformDeleteBlockers> CollectPlatformDeleteBlockersAsync");
+        Assert.Contains("mapPools", platformCollector);
+
+        // 删交换所：判据在端点内联（要跑 C# 谓词），同样必须并进 MAP 池
+        var exchangeDelete = EndpointBody(console, "app.MapDelete(\"/gw/exchanges/{id}\"");
+        Assert.Contains("internalTenantId", exchangeDelete);
+        Assert.Contains("modelGroups.Find(", exchangeDelete);
+        // 粗筛必须覆盖判据认的两种 PlatformId，少一个等于把那一类重新漏掉
+        Assert.Contains("new[] { id, \"__exchange__\" }", exchangeDelete);
+        // 且粗筛必须发生在判据之前——顺序反了就是先判后补，补进来的没人看
+        Assert.True(
+            exchangeDelete.IndexOf("modelGroups.Find(", StringComparison.Ordinal)
+            < exchangeDelete.IndexOf("var blocking = pools", StringComparison.Ordinal),
+            "MAP 池必须在 blocking 判据之前并入候选");
+    }
+
+    /// <summary>
+    /// offering 是第二类引用，而且是唯一按 _id 单键指过去的那一类。
+    ///
+    /// 池成员按 (modelId, platformId) 复合定位、随处可见，写判据时很难忘；
+    /// 逻辑模型的 offering 藏在另一张集合里，删掉目标它不会报错、不会变红，
+    /// 只会在路由时静默解析不到——正是本 PR 的删除闸门要消灭的那种残留，
+    /// 却在第一版里被删模型与删交换所两条路径同时漏掉。
+    /// 所以这两条路径必须各自走同一个共享判定源，任何一条改回去都在这里变红。
+    ///
+    /// （上游合并那条路径同属这一族，随合并功能一起挪到后续 PR，
+    /// 见 doc/debt.platform.llm-gateway.md「上游合并拆出本 PR」。）
+    /// </summary>
+    [Fact]
+    public void Deletes_NeverOrphanLogicalModelOfferings()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 删模型：占用清单要同时报「池把它当成员」和「逻辑模型把它当 offering 上游」
+        var modelDelete = EndpointBody(console, "app.MapDelete(\"/gw/models/{id}\"");
+        Assert.Contains("blockers.TotalCount > 0", modelDelete);
+        Assert.Contains("blockers.LogicalModels", modelDelete);
+
+        // 删交换所：图层能力就是靠 TargetKind=exchange 的 offering 装起来的，只查池会整条漏掉
+        var exchangeDelete = EndpointBody(console, "app.MapDelete(\"/gw/exchanges/{id}\"");
+        Assert.Contains("CollectOfferingHolderNamesAsync(http, gwModelOfferings, gwLogicalModels, \"exchange\", id)", exchangeDelete);
+
+    }
+
+    /// <summary>
+    /// 提示词策略是 appCaller 的从属子项，必须跟着一起删。
+    ///
+    /// 它只能从 `/gw/app-callers/{id}/prompt-policy` 建、没有独立入口，
+    /// 运行时（`GatewayPromptPolicyApplier`）却按 (TenantId, AppCallerCode, RequestType) 选中它，
+    /// **完全不看 appCaller 注册文档**。只删注册行的话策略照样在改写系统提示词；
+    /// 而 appCaller 是被下一次真实调用被动重建的，重建之后老提示词就这么回来了——
+    /// 与确认弹窗承诺的「配置不会回来」正好相反。
+    /// </summary>
+    [Fact]
+    public void DeletingAppCaller_AlsoRemovesItsPromptPolicies()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var applier = ReadRepoFile("llmgw/serving/GatewayPromptPolicyApplier.cs");
+        var page = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
+
+        // 运行时的选中判据不含 appCaller 文档：这就是「只删注册行不够」的根据
+        Assert.Contains("fb.Eq(\"AppCallerCode\", request.AppCallerCode.Trim().ToLowerInvariant())", applier);
+
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/app-callers/{id}\"");
+        Assert.Contains("promptPolicies.DeleteManyAsync", delete);
+        Assert.Contains("promptPolicyVersionsDeleted", delete);
+        // 删了几版必须报出来：它会改写系统提示词，静默删等于静默改行为
+        Assert.Contains("promptPolicyVersionsDeleted", page);
+    }
+
+    /// <summary>
+    /// 改名必须同步归一名。唯一索引与重名判定读的都是 NameNormalized，
+    /// 只改 Name 会让「看到的名字」和「判定用的名字」分家：当场不报错，
+    /// 下一次改名或新建才炸，且报的是索引冲突而不是「重名」。
+    /// </summary>
+    [Fact]
+    public void PlatformRename_KeepsNormalizedNameInSync()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var update = EndpointBody(console, "app.MapPut(\"/gw/platforms/{id}\"");
+
+        Assert.Contains("Set(\"NameNormalized\", normalized)", update);
+        // 归一口径必须与创建路径一致（GatewayConfigurationProvisioning：Trim + ToLowerInvariant）
+        Assert.Contains("name.ToLowerInvariant()", update);
+        Assert.Contains("name.ToLowerInvariant()", ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs"));
+        // 改成一个已存在的名字要按重名拒绝，而不是让唯一索引抛出去变成 500
+        Assert.Contains("DUPLICATE_PLATFORM", update);
+        // 预检和写入之间有窗口：并发改名双方都能过预检，最后由唯一索引挡下一个。
+        // 只有预检没有 catch，那一个就成 500——同一件事对外报两种结果。
+        // 这里要求这条路径自己接住 DuplicateKey，而不是依赖调用方少并发。
+        var duplicateCatch = update.IndexOf("ServerErrorCategory.DuplicateKey", StringComparison.Ordinal);
+        Assert.True(duplicateCatch > 0, "改名端点没有接住唯一索引的重名冲突，并发改名会变成 500");
+        Assert.Contains("DUPLICATE_PLATFORM", update[duplicateCatch..]);
+    }
+
+    /// <summary>
+    /// 改上游类型不能把「继承协议」的模型悄悄换掉报文协议。
+    ///
+    /// 模型 Protocol 为空表示继承所属上游
+    /// （运行时 `IsNullOrWhiteSpace(Protocol) ? PlatformType : Protocol`），
+    /// 把上游 openai 改成 claude，这批模型之后全按错协议发出去。一处挡了另一处没挡，
+    /// 等于这条不变量只在一半路径上成立。
+    /// </summary>
+    [Fact]
+    public void PlatformTypeChange_BlockedWhileModelsInheritProtocol()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var update = EndpointBody(console, "app.MapPut(\"/gw/platforms/{id}\"");
+
+        Assert.Contains("PLATFORM_TYPE_LOCKED", update);
+
+        // 判据必须真的按「继承」取模型：只看 PlatformId 会把显式写了协议的也算进去（过宽），
+        // 只判某一种空值写法则会漏掉另外两种（过窄，形状 1）。三种空值形态都要认。
+        var guardAt = update.IndexOf("PLATFORM_TYPE_LOCKED", StringComparison.Ordinal);
+        var guard = update[..guardAt];
+        Assert.Contains("Exists(\"Protocol\", false)", guard);
+        Assert.Contains("Eq(\"Protocol\", BsonNull.Value)", guard);
+        Assert.Contains("Eq(\"Protocol\", \"\")", guard);
+
+        // 只在类型真的变了时才挡：空上游、或名下模型都显式写了协议的，改类型无人受影响
+        Assert.Contains("string.Equals(currentType, type, StringComparison.Ordinal)", guard);
+
+        // 判据取的模型集合必须与**路由能解析到的**那一套一致。认领自 MAP 的平台，名下模型
+        // 可能还只存在于 MAP 的 models 集合里（池成员端点对内部租户会回退过去），
+        // 那批模型 Protocol 为空一样继承本平台类型。只数 gwModels 就是形状 1：换个存放位置就漏。
+        Assert.Contains("models.Find(", guard);
+        Assert.Contains("internalTenantId", guard);
+        // MAP 侧要排掉被 GW 同 _id 遮住的那些（认领是把同一个 _id 复制过来，GW 为准）
+        Assert.Contains("gwIdsUnderPlatform", guard);
+
+        // 报的条数必须是两边合计：名字列表是截断的，拿它的长度当条数会把 50 个说成 5 个，
+        // 用户照着提示改完那 5 个再来，还是被挡。
+        Assert.Contains("gwInheriting.Count + mapInheriting.Count", guard);
+        var message = update[guardAt..];
+        Assert.Contains("{inheritingCount} 个模型", message);
+        Assert.DoesNotContain("{names.Count} 个模型", message);
+    }
+
+    /// <summary>
+    /// 反断头通用守卫：api.ts 里导出的每个函数都必须有人调用。
+    ///
+    /// 形状 2（链路只建到一半）在本仓库的具体形态就是「后端加了端点、api.ts 加了函数、
+    /// 然后没有任何页面用它」——编译过、全量测试绿、通读也看不出来，只会静默地
+    /// 「功能像是有，但界面上找不到入口」。本测试写完当场就抓到一条：deleteModel
+    /// 已经写了两天，前端一个调用点都没有。
+    /// </summary>
+    [Fact]
+    public void ConsoleApiClient_HasNoOrphanExports()
+    {
+        var root = LocateRepoRoot();
+        var srcDir = Path.Combine(root, "llmgw", "web", "src");
+        var apiPath = Path.Combine(srcDir, "lib", "api.ts");
+        var apiSource = File.ReadAllText(apiPath);
+
+        var others = Directory
+            .EnumerateFiles(srcDir, "*.*", SearchOption.AllDirectories)
+            .Where(x => x.EndsWith(".ts", StringComparison.Ordinal) || x.EndsWith(".tsx", StringComparison.Ordinal))
+            .Where(x => !string.Equals(x, apiPath, StringComparison.Ordinal))
+            .Select(File.ReadAllText)
+            .ToList();
+
+        var orphans = new List<string>();
+        foreach (Match match in Regex.Matches(apiSource, @"^export function (\w+)", RegexOptions.Multiline))
+        {
+            var name = match.Groups[1].Value;
+            var word = new Regex($@"\b{Regex.Escape(name)}\b");
+            if (others.Any(x => word.IsMatch(x))) continue;
+            // 同文件内被引用 ≥2 次（定义 + 至少一处使用）说明它是内部 helper 顺带导出的，不算断头
+            if (word.Matches(apiSource).Count >= 2) continue;
+            orphans.Add(name);
+        }
+
+        Assert.True(
+            orphans.Count == 0,
+            $"api.ts 有 {orphans.Count} 个导出没有任何调用点，功能建了一半：{string.Join("、", orphans)}");
+    }
+
+    /// <summary>
+    /// 从端点定义切到它自己的收尾（`}).RequireAuthorization(...)` 那一行），而不是取固定字符数。
+    ///
+    /// 固定字符数的窗口会随着端点变长而悄悄把尾部断言切到窗口外——本仓库刚踩过：
+    /// 往租户删除里加了几行，「必须挂 TenantOwner」这条断言就落到 4000 字之外报了「找不到」，
+    /// 报的是缺失，实际是窗口太窄。判据的边界要跟着被判对象走，不能是一个拍出来的数字。
+    /// </summary>
+    private static string EndpointBody(string source, string anchor)
+    {
+        var start = source.IndexOf(anchor, StringComparison.Ordinal);
+        Assert.True(start > 0, $"找不到端点：{anchor}");
+        var end = source.IndexOf("}).Require", start, StringComparison.Ordinal);
+        Assert.True(end > start, $"端点没有收尾的授权声明：{anchor}");
+        var lineEnd = source.IndexOf('\n', end);
+        return source[start..(lineEnd < 0 ? source.Length : lineEnd)];
+    }
+
+    /// <summary>
+    /// 取一个静态方法的方法体。端点靠 "}).Require" 收尾，静态方法没有那个锚，
+    /// 所以按大括号配平找终点——找错了会把后面的方法一起吃进来，断言就形同虚设。
+    /// </summary>
+    private static string MethodBody(string source, string signature)
+    {
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start > 0, $"找不到方法：{signature}");
+        var open = source.IndexOf('{', source.IndexOf('\n', start));
+        Assert.True(open > start, $"方法没有方法体：{signature}");
+        var depth = 0;
+        for (var i = open; i < source.Length; i++)
+        {
+            if (source[i] == '{') depth++;
+            else if (source[i] == '}')
+            {
+                depth--;
+                if (depth == 0) return source[start..(i + 1)];
+            }
+        }
+
+        Assert.Fail($"方法大括号不配平：{signature}");
+        return string.Empty;
     }
 
     private static string ReadRepoFile(string relativePath)
