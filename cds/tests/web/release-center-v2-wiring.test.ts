@@ -138,6 +138,35 @@ describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
     expect(timeline).toContain('看失败原因');
   });
 
+  /**
+   * 止血三条的接线守卫（2026-08-12）。判据层已经在 releaseDiagnosis 里有单测，
+   * 但「结论位有没有兜底截断」「影响面有没有真的渲染出来」「归并后的分组有没有
+   * 接进两个日志区块」这三件事删掉之后，页面照样编译、单测照样绿——正是形状 2，
+   * 必须在源码层钉住。
+   */
+  it('结论位恒为一句话：line-clamp 兜底还在', () => {
+    const body = functionBody(diagnosis, 'export function FailureDiagnosis(');
+    expect(body).toMatch(/line-clamp-2[^>]*>\{diagnosis\.headline\}/);
+  });
+
+  it('影响面单独成行，且只在能被数据证明时出现', () => {
+    const body = functionBody(diagnosis, 'export function FailureDiagnosis(');
+    expect(body).toContain('生产未受影响');
+    expect(body).toContain('productionUntouched && row');
+    // 结论不许拍脑袋：仍由「目标当前版本 ≠ 本次版本」推出来
+    expect(diagnosis).toContain("row?.currentCommit !== run.commitSha");
+    // 别又退回元信息行末尾那句灰色小字
+    expect(body).not.toContain('未切换到本次版本`');
+  });
+
+  it('归并后的分组接进了 error 与噪音两个区块，且压掉多少要说出来', () => {
+    const body = functionBody(diagnosis, 'export function FailureDiagnosis(');
+    expect(body).toContain('diagnosis.errorGroups');
+    expect(body).toContain('diagnosis.noiseGroups');
+    expect(body.match(/<LogGroupList/g) || []).toHaveLength(2);
+    expect(functionBody(diagnosis, 'function describeGroups(')).toContain('归并');
+  });
+
   it('发布脚本原文只在配置页签，不回到首屏', () => {
     expect(config).toContain('发布脚本原文');
     expect(config).toContain('deployScriptLines(row)');

@@ -141,7 +141,47 @@ describe('发布中心渲染冒烟 · 失败诊断', () => {
 
   it('生产未被改动这个结论由数据推出：目标仍在自己那一版', () => {
     // currentCommit(1b751ad) ≠ 本次失败的 commit(307301a)，才敢这么说。
-    expect(html).toContain('目标仍在 1b751ad');
+    expect(html).toContain('生产未受影响');
+    expect(html).toContain('1b751ad');
+    expect(html).toContain('本次版本没有切换上线');
+  });
+
+  /**
+   * rel_9759ead9be9405e3 的形状：远端执行器把一句人话和 19 行 stderr 拼成
+   * **一条** error 丢回来。判据层已经切过一刀，这里证明屏幕上真的只剩一句话。
+   */
+  it('复合 error 不许在结论位铺成一堵墙', () => {
+    const run = failedRun();
+    run.logs = [{
+      seq: 1,
+      at: '2026-07-29T16:07:10Z',
+      level: 'error' as const,
+      message: [
+        '执行项目发布命令失败: ssh exec exit=22',
+        '--- stderr(tail) --- ... [truncated, kept last 19 lines / 1418 chars]',
+        'Warning: Problem (retrying all errors). Will retry in 2 seconds. 4 retries left.',
+        'curl: (22) The requested URL returned error: 404',
+      ].join('\n'),
+    }];
+    const wall = render(createElement(FailureDiagnosis, {
+      run,
+      row: productionRow(),
+      retrying: false,
+      canRollback: true,
+      onRetry: () => {},
+      onRollback: () => {},
+    }));
+    const headline = wall.slice(wall.indexOf('line-clamp-2'), wall.indexOf('</h3>'));
+    expect(headline).toContain('执行项目发布命令失败: ssh exec exit=22');
+    expect(headline).not.toContain('curl');
+    expect(headline).not.toContain('truncated');
+    // 原文没被吞掉：完整 error 仍在下方的 error 行区块里
+    expect(wall).toContain('The requested URL returned error: 404');
+  });
+
+  it('影响面单独成行，不再挂在元信息末尾当灰色小字', () => {
+    // 判据没变，位置变了：以前是「耗时 38s · 目标仍在 xxx」的尾巴，现在自成一行。
+    expect(html).not.toMatch(/耗时[^<]*目标仍在/);
   });
 
   it('目标当前就跑着这一版时不许说「未切换」', () => {
@@ -156,7 +196,8 @@ describe('发布中心渲染冒烟 · 失败诊断', () => {
       onRetry: () => {},
       onRollback: () => {},
     }));
-    expect(same).not.toContain('未切换到本次版本');
+    expect(same).not.toContain('生产未受影响');
+    expect(same).not.toContain('本次版本没有切换上线');
   });
 });
 

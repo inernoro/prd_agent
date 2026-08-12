@@ -10,10 +10,15 @@
  */
 
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, HardDrive, Loader2, RotateCcw, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ChevronDown, HardDrive, Loader2, RotateCcw, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
-import { diagnoseReleaseFailure, parseDiskGuardShortfall, type ReleaseGateCheck } from '@/lib/releaseDiagnosis';
+import {
+  diagnoseReleaseFailure,
+  parseDiskGuardShortfall,
+  type ReleaseGateCheck,
+  type ReleaseLogGroup,
+} from '@/lib/releaseDiagnosis';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { Chip, CodeText, formatClock, formatDateTime, formatDuration } from './shared';
 import type { CenterRow, ReleaseRun } from './types';
@@ -52,15 +57,14 @@ export function FailureDiagnosis({
               {row ? <Chip>{row.target.name}</Chip> : null}
               <CodeText className="text-muted-foreground">{run.releaseId}</CodeText>
             </div>
-            <h3 className="mt-2.5 text-[17px] font-semibold leading-snug">{diagnosis.headline}</h3>
+            {/* 结论位恒为一句话：判据层已切掉 stderr 尾巴，这里再用 line-clamp 兜一道，
+                任何漏网的长文本都不许把操作按钮挤出首屏。完整原文见下方 error 行区块。 */}
+            <h3 className="mt-2.5 line-clamp-2 text-[17px] font-semibold leading-snug">{diagnosis.headline}</h3>
             <p className="mt-1.5 text-xs text-muted-foreground">
               {formatDateTime(run.startedAt)}
               {run.operator ? ` 由 ${run.operator} 触发` : ''}
               {` · commit ${run.commitSha.slice(0, 7)}`}
               {duration ? ` · 耗时 ${duration}` : ''}
-              {productionUntouched && row
-                ? ` · 目标仍在 ${row.currentCommit.slice(0, 7)}，未切换到本次版本`
-                : ''}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -74,6 +78,19 @@ export function FailureDiagnosis({
             </Button>
           </div>
         </div>
+
+        {/* 失败后第一个要确认的事实：生产有没有被动过。以前它是元信息行末尾的一句
+            灰色小字，读者要先趟过整条元信息才看得到；现在单独成行。
+            只在能被数据证明时出现（目标当前版本 ≠ 本次版本），证明不了就不说。 */}
+        {productionUntouched && row ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-500" />
+            <span className="font-semibold text-emerald-600 dark:text-emerald-400">生产未受影响</span>
+            <span className="text-muted-foreground">
+              {row.target.name}仍在 <CodeText>{row.currentCommit.slice(0, 7)}</CodeText>，本次版本没有切换上线
+            </span>
+          </div>
+        ) : null}
       </section>
 
       {diskShortfall && row ? (
@@ -123,12 +140,10 @@ export function FailureDiagnosis({
             </section>
           )}
 
-          {diagnosis.errorLines.length > 0 ? (
+          {diagnosis.errorGroups.length > 0 ? (
             <section className="cds-surface-raised cds-hairline rounded-lg p-4">
-              <h4 className="text-sm font-semibold">错误级日志（{diagnosis.errorLines.length} 条）</h4>
-              <pre className="mt-2 overflow-x-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6">
-                {diagnosis.errorLines.join('\n')}
-              </pre>
+              <h4 className="text-sm font-semibold">错误级日志（{describeGroups(diagnosis.errorGroups)}）</h4>
+              <LogGroupList groups={diagnosis.errorGroups} />
             </section>
           ) : null}
         </div>
@@ -159,18 +174,18 @@ export function FailureDiagnosis({
             ) : null}
           </section>
 
-          {diagnosis.noiseLines.length > 0 ? (
+          {diagnosis.noiseGroups.length > 0 ? (
             <section className="cds-surface-raised cds-hairline rounded-lg p-4">
               <div className="flex items-center justify-between gap-2">
                 <h4 className="flex items-center gap-1.5 text-sm font-semibold">
                   <AlertTriangle className="h-4 w-4 text-amber-500" />
                   顺带发现的噪音
                 </h4>
-                <Chip tone="warn">{diagnosis.noiseLines.length} 条</Chip>
+                <Chip tone="warn">{describeGroups(diagnosis.noiseGroups)}</Chip>
               </div>
-              <pre className="mt-2 overflow-x-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6">
-                {diagnosis.noiseLines.join('\n')}
-              </pre>
+              {/* 噪音栏只给代表行 + 计数：这一栏本来就写着「不是失败原因」，
+                  再把只差一个倒计时的几种写法铺开只是二次刷屏。完整原文在下方原始日志。 */}
+              <LogGroupList groups={diagnosis.noiseGroups} showVariants={false} />
               <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
                 这些是 WARN，不是失败原因；但它们会把真正的判据挤出错误摘要，
                 所以单独列在这里，不与上面的结论混在一起。
@@ -194,6 +209,45 @@ export function FailureDiagnosis({
           </details>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 「12 条 · 归并 3 组」——刷屏被压掉多少，得让读者看见，不能悄悄少几行。 */
+function describeGroups(groups: ReadonlyArray<ReleaseLogGroup>): string {
+  const total = groups.reduce((sum, group) => sum + group.count, 0);
+  return total > groups.length ? `${total} 条 · 归并 ${groups.length} 组` : `${total} 条`;
+}
+
+/**
+ * 归并后的日志块。
+ *
+ * 重复只压缩计数，不压缩差异：同组里出现过的不同原文（`404` 与 `500` 这种）
+ * 逐条列出来，读者不必翻原始日志才知道组里并非一模一样。
+ */
+function LogGroupList({
+  groups,
+  showVariants = true,
+}: {
+  groups: ReadonlyArray<ReleaseLogGroup>;
+  showVariants?: boolean;
+}): JSX.Element {
+  return (
+    <div className="mt-2 overflow-x-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6">
+      {groups.map((group) => (
+        <div key={group.text} className="whitespace-pre-wrap break-all">
+          {(showVariants ? group.variants : group.variants.slice(0, 1)).map((variant, index) => (
+            <div key={variant} className={index > 0 ? 'text-muted-foreground' : ''}>
+              {variant}
+              {index === 0 && group.count > 1 ? (
+                <span className="ml-2 rounded bg-[hsl(var(--hairline))] px-1.5 text-[10.5px] text-muted-foreground">
+                  × {group.count}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
