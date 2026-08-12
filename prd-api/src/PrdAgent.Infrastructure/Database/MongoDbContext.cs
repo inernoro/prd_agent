@@ -359,6 +359,10 @@ public class MongoDbContext
     // 知识库语义检索：文档切块向量
     public IMongoCollection<DocumentEmbedding> DocumentEmbeddings => _database.GetCollection<DocumentEmbedding>("document_embeddings");
 
+    // 网页托管「向我提问」
+    public IMongoCollection<HostedSiteAskSession> HostedSiteAskSessions => _database.GetCollection<HostedSiteAskSession>("hosted_site_ask_sessions");
+    public IMongoCollection<HostedSiteAskMessage> HostedSiteAskMessages => _database.GetCollection<HostedSiteAskMessage>("hosted_site_ask_messages");
+
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");

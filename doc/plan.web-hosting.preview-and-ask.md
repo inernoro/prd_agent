@@ -18,7 +18,7 @@
 |---|---|---|---|---|---|---|
 | **A 预览修复** #1356 | `claude/web-hosting-preview-fix`（基于 main） | 100% | 两轮已收口 | 无 | 合并 | 42 条 vitest 守卫全绿；红绿闭环已跑（把 `withPreviewBase` 改回旧写法 → 8 条变红 → 恢复）；CI 全绿 |
 | **B 向我提问** #1358 | `claude/web-hosting-ask`（叠在 A 上） | 95% | 两轮已收口，待真人验收 | **没有任何人用浏览器点开过这个功能**（我的沙箱 Chromium 无外网） | 由人打开预览页点一次提问，看到答案流出来 | 后端 xUnit 守卫；API 层灰度实测；**无真人路径截图** |
-| **C 检索底座** #1357 | `claude/knowledge-embedding-base`（基于 main） | 100%（底座部分） | 两轮已收口 | 检索服务本身缺 embedding 供应商 key（外部输入） | 合并；拿到 key 后续做检索服务 | 切块与跨模型污染守卫；[debt.platform.embedding-provider.md](./debt.platform.embedding-provider.md) |
+| **C 检索底座** #1357 | `claude/knowledge-embedding-base`（基于 main） | 100%（底座部分） | 两轮已收口 | 检索服务本身缺 embedding 供应商 key（外部输入） | 合并；拿到 key 后续做检索服务 | 切块与跨模型污染守卫；[向量供应商台账](./debt.platform.embedding-provider.md) |
 
 三条线的依赖：C 与 A、B 完全无关，可任意顺序合。B 依赖 A（B 的分享页改动叠在 A 的预览修复之上），**A 先合，B 后合**。
 
