@@ -292,13 +292,26 @@ async function main() {
     check('生成中不提前宣布「模型实际给出 N 层」', !prematureVerdict);
 
     const bad = overlapReport.filter((r) => r.hits.length);
+    // 三个控件必须**每一档都在场**才算测过。
+    //
+    // measureOverlap 会把找不到的控件过滤掉，而「没有两两配对」自然就没有重叠——
+    // 于是分层提前跑完、或任何一个选择器漂了，这条判据都会在「一个都没比」的情况下
+    // 判绿，宣称三个控件从不遮挡（Codex PR #1363 P2；正是本仓库判据纪律里的形状 4：
+    // 不会红的证据比没有证据更糟）。缺控件时必须显式判红让人来看，不许静默放行。
+    const EXPECTED_CONTROLS = ['Frame 头部', '图层面板按钮', '图层分离中标记'];
+    const incomplete = overlapReport
+      .map((r) => ({ zoom: r.zoom, missing: EXPECTED_CONTROLS.filter((name) => !r.present.includes(name)) }))
+      .filter((r) => r.missing.length);
     const waitingShot = await shot(page, 'waiting');
     check(
       '等待态的 Frame 头部 / 图层面板按钮 / 分层中标记在各缩放档位都不遮挡',
-      bad.length === 0,
+      overlapReport.length > 0 && bad.length === 0 && incomplete.length === 0,
       bad.length
         ? `重叠档位：${bad.map((r) => `${r.zoom}%(${r.hits.join('、')})`).join('；')}`
-        : `测过 ${overlapReport.map((r) => `${r.zoom}%`).join('/')}，在场：${overlapReport[0].present.join('、')}（见 ${waitingShot}）`,
+        : incomplete.length
+          ? `控件缺席，这一档等于没测：${incomplete.map((r) => `${r.zoom}%缺[${r.missing.join('、')}]`).join('；')}`
+            + `（多半是分层在测完之前就跑完了，等待态消失——重跑或缩短缩放循环，别把它当通过）`
+          : `测过 ${overlapReport.map((r) => `${r.zoom}%`).join('/')}，三个控件每档都在场（见 ${waitingShot}）`,
     );
 
     // ---- 闭环：等图层行真的渲染出来（覆盖率文案 = 内容判定已跑完）
