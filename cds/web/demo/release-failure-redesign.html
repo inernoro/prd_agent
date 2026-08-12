@@ -53,6 +53,27 @@
 
 * { box-sizing: border-box; }
 
+/* ─────────────────────────────────────────────────────────────
+   动效：只在「有信息要传达」时出现——进场按信息优先级编排、
+   展开顺着来源方向生长、复制给一次确认。曲线只有三条，
+   全部包在 prefers-reduction 之外，关掉动效页面照常可用。
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.32, 0.72, 0.24, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes enter { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+@keyframes enter-soft { from { opacity: 0; } to { opacity: 1; } }
+@keyframes flash {
+  0% { background: hsl(var(--bad) / 0); }
+  38% { background: hsl(var(--bad) / 0.26); }
+  100% { background: hsl(var(--bad) / 0.09); }
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes sheet-out { to { opacity: 0; transform: translateY(8px) scale(0.99); } }
+@keyframes veil-out { to { opacity: 0; } }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -110,26 +131,34 @@ h1 {
   gap: 12px;
 }
 .segmented {
+  position: relative;
   display: inline-flex;
   padding: 3px;
-  gap: 2px;
   border-radius: 999px;
   background: var(--sunken);
 }
+.segmented .thumb {
+  position: absolute;
+  top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+  transform: translateX(100%);
+}
+.segmented[data-active="before"] .thumb { transform: translateX(0); }
 .segmented button {
+  position: relative; z-index: 1;
   appearance: none; border: 0; cursor: pointer;
+  min-width: 84px;
   padding: 7px 20px;
   border-radius: 999px;
   background: transparent;
   color: var(--ink-2);
   font: inherit; font-size: 13.5px; font-weight: 500;
-  transition: background 160ms ease, color 160ms ease;
+  transition: color 220ms var(--ease);
 }
-.segmented button[aria-pressed="true"] {
-  background: var(--panel);
-  color: var(--ink);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
-}
+.segmented button[aria-pressed="true"] { color: var(--ink); }
 .quiet {
   appearance: none; cursor: pointer;
   border: 0; background: none;
@@ -150,10 +179,8 @@ h1 {
   border: 1px solid var(--rule);
 }
 .stage > [hidden] { display: none; }
-@media (prefers-reduced-motion: no-preference) {
-  .stage > .cds { animation: rise 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-}
+/* 面板高度随内容变化时平滑过渡，避免详情展开/切换视图时页面跳一下 */
+.device { transition: none; }
 
 /* ─────────────────────────────────────────────────────────────
    CDS mock 作用域，取值对齐 cds/web/src/index.css
@@ -352,11 +379,16 @@ h1 {
 }
 
 /* ── 改版：第二层（详情） ───────────────────────────────── */
-.drawer { display: none; flex-direction: column; gap: 14px; }
-.drawer[data-open="true"] { display: flex; }
-@media (prefers-reduced-motion: no-preference) {
-  .drawer[data-open="true"] { animation: rise 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+/* 抽屉用 grid 行高做展开：0fr → 1fr，不需要量高度，也不会跳 */
+.drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: -16px;
+  opacity: 0;
+  pointer-events: none;
 }
+.drawer[data-open="true"] { grid-template-rows: 1fr; margin-top: 0; opacity: 1; pointer-events: auto; }
+.drawer-inner { min-height: 0; overflow: hidden; }
 .drawer-grid { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
 @media (max-width: 900px) { .drawer-grid { grid-template-columns: minmax(0, 1fr); } }
 .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
@@ -461,6 +493,7 @@ details.logs > summary::-webkit-details-marker { display: none; }
   padding: 24px;
 }
 .sheet-backdrop[hidden] { display: none; }
+.sheet-backdrop[data-closing="true"] { pointer-events: none; }
 .sheet {
   width: min(720px, 100%);
   max-height: min(78vh, 720px);
@@ -578,6 +611,50 @@ footer p { margin: 0 0 4px; }
   box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.5);
 }
 .toast[hidden] { display: none; }
+.page-btn .swap { display: inline-flex; align-items: center; gap: 7px; }
+
+/* ── 动效总闸：关掉动画偏好时，下面这一整块都不生效 ────────── */
+@media (prefers-reduced-motion: no-preference) {
+  /* 进场：按信息优先级依次浮现，让视线走一遍「结论 → 影响 → 死在哪」 */
+  .cds [data-enter],
+  .cds .step {
+    animation: enter 460ms var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 55ms);
+  }
+  /* 失败那一格在轨道点亮之后闪一下，用动作说明「死在这里」，只闪一次 */
+  .cds .step[data-state="failed"] {
+    animation: enter 460ms var(--ease) both, flash 1100ms var(--ease-soft) both;
+    animation-delay: calc(var(--i, 0) * 55ms), calc(var(--i, 0) * 55ms + 260ms);
+  }
+  .device { transition: height 340ms var(--ease); }
+  .segmented .thumb { transition: transform 340ms var(--ease); }
+  .drawer {
+    transition: grid-template-rows 340ms var(--ease), margin-top 340ms var(--ease), opacity 200ms linear;
+  }
+  .drawer[data-open="true"] .drawer-grid > .col > * {
+    animation: enter 420ms var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 60ms + 90ms);
+  }
+  /* 展开类内容顺着来源方向长出来，不做位移，避免密集处晃眼 */
+  details.logs[open] .log-pane,
+  details.inline[open] > p,
+  details.inline[open] > ol { animation: enter-soft 240ms var(--ease) both; }
+  .disclosure[open] .disclosure-body { animation: enter 320ms var(--ease) both; }
+  .disclosure[open] .reason { animation: enter 340ms var(--ease) both; animation-delay: calc(var(--i, 0) * 50ms); }
+  .sheet { animation: sheet-in 260ms var(--ease-spring) both; }
+  .sheet-backdrop { animation: enter-soft 180ms linear both; }
+  .sheet-backdrop[data-closing="true"] { animation: veil-out 160ms linear both; }
+  .sheet-backdrop[data-closing="true"] .sheet { animation: sheet-out 160ms var(--ease-soft) both; }
+  .toast { animation: toast-in 240ms var(--ease-spring) both; }
+  /* 主题切换时颜色渐变而不是闪断；只在切换那 300ms 内挂上 */
+  .cds[data-theming="true"], .cds[data-theming="true"] * {
+    transition: background-color 280ms var(--ease-soft), border-color 280ms var(--ease-soft), color 280ms var(--ease-soft);
+  }
+  .btn, .page-btn, .quiet, .cds-link { transition: transform 140ms var(--ease), color 180ms var(--ease), background-color 180ms var(--ease); }
+  .disclosure > summary { transition: color 180ms var(--ease); }
+  .disclosure > summary:hover { color: var(--accent); }
+}
+@keyframes sheet-in { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
 </style>
 
 <div class="shell">
@@ -590,7 +667,8 @@ footer p { margin: 0 0 4px; }
 
   <section class="section">
     <div class="controls">
-      <div class="segmented" role="group" aria-label="切换现状与改版">
+      <div class="segmented" id="segmented" data-active="after" role="group" aria-label="切换现状与改版">
+        <span class="thumb" aria-hidden="true"></span>
         <button type="button" id="btn-before" aria-pressed="false">现状</button>
         <button type="button" id="btn-after" aria-pressed="true">改版</button>
       </div>
@@ -667,7 +745,7 @@ footer p { margin: 0 0 4px; }
               <button type="button" class="cds-link">查看全部 37 次</button>
             </div>
 
-            <div class="cds-run">
+            <div class="cds-run" data-enter style="--i:0">
               <span class="led"></span>
               <div>
                 <div class="cds-run-title">Merge pull request #1346 from inernoro/codex/fix-def-2026-0190-web-upload-feedback</div>
@@ -686,7 +764,7 @@ footer p { margin: 0 0 4px; }
             <div class="cds-detail">
 
               <!-- 第一层：结论 · 影响 · 下一步 -->
-              <div class="verdict">
+              <div class="verdict" data-enter style="--i:1">
                 <div class="verdict-top">
                   <div style="min-width:0">
                     <div class="verdict-id">
@@ -719,30 +797,31 @@ footer p { margin: 0 0 4px; }
 
               <!-- 步骤轨：五个词说清死在哪 -->
               <div class="steps">
-                <div class="step" data-state="done">
+                <div class="step" data-state="done" style="--i:2">
                   <span class="step-name">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                     发布前检查
                   </span>
                   <span class="step-note">通过</span>
                 </div>
-                <div class="step" data-state="failed">
+                <div class="step" data-state="failed" style="--i:3">
                   <span class="step-name">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
                     拉取产物
                   </span>
                   <span class="step-note">404 × 5</span>
                 </div>
-                <div class="step" data-state="skipped"><span class="step-name">部署容器</span><span class="step-note">未执行</span></div>
-                <div class="step" data-state="skipped"><span class="step-name">切换版本</span><span class="step-note">未执行</span></div>
-                <div class="step" data-state="skipped"><span class="step-name">健康检查</span><span class="step-note">未执行</span></div>
+                <div class="step" data-state="skipped" style="--i:4"><span class="step-name">部署容器</span><span class="step-note">未执行</span></div>
+                <div class="step" data-state="skipped" style="--i:5"><span class="step-name">切换版本</span><span class="step-note">未执行</span></div>
+                <div class="step" data-state="skipped" style="--i:6"><span class="step-name">健康检查</span><span class="step-note">未执行</span></div>
               </div>
 
               <!-- 第二层：详情，默认收起 -->
               <div class="drawer" id="drawer" data-open="false">
+               <div class="drawer-inner">
                 <div class="drawer-grid">
                   <div class="col">
-                    <div class="cds-card">
+                    <div class="cds-card" style="--i:0">
                       <div class="cds-card-head">
                         <h4>判据</h4>
                         <span class="chip" data-tone="muted">取自日志</span>
@@ -779,14 +858,14 @@ footer p { margin: 0 0 4px; }
                   </div>
 
                   <div class="col">
-                    <div class="tiles">
+                    <div class="tiles" style="--i:0">
                       <div class="tile"><div class="tile-k">死在</div><div class="tile-v">第 2 步</div></div>
                       <div class="tile"><div class="tile-k">退出码</div><div class="tile-v">22</div></div>
                       <div class="tile"><div class="tile-k">重试</div><div class="tile-v">5 <small>次</small></div></div>
                       <div class="tile"><div class="tile-k">耗时</div><div class="tile-v">38 <small>s</small></div></div>
                     </div>
 
-                    <div class="guess">
+                    <div class="guess" style="--i:1">
                       <div class="guess-head">
                         <span class="chip" data-tone="warn">推断</span>
                         镜像前缀被拼到了绝对地址前面
@@ -799,7 +878,7 @@ footer p { margin: 0 0 4px; }
                       </details>
                     </div>
 
-                    <details class="logs">
+                    <details class="logs" style="--i:2">
                       <summary>
                         <span>原始日志</span>
                         <span class="chip" data-tone="muted">19 行 · 折叠 8 行重复</span>
@@ -819,6 +898,7 @@ footer p { margin: 0 0 4px; }
                     </details>
                   </div>
                 </div>
+               </div>
               </div>
 
             </div>
@@ -835,28 +915,28 @@ footer p { margin: 0 0 4px; }
       <summary>为什么现状那一屏难看<span class="aside">四条根因</span><span class="caret"></span></summary>
       <div class="disclosure-body">
         <div class="reasons">
-          <div class="reason">
+          <div class="reason" style="--i:0">
             <span class="reason-n">1</span>
             <div>
               <h4>结论位承载了整段原始日志</h4>
               <p>没有门禁 JSON 时 headline 取 <code>errorLines[0]</code>，而这条 error 自带 19 行 stderr 尾巴。一句话的位置装了 1418 个字符。</p>
             </div>
           </div>
-          <div class="reason">
+          <div class="reason" style="--i:1">
             <span class="reason-n">2</span>
             <div>
               <h4>日志被当成散文排版</h4>
               <p>日志靠换行传达结构，<code>&lt;h3&gt;</code> 里换行全被折叠成空格，17px 粗体让每个字都在喊。</p>
             </div>
           </div>
-          <div class="reason">
+          <div class="reason" style="--i:2">
             <span class="reason-n">3</span>
             <div>
               <h4>最该看的那句被压成灰字</h4>
               <p>「目标仍在 06efeb6」等于生产没受影响，却挂在文字墙下面 11px 的尾巴里。</p>
             </div>
           </div>
-          <div class="reason">
+          <div class="reason" style="--i:3">
             <span class="reason-n">4</span>
             <div>
               <h4>五条重复告警各占一行</h4>
@@ -976,8 +1056,10 @@ footer p { margin: 0 0 4px; }
     <div class="sheet-foot">
       <span id="sheet-count"></span>
       <button type="button" class="page-btn" data-kind="primary" id="sheet-copy">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-        复制
+        <span class="swap" id="sheet-copy-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          复制
+        </span>
       </button>
     </div>
   </div>
@@ -1065,11 +1147,41 @@ footer p { margin: 0 0 4px; }
   var sheetCount = document.getElementById('sheet-count');
   var toast = document.getElementById('toast');
 
+  var segmented = document.getElementById('segmented');
+  var device = document.querySelector('.device');
+  var copyLabel = document.getElementById('sheet-copy-label');
+  var COPY_IDLE = copyLabel.innerHTML;
+  var COPY_DONE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>已复制';
+
   var view = 'after';
   var cdsTheme = 'dark';
   var annotate = true;
   var toastTimer = 0;
+  var themeTimer = 0;
+  var copyTimer = 0;
+  var closeTimer = 0;
   var lastFocus = null;
+
+  var stillMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  /**
+   * 高度接力：先量旧高，改完再量新高，然后从旧高过渡到新高。
+   * 少了这一步，切视图和展开详情时整页会跳一下——动效的意义正是
+   * 让用户看见「什么变了」，而不是眼前忽然换了一屏。
+   */
+  function morph(mutate) {
+    if (stillMotion.matches) { mutate(); return; }
+    var from = device.getBoundingClientRect().height;
+    mutate();
+    device.style.height = 'auto';
+    var to = device.getBoundingClientRect().height;
+    if (Math.abs(to - from) < 2) { device.style.height = ''; return; }
+    device.style.height = from + 'px';
+    void device.offsetHeight;
+    device.style.height = to + 'px';
+    window.clearTimeout(morph.timer);
+    morph.timer = window.setTimeout(function () { device.style.height = ''; }, 380);
+  }
 
   function render() {
     var isBefore = view === 'before';
@@ -1079,6 +1191,7 @@ footer p { margin: 0 0 4px; }
     btnAfter.setAttribute('aria-pressed', String(!isBefore));
     before.setAttribute('data-cds-theme', cdsTheme);
     after.setAttribute('data-cds-theme', cdsTheme);
+    segmented.setAttribute('data-active', isBefore ? 'before' : 'after');
     btnAnnotate.hidden = !isBefore;
     btnAnnotate.textContent = annotate ? '隐藏标记' : '显示标记';
     btnTheme.textContent = cdsTheme === 'dark' ? '白天主题' : '深色主题';
@@ -1091,6 +1204,8 @@ footer p { margin: 0 0 4px; }
   }
 
   function showToast(message) {
+    toast.hidden = true;
+    void toast.offsetWidth;
     toast.textContent = message;
     toast.hidden = false;
     window.clearTimeout(toastTimer);
@@ -1108,19 +1223,50 @@ footer p { margin: 0 0 4px; }
   }
 
   function closeSheet() {
-    sheet.hidden = true;
+    if (stillMotion.matches) {
+      sheet.hidden = true;
+    } else {
+      sheet.setAttribute('data-closing', 'true');
+      window.clearTimeout(closeTimer);
+      closeTimer = window.setTimeout(function () {
+        sheet.hidden = true;
+        sheet.removeAttribute('data-closing');
+      }, 160);
+    }
     if (lastFocus && lastFocus.focus) lastFocus.focus();
   }
 
+  /** 复制后按钮自己确认一次，用户不必去别处找反馈。 */
+  function markCopied() {
+    copyLabel.innerHTML = COPY_DONE;
+    window.clearTimeout(copyTimer);
+    copyTimer = window.setTimeout(function () { copyLabel.innerHTML = COPY_IDLE; }, 1800);
+  }
+
+  /**
+   * 复制。剪贴板 API 在部分环境下既不 resolve 也不 reject（无用户激活、
+   * 非安全上下文），所以加一道 500ms 兜底：迟迟不回就走 execCommand，
+   * 再不行就明说「请手动选中」——不允许点了按钮什么反馈都没有。
+   */
   function copyText(text) {
+    var settled = false;
+    function succeed() {
+      if (settled) return;
+      settled = true;
+      markCopied();
+      showToast('已复制，粘给智能体即可');
+    }
+    function fallThrough() {
+      if (settled) return;
+      settled = true;
+      fallbackCopy(text);
+    }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(
-        function () { showToast('已复制，粘给智能体即可'); },
-        function () { fallbackCopy(text); }
-      );
+      navigator.clipboard.writeText(text).then(succeed, fallThrough);
+      window.setTimeout(fallThrough, 500);
       return;
     }
-    fallbackCopy(text);
+    fallThrough();
   }
 
   function fallbackCopy(text) {
@@ -1134,19 +1280,32 @@ footer p { margin: 0 0 4px; }
     var ok = false;
     try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
     document.body.removeChild(area);
+    if (ok) markCopied();
     showToast(ok ? '已复制，粘给智能体即可' : '浏览器拦截了复制，请手动选中上方文本');
   }
 
-  btnBefore.addEventListener('click', function () { view = 'before'; render(); });
-  btnAfter.addEventListener('click', function () { view = 'after'; render(); });
-  btnTheme.addEventListener('click', function () { cdsTheme = cdsTheme === 'dark' ? 'light' : 'dark'; render(); });
+  btnBefore.addEventListener('click', function () { morph(function () { view = 'before'; render(); }); });
+  btnAfter.addEventListener('click', function () { morph(function () { view = 'after'; render(); }); });
   btnAnnotate.addEventListener('click', function () { annotate = !annotate; render(); });
+
+  // 主题切换只在这 300ms 内挂过渡，平时不给全树留 transition
+  btnTheme.addEventListener('click', function () {
+    cdsTheme = cdsTheme === 'dark' ? 'light' : 'dark';
+    [before, after].forEach(function (panel) { panel.setAttribute('data-theming', 'true'); });
+    render();
+    window.clearTimeout(themeTimer);
+    themeTimer = window.setTimeout(function () {
+      [before, after].forEach(function (panel) { panel.removeAttribute('data-theming'); });
+    }, 320);
+  });
 
   btnDrawer.addEventListener('click', function () {
     var open = drawer.getAttribute('data-open') === 'true';
-    drawer.setAttribute('data-open', String(!open));
-    btnDrawer.setAttribute('aria-expanded', String(!open));
-    btnDrawer.textContent = open ? '详情' : '收起详情';
+    morph(function () {
+      drawer.setAttribute('data-open', String(!open));
+      btnDrawer.setAttribute('aria-expanded', String(!open));
+      btnDrawer.textContent = open ? '详情' : '收起详情';
+    });
   });
 
   document.getElementById('btn-agent').addEventListener('click', function () {
@@ -1164,8 +1323,8 @@ footer p { margin: 0 0 4px; }
     if (event.metaKey || event.ctrlKey || event.altKey || !sheet.hidden) return;
     var tag = (event.target && event.target.tagName) || '';
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-    if (event.key === '1') { view = 'before'; render(); }
-    if (event.key === '2') { view = 'after'; render(); }
+    if (event.key === '1') morph(function () { view = 'before'; render(); });
+    if (event.key === '2') morph(function () { view = 'after'; render(); });
   });
 
   render();
