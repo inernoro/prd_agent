@@ -35,7 +35,14 @@ export function AccountSecurityPage() {
       // 预填 MAP 登录名：一键登录进来的人不该被迫再想一个名字。
       // 那个名字被别人占了就留空，让下面的提示说清原因，而不是填上去等他撞一次。
       const suggested = res.data.suggestedUsernameTaken ? '' : (res.data.suggestedUsername ?? '');
-      setUsername(res.data.usernameIsGenerated ? suggested : res.data.username);
+      // 有可用建议就用建议，不论当前名字是不是自动生成的。
+      // 上一版只在 usernameIsGenerated 时才用建议，于是「MAP 改过名的老账号」
+      // 看到的是旧名字：页面说 MAP 名已经填好了，显示的却是旧值，原样提交等于没改
+      // （Codex PR #1364 P2）。我上一轮只放开了输入框的显示条件，没跟着改预填的值——
+      // 同一个洞的另一半。
+      // 没有建议时：自动生成的名字不预填（逼用户取一个记得住的），
+      // 用户自己取过的名字照常回填。
+      setUsername(suggested || (res.data.usernameIsGenerated ? '' : res.data.username));
       setLoadError(null);
     } else {
       setLoadError(res.error?.message || '读取账号信息失败');

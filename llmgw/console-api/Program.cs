@@ -105,7 +105,26 @@ var mapSsoLifetimeMinutes = config.GetValue<int>("LlmGwJwt:MapSsoLifetimeMinutes
 var mapSsoLifetime = mapSsoLifetimeMinutes > 0
     ? TimeSpan.FromMinutes(mapSsoLifetimeMinutes)
     : gwJwt.Lifetime;
+// 显式配置了收紧，就意味着「这条联邦会话必须在某个固定时刻死掉」。
+// 续签时必须按**剩余**时效签，不能重新给满：否则 15 分钟的 SSO 会话
+// 设一次口令、或切一次租户，就换成多天的 token，而 fed_session 带着的
+// 免旧口令特权会一起延长——反复调用甚至能无限续命（Codex PR #1364 P1）。
+// 没配置（默认与普通会话同为 7 天）时保持原样，续签照常给满，
+// 不动「用过就自动延长」的既有体验。
+var mapSsoLifetimeIsHardDeadline = mapSsoLifetimeMinutes > 0;
 builder.Services.AddSingleton(gwJwt);
+
+// 联邦会话续签该用多长时效：受硬截止约束时取当前 token 的剩余时间，否则不限制。
+// 取不到 exp 就回落成配置值本身——绝不静默给满。
+static TimeSpan? FederatedReissueLifetime(HttpContext http, bool hardDeadline, TimeSpan configured)
+{
+    if (!hardDeadline) return null;
+    var raw = http.User.FindFirst("exp")?.Value;
+    if (!long.TryParse(raw, out var unix)) return configured;
+    var remaining = DateTimeOffset.FromUnixTimeSeconds(unix) - DateTimeOffset.UtcNow;
+    // Issue 内部有 5 分钟下限兜底，这里只保证不把到期时间往后推。
+    return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMinutes(1);
+}
 
 // ── 鉴权 ──
 builder.Services
@@ -984,7 +1003,11 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     var tenant = membership is null ? null : await tenants.Find(x => x.Id == tenantAccess.TenantId && x.Status == "active").FirstOrDefaultAsync();
     if (tenant is null || membership is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("TENANT_ACCESS_DENIED", "租户成员关系已失效"), jsonOptions, 403);
-    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership, federatedSession: fromFederatedSession);
+    // 联邦会话续签不得把到期时间往后推，理由见 FederatedReissueLifetime。
+    var reissueLifetime = fromFederatedSession
+        ? FederatedReissueLifetime(http, mapSsoLifetimeIsHardDeadline, mapSsoLifetime)
+        : null;
+    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership, reissueLifetime, federatedSession: fromFederatedSession);
     var data = new ChangePasswordResultDto
     {
         Token = token,
@@ -1115,7 +1138,10 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
     // 改密那条路（上面 Issue(..., federatedSession: fromFederatedSession)）早就是这么做的，
     // 这里漏了同一个判断（Codex PR #1363 P2）。
     var switchFromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
-    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership, federatedSession: switchFromFederatedSession);
+    var switchReissueLifetime = switchFromFederatedSession
+        ? FederatedReissueLifetime(http, mapSsoLifetimeIsHardDeadline, mapSsoLifetime)
+        : null;
+    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership, switchReissueLifetime, federatedSession: switchFromFederatedSession);
     return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
     {
         Token = token,

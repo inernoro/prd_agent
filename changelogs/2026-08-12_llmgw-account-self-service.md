@@ -6,3 +6,5 @@
 | fix | llmgw | 账号与安全页补登记进教程维护映射，修掉 tutorial drift |
 | fix | llmgw | 切换租户时保留 fed_session，一键登录用户切租户后仍能靠 SSO 自救口令 |
 | fix | llmgw | MAP 改过名的联邦账号能看到登录名输入框，可以改成新的 MAP 名 |
+| security | llmgw | 收紧过的 SSO 会话续签时按剩余时效签，不再换成多天 token 把免旧口令特权一起延长 |
+| fix | llmgw | MAP 改过名的老账号，登录名输入框预填新建议而不是旧名字 |
