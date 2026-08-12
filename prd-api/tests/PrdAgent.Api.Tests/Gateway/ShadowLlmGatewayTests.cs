@@ -283,6 +283,63 @@ public class ShadowLlmGatewayTests
     }
 
     [Fact]
+    public async Task AvailablePools_UseGatewayCatalogAndNeverPublishStaleInprocLogicalModels()
+    {
+        var staleLogical = new AvailableModelPool
+        {
+            Id = "stale-logical",
+            Code = "nanobanana-2-lite",
+            ResolutionType = "LogicalModel",
+            Models = [new PoolModelInfo { ModelId = "nanobanana-2-lite", PlatformId = "logical-model" }],
+        };
+        var legacyPool = new AvailableModelPool
+        {
+            Id = "legacy-generation",
+            Code = "legacy-generation",
+            ResolutionType = "DefaultPool",
+        };
+        var gatewayLogical = new AvailableModelPool
+        {
+            Id = "gateway-logical",
+            Code = "image2",
+            ResolutionType = "LogicalModel",
+            Models = [new PoolModelInfo { ModelId = "image2", PlatformId = "logical-model" }],
+        };
+        var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"))
+        {
+            AvailablePools = [staleLogical, legacyPool],
+        };
+        var http = new FakeGateway(LogicalRes("image2", "upstream-image-2"))
+        {
+            AvailablePools = [gatewayLogical],
+        };
+        var shadow = new ShadowLlmGateway(inproc, http, NullLogger<ShadowLlmGateway>.Instance);
+
+        var authoritative = await shadow.GetAvailablePoolsAsync("demo.app::generation", "generation");
+
+        authoritative.ShouldHaveSingleItem().Code.ShouldBe("image2");
+        var fallbackInproc = new FakeGateway(Res("legacy-model", "openai", "openai"))
+        {
+            AvailablePools = [staleLogical, legacyPool],
+        };
+        var emptyHttp = new FakeGateway(LogicalRes("image2", "upstream-image-2"))
+        {
+            AvailablePools = [],
+        };
+        var fallbackShadow = new ShadowLlmGateway(
+            fallbackInproc,
+            emptyHttp,
+            NullLogger<ShadowLlmGateway>.Instance);
+
+        var compatibilityFallback = await fallbackShadow.GetAvailablePoolsAsync(
+            "demo.app::generation",
+            "generation");
+
+        compatibilityFallback.ShouldHaveSingleItem().Code.ShouldBe("legacy-generation");
+        compatibilityFallback.ShouldNotContain(x => x.ResolutionType == "LogicalModel");
+    }
+
+    [Fact]
     public async Task LogicalModelRunContext_ForcesHttpAcrossResolveSendStreamAndRaw()
     {
         var inproc = new FakeGateway(Res("legacy-model", "openai", "openai"))
