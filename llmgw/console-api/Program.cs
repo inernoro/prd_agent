@@ -6898,7 +6898,10 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         }
 
         var caps = (entry.Capabilities ?? ProviderPresets.InferCapabilities(modelId).ToList())
-            .Where(c => GatewayConfigurationProvisioning.IsSupportedModelType(c))
+            // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
+            // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
+            // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
+            .Where(c => GatewayConfigurationProvisioning.IsSupportedCapabilityCode(c))
             .Select(c => c.Trim().ToLowerInvariant())
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -7272,38 +7275,34 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
 // 刻意**不做级联**：模型、模型池成员都可能挂在这个 Provider 上，静默连坐删掉是不可逆的。
 // 有引用就拒绝，并把「被谁引用、还剩几个」直接说出来，让用户知道下一步该清哪里
 // （expectation-management：失败要给得出可执行的下一步）。
-app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool withModels = false) =>
+app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
 {
     var fb = Builders<BsonDocument>.Filter;
     var filter = TenantAccess.Filter(http, fb.Eq("_id", id));
     var doc = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     if (doc is null) return Json(ApiEnvelope<object>.Fail("NOT_GW_AUTHORITY", "请先将平台认领到 GW，再在 GW 中删除"), jsonOptions, 409);
 
-    // 删除的出路必须是**用户真能走通**的一条，否则等于没有删除功能。
+    // 只删「干净的」Provider：名下没有模型、也没有被任何模型池引用。
     //
-    // 这里踩过两次同一个坑：
-    //   一版回「先移除模型再删除」——产品里根本没有删 GW 模型的入口（只有 /api-key），
-    //     照着做做不到，Provider 用过一次就永远删不掉。
-    //   二版加了 withModels 级联，但同一个 PR 里刚给导入接上「自动同步进托管默认池」，
-    //     于是导入过模型的 Provider 必然被池引用；而托管池是 append-only，
-    //     /gw/pools/{id}/models 明确拒绝移除成员（APPEND_ONLY_POOL）——
-    //     「先从池里移除」同样是一句做不到的话，级联照样删不掉。
+    // 这一版**刻意不做级联**。曾经做过，撤了——理由值得写下来：
+    // 级联要动模型池的成员数组，而池那边有一整套别处在维护的不变量：托管默认池是
+    // append-only、删成员前要过 ValidateDefaultGatewayPoolMembersAsync 确认池不会变空、
+    // 每次改 Models 都要递增 Version 让 PoolVersionGuard 能发现并发写。绕过任何一条，
+    // 换来的都是「删是删掉了，但某个应用调用方的默认池当场空了」这类静默事故。
+    // 把这三条在这里再实现一遍，等于开出一份与池模块并行的第二判据（形状 3）。
     //
-    // 所以级联的语义必须覆盖到底：连同名下模型**和它们在池里的成员位**一起清掉。
-    // 仍然不默认级联——连坐删除不可逆，必须由用户在弹窗里显式点头一次。
-    var modelFilter = TenantAccess.Filter(http, fb.Eq("PlatformId", id));
-    var modelCount = await gwModels.CountDocumentsAsync(modelFilter);
-
-    // 成员数组叫 Models，不叫 Members——全仓其它地方（池成员端点、健康判定、导入）都用 Models。
-    // 一版写成 Members：字段不存在，查询恒返回空，这条检查从落地起就没生效过，
-    // Provider 被删掉、池里留下解析不了的悬空成员，而日志里一切正常
-    // （predicate-and-wiring-discipline 形状 6：判据读到的不是真正生效的那个值）。
-    var poolMemberFilter = TenantAccess.Filter(http, fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", id)));
+    // 而本 PR 的目标是「接一个上游更省事」，删除入口是为了「试完的测试 Provider 能清掉」——
+    // 那种 Provider 名下本来就没有模型，这条路径已经完全够用。
+    // 带模型的 Provider 怎么删，连同池不变量一起在独立 PR 里做，已记 debt 台账。
+    //
+    // 成员数组叫 Models 不叫 Members——全仓其它地方都用 Models。一版写成 Members：
+    // 字段不存在、查询恒返回空，这条检查从落地起就没生效过（形状 6）。
+    var modelCount = await gwModels.CountDocumentsAsync(TenantAccess.Filter(http, fb.Eq("PlatformId", id)));
     var referencingPools = await gwModelPools
-        .Find(poolMemberFilter)
+        .Find(TenantAccess.Filter(http, fb.ElemMatch<BsonDocument>("Models", fb.Eq("PlatformId", id))))
         .Project(Builders<BsonDocument>.Projection.Include("Name")).ToListAsync();
 
-    if ((modelCount > 0 || referencingPools.Count > 0) && !withModels)
+    if (modelCount > 0 || referencingPools.Count > 0)
     {
         var parts = new List<string>();
         if (modelCount > 0) parts.Add($"{modelCount} 个模型");
@@ -7312,33 +7311,12 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool wit
             var names = string.Join("、", referencingPools.Take(3).Select(p => p.AsNullableString("Name") ?? p.GetStringOrEmpty("_id")));
             parts.Add($"{referencingPools.Count} 个模型池里的成员位（{names}）");
         }
+        // 不给一句用户执行不了的指令：这个产品目前没有删 GW 模型、也没有从托管池移除成员的入口。
+        // 如实说清「现在能做什么」，而不是编一条听起来合理的补救路径。
         return Json(ApiEnvelope<object>.Fail(
-            "PLATFORM_HAS_MODELS",
-            $"这个 Provider 名下还有 {string.Join("、", parts)}。确认要一并删除吗？"), jsonOptions, 409);
-    }
-
-    // 顺序要紧：先把池里的成员位摘掉，再删模型，最后删 Provider。
-    // 反过来做会留下一个窗口——模型没了、池里还指着它，那正是悬空成员。
-    //
-    // 这里直接对池文档做 $pull，不走 /gw/pools/{id}/models：那条端点对托管默认池是
-    // append-only（拒绝移除），而托管池里的成员恰恰是导入时自动同步进去的。
-    // 用户没有别的手段能清掉它们，级联就必须自己负责到底。
-    var removedPoolMembers = 0L;
-    if (referencingPools.Count > 0)
-    {
-        var pull = await gwModelPools.UpdateManyAsync(
-            poolMemberFilter,
-            Builders<BsonDocument>.Update
-                .PullFilter<BsonDocument>("Models", fb.Eq("PlatformId", id))
-                .Set("UpdatedAt", DateTime.UtcNow));
-        removedPoolMembers = pull.ModifiedCount;
-    }
-
-    var deletedModels = 0L;
-    if (modelCount > 0)
-    {
-        var del = await gwModels.DeleteManyAsync(modelFilter);
-        deletedModels = del.DeletedCount;
+            "PLATFORM_IN_USE",
+            $"这个 Provider 名下还有 {string.Join("、", parts)}，暂不支持删除。"
+            + "可以先「停用」它——停用后不再参与任何调度。带模型的 Provider 删除能力正在单独处理。"), jsonOptions, 409);
     }
 
     await gwPlatforms.DeleteOneAsync(filter);
@@ -7351,13 +7329,8 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool wit
         targetName: doc.AsNullableString("Name"),
         success: true,
         reason: null,
-        changes: new BsonDocument
-        {
-            { "authority", "llm_gateway" },
-            { "deletedModels", deletedModels },
-            { "removedPoolMembers", removedPoolMembers },
-        });
-    return Json(ApiEnvelope<object>.Ok(new { deletedModels, removedPoolMembers }), jsonOptions);
+        changes: new BsonDocument { { "authority", "llm_gateway" } });
+    return Json(ApiEnvelope<object>.Ok(new { }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 平台密钥删除：只允许清理 GW 权威平台的密钥，MAP 来源平台必须先认领。

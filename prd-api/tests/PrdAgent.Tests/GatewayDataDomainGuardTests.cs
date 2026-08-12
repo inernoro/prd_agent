@@ -3297,10 +3297,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ElemMatch<BsonDocument>(\"Models\"", body);
         Assert.DoesNotContain("ElemMatch<BsonDocument>(\"Members\"", body);
 
-        // 级联必须自己把池里的成员位摘掉。托管默认池是 append-only，
-        // /gw/pools/{id}/models 拒绝移除成员——而那些成员正是导入时自动同步进去的。
-        // 只拦不清的话，「先从池里移除」又是一句用户做不到的话，删除功能等于不存在。
-        Assert.Contains("PullFilter<BsonDocument>(\"Models\"", body);
+        // 这条端点**不许**自己改模型池。池那边有一整套别处维护的不变量：
+        // 托管默认池 append-only、删成员前要确认池不会变空、每次改 Models 要递增 Version
+        // 让 PoolVersionGuard 能发现并发写。在这里再实现一遍等于开第二份判据（形状 3），
+        // 而漏掉任何一条换来的都是「删是删掉了，但某个调用方的默认池当场空了」。
+        // 带模型的 Provider 怎么删，连同池不变量一起在独立 PR 里做。
+        Assert.DoesNotContain("PullFilter", body);
+        Assert.DoesNotContain("gwModels.DeleteMany", body);
     }
 
     /// <summary>
@@ -3372,6 +3375,52 @@ public class GatewayDataDomainGuardTests
         // 池同步的触发条件不能写成「这次新建了几个」——同步失败后重试全是 Skipped，
         // Created 归零，同步块被跳过，我们自己那句「稍后重试导入」就成了空话
         Assert.Contains("result.Created > 0 || result.Skipped > 0", body);
+    }
+
+    /// <summary>
+    /// 用途名与**存储层能力名**是两套词汇（`generation` -> `image_generation`），
+    /// 映射只许有一份。拿用途白名单去校验存储名，会把推断出的 image_generation /
+    /// video_generation 整批静默丢掉——生图与视频模型带着空用途入库，还照样默认勾选
+    /// （形状 1：判据比它该管的范围窄）。
+    /// </summary>
+    [Fact]
+    public void 推断出的每个用途都必须能通过导入端的校验()
+    {
+        var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
+        var presets = ReadRepoFile("llmgw/console-api/Provisioning/ProviderPresets.cs");
+
+        // 用途白名单
+        var typesBlock = System.Text.RegularExpressions.Regex.Match(
+            provisioning, @"SupportedModelTypes\s*=\s*\[(?<body>.*?)\]",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(typesBlock.Success, "用途白名单不见了");
+        var types = System.Text.RegularExpressions.Regex.Matches(typesBlock.Groups["body"].Value, "\"([a-z-]+)\"")
+            .Select(m => m.Groups[1].Value).ToHashSet();
+        Assert.True(types.Count >= 10, $"只解析到 {types.Count} 个用途");
+
+        // 映射（用途 -> 存储层能力名），与 ToCapabilityCode 同源
+        string ToCode(string t) => t switch
+        {
+            "generation" => "image_generation",
+            "long-context" => "long_context",
+            "video-gen" => "video_generation",
+            "audio-gen" => "audio_generation",
+            _ => t,
+        };
+        var codes = types.Select(ToCode).ToHashSet();
+
+        // 推断可能产出的每一个值
+        var inferred = System.Text.RegularExpressions.Regex.Matches(presets, @"caps\.Add\(""([a-z_]+)""\)")
+            .Select(m => m.Groups[1].Value).ToHashSet();
+        Assert.True(inferred.Count >= 5, $"只解析到 {inferred.Count} 个推断用途");
+
+        var dropped = inferred.Where(c => !codes.Contains(c)).ToList();
+        Assert.True(dropped.Count == 0, "这些推断出的用途过不了导入端校验，会被静默丢掉：" + string.Join("、", dropped));
+
+        // 映射必须只有一份
+        Assert.Contains("ToCapabilityCode", provisioning);
+        Assert.Contains("IsSupportedCapabilityCode", provisioning);
+        Assert.Contains("IsSupportedCapabilityCode", ReadRepoFile("llmgw/console-api/Program.cs"));
     }
 
     [Fact]

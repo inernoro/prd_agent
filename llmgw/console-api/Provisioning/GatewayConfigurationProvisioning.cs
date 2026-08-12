@@ -424,9 +424,17 @@ public static class GatewayConfigurationProvisioning
         return document;
     }
 
-    private static BsonDocument ToCapabilityDocument(string modelType)
-    {
-        var capability = modelType switch
+    /// <summary>
+    /// 模型用途名 -> **存储层能力名** 的唯一映射。
+    ///
+    /// 这两套词汇本来就不同：表单/池类型说 `generation`，落库的 Capabilities[].Type 写
+    /// `image_generation`（GatewayModelPoolTypeRegistry 也按后者匹配）。抽成公开方法是因为
+    /// 批量导入那条路径直接产出**存储层**能力名，需要用同一份映射来判断合法性——
+    /// 之前拿用途白名单去校验存储名，image_generation / video_generation 被整批静默丢掉，
+    /// 生图与视频模型带着空用途入库，还照样默认勾选（形状 1：判据比它该管的范围窄）。
+    /// </summary>
+    public static string ToCapabilityCode(string modelType)
+        => modelType switch
         {
             "generation" => "image_generation",
             "long-context" => "long_context",
@@ -434,8 +442,17 @@ public static class GatewayConfigurationProvisioning
             "audio-gen" => "audio_generation",
             _ => modelType,
         };
-        return new BsonDocument { ["Type"] = capability, ["Source"] = "user", ["Value"] = true };
+
+    /// <summary>存储层能力名的白名单，由用途白名单经同一份映射推导，不另立一份。</summary>
+    public static bool IsSupportedCapabilityCode(string? capability)
+    {
+        if (string.IsNullOrWhiteSpace(capability)) return false;
+        var code = capability.Trim().ToLowerInvariant();
+        return SupportedModelTypes.Select(ToCapabilityCode).Contains(code);
     }
+
+    private static BsonDocument ToCapabilityDocument(string modelType)
+        => new() { ["Type"] = ToCapabilityCode(modelType), ["Source"] = "user", ["Value"] = true };
 
     private static bool TryNormalizeExchangeCore(
         string? rawName,

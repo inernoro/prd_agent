@@ -211,11 +211,11 @@ export function PlatformsPage() {
     }
   }
 
-  async function removePlatform(p: PlatformItem, withModels = false) {
-    if (!withModels && !window.confirm(`彻底删除 Provider「${p.name}」？删除后它的地址与密钥都不再保留。`)) return;
+  async function removePlatform(p: PlatformItem) {
+    if (!window.confirm(`彻底删除 Provider「${p.name}」？删除后它的地址与密钥都不再保留。`)) return;
     setBusyId(p.id);
     setToast(null);
-    const res = await deletePlatform(p.id, withModels);
+    const res = await deletePlatform(p.id);
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.filter((x) => x.id !== p.id) : prev));
@@ -224,20 +224,10 @@ export function PlatformsPage() {
         delete next[p.id];
         return next;
       });
-      const bits: string[] = [];
-      if (res.data.deletedModels > 0) bits.push(`${res.data.deletedModels} 个模型`);
-      if (res.data.removedPoolMembers > 0) bits.push(`${res.data.removedPoolMembers} 个模型池里的成员位`);
-      setToast(`已删除 Provider「${p.name}」${bits.length > 0 ? `，同时清理了 ${bits.join('、')}` : ''}`);
+      setToast(`已删除 Provider「${p.name}」`);
       return;
     }
-    // 名下有模型或被池引用：后端把「有几个、在哪些池」写在消息里，这里就地再确认一次。
-    // 不做默认级联——连坐删除不可逆，必须有一次显式点头。
-    if (res.error?.code === 'PLATFORM_HAS_MODELS') {
-      if (window.confirm(`${res.error.message}\n\n确认后这些内容会一并删除，无法撤销。`)) {
-        await removePlatform(p, true);
-      }
-      return;
-    }
+    // 后端已经把「还剩什么、现在能做什么」写进消息，原样透出即可，前端不另加一套说辞
     setToast(res.error?.message || '删除失败');
   }
 
