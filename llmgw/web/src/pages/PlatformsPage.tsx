@@ -445,7 +445,12 @@ export function PlatformsPage() {
           <div style={{ marginBottom: 10, fontWeight: 600 }}>
             {items.find((x) => x.id === discovery.platformId)?.name || discovery.platformId} 的上游模型
           </div>
+          {/* key 换 Provider 就换：勾选集是 useState 初始值，只在挂载时算一次。
+              不加 key 的话，开着 A 的清单再去点 B 的「查看模型」，这个组件不卸载，
+              A 的勾选原样留着——两个 Provider 撞上同名模型（gpt-4o 之类很常见）时，
+              用户会把一份自己没勾过的选择导进 B。 */}
           <UpstreamModelPicker
+            key={discovery.platformId}
             data={discovery.data}
             busy={busyId === discovery.platformId}
             onImport={(selected) => void runImport(discovery.platformId, selected)}

@@ -7003,7 +7003,8 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
             try
             {
                 var body = await ReadUpstreamBodyAsync(resp, MaxUpstreamBodyBytes, probeCts.Token);
-                var arr = System.Text.Json.Nodes.JsonNode.Parse(body)?["data"] as System.Text.Json.Nodes.JsonArray;
+                var probeRoot = System.Text.Json.Nodes.JsonNode.Parse(body) as System.Text.Json.Nodes.JsonObject;
+                var arr = probeRoot?["data"] as System.Text.Json.Nodes.JsonArray;
                 modelCount = arr?.Count;
             }
             // 不是 JSON、或体积超限中止 —— 都留 modelCount = null，交给下面的形状判据判成不可达。
@@ -7131,7 +7132,11 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
     System.Text.Json.Nodes.JsonArray? dataArray;
     try
     {
-        dataArray = System.Text.Json.Nodes.JsonNode.Parse(body)?["data"] as System.Text.Json.Nodes.JsonArray;
+        // 先转 JsonObject 再索引：根节点是数组或标量时（上游直接回一个 [] 、或回个字符串），
+        // node["data"] 抛的是 InvalidOperationException 而不是 JsonException，会穿过下面这个 catch
+        // 变成 500。转型失败得到 null，正好落进后面的「没有 data 数组」分支，报 UPSTREAM_SHAPE。
+        var root = System.Text.Json.Nodes.JsonNode.Parse(body) as System.Text.Json.Nodes.JsonObject;
+        dataArray = root?["data"] as System.Text.Json.Nodes.JsonArray;
     }
     catch (System.Text.Json.JsonException)
     {

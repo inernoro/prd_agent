@@ -3441,12 +3441,33 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("var pricing = modelNode?[\"pricing\"];", presets);
 
         var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        // 同一个坑的第三处：根节点不是对象（上游直接回 [] 或回个标量）时，
+        // Parse(body)?["data"] 抛的同样是 InvalidOperationException，而「查看模型」端点
+        // 只 catch JsonException —— 整条请求变 500，而不是它自己声称会给的 UPSTREAM_SHAPE。
+        // 必须先 as JsonObject 再索引，转型失败自然落进「没有 data 数组」分支。
+        Assert.DoesNotContain("JsonNode.Parse(body)?[\"data\"]", server);
         Assert.Contains("MaxDiscoveredModels", server);
         Assert.Contains("Take(MaxDiscoveredModels)", server);
         // 截断不许静默：得让用户看见上游原本有多少
         Assert.Contains("TruncatedFromTotal", server);
         Assert.Contains("TruncatedFromTotal", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
         Assert.Contains("truncatedFromTotal", ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx"));
+    }
+
+    /// <summary>
+    /// 换 Provider 必须重挂模型选择器。勾选集是 useState 的初始值，只在挂载时算一次；
+    /// 开着 A 的清单再点 B 的「查看模型」时组件不卸载，A 的勾选原样留着，
+    /// 撞上同名模型就会把用户没勾过的选择导进 B。key 一改，React 才会重建这个组件。
+    /// </summary>
+    [Fact]
+    public void 换_Provider_必须重挂上游模型选择器()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+        var start = page.IndexOf("<UpstreamModelPicker", StringComparison.Ordinal);
+        Assert.True(start > 0, "上游模型选择器不见了");
+        var end = page.IndexOf("/>", start, StringComparison.Ordinal);
+        Assert.True(end > start, "上游模型选择器的 JSX 没闭合，守卫切不出它的 props");
+        Assert.Contains("key={discovery.platformId}", page[start..end]);
     }
 
     [Fact]
