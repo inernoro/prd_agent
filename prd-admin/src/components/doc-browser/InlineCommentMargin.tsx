@@ -160,7 +160,7 @@ export function InlineCommentMargin({
     >
       <div className="flex items-center justify-between px-3.5 py-3 flex-none border-b border-b-token-subtle" >
         <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-          <MessageSquareText size={13} style={{ color: 'rgba(216,180,254,0.95)' }} />
+          <MessageSquareText size={13} style={{ color: 'var(--accent-fg-violet)' }} />
           本页批注 · {total}
         </div>
         {onClose && (
@@ -183,7 +183,7 @@ export function InlineCommentMargin({
 
             {wholeDoc.length > 0 && (
               <div className="pt-1">
-                <div className="text-[10px] font-semibold mb-2 px-0.5" style={{ color: 'rgba(147,197,253,0.9)' }}>全文评论</div>
+                <div className="text-[10px] font-semibold mb-2 px-0.5" style={{ color: 'var(--accent-fg-blue)' }}>全文评论</div>
                 <div className="p-3 rounded-[11px] space-y-2.5" style={{ background: 'rgba(96,165,250,0.05)', border: '1px solid rgba(96,165,250,0.16)' }}>
                   {wholeDoc.map((c) => <CommentLine key={c.id} comment={c} canDelete={canDelete?.(c)} onDelete={onDelete} />)}
                   {canCreate && (
@@ -196,8 +196,8 @@ export function InlineCommentMargin({
             {orphaned.length > 0 && (
               <div className="pt-2 mt-1" style={{ borderTop: '1px dashed var(--border-subtle)' }}>
                 <div className="flex items-center gap-1.5 mb-2 mt-2">
-                  <AlertTriangle size={11} style={{ color: 'rgba(245,158,11,0.9)' }} />
-                  <span className="text-[10px] font-semibold" style={{ color: 'rgba(245,158,11,0.9)' }}>
+                  <AlertTriangle size={11} style={{ color: 'var(--accent-fg-amber)' }} />
+                  <span className="text-[10px] font-semibold" style={{ color: 'var(--accent-fg-amber)' }}>
                     {orphaned.reduce((n, g) => n + g.comments.length, 0)} 条失锚批注
                   </span>
                 </div>

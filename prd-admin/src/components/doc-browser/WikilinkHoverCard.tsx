@@ -92,7 +92,7 @@ export function WikilinkHoverCard() {
           boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
         }}
       >
-        <div style={{ color: 'rgba(255,156,77,0.95)', fontSize: 11, marginBottom: 6 }}>文档不存在</div>
+        <div style={{ color: 'var(--accent-fg-amber)', fontSize: 11, marginBottom: 6 }}>文档不存在</div>
         <div style={{ fontWeight: 600, marginBottom: 4 }}>「{hover.title}」</div>
         <div style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
           这个标题在当前知识库找不到对应文档。点击不会跳转。
@@ -123,7 +123,7 @@ export function WikilinkHoverCard() {
       <div
         style={{
           fontSize: 10,
-          color: 'rgba(124,156,255,0.95)',
+          color: 'var(--accent-fg-blue)',
           background: 'rgba(124,156,255,0.12)',
           padding: '2px 8px',
           borderRadius: 8,

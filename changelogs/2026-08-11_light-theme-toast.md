@@ -7,3 +7,7 @@
 | docs | prd-admin | debt.frontend.md 补「浮层/提示层浅色审计」台账：本轮清偿清单 + 17 条显式不做的条目与原因 + 守卫判据剩余缺口 |
 | test | prd-admin | 双皮肤硬编码棘轮补三处判据缺口：扫描范围加 .ts（此前只扫 .tsx，导致配色 SSOT glassStyles.ts 从未被扫过）、新增「深色 rgba 当背景」计数、新增 Toast 底层双写接线守卫 |
 | fix | prd-admin | 修复 Tooltip 气泡与箭头不同源：新增双写 --tooltip-bg/--tooltip-border，气泡不再复用暗色下仅 3% 白的 --glass-bg-end（该值靠 backdrop blur 成形，SVG 箭头吃不到 blur 会消失） |
+| fix | prd-admin | 修复验收 fail 的镜像缺陷：底翻成浅色后，浮层内为深底调的浅紫/浅蓝/白系文字消失。45 处写死浅色前景统一到新增的 --accent-fg-* 双写族（原 --toast-accent-* 并入，避免两套名字指同一件事） |
+| fix | prd-admin | 修复 Mermaid 图在浅色主题下浅字压浅底：mermaid 主题改为按 data-theme 双套配置并在主题切换时重烘；容器底改走 --nested-block-bg |
+| fix | prd-admin | 修复暗色主题下原生 option 弹出白色列表：option 由 Canvas/CanvasText 系统色改为主题 token（弹层由 UA 绘制，Canvas 的解析结果不可控） |
+| test | prd-admin | 棘轮补第 4 条判据「写死的浅色前景」（color: 里感知亮度 > 0.5 的字面色）——前三条只盯背景，本次 45 处镜像缺陷一处都没拦住 |

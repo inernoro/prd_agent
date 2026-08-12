@@ -9,6 +9,11 @@
  *  1. 白透明表面 rgba(255,255,255,x) —— 浅色下隐形/发灰
  *  2. 深色 hex 字面量（感知亮度 < 0.15）—— 浅色下变成漂浮的暗块
  *  3. 深色 rgba() 当背景用（感知亮度 < 0.15）—— 同 2，只是换了写法
+ *  4. 浅色前景写死（color: 的字面色，感知亮度 > 0.5）—— 面翻成浅色后它就消失
+ *
+ * 判据 4 的由来（2026-08-12 验收 fail）：修完 Toast 后把一批浮层的底翻成
+ * 暖纸色，但面板内部为深底调的浅紫/浅绿/白系文字仍写死，浅色下变成
+ * 「浅底浅字」——原缺陷的镜像。判据 1~3 只盯背景，一处都拦不住。
  *
  * 判据扩宽的由来（2026-08-11，浅色 Toast 不可读）：
  * 原判据只认「白 rgba」与「深色 hex」，且 walk() 只收 .tsx。于是
@@ -44,6 +49,8 @@ const SEMANTIC_THEME_CONSUMERS = [
 const WHITE_ALPHA_RE = /rgba\(\s*255\s*,\s*255\s*,\s*255/g;
 /** 全部 6 位 hex，再按感知亮度过滤出「深色」。 */
 const HEX_RE = /#[0-9a-fA-F]{6}\b/g;
+/** 前景色声明（只认 color:，不碰 background/border/shadow）。 */
+const FG_DECL_RE = /(?<![a-zA-Z-])color:/g;
 /** 任意 rgb/rgba，取三个通道判明暗。 */
 const RGB_RE = /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*[,)]/g;
 /**
@@ -100,6 +107,29 @@ function countDarkRgbaBg(content: string): number {
   return count;
 }
 
+/** 感知亮度 > 0.5 视为浅色（#c4b5fd ≈ 0.74 命中；#6d28d9 ≈ 0.19 不命中）。 */
+function isLight(r: number, g: number, b: number): boolean {
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5;
+}
+
+/** 写死的浅色前景处数：面一旦翻成浅色，这些字就消失（本次事故的镜像形态）。 */
+function countLightFg(content: string): number {
+  let count = 0;
+  for (const m of content.matchAll(FG_DECL_RE)) {
+    const value = declValue(content, (m.index ?? 0) + m[0].length);
+    for (const hit of value.matchAll(RGB_RE)) {
+      if (isLight(Number(hit[1]), Number(hit[2]), Number(hit[3]))) count += 1;
+    }
+    for (const hex of value.matchAll(HEX_RE)) {
+      const h = hex[0];
+      if (isLight(parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16))) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
 /** 跳过的目录/文件：测试、开发样板、mockup。 */
 function skipped(rel: string): boolean {
   return (
@@ -127,6 +157,7 @@ interface Counts {
   whiteAlpha: number;
   darkHex: number;
   darkRgbaBg: number;
+  lightFg: number;
 }
 
 function scan(): Record<string, Counts> {
@@ -138,8 +169,9 @@ function scan(): Record<string, Counts> {
     const whiteAlpha = content.match(WHITE_ALPHA_RE)?.length ?? 0;
     const darkHex = (content.match(HEX_RE) ?? []).filter(isDarkHex).length;
     const darkRgbaBg = countDarkRgbaBg(content);
-    if (whiteAlpha > 0 || darkHex > 0 || darkRgbaBg > 0) {
-      result[rel] = { whiteAlpha, darkHex, darkRgbaBg };
+    const lightFg = countLightFg(content);
+    if (whiteAlpha > 0 || darkHex > 0 || darkRgbaBg > 0 || lightFg > 0) {
+      result[rel] = { whiteAlpha, darkHex, darkRgbaBg, lightFg };
     }
   }
   return Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)));
@@ -159,7 +191,7 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
     const violations: string[] = [];
 
     for (const [file, counts] of Object.entries(current)) {
-      const base = baseline[file] ?? { whiteAlpha: 0, darkHex: 0, darkRgbaBg: 0 };
+      const base = baseline[file] ?? { whiteAlpha: 0, darkHex: 0, darkRgbaBg: 0, lightFg: 0 };
       if (counts.whiteAlpha > base.whiteAlpha) {
         violations.push(
           `${file}: rgba(255,255,255,x) 由 ${base.whiteAlpha} 增至 ${counts.whiteAlpha} —— 浅色主题下会隐形。` +
@@ -178,6 +210,13 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
             `与深色 hex 同罪，浅色主题下是漂浮暗块 / 深底深字。` +
             `请改用 var(--bg-card)/var(--panel-solid)/var(--glass-bg-start) 等语义 token；` +
             `确需浮层专用底色就在 tokens.css 双写一个新 token（参考 --toast-bg-base）`,
+        );
+      }
+      if ((counts.lightFg ?? 0) > (base.lightFg ?? 0)) {
+        violations.push(
+          `${file}: 写死的浅色前景由 ${base.lightFg ?? 0} 增至 ${counts.lightFg} —— ` +
+            `一旦这块面翻成浅色（或本来就在浅色主题下），这些字直接消失。` +
+            `请改用 var(--text-primary|secondary|muted) 或 var(--accent-fg-*)（tokens.css 双写）`,
         );
       }
     }
@@ -263,16 +302,16 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
         const start = tokens.indexOf(`${selector} {`);
         const end = tokens.indexOf('\n}', start);
         const block = tokens.slice(start, end === -1 ? undefined : end);
-        const hits = [...block.matchAll(new RegExp(`--toast-accent-${kind}:\\s*([^;]+);`, 'g'))];
+        const hits = [...block.matchAll(new RegExp(`--accent-fg-${kind}:\\s*([^;]+);`, 'g'))];
         return hits.length ? hits[hits.length - 1][1].trim() : null;
       };
       const darkAccent = readAccent(':root');
       const lightAccent = readAccent('[data-theme="light"]');
-      expect(darkAccent, `:root 缺少 --toast-accent-${kind}`).not.toBeNull();
-      expect(lightAccent, `[data-theme="light"] 缺少 --toast-accent-${kind}`).not.toBeNull();
+      expect(darkAccent, `:root 缺少 --accent-fg-${kind}`).not.toBeNull();
+      expect(lightAccent, `[data-theme="light"] 缺少 --accent-fg-${kind}`).not.toBeNull();
       expect(
         luminanceOf(lightAccent as string),
-        `--toast-accent-${kind} 浅色档(${lightAccent})必须比暗色档(${darkAccent})更深，否则浅色 Toast 上看不清`,
+        `--accent-fg-${kind} 浅色档(${lightAccent})必须比暗色档(${darkAccent})更深，否则浅色 Toast 上看不清`,
       ).toBeLessThan(luminanceOf(darkAccent as string));
     }
 

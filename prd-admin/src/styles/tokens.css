@@ -68,10 +68,18 @@
   --toast-bg-base: rgba(8, 10, 16, 0.94);
   /* Toast 语义前景（图标 + 动作按钮文字）。暗色下用 500 档；浅色下必须压到 700 档，
      否则 500 档饱和色落在暖纸底上只有 1.9:1，非文本元素连 3:1 都不到。 */
-  --toast-accent-success: #22c55e;
-  --toast-accent-error: #ef4444;
-  --toast-accent-info: #3b82f6;
-  --toast-accent-warning: #fb923c;
+  --accent-fg-success: #22c55e;
+  --accent-fg-error: #ef4444;
+  --accent-fg-info: #3b82f6;
+  --accent-fg-warning: #fb923c;
+  /* 浮层里成片的浅紫/浅蓝/浅红强调字原本是为深底调的，底一翻就消失。
+     统一到这一族：暗色沿用原来的 pastel 档，浅色压到 700/800 档。 */
+  --accent-fg-violet: #c4b5fd;
+  --accent-fg-violet-strong: #e9d5ff;
+  --accent-fg-blue: #93c5fd;
+  --accent-fg-amber: #fbbf24;
+  --accent-fg-danger: #f87171;
+  --accent-fg-emerald: #34d399;
 
   /* 浮层面板底（Popover / Drawer / HoverCard / 划词浮层 / 兜底卡）。
      与 --panel 的区别：--panel 底部只有 0.78 alpha，飘在正文上会透字；
@@ -509,10 +517,18 @@
   --glass-border: rgba(26, 26, 31, 0.14);
   /* 浅色下 Toast 底层必须也是暖纸色，否则语义色叠在深底上 + 深色正文 = 不可读。 */
   --toast-bg-base: rgba(252, 250, 247, 0.97);
-  --toast-accent-success: #15803d;
-  --toast-accent-error: #b91c1c;
-  --toast-accent-info: #1d4ed8;
-  --toast-accent-warning: #c2410c;
+  /* 浅色档一律压到 700/800：700 档的绿与琥珀落在暖纸底上只有 4.1~4.2:1，
+     刚好卡在 4.5 线下，所以这两色再降一级到 800。 */
+  --accent-fg-success: #166534;
+  --accent-fg-error: #b91c1c;
+  --accent-fg-info: #1d4ed8;
+  --accent-fg-warning: #9a3412;
+  --accent-fg-violet: #6d28d9;
+  --accent-fg-violet-strong: #5b21b6;
+  --accent-fg-blue: #1d4ed8;
+  --accent-fg-amber: #92400e;
+  --accent-fg-danger: #b91c1c;
+  --accent-fg-emerald: #166534;
 
   /* 浮层在浅色下走暖纸色，且保持近实心 —— 半透明深色叠在纸面上就是「白底浮暗卡」。 */
   --overlay-panel-bg: linear-gradient(180deg, #FCFAF7 0%, #F4F0E9 100%);

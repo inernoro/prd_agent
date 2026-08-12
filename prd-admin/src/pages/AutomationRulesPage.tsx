@@ -86,14 +86,14 @@ function HookUrlDisplay({ hookId, onRegenerate }: { hookId: string; onRegenerate
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 p-2.5 rounded-[12px] min-w-0" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
-        <Link size={14} style={{ color: 'rgba(34,197,94,0.8)', flexShrink: 0 }} />
-        <code className="flex-1 text-xs break-all" style={{ color: 'rgba(34,197,94,0.9)' }}>{url}</code>
+        <Link size={14} style={{ color: 'var(--accent-fg-emerald)', flexShrink: 0 }} />
+        <code className="flex-1 text-xs break-all" style={{ color: 'var(--accent-fg-emerald)' }}>{url}</code>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => { navigator.clipboard.writeText(url); toast.success('已复制地址'); }}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover-bg-soft"
-          style={{ color: 'rgba(34,197,94,0.8)', border: '1px solid rgba(34,197,94,0.15)' }}
+          style={{ color: 'var(--accent-fg-emerald)', border: '1px solid rgba(34,197,94,0.15)' }}
         >
           <Copy size={12} /> 复制地址
         </button>
@@ -477,7 +477,7 @@ export default function AutomationRulesPage() {
                   onClick={() => navigate(`/workflow-agent/${wf.id}`)}
                   className="flex items-center gap-3 px-3 py-2 rounded-[10px] cursor-pointer transition-all surface-row"
                 >
-                  <Zap size={14} style={{ color: 'rgba(234,179,8,0.8)', flexShrink: 0 }} />
+                  <Zap size={14} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium truncate">{wf.name}</div>
                     <div className="text-[11px] flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
@@ -537,7 +537,7 @@ export default function AutomationRulesPage() {
                       <button onClick={() => handleNew('incoming_webhook')}
                         className={selectItemClass + ' w-full text-left flex items-center gap-2'}
                         style={{ color: 'var(--text-primary)' }}>
-                        <Link size={14} style={{ color: 'rgba(34,197,94,0.8)' }} />
+                        <Link size={14} style={{ color: 'var(--accent-fg-emerald)' }} />
                         <div>
                           <div className="text-sm">传入 Webhook</div>
                           <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>外部系统 POST 触发</div>
@@ -700,7 +700,7 @@ export default function AutomationRulesPage() {
                         <div style={{ color: 'var(--text-muted)' }}>
                           POST <code className="px-1 py-0.5 rounded bg-token-nested">{`{"username":"张三","repo":"my-project"}`}</code>
                         </div>
-                        <div className="mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
+                        <div className="mt-0.5" style={{ color: 'var(--accent-fg-emerald)' }}>
                           渲染 → 用户 张三 推送到 my-project
                         </div>
                       </div>

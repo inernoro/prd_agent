@@ -186,7 +186,7 @@ export function TipCard({
               display: 'inline-block',
               fontSize: 10,
               fontWeight: 600,
-              color: '#fff',
+              color: 'var(--text-primary)',
               background: 'linear-gradient(135deg, #f43f5e, #a855f7)',
               borderRadius: 999,
               padding: '1px 7px',

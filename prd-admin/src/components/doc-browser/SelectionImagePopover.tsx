@@ -56,7 +56,7 @@ export function SelectionImagePopover({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between px-3 pt-3 pb-2 shrink-0">
-        <span className="text-[11px] font-semibold flex items-center gap-1.5" style={{ color: 'rgba(216,180,254,0.9)' }}>
+        <span className="text-[11px] font-semibold flex items-center gap-1.5" style={{ color: 'var(--accent-fg-violet)' }}>
           <ImagePlus size={12} />
           为选中内容配图
         </span>

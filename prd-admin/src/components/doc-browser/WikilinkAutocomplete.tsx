@@ -224,7 +224,7 @@ export function WikilinkAutocomplete({ textareaRef, value, storeId, onInsert }: 
         className="border-b border-b-token-subtle" style={{ padding: '8px 12px', fontSize: 11, color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}
       >
         <span>
-          {trigger?.kind === 'at' ? '@' : '[['} <strong style={{ color: '#fff' }}>{trigger?.query || '(空)'}</strong> · 找到 {items.length} 条
+          {trigger?.kind === 'at' ? '@' : '[['} <strong style={{ color: 'var(--text-primary)' }}>{trigger?.query || '(空)'}</strong> · 找到 {items.length} 条
         </span>
         <span style={{ color: 'var(--text-muted)' }}>↑↓ 选 · Enter 确认 · Esc 关</span>
       </div>

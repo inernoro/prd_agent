@@ -516,7 +516,7 @@ export function TipsDrawer() {
               color: 'var(--text-primary, #fff)',
             }}
           >
-            <Sparkles size={14} style={{ color: '#c4b5fd' }} />
+            <Sparkles size={14} style={{ color: 'var(--accent-fg-violet)' }} />
             {showAllPages ? '全部教程' : '本页教程'}
             {/* 「本页 / 全部」切换:仅当其它页面还有更多教程时才展示,避免无意义按钮 */}
             {(showAllPages || tips.length > pageTips.length) && (
@@ -527,7 +527,7 @@ export function TipsDrawer() {
                 style={{
                   border: '1px solid rgba(196,181,253,0.30)',
                   background: 'rgba(196,181,253,0.10)',
-                  color: '#c4b5fd',
+                  color: 'var(--accent-fg-violet)',
                   cursor: 'pointer',
                   padding: '2px 7px',
                   borderRadius: 999,
@@ -543,7 +543,7 @@ export function TipsDrawer() {
               <span
                 style={{
                   fontSize: 11,
-                  color: 'rgba(255,255,255,0.55)',
+                  color: 'var(--text-secondary)',
                   fontFamily: 'ui-monospace, Menlo, monospace',
                   marginLeft: 2,
                 }}
@@ -558,7 +558,7 @@ export function TipsDrawer() {
                   padding: '1px 6px',
                   borderRadius: 999,
                   background: 'rgba(196,181,253,0.16)',
-                  color: '#c4b5fd',
+                  color: 'var(--accent-fg-violet)',
                 }}
               >
                 已锁定
@@ -592,7 +592,7 @@ export function TipsDrawer() {
               style={{
                 border: 'none',
                 background: 'transparent',
-                color: 'rgba(255,255,255,0.45)',
+                color: 'var(--text-muted)',
                 cursor: 'pointer',
                 padding: 5,
                 display: 'inline-flex',
@@ -621,7 +621,7 @@ export function TipsDrawer() {
               style={{
                 padding: '32px 12px',
                 textAlign: 'center',
-                color: 'rgba(255,255,255,0.45)',
+                color: 'var(--text-muted)',
                 fontSize: 12,
                 lineHeight: 1.6,
               }}
@@ -638,7 +638,7 @@ export function TipsDrawer() {
                       marginTop: 10,
                       border: '1px solid rgba(196,181,253,0.35)',
                       background: 'rgba(196,181,253,0.12)',
-                      color: '#c4b5fd',
+                      color: 'var(--accent-fg-violet)',
                       cursor: 'pointer',
                       padding: '5px 12px',
                       borderRadius: 999,
@@ -698,7 +698,7 @@ export function TipsDrawer() {
                       {(stepCount > 0 || chip) && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
                           {stepCount > 0 && (
-                            <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'ui-monospace, Menlo, monospace' }}>
+                            <span style={{ fontSize: 10.5, color: 'var(--text-muted)', fontFamily: 'ui-monospace, Menlo, monospace' }}>
                               {stepCount} 步 · 约 {estMin} 分钟 · +{xpReward} 经验
                             </span>
                           )}
@@ -720,13 +720,13 @@ export function TipsDrawer() {
                       type="button"
                       onClick={() => handleDismissTip(t.id)}
                       title="本次关闭"
-                      style={{ border: 'none', background: 'transparent', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', padding: 2, display: 'inline-flex', flexShrink: 0 }}
+                      style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: 2, display: 'inline-flex', flexShrink: 0 }}
                     >
                       <X size={12} />
                     </button>
                   </div>
                   {t.body && (
-                    <div style={{ fontSize: 11.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.62)', whiteSpace: 'pre-wrap', paddingLeft: 22 }}>
+                    <div style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', paddingLeft: 22 }}>
                       {t.body}
                     </div>
                   )}
@@ -738,7 +738,7 @@ export function TipsDrawer() {
                         flex: 1,
                         border: '1px solid rgba(167,139,250,0.4)',
                         background: 'linear-gradient(135deg, rgba(168,85,247,0.22), rgba(99,102,241,0.16))',
-                        color: '#c4b5fd',
+                        color: 'var(--accent-fg-violet)',
                         cursor: 'pointer',
                         padding: '6px 10px',
                         borderRadius: 8,
@@ -758,7 +758,7 @@ export function TipsDrawer() {
                         type="button"
                         onClick={() => handleMarkLearned(t.id)}
                         title="我已学会(升级后会再次提醒)"
-                        style={{ border: 'none', background: 'rgba(52,211,153,0.12)', color: 'rgba(52,211,153,0.95)', cursor: 'pointer', padding: '6px 9px', borderRadius: 8, fontSize: 11.5, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}
+                        style={{ border: 'none', background: 'rgba(52,211,153,0.12)', color: 'var(--accent-fg-emerald)', cursor: 'pointer', padding: '6px 9px', borderRadius: 8, fontSize: 11.5, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}
                       >
                         <GraduationCap size={12} strokeWidth={2.4} />
                         已会
@@ -769,7 +769,7 @@ export function TipsDrawer() {
                         type="button"
                         onClick={() => handleDismissForever(t.id)}
                         title="不再提示这条"
-                        style={{ border: 'none', background: 'transparent', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '6px 4px', borderRadius: 8, fontSize: 11, flexShrink: 0 }}
+                        style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', padding: '6px 4px', borderRadius: 8, fontSize: 11, flexShrink: 0 }}
                       >
                         不再提示
                       </button>

@@ -144,20 +144,14 @@ select {
   color-scheme: light;
 }
 
-/* 让 option/optgroup 尽量随 color-scheme 自适应（Canvas/CanvasText 会随暗色方案变化） */
+/* option/optgroup 直接用主题 token 上色。
+   原先用 Canvas/CanvasText 系统色，指望它跟随 color-scheme——但弹层是 UA 画的，
+   Canvas 在弹层里解析成什么由浏览器决定，实测暗色主题下会解析成白，
+   于是米白 option 列表浮在暗色页面上。token 是我们自己的双写值，两个主题都确定。 */
 select option,
 select optgroup {
-  color: CanvasText;
-  background-color: Canvas;
-}
-
-/* 兼容：极少数不支持 Canvas/CanvasText 的环境 */
-@supports not (color: CanvasText) {
-  select option,
-  select optgroup {
-    color: #111;
-    background-color: #fff;
-  }
+  color: var(--text-primary);
+  background-color: var(--bg-elevated);
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }

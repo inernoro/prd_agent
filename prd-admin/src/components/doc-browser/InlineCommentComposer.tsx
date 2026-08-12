@@ -93,8 +93,8 @@ export function InlineCommentComposer({
         </button>
       </div>
       <div className="flex items-center gap-1 mb-1">
-        <Quote size={9} style={{ color: 'rgba(216,180,254,0.75)' }} />
-        <span className="text-[10px] font-semibold" style={{ color: 'rgba(216,180,254,0.85)' }}>你选中的内容</span>
+        <Quote size={9} style={{ color: 'var(--accent-fg-violet)' }} />
+        <span className="text-[10px] font-semibold" style={{ color: 'var(--accent-fg-violet)' }}>你选中的内容</span>
       </div>
       <div
         className="px-2.5 py-1.5 rounded-[8px] text-[12px] mb-2 max-h-24 overflow-y-auto"
@@ -104,7 +104,7 @@ export function InlineCommentComposer({
           // 边的 color/style，只剩 3px 宽度但变成淡紫——失去引用块视觉强调（Bugbot Low）
           border: '1px solid rgba(168,85,247,0.22)',
           borderLeft: '3px solid rgba(168,85,247,0.7)',
-          color: 'rgba(232,210,255,0.98)',
+          color: 'var(--accent-fg-violet-strong)',
           fontStyle: 'italic',
           lineHeight: 1.5,
           whiteSpace: 'pre-wrap',
@@ -135,7 +135,7 @@ export function InlineCommentComposer({
           onClick={handleSubmit}
           disabled={submitting || !draft.trim()}
           className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'rgba(216,180,254,0.97)' }}
+          style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
         >
           {submitting ? <MapSpinner size={11} /> : <Send size={11} />}
           发送

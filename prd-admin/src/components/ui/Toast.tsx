@@ -14,28 +14,28 @@ const icons = {
 /**
  * bg / border 是低透明度语义色，叠在 --toast-bg-base 上，暗浅两套主题都成立；
  * icon 是不透明前景（图标 + 动作按钮文字），必须走 token —— 500 档饱和色
- * 在浅色暖纸底上只有 1.9:1，看不清。见 tokens.css 的 --toast-accent-*。
+ * 在浅色暖纸底上只有 1.9:1，看不清。见 tokens.css 的 --accent-fg-*。
  */
 const colors = {
   success: {
     bg: 'rgba(34, 197, 94, 0.18)',
     border: 'rgba(34, 197, 94, 0.38)',
-    icon: 'var(--toast-accent-success)',
+    icon: 'var(--accent-fg-success)',
   },
   error: {
     bg: 'rgba(239, 68, 68, 0.18)',
     border: 'rgba(239, 68, 68, 0.38)',
-    icon: 'var(--toast-accent-error)',
+    icon: 'var(--accent-fg-error)',
   },
   info: {
     bg: 'rgba(59, 130, 246, 0.18)',
     border: 'rgba(59, 130, 246, 0.38)',
-    icon: 'var(--toast-accent-info)',
+    icon: 'var(--accent-fg-info)',
   },
   warning: {
     bg: 'rgba(251, 146, 60, 0.18)',
     border: 'rgba(251, 146, 60, 0.38)',
-    icon: 'var(--toast-accent-warning)',
+    icon: 'var(--accent-fg-warning)',
   },
 };
 

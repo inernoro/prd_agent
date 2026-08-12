@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useDataTheme } from '@/hooks/useDataTheme';
 import { ChevronDown, ChevronUp, Copy, Loader2 } from 'lucide-react';
 
 /**
@@ -6,26 +7,40 @@ import { ChevronDown, ChevronUp, Copy, Loader2 } from 'lucide-react';
  * 渲染失败时降级为可折叠的源码块。
  */
 let mermaidPromise: Promise<typeof import('mermaid').default> | null = null;
+
+/**
+ * mermaid 的配色是渲染时一次性烘进 SVG 的，拿不到 CSS 变量，所以只能按当前
+ * data-theme 显式给两套。此前写死 theme:'dark' + 近白文字，浅色主题下整张图
+ * 是浅字压浅底，几乎看不见。
+ */
+const MERMAID_THEME = {
+  dark: {
+    theme: 'dark' as const,
+    themeVariables: {
+      primaryColor: '#a855f7',
+      primaryTextColor: '#f3e8ff',
+      primaryBorderColor: '#7e22ce',
+      lineColor: '#a78bfa',
+      textColor: '#e5e7eb',
+      background: 'transparent',
+    },
+  },
+  light: {
+    theme: 'base' as const,
+    themeVariables: {
+      primaryColor: '#ede9fe',
+      primaryTextColor: '#3b0764',
+      primaryBorderColor: '#6d28d9',
+      lineColor: '#6d28d9',
+      textColor: '#1f2937',
+      background: 'transparent',
+    },
+  },
+};
+
 function loadMermaid() {
   if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then(mod => {
-      const m = mod.default;
-      m.initialize({
-        startOnLoad: false,
-        theme: 'dark',
-        securityLevel: 'strict',
-        fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
-        themeVariables: {
-          primaryColor: '#a855f7',
-          primaryTextColor: '#f3e8ff',
-          primaryBorderColor: '#7e22ce',
-          lineColor: '#a78bfa',
-          textColor: '#e5e7eb',
-          background: 'transparent',
-        },
-      });
-      return m;
-    });
+    mermaidPromise = import('mermaid').then(mod => mod.default);
   }
   return mermaidPromise;
 }
@@ -37,6 +52,7 @@ export function MermaidDiagram({ code }: { code: string }) {
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [showSource, setShowSource] = useState(false);
+  const theme = useDataTheme();
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +60,14 @@ export function MermaidDiagram({ code }: { code: string }) {
     loadMermaid()
       .then(async mermaid => {
         if (cancelled) return;
+        // 每次渲染前按当前主题重新 initialize：mermaid 是全局单例，
+        // 主题切换后必须重烘一遍，否则沿用上一套配色。
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
+          ...MERMAID_THEME[theme],
+        });
         const id = `mermaid-${Date.now().toString(36)}-${++seq}`;
         try {
           const { svg } = await mermaid.render(id, code);
@@ -62,7 +86,7 @@ export function MermaidDiagram({ code }: { code: string }) {
         setStatus('error');
       });
     return () => { cancelled = true; };
-  }, [code]);
+  }, [code, theme]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code).catch(() => {});
@@ -72,7 +96,7 @@ export function MermaidDiagram({ code }: { code: string }) {
     <div
       className="my-3 rounded-lg overflow-hidden group/mermaid"
       style={{
-        background: 'rgba(15, 17, 23, 0.6)',
+        background: 'var(--nested-block-bg)',
         border: '1px solid rgba(168, 85, 247, 0.18)',
       }}
     >
@@ -81,7 +105,7 @@ export function MermaidDiagram({ code }: { code: string }) {
         style={{
           background: 'rgba(168, 85, 247, 0.08)',
           borderBottom: '1px solid rgba(168, 85, 247, 0.14)',
-          color: '#d8b4fe',
+          color: 'var(--accent-fg-violet)',
         }}
       >
         <span className="font-mono font-semibold">◆ MERMAID</span>
@@ -121,7 +145,7 @@ export function MermaidDiagram({ code }: { code: string }) {
       {status === 'error' && (
         <div
           className="px-4 py-3 text-[12px]"
-          style={{ background: 'rgba(248,113,113,0.06)', color: '#fca5a5' }}
+          style={{ background: 'rgba(248,113,113,0.06)', color: 'var(--accent-fg-danger)' }}
         >
           图表渲染失败：{errorMsg}
         </div>

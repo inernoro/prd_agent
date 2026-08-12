@@ -181,7 +181,7 @@ export function SelectionAiPopover({
     >
       {/* 头部：标题 + 模型可见性（ai-model-visibility）+ 关闭 */}
       <div className="flex items-center justify-between mb-2 shrink-0">
-        <span className="text-[10px] font-semibold flex items-center gap-1.5" style={{ color: 'rgba(216,180,254,0.9)' }}>
+        <span className="text-[10px] font-semibold flex items-center gap-1.5" style={{ color: 'var(--accent-fg-violet)' }}>
           <Sparkles size={11} />
           划词 AI 改写
           {model && (
@@ -200,8 +200,8 @@ export function SelectionAiPopover({
 
       {/* 选中片段引用块 */}
       <div className="flex items-center gap-1 mb-1 shrink-0">
-        <Quote size={9} style={{ color: 'rgba(216,180,254,0.75)' }} />
-        <span className="text-[10px] font-semibold" style={{ color: 'rgba(216,180,254,0.85)' }}>你选中的内容</span>
+        <Quote size={9} style={{ color: 'var(--accent-fg-violet)' }} />
+        <span className="text-[10px] font-semibold" style={{ color: 'var(--accent-fg-violet)' }}>你选中的内容</span>
       </div>
       <div
         className="px-2.5 py-1.5 rounded-[8px] text-[12px] mb-2 overflow-y-auto shrink-0"
@@ -210,7 +210,7 @@ export function SelectionAiPopover({
           background: 'rgba(168,85,247,0.12)',
           border: '1px solid rgba(168,85,247,0.22)',
           borderLeft: '3px solid rgba(168,85,247,0.7)',
-          color: 'rgba(232,210,255,0.98)',
+          color: 'var(--accent-fg-violet-strong)',
           lineHeight: 1.5,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
@@ -260,7 +260,7 @@ export function SelectionAiPopover({
           onClick={() => customInstruction.trim() && run('custom', customInstruction.trim())}
           disabled={busy || !customInstruction.trim()}
           className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'rgba(216,180,254,0.97)' }}
+          style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
           title="执行自定义指令"
         >
           <Send size={12} />
@@ -275,7 +275,7 @@ export function SelectionAiPopover({
           style={{ flex: 1, minHeight: 60, maxHeight: 200, color: 'var(--text-primary)', lineHeight: 1.6, overscrollBehavior: 'contain' }}
         >
           {phase === 'error' ? (
-            <span style={{ color: 'rgba(248,113,113,0.9)' }}>{errorMsg}</span>
+            <span style={{ color: 'var(--accent-fg-danger)' }}>{errorMsg}</span>
           ) : showDiff && phase === 'done' ? (
             <MiniDiff lines={computeLineDiff(anchor.selectedText, output)} />
           ) : (
@@ -314,7 +314,7 @@ export function SelectionAiPopover({
             disabled={!canReplace || !!applying}
             title={canReplace ? '用 AI 结果替换选中片段' : '选区在原文中出现多处且无法唯一定位，为避免替换错位置已禁用；可改用「插入」或复制'}
             className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: 'rgba(168,85,247,0.22)', border: '1px solid rgba(168,85,247,0.45)', color: 'rgba(232,210,255,0.98)' }}
+            style={{ background: 'rgba(168,85,247,0.22)', border: '1px solid rgba(168,85,247,0.45)', color: 'var(--accent-fg-violet-strong)' }}
           >
             {applying === 'replace' ? <MapSpinner size={11} /> : <Replace size={11} />}
             替换原文
@@ -371,7 +371,7 @@ export function SelectionAiPopover({
           <button
             onClick={() => activeAction && run(activeAction, activeAction === 'custom' ? customInstruction.trim() : undefined)}
             className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-            style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'rgba(216,180,254,0.97)' }}
+            style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
           >
             <RotateCcw size={11} /> 重试
           </button>
