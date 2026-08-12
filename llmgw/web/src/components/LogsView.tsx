@@ -201,6 +201,9 @@ export function LogsView() {
   const [filterServiceKeyId, setFilterServiceKeyId] = useState(() => initialQueryValue('serviceKeyId'));
   const [filterClientCode, setFilterClientCode] = useState(() => initialQueryValue('clientCode'));
   const [filterEnvironment, setFilterEnvironment] = useState(() => initialQueryValue('environment'));
+  // 按上游平台过滤：从平台页「查看日志」深链进来（?platformId=xxx），
+  // 用来回答「这条上游到底有没有在被调、报什么错」。provider 会重名，只能用 id。
+  const [filterPlatformId, setFilterPlatformId] = useState(() => initialQueryValue('platformId'));
 
   const [meta, setMeta] = useState<{
     models: string[];
@@ -326,8 +329,9 @@ export function LogsView() {
       serviceKeyId: filterServiceKeyId || undefined,
       clientCode: filterClientCode || undefined,
       environment: filterEnvironment || undefined,
+      platformId: filterPlatformId.trim() || undefined,
     }),
-    [range, subtab, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterOperation, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment],
+    [range, subtab, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterOperation, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment, filterPlatformId],
   );
 
   useEffect(() => {
@@ -891,6 +895,7 @@ export function LogsView() {
     filterServiceKeyId,
     filterClientCode,
     filterEnvironment,
+    filterPlatformId.trim(),
   ].filter(Boolean).length;
   const clearFilters = () => {
     setFilterModel('');
@@ -912,6 +917,7 @@ export function LogsView() {
     setFilterServiceKeyId('');
     setFilterClientCode('');
     setFilterEnvironment('');
+    setFilterPlatformId('');
   };
   const successRate = summary?.total
     ? `${Math.round((summary.succeeded / summary.total) * 1000) / 10}%`
@@ -1008,6 +1014,8 @@ export function LogsView() {
               <input aria-label="运行 ID" value={filterRunId} onChange={(event) => setFilterRunId(event.target.value)} placeholder="运行 ID" spellCheck={false} />
               <input aria-label="会话 ID" value={filterSessionId} onChange={(event) => setFilterSessionId(event.target.value)} placeholder="会话 ID" spellCheck={false} />
               <input aria-label="模型池 ID" value={filterModelPoolId} onChange={(event) => setFilterModelPoolId(event.target.value)} placeholder="模型池 ID" spellCheck={false} />
+              {/* 平台页「查看日志」深链会填上它。必须可见可清，否则用户看到一份被过滤的列表却不知道为什么少了记录 */}
+              <input aria-label="上游平台 ID" value={filterPlatformId} onChange={(event) => setFilterPlatformId(event.target.value)} placeholder="上游平台 ID" spellCheck={false} />
               <select aria-label="应用" value={filterAppCaller} onChange={(event) => setFilterAppCaller(event.target.value)}>
                 <option value="">全部应用</option>
                 {meta.appCallers.map((value) => <option key={value} value={value}>{value}</option>)}

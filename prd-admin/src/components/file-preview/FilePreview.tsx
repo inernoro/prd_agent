@@ -14,10 +14,51 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
 
-function formatBackgroundDuration(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+const MINUTE_SECONDS = 60;
+const HOUR_SECONDS = 60 * MINUTE_SECONDS;
+const DAY_SECONDS = 24 * HOUR_SECONDS;
+/** 超过这个时长就不该再说「已等待」——它暗示马上就好，而实际上多半要人来点重试。 */
+const ARCHIVE_STALLED_SECONDS = HOUR_SECONDS;
+
+/**
+ * 等待时长的人话。此前只有 mm:ss，没有小时和天的进位——
+ * 一条 7 月 24 日卡住的记录在 8 月 11 日会显示「已等待 26573:16」，
+ * 数字本身没算错，但没人能从这串数里看出「这条已经卡了 18 天」。
+ */
+export function formatBackgroundDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  if (seconds >= DAY_SECONDS)
+    return `${Math.floor(seconds / DAY_SECONDS)} 天 ${Math.floor((seconds % DAY_SECONDS) / HOUR_SECONDS)} 小时`;
+  if (seconds >= HOUR_SECONDS)
+    return `${Math.floor(seconds / HOUR_SECONDS)} 小时 ${Math.floor((seconds % HOUR_SECONDS) / MINUTE_SECONDS)} 分`;
+  const minutes = Math.floor(seconds / MINUTE_SECONDS);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % MINUTE_SECONDS).padStart(2, '0')}`;
+}
+
+/**
+ * 后台归档等了多久、还该不该按「就快好了」来讲。
+ *
+ * 卡了一个小时以上的，用户要知道的是**什么时候开始的**和**它已经不正常了**，
+ * 而不是一个还在每秒往上跳的计数器——那只会让人以为系统还在推进。
+ */
+export function describeArchiveWait(startedAt?: string, now = Date.now()): {
+  seconds: number;
+  stalled: boolean;
+  /** 卡住时给出开始时刻，让人能判断「这是哪天的事」 */
+  startedLabel: string | null;
+} {
+  const startedMs = startedAt ? new Date(startedAt).getTime() : Number.NaN;
+  if (!Number.isFinite(startedMs)) return { seconds: 0, stalled: false, startedLabel: null };
+  const seconds = Math.max(0, Math.floor((now - startedMs) / 1000));
+  const stalled = seconds >= ARCHIVE_STALLED_SECONDS;
+  if (!stalled) return { seconds, stalled, startedLabel: null };
+  const started = new Date(startedMs);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return {
+    seconds,
+    stalled,
+    startedLabel: `${started.getFullYear()}-${pad(started.getMonth() + 1)}-${pad(started.getDate())} ${pad(started.getHours())}:${pad(started.getMinutes())}`,
+  };
 }
 
 const RECORDING_ARCHIVE_STALE_MS = 10 * 60 * 1000;
@@ -41,16 +82,19 @@ function RecordingArchiveProgress({
   waitingForRetry: boolean;
   entryId: string;
 }) {
-  const startedMs = startedAt ? new Date(startedAt).getTime() : Date.now();
-  const [elapsed, setElapsed] = useState(() => (
-    Number.isFinite(startedMs) ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0
-  ));
+  // 每次从 startedAt 重算，不做 +1 累加：累加会随标签页休眠漂移，
+  // 也会在「这条其实是几天前的」时候装作自己一直在跟进。
+  const [wait, setWait] = useState(() => describeArchiveWait(startedAt));
   const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setElapsed(value => value + 1), 1000);
+    setWait(describeArchiveWait(startedAt));
+    // 已经卡成天级的，没必要每秒重算一遍——那个数字一分钟也不会变一次。
+    if (describeArchiveWait(startedAt).stalled) return undefined;
+    const timer = window.setInterval(() => setWait(describeArchiveWait(startedAt)), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [startedAt]);
+  const elapsed = wait.seconds;
 
   const stages = [
     { label: '录音已保存', state: 'done' as const, icon: Check },
@@ -78,7 +122,9 @@ function RecordingArchiveProgress({
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[13px] font-semibold text-token-primary">
-            {waitingForRetry ? '云端服务暂时不可用，已排队重试' : '正在保存云端副本'}
+            {wait.stalled
+              ? '云端副本长时间没有完成，多半要手动重试'
+              : waitingForRetry ? '云端服务暂时不可用，已排队重试' : '正在保存云端副本'}
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-token-secondary">
             {waitingForRetry
@@ -133,8 +179,9 @@ function RecordingArchiveProgress({
       </div>
 
       <p className="mt-3 text-center text-[10px] tabular-nums text-token-muted">
-        {waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'}
-        {' · '}{waitingForRetry ? '已等待' : '已处理'} {formatBackgroundDuration(elapsed)}
+        {wait.stalled
+          ? `${wait.startedLabel} 开始，已经卡了 ${formatBackgroundDuration(elapsed)}`
+          : `${waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'} · ${waitingForRetry ? '已等待' : '已处理'} ${formatBackgroundDuration(elapsed)}`}
       </p>
       {waitingForRetry && (
         <button

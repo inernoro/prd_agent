@@ -23,4 +23,6 @@
 | 白天主题适配 | 编辑器配色当前偏暗，白天模式对比度未走 `cds-theme-tokens` 规则审计 | Phase 2 |
 | 节点删除/重排 | MVP 只支持编辑文字内容；增删/拖拽改顺序未做 | Phase 2 |
 | 长文档 chunk | `SourceText` 入库前硬截 16K 字；超长文档需 chunk → 段级 outline → 全局 refine | Phase 2 |
+| 说话人逐句归属是估算 | 上游未返回原生说话人时走本地声纹兜底：**分出几个人**来自真实声学聚类（基频 / 过零率 / Goertzel 频带 + 平均链接），但**哪句话归谁**是按字数比例摊到语音段上（`LocalSpeakerDiarizer.AlignClausesToTurns`），隐含「所有人语速一致」假设；每句时间戳取的是该语音段起止，不是这句话的真实起止。已在笔记里写明来源（`> 说话人来源：local · …`）并在结果页标注，但估算本身未消除。要精确需要真正的强制对齐（forced alignment）或上游原生 diarization。 |
+| 说话人来源仅三态 | 来源只区分 native / model / local 三种，且要求同一批分段来源一致才写来源行；混合来源（未来若出现分段级混合改写）会退化为不写，用户看不到任何提示。 |
 | 自测路径有限 | 本次 MVP 自测路径：本地 `pnpm tsc + pnpm test navCoverage + pnpm lint`；CDS 灰度 + 真实 LLM 端到端待用户验收 | 见交付消息 |

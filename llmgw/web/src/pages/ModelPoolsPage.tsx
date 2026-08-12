@@ -14,11 +14,12 @@
 //     卡片内边距只允许 CARD_PADDING(14) 与嵌套块 INSET_PADDING(10) 两种。
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
+import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, deletePool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
 import type { ExchangeItem, ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo, PoolTypesData } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { healthChip } from '@/components/poolsHelpers';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { BODY_TEXT, FIELD_INPUT, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
@@ -65,6 +66,7 @@ export function ModelPoolsPage() {
   const { tenant } = useAuth();
   const navigate = useNavigate();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { confirm, promptText } = useDialogs();
   const [pools, setPools] = useState<ModelPool[] | null>(null);
   const [poolTypes, setPoolTypes] = useState<PoolTypesData | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
@@ -131,6 +133,30 @@ export function ModelPoolsPage() {
     } else {
       setToast(res.error?.message || '操作失败');
     }
+  }
+
+  // 删除模型池。后端把「它是某类型的当前默认池」和「还有 appCaller 绑着它」分开报，
+  // 因为前者要先改默认、后者要先解绑，补救动作不一样，合并成一句会让运维不知道先做哪个。
+  async function removePool(pool: ModelPool) {
+    const label = pool.name || pool.code || pool.id;
+    const typed = await promptText({
+      title: `删除模型池「${label}」`,
+      description: `它的 ${pool.models.length} 个成员配置一并消失，无法撤销。`,
+      inputLabel: '确认请输入模型池名称',
+      requireExact: label,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== label) { setToast('输入的名称不一致，已取消删除'); return; }
+    setBusyId(pool.id);
+    setToast(null);
+    const res = await deletePool(pool.id);
+    setBusyId(null);
+    if (!res.success) { setToast(res.error?.message || '删除失败'); return; }
+    setDrawer(null);
+    setPools((prev) => (prev ? prev.filter((x) => x.id !== pool.id) : prev));
+    setToast(`已删除模型池「${label}」`);
   }
 
   async function claimPool(pool: ModelPool) {
@@ -343,7 +369,7 @@ export function ModelPoolsPage() {
       setToast('最大数量必须是正整数');
       return;
     }
-    if (!window.confirm(`批量导入「${pool.name}」的模型池成员？`)) return;
+    if (!await confirm({ title: `批量导入「${pool.name}」的模型池成员？`, description: '按当前筛选把匹配的模型追加进这个池。', confirmLabel: '批量导入' })) return;
     setBusyId(`pool-bulk-import:${pool.id}`);
     setToast(null);
     const res = await bulkImportPoolModels(pool.id, {
@@ -549,6 +575,7 @@ export function ModelPoolsPage() {
                 <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap', margin: `${GAP.section}px 0` }}>
                   {canWrite ? (selectedPool.authority === 'llm_gateway' ? <Button size="sm" variant="secondary" onClick={() => (editDrafts[selectedPool.id] ? cancelEditPool(selectedPool.id) : startEditPool(selectedPool))}>{editDrafts[selectedPool.id] ? '取消编辑' : '编辑属性'}</Button> : <Button size="sm" variant="secondary" disabled={busyId === selectedPool.id} onClick={() => void claimPool(selectedPool)}>导入为可维护配置</Button>) : null}
                   {canWrite && !selectedPool.isDefaultForType ? <Button size="sm" variant="ghost" disabled={busyId === selectedPool.id} onClick={() => void makeDefault(selectedPool)}>设为默认池</Button> : null}
+                  {canWrite && selectedPool.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" disabled={busyId === selectedPool.id} onClick={() => void removePool(selectedPool)}>删除</Button> : null}
                   <Link to={`/app-callers?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-secondary)', textDecoration: 'none' }}>查看 appCaller</Link>
                   <Link to={`/logs?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-secondary)', textDecoration: 'none' }}>查看请求记录</Link>
                 </div>

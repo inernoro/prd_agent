@@ -24,12 +24,14 @@ import { Button, Card, Chip, InlineAlert, SectionLoader } from '@/components/ui'
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { CARD_ACTIONS, CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
+import { useDialogs } from '@/components/ConfirmDialog';
 
 const VARIABLES = ['tenantId', 'teamId', 'appCallerCode', 'requestType', 'sourceSystem'];
 const emptyDraft: PromptPolicyDraft = { expectedVersion: 0, systemPromptPrefix: '', systemPromptSuffix: '', enabled: true, allowedVariables: [], maxChars: 8000 };
 
 export function PromptPolicyPage() {
   const { id = '' } = useParams();
+  const { confirm } = useDialogs();
   const [data, setData] = useState<PromptPolicyData | null>(null);
   const [draft, setDraft] = useState<PromptPolicyDraft>(emptyDraft);
   const [sample, setSample] = useState('你是一个可靠的助手。');
@@ -69,7 +71,7 @@ export function PromptPolicyPage() {
     setNotice(`已保存版本 v${res.data.version}`); setPreview(null); await load();
   };
   const rollback = async (targetVersion: number) => {
-    if (!data?.current || !window.confirm(`回滚到 v${targetVersion}？系统会创建一个新版本，不覆盖历史。`)) return;
+    if (!data?.current || !await confirm({ title: `回滚到 v${targetVersion}？`, description: '系统会创建一个新版本，不覆盖历史。', confirmLabel: '回滚' })) return;
     setBusy(true); setError(null);
     const res = await rollbackPromptPolicy(id, data.current.version, targetVersion);
     setBusy(false);

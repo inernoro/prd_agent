@@ -12,6 +12,25 @@ public static class TranscribeNoteText
     private const string SummaryMarker = "## 摘要";
 
     /// <summary>
+    /// 说话人来源说明行的前缀（SubtitleFormatter.FormatSpeakerSourceNote 产出，唯一字面量在这里）。
+    /// 它是**元信息不是转录内容**：反解原文时要剔掉，替换原文时要留住——
+    /// 用户只是把某句话改对了字，说话人标签的来源并没有因此变化。
+    /// </summary>
+    public const string SpeakerSourcePrefix = "> 说话人来源：";
+
+    /// <summary>取出笔记里的说话人来源行（含前缀），没有返回 null。</summary>
+    public static string? ExtractSpeakerSourceLine(string noteMd)
+    {
+        if (string.IsNullOrEmpty(noteMd)) return null;
+        foreach (var raw in noteMd.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith(SpeakerSourcePrefix, StringComparison.Ordinal)) return line;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// 静音/拒答判定：极短转录文本且命中「转写模型把指令当聊天回答」「明确表示没听到内容」的模式。
     /// 只在极短文本上启用，避免误伤真实的一句话录音。
     /// 历史事故（2026-07-12）：静音录音产出"好的，请播放音频，我会逐字转写"并被存成笔记。
@@ -52,6 +71,12 @@ public static class TranscribeNoteText
         var idx = noteMd.IndexOf(TranscriptMarker, StringComparison.Ordinal);
         if (idx < 0) return null;
         var body = noteMd[(idx + TranscriptMarker.Length)..].Trim();
+        // 来源行是元信息，不是转录内容：留在这里会被当成原文送进编辑框、再被当成用户输入存回去。
+        if (body.StartsWith(SpeakerSourcePrefix, StringComparison.Ordinal))
+        {
+            var lineEnd = body.IndexOf('\n');
+            body = lineEnd < 0 ? string.Empty : body[(lineEnd + 1)..].Trim();
+        }
         return string.IsNullOrWhiteSpace(body) ? null : body;
     }
 
@@ -62,17 +87,22 @@ public static class TranscribeNoteText
     public static string ReplaceTranscriptSection(string noteMd, string newTranscript)
     {
         var transcript = newTranscript.Trim();
+        // 来源行跟着说话人标签走，不跟着正文走：用户改的是字，不是「这些角色是怎么分出来的」。
+        // 不带过来的话，手动编辑一次原文就把估算提示悄悄抹掉了，界面重新变成看不出真假。
+        var sourceLine = ExtractSpeakerSourceLine(noteMd);
+        var body = sourceLine == null ? transcript : sourceLine + "\n\n" + transcript;
+
         var idx = noteMd.IndexOf(TranscriptMarker, StringComparison.Ordinal);
         if (idx < 0)
         {
             var prefix = noteMd.TrimEnd();
             var glue = prefix.Length > 0 ? "\n\n" : "";
-            return prefix + glue + TranscriptMarker + "\n\n" + transcript + "\n";
+            return prefix + glue + TranscriptMarker + "\n\n" + body + "\n";
         }
 
         var head = noteMd[..idx].TrimEnd();
         var headGlue = head.Length > 0 ? "\n\n" : "";
-        return head + headGlue + TranscriptMarker + "\n\n" + transcript + "\n";
+        return head + headGlue + TranscriptMarker + "\n\n" + body + "\n";
     }
 
     /// <summary>

@@ -359,6 +359,8 @@ export const api = {
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
       homeLauncher: () => '/api/dashboard/user-preferences/home-launcher',
       docStorePins: () => '/api/dashboard/user-preferences/doc-store-pins',
+      transcriptLexicon: () => '/api/dashboard/user-preferences/transcript-lexicon',
+      transcriptLexiconSystem: () => '/api/dashboard/user-preferences/transcript-lexicon/system',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
