@@ -6528,10 +6528,50 @@ app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformR
 // ---------------------------------------------------------------------------
 
 // 探测上游用的 HttpClient：超时压到 15s，避免一个不通的地址把控制台请求挂住。
-// 探针专用 HttpClient。**关掉自动重定向**：校验只对最初那个地址成立，
-// 跟随 302 等于把已校验目标换成一个没校验过的地址，内网探测的门就从这里溜进去。
-// 重定向本身会如实变成一个 3xx 状态码回给用户，比静默跟过去更透明。
-var upstreamProbeHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+// 探针专用 HttpClient。三道门，缺一道都能被绕过：
+//
+// 1. **关掉自动重定向**：校验只对最初那个地址成立，跟随 302 等于把已校验目标换成
+//    一个没校验过的地址。重定向会如实变成一个 3xx 回给用户，比静默跟过去更透明。
+// 2. **在 ConnectCallback 里校验真正要连的那个 IP**。只在发请求前查一次 DNS 是不够的：
+//    HttpClient 连接时会**再解析一次**，控制着 rebinding 域名的租户可以让第一次返回公网
+//    地址、第二次返回 127.0.0.1 或 169.254.169.254，前面那道校验就白做了
+//    （predicate-and-wiring-discipline 形状 6：判据读到的不是真正生效的那个值）。
+//    放在这里就没有窗口——被校验的地址和被连接的地址是同一个。
+// 3. 是否强制这道门由请求自己带（内部租户的本地上游预设本来就要指向内网，见下）。
+var blockPrivateProbeTargets = new HttpRequestOptionsKey<bool>("BlockPrivateProbeTargets");
+var upstreamProbeHttp = new HttpClient(new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    ConnectCallback = async (context, ct) =>
+    {
+        var enforce = context.InitialRequestMessage.Options.TryGetValue(blockPrivateProbeTargets, out var flag) && flag;
+        var host = context.DnsEndPoint.Host;
+        var addresses = IPAddress.TryParse(host, out var literal)
+            ? new[] { literal }
+            : await Dns.GetHostAddressesAsync(host, ct);
+
+        if (enforce)
+        {
+            addresses = addresses.Where(GatewayConfigurationProvisioning.IsSafeExternalExchangeAddress).ToArray();
+            if (addresses.Length == 0)
+                throw new HttpRequestException("目标解析到了内网、回环或云元数据地址，已拒绝连接");
+        }
+        if (addresses.Length == 0)
+            throw new HttpRequestException("目标域名解析不到任何地址");
+
+        var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(addresses, context.DnsEndPoint.Port, ct);
+            return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    },
+})
 {
     Timeout = TimeSpan.FromSeconds(15),
 };
@@ -6625,7 +6665,15 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
             }
         }
 
-        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+        // 外部租户强制内网校验；内部租户豁免（本地上游预设本来就要指向内网）
+        req.Options.Set(blockPrivateProbeTargets, TenantAccess.GetRequired(http).TenantId != internalTenantId);
+
+        // 整条探测（含读 body）共用一个 15 秒预算。
+        // HttpClient.Timeout 在 ResponseHeadersRead 下只覆盖到响应头到达为止：
+        // 上游先回头、再把 body 挂住慢慢流，下面这个读就没人管了，
+        // 「保存后自动测一次」会挂死并占住一个控制台请求。
+        using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
         sw.Stop();
         var status = (int)resp.StatusCode;
         int? modelCount = null;
@@ -6633,7 +6681,7 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
         {
             try
             {
-                var body = await resp.Content.ReadAsStringAsync();
+                var body = await resp.Content.ReadAsStringAsync(probeCts.Token);
                 var arr = System.Text.Json.Nodes.JsonNode.Parse(body)?["data"] as System.Text.Json.Nodes.JsonArray;
                 modelCount = arr?.Count;
             }
@@ -6727,11 +6775,14 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         using var req = new HttpRequestMessage(HttpMethod.Get, probeUrl);
         if (keyResult.Success && keyResult.PlainText.Length > 0)
             req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {keyResult.PlainText}");
-        using var resp = await upstreamProbeHttp.SendAsync(req);
+        // 与「测试连接」同款：外部租户强制内网校验，整条请求（含读 body）共用一个 15 秒预算
+        req.Options.Set(blockPrivateProbeTargets, TenantAccess.GetRequired(http).TenantId != internalTenantId);
+        using var discoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, discoveryCts.Token);
         if (!resp.IsSuccessStatusCode)
             return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_" + (int)resp.StatusCode,
                 $"上游返回 HTTP {(int)resp.StatusCode}，先点「测试连接」看具体原因"), jsonOptions, 502);
-        body = await resp.Content.ReadAsStringAsync();
+        body = await resp.Content.ReadAsStringAsync(discoveryCts.Token);
     }
     catch (TaskCanceledException)
     {
@@ -6835,10 +6886,31 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             continue;
         }
 
+        // 这条端点不走 TryNormalizeModel（那是给单模型表单用的），但**校验口径必须同源**，
+        // 否则直连调用或旧版前端能把任意用途名、负价格、超长标识塞进来：
+        // 用途会被池同步当成合法类型参与路由，负价格会进成本核算。
+        // 判定函数收在 GatewayConfigurationProvisioning，两条入库路径共用一份，防漂移。
+        if (modelId.Length > GatewayConfigurationProvisioning.MaxModelNameLength)
+        {
+            result.Skipped++;
+            result.SkippedModelIds.Add(modelId);
+            continue;
+        }
+
         var caps = (entry.Capabilities ?? ProviderPresets.InferCapabilities(modelId).ToList())
-            .Where(c => !string.IsNullOrWhiteSpace(c))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(c => GatewayConfigurationProvisioning.IsSupportedModelType(c))
+            .Select(c => c.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
             .ToList();
+
+        if (!GatewayConfigurationProvisioning.IsValidPrice(entry.InputPricePerMillion)
+            || !GatewayConfigurationProvisioning.IsValidPrice(entry.OutputPricePerMillion)
+            || !GatewayConfigurationProvisioning.IsValidPrice(entry.PricePerCall)
+            || !GatewayConfigurationProvisioning.IsSupportedCurrency(entry.PriceCurrency))
+        {
+            return Json(ApiEnvelope<ImportUpstreamModelsResult>.Fail(
+                "INVALID_INPUT", $"模型「{modelId}」的价格或币种不合法（价格不能为负，币种只支持 CNY / USD）"), jsonOptions, 400);
+        }
 
         var doc = new BsonDocument
         {
@@ -6896,7 +6968,11 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
     // 与单模型端点的差别：那边同步失败会把刚插入的那一条删掉再报错；这里是批量，
     // 已插入的模型本身是有效配置（用户可以手动加进池），全删掉反而更糟。
     // 所以如实降级——照常返回创建结果，但把「池没同步上、去哪补」写进响应，不谎报全绿。
-    if (result.Created > 0)
+    // 条件是「这次请求点名的模型现在都在库里」，不是「这次新建了几个」。
+    // 写成 Created > 0 的后果我自己的失败文案就踩了：同步失败时我们刻意保留已插入的模型，
+    // 并告诉用户「稍后重试导入」——可重试时那些模型全部命中 Skipped、Created 归零，
+    // 这个块直接被跳过，池成员永远补不回来。又是一句用户照做也没用的话。
+    if (result.Created > 0 || result.Skipped > 0)
     {
         try
         {

@@ -54,6 +54,23 @@ public sealed record NormalizedExchangeDraft(
 
 public static class GatewayConfigurationProvisioning
 {
+    /// <summary>
+    /// 模型用途白名单的唯一判定源。批量导入端点不走 TryNormalizeModel（它是给单模型表单用的），
+    /// 但**校验口径必须是同一份**，否则两条入库路径会各自漂移：
+    /// 直连调用或旧版前端能把任意用途名塞进来，再被池同步当成合法类型参与路由。
+    /// </summary>
+    public static bool IsSupportedModelType(string? modelType)
+        => !string.IsNullOrWhiteSpace(modelType) && SupportedModelTypes.Contains(modelType.Trim().ToLowerInvariant());
+
+    /// <summary>价格与币种的校验口径，同样对两条入库路径共用（负价格进不了成本核算）。</summary>
+    public static bool IsValidPrice(decimal? price) => price is null or >= 0;
+
+    public static bool IsSupportedCurrency(string? currency)
+        => string.IsNullOrWhiteSpace(currency) || currency.Trim().ToUpperInvariant() is "CNY" or "USD";
+
+    /// <summary>模型名长度上限，与 TryNormalizeModel 同源。</summary>
+    public const int MaxModelNameLength = 240;
+
     private static readonly HashSet<string> SupportedModelTypes =
     [
         "chat", "intent", "vision", "generation", "code", "long-context", "embedding",
@@ -163,7 +180,7 @@ public static class GatewayConfigurationProvisioning
 
         var modelName = request.ModelName?.Trim() ?? string.Empty;
         if (modelName.Length == 0) return Fail("上游模型标识不能为空", out error);
-        if (modelName.Length > 240) return Fail("上游模型标识不能超过 240 个字符", out error);
+        if (modelName.Length > MaxModelNameLength) return Fail($"上游模型标识不能超过 {MaxModelNameLength} 个字符", out error);
         var name = request.Name?.Trim() ?? modelName;
         if (name.Length > 160) return Fail("模型显示名称不能超过 160 个字符", out error);
 

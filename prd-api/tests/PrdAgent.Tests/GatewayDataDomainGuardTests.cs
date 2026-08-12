@@ -3325,6 +3325,55 @@ public class GatewayDataDomainGuardTests
     /// 只标来源不标时间时，面板开着不动的用户分不清手上这份报价是刚拉的还是很久以前的，
     /// 会照着过期价格做导入决定。
     /// </summary>
+    /// <summary>
+    /// 探测客户端必须在**真正建立连接的那一刻**校验对端 IP。
+    ///
+    /// 只在发请求前查一次 DNS 是不够的：HttpClient 连接时会再解析一次，控制着 rebinding
+    /// 域名的租户可以让第一次返回公网地址、第二次返回 127.0.0.1 或 169.254.169.254，
+    /// 前面那道校验就白做了（形状 6：判据读到的不是真正生效的那个值）。
+    /// 放进 ConnectCallback 就没有窗口——被校验的地址和被连接的地址是同一个。
+    /// </summary>
+    [Fact]
+    public void 探测客户端必须在连接时校验对端地址()
+    {
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("ConnectCallback", server);
+        Assert.Contains("IsSafeExternalExchangeAddress", server);
+        // 整条探测（含读 body）要共用一个超时预算：ResponseHeadersRead 下
+        // HttpClient.Timeout 只覆盖到响应头，body 挂住就没人管了
+        Assert.Contains("probeCts.Token", server);
+        Assert.Contains("discoveryCts.Token", server);
+    }
+
+    /// <summary>
+    /// 批量导入不走 TryNormalizeModel，但校验口径必须与它同源——判定函数收在
+    /// GatewayConfigurationProvisioning，两条入库路径共用一份。各写一份必然漂移：
+    /// 直连调用能把任意用途名、负价格、超长标识塞进来，用途还会被池同步当成合法类型参与路由。
+    /// </summary>
+    [Fact]
+    public void 批量导入的校验口径必须与单模型端点同源()
+    {
+        var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
+        Assert.Contains("IsSupportedModelType", provisioning);
+        Assert.Contains("IsValidPrice", provisioning);
+        Assert.Contains("IsSupportedCurrency", provisioning);
+        // 长度上限只许有一个字面量来源
+        Assert.Contains("MaxModelNameLength", provisioning);
+
+        var server = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = server.IndexOf("/gw/platforms/{id}/models/import", StringComparison.Ordinal);
+        var next = server.IndexOf("app.MapPost(", start, StringComparison.Ordinal);
+        var body = next > 0 ? server[start..next] : server[start..];
+
+        Assert.Contains("IsSupportedModelType", body);
+        Assert.Contains("IsValidPrice", body);
+        Assert.Contains("MaxModelNameLength", body);
+        // 池同步的触发条件不能写成「这次新建了几个」——同步失败后重试全是 Skipped，
+        // Created 归零，同步块被跳过，我们自己那句「稍后重试导入」就成了空话
+        Assert.Contains("result.Created > 0 || result.Skipped > 0", body);
+    }
+
     [Fact]
     public void 上游拉回来的清单必须带拉取时间()
     {
