@@ -44,6 +44,23 @@ public static class AssetStorageDeletePolicy
             System.Text.RegularExpressions.RegexOptions.IgnoreCase
             | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     }
+
+    public static bool IsContentAddressedGeneratedImageKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^visual-agent/img/[a-z2-7]{26}\.(png|jpg|jpeg|gif|webp)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
 }
 
 /// <summary>

@@ -1428,8 +1428,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.getByRole('button', { name: /单镜直出/ }).click();
       await page.getByLabel('项目名称').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-video`);
       await page.getByLabel('文学稿内容').fill(prompt);
-      await page.getByRole('button', { name: '设置', exact: true }).click();
-      const settings = page.getByRole('region', { name: '生成设置' });
+      const studio = page.getByTestId('video-project-studio');
+      await studio.getByRole('button', { name: '设置', exact: true }).click();
+      const settings = studio.getByRole('region', { name: '生成设置' });
       await settings.getByLabel('视频模型').selectOption(model.id);
       await settings.getByLabel('画幅').selectOption(selectedAspect);
       await settings.getByLabel('单镜时长').selectOption(String(Math.min(...(model.durations?.length ? model.durations : [5]))));

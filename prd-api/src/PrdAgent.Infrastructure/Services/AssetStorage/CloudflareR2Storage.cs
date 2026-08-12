@@ -516,6 +516,11 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             reason = "owned_generated_video";
             return true;
         }
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedImageKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_image";
+            return true;
+        }
         if (!_enableSafeDelete) { reason = "disabled"; return false; }
         if (_safeDeleteAllowPrefixes.Length == 0) { reason = "empty_allowlist"; return false; }
 

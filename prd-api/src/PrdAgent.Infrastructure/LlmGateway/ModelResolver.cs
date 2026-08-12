@@ -810,24 +810,50 @@ public class ModelResolver : IModelResolver
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
                 Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
             .ToListAsync(ct);
-        var availableIds = offerings.Select(x => x.LogicalModelId).ToHashSet(StringComparer.Ordinal);
-        return logicalModels
-            .Where(x => availableIds.Contains(x.Id)
-                && (x.AllowedAppCallerCodes.Count == 0 || x.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase)))
-            .Select(x => new AvailableModelPool
+        var offeringsByLogicalModel = offerings
+            .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
+        var result = new List<AvailableModelPool>();
+        foreach (var logical in logicalModels)
+        {
+            if (logical.AllowedAppCallerCodes.Count > 0
+                && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
             {
-                Id = x.Id,
-                Name = x.Name,
-                Code = x.PublicId,
-                Priority = x.DisplayOrder,
+                continue;
+            }
+
+            if (!offeringsByLogicalModel.TryGetValue(logical.Id, out var logicalOfferings))
+                continue;
+
+            // “启用且健康”只是控制面状态，不代表 Offering 指向的 Exchange、模型和平台仍然存在。
+            // 选择器只能展示在当前租户与 appCaller 下至少能完整解析一个上游的逻辑模型，避免用户
+            // 选中后才得到“模型不可用”。这里复用实际解析构建器，保证目录与执行链路采用同一规则。
+            var hasResolvableOffering = false;
+            foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
+            {
+                if (await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct) is not null)
+                {
+                    hasResolvableOffering = true;
+                    break;
+                }
+            }
+            if (!hasResolvableOffering)
+                continue;
+
+            result.Add(new AvailableModelPool
+            {
+                Id = logical.Id,
+                Name = logical.Name,
+                Code = logical.PublicId,
+                Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",
-                IsDedicated = x.AllowedAppCallerCodes.Count > 0,
+                IsDedicated = logical.AllowedAppCallerCodes.Count > 0,
                 IsDefault = false,
                 Models =
                 [
                     new PoolModelInfo
                     {
-                        ModelId = x.PublicId,
+                        ModelId = logical.PublicId,
                         PlatformId = "logical-model",
                         PlatformName = "LLM Gateway",
                         Priority = 1,
@@ -835,7 +861,10 @@ public class ModelResolver : IModelResolver
                         HealthScore = 100,
                     }
                 ],
-            }).ToList();
+            });
+        }
+
+        return result;
     }
 
     private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync(

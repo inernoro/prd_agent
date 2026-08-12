@@ -4142,6 +4142,27 @@ public class GatewayDataDomainGuardTests
             "实时 ASR 必须先把已验证租户打开为请求上下文，再解析和访问该租户的模型供应商");
     }
 
+    [Fact]
+    public void LogicalModelCatalog_OnlyPublishesOfferingsThatTheExecutionResolverCanBuild()
+    {
+        var resolver = ReadRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var catalogStart = resolver.IndexOf(
+            "private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync",
+            StringComparison.Ordinal);
+        var resolveStart = resolver.IndexOf(
+            "private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync",
+            catalogStart,
+            StringComparison.Ordinal);
+        Assert.True(catalogStart >= 0 && resolveStart > catalogStart);
+        var catalog = resolver[catalogStart..resolveStart];
+
+        Assert.Contains("OrderLogicalOfferings(logical, logicalOfferings)", catalog);
+        Assert.Contains("TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct)", catalog);
+        Assert.Contains("if (!hasResolvableOffering)", catalog);
+        Assert.DoesNotContain("availableIds.Contains", catalog);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();
