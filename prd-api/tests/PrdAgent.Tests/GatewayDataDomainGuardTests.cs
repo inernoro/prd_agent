@@ -3495,7 +3495,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ModelNameNormalized", body);
         // 并发撞唯一索引要按「已存在」吞掉，不能整批失败
         Assert.Contains("DuplicateKey", body);
+    }
 
+    /// <summary>
     /// 凡是把 HostedSite 交给前端的公开方法，都必须挂上派生字段（目前是 PdfAssetUrl）。
     ///
     /// 上一轮我按判断挑了七条「前端会用到的」路径去挂，review 立刻找出漏掉的
