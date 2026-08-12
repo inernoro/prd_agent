@@ -3,7 +3,7 @@
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, mergePlatformInto, rotatePlatformApiKey, setPlatformEnabled, updatePlatform } from '@/lib/api';
+import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, rotatePlatformApiKey, setPlatformEnabled, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, PlatformItem, UpdatePlatformRequest } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
@@ -164,60 +164,6 @@ export function PlatformsPage() {
     } else {
       setToast(res.error?.message || '保存失败');
     }
-  }
-
-  /**
-   * 合并上游：把源名下的模型与池成员改嫁给目标，然后删掉源。
-   *
-   * 为「两条同名同址、只有密钥不同」这种局面准备的——手工一个个改绑再删，
-   * 中间漏一步就留下指向已删平台的池成员，看起来正常、实际解析不到。
-   */
-  async function mergeInto(source: PlatformItem) {
-    // 接口类型不同的不列为候选：没写 Protocol 的模型继承所属上游的类型，
-    // 合过去等于把它们的报文协议换掉。服务端也会拒（PLATFORM_TYPE_MISMATCH），
-    // 但让用户先选了再被拒是白走一趟——不该出现在选项里。
-    const candidates = (items || []).filter((x) => (
-      x.id !== source.id
-      && x.authority === 'llm_gateway'
-      && (x.platformType ?? '') === (source.platformType ?? '')
-    ));
-    if (candidates.length === 0) {
-      setToast(`没有可合并的目标上游（只能并入接口类型同为 ${source.platformType || '未设置'} 的上游）`);
-      return;
-    }
-    const listed = candidates.map((x, i) => `${i + 1}. ${x.name}（${x.apiUrl || '无地址'}）`).join('\n');
-    const picked = await promptText({
-      title: `把「${source.name}」并入哪一条？`,
-      description: `它名下的模型与池成员会改指到目标，重复的会被去重，随后源上游被删除。\n\n${listed}`,
-      inputLabel: '输入目标序号',
-      placeholder: '1',
-      confirmLabel: '下一步',
-    });
-    if (picked === null) return;
-    const index = Number(picked.trim()) - 1;
-    const target = candidates[index];
-    if (!target) {
-      setToast('序号无效，已取消合并');
-      return;
-    }
-    if (!await confirm({ title: `确认把「${source.name}」并入「${target.name}」？`, description: '源上游会被删除，无法撤销。', tone: 'danger', confirmLabel: '合并' })) return;
-    setBusyId(source.id);
-    setToast(null);
-    const res = await mergePlatformInto(source.id, target.id);
-    setBusyId(null);
-    if (!res.success) {
-      setToast(res.error?.message || '合并失败');
-      return;
-    }
-    const r = res.data;
-    const reload = await getPlatforms();
-    if (reload.success) setItems(reload.data.items);
-    setToast(
-      `已并入「${target.name}」：模型改嫁 ${r.modelsMoved}、去重 ${r.modelsDropped}，`
-      + `池成员改指 ${r.poolMembersRepointed}、去重 ${r.poolMembersDeduped}，`
-      + `逻辑模型 offering 改指 ${r.offeringsRepointed}、去重 ${r.offeringsDeduped}`
-      + (r.sourceDeleted ? '，源上游已删除' : '，源上游仍有残留引用未删除'),
-    );
   }
 
   /**
@@ -512,9 +458,6 @@ export function PlatformsPage() {
                           </Link>
                           {p.authority === 'llm_gateway' ? (
                             <>
-                              <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void mergeInto(p)}>
-                                合并到…
-                              </Button>
                               <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void removePlatform(p)}>
                                 删除
                               </Button>

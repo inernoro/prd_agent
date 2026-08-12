@@ -637,19 +637,6 @@ export type UpdatePlatformRequest = {
   maxConcurrency?: number;
   remark?: string;
 };
-/** 合并上游的结果：源名下的东西改嫁给目标后，源被删掉。 */
-export type PlatformMergeResult = {
-  sourceId: string;
-  targetId: string;
-  modelsMoved: number;
-  modelsDropped: number;
-  poolMembersRepointed: number;
-  poolMembersDeduped: number;
-  /** 被丢弃的重复模型上挂着的 offering，改指到留下来那条同名模型的条数 */
-  offeringsRepointed: number;
-  offeringsDeduped: number;
-  sourceDeleted: boolean;
-};
 export type PlatformsData = { items: PlatformItem[]; total: number };
 export type CreatePlatformRequest = {
   name: string;

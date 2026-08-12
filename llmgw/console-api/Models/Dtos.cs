@@ -1019,25 +1019,6 @@ public sealed class UpdatePlatformRequest
     public string? Remark { get; set; }
 }
 
-/// <summary>合并上游的结果：把源上游名下的东西改嫁给目标，然后删掉源。</summary>
-public sealed class PlatformMergeResult
-{
-    public string SourceId { get; set; } = "";
-    public string TargetId { get; set; } = "";
-    /// <summary>改嫁过去的模型数（源上有、目标没有的同名模型）。</summary>
-    public int ModelsMoved { get; set; }
-    /// <summary>因为目标已有同名模型而直接删掉的重复模型数。</summary>
-    public int ModelsDropped { get; set; }
-    /// <summary>改指到目标的池成员数。</summary>
-    public int PoolMembersRepointed { get; set; }
-    /// <summary>因为目标已在同一个池里而合并掉的重复池成员数。</summary>
-    public int PoolMembersDeduped { get; set; }
-    /// <summary>被丢弃的重复模型上挂着的 offering，改指到目标同名模型的条数。</summary>
-    public int OfferingsRepointed { get; set; }
-    /// <summary>改指后会和同一逻辑模型下已有 offering 撞车，因而合并掉的条数。</summary>
-    public int OfferingsDeduped { get; set; }
-    public bool SourceDeleted { get; set; }
-}
 public sealed class CreatePlatformRequest
 {
     public string? Name { get; set; }

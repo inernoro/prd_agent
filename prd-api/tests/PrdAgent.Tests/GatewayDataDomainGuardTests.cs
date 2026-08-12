@@ -4130,15 +4130,9 @@ public class GatewayDataDomainGuardTests
 
         // 4) 改得动 / 并得了——「只能建不能改、不能并」正是垃圾堆积的上游成因
         Assert.Contains("app.MapPut(\"/gw/platforms/{id}\"", console);
-        Assert.Contains("app.MapPost(\"/gw/platforms/{id}/merge-into/{targetId}\"", console);
         Assert.Contains("platform.update", console);
-        Assert.Contains("platform.merge", console);
         Assert.Contains("export function updatePlatform(", api);
-        Assert.Contains("export function mergePlatformInto(", api);
         Assert.Contains("beginEdit", page);
-        Assert.Contains("mergeInto", page);
-        // 合并把成员改指到目标后，健康位记的是「在源那边」的历史，必须重算
-        Assert.Contains("member[\"HealthStatus\"] = 0;", console);
 
         // 5) 模型也删得掉——平台删除要求先清模型引用，没有这个端点那条路径根本走不通
         Assert.Contains("app.MapDelete(\"/gw/models/{id}\"", console);
@@ -4294,11 +4288,14 @@ public class GatewayDataDomainGuardTests
     /// 池成员按 (modelId, platformId) 复合定位、随处可见，写判据时很难忘；
     /// 逻辑模型的 offering 藏在另一张集合里，删掉目标它不会报错、不会变红，
     /// 只会在路由时静默解析不到——正是本 PR 的删除闸门要消灭的那种残留，
-    /// 却在第一版里被三条路径同时漏掉（删模型 / 删交换所 / 合并时丢弃重复模型）。
-    /// 所以这三条路径必须各自走同一个共享判定源，任何一条改回去都在这里变红。
+    /// 却在第一版里被删模型与删交换所两条路径同时漏掉。
+    /// 所以这两条路径必须各自走同一个共享判定源，任何一条改回去都在这里变红。
+    ///
+    /// （上游合并那条路径同属这一族，随合并功能一起挪到后续 PR，
+    /// 见 doc/debt.platform.llm-gateway.md「上游合并拆出本 PR」。）
     /// </summary>
     [Fact]
-    public void DeletesAndMerges_NeverOrphanLogicalModelOfferings()
+    public void Deletes_NeverOrphanLogicalModelOfferings()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
 
@@ -4311,104 +4308,6 @@ public class GatewayDataDomainGuardTests
         var exchangeDelete = EndpointBody(console, "app.MapDelete(\"/gw/exchanges/{id}\"");
         Assert.Contains("CollectOfferingHolderNamesAsync(http, gwModelOfferings, gwLogicalModels, \"exchange\", id)", exchangeDelete);
 
-        // 合并：丢弃重复模型之前必须先把 offering 改指到留下来的那条同名模型，
-        // 否则合并的净效果是「把一条能用的 offering 变成指向已删模型」
-        var merge = EndpointBody(console, "app.MapPost(\"/gw/platforms/{id}/merge-into/{targetId}\"");
-        var repointAt = merge.IndexOf("RepointOfferingsAsync(", StringComparison.Ordinal);
-        var dropAt = merge.IndexOf("result.ModelsDropped++", StringComparison.Ordinal);
-        Assert.True(repointAt > 0, "合并必须改指被丢弃模型上的 offering");
-        Assert.True(dropAt > 0 && repointAt < dropAt, "改指必须发生在丢弃模型之前，否则先删后改指等于改指到空气");
-
-        // 共享判定源：TargetKind 缺省的存量文档必须按 model 处理，漏判等于漏掉一整批存量引用
-        Assert.Contains("fb.Exists(\"TargetKind\", false)", console);
-
-        // 池成员的 ModelId 可以是模型 _id（加成员端点同时接受 _id / ModelName / Name）。
-        // 只改 PlatformId 会留下「目标平台 + 已删模型 _id」——平台在、模型名对得上，
-        // 按 _id 解析却直接落空，而且它不再指向源平台，连删源平台前的复查都查不到它。
-        Assert.Contains("survivorByDroppedModelId", merge);
-        Assert.Contains("member[\"ModelId\"] = survivorModelId", merge);
-        // 扫池的过滤也要认这一类：成员可能只有 ModelId 命中、PlatformId 早就不是源平台
-        Assert.Contains("fb.In(\"ModelId\", survivorByDroppedModelId.Keys)", merge);
-        // 三种别名都要认：加成员端点按 Or(_id, ModelName, Name) 认模型，落库时把调用方给的
-        // 原样写进 ModelId，所以成员里存的可能是名字而不是 _id。只记 _id 的话，存名字的成员
-        // 改完 PlatformId 就断在这里——运行时那三个 Eq 大小写敏感，「GPT-4o」匹配不上「gpt-4o」。
-        Assert.Contains("AsNullableString(\"ModelName\")", merge);
-        Assert.Contains("AsNullableString(\"Name\")", merge);
-        // 但**两种键必须分表**，因为能声称的范围不一样：_id 全局唯一，跨平台匹配也成立；
-        // 模型名只在一条上游内唯一，别的平台底下同样有 gpt-4o 是常态。
-        // 合成一张表拿名字全局匹配，会把无关平台的成员也改掉（改 ModelId 不改 PlatformId），
-        // 亲手造出一对解析不到的组合——这正是「判据太窄」被修过头成「判据太宽」。
-        Assert.Contains("survivorByDroppedModelName", merge);
-        Assert.Contains("survivorByDroppedModelName.ContainsKey(alias)", merge);
-        // 去重键按「最终指向哪个模型」算，不按字面：合并后 (目标平台, 幸存者_id) 与
-        // (目标平台, "gpt-4o") 是同一个模型的两条成员，字面不同会被当成两条留下来，
-        // 加权选择就把这个模型的权重算了两遍。归一只对落在目标平台的成员做——
-        // 跨平台同名是两个不同模型，键里本来就带 PlatformId 隔开。
-        var dedupDense = new string(merge.Where(c => !char.IsWhiteSpace(c)).ToArray());
-        Assert.Contains("stringCanonicalKey(stringplatformId,stringmodelId)", dedupDense);
-        Assert.Contains("string.Equals(platformId,targetId,StringComparison.Ordinal)", dedupDense);
-
-        // 冲突时保留**目标那条**，不是数组里排前面那条。合并是把源并进目标，目标成员的
-        // Priority / Protocol / 定价 / 能力 / 健康历史都是用户为这个平台配好的；源那条只是要被吸收掉的。
-        // 按「先到先得」的话，源在数组里靠前就会把目标那条顶掉——静默换掉一整条成员的配置，
-        // 比留两条重复更糟。所以必须先扫出「本来就在的成员」占了哪些键。
-        Assert.Contains("keysOwnedByExistingMembers", merge);
-        Assert.Contains("isSource&&keysOwnedByExistingMembers.Contains(key)", dedupDense);
-
-        // 归一表必须收目标平台上**每一种能被接受的写法**（ModelName 与 Name）。
-        // 只索引 ModelName 的话，用 Name 别名建的目标成员算出来的键仍与幸存者 _id 不同，
-        // 两条指向同一模型的成员照样并存。注意这与 targetModelIdByName 是两件事：
-        // 那张表回答「算不算同一个模型」（身份口径），不能顺手一起放宽。
-        Assert.Contains("canonicalTargetModelIdByAlias", merge);
-        Assert.Contains("IndexTargetModelAliases", merge);
-
-        // 池的每一处写入都要带版本闸 + 递增，全仓其它八个写点都这么写；
-        // 少这一处就意味着合并能盖掉并发改动，或让读到旧版本的操作在合并后把陈旧成员写回来。
-        Assert.Contains("PoolVersionGuard(Builders<BsonDocument>.Filter, pool)", merge);
-        Assert.Contains("POOL_CONCURRENTLY_MODIFIED", merge);
-        Assert.Contains(".Inc(\"Version\", 1)", merge);
-
-        // 名字命中必须**与**「这条成员本来就在源平台」取合取，不能只是恰好写在附近。
-        // 去空白后断言这个合取本身：`pointsAtSourcePlatform` 在旧版里也出现在附近
-        // （它就声明在上一行），按距离判会在出问题的那版上照样绿——那种断言是假证据。
-        var mergeDense = new string(merge.Where(c => !char.IsWhiteSpace(c)).ToArray());
-        Assert.Contains("pointsAtSourcePlatform&&survivorByDroppedModelName.TryGetValue", mergeDense);
-        // 全局 In 过滤只许用 _id 那张表：名字键放进去就是全局匹配
-        Assert.Contains("fb.In(\"ModelId\", survivorByDroppedModelId.Keys)", merge);
-        Assert.DoesNotContain("fb.In(\"ModelId\", survivorByDroppedModelName.Keys)", merge);
-
-        // 「同名」必须按归一名判，不能按大小写敏感的原名：模型身份的唯一索引建在
-        // ModelNameNormalized 上，按原名比会把 GPT-4o 与 gpt-4o 当成两个模型，
-        // 于是走「改绑过去」撞唯一索引抛异常——而此时前面的模型与 offering 已经改完了，
-        // 留下一个改了一半的合并（合并没有事务，抛在中间就回不去了）。
-        Assert.Contains("NormalizedModelKey(", merge);
-        Assert.DoesNotContain("targetModelIdByName.TryGetValue(modelName", merge);
-        // 归一口径与创建路径同源，且存量文档缺字段时不许退回大小写敏感的原名
-        Assert.Contains("model.AsNullableString(\"ModelNameNormalized\")", console);
-        Assert.Contains("raw.ToLowerInvariant()", console);
-
-        // 删被丢弃的模型必须排在**所有**引用改指之后。合并跨四个集合、没有事务，
-        // 中途失败不能回滚，只能让它「中断也可重放」：模型还在就能重新算出同一张 survivor 表
-        // 接着改；先删的话那些 _id 永久查不回来，重试只会留下解析不到的池成员。
-        var dropAt2 = merge.IndexOf("foreach (var droppedFilter in droppedModelFilters)", StringComparison.Ordinal);
-        var poolWriteAt = merge.IndexOf("gwModelPools.UpdateOneAsync", StringComparison.Ordinal);
-        Assert.True(dropAt2 > 0, "被丢弃模型的删除应当收拢成一处");
-        Assert.True(poolWriteAt > 0 && dropAt2 > poolWriteAt, "删模型必须排在池成员改指之后");
-        // 只许有这一处删除：循环体内直接删就又回到「先删后改指」了
-        Assert.Equal(1, merge.Split("gwModels.DeleteOneAsync", StringSplitOptions.None).Length - 1);
-
-        // 接口类型不同不许合并：模型的 Protocol 允许为空表示「继承所属上游」
-        // （运行时 `IsNullOrWhiteSpace(Protocol) ? PlatformType : Protocol`），
-        // 把 openai 上游的模型合到 claude 上游，等于把那批模型的报文协议悄悄换掉。
-        Assert.Contains("PLATFORM_TYPE_MISMATCH", merge);
-        Assert.True(
-            merge.IndexOf("PLATFORM_TYPE_MISMATCH", StringComparison.Ordinal)
-            < merge.IndexOf("gwModels.UpdateOneAsync", StringComparison.Ordinal),
-            "类型不匹配必须在任何写操作之前就拒绝，不能改了一半才发现");
-        // 这条判据的根据：运行时确实按「没写 Protocol 就用 PlatformType」解析
-        Assert.Contains(
-            "string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol",
-            ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs"));
     }
 
     /// <summary>
@@ -4465,8 +4364,7 @@ public class GatewayDataDomainGuardTests
     /// <summary>
     /// 改上游类型不能把「继承协议」的模型悄悄换掉报文协议。
     ///
-    /// 合并端点已经为同一条不变量挡了跨类型改嫁（PLATFORM_TYPE_MISMATCH），但改类型是
-    /// 另一条通往同一后果的路：模型 Protocol 为空表示继承所属上游
+    /// 模型 Protocol 为空表示继承所属上游
     /// （运行时 `IsNullOrWhiteSpace(Protocol) ? PlatformType : Protocol`），
     /// 把上游 openai 改成 claude，这批模型之后全按错协议发出去。一处挡了另一处没挡，
     /// 等于这条不变量只在一半路径上成立。
