@@ -10,6 +10,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using SixLabors.ImageSharp;
 
@@ -25,11 +26,12 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("dashboard", AdminPermissionCatalog.Access)]
 public class ProfileController : ControllerBase
 {
-    private const string ProfileAvatarRunAppKey = "profile-avatar";
+    private const string ProfileAvatarRunAppKey = ProfileAvatarGenerationCleanupService.AppKey;
     private readonly MongoDbContext _db;
     private readonly ILogger<ProfileController> _logger;
     private readonly IConfiguration _cfg;
     private readonly IAssetStorage _assetStorage;
+    private readonly ProfileAvatarGenerationCleanupService _avatarGenerationCleanup;
 
     private const long MaxAvatarUploadBytes = 5 * 1024 * 1024; // 5MB
     private const int MaxAvatarDimension = 8192;
@@ -40,12 +42,14 @@ public class ProfileController : ControllerBase
         MongoDbContext db,
         ILogger<ProfileController> logger,
         IConfiguration cfg,
-        IAssetStorage assetStorage)
+        IAssetStorage assetStorage,
+        ProfileAvatarGenerationCleanupService avatarGenerationCleanup)
     {
         _db = db;
         _logger = logger;
         _cfg = cfg;
         _assetStorage = assetStorage;
+        _avatarGenerationCleanup = avatarGenerationCleanup;
     }
 
     private string GetCurrentUserId() => this.GetRequiredUserId();
@@ -376,6 +380,15 @@ public class ProfileController : ControllerBase
         }));
     }
 
+    private static string? TryGetAvatarGenerationRunId(string? requestId)
+    {
+        const string suffix = "-0-0";
+        var normalized = (requestId ?? string.Empty).Trim();
+        return normalized.EndsWith(suffix, StringComparison.Ordinal) && normalized.Length > suffix.Length
+            ? normalized[..^suffix.Length]
+            : null;
+    }
+
     /// <summary>
     /// 创建本人头像 AI 编辑任务。任务由后台 Worker 执行，不受本次 HTTP 请求断开影响。
     /// </summary>
@@ -468,6 +481,11 @@ public class ProfileController : ControllerBase
                 "当前头像格式不受支持，请重新上传 png、jpg、gif 或 webp 图片。"));
         }
 
+        var sourceSha256 = Convert.ToHexString(SHA256.HashData(avatarBytes)).ToLowerInvariant();
+        await using var sourceAssetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{sourceSha256}",
+            CancellationToken.None);
         var sourceAsset = await _assetStorage.SaveAsync(
             avatarBytes,
             GuessAvatarMimeFromExt(ext),
@@ -675,6 +693,12 @@ public class ProfileController : ControllerBase
         await _assetStorage.UploadToKeyAsync(objectKey, found.Value.bytes, mime, ct);
         var previousUser = await ReplaceAvatarFileNameAsync(currentUserId, avatarFileName, ct);
         await DeleteSupersededAvatarAsync(currentUserId, previousUser?.AvatarFileName, avatarFileName);
+
+        var sourceRunId = TryGetAvatarGenerationRunId(artifact.RequestId);
+        if (sourceRunId != null)
+        {
+            _avatarGenerationCleanup.QueueRunCleanup(sourceRunId, currentUserId);
+        }
 
         user.AvatarFileName = avatarFileName;
         var now = DateTime.UtcNow;

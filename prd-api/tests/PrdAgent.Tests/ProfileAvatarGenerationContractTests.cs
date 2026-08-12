@@ -15,6 +15,7 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("Status = ImageGenRunStatus.ScopedQueued", source);
         Assert.Contains("AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img", source);
         Assert.Contains("InitImageAssetSha256 = sourceAsset.Sha256", source);
+        Assert.Contains("$\"generated-image:{sourceSha256}\"", source);
         Assert.Contains("ErrorCodes.AVATAR_PROMPT_TOO_LONG", source);
         Assert.Contains("InsertOneAsync(run, cancellationToken: CancellationToken.None)", source);
         Assert.DoesNotContain("RequestAborted", source);
@@ -111,6 +112,30 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("DeleteSupersededAvatarAsync", source);
         Assert.Contains("DeleteByKeyAsync", source);
         Assert.DoesNotContain("$\"{usernameLower}.{ext}\"", source);
+    }
+
+    [Fact]
+    public void ProfileAvatarGeneration_MustCleanAppliedAndExpiredArtifactsSafely()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
+        var cleanup = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ProfileAvatarGenerationCleanupService.cs"));
+        var program = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Program.cs"));
+
+        Assert.Contains("TryGetAvatarGenerationRunId(artifact.RequestId)", controller);
+        Assert.Contains("_avatarGenerationCleanup.QueueRunCleanup", controller);
+        Assert.Contains("Channel.CreateBounded", cleanup);
+        Assert.Contains("while (_cleanupQueue.Reader.TryRead", cleanup);
+        Assert.Contains("DefaultRetention = TimeSpan.FromHours(24)", cleanup);
+        Assert.Contains("await CleanupExpiredAsync(now, stoppingToken)", cleanup);
+        Assert.Contains("otherArtifactRefs == 0 && imageAssetRefs == 0 && otherRunRefs == 0", cleanup);
+        Assert.Contains("ImageRefs.AssetSha256", cleanup);
+        Assert.Contains("ImageGenRunItems.DeleteManyAsync", cleanup);
+        Assert.Contains("ImageGenRunEvents.DeleteManyAsync", cleanup);
+        Assert.Contains("ImageGenRuns.DeleteOneAsync", cleanup);
+        Assert.Contains("AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>())", program);
     }
 
     [Fact]

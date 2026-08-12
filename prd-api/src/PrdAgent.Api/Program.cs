@@ -350,6 +350,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.Toolbox.ToolboxRunWorker
 
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>());
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
