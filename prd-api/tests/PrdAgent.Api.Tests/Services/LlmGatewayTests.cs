@@ -1604,6 +1604,64 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenOfferingIsRequired_ShouldNotRetryAnotherOffering()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            LogicalModelId = "logical-video",
+            LogicalModelPublicId = "video-model",
+            OfferingId = "offering-a",
+            OfferingTargetKind = "model",
+            ActualModel = "video-model-a",
+            ActualPlatformId = "platform-a",
+            ActualPlatformName = "Provider A",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider-a.example.com",
+            ApiKey = "sk-a",
+            RetryCandidates =
+            [
+                new ModelResolutionResult
+                {
+                    Success = true,
+                    ResolutionType = "LogicalModel",
+                    LogicalModelId = "logical-video",
+                    LogicalModelPublicId = "video-model",
+                    OfferingId = "offering-b",
+                    OfferingTargetKind = "model",
+                    ActualModel = "video-model-b",
+                    ActualPlatformId = "platform-b",
+                    ActualPlatformName = "Provider B",
+                    PlatformType = "openai",
+                    Protocol = "openai",
+                    ApiUrl = "https://provider-b.example.com",
+                    ApiKey = "sk-b",
+                }
+            ]
+        };
+        var http = new SequenceHttpClientFactory(
+            (503, "{\"error\":{\"message\":\"temporary polling failure\"}}"),
+            (200, "{\"status\":\"completed\"}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            RequiredOfferingId = "offering-a",
+            AppCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            ModelType = ModelTypes.VideoGen,
+            EndpointPath = "/videos/job-1",
+            HttpMethod = "GET",
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Equal(503, response.StatusCode);
+        Assert.Single(http.RequestUris);
+        Assert.Contains("provider-a.example.com", http.RequestUris[0]);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenGpt56UsesDefaultChatEndpoint_ShouldNormalizeLegacyParameters()
     {
         var resolution = new GatewayModelResolution

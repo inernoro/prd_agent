@@ -178,7 +178,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (request.Context?.IsHealthProbe == true
             || (!string.IsNullOrWhiteSpace(request.ExpectedModel) && string.IsNullOrWhiteSpace(resolution.LogicalModelId))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
-            || !string.IsNullOrWhiteSpace(request.PinnedModelId))
+            || !string.IsNullOrWhiteSpace(request.PinnedModelId)
+            || !string.IsNullOrWhiteSpace(request.RequiredOfferingId))
         {
             return candidates;
         }

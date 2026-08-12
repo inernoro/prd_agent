@@ -1,5 +1,5 @@
 import { toast } from '@/lib/toast';
-import { useAuthStore } from '@/stores/authStore';
+import { apiDownload } from '@/services/real/apiClient';
 
 function filenameSafe(value: string) {
   return String(value || 'image')
@@ -35,25 +35,16 @@ export async function downloadGeneratedImage(src: string, filename: string) {
   if (!source) return;
 
   try {
-    const token = useAuthStore.getState().token;
     const isRemote = /^https?:\/\//i.test(source);
-    const response = await fetch(
-      isRemote
-        ? `/api/visual-agent/image-gen/download?url=${encodeURIComponent(source)}`
-        : source,
-      isRemote
-        ? {
-            headers: {
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              'X-App-Name': 'visual-agent',
-              'X-Client': 'admin',
-            },
-          }
-        : undefined,
-    );
-    if (!response.ok) throw new Error('download failed');
-
-    const blob = await response.blob();
+    const blob = isRemote
+      ? (await apiDownload(
+          `/api/visual-agent/image-gen/download?url=${encodeURIComponent(source)}`,
+          `${filenameSafe(filename)}.png`,
+        )).blob
+      : await fetch(source).then((response) => {
+          if (!response.ok) throw new Error('download failed');
+          return response.blob();
+        });
     if (!blob.type.toLowerCase().startsWith('image/')) throw new Error('invalid image response');
     const blobUrl = URL.createObjectURL(blob);
     try {
