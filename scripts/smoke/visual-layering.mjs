@@ -615,13 +615,28 @@ async function main() {
     check('层数文案不承诺做不到的上限', !capWording, capWording ? '仍写着「最多拆」' : '');
 
     // ---- 刷新后排版不塌
+    //
+    // 量的必须是**世界坐标**（元素 style 上的 left/top/width/height），不是 getBoundingClientRect。
+    // 屏幕矩形里混着相机：刷新会重新 fit 一次视口，zoom 一变，每一块的屏幕尺寸整体等比变，
+    // 判据就会为了一个纯相机原因翻红。第 10 轮冒烟实测就栽在这里——刷新前后 9 块里有 8 块
+    // 精确地同乘 1.713，一眼看去像「排版全塌了」，其实只是镜头拉远。
+    // 世界坐标是相机无关的，落盘的也正是它，比的才是同一件事（拖拽判据早先同样栽过，见上文）。
+    const worldBoxes = () => page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
+      .map((el) => ({
+        w: Math.round(parseFloat(el.style.width) || 0),
+        h: Math.round(parseFloat(el.style.height) || 0),
+        x: Math.round(parseFloat(el.style.left) || 0),
+        y: Math.round(parseFloat(el.style.top) || 0),
+        group: el.getAttribute('data-layer-group') || '-',
+        idx: el.getAttribute('data-layer-index') || '-',
+        role: el.getAttribute('data-layer-role') || '-',
+        st: el.getAttribute('data-layer-status') || '-',
+      }))
+      .filter((b) => b.w > 60 && b.h > 60));
     // 先等画布静止：裁剪落位是异步的（读图 → 量包围盒 → 上传裁剪结果 → 回写），
     // 还在动的时候拍快照，比的就不是同一个状态。连续两次尺寸签名一致才算稳。
-    const sizeSignature = () => page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
-      .map((el) => el.getBoundingClientRect())
-      .filter((r) => r.width > 60 && r.height > 60)
-      .map((r) => `${Math.round(r.width)}x${Math.round(r.height)}`)
-      .sort().join('|'));
+    const sizeKey = (list) => list.map((r) => `${r.w}x${r.h}`).sort().join('|');
+    const sizeSignature = async () => sizeKey(await worldBoxes());
     let settled = '';
     for (let i = 0; i < 45; i += 1) {
       const a = await sizeSignature();
@@ -632,34 +647,21 @@ async function main() {
     check('裁剪落位会收敛（画布不会一直在动）', !!settled, settled ? `稳定于 ${settled}` : '90s 内未静止');
     // 落盘是 debounce 的，静止之后再给它一个窗口，别把「还没写完」误判成「写丢了」。
     await page.waitForTimeout(6000);
-    const beforeReloadRects = await page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
-      .map((el) => el.getBoundingClientRect())
-      .filter((r) => r.width > 60 && r.height > 60)
-      .map((r) => ({ w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.x), y: Math.round(r.y) })));
-    // 诊断（不是判据）：刷新前后各打一份「这张图是谁、地址长什么样」，
-    // 丢东西的时候能一眼看出丢的是哪一组、以及它的 src 是资产地址还是模型直链。
-    const dumpImages = () => page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
-      .map((el) => ({ r: el.getBoundingClientRect(), el }))
-      .filter((x) => x.r.width > 40 && x.r.height > 40)
-      .map((x) => `${Math.round(x.r.width)}x${Math.round(x.r.height)} @${Math.round(x.r.x)}`
-        + ` group=${x.el.getAttribute('data-layer-group') || '-'}`
-        + ` idx=${x.el.getAttribute('data-layer-index') || '-'}`
-        + ` role=${x.el.getAttribute('data-layer-role') || '-'}`
-        + ` st=${x.el.getAttribute('data-layer-status') || '-'}`));
+    const beforeReloadRects = await worldBoxes();
+    // 诊断（不是判据）：刷新前后各打一份「这块是谁、多大、在哪」，
+    // 丢东西的时候能一眼看出丢的是哪一组第几层。同样只用世界坐标。
+    const dumpImages = async () => (await worldBoxes())
+      .map((b) => `${b.w}x${b.h} @${b.x},${b.y} group=${b.group} idx=${b.idx} role=${b.role} st=${b.st}`);
     console.log('  [诊断] 刷新前：\n    ' + (await dumpImages()).join('\n    '));
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(14000);
     await esc(page);
     const reloadShot = await shot(page, 'after-reload');
-    const rects = await page.evaluate(() => [...document.querySelectorAll('[data-canvas-key]')]
-      .map((el) => el.getBoundingClientRect())
-      .filter((r) => r.width > 60 && r.height > 60)
-      .map((r) => ({ w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.x), y: Math.round(r.y) })));
+    const rects = await worldBoxes();
     // 刷新前后每块的尺寸必须一模一样。
     // 判据不能写成「所有图块等大」——那是上一版的错误模型（各层都是满幅方块）。
     // 现在每块都被裁成自己的最小非透明外接矩形，本来就该各不相同；
     // 真正要防的是「尺寸没落盘，刷新后被 onLoad 的 natural 尺寸覆盖」。
-    const sizeKey = (list) => list.map((r) => `${r.w}x${r.h}`).sort().join('|');
     check('刷新后每块尺寸与刷新前一致（排版真的落盘了）',
       rects.length >= 2 && sizeKey(rects) === sizeKey(beforeReloadRects),
       `刷新前 ${sizeKey(beforeReloadRects)} / 刷新后 ${sizeKey(rects)}（见 ${reloadShot}）`);

@@ -7188,7 +7188,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               border: '1px solid rgba(255,255,255,0.10)',
                               color: 'rgba(255,255,255,0.78)',
                               // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
-                              transform: 'scale(var(--invZoom))',
+                              // 再让开 Frame 头部：Frame 给头部留的是 FRAME_HEADER=46 个**世界**像素，
+                              // 而头部标签自己是 scale(1/zoom) 的**屏幕**常量。缩得越小，
+                              // 那 46px 在屏幕上越薄（21% 时只剩 ~10px），头部就压到卡片上来了
+                              // ——冒烟实测 21%/19% 两档「Frame 头部 × 图层分离中」重叠。
+                              // 这里按同一套换算把徽章往下推：scale 之后的 translateY 正好是屏幕像素，
+                              // 需要让开的量 = 头部屏幕高度 − 头部预留的屏幕高度，高倍下自然归零。
+                              transform: `scale(var(--invZoom)) translateY(${
+                                it.layerRole === 'layer'
+                                  ? Math.max(0, Math.round(30 - 41 * zoom))
+                                  : 0
+                              }px)`,
                               transformOrigin: 'left top',
                             }}
                             title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
