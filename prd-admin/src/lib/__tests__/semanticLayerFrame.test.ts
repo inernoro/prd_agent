@@ -67,6 +67,25 @@ describe('拆分途中把 Frame 拖走', () => {
     expect(moved.h).toBe(500);
   });
 
+  it('拆分途中把占位卡拽大，后到的图层按新尺寸摊开', () => {
+    // 占位卡没有「生成中不许改大小」这道门（canResize 只看是不是单选），
+    // 所以「等待期顺手把框拽大」是真能走到的路径，不是假想输入。
+    const read = createLiveGroupOrigin('g1', seed);
+    const resized = read([placeholder({ w: 1600, h: 800 })]);
+    expect(resized.w).toBe(1600);
+    expect(resized.h).toBe(800);
+    // 只改尺寸时位置不该跟着漂。
+    expect(resized.x).toBe(1220);
+    expect(resized.y).toBe(200);
+  });
+
+  it('尺寸缺失或非正数时不采纳，维持上一次的尺寸', () => {
+    const read = createLiveGroupOrigin('g1', seed);
+    expect(read([placeholder({ w: undefined, h: undefined })])).toEqual(seed);
+    expect(read([placeholder({ w: 0, h: 800 })])).toEqual(seed);
+    expect(read([placeholder({ w: Number.NaN, h: 800 })])).toEqual(seed);
+  });
+
   it('全部裁剪完锚点消失后，保留最后读到的位置而不是跳回原点', () => {
     // 收尾的视角适配在所有图层都裁完之后跑；那时组里已经没有未裁剪的占位卡，
     // 若退回种子值，镜头会飞回最初那块空地（用户看到的就是「拖了个寂寞」）。

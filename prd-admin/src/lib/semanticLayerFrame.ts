@@ -180,6 +180,8 @@ export function planLayeredCopyRect(input: {
 export type LiveGroupOriginCandidate = SemanticLayerMetadata & {
   x?: number;
   y?: number;
+  w?: number;
+  h?: number;
   /** 有值 = 这一层已按内容裁剪过，它的坐标是裁剪后的落点，不再代表组原点。 */
   layerHomeX?: number;
 };
@@ -190,8 +192,16 @@ export function createLiveGroupOrigin(groupId: string, seed: SemanticLayerPlacem
     const anchor = items.find((candidate) => candidate.layerGroupId === groupId
       && candidate.layerRole === 'layer'
       && !Number.isFinite(candidate.layerHomeX as number));
-    if (anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
+    if (!anchor) return current;
+    if (Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
       current = { ...current, x: Number(anchor.x), y: Number(anchor.y) };
+    }
+    // 尺寸同理。占位卡没有「生成中不许改大小」这道门（canResize 只看是不是单选），
+    // 用户完全可以在等待期把它拽大一圈；后到的图层若还按开跑时的尺寸摊开，
+    // 就会和用户眼前那个框对不上——和「拖走之后跑回原位」是同一个洞的另一半。
+    if (Number.isFinite(anchor.w) && Number.isFinite(anchor.h)
+      && Number(anchor.w) > 0 && Number(anchor.h) > 0) {
+      current = { ...current, w: Number(anchor.w), h: Number(anchor.h) };
     }
     return current;
   };
