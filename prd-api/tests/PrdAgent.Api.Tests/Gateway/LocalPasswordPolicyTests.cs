@@ -136,8 +136,14 @@ public class AccountSelfServiceWiringTests
         var program = ReadRepoFile("llmgw/console-api/Program.cs");
         Assert.Contains("\"/gw/auth/account\"", program);
         // 任何角色都要能管自己的凭据，不能挂在按角色收窄的策略上。
+        //
+        // 判据不再切「往后 2200 个字符」那种魔数窗口：处理器一长，.RequireAuthorization()
+        // 就被挤出窗口，判据凭空变红，而端点其实一切正常（实测就是这么红的：它落在
+        // 偏移 2345，只超出 145 个字符）。改成「从本端点注册开始，到下一个 app.Map 之前」
+        // ——这才是这一条注册语句真正的范围，处理器再长也不会误判。
         var idx = program.IndexOf("\"/gw/auth/account\"", System.StringComparison.Ordinal);
-        var block = program[idx..System.Math.Min(program.Length, idx + 2200)];
+        var nextMap = program.IndexOf("app.Map", idx + 1, System.StringComparison.Ordinal);
+        var block = nextMap < 0 ? program[idx..] : program[idx..nextMap];
         Assert.Contains(".RequireAuthorization();", block);
     }
 
