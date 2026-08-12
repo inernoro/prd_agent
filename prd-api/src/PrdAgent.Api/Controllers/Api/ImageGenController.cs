@@ -1914,19 +1914,15 @@ public class ImageGenController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片地址无效，请刷新作品后重试"));
         }
 
+        // 公网 URL 的 path 可能包含 CDN 基础路径，不能据此反推对象存储 key。
+        // 只从当前用户已有的运行项、产物登记或工作区资产中解析内容哈希，
+        // 同步单图流程没有 ImageGenRunItem，必须允许本人 UploadArtifact 独立证明归属。
         var ownedItem = await _db.ImageGenRunItems
             .Find(item => item.OwnerAdminId == adminId
                           && item.Status == ImageGenRunItemStatus.Done
                           && item.Url == normalizedUrl)
             .SortByDescending(item => item.EndedAt)
             .FirstOrDefaultAsync(ct);
-        if (ownedItem == null)
-        {
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "图片不存在或无权下载"));
-        }
-
-        // 公网 URL 的 path 可能包含 CDN 基础路径，不能据此反推对象存储 key。
-        // 只从当前用户已有的产物登记中解析内容哈希，再按视觉创作业务域读取对象。
         var outputArtifact = await _db.UploadArtifacts
             .Find(artifact => artifact.CreatedByAdminId == adminId
                               && artifact.Kind == "output_image"
@@ -1941,6 +1937,11 @@ public class ImageGenController : ControllerBase
                                && (asset.Url == normalizedUrl || asset.OriginalUrl == normalizedUrl))
                 .SortByDescending(asset => asset.CreatedAt)
                 .FirstOrDefaultAsync(ct);
+        }
+
+        if (ownedItem == null && outputArtifact == null && imageAsset == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "图片不存在或无权下载"));
         }
 
         var sha256 = outputArtifact?.Sha256

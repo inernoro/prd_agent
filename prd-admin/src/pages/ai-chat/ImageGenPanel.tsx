@@ -23,6 +23,7 @@ type ImageItem = {
   ratioAdjusted?: boolean;
   base64?: string | null;
   url?: string | null;
+  downloadUrl?: string | null;
   revisedPrompt?: string | null;
   errorMessage?: string | null;
 };
@@ -128,6 +129,7 @@ export default function ImageGenPanel() {
     src: string;
     prompt: string;
     revisedPrompt?: string;
+    downloadUrl?: string;
   }>({
     open: false,
     title: '图片预览',
@@ -207,6 +209,7 @@ export default function ImageGenPanel() {
         ratioAdjusted: Boolean(res.data?.meta?.ratioAdjusted),
         base64: img.base64 ?? null,
         url: img.url ?? null,
+        downloadUrl: img.originalUrl ?? img.url ?? null,
         revisedPrompt: img.revisedPrompt ?? null,
       }));
       setImages((prev) => [...imgs, ...prev]);
@@ -469,13 +472,13 @@ export default function ImageGenPanel() {
                           }}
                           onClick={() => {
                             if (!canShow) return;
-                            setImagePreview({ open: true, title: '图片预览', src, prompt: it.prompt, revisedPrompt: it.revisedPrompt || '' });
+                            setImagePreview({ open: true, title: '图片预览', src, prompt: it.prompt, revisedPrompt: it.revisedPrompt || '', downloadUrl: it.downloadUrl || src });
                           }}
                           onKeyDown={(e) => {
                             if (!canShow) return;
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();
-                              setImagePreview({ open: true, title: '图片预览', src, prompt: it.prompt, revisedPrompt: it.revisedPrompt || '' });
+                              setImagePreview({ open: true, title: '图片预览', src, prompt: it.prompt, revisedPrompt: it.revisedPrompt || '', downloadUrl: it.downloadUrl || src });
                             }
                           }}
                         >
@@ -559,7 +562,7 @@ export default function ImageGenPanel() {
                               ].join(' ')}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                void downloadGeneratedImage(src, it.prompt || 'image');
+                                void downloadGeneratedImage(it.downloadUrl || src, it.prompt || 'image');
                               }}
                               aria-label="下载图片"
                               title="下载图片"
@@ -693,7 +696,7 @@ export default function ImageGenPanel() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => void downloadGeneratedImage(imagePreview.src, imagePreview.prompt || imagePreview.title || 'image')}
+                onClick={() => void downloadGeneratedImage(imagePreview.downloadUrl || imagePreview.src, imagePreview.prompt || imagePreview.title || 'image')}
                 disabled={!imagePreview.src}
               >
                 <Download size={16} />
@@ -753,4 +756,3 @@ export default function ImageGenPanel() {
     </div>
   );
 }
-
