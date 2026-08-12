@@ -1,5 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Channels;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -17,6 +19,8 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
     public const string AppKey = "profile-avatar";
     internal static readonly TimeSpan DefaultRetention = TimeSpan.FromHours(24);
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromHours(1);
+    private static readonly TimeSpan ObjectCleanupInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ObjectCleanupLease = TimeSpan.FromMinutes(2);
     private const int CleanupBatchSize = 50;
     private readonly Channel<(string runId, string ownerAdminId)> _cleanupQueue =
         Channel.CreateBounded<(string runId, string ownerAdminId)>(new BoundedChannelOptions(1000)
@@ -50,6 +54,7 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var nextExpiredCleanupAt = DateTime.MinValue;
+        var nextObjectCleanupAt = DateTime.MinValue;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -65,6 +70,11 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
                     nextExpiredCleanupAt = now + CleanupInterval;
                     await CleanupExpiredAsync(now, stoppingToken);
                 }
+                if (now >= nextObjectCleanupAt)
+                {
+                    nextObjectCleanupAt = now + ObjectCleanupInterval;
+                    await CleanupPendingAvatarObjectsAsync(now, stoppingToken);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -78,9 +88,12 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
             try
             {
                 var waitForQueue = _cleanupQueue.Reader.WaitToReadAsync(stoppingToken).AsTask();
+                var nextScheduledCleanupAt = nextExpiredCleanupAt < nextObjectCleanupAt
+                    ? nextExpiredCleanupAt
+                    : nextObjectCleanupAt;
                 var waitForExpiry = Task.Delay(
-                    nextExpiredCleanupAt > DateTime.UtcNow
-                        ? nextExpiredCleanupAt - DateTime.UtcNow
+                    nextScheduledCleanupAt > DateTime.UtcNow
+                        ? nextScheduledCleanupAt - DateTime.UtcNow
                         : TimeSpan.Zero,
                     stoppingToken);
                 await Task.WhenAny(waitForQueue, waitForExpiry);
@@ -105,6 +118,146 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
         }
         return accepted;
     }
+
+    public async Task TrackAndTryDeleteSupersededAvatarAsync(
+        string userId,
+        string? previousFileName,
+        string? currentFileName,
+        CancellationToken ct)
+    {
+        if (!ProfileAvatarObjectCleanupPolicy.TryBuildObjectKey(
+                userId,
+                previousFileName,
+                currentFileName,
+                out var normalizedPreviousFileName,
+                out var objectKey))
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var task = new ProfileAvatarObjectCleanupTask
+        {
+            Id = ProfileAvatarObjectCleanupPolicy.BuildTaskId(userId, objectKey),
+            UserId = userId.Trim(),
+            PreviousFileName = normalizedPreviousFileName,
+            ObjectKey = objectKey,
+            AttemptCount = 1,
+            LastAttemptAt = now,
+            NextAttemptAt = now + ObjectCleanupLease,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await _db.ProfileAvatarObjectCleanupTasks.ReplaceOneAsync(
+            x => x.Id == task.Id,
+            task,
+            new ReplaceOptions { IsUpsert = true },
+            ct);
+        await TryDeleteAvatarObjectAsync(task, ct);
+    }
+
+    internal async Task<int> CleanupPendingAvatarObjectsAsync(DateTime now, CancellationToken ct)
+    {
+        var cleaned = 0;
+        while (!ct.IsCancellationRequested)
+        {
+            var dueFilter = Builders<ProfileAvatarObjectCleanupTask>.Filter.Lte(
+                x => x.NextAttemptAt,
+                now);
+            var task = await _db.ProfileAvatarObjectCleanupTasks.FindOneAndUpdateAsync(
+                dueFilter,
+                Builders<ProfileAvatarObjectCleanupTask>.Update
+                    .Set(x => x.LastAttemptAt, now)
+                    .Set(x => x.NextAttemptAt, now + ObjectCleanupLease)
+                    .Set(x => x.UpdatedAt, now)
+                    .Inc(x => x.AttemptCount, 1),
+                new FindOneAndUpdateOptions<ProfileAvatarObjectCleanupTask>
+                {
+                    Sort = Builders<ProfileAvatarObjectCleanupTask>.Sort.Ascending(x => x.NextAttemptAt),
+                    ReturnDocument = ReturnDocument.After,
+                },
+                ct);
+            if (task == null) break;
+            if (await TryDeleteAvatarObjectAsync(task, ct)) cleaned++;
+        }
+        return cleaned;
+    }
+
+    private async Task<bool> TryDeleteAvatarObjectAsync(
+        ProfileAvatarObjectCleanupTask task,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (!ProfileAvatarObjectCleanupPolicy.TryBuildObjectKey(
+                    task.UserId,
+                    task.PreviousFileName,
+                    currentFileName: null,
+                    out _,
+                    out var validatedObjectKey)
+                || !string.Equals(validatedObjectKey, task.ObjectKey, StringComparison.Ordinal))
+            {
+                await _db.ProfileAvatarObjectCleanupTasks.DeleteOneAsync(x => x.Id == task.Id, ct);
+                return true;
+            }
+
+            var currentAvatarFileName = await _db.Users
+                .Find(x => x.UserId == task.UserId)
+                .Project(x => x.AvatarFileName)
+                .FirstOrDefaultAsync(ct);
+            if (string.Equals(
+                    currentAvatarFileName?.Trim(),
+                    task.PreviousFileName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                await _db.ProfileAvatarObjectCleanupTasks.DeleteOneAsync(x => x.Id == task.Id, ct);
+                _logger.LogInformation(
+                    "Superseded avatar cleanup cancelled because the file is active again. userId={UserId} file={File}",
+                    task.UserId,
+                    task.PreviousFileName);
+                return true;
+            }
+
+            await _assetStorage.DeleteByKeyAsync(task.ObjectKey, ct);
+            await _db.ProfileAvatarObjectCleanupTasks.DeleteOneAsync(x => x.Id == task.Id, ct);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var retryAt = DateTime.UtcNow + RetryDelay(task.AttemptCount);
+            _logger.LogWarning(
+                ex,
+                "Superseded self-service avatar cleanup deferred. userId={UserId} file={File} attempt={Attempt}",
+                task.UserId,
+                task.PreviousFileName,
+                task.AttemptCount);
+            try
+            {
+                await _db.ProfileAvatarObjectCleanupTasks.UpdateOneAsync(
+                    x => x.Id == task.Id,
+                    Builders<ProfileAvatarObjectCleanupTask>.Update
+                        .Set(x => x.NextAttemptAt, retryAt)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+            }
+            catch (Exception persistException)
+            {
+                // 初次删除前已持久化任务并预留租约；这里只是尽量提前下一次重试时间。
+                _logger.LogError(
+                    persistException,
+                    "Superseded avatar retry schedule update failed; existing lease remains. taskId={TaskId}",
+                    task.Id);
+            }
+            return false;
+        }
+    }
+
+    private static TimeSpan RetryDelay(int attemptCount)
+        => TimeSpan.FromMinutes(Math.Min(60, Math.Pow(2, Math.Clamp(attemptCount - 1, 0, 6))));
 
     internal async Task<int> CleanupExpiredAsync(DateTime now, CancellationToken ct)
     {
@@ -257,5 +410,46 @@ public sealed class ProfileAvatarGenerationCleanupService : BackgroundService
     {
         var normalized = (sha ?? string.Empty).Trim().ToLowerInvariant();
         return normalized.Length == 64 && normalized.All(Uri.IsHexDigit) ? normalized : null;
+    }
+}
+
+public static class ProfileAvatarObjectCleanupPolicy
+{
+    public static string BuildOwnerPrefix(string userId)
+    {
+        var ownerHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes((userId ?? string.Empty).Trim())))
+            .ToLowerInvariant()[..12];
+        return $"u-{ownerHash}-";
+    }
+
+    public static string BuildTaskId(string userId, string objectKey)
+    {
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"profile-avatar-cleanup\0{userId.Trim()}\0{objectKey.Trim().ToLowerInvariant()}")))
+            .ToLowerInvariant();
+        return digest[..32];
+    }
+
+    public static bool TryBuildObjectKey(
+        string userId,
+        string? previousFileName,
+        string? currentFileName,
+        out string normalizedPreviousFileName,
+        out string objectKey)
+    {
+        normalizedPreviousFileName = (previousFileName ?? string.Empty).Trim().ToLowerInvariant();
+        var current = (currentFileName ?? string.Empty).Trim().ToLowerInvariant();
+        objectKey = string.Empty;
+        if (string.IsNullOrWhiteSpace(userId)
+            || string.IsNullOrWhiteSpace(normalizedPreviousFileName)
+            || string.Equals(normalizedPreviousFileName, current, StringComparison.Ordinal)
+            || !normalizedPreviousFileName.StartsWith(BuildOwnerPrefix(userId), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{normalizedPreviousFileName}";
+        return AssetStorageDeletePolicy.IsVersionedUserAvatarKey(objectKey);
     }
 }

@@ -166,20 +166,9 @@ public class ProfileController : ControllerBase
 
     private static string BuildVersionedAvatarFileName(string userId, string ext, ReadOnlySpan<byte> bytes)
     {
-        var ownerHash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes((userId ?? string.Empty).Trim())))
-            .ToLowerInvariant()[..12];
         var contentHash = Convert.ToHexString(SHA256.HashData(bytes))
             .ToLowerInvariant()[..24];
-        return $"u-{ownerHash}-{contentHash}.{ext}";
-    }
-
-    private static string BuildAvatarOwnerPrefix(string userId)
-    {
-        var ownerHash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes((userId ?? string.Empty).Trim())))
-            .ToLowerInvariant()[..12];
-        return $"u-{ownerHash}-";
+        return $"{ProfileAvatarObjectCleanupPolicy.BuildOwnerPrefix(userId)}{contentHash}.{ext}";
     }
 
     private async Task<User?> ReplaceAvatarFileNameAsync(
@@ -199,30 +188,11 @@ public class ProfileController : ControllerBase
         string? previousFileName,
         string? currentFileName)
     {
-        var previous = (previousFileName ?? string.Empty).Trim().ToLowerInvariant();
-        var current = (currentFileName ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(previous)
-            || string.Equals(previous, current, StringComparison.Ordinal)
-            || !previous.StartsWith(BuildAvatarOwnerPrefix(userId), StringComparison.Ordinal)
-            || !AssetStorageDeletePolicy.IsVersionedUserAvatarKey(
-                $"{AvatarUrlBuilder.AvatarPathPrefix}/{previous}"))
-        {
-            return;
-        }
-
-        var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{previous}";
-        try
-        {
-            await _assetStorage.DeleteByKeyAsync(objectKey, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Superseded self-service avatar cleanup failed. userId={UserId} file={File}",
-                userId,
-                previous);
-        }
+        await _avatarGenerationCleanup.TrackAndTryDeleteSupersededAvatarAsync(
+            userId,
+            previousFileName,
+            currentFileName,
+            CancellationToken.None);
     }
 
     private static (bool ok, string? error) ValidateAvatarFileName(string? avatarFileName)
@@ -740,7 +710,9 @@ public class ProfileController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(fileName))
         {
-            if (!fileName.StartsWith(BuildAvatarOwnerPrefix(currentUserId), StringComparison.Ordinal))
+            if (!fileName.StartsWith(
+                    ProfileAvatarObjectCleanupPolicy.BuildOwnerPrefix(currentUserId),
+                    StringComparison.Ordinal))
             {
                 return BadRequest(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,

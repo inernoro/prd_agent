@@ -104,13 +104,17 @@ public class ProfileAvatarGenerationContractTests
     {
         var source = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
+        var cleanup = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ProfileAvatarGenerationCleanupService.cs"));
 
         Assert.Contains("BuildVersionedAvatarFileName(currentUserId, ext, bytes)", source);
         Assert.Contains("BuildVersionedAvatarFileName(currentUserId, ext, found.Value.bytes)", source);
         Assert.Contains("SHA256.HashData(bytes)", source);
         Assert.Contains("FindOneAndUpdateAsync", source);
         Assert.Contains("DeleteSupersededAvatarAsync", source);
-        Assert.Contains("DeleteByKeyAsync", source);
+        Assert.Contains("TrackAndTryDeleteSupersededAvatarAsync", source);
+        Assert.Contains("ProfileAvatarObjectCleanupTasks.ReplaceOneAsync", cleanup);
+        Assert.Contains("DeleteByKeyAsync", cleanup);
         Assert.DoesNotContain("$\"{usernameLower}.{ext}\"", source);
     }
 
@@ -130,6 +134,12 @@ public class ProfileAvatarGenerationContractTests
         Assert.Contains("while (_cleanupQueue.Reader.TryRead", cleanup);
         Assert.Contains("DefaultRetention = TimeSpan.FromHours(24)", cleanup);
         Assert.Contains("await CleanupExpiredAsync(now, stoppingToken)", cleanup);
+        Assert.Contains("await CleanupPendingAvatarObjectsAsync(now, stoppingToken)", cleanup);
+        Assert.Contains("ProfileAvatarObjectCleanupTasks.ReplaceOneAsync", cleanup);
+        Assert.Contains("FindOneAndUpdateAsync", cleanup);
+        Assert.Contains("NextAttemptAt", cleanup);
+        Assert.Contains("await _assetStorage.DeleteByKeyAsync(task.ObjectKey, ct)", cleanup);
+        Assert.Contains("currentAvatarFileName", cleanup);
         Assert.Contains("while (!ct.IsCancellationRequested)", cleanup);
         Assert.Contains("Builders<ImageGenRun>.Filter.Nin(x => x.Id, failedRunIds)", cleanup);
         Assert.Contains("failedRunIds.Add(candidate.Id)", cleanup);
@@ -152,7 +162,7 @@ public class ProfileAvatarGenerationContractTests
         Assert.True(endpointStart >= 0 && endpointEnd > endpointStart);
         var endpoint = source[endpointStart..endpointEnd];
 
-        Assert.Contains("fileName.StartsWith(BuildAvatarOwnerPrefix(currentUserId)", endpoint);
+        Assert.Contains("ProfileAvatarObjectCleanupPolicy.BuildOwnerPrefix(currentUserId)", endpoint);
         Assert.Contains("await _assetStorage.ExistsAsync(objectKey, ct)", endpoint);
         Assert.True(
             endpoint.IndexOf("ExistsAsync", StringComparison.Ordinal)
