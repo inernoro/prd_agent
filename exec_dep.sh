@@ -624,7 +624,11 @@ else
 fi
 
 compose_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+compose_project_directory="${PRD_AGENT_COMPOSE_PROJECT_DIRECTORY:-}"
 compose_run() {
+  if [ -n "$compose_project_directory" ]; then
+    set -- --project-directory "$compose_project_directory" "$@"
+  fi
   if [ -f "$compose_dotenv_file" ]; then
     if [ "$COMPOSE" = "docker-compose" ]; then
       docker-compose --env-file "$compose_dotenv_file" "$@"
@@ -665,6 +669,12 @@ if [ ! -f scripts/lib/static-release.sh ]; then
 fi
 # shellcheck source=scripts/lib/static-release.sh
 . scripts/lib/static-release.sh
+if [ ! -f scripts/lib/gateway-bind-mount.sh ]; then
+  echo "ERROR: missing scripts/lib/gateway-bind-mount.sh" >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/gateway-bind-mount.sh
+. scripts/lib/gateway-bind-mount.sh
 
 tmp_dir="$(mktemp -d)"
 release_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -738,6 +748,25 @@ write_release_evidence() {
     --static-before-previous "$static_before_previous" \
     --smoke-json "$public_smoke_json" \
     --asset-storage-readiness-json "$asset_storage_readiness_json" \
+    --gateway-bind-state "$GATEWAY_BIND_STATE" \
+    --gateway-bind-reason "$GATEWAY_BIND_REASON" \
+    --gateway-bind-initial-state "$GATEWAY_BIND_INITIAL_STATE" \
+    --gateway-bind-initial-reason "$GATEWAY_BIND_INITIAL_REASON" \
+    --gateway-bind-recreated "$GATEWAY_BIND_RECREATED" \
+    --gateway-container-before "$GATEWAY_BIND_CONTAINER_BEFORE" \
+    --gateway-container-after "$GATEWAY_BIND_CONTAINER_AFTER" \
+    --gateway-host-static-target "$GATEWAY_BIND_HOST_STATIC_TARGET" \
+    --gateway-container-static-target "$GATEWAY_BIND_CONTAINER_STATIC_TARGET" \
+    --gateway-host-static-sha256 "$GATEWAY_BIND_HOST_STATIC_SHA" \
+    --gateway-container-static-sha256 "$GATEWAY_BIND_CONTAINER_STATIC_SHA" \
+    --gateway-host-nginx-sha256 "$GATEWAY_BIND_HOST_NGINX_SHA" \
+    --gateway-container-nginx-sha256 "$GATEWAY_BIND_CONTAINER_NGINX_SHA" \
+    --gateway-bind-initial-host-static-target "$GATEWAY_BIND_INITIAL_HOST_STATIC_TARGET" \
+    --gateway-bind-initial-container-static-target "$GATEWAY_BIND_INITIAL_CONTAINER_STATIC_TARGET" \
+    --gateway-bind-initial-host-static-sha256 "$GATEWAY_BIND_INITIAL_HOST_STATIC_SHA" \
+    --gateway-bind-initial-container-static-sha256 "$GATEWAY_BIND_INITIAL_CONTAINER_STATIC_SHA" \
+    --gateway-bind-initial-host-nginx-sha256 "$GATEWAY_BIND_INITIAL_HOST_NGINX_SHA" \
+    --gateway-bind-initial-container-nginx-sha256 "$GATEWAY_BIND_INITIAL_CONTAINER_NGINX_SHA" \
     --failure-stage "$evidence_failure_stage" \
     --rollback-result "$evidence_rollback_result"
 }
@@ -1677,6 +1706,12 @@ refresh_gateway_after_compose() {
     if [ "$gateway_running" = "true" ]; then
       echo "Synchronizing active gateway config and reloading in place without changing its container IP..."
       sync_active_gateway_nginx_config
+      gateway_reconcile_bind_mounts \
+        "$gateway_container_id" \
+        "$active_static_root" \
+        "$active_nginx_conf_root" \
+        "$compose_project_directory" \
+        "$gateway_service"
     else
       echo "Starting gateway service for the first time..."
       compose_run up -d --no-deps "$gateway_service"

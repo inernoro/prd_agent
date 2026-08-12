@@ -1,8 +1,12 @@
 ---
-globs: ["prd-api/src/**/*.cs"]
+paths:
+  - "prd-api/src/**/*.cs"
 ---
 
 # 应用身份隔离原则
+
+**一句话**：每个应用必须有自己的 Controller 并在里面硬编码 appKey，不许由前端传进来。
+**什么时候撞上**：新增应用，或给已有应用加后端接口入口。
 
 每个应用必须有独立的 Controller 层，Controller 中硬编码 `appKey`，不由前端传递。
 

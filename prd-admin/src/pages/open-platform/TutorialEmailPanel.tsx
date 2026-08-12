@@ -418,8 +418,8 @@ function ComposeView() {
                     style={
                       msg.role === 'user'
                         ? {
-                            background: 'var(--accent-primary)',
-                            color: 'white',
+                            background: 'var(--button-primary-bg)',
+                            color: 'var(--button-primary-fg)',
                             borderBottomRightRadius: 4,
                           }
                         : {

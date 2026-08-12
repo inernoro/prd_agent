@@ -1,14 +1,17 @@
 ---
-globs: prd-api/src/**/Controllers/**/*.cs,prd-api/src/**/Services/**/*.cs
+globs: prd-api/src/**/Controllers/**/*.cs,prd-api/src/**/Services/**/*.cs,prd-api/src/**/Models/**/*.cs
 description: 快照反规范化兜底：Fallback 字段必须与 Snapshot 完全对齐
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/snapshot-fallback.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-08-11T09:03:38Z -->
 
 
 # 快照反规范化兜底规则
+
+**一句话**：加快照字段就要同步维护一条等价覆盖的兜底查询：字段要对齐、入口条件要够宽，否则老数据展示会缺东西。
+**什么时候撞上**：新增或修改快照（反规范化）字段。
 
 为性能或离线展示而引入快照（Snapshot / Denormalization）字段时，必须同步维护一条**等价覆盖**的兜底（Fallback）查询路径，供无快照的历史数据使用。
 

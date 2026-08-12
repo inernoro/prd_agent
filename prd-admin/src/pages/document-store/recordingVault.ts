@@ -1,6 +1,6 @@
 /**
  * 录音数据保险箱（IndexedDB，best-effort）——录音期间每个音频分片实时落库，
- * 只有「上传成功」才清除。页面崩溃 / 忘记关闭 / 网络断开 / 标签页被杀，
+ * 只有云端归档已可用才清除。页面崩溃 / 忘记关闭 / 网络断开 / 标签页被杀，
  * 已录内容都能在下次进入知识库时恢复并继续转录，不丢数据。
  *
  * 结构：
@@ -113,12 +113,14 @@ export type UploadedRecordingFollowUp =
  */
 export function decideUploadedRecordingFollowUp(
   archivePending: boolean,
-  liveTranscriptReady: boolean,
+  _liveTranscriptReady: boolean,
   deferredTranscriptionRunId?: string | null,
 ): UploadedRecordingFollowUp {
   const runId = deferredTranscriptionRunId?.trim();
   if (runId) return { kind: 'watch-deferred-run', runId };
-  if (archivePending && !liveTranscriptReady) return { kind: 'wait-for-archive' };
+  // 待归档音频还没有可播放的云端地址。即使实时原文已就绪，也应停留在同一
+  // 音频结果页等待归档，不能重新打开上传/转录流程制造第二次处理的错觉。
+  if (archivePending) return { kind: 'wait-for-archive' };
   return { kind: 'open-transcription' };
 }
 
@@ -130,6 +132,39 @@ export function enqueueBackgroundTranscriptionRun(
   const normalized = runId.trim();
   if (!normalized || current.includes(normalized)) return current;
   return [...current, normalized];
+}
+
+/**
+ * 刷新或重新进入录音结果页时，根据服务端最近一次 run 恢复后台看护。
+ * 只接管真正处于在途状态的任务，终态 run 不应让页面永久显示“处理中”。
+ */
+export function recoverableBackgroundTranscriptionRunId(
+  run: { id?: string | null; status?: string | null } | null | undefined,
+): string | null {
+  const runId = run?.id?.trim();
+  const status = run?.status?.trim().toLowerCase();
+  if (!runId || (status !== 'queued' && status !== 'running')) return null;
+  return runId;
+}
+
+/**
+ * 最近一次转录如果是失败告终，页面必须留下痕迹。
+ *
+ * 在途 run 由上面那条恢复看护接管，成功 run 会长出笔记；只有失败 run 两头不沾——
+ * 关掉抽屉或刷新之后，整屏又退回「把录音转成文字」，用户根本看不出刚才跑过、更看不出为什么没成。
+ * 「我不清楚是好了还是坏了」就是从这个缝里漏出来的。
+ *
+ * 只认失败态；诊断块（后端追加的 [diagnostic] JSON）给的是排障细节，不是给用户看的，截掉。
+ */
+export function describeFailedTranscription(
+  run: { status?: string | null; errorMessage?: string | null; updatedAt?: string | null; createdAt?: string | null } | null | undefined,
+): { reason: string; at: string | null } | null {
+  if (run?.status?.trim().toLowerCase() !== 'failed') return null;
+  const raw = (run.errorMessage ?? '').split('[diagnostic]')[0].trim();
+  return {
+    reason: raw || '转录失败，原因未知',
+    at: (run.updatedAt ?? run.createdAt ?? null),
+  };
 }
 
 function openDb(): Promise<IDBDatabase | null> {

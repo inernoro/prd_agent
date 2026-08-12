@@ -170,6 +170,23 @@ interface ToolboxState {
 //   - 'tool'  = 能力型工具，缺少 agent 三要素中的任何一项
 //   - 'infra' = 平台级基础设施（工作流引擎、更新中心、市场、模型、团队等），不进百宝箱
 export const BUILTIN_TOOLS: ToolboxItem[] = [
+  // 通用对话智能体：先带 wip，按 CLAUDE.md 规则 #8 验收通过后再删这个字段转正式
+  {
+    id: 'builtin-chat-agent',
+    name: '通用对话智能体',
+    description: '打开就能聊的多轮对话入口，说到一半刷新页面也不会丢',
+    icon: 'MessageSquare',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'agent',
+    agentKey: 'chat-agent',
+    routePath: '/chat',
+    permission: 'chat-agent.use',
+    tags: ['对话', '聊天', '通用', '智能体', 'chat'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    wip: true,
+  },
   // ========== 智能体（定制版，有专门页面 + 完备生命周期 + 存储）==========
   // 注：PRD 解读智能体 Web 端已下线，统一改为下载桌面端体验，不再注册到百宝箱
   {

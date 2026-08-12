@@ -68,6 +68,12 @@ import {
 } from '@/lib/visualAgentPromptUtils';
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import {
+  createLayeredPsdBlob,
+  decomposeImageToLayers,
+  downloadLayeredPsd,
+} from '@/lib/layeredPsd';
+import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
@@ -89,6 +95,7 @@ import {
   Grid3X3,
   Hand,
   ImagePlus,
+  Layers,
   MapPin,
   Maximize2,
   MessageSquare,
@@ -106,7 +113,17 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
@@ -170,6 +187,12 @@ type CanvasImageItem = {
   text?: string;
   fontSize?: number;
   textColor?: string;
+
+  // AI 语义分层 Frame。图层仍是普通图片，可单独选择、编辑、移动和复用。
+  layerGroupId?: string;
+  layerSourceKey?: string;
+  layerIndex?: number;
+  layerRole?: 'source' | 'layer';
 };
 
 function computeObjectFitContainRect(containerW: number, containerH: number, contentW: number, contentH: number) {
@@ -1098,6 +1121,64 @@ function buildTemplate(name: string) {
   return '';
 }
 
+function StageClampedQuickActionBar({
+  stageRef,
+  obstacleRef,
+  zoom,
+  positionKey,
+  children,
+}: {
+  stageRef: RefObject<HTMLDivElement | null>;
+  obstacleRef?: RefObject<HTMLDivElement | null>;
+  zoom: number;
+  positionKey: string;
+  children: ReactNode;
+}) {
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [shiftWorldX, setShiftWorldX] = useState(0);
+
+  useLayoutEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const stage = stageRef.current;
+      const bar = barRef.current;
+      if (!stage || !bar) return;
+      const stageRect = stage.getBoundingClientRect();
+      const obstacleRect = obstacleRef?.current?.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const currentShift = shiftWorldX * Math.max(zoom, 0.01);
+      const nextShiftScreen = computeHorizontalClampShift({
+        stageLeft: stageRect.left,
+        stageRight: obstacleRect && obstacleRect.width > 0
+          ? Math.min(stageRect.right, obstacleRect.left)
+          : stageRect.right,
+        elementLeft: barRect.left,
+        elementRight: barRect.right,
+        currentShift,
+      });
+      const nextShiftWorld = nextShiftScreen / Math.max(zoom, 0.01);
+      setShiftWorldX((current) => Math.abs(current - nextShiftWorld) < 0.25 ? current : nextShiftWorld);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [obstacleRef, positionKey, shiftWorldX, stageRef, zoom]);
+
+  return (
+    <div
+      ref={barRef}
+      style={{
+        position: 'absolute',
+        left: `calc(50% + ${shiftWorldX}px)`,
+        top: 0,
+        transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
+        transformOrigin: 'center bottom',
+        pointerEvents: 'auto',
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function AdvancedVisualAgentTab(props: { workspaceId: string; initialPrompt?: string }) {
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
@@ -1218,6 +1299,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [diyQuickActions]);
   const [quickEditRunning, setQuickEditRunning] = useState(false);
   const [quickActionDialogOpen, setQuickActionDialogOpen] = useState(false);
+  const [layeringProgress, setLayeringProgress] = useState<{
+    sourceKey: string;
+    phase: string;
+    completed?: number;
+    total?: number;
+  } | null>(null);
   // 局部重绘（Inpainting）状态
   const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
@@ -1237,15 +1324,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type SizeOption = { size: string; aspectRatio: string };
   type SizesByResolutionType = Record<'1k' | '2k' | '4k', SizeOption[]>;
   const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
-  // 当前模型是否为自适应模型（gpt-image-2-all 等）：true 时尺寸选择器应展示"自适应"
-  const [currentModelIsAdaptive, setCurrentModelIsAdaptive] = useState(false);
+  // 仅“尺寸语义不适用”的模型隐藏选择器；提示词传输型自适应模型仍允许用户选尺寸。
+  const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
 
   useEffect(() => {
     // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
     const modelCode = effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
-      setCurrentModelIsAdaptive(false);
+      setCurrentModelSizesNotApplicable(false);
       return;
     }
 
@@ -1258,15 +1345,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             '2k': Array.isArray(data['2k']) ? data['2k'] : [],
             '4k': Array.isArray(data['4k']) ? data['4k'] : [],
           });
-          setCurrentModelIsAdaptive(res.data.isAdaptive === true);
+          setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);
         } else {
           setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
-          setCurrentModelIsAdaptive(false);
+          setCurrentModelSizesNotApplicable(false);
         }
       })
       .catch(() => {
         setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
-        setCurrentModelIsAdaptive(false);
+        setCurrentModelSizesNotApplicable(false);
       });
   }, [effectiveModel]);
 
@@ -1393,6 +1480,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const canvasRef = useRef<CanvasImageItem[]>([]);
+  const semanticLayerFrames = useMemo(() => collectSemanticLayerFrames(canvas), [canvas]);
 
   // 图片选项（用于 @ 下拉菜单）
   const imageOptions = useMemo<ImageOption[]>(() => {
@@ -1584,6 +1672,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const rafTransformRef = useRef<number | null>(null);
   const lastUiSyncRef = useRef(0);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const chatPanelRef = useRef<HTMLDivElement | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
   const worldUiRef = useRef<HTMLDivElement | null>(null);
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -2292,6 +2381,215 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     prompt: string;
     key: string; // 右键点击的元素 key，用于图层操作
   }>({ open: false, x: 0, y: 0, src: '', prompt: '', key: '' });
+
+  const decomposeImageIntoFrame = useCallback(async (input: {
+    key: string;
+    src: string;
+    prompt: string;
+  }) => {
+    if (layeringProgress) return;
+    if (!workspaceId) {
+      toast.error('AI 分层失败', '当前画布尚未创建工作区');
+      return;
+    }
+
+    const sourceItem = canvasRef.current.find((candidate) => candidate.key === input.key);
+    if (!sourceItem) {
+      toast.error('AI 分层失败', '画布中找不到当前图片');
+      return;
+    }
+
+    const existingGroupId = String(sourceItem.layerGroupId ?? '').trim();
+    const existingLayers = existingGroupId
+      ? canvasRef.current.filter((candidate) => candidate.layerGroupId === existingGroupId && candidate.layerRole === 'layer')
+      : [];
+    if (existingLayers.length > 0) {
+      setSelectionWithoutChip([existingLayers[0]!.key]);
+      toast.info('分层结果已在画布中', `已复用 ${existingLayers.length} 个可编辑图层，无需再次调用模型。`);
+      return;
+    }
+
+    const source = String(sourceItem.originalSrc || input.src || '').trim();
+    if (!source) {
+      toast.error('AI 分层失败', '当前图片没有可读取的原图');
+      return;
+    }
+
+    const loadingId = toast.loading(
+      '正在创建可编辑图层',
+      '模型拆分、资产保存和画布排列会分阶段进行，预计需要 15–30 秒。',
+    );
+    setLayeringProgress({ sourceKey: sourceItem.key, phase: '正在提交语义分层模型' });
+
+    try {
+      const result = await decomposeImageToLayers({
+        source,
+        sourceSha256: sourceItem.originalSrc ? null : (sourceItem.sha256 ?? null),
+        layerCount: 4,
+      });
+      if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
+
+      const remoteLayers = (result.data?.images ?? [])
+        .map((image, index) => ({
+          index,
+          name: `AI 图层 ${String(index + 1).padStart(2, '0')}`,
+          source: String(image.originalUrl || image.url || '').trim(),
+        }))
+        .filter((layer) => !!layer.source);
+      if (remoteLayers.length === 0) throw new Error('分层模型未返回可用图层');
+
+      const persistedLayers: Array<{
+        index: number;
+        name: string;
+        asset: ImageAsset;
+      }> = [];
+      for (let index = 0; index < remoteLayers.length; index += 1) {
+        const layer = remoteLayers[index]!;
+        setLayeringProgress({
+          sourceKey: sourceItem.key,
+          phase: `正在保存图层 ${index + 1}/${remoteLayers.length}`,
+          completed: index,
+          total: remoteLayers.length,
+        });
+        const upload = await uploadVisualAgentWorkspaceAsset({
+          id: workspaceId,
+          sourceUrl: layer.source,
+          prompt: `${input.prompt || '图片'} · ${layer.name}`,
+          idempotencyKey: `semantic_layer_${sourceItem.key}_${layer.index}_${Date.now()}`,
+        });
+        if (!upload.success) throw new Error(upload.error?.message || `${layer.name} 保存失败`);
+        persistedLayers.push({ index: layer.index, name: layer.name, asset: upload.data.asset });
+      }
+
+      setLayeringProgress({
+        sourceKey: sourceItem.key,
+        phase: '正在排列分层 Frame',
+        completed: persistedLayers.length,
+        total: persistedLayers.length,
+      });
+      const groupId = `layer_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const layout = planSemanticLayerFrame(sourceItem, persistedLayers.length);
+      const now = Date.now();
+      const maxRefId = canvasRef.current.reduce(
+        (max, candidate) => typeof candidate.refId === 'number' ? Math.max(max, candidate.refId) : max,
+        0,
+      );
+      const layerItems: CanvasImageItem[] = persistedLayers.map((layer, index) => {
+        const placement = layout.placements[index]!;
+        return {
+          key: `${groupId}_layer_${index + 1}`,
+          createdAt: now + index,
+          prompt: `${input.prompt || '图片'} · ${layer.name}`,
+          src: layer.asset.url,
+          status: 'done',
+          kind: 'image',
+          assetId: layer.asset.id,
+          sha256: layer.asset.sha256,
+          syncStatus: 'synced',
+          syncError: null,
+          naturalW: layer.asset.width,
+          naturalH: layer.asset.height,
+          userResized: true,
+          refId: maxRefId + index + 1,
+          ...placement,
+          layerGroupId: groupId,
+          layerSourceKey: sourceItem.key,
+          layerIndex: index + 1,
+          layerRole: 'layer',
+        };
+      });
+
+      setCanvas((previous) => {
+        const next = previous.map((candidate) => candidate.key === sourceItem.key
+          ? {
+              ...candidate,
+              layerGroupId: groupId,
+              layerSourceKey: sourceItem.key,
+              layerIndex: 0,
+              layerRole: 'source' as const,
+            }
+          : candidate);
+        return [...next, ...layerItems];
+      });
+      setNextRefId(maxRefId + layerItems.length + 1);
+      setSelectionWithoutChip(layerItems.length > 0 ? [layerItems[0]!.key] : []);
+      toast.success(
+        'AI 分层已加入画布',
+        `${layerItems.length} 个透明图层已保存在原图附近。可逐个选择、编辑和复用，也可从 Frame 直接导出 PSD。`,
+        7000,
+      );
+    } catch (error) {
+      toast.error('AI 分层失败', error instanceof Error ? error.message : '图片分层或资产保存失败', 7000);
+    } finally {
+      toast.dismiss(loadingId);
+      setLayeringProgress(null);
+    }
+  }, [layeringProgress, setSelectionWithoutChip, workspaceId]);
+
+  const exportAiLayeredPsd = useCallback(async (input: {
+    key: string;
+    src: string;
+    prompt: string;
+  }) => {
+    const item = canvasRef.current.find((candidate) => candidate.key === input.key);
+    const groupId = String(item?.layerGroupId ?? '').trim();
+    // 同一 layerIndex 可能并存「原始图层」和「快捷编辑后的新版本」，只导出最新那版。
+    const cachedLayers = selectExportableLayers(canvasRef.current, groupId);
+    const cachedSource = groupId
+      ? canvasRef.current.find((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'source')
+      : item;
+    const source = String(cachedSource?.originalSrc || cachedSource?.src || input.src || '').trim();
+    if (!source) {
+      toast.error('PSD 导出失败', '当前图片没有可读取的原图');
+      return;
+    }
+
+    const loadingId = toast.loading(
+      cachedLayers.length > 0 ? '正在组装 PSD' : '正在拆分图片图层',
+      cachedLayers.length > 0
+        ? `正在复用画布中的 ${cachedLayers.length} 个图层，不会再次调用模型。`
+        : '预计需要 15–30 秒。完成后会在本机生成 PSD，期间可以继续使用画布。',
+    );
+
+    try {
+      let layerSources = cachedLayers.map((layer, index) => ({
+        name: cleanDisplayTitle(layer.prompt) || `AI 图层 ${String(index + 1).padStart(2, '0')}`,
+        source: layer.src,
+      }));
+
+      if (layerSources.length === 0) {
+        const result = await decomposeImageToLayers({
+          source,
+          sourceSha256: cachedSource?.originalSrc ? null : (cachedSource?.sha256 ?? null),
+          layerCount: 4,
+        });
+        if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
+        layerSources = (result.data?.images ?? [])
+          .map((image, index) => ({
+            name: `AI 图层 ${String(index + 1).padStart(2, '0')}`,
+            source: String(image.originalUrl || image.url || '').trim(),
+          }))
+          .filter((layer) => !!layer.source);
+      }
+      if (layerSources.length === 0) throw new Error('分层模型未返回可用图层');
+
+      const blob = await createLayeredPsdBlob({ source, layerSources });
+      downloadLayeredPsd(blob, input.prompt || 'visual-agent-layered');
+      toast.success(
+        'PSD 已生成',
+        `包含 ${layerSources.length} 个默认可见的 AI 图层和 1 个隐藏原图参考层。`,
+        6000,
+      );
+    } catch (error) {
+      toast.error(
+        'PSD 导出失败',
+        error instanceof Error ? error.message : '图片分层或 PSD 写入失败',
+        6000,
+      );
+    } finally {
+      toast.dismiss(loadingId);
+    }
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const msgContentRef = useRef<HTMLDivElement | null>(null);
@@ -4395,6 +4693,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           h: genH,
           x: newX,
           y: newY,
+          // 编辑的是某个 AI 分层图层时，产物必须继承同一层的归属，
+          // 否则它在画布上看得见、Frame 导出 PSD 时却只认原始图层（编辑结果静默丢失）。
+          // 不摘除原图层：同 layerIndex 两版并存，由 selectExportableLayers 取最新，
+          // 这样生成还在跑或失败时（src 为空）导出会自动回落到原图层。
+          ...(sourceItem.layerRole === 'layer' && sourceItem.layerGroupId
+            ? {
+                layerGroupId: sourceItem.layerGroupId,
+                layerSourceKey: sourceItem.layerSourceKey,
+                layerIndex: sourceItem.layerIndex,
+                layerRole: 'layer' as const,
+              }
+            : {}),
         };
         return [...prev, placeholder].slice(-60);
       });
@@ -6579,6 +6889,94 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div ref={worldUiRef} className="absolute inset-0 z-30 pointer-events-none" style={{ transformOrigin: '0 0' }}>
               {/* 展示层：永远可读且压在图片上方 */}
               <div className="absolute inset-0 pointer-events-none">
+                {semanticLayerFrames.map((frame) => (
+                  <div
+                    key={`semantic_frame_${frame.id}`}
+                    className="absolute rounded-[18px]"
+                    style={{
+                      left: Math.round(frame.x),
+                      top: Math.round(frame.y),
+                      width: Math.round(frame.w),
+                      height: Math.round(frame.h),
+                      border: '1px dashed rgba(var(--accent-primary-rgb), 0.72)',
+                      background: 'rgba(var(--accent-primary-rgb), 0.035)',
+                      boxShadow: '0 0 0 1px rgba(var(--accent-primary-rgb), 0.06) inset',
+                    }}
+                  >
+                    <div
+                      className="absolute left-3 top-2 min-w-0 flex items-center gap-2"
+                      style={{
+                        color: 'var(--text-primary)',
+                        transform: 'scale(var(--invZoom))',
+                        transformOrigin: 'left top',
+                      }}
+                    >
+                      <Layers size={15} className="shrink-0" />
+                      <span className="whitespace-nowrap text-[12px] font-semibold" title={frame.name}>
+                        Frame · AI 分层 · {frame.layerKeys.length} 个图层
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="absolute right-3 top-2 pointer-events-auto h-7 px-2.5 rounded-[8px] inline-flex items-center gap-1.5 text-[11px] font-semibold transition-colors hover-bg-soft"
+                      style={{
+                        color: 'var(--text-primary)',
+                        background: 'var(--panel-solid)',
+                        border: '1px solid rgba(var(--accent-primary-rgb), 0.28)',
+                        transform: 'scale(var(--invZoom))',
+                        transformOrigin: 'right top',
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => {
+                        const sourceItem = canvasRef.current.find((candidate) => candidate.key === frame.sourceKey);
+                        void exportAiLayeredPsd({
+                          key: sourceItem?.key || frame.layerKeys[0] || '',
+                          src: sourceItem?.src || '',
+                          prompt: sourceItem?.prompt || frame.name,
+                        });
+                      }}
+                    >
+                      <Download size={13} />
+                      导出 PSD
+                    </button>
+                  </div>
+                ))}
+
+                {layeringProgress ? (() => {
+                  const source = canvas.find((candidate) => candidate.key === layeringProgress.sourceKey);
+                  if (!source) return null;
+                  const progressText = layeringProgress.total
+                    ? `${layeringProgress.phase} · ${layeringProgress.completed ?? 0}/${layeringProgress.total}`
+                    : layeringProgress.phase;
+                  return (
+                    <div
+                      className="absolute"
+                      style={{
+                        left: Math.round(source.x ?? 0),
+                        top: Math.round((source.y ?? 0) + (source.h ?? 220)),
+                        width: Math.max(180, Math.round(source.w ?? 320)),
+                      }}
+                    >
+                      <div
+                        role="status"
+                        aria-live="polite"
+                        className="mt-3 mx-auto w-fit max-w-full rounded-[10px] px-3 h-8 flex items-center gap-2 text-[11px] font-semibold"
+                        style={{
+                          transform: 'scale(var(--invZoom))',
+                          transformOrigin: 'center top',
+                          color: 'var(--text-primary)',
+                          background: 'var(--panel-solid)',
+                          border: '1px solid rgba(var(--accent-primary-rgb), 0.42)',
+                          boxShadow: 'var(--shadow-glass-toast)',
+                        }}
+                      >
+                        <Layers size={14} className="animate-pulse shrink-0" />
+                        <span className="truncate">{progressText}</span>
+                      </div>
+                    </div>
+                  );
+                })() : null}
+
                 {canvas
                   .filter((x) => (x.kind ?? 'image') === 'generator')
                   .map((g) => {
@@ -6777,8 +7175,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         const sY = inn.y;
                         const sW = Math.max(1, inn.w);
                         const sH = Math.max(1, inn.h);
-                        const selectionScreenTop = Math.round((iy + sY) * zoom + camera.y);
-                        const placeQuickBarInside = selectionScreenTop < 120;
                         return (
                           <div
                             key={`quickbar_${it.key}`}
@@ -6792,22 +7188,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             }}
                           >
                             {/* 快捷操作栏：选区上方居中 */}
-                            <div
-                              style={{
-                                position: 'absolute',
-                                left: '50%',
-                                top: 0,
-                                transform: placeQuickBarInside
-                                  ? 'translate(-50%, 12px) scale(var(--invZoom))'
-                                  : 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
-                                transformOrigin: placeQuickBarInside ? 'center top' : 'center bottom',
-                                pointerEvents: 'auto',
-                              }}
-                              onPointerDown={(e) => e.stopPropagation()}
+                            <StageClampedQuickActionBar
+                              stageRef={stageRef}
+                              obstacleRef={chatPanelRef}
+                              zoom={zoom}
+                              positionKey={`${it.key}:${ix}:${iy}:${sW}:${camera.x}:${stageSize.w}`}
                             >
                               <ImageQuickActionBar
                                 actions={mergedQuickActions}
                                 onAction={handleQuickAction}
+                                onLayer={() => void decomposeImageIntoFrame({
+                                  key: it.key,
+                                  src: it.src,
+                                  prompt: it.prompt || '图片',
+                                })}
+                                layering={layeringProgress?.sourceKey === it.key}
                                 onDownload={() => void downloadGeneratedImage(it.src, it.prompt || 'image')}
                                 onOpenConfig={() => setQuickActionDialogOpen(true)}
                                 onInpaint={() => {
@@ -6818,7 +7213,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   setInpaintTarget(it);
                                 }}
                               />
-                            </div>
+                            </StageClampedQuickActionBar>
 
                             {/* 快捷编辑输入框：选区下方居中 */}
                             <div
@@ -6915,8 +7310,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                   <div className="mt-2 flex items-center justify-between gap-2">
                     {/* 尺寸选择器 */}
-                    {/* 自适应模型：渲染一个非交互的静态 chip，避免打开一个仅用于迷惑的尺寸面板 */}
-                    {currentModelIsAdaptive ? (
+                    {/* 尺寸不适用的模型：渲染非交互静态 chip。提示词传输型模型仍走正常选择器。 */}
+                    {currentModelSizesNotApplicable ? (
                       <span
                         className="inline-flex items-center gap-1 rounded-full px-2.5 h-6 text-[11px] font-medium"
                         style={{
@@ -7763,6 +8158,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
+            ref={chatPanelRef}
             className={`${isMobile ? 'absolute inset-0' : 'absolute right-3 top-3'} z-30 flex flex-col`}
             style={{
               width: isMobile ? '100%' : 420,
@@ -8120,15 +8516,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div ref={sizeSelectorRef} className="relative flex items-center gap-1.5">
                   <button
                     type="button"
-                    className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-semibold ${sizeSelectorOpen ? 'surface-action-accent' : 'surface-action'} ${currentModelIsAdaptive ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
+                    className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-semibold ${sizeSelectorOpen ? 'surface-action-accent' : 'surface-action'} ${currentModelSizesNotApplicable ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
                     aria-label="尺寸比例"
-                    title={currentModelIsAdaptive ? '该模型为自适应尺寸，具体尺寸由 prompt 描述决定' : '选择分辨率和比例'}
-                    disabled={currentModelIsAdaptive}
-                    onClick={() => { if (!currentModelIsAdaptive) setSizeSelectorOpen((v) => !v); }}
+                    title={currentModelSizesNotApplicable ? '该模型不提供尺寸选择' : '选择分辨率和比例'}
+                    disabled={currentModelSizesNotApplicable}
+                    onClick={() => { if (!currentModelSizesNotApplicable) setSizeSelectorOpen((v) => !v); }}
                   >
                     {(() => {
-                      // 自适应模型：尺寸由 prompt 决定，标"自适应"
-                      if (currentModelIsAdaptive) {
+                      if (currentModelSizesNotApplicable) {
                         return <span style={{ whiteSpace: 'nowrap' }}>自适应</span>;
                       }
                       const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
@@ -8140,7 +8535,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect || '1:1'}</span>
                       );
                     })()}
-                    {currentModelIsAdaptive ? null : (
+                    {currentModelSizesNotApplicable ? null : (
                       <span className="text-[9px] text-token-muted">▾</span>
                     )}
                   </button>
@@ -8660,7 +9055,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <ChevronRight size={14} className="ml-auto opacity-50" />
                   </button>
                   <div
-                    className="absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[120px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
+                    className="absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[160px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
                     style={{
                       ...glassTooltip,
                       background: 'rgba(32,32,38,0.96)',
@@ -8723,6 +9118,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     >
                       <FileImage size={14} />
                       SVG
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover-bg-soft transition-colors"
+                      style={{ color: 'var(--text-primary)' }}
+                      onClick={() => {
+                        void exportAiLayeredPsd({
+                          key: imgContextMenu.key,
+                          src: imgContextMenu.src,
+                          prompt: imgContextMenu.prompt || 'image',
+                        });
+                        setImgContextMenu((p) => ({ ...p, open: false }));
+                      }}
+                    >
+                      <Layers size={14} />
+                      PSD（AI 分层）
                     </button>
                   </div>
                 </div>

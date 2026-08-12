@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-15 | **状态**：开发中
 
+**一句话**：快捷指令（把平台能力做成手机上一键触发）这块的已知边界与本轮已修项。
+**谁该读**：接手快捷指令的工程师。
+**读完能做什么**：判断某个限制是已知边界还是新问题。
+
+---
+
 ## 总览
 
 | 指标 | 当前值 |
@@ -10,9 +16,7 @@
 | in-progress | 0 |
 | paid | 0 |
 
-模块范围：`prd-api/src/PrdAgent.Api/Controllers/ShortcutsController.cs`、
 `prd-admin/src/pages/shortcuts-agent/`（`ShortcutsPage.tsx` 管理 + `ShortcutInstallPage.tsx` 扫码安装公开页）、
-`prd-api/src/PrdAgent.Infrastructure/Services/ShortcutPlistGenerator.cs`、`lib/clipboard.ts`。
 
 ---
 
@@ -72,5 +76,15 @@ fetch+blob 有破坏 iOS "添加快捷指令"系统交接的风险，需真机�
 ## 相关
 
 - `.claude/rules/zero-friction-input.md` / `chief-designer-usability.md` —— 体验底线
-- `doc/guide.shortcuts-agent.md` —— 用户使用指南
-- `doc/design.shortcuts-agent.apple.md` —— 设计文档
+- [doc/guide.shortcuts-agent.md](./guide.shortcuts-agent.md) —— 用户使用指南
+- [doc/design.shortcuts-agent.apple.md](./design.shortcuts-agent.apple.md) —— 设计文档
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `prd-api/src/PrdAgent.Api/Controllers/ShortcutsController.cs`、`prd-api/src/PrdAgent.Infrastructure/Services/ShortcutPlistGenerator.cs`、`lib/clipboard.ts` |

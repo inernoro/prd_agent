@@ -110,6 +110,12 @@ public class MongoDbContext
     public IMongoCollection<InfraAgentHookProfile> InfraAgentHookProfiles => _database.GetCollection<InfraAgentHookProfile>("infra_agent_hook_profiles");
     public IMongoCollection<InfraAgentRuntimeProfile> InfraAgentRuntimeProfiles => _database.GetCollection<InfraAgentRuntimeProfile>("infra_agent_runtime_profiles");
 
+    // 通用对话智能体（面向全体用户的对聊入口，见 doc/design.platform.chat-agent.md）。
+    // 与上面那套基础设施 Agent 刻意分表：语义不同，混表会互相污染。
+    public IMongoCollection<ChatAgentSession> ChatAgentSessions => _database.GetCollection<ChatAgentSession>("chat_agent_sessions");
+    public IMongoCollection<ChatAgentMessage> ChatAgentMessages => _database.GetCollection<ChatAgentMessage>("chat_agent_messages");
+    public IMongoCollection<ChatAgentEvent> ChatAgentEvents => _database.GetCollection<ChatAgentEvent>("chat_agent_events");
+
     // 外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.platform.external-authorization.md）
     public IMongoCollection<ExternalAuthorization> ExternalAuthorizations => _database.GetCollection<ExternalAuthorization>("external_authorizations");
 
@@ -175,6 +181,8 @@ public class MongoDbContext
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
     public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
     public IMongoCollection<ReviewAppeal> ReviewAppeals => _database.GetCollection<ReviewAppeal>("review_appeals");
+    public IMongoCollection<RequirementAssessmentRun> RequirementAssessmentRuns => _database.GetCollection<RequirementAssessmentRun>("requirement_assessment_runs");
+    public IMongoCollection<RequirementAssessmentItem> RequirementAssessmentItems => _database.GetCollection<RequirementAssessmentItem>("requirement_assessment_items");
 
     // PR Review V2（pr-review）：用户级 GitHub OAuth 连接 + 审查记录
     public IMongoCollection<GitHubUserConnection> GitHubUserConnections => _database.GetCollection<GitHubUserConnection>("github_user_connections");
@@ -354,6 +362,13 @@ public class MongoDbContext
     public IMongoCollection<SiteViewEvent> SiteViewEvents => _database.GetCollection<SiteViewEvent>("site_view_events");
     public IMongoCollection<HostedSiteComment> HostedSiteComments => _database.GetCollection<HostedSiteComment>("hosted_site_comments");
     public IMongoCollection<WebFolder> WebFolders => _database.GetCollection<WebFolder>("web_folders");
+
+    // 知识库语义检索：文档切块向量
+    public IMongoCollection<DocumentEmbedding> DocumentEmbeddings => _database.GetCollection<DocumentEmbedding>("document_embeddings");
+
+    // 网页托管「向我提问」
+    public IMongoCollection<HostedSiteAskSession> HostedSiteAskSessions => _database.GetCollection<HostedSiteAskSession>("hosted_site_ask_sessions");
+    public IMongoCollection<HostedSiteAskMessage> HostedSiteAskMessages => _database.GetCollection<HostedSiteAskMessage>("hosted_site_ask_messages");
 
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
@@ -689,6 +704,8 @@ public class MongoDbContext
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.GroupId)));
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.SessionId)));
+        LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
+            Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.LogicalRequestId).Ascending(l => l.StartedAt)));
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.Provider).Ascending(l => l.Model)));
 

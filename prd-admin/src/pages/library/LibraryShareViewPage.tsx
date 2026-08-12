@@ -36,6 +36,8 @@ import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   parseLibraryShareViewMode,
   resolveShareKnowledgeBaseReturnPath,
@@ -52,6 +54,10 @@ import {
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 export function LibraryShareViewPage() {
+  // 移动端沉浸阅读：分享页无 AppShell，自己消费 DocBrowser 的顶栏接管
+  //（文档标题 + 返回一条顶栏，标题条/简介条/查看方式条全部让位）
+  const isMobileViewport = useIsMobile();
+  const readerOverride = useReaderChromeStore((s) => s.override);
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -276,9 +282,20 @@ export function LibraryShareViewPage() {
       ? '当前账号不能直接打开该知识库，返回我的知识库列表'
       : '登录后进入我的知识库列表';
 
+  const immersiveReading = isMobileViewport && activeView === 'read' && !!readerOverride;
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: SANS }}>
+      {/* 移动端沉浸阅读：DocBrowser 自绘 fixed 沉浸顶栏（返回 + 标题 + 字号/全屏/更多），
+          分享页只需给它留出等高占位，并隐藏下方三条头部行 */}
+      {immersiveReading && (
+        <div
+          aria-hidden
+          style={{ height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))', flexShrink: 0 }}
+        />
+      )}
       {/* 顶栏：跟随全局主题偏好 */}
+      {!immersiveReading && (
       <div style={{
         padding: '10px 16px',
         display: 'flex',
@@ -316,7 +333,7 @@ export function LibraryShareViewPage() {
           </span>
         </div>
         <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} />
+          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} variant="inline" />
           {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
           <button
             onClick={() => navigate(knowledgeBaseReturnPath)}
@@ -335,9 +352,10 @@ export function LibraryShareViewPage() {
           </button>
         </div>
       </div>
+      )}
 
       {/* 简介条：低饱和度 */}
-      {hasMeta && (
+      {hasMeta && !immersiveReading && (
         <div style={{
           padding: '8px 16px',
           display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
@@ -360,7 +378,7 @@ export function LibraryShareViewPage() {
         </div>
       )}
 
-      {!isSingleDoc && (
+      {!isSingleDoc && !immersiveReading && (
         <nav
           aria-label="知识库查看方式"
           style={{
@@ -391,13 +409,14 @@ export function LibraryShareViewPage() {
         {activeView === 'read' && (
           <DocBrowser
             entries={browserEntries}
+            immersiveOnMobile
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
             selectedEntryId={controlledSelectedEntryId}
             onSelectEntry={selectSharedEntry}
             loadContent={loadContent}
             sortMode={shareSortMode}
-            sidebarHeader={
+            sidebarFilters={
               <ReaderSortControl value={shareSortMode} onChange={setShareSortMode} />
             }
             inlineCommentShareToken={token ?? undefined}
@@ -436,10 +455,10 @@ function ReaderSortControl({ value, onChange }: { value: DocBrowserSortMode; onC
     { mode: 'created-desc', label: '最新创建' },
     { mode: 'updated-desc', label: '最近更新' },
   ];
+  // 标签由筛选面板分组标题承担；段控尺寸与知识库详情的排序段控保持一致
   return (
-    <div className="flex items-center gap-1.5" aria-label="文章排序">
-      <span className="shrink-0 text-[11px] font-medium text-token-muted">排序</span>
-      <div role="group" aria-label="排序方式" className="surface-inset flex shrink-0 items-center gap-0.5 rounded-[9px] p-0.5">
+    <div className="flex items-center" aria-label="文章排序">
+      <div role="group" aria-label="排序方式" className="inline-flex shrink-0 items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
         {options.map((option) => {
           const active = option.mode === value;
           return (
@@ -448,7 +467,8 @@ function ReaderSortControl({ value, onChange }: { value: DocBrowserSortMode; onC
               type="button"
               onClick={() => onChange(option.mode)}
               aria-pressed={active}
-              className={`shrink-0 whitespace-nowrap rounded-[7px] px-2.5 py-1.5 text-[11px] font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover-bg-soft'}`}
+              className={`shrink-0 whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${active ? '' : 'text-token-muted hover-bg-soft'}`}
+              style={active ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 } : undefined}
             >
               {option.label}
             </button>

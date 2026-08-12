@@ -10,6 +10,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -77,9 +78,12 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 ReleaseCommit = releaseCommit,
                 GroupId = start.GroupId,
                 SessionId = start.SessionId,
+                LogicalRequestId = start.LogicalRequestId,
+                ProviderTaskId = start.ProviderTaskId,
                 UserId = start.UserId,
                 ViewRole = start.ViewRole,
                 RequestType = start.RequestType,
+                Operation = start.Operation,
                 AppCallerCode = start.AppCallerCode,
                 AppCallerCodeDisplayName = GetDisplayName(start.AppCallerCode),
                 AppCallerTitle = string.IsNullOrWhiteSpace(start.AppCallerTitle) ? null : start.AppCallerTitle,
@@ -195,9 +199,13 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                     ReleaseCommit = releaseCommit,
                     GroupId = start.GroupId,
                     SessionId = start.SessionId,
+                    LogicalRequestId = start.LogicalRequestId,
+                    ProviderTaskId = start.ProviderTaskId,
+                    RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim(),
                     UserId = start.UserId,
                     ViewRole = start.ViewRole,
                     RequestType = start.RequestType,
+                    Operation = start.Operation,
                     AppCallerCode = start.AppCallerCode,
                     AppCallerCodeDisplayName = GetDisplayName(start.AppCallerCode),
                     AppCallerTitle = string.IsNullOrWhiteSpace(start.AppCallerTitle) ? null : start.AppCallerTitle,
@@ -247,6 +255,44 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
 
     private static string? NormalizeIdentity(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    public async Task BindProviderTaskAsync(
+        string logId,
+        string providerTaskId,
+        string? fallbackLogicalRequestId = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(logId) || string.IsNullOrWhiteSpace(providerTaskId)) return;
+
+        try
+        {
+            await _db.LlmRequestLogs.UpdateOneAsync(
+                log => log.Id == logId,
+                Builders<LlmRequestLog>.Update.Set(log => log.ProviderTaskId, providerTaskId.Trim()),
+                cancellationToken: ct);
+
+            if (string.IsNullOrWhiteSpace(fallbackLogicalRequestId)) return;
+            var missingLogicalId = Builders<LlmRequestLog>.Filter.And(
+                Builders<LlmRequestLog>.Filter.Eq(log => log.Id, logId),
+                Builders<LlmRequestLog>.Filter.Or(
+                    Builders<LlmRequestLog>.Filter.Eq(log => log.LogicalRequestId, null),
+                    Builders<LlmRequestLog>.Filter.Eq(log => log.LogicalRequestId, string.Empty)));
+            await _db.LlmRequestLogs.UpdateOneAsync(
+                missingLogicalId,
+                Builders<LlmRequestLog>.Update.Set(
+                    log => log.LogicalRequestId,
+                    fallbackLogicalRequestId.Trim()),
+                cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "补齐异步供应商任务日志关联失败: LogId={LogId}, ProviderTaskId={ProviderTaskId}",
+                logId,
+                providerTaskId);
+        }
+    }
 
     public void MarkFirstByte(string logId, DateTime at)
     {

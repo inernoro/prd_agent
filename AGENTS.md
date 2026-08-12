@@ -1,63 +1,35 @@
 # AGENTS.md
 
-> PRD Agent 全栈项目。子目录 AGENTS.md 含各模块构建命令，`.Codex/rules/` 含按需加载的架构规则。
+> PRD Agent 全栈项目（`prd-api` .NET 8 / `prd-admin` React+Vite / `prd-desktop` Tauri / `prd-video` Remotion / `llmgw` LLM 网关 / `cds` 分支预览部署）。
+> 本文件是全体 AI Agent 的共用规则 SSOT，工具中立。各模块构建命令见子目录同名文件；架构规则见 `.claude/rules/`。
 
----
+<!--
+为什么这份是 SSOT：本仓库曾经并行维护根 CLAUDE.md 与根 AGENTS.md 两份 95% 相同的副本，
+没有同步脚本，结果必然漂移——AGENTS.md 知道 llmgw 模块，CLAUDE.md 一个字都没提，
+导致 llmgw 的必跑校验命令对 Claude Code 完全不可见。
+现在 CLAUDE.md 只做 `@AGENTS.md` 导入 + 一小节宿主专属差异，正文只此一份。
+守卫：scripts/tests/test_claude_memory_contract.py
+-->
 
 ## 0. 禁止任何 Emoji（最高优先级，先于一切其他规则）
 
-**本系统任何项目（`prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`、`llmgw/`、`cds/`、`doc/`、`changelogs/`、提交信息、PR 描述、UI 渲染输出、聊天回复）一律不允许出现 emoji 字符。**
+本系统任何项目（含 `doc/`、`changelogs/`、提交信息、PR 描述、UI 文案、**给用户的回复正文**）一律不允许出现 emoji 字符。
 
-适用范围：
-- 代码字面量（任何 `'<emoji>'` / `"<emoji>"` / 模板字符串里的 emoji）—— 一律 reject
-- UI 文案（按钮标签、tooltip、空状态、toast、表头）—— 一律 reject
-- 文档 Markdown（README / doc/*.md / changelogs/*.md / 注释）—— 一律 reject
-- Commit message / PR title / PR body —— 一律 reject
-- 给用户的回复正文（除非用户明确粘贴 emoji 让 Codex 复述）—— 一律 reject
+替代方案：状态/类型用 SVG icon（前端已有 ICON 注册表 / lucide-react / cds 的 `ICON.*`）；重要程度用文案分级（建议 / 警告 / 必填 / 已禁用）；视觉强调走 CSS（颜色、加粗、底色）。例外仅限本节：为说明「哪些字符算 emoji」，可在 inline code 里写反面例子如 `'rocket'`。
 
-替代方案：
-- 状态/类型用 **SVG icon**（前端项目已有 ICON 注册表 / lucide-react / cds 的 `ICON.*`）
-- 重要程度用文案分级（"建议 / 警告 / 必填 / 已禁用"）
-- 视觉强调走 CSS（颜色、加粗、底色），不走 emoji
-
-例外（仅本节本身）：本规则正文为了说明"哪些字符算 emoji"，必要时会在 inline `code` 字面量里展示反面例子，比如 `'rocket'` / `'lightbulb'`。除此之外的任何 markdown / 代码 / UI 都一律拒收。规则标题、段落正文（含历史溯源段）一律不带 emoji 字符。
-
-历史背景：用户 2026-04-27 第二次明确强调"本系统任何项目不允许使用任何的 emoji 图标"。第一次违反是分支卡 stats chips 用了 4 个 emoji（火箭/机器人/灯泡/向下箭头），已立刻修复。本规则置顶意在阻止再犯。
-
----
-
-## 项目结构
-
-```
-prd_agent/
-├── prd-api/          # .NET 8 后端 (C# 12)        → prd-api/AGENTS.md
-├── prd-admin/        # React 18 管理后台 (Vite)    → prd-admin/AGENTS.md
-├── prd-desktop/      # Tauri 2.0 桌面客户端        → prd-desktop/AGENTS.md
-├── prd-video/        # Remotion 视频合成
-├── llmgw/            # LLM Gateway 产品根目录          → llmgw/AGENTS.md
-├── changelogs/       # 更新记录碎片（每 PR 一个文件，发版时合并）
-├── doc/              # 编号文档 (spec/design/plan/rule/guide/report)
-└── scripts/          # 构建/部署脚本
-```
+<!--
+历史背景：用户 2026-04-27 第二次明确强调「本系统任何项目不允许使用任何的 emoji 图标」。
+第一次违反是分支卡 stats chips 用了 4 个 emoji（火箭/机器人/灯泡/向下箭头），已立刻修复。
+本规则置顶意在阻止再犯。
+-->
 
 ## 快速启动
 
 ```bash
-# Docker Compose (推荐)
 docker compose -f docker-compose.dev.yml up -d --build
-# Web: localhost:5500, API: localhost:5000, Mongo: localhost:18081, Redis: localhost:18082
-
-# Windows
-.\quick.ps1           # Backend only
-.\quick.ps1 all       # Server + desktop + admin
-```
-
-各模块构建命令见子目录 AGENTS.md（`prd-api/`、`prd-admin/`、`prd-desktop/`、`llmgw/`）。
-
-### Video (prd-video/) — Remotion 4.0
-
-```bash
-cd prd-video && pnpm install && pnpm start
+# Web 5500 / API 5000 / Mongo 18081 / Redis 18082
+.\quick.ps1 all          # Windows: server + desktop + admin
+cd prd-video && pnpm start   # Remotion 4.0
 ```
 
 ---
@@ -66,266 +38,175 @@ cd prd-video && pnpm install && pnpm start
 
 ### 1. 前端包管理器：pnpm Only
 
-所有前端项目（`prd-admin`、`prd-desktop`、`prd-video`、`llmgw/web`）统一使用 **pnpm**，禁止 npm / yarn。
-Lockfile 仅保留 `pnpm-lock.yaml`，禁止提交 `package-lock.json` 或 `yarn.lock`。
+`prd-admin` / `prd-desktop` / `prd-video` / `llmgw/web` 统一 pnpm，禁止 npm / yarn。仅保留 `pnpm-lock.yaml`，禁止提交 `package-lock.json` / `yarn.lock`。
 
 ### 2. C# 静态分析
 
-任何 `.cs` 改动完成后必须执行（详见 `prd-api/AGENTS.md`）：
+任何 `.cs` 改动后必须跑，`error CS*` 必须修复，`warning CS*` 评估是否本次引入：
 
 ```bash
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
 ```
 
-- `error CS*`：必须修复
-- `warning CS*`：评估是否为本次改动引入
-
 ### 3. 任务完成交接
 
-完成开发任务后，**必须主动**使用 `task-handoff-checklist` 技能生成交接清单（涉及 3+ 文件变更、API 端点变更、或 UI 页面变更时）。1-2 个文件小修改无需生成。
+涉及 3+ 文件 / API 端点 / UI 页面变更时，**必须主动**用 `task-handoff-checklist` 技能生成交接清单。1-2 个文件的小修改无需生成。
 
-### 4. 更新记录维护（Changelog Fragments）
+### 4. 更新记录：只写碎片，禁止编辑 CHANGELOG.md
 
-对 `prd-api/`、`prd-admin/`、`prd-desktop/`、`prd-video/`、`llmgw/` 的任何代码变更（feat/fix/refactor/perf），**提交前必须**在 `changelogs/` 目录创建碎片文件，**禁止直接编辑 `CHANGELOG.md`**。
+对 `prd-api` / `prd-admin` / `prd-desktop` / `prd-video` / `llmgw` 的任何代码变更（feat/fix/refactor/perf），提交前必须建 `changelogs/YYYY-MM-DD_<短描述>.md`，内容为纯表格行（无表头），同一 PR 全部变更放**一个**文件：
 
-#### 碎片文件规则
+```
+| feat | prd-admin | 新增XX功能 |
+| fix | prd-api | 修复XX问题 |
+```
 
-- 文件名：`changelogs/YYYY-MM-DD_<短描述>.md`（如 `2026-03-19_safari-fix.md`）
-- 内容为纯表格行（无表头），每行一条记录：
-  ```
-  | feat | prd-admin | 新增XX功能 |
-  | fix | prd-api | 修复XX问题 |
-  ```
-- 类型枚举只允许：`feat` 新功能、`fix` 修复、`perf` 优化、`refactor` 重构、`docs` 文档、`chore` 杂项、`test` 测试、`ci` 构建、`security` 安全、`ops` 运维、`style` 样式、`polish` 润色、`rule` 规范、`merge` 合并、`revert` 回滚。
-- 同一 PR 的所有变更放在**一个碎片文件**中
-- 纯文档变更（`doc/`）、纯 AGENTS.md 规则调整可选记录
+类型枚举：`feat` `fix` `perf` `refactor` `docs` `chore` `test` `ci` `security` `ops` `style` `polish` `rule` `merge` `revert`。纯 `doc/` 或纯规则调整可选记录。发版时跑 `bash scripts/assemble-changelog.sh` 合并。
 
-#### 发版合并
-
-版本发布时执行 `bash scripts/assemble-changelog.sh`，自动将碎片文件按日期合并进 `CHANGELOG.md` 的 `[未发布]` 区域并删除碎片文件。
-
-#### 为什么这样做
-
-多分支并行开发时，直接编辑 `CHANGELOG.md` 会在同一位置插入内容导致 **必然冲突**。碎片文件各自独立，彻底消除合并冲突。
+<!--
+为什么这样做：多分支并行开发时直接编辑 CHANGELOG.md 会在同一位置插入内容导致必然冲突。
+碎片文件各自独立，彻底消除合并冲突。
+-->
 
 ### 5. 提交与 PR 工作流
 
-#### 5.1 Commit message 必须使用中文
-
-所有 `git commit` 信息**必须用中文**撰写（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal 等专有名词）和 Conventional Commits 前缀，其余表述一律中文。
-
-提交标题类型枚举只允许：`feat`、`fix`、`perf`、`refactor`、`docs`、`chore`、`test`、`ci`、`build`、`release`、`revert`、`merge`、`security`、`ops`、`style`、`polish`、`rule`。
+**5.1 Commit message 必须中文**（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal）和 Conventional Commits 前缀。类型枚举同规则 #4，另加 `build` `release`。
 
 ```
 正确：fix(prd-admin): 修复周报弹窗样式错乱
-正确：feat(prd-api): 新增缺陷分享 SSE 流式推送
 错误：fix: resolve modal styling issue
 ```
 
-#### 5.2 测试全部通过后才推送 / 提 PR
-
-`git push` 与创建 PR **前必须**跑通对应模块的本地校验，**任意一项失败都不得推送**：
+**5.2 校验全绿才准 push**，任意一项失败都不得推送：
 
 | 改动范围 | 必跑校验 |
 |----------|----------|
-| `prd-api/` `.cs` | `cd prd-api && dotnet build --no-restore`（零 `error CS*`） |
-| `prd-admin/` / `prd-desktop/` `.ts` `.tsx` | `pnpm tsc --noEmit` + `pnpm lint`（本次改动文件零新增告警） |
-| 含单元/集成测试的模块 | `pnpm test` / `dotnet test` 对应套件全绿 |
-| 本地缺 SDK 无法验证 | 必须走 `/cds-deploy` 远端编译，CDS 绿灯后才推送 |
+| `prd-api/` `.cs` | `dotnet build --no-restore`（零 `error CS*`） |
+| `prd-admin/` `prd-desktop/` `.ts` `.tsx` | `pnpm tsc --noEmit` + `pnpm lint`（改动文件零新增告警） |
+| `llmgw/` | 见 `llmgw/AGENTS.md` 的模块校验表 |
+| 含测试的模块 | `pnpm test` / `dotnet test` 全绿 |
+| 本地缺 SDK | 走 `/cds-deploy` 远端编译，CDS 绿灯后才推送 |
 
-#### 5.3 PR 创建条件
+**5.3 禁止自动创建 PR**。除非用户明确说「提 PR / 创建 PR」，任务完成只做 commit + push。遇阻塞说明原因并等指示，禁止提交半成品。
 
-除非用户明确要求"提交 PR"/"创建 PR"/"提 PR"，否则**禁止自动创建 Pull Request**。
-任务完成后只做 commit + push，不得擅自调用 PR 创建工具。
-遇到阻塞无法完成的任务，向用户说明阻塞原因并等待指示，禁止提交半成品。
+**5.4 PR 描述走标准模板**，SSOT 是 `.github/pull_request_template.md`（改格式只动这一个文件）。必填段落：摘要 / 改动 diff（按端分组、逐条「文件或模块 + 一句话」）/ 测试 / 风险与已知边界。
 
-#### 5.4 PR 描述必须简洁注明 diff
+模板是下限不是上限：① 必填段落不得缺失；② 不适用的写「无」或删除，不得写占位空话；③ 不得因模板没某栏就丢弃重要信息。平台自动创建的 PR（描述只有一行 commit message）后续**必须**补全。
 
-被允许创建 PR 时，描述模板必须包含「改动摘要」段落，**简洁列出 diff 范围**（修改的文件/模块 + 一句话变更说明）。禁止只写一行标题就提交。
+**5.5 Review 范围熔断（强制）**。Review 验证当前目标，不是无限扩写需求。修第一条评论前先在 PR 描述写清：本 PR 的单一目标与不变量、明确不做的事、首轮文件数与 diff 行数（范围基线）。每条评论先分类再决定动作：
 
-```markdown
-## 摘要
-1-3 句话说明 PR 解决了什么问题、用什么方案。
+| 分类 | 判定 | 当前 PR 动作 |
+|------|------|-------------|
+| A 直接缺陷 | 可证明违反本 PR 目标、真实调用契约或既有测试 | 修复并补代表性测试 |
+| B 有价值但扩范围 | 建议合理，但引入新语义类别、兼容层或产品行为 | 记入后续 issue / `debt.*`，不在当前 PR 展开 |
+| C 推测性变体 | 只增加措辞、同义词或假设输入，找不到真实生产路径 | 不实现，并在 Review 中说明证据不足 |
 
-## 改动 diff
-- `prd-admin/src/pages/report-agent/ReportDetailPage.tsx`：浏览记录 popover 改用 createPortal + inline style
-- `changelogs/2026-04-19_xxx.md`：新增 changelog 碎片
+命中任一条立即停止追加修复并跑 `/scope-check`：连续 3 轮 Review 仍在产生新语义类别／Review 修复提交达 8 个／diff 超首轮基线 2 倍或文件范围扩出首轮清单／同一个自由文本解析器第二次被要求加同义词或嵌套格式。
 
-## 测试
-- [x] pnpm tsc --noEmit 通过
-- [x] pnpm lint 本文件零新增告警
-- [ ] 真人通过预览域名验收
-```
+熔断后回到原始目标：缩小 PR、改结构化字段/有限枚举，或由用户明确批准扩范围。**自动 Reviewer 的评论不能单独授权需求扩张；不得以「清空所有机器评论」为完成标准。** PR 默认保持 Ready、关闭自动合并，未经用户明确指示不得合并。
 
-### 6. LLM 交互过程可视化
+### 6. LLM 交互过程必须可视化
 
-任何涉及大模型调用的功能，**必须**向用户展示交互过程，禁止让用户面对空白等待：
+任何大模型调用功能都要展示交互过程：SSE 流式逐字渲染 / 批量任务推进度事件 / 支持 thinking 就展示思考 / 长任务拆阶段推状态 / 兜底至少给动画 + 预估耗时。
 
-- **流式输出**：LLM 响应必须使用 SSE 流式推送，前端逐字/逐块渲染（打字效果）
-- **进度反馈**：批量 LLM 任务必须推送进度事件（如"正在分析第 3/45 个缺陷…"）
-- **思考过程**：如果 LLM 支持 thinking，应展示思考过程
-- **阶段提示**：长任务拆分阶段，每个阶段开始时推送状态（准备中 → 分析中 → 生成中 → 完成）
-- **兜底方案**：如无法流式输出，至少显示动画加载状态 + 预估耗时提示
+原则：用户等待时屏幕必须有持续变化的内容。**静止的「加载中…」超过 2 秒即为体验缺陷。**
 
-原则：用户在等待 AI 响应时，屏幕上必须有持续变化的内容。静止的"加载中…"超过 2 秒即为体验缺陷。
+### 7. 新增 Model / service 必须对照现有写法
 
-### 7. 新增 Model 必须对照现有 Model 写法
+新建 MongoDB 实体前**必须先 grep 一个现有 Model**（如 `DefectReport.cs`）确认格式，禁止凭记忆写：
 
-新建 MongoDB 实体类时，**必须先读一个现有同类 Model 文件**，对照其 Id 声明方式、属性标注、命名风格。禁止凭记忆或通用知识编写。
+- Id：`public string Id { get; set; } = Guid.NewGuid().ToString("N");`，不加 `[BsonId]` / `[BsonRepresentation]`
+- 取用户 ID 用 `this.GetRequiredUserId()`，不用 `User.FindFirstValue("userId")`
 
-**具体规则**：
-- Id 声明：`public string Id { get; set; } = Guid.NewGuid().ToString("N");`，不加 `[BsonId]` / `[BsonRepresentation]`
-- 必须 `grep` 一个现有 Model（如 `DefectReport.cs`）确认格式后再写
-- 获取用户 ID：`this.GetRequiredUserId()`，不用 `User.FindFirstValue("userId")`
+新建 `services/real/*.ts` 前必须先读 `apiClient.ts` 的 `apiRequest` 签名。四个陷阱：
 
-**前端 service 层同样适用**：新建 `services/real/*.ts` 时，必须先读 `apiClient.ts` 的 `apiRequest` 签名。关键陷阱：
-- `apiRequest` 内部会自动 `JSON.stringify(options.body)`，**调用方传原始对象，禁止再 `JSON.stringify`**
-- 错误：`body: JSON.stringify({ title })` → 双重序列化，后端 400
-- 正确：`body: { title }` → 正确
+- `apiRequest` 内部会自动 `JSON.stringify(body)`，**调用方传原始对象**——`body: { title }` 对，`body: JSON.stringify({title})` 双重序列化后端 400
 - FormData 上传不能走 `apiRequest`（会被 JSON 序列化），必须直接 `fetch`
-- `apiRequest` 返回 `ApiResponse<T>` 格式 `{success, data, error}`，**用 `res.success` 判断，不是 `res.ok`**
-- 错误信息是对象 `res.error?.message`，不是字符串 `res.error`
+- 返回 `ApiResponse<T>` = `{success, data, error}`，判断用 `res.success` 不是 `res.ok`
+- 错误是对象 `res.error?.message`，不是字符串 `res.error`
 
-### 8. Agent 开发"完成"标准
+### 8. 「完成」标准
 
-功能开发声称"完成"前，**必须全部满足**以下条件：
-- 后端编译零错误（本地 + CDS 环境双重验证）
-- 前端页面可通过预览地址打开并正常渲染
-- 核心业务流程端到端跑通（不是只有 CRUD）
-- 直连预览域名测试（非 container-exec），模拟真实用户访问路径
-- 依赖的外部服务（如 ASR 模型池）已确认可用
+声称完成前必须全部满足：后端编译零错误（本地 + CDS 双验证）／前端页面能通过预览地址打开并正常渲染／核心业务流程端到端跑通（不是只有 CRUD）／直连预览域名测试（container-exec 是诊断工具不是验收工具）／依赖的外部服务已确认可用。
 
-**禁止**：
-- 骨架完成就报"已实现"——CRUD 能用不等于业务跑通
-- 绕过真实访问路径测试——container-exec 是诊断工具，不是验收工具
-- 不主动查系统能力——需要模型池就去查平台有没有，需要用户就去查数据库有哪些
+禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。
 
-### 8.1 自测优先 — 不得把校验责任先交还给用户
+**8.1 自测优先——不得把校验责任先交还给用户。** 提交前必须至少跑通一条自测路径，并在交付消息里**写明走了哪条、断言了什么**：
 
-**当遇到问题需要校验时，AI 必须优先自测；只有在穷尽所有自测路径仍无法验证时，才能请用户协助。**
+1. Vitest / xUnit 集成测试，断言新行为发生（首选，最廉价）
+2. `/cds-deploy` 推灰度环境等容器就绪 + 冒烟
+3. Playwright 无头浏览器直连预览域名走真实用户路径
+4. `WebFetch` + 已有 API key 打真实端点断言返回值
 
-历史背景：2026-05-07 用户反复反馈"修了七八轮还是同一个 bug"，根因之一是 AI 提交后只跑 `tsc --noEmit + 单元测试`，把"端到端是否真的解决"丢给用户去点击验证。用户不是 QA。
+禁止用「我无法做到 X」当借口——必须先列出试过哪几条路径才被卡住。自测跑不通就**明说「自测未跑通，问题可能仍存在」**，不许声称「已修复」。不适用：纯文档 / 纯注释 / 纯 changelog，或用户说了「先提，等会儿我再测」。
 
-**强制要求**：
-- 提交前先穷尽下列自测路径，**至少跑通一条**：
-  1. **Vitest / xUnit 集成测试**：模拟真实状态机/调用链，断言新行为发生（首选，最廉价）
-  2. **`/cds-deploy`**：推到 CDS 灰度环境，等容器就绪 + 自动冒烟（无 SDK / 无 sudo 时的兜底）
-  3. **Playwright 无头浏览器直连预览域名**：走真实用户路径取证（`/验收` 技能的 harness 即此路径）
-  4. **`WebFetch` + 已有 API key**：对暴露的非鉴权端点跑真实 HTTP 请求，断言返回值
-- 必须在交付消息里**写明**自测了什么、断言了什么、用了哪条路径
-- **禁止**用「我无法做到 X」作为提交完成的借口——必须先列出具体尝试过哪几条路径才被卡住，让用户能判断是真硬限制还是 AI 偷懒
-- 自测失败 ≠ 提交失败：发现新 bug 就修了再提；测试不出来就**不要**声称"已修复"，明确说"自测未跑通，问题可能仍存在"
+<!--
+历史背景：2026-05-07 用户反复反馈「修了七八轮还是同一个 bug」，根因之一是 AI 提交后只跑
+tsc --noEmit + 单元测试，把「端到端是否真的解决」丢给用户去点击验证。用户不是 QA。
+-->
 
-**不适用范围**：
-- 纯文档 / 纯注释 / 纯 changelog 改动
-- 用户明确说"先提，等会儿我再测"
+### 9. 新功能/新 Agent 默认注册百宝箱 + 必须声明位置
 
-**判定脚本**（提交前自查）：
-- [ ] 我跑了 `pnpm tsc --noEmit` ?（语法 / 类型）
-- [ ] 我跑了 `pnpm test` / `dotnet test` ?（不退化）
-- [ ] 我**新增了**针对本次改动的集成测试 / 调了 `/cds-deploy` / 用 Playwright 直连预览域名 ?（行为是否真发生）
-- [ ] 交付消息里写清自测路径 + 自测结论了 ?
-
-如果第 3 项不满足，**不允许声称"已完成"**。
-
-### 9. 新功能/新 Agent 导航默认去百宝箱 + 必须声明位置
-
-新 Agent 默认注册到百宝箱（`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`），左侧导航和首页快捷为可选升级。**新条目必须带 `wip: true`**，通过规则 #8 完成标准验收后才删除该字段转为正式发布。交付消息必须包含三行：
+新 Agent 默认注册到 `prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`，**必须带 `wip: true`**，通过规则 #8 验收后才删掉转正式。左侧导航和首页快捷是可选升级。交付消息必须含三行：
 
 ```
 【位置】百宝箱 / 左侧导航"XX"菜单 / 首页快捷入口
 【路径】登录后首页 → 1) 点击 → 2) 点击 → 3) 到达
-【预览】<preview-url 返回的 CDS 实际入口>{page-path}
+【预览】<cdscli 返回的实际入口>{功能页深链}
 ```
 
-URL 来源见规则 #11：必须调用 `preview-url` 读取 CDS API 实际入口，禁止本地推算。禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.Codex/rules/navigation-registry.md`。
+禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `navigation-registry` 规则（有 CI 守卫 `navCoverage`）。
 
-### 10. doc/ 文件命名必须走 7 类前缀
+### 10. doc/ 命名：`{类型前缀}.{appname}[.{子模块}].md`
 
-`doc/` 下所有 `.md` 文件**必须**以 `spec.` / `design.` / `plan.` / `rule.` / `guide.` / `report.` / `debt.` 其中一个前缀开头，否则不允许落盘。详细前缀语义、文件头部格式、状态枚举见 `doc/rule.doc.naming.md`。
+两条铁律缺一不可（完整语义见 `doc/rule.doc.naming.md`）：
 
-- 正确：`doc/design.report-agent.md`、`doc/guide.platform.quickstart.md`、`doc/report.2026-W13.md`、`doc/debt.video-agent.md`
-- 错误：`doc/output-xxx.md`、`doc/notes-temp.md`、`doc/report-agent.md`（无类型前缀）
-- 错误：`doc/samples/xxx.md`（禁止建子目录，保持 doc/ 扁平）
+1. **类型前缀**七选一：`spec.` `design.` `plan.` `rule.` `guide.` `report.` `debt.`
+2. **appname 优先 + 点分层级**：topic 第一段是应用名，子模块用 `.` 续接，禁止用 `-` 把 appname 和子模块黏死
 
-**`debt.*` 用于记录工程债务台账**（已知边界、后续可补、TODO 留尾、不确定风险）。任务交付时主动声明的"已知边界"段落必须固化到对应 `debt.{module}.md`，不能只留在 commit message 里 —— 否则下一次 session 没人记得。
+跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。
 
-新增或重命名文档前：
-1. 先读 `doc/rule.doc.naming.md` 确认前缀、头部、状态枚举
-2. 同步更新 `doc/index.yml`（外部同步工具消费）与 `doc/guide.list.directory.md`（人类索引）
-3. 触发 `/doc-sync` 技能校验一致性（可选）
+正确 `spec.cds.settings.md`、`design.cds.agent.runtime.md`；错误 `spec.cds-settings.md`（黏连）、`design.defect-automation-autonomy.md`（appname 不在首段）、`output-xxx.md`（无前缀）。
 
-### 11. 接入 CDS 后必须调用 `preview-url` 交付真实预览地址
+`debt.*` 记工程债务台账——交付时声明的「已知边界」必须固化进对应 `debt.{module}.md`，不能只留在 commit message 里。
 
-只要当前项目安装了 CDS 技能包、存在项目级 CDS 连接，或通过 CDS 右上角快速接入过，`preview-url` 就是必装能力。任何代码改动 push 后或需要人工验收时，最终回复必须先调用该技能，再列出预览地址。
+**每篇文档必须带导读三行**（`**一句话**` / `**谁该读**` / `**读完能做什么**`，写在 H1 与版本行之后）。正文只写人类要掌控的层次（为什么做 / 给谁用 / 数据怎么流动 / 关键表设计 / 取舍与风险 / 验收标准）；**实现代码、接口签名、目录树、逐文件改法一律不进文档**——AI 要细节直接读源码。闸门：`python3 scripts/doc-readability-check.py --ratchet`（CI `docs-readability`，新文档不带导读三行会红）。
 
-#### 真实地址 SSOT
+新增/重命名文档后同步 `doc/index.yml` 与 `doc/guide.list.directory.md`。评测产出的样本/证据/报告**不进 `doc/`**，归验收知识库。
 
-- Agent 只能使用 CDS `GET /api/branches` 返回的 `previewUrl` / `previewUrls`。
-- 一个 CDS 可能在同一个公开 `previewDomain` 下有两个或更多实际入口，例如本系统的主应用与模型网关控制台；入口数由实际发布的逻辑服务决定，不等于 `rootDomains` 数量。`rootDomains` 可能包含隐藏、备用或内部域名，API 与 Agent 都不得向用户暴露。命令返回多行时必须全部列出公开入口。
-- `previewSlug`、分支名、项目名、仓库目录、`CDS_HOST` 和历史 v1/v2/v3 公式都不是 Agent 生成公网 URL 的授权。
-- 缺凭据、API 故障、分支未部署或地址字段缺失时，应如实报错并继续修复接入/部署；禁止本地 slugify、拼域名或猜一个地址。
-- `cds/src/services/preview-slug.ts:computePreviewSlug` 仍是 CDS 后端内部 slug 计算 SSOT，但不是 Agent 的 URL 生成器。
+### 11. push 后必须用 cdscli 给出真实预览地址
 
-#### 强制行为：永远只调一条命令（不许自己 slugify）
-
-每次 push 后必须调用 `preview-url` 技能。它会按当前宿主的实际项目级技能根定位 `cdscli.py`：Codex / 通用 Agent Skills 通常使用 `.agents/skills`，Claude Code 使用 `.claude/skills`。禁止在通用提示词里硬编码某一个宿主目录。本仓库源码校验命令为：
+只要项目接了 CDS，任何代码改动 push 后或需人工验收时，最终回复必须先跑这条命令再列地址。本仓库 `cdscli.py` 只有一份，在 `.claude/skills/cds/cli/`；若你的宿主用别的技能根，就在那个根下定位同一个脚本，不要硬编码不存在的路径：
 
 ```bash
 python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 ```
 
-```
-【预览】<cdscli 输出的第 1 个实际入口>{本次改动的具体功能页路径，必填}
-【预览】<cdscli 输出的第 2 个实际入口>{同一功能页路径，如 CDS 返回多入口}
-```
+**唯一 SSOT**：只能用 CDS `GET /api/branches` 返回的 `previewUrl` / `previewUrls`，多入口全部列出。**禁止**本地 slugify、拼 `${x}.miduo.org`、`tr '/' '-'` 推 branch id、在 commit/PR/模板里手写 URL（`cds/tests/services/preview-url-skill-drift.test.ts` 有守卫扫描）。缺凭据或分支未部署就如实报错，不许猜地址。
 
-#### 必须给「最终地址」，不给「中间地址」（2026-06-04 用户强制）
+**必须给最终深链，不给根地址**：cdscli 输出是根域名 SSOT（域名部分不许自己造），功能页路由 + query/tab/锚点由你按本次改动的真实路由追加，让用户点一下就落到验收那一屏。多个功能页改动就给多条。反例 `【预览】https://xxx.miduo.org/`；正例 `【预览】https://xxx.miduo.org/open-platform?tab=open-api`。
 
-**预览行必须是能直接落到本次改动功能页的最终深链**（cdscli 给的根域名 + 该功能的路由 + 必要的 query/tab），让用户点一下就到位，**禁止只给根域名**让用户自己 登录 → 搜索 → 进菜单 → 切 tab 走一圈。
+不适用：仅 `doc/` / 仅 Agent 元数据目录 / 仅 `changelogs/` 的 push。
 
-- 反例（只给根/中间地址）：`【预览】https://xxx.miduo.org/`
-- 正例（最终地址，带路由 + tab）：`【预览】https://xxx.miduo.org/open-platform?tab=open-api`
-- 规则：cdscli 输出是**根域名 SSOT**（不许自己 slugify 域名部分）；功能页路径由你**按本次改动的真实路由 + query 追加**（这部分不经 cdscli，是页面路由不是域名）。
-- 深链要落到「用户验收这次改动会看的那一屏」：有 tab 的带 `?tab=`，有 id 的给一个真实可达的 `:id`（或列表页 + 一句话指明点哪条），有锚点的带 `#anchor`。
-- 多个功能页改动 → 给多条【预览】，每条都是最终地址。
-- 历史背景：用户反馈"每次预览给根地址，导致我每次都要走一圈"。最终地址是默认，不是可选。
-
-这条 CLI 是预览 URL 唯一的可执行查询入口。它从项目级 `.cds/credentials.json` 或当前进程的 CDS 上下文取得 host + project credential，调用 `/api/branches` 后原样消费 `previewUrl` / `previewUrls`。它没有 URL 推算 fallback。
-
-**禁止以下"绕开 cdscli"的行为**（都被 `cds/tests/services/preview-url-skill-drift.test.ts` 守卫扫，CI 会 fail）：
-
-- 在 bash / Python / 任何脚本里写自己的 `slugify()` 函数
-- 拼 `${X}.miduo.org` / `${BRANCH_ID}.miduo.org` 这种 v1 风格
-- `tr '/' '-'` 单步推 CDS branch id
-- 在 commit message / PR body / skill 模板里手写 URL
-
-#### 适用场景
-
-- 适用：任何 `.cs` / `.ts` / `.tsx` / `.rs` / `.css` 改动 push 后
-- 适用：Dockerfile / docker-compose 改动 push 后
-- 适用：涉及 UI 入口变更的（同步规则 #9 的【位置】+【路径】）
-- 不适用：仅文档（`doc/`）/ 仅 `.Codex/` 元数据 / 仅 `changelogs/` 的 push 可省略
-
-#### 反面案例
-
-> 2026-04-26 用户反馈「不知道怎么看」——AI 完成 push 但只说「commit 已推送，CDS 几分钟内自动部署」，没给具体 URL。修复：本规则强制输出预览地址。
->
-> 同日二次反馈：AI 加了规则但 URL 公式错了（只用 `${branchSlug}`，缺 `${projectSlug}` 前缀），CDS 多项目改造后该公式不再有效。
->
-> 2026-04-27 三次反馈：v2 公式（项目名前缀）虽然能用，但项目名永远排第一遮住关键信息——重要的靠前。修复：v3 公式（tail-prefix-project），项目名后缀化。
-
-#### 与规则 #9 的关系
-
-规则 #9 是新 Agent 交付时的【位置/路径/预览】三行结构；本规则覆盖**所有** push（不限于新 Agent），**任何代码改动 push 后都必须有【预览】行**。
-
-跑评测/脚手架产出的"样本/证据/报告"文件**不进 `doc/`**——归验收知识库（`document_stores`，见 `doc/rule.doc.naming.md`「报告/验收/图片不进 doc/」，按 MAP/CDS 主题分流）。`doc/` 的 `report.*` **目标收敛到周报 `report.YYYY-WNN`**（存量被设计文档/脚本/后端引用的非周报报告 grandfather 保留，待专项迁移，见 `rule.doc.naming` §报告），且禁止 commit `output-*.md` / `tmp-*.md` 裸文件名或文档插图。
+<!--
+历史背景：2026-04-26 用户反馈「不知道怎么看」——AI push 后只说「CDS 几分钟内自动部署」没给 URL。
+同日二次反馈 URL 公式错（缺 projectSlug 前缀）；2026-04-27 三次反馈项目名排第一遮住关键信息。
+2026-06-04 用户强制要求最终深链：「每次预览给根地址，导致我每次都要走一圈」。
+结论：URL 一律走 cdscli，不再维护任何本地公式。
+-->
 
 ---
 
-## 架构规则索引
+## 规则与技能
 
-以下规则按需加载（仅当编辑匹配 glob 的文件时），详见 `.Codex/rules/`：
+- **架构规则** `.claude/rules/`：52 条，全体 Agent 共用。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
+- **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制，所以在此点名——
+  - `local-debugging.md`：本地连调、视觉修复、接口排查、CDS 部署验证的工作方式。
+  - `production-release-safety.md`：碰发布链路（`exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow）前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`。公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数。
+- **技能**：57 个在 `.claude/skills/`，另有 3 个在 `.agents/skills/`。多数宿主会自动注入名称与描述，**但只注入它自己那个技能根**——只认 `.agents/skills` 的宿主看不到另外 57 个。**注入不全时自己选**：`ls .claude/skills/`，每个目录的 `SKILL.md` frontmatter 里 `name` 与 `description` 就是选取依据（description 写明了触发场景）。frontmatter 字段的完整性由 CI 棘轮盯着（只降不升），但「目录里整个没有 SKILL.md」CI 现在拦不住——扫到这种目录按缺陷报出来，别当它不存在；此处同样不维护会漂移的第二份清单。
+
+<details>
+<summary>历史显式索引（仅兼容旧宿主，不作为规则或技能 SSOT）</summary>
 
 | 规则文件 | 触发范围 | 核心要点 |
 |----------|----------|----------|
@@ -458,3 +339,8 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 9. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
 10. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
 11. **迁移/重构后** → `/hygiene`
+</details>
+
+生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。
+
+常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解。首次开发 Agent 走 `/help`。

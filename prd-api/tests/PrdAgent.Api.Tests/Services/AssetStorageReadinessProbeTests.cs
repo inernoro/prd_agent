@@ -39,9 +39,15 @@ public sealed class AssetStorageReadinessProbeTests
         result.InternalReadVerified.ShouldBeTrue();
         result.PublicReadVerified.ShouldBeTrue();
         result.CleanupVerified.ShouldBeTrue();
+        result.ProbeBytes.ShouldBe(AssetStorageReadinessProbe.RepresentativePayloadBytes);
         storage.UploadCount.ShouldBe(1);
         storage.DeleteCount.ShouldBe(1);
         storage.ObjectCount.ShouldBe(0);
+        storage.LastUploadKey.ShouldEndWith(".m4a");
+        storage.LastUploadContentType.ShouldBe("audio/mp4;codecs=mp4a.40.2");
+        storage.LastUploadCacheControl.ShouldBeNull();
+        storage.LastUploadBytes.ShouldNotBeNull();
+        storage.LastUploadBytes.Length.ShouldBe(AssetStorageReadinessProbe.RepresentativePayloadBytes);
     }
 
     [Theory]
@@ -63,6 +69,7 @@ public sealed class AssetStorageReadinessProbeTests
 
         result.Status.ShouldBe("unhealthy");
         result.ErrorCode.ShouldBe(expectedErrorCode);
+        result.ProbeBytes.ShouldBe(AssetStorageReadinessProbe.RepresentativePayloadBytes);
         result.ErrorMessage.ShouldNotBeNullOrWhiteSpace();
         result.ErrorMessage.ToLowerInvariant().ShouldNotContain("secret");
         if (failure != ProbeFailure.Write)
@@ -276,6 +283,10 @@ public sealed class AssetStorageReadinessProbeTests
         public int DeleteCount { get; private set; }
         public int PublicReadCount { get; private set; }
         public int ObjectCount => _objects.Count;
+        public string? LastUploadKey { get; private set; }
+        public string? LastUploadContentType { get; private set; }
+        public string? LastUploadCacheControl { get; private set; }
+        public byte[]? LastUploadBytes { get; private set; }
 
         public Task<StoredAsset> SaveAsync(
             byte[] bytes,
@@ -328,6 +339,10 @@ public sealed class AssetStorageReadinessProbeTests
             string? cacheControl = null)
         {
             UploadCount++;
+            LastUploadKey = key;
+            LastUploadContentType = contentType;
+            LastUploadCacheControl = cacheControl;
+            LastUploadBytes = bytes.ToArray();
             if (UploadDelay > TimeSpan.Zero)
             {
                 await Task.Delay(UploadDelay, ct);

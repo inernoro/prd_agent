@@ -284,4 +284,4 @@
 - **提交类型分布**：fix 74 / merge 68 / polish 17 / feat 15 / security 5 / test 2 / rule 2 / refactor 2 / perf 2 / docs 2 / style 1
 - **本周正式发布**：39 次 run，成功 23 / 失败 16（成功率 59.0%），口径为正式发布台账 `/api/releases/runs`（W29：77 次 run，成功 27 / 失败 50，成功率 35.1%）
 - **分支预览部署**：本周 6 个不可变部署版本——这是分支预览，**不等于正式发布**，勿混用
-- **相关设计文档**：`doc/plan.platform.llm-gateway.full-cutover.md`（网关切换看板）、`doc/design.platform.llm-gateway.physical-isolation.md`（网关拓扑）、`doc/debt.cds.build-gate.md`（部署平台队列债务）
+- **相关设计文档**：[doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)（网关切换看板）、[doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)（网关拓扑）、[doc/debt.cds.build-gate.md](./debt.cds.build-gate.md)（部署平台队列债务）

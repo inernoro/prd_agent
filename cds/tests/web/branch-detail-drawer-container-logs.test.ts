@@ -23,8 +23,12 @@ describe('BranchDetailDrawer container log loading contract', () => {
     expect(source).toContain('void loadServiceLogs(deploymentLogProfileId);');
   });
 
-  it('全屏详情和运维面板使用完整可用宽度，不保留桌面端最大宽度上限', () => {
-    expect(source).not.toMatch(/max-w-\[min\(1240px/);
+  it('分支详情在桌面端保持三分之二屏宽，移动端仍使用全屏', () => {
+    expect(source).toContain('w-full flex-col');
+    expect(source).toContain('md:w-2/3 md:border-l');
+  });
+
+  it('资源工作台和运维面板使用完整可用宽度，不保留桌面端最大宽度上限', () => {
     expect(source).not.toContain('max-w-[1760px]');
     expect(monitoringSource).not.toMatch(/max-w-\[min\(1100px/);
   });

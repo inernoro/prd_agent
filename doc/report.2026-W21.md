@@ -97,7 +97,7 @@ timeline
 
 > **价值**：CDS 预览 URL 公式过去散落在后端、PR 评论模板、check-run 摘要、Settings 预览等多处，改一次公式要改多地。本周收敛到单一 `computePreviewSlug`，并加守卫测试禁止 AI / 任何脚本自己写 `slugify()` 或拼 `${x}.miduo.org`。
 
-- 统一预览 URL 生成为单一 SSOT（`cds/src/services/preview-slug.ts`）。
+- 统一预览 URL 生成为单一 SSOT。
 - 守卫测试 `preview-url-skill-drift.test.ts` 扫描禁止绕开 cdscli 的手写 slugify。
 - cdscli 多轮加固：null branches TypeError、IPv6 字面量 host 被端口拆分、2xx 非 JSON 守护、预览域 root 精确后缀匹配、legacy 兜底不跨多项目泄漏。
 - 相关 PR：#646。
@@ -237,3 +237,13 @@ timeline
 | #662  | 2026-05-23 | 每日熵减计划 2026-W21 — PA Agent changelog 入库  | 文档     |
 
 > **补充说明**：PR #611（毒舌秘书与 PA Agent 合入 main 基线）以 merge commit 形式于 05-23 落地主干，未出现在 base=main 的 GitHub PR 列表首页，故未计入上表 20 项，但其代码已在本周主干内。W21 净增行数偏高（+69,908）主要来自 #642 把 W20 的 CDS Agent runtime / SDK 探索一次性合入。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 5. 预览 URL 生成统一为单一 SSOT | `cds/src/services/preview-slug.ts` |

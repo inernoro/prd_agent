@@ -39,10 +39,10 @@ function ToggleButton({
       style={{
         color: active ? '#fff' : 'var(--text-secondary)',
         background: active
-          ? 'linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(124, 58, 237, 0.15))'
+          ? 'linear-gradient(135deg, rgba(200, 98, 58, 0.3), rgba(176, 82, 46, 0.15))'
           : 'transparent',
-        border: active ? '1px solid rgba(168, 85, 247, 0.45)' : '1px solid transparent',
-        boxShadow: active ? '0 0 14px rgba(168, 85, 247, 0.35)' : 'none',
+        border: active ? '1px solid rgba(200, 98, 58, 0.45)' : '1px solid transparent',
+        boxShadow: active ? '0 0 14px rgba(200, 98, 58, 0.35)' : 'none',
         fontFamily: 'var(--font-display)',
         letterSpacing: '0.04em',
         minWidth: '32px',

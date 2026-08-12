@@ -28,6 +28,7 @@
 import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html, hashlib
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
 REPORT_KINDS = (
@@ -44,6 +45,7 @@ REPORT_KINDS = (
 
 DAILY_REQUIRED_SECTIONS = (
     "结论分层",
+    "缺陷分级速览",
     "昨日工作总结",
     "改动规模与深度预算",
     "标记法则与验收标准",
@@ -61,6 +63,46 @@ DAILY_CONCLUSION_FIELDS = (
     "发布建议",
     "判定性质",
 )
+
+# 「给你的一页结论」：写给不看代码的决策读者的第一屏。
+# 结论分层（DAILY_CONCLUSION_FIELDS）解决的是「验收员之间不要混淆语义」，
+# 但它仍是验收行话；本节解决的是「产品负责人打开链接能不能自己判断」。
+# 用户 2026-08-05：报告网页看得懂字、看不懂内容，读完既不敢提交也说不清哪里不对。
+PLAIN_SUMMARY_SECTION = "给你的一页结论"
+PLAIN_SUMMARY_FIELDS = (
+    "产品能不能用",
+    "验收测完了吗",
+    "昨天上了什么",
+    "需要你决定什么",
+    "下面的内容",
+)
+PLAIN_PRODUCT_ANSWERS = ("可以正常使用", "有功能坏了", "这次没测出来")
+PLAIN_COMPLETENESS_ANSWERS = ("测完了", "没测完")
+PLAIN_NO_DECISION = "本次不需要你做任何事"
+# 这一节里出现即拒收的验收行话，除非当场用「（……）」解释。
+# 判据取的是「术语后面紧跟不跟解释」，不是「报告里有没有解释过」——
+# 读者读的是这一屏，别处解释过对他没用。
+PLAIN_JARGON_TERMS = (
+    "门禁",
+    "断言",
+    "契约测试",
+    "冻结提交",
+    "证明力",
+    "覆盖矩阵",
+    "根因链",
+    "Verdict",
+    "SHA",
+    "smoke",
+    "ready",
+    "verify-open",
+    "integration-live",
+)
+DAILY_SEVERITY_SUMMARY_FIELDS = (
+    "严重级",
+    "数量",
+    "问题概述",
+)
+DAILY_SEVERITY_LEVELS = ("P0", "P1", "P2", "P3")
 DAILY_ROOT_CAUSE_FIELDS = (
     "目标要求",
     "观察事实",
@@ -74,6 +116,16 @@ VERDICT_NATURES = {
     "conditional": {"覆盖不足", "非阻断风险"},
     "fail": {"产品失败", "核心用例失败", "验收链路失败", "硬门禁失败"},
 }
+ROOT_CAUSE_CONCLUSIONS = {
+    "通过",
+    "覆盖缺口",
+    "非阻断风险",
+    "产品失败",
+    "核心用例失败",
+    "验收链路失败",
+    "硬门禁失败",
+}
+CORE_CASE_RESULTS = {"通过", "失败", "未执行"}
 
 
 def curl(args, retries=5):
@@ -872,10 +924,28 @@ def _strip_severity_count_claims(text):
     return re.sub(r"\bP[0-3]\s*[:：=]\s*\d+\b", " ", raw, flags=re.I)
 
 
+def _core_case_results_from_product_quality(text):
+    """Read the finite core-case token from the product-quality field."""
+    return [
+        re.sub(r"[`*_\s]", "", value)
+        for value in re.findall(
+            r"核心用例\s*[:：=]\s*([^；;，,|\n]+)", text or "", re.I
+        )
+    ]
+
+
 def _daily_fact_signals(values, body):
-    """Extract the product and coverage facts used to justify a daily Verdict."""
+    """Extract only structured facts used to justify a daily Verdict.
+
+    The first four root-cause columns are human-readable evidence. They may
+    describe goals, counterfactuals and causes, so treating their wording as an
+    observed failure makes the gate unstable. Machine judgment therefore reads
+    only the finite conclusion column.
+    """
     product_quality = values.get("产品质量", "").strip()
     completeness = values.get("验收完整性", "").strip()
+    core_case_results = _core_case_results_from_product_quality(product_quality)
+    core_case_result = core_case_results[0] if len(core_case_results) == 1 else ""
 
     severity_counts = _severity_counts_from_text(product_quality)
     zero_defects = bool(
@@ -943,7 +1013,7 @@ def _daily_fact_signals(values, body):
         or blocking_defect_rows
         or re.search(
             r"\bP[01]\b"
-            r"|(?:产品|核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
+            r"|产品[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
             positive_product,
             re.I,
         )
@@ -954,40 +1024,25 @@ def _daily_fact_signals(values, body):
         or re.search(r"\bP[23]\b|非阻断风险", positive_product, re.I)
     )
     product_risk = blocking_product_failure or nonblocking_product_risk
-    core_failure = bool(
-        re.search(
-            r"(?:核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
-            positive_product,
-            re.I,
-        )
-    )
-    root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
-    root_fact_cells = []
-    for row in root_cause_rows:
-        root_fact_cells.extend(row[:4])
-    root_facts = "；".join(root_fact_cells)
-    chain_failure = bool(
-        re.search(
-            r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)",
-            root_facts,
-            re.I,
-        )
-    )
-    hard_gate_failure = bool(
-        re.search(
-            r"(?:CDS\s*)?(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|阻断|不可用)"
-            r"|(?:失败|未通过)[^。；;|\n]{0,20}"
-            r"(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)",
-            root_facts,
-            re.I,
-        )
-    )
+    _, root_cause_rows = _section_table(body, "根因链条")
+    root_conclusions = {
+        re.sub(r"[`*_\s]", "", row[4])
+        for row in root_cause_rows
+        if len(row) == len(DAILY_ROOT_CAUSE_FIELDS)
+    }
+    core_failure = core_case_result == "失败"
+    core_unexecuted = core_case_result == "未执行"
+    root_core_failure = "核心用例失败" in root_conclusions
+    chain_failure = "验收链路失败" in root_conclusions
+    hard_gate_failure = "硬门禁失败" in root_conclusions
+    root_product_failure = "产品失败" in root_conclusions
+    root_nonblocking_risk = "非阻断风险" in root_conclusions
+    root_coverage_gap = "覆盖缺口" in root_conclusions
     coverage_gap_count = _coverage_gap_count(body)
     completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)
     incomplete = bool(
-        coverage_gap_count > 0
+        core_unexecuted
+        or coverage_gap_count > 0
         or re.search(
             r"不完整|无法确认|未覆盖|覆盖不足|覆盖缺口|\d+\s*项?缺口",
             completeness_with_zero_gaps_removed,
@@ -1001,13 +1056,223 @@ def _daily_fact_signals(values, body):
         "blocking_product_failure": blocking_product_failure,
         "nonblocking_product_risk": nonblocking_product_risk,
         "product_risk": product_risk,
+        "root_product_failure": root_product_failure,
+        "root_nonblocking_risk": root_nonblocking_risk,
+        "root_coverage_gap": root_coverage_gap,
+        "root_conclusions": root_conclusions,
+        "core_case_results": core_case_results,
+        "core_case_result": core_case_result,
         "core_failure": core_failure,
+        "core_unexecuted": core_unexecuted,
+        "root_core_failure": root_core_failure,
         "chain_failure": chain_failure,
         "hard_gate_failure": hard_gate_failure,
         "coverage_gap_count": coverage_gap_count,
         "incomplete": incomplete,
         "claims_complete": claims_complete,
     }
+
+
+def _daily_severity_summary_errors(values, body):
+    """Require a glanceable P0-P3 breakdown with a short summary per level."""
+    errors = []
+    headers, rows = _section_table(body, "缺陷分级速览")
+    normalized_headers = [re.sub(r"[`*_\s]", "", cell) for cell in headers]
+    if normalized_headers != list(DAILY_SEVERITY_SUMMARY_FIELDS):
+        return [
+            "[缺陷分级] 每日验收必须包含「缺陷分级速览」表，表头严格为："
+            + "、".join(DAILY_SEVERITY_SUMMARY_FIELDS)
+        ]
+
+    parsed = {}
+    for index, row in enumerate(rows, start=1):
+        if len(row) != len(DAILY_SEVERITY_SUMMARY_FIELDS):
+            errors.append(f"[缺陷分级] 第 {index} 行必须完整填写三列")
+            continue
+        severity = re.sub(r"[`*_\s]", "", row[0]).upper()
+        if severity not in DAILY_SEVERITY_LEVELS:
+            errors.append(f"[缺陷分级] 第 {index} 行严重级无效：{row[0]}")
+            continue
+        if severity in parsed:
+            errors.append(f"[缺陷分级] 严重级 {severity} 重复")
+            continue
+        count_text = re.sub(r"[`*_\s]", "", row[1])
+        if not re.fullmatch(r"\d+", count_text):
+            errors.append(f"[缺陷分级] {severity} 数量必须是非负整数")
+            continue
+        overview = re.sub(r"\s+", " ", row[2]).strip()
+        count = int(count_text)
+        if not overview:
+            errors.append(f"[缺陷分级] {severity} 缺少问题概述")
+        elif count > 0 and (
+            len(overview) < 4
+            or re.fullmatch(r"(?:无|暂无|没有|未发现|略|见缺陷清单|详见报告|[-—])", overview)
+        ):
+            errors.append(
+                f"[缺陷分级] {severity} 数量为 {count} 时必须简述代表性问题，不能只给数量"
+            )
+        parsed[severity] = (count, overview)
+
+    missing = [severity for severity in DAILY_SEVERITY_LEVELS if severity not in parsed]
+    if missing:
+        errors.append("[缺陷分级] 缺少严重级行：" + "、".join(missing))
+
+    product_counts = _severity_counts_from_text(values.get("产品质量", ""))
+    if product_counts is None or set(product_counts) != set(DAILY_SEVERITY_LEVELS):
+        errors.append(
+            "[缺陷分级] 产品质量必须填写 P0/P1/P2/P3=数字/数字/数字/数字，便于通知直接复用"
+        )
+    elif not missing:
+        summary_counts = {severity: parsed[severity][0] for severity in DAILY_SEVERITY_LEVELS}
+        if product_counts != summary_counts:
+            errors.append("[缺陷分级] 产品质量中的 P0-P3 数量与「缺陷分级速览」不一致")
+
+    return errors
+
+
+def _has_plain_summary_section(markdown):
+    """True only when the report really carries the plain-summary H2 section.
+
+    A plain substring test would also fire on a report that merely mentions the
+    section name in prose, and the HTML would then open in brief view with no
+    matching heading to keep — an empty body. The anchor here is deliberately
+    the same `^## <heading>$` shape `_section_table` uses, so the renderer and
+    the gate cannot drift into two different answers.
+    """
+    return bool(
+        re.search(
+            rf"^##\s+{re.escape(PLAIN_SUMMARY_SECTION)}\s*$",
+            markdown or "",
+            re.M,
+        )
+    )
+
+
+def _plain_summary_jargon_errors(text):
+    """Reject acceptance jargon that is not explained on the spot.
+
+    The reader of this section does not read code and does not know what a
+    gate, an assertion or a frozen SHA is. A term is allowed only when the very
+    next characters are a parenthesised plain-language explanation, because an
+    explanation living somewhere else in the report does not reach this screen.
+    """
+    errors = []
+    for term in PLAIN_JARGON_TERMS:
+        pattern = (
+            rf"(?<![0-9A-Za-z]){re.escape(term)}(?![0-9A-Za-z])"
+            if re.fullmatch(r"[0-9A-Za-z\-]+", term)
+            else re.escape(term)
+        )
+        for match in re.finditer(pattern, text or "", re.I):
+            # 允许术语与解释之间有任意空白：判的是「下一个非空白字符是不是左括号」，
+            # 固定取两个字符再 lstrip 会把「门禁  （…）」这种多打一个空格的写法冤判。
+            if re.match(r"\s*[（(]", (text or "")[match.end():]):
+                continue
+            errors.append(
+                f"[说人话] 「{PLAIN_SUMMARY_SECTION}」出现未解释的验收行话「{term}」；"
+                "要么换成大白话，要么紧跟「（一句话解释）」"
+            )
+            break
+    return errors
+
+
+def _plain_summary_errors(verdict, body, facts):
+    """Require a decision-maker-readable first screen and keep it honest.
+
+    The five-field conclusion table below answers auditor questions. This one
+    answers the only four questions the person who signs off actually has: can
+    people use the product, did we finish testing, what shipped, and do I have
+    to decide anything. Cross-checks against the same fact signals keep it from
+    drifting into a friendlier but false summary.
+    """
+    errors = []
+    rows = _section_table_rows(body, PLAIN_SUMMARY_SECTION)
+    if not rows:
+        return [
+            f"[说人话] 每日验收缺少实质填写的「{PLAIN_SUMMARY_SECTION}」表："
+            "报告第一屏必须先用大白话回答产品能不能用、验收测完没、昨天上了什么、要不要你决定"
+        ]
+
+    values = {}
+    for row in rows:
+        if len(row) >= 2:
+            values[re.sub(r"[`*_\s]", "", row[0])] = row[1].strip()
+    for field in PLAIN_SUMMARY_FIELDS:
+        if not values.get(field):
+            errors.append(f"[说人话] 「{PLAIN_SUMMARY_SECTION}」缺少「{field}」字段或答案")
+
+    product = values.get("产品能不能用", "")
+    completeness = values.get("验收测完了吗", "")
+    shipped = values.get("昨天上了什么", "")
+    decision = values.get("需要你决定什么", "")
+
+    product_answer = next(
+        (item for item in PLAIN_PRODUCT_ANSWERS if product.startswith(item)), ""
+    )
+    if product and not product_answer:
+        errors.append(
+            "[说人话] 「产品能不能用」必须以固定答案开头："
+            + "/".join(PLAIN_PRODUCT_ANSWERS)
+        )
+    completeness_answer = next(
+        (item for item in PLAIN_COMPLETENESS_ANSWERS if completeness.startswith(item)), ""
+    )
+    if completeness and not completeness_answer:
+        errors.append(
+            "[说人话] 「验收测完了吗」必须以固定答案开头："
+            + "/".join(PLAIN_COMPLETENESS_ANSWERS)
+        )
+    if shipped and (len(re.sub(r"\s", "", shipped)) < 8 or "详见" in shipped):
+        errors.append(
+            "[说人话] 「昨天上了什么」必须逐条写清楚功能和它对用户的意义，不得只写「详见报告」"
+        )
+    if decision and PLAIN_NO_DECISION not in decision and "建议" not in decision:
+        errors.append(
+            "[说人话] 「需要你决定什么」每条必须给出建议和不处理的后果；"
+            f"确实无事项时只写「{PLAIN_NO_DECISION}」"
+        )
+
+    # 用户真正要的那条分界线：产品坏了，和「我们没测成」，是两件事。
+    # 2026-08-04 每日验收把「测试脚本时序断言失败」写成首屏「不通过·阻断」，
+    # 而报告自己写着未发现用户控件失效——读者当然既看不懂也不敢签字。
+    broken = bool(facts["blocking_product_failure"] or facts["core_failure"])
+    unconfirmed = bool(facts["chain_failure"] or facts["hard_gate_failure"])
+    if product_answer == "有功能坏了" and not broken:
+        errors.append(
+            "[说人话] 「产品能不能用=有功能坏了」但没有 P0/P1 产品缺陷、核心用例也不是失败；"
+            "测试脚本或环境自身的问题应写「这次没测出来」，不得说成产品坏了"
+        )
+    if product_answer in {"可以正常使用", "这次没测出来"} and broken:
+        errors.append(
+            "[说人话] 已有 P0/P1 产品缺陷或核心用例失败，「产品能不能用」不能写成"
+            + product_answer
+        )
+    if product_answer == "可以正常使用" and unconfirmed:
+        errors.append(
+            "[说人话] 验收链路或硬门禁失败时无法证明产品可用，"
+            "「产品能不能用」必须写「这次没测出来」"
+        )
+    if completeness_answer == "测完了" and (
+        facts["incomplete"]
+        or facts["coverage_gap_count"] > 0
+        or facts["core_unexecuted"]
+    ):
+        errors.append(
+            "[说人话] 「验收测完了吗=测完了」与验收完整性、覆盖缺口或核心用例未执行的事实矛盾"
+        )
+    if completeness_answer == "没测完" and not (
+        facts["incomplete"] or facts["coverage_gap_count"] > 0 or facts["core_unexecuted"]
+    ):
+        errors.append(
+            "[说人话] 「验收测完了吗=没测完」但报告没有任何未覆盖、无法确认或核心用例未执行的事实"
+        )
+    if verdict == "pass" and product_answer and product_answer != "可以正常使用":
+        errors.append("[说人话] verdict=pass 时「产品能不能用」必须是「可以正常使用」")
+    if verdict == "pass" and completeness_answer and completeness_answer != "测完了":
+        errors.append("[说人话] verdict=pass 时「验收测完了吗」必须是「测完了」")
+
+    errors.extend(_plain_summary_jargon_errors(_section_text(body, PLAIN_SUMMARY_SECTION)))
+    return errors
 
 
 def _daily_conclusion_contract_errors(verdict, body):
@@ -1032,6 +1297,8 @@ def _daily_conclusion_contract_errors(verdict, body):
         if not values.get(field):
             errors.append(f"[结论语义] 「结论分层」缺少「{field}」字段或结果")
 
+    errors.extend(_daily_severity_summary_errors(values, body))
+
     nature = re.sub(r"[`*_\s]", "", values.get("判定性质", ""))
     allowed = VERDICT_NATURES.get(verdict, set())
     if nature and nature not in allowed:
@@ -1053,33 +1320,75 @@ def _daily_conclusion_contract_errors(verdict, body):
         )
 
     facts = _daily_fact_signals(values, body)
+    errors.extend(_plain_summary_errors(verdict, body, facts))
+    if not facts["core_case_results"]:
+        errors.append(
+            "[事实一致性] 产品质量必须填写结构化核心用例结果：核心用例=通过/失败/未执行"
+        )
+    elif len(facts["core_case_results"]) != 1:
+        errors.append("[事实一致性] 产品质量只能填写一个结构化核心用例结果")
+    elif facts["core_case_result"] not in CORE_CASE_RESULTS:
+        errors.append(
+            "[事实一致性] 核心用例结果只允许："
+            + "/".join(sorted(CORE_CASE_RESULTS))
+        )
     if facts["zero_defects"] and facts["product_risk"]:
         errors.append("[事实一致性] 产品质量同时声称缺陷为 0/未发现缺陷，又报告了 P0-P3 缺陷事实")
     if facts["claims_complete"] and facts["coverage_gap_count"] > 0:
         errors.append(
             f"[事实一致性] 验收完整性声称完整，但覆盖缺口表仍有 {facts['coverage_gap_count']} 项"
         )
-    if nature == "产品失败" and not facts["blocking_product_failure"]:
-        errors.append("[事实一致性] 判定性质为产品失败，但产品质量和缺陷清单没有 P0/P1 产品失败事实")
-    if nature == "核心用例失败" and not facts["core_failure"]:
-        errors.append("[事实一致性] 判定性质为核心用例失败，但产品质量没有核心用例/流程失败事实")
+    if facts["claims_complete"] and facts["core_unexecuted"]:
+        errors.append("[事实一致性] 核心用例=未执行时，验收完整性不能声称完整")
+    if facts["claims_complete"] and facts["root_coverage_gap"]:
+        errors.append("[事实一致性] 验收完整性声称完整，但根因链仍有覆盖缺口")
+    product_failure = bool(
+        facts["blocking_product_failure"] and facts["root_product_failure"]
+    )
+    if facts["root_product_failure"] and not facts["blocking_product_failure"]:
+        errors.append("[事实一致性] 根因链结论为产品失败，但产品质量和缺陷清单没有 P0/P1 产品失败事实")
+    if nature == "产品失败" and not product_failure:
+        errors.append("[事实一致性] 判定性质为产品失败，但缺少 P0/P1 产品失败事实或根因链结构化结论")
+    if facts["root_core_failure"] and not facts["core_failure"]:
+        errors.append("[事实一致性] 根因链结论为核心用例失败，但产品质量的核心用例结果不是失败")
+    if nature == "核心用例失败" and not (
+        facts["core_failure"] and facts["root_core_failure"]
+    ):
+        errors.append(
+            "[事实一致性] 判定性质为核心用例失败，但缺少产品质量的核心用例=失败或根因链同名结论"
+        )
     if nature == "验收链路失败" and not facts["chain_failure"]:
-        errors.append("[事实一致性] 判定性质为验收链路失败，但根因链没有归档、打开验证或通知链路失败事实")
+        errors.append("[事实一致性] 判定性质为验收链路失败，但根因链结论没有「验收链路失败」")
     if nature == "硬门禁失败" and not facts["hard_gate_failure"]:
-        errors.append("[事实一致性] 判定性质为硬门禁失败，但根因链没有 ready、smoke、构建或强制测试失败事实")
+        errors.append("[事实一致性] 判定性质为硬门禁失败，但根因链结论没有「硬门禁失败」")
     if nature == "覆盖不足" and not facts["incomplete"]:
         errors.append("[事实一致性] 判定性质为覆盖不足，但验收完整性和覆盖缺口没有缺口事实")
-    if verdict == "pass" and (facts["incomplete"] or facts["product_risk"]):
-        errors.append("[事实一致性] pass 与未覆盖/无法确认或 P0-P3 缺陷事实不一致")
-    if verdict == "conditional" and facts["blocking_product_failure"]:
-        errors.append("[事实一致性] 已有 P0/P1 产品失败事实时不能使用 conditional，必须使用 fail")
+    if nature == "覆盖不足" and not facts["root_coverage_gap"]:
+        errors.append("[事实一致性] 判定性质为覆盖不足，但根因链结论没有「覆盖缺口」")
+    if nature == "非阻断风险" and not facts["root_nonblocking_risk"]:
+        errors.append("[事实一致性] 判定性质为非阻断风险，但根因链结论没有「非阻断风险」")
+    blocking_failure = bool(
+        facts["blocking_product_failure"]
+        or facts["core_failure"]
+        or facts["chain_failure"]
+        or facts["hard_gate_failure"]
+    )
+    if verdict == "pass" and (
+        facts["incomplete"]
+        or facts["product_risk"]
+        or facts["root_nonblocking_risk"]
+        or facts["root_coverage_gap"]
+        or facts["core_case_result"] != "通过"
+        or blocking_failure
+    ):
+        errors.append("[事实一致性] pass 与未覆盖/无法确认、风险或失败事实不一致")
+    if verdict == "conditional" and blocking_failure:
+        errors.append("[事实一致性] 已有产品、核心用例、验收链路或硬门禁失败事实时不能使用 conditional，必须使用 fail")
     coverage_only = (
         facts["zero_defects"]
         and facts["incomplete"]
         and not facts["product_risk"]
-        and not facts["core_failure"]
-        and not facts["chain_failure"]
-        and not facts["hard_gate_failure"]
+        and not blocking_failure
     )
     if verdict == "fail" and coverage_only:
         errors.append(
@@ -1106,6 +1415,16 @@ def _daily_conclusion_contract_errors(verdict, body):
             errors.append(
                 "[根因链] 每条数据必须完整填写六列；无效数据行："
                 + "、".join(str(index) for index in malformed_rows)
+            )
+        unknown_conclusions = sorted(
+            facts["root_conclusions"] - ROOT_CAUSE_CONCLUSIONS
+        )
+        if unknown_conclusions:
+            errors.append(
+                "[根因链] 「结论」只允许："
+                + "、".join(sorted(ROOT_CAUSE_CONCLUSIONS))
+                + "；当前无效值："
+                + "、".join(unknown_conclusions)
             )
 
     return errors
@@ -1227,6 +1546,7 @@ class _EvidenceHtmlParser(HTMLParser):
         self.back_links = 0
         self.side_tabs = []
         self.directory_hrefs = []
+        self.internal_hrefs = []
         self.mobile_nav_toggles = 0
         self._card = None
 
@@ -1236,6 +1556,8 @@ class _EvidenceHtmlParser(HTMLParser):
         if element_id:
             self.ids.append(element_id)
         href = values.get("href", "")
+        if tag == "a" and href.startswith("#") and len(href) > 1:
+            self.internal_hrefs.append(unquote(href[1:]))
         if href.startswith("#fig-"):
             self.figure_hrefs.append(href[1:])
         classes = set(values.get("class", "").split())
@@ -1339,6 +1661,14 @@ def _interactive_evidence_errors(html_content, manifest):
     unresolved = sorted({anchor for anchor in parser.figure_hrefs if id_counts.get(anchor, 0) != 1})
     if unresolved:
         errors.append("[证据关系] 存在无法唯一解析的图链接：" + "、".join(unresolved))
+    unresolved_internal = sorted({
+        anchor for anchor in parser.internal_hrefs
+        if id_counts.get(anchor, 0) != 1
+    })
+    if unresolved_internal:
+        errors.append(
+            "[报告交互] 存在无法唯一解析的内部链接：" + "、".join(unresolved_internal)
+        )
     return errors
 
 
@@ -1475,9 +1805,11 @@ def _collect_problem_items(markdown, manifest):
     def section_table_rows(section_name):
         in_section = False
         table_rows = []
+        heading_suffix = r"(?:[（(]P0-P3[）)])?" if section_name == "缺陷清单" else ""
+        heading_pattern = rf"^##\s+(?:\d+\.\s*)?{re.escape(section_name)}{heading_suffix}\s*$"
         for line in (markdown or "").splitlines():
             stripped = line.strip()
-            if re.match(rf"^##\s+{re.escape(section_name)}(?:\s|$)", stripped):
+            if re.match(heading_pattern, stripped, re.I):
                 in_section = True
                 continue
             if in_section and stripped.startswith("## "):
@@ -1820,6 +2152,12 @@ def _wrap_body_figures(body_html, manifest, figure_srcs=None):
     return body_html
 
 
+# ── 米多刊系刊徽（SSOT 见 .claude/rules/report-design-system.md）──
+# 模板必须自包含，无法 import 共享，故靠 data-emblem 标记 +
+# scripts/tests/test_report_emblems.py 防止各处拷贝漂移。
+_EMBLEM_POLARIS = '''<svg viewBox="0 0 120 120" fill="none" data-emblem="polaris" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-polaris-c"><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z"/></clipPath></defs><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z" fill="currentColor" fill-opacity="0.16"/><g clip-path="url(#emb-polaris-c)" stroke="currentColor" stroke-width="1.8" opacity="0.7"><path d="M10 30 L96 116 M28 12 L114 98 M4 52 L74 122 M50 -6 L120 64"/></g><path d="M60 6 L69 51 L114 60 L69 69 L60 114 L51 69 L6 60 L51 51 Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><g stroke="currentColor" stroke-width="2" opacity="0.8"><path d="M98 20 L104 34 L118 40 L104 46 L98 60 L92 46 L78 40 L92 34 Z"/></g><circle cx="24" cy="96" r="3.5" fill="currentColor" fill-opacity="0.8"/></svg>'''
+_EMBLEM_COMET = '''<svg viewBox="0 0 120 120" fill="none" data-emblem="comet" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-comet-c"><circle cx="82" cy="38" r="20"/></clipPath></defs><g stroke="currentColor" stroke-linecap="round" opacity="0.75"><path d="M66 54 L14 106" stroke-width="3"/><path d="M72 62 L28 106" stroke-width="2.4" opacity="0.8"/><path d="M60 46 L8 98" stroke-width="2.4" opacity="0.8"/><path d="M78 68 L44 102" stroke-width="1.8" opacity="0.55"/><path d="M54 38 L6 86" stroke-width="1.8" opacity="0.55"/><path d="M84 76 L60 100" stroke-width="1.4" opacity="0.35"/></g><circle cx="82" cy="38" r="20" fill="currentColor" fill-opacity="0.18"/><g clip-path="url(#emb-comet-c)" stroke="currentColor" stroke-width="1.6" opacity="0.75"><path d="M58 26 L106 26 M58 36 L106 36 M58 46 L106 46"/></g><circle cx="82" cy="38" r="20" stroke="currentColor" stroke-width="3"/></svg>'''
+
 def build_interactive_html(
     title,
     verdict,
@@ -1843,17 +2181,20 @@ def build_interactive_html(
             "accent": "#0f766e", "accent_soft": "rgba(15,118,110,0.08)",
             "byline": "验收智能体 · 自动编档",
             "section_label": "档案",
+            "emblem": _EMBLEM_POLARIS,   # 北极星 = 基准/标尺
         },
         "daily": {
             "cn": "每日巡检特刊", "en": "DAILY PATROL EDITION",
             "accent": "#3b5f8a", "accent_soft": "rgba(59,95,138,0.08)",
             "byline": "每日全量巡检 · 自动编档",
             "section_label": "巡检",
+            "emblem": _EMBLEM_COMET,     # 彗星 = 每天扫过全站一圈
         },
     }
     fl = _FLAVORS.get(flavor) or _FLAVORS["acceptance"]
     flavor_cn, flavor_en = fl["cn"], fl["en"]
     accent, accent_soft, byline = fl["accent"], fl["accent_soft"], fl["byline"]
+    emblem_svg = fl["emblem"]
     section_label = fl["section_label"]
     report_version = (report_version or "v0.9").strip()
     if not re.fullmatch(r"v\d+\.\d+", report_version):
@@ -1871,6 +2212,22 @@ def build_interactive_html(
     body_html = _decorate_problem_figures(markdown_to_html(markdown_content), problem_anchors)
     body_html = _wrap_body_figures(body_html, manifest, figure_srcs)
     section_navigation = _collect_section_navigation(markdown_content, problem_items)
+
+    def section_anchor(pattern):
+        section = next(
+            (entry for entry in section_navigation if re.search(pattern, entry["title"], re.I)),
+            None,
+        )
+        return section["id"] if section else ""
+
+    # 重点卡只能指向正文真实存在的章节。报告允许使用「总缺口账本」或
+    # 「覆盖缺口」两种标题，链接目标必须跟随本次实际解析结果，禁止硬编码标题。
+    gap_section_anchor = (
+        section_anchor(r"^总缺口账本(?:\s|$)")
+        or section_anchor(r"^覆盖缺口(?:\s|$)")
+        or section_anchor(r"缺口")
+    )
+    defect_section_anchor = section_anchor(r"^(?:\d+\.\s*)?缺陷清单(?:[（(]P0-P3[）)])?(?:\s|$)")
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
         "conditional": ("有条件通过", "conditional"),
@@ -2016,28 +2373,37 @@ def build_interactive_html(
                 if item.get("anchor"):
                     href = f' href="#{html.escape(item["anchor"], quote=True)}"'
                     link_label = "查看证据图"
-                elif item.get("severity") == "P3":
-                    href = ' href="#总缺口账本"'
+                elif item.get("severity") == "P3" and gap_section_anchor:
+                    href = f' href="#{html.escape(gap_section_anchor, quote=True)}"'
                     link_label = "查看完整缺口账本"
-                else:
-                    href = ' href="#缺陷清单"'
+                elif defect_section_anchor:
+                    href = f' href="#{html.escape(defect_section_anchor, quote=True)}"'
                     link_label = "查看正文缺陷清单"
+                else:
+                    href = ""
+                    link_label = ""
+                action = f'<a{href}>{link_label}</a>' if href else ""
                 cards.append(
                     f'<div class="problem-card is-{cls}">'
                     f'<strong><span>{sev}</span>{title_text}</strong>'
                     f'<p>{detail}</p>'
-                    f'<a{href}>{link_label}</a>'
+                    f'{action}'
                     f'</div>'
                 )
             cards_html = "".join(cards)
         else:
             fallback_class = "risk" if verdict == "conditional" else "fail"
             fallback_badge = "条件" if verdict == "conditional" else "P0/P1"
+            fallback_anchor = gap_section_anchor if verdict == "conditional" else defect_section_anchor
+            fallback_link = (
+                f'<a href="#{html.escape(fallback_anchor, quote=True)}">查看对应清单</a>'
+                if fallback_anchor else ""
+            )
             cards_html = (
                 f'<div class="problem-card is-{fallback_class}">'
                 f'<strong><span>{fallback_badge}</span>请查看正文风险与缺口清单</strong>'
                 f'<p>报告 Verdict 为{html.escape(verdict_cn)}，但未抽取到结构化重点项。</p>'
-                f'<a href="#缺陷清单">查看缺陷清单</a></div>'
+                f'{fallback_link}</div>'
             )
         if verdict == "conditional":
             focus_kicker = "有条件通过重点"
@@ -2058,6 +2424,24 @@ def build_interactive_html(
         '出现这种形态说明取证环节被跳过，结论不可直接采信。</p>'
     )
     nav_html = "".join(figures) or '<p class="nav-empty">未附截图证据</p>'
+    # 简版/完整版：报告写了「给你的一页结论」才有简版可给，默认就落在简版——
+    # 决策读者点开链接第一眼看到的是四行大白话 + 缺陷 + 截图，其余章节收起。
+    # 没有那一节的报告（单次验收/历史报告）保持完整版，行为不变。
+    has_plain_summary = _has_plain_summary_section(markdown_content)
+    default_view = "brief" if has_plain_summary else "full"
+    view_switch_html = (
+        '<div class="view-switch" data-view-switch>'
+        '<button type="button" class="active" data-view-mode="brief">简版<small>给你看</small></button>'
+        '<button type="button" data-view-mode="full">完整版<small>给工程师看</small></button>'
+        '<span class="vs-hint">简版只留结论、缺陷和截图；完整版是全部取证过程</span>'
+        '</div>'
+        if has_plain_summary
+        else ""
+    )
+    brief_sections_json = json.dumps(
+        [PLAIN_SUMMARY_SECTION, "昨日工作总结", "缺陷清单"],
+        ensure_ascii=False,
+    )
     result = f"""<!doctype html>
 <!-- map-acceptance-template: interactive-html-v2 -->
 <html lang="zh-CN" data-template="map-acceptance-interactive-html-v2" data-skin="miduo-press-dossier">
@@ -2132,6 +2516,12 @@ main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px
 .hero{{padding:26px 0 0}}
 .masthead{{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:3px solid var(--ink);position:relative}}
 .masthead::after{{content:"";position:absolute;left:0;right:0;bottom:-6px;height:1px;background:var(--ink)}}
+/* 刊徽水印（衬字板式）：垫在右侧 mono 小字背后，只做刊物区分，不承载信息。
+   验收=北极星 / 巡检=彗星，见 .claude/rules/report-design-system.md。
+   结构性 class 未动，模板契约 map-acceptance-interactive-html-v2 不受影响。 */
+.masthead .emblem{{position:absolute;top:-12px;right:-6px;width:86px;height:86px;color:var(--accent);opacity:.13;z-index:0;pointer-events:none}}
+.masthead .emblem svg{{display:block;width:100%;height:100%}}
+.masthead .t,.masthead .r,.masthead .stamp{{position:relative;z-index:1}}
 .masthead .stamp{{width:44px;height:44px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:14px;box-shadow:3px 3px 0 rgba(33,29,24,.82)}}
 .masthead .t b{{font-family:var(--serif);font-size:clamp(19px,2.2vw,24px);font-weight:700;display:block;letter-spacing:.02em}}
 .masthead .t span{{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);letter-spacing:.3em}}
@@ -2192,6 +2582,19 @@ main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px
 .method-note strong{{color:var(--ink)}}
 .method-note a{{font-weight:700;text-decoration:none}}
 .method-note span{{color:var(--ink-3)}}
+.view-switch{{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:18px 0 0}}
+.view-switch .vs-hint{{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--ink-3)}}
+.view-switch button small{{display:block;font-size:9.5px;letter-spacing:.12em;opacity:.72;font-weight:400}}
+body[data-view="brief"] .rb-hidden{{display:none}}
+body[data-view="brief"] .toolbar{{display:none}}
+/* 简版把正文提到刊头正下方：结论要是第一眼看到的东西，
+   指标条、风险块和证据版面往后排，否则「给你的一页结论」被推到一千像素以下。 */
+body[data-view="brief"] main{{display:flex;flex-direction:column}}
+body[data-view="brief"] main>*{{order:2}}
+body[data-view="brief"] main>.hero{{order:0}}
+body[data-view="brief"] main>#reportBody{{order:1}}
+body[data-view="brief"] main>.colophon{{order:3}}
+body[data-view="brief"] #reportBody h2::before{{content:none}}
 .toolbar{{position:sticky;top:0;z-index:14;background:var(--paper-2);border:1.5px solid var(--ink);border-radius:3px;padding:9px 10px;margin:20px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
 .toolbar input{{min-width:200px;flex:1;border:1px solid var(--line-2);border-radius:2px;padding:8px 10px;font:inherit;background:#fff;color:var(--ink)}}
 .filter-count{{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.06em;margin-left:auto;white-space:nowrap}}
@@ -2335,6 +2738,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 .figure-anchor,#evidence-gallery,h1,h2,h3{{scroll-margin-top:118px}}
 .masthead .r{{display:none}}
 .masthead .stamp{{width:36px;height:36px;font-size:12px}}
+.masthead .emblem{{width:60px;height:60px;top:-8px;right:-2px}}
 .dateline{{gap:0 12px;font-size:9.5px}}
 .dl-verdict{{margin-left:0}}
 .title-row{{gap:12px}}
@@ -2351,7 +2755,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 }}
 </style>
 </head>
-<body>
+<body data-view="{default_view}">
 <div class="layout">
 <aside id="report-navigation">
   <div class="side-mast"><span class="side-stamp">MAP</span><div><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><i>{flavor_en}</i></div></div>
@@ -2371,6 +2775,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 <main>
   <header class="hero">
     <div class="masthead">
+      <div class="emblem">{emblem_svg}</div>
       <div class="stamp">MAP</div>
       <div class="t"><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><span>{flavor_en}</span></div>
       <div class="r"><span>MAP 验收标准 v2 · 真人路径取证</span><span>{byline}</span></div>
@@ -2384,6 +2789,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     </div>
     <div class="title-row"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}"><i>VERDICT</i>{html.escape(verdict_cn)}</span></div>
     <div class="metric-grid">{summary_html}</div>
+    {view_switch_html}
   </header>
   {reviewer_focus_html}
   {problem_html}
@@ -2421,6 +2827,48 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 </div>
 <script>
 (function(){{
+  // 简版/完整版：把正文按 H2 分段，简版只留决策读者需要的几段。
+  // 不改 DOM 结构，只加 class —— 模板契约（layout/hero/evidence-nav/reportBody）逐字节不变。
+  var viewSwitch=document.querySelector('[data-view-switch]');
+  if(viewSwitch){{
+    var briefSections={brief_sections_json};
+    var squeeze=function(text){{return (text||'').replace(/\\s+/g,'');}};
+    var briefKeys=briefSections.map(squeeze);
+    var keep=false;
+    var kept=0;
+    var hidden=[];
+    Array.prototype.slice.call(document.querySelectorAll('#reportBody>*')).forEach(function(node){{
+      if(node.tagName==='H1'){{return;}}
+      if(node.tagName==='H2'){{
+        var title=squeeze(node.textContent);
+        keep=briefKeys.some(function(name){{return title.indexOf(name)>=0;}});
+      }}
+      if(keep){{kept++;}}else{{hidden.push(node);}}
+    }});
+    // 一段都没留住说明这份报告的章节名不在简版清单里，
+    // 此时收起全部正文会给出一页空白；宁可退回完整版，也不给空页面。
+    if(kept){{hidden.forEach(function(node){{node.classList.add('rb-hidden');}});}}
+    else{{document.body.setAttribute('data-view','full');viewSwitch.style.display='none';}}
+    var setView=function(mode){{
+      document.body.setAttribute('data-view',mode==='full'?'full':'brief');
+      Array.prototype.slice.call(viewSwitch.querySelectorAll('[data-view-mode]')).forEach(function(btn){{
+        btn.classList.toggle('active',btn.getAttribute('data-view-mode')===mode);
+      }});
+    }};
+    viewSwitch.addEventListener('click',function(event){{
+      var btn=event.target.closest?event.target.closest('[data-view-mode]'):null;
+      if(btn){{setView(btn.getAttribute('data-view-mode'));}}
+    }});
+    // 简版下点证据缩略图/目录跳到被收起的章节会「跳了没反应」，
+    // 所以目标不可见时先自动展开完整版，再让浏览器滚过去。
+    document.addEventListener('click',function(event){{
+      if(document.body.getAttribute('data-view')!=='brief'){{return;}}
+      var link=event.target.closest?event.target.closest('a[href^="#"]'):null;
+      if(!link){{return;}}
+      var target=document.getElementById(decodeURIComponent(link.getAttribute('href').slice(1)));
+      if(target&&target.offsetParent===null){{setView('full');}}
+    }},true);
+  }}
   var reportNavigation=document.getElementById('report-navigation');
   var mobileNavDrawer=document.getElementById('mobile-nav-drawer');
   var mobileNavToggle=document.querySelector('[data-mobile-nav-toggle]');

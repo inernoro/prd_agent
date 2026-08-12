@@ -1,8 +1,16 @@
+---
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-admin/src/**/*.css"
+---
+
 # prd-admin 系统级双皮肤（Dual Theme）
 
-> 触发：编辑 `prd-admin/src/**/*.tsx`、`prd-admin/src/styles/*.css`。
-> 一句话：**颜色只能来自 token 或双皮肤分支，禁止裸写**。tokens.css 的暗/浅双主题早已齐备，
-> 历史上所有「白底浮暗卡」「浅色下表面隐形」问题的根因都是组件绕过 token 硬编码颜色。
+**一句话**：prd-admin 的颜色只能来自主题 token 或双皮肤分支，裸写的白透明与深色 hex 会被棘轮测试拦下。
+**什么时候撞上**：改 prd-admin 里任何带颜色的组件或样式文件。
+
+> tokens.css 的暗/浅双主题早已齐备，历史上所有「白底浮暗卡」「浅色下表面隐形」问题的根因
+> 都是组件绕过 token 硬编码颜色。
 
 ---
 
@@ -33,7 +41,7 @@
 4. **基线更新**：确属合法例外需要提高某文件计数时，跑
    `UPDATE_THEME_BASELINE=1 pnpm vitest run src/lib/__tests__/themeHardcodeRatchet.test.ts`
    基线 diff 必须出现在 PR 里并说明原因；无说明的基线上调一律 reject。
-5. **清扫顺序**（存量债务，台账见 `doc/debt.frontend.mobile-light-theme.md`）：用户走到哪修到哪；优先级 = 移动端 Tab 直达页 > 高频 Agent 页 > 管理后台深页。
+5. **清扫顺序**（存量债务，台账见 `doc/debt.frontend.md「移动端全局浅色主题」`）：用户走到哪修到哪；优先级 = 移动端 Tab 直达页 > 高频 Agent 页 > 管理后台深页。
 
 ## 三、验收要求
 

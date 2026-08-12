@@ -1,4 +1,16 @@
+---
+paths:
+  - "exec_dep.sh"
+  - "fast.sh"
+  - "deploy/nginx/**/*"
+  - "docker-compose*.yml"
+  - ".github/workflows/*.yml"
+---
+
 # 生产发布安全触发规则
+
+**一句话**：改生产发布入口前必须先读那份安全合同：容器健康不等于页面健康，静态产物要先在非在线目录验完再原子切换，没拿到公网入口证据不许说发布完成。
+**什么时候撞上**：改发布脚本、nginx 配置、compose，或发布类 workflow。
 
 修改 `exec_dep.sh`、`fast.sh`、`deploy/nginx/**`、`docker-compose*.yml`、`.github/workflows/web-latest-pages.yml`、`.github/workflows/server-deploy.yml` 或其他生产发布入口前，必须完整阅读 `doc/rule.platform.production-release-safety.md`。
 

@@ -2,8 +2,13 @@
 
 > **版本**：v1.0 | **日期**：2026-07-15 | **状态**：已落地
 
-> **更新**:2026-07-15
+**一句话**：删了项目或分支、容器却还在后台跑：用对账收敛取代命令式级联删除，靠周期对账清孤儿。
+**谁该读**：排查孤儿资源的运维；接手生命周期的工程师。
+**读完能做什么**：说清对账为什么比级联删除可靠。
 
+---
+
+> **更新**:2026-07-15
 
 ## 一、管理摘要
 
@@ -55,10 +60,9 @@
 
 ## 六、关联
 
-- `cds/src/services/orphan-container-reaper.ts` — 孤儿判定与收割 SSOT
 - `.claude/rules/cds-first-verification.md` / `closed-loop-acceptance.md` — 验收纪律
-- `doc/debt.cds.performance.md` — too-many-containers 告警(本设计消除其主要来源)
-- `doc/design.cds.self-hosting.md` — 预览实例(收割器在预览实例中随后台服务整体跳过)
+- [doc/debt.cds.performance.md](./debt.cds.performance.md) — too-many-containers 告警(本设计消除其主要来源)
+- [doc/design.cds.self-hosting.md](./design.cds.self-hosting.md) — 预览实例(收割器在预览实例中随后台服务整体跳过)
 - `.claude/rules/cross-project-isolation.md` — 系统级容器免死名单的依据
 
 ## 七、风险与已知边界
@@ -67,3 +71,13 @@
 - 判定依赖 label:历史上手工 `docker run` 起的、无 label 的残留容器不在收割范围(宁漏勿误),需人工一次性盘点;
 - 项目删除的物理清理是响应后异步:极端情况下进程在异步段崩溃 → 残留交由收割器下一轮收敛(这正是本架构的设计意图);
 - 收割 stop 与 auto-restart 巡检的交互:孤儿容器不在 state,auto-restart 只扫 state 内 infra,不会把被收割的孤儿重新拉起(已核对口径)。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 六、关联 | `cds/src/services/orphan-container-reaper.ts` | 孤儿判定与收割 SSOT |

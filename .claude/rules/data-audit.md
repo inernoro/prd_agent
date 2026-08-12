@@ -1,8 +1,13 @@
 ---
-globs: ["prd-api/src/**/Models/**/*.cs", "prd-api/src/**/Controllers/**/*.cs"]
+paths:
+  - "prd-api/src/**/Models/**/*.cs"
+  - "prd-api/src/**/Controllers/**/*.cs"
 ---
 
 # 数据关系审计原则
+
+**一句话**：实体 A 新增对 B 的引用时，必须把所有访问 B 的端点审一遍，确认权限校验覆盖了新路径。
+**什么时候撞上**：Model 新增引用字段，或把单引用改成多引用。
 
 当实体 A 新增对实体 B 的引用关系，必须审计所有访问实体 B 的端点，确保权限校验覆盖新关系。
 

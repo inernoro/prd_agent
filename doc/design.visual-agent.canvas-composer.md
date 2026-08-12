@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-19 | **状态**：已落地
 
+**一句话**：视觉编辑器把画布、图片引用、混排输入、上传生命周期与持久化揉在一处，本文按四层拆解它。
+**谁该读**：接手视觉编辑器的前端工程师。
+**读完能做什么**：定位一个问题属于四层里的哪一层。
+
+---
+
 ## 管理摘要
 
 - **解决什么问题**：视觉创作编辑器（AdvancedVisualAgentTab，约 9400 行）承载了画布、两阶段图片引用、富文本混排输入、上传生命周期与服务端持久化等大量隐性设计，此前无文档——每次跨项目迁移（如 BrandAI）都要重新读码考古，成本高且必漏。本文把这些原理固化为唯一事实源。
@@ -41,7 +47,7 @@ sendText → resolveImageRefs（chipRefs/选中/inline 图统一解析）→ bui
 ## 关联文档
 
 - .claude/rules/gesture-unification.md — 手势统一标准（标准 A 参考实现即本页）
-- doc/plan.visual-agent.optimization-backlog.md — 本次考古沉淀的优化清单
+- [plan.visual-agent.optimization-backlog.md](./plan.visual-agent.optimization-backlog.md) — 本次考古沉淀的优化清单
 - BrandAI 仓库 docs/12、docs/13 — 迁移计划与逐项对齐清单（约 98 项规格）
 
 ## 风险

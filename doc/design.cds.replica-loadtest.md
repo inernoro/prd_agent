@@ -1,8 +1,14 @@
 # CDS 复制集压测（A/B 负载对比台） · 设计
 
 > **版本**：v1.0 | **日期**：2026-07-27 | **状态**：已落地（MVP）
+
+**一句话**：一个入口并排跑两个版本做负载对比，用来验证改动对性能的真实影响。
+**谁该读**：要做性能对比验证的人。
+**读完能做什么**：说清对比台怎么分流与取数。
+
+---
 >
-> 关联：`design.cds.replica-set.md`、`debt.cds.replica-set.md`、`.claude/rules/concurrency-gate-discipline.md`
+> 关联：[design.cds.replica-set.md](./design.cds.replica-set.md)、[debt.cds.md](./debt.cds.md)、`.claude/rules/concurrency-gate-discipline.md`
 
 ---
 

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.ModelPool;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -98,6 +99,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             RequestId = current?.RequestId ?? Guid.NewGuid().ToString("N"),
             GroupId = current?.GroupId,
             RunId = current?.RunId,
+            LogicalRequestId = current?.LogicalRequestId,
+            ProviderTaskId = current?.ProviderTaskId,
             SessionId = current?.SessionId,
             UserId = current?.UserId,
             ViewRole = current?.ViewRole,

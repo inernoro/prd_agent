@@ -19,6 +19,7 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.LLM.Adapters;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -122,6 +123,17 @@ public class OpenAIImageClient : IImageGenerationClient
         if (references.Count > 0) body["input_references"] = references;
 
         return ("images", body);
+    }
+
+    internal static bool ResolveEffectiveIsAdaptive(
+        GatewayModelResolution? resolution,
+        string? modelId)
+    {
+        var sizeControl = ImageSizeControlCapabilities.Parse(resolution?.ParameterCapabilities);
+        if (sizeControl.IsConfigured) return sizeControl.UsePrompt;
+
+        var adapter = ImageGenModelAdapterRegistry.TryMatch(modelId);
+        return adapter?.SizeConstraintType == SizeConstraintTypes.Adaptive;
     }
 
 
@@ -277,10 +289,10 @@ public class OpenAIImageClient : IImageGenerationClient
         // 获取平台适配器（优先使用 Gateway 解析出的 wire 协议，避免同平台多协议时被 URL/模型名猜回旧适配器）。
         var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName, wireProtocol);
         var isVolces = platformAdapter.PlatformType == "volces"; // 保留兼容变量
-        // OpenRouter 新图片协议走专用 /images；旧兼容协议仍保留 chat/completions + modalities。
-        // Offering 必须显式声明 openrouter-image，避免仅凭域名猜测后把旧通道切错协议。
-        var isOpenRouterImageApi = wireProtocol is "openrouter-image" or "openrouter-images";
-        var isOpenRouter = !isOpenRouterImageApi
+        // OpenRouter 有两条显式协议：openrouter-image 走专用 Images API；openrouter 保留
+        // chat/completions + modalities 的多模态模型兼容路径。不能只凭域名把专用图片模型改回 chat。
+        var isOpenRouterImagesApi = wireProtocol is "openrouter-image" or "openrouter-images";
+        var isOpenRouter = !isOpenRouterImagesApi
             && (apiUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(wireProtocol, "openrouter", StringComparison.OrdinalIgnoreCase));
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
@@ -336,6 +348,10 @@ public class OpenAIImageClient : IImageGenerationClient
         {
             size = null;
         }
+
+        // 特殊模型拒绝尺寸字段，但仍允许用户选择画幅：在模型解析完成后，
+        // 由统一请求边界把结构化尺寸语言化，确保标准、Exchange、图生图等路径使用同一份实际 prompt。
+        prompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt(prompt, reqParams, adapterConfig);
 
         // 非 Volces 且无适配器：尝试命中"允许尺寸白名单"缓存，避免先 400 再重试
         var capsKey = BuildCapsKey(null, platformIdForLog, null, effectiveModelName);
@@ -400,6 +416,18 @@ public class OpenAIImageClient : IImageGenerationClient
             Images = string.IsNullOrWhiteSpace(initImageBase64) ? new List<string>() : new List<string> { initImageBase64 },
             MaskBase64 = maskBase64,
         };
+        var canonicalSizeForSend = requestedSizeNorm;
+
+        GatewayCanonicalImageRequest CanonicalForCurrentSend()
+            => new()
+            {
+                Prompt = canonicalImageRequest.Prompt,
+                Count = canonicalImageRequest.Count,
+                Size = canonicalSizeForSend,
+                ResponseFormat = canonicalImageRequest.ResponseFormat,
+                Images = canonicalImageRequest.Images,
+                MaskBase64 = canonicalImageRequest.MaskBase64,
+            };
         
         // 使用平台适配器构建请求
         object reqObj;
@@ -502,7 +530,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         RequestBody = exchangeBody,
                         IsMultipart = false,
@@ -537,7 +565,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
@@ -554,20 +582,37 @@ public class OpenAIImageClient : IImageGenerationClient
                         }
                     }, resolution, token);
                 }
-                // OpenRouter 专用图片协议：/images + input_references。
-                // Gateway 会基于 canonical request 为每条 Offering 重新构建，确保故障切换时协议不串线。
-                else if (isOpenRouterImageApi)
+                // OpenRouter 专用 Images API：文生图与参考图统一使用顶层 prompt/aspect_ratio/input_references。
+                else if (isOpenRouterImagesApi)
                 {
-                    var openRouterRequest = BuildOpenRouterImageRequest(
-                        effectiveModelName,
-                        prompt,
-                        n,
-                        requestedSizeNorm,
-                        initImageBase64 == null ? [] : [initImageBase64],
-                        isAdaptiveModel);
+                    var orImageBody = new JsonObject
+                    {
+                        ["model"] = effectiveModelName,
+                        ["prompt"] = prompt,
+                        ["n"] = Math.Max(1, n),
+                    };
+                    var orImageAspect = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(size);
+                    if (orImageAspect != null)
+                    {
+                        orImageBody["aspect_ratio"] = orImageAspect;
+                    }
+                    if (initImageBase64 != null)
+                    {
+                        var dataUri = initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                            ? initImageBase64
+                            : $"data:image/png;base64,{initImageBase64}";
+                        orImageBody["input_references"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["type"] = "image_url",
+                                ["image_url"] = new JsonObject { ["url"] = dataUri },
+                            },
+                        };
+                    }
 
                     _logger.LogInformation(
-                        "[OpenAIImageClient] OpenRouter 专用图片请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
+                        "[OpenAIImageClient] OpenRouter 专用 Images API 请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
                         appCallerCode, initImageBase64 != null, effectiveModelName);
 
                     return await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
@@ -575,10 +620,10 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
-                        EndpointPath = openRouterRequest.EndpointPath,
-                        RequestBody = openRouterRequest.Body,
+                        EndpointPath = "images",
+                        RequestBody = orImageBody,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
                         Context = new GatewayRequestContext
@@ -592,7 +637,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         }
                     }, resolution, token);
                 }
-                // OpenRouter 旧图片协议：chat/completions + modalities（文生图 / 图生图统一走这条）
+                // OpenRouter 多模态图片生成：chat/completions + modalities（文生图 / 图生图统一走这条）
                 // isOpenRouter = apiUrl 命中；forceOpenRouter = images/generations 返回 404 后的兜底重试
                 else if (isOpenRouter || forceOpenRouter)
                 {
@@ -626,7 +671,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     // 把所选画幅透传给 OpenRouter：其 chat/completions 出图用 image_config.aspect_ratio 控制形状，
                     // 不传则回退模型默认(通常方形)，导致 16:9 / 9:16 关键帧被裁切、与后续图生视频画幅错配（Codex review）。
                     // 仅在能从 size 推出受支持的比例时添加，推不出就不加(保持原行为，避免未知字段 400)。
-                    var orAspect = DeriveOpenRouterAspectRatio(size);
+                    var orAspect = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(size);
                     if (orAspect != null)
                     {
                         orBody["image_config"] = new JsonObject { ["aspect_ratio"] = orAspect };
@@ -641,7 +686,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = "chat/completions",
                         RequestBody = orBody,
@@ -693,7 +738,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         RequestBody = requestBody,
@@ -782,7 +827,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         IsMultipart = true,
@@ -838,6 +883,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     if (!string.IsNullOrEmpty(suggestedSize))
                     {
                         SetRequestedSizeForRetry(reqObj, initImageBase64, suggestedSize);
+                        canonicalSizeForSend = NormalizeSizeString(suggestedSize);
                         gatewayResp = await SendViaGatewayAsync(ct);
                     }
                 }
@@ -873,6 +919,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     if (!string.Equals(NormalizeSizeString(currentSize), NormalizeSizeString(chosenStr), StringComparison.OrdinalIgnoreCase))
                     {
                         SetRequestedSizeForRetry(reqObj, initImageBase64, chosenStr);
+                        canonicalSizeForSend = NormalizeSizeString(chosenStr);
                         gatewayResp = await SendViaGatewayAsync(ct);
                     }
                 }
@@ -995,6 +1042,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         RequestedSize = requestedSizeRaw,
                         EffectiveSize = requestedSizeRaw,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
@@ -1141,6 +1189,7 @@ public class OpenAIImageClient : IImageGenerationClient
             var watermarkConfig = string.IsNullOrWhiteSpace(appKeyForWatermark) ? null : await TryGetWatermarkConfigAsync(appKeyForWatermark, ct);
             _logger.LogInformation("ImageGen watermark config resolved: {HasWatermark}", watermarkConfig != null);
             var cosInfos = new List<object>();
+            string? actualOutputSize = null;
             for (var i = 0; i < images.Count; i++)
             {
                 byte[]? bytes = null;
@@ -1171,9 +1220,12 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
-                var sizeStr = NormalizeSizeString(size);
+                // 元数据采用实际图片尺寸；保存与 UploadArtifact 登记仍共用每 SHA 租约，
+                // 避免工作区清理在对象写入与登记之间删除产物。
+                var identifiedSize = IdentifyActualImageSize(bytes);
+                actualOutputSize ??= identifiedSize;
+                var sizeStr = NormalizeSizeString(identifiedSize ?? size);
                 var okDim = TryParseSize(sizeStr, out var w0, out var h0);
-                // 原图写入和 UploadArtifact 登记共用每 SHA 租约，避免工作区清理在两步之间删掉对象。
                 var stored = await SaveGeneratedOutputAsync(
                     bytes,
                     outMime,
@@ -1220,7 +1272,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
             // Gateway 已处理日志记录，无需手动记录
 
-            var finalSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
+            var finalSize = actualOutputSize ?? GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
             var effectiveSize = string.IsNullOrWhiteSpace(finalSize) ? null : finalSize.Trim();
             var effectiveSizeNorm = NormalizeSizeString(effectiveSize);
             var sizeAdjusted = !string.IsNullOrWhiteSpace(requestedSizeNorm) &&
@@ -1237,6 +1289,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     EffectiveSize = effectiveSize,
                     SizeAdjusted = sizeAdjusted,
                     RatioAdjusted = ratioAdjusted,
+                    IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     SizeAdjustmentNote = sizeAdjusted && !string.IsNullOrWhiteSpace(requestedSizeRaw) && !string.IsNullOrWhiteSpace(effectiveSize)
                         ? $"本次尺寸替换：{requestedSizeRaw} -> {effectiveSize}"
                         : null
@@ -1507,7 +1560,8 @@ public class OpenAIImageClient : IImageGenerationClient
                     Meta = new ImageGenResultMeta
                     {
                         RequestedSize = size,
-                        EffectiveSize = size
+                        EffectiveSize = size,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
@@ -1657,7 +1711,8 @@ public class OpenAIImageClient : IImageGenerationClient
                     Meta = new ImageGenResultMeta
                     {
                         RequestedSize = size,
-                        EffectiveSize = size
+                        EffectiveSize = size,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
@@ -1940,7 +1995,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 Meta = new ImageGenResultMeta
                 {
                     RequestedSize = size,
-                    EffectiveSize = size
+                    EffectiveSize = size,
+                    IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                 }
             });
         }
@@ -2631,30 +2687,6 @@ public class OpenAIImageClient : IImageGenerationClient
 
     private readonly record struct SizeCapsKey(string? ModelId, string? PlatformId, string? ModelNameLower);
 
-    // 从 "WxH" 像素尺寸推 OpenRouter image_config.aspect_ratio（受支持集合里取最接近的比例）。
-    // 推不出（空/格式错/无法解析）返回 null —— 调用方据此决定不加 image_config，保持原行为不引入未知字段（Codex review）。
-    private static string? DeriveOpenRouterAspectRatio(string? size)
-    {
-        if (string.IsNullOrWhiteSpace(size)) return null;
-        var parts = size.Trim().ToLowerInvariant().Split('x');
-        if (parts.Length != 2) return null;
-        if (!int.TryParse(parts[0], out var w) || !int.TryParse(parts[1], out var h) || w <= 0 || h <= 0) return null;
-        var target = (double)w / h;
-        var candidates = new (string Label, double Ratio)[]
-        {
-            ("1:1", 1.0), ("2:3", 2.0 / 3), ("3:2", 3.0 / 2), ("3:4", 3.0 / 4), ("4:3", 4.0 / 3),
-            ("4:5", 4.0 / 5), ("5:4", 5.0 / 4), ("9:16", 9.0 / 16), ("16:9", 16.0 / 9), ("21:9", 21.0 / 9),
-        };
-        var best = candidates[0];
-        var bestDiff = double.MaxValue;
-        foreach (var c in candidates)
-        {
-            var d = Math.Abs(c.Ratio - target);
-            if (d < bestDiff) { bestDiff = d; best = c; }
-        }
-        return best.Label;
-    }
-
     private static SizeCapsKey BuildCapsKey(string? modelId, string? platformId, string? modelName, string effectiveModelName)
     {
         var mid = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
@@ -2900,6 +2932,20 @@ public class OpenAIImageClient : IImageGenerationClient
             return false;
         }
     }
+
+    internal static string? IdentifyActualImageSize(byte[]? bytes)
+    {
+        if (bytes == null || bytes.Length == 0) return null;
+        try
+        {
+            var info = SixLabors.ImageSharp.Image.Identify(bytes);
+            return info is { Width: > 0, Height: > 0 } ? $"{info.Width}x{info.Height}" : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 
 public class ImageGenResult
@@ -2930,6 +2976,7 @@ public class ImageGenResultMeta
     public string? EffectiveSize { get; set; }
     public bool SizeAdjusted { get; set; }
     public bool RatioAdjusted { get; set; }
+    public bool? IsAdaptive { get; set; }
     public string? SizeAdjustmentNote { get; set; }
 }
 

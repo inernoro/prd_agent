@@ -1,6 +1,12 @@
 # MAP 企业级自动化验收规范 · 规则
 
-> **版本**：v1.3 | **日期**：2026-07-23 | **状态**：已落地
+> **版本**：v1.5 | **日期**：2026-08-01 | **状态**：已落地
+
+**一句话**：规定一份验收报告要拿出什么证据才算数，让别人不用问执行人就能复核结论。
+**谁该读**：做验收的人和 AI；要看懂验收报告结论可信度的产品经理与管理者。
+**读完能做什么**：判断一份验收报告能不能采信，以及自己做验收时该留哪些证据。
+
+---
 
 ## 1. 目标
 
@@ -29,10 +35,10 @@ MAP 企业级自动化验收不是“跑脚本、截图片、发链接”。它�
 
 | 资产 | 位置 | 作用 | 禁止事项 |
 |---|---|---|---|
-| 企业级规范 | `doc/rule.acceptance.map-enterprise.md` | 定义验收治理主契约 | 不写单次执行结果 |
-| 每日验收 SOP | `doc/guide.acceptance.daily-sop.md` | 定义每日自动化如何运行 | 不复制技能全文到 automation prompt |
-| 报告与证据规范 | `doc/guide.acceptance.report-evidence.md` | 定义报告信息架构、截图、链接和失败呈现 | 不把截图堆成无解释素材墙 |
-| 引用与知识库治理 | `doc/design.acceptance.knowledge-governance.md` | 定义 CDS 文件夹、规范文档和引用方式 | 不把执行报告塞进 `doc/` |
+| 企业级规范 | [doc/rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md) | 定义验收治理主契约 | 不写单次执行结果 |
+| 每日验收 SOP | [doc/guide.acceptance.daily-sop.md](./guide.acceptance.daily-sop.md) | 定义每日自动化如何运行 | 不复制技能全文到 automation prompt |
+| 报告与证据规范 | [doc/guide.acceptance.report-evidence.md](./guide.acceptance.report-evidence.md) | 定义报告信息架构、截图、链接和失败呈现 | 不把截图堆成无解释素材墙 |
+| 引用与知识库治理 | [doc/design.acceptance.knowledge-governance.md](./design.acceptance.knowledge-governance.md) | 定义 CDS 文件夹、规范文档和引用方式 | 不把执行报告塞进 `doc/` |
 | 技能实现 | `.claude/skills/**` | 可执行规则、脚本和模板 | 不与主规范语义冲突 |
 | 执行报告 | CDS `/reports` | 每次验收结果、截图资产、元数据和分享链 | 不提交到仓库 |
 
@@ -266,13 +272,33 @@ python3 "$SKILLS_ROOT/acceptance-test-design/scripts/daily_scope.py" \
 | `uncovered` | 范围内但未测，必须进入缺口账本 |
 | `unverifiable` | 目标版本无法复现或证据不能指向目标 SHA，只能判“无法确认”，不得判产品失败 |
 
+### 7.0 给你的一页结论（决策读者首屏）
+
+结论语义分层（§7.1）是给验收员看的，它保证语义不混淆，但它本身仍是验收行话。每日/昨日验收报告正文的**第一个 H2 固定为「给你的一页结论」**，写给不看代码的决策读者，只回答他真正会问的四件事。
+
+| 你要知道的 | 答案格式 |
+|---|---|
+| 产品能不能用 | 固定开头 `可以正常使用` / `有功能坏了` / `这次没测出来`，后跟一句「用户会遇到什么」 |
+| 验收测完了吗 | 固定开头 `测完了` / `没测完`，后跟一句「缺的是什么」 |
+| 昨天上了什么 | 逐条「功能大白话名称 + 对用户的意义」，禁止只写「详见报告」 |
+| 需要你决定什么 | 每条给出建议和不处理的后果；确实无事项时只写「本次不需要你做任何事」 |
+| 下面的内容 | 固定提示：都是给工程师看的技术细节，你可以不看 |
+
+这一节的硬约束（归档脚本逐条校验，不达标拒收）：
+
+1. **产品失败与验收失败必须分开**：只有存在 P0/P1 产品缺陷或核心用例失败，才可写「有功能坏了」；验收链路失败或硬门禁失败而产品未失败时，必须写「这次没测出来」，不得表述成产品坏了。反向同样禁止：已有 P0/P1 或核心用例失败时不许写「可以正常使用」。
+2. **完整性不许自相矛盾**：「测完了」与不完整、覆盖缺口、核心用例未执行三项事实互斥；「没测完」必须真有缺口事实。
+3. **不许说行话**：这一节出现 `门禁`、`断言`、`契约测试`、`冻结提交`、`证明力`、`覆盖矩阵`、`根因链`、`Verdict`、`SHA`、`smoke`、`ready`、`verify-open`、`integration-live` 即拒收，除非紧跟「（一句话解释）」。别处解释过不算——读者读的是这一屏。
+
+含本节的报告在 CDS 归档为交互 HTML 时默认渲染成**简版**（只留本节、昨日工作总结、缺陷清单、问题卡和证据截图），一键可切「完整版」查看全部取证过程。
+
 ### 7.1 结论语义分层
 
 验收报告不得再用单一 Verdict 同时表达产品质量、覆盖完整性和交付建议。首屏必须拆成以下五项：
 
 | 字段 | 回答的问题 |
 |---|---|
-| 产品质量 | 是否发现可复现的产品缺陷；缺陷数量和最高严重级是什么 |
+| 产品质量 | 是否发现可复现的产品缺陷；必须给出缺陷总数、P0/P1/P2/P3 数量和非零严重级的一句话问题概述；必须写 `核心用例=通过/失败/未执行`；未执行或根因链含覆盖缺口时验收完整性必须为不完整 |
 | 验收完整性 | 目标范围是否全部获得有效证据；有多少项 covered、unverifiable、uncovered |
 | 综合结论 | `pass`、`conditional` 或 `fail` |
 | 发布建议 | 哪些范围可以继续，哪些范围不能作质量承诺 |
@@ -294,7 +320,7 @@ Verdict 只按下表判定：
 
 | 目标要求 | 观察事实 | 系统原因 | 证据影响 | 结论 | 关闭动作 |
 |---|---|---|---|---|---|
-| 应验收目标日冻结 SHA | CDS 当前部署 SHA 已前进 | 分支预览自动跟随最新 HEAD | 当前截图只能证明新版本，不能证明目标日版本 | 目标日分支无法确认，不是已知产品缺陷 | 创建冻结 SHA 的独立预览后复测 |
+| 应验收目标日冻结 SHA | CDS 当前部署 SHA 已前进 | 分支预览自动跟随最新 HEAD | 当前截图只能证明新版本，不能证明目标日版本；这不是已知产品缺陷 | 覆盖缺口 | 创建冻结 SHA 的独立预览后复测 |
 
 根因链必须从用户目标写到最终判定，禁止只写“未覆盖”“环境问题”或内部缩写。若 `target_sha != tested_sha`：
 
@@ -394,9 +420,87 @@ Verdict 只按下表判定：
 2. 视口宽度不大于 `480px`，记录实际 `viewport_width` 与 `viewport_height`。
 3. 移动端使用独立用户路径，从登录页或首页按可见入口点击进入，不复用桌面端已经直达目标状态的页面。
 4. 报告含「移动端验收」章节，写明视口、触控方式、入口路径、核心动作、结果状态、滚动归属、横向溢出、遮挡/裁切和固定元素可达性。
-5. 页面状态与检查项以 `doc/rule.frontend.mobile-visual-check-matrix.md` 为 SSOT；弹窗、抽屉、软键盘、安全区和底部固定操作等按实际改动选取，不用无关状态堆截图。
+5. 页面状态与检查项以 [doc/rule.frontend.mobile-visual-check-matrix.md](./rule.frontend.mobile-visual-check-matrix.md) 为 SSOT；弹窗、抽屉、软键盘、安全区和底部固定操作等按实际改动选取，不用无关状态堆截图。
 
 只有明确不提供移动 Web 体验的桌面原生页面或内部非页面变更，才允许报告写「移动端不适用」并说明产品边界。此类报告不得声称移动端通过；若目标含任何用户可见 Web 页面，不能使用该豁免。
+
+## 11.3 连续任务状态机验收硬门禁
+
+录音、上传、转录、生成、同步、归档、发布等包含前台动作和后台阶段的功能，验收对象不是某一张最终页面，而是从用户发起任务到结果稳定可恢复的完整状态机。只证明入口可见、最终结果存在或某次 API 成功，不能支撑连续任务通过。
+
+### 11.3.1 必测状态
+
+测试设计必须把实际适用的状态写成状态矩阵。下表是通用基线，不适用的状态必须写明原因，不能静默省略。
+
+| 状态 | 用户问题 | 页面必须回答 | 主要失败信号 |
+|---|---|---|---|
+| 入口 | 我从哪里开始 | 入口名称、用途和下一步明确 | 入口缺失、入口在移动端不可达 |
+| 执行中 | 系统正在接收什么 | 当前动作可见，核心控制持续可用 | 长内容遮挡控制区、操作无反馈 |
+| 收口中 | 我点结束后发生什么 | 立即出现阶段反馈，不让用户面对静止页面 | 点击后空白、长时间无状态变化 |
+| 首次可用 | 我最早什么时候能得到价值 | 可播放、可阅读或可查看的结果尽早出现 | 等待非必要后台工作后才展示结果 |
+| 后台处理中 | 后台还在做什么 | 处理范围、当前阶段、是否可离开明确 | 含糊的“处理中”、伪造耗时 |
+| 慢路径 | 为什么比平时慢 | 持续变化的进度、已等待时间或明确慢因 | 静止加载超过 2 秒、用户误以为卡死 |
+| 失败路径 | 哪一步失败了 | 已获得结果继续可用，失败范围和重试方式明确 | 整页报错、已有结果消失、把排队写成成功 |
+| 恢复路径 | 重试后是否真的恢复 | 当前页局部更新到真实结果，状态与内部结果一致 | 反复整页刷新、路由循环、假成功 |
+| 刷新恢复 | 我刷新后还在原任务吗 | 同一任务、同一结果和可用能力恢复 | 跳回列表、详情与列表来回切换 |
+| 返回定位 | 我从哪里进来的 | 返回列表后能定位刚访问或刚生成的条目 | 新条目排到末尾、用户失去上下文 |
+
+### 11.3.2 连续性不变量
+
+连续任务的深度验收必须至少证明以下不变量：
+
+1. 用户身份、任务身份和结果身份在状态跃迁中保持一致，不因后台更新切换到另一条记录。
+2. 一旦音频、原文、草稿或其他阶段性结果可用，后续刷新不得清空或遮蔽它；采用保留旧内容的局部更新。
+3. 后台状态变化不得制造浏览器整页重载、详情与列表互跳、无限 `pushState` / `replaceState` 或重复加载层。
+4. 首次反馈和首次可用结果分别计时。前台反馈超过 2 秒没有持续变化，或可用结果被非必要后台工作阻塞，均为体验失败。
+5. 单一选项不得伪装成切换控件；没有第二种视图时直接展示内容。
+6. 页面文案必须区分“本地已可用”“后台处理中”“排队重试”“云端已成功”，不得把降级状态包装成完成。
+7. 移动端必须同时检查滚动归属、固定控制可达、长内容遮挡、软键盘和安全区；桌面截图不能替代。
+
+### 11.3.3 四态测试与证据来源
+
+每个高风险连续任务至少覆盖以下四条路径：
+
+| 路径 | 注入或操作方式 | 必须证明 |
+|---|---|---|
+| 正常路径 | 正常速度、依赖成功 | 入口、动作、首次可用结果、最终稳定结果 |
+| 慢路径 | 人工延迟关键响应或数据流 | 立即反馈、等待过程持续可理解、核心控制不消失 |
+| 失败路径 | 注入超时、外部依赖失败或队列错误 | 页面诚实说明失败范围，已有结果仍可用，不跳页 |
+| 恢复路径 | 失败后重试成功、后台状态二次更新、手动刷新 | 局部更新、任务身份稳定、刷新恢复、无路由循环 |
+
+证据必须标明来源：
+
+- `deterministic-fixture`：注入麦克风、数据流、计时、API 状态或故障，用于稳定证明前端状态机、布局、动作和恢复逻辑。
+- `preview-live`：在目标 SHA 的公网预览环境中执行真实页面和真实网络路径。
+- `integration-live`：真实外部依赖、队列、对象存储、ASR 或其他集成结果，并由 API、日志或持久化状态佐证。
+
+fixture 证据不能证明真实外部依赖成功。若前端四态已通过但 `integration-live` 缺失或失败，必须把对应集成项标记为 `conditional`、`uncovered` 或 `fail`，不得用模拟完成态给产品整体判完整通过。
+
+### 11.3.4 可观测指标
+
+连续任务报告或自动化结果至少记录：
+
+| 指标 | 含义 | 判定用途 |
+|---|---|---|
+| `first_feedback_ms` | 用户动作到第一个可见反馈 | 识别点击后静止等待 |
+| `first_usable_result_ms` | 用户动作到首次可播放、可读或可操作结果 | 识别被后台非必要阶段阻塞 |
+| `document_boot_count` | 手动刷新前文档实际启动次数 | 大于 1 表示发生非预期整页刷新 |
+| `before_unload_count` | 手动刷新前卸载次数 | 识别浏览器级跳转或刷新 |
+| `history_write_count` | `pushState` 和 `replaceState` 次数 | 识别路由抖动和循环 |
+| `content_loader_appearances` | 首次结果可用后正文加载层重新出现次数 | 应为 0，状态更新必须保留现有内容 |
+| `task_identity` | 状态跃迁前后的任务或结果 ID | 必须保持一致 |
+| `evidence_provenance` | fixture、preview 或 live integration | 防止模拟证据冒充真实集成 |
+
+阈值由具体产品合同决定；没有业务阈值时，至少执行“反馈不静止、首次可用不等最终后台完成、手动刷新前不发生文档重启、已有内容不回退为加载态”四项硬断言。
+
+### 11.3.5 视觉状态使用语义对照
+
+主题、材质和浏览器颜色混合会改变最终 RGB。对“来源高光、选中、禁用、失败、处理中”等状态做自动化验收时，必须验证产品语义，不得只写死某个主题的颜色常量：
+
+1. 同屏选取一个普通状态作为对照，比较背景、边框、阴影、图标或文案中至少一个稳定差异；
+2. 同时保留目标状态与对照状态的截图，证明差异在人眼下可辨认；
+3. 若产品合同明确规定设计 token，可断言 token 或语义属性；只有颜色本身就是合同值时才断言精确 RGB；
+4. 目标状态与普通状态计算样式相同，或截图中不可辨认，即使 DOM 中存在对应 class，也不得判通过。
 
 ## 12. CDS 与 CDS Agent 边界
 
@@ -426,6 +530,7 @@ Verdict 只按下表判定：
 | 报告规范引用与实际流程不一致 | 判规范一致性失败，补写自测或修正流程 |
 | 执行类验收 HTML 缺少标准模板血统 | CDS 拒收，返回 `acceptance_html_template_required`；必须从 Markdown 源和 manifest 重新跑 `archive_report.py` |
 | L1/L2 用户可见 Web 页面缺少真实触控移动端证据，或报告缺「移动端验收」 | 归档拒收；桌面 context 仅缩窄视口不得计入移动端证据 |
+| 高风险连续任务缺正常、慢、失败、恢复四态，或 fixture 冒充真实集成成功 | 不得判完整通过；缺状态降级为 `conditional`，真实依赖已失败则按产品失败判定 |
 
 ## 14. 可审计字段
 
@@ -433,8 +538,8 @@ Verdict 只按下表判定：
 |---|---|
 | 范围 | `target_type`、`target_date`、`timezone`、`repo`、`branch`、`target_sha`、`tested_sha`、`preview_url`、`scope_source` |
 | 变更 | `pr`、`commit`、`changed_files`、`module`、`risk_tags`、`assertion_id`、`change_assertion` |
-| 设计 | `user_visible_surface`、`impact_model`、`proof_strategy`、`proof_strength_score`、`fusion_scenario_id`、`coverage_decision` |
-| 执行 | `test_unit_id`、`breadcrumb`、`final_url`、`expected_result`、`actual_result`、`evidence_ids`、`screenshot_anchors`、`api_log_state_refs`、`viewport_width`、`viewport_height`、`is_mobile`、`touch_points`、`mobile_path_id` |
+| 设计 | `user_visible_surface`、`impact_model`、`proof_strategy`、`proof_strength_score`、`fusion_scenario_id`、`coverage_decision`、`state_matrix`、`wait_budget` |
+| 执行 | `test_unit_id`、`breadcrumb`、`final_url`、`expected_result`、`actual_result`、`evidence_ids`、`screenshot_anchors`、`api_log_state_refs`、`viewport_width`、`viewport_height`、`is_mobile`、`touch_points`、`mobile_path_id`、`first_feedback_ms`、`first_usable_result_ms`、`document_boot_count`、`before_unload_count`、`history_write_count`、`content_loader_appearances`、`task_identity`、`evidence_provenance` |
 | 质量 | `tier`、`depth_label`、`verdict`、`defect_counts`、`uncovered_items`、`downgrade_reason`、`retry_record`、`readback_status` |
 | 归档 | `report_id`、`standard_id`、`standard_version`、`skill_versions`、`script_checksums`、`cds_project`、`cds_folder`、`deeplink`、`verify_open_attempts` |
 

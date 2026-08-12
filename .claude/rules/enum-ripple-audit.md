@@ -1,8 +1,17 @@
 ---
-globs: ["prd-api/src/**/Enums/**/*.cs", "prd-api/src/**/Models/**/*.cs", "prd-admin/src/types/**/*.ts", "prd-desktop/src/types/**/*.ts"]
+paths:
+  - "prd-api/src/**/Enums.cs"
+  - "prd-api/src/**/Models/**/*.cs"
+  - "prd-admin/src/types/**/*.ts"
+  - "prd-admin/src/lib/**/*.ts"
+  - "prd-admin/src/pages/**/*.tsx"
+  - "prd-desktop/src/types/**/*.ts"
 ---
 
 # 枚举/常量扩展涟漪审计
+
+**一句话**：枚举或常量注册表成员一变，必须按六层涟漪全栈审一遍：类型定义、映射表、硬编码列表、序列化、Mock、文档。
+**什么时候撞上**：给枚举、联合类型、常量注册表增删成员。
 
 当枚举（enum）、联合类型（union type）、常量注册表（registry/map）的成员数量发生变化时，必须全栈审计所有消费点，防止遗漏。
 

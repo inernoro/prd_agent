@@ -60,6 +60,25 @@ export type TranscribeFlowDrawerProps = {
 
 type StepState = TranscribeStepState;
 
+/**
+ * 等自动重试时给用户的那句话。
+ *
+ * 说清三件事：为什么停着、已经试了几次、下一次什么时候——
+ * 「还要多久」给不出确切值就给出下次时刻，绝不用一个不动的转圈糊弄过去。
+ * 时间戳坏掉时宁可不提时刻，也不把 Invalid Date 摆到用户脸上。
+ */
+export function describeRetryWait(
+  retry: { count: number; nextAt: string } | null,
+): string {
+  if (!retry) return '';
+  const at = new Date(retry.nextAt);
+  const when = Number.isNaN(at.getTime())
+    ? ''
+    : `下一次约在 ${at.toLocaleTimeString('zh-CN', { hour12: false })}。`;
+  return `语音转写服务暂时不可用，已自动重试 ${retry.count} 次；${when}`
+    + '录音已安全保存，可以关闭面板，恢复后会自动接着跑。';
+}
+
 export function TranscribeFlowDrawer({
   storeId,
   file,
@@ -81,6 +100,10 @@ export function TranscribeFlowDrawer({
   const [entryId, setEntryId] = useState<string | null>(initialEntryId ?? null);
   const [runId, setRunId] = useState<string | null>(restyleRun?.runId ?? null);
   const [phase, setPhase] = useState(restyleRun ? '完成' : '排队中');
+  // 转录暂时不可用、正在等自动重试。后端下发结构化字段，界面如实转述——
+  // 之前这一屏只显示按步骤推断出来的「排队中」，把服务端说的实话盖掉了，
+  // 用户盯着一个转圈几分钟，分不清是在跑还是已经坏了。
+  const [retryWait, setRetryWait] = useState<{ count: number; nextAt: string } | null>(null);
   const [status, setStatus] = useState<'uploading' | 'running' | 'done' | 'failed'>(
     file ? 'uploading' : restyleRun ? 'done' : 'running');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -188,6 +211,10 @@ export function TranscribeFlowDrawer({
     if (!res.success) return;
     const r = res.data;
     if (r.phase) setPhase(r.phase);
+    // 结构化事实，不是从 phase 文案里猜出来的：有下次重试时刻 = 正在等自动重试
+    setRetryWait(r.automaticRetryNextAt
+      ? { count: r.automaticRetryCount ?? 0, nextAt: r.automaticRetryNextAt }
+      : null);
     if (r.status === 'done') {
       setPhase('完成');
       setStatus('done');
@@ -348,7 +375,7 @@ export function TranscribeFlowDrawer({
     }
   }, [rawDraft, runId, savingRaw]);
 
-  // ── 阶段清单状态推导（默认三步；主动整理时四步，纯函数与单测覆盖） ──
+  // ── 阶段清单状态推导（三步横向标志，纯函数与单测覆盖） ──
   const steps = useMemo(
     () => deriveTranscribeSteps({
       status,
@@ -363,12 +390,15 @@ export function TranscribeFlowDrawer({
 
   const running = status === 'uploading' || status === 'running';
   const inPlace = !!entryId && outputEntryId === entryId;
+  const restylingSavedTranscript = running && includeSummary && Boolean(outputEntryId);
   const activeStep = steps.find(step => step.state === 'active');
   const selectedStyle = styles.find(style => style.key === styleKey);
   const meetingContextFields = useMemo(
     () => selectedStyle?.contextInput ? parseMeetingContext(styleContext) : [],
     [selectedStyle?.contextInput, styleContext],
   );
+  const retryWaitDescription = describeRetryWait(retryWait);
+
   const runningDescription = status === 'uploading'
     ? '录音正在安全保存，随后只生成可编辑原文'
     : phase.includes('写入')
@@ -414,8 +444,8 @@ export function TranscribeFlowDrawer({
   }, []);
 
   const body = (
-    <div className={running ? 'flex min-h-full flex-col justify-center gap-5 py-6' : 'space-y-4 py-4'}>
-      {running && (
+    <div className={running && !restylingSavedTranscript ? 'flex min-h-full flex-col justify-center gap-5 py-6' : 'space-y-4 py-4'}>
+      {running && !restylingSavedTranscript && (
         <div className="mx-auto flex w-full max-w-[340px] flex-col items-center text-center" aria-live="polite">
           <motion.div
             className="mb-4 flex h-20 w-20 items-center justify-center rounded-[24px]"
@@ -425,10 +455,15 @@ export function TranscribeFlowDrawer({
             <MapSpinner size={28} />
           </motion.div>
           <p className="text-[18px] font-semibold text-token-primary">
-            {status === 'uploading' ? '正在保存录音' : (activeStep?.label ?? phase)}
+            {status === 'uploading'
+              ? '正在保存录音'
+              // 等重试时以服务端下发的 phase 为准：推断出来的步骤标签会把「暂时不可用」说成「排队中」
+              : retryWait
+                ? phase
+                : (activeStep?.label ?? phase)}
           </p>
           <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
-            {runningDescription}
+            {retryWait ? retryWaitDescription : runningDescription}
           </p>
           <p className="mt-3 text-[11px] tabular-nums text-token-muted">
             已进行 {formatProcessDuration(runningSeconds)}
@@ -436,21 +471,35 @@ export function TranscribeFlowDrawer({
         </div>
       )}
 
-      {/* 阶段清单（Notion 式逐项点亮） */}
+      {/* 三步横向标志：移动端只表达里程碑，不用纵向清单占满首屏。 */}
       <div
-        className={`space-y-2.5 ${running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : ''}`}
+        aria-label="处理进度"
+        className={running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : 'w-full'}
         style={running ? { background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' } : undefined}>
-        {steps.map((s) => (
-          <div
-            key={s.key}
-            data-testid={`transcribe-step-${s.key}`}
-            data-state={s.state}
-            aria-current={s.state === 'active' ? 'step' : undefined}
-            className="flex items-center gap-2.5">
-            <StepIcon state={s.state} />
+        {restylingSavedTranscript ? (
+          <div className="flex items-start gap-2.5" aria-live="polite">
+            <MapSpinner size={14} />
             <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-token-primary">正在整理已保存的原文</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-token-muted">不会重新上传或转录音频，结果会更新在当前录音中。</p>
+              <p className="mt-1 text-[10px] tabular-nums text-token-muted">
+                已进行 {formatProcessDuration(runningSeconds)} · 通常需要 30–90 秒，可后台运行
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {steps.map((s) => (
+              <div
+                key={s.key}
+                data-testid={`transcribe-step-${s.key}`}
+                data-state={s.state}
+                aria-current={s.state === 'active' ? 'step' : undefined}
+                className="flex min-w-0 flex-col items-center text-center">
+                <StepIcon state={s.state} />
+                <div className="mt-2 min-w-0">
               <span
-                className="text-[13px]"
+                    className="block text-[11px] leading-4"
                 style={{
                   color: s.state === 'pending'
                     ? 'var(--text-muted)'
@@ -462,11 +511,13 @@ export function TranscribeFlowDrawer({
                 {s.label}
               </span>
               {s.sub && (
-                <span className="ml-2 text-[11px] text-token-muted">{s.sub}</span>
+                    <span className="mt-0.5 block text-[10px] leading-4 text-token-muted">{s.sub}</span>
               )}
             </div>
           </div>
-        ))}
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 上传进度条：仅上传阶段显示 */}
@@ -824,8 +875,14 @@ export function TranscribeFlowDrawer({
             {discarding ? <MapSpinner size={12} /> : null} 取消本次录音
           </Button>
         )}
-        <Button variant={status === 'done' ? 'primary' : 'ghost'} size="sm" onClick={onClose}>
-          {running ? '后台运行' : '关闭'}
+        <Button
+          variant={status === 'done' ? 'primary' : 'ghost'}
+          size="sm"
+          onClick={() => {
+            if (status === 'done' && outputEntryId) onOpenEntry?.(outputEntryId);
+            onClose();
+          }}>
+          {running ? '后台运行' : status === 'done' ? '查看录音原文' : '关闭'}
         </Button>
       </div>
     </div>

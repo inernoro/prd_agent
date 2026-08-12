@@ -6,6 +6,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Transformers;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
@@ -89,6 +90,7 @@ public class DoubaoAsrTransformerTests
               {
                 "start_time": 450,
                 "end_time": 1530,
+                "speaker_id": "0",
                 "text": "关闭透传。"
               }
             ]
@@ -104,6 +106,7 @@ public class DoubaoAsrTransformerTests
         segments[0]!["start"]!.GetValue<double>().ShouldBe(0.45);
         segments[0]!["end"]!.GetValue<double>().ShouldBe(1.53);
         segments[0]!["text"]!.GetValue<string>().ShouldBe("关闭透传。");
+        segments[0]!["speaker"]!.GetValue<string>().ShouldBe("0");
     }
 
     [Fact]

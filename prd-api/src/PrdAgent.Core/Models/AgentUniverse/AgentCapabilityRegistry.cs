@@ -29,6 +29,10 @@ public static class AgentCapabilityRegistry
             DefaultAction = "text2img",
             InputHint = "描述你想要的画面，例如：赛博朋克风格的城市夜景，霓虹灯，雨夜",
             ActionLabel = "生成图片",
+            GeneralAgentHint = "通用助手可以直接出图，不用先选它；要用图生图、看图说话这类玩法再点进来。",
+            // 刻意不给 ToolName：通用对话已经有 chat_generate_image，走的是同一条平台出图流水线
+            // （同样入 image_gen_runs、同样落素材库）。再登一把只会让模型面对两把同功能的工具。
+            // 视觉体独有的 img2img / describe_image / compose 尚未成为工具，见 debt.knowledge-base。
         },
 
         // ── 文学创作：文档/文字 → 改写后的文本（路由到 LiteraryAgentAdapter.write_content）──
@@ -46,6 +50,10 @@ public static class AgentCapabilityRegistry
             DefaultAction = "write_content",
             InputHint = "告诉我怎么改写、续写或润色这篇文档",
             ActionLabel = "发送",
+            GeneralAgentHint = "说「改写成故事」「润色一下」这类要求时，通用助手会自己找它。",
+            ToolName = "agent_literary_write",
+            ToolWhenToUse = "用户要把一段内容改写成叙事/散文/故事，或要续写、润色、换一种笔调重讲时用它。"
+                            + "普通的总结、翻译、答疑不要用——那是你自己该做的事。",
             OutboundActions = new()
             {
                 new AgentOutboundAction
@@ -73,6 +81,10 @@ public static class AgentCapabilityRegistry
             DefaultAction = "extract_defect",
             InputHint = "粘贴缺陷描述，或让我从这篇文档提取结构化缺陷",
             ActionLabel = "提取缺陷",
+            GeneralAgentHint = "说「这个有问题，帮我开个单」时，通用助手会自己找它。",
+            ToolName = "agent_defect_extract",
+            ToolWhenToUse = "用户在描述一个坏掉的行为、或要把一段吐槽/会议记录整理成缺陷单时用它，"
+                            + "产出标题、复现步骤、严重程度等结构化字段。只是讨论问题、还没到要开单，不用调。",
             OutboundActions = new()
             {
                 new AgentOutboundAction
@@ -100,8 +112,20 @@ public static class AgentCapabilityRegistry
             DefaultAction = "analyze_prd",
             InputHint = "让我分析这篇 PRD 的完整性、逻辑与缺口",
             ActionLabel = "分析",
+            GeneralAgentHint = "拿一篇需求文档问「写全了没」时，通用助手会自己找它。",
+            ToolName = "agent_prd_analyze",
+            ToolWhenToUse = "用户拿来一篇需求文档/PRD，问它写得全不全、有没有漏洞、有哪些没说清的地方时用它。"
+                            + "只是让你概括一下文档讲了什么，不用调。",
         },
     };
+
+    /// <summary>
+    /// 可被通用对话智能体自己转派的能力（声明了 ToolName 的那些）。
+    /// 通用体的工具清单从这里长出来，不另抄一份名单——否则加了能力忘了加工具、
+    /// 或者删了能力工具还挂着（形状 2：链路只建一半）。
+    /// </summary>
+    public static readonly IReadOnlyList<AgentCapability> Delegatable =
+        All.Where(c => !string.IsNullOrWhiteSpace(c.ToolName)).ToList();
 
     /// <summary>按 agentKey 查找能力契约，找不到返回 null。</summary>
     public static AgentCapability? Find(string? agentKey)

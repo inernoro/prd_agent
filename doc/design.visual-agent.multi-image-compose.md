@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：引用多张图时不能按顺序拼提示词，要先提描述、走确定性规则，必要时再让视觉模型解析意图。
+**谁该读**：做多图生成的工程师。
+**读完能做什么**：说清多张参考图怎么被理解成一个意图。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：用户引用多张图片时，系统需要稳定理解主体、背景、风格和空间关系，不能只按图片顺序拼接提示词。
@@ -102,17 +108,21 @@
 
 ## 9. 当前实现入口
 
-- `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs`
-- `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs`
-- `prd-api/src/PrdAgent.Infrastructure/Services/MultiImageDomainService.cs`
-- `prd-api/src/PrdAgent.Core/Interfaces/IMultiImageDomainService.cs`
 - `prd-api/src/PrdAgent.Core/Models/MultiImage/`
-- `prd-api/src/PrdAgent.Core/Models/ImageAsset.cs`
-- `prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs`
 
 ## 关联文档
 
-- `doc/design.visual-agent.md`
-- `doc/design.visual-agent.inline-image-chat.md`
-- `doc/design.visual-agent.multi-image-vision-api.md`
-- `doc/design.platform.model-pool.md`
+- [doc/design.visual-agent.md](./design.visual-agent.md)
+- [doc/design.visual-agent.inline-image-chat.md](./design.visual-agent.inline-image-chat.md)
+- [doc/design.visual-agent.multi-image-vision-api.md](./design.visual-agent.multi-image-vision-api.md)
+- [doc/design.platform.model-pool.md](./design.platform.model-pool.md)
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 9. 当前实现入口 | `prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs`、`prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs`、`prd-api/src/PrdAgent.Infrastructure/Services/MultiImageDomainService.cs`、`prd-api/src/PrdAgent.Core/Interfaces/IMultiImageDomainService.cs`、`prd-api/src/PrdAgent.Core/Models/ImageAsset.cs`、`prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs` |

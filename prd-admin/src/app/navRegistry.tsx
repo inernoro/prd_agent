@@ -19,6 +19,7 @@ import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
 const VisualStoryboardPage = lazy(() => import('@/pages/visual-storyboard/VisualStoryboardPage'));
 const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
+const ChatPage = lazy(() => import('@/pages/chat').then(m => ({ default: m.ChatPage })));
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
 const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
@@ -163,6 +164,29 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       },
       statLabel: '画布',
       tags: ['视觉', '智能体', '图像', '生图', 'AI绘画'],
+    },
+  },
+  {
+    path: '/chat',
+    permission: 'chat-agent.use',
+    element: shellGuarded('chat-agent.use', <ChatPage />),
+    nav: {
+      label: '对话',
+      shortLabel: '对话',
+      description: '打开就能聊的通用智能体，多轮对话，刷新不丢',
+      icon: 'MessageSquare',
+      section: 'agent',
+      appKey: 'chat-agent',
+      accentColor: '#D97757',
+      agentColor: {
+        bg: 'rgba(217, 119, 87, 0.08)',
+        border: 'rgba(217, 119, 87, 0.2)',
+        iconBg: 'rgba(217, 119, 87, 0.15)',
+        text: '#D97757',
+      },
+      statLabel: '会话',
+      tags: ['对话', '聊天', '智能体', '通用', 'chat'],
+      wip: true,
     },
   },
   {

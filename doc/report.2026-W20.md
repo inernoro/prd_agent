@@ -124,7 +124,7 @@ timeline
 > **价值**：本周新增 3 类平台技能。老王智能体用"米多解决问题五步法"在用户卡住时强制拆解任务；issues 三技能（autofix / visual-create / visual-run）建立 Agent 间 issue 自动巡检协议；daily-entropy-plan 把每日熵减做成一条命令跑完的全流程编排。
 
 - 新增 `laowang` 老王智能体技能。
-- 新增 issues 三技能 + 协议规则文档（`rule.skill.issues-system.md`）。
+- 新增 issues 三技能 + 协议规则文档（[rule.skill.issues-system.md](./rule.skill.issues-system.md)）。
 - 新增 `daily-entropy-plan` 每日熵减全流程编排技能。
 - 海鲜市场卡片布局升级 + 百宝箱功能增强。
 - 修复左侧 sidebar 与「我的导航」菜单数量不一致；优化通知卡交互（批量处理 / 动态定位 / 乐观更新）。

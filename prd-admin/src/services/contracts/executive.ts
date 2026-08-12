@@ -93,6 +93,113 @@ export type ExecutiveLeaderboard = {
   totalDays: number;
 };
 
+/* ── 团队洞察（结论优先四段式） ────────────────────────────── */
+
+export type TeamInsightKpi = {
+  key: string;
+  label: string;
+  /** 后端算不出来时为 null —— 前端必须显示「数据不足」而不是补 0 */
+  value: number | null;
+  unit: string;
+  prev: number | null;
+  deltaPct: number | null;
+  /** 该指标是越大越好还是越小越好，决定环比染色 */
+  higherIsBetter: boolean;
+  /** 日序列；窗口无界或过长时为空数组，前端不画 sparkline */
+  series: number[];
+  /** 口径说明，后端 SSOT */
+  note: string;
+  /** 构成拆解：让一个大数看得见来路 */
+  parts: { label: string; value: number }[];
+  /** 副指标：环比拿不到时的第二个可读量（日均 / 分位数 / 占比） */
+  secondary: string | null;
+};
+
+export type TeamInsightAttention = {
+  severity: 'critical' | 'watch';
+  key: string;
+  title: string;
+  evidence: string;
+  suggestion: string;
+  linkLabel: string;
+  linkTo: string;
+};
+
+export type TeamInsightMember = {
+  userId: string;
+  displayName: string;
+  role: string;
+  avatarFileName: string | null;
+  output: number;
+  /** 结果质量 0-100；必须有结果型信号（缺陷解决率 / 生图成功率）才计算，
+   *  调用成功率只作附加项。本窗无结果型信号时为 null，不折算成 100。 */
+  quality: number | null;
+  quadrant: '主力产出' | '精工型' | '高量低果' | '低活跃' | '数据不足' | '样本不足';
+  outputDays: number;
+  llmCalls: number;
+  llmErrors: number;
+  cost: number;
+  tokens: number;
+  breakdown: {
+    docs: number; sites: number; reports: number;
+    imageRuns: number; imagesDone: number; imagesFailed: number;
+    defectsReported: number; defectsAssigned: number;
+    defectsResolved: number; defectsBacklog: number;
+  };
+  highlights: string[];
+};
+
+export type TeamInsightFlowNode = { name: string; value: number; unit: string; loss?: boolean; hint?: string | null };
+
+export type TeamInsightHeadline = {
+  /** 头条：这一屏最该被看见的那一件事 */
+  text: string;
+  tone: 'critical' | 'watch' | 'good' | 'neutral';
+  /** 头条是怎么算出来的 —— 读者不必信任面板，他可以照着去查 */
+  basis: string;
+  /** 支撑点：每句都挂着真实数字，算不出来的不出句；basis 说清口径 */
+  points: { text: string; tone: 'critical' | 'watch' | 'good' | 'neutral'; basis: string }[];
+  attentionCount: number;
+  criticalCount: number;
+};
+
+export type TeamInsights = {
+  headline: TeamInsightHeadline;
+  pulse: TeamInsightKpi[];
+  attention: TeamInsightAttention[];
+  members: TeamInsightMember[];
+  flow: { left: TeamInsightFlowNode[]; mid: TeamInsightFlowNode[]; right: TeamInsightFlowNode[] };
+  meta: {
+    /** 窗口跨了几天；无界窗口（全部时间）为 0 */
+    days: number;
+    from: string | null;
+    /** 窗口右边界（闭区间最后一天）。注意不是响应生成时刻——旧语义会把人骗过去 */
+    to: string;
+    prevFrom: string | null;
+    /** 上一窗右边界（闭区间最后一天）；无环比时为 null */
+    prevTo: string | null;
+    totalMembers: number;
+    /** 四象限分界阈值（产出阈值 / 质量中位），与后端判定同口径 */
+    medians: { output: number; quality: number };
+    /** 单人卡的参照系：各项在入图成员里的中位 */
+    benchmarks: { docs: number; sites: number; imageRuns: number; reports: number; defectsResolved: number; llmCalls: number };
+    /** 各象限人数，直接标在角上 */
+    quadrantCounts: Record<string, number>;
+    /** 有结果型信号、进得了画像的人数 */
+    plottedMembers: number;
+    /** 入图样本 >= 3 才做四象限分型；否则象限一律为「样本不足」 */
+    quadrantReliable: boolean;
+    /** 模型组是否配了单价；否则成本一律算不出来，显示数据不足而非 0 */
+    costAvailable: boolean;
+    seriesAvailable: boolean;
+    /** 明确拿不到的指标 —— 面板照实说明，不编数字 */
+    unavailable: { metric: string; reason: string }[];
+    sources: { metric: string; source: string }[];
+  };
+};
+
+export type GetTeamInsightsContract = (days?: number) => Promise<ApiResponse<TeamInsights>>;
+
 export type GetExecutiveOverviewContract = (days?: number) => Promise<ApiResponse<ExecutiveOverview>>;
 export type GetExecutiveTrendsContract = (days?: number) => Promise<ApiResponse<ExecutiveTrendItem[]>>;
 export type GetExecutiveTeamContract = (days?: number) => Promise<ApiResponse<ExecutiveTeamMember[]>>;

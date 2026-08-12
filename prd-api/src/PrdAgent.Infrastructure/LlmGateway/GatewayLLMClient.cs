@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -118,6 +119,8 @@ public class GatewayLLMClient : ILLMClient
                 SessionId = scopeCtx?.SessionId,
                 GroupId = scopeCtx?.GroupId,
                 RunId = scopeCtx?.RunId,
+                LogicalRequestId = scopeCtx?.LogicalRequestId,
+                ProviderTaskId = scopeCtx?.ProviderTaskId,
                 UserId = scopeCtx?.UserId,
                 ViewRole = scopeCtx?.ViewRole,
                 DocumentChars = scopeCtx?.DocumentChars,

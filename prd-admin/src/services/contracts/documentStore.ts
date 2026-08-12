@@ -242,6 +242,13 @@ export type DocumentStoreAgentRun = {
   transcriptText?: string;
   /** 「换个整理方式」任务指向的原转录 run */
   restyleOfRunId?: string;
+  /**
+   * 已自动重试的次数 / 下一次自动重试的时刻（后端在转录暂时不可用时下发）。
+   * 这两个是**结构化事实**：界面据此如实说「在等重试、第几次、还要多久」，
+   * 而不是去猜 phase 文案里有没有「重试」两个字。
+   */
+  automaticRetryCount?: number;
+  automaticRetryNextAt?: string;
   /** 多轮对话历史（仅 reprocess 模式有内容） */
   messages?: ReprocessChatMessage[];
   createdAt: string;

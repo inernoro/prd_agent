@@ -44,6 +44,7 @@ export const generateImageGenReal: GenerateImageGenContract = async (input) => {
       modelId: input.modelId,
       platformId: input.platformId,
       modelName: input.modelName,
+      operation: input.operation,
       prompt: input.prompt,
       n: input.n,
       size: input.size,
@@ -139,4 +140,3 @@ export const streamImageGenRunWithRetryReal: StreamImageGenRunWithRetryContract 
 
   return ok(true);
 };
-

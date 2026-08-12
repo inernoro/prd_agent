@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-23 | **状态**：已落地
 
+**一句话**：代码托管方要订阅哪七个事件、哪些噪声事件会被静默过滤，以及怎么验证真的收到了。
+**谁该读**：配置事件订阅的管理员；排查推送后没反应的人。
+**读完能做什么**：勾对事件并验证平台确实收到与处理。
+
+---
+
 > **适用**：CDS GitHub App
 
 
@@ -186,4 +192,4 @@ POST  GitHub 推送 Webhook · check_run    200   15ms
 - `cds/src/services/github-webhook-dispatcher.ts` — 事件分发核心
 - `cds/tests/routes/github-webhook.test.ts` — 单测(噪声过滤/去重/500→200)
 - `.claude/rules/cds-auto-deploy.md` — push 即部署原则
-- `doc/design.cds.md` — CDS 总体设计
+- [doc/design.cds.md](./design.cds.md) — CDS 总体设计

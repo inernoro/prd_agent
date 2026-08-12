@@ -62,12 +62,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json') }}
+          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-bt-
 
       - name: Install dependencies
         run: pnpm install
+
+      # 同 ci.yml：渲染冒烟要用 cds/web/node_modules 里的 react。
+      - name: Install web dependencies
+        run: pnpm run install:web
 
       - name: Type check
         run: pnpm build

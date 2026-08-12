@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
  * 本套件用源码扫描把两件事焊死：
  *   1. ReleaseRunStatus → 事件类型的映射只在 release-events.ts；
  *   2. 「哪些事件够格叫醒人」只在 cds-events-bus.ts —— 存活监控与发布必须共用这一张表，
- *      而不是各接各的告警通道（doc/debt.cds.uptime-monitor.md 债务 2-1 仍是 open）。
+ *      而不是各接各的告警通道（doc/debt.cds.md「CDS 存活监控（uptime-monitor）」 债务 2-1 仍是 open）。
  */
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');

@@ -12,6 +12,8 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
 using PrdAgent.Infrastructure.LlmGateway.Transformers;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Adapters;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -519,6 +521,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 var attemptStartedAt = DateTime.UtcNow;
+                MarkLastSendAttemptReachedProvider(providerAttempts);
                 response = await httpClient.SendAsync(httpRequest, ct);
                 responseBody = await response.Content.ReadAsStringAsync(ct);
                 var attemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
@@ -761,6 +764,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 Exception? sendException = null;
                 var attemptStartedAt = DateTime.UtcNow;
+                MarkLastSendAttemptReachedProvider(providerAttempts);
                 try
                 {
                     rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -1528,9 +1532,29 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var spec = source.CanonicalImageRequest!;
         var protocol = string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol;
         var normalizedProtocol = protocol?.Trim().ToLowerInvariant();
-        var modelAdapter = LLM.ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
-        var isAdaptiveModel = modelAdapter?.SizeConstraintType == LLM.SizeConstraintTypes.Adaptive;
         var images = spec.Images.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        // 上游模型能力优先于 MAP 静态兼容表。只有存量模型尚未配置 image_size 能力时，
+        // 才回退到旧适配表，避免新增模型继续依赖按名称猜测。
+        var upstreamSizeControl = ImageSizeControlCapabilities.Parse(resolution.ParameterCapabilities);
+        var basePrompt = ImageGenRequestBuilder.RemoveSizePromptDirective(spec.Prompt);
+        string effectivePrompt;
+        if (upstreamSizeControl.IsConfigured)
+        {
+            // 先以无尺寸指令的业务提示构建候选 wire；最终尺寸必须从候选适配器
+            // 已归一化的 wire 中读取，再统一应用 field / prompt，避免两者不一致。
+            effectivePrompt = basePrompt;
+        }
+        else
+        {
+            var finalRequestParams = ImageGenModelAdapterRegistry.BuildRequestParams(
+                resolution.ActualModel,
+                spec.Size);
+            var finalAdapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
+            effectivePrompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt(
+                basePrompt,
+                finalRequestParams,
+                finalAdapterConfig);
+        }
         JsonObject? body = null;
         Dictionary<string, object>? multipartFields = null;
         Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null;
@@ -1539,12 +1563,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         if (resolution.IsExchange)
         {
-            body = new JsonObject { ["prompt"] = spec.Prompt };
-            if (!isAdaptiveModel)
-            {
-                body["n"] = Math.Max(1, spec.Count);
-                if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
-            }
+            body = new JsonObject { ["prompt"] = effectivePrompt, ["n"] = Math.Max(1, spec.Count) };
+            if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
             if (images.Count > 0)
             {
                 var imageUrls = new JsonArray();
@@ -1557,7 +1577,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             var (aspectRatio, imageSize) = LLM.Adapters.GooglePlatformAdapter.ParseSizeToGoogleParams(spec.Size);
             body = LLM.Adapters.GooglePlatformAdapter.BuildGoogleRequestBody(
-                resolution.ActualModel!, spec.Prompt, aspectRatio, imageSize, images, spec.MaskBase64);
+                resolution.ActualModel!, effectivePrompt, aspectRatio, imageSize, images, spec.MaskBase64);
             endpointPath = LLM.Adapters.GooglePlatformAdapter.BuildGoogleEndpointPath(resolution.ActualModel!);
         }
         else if (normalizedProtocol is "openrouter-image" or "openrouter-images")
@@ -1565,25 +1585,26 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             body = new JsonObject
             {
                 ["model"] = resolution.ActualModel,
-                ["prompt"] = spec.Prompt,
+                ["prompt"] = effectivePrompt,
+                ["n"] = Math.Max(1, spec.Count),
             };
-            if (!isAdaptiveModel)
+            var aspectRatio = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(spec.Size);
+            if (aspectRatio != null)
             {
-                body["n"] = Math.Clamp(spec.Count, 1, 10);
-                if (!string.IsNullOrWhiteSpace(spec.Size)) body["size"] = spec.Size;
+                body["aspect_ratio"] = aspectRatio;
             }
             if (images.Count > 0)
             {
-                var references = new JsonArray();
+                var inputReferences = new JsonArray();
                 foreach (var image in images)
                 {
-                    references.Add(new JsonObject
+                    inputReferences.Add(new JsonObject
                     {
                         ["type"] = "image_url",
                         ["image_url"] = new JsonObject { ["url"] = EnsureImageDataUri(image) }
                     });
                 }
-                body["input_references"] = references;
+                body["input_references"] = inputReferences;
             }
             endpointPath = "images";
         }
@@ -1593,11 +1614,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             JsonNode userContent;
             if (images.Count == 0)
             {
-                userContent = JsonValue.Create(spec.Prompt)!;
+                userContent = JsonValue.Create(effectivePrompt)!;
             }
             else
             {
-                var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = spec.Prompt });
+                var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = effectivePrompt });
                 foreach (var image in images)
                 {
                     content.Add(new JsonObject
@@ -1614,6 +1635,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = userContent }),
                 ["modalities"] = new JsonArray("image", "text"),
             };
+            var aspectRatio = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(spec.Size);
+            if (aspectRatio != null)
+            {
+                body["image_config"] = new JsonObject { ["aspect_ratio"] = aspectRatio };
+            }
             endpointPath = "chat/completions";
         }
         else
@@ -1622,37 +1648,70 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 resolution.ApiUrl, resolution.ActualModel, normalizedProtocol);
             if (images.Count == 0)
             {
-                var built = LLM.ImageGenRequestBuilder.BuildStandardGeneration(
+                var built = ImageGenRequestBuilder.BuildStandardGeneration(
                     resolution.ActualModel!,
-                    spec.Prompt,
+                    effectivePrompt,
                     Math.Max(1, spec.Count),
                     spec.Size,
                     spec.ResponseFormat,
-                    adapter);
+                    adapter,
+                    applyAdaptiveSizePrompt: false);
                 body = JsonNode.Parse(adapter.SerializeRequest(built.RequestBody))?.AsObject() ?? new JsonObject();
-                if (isAdaptiveModel) body.Remove("n");
                 endpointPath = "images/generations";
             }
-            else if (TryDecodeCanonicalImage(images[0], out var bytes, out var mimeType))
+            else
             {
-                var effectiveSize = isAdaptiveModel ? null : adapter.NormalizeSize(spec.Size);
-                var effectiveFormat = modelAdapter?.SupportsResponseFormat == false
-                    ? null
-                    : adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
-                isMultipart = true;
-                endpointPath = "images/edits";
-                multipartFields = new Dictionary<string, object>
+                var decodedImages = new List<(byte[] Bytes, string MimeType)>();
+                foreach (var image in images)
                 {
-                    ["prompt"] = spec.Prompt,
-                };
-                if (!isAdaptiveModel) multipartFields["n"] = Math.Max(1, spec.Count);
-                if (!string.IsNullOrWhiteSpace(effectiveSize)) multipartFields["size"] = effectiveSize;
-                if (!string.IsNullOrWhiteSpace(effectiveFormat)) multipartFields["response_format"] = effectiveFormat;
-                multipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                    if (TryDecodeCanonicalImage(image, out var imageBytes, out var imageMimeType))
+                        decodedImages.Add((imageBytes, imageMimeType));
+                }
+                if (decodedImages.Count > 0)
                 {
-                    ["image"] = ("input.png", bytes, mimeType),
-                };
+                    var effectiveSize = adapter.NormalizeSize(spec.Size);
+                    var adapterConfig = ImageGenModelAdapterRegistry.TryMatch(resolution.ActualModel);
+                    var effectiveFormat = adapter.ForceUrlResponseFormat ? "url" : spec.ResponseFormat;
+                    if (adapterConfig?.SupportsResponseFormat == false) effectiveFormat = null;
+                    isMultipart = true;
+                    endpointPath = "images/edits";
+                    multipartFields = new Dictionary<string, object>
+                    {
+                        ["prompt"] = effectivePrompt,
+                        ["n"] = Math.Max(1, spec.Count),
+                    };
+                    if (!string.IsNullOrWhiteSpace(effectiveSize)) multipartFields["size"] = effectiveSize;
+                    if (!string.IsNullOrWhiteSpace(effectiveFormat)) multipartFields["response_format"] = effectiveFormat;
+                    multipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>();
+                    for (var index = 0; index < decodedImages.Count; index++)
+                    {
+                        var fieldName = decodedImages.Count == 1 ? "image" : $"image[{index}]";
+                        var fileName = decodedImages.Count == 1 ? "input.png" : $"input-{index + 1}.png";
+                        multipartFiles[fieldName] = (fileName, decodedImages[index].Bytes, decodedImages[index].MimeType);
+                    }
+                    if (!string.IsNullOrWhiteSpace(spec.MaskBase64)
+                        && TryDecodeCanonicalImage(spec.MaskBase64, out var maskBytes, out var maskMimeType))
+                    {
+                        multipartFiles["mask"] = ("mask.png", maskBytes, maskMimeType);
+                    }
+                }
             }
+        }
+
+        if (upstreamSizeControl.IsConfigured)
+        {
+            var effectiveSize = ResolveEffectiveImageSizeFromWire(
+                body,
+                multipartFields,
+                spec.Size,
+                resolution.ActualModel);
+            ApplyConfiguredImageSizeControl(body, multipartFields, upstreamSizeControl, effectiveSize);
+            ApplyConfiguredSizePromptToWire(
+                body,
+                multipartFields,
+                basePrompt,
+                effectiveSize,
+                upstreamSizeControl.UsePrompt);
         }
 
         if (!resolution.IsExchange && !string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath))
@@ -1660,6 +1719,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         return new GatewayRawRequest
         {
+            CanonicalImageRequest = spec,
+            RequiredLogicalModelPublicId = source.RequiredLogicalModelPublicId,
             AppCallerCode = source.AppCallerCode,
             ModelType = source.ModelType,
             ExpectedModel = source.ExpectedModel,
@@ -1670,12 +1731,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             IsMultipart = isMultipart,
             MultipartFields = multipartFields,
             MultipartFiles = multipartFiles,
+            MultipartFileRefs = multipartFiles is null ? source.MultipartFileRefs : null,
             HttpMethod = source.HttpMethod,
             ExtraHeaders = source.ExtraHeaders,
             TimeoutSeconds = source.TimeoutSeconds,
             ExpectBinaryResponse = source.ExpectBinaryResponse,
             Context = source.Context,
-            CanonicalImageRequest = spec,
         };
     }
 
@@ -1691,6 +1752,360 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return hasPreparedWireRequest && currentResolution is null
             ? source
             : RebuildCanonicalImageRequest(source, targetResolution);
+    }
+
+    private static GatewayRawRequest ApplyResolvedImageSizeControlToBuiltRequest(
+        GatewayRawRequest source,
+        ModelResolutionResult resolution)
+    {
+        var capability = ImageSizeControlCapabilities.Parse(resolution.ParameterCapabilities);
+        if (!HasBuiltImageWireRequest(source)) return RebuildCanonicalImageRequest(source, resolution);
+        if (!capability.IsConfigured) return source;
+
+        var body = source.RequestBody?.DeepClone().AsObject();
+        var multipartFields = source.MultipartFields is null
+            ? null
+            : new Dictionary<string, object>(source.MultipartFields, StringComparer.Ordinal);
+        var effectiveSize = ResolveEffectiveImageSizeFromWire(
+            body,
+            multipartFields,
+            source.CanonicalImageRequest!.Size,
+            resolution.ActualModel);
+        ApplyConfiguredImageSizeControl(
+            body,
+            multipartFields,
+            capability,
+            effectiveSize);
+
+        var promptUpdated = ApplyConfiguredSizePromptToWire(
+                body,
+                multipartFields,
+                source.CanonicalImageRequest.Prompt,
+                effectiveSize,
+                capability.UsePrompt);
+        if (capability.UsePrompt && !promptUpdated)
+        {
+            return RebuildCanonicalImageRequest(source, resolution);
+        }
+
+        return CopyRawRequestWithWire(source, body, multipartFields);
+    }
+
+    private static bool HasBuiltImageWireRequest(GatewayRawRequest request)
+        => request.IsMultipart
+            ? request.MultipartFields is not null
+              || request.MultipartFiles is not null
+              || request.MultipartFileRefs is not null
+            : request.RequestBody is { Count: > 0 };
+
+    private static GatewayRawRequest CopyRawRequestWithWire(
+        GatewayRawRequest source,
+        JsonObject? body,
+        Dictionary<string, object>? multipartFields)
+        => new()
+        {
+            CanonicalImageRequest = source.CanonicalImageRequest,
+            RequiredLogicalModelPublicId = source.RequiredLogicalModelPublicId,
+            AppCallerCode = source.AppCallerCode,
+            ModelType = source.ModelType,
+            EndpointPath = source.EndpointPath,
+            ExpectedModel = source.ExpectedModel,
+            PinnedPlatformId = source.PinnedPlatformId,
+            PinnedModelId = source.PinnedModelId,
+            RequestBody = body,
+            IsMultipart = source.IsMultipart,
+            MultipartFields = multipartFields,
+            MultipartFiles = source.MultipartFiles,
+            MultipartFileRefs = source.MultipartFileRefs,
+            HttpMethod = source.HttpMethod,
+            ExtraHeaders = source.ExtraHeaders,
+            TimeoutSeconds = source.TimeoutSeconds,
+            ExpectBinaryResponse = source.ExpectBinaryResponse,
+            Context = source.Context,
+        };
+
+    private static bool ApplyConfiguredSizePromptToWire(
+        JsonObject? body,
+        Dictionary<string, object>? multipartFields,
+        string fallbackPrompt,
+        string? requestedSize,
+        bool usePrompt)
+    {
+        string Transform(string? prompt)
+        {
+            var originalPrompt = ImageGenRequestBuilder.RemoveSizePromptDirective(
+                string.IsNullOrWhiteSpace(prompt) ? fallbackPrompt : prompt);
+            return usePrompt
+                ? ImageGenRequestBuilder.ApplyConfiguredSizePrompt(originalPrompt, requestedSize)
+                : originalPrompt;
+        }
+
+        if (multipartFields is not null
+            && multipartFields.TryGetValue("prompt", out var multipartPrompt))
+        {
+            multipartFields["prompt"] = Transform(multipartPrompt?.ToString());
+            return true;
+        }
+        if (body is null) return false;
+        if (body["prompt"] is JsonValue promptValue
+            && promptValue.TryGetValue<string>(out var topLevelPrompt))
+        {
+            body["prompt"] = Transform(topLevelPrompt);
+            return true;
+        }
+        if (body["messages"] is JsonArray messages)
+        {
+            foreach (var message in messages.OfType<JsonObject>())
+            {
+                if (message["role"] is JsonValue roleValue
+                    && roleValue.TryGetValue<string>(out var role)
+                    && !string.Equals(role, "user", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (message["content"] is JsonValue contentValue
+                    && contentValue.TryGetValue<string>(out var contentPrompt))
+                {
+                    message["content"] = Transform(contentPrompt);
+                    return true;
+                }
+                if (message["content"] is not JsonArray contentParts) continue;
+                foreach (var part in contentParts.OfType<JsonObject>())
+                {
+                    if (part["text"] is not JsonValue textValue
+                        || !textValue.TryGetValue<string>(out var textPrompt)) continue;
+                    part["text"] = Transform(textPrompt);
+                    return true;
+                }
+            }
+        }
+        if (body["contents"] is JsonArray contents)
+        {
+            foreach (var content in contents.OfType<JsonObject>())
+            {
+                if (content["parts"] is not JsonArray parts) continue;
+                foreach (var part in parts.OfType<JsonObject>())
+                {
+                    if (part["text"] is not JsonValue textValue
+                        || !textValue.TryGetValue<string>(out var textPrompt)) continue;
+                    part["text"] = Transform(textPrompt);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static string? ResolveEffectiveImageSizeFromWire(
+        JsonObject? body,
+        Dictionary<string, object>? multipartFields,
+        string? fallbackSize,
+        string? actualModel)
+    {
+        static string? NormalizeSizeValue(object? value)
+        {
+            var raw = value?.ToString();
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            var parts = raw.Split(
+                new[] { 'x', 'X' },
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length == 2
+                   && int.TryParse(parts[0], out var width)
+                   && int.TryParse(parts[1], out var height)
+                   && width > 0
+                   && height > 0
+                ? $"{width}x{height}"
+                : null;
+        }
+
+        static int? ReadPositiveInt(object? value)
+        {
+            try
+            {
+                var number = Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+                return number > 0 ? number : null;
+            }
+            catch (Exception) when (value is not null)
+            {
+                return null;
+            }
+        }
+
+        var bodySize = body?["size"] is JsonValue bodySizeValue
+            && bodySizeValue.TryGetValue<string>(out var bodySizeText)
+            ? NormalizeSizeValue(bodySizeText)
+            : null;
+        if (bodySize is not null) return bodySize;
+
+        var bodyWidth = body?["width"] is JsonValue bodyWidthValue
+            ? ReadPositiveInt(bodyWidthValue.ToString())
+            : null;
+        var bodyHeight = body?["height"] is JsonValue bodyHeightValue
+            ? ReadPositiveInt(bodyHeightValue.ToString())
+            : null;
+        if (bodyWidth.HasValue && bodyHeight.HasValue)
+            return $"{bodyWidth.Value}x{bodyHeight.Value}";
+
+        if (multipartFields is not null)
+        {
+            if (multipartFields.TryGetValue("size", out var multipartSize))
+            {
+                var normalizedMultipartSize = NormalizeSizeValue(multipartSize);
+                if (normalizedMultipartSize is not null) return normalizedMultipartSize;
+            }
+            var multipartWidth = multipartFields.TryGetValue("width", out var widthValue)
+                ? ReadPositiveInt(widthValue)
+                : null;
+            var multipartHeight = multipartFields.TryGetValue("height", out var heightValue)
+                ? ReadPositiveInt(heightValue)
+                : null;
+            if (multipartWidth.HasValue && multipartHeight.HasValue)
+                return $"{multipartWidth.Value}x{multipartHeight.Value}";
+        }
+
+        var adapterSize = ImageGenModelAdapterRegistry.BuildRequestParams(actualModel, fallbackSize).Adaptation.Size;
+        return NormalizeSizeValue(adapterSize)
+               ?? NormalizeSizeValue(fallbackSize)
+               ?? fallbackSize;
+    }
+
+    private static void ApplyConfiguredImageSizeControl(
+        JsonObject? body,
+        Dictionary<string, object>? multipartFields,
+        ImageSizeControlCapabilityState capability,
+        string? requestedSize)
+    {
+        var existingGoogleImageSize = body?["generationConfig"]?["imageConfig"]?["imageSize"]
+            is JsonValue imageSizeValue
+            && imageSizeValue.TryGetValue<string>(out var imageSizeText)
+                ? imageSizeText
+                : null;
+        var existingResolution = body?["resolution"]?.DeepClone();
+        var existingAspectRatio = body?["aspect_ratio"] is JsonValue aspectRatioValue
+            && aspectRatioValue.TryGetValue<string>(out var aspectRatioText)
+                ? aspectRatioText
+                : null;
+        var existingMultipartResolution = multipartFields is not null
+            && multipartFields.TryGetValue("resolution", out var multipartResolution)
+                ? multipartResolution
+                : null;
+        var existingMultipartAspectRatio = multipartFields is not null
+            && multipartFields.TryGetValue("aspect_ratio", out var multipartAspectRatio)
+                ? multipartAspectRatio?.ToString()
+                : null;
+        RemoveImageSizeFields(body, multipartFields);
+        if (!capability.UseField || string.IsNullOrWhiteSpace(capability.FieldFormat)) return;
+
+        var normalizedSize = string.IsNullOrWhiteSpace(requestedSize) ? "1024x1024" : requestedSize.Trim();
+        var aspectRatio = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(normalizedSize) ?? "1:1";
+        var (width, height) = ParseImageSize(normalizedSize);
+
+        if (body is not null)
+        {
+            switch (capability.FieldFormat)
+            {
+                case ImageSizeFieldFormats.Size:
+                    body["size"] = normalizedSize;
+                    break;
+                case ImageSizeFieldFormats.WidthHeight:
+                    body["width"] = width;
+                    body["height"] = height;
+                    break;
+                case ImageSizeFieldFormats.AspectRatio:
+                    body["aspect_ratio"] = string.IsNullOrWhiteSpace(existingAspectRatio)
+                        ? aspectRatio
+                        : existingAspectRatio;
+                    if (existingResolution is not null) body["resolution"] = existingResolution;
+                    break;
+                case ImageSizeFieldFormats.ImageConfigAspectRatio:
+                    if (body["generationConfig"] is JsonObject generationConfig)
+                    {
+                        var googleImageConfig = generationConfig["imageConfig"] as JsonObject ?? new JsonObject();
+                        googleImageConfig["aspectRatio"] = aspectRatio;
+                        var (_, computedImageSize) = LLM.Adapters.GooglePlatformAdapter.ParseSizeToGoogleParams(normalizedSize);
+                        googleImageConfig["imageSize"] = string.IsNullOrWhiteSpace(existingGoogleImageSize)
+                            ? computedImageSize
+                            : existingGoogleImageSize;
+                        generationConfig["imageConfig"] = googleImageConfig;
+                    }
+                    else
+                    {
+                        var imageConfig = body["image_config"] as JsonObject ?? new JsonObject();
+                        imageConfig["aspect_ratio"] = aspectRatio;
+                        body["image_config"] = imageConfig;
+                    }
+                    break;
+            }
+        }
+
+        if (multipartFields is not null)
+        {
+            switch (capability.FieldFormat)
+            {
+                case ImageSizeFieldFormats.Size:
+                    multipartFields["size"] = normalizedSize;
+                    break;
+                case ImageSizeFieldFormats.WidthHeight:
+                    multipartFields["width"] = width;
+                    multipartFields["height"] = height;
+                    break;
+                case ImageSizeFieldFormats.AspectRatio:
+                    multipartFields["aspect_ratio"] = string.IsNullOrWhiteSpace(existingMultipartAspectRatio)
+                        ? aspectRatio
+                        : existingMultipartAspectRatio;
+                    if (existingMultipartResolution is not null)
+                        multipartFields["resolution"] = existingMultipartResolution;
+                    break;
+                case ImageSizeFieldFormats.ImageConfigAspectRatio:
+                    multipartFields["image_config.aspect_ratio"] = aspectRatio;
+                    break;
+            }
+        }
+    }
+
+    private static void RemoveImageSizeFields(JsonObject? body, Dictionary<string, object>? multipartFields)
+    {
+        if (body is not null)
+        {
+            body.Remove("size");
+            body.Remove("width");
+            body.Remove("height");
+            body.Remove("aspect_ratio");
+            body.Remove("aspectRatio");
+            body.Remove("resolution");
+            if (body["image_config"] is JsonObject imageConfig)
+            {
+                imageConfig.Remove("aspect_ratio");
+                if (imageConfig.Count == 0) body.Remove("image_config");
+            }
+            if (body["generationConfig"] is JsonObject generationConfig
+                && generationConfig["imageConfig"] is JsonObject googleImageConfig)
+            {
+                googleImageConfig.Remove("aspectRatio");
+                googleImageConfig.Remove("imageSize");
+            }
+        }
+
+        if (multipartFields is null) return;
+        multipartFields.Remove("size");
+        multipartFields.Remove("width");
+        multipartFields.Remove("height");
+        multipartFields.Remove("aspect_ratio");
+        multipartFields.Remove("aspectRatio");
+        multipartFields.Remove("resolution");
+        multipartFields.Remove("image_config.aspect_ratio");
+    }
+
+    private static (int Width, int Height) ParseImageSize(string normalizedSize)
+    {
+        var parts = normalizedSize.Split(new[] { 'x', 'X' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 2
+               && int.TryParse(parts[0], out var width)
+               && int.TryParse(parts[1], out var height)
+               && width > 0
+               && height > 0
+            ? (width, height)
+            : (1024, 1024);
     }
 
     private static string EnsureImageDataUri(string value)
@@ -1731,10 +2146,23 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRawRequest request,
         ModelResolutionResult resolution,
         DateTime startedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool rebuildCanonicalImageRequest = false)
     {
+        // 同一上游沿用调用方通过 ImageGenRequestBuilder 算好的 wire 请求，再叠加显式 image_size 能力；
+        // 这样 inherit 不会丢失旧适配器的字段重命名/response_format 约束，端点与尺寸重试也会重新
+        // 应用显式能力。只有切换 Provider candidate 或调用方未提供 wire 请求时才完整重建。
+        if (request.CanonicalImageRequest is not null)
+        {
+            request = rebuildCanonicalImageRequest
+                ? RebuildCanonicalImageRequest(request, resolution)
+                : ApplyResolvedImageSizeControlToBuiltRequest(request, resolution);
+        }
+
         string? logId = null;
         GatewayProviderConcurrencyLease? providerLease = null;
+        var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+        List<LlmProviderAttempt>? rawProviderAttempts = null;
 
         try
         {
@@ -1752,8 +2180,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var candidate = resolution.RetryCandidates[0];
                     candidate.RetryCandidates = resolution.RetryCandidates.Skip(1).ToList();
-                    var candidateRequest = PrepareCanonicalImageRequestForResolution(request, resolution, candidate);
-                    return await ExecuteRawWithResolutionAsync(candidateRequest, candidate, startedAt, ct);
+                    return await ExecuteRawWithResolutionAsync(
+                        request, candidate, startedAt, ct, rebuildCanonicalImageRequest: true);
                 }
                 return GatewayRawResponse.Fail(concurrency.ErrorCode, admissionMessage, 429);
             }
@@ -1944,8 +2372,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6. 发送请求
             var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
-            var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
-            var rawProviderAttempts = BuildProviderAttempts(resolution, gatewayTransport);
+            rawProviderAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = GetProviderRetryResolutions(resolution, request);
 
             _logger.LogInformation(
@@ -1962,6 +2389,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 request.IsMultipart);
 
             var submitStartedAt = DateTime.UtcNow;
+            MarkLastSendAttemptReachedProvider(rawProviderAttempts);
             var response = await httpClient.SendAsync(httpRequest, ct);
 
             // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）。
@@ -2039,7 +2467,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     }
 
                     var dur = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                    await FinishRawLogAsync(logId, buildStatusCode, buildMessage, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                    await FinishRawLogAsync(logId, buildStatusCode, buildMessage, dur, resolution, request, gatewayTransport, ct, rawProviderAttempts);
                     return new GatewayRawResponse
                     {
                         Success = false,
@@ -2070,7 +2498,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             $"previous candidate admission rejected: {retryConcurrency.ErrorCode}");
                         continue;
                     }
-                    await FinishRawLogAsync(logId, 429, message, dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                    await FinishRawLogAsync(logId, 429, message, dur, resolution, request, gatewayTransport, ct, rawProviderAttempts);
                     return GatewayRawResponse.Fail(retryConcurrency.ErrorCode, message, 429);
                 }
                 providerLease = retryConcurrency.Lease;
@@ -2095,6 +2523,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 submitStartedAt = DateTime.UtcNow;
+                MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                 response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
                 contentType = response.Content.Headers.ContentType?.MediaType ?? "";
                 rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
@@ -2140,7 +2569,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     var dur = (long)(endedNow - startedAt).TotalMilliseconds;
                     CompleteLastSendAttempt(rawProviderAttempts, (int)response.StatusCode, submitDurationMs, submitError);
                     await FinishRawLogAsync(
-                        logId, (int)response.StatusCode, responseBody, dur, resolution, gatewayTransport, ct,
+                        logId, (int)response.StatusCode, responseBody, dur, resolution, request, gatewayTransport, ct,
                         rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(response, "application/json"));
                     return GatewayRawResponse.Fail("EXCHANGE_ASYNC_SUBMIT_FAILED", submitError, (int)response.StatusCode);
                 }
@@ -2193,7 +2622,26 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         var queryClient = CreateOutboundClient(request.Context?.TenantId);
                         queryClient.Timeout = TimeSpan.FromSeconds(30);
                         var queryStartedAt = DateTime.UtcNow;
-                        var queryResp = await queryClient.SendAsync(queryRequest, ct);
+                        HttpResponseMessage queryResp;
+                        try
+                        {
+                            queryResp = await queryClient.SendAsync(queryRequest, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            var failedPollDurationMs = (long)(DateTime.UtcNow - queryStartedAt).TotalMilliseconds;
+                            var (queryMessage, queryStatusCode) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+                            AddProviderAttempt(
+                                rawProviderAttempts,
+                                resolution,
+                                stage: "poll",
+                                transport: gatewayTransport,
+                                statusCode: queryStatusCode,
+                                durationMs: failedPollDurationMs,
+                                error: queryMessage,
+                                reason: $"exchange async poll attempt {pollAttempt} transport failed");
+                            throw;
+                        }
 
                         var queryHeaders = new Dictionary<string, string>();
                         foreach (var h in queryResp.Headers)
@@ -2237,7 +2685,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             var endedNow = DateTime.UtcNow;
                             var dur = (long)(endedNow - startedAt).TotalMilliseconds;
                             await FinishRawLogAsync(
-                                logId, (int)queryResp.StatusCode, responseBody, dur, resolution, gatewayTransport, ct,
+                                logId, (int)queryResp.StatusCode, responseBody, dur, resolution, request, gatewayTransport, ct,
                                 rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(queryResp, "application/json"));
                             return GatewayRawResponse.Fail("EXCHANGE_ASYNC_QUERY_FAILED", queryError, (int)queryResp.StatusCode);
                         }
@@ -2274,7 +2722,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             durationMs: dur,
                             error: "轮询超时",
                             reason: $"exchange async poll timeout after {pollAttempt} attempts");
-                        await FinishRawLogAsync(logId, 408, "轮询超时", dur, resolution, gatewayTransport, ct, rawProviderAttempts);
+                        await FinishRawLogAsync(logId, 408, "轮询超时", dur, resolution, request, gatewayTransport, ct, rawProviderAttempts);
                         return GatewayRawResponse.Fail("EXCHANGE_ASYNC_TIMEOUT",
                             $"异步任务超时，已轮询 {pollAttempt} 次 ({pollAttempt * asyncTransformer.PollIntervalMs / 1000}秒)", 408);
                     }
@@ -2334,7 +2782,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             // 9. 写入日志（完成）
             await FinishRawLogAsync(
-                logId, (int)response.StatusCode, finalResponseBody, durationMs, resolution, gatewayTransport, ct,
+                logId, (int)response.StatusCode, finalResponseBody, durationMs, resolution, request, gatewayTransport, ct,
                 rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(
                     response, contentType.Length > 0 ? contentType : "application/json"));
 
@@ -2384,7 +2832,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             _logger.LogError(ex, "[LlmGateway.SendRaw] 请求失败 status={Code}", code);
             if (logId != null)
             {
-                _logWriter?.MarkError(logId, msg, code);
+                if (rawProviderAttempts is not null)
+                {
+                    CompletePendingSendAttempt(rawProviderAttempts, code, (long)(DateTime.UtcNow - startedAt).TotalMilliseconds, msg);
+                    await FinishRawLogAsync(
+                        logId,
+                        code,
+                        msg,
+                        (long)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+                        resolution,
+                        request,
+                        gatewayTransport,
+                        CancellationToken.None,
+                        rawProviderAttempts);
+                }
+                else
+                {
+                    _logWriter?.MarkError(logId, msg, code);
+                }
             }
             return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
         }
@@ -2405,6 +2870,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var wsUrl = ResolveDoubaoStreamAsrUrl(resolution);
         var requestBodyForLog = BuildDoubaoStreamAsrRequestLogBody(request);
         var logId = await StartRawLogAsync(request, gatewayResolution, wsUrl, requestBodyForLog, startedAt, ct);
+        var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+        var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
 
         try
         {
@@ -2412,7 +2879,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (!TryGetAsrAudioBytes(request, out var audioBytes, out var audioName, out var audioError))
             {
                 var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                await FinishRawLogAsync(logId, 400, audioError, duration, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
+                CompletePendingSendAttempt(providerAttempts, 400, duration, audioError);
+                await FinishRawLogAsync(logId, 400, audioError, duration, resolution, request, gatewayTransport, ct, providerAttempts);
                 return new GatewayRawResponse
                 {
                     Success = false,
@@ -2431,7 +2899,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                 var message = "doubao-asr-stream 缺少 Access Key，无法建立 WebSocket ASR 连接。";
-                await FinishRawLogAsync(logId, 401, message, duration, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
+                CompletePendingSendAttempt(providerAttempts, 401, duration, message);
+                await FinishRawLogAsync(logId, 401, message, duration, resolution, request, gatewayTransport, ct, providerAttempts);
                 return new GatewayRawResponse
                 {
                     Success = false,
@@ -2452,6 +2921,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 audioName,
                 audioBytes.Length);
 
+            MarkLastSendAttemptReachedProvider(providerAttempts);
             var streamResult = await _doubaoStreamAsr.TranscribeAsync(
                 wsUrl,
                 appKey,
@@ -2465,6 +2935,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
             var statusCode = streamResult.Success ? 200 : 502;
             var content = BuildDoubaoStreamAsrVerboseJson(streamResult);
+            CompletePendingSendAttempt(
+                providerAttempts,
+                statusCode,
+                durationMs,
+                streamResult.Success ? null : streamResult.Error ?? streamResult.Diagnostic.FriendlyError);
 
             if (HasTrackedHealthRoute(resolution))
             {
@@ -2474,7 +2949,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     await _modelResolver.RecordFailureAsync(resolution, ct);
             }
 
-            await FinishRawLogAsync(logId, statusCode, content, durationMs, resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc, ct);
+            await FinishRawLogAsync(logId, statusCode, content, durationMs, resolution, request, gatewayTransport, ct, providerAttempts);
 
             var headers = new Dictionary<string, string>
             {
@@ -2519,7 +2994,20 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
             _logger.LogError(ex, "[LlmGateway.DoubaoStreamAsr] 请求失败 status={Code}", code);
             if (logId != null)
-                _logWriter?.MarkError(logId, msg, code);
+            {
+                var duration = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                CompletePendingSendAttempt(providerAttempts, code, duration, msg);
+                await FinishRawLogAsync(
+                    logId,
+                    code,
+                    msg,
+                    duration,
+                    resolution,
+                    request,
+                    gatewayTransport,
+                    CancellationToken.None,
+                    providerAttempts);
+            }
             return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
         }
     }
@@ -2626,16 +3114,19 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var segments = new JsonArray();
         var segmentId = 0;
-        foreach (var (startSec, endSec, text) in ExtractDoubaoSegments(result))
+        foreach (var (startSec, endSec, text, speaker) in ExtractDoubaoSegments(result))
         {
-            segments.Add(new JsonObject
+            var segment = new JsonObject
             {
                 ["id"] = segmentId++,
                 ["seek"] = 0,
                 ["start"] = startSec,
                 ["end"] = endSec,
                 ["text"] = text,
-            });
+            };
+            if (!string.IsNullOrWhiteSpace(speaker))
+                segment["speaker"] = speaker;
+            segments.Add(segment);
         }
 
         var root = new JsonObject
@@ -2656,7 +3147,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return root.ToJsonString();
     }
 
-    private static IEnumerable<(double StartSec, double EndSec, string Text)> ExtractDoubaoSegments(StreamAsrResult result)
+    private static IEnumerable<(double StartSec, double EndSec, string Text, string? Speaker)> ExtractDoubaoSegments(StreamAsrResult result)
     {
         foreach (var response in result.Responses)
         {
@@ -2680,7 +3171,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var endMs = utterance.TryGetProperty("end_time", out var et) && et.ValueKind == JsonValueKind.Number
                     ? et.GetDouble()
                     : startMs;
-                yield return (startMs / 1000.0, endMs / 1000.0, text.Trim());
+                yield return (
+                    startMs / 1000.0,
+                    endMs / 1000.0,
+                    text.Trim(),
+                    DoubaoStreamAsrService.ResolveSpeakerId(utterance));
             }
         }
 
@@ -2691,14 +3186,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 if (string.IsNullOrWhiteSpace(segment.Text)) continue;
                 var end = cursor + Math.Max(0, segment.DurationSec);
-                yield return (cursor, end, segment.Text.Trim());
+                yield return (cursor, end, segment.Text.Trim(), segment.SpeakerId);
                 cursor = end;
             }
             yield break;
         }
 
         if (!string.IsNullOrWhiteSpace(result.FullText))
-            yield return (0, 0, result.FullText.Trim());
+            yield return (0, 0, result.FullText.Trim(), null);
     }
 
     /// <inheritdoc />
@@ -3660,6 +4155,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     PromptPolicyId: request.Context?.PromptPolicyId,
                     PromptPolicyVersion: request.Context?.PromptPolicyVersion,
                     PromptPolicyHash: request.Context?.PromptPolicyHash,
+                    Operation: GatewayOperations.Invoke,
+                    LogicalRequestId: request.Context?.LogicalRequestId
+                        ?? request.Context?.RequestId,
+                    ProviderTaskId: request.Context?.ProviderTaskId,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
                     // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
@@ -4036,6 +4535,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ClientCode: request.Context?.ClientCode,
                     Environment: request.Context?.Environment,
                     ServiceKeyPrefix: request.Context?.ServiceKeyPrefix,
+                    Operation: ResolveRawOperation(request, endpoint),
+                    LogicalRequestId: request.Context?.LogicalRequestId
+                        ?? request.Context?.RequestId,
+                    ProviderTaskId: request.Context?.ProviderTaskId,
                     // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
                     // MAP 侧已把 Context.GatewayTransport 置为 "http"，此处尊重之。
                     GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
@@ -4067,12 +4570,31 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return clone;
     }
 
+    private static string ResolveRawOperation(GatewayRawRequest request, string? resolvedEndpoint = null)
+    {
+        string? declaredOperation = null;
+        if (request.RequestBody?.TryGetPropertyValue("_gateway_operation", out var operationNode) == true
+            && operationNode is JsonValue operationValue
+            && operationValue.TryGetValue<string>(out var operation))
+        {
+            declaredOperation = operation;
+        }
+
+        return GatewayOperations.Resolve(
+            request.ModelType,
+            request.HttpMethod,
+            resolvedEndpoint ?? request.EndpointPath,
+            declaredOperation,
+            request.Context?.IsHealthProbe);
+    }
+
     private Task FinishRawLogAsync(
         string? logId,
         int statusCode,
         string responseBody,
         long durationMs,
         ModelResolutionResult resolution,
+        GatewayRawRequest request,
         string gatewayTransport,
         CancellationToken ct,
         List<LlmProviderAttempt>? providerAttempts = null,
@@ -4098,7 +4620,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     Source = "response_body"
                 }
                 : null;
-            var cost = EstimateCost(resolution, tokenUsage, countCall: statusCode >= 200 && statusCode < 300);
+            var operation = ResolveRawOperation(request);
+            var cost = EstimateCost(
+                resolution,
+                tokenUsage,
+                countCall: statusCode >= 200
+                    && statusCode < 300
+                    && GatewayOperations.CountsPricePerCall(operation));
 
             _logWriter.MarkDone(
                 logId,
@@ -4218,6 +4746,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupName = resolution.ModelGroupName,
             Protocol = resolution.Protocol,
             Transport = transport,
+            ReachedProvider = false,
             Status = "sent",
             Reason = resolution.IsFallback ? resolution.FallbackReason : resolution.ResolutionReason,
         });
@@ -4233,6 +4762,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string? error)
     {
         var attempts = BuildProviderAttempts(resolution, requestTransport);
+        MarkLastSendAttemptReachedProvider(attempts);
         CompleteLastSendAttempt(attempts, statusCode, durationMs, error);
         return attempts;
     }
@@ -4262,6 +4792,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupName = resolution.ModelGroupName,
             Protocol = resolution.Protocol,
             Transport = transport,
+            ReachedProvider = string.Equals(stage, "poll", StringComparison.OrdinalIgnoreCase),
             Status = statusOverride
                      ?? (statusCode >= 200 && statusCode < 300 && string.IsNullOrWhiteSpace(error)
                          ? "succeeded"
@@ -4292,6 +4823,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupName = resolution.ModelGroupName,
             Protocol = resolution.Protocol,
             Transport = transport,
+            ReachedProvider = false,
             Status = "sent",
             Reason = reason,
         });
@@ -4334,6 +4866,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ModelGroupName = resolution.ModelGroupName,
             Protocol = resolution.Protocol,
             Transport = transport,
+            ReachedProvider = false,
             Status = "sent",
             Reason = resolution.IsFallback ? resolution.FallbackReason : resolution.ResolutionReason,
         });
@@ -4359,6 +4892,34 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         attempt.Status = statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
         if (!string.IsNullOrWhiteSpace(error))
             attempt.Reason = error;
+    }
+
+    private static void CompletePendingSendAttempt(
+        List<LlmProviderAttempt> attempts,
+        int statusCode,
+        long durationMs,
+        string? error)
+    {
+        var attempt = attempts.LastOrDefault(x =>
+            string.Equals(x.Stage, "send", StringComparison.OrdinalIgnoreCase)
+            && x.EndedAt is null);
+        if (attempt is null)
+            return;
+
+        attempt.StatusCode = statusCode;
+        attempt.DurationMs = durationMs;
+        attempt.EndedAt = DateTime.UtcNow;
+        attempt.Error = string.IsNullOrWhiteSpace(error) ? null : error;
+        attempt.Status = statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
+        if (!string.IsNullOrWhiteSpace(error))
+            attempt.Reason = error;
+    }
+
+    private static void MarkLastSendAttemptReachedProvider(List<LlmProviderAttempt> attempts)
+    {
+        var attempt = attempts.LastOrDefault(x => string.Equals(x.Stage, "send", StringComparison.OrdinalIgnoreCase));
+        if (attempt is not null)
+            attempt.ReachedProvider = true;
     }
 
     #endregion

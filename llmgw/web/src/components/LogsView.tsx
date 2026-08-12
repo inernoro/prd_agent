@@ -76,6 +76,19 @@ const TRANSPORT_META: Record<string, { label: string; color: string; bg: string 
   'admin-probe': { label: 'admin-probe', color: '#6e7681', bg: 'rgba(110,118,129,0.14)' },
   direct: { label: 'direct', color: '#f85149', bg: 'rgba(248,81,73,0.14)' },
 };
+
+const OPERATION_META: Record<string, { label: string; color: string; bg: string }> = {
+  invoke: { label: '调用', color: 'var(--accent)', bg: 'var(--accent-soft)' },
+  submit: { label: '任务提交', color: 'var(--ok)', bg: 'var(--ok-bg)' },
+  status: { label: '状态查询', color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' },
+  download: { label: '结果下载', color: 'var(--info)', bg: 'var(--info-bg)' },
+  cancel: { label: '取消任务', color: 'var(--err)', bg: 'var(--err-bg)' },
+  probe: { label: '健康探测', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' },
+};
+function getOperationMeta(operation?: string | null) {
+  if (!operation) return { label: '调用', color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
+  return OPERATION_META[operation.toLowerCase()] ?? { label: operation, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
+}
 function getTransportMeta(t?: string | null) {
   if (!t) return null;
   return TRANSPORT_META[t.toLowerCase()] ?? { label: t, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
@@ -175,6 +188,7 @@ export function LogsView() {
   const [filterAppCaller, setFilterAppCaller] = useState('');
   const [filterTransport, setFilterTransport] = useState('');
   const [filterRequestType, setFilterRequestType] = useState('');
+  const [filterOperation, setFilterOperation] = useState('');
   const [filterSourceSystem, setFilterSourceSystem] = useState('');
   const [filterIngressProtocol, setFilterIngressProtocol] = useState('');
   const [filterModelPolicy, setFilterModelPolicy] = useState('');
@@ -187,6 +201,9 @@ export function LogsView() {
   const [filterServiceKeyId, setFilterServiceKeyId] = useState(() => initialQueryValue('serviceKeyId'));
   const [filterClientCode, setFilterClientCode] = useState(() => initialQueryValue('clientCode'));
   const [filterEnvironment, setFilterEnvironment] = useState(() => initialQueryValue('environment'));
+  // 按上游平台过滤：从平台页「查看日志」深链进来（?platformId=xxx），
+  // 用来回答「这条上游到底有没有在被调、报什么错」。provider 会重名，只能用 id。
+  const [filterPlatformId, setFilterPlatformId] = useState(() => initialQueryValue('platformId'));
 
   const [meta, setMeta] = useState<{
     models: string[];
@@ -195,6 +212,7 @@ export function LogsView() {
     appCallers: string[];
     transports: string[];
     requestTypes: string[];
+    operations: string[];
     sourceSystems: string[];
     ingressProtocols: string[];
     modelPolicies: string[];
@@ -208,6 +226,7 @@ export function LogsView() {
     appCallers: [],
     transports: [],
     requestTypes: [],
+    operations: [],
     sourceSystems: [],
     ingressProtocols: [],
     modelPolicies: [],
@@ -297,6 +316,8 @@ export function LogsView() {
       appCallerCode: filterAppCaller || undefined,
       transport: filterTransport || undefined,
       requestType: filterRequestType || undefined,
+      operation: subtab === 'upstream' ? filterOperation || undefined : undefined,
+      view: subtab === 'upstream' ? 'physical' as const : 'logical' as const,
       sourceSystem: filterSourceSystem || undefined,
       ingressProtocol: filterIngressProtocol || undefined,
       modelPolicy: filterModelPolicy || undefined,
@@ -308,8 +329,9 @@ export function LogsView() {
       serviceKeyId: filterServiceKeyId || undefined,
       clientCode: filterClientCode || undefined,
       environment: filterEnvironment || undefined,
+      platformId: filterPlatformId.trim() || undefined,
     }),
-    [range, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment],
+    [range, subtab, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterOperation, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment, filterPlatformId],
   );
 
   useEffect(() => {
@@ -322,6 +344,7 @@ export function LogsView() {
           appCallers: res.data.appCallers ?? [],
           transports: res.data.transports ?? [],
           requestTypes: res.data.requestTypes ?? [],
+          operations: res.data.operations ?? [],
           sourceSystems: res.data.sourceSystems ?? [],
           ingressProtocols: res.data.ingressProtocols ?? [],
           modelPolicies: res.data.modelPolicies ?? [],
@@ -562,6 +585,10 @@ export function LogsView() {
     switch (col.key) {
       case 'date':
         return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtShortTime(it.startedAt)}</span>;
+      case 'operation': {
+        const operation = getOperationMeta(it.operation);
+        return <Chip label={operation.label} color={operation.color} bg={operation.bg} />;
+      }
       case 'model':
         return (
           <LogEntityHoverCard
@@ -856,6 +883,7 @@ export function LogsView() {
     filterAppCaller,
     filterTransport,
     filterRequestType,
+    subtab === 'upstream' ? filterOperation : '',
     filterSourceSystem,
     filterIngressProtocol,
     filterModelPolicy,
@@ -867,6 +895,7 @@ export function LogsView() {
     filterServiceKeyId,
     filterClientCode,
     filterEnvironment,
+    filterPlatformId.trim(),
   ].filter(Boolean).length;
   const clearFilters = () => {
     setFilterModel('');
@@ -875,6 +904,7 @@ export function LogsView() {
     setFilterAppCaller('');
     setFilterTransport('');
     setFilterRequestType('');
+    setFilterOperation('');
     setFilterSourceSystem('');
     setFilterIngressProtocol('');
     setFilterModelPolicy('');
@@ -887,6 +917,7 @@ export function LogsView() {
     setFilterServiceKeyId('');
     setFilterClientCode('');
     setFilterEnvironment('');
+    setFilterPlatformId('');
   };
   const successRate = summary?.total
     ? `${Math.round((summary.succeeded / summary.total) * 1000) / 10}%`
@@ -899,7 +930,9 @@ export function LogsView() {
           <h1>Logs</h1>
           {subtab === 'generations' ? (
             <p className="lg-log-summary-strip">
-              <span>请求 <strong className="tabular">{fmtCompact(summary?.total)}</strong></span>
+              <span>业务请求 <strong className="tabular">{fmtCompact(summary?.total)}</strong></span>
+              <span>上游调用 <strong className="tabular">{fmtCompact(summary?.upstreamCalls)}</strong></span>
+              <span>状态查询 <strong className="tabular">{fmtCompact(summary?.statusQueries)}</strong></span>
               <span>成功率 <strong className="tabular">{successRate}</strong></span>
               <span>Token <strong className="tabular">{fmtCompact(summary?.totalTokens)}</strong></span>
               <span>费用 <strong className="tabular">{fmtCost(summary?.estimatedCostUsd, 'USD')}</strong></span>
@@ -981,6 +1014,8 @@ export function LogsView() {
               <input aria-label="运行 ID" value={filterRunId} onChange={(event) => setFilterRunId(event.target.value)} placeholder="运行 ID" spellCheck={false} />
               <input aria-label="会话 ID" value={filterSessionId} onChange={(event) => setFilterSessionId(event.target.value)} placeholder="会话 ID" spellCheck={false} />
               <input aria-label="模型池 ID" value={filterModelPoolId} onChange={(event) => setFilterModelPoolId(event.target.value)} placeholder="模型池 ID" spellCheck={false} />
+              {/* 平台页「查看日志」深链会填上它。必须可见可清，否则用户看到一份被过滤的列表却不知道为什么少了记录 */}
+              <input aria-label="上游平台 ID" value={filterPlatformId} onChange={(event) => setFilterPlatformId(event.target.value)} placeholder="上游平台 ID" spellCheck={false} />
               <select aria-label="应用" value={filterAppCaller} onChange={(event) => setFilterAppCaller(event.target.value)}>
                 <option value="">全部应用</option>
                 {meta.appCallers.map((value) => <option key={value} value={value}>{value}</option>)}
@@ -993,6 +1028,12 @@ export function LogsView() {
                 <option value="">全部请求类型</option>
                 {meta.requestTypes.map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
+              {subtab === 'upstream' ? (
+                <select aria-label="操作类型" value={filterOperation} onChange={(event) => setFilterOperation(event.target.value)}>
+                  <option value="">全部操作类型</option>
+                  {meta.operations.map((value) => <option key={value} value={value}>{getOperationMeta(value).label}</option>)}
+                </select>
+              ) : null}
               {activeFilterCount > 0 ? <button className="lg-log-clear" type="button" onClick={clearFilters}>清除 {activeFilterCount} 个筛选</button> : null}
             </div>
           </details>

@@ -1,13 +1,15 @@
 ---
-globs: prd-api/src/**/*.cs,prd-admin/src/**/*.{ts,tsx},prd-desktop/src/**/*.{ts,tsx},cds/src/**/*.ts,**/Dockerfile
-description: CDS 优先验证：本地无 SDK ≠ 无法验证，禁止把验证负担转嫁给用户
+description: 改完可执行代码却发现本地缺 dotnet/node/cargo 时阅读
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/cds-first-verification.md
-     生成时间: 2026-06-14T08:27:26Z -->
+     生成时间: 2026-08-11T09:03:38Z -->
 
 # CDS 优先验证原则
+
+**一句话**：本地没有 SDK 不等于无法验证——必须走 CDS 远端编译部署，禁止把验证责任丢回给用户。
+**什么时候撞上**：改了可执行代码，却发现本地缺 dotnet / node / cargo 等构建工具。
 
 > 本地没有 SDK 不是"无法验证"的理由。CDS 就是为这种场景准备的远端编译/部署/验证环境，**必须**用 CDS 跑，不能以"本地无 dotnet/无环境"为由提交未验证的代码。
 
@@ -21,11 +23,11 @@ description: CDS 优先验证：本地无 SDK ≠ 无法验证，禁止把验证
 
 4. **CDS 部署是异步链路的一部分**，不是"额外步骤"：开发完成 → 提交 → push → `/cds-deploy` → 等待绿灯 → 才能声称完成。跳过 CDS 验证就声称完成 = 违反规则 #8。
 
-5. **优先 CDS，不要纠结本地**：当 AI 发现本地缺 SDK 时，**第一反应应该是 `/cds-deploy`**，而不是在交付文档里写"⚠ 环境无 SDK 未运行，请你或下一位 agent 自行验证"。把验证负担转嫁给用户是最糟糕的实践。
+5. **优先 CDS，不要纠结本地**：当 AI 发现本地缺 SDK 时，**第一反应应该是 `/cds-deploy`**，而不是在交付文档里写"环境无 SDK 未运行，请你或下一位 agent 自行验证"。把验证负担转嫁给用户是最糟糕的实践。
 
 ## 反面案例（真实发生过）
 
-> 2026-04-15 更新中心功能开发时，AI 在沙箱里发现没有 dotnet SDK，于是写了"⚠ dotnet build 环境无 dotnet SDK 未能运行；C# 代码已两次通读自审"，把 C# 编译验证负担转嫁给用户。
+> 2026-04-15 更新中心功能开发时，AI 在沙箱里发现没有 dotnet SDK，于是写了"dotnet build 环境无 dotnet SDK 未能运行；C# 代码已两次通读自审"，把 C# 编译验证负担转嫁给用户。
 >
 > **正确做法**：当场用 `/cds-deploy` 推到 CDS 灰度环境，CDS 容器内的 .NET SDK 会真实编译；编译错误会出现在 `POST /api/branches/:id/container-logs` 返回里，AI 看到错误自己修，修完重新部署。整个过程 AI 自闭环，用户零参与。
 

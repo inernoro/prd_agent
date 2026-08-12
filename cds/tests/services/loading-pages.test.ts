@@ -1,5 +1,5 @@
 /**
- * loading-pages SSOT 契约（doc/debt.cds.nginx-loading-pages.md D2，2026-07-09）。
+ * loading-pages SSOT 契约（doc/debt.cds.md「CDS Loading Pages」 D2，2026-07-09）。
  *
  * 迁移纪律：页面从散落文件迁入 SSOT 时**只搬不改**——快照锁住输出，
  * 任何有意的样式调整必须显式更新快照（评审可见），杜绝「迁移顺手改样式」

@@ -2,6 +2,12 @@
 
 > **版本**：v1.1 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：按参考图数量分流：无图走文生图、一张走图片编辑、多张走多图视觉生成。
+**谁该读**：做生图接入的工程师。
+**读完能做什么**：按参考图数量判断该走哪条链路。
+
+---
+
 ## 管理摘要
 
 - **问题**：单图编辑接口无法让模型同时理解多张参考图，限制了融合、拼贴和多素材创作。
@@ -49,4 +55,4 @@
 - 图片客户端：`prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs`。
 - Vision 契约：`prd-api/src/PrdAgent.Core/Models/MultiImage/VisionApiModels.cs`。
 - 多图领域服务：`prd-api/src/PrdAgent.Infrastructure/Services/MultiImageDomainService.cs`、`MultiImageComposeService.cs`。
-- 关联设计：`design.visual-agent.multi-image-compose.md`、`design.platform.image-ref-and-persistence.md`。
+- 关联设计：[design.visual-agent.multi-image-compose.md](./design.visual-agent.multi-image-compose.md)、[design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)。

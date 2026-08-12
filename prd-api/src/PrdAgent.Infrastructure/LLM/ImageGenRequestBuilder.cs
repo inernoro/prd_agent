@@ -18,8 +18,10 @@ namespace PrdAgent.Infrastructure.LLM;
 ///   // built.RequestBody 即可直接发上游
 ///
 /// 加一个新生图模型的成本目标：
-///   - 只在 <see cref="ImageGenModelConfigs"/> 加一条 <see cref="ImageGenModelAdapterConfig"/>
-///     （含 ModelIdPattern / SizeParamFormat / SizesByResolution / ParamRenames / PlatformType）。
+///   - 尺寸怎么传给上游由 llmgw 模型能力显式声明；旧模型才按名称回退到
+///     <see cref="ImageGenModelConfigs"/> 的 SizeParamFormat / InjectSizePrompt。
+///   - 模型支持哪些尺寸与归一化限制仍在 <see cref="ImageGenModelConfigs"/> 维护，
+///     直到上游能力契约覆盖这组约束。
 ///   - 仅当上游协议形状全新（既非 OpenAI 兼容、又非 Volces/Google/OpenRouter/即梦 Exchange 之一）时，
 ///     才需要再新增一个 <c>IImageGenPlatformAdapter</c> 实现并在
 ///     <see cref="ImageGenPlatformAdapterFactory"/> 注册。
@@ -33,6 +35,103 @@ namespace PrdAgent.Infrastructure.LLM;
 /// </summary>
 public static class ImageGenRequestBuilder
 {
+    private const string AdaptiveSizePromptMarker = "[输出尺寸要求 / OUTPUT SIZE，最高优先级]";
+
+    /// <summary>
+    /// 把结构化尺寸转换成特殊模型可理解的置顶语言指令。
+    /// 默认作用于“自适应 + 不发送尺寸参数 + 尺寸仍适用”的模型；配置明确开启
+    /// InjectSizePrompt 时，会在保留原生尺寸参数的同时增加语义兜底。
+    /// SizesNotApplicable 模型完全不参与尺寸选择和提示词注入。
+    /// </summary>
+    public static string ApplyAdaptiveSizePrompt(
+        string prompt,
+        ImageGenRequestParams requestParams,
+        ImageGenModelAdapterConfig? adapterConfig)
+    {
+        if (adapterConfig == null
+            || (!requestParams.IsAdaptive && !adapterConfig.InjectSizePrompt)
+            || (requestParams.IsAdaptive && adapterConfig.SizeParamFormat != SizeParamFormats.None)
+            || adapterConfig.SizesNotApplicable)
+        {
+            return prompt;
+        }
+
+        var adaptation = requestParams.Adaptation;
+        if (adaptation.Width <= 0 || adaptation.Height <= 0 || string.IsNullOrWhiteSpace(adaptation.Size))
+        {
+            return prompt;
+        }
+
+        var safePrompt = prompt ?? string.Empty;
+        var trimmedPrompt = safePrompt.TrimStart();
+        if (trimmedPrompt.StartsWith(AdaptiveSizePromptMarker, StringComparison.Ordinal))
+        {
+            return safePrompt;
+        }
+
+        var ratio = string.IsNullOrWhiteSpace(adaptation.AspectRatio)
+            ? ReduceRatio(adaptation.Width, adaptation.Height)
+            : adaptation.AspectRatio;
+        var orientation = adaptation.Width == adaptation.Height
+            ? "正方形 / square"
+            : adaptation.Width > adaptation.Height
+                ? "横版 / landscape"
+                : "竖版 / portrait";
+        var exclusion = adaptation.Width == adaptation.Height
+            ? "不要改变画幅。"
+            : "不要输出正方形或其他比例。";
+        var directive = $"{AdaptiveSizePromptMarker} 目标画布 {adaptation.Size}，严格宽高比 {ratio}，{orientation}。{exclusion}";
+        return string.IsNullOrWhiteSpace(safePrompt) ? directive : $"{directive}\n{safePrompt}";
+    }
+
+    /// <summary>
+    /// 按上游模型能力显式注入尺寸提示词。与静态适配表无关，用于 Gateway 已解析出实际模型后
+    /// 消费 llmgw_models 上的 image_size.prompt 能力。
+    /// </summary>
+    public static string ApplyConfiguredSizePrompt(string prompt, string? requestedSize)
+    {
+        var normalized = string.IsNullOrWhiteSpace(requestedSize) ? "1024x1024" : requestedSize.Trim();
+        var parts = normalized.Split(new[] { 'x', 'X' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2
+            || !int.TryParse(parts[0], out var width)
+            || !int.TryParse(parts[1], out var height)
+            || width <= 0
+            || height <= 0)
+        {
+            return prompt;
+        }
+
+        var requestParams = new ImageGenRequestParams
+        {
+            IsAdaptive = true,
+            Adaptation = new SizeAdaptationResult
+            {
+                Size = $"{width}x{height}",
+                Width = width,
+                Height = height,
+                AspectRatio = ReduceRatio(width, height),
+            },
+        };
+        var configuredAdapter = new ImageGenModelAdapterConfig
+        {
+            SizeConstraintType = SizeConstraintTypes.Adaptive,
+            SizeParamFormat = SizeParamFormats.None,
+            InjectSizePrompt = true,
+        };
+        return ApplyAdaptiveSizePrompt(prompt, requestParams, configuredAdapter);
+    }
+
+    /// <summary>移除由尺寸适配器写入首行的受控尺寸指令，保留原始业务提示词。</summary>
+    public static string RemoveSizePromptDirective(string prompt)
+    {
+        var safePrompt = prompt ?? string.Empty;
+        var trimmedPrompt = safePrompt.TrimStart();
+        if (!trimmedPrompt.StartsWith(AdaptiveSizePromptMarker, StringComparison.Ordinal))
+            return safePrompt;
+        var lineBreak = trimmedPrompt.IndexOf('\n');
+        return lineBreak < 0 ? string.Empty : trimmedPrompt[(lineBreak + 1)..];
+    }
+
     /// <summary>
     /// 构建"标准 OpenAI 兼容 / Volces"协议下的文生图上游请求体。
     /// 一次性完成：尺寸归一化 → 尺寸参数格式（size / width+height / aspect_ratio / none）→ 参数重命名 → 请求体拼装。
@@ -50,7 +149,8 @@ public static class ImageGenRequestBuilder
         int n,
         string? requestedSize,
         string? responseFormat,
-        IImageGenPlatformAdapter platformAdapter)
+        IImageGenPlatformAdapter platformAdapter,
+        bool applyAdaptiveSizePrompt = true)
     {
         // 1. 尺寸归一化 + 尺寸参数格式 + 参数重命名（SSOT：Registry）
         var reqParams = ImageGenModelAdapterRegistry.BuildRequestParams(
@@ -80,11 +180,14 @@ public static class ImageGenRequestBuilder
         //    自适应模型显式置空，避免被注入到请求体。
         var sizeForBody = isAdaptive ? null : NormalizedSizeForBody(reqParams, requestedSize);
         var normalizedSize = platformAdapter.NormalizeSize(sizeForBody);
+        var effectivePrompt = applyAdaptiveSizePrompt
+            ? ApplyAdaptiveSizePrompt(prompt, reqParams, adapterConfig)
+            : prompt;
 
         // 5. 由平台适配器拼装最终请求体（OpenAI 兼容 / Volces 等）
         var requestBody = platformAdapter.BuildGenerationRequest(
             model,
-            prompt,
+            effectivePrompt,
             n,
             normalizedSize,
             effectiveResponseFormat,
@@ -126,10 +229,12 @@ public static class ImageGenRequestBuilder
         var sizeParams = reqParams.HasAdapter && reqParams.SizeParams.Count > 0
             ? reqParams.SizeParams
             : null;
+        var adapterConfig = reqParams.HasAdapter ? ImageGenModelAdapterRegistry.TryMatch(model) : null;
+        var effectivePrompt = ApplyAdaptiveSizePrompt(prompt, reqParams, adapterConfig);
 
         return platformAdapter.BuildGenerationRequest(
             model,
-            prompt,
+            effectivePrompt,
             n,
             normalizedSize,
             effectiveResponseFormat,
@@ -149,6 +254,40 @@ public static class ImageGenRequestBuilder
             return string.IsNullOrWhiteSpace(reqParams.Adaptation.Size) ? null : reqParams.Adaptation.Size;
         }
         return string.IsNullOrWhiteSpace(requestedSize) ? null : requestedSize.Trim();
+    }
+
+    private static string ReduceRatio(int width, int height)
+    {
+        var a = Math.Abs(width);
+        var b = Math.Abs(height);
+        while (b != 0)
+        {
+            (a, b) = (b, a % b);
+        }
+
+        var divisor = Math.Max(1, a);
+        return $"{width / divisor}:{height / divisor}";
+    }
+
+    /// <summary>
+    /// 从像素尺寸推导 OpenRouter image_config.aspect_ratio 支持的最接近比例。
+    /// </summary>
+    internal static string? DeriveOpenRouterAspectRatio(string? size)
+    {
+        if (!ImageGenModelAdapterRegistry.TryParseSize(size, out var width, out var height)
+            || width <= 0
+            || height <= 0)
+        {
+            return null;
+        }
+
+        var target = (double)width / height;
+        var candidates = new (string Label, double Ratio)[]
+        {
+            ("1:1", 1.0), ("2:3", 2.0 / 3), ("3:2", 3.0 / 2), ("3:4", 3.0 / 4), ("4:3", 4.0 / 3),
+            ("4:5", 4.0 / 5), ("5:4", 5.0 / 4), ("9:16", 9.0 / 16), ("16:9", 16.0 / 9), ("21:9", 21.0 / 9),
+        };
+        return candidates.MinBy(candidate => Math.Abs(candidate.Ratio - target)).Label;
     }
 }
 

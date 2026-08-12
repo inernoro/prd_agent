@@ -199,11 +199,15 @@ describe('SkillProxy', () => {
     expect(STARTER_SKILL_BUNDLES.bundles.map((bundle) => bundle.key)).toEqual([
       'foundation', 'product', 'delivery', 'quality',
     ]);
-    expect(catalogSkills.length).toBeGreaterThanOrEqual(18);
+    expect(catalogSkills.length).toBeGreaterThanOrEqual(22);
     expect(new Set(catalogSkills.map((skill) => skill.key)).size).toBe(catalogSkills.length);
     expect(catalogSkills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
       'phase0-guard',
+      'doc-writer',
       'product-document-generator',
+      'conflict-resolution',
+      'scope-check',
+      'task-handoff-checklist',
       'human-verify',
       'code-hygiene',
       'create-skill-file',

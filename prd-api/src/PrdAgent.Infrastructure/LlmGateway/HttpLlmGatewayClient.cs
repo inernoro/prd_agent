@@ -11,6 +11,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.ModelPool;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -28,7 +29,7 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// JSON 口径与 serving 端严格对齐：PascalCase（PropertyNamingPolicy = null）。
 /// </summary>
 public sealed class HttpLlmGatewayClient
-    : PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway, CoreGateway.ILlmGateway
+    : PrdAgent.Core.LlmGateway.ILogicalModelGateway, CoreGateway.ILlmGateway
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<HttpLlmGatewayClient> _logger;

@@ -2,6 +2,12 @@
 
 > **版本**：v1.1 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：图片引用作为独立元数据随日志保存，消息由服务端持久化，避免脱敏截断与前端丢消息。
+**谁该读**：接手图片链路与消息存储的工程师。
+**读完能做什么**：说清图片与消息各自在哪一层落库。
+
+---
+
 ## 管理摘要
 
 - **问题**：图片请求体中的 base64 会在日志脱敏或截断后失效；由前端异步保存的视觉创作消息会因网络抖动或页面切换丢失。
@@ -73,6 +79,6 @@ SSE 事件只通知客户端刷新显示，不能作为持久化的唯一来源�
 
 ## 关联文档
 
-- `design.visual-agent.md`：视觉创作能力与消息展示上下文。
-- `design.platform.llm-gateway.md`：统一 Gateway 调用与日志边界。
+- [design.visual-agent.md](./design.visual-agent.md)：视觉创作能力与消息展示上下文。
+- [design.platform.llm-gateway.md](./design.platform.llm-gateway.md)：统一 Gateway 调用与日志边界。
 - `rule.platform.server-authority.md`：服务端保存业务事实的约束。

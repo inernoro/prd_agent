@@ -59,6 +59,35 @@ describe('VisualAgent Canvas 持久化测试', () => {
       expect(result.skippedLocalOnlyImages).toBe(0);
     });
 
+    it('应往返保存 AI 分层 Frame 元数据', () => {
+      const items: CanvasImageItem[] = [{
+        key: 'layer-1',
+        createdAt: Date.now(),
+        prompt: 'AI 图层 01',
+        src: 'https://example.com/layer-1.png',
+        status: 'done',
+        kind: 'image',
+        assetId: 'asset-layer-1',
+        layerGroupId: 'group-1',
+        layerSourceKey: 'source-1',
+        layerIndex: 1,
+        layerRole: 'layer',
+      }];
+
+      const persisted = canvasToPersistedV1(items);
+      const restored = persistedV1ToCanvas(persisted.state, [{
+        id: 'asset-layer-1',
+        url: 'https://example.com/layer-1.png',
+      }]);
+
+      expect(restored.canvas[0]).toMatchObject({
+        layerGroupId: 'group-1',
+        layerSourceKey: 'source-1',
+        layerIndex: 1,
+        layerRole: 'layer',
+      });
+    });
+
     it('应保存完成状态的图片（有远程 src 无 assetId）', () => {
       const items: CanvasImageItem[] = [{
         key: 'img-2',

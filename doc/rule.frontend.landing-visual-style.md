@@ -1,11 +1,16 @@
 # 首页与登录页视觉语言 · 规则
 
-> **版本**：v1.0 | **日期**：2026-07-07 | **状态**：已落地
+> **版本**：v2.0 | **日期**：2026-08-06 | **状态**：已落地
+
+**一句话**：对外展示类页面的视觉契约：一种签名渐变、一套标签规格、一套玻璃卡配方，都不许就地自造。
+**谁该读**：改首页、登录页或任何对外页面的前端工程师与设计。
+**读完能做什么**：按硬规则检查自己的页面有没有自造颜色或样式，并找到该复用的零件。
+
+---
 
 > **范围**：`prd-admin/src/pages/home/` + 所有对外展示类页面（登录、分享、落地、订阅邮件 H5 等）。
 > **权威出处**：PR inernoro/prd_agent#405（`claude/redesign-homepage-gTSAf`），把 /home 从"粒子堆 + 代理卡片秀"重做成 Linear.app × Retro-Futurism 融合的九幕叙事。
 > **维护原则**：每次更新整页替换，不保留历史变更记录（历史由 git + changelogs 承担）。
-
 
 ## 一、风格定位：Linear × Retro-Futurism
 
@@ -13,7 +18,7 @@
 
 - Linear.app 的骨架：极窄字距、静态背景、滚动 fade-up、单一长景、大量留白
 - Retro-Futurism 的点缀：HUD 终端 chip、CRT 扫描线、Synthwave 地平线、Tron 透视地板、霓虹呼吸灯
-- 品牌主色（2026-07-07 起）：靛蓝-紫罗兰同族色（`#5B8DEF` → `#7C6CF0` → `#A78BFA`），对齐应用内 `--accent-primary #818CF8` 与登录后工作台的观感，取代早期青 (#00f0ff) → 紫 (#7c3aed) → 玫红 (#f43f5e) 三色霓虹。邻近色相"彩而不乱"，不再走"去紫"策略——紫罗兰现在是主色而非需要克制的点缀色
+- 品牌主色（2026-08-02 起，"米多墨系"）：暖石墨底 + 陶土同族渐变（`#CE6B41` → `#D97757` → `#E0A06B`），对齐应用内 `--accent-primary #D97757`，与登录后工作台、桌面/移动首页统一为暖调"墨系"。**紫 / 靛 / 品红全面退出**，2026-07-07 起曾采用的靛蓝-紫罗兰同族色（`#5B8DEF` → `#7C6CF0` → `#A78BFA`）已作废——受 `inkPalette` 守卫测试拦截，不得恢复
 
 ---
 
@@ -23,10 +28,8 @@
 
 所有品牌强调色必须引用 `HERO_GRADIENT`，不得自造渐变。
 
-```ts
-// 出处：prd-admin/src/pages/home/sections/HeroSection.tsx
-export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #A78BFA 100%)';
-```
+签名渐变是一个**统一导出的常量**（135 度，陶土三段过渡），落地页与登录页共用同一份。
+**不许就地写渐变**：任何自造的渐变都会让品牌色出现第二套，两套一旦并存就再也收不回来。
 
 用途：主 CTA 背景、顶栏登录按钮、Logo 内底色、标题渐变文字、FinalCta 大字、登录页 RetroHorizon 装饰与主 CTA 投影（2026-07-07 起登录页同步收敛到同一渐变，不再自造独立配色）。
 
@@ -66,24 +69,9 @@ export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #
 
 ### R5 · HUD Chip 必须按 SectionHeader 规格
 
-所有"小标签 / eyebrow / 状态条"必须是：
-
-```tsx
-<div
-  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-md"
-  style={{
-    fontFamily: 'var(--font-mono)',
-    background: `${accent}0a`,                  // 10/255 alpha
-    border: `1px solid ${accent}3d`,            // 61/255 alpha
-    boxShadow: `0 0 20px ${accent}33, inset 0 0 10px ${accent}0a`,
-  }}
->
-  <Icon style={{ color: accent }} />
-  <span style={{ color: accent, letterSpacing: '0.2em', textShadow: `0 0 10px ${accent}99` }}>
-    TEXT UPPERCASE
-  </span>
-</div>
-```
+所有"小标签 / 状态条"的规格是**一套固定配方**，只有强调色一个变量：等宽字体、宽字距、全大写文案，
+背景取强调色约 4% 透明度、边框约 24%、外发光与内发光都由同一个强调色派生。
+**规格不许逐处调**——要改就改那份共享的标签组件，否则每个页面都会长出一个「差一点点」的版本。
 
 带 live dot 的版本（"Live · ONLINE"）用 `animate-ping` + emerald-400 发光。参考 `HeroSection` 的状态条和 `SectionHeader.tsx`。
 
@@ -92,7 +80,7 @@ export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #
 主 CTA + 次 CTA 永远**同高、同 radius、同字号**，一实一虚：
 
 ```
-[ Sparkles | 立即开始 | →  ]   ← HERO_GRADIENT pill，0 0 48px rgba(124,58,237,0.35) 晕影
+[ Sparkles | 立即开始 | →  ]   ← HERO_GRADIENT pill，0 0 48px rgba(200,98,58,0.35) 晕影，深墨字（HERO_GRADIENT_FG，非白字——渐变对白字对比度不达标）
 [  Play   | 观看演示 | →  ]   ← rgba(255,255,255,0.04) + 1px 白 18% 边 + backdrop-blur 12px
 ```
 
@@ -105,31 +93,27 @@ export const HERO_GRADIENT = 'linear-gradient(135deg, #5B8DEF 0%, #7C6CF0 48%, #
 - `prefers-reduced-motion` 时必须禁用
 - 其他 section 的 h2 只允许**静态** `text-shadow: 0 0 32px ${accent}2e`
 
-### R8 · 靛蓝-紫罗兰同族色原则（2026-07-07 起替代旧"去紫"原则）
+### R8 · 米多墨系同族色原则（2026-08-02 起替代旧"靛蓝-紫罗兰"原则）
 
-品牌强调色统一收敛到 `HERO_GRADIENT` 的靛蓝-紫罗兰同族色系，不再刻意压制紫色。单独使用的强调色优先顺序：
+品牌强调色统一收敛到 `HERO_GRADIENT` 的陶土同族色系，且与应用内首页/工作台共享的**八色墨带**（`INK_HUES`，定义见文末「实现来源」）同一支笔。单独使用的强调色优先顺序：
 
 ```
-slate-300 (#cbd5e1)  ← 冷白，主基调
-indigo    (#5B8DEF)  ← 主 accent（HERO_GRADIENT 起点）
-violet    (#7C6CF0)  ← 次 accent（HERO_GRADIENT 中段，对齐 --accent-primary #818CF8）
-violet-2  (#A78BFA)  ← HERO_GRADIENT 终点，浅紫罗兰
+slate-300 (#cbd5e1)  ← 冷白，中性基调
+clay      (#CE6B41)  ← 主 accent（HERO_GRADIENT 起点，陶土）
+clay-2    (#D97757)  ← 次 accent（HERO_GRADIENT 中段，对齐 --accent-primary #D97757）
+clay-3    (#E0A06B)  ← HERO_GRADIENT 终点，浅陶土
 emerald   (#34d399)  ← 状态 / 存活 / 成功（不变）
 ```
 
-禁止：脱离 `HERO_GRADIENT` 同族色系另造强调色（如恢复旧青色 `#00f0ff` 或玫红 `#f43f5e` 作单独高亮）。允许：紫罗兰作为独立强调色使用（不再要求"只能小面积点缀"），但仍需引用 `HERO_GRADIENT` 或其色阶，不得自造新的紫色值。
+八色墨带（`INK_HUES`，用于品类色/图标色，不用于品牌主渐变）：陶土 `clay`（视觉/影像）、焦糖 `caramel`（缺陷/生产）、琥珀 `amber`（市场/AI）、橄榄 `olive`（阅读/文档）、松绿 `pine`（写作/代码）、黛青 `celadon`（流程/协作）、钢青 `steel`（音视频/网络）、钢蓝 `slate`（结构/管理）。
+
+**禁止**：紫 / 靛 / 品红任何色相（含 hex / `rgba()` / `hsl()` / Tailwind 紫系类）在受管范围内出现，或脱离 `HERO_GRADIENT` / `INK_HUES` 另造强调色（如恢复旧青色 `#00f0ff`、旧玫红 `#f43f5e`、2026-07-07 曾用的靛蓝-紫罗兰 `#5B8DEF`/`#7C6CF0`/`#A78BFA`）。有一条 no-purple 守卫测试按色相+饱和度+明度判定，覆盖三个首页与共享色板，另有一条守卫禁止"accent 当底 + 白字"的低对比度组合（见文末「实现来源」）。
 
 ### R9 · 卡片玻璃化
 
-任何 card/panel 的"玻璃效果"必须遵循：
-
-```css
-background: rgba(10, 14, 22, 0.72);    /* 深色半透明 */
-border: 1px solid rgba(255, 255, 255, 0.12);
-backdrop-filter: blur(14px);
-box-shadow: 0 18px 54px rgba(0, 0, 0, 0.55), inset 0 0 10px rgba(148, 163, 184, 0.04);
-border-radius: 22px;                   /* clamp 18-24 */
-```
+卡片玻璃感的配方同样固定：深色半透明底（约 72% 不透明）、极淡白边（约 12%）、
+中等强度背景模糊、一层大而软的外投影加一层极淡内发光、圆角约 22。
+**这几个数是一组，不是六个独立参数**——单独调其中一个（比如只加深投影）就会脱离整套视觉语言。
 
 内层 headline 用 `SectionHeader` 版式，不再自造 `<h2>` 样式。
 
@@ -143,19 +127,20 @@ border-radius: 22px;                   /* clamp 18-24 */
 
 | 用途 | 值 | 语义 |
 |------|----|------|
-| 基底 | `#030306` / `#050510` | 页面最深背景 |
+| 基底 | `#100E0C` | 暖石墨，页面最深背景（取代早期冷黑 `#030306`/`#050510`） |
 | 文字主 | `#ffffff` / `white` | 标题、一等信息 |
 | 文字副 | `rgba(255,255,255,0.62)` | 副标题 / 描述 |
 | 文字弱 | `rgba(255,255,255,0.55)` | 导航、tooltip |
 | 边框默认 | `rgba(255,255,255,0.18)` | input、outline button |
 | 边框 hover | `rgba(203,213,225,0.5)` | 冷白高亮 |
 | 冷白光晕 | `rgba(203,213,225,0.28)` | 顶部背景光晕 |
-| 靛蓝 | `#5B8DEF` | HERO_GRADIENT 起点 / 主 accent |
-| 紫罗兰 | `#7C6CF0` | HERO_GRADIENT 中段（对齐 `--accent-primary #818CF8`） |
-| 浅紫罗兰 | `#A78BFA` | HERO_GRADIENT 终点 |
+| 陶土 | `#CE6B41` | HERO_GRADIENT 起点 / 主 accent |
+| 陶土-2 | `#D97757` | HERO_GRADIENT 中段（对齐 `--accent-primary #D97757`） |
+| 浅陶土 | `#E0A06B` | HERO_GRADIENT 终点 |
+| 渐变前景字 | `var(--button-primary-fg)`（`HERO_GRADIENT_FG`） | 铺在 HERO_GRADIENT 上的文字色，深墨字非白字（对比度） |
 | 存活绿 | `#34d399` | live dot |
 
-> 2026-07-07 起 synthwave 地平线/太阳/Tron 地板等装饰同步收敛到靛蓝-紫罗兰同族色，不再使用青 (`#00f0ff`) / 玫瑰 (`#f43f5e`) 独立配色。
+> 2026-08-02 起 synthwave 地平线/太阳/Tron 地板等装饰同步收敛到陶土同族色，不再使用青 (`#00f0ff`) / 玫瑰 (`#f43f5e`) / 靛蓝-紫罗兰（2026-07-07 曾用，已作废）独立配色。
 
 ---
 
@@ -187,7 +172,7 @@ border-radius: 22px;                   /* clamp 18-24 */
 | 在 section 里硬写 `<h2 className="text-5xl ...">` | 用 `<SectionHeader>` |
 | 用 framer-motion 做入场动画 | 用 `<Reveal>` |
 | 按钮宽度自适应文字 | 主次 CTA 对称，`h-12 px-8 rounded-full` |
-| 脱离 `HERO_GRADIENT` 同族色系另造强调色（恢复旧青/玫红） | 强调色统一走靛蓝-紫罗兰色阶 |
+| 脱离 `HERO_GRADIENT` / `INK_HUES` 另造强调色（恢复旧青/玫红/紫/靛/品红） | 强调色统一走陶土色阶或八色墨带 |
 | 中文硬编码 | 走 `useLanguage()` 字典 |
 | 在 fixed 层画"地平线亮带" | 局部化到 Hero 内部，absolute 绝不 fixed |
 | 标题持续闪烁 | 只有 hero h1 允许 5s 极慢呼吸 |
@@ -203,7 +188,7 @@ border-radius: 22px;                   /* clamp 18-24 */
 - [ ] 所有"小标签"是 HUD chip 规格（mono + UPPERCASE + accent 发光边）
 - [ ] 所有进场元素包了 `<Reveal>`，且尊重 reduced-motion
 - [ ] 主次 CTA 对称双胞胎（`h-12 px-8 rounded-full`）
-- [ ] 没有脱离 `HERO_GRADIENT` 同族色系的独立强调色（旧青 `#00f0ff` / 旧玫红 `#f43f5e`）
+- [ ] 没有脱离 `HERO_GRADIENT` / `INK_HUES` 的独立强调色（旧青 `#00f0ff` / 旧玫红 `#f43f5e` / 已作废的靛蓝-紫罗兰）；no-purple 守卫测试绿（见文末「实现来源」）
 - [ ] 文案走 i18n 字典，或明确标注为"伪数据保持中文"
 - [ ] 卡片符合 R9 玻璃化规格
 
@@ -211,11 +196,22 @@ border-radius: 22px;                   /* clamp 18-24 */
 
 ## 七、关联文件
 
-- `prd-admin/src/pages/home/LandingPage.tsx` — 十一幕骨架
-- `prd-admin/src/pages/home/sections/HeroSection.tsx` — 风格源头（HERO_GRADIENT / hero-title-pulse / hud-pulse）
-- `prd-admin/src/pages/home/components/StaticBackdrop.tsx` — 背景
-- `prd-admin/src/pages/home/components/SectionHeader.tsx` — 幕头版式
-- `prd-admin/src/pages/home/components/Reveal.tsx` — 进场动效
-- `prd-admin/src/styles/tokens.css` — 字体 CSS 变量
 - `prd-admin/index.html` — Google Fonts 预连接
 - `.claude/rules/frontend-architecture.md` — 组件复用与注册表模式
+- `prd-admin/src/lib/__tests__/inkPalette.test.ts` — 米多墨系 no-purple 守卫测试（SSOT）
+- `prd-admin/src/lib/tileAccent.ts` — `INK_HUES` 八色墨带定义
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 七、关联文件 | `prd-admin/src/pages/home/LandingPage.tsx` | 十一幕骨架 |
+| 七、关联文件 | `prd-admin/src/pages/home/sections/HeroSection.tsx` | 风格源头（HERO_GRADIENT / hero-title-pulse / hud-pulse） |
+| 七、关联文件 | `prd-admin/src/pages/home/components/StaticBackdrop.tsx` | 背景 |
+| 七、关联文件 | `prd-admin/src/pages/home/components/SectionHeader.tsx` | 幕头版式 |
+| 七、关联文件 | `prd-admin/src/pages/home/components/Reveal.tsx` | 进场动效 |
+| 七、关联文件 | `prd-admin/src/styles/tokens.css` | 字体 CSS 变量 |

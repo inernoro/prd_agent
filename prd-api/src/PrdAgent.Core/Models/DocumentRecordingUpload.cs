@@ -77,7 +77,10 @@ public class DocumentRecordingUploadSession
 
     /// <summary>
     /// 会话最早可清理时间。待归档或待转录 outbox 会延长该时间；清理逻辑还必须
-    /// 同时检查 pending 标记并先原子认领，禁止仅按本字段建立无条件 TTL 索引。
+    /// 同时检查 pending 标记并先原子认领，禁止按本字段建立 TTL 索引。
+    /// 回收顺序固定为“先删分片、再删会话”：TTL 若先删掉父会话，分片会失去
+    /// 可关联的父记录，转录 outbox 也无法恢复。
+
     /// </summary>
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(1);
 }

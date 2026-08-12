@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-09 | **状态**：开发中
 
+**一句话**：把长文转成网页幻灯片这条链路的已知边界与必须在后续重构里偿还的债。
+**谁该读**：接手这个功能的工程师。
+**读完能做什么**：判断预览与生成的当前限制，并挑出必还项。
+
+---
+
 > 模块：prd-admin `md-to-ppt-agent` + prd-api `MdToPptController`
 > 用途：记录 MD→PPT 已知边界、留尾、必须在「对话式 artifact 重构」里偿还的债务。
 
@@ -18,7 +24,7 @@ LLM(输入可含用户粘贴 / 上传 / 知识库,均可能被 prompt-injection)
 注入的 nav-guard 只拦 link/history 跳转,**不沙箱化、不消毒脚本执行**。等价于一个存储型 XSS。
 
 **为什么没在 PR #750 里直接修**：正确修法是架构级的(预览必须从隔离源渲染),而该页已排期被
-「对话 + artifact 实时预览」重构(见 `doc/plan.md-to-ppt.chat-redesign.md`)替换。在即将重写的
+「对话 + artifact 实时预览」重构(见 [doc/plan.md-to-ppt.chat-redesign.md](./plan.md-to-ppt.chat-redesign.md))替换。在即将重写的
 代码上做架构改造是浪费,且 naive 去掉 same-origin 会让 reveal 渲染空白(init 访问 storage 抛错)。
 2026-06-09 与用户确认:**defer 到重构一并解决 + 记本债务台账**,不在当前 PR 改这页。
 

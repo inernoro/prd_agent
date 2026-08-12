@@ -5,9 +5,14 @@ import {
   activeSegmentIndex,
   extractTranscriptSummary,
   estimateTranscriptSegments,
+  replaceEstimatedTranscriptSentenceText,
   parseSummaryModules,
   activeSummaryModuleIndex,
   replaceTranscriptSegmentText,
+  renameTranscriptSpeaker,
+  buildTranscriptWordCloud,
+  parseRecordingAnswerParts,
+  parseSpeakerSourceNote,
 } from '../transcriptSegments';
 
 /**
@@ -46,6 +51,22 @@ const PLAIN_NOTE = `# 独白 · 转录笔记
 `;
 
 describe('parseTranscriptSegments', () => {
+  it('保留说话人并支持批量改名', () => {
+    const note = '## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 第一段。\n\n**[00:03 - 00:06]** [说话人2] 第二段。';
+    expect(parseTranscriptSegments(note)[0]).toEqual({ start: 0, end: 3, speaker: '说话人1', text: '第一段。' });
+    const renamed = renameTranscriptSpeaker(note, '说话人1', '小公爷');
+    expect(renamed).toContain('**[00:00 - 00:03]** [小公爷] 第一段。');
+    expect(renamed).toContain('[说话人2] 第二段。');
+  });
+
+  it('说话人改名会清理破坏时间轴格式的方括号和换行', () => {
+    const note = '## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 第一段。';
+    const renamed = renameTranscriptSpeaker(note, '说话人1', ' 小公爷[客户]\n主讲 ');
+
+    expect(renamed).toContain('[小公爷 客户 主讲] 第一段。');
+    expect(parseTranscriptSegments(renamed)[0].speaker).toBe('小公爷 客户 主讲');
+  });
+
   it('编辑单句时保留时间戳与摘要', () => {
     expect(replaceTranscriptSegmentText(TIMED_NOTE, 1, '用户修订后的第二句。')).toContain(
       '**[00:05 - 00:12]** 用户修订后的第二句。',
@@ -76,6 +97,224 @@ describe('parseTranscriptSegments', () => {
 
   it('空文本返回空数组', () => {
     expect(parseTranscriptSegments('')).toEqual([]);
+  });
+});
+
+describe('buildTranscriptWordCloud', () => {
+  it('汇总整场录音词频并过滤常见停用词', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 2, text: '报价合理，交付质量重要' },
+      { start: 2, end: 4, text: '报价需要匹配交付质量' },
+    ]);
+    expect(cloud.some(item => item.word.includes('报价'))).toBe(true);
+    expect(cloud.some(item => item.word === '需要')).toBe(false);
+  });
+
+  it('只出现一次的词不进词云——词云的意义是「反复提到」', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 2, text: '报价报价，顺带提一句排期' },
+    ]);
+    expect(cloud.some(item => item.word === '报价')).toBe(true);
+    // 排期只说了一次，不算这场的关键词
+    expect(cloud.some(item => item.word === '排期')).toBe(false);
+  });
+
+  it('丢掉「接上前一个窗口尾字」的滑窗碎片', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 2, text: '交付质量重要' },
+      { start: 2, end: 4, text: '匹配交付质量' },
+    ]);
+    // 交付、质量是真词
+    expect(cloud.some(item => item.word === '交付')).toBe(true);
+    expect(cloud.some(item => item.word === '质量')).toBe(true);
+    // 付质 是「交付」的尾字接上「质量」的首字滑出来的半截，频次与本体相同，必须丢
+    expect(cloud.some(item => item.word === '付质')).toBe(false);
+  });
+
+  it('含虚词字的双字组合不进词云——真实转写里 1/3 的噪音出在这', () => {
+    // 「一个东西」滑窗出 一个/个东/东西：一个是停用词，个东是碎片但没有左锚点
+    // （锚点「一个」已被停用词删掉），只有判虚词字才拦得住它。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '一个东西，另一个东西，还有一个东西' },
+    ]);
+    expect(cloud.some(item => item.word === '东西')).toBe(true);
+    expect(cloud.some(item => item.word === '个东')).toBe(false);
+    expect(cloud.some(item => item.word.includes('的'))).toBe(false);
+  });
+
+  it('虚词字表不吃真词：含 在/会 的实词必须留下', () => {
+    // 这些字刻意没收进 FUNCTION_CHARS，因为它们能组成真实实词。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '存在。会议。存在。会议。' },
+    ]);
+    for (const word of ['存在', '会议']) {
+      expect(cloud.some(item => item.word === word)).toBe(true);
+    }
+  });
+
+  it('判不出边界的不收：只在一个固定长串里出现过的组合一律丢掉', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '存在下单会议，存在下单会议' },
+    ]);
+    expect(cloud.some(item => item.word === '存在')).toBe(true);
+    expect(cloud.some(item => item.word === '会议')).toBe(true);
+    for (const undecidable of ['在下', '下单', '单会']) {
+      expect(cloud.some(item => item.word === undecidable)).toBe(false);
+    }
+  });
+
+  it('已知边界：词典里没有的词会整个丢掉（精度换召回，是有意的）', () => {
+    // Intl.Segmenter 查的是 ICU 词典，「下单」不在里面，会被切成单字，
+    // 而单字一律不进词云。代价是这类词看不到，换来的是绝不会端出半截词——
+    // 验收判据是「无法确定边界时不收录」，这个方向是有意选的。
+    // 这条用例把损失钉成已知项：它变红说明分词器换了，得重新评估召回。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '他要下单了，赶紧下单吧' },
+    ]);
+    expect(cloud.some(item => item.word === '下单')).toBe(false);
+    // 但绝不能因此冒出「要下」「单了」这种骑在词缝上的东西
+    for (const fragment of ['要下', '单了', '紧下']) {
+      expect(cloud.some(item => item.word === fragment)).toBe(false);
+    }
+  });
+
+  it('验收点名的半截词一个都不许出现', () => {
+    // 2026-08-11 外部验收两轮点名：规优 / 看一 / 下常 / 后第 / 考图 / 如说。
+    // 前三版靠统计判据都拦不住「看一」——它在真实语料里两侧都有变化
+    // （你看一下 / 我看一下、看一下 / 看一眼），统计上和真词无法区分。
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '我们看一下常规优化，你看一下这个效果，我看一下那个效果' },
+      { start: 3, end: 6, text: '参考图要更新，参考图很重要，比如说这个背包，比如说那个背包' },
+    ]);
+    for (const fragment of ['规优', '看一', '下常', '后第', '考图', '如说']) {
+      expect(cloud.some(item => item.word === fragment)).toBe(false);
+    }
+    expect(cloud.some(item => item.word === '效果')).toBe(true);
+    expect(cloud.some(item => item.word === '背包')).toBe(true);
+  });
+
+  it('词典能把通用分词器丢掉的专有名词捞回来', () => {
+    // 换 Intl.Segmenter 后，ICU 词典不收人名，「泽坤」整个消失——
+    // 而会上被反复叫到的人名恰恰是高价值信息（2026-08-11 外部验收实测）。
+    const segments = [{ start: 0, end: 3, text: '泽坤说要下单，泽坤又说排期紧张，泽坤再确认一次' }];
+    expect(buildTranscriptWordCloud(segments).some(item => item.word === '泽坤')).toBe(false);
+    expect(buildTranscriptWordCloud(segments, 18, ['泽坤']).some(item => item.word === '泽坤')).toBe(true);
+  });
+
+  it('词典只做「加」不做「猜」：不会因此冒出半截词', () => {
+    // 词典命中的整词先被切走，剩下的才交给 Segmenter。
+    // 所以补词典不会把已经治好的滑窗碎片问题带回来。
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: '泽坤看一下常规优化，泽坤看一下这个效果，泽坤说效果不错' }],
+      18,
+      ['泽坤'],
+    );
+    expect(cloud.some(item => item.word === '泽坤')).toBe(true);
+    for (const fragment of ['看一', '规优', '坤看']) {
+      expect(cloud.some(item => item.word === fragment)).toBe(false);
+    }
+  });
+
+  it('显式加进词典的词，不该被「猜词」的通用护栏丢掉', () => {
+    // 两道通用过滤（停用词 / 二字里含虚词字）是给 Segmenter 猜出来的词用的护栏。
+    // 真实会踩到的：产品名「个推」带虚词字「个」，人名「那英」带「那」。
+    // 用户加了词却在词云里看不见 = 那个补词入口是假的；
+    // L0 说话人层零配置捞人名的整个意义也在这里断掉。
+    const gt = [{ start: 0, end: 3, text: '个推的推送到了，个推那边确认过，个推再测一次' }];
+    expect(buildTranscriptWordCloud(gt).some(item => item.word === '个推')).toBe(false);
+    expect(buildTranscriptWordCloud(gt, 18, ['个推']).some(item => item.word === '个推')).toBe(true);
+
+    // 说话人名走的是同一条词典通道（调用方把说话人拼进 dictionary）
+    const na = [{ start: 0, end: 3, text: '那英说要下单，那英又说排期紧张，那英再确认一次' }];
+    expect(buildTranscriptWordCloud(na, 18, ['那英']).some(item => item.word === '那英')).toBe(true);
+  });
+
+  it('豁免只给词典词，没加词典的二字虚词组合仍然被挡住', () => {
+    // 上一条的豁免不能顺手把护栏整个拆了：没进词典的「这个」「那个」还得挡住，
+    // 否则词云会重新被虚词灌满。
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: '这个方案那个方案，这个再看看，那个再等等' }],
+      18,
+      [],
+    );
+    for (const noise of ['这个', '那个']) {
+      expect(cloud.some(item => item.word === noise)).toBe(false);
+    }
+  });
+
+  it('词典词仍然要「反复提到」才进词云：只说一次不算', () => {
+    // 豁免的是猜词护栏，不是「反复提到」这个定义本身——
+    // 词云讲的是这场反复提到什么，不是把词典列一遍。
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: '个推只被提到这一次' }],
+      18,
+      ['个推'],
+    );
+    expect(cloud.some(item => item.word === '个推')).toBe(false);
+  });
+
+  it('长词优先：不会被更短的词典词抢先切走', () => {
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: '张三丰来了，张三丰走了' }],
+      18,
+      ['张三', '张三丰'],
+    );
+    expect(cloud.some(item => item.word === '张三丰')).toBe(true);
+    expect(cloud.some(item => item.word === '张三')).toBe(false);
+  });
+
+  it('英文词典项的次数是真实出现次数，不因为词典而翻倍', () => {
+    // 词典与英文两条通道扫的若都是原文，同一个英文词会被各数一遍。
+    // 判据是「数字对不对」而不是「在不在」：翻倍的词会被顶到词云最前面，
+    // 结论句里那句「这场反复提到的是 X（N 次）」直接报错数。
+    const segments = [{ start: 0, end: 3, text: 'kubernetes 扩容，kubernetes 排期，kubernetes 上线' }];
+    const withDictionary = buildTranscriptWordCloud(segments, 18, ['kubernetes']);
+    const without = buildTranscriptWordCloud(segments);
+    expect(withDictionary.find(item => item.word === 'kubernetes')?.count).toBe(3);
+    expect(without.find(item => item.word === 'kubernetes')?.count).toBe(3);
+  });
+
+  it('大小写不同不裂成两个词条', () => {
+    // 词典写 Kubernetes、正文写 kubernetes，是同一个词，必须并成一格
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: 'Kubernetes 扩容，kubernetes 排期，KUBERNETES 上线' }],
+      18,
+      ['Kubernetes'],
+    );
+    const hits = cloud.filter(item => item.word.toLowerCase() === 'kubernetes');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].count).toBe(3);
+  });
+
+  it('英文词典项按词边界匹配，不从更长的词中间挖走一块', () => {
+    // 词典有 rate 时，rateLimit 不该被拆成 rate + Limit
+    const cloud = buildTranscriptWordCloud(
+      [{ start: 0, end: 3, text: 'rateLimit 配置，rateLimit 生效' }],
+      18,
+      ['rate'],
+    );
+    expect(cloud.find(item => item.word === 'ratelimit')?.count).toBe(2);
+    expect(cloud.some(item => item.word === 'rate')).toBe(false);
+  });
+
+  it('按频次降序，第一个就是全场最常提到的（展示层的权重基准）', () => {
+    const cloud = buildTranscriptWordCloud([
+      { start: 0, end: 3, text: '预算预算预算，另外说说效果效果' },
+    ]);
+    expect(cloud[0]).toEqual({ word: '预算', count: 3 });
+    expect(cloud.every((item, index) => index === 0 || item.count <= cloud[index - 1].count)).toBe(true);
+  });
+});
+
+describe('parseRecordingAnswerParts', () => {
+  it('把单点和区间引用转换为可跳播秒数', () => {
+    expect(parseRecordingAnswerParts('结论一 [00:12-00:18]，补充 [01:02]。')).toEqual([
+      { kind: 'text', text: '结论一 ' },
+      { kind: 'citation', label: '[00:12-00:18]', start: 12 },
+      { kind: 'text', text: '，补充 ' },
+      { kind: 'citation', label: '[01:02]', start: 62 },
+      { kind: 'text', text: '。' },
+    ]);
   });
 });
 
@@ -132,6 +371,12 @@ describe('estimateTranscriptSegments', () => {
   it('时长未知时不生成伪时间轴', () => {
     expect(estimateTranscriptSegments(parseTranscriptSegments(PLAIN_NOTE), 0)).toEqual([]);
   });
+
+  it('估算跟随拆出的句子仍可逐句校对', () => {
+    const note = '## 转录全文\n\n第一句。第二句更长。第三句。';
+    expect(replaceEstimatedTranscriptSentenceText(note, 1, '修改后的第二句。'))
+      .toContain('第一句。修改后的第二句。第三句。');
+  });
 });
 
 describe('parseSummaryModules', () => {
@@ -153,5 +398,42 @@ describe('activeSummaryModuleIndex', () => {
     expect(activeSummaryModuleIndex(4, 0, 100)).toBe(0);
     expect(activeSummaryModuleIndex(4, 51, 100)).toBe(2);
     expect(activeSummaryModuleIndex(4, 100, 100)).toBe(3);
+  });
+});
+
+describe('parseSpeakerSourceNote', () => {
+  // 契约来源：后端 SubtitleFormatter.FormatSpeakerSourceNote 写进笔记的
+  //   `> 说话人来源：{key} · {说明}` 行。key 决定口吻，说明文案只在后端维护一份。
+  const noteWith = (line: string) =>
+    `# 录音 · 转录笔记\n> 来源：a.m4a\n\n## 转录全文\n\n${line}\n\n**[00:00 - 00:09]** [说话人1] 甲。\n`;
+
+  it('本地声纹兜底判为估算，说明文案原样取自笔记', () => {
+    const parsed = parseSpeakerSourceNote(noteWith(
+      '> 说话人来源：local · 声纹估算 · 本地按声纹分出几种声音是真实声学结果，但每句归谁是按语速比例推算的，可能与实际不符'));
+    expect(parsed?.key).toBe('local');
+    expect(parsed?.estimated).toBe(true);
+    expect(parsed?.text).toContain('按语速比例推算');
+  });
+
+  it('上游原生识别不标估算', () => {
+    const parsed = parseSpeakerSourceNote(noteWith('> 说话人来源：native · 原生识别 · 由语音识别服务直接返回，逐句归属可信'));
+    expect(parsed?.key).toBe('native');
+    expect(parsed?.estimated).toBe(false);
+  });
+
+  it('模型重听属于模型判断，同样标估算', () => {
+    expect(parseSpeakerSourceNote(noteWith('> 说话人来源：model · 模型重听 · 音频模型重新听完整段后按声音切分，属模型判断'))?.estimated).toBe(true);
+  });
+
+  it('旧笔记没有来源行时返回 null，不猜也不兜底', () => {
+    expect(parseSpeakerSourceNote('# 录音\n\n## 转录全文\n\n**[00:00 - 00:09]** [说话人1] 甲。')).toBeNull();
+    expect(parseSpeakerSourceNote('')).toBeNull();
+  });
+
+  it('来源行不参与逐句解析，不会被当成一句转录', () => {
+    const md = noteWith('> 说话人来源：local · 声纹估算 · 每句归谁按语速比例推算');
+    expect(parseTranscriptSegments(md)).toEqual([
+      { start: 0, end: 9, speaker: '说话人1', text: '甲。' },
+    ]);
   });
 });

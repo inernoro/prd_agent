@@ -12,9 +12,16 @@ export interface FeedItem {
   coverAssetId?: string;
 }
 
+/**
+ * 动态流响应。
+ *
+ * `degradedSources`：后端逐个来源查库，单个失败不整体 500（另一个来源照常可用），
+ * 但会把没取到的来源列在这里。**空列表 + 非空 degradedSources = 服务挂了，
+ * 不是"你还没用过"** —— 少了这个字段，前端只看 HTTP 成不成功就会把故障渲染成空态。
+ */
 export type GetMobileFeedContract = (args?: {
   limit?: number;
-}) => Promise<ApiResponse<{ items: FeedItem[] }>>;
+}) => Promise<ApiResponse<{ items: FeedItem[]; degradedSources?: string[] }>>;
 
 // ─── Stats ───
 

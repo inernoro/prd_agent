@@ -4,6 +4,8 @@
 
 > **关联实现**：`.claude/skills/create-visual-test-to-kb/`（可执行 SSOT）
 > **一句话**：把"凭感觉验收 + 随手写报告"升级为业界对标、可追溯、可沉淀的标准化验收体系——并让它成为质量资产，越用越值钱。
+> **谁该读**：设计验收体系的产品与工程师。
+> **读完能做什么**：说清验收体系由哪几块组成、各自产出什么。
 
 
 ## 1. 管理摘要
@@ -193,7 +195,7 @@ v3 报告骨架（29119-3 对齐）与状态前置标题已在标准与配置中
 
 ## 11. 关联文档
 
-- 方法论 SSOT：`doc/rule.skill.issues-system.md` §5（四轴矩阵 / 10 条硬约束 / P0-P3）
+- 方法论 SSOT：[doc/rule.skill.issues-system.md](./rule.skill.issues-system.md) §5（四轴矩阵 / 10 条硬约束 / P0-P3）
 - 端到端验收原则：`.claude/rules/e2e-verification.md`
 - 完成标准与自测优先：`CLAUDE.md` §8 / §8.1
 - 可执行实现：`.claude/skills/create-visual-test-to-kb/`

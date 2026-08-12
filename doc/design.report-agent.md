@@ -4,6 +4,10 @@
 
 > **appKey**：`report-agent`
 
+**一句话**：让团队周报从"负担"变成"资产"——成员轻松写、管理者秒懂、数据自动来。
+**谁该读**：周报功能的产品与工程师。
+**读完能做什么**：说清采集、生成、汇总三段的整体设计。
+
 ## 一、管理摘要
 
 - **解决什么问题**：团队周报撰写依赖人工汇总，管理者需逐篇阅读成员周报才能掌握全局进展，且缺乏数据驱动的工作量度量
@@ -12,8 +16,6 @@
 - **影响范围**：prd-api（ReportAgentController）、prd-admin（20+ 前端页面）、LLM Gateway（AI 汇总调用）、工作流引擎（数据采集）
 
 ## 二、产品定位
-
-**一句话**：让团队周报从"负担"变成"资产"——成员轻松写、管理者秒懂、数据自动来。
 
 **目标用户**：
 
@@ -164,7 +166,7 @@
 | `report_weekly_reports` | 周报 | UserId, TeamId, WeekYear, Sections, Status |
 | `report_data_sources` | 数据源配置 | TeamId, SourceType(git/svn), RepoUrl, Credentials |
 | `report_commits` | 代码提交缓存 | DataSourceId, MappedUserId, CommitHash, Message, Date |
-| `report_comments` | 段落级评论 | ReportId, SectionIndex, Content, ParentCommentId（回复） |
+| `report_comments` | 段落级评论 + 划词评论 | ReportId, SectionIndex, Content, ParentCommentId（回复）；划词评论额外带 SelectedText/ContextBefore/ContextAfter/StartOffset/EndOffset（选区锚定，null 表示传统段落级评论），前端据此在正文重定位并画黄色下划线，正文变化找不到原片段时仅不画线、评论保留（changelogs/2026-07-27_report-comment-underline.md） |
 | `report_likes` | 点赞记录 | ReportId, UserId（唯一约束：一人一赞） |
 | `report_view_events` | 浏览事件 | ReportId, UserId, ViewedAt（允许重复，统计频次） |
 | `report_team_summaries` | AI 团队汇总 | TeamId, WeekYear, Summary, GeneratedBy(AI) |
@@ -243,6 +245,7 @@
 | GET | `/api/report/reports/{id}/comments` | 获取评论列表 |
 | POST | `/api/report/reports/{id}/comments` | 发表评论 |
 | DELETE | `/api/report/reports/{reportId}/comments/{commentId}` | 删除评论 |
+| POST | `/api/report-agent/reports/{id}/comments/images` | 上传评论图片（有权查看该周报即可上传，不限作者与状态；≤5MB，白名单 MIME；返回 `attachmentId` 供创建评论时填入 `attachmentIds`） |
 | GET | `/api/report/reports/{id}/likes` | 获取点赞列表 |
 | POST | `/api/report/reports/{id}/likes` | 点赞 |
 | DELETE | `/api/report/reports/{id}/likes` | 取消点赞 |
@@ -260,9 +263,9 @@
 
 | 文档 | 关系 |
 |------|------|
-| `design.report-agent.ai-systems.md` | 市场调研 — Phase 1 前的竞品分析，为功能设计提供灵感 |
-| `design.executive-dashboard.md` | 总裁面板消费周报数据，展示团队级聚合指标 |
-| `design.workflow-agent.engine.md` | 工作流引擎为周报提供外部数据源采集能力 |
+| [design.report-agent.ai-systems.md](./design.report-agent.ai-systems.md) | 市场调研 — Phase 1 前的竞品分析，为功能设计提供灵感 |
+| [design.executive-dashboard.md](./design.executive-dashboard.md) | 总裁面板消费周报数据，展示团队级聚合指标 |
+| [design.workflow-agent.engine.md](./design.workflow-agent.engine.md) | 工作流引擎为周报提供外部数据源采集能力 |
 
 ## 十、影响范围与风险
 
@@ -283,3 +286,7 @@
 | AI 汇总生成质量不稳定 | 中 | 中 | 支持自定义 prompt + 重新生成 |
 | 大团队周报数据量大导致汇总超 token 限制 | 中 | 中 | 分批汇总或摘要后再汇总 |
 | 身份映射不准导致 commit 归属错误 | 中 | 低 | 管理界面支持手动修正映射 |
+
+## 十一、评论图片附件
+
+周报（富文本正文、日报、评论）三处独立的图片上传表单收敛为共用实现，评论输入器升级为支持粘贴截图、选图上传、待发缩略图删除的多行 composer。评论创建接口新增 `attachmentIds`（上限 9 张、按归属校验），支持纯文字、图文混合、纯图片三种形态——仅当正文与附件同时为空才拒绝；列表接口批量解析并返回附件详情。图片大图预览统一走 `createPortal` 挂载到 `document.body` 并提升层级，避免被右侧栏或卡片遮挡（呼应 [浮层三硬约束](./rule.frontend.frontend-modal.md)）。

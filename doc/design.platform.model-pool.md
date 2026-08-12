@@ -2,6 +2,12 @@
 
 > **版本**：v3.0 | **日期**：2026-07-20 | **状态**：开发中
 
+**一句话**：应用只认逻辑模型名，网关为每个逻辑模型挂多个上游供给并按优先级与权重选一个。
+**谁该读**：做模型池配置的运维与工程师。
+**读完能做什么**：说清逻辑模型与上游供给的对应关系。
+
+---
+
 ## 一、管理摘要
 
 - **应用看什么**：应用只维护自己有权使用的逻辑模型列表，例如 `image2`、`nanobanana-2`。它不读取 Provider、Endpoint、密钥或上游真实模型名。
@@ -53,7 +59,8 @@ appCallerCode 是业务用途，逻辑模型 PublicId 是应用选择，真实�
 | 逻辑模型 | Offering | 协议 | 典型用途 |
 |---|---|---|---|
 | `image2` | OpenAI 直连 | OpenAI Images | 主上游 |
-| `image2` | OpenRouter | OpenAI Chat 多模态 | 备用上游 |
+| `image2` | OpenRouter（专用生图模型） | `openrouter-image`：OpenRouter 专用 Images API | 备用上游 |
+| `image2` | OpenRouter（多模态模型） | `openrouter`：OpenAI Chat 多模态 | 备用上游 |
 | `nanobanana-2` | Google 直连 | Gemini `generateContent` | 主上游 |
 | `nanobanana-2` | 兼容平台代理 | OpenAI Images 或 Exchange | 备用上游 |
 
@@ -126,7 +133,7 @@ appCallerCode 是业务用途，逻辑模型 PublicId 是应用选择，真实�
 
 ## 关联文档
 
-- `doc/design.platform.llm-gateway.md`
-- `doc/design.platform.llm-gateway.physical-isolation.md`
-- `doc/plan.platform.llm-gateway.external-platform.md`
-- `doc/rule.platform.llm-gateway.md`
+- [doc/design.platform.llm-gateway.md](./design.platform.llm-gateway.md)
+- [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)
+- [doc/plan.platform.llm-gateway.external-platform.md](./plan.platform.llm-gateway.external-platform.md)
+- [doc/rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)

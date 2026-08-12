@@ -33,14 +33,23 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 export const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, style, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    /**
+     * frame 布局：不再套「整体滚动」的内层包裹，children 直接铺在 flex-col 的
+     * Content 里，由调用方自己划分 shrink-0 头部 / flex-1 滚动主体 / shrink-0 底栏。
+     * 给「操作按钮必须永远可见」的高内容弹窗用（发布弹窗返工的根因之一就是
+     * 底栏跟着长内容一起滚走，用户要「使劲拉下去才能看到下一步操作」）。
+     */
+    frame?: boolean;
+  }
+>(({ className, children, style, frame, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
         'fixed left-[50%] top-[50%] z-50 flex w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col border bg-card shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg',
+        frame && 'overflow-hidden',
         className
       )}
       // 布局关键尺寸走 inline style：frontend-modal.md 明确 Tailwind arbitrary value(h-[90vh]) 在 v4 下不可靠。
@@ -48,12 +57,19 @@ export const DialogContent = React.forwardRef<
       style={{ maxHeight: '90vh', ...style }}
       {...props}
     >
-      <div
-        className="grid gap-4 overflow-y-auto p-6"
-        style={{ minHeight: 0, overscrollBehavior: 'contain' }}
-      >
-        {children}
-      </div>
+      {frame ? children : (
+        <div
+          className="grid gap-4 overflow-y-auto p-6"
+          // gridTemplateColumns 的 minmax(0, 1fr)：grid 轨道默认 min-content 下限，
+          // 一段不换行的长内容（日志 <pre>、整段脚本）会把轨道撑得比弹窗还宽，
+          // 右侧内容整体被裁掉——2026-07-30 用户截图里「输入框不见了」「步骤 2/4/6
+          // 消失」就是这个。钉死 minmax(0,1fr) 后轨道永不超过容器，
+          // 长内容只能在自己的滚动容器里消化。
+          style={{ minHeight: 0, overscrollBehavior: 'contain', gridTemplateColumns: 'minmax(0, 1fr)' }}
+        >
+          {children}
+        </div>
+      )}
       <DialogPrimitive.Close className="absolute right-4 top-4 z-10 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
         <X className="h-4 w-4" />
         <span className="sr-only">关闭</span>
@@ -62,6 +78,16 @@ export const DialogContent = React.forwardRef<
   </DialogPortal>
 ));
 DialogContent.displayName = DialogPrimitive.Content.displayName;
+
+/** frame 布局里的滚动主体：flex-1 + min-h-0 + 自己消化纵向滚动。 */
+export const DialogBody = ({ className, style, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  <div
+    className={cn('min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4', className)}
+    style={{ overscrollBehavior: 'contain', ...style }}
+    {...props}
+  />
+);
+DialogBody.displayName = 'DialogBody';
 
 export const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div

@@ -20,6 +20,7 @@ using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -1903,7 +1904,10 @@ public class DocumentStoreController : ControllerBase
             cancellationToken: CancellationToken.None);
 
         var result = await _liveTranscriptionRelay.RelayAsync(browser, userId, sessionId);
-        var status = result.Completed
+        // 重连后的流只包含断线后的音频。它可以继续给用户实时反馈，但不能被当作
+        // 整场录音的完整原文；持久化为 degraded，完成链路会自动用完整音频校准。
+        var resumed = string.Equals(Request.Query["resumed"], "true", StringComparison.OrdinalIgnoreCase);
+        var status = result.Completed && !resumed
             ? DocumentLiveTranscriptStatus.Completed
             : DocumentLiveTranscriptStatus.Degraded;
         await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -1913,7 +1917,9 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.LiveTranscript, result.Transcript)
                 .Set(s => s.LiveTranscriptProvider, result.Provider)
                 .Set(s => s.LiveTranscriptModel, result.Model)
-                .Set(s => s.LiveTranscriptError, result.Error)
+                .Set(s => s.LiveTranscriptError, resumed && result.Completed
+                    ? "实时转写发生过重连，结束后将使用完整录音校准"
+                    : result.Error)
                 .Set(s => s.LiveTranscriptUpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         if (result.Completed && !string.IsNullOrWhiteSpace(result.Transcript))
@@ -1939,6 +1945,62 @@ public class DocumentStoreController : ControllerBase
                 }
             }
         }
+    }
+
+    /// <summary>用户主动唤醒卡住的录音云端归档；不会重复创建条目。</summary>
+    [HttpPost("entries/{entryId}/recording-archive/retry")]
+    public async Task<IActionResult> RetryRecordingArchive(string entryId)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音条目不存在"));
+
+        var now = DateTime.UtcNow;
+        var result = await QueueRecordingArchiveRetryAsync(
+            _db.DocumentRecordingUploadSessions,
+            entryId,
+            userId,
+            InstanceIdentity.Get(_config),
+            now,
+            CancellationToken.None);
+        if (result.MatchedCount == 0)
+        {
+            var completed = entry.Metadata?.GetValueOrDefault("audioArchiveStatus")
+                == DocumentRecordingArchiveStatus.Completed;
+            return completed
+                ? Ok(ApiResponse<object>.Ok(new { queued = false, completed = true }))
+                : Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "当前录音不在可重试状态"));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { queued = true, completed = false }));
+    }
+
+    internal static async Task<UpdateResult> QueueRecordingArchiveRetryAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string entryId,
+        string userId,
+        string instanceId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var recoverableStatus = Builders<DocumentRecordingUploadSession>.Filter.In(
+            session => session.ArchiveStatus,
+            [DocumentRecordingArchiveStatus.Pending, DocumentRecordingArchiveStatus.Archiving]);
+        return await sessions.UpdateOneAsync(
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(session => session.EntryId, entryId),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(session => session.UserId, userId),
+                recoverableStatus),
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(session => session.OwnerInstanceId, instanceId)
+                .Set(session => session.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
+                .Unset(session => session.ArchiveLeaseId)
+                .Set(session => session.ArchiveNextAttemptAt, now)
+                .Set(session => session.ArchiveError, null)
+                .Set(session => session.UpdatedAt, now),
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>按顺序接收一个录音二进制分片。重复发送已确认的 index 会幂等返回。</summary>
@@ -6621,7 +6683,9 @@ public class DocumentStoreController : ControllerBase
             reusable.Title = title;
             reusable.Description = description;
             reusable.ExpiresAt = expiresAt;
-            await TryAllocateDocumentStoreShortSeqAsync(reusable);
+            // 复用旧分享时，只有本次显式要数字短链才补分配（AllocateAsync 幂等，不会重复占号）
+            if (request.AllocateShortLink && reusable.ShortSeq <= 0)
+                await TryAllocateDocumentStoreShortSeqAsync(reusable);
             return Ok(ApiResponse<DocumentStoreShareLink>.Ok(reusable));
         }
 
@@ -6639,11 +6703,35 @@ public class DocumentStoreController : ControllerBase
             ExpiresAt = expiresAt,
         };
         await _db.DocumentStoreShareLinks.InsertOneAsync(link, cancellationToken: CancellationToken.None);
-        await TryAllocateDocumentStoreShortSeqAsync(link);
+        // 数字短链 /s/{seq} 按需懒分配（与网页托管 2026-06-11 同口径）：默认 ShortSeq=0，
+        // 对外只给不可枚举的 /s/lib/{token}。无条件分配会让 short_links 集合被每条分享污染，
+        // 且把「全局自增、可从 1 枚举」的地址当成常态发出去（见 doc/debt.platform.md「分享链接安全」）。
+        if (request.AllocateShortLink)
+            await TryAllocateDocumentStoreShortSeqAsync(link);
 
         // 返回完整 DocumentStoreShareLink，保持前端 DocumentStoreShareLink 类型契约不变。
         // 统一短链只登记 token，不区分阅读/星球/双链图；不同展示方式是同一公开页的 view 参数。
         return Ok(ApiResponse<DocumentStoreShareLink>.Ok(link));
+    }
+
+    /// <summary>为已有分享按需生成数字短链 /s/{seq}（用户在面板里主动点「生成数字短链」）</summary>
+    [HttpPost("share-links/{linkId}/short-link")]
+    public async Task<IActionResult> EnsureShareLinkShortSeq(string linkId)
+    {
+        var userId = GetUserId();
+        var link = await _db.DocumentStoreShareLinks.Find(l => l.Id == linkId).FirstOrDefaultAsync();
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
+        if (link.CreatedBy != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权修改此分享"));
+        if (link.IsRevoked)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已撤销的分享不能生成短链"));
+
+        await TryAllocateDocumentStoreShortSeqAsync(link);
+        if (link.ShortSeq <= 0)
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "生成数字短链失败，请稍后重试"));
+
+        return Ok(ApiResponse<object>.Ok(new { shortSeq = link.ShortSeq }));
     }
 
     private async Task TryAllocateDocumentStoreShortSeqAsync(DocumentStoreShareLink link)
@@ -8185,6 +8273,13 @@ public class CreateShareLinkRequest
 
     /// <summary>单篇文档分享：DocumentEntry.Id；不传 = 分享整个知识库</summary>
     public string? EntryId { get; set; }
+
+    /// <summary>
+    /// 是否同时分配数字短链 /s/{seq}。默认 false —— 数字短链全局自增、可被从 1 逐个枚举，
+    /// 只有用户主动要才给（与网页托管 2026-06-11 的按需懒分配同口径）。
+    /// 对外访问用不可枚举的 /s/lib/{token} 长链即可，不依赖 short_links。
+    /// </summary>
+    public bool AllocateShortLink { get; set; }
 }
 
 public class LogViewRequest

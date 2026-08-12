@@ -14,6 +14,18 @@ public class AppSettings
     /// <summary>是否启用 Prompt Caching（关闭后将强制不使用缓存相关能力）</summary>
     public bool EnablePromptCache { get; set; } = true;
 
+    /// <summary>
+    /// 转录词云的系统级词典：人名、产品名、团队黑话这类通用分词器不认识的词。
+    ///
+    /// 由来：词云用 Intl.Segmenter 做词典分词，精度换了召回——ICU 词典不收专有名词，
+    /// 会上被反复叫到的人名（实测「泽坤」）会整个消失，而那恰恰是高价值信息。
+    /// 这张表是「加」不是「猜」：只保证表里的词被完整保留，不会引入新的边界猜测，
+    /// 所以不会把已经治好的半截词问题带回来。
+    ///
+    /// 所有用户默认引用这张表；个人补充见 UserPreferences.TranscriptLexicon。
+    /// </summary>
+    public List<string>? TranscriptLexicon { get; set; }
+
     /// <summary>请求 Body 最大字符数（默认 200k，所有大模型请求输入的字符限制统一来源）</summary>
     public int? RequestBodyMaxChars { get; set; }
 

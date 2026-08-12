@@ -39,24 +39,73 @@ description: 从 git 历史生成「今日大事早知道」开发日报，并�
 
 > 禁止把修复写在新增前面，禁止因为「今天修的多」就让修复段落喧宾夺主。
 
-### 纪律 2：时间边界按「提交日期文本」判断，不做时区换算
+### 纪律 2：采集窗口是「上期水位线 → 本期 HEAD」，不是「今天这个日历日」
 
-与周报技能一致：用 `%cd --date=short` 输出 `YYYY-MM-DD`，只按这个日期文本过滤当天提交。**不要**用 `--since/--until` 让 Git 按提交自带时区解析（会把跨午夜的提交卷错天）。**必须先解析默认主干并 `--first-parent` 只走主干线**（见纪律 3），否则在 feature 分支上跑会把未合并的本地提交当成"主干落地"统计上去。
+**日报覆盖的是一段连续区间，不是一个日历日。** 起点永远等于上一期日报采到的位置
+（水位线 / watermark），终点是本次运行时的主干 HEAD。区间**左开右闭**：`(上期 lastCommit, HEAD]`。
+
+> **为什么不能按日历日**（2026-07-30 实测事故，本纪律因此重写）：
+> 日报由定时任务在每天早上跑（实测 09:10 +0800）。按日历日过滤时，当天 09:10 之后
+> 落地的提交**不在当天报告里**（报告已经跑完了），也**不在第二天报告里**（日期桶不对），
+> 于是永久漏报。实测 07-28 / 07-29 两天共漏掉 8 个主干条目、36 个真实提交，含 4 个 feat
+> （周报技能 v2、知识库正文链接卡死修复、录音存储就绪修复等当周最大的几项）。
+> 漏报无声无息：每期报告自己看着都正常，只有把相邻两期的覆盖区间拼起来才看得见那个洞。
+
+**水位线以提交 SHA 为准**，不用日期、不用时间戳。三个理由：免疫时区错位（git `%cd` 用提交
+自带时区，容器多为 UTC，两者会差一天）；免疫「同一秒多个提交」的边界重叠；**中断自动续上**
+——漏跑三天，下次窗口自然横跨三天，不需要任何补偿逻辑。
+
+水位线存在上一期条目的 `metadata.lastCommit`，由 `coverage_window.py` 读取，三级兜底：
+
+| mode | 触发条件 | 窗口 |
+|------|----------|------|
+| `sha` | 上期 `lastCommit` 在本地可达**且是本期右端的祖先**（正常路径） | `git log <lastCommit>..<headSha>` |
+| `since` | **仅**上期从来没记过 SHA（本机制上线前的老条目）且有 `coverTo` | `git log <headSha> --since=<coverTo>` 再剔除 `excludeSha`（--since 是闭区间，须还原左开） |
+| `today` | 库里没有历史日报（首次运行），或老条目连 `coverTo` 都没有 | 退化为当日，与旧行为一致 |
+
+> **不降级的那种情况**：上期**记了 SHA 却在当前历史里用不上**（`cat-file` 找不到，或它不是本期右端的祖先——
+> main 被 force push 改写后的典型表现），`coverage_window.py` 直接 `exit 3`，**不**退到时间戳。
+> 因为时间戳表达不了「图上哪些点没被覆盖过」：改写后的提交常保留更早的 committer date，
+> 会被 `--since` 整批排除，而水位线照样前进 → 那批改动永久跳过。这种情况必须人工确认。
 
 ```bash
-TODAY=${1:-$(date +%Y-%m-%d)}   # 可传入目标日期，缺省今天
-# 默认主干（origin/HEAD → origin/main 兜底），日报只统计落地主干的提交
+# 0. 主干：所有 git log 必须带 "$DEFAULT_BRANCH" + --first-parent（见纪律 3），
+#    否则在 feature 分支上跑会把未合并的本地提交当成「主干落地」统计上去。
 DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
 DEFAULT_BRANCH=${DEFAULT_BRANCH:-origin/main}
-git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
-  | awk -F '\t' -v d="$TODAY" '$1==d'
+git fetch origin --quiet          # 必须先 fetch：容器多为浅克隆，不 fetch 会少看好几天
+
+# 1. 读水位线（stdout 是单份 JSON，诊断走 stderr）
+WIN=$(python3 .claude/skills/daily-report-summary/reference/coverage_window.py \
+        --base https://main-prd-agent.miduo.org --impersonate inernoro --target-date "$TODAY")
+MODE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["mode"])')
+RANGE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["revRange"])')
+HEAD_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["headSha"])')
+
+# 2. 按 mode 取本期区间内的主干条目
+case "$MODE" in
+  sha)   git log --first-parent "$RANGE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
+  since) SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
+         # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界
+         git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
+  today) git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
+           | awk -F '\t' -v d="$TODAY" '$1==d' ;;
+esac
 ```
+
+**发布时必须回写水位线**：`publish.py --last-commit "$HEAD_SHA"`（见 Phase 5）。
+不回写，下一期就读不到水位线、退回当日口径，这个洞立刻复发。
+
+**跨日窗口的写法**：当窗口横跨多天（`spanDays > 1`，即补记期），报头 dateline 必须写明
+真实覆盖区间而不是只写目标日期，例如
+`2026 年 7 月 30 日 · 第 211 期 · 补记 07-28 15:22 ~ 07-30 05:14`，
+并在「今日大事」首条说明这是补记期、补的是哪几天。**禁止**把多天的量按单日呈现。
 
 ### 纪律 3：默认主干为主，但合并日 ≠ 提交日时要穿透 PR
 
 主仓库常见「feature 分支当天提交、当天/隔天 merge 到 main」。先取主干当日提交（`--first-parent` + 主干 merge commit 的 committer date = 落地时间，口径正确）；若发现当天有 merge commit，用 `git log <merge>^1..<merge>^2 --oneline` 穿透读 PR 真实 commits，以 commit 内容（而非 merge 标题）判断主题归属。**禁止**只读 merge 标题就归类。
 
-**已知边界（committer date 的口径）**：本仓库 PR 全部走 merge commit，merge 的 committer date 即落地日，统计准确。若仓库改用 **fast-forward / rebase 合并**，被合并的提交会保留更早的 committer date，可能让「当天 ff 落地」的提交按更早日期归档（当天显示零活动而实际已发版）。遇到 ff/rebase 流程，需改用 PR 元数据的落地 SHA 日期（参照 `weekly-update-summary` 纪律 3）。本边界已记入 `doc/debt.report-agent.daily.md`。
+**已知边界（committer date 的口径）**：本仓库 PR 全部走 merge commit，merge 的 committer date 即落地日，统计准确。若仓库改用 **fast-forward / rebase 合并**，被合并的提交会保留更早的 committer date，可能让「当天 ff 落地」的提交按更早日期归档（当天显示零活动而实际已发版）。遇到 ff/rebase 流程，需改用 PR 元数据的落地 SHA 日期（参照 `weekly-update-summary` 纪律 3）。本边界已记入 `doc/debt.report-agent.md`。
 
 ### 纪律 4：标题固定格式，库固定名
 
@@ -119,46 +168,101 @@ html 报纸版硬约束（publish.py 发布前校验，违者拒发）：
 
 ## 执行流程
 
-### Phase 1：确定目标日期
+### Phase 1：确定目标日期 + 解析采集窗口
 
 ```bash
-# 全流程唯一日期变量：TODAY。后续 Phase 2 的 git 过滤、Phase 5 的 --title/--daily-date
-# 一律复用这个 TODAY，禁止再引入 ARG_DATE 等别名，避免补历史日报时各处日期对不上。
+# 全流程唯一日期变量：TODAY —— 它只决定**标题和归档日期**，不再决定采集范围（纪律 2）。
+# 后续 Phase 5 的 --title/--daily-date 一律复用它，禁止引入 ARG_DATE 等别名。
 TODAY=${1:-$(date +%Y-%m-%d)}
+
+# 采集范围由水位线决定，与 TODAY 解耦。必须先 fetch：容器多为浅克隆，不 fetch 会少看好几天。
+DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+DEFAULT_BRANCH=${DEFAULT_BRANCH:-origin/main}
+git fetch origin --quiet
+# 浅克隆必须**真的**补全：失败不能吞。浅克隆下 merge 的父提交不可达（.git/shallow 的
+# graft 会让边界提交看起来根本没有父），Phase 2 的穿透判据会把每个 merge 误判成「直接提交」，
+# 于是只统计到一行 merge 标题、PR 里的真实提交全部丢失——而 Phase 5 照样把水位线推到 HEAD，
+# 那些提交**永久**不会再被任何一期采到。这正是本 PR 要根治的漏报，必须当场中止。
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+  git fetch origin --unshallow --quiet || git fetch origin --deepen=2000 --quiet || true
+  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+    echo "[致命] 仓库仍是浅克隆，merge 无法穿透：统计会静默丢失 PR 内提交，而水位线仍会前进。" >&2
+    echo "       请先手动跑通 git fetch origin --unshallow 再生成日报。" >&2
+    exit 3
+  fi
+fi
+
+WIN=$(python3 .claude/skills/daily-report-summary/reference/coverage_window.py \
+        --base https://main-prd-agent.miduo.org --impersonate inernoro --target-date "$TODAY")
+echo "$WIN"    # {mode, baseSha, sinceIso, headSha, revRange, spanDays, prevDate, gap}
+
+# 窗口三变量在此**一次性**解出，Phase 2 与 Phase 5 只引用、不重复解析——
+# 重复解析是上一轮的真实事故：Phase 2 只解了 MODE/RANGE 却引用 $HEAD_SHA，
+# since 模式下它是空串，git log 直接 exit 128，降级路径整条跑不起来。
+MODE=$(echo "$WIN"  | python3 -c 'import json,sys;print(json.load(sys.stdin)["mode"])')
+RANGE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["revRange"])')
+HEAD_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["headSha"])')
+SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
+EXCLUDE_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("excludeSha",""))')
+# 空值即刻报错，不要留到 git log 才以 exit 128 的形式暴露
+: "${MODE:?窗口解析失败：MODE 为空}" "${HEAD_SHA:?窗口解析失败：headSha 为空}"
 ```
-用户可指定日期（如「补 2026-05-30 的日报」时 `TODAY=2026-05-30`）；缺省取今天。纪律 2 与 Phase 2 的代码块都直接用这个 `TODAY`，不重新定义。
+
+用户可指定日期（如「补 2026-05-30 的日报」时 `TODAY=2026-05-30`）；缺省取今天。
+`--target-date` 会让水位线查询**排除目标日当天已发布的那篇**，避免重跑当天时窗口塌成空集。
+
+若 `gap=true` 或 `spanDays>1`，本期是**补记期**：dateline 与「今日大事」首条必须说明补的是哪几天（纪律 2）。
 
 ### Phase 2：数据收集（按纪律 2/3）
 
 ```bash
-# 0. 先定主干（纪律 2/3）：以下所有 git log 都必须带 "$DEFAULT_BRANCH" + --first-parent，
-#    否则在 feature 分支上跑会把未合并提交当成"主干落地"，并绕过零提交硬闸。
-DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
-DEFAULT_BRANCH=${DEFAULT_BRANCH:-origin/main}
+# 0. 把 Phase 1 解出的窗口落成一个可复用的 first-parent 列表 /tmp/win_fp.tsv：<date>\t<sha>\t<author>\t<subject>
+#    以下所有统计都从这个列表派生，保证「报头数字」与「正文叙事」同源，不会各算各的。
+#    MODE / RANGE / HEAD_SHA / SINCE 均来自 Phase 1，此处不重新解析（重解就会漏解）。
+case "$MODE" in
+  sha)   git log --first-parent "$RANGE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
+  since) # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界。
+         # git 的 --since 是闭区间（实测 git 2.43：喂某提交的 %cI 会把该提交自身返回），
+         # 而 $SINCE 正是上期最后一个提交的 %cI，故必须按 SHA 把它剔掉还原「左开」，
+         # 否则上期末条被重复统计；它若是 merge，Phase 2 还会穿透它把上个 PR 整个重算。
+         git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short \
+           | awk -F '\t' -v x="$EXCLUDE_SHA" 'x=="" || $2!=x' ;;
+  today) git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
+           | awk -F '\t' -v d="$TODAY" '$1==d' ;;
+esac > /tmp/win_fp.tsv
 
-# 2.1 当日落地主干的 first-parent 提交（merge 行 + 直接提交）——看"今天落了哪些 PR/直接提交"
-git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%h%x09%an%x09%s" --date=short \
-  | awk -F '\t' -v d="$TODAY" '$1==d'
+# 2.1 本期落地主干的 first-parent 条目——看"这期落了哪些 PR/直接提交"
+cat /tmp/win_fp.tsv
 
-# 2.2 收集"当天落地的真实提交"——类型分布/贡献者/新增展开的【权威来源】。
-#   关键：合并日 first-parent 多为 "Merge pull request…"，直接 grep 会把 feat/fix 统计成 0、
-#   贡献者只剩 merge 作者。所以真实提交 = (a) 当天直接落主干的非 merge 提交
-#   + (b) 当天每个 merge 内部穿透出来的真实提交。产出 /tmp/today_real.tsv：<author>\t<subject>
+# 2.2 收集"本期落地的真实提交"——类型分布/贡献者/新增展开的【权威来源】。
+#   关键：first-parent 多为 "Merge pull request…"，直接 grep 会把 feat/fix 统计成 0、
+#   贡献者只剩 merge 作者。所以真实提交 = (a) 直接落主干的非 merge 提交
+#   + (b) 每个 merge 内部穿透出来的真实提交。产出 /tmp/today_real.tsv：<author>\t<subject>
 : > /tmp/today_real.tsv
-git log --first-parent --no-merges "$DEFAULT_BRANCH" --format="%cd%x09%an%x09%s" --date=short \
-  | awk -F '\t' -v d="$TODAY" '$1==d{print $2"\t"$3}' >> /tmp/today_real.tsv
-git log --first-parent --merges "$DEFAULT_BRANCH" --format="%cd%x09%H" --date=short \
-  | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' \
-  | while read m; do git log "$m^1..$m^2" --no-merges --format="%an%x09%s"; done >> /tmp/today_real.tsv
+while IFS=$'\t' read -r d sha an s; do
+  # 是不是 merge 必须看**提交对象本身**的 parent 行数（git cat-file -p），不能用
+  # `rev-parse ^2 是否可解` 来推断：浅克隆的 .git/shallow graft 会让边界提交
+  # 「看起来没有父」，于是 merge 被误判成直接提交、PR 内提交全部丢失且不报错。
+  # 实测：浅克隆下同一个 merge，cat-file 显示 2 个 parent，而 rev-list --parents 显示 0 个。
+  nparent=$(git cat-file -p "$sha" | grep -c '^parent')
+  if [ "$nparent" -ge 2 ]; then                                    # 是 merge
+    if ! git rev-parse -q --verify "$sha^2" >/dev/null 2>&1; then  # 但父不可达 → 不能静默降级
+      echo "[致命] merge $sha 的父提交不可达（浅克隆/部分克隆未补全），穿透会静默丢失该 PR 的全部提交" >&2
+      exit 3
+    fi
+    git log "$sha^1..$sha^2" --no-merges --format="%an%x09%s" >> /tmp/today_real.tsv
+  else                                                             # 直接提交：自己算一条
+    printf '%s\t%s\n' "$an" "$s" >> /tmp/today_real.tsv
+  fi
+done < /tmp/win_fp.tsv
 
 # 类型分布（权威：从真实提交主题统计，不是 merge 标题）
-cut -f2 /tmp/today_real.tsv | grep -oE '^(feat|fix|perf|refactor|style|docs|chore|test)' | sort | uniq -c | sort -rn
+cut -f2 /tmp/today_real.tsv | grep -oE '^(feat|fix|perf|refactor|style|docs|chore|test|ci)' | sort | uniq -c | sort -rn
 # 提交总数（报告头 N 用这个：真实落地提交数，不含 merge 壳）
 wc -l < /tmp/today_real.tsv
 
-# 2.3 穿透当日 merge commit（人读，判断主题归属；与 2.2(b) 同源）
-git log --first-parent --merges "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%s" --date=short \
-  | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' \
+# 2.3 穿透本期 merge commit（人读，判断主题归属；与 2.2(b) 同源）
+cut -f2 /tmp/win_fp.tsv \
   | while read m; do echo "== PR merge $m =="; git log "$m^1..$m^2" --no-merges --oneline 2>/dev/null; done
 
 # 2.4 贡献者（权威：真实提交作者，含 PR 内作者，不是按 merge 作者；与 2.2 同源）
@@ -212,13 +316,22 @@ node /tmp/daily-driver.mjs "$PREVIEW_URL"      # 产出 OUT/*.png + OUT/manifest
 ```bash
 export AI_ACCESS_KEY=...            # 已在 CDS 远端环境注入
 # 注意：续行反斜杠必须是行尾最后一个字符，行内注释会截断命令（Codex P2 教训）
+# HEAD_SHA 来自 Phase 1，不重解
+COVER_TO=$(git log -1 "$HEAD_SHA" --format=%cI)
 python3 .claude/skills/daily-report-summary/reference/publish.py \
   --base https://main-prd-agent.miduo.org \
   --impersonate inernoro \
   --title "日报-${TODAY}-今日大事早知道" \
   --daily-date "${TODAY}" \
   --report-html /tmp/daily-${TODAY}.html \
+  --last-commit "$HEAD_SHA" \
+  --cover-to "$COVER_TO" \
+  --replace-same-date \
   --manifest /tmp/acc_shots/manifest.json
+# --last-commit：**必传，脚本已强制**（纪律 2；不传直接 exit 7 拒发）。它是下一期的水位线起点；
+#   当天晚些时候的提交会永久漏报（2026-07-30 实测漏 36 个真实提交的根因）。
+# --cover-to：SHA 因 force push / 浅克隆不可达时的降级水位线，一并写上。
+# --replace-same-date：同一天重跑/修正时替换旧条目而不是叠一篇（先建新、校验落库成功、再删旧）。
 # --report-html 为默认报纸版；用户要 md 时换成 --report-md /tmp/daily-${TODAY}.md
 # --manifest：有 Phase 4.5 截图时必传，脚本据此上传图 + 回填 {{IMG:}} 占位；无截图可省略
 # 二选项：--report-html 与 --report-md 恰好传一个（纪律 6）；html 版发布前有自包含/禁脚本/viewport 硬校验
@@ -247,10 +360,14 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
 
 | 场景 | 处理 |
 |------|------|
-| 当日真实提交数为 0（`wc -l /tmp/today_real.tsv`，非 first-parent 行数） | 写「今日主干无落地提交」，不发布空报告 |
+| 窗口内真实提交数为 0（`wc -l /tmp/today_real.tsv`） | 写「自上期日报（{prevDate}）以来主干无新落地提交」，不发布空报告。**注意措辞**：水位线口径下这句话的含义是「上期之后没有新东西」，不是「今天没干活」 |
+| 上期日报中断/漏跑（`gap=true`） | 无需人工干预：窗口自动从上期水位线一路续到本期 HEAD。dateline 与「今日大事」首条必须写明这是补记期、补的是哪几天（纪律 2） |
+| 水位线读取失败（知识库不可达/鉴权失败） | `coverage_window.py` 直接 exit 3，**不要**当成「首次运行」继续——那会把历史重报一遍。修好再跑 |
+| 上期条目无 `lastCommit` 也无 `coverTo`（本机制上线前的老条目） | 自动退化为当日口径并在 stderr 告警；本期正常出报，回写水位线后下期即恢复连续 |
+| 本地是浅克隆（容器默认） | Phase 1 已带 `--unshallow`；不做的话 `git log <sha>..HEAD` 会因为 SHA 不可达而降级成时间戳口径 |
 | 预览环境 524 / 不可达 | 正文已就绪，提示稍后用同命令重跑（publish.py 自带退避重试 + 空壳兜底） |
-| 「日报知识库」已存在 | 复用，不重复建；同日重复发布会生成新条目（标题相同，metadata.dailyDate 去重可选） |
-| 没有 AI 密钥 / 无文档空间 | 退化为 `--local` 落 `doc/` 外的本地 md（仅自查，不算交付） |
+| 「日报知识库」已存在 | 复用，不重复建；同日重跑用 `--replace-same-date` 替换旧条目，不叠第二篇 |
+| 没有 AI 密钥 / 无文档空间 | 退化为 `--local` 落 `doc/` 外的本地 md（仅自查，不算交付）。注意 `--local` 不写水位线，下期会退化为当日口径 |
 
 ## 注意事项
 
@@ -259,3 +376,6 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
 3. 禁止 emoji（CLAUDE.md 规则 0）
 4. 数字必须来自 git 输出（纪律 5）
 5. 知识库默认私有；分享链对「拿到链接者」开放，非殿堂（isPublic=true 对所有人）
+6. **发布必带 `--last-commit`**（纪律 2）。这是整条连续覆盖链的唯一支点：漏一次，
+   下一期就断链退回按日历日采，当天晚些时候的提交永久漏报，而且**报告自己看不出来**
+   ——每期单独看都正常，只有把相邻两期的覆盖区间拼起来才发现中间有洞。

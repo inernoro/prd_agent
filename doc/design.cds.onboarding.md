@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：项目接入时先由扫描收集仓库事实生成草稿，服务端再解析校验并收敛成正式配置。
+**谁该读**：做项目接入的工程师。
+**读完能做什么**：说清草稿到正式配置之间发生了什么。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：项目接入 CDS 时，技术栈识别、服务拆分、基础设施判断和运行配置容易依赖人工经验。
@@ -119,7 +125,7 @@ pending import 保存原始来源、解析结果和校验问题。用户确认�
 
 ## 关联文档
 
-- `doc/design.cds.md`
-- `doc/design.cds.visual-deploy.md`
-- `doc/guide.cds.env.md`
-- `doc/plan.cds.status.md`
+- [doc/design.cds.md](./design.cds.md)
+- [doc/design.cds.visual-deploy.md](./design.cds.visual-deploy.md)
+- [doc/guide.cds.env.md](./guide.cds.env.md)
+- [doc/plan.cds.status.md](./plan.cds.status.md)

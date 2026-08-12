@@ -116,7 +116,8 @@ public class TranscribeNoteTextTests
     public void BuildSummarySystemPrompt_会议纪要风格()
     {
         var prompt = TranscribeNoteText.BuildSummarySystemPrompt(new DocumentStoreAgentRun { TemplateKey = "meeting" });
-        Assert.Contains("【方案评审结果通知】", prompt);
+        Assert.Contains("会议概要", prompt);
+        Assert.Contains("待办事项", prompt);
         Assert.Contains("评审意见", prompt);
         Assert.Contains("不得擅自写成通过", prompt);
         Assert.Contains("不得编造", prompt);
@@ -170,5 +171,46 @@ public class TranscribeNoteTextTests
         Assert.NotNull(TranscribeStyleRegistry.Find(" Meeting "));
         Assert.Null(TranscribeStyleRegistry.Find("nope"));
         Assert.Null(TranscribeStyleRegistry.Find(null));
+    }
+
+    // ── 说话人来源行：它是元信息，不是转录内容 ──
+
+    private const string NoteWithSource =
+        "# 录音 · 转录笔记\n\n## 转录全文\n\n"
+        + "> 说话人来源：local · 声纹估算 · 每句归谁按语速比例推算\n\n"
+        + "**[00:00 - 00:09]** [说话人1] 甲。\n";
+
+    [Fact]
+    public void 替换转录原文_必须留住说话人来源行()
+    {
+        // 用户改的是字，不是「这些角色是怎么分出来的」。
+        // 不带过来的话，手动编辑一次原文就把估算提示悄悄抹掉，界面重新变得看不出真假。
+        var updated = TranscribeNoteText.ReplaceTranscriptSection(NoteWithSource, "修订后的原文。");
+
+        Assert.Contains(TranscribeNoteText.SpeakerSourcePrefix, updated);
+        Assert.Contains("修订后的原文。", updated);
+        Assert.DoesNotContain("说话人1] 甲。", updated);
+    }
+
+    [Fact]
+    public void 反解转录原文_必须剔掉说话人来源行()
+    {
+        // 留着它会被当成原文送进编辑框，再被当成用户输入存回去——一轮编辑就把元信息变成正文。
+        var body = TranscribeNoteText.ExtractTranscriptFromNote(NoteWithSource);
+
+        Assert.NotNull(body);
+        Assert.DoesNotContain(TranscribeNoteText.SpeakerSourcePrefix, body);
+        Assert.StartsWith("**[00:00 - 00:09]**", body);
+    }
+
+    [Fact]
+    public void 没有来源行的老笔记_替换与反解行为不变()
+    {
+        const string plain = "# 录音\n\n## 转录全文\n\n原来的话。\n";
+
+        Assert.Equal("原来的话。", TranscribeNoteText.ExtractTranscriptFromNote(plain));
+        var updated = TranscribeNoteText.ReplaceTranscriptSection(plain, "新的话。");
+        Assert.DoesNotContain(TranscribeNoteText.SpeakerSourcePrefix, updated);
+        Assert.Contains("新的话。", updated);
     }
 }

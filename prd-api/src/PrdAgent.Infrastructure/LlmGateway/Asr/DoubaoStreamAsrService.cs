@@ -7,6 +7,8 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Asr;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -938,7 +940,24 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             0x00
         };
 
-        var payload = new JsonObject
+        var payload = BuildRecognitionRequest(channels, bits, rate, config);
+
+        var payloadBytes = GzipCompress(Encoding.UTF8.GetBytes(payload.ToJsonString()));
+
+        using var ms = new MemoryStream();
+        ms.Write(header, 0, header.Length);
+        WriteInt32BigEndian(ms, seq);
+        WriteUInt32BigEndian(ms, (uint)payloadBytes.Length);
+        ms.Write(payloadBytes, 0, payloadBytes.Length);
+        return ms.ToArray();
+    }
+
+    internal static JsonObject BuildRecognitionRequest(
+        int channels,
+        int bits,
+        int rate,
+        Dictionary<string, object>? config)
+        => new()
         {
             ["user"] = new JsonObject { ["uid"] = "prd-agent" },
             ["audio"] = new JsonObject
@@ -956,19 +975,10 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
                 ["enable_punc"] = GetBool(config, "enablePunc", true),
                 ["enable_ddc"] = GetBool(config, "enableDdc", true),
                 ["show_utterances"] = true,
+                ["enable_speaker_info"] = GetBool(config, "enableSpeakerInfo", true),
                 ["enable_nonstream"] = false
             }
         };
-
-        var payloadBytes = GzipCompress(Encoding.UTF8.GetBytes(payload.ToJsonString()));
-
-        using var ms = new MemoryStream();
-        ms.Write(header, 0, header.Length);
-        WriteInt32BigEndian(ms, seq);
-        WriteUInt32BigEndian(ms, (uint)payloadBytes.Length);
-        ms.Write(payloadBytes, 0, payloadBytes.Length);
-        return ms.ToArray();
-    }
 
     private static byte[] BuildAudioOnlyRequest(int seq, byte[] segment, bool isLast)
     {
@@ -1169,7 +1179,8 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
                             segments.Add(new StreamAsrSegment
                             {
                                 Text = text,
-                                DurationSec = (endMs - startMs) / 1000.0
+                                DurationSec = (endMs - startMs) / 1000.0,
+                                SpeakerId = ResolveSpeakerId(utt),
                             });
                         }
                     }
@@ -1205,6 +1216,24 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             catch { /* skip */ }
         }
         return segments;
+    }
+
+    internal static string? ResolveSpeakerId(JsonElement utterance)
+    {
+        foreach (var key in new[] { "speaker_id", "speaker", "speakerId" })
+        {
+            if (!utterance.TryGetProperty(key, out var value)) continue;
+            if (value.ValueKind == JsonValueKind.String)
+                return string.IsNullOrWhiteSpace(value.GetString()) ? null : value.GetString();
+            if (value.ValueKind == JsonValueKind.Number)
+                return value.GetRawText();
+        }
+
+        if (utterance.TryGetProperty("speaker_info", out var info)
+            && info.ValueKind == JsonValueKind.Object)
+            return ResolveSpeakerId(info);
+
+        return null;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1459,6 +1488,7 @@ public class StreamAsrSegment
 {
     public string Text { get; set; } = "";
     public double DurationSec { get; set; }
+    public string? SpeakerId { get; set; }
 }
 
 /// <summary>

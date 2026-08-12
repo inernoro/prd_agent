@@ -74,9 +74,10 @@ export type ClarifyImageGenPromptContract = (input: {
 }) => Promise<ApiResponse<ImageGenClarifyResponse>>;
 
 export type GenerateImageGenContract = (input: {
-  modelId: string;
+  modelId?: string;
   platformId?: string;
   modelName?: string;
+  operation?: 'generate' | 'layering';
   prompt: string;
   n?: number;
   size?: string;

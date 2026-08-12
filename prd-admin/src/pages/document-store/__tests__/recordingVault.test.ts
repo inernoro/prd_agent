@@ -4,6 +4,7 @@ import {
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
+  recoverableBackgroundTranscriptionRunId,
   shouldRetryVaultServerCompletion,
 } from '../recordingVault';
 
@@ -55,7 +56,7 @@ describe('recording vault deferred transcription recovery', () => {
     [true, false, 'run-2', { kind: 'watch-deferred-run', runId: 'run-2' }],
     [true, true, 'run-3', { kind: 'watch-deferred-run', runId: 'run-3' }],
     [true, false, null, { kind: 'wait-for-archive' }],
-    [true, true, null, { kind: 'open-transcription' }],
+    [true, true, null, { kind: 'wait-for-archive' }],
     [false, false, null, { kind: 'open-transcription' }],
     [false, true, null, { kind: 'open-transcription' }],
   ])(
@@ -78,6 +79,15 @@ describe('recording vault deferred transcription recovery', () => {
     expect(duplicate).toEqual(['run-1']);
     expect(second).toEqual(['run-1', 'run-2']);
     expect(enqueueBackgroundTranscriptionRun(second, ' ')).toEqual(second);
+  });
+
+  it('recovers only queued or running runs after a page refresh', () => {
+    expect(recoverableBackgroundTranscriptionRunId({ id: ' run-1 ', status: 'queued' })).toBe('run-1');
+    expect(recoverableBackgroundTranscriptionRunId({ id: 'run-2', status: 'RUNNING' })).toBe('run-2');
+    expect(recoverableBackgroundTranscriptionRunId({ id: 'run-3', status: 'done' })).toBeNull();
+    expect(recoverableBackgroundTranscriptionRunId({ id: 'run-4', status: 'failed' })).toBeNull();
+    expect(recoverableBackgroundTranscriptionRunId({ id: ' ', status: 'running' })).toBeNull();
+    expect(recoverableBackgroundTranscriptionRunId(null)).toBeNull();
   });
 });
 

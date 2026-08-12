@@ -165,6 +165,13 @@ export const STARTER_SKILL_BUNDLES = {
       roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'],
       skills: [
         {
+          key: 'doc-writer',
+          name: '仓库自适应文档',
+          description: '先识别现有文档约定，再生成适合业务、产品和工程协作的文档。',
+          roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'],
+          recommendedFor: ['pm', 'owner', 'domain-expert'],
+        },
+        {
           key: 'product-document-generator',
           name: '产品文档生成',
           description: '生成新项目或存量扩展所需的结构化产品文档。',
@@ -200,6 +207,27 @@ export const STARTER_SKILL_BUNDLES = {
       summary: '让改动可维护、可审查，并能稳定交接给下一位协作者。',
       roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'],
       skills: [
+        {
+          key: 'conflict-resolution',
+          name: '安全冲突处理',
+          description: '动态识别默认分支，分级解决冲突并保留可恢复锚点。',
+          roles: ['dev', 'qa'],
+          recommendedFor: ['dev'],
+        },
+        {
+          key: 'scope-check',
+          name: '分支边界审计',
+          description: '结合仓库规则和所有权证据识别越界、共享与未知变更。',
+          roles: ['owner', 'dev', 'qa'],
+          recommendedFor: ['dev', 'qa'],
+        },
+        {
+          key: 'task-handoff-checklist',
+          name: '任务交接清单',
+          description: '把改动、验收证据、发布风险和用户操作路径完整交给下一位负责人。',
+          roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'],
+          recommendedFor: ['pm', 'owner', 'dev', 'qa'],
+        },
         {
           key: 'human-verify',
           name: '对抗式人工验收',

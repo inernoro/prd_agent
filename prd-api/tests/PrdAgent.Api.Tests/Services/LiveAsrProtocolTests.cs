@@ -8,6 +8,8 @@ using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using System.Threading.Channels;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Asr;
 
 namespace PrdAgent.Api.Tests.Services;
 

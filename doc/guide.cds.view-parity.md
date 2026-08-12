@@ -2,13 +2,19 @@
 
 > **版本**：v1.0 | **日期**：2026-04-15 | **状态**：已落地
 
+**一句话**：列表视图与拓扑视图的功能映射全表，改任一视图都要回来对照，防止两边能力漂移。
+**谁该读**：改这两个视图的前端工程师；做提交前自查的人。
+**读完能做什么**：逐条对照两个视图的能力差，并按清单跑冒烟。
+
+---
+
 > **创建**:2026-04-15 | **适用版本**:commit `eaf0029+`
 > 用户的架构承诺:**拓扑面板未来继承列表面板功能**。本文档是两个视图的功能映射全表,每次改动任意一个视图,都要回来对照本表,确保不会漂移。
 
 
 ## 1. 本文档是什么
 
-- **不是** design 文档(那是 `design.cds.md`)
+- **不是** design 文档(那是 [design.cds.md](./design.cds.md))
 - **是** 一份"该有的功能都在哪?"的速查表
 - 每一行都指向具体代码位置,便于改一方时同步另一方
 - 附带一套自测冒烟流程(`§5 冒烟测试清单`),提交前过一遍
@@ -293,7 +299,7 @@ curl -s -X POST $BASE/api/branches/smoke/container-logs \
 
 ## 8. 关联文档
 
-- `doc/design.cds.md` — CDS 架构设计
-- `doc/plan.cds.backlog-matrix.md` — 问题矩阵 SSOT
-- `doc/plan.cds.multi-project-phases.md` — P0-P6 里程碑
-- `doc/design.cds.resilience.md` — 服务器权威 / SSE 重连
+- [doc/design.cds.md](./design.cds.md) — CDS 架构设计
+- [doc/plan.cds.backlog-matrix.md](./plan.cds.backlog-matrix.md) — 问题矩阵 SSOT
+- [doc/plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md) — P0-P6 里程碑
+- [doc/design.cds.resilience.md](./design.cds.resilience.md) — 服务器权威 / SSE 重连

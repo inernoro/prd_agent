@@ -377,7 +377,7 @@ export class GitHubAppClient {
    * 查询仓库指定 ref 下某文件是否存在（GET /contents，200=exists / 404=missing /
    * 其他或网络异常=unknown）。极速版入口校验用：push 进 waiting 前确认
    * `.github/workflows/branch-image.yml` 真的存在，缺文件的仓库 CI 完成事件
-   * 永远不会来，不该让分支苦等 15 分钟看门狗（debt.cds.removed-branch-pages #7）。
+   * 永远不会来，不该让分支苦等 15 分钟看门狗（doc/debt.cds.md「CDS 过期分支预览页」 #7）。
    * unknown 一律由调用方 fail-open（照旧 waiting，看门狗兜底），本方法不抛错。
    */
   async workflowFileExists(

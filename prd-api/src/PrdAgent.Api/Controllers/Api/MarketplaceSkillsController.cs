@@ -18,6 +18,7 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.MarketplaceSkills;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -543,8 +544,8 @@ public class MarketplaceSkillsController : ControllerBase
         finalDescription = TrimChars(finalDescription, DescriptionMaxChars);
 
         var tags = ParseTags(tagsJson);
-        var finalIcon = string.IsNullOrWhiteSpace(iconEmoji) ? "🧩" : iconEmoji.Trim();
-        if (finalIcon.Length > 4) finalIcon = finalIcon[..4]; // emoji 至多 4 字符
+        // 字段仅为旧客户端兼容保留。视觉标识由前端 SVG 图标体系负责。
+        var finalIcon = string.Empty;
 
         // 作者快照
         var author = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
@@ -626,7 +627,7 @@ public class MarketplaceSkillsController : ControllerBase
         var update = Builders<MarketplaceSkill>.Update
             .Set(x => x.Title, NormalizeTitle(title, skill.Title))
             .Set(x => x.Description, NormalizeDescription(description, skill.Description))
-            .Set(x => x.IconEmoji, NormalizeIcon(iconEmoji, skill.IconEmoji))
+            .Set(x => x.IconEmoji, string.Empty)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         if (tagsJson != null)
@@ -926,7 +927,7 @@ public class MarketplaceSkillsController : ControllerBase
                 id = skill.Id,
                 title = skill.Title,
                 description = skill.Description,
-                iconEmoji = skill.IconEmoji,
+                iconEmoji = string.Empty,
                 coverImageUrl = skill.CoverImageUrl,
                 tags = skill.Tags ?? new List<string>(),
                 zipUrl = skill.ZipUrl,
@@ -1158,14 +1159,6 @@ public class MarketplaceSkillsController : ControllerBase
         return string.IsNullOrWhiteSpace(normalized) ? fallback : normalized;
     }
 
-    private static string NormalizeIcon(string? iconEmoji, string fallback)
-    {
-        var normalized = (iconEmoji ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(normalized))
-            normalized = string.IsNullOrWhiteSpace(fallback) ? "🧩" : fallback;
-        return normalized.Length > 4 ? normalized[..4] : normalized;
-    }
-
     private async Task<Dictionary<string, long>> LoadActiveShareCountsAsync(IEnumerable<string> skillIds, CancellationToken ct)
     {
         var ids = skillIds
@@ -1210,7 +1203,7 @@ public class MarketplaceSkillsController : ControllerBase
             s.Id,
             s.Title,
             s.Description,
-            iconEmoji = s.IconEmoji,
+            iconEmoji = string.Empty,
             coverImageUrl = s.CoverImageUrl,
             previewUrl = s.PreviewUrl,
             previewSource = s.PreviewSource,

@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：统一存储接口支持三种后端，写入与删除都登记事实，系统资产按清单检查与同步。
+**谁该读**：做存储切换的运维与工程师。
+**读完能做什么**：说清切换后端时哪些资产会被检查到。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：文件分散在不同业务集合和对象存储中，切换 Provider 时容易遗漏资产、系统图标和历史 URL。
@@ -121,6 +127,6 @@ Provider 切换只影响切换后的读写实现。历史记录中保存的完�
 
 ## 关联文档
 
-- `doc/design.platform.image-ref-and-persistence.md`
-- `doc/design.platform.workspace.md`
-- `doc/debt.platform.md`
+- [doc/design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)
+- [doc/design.platform.workspace.md](./design.platform.workspace.md)
+- [doc/debt.platform.md](./debt.platform.md)

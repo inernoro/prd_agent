@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
@@ -15,7 +16,17 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
     private readonly Dictionary<string, IAgentTool> _tools = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<AgentToolRegistry> _logger;
 
-    public AgentToolRegistry(ILogger<AgentToolRegistry> logger, IConfiguration configuration, MongoDbContext db)
+    /// <param name="externalTools">
+    /// 由上层（Api）通过 DI 贡献的工具。本项目在 Infrastructure，够不到 Api 里的
+    /// <c>IAgentAdapter</c>，而「把专业智能体包成工具」的实现必须待在 Api 侧——
+    /// 所以留这个口子，而不是把适配器接口硬拽下来。
+    /// </param>
+    public AgentToolRegistry(
+        ILogger<AgentToolRegistry> logger,
+        IConfiguration configuration,
+        MongoDbContext db,
+        IServiceScopeFactory scopeFactory,
+        IEnumerable<IAgentTool> externalTools)
     {
         _logger = logger;
         var workspace = AgentWorkspace.Resolve(configuration);
@@ -40,8 +51,15 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         Register(new KbDiffTool(db));
         Register(new KbApplyTool(db));
         Register(new KbRejectTool(db));
+        // 通用对话专用的两把：出图与存笔记。都只做转发，不含生成或存储逻辑。
+        Register(new ChatGenerateImageTool(db));
+        Register(new ChatSaveNoteTool(db, scopeFactory));
         Register(new CdsBridgeSnapshotTool());
         Register(new CdsBridgeActionTool());
+
+        // 上层贡献的工具最后登记：撞名照样抛，谁也不许悄悄覆盖内置工具
+        foreach (var tool in externalTools)
+            Register(tool);
     }
 
     private void Register(IAgentTool tool)

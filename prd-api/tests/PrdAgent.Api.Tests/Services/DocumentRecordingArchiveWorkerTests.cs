@@ -533,6 +533,43 @@ public sealed class DocumentRecordingArchiveWorkerTests
         untouchedMain.ArchiveLeaseId.ShouldBe("main-old");
     }
 
+    [Theory]
+    [InlineData(DocumentRecordingArchiveStatus.Pending)]
+    [InlineData(DocumentRecordingArchiveStatus.Archiving)]
+    public async Task ManualArchiveRetry_ShouldTakeOverRecoverableSession(
+        string archiveStatus)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+
+        var now = DateTime.UtcNow;
+        var session = Session("manual-retry", "old-instance", archiveStatus);
+        session.EntryId = "recording-pending-manual-retry";
+        session.ArchiveLeaseId = "stale-lease";
+        session.ArchiveError = "previous failure";
+        session.ArchiveNextAttemptAt = now.AddHours(2);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        var result = await DocumentStoreController.QueueRecordingArchiveRetryAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.EntryId,
+            session.UserId,
+            "current-instance",
+            now,
+            CancellationToken.None);
+
+        result.ModifiedCount.ShouldBe(1);
+        var retried = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(item => item.Id == session.Id)
+            .SingleAsync();
+        retried.OwnerInstanceId.ShouldBe("current-instance");
+        retried.ArchiveStatus.ShouldBe(DocumentRecordingArchiveStatus.Pending);
+        retried.ArchiveLeaseId.ShouldBeNull();
+        retried.ArchiveError.ShouldBeNull();
+        retried.ArchiveNextAttemptAt.ShouldNotBeNull();
+        (retried.ArchiveNextAttemptAt!.Value - now).Duration()
+            .ShouldBeLessThan(TimeSpan.FromMilliseconds(1));
+    }
+
     [Fact]
     public async Task CompletionClaim_ShouldIncludeFinalChunkCommittedBeforeClaim()
     {
@@ -1581,7 +1618,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     [Theory]
     [InlineData(0, 1)]
     [InlineData(3, 8)]
-    [InlineData(20, 256)]
+    [InlineData(20, 15)]
     public void ComputeBackoff_ShouldBeBounded(int attempts, int expectedMinutes)
     {
         DocumentRecordingArchiveWorker.ComputeBackoff(attempts)
@@ -2139,6 +2176,44 @@ public sealed class DocumentRecordingArchiveWorkerTests
         catalog.ShouldContain("idx_recording_sessions_archive_expiry");
         catalog.ShouldContain("idx_recording_sessions_expired_cleanup_claim");
         catalog.ShouldContain("idx_recording_chunks_session_index");
+        // StaleLease 补偿按 (OwnerInstanceId, ArchiveStatus, UpdatedAt) 回收超时租约。
+        catalog.ShouldContain("idx_recording_sessions_archive_stale_lease");
+        // 孤儿分片回收按 (CreatedAt, SessionId) 形成有界候选。
+        catalog.ShouldContain("idx_recording_chunks_created_session");
+    }
+
+    /// <summary>
+    /// 录音两张表禁止 TTL：TTL 会先删父会话，留下无法关联的孤儿分片并让转录 outbox 无法恢复。
+    /// 断言范围限定在录音区块内，避免其他集合日后新增合法 TTL 时误红。
+    /// </summary>
+    [Fact]
+    public void RecordingUploadCollections_ShouldDropLegacyTtlAndDeclareNone()
+    {
+        var catalog = File.ReadAllText(MongoDbIndexCatalogPath());
+        const string sectionStartMarker =
+            "// begin collection: document_recording_upload_sessions + document_recording_upload_chunks";
+        const string sectionEndMarker =
+            "// end collection: document_recording_upload_sessions + document_recording_upload_chunks";
+
+        var sectionStart = catalog.IndexOf(sectionStartMarker, StringComparison.Ordinal);
+        sectionStart.ShouldBeGreaterThanOrEqualTo(0);
+        var sectionEnd = catalog.IndexOf(sectionEndMarker, sectionStart, StringComparison.Ordinal);
+        sectionEnd.ShouldBeGreaterThan(sectionStart);
+        var section = catalog[sectionStart..sectionEnd];
+
+        // 存量库可能残留旧数据字典建议的 TTL；必须在建索引之前精确移除，
+        // 否则同键不同选项会触发 index options conflict 并让 TTL 继续生效。
+        var legacyTtlRemoval = section.IndexOf(
+            "index.expireAfterSeconds !== undefined",
+            StringComparison.Ordinal);
+        legacyTtlRemoval.ShouldBeGreaterThanOrEqualTo(0);
+        var firstRecordingCreateIndex = section.IndexOf(
+            ".createIndex(",
+            StringComparison.Ordinal);
+        firstRecordingCreateIndex.ShouldBeGreaterThan(legacyTtlRemoval);
+
+        // 迁移块之后不得再出现任何 TTL 声明。
+        section[firstRecordingCreateIndex..].ShouldNotContain("expireAfterSeconds");
     }
 
     [Fact]
@@ -2836,24 +2911,26 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     private static string DocumentStoreControllerPath()
+        => RepositoryFilePath(
+            "prd-api",
+            "src",
+            "PrdAgent.Api",
+            "Controllers",
+            "Api",
+            "DocumentStoreController.cs");
+
+    private static string RepositoryFilePath(params string[] segments)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            var path = Path.Combine(
-                dir.FullName,
-                "prd-api",
-                "src",
-                "PrdAgent.Api",
-                "Controllers",
-                "Api",
-                "DocumentStoreController.cs");
+            var path = Path.Combine([dir.FullName, .. segments]);
             if (File.Exists(path)) return path;
             dir = dir.Parent;
         }
 
         throw new DirectoryNotFoundException(
-            "Could not locate DocumentStoreController.cs from test base directory.");
+            $"Could not locate {string.Join('/', segments)} from test base directory.");
     }
 
     private static string DocumentRecordingArchiveWorkerPath()
@@ -2897,16 +2974,5 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     private static string MongoDbIndexCatalogPath()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            var path = Path.Combine(dir.FullName, "scripts", "mongodb-indexes.js");
-            if (File.Exists(path)) return path;
-            dir = dir.Parent;
-        }
-
-        throw new DirectoryNotFoundException(
-            "Could not locate scripts/mongodb-indexes.js from test base directory.");
-    }
+        => RepositoryFilePath("scripts", "mongodb-indexes.js");
 }

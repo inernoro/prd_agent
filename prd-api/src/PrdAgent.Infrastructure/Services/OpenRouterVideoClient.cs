@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -18,6 +19,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly ILogger<OpenRouterVideoClient> _logger;
+    private readonly ILLMRequestContextAccessor? _contextAccessor;
+    private readonly ILlmRequestLogWriter? _logWriter;
     // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
     private GatewayModelResolution? _submitResolution;
     private string? _submitAppCallerCode;
@@ -26,12 +29,16 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         ILlmGateway gateway,
         IHttpClientFactory httpClientFactory,
         ISafeOutboundUrlValidator urlValidator,
-        ILogger<OpenRouterVideoClient> logger)
+        ILogger<OpenRouterVideoClient> logger,
+        ILLMRequestContextAccessor? contextAccessor = null,
+        ILlmRequestLogWriter? logWriter = null)
     {
         _gateway = gateway;
         _httpClientFactory = httpClientFactory;
         _urlValidator = urlValidator;
         _logger = logger;
+        _contextAccessor = contextAccessor;
+        _logWriter = logWriter;
     }
 
     public async Task<OpenRouterVideoSubmitResult> SubmitAsync(OpenRouterVideoSubmitRequest request, CancellationToken ct = default)
@@ -113,12 +120,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             RequestBody = body,
             HttpMethod = "POST",
             TimeoutSeconds = 60,
-            Context = new GatewayRequestContext
-            {
-                RequestId = request.RequestId,
-                UserId = request.UserId,
-                QuestionText = request.Prompt
-            }
+            Context = BuildContext(request.RequestId, request.UserId, request.Prompt, providerTaskId: null)
         }, resolution, ct);
 
         if (!rawResp.Success || string.IsNullOrWhiteSpace(rawResp.Content))
@@ -141,6 +143,15 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                 Success = false,
                 ErrorMessage = "OpenRouter 响应缺少 id 字段"
             };
+        }
+
+        if (!string.IsNullOrWhiteSpace(rawResp.LogId) && _logWriter is not null)
+        {
+            await _logWriter.BindProviderTaskAsync(
+                rawResp.LogId,
+                jobId,
+                fallbackLogicalRequestId: jobId,
+                ct: ct);
         }
 
         double? cost = ReadCost(doc);
@@ -210,7 +221,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}",
             RequestBody = statusBody,
             HttpMethod = "GET",
-            TimeoutSeconds = 30
+            TimeoutSeconds = 30,
+            Context = BuildContext(requestId: null, userId: null, questionText: null, providerTaskId: jobId)
         }, statusResolution, ct);
 
         if (!rawResp.Success || string.IsNullOrWhiteSpace(rawResp.Content))
@@ -304,6 +316,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}/content?index={urlIndex}",
             HttpMethod = "GET",
             TimeoutSeconds = 120, // 视频文件可能较大
+            Context = BuildContext(requestId: null, userId: null, questionText: null, providerTaskId: jobId),
             // OpenRouter 此端点回 mp4 字节，却把 Content-Type 标成 application/json，
             // 不强制二进制会被按字符串读取损坏 → binaryContent 为空 → 误判「HTTP 200 下载失败」。
             ExpectBinaryResponse = true,
@@ -552,6 +565,41 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             or System.Net.HttpStatusCode.TemporaryRedirect
             or System.Net.HttpStatusCode.PermanentRedirect;
 
+    private GatewayRequestContext BuildContext(
+        string? requestId,
+        string? userId,
+        string? questionText,
+        string? providerTaskId)
+    {
+        var current = _contextAccessor?.Current;
+        return new GatewayRequestContext
+        {
+            TenantId = current?.TenantId,
+            TeamId = current?.TeamId,
+            ServiceKeyId = current?.ServiceKeyId,
+            ClientCode = current?.ClientCode,
+            Environment = current?.Environment,
+            ServiceKeyPrefix = current?.ServiceKeyPrefix,
+            RequestId = requestId,
+            SessionId = current?.SessionId,
+            RunId = current?.RunId,
+            LogicalRequestId = current?.LogicalRequestId
+                ?? current?.RunId
+                ?? current?.SessionId
+                ?? requestId
+                ?? providerTaskId,
+            ProviderTaskId = providerTaskId,
+            GroupId = current?.GroupId,
+            UserId = userId ?? current?.UserId,
+            ViewRole = current?.ViewRole,
+            DocumentChars = current?.DocumentChars,
+            DocumentHash = current?.DocumentHash,
+            QuestionText = questionText,
+            SystemPromptText = current?.SystemPromptRedacted,
+            GatewayTransport = current?.GatewayTransport,
+            IsHealthProbe = current?.IsHealthProbe,
+        };
+    }
     private static bool IsVolcengineVideoResolution(GatewayModelResolution resolution)
         => resolution.IsExchange
            && string.Equals(resolution.ExchangeTransformerType, "volcengine-video", StringComparison.OrdinalIgnoreCase);

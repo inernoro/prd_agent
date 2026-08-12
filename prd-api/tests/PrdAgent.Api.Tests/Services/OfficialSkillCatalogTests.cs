@@ -81,7 +81,7 @@ public class OfficialSkillCatalogTests
         Assert.Contains(design.Files, f => f.Path == "references/fusion-testing.md");
         Assert.Contains(design.Files, f => f.Path == "references/output-contract.md");
         Assert.Contains(design.Files, f => f.Path == "references/rules/manifest.json");
-        Assert.Contains(design.Files, f => f.Path == "references/rules/rule.acceptance.map-enterprise.md");
+        Assert.Contains(design.Files, f => f.Path == "references/rules/baseline.md");
 
         Assert.NotNull(orchestrator);
         Assert.Contains(orchestrator.Files, f => f.Path == "references/evidence-contract.md");
@@ -131,7 +131,7 @@ public class OfficialSkillCatalogTests
         Assert.Contains("acceptance-scenario-orchestrator/SKILL.md", names);
         Assert.Contains("acceptance-test-design/references/proof-strength.md", names);
         Assert.Contains("acceptance-test-design/references/rules/manifest.json", names);
-        Assert.Contains("acceptance-test-design/references/rules/rule.acceptance.map-enterprise.md", names);
+        Assert.Contains("acceptance-test-design/references/rules/baseline.md", names);
         Assert.Contains("acceptance-scenario-orchestrator/references/evidence-contract.md", names);
         Assert.Contains("acceptance-scenario-orchestrator/references/rules/manifest.json", names);
         Assert.Contains("create-visual-test-to-kb/references/rules/manifest.json", names);
@@ -153,6 +153,7 @@ public class OfficialSkillCatalogTests
         var verifyOpen = ReadZipText(zip, "create-visual-test-to-kb/scripts/verify-open.mjs");
         Assert.Contains("VERIFY_OPEN_MAX_ATTEMPTS || '3'", verifyOpen);
         Assert.Contains("VERIFY_OPEN_SETTLE_TIMEOUT_MS", verifyOpen);
+        Assert.Contains("ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0", verifyOpen);
 
         var archiveReport = ReadZipText(zip, "create-visual-test-to-kb/scripts/archive_report.py");
         Assert.Contains("改动规模与深度预算", archiveReport);

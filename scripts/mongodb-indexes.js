@@ -268,6 +268,13 @@ db.llmrequestlogs.createIndex({ "SessionId": 1 })
 db.llmrequestlogs.createIndex({ "Provider": 1, "Model": 1 })
 db.llmrequestlogs.createIndex({ "EndedAt": 1 })
 
+// collection: behavior_events
+// 采用度端点（GET /api/executive/adoption）按窗口 + 路由列表查这张表，并取最早一条当采集起点。
+// 这是每次路由跳转都写的高频表：无索引时那两条查询是全表扫 + 内存排序，
+// 量大后会撞上 Mongo 32MB 排序上限直接抛错。
+db.behavior_events.createIndex({ "OccurredAt": 1 })
+db.behavior_events.createIndex({ "Route": 1, "OccurredAt": 1 })
+
 // collection: apirequestlogs
 db.apirequestlogs.createIndex({ "StartedAt": -1 })
 db.apirequestlogs.createIndex({ "RequestId": 1 })
@@ -1319,6 +1326,31 @@ db.home_recent_opens.createIndex(
   { name: "uniq_home_recent_opens_user_entity", unique: true }
 )
 
+// begin collection: document_recording_upload_sessions + document_recording_upload_chunks
+// 这两个集合一律不使用 TTL。过期回收必须由应用按“先删分片、再删会话”的顺序执行：
+// Mongo TTL 若先删掉父会话，分片就失去可关联的父记录，转录 outbox 也无法恢复。
+// 旧版数据字典曾建议 DBA 自建 TTL 索引，存量库可能残留；这里先精确移除，
+// 否则同键不同选项的定义会触发 index options conflict，并让破坏性过期策略继续生效。
+const recordingTtlFreeCollectionNames = [
+  "document_recording_upload_sessions",
+  "document_recording_upload_chunks"
+]
+recordingTtlFreeCollectionNames.forEach(collectionName => {
+  if (db.getCollectionInfos({ name: collectionName }).length === 0) return
+  const collection = db.getCollection(collectionName)
+  collection.getIndexes()
+    .filter(index => index.expireAfterSeconds !== undefined)
+    .forEach(index => {
+      try {
+        collection.dropIndex(index.name)
+      } catch (error) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `${collectionName}.${index.name}: failed to drop forbidden TTL index: ${error.message || error}`
+        )
+      }
+    })
+})
+
 // collection: document_recording_upload_sessions
 // 每轮 Worker 先恢复已完成会话的转录 outbox；partial index 只保留真正待恢复的小集合。
 db.document_recording_upload_sessions.createIndex(
@@ -1347,11 +1379,26 @@ db.document_recording_upload_sessions.createIndex(
   { name: "idx_recording_sessions_expired_cleanup_claim" }
 )
 
+// Worker 重启时按实例、归档中状态和更新时间回收超时租约（StaleLease 补偿）。
+db.document_recording_upload_sessions.createIndex(
+  { "OwnerInstanceId": 1, "ArchiveStatus": 1, "UpdatedAt": 1 },
+  { name: "idx_recording_sessions_archive_stale_lease" }
+)
+
+// collection: document_recording_upload_chunks
 // 录音分片拼接、转录读取和清理均按会话过滤并按 Index 排序。
 db.document_recording_upload_chunks.createIndex(
   { "SessionId": 1, "Index": 1 },
   { name: "idx_recording_chunks_session_index" }
 )
+
+// 孤儿分片（cancel 删掉父会话后才落库的 append）没有父记录可依赖，
+// 回收时先按年龄形成有界候选再按 SessionId 分组。
+db.document_recording_upload_chunks.createIndex(
+  { "CreatedAt": 1, "SessionId": 1 },
+  { name: "idx_recording_chunks_created_session" }
+)
+// end collection: document_recording_upload_sessions + document_recording_upload_chunks
 
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(

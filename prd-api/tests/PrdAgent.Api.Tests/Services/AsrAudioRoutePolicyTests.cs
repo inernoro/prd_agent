@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Services;
-using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 using Shouldly;
 using Xunit;
 

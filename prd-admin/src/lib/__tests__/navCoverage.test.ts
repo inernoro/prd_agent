@@ -14,9 +14,17 @@
  * 都自动同步，CI 不会报错。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { NAV_REGISTRY } from '@/app/navRegistry';
+import { NAV_REGISTRY, navIdFromPath } from '@/app/navRegistry';
+import { getLauncherCatalog, findLauncherItem, resolveCatalogId } from '@/lib/launcherCatalog';
+import { QUICK_LINK_BY_ID } from '@/pages/AgentLauncherPage';
 import appTsxRaw from '../../app/App.tsx?raw';
+import launcherSource from '../../pages/AgentLauncherPage.tsx?raw';
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * 不通过 NAV_REGISTRY 注册、但在 App.tsx 直接写 <Route> 的路由白名单。
@@ -125,5 +133,195 @@ describe('App.tsx 路由覆盖', () => {
         `\n发现 ${missing.length} 个 App.tsx 中独立声明、但未登记的路由。\n\n${hint}\n`,
       );
     }
+  });
+
+  it('首页快捷入口按目录 id 记账，不许留下查无此项的幽灵 id', () => {
+    // 快捷入口的 key 是「偏好 id」（updates / voc / models / teams / my-assets），
+    // 而目录 id 由路由推导（changelog / team-activity / mds / users / visual-agent）。
+    // 拿偏好 id 去 addRecentVisit，记进去的就是一串谁也查不到的 id：
+    // Cmd+K 的最近使用、设置里的使用统计都会静默把它丢掉——不报错，只是永远不出现。
+    //
+    // 判据落在**消费方真正用的那本目录**上（getLauncherCatalog + findLauncherItem）。
+    // 按路由找条目：找得到就要求推导出的 id 与它一致；找不到（如 /showcase 这类
+    // 刻意不进目录的演示页）说明它本来就不该记账，由页面那道 catalogIds 闸拦住。
+    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
+    expect(catalog.length, '目录是空的，判据已经失效').toBeGreaterThan(0);
+
+    let checked = 0;
+    for (const [prefId, link] of Object.entries(QUICK_LINK_BY_ID)) {
+      if (!link) continue;
+      const byRoute = catalog.find((item) => item.route === link.path);
+      if (!byRoute) continue;
+      checked += 1;
+      const trackedId = navIdFromPath(link.path);
+      expect(
+        findLauncherItem(catalog, trackedId)?.id,
+        `快捷入口 ${prefId}（${link.path}）记账用的 id「${trackedId}」对不上目录里的「${byRoute.id}」`,
+      ).toBe(byRoute.id);
+    }
+    expect(checked, '一个快捷入口都没对上目录路由，判据已经失效').toBeGreaterThan(0);
+  });
+
+  it('页面确实按这条规则记账（上面那条只证明规则对，不证明页面在用）', () => {
+    // 上面的用例自己算 navIdFromPath(path)，页面改成别的写法它照样绿（实测）。
+    // 判据必须看页面真正传了什么：id 来自路由推导，且跳转前过 catalogIds 这道闸。
+    const quickLinkBlock = launcherSource.slice(
+      launcherSource.indexOf('首页快捷入口'),
+      launcherSource.indexOf('home-desk-badge'),
+    );
+    expect(quickLinkBlock, '找不到快捷入口那段渲染，判据已经失效').toBeTruthy();
+    expect(quickLinkBlock, '快捷入口的记账 id 不是从路由推导的').toMatch(/const trackedId = navIdFromPath\(link\.path\);/);
+    expect(quickLinkBlock, '快捷入口把偏好别名当记账 id 用了').not.toMatch(/\{ id: link\.id/);
+    // 目录闸已经收进 useTrackedNavigate（出口本身），调用方不再各写一遍——
+    // 写在调用方就会有人忘记：移动端的「米多早报」就是这么记了个目录里没有的 id。
+    const tracker = fs.readFileSync(path.resolve(TEST_DIR, '../useTrackedNavigate.ts'), 'utf8');
+    expect(tracker, '记账出口没走 resolveCatalogId，规范 id 会两边各算各的').toMatch(
+      /resolveCatalogId\(catalog, \{ id: entry\.id, agentKey: entry\.agentKey, route \}\)/,
+    );
+    expect(tracker, '记账出口没有目录闸：解析不出规范 id 时不该记账').toMatch(/if \(entry && canonicalId\)/);
+    // 排序侧必须用同一个解析器，否则记进去的 key 和查出来的 key 对不上
+    expect(launcherSource, '「你常用的」排序没走 resolveCatalogId').toContain('resolveCatalogId(launcherCatalog');
+  });
+
+  it('appKey 与目录 id 不同名的入口也要能解析出规范 id', () => {
+    // /task-tree 的 appKey 是 task-tree-agent、/emergence 是 emergence-agent——
+    // 目录 id 由路由推导，两者故意不同名。只按 agentKey 查会解析失败，
+    // 而失败的后果是记账**整条被丢掉**（比记个幽灵 id 更糟：排行榜里直接没有）。
+    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
+    const mismatched = catalog.filter((item) => item.agentKey && item.agentKey !== item.id);
+    expect(mismatched.length, '没有 appKey 与目录 id 不同名的入口，判据已经失效').toBeGreaterThan(0);
+
+    for (const item of mismatched) {
+      expect(
+        resolveCatalogId(catalog, { id: item.id, agentKey: item.agentKey, route: item.route }),
+        `${item.route}（appKey ${item.agentKey}）解析不出目录 id`,
+      ).toBe(item.id);
+      // 只给 agentKey 也要能解析——首页瓦片就是这么传的
+      expect(
+        resolveCatalogId(catalog, { id: item.agentKey!, agentKey: item.agentKey }),
+        `只给 agentKey ${item.agentKey} 时解析不出目录 id`,
+      ).toBe(item.id);
+    }
+  });
+
+  it('目录里没有的入口仍然解析不出来（闸不能被顺手拆掉）', () => {
+    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
+    expect(resolveCatalogId(catalog, { id: 'daily-post', agentKey: 'daily-post', route: '/daily-post' })).toBeUndefined();
+    expect(resolveCatalogId(catalog, { id: '不存在的东西' })).toBeUndefined();
+  });
+
+  it('快捷入口的 path 必须是目录里原样存在的路由', () => {
+    // 「我的资源」曾经指向 /visual-agent?tab=assets——目标页只读 workspaceId、
+    // 根本不认这个 query，点进去落在视觉创作列表。标签说一处、去处是另一处，
+    // 比死链更难发现：页面确实变了，只是变错了地方。
+    const catalog = getLauncherCatalog({ permissions: [], isRoot: true });
+    const routes = new Set(catalog.map((item) => item.route));
+
+    for (const [prefId, link] of Object.entries(QUICK_LINK_BY_ID)) {
+      if (!link) continue;
+      // 目录里没有的入口（作品广场那类演示页）由记账闸负责，不在这条判据内
+      if (!routes.has(link.path.split(/[?#]/)[0])) continue;
+      expect(
+        routes.has(link.path),
+        `快捷入口 ${prefId} 指向 ${link.path}，但目录里注册的是 ${link.path.split(/[?#]/)[0]}——多出来的 query 目标页不认`,
+      ).toBe(true);
+    }
+  });
+});
+
+/**
+ * 周报「用量口径」里 route: token 的守卫。
+ *
+ * 放在这个文件里，是为了复用上面那一个 parseLiteralRoutesFromAppTsx —— 另写一套路由提取
+ * 就是 predicate-and-wiring-discipline 形状 3（判据分裂后各自漂移）：navRegistry 改了、
+ * 周报守卫的正则没改，两边就会给出相反的答案。
+ *
+ * 为什么必须守：route: token 写错时，采用度端点只会报 zero（behavior_events 里查不到这个
+ * 路由），而「路由写错了」和「这个页面真的没人访问」在输出里长得一模一样。周报会据此
+ * 写出「上线后无人使用」——一句由拼写错误制造的假结论。
+ */
+describe('周报用量口径 · route token 必须指向真实路由', () => {
+  const reportDir = path.resolve(TEST_DIR, '../../../../doc');
+  const tokenLine = /\*\*用量口径\*\*\s*[：:]\s*(.+)/;
+
+  it('每个 route: token 都能找到对应 <Route>（App.tsx 字面量 + NAV_REGISTRY 自动生成）', () => {
+    if (!fs.existsSync(reportDir)) return;
+    // 路由有两个来源，缺一个判据就太窄（predicate-and-wiring-discipline 形状 1）：
+    // App.tsx 里的字面量 <Route>，以及 App.tsx 从 NAV_REGISTRY 自动 map 出来的那批
+    // （见 App.tsx 的 `NAV_REGISTRY.filter(...).map(e => <Route path={e.path} …/>)` 两处）。
+    // 只认字面量会把 /chat、/visual-agent 这类注册表路由误判成「不存在」，
+    // 而它们恰恰是新能力最常用的入口——误判的后果与 token 写错相反但同样坏：
+    // 作者会被逼着把正确的 token 改错，采用度从此永远查不到这个页面。
+    //
+    // 「注册了」本身不是「挂载了」——下一条用例负责钉住这两处 map 还在，
+    // 否则 map 被删掉后，这里仍会把已经 404 的注册表路由当成合法路由放行。
+    const routes = new Set([...parseLiteralRoutesFromAppTsx(), ...NAV_REGISTRY.map((e) => e.path)]);
+    const problems: string[] = [];
+    let checked = 0;
+
+    for (const file of fs.readdirSync(reportDir).filter((f) => /^report\..*\.md$/.test(f))) {
+      const text = fs.readFileSync(path.join(reportDir, file), 'utf-8');
+      for (const line of text.split('\n')) {
+        const m = tokenLine.exec(line);
+        if (!m) continue;
+        const toks = [...m[1].matchAll(/`([^`]+)`/g)].map((x) => x[1]);
+        for (const t of toks) {
+          if (!t.startsWith('route:') || t.includes('{') || t.includes('|')) continue;
+          checked += 1;
+          const route = t.slice('route:'.length);
+          if (!routes.has(route)) problems.push(`${file}：${t} —— App.tsx 与 NAV_REGISTRY 里都没有这个路由`);
+        }
+      }
+    }
+
+    expect(problems, `用量口径的 route token 有 ${problems.length} 处指向不存在的路由：\n${problems.join('\n')}`).toEqual([]);
+    // checked 为 0 是合法状态：标签约定从落地后的第一份周报开始生效
+    expect(checked).toBeGreaterThanOrEqual(0);
+  });
+
+  /**
+   * 上一条用例把 NAV_REGISTRY 的 path 当成合法路由，前提是 App.tsx 真的把它们挂成了
+   * <Route>。这个前提今天成立，但它**不是自明的**：注册表路由只因为 App.tsx 里那两处
+   * `NAV_REGISTRY.filter(...).map(...)` 才可达。任一处被删、或 placement 谓词漂移，
+   * 对应条目立刻变成 404，而上一条用例照样判绿——因为它读的是同一份注册表，
+   * 拿「登记过」当成了「挂载了」（predicate-and-wiring-discipline 形状 8：
+   * 把一份在真实运行条件下不成立的声明当成证据）。
+   *
+   * 所以这里单独钉住那条接线：挂载块必须存在、必须真的渲染 <Route path={e.path}>，
+   * 且注册表里用到的每一种 placement 都得有块覆盖到。
+   */
+  it('NAV_REGISTRY 到 <Route> 的挂载接线必须还在，且覆盖注册表用到的每种 placement', () => {
+    // 抓 `NAV_REGISTRY.filter(<谓词>).map(` 及其后的渲染体
+    const blocks = [...appTsxRaw.matchAll(/NAV_REGISTRY\s*\.filter\(([\s\S]*?)\)\s*\.map\(([\s\S]{0,400})/g)].map(
+      (m) => ({ predicate: m[1], body: m[2] }),
+    );
+
+    expect(
+      blocks.length,
+      'App.tsx 里找不到任何 `NAV_REGISTRY.filter(...).map(...)` 挂载块——注册表路由已全部 404，' +
+        '周报 route token 守卫会因此把不可达的路由判成合法',
+    ).toBeGreaterThan(0);
+
+    const notRenderingRoute = blocks
+      .filter((b) => !(b.body.includes('<Route') && b.body.includes('path={e.path')))
+      .map((b) => b.predicate.trim());
+    expect(
+      notRenderingRoute,
+      `有挂载块不再渲染 <Route path={e.path}>，注册表路由不可达：\n${notRenderingRoute.join('\n')}`,
+    ).toEqual([]);
+
+    // 注册表里实际用到的 placement（undefined 记作 shell，与 App.tsx 的默认分支同义）
+    const usedPlacements = new Set(NAV_REGISTRY.map((e) => e.placement ?? 'shell'));
+    const predicates = blocks.map((b) => b.predicate).join('\n');
+    const uncovered = [...usedPlacements].filter((p) =>
+      p === 'shell'
+        ? // 默认分支写法是 `!e.placement || e.placement === 'shell'`，两种写法认其一
+          !(predicates.includes('!e.placement') || predicates.includes("=== 'shell'"))
+        : !predicates.includes(`'${p}'`),
+    );
+    expect(
+      uncovered,
+      `注册表用到的 placement 没有对应挂载块，这些条目已经 404：${uncovered.join('、')}`,
+    ).toEqual([]);
   });
 });

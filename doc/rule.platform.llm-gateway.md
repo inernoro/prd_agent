@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：所有大模型调用必须走统一入口，并沉淀了流式场景里最容易踩的五个坑及其判据。
+**谁该读**：写大模型调用代码的工程师；排查流式卡顿或思考内容不显示的人。
+**读完能做什么**：按清单发起一次合规的流式调用，并对照五个陷阱自查。
+
+---
+
 所有大模型调用必须通过 `ILlmGateway`，禁止直接调用底层 LLM 客户端。本文档除了约束调用方式，还沉淀了流式场景下的 5 个关键陷阱——每一条都对应过线上级故障。
 
 ## 一、基础规则
@@ -48,24 +54,15 @@ Gateway 自动记录到 `llmrequestlogs`：`RequestPurpose`、`ModelResolutionTy
 
 **原因**：OpenRouter 默认把 reasoning 当成"内部计算"，不在流里下发。即使你打开了 `IncludeThinking = true`，那只影响 Gateway 是否向服务层 yield thinking chunk，不影响上游是否往下流。
 
-**修复**：在 `RequestBody` 里显式设置两个字段：
+**修复**：请求体里要同时带上新旧两个「返回推理过程」的开关——上游对不同模型、不同时期
+认的字段名不一致，只设一个会在部分模型上静默失效。
 
-```csharp
-RequestBody = new JsonObject
-{
-    ["messages"] = ...,
-    ["include_reasoning"] = true,                              // 旧字段，OpenRouter 历史兼容
-    ["reasoning"] = new JsonObject { ["exclude"] = false },    // 新字段，OpenRouter 当前推荐
-},
-```
 
 两个字段都要加，因为 OpenRouter 对不同模型/时期支持的字段名不一致。
 
-同时服务层必须设置：
+同时服务层要显式打开「把思考内容透传给调用方」的开关。**这是两个独立的闸**：
+一个让上游愿意吐推理过程，一个让网关愿意往下传，只开一个用户依旧看不到思考。
 
-```csharp
-IncludeThinking = true,  // Gateway 决定是否向调用方 yield Thinking chunk
-```
 
 两个开关缺一不可：
 - `include_reasoning: true` → **上游**愿意往下流 reasoning

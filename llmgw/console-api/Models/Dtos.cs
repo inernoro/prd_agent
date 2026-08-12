@@ -11,6 +11,14 @@ public sealed class ApiEnvelope<T>
 
     public static ApiEnvelope<T> Fail(string code, string message) =>
         new() { Success = false, Data = default, Error = new ApiErrorBody { Code = code, Message = message } };
+
+    /// <summary>
+    /// 带数据的失败。用于「拒绝了，但要告诉调用方拒绝的依据」——
+    /// 例如删除被引用挡下时，把占用清单一起回去，前端才能把「先摘哪几个」列出来，
+    /// 而不是只甩一句「删不了」让人自己猜。
+    /// </summary>
+    public static ApiEnvelope<T> Fail(string code, string message, T data) =>
+        new() { Success = false, Data = data, Error = new ApiErrorBody { Code = code, Message = message } };
 }
 
 public sealed class ApiErrorBody
@@ -93,6 +101,8 @@ public sealed class LlmLogListItem
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    public string? LogicalRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
     public string? UserId { get; set; }
     public string? TeamId { get; set; }
     public string? ServiceKeyId { get; set; }
@@ -102,6 +112,7 @@ public sealed class LlmLogListItem
     public string? Username { get; set; }
     public string? DisplayName { get; set; }
     public string? RequestType { get; set; }
+    public string? Operation { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
     public string? AppCallerTitle { get; set; }
@@ -157,6 +168,10 @@ public sealed class LlmLogDetail
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    public string? LogicalRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
+    public long UpstreamCallCount { get; set; }
+    public long StatusQueryCount { get; set; }
     public string? UserId { get; set; }
     public string? TeamId { get; set; }
     public string? ServiceKeyId { get; set; }
@@ -164,6 +179,7 @@ public sealed class LlmLogDetail
     public string? Environment { get; set; }
     public string? ServiceKeyPrefix { get; set; }
     public string? RequestType { get; set; }
+    public string? Operation { get; set; }
     public string? AppCallerCode { get; set; }
     public string? AppCallerCodeDisplayName { get; set; }
     public string? AppCallerTitle { get; set; }
@@ -288,6 +304,7 @@ public sealed class ProviderAttemptDto
     public string? ModelGroupName { get; set; }
     public string? Protocol { get; set; }
     public string? Transport { get; set; }
+    public bool? ReachedProvider { get; set; }
     public string Status { get; set; } = "selected";
     public string? Reason { get; set; }
     public int? StatusCode { get; set; }
@@ -320,12 +337,16 @@ public sealed class LogsMeta
     public List<string> ServiceKeyIds { get; set; } = new();
     public List<string> ClientCodes { get; set; } = new();
     public List<string> Environments { get; set; } = new();
+    public List<string> Operations { get; set; } = new();
 }
 
 // ── 日志汇总 ──
 public sealed class LogsSummaryData
 {
     public long Total { get; set; }
+    public long UpstreamCalls { get; set; }
+    public long ControlCalls { get; set; }
+    public long StatusQueries { get; set; }
     public long Succeeded { get; set; }
     public long Failed { get; set; }
     public long Running { get; set; }
@@ -891,7 +912,113 @@ public sealed class PlatformItem
     public string SourceCollection { get; set; } = "llmplatforms"; public string Authority { get; set; } = "map";
     public string? ClaimedAt { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// 密钥指纹：只保留头尾各几位，中间打码（如 sk-or-v1…9c2a）。
+    /// 存在的理由是两条上游可以同名同 URL、只有 key 不同——只回 hasKey 时运维分不出谁是谁，
+    /// 也就没法判断该换哪一把。仅在调用方具备 ConfigWrite 时下发，其余一律 null。
+    /// 明文永不外泄，这里也永远不是完整密钥。
+    /// </summary>
+    public string? KeyFingerprint { get; set; }
+
+    /// <summary>密钥可读性：missing（没配）/ ok（能解开）/ unreadable（密文在但当前密钥解不开，多半是换过 ApiKeyCrypto:Secret）。</summary>
+    public string KeyStatus { get; set; } = "missing";
 }
+
+/// <summary>
+/// 删除上游前的占用清单：谁还在引用它。空 = 可安全删除。
+/// 交换所（exchanges）自带上游地址与密钥、不绑平台，所以不在这张表里。
+/// </summary>
+public sealed class PlatformDeleteBlockers
+{
+    public List<string> Models { get; set; } = new();
+    public List<string> Pools { get; set; } = new();
+    public int TotalCount => Models.Count + Pools.Count;
+}
+
+/// <summary>
+/// 删除模型前的占用清单：哪些模型池还把它当成员，哪些逻辑模型还把它当上游 offering。
+/// 两类引用的定位方式不同（池成员按 (modelId, platformId) 复合，offering 按 _id 单键），
+/// 只查一类就会漏掉另一类，留下一条指向已删模型、解析不到又不报错的 offering。
+/// </summary>
+public sealed class ModelDeleteBlockers
+{
+    public List<string> Pools { get; set; } = new();
+    public List<string> LogicalModels { get; set; } = new();
+    public int TotalCount => Pools.Count + LogicalModels.Count;
+}
+
+/// <summary>
+/// 删除模型池前的占用清单。
+/// 「是某个类型的当前默认池」单列一条：它不是别人引用了你，而是删掉之后那个类型没有默认可用，
+/// 属于同样必须先解决、但解决方式完全不同的一类阻挡。
+/// </summary>
+public sealed class PoolDeleteBlockers
+{
+    public bool IsCurrentDefault { get; set; }
+    public List<string> AppCallers { get; set; } = new();
+    public int TotalCount => AppCallers.Count + (IsCurrentDefault ? 1 : 0);
+}
+
+/// <summary>删除交换所前的占用清单：哪些模型池成员还指着它，哪些逻辑模型还把它当 offering 上游。</summary>
+public sealed class ExchangeDeleteBlockers
+{
+    public List<string> Pools { get; set; } = new();
+    public List<string> LogicalModels { get; set; } = new();
+    public int TotalCount => Pools.Count + LogicalModels.Count;
+}
+
+/// <summary>删除团队前的占用清单：成员、接入密钥、appCaller 三类引用。</summary>
+public sealed class TeamDeleteBlockers
+{
+    public List<string> Members { get; set; } = new();
+    public int ServiceKeys { get; set; }
+    public int AppCallers { get; set; }
+    public int TotalCount => Members.Count + ServiceKeys + AppCallers;
+}
+
+/// <summary>
+/// 删除租户前的剩余内容清单。租户删除刻意不做级联，所以这张清单同时就是
+/// 「还要自己清掉什么」的待办：每一项非零都会挡下删除。
+/// </summary>
+public sealed class TenantDeleteBlockers
+{
+    public int OtherMembers { get; set; }
+    public int Platforms { get; set; }
+    public int Models { get; set; }
+    public int Pools { get; set; }
+    public int Exchanges { get; set; }
+    public int LogicalModels { get; set; }
+    public int ServiceKeys { get; set; }
+    public int AppCallers { get; set; }
+    public int TotalCount => OtherMembers + Platforms + Models + Pools + Exchanges + LogicalModels + ServiceKeys + AppCallers;
+}
+
+/// <summary>删除逻辑模型的结果：它名下的 offering 是从属子项，跟着一起删。</summary>
+public sealed class LogicalModelDeleteResult
+{
+    public int OfferingsDeleted { get; set; }
+}
+
+/// <summary>
+/// 删除 appCaller 的结果：它名下的提示词策略版本是从属子项，跟着一起删。
+/// 报条数而不是静默删——删的是会改写系统提示词的治理配置，事后必须能核对删掉了什么。
+/// </summary>
+public sealed class AppCallerDeleteResult
+{
+    public int PromptPolicyVersionsDeleted { get; set; }
+}
+
+/// <summary>编辑上游：只改这几项；密钥走独立的轮换端点，不混在这里。</summary>
+public sealed class UpdatePlatformRequest
+{
+    public string? Name { get; set; }
+    public string? PlatformType { get; set; }
+    public string? ApiUrl { get; set; }
+    public int? MaxConcurrency { get; set; }
+    public string? Remark { get; set; }
+}
+
 public sealed class CreatePlatformRequest
 {
     public string? Name { get; set; }
@@ -917,6 +1044,8 @@ public sealed class ModelItem
     public string? ClaimedAt { get; set; }
     public long CallCount { get; set; } public long SuccessCount { get; set; } public long FailCount { get; set; } public long TotalDuration { get; set; }
     public List<ModelCapabilityItem> Capabilities { get; set; } = new();
+    public string ImageSizeControlMode { get; set; } = "inherit";
+    public string? ImageSizeFieldFormat { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
@@ -930,6 +1059,8 @@ public sealed class CreateModelRequest
     public string? ModelName { get; set; }
     public string? Protocol { get; set; }
     public List<string> Capabilities { get; set; } = new();
+    public string? ImageSizeControlMode { get; set; }
+    public string? ImageSizeFieldFormat { get; set; }
     public string? ApiKey { get; set; }
     public int? Timeout { get; set; }
     public int? MaxRetries { get; set; }
@@ -940,6 +1071,11 @@ public sealed class CreateModelRequest
     public decimal? PricePerCall { get; set; }
     public string? PriceCurrency { get; set; }
     public string? Remark { get; set; }
+}
+public sealed class UpdateModelImageSizeControlRequest
+{
+    public string? Mode { get; set; }
+    public string? FieldFormat { get; set; }
 }
 public sealed class CreateModelResult
 {
@@ -1113,6 +1249,26 @@ public sealed class UpdateExchangeRequest
     public bool? Enabled { get; set; }
     public string? Description { get; set; }
     public long? Version { get; set; }
+}
+
+public sealed class InstallImageLayeringCapabilityRequest
+{
+    public string? ApiKey { get; set; }
+}
+
+public sealed class ImageLayeringCapabilityStatus
+{
+    public string CapabilityId { get; set; } = "image-layering";
+    public string State { get; set; } = "not-installed";
+    public bool Installed { get; set; }
+    public bool Verified { get; set; }
+    public bool HasKey { get; set; }
+    public string? ExchangeId { get; set; }
+    public string? LogicalModelId { get; set; }
+    public string? OfferingId { get; set; }
+    public string ModelId { get; set; } = "fal-qwen-image-layered";
+    public string PublicId { get; set; } = "image-layering";
+    public string? LastVerifiedAt { get; set; }
 }
 
 // ── GW-owned API key 健康自检（不返回明文/密文/脱敏 key）──
@@ -1452,4 +1608,121 @@ public sealed class BugReportListData
 {
     public List<BugReportItem> Items { get; set; } = new();
     public bool ForwardConfigured { get; set; }
+}
+
+// ---------------------------------------------------------------------------
+// 上游预设 / 连通性自测 / 模型发现（minimal-user-input.md）
+// ---------------------------------------------------------------------------
+
+/// <summary>一条内置上游预设。用户选它 = 一次性拿到地址、协议、并发的正确默认值。</summary>
+public sealed class ProviderPresetItem
+{
+    public string Key { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string PlatformType { get; set; } = string.Empty;
+    public string ApiUrl { get; set; } = string.Empty;
+    public string? ProviderId { get; set; }
+    public int MaxConcurrency { get; set; }
+    /// <summary>去哪里领密钥。空字符串表示这个上游不需要密钥（本地部署）。</summary>
+    public string KeyConsoleUrl { get; set; } = string.Empty;
+    /// <summary>密钥常见前缀，用于填错时给一句「看起来不像这个平台的密钥」。</summary>
+    public string KeyPrefixHint { get; set; } = string.Empty;
+    public bool SupportsModelDiscovery { get; set; }
+    public bool SupportsUpstreamPricing { get; set; }
+    public string Summary { get; set; } = string.Empty;
+    /// <summary>搜索用的别名（中英文、拼音），前端只做过滤不做翻译。</summary>
+    public List<string> SearchTerms { get; set; } = new();
+
+    /// <summary>不校验密钥的本地/自建上游给的占位密钥；需要真密钥的上游为空串。</summary>
+    public string KeylessPlaceholder { get; set; } = string.Empty;
+}
+
+public sealed class ProviderPresetsData
+{
+    public List<ProviderPresetItem> Items { get; set; } = new();
+}
+
+/// <summary>连通性自测结果。失败时 nextStep 必须给出可执行的下一步，不许只说「失败」。</summary>
+public sealed class PlatformTestResult
+{
+    public bool Reachable { get; set; }
+    public int? HttpStatus { get; set; }
+    public long ElapsedMs { get; set; }
+    /// <summary>探测实际打的地址，让用户能核对是不是自己想的那个。</summary>
+    public string ProbedUrl { get; set; } = string.Empty;
+    public int? ModelCount { get; set; }
+    public string? FailureKind { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string? NextStep { get; set; }
+}
+
+/// <summary>上游返回的一个模型，外加系统替用户推断出来的用途与价格。</summary>
+public sealed class UpstreamModelItem
+{
+    public string ModelId { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    /// <summary>系统按模型标识推断的用途；推断不出来就是空数组，由用户勾选。</summary>
+    public List<string> InferredCapabilities { get; set; } = new();
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    /// <summary>价格来源：upstream = 上游给的；null = 上游没给，界面要如实说「未提供」。</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>该模型标识是否已经在本租户登记过，避免重复导入。</summary>
+    public bool AlreadyImported { get; set; }
+}
+
+public sealed class UpstreamModelsData
+{
+    public string ProbedUrl { get; set; } = string.Empty;
+    public int Total { get; set; }
+    public int AlreadyImportedCount { get; set; }
+    public bool PricingProvided { get; set; }
+
+    /// <summary>
+    /// 上游实际返回了多少个模型——**仅在被截断时非空**。
+    /// 截断必须让用户看见，否则他会以为面板里这些就是全部（no silent caps）。
+    /// </summary>
+    public int? TruncatedFromTotal { get; set; }
+
+    /// <summary>
+    /// 这份清单与价格是什么时候从上游拉回来的（服务端时间）。
+    /// minimal-user-input 第 2 条要求拉回来的值必须标「来源与时间」——面板可能开着不动，
+    /// 用户得能分辨手上这份报价是刚拉的还是半小时前的，否则会照着过期价格做导入决定。
+    /// </summary>
+    public DateTime FetchedAt { get; set; }
+
+    public List<UpstreamModelItem> Items { get; set; } = new();
+}
+
+/// <summary>批量导入：只带模型标识，用途与价格由服务端按发现结果补齐，前端可覆盖。</summary>
+public sealed class ImportUpstreamModelsRequest
+{
+    public List<ImportUpstreamModelEntry>? Models { get; set; }
+}
+
+public sealed class ImportUpstreamModelEntry
+{
+    public string? ModelId { get; set; }
+    public List<string>? Capabilities { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+}
+
+public sealed class ImportUpstreamModelsResult
+{
+    public int Requested { get; set; }
+    public int Created { get; set; }
+    public int Skipped { get; set; }
+    public List<string> SkippedModelIds { get; set; } = new();
+    public List<string> CreatedModelIds { get; set; } = new();
+
+    /// <summary>默认模型池同步是否失败。true 时模型已入库但不会被池路由选中，前端必须如实告知而不是报全绿。</summary>
+    public bool PoolSyncFailed { get; set; }
+
+    /// <summary>需要额外告诉用户的话（目前只有池同步失败时非空）。</summary>
+    public string? Message { get; set; }
 }

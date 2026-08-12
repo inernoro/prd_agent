@@ -1,12 +1,13 @@
 ---
 name: cds
-version: 0.12.1
+metadata:
+  version: 0.13.2
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.12.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.13.2 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -280,6 +281,8 @@ python3 <当前项目技能根>/cds/cli/cdscli.py --human preview-url
 当前项目技能根必须按宿主实际安装位置解析，不得假定一定是 `.claude/skills`。`cdscli` 只信任 `/api/branches` 返回的 `previewUrl` / `previewUrls`，不使用分支名、项目名、`previewSlug` 或 `CDS_HOST` 推算 URL。
 
 一个 CDS 实例可能在同一个公开 `previewDomain` 下发布多个真实入口，包括主应用、模型网关控制台和其他声明了 `cds.subdomain` 的独立服务。入口数由实际发布的逻辑服务决定，不等于 `rootDomains` 数量。`rootDomains` 可能包含隐藏、备用或内部域名，API 与 Agent 都不得向用户暴露。命令返回多行时必须全部列出公开入口，不得自行挑选或补写。API 不可用、分支未部署或缺少地址字段时应明确失败，不得退化为本地公式。
+
+这里的“入口”只指用户可操作的 Web 页面，不含 readiness/liveness/health API。路由是否发布由 `cds.subdomain` 决定，是否进入用户入口清单及其名称、落点由 `cds.web-entry-name` / `cds.web-entry-path` 决定；两者禁止混用。`preview-url` 优先消费后端返回的 `previewEntries`，旧响应中混入的健康检查 URL 必须过滤。用户要改入口时，Agent 应维护项目根 `cds-compose.yml`，不要求用户在 Dashboard、分支覆盖和 nginx 配置之间寻找入口设置。
 
 `cds/src/services/preview-slug.ts:computePreviewSlug` 仍是 CDS 后端内部 slug 计算 SSOT，但它不是 Agent 生成公网 URL 的授权。
 

@@ -13,9 +13,17 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:5500';
+const START_LOCAL_SERVER = process.env.E2E_LOCAL_SERVER === '1';
 
 export default defineConfig({
   testDir: './specs',
+  webServer: START_LOCAL_SERVER ? {
+    // 验收生产构建，不用 React 开发态 StrictMode 的双副作用替代用户实际环境。
+    command: 'pnpm --dir ../prd-admin preview --host 127.0.0.1 --port 5500 --strictPort',
+    url: 'http://127.0.0.1:5500',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+  } : undefined,
   // Fail the build on `.only` — `.only` left in CI silently skips the
   // rest of the suite, creating a dangerous false-green.
   forbidOnly: !!process.env.CI,

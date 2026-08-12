@@ -1,15 +1,24 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePreview } from '@/components/file-preview';
+import {
+  FilePreview,
+  HTML_ZOOM_STORAGE_KEY,
+  HTML_ZOOM_MIN,
+  HTML_ZOOM_MAX,
+  HTML_ZOOM_STEP,
+  readStoredHtmlZoom,
+} from '@/components/file-preview';
 import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
 import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
+import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Pin, PinOff,
-  ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
+  Trash2, FilePlus, FolderPlus,
   Upload, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
-  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText,
+  Sparkles, Wand2, Tags, Replace, BookOpen, SlidersHorizontal, Share2, ExternalLink, Copy,
+  ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText, MoreHorizontal,
+  ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -20,6 +29,8 @@ import '@uiw/react-md-editor/markdown-editor.css';
 const MDEditor = lazy(() => import('@uiw/react-md-editor'));
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
 import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '@/lib/tagPalette';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
+import { glassMobileHeader } from '@/lib/glassStyles';
 import { compareDocBrowserEntries, computeReorderUpdates, type DocBrowserReorderUpdate, type DocBrowserSortMode } from './docBrowserSort';
 
 export type { DocBrowserSortMode } from './docBrowserSort';
@@ -190,126 +201,6 @@ function ReadingProgressBar({ scrollRef }: { scrollRef: React.RefObject<HTMLDivE
   );
 }
 
-// 顶部标签筛选下拉：标签过多时收进一个"标签筛选"下拉按钮，点开弹出长方形面板多选筛选（createPortal 防裁剪）。
-function TagFilterDropdown({
-  tags, selected, colors, onToggle, onClear,
-}: {
-  tags: string[];
-  selected: Set<string>;
-  colors: Record<string, TagColorKey>;
-  onToggle: (tag: string) => void;
-  onClear: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [kw, setKw] = useState('');
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (t.closest('[data-tagfilter-pop]') || t.closest('[data-tagfilter-trigger]')) return;
-      setOpen(false);
-    };
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onEsc);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
-  }, [open]);
-
-  const toggleOpen = () => {
-    const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 240) });
-    setOpen(o => !o);
-  };
-
-  const shown = kw.trim() ? tags.filter(t => t.toLowerCase().includes(kw.trim().toLowerCase())) : tags;
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        data-tagfilter-trigger
-        onClick={toggleOpen}
-        className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] px-2 rounded-full cursor-pointer transition-colors"
-        style={{
-          height: 22, lineHeight: '22px',
-          color: selected.size > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
-          background: selected.size > 0 ? 'var(--accent-soft, rgba(129,140,248,0.12))' : 'var(--bg-input)',
-          border: '1px solid var(--border-faint)',
-        }}
-        title="按标签筛选（多选取并集；再次点击取消）"
-      >
-        <Tags size={12} />
-        标签筛选{selected.size > 0 ? ` · ${selected.size}` : ''}
-        <ChevronDown size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
-      </button>
-      {selected.size > 0 && (
-        <button
-          onClick={onClear}
-          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[9.5px] px-1.5 rounded-full cursor-pointer"
-          style={{ height: 20, lineHeight: '20px', color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
-          title="清空筛选"
-        >
-          <X size={9} /> 清空
-        </button>
-      )}
-      {open && pos && createPortal(
-        <div
-          data-tagfilter-pop
-          style={{
-            position: 'fixed', top: pos.top, left: pos.left, width: pos.width, maxWidth: 360,
-            maxHeight: 320, overflowY: 'auto', overscrollBehavior: 'contain',
-            zIndex: 10000, borderRadius: 10, padding: 10,
-            background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)',
-            boxShadow: '0 8px 28px rgba(0,0,0,0.28)',
-          }}
-        >
-          {tags.length > 12 && (
-            <div className="flex items-center gap-1.5 mb-2 px-2 rounded-md" style={{ height: 28, background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
-              <Search size={12} style={{ color: 'var(--text-muted)' }} />
-              <input
-                value={kw}
-                onChange={e => setKw(e.target.value)}
-                autoFocus
-                placeholder="搜索标签…"
-                className="flex-1 bg-transparent outline-none text-[11px]"
-                style={{ color: 'var(--text-primary)' }}
-              />
-            </div>
-          )}
-          <div className="flex flex-wrap gap-1.5">
-            {shown.map(tag => {
-              const c = getTagColor(tag, colors);
-              const active = selected.has(tag);
-              return (
-                <button
-                  key={tag}
-                  onClick={() => onToggle(tag)}
-                  className="text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
-                  style={{
-                    height: 22, lineHeight: '22px',
-                    color: active ? '#fff' : c.text,
-                    background: active ? c.dot : c.bg,
-                    border: `1px solid ${active ? c.dot : c.border}`,
-                  }}
-                  title={`#${tag}`}
-                >
-                  {truncateTagDisplay(tag, 10)}
-                </button>
-              );
-            })}
-            {shown.length === 0 && (
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无匹配标签</span>
-            )}
-          </div>
-        </div>,
-        document.body,
-      )}
-    </>
-  );
-}
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { VersionHistoryModal, type VersionApi } from './VersionHistoryModal';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -382,6 +273,33 @@ export type DocBrowserEntry = {
 };
 
 /**
+ * 阅读区工具栏的尺寸规矩（唯一来源，新增控件一律引用这三个常量）：
+ * - 带文字的按钮：28px 高（h-7）、圆角 8、字号 11、图标 12
+ * - 纯图标按钮：28x28（手机端 32x32，保证点得中）
+ * - 状态药丸（README / 置顶 / 标签 / new / 验收结论）：22px 高，比按钮矮一档，形成两级节奏
+ * 历史教训（2026-07-31 用户反馈「按钮忽大忽小，没有任何规矩」）：这一排原本混着
+ * h-6 / h-7 / h-8 与 py-0.5 药丸，同一行里三四种高度，看上去毫无章法。
+ */
+const TOOLBAR_BTN = 'h-7 px-2.5 rounded-[8px] text-[11px] font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_ICON_BTN = 'h-7 w-7 rounded-[8px] inline-flex items-center justify-center cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_ICON_BTN_MOBILE = 'h-8 w-8 rounded-[9px] inline-flex items-center justify-center cursor-pointer transition-colors flex-shrink-0';
+const TOOLBAR_CHIP = 'h-[22px] px-2 rounded-full text-[10px] inline-flex items-center gap-1 flex-shrink-0';
+
+/** 阅读区「更多」菜单项：图标 + 文字，比一排彩色图标钮更好认。 */
+function ReaderMoreItem({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary transition-colors"
+    >
+      <span className="flex-shrink-0 text-token-muted">{icon}</span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+/**
  * 目录排序模式：
  * - 'default'：置顶 → 文件夹 → 主文档 → SortOrder → 自然标题顺序（用于书籍和自定义目录）
  * - 'created-desc'：置顶 → 文件夹 → 按创建时间倒序（用于阅读/分享场景，新内容先看到）
@@ -452,8 +370,12 @@ export type DocBrowserProps = {
   onQuickRecord?: () => void;
   /** 音频结果区「换个整理方式」：对已完成转录的音频免重跑 ASR 重新整理摘要 */
   onRestyleTranscribe?: (entryId: string) => void;
+  /** 当前选中音频最近一次转录失败的说明；有值时结果区如实写明原因并把按钮改成重试 */
+  transcribeFailure?: { reason: string; at: string | null } | null;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
+  /** 音频原文页的问答入口；可预置带时间引用约束的提问。 */
+  onAskRecording?: (entryId: string) => void;
   /** 点击"分享"时触发（仅文档条目显示），分享单篇文档 */
   onShareEntry?: (entryId: string) => void;
   /** 指定后：当该 entry 被选中且内容加载完成时自动进入编辑态（新建文档免再点一次「编辑」） */
@@ -474,6 +396,11 @@ export type DocBrowserProps = {
    * 不传则不渲染，对现有调用方无影响。
    */
   contentFooter?: (entryId: string) => React.ReactNode;
+  /** 阅读区「更多」菜单顶部自定义插槽（移动端沉浸阅读时页面级信息/动作的收纳处，如 空间信息、分享）。 */
+  readerMenuExtra?: ReactNode;
+  /** 移动端沉浸阅读（标题接管顶栏 + 单行操作 + 满铺）。默认关闭——嵌入式消费方
+   *（pm-agent 知识面板等，宿主自带头部 chrome）不受影响；仅全屏阅读页显式开启（Codex P2）。 */
+  immersiveOnMobile?: boolean;
   /**
    * 启用双链编辑器自动补全：编辑模式下输入 [[ 或 @ 弹出本库文档候选。
    * 不传则编辑器无补全。仅 DocumentStorePage 的私人编辑场景传入。
@@ -483,10 +410,23 @@ export type DocBrowserProps = {
   sortMode?: DocBrowserSortMode;
   /**
    * "显示更新时间"的默认值（仅在用户未显式切换过开关时生效）。
-   * 默认 true：时间默认显示（用户反馈要求），且时间永远固定在每行最右边。
-   * 用户手动开/关后以其 sessionStorage 选择为准。
+   * 默认 false（2026-07-31 用户反馈：「自从有了时间，可见区域就少很多」）——时间会挤掉
+   * 标题的可见宽度，改为默认不显示、需要的人去「筛选」面板里打开。
+   * 验收库这类以时间为主线的调用方可显式传 true。用户手动开/关后以其 sessionStorage 选择为准。
    */
   showUpdatedTimeDefault?: boolean;
+  /**
+   * 收进「筛选」面板的调用方控件（排序等纯筛选/排序类）。
+   * 与 sidebarHeader 的区别：sidebarHeader 是常驻在搜索框上方的内容（分类 chip、列表标题、
+   * 快速新建等**动作**），不能藏进筛选面板；sidebarFilters 才是点开筛选后一屏平铺的选项。
+   */
+  sidebarFilters?: ReactNode;
+  /**
+   * 当前选中条目的解析结果回传（含 searchResults 兜底）。
+   * 调用方自己 `entries.find()` 会漏掉「只存在于后端搜索结果里的命中」（大库超过首页 200 条时常见），
+   * 分享 / 下载的「当前这篇」锚点会因此静默回落到整库 —— 正是本次要防的暴露（Codex P1）。
+   */
+  onSelectedEntryChange?: (entry: DocBrowserEntry | undefined) => void;
   /**
    * 分享视图传入分享 token，用于私有库读取划词评论气泡（PR #685 Codex P1）。
    * 后端凭此 token 验证调用方确实通过有效分享访问，而非靠"存在分享链"放行。
@@ -665,6 +605,7 @@ function TranscribeHeroCard({
   currentEntryId,
   noteEntryId,
   subtitleEntryId,
+  lastFailure,
   onStart,
   onOpenNote,
   onRestyle,
@@ -672,6 +613,8 @@ function TranscribeHeroCard({
   currentEntryId: string;
   noteEntryId?: string;
   subtitleEntryId?: string;
+  /** 最近一次转录失败的说明；有值时卡片如实写明失败原因，按钮改为重试 */
+  lastFailure?: { reason: string; at: string | null } | null;
   /** 发起原文转录；整理在完成后另选 */
   onStart?: (styleKey?: string) => void;
   onOpenNote: (entryId: string) => void;
@@ -679,6 +622,8 @@ function TranscribeHeroCard({
   onRestyle?: () => void;
 }) {
   const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
+  // 没转出笔记、且上次是失败告终 —— 这时候必须说话，不能装作从没跑过
+  const showFailure = !noteEntryId && !!lastFailure;
   return (
     <div
       className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
@@ -690,10 +635,16 @@ function TranscribeHeroCard({
           </div>
           <div className="min-w-0">
             <p className="text-[13px] font-semibold text-token-primary">
-              {inPlace ? '录音和原文已保存在本页' : noteEntryId ? '录音原文已生成' : '把录音转成文字'}
+              {inPlace ? '录音和原文已保存在本页'
+                : noteEntryId ? '录音原文已生成'
+                : showFailure ? '上次转文字没成功'
+                : '把录音转成文字'}
             </p>
             <p className="truncate text-[11px] text-token-muted">
-              {inPlace ? '位置与标题保持不变，需要时再一键整理' : noteEntryId ? '点下方打开原文，需要时再一键整理' : '先生成可编辑原文，不自动总结或改写'}
+              {inPlace ? '位置与标题保持不变，需要时再一键整理'
+                : noteEntryId ? '点下方打开原文，需要时再一键整理'
+                : showFailure ? '录音还在，没有丢；可以直接重试'
+                : '先生成可编辑原文，不自动总结或改写'}
             </p>
           </div>
         </div>
@@ -702,10 +653,20 @@ function TranscribeHeroCard({
             onClick={() => onStart()}
             className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
             style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}>
-            转成文字
+            {showFailure ? '重试' : '转成文字'}
           </button>
         )}
       </div>
+
+      {/* 失败原因照抄服务端，不改写成「稍后再试」那种等于没说的话 */}
+      {showFailure && (
+        <div
+          className="flex items-start gap-2 rounded-[10px] px-3 py-2 text-[11.5px] leading-relaxed"
+          style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
+          <AlertTriangle size={13} className="mt-[2px] flex-shrink-0" />
+          <span className="min-w-0 break-words">{lastFailure!.reason}</span>
+        </div>
+      )}
 
       {/* 已转录：历史产物 chips + 换个整理方式 */}
       {(noteEntryId || subtitleEntryId) && (
@@ -1210,6 +1171,7 @@ function TreeNode({
   childrenMap,
   depth,
   selectedEntryId,
+  returnEntryId,
   primaryEntryId,
   pinnedEntryIds,
   folderPrimaryMap,
@@ -1244,6 +1206,8 @@ function TreeNode({
   childrenMap: Map<string, DocBrowserEntry[]>;
   depth: number;
   selectedEntryId?: string;
+  /** 从正文退回列表后保留的来源行，只做浅色定位，不代表仍处于选中态。 */
+  returnEntryId?: string;
   isEntryFresh?: (entry: DocBrowserEntry) => boolean;
   primaryEntryId?: string;
   pinnedEntryIds: Set<string>;
@@ -1280,6 +1244,7 @@ function TreeNode({
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
   const isSelected = entry.id === selectedEntryId;
+  const isReturnContext = !isSelected && entry.id === returnEntryId;
   const isPrimary = entry.id === primaryEntryId || (entry.parentId ? folderPrimaryMap.get(entry.parentId) === entry.id : false);
   const isPinned = pinnedEntryIds.has(entry.id);
   const children = childrenMap.get(entry.id) ?? [];
@@ -1393,14 +1358,20 @@ function TreeNode({
             ? 'var(--accent-soft, rgba(99,102,241,0.14))'
             : (isSelected && !isFolder
                 ? 'var(--selection-bg)'
-                : undefined),
+                : isReturnContext && !isFolder
+                  ? 'rgba(99,102,241,0.08)'
+                  : undefined),
           outline: dragOver ? '1px dashed var(--accent-primary, var(--accent-gold))' : 'none',
           // 排序放置指示线：目标行顶/底一条 2px 主题色插入线（Notion/语雀式拖拽换位反馈）
           boxShadow: reorderHint === 'before'
             ? 'inset 0 2px 0 0 var(--accent-primary, #818cf8)'
             : reorderHint === 'after'
               ? 'inset 0 -2px 0 0 var(--accent-primary, #818cf8)'
-              : (isSelected && !isFolder ? 'inset 0 0 0 1px var(--selection-border)' : undefined),
+              : (isSelected && !isFolder
+                  ? 'inset 0 0 0 1px var(--selection-border)'
+                  : isReturnContext && !isFolder
+                    ? 'inset 0 0 0 1px rgba(99,102,241,0.22)'
+                    : undefined),
           // 文件夹「章节分组」标题：上方单条细分隔线 + 克制留白，更接近文档站目录观感
           ...(isFolder
             ? {
@@ -1418,33 +1389,33 @@ function TreeNode({
       >
         {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
         <div className="flex items-center gap-2 w-full min-w-0">
-          {/* 批量多选勾选框：普通状态悬浮覆盖文件图标，不再永久占一列目录宽度。 */}
-          {!isFolder && onToggleSelect && (
+          {/* 图标位 = 勾选框位：hover（或已勾选）时勾选框顶掉文件图标，二者共用同一个 15px 槽。
+              2026-07-31 用户反馈「行首出现一个黑方块」：旧实现是把不透明近黑的勾选框 absolute
+              盖在图标上、再加一圈近黑 ring，暗色下就成了一块挖空似的黑疙瘩，还把图标糊住。
+              改成同槽互斥后既没有黑块，也不产生布局跳动（槽宽恒定）。 */}
+          <span className="relative flex-shrink-0 inline-flex items-center justify-center" style={{ width: 15, height: 15 }}>
             <span
-              role="checkbox"
-              aria-checked={isChecked}
-              onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
-              className={`${reserveSelectSpace ? 'flex-shrink-0' : 'absolute'} inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-              style={{
-                width: 15, height: 15, borderRadius: 4,
-                border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong)'}`,
-                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--selection-checkbox-bg)',
-                ...(!reserveSelectSpace
-                  ? {
-                      left: `${10 + depth * 14}px`,
-                      top: 8,
-                      zIndex: 2,
-                      boxShadow: '0 0 0 2px var(--selection-checkbox-ring)',
-                    }
-                  : {}),
-              }}
-              title={isChecked ? '取消选择' : '选择（批量操作）'}
+              className={`inline-flex items-center justify-center transition-opacity ${!isFolder && onToggleSelect && !reserveSelectSpace ? (isChecked ? 'opacity-0' : 'group-hover:opacity-0') : ''}`}
+              style={{ width: 14, height: 14 }}
             >
-              {isChecked && <Check size={10} style={{ color: '#fff' }} />}
+              <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
             </span>
-          )}
-          <span className="flex-shrink-0 inline-flex items-center justify-center" style={{ width: 14, height: 14 }}>
-            <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+            {!isFolder && onToggleSelect && (
+              <span
+                role="checkbox"
+                aria-checked={isChecked}
+                onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
+                className={`absolute inset-0 inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace || isChecked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                style={{
+                  borderRadius: 4,
+                  border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong)'}`,
+                  background: isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--selection-checkbox-bg)',
+                }}
+                title={isChecked ? '取消选择' : '选择（批量操作）'}
+              >
+                {isChecked && <Check size={10} style={{ color: '#fff' }} />}
+              </span>
+            )}
           </span>
 
           {/* 非文件夹标题不再 flex-1 撑满：取自然宽度，让 NEW 紧贴标题末尾（时间靠 ml-auto 顶右）。
@@ -1620,6 +1591,7 @@ function TreeNode({
           childrenMap={childrenMap}
           depth={depth + 1}
           selectedEntryId={selectedEntryId}
+          returnEntryId={returnEntryId}
           primaryEntryId={primaryEntryId}
           pinnedEntryIds={pinnedEntryIds}
           folderPrimaryMap={folderPrimaryMap}
@@ -1655,54 +1627,14 @@ function TreeNode({
   );
 }
 
-// ── 面包屑 ──
-
-function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowserEntry[] }) {
-  const entryMap = useMemo(() => new Map(entries.map(e => [e.id, e])), [entries]);
-
-  const path = useMemo(() => {
-    const result: DocBrowserEntry[] = [];
-    let current = entryMap.get(entryId);
-    if (!current) return result;
-    result.unshift(current);
-    while (current?.parentId) {
-      const parent = entryMap.get(current.parentId);
-      if (!parent) break;
-      result.unshift(parent);
-      current = parent;
-    }
-    return result;
-  }, [entryId, entryMap]);
-
-  // 2026-05-28 用户两次反馈："标题重复显示像 bug"。
-  // 第一次修复改成小灰字字号(11px)，但文件名 + markdown H1 内容仍 99% 重合。
-  // 第二次彻底修：单级路径(就是文件本身,没有父文件夹)直接不渲染面包屑——
-  // 因为 markdown H1 已经是"我是什么文档"的清晰锚点，重复显示无收益。
-  // 仅在多级路径(有父文件夹层级)时才渲染面包屑，作为"我在哪"的位置指示。
-  if (path.length <= 1) return null;
-
-  // 多级路径：仍是小灰字，作为位置指示。最后一段(文件名本身)用 truncate +
-  // max-w 避免吃掉过多空间。
-  return (
-    <div className="flex items-center gap-1 text-[11px] min-w-0" style={{ color: 'var(--text-muted)' }}>
-      {path.map((entry, i) => (
-        <span key={entry.id} className="flex items-center gap-1 min-w-0">
-          {i > 0 && <ChevronRight size={10} className="flex-shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.6 }} />}
-          <span className="truncate" title={entry.title} style={i === path.length - 1 ? { maxWidth: '320px' } : undefined}>
-            {entry.title}
-          </span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
 // 阅读列全屏包裹：非全屏原位渲染；全屏时 createPortal 到 body 铺满视口（fixed inset-0）。
 // 物理脱离 AgentFullscreenLayout 等祖先布局上下文，杜绝「点全屏不展开」。
 function ReaderColumnFrame({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
   if (!fullscreen) return <>{children}</>;
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100vh', background: 'var(--bg-base)' }}>
+    // 100dvh：移动端浏览器工具栏收展时 100vh 会比可视视口高（底部被吃掉一条），
+    // dvh 跟随动态视口；不支持 dvh 的浏览器忽略该声明，由 inset-0 兜底撑满。
+    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100dvh', background: 'var(--bg-base)' }}>
       {children}
     </div>,
     document.body,
@@ -1742,7 +1674,9 @@ export function DocBrowser({
   onUploadAudio,
   onQuickRecord,
   onRestyleTranscribe,
+  transcribeFailure,
   onReprocess,
+  onAskRecording,
   onShareEntry,
   autoEditEntryId,
   onAutoEditConsumed,
@@ -1752,7 +1686,9 @@ export function DocBrowser({
   emptyState,
   loading,
   sortMode = 'default',
-  showUpdatedTimeDefault = true,
+  showUpdatedTimeDefault = false,
+  sidebarFilters,
+  onSelectedEntryChange,
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
@@ -1763,6 +1699,8 @@ export function DocBrowser({
   onTagColorsChange,
   inlineCommentShareToken,
   contentFooter,
+  readerMenuExtra,
+  immersiveOnMobile,
   autocompleteStoreId,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
@@ -1794,27 +1732,14 @@ export function DocBrowser({
     const saved = sessionStorage.getItem('doc-browser-show-updated-time');
     if (saved === '1') return true;
     if (saved === '0') return false;
-    return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（验收库默认显示时间）
+    return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（默认关；验收库可显式打开）
   });
   // 列表时间显示哪个字段：跟随排序键，避免"按创建排序却显更新时间"的错位。
   const timeField: 'createdAt' | 'updatedAt' = sortMode === 'created-desc' ? 'createdAt' : 'updatedAt';
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const settingsMenuRef = useRef<HTMLDivElement>(null);
-  // 头部控件行（排序 + 正文标题 + 显示）合并到一行；侧栏很窄时控件只留图标（隐藏文字标签）。
-  const headerControlsRef = useRef<HTMLDivElement>(null);
-  const [compactControls, setCompactControls] = useState(false);
-  useEffect(() => {
-    const el = headerControlsRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 999;
-      // 排序控件(排序+3选项，nowrap)约需 ~210px；窄于 ~380px 时正文标题/显示收成纯图标，
-      // 给排序留足空间、整行一行放下、不触发横向滚动。
-      setCompactControls(w < 380);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const [readerMoreOpen, setReaderMoreOpen] = useState(false);
+  const readerMoreRef = useRef<HTMLDivElement>(null);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const filterAnchorRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -1832,6 +1757,12 @@ export function DocBrowser({
   // 在任何嵌套上下文都铺满视口（遵守 .claude/rules/frontend-modal.md）。
   const [readerFullscreen, setReaderFullscreen] = useState(false);
   const toggleReaderFullscreen = useCallback(() => setReaderFullscreen((v) => !v), []);
+  // HTML 报告字号档位（移动端工具栏 ± 控件；FilePreview 受控应用到 srcDoc body）。
+  // 纯 UI 偏好 → localStorage 记忆（no-localstorage.md 例外清单）
+  const [htmlZoom, setHtmlZoom] = useState<number>(readStoredHtmlZoom);
+  useEffect(() => {
+    try { localStorage.setItem(HTML_ZOOM_STORAGE_KEY, String(htmlZoom)); } catch { /* ignore */ }
+  }, [htmlZoom]);
   // 右侧栏（本页章节 TOC / 批注栏）可收起，给正文让出宽度。纯 UI 偏好，sessionStorage 持久化
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(() => sessionStorage.getItem('doc-browser-right-collapsed') === '1');
   const toggleRightPanel = useCallback(() => setRightPanelCollapsed((v) => {
@@ -1858,6 +1789,8 @@ export function DocBrowser({
       return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
     } catch { return new Set(); }
   });
+  // 筛选按钮高亮条件：有标签在筛，或打开了更新时间（默认关）——让「我改过设置」这件事看得见
+  const filtersDirty = selectedTags.size > 0 || showUpdatedTime;
   useEffect(() => {
     sessionStorage.setItem('doc-browser-selected-tags', JSON.stringify([...selectedTags]));
   }, [selectedTags]);
@@ -1909,10 +1842,14 @@ export function DocBrowser({
 
   // ── 移动端主从布局：正文为主，目录用左侧抽屉承载。桌面端 isMobile=false 时不改动原布局。──
   const { isMobile } = useBreakpoint();
+  // 沉浸阅读是调用方显式开启的能力：未开启的嵌入式消费方在移动端保持原工具栏行为
+  const immersiveActive = !!immersiveOnMobile && isMobile;
   const [mobileDetail, setMobileDetail] = useState(false);
   const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
+  const [lastVisitedEntryId, setLastVisitedEntryId] = useState<string | undefined>(selectedEntryId);
   const prevSelForMobileRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (selectedEntryId) setLastVisitedEntryId(selectedEntryId);
     if (!isMobile) return;
     if (!selectedEntryId) {
       setMobileDetail(false);
@@ -1946,6 +1883,27 @@ export function DocBrowser({
     () => entries.find(e => e.id === selectedEntryId) ?? searchResults?.find(e => e.id === selectedEntryId),
     [entries, searchResults, selectedEntryId],
   );
+  // 把解析结果回传调用方，让「当前这篇」的范围锚点也能覆盖搜索命中
+  useEffect(() => { onSelectedEntryChange?.(selectedEntryData); }, [selectedEntryData, onSelectedEntryChange]);
+
+  // ── 移动端沉浸阅读：接管 AppShell 顶栏（文档标题替代应用名 + 返回箭头回列表），
+  //    调用方页面同时据此隐藏自己的头部行（stores/readerChromeStore.ts，2026-08-10 用户确认交互）──
+  const setReaderChrome = useReaderChromeStore((s) => s.setOverride);
+  const clearReaderChrome = useReaderChromeStore((s) => s.clearOverride);
+  useEffect(() => {
+    if (!(immersiveActive && mobileDetail && selectedEntryData && !selectedEntryData.isFolder)) {
+      clearReaderChrome();
+      return;
+    }
+    setReaderChrome({
+      title: getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines),
+      onBack: () => {
+        setMobileDetail(false);
+        setMobileDirectoryOpen(false);
+      },
+    });
+    return () => clearReaderChrome();
+  }, [immersiveActive, mobileDetail, selectedEntryData, useContentTitle, contentFirstLines, setReaderChrome, clearReaderChrome]);
 
   // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹。
   // 合并 searchResults：搜索命中 / 深链 ?entry 的条目可能不在已加载的 entries 里，
@@ -1957,12 +1915,12 @@ export function DocBrowser({
     return m;
   }, [entries, searchResults]);
 
-  // 选中条目（含通过 ?entry 传入的初始选中）自动展开其所有祖先文件夹 + 滚动到可见。
-  // 否则在分享链 / 子文件夹归档场景下，选中的那篇藏在折叠文件夹里，用户看不到"当前在读哪一篇"。
+  // 选中条目自动展开祖先；退回列表后继续滚到刚才阅读的来源行，保留空间记忆。
   useEffect(() => {
-    if (!selectedEntryId) return;
+    const focusEntryId = selectedEntryId ?? lastVisitedEntryId;
+    if (!focusEntryId) return;
     const ancestors: string[] = [];
-    let pid = parentMap.get(selectedEntryId);
+    let pid = parentMap.get(focusEntryId);
     let guard = 0;
     while (pid && guard++ < 50) {
       ancestors.push(pid);
@@ -1978,11 +1936,11 @@ export function DocBrowser({
     }
     // 展开后下一帧把选中行滚到可见区
     const t = setTimeout(() => {
-      const el = sidebarRef.current?.querySelector(`[data-entry-id="${selectedEntryId}"]`);
+      const el = sidebarRef.current?.querySelector(`[data-entry-id="${focusEntryId}"]`);
       el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }, 80);
     return () => clearTimeout(t);
-  }, [selectedEntryId, parentMap]);
+  }, [selectedEntryId, lastVisitedEntryId, parentMap]);
 
   // 批次 C：只对选中的非文件夹条目埋点
   const trackedEntryId = useMemo(() => {
@@ -2520,16 +2478,6 @@ export function DocBrowser({
     setContentFirstLines(lines);
   }, [entries]);
 
-  // 显示设置菜单 click outside
-  useEffect(() => {
-    if (!showSettingsMenu) return;
-    const handleClick = (e: MouseEvent) => {
-      if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node)) setShowSettingsMenu(false);
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [showSettingsMenu]);
-
   // 搜索过滤（本地 title 搜索 + 可选后端内容搜索） + tag 过滤
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
     const hasTagFilter = selectedTags.size > 0;
@@ -2719,17 +2667,24 @@ export function DocBrowser({
       return;
     }
     const fid = ++contentFetchIdRef.current;
-    setContentLoading(true);
-    setPreview(null);
+    // 同一篇文档的 updatedAt 可能因录音转录、云端归档、订阅同步连续变化。
+    // 保留当前可用内容并在后台拉取新版本，只有切换文档时才清空预览。
+    // 否则每次元数据变化都会露出整块加载页，视觉上像页面反复刷新。
+    const refreshInBackground = loadedContentKey?.startsWith(`${entryId}:`)
+      && previewRef.current !== null;
+    if (!refreshInBackground) {
+      setContentLoading(true);
+      setPreview(null);
+    }
     try {
       const data = await loadContent(entryId);
       if (fid !== contentFetchIdRef.current) return; // 过期：更晚的加载/本地保存已发生，丢弃本次结果
       setPreview(data);
       setLoadedContentKey(contentKey);
     } catch {
-      if (fid === contentFetchIdRef.current) setPreview(null);
+      if (fid === contentFetchIdRef.current && !refreshInBackground) setPreview(null);
     }
-    if (fid === contentFetchIdRef.current) setContentLoading(false);
+    if (fid === contentFetchIdRef.current && !refreshInBackground) setContentLoading(false);
   }, [loadContent, loadedContentKey]);
 
   useEffect(() => {
@@ -2906,22 +2861,244 @@ export function DocBrowser({
   }
 
   const isCards = appearance === 'cards';
+  const mobileHasSelectedEntry = Boolean(selectedEntryId);
+  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen && mobileHasSelectedEntry;
+  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen && mobileHasSelectedEntry;
+  // 沉浸阅读态（移动端正文打开）：外层卡片 chrome（p-3 / 圆角 / 浮起面）全部去掉，
+  // 正文从沉浸顶栏下边缘直接开始、左右满铺（2026-08-10 用户「主页面尽可能的大」）
+  const mobileDetailChromeless = immersiveActive && mobileDetail && mobileHasSelectedEntry;
   // cards: 双独立圆角卡片 + 中间 12px 可拖拽分隔条（周报风格）；inset: 单容器无 gap（知识库/分享）
   // cards 模式不再用 gap-3，改由两卡片之间的 ResizeHandle（宽 12px）承担间距 + 拖拽调宽
   const rootClass = isCards
-    ? 'flex flex-1 overflow-hidden p-3 rounded-2xl surface-raised'
-    : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]';
+    ? (mobileDetailChromeless ? 'flex flex-1 overflow-hidden' : 'flex flex-1 overflow-hidden p-3 rounded-2xl surface-raised')
+    : (mobileDetailChromeless ? 'surface-inset flex flex-1 gap-0 overflow-hidden' : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]');
   // cards 模式下左右各自包圆角卡片；inset 模式下走原生分隔线
   const sidebarClass = isCards
     ? 'surface-reading relative flex flex-shrink-0 flex-col rounded-xl overflow-hidden'
     : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
-  const mobileHasSelectedEntry = Boolean(selectedEntryId);
-  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen && mobileHasSelectedEntry;
-  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen && mobileHasSelectedEntry;
+
+  // ── 沉浸阅读单行顶栏（移动端）：返回 + 标题 + 字号 + 全屏 + 更多合成一行，
+  //    替代「AppShell 顶栏 + 阅读工具栏」两行（2026-08-10 用户「还有这么多空间没有利用到」）──
+  const mobileImmersiveReading = immersiveActive && mobileDetail && !!selectedEntryData && !selectedEntryData.isFolder;
+  const selectedIsHtmlPreview = !!selectedEntryData && !selectedEntryData.isFolder
+    && (getFileTypeConfig(selectedEntryData.title, selectedEntryData.contentType).preview === 'html'
+      || (selectedEntryData.contentType ?? '').toLowerCase().includes('html')
+      || /\.html?$/i.test(selectedEntryData.title));
+  // 字号仅对 srcDoc 型 HTML 生效：fileUrl 型上传附件走最严 sandbox 跨域 iframe，
+  // zoom 注入不进去，显示控件会变成"改了百分比却没效果"的假开关（Codex P2）
+  const selectedIsZoomableHtml = selectedIsHtmlPreview && !!preview?.text && !preview?.fileUrl;
+
+  // 字号控件（srcDoc 型 HTML 专属）：沉浸态渲染在顶栏、非沉浸移动端渲染在工具栏行——同一份节点
+  const zoomControlsNode = (!editMode && selectedIsZoomableHtml) ? (
+    <>
+      <button
+        type="button"
+        aria-label="缩小字号"
+        disabled={htmlZoom <= HTML_ZOOM_MIN}
+        onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
+        className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+        style={{ color: 'var(--text-secondary)' }}
+        title={`缩小字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+        <ZoomOut size={16} />
+      </button>
+      {htmlZoom !== 1 && (
+        <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+          {Math.round(htmlZoom * 100)}%
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label="放大字号"
+        disabled={htmlZoom >= HTML_ZOOM_MAX}
+        onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
+        className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+        style={{ color: 'var(--text-secondary)' }}
+        title={`放大字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+        <ZoomIn size={16} />
+      </button>
+    </>
+  ) : null;
+
+  // 「更多」按钮 + 菜单：桌面渲染在工具栏尾部、移动端渲染在沉浸顶栏——同一份节点，杜绝双份漂移
+  const readerMoreNode = (() => {
+    const sel = selectedEntryData;
+    if (!sel || sel.isFolder) return null;
+    const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
+    const showTranscribe = canTranscribe(sel) && !!onTranscribe;
+    const showReprocess = canReprocess(sel) && !!onReprocess;
+    const isAcc = !!(sel.metadata?.kind === 'acceptance-report' || sel.metadata?.verdict);
+    const showEvidence = isAcc && !!preview?.text && !editMode;
+    const showVersions = !!versionApi && !isMobile && !editMode;
+    const isSubscription = sel.sourceType === 'subscription';
+    const githubSha = sel.metadata?.github_sha;
+    const showSubscription = isSubscription && !!onOpenSubscription;
+    // 移动端把低频动作（目录 / 划词评论 / 编辑）折进菜单，顶栏只留 字号/全屏/更多
+    const showDirectoryItem = isMobile;
+    const showCommentsItem = isMobile && !!trackedEntryForComments;
+    const showEditItem = isMobile && !!onSaveContent
+      && getFileTypeConfig(sel.title, sel.contentType).editable && !editMode;
+    // 原工具栏 chips（验收结论 / README / 置顶 / new / 标签）折进菜单顶部信息区
+    const vc = getVerdictConfig(sel.metadata?.verdict);
+    const tier = sel.metadata?.tier;
+    const isReadme = sel.id === primaryEntryId;
+    const isPinnedItem = pinnedSet.has(sel.id) && !isReadme;
+    const infoTags = sel.tags ?? [];
+    const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
+    const infoAny = !!vc || isReadme || isPinnedItem || infoTags.length > 0 || recentlyChanged;
+    const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions
+      || showSubscription || showDirectoryItem || showCommentsItem || showEditItem || infoAny || !!readerMenuExtra;
+    if (!any) return null;
+    return (
+      <div ref={readerMoreRef} className="relative flex-shrink-0" style={{ marginLeft: 'auto' }}>
+        <button
+          onClick={() => setReaderMoreOpen(v => !v)}
+          className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+          title="更多操作">
+          <MoreHorizontal size={13} />
+        </button>
+        <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
+          anchorRef={readerMoreRef} minWidth={190}
+          className="surface-popover rounded-[10px] p-1.5"
+          style={{ maxHeight: 'min(70vh, 480px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {infoAny && (
+            <div
+              className="flex flex-wrap items-center gap-1.5 px-2 pt-1.5 pb-2 mb-1"
+              style={{ borderBottom: '1px solid var(--border-faint)' }}
+            >
+              {vc && (
+                <span className={`${TOOLBAR_CHIP} font-bold tabular-nums`}
+                  style={{ background: vc.background, color: vc.color, border: vc.border }}
+                  title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}>
+                  {vc.label}{tier ? ` ${tier}` : ''}
+                </span>
+              )}
+              {isReadme && (
+                <span className={TOOLBAR_CHIP}
+                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
+                  README
+                </span>
+              )}
+              {isPinnedItem && (
+                <span className={TOOLBAR_CHIP}
+                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
+                  置顶
+                </span>
+              )}
+              {recentlyChanged && (
+                <span className={`${TOOLBAR_CHIP} font-bold`}
+                  style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)', letterSpacing: '0.3px' }}
+                  title={sel.lastChangedAt ? `最近更新: ${new Date(sel.lastChangedAt).toLocaleString('zh-CN')}` : ''}>
+                  new
+                </span>
+              )}
+              {infoTags.map(tag => {
+                const c = getTagColor(tag, tagColorMap);
+                return (
+                  <span key={tag} className={TOOLBAR_CHIP}
+                    style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
+                    #{tag}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {readerMenuExtra != null && (
+            <div onClick={() => setReaderMoreOpen(false)}>
+              {readerMenuExtra}
+            </div>
+          )}
+          {showDirectoryItem && (
+            <ReaderMoreItem icon={<PanelLeftOpen size={13} />} label="文档目录"
+              onClick={() => { setReaderMoreOpen(false); setMobileDirectoryOpen(true); }} />
+          )}
+          {showCommentsItem && (
+            <ReaderMoreItem icon={<MessageSquareText size={13} />}
+              label={commentCount > 0 ? `划词评论 · ${commentCount} 条` : '划词评论'}
+              onClick={() => { setReaderMoreOpen(false); setInlineCommentsOpen(true); }} />
+          )}
+          {showEditItem && (
+            <ReaderMoreItem icon={<Pencil size={13} />} label="编辑文档"
+              onClick={() => { setReaderMoreOpen(false); setEditContent(preview?.text ?? ''); setEditMode(true); }} />
+          )}
+          {showTranscribe && (
+            <ReaderMoreItem icon={<AudioLines size={13} />} label="转录并生成摘要"
+              onClick={() => { setReaderMoreOpen(false); onTranscribe!(sel.id); }} />
+          )}
+          {showSubtitle && (
+            <ReaderMoreItem icon={<Sparkles size={13} />} label="生成字幕"
+              onClick={() => { setReaderMoreOpen(false); onGenerateSubtitle!(sel.id); }} />
+          )}
+          {showReprocess && (
+            <ReaderMoreItem icon={<Wand2 size={13} />} label="用智能体加工"
+              onClick={() => { setReaderMoreOpen(false); onReprocess!(sel.id); }} />
+          )}
+          {showEvidence && (
+            <ReaderMoreItem icon={<Workflow size={13} />} label="证据板"
+              onClick={() => { setReaderMoreOpen(false); setEvidenceGraphOpen(true); }} />
+          )}
+          {showVersions && (
+            <ReaderMoreItem icon={<History size={13} />} label="历史版本"
+              onClick={() => { setReaderMoreOpen(false); setVersionHistoryOpen(true); }} />
+          )}
+          {showSubscription && (
+            <ReaderMoreItem icon={<Rss size={13} />}
+              label={githubSha ? `订阅信息 · #${githubSha.slice(0, 7)}` : '订阅信息'}
+              onClick={() => { setReaderMoreOpen(false); onOpenSubscription!(sel.id); }} />
+          )}
+        </AnchoredMenu>
+      </div>
+    );
+  })();
 
   return (
     <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
+      {/* ── 沉浸阅读单行顶栏（移动端，portal 到 body）：返回 + 标题 + 字号 + 全屏 + 更多。
+          AppShell 顶栏与阅读工具栏两行合一，编辑态只留 返回 + 标题（保存/取消在下方工具栏行）。 ── */}
+      {mobileImmersiveReading && !readerFullscreen && createPortal(
+        <header
+          className="fixed top-0 left-0 right-0 z-100 flex items-center gap-1 pl-1 pr-2"
+          style={{
+            ...glassMobileHeader,
+            height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => { setMobileDetail(false); setMobileDirectoryOpen(false); }}
+            className="h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-xl"
+            style={{ color: 'var(--text-primary)' }}
+            aria-label="返回列表"
+          >
+            <ChevronLeft size={22} />
+          </button>
+          <span
+            className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-none"
+            style={{ color: 'var(--text-primary)' }}
+            title={selectedEntryData ? getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines) : undefined}
+          >
+            {selectedEntryData ? getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines) : ''}
+          </span>
+          {!editMode && (
+            <>
+              {zoomControlsNode}
+              <button
+                type="button"
+                aria-label="全屏阅读"
+                onClick={toggleReaderFullscreen}
+                className={TOOLBAR_ICON_BTN_MOBILE}
+                style={{ color: 'var(--text-secondary)' }}
+                title="全屏阅读">
+                <Maximize2 size={16} />
+              </button>
+              {readerMoreNode}
+            </>
+          )}
+        </header>,
+        document.body,
+      )}
       {sidebarAsMobileDrawer && (
         <div
           className="fixed inset-0 z-[130]"
@@ -2977,58 +3154,15 @@ export function DocBrowser({
           </div>
         )}
 
-        {/* 头部控件行：排序(sidebarHeader) + 正文标题切换 + 显示设置，合并到一行省垂直空间；
-            侧栏很窄(compactControls)时正文标题/显示只留图标（文字标签隐藏，title 提示仍在）。 */}
-        <div
-          ref={headerControlsRef}
-          className="shrink-0 flex items-center gap-2 px-3 py-2.5 overflow-x-auto"
-          style={{ borderBottom: '1px solid var(--border-faint)' }}>
-          {/* 排序控件 shrink-0 + 内部 whitespace-nowrap：永不被挤压换行（用户最讨厌的字字竖排折叠） */}
-          <div className="shrink-0">{sidebarHeader}</div>
-          {/* 正文标题/显示 推到最右；窄栏(compactControls)只留图标。整行放不下时横向滚动，绝不竖排折叠 */}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            <button
-              onClick={() => setUseContentTitle(!useContentTitle)}
-              className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
-              title={useContentTitle ? '当前：显示正文第一行为标题' : '当前：显示文件名为标题'}>
-              {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
-              {!compactControls && (useContentTitle ? '正文标题' : '文件名')}
-            </button>
-            <div ref={settingsMenuRef} className="relative">
-              <button
-                onClick={() => setShowSettingsMenu(v => !v)}
-                className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
-                title="显示设置">
-                <Settings size={11} className={showUpdatedTime ? 'text-token-accent' : ''} />
-                {!compactControls && '显示'}
-              </button>
-              {showSettingsMenu && (
-                <div className="surface-popover absolute right-0 top-[26px] z-50 min-w-[180px] rounded-[10px] p-2">
-                  <label className="flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-token-secondary transition-colors hover-bg-soft">
-                    <input
-                      type="checkbox"
-                      checked={showUpdatedTime}
-                      onChange={(e) => {
-                        const next = e.target.checked;
-                        setShowUpdatedTime(next);
-                        sessionStorage.setItem('doc-browser-show-updated-time', next ? '1' : '0');
-                      }}
-                      className="h-3 w-3 cursor-pointer accent-current"
-                    />
-                    显示更新时间
-                  </label>
-                  <div className="px-2 py-1 text-[10px] text-token-muted">
-                    显示每条目最后变更时间，鼠标悬停查看精确时间和作者。
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        {/* 搜索 + 新建文件夹 */}
+        {/* 顶部只留「搜索 + 筛选」一行：排序 / 标题显示 / 更新时间 / 标签筛选 全部收进筛选面板。
+            2026-07-31 用户要求「折叠成一个高级筛选，但尽量减少点击次数，最好一次性完成」——
+            所以面板是一屏平铺（不再套二级菜单），点开即可把所有选项一次调完。
+            已选中的标签仍在外面留一行 chip，保证「当前正被筛选」这件事不会藏起来。 */}
         <div className="surface-panel-header px-3 py-3">
-          <div className="flex gap-1.5">
-            <div className="relative flex-1">
+          {/* 常驻头部内容（分类 chip / 列表标题 / 快速新建等动作）——不属于筛选，不进面板 */}
+          {sidebarHeader && <div className="mb-2">{sidebarHeader}</div>}
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1 min-w-0">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 value={search} onChange={e => handleSearchChange(e.target.value)}
@@ -3046,46 +3180,100 @@ export function DocBrowser({
                 </span>
               )}
             </div>
-            {/* 旧「+」下拉菜单已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口，见 CreatePaletteFab） */}
+            <div ref={filterAnchorRef} className="shrink-0">
+              <button
+                onClick={() => setShowFilterPanel(v => !v)}
+                className="flex h-8 cursor-pointer items-center gap-1 rounded-[9px] px-2.5 text-[11px] font-semibold transition-colors"
+                style={filtersDirty
+                  ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                  : { background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-muted)' }}
+                title="筛选与显示：排序 / 标题显示 / 更新时间 / 标签">
+                <SlidersHorizontal size={12} />
+                筛选{selectedTags.size > 0 ? ` · ${selectedTags.size}` : ''}
+              </button>
+            </div>
           </div>
-          {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
-          {allTagsRanked.length > 0 && (
-            <div
-              className="flex items-center gap-1 overflow-x-auto"
-              style={{
-                paddingTop: 2,
-                paddingBottom: 2,
-                scrollbarWidth: 'thin',
-                scrollbarColor: 'rgba(255,255,255,0.15) transparent',
-              }}
-              title="点击筛选；多选取并集；再次点击取消"
-            >
-              {allTagsRanked.length > 6 ? (
-                <TagFilterDropdown
-                  tags={allTagsRanked}
-                  selected={selectedTags}
-                  colors={tagColorMap}
-                  onToggle={toggleTag}
-                  onClear={() => setSelectedTags(new Set())}
-                />
-              ) : (
-                <>
+
+          {/* 已选标签：留在外面，避免「筛着却看不出在筛」 */}
+          {selectedTags.size > 0 && (
+            <div className="mt-2 flex items-center gap-1 overflow-x-auto" style={{ paddingBottom: 2 }}>
+              {[...selectedTags].map(tag => {
+                const c = getTagColor(tag, tagColorMap);
+                return (
+                  <button key={tag} onClick={() => toggleTag(tag)}
+                    className="flex-shrink-0 cursor-pointer rounded-full px-2 text-[10px] font-medium"
+                    style={{ height: 20, lineHeight: '20px', color: 'white', background: c.dot, border: `1px solid ${c.dot}` }}
+                    title="点击取消该标签筛选">
+                    {truncateTagDisplay(tag)} ×
+                  </button>
+                );
+              })}
+              <button onClick={() => setSelectedTags(new Set())}
+                className="flex-shrink-0 cursor-pointer rounded-full px-1.5 text-[9.5px]"
+                style={{ height: 18, lineHeight: '18px', color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                title="清空标签筛选">
+                清空
+              </button>
+            </div>
+          )}
+
+          <AnchoredMenu open={showFilterPanel} onClose={() => setShowFilterPanel(false)}
+            anchorRef={filterAnchorRef} minWidth={260}
+            className="surface-popover max-h-[70vh] w-[300px] max-w-[92vw] overflow-y-auto rounded-[12px] p-3">
+            {sidebarFilters && (
+              <div className="mb-3">
+                <div className="mb-1.5 text-[11px] font-semibold text-token-primary">排序</div>
+                {sidebarFilters}
+              </div>
+            )}
+
+            <div className="mb-3">
+              <div className="mb-1.5 text-[11px] font-semibold text-token-primary">标题显示</div>
+              {/* 段控尺寸与排序段控严格一致（p-0.5 容器 + px-2 py-1 + 11px 字），
+                  2026-07-31 用户：「这些大小应该一致吧，我偏向小的那个」 */}
+              <div className="inline-flex items-center gap-0.5 rounded-[8px] p-0.5" style={{ background: 'rgba(148,163,184,0.10)' }}>
+                <button onClick={() => setUseContentTitle(true)}
+                  className="cursor-pointer whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+                  style={useContentTitle
+                    ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
+                    : { color: 'var(--text-muted)' }}
+                  title="用正文第一行作为列表标题">正文标题</button>
+                <button onClick={() => setUseContentTitle(false)}
+                  className="cursor-pointer whitespace-nowrap rounded-[6px] px-2 py-1 text-[11px] transition-colors"
+                  style={!useContentTitle
+                    ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', fontWeight: 600 }
+                    : { color: 'var(--text-muted)' }}
+                  title="用文件名作为列表标题">文件名</button>
+              </div>
+            </div>
+
+            <label className="mb-3 flex cursor-pointer items-start gap-2 text-[11px] text-token-secondary">
+              <input
+                type="checkbox"
+                checked={showUpdatedTime}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setShowUpdatedTime(next);
+                  sessionStorage.setItem('doc-browser-show-updated-time', next ? '1' : '0');
+                }}
+                className="mt-0.5 h-3 w-3 cursor-pointer accent-current"
+              />
+              <span>
+                <span className="block font-semibold text-token-primary">显示更新时间</span>
+                <span className="block text-[10px] text-token-muted">默认关闭：时间会占掉标题的可见宽度，需要时再打开。</span>
+              </span>
+            </label>
+
+            {allTagsRanked.length > 0 && (
+              <div>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-token-primary">标签</span>
                   {selectedTags.size > 0 && (
-                    <button
-                      onClick={() => setSelectedTags(new Set())}
-                      className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
-                      style={{
-                        height: 18,
-                        lineHeight: '18px',
-                        color: 'var(--text-muted)',
-                        background: 'var(--bg-input)',
-                        border: '1px solid var(--border-faint)',
-                      }}
-                      title="清空筛选"
-                    >
-                      清空
-                    </button>
+                    <button onClick={() => setSelectedTags(new Set())}
+                      className="ml-auto cursor-pointer text-[10px] text-token-muted hover-text-primary">清空</button>
                   )}
+                </div>
+                <div className="flex flex-wrap gap-1">
                   {allTagsRanked.map(tag => {
                     const c = getTagColor(tag, tagColorMap);
                     const active = selectedTags.has(tag);
@@ -3093,14 +3281,13 @@ export function DocBrowser({
                       <button
                         key={tag}
                         onClick={() => toggleTag(tag)}
-                        className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                        className="cursor-pointer rounded-full px-2 text-[10px] font-medium transition-all"
                         style={{
                           height: 20,
                           lineHeight: '20px',
                           color: active ? 'white' : c.text,
                           background: active ? c.dot : c.bg,
                           border: `1px solid ${active ? c.dot : c.border}`,
-                          letterSpacing: '0.01em',
                         }}
                         title={`#${tag}`}
                       >
@@ -3108,10 +3295,11 @@ export function DocBrowser({
                       </button>
                     );
                   })}
-                </>
-              )}
-            </div>
-          )}
+                </div>
+              </div>
+            )}
+          </AnchoredMenu>
+
           {creatingFolder && (
             <div className="flex gap-1.5">
               <input
@@ -3227,6 +3415,7 @@ export function DocBrowser({
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() || selectedTags.size > 0 ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
+              returnEntryId={!selectedEntryId ? lastVisitedEntryId : undefined}
               primaryEntryId={primaryEntryId}
               pinnedEntryIds={pinnedSet}
               folderPrimaryMap={folderPrimaryMap}
@@ -3341,24 +3530,81 @@ export function DocBrowser({
           全屏时整列经 ReaderColumnFrame createPortal 到 body 铺满视口。 */}
       <ReaderColumnFrame fullscreen={readerFullscreen}>
       <div
-        className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
+        className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? (mobileDetailChromeless ? ' surface-reading' : ' surface-reading rounded-xl') : ''}`}
         style={{ minHeight: 0, display: isMobile && (!mobileDetail || !selectedEntryId) ? 'none' : undefined }}
       >
         {selectedEntryId ? (
           <>
-            {/* 面包屑导航 header：移动端保持单行横滑，正文面积优先。 */}
+            {/* 阅读头（2026-08-10 用户确认的重构）：
+                - 桌面：行1 = 文档标题（替代面包屑；父文件夹作浅色前缀保层级）+ 更新于/更新者；
+                        行2 = 主操作图标行。徽标/标签 chips 全部折进「更多」。
+                - 移动：标题已上移到 AppShell 顶栏（readerChromeStore 接管），本处只剩单行主操作。
+                全屏阅读 = 整页只留内容：整块隐藏，退出走半透明浮动钮；编辑态例外（保存/取消在行2上）。 */}
+            {(!readerFullscreen || editMode) && (
+            <>
+            {!isMobile && selectedEntryData && (
+              <div
+                className="flex items-center gap-2 py-2 px-5"
+                style={{ borderBottom: '1px solid var(--border-faint)' }}
+              >
+                {(() => {
+                  const parent = selectedEntryData.parentId
+                    ? entries.find(e => e.id === selectedEntryData.parentId)
+                    : undefined;
+                  if (!parent) return null;
+                  return (
+                    <span
+                      className="text-[11px] flex-shrink-0 max-w-[180px] truncate"
+                      style={{ color: 'var(--text-muted)' }}
+                      title={`所在文件夹：${parent.title}`}
+                    >
+                      {parent.title} ›
+                    </span>
+                  );
+                })()}
+                <span
+                  className="min-w-0 truncate text-[14px] font-semibold"
+                  style={{ color: 'var(--text-primary)' }}
+                  title={getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines)}
+                >
+                  {getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines)}
+                </span>
+                {!selectedEntryData.isFolder && (
+                  <div className="ml-auto flex items-center gap-3 min-w-0 flex-shrink-0">
+                    <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                      更新于 <RelativeTime value={selectedEntryData.updatedAt} fallback="未知时间" title={`最后更新时间：${formatMetaTime(selectedEntryData.updatedAt)}`} />
+                    </span>
+                    {/* 作者未知时不显示「更新者 未知用户」，减少噪音 */}
+                    {selectedEntryData.updatedByName && (
+                      <span
+                        className="text-[10px] truncate max-w-[160px]"
+                        style={{ color: 'var(--text-muted)' }}
+                        title={`更新者：${selectedEntryData.updatedByName}`}
+                      >
+                        更新者 {selectedEntryData.updatedByName}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {/* 行2：主操作行。移动端非编辑态不渲染——动作全部并入沉浸顶栏一行
+                （2026-08-10 用户「还有这么多空间没有利用到」）；编辑态保留（保存/取消在此）。 */}
+            {(!immersiveActive || editMode) && (
             <div
               className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-nowrap overflow-x-auto' : 'px-5 flex-wrap'}`}
               style={{
                 borderBottom: '1px solid var(--border-subtle)',
                 scrollbarWidth: isMobile ? 'none' : undefined,
+                // 横滑到尽头不把手势链给祖先（iOS 会整页橡皮筋，体感"页面在左右滑"）
+                overscrollBehaviorX: isMobile ? 'contain' : undefined,
               }}
             >
-              {/* 移动端目录抽屉入口：不再把正文切回列表。 */}
+              {/* 移动端目录抽屉入口（沉浸态由顶栏/菜单承载，此按钮只在非沉浸或编辑态出现） */}
               {isMobile && (
                 <button
                   onClick={() => setMobileDirectoryOpen(true)}
-                  className="flex-shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-[9px] text-[12px] cursor-pointer transition-colors hover:opacity-80"
+                  className={`${TOOLBAR_ICON_BTN_MOBILE} hover:opacity-80`}
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
                   aria-label="打开目录"
                   title="打开目录"
@@ -3370,224 +3616,20 @@ export function DocBrowser({
               {onBackToList && !isMobile && (
                 <button
                   onClick={onBackToList}
-                  className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-[8px] text-[11px] cursor-pointer transition-colors hover:opacity-80"
+                  className={`${TOOLBAR_BTN} hover:opacity-80`}
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
                   title="返回文档列表"
                 >
-                  <ChevronLeft size={13} /> 返回列表
+                  <ChevronLeft size={12} /> 返回列表
                 </button>
               )}
-              <Breadcrumbs entryId={selectedEntryId} entries={entries} />
-              {/* 验收结论药丸：列表里有、阅读区原先缺失，这里补上让「通过 L1」在阅读视图也一眼可见 */}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                const vc = sel && !sel.isFolder ? getVerdictConfig(sel.metadata?.verdict) : null;
-                if (!vc) return null;
-                const tier = sel!.metadata?.tier;
-                return (
-                  <span
-                    className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold tabular-nums"
-                    style={{ background: vc.background, color: vc.color, border: vc.border }}
-                    title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
-                  >
-                    {vc.label}{tier ? ` ${tier}` : ''}
-                  </span>
-                );
-              })()}
-              {selectedEntryId === primaryEntryId && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
-                  README
-                </span>
-              )}
-              {pinnedSet.has(selectedEntryId) && selectedEntryId !== primaryEntryId && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
-                  置顶
-                </span>
-              )}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder || (sel.tags?.length ?? 0) === 0) return null;
-                const tagLimit = isMobile ? 1 : 4;
-                return (
-                  <>
-                    {sel.tags!.slice(0, tagLimit).map(tag => {
-                      const c = getTagColor(tag, tagColorMap);
-                      return (
-                        <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                          style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
-                          #{tag}
-                        </span>
-                      );
-                    })}
-                    {sel.tags!.length > tagLimit && (
-                      <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        +{sel.tags!.length - tagLimit}
-                      </span>
-                    )}
-                  </>
-                );
-              })()}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                // 移动端：隐藏「更新于/更新者」（其 ml-auto 会把自己顶出窄屏右边缘、与标签重叠裁切）。
-                if (!sel || sel.isFolder || isMobile) return null;
-                // 「更新于」用 updatedAt（所有本地变更都会刷新它）；lastChangedAt 仅供 new 徽标，
-                // 避免浏览器内保存只 patch updatedAt 而 lastChangedAt 滞后导致显示陈旧
-                return (
-                  <div className="ml-auto flex items-center gap-3 min-w-0">
-                    <span
-                      className="text-[10px] whitespace-nowrap"
-                      style={{ color: 'var(--text-muted)' }}
-                    >
-                      更新于 <RelativeTime value={sel.updatedAt} fallback="未知时间" title={`最后更新时间：${formatMetaTime(sel.updatedAt)}`} />
-                    </span>
-                    {/* 作者未知时不显示「更新者 未知用户」，减少噪音 */}
-                    {sel.updatedByName && (
-                      <span
-                        className="text-[10px] truncate max-w-[160px]"
-                        style={{ color: 'var(--text-muted)' }}
-                        title={`更新者：${sel.updatedByName}`}
-                      >
-                        更新者 {sel.updatedByName}
-                      </span>
-                    )}
-                  </div>
-                );
-              })()}
-              {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder || isMobile) return null; // 移动端隐藏 new/订阅徽标，给标题+标签让位
-                const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
-                const isSubscription = sel.sourceType === 'subscription';
-                const githubSha = sel.metadata?.github_sha;
-                if (!recentlyChanged && !isSubscription) return null;
-                return (
-                  <>
-                    {recentlyChanged && (
-                      <span
-                        className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold"
-                        style={{
-                          background: 'rgba(34,197,94,0.1)',
-                          color: 'rgba(74,222,128,0.95)',
-                          border: '1px solid rgba(34,197,94,0.25)',
-                          letterSpacing: '0.3px',
-                        }}
-                        title={sel.lastChangedAt ? `最近更新: ${new Date(sel.lastChangedAt).toLocaleString('zh-CN')}` : ''}
-                      >
-                        new
-                      </span>
-                    )}
-                    {isSubscription && onOpenSubscription && (
-                      <button
-                        onClick={() => onOpenSubscription(sel.id)}
-                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
-                        style={{
-                          background: 'var(--selection-bg)',
-                          border: '1px solid var(--selection-border)',
-                          color: 'var(--selection-text)',
-                        }}
-                        title={githubSha ? `GitHub 版本 ${githubSha.slice(0, 7)}（点击查看同步详情）` : '查看订阅同步详情'}
-                      >
-                        {githubSha ? `#${githubSha.slice(0, 7)}` : '订阅信息'}
-                      </button>
-                    )}
-                  </>
-                );
-              })()}
-              {/* 知识库 Agent 按钮：生成字幕 / 再加工 */}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
-                const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
-                const showTranscribe = canTranscribe(sel) && !!onTranscribe;
-                const showReprocess = canReprocess(sel) && !!onReprocess;
-                if (!showSubtitle && !showReprocess && !showTranscribe) return null;
-                return (
-                  <>
-                    {showTranscribe && (
-                      <button
-                        onClick={() => onTranscribe!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
-                        style={{
-                          background: 'rgba(34,197,94,0.08)',
-                          border: '1px solid rgba(34,197,94,0.2)',
-                          color: 'rgba(74,222,128,0.95)',
-                        }}
-                        title="转录并生成 AI 摘要"
-                      >
-                        <AudioLines size={isMobile ? 14 : 11} />
-                        {!isMobile && '转录'}
-                      </button>
-                    )}
-                    {showSubtitle && (
-                      <button
-                        onClick={() => onGenerateSubtitle!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
-                        style={{
-                          background: 'rgba(168,85,247,0.1)',
-                          border: '1px solid rgba(168,85,247,0.22)',
-                          color: 'rgba(216,180,254,0.95)',
-                        }}
-                        title="一键生成字幕"
-                      >
-                        <Sparkles size={isMobile ? 14 : 11} />
-                        {!isMobile && '生成字幕'}
-                      </button>
-                    )}
-                    {showReprocess && (
-                      <button
-                        onClick={() => onReprocess!(sel.id)}
-                        className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
-                        style={{
-                          background: 'var(--selection-bg)',
-                          border: '1px solid var(--selection-border)',
-                          color: 'var(--selection-text)',
-                        }}
-                        title="用智能体加工文档"
-                      >
-                        <Wand2 size={isMobile ? 14 : 11} />
-                        {!isMobile && '智能体'}
-                      </button>
-                    )}
-                  </>
-                );
-              })()}
-              {/* 验收报告「证据关系图」按钮：仅验收类条目 + 有正文时显示，放在工具栏（非文章正中） */}
-              {(() => {
-                // 用 selectedEntryData（含 searchResults 回退），与正文/GitHub 渲染一致，
-                // 否则搜索命中的验收报告点开后「证据图」按钮不显示。
-                const sel = selectedEntryData;
-                const isAcc = !!(sel?.metadata?.kind === 'acceptance-report' || sel?.metadata?.verdict);
-                if (!isAcc || !preview?.text || editMode) return null;
-                return (
-                  <button
-                    onClick={() => setEvidenceGraphOpen(true)}
-                    className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
-                    style={{
-                      background: 'rgba(99,102,241,0.1)',
-                      border: '1px solid rgba(99,102,241,0.22)',
-                      color: 'rgba(165,180,252,0.95)',
-                    }}
-                    title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
-                  >
-                    <Workflow size={isMobile ? 14 : 11} />
-                    {!isMobile && '证据板'}
-                  </button>
-                );
-              })()}
-              {/* 批注布局开关已移除：评论默认内联，点击某条 → 右侧批注栏展开，关掉即回内联（activeCommentKey 单独驱动） */}
-              {/* 批次 D：划词评论开关按钮 */}
-              {trackedEntryForComments && (
+              {/* 批次 D：划词评论开关按钮（移动端折进「更多」菜单，不占工具栏位） */}
+              {trackedEntryForComments && !isMobile && (
                 <button
                   onClick={() => setInlineCommentsOpen(true)}
-                  className="h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                  // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
+                  className={commentCount > 0 ? TOOLBAR_BTN : TOOLBAR_ICON_BTN}
                   style={{
-                    // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
-                    width: commentCount > 0 ? undefined : 28,
-                    padding: commentCount > 0 ? '0 8px' : 0,
                     background: 'rgba(168,85,247,0.08)',
                     border: '1px solid rgba(168,85,247,0.18)',
                     color: 'rgba(216,180,254,0.95)',
@@ -3602,22 +3644,28 @@ export function DocBrowser({
               {selectedEntryId && !entries.find(e => e.id === selectedEntryId)?.isFolder && tocContent && !isMobile && (
                 <button
                   onClick={toggleRightPanel}
-                  className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                  className={TOOLBAR_BTN}
                   style={{
                     background: rightPanelCollapsed ? 'var(--nested-block-bg)' : 'var(--selection-bg)',
                     border: `1px solid ${rightPanelCollapsed ? 'var(--nested-block-border)' : 'var(--selection-border)'}`,
                     color: rightPanelCollapsed ? 'var(--text-muted)' : 'var(--selection-text)',
                   }}
                   title={rightPanelCollapsed ? '显示本页章节 / 批注栏' : '收起本页章节 / 批注栏'}>
-                  <PanelRight size={11} /> {rightPanelCollapsed ? '章节' : '收起'}
+                  <PanelRight size={12} /> {rightPanelCollapsed ? '章节' : '收起'}
                 </button>
               )}
-              {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
-              {selectedEntryId && !isMobile && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
+              {/* 非沉浸移动端：字号控件仍在工具栏行 */}
+              {isMobile && !immersiveActive && zoomControlsNode}
+              {/* 全屏阅读（CSS 全屏覆盖层，ESC / 再点一次退出）。沉浸态移动端入口在沉浸顶栏。 */}
+              {selectedEntryId && (!isMobile || !immersiveActive) && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
-                  className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
-                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                  className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+                  style={{
+                    background: readerFullscreen ? 'var(--selection-bg)' : 'var(--bg-card)',
+                    border: `1px solid ${readerFullscreen ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
+                    color: readerFullscreen ? 'var(--selection-text)' : 'var(--text-muted)',
+                  }}
                   title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
                   {readerFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
                 </button>
@@ -3630,22 +3678,13 @@ export function DocBrowser({
                 if (!cfg.editable) return null;
                 return (
                   <div className="flex items-center gap-1.5">
-                    {versionApi && !isMobile && !editMode && (
-                      <button
-                        onClick={() => setVersionHistoryOpen(true)}
-                        className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
-                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                        title="历史版本 — 查看并恢复">
-                        <History size={13} />
-                      </button>
-                    )}
                     {editMode ? (
                       <>
                         {/* Markdown：富文本（所见即所得）/ 源码（支持 [[ 自动补全）双模式 */}
                         {getFileTypeConfig(sel.title, sel.contentType).label === 'Markdown' && (
                           <button
                             onClick={() => setMdEditRich((v) => !v)}
-                            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                            className={TOOLBAR_BTN}
                             style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.18)', color: 'rgba(216,180,254,0.95)' }}
                             title={mdEditRich ? '切换到源码模式（支持 [[ 引用自动补全）' : '切换到富文本（所见即所得）'}>
                             {mdEditRich ? '源码' : '富文本'}
@@ -3663,31 +3702,60 @@ export function DocBrowser({
                             }
                           }}
                           disabled={saving}
-                          className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          className={TOOLBAR_BTN}
                           style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
-                          {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={11} />}
+                          {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={12} />}
                           保存
                         </button>
                         <button
                           onClick={() => setEditMode(false)}
-                          className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          className={TOOLBAR_BTN}
                           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                          <X size={11} /> 取消
+                          <X size={12} /> 取消
                         </button>
                       </>
-                    ) : (
+                    ) : !isMobile ? (
                       <button
                         onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
-                        className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
+                        className={TOOLBAR_ICON_BTN}
                         style={{ background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }}
                         title="编辑文档">
                         <Pencil size={13} />
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 );
               })()}
+              {/* 「更多」置尾（沉浸态移动端渲染在沉浸顶栏，共享同一节点） */}
+              {(!isMobile || !immersiveActive) && readerMoreNode}
             </div>
+            )}
+            </>
+            )}
+            {/* 全屏沉浸态：半透明浮动退出钮（fixed 挂在 portal 树内，z 高于全屏覆盖层） */}
+            {readerFullscreen && !editMode && (
+              <button
+                type="button"
+                onClick={toggleReaderFullscreen}
+                aria-label="退出全屏"
+                title="退出全屏（ESC）"
+                className="fixed inline-flex items-center justify-center rounded-full cursor-pointer transition-opacity active:opacity-70"
+                style={{
+                  top: 'calc(env(safe-area-inset-top, 0px) + 10px)',
+                  right: 12,
+                  zIndex: 130,
+                  width: 38,
+                  height: 38,
+                  background: 'color-mix(in srgb, var(--bg-elevated) 68%, transparent)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <Minimize2 size={16} />
+              </button>
+            )}
             {/* 内容区 + 右侧本页章节导航（F1）。 */}
             <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0, background: 'var(--bg-card)' }}>
               {/* 内容列包裹：让进度条 absolute 限定在本列宽度内，不跨到右侧 TOC 列（Bugbot Low） */}
@@ -3757,6 +3825,7 @@ export function DocBrowser({
                     currentEntryId={selectedEntryData.id}
                     noteEntryId={selectedEntryData.metadata?.transcribe_entry_id}
                     subtitleEntryId={selectedEntryData.metadata?.subtitle_entry_id}
+                    lastFailure={transcribeFailure}
                     onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}
                     onOpenNote={(noteId) => handleSelectEntry(noteId)}
                     onRestyle={onRestyleTranscribe ? () => onRestyleTranscribe(selectedEntryData.id) : undefined}
@@ -3830,10 +3899,12 @@ export function DocBrowser({
                   <FilePreview
                     entry={selectedEntryData}
                     preview={preview}
+                    // 移动端内容区 px-4（16px）：HTML 报告纸面用负 margin 抵消它满铺卡片宽
+                    htmlBleedX={16}
+                    // 字号档位只在移动端生效：桌面无调节控件，若把移动端的档位带过去
+                    // 会放大后无处重置（Codex P2）——桌面恒传 1
+                    htmlZoom={isMobile ? htmlZoom : 1}
                     transcriptNoteMd={transcriptNoteMd}
-                    onRestyleTranscribe={onRestyleTranscribe && selectedEntryData
-                      ? () => onRestyleTranscribe(selectedEntryData.id)
-                      : undefined}
                     onSaveTranscriptNote={audioNoteId && onSaveContent ? async (nextNoteMd) => {
                       const saved = audioNoteId === selectedEntryData?.id
                         ? await commitLocalSave(audioNoteId, nextNoteMd)
@@ -3841,6 +3912,9 @@ export function DocBrowser({
                       if (saved) setTranscriptNoteMd(nextNoteMd);
                       return saved;
                     } : undefined}
+                    onAskRecording={selectedEntryData && onAskRecording
+                      ? () => onAskRecording(selectedEntryData.id)
+                      : undefined}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">

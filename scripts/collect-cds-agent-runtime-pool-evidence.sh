@@ -11,7 +11,8 @@
 #
 # 不删除、不重启、不部署。远程检查只在 CDS_HOST 存在时执行。
 # 设置 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 时，会用同一份 summary
-# 刷新 doc/status.cds-agent-current-progress.md。
+# 生成一页本地进度跳转页（默认落在证据目录里，不入库）。
+# 注意这里是整份覆盖写，所以默认目标只能是生成物；指向任何手写文档都会把它整篇冲掉。
 
 set -uo pipefail
 
@@ -20,7 +21,7 @@ OUT_DIR="${CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR:-/tmp/cds-agent-runtime-pool-evid
 RUN_GOAL_AUDIT="${CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT:-1}"
 GOAL_AUDIT_TIMEOUT="${CDS_AGENT_RUNTIME_POOL_GOAL_AUDIT_TIMEOUT:-25}"
 UPDATE_STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC:-0}"
-STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_STATUS_DOC:-$ROOT_DIR/doc/status.cds-agent-current-progress.md}"
+STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_STATUS_DOC:-$OUT_DIR/cds-agent-current-progress.md}"
 RUNTIME_CAPACITY_REPORT="${CDS_AGENT_RUNTIME_CAPACITY_REPORT:-/tmp/cds-agent-runtime-live-apply-current.json}"
 
 mkdir -p "$OUT_DIR"

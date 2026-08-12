@@ -419,18 +419,39 @@ services:
       - "8091:8091"
     labels:
       cds.subdomain: "llmgw"
+      cds.web-entry-name: "模型网关控制台"
+      cds.web-entry-path: "/console"
 `;
     const cfg = parseCdsCompose(yaml);
     expect(cfg).not.toBeNull();
     const bp = cfg!.buildProfiles.find((p) => p.id === 'llmgw');
     expect(bp).toBeDefined();
     expect(bp!.subdomain).toBe('llmgw');
+    expect(bp!.webEntry).toEqual({ name: '模型网关控制台', path: '/console' });
 
     // round-trip：导出回 compose 再解析，subdomain 不丢。
     const back = parseCdsCompose(
       toCdsCompose(cfg!.buildProfiles, cfg!.envVars, cfg!.infraServices, cfg!.routingRules),
     );
     expect(back!.buildProfiles.find((p) => p.id === 'llmgw')!.subdomain).toBe('llmgw');
+    expect(back!.buildProfiles.find((p) => p.id === 'llmgw')!.webEntry)
+      .toEqual({ name: '模型网关控制台', path: '/console' });
+  });
+
+  it('健康检查路径不能成为用户 Web 入口', () => {
+    const cfg = parseCdsCompose(`
+services:
+  api:
+    build: ./api
+    ports: ["8080"]
+    labels:
+      cds.subdomain: "api"
+      cds.web-entry-name: "错误入口"
+      cds.web-entry-path: "/healthz"
+      cds.readiness-path: "/healthz"
+`);
+    expect(cfg!.buildProfiles.find((p) => p.id === 'api')!.webEntry).toBeUndefined();
+    expect(cfg!.buildProfiles.find((p) => p.id === 'api')!.readinessProbe?.path).toBe('/healthz');
   });
 
   it('非法 subdomain（含点/大写）被忽略，不写入 BuildProfile', () => {

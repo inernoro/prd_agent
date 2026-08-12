@@ -2,9 +2,14 @@
 
 > **版本**：v1.0 | **日期**：2026-05-01 | **状态**：已落地
 
+**一句话**：同一个数据库实例下按分支切库名做隔离，连接串自动跟随，避免多分支验收互相污染数据。
+**谁该读**：开多分支验收的用户；写模板的工程师与 AI。
+**读完能做什么**：开启隔离并知道哪些连接串会被自动改写、边界在哪。
+
+---
+
 > **覆盖范围**:`BuildProfile.dbScope` 字段;同一 mysql/postgres 实例下用 database name 隔离多分支
 > **目标读者**:用户(开多分支验收时) + AI Agent(写 cdscli 模板表时)
-
 
 ## 0. 30 秒读懂
 
@@ -163,7 +168,16 @@ Phase 6 实战时,挑一个 Prisma + MySQL 项目,把 backend 的 dbScope 设成
 
 ## 8. 关联文档
 
-- `doc/spec.cds.compose-contract.md` — cds-compose 完整契约 SSOT
-- `doc/guide.cds.orm-support.md` — Phase 4 ORM migration 注入(per-branch 后,migration 命令在每个分支独立 DB 上跑一次)
-- `doc/plan.cds.status.md` — CDS 当前状态看板(mysql 接入完整里程碑见 §二)
-- `cds/src/services/db-scope-isolation.ts` — 实现 + 内联文档
+- [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md) — cds-compose 完整契约 SSOT
+- [doc/guide.cds.orm-support.md](./guide.cds.orm-support.md) — Phase 4 ORM migration 注入(per-branch 后,migration 命令在每个分支独立 DB 上跑一次)
+- [doc/plan.cds.status.md](./plan.cds.status.md) — CDS 当前状态看板(mysql 接入完整里程碑见 §二)
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 8. 关联文档 | `cds/src/services/db-scope-isolation.ts` | 实现 + 内联文档 |

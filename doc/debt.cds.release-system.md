@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-28 | **状态**：开发中
 
+**一句话**：发布系统曾因执行体不受管而永久锁死发布目标，本文记修复主线、真实环境证据与仍缺的证据。
+**谁该读**：接手发布系统的工程师；关心发布可靠性的人。
+**读完能做什么**：知道锁死问题是怎么根治的，以及还缺哪些证据。
+
+---
+
 ## 总览
 
 生产发布系统（`ReleaseTarget` / `ReleaseRun` + SSH 执行）在 2026-07-28 之前存在一个会让
@@ -16,7 +22,6 @@ PR #1273 落地了**阶段一（止血）**：心跳 + 中断收敛 + 执行超�
 本台账记录阶段一**有意延期**的边界项，以及**尚未取得真实环境证据**的行为，
 防止下一次 session 把「有单测」误当成「已验证」。
 
-模块范围：`cds/src/services/release-service.ts`、`cds/src/routes/releases.ts`、
 `cds/src/services/deploy-drain.ts`、`cds/src/server.ts`（收割器接线 + 排空闸）。
 
 ## 已知边界 / 待补（open）
@@ -32,9 +37,13 @@ PR #1273 落地了**阶段一（止血）**：心跳 + 中断收敛 + 执行超�
 | 10 | **远端产物自动回收默认开启，且会在生产机器上执行删除** | 阶段三新增。`release-remote-watcher` 每轮调 `reclaimRemoteReleaseArtifacts`，对超出保留窗口的 worktree 走 `git worktree remove --force`、对 static 成品目录走 `rm -rf`。这是本仓库**唯一**一处默认开启、定时无人值守、在生产机上删东西的路径 | 逃生阀 `CDS_RELEASE_ARTIFACT_RETENTION=0` 只巡检不回收。八条安全边界见 `release-artifact-retention.ts` 头部；其中五条（current/previous 落在淘汰位仍受保护、读不回来不删、台账为空不删、auto-restore 派生目录受保护、脏条目进不了删除计划）有对抗性回归 `tests/services/release-reclaim-adversarial.test.ts`，并逐条红检过 |
 | 11 | auto-restore 回溯到的原始版本不进保护集 | `current -> <failed>-auto-restore` 时，drift 判定会回溯到 `previousReleaseId` 指的原始版本，但回收的保护集只保派生目录本身。**这是取舍不是疏漏**：发布脚本里 `worktree="$worktree_root/$CDS_RELEASE_ID"`，自动恢复那次用的是 `-auto-restore` 这个 id，因此它是一棵独立 worktree，删掉原始版本不影响正在服务的那份 | 代价仅是「日后真要回滚到该版本时，脚本的 `if [ ! -d "$worktree" ]; then git worktree add` 会从 git 重新长一次」，多一次 checkout。若将来 auto-restore 改成复用原目录，这条必须立刻改成保护 |
 | 12 | 共用目录的产物归属只能从 run 台账反推，台账被裁剪后就永远推不出来 | 两个目标真共用同一 `host + publicDirectory` 时（`isSameRemoteDirectory` 判真），回收要靠「这个产物 id 属于谁」才敢删，而当前唯一的归属依据是 run 台账。run 台账有保留上限，老 run 被 `pruneReleaseRuns` 裁掉之后，远端那些老产物 id 在两个目标看来都「不认识」，于是双方永远 defer，`.releases` / worktree 目录无界增长 | 失效方向是**保守的**：只会漏删，不会误删别人的生产产物。真修需要一份独立于 run 的产物归属账（回收时写、不随 run 裁剪），或把远端产物按 targetId 分命名空间；两者都超出本轮范围，故记账不改 |
-| 9 | 无告警外发（与存活监控同一笔债） | 发布 started / succeeded / failed / rolled-back 已上 `cds-events-bus`，`isAlertCdsEvent` 也已把 failed / rolled-back 标成告警级；但 CDS 至今没有任何外发通道（站内通知 / Webhook / 邮件），见 `doc/debt.cds.uptime-monitor.md` 债务 2-1 | 关掉页面后发布失败**能被记录、能被订阅**，但不会主动叫醒人。接通道时只需 `subscribe` + `isAlertCdsEvent`，不许再判一遍事件名 |
+| 9 | ~~无告警外发（与存活监控同一笔债）~~ **已偿还（2026-07-29）** | 发布 started / succeeded / failed / rolled-back 已上 `cds-events-bus`，`isAlertCdsEvent` 也已把 failed / rolled-back 标成告警级；服务端通知账本订阅总线、记进本地账本文件、可选外发到 MAP 站内通知，服务启动流程已接线。残留边界（只有 MAP 一个外发适配器、无 Webhook / 邮件）见 [doc/debt.cds.md](./debt.cds.md) 债务 3 | 关掉页面后发布失败**能被记录、能被外发叫醒人**（前提是配置了 MAP 转发或专用通知 env，否则如实标记「未外发」） |
 | 6 | 收割器实例与执行实例不同 | `server.ts` 的周期收割用的是**独立 new 出来的** `ReleaseService`，与路由里执行发布的不是同一个实例，故其 `inFlight` 恒为空。当前靠心跳阈值判定，行为正确；但 `reconcileInterruptedReleases` 里那句 `this.inFlight.has(...)` 对收割器而言是死代码 | 无行为影响；语义容易误导后来人 |
 | 7 | `DrainableReleaseStatus` 并了两个过渡期成员 | 类型并上 `cancelled`（取消能力落地后可能进联合）与 `prechecking`（已删的死状态），让两侧独立演进不互相卡编译。并集不削弱穷尽性 | 仅可读性 |
+| 13 | 定时发布的「人工确认」没有服务端待办账本 | 2026-07-29 新增。`ScheduledJobTarget.release.requireApproval` 的语义是「到点只跑预检 + 发一条 `release.schedule.approval-required` 站内信，永不自动发布」，人看到通知后**手动**去发布中心点发布。没有「批准/驳回」这两个动作，也没有待办状态 | 语义是 fail-safe 的（永远不会因为没人批准而误发），但「谁批了、什么时候批的」没有审计记录。真做需要服务端待办账本 + 审批端点，列 v2 |
+| 14 | 定时发布只在单进程内去重 | `ScheduledJobService` 的去重是实例内 `running: Set` + `claimScheduledOccurrence` 先推进 `nextRunAt`。蓝绿 promote 期间若出现双 daemon 同时活跃，同一 occurrence 可能被抢两次 | 兜底是 `ReleaseService.isTargetBusy` 与 `assertTargetFree` 的 state 级判据（读的是共享台账，跨实例可见），第二次会记 `skipped` 而不是并发部署。可接受 |
+| 15 | 定时发布超时后不知道最终结果 | 任务超时（默认 3600s）只把 `ScheduledJobRun` 记成 failed 并写明 `releaseId`，**绝不**调 `cancelRelease`（调度器不是发布的主人）。发布本身可能随后成功 | 任务运行记录会留一条假失败，需要人点进 releaseId 看真实结果；连续 2 次假失败还会触发规则自动停用。缓解办法是把 timeoutSeconds 设得高于发布 P95 |
+| 16 | 定时发布的前端只做只读 + 启停 | 本轮 `TaskSchedulePage` 只让 release 规则「看得见、能启停、能看运行记录 + 自动停用原因」，动作弹窗对 release 是只读摘要；创建与编辑目前只能走 API。完整表单在发布中心「自动发布」页签落地（前端轨道） | 编辑路径已防数据丢失（`ActionForm.release` 原样回传 + 类型分段控件对 release 隐藏），不会因为在本页改个名字就把发布配置抹掉 |
 
 ## 真实环境证据（2026-07-28 已补齐）
 
@@ -99,9 +108,19 @@ abort 定时器（预检类用 60s 短超时）；无法取消 → `cancelReleas
 
 ## 相关
 
-- 计划：`doc/plan.cds.release-system.md`（四阶段方案与看板）
+- 计划：[doc/plan.cds.release-system.md](./plan.cds.release-system.md)（四阶段方案与看板）
 - 规则：`.claude/rules/concurrency-gate-discipline.md`（并发闸五件套）、
   `.claude/rules/server-authority.md`（长任务与请求生命周期解耦）、
   `.claude/rules/production-release-safety.md`（生产发布安全触发）
 - PR：#1273（含 Codex 七轮 20+ 条 P1/P2 的逐条修复）
 - changelog：`changelogs/2026-07-27_cds-trunk-protection-uptime-loadtest-bugreport.md`
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 总览 | `cds/src/services/release-service.ts`、`cds/src/routes/releases.ts` |

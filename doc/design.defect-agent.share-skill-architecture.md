@@ -2,6 +2,12 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：用带范围和有效期的分享链接把缺陷上下文交给外部，再用受控凭据收回评论、状态与修复报告。
+**谁该读**：做外部协作的产品与工程师。
+**读完能做什么**：说清外部方能看到什么、能写回什么。
+
+---
+
 ## 一、管理摘要
 
 - **解决什么问题**：外部开发者或 Agent 修复缺陷时，口头转述会丢失原始描述、截图、评论、状态和验收标准。
@@ -98,8 +104,8 @@ Agent 修复任务至少需要以下信息：
 | 能力 | 事实入口 |
 |------|----------|
 | 分享、外部操作和报告验收 | `prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs` |
-| 缺陷总体状态机 | `doc/design.defect-agent.md` |
-| 自动化自治 | `doc/design.defect-agent.automation-autonomy.md` |
+| 缺陷总体状态机 | [doc/design.defect-agent.md](./design.defect-agent.md) |
+| 自动化自治 | [doc/design.defect-agent.automation-autonomy.md](./design.defect-agent.automation-autonomy.md) |
 | 分享相关前端 | `prd-admin/src/pages/defect-agent/` |
 | Agent API key | `prd-api/src/PrdAgent.Api/Controllers/Api/AgentApiKeysController.cs` |
 
@@ -114,7 +120,7 @@ Agent 修复任务至少需要以下信息：
 
 ## 关联文档
 
-- `doc/design.defect-agent.md`
-- `doc/design.defect-agent.automation-autonomy.md`
-- `doc/spec.defect-agent.automation-protocol.md`
-- `doc/rule.platform.agent-permissions.md`
+- [doc/design.defect-agent.md](./design.defect-agent.md)
+- [doc/design.defect-agent.automation-autonomy.md](./design.defect-agent.automation-autonomy.md)
+- [doc/spec.defect-agent.automation-protocol.md](./spec.defect-agent.automation-protocol.md)
+- [doc/rule.platform.agent-permissions.md](./rule.platform.agent-permissions.md)

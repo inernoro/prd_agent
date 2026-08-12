@@ -97,7 +97,10 @@ public record LlmLogStart(
     string? LogicalModelId = null,
     string? LogicalModelPublicId = null,
     string? OfferingId = null,
-    string? OfferingTargetKind = null);
+    string? OfferingTargetKind = null,
+    string? Operation = null,
+    string? LogicalRequestId = null,
+    string? ProviderTaskId = null);
 
 public record LlmLogDone(
     int? StatusCode,
@@ -152,6 +155,16 @@ public sealed record LlmLogImagePayload(
 public interface ILlmRequestLogWriter
 {
     Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default);
+    /// <summary>
+    /// 在异步供应商返回任务 ID 后补齐提交日志的任务关联。
+    /// 已存在的业务逻辑请求 ID 必须保留，仅在缺失时使用 fallbackLogicalRequestId。
+    /// </summary>
+    Task BindProviderTaskAsync(
+        string logId,
+        string providerTaskId,
+        string? fallbackLogicalRequestId = null,
+        CancellationToken ct = default)
+        => Task.CompletedTask;
     void MarkFirstByte(string logId, DateTime at);
     void MarkDone(string logId, LlmLogDone done);
     void MarkError(string logId, string error, int? statusCode = null);

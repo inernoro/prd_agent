@@ -149,7 +149,7 @@ const INVOCATION_SCOPES = ['invoke', 'stream:invoke', 'raw:invoke'];
  * 其余大小写不敏感精确匹配。只看 enabled + 未过期会把一把 `readiness:read`
  * 的探针密钥当成「可以去跑请求了」，清单划掉、接入片段还把它的前缀亮出来（Codex P2）。
  *
- * 已知边界（见 doc/debt.platform.preview-entrypoints.md 的 ONB-key-usability）：
+ * 已知边界（见 doc/debt.platform.md「预览入口下发（Preview Entrypoints）· 债务台账」 的 ONB-key-usability）：
  * purpose / ingressProtocol / appCallerCode 三项同样参与服务端授权，这里没有镜像 ——
  * 把整张矩阵抄进 TS 就是判据分裂（形状 3），必然漂移。正解是服务端出一个
  * onboarding digest，而那需要 console-api 与 serving 共享判定，属独立改动。

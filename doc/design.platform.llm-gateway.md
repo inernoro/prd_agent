@@ -2,6 +2,10 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：所有大模型调用的唯一入口——屏蔽平台差异，统一调度、监控、容灾。
+**谁该读**：任何要调大模型的工程师；排查「选了 A 却跑了 B」的人。
+**读完能做什么**：按先算后发的模式发起调用，并知道模型是怎么被三级调度选出来的。
+
 ## 一、管理摘要
 
 - **解决什么问题**：系统有 6 个 Agent + 工作流引擎，每个都要调用大模型，但模型来自不同平台（OpenAI、Claude、火山引擎等），直接对接导致调用代码散乱、模型切换困难、无法统一监控和故障转移
@@ -10,8 +14,6 @@
 - **影响范围**：所有 Agent、工作流引擎、开放平台——系统中每一次 LLM 调用都经过 Gateway
 
 ## 二、产品定位
-
-**一句话**：所有大模型调用的唯一入口——屏蔽平台差异，统一调度、监控、容灾。
 
 **服务对象**：
 
@@ -193,15 +195,15 @@
 
 | 文档 | 关系 |
 |------|------|
-| `design.platform.model-pool.md` | 三级调度的详细设计（模型组、策略引擎、AppCaller 注册） |
-| `design.platform.model-pool.md` | 模型池解析、故障转移与自动探活设计 |
-| `design.emergence.system.md` | Gateway 作为基础层支撑所有 Agent 的涌现能力 |
+| [design.platform.model-pool.md](./design.platform.model-pool.md) | 三级调度的详细设计（模型组、策略引擎、AppCaller 注册） |
+| [design.platform.model-pool.md](./design.platform.model-pool.md) | 模型池解析、故障转移与自动探活设计 |
+| [design.emergence.system.md](./design.emergence.system.md) | Gateway 作为基础层支撑所有 Agent 的涌现能力 |
 | `.claude/rules/llm-gateway.md` | Gateway 使用规则（AppCallerCode 命名规范、调度优先级） |
-| `design.platform.llm-gateway.refactor.md` | Compute-then-Send 重构详细设计 |
+| [design.platform.llm-gateway.refactor.md](./design.platform.llm-gateway.refactor.md) | Compute-then-Send 重构详细设计 |
 
 ## 九、Compute-then-Send 原则（外部调用两阶段）
 
-> 详见 `.claude/rules/compute-then-send.md` 和 `doc/design.platform.llm-gateway.refactor.md`
+> 详见 `.claude/rules/compute-then-send.md` 和 [doc/design.platform.llm-gateway.refactor.md](./design.platform.llm-gateway.refactor.md)
 
 外部调用（LLM / 图片生成 / 视频生成）必须把**计算阶段**和**发送阶段**严格拆分：
 
@@ -214,20 +216,11 @@
 
 ### 标准调用模式
 
-```csharp
-// 是 正确：先算后发
-var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelType, expectedModel, ct);
-if (!resolution.Success) { /* 返回错误 */ }
+**先算后发，算一次**：先解析出这次要用的平台与模型，解析失败就直接返回错误；
+解析成功后把**同一份解析结果**交给发送阶段。
 
-var response = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
-{
-    AppCallerCode = appCallerCode,
-    ModelType     = ModelType,
-    EndpointPath  = "/chat/completions",
-    RequestBody   = body,
-    HttpMethod    = "POST",
-}, resolution, ct);
-```
+发送阶段**不许再解析第二次**——那正是「用户选了 A、实际发给 B」这类问题的根源
+（详见「先算后发」纪律）。调用方要展示模型名时，用的也是这份解析结果，保证展示与实际一致。
 
 ### 已落地的实现（2026-04-23）
 

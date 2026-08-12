@@ -328,6 +328,7 @@ export const api = {
     agents: () => '/api/executive/agents',
     models: () => '/api/executive/models',
     leaderboard: () => '/api/executive/leaderboard',
+    teamInsights: () => '/api/executive/team-insights',
   },
 
   // ============ Profile 自服务 ============
@@ -363,6 +364,8 @@ export const api = {
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
       homeLauncher: () => '/api/dashboard/user-preferences/home-launcher',
       docStorePins: () => '/api/dashboard/user-preferences/doc-store-pins',
+      transcriptLexicon: () => '/api/dashboard/user-preferences/transcript-lexicon',
+      transcriptLexiconSystem: () => '/api/dashboard/user-preferences/transcript-lexicon/system',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -884,6 +887,14 @@ export const api = {
     probe: (id: string) => `/api/infra-connections/${id}/probe`,
   },
 
+  // ============ 通用对话智能体（打开就能聊的多轮对话入口）============
+  chatAgent: {
+    sessions: () => '/api/chat-agent/sessions',
+    session: (id: string) => `/api/chat-agent/sessions/${id}`,
+    messages: (id: string) => `/api/chat-agent/sessions/${id}/messages`,
+    stream: (id: string) => `/api/chat-agent/sessions/${id}/stream`,
+  },
+
   // ============ Infra Agent Sessions CDS Agent 工作台 ============
   infraAgentSessions: {
     eventSchema: () => '/api/infra-agent-sessions/event-schema',
@@ -1237,6 +1248,13 @@ export const api = {
     renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
     shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
+    // 分享 token 域的正文代理：托管域名不返回 ACAO，浏览器直接 fetch 必被 CORS 拦，
+    // 预览页要拿原文注入 srcDoc 只能走服务端同源代理
+    shareContent: (token: string) => `/api/web-pages/shares/view/${token}/content`,
+    // 「向我提问」
+    askConfig: (siteId: string) => `/api/web-pages/${siteId}/ask/config`,
+    askStream: (siteId: string) => `/api/web-pages/${siteId}/ask/stream`,
+    askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
   },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {
@@ -1314,6 +1332,7 @@ export const api = {
       // 分享链接
       shareLinks: (storeId: string) => `/api/document-store/stores/${storeId}/share-links`,
       shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
+      shareLinkShortSeq: (linkId: string) => `/api/document-store/share-links/${linkId}/short-link`,
       // 知识库 Agent：再加工模板列表
       reprocessTemplates: () => `/api/document-store/reprocess-templates`,
       // 知识库 Agent：可调用智能体（内置 + 用户自建）
@@ -1340,6 +1359,7 @@ export const api = {
       recordingUploadStatus: (sessionId: string) => `/api/document-store/recording-uploads/${sessionId}`,
       recordingUploadChunk: (sessionId: string, index: number) => `/api/document-store/recording-uploads/${sessionId}/chunks/${index}`,
       recordingUploadComplete: (sessionId: string) => `/api/document-store/recording-uploads/${sessionId}/complete`,
+      recordingArchiveRetry: (entryId: string) => `/api/document-store/entries/${entryId}/recording-archive/retry`,
       replace: (entryId: string) => `/api/document-store/entries/${entryId}/replace`,
       subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,

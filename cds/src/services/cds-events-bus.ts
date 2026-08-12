@@ -64,6 +64,23 @@ export type CdsEventType =
   // 照着它做回滚会滚到一个根本不在线上的版本。只告警不自愈(计划第六节)。
   | 'release.drift-detected'
   | 'release.drift-cleared'
+  // 2026-07-29:定时发布(scheduled-job 的 release 动作)的两条治理事件。
+  // 它们不是发布生命周期(那四条由 release-events 按 ReleaseRunStatus 映射),
+  // 而是「调度器决定不发」的时刻 —— 恰恰是最容易无声无息过去的两种:
+  //   approval-required:规则要求人工确认,到点只跑了预检,等人拍板;
+  //   schedule.disabled:连续失败达阈值,规则被自动停用,不再自己重试。
+  // 两条都 alert=true:没人被叫醒的话,前者等于「永远没人确认」,后者等于
+  // 「定时发布从此静默消失」,而这两件事都不会在任何页面上自己冒出来。
+  | 'release.schedule.approval-required'
+  | 'release.schedule.disabled'
+  // 2026-07-29:存活监控判定「连续失败 → down / 恢复」。此前 uptime-monitor 只把
+  // 故障写进自己那份 incidents 台账,谁都不会被叫醒 —— 状态页没人盯着的时候,
+  // 生产掉线和没掉线在 CDS 这边是同一种沉默。上总线后它才和发布失败同一条通道。
+  | 'uptime.target.down'
+  | 'uptime.target.recovered'
+  // 2026-07-29:服务端通知账本记下一条新站内信。**必须 alert=false**,
+  // 否则账本订阅到自己发的事件会无限递归记账。
+  | 'notice.created'
   | 'heartbeat';
 
 export interface CdsEventEnvelope<T = unknown> {
@@ -78,7 +95,7 @@ export interface CdsEventEnvelope<T = unknown> {
  * 告警级事件白名单 —— 「哪些事件够格在没人盯屏时叫醒人」的唯一判定源。
  *
  * 为什么先立这张表、而不是等真接通道时再说:CDS 至今**没有**任何告警外发
- * (站内通知 / Webhook / 邮件),`doc/debt.cds.uptime-monitor.md` 债务 2-1 把
+ * (站内通知 / Webhook / 邮件),`doc/debt.cds.md「CDS 存活监控（uptime-monitor）」` 债务 2-1 把
  * 「无告警外发」登记为 open。发布失败同样无外发。这两件事必须共用一条通道,
  * 否则会长出「存活监控一套、发布一套」两条各判各的分发逻辑 —— 那正是本仓库
  * 反复栽跟头的形状。所以先把判定收敛到这里,将来的分发器只需
@@ -124,11 +141,112 @@ const CDS_EVENT_ALERT_CLASS: Record<CdsEventType, boolean> = {
   'release.drift-detected': true,
   // 漂移解除是「已自愈」,不叫醒人;但发生过必须留痕,否则复盘时看不到它响过又停了。
   'release.drift-cleared': false,
+  // 待人工确认不叫醒人 = 永远没人确认;自动停用不叫醒人 = 定时发布静默消失。
+  'release.schedule.approval-required': true,
+  'release.schedule.disabled': true,
+  // 连续失败达阈值才判 down(去抖已在 uptime-metrics 做过),到这一步就是真掉线。
+  'uptime.target.down': true,
+  // 恢复是好消息,不叫醒人。
+  'uptime.target.recovered': false,
+  // 账本自己发的事件绝不能是告警级 —— 否则订阅方记一条又发一条,无限递归。
+  'notice.created': false,
   heartbeat: false,
 };
 
 export function isAlertCdsEvent(type: CdsEventType): boolean {
   return CDS_EVENT_ALERT_CLASS[type] === true;
+}
+
+/**
+ * 事件 → 站内信文案。
+ *
+ * 为什么放在**这个**文件而不是通知账本里:tests/services/release-event-source-guard.ts
+ * 只豁免 release-events.ts 与本文件出现发布事件字面量,别处一旦按事件名分支就判红。
+ * 这条约束是刻意的 —— 「哪些事件叫醒人」「叫醒时说什么」「点开去哪」必须是同一张表,
+ * 拆成两处就会漂移(存活监控一套、发布一套正是本仓库反复栽的形状)。
+ *
+ * 通知账本因此只做一件事:拿这里给的 copy + envelope.data 的结构化字段渲染,
+ * 自己不认识任何事件名。
+ *
+ * link 是深链**类别**不是具体 URL:具体 id 只有 envelope.data 里才有,
+ * 拼接由账本做;但「这类事件该落到哪一屏」的判定留在这里。
+ */
+export interface CdsEventNoticeCopy {
+  /** 站内信标题(中文,不带项目名 —— 项目名由账本从 data 里取并单独展示) */
+  title: string;
+  /** 来源标签,前端据此选图标:release / uptime / drift / system */
+  source: string;
+  level: 'info' | 'warning' | 'danger';
+  /** 深链类别。release=发布中心;status=状态页;maintenance=系统维护;none=不给链接 */
+  link: 'release' | 'status' | 'maintenance' | 'none';
+  actionLabel?: string;
+}
+
+/**
+ * 穷尽 Record:新增 CdsEventType 时这里少一个键 TS 直接报错,逼作者显式回答
+ * 「这条要不要进站内信」。null = 不进账本。
+ */
+const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
+  'self.status': null,
+  'self.refresh.started': null,
+  'self.refresh.done': null,
+  'self.refresh.failed': null,
+  'self.update.started': null,
+  'self.update.step': null,
+  'self.update.done': null,
+  'self.update.failed': { title: 'CDS 自更新失败', source: 'self-update', level: 'danger', link: 'maintenance', actionLabel: '查看维护面板' },
+  'operator.request.created': null,
+  'operator.request.approved': null,
+  'operator.request.rejected': null,
+  'operator.request.log': null,
+  'operator.request.completed': null,
+  'operator.request.failed': null,
+  'pending-import.created': null,
+  'pending-import.decided': null,
+  'pending-import.count': null,
+  'access-request.created': null,
+  'access-request.decided': null,
+  'access-request.count': null,
+  'project.config.changed': null,
+  'infra.flap.circuit-breaker': { title: '基础设施反复重启已熔断', source: 'system', level: 'danger', link: 'status', actionLabel: '查看状态页' },
+  'preview.canary.alert': { title: '预览入口探测失败', source: 'uptime', level: 'warning', link: 'status', actionLabel: '查看状态页' },
+  'preview.canary.recovered': null,
+  'agent-session.activity': null,
+  'release.started': null,
+  // 成功默认不入账(见 shouldLedgerEvent):只有自动触发的那种成功才值得打扰人。
+  'release.succeeded': { title: '生产发布完成', source: 'release', level: 'info', link: 'release', actionLabel: '查看发布记录' },
+  'release.failed': { title: '生产发布失败', source: 'release', level: 'danger', link: 'release', actionLabel: '查看发布记录' },
+  'release.rolled-back': { title: '生产已回滚', source: 'release', level: 'warning', link: 'release', actionLabel: '查看发布记录' },
+  'release.drift-detected': { title: '生产现场与 CDS 台账不一致', source: 'drift', level: 'danger', link: 'release', actionLabel: '查看发布目标' },
+  'release.drift-cleared': null,
+  'release.schedule.approval-required': { title: '定时发布待人工确认', source: 'release', level: 'warning', link: 'release', actionLabel: '前往发布中心' },
+  'release.schedule.disabled': { title: '定时发布已自动停用', source: 'release', level: 'danger', link: 'release', actionLabel: '查看发布中心' },
+  'uptime.target.down': { title: '生产服务健康掉线', source: 'uptime', level: 'danger', link: 'status', actionLabel: '查看状态页' },
+  'uptime.target.recovered': null,
+  'notice.created': null,
+  heartbeat: null,
+};
+
+export function cdsEventNoticeCopy(type: CdsEventType): CdsEventNoticeCopy | null {
+  return CDS_EVENT_NOTICE_COPY[type] ?? null;
+}
+
+/**
+ * 这条事件要不要记进站内信账本 —— **唯一**判定源,别处不许再按事件名判一遍。
+ *
+ * 两段口径:
+ *  1. 有文案 + 告警级 → 一律入账(告警的定义就是「没人盯屏时也要叫醒人」);
+ *  2. 有文案但非告警级(即成功类)→ 只有**自动触发**的才入账。判据是 payload 里
+ *     带 rollbackOf(这次成功属于一次回滚 run)或 autoRestoredAt(自动恢复)。
+ *     人点按钮发出来的成功他自己看得见,再发一条站内信纯属噪声;而系统半夜自己
+ *     回滚过一次,不通知就等于没发生。
+ */
+export function shouldLedgerEvent(type: CdsEventType, data: unknown): boolean {
+  if (!CDS_EVENT_NOTICE_COPY[type]) return false;
+  if (isAlertCdsEvent(type)) return true;
+  const payload = (data ?? {}) as { rollbackOf?: unknown; autoRestoredAt?: unknown };
+  const auto = payload.rollbackOf ?? payload.autoRestoredAt;
+  return typeof auto === 'string' && auto.trim().length > 0;
 }
 
 class CdsEventsBus {

@@ -1,5 +1,6 @@
 // 验收 · 归档后「自查能否打开」(项目无关，存储无关)
 // 用途：归档拿到可达链接后，headless 打开真页面断言报告确实渲染（标题 + 正文 + 截图），
+//       并全量核对交互报告的内部链接目标，真实点击当前桌面路径可见链接验证章节滚动。
 //       而不是"建了条目但点开空白"。空/打不开 → 退出码 2，调用方据此重新推送验收。
 // 链接来源（任选其一，脚本本身不关心存储）：
 //   - CDS 匿名分享链 /r/<token>（E6，无需登录，headless 可直接断言——首选）。
@@ -80,6 +81,77 @@ async function waitForRenderedContent(text, minImages) {
   return snapshot;
 }
 
+async function auditInteractiveReports() {
+  const reports = [];
+  for (const frame of page.frames()) {
+    try {
+      if (await frame.locator('#reportBody').count() === 0) continue;
+      const staticAudit = await frame.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a[href^="#"]'))
+          .map((link) => ({
+            href: link.getAttribute('href') || '',
+            text: (link.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+          }))
+          .filter((link) => link.href.length > 1);
+        const broken = links.filter((link) => {
+          let id = link.href.slice(1);
+          try { id = decodeURIComponent(id); } catch { return true; }
+          return document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length !== 1;
+        });
+        return { linkCount: links.length, broken };
+      });
+
+      const clickErrors = [];
+      const links = frame.locator('a[href^="#"]');
+      const count = await links.count();
+      let clicked = 0;
+      for (let index = 0; index < count; index += 1) {
+        const link = links.nth(index);
+        const href = await link.getAttribute('href');
+        if (!href || href.length <= 1 || !(await link.isVisible())) continue;
+        let targetId = href.slice(1);
+        try { targetId = decodeURIComponent(targetId); } catch {
+          clickErrors.push(`${href}: 锚点编码无效`);
+          continue;
+        }
+        const targetCount = await frame.evaluate(
+          (id) => document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length,
+          targetId,
+        );
+        if (targetCount !== 1) continue;
+        const label = ((await link.innerText().catch(() => '')) || href).trim().replace(/\s+/g, ' ').slice(0, 80);
+        try {
+          await link.click({ timeout: 5000 });
+          clicked += 1;
+          await sleep(50);
+          const targetVisible = await frame.evaluate((id) => {
+            const target = document.getElementById(id);
+            if (!target) return false;
+            const rect = target.getBoundingClientRect();
+            return rect.bottom > 0 && rect.top < window.innerHeight;
+          }, targetId);
+          if (!targetVisible) clickErrors.push(`${label}: 点击后目标 #${targetId} 未进入可视区`);
+        } catch (error) {
+          clickErrors.push(`${label}: ${error && error.message ? error.message.split('\n')[0] : String(error)}`);
+        }
+      }
+      reports.push({ ...staticAudit, clicked, clickErrors });
+    } catch (error) {
+      reports.push({ linkCount: 0, clicked: 0, broken: [], clickErrors: [String(error)] });
+    }
+  }
+  const broken = reports.flatMap((report) => report.broken || []);
+  const clickErrors = reports.flatMap((report) => report.clickErrors || []);
+  return {
+    reportCount: reports.length,
+    linkCount: reports.reduce((sum, report) => sum + (report.linkCount || 0), 0),
+    clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
+    broken,
+    clickErrors,
+    ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0,
+  };
+}
+
 async function runAttempt(attempt) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await sleep(1500);
@@ -96,12 +168,13 @@ async function runAttempt(attempt) {
   const hasText = mustText ? txt.includes(mustText) : txt.length > 200;
   const hasRequiredTexts = requiredTexts.every((required) => txt.includes(required));
   const okImg = imgCount >= minImg;
+  const interaction = await auditInteractiveReports();
   // 死页判定只在「内容没渲染出来」时才有意义：报告正文完全可能合法地包含
   // "不存在 / 已失效" 等词（如缺陷描述、整改记录），全文扫词会把正常报告误杀。
   // 故仅当 必现文字未命中 或 图片数不达标 时，才用关键词区分"死页"与"内容缺失"。
   const deadKeywordHit = ['暂无可预览', '未对外开放', '页面不存在', '链接已失效', '无权访问', '404'].some((k) => txt.includes(k));
   const dead = (!hasText || !hasRequiredTexts || !okImg) && deadKeywordHit;
-  return { attempt, hasText, hasRequiredTexts, imgCount, minImg, dead, ok: !dead && hasText && hasRequiredTexts && okImg };
+  return { attempt, hasText, hasRequiredTexts, imgCount, minImg, dead, interaction, ok: !dead && hasText && hasRequiredTexts && okImg && interaction.ok };
 }
 
 let code = 2;
@@ -112,6 +185,11 @@ try {
       const result = await runAttempt(attempt);
       attempts.push(result);
       console.log(`  第${attempt}次：标题命中=${result.hasText}  当前运行标识命中=${result.hasRequiredTexts}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
+      console.log(`  第${attempt}次交互：报告=${result.interaction.reportCount}  内部链接=${result.interaction.linkCount}  已点击=${result.interaction.clicked}  断链=${result.interaction.broken.length}  点击失败=${result.interaction.clickErrors.length}`);
+      if (result.interaction.broken.length) {
+        console.log(`  断链明细：${result.interaction.broken.map((item) => `${item.text || item.href} -> ${item.href}`).join(' | ')}`);
+      }
+      if (result.interaction.clickErrors.length) console.log(`  点击失败明细：${result.interaction.clickErrors.join(' | ')}`);
       if (result.ok) {
         code = 0;
         if (attempt > 1) {
@@ -134,9 +212,9 @@ try {
     }
   }
   if (code === 0) {
-    console.log('  结论：报告可正常打开、正文 + 截图齐全（exit 0）');
+    console.log('  结论：报告可正常打开，正文、截图和内部链接交互齐全（exit 0）');
   } else {
-    console.log('  结论：打不开/空白/截图缺失；已完成允许的重试，验收不算落地（exit 2）');
+    console.log('  结论：打不开、空白、截图缺失或内部链接不可用；已完成允许的重试，验收不算落地（exit 2）');
   }
 } finally {
   await browser.close();

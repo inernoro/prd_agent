@@ -2,6 +2,12 @@
 
 > **版本**：v3.1 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：把周报从空模板等人填，升级为打开时已有可审阅草稿，人只补机器不知道的判断与感受。
+**谁该读**：周报功能的产品与工程师。
+**读完能做什么**：知道这一版要补哪些采集与归纳能力。
+
+---
+
 ## 目标
 
 把周报从“空模板等待填写”升级为“打开时已有可审阅草稿”。系统优先聚合可授权的数据，AI 负责归纳和表达，人只补充机器无法知道的计划、判断和感受。
@@ -47,7 +53,7 @@
 
 - 记录草稿来源、实际模型、fallback 原因和用户编辑差异。
 - 质量评估按脱敏样本和明确指标执行，不用批量付费调用试模型。
-- 模型池治理继续由 `plan.report-agent.model-governance.md` 负责。
+- 模型池治理继续由 [plan.report-agent.model-governance.md](./plan.report-agent.model-governance.md) 负责。
 
 ## 数据边界
 
@@ -77,7 +83,7 @@
 
 ## 关联文档
 
-- `doc/spec.report-agent.v2.md`
-- `doc/design.report-agent.md`
-- `doc/plan.report-agent.model-governance.md`
-- `doc/guide.report-agent.weekly.md`
+- [doc/spec.report-agent.v2.md](./spec.report-agent.v2.md)
+- [doc/design.report-agent.md](./design.report-agent.md)
+- [doc/plan.report-agent.model-governance.md](./plan.report-agent.model-governance.md)
+- [doc/guide.report-agent.weekly.md](./guide.report-agent.weekly.md)

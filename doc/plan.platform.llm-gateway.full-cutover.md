@@ -2,9 +2,15 @@
 
 > **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
 
+**一句话**：新的模型网关已经承担全部线上流量，这份计划管的是何时以及凭什么把主系统里的老路径彻底删掉。
+**谁该读**：负责网关退场的工程师；想知道「这件事还剩多少、卡在哪」的任何人。
+**读完能做什么**：判断当前是否满足删除老路径的全部门禁条件，不满足时知道差哪一条。
+
+---
+
 ## 目标
 
-在生产 `Mode=http`、配置权威和六类协议验收已经稳定的基础上，物理删除 MAP 进程内网关及传统解析兜底，使所有模型调用只经过独立 LLM Gateway。本文只保留尚未完成的退场动作和发布门禁；已落地架构以 `design.platform.llm-gateway.physical-isolation.md` 为准，风险与证据缺口以 `debt.platform.llm-gateway.md` 为准。
+在生产 `Mode=http`、配置权威和六类协议验收已经稳定的基础上，物理删除 MAP 进程内网关及传统解析兜底，使所有模型调用只经过独立 LLM Gateway。本文只保留尚未完成的退场动作和发布门禁；已落地架构以 [design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md) 为准，风险与证据缺口以 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 为准。
 
 ## 当前事实
 
@@ -12,8 +18,27 @@
 - MAP 业务日志仍归 MAP；Gateway 账号、审计、请求日志和 shadow 证据归 `llm_gateway` 数据域。
 - 旧 `LlmGateway.cs`、`ShadowLlmGateway.cs` 和 legacy resolver 仍在仓库中，只承担显式回滚保险，不承载正常生产流量。
 - GitHub 手动 workflow 只有进入 default branch 后才会出现在 `workflow_dispatch` 入口；生产演练不能引用尚未进入默认分支的工作流。
+- 网关契约（接口与请求响应类型）已归位到 Core，MAP 与 Gateway 两侧引用同一份；实现仍留在主系统的基础设施层，等待整体搬出。
 
-## 唯一未完成阶段
+## 未完成阶段
+
+### S5.5：把实现搬出主系统（不改运行时行为，不受 S6 门禁约束）
+
+S6 是「删」，这一节是「搬」——两者的区别在于：搬不改变任何运行时行为，因此不需要线上证据，可以在门禁满足之前先做完。做完之后 S6 才只剩下拆装配这一件事。
+
+| 步骤 | 状态 | 说明 |
+| --- | --- | --- |
+| 契约归位到 Core | 已完成（2026-08-05） | 13 个纯接口与数据类型迁到 Core，两侧引用同一份 |
+| 合并两份网关接口 | 已完成（2026-08-06） | 宽接口改为继承 Core 窄接口，装配处的强制类型转换变成隐式向上转型；签名漂移由编译期拦截，不再等到运行时 |
+| 命名空间改名 | 已完成（2026-08-06） | 契约命名空间与所在项目对齐；136 个引用文件按编译器报错补 using |
+| 实现整体迁进 Gateway 侧项目 | **依赖 S6，当前做不了** | 见下方说明 |
+
+「实现整体迁进 Gateway 侧项目」此前被判为可独立推进，这是**错的**：主系统的服务装配里
+直接构造进程内网关与影子网关两个实现类，只要这两条装配还在，主系统就必须能编译到实现，
+实现就搬不出去。也就是说这一步的真实前置是 S6 删除装配，而 S6 卡在需要生产证据的门禁上。
+纠正记录留在此处，避免下一个人重复得出「可以先搬」的错误结论。
+
+搬迁期间的固定约束：每一步都必须保持编译、全量单测与静态守卫通过；守卫按物理路径读源码，文件移动后要同步守卫里被钉死的路径，不允许为了让守卫变绿而放宽断言。
 
 ### S6：删除进程内旧路径
 
@@ -77,8 +102,8 @@
 
 ## 关联文档
 
-- `doc/design.platform.llm-gateway.physical-isolation.md`
-- `doc/design.platform.llm-gateway.migration-retrospective.md`
-- `doc/debt.platform.llm-gateway.md`
-- `doc/debt.platform.llm-gateway.isolation.md`
+- [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)
+- [doc/design.platform.llm-gateway.migration-retrospective.md](./design.platform.llm-gateway.migration-retrospective.md)
+- [doc/debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)
+- [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)
 - `llmgw/docs/README.md`

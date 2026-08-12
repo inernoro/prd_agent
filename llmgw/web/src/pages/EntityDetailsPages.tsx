@@ -190,7 +190,7 @@ export function ModelDetailsPage() {
       getLogicalModels(),
       getModels(),
       getPlatforms(),
-      requestedModel ? getLogs({ ...range, model: requestedModel, page: 1, pageSize: 8 }) : Promise.resolve(null),
+      requestedModel ? getLogs({ ...range, model: requestedModel, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([logicalResult, modelResult, platformResult, logResult]) => {
       if (!alive) return;
       if (!logicalResult.success || !modelResult.success || !platformResult.success) {
@@ -338,7 +338,7 @@ export function ProviderDetailsPage() {
     Promise.all([
       getPlatforms(),
       getModels(requestedId ? { platformId: requestedId } : undefined),
-      requestedName ? getLogs({ ...range, provider: requestedName, page: 1, pageSize: 8 }) : Promise.resolve(null),
+      requestedName ? getLogs({ ...range, provider: requestedName, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([platformResult, modelResult, logResult]) => {
       if (!alive) return;
       if (!platformResult.success || !modelResult.success) {
@@ -471,6 +471,8 @@ function observedProvider(item: LlmLogListItem, requestedName: string): Platform
     maxConcurrency: 0,
     remark: '该 Provider 仅在运行日志中被观察到，不是当前租户的可编辑 Provider 配置。页面展示可验证的运行事实，不补造连接、密钥或并发配置。',
     hasKey: false,
+    // 这条 Provider 是从运行日志里观察到的，不是可编辑配置，本来就没有密钥可谈
+    keyStatus: 'missing',
     sourceCollection: 'llmrequestlogs',
     authority: 'runtime_observed',
     createdAt: null,
@@ -536,7 +538,7 @@ export function AppCallerDetailsPage() {
     Promise.all([
       getGatewayAppCallers({ page: 1, pageSize: 50, search: requestedCode || requestedId }),
       getPools(),
-      requestedCode ? getLogs({ ...range, appCallerCode: requestedCode, page: 1, pageSize: 8 }) : Promise.resolve(null),
+      requestedCode ? getLogs({ ...range, appCallerCode: requestedCode, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([appResult, poolResult, logResult]) => {
       if (!alive) return;
       if (!appResult.success || !poolResult.success) {

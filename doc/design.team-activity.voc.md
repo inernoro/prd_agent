@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
+**一句话**：团队动态与用户体验之声的设计，当前仍在建设中。
+**谁该读**：接手这块的产品与工程师。
+**读完能做什么**：知道当前设计到哪一步、还没定什么。
+
+---
+
 - 状态：建设中
 - owner：团队动态
 - 关联代码：`prd-api/.../Controllers/Api/TeamActivityController.cs`、`prd-admin/src/pages/team-activity/`

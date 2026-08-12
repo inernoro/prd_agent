@@ -14,8 +14,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
+import { parseWebEntryLabels } from './web-entry.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -215,6 +216,10 @@ export interface CdsComposeConfig {
     prebuiltImage?: boolean;
     /** 基础级镜像回退链(对齐 BuildProfile.fallbackImage);裸预构建站点用,无 express mode 也生效 */
     fallbackImage?: string | string[];
+    /** 独立命名子域路由；不等同于用户可见 Web 入口。 */
+    subdomain?: string;
+    /** 用户可见 Web 入口；与 readinessProbe 严格分离。 */
+    webEntry?: WebEntryConfig;
   }>;
   envVars: Record<string, string>;
   /**
@@ -502,6 +507,13 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         // Phase 7 fix(B17):cds.prebuilt-image label → BuildProfile.prebuiltImage
         const prebuilt = labels['cds.prebuilt-image'];
         const prebuiltImage = prebuilt === 'true' || prebuilt === '1';
+        // 用户可见入口必须由 cds.web-entry-* 明确声明。readinessPath 只用于
+        // 机器探活，绝不能再被复用成用户点击后的落点。
+        const webEntry = parseWebEntryLabels(labels);
+        const hasWebEntryLabels = Object.keys(labels).some((key) => key.startsWith('cds.web-entry-'));
+        if (hasWebEntryLabels && !webEntry) {
+          console.warn(`[compose-parser] service "${serviceId}" 的 cds.web-entry-* 声明不完整或指向探活路径，已忽略用户入口`);
+        }
         // cds.subdomain label → BuildProfile.subdomain:该服务获得 `<previewSlug>-<subdomain>.<root>`
         // 命名 URL(独立入口,不埋在主应用路径下)。须单 DNS label,非法值忽略(不阻断解析)。
         const subdomainRaw = labels['cds.subdomain'];
@@ -549,6 +561,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           // 使无 express deployMode 的站点(如 llmgw-web)也能逐级回退 sha → branch-<slug> → branch-main。
           ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),
           ...(subdomain ? { subdomain } : {}),
+          ...(webEntry ? { webEntry } : {}),
         });
       } else {
         // Infra service — no source mount, possibly built-from-source custom
@@ -729,6 +742,12 @@ export function toCdsCompose(
     // subdomain → cds.subdomain label(round-trip):命名子域 URL 元数据,导出/重导入不丢。
     if (p.subdomain) {
       entryLabels['cds.subdomain'] = p.subdomain;
+    }
+    // 用户入口元数据单独 round-trip，禁止从 readinessProbe 反推。
+    if (p.webEntry) {
+      entryLabels['cds.web-entry-name'] = p.webEntry.name;
+      entryLabels['cds.web-entry-path'] = p.webEntry.path;
+      if (p.webEntry.primary) entryLabels['cds.web-entry-primary'] = 'true';
     }
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {

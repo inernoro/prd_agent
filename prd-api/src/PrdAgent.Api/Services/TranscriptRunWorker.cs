@@ -7,6 +7,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 

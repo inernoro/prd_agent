@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-04-28 | **状态**：已落地
 
+**一句话**：前端从旧栈迁到新栈的运行手册：交接入口、每迁一页必须同步什么、验收清单与防遗忘机制。
+**谁该读**：接手前端迁移的工程师。
+**读完能做什么**：迁一页并按清单同步与验收，不留半截状态。
+
+---
+
 > 更新：2026-04-28
 > 适用范围：`cds/web/` React 迁移、`cds/web-legacy/` 退场、CDS 本地验收。
 
@@ -10,11 +16,10 @@
 
 每次接手 CDS Web 迁移时，先读以下文件，不依赖聊天记录：
 
-1. `doc/plan.cds.web-migration.md`：路线图、当前完成状态、下一页迁移计划。
-2. `doc/guide.cds.web-migration-runbook.md`：本文件，包含命令、验收清单和防遗忘机制。
-3. `cds/CLAUDE.md`：CDS 模块硬约束，尤其是禁止 emoji、主题 token、API label。
-4. `cds/src/server.ts`：`MIGRATED_REACT_ROUTES` 和 `installSpaFallback()`。
-5. `cds/web/src/App.tsx`：React client 路由表。
+1. [doc/plan.cds.web-migration.md](./plan.cds.web-migration.md)：路线图、当前完成状态、下一页迁移计划。
+2. [doc/guide.cds.web-migration-runbook.md](./guide.cds.web-migration-runbook.md)：本文件，包含命令、验收清单和防遗忘机制。
+3. CDS 模块硬约束（`cds/CLAUDE.md`），尤其是禁止 emoji、主题 token、API label。
+4. 服务端已迁移路由表与 SPA fallback、前端 client 路由表——这两处是"这一页到底迁没迁"的事实源（文件见下表）。
 
 ---
 
@@ -155,14 +160,14 @@ http://127.0.0.1:9900/settings/<projectId>
 
 同一个改动必须覆盖这些落点：
 
-| 落点 | 必做内容 |
-|------|----------|
+| 落点文件 | 必做内容 |
+|----------|----------|
 | `cds/src/server.ts` | `MIGRATED_REACT_ROUTES` 加路由；必要时加旧 URL redirect |
 | `cds/web/src/App.tsx` | 加 `<Route>`；更新注释里的已迁移/待迁移列表 |
 | `cds/tests/routes/server-integration.test.ts` | 覆盖 React route、legacy fallback、`/api/*` 不被 shadow |
 | `cds/web/src/pages/*` | 新页面源码，API 统一走 `apiRequest()` |
-| `doc/plan.cds.web-migration.md` | 更新 Week 章节勾选、进度日志和下一步 |
-| `doc/guide.cds.web-migration-runbook.md` | 如命令、路由或验收方式变化，同步更新 |
+| [doc/plan.cds.web-migration.md](./plan.cds.web-migration.md) | 更新 Week 章节勾选、进度日志和下一步 |
+| [doc/guide.cds.web-migration-runbook.md](./guide.cds.web-migration-runbook.md) | 如命令、路由或验收方式变化，同步更新 |
 | `cds/CLAUDE.md` | 如目录结构或迁移边界变化，同步更新 |
 | `changelogs/` | 新增日期碎片，写清用户可感知变化和验证 |
 
@@ -231,7 +236,7 @@ http://127.0.0.1:9900/settings/<projectId>
 为避免 agent 在长任务或上下文压缩后丢失要求，采用以下机制：
 
 1. 聊天里的“下一步”和“必跑命令”必须落到本 runbook 或计划文档。
-2. 每完成一个页面，在 `doc/plan.cds.web-migration.md` 的“进度日志”追加一行。
+2. 每完成一个页面，在 [doc/plan.cds.web-migration.md](./plan.cds.web-migration.md) 的“进度日志”追加一行。
 3. 每次开始新页面前，先更新本文件的“下一步优先级”。
 4. 每次 final response 只汇报本轮事实；长期交接信息以仓库文档为准。
 5. 若用户临时给了验收参数、端口、账号或环境约束，优先写入本文件中不含密钥的部分；密钥只留在 `.cds.env` 或用户本地环境。
@@ -240,13 +245,13 @@ http://127.0.0.1:9900/settings/<projectId>
 
 ## 7. 当前下一步
 
-A/B/C/D 阶段已收口。**Week 4.6 视觉与主链路重构（向 Railway 看齐）已收口；当前在 Week 4.7：部署 tab Railway 化**。详见 `doc/plan.cds.web-migration.md` Week 4.6 / Week 4.7 章节。
+A/B/C/D 阶段已收口。**Week 4.6 视觉与主链路重构（向 Railway 看齐）已收口；当前在 Week 4.7：部署 tab Railway 化**。详见 [doc/plan.cds.web-migration.md](./plan.cds.web-migration.md) Week 4.6 / Week 4.7 章节。
 
 ### Week 4.6（已收口）
 
 执行步骤：
 
-1. [x] 抽 `AppShell` + `TopBar` + `Workspace` + `Crumb` 共享布局组件（`cds/web/src/components/layout/AppShell.tsx`）；所有页面共用左侧 56px 导航条、顶部面包屑、居中 1240/1360px 工作区。
+1. [x] 抽 `AppShell` + `TopBar` + `Workspace` + `Crumb` 共享布局组件；所有页面共用左侧 56px 导航条、顶部面包屑、居中 1240/1360px 工作区。
 2. [x] 扩展 `cds/web/src/index.css` 引入 surface 三档（base/raised/sunken）+ hairline 边框 token + `.cds-hero` / `.cds-stat` / `.cds-crumb` utility class。
 3. [x] ProjectListPage 切片：hero 表单收敛 + 项目卡极简化 + 工具入口折叠。
 4. [x] BranchListPage / BranchDetailPage / BranchTopologyPage / ProjectSettingsPage / CdsSettingsPage 5 个页面全部套用 AppShell + TopBar + Workspace + Crumb；删除每页重复的自建 nav + breadcrumb；项目设置/系统设置 TabsList 与内容区改用 surface-raised + hairline。
@@ -271,3 +276,13 @@ A/B/C/D 阶段已收口。**Week 4.6 视觉与主链路重构（向 Railway 看�
 - BranchListPage 部署小卡是否同步阶段树（独立任务，等 Drawer 验收后判断）。
 - 用户确认是否升级简化拓扑为 React Flow（独立动作，不阻塞 Week 5）。
 - 用户确认是否进入 Week 5 删除 `cds/web-legacy/`。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| Week 4.6（已收口） | `cds/web/src/components/layout/AppShell.tsx` |

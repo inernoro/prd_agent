@@ -22,10 +22,15 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet restore "src/PrdAgent.Api/PrdAgent.Api.csproj"
 COPY . .
 WORKDIR "/src/src/PrdAgent.Api"
+# commit 必须烤进程序集（SourceRevisionId → AssemblyInformationalVersion 的 "+sha" 后缀），
+# 而不是只写进 ENV：容器启动时平台会注入同名 env 覆盖掉镜像里的值，那个值只能代表
+# 「部署希望跑哪版」，不能代表「实际跑的是哪版」。两者由 /api/v 分列并对账。
+ARG GIT_COMMIT=""
 # publish 会自动 build：避免 build + publish 双编译；二次 restore 防止 BuildKit 复用 restore 层但 NuGet cache mount 缺包
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet restore "PrdAgent.Api.csproj" && \
-    dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore
+    dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore \
+      ${GIT_COMMIT:+-p:SourceRevisionId=$GIT_COMMIT}
 
 FROM base AS final
 WORKDIR /app

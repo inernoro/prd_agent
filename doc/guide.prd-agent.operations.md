@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-03-20 | **状态**：已落地
 
+**一句话**：桌面端与管理后台逐页面的功能、操作路径、界面布局和对应接口清单，供验收、写用例、前后端对齐。
+**谁该读**：做验收的产品、写测试用例的测试、要对齐前后端行为的开发。
+**读完能做什么**：按模块找到操作路径、界面布局和对应接口，逐条核对实现是否一致。
+
+---
+
 > 本文档完整描述 PRD Agent 在桌面端（Tauri）和 Web 管理后台（prd-admin）上的所有用户可见功能、操作流程、UI 布局及 API 端点，供产品验收、QA 测试和开发对齐使用。
 
 
@@ -1891,25 +1897,6 @@ Web 端使用 **Zustand** 作为状态管理方案，遵循前端架构规则中
 
 管理 PRD Agent 页面的全局状态。
 
-```typescript
-interface PrdAgentStore {
-  // 主区域模式切换
-  mode: 'chat' | 'preview';
-
-  // 会话列表（从后端获取，前端仅作展示）
-  sessions: PrdAgentSessionInfo[];
-
-  // 当前激活的会话 ID
-  activeSessionId: string;
-
-  // 当前角色视角
-  currentRole: 'PM' | 'DEV' | 'QA';
-
-  // 侧边栏折叠状态
-  sidebarCollapsed: boolean;
-}
-```
-
 **字段说明：**
 
 | 字段 | 类型 | 说明 |
@@ -1926,21 +1913,6 @@ interface PrdAgentStore {
 
 管理文档预览模式下的导航与引用高亮状态。
 
-```typescript
-interface PrdPreviewNavStore {
-  // 目标跳转的标题 ID
-  targetHeadingId: string | null;
-
-  // 目标跳转的标题文本
-  targetHeadingTitle: string | null;
-
-  // 引用列表
-  citations: DocCitation[];
-
-  // 当前激活的引用索引
-  activeCitationIndex: number;
-}
-```
 
 **Actions（动作方法）：**
 
@@ -1987,30 +1959,12 @@ Web 端使用浏览器原生 **CustomEvent** 机制实现跨组件通信，避�
 | `prdAgent:openPreview` | `{ documentId: string, sessionId: string, groupId: string }` | 用户点击消息中的文档链接或引用 | 预览组件，切换 mode 为 preview 并加载文档 |
 | `prdAgent:addDocument` | 无 | 用户点击知识库区域的追加资料按钮 | 文档上传组件，弹出追加文档界面 |
 
-#### 9.5.2 使用示例
+#### 9.5.2 收发约定
 
-**派发事件：**
+事件在 `window` 上派发与监听，`detail` 结构以上表为准。两条约定：
 
-```typescript
-// 切换会话
-window.dispatchEvent(
-  new CustomEvent('prdAgent:switchSession', {
-    detail: { sessionId: 'sess_abc123' },
-  })
-);
-```
-
-**监听事件：**
-
-```typescript
-useEffect(() => {
-  const handler = (e: CustomEvent<{ sessionId: string }>) => {
-    loadSession(e.detail.sessionId);
-  };
-  window.addEventListener('prdAgent:switchSession', handler);
-  return () => window.removeEventListener('prdAgent:switchSession', handler);
-}, []);
-```
+- **派发方不关心谁在听**：同一个事件可以有零个或多个监听方，派发方不做存在性判断。
+- **监听方负责自己摘除**：组件卸载时必须移除监听，否则会话切换后旧组件仍会响应，导致重复加载。
 
 #### 9.5.3 设计原则
 

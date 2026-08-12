@@ -1,22 +1,42 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Api.Tests.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
 public class GatewayDoubaoStreamAsrTests
 {
     [Fact]
+    public void RecognitionRequest_ShouldEnableNativeSpeakerInformation_ByDefault()
+    {
+        var request = DoubaoStreamAsrService.BuildRecognitionRequest(1, 16, 16000, null);
+
+        request["request"]!["show_utterances"]!.GetValue<bool>().ShouldBeTrue();
+        request["request"]!["enable_speaker_info"]!.GetValue<bool>().ShouldBeTrue();
+
+        var explicitlyDisabled = DoubaoStreamAsrService.BuildRecognitionRequest(
+            1,
+            16,
+            16000,
+            new Dictionary<string, object> { ["enableSpeakerInfo"] = false });
+        explicitlyDisabled["request"]!["enable_speaker_info"]!.GetValue<bool>().ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task RawDoubaoStreamAsr_ShouldExecuteInsideGateway_AndReturnVerboseJson()
     {
         var fakeAsr = new FakeDoubaoStreamAsrExecutor();
+        var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(
             new NoopModelResolver(),
             new NoopHttpClientFactory(),
             NullLogger<LlmGateway>.Instance,
+            logWriter,
             doubaoStreamAsr: fakeAsr);
 
         var response = await gateway.SendRawWithResolutionAsync(
@@ -73,7 +93,57 @@ public class GatewayDoubaoStreamAsrTests
         segment.GetProperty("start").GetDouble().ShouldBe(1);
         segment.GetProperty("end").GetDouble().ShouldBe(2.5);
         segment.GetProperty("text").GetString().ShouldBe("第一句字幕");
+        segment.GetProperty("speaker").GetString().ShouldBe("2");
         root.GetProperty("gateway").GetProperty("protocol").GetString().ShouldBe("websocket");
+        logWriter.Done.ShouldNotBeNull();
+        logWriter.Done!.ProviderAttempts.ShouldNotBeNull();
+        logWriter.Done.ProviderAttempts!.Single().ReachedProvider.ShouldBe(true);
+    }
+
+    [Fact]
+    public async Task RawDoubaoStreamAsr_WhenAudioIsMissing_ShouldNotCountProviderCall()
+    {
+        var fakeAsr = new FakeDoubaoStreamAsrExecutor();
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(
+            new NoopModelResolver(),
+            new NoopHttpClientFactory(),
+            NullLogger<LlmGateway>.Instance,
+            logWriter,
+            doubaoStreamAsr: fakeAsr);
+
+        var response = await gateway.SendRawWithResolutionAsync(
+            new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+                ModelType = ModelTypes.Asr,
+                IsMultipart = true,
+                MultipartFields = new Dictionary<string, object>
+                {
+                    ["response_format"] = "verbose_json",
+                },
+            },
+            new GatewayModelResolution
+            {
+                Success = true,
+                ResolutionType = "DedicatedPool",
+                ActualModel = "doubao-asr-stream",
+                ActualPlatformId = "exchange-doubao-stream",
+                ActualPlatformName = "Doubao Stream ASR",
+                PlatformType = "exchange",
+                ApiUrl = "wss://example.test/asr",
+                ApiKey = "app-123|access-456",
+                IsExchange = true,
+                ExchangeName = "Doubao Stream ASR",
+                ExchangeTransformerType = "doubao-asr-stream",
+            });
+
+        response.Success.ShouldBeFalse();
+        response.ErrorCode.ShouldBe("ASR_AUDIO_MISSING");
+        fakeAsr.AudioBytes.ShouldBeEmpty();
+        logWriter.Done.ShouldNotBeNull();
+        logWriter.Done!.ProviderAttempts.ShouldNotBeNull();
+        logWriter.Done.ProviderAttempts!.Single().ReachedProvider.ShouldBe(false);
     }
 
     [Fact]
@@ -161,7 +231,7 @@ public class GatewayDoubaoStreamAsrTests
                   "result": {
                     "text": "第一句字幕",
                     "utterances": [
-                      { "start_time": 1000, "end_time": 2500, "text": "第一句字幕" }
+                      { "start_time": 1000, "end_time": 2500, "text": "第一句字幕", "speaker_info": { "speaker_id": 2 } }
                     ]
                   }
                 }

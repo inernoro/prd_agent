@@ -26,7 +26,7 @@
  *    端口的服务），命中者标「未纳入监控」而不是「故障」。此外，端口开着但
  *    不说 HTTP 的目标会在连续拿到协议层错误后**自动降级**为容器状态判定，
  *    不再永久标红。两条合起来治「非 HTTP 服务被永久误报」，
- *    见 doc/debt.cds.uptime-monitor.md。
+ *    见 doc/debt.cds.md「CDS 存活监控（uptime-monitor）」。
  *
  * 纯计算（可用率 / 去抖 / 降采样 / 事件合成）全在 services/uptime-metrics.ts，
  * 本文件只做「发探测 + 编排 + 落盘」。
@@ -118,6 +118,25 @@ export interface ProbeTarget {
 }
 
 /** 单个 target 的持久化状态。 */
+/**
+ * 存活翻转事件（上 cds-events-bus 用）。事件名与 CdsEventType 一一对应，
+ * 由接线方转发——本模块不 import 总线（见构造参数 onAlert 的注释）。
+ */
+export type UptimeAlertEventType = 'uptime.target.down' | 'uptime.target.recovered';
+
+export interface UptimeAlertEventData {
+  targetId: string;
+  projectId: string;
+  branchId: string;
+  /** 站内信渲染直接用它当主语，字段名与发布漂移事件对齐（targetName）。 */
+  targetName: string;
+  probeKind: ProbeKind;
+  probeUrl?: string;
+  message: string;
+  consecutiveFailures: number;
+  detectedAt: string;
+}
+
 export interface UptimeTargetRecord {
   id: string;
   branchId: string;
@@ -739,6 +758,15 @@ export class UptimeMonitorService {
       probe?: ProbeFn;
       now?: () => number;
       logger?: { warn?: (m: string) => void; info?: (m: string) => void };
+      /**
+       * 存活状态翻转出口（2026-07-29）。晚绑定的理由与 release-remote-watcher 的
+       * setReleaseDriftNotifier 同源：监控模块不该反向 import 事件总线、更不该自己
+       * 决定「这条要不要叫醒人」——那正是「存活一套、发布一套」两条分发逻辑的长法。
+       * 接线方（index.ts）一行 cdsEventsBus.publish 转发即可。
+       *
+       * 不接不报错，只是掉线永远没人被通知——所以有源码守卫钉住这行接线。
+       */
+      onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void;
     },
   ) {
     this.load();
@@ -893,12 +921,50 @@ export class UptimeMonitorService {
     record.status = next.status;
     record.consecutiveFailures = next.consecutiveFailures;
     record.consecutiveSuccesses = next.consecutiveSuccesses;
+    const cause = sample.err || (sample.code ? `HTTP ${sample.code}` : '探测连续失败');
     applyIncidentTransition(record.incidents, next.transition, {
       targetId: target.id,
       at: sample.t,
-      cause: sample.err || (sample.code ? `HTTP ${sample.code}` : '探测连续失败'),
+      cause,
     }, MAX_INCIDENTS_PER_TARGET);
     if (next.transition === 'to-down') this.attachReleaseAttribution(target, record, sample.t);
+    // 状态翻转才外发：去抖已经在 nextDebounceState 做过，走到这里就是「真掉线 / 真恢复」，
+    // 不会每轮探测都响一次。排除名单里的目标不算故障，不打扰人。
+    if (next.transition && !record.excluded) {
+      this.emitAlert(
+        next.transition === 'to-down' ? 'uptime.target.down' : 'uptime.target.recovered',
+        target,
+        record,
+        sample.t,
+        next.transition === 'to-down' ? cause : '探测已连续成功，服务恢复',
+      );
+    }
+  }
+
+  /** 把状态翻转转发给接线方（未接线时静默，见构造参数 onAlert 注释）。 */
+  private emitAlert(
+    type: UptimeAlertEventType,
+    target: ProbeTarget,
+    record: UptimeTargetRecord,
+    at: number,
+    message: string,
+  ): void {
+    if (!this.deps.onAlert) return;
+    try {
+      this.deps.onAlert(type, {
+        targetId: target.id,
+        projectId: target.projectId,
+        branchId: target.branchId,
+        targetName: target.name,
+        probeKind: target.probeKind,
+        ...(target.url ? { probeUrl: target.url } : {}),
+        message,
+        consecutiveFailures: record.consecutiveFailures,
+        detectedAt: new Date(at).toISOString(),
+      });
+    } catch (err) {
+      this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`);
+    }
   }
 
   /**

@@ -2,6 +2,12 @@
 
 > **版本**：v1.1 | **日期**：2026-05-17 | **状态**：已落地
 
+**一句话**：完整复现一次 Agent 工作台操作：从配置、建会话、发任务、审批工具到让远程 Agent 提交合并请求。
+**谁该读**：要复现或验收这条链路的人和下一位智能体。
+**读完能做什么**：从真实入口走完全流程，并知道为什么接口直连不算复现。
+
+---
+
 ## 目标
 
 这份教程让另一个人或下一个智能体复现 CDS Agent 工作台的完整操作：从系统配置、进入页面、创建会话、发送任务、审批工具、查看产物，到让远程 Agent 创建 PR。
@@ -13,7 +19,7 @@
 - 页面和 API 里仍有历史 runtime 名 `claude-sdk`。
 - `claude-agent-sdk` 是官方 Claude Agent SDK，不是本仓库自研；本仓库只写 adapter，把官方 SDK 事件、权限、取消和结果映射到 MAP/CDS。
 - 当前默认目标路径是 `runtimeAdapter=claude-agent-sdk`；`legacy-sidecar` 只作为显式 fallback，仍使用官方 `anthropic` Python SDK + 本仓库自研 loop。
-- 复现通过只证明 CDS Agent 工作台链路可用；要证明完整官方 SDK 迁移，必须额外通过 `doc/guide.cds.agent.runtime-pool-recovery.md` 里的 official SDK smoke。
+- 复现通过只证明 CDS Agent 工作台链路可用；要证明完整官方 SDK 迁移，必须额外通过 [doc/guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md) 里的 official SDK smoke。
 
 ## 前置条件
 

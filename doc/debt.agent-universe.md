@@ -2,7 +2,13 @@
 
 > **版本**：v4.0 | **日期**：2026-07-17 | **状态**：开发中
 
-> **关联设计**：`design.agent-universe.md`
+**一句话**：智能体宇宙已落地什么、诚实记录的边界、需要用户拍板的分叉，以及按波次排的剩余债务。
+**谁该读**：接手这个模块的人；要拍板分叉的产品。
+**读完能做什么**：判断当前能力边界，并挑出下一波该还的债。
+
+---
+
+> **关联设计**：[design.agent-universe.md](./design.agent-universe.md)
 
 记录"智能体宇宙"主动声明的已知边界、剩余技术债务、需用户判断的分叉，避免下一次 session 没人记得。
 
@@ -36,6 +42,12 @@
 | 插入位置 | 文学"插入文档"走既有 追加末尾/替换原文，非光标处插入。见 §四。 |
 | 配图接力较慢 | E9 串两次 LLM（文学描述 ~16s + 视觉生图 ~20s）≈ 40s，已分阶段显示进度（①构思 → ②生图），非卡死。 |
 | toast 瞬时 | 出站成功 toast ~3s，自动化截图未必每次捕获；已用 HTTP 直测兜底。 |
+| 通用体转派一次性、无续订 | 抽屉里的通用智能体走 `StreamOneOffAsync`：不建会话、不落库，因此**没有断线续订**——客户端断开就看不到后续（服务端那一轮仍会跑完，不会被掐）。需要续订的场景走 `/chat` 会话路径。 |
+| 转派身份台账在进程内存 | 工具回调只带 runId，一次性转派的 runId→发起人映射存在进程内（`ChatAgentOneOffRunRegistry`，15 分钟 TTL）。多副本部署时回调打到别的实例会查不到、工具拒绝执行。当前部署形态是「一个作用域一个容器」（与 `ReconcileInterruptedTurnsAsync` 前提一致），成立；横向扩容前必须换成共享存储。 |
+| 通用体那一轮不显示模型名 | 抽屉里其它智能体的回答顶部有「模型 · 平台」徽章（数据来自网关 `Start` chunk 的 `Resolution`），通用体这一轮没有——它不走网关，跑在外部 sidecar 上，模型由那个运行时自己的配置决定。链路上也确实没有可透出的值：`SidecarEvent` 整个类型没有 model/provider 字段，`RuntimeInit` 在 `ChatAgentService` 里落到 default 分支被丢弃，一次性转派同样没有。**要补齐得**：给 sidecar 事件契约加字段 + 确认外部运行时真的在 `runtime_init` 里报了模型（本仓库核不到，属外部依赖）+ 一次性信封加 `model` 事件 + 前端徽章开闸。属规则 5.5 的 B 类（新契约字段 + 不可自证的外部依赖）。（2026-08-11 PR #1359 Review 十一轮提出）|
+| 视觉体只覆盖文生图 | 通用体的出图走 `chat_generate_image`（与视觉创作同一条平台流水线），故视觉体刻意未登记为转派工具，避免两把同功能工具让路由随机化。视觉体独有的 img2img / describe_image / compose 尚无对应工具，只能显式选中/@ 使用。 |
+| 通用体依赖外部运行时 | 对话运行时是外部 sidecar（`ClaudeSdkExecutor:Sidecars`），默认配置为空。未配置时 capabilities 下发 `available=false` + 原因，抽屉不默认选它、如实提示手动挑——但这意味着**未配置 sidecar 的部署上，「不必选智能体」这个体验拿不到**。 |
+| root 破窗账户用不了转派 | root 直接点专业智能体可以用（中间件认 `isRoot` claim 放行），但**经通用体转派会被拒**（`agent_permission_denied`）。根因：root 按设计不落库（`AuthController` 就地构造 `UserId="root"`，注释写明「不落库」），而转派的权限判据 `GetEffectivePermissionsAsync(userId, isRoot:false)` 要查 `Users` 集合，查不到就是空权限。工具回调来自 sidecar、不带发起人的 claims，所以这里拿不到 `isRoot`。**为什么没在本 PR 修**：要修得把「这一轮的发起人是不是 root」这个授权信号存进 runId 台账（`ChatAgentOneOffRunRegistry` / 会话记录）再在回调侧取出——等于新开一条跨进程的授权传播通道，而 runId 可猜的话就是提权面。影响面：一个破窗账户少一条便捷路径，fail-closed 且有明确报错，不是静默错答。要修需先定「授权信号怎么在 run 台账里防伪」。 |
 
 ## 三、需用户判断业务逻辑的分叉
 
@@ -61,6 +73,8 @@
 | — | img2img / compose | `VisualAgentAdapter` 的 img2img/compose 仍占位；信封已能传 `imageUrls`，待接通 |
 | — | video-agent | 无可单轮跑的真实组件（视频是长任务 Run/Worker），未登记，单独波次 |
 | — | 多轮上下文 | 如需 chat 多轮，改适配器或信封侧聚合历史 |
+| — | 一次性执行无台账、断线取不回 | 通用体走 `StreamOneOffAsync`，服务端用 `CancellationToken.None` 跑完（不因客户端断开取消），但**没有 run 台账、没有事件序列**。用户关抽屉 / 切页 / SSE 断线之后，这一轮的答案和转派产物就再也取不回来了——前端也不会把未完成的消息写进持久化。要补齐得把这条路径改造成既有的 Run/Worker 模式：入队一条 run、事件按 seq 落库、断线后按 seq 续传。这是新增一套持久化与恢复语义（不是补一条判据），故不在 PR #1359 展开（2026-08-11 Review 三轮提出，按规则 5.5 范围熔断记账）。做之前先确认要不要与会话路径（`ChatAgentSession` + `ChatAgentEvents`）共用同一套表，避免又分裂出第二份事件日志 |
+| — | 信封缺替换语义 | 本信封的 `text` 事件是**追加**语义，会话路径却是「终态给了定稿全文就以定稿为准」（`ChatAgentService` 收到 `Done.FinalText` 会清空累积增量重写）。当前只补了「一个增量都没流出来时把定稿当正文发一次」，够治「用户看到空回答」；但运行时若在终态**修订**已流出的草稿，这里仍以增量为准，与会话路径不一致。要对齐得给信封加替换语义（新事件 + 前端从追加改成可替换渲染），涉及 `ReprocessChatDrawer` 与 `VisualCreationMiniPanel` 两个消费方。目前没有任何在用运行时被观察到会修订草稿，故先记账不做（2026-08-11 PR #1359 Review 二轮提出） |
 
 ## 五、验收标准（用户硬性要求：通过才算数）
 

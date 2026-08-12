@@ -2,13 +2,23 @@
 
 > **版本**：v1.0 | **日期**：2026-06-26 | **状态**：开发中
 
+**一句话**：函数调用穿协议不丢已落地核心路径，本文记还没覆盖的协议保真边界与更大的后续范围。
+**谁该读**：做协议适配的工程师。
+**读完能做什么**：判断某种协议组合当前保不保真。
+
+---
+
 | 字段 | 内容 |
 |---|---|
 | 模块 | LLM 网关协议保真层（函数调用穿协议 + 能力描述符路由） |
-| 状态 | partial（核心已落地；Claude 流式 tool_use、池路径能力兜底与 OpenAI logprobs Extensions 消费已补齐，以下保留未完成边界） |
-| 关联 | `doc/design.platform.llm-gateway.unification.md` 决策一、`prd-api/src/PrdAgent.Infrastructure/LlmGateway/`、`OpenApiController.cs`、`changelogs/2026-06-26_vision-detail-fix.md` |
+| 关联 | [doc/design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md) 决策一、`prd-api/src/PrdAgent.Infrastructure/LlmGateway/`、`OpenApiController.cs`、`changelogs/2026-06-26_vision-detail-fix.md` |
 | 提出 | 用户「协议不能归一，要保真」+ 取证后分波落地（F1 识图 / F3a 采样 / G1-G6 函数调用穿协议） |
 
+## 债务台账（状态：partial）
+
+| 字段 | 内容 |
+|---|---|
+| 状态 | partial（核心已落地；Claude 流式 tool_use、池路径能力兜底与 OpenAI logprobs Extensions 消费已补齐，以下保留未完成边界） |
 
 ## 债务主题
 
@@ -43,3 +53,4 @@
 ## 范围外（更大的后续波次，非本债务）
 
 - gateway 物理独立成服务、观测性页面（Logs Generations/Upstream/Sessions）、池清理（IsMain/IsVision legacy 字段下线）、管理 UI OpenRouter 超集。
+

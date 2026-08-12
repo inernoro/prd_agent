@@ -13,6 +13,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -41,6 +42,7 @@ public class AgentUniverseController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
+    private readonly IChatAgentService _chatAgent;
     private readonly ILogger<AgentUniverseController> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -52,6 +54,7 @@ public class AgentUniverseController : ControllerBase
         ILLMRequestContextAccessor llmRequestContext,
         MongoDbContext db,
         ILlmGateway gateway,
+        IChatAgentService chatAgent,
         ILogger<AgentUniverseController> logger)
     {
         _adapters = adapters;
@@ -59,16 +62,53 @@ public class AgentUniverseController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _db = db;
         _gateway = gateway;
+        _chatAgent = chatAgent;
         _logger = logger;
     }
 
+    /// <summary>通用对话智能体在本信封里的标识。与 appKey / 权限键 chat-agent.use 对齐。</summary>
+    public const string GeneralAgentKey = "chat-agent";
+
     /// <summary>
-    /// 下发智能体能力契约清单（前端据此渲染选择器与对应交互）。
+    /// 下发智能体能力契约清单（前端据此渲染选择器与对应交互），外加通用智能体。
+    ///
+    /// 通用体不进 <see cref="AgentCapabilityRegistry"/>：那张表的前提是「每条都有 IAgentAdapter」，
+    /// 而通用体的真实组件是外部对话运行时，可用性只能**运行时探测**——
+    /// 硬塞进去就成了一条看着有根、其实随时可能是空的记录（no-rootless-tree 原则〇）。
     /// </summary>
     [HttpGet("capabilities")]
     public IActionResult Capabilities()
     {
-        return Ok(ApiResponse<object>.Ok(new { capabilities = AgentCapabilityRegistry.All }));
+        var runtime = _chatAgent.GetRuntimeStatus();
+        var generalAccess = ResolveGeneralAvailability(
+            runtime.Available, runtime.Reason, HasPermission(AdminPermissionCatalog.ChatAgentUse));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            capabilities = AgentCapabilityRegistry.All,
+            general = new
+            {
+                agentKey = GeneralAgentKey,
+                name = "通用智能体",
+                description = "直接说要做什么就行。该找哪个专业智能体，它自己会判断。",
+                icon = "Sparkles",
+                accent = "#D97757",
+                // 真探测：运行时没配、或这个账号没权限，都如实说，不给用户一个点了必然失败的入口
+                available = generalAccess.Available,
+                unavailableReason = generalAccess.Reason,
+                // 头像条上要展示谁 + 悬浮说什么，全部来自能力契约，前端不另维护一份
+                delegates = AgentCapabilityRegistry.All.Select(c => new
+                {
+                    agentKey = c.AgentKey,
+                    name = c.Name,
+                    icon = c.Icon,
+                    accent = c.Accent,
+                    description = c.Description,
+                    hint = c.GeneralAgentHint,
+                    // 通用体能不能自己找到它。false 不代表用不了，只代表得点一下/@ 一下
+                    autoRoutable = !string.IsNullOrWhiteSpace(c.ToolName),
+                }),
+            },
+        }));
     }
 
     /// <summary>
@@ -146,6 +186,15 @@ public class AgentUniverseController : ControllerBase
         Response.Headers.Connection = "keep-alive";
 
         var userId = this.GetRequiredUserId();
+
+        // 通用智能体：**不必先挑智能体**的那条路。用户说要做什么，它自己判断要不要转派、转派给谁。
+        // 专业智能体在这里是它的工具（AgentCapabilityRegistry.Delegatable），
+        // 转派后跑的仍是那些智能体的真实组件，与用户手动选中走的是同一条路。
+        if (string.Equals(request.AgentKey, GeneralAgentKey, StringComparison.Ordinal))
+        {
+            await RunGeneralAgentAsync(request, userId);
+            return;
+        }
 
         // 百宝箱自定义智能体（用户自建的通用智能体）：agentKey 形如 "custom:{itemId}"。
         // 走同一套 invoke 信封，实时从库加载它的 systemPrompt（单一数据源，改了立即生效），
@@ -306,6 +355,175 @@ public class AgentUniverseController : ControllerBase
     }
 
     /// <summary>
+    /// 通用智能体的执行：整轮交给对话运行时，工具（含专业智能体转派）由它自己决定用不用。
+    ///
+    /// 这里刻意不写任何「先分类意图再挑智能体」的调度——那属于运行时里的官方 SDK。
+    /// 我方只做三件事：把文档与历史组装成一轮、把事件翻成本信封的 SSE、把权限门关好。
+    /// </summary>
+    private async Task RunGeneralAgentAsync(AgentInvokeRequest request, string userId)
+    {
+        // 权限门与用户直接打开「对话」页一致，走统一信封不放大权限
+        if (!HasPermission(AdminPermissionCatalog.ChatAgentUse))
+        {
+            await WriteSseEventAsync("error", new
+            {
+                code = "PERMISSION_DENIED",
+                message = $"需要「通用智能体」权限（{AdminPermissionCatalog.ChatAgentUse}），当前账号未开通，请联系管理员。",
+            });
+            return;
+        }
+
+        var text = (request.Text ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            await WriteSseEventAsync("error", new { code = "EMPTY_INPUT", message = "请先输入内容" });
+            return;
+        }
+
+        await WriteSseEventAsync("start", new
+        {
+            agentKey = GeneralAgentKey,
+            invokeMode = AgentInvokeModes.Chat,
+            action = "chat",
+            timestamp = DateTime.UtcNow,
+        });
+
+        // 文档不塞进历史，而是作为本轮输入的一部分——历史是"聊过什么"，文档是"在看什么"，
+        // 混在一起会让长文档在每一轮里重复出现，几轮就把上下文撑爆。
+        var userMessage = BuildDocUserMessage(text, request.DocumentContent);
+        var history = (request.History ?? new List<AgentInvokeHistoryItem>())
+            .Where(h => !string.IsNullOrWhiteSpace(h.Content))
+            .Select(h => new ChatAgentOneOffMessage(
+                h.Role == "assistant" ? "assistant" : "user",
+                h.Content))
+            .ToList();
+
+        // 有没有真的流出过正文。运行时可以只在 Done 里给定稿全文而一个增量都不发
+        // （对话路径与 CapsuleExecutor 都按「给了定稿就以定稿为准」处理），
+        // 这里若把 Done 整条丢掉，那种运行时下用户看到的就是一个字都没有的空回答。
+        var streamedAnyText = false;
+        try
+        {
+            // CancellationToken.None：客户端断开不取消服务器任务（server-authority）
+            await foreach (var evt in _chatAgent.StreamOneOffAsync(
+                               new ChatAgentOneOffRequest(userId, userMessage, history),
+                               CancellationToken.None))
+            {
+                switch (evt.Type)
+                {
+                    case ChatAgentEventTypes.TextDelta:
+                        var delta = ExtractTextDelta(evt.PayloadJson);
+                        if (!string.IsNullOrEmpty(delta))
+                        {
+                            streamedAnyText = true;
+                            await WriteSseEventAsync("text", new { content = delta });
+                        }
+                        break;
+
+                    // 定稿全文：只在一个增量都没流出来时补发。
+                    // 流过增量就不补——本信封的 text 事件是追加语义，补发等于把整段答案再贴一遍。
+                    case ChatAgentEventTypes.Done:
+                        var finalText = ExtractTextDelta(evt.PayloadJson);
+                        if (ShouldEmitFinalText(streamedAnyText, finalText))
+                        {
+                            streamedAnyText = true;
+                            await WriteSseEventAsync("text", new { content = finalText });
+                        }
+                        break;
+
+                    // 思考过程：同样是「等待期屏幕上要有变化」的一部分（CLAUDE.md 规则 #6）。
+                    // 长推理阶段没有 text 也没有工具事件，丢掉它就只剩一个静止的等待态。
+                    // 字段名要翻成本信封的 content——和 text 一样，名字对上了字段没对上等于没接线。
+                    case ChatAgentEventTypes.Thinking:
+                        var thinking = ExtractTextDelta(evt.PayloadJson);
+                        if (!string.IsNullOrEmpty(thinking))
+                            await WriteSseEventAsync("thinking", new { content = thinking });
+                        break;
+
+                    // 工具卡（含转派给专业智能体）原样透出：等待期屏幕上要有推进感，
+                    // 不能只留一个转圈（CLAUDE.md 规则 #6）。
+                    case ChatAgentEventTypes.ToolStarted:
+                    case ChatAgentEventTypes.ToolFinished:
+                        await WriteSseRawAsync(evt.Type, evt.PayloadJson);
+                        break;
+
+                    case ChatAgentEventTypes.Error:
+                        await WriteSseRawAsync("error", evt.PayloadJson);
+                        return;
+
+                    default:
+                        break;
+                }
+            }
+
+            await WriteSseEventAsync("done", new { timestamp = DateTime.UtcNow });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Agent universe general invoke failed");
+            try { await WriteSseEventAsync("error", new { message = "通用智能体执行异常，请稍后重试" }); }
+            catch { /* ignore */ }
+        }
+    }
+
+    /// <summary>
+    /// 对话事件的文本增量 → 本信封 text 事件的正文。
+    ///
+    /// 两条信封的字段名不一样（对话用 text，本信封用 content）。只改事件名不改字段，
+    /// 前端流式渲染会一个字都收不到——名字对上了、字段没对上，等于没接线，
+    /// 而且不会报错，只会安静地不出字。所以这一步单独成函数，由单测盯着。
+    /// </summary>
+    internal static string? ExtractTextDelta(string payloadJson)
+        => ReadJsonString(payloadJson, "text");
+
+    /// <summary>
+    /// 通用体对**这个账号**到底可不可用，以及不可用时说什么。
+    ///
+    /// 判据必须同时含运行时健康与调用权限：`RunGeneralAgentAsync` 的门是
+    /// `chat-agent.use`，能力清单只看运行时的话，没这个权限的账号会看到一个「可用」的
+    /// 通用体——抽屉据此把它选成默认收件人、放开无文档输入，然后每一次发送都被
+    /// PERMISSION_DENIED 打回，等于给了一个点了必然失败的入口。
+    ///
+    /// 缺权限时优先报权限：运行时配没配对这个用户不构成可行动信息，
+    /// 「找管理员开权限」才是他能去做的事。
+    /// </summary>
+    internal static (bool Available, string? Reason) ResolveGeneralAvailability(
+        bool runtimeAvailable, string? runtimeReason, bool hasChatAgentPermission)
+    {
+        if (!hasChatAgentPermission)
+            return (false, $"需要「通用智能体」权限（{AdminPermissionCatalog.ChatAgentUse}），当前账号未开通，请联系管理员。");
+        return (runtimeAvailable, runtimeReason);
+    }
+
+    /// <summary>
+    /// 收到终态的定稿全文时，要不要把它当正文补发一次。
+    ///
+    /// 只有「一个增量都没流出来」才补。运行时分两类：一类边跑边发增量、终态只是收尾；
+    /// 另一类攒完了在终态一次性给全文。本信封的 text 事件是**追加**语义，
+    /// 对前一类补发会把整段答案贴两遍，对后一类不补发则用户看到空白。
+    /// </summary>
+    internal static bool ShouldEmitFinalText(bool streamedAnyText, string? finalText)
+        => !streamedAnyText && !string.IsNullOrWhiteSpace(finalText);
+
+    /// <summary>从事件载荷里取一个字符串字段，取不到返回 null（不抛，不猜）。</summary>
+    private static string? ReadJsonString(string payloadJson, string field)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            return doc.RootElement.TryGetProperty(field, out var value)
+                   && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 自定义百宝箱智能体的统一执行：实时读库取 systemPrompt（+知识库），跑真实网关 chat。
     /// systemPrompt 每次实时从 ToolboxItem 读取 = 单一数据源，用户改了配置立即生效、零漂移。
     /// </summary>
@@ -458,11 +676,14 @@ public class AgentUniverseController : ControllerBase
         return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
     }
 
-    private async Task WriteSseEventAsync(string eventName, object data)
+    private Task WriteSseEventAsync(string eventName, object data)
+        => WriteSseRawAsync(eventName, JsonSerializer.Serialize(data, JsonOptions));
+
+    /// <summary>载荷已经是 JSON 字符串时直接下发，不再序列化一次（否则会变成被转义的字符串）。</summary>
+    private async Task WriteSseRawAsync(string eventName, string json)
     {
         try
         {
-            var json = JsonSerializer.Serialize(data, JsonOptions);
             await Response.WriteAsync($"event: {eventName}\n");
             await Response.WriteAsync($"data: {json}\n\n");
             await Response.Body.FlushAsync();

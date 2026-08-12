@@ -1,8 +1,14 @@
 ---
-globs: ["prd-admin/src/lib/marketplaceTypes.tsx", "prd-api/src/**/IMarketplaceItem.cs", "prd-api/src/**/ForkService.cs", "prd-api/src/**/IForkable.cs"]
+paths:
+  - "prd-admin/src/lib/marketplaceTypes.tsx"
+  - "prd-api/src/**/IMarketplaceItem.cs"
+  - "prd-api/src/**/ForkService.cs"
 ---
 
 # 海鲜市场 (Configuration Marketplace) 扩展指南
+
+**一句话**：往海鲜市场加新配置类型时，前端在注册表登记并实现预览渲染器，后端实现可复制接口并用白名单字段复制。
+**什么时候撞上**：要把一种新配置发布到海鲜市场。
 
 当需要将新的配置类型发布到海鲜市场时参考。
 

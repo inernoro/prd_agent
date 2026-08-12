@@ -19,6 +19,21 @@ function read(relative: string): string {
   return fs.readFileSync(path.join(CDS_ROOT, relative), 'utf8');
 }
 
+/**
+ * 发布中心 v2 已从单文件拆成 pages/release-center/ 下的一组组件，
+ * 所以这里扫「入口页 + 整个目录」——只盯入口页的话，任何一段实现搬进子组件
+ * 都会让本套件静默变绿（形状 4：测试自己坏了）。
+ */
+function releaseCenterSurface(): string {
+  const dir = path.join(CDS_ROOT, 'web/src/pages/release-center');
+  const files = fs.readdirSync(dir)
+    .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
+    .map((name) => path.join(dir, name));
+  return [path.join(CDS_ROOT, 'web/src/pages/ReleaseCenterPage.tsx'), ...files]
+    .map((file) => fs.readFileSync(file, 'utf8'))
+    .join('\n');
+}
+
 function walk(relativeDir: string, extensions: string[]): string[] {
   const out: string[] = [];
   const root = path.join(CDS_ROOT, relativeDir);
@@ -88,7 +103,7 @@ describe('发布步骤判定只有一个源', () => {
 
 describe('CDS 通用产品里不许长本仓库的脚本名', () => {
   it('发布中心页面没有任何仓库脚本名字面量', () => {
-    const source = read('web/src/pages/ReleaseCenterPage.tsx');
+    const source = releaseCenterSurface();
 
     // 事故值：DEFAULT_DEPLOY_COMMAND / SCRIPT_LABELS / 步骤标签 / 过滤条件共五处写死。
     expect(source).not.toContain('fast.sh');
@@ -96,7 +111,7 @@ describe('CDS 通用产品里不许长本仓库的脚本名', () => {
   });
 
   it('发布中心不再从日志 phase 反推步骤，改读结构化字段', () => {
-    const source = read('web/src/pages/ReleaseCenterPage.tsx');
+    const source = releaseCenterSurface();
 
     expect(source).toContain('resolveReleaseSteps(');
     expect(source).not.toMatch(/phaseSet/);

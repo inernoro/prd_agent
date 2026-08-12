@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-04-24 | **状态**：已落地
 
+**一句话**：把散落在各处的外部系统凭证收进一个个人级授权中心，工作流只引用授权而不再内嵌密钥。
+**谁该读**：要接入新外部系统的工程师；关心凭证安全边界的人。
+**读完能做什么**：说清凭证存在哪、怎么被引用、轮换后为什么不用改工作流。
+
+---
+
 ## 管理摘要
 
 当前外部系统（TAPD / 语雀 / GitHub）的授权凭证散落在多个地方——TAPD Cookie 在每个工作流模板里手动粘贴、语雀没有任何集成、GitHub 分散在 CDS 和 PR 审查两套系统。用户无法知道自己授权了哪些系统、哪些快过期、哪些还在被使用。
@@ -140,15 +146,10 @@
 
 后端用注册表存各类型的处理器（对齐前端 `CONFIG_TYPE_REGISTRY` 规则）：
 
-```csharp
-public interface IAuthTypeHandler
-{
-    string TypeKey { get; }
-    Task<ValidationResult> ValidateAsync(Dictionary<string,string> credentials);
-    Task<DateTime?> DetectExpiryAsync(Dictionary<string,string> credentials);
-    object ExtractMetadata(Dictionary<string,string> credentials);
-}
-```
+每种授权类型要提供四样东西：**它叫什么**（类型标识）、**怎么验凭证是否有效**、
+**怎么读出过期时间**、**从凭证里能抽出哪些可展示的信息**（如工作区名、账号名）。
+新增一种类型就是把这四样补齐并登记进注册表，**不改任何调用方**。
+
 
 新增类型只要实现这个接口 + 注册到 DI 容器。
 
@@ -217,26 +218,14 @@ public interface IAuthTypeHandler
 
 ### 工作流侧变更
 
-`requiredInputs` 新增类型：
+工作流的输入项新增一种「选授权」类型：声明它要哪一类授权、是否必填，
+界面就渲染成一个只列该类型的选择器。
 
-```typescript
-{
-  key: 'tapd',
-  type: 'auth-picker',   // 新增
-  authType: 'tapd',      // 限定可选类型
-  required: true
-}
-```
 
-模板 `build()` 生成的节点 config 引用 `authId`：
+模板生成的节点里**只存授权的引用（授权 ID）与取值方式，不存明文凭证**；
+执行时凭引用去换明文注入。这样凭证轮换后所有引用它的工作流自动跟着变，
+工作流定义本身也永远不含密钥。
 
-```typescript
-config: {
-  authMode: 'stored',
-  authId: inputs.tapd,     // 用户选的授权 ID
-  workspaceId: ...         // 从 metadata 取
-}
-```
 
 工作流执行时，`ExecuteTapdCollectorAsync` 读到 `authMode: 'stored'`，调 `/api/authorizations/:id/resolve` 取明文凭证注入。
 
@@ -246,7 +235,7 @@ config: {
 
 - `.claude/rules/marketplace.md` — 类型注册表模式参考
 - `.claude/rules/frontend-architecture.md` — 前端 CONFIG_TYPE_REGISTRY 参考
-- `doc/spec.srs.md` — 待更新，收录本模块
+- [doc/spec.srs.md](./spec.srs.md) — 待更新，收录本模块
 - `.claude/rules/codebase-snapshot.md` — 待更新，新增 `external_authorizations` 集合
 
 ---

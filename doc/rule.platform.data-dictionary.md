@@ -2,11 +2,17 @@
 
 > **版本**：v1.1 | **日期**：2026-07-23 | **状态**：已落地
 
+**一句话**：全系统持久化状态的对照表：数据库、缓存键、对象存储、网页端本地存储、桌面端落盘，一处集中查。
+**谁该读**：排障要找数据在哪的人；新增存储的工程师。
+**读完能做什么**：定位一份数据存在哪一层，并按维护规则登记新增的存储。
+
+---
+
 本文件用于**集中说明本项目所有“持久化/可恢复状态”**（服务端数据库、缓存 Key、对象存储、客户端本地存储、桌面端落盘文件等），作为研发与运维的统一对照表。
 
 维护规则（强制）：
 - 新增/变更任何持久化点（集合/索引/TTL、缓存 key、COS key、localStorage/IndexedDB、落盘文件路径/格式）时，**必须同步更新本文件**。
-- 以代码为准：后端集合以 `prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` 和实际 `GetCollection` 调用为权威来源，索引/TTL 以 `scripts/mongodb-indexes.js` 可执行 DBA 清单为权威来源；缓存 key 以 `prd-api/src/PrdAgent.Core/Interfaces/ICacheManager.cs` 为权威来源；COS key 以 `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs` 为权威来源。
+- 以代码为准：本文与代码冲突时一律信代码。四类东西各有自己的权威来源——集合看数据库上下文类的实际取集合调用，索引与 TTL 看 DBA 可执行清单脚本，缓存 key 看缓存管理接口，对象存储 key 看腾讯云存储实现（文件见文末「实现来源」）。
 
 
 ## MongoDB（长期存储）
@@ -72,7 +78,7 @@
 | `llm_app_callers` | `LLMAppCaller` | LLM 应用调用者配置 | `appCode` 唯一；`lastCalledAt` |
 | `model_scheduler_config` | `ModelSchedulerConfig` | 模型调度策略配置 | - |
 | `model_test_stubs` | `ModelTestStub` | 模型测试桩（Stub OpenAI 兼容） | - |
-| `model_exchanges` | `ModelExchange` | 模型中继（虚拟平台）。每条记录承载一个非标准上游 API（fal.ai / 豆包 ASR / Gemini 原生），对外伪装成 OpenAI 兼容接口。关键字段：`Name`（虚拟平台名，用户自定义显示）、`TargetUrl`（支持 `{model}` 占位符）、`TransformerType`（决定请求/响应转换逻辑）、`TargetAuthScheme`（Bearer / Key / x-api-key / x-goog-api-key / doubao-asr）、`Models: List<ExchangeModel>`（嵌套：挂在该中继下的模型列表，含 ModelId / DisplayName / ModelType / Description / Enabled）；兼容旧字段 `ModelAlias` + `ModelAliases: List<string>`，读取时 `GetEffectiveModels()` 自动 lazy migration（详见 `design.platform.exchange-virtual-platform.md`） | `ModelAlias` 唯一（源码注册，运行时未自动创建；未来建议换为 `Name` 唯一） |
+| `model_exchanges` | `ModelExchange` | 模型中继（虚拟平台）。每条记录承载一个非标准上游 API（fal.ai / 豆包 ASR / Gemini 原生），对外伪装成 OpenAI 兼容接口。关键字段：`Name`（虚拟平台名，用户自定义显示）、`TargetUrl`（支持 `{model}` 占位符）、`TransformerType`（决定请求/响应转换逻辑）、`TargetAuthScheme`（Bearer / Key / x-api-key / x-goog-api-key / doubao-asr）、`Models: List<ExchangeModel>`（嵌套：挂在该中继下的模型列表，含 ModelId / DisplayName / ModelType / Description / Enabled）；兼容旧字段 `ModelAlias` + `ModelAliases: List<string>`，读取时 `GetEffectiveModels()` 自动 lazy migration（详见 [design.platform.exchange-virtual-platform.md](./design.platform.exchange-virtual-platform.md)） | `ModelAlias` 唯一（源码注册，运行时未自动创建；未来建议换为 `Name` 唯一） |
 | `system_roles` | `SystemRole` | 系统角色定义（RBAC 权限矩阵） | `roleName` 唯一 |
 | `user_preferences` | `UserPreference` | 用户偏好设置 | `userId` 唯一 |
 | `watermark_font_assets` | `WatermarkFontAsset` | 水印字体资产 | `(userId, fontKey)` 唯一 |
@@ -104,6 +110,7 @@
 | `pr_review_items` | `PrReviewItem` | PR 审查工作台的用户级记录（owner/repo/number + 嵌入式 Snapshot + 私人笔记） | `(userId, updatedAt desc)`；`(userId, owner, repo, number)` 唯一 |
 | `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
 | `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
+| `document_embeddings` | `DocumentEmbedding` | 知识库文档切块向量（`Vector` 为 float32 二进制，随向量存 `Model` / `Dimension`，跨模型同维度判为不兼容；`DeploymentSlug` 隔离分支预览与生产，二者共用同一个 Mongo） | 待建：`(storeId, deploymentSlug, model)` 检索用；`(entryId, chunkIndex, deploymentSlug)` 唯一——**唯一键必须带部署作用域**，否则分支预览与生产的同一篇文档会撞键。索引未创建，见 no-auto-index 规则，交 DBA |
 | `document_stores` | `DocumentStore` | 知识库（文档空间）主记录：名称/描述/tags/是否公开/主文档/置顶/点赞收藏计数 | （未显式创建额外索引；owner 查询走 `OwnerId`） |
 | `document_entries` | `DocumentEntry` | 知识库内的文档条目：文件/文件夹/订阅源；含 `sourceType`(upload/subscription/github_directory)、同步字段（`SyncIntervalMinutes` / `LastSyncAt` / `IsPaused` / `ContentHash` / `LastETag` / `LastChangedAt`）、软链到 `ParsedPrd.Id` / `attachments.Id` | （未显式创建额外索引；按 `StoreId`、`ParentId` 查询） |
 | `document_sync_logs` | `DocumentSyncLog` | 知识库订阅同步日志（**只记录 change / error 事件**，无变化不落库）。GitHub 目录类型含 `FileChanges: [{path, action}]` | （按 `EntryId`、`SyncedAt desc` 查询） |
@@ -111,14 +118,14 @@
 | `document_store_favorites` | `DocumentStoreFavorite` | 知识库收藏记录 | `(StoreId, UserId)` 去重 |
 | `document_store_share_links` | `DocumentStoreShareLink` | 知识库分享链接（Token + 过期时间 + 访问计数） | `token` 唯一；`StoreId` |
 | `document_store_agent_runs` | `DocumentStoreAgentRun` | 知识库 Agent 任务（`Kind`: subtitle 字幕生成 / reprocess 文档再加工）。含 Run 状态机、流式产物、模板 key、自定义提示词 | （按 `SourceEntryId`、`Kind`、`Status` 查询；事件流走 `IRunEventStore`） |
-| `document_recording_upload_sessions` | `DocumentRecordingUploadSession` | 手机录音分片上传会话：记录目标知识库、下一分片序号、已确认字节数和完成后的音频条目 | `ExpiresAt` 过期会话在新会话建立时清理；建议部署 TTL 索引 |
-| `document_recording_upload_chunks` | `DocumentRecordingUploadChunk` | 录音期间顺序写入的临时二进制分片，完成后拼接进正式附件并立即删除 | `(SessionId, Index)` 逻辑唯一；超过一天的遗留分片在新会话建立时清理 |
+| `document_recording_upload_sessions` | `DocumentRecordingUploadSession` | 手机录音分片上传会话：记录目标知识库、下一分片序号、已确认字节数和完成后的音频条目 | `(OwnerInstanceId, Status, UpdatedAt)` partial 转录 outbox 恢复；`(OwnerInstanceId, ArchiveStatus, ArchiveNextAttemptAt)` 归档认领；`(OwnerInstanceId, ArchiveStatus, UpdatedAt)` 超时租约回收；`(ArchiveStatus, ExpiresAt)` 已归档清理；`(Status, DeferredTranscriptionRunPending, ExpiresAt, UpdatedAt)` 过期回收认领。**禁止 TTL**，由应用先删分片再删会话；索引清单会移除存量遗留 TTL |
+| `document_recording_upload_chunks` | `DocumentRecordingUploadChunk` | 录音期间顺序写入的临时二进制分片，完成后拼接进正式附件并立即删除 | `(SessionId, Index)` 覆盖读取、排序和删除；`(CreatedAt, SessionId)` 覆盖孤儿分片回收。**禁止 TTL**（同会话表） |
 | `document_store_view_events` | `DocumentStoreViewEvent` | 知识库浏览事件（谁访问了哪篇文档、停留多久）。含匿名访客 `AnonSessionToken`、`EnteredAt`、`LeftAt`、`DurationMs`、`UserAgent`、`Referer` | （按 `StoreId`、`EnteredAt desc` 查询） |
 | `document_inline_comments` | `DocumentInlineComment` | 文档划词评论（按 `SelectedText + ContextBefore/After` 锚定，非整章评论）。`Status`: active/orphaned；正文更新时由 `InlineCommentRebinder.TryRebind` 重锚定 | （按 `EntryId`、`CreatedAt` 查询） |
 | `mentions` | `Mention` | 通用 @ 账本（双链 + 反向链接 + 宇宙图 SSOT）。关键字段：`FromType`/`FromId`（引用源实体，MVP 仅 "document"）+ `ToType`/`ToId`（被引用实体）+ `AnchorText`（用户在源里看到的字面，如 "[[xxx]]" 的 xxx）+ `Context`（前后约 60 字上下文，反向链接展示用）+ `ScopeId`（作用域=StoreId）+ `IsAutoDetected`（false=用户显式 [[]]，true=AI 自动补链）。写入时机：`DocumentStoreController.UpdateEntryContent` 保存正文时 `MentionService.ResyncDocumentMentionsAsync` 先删后写；删除时 `DeleteEntry` 级联 `CascadeDeleteAsync` 清掉 from/to 任一为被删 entry 的记录 | 建议手动建索引（`no-auto-index` 规则）：`{ ScopeId: 1 }`（宇宙图全图）+ `{ ToType: 1, ToId: 1 }`（反向链接）+ `{ FromType: 1, FromId: 1 }`（先删后写）|
 | `agent_api_keys` | `AgentApiKey` | 海鲜市场开放接口 / Agent 开放入口的 M2M 长效 API Key。关键字段：`ApiKeyHash`（SHA256，不存明文）+ `KeyPrefix`（明文前 12 字符仅用于 UI 识别）+ `Scopes: List<string>`（`marketplace.skills:read/write` 或动态 `agent.{key}:{action}`）+ `ExpiresAt`（可为 null；默认 365 天；过期后有 7 天 `GracePeriodDays` 宽限期仍放行）+ `RevokedAt`（非空即失效）+ `LastRenewedAt/LastUsedAt`（审计）+ `OwnerUserId`（调用时以该用户身份执行） | 按 `ApiKeyHash` 查询（鉴权）；按 `OwnerUserId` 查询（用户管理） |
 | `agent_open_endpoints` | `AgentOpenEndpoint` | P3 Agent 开放接口登记。每条描述"某个 Agent 在路径 Y 开放 HTTP 接口，需 scope Z 调用"。关键字段：`AgentKey`（kebab-case，对齐 `toolboxStore.BUILTIN_TOOLS`）+ `HttpMethod` + `Path`（绝对路径）+ `RequiredScopes: List<string>`（正则 `agent.{key}:{action}`）+ `AllowedCallerUserIds`（反向白名单，空=公开给所有持 scope 的 Key）+ `RequestExampleJson/ResponseExampleJson`（给前端渲染调用示例）+ `LinkedMarketplaceSkillId`（P3 桥接目标，已占位、自动桥接逻辑待后续实现） | 按 `AgentKey` 查询；按 `RequiredScopes` 反查（用于 scope 白名单校验） |
-| `home_recent_opens` | `UserRecentOpen` | 首页「继续上次」每用户最近打开台账。打开视觉/文学工作区详情或工作流详情时 `RecentOpenTracker.TouchAsync` 按 `(UserId, AgentKey, EntityId)` upsert。是 `GET /api/home/recent-work` 的唯一数据源——禁止改回实体全局时间戳（UpdatedAt/LastOpenedAt/LastExecutedAt），否则共享成员/定时任务的活跃会顶进所有用户的继续上次 | 建议手动建索引（`no-auto-index`）：`(UserId, LastOpenedAt desc)` + `(UserId, AgentKey, EntityId)` 唯一，见 guide.platform.mongodb-indexes.md |
+| `home_recent_opens` | `UserRecentOpen` | 首页「继续上次」每用户最近打开台账。打开视觉/文学工作区详情或工作流详情时 `RecentOpenTracker.TouchAsync` 按 `(UserId, AgentKey, EntityId)` upsert。是 `GET /api/home/recent-work` 的唯一数据源——禁止改回实体全局时间戳（UpdatedAt/LastOpenedAt/LastExecutedAt），否则共享成员/定时任务的活跃会顶进所有用户的继续上次 | 建议手动建索引（`no-auto-index`）：`(UserId, LastOpenedAt desc)` + `(UserId, AgentKey, EntityId)` 唯一，见 [guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md) |
 
 ### LLM Gateway 独立数据库
 
@@ -136,7 +143,7 @@
 
 ### Redis 基本配置
 
-- **默认 TTL**：`Session:TimeoutMinutes`（默认 30 分钟），由 `RedisCacheManager` 的 `defaultExpiryMinutes` 决定（见 `prd-api/src/PrdAgent.Api/Program.cs`）。
+- **默认 TTL**：`Session:TimeoutMinutes`（默认 30 分钟），由 `RedisCacheManager` 的 `defaultExpiryMinutes` 决定。
 - **序列化**：JSON（camelCase）。
 
 ### Redis Key 清单
@@ -165,8 +172,6 @@
 ## 对象存储（Tencent COS）
 
 ### COS Key（对象名）规则
-
-权威实现：`prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs`
 
 - **Key 必须全小写**。
 - 业务 Key 由 `domain/type/sha/ext` 决定，形如：
@@ -212,7 +217,7 @@
 
 | Key | 值 | 说明 |
 |---|---|---|
-| `prd-admin-auth` | zustand persist（`{ state, version }`） | 管理端登录态（`prd-admin/src/stores/authStore.ts`）；入口会读取它来判断是否触发 post-login 特效（`prd-admin/src/main.tsx`） |
+| `prd-admin-auth` | zustand persist（`{ state, version }`） | 管理端登录态；入口会读取它来判断是否触发 post-login 特效 |
 | `prd-admin-layout` | zustand persist | 仅持久化 `navCollapsed`（侧边栏折叠） |
 | `prdAdmin.aiChat.sessions.{userId}` | `LocalSession[]` | AI Chat 页面本地会话列表（仅 UI 层） |
 | `prdAdmin.aiChat.messages.{userId}.{sessionId}` | `UiMessage[]` | AI Chat 页面本地消息（仅 UI 层） |
@@ -241,12 +246,12 @@
 
 ### localStorage（Zustand persist）
 
-| Key | 值 | 说明 |
+| Key | 值 | 实现文件 |
 |---|---|---|
 | `auth-storage` | 认证信息（token/refresh/sessionKey/user） | `prd-desktop/src/stores/authStore.ts` |
 | `session-storage` | 会话/角色/模式/文档/群游标等（partialize） | `prd-desktop/src/stores/sessionStore.ts` |
 | `message-storage` | 已加载消息（partialize），并在 rehydrate 时 revive Date | `prd-desktop/src/stores/messageStore.ts` |
-| `prd-citation-preview-storage` | `drawerWidth` | 引用预览抽屉宽度（`prd-desktop/src/stores/prdCitationPreviewStore.ts`） |
+| `prd-citation-preview-storage` | `drawerWidth` | 引用预览抽屉宽度 |
 | `ui-prefs-storage` | UI 偏好设置（主题、布局等） | `prd-desktop/src/stores/uiPrefsStore.ts` |
 | `settings-storage` | 用户设置（服务器地址、开发者模式等） | `prd-desktop/src/stores/settingsStore.ts` |
 | `desktop-branding-storage` | 桌面端品牌配置（名称、图标 URL 等） | `prd-desktop/src/stores/desktopBrandingStore.ts` |
@@ -256,16 +261,43 @@
 
 | Key | 值 | 说明 |
 |---|---|---|
-| `prdAgent.sidebarWidth` | string（number） | Sidebar 展开宽度（`prd-desktop/src/components/Layout/Sidebar.tsx`） |
+| `prdAgent.sidebarWidth` | string（number） | Sidebar 展开宽度 |
 
 ### sessionStorage
 
 | Key | 值 | 说明 |
 |---|---|---|
-| `demo-prd-content` | string | 演示模式的 PRD 内容缓存（`prd-desktop/src/components/Settings/SettingsModal.tsx`） |
+| `demo-prd-content` | string | 演示模式的 PRD 内容缓存 |
 
 ### 落盘文件（Tauri）
 
 | 路径 | 格式 | 说明 |
 |---|---|---|
 | `{app_data_dir}/config.json` | JSON（pretty） | 桌面端配置（`apiBaseUrl/isDeveloper/clientId`），由 `src-tauri/src/commands/config.rs` 读写 |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| Redis 基本配置 | `prd-api/src/PrdAgent.Api/Program.cs` |
+| localStorage | `prd-admin/src/stores/authStore.ts`、`prd-admin/src/main.tsx` |
+| localStorage（Zustand persist） | `prd-desktop/src/stores/prdCitationPreviewStore.ts` |
+| localStorage（手写 key） | `prd-desktop/src/components/Layout/Sidebar.tsx` |
+| sessionStorage | `prd-desktop/src/components/Settings/SettingsModal.tsx` |
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 权威来源 | 文件 |
+|----------|------|
+| 集合清单 | `prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` |
+| 索引与 TTL | `scripts/mongodb-indexes.js` |
+| 缓存 key | `prd-api/src/PrdAgent.Core/Interfaces/ICacheManager.cs` |
+| 对象存储 key | `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs` |

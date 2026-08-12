@@ -2,8 +2,13 @@
 
 > **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
 
-> **更新**:2026-07-15
+**一句话**：验收自身改动原本只能对生产实例自更新、全员陪跑，本文讲怎么让它托管自己做隔离验收。
+**谁该读**：做自身验收的工程师。
+**读完能做什么**：说清自托管验收与生产自更新的风险差别。
 
+---
+
+> **更新**:2026-07-15
 
 ## 一、管理摘要
 
@@ -97,9 +102,8 @@ SSOT:`cds/src/services/preview-instance.ts`。
 
 - `cds/src/services/preview-instance.ts` / `preview-instance-seed.ts` — 模式 SSOT 与 seed
 - `cds/cds-compose.selfhost.yml` — cds-self 项目 compose 合同(粘贴导入)
-- `cds/tests/services/preview-instance.test.ts` — 拦截边界 + seed 幂等单测
 - `.claude/rules/cross-project-isolation.md` — 通道 4(共享库)/通道 5(self-update 重启)是本设计要消灭的痛
-- `doc/plan.cds.status.md` — CDS 活状态与路线入口
+- [doc/plan.cds.status.md](./plan.cds.status.md) — CDS 活状态与路线入口
 
 ## 七、风险与已知边界
 
@@ -107,3 +111,13 @@ SSOT:`cds/src/services/preview-instance.ts`。
 - 演示分支的"运行中"状态是 seed 出来的形状数据,点它的预览链接不会有真页面(分支卡有备注说明);
 - 冷构建(两次 pnpm install + tsc + vite build)约 3-6 分钟,readiness 窗口已放到 1200s;
 - 同仓库双项目会双份 clone(磁盘),janitor 只在父 CDS 生效,子实例无清理需求(无容器、state 随 worktree 回收)。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 六、关联 | `cds/tests/services/preview-instance.test.ts` | 拦截边界 + seed 幂等单测 |

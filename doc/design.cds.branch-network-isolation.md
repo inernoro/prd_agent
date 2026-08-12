@@ -2,6 +2,12 @@
 
 > **版本**：v1.0 | **日期**：2026-06-29 | **状态**：已落地
 
+**一句话**：同项目各分支原本共用一张网络、靠服务别名互通，本文讲怎么补上分支之间的隔离。
+**谁该读**：排查分支间串扰的工程师。
+**读完能做什么**：说清隔离前后的连通性变化。
+
+---
+
 > 进度：代码已落地，待 CDS 灰度 docker 验证后默认生效。
 
 ## 1. 管理摘要（30 秒）
@@ -54,10 +60,8 @@ docker 多网语义：容器同时挂分支网 + 共享网时，DNS 跨其所连
 
 ## 5. 实现位置（official/self-built 边界无关，纯自建）
 
-- `cds/src/services/branch-network.ts`：纯函数 SSOT（`branchAppNetworkName` / `resolveAppNetworkPlan`
   / `branchNetworkIsolationEnabled`）。`branchAppNetworkName` 超 60 字符时截断 + 追加完整 id 短哈希后缀
   保唯一（Codex P2，避免长 id 撞同网）；≤60 输出零回归。单测 `cds/tests/services/branch-network.test.ts`。
-- `cds/src/services/container.ts`：
   - `runService`（app 容器，隔离时）：**create → connect(infra) → start** 时序——先 `docker create`
     （进程不启动）落在分支网，再 `connectContainerToSharedNetwork` 连共享 infra 网，**最后 `docker start`**。
     保证进程启动前两张网都已就位，避免 entrypoint 阶段就开 DB 连接的镜像在 infra 网就位前连库失败
@@ -92,3 +96,14 @@ docker 多网语义：容器同时挂分支网 + 共享网时，DNS 跨其所连
 
 - 根因排查与 bug 修复见 `changelogs/2026-06-29_*`。
 - 跨项目隔离（P4，项目级网络）见 `.claude/rules/cross-project-isolation.md`；本设计在其下做**分支级**细分。
+
+---
+
+## 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 | 作用 |
+|------|------|------|
+| 5. 实现位置（official/self-built 边界无关，纯自建） | `cds/src/services/branch-network.ts` | 纯函数 SSOT（`branchAppNetworkName` / `resolveAppNetworkPlan` |
+| 5. 实现位置（official/self-built 边界无关，纯自建） | `cds/src/services/container.ts` | — |

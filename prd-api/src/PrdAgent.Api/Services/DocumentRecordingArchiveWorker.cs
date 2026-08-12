@@ -440,7 +440,9 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
 
     internal static TimeSpan ComputeBackoff(int attempts)
     {
-        var minutes = Math.Min(360, Math.Pow(2, Math.Clamp(attempts, 0, 8)));
+        // 对象存储恢复后必须在可感知时间内自愈。长达数小时的指数退避会让一段
+        // 已安全落库的录音看起来永久卡死；15 分钟封顶，同时保留手动立即重试入口。
+        var minutes = Math.Min(15, Math.Pow(2, Math.Clamp(attempts, 0, 4)));
         return TimeSpan.FromMinutes(minutes);
     }
 

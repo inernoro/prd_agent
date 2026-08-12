@@ -12,6 +12,7 @@ import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
+import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
@@ -35,7 +36,9 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
 import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
+import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
+import { availabilityOverRange } from './services/uptime-metrics.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -222,7 +225,69 @@ function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Time
  * 端点共用，端点是注册在「任务调度」里的定时回归任务的探测目标）。
  */
 const BUILD_GATE_WATCHDOG_INTERVAL_MS = 60_000;
+// 入口可达性自检间隔。2026-07-30 事故：Cloudflare 一条规则把 /api/self-update
+// 挡在应用之外数小时无人知晓——因为请求没进应用，CDS 的日志和历史都不会有记录。
+// 30 分钟一轮足够（拦截规则不是高频事件），且探测本身是三个无鉴权请求，开销可忽略。
+const ENTRYPOINT_SELF_CHECK_INTERVAL_MS = 30 * 60_000;
+// 启动后延迟首检：等 CDS 自己起来并且 nginx reload 完，否则首检必然误报。
+const ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS = 90_000;
+
 const BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS = 10 * 60_000;
+
+/**
+ * 控制面入口可达性看门狗（2026-07-30）。
+ *
+ * 回答一个此前没人问过的问题：**我自己的入口，从公网还进得来吗？**
+ *
+ * 这次事故里 /api/self-update 被 CDN 规则挡在应用外，用户每次点更新都失败，
+ * 但因为请求没进应用，CDS 的日志、更新历史、事件流里一条记录都没有——
+ * 从系统内部看一切正常。只有从**公网**回头探测自己，才能看见这一层。
+ */
+function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  // executor 不对外提供控制面入口，自检没有意义。
+  if (config.mode === 'executor') return null;
+  const baseUrl = resolveSelfCheckBaseUrl(config.rootDomains);
+  if (!baseUrl) {
+    // 没配根域名就没法做真实链路探测。明说跳过，不假装健康（no-rootless-tree）。
+    console.log('[entrypoint-check] 未配置 CDS_ROOT_DOMAINS，跳过入口可达性自检');
+    return null;
+  }
+
+  let lastBlockedSignature = '';
+  const run = async () => {
+    try {
+      const report = await runEntrypointSelfCheck(baseUrl);
+      const signature = report.blocked.map((b) => `${b.path}:${b.status}`).join(',');
+      if (signature === lastBlockedSignature) return;   // 状态没变化就不刷屏
+      lastBlockedSignature = signature;
+
+      if (report.healthy) {
+        console.log(`[entrypoint-check] ${report.summary}`);
+        store?.record({
+          category: 'system', severity: 'info', source: 'entrypoint-check',
+          action: 'entrypoint.reachability.recovered',
+          message: report.summary, status: 'info',
+          details: { results: report.results },
+        });
+        return;
+      }
+      console.warn(`[entrypoint-check] ${report.summary}`);
+      store?.record({
+        category: 'system', severity: 'warn', source: 'entrypoint-check',
+        action: 'entrypoint.reachability.blocked',
+        message: report.summary, status: 'warn',
+        details: { blocked: report.blocked, nextAction: report.nextAction, results: report.results },
+      });
+    } catch (err) {
+      console.warn(`[entrypoint-check] 自检失败: ${(err as Error).message}`);
+    }
+  };
+
+  setTimeout(() => { void run(); }, ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, ENTRYPOINT_SELF_CHECK_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
 
 function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateService): NodeJS.Timeout | null {
   if (!store) return null;
@@ -874,6 +939,7 @@ if (activeServerEventLogStore) {
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
+const entrypointReachabilityWatchdog = startEntrypointReachabilityWatchdog(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
@@ -2007,7 +2073,7 @@ diskGuard.refreshNow();
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
-// infra 生命周期取证器（debt.cds.replica-set #17）：常驻 docker events 监听，
+// infra 生命周期取证器（doc/debt.cds.md「CDS 复制集模式工程债务」 #17）：常驻 docker events 监听，
 // 记录 infra 容器 oom/die/kill/start 事件，区分 cgroup OOM / 外部 SIGKILL / 自身退出
 const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore });
 
@@ -3574,7 +3640,7 @@ function buildBranchAbandonedPageHtml(opts: {
 
 // buildTransitPageHtml（未构建分支的全屏过渡页）已于 2026-07-09 删除：全仓零调用点的
 // 死代码（已被 React PreviewPreparingPage / preview-canary 流程取代）。历史实现见 git
-// 记录；等待页 SSOT 见 src/loading-pages/index.ts（doc/debt.cds.nginx-loading-pages.md D2）。
+// 记录；等待页 SSOT 见 src/loading-pages/index.ts（doc/debt.cds.md「CDS Loading Pages」 D2）。
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.
@@ -4396,6 +4462,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+    // 掉线/恢复上总线。少了这一行，生产健康掉线只会躺在 incidents 台账里，
+    // 没人盯着状态页就等于没发生——服务端站内信账本正是订阅总线拿到它的。
+    // 「这条要不要叫醒人」的判定仍只在 CDS_EVENT_ALERT_CLASS 一处，这里只转发。
+    onAlert: (type, data) => { cdsEventsBus.publish(type, data); },
   });
   app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
   // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()
@@ -4417,6 +4487,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     setReleaseHealthSource((probeTargetId) => {
       const record = uptimeMonitor.getRecord(probeTargetId);
       if (!record) return undefined;
+      // 近 24h 走存活监控自己那份口径（状态页也用它），发布中心不另算一遍：
+      // 两处各算各的必然漂移，用户会看到同一个目标在两个页面上可用率不一样。
+      const a24 = availabilityOverRange(record, 24 * 3600 * 1000, Date.now());
       return {
         status: record.status,
         probeUrl: record.probeUrl,
@@ -4424,6 +4497,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         pausedReason: record.pausedReason,
         excluded: record.excluded,
         intervalSeconds: Math.round(uptimeMonitor.config.intervalMs / 1000),
+        availability24h: a24.ratio,
+        sampleCount24h: a24.upCount + a24.downCount,
+        upCount24h: a24.upCount,
+        avgLatencyMs24h: a24.avgLatencyMs,
       };
     });
   }
