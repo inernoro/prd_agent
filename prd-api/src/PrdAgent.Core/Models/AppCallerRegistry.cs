@@ -1136,6 +1136,18 @@ public static class Admin
         public const string Query = "prd-agent-web.knowledge-base.query::embedding";
     }
 
+    /// <summary>网页托管「向我提问」：访客对着托管页面提问，上下文是该页面正文。</summary>
+    public static class WebHosting
+    {
+        [AppCallerMetadata(
+            "网页托管-向我提问",
+            "访客在托管页面右下角提问，模型只依据该页面正文回答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Ask = "prd-agent-web.web-hosting.ask::chat";
+    }
+
     public static class Lab
     {
         [AppCallerMetadata(

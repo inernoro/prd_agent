@@ -104,6 +104,37 @@ public class HostedSite
     /// </summary>
     public bool CommentsEnabled { get; set; } = true;
 
+    // ── 向我提问（访客对着这个页面问 AI） ──
+
+    /// <summary>
+    /// 是否开放「向我提问」。默认 **false** —— 与 CommentsEnabled 刻意相反。
+    ///
+    /// 评论是纯存储、零边际成本，所以默认开；提问每一次都要烧 token 和钱，
+    /// 存量站点绝不能因为 Mongo 反序列化老文档（无此字段）就"顺带被打开"。
+    /// 初始化器为 false，老文档反序列化后恒为关闭，owner 必须显式打开。
+    /// </summary>
+    public bool AskEnabled { get; set; }
+
+    /// <summary>提问面板的欢迎语；空则前端用站点标题兜底</summary>
+    public string? AskWelcome { get; set; }
+
+    /// <summary>
+    /// 站点级开场问题题库 —— owner 在「提问设置」里维护的候选池。
+    /// 分享链接可以从这个池子里各自挑几条（见 WebPageShareLink.AskSuggestedQuestions）；
+    /// 没挑的链接直接用这里的全量（截前 N 条）。
+    /// </summary>
+    public List<string> AskSuggestedQuestions { get; set; } = new();
+
+    /// <summary>是否允许未登录访客提问。false = 只有登录用户能问（默认，防白嫖 token）</summary>
+    public bool AskAllowAnonymous { get; set; }
+
+    /// <summary>本站点每日提问次数上限（0 = 用系统默认值）</summary>
+    public int AskDailyLimit { get; set; }
+
+    /// <summary>提问配置最后修改时间 / 修改人（审计用，排查"谁把它打开了"）</summary>
+    public DateTime? AskConfigUpdatedAt { get; set; }
+    public string? AskConfigUpdatedBy { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
@@ -243,6 +274,20 @@ public class WebPageShareLink
     /// 不参与高频写路径（避免每次访问聚合 distinct count）。
     /// </summary>
     public long UniqueIpCount { get; set; }
+
+    /// <summary>
+    /// 本条分享链接自选的开场问题（创建分享时从站点题库里勾选，也可现场加自定义的）。
+    ///
+    /// 三态语义，**禁止**给这里加 `= new()` 初始化器 —— 加了就把「没选」和「选了空」
+    /// 糊成同一个值，等于永远读不出"这条链接明确不要开场问题"：
+    ///   - null       = 没选过（存量分享反序列化落这里）→ 继承站点题库 HostedSite.AskSuggestedQuestions
+    ///   - 空列表 []  = 明确选了"一个都不显示"→ 面板不出开场问题
+    ///   - 非空列表   = 本链接只显示这几条
+    ///
+    /// 同一个坑 ContentVersion 上面已经栽过一次（初始化器让老文档读出错误的活跃值），
+    /// 三态取舍统一收在 <see cref="AskOpeningQuestions.Resolve"/>，不许在别处各判一遍。
+    /// </summary>
+    public List<string>? AskSuggestedQuestions { get; set; }
 
     private static string GenerateToken()
         => Convert.ToBase64String(RandomNumberGenerator.GetBytes(9))
