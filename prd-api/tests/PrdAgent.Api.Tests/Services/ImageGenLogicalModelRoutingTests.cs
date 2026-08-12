@@ -1,4 +1,5 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LLM;
 using Xunit;
@@ -64,5 +65,34 @@ public sealed class ImageGenLogicalModelRoutingTests
         var result = ImageGenRunWorker.ResolveExplicitLogicalModelPublicId(run);
 
         Assert.Null(result);
+    }
+
+    [Fact]
+    public void ResolveEffectiveIsAdaptive_PrefersConfiguredPromptCapability()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            ParameterCapabilities = new Dictionary<string, bool>
+            {
+                ["image_size.prompt"] = true,
+                ["image_size.field.size"] = true,
+            },
+        };
+
+        Assert.True(OpenAIImageClient.ResolveEffectiveIsAdaptive(resolution, "plain-image-model"));
+    }
+
+    [Fact]
+    public void ResolveEffectiveIsAdaptive_ConfiguredNoneOverridesLegacyAdaptiveAdapter()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            ParameterCapabilities = new Dictionary<string, bool>
+            {
+                ["image_size.none"] = true,
+            },
+        };
+
+        Assert.False(OpenAIImageClient.ResolveEffectiveIsAdaptive(resolution, "gpt-image-2-all"));
     }
 }

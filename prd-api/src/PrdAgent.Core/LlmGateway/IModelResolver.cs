@@ -496,7 +496,7 @@ public class ModelResolutionResult
             SupportsStructuredOutput = StructuredOutputCapability(model),
             SupportsLogprobs = LogprobsCapability(model),
             SupportsParallelToolCalls = ParallelToolCallsCapability(model),
-            ParameterCapabilities = ExtractParameterCapabilities(model.Capabilities),
+            ParameterCapabilities = ExtractExchangePoolParameterCapabilities(model.Capabilities),
             InputPricePerMillion = model.InputPricePerMillion,
             OutputPricePerMillion = model.OutputPricePerMillion,
             PricePerCall = model.PricePerCall,
@@ -710,7 +710,23 @@ public class ModelResolutionResult
         => CapabilityValue(EffectiveCapabilities(model, modelConfig), "parallel_tool_calls", "parallel_tools", "parallel_function_calling");
 
     private static IEnumerable<LLMModelCapability>? EffectiveCapabilities(ModelGroupItem model, LLMModel? modelConfig)
-        => model.Capabilities is { Count: > 0 } ? model.Capabilities : modelConfig?.Capabilities;
+    {
+        // 上游模型能力是最终事实。池成员仍可补充普通能力，但只要已解析到真实模型配置，
+        // image_size 保留命名空间就只从该模型读取；模型切回 inherit 后也不能让旧池快照回流。
+        var merged = new Dictionary<string, LLMModelCapability>(StringComparer.OrdinalIgnoreCase);
+        foreach (var capability in modelConfig?.Capabilities ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(capability.Type)) merged[capability.Type] = capability;
+        }
+        foreach (var capability in model.Capabilities ?? [])
+        {
+            if (modelConfig is not null
+                && ImageSizeControlCapabilities.IsSizeControlCapability(capability.Type))
+                continue;
+            if (!string.IsNullOrWhiteSpace(capability.Type)) merged[capability.Type] = capability;
+        }
+        return merged.Count == 0 ? null : merged.Values;
+    }
 
     private static bool? CapabilityValue(IEnumerable<LLMModelCapability>? capabilities, params string[] types)
     {
@@ -733,20 +749,13 @@ public class ModelResolutionResult
         return result.Count == 0 ? null : result;
     }
 
+    private static Dictionary<string, bool>? ExtractExchangePoolParameterCapabilities(
+        IEnumerable<LLMModelCapability>? capabilities)
+        => ExtractParameterCapabilities(capabilities?.Where(capability =>
+            !ImageSizeControlCapabilities.IsSizeControlCapability(capability.Type)));
+
     private static string? ParameterCapabilityName(string? type)
-    {
-        if (string.IsNullOrWhiteSpace(type)) return null;
-        var normalized = type.Trim();
-        foreach (var prefix in new[] { "parameter:", "parameter.", "param:", "param." })
-        {
-            if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                var name = normalized[prefix.Length..].Trim();
-                return name.Length == 0 ? null : name;
-            }
-        }
-        return null;
-    }
+        => ParameterCapabilityTypes.GetParameterName(type);
 }
 
 /// <summary>

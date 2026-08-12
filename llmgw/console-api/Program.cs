@@ -6903,6 +6903,8 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
             { "modelName", draft.ModelName },
             { "protocol", ToBsonAuditValue(draft.Protocol) },
             { "capabilities", new BsonArray(draft.Capabilities) },
+            { "imageSizeControlMode", draft.ImageSizeControlMode },
+            { "imageSizeFieldFormat", ToBsonAuditValue(draft.ImageSizeFieldFormat) },
             { "priceCurrency", ToBsonAuditValue(draft.PriceCurrency) },
             { "hasDedicatedKey", encryptedApiKey is not null },
             { "modelsAppended", ensured.ModelsAppended },
@@ -6993,6 +6995,62 @@ app.MapPut("/gw/models/{id}/enabled", async (HttpContext http, string id, Toggle
             { "authority", targetAuthority },
         });
     var fresh = await targetModels.Find(filter).FirstOrDefaultAsync();
+    return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 上游生图模型尺寸能力：能力跟随实际模型，逻辑模型和业务端不得按模型名猜测。
+app.MapPut("/gw/models/{id}/image-size-control", async (
+    HttpContext http,
+    string id,
+    [FromBody] UpdateModelImageSizeControlRequest? body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "缺少图片尺寸控制配置"), jsonOptions, 400);
+    if (!GatewayConfigurationProvisioning.TryNormalizeImageSizeControl(
+            body.Mode, body.FieldFormat, out var mode, out var fieldFormat, out var error))
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var doc = await gwModels.Find(filter).FirstOrDefaultAsync();
+    if (doc is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("NOT_GW_AUTHORITY", "请先将模型导入平台，再维护上游尺寸能力"), jsonOptions, 409);
+
+    var currentCaps = doc.TryGetValue("Capabilities", out var cv) && cv.IsBsonArray
+        ? cv.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList()
+        : new List<BsonDocument>();
+    var isImageGeneration = doc.AsNullableBool("IsImageGen") == true
+                            || GatewayConfigurationProvisioning.HasEnabledCapability(
+                                currentCaps,
+                                "image_generation",
+                                "text_to_image",
+                                "image");
+    if (mode != "inherit" && !isImageGeneration)
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "只有图片生成模型可以配置图片尺寸控制能力"), jsonOptions, 400);
+
+    var before = MapImageSizeControl(currentCaps);
+    var nextCaps = currentCaps
+        .Where(x => !GatewayConfigurationProvisioning.IsImageSizeControlCapability(x.AsNullableString("Type")))
+        .ToList();
+    nextCaps.AddRange(GatewayConfigurationProvisioning.BuildImageSizeCapabilityDocuments(mode, fieldFormat));
+    await gwModels.UpdateOneAsync(filter, Builders<BsonDocument>.Update
+        .Set("Capabilities", new BsonArray(nextCaps))
+        .Set("UpdatedAt", DateTime.UtcNow));
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.update_image_size_control",
+        targetType: "llmgw_model",
+        targetId: id,
+        targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "mode", new BsonDocument { { "from", before.Mode }, { "to", mode } } },
+            { "fieldFormat", new BsonDocument { { "from", ToBsonAuditValue(before.FieldFormat) }, { "to", ToBsonAuditValue(fieldFormat) } } },
+            { "authority", "llm_gateway" },
+        });
+    var fresh = await gwModels.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
@@ -7481,10 +7539,10 @@ app.MapPost("/gw/models/capabilities/bulk-update", async (HttpContext http, [Fro
     foreach (var capability in body.Capabilities ?? new List<ModelCapabilityItem>())
     {
         if (capability is null) continue;
-        var type = capability.Type.Trim();
+        if (!GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
+                capability.Type, out var type, out var capabilityTypeError))
+            return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", capabilityTypeError), jsonOptions, 400);
         var source = string.IsNullOrWhiteSpace(capability.Source) ? "user" : capability.Source.Trim();
-        if (type.Length == 0) return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "capability.type 不能为空"), jsonOptions, 400);
-        if (type.Length > 120) return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "capability.type 长度超出限制"), jsonOptions, 400);
         if (source.Length > 40) return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "capability.source 长度超出限制"), jsonOptions, 400);
         capabilityPatches.Add(new BsonDocument
         {
@@ -8774,6 +8832,13 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
     if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
     var managedAppendOnly = IsManagedAppendOnlyPool(pool);
     if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    if (GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            body.Capabilities?.Select(capability => capability?.Type) ?? []))
+    {
+        return Json(ApiEnvelope<PoolItem>.Fail(
+            "INVALID_INPUT",
+            "图片尺寸能力只能在模型高级配置中维护，不能写入模型池成员"), jsonOptions, 400);
+    }
 
     var modelId = (body.ModelId ?? string.Empty).Trim();
     var platformId = (body.PlatformId ?? string.Empty).Trim();
@@ -11615,6 +11680,7 @@ static ModelItem MapModel(BsonDocument d)
         Source = c.GetStringOrEmpty("Source"),
         Value = c.AsNullableBool("Value") ?? false,
     }).ToList();
+    var imageSizeControl = MapImageSizeControl(capsArr.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument));
     return new ModelItem
     {
         Id = d.GetStringOrEmpty("_id"),
@@ -11645,6 +11711,8 @@ static ModelItem MapModel(BsonDocument d)
         FailCount = d.AsNullableLong("FailCount") ?? 0,
         TotalDuration = d.AsNullableLong("TotalDuration") ?? 0,
         Capabilities = caps,
+        ImageSizeControlMode = imageSizeControl.Mode,
+        ImageSizeFieldFormat = imageSizeControl.FieldFormat,
         InputPricePerMillion = d.AsNullableDecimal("InputPricePerMillion"),
         OutputPricePerMillion = d.AsNullableDecimal("OutputPricePerMillion"),
         PricePerCall = d.AsNullableDecimal("PricePerCall"),
@@ -11653,6 +11721,9 @@ static ModelItem MapModel(BsonDocument d)
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
     };
 }
+
+static (string Mode, string? FieldFormat) MapImageSizeControl(IEnumerable<BsonDocument> capabilities)
+    => GatewayConfigurationProvisioning.MapImageSizeControl(capabilities);
 
 static bool IsSafeOfferingEndpointPath(string? value)
 {

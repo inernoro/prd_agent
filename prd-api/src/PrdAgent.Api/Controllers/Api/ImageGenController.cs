@@ -54,6 +54,13 @@ public class ImageGenController : ControllerBase
         public const string VisionGen = "visual-agent.image.vision::generation";
     }
 
+    private static readonly string[] ImageGenAppCallerCodes =
+    [
+        AppCallerCodes.Text2Img,
+        AppCallerCodes.Img2Img,
+        AppCallerCodes.VisionGen,
+    ];
+
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public ImageGenController(
@@ -99,13 +106,12 @@ public class ImageGenController : ControllerBase
     [HttpGet("models")]
     public async Task<IActionResult> GetImageGenModels(CancellationToken ct)
     {
-        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img, AppCallerCodes.VisionGen };
         const string modelType = "generation";
 
         var seen = new HashSet<string>();
         var merged = new List<ModelPoolForAppResult>();
 
-        foreach (var code in codes)
+        foreach (var code in ImageGenAppCallerCodes)
         {
             var pools = (await _gateway.GetAvailablePoolsAsync(code, modelType, ct))
                 .Select(pool => MapAvailablePool(pool, modelType));
@@ -429,30 +435,84 @@ public class ImageGenController : ControllerBase
         var requestedModelId = modelId.Trim();
         var adapterModelId = requestedModelId;
         var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
-        if (adapterInfo == null || !adapterInfo.Matched)
+        // 尺寸传输方式属于实际上游模型，即使公开模型名恰好命中旧适配表，也要先解析
+        // 当前路由，避免静态兼容配置遮住控制台显式声明的字段或提示词能力。
+        GatewayModelResolution? runtimeResolution = null;
+        // 模型列表合并了三类生图调用方；适配信息也必须在同一授权范围内解析，不能固定按
+        // 文生图查询，否则仅授权给图生图或多图生成的模型会错误回退到旧适配信息。
+        foreach (var appCallerCode in ImageGenAppCallerCodes)
         {
-            // 视觉创作展示的是 Gateway 逻辑模型公开 ID（如 image2），而尺寸传输方式属于实际
-            // Offering 的适配能力。统一通过 Gateway 解析契约取得运行时模型，不在前端或此处维护别名表。
-            var resolution = await _gateway.ResolveRequiredLogicalModelAsync(
-                AppCallerCodes.Text2Img,
+            var candidate = await _gateway.ResolveRequiredLogicalModelAsync(
+                appCallerCode,
                 "generation",
                 requestedModelId,
                 ct);
-            if (resolution.Success && !string.IsNullOrWhiteSpace(resolution.ActualModel))
+            if (candidate.Success)
             {
-                adapterModelId = resolution.ActualModel.Trim();
-                adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
+                runtimeResolution = candidate;
+                break;
             }
         }
 
+        if (runtimeResolution?.Success == true && !string.IsNullOrWhiteSpace(runtimeResolution.ActualModel))
+        {
+            adapterModelId = runtimeResolution.ActualModel.Trim();
+            adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
+        }
+
+        var upstreamSizeControl = ImageSizeControlCapabilities.Parse(runtimeResolution?.ParameterCapabilities);
         if (adapterInfo == null || !adapterInfo.Matched)
         {
-            return Ok(ApiResponse<object>.Ok(new
+            if (!upstreamSizeControl.IsConfigured)
             {
-                matched = false,
-                modelId = requestedModelId,
-            }));
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    matched = false,
+                    modelId = requestedModelId,
+                }));
+            }
+
+            // 新上游可以只通过显式 image_size 能力完成接入，不要求先把模型名写进
+            // MAP 的旧适配表。保留一组通用选择项，none 模式由 sizesNotApplicable 隐藏。
+            adapterInfo = new ImageGenAdapterInfo
+            {
+                Matched = true,
+                AdapterName = adapterModelId,
+                DisplayName = adapterModelId,
+                Provider = runtimeResolution?.ActualPlatformName ?? string.Empty,
+                SizeConstraintType = "upstream",
+                SizeConstraintDescription = "由上游模型显式尺寸能力控制",
+                SizesByResolution = new Dictionary<string, List<SizeOption>>
+                {
+                    ["1k"] =
+                    [
+                        new("1024x1024", "1:1"),
+                        new("1344x768", "7:4"),
+                        new("768x1344", "4:7"),
+                        new("1248x832", "3:2"),
+                        new("832x1248", "2:3"),
+                    ],
+                    ["2k"] = [],
+                    ["4k"] = [],
+                },
+            };
         }
+
+        var effectiveSizeParamFormat = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.FieldFormat switch
+            {
+                ImageSizeFieldFormats.Size => SizeParamFormats.WxH,
+                ImageSizeFieldFormats.WidthHeight => SizeParamFormats.WidthHeight,
+                ImageSizeFieldFormats.AspectRatio or ImageSizeFieldFormats.ImageConfigAspectRatio => SizeParamFormats.AspectRatio,
+                _ => SizeParamFormats.None,
+            }
+            : adapterInfo.SizeParamFormat;
+        var effectiveSizesNotApplicable = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.SizesNotApplicable
+            : adapterInfo.SizesNotApplicable;
+        var effectiveIsAdaptive = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.UsePrompt
+            : adapterInfo.IsAdaptive;
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -469,8 +529,14 @@ public class ImageGenController : ControllerBase
                 description = adapterInfo.SizeConstraintDescription,
             },
             sizesByResolution = adapterInfo.SizesByResolution,
-            sizeParamFormat = adapterInfo.SizeParamFormat,
-            sizesNotApplicable = adapterInfo.SizesNotApplicable,
+            sizeParamFormat = effectiveSizeParamFormat,
+            sizesNotApplicable = effectiveSizesNotApplicable,
+            sizeControl = new
+            {
+                source = upstreamSizeControl.IsConfigured ? "upstream-model" : "legacy-adapter",
+                mode = upstreamSizeControl.Mode,
+                fieldFormat = upstreamSizeControl.FieldFormat,
+            },
             limitations = new
             {
                 mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
@@ -483,7 +549,7 @@ public class ImageGenController : ControllerBase
             },
             supportsImageToImage = adapterInfo.SupportsImageToImage,
             supportsInpainting = adapterInfo.SupportsInpainting,
-            isAdaptive = adapterInfo.IsAdaptive,
+            isAdaptive = effectiveIsAdaptive,
         }));
     }
 

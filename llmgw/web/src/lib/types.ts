@@ -673,6 +673,8 @@ export type ModelItem = {
   sourceCollection: string; authority: string; claimedAt?: string | null;
   callCount: number; successCount: number; failCount: number; totalDuration: number;
   capabilities: ModelCapability[];
+  imageSizeControlMode?: ImageSizeControlMode;
+  imageSizeFieldFormat?: ImageSizeFieldFormat | null;
   inputPricePerMillion?: number | null; outputPricePerMillion?: number | null;
   pricePerCall?: number | null; priceCurrency?: 'CNY' | 'USD' | null;
   createdAt?: string | null; updatedAt?: string | null;
@@ -684,6 +686,8 @@ export type CreateModelRequest = {
   modelName: string;
   protocol?: 'inherit' | 'openai' | 'claude';
   capabilities: string[];
+  imageSizeControlMode?: ImageSizeControlMode;
+  imageSizeFieldFormat?: ImageSizeFieldFormat;
   apiKey?: string;
   timeout?: number;
   maxRetries?: number;
@@ -694,6 +698,12 @@ export type CreateModelRequest = {
   pricePerCall?: number;
   priceCurrency?: 'CNY' | 'USD';
   remark?: string;
+};
+export type ImageSizeControlMode = 'inherit' | 'field' | 'prompt' | 'field_and_prompt' | 'none';
+export type ImageSizeFieldFormat = 'size' | 'width_height' | 'aspect_ratio' | 'image_config.aspect_ratio';
+export type UpdateModelImageSizeControlRequest = {
+  mode: ImageSizeControlMode;
+  fieldFormat?: ImageSizeFieldFormat;
 };
 export type CreateModelResult = {
   item: ModelItem;

@@ -62,6 +62,7 @@ import type {
   CreatePlatformRequest,
   CreateModelRequest,
   CreateModelResult,
+  UpdateModelImageSizeControlRequest,
   ParameterCapabilitiesMetaData,
   ExchangesData,
   ExchangeItem,
@@ -582,6 +583,9 @@ export function getModels(params?: { platformId?: string; enabled?: boolean }): 
 }
 export function createModel(req: CreateModelRequest): Promise<ApiResponse<CreateModelResult>> {
   return apiRequest<CreateModelResult>('/models', { method: 'POST', body: req });
+}
+export function updateModelImageSizeControl(id: string, req: UpdateModelImageSizeControlRequest): Promise<ApiResponse<ModelItem>> {
+  return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/image-size-control`, { method: 'PUT', body: req });
 }
 export function getLogicalModels(params?: { modelType?: string; enabled?: boolean }): Promise<ApiResponse<LogicalModelsData>> {
   return apiRequest<LogicalModelsData>('/logical-models', {

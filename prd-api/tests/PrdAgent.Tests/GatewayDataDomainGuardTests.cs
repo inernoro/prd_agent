@@ -1112,6 +1112,29 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void LiteraryIllustrationPicker_UsesCapabilityAwareSizeMetadataForEveryPicker()
+    {
+        var editor = ReadRepoFile("prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx");
+
+        Assert.Contains("getVisualAgentAdapterInfo,", editor);
+        Assert.Contains("const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable]", editor);
+        Assert.Contains("setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);", editor);
+        Assert.Equal(2, editor.Split("!currentModelSizesNotApplicable && (", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
+    public void ImageRunEvents_UseResolvedSizeCapabilityInsteadOfOnlyTheLegacyAdapter()
+    {
+        var imageWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
+        var imageClient = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+
+        Assert.Contains("var startIsAdaptive = await ResolveRunIsAdaptiveAsync", imageWorker);
+        Assert.Contains("var doneIsAdaptive = meta?.IsAdaptive", imageWorker);
+        Assert.Contains("isAdaptive = doneIsAdaptive", imageWorker);
+        Assert.Contains("IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName)", imageClient);
+    }
+
+    [Fact]
     public void VisualImageRun_UsesQueueStatusThatLegacyWorkersCannotClaim()
     {
         var runModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");
