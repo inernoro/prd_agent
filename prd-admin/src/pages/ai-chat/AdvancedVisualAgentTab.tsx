@@ -2729,6 +2729,27 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     [canvas, layerPanelGroupId],
   );
 
+  /**
+   * 切到哪一组，输入框就显示哪一组当初用的拆法。
+   *
+   * 拆法本来就按组存在图层身上（layerIntent，也落盘），但面板一直绑的是那个
+   * 会话级的全局值。画布上有多次分层时，打开旧的那个 Frame，输入框显示的是**另一组**
+   * 的文字，点「重新拆分」就把别人的拆法当成这一组的送进一次要花钱的调用
+   * （Codex PR #1363 P1）。
+   *
+   * 这和上一轮修的是同一个病的另一半：上一轮把跨**账号**的留存收进 sessionStorage，
+   * 这一轮收的是跨**组**的串味——存对了地方还不够，读的时候也得认组。
+   * 只在组切换时重新播种，不干扰用户正在敲的字。
+   */
+  const seededIntentGroupRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!layerPanelGroupId) { seededIntentGroupRef.current = null; return; }
+    if (seededIntentGroupRef.current === layerPanelGroupId) return;
+    seededIntentGroupRef.current = layerPanelGroupId;
+    const groupIntent = layerPanelLayers.find((layer) => typeof layer.layerIntent === 'string' && layer.layerIntent)?.layerIntent;
+    setLayerIntentPref(String(groupIntent ?? ''));
+  }, [layerPanelGroupId, layerPanelLayers]);
+
   // 原图靠图层身上的 layerSourceKey 反查，**不**靠「原图身上打了哪个组号」——
   // 一张图能被拆很多次，原图身上只记得住最后一个组号，早先那几组就全指到别人身上了。
   const layerPanelSource = useMemo(() => {
