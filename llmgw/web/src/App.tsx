@@ -27,7 +27,6 @@ import { QuickstartPage } from '@/pages/QuickstartPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
 import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
 import { SettingsPage } from '@/pages/SettingsPage';
-import { AccountSecurityPage } from '@/pages/AccountSecurityPage';
 import { UsagePage } from '@/pages/UsagePage';
 import { LearningCenterPage } from '@/pages/LearningCenterPage';
 import { AppCallerDetailsPage, ModelDetailsPage, ProviderDetailsPage } from '@/pages/EntityDetailsPages';
@@ -132,8 +131,6 @@ export function App() {
             <Route path="/shadow" element={<RequirePageAccess page="shadow"><ShadowPage /></RequirePageAccess>} />
             <Route path="/governance" element={<RequirePageAccess page="governance"><GovernancePage /></RequirePageAccess>} />
             <Route path="/settings" element={<RequirePageAccess page="settings"><SettingsPage /></RequirePageAccess>} />
-            {/* 管自己的登录名与口令不是租户能力，任何角色都必须能进，故不套 RequirePageAccess。 */}
-            <Route path="/account" element={<AccountSecurityPage />} />
             <Route path="/usage" element={<RequirePageAccess page="usage"><UsagePage /></RequirePageAccess>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

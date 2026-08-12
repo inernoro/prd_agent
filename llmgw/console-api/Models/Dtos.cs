@@ -61,18 +61,8 @@ public sealed class SwitchTenantRequestDto
 // ── 改密 ──
 public sealed class ChangePasswordRequestDto
 {
-    /// <summary>
-    /// 旧口令。联邦账号首次设置本地口令时可以为空——它的旧口令是建号时随机生成的，
-    /// 判定见 <see cref="Auth.LocalPasswordPolicy.RequiresOldPassword"/>。
-    /// </summary>
     public string? OldPassword { get; set; }
     public string? NewPassword { get; set; }
-
-    /// <summary>
-    /// 可选的新登录名。联邦账号的自动用户名（map-{hash}）没人记得住，
-    /// 不让改名的话即使设了口令也登不进来。留空表示保持现有用户名。
-    /// </summary>
-    public string? Username { get; set; }
 }
 
 public sealed class ChangePasswordResultDto
@@ -83,43 +73,6 @@ public sealed class ChangePasswordResultDto
     public string? DisplayName { get; init; }
     public string? ExpiresAt { get; init; }
     public string? IdentityProvider { get; init; }
-    public TenantSessionDto? Tenant { get; init; }
-}
-
-/// <summary>
-/// 「账号与安全」页要渲染的自身账号事实。它回答三个此前无处可查的问题：
-/// 我的登录名是什么、我有没有可用的本地口令、设置口令要不要填旧口令。
-/// </summary>
-public sealed class AccountProfileDto
-{
-    public string Username { get; init; } = string.Empty;
-    public string? DisplayName { get; init; }
-
-    /// <summary>身份来源：map 表示由 MAP 一键登录自动建号，空表示独立口令账号。</summary>
-    public string? IdentityProvider { get; init; }
-
-    /// <summary>当前是否存在有人知道的本地口令。false 表示这个账号还从未被真人认领。</summary>
-    public bool HasLocalPassword { get; init; }
-
-    /// <summary>设置新口令时是否必须填写旧口令。</summary>
-    public bool RequiresOldPassword { get; init; }
-
-    /// <summary>当前用户名是否为自动生成（据此提示用户改成记得住的名字）。</summary>
-    public bool UsernameIsGenerated { get; init; }
-
-    /// <summary>
-    /// 建议的登录名，即外部身份那边的登录名（MAP 用户名）。
-    /// 前端拿它预填输入框——SSO 进来的人不该被迫记住第二个名字。为空表示没有可用建议。
-    /// </summary>
-    public string? SuggestedUsername { get; init; }
-
-    /// <summary>
-    /// 建议登录名已被别人占用。为 true 时前端必须明说「你的 MAP 登录名已被占用，请另取一个」，
-    /// 否则用户会照着填、撞一次冲突、再自己猜原因。
-    /// </summary>
-    public bool SuggestedUsernameTaken { get; init; }
-
-    public int MinPasswordLength { get; init; }
     public TenantSessionDto? Tenant { get; init; }
 }
 

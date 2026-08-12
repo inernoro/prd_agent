@@ -24,13 +24,6 @@ public class LlmGwUser
     /// <summary>外部身份不可变主体。MAP 账号按 map:{userId} 绑定，不以可变用户名关联。</summary>
     public string? ExternalSubjectId { get; set; }
 
-    /// <summary>
-    /// 外部身份那边的登录名（MAP 用户名），每次一键登录刷新。
-    /// 用途只有一个：网关登录名默认跟它保持一致——SSO 进来的人不该被迫记住第二个名字。
-    /// 它是「建议值」不是权威：被占用或不合法时网关自己那个名字仍然算数。
-    /// </summary>
-    public string? ExternalUsername { get; set; }
-
     public bool IsActive { get; set; } = true;
 
     /// <summary>

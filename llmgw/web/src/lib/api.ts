@@ -14,7 +14,6 @@
 // 列表数据形状与 /gw 控制台 API 对齐；密钥字段只返回 hasKey，不返回明文或密文。
 
 import type {
-  AccountProfile,
   ApiResponse,
   ChangePasswordRequest,
   ChangePasswordResult,
@@ -502,10 +501,6 @@ export function exchangeMapSso(req: MapSsoRequest): Promise<ApiResponse<LoginRes
 
 export function changePassword(req: ChangePasswordRequest): Promise<ApiResponse<ChangePasswordResult>> {
   return apiRequest<ChangePasswordResult>('/auth/change-password', { method: 'POST', body: req });
-}
-
-export function getAccountProfile(): Promise<ApiResponse<AccountProfile>> {
-  return apiRequest<AccountProfile>('/auth/account');
 }
 
 // ── 日志 ──

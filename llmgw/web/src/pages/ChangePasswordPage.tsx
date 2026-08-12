@@ -35,7 +35,7 @@ export function ChangePasswordPage() {
     }
     setSubmitting(true);
     setError(null);
-    const res = await changePassword({ oldPassword, newPassword });
+    const res = await changePassword(oldPassword, newPassword);
     setSubmitting(false);
     if (res.success) {
       navigate('/', { replace: true });

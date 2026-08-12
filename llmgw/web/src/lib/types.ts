@@ -29,13 +29,7 @@ export type LoginResult = {
 export type TenantSession = { id: string; name: string; isInternal: boolean; role: string; teamIds: string[] };
 
 // ── 改密 ──
-export type ChangePasswordRequest = {
-  /** 联邦账号首次设置本地口令时留空——它的旧口令是建号时随机生成的，没人知道。 */
-  oldPassword?: string;
-  newPassword: string;
-  /** 可选的新登录名；留空表示保持现有用户名。 */
-  username?: string;
-};
+export type ChangePasswordRequest = { oldPassword: string; newPassword: string };
 export type ChangePasswordResult = {
   /** 改密后重新签发的 token（不再带 mcp 标记）。 */
   token: string;
@@ -43,24 +37,6 @@ export type ChangePasswordResult = {
   displayName?: string | null;
   expiresAt?: string | null;
   identityProvider?: string | null;
-  tenant?: TenantSession | null;
-};
-
-/** 「账号与安全」页的数据源：我的登录名是什么、有没有可用的本地口令、改密要不要填旧口令。 */
-export type AccountProfile = {
-  username: string;
-  displayName?: string | null;
-  /** map 表示由 MAP 一键登录自动建号，空表示独立口令账号。 */
-  identityProvider?: string | null;
-  hasLocalPassword: boolean;
-  requiresOldPassword: boolean;
-  /** 当前用户名是否为自动生成（map-xxxx），据此提示用户改成记得住的名字。 */
-  usernameIsGenerated: boolean;
-  /** 建议的登录名（MAP 用户名），用于预填输入框；为空表示没有可用建议。 */
-  suggestedUsername?: string | null;
-  /** 建议登录名已被别人占用——必须明说，否则用户会照着填再撞一次。 */
-  suggestedUsernameTaken?: boolean;
-  minPasswordLength: number;
   tenant?: TenantSession | null;
 };
 

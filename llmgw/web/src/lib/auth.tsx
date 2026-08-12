@@ -23,7 +23,7 @@ import {
 } from './api';
 import { getToken } from './api';
 import type { SessionExpiredReason } from './api';
-import type { ApiResponse, ChangePasswordRequest, ChangePasswordResult, LoginResult, TenantSession } from './types';
+import type { ApiResponse, ChangePasswordResult, LoginResult, TenantSession } from './types';
 
 type AuthState = {
   authed: boolean;
@@ -36,8 +36,7 @@ type AuthState = {
   sessionExpiredReason: SessionExpiredReason | null;
   login: (username: string, password: string) => Promise<ApiResponse<LoginResult>>;
   loginWithMapCode: (code: string) => Promise<ApiResponse<LoginResult>>;
-  /** 设置本地口令。联邦账号首次认领时可不带 oldPassword，并可顺带把自动用户名改成记得住的。 */
-  changePassword: (req: ChangePasswordRequest) => Promise<ApiResponse<ChangePasswordResult>>;
+  changePassword: (oldPassword: string, newPassword: string) => Promise<ApiResponse<ChangePasswordResult>>;
   logout: () => void;
 };
 
@@ -241,8 +240,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return res;
       },
-      async changePassword(req: ChangePasswordRequest) {
-        const res = await apiChangePassword(req);
+      async changePassword(oldPassword: string, newPassword: string) {
+        const res = await apiChangePassword({ oldPassword, newPassword });
         if (res.success && res.data?.token) {
           applyChangePasswordResult(res.data);
           setUser(getStoredUser());

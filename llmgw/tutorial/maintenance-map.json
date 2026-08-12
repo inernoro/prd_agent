@@ -92,17 +92,6 @@
       ]
     },
     {
-      "id": "account-security",
-      "routes": [
-        "/account"
-      ],
-      "pagePath": "llmgw/web/src/pages/AccountSecurityPage.tsx",
-      "tutorialSourceIds": [
-        "chapter-02",
-        "chapter-30"
-      ]
-    },
-    {
       "id": "log-detail",
       "routes": ["/logs/:id"],
       "pagePath": "llmgw/web/src/pages/LogDetailPage.tsx",
