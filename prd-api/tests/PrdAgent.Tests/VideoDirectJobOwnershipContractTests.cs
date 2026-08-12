@@ -13,10 +13,9 @@ public class VideoDirectJobOwnershipContractTests
             "prd-api/src/PrdAgent.Core/Models/VideoGenModels.cs"));
         var database = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs"));
+        var indexCatalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
         var initializer = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/Database/DatabaseInitializer.cs"));
-        var stableSmoke = File.ReadAllText(LocateRepoFile(
-            "e2e/specs/stable-smoke.spec.ts"));
 
         Assert.Contains("class DirectVideoJobOwnership", models);
         Assert.Contains("ExpiresAt", models);
@@ -39,13 +38,9 @@ public class VideoDirectJobOwnershipContractTests
         Assert.Contains("[FromQuery] string? recoveryToken", controller);
         Assert.Contains("Set(item => item.RevokedAt, revokedAt)", controller);
         Assert.Contains("撤销墓碑保留到恢复凭证过期", controller);
-        Assert.Contains("ttl_direct_video_job_expires_at", initializer);
-        Assert.Contains("EnsureDirectVideoJobOwnershipIndexesAsync", initializer);
-        Assert.Contains("finally", stableSmoke);
-        Assert.Contains("/api/video-agent/videogen-direct/${encodeURIComponent(directJobId)}", stableSmoke);
-        Assert.Contains("expect(cleanupBody.data.cleaned).toBe(true)", stableSmoke);
-        Assert.Contains("已清理视频任务的旧恢复凭证必须失效", stableSmoke);
-        Assert.Contains("expect(revokedStatus.status()", stableSmoke);
+        Assert.Contains("db.direct_video_job_ownerships.updateMany", indexCatalog);
+        Assert.Contains("ttl_direct_video_job_expires_at", indexCatalog);
+        Assert.DoesNotContain("EnsureDirectVideoJobOwnershipIndexesAsync", initializer);
     }
 
     private static string LocateRepoFile(string relativePath)

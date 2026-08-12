@@ -19,7 +19,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
   createVideoGenRunReal,
-  downloadVideoGenRunReal,
+  createVideoGenDownloadTicketReal,
   getVideoGenRunReal,
 } from '@/services/real/videoAgent';
 import {
@@ -85,15 +85,23 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
     if (!currentRun?.id || isDownloading) return;
     setIsDownloading(true);
     try {
-      const file = await downloadVideoGenRunReal(currentRun.id);
-      const url = URL.createObjectURL(file.blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = file.fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      const response = await createVideoGenDownloadTicketReal(currentRun.id);
+      if (!response.success || !response.data?.ticket) {
+        throw new Error(response.error?.message || '视频下载失败，请稍后重试');
+      }
+
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = '/api/video-download';
+      form.style.display = 'none';
+      const ticketInput = document.createElement('input');
+      ticketInput.type = 'hidden';
+      ticketInput.name = 'ticket';
+      ticketInput.value = response.data.ticket;
+      form.appendChild(ticketInput);
+      document.body.appendChild(form);
+      form.submit();
+      form.remove();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '视频下载失败，请稍后重试');
     } finally {

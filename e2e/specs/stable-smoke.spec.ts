@@ -1569,15 +1569,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(browserMedia.width, '浏览器必须解码出有效视频画面').toBeGreaterThan(0);
       expect(browserMedia.height, '浏览器必须解码出有效视频画面').toBeGreaterThan(0);
 
-      const [downloadResponse, download] = await Promise.all([
+      const [ticketResponse, downloadResponse, download] = await Promise.all([
         page.waitForResponse((response) => (
-          response.request().method() === 'GET'
-          && new URL(response.url()).pathname === `/api/video-agent/runs/${encodeURIComponent(runId)}/download`
+          response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/video-agent/runs/${encodeURIComponent(runId)}/download-ticket`
         )),
-        // 页面会先完整读取 MP4 为 Blob，再触发浏览器下载事件；真实视频不能沿用 10 秒默认时限。
-        page.waitForEvent('download', { timeout: 90_000 }),
+        page.waitForResponse((response) => (
+          response.request().method() === 'POST'
+          && new URL(response.url()).pathname === '/api/video-download'
+        )),
+        page.waitForEvent('download'),
         downloadButton.click(),
       ]);
+      expect(ticketResponse.ok(), '视频下载凭据必须成功签发').toBe(true);
       expect(downloadResponse.ok(), '视频下载端点必须成功返回').toBe(true);
       expect(downloadResponse.headers()['content-type'] || '').toMatch(/^video\/mp4/i);
       expect(downloadResponse.headers()['content-disposition'] || '').toContain(`video-${runId}.mp4`);

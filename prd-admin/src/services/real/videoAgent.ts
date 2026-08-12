@@ -1,4 +1,4 @@
-import { apiDownload, apiRequest, type ApiDownloadedFile } from './apiClient';
+import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
 import type {
   CreateVideoGenRunContract,
@@ -62,12 +62,11 @@ export const getVideoGenRunReal: GetVideoGenRunContract = async (runId) => {
   });
 };
 
-export async function downloadVideoGenRunReal(runId: string): Promise<ApiDownloadedFile> {
-  return apiDownload(
-    api.videoAgent.runs.download(encodeURIComponent(runId)),
-    `video-${runId}.mp4`,
+export const createVideoGenDownloadTicketReal = async (runId: string) =>
+  apiRequest<{ ticket: string; fileName: string }>(
+    api.videoAgent.runs.downloadTicket(encodeURIComponent(runId)),
+    { method: 'POST' },
   );
-}
 
 // 视觉创作（视觉分镜台）专用：走 visual-agent 自有 video-gen 端点，
 // 用 visual-agent 的权限/配额/appKey，避免 visual-agent-only 账号撞 video-agent 403。

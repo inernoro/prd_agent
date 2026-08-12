@@ -32,6 +32,7 @@ public class VideoAgentController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoAgentController> _logger;
     private readonly IDataProtector _directVideoJobProtector;
+    private readonly IDataProtector _videoDownloadTicketProtector;
 
     private const string AppKey = "video-agent";
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -57,6 +58,8 @@ public class VideoAgentController : ControllerBase
         _logger = logger;
         _directVideoJobProtector = dataProtectionProvider.CreateProtector(
             "PrdAgent.VideoAgent.DirectJobOwnership.v1");
+        _videoDownloadTicketProtector = dataProtectionProvider.CreateProtector(
+            VideoDownloadTicket.ProtectorPurpose);
     }
 
     private readonly IOpenRouterVideoClient _videoClient;
@@ -589,6 +592,42 @@ public class VideoAgentController : ControllerBase
         }
 
         return File(asset.Value.bytes, "video/mp4", $"video-{run.Id}.mp4");
+    }
+
+    /// <summary>
+    /// 为浏览器原生下载签发短时、只绑定当前用户和当前视频的凭据。
+    /// 避免前端先把完整 MP4 读入内存后再模拟点击，导致大文件下载被浏览器拦截。
+    /// </summary>
+    [HttpPost("runs/{runId}/download-ticket")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateRunDownloadTicket(string runId, CancellationToken ct)
+    {
+        var ownerAdminId = GetAdminId();
+        var run = await _videoGenService.GetRunAsync(runId, ownerAdminId, ct: ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+
+        if (run.Status != VideoGenRunStatus.Completed || string.IsNullOrWhiteSpace(run.VideoAssetSha256))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "视频尚未生成完成，请等待完成后再下载"));
+        }
+
+        var payload = new VideoDownloadTicket(
+            run.Id,
+            ownerAdminId,
+            DateTime.UtcNow.Add(VideoDownloadTicket.Lifetime));
+        var ticket = _videoDownloadTicketProtector.Protect(
+            JsonSerializer.Serialize(payload, JsonOptions));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            ticket,
+            fileName = $"video-{run.Id}.mp4",
+        }));
     }
 
 
