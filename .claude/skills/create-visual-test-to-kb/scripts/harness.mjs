@@ -692,6 +692,9 @@ export function writeManifest(outDir, extra = {}) {
     last.warnings = (last.warnings || []).concat(
       orphanBlockers.map((f) => `自动捕获(${f.severity},${f.kind},末次截图后/未挂载): ${f.message}`),
     );
+    // 稳定冒烟视觉门禁按结构化状态裁决，不读取 warnings 文案。晚到 blocker 除了留下诊断证据，
+    // 还必须把最后一条证据的自动结论降为不通过，否则归档会拒收、前置门禁却可能误放行。
+    last.automatedStatus = '不通过';
     orphanBlockers.forEach((f) => { f._attached = true; });
   }
   fs.writeFileSync(`${outDir}/manifest.json`, JSON.stringify(shots, null, 2));
