@@ -1,7 +1,7 @@
 ---
 name: stable-smoke
 version: 1.9.0
-description: Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".
+description: 'Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".'
 ---
 
 # 稳定冒烟

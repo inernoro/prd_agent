@@ -204,9 +204,8 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
   - `local-debugging.md`：本地连调、视觉修复、接口排查、CDS 部署验证的工作方式。
   - `production-release-safety.md`：碰发布链路（`exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow）前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`。公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数。
 - **技能**：57 个在 `.claude/skills/`，另有 3 个在 `.agents/skills/`。多数宿主会自动注入名称与描述，**但只注入它自己那个技能根**——只认 `.agents/skills` 的宿主看不到另外 57 个。**注入不全时自己选**：`ls .claude/skills/`，每个目录的 `SKILL.md` frontmatter 里 `name` 与 `description` 就是选取依据（description 写明了触发场景）。frontmatter 字段的完整性由 CI 棘轮盯着（只降不升），但「目录里整个没有 SKILL.md」CI 现在拦不住——扫到这种目录按缺陷报出来，别当它不存在；此处同样不维护会漂移的第二份清单。
-
-<details>
-<summary>历史显式索引（仅兼容旧宿主，不作为规则或技能 SSOT）</summary>
+<!--
+历史显式索引仅供旧宿主查阅，不作为规则或技能 SSOT，也不注入 Agent 上下文。
 
 | 规则文件 | 触发范围 | 核心要点 |
 |----------|----------|----------|
@@ -339,8 +338,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 9. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
 10. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
 11. **迁移/重构后** → `/hygiene`
-</details>
-
+-->
 生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。
 
 常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解。首次开发 Agent 走 `/help`。

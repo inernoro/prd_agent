@@ -16,7 +16,7 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |---|---|---|---|---|---|---|
-| 2026-08-03-cds-split-surface-probe | P2 | 2026-08-03 | 生产表面探针默认假定 MAP、`/health` 与 LLM Gateway 位于同一域名；CDS 预览实际返回 MAP 与 Gateway 两个公开入口，主域名未暴露 `/health`，导致主页面、入口资源与 API 版本正常时仍误报失败 | 对 CDS 双入口预览运行 `scripts/prd-agent-public-surface-smoke.py --surface map` | open | 增加显式的 CDS 双入口拓扑参数或组合探针：主入口检查 HTML、真实 JS/CSS、`/api/version` 与目标提交；Gateway 入口检查页面、Console/Serving 健康和四协议无密钥 401。两部分都通过才判 pass，并补行为测试和真实 CDS 复测 |
+| 2026-08-03-cds-split-surface-probe | P2 | 2026-08-03 | 生产表面探针默认假定 MAP、`/health` 与 LLM Gateway 位于同一域名；CDS 预览实际返回 MAP 与 Gateway 两个公开入口，主域名未暴露 `/health`，导致主页面、入口资源与 API 版本正常时仍误报失败 | 对 CDS 双入口预览以 MAP 模式运行生产表面探针 | open | 增加显式的 CDS 双入口拓扑参数或组合探针：主入口检查 HTML、真实 JS/CSS、`/api/version` 与目标提交；Gateway 入口检查页面、Console/Serving 健康和四协议无密钥 401。两部分都通过才判 pass，并补行为测试和真实 CDS 复测 |
 
 ## 已还的债务（归档）
 
@@ -51,3 +51,7 @@
 | ID | 修复 PR | 修复日期 | 备注 |
 |---|---|---|---|
 | 2026-07-12-production-static-permission-recovery | 生产应急操作 | 2026-07-12 | 将静态目录从 `700` 恢复为 `755`；公网 `/`、入口 JS、`/health`、`/llmgw/` 均恢复 200。仅为恢复，不代表长期机制已完成 |
+
+## 实现来源
+
+- 生产表面探针：[prd-agent-public-surface-smoke.py](../scripts/prd-agent-public-surface-smoke.py)
