@@ -352,6 +352,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.Toolbox.ToolboxRunWorker
 builder.Services.AddHostedService<ImageGenRunWorker>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>());
+builder.Services.AddSingleton<PrdAgent.Api.Services.DocumentAssetCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.DocumentAssetCleanupService>());
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();

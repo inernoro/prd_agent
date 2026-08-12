@@ -86,6 +86,11 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['USER_NOT_FOUND', '用户不存在，请返回后重新选择。'],
   ['TEAM_LEADER_TRANSFER_REQUIRED', '团队负责人不能直接退出，请先在成员管理中将负责人移交给其他成员。'],
   ['INVALID_CONFIG', '模型配置不完整，请先在模型平台补充 API 地址和密钥后再测试。'],
+  ['PROFILE_KEY_EMPTY', '运行配置缺少可用密钥，请先在模型平台完成配置后重试。'],
+  ['UNSUPPORTED_TYPE', '当前文件类型不受支持，请更换文件类型后重试。'],
+  ['GENERATION_FAILED', '智能生成未完成，请稍后重试。'],
+  ['AI_GENERATION_FAILED', '智能生成未完成，请稍后重试。'],
+  ['AVATAR_GENERATION_FAILED', '头像生成未完成，请稍后重试。'],
   ['DUPLICATE_MODEL', '该模型名称已存在，请刷新模型列表后确认；如需新增，请改用其他模型名称。'],
   ['DUPLICATE_NAME', '该名称已存在，请刷新列表后确认；如需新增，请改用其他名称。'],
   ['SYNTHETIC_LOGIN_DISABLED', '合成测试登录未启用，请由管理员开启后重新生成入口。'],
@@ -173,11 +178,25 @@ function isSafeUserMessage(message: string, code: string): boolean {
     normalizedCode === 'HAS_MODEL_POOL_REFS'
       && /^平台下的模型被以下模型池引用，请先从模型池移除：.{1,200}$/u.test(text)
   );
-  if (!USER_MESSAGE_ALLOWLIST.get(normalizedCode)?.has(text) && !isStructuredBusinessMessage) return false;
   if (!text || text.length > 320) return false;
+  if (/[\r\n]/u.test(text)) return false;
   if (/^[{[]/.test(text)) return false;
   if (!/[\u3400-\u9fff]/u.test(text)) return false;
-  return !INTERNAL_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text));
+  if (INTERNAL_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text))) return false;
+
+  const isExplicitlyAllowed = USER_MESSAGE_ALLOWLIST.get(normalizedCode)?.has(text) === true;
+  const isStableContractCode = /^[A-Z][A-Z0-9_]{2,80}$/u.test(normalizedCode);
+  const isRegisteredCode = USER_FACING_CODE_MESSAGES.has(normalizedCode)
+    || USER_MESSAGE_ALLOWLIST.has(normalizedCode);
+  const containsUnregisteredTechnicalIdentifier = /\b[A-Za-z][A-Za-z0-9_.-]{2,}\b/u.test(text);
+  // 未登记的新业务码只有在文案本身已满足“中文结果 + 恢复动作 + 无内部诊断”时才保留。
+  // 这样新增端点不会被通用输入提示覆盖，同时仍禁止透传异常和上游原文。
+  return isExplicitlyAllowed
+    || isStructuredBusinessMessage
+    || (!isRegisteredCode
+      && isStableContractCode
+      && !containsUnregisteredTechnicalIdentifier
+      && messageContainsRecovery(text));
 }
 
 function classifiedMessage(code: string, recoveryMessage: string): string | null {

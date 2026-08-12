@@ -81,6 +81,8 @@ public class MongoDbContext
     public IMongoCollection<UploadArtifact> UploadArtifacts => _database.GetCollection<UploadArtifact>("upload_artifacts");
     public IMongoCollection<ProfileAvatarObjectCleanupTask> ProfileAvatarObjectCleanupTasks =>
         _database.GetCollection<ProfileAvatarObjectCleanupTask>("profile_avatar_object_cleanup_tasks");
+    public IMongoCollection<DocumentAssetCleanupTask> DocumentAssetCleanupTasks =>
+        _database.GetCollection<DocumentAssetCleanupTask>("document_asset_cleanup_tasks");
     public IMongoCollection<AdminPromptOverride> AdminPromptOverrides => _database.GetCollection<AdminPromptOverride>("admin_prompt_overrides");
     public IMongoCollection<AdminIdempotencyRecord> AdminIdempotencyRecords => _database.GetCollection<AdminIdempotencyRecord>("admin_idempotency");
     public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");

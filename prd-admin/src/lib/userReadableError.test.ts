@@ -116,6 +116,42 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('文件上传未完成，请检查文件后重新上传。');
   });
 
+  it('已登记错误码不会因文案含恢复词而绕过严格映射', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'INVALID_FORMAT', message: '服务返回格式异常，请稍后重试。' },
+      options,
+    );
+
+    expect(message).toBe('文件上传未完成，请检查文件后重新上传。');
+  });
+
+  it('未登记稳定业务码的安全文案包含恢复动作时予以保留', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'NEW_BUSINESS_RULE', message: '当前内容尚未准备完成，请返回列表刷新后重试。' },
+      options,
+    );
+
+    expect(message).toBe('当前内容尚未准备完成，请返回列表刷新后重试。');
+  });
+
+  it('未登记业务码仍屏蔽技术字段名', () => {
+    const message = toUserReadableErrorMessage(
+      { code: 'NEW_BUSINESS_RULE', message: 'profileKey 字段无效，请检查输入后重试。' },
+      options,
+    );
+
+    expect(message).toBe('文件上传未完成，请检查文件后重新上传。');
+    expect(message).not.toContain('profileKey');
+  });
+
+  it.each([
+    ['PROFILE_KEY_EMPTY', '运行配置缺少可用密钥，请先在模型平台完成配置后重试。'],
+    ['UNSUPPORTED_TYPE', '当前文件类型不受支持，请更换文件类型后重试。'],
+    ['GENERATION_FAILED', '智能生成未完成，请稍后重试。'],
+  ])('为既有未覆盖错误码 %s 提供可执行恢复动作', (code, expected) => {
+    expect(toUserReadableErrorMessage({ code, message: '原始错误不应展示' }, options)).toBe(expected);
+  });
+
   it('显式允许的错误码仍会屏蔽网络地址和密钥', () => {
     const connection = toUserReadableErrorMessage(
       { code: 'VALIDATION_ERROR', message: 'connect ECONNREFUSED 10.0.0.5:443' },

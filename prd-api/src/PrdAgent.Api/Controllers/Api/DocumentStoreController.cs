@@ -55,6 +55,7 @@ public class DocumentStoreController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly DocumentStoreLiveTranscriptionRelay _liveTranscriptionRelay;
+    private readonly DocumentAssetCleanupService _documentAssetCleanup;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -124,6 +125,7 @@ public class DocumentStoreController : ControllerBase
         IConfiguration config,
         DocumentStoreAssetNormalizer assetNormalizer,
         DocumentStoreLiveTranscriptionRelay liveTranscriptionRelay,
+        DocumentAssetCleanupService documentAssetCleanup,
         EntryContentWriteService entryContentWriter,
         ILogger<DocumentStoreController> logger)
     {
@@ -146,6 +148,7 @@ public class DocumentStoreController : ControllerBase
         _config = config;
         _assetNormalizer = assetNormalizer;
         _liveTranscriptionRelay = liveTranscriptionRelay;
+        _documentAssetCleanup = documentAssetCleanup;
         _entryContentWriter = entryContentWriter;
         _logger = logger;
     }
@@ -656,15 +659,16 @@ public class DocumentStoreController : ControllerBase
             ? new List<Attachment>()
             : await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync();
 
-        // 合成验收上传写入受控 _it Key。必须先确认删除范围外没有引用，再删除真实对象；
-        // 任何存储失败都在数据库级联前熔断，保留可重试记录，不能留下无法追踪的孤儿文件。
+        // 合成验收上传写入受控 _it Key。先持久化对象清理意图，再执行数据库级联；
+        // Worker 只有在 Attachment 引用全部解除后才删除对象。数据库任一步失败时，
+        // 仍存活的 Attachment 会阻止对象删除，不会产生指向已删除文件的断链记录。
         try
         {
-            await DeleteUnreferencedStoredAssetsAsync(attachments, attachmentIds, CancellationToken.None);
+            await _documentAssetCleanup.TrackPendingAsync(attachments, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[document-store] Store asset cleanup failed before cascade: store={StoreId}", storeId);
+            _logger.LogError(ex, "[document-store] Store asset cleanup intent failed before cascade: store={StoreId}", storeId);
             return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.Fail(
                 "DOCUMENT_ASSET_CLEANUP_FAILED",
                 "文件清理暂时未完成，请稍后重试删除"));
@@ -1110,11 +1114,11 @@ public class DocumentStoreController : ControllerBase
 
         try
         {
-            await DeleteUnreferencedStoredAssetsAsync(attachments, attachmentIds, CancellationToken.None);
+            await _documentAssetCleanup.TrackPendingAsync(attachments, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[document-store] Entry asset cleanup failed before cascade: entry={EntryId}", entryId);
+            _logger.LogError(ex, "[document-store] Entry asset cleanup intent failed before cascade: entry={EntryId}", entryId);
             return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.Fail(
                 "DOCUMENT_ASSET_CLEANUP_FAILED",
                 "文件清理暂时未完成，请稍后重试删除"));
@@ -3692,28 +3696,6 @@ public class DocumentStoreController : ControllerBase
         throw new InvalidOperationException("资产存储重试未返回结果");
     }
 
-    private async Task DeleteUnreferencedStoredAssetsAsync(
-        IReadOnlyCollection<Attachment> attachments,
-        IReadOnlyCollection<string> attachmentIdsToDelete,
-        CancellationToken cancellationToken)
-    {
-        var excludedAttachmentIds = attachmentIdsToDelete.ToArray();
-        foreach (var storageKey in attachments
-                     .Select(a => a.StorageKey)
-                     .Where(key => !string.IsNullOrWhiteSpace(key))
-                     .Select(key => key!)
-                     .Distinct(StringComparer.Ordinal))
-        {
-            var otherReferenceCount = await _db.Attachments.CountDocumentsAsync(
-                a => a.StorageKey == storageKey && !excludedAttachmentIds.Contains(a.AttachmentId),
-                cancellationToken: cancellationToken);
-            if (otherReferenceCount == 0)
-            {
-                await _assetStorage.DeleteByKeyAsync(storageKey, cancellationToken);
-            }
-        }
-    }
-
     private static bool IsAssetStorageFailure(Exception ex)
         => ex is AmazonS3Exception
             or CosServerException
@@ -3871,9 +3853,8 @@ public class DocumentStoreController : ControllerBase
             {
                 if (oldAttachment != null)
                 {
-                    await DeleteUnreferencedStoredAssetsAsync(
+                    await _documentAssetCleanup.TrackPendingAsync(
                         new[] { oldAttachment },
-                        new[] { oldAttachmentId },
                         CancellationToken.None);
                 }
                 await _db.Attachments.DeleteOneAsync(a => a.AttachmentId == oldAttachmentId, CancellationToken.None);
