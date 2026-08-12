@@ -58,6 +58,16 @@ public sealed class AgentToolInvocationContext
     public string? AppCallerCode { get; init; }
     public string? SidecarName { get; init; }
     public string? InfraAgentSessionId { get; init; }
+
+    /// <summary>
+    /// 发起这次调用的用户。工具据此判断能读写哪些数据，权限不放大。
+    /// 历史上工具只认 InfraAgentSessionId（基础设施 Agent 会话），
+    /// 于是任何别的调用方都用不了这些工具——通用对话就撞在这里。
+    /// 现在改为显式带用户：有 InfraAgentSessionId 时仍以它为准（既有行为不变），
+    /// 没有时用这个字段兜底。
+    /// </summary>
+    public string? UserId { get; init; }
+
     public string? ApprovalId { get; init; }
     public string? CdsBaseUrl { get; init; }
     public string? CdsProjectId { get; init; }

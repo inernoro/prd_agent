@@ -417,6 +417,8 @@ export type LogsListParams = {
   environment?: string;
   operation?: string;
   view?: 'logical' | 'physical';
+  /** 按上游平台过滤。provider 是厂商类型会重名，只有 platformId 能精确定位到某一条上游。 */
+  platformId?: string;
 };
 
 export type LogsListData = {
@@ -605,12 +607,36 @@ export type UpsertPoolModelRequest = {
   capabilities?: ModelCapability[];
 };
 
-// ── 平台（无密钥，仅 hasKey）──
+// ── 平台（密钥明文永不下发；只有头尾打码的指纹）──
 export type PlatformItem = {
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
+  /** 密钥指纹（如 sk-or-…9c2a）。仅具备 config:write 时下发，其余为 null。永远不是完整密钥。 */
+  keyFingerprint?: string | null;
+  /** missing 没配 / ok 能解开 / unreadable 密文在但当前 ApiKeyCrypto:Secret 解不开 */
+  keyStatus: 'missing' | 'ok' | 'unreadable';
   sourceCollection: string; authority: string; claimedAt?: string | null;
   createdAt?: string | null; updatedAt?: string | null;
+};
+/** 删除上游被挡下时回来的占用清单：先摘掉这些才能删。 */
+export type PlatformDeleteBlockers = { models: string[]; pools: string[]; totalCount: number };
+/** 删除模型被挡下时回来的占用清单。 */
+export type ModelDeleteBlockers = { pools: string[]; totalCount: number };
+/** 删除模型池被挡下时回来的占用清单；isCurrentDefault 是「删了那个类型没默认可用」这类阻挡。 */
+export type PoolDeleteBlockers = { isCurrentDefault: boolean; appCallers: string[]; totalCount: number };
+/** 删除交换所被挡下时回来的占用清单。 */
+export type ExchangeDeleteBlockers = { pools: string[]; totalCount: number };
+/** 删除逻辑模型的结果：名下 offering 作为从属子项一并删除。 */
+export type LogicalModelDeleteResult = { offeringsDeleted: number };
+/** 删 appCaller 连带删掉的提示词策略版本数（0 表示它本来就没配过策略）。 */
+export type AppCallerDeleteResult = { promptPolicyVersionsDeleted: number };
+/** 编辑上游：只改这几项，密钥走独立的轮换端点。 */
+export type UpdatePlatformRequest = {
+  name?: string;
+  platformType?: string;
+  apiUrl?: string;
+  maxConcurrency?: number;
+  remark?: string;
 };
 export type PlatformsData = { items: PlatformItem[]; total: number };
 export type CreatePlatformRequest = {
@@ -621,6 +647,79 @@ export type CreatePlatformRequest = {
   apiKey: string;
   maxConcurrency?: number;
   remark?: string;
+};
+
+// ── 内置上游预设 / 连通性自测 / 模型发现（minimal-user-input.md）──
+// 这些类型的唯一数据源是后端 /gw/provider-presets，前端不另维护一份上游清单。
+export type ProviderPresetItem = {
+  key: string;
+  name: string;
+  platformType: 'openai' | 'claude';
+  apiUrl: string;
+  providerId?: string | null;
+  maxConcurrency: number;
+  keyConsoleUrl: string;
+  keyPrefixHint: string;
+  supportsModelDiscovery: boolean;
+  supportsUpstreamPricing: boolean;
+  summary: string;
+  searchTerms: string[];
+  /** 非空 = 该上游不校验密钥，前端替用户预填这个占位值 */
+  keylessPlaceholder?: string;
+};
+export type ProviderPresetsData = { items: ProviderPresetItem[] };
+
+export type PlatformTestResult = {
+  reachable: boolean;
+  httpStatus?: number | null;
+  elapsedMs: number;
+  probedUrl: string;
+  modelCount?: number | null;
+  failureKind?: string | null;
+  message: string;
+  nextStep?: string | null;
+};
+
+export type UpstreamModelItem = {
+  modelId: string;
+  displayName?: string | null;
+  inferredCapabilities: string[];
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+  priceSource?: string | null;
+  alreadyImported: boolean;
+};
+export type UpstreamModelsData = {
+  probedUrl: string;
+  total: number;
+  alreadyImportedCount: number;
+  pricingProvided: boolean;
+  /** 上游实际返回了多少个——仅在被截断时非空，必须显示出来 */
+  truncatedFromTotal?: number | null;
+  /** 这份清单与价格的拉取时间（服务端 UTC）。面板可能开着不动，用户要能分辨新鲜度 */
+  fetchedAt: string;
+  items: UpstreamModelItem[];
+};
+
+export type ImportUpstreamModelEntry = {
+  modelId: string;
+  capabilities?: string[];
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+};
+export type ImportUpstreamModelsResult = {
+  requested: number;
+  created: number;
+  skipped: number;
+  skippedModelIds: string[];
+  createdModelIds: string[];
+  /** 模型已入库但没进默认池：池路由选不到它们，必须如实告知 */
+  poolSyncFailed?: boolean;
+  message?: string;
 };
 
 // ── 模型（无密钥，仅 hasKey）──
@@ -648,6 +747,8 @@ export type ModelItem = {
   sourceCollection: string; authority: string; claimedAt?: string | null;
   callCount: number; successCount: number; failCount: number; totalDuration: number;
   capabilities: ModelCapability[];
+  imageSizeControlMode?: ImageSizeControlMode;
+  imageSizeFieldFormat?: ImageSizeFieldFormat | null;
   inputPricePerMillion?: number | null; outputPricePerMillion?: number | null;
   pricePerCall?: number | null; priceCurrency?: 'CNY' | 'USD' | null;
   createdAt?: string | null; updatedAt?: string | null;
@@ -659,6 +760,8 @@ export type CreateModelRequest = {
   modelName: string;
   protocol?: 'inherit' | 'openai' | 'claude';
   capabilities: string[];
+  imageSizeControlMode?: ImageSizeControlMode;
+  imageSizeFieldFormat?: ImageSizeFieldFormat;
   apiKey?: string;
   timeout?: number;
   maxRetries?: number;
@@ -669,6 +772,12 @@ export type CreateModelRequest = {
   pricePerCall?: number;
   priceCurrency?: 'CNY' | 'USD';
   remark?: string;
+};
+export type ImageSizeControlMode = 'inherit' | 'field' | 'prompt' | 'field_and_prompt' | 'none';
+export type ImageSizeFieldFormat = 'size' | 'width_height' | 'aspect_ratio' | 'image_config.aspect_ratio';
+export type UpdateModelImageSizeControlRequest = {
+  mode: ImageSizeControlMode;
+  fieldFormat?: ImageSizeFieldFormat;
 };
 export type CreateModelResult = {
   item: ModelItem;
@@ -790,6 +899,19 @@ export type CreateExchangeRequest = {
   description?: string | null;
 };
 export type UpdateExchangeRequest = Omit<CreateExchangeRequest, 'apiKey'> & { version: number };
+export type ImageLayeringCapabilityStatus = {
+  capabilityId: 'image-layering';
+  state: 'not-installed' | 'incomplete' | 'installed' | 'verified';
+  installed: boolean;
+  verified: boolean;
+  hasKey: boolean;
+  exchangeId?: string | null;
+  logicalModelId?: string | null;
+  offeringId?: string | null;
+  modelId: string;
+  publicId: string;
+  lastVerifiedAt?: string | null;
+};
 
 // ── GW-owned API key 健康自检 ──
 export type KeyHealthSummary = {
@@ -1165,7 +1287,22 @@ export type OrganizationData = {
 };
 
 export type CreatedTenant = { id: string; name: string; slug: string; defaultTeamId: string };
+/** 删除团队前的占用清单。 */
+export type TeamDeleteBlockers = { members: string[]; serviceKeys: number; appCallers: number; totalCount: number };
+/** 删除租户前的剩余内容清单：每一项非零都会挡下删除，同时就是「还要清什么」的待办。 */
+export type TenantDeleteBlockers = {
+  otherMembers: number; platforms: number; models: number; pools: number;
+  exchanges: number; logicalModels: number; serviceKeys: number; appCallers: number; totalCount: number;
+};
 export type CreatedTeam = { id: string; name: string; status: string };
+/** PUT /gw/teams/{id} 的返回体：只有 id 与连带影响计数，不回读团队名。 */
+export type TeamUpdateResult = {
+  id: string;
+  updated: boolean;
+  invalidatedMemberships: number;
+  revokedServiceKeys: number;
+  disabledAppCallers: number;
+};
 export type CreateMemberRequest = {
   username: string;
   displayName?: string;

@@ -3,7 +3,7 @@
  * <html>. Bootstrap script in index.html applies the stored value before paint
  * to avoid FOUC.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export type Theme = 'dark' | 'light';
 export type ThemeMode = Theme | 'system';
@@ -28,6 +28,20 @@ function resolveTheme(mode: ThemeMode): Theme {
   return mode === 'system' ? systemTheme() : mode;
 }
 
+/*
+ * 同标签页内的跨实例同步。
+ *
+ * useTheme 的 mode 是**每个组件实例各自的 useState**，而下面那个 storage 监听
+ * 只在**其他标签页**写入时触发，同标签页不触发。所以只要页面里有两个以上消费者
+ * （2026-08-05 起：rail 主题按钮 + 头像浮层的三档选择器），一处改主题另一处的
+ * state 就是陈旧的——rail 图标不翻、浮层对勾停在旧档。
+ *
+ * 这里用一个模块级订阅表补上：applyThemeMode 是所有落地路径的必经之处，
+ * 在它里面广播，任何实例改主题其余实例都会跟上。
+ */
+type ThemeListener = (mode: ThemeMode) => void;
+const themeListeners = new Set<ThemeListener>();
+
 export function applyThemeMode(mode: ThemeMode): void {
   const theme = resolveTheme(mode);
   document.documentElement.dataset.theme = theme;
@@ -38,6 +52,52 @@ export function applyThemeMode(mode: ThemeMode): void {
   } catch {
     /* ignore */
   }
+  // 广播给同页其它实例。回环安全：收到广播的实例 setMode 成同一个值时 React
+  // 直接 bail out，不会再触发它自己的 effect，因此不会来回震荡。
+  themeListeners.forEach((listener) => listener(mode));
+}
+
+export type RippleOrigin = { x: number; y: number };
+
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (callback: () => void) => { ready: Promise<void> };
+};
+
+/**
+ * 从 origin 点向外扩散的圆形主题切换（View Transition API），自动降级为瞬时切换。
+ *
+ * `apply` 必须**同步**改 DOM：startViewTransition 在回调返回后立刻捕「新」快照，
+ * 异步改（比如只调 React setState）会让它捕到还没变的画面，波纹扫过去什么都没变。
+ */
+export function runThemeTransition(origin: RippleOrigin | null, apply: () => void): void {
+  const x = origin?.x ?? window.innerWidth / 2;
+  const y = origin?.y ?? 0;
+  // 覆盖整屏所需半径 = 从 origin 到最远角的距离
+  const maxRadius = Math.ceil(Math.sqrt(
+    Math.max(x, window.innerWidth - x) ** 2
+    + Math.max(y, window.innerHeight - y) ** 2,
+  ));
+
+  const root = document.documentElement;
+  root.style.setProperty('--ripple-x', `${x}px`);
+  root.style.setProperty('--ripple-y', `${y}px`);
+  root.style.setProperty('--ripple-radius', `${maxRadius}px`);
+
+  const start = (document as ViewTransitionDocument).startViewTransition;
+  const reduced = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced || typeof start !== 'function') {
+    apply();
+    return;
+  }
+
+  const transition = start.call(document, () => {
+    // 冻结全局 micro-motion，让「新」快照捕到的是最终配色而不是过渡中途色
+    root.classList.add('vt-snapshotting');
+    apply();
+  });
+  const unfreeze = (): void => root.classList.remove('vt-snapshotting');
+  transition.ready.then(unfreeze, unfreeze);
 }
 
 export function useTheme(): {
@@ -45,6 +105,7 @@ export function useTheme(): {
   mode: ThemeMode;
   setTheme: (t: ThemeMode) => void;
   toggle: () => void;
+  toggleWithRipple: (origin: RippleOrigin | null) => void;
 } {
   const [mode, setMode] = useState<ThemeMode>(() => readStoredMode());
   const [system, setSystem] = useState<Theme>(() => systemTheme());
@@ -68,14 +129,32 @@ export function useTheme(): {
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
+  // 同页其它实例改了主题时跟上（storage 事件只跨标签页，管不到这里）
+  useEffect(() => {
+    const onBroadcast: ThemeListener = (next) => setMode(next);
+    themeListeners.add(onBroadcast);
+    return () => { themeListeners.delete(onBroadcast); };
+  }, []);
+
   useEffect(() => {
     applyThemeMode(mode);
   }, [mode, theme]);
+
+  const toggleWithRipple = useCallback((origin: RippleOrigin | null) => {
+    const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
+    runThemeTransition(origin, () => {
+      // 先同步落 DOM（View Transition 要立刻捕到新配色），再同步 React 状态；
+      // 下一轮 effect 里的 applyThemeMode 是幂等的，不会二次闪烁。
+      applyThemeMode(next);
+      setMode(next);
+    });
+  }, [theme]);
 
   return {
     theme,
     mode,
     setTheme: setMode,
     toggle: () => setMode((current) => (current === 'dark' ? 'light' : 'dark')),
+    toggleWithRipple,
   };
 }

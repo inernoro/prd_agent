@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, CloudUpload, FileText, Clock3, RefreshCw } from 'lucide-react';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
@@ -13,10 +14,51 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
 
-function formatBackgroundDuration(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+const MINUTE_SECONDS = 60;
+const HOUR_SECONDS = 60 * MINUTE_SECONDS;
+const DAY_SECONDS = 24 * HOUR_SECONDS;
+/** 超过这个时长就不该再说「已等待」——它暗示马上就好，而实际上多半要人来点重试。 */
+const ARCHIVE_STALLED_SECONDS = HOUR_SECONDS;
+
+/**
+ * 等待时长的人话。此前只有 mm:ss，没有小时和天的进位——
+ * 一条 7 月 24 日卡住的记录在 8 月 11 日会显示「已等待 26573:16」，
+ * 数字本身没算错，但没人能从这串数里看出「这条已经卡了 18 天」。
+ */
+export function formatBackgroundDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  if (seconds >= DAY_SECONDS)
+    return `${Math.floor(seconds / DAY_SECONDS)} 天 ${Math.floor((seconds % DAY_SECONDS) / HOUR_SECONDS)} 小时`;
+  if (seconds >= HOUR_SECONDS)
+    return `${Math.floor(seconds / HOUR_SECONDS)} 小时 ${Math.floor((seconds % HOUR_SECONDS) / MINUTE_SECONDS)} 分`;
+  const minutes = Math.floor(seconds / MINUTE_SECONDS);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % MINUTE_SECONDS).padStart(2, '0')}`;
+}
+
+/**
+ * 后台归档等了多久、还该不该按「就快好了」来讲。
+ *
+ * 卡了一个小时以上的，用户要知道的是**什么时候开始的**和**它已经不正常了**，
+ * 而不是一个还在每秒往上跳的计数器——那只会让人以为系统还在推进。
+ */
+export function describeArchiveWait(startedAt?: string, now = Date.now()): {
+  seconds: number;
+  stalled: boolean;
+  /** 卡住时给出开始时刻，让人能判断「这是哪天的事」 */
+  startedLabel: string | null;
+} {
+  const startedMs = startedAt ? new Date(startedAt).getTime() : Number.NaN;
+  if (!Number.isFinite(startedMs)) return { seconds: 0, stalled: false, startedLabel: null };
+  const seconds = Math.max(0, Math.floor((now - startedMs) / 1000));
+  const stalled = seconds >= ARCHIVE_STALLED_SECONDS;
+  if (!stalled) return { seconds, stalled, startedLabel: null };
+  const started = new Date(startedMs);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return {
+    seconds,
+    stalled,
+    startedLabel: `${started.getFullYear()}-${pad(started.getMonth() + 1)}-${pad(started.getDate())} ${pad(started.getHours())}:${pad(started.getMinutes())}`,
+  };
 }
 
 const RECORDING_ARCHIVE_STALE_MS = 10 * 60 * 1000;
@@ -40,16 +82,19 @@ function RecordingArchiveProgress({
   waitingForRetry: boolean;
   entryId: string;
 }) {
-  const startedMs = startedAt ? new Date(startedAt).getTime() : Date.now();
-  const [elapsed, setElapsed] = useState(() => (
-    Number.isFinite(startedMs) ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0
-  ));
+  // 每次从 startedAt 重算，不做 +1 累加：累加会随标签页休眠漂移，
+  // 也会在「这条其实是几天前的」时候装作自己一直在跟进。
+  const [wait, setWait] = useState(() => describeArchiveWait(startedAt));
   const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setElapsed(value => value + 1), 1000);
+    setWait(describeArchiveWait(startedAt));
+    // 已经卡成天级的，没必要每秒重算一遍——那个数字一分钟也不会变一次。
+    if (describeArchiveWait(startedAt).stalled) return undefined;
+    const timer = window.setInterval(() => setWait(describeArchiveWait(startedAt)), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [startedAt]);
+  const elapsed = wait.seconds;
 
   const stages = [
     { label: '录音已保存', state: 'done' as const, icon: Check },
@@ -77,7 +122,9 @@ function RecordingArchiveProgress({
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[13px] font-semibold text-token-primary">
-            {waitingForRetry ? '云端服务暂时不可用，已排队重试' : '正在保存云端副本'}
+            {wait.stalled
+              ? '云端副本长时间没有完成，多半要手动重试'
+              : waitingForRetry ? '云端服务暂时不可用，已排队重试' : '正在保存云端副本'}
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-token-secondary">
             {waitingForRetry
@@ -132,8 +179,9 @@ function RecordingArchiveProgress({
       </div>
 
       <p className="mt-3 text-center text-[10px] tabular-nums text-token-muted">
-        {waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'}
-        {' · '}{waitingForRetry ? '已等待' : '已处理'} {formatBackgroundDuration(elapsed)}
+        {wait.stalled
+          ? `${wait.startedLabel} 开始，已经卡了 ${formatBackgroundDuration(elapsed)}`
+          : `${waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'} · ${waitingForRetry ? '已等待' : '已处理'} ${formatBackgroundDuration(elapsed)}`}
       </p>
       {waitingForRetry && (
         <button
@@ -162,6 +210,30 @@ function RecordingArchiveProgress({
 }
 
 /**
+ * 移动端 HTML 报告字号档位（CSS zoom，作用于 srcDoc body）：
+ * 周报/验收报告等 HTML 产物按 980px 桌面纸面设计，手机上正文与等宽小字偏小且
+ * sandbox iframe 内无法双指缩放——给读者一个显式放大手段。zoom 会触发真实重排
+ * （非截图式缩放），流式布局按更窄的等效视口重新换行，不会出横向滚动条。
+ * 档位状态由调用方（DocBrowser 工具栏）持有并经 htmlZoom prop 下发——控件与
+ * 其他阅读动作同一行，不单独占行；本组件只负责把 zoom 应用到 srcDoc body。
+ * 纯 UI 偏好，发版后旧值无害 → 允许 localStorage（.claude/rules/no-localstorage.md）。
+ */
+export const HTML_ZOOM_STORAGE_KEY = 'doc-html-preview-zoom';
+export const HTML_ZOOM_MIN = 1;
+export const HTML_ZOOM_MAX = 1.6;
+export const HTML_ZOOM_STEP = 0.15;
+
+export function readStoredHtmlZoom(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(HTML_ZOOM_STORAGE_KEY) ?? '');
+    if (Number.isFinite(v) && v >= HTML_ZOOM_MIN && v <= HTML_ZOOM_MAX) {
+      return Math.round(v * 100) / 100;
+    }
+  } catch { /* ignore */ }
+  return 1;
+}
+
+/**
  * 给 srcDoc 渲染的 HTML 正文注入移动端响应式能力：
  * - 缺 <meta viewport> 时补一条 width=device-width（核心：让移动端按真机宽度排版而非 980px 桌面视口）
  * - 注入流式兜底 CSS（img/table/pre 等 max-width:100%），把固定像素宽内容收进屏宽
@@ -180,7 +252,7 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, htmlBleedX, htmlZoom }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
@@ -189,7 +261,22 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
   /** 打开知识库智能体，并以当前录音原文作为上下文。 */
   onAskRecording?: () => void;
+  /** 移动端 HTML 预览左右出血像素：抵消调用方内容区的水平 padding，让报告纸面满铺卡片宽度。 */
+  htmlBleedX?: number;
+  /** HTML 报告字号档位（受控，由调用方工具栏持有；缺省 1 = 100%）。 */
+  htmlZoom?: number;
 }) {
+  const isMobile = useIsMobile();
+  const htmlIframeRef = useRef<HTMLIFrameElement | null>(null);
+  // onLoad 闭包里读的是挂载时的 zoom，用 ref 镜像保证 iframe 重载后应用的是当前档位
+  const htmlZoomRef = useRef(htmlZoom ?? 1);
+  useEffect(() => {
+    htmlZoomRef.current = htmlZoom ?? 1;
+    // 已渲染的 srcDoc 文档就地应用（allow-same-origin 可达）；重排后 ResizeObserver 会自动跟高
+    const body = htmlIframeRef.current?.contentDocument?.body;
+    if (body) body.style.setProperty('zoom', String(htmlZoom ?? 1));
+  }, [htmlZoom]);
+
   if (!entry) {
     return (
       <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -327,8 +414,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     // 视口排版再缩放进窄 iframe → 整页看起来很小。srcDoc 正文可注入 viewport + 流式 CSS
     // 让其按设备宽度重排（fileUrl 上传文件无法注入，由生成端补 viewport 兜底）。
     const srcDocHtml = !fileUrl ? ensureResponsiveHtml(text ?? '') : null;
-    return (
+    // 移动端满铺：负 margin 抵消调用方内容区的水平 padding，纸面横向撑满卡片
+    // （mobile-first-density：手机端只留一层 gutter，不让三层 padding 叠加吃掉屏宽）。
+    // 仅 srcDoc 走满铺/字号（fileUrl 依赖 height:100% 链，包一层 div 会塌高，保持原样）。
+    const bleed = isMobile && !fileUrl && htmlBleedX ? htmlBleedX : 0;
+    const iframeEl = (
       <iframe
+        ref={htmlIframeRef}
         {...(fileUrl ? { src: fileUrl } : { srcDoc: srcDocHtml ?? '' })}
         title={entry.title}
         // srcDoc（导入/手写 HTML，与父同源可量高）：用 allow-same-origin（仍未给 allow-scripts，
@@ -350,6 +442,10 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             };
             const d = ifr.contentDocument;
             if (!d || !d.documentElement) return;
+            // 用户设过字号档位 → 文档一挂载就应用，避免先按 100% 排完再跳一次
+            if (d.body && htmlZoomRef.current !== 1) {
+              d.body.style.setProperty('zoom', String(htmlZoomRef.current));
+            }
             // 失控熔断：正常内容量高会在几帧内收敛（±2px 阈值兜住抖动）。若**连续**写高
             // 迟迟不收敛，说明内容高度反过来依赖 iframe 高度（如 100vh 布局）形成正反馈——
             // 此时必须停手，否则 RO 每帧触发，主线程被打满、整页卡死。
@@ -473,11 +569,21 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}
-        className="w-full rounded-lg border border-token-subtle"
+        // 满铺时去掉左右描边与圆角（纸面直抵卡片边缘，只留上下分隔线）
+        className={`w-full border-token-subtle ${bleed ? 'border-y' : 'rounded-lg border'}`}
         // overflowAnchor none：把 iframe 从外层滚动器的 scroll anchoring 候选里摘出去，
         // 自增高过程中浏览器不再为"补偿高度变化"回调 scrollTop（滚动阻滞感的另一半根因）。
         style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, background: '#fff', overflowAnchor: 'none' }}
       />
+    );
+    if (!bleed) return iframeEl;
+    // overflowX clip：zoom 重排的亚像素舍入偶尔会让内容超宽 1-2px，
+    // 阅读列因此变成可横移容器（overflow-y:auto 会把 overflow-x 也算成 auto），
+    // 竖滑手势被横向分量搅得发飘——阅读区一律禁止横向滚动
+    return (
+      <div style={{ marginLeft: -bleed, marginRight: -bleed, overflowX: 'clip' }}>
+        {iframeEl}
+      </div>
     );
   }
 

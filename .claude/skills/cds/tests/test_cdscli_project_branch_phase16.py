@@ -387,7 +387,7 @@ def test_preview_url_uses_explicit_global_key_to_resolve_cds_self(tmp_path, monk
 
 
 def test_preview_urls_use_api_values_and_preserve_multiple_entries():
-    """preview-url 只消费 API 地址，主入口优先且去重。"""
+    """preview-url 只消费 API 页面地址，主入口优先并过滤探活 URL。"""
     branch = {
         "previewSlug": "must-not-be-used-to-build-a-host",
         "previewUrl": "https://primary.example/",
@@ -403,7 +403,22 @@ def test_preview_urls_use_api_values_and_preserve_multiple_entries():
     assert cdscli._preview_urls_from_branch(branch) == [
         "https://primary.example/",
         "https://secondary.example/",
-        "https://gateway.example/gw/healthz",
+    ]
+
+
+def test_preview_entries_are_named_web_pages_and_override_legacy_health_urls():
+    branch = {
+        "previewUrl": "https://legacy.example/healthz",
+        "previewUrls": ["https://legacy.example/healthz"],
+        "previewEntries": [
+            {"name": "管理端", "url": "https://main.example/", "primary": True},
+            {"name": "帮助中心", "url": "https://help.example/guide", "primary": False},
+        ],
+    }
+
+    assert cdscli._preview_urls_from_branch(branch) == [
+        "https://main.example/",
+        "https://help.example/guide",
     ]
 
 

@@ -153,6 +153,11 @@ const STUBS = {
   '/parameter-capabilities/meta': { items: [], templates: [] },
   '/logical-models': { items: LOGICAL_MODELS, total: LOGICAL_MODELS.length },
   '/exchanges': { ...LIST, items: EXCHANGES, exchanges: EXCHANGES },
+  '/capabilities/image-layering': {
+    capabilityId: 'image-layering', state: 'installed', installed: true, verified: false, hasKey: true,
+    exchangeId: 'ex2', logicalModelId: 'lm-image-layering', offeringId: 'of-image-layering',
+    modelId: 'fal-qwen-image-layered', publicId: 'image-layering', lastVerifiedAt: null,
+  },
   // 形状必须对齐 ExchangeMetaData —— 旧桩写的是 protocols/targetKinds/models，
   // 因为 exchanges 恒空、渲染分支从没走到，这个错形状一直没暴露。
   '/exchanges/meta': {
@@ -318,6 +323,22 @@ for (const route of ROUTES) {
   await page.waitForTimeout(800);
   data[route] = await page.evaluate(measure);
 }
+await page.goto(`${base}/exchanges#image-layering`);
+await page.waitForSelector('[data-testid="exchange-list"]');
+const exchangeLayout = await page.evaluate(() => {
+  const capability = document.querySelector('#image-layering');
+  const cards = [...document.querySelectorAll('[data-testid="exchange-list"] > div')]
+    .map((element) => element.getBoundingClientRect());
+  return {
+    capabilityWidth: capability ? Math.round(capability.getBoundingClientRect().width) : null,
+    cardCount: cards.length,
+    columns: new Set(cards.map((rect) => Math.round(rect.left))).size,
+    equalWidths: new Set(cards.map((rect) => Math.round(rect.width))).size <= 1,
+  };
+});
+if (process.env.LLMGW_SCREENSHOT_PATH) {
+  await page.screenshot({ path: process.env.LLMGW_SCREENSHOT_PATH, fullPage: true });
+}
 await browser.close();
 server.close();
 
@@ -359,5 +380,10 @@ for (const [route, m] of Object.entries(data)) {
   drift += diffs.length;
 }
 console.log(`\n合计漂移项: ${drift}`);
+console.log('Exchange 布局:', JSON.stringify(exchangeLayout));
+if (exchangeLayout.cardCount > 1 && (exchangeLayout.columns !== 1 || !exchangeLayout.equalWidths)) {
+  console.error('Exchange 列表必须保持单列且卡片等宽。');
+  drift += 1;
+}
 // 有漂移必须非零退出，否则任何按退出码判定的 CI / 本地校验都会把回归当通过。
 if (drift > 0) process.exitCode = 1;

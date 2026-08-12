@@ -1,5 +1,15 @@
 * { box-sizing: border-box; }
 
+/* 整页只许纵向滚动（2026-08-09 用户反馈「总是可以左右滑动，向下滑很别扭」）：
+   - overflow-x clip：窄机型上偶发的超宽元素（如部署徽章、zoom 重排的亚像素舍入）
+     会把 body 撑出 1-2px 横滑，一律裁掉；
+   - overscroll-behavior-x none：iOS 对横向 overscroll 会整页橡皮筋拖动，禁断。
+   应用内需要横滑的控制条/卡片轨都有自己的 overflow-x-auto 容器，不受影响。 */
+html, body {
+  overflow-x: clip;
+  overscroll-behavior-x: none;
+}
+
 /* CDS 同款主题水波：快照期间冻结普通 CSS transition，避免新旧主题在截图时串色。 */
 .theme-transition-snapshotting,
 .theme-transition-snapshotting *,

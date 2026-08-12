@@ -190,6 +190,33 @@ public class LocalSpeakerDiarizerTests
             .ShouldBe(["说话人1", "说话人2"]);
     }
 
+    /// <summary>
+    /// 本地兜底产出的每一句都必须盖上「声纹估算」的戳。
+    ///
+    /// 分出几个人是真实声学结果，但哪句话归谁是按字数比例摊出来的——
+    /// 不盖戳，界面上它和上游原生识别长得一模一样，用户无从判断该不该信。
+    /// 刻意复用上面那条用例的同一段合成音频：判据要建在已被证明能分出两个人的地基上，
+    /// 另造一份声学素材等于给这条断言换了个没人验证过的前提。
+    /// </summary>
+    [Fact]
+    public void LocalDiarization_ShouldStampEverySegmentAsEstimated()
+    {
+        var wav = BuildWav(
+            (0.35, 0, 0),
+            (2.2, 125, 0.70),
+            (0.55, 0, 0),
+            (2.8, 255, 0.65),
+            (0.30, 0, 0));
+
+        var result = LocalSpeakerDiarizer.TryDiarize(
+            wav,
+            "米多有十年的行业经验和丰富的营销策略。只要交付质量达到标准，当前报价是合理的。希望通用功能优化不要额外收费。");
+
+        result.ShouldNotBeNull();
+        result.SpeakerCount.ShouldBe(2);
+        result.Segments.ShouldAllBe(segment => segment.SpeakerSource == SpeakerSources.Local);
+    }
+
     [Fact]
     public void InvalidAudio_ShouldDeclineDiarization()
     {

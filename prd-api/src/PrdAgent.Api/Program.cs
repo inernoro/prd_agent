@@ -15,6 +15,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Middleware;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Diagnostics;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Cache;
@@ -208,7 +209,7 @@ builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHea
 builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWorker>();
 
 // 模型调度执行器
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
@@ -223,7 +224,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(
         sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>>()));
 
 var configuredGatewayMode = builder.Configuration["LlmGateway:Mode"]?.Trim();
-var gatewayMode = PrdAgent.Infrastructure.LlmGateway.LlmGatewayModePolicy.Resolve(
+var gatewayMode = PrdAgent.Core.LlmGateway.LlmGatewayModePolicy.Resolve(
     configuredGatewayMode,
     builder.Environment.IsProduction());
 // 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
@@ -244,12 +245,12 @@ var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway
 // 显式逻辑模型不跟随 MAP 的全局 inproc/shadow 迁移开关：它始终使用独立 serving HTTP 边界。
 // 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>(sp =>
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 
 if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
 {
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 }
 else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
@@ -258,10 +259,10 @@ else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
     // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
     // LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对）。inproc+仅白名单时不比对（writer=null）。
     var shadowSamplePercent = int.TryParse(builder.Configuration["LlmGateway:ShadowFullSamplePercent"], out var sp0) ? sp0 : 0;
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
+    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>
         new PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway(
             inproc: new PrdAgent.Infrastructure.LlmGateway.LlmGateway(
-                sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>(),
+                sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>(),
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>>(),
                 sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
@@ -281,18 +282,19 @@ else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
 }
 else
 {
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
 }
 
-// 注册 Core 层的 ILlmGateway 接口（同一实例）
+// 把同一个实例也暴露成 Core 层那个窄接口。宽接口已继承窄接口，这里是隐式向上转型；
+// 此前写的是强制类型转换，接口一旦漂移只会在运行时炸，现在由编译期兜住。
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
-    (PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway)sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>());
+    sp.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>());
 
 // OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenerationClient>(sp =>
     sp.GetRequiredService<OpenAIImageClient>());
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenGateway,
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ImageGen.IImageGenGateway,
     PrdAgent.Infrastructure.LlmGateway.ImageGen.ImageGenGateway>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
@@ -313,6 +315,12 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+// 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
+
+// 网页托管「向我提问」：站点正文快照（喂给模型的上下文）+ 配额闸（保护 owner 的 token 预算）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteContentSnapshotService, PrdAgent.Infrastructure.Services.SiteContentSnapshotService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAskQuotaService, PrdAgent.Infrastructure.Services.AskQuotaService>();
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
@@ -1288,6 +1296,21 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentHookProfileServic
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentRuntimeProfileService,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentRuntimeProfileService>();
 
+// 通用对话智能体（见 doc/design.platform.chat-agent.md）。
+// 适配层 + 进程内轮次队列 + 后台 worker；对话循环在 agent 运行时的官方 SDK 里，此处没有循环。
+builder.Services.Configure<PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOptions>(
+    builder.Configuration.GetSection(
+        PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOptions.SectionName));
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentTurnQueue,
+    PrdAgent.Infrastructure.Services.ChatAgent.InMemoryChatAgentTurnQueue>();
+// 一次性转派的 runId → 发起人台账。必须是 Singleton：工具回调是另一条 HTTP 请求进来的，
+// Scoped 的话回调那一侧永远拿到一个空台账，工具会全部因「没有用户身份」而拒绝执行。
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentOneOffRunRegistry,
+    PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOneOffRunRegistry>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IChatAgentService,
+    PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ChatAgentTurnWorker>();
+
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
 // 详见 doc/design.cds.agent.sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
 //
@@ -1321,6 +1344,20 @@ builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker>();
 builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.CdsSidecarSyncService>();
+
+// 把已登记 ToolName 的专业智能体各包成一把工具，交给通用对话智能体自己转派
+// （用户不必先挑智能体）。名单来自 AgentCapabilityRegistry.Delegatable，这里不另抄一份——
+// 契约里新增一个可转派智能体，工具自动就位，不会出现「登记了但没人接线」。
+// 必须在 AgentToolRegistry 之前注册：它构造时会把这些 IAgentTool 一并收进去。
+foreach (var delegatable in PrdAgent.Core.Models.AgentUniverse.AgentCapabilityRegistry.Delegatable)
+{
+    var capability = delegatable;
+    builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.AgentTools.IAgentTool>(sp =>
+        new PrdAgent.Api.Services.Toolbox.AgentDelegateTool(
+            capability,
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ILogger<PrdAgent.Api.Services.Toolbox.AgentDelegateTool>>()));
+}
 
 // Agent Tools 注册表 + 反向调用入口（sidecar 收到 tool_use 后回调主服务）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,
@@ -1571,16 +1608,28 @@ static IResult VersionInfo(IHostEnvironment env)
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
         ?? "unknown";
-    var commit = FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA");
+
+    // 实际值：编译期由 -p:SourceRevisionId 烤进程序集，运行时改不了
+    var actualCommit = BuildIdentity.ParseBakedCommit(informationalVersion);
+    // 期待值：部署时注入的环境变量，声明「本次希望跑哪个 commit」，可被平台改写
+    var declaredCommit = FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA");
+    var match = BuildIdentity.Compare(actualCommit, declaredCommit);
     var buildTime = FirstEnv("BUILD_TIME", "BUILD_TIME_UTC", "CDS_BUILD_TIME", "VERCEL_GIT_COMMIT_DATE");
+
+    // commit 字段保持向后兼容，但优先给实际值 —— 一个值没法自证，对账结论看 commitMatch
+    var effective = actualCommit ?? declaredCommit;
 
     return Results.Ok(new
     {
         app = "prd-agent",
         service = "prd-api",
         version = informationalVersion,
-        commit,
-        shortCommit = ShortCommit(commit),
+        commit = effective,
+        shortCommit = ShortCommit(effective),
+        actualCommit,
+        expectedCommit = declaredCommit,
+        commitMatch = BuildIdentity.ToWireValue(match),
+        commitWarning = BuildIdentity.DescribeMismatch(match, actualCommit, declaredCommit),
         buildTimeUtc = buildTime,
         environment = env.EnvironmentName,
         serverTimeUtc = DateTime.UtcNow,

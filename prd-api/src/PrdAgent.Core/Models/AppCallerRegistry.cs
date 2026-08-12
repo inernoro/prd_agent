@@ -207,6 +207,14 @@ public static class VisualAgent
         public const string VisionGen = "visual-agent.image.vision::generation";
 
         [AppCallerMetadata(
+            "图片语义分层",
+            "把单张图片拆解为可独立编辑的 RGBA 图层",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string Layering = "visual-agent.image.layering::generation";
+
+        [AppCallerMetadata(
             "图片分析",
             "分析图片内容",
             ModelTypes = new[] { ModelTypes.Vision },
@@ -1078,11 +1086,67 @@ public static class DocumentStoreAgent
 }
 
 /// <summary>
+/// 通用对话智能体（面向全体用户的对聊入口）
+/// </summary>
+public static class ChatAgent
+{
+    public const string AppName = "通用对话智能体";
+
+    [AppCallerMetadata(
+        "通用对话-多轮会话",
+        "面向全体用户的通用对话入口。对话循环由 agent 运行时的官方 SDK 执行，本 caller 仅用于关联日志与配额",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Chat"
+    )]
+    public const string Conversation = "chat-agent.conversation::chat";
+
+    [AppCallerMetadata(
+        "通用对话-对话内出图",
+        "用户在对话里说「画一张」时触发，转发给平台已有的出图流水线",
+        ModelTypes = new[] { ModelTypes.ImageGen },
+        Category = "Chat"
+    )]
+    public const string ImageGeneration = "chat-agent.image-gen::generation";
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin
 {
     public const string AppName = "PRD Agent Web";
+
+    /// <summary>知识库语义检索：文档切块与提问的向量化。</summary>
+    public static class KnowledgeBase
+    {
+        [AppCallerMetadata(
+            "知识库-文档向量化",
+            "给知识库文档切块建索引时调用向量模型（批量、离线）",
+            ModelTypes = new[] { ModelTypes.Embedding },
+            Category = "Document"
+        )]
+        public const string Index = "prd-agent-web.knowledge-base.index::embedding";
+
+        [AppCallerMetadata(
+            "知识库-检索向量化",
+            "把用户的提问转成向量以检索知识库（在线、单条、低延迟）",
+            ModelTypes = new[] { ModelTypes.Embedding },
+            Category = "Document"
+        )]
+        public const string Query = "prd-agent-web.knowledge-base.query::embedding";
+    }
+
+    /// <summary>网页托管「向我提问」：访客对着托管页面提问，上下文是该页面正文。</summary>
+    public static class WebHosting
+    {
+        [AppCallerMetadata(
+            "网页托管-向我提问",
+            "访客在托管页面右下角提问，模型只依据该页面正文回答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Ask = "prd-agent-web.web-hosting.ask::chat";
+    }
 
     public static class Lab
     {

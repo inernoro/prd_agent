@@ -41,6 +41,7 @@
     "@tailwindcss/vite": "^4.1.17",
     "@uiw/react-md-editor": "^4.1.1",
     "@xyflow/react": "^12.10.0",
+    "ag-psd": "^31.0.2",
     "clsx": "^2.1.1",
     "dayjs": "^1.11.13",
     "echarts": "^6.0.0",

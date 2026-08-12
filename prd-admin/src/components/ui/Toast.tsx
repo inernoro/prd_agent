@@ -1,6 +1,6 @@
 import { cn } from '@/lib/cn';
 import { useToastStore, type Toast as ToastModel } from '@/lib/toast';
-import { CheckCircle2, XCircle, Info, AlertTriangle, X } from 'lucide-react';
+import { CheckCircle2, XCircle, Info, AlertTriangle, LoaderCircle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { glassToast } from '@/lib/glassStyles';
 
@@ -50,7 +50,7 @@ function ToastItem({ toast }: { toast: ToastModel }) {
   const removeToast = useToastStore((s) => s.removeToast);
   const [isExiting, setIsExiting] = useState(false);
 
-  const Icon = icons[toast.type];
+  const Icon = toast.loading ? LoaderCircle : icons[toast.type];
   const color = colors[toast.type];
 
   useEffect(() => {
@@ -87,7 +87,11 @@ function ToastItem({ toast }: { toast: ToastModel }) {
       )}
       style={glassToast(color.bg, color.border)}
     >
-      <Icon size={20} style={{ color: color.icon, flexShrink: 0, marginTop: 2 }} />
+      <Icon
+        size={20}
+        className={toast.loading ? 'animate-spin' : undefined}
+        style={{ color: color.icon, flexShrink: 0, marginTop: 2 }}
+      />
 
       <div className="flex-1 min-w-0">
         <div className="font-semibold text-[13px] text-token-primary mb-1">{toast.title}</div>

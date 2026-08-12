@@ -1305,7 +1305,7 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
           >
             <div>
               <div style={{ fontSize: 16, marginBottom: 8 }}>这个库还没有节点</div>
-              <div>在文档里写 <code style={{ background: '#2a2a2a', padding: '2px 6px', borderRadius: 3 }}>[[标题]]</code> 即可织出第一条边。</div>
+              <div>在文档里写 <code style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: 3, whiteSpace: 'nowrap' }}>[[标题]]</code> 即可织出第一条边。</div>
             </div>
           </div>
         )}

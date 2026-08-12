@@ -36,6 +36,8 @@ import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   parseLibraryShareViewMode,
   resolveShareKnowledgeBaseReturnPath,
@@ -52,6 +54,10 @@ import {
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 export function LibraryShareViewPage() {
+  // 移动端沉浸阅读：分享页无 AppShell，自己消费 DocBrowser 的顶栏接管
+  //（文档标题 + 返回一条顶栏，标题条/简介条/查看方式条全部让位）
+  const isMobileViewport = useIsMobile();
+  const readerOverride = useReaderChromeStore((s) => s.override);
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -276,9 +282,20 @@ export function LibraryShareViewPage() {
       ? '当前账号不能直接打开该知识库，返回我的知识库列表'
       : '登录后进入我的知识库列表';
 
+  const immersiveReading = isMobileViewport && activeView === 'read' && !!readerOverride;
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: SANS }}>
+      {/* 移动端沉浸阅读：DocBrowser 自绘 fixed 沉浸顶栏（返回 + 标题 + 字号/全屏/更多），
+          分享页只需给它留出等高占位，并隐藏下方三条头部行 */}
+      {immersiveReading && (
+        <div
+          aria-hidden
+          style={{ height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))', flexShrink: 0 }}
+        />
+      )}
       {/* 顶栏：跟随全局主题偏好 */}
+      {!immersiveReading && (
       <div style={{
         padding: '10px 16px',
         display: 'flex',
@@ -335,9 +352,10 @@ export function LibraryShareViewPage() {
           </button>
         </div>
       </div>
+      )}
 
       {/* 简介条：低饱和度 */}
-      {hasMeta && (
+      {hasMeta && !immersiveReading && (
         <div style={{
           padding: '8px 16px',
           display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
@@ -360,7 +378,7 @@ export function LibraryShareViewPage() {
         </div>
       )}
 
-      {!isSingleDoc && (
+      {!isSingleDoc && !immersiveReading && (
         <nav
           aria-label="知识库查看方式"
           style={{
@@ -391,6 +409,7 @@ export function LibraryShareViewPage() {
         {activeView === 'read' && (
           <DocBrowser
             entries={browserEntries}
+            immersiveOnMobile
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
             selectedEntryId={controlledSelectedEntryId}

@@ -96,6 +96,7 @@
 | **尺寸限制** | 不同模型支持不同尺寸，动态配置 | ImageGenSizeCaps |
 | **资产管理** | 上传/删除工作空间资产，COS 存储 | UploadArtifacts |
 | **投稿系统** | 优秀作品投稿展示，含生成快照 | SubmissionsController |
+| **分层 PSD 导出** | 生成图片按语义拆成多个图层（如主体/背景/文字），导出为可在设计软件里逐层编辑的 PSD；分层结果持久化到画布 Frame，支持单层重新编辑与免重算复用；默认展示 AI 分层合成结果，原图降级为隐藏参考层 | LLM Gateway `image-layering` 公开能力 |
 
 ## 五、整体架构
 
@@ -248,6 +249,7 @@
 | Video Agent | 视频封面/素材复用 VisualAgent 资产 | 视频团队 |
 | 水印系统 | 按 appKey 绑定，生图后自动叠加 | 全局 |
 | 桌面客户端 | 桌面端有独立的 VisualAgent 入口 | 桌面团队 |
+| LLM Gateway 分层能力 | MAP 单向依赖网关暴露的 `image-layering` 公开能力，不感知具体上游平台和模型 | 网关团队 |
 
 ### 风险评估
 

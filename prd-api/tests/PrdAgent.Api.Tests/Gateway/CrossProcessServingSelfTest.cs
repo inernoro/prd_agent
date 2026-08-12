@@ -14,6 +14,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
@@ -57,7 +58,7 @@ public class CrossProcessServingSelfTest
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         // 与生产一致：PascalCase 绑定，才能把客户端发来的 PascalCase body 正确反序列化。
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
-        builder.Services.AddSingleton<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, FakeServingGateway>();
+        builder.Services.AddSingleton<PrdAgent.Core.LlmGateway.ILlmGateway, FakeServingGateway>();
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
 
         await using var app = builder.Build();
@@ -160,7 +161,7 @@ public class CrossProcessServingSelfTest
     }
 
     // ─── stub 上游：顶替真实 LlmGateway，专测 HTTP 边界 ───
-    private sealed class FakeServingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class FakeServingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         private static GatewayModelResolution Res() => new()
         {

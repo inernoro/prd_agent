@@ -4,6 +4,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.LlmGatewayHost;
 

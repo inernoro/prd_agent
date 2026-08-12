@@ -19,6 +19,7 @@ using System.Text.RegularExpressions;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using static PrdAgent.Core.Models.AppCallerRegistry;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -31,6 +32,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class ImageGenController : ControllerBase
 {
+    private const string ImageLayeringCapabilityId = "image-layering";
+
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
     private readonly IImageGenerationClient _imageClient;
@@ -50,6 +53,13 @@ public class ImageGenController : ControllerBase
         public const string Img2Img = "visual-agent.image.img2img::generation";
         public const string VisionGen = "visual-agent.image.vision::generation";
     }
+
+    private static readonly string[] ImageGenAppCallerCodes =
+    [
+        AppCallerCodes.Text2Img,
+        AppCallerCodes.Img2Img,
+        AppCallerCodes.VisionGen,
+    ];
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -96,7 +106,6 @@ public class ImageGenController : ControllerBase
     [HttpGet("models")]
     public async Task<IActionResult> GetImageGenModels(CancellationToken ct)
     {
-        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img, AppCallerCodes.VisionGen };
         const string modelType = "generation";
 
         var seen = new HashSet<string>();
@@ -104,7 +113,7 @@ public class ImageGenController : ControllerBase
 
         try
         {
-            foreach (var code in codes)
+            foreach (var code in ImageGenAppCallerCodes)
             {
                 var pools = (await _gateway.GetAvailablePoolsAsync(code, modelType, ct))
                     .Select(pool => MapAvailablePool(pool, modelType));
@@ -434,27 +443,99 @@ public class ImageGenController : ControllerBase
     /// </summary>
     /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-image-1.5）</param>
     [HttpGet("adapter-info")]
-    public IActionResult GetAdapterInfo([FromQuery] string modelId)
+    public async Task<IActionResult> GetAdapterInfo([FromQuery] string modelId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(modelId))
         {
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "modelId 不能为空"));
         }
 
-        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(modelId.Trim());
+        var requestedModelId = modelId.Trim();
+        var adapterModelId = requestedModelId;
+        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
+        // 尺寸传输方式属于实际上游模型，即使公开模型名恰好命中旧适配表，也要先解析
+        // 当前路由，避免静态兼容配置遮住控制台显式声明的字段或提示词能力。
+        GatewayModelResolution? runtimeResolution = null;
+        // 模型列表合并了三类生图调用方；适配信息也必须在同一授权范围内解析，不能固定按
+        // 文生图查询，否则仅授权给图生图或多图生成的模型会错误回退到旧适配信息。
+        foreach (var appCallerCode in ImageGenAppCallerCodes)
+        {
+            var candidate = await _gateway.ResolveRequiredLogicalModelAsync(
+                appCallerCode,
+                "generation",
+                requestedModelId,
+                ct);
+            if (candidate.Success)
+            {
+                runtimeResolution = candidate;
+                break;
+            }
+        }
+
+        if (runtimeResolution?.Success == true && !string.IsNullOrWhiteSpace(runtimeResolution.ActualModel))
+        {
+            adapterModelId = runtimeResolution.ActualModel.Trim();
+            adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(adapterModelId);
+        }
+
+        var upstreamSizeControl = ImageSizeControlCapabilities.Parse(runtimeResolution?.ParameterCapabilities);
         if (adapterInfo == null || !adapterInfo.Matched)
         {
-            return Ok(ApiResponse<object>.Ok(new
+            if (!upstreamSizeControl.IsConfigured)
             {
-                matched = false,
-                modelId = modelId.Trim(),
-            }));
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    matched = false,
+                    modelId = requestedModelId,
+                }));
+            }
+
+            // 新上游可以只通过显式 image_size 能力完成接入，不要求先把模型名写进
+            // MAP 的旧适配表。保留一组通用选择项，none 模式由 sizesNotApplicable 隐藏。
+            adapterInfo = new ImageGenAdapterInfo
+            {
+                Matched = true,
+                AdapterName = adapterModelId,
+                DisplayName = adapterModelId,
+                Provider = runtimeResolution?.ActualPlatformName ?? string.Empty,
+                SizeConstraintType = "upstream",
+                SizeConstraintDescription = "由上游模型显式尺寸能力控制",
+                SizesByResolution = new Dictionary<string, List<SizeOption>>
+                {
+                    ["1k"] =
+                    [
+                        new("1024x1024", "1:1"),
+                        new("1344x768", "7:4"),
+                        new("768x1344", "4:7"),
+                        new("1248x832", "3:2"),
+                        new("832x1248", "2:3"),
+                    ],
+                    ["2k"] = [],
+                    ["4k"] = [],
+                },
+            };
         }
+
+        var effectiveSizeParamFormat = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.FieldFormat switch
+            {
+                ImageSizeFieldFormats.Size => SizeParamFormats.WxH,
+                ImageSizeFieldFormats.WidthHeight => SizeParamFormats.WidthHeight,
+                ImageSizeFieldFormats.AspectRatio or ImageSizeFieldFormats.ImageConfigAspectRatio => SizeParamFormats.AspectRatio,
+                _ => SizeParamFormats.None,
+            }
+            : adapterInfo.SizeParamFormat;
+        var effectiveSizesNotApplicable = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.SizesNotApplicable
+            : adapterInfo.SizesNotApplicable;
+        var effectiveIsAdaptive = upstreamSizeControl.IsConfigured
+            ? upstreamSizeControl.UsePrompt
+            : adapterInfo.IsAdaptive;
 
         return Ok(ApiResponse<object>.Ok(new
         {
             matched = true,
-            modelId = modelId.Trim(),
+            modelId = requestedModelId,
             adapterName = adapterInfo.AdapterName,
             displayName = adapterInfo.DisplayName,
             provider = adapterInfo.Provider,
@@ -466,7 +547,14 @@ public class ImageGenController : ControllerBase
                 description = adapterInfo.SizeConstraintDescription,
             },
             sizesByResolution = adapterInfo.SizesByResolution,
-            sizeParamFormat = adapterInfo.SizeParamFormat,
+            sizeParamFormat = effectiveSizeParamFormat,
+            sizesNotApplicable = effectiveSizesNotApplicable,
+            sizeControl = new
+            {
+                source = upstreamSizeControl.IsConfigured ? "upstream-model" : "legacy-adapter",
+                mode = upstreamSizeControl.Mode,
+                fieldFormat = upstreamSizeControl.FieldFormat,
+            },
             limitations = new
             {
                 mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
@@ -479,7 +567,7 @@ public class ImageGenController : ControllerBase
             },
             supportsImageToImage = adapterInfo.SupportsImageToImage,
             supportsInpainting = adapterInfo.SupportsInpainting,
-            isAdaptive = adapterInfo.IsAdaptive,
+            isAdaptive = effectiveIsAdaptive,
         }));
     }
 
@@ -873,6 +961,12 @@ public class ImageGenController : ControllerBase
     public async Task<IActionResult> Generate([FromBody] ImageGenGenerateRequest request, CancellationToken ct)
     {
         var adminId = GetAdminId();
+        var operation = (request?.Operation ?? "generate").Trim().ToLowerInvariant();
+        if (operation is not ("generate" or "layering"))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "operation 仅支持 generate 或 layering"));
+        }
+        var isLayering = operation == "layering";
         var prompt = (request?.Prompt ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(prompt))
         {
@@ -885,9 +979,17 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = VisualAgent.ImageGen.Generate;
+        var appCallerCode = isLayering ? VisualAgent.Image.Layering : VisualAgent.ImageGen.Generate;
+        var requiredLogicalModelPublicId = isLayering ? ImageLayeringCapabilityId : null;
         GatewayModelResolution? resolved = null;
-        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
+        if (isLayering)
+        {
+            // MAP 只依赖 LLMGW 发布的通用能力标识，不感知 fal.ai、Exchange 或具体模型。
+            modelId = null;
+            platformId = null;
+            modelName = null;
+        }
+        else if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
             resolved = await _gateway.ResolveModelAsync(appCallerCode, "generation", ct: ct);
             if (resolved != null)
@@ -919,6 +1021,10 @@ public class ImageGenController : ControllerBase
                                 || !string.IsNullOrWhiteSpace(initImageBase64)
                                 || !string.IsNullOrWhiteSpace(initImageUrl)
                                 || !string.IsNullOrWhiteSpace(initImageAssetSha256);
+        if (isLayering && !initImageProvided)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片分层必须提供一张输入图片"));
+        }
 
         // 兼容：允许前端只传 URL / sha，服务端负责下载/读取并转为 base64（避免浏览器 CORS 与性能问题）
         if (initImageBase64 == null && !string.IsNullOrWhiteSpace(initImageAssetSha256))
@@ -1019,7 +1125,12 @@ public class ImageGenController : ControllerBase
         }
         var maskB64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim();
         var res = await _imageClient.GenerateUnifiedAsync(prompt, n, size, responseFormat, ct, appCallerCode,
-            images: images.Count > 0 ? images : null, modelId, platformId, modelName, maskBase64: maskB64);
+            images: images.Count > 0 ? images : null,
+            modelId,
+            platformId,
+            modelName,
+            maskBase64: maskB64,
+            requiredLogicalModelPublicId: requiredLogicalModelPublicId);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -2154,6 +2265,7 @@ public class ImageGenPlanItem
 
 public class ImageGenGenerateRequest
 {
+    public string? Operation { get; set; }
     public string Prompt { get; set; } = string.Empty;
     public string? ModelId { get; set; }
     public string? PlatformId { get; set; }

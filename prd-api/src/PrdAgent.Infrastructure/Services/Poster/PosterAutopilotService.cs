@@ -9,6 +9,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.Changelog;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Services.Poster;
 

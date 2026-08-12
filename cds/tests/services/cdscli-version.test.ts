@@ -11,7 +11,8 @@ function readSkillFrontmatterVersion(): string | null {
   const skillMd = fs.readFileSync(path.join(repoRoot, '.claude', 'skills', 'cds', 'SKILL.md'), 'utf-8');
   const frontmatter = skillMd.match(/^---\n([\s\S]*?)\n---/);
   if (!frontmatter) return null;
-  const version = frontmatter[1].match(/^version:\s*(.+?)\s*$/m);
+  const metadata = frontmatter[1].match(/^metadata:\s*\n((?:[ \t]+.*(?:\n|$))*)/m);
+  const version = metadata?.[1].match(/^\s+version:\s*(.+?)\s*$/m);
   return version ? version[1].trim().replace(/^["']|["']$/g, '') : null;
 }
 

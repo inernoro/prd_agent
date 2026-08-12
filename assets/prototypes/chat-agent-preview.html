@@ -1,0 +1,1256 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>通用对话智能体 · 方案预览</title>
+<style>
+:root{
+  color-scheme: dark;
+  --bg-base:#141418; --bg-elevated:#1e1e24; --bg-card:rgba(255,255,255,.06);
+  --bg-card-hover:rgba(255,255,255,.10); --bg-input:rgba(255,255,255,.07);
+  --bg-nested:rgba(255,255,255,.025);
+  --text-primary:#f7f7fb; --text-secondary:rgba(247,247,251,.80); --text-muted:rgba(247,247,251,.55);
+  --border-faint:rgba(255,255,255,.08); --border-subtle:rgba(255,255,255,.12);
+  --border-default:rgba(255,255,255,.18);
+  --accent:#D97757; --accent-soft:rgba(217,119,87,.16); --accent-border:rgba(217,119,87,.42);
+  --ok:#5FBF7F; --ok-soft:rgba(95,191,127,.14);
+  --warn:#E0A85C; --warn-soft:rgba(224,168,92,.14);
+  --bad:#D96A6A; --bad-soft:rgba(217,106,106,.14);
+  --info:#7BA7D9; --info-soft:rgba(123,167,217,.14);
+  --shadow:0 10px 30px -20px rgba(0,0,0,.85);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+[data-theme="light"]{
+  color-scheme: light;
+  --bg-base:#EEEAE3; --bg-elevated:#E4DED5; --bg-card:#F8F5EF;
+  --bg-card-hover:rgba(26,26,31,.05); --bg-input:#FBF8F3;
+  --bg-nested:rgba(26,26,31,.03);
+  --text-primary:#262029; --text-secondary:rgba(38,32,41,.78); --text-muted:rgba(38,32,41,.56);
+  --border-faint:rgba(26,26,31,.08); --border-subtle:rgba(26,26,31,.14);
+  --border-default:rgba(26,26,31,.22);
+  --accent:#A64B35; --accent-soft:rgba(166,75,53,.12); --accent-border:rgba(166,75,53,.34);
+  --ok:#3F8A5C; --ok-soft:rgba(63,138,92,.12);
+  --warn:#A9762C; --warn-soft:rgba(169,118,44,.12);
+  --bad:#B04A4A; --bad-soft:rgba(176,74,74,.12);
+  --info:#3F6E9E; --info-soft:rgba(63,110,158,.12);
+  --shadow:0 10px 26px -20px rgba(89,65,50,.5);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg-base); color:var(--text-primary);
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",Segoe UI,Roboto,sans-serif;
+  overflow-x:hidden;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 100px}
+a{color:var(--accent)}
+
+/* ---------- header ---------- */
+header.top{
+  position:sticky;top:0;z-index:40;background:var(--bg-base);
+  border-bottom:1px solid var(--border-faint);
+}
+.top-inner{max-width:1180px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-size:17px;font-weight:650;letter-spacing:.2px}
+.brand span{color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px}
+.top-spacer{flex:1}
+.pill{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;
+  font-size:12px;border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary);
+  white-space:nowrap;
+}
+.pill.accent{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.pill.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.btn{
+  display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-primary);
+  font-size:13px;font-family:inherit;transition:background .16s,border-color .16s,transform .1s;
+}
+.btn:hover{background:var(--bg-card-hover);border-color:var(--border-default)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn[disabled]{opacity:.42;cursor:default}
+
+/* ---------- section nav ---------- */
+nav.secnav{
+  position:sticky;top:57px;z-index:30;background:var(--bg-base);
+  border-bottom:1px solid var(--border-faint);
+}
+.secnav-inner{max-width:1180px;margin:0 auto;padding:9px 20px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.secnav-inner::-webkit-scrollbar{display:none}
+.secnav a{
+  flex:0 0 auto;padding:5px 11px;border-radius:8px;font-size:12.5px;text-decoration:none;
+  color:var(--text-muted);border:1px solid transparent;white-space:nowrap;
+}
+.secnav a:hover{background:var(--bg-card);color:var(--text-primary)}
+.secnav a.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-border)}
+
+/* ---------- generic section ---------- */
+section{padding-top:52px;scroll-margin-top:112px}
+.sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+.sec-num{font:600 12px/1 var(--mono);color:var(--accent);letter-spacing:1.5px;padding-top:6px}
+h2{font-size:24px;margin:0;letter-spacing:-.2px}
+.sec-sub{color:var(--text-muted);font-size:13.5px;margin:0 0 22px 0}
+h3{font-size:16px;margin:26px 0 10px}
+.card{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g5{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:900px){.g3,.g5{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.g2,.g3,.g5{grid-template-columns:1fr}}
+
+/* ---------- get cards ---------- */
+.get{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:13px;padding:15px 15px 16px}
+.get .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);margin-bottom:10px}
+.get b{display:block;font-size:14px;margin-bottom:4px}
+.get p{margin:0;font-size:12.8px;color:var(--text-muted);line-height:1.65}
+.nots{border:1px dashed var(--border-subtle);border-radius:13px;padding:15px 18px;background:var(--bg-nested)}
+.nots ul{margin:8px 0 0;padding-left:19px;color:var(--text-muted);font-size:13px}
+.nots li{margin:3px 0}
+
+/* ---------- demo app shell ---------- */
+.demo-frame{
+  border:1px solid var(--border-default);border-radius:16px;overflow:hidden;
+  background:var(--bg-elevated);box-shadow:var(--shadow);
+}
+.demo-bar{
+  display:flex;align-items:center;gap:8px;padding:9px 13px;
+  background:var(--bg-nested);border-bottom:1px solid var(--border-faint)
+}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--border-default)}
+.urlbar{
+  flex:1;text-align:center;font:11.5px/1 var(--mono);color:var(--text-muted);
+  background:var(--bg-input);border:1px solid var(--border-faint);border-radius:7px;padding:5px 10px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.app{display:grid;grid-template-columns:186px 214px 1fr;min-height:552px}
+@media(max-width:900px){.app{grid-template-columns:1fr}.appnav,.applist{display:none!important}}
+
+.appnav{background:var(--bg-nested);border-right:1px solid var(--border-faint);padding:12px 9px}
+.navitem{
+  display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:9px;
+  font-size:13px;color:var(--text-muted);cursor:default;margin-bottom:2px
+}
+.navitem.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.navitem.new::after{
+  content:"新";font-size:9.5px;margin-left:auto;background:var(--accent);color:#fff;
+  padding:1px 5px;border-radius:5px;font-weight:600
+}
+.navgroup{font-size:10.5px;color:var(--text-muted);opacity:.65;padding:12px 10px 5px;letter-spacing:.6px}
+
+.applist{background:var(--bg-nested);border-right:1px solid var(--border-faint);padding:12px 9px;overflow:auto}
+.newchat{
+  width:100%;justify-content:center;margin-bottom:11px;font-size:12.5px;padding:7px
+}
+.sessitem{padding:9px 10px;border-radius:9px;margin-bottom:3px;cursor:default}
+.sessitem.on{background:var(--bg-card);border:1px solid var(--border-subtle)}
+.sessitem b{display:block;font-size:12.7px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sessitem span{font-size:11px;color:var(--text-muted)}
+
+.chat{display:flex;flex-direction:column;background:var(--bg-elevated);min-width:0}
+.chat-head{
+  display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--border-faint);
+  font-size:13.5px;font-weight:600
+}
+.chat-head .pill{margin-left:auto;font-size:11px;padding:3px 9px}
+.stream{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px;min-height:340px;max-height:440px}
+.stream::-webkit-scrollbar{width:7px}
+.stream::-webkit-scrollbar-thumb{background:var(--border-subtle);border-radius:4px}
+
+.msg{display:flex;gap:11px;animation:rise .34s cubic-bezier(.2,.7,.3,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+.avatar{
+  flex:0 0 27px;height:27px;border-radius:8px;display:grid;place-items:center;
+  font-size:10.5px;font-weight:700;margin-top:1px
+}
+.msg.user .avatar{background:var(--info-soft);color:var(--info)}
+.msg.ai .avatar{background:var(--accent-soft);color:var(--accent)}
+.body{flex:1;min-width:0}
+.bubble{
+  background:var(--bg-card);border:1px solid var(--border-faint);border-radius:12px;
+  padding:10px 13px;font-size:13.6px;line-height:1.72;white-space:pre-wrap
+}
+.msg.user .bubble{background:var(--info-soft);border-color:transparent}
+.think{
+  font-size:12.3px;color:var(--text-muted);font-style:italic;
+  border-left:2px solid var(--border-subtle);padding:2px 0 2px 10px;margin-bottom:7px
+}
+.caret{display:inline-block;width:2px;height:1em;background:var(--accent);vertical-align:-2px;animation:blink .95s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* tool card */
+.tool{
+  border:1px solid var(--border-subtle);border-radius:12px;overflow:hidden;
+  background:var(--bg-nested);margin-top:8px
+}
+.tool-head{display:flex;align-items:center;gap:9px;padding:9px 12px;font-size:12.6px;font-weight:600}
+.tool-head .tag{
+  font:10.5px/1 var(--mono);padding:2px 6px;border-radius:5px;
+  background:var(--bg-card);border:1px solid var(--border-faint);color:var(--text-muted);font-weight:400
+}
+.tool-state{margin-left:auto;font-size:11.5px;font-weight:500}
+.tool.run .tool-state{color:var(--accent)}
+.tool.done .tool-state{color:var(--ok)}
+.tool.fail .tool-state{color:var(--bad)}
+.tool-body{padding:0 12px 12px}
+.bar{height:4px;border-radius:3px;background:var(--border-faint);overflow:hidden;margin:2px 0 8px}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .5s ease}
+.steps{display:flex;gap:5px;flex-wrap:wrap;font-size:11.2px;color:var(--text-muted)}
+.steps s{text-decoration:none;padding:2px 7px;border-radius:6px;background:var(--bg-card);border:1px solid var(--border-faint)}
+.steps s.on{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.steps s.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.artwork{
+  height:126px;border-radius:9px;margin-top:4px;position:relative;overflow:hidden;
+  background:linear-gradient(125deg,#D97757 0%,#8E4B6E 42%,#3B4E86 100%);
+  display:grid;place-items:center;color:#fff;text-align:center;
+  animation:fadein .55s ease both
+}
+@keyframes fadein{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+.artwork::after{
+  content:"";position:absolute;inset:0;
+  background:radial-gradient(120% 90% at 18% 8%,rgba(255,255,255,.34),transparent 55%)
+}
+.artwork div{position:relative;z-index:1}
+.artwork b{display:block;font-size:16px;letter-spacing:3px}
+.artwork span{font-size:10.5px;opacity:.85;letter-spacing:1.5px}
+.kbcard{
+  display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;
+  background:var(--ok-soft);border:1px solid transparent;font-size:12.4px;margin-top:2px
+}
+.kbcard .btn{margin-left:auto;padding:4px 10px;font-size:11.5px}
+.cite{
+  font-size:11.8px;color:var(--text-muted);border-left:2px solid var(--accent-border);
+  padding-left:9px;margin-top:7px
+}
+.cite b{color:var(--text-secondary);font-weight:550}
+
+.composer{border-top:1px solid var(--border-faint);padding:11px 16px 14px;background:var(--bg-elevated)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+.chip{
+  font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary)
+}
+.chip:hover{border-color:var(--accent-border);color:var(--accent)}
+.inputrow{display:flex;gap:9px;align-items:center;background:var(--bg-input);border:1px solid var(--border-subtle);border-radius:11px;padding:8px 10px 8px 13px}
+.inputrow input{
+  flex:1;background:transparent;border:0;outline:0;color:var(--text-primary);
+  font:14px/1.5 inherit
+}
+.inputrow input::placeholder{color:var(--text-muted)}
+.sendbtn{width:31px;height:31px;border-radius:8px;border:0;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer}
+
+.playbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:14px 0 0}
+.playbar .hint{font-size:12.3px;color:var(--text-muted)}
+
+/* ---------- diagrams ---------- */
+.figwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:14px;background:var(--bg-card);padding:16px}
+svg .bx{fill:var(--bg-nested);stroke:var(--border-subtle)}
+svg .bx.acc{fill:var(--accent-soft);stroke:var(--accent-border)}
+svg .bx.ok{fill:var(--ok-soft);stroke:transparent}
+svg .bx.info{fill:var(--info-soft);stroke:transparent}
+svg .bx.warn{fill:var(--warn-soft);stroke:transparent}
+svg .bx.bad{fill:var(--bad-soft);stroke:var(--bad);stroke-dasharray:5 4}
+svg text{fill:var(--text-primary);font-family:inherit}
+svg .t{font-size:12.5px;font-weight:600}
+svg .s{font-size:10.8px;fill:var(--text-muted);font-weight:400}
+svg .lbl{font-size:10.5px;fill:var(--text-muted)}
+svg .ln{stroke:var(--border-default);fill:none}
+svg .ln.acc{stroke:var(--accent)}
+svg .grp{fill:none;stroke:var(--border-faint);stroke-dasharray:4 4}
+svg .grpt{font-size:10.5px;fill:var(--text-muted);letter-spacing:1px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-muted)}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+
+/* ---------- lanes ---------- */
+.lane{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:12px}
+.lane-head{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+.lane-head b{font-size:14.5px}
+.lane-head .pill{font-size:11px;padding:3px 9px}
+.flow{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding-bottom:4px}
+.step{
+  flex:0 0 auto;min-width:126px;max-width:170px;background:var(--bg-nested);
+  border:1px solid var(--border-faint);border-radius:10px;padding:9px 11px;font-size:12.2px
+}
+.step b{display:block;font-size:12.4px;margin-bottom:3px}
+.step span{color:var(--text-muted);font-size:11.3px;line-height:1.55;display:block}
+.step.end{background:var(--ok-soft);border-color:transparent}
+.step.end b{color:var(--ok)}
+.arrow{flex:0 0 auto;display:grid;place-items:center;padding:0 7px;color:var(--text-muted)}
+.endnote{margin-top:10px;font-size:12px;color:var(--text-muted);display:flex;gap:7px;align-items:flex-start}
+.endnote b{color:var(--ok)}
+
+/* ---------- tables ---------- */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border-faint);vertical-align:top}
+th{font-size:11.5px;letter-spacing:.5px;color:var(--text-muted);font-weight:600;background:var(--bg-nested)}
+th:first-child,td:first-child{border-top-left-radius:0}
+tbody tr:hover{background:var(--bg-card-hover)}
+td code,.mono{font:12px var(--mono);background:var(--bg-nested);padding:1px 5px;border-radius:4px}
+.tblwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:13px}
+.yes{color:var(--ok);font-weight:600}
+.no{color:var(--bad);font-weight:600}
+
+/* ---------- do / dont ---------- */
+.dd{border-radius:13px;padding:16px;border:1px solid var(--border-faint)}
+.dd.do{background:var(--ok-soft)}
+.dd.dont{background:var(--bad-soft)}
+.dd h4{margin:0 0 9px;font-size:14px;display:flex;align-items:center;gap:7px}
+.dd.do h4{color:var(--ok)}
+.dd.dont h4{color:var(--bad)}
+.dd ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+.fuse{background:var(--warn-soft);border:1px solid transparent;border-radius:13px;padding:16px;margin-top:12px}
+.fuse h4{margin:0 0 8px;color:var(--warn);font-size:14px}
+.fuse ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+
+/* ---------- decisions ---------- */
+.dec{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:11px}
+.dec-q{font-size:14px;font-weight:600;margin-bottom:9px;display:flex;gap:9px}
+.dec-q em{
+  font-style:normal;flex:0 0 auto;width:21px;height:21px;border-radius:6px;background:var(--accent-soft);
+  color:var(--accent);display:grid;place-items:center;font:600 11px/1 var(--mono);margin-top:2px
+}
+.opts{display:grid;gap:8px;grid-template-columns:1fr 1fr}
+@media(max-width:640px){.opts{grid-template-columns:1fr}}
+.opt{border:1px solid var(--border-faint);border-radius:9px;padding:9px 11px;font-size:12.5px;background:var(--bg-nested)}
+.opt.pick{border-color:var(--accent-border);background:var(--accent-soft)}
+.opt b{display:block;font-size:12.8px;margin-bottom:3px}
+.opt.pick b{color:var(--accent)}
+.opt span{color:var(--text-muted);font-size:11.6px;line-height:1.6}
+
+/* ---------- phases ---------- */
+.phase{display:flex;gap:13px;padding:14px 0;border-bottom:1px solid var(--border-faint)}
+.phase:last-child{border-bottom:0}
+.phase .no{flex:0 0 auto;width:34px;height:34px;border-radius:10px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font:600 13px/1 var(--mono)}
+.phase b{font-size:14px}
+.phase p{margin:4px 0 0;font-size:12.8px;color:var(--text-muted)}
+.phase .stop{margin-top:6px;font-size:12px;color:var(--ok)}
+
+footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint);color:var(--text-muted);font-size:12.5px}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">通用对话智能体<span>方案预览 · 决策用</span></div>
+    <div class="top-spacer"></div>
+    <span class="pill warn">状态：待决策</span>
+    <span class="pill">2026-08-05</span>
+    <button class="btn" id="themeBtn" type="button">切到白天</button>
+  </div>
+</header>
+
+<nav class="secnav">
+  <div class="secnav-inner" id="secnav">
+    <a href="#s0" class="on">你能得到什么</a>
+    <a href="#s1">操作页面演示</a>
+    <a href="#s2">架构图</a>
+    <a href="#s3">数据流转与鉴权</a>
+    <a href="#s4">角色业务流</a>
+    <a href="#s5">验收方式</a>
+    <a href="#s6">范围契约</a>
+    <a href="#s7">要你拍板的</a>
+    <a href="#s8">成本与退出</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ============ S0 ============ -->
+<section id="s0">
+  <div class="sec-head"><span class="sec-num">S0</span><h2>你能得到什么</h2></div>
+  <p class="sec-sub">这一屏答一个问题：这次改动做完，你手上多了什么、少了什么麻烦。下面每一条都在后面章节有对应的验收判据。</p>
+
+  <div class="grid g5">
+    <div class="get">
+      <div class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+      <b>一个入口</b>
+      <p>左侧导航多一项「对话」。登录进去就能说话，没有第二次认证、没有装客户端。</p>
+    </div>
+    <div class="get">
+      <div class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 3v6h6"/></svg></div>
+      <b>多轮不丢</b>
+      <p>任务在服务端跑完。关掉页面、刷新、换设备回来，进度和内容都还在。</p>
+    </div>
+    <div class="get">
+      <div class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>
+      <b>对话里出图</b>
+      <p>说一句「画一张海报」就出图，图直接落进你现有的素材库，不用另开视觉创作页。</p>
+    </div>
+    <div class="get">
+      <div class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>
+      <b>对话里存档</b>
+      <p>一句「记下来」就写进知识库，给你一条能点开的链接。下次直接问，它自己去翻。</p>
+    </div>
+    <div class="get">
+      <div class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div>
+      <b>不自己造轮子</b>
+      <p>agent 循环直接用官方 Claude Agent SDK，我们只写适配。不新建运行时、不新建鉴权，回滚等于删一个路由。</p>
+    </div>
+  </div>
+
+  <div class="nots" style="margin-top:14px">
+    <b style="font-size:13.5px">首版明确<span style="color:var(--bad)">不给</span>你的（写在这里就是承诺不偷偷做，也不假装有）</b>
+    <ul>
+      <li>联网搜索、抓网页</li>
+      <li>上传文件让它读（长文档解析）</li>
+      <li>自定义人设 / 角色市场</li>
+      <li>跨会话长期记忆（换个会话它不记得你）</li>
+      <li>把百宝箱里所有工具一次性接进来</li>
+    </ul>
+    <p style="margin:9px 0 0;font-size:12.5px;color:var(--text-muted)">这五条不是做不了，是首版故意不做。全部进技术债务台账，等这一版被真人用起来再按真实呼声排序。</p>
+  </div>
+</section>
+
+<!-- ============ S1 ============ -->
+<section id="s1">
+  <div class="sec-head"><span class="sec-num">S1</span><h2>操作页面演示</h2><span class="pill accent">可点击</span></div>
+  <p class="sec-sub">下面是你将来真正会看到的那一屏。点「播放演示」看完整一轮：提问、出图、入库、再问。这是模拟，不连真模型，但布局、状态、文案与实现目标一致。</p>
+
+  <div class="demo-frame">
+    <div class="demo-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="urlbar" id="urlbar">map.example.org/chat</span>
+    </div>
+    <div class="app">
+      <aside class="appnav">
+        <div class="navgroup">工作台</div>
+        <div class="navitem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>首页</div>
+        <div class="navitem on new"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>对话</div>
+        <div class="navitem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>百宝箱</div>
+        <div class="navitem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>知识库</div>
+        <div class="navitem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>视觉创作</div>
+        <div class="navgroup">系统</div>
+        <div class="navitem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10.6 3.09V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.2.61.78 1.03 1.42 1.03H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置</div>
+      </aside>
+
+      <aside class="applist">
+        <button class="btn primary newchat" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          新建会话
+        </button>
+        <div class="sessitem on"><b>发布日海报配色</b><span>刚刚</span></div>
+        <div class="sessitem"><b>八月排期怎么排</b><span>昨天</span></div>
+        <div class="sessitem"><b>周报开头怎么写</b><span>8 月 1 日</span></div>
+      </aside>
+
+      <div class="chat">
+        <div class="chat-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          发布日海报配色
+          <span class="pill" id="modelPill">模型：跟随平台默认</span>
+        </div>
+        <div class="stream" id="stream">
+          <div class="msg ai">
+            <div class="avatar">AI</div>
+            <div class="body"><div class="bubble">在。可以直接说要做什么：让我出图、把结论存进知识库、或者问我之前存过的东西。</div></div>
+          </div>
+        </div>
+        <div class="composer">
+          <div class="chips" id="chips">
+            <span class="chip" data-jump="0">帮我画一张发布日海报</span>
+            <span class="chip" data-jump="1">把这套配色记进知识库</span>
+            <span class="chip" data-jump="2">上次那套配色是什么</span>
+          </div>
+          <div class="inputrow">
+            <input id="fakeinput" placeholder="说点什么，回车发送" readonly>
+            <button class="sendbtn" type="button" id="sendBtn" aria-label="发送">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m22 2-7 20-4-9-9-4z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="playbar">
+    <button class="btn primary" id="playBtn" type="button">播放演示</button>
+    <button class="btn" id="stepBtn" type="button">下一步</button>
+    <button class="btn" id="resetBtn" type="button">重播</button>
+    <span class="hint" id="playHint">共 3 轮：出图、入库、检索回答。</span>
+  </div>
+
+  <div class="grid g3" style="margin-top:18px">
+    <div class="card"><b style="font-size:13.5px">等待期在动</b><p style="margin:6px 0 0;font-size:12.6px;color:var(--text-muted)">工具卡有阶段名和进度条，不是一个转圈图标。任何超过两秒的等待，屏幕上都得有东西在变。</p></div>
+    <div class="card"><b style="font-size:13.5px">产物在消息流里</b><p style="margin:6px 0 0;font-size:12.6px;color:var(--text-muted)">图直接出现在对话里，入库给可点的链接。不做「已提交，请去别处查看」这种半截交付。</p></div>
+    <div class="card"><b style="font-size:13.5px">失败也有话说</b><p style="margin:6px 0 0;font-size:12.6px;color:var(--text-muted)">工具失败转红并写清原因，会话不中断，可以就地重试或换个说法继续。</p></div>
+  </div>
+</section>
+
+<!-- ============ S2 ============ -->
+<section id="s2">
+  <div class="sec-head"><span class="sec-num">S2</span><h2>架构图</h2><span class="pill accent">谁做什么</span></div>
+  <p class="sec-sub">先答最要紧的一句：<b>对话的 agent 循环用官方 Claude Agent SDK，我们一行都不写。</b>它已经在这个仓库里跑着（就是驱动那个工程对话入口的同一个运行时容器），我们只做适配。</p>
+
+  <h3>先把四个东西分清楚</h3>
+  <p style="margin:-4px 0 12px;font-size:13px;color:var(--text-muted)">这四个名字经常被混在一起讲，其实职责完全不同。表看完再看图。</p>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th style="width:132px">名字</th><th style="width:210px">它到底是什么</th><th style="width:126px">跑在哪</th><th style="width:86px">对外域名</th><th>本次动它吗</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>MAP</b></td><td>业务主体，就是你天天用的这个平台（后端加管理前端）</td><td>主服务容器</td><td>有</td>
+        <td><span class="yes">新增</span>：对话页、对话接口、事件翻译、三把工具的实现。<b>本次写的代码全在这里</b></td>
+      </tr>
+      <tr>
+        <td><b>agent 运行时</b><br><span class="mono">claude-sdk-sidecar</span></td>
+        <td>Agent 的大脑。内核是<b>官方 Claude Agent SDK</b>，循环、上下文管理、工具调用协议全是它自带的</td>
+        <td>独立容器，只在内网，和主服务是邻居</td><td>无</td>
+        <td><span class="yes">复用</span>：不改它的代码，只是多一个调用方</td>
+      </tr>
+      <tr>
+        <td><b>模型网关</b><br><span class="mono">llmgw</span></td>
+        <td>管模型池、调度和调用日志的那一层。已经有一个和 Claude 原生格式兼容的入口</td>
+        <td>独立容器</td><td>有，独立子域</td>
+        <td><span class="yes">复用</span>：运行时把模型请求指向它，日志与模型池自动生效</td>
+      </tr>
+      <tr>
+        <td><b>CDS</b></td><td>部署平台。负责把上面这些编排进分支预览</td><td>平台自身</td><td>有</td>
+        <td>不动。它是「部署在哪」，不是并列的一个部件</td>
+      </tr>
+      <tr style="background:var(--bad-soft)">
+        <td><b>CDS Agent</b></td>
+        <td><b>是一个功能，不是一个部件</b>。它用上面那个运行时去做基础设施运维操作</td>
+        <td>——</td><td>——</td>
+        <td><span class="no">不用、不改</span>。你说的那一坨指的是这个<b>功能</b>，不是那个<b>运行时</b></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p style="margin:14px 0 20px;font-size:13.4px;line-height:1.75;color:var(--text-secondary)">
+    这一行是本次方案的关键区分：<b>运行时是好的，那个功能的部署姿势才是问题</b>。它把运行时用在了跨容器的分支预览场景，
+    于是链路长、要二次认证、延迟高。通用对话不走那条路——运行时就在主服务隔壁的内网里，一跳就到。
+  </p>
+
+  <div class="figwrap">
+  <svg viewBox="0 0 1120 560" width="100%" style="min-width:880px" role="img" aria-label="总体架构图">
+    <defs>
+      <marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker>
+      <marker id="ah2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--border-default)"/></marker>
+    </defs>
+
+    <!-- browser -->
+    <rect class="bx info" x="16" y="38" width="344" height="76" rx="11"/>
+    <text class="t" x="34" y="64">浏览器 · 对话页</text>
+    <text class="s" x="34" y="84">会话列表 + 消息流 + 工具卡</text>
+    <text class="s" x="34" y="102">断线自动重连，按事件序号续订</text>
+
+    <!-- MAP group -->
+    <rect class="grp" x="16" y="150" width="344" height="256" rx="14"/>
+    <text class="grpt" x="32" y="172">MAP 主服务 · 本次写的代码全在这个框里</text>
+
+    <rect class="bx acc" x="34" y="188" width="308" height="52" rx="10"/>
+    <text class="t" x="50" y="212">对话接口</text>
+    <text class="s" x="50" y="230">建会话 / 发消息 / 订阅事件流</text>
+
+    <rect class="bx acc" x="34" y="252" width="148" height="56" rx="10"/>
+    <text class="t" x="48" y="276">会话与消息</text>
+    <text class="s" x="48" y="294">落库，盖部署作用域戳</text>
+
+    <rect class="bx acc" x="194" y="252" width="148" height="56" rx="10"/>
+    <text class="t" x="208" y="276">事件翻译层</text>
+    <text class="s" x="208" y="294">运行时事件译成工具卡</text>
+
+    <text class="s" x="34" y="334" style="font-size:11.5px">三把工具的实现（注册给运行时调用）</text>
+    <rect class="bx acc" x="34" y="342" width="98" height="38" rx="8"/>
+    <text class="s" x="46" y="366" style="font-size:11px;fill:var(--accent)">生成图片</text>
+    <rect class="bx acc" x="140" y="342" width="98" height="38" rx="8"/>
+    <text class="s" x="152" y="366" style="font-size:11px;fill:var(--accent)">写入知识库</text>
+    <rect class="bx acc" x="246" y="342" width="96" height="38" rx="8"/>
+    <text class="s" x="258" y="366" style="font-size:11px;fill:var(--accent)">检索知识库</text>
+
+    <!-- sidecar group -->
+    <rect class="grp" x="384" y="150" width="308" height="256" rx="14"/>
+    <text class="grpt" x="400" y="172">agent 运行时 · 独立容器 · 只在内网 · 无对外域名</text>
+
+    <rect class="bx ok" x="402" y="188" width="272" height="120" rx="10"/>
+    <text class="t" x="418" y="212">官方 Claude Agent SDK</text>
+    <text class="s" x="418" y="232">agent 循环，是它的</text>
+    <text class="s" x="418" y="250">上下文管理，是它的</text>
+    <text class="s" x="418" y="268">工具调用协议，是它的</text>
+    <text class="s" x="418" y="286">轮数上限，是我们传给它的一个参数</text>
+    <text class="s" x="418" y="304">我们一行循环代码都不写</text>
+
+    <rect class="bx ok" x="402" y="322" width="272" height="58" rx="10"/>
+    <text class="t" x="418" y="346">工具桥（已有）</text>
+    <text class="s" x="418" y="364">运行时要用工具时反向调回 MAP</text>
+
+    <!-- gateway group -->
+    <rect class="grp" x="716" y="150" width="388" height="256" rx="14"/>
+    <text class="grpt" x="732" y="172">模型网关 · 独立容器 · 独立子域</text>
+
+    <rect class="bx ok" x="734" y="188" width="352" height="56" rx="10"/>
+    <text class="t" x="750" y="212">Claude 原生格式兼容入口（已有）</text>
+    <text class="s" x="750" y="230">运行时把模型请求指到这里，不直连厂商</text>
+
+    <rect class="bx ok" x="734" y="256" width="352" height="56" rx="10"/>
+    <text class="t" x="750" y="280">模型池 / 调度 / 调用日志</text>
+    <text class="s" x="750" y="298">页面选哪个模型，这里能查到跑的是哪个</text>
+
+    <rect class="bx" x="734" y="324" width="352" height="56" rx="10"/>
+    <text class="t" x="750" y="348">各家大模型</text>
+    <text class="s" x="750" y="366">平台密钥静态加密存放，运行时接触不到</text>
+
+    <!-- bottom row -->
+    <rect class="bx" x="16" y="428" width="344" height="76" rx="10"/>
+    <text class="t" x="34" y="452">共享数据库（已有）</text>
+    <text class="s" x="34" y="472">会话、消息、任务、事件</text>
+    <text class="s" x="34" y="490">分支之间共库，靠作用域戳区分来源</text>
+
+    <rect class="bx bad" x="384" y="428" width="308" height="76" rx="10"/>
+    <text class="t" x="402" y="452" style="font-size:12px">本次明确不碰</text>
+    <text class="s" x="402" y="472">那个基础设施运维功能 · 分支预览里的运行时部署姿势</text>
+    <text class="s" x="402" y="490">以及任何形式的自研 agent 循环或自研 SDK</text>
+
+    <rect class="bx" x="716" y="428" width="388" height="76" rx="10"/>
+    <text class="t" x="734" y="452">CDS 部署平台</text>
+    <text class="s" x="734" y="472">负责把上面三个容器编排进分支预览</text>
+    <text class="s" x="734" y="490">本次不改编排，只是多一个内网调用关系</text>
+
+    <!-- arrows -->
+    <path class="ln acc" d="M120 116 L120 186" marker-end="url(#ah)"/>
+    <text class="lbl" x="128" y="152">登录态直连</text>
+    <path class="ln acc" d="M268 250 C 268 160, 300 128, 340 118" marker-end="url(#ah)" style="opacity:.55"/>
+    <text class="lbl" x="238" y="146">事件流回推</text>
+    <path class="ln acc" d="M344 214 L400 214" marker-end="url(#ah)"/>
+    <text class="lbl" x="330" y="192">内网令牌，转发这一轮</text>
+    <path class="ln acc" d="M676 214 L732 214" marker-end="url(#ah)"/>
+    <text class="lbl" x="666" y="192">网关服务密钥</text>
+    <path class="ln acc" d="M400 352 L344 362" marker-end="url(#ah)"/>
+    <text class="lbl" x="330" y="392">工具桥反向调</text>
+    <path class="ln" d="M108 310 L108 426" marker-end="url(#ah2)"/>
+    <path class="ln" d="M910 246 L910 254" marker-end="url(#ah2)"/>
+    <path class="ln" d="M910 314 L910 322" marker-end="url(#ah2)"/>
+  </svg>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:var(--accent-soft);border:1px solid var(--accent-border)"></i>本次新增（我们写的）</span>
+    <span><i style="background:var(--ok-soft)"></i>复用现有（别人写的，不改）</span>
+    <span><i style="background:var(--info-soft)"></i>用户侧</span>
+    <span><i style="background:var(--bad-soft);border:1px dashed var(--bad)"></i>明确不碰</span>
+  </div>
+
+  <h3>写与不写的分界线</h3>
+  <div class="grid g2">
+    <div class="dd do">
+      <h4>别人写好的，直接用，一行不碰</h4>
+      <ul>
+        <li>agent 循环：什么时候继续问、什么时候收尾，SDK 自己管。</li>
+        <li>上下文管理：历史怎么裁、怎么压缩，SDK 自己管。</li>
+        <li>工具调用协议：模型怎么声明要用工具、结果怎么回灌，SDK 自己管。</li>
+        <li>流式协议：文字增量、工具开始、工具结果、用量、终态，运行时已经吐好了。</li>
+        <li>轮数上限、超时、取消：都是传给运行时的参数，不是我们实现的机制。</li>
+      </ul>
+    </div>
+    <div class="dd dont">
+      <h4>我们只写这四样，别的一律不写</h4>
+      <ul>
+        <li>会话与消息的存储、断线续订（复用平台已有的任务与事件流）。</li>
+        <li>把运行时的事件翻译成页面上的消息气泡与工具卡。</li>
+        <li>三把工具的实现，各自转发给平台已有的出图与知识库能力。</li>
+        <li>对话页面本身。</li>
+        <li><b>明令禁止</b>：自研 agent 循环、自研 SDK、自研工具调用协议。命中即熔断。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <b style="font-size:13.5px">为什么这么接，模型池和日志还能生效</b>
+    <p style="margin:6px 0 0;font-size:12.9px;color:var(--text-muted);line-height:1.75">
+      官方 SDK 允许把模型请求指向任何一个格式兼容的地址。我们的网关正好已经有这样一个入口，
+      而且带模型池路由与调用日志。于是「用别人的 SDK」和「模型仍归我们的网关管」这两件事不矛盾——
+      SDK 负责怎么思考，网关负责用哪个模型、记什么账。两边都不用为对方改代码。
+    </p>
+  </div>
+</section>
+
+<!-- ============ S3 ============ -->
+<section id="s3">
+  <div class="sec-head"><span class="sec-num">S3</span><h2>数据流转与鉴权</h2></div>
+  <p class="sec-sub">数据从哪来、经过谁、每一跳拿什么凭据。橙色是我们新增的执行节点，绿色是别人的现成部件，灰底菱形是鉴权点。注意第 4 步：循环在运行时里，不在我们这儿。</p>
+
+  <div class="figwrap">
+  <svg viewBox="0 0 1200 500" width="100%" style="min-width:960px" role="img" aria-label="数据流转与鉴权图">
+    <defs><marker id="ah3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker></defs>
+
+    <text class="grpt" x="18" y="26">用户侧</text>
+    <text class="grpt" x="376" y="26">MAP · 我们写的</text>
+    <text class="grpt" x="720" y="26">agent 运行时 · 别人的 SDK</text>
+    <text class="grpt" x="1036" y="26">外部依赖</text>
+    <path class="grp" d="M286 12 L286 486"/>
+    <path class="grp" d="M666 12 L666 486"/>
+    <path class="grp" d="M976 12 L976 486"/>
+
+    <rect class="bx info" x="16" y="44" width="180" height="52" rx="10"/>
+    <text class="t" x="30" y="68">1 用户发一句话</text>
+    <text class="s" x="30" y="88">已登录，带现有凭据</text>
+
+    <path class="bx" d="M286 46 L330 70 L286 94 L242 70 Z"/>
+    <text class="s" x="252" y="68" style="font-size:10px">鉴权 A</text>
+    <text class="s" x="252" y="82" style="font-size:10px">登录态</text>
+
+    <rect class="bx acc" x="372" y="44" width="240" height="52" rx="10"/>
+    <text class="t" x="386" y="68">2 建任务并入队</text>
+    <text class="s" x="386" y="88">盖部署作用域戳，只本部署认领</text>
+
+    <rect class="bx acc" x="372" y="120" width="240" height="52" rx="10"/>
+    <text class="t" x="386" y="144">3 把这一轮转给运行时</text>
+    <text class="s" x="386" y="164">带上历史、三把工具的定义、轮数上限</text>
+
+    <path class="bx" d="M666 122 L710 146 L666 170 L622 146 Z"/>
+    <text class="s" x="632" y="144" style="font-size:10px">鉴权 B</text>
+    <text class="s" x="628" y="158" style="font-size:10px">内网令牌</text>
+
+    <rect class="bx ok" x="716" y="100" width="196" height="120" rx="10"/>
+    <text class="t" x="730" y="124">4 官方 SDK 跑循环</text>
+    <text class="s" x="730" y="144">问模型 · 决定用不用工具</text>
+    <text class="s" x="730" y="162">回灌结果 · 判断要不要再问</text>
+    <text class="s" x="730" y="180">全部是 SDK 自带行为</text>
+    <text class="s" x="730" y="204" style="fill:var(--ok)">这一步我们没有代码</text>
+
+    <path class="bx" d="M976 122 L1020 146 L976 170 L932 146 Z"/>
+    <text class="s" x="942" y="144" style="font-size:10px">鉴权 C</text>
+    <text class="s" x="938" y="158" style="font-size:10px">网关密钥</text>
+
+    <rect class="bx ok" x="1032" y="104" width="152" height="52" rx="10"/>
+    <text class="t" x="1046" y="128">模型网关</text>
+    <text class="s" x="1046" y="146">选模型 · 记日志</text>
+
+    <rect class="bx" x="1032" y="168" width="152" height="46" rx="10"/>
+    <text class="t" x="1046" y="192">各家大模型</text>
+    <text class="s" x="1046" y="208">密钥加密存放</text>
+
+    <rect class="bx ok" x="716" y="252" width="196" height="56" rx="10"/>
+    <text class="t" x="730" y="276">5 工具桥反向调</text>
+    <text class="s" x="730" y="296">SDK 要用工具时回头找 MAP</text>
+
+    <path class="bx" d="M666 256 L710 280 L666 304 L622 280 Z"/>
+    <text class="s" x="630" y="278" style="font-size:10px">鉴权 D</text>
+    <text class="s" x="624" y="292" style="font-size:10px">你本人身份</text>
+
+    <rect class="bx acc" x="372" y="252" width="240" height="56" rx="10"/>
+    <text class="t" x="386" y="276">6 三把工具执行</text>
+    <text class="s" x="386" y="296">权限不放大，按你本人算</text>
+
+    <rect class="bx ok" x="372" y="324" width="240" height="46" rx="10"/>
+    <text class="s" x="386" y="346" style="font-size:11.5px">出图队列 / 文档空间（已有）</text>
+    <text class="s" x="386" y="362" style="font-size:10.5px">产物落进你的素材库与知识库</text>
+
+    <rect class="bx acc" x="372" y="392" width="240" height="56" rx="10"/>
+    <text class="t" x="386" y="416">7 翻译事件并落库</text>
+    <text class="s" x="386" y="436">译成消息与工具卡，按序号存</text>
+
+    <rect class="bx info" x="16" y="392" width="180" height="56" rx="10"/>
+    <text class="t" x="30" y="416">8 推回页面</text>
+    <text class="s" x="30" y="436">断线重连补发，不丢</text>
+
+    <rect class="bx" x="16" y="170" width="180" height="104" rx="10"/>
+    <text class="t" x="30" y="194">刷新页面怎么办</text>
+    <text class="s" x="30" y="214">任务在服务端继续跑</text>
+    <text class="s" x="30" y="232">回来按事件序号续订</text>
+    <text class="s" x="30" y="250">客户端断开不取消任务</text>
+
+    <path class="ln acc" d="M198 70 L240 70" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M332 70 L370 70" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M492 98 L492 118" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M614 146 L620 146" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M712 146 L714 146" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M914 146 L930 146" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M1022 146 L1030 134" marker-end="url(#ah3)"/>
+    <path class="ln" d="M1108 158 L1108 166" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M814 222 L814 250" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M714 280 L712 280" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M620 280 L614 280" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M492 310 L492 322" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M760 310 C 700 380, 660 420, 616 420" marker-end="url(#ah3)"/>
+    <text class="lbl" x="660" y="448">流式事件回传</text>
+    <path class="ln acc" d="M370 420 L200 420" marker-end="url(#ah3)"/>
+    <text class="lbl" x="924" y="242">循环由 SDK 控制</text>
+    <text class="lbl" x="924" y="258">轮数上限是入参</text>
+  </svg>
+  </div>
+
+  <h3>四个鉴权点，一句话各自说清</h3>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th style="width:66px">鉴权点</th><th style="width:172px">这一跳是谁在调谁</th><th>拿什么凭据</th><th style="width:196px">为什么不是新东西</th></tr></thead>
+    <tbody>
+      <tr><td><b>A</b></td><td>浏览器调 MAP</td><td>你现在登录平台用的那把凭据，一模一样</td><td>不新建登录、不发第二把钥匙、不做设备配对</td></tr>
+      <tr><td><b>B</b></td><td>MAP 调 agent 运行时</td><td>运行时的内网令牌，服务之间用，走内网不出容器网络</td><td>这条链路已经在跑着，本次只是多一个调用方</td></tr>
+      <tr><td><b>C</b></td><td>运行时调模型网关</td><td>网关的服务密钥，用户看不到也不需要知道</td><td>网关早就在用，本次只是把运行时的模型出口指过去</td></tr>
+      <tr><td><b>D</b></td><td>工具桥回调 MAP 读写你的数据</td><td>沿用发起这次对话的那个人的身份，权限不放大</td><td>工具桥与权限判断都是现成的，原样复用</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="card" style="margin-top:12px;background:var(--info-soft);border-color:transparent">
+    <b style="font-size:13.4px">这里没有「超远距离传输」</b>
+    <p style="margin:6px 0 0;font-size:12.9px;color:var(--text-secondary);line-height:1.75">
+      鉴权 B 那一跳是同一个容器网络里的邻居调用，不出机房、不经公网、不需要用户再认证一次。
+      你之前遇到的延迟和认证麻烦，来自那个运维功能把运行时放到了分支预览里、隔着好几层往回打。
+      本次的部署姿势不同，所以那些问题不会跟过来。
+    </p>
+  </div>
+
+  <h3>失败了会怎样（这一段决定它像不像个成品）</h3>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th style="width:180px">哪里坏了</th><th>页面上你看到什么</th><th style="width:200px">数据会不会烂在半路</th></tr></thead>
+    <tbody>
+      <tr><td>模型超时或报错</td><td>这一轮转红，写清是模型的问题，给「重试这一轮」按钮</td><td>不会。这轮标记失败，历史完整保留</td></tr>
+      <tr><td>agent 运行时挂了</td><td>明确提示运行时不可用，而不是假装在思考</td><td>不会。任务标记失败，可重新发起</td></tr>
+      <tr><td>出图失败</td><td>工具卡转红并写原因，对话继续，可换描述再来</td><td>不会。出图任务本来就有失败态</td></tr>
+      <tr><td>知识库写入失败</td><td>工具卡转红，明确说没存进去，不给假链接</td><td>不会。写入是一次原子操作</td></tr>
+      <tr><td>你把页面关了</td><td>下次进来接着看，中途内容按序号补齐</td><td>不会。任务在服务端跑完</td></tr>
+      <tr><td>模型绕圈停不下来</td><td>到轮数上限自动收尾，如实说卡住了并给出已完成部分</td><td>不会。上限是传给 SDK 的硬参数，不靠模型自觉</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ============ S4 ============ -->
+<section id="s4">
+  <div class="sec-head"><span class="sec-num">S4</span><h2>角色业务流</h2></div>
+  <p class="sec-sub">防断头用的。每条链路的终点必须是「这个人手里拿到了东西」，不能停在「系统提交成功」。终点格子是绿的才算数。</p>
+
+  <div class="lane">
+    <div class="lane-head"><b>普通用户</b><span class="pill">不懂技术，只想要结果</span></div>
+    <div class="flow">
+      <div class="step"><b>登录</b><span>用现在这把账号，不做任何额外配置</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step"><b>点左侧「对话」</b><span>不用记地址，不用问同事在哪</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step"><b>直接说话</b><span>空会话有三个建议问法兜底</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step"><b>看它干活</b><span>阶段名和进度一直在变，不是干等</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step end"><b>拿到产物</b><span>图在对话里、条目有链接、答案带出处</span></div>
+    </div>
+    <div class="endnote"><b>终点检查</b><span>图必须真的显示出来才叫完成，卡在「正在生成」不算。入库必须给能点开的链接，不能只说「已保存」。</span></div>
+  </div>
+
+  <div class="lane">
+    <div class="lane-head"><b>产品经理</b><span class="pill">要把结论沉下来，还要给团队看</span></div>
+    <div class="flow">
+      <div class="step"><b>把会上结论粘进来</b><span>让它整理成条理清楚的一段</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step"><b>说「记进知识库」</b><span>它自己选空间、起标题，你可以否</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step"><b>点链接核对</b><span>当场打开看排版对不对</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step end"><b>把链接甩群里</b><span>用现有的分享能力，不用新学</span></div>
+    </div>
+    <div class="endnote"><b>终点检查</b><span>链接必须是团队点开就能看的那种，而不是只有本人能看的私有草稿。权限沿用文档空间既有规则。</span></div>
+  </div>
+
+  <div class="lane">
+    <div class="lane-head"><b>管理员 / 开发</b><span class="pill">要能查、能限、能背锅</span></div>
+    <div class="flow">
+      <div class="step"><b>选模型</b><span>在模型管理里指定这个入口用哪个</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step"><b>控权限</b><span>入口本身是一条权限，可按人群开关</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step"><b>查调用</b><span>网关日志里能查到每一次真实请求</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step end"><b>核对一致</b><span>页面上选的模型与日志里跑的一致</span></div>
+    </div>
+    <div class="endnote"><b>终点检查</b><span>「页面选甲、后台跑乙」是本仓库出过的老问题，所以这条被写成验收判据第 6 条，必须当场对得上。</span></div>
+  </div>
+</section>
+
+<!-- ============ S5 ============ -->
+<section id="s5">
+  <div class="sec-head"><span class="sec-num">S5</span><h2>验收方式</h2><span class="pill accent">你自己就能核</span></div>
+  <p class="sec-sub">防自嗨用的。每条判据都写清「谁来核、怎么核、什么算过」，不接受「我通读自审过」「代码逻辑没问题」这类说法当证据。第 7 条专门用来卡「有没有偷偷自己造轮子」。</p>
+
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th style="width:34px">#</th><th style="width:140px">要证明什么</th><th>你怎么亲自核</th><th style="width:78px">谁来核</th><th style="width:150px">什么算过</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>真能多轮</td><td>连问三句，第三句里说「按你第一句说的那个来」</td><td>你</td><td>它接得住，没重新问一遍</td></tr>
+      <tr><td>2</td><td>断线不丢</td><td>它正在干活时刷新页面，或者直接关掉过一分钟再进</td><td>你</td><td>回来内容齐全，任务照跑完</td></tr>
+      <tr><td>3</td><td>出图闭环</td><td>说「画一张横版的发布日海报」，然后一直等到底</td><td>你</td><td><span class="yes">图真的显示在对话里</span>。停在进度条上不算</td></tr>
+      <tr><td>4</td><td>入库闭环</td><td>说「把这套配色记进知识库」，然后点它给的链接</td><td>你</td><td>链接能打开，内容就是刚才那段</td></tr>
+      <tr><td>5</td><td>检索闭环</td><td>新开一个会话，问上一步存的那件事</td><td>你</td><td>答得出来，且标了出处能点开</td></tr>
+      <tr><td>6</td><td>模型没串</td><td>页面上指定一个模型，去网关日志查这一次调用</td><td>管理员</td><td>日志里跑的就是你选的那个</td></tr>
+      <tr><td>7</td><td><b>没有自研循环</b></td><td>看改动文件清单，搜有没有「问模型 - 调工具 - 回灌 - 再问」这类代码</td><td>评审</td><td><span class="no">一行都没有</span>。循环全在运行时的官方 SDK 里</td></tr>
+      <tr><td>8</td><td>没有越界</td><td>看改动文件清单</td><td>评审</td><td>运行时内核、那个运维功能、鉴权，三者<span class="no">一个字未碰</span></td></tr>
+      <tr><td>9</td><td>两套皮肤都行</td><td>白天黑夜各切一次，各截一张图</td><td>验收</td><td>不破版、不出现看不清的字</td></tr>
+      <tr><td>10</td><td>等待期有内容</td><td>盯着任一超过两秒的等待</td><td>验收</td><td>屏幕上一直有东西在变，不是一个死转圈</td></tr>
+      <tr><td>11</td><td>失败讲人话</td><td>故意写一句会让它失败的要求</td><td>验收</td><td>红态 + 说清原因 + 会话还能继续</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="dd do">
+      <h4>算数的证据</h4>
+      <ul>
+        <li>在真实预览地址上、从左侧导航点进去截的图，地址栏可见。</li>
+        <li>白天和黑夜两套各一张，页脚的部署标记入镜，证明是最新那一版。</li>
+        <li>出图那张必须拍到图本身，入库那张必须拍到点开后的条目。</li>
+        <li>验收报告归档进验收中心，给一条能直接打开的深链。</li>
+      </ul>
+    </div>
+    <div class="dd dont">
+      <h4>不算数的证据</h4>
+      <ul>
+        <li>「接口返回成功」「测试全绿」——这些是必要条件，不是验收本身。</li>
+        <li>截图里还在转圈，说明文字却写「已完成」。这叫断头验收，直接退回。</li>
+        <li>用旧版本的截图充数。</li>
+        <li>「我通读了两遍代码，逻辑没问题」。</li>
+        <li>只测新建的会话，不测刷新后的老会话。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ S6 ============ -->
+<section id="s6">
+  <div class="sec-head"><span class="sec-num">S6</span><h2>范围契约</h2></div>
+  <p class="sec-sub">防止两个月做成一坨。这一节是可以拿来卡我的：越过下面任何一条线，你有权叫停。</p>
+
+  <div class="grid g2">
+    <div class="dd do">
+      <h4>本期做这些（就这么多）</h4>
+      <ul>
+        <li>一个页面：会话列表 + 消息流 + 输入框。</li>
+        <li>一个执行器：问模型、调工具、回灌、再问，轮数有硬上限。</li>
+        <li>三把工具：生成图片、写入知识库、检索知识库。</li>
+        <li>一条权限、一条导航、一个百宝箱条目（先标未完成）。</li>
+      </ul>
+    </div>
+    <div class="dd dont">
+      <h4>本期不做（想做也不做，全进债务台账）</h4>
+      <ul>
+        <li>联网搜索、抓网页、上传文件解析。</li>
+        <li>自定义人设、角色市场、多智能体互相调用。</li>
+        <li>跨会话长期记忆、用户画像。</li>
+        <li>把百宝箱所有工具接进来。</li>
+        <li>改任何现有表结构、改任何现有鉴权。</li>
+        <li><b>自研 agent 循环、自研 SDK、自研工具调用协议</b>。这条永远不做，不只本期。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="fuse">
+    <h4>熔断线：命中任意一条，立刻停下来找你，不许自己往前冲</h4>
+    <ul>
+      <li>连续八个提交没有新增可用功能，只在改文档、改脚本、改计划。</li>
+      <li>工具数量超过三把，或者有人提议「顺手把某某也接上」。</li>
+      <li><b>出现任何自研 agent 循环、自研 SDK、自研工具调用协议的代码。</b>这条是红线中的红线。</li>
+      <li>改动伸进了 agent 运行时的内核代码，而不是只加适配与配置。</li>
+      <li>改动碰到了那个基础设施运维功能、分支预览的运行时部署、或任何鉴权代码。</li>
+      <li>改动行数超过第一轮基线的两倍，或者文件范围扩出第一轮清单。</li>
+      <li>同一份计划文档被重写五次以上，而卡点没有消失。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ S7 ============ -->
+<section id="s7">
+  <div class="sec-head"><span class="sec-num">S7</span><h2>要你拍板的</h2><span class="pill accent">六个岔路口</span></div>
+  <p class="sec-sub">每个都给了默认选项。你什么都不说，我就按橙色那个走；想改哪个直接点名。</p>
+
+  <div class="dec">
+    <div class="dec-q"><em>1</em>入口放哪</div>
+    <div class="opts">
+      <div class="opt pick"><b>左侧一级导航「对话」+ 百宝箱条目</b><span>推荐。这本来就是个面向所有人的日常入口，藏在百宝箱里等于没有。百宝箱那份先标未完成，验收过了再转正。</span></div>
+      <div class="opt"><b>先只进百宝箱，低调试水</b><span>更保守，但用户找不到就没人用，也就拿不到真实反馈来排后面的优先级。</span></div>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dec-q"><em>2</em>首发是不是就这三把工具</div>
+    <div class="opts">
+      <div class="opt pick"><b>就三把：出图、写知识库、查知识库</b><span>推荐。这三把正好覆盖你问的「生图 + 本地持久化到知识库」，且底层全是现成的，接错的风险最低。</span></div>
+      <div class="opt"><b>再加一把「查平台数据」</b><span>能问「上周谁提了几个缺陷」这类问题，但要额外处理权限收敛，会让第一版拖长一到两天。</span></div>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dec-q"><em>3</em>会话数据存哪</div>
+    <div class="opts">
+      <div class="opt pick"><b>新开一套独立的会话记录</b><span>推荐。现有那套会话绑着产品需求解读的角色概念，混进来会互相污染，以后谁都不敢动。</span></div>
+      <div class="opt"><b>复用现有会话表</b><span>省一点建表工夫，但要给现有结构加通用字段，属于改存量，违反本期「不改现有表结构」。</span></div>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dec-q"><em>4</em>模型谁来定</div>
+    <div class="opts">
+      <div class="opt pick"><b>默认跟随平台，页面上可切</b><span>推荐。普通用户不用管，你和管理员想试新模型时当场切，还能顺带验证第 6 条判据。</span></div>
+      <div class="opt"><b>完全由管理员锁死</b><span>可控性最好，但用户遇到模型不给力时只能等人改配置。</span></div>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dec-q"><em>5</em>第一阶段做完就给人用吗</div>
+    <div class="opts">
+      <div class="opt pick"><b>给，标未完成，收真实反馈</b><span>推荐。纯多轮对话本身就有价值，早一天上线就早一天知道大家真正想要哪把工具。</span></div>
+      <div class="opt"><b>三个阶段全做完再一起放</b><span>观感更完整，但把「不要过度开发」的风险又拉回来了，中间没有任何真实反馈来纠偏。</span></div>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dec-q"><em>6</em>运行时自带的只读文件工具，通用对话要不要关掉</div>
+    <p style="margin:-4px 0 9px;font-size:12.4px;color:var(--text-muted)">背景：agent 运行时目前默认开着三个只读文件工具（读文件、按内容找、按文件名找），是给代码审查场景准备的。通用对话用不上，而且口径讲不清。</p>
+    <div class="opts">
+      <div class="opt pick"><b>关掉，只留我们注册的三把工具</b><span>推荐。给运行时补一个按次生效的开关即可，属于适配层配置，不动 SDK 内核。用户问一句不会读到仓库文件，权限口径干净。</span></div>
+      <div class="opt"><b>先不关，接受它能读仓库文件</b><span>省一点工夫，但普通用户的对话会带着代码读取能力，出了事说不清是谁批准的。不建议。</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ S8 ============ -->
+<section id="s8">
+  <div class="sec-head"><span class="sec-num">S8</span><h2>成本与退出</h2></div>
+  <p class="sec-sub">三个阶段，每个阶段自己就能验收、自己就能停。你在任何一个阶段结束时说「够了」，都能拿到一个完整可用的东西，不会留半截。</p>
+
+  <div class="card">
+    <div class="phase">
+      <div class="no">一</div>
+      <div>
+        <b>纯多轮对话，零工具</b>
+        <p>页面、转发与事件翻译、事件流、断线恢复。循环直接交给运行时，我们这一阶段一行循环代码都不写。这一阶段结束就已经回答了「有没有能对聊的智能体、在哪用」。</p>
+        <div class="stop">可停点：此时上线即可用，判据 1、2、7、8、9、10、11 全部可验。</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="no">二</div>
+      <div>
+        <b>挂上出图</b>
+        <p>第一把工具接进来，同时把工具卡这套交互定型，后面两把照抄。</p>
+        <div class="stop">可停点：判据 3 可验。到这里就回答了「能不能在对话里生图」。</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="no">三</div>
+      <div>
+        <b>挂上知识库读写</b>
+        <p>写入和检索两把一起上，因为它们要配套才有意义：存得进去、查得出来。</p>
+        <div class="stop">可停点：判据 4、5 可验。到这里三个问题全部回答完毕。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card">
+      <h4 style="margin:0 0 9px;font-size:14px">怎么退出</h4>
+      <ul style="margin:0;padding-left:19px;font-size:13px;line-height:1.8;color:var(--text-secondary)">
+        <li>关掉那条权限，入口立刻消失，其他人无感。</li>
+        <li>不改任何现有表结构，回滚不需要数据迁移。</li>
+        <li>不改任何现有鉴权，回滚不影响别人登录。</li>
+        <li>新数据在独立集合里，真要清理就是删一个集合。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 9px;font-size:14px">规模量级</h4>
+      <ul style="margin:0;padding-left:19px;font-size:13px;line-height:1.8;color:var(--text-secondary)">
+        <li>后端新增：一个接口层、一个转发与事件翻译层、三个工具适配。没有循环、没有 SDK。</li>
+        <li>前端新增：一个页面，消息渲染直接复用现有组件。</li>
+        <li>预计触及八到十二个文件，不含测试。</li>
+        <li>超出这个量级就是走偏了，按熔断线处理。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p style="margin:0 0 6px">这份预览由「重大改动方案预览」技能产出。它规定任何重大改动在动手前必须先给出六件套：操作页面演示、架构图、数据流转与鉴权、角色业务流、验收方式、范围契约，外加决策点与退出方式。</p>
+  <p style="margin:0">页面里的界面是模拟，不连真实模型与数据；架构与数据流表达的是实现目标，最终以验收判据为准。</p>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  /* ---------- theme ---------- */
+  var root=document.documentElement, tb=document.getElementById('themeBtn');
+  function setTheme(t){root.setAttribute('data-theme',t);tb.textContent=(t==='dark'?'切到白天':'切到黑夜');}
+  tb.addEventListener('click',function(){setTheme(root.getAttribute('data-theme')==='dark'?'light':'dark');});
+
+  /* ---------- section nav highlight ---------- */
+  var links=[].slice.call(document.querySelectorAll('.secnav a'));
+  var secs=links.map(function(a){return document.querySelector(a.getAttribute('href'));});
+  window.addEventListener('scroll',function(){
+    var y=window.scrollY+150,cur=0;
+    secs.forEach(function(s,i){if(s&&s.offsetTop<=y)cur=i;});
+    links.forEach(function(a,i){a.classList.toggle('on',i===cur);});
+  },{passive:true});
+
+  /* ---------- demo replay ---------- */
+  var stream=document.getElementById('stream');
+  var playBtn=document.getElementById('playBtn'), stepBtn=document.getElementById('stepBtn'),
+      resetBtn=document.getElementById('resetBtn'), hint=document.getElementById('playHint'),
+      fakeinput=document.getElementById('fakeinput'), sendBtn=document.getElementById('sendBtn');
+  var timers=[], playing=false, cursor=0;
+
+  function clearTimers(){timers.forEach(clearTimeout);timers=[];}
+  function later(fn,ms){var t=setTimeout(fn,ms);timers.push(t);return t;}
+  function scroll(){stream.scrollTop=stream.scrollHeight;}
+
+  function el(html){var d=document.createElement('div');d.innerHTML=html.trim();return d.firstChild;}
+
+  function addUser(text){
+    var m=el('<div class="msg user"><div class="avatar">我</div><div class="body"><div class="bubble"></div></div></div>');
+    m.querySelector('.bubble').textContent=text;
+    stream.appendChild(m);scroll();return m;
+  }
+  function addAi(){
+    var m=el('<div class="msg ai"><div class="avatar">AI</div><div class="body"></div></div>');
+    stream.appendChild(m);scroll();return m.querySelector('.body');
+  }
+  function think(body,text,ms){
+    var t=el('<div class="think"></div>');t.textContent=text;body.appendChild(t);scroll();
+    later(function(){t.remove();},ms);
+  }
+  function type(body,text,done){
+    var b=el('<div class="bubble"></div>');body.appendChild(b);
+    var caret=el('<span class="caret"></span>');b.appendChild(caret);
+    var i=0;
+    (function tick(){
+      if(i<=text.length){
+        caret.remove();
+        b.textContent=text.slice(0,i);
+        b.appendChild(caret);
+        i++;scroll();later(tick,22);
+      }else{caret.remove();if(done)done();}
+    })();
+  }
+  function toolCard(body,name,tag,steps){
+    var c=el('<div class="tool run"><div class="tool-head"></div><div class="tool-body"><div class="bar"><i></i></div><div class="steps"></div></div></div>');
+    var h=c.querySelector('.tool-head');
+    h.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
+    var nm=document.createElement('span');nm.textContent=name;h.appendChild(nm);
+    var tg=document.createElement('span');tg.className='tag';tg.textContent=tag;h.appendChild(tg);
+    var st=document.createElement('span');st.className='tool-state';st.textContent='执行中';h.appendChild(st);
+    var sw=c.querySelector('.steps');
+    steps.forEach(function(s){var e=document.createElement('s');e.textContent=s;sw.appendChild(e);});
+    body.appendChild(c);scroll();
+    return c;
+  }
+  function runCard(card,per,onDone){
+    var bar=card.querySelector('.bar i'), ss=[].slice.call(card.querySelectorAll('.steps s'));
+    var i=0;
+    (function next(){
+      if(i>0)ss[i-1].className='ok';
+      if(i<ss.length){
+        ss[i].className='on';
+        bar.style.width=Math.round((i+1)/ss.length*100)+'%';
+        i++;scroll();later(next,per);
+      }else{
+        card.className='tool done';
+        card.querySelector('.tool-state').textContent='完成';
+        if(onDone)onDone(card.querySelector('.tool-body'));
+      }
+    })();
+  }
+
+  var script=[
+    // round 1 : image
+    function(next){
+      addUser('帮我画一张米多发布日的海报，横版，暖色调');
+      later(function(){
+        var body=addAi();
+        think(body,'正在想：这是要出图，先把风格要求拆清楚',900);
+        later(function(){
+          type(body,'好。横版暖色调，我按发布日的调性出一版，出完直接放进你的素材库。',function(){
+            var c=toolCard(body,'生成图片','工具',['排队','模型出图','写入素材库']);
+            runCard(c,760,function(tb){
+              var art=el('<div class="artwork"><div><b>MIDUO RELEASE</b><span>2026 . 08 . 05</span></div></div>');
+              tb.appendChild(art);scroll();
+              later(function(){
+                type(body,'出好了，已经存进素材库。要换配色或改成竖版都可以直接说。',next);
+              },600);
+            });
+          });
+        },900);
+      },600);
+    },
+    // round 2 : save
+    function(next){
+      addUser('不错。把这次的配色方案记进知识库，标题叫「发布日海报配色」');
+      later(function(){
+        var body=addAi();
+        think(body,'正在想：要写入知识库，先确认写到哪个空间',800);
+        later(function(){
+          type(body,'我把主色、辅色和用法整理成一条，写进「设计规范」空间。',function(){
+            var c=toolCard(body,'写入知识库','工具',['整理内容','选定空间','写入并建链接']);
+            runCard(c,700,function(tb){
+              var k=el('<div class="kbcard"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span>已写入 设计规范 / 发布日海报配色</span><button class="btn" type="button">打开这篇</button></div>');
+              tb.appendChild(k);scroll();
+              later(function(){type(body,'链接在上面，点开就是刚才那段内容，团队里有权限的人都能看。',next);},600);
+            });
+          });
+        },800);
+      },600);
+    },
+    // round 3 : search
+    function(next){
+      addUser('新会话问一句：上次那套发布日的配色是什么来着');
+      later(function(){
+        var body=addAi();
+        think(body,'正在想：这要去知识库里翻，不能凭印象编',800);
+        later(function(){
+          var c=toolCard(body,'检索知识库','工具',['理解问题','检索','读取原文']);
+          runCard(c,640,function(){
+            later(function(){
+              type(body,'主色是暖橙，辅色用深紫过渡到靛蓝，底色留暖灰。用法是大面积暖橙压标题，深紫只做过渡不单独出现。',function(){
+                var ct=el('<div class="cite"><b>出处</b> 设计规范 / 发布日海报配色 · 8 月 5 日写入 · 点击打开</div>');
+                body.appendChild(ct);scroll();
+                later(next,300);
+              });
+            },400);
+          });
+        },800);
+      },600);
+    }
+  ];
+
+  function reset(){
+    clearTimers();playing=false;cursor=0;
+    stream.innerHTML='';
+    var m=el('<div class="msg ai"><div class="avatar">AI</div><div class="body"><div class="bubble">在。可以直接说要做什么：让我出图、把结论存进知识库、或者问我之前存过的东西。</div></div></div>');
+    stream.appendChild(m);
+    playBtn.textContent='播放演示';playBtn.disabled=false;stepBtn.disabled=false;
+    hint.textContent='共 3 轮：出图、入库、检索回答。';
+    fakeinput.value='';
+  }
+  function runOne(auto){
+    if(cursor>=script.length){
+      hint.textContent='演示结束。真实实现里这三段分别对应验收判据第 3、4、5 条。';
+      playBtn.textContent='播放演示';playBtn.disabled=false;playing=false;return;
+    }
+    var i=cursor++;
+    hint.textContent='第 '+(i+1)+' 轮 / 共 3 轮 '+['出图','入库','检索回答'][i];
+    playBtn.disabled=true;stepBtn.disabled=true;
+    script[i](function(){
+      stepBtn.disabled=false;
+      if(auto&&playing){later(function(){runOne(true);},700);}
+      else{playBtn.disabled=false;if(cursor>=script.length){hint.textContent='演示结束。真实实现里这三段分别对应验收判据第 3、4、5 条。';playing=false;playBtn.textContent='播放演示';}}
+    });
+  }
+  playBtn.addEventListener('click',function(){
+    if(cursor>=script.length)reset();
+    playing=true;playBtn.textContent='播放中';runOne(true);
+  });
+  stepBtn.addEventListener('click',function(){playing=false;runOne(false);});
+  resetBtn.addEventListener('click',reset);
+  sendBtn.addEventListener('click',function(){playing=false;runOne(false);});
+  [].slice.call(document.querySelectorAll('.chip')).forEach(function(ch){
+    ch.addEventListener('click',function(){
+      var j=parseInt(ch.getAttribute('data-jump'),10);
+      clearTimers();playing=false;cursor=j;runOne(false);
+    });
+  });
+  reset();
+})();
+</script>
+</body>
+</html>

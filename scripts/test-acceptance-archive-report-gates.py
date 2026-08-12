@@ -321,6 +321,68 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         raise AssertionError("conditional reports must expose a risk-and-gap focus block")
     if "G1 · 设置页在线终态" not in daily_html or "查看完整缺口账本" not in daily_html:
         raise AssertionError("conditional focus must expose structured gap items")
+    # 没有「给你的一页结论」的报告保持完整版，行为与本次改动前一致。
+    if '<body data-view="full">' not in daily_html or 'data-view-mode="brief"' in daily_html:
+        raise AssertionError("reports without the plain summary must stay in full view")
+
+    # 有「给你的一页结论」的报告默认落简版，并带简版/完整版切换。
+    plain_report = daily_report.replace(
+        "## 验收时间",
+        f"## {archive.PLAIN_SUMMARY_SECTION}\n\n"
+        "| 你要知道的 | 答案 |\n"
+        "|---|---|\n"
+        "| 产品能不能用 | 这次没测出来，不能保证 |\n"
+        "| 验收测完了吗 | 没测完，缺 4 项 |\n"
+        "| 昨天上了什么 | 录音页面新增自动续录；周报页面加了导出按钮 |\n"
+        f"| 需要你决定什么 | {archive.PLAIN_NO_DECISION} |\n"
+        "| 下面的内容 | 都是给工程师看的技术细节，你可以不看 |\n\n"
+        "## 验收时间",
+        1,
+    )
+    plain_html = archive.build_interactive_html(
+        "日报",
+        "conditional",
+        compiled_markdown(archive, plain_report, annotated_manifest),
+        annotated_manifest,
+        flavor="daily",
+    )
+    if '<body data-view="brief">' not in plain_html:
+        raise AssertionError("plain-summary reports must open in the brief view")
+    for needle in (
+        'data-view-mode="brief"',
+        'data-view-mode="full"',
+        'body[data-view="brief"] .rb-hidden',
+        archive.PLAIN_SUMMARY_SECTION,
+    ):
+        if needle not in plain_html:
+            raise AssertionError(f"brief view is missing its wiring: {needle}")
+    # 正文只是「提到」这五个字、并没有那一节时，不得切简版：
+    # 子串判据会让这类报告开在简版而没有任何章节留得住，读者看到一页空白。
+    mention_only = daily_report.replace(
+        "## 覆盖缺口",
+        f"## 目标与价值\n\n验证「{archive.PLAIN_SUMMARY_SECTION}」首屏在存量报告上不误伤。\n\n## 覆盖缺口",
+        1,
+    )
+    mention_html = archive.build_interactive_html(
+        "日报",
+        "conditional",
+        compiled_markdown(archive, mention_only, annotated_manifest),
+        annotated_manifest,
+        flavor="daily",
+    )
+    if '<body data-view="full">' not in mention_html or 'data-view-mode="brief"' in mention_html:
+        raise AssertionError("merely mentioning the plain summary must not switch to brief view")
+
+    # 模板契约结构（CDS reports.ts 与本 gate 双重校验）不得被简版改动破坏。
+    for marker in (
+        'data-template="map-acceptance-interactive-html-v2"',
+        'class="layout"',
+        'class="hero"',
+        'class="evidence-nav"',
+        'id="reportBody"',
+    ):
+        if marker not in plain_html:
+            raise AssertionError(f"brief view broke the template contract: {marker}")
 
     relationship_manifest = [
         {"name": "01-entry", "caption": "图 01 验证首页入口可以访问", "annotated": True},

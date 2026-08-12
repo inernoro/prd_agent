@@ -156,6 +156,18 @@
     ]
   },
   {
+    "code": "chat-agent.conversation::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "chat-agent.image-gen::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
     "code": "defect-agent.analyze-image::vision",
     "modelTypes": [
       "vision"
@@ -516,6 +528,18 @@
     ]
   },
   {
+    "code": "prd-agent-web.knowledge-base.index::embedding",
+    "modelTypes": [
+      "embedding"
+    ]
+  },
+  {
+    "code": "prd-agent-web.knowledge-base.query::embedding",
+    "modelTypes": [
+      "embedding"
+    ]
+  },
+  {
     "code": "prd-agent-web.lab::chat",
     "modelTypes": [
       "chat"
@@ -543,6 +567,12 @@
     "code": "prd-agent-web.platforms.reclassify::intent",
     "modelTypes": [
       "intent"
+    ]
+  },
+  {
+    "code": "prd-agent-web.web-hosting.ask::chat",
+    "modelTypes": [
+      "chat"
     ]
   },
   {
@@ -907,6 +937,12 @@
   },
   {
     "code": "visual-agent.image.img2img::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.image.layering::generation",
     "modelTypes": [
       "generation"
     ]

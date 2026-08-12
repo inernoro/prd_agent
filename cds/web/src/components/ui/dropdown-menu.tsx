@@ -125,6 +125,8 @@ export function DropdownItem({
   download,
   disabled,
   destructive,
+  target,
+  rel,
 }: {
   children: ReactNode;
   onSelect?: () => void;
@@ -133,6 +135,8 @@ export function DropdownItem({
   download?: boolean | string;
   disabled?: boolean;
   destructive?: boolean;
+  target?: string;
+  rel?: string;
 }): JSX.Element {
   const className = cn(
     'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-[hsl(var(--surface-sunken))]',
@@ -141,7 +145,7 @@ export function DropdownItem({
   );
   if (asChild && href) {
     return (
-      <a className={className} href={href} download={download} role="menuitem">
+      <a className={className} href={href} download={download} target={target} rel={rel} role="menuitem">
         {children}
       </a>
     );

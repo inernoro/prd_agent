@@ -70,6 +70,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
 import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -537,6 +538,9 @@ export default function AppShell() {
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const activeNavItem = visibleItems.find((it) => it.key === activeKey);
   const mobileAppName = isHomePage ? 'PRD Agent' : (activeNavItem?.label || 'PRD Agent');
+  // 移动端沉浸阅读：DocBrowser 阅读态接管顶栏（文档标题 + 返回），铃铛/汉堡随之隐藏，
+  // 返回一步恢复（stores/readerChromeStore.ts）
+  const readerOverride = useReaderChromeStore((s) => s.override);
   const suppressFloatingDock = location.pathname.startsWith('/cds-agent');
 
   // 液态玻璃一键开关（头像菜单内）：2026-07-17 起接到「界面材质」SSOT——
@@ -1044,7 +1048,9 @@ export default function AppShell() {
         );
       })()}
       {/* ── 移动端: 全局顶部导航栏 ── */}
-      {isMobile && (
+      {/* 沉浸阅读态（readerOverride 激活）：顶栏由 DocBrowser 自绘的单行阅读栏接管
+          （返回 + 标题 + 字号/全屏/更多同一行），AppShell 不再渲染自己的顶栏。 */}
+      {isMobile && !readerOverride && (
         <header
           className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{
@@ -1972,7 +1978,9 @@ export default function AppShell() {
               'relative w-full flex-1 min-h-0 flex flex-col',
               useCanvasPanel && 'overflow-auto',
               isMobile
-                ? 'px-[var(--mobile-padding,16px)] py-3'
+                // 沉浸阅读：主区零内边距，正文从顶栏下边缘直接开始、左右满铺
+                //（2026-08-10 用户「还有这么多空间没有利用到」「主页面尽可能的大」）
+                ? (readerOverride ? 'p-0' : 'px-[var(--mobile-padding,16px)] py-3')
                 : fullBleedMain
                   ? 'p-0'
                   : isHomePage
