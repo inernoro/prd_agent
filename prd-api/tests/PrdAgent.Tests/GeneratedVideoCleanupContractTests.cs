@@ -36,7 +36,7 @@ public class GeneratedVideoCleanupContractTests
         Assert.Contains("AssetSha256 = stored.Sha256", worker);
         Assert.Contains("[HttpDelete(\"runs/{runId}\")]", controller);
         Assert.Contains("[HttpGet(\"runs/{runId}/download\")]", controller);
-        Assert.Contains("TryReadByShaAsync", controller);
+        Assert.Contains("TryOpenReadByShaAsync", controller);
         Assert.Contains("EnsureVideoAssetShaAsync", controller);
         Assert.Contains("_db.AssetRegistry", controller);
         Assert.Contains("item.Url == run.VideoAssetUrl", controller);

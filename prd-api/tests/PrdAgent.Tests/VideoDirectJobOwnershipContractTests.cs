@@ -42,6 +42,7 @@ public class VideoDirectJobOwnershipContractTests
         Assert.Contains("CreateDirectVideoJobRecoveryToken(ownership)", controller);
         Assert.Contains("TryPersistDirectVideoJobOwnershipAsync(ownership)", controller);
         Assert.Contains("item.RevokedAt == null", controller);
+        Assert.Equal(2, controller.Split("Filter.Gt(item => item.ExpiresAt, now)", StringSplitOptions.None).Length - 1);
         Assert.Contains("return ownershipRestored ? recovered : null", controller);
         Assert.Contains("dataProtectionProvider.CreateProtector", controller);
         Assert.Contains("[FromQuery] string? recoveryToken", controller);
@@ -50,7 +51,9 @@ public class VideoDirectJobOwnershipContractTests
         Assert.Contains("candidates.Count > 1", controller);
         Assert.Equal(2, controller.Split("var ownership = await FindOwnedDirectVideoJobAsync(jobId, recoveryToken);", StringSplitOptions.None).Length - 1);
         Assert.Equal(2, controller.Split("视频任务不存在或不可访问，请从本人的任务记录重新打开", StringSplitOptions.None).Length - 1);
-        Assert.Contains("expectedModel: ownership.Model", controller);
+        Assert.Contains("GetStatusForOfferingAsync", controller);
+        Assert.Contains("OpenVideoStreamForOfferingAsync", controller);
+        Assert.Contains("ownership.Model,\n                ownership.OfferingId", controller);
         Assert.Contains("[HttpDelete(\"videogen-direct/{jobId}\")]", controller);
         Assert.Contains("[FromQuery] string? recoveryToken", controller);
         Assert.Contains("Set(item => item.RevokedAt, revokedAt)", controller);

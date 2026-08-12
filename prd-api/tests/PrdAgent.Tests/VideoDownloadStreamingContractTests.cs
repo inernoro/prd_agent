@@ -44,6 +44,24 @@ public class VideoDownloadStreamingContractTests
     }
 
     [Fact]
+    public void LegacyRunDownload_MustStreamWithoutMaterializingCompleteMp4()
+    {
+        var controller = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs"));
+        var actionStart = controller.IndexOf("public async Task<IActionResult> DownloadRun", StringComparison.Ordinal);
+        var actionEnd = controller.IndexOf("[HttpPost(\"runs/{runId}/download-ticket\")]", actionStart, StringComparison.Ordinal);
+        Assert.True(actionStart >= 0 && actionEnd > actionStart);
+        var action = controller[actionStart..actionEnd];
+
+        Assert.Contains("TryOpenReadByShaAsync", action);
+        Assert.Contains("HttpCompletionOption.ResponseHeadersRead", action);
+        Assert.Contains("CopyToAsync(Response.Body", action);
+        Assert.Contains("enableRangeProcessing: true", action);
+        Assert.DoesNotContain("TryReadByShaAsync", action);
+        Assert.DoesNotContain("File(asset.Value.bytes", action);
+    }
+
+    [Fact]
     public async Task LocalAssetStorage_MustReturnFileStreamForLargeAssetReads()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"video-stream-{Guid.NewGuid():N}");

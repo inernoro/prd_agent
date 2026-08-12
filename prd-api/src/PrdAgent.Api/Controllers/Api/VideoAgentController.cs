@@ -30,6 +30,7 @@ public class VideoAgentController : ControllerBase
     private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAssetStorage _assetStorage;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<VideoAgentController> _logger;
     private readonly IDataProtector _directVideoJobProtector;
     private readonly IDataProtector _videoDownloadTicketProtector;
@@ -45,6 +46,7 @@ public class VideoAgentController : ControllerBase
         IOpenRouterVideoClient videoClient,
         ILLMRequestContextAccessor llmRequestContext,
         IAssetStorage assetStorage,
+        IHttpClientFactory httpClientFactory,
         IDataProtectionProvider dataProtectionProvider,
         ILogger<VideoAgentController> logger)
     {
@@ -55,6 +57,7 @@ public class VideoAgentController : ControllerBase
         _videoClient = videoClient;
         _llmRequestContext = llmRequestContext;
         _assetStorage = assetStorage;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
         _directVideoJobProtector = dataProtectionProvider.CreateProtector(
             "PrdAgent.VideoAgent.DirectJobOwnership.v1");
@@ -317,9 +320,11 @@ public class VideoAgentController : ControllerBase
         DirectVideoJobOwnership? ownership;
         try
         {
+            var now = DateTime.UtcNow;
             var ownershipFilter = Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.AppKey, AppKey)
                                   & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.JobId, jobId)
-                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.OwnerAdminId, ownerAdminId);
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.OwnerAdminId, ownerAdminId)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Gt(item => item.ExpiresAt, now);
             if (hasRecoveryOwnership)
             {
                 ownershipFilter &= Builders<DirectVideoJobOwnership>.Filter.Eq(
@@ -396,9 +401,11 @@ public class VideoAgentController : ControllerBase
             out var recovered);
         try
         {
+            var now = DateTime.UtcNow;
             var ownershipFilter = Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.JobId, jobId)
                                   & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.OwnerAdminId, ownerAdminId)
-                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.AppKey, AppKey);
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.AppKey, AppKey)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Gt(item => item.ExpiresAt, now);
             if (hasRecoveryOwnership)
             {
                 ownershipFilter &= Builders<DirectVideoJobOwnership>.Filter.Eq(
@@ -606,7 +613,7 @@ public class VideoAgentController : ControllerBase
     /// </summary>
     [HttpGet("runs/{runId}/download")]
     [Produces("video/mp4")]
-    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DownloadRun(string runId, CancellationToken ct)
@@ -629,19 +636,53 @@ public class VideoAgentController : ControllerBase
                 "视频文件暂时不可用，请重新生成后再下载"));
         }
 
-        var asset = await _assetStorage.TryReadByShaAsync(
+        var localAsset = await _assetStorage.TryOpenReadByShaAsync(
             run.VideoAssetSha256!,
             ct,
             domain: AppDomainPaths.DomainVideoAgent,
             type: AppDomainPaths.TypeVideo);
-        if (asset == null || asset.Value.bytes.Length == 0)
+        if (localAsset != null)
+        {
+            return File(
+                localAsset.Content,
+                "video/mp4",
+                $"video-{run.Id}.mp4",
+                enableRangeProcessing: true);
+        }
+
+        var assetUrl = _assetStorage.TryBuildUrlBySha(
+            run.VideoAssetSha256!,
+            "video/mp4",
+            domain: AppDomainPaths.DomainVideoAgent,
+            type: AppDomainPaths.TypeVideo);
+        if (!Uri.TryCreate(assetUrl, UriKind.Absolute, out var assetUri)
+            || (assetUri.Scheme != Uri.UriSchemeHttps && assetUri.Scheme != Uri.UriSchemeHttp))
         {
             return NotFound(ApiResponse<object>.Fail(
                 ErrorCodes.NOT_FOUND,
                 "视频文件暂时不可用，请重新生成后再下载"));
         }
 
-        return File(asset.Value.bytes, "video/mp4", $"video-{run.Id}.mp4");
+        using var upstream = await _httpClientFactory
+            .CreateClient("AssetStorageStream")
+            .GetAsync(assetUri, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!upstream.IsSuccessStatusCode)
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请重新生成后再下载"));
+        }
+
+        Response.ContentType = "video/mp4";
+        Response.ContentLength = upstream.Content.Headers.ContentLength;
+        Response.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+        {
+            FileName = $"video-{run.Id}.mp4",
+            FileNameStar = $"video-{run.Id}.mp4",
+        }.ToString();
+        await using var stream = await upstream.Content.ReadAsStreamAsync(ct);
+        await stream.CopyToAsync(Response.Body, 128 * 1024, ct);
+        return new EmptyResult();
     }
 
     /// <summary>
@@ -707,13 +748,6 @@ public class VideoAgentController : ControllerBase
         {
             return false;
         }
-
-        var asset = await _assetStorage.TryReadByShaAsync(
-            sha256,
-            ct,
-            domain: AppDomainPaths.DomainVideoAgent,
-            type: AppDomainPaths.TypeVideo);
-        if (asset == null || asset.Value.bytes.Length == 0) return false;
 
         await _db.VideoGenRuns.UpdateOneAsync(
             item => item.Id == run.Id
