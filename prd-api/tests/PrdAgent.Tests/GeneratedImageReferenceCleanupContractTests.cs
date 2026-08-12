@@ -13,10 +13,10 @@ public class GeneratedImageReferenceCleanupContractTests
         Assert.Contains("TryDeleteUnreferencedGeneratedImageAsync", controller);
         Assert.Contains("item => item.Sha256", controller);
         Assert.Contains("item => item.OriginalSha256", controller);
+        Assert.Contains("item => item.DisplaySha256", controller);
+        Assert.Contains("item => item.DisplaySha256 == sha", controller);
         Assert.Contains("item => item.InitImageAssetSha256", controller);
         Assert.Contains("ImageRefs.AssetSha256", controller);
-        Assert.Contains("excludedRunIds", controller);
-        Assert.Contains("excludedArtifactIds", controller);
         Assert.Equal(
             1,
             controller.Split("_assetStorage.DeleteByShaAsync", StringSplitOptions.None).Length - 1);

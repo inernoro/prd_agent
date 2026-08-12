@@ -133,6 +133,19 @@ public sealed class SyntheticLoginControllerTests
     }
 
     [Fact]
+    public void StableSmokeSignature_ShouldApplyAStreamingBufferLimitBeforeReadingTheBody()
+    {
+        var handler = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Authentication/StableSmokeAuthenticationHandler.cs"));
+
+        Assert.Contains("bufferLimit: MaximumBodyBytes", handler);
+        Assert.Contains("catch (IOException)", handler);
+        Assert.True(
+            handler.IndexOf("bufferLimit: MaximumBodyBytes", StringComparison.Ordinal)
+            < handler.IndexOf("ReadToEndAsync", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void StableSmokePublicRegistry_ShouldContainNoPrivateKeyMaterial()
     {
         var settings = File.ReadAllText(LocateRepoFile(

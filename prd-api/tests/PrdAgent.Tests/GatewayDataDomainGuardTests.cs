@@ -1302,7 +1302,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void WorkspaceDeletion_CleansGeneratedArtifactsBeforeRemovingRunOwnership()
+    public void WorkspaceDeletion_RemovesAllReferencesBeforePhysicalObjectCleanup()
     {
         var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
         var helperStart = controller.IndexOf("private async Task<bool> TryDeleteUnreferencedGeneratedImageAsync", StringComparison.Ordinal);
@@ -1310,10 +1310,12 @@ public class GatewayDataDomainGuardTests
         var uploadArtifactCheck = controller.IndexOf("_db.UploadArtifacts.CountDocumentsAsync(artifactFilter", helperStart, StringComparison.Ordinal);
         var imageRunCheck = controller.IndexOf("_db.ImageGenRuns.CountDocumentsAsync(runFilter", helperStart, StringComparison.Ordinal);
         var helperDeleteObject = controller.IndexOf("await _assetStorage.DeleteByShaAsync(", helperStart, StringComparison.Ordinal);
-        var collectArtifacts = controller.IndexOf("var runArtifacts = await _db.UploadArtifacts.Find", StringComparison.Ordinal);
-        var workspaceDeleteObject = controller.IndexOf("await TryDeleteUnreferencedGeneratedImageAsync(", collectArtifacts, StringComparison.Ordinal);
-        var deleteArtifactRecords = controller.IndexOf("await _db.UploadArtifacts.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
-        var deleteRun = controller.IndexOf("await _db.ImageGenRuns.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
+        var collectArtifacts = controller.IndexOf("runArtifacts = (await _db.UploadArtifacts.Find", StringComparison.Ordinal);
+        var deleteAssetRecords = controller.IndexOf("await _db.ImageAssets.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
+        var deleteArtifactRecords = controller.IndexOf("await _db.UploadArtifacts.DeleteManyAsync", deleteAssetRecords, StringComparison.Ordinal);
+        var deleteRun = controller.IndexOf("await _db.ImageGenRuns.DeleteManyAsync", deleteArtifactRecords, StringComparison.Ordinal);
+        var deleteWorkspace = controller.IndexOf("await _db.ImageMasterWorkspaces.DeleteOneAsync", deleteRun, StringComparison.Ordinal);
+        var workspaceDeleteObject = controller.IndexOf("await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None)", deleteWorkspace, StringComparison.Ordinal);
 
         Assert.True(helperStart >= 0, "底层对象删除必须复用统一的引用检查入口");
         Assert.True(imageAssetCheck > helperStart, "删除对象前必须检查图片资产引用");
@@ -1321,9 +1323,12 @@ public class GatewayDataDomainGuardTests
         Assert.True(imageRunCheck > uploadArtifactCheck, "删除对象前必须检查其他生图任务引用");
         Assert.True(helperDeleteObject > imageRunCheck, "全部引用检查通过后才能删除底层对象");
         Assert.True(collectArtifacts >= 0, "工作区删除必须先按 runId 收集生成产物");
-        Assert.True(workspaceDeleteObject > collectArtifacts, "工作区删除必须通过统一入口检查并清理底层对象");
-        Assert.True(deleteArtifactRecords > workspaceDeleteObject, "底层对象处理完成后才能删除产物记录");
-        Assert.True(deleteRun > deleteArtifactRecords, "必须最后删除 run，避免清理失败后失去归属链");
+        Assert.True(deleteAssetRecords > collectArtifacts, "收集归属完成后才能删除资产记录");
+        Assert.True(deleteArtifactRecords > deleteAssetRecords, "必须先解除资产引用再解除产物引用");
+        Assert.True(deleteRun > deleteArtifactRecords, "必须在底层对象回收前解除任务归属");
+        Assert.True(deleteWorkspace > deleteRun, "工作区记录必须在任务归属解除后删除");
+        Assert.True(workspaceDeleteObject > deleteWorkspace, "全部数据库引用解除后才能通过统一入口回收底层对象");
+        Assert.Contains(".Find(x => x.WorkspaceId == wid)", controller);
     }
 
     [Fact]

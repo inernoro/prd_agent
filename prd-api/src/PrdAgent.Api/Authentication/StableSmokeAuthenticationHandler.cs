@@ -85,16 +85,25 @@ public sealed class StableSmokeAuthenticationHandler
         if (Request.ContentLength is > MaximumBodyBytes)
             return Fail("body_too_large");
 
-        Request.EnableBuffering();
+        // Content-Length 对分块传输可以为空。缓冲层本身必须设置硬上限，避免在验签前
+        // 将代理允许的大请求完整写入内存或临时文件。
+        Request.EnableBuffering(
+            bufferThreshold: 32 * 1024,
+            bufferLimit: MaximumBodyBytes);
         string body;
-        using (var reader = new StreamReader(
-                   Request.Body,
-                   Encoding.UTF8,
-                   detectEncodingFromByteOrderMarks: false,
-                   leaveOpen: true))
+        try
         {
+            using var reader = new StreamReader(
+                Request.Body,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: false,
+                leaveOpen: true);
             body = await reader.ReadToEndAsync(Context.RequestAborted);
             Request.Body.Position = 0;
+        }
+        catch (IOException)
+        {
+            return Fail("body_too_large");
         }
         if (Encoding.UTF8.GetByteCount(body) > MaximumBodyBytes)
             return Fail("body_too_large");

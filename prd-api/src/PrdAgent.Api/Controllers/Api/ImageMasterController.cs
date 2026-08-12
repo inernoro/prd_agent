@@ -91,9 +91,7 @@ public class ImageMasterController : ControllerBase
 
     private async Task<bool> TryDeleteUnreferencedGeneratedImageAsync(
         string? sha256,
-        CancellationToken ct,
-        IReadOnlyCollection<string>? excludedRunIds = null,
-        IReadOnlyCollection<string>? excludedArtifactIds = null)
+        CancellationToken ct)
     {
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(sha)) return false;
@@ -105,21 +103,25 @@ public class ImageMasterController : ControllerBase
 
         var imageAssetFilter = Builders<ImageAsset>.Filter.Or(
             Builders<ImageAsset>.Filter.Eq(item => item.Sha256, sha),
-            Builders<ImageAsset>.Filter.Eq(item => item.OriginalSha256, sha));
+            Builders<ImageAsset>.Filter.Eq(item => item.OriginalSha256, sha),
+            Builders<ImageAsset>.Filter.Eq(item => item.DisplaySha256, sha));
         if (await _db.ImageAssets.CountDocumentsAsync(imageAssetFilter, cancellationToken: ct) > 0)
             return false;
 
         var artifactFilter = Builders<UploadArtifact>.Filter.Eq(item => item.Sha256, sha);
-        if (excludedArtifactIds is { Count: > 0 })
-            artifactFilter &= Builders<UploadArtifact>.Filter.Nin(item => item.Id, excludedArtifactIds);
         if (await _db.UploadArtifacts.CountDocumentsAsync(artifactFilter, cancellationToken: ct) > 0)
             return false;
+
+        if (await _db.ImageGenRunItems.CountDocumentsAsync(
+                item => item.DisplaySha256 == sha,
+                cancellationToken: ct) > 0)
+        {
+            return false;
+        }
 
         var runFilter = Builders<ImageGenRun>.Filter.Or(
             Builders<ImageGenRun>.Filter.Eq(item => item.InitImageAssetSha256, sha),
             Builders<ImageGenRun>.Filter.Eq("ImageRefs.AssetSha256", sha));
-        if (excludedRunIds is { Count: > 0 })
-            runFilter &= Builders<ImageGenRun>.Filter.Nin(item => item.Id, excludedRunIds);
         if (await _db.ImageGenRuns.CountDocumentsAsync(runFilter, cancellationToken: ct) > 0)
             return false;
 
@@ -553,7 +555,7 @@ public class ImageMasterController : ControllerBase
         }
 
         var imageRuns = await _db.ImageGenRuns
-            .Find(x => x.WorkspaceId == wid && x.OwnerAdminId == adminId)
+            .Find(x => x.WorkspaceId == wid)
             .Project(x => new { x.Id, x.Status })
             .ToListAsync(ct);
         if (imageRuns.Any(x => x.Status is ImageGenRunStatus.Queued
@@ -570,26 +572,25 @@ public class ImageMasterController : ControllerBase
         await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
         // 2) 删除消息（workspace 维度）
         await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
-        // 3) 删除资产记录（workspace 维度），底层文件按 sha 全库引用计数决定是否删除
+        // 3) 先收集全部持久化归属与待回收摘要。共享工作区中的任务可能由成员创建，
+        // 删除与活动任务阻断都必须按 WorkspaceId 覆盖，而不是只看所有者。
         var assets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid).ToListAsync(ct);
-        await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
-        foreach (var a in assets)
+        var cleanupShas = new HashSet<string>(StringComparer.Ordinal);
+        static void AddCleanupSha(ISet<string> target, string? value)
         {
-            try
-            {
-                await TryDeleteUnreferencedGeneratedImageAsync(
-                    a.Sha256,
-                    ct,
-                    excludedRunIds: imageRunIds);
-            }
-            catch
-            {
-                // ignore: best-effort
-            }
+            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(normalized)) target.Add(normalized);
+        }
+        foreach (var asset in assets)
+        {
+            AddCleanupSha(cleanupShas, asset.Sha256);
+            AddCleanupSha(cleanupShas, asset.OriginalSha256);
+            AddCleanupSha(cleanupShas, asset.DisplaySha256);
         }
 
-        // 4) 先清理生图请求产生的 UploadArtifacts 和底层对象，再删除运行归属。requestId
-        // 固定为 {runId}-{itemIndex}-{imageIndex}；若先删 run，就会丢失唯一可追踪的所有权链。
+        // requestId 固定为 {runId}-{itemIndex}-{imageIndex}，用于收集当前工作区生成的原图归属。
+        UploadArtifact[] runArtifacts = [];
+        ImageGenRunItem[] runItems = [];
         if (imageRunIds.Length > 0)
         {
             var artifactFilters = imageRunIds
@@ -598,34 +599,43 @@ public class ImageMasterController : ControllerBase
                     new BsonRegularExpression($"^{Regex.Escape(runId)}-\\d+-\\d+$")))
                 .ToArray();
             var runArtifactFilter = Builders<UploadArtifact>.Filter.Or(artifactFilters);
-            var runArtifacts = await _db.UploadArtifacts.Find(runArtifactFilter).ToListAsync(ct);
+            runArtifacts = (await _db.UploadArtifacts.Find(runArtifactFilter).ToListAsync(ct)).ToArray();
+            runItems = (await _db.ImageGenRunItems
+                .Find(x => imageRunIds.Contains(x.RunId))
+                .ToListAsync(ct)).ToArray();
+            foreach (var artifact in runArtifacts) AddCleanupSha(cleanupShas, artifact.Sha256);
+            foreach (var item in runItems) AddCleanupSha(cleanupShas, item.DisplaySha256);
+        }
+
+        // 4) 所有数据库引用先删除。任一步失败都会在物理删除开始前中止，避免留下仍可见但
+        // 已经失去底层对象的产物记录。
+        await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
+        if (imageRunIds.Length > 0)
+        {
             var runArtifactIds = runArtifacts.Select(x => x.Id).ToArray();
-
-            foreach (var sha in runArtifacts
-                         .Select(x => x.Sha256?.Trim().ToLowerInvariant())
-                         .Where(x => !string.IsNullOrWhiteSpace(x))
-                         .Distinct(StringComparer.Ordinal))
-            {
-                await TryDeleteUnreferencedGeneratedImageAsync(
-                    sha,
-                    ct,
-                    excludedRunIds: imageRunIds,
-                    excludedArtifactIds: runArtifactIds);
-            }
-
             if (runArtifactIds.Length > 0)
-            {
                 await _db.UploadArtifacts.DeleteManyAsync(x => runArtifactIds.Contains(x.Id), ct);
-            }
-
-            // 5) 产物清理完成后才删除任务明细、事件和 run，保留失败后的可重试归属链。
             await _db.ImageGenRunItems.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
             await _db.ImageGenRunEvents.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
             await _db.ImageGenRuns.DeleteManyAsync(x => imageRunIds.Contains(x.Id), ct);
         }
 
-        // 6) 删除 workspace
+        // 5) 删除 workspace
         await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == wid, ct);
+
+        // 6) 引用解除后再做引用安全的物理回收。请求断开不能打断服务端清理；失败最多留下
+        // 可后续回收的孤儿对象，不会产生数据库记录指向已删除对象的数据损坏。
+        foreach (var sha in cleanupShas)
+        {
+            try
+            {
+                await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ImageMaster workspace object cleanup failed: workspaceId={WorkspaceId} sha={Sha}", wid, sha);
+            }
+        }
 
         var payload = new { deleted = true };
         if (!string.IsNullOrWhiteSpace(idemKey))
