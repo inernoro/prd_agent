@@ -796,8 +796,38 @@ public class WebPagesController : ControllerBase
     {
         var site = await _siteService.GetByIdAsync(id, GetUserId());
         if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+        return await FetchSiteHtmlResultAsync(site);
+    }
+
+    /// <summary>
+    /// 经分享链接读取站点入口 HTML 原文（匿名可访问，走分享门禁）。
+    ///
+    /// 为什么必须有这条：托管内容在独立域名（与主站刻意跨域隔离，防止用户上传的 HTML 触达主站登录态），
+    /// 该域名不返回 Access-Control-Allow-Origin，浏览器侧 fetch 一律被 CORS 拦掉。预览页要拿原文注入
+    /// srcDoc 渲染，只能走服务端同源代理——与 GetSiteContent 同一个取回实现，不另开一套。
+    /// </summary>
+    [HttpGet("shares/view/{token}/content")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetShareSiteContent(string token, [FromQuery] string? siteId, [FromQuery] string? password)
+    {
+        var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
+        var resolved = await _siteService.ResolveShareSiteAsync(token, siteId, password, viewerUserId);
+        if (resolved.Error != null)
+            return MapCommentError(resolved.Error, resolved.HttpStatus, resolved.ErrorCode, resolved.RetryAfterSeconds);
+        if (resolved.Site == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+        return await FetchSiteHtmlResultAsync(resolved.Site);
+    }
+
+    /// <summary>
+    /// 服务端代理取回站点入口 HTML，绕开浏览器跨域限制。站内路径与分享路径共用，
+    /// 保证「什么算可读、多大算超限、失败怎么报」只有一份判定（判据分裂会随时间漂移）。
+    /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。
+    /// </summary>
+    private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site)
+    {
         if (!string.IsNullOrEmpty(site.WrappedAssetType))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频/Markdown 包装站，不支持以 HTML 导入"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频/Markdown 包装站，不支持以 HTML 读取"));
         if (string.IsNullOrWhiteSpace(site.SiteUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
 
@@ -808,17 +838,58 @@ public class WebPagesController : ControllerBase
             var url = $"{site.SiteUrl}{(site.SiteUrl.Contains('?') ? "&" : "?")}v={version.Ticks}";
             var http = _httpClientFactory.CreateClient();
             http.Timeout = TimeSpan.FromSeconds(20);
-            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+
+            // 整个取回过程（含读 body）都必须有截止时间。
+            // HttpClient.Timeout 配 ResponseHeadersRead 只覆盖到「响应头到手」，之后读 body
+            // 是不设防的——对方慢慢滴数据就能把这个请求永久挂住。
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+            using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             if (!resp.IsSuccessStatusCode)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
             if (resp.Content.Headers.ContentLength is > maxBytes)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持导入"));
-            var html = await resp.Content.ReadAsStringAsync();
-            if (html.Length > maxBytes)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持导入"));
-            return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title, contentType = "text/html", html }));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
+
+            // 边读边卡上限，**不能**先 ReadAsStringAsync 再判长度。
+            //
+            // Content-Length 只是「对方自愿声明的」：缺头、chunked、或者声明一个压缩后的小尺寸，
+            // 上面那道判断就形同虚设，而托管上传允许到 500MB。这条路由是匿名可达的
+            // （拿着公开分享 token 就能打），先缓冲后判断等于把「一次请求分配几百 MB」
+            // 的开关交给外部——读满上限就立刻断，多一个字节都不收。
+            var over = false;
+            byte[] bytes;
+            await using (var stream = await resp.Content.ReadAsStreamAsync(cts.Token))
+            using (var buffered = new MemoryStream())
+            {
+                var chunk = new byte[8192];
+                while (true)
+                {
+                    var read = await stream.ReadAsync(chunk, cts.Token);
+                    if (read <= 0) break;
+                    if (buffered.Length + read > maxBytes) { over = true; break; }
+                    buffered.Write(chunk, 0, read);
+                }
+                bytes = buffered.ToArray();
+            }
+            if (over)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
+
+            // 去掉 UTF-8 BOM，否则首字符是 \ufeff，注进 srcDoc 会在页面顶部留一个空白字符
+            var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+                ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
+                : Encoding.UTF8.GetString(bytes);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                siteId = site.Id,
+                title = site.Title,
+                contentType = "text/html",
+                siteUrl = site.SiteUrl,
+                html,
+            }));
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        // OperationCanceledException 而不是 TaskCanceledException：显式 CancellationToken 触发时
+        // 抛的是前者，只写后者会漏掉「读 body 超时」这条新路径（TaskCanceled 是它的子类，写父类才全）。
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点内容读取超时或失败，请稍后重试"));
         }
@@ -967,7 +1038,9 @@ public class WebPagesController : ControllerBase
                 visibility: visibility,
                 // 数字短链按需分配：仅当用户在分享面板主动选「数字短链」时 client 传 true。
                 // 默认 false → 只发不可枚举的 /s/wp/{token} 长链，不污染 short_links。
-                allocateShortLink: req.AllocateShortLink ?? false);
+                allocateShortLink: req.AllocateShortLink ?? false,
+                // 原样透传（含 null），三态判定归 AskOpeningQuestions.Resolve 一处
+                askSuggestedQuestions: req.AskSuggestedQuestions);
 
             // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
             //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
@@ -1143,6 +1216,7 @@ public class WebPagesController : ControllerBase
             result.CreatedBy,
             result.CreatedByName,
             result.Sites,
+            result.Ask,
         }));
     }
 
@@ -1394,6 +1468,14 @@ public class CreateWebPageShareRequest
 
     /// <summary>访问可见性：owner-only（默认） / logged-in / public</summary>
     public string? Visibility { get; set; }
+
+    /// <summary>
+    /// 本条分享链接自选的开场问题（分享面板里从站点题库勾选 / 手写）。
+    ///
+    /// 三态必须原样传达到服务层，**不要**在这里把 null 兜成空数组：
+    ///   不传（null）= 沿用站点题库；传 []= 这条链接不显示开场问题；传非空 = 只显示这几条。
+    /// </summary>
+    public List<string>? AskSuggestedQuestions { get; set; }
 
     /// <summary>
     /// 是否分配数字短链 /s/{seq}。默认 false：用户意图里没有短链就不强制生成，

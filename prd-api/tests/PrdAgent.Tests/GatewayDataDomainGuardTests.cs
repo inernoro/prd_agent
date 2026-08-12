@@ -3151,6 +3151,25 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("拒绝降级 legacy 直连", resolver);
     }
 
+    /// <summary>
+    /// 失败关闭只在「认定有专属绑定」时才被查，所以绑定判据必须是唯一的一份。
+    /// 生产 ResolveAsync 与 InMemoryModelResolver 各判一次的话，改一处忘一处，
+    /// 失败关闭会在其中一条路径上静默失效（predicate-and-wiring-discipline 形状 3）。
+    /// 这里断言两条解析路径都走同一个 HasDedicatedBinding。
+    /// </summary>
+    [Fact]
+    public void ModelResolver_BothResolutionPathsShareTheDedicatedBindingPredicate()
+    {
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+
+        var uses = System.Text.RegularExpressions.Regex
+            .Matches(resolver, @"HasDedicatedBinding\(requirement\?\.ModelGroupIds\)")
+            .Count;
+
+        Assert.True(uses >= 2,
+            $"生产与 InMemory 两条解析路径都必须用共享的 HasDedicatedBinding 判据，实际只有 {uses} 处");
+    }
+
     [Fact]
     public void ModelResolver_AvailablePoolsFailClosedBeforeMapFallbackForExternalTenants()
     {

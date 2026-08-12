@@ -1,0 +1,110 @@
+using System.Security.Cryptography;
+using System.Text;
+
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// 把一篇文档切成适合向量化的块。纯函数，不碰 IO，可直接单测。
+///
+/// 切块粒度是检索质量的第一道闸：
+///   块太大 → 一块里混了好几个话题，向量被稀释，什么都能匹配一点、什么都不准；
+///   块太小 → 单块缺上下文，命中了也答不出完整答案。
+/// 这里取 ~600 字 + 80 字重叠。重叠是为了不让答案恰好被切口劈成两半——
+/// 「第一步做 A」和「第二步做 B」分属两块时，问"步骤是什么"只能召回一半。
+/// </summary>
+public static class DocumentChunker
+{
+    /// <summary>单块目标长度（字符）。中文按字计，600 字约等于一两个自然段。</summary>
+    public const int TargetChunkSize = 600;
+
+    /// <summary>相邻块的重叠长度，防止答案被切口劈开。</summary>
+    public const int OverlapSize = 80;
+
+    /// <summary>低于这个长度的尾块直接并进上一块，避免产生一堆没信息量的碎块。</summary>
+    public const int MinChunkSize = 80;
+
+    /// <summary>
+    /// 切块。优先在段落边界切，其次句子边界，都没有才硬切——
+    /// 硬切会把一句话劈成两半，是最后手段。
+    /// </summary>
+    public static List<string> Split(string? text)
+    {
+        var s = Normalize(text);
+        if (s.Length == 0) return new List<string>();
+        if (s.Length <= TargetChunkSize) return new List<string> { s };
+
+        var chunks = new List<string>();
+        var pos = 0;
+
+        while (pos < s.Length)
+        {
+            var remaining = s.Length - pos;
+            if (remaining <= TargetChunkSize)
+            {
+                var tail = s[pos..].Trim();
+                // 尾巴太短就并进上一块，别单独成块
+                if (tail.Length < MinChunkSize && chunks.Count > 0)
+                    chunks[^1] = (chunks[^1] + "\n" + tail).Trim();
+                else if (tail.Length > 0)
+                    chunks.Add(tail);
+                break;
+            }
+
+            var end = FindBreakPoint(s, pos, pos + TargetChunkSize);
+            var chunk = s[pos..end].Trim();
+            if (chunk.Length > 0) chunks.Add(chunk);
+
+            // 带重叠推进。必须保证 next > pos，否则 FindBreakPoint 若退回到 pos
+            // 附近就会原地打转——死循环，而且是那种线上才会撞见的死循环。
+            var next = end - OverlapSize;
+            pos = next <= pos ? end : next;
+        }
+
+        return chunks;
+    }
+
+    /// <summary>
+    /// 在 [from, limit] 里找一个体面的切点：段落 &gt; 句末 &gt; 硬切。
+    /// 只在后半段找，避免为了对齐边界把块切得过短。
+    /// </summary>
+    private static int FindBreakPoint(string s, int from, int limit)
+    {
+        if (limit >= s.Length) return s.Length;
+
+        var searchStart = from + (limit - from) / 2;
+
+        var para = s.LastIndexOf('\n', limit - 1, limit - searchStart);
+        if (para > searchStart) return para + 1;
+
+        for (var i = limit - 1; i > searchStart; i--)
+        {
+            var c = s[i];
+            if (c is '。' or '！' or '？' or '；' or '.' or '!' or '?' or ';')
+                return i + 1;
+        }
+
+        return limit;
+    }
+
+    private static string Normalize(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var s = text.Replace("\r\n", "\n").Replace('\r', '\n');
+        // 连续空行压成一个：Markdown 里大量空行会白占块预算
+        while (s.Contains("\n\n\n")) s = s.Replace("\n\n\n", "\n\n");
+        return s.Trim();
+    }
+
+    /// <summary>
+    /// 切块内容的哈希，增量建索引的判据：内容没变就不重算向量（省钱也省时间）。
+    ///
+    /// 必须把**模型标识**也拌进去。只哈内容的话，换了 embedding 模型后所有块的哈希不变，
+    /// 增量逻辑会认为"都没变"而一条都不重建——于是库里永远留着旧模型的向量，
+    /// 检索静默地一直用错向量空间。
+    /// </summary>
+    public static string ComputeHash(string chunkText, string model)
+    {
+        var bytes = Encoding.UTF8.GetBytes($"{model}\0{chunkText}");
+        return Convert.ToHexString(SHA256.HashData(bytes))[..32].ToLowerInvariant();
+    }
+}

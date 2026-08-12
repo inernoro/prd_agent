@@ -262,6 +262,7 @@
 - [CDS 高可用运行验证 · 计划](./plan.cds.resilience-rollout.md) `plan.cds.resilience-rollout`
 - [CDS 当前工作看板 · 计划](./plan.cds.status.md) `plan.cds.status`
 - [CDS Legacy 前端退场 · 计划](./plan.cds.web-migration.md) `plan.cds.web-migration`
+- [网页托管 · 预览修复与向我提问 · 三 PR 拆分看板](./plan.web-hosting.preview-and-ask.md) `plan.web-hosting.preview-and-ask`
 - [每日小贴士场景统一与过时检测 · 计划](./plan.daily-tips.scenarios-and-staleness.md) `plan.daily-tips.scenarios-and-staleness`
 - [Desktop 资产中心 · 计划](./plan.desktop.asset-features.md) `plan.desktop.asset-features`
 - [抖音与 TikTok 真订阅闭环 · 计划](./plan.emergence.tiktok-douyin-poster.md) `plan.emergence.tiktok-douyin-poster`
@@ -301,6 +302,7 @@
 - [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
 - [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
+- [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
 - [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
 - [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`
 - [平台基础设施杂项 · 债务台账](./debt.platform.md) `debt.platform`
