@@ -308,25 +308,11 @@ public class DocumentStoreAgentWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[doc-store-agent] Run {RunId} failed", run.Id);
-            var msg = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
-
-            // SubtitleAsrException 携带诊断信息，原样塞进 SSE error / run.errorMessage
-            IDictionary<string, object?>? diagnostic = null;
-            if (ex is PrdAgent.Api.Services.SubtitleAsrException sae)
-                diagnostic = sae.Diagnostic;
-
-            // run.errorMessage 在 UI 兜底展示（非 SSE 路径），把诊断序列化进去（截断 1500）
-            string errorMessageForDb = msg;
-            if (diagnostic != null)
-            {
-                try
-                {
-                    var diagJson = System.Text.Json.JsonSerializer.Serialize(diagnostic);
-                    var combined = msg + "\n\n[diagnostic]\n" + diagJson;
-                    errorMessageForDb = combined.Length > 1500 ? combined[..1500] : combined;
-                }
-                catch { /* fall back to plain msg */ }
-            }
+            var userMessage = ex is SubtitleAsrException
+                || run.Kind == DocumentStoreAgentRunKind.Transcribe
+                || run.Kind == DocumentStoreAgentRunKind.Subtitle
+                ? AudioTranscriptionUserError.FromException(ex)
+                : "内容处理暂时失败。请稍后重试；已上传的原始内容仍会保留。";
 
             var failedAt = DateTime.UtcNow;
             var willRetry = DocumentRecordingArchiveWorker
@@ -356,7 +342,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             {
                 failedUpdate = Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                    .Set(r => r.ErrorMessage, errorMessageForDb)
+                    .Set(r => r.ErrorMessage, userMessage)
                     .Set(r => r.EndedAt, failedAt)
                     .Set(r => r.AutomaticRetryNextAt, null)
                     .Set(r => r.AutomaticRetryReason, null);
@@ -403,8 +389,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             {
                 await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "error", new
                 {
-                    message = msg,
-                    diagnostic,
+                    message = userMessage,
                 });
             }
         }

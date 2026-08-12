@@ -162,7 +162,7 @@ public class TranscriptRunWorker : BackgroundService
             _currentRunId = null;
             _logger.LogError(ex, "[transcript-agent] Run {RunId} failed", run.Id);
             var userError = run.Type == "asr"
-                ? ToUserReadableAsrError(ex)
+                ? AudioTranscriptionUserError.FromException(ex)
                 : "文案生成暂时失败，请稍后重试；已完成的转写内容不会丢失。";
 
             var failed = await db.TranscriptRuns.UpdateOneAsync(
@@ -600,23 +600,6 @@ public class TranscriptRunWorker : BackgroundService
                 .Set(r => r.UpdatedAt, DateTime.UtcNow));
         if (result.MatchedCount != 1)
             throw new InvalidOperationException("任务处理权已变化，当前 Worker 停止写入");
-    }
-
-    private static string ToUserReadableAsrError(Exception ex)
-    {
-        var message = ex.Message ?? string.Empty;
-        if (message.Contains("没有识别到有效语音", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
-        {
-            return "没有识别到有效语音。请确认录音中有人声且音量清晰，然后重新上传；原始音频已保留。";
-        }
-
-        if (message.Contains("规范化后超过", StringComparison.OrdinalIgnoreCase))
-        {
-            return "音频时长超过单次转写上限，请裁剪或分段后重新上传；原始音频已保留。";
-        }
-
-        return "语音转写暂时失败。请稍后重试或换一段清晰音频；原始音频已保留，不需要重新录制。";
     }
 
     private static async Task<byte[]> NormalizeAudioAsync(
