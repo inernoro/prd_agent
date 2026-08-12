@@ -95,6 +95,7 @@ import {
   MousePointer2,
   Palette,
   Plus,
+  RefreshCw,
   Send,
   Settings,
   Share,
@@ -2447,24 +2448,32 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     [reloadWorkspace, workspaceId, clearSelectionWithChips]
   );
 
-  useEffect(() => {
+  // 只刷新模型目录，不触发上游探活或生成请求。失败时保留旧目录，避免一次网关抖动把当前页面锁死。
+  const reloadImageGenModels = useCallback(async () => {
     setModelsLoading(true);
     setModelsError(null);
-    // 通过视觉创作专属端点获取逻辑模型目录；旧环境由后端提供模型池兼容投影。
-    getVisualAgentImageGenModels()
-      .then((poolsRes) => {
-        if (poolsRes.success) {
-          setImageGenPools(poolsRes.data ?? []);
-          return;
-        }
-        setImageGenPools([]);
-        setModelsError({
-          message: poolsRes.error?.message || '模型网关暂时不可用，请稍后重试。',
-          requestId: poolsRes.error?.requestId,
-        });
-      })
-      .finally(() => setModelsLoading(false));
+    try {
+      const poolsRes = await getVisualAgentImageGenModels();
+      if (poolsRes.success) {
+        setImageGenPools(poolsRes.data ?? []);
+        return;
+      }
+      setModelsError({
+        message: poolsRes.error?.message || '模型网关暂时不可用，请稍后重试。',
+        requestId: poolsRes.error?.requestId,
+      });
+    } catch (error) {
+      setModelsError({
+        message: error instanceof Error && error.message ? error.message : '模型目录加载失败，请稍后重试。',
+      });
+    } finally {
+      setModelsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void reloadImageGenModels();
+  }, [reloadImageGenModels]);
 
   // 读取模型偏好（从后端）
   useEffect(() => {
@@ -7208,17 +7217,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </button>
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
-                            {allImageGenModels.length === 0 ? (
-                              <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
-                                {modelsError ? (
-                                  <>
-                                    <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
-                                    <div className="mt-1">{modelsError.message}</div>
-                                    {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
-                                  </>
-                                ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
-                              </div>
-                            ) : allImageGenModels
+                              {allImageGenModels.length === 0 ? (
+                                <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
+                                  {modelsError ? (
+                                    <>
+                                      <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
+                                      <div className="mt-1">{modelsError.message}</div>
+                                      {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
+                                    </>
+                                  ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                                  <button
+                                    type="button"
+                                    className="mt-3 inline-flex h-7 items-center gap-1.5 rounded-full border border-token-subtle px-2.5 text-[10px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
+                                    onClick={() => void reloadImageGenModels()}
+                                    disabled={modelsLoading}
+                                  >
+                                    <RefreshCw size={11} className={modelsLoading ? 'animate-spin' : ''} />
+                                    {modelsLoading ? '正在加载目录' : '重新加载模型目录'}
+                                  </button>
+                                </div>
+                              ) : allImageGenModels
                               .slice()
                               .sort(
                                 (a, b) =>
@@ -8367,6 +8385,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
                                 </>
                               ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                              <button
+                                type="button"
+                                className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-token-subtle px-3 text-[11px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => void reloadImageGenModels()}
+                                disabled={modelsLoading}
+                              >
+                                <RefreshCw size={12} className={modelsLoading ? 'animate-spin' : ''} />
+                                {modelsLoading ? '正在加载目录' : '重新加载模型目录'}
+                              </button>
                             </div>
                           ) : (
                             <div className="space-y-1.5">
