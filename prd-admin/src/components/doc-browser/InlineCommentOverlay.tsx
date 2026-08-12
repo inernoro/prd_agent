@@ -289,7 +289,7 @@ export function InlineCommentOverlay({
                         marginLeft: -6,
                         border: `2px solid ${col}`,
                         background: withAlpha(col, 0.95),
-                        color: m.orphaned ? '#e2e8f0' : '#1a1205',
+                        color: m.orphaned ? 'var(--text-secondary)' : 'var(--text-primary)',
                         fontSize: 9,
                         fontWeight: 800,
                         lineHeight: 1,

@@ -47,8 +47,14 @@ const SEMANTIC_THEME_CONSUMERS = [
 
 /** 白透明表面（浅色下隐形）。 */
 const WHITE_ALPHA_RE = /rgba\(\s*255\s*,\s*255\s*,\s*255/g;
-/** 全部 6 位 hex，再按感知亮度过滤出「深色」。 */
-const HEX_RE = /#[0-9a-fA-F]{6}\b/g;
+/** 3 位与 6 位 hex 都要认：只认 6 位的话最常见的 `#fff` 直接漏网。 */
+const HEX_RE = /#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/g;
+
+/** #abc → #aabbcc，统一成 6 位再取通道。 */
+function expandHex(hex: string): string {
+  const h = hex.slice(1);
+  return h.length === 3 ? `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}` : hex;
+}
 /** 前景色声明（只认 color:，不碰 background/border/shadow）。 */
 const FG_DECL_RE = /(?<![a-zA-Z-])color:/g;
 /** 任意 rgb/rgba，取三个通道判明暗。 */
@@ -68,7 +74,8 @@ function isDark(r: number, g: number, b: number): boolean {
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.15;
 }
 
-function isDarkHex(hex: string): boolean {
+function isDarkHex(raw: string): boolean {
+  const hex = expandHex(raw);
   return isDark(
     parseInt(hex.slice(1, 3), 16),
     parseInt(hex.slice(3, 5), 16),
@@ -86,8 +93,10 @@ function declValue(src: string, start: number): string {
   const limit = Math.min(src.length, start + 400);
   for (let i = start; i < limit; i += 1) {
     const ch = src[i];
-    if (ch === '(' || ch === '[') depth += 1;
-    else if (ch === ')' || ch === ']') {
+    // `{` 必须算一层：JSX 的 style={{ color: 'x' }} 靠 `}` 收尾，不认它就会
+    // 一路吃到后面几十行，把别的声明里的颜色算进本条（第一版就是这么误报的）。
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') {
       if (depth === 0) return src.slice(start, i);
       depth -= 1;
     } else if (depth === 0 && (ch === ';' || ch === ',')) return src.slice(start, i);
@@ -112,16 +121,38 @@ function isLight(r: number, g: number, b: number): boolean {
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5;
 }
 
+/** tokens.css 的 [data-theme="light"] 块里定义过的变量名。 */
+let lightTokensCache: Set<string> | null = null;
+function lightDefinedTokens(): Set<string> {
+  if (lightTokensCache) return lightTokensCache;
+  const css = fs.readFileSync(path.join(SRC_DIR, 'styles/tokens.css'), 'utf8');
+  const start = css.indexOf('[data-theme="light"] {');
+  const block = start === -1 ? '' : css.slice(start, css.indexOf('\n}', start));
+  lightTokensCache = new Set([...block.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+  return lightTokensCache;
+}
+
+/**
+ * 剔除 `var(--x, 字面色)` 里的兜底色 —— 但**只在 --x 确实有浅色定义时**才剔。
+ * 变量在浅色块里没定义，兜底就不是兜底，它每次都会生效，那就是真坑
+ * （predicate-and-wiring-discipline 形状 8：别把不成立的证据当证据）。
+ */
+function stripSafeVarFallbacks(value: string): string {
+  const defined = lightDefinedTokens();
+  return value.replace(/var\(\s*(--[a-z0-9-]+)\s*,([^)]*)\)/g, (whole, name: string) =>
+    defined.has(name) ? `var(${name})` : whole);
+}
+
 /** 写死的浅色前景处数：面一旦翻成浅色，这些字就消失（本次事故的镜像形态）。 */
 function countLightFg(content: string): number {
   let count = 0;
   for (const m of content.matchAll(FG_DECL_RE)) {
-    const value = declValue(content, (m.index ?? 0) + m[0].length);
+    const value = stripSafeVarFallbacks(declValue(content, (m.index ?? 0) + m[0].length));
     for (const hit of value.matchAll(RGB_RE)) {
       if (isLight(Number(hit[1]), Number(hit[2]), Number(hit[3]))) count += 1;
     }
     for (const hex of value.matchAll(HEX_RE)) {
-      const h = hex[0];
+      const h = expandHex(hex[0]);
       if (isLight(parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16))) {
         count += 1;
       }
@@ -244,6 +275,43 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
     });
 
     expect(violations).toEqual([]);
+  });
+
+  /**
+   * 零容忍守卫：本次翻过底的浮层面板，四类硬编码必须**恒为 0**（不是棘轮，是硬底线）。
+   *
+   * 由来（2026-08-12 第二轮复测）：这批浮层里有一半（划词 AI 改写、划词批注、
+   * Wikilink 联想）在真实环境里触发条件苛刻，验收连续两轮都「未覆盖」。
+   * 够不到就等于没验，那这条线只能由源码守卫来兜——它们的配色现在 100% 走 token，
+   * 任何人往回写一个字面色，这条立刻红，不用等有人碰巧点到那个浮层。
+   */
+  it('翻过底的浮层面板：配色 100% 走 token，零硬编码', () => {
+    const OVERLAY_PANELS = [
+      'components/daily-tips/TipsDrawer.tsx',
+      'components/daily-tips/TipCard.tsx',
+      'components/doc-browser/SelectionAiPopover.tsx',
+      'components/doc-browser/SelectionImagePopover.tsx',
+      'components/doc-browser/InlineCommentComposer.tsx',
+      'components/doc-browser/InlineCommentOverlay.tsx',
+      'components/doc-browser/InlineCommentMargin.tsx',
+      'components/doc-browser/inlineCommentShared.tsx',
+      'components/doc-browser/WikilinkAutocomplete.tsx',
+      'components/doc-browser/WikilinkHoverCard.tsx',
+    ];
+    const violations = OVERLAY_PANELS.flatMap((rel) => {
+      const content = fs.readFileSync(path.join(SRC_DIR, rel), 'utf8');
+      const lightFg = countLightFg(content);
+      const darkRgbaBg = countDarkRgbaBg(content);
+      const out: string[] = [];
+      if (lightFg > 0) out.push(`${rel}: ${lightFg} 处写死浅色前景 —— 浅色主题下这些字会消失`);
+      if (darkRgbaBg > 0) out.push(`${rel}: ${darkRgbaBg} 处写死深色背景 —— 浅色主题下是白底浮暗卡`);
+      return out;
+    });
+
+    expect(
+      violations,
+      ['', '这批浮层验收够不到，只能靠守卫兜底，因此零容忍：', ...violations].join('\n'),
+    ).toEqual([]);
   });
 
   /**

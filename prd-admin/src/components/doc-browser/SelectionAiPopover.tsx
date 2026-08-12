@@ -233,7 +233,7 @@ export function SelectionAiPopover({
               style={{
                 background: active ? 'rgba(168,85,247,0.28)' : 'var(--nested-block-bg)',
                 border: `1px solid ${active ? 'rgba(168,85,247,0.55)' : 'var(--border-subtle)'}`,
-                color: active ? 'rgba(232,210,255,0.98)' : 'var(--text-secondary)',
+                color: active ? 'var(--accent-fg-violet-strong)' : 'var(--text-secondary)',
               }}
             >
               {a.label}
@@ -401,7 +401,7 @@ function MiniDiff({ lines }: { lines: DiffLine[] }) {
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
             background: l.type === 'add' ? 'rgba(34,197,94,0.12)' : l.type === 'del' ? 'rgba(248,113,113,0.12)' : 'transparent',
-            color: l.type === 'add' ? 'rgba(134,239,172,0.95)' : l.type === 'del' ? 'rgba(252,165,165,0.9)' : 'var(--text-secondary)',
+            color: l.type === 'add' ? 'var(--accent-fg-emerald)' : l.type === 'del' ? 'var(--accent-fg-danger)' : 'var(--text-secondary)',
             textDecoration: l.type === 'del' ? 'line-through' : undefined,
             padding: '0 4px',
             borderRadius: 3,

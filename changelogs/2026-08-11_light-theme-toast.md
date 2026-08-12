@@ -11,3 +11,6 @@
 | fix | prd-admin | 修复 Mermaid 图在浅色主题下浅字压浅底：mermaid 主题改为按 data-theme 双套配置并在主题切换时重烘；容器底改走 --nested-block-bg |
 | fix | prd-admin | 修复暗色主题下原生 option 弹出白色列表：option 由 Canvas/CanvasText 系统色改为主题 token（弹层由 UA 绘制，Canvas 的解析结果不可控） |
 | test | prd-admin | 棘轮补第 4 条判据「写死的浅色前景」（color: 里感知亮度 > 0.5 的字面色）——前三条只盯背景，本次 45 处镜像缺陷一处都没拦住 |
+| fix | prd-admin | 清掉三元分支里残留的写死浅色前景（AI 改写 diff 的增删行文字、教程置顶态、评论孤儿态），此前正则只匹配单值 color 漏掉了三元 |
+| test | prd-admin | 新增零容忍守卫：10 个翻过底的浮层面板四类硬编码恒为 0（这批浮层验收连续两轮够不到，只能由源码守卫兜底） |
+| test | prd-admin | 修守卫三处判据缺陷：declValue 不认 `}` 导致 JSX style 取值越界误报（全仓 lightFg 1851→1611）、var() 兜底色误判（仅当变量在浅色块有定义才豁免）、hex 只认 6 位漏掉 `#fff` |

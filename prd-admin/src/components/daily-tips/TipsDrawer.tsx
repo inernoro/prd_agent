@@ -573,7 +573,7 @@ export function TipsDrawer() {
               style={{
                 border: 'none',
                 background: pinned ? 'rgba(196,181,253,0.16)' : 'transparent',
-                color: pinned ? '#c4b5fd' : 'rgba(255,255,255,0.45)',
+                color: pinned ? 'var(--accent-fg-violet)' : 'var(--text-muted)',
                 cursor: 'pointer',
                 padding: 5,
                 display: 'inline-flex',

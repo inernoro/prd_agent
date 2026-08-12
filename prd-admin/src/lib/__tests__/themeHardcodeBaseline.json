@@ -27,7 +27,7 @@
     "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 12
+    "lightFg": 9
   },
   "/components/ai-news/UpdateCenterNewsTeaser.tsx": {
     "whiteAlpha": 0,
@@ -51,7 +51,7 @@
     "whiteAlpha": 1,
     "darkHex": 2,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 0
   },
   "/components/config-card/ConfigCard.tsx": {
     "whiteAlpha": 0,
@@ -75,7 +75,7 @@
     "whiteAlpha": 11,
     "darkHex": 0,
     "darkRgbaBg": 6,
-    "lightFg": 19
+    "lightFg": 21
   },
   "/components/daily-tips/TipCard.tsx": {
     "whiteAlpha": 1,
@@ -84,22 +84,10 @@
     "lightFg": 0
   },
   "/components/daily-tips/TipsDrawer.tsx": {
-    "whiteAlpha": 3,
+    "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/components/daily-tips/TipsEntryButton.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/daily-tips/TipsRotator.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 0
   },
   "/components/design/Badge.tsx": {
     "whiteAlpha": 0,
@@ -147,13 +135,13 @@
     "whiteAlpha": 2,
     "darkHex": 3,
     "darkRgbaBg": 4,
-    "lightFg": 8
+    "lightFg": 10
   },
   "/components/doc-browser/AudioWavePlayer.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 2
   },
   "/components/doc-browser/BulkActionBar.tsx": {
     "whiteAlpha": 0,
@@ -165,7 +153,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 0
+    "lightFg": 1
   },
   "/components/doc-browser/DocBrowser.tsx": {
     "whiteAlpha": 1,
@@ -173,37 +161,19 @@
     "darkRgbaBg": 3,
     "lightFg": 12
   },
-  "/components/doc-browser/DocEmptyState.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
   "/components/doc-browser/DocumentStoreBrowser.tsx": {
     "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
     "lightFg": 0
   },
-  "/components/doc-browser/InlineCommentMargin.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
   "/components/doc-browser/InlineCommentOverlay.tsx": {
     "whiteAlpha": 0,
-    "darkHex": 3,
+    "darkHex": 2,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 0
   },
   "/components/doc-browser/InteractiveTranscriptDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 3
-  },
-  "/components/doc-browser/SelectionAiPopover.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
@@ -219,7 +189,13 @@
     "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 3
+    "lightFg": 1
+  },
+  "/components/effects/BlackHoleVortex.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0
   },
   "/components/effects/CssRainBackground.tsx": {
     "whiteAlpha": 0,
@@ -243,7 +219,7 @@
     "whiteAlpha": 4,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 1
   },
   "/components/effects/NightSkyBackground.tsx": {
     "whiteAlpha": 1,
@@ -285,7 +261,7 @@
     "whiteAlpha": 1,
     "darkHex": 2,
     "darkRgbaBg": 1,
-    "lightFg": 12
+    "lightFg": 8
   },
   "/components/llm-logs/LlmGenerationsView.tsx": {
     "whiteAlpha": 1,
@@ -303,7 +279,7 @@
     "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 3
   },
   "/components/login/ConvergingBeamsBackdrop.tsx": {
     "whiteAlpha": 4,
@@ -333,13 +309,13 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 2
+    "lightFg": 0
   },
   "/components/mobile/appStore.tsx": {
     "whiteAlpha": 3,
-    "darkHex": 3,
+    "darkHex": 5,
     "darkRgbaBg": 6,
-    "lightFg": 0
+    "lightFg": 2
   },
   "/components/mobile/MobileBottomSheet.tsx": {
     "whiteAlpha": 0,
@@ -347,17 +323,29 @@
     "darkRgbaBg": 1,
     "lightFg": 0
   },
+  "/components/mobile/MobileFab.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1
+  },
+  "/components/mobile/MobileOverflowMenu.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1
+  },
   "/components/MobileCompatGate.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 5
+    "lightFg": 2
   },
   "/components/MobileSafeBoundary.tsx": {
     "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 5
+    "lightFg": 0
   },
   "/components/model/ModelPoolPickerDialog.tsx": {
     "whiteAlpha": 0,
@@ -375,19 +363,19 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 8
+    "lightFg": 6
   },
   "/components/PdfThumbnail.tsx": {
     "whiteAlpha": 2,
-    "darkHex": 2,
+    "darkHex": 3,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 2
   },
   "/components/prd-preview/PrdPreviewPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 1
+    "lightFg": 0
   },
   "/components/reactbits/SpotlightCard.tsx": {
     "whiteAlpha": 1,
@@ -429,25 +417,25 @@
     "whiteAlpha": 10,
     "darkHex": 7,
     "darkRgbaBg": 5,
-    "lightFg": 9
+    "lightFg": 6
   },
   "/components/showcase/SubmissionCard.tsx": {
     "whiteAlpha": 4,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 4
+    "lightFg": 2
   },
   "/components/showcase/SubmissionDetailModal.tsx": {
     "whiteAlpha": 1,
-    "darkHex": 0,
+    "darkHex": 2,
     "darkRgbaBg": 4,
-    "lightFg": 3
+    "lightFg": 0
   },
   "/components/skills/SystemPromptsPanel.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 5
+    "lightFg": 4
   },
   "/components/sse/SsePhaseBar.tsx": {
     "whiteAlpha": 1,
@@ -465,31 +453,31 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 9,
-    "lightFg": 22
+    "lightFg": 20
   },
   "/components/team/GroupAccessDialog.tsx": {
     "whiteAlpha": 0,
     "darkHex": 2,
     "darkRgbaBg": 1,
-    "lightFg": 4
+    "lightFg": 0
   },
   "/components/team/SpaceBar.tsx": {
     "whiteAlpha": 0,
     "darkHex": 2,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 0
   },
   "/components/team/TeamManagerPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 3,
     "darkRgbaBg": 1,
-    "lightFg": 1
+    "lightFg": 0
   },
   "/components/team/TeamScopeBar.tsx": {
     "whiteAlpha": 0,
     "darkHex": 3,
     "darkRgbaBg": 0,
-    "lightFg": 5
+    "lightFg": 0
   },
   "/components/three/AttentionLandscape.tsx": {
     "whiteAlpha": 2,
@@ -513,19 +501,19 @@
     "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 6
+    "lightFg": 3
   },
   "/components/ui/GlobalDefectSubmitDialog.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 17
+    "lightFg": 20
   },
   "/components/ui/ImageLightbox.tsx": {
     "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 7,
-    "lightFg": 6
+    "lightFg": 5
   },
   "/components/ui/ImagePreviewDialog.tsx": {
     "whiteAlpha": 3,
@@ -549,7 +537,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 9
+    "lightFg": 8
   },
   "/components/ui/SystemDialogHost.tsx": {
     "whiteAlpha": 0,
@@ -565,15 +553,15 @@
   },
   "/components/ui/UserProfilePopover.tsx": {
     "whiteAlpha": 0,
-    "darkHex": 0,
+    "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 4
   },
   "/components/ui/VideoLoader.tsx": {
     "whiteAlpha": 1,
-    "darkHex": 2,
+    "darkHex": 7,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 0
   },
   "/components/ui/WorkflowProgressBar.tsx": {
     "whiteAlpha": 0,
@@ -591,13 +579,13 @@
     "whiteAlpha": 39,
     "darkHex": 3,
     "darkRgbaBg": 2,
-    "lightFg": 33
+    "lightFg": 24
   },
   "/components/visual-agent/ImageQuickActionBar.tsx": {
     "whiteAlpha": 8,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 10
+    "lightFg": 8
   },
   "/components/visual-agent/ImageQuickEditInput.tsx": {
     "whiteAlpha": 3,
@@ -609,13 +597,13 @@
     "whiteAlpha": 17,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 17
+    "lightFg": 11
   },
   "/components/visual-agent/QuickActionConfigPanel.tsx": {
     "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/components/visual-agent/SizePickerPanel.tsx": {
     "whiteAlpha": 11,
@@ -627,13 +615,13 @@
     "whiteAlpha": 21,
     "darkHex": 0,
     "darkRgbaBg": 5,
-    "lightFg": 10
+    "lightFg": 11
   },
   "/components/watermark/WatermarkSettingsPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 4,
     "darkRgbaBg": 0,
-    "lightFg": 8
+    "lightFg": 5
   },
   "/components/web-hosting/FolderManager.tsx": {
     "whiteAlpha": 0,
@@ -663,13 +651,13 @@
     "whiteAlpha": 0,
     "darkHex": 2,
     "darkRgbaBg": 2,
-    "lightFg": 0
+    "lightFg": 2
   },
   "/components/weekly-poster/WeeklyPosterModal.tsx": {
     "whiteAlpha": 47,
-    "darkHex": 11,
+    "darkHex": 16,
     "darkRgbaBg": 19,
-    "lightFg": 11
+    "lightFg": 17
   },
   "/layouts/AppShell.tsx": {
     "whiteAlpha": 1,
@@ -711,7 +699,7 @@
     "whiteAlpha": 2,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 9
+    "lightFg": 16
   },
   "/lib/platformColors.ts": {
     "whiteAlpha": 2,
@@ -735,7 +723,7 @@
     "whiteAlpha": 76,
     "darkHex": 2,
     "darkRgbaBg": 10,
-    "lightFg": 60
+    "lightFg": 56
   },
   "/pages/ai-chat/components/ChatMessageItem.tsx": {
     "whiteAlpha": 1,
@@ -795,13 +783,13 @@
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 5
   },
   "/pages/ai-toolbox/components/ToolDetail.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 12
+    "lightFg": 8
   },
   "/pages/ai-toolbox/components/ToolEditor.tsx": {
     "whiteAlpha": 0,
@@ -815,17 +803,23 @@
     "darkRgbaBg": 1,
     "lightFg": 0
   },
+  "/pages/ai-toolbox/MobileToolboxView.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2
+  },
   "/pages/ai-toolbox/SharedConversation.tsx": {
     "whiteAlpha": 0,
     "darkHex": 5,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/pages/arena/ArenaPage.tsx": {
     "whiteAlpha": 39,
     "darkHex": 2,
-    "darkRgbaBg": 14,
-    "lightFg": 7
+    "darkRgbaBg": 12,
+    "lightFg": 9
   },
   "/pages/AssetsManagePage.tsx": {
     "whiteAlpha": 0,
@@ -861,7 +855,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 5
+    "lightFg": 4
   },
   "/pages/ccas-agent/CcasAgentPage.tsx": {
     "whiteAlpha": 0,
@@ -897,13 +891,13 @@
     "whiteAlpha": 178,
     "darkHex": 5,
     "darkRgbaBg": 97,
-    "lightFg": 71
+    "lightFg": 69
   },
   "/pages/changelog/ChangelogPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 2
   },
   "/pages/channel-trace-agent/ImportPasswordModal.tsx": {
     "whiteAlpha": 0,
@@ -939,31 +933,31 @@
     "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 7
+    "lightFg": 5
   },
   "/pages/DataTransferPage.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 4,
-    "lightFg": 14
+    "lightFg": 12
   },
   "/pages/defect-agent/components/DefectCard.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 19
+    "lightFg": 15
   },
   "/pages/defect-agent/components/DefectDetailPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 5
+    "lightFg": 7
   },
   "/pages/defect-agent/components/DefectFixReportPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 5
+    "lightFg": 2
   },
   "/pages/defect-agent/components/DefectListRow.tsx": {
     "whiteAlpha": 0,
@@ -975,7 +969,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 1
+    "lightFg": 5
   },
   "/pages/defect-agent/components/KanbanBoard.tsx": {
     "whiteAlpha": 0,
@@ -987,13 +981,13 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 2
   },
   "/pages/defect-agent/components/StatsPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 6
+    "lightFg": 4
   },
   "/pages/defect-agent/components/TemplateDialog.tsx": {
     "whiteAlpha": 0,
@@ -1011,25 +1005,25 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 4
+    "lightFg": 1
   },
   "/pages/document-store/DocApplyDiffModal.tsx": {
     "whiteAlpha": 2,
     "darkHex": 0,
-    "darkRgbaBg": 7,
-    "lightFg": 9
+    "darkRgbaBg": 4,
+    "lightFg": 8
   },
   "/pages/document-store/DocumentGalaxyView.tsx": {
     "whiteAlpha": 49,
     "darkHex": 9,
-    "darkRgbaBg": 14,
+    "darkRgbaBg": 13,
     "lightFg": 56
   },
   "/pages/document-store/DocumentStorePage.tsx": {
     "whiteAlpha": 4,
     "darkHex": 4,
     "darkRgbaBg": 2,
-    "lightFg": 11
+    "lightFg": 10
   },
   "/pages/document-store/GalaxyStandalonePage.tsx": {
     "whiteAlpha": 0,
@@ -1041,24 +1035,24 @@
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 8
+    "lightFg": 6
   },
   "/pages/document-store/ReaderPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 4
+    "lightFg": 5
   },
   "/pages/document-store/RecordAudioSheet.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
-    "darkRgbaBg": 6,
-    "lightFg": 5
+    "darkRgbaBg": 3,
+    "lightFg": 6
   },
   "/pages/document-store/ReprocessChatDrawer.tsx": {
     "whiteAlpha": 4,
     "darkHex": 0,
-    "darkRgbaBg": 13,
+    "darkRgbaBg": 7,
     "lightFg": 16
   },
   "/pages/document-store/ShortVideoMaterialDialog.tsx": {
@@ -1071,19 +1065,19 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 10
+    "lightFg": 7
   },
   "/pages/document-store/SubtitleGenerationDrawer.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 8,
+    "darkRgbaBg": 3,
     "lightFg": 8
   },
   "/pages/document-store/SyncCenterDialog.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 14,
-    "lightFg": 49
+    "lightFg": 33
   },
   "/pages/document-store/SyncManagerPanel.tsx": {
     "whiteAlpha": 0,
@@ -1095,25 +1089,25 @@
     "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 0
   },
   "/pages/document-store/TranscribeFlowDrawer.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
-    "darkRgbaBg": 6,
-    "lightFg": 14
+    "darkRgbaBg": 3,
+    "lightFg": 11
   },
   "/pages/document-store/UniverseGraphPage.tsx": {
     "whiteAlpha": 1,
     "darkHex": 2,
     "darkRgbaBg": 7,
-    "lightFg": 26
+    "lightFg": 27
   },
   "/pages/document-store/ViewersDrawer.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 15
+    "lightFg": 9
   },
   "/pages/email-agent/EmailAgentPage.tsx": {
     "whiteAlpha": 0,
@@ -1147,9 +1141,9 @@
   },
   "/pages/emergence/EmergenceNode.tsx": {
     "whiteAlpha": 7,
-    "darkHex": 0,
+    "darkHex": 2,
     "darkRgbaBg": 0,
-    "lightFg": 8
+    "lightFg": 7
   },
   "/pages/ExchangeManagePage.tsx": {
     "whiteAlpha": 0,
@@ -1185,12 +1179,18 @@
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 13
+    "lightFg": 12
+  },
+  "/pages/home/components/LanguageToggle.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1
   },
   "/pages/home/components/ProductMockup.tsx": {
     "whiteAlpha": 11,
     "darkHex": 11,
-    "darkRgbaBg": 2,
+    "darkRgbaBg": 1,
     "lightFg": 2
   },
   "/pages/home/components/StaticBackdrop.tsx": {
@@ -1281,7 +1281,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 4
+    "lightFg": 5
   },
   "/pages/lab-showcase/ShowcaseLabTab.tsx": {
     "whiteAlpha": 5,
@@ -1299,13 +1299,13 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 7
+    "lightFg": 5
   },
   "/pages/labs/MySharesPage.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 6
+    "lightFg": 7
   },
   "/pages/labs/ShareLinkTesterPage.tsx": {
     "whiteAlpha": 0,
@@ -1317,7 +1317,7 @@
     "whiteAlpha": 1,
     "darkHex": 2,
     "darkRgbaBg": 0,
-    "lightFg": 5
+    "lightFg": 3
   },
   "/pages/library/ClayButton.tsx": {
     "whiteAlpha": 0,
@@ -1327,15 +1327,15 @@
   },
   "/pages/library/LibraryDocReader.tsx": {
     "whiteAlpha": 0,
-    "darkHex": 44,
+    "darkHex": 45,
     "darkRgbaBg": 0,
-    "lightFg": 12
+    "lightFg": 9
   },
   "/pages/library/LibraryLandingPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 66,
     "darkRgbaBg": 0,
-    "lightFg": 12
+    "lightFg": 4
   },
   "/pages/library/LibraryShareViewPage.tsx": {
     "whiteAlpha": 0,
@@ -1347,13 +1347,13 @@
     "whiteAlpha": 0,
     "darkHex": 19,
     "darkRgbaBg": 0,
-    "lightFg": 5
+    "lightFg": 4
   },
   "/pages/literary-agent/ArticleIllustrationEditorPage.tsx": {
     "whiteAlpha": 32,
     "darkHex": 0,
     "darkRgbaBg": 8,
-    "lightFg": 72
+    "lightFg": 61
   },
   "/pages/literary-agent/ConfigManagementDialog.tsx": {
     "whiteAlpha": 0,
@@ -1365,13 +1365,13 @@
     "whiteAlpha": 0,
     "darkHex": 13,
     "darkRgbaBg": 5,
-    "lightFg": 4
+    "lightFg": 3
   },
   "/pages/LlmLogsPage.tsx": {
     "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 28
+    "lightFg": 26
   },
   "/pages/LoginPage.tsx": {
     "whiteAlpha": 1,
@@ -1389,7 +1389,7 @@
     "whiteAlpha": 5,
     "darkHex": 18,
     "darkRgbaBg": 2,
-    "lightFg": 1
+    "lightFg": 3
   },
   "/pages/mobile-home/DailyPostPage.tsx": {
     "whiteAlpha": 0,
@@ -1401,13 +1401,13 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 3
   },
   "/pages/ModelAppGroupPage.tsx": {
     "whiteAlpha": 3,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 9
+    "lightFg": 8
   },
   "/pages/ModelManagePage.tsx": {
     "whiteAlpha": 1,
@@ -1419,7 +1419,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 11
+    "lightFg": 9
   },
   "/pages/open-platform/AppsPanel.tsx": {
     "whiteAlpha": 0,
@@ -1461,31 +1461,31 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 5
   },
   "/pages/pa-agent/PaAssistantChat.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 6
   },
   "/pages/pa-agent/PaProfilePanel.tsx": {
     "whiteAlpha": 1,
     "darkHex": 5,
     "darkRgbaBg": 1,
-    "lightFg": 11
+    "lightFg": 6
   },
   "/pages/pa-agent/PaReviewDrawer.tsx": {
     "whiteAlpha": 1,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 15
+    "lightFg": 9
   },
   "/pages/pa-agent/PaTaskBoard.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 6
+    "lightFg": 8
   },
   "/pages/pm-agent/AuditLogView.tsx": {
     "whiteAlpha": 0,
@@ -1511,17 +1511,11 @@
     "darkRgbaBg": 0,
     "lightFg": 2
   },
-  "/pages/pm-agent/CycleManagerModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
   "/pages/pm-agent/DashboardView.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 12
+    "lightFg": 6
   },
   "/pages/pm-agent/DecisionsPanel.tsx": {
     "whiteAlpha": 0,
@@ -1533,7 +1527,13 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 11
+    "lightFg": 6
+  },
+  "/pages/pm-agent/GanttChart.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1
   },
   "/pages/pm-agent/GlobalView.tsx": {
     "whiteAlpha": 0,
@@ -1569,13 +1569,13 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 13
+    "lightFg": 8
   },
   "/pages/pm-agent/ImportPersonalReportModal.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/pages/pm-agent/KanbanBoard.tsx": {
     "whiteAlpha": 0,
@@ -1587,37 +1587,37 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/pages/pm-agent/MilestoneDetailDrawer.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 11
+    "lightFg": 8
   },
   "/pages/pm-agent/MilestoneDetailPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 6
+    "lightFg": 5
   },
   "/pages/pm-agent/MilestonesBar.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 2
   },
   "/pages/pm-agent/MilestonesPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 9
+    "lightFg": 5
   },
   "/pages/pm-agent/MilestoneSuggestPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/pages/pm-agent/PmAgentPage.tsx": {
     "whiteAlpha": 0,
@@ -1671,19 +1671,19 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 1
   },
   "/pages/pm-agent/TaskDetailDrawer.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/pages/pm-agent/TaskDetailPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/pages/pm-agent/TaskWorkLogPanel.tsx": {
     "whiteAlpha": 0,
@@ -1779,7 +1779,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 16
+    "lightFg": 13
   },
   "/pages/product-agent/knowledge/VersionKnowledgeCard.tsx": {
     "whiteAlpha": 0,
@@ -1821,7 +1821,7 @@
     "whiteAlpha": 13,
     "darkHex": 2,
     "darkRgbaBg": 1,
-    "lightFg": 10
+    "lightFg": 12
   },
   "/pages/product-agent/ProductHistoryImportDialog.tsx": {
     "whiteAlpha": 0,
@@ -1839,7 +1839,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 5
   },
   "/pages/product-agent/ProductRelationModals.tsx": {
     "whiteAlpha": 0,
@@ -1899,7 +1899,7 @@
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 1
   },
   "/pages/product-agent/VersionWorkflowImportDialog.tsx": {
     "whiteAlpha": 0,
@@ -1953,7 +1953,7 @@
     "whiteAlpha": 0,
     "darkHex": 8,
     "darkRgbaBg": 4,
-    "lightFg": 0
+    "lightFg": 1
   },
   "/pages/public-profile/profileBackgrounds.ts": {
     "whiteAlpha": 1,
@@ -1965,13 +1965,13 @@
     "whiteAlpha": 1,
     "darkHex": 3,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 2
   },
   "/pages/report-agent/components/DailyLogPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 24
+    "lightFg": 19
   },
   "/pages/report-agent/components/DataSourceManager.tsx": {
     "whiteAlpha": 0,
@@ -1983,7 +1983,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 3
   },
   "/pages/report-agent/components/MarkdownImportModal.tsx": {
     "whiteAlpha": 0,
@@ -2001,18 +2001,12 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 9
+    "lightFg": 6
   },
   "/pages/report-agent/components/ReportCommentComposer.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/report-agent/components/ReportDetailPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
     "lightFg": 1
   },
   "/pages/report-agent/components/ReportEditor.tsx": {
@@ -2025,7 +2019,7 @@
     "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 5,
-    "lightFg": 7
+    "lightFg": 4
   },
   "/pages/report-agent/components/ReportTableSectionView.tsx": {
     "whiteAlpha": 0,
@@ -2043,7 +2037,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 2
   },
   "/pages/report-agent/components/SettingsPanel.tsx": {
     "whiteAlpha": 0,
@@ -2055,7 +2049,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 2
   },
   "/pages/report-agent/components/StatsCardPanel.tsx": {
     "whiteAlpha": 0,
@@ -2067,7 +2061,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 9
+    "lightFg": 7
   },
   "/pages/report-agent/components/TeamIssuesPanel.tsx": {
     "whiteAlpha": 0,
@@ -2103,13 +2097,13 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 2
   },
   "/pages/ReportTeamShareViewPage.tsx": {
     "whiteAlpha": 14,
     "darkHex": 3,
     "darkRgbaBg": 2,
-    "lightFg": 17
+    "lightFg": 26
   },
   "/pages/review-agent/components/AppealHistoryDrawer.tsx": {
     "whiteAlpha": 0,
@@ -2135,6 +2129,18 @@
     "darkRgbaBg": 0,
     "lightFg": 6
   },
+  "/pages/settings/PeerNodesSettings.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1
+  },
+  "/pages/settings/ShortLinksAdminSettings.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0
+  },
   "/pages/settings/UpdateAccelerationSettings.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
@@ -2143,9 +2149,9 @@
   },
   "/pages/ShareViewPage.tsx": {
     "whiteAlpha": 17,
-    "darkHex": 3,
+    "darkHex": 4,
     "darkRgbaBg": 5,
-    "lightFg": 14
+    "lightFg": 23
   },
   "/pages/shitu-agent/ShituHelpDrawer.tsx": {
     "whiteAlpha": 0,
@@ -2157,43 +2163,43 @@
     "whiteAlpha": 0,
     "darkHex": 2,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 7
   },
   "/pages/shortcuts-agent/ShortcutsPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 14
+    "lightFg": 15
   },
   "/pages/ShortLinkRouter.tsx": {
     "whiteAlpha": 2,
     "darkHex": 3,
     "darkRgbaBg": 2,
-    "lightFg": 2
+    "lightFg": 4
   },
   "/pages/SkillAgentPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 31
+    "lightFg": 24
   },
   "/pages/SkillShareViewPage.tsx": {
     "whiteAlpha": 1,
     "darkHex": 3,
     "darkRgbaBg": 0,
-    "lightFg": 7
+    "lightFg": 1
   },
   "/pages/SkillsPage.tsx": {
     "whiteAlpha": 4,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 8
+    "lightFg": 23
   },
   "/pages/speech-agent/SpeechAgentPlayPage.tsx": {
     "whiteAlpha": 8,
     "darkHex": 10,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 6
   },
   "/pages/system-logs/SystemLogsTab.tsx": {
     "whiteAlpha": 0,
@@ -2205,13 +2211,13 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 5
+    "lightFg": 2
   },
   "/pages/task-tree/TaskTreePage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 6
+    "lightFg": 5
   },
   "/pages/team-activity/ExperienceBoard.tsx": {
     "whiteAlpha": 0,
@@ -2235,7 +2241,7 @@
     "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 0
   },
   "/pages/team-activity/StatsPanels.tsx": {
     "whiteAlpha": 0,
@@ -2247,23 +2253,23 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 1
+    "lightFg": 0
   },
   "/pages/tutorial-email/TutorialEmailPage.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 3
+    "lightFg": 5
   },
   "/pages/UsersPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 4
   },
   "/pages/video-agent/VideoGenDirectPanel.tsx": {
     "whiteAlpha": 1,
-    "darkHex": 3,
+    "darkHex": 4,
     "darkRgbaBg": 1,
     "lightFg": 5
   },
@@ -2283,7 +2289,7 @@
     "whiteAlpha": 40,
     "darkHex": 2,
     "darkRgbaBg": 2,
-    "lightFg": 30
+    "lightFg": 25
   },
   "/pages/visual-agent/VisualAgentFullscreenPage.tsx": {
     "whiteAlpha": 2,
@@ -2301,37 +2307,37 @@
     "whiteAlpha": 2,
     "darkHex": 2,
     "darkRgbaBg": 5,
-    "lightFg": 9
+    "lightFg": 11
   },
   "/pages/visual-storyboard/VisualStoryboardPage.tsx": {
     "whiteAlpha": 14,
-    "darkHex": 0,
-    "darkRgbaBg": 7,
-    "lightFg": 4
+    "darkHex": 1,
+    "darkRgbaBg": 6,
+    "lightFg": 9
   },
   "/pages/WebPagesPage.tsx": {
     "whiteAlpha": 3,
     "darkHex": 0,
     "darkRgbaBg": 7,
-    "lightFg": 34
+    "lightFg": 16
   },
   "/pages/weekly-poster/PosterDesignerPage.tsx": {
     "whiteAlpha": 97,
-    "darkHex": 14,
-    "darkRgbaBg": 20,
-    "lightFg": 6
+    "darkHex": 16,
+    "darkRgbaBg": 16,
+    "lightFg": 9
   },
   "/pages/weekly-poster/WeeklyPosterEditorPage.tsx": {
     "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 4
+    "lightFg": 5
   },
   "/pages/weekly-poster/WeeklyPosterWizardPage.tsx": {
     "whiteAlpha": 7,
-    "darkHex": 1,
+    "darkHex": 2,
     "darkRgbaBg": 4,
-    "lightFg": 5
+    "lightFg": 6
   },
   "/pages/workflow-agent/ArtifactPreviewModal.tsx": {
     "whiteAlpha": 1,
@@ -2343,43 +2349,43 @@
     "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 11
+    "lightFg": 7
   },
   "/pages/workflow-agent/committeeMonthlyHtmlTemplate.ts": {
     "whiteAlpha": 0,
     "darkHex": 4,
     "darkRgbaBg": 2,
-    "lightFg": 20
+    "lightFg": 19
   },
   "/pages/workflow-agent/ExecutionDetailPanel.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/pages/workflow-agent/qualityMonthlyTemplate.ts": {
     "whiteAlpha": 2,
     "darkHex": 4,
     "darkRgbaBg": 2,
-    "lightFg": 45
+    "lightFg": 49
   },
   "/pages/workflow-agent/tapdHtmlTemplate.ts": {
     "whiteAlpha": 4,
     "darkHex": 4,
     "darkRgbaBg": 0,
-    "lightFg": 17
+    "lightFg": 20
   },
   "/pages/workflow-agent/WorkflowCanvas.tsx": {
     "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 8
+    "lightFg": 2
   },
   "/pages/workflow-agent/WorkflowChatPanel.tsx": {
     "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 11
+    "lightFg": 10
   },
   "/pages/workflow-agent/workflowTemplates.ts": {
     "whiteAlpha": 0,
@@ -2391,6 +2397,6 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 9
   }
 }
