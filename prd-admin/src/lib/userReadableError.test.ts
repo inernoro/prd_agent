@@ -225,6 +225,7 @@ describe('toUserReadableErrorMessage', () => {
     ['DUPLICATE_NAME', '该名称已存在，请刷新列表后确认；如需新增，请改用其他名称。'],
     ['DOCUMENT_ASSET_CLEANUP_FAILED', '文件清理暂时未完成，请稍后重试删除。'],
     ['NO_PRD_DOCUMENT', '当前群组尚未绑定 PRD 文档，请先在群组设置中绑定后重试。'],
+    ['INVALID_ATTACHMENT', '评论中包含已失效或无权使用的图片，请移除后重新上传再提交。'],
   ])('为稳定业务错误 %s 使用已登记文案而不是通用输入提示', (code, expected) => {
     const message = toUserReadableErrorMessage(
       { code, message: 'HTTP 500 provider traceId=secret' },

@@ -94,6 +94,7 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['SYNTHETIC_LOGIN_ACCOUNT_UNAVAILABLE', '合成测试账号不可用，请检查账号状态后重新生成入口。'],
   ['SYNTHETIC_LOGIN_TICKET_INVALID', '一次性登录入口已失效，请重新生成后再试。'],
   ['INVALID_ATTACHMENT_TYPE', '附件格式不受支持，请更换文件后重新上传。'],
+  ['INVALID_ATTACHMENT', '评论中包含已失效或无权使用的图片，请移除后重新上传再提交。'],
   ['ATTACHMENT_TOO_LARGE', '附件超过当前大小限制，请缩小文件后重新上传。'],
   ['UPLOAD_TIMEOUT', '附件上传超时，请检查网络后重新上传。'],
   ['LLM_ERROR', '智能处理未完成，请稍后重试。'],
