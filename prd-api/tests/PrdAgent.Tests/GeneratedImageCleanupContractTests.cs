@@ -69,6 +69,8 @@ public class GeneratedImageCleanupContractTests
             "prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs"));
         var cleanup = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs"));
+        var avatarCleanup = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ProfileAvatarGenerationCleanupService.cs"));
 
         Assert.Contains("$\"generated-image:{sha}\"", writer);
         Assert.Contains("SaveGeneratedOutputAsync", writer);
@@ -79,7 +81,33 @@ public class GeneratedImageCleanupContractTests
             helper.IndexOf("VideoAssetMutationLease.AcquireAsync", StringComparison.Ordinal)
             < helper.IndexOf("_assetStorage.SaveAsync", StringComparison.Ordinal));
         Assert.Contains("$\"generated-image:{sha}\"", cleanup);
-        Assert.Contains("$\"generated-image:{a.Sha256}\"", cleanup);
+        Assert.Contains("$\"generated-image:{sha}\"", avatarCleanup);
+    }
+
+    [Fact]
+    public void LegacyWorkerFallback_ShouldHoldThePerShaLeaseUntilReferenceInsertion()
+    {
+        var worker = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs"));
+        var fallbackStart = worker.IndexOf(
+            "回退：下载展示图保存（兼容旧逻辑）",
+            StringComparison.Ordinal);
+        var helperStart = worker.IndexOf(
+            "private async Task<ImageAsset> PersistImageAssetRecordAsync",
+            fallbackStart,
+            StringComparison.Ordinal);
+        Assert.True(fallbackStart >= 0 && helperStart > fallbackStart);
+        var fallback = worker[fallbackStart..helperStart];
+
+        Assert.Contains("SHA256.HashData(bytes)", fallback);
+        Assert.Contains("$\"generated-image:{assetSha256}\"", fallback);
+        Assert.True(
+            fallback.IndexOf("VideoAssetMutationLease.AcquireAsync", StringComparison.Ordinal)
+            < fallback.IndexOf("assetStorage.SaveAsync", StringComparison.Ordinal));
+        Assert.Contains("return await PersistImageAssetRecordAsync", fallback);
+
+        var helper = worker[helperStart..];
+        Assert.Contains("_db.ImageAssets.InsertOneAsync", helper);
     }
 
     private static string LocateRepoFile(string relativePath)

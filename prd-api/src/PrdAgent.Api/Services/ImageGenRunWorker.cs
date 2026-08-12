@@ -10,6 +10,7 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Api.Services;
@@ -1205,29 +1206,78 @@ public class ImageGenRunWorker : BackgroundService
             // 已有原图信息，直接使用
             assetUrl = originalUrl.Trim();
             assetSha256 = originalSha256.Trim();
+            return await PersistImageAssetRecordAsync(
+                run,
+                prompt,
+                requestedSize,
+                effectiveSize,
+                url,
+                assetUrl,
+                assetSha256,
+                assetMime,
+                assetSizeBytes,
+                ct);
         }
-        else
-        {
-            // 回退：下载展示图保存（兼容旧逻辑）
-            byte[]? bytes = null;
-            if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u))
-            {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-                using var resp = await http.GetAsync(u, ct).ConfigureAwait(false);
-                if (!resp.IsSuccessStatusCode) return null;
-                assetMime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
-                bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-            }
-            if (bytes == null || bytes.Length == 0) return null;
-            if (bytes.LongLength > 15 * 1024 * 1024) return null;
-            if (!assetMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) assetMime = "image/png";
 
-            RegistryAssetStorage.OverrideNextScope("generated");
-            var stored = await assetStorage.SaveAsync(bytes, assetMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-            assetUrl = stored.Url;
-            assetSha256 = stored.Sha256;
-            assetSizeBytes = stored.SizeBytes;
+        // 回退：下载展示图保存（兼容旧逻辑）。保存前按内容预计算 SHA，
+        // 与所有生成图删除路径共用一把租约，并持有到 ImageAsset 引用写入完成。
+        byte[]? bytes = null;
+        if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u))
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            using var resp = await http.GetAsync(u, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return null;
+            assetMime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
+            bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         }
+        if (bytes == null || bytes.Length == 0) return null;
+        if (bytes.LongLength > 15 * 1024 * 1024) return null;
+        if (!assetMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) assetMime = "image/png";
+
+        assetSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{assetSha256}",
+            ct);
+        RegistryAssetStorage.OverrideNextScope("generated");
+        var stored = await assetStorage.SaveAsync(
+            bytes,
+            assetMime,
+            ct,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg);
+        assetUrl = stored.Url;
+        assetSizeBytes = stored.SizeBytes;
+        if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("生成图片存储摘要校验失败");
+
+        return await PersistImageAssetRecordAsync(
+            run,
+            prompt,
+            requestedSize,
+            effectiveSize,
+            url,
+            assetUrl,
+            assetSha256,
+            assetMime,
+            assetSizeBytes,
+            ct);
+    }
+
+    private async Task<ImageAsset> PersistImageAssetRecordAsync(
+        ImageGenRun run,
+        string prompt,
+        string requestedSize,
+        string? effectiveSize,
+        string? url,
+        string assetUrl,
+        string assetSha256,
+        string assetMime,
+        long assetSizeBytes,
+        CancellationToken ct)
+    {
+        var wid = (run.WorkspaceId ?? string.Empty).Trim();
+        var adminId = (run.OwnerAdminId ?? string.Empty).Trim();
 
         // 创建 ImageAsset 记录
         // Sha256 = 原图 SHA256（用于参考图查找）
