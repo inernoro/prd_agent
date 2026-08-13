@@ -311,7 +311,7 @@ export function renderBusinessDecisionPage(functionalLead, failureSectionContent
   const productionCoverage = coverageByEnvironment.get('production');
   const deadline = nextRetestDeadline(executionSummary?.runId);
   const lines = [
-    '## 老板一页结论',
+    '## 结论与处理顺序',
     '',
     `> 本轮计划 ${counts.planned} 项，已完成 ${counts.completed} 项；通过 ${counts.passed} 项、失败 ${counts.failed} 项、未执行 ${counts.notRun} 项。${counts.failed > 0 ? '当前不能放行。' : counts.notRun > 0 ? '当前只能有条件放行。' : '当前可以放行。'}`,
     '',
@@ -415,9 +415,9 @@ function renderCombinedExecutiveSummary(functionalLead, visualGateLeadContent) {
     : !/不通过|部分通过/.test(functionalLead);
   const canRelease = functionalPassed && rowValue('能否发布') === '可以';
   return [
-    '## 主管先看',
+    '## 处理流程',
     '',
-    '| 决策项 | 结论 | 主管动作 |',
+    '| 决策项 | 结论 | 下一步 |',
     '|---|---|---|',
     `| 能否发布 | ${canRelease ? '可以' : '不可以'} | ${canRelease ? '保持每 48 小时复测' : '失败、未执行、缺证据和需干预项关闭前，不得宣布全面通过'} |`,
     `| 功能验收 | ${functionalSummary} | 优先查看失败和未执行清单，未执行不能按通过计算 |`,
@@ -593,7 +593,7 @@ export function synthesizeReviewerOverview(functionalModuleContent, gateModuleCo
     ? new Map(functionalTable.rows.map((row) => [row[functionalTable.headers.indexOf('模块')], row]))
     : new Map();
   const lines = [
-    '## 主管验收总览',
+    '## 模块验收总览',
     '',
     '| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |',
     '|---|---|---|---|---|---|---|---|---|---|---|',
@@ -627,11 +627,11 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   ));
   const visualGateSummary = visualGate.sections.filter((section) => isVisualGateSummarySection(section.title));
   const visualGateLedger = visualGate.sections.filter((section) => visualGateLedgerSections.has(section.title));
-  const visualGateLead = visualGate.sections.find((section) => section.title === '主管先看');
-  const hasFunctionalExecutive = functional.sections.some((section) => section.title === '主管先看');
+  const visualGateLead = visualGate.sections.find((section) => ['处理流程', '主管先看'].includes(section.title));
+  const hasFunctionalExecutive = functional.sections.some((section) => ['处理流程', '主管先看'].includes(section.title));
   const visualSteps = visual.sections.filter((section) => /^步骤\s+\d+/.test(section.title));
   const visualPlanSections = visualPlan.sections.filter((section) => section.title === '逐模块视觉取证任务');
-  const visualOverview = visual.sections.find((section) => section.title === '主管验收总览');
+  const visualOverview = visual.sections.find((section) => ['模块验收总览', '主管验收总览'].includes(section.title));
   const visualGateModules = visualGate.sections.find((section) => section.title === '模块覆盖');
   const functionalModules = functional.sections.find((section) => section.title === '业务功能线与面包屑');
   const functionalFailures = functional.sections.find((section) => section.title === '未通过与未执行逐项清单');
@@ -662,12 +662,14 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     : functionalVerdict === 'conditional' || visualGateVerdict === 'conditional'
       ? 'conditional'
       : 'pass';
-  const synchronizedLead = authoritativeCounts
+  const synchronizedLead = (authoritativeCounts
     ? functional.lead.replace(
       /共\s*\d+\s*项，\s*\d+\s*项通过、\s*\d+\s*项不通过、\s*\d+\s*项未执行/,
       `共 ${authoritativeCounts.planned} 项，${authoritativeCounts.passed} 项通过、${authoritativeCounts.failed} 项不通过、${authoritativeCounts.notRun} 项未执行`,
     )
-    : functional.lead;
+    : functional.lead)
+    .replace(/主管报告/g, '验收报告')
+    .replace(/主管结论/g, '验收结论');
   const output = [synchronizedLead, '', `Verdict: ${inferredVerdict}`, ''];
   const businessDecisionPage = renderBusinessDecisionPage(
     synchronizedLead,
@@ -686,16 +688,21 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     if (section.title === '视觉证据预算' || section.title === '业务功能线与面包屑' || /^步骤\s+\d+/.test(section.title)) {
       continue;
     }
-    if (section.title === '主管先看') {
-      output.push(synchronizeExecutiveSummary(section.content, visualGateLead?.content || '', authoritativeCounts), '');
+    if (['处理流程', '主管先看'].includes(section.title)) {
+      output.push(
+        synchronizeExecutiveSummary(section.content, visualGateLead?.content || '', authoritativeCounts)
+          .replace(/^##\s+主管先看$/m, '## 处理流程')
+          .replace(/\|\s*决策项\s*\|\s*结论\s*\|\s*主管动作\s*\|/m, '| 决策项 | 结论 | 下一步 |'),
+        '',
+      );
       if (!businessDecisionInserted && businessDecisionPage) {
         output.push(businessDecisionPage, '');
         businessDecisionInserted = true;
       }
       continue;
     }
-    if (section.title === '主管验收总览') {
-      output.push(reviewerOverview || section.content, '');
+    if (['模块验收总览', '主管验收总览'].includes(section.title)) {
+      output.push((reviewerOverview || section.content).replace(/^##\s+主管验收总览$/m, '## 模块验收总览'), '');
       continue;
     }
     if (section.title === '关联测试方法') {
