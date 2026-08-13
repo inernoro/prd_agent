@@ -1,139 +1,156 @@
-# 逻辑模型、上游 Offering 与默认模型池设计
+# AppCaller 模型池选择与池内调度 · 设计
 
-> **版本**：v3.0 | **日期**：2026-07-20 | **状态**：开发中
+> **版本**：v4.0 | **日期**：2026-08-12 | **状态**：开发中
 
-**一句话**：应用只认逻辑模型名，网关为每个逻辑模型挂多个上游供给并按优先级与权重选一个。
-**谁该读**：做模型池配置的运维与工程师。
-**读完能做什么**：说清逻辑模型与上游供给的对应关系。
+**一句话**：MAP 把 AppCallerCode（业务调用身份）获准的模型池当作业务可选模型，LLMGW 只在所选池内调度；跨池代选必须显式授权且默认关闭。
+**谁该读**：设计模型选择体验的产品与 MAP 工程师；维护 AppCaller、模型池和故障恢复的 LLMGW 工程师。
+**读完能做什么**：判断一个选择、切换、熔断或恢复动作属于 MAP 还是 LLMGW，并写出不扩散故障的验收条件。
 
 ---
 
-## 一、管理摘要
+## 一、决策摘要
 
-- **应用看什么**：应用只维护自己有权使用的逻辑模型列表，例如 `image2`、`nanobanana-2`。它不读取 Provider、Endpoint、密钥或上游真实模型名。
-- **Gateway 管什么**：Gateway 为每个逻辑模型维护一个或多个 Offering。每个 Offering 指向平台模型或 Exchange，并独立声明协议、优先级、权重、并发、分钟速率和健康状态。
-- **模型池做什么**：模型池不再承担应用的全部离散模型组合。只有请求未显式选择逻辑模型时，模型池才提供 appCaller 专属默认、模型类型默认与 legacy 兜底。
-- **为什么这样拆**：同一逻辑模型可由多个不同协议、不同限额的上游供给；应用选择稳定能力，Gateway 负责路由和故障切换，双方可以独立演进。
+本设计采用四层身份，每层只承担一种责任：
 
-## 1. 核心对象
-
-| 对象 | 责任 |
-|---|---|
-| appCaller | 表达谁在什么业务场景调用，并承载权限、预算、速率与 PromptPolicy |
-| GatewayLogicalModel | 面向应用的稳定公开模型标识、名称、类型、能力与 appCaller 可见范围 |
-| GatewayModelOffering | 把一个逻辑模型连接到一个真实上游目标，并保存路由和治理参数 |
-| Provider / Endpoint / Credential | 保存供应商、请求地址、协议和只写凭据；不暴露给应用 |
-| LLMModel / ModelExchange | 表达可执行的普通模型或异构 Exchange 目标 |
-| ModelGroup | 只在没有显式逻辑模型时提供默认与兼容兜底 |
-| ModelResolver | 在一次计算阶段完成租户、权限、逻辑模型、Offering 和重试候选解析 |
-
-appCallerCode 是业务用途，逻辑模型 PublicId 是应用选择，真实上游模型名是 Gateway 执行细节。三个标识不得互相代替。
-
-## 2. 解析顺序
-
-解析顺序固定为：
-
-1. 请求显式给出模型时，先按当前租户、模型类型和 appCaller 可见范围解析逻辑模型。
-2. 对该逻辑模型读取启用且未隔离的 Offering，按 `priority` 或 `weighted` 产生一次性主候选与有界重试候选。
-3. 请求未显式给出模型时，才按 appCaller 专属模型池、模型类型默认池、legacy 兼容配置依次解析。
-4. 显式模型不存在、跨租户或无权限时 fail-closed，不能静默退回默认池并伪装成用户所选模型。
-
-解析阶段一次性确定候选，发送阶段不得再次调用 Resolver。这样可以保证界面选择、预算预占、日志与真实请求使用同一份决策。
-
-## 3. 应用模型列表
-
-视觉创作等应用从 Gateway 的租户模型目录读取列表。目录只返回：
-
-- 逻辑模型 PublicId、显示名、模型类型和能力；
-- 当前 appCaller 是否可见；
-- 是否至少存在一个可用 Offering。
-
-目录不得返回上游密钥、真实 Endpoint、Provider 内部配置或候选顺序。应用提交 PublicId，日志同时保存 PublicId、OfferingId、实际模型和 Provider，既保持应用稳定，又能完成运维追踪。
-
-迁移期间，既有“可用模型池”接口可以返回逻辑模型的兼容投影，避免一次重写所有调用方。只要租户已经有逻辑模型，投影不得再把池成员或上游名称当成应用选项；没有逻辑模型数据时才回退旧池列表。
-
-## 4. Offering 路由与异构协议
-
-同一逻辑模型可以拥有多个 Offering，例如：
-
-| 逻辑模型 | Offering | 协议 | 典型用途 |
+| 身份 | 权威归属 | 责任 | 不负责 |
 |---|---|---|---|
-| `image2` | OpenAI 直连 | OpenAI Images | 主上游 |
-| `image2` | OpenRouter（专用生图模型） | `openrouter-image`：OpenRouter 专用 Images API | 备用上游 |
-| `image2` | OpenRouter（多模态模型） | `openrouter`：OpenAI Chat 多模态 | 备用上游 |
-| `nanobanana-2` | Google 直连 | Gemini `generateContent` | 主上游 |
-| `nanobanana-2` | 兼容平台代理 | OpenAI Images 或 Exchange | 备用上游 |
+| AppCallerCode | MAP 定义用途，LLMGW 保存治理配置 | 标识谁在什么业务场景调用，并限定可用模型池 | 不代表模型，也不代表 Provider |
+| 模型池 | LLMGW | 作为 MAP 的稳定业务选项，封装一种用户可理解的模型能力 | 不表达 MAP 的推荐、禁用或产品关系 |
+| 池成员 / Offering | LLMGW | 指向真实 Provider、Endpoint、协议和凭据，承担池内调度 | 不暴露给普通用户选择 |
+| 业务关系 | MAP | 推荐、风险提示、默认选择、用户偏好和强制选择 | 不修改 LLMGW 健康状态或调度算法 |
 
-不同 Offering 的请求形状完全不同时，Gateway 必须从协议无关的 canonical request 重新构建下一次请求。禁止把第一个上游的 JSON 或 multipart 原样发给第二个上游。图片请求至少保留 prompt、数量、尺寸、响应格式、参考图与 mask；每次尝试再生成对应的 endpoint、鉴权头和 body。
+MAP 查询一个 AppCallerCode 获准的模型池，并使用池的稳定标识提交选择。展示名称可以来自 LLMGW 的池名称，MAP 可以附加自己的业务文案，但不能把某个 Provider 成员伪装成独立业务模型。
 
-重试只处理受认可的上游故障，例如 429、超时与 5xx。用户输入错误、权限拒绝、内容策略拒绝和主动取消不得被误判为健康故障，也不得无限重试。
+## 二、AppCaller 模型池契约
 
-## 5. 策略、限流与健康
+每个 AppCaller 至少表达以下业务事实：
 
-`priority` 先使用健康且优先级数值更小的 Offering；`weighted` 在健康候选中按权重选主候选，并保留其余候选作为有界故障切换顺序。所有策略必须满足：
+| 配置 | 含义 | 默认值 |
+|---|---|---|
+| 获准模型池集合 | MAP 可以展示和提交的池 | 空集合，未配置时拒绝真实流量 |
+| 默认模型池 | 用户未显式选择时使用的池 | 必须属于获准集合 |
+| 允许跨池代选 | 所选池不可完成请求时，LLMGW 是否可改用另一获准池 | 关闭 |
+| 跨池候选顺序 | 仅在允许跨池代选时使用 | 显式配置，不从全局池猜测 |
 
-- 禁用或 Unavailable 的 Offering 不承接普通流量；
-- 不跨租户、不跨逻辑模型、不跨 appCaller 授权范围；
-- Offering 的并发和每分钟速率在 Gateway 数据面执行，不交给应用自觉遵守；
-- 多个 serving 实例共享 Mongo 原子速率窗口和并发租约；
-- 一次失败只更新实际命中的 Offering；成功清理连续失败并恢复健康；
-- 最终选择与每次尝试都写入同一请求日志。
+获准集合不是“当前健康池集合”。一个池暂时故障时仍保留在目录中，并携带健康摘要；否则 MAP 会把“上游暂时不可用”误判成“配置被删除”，用户也失去恢复和追踪入口。
 
-平台和模型级并发仍可作为更粗粒度总闸。Offering 级限制表达某条具体供应线路的额度，任一层触顶时可以尝试同一逻辑模型的下一个 Offering；候选耗尽后返回结构化 429。
+## 三、选择与调度边界
 
-## 6. 模型池的保留边界
+一次请求按以下顺序处理：
 
-模型池仍有三个合法用途：
+1. MAP 提交 AppCallerCode 和用户所选模型池；未显式选择时提交默认语义。
+2. LLMGW 校验该池是否属于 AppCaller 的获准集合。越权、未知或类型不符时直接失败。
+3. LLMGW 仅在所选池内选择健康成员，并按池策略执行有界重试。
+4. 所选池候选耗尽时：
+   - “允许跨池代选”关闭：返回结构化失败，保持用户选择不变；
+   - “允许跨池代选”开启：只在 AppCaller 显式配置的候选池中选择，并在响应、日志和通知中写明原池、实际池与原因。
+5. MAP 根据结果决定如何提示用户，不得因一次池失败关闭整个创作入口或清空全部模型目录。
 
-1. 调用方没有显式选择模型时的默认选择；
-2. 特殊 appCaller 的专属默认与兼容策略；
-3. 旧调用方和回滚版本的非破坏性兼容。
+以下两类切换不得混为一谈：
 
-模型池不再负责把每个应用模型与每个上游做笛卡尔组合。新应用不得通过读取池成员来推断完整模型目录，也不得要求为每个 appCaller 复制一套相同池。
+| 切换类型 | 是否默认允许 | 原因 |
+|---|---|---|
+| 同一池内更换成员 / Provider Offering | 允许 | 对用户仍是同一个业务模型，由 LLMGW 履行池内调度职责 |
+| 从用户选择的模型池切到另一个模型池 | 禁止 | 业务语义可能改变，必须由 AppCaller 明确授权 |
 
-## 7. 权威、迁移与回滚
+## 四、模型目录与业务展示
 
-新权威集合为 `llmgw_logical_models` 与 `llmgw_model_offerings`。Offering 复用 Gateway 已拥有的 `llmgw_models`、`llmgw_platforms` 和 `llmgw_model_exchanges`，凭据继续只写和加密保存。
+LLMGW 为 AppCaller 返回配置目录，而不是只返回当前能接流量的池。每个池至少提供：
 
-迁移采用兼容投影，不删除旧集合：
+- 稳定池标识、显示名、模型类型和能力；
+- 当前健康摘要，以及是否存在可调度成员；
+- 最近真实请求的样本数、平均耗时和最近 10 次成功率；
+- 指标时间范围与更新时间，避免把旧数据伪装成实时状态。
 
-- 新版应用先读逻辑模型；旧版应用仍可读模型池投影；
-- 逻辑模型命中时不写伪造的 ModelGroupId，日志使用 LogicalModelId 与 OfferingId；
-- 没有逻辑模型数据时保留旧三级池解析；
-- 回滚到旧版本不需要恢复被删除的数据，因为本变更不删除池、平台、模型或 Exchange。
+目录不得返回凭据、完整 Endpoint、内部候选顺序或未经授权的池。健康摘要是事实，不是产品决策。
 
-禁止同时无来源地双写两套健康状态。逻辑模型路径写 Offering 健康；旧池路径写池成员健康。
+MAP 在此基础上维护业务关系：
 
-## 8. 日志与可观测性
-
-每次请求至少记录：TenantId、appCallerCode、逻辑模型 PublicId、OfferingId、实际 Provider、实际模型、协议、endpoint 摘要、每次上游尝试、耗时、错误分类、token、价格证据和是否回退。
-
-用户日志列表以逻辑模型为主，实际上游作为次级信息；详情页同时展示两层，避免用户把正常故障切换误认为“模型偷偷变了”。任何日志和 API 都不得回显明文凭据。
-
-## 9. 当前事实入口
-
-| 能力 | 事实入口 |
+| MAP 状态 | 用户体验 |
 |---|---|
-| 逻辑模型与 Offering 模型 | `prd-api/src/PrdAgent.Core/Models/GatewayLogicalModel.cs` |
-| 解析与健康写入 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs` |
-| 解析契约 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/IModelResolver.cs` |
-| 多协议发送与重试 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` |
-| Offering 限流与并发 | `prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayProviderConcurrencyCoordinator.cs` |
-| 控制台管理 API | `llmgw/console-api/Program.cs` |
-| 视觉创作模型目录 | `prd-admin/src/services/real/visualCreation.ts` |
+| 推荐 | 默认靠前，展示业务优势和近期指标 |
+| 正常 | 可直接选择 |
+| 谨慎使用 | 展示失败率或耗时风险，建议换模型 |
+| 当前不可用 | 保留可见和可选择入口，提交前明确警告；用户坚持时由 LLMGW 按严格契约返回成功或失败 |
 
-## 10. 验收标准
+MAP 不得因某个池不可用而关闭模型选择器、隐藏恢复入口或阻断与模型无关的页面能力。
 
-- 视觉创作能显示多个租户授权逻辑模型，选择值是 PublicId，不泄漏上游。
-- 同一逻辑模型至少可配置两个不同协议的 Offering；首个 429、超时或 5xx 后会按第二个协议重建请求。
-- Offering 的并发、RPM、健康和启停在多 serving 实例下生效并彼此隔离。
-- 显式未知模型和无权限模型 fail-closed；未显式选模型才使用默认池。
-- 日志能同时回答“用户选了什么”和“Gateway 实际走了哪个上游”。
-- 旧池数据保持可读，回滚不需要数据恢复或删除新集合。
+## 五、健康状态与自动恢复
+
+LLMGW 的健康状态只描述池成员或 Offering 的执行事实：
+
+```text
+Healthy -> Degraded -> Open -> HalfOpen -> Healthy
+                        ^          |
+                        +----------+
+```
+
+- `Healthy`：可正常承接流量；
+- `Degraded`：近期存在受认可的上游失败，仍可按池策略承接受控流量；
+- `Open`：暂时隔离，不承接普通流量；
+- `HalfOpen`：冷却后只放行受限的真实业务请求验证恢复；成功回到 Healthy，失败重新 Open 并延长冷却。
+
+健康判定只接受上游执行类错误，例如连接失败、超时、限流和 5xx。用户输入错误、权限拒绝、内容政策拒绝和主动取消不得污染健康状态。
+
+默认禁止为了探活而创建付费模型请求。恢复证据优先来自真实业务流量；需要人工测试时必须明确显示可能产生费用，并由有权限的操作者单独确认。
+
+## 六、故障不扩散
+
+故障必须停在最小责任域：
+
+| 故障 | LLMGW 行为 | MAP 行为 |
+|---|---|---|
+| 单个池成员失败 | 隔离该成员，尝试同池候选 | 保持模型选择和页面可用 |
+| 所选池全部候选失败 | 按跨池授权决定失败或代选 | 提示风险并提供重试、换池或坚持选择 |
+| 模型目录读取失败 | 返回独立的目录错误，不篡改池配置 | 保留上次成功目录并标记陈旧，不关闭整个系统 |
+| 通知中心故障 | 自动恢复与数据面继续工作 | 管理员可能暂时收不到通知，但用户请求不应因此失败 |
+| MAP 业务关系配置错误 | 不改变 LLMGW 健康状态 | MAP 回退到中性排序并保留模型入口 |
+
+任何“一个上游失败导致全部模型消失”“通知没送达导致无法恢复”“没有健康池所以恢复按钮也消失”的行为都违反本设计。
+
+## 七、通知、人工止血与审计
+
+LLMGW 在首次 Open、跨池代选、恢复成功和恢复失败时产生结构化事件。MAP 站内通知中心消费事件并提供深链，但通知不是自动恢复的前置依赖。
+
+管理员必须始终能执行以下最小动作：
+
+- 隔离或恢复单个池成员；
+- 让 Open 成员进入 HalfOpen，而不是直接伪造 Healthy；
+- 更换 AppCaller 默认池；
+- 临时允许或关闭跨池代选，并设置原因和失效时间；
+- 回滚到上一次 AppCaller 配置。
+
+每次动作记录操作者、时间、对象、前后值、原因、失效时间和回滚关联。批量“全部禁用”不得作为默认止血动作。
+
+## 八、迁移与兼容
+
+现有逻辑模型和单池绑定属于迁移期数据，不再作为 MAP 模型目录的长期权威。迁移遵循以下顺序：
+
+1. 先为 AppCaller 建立获准池集合和默认池，保持现有流量不变；
+2. MAP 改为读取 AppCaller 池目录并提交稳定池标识；
+3. LLMGW 强制所选池边界和默认关闭跨池代选；
+4. 指标、通知和恢复入口接通后，再退役逻辑目录兼容投影；
+5. 迁移全程不删除物理池、Provider 或历史日志，确保可回滚。
+
+兼容层不得改变新契约：显式选择未知池或无权池必须失败，不能静默落到全局默认或 legacy 模型。
+
+## 九、验收标准
+
+- 一个 AppCaller 可以配置多个可见模型池和一个默认池。
+- MAP 展示的是获准池，不因健康状态变化而删除目录项。
+- 默认配置下，用户选择池 A 后，任何失败都不能让请求落到池 B。
+- 开启跨池代选后，只能落到显式候选池，并完整记录原池、实际池和原因。
+- 同池成员故障可以自动切换，用户输入错误不会熔断成员。
+- Open 成员无需合成付费探测即可通过受限真实请求进入 HalfOpen 并恢复。
+- 模型卡显示平均耗时、最近 10 次成功率、样本数和更新时间。
+- 所有池不可用时，MAP 页面、模型目录、站内通知和人工恢复入口仍然可用。
+- 通知中心不可用时，LLMGW 数据面和自动恢复不受影响。
+- 隔离、恢复、跨池授权和回滚均有审计证据。
 
 ## 关联文档
 
-- [doc/design.platform.llm-gateway.md](./design.platform.llm-gateway.md)
-- [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)
-- [doc/plan.platform.llm-gateway.external-platform.md](./plan.platform.llm-gateway.external-platform.md)
-- [doc/rule.platform.llm-gateway.md](./rule.platform.llm-gateway.md)
+- [LLM Gateway 统一调用设计](./design.platform.llm-gateway.md)
+- [LLM Gateway 职责边界与调用规则](./rule.platform.llm-gateway.md)
+- [LLM Gateway 故障隔离与恢复计划](./plan.platform.llm-gateway.resilience.md)
+- [LLM Gateway 故障止血与恢复指南](./guide.platform.llm-gateway.incident-recovery.md)
+- [LLM 网关与模型池债务台账](./debt.platform.llm-gateway.md)

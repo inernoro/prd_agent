@@ -285,6 +285,16 @@ public sealed class HttpLlmGatewayClient
 
         // S2 观测：把 Context.GatewayTransport 打成 "http"（跨进程 raw），serving 端据此标注日志传输通道。
         // 无论是否锁定 ExpectedModel 都重建一份副本以打标记；ActualModel 非空时同时锁定 ExpectedModel。
+        // 严格模型池契约的第一次解析会把 ExpectedModel 清空，并把命中的池保存在
+        // ModelGroupId。这里不能把实际 Provider 模型名再次作为 ExpectedModel 发送，
+        // 否则 serving 会把 Provider 名当成池 ID 二次解析，导致图片等 raw 请求被误判为
+        // “所选模型池不在 appCaller 允许范围内”。跨进程重解析必须保留池身份。
+        var outboundExpectedModel = !string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
+            ? resolution.LogicalModelPublicId
+            : string.Equals(resolution.ResolutionType, "GatewayRegistryPool", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(resolution.ModelGroupId)
+                ? resolution.ModelGroupId
+                : string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel;
         var httpTaggedContext = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http);
         // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本。
         var outboundRequest = new GatewayRawRequest
@@ -297,9 +307,7 @@ public sealed class HttpLlmGatewayClient
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
-            ExpectedModel = !string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
-                ? resolution.LogicalModelPublicId
-                : string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel,
+            ExpectedModel = outboundExpectedModel,
             PinnedPlatformId = request.PinnedPlatformId,
             PinnedModelId = request.PinnedModelId,
             RequestBody = request.RequestBody,

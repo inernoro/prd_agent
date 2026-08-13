@@ -1,18 +1,18 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v2.8 | **日期**：2026-08-11 | **状态**：开发中
+> **版本**：v2.9 | **日期**：2026-08-12 | **状态**：开发中
 
 **一句话**：网关与模型池的债务总表，含协议路由收口与多次生产取证记录。
 **谁该读**：接手网关的工程师；做发布判断的人。
 **读完能做什么**：查清某条债务的状态与对应证据。
 
 ---
-> **关联设计**：[design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)（统一方案）、`design.llm-gateway.md`、`design.model-pool.md`
-> **整改计划**：[plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)
+> **关联设计**：[LLM Gateway 统一调用](./design.platform.llm-gateway.md)、[AppCaller 模型池选择与池内调度](./design.platform.model-pool.md)、[LLM 网关与模型池统一](./design.platform.llm-gateway.unification.md)
+> **整改计划**：[LLM Gateway 故障隔离与恢复](./plan.platform.llm-gateway.resilience.md)、[LLM 网关旧路径物理退场](./plan.platform.llm-gateway.full-cutover.md)
 
 ## 总览
 
-当前 open: 22 / in-progress: 4 / paid: 22 / 总计: 48
+当前 open: 26 / in-progress: 8 / paid: 24 / 总计: 58
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -20,6 +20,10 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-12-unavailable-pool-no-passive-half-open | critical | 2026-08-12 | 模型成员连续失败后会进入 `Unavailable`，Resolver 随即永久排除该成员；但健康恢复只发生在一次成功请求之后，导致成员没有机会通过真实流量恢复。控制台也没有恢复或切换入口。生产不能用 CDS 或定时生图探测兜底，因为主动调用会消耗供应商额度 | 任一 generation 上游连续失败并被熔断时 | in-progress | 已实现冷却后由真实请求原子领取半开租约，人工恢复也只授予半开资格，不直接改成健康；成功和失败会清理租约，默认探测服务保持关闭。单元与全量非集成回归通过。尚欠指数退避、多实例并发故障演练和生产证据，完成前不得标为 paid。 |
+| 2026-08-12-appcaller-single-pool-binding | critical | 2026-08-12 | 当前 GW AppCaller 只有单值 `ModelPoolId`，无法表达“多个获准池 + 一个默认池 + 跨池代选默认关闭”。MAP 因此不能从 AppCaller 配置取得完整业务模型集合，紧急切默认池还会把模型目录压缩成一个选项 | 任一 AppCaller 需要向用户提供多个可选模型池，或值班人切换默认池时 | in-progress | 已增加获准池集合、默认池和跨池开关，控制台支持多池编辑，旧单值迁移会补成严格单池且默认禁止跨池。尚欠临时授权失效时间、生产数据迁移与回滚演练。 |
+| 2026-08-12-explicit-selection-can-bypass-pool-boundary | critical | 2026-08-12 | 显式 expected model / 逻辑模型解析发生在 AppCaller 单池边界之前，逻辑目录或额外池搜索可能使命中的执行目标不属于当前 AppCaller 绑定池。现有语义不能证明“用户选池 A，默认绝不执行池 B” | MAP 允许用户显式选择模型，或逻辑目录存在多个模型时 | in-progress | 严格配置已先校验池授权并跳过逻辑目录旁路；默认仅保留所选池，显式开启时按获准集合顺序代选，未知选择 fail-closed。4 条严格路由与半开合同测试通过。尚欠真实 Serving 请求的请求池与实际池审计验收。 |
+| 2026-08-12-map-catalog-and-health-advice-coupled | high | 2026-08-12 | MAP 模型列表当前复用 Resolver 的“可用池”投影，目录会随路由绑定和健康变化收缩；视觉创作推荐文案仍有前端硬编码，也没有平均耗时、最近 10 次成功率、样本数和更新时间。局部上游故障因此可能表现为模型消失或整个选择器不可恢复 | 任一可选模型池故障、默认池切换或目录接口短时失败时 | in-progress | MAP 已按池生成单一业务模型身份，展示平均耗时与最近 10 次成功率；不健康池保留在选择器中并允许用户坚持，5 条前端合同测试通过。尚欠目录最近成功快照、陈旧标记、指标更新时间和生产页面验收。 |
 | 2026-08-12-delete-provider-with-models | medium | 2026-08-12 | 只能删「干净的」Provider（名下无模型、无池引用）。带模型的删不掉，只能停用 | 想彻底清掉一个已经导入过模型的 Provider 时 | open | PR #1362 里做过级联（withModels）又撤了，撤的理由比做的理由重要：级联要动模型池的成员数组，而池那边有一整套别处维护的不变量——托管默认池 append-only、删成员前要过 `ValidateDefaultGatewayPoolMembersAsync` 确认池不会变空、每次改 `Models` 要递增 `Version` 让 `PoolVersionGuard` 能发现并发写；此外删除与批量导入之间还有 TOCTOU 窗口（导入先读到 Provider 还在，删除拍完快照后导入才插入，留下启用态孤儿模型），修它要 fencing 或多文档事务，而本部署是 standalone Mongo 无多文档事务（同库 `2026-07-14-tenant-provision-crash-consistency` 记着同一类约束）。在删除端点里把这四条再实现一遍等于开出与池模块并行的第二判据，漏掉任何一条换来的都是「删掉了、但某个调用方的默认池当场空了」这类静默事故。补法：连同池不变量在独立 PR 里做，复用池模块既有的守卫入口而不是重写；届时一并处理 fencing |
 | 2026-08-12-anthropic-discovery | low | 2026-08-12 | Anthropic 预设标了不支持模型发现，「查看模型」对 Claude 协议一律拒绝，接 Anthropic 的用户只能手敲模型标识 | 用户接入 Anthropic 并希望像别的上游一样勾选导入时 | open | PR #1362 review 第七轮提出：Anthropic 实际提供 `GET /v1/models`，用的正是探针已经在发的 `x-api-key` + `anthropic-version` 头，所以「没有模型列表接口」这个说法不成立。不在当前 PR 打开的理由：要新增一条 Claude 协议的清单解析路径（响应形状与 OpenAI 的 `data` 数组不一定一致），而手上没有 Anthropic 密钥可验证，改完只能靠猜——按范围熔断规则记账。补法：拿到一把 Anthropic 密钥后实测响应形状，再把预设的 SupportsModelDiscovery 打开并接上解析 |
 | 2026-08-12-import-capability-not-editable | medium | 2026-08-12 | 上游模型清单里，系统推断出的用途以只读 chip 展示，导入前改不了。推断错（例如图像分类模型撞上宽泛的 `-image` 生成规则）就会带着错用途导入，并被自动同步进对应的托管默认池；而现有的平台级用途编辑器只改模型文档、不改已经产生的池成员关系 | 上游出现标识具误导性的模型时 | open | PR #1362 review 提出，判断成立，且确实与本 PR 新写的 `minimal-user-input.md` 第 3 条「推断值必须可改」有张力。不在当前 PR 修的理由：要么在选择面板里长出一套用途编辑 UI，要么让池成员关系跟随用途变更——两条都是新语义类别，按范围熔断规则记账。当前缓解：默认只勾选「推断出了用途」的模型且用途以 `source=inferred` 标出，用户可整条不勾；导入后仍可用平台级用途编辑器改模型本身。补法：选择面板每行加用途多选，或导入前置一步「确认用途」，并让池成员关系跟随用途变更重算 |

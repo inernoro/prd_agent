@@ -141,6 +141,7 @@ import {
   MousePointer2,
   Palette,
   Plus,
+  RefreshCw,
   Send,
   Settings,
   Share,
@@ -980,6 +981,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const DEFAULT_ZOOM = 0.5;
 
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState<{ message: string; requestId?: string | null } | null>(null);
   // 统一模型目录。新配置返回逻辑模型；没有逻辑目录时兼容返回旧模型池投影。
   const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
@@ -1001,8 +1003,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [poolModels]);
 
   const serverDefaultModel = useMemo(() => {
-    // 后端已按 priority + createdAt 排序，直接取第一个启用的模型
-    return allImageGenModels.find((m) => m.enabled) ?? null;
+    // 严格 AppCaller 的默认池由后端显式标记；不能用排序后的第一个池覆盖默认配置。
+    return allImageGenModels.find((m) => m.enabled && m.isDefault)
+      ?? allImageGenModels.find((m) => m.enabled)
+      ?? null;
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -1157,10 +1161,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [directPrompt, setDirectPrompt] = useState(false);
   const [directPromptReady, setDirectPromptReady] = useState(false);
   const effectiveModel = useMemo(() => {
-    const byId = modelPrefModelId ? enabledImageModels.find((m) => m.id === modelPrefModelId) ?? null : null;
+    const byId = modelPrefModelId ? allImageGenModels.find((m) => m.id === modelPrefModelId) ?? null : null;
     if (modelPrefAuto) return serverDefaultModel;
     return byId ?? serverDefaultModel;
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
+  }, [allImageGenModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
   // 尺寸选项（后端按分辨率分组返回，前端直接使用，无需转换）
   type SizeOption = { size: string; aspectRatio: string };
@@ -1170,8 +1174,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
 
   useEffect(() => {
-    // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
-    const modelCode = effectiveModel?.modelName;
+    // 生成请求仍使用模型池 ID；尺寸适配查询必须使用池内实际上游模型 ID，
+    // 否则 adapter-info 无法命中 Provider 适配器，尺寸/比例选项会被错误清空。
+    const modelCode = effectiveModel?.actualModelId || effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
       setCurrentModelSizesNotApplicable(false);
@@ -3261,15 +3266,32 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     [reloadWorkspace, workspaceId, clearSelectionWithChips]
   );
 
-  useEffect(() => {
+  // 只刷新模型目录，不触发上游探活或生成请求。失败时保留旧目录，避免一次网关抖动把当前页面锁死。
+  const reloadImageGenModels = useCallback(async () => {
     setModelsLoading(true);
-    // 通过视觉创作专属端点获取逻辑模型目录；旧环境由后端提供模型池兼容投影。
-    getVisualAgentImageGenModels()
-      .then((poolsRes) => {
-        if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
-      })
-      .finally(() => setModelsLoading(false));
+    setModelsError(null);
+    try {
+      const poolsRes = await getVisualAgentImageGenModels();
+      if (poolsRes.success) {
+        setImageGenPools(poolsRes.data ?? []);
+        return;
+      }
+      setModelsError({
+        message: poolsRes.error?.message || '模型网关暂时不可用，请稍后重试。',
+        requestId: poolsRes.error?.requestId,
+      });
+    } catch (error) {
+      setModelsError({
+        message: error instanceof Error && error.message ? error.message : '模型目录加载失败，请稍后重试。',
+      });
+    } finally {
+      setModelsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void reloadImageGenModels();
+  }, [reloadImageGenModels]);
 
   // 读取模型偏好（从后端）
   useEffect(() => {
@@ -3354,19 +3376,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, [directPrompt, directPromptKey, directPromptReady]);
 
-  // 如果手动选中的模型被后端删除（模型池中不存在），自动回退到”自动”
+  // 只有模型池从目录中删除时才回到自动；健康异常只做建议，不剥夺用户选择。
   // 重要：必须等模型池加载完成后再判断，否则空数组会误判用户选择
   useEffect(() => {
     if (modelsLoading) return;
     if (modelPrefAuto) return;
     if (!modelPrefModelId) return;
-    if (enabledImageModels.length === 0) return;
-    const ok = enabledImageModels.some((m) => m.id === modelPrefModelId);
+    if (allImageGenModels.length === 0) return;
+    const ok = allImageGenModels.some((m) => m.id === modelPrefModelId);
     if (!ok) {
       setModelPrefAuto(true);
       setModelPrefModelId('');
     }
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
+  }, [allImageGenModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
 
   // 启动时：加载 workspace 并回放历史消息+画布（workspaceId 为稳定主键）
   useEffect(() => {
@@ -8405,7 +8427,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </button>
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
-                            {allImageGenModels
+                              {allImageGenModels.length === 0 ? (
+                                <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
+                                  {modelsError ? (
+                                    <>
+                                      <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
+                                      <div className="mt-1">{modelsError.message}</div>
+                                      {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
+                                    </>
+                                  ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                                  <button
+                                    type="button"
+                                    className="mt-3 inline-flex h-7 items-center gap-1.5 rounded-full border border-token-subtle px-2.5 text-[10px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
+                                    onClick={() => void reloadImageGenModels()}
+                                    disabled={modelsLoading}
+                                  >
+                                    <RefreshCw size={11} className={modelsLoading ? 'animate-spin' : ''} />
+                                    {modelsLoading ? '正在加载目录' : '重新加载模型目录'}
+                                  </button>
+                                </div>
+                              ) : allImageGenModels
                               .slice()
                               .sort(
                                 (a, b) =>
@@ -8436,7 +8477,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
                                       background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
                                     }}
-                                    disabled={disabled}
                                     onClick={() => {
                                       setModelPrefAuto(false);
                                       setModelPrefModelId(m.id);
@@ -8466,7 +8506,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                           )}
                                         </div>
                                         <div className="mt-0.5 truncate text-[11px] text-token-muted">
-                                          {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : sourceLabel)}
+                                          {m.subtitle || (disabled ? '当前不建议使用，可继续选择' : sourceLabel)}
                                         </div>
                                       </div>
                                       <div className="ml-auto shrink-0">
@@ -9546,13 +9586,28 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         </div>
 
                         <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
-                          {enabledImageModels.length === 0 ? (
-                            <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
-                              暂无启用的生图模型（可在“模型管理”中开启）
+                          {allImageGenModels.length === 0 ? (
+                            <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed var(--border-subtle)' }}>
+                              {modelsError ? (
+                                <>
+                                  <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
+                                  <div className="mt-1 leading-relaxed">{modelsError.message}</div>
+                                  {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
+                                </>
+                              ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                              <button
+                                type="button"
+                                className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-token-subtle px-3 text-[11px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => void reloadImageGenModels()}
+                                disabled={modelsLoading}
+                              >
+                                <RefreshCw size={12} className={modelsLoading ? 'animate-spin' : ''} />
+                                {modelsLoading ? '正在加载目录' : '重新加载模型目录'}
+                              </button>
                             </div>
                           ) : (
                             <div className="space-y-1.5">
-                              {enabledImageModels.map((m) => {
+                              {allImageGenModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
                                   const meta = getImageModelMeta(m);
                                   return (
@@ -9561,9 +9616,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       type="button"
                                       className="group w-full text-left rounded-[14px] px-3 py-2.5 transition-all"
                                       style={{
-                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid rgba(255,255,255,0.08)',
-                                        background: picked ? 'rgba(250,204,21,0.07)' : 'rgba(255,255,255,0.02)',
+                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid var(--border-subtle)',
+                                        background: picked ? 'rgba(250,204,21,0.07)' : 'var(--nested-block-bg)',
                                         boxShadow: picked ? '0 0 0 3px rgba(250,204,21,0.08)' : 'none',
+                                        opacity: m.enabled ? 1 : 0.72,
                                       }}
                                       onClick={() => {
                                         setModelPrefAuto(false);
@@ -9577,7 +9633,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                           className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full transition-colors"
                                           style={{
                                             background: picked ? 'rgba(250,204,21,0.95)' : 'transparent',
-                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid rgba(255,255,255,0.22)',
+                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid var(--border-subtle)',
                                             color: picked ? '#1a1a1a' : 'transparent',
                                           }}
                                           aria-label={picked ? '已选择' : '未选择'}

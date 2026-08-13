@@ -69,6 +69,12 @@ export interface ModelGroupForApp extends ModelGroup {
   isDefault: boolean;
   /** 是否为传统配置模型（isImageGen 等标记） */
   isLegacy: boolean;
+  /** 近七天平均耗时，毫秒。 */
+  averageDurationMs?: number | null;
+  /** 最近成功率的实际样本数，最多十次。 */
+  recentTenRequests?: number;
+  /** 最近最多十次请求成功率。 */
+  recentTenSuccessRatePercent?: number | null;
   /**
    * 网关声明的能力标签（image_generation / image_layering ...）。
    * 用来区分「用户可以挑来生图的模型」与「只能被具体动作调用的能力」。

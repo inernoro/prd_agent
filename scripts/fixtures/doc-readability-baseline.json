@@ -29,7 +29,7 @@
   },
   "source_refs": {
     "spec": 15,
-    "design": 180,
+    "design": 178,
     "plan": 24,
     "rule": 41,
     "guide": 105,
@@ -392,12 +392,6 @@
       "bare": 0,
       "impl": 0,
       "src": 3
-    },
-    "design.platform.llm-gateway.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 2
     },
     "design.platform.llm-gateway.refactor.md": {
       "missing": 0,

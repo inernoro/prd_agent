@@ -501,6 +501,7 @@ export type ModelPool = {
   boundAppCallers: Array<{ id: string; appCallerCode: string; title?: string | null; status: string }>;
   recentRequests: number; recentSucceeded: number; recentFailed: number;
   recentSuccessRatePercent?: number | null; lastRequestAt?: string | null; trafficWindowHours: number;
+  averageDurationMs?: number | null; recentTenRequests: number; recentTenSuccessRatePercent?: number | null;
   health: 'healthy' | 'degraded' | 'unavailable' | 'empty';
   healthyMembers: number; degradedMembers: number; unavailableMembers: number;
   managedByRegistry: boolean; appendOnly: boolean; poolRole?: string | null;
@@ -1049,6 +1050,9 @@ export type GatewayAppCaller = {
   title?: string | null;
   status: string;
   modelPoolId?: string | null;
+  allowedModelPoolIds?: string[];
+  defaultModelPoolId?: string | null;
+  allowCrossPoolFallback?: boolean;
   modelPolicy?: string | null;
   parameterPolicy?: string | null;
   lastObservedModelPoolId?: string | null;
@@ -1083,6 +1087,9 @@ export type CreateGatewayAppCallerRequest = {
 export type UpdateGatewayAppCallerRequest = {
   status?: string;
   modelPoolId?: string;
+  allowedModelPoolIds?: string[];
+  defaultModelPoolId?: string;
+  allowCrossPoolFallback?: boolean;
   modelPolicy?: string;
   parameterPolicy?: string;
   owner?: string;

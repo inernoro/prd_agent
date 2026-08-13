@@ -945,6 +945,82 @@ public class ModelResolverTests
         Assert.True(pools[0].IsDefault);
     }
 
+    [Fact]
+    public void StrictPoolCandidates_DefaultDeny_ShouldKeepOnlySelectedPool()
+    {
+        var first = CreateModelGroup(
+            "pool-first", "First Pool", "generation", false, 0,
+            ("plat-1", "first-model", ModelHealthStatus.Healthy));
+        var second = CreateModelGroup(
+            "pool-second", "Second Pool", "generation", false, 1,
+            ("plat-2", "second-model", ModelHealthStatus.Healthy));
+
+        var candidates = ModelResolver.SelectStrictPoolCandidates(
+            [first, second],
+            "pool-second",
+            allowCrossPoolFallback: false);
+
+        Assert.Single(candidates);
+        Assert.Equal("pool-second", candidates[0].Id);
+    }
+
+    [Fact]
+    public void StrictPoolCandidates_ExplicitlyAllowed_ShouldPreserveFallbackOrder()
+    {
+        var first = CreateModelGroup(
+            "pool-first", "First Pool", "generation", false, 0,
+            ("plat-1", "first-model", ModelHealthStatus.Healthy));
+        var second = CreateModelGroup(
+            "pool-second", "Second Pool", "generation", false, 1,
+            ("plat-2", "second-model", ModelHealthStatus.Healthy));
+
+        var candidates = ModelResolver.SelectStrictPoolCandidates(
+            [first, second],
+            "Second Pool",
+            allowCrossPoolFallback: true);
+
+        Assert.Equal(["pool-second", "pool-first"], candidates.Select(pool => pool.Id));
+    }
+
+    [Fact]
+    public void StrictPoolCandidates_UnknownSelection_ShouldFailClosed()
+    {
+        var pool = CreateModelGroup(
+            "pool-only", "Only Pool", "generation", false, 0,
+            ("plat-1", "only-model", ModelHealthStatus.Healthy));
+
+        var candidates = ModelResolver.SelectStrictPoolCandidates(
+            [pool],
+            "outside-pool",
+            allowCrossPoolFallback: true);
+
+        Assert.Empty(candidates);
+    }
+
+    [Fact]
+    public void HalfOpenEligibility_ShouldRequireCooldownAndExpiredLease()
+    {
+        var now = DateTime.UtcNow;
+        var cutoff = now.AddMinutes(-2);
+        var member = new ModelGroupItem
+        {
+            HealthStatus = ModelHealthStatus.Unavailable,
+            LastFailedAt = cutoff.AddSeconds(-1),
+        };
+
+        Assert.True(ModelResolver.IsHalfOpenEligible(member, now, cutoff));
+
+        member.HalfOpenLeaseUntil = now.AddSeconds(30);
+        Assert.False(ModelResolver.IsHalfOpenEligible(member, now, cutoff));
+
+        member.HalfOpenLeaseUntil = now.AddSeconds(-1);
+        member.LastFailedAt = cutoff.AddSeconds(1);
+        Assert.False(ModelResolver.IsHalfOpenEligible(member, now, cutoff));
+
+        member.ManualRecoveryAt = now.AddSeconds(-1);
+        Assert.True(ModelResolver.IsHalfOpenEligible(member, now, cutoff));
+    }
+
     #endregion
 
     #region ToGatewayResolution Tests

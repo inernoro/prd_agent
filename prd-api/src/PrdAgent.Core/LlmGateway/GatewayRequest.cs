@@ -440,7 +440,19 @@ public sealed class GatewayAppCallerRecord
     public List<string> ObservedIngressProtocols { get; set; } = new();
     public string? Title { get; set; }
     public string Status { get; set; } = "discovered";
+    /// <summary>
+    /// 旧版单池绑定。新配置写入时同步为默认池，供滚动发布期间的旧实例兼容读取。
+    /// </summary>
     public string? ModelPoolId { get; set; }
+    /// <summary>
+    /// AppCaller 允许向 MAP 展示和接受选择的模型池有序集合。
+    /// 非空表示启用严格模型池契约；空集合继续使用旧版单池兼容语义。
+    /// </summary>
+    public List<string> AllowedModelPoolIds { get; set; } = new();
+    /// <summary>调用方未明确选择模型池时使用的默认池，必须属于 AllowedModelPoolIds。</summary>
+    public string? DefaultModelPoolId { get; set; }
+    /// <summary>是否允许所选模型池失败后按 AllowedModelPoolIds 顺序跨池调度，默认禁止。</summary>
+    public bool AllowCrossPoolFallback { get; set; }
     public string? ModelPolicy { get; set; }
     public string? ParameterPolicy { get; set; }
     public string? LastObservedModelPoolId { get; set; }

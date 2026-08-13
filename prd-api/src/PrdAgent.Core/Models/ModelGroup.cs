@@ -85,6 +85,18 @@ public class ModelGroupItem
     public int ConsecutiveSuccesses { get; set; } = 0;
 
     /// <summary>
+    /// 自动半开验证租约截止时间。租约期间只有获得租约的请求可把不可用成员作为末位候选，
+    /// 避免冷却结束后并发流量同时冲击刚恢复的上游。
+    /// </summary>
+    public DateTime? HalfOpenLeaseUntil { get; set; }
+
+    /// <summary>
+    /// 人工请求进入半开验证的时间。成员仍保持不可用，必须先获得半开租约，
+    /// 防止控制台恢复动作把并发流量直接放回刚恢复的上游。
+    /// </summary>
+    public DateTime? ManualRecoveryAt { get; set; }
+
+    /// <summary>
     /// 是否启用 Prompt Cache（模型池项级开关）
     /// - null: 使用全局配置（默认行为）
     /// - true: 强制启用

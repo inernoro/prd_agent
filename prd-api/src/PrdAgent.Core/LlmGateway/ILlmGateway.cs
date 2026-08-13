@@ -199,6 +199,14 @@ public class AvailableModelPool
     /// </summary>
     public List<PoolModelInfo> Models { get; init; } = new();
 
+    /// <summary>近七天有耗时记录的请求平均耗时。</summary>
+    public long? AverageDurationMs { get; init; }
+
+    /// <summary>最近最多十次请求的样本数。</summary>
+    public int RecentTenRequests { get; init; }
+
+    /// <summary>最近最多十次请求成功率；没有样本时为空。</summary>
+    public decimal? RecentTenSuccessRatePercent { get; init; }
     /// <summary>
     /// 网关声明的能力标签（如 image_generation / image_layering）。
     ///

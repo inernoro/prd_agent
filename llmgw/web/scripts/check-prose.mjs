@@ -54,7 +54,7 @@ const BUDGETS = [
   // Exchange 已迁移，常驻 JSX 正文为 0 段；超出的字来自 transformerType 等选项常量，
   // 它们实际渲染在 HelpPopover 里，但守卫看不出常量最终落到哪个出口（已知边界）。
   { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置；2026-08-10 +1 是新增的「删除」按钮文案（与图标同段，只多算一个汉字）' },
-  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 435, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案；2026-08-10 +2 是模型池详情抽屉里新增的「删除」按钮文案' },
+  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 437, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案；模型池详情抽屉同时包含主线新增的「删除」按钮和本分支的「恢复」操作文案' },
   { file: 'pages/QuickstartPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '四协议接入片段常量属产品内容，且部分渲染在 HelpPopover 内' },
 ];
 

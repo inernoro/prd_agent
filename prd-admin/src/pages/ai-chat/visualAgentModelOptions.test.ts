@@ -22,7 +22,7 @@ function pool(models: ModelGroupForApp['models']): ModelGroupForApp {
 }
 
 describe('buildVisualAgentModelOptions', () => {
-  it('把网关池内的三个成员展开为可精确选择的模型', () => {
+  it('一个网关池只暴露一个业务模型身份，池内成员由网关调度', () => {
     const options = buildVisualAgentModelOptions([
       pool([
         { modelId: 'openai/gpt-image-2', platformId: 'openrouter', priority: 10, healthStatus: ModelHealthStatus.Healthy, consecutiveFailures: 0, consecutiveSuccesses: 1 },
@@ -31,17 +31,10 @@ describe('buildVisualAgentModelOptions', () => {
       ]),
     ]);
 
-    expect(options.map((item) => item.name)).toEqual([
-      'OpenAI GPT Image 2',
-      'Google Nano Banana 2',
-      'Google Nano Banana 2 Lite',
-    ]);
-    expect(options.map((item) => item.modelName)).toEqual([
-      'openai/gpt-image-2',
-      'google/gemini-3.1-flash-image',
-      'google/gemini-3.1-flash-lite-image',
-    ]);
-    expect(new Set(options.map((item) => item.id))).toHaveLength(3);
+    expect(options.map((item) => item.name)).toEqual(['视觉创作测试池']);
+    expect(options.map((item) => item.modelName)).toEqual(['image-test-pool']);
+    expect(options[0]?.platformId).toBe('model-pool');
+    expect(options).toHaveLength(1);
     expect(options.every((item) => item.enabled && item.isDedicated)).toBe(true);
   });
 
@@ -53,7 +46,7 @@ describe('buildVisualAgentModelOptions', () => {
     ]);
 
     expect(options[0]?.name).toBe('视觉创作测试池');
-    expect(options[0]?.modelName).toBe('default-generation-stub');
+    expect(options[0]?.modelName).toBe('image-test-pool');
   });
 
   it('逻辑模型只暴露稳定公开标识，不暴露 Offering 上游', () => {

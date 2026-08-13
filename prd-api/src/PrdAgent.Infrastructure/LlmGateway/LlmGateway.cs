@@ -148,7 +148,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var candidates = new List<ModelResolutionResult> { resolution };
         if (request.Context?.IsHealthProbe == true
-            || (!string.IsNullOrWhiteSpace(request.ExpectedModel) && string.IsNullOrWhiteSpace(resolution.LogicalModelId))
+            || (IsProviderPinnedExpectedModel(resolution, request.ExpectedModel))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
             || !string.IsNullOrWhiteSpace(request.PinnedModelId))
         {
@@ -164,12 +164,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
 
-        var maxAttempts = GetProviderRetryMaxAttempts();
-        return candidates
-            .GroupBy(c => $"{c.ActualPlatformId}::{c.ActualModel}", StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .Take(maxAttempts)
-            .ToList();
+        return LimitProviderRetryResolutions(resolution, candidates.Skip(1));
     }
 
     private static List<ModelResolutionResult> GetProviderRetryResolutions(
@@ -178,7 +173,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var candidates = new List<ModelResolutionResult> { resolution };
         if (request.Context?.IsHealthProbe == true
-            || (!string.IsNullOrWhiteSpace(request.ExpectedModel) && string.IsNullOrWhiteSpace(resolution.LogicalModelId))
+            || (IsProviderPinnedExpectedModel(resolution, request.ExpectedModel))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
             || !string.IsNullOrWhiteSpace(request.PinnedModelId)
             || !string.IsNullOrWhiteSpace(request.RequiredOfferingId))
@@ -195,12 +190,93 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
 
+        return LimitProviderRetryResolutions(resolution, candidates.Skip(1));
+    }
+
+    private static List<ModelResolutionResult> LimitProviderRetryResolutions(
+        ModelResolutionResult primary,
+        IEnumerable<ModelResolutionResult> retryCandidates)
+    {
         var maxAttempts = GetProviderRetryMaxAttempts();
-        return candidates
+        var retryBudget = Math.Max(0, maxAttempts - 1);
+        if (retryBudget == 0)
+            return [primary];
+
+        var uniqueCandidates = retryCandidates
             .GroupBy(c => $"{c.ActualPlatformId}::{c.ActualModel}", StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
+            .ToList();
+
+        // 跨池兜底必须预留一个尝试位。否则同池有两个成员时，默认两次重试上限会在
+        // 进入第二个模型池前耗尽，导致调用方配置的跨池自愈形同虚设。
+        var crossPoolCandidate = uniqueCandidates.FirstOrDefault(candidate => !IsSameModelPool(primary, candidate));
+        var orderedCandidates = new List<ModelResolutionResult>();
+        if (crossPoolCandidate is not null && retryBudget > 0)
+        {
+            var samePoolCandidates = uniqueCandidates
+                .Where(candidate => IsSameModelPool(primary, candidate))
+                .ToList();
+            // 半开候选本身就是恢复探测。若它作为 primary 失败，优先给同池健康成员
+            // 一次机会；否则默认两次尝试会直接跳到跨池，造成同池仍可用却被误判失效。
+            var primaryIsHalfOpenRecovery = string.Equals(
+                primary.HealthStatus,
+                ModelHealthStatus.Unavailable.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+            var samePoolBudget = primaryIsHalfOpenRecovery
+                ? Math.Min(1, retryBudget)
+                : Math.Max(0, retryBudget - 1);
+            orderedCandidates.AddRange(samePoolCandidates.Take(samePoolBudget));
+            if (orderedCandidates.Count < retryBudget)
+                orderedCandidates.Add(crossPoolCandidate);
+            orderedCandidates.AddRange(uniqueCandidates.Where(candidate =>
+                !ReferenceEquals(candidate, crossPoolCandidate)
+                && !orderedCandidates.Contains(candidate)));
+        }
+        else
+        {
+            orderedCandidates.AddRange(uniqueCandidates);
+        }
+
+        return new[] { primary }
+            .Concat(orderedCandidates)
             .Take(maxAttempts)
             .ToList();
+    }
+
+    private static bool IsSameModelPool(ModelResolutionResult left, ModelResolutionResult right)
+    {
+        if (!string.IsNullOrWhiteSpace(left.ModelGroupId)
+            && !string.IsNullOrWhiteSpace(right.ModelGroupId))
+        {
+            return string.Equals(left.ModelGroupId, right.ModelGroupId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.Equals(left.ModelGroupCode, right.ModelGroupCode, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(left.ModelGroupName, right.ModelGroupName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsProviderPinnedExpectedModel(
+        ModelResolutionResult resolution,
+        string? expectedModel)
+    {
+        if (string.IsNullOrWhiteSpace(expectedModel)
+            || !string.IsNullOrWhiteSpace(resolution.LogicalModelId))
+        {
+            return false;
+        }
+
+        if (resolution.ResolutionType is "GatewayRegistryPool" or "DedicatedPool" or "DefaultPool")
+        {
+            return false;
+        }
+
+        // 选定模型池不是钉死某个 Provider。池身份允许同池 RetryCandidates 和半开成员
+        // 继续接管；只有显式传入 Provider 模型名时才关闭候选切换。
+        var requested = expectedModel.Trim();
+        var isPoolIdentity = string.Equals(requested, resolution.ModelGroupId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(requested, resolution.ModelGroupCode, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(requested, resolution.ModelGroupName, StringComparison.OrdinalIgnoreCase);
+        return !isPoolIdentity;
     }
 
     private static int GetProviderRetryMaxAttempts()
@@ -522,7 +598,37 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 var attemptStartedAt = DateTime.UtcNow;
                 MarkLastSendAttemptReachedProvider(providerAttempts);
-                response = await httpClient.SendAsync(httpRequest, ct);
+                try
+                {
+                    response = await httpClient.SendAsync(httpRequest, ct);
+                }
+                catch (Exception sendException)
+                {
+                    var sendAttemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
+                    var (sendMessage, sendStatusCode) = ClassifyTransportException(
+                        sendException,
+                        ct.IsCancellationRequested);
+                    CompleteLastSendAttempt(providerAttempts, sendStatusCode, sendAttemptDurationMs, sendMessage);
+                    _logger.LogWarning(sendException,
+                        "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
+                        sendStatusCode,
+                        activeResolution.ActualModel);
+                    if (HasTrackedHealthRoute(activeResolution))
+                        await _modelResolver.RecordFailureAsync(activeResolution, ct);
+
+                    if (attemptIndex < retryResolutions.Count - 1
+                        && ShouldRetryProviderStatus(sendStatusCode))
+                    {
+                        AddPendingProviderAttempt(
+                            providerAttempts,
+                            retryResolutions[attemptIndex + 1],
+                            gatewayTransport,
+                            $"previous candidate failed with transport status {sendStatusCode}");
+                        continue;
+                    }
+
+                    throw;
+                }
                 responseBody = await response.Content.ReadAsStringAsync(ct);
                 var attemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
                 var attemptError = response.IsSuccessStatusCode
@@ -2390,7 +2496,25 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var submitStartedAt = DateTime.UtcNow;
             MarkLastSendAttemptReachedProvider(rawProviderAttempts);
-            var response = await httpClient.SendAsync(httpRequest, ct);
+            HttpResponseMessage response;
+            try
+            {
+                response = await httpClient.SendAsync(httpRequest, ct);
+            }
+            catch (Exception sendException)
+            {
+                var (sendMessage, sendStatusCode) = ClassifyTransportException(
+                    sendException,
+                    ct.IsCancellationRequested);
+                _logger.LogWarning(sendException,
+                    "[LlmGateway.SendRaw] HttpClient.SendAsync 失败 status={Code} model={Model}",
+                    sendStatusCode,
+                    resolution.ActualModel);
+                response = new HttpResponseMessage((System.Net.HttpStatusCode)sendStatusCode)
+                {
+                    Content = new StringContent(sendMessage, Encoding.UTF8, "text/plain")
+                };
+            }
 
             // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）。
             // 先无损读出全部字节，再决定按二进制还是文本处理——避免下游把二进制 Content-Type 标错
@@ -2524,7 +2648,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 submitStartedAt = DateTime.UtcNow;
                 MarkLastSendAttemptReachedProvider(rawProviderAttempts);
-                response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
+                try
+                {
+                    response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
+                }
+                catch (Exception sendException)
+                {
+                    var (sendMessage, sendStatusCode) = ClassifyTransportException(
+                        sendException,
+                        ct.IsCancellationRequested);
+                    _logger.LogWarning(sendException,
+                        "[LlmGateway.SendRaw] retry HttpClient.SendAsync 失败 status={Code} model={Model}",
+                        sendStatusCode,
+                        resolution.ActualModel);
+                    response = new HttpResponseMessage((System.Net.HttpStatusCode)sendStatusCode)
+                    {
+                        Content = new StringContent(sendMessage, Encoding.UTF8, "text/plain")
+                    };
+                }
                 contentType = response.Content.Headers.ContentType?.MediaType ?? "";
                 rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
                 submitDurationMs = (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds;

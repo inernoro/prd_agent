@@ -1765,11 +1765,13 @@ public class ImageMasterController : ControllerBase
                     ? modelId
                     // 分层的 platformId 已在上面清空，所以只会落到这一支；能力标识由网关发布，MAP 不感知上游。
                     : isLayering ? PrdAgent.Core.Models.GatewayCapabilityIds.ImageLayering : null,
-                // 用户显式选择优先。逻辑模型只携带稳定 PublicId，真实上游由 Gateway 决定；
+                // 用户选择模型池时只保存池身份，交给 Gateway 做池内调度；逻辑模型仍携带稳定 PublicId。
                 // 兼容旧 picker 的 platformId + modelId 仍记为 DirectModel。
                 ModelResolutionType = isLayering || string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                     ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
-                    : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
+                    : string.Equals(platformId, "model-pool", StringComparison.OrdinalIgnoreCase)
+                        ? null
+                        : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
                 Size = size,
                 ResponseFormat = responseFormat,
                 MaxConcurrency = 1,
