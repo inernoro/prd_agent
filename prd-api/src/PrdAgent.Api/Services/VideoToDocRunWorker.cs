@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.LlmGateway;
 
@@ -265,14 +266,9 @@ public class VideoToDocRunWorker : BackgroundService
             AppCallerCode = AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
             ModelType = ModelTypes.Asr,
             EndpointPath = "/v1/audio/transcriptions",
-            MultipartFields = new Dictionary<string, object>
-            {
-                // model 字段由 Gateway 根据 ASR 模型池调度结果自动替换
-                ["model"] = "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = run.Language == "auto" ? "" : run.Language
-            },
+            MultipartFields = AsrTranscriptionRequestPolicy.BuildMultipartFields(
+                asrResolution.ActualModel,
+                run.Language == "auto" ? null : run.Language),
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("audio.wav", audioBytes, "audio/wav")

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
+import { collectSemanticLayerFrames, computeHorizontalClampShift, computeVerticalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
 
 describe('semantic layer frame', () => {
   it('places layer cards near the source while preserving its aspect ratio', () => {
@@ -40,6 +40,21 @@ describe('semantic layer frame', () => {
       elementRight: 640,
       currentShift: -80,
     })).toBe(0);
+
+    expect(computeVerticalClampShift({
+      stageTop: 80,
+      stageBottom: 900,
+      elementTop: -20,
+      elementBottom: 16,
+    })).toBe(112);
+
+    expect(computeVerticalClampShift({
+      stageTop: 80,
+      stageBottom: 900,
+      elementTop: 92,
+      elementBottom: 128,
+      currentShift: 112,
+    })).toBe(112);
   });
 });
 

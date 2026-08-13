@@ -73,7 +73,7 @@ import {
   decomposeImageToLayers,
   downloadLayeredPsd,
 } from '@/lib/layeredPsd';
-import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
+import { collectSemanticLayerFrames, computeHorizontalClampShift, computeVerticalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
@@ -1136,6 +1136,7 @@ function StageClampedQuickActionBar({
 }) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const [shiftWorldX, setShiftWorldX] = useState(0);
+  const [shiftWorldY, setShiftWorldY] = useState(0);
 
   useLayoutEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -1157,9 +1158,19 @@ function StageClampedQuickActionBar({
       });
       const nextShiftWorld = nextShiftScreen / Math.max(zoom, 0.01);
       setShiftWorldX((current) => Math.abs(current - nextShiftWorld) < 0.25 ? current : nextShiftWorld);
+      const currentShiftY = shiftWorldY * Math.max(zoom, 0.01);
+      const nextShiftScreenY = computeVerticalClampShift({
+        stageTop: stageRect.top,
+        stageBottom: stageRect.bottom,
+        elementTop: barRect.top,
+        elementBottom: barRect.bottom,
+        currentShift: currentShiftY,
+      });
+      const nextShiftWorldY = nextShiftScreenY / Math.max(zoom, 0.01);
+      setShiftWorldY((current) => Math.abs(current - nextShiftWorldY) < 0.25 ? current : nextShiftWorldY);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [obstacleRef, positionKey, shiftWorldX, stageRef, zoom]);
+  }, [obstacleRef, positionKey, shiftWorldX, shiftWorldY, stageRef, zoom]);
 
   return (
     <div
@@ -1167,7 +1178,7 @@ function StageClampedQuickActionBar({
       style={{
         position: 'absolute',
         left: `calc(50% + ${shiftWorldX}px)`,
-        top: 0,
+        top: shiftWorldY,
         transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
         transformOrigin: 'center bottom',
         pointerEvents: 'auto',

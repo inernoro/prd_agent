@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.LlmGateway;
 
@@ -124,13 +125,9 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
             PinnedPlatformId = request?.PinnedPlatformId,
             PinnedModelId = request?.PinnedModelId,
             IsMultipart = true,
-            MultipartFields = new Dictionary<string, object>
-            {
-                ["model"] = resolution.ActualModel ?? request?.ExpectedModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = request?.Language ?? "",
-            },
+            MultipartFields = AsrTranscriptionRequestPolicy.BuildMultipartFields(
+                resolution.ActualModel ?? request?.ExpectedModel,
+                request?.Language),
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("llmgw-asr-canary.wav", audio, "audio/wav"),

@@ -4016,6 +4016,28 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void AsrWorkers_MustUseSharedTranscriptionParameterPolicy()
+    {
+        var callers = new[]
+        {
+            "prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs",
+            "prd-api/src/PrdAgent.Api/Services/VideoToDocRunWorker.cs",
+            "prd-api/src/PrdAgent.Api/Services/SubtitleGenerationProcessor.cs",
+            "prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs",
+            "prd-api/src/PrdAgent.Api/Controllers/Api/LlmGatewayOpsCanaryController.cs",
+            "prd-api/src/PrdAgent.Infrastructure/LlmGateway/Asr/LiveAsrBatchFallbackService.cs",
+        };
+
+        foreach (var path in callers)
+        {
+            var source = ReadRepoFile(path);
+            Assert.Contains("AsrTranscriptionRequestPolicy.BuildMultipartFields", source);
+            Assert.DoesNotContain("[\"response_format\"] = \"verbose_json\"", source);
+            Assert.DoesNotContain("[\"timestamp_granularities[]\"] = \"segment\"", source);
+        }
+    }
+
+    [Fact]
     public void ExternalConsole_CostSummaryPreservesUnknownAndCurrencyBoundaries()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");

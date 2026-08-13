@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
@@ -802,12 +803,8 @@ public class SubtitleGenerationProcessor
                 case "doubao-asr-stream":
                     // WebSocket 协议由 LlmGateway/llmgw-serve 执行；本处理器仍只提交 GatewayRawRequest。
                     return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode,
-                        new Dictionary<string, object>
-                        {
-                            ["model"] = resolution.ActualModel ?? "doubao-asr-stream",
-                            ["response_format"] = "verbose_json",
-                            ["timestamp_granularities[]"] = "segment",
-                        });
+                        AsrTranscriptionRequestPolicy.BuildMultipartFields(
+                            resolution.ActualModel ?? "doubao-asr-stream"));
 
                 case "doubao-asr":
                     // doubao-asr 异步模式 ≠ Whisper multipart：DoubaoAsrTransformer.TransformRequest
@@ -847,13 +844,7 @@ public class SubtitleGenerationProcessor
             "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
             resolution.ActualModel, resolution.ActualPlatformName);
         return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode,
-            new Dictionary<string, object>
-            {
-                ["model"] = resolution.ActualModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = ""
-            });
+            AsrTranscriptionRequestPolicy.BuildMultipartFields(resolution.ActualModel));
     }
 
     // ──────────────────────────────────────────────────────

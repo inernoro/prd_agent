@@ -12,6 +12,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
@@ -6712,12 +6713,7 @@ function safeChart(canvasId, config) {
             ModelType = ModelTypes.Asr,
             EndpointPath = "/v1/audio/transcriptions",
             IsMultipart = true,
-            MultipartFields = new Dictionary<string, object>
-            {
-                ["model"] = resolution.ActualModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-            },
+            MultipartFields = AsrTranscriptionRequestPolicy.BuildMultipartFields(resolution.ActualModel),
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("audio.wav", audioBytes, "audio/wav"),

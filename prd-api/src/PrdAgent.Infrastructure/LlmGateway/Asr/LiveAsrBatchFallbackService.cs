@@ -478,29 +478,16 @@ public sealed class LiveAsrBatchFallbackService
                 });
         }
 
-        var useCompactJson = UsesCompactJsonTranscription(candidate.ActualModel);
-        var multipartFields = new Dictionary<string, object>
-        {
-            ["model"] = candidate.ActualModel ?? "whisper-1",
-            ["response_format"] = useCompactJson ? "json" : "verbose_json",
-        };
-        if (!useCompactJson)
-            multipartFields["timestamp_granularities[]"] = "segment";
-
         return BaseRequest(
             candidate,
             requestContext,
             endpointPath: "/v1/audio/transcriptions",
-            multipartFields: multipartFields,
+            multipartFields: AsrTranscriptionRequestPolicy.BuildMultipartFields(candidate.ActualModel),
             multipartFiles: new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("live-window.wav", wave, "audio/wav"),
             });
     }
-
-    private static bool UsesCompactJsonTranscription(string? model)
-        => model?.StartsWith("gpt-4o-transcribe", StringComparison.OrdinalIgnoreCase) == true
-            || model?.StartsWith("gpt-4o-mini-transcribe", StringComparison.OrdinalIgnoreCase) == true;
 
     private static GatewayRawRequest BaseRequest(
         ModelResolutionResult candidate,

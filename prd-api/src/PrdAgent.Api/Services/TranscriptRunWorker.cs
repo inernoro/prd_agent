@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.LlmGateway;
@@ -336,12 +337,7 @@ public class TranscriptRunWorker : BackgroundService
                 ModelType = ModelTypes.Asr,
                 EndpointPath = "/v1/audio/transcriptions",
                 IsMultipart = true,
-                MultipartFields = new Dictionary<string, object>
-                {
-                    ["model"] = candidate.ActualModel ?? "whisper-1",
-                    ["response_format"] = "verbose_json",
-                    ["timestamp_granularities[]"] = "segment"
-                },
+                MultipartFields = AsrTranscriptionRequestPolicy.BuildMultipartFields(candidate.ActualModel),
                 MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
                 {
                     ["file"] = ("audio.wav", audioBytes, "audio/wav")
