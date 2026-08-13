@@ -12,3 +12,6 @@
 | fix | prd-api | 模型池近期成功率只统计已结束请求，避免运行中请求拉低指标 |
 | fix | llmgw | 删除模型池前同时阻挡默认池和允许池集合引用 |
 | fix | prd-admin | LLM Gateway 站内信跳转成功后才标记已处理，失败可重试 |
+| fix | prd-api | 管理员网关告警仅对管理员可见可处理，并修正日志 requestId 深链 |
+| fix | llmgw | 严格 AppCaller 模型池只允许已认领的 LLMGW 池，避免保存后运行时失效 |
+| fix | prd-api | 显式模型池保持池内 Provider 重试，不再误把池选择当成单模型钉死 |

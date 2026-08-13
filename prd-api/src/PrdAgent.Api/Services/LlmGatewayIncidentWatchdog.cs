@@ -107,7 +107,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             .SortByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
         var now = DateTime.UtcNow;
-        var actionUrl = $"/logs?transaction={Uri.EscapeDataString(signal.RequestId)}";
+        var actionUrl = $"/logs?requestId={Uri.EscapeDataString(signal.RequestId)}";
         var message = $"{signal.AppCallerLabel} 调用 {signal.ModelLabel} 失败：{signal.FailureSummary}。"
                       + $"\n平台：{signal.PlatformLabel}；最近窗口失败 {signal.FailureCount} 次；请求编号：{signal.RequestId}。"
                       + "\n系统会持续观察该上游；出现成功请求后自动关闭本故障并通知恢复。";
@@ -193,7 +193,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             Source = "gateway-alert",
             Section = AdminNotificationSections.Admin,
             ActionLabel = "查看恢复请求",
-            ActionUrl = $"/logs?transaction={Uri.EscapeDataString(signal.RequestId)}",
+            ActionUrl = $"/logs?requestId={Uri.EscapeDataString(signal.RequestId)}",
             ActionKind = "llm-gateway",
             ExpiresAt = now.AddDays(7),
         }, cancellationToken: ct);

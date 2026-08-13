@@ -5093,13 +5093,10 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         else
         {
             var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", modelPoolId));
-            var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync()
-                       ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
-                           ? await modelGroups.Find(Builders<BsonDocument>.Filter.Eq("_id", modelPoolId)).FirstOrDefaultAsync()
-                           : null);
+            var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
             if (pool is null)
             {
-                return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", $"模型池不存在：{modelPoolId}"), jsonOptions, 400);
+                return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", $"模型池不存在或尚未认领到 LLMGW：{modelPoolId}"), jsonOptions, 400);
             }
             var poolType = pool.GetStringOrEmpty("ModelType");
             var requestType = doc.GetStringOrEmpty("RequestType");
@@ -5136,13 +5133,10 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         foreach (var allowedPoolId in allowedModelPoolIds)
         {
             var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", allowedPoolId));
-            var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync()
-                       ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
-                           ? await modelGroups.Find(Builders<BsonDocument>.Filter.Eq("_id", allowedPoolId)).FirstOrDefaultAsync()
-                           : null);
+            var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
             if (pool is null)
             {
-                return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", $"模型池不存在：{allowedPoolId}"), jsonOptions, 400);
+                return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", $"模型池不存在或尚未认领到 LLMGW：{allowedPoolId}"), jsonOptions, 400);
             }
             var poolType = pool.GetStringOrEmpty("ModelType");
             var requestType = doc.GetStringOrEmpty("RequestType");

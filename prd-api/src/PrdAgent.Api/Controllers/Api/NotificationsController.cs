@@ -40,7 +40,7 @@ public sealed class NotificationsController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
-        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled);
+        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled, HasAdminNotificationPermission());
 
         var items = await _db.AdminNotifications
             .Find(filter)
@@ -230,13 +230,28 @@ public sealed class NotificationsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
         }
 
+        var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
+        var visible = BuildVisibleNotificationFilter(
+            userId,
+            now,
+            includeHandled: false,
+            includeAdmin: HasAdminNotificationPermission());
         var update = Builders<AdminNotification>.Update
             .Set(x => x.Status, "handled")
             .Set(x => x.HandledAt, now)
             .Set(x => x.UpdatedAt, now);
 
-        await _db.AdminNotifications.UpdateOneAsync(x => x.Id == nid, update, cancellationToken: ct);
+        var result = await _db.AdminNotifications.UpdateOneAsync(
+            Builders<AdminNotification>.Filter.And(
+                Builders<AdminNotification>.Filter.Eq(x => x.Id, nid),
+                visible),
+            update,
+            cancellationToken: ct);
+        if (result.MatchedCount == 0)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "通知不存在、已处理或无权操作"));
+        }
         return Ok(ApiResponse<object>.Ok(new { handled = true }));
     }
 
@@ -246,7 +261,11 @@ public sealed class NotificationsController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
-        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled: false);
+        var filter = BuildVisibleNotificationFilter(
+            userId,
+            now,
+            includeHandled: false,
+            includeAdmin: HasAdminNotificationPermission());
         var update = Builders<AdminNotification>.Update
             .Set(x => x.Status, "handled")
             .Set(x => x.HandledAt, now)
@@ -271,7 +290,27 @@ public sealed class NotificationsController : ControllerBase
             || permissions.Contains(AdminPermissionCatalog.DefectAgentManage);
     }
 
-    private static FilterDefinition<AdminNotification> BuildVisibleNotificationFilter(string userId, DateTime now, bool includeHandled)
+    private bool HasAdminNotificationPermission()
+    {
+        if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal)
+            || string.Equals(User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value, "1", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.SettingsWrite)
+            || permissions.Contains(AdminPermissionCatalog.OpenPlatformManage)
+            || permissions.Contains(AdminPermissionCatalog.AutomationsManage)
+            || permissions.Contains(AdminPermissionCatalog.DefectAgentManage);
+    }
+
+    private static FilterDefinition<AdminNotification> BuildVisibleNotificationFilter(
+        string userId,
+        DateTime now,
+        bool includeHandled,
+        bool includeAdmin)
     {
         var filter = Builders<AdminNotification>.Filter.Empty;
 
@@ -282,6 +321,11 @@ public sealed class NotificationsController : ControllerBase
         filter &= Builders<AdminNotification>.Filter.Or(
             Builders<AdminNotification>.Filter.Eq(x => x.ExpiresAt, null),
             Builders<AdminNotification>.Filter.Gt(x => x.ExpiresAt, now));
+
+        if (!includeAdmin)
+        {
+            filter &= Builders<AdminNotification>.Filter.Ne(x => x.Section, AdminNotificationSections.Admin);
+        }
 
         if (!includeHandled)
         {

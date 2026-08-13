@@ -148,7 +148,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var candidates = new List<ModelResolutionResult> { resolution };
         if (request.Context?.IsHealthProbe == true
-            || (!string.IsNullOrWhiteSpace(request.ExpectedModel) && string.IsNullOrWhiteSpace(resolution.LogicalModelId))
+            || (IsProviderPinnedExpectedModel(resolution, request.ExpectedModel))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
             || !string.IsNullOrWhiteSpace(request.PinnedModelId))
         {
@@ -178,7 +178,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         var candidates = new List<ModelResolutionResult> { resolution };
         if (request.Context?.IsHealthProbe == true
-            || (!string.IsNullOrWhiteSpace(request.ExpectedModel) && string.IsNullOrWhiteSpace(resolution.LogicalModelId))
+            || (IsProviderPinnedExpectedModel(resolution, request.ExpectedModel))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
             || !string.IsNullOrWhiteSpace(request.PinnedModelId)
             || !string.IsNullOrWhiteSpace(request.RequiredOfferingId))
@@ -201,6 +201,25 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             .Select(g => g.First())
             .Take(maxAttempts)
             .ToList();
+    }
+
+    private static bool IsProviderPinnedExpectedModel(
+        ModelResolutionResult resolution,
+        string? expectedModel)
+    {
+        if (string.IsNullOrWhiteSpace(expectedModel)
+            || !string.IsNullOrWhiteSpace(resolution.LogicalModelId))
+        {
+            return false;
+        }
+
+        // 选定模型池不是钉死某个 Provider。池身份允许同池 RetryCandidates 和半开成员
+        // 继续接管；只有显式传入 Provider 模型名时才关闭候选切换。
+        var requested = expectedModel.Trim();
+        var isPoolIdentity = string.Equals(requested, resolution.ModelGroupId, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(requested, resolution.ModelGroupCode, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(requested, resolution.ModelGroupName, StringComparison.OrdinalIgnoreCase);
+        return !isPoolIdentity;
     }
 
     private static int GetProviderRetryMaxAttempts()
