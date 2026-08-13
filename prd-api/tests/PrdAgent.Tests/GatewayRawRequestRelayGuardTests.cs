@@ -111,8 +111,12 @@ public class GatewayRawRequestRelayGuardTests
 
     private static void TryTakeAssignment(string segment, int nested, HashSet<string> sink)
     {
-        // 第一段会带上初始化器的左花括号，先剥掉再匹配
-        var m = Regex.Match(segment.TrimStart('{', ' ', '\t', '\r', '\n').Trim(), @"^([A-Z][A-Za-z0-9_]*)\s*=");
+        // 第一段会带上初始化器的左花括号；字段前还可能有解释性行注释。
+        // 先移除这两类非语义前缀，避免真实已转发字段被误报为缺失。
+        var normalized = Regex.Replace(segment, @"(?m)^\s*//.*(?:\r?\n|$)", string.Empty)
+            .TrimStart('{', ' ', '\t', '\r', '\n')
+            .Trim();
+        var m = Regex.Match(normalized, @"^([A-Z][A-Za-z0-9_]*)\s*=");
         if (m.Success) sink.Add(m.Groups[1].Value);
     }
 

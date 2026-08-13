@@ -20,15 +20,18 @@ public sealed class NotificationsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly AdminPushNotificationService _pushService;
     private readonly AdminNotificationEventService _eventService;
+    private readonly IConfiguration _configuration;
 
     public NotificationsController(
         MongoDbContext db,
         AdminPushNotificationService pushService,
-        AdminNotificationEventService eventService)
+        AdminNotificationEventService eventService,
+        IConfiguration configuration)
     {
         _db = db;
         _pushService = pushService;
         _eventService = eventService;
+        _configuration = configuration;
     }
 
     [HttpGet]
@@ -136,6 +139,39 @@ public sealed class NotificationsController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权创建管理员通知事件"));
         }
 
+        var isStableSmoke = string.Equals(
+            User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value,
+            "1",
+            StringComparison.Ordinal);
+        var configuredTarget = _configuration["StableSmokeAuthentication:NotificationTargetUsername"]?.Trim();
+        if (isStableSmoke)
+        {
+            if (!IsStableSmokeNotificationTargetAllowed(request, configuredTarget))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(
+                    ErrorCodes.PERMISSION_DENIED,
+                    "稳定冒烟通知目标未获授权，请由管理员更新固定通知账号后重试"));
+            }
+            var target = await _db.Users
+                .Find(user => user.Username == configuredTarget
+                    && user.Status == UserStatus.Active
+                    && user.UserType == UserType.Human)
+                .FirstOrDefaultAsync(ct);
+            if (target is null)
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    "固定通知账号不存在或不可用，请由管理员修复账号后重试"));
+            }
+            request.TargetUserId = target.UserId;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.TargetUsername))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "通知目标只能使用用户标识，请检查后重试"));
+        }
+
         var userId = this.GetRequiredUserId();
         try
         {
@@ -156,6 +192,7 @@ public sealed class NotificationsController : ControllerBase
                     n.ActionUrl,
                     n.ActionKind,
                     n.Source,
+                    n.TargetUserId,
                     section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section),
                     sectionLabel = AdminNotificationSections.Label(AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section)),
                     sourceLabel = AdminNotificationSourceCatalog.ResolveSourceLabel(n.Source),
@@ -171,6 +208,17 @@ public sealed class NotificationsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
     }
+
+    internal static bool IsStableSmokeNotificationTargetAllowed(
+        AdminNotificationEventRequest request,
+        string? configuredTarget)
+        => !string.IsNullOrWhiteSpace(configuredTarget)
+           && string.IsNullOrWhiteSpace(request.TargetUserId)
+           && !string.IsNullOrWhiteSpace(request.TargetUsername)
+           && string.Equals(
+               request.TargetUsername.Trim(),
+               configuredTarget.Trim(),
+               StringComparison.OrdinalIgnoreCase);
 
     [HttpPost("{id}/handle")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
@@ -212,6 +260,8 @@ public sealed class NotificationsController : ControllerBase
     {
         if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal))
             return true;
+        if (string.Equals(User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value, "1", StringComparison.Ordinal))
+            return true;
 
         var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return permissions.Contains(AdminPermissionCatalog.Super)
@@ -244,12 +294,13 @@ public sealed class NotificationsController : ControllerBase
     private static object ToNotificationDto(AdminNotification n)
     {
         var section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section);
+        var presentation = ToUserReadablePresentation(n);
         return new
         {
             n.Id,
             n.Key,
-            n.Title,
-            n.Message,
+            presentation.Title,
+            presentation.Message,
             n.Level,
             n.Status,
             n.ActionLabel,
@@ -265,5 +316,17 @@ public sealed class NotificationsController : ControllerBase
             n.HandledAt,
             n.ExpiresAt
         };
+    }
+
+    internal static (string Title, string? Message) ToUserReadablePresentation(AdminNotification notification)
+    {
+        if (string.Equals(notification.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase))
+        {
+            return (
+                "AI 创作服务需要管理员处理",
+                "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。");
+        }
+
+        return (notification.Title, notification.Message);
     }
 }

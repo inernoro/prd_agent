@@ -136,6 +136,7 @@ import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
 import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
 import { autoSubmitImages } from '@/services/real/submissions';
+import { downloadGeneratedImage } from '@/lib/generatedImageDownload';
 
 type CanvasImageItem = {
   key: string;
@@ -753,52 +754,6 @@ async function copyToClipboard(text: string) {
   }
 }
 
-async function downloadImage(src: string, filename: string) {
-  const safe = String(filename || 'image')
-    .trim()
-    .replaceAll('/', '-')
-    .replaceAll('\\', '-')
-    .replaceAll(':', '-')
-    .replaceAll('*', '-')
-    .replaceAll('?', '-')
-    .replaceAll('"', '-')
-    .replaceAll('<', '-')
-    .replaceAll('>', '-')
-    .replaceAll('|', '-')
-    .slice(0, 80);
-
-  const finalName = safe ? `${safe}.png` : 'image.png';
-
-  try {
-    // 使用 fetch + blob 方式下载，解决跨域图片无法直接下载的问题
-    const response = await fetch(src, { mode: 'cors' });
-    if (!response.ok) throw new Error('Fetch failed');
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = finalName;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    // 延迟释放 blob URL
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-  } catch {
-    // 如果 fetch 失败（如 CORS 问题），回退到直接下载方式
-    const a = document.createElement('a');
-    a.href = src;
-    a.download = finalName;
-    a.rel = 'noopener';
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-}
-
 async function copyImageToClipboard(src: string) {
   if (!src) return;
   try {
@@ -878,7 +833,7 @@ async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     } catch {
       // fallback
-      void downloadImage(src, safe);
+      void downloadGeneratedImage(src, safe);
     }
     return;
   }
@@ -920,7 +875,7 @@ async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   } catch {
-    void downloadImage(src, safe);
+    void downloadGeneratedImage(src, safe);
   }
 }
 
@@ -2730,18 +2685,45 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         )
       );
 
-      // 先乐观删除 UI
-      setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
+      // 同步更新 state 与 ref。自动保存、生成回调和删除确认都读取 canvasRef；若只更新
+      // React state，删除后的首个保存可能仍把旧元素写回服务端，刷新后图片会复活。
+      const nextCanvas = (canvasRef.current ?? []).filter((it) => !set.has(it.key));
+      canvasRef.current = nextCanvas;
+      setCanvas(nextCanvas);
       clearSelectionWithChips();
 
-      if (assetIds.length === 0) return;
-      const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
-      // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
-      const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
-      if (realFailed) {
-        toast.error(realFailed.error?.message || '删除失败');
-        await reloadWorkspace();
+      if (assetIds.length > 0) {
+        const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
+        // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
+        const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
+        if (realFailed) {
+          toast.error(realFailed.error?.message || '删除失败');
+          await reloadWorkspace();
+          return;
+        }
       }
+
+      // 资产删除成功后立即持久化同一份删除后快照，不依赖 debounce 的时序。这样接口成功、
+      // 画布保存与刷新恢复三者形成一个可等待的完成点。
+      if (canvasSaveTimerRef.current != null) {
+        window.clearTimeout(canvasSaveTimerRef.current);
+        canvasSaveTimerRef.current = null;
+      }
+      const built = canvasToPersistedV1(nextCanvas);
+      const json = JSON.stringify(built.state);
+      const saved = await saveVisualAgentWorkspaceCanvas({
+        id: workspaceId,
+        schemaVersion: PERSIST_SCHEMA_VERSION,
+        payloadJson: json,
+        idempotencyKey: `delete_${Date.now()}`,
+      });
+      if (!saved.success) {
+        toast.error(saved.error?.message || '图片已删除，但画布同步失败，正在重新加载');
+        await reloadWorkspace();
+        return;
+      }
+      lastSavedJsonRef.current = json;
+      lastSaveAtRef.current = Date.now();
     },
     [reloadWorkspace, workspaceId, clearSelectionWithChips]
   );
@@ -5254,11 +5236,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
+    const imageFiles = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
+    if (imageFiles.length > 20) {
+      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
+    }
     // 先按「新增路径」的上限（下方 list.slice(0, 20)）截断，再压缩——否则一次拖入 50 张时
     // 会把 30 张注定被丢弃的图也解码 + 画到 canvas，反而在上传前先卡死/爆内存。
-    const rawList = (files ?? [])
-      .filter((f) => f && f.type && f.type.startsWith('image/'))
-      .slice(0, 20);
+    const rawList = imageFiles.slice(0, 20);
     if (rawList.length === 0) return;
 
     // 关键：上传/放置必须串行化，否则两次快速上传会并发读文件，导致“空位算法看不到对方”=> 100% 覆盖
@@ -6571,6 +6555,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         ) : it.src ? (
                           <div className="absolute inset-0 flex items-center justify-center">
                             <img
+                              data-testid="canvas-image"
                               src={it.src}
                               alt={it.prompt}
                               className="w-full h-full block"
@@ -6711,6 +6696,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </div>
                             ) : null}
                             <img
+                              data-testid="canvas-image"
                               src={it.src}
                               alt={it.prompt}
                               className="w-full h-full block"
@@ -7263,7 +7249,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   prompt: it.prompt || '图片',
                                 })}
                                 layering={layeringProgress?.sourceKey === it.key}
-                                onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
+                                onDownload={() => void downloadGeneratedImage(it.src, it.prompt || 'image')}
                                 onOpenConfig={() => setQuickActionDialogOpen(true)}
                                 onInpaint={() => {
                                   if (it.status !== 'done' || !it.src) {
@@ -9078,7 +9064,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
                   void downloadAllAsZip(items, `visual-agent_${Date.now()}`);
                 } else {
-                  void downloadImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
+                  void downloadGeneratedImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
                 }
                 setImgContextMenu((p) => ({ ...p, open: false }));
               }}
@@ -9347,7 +9333,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         content={
           <div className="h-full min-h-0 flex flex-col">
             <div className="flex items-center justify-end gap-2 pb-2">
-              <Button variant="secondary" size="sm" onClick={() => void downloadImage(preview.src, preview.prompt || 'image')} disabled={!preview.src}>
+              <Button variant="secondary" size="sm" onClick={() => void downloadGeneratedImage(preview.src, preview.prompt || 'image')} disabled={!preview.src}>
                 <Download size={16} />
                 下载
               </Button>

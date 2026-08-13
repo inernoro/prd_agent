@@ -7,6 +7,7 @@ import type {
   ResetPasswordContract,
   ResetPasswordResponse,
   SsoOptionsResponse,
+  SyntheticLoginContract,
 } from '@/services/contracts/auth';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
@@ -61,6 +62,24 @@ export const loginWithMiduoPlanetTokenReal: MiduoPlanetLoginContract = async (to
     refreshToken: res.data.refreshToken,
     sessionKey: res.data.sessionKey,
     mustResetPassword: res.data.mustResetPassword,
+  });
+};
+
+export const loginWithSyntheticTicketReal: SyntheticLoginContract = async (code): Promise<ApiResponse<LoginResponse>> => {
+  const res = await apiRequest<BackendLoginResponse>(api.auth.syntheticLoginExchange(), {
+    method: 'POST',
+    auth: false,
+    body: { code },
+  });
+
+  if (!res.success) return res;
+
+  return ok({
+    user: res.data.user,
+    accessToken: res.data.accessToken,
+    refreshToken: res.data.refreshToken,
+    sessionKey: res.data.sessionKey,
+    mustResetPassword: false,
   });
 };
 

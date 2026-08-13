@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -45,10 +46,14 @@ public sealed class LlmGatewaySsoController : ControllerBase
     public async Task<IActionResult> CreateTicket(CancellationToken ct)
     {
         // 只接受 MAP 管理后台真人会话。Agent/API key 即使绑定了管理员用户，也不能签发浏览器 SSO。
-        var clientType = User.FindFirst("clientType")?.Value;
-        var sessionKey = User.FindFirst("sessionKey")?.Value;
-        if (!string.Equals(clientType, "admin", StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(sessionKey))
+        if (FederatedConsoleSessionPolicy.IsSynthetic(User))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    "SYNTHETIC_SESSION_FEDERATION_FORBIDDEN",
+                    "合成测试会话不能进入外部控制台，请使用真人管理员会话登录"));
+        }
+        if (!FederatedConsoleSessionPolicy.IsEligibleBrowserSession(User))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail("MAP_SSO_BROWSER_SESSION_REQUIRED", "请使用 MAP 管理后台登录后再打开模型网关"));

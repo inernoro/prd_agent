@@ -38,6 +38,8 @@ export type GetSsoOptionsContract = () => Promise<ApiResponse<SsoOptionsResponse
 
 export type MiduoPlanetLoginContract = (token: string) => Promise<ApiResponse<LoginResponse>>;
 
+export type SyntheticLoginContract = (code: string) => Promise<ApiResponse<LoginResponse>>;
+
 export type ResetPasswordResponse = {
   userId: string;
   resetAt: string;

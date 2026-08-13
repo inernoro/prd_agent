@@ -43,6 +43,7 @@ import type { ReprocessAgent, DocumentStoreConversation } from '@/services/contr
 import { DocApplyDiffModal } from './DocApplyDiffModal';
 import type { ApplyMode, FolderNode } from './docApplyPreview';
 import { toast } from '@/lib/toast';
+import { shortVideoFailureMessage } from '@/lib/shortVideoFailure';
 
 export type ReprocessChatDrawerProps = {
   entryId?: string;
@@ -1371,7 +1372,7 @@ export function ReprocessChatDrawer({
       }
 
       if (run.status === 'failed') {
-        const message = run.errorMessage || '短视频解析失败';
+        const message = shortVideoFailureMessage(run.errorMessage, run.errorCode);
         setMessages((prev) => prev.map((m) => m.id === messageId
           ? { ...m, streaming: false, phase: 'error', shortVideoRun: run, content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
           : m));
@@ -1479,7 +1480,7 @@ export function ReprocessChatDrawer({
       const res = await createShortVideoMaterialRun({ videoUrl: url, storeId });
       if (entryIdRef.current !== ownerKey) return;
       if (!res.success || !res.data) {
-        const message = res.error?.message || '短视频解析失败';
+        const message = shortVideoFailureMessage(res.error);
         setError(message);
         setMessages((prev) => prev.map((m) => m.id === asstMsgId
           ? { ...m, streaming: false, phase: 'error', content: `（解析失败：${message}）` }
@@ -1503,7 +1504,7 @@ export function ReprocessChatDrawer({
       await pollShortVideoRun(result.run.id, asstMsgId, ownerKey, pollToken);
     } catch (e) {
       if (entryIdRef.current !== ownerKey) return;
-      const message = e instanceof Error ? e.message : '网络异常';
+      const message = shortVideoFailureMessage(e);
       setError(message);
       setMessages((prev) => prev.map((m) => m.id === asstMsgId
         ? { ...m, streaming: false, phase: 'error', content: `（解析失败：${message}）` }

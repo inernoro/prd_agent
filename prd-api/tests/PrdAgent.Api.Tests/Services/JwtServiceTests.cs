@@ -1,5 +1,6 @@
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
+using System.IdentityModel.Tokens.Jwt;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -114,5 +115,30 @@ public class JwtServiceTests
 
         // Assert
         Assert.Equal(user.UserId, userId);
+    }
+
+    [Fact]
+    public void GenerateAccessToken_ShouldSupportBoundedSyntheticSession()
+    {
+        var before = DateTime.UtcNow;
+        var user = new User
+        {
+            UserId = "stable-smoke-user-id",
+            Username = "stable-smoke-user",
+            DisplayName = "Stable Smoke User",
+            Role = UserRole.QA
+        };
+
+        var token = _jwtService.GenerateAccessToken(
+            user,
+            clientType: "admin",
+            sessionKey: "synthetic-session-key",
+            tokenVersion: 1,
+            expiresInMinutes: 30,
+            authType: "synthetic-test");
+
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        Assert.Equal("synthetic-test", jwt.Claims.Single(claim => claim.Type == "authType").Value);
+        Assert.InRange(jwt.ValidTo, before.AddMinutes(29), before.AddMinutes(31));
     }
 }

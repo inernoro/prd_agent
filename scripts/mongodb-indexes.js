@@ -98,6 +98,8 @@ function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinit
       return
     }
 
+    // prepareUnique 在现有索引仍在保护写入时阻止新的重复键；
+    // 不允许先 drop 再 create，否则在索引替换窗口会放进新重复数据。
     try {
       db.runCommand({
         collMod: collectionName,
@@ -144,6 +146,42 @@ db.console_sso_tickets.createIndex(
 db.console_sso_tickets.createIndex(
   { "ExpiresAt": 1 },
   { name: "ttl_console_sso_tickets_expires_at", expireAfterSeconds: 0 }
+)
+
+// collection: direct_video_job_ownerships
+// 旧记录在维护窗口补齐七天到期时间；新写入由模型直接设置 ExpiresAt。
+const directVideoOwnershipRetentionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+db.direct_video_job_ownerships.updateMany(
+  { "ExpiresAt": { $exists: false } },
+  { $set: { "ExpiresAt": directVideoOwnershipRetentionExpiresAt } }
+)
+db.direct_video_job_ownerships.updateMany(
+  { "JobNamespace": { $exists: false } },
+  [{
+    $set: {
+      "JobNamespace": {
+        $cond: [
+          { $and: [{ $ne: ["$OfferingId", null] }, { $ne: ["$OfferingId", ""] }] },
+          { $concat: ["offering:", "$OfferingId"] },
+          { $concat: ["model:", { $ifNull: ["$Model", "unknown"] }] }
+        ]
+      }
+    }
+  }]
+)
+db.direct_video_job_ownerships.createIndex(
+  { "AppKey": 1, "JobNamespace": 1, "JobId": 1 },
+  { name: "uniq_direct_video_job_app_namespace_job", unique: true }
+)
+const legacyDirectVideoJobIndex = db.direct_video_job_ownerships.getIndexes()
+  .find(index => index.name === "uniq_direct_video_job_app_job")
+if (legacyDirectVideoJobIndex) {
+  // 新命名空间唯一索引已成功建立后才移除旧索引，全程无无保护写入窗口。
+  db.direct_video_job_ownerships.dropIndex(legacyDirectVideoJobIndex.name)
+}
+db.direct_video_job_ownerships.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "ttl_direct_video_job_expires_at", expireAfterSeconds: 0 }
 )
 
 // collection: system_roles

@@ -106,6 +106,7 @@
 - [开放平台功能概要 · 设计](./design.open-platform.md) `design.open-platform`
 - [Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计](./design.page-agent.bridge.md) `design.page-agent.bridge`
 - [账户数据共享 · 设计](./design.platform.account-data-sharing.md) `design.platform.account-data-sharing`
+- [MAP 核心业务稳定基线 · 设计](./design.platform.core-business-stability.md) `design.platform.core-business-stability`
 - [通用对话智能体 · 设计](./design.platform.chat-agent.md) `design.platform.chat-agent`
 - [模型中继虚拟平台设计 · 设计](./design.platform.exchange-virtual-platform.md) `design.platform.exchange-virtual-platform`
 - [CDS 部署架构与冲突分析 · 设计](./design.platform.exec-bt-deployment.md) `design.platform.exec-bt-deployment`
@@ -270,6 +271,7 @@
 - [前端 Apple 设计系统迁移 · 计划](./plan.frontend.apple-design-migration.md) `plan.frontend.apple-design-migration`
 - [前端移动端适配 · 计划](./plan.frontend.mobile-adaptation.md) `plan.frontend.mobile-adaptation`
 - [MD 转 PPT 对话工作台收尾 · 计划](./plan.md-to-ppt.chat-redesign.md) `plan.md-to-ppt.chat-redesign`
+- [MAP 核心业务稳定基线落地 · 计划](./plan.platform.core-business-stability.md) `plan.platform.core-business-stability`
 - [LLM Gateway 模型网关权威教程 · 计划](./plan.platform.llm-gateway.authoritative-tutorial.md) `plan.platform.llm-gateway.authoritative-tutorial`
 - [LLM Gateway 外部平台化与控制台体验收口 · 计划](./plan.platform.llm-gateway.external-platform.md) `plan.platform.llm-gateway.external-platform`
 - [LLM 网关旧路径物理退场 · 计划](./plan.platform.llm-gateway.full-cutover.md) `plan.platform.llm-gateway.full-cutover`

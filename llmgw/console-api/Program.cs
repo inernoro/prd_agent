@@ -26,6 +26,7 @@ using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
 using PrdAgent.LlmGw.Organization;
 using PrdAgent.LlmGw.Provisioning;
+using PrdAgent.LlmGw.LogicalModels;
 using PrdAgent.LlmGw.Security;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -70,8 +71,10 @@ if (jwtTooShort)
 var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
 
 // 网关控制台登录账号：
-// - 长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不再被 env 覆盖。
-// - LLMGW_ADMIN_PASSWORD 仅用于“首次 bootstrap 创建账号”或 LLMGW_ADMIN_FORCE_RESET 破玻璃时的重置口令。
+// - 默认模式下，长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不被 env 覆盖。
+// - LLMGW_ADMIN_ENV_AUTHORITY=1 时，LLMGW_ADMIN_PASSWORD 是长期权威；启动只在检测到漂移时修复，
+//   密码和状态一致时不写库、不递增 SecurityVersion，避免每次重启让已有会话失效。
+// - LLMGW_ADMIN_FORCE_RESET 保留为兼容的一次性破玻璃开关，同样采用幂等修复。
 // - 未设 bootstrap 口令时，内置 admin/admin 引导 + 首登强制改密，避免新环境锁死。
 const string AdminUser = "admin";
 const string DefaultAdminPwd = "admin";
@@ -105,7 +108,40 @@ var mapSsoLifetimeMinutes = config.GetValue<int>("LlmGwJwt:MapSsoLifetimeMinutes
 var mapSsoLifetime = mapSsoLifetimeMinutes > 0
     ? TimeSpan.FromMinutes(mapSsoLifetimeMinutes)
     : gwJwt.Lifetime;
+// 显式配置了收紧，就意味着「这条联邦会话必须在某个固定时刻死掉」。
+// 续签时必须按**剩余**时效签，不能重新给满：否则 15 分钟的 SSO 会话
+// 设一次口令、或切一次租户，就换成多天的 token，而 fed_session 带着的
+// 免旧口令特权会一起延长——反复调用甚至能无限续命（Codex PR #1364 P1）。
+// 没配置（默认与普通会话同为 7 天）时保持原样，续签照常给满，
+// 不动「用过就自动延长」的既有体验。
+// 只有**真的收紧了**才算硬截止。配成 >= 常规时长时 Issue 会把它 cap 回 _lifetime，
+// 于是 TryRenew 的「originalLifetime < _lifetime 才跳过」判据认不出它，中间件照常滑动续期，
+// fed_session 跟着无限延长——那样这个 flag 就是个假承诺（Codex PR #1364 P2）。
+// 判据跟着实际效果走，而不是跟着「配了没配」走。
+var mapSsoLifetimeIsHardDeadline = mapSsoLifetimeMinutes > 0 && mapSsoLifetime < gwJwt.Lifetime;
 builder.Services.AddSingleton(gwJwt);
+
+// 联邦会话续签的**绝对**到期时刻：原样沿用当前 token 的 exp，一秒都不往后挪。
+//
+// 上一版返回的是「剩余时长」，栽在 Issue 的 5 分钟下限上：只剩 2 分钟会被抬成 5 分钟，
+// 每 2 分钟续一次就能无限续命。所以这里必须给绝对时刻，由 Issue 走 absoluteExpiresAt
+// 分支绕开那个下限（Codex PR #1364 P1 第二轮）。
+//
+// 取不到 exp、或 exp 已经过去，都返回 null，调用方据此**拒绝续签**而不是给满——
+// 读不出截止时刻、或截止时刻已到时，唯一安全的动作都是不发新 token。
+//
+// 「已经过去」这一支不是假想输入：JwtBearer 配了 1 分钟 ClockSkew（见下方鉴权配置），
+// token 过期后一分钟内仍然能通过鉴权。此时 exp 在过去，若直接拿去签发，
+// JwtSecurityToken 会因为 expires <= notBefore 抛异常（Codex PR #1364 P2）。
+// 上一版我只 clamp 了「太远的未来」，没管「已经过去」——又是只覆盖了一个方向。
+static DateTime? FederatedHardDeadline(HttpContext http, bool hardDeadline)
+{
+    if (!hardDeadline) return null;
+    var raw = http.User.FindFirst("exp")?.Value;
+    if (!long.TryParse(raw, out var unix)) return null;
+    var deadline = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime;
+    return deadline > DateTime.UtcNow ? deadline : null;
+}
 
 // ── 鉴权 ──
 builder.Services
@@ -189,16 +225,32 @@ var app = builder.Build();
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
 
-// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 仅 bootstrap/破玻璃）──
-// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式重置 admin
+// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，可选 env 长期托管）──
+// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式校准 admin
 // 口令。用于「账号被认领但口令登不进」的死锁恢复。恢复后请把该 env 清掉。
 // **仅认真值**（Bugbot Medium）：只判「非空」会把 =0 / =false 误当开启，每次启动强制回 admin/admin 反而擦掉 env 口令。
-// 口令来源（2026-07-04 目标模式）：数据库是长期权威；LLMGW_ADMIN_PASSWORD 仅在首次创建或 force reset 时使用。
+// 永久在线模式：LLMGW_ADMIN_ENV_AUTHORITY=1 时，env 是 admin 口令权威。该模式要求显式配置非默认强口令。
 var forceResetRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET") ?? string.Empty).Trim();
 var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw, StringComparer.OrdinalIgnoreCase);
-var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
+var envAuthorityRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_ENV_AUTHORITY") ?? string.Empty).Trim();
+var envAuthorityAdmin = new[] { "1", "true", "yes", "on" }.Contains(envAuthorityRaw, StringComparer.OrdinalIgnoreCase);
+var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD")?.Trim();
+if (envAuthorityAdmin && (!GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd) || adminBootstrapPwd == DefaultAdminPwd))
+{
+    throw new InvalidOperationException(
+        $"LLMGW_ADMIN_ENV_AUTHORITY 已启用，但 LLMGW_ADMIN_PASSWORD 未达到至少 {GwPasswordPolicy.MinimumLength} 位的口令规则或仍为默认弱口令。" +
+        "请先配置独立强口令；服务拒绝以不可用的破窗账户启动。");
+}
 var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
-await SeedAdminAsync(gatewayDatabase, operationAudits, AdminUser, DefaultAdminPwd, internalTenantId, forceResetAdmin, adminBootstrapPwd);
+await SeedAdminAsync(
+    gatewayDatabase,
+    operationAudits,
+    AdminUser,
+    DefaultAdminPwd,
+    internalTenantId,
+    forceResetAdmin,
+    envAuthorityAdmin,
+    adminBootstrapPwd);
 
 // GW 请求日志由 llmgw-serve 写入独立 llm_gateway 库；控制台和 runtime gates 必须读取同一权威来源。
 var logs = gatewayDatabase.GetCollection<BsonDocument>("llmrequestlogs");
@@ -235,6 +287,9 @@ var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cos
 var costImportScopeLocks = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
 var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
 var legacyKeyUsage = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_usage");
+await LogicalModelCapabilityPolicy.BackfillLegacyGenerationModelsAsync(
+    gwLogicalModels,
+    CancellationToken.None);
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
 await EnsureInternalTenantAsync(
     users,
@@ -700,16 +755,27 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 
         var externalSubjectId = $"map:{mapUserId}";
         var gwUser = await users.Find(x => x.IdentityProvider == "map" && x.ExternalSubjectId == externalSubjectId).FirstOrDefaultAsync();
+
+        // 登录名默认跟 MAP 一致：一键登录进来的人不该被迫记住第二个名字。
+        // 取不到（不合法字符集、或已被别人占用）才退回自动名，并在账号页如实说明为什么。
+        var preferredUsername = LocalPasswordPolicy.TryNormalizeUsername(mapUsername, out var normalizedMapUsername, out _)
+            ? normalizedMapUsername
+            : null;
+        var preferredTaken = preferredUsername is not null
+            && await users.Find(x => x.Username == preferredUsername
+                                     && (x.IdentityProvider != "map" || x.ExternalSubjectId != externalSubjectId)).AnyAsync();
+        var fallbackUsername = $"map-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mapUserId))).ToLowerInvariant()[..16]}";
+
         if (gwUser is null)
         {
-            var stableUserHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mapUserId))).ToLowerInvariant();
             var createdUser = new LlmGwUser
             {
                 Id = Guid.NewGuid().ToString("N"),
-                Username = $"map-{stableUserHash[..16]}",
+                Username = preferredUsername is not null && !preferredTaken ? preferredUsername : fallbackUsername,
                 DisplayName = mapDisplayName.Length > 0 ? mapDisplayName : mapUsername,
                 IdentityProvider = "map",
                 ExternalSubjectId = externalSubjectId,
+                ExternalUsername = mapUsername,
                 PasswordHash = PasswordHasher.Hash(Convert.ToBase64String(RandomNumberGenerator.GetBytes(48))),
                 IsActive = true,
                 MustChangePassword = false,
@@ -732,11 +798,35 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
                 if (gwUser is null) throw;
             }
         }
+        else if (preferredUsername is not null
+                 && !preferredTaken
+                 && gwUser.Username.StartsWith(LocalPasswordPolicy.ReservedUsernamePrefix, StringComparison.Ordinal))
+        {
+            // 存量自愈：早先建的号还叫自动名，而 MAP 用户名此刻可用，就地改过来。
+            // 判据用保留前缀而不是别的标记——那个命名空间真人拿不到，落在里面必然是自动生成的。
+            // 改名不影响身份关联：绑定走 ExternalSubjectId，从来不依赖用户名。
+            try
+            {
+                var renamed = await users.FindOneAndUpdateAsync(
+                    Builders<LlmGwUser>.Filter.And(
+                        Builders<LlmGwUser>.Filter.Eq(x => x.Id, gwUser.Id),
+                        Builders<LlmGwUser>.Filter.Eq(x => x.Username, gwUser.Username)),
+                    Builders<LlmGwUser>.Update.Set(x => x.Username, preferredUsername),
+                    new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+                if (renamed is not null) gwUser = renamed;
+            }
+            catch (Exception ex) when (IsDuplicateKey(ex))
+            {
+                // 查到可用与真正写入之间被人抢先。保持自动名，账号页会提示改名。
+            }
+        }
 
         gwUser = await users.FindOneAndUpdateAsync(
             Builders<LlmGwUser>.Filter.Eq(x => x.Id, gwUser.Id),
             Builders<LlmGwUser>.Update
                 .Set(x => x.DisplayName, mapDisplayName.Length > 0 ? mapDisplayName : mapUsername)
+                // MAP 那边改了名要跟着刷新，否则账号页给的建议值是过期的。
+                .Set(x => x.ExternalUsername, mapUsername)
                 .Set(x => x.IsActive, true)
                 .Set(x => x.MustChangePassword, false)
                 .Set(x => x.DefaultTenantId, tenant.Id)
@@ -792,7 +882,7 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 
         // MAP 联邦会话默认与普通会话同为 7 天（LlmGwJwt:MapSsoLifetimeMinutes 可收紧）；
         // 再次从 MAP 点击仍会原子吊销该用户旧 Gateway 会话。
-        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, mapSsoLifetime);
+        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, mapSsoLifetime, federatedSession: true);
         return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
         {
             Token = token,
@@ -818,21 +908,33 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
 // ───────────────────────────── 改密（需鉴权，mcp token 也可）─────────────────────────────
 // 首登强制改密：校验旧口令 → 写新哈希 → 清 MustChangePassword → 重新签发不带 mcp 的 token。
 // 用普通 RequireAuthorization（不走 LogsRead 策略），使 mcp=1 的 token 能在此改密后解锁日志。
+//
+// 同一条路径也承担「联邦账号首次认领本地口令」：MAP 一键登录建的号，用户名与口令都是自动生成的，
+// 没人知道旧口令。是否豁免旧口令由 LocalPasswordPolicy 单点判定，写口令仍然只有这一处实现。
 app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] ChangePasswordRequestDto req) =>
 {
     var oldPwd = req.OldPassword ?? "";
     var newPwd = req.NewPassword ?? "";
-    if (oldPwd.Length == 0 || newPwd.Length == 0)
+    var requestedUsername = (req.Username ?? "").Trim();
+    if (newPwd.Length == 0)
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令与新口令不能为空"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "新口令不能为空"), jsonOptions);
     }
-    if (newPwd.Length < 12)
+    if (!LocalPasswordPolicy.MeetsMinimumLength(newPwd))
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", "新口令至少 12 位"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", $"新口令至少 {LocalPasswordPolicy.MinPasswordLength} 位"), jsonOptions);
     }
-    if (newPwd == oldPwd)
+
+    // 硬截止的联邦会话：**在任何写入之前**就把「到期时间不可读 / 已经过期」挡掉。
+    // 放到最后再签发是不行的：那时口令、用户名、SecurityVersion 都已经落库，
+    // 签发失败只能回 500，而用户的会话恰恰被这次改密作废了——改成功了却拿到 500，
+    // 还得重新登录（Codex PR #1364 P2）。
+    if (http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1"
+        && mapSsoLifetimeIsHardDeadline
+        && FederatedHardDeadline(http, true) is null)
     {
-        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("SAME_PASSWORD", "新口令不能与旧口令相同"), jsonOptions);
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail(
+            "SESSION_EXPIRED", "会话已到期或到期时间不可读，请重新登录后再试"), jsonOptions, 401);
     }
 
     // 从 token 的 sub（用户 Id）定位账号，避免依赖可变的用户名。
@@ -848,7 +950,55 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
     }
-    if (!PasswordHasher.Verify(oldPwd, user.PasswordHash))
+    if (envAuthorityAdmin && string.Equals(user.Username, AdminUser, StringComparison.Ordinal))
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "auth.change_password",
+            targetType: "llmgw_console_user",
+            targetId: user.Id,
+            targetName: user.Username,
+            success: false,
+            reason: "PASSWORD_MANAGED_BY_DEPLOYMENT");
+        return Json(
+            ApiEnvelope<ChangePasswordResultDto>.Fail(
+                "PASSWORD_MANAGED_BY_DEPLOYMENT",
+                "该管理员口令由部署配置统一管理，当前页面不能修改。请联系系统管理员更新后重新登录。"),
+            jsonOptions,
+            statusCode: 409);
+    }
+
+    // 会话来源参与判定：从 MAP 一键登录进来的人此刻就能再走一遍 SSO，
+    // 要求旧口令拦不住任何人，只会把忘记口令的本人锁死。
+    var fromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
+    var requiresOldPassword = LocalPasswordPolicy.RequiresOldPassword(
+        user.IdentityProvider, user.PasswordChangedByUser, fromFederatedSession);
+    if (requiresOldPassword && oldPwd.Length == 0)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "旧口令不能为空"), jsonOptions);
+    }
+    if (requiresOldPassword && newPwd == oldPwd)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("SAME_PASSWORD", "新口令不能与旧口令相同"), jsonOptions);
+    }
+
+    var newUsername = user.Username;
+    if (requestedUsername.Length > 0)
+    {
+        if (!LocalPasswordPolicy.TryNormalizeUsername(requestedUsername, out var normalizedUsername, out var usernameError))
+        {
+            return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_USERNAME", usernameError!), jsonOptions);
+        }
+        if (!string.Equals(normalizedUsername, user.Username, StringComparison.Ordinal)
+            && await users.Find(u => u.Username == normalizedUsername).AnyAsync())
+        {
+            return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("USERNAME_TAKEN", "该登录名已被占用"), jsonOptions);
+        }
+        newUsername = normalizedUsername;
+    }
+
+    if (requiresOldPassword && !PasswordHasher.Verify(oldPwd, user.PasswordHash))
     {
         await WriteOperationAuditAsync(
             operationAudits,
@@ -866,21 +1016,42 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     var wasPasswordChangedByUser = user.PasswordChangedByUser;
     var update = Builders<LlmGwUser>.Update
         .Set(u => u.PasswordHash, PasswordHasher.Hash(newPwd))
+        .Set(u => u.Username, newUsername)
         .Set(u => u.MustChangePassword, false)
         // 标记为真人认领：默认模式下重启不再自愈回 admin/admin，保住用户新口令。
+        // 联邦账号一旦认领，下次改密就回到常规的旧口令校验。
         .Set(u => u.PasswordChangedByUser, true)
         .Inc(u => u.SecurityVersion, 1)
         .Set(u => u.UpdatedAt, DateTime.UtcNow);
-    var changedUser = await users.FindOneAndUpdateAsync(
-        Builders<LlmGwUser>.Filter.And(
-            Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
-            Builders<LlmGwUser>.Filter.Eq(u => u.IsActive, true),
-            Builders<LlmGwUser>.Filter.Eq(u => u.SecurityVersion, user.SecurityVersion),
-            Builders<LlmGwUser>.Filter.Eq(u => u.PasswordHash, user.PasswordHash)),
-        update,
-        new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+    LlmGwUser? changedUser;
+    try
+    {
+        changedUser = await users.FindOneAndUpdateAsync(
+            Builders<LlmGwUser>.Filter.And(
+                Builders<LlmGwUser>.Filter.Eq(u => u.Id, user.Id),
+                Builders<LlmGwUser>.Filter.Eq(u => u.IsActive, true),
+                Builders<LlmGwUser>.Filter.Eq(u => u.SecurityVersion, user.SecurityVersion),
+                Builders<LlmGwUser>.Filter.Eq(u => u.PasswordHash, user.PasswordHash)),
+            update,
+            new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
+    }
+    catch (Exception ex) when (IsDuplicateKey(ex))
+    {
+        // 上面的占用查询与这次写入之间有窗口，唯一索引才是权威。
+        // 两种异常都要接：findAndModify 走 MongoCommandException，普通写入走 MongoWriteException。
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("USERNAME_TAKEN", "该登录名已被占用"), jsonOptions);
+    }
     if (changedUser is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("PASSWORD_CHANGE_CONFLICT", "账号口令已被其他操作更新，请重新登录"), jsonOptions, 409);
+    var auditChanges = new BsonDocument
+    {
+        { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
+        { "passwordChangedByUser", new BsonDocument { { "from", wasPasswordChangedByUser }, { "to", true } } },
+        // 免旧口令的首次认领要在审计里留痕，否则事后分不清「验过旧口令」和「凭会话认领」。
+        { "oldPasswordVerified", requiresOldPassword },
+    };
+    if (!string.Equals(newUsername, user.Username, StringComparison.Ordinal))
+        auditChanges.Add("username", new BsonDocument { { "from", user.Username }, { "to", newUsername } });
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -890,11 +1061,7 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         targetName: user.Username,
         success: true,
         reason: null,
-        changes: new BsonDocument
-        {
-            { "mustChangePassword", new BsonDocument { { "from", wasMustChangePassword }, { "to", false } } },
-            { "passwordChangedByUser", new BsonDocument { { "from", wasPasswordChangedByUser }, { "to", true } } },
-        });
+        changes: auditChanges);
 
     // 重新签发 token（此时 MustChangePassword 已清，Issue 不再带 mcp claim）。
     var tenantAccess = TenantAccess.GetRequired(http);
@@ -902,7 +1069,27 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     var tenant = membership is null ? null : await tenants.Find(x => x.Id == tenantAccess.TenantId && x.Status == "active").FirstOrDefaultAsync();
     if (tenant is null || membership is null)
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("TENANT_ACCESS_DENIED", "租户成员关系已失效"), jsonOptions, 403);
-    var (token, expiresAt) = gwJwt.Issue(changedUser, tenant, membership);
+    // 联邦会话续签不得把到期时间往后推，理由见 FederatedHardDeadline。
+    // 前面已经在**任何写入之前**挡过一次；但从那次检查到这里要经过定位账号、
+    // PBKDF2、写库、写审计，硬截止完全可能正好落在这段时间里（TOCTOU）。
+    // 此时口令**已经改成功了**，绝不能回一个「失败」——用户会拿着旧口令反复重试，
+    // 而旧口令已经不好使了。如实说：改成功了，会话到期了，请重新登录（Codex PR #1364 P2）。
+    var needsHardDeadline = fromFederatedSession && mapSsoLifetimeIsHardDeadline;
+    var reissueDeadline = FederatedHardDeadline(http, needsHardDeadline);
+    if (needsHardDeadline && reissueDeadline is null)
+    {
+        return Json(ApiEnvelope<ChangePasswordResultDto>.Ok(new ChangePasswordResultDto
+        {
+            Token = string.Empty,
+            Username = changedUser.Username,
+            DisplayName = string.IsNullOrEmpty(changedUser.DisplayName) ? changedUser.Username : changedUser.DisplayName,
+            IdentityProvider = changedUser.IdentityProvider,
+            Tenant = ToTenantSession(tenant, membership),
+            RequiresRelogin = true,
+        }), jsonOptions);
+    }
+    var (token, expiresAt) = gwJwt.Issue(
+        changedUser, tenant, membership, federatedSession: fromFederatedSession, absoluteExpiresAt: reissueDeadline);
     var data = new ChangePasswordResultDto
     {
         Token = token,
@@ -913,6 +1100,59 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
         Tenant = ToTenantSession(tenant, membership),
     };
     return Json(ApiEnvelope<ChangePasswordResultDto>.Ok(data), jsonOptions);
+}).RequireAuthorization();
+
+// 「账号与安全」页的数据源：告诉用户自己的登录名是什么、有没有可用的本地口令。
+// 一键登录进来的人此前无处得知这两件事，于是「网关有口令但登不进去」。
+// 与改密同为普通 RequireAuthorization：任何角色都必须能管自己的凭据。
+app.MapGet("/gw/auth/account", async (HttpContext http) =>
+{
+    var userId = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        ?? http.User.FindFirst("sub")?.Value;
+    if (string.IsNullOrEmpty(userId))
+        return Json(ApiEnvelope<AccountProfileDto>.Fail("UNAUTHORIZED", "无效的登录态"), jsonOptions, statusCode: 401);
+
+    var user = await users.Find(u => u.Id == userId).FirstOrDefaultAsync();
+    if (user is null || !user.IsActive)
+        return Json(ApiEnvelope<AccountProfileDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
+
+    var access = TenantAccess.GetRequired(http);
+    var requiresOld = LocalPasswordPolicy.RequiresOldPassword(
+        user.IdentityProvider,
+        user.PasswordChangedByUser,
+        http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1");
+
+    // 建议登录名 = 外部身份那边的登录名。只在它与当前用户名不同时才有意义；
+    // 被别人占用时也要返回，好让页面说清「为什么你不能用自己那个名字」。
+    string? suggestedUsername = null;
+    var suggestedTaken = false;
+    if (LocalPasswordPolicy.TryNormalizeUsername(user.ExternalUsername, out var normalizedExternal, out _)
+        && !string.Equals(normalizedExternal, user.Username, StringComparison.Ordinal))
+    {
+        suggestedUsername = normalizedExternal;
+        suggestedTaken = await users.Find(x => x.Username == normalizedExternal && x.Id != user.Id).AnyAsync();
+    }
+
+    return Json(ApiEnvelope<AccountProfileDto>.Ok(new AccountProfileDto
+    {
+        Username = user.Username,
+        DisplayName = string.IsNullOrEmpty(user.DisplayName) ? user.Username : user.DisplayName,
+        IdentityProvider = user.IdentityProvider,
+        HasLocalPassword = LocalPasswordPolicy.HasUsablePassword(user.IdentityProvider, user.PasswordChangedByUser),
+        RequiresOldPassword = requiresOld,
+        UsernameIsGenerated = user.Username.StartsWith(LocalPasswordPolicy.ReservedUsernamePrefix, StringComparison.Ordinal),
+        SuggestedUsername = suggestedUsername,
+        SuggestedUsernameTaken = suggestedTaken,
+        MinPasswordLength = LocalPasswordPolicy.MinPasswordLength,
+        Tenant = new TenantSessionDto
+        {
+            Id = access.TenantId,
+            Name = access.TenantName,
+            IsInternal = access.IsInternalTenant,
+            Role = access.Role,
+            TeamIds = access.TeamIds.ToList(),
+        },
+    }), jsonOptions);
 }).RequireAuthorization();
 
 app.MapGet("/gw/auth/context", (HttpContext http) =>
@@ -972,8 +1212,29 @@ app.MapPost("/gw/auth/switch-tenant", async (HttpContext http, [FromBody] Switch
         || !TenantOwnerAuthority.IsEffectiveOwner(tenant, membership))
         return Json(ApiEnvelope<LoginResultDto>.Fail("TENANT_ACCESS_DENIED", "无权切换到该租户"), jsonOptions, 403);
 
+    // 同上：先挡住到期/不可读，再写默认租户。否则写完才发现签不出 token，
+    // 用户的默认租户已经被改掉，却只拿到一个错误。
+    var switchFromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
+    var switchDeadline = FederatedHardDeadline(http, switchFromFederatedSession && mapSsoLifetimeIsHardDeadline);
+    if (switchFromFederatedSession && mapSsoLifetimeIsHardDeadline && switchDeadline is null)
+        return Json(ApiEnvelope<LoginResultDto>.Fail(
+            "SESSION_EXPIRED", "会话已到期或到期时间不可读，请重新登录后再试"), jsonOptions, 401);
+
     await users.UpdateOneAsync(x => x.Id == user.Id, Builders<LlmGwUser>.Update.Set(x => x.DefaultTenantId, tenant.Id).Set(x => x.UpdatedAt, DateTime.UtcNow));
-    var (token, expiresAt) = gwJwt.Issue(user, tenant, membership);
+    // 换租户是**续期**，会话血统不变：fed_session 必须原样带过去。
+    // 丢掉它的后果正好打在本次新增的功能上——一键登录进来、还没设过口令的人切一次租户，
+    // /gw/auth/account 就会改口说「要先填当前口令」，而那个口令是建号时随机生成的、
+    // 没人知道，于是「忘了口令可以靠 SSO 自救」这条路当场断掉，直到重新走一次 MAP 登录。
+    // 改密那条路（上面 Issue(..., federatedSession: fromFederatedSession)）早就是这么做的，
+    // 这里漏了同一个判断（Codex PR #1363 P2）。
+    // 写库到这里之间同样有 TOCTOU 窗口，重新读一次；这里改的只是「默认租户」这种偏好，
+    // 不是凭据，所以回 401 让用户重登即可，不需要像改密那样特殊措辞。
+    switchDeadline = FederatedHardDeadline(http, switchFromFederatedSession && mapSsoLifetimeIsHardDeadline);
+    if (switchFromFederatedSession && mapSsoLifetimeIsHardDeadline && switchDeadline is null)
+        return Json(ApiEnvelope<LoginResultDto>.Fail(
+            "SESSION_EXPIRED", "会话已到期，请重新登录后再试"), jsonOptions, 401);
+    var (token, expiresAt) = gwJwt.Issue(
+        user, tenant, membership, federatedSession: switchFromFederatedSession, absoluteExpiresAt: switchDeadline);
     return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
     {
         Token = token,
@@ -1549,7 +1810,7 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
     }
 
     var initialPassword = body.InitialPassword ?? string.Empty;
-    if (initialPassword.Length < 12)
+    if (!GwPasswordPolicy.MeetsMinimumLength(initialPassword))
         return Json(ApiEnvelope<object>.Fail("INVALID_PASSWORD", "新用户初始密码至少 12 位"), jsonOptions, 400);
     memberUser = new LlmGwUser
     {
@@ -2730,7 +2991,7 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
     var now = DateTime.UtcNow;
     var id = $"gw-logical-{Guid.NewGuid():N}";
-    var capabilities = (body?.Capabilities ?? new()).Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+    var capabilities = LogicalModelCapabilityPolicy.Normalize(modelType, body?.Capabilities);
     var appCallers = (body?.AllowedAppCallerCodes ?? new()).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     var document = new BsonDocument
     {
@@ -2801,7 +3062,12 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     }
     if (body.Capabilities is not null)
     {
-        var capabilities = body.Capabilities.Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        var existing = await gwLogicalModels.Find(
+                TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+            .Project(Builders<BsonDocument>.Projection.Include("ModelType"))
+            .FirstOrDefaultAsync();
+        var existingModelType = existing?.GetStringOrEmpty("ModelType") ?? string.Empty;
+        var capabilities = LogicalModelCapabilityPolicy.Normalize(existingModelType, body.Capabilities);
         updates.Add(Builders<BsonDocument>.Update.Set("Capabilities", new BsonArray(capabilities)));
     }
     if (body.AllowedAppCallerCodes is not null)
@@ -2857,7 +3123,12 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为 1 到 1000000"), jsonOptions, 400);
     if (!IsSafeOfferingEndpointPath(body?.EndpointPath))
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
-    var duplicate = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", id), fb.Eq("TargetKind", targetKind), fb.Eq("TargetId", targetId));
+    var duplicate = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("LogicalModelId", id),
+        fb.Eq("TargetKind", targetKind),
+        fb.Eq("TargetId", targetId),
+        fb.Not(fb.Exists("SupersededByOfferingId")));
     if (await gwModelOfferings.Find(duplicate).AnyAsync())
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("DUPLICATE_OFFERING", "该上游已绑定到此逻辑模型"), jsonOptions, 409);
 
@@ -2892,6 +3163,7 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
 
 app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId, [FromBody] UpdateModelOfferingRequest? body) =>
 {
+    var fb = Builders<BsonDocument>.Filter;
     if (body is null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "缺少更新内容"), jsonOptions, 400);
     if (body.MaxConcurrency is < 0 or > 10000)
@@ -2900,6 +3172,15 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为空、0 或 1 到 1000000"), jsonOptions, 400);
     if (!IsSafeOfferingEndpointPath(body.EndpointPath))
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", offeringId), Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+    var existing = await gwModelOfferings.Find(filter).FirstOrDefaultAsync();
+    if (existing is null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+    if (existing.Contains("SupersededByOfferingId"))
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            "OFFERING_SUPERSEDED",
+            "该 Offering 已有新版本，请刷新后编辑当前版本"), jsonOptions, 409);
     var updates = new List<UpdateDefinition<BsonDocument>>();
     if (body.UpstreamModelId is not null) updates.Add(SetOrUnset("UpstreamModelId", body.UpstreamModelId));
     if (body.Protocol is not null) updates.Add(SetOrUnset("Protocol", body.Protocol.ToLowerInvariant()));
@@ -2911,15 +3192,118 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
     if (body.Notes is not null) updates.Add(SetOrUnset("Notes", body.Notes));
     if (updates.Count == 0)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
+    var changedFieldCount = updates.Count;
+    var routingConfigurationChanged = OfferingRoutingChangePolicy.HasChanged(
+        existing.AsNullableString("UpstreamModelId"),
+        existing.AsNullableString("Protocol"),
+        existing.AsNullableString("EndpointPath"),
+        body.UpstreamModelId,
+        body.Protocol,
+        body.EndpointPath);
+    if (routingConfigurationChanged)
+    {
+        // Offering ID 是已受理异步任务的持久化路由身份，协议、Endpoint 与上游模型不得原地改写。
+        // 生成一个新 Offering 给后续任务使用；旧 Offering 退出新任务调度，但仍保留原路由，
+        // 使已经付费提交的视频任务在 worker 重启后仍能按旧 ID 轮询和下载。
+        var now = DateTime.UtcNow;
+        var replacementId = $"gw-offering-{Guid.NewGuid():N}";
+        var replacement = existing.DeepClone().AsBsonDocument;
+        replacement["_id"] = replacementId;
+        ApplyModelOfferingUpdate(replacement, body);
+        replacement["Enabled"] = false;
+        replacement["HealthStatus"] = 0;
+        replacement["ConsecutiveFailures"] = 0;
+        replacement["ConsecutiveSuccesses"] = 0;
+        replacement["SupersedesOfferingId"] = offeringId;
+        var stagingMarker = $"pending:{replacementId}";
+        replacement["SupersededByOfferingId"] = stagingMarker;
+        replacement["CreatedAt"] = now;
+        replacement["UpdatedAt"] = now;
+        replacement.Remove("SupersededAt");
+
+        await gwModelOfferings.InsertOneAsync(replacement);
+        var retirementFilter = fb.And(filter, fb.Not(fb.Exists("SupersededByOfferingId")));
+        var retired = await gwModelOfferings.FindOneAndUpdateAsync(
+            retirementFilter,
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("SupersededByOfferingId", replacementId)
+                .Set("SupersededAt", now)
+                .Set("UpdatedAt", now),
+            new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+        if (retired is null)
+        {
+            await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "OFFERING_EDIT_CONFLICT",
+                "该 Offering 已被其他管理员更新，请刷新后重试"), jsonOptions, 409);
+        }
+
+        var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
+        var promoted = await gwModelOfferings.UpdateOneAsync(
+            TenantAccess.Filter(http, fb.And(
+                fb.Eq("_id", replacementId),
+                fb.Eq("SupersededByOfferingId", stagingMarker))),
+            Builders<BsonDocument>.Update
+                .Unset("SupersededByOfferingId")
+                .Set("Enabled", replacementEnabled)
+                .Set("UpdatedAt", DateTime.UtcNow));
+        if (promoted.ModifiedCount != 1)
+        {
+            await gwModelOfferings.UpdateOneAsync(
+                TenantAccess.Filter(http, fb.And(
+                    fb.Eq("_id", offeringId),
+                    fb.Eq("SupersededByOfferingId", replacementId))),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", replacementEnabled)
+                    .Unset("SupersededByOfferingId")
+                    .Unset("SupersededAt")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "OFFERING_PROMOTION_FAILED",
+                "新路由未能接管流量，原 Offering 已恢复，请重试"), jsonOptions, 503);
+        }
+        replacement.Remove("SupersededByOfferingId");
+        replacement["Enabled"] = replacementEnabled;
+
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            "model-offering.route-replaced",
+            "llmgw_model_offering",
+            replacementId,
+            replacement.GetStringOrEmpty("TargetId"),
+            true,
+            null,
+            new BsonDocument
+            {
+                { "logicalModelId", logicalId },
+                { "supersededOfferingId", offeringId },
+                { "fieldCount", changedFieldCount },
+                { "healthReset", true },
+            });
+        var logicalForReplacement = await gwLogicalModels.Find(
+            TenantAccess.Filter(http, fb.Eq("_id", logicalId))).FirstOrDefaultAsync();
+        var replacementModels = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+        var replacementExchanges = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+        var replacementPlatforms = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+        return Json(ApiEnvelope<ModelOfferingItem>.Ok(MapLogicalModel(
+            logicalForReplacement!,
+            new List<BsonDocument> { replacement },
+            replacementModels,
+            replacementExchanges,
+            replacementPlatforms).Offerings.Single()), jsonOptions);
+    }
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
-        Builders<BsonDocument>.Filter.Eq("_id", offeringId), Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
     var updated = await gwModelOfferings.FindOneAndUpdateAsync(filter, Builders<BsonDocument>.Update.Combine(updates),
         new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
     if (updated is null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
     await WriteOperationAuditAsync(operationAudits, http, "model-offering.update", "llmgw_model_offering", offeringId, updated.GetStringOrEmpty("TargetId"), true, null,
-        new BsonDocument { { "logicalModelId", logicalId }, { "fieldCount", updates.Count - 1 } });
+        new BsonDocument { { "logicalModelId", logicalId }, { "fieldCount", changedFieldCount }, { "healthReset", routingConfigurationChanged } });
     var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", logicalId))).FirstOrDefaultAsync();
     var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
     var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
@@ -7775,6 +8159,8 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
     await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("ApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "platform", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -7788,6 +8174,7 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
@@ -7804,6 +8191,8 @@ app.MapDelete("/gw/platforms/{id}/api-key", async (HttpContext http, string id) 
     await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("ApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "platform", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -7817,6 +8206,7 @@ app.MapDelete("/gw/platforms/{id}/api-key", async (HttpContext http, string id) 
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
@@ -8136,6 +8526,8 @@ app.MapPut("/gw/models/{id}/api-key", async (HttpContext http, string id, [FromB
     await gwModels.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("ApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "model", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -8149,6 +8541,7 @@ app.MapPut("/gw/models/{id}/api-key", async (HttpContext http, string id, [FromB
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModels.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
@@ -8165,6 +8558,8 @@ app.MapDelete("/gw/models/{id}/api-key", async (HttpContext http, string id) =>
     await gwModels.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("ApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "model", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -8178,6 +8573,7 @@ app.MapDelete("/gw/models/{id}/api-key", async (HttpContext http, string id) =>
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModels.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
@@ -8634,6 +9030,8 @@ app.MapPut("/gw/exchanges/{id}/api-key", async (HttpContext http, string id, [Fr
     await gwModelExchanges.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("TargetApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "exchange", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -8647,6 +9045,7 @@ app.MapPut("/gw/exchanges/{id}/api-key", async (HttpContext http, string id, [Fr
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModelExchanges.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions);
@@ -8663,6 +9062,8 @@ app.MapDelete("/gw/exchanges/{id}/api-key", async (HttpContext http, string id) 
     await gwModelExchanges.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("TargetApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "exchange", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -8676,6 +9077,7 @@ app.MapDelete("/gw/exchanges/{id}/api-key", async (HttpContext http, string id) 
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModelExchanges.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions);
@@ -8775,7 +9177,11 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
     }
 
     var targetFilter = TenantAccess.Filter(http, filters.Count == 0 ? fb.Empty : fb.And(filters));
-    var matchedCount = await targetCollection.CountDocumentsAsync(targetFilter);
+    var matchedTargets = await targetCollection.Find(targetFilter)
+        .Project(Builders<BsonDocument>.Projection.Include("_id"))
+        .ToListAsync();
+    var matchedTargetIds = matchedTargets.Select(item => item.GetStringOrEmpty("_id")).ToList();
+    var matchedCount = matchedTargetIds.Count;
     var skippedCount = ids.Count > 0 ? Math.Max(0, ids.Count - matchedCount) : 0;
     if (matchedCount == 0)
     {
@@ -8793,6 +9199,8 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
     var updateResult = await targetCollection.UpdateManyAsync(targetFilter, Builders<BsonDocument>.Update
         .Set(encryptedField, encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, objectType, matchedTargetIds, gwModels, gwModelOfferings);
     var result = new BulkRotateApiKeysResult
     {
         ObjectType = objectType,
@@ -8818,6 +9226,7 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
             { "matchedCount", matchedCount },
             { "modifiedCount", updateResult.ModifiedCount },
             { "skippedCount", skippedCount },
+            { "offeringsReset", resetOfferingCount },
             { "hasKey", new BsonDocument { { "to", true } } },
             { "authority", "llm_gateway" },
         });
@@ -10586,9 +10995,10 @@ static async Task EnsureInternalTenantAsync(
 }
 
 // 幂等播种管理员。优先级（从高到低）：
-//   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，显式重置 admin 口令 + 强制改密。
-//   2) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
-//   3) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
+//   1) envAuthority（LLMGW_ADMIN_ENV_AUTHORITY=1）：env 是长期权威，只在口令或账号状态漂移时修复。
+//   2) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：一次性破玻璃，同样只在漂移时修复。
+//   3) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
+//   4) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
 static async Task SeedAdminAsync(
     IMongoDatabase db,
     IMongoCollection<BsonDocument> operationAudits,
@@ -10596,32 +11006,51 @@ static async Task SeedAdminAsync(
     string defaultPwd,
     string tenantId,
     bool forceReset = false,
+    bool envAuthority = false,
     string? envPassword = null)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
 
     // 多租户账号由 membership 控制，不得在 bootstrap 时禁用其它租户用户。
 
-    // 破玻璃优先级最高：显式打开时才改库中口令，用于账号被认领但口令丢失的死锁恢复。
-    if (forceReset)
+    // 环境变量长期托管或一次性破玻璃：只修复漂移。PBKDF2 每次 Hash 都有新盐，禁止在口令已经
+    // 匹配时重复写 Hash，否则每次启动都会制造无意义变更并使所有现有会话失效。
+    if (envAuthority || forceReset)
     {
         var resetPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
-        var resetHash = PasswordHasher.Hash(resetPassword);
         var resetMustChange = resetPassword == defaultPwd;
         var existingForce = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
         if (existingForce is not null)
         {
-            await users.UpdateOneAsync(u => u.Username == username,
-                Builders<LlmGwUser>.Update
-                    .Set(u => u.PasswordHash, resetHash)
-                    .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, resetMustChange)
-                    .Set(u => u.PasswordChangedByUser, false)
-                    .Inc(u => u.SecurityVersion, 1)
-                    .Set(u => u.UpdatedAt, DateTime.UtcNow));
+            var passwordDrifted = !PasswordHasher.Verify(resetPassword, existingForce.PasswordHash);
+            var activeDrifted = !existingForce.IsActive;
+            var mustChangeDrifted = existingForce.MustChangePassword != resetMustChange;
+            var ownershipDrifted = existingForce.PasswordChangedByUser;
+
+            if (!passwordDrifted && !activeDrifted && !mustChangeDrifted && !ownershipDrifted)
+                return;
+
+            var updates = new List<UpdateDefinition<LlmGwUser>>();
+            if (passwordDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.PasswordHash, PasswordHasher.Hash(resetPassword)));
+            if (activeDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
+            if (mustChangeDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.MustChangePassword, resetMustChange));
+            if (ownershipDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.PasswordChangedByUser, false));
+
+            var securityStateChanged = passwordDrifted || activeDrifted || mustChangeDrifted;
+            if (securityStateChanged)
+                updates.Add(Builders<LlmGwUser>.Update.Inc(u => u.SecurityVersion, 1));
+            updates.Add(Builders<LlmGwUser>.Update.Set(u => u.UpdatedAt, DateTime.UtcNow));
+
+            await users.UpdateOneAsync(
+                u => u.Username == username,
+                Builders<LlmGwUser>.Update.Combine(updates));
             await WriteSystemOperationAuditAsync(
                 operationAudits,
-                action: "admin.force_reset",
+                action: envAuthority ? "admin.env_authority_reconcile" : "admin.force_reset",
                 targetType: "llmgw_console_user",
                 targetId: existingForce.Id,
                 targetName: username,
@@ -10629,7 +11058,9 @@ static async Task SeedAdminAsync(
                 reason: null,
                 changes: new BsonDocument
                 {
+                    { "mode", envAuthority ? "env_authority" : "force_reset" },
                     { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                    { "passwordDrifted", passwordDrifted },
                     { "mustChangePassword", new BsonDocument { { "from", existingForce.MustChangePassword }, { "to", resetMustChange } } },
                     { "passwordChangedByUser", new BsonDocument { { "from", existingForce.PasswordChangedByUser }, { "to", false } } },
                     { "wasActive", existingForce.IsActive },
@@ -10640,7 +11071,7 @@ static async Task SeedAdminAsync(
         {
             var resetUser = new LlmGwUser
             {
-                Username = username, PasswordHash = resetHash, DisplayName = username,
+                Username = username, PasswordHash = PasswordHasher.Hash(resetPassword), DisplayName = username,
                 IsActive = true, MustChangePassword = resetMustChange, PasswordChangedByUser = false,
                 Scopes = new[] { "logs:read" }, CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -10648,7 +11079,7 @@ static async Task SeedAdminAsync(
             await users.InsertOneAsync(resetUser);
             await WriteSystemOperationAuditAsync(
                 operationAudits,
-                action: "admin.force_reset_bootstrap",
+                action: envAuthority ? "admin.env_authority_bootstrap" : "admin.force_reset_bootstrap",
                 targetType: "llmgw_console_user",
                 targetId: resetUser.Id,
                 targetName: username,
@@ -10656,6 +11087,7 @@ static async Task SeedAdminAsync(
                 reason: null,
                 changes: new BsonDocument
                 {
+                    { "mode", envAuthority ? "env_authority" : "force_reset" },
                     { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
                     { "mustChangePassword", resetMustChange },
                 },
@@ -12475,6 +12907,33 @@ static bool IsSafeOfferingEndpointPath(string? value)
            && !path.Any(char.IsControl);
 }
 
+static void ApplyModelOfferingUpdate(BsonDocument document, UpdateModelOfferingRequest body)
+{
+    SetOrRemove("UpstreamModelId", body.UpstreamModelId);
+    SetOrRemove("Protocol", body.Protocol?.ToLowerInvariant());
+    SetOrRemove("EndpointPath", body.EndpointPath);
+    if (body.Priority is not null) document["Priority"] = Math.Clamp(body.Priority.Value, 0, 10000);
+    if (body.Weight is not null) document["Weight"] = Math.Clamp(body.Weight.Value, 1, 10000);
+    if (body.MaxConcurrency is not null)
+    {
+        if (body.MaxConcurrency > 0) document["MaxConcurrency"] = body.MaxConcurrency.Value;
+        else document.Remove("MaxConcurrency");
+    }
+    if (body.RateLimitPerMinute is not null)
+    {
+        if (body.RateLimitPerMinute > 0) document["RateLimitPerMinute"] = body.RateLimitPerMinute.Value;
+        else document.Remove("RateLimitPerMinute");
+    }
+    SetOrRemove("Notes", body.Notes);
+
+    void SetOrRemove(string field, string? value)
+    {
+        if (value is null) return;
+        if (string.IsNullOrWhiteSpace(value)) document.Remove(field);
+        else document[field] = value.Trim();
+    }
+}
+
 static LogicalModelItem MapLogicalModel(
     BsonDocument logical,
     IReadOnlyCollection<BsonDocument> offeringDocs,
@@ -12491,6 +12950,7 @@ static LogicalModelItem MapLogicalModel(
         .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
     var offerings = offeringDocs
         .Where(x => string.Equals(x.GetStringOrEmpty("LogicalModelId"), logicalId, StringComparison.Ordinal))
+        .Where(x => !x.Contains("SupersededByOfferingId"))
         .OrderBy(x => x.AsNullableInt("Priority") ?? 100)
         .Select(x =>
         {
@@ -13406,6 +13866,15 @@ static BsonDocument PromptPolicyAuditChanges(BsonDocument doc) => new()
 };
 
 // 统一 JSON 输出（带信封 + 指定状态码）。
+// 唯一索引冲突的统一判定：findAndModify 走 MongoCommandException，普通写入走 MongoWriteException，
+// 两条路径的错误码都是 11000。分散着各判一次迟早漏一条，所以只在这里判。
+static bool IsDuplicateKey(Exception ex) => ex switch
+{
+    MongoCommandException command => command.Code == 11000,
+    MongoWriteException write => write.WriteError?.Category == ServerErrorCategory.DuplicateKey,
+    _ => false,
+};
+
 static IResult Json<T>(T value, JsonSerializerOptions options, int statusCode = 200)
     => Results.Json(value, options, statusCode: statusCode);
 
@@ -13415,6 +13884,47 @@ static string? NormalizeCommitFilter(string? value)
     if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
         trimmed = trimmed[4..];
     return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
+}
+
+static async Task<long> ResetOfferingsAfterCredentialChangeAsync(
+    HttpContext http,
+    string objectType,
+    IEnumerable<string> changedIds,
+    IMongoCollection<BsonDocument> gatewayModels,
+    IMongoCollection<BsonDocument> offerings)
+{
+    var ids = changedIds
+        .Where(id => !string.IsNullOrWhiteSpace(id))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+    if (ids.Count == 0) return 0;
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var targetKind = objectType;
+    var targetIds = ids;
+    if (string.Equals(objectType, "platform", StringComparison.Ordinal))
+    {
+        targetKind = "model";
+        var modelDocs = await gatewayModels.Find(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                Builders<BsonDocument>.Filter.In("PlatformId", ids)))
+            .Project(Builders<BsonDocument>.Projection.Include("_id"))
+            .ToListAsync();
+        targetIds = modelDocs.Select(item => item.GetStringOrEmpty("_id")).ToList();
+    }
+    if (targetIds.Count == 0) return 0;
+
+    var filter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("TargetKind", targetKind),
+        Builders<BsonDocument>.Filter.In("TargetId", targetIds));
+    var update = Builders<BsonDocument>.Update
+        .Set("HealthStatus", 0)
+        .Set("ConsecutiveFailures", 0)
+        .Set("ConsecutiveSuccesses", 0)
+        .Set("UpdatedAt", DateTime.UtcNow);
+    var result = await offerings.UpdateManyAsync(filter, update);
+    return result.ModifiedCount;
 }
 
 static async Task RunGatewayRecoveryLoopAsync(

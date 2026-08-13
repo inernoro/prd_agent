@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
 using Shouldly;
 using Xunit;
 
@@ -7,6 +9,58 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class AsrAudioRoutePolicyTests
 {
+    [Fact]
+    public void SelectCandidates_ShouldUsePrecomputedDistinctFallbacksInOrder()
+    {
+        var duplicate = new ModelResolutionResult
+        {
+            Success = true,
+            OfferingId = "offering-primary",
+            ActualModel = "primary",
+        };
+        var backup = new ModelResolutionResult
+        {
+            Success = true,
+            OfferingId = "offering-backup",
+            ActualModel = "backup",
+        };
+        var primary = new ModelResolutionResult
+        {
+            Success = true,
+            OfferingId = "offering-primary",
+            ActualModel = "primary",
+            RetryCandidates = [duplicate, backup],
+        };
+
+        var candidates = TranscriptAsrCandidatePolicy.SelectCandidates(primary);
+
+        candidates.Select(candidate => candidate.ActualModel)
+            .ShouldBe(new[] { "primary", "backup" });
+        TranscriptAsrCandidatePolicy.ChatValidationAttemptsPerCandidate.ShouldBe(4);
+    }
+
+    [Theory]
+    [InlineData(null, 1800, 1680)]
+    [InlineData(300, 300, 180)]
+    [InlineData(9999, 7200, 7080)]
+    public void AsrProcessingDeadline_AlwaysEndsBeforeTheWatchdog(
+        int? configuredSeconds,
+        int expectedWatchdogSeconds,
+        int expectedAsrSeconds)
+    {
+        var values = new Dictionary<string, string?>();
+        if (configuredSeconds.HasValue)
+            values[TranscriptRunTimingPolicy.WatchdogTimeoutKey] = configuredSeconds.Value.ToString();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+
+        TranscriptRunTimingPolicy.ResolveWatchdogTimeout(configuration).TotalSeconds
+            .ShouldBe(expectedWatchdogSeconds);
+        TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration).TotalSeconds
+            .ShouldBe(expectedAsrSeconds);
+        TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)
+            .ShouldBeLessThan(TranscriptRunTimingPolicy.ResolveWatchdogTimeout(configuration));
+    }
+
     [Fact]
     public void ConfigureFfmpegArguments_ShouldPadShortClipsWithoutTruncatingLongAudio()
     {
@@ -23,6 +77,25 @@ public class AsrAudioRoutePolicyTests
         startInfo.ArgumentList.ShouldNotContain("-shortest");
         startInfo.ArgumentList[^1].ShouldBe("/tmp/normalized.wav");
         AsrAudioNormalizationPolicy.MinimumDurationSeconds.ShouldBe(15);
+    }
+
+    [Fact]
+    public void ConfigureFfmpegArguments_ShouldBoundTranscriptNormalizationBeforeMaterialization()
+    {
+        var startInfo = new ProcessStartInfo();
+
+        AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(
+            startInfo.ArgumentList,
+            "/tmp/source.m4a",
+            "/tmp/normalized.wav");
+
+        startInfo.ArgumentList.ShouldNotContain("-fs");
+        AsrAudioNormalizationPolicy.IsNormalizedAudioWithinLimit(
+            AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes - 1).ShouldBeTrue();
+        AsrAudioNormalizationPolicy.IsNormalizedAudioWithinLimit(
+            AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes).ShouldBeFalse();
+        AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds.ShouldBeGreaterThan(2000);
+        AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds.ShouldBeLessThan(2200);
     }
 
     [Theory]

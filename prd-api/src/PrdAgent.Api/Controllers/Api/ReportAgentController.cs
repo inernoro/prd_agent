@@ -903,7 +903,9 @@ public class ReportAgentController : ControllerBase
 
         var effectiveRole = team.LeaderUserId == userId ? ReportTeamRole.Leader : membership.Role;
         if (effectiveRole == ReportTeamRole.Leader || membership.Role == ReportTeamRole.Leader)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_REQUEST", "团队负责人不能直接退出，请先移交负责人"));
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.TEAM_LEADER_TRANSFER_REQUIRED,
+                "团队负责人不能直接退出，请先在成员管理中将负责人移交给其他成员。"));
 
         var result = await _db.ReportTeamMembers.DeleteOneAsync(m => m.TeamId == id && m.UserId == userId);
         if (result.DeletedCount == 0)

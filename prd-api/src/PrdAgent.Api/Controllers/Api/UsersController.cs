@@ -12,6 +12,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
@@ -33,6 +34,7 @@ public class UsersController : ControllerBase
     private readonly IConfiguration _cfg;
     private readonly IAssetStorage _assetStorage;
     private readonly IIdGenerator _idGenerator;
+    private readonly ProfileAvatarGenerationCleanupService _avatarGenerationCleanup;
     private static readonly Regex UsernameRegex = new(@"^[a-zA-Z0-9_]+$", RegexOptions.Compiled);
     private const long MaxAvatarUploadBytes = 5 * 1024 * 1024; // 5MB：头像应很小
 
@@ -42,7 +44,8 @@ public class UsersController : ControllerBase
         ILoginAttemptService loginAttemptService,
         IConfiguration cfg,
         IAssetStorage assetStorage,
-        IIdGenerator idGenerator)
+        IIdGenerator idGenerator,
+        ProfileAvatarGenerationCleanupService avatarGenerationCleanup)
     {
         _db = db;
         _logger = logger;
@@ -50,6 +53,7 @@ public class UsersController : ControllerBase
         _cfg = cfg;
         _assetStorage = assetStorage;
         _idGenerator = idGenerator;
+        _avatarGenerationCleanup = avatarGenerationCleanup;
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -493,8 +497,51 @@ public class UsersController : ControllerBase
         var (ok2, err2) = ValidateAvatarFileName(fileName);
         if (!ok2) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err2 ?? "头像文件名不合法"));
 
-        var update = Builders<User>.Update.Set(u => u.AvatarFileName, fileName);
-        await _db.Users.UpdateOneAsync(u => u.UserId == userId, update, cancellationToken: ct);
+        User? previousUser;
+        await using (var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
+                         _db,
+                         ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(userId),
+                         ct))
+        {
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{fileName}";
+                bool avatarExists;
+                try
+                {
+                    avatarExists = await _assetStorage.ExistsAsync(objectKey, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Admin avatar object validation failed. userId={UserId}", userId);
+                    return StatusCode(
+                        StatusCodes.Status503ServiceUnavailable,
+                        ApiResponse<object>.Fail(
+                            "AVATAR_STORAGE_UNAVAILABLE",
+                            "头像存储暂时不可用，原头像未变更，请稍后重试"));
+                }
+
+                if (!avatarExists)
+                {
+                    return NotFound(ApiResponse<object>.Fail(
+                        "AVATAR_NOT_FOUND",
+                        "头像文件不存在，原头像未变更，请重新上传后再试"));
+                }
+            }
+
+            previousUser = await _db.Users.FindOneAndUpdateAsync<User, User>(
+                u => u.UserId == userId,
+                Builders<User>.Update.Set(u => u.AvatarFileName, fileName),
+                new FindOneAndUpdateOptions<User, User> { ReturnDocument = ReturnDocument.Before },
+                ct);
+        }
+        if (previousUser == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        await _avatarGenerationCleanup.TrackAndTryDeleteSupersededAvatarAsync(
+            userId,
+            previousUser.AvatarFileName,
+            fileName,
+            CancellationToken.None);
 
         return Ok(ApiResponse<UserAvatarUpdateResponse>.Ok(new UserAvatarUpdateResponse
         {
@@ -572,11 +619,27 @@ public class UsersController : ControllerBase
 
         var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
 
-        await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
-
         var now = DateTime.UtcNow;
-        var update = Builders<User>.Update.Set(u => u.AvatarFileName, avatarFileName);
-        await _db.Users.UpdateOneAsync(u => u.UserId == uid, update, cancellationToken: ct);
+        User? previousUser;
+        await using (var avatarMutationLease = await VideoAssetMutationLease.AcquireAsync(
+                         _db,
+                         ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(uid),
+                         ct))
+        {
+            await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
+            previousUser = await _db.Users.FindOneAndUpdateAsync<User, User>(
+                u => u.UserId == uid,
+                Builders<User>.Update.Set(u => u.AvatarFileName, avatarFileName),
+                new FindOneAndUpdateOptions<User, User> { ReturnDocument = ReturnDocument.Before },
+                ct);
+        }
+        if (previousUser == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        await _avatarGenerationCleanup.TrackAndTryDeleteSupersededAvatarAsync(
+            uid,
+            previousUser.AvatarFileName,
+            avatarFileName,
+            CancellationToken.None);
 
         user.AvatarFileName = avatarFileName;
         var avatarUrl = AvatarUrlBuilder.BuildFresh(_cfg, user);

@@ -567,8 +567,16 @@ public class LiveAsrProtocolTests
         result.Transcript.ShouldBe("备用供应商成功");
         result.Provider.ShouldBe(second.ActualPlatformName);
         result.Model.ShouldBe(second.ActualModel);
-        events.Single(evt => evt.Type == LiveAsrEventTypes.Ready).Provider.ShouldBeNull();
-        events.Single(evt => evt.Type == LiveAsrEventTypes.Ready).Model.ShouldBeNull();
+        var readyEvent = events.Single(evt => evt.Type == LiveAsrEventTypes.Ready);
+        readyEvent.Provider.ShouldBeNull();
+        readyEvent.Model.ShouldBeNull();
+        var readyMessage = readyEvent.Message.ShouldNotBeNull();
+        readyMessage.ShouldContain("录音仍会安全保存");
+        readyMessage.ShouldContain("重试完整转写");
+        readyMessage.ShouldNotContain("供应商");
+        readyMessage.ShouldNotContain("Provider");
+        readyMessage.ShouldNotContain("模型");
+        readyMessage.ShouldNotContain("token");
         events.Single(evt => evt.Type == LiveAsrEventTypes.Partial).Provider
             .ShouldBe(second.ActualPlatformName);
         events.Single(evt => evt.Type == LiveAsrEventTypes.Degraded).Model

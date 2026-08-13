@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
 using MongoDB.Bson;
@@ -11,6 +12,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.LlmGateway;
 
@@ -54,6 +56,8 @@ public class VideoGenRunWorker : BackgroundService
         {
             try
             {
+                if (await ResumePendingDeletionAsync(stoppingToken)) continue;
+
                 // 路径 1: Queued → 根据 Mode 路由
                 //   - direct      → 直接走 ProcessDirectVideoGenAsync (Rendering)
                 //   - storyboard  → 走 ProcessScriptingAsync 拆分镜 (Scripting → Editing)
@@ -170,6 +174,41 @@ public class VideoGenRunWorker : BackgroundService
 
             await Task.Delay(2000, stoppingToken);
         }
+    }
+
+    private async Task<bool> ResumePendingDeletionAsync(CancellationToken ct)
+    {
+        var retryBefore = DateTime.UtcNow - TimeSpan.FromMinutes(2);
+        var fb = Builders<VideoGenRun>.Filter;
+        var pending = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            fb.Ne(x => x.DeletionRequestedAt, null)
+            & fb.Or(
+                fb.Eq(x => x.DeletionCleanupAttemptedAt, null),
+                fb.Lte(x => x.DeletionCleanupAttemptedAt, retryBefore)),
+            Builders<VideoGenRun>.Update.Set(x => x.DeletionCleanupAttemptedAt, DateTime.UtcNow),
+            new FindOneAndUpdateOptions<VideoGenRun>
+            {
+                Sort = Builders<VideoGenRun>.Sort.Ascending(x => x.DeletionRequestedAt),
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (pending == null) return false;
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IVideoGenService>();
+            await service.DeleteRunAsync(
+                pending.Id,
+                pending.OwnerAdminId,
+                appKey: pending.AppKey,
+                ct: CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "VideoGen 删除恢复失败，稍后重试: runId={RunId}", pending.Id);
+        }
+        return true;
     }
 
     /// <summary>
@@ -291,6 +330,7 @@ public class VideoGenRunWorker : BackgroundService
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.DirectVideoModel, submitResult.ActualModel ?? run.DirectVideoModel)
+                .Set(x => x.DirectVideoOfferingId, submitResult.OfferingId)
                 .Set(x => x.DirectDuration, submitResult.ActualDurationSeconds ?? run.DirectDuration)
                 .Set(x => x.TotalDurationSeconds, submitResult.ActualDurationSeconds ?? run.TotalDurationSeconds)
                 .Set(x => x.DirectVideoJobId, submitResult.JobId)
@@ -322,8 +362,18 @@ public class VideoGenRunWorker : BackgroundService
             OpenRouterVideoStatus status;
             try
             {
-                status = await client.GetStatusAsync(
-                    appCallerCode, submitResult.JobId!, submitResult.ActualModel, CancellationToken.None);
+                status = string.IsNullOrWhiteSpace(submitResult.OfferingId)
+                    ? await client.GetStatusAsync(
+                        appCallerCode,
+                        submitResult.JobId!,
+                        submitResult.ActualModel,
+                        CancellationToken.None)
+                    : await client.GetStatusForOfferingAsync(
+                        appCallerCode,
+                        submitResult.JobId!,
+                        submitResult.ActualModel,
+                        submitResult.OfferingId,
+                        CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -350,8 +400,20 @@ public class VideoGenRunWorker : BackgroundService
                 string finalUrl;
                 try
                 {
-                    var dl = await client.DownloadVideoBytesAsync(
-                        appCallerCode, submitResult.JobId!, 0, submitResult.ActualModel, CancellationToken.None);
+                    var dl = string.IsNullOrWhiteSpace(submitResult.OfferingId)
+                        ? await client.DownloadVideoBytesAsync(
+                            appCallerCode,
+                            submitResult.JobId!,
+                            0,
+                            submitResult.ActualModel,
+                            CancellationToken.None)
+                        : await client.DownloadVideoBytesForOfferingAsync(
+                            appCallerCode,
+                            submitResult.JobId!,
+                            0,
+                            submitResult.ActualModel,
+                            submitResult.OfferingId,
+                            CancellationToken.None);
                     if (!dl.Success || dl.Bytes == null || dl.Bytes.Length == 0)
                     {
                         await FailRunAsync(run, "DOWNLOAD_FAILED",
@@ -360,11 +422,30 @@ public class VideoGenRunWorker : BackgroundService
                     }
 
                     var playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
+                    var expectedSha256 = Convert.ToHexString(SHA256.HashData(playbackBytes)).ToLowerInvariant();
+                    await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                        _db,
+                        $"generated-video:{expectedSha256}",
+                        CancellationToken.None);
                     RegistryAssetStorage.OverrideNextScope("generated");
                     var stored = await _assetStorage.SaveAsync(
                         playbackBytes, dl.ContentType ?? "video/mp4", CancellationToken.None,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+                    if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("视频资产摘要校验失败");
                     finalUrl = stored.Url;
+
+                    await _db.VideoGenRuns.UpdateOneAsync(
+                        x => x.Id == run.Id,
+                        Builders<VideoGenRun>.Update
+                            .Set(x => x.Status, VideoGenRunStatus.Completed)
+                            .Set(x => x.VideoAssetUrl, finalUrl)
+                            .Set(x => x.VideoAssetSha256, stored.Sha256)
+                            .Set(x => x.DirectVideoCost, status.Cost)
+                            .Set(x => x.CurrentPhase, "completed")
+                            .Set(x => x.PhaseProgress, 100)
+                            .Set(x => x.EndedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
 
                     _logger.LogInformation("VideoGen 视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
                         run.Id, finalUrl, stored.SizeBytes);
@@ -376,16 +457,6 @@ public class VideoGenRunWorker : BackgroundService
                     return;
                 }
 
-                await _db.VideoGenRuns.UpdateOneAsync(
-                    x => x.Id == run.Id,
-                    Builders<VideoGenRun>.Update
-                        .Set(x => x.Status, VideoGenRunStatus.Completed)
-                        .Set(x => x.VideoAssetUrl, finalUrl)
-                        .Set(x => x.DirectVideoCost, status.Cost)
-                        .Set(x => x.CurrentPhase, "completed")
-                        .Set(x => x.PhaseProgress, 100)
-                        .Set(x => x.EndedAt, DateTime.UtcNow),
-                    cancellationToken: CancellationToken.None);
                 await UpdateProjectAsync(run, VideoProjectStatus.Completed);
 
                 await PublishEventAsync(run.Id, "run.completed", new
@@ -421,17 +492,18 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage)
     {
+        var userMessage = VideoGenerationUserError.ForPersistence(errorCode, errorMessage);
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Failed)
                 .Set(x => x.ErrorCode, errorCode)
-                .Set(x => x.ErrorMessage, errorMessage)
+                .Set(x => x.ErrorMessage, userMessage)
                 .Set(x => x.EndedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
-        await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = errorMessage });
+        await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = userMessage });
     }
 
     private async Task CancelRunAsync(VideoGenRun run)
@@ -939,6 +1011,7 @@ public class VideoGenRunWorker : BackgroundService
                         .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
                         .Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId)
                         .Set($"Scenes.{sceneIdx}.Model", submitResult.ActualModel ?? scene.Model ?? run.DirectVideoModel)
+                        .Set($"Scenes.{sceneIdx}.OfferingId", submitResult.OfferingId)
                         .Set($"Scenes.{sceneIdx}.Duration", submitResult.ActualDurationSeconds ?? scene.Duration ?? run.DirectDuration)
                         .Set($"Scenes.{sceneIdx}.RenderLeaseId", claimId)
                         .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", DateTime.UtcNow + SceneRenderLease),
@@ -946,6 +1019,7 @@ public class VideoGenRunWorker : BackgroundService
                 if (submitted.ModifiedCount != 1) return;
                 submittedJobId = submitResult.JobId;
                 actualModel = submitResult.ActualModel ?? sceneModel;
+                scene.OfferingId = submitResult.OfferingId;
                 actualDuration = submitResult.ActualDurationSeconds ?? actualDuration;
                 expectedJobId = submittedJobId;
             }
@@ -965,15 +1039,37 @@ public class VideoGenRunWorker : BackgroundService
             {
                 if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
-                var status = await client.GetStatusAsync(
-                    appCallerCode, submittedJobId, actualModel, CancellationToken.None);
+                var status = string.IsNullOrWhiteSpace(scene.OfferingId)
+                    ? await client.GetStatusAsync(
+                        appCallerCode,
+                        submittedJobId,
+                        actualModel,
+                        CancellationToken.None)
+                    : await client.GetStatusForOfferingAsync(
+                        appCallerCode,
+                        submittedJobId,
+                        actualModel,
+                        scene.OfferingId,
+                        CancellationToken.None);
                 if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
                 if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
                 {
                     // 下载到 COS
-                    var dl = await client.DownloadVideoBytesAsync(
-                        appCallerCode, submittedJobId, 0, actualModel, CancellationToken.None);
+                    var dl = string.IsNullOrWhiteSpace(scene.OfferingId)
+                        ? await client.DownloadVideoBytesAsync(
+                            appCallerCode,
+                            submittedJobId,
+                            0,
+                            actualModel,
+                            CancellationToken.None)
+                        : await client.DownloadVideoBytesForOfferingAsync(
+                            appCallerCode,
+                            submittedJobId,
+                            0,
+                            actualModel,
+                            scene.OfferingId,
+                            CancellationToken.None);
                     if (!dl.Success || dl.Bytes == null)
                     {
                         await MarkSceneErrorAsync(
@@ -985,14 +1081,22 @@ public class VideoGenRunWorker : BackgroundService
                         return;
                     }
                     var playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
+                    var expectedSha256 = Convert.ToHexString(SHA256.HashData(playbackBytes)).ToLowerInvariant();
+                    await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                        _db,
+                        $"generated-video:{expectedSha256}",
+                        CancellationToken.None);
                     RegistryAssetStorage.OverrideNextScope("generated");
                     var stored = await _assetStorage.SaveAsync(playbackBytes, dl.ContentType ?? "video/mp4",
                         CancellationToken.None,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+                    if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("视频资产摘要校验失败");
 
                     var version = new VideoGenSceneVersion
                     {
                         VideoUrl = stored.Url,
+                        AssetSha256 = stored.Sha256,
                         JobId = submittedJobId,
                         Model = actualModel,
                         Prompt = scene.Prompt,
@@ -1157,7 +1261,7 @@ public class VideoGenRunWorker : BackgroundService
         string? expectedJobId = null,
         string? expectedLeaseId = null)
     {
-        var trimmed = errorMessage.Length > 500 ? errorMessage[..500] + "…" : errorMessage;
+        var userMessage = VideoGenerationUserError.ForPersistence("SCENE_RENDER_FAILED", errorMessage);
         var filter = Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId);
         if (!string.IsNullOrWhiteSpace(expectedJobId))
         {
@@ -1171,7 +1275,7 @@ public class VideoGenRunWorker : BackgroundService
             filter,
             Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Error)
-                .Set($"Scenes.{sceneIdx}.ErrorMessage", trimmed)
+                .Set($"Scenes.{sceneIdx}.ErrorMessage", userMessage)
                 .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
                 .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
                 .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null),
@@ -1179,7 +1283,7 @@ public class VideoGenRunWorker : BackgroundService
         if (updated.ModifiedCount != 1) return;
         await SyncProjectSceneActivityAsync(runId);
         await PublishEventAsync(runId, "scene.render.error",
-            new { sceneIndex = sceneIdx, message = trimmed });
+            new { sceneIndex = sceneIdx, message = userMessage });
     }
 
     internal static string ResolveProjectStatusForScenes(IReadOnlyCollection<VideoGenScene> scenes)
@@ -1368,6 +1472,11 @@ public class VideoGenRunWorker : BackgroundService
 
             await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-uploading", 90);
             var bytes = await File.ReadAllBytesAsync(outputFile, CancellationToken.None);
+            var expectedSha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                _db,
+                $"generated-video:{expectedSha256}",
+                CancellationToken.None);
             RegistryAssetStorage.OverrideNextScope("generated");
             var stored = await _assetStorage.SaveAsync(
                 bytes,
@@ -1375,6 +1484,8 @@ public class VideoGenRunWorker : BackgroundService
                 CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent,
                 type: AppDomainPaths.TypeVideo);
+            if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("视频资产摘要校验失败");
 
             var totalCost = run.Scenes.Where(scene => scene.Cost.HasValue).Sum(scene => scene.Cost!.Value);
             await _db.VideoGenRuns.UpdateOneAsync(
@@ -1382,6 +1493,7 @@ public class VideoGenRunWorker : BackgroundService
                 Builders<VideoGenRun>.Update
                     .Set(x => x.Status, VideoGenRunStatus.Completed)
                     .Set(x => x.VideoAssetUrl, stored.Url)
+                    .Set(x => x.VideoAssetSha256, stored.Sha256)
                     .Set(x => x.DirectVideoCost, totalCost)
                     .Set(x => x.ExportErrorMessage, (string?)null)
                     .Set(x => x.ExportedAt, DateTime.UtcNow)
@@ -1550,13 +1662,13 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null)
     {
-        var trimmed = errorMessage.Length > 1200 ? errorMessage[..1200] : errorMessage;
+        var userMessage = VideoGenerationUserError.ForPersistence("EXPORT_FAILED", errorMessage);
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Editing)
                 .Set(x => x.ExportRequested, false)
-                .Set(x => x.ExportErrorMessage, trimmed)
+                .Set(x => x.ExportErrorMessage, userMessage)
                 .Set(x => x.CurrentPhase, "export-failed")
                 .Set(x => x.PhaseProgress, 0),
             cancellationToken: CancellationToken.None);
@@ -1568,12 +1680,12 @@ public class VideoGenRunWorker : BackgroundService
                     .Set(x => x.Status, VideoExportTaskStatus.Failed)
                     .Set(x => x.CurrentPhase, "export-failed")
                     .Set(x => x.Progress, 0)
-                    .Set(x => x.ErrorMessage, trimmed)
+                    .Set(x => x.ErrorMessage, userMessage)
                     .Set(x => x.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
         }
         await UpdateProjectAsync(run, VideoProjectStatus.Editing);
-        await PublishEventAsync(run.Id, "export.error", new { message = trimmed });
+        await PublishEventAsync(run.Id, "export.error", new { message = userMessage });
     }
 
     private async Task UpdatePhaseAsync(VideoGenRun run, string phase, int progress)

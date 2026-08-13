@@ -1,6 +1,68 @@
 namespace PrdAgent.Infrastructure.Services.AssetStorage;
 
 public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime);
+public record AssetReadHandle(Stream Content, string Mime, long? Length);
+
+/// <summary>
+/// 允许存储实现回收严格受约束的自服务头像单对象，不扩大通用安全删除白名单。
+/// </summary>
+public static class AssetStorageDeletePolicy
+{
+    private const string AvatarPathPrefix = "icon/backups/head/";
+
+    public static bool IsVersionedUserAvatarKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        if (!normalized.StartsWith(AvatarPathPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+        var fileName = normalized[AvatarPathPrefix.Length..];
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            fileName,
+            @"^u-[0-9a-f]{12}-[0-9a-f]{24}\.(png|jpg|gif|webp)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    public static bool IsContentAddressedGeneratedVideoKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^video-agent/video/[a-z2-7]{26}\.mp4$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    public static bool IsContentAddressedGeneratedImageKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^visual-agent/img/[a-z2-7]{26}\.(png|jpg|jpeg|gif|webp)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+}
 
 /// <summary>
 /// 暴露运行时实际选择的存储实现，供就绪检查核对环境合同。
@@ -29,6 +91,16 @@ public interface IAssetStorage
     /// 按 sha256 读取 bytes（用于本地存储或兼容旧数据）。
     /// </summary>
     Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null);
+
+    /// <summary>
+    /// 按 sha256 打开顺序读取流。用于大文件响应，避免把完整对象装入托管内存。
+    /// 不支持原生流的远端实现可返回 null，由调用方使用受控 HTTP 流式代理。
+    /// </summary>
+    Task<AssetReadHandle?> TryOpenReadByShaAsync(
+        string sha256,
+        CancellationToken ct,
+        string? domain = null,
+        string? type = null) => Task.FromResult<AssetReadHandle?>(null);
 
     /// <summary>
     /// 按 sha256 删除底层对象（若实现支持）。
@@ -74,4 +146,3 @@ public interface IAssetStorage
     /// </summary>
     string BuildSiteKey(string siteId, string filePath);
 }
-

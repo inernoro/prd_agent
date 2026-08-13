@@ -359,6 +359,10 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.Toolbox.ToolboxRunWorker
 
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>());
+builder.Services.AddSingleton<PrdAgent.Api.Services.DocumentAssetCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.DocumentAssetCleanupService>());
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
@@ -671,6 +675,13 @@ builder.Services.AddHttpClient("AssetStorageReadiness", client =>
     client.DefaultRequestHeaders.CacheControl =
         new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
 });
+builder.Services.AddHttpClient("AssetStorageStream", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+});
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
@@ -870,6 +881,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options => { })
     .AddScheme<PrdAgent.Api.Authentication.AiAccessKeyAuthenticationOptions, PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler>(
         PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        options => { })
+    .AddScheme<PrdAgent.Api.Authentication.StableSmokeAuthenticationOptions, PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler>(
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName,
         options => { });
 
 builder.Services.AddAuthorization(options =>
@@ -878,7 +892,8 @@ builder.Services.AddAuthorization(options =>
     options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
         JwtBearerDefaults.AuthenticationScheme,
         "ApiKey",
-        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName)
+        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
         .Build();
 });
