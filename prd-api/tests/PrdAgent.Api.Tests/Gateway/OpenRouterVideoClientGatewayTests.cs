@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -49,6 +50,66 @@ public class OpenRouterVideoClientGatewayTests
             .ShouldBe("视频生成等待超时，请稍后重试。");
         VideoGenerationUserError.FromDiagnostic("bad request details", 400)
             .ShouldBe("当前视频模型无法处理这次请求，请检查描述、参考图和视频参数后重试。");
+    }
+
+    [Fact]
+    public void PersistenceGate_ShouldSanitizeWorkerAndHistoricalRunErrors()
+    {
+        const string upstream = "大模型平台额度已用尽或被限额，请充值或更换 API Key。上游信息：Insufficient credits. Add more using https://openrouter.ai/settings/credits";
+        var run = new VideoGenRun
+        {
+            ErrorCode = "VIDEOGEN_ERROR",
+            ErrorMessage = upstream,
+            ExportErrorMessage = "ffmpeg provider failed at https://provider.example/log",
+            Scenes = [new VideoGenScene { ErrorMessage = upstream }],
+        };
+
+        VideoGenerationUserError.ForPersistence("VIDEOGEN_ERROR", upstream)
+            .ShouldBe(GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
+        VideoGenerationUserError.ForPersistence("EMPTY_PROMPT", "directPrompt 为空")
+            .ShouldBe("视频描述为空，请返回并输入内容后重试。");
+        VideoGenerationUserError.ForPersistence("DOWNLOAD_FAILED", upstream)
+            .ShouldBe(VideoGenerationUserError.DownloadUnavailable());
+
+        VideoGenerationUserError.SanitizeForResponse(run);
+        run.ErrorMessage.ShouldBe(GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
+        run.ExportErrorMessage.ShouldBe("视频导出暂时失败，请稍后重试。若持续出现，请联系管理员。");
+        run.Scenes.Single().ErrorMessage.ShouldBe(GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
+        run.ErrorMessage.ShouldNotContain("上游信息");
+        run.ExportErrorMessage.ShouldNotContain("http");
+        run.Scenes.Single().ErrorMessage.ShouldNotContain("API Key");
+    }
+
+    [Fact]
+    public void PersistenceGate_ShouldKeepSafeActionableVideoStates()
+    {
+        VideoGenerationUserError.ForPersistence("MODEL_RESOLVE_FAILED", "模型调度失败: provider token invalid")
+            .ShouldBe("当前没有可用的视频生成模型，请联系管理员检查模型配置后重试。");
+        VideoGenerationUserError.ForPersistence("EXPORT_FAILED", "存在尚未生成的视频分镜")
+            .ShouldBe("仍有分镜尚未生成，请完成全部分镜后再导出。");
+        VideoGenerationUserError.ForPersistence("SCENE_RENDER_FAILED", "生成提交进程已中断")
+            .ShouldContain("手动重试");
+    }
+
+    [Fact]
+    public void HistoricalErrorEvents_ShouldBeSanitizedDuringReplay()
+    {
+        const string upstream = "provider token invalid at https://provider.example/settings";
+        var runPayload = VideoGenerationUserError.SanitizeEventPayload(
+            "run.error",
+            $"{{\"code\":\"VIDEOGEN_ERROR\",\"message\":\"{upstream}\"}}");
+        var scenePayload = VideoGenerationUserError.SanitizeEventPayload(
+            "scene.render.error",
+            $"{{\"sceneIndex\":1,\"message\":\"{upstream}\"}}");
+        var progressPayload = "{\"progress\":35}";
+
+        JsonNode.Parse(runPayload)!["message"]!.GetValue<string>()
+            .ShouldBe(VideoGenerationUserError.ServiceUnavailable());
+        runPayload.ShouldNotContain("provider");
+        runPayload.ShouldNotContain("http");
+        scenePayload.ShouldNotContain("token");
+        VideoGenerationUserError.SanitizeEventPayload("phase.progress", progressPayload)
+            .ShouldBe(progressPayload);
     }
 
     [Fact]

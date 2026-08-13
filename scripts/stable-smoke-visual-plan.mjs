@@ -19,6 +19,17 @@ function stateTheme(module, index) {
   return themes[index % themes.length];
 }
 
+function mobileMetadata(module, label, primaryState, viewportClass) {
+  if (viewportClass !== 'mobile') return {};
+  const stageText = `${label || ''} ${primaryState || ''}`;
+  return {
+    mobilePathId: `${module.id}-mobile`,
+    mobileStage: /结果|完成|保存|持久|回读|进度|状态|预览|失败|恢复|时间轴/.test(stageText)
+      ? 'result'
+      : 'action',
+  };
+}
+
 function slotId(moduleId, sequence) {
   return `VISUAL-${moduleId.toUpperCase()}-${String(sequence).padStart(2, '0')}`;
 }
@@ -127,6 +138,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           testType: index === 0 ? '冒烟' : '视觉',
           theme: stateTheme(module, index),
           viewportClass,
+          ...mobileMetadata(module, state, state, viewportClass),
           breadcrumb: qualifyBreadcrumb(`${module.breadcrumb} → ${state}`),
           expectedProof: `页面处于“${state}”状态，关键内容和操作完整可见`,
           methodAnchor: `#visual-method-${module.id}`,
@@ -155,6 +167,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           testType: '视觉',
           theme: extra.theme,
           viewportClass: extra.viewportClass,
+          ...mobileMetadata(module, extra.label, extra.primaryState, extra.viewportClass),
           breadcrumb: qualifyBreadcrumb(`${module.breadcrumb} → ${extra.label}`),
           expectedProof: extra.expectedProof,
           methodAnchor: `#visual-method-${module.id}`,

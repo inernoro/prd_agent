@@ -17,6 +17,30 @@ function groupByModule(manifest) {
   return [...modules.entries()];
 }
 
+function evidenceReference(item) {
+  const number = String(item.name || '').match(/^(\d{1,3})/)?.[1];
+  return number ? `[图${number}](#fig-${number.padStart(3, '0')})` : '查看对应步骤证据';
+}
+
+function renderAcceptanceCases(manifest) {
+  const lines = [
+    '## 验收用例',
+    '',
+    '本表供审核人员先判断每个模块是否通过、是否需要干预；点击证据后可继续按完整面包屑逐图核对。',
+    '',
+    '| 用例 | 模块 | 类型 | 完整测试路径 | 结论 | 是否需干预 | 证据 |',
+    '|---:|---|---|---|---|---|---|',
+  ];
+  for (const [index, [module, rows]] of groupByModule(manifest).entries()) {
+    const allPassed = rows.length > 0 && rows.every((item) => item.status === '通过');
+    const hasFailure = rows.some((item) => item.status === '不通过');
+    const result = allPassed ? '通过' : hasFailure ? '不通过' : '需干预';
+    const breadcrumb = rows[0]?.breadcrumb || '路径未记录';
+    lines.push(`| ${index + 1} | ${module} | 冒烟、功能与视觉 | ${breadcrumb} | ${result} | ${allPassed ? '否' : '是'} | ${evidenceReference(rows[0] || {})} |`);
+  }
+  return lines.join('\n');
+}
+
 export function prepareArchiveReport(report, manifest) {
   const normalizedReport = String(report).replace(/#fig-(\d{3})-[^)\s]+(?=\))/g, '#fig-$1');
   const start = normalizedReport.indexOf('## 视觉证据图片');
@@ -38,7 +62,10 @@ export function prepareArchiveReport(report, manifest) {
       '',
     ]),
   ]).join('\n');
-  return `${normalizedReport.slice(0, start)}${steps}\n\n${normalizedReport.slice(end)}`;
+  const cases = /(?:^|\n)##\s+[^\n]*验收用例/m.test(normalizedReport)
+    ? ''
+    : `${renderAcceptanceCases(manifest)}\n\n`;
+  return `${normalizedReport.slice(0, start)}${cases}${steps}\n\n${normalizedReport.slice(end)}`;
 }
 
 async function main() {

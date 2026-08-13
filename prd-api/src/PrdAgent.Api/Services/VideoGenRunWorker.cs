@@ -492,17 +492,18 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage)
     {
+        var userMessage = VideoGenerationUserError.ForPersistence(errorCode, errorMessage);
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Failed)
                 .Set(x => x.ErrorCode, errorCode)
-                .Set(x => x.ErrorMessage, errorMessage)
+                .Set(x => x.ErrorMessage, userMessage)
                 .Set(x => x.EndedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
-        await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = errorMessage });
+        await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = userMessage });
     }
 
     private async Task CancelRunAsync(VideoGenRun run)
@@ -1260,7 +1261,7 @@ public class VideoGenRunWorker : BackgroundService
         string? expectedJobId = null,
         string? expectedLeaseId = null)
     {
-        var trimmed = errorMessage.Length > 500 ? errorMessage[..500] + "…" : errorMessage;
+        var userMessage = VideoGenerationUserError.ForPersistence("SCENE_RENDER_FAILED", errorMessage);
         var filter = Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId);
         if (!string.IsNullOrWhiteSpace(expectedJobId))
         {
@@ -1274,7 +1275,7 @@ public class VideoGenRunWorker : BackgroundService
             filter,
             Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Error)
-                .Set($"Scenes.{sceneIdx}.ErrorMessage", trimmed)
+                .Set($"Scenes.{sceneIdx}.ErrorMessage", userMessage)
                 .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
                 .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
                 .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null),
@@ -1282,7 +1283,7 @@ public class VideoGenRunWorker : BackgroundService
         if (updated.ModifiedCount != 1) return;
         await SyncProjectSceneActivityAsync(runId);
         await PublishEventAsync(runId, "scene.render.error",
-            new { sceneIndex = sceneIdx, message = trimmed });
+            new { sceneIndex = sceneIdx, message = userMessage });
     }
 
     internal static string ResolveProjectStatusForScenes(IReadOnlyCollection<VideoGenScene> scenes)
@@ -1661,13 +1662,13 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null)
     {
-        var trimmed = errorMessage.Length > 1200 ? errorMessage[..1200] : errorMessage;
+        var userMessage = VideoGenerationUserError.ForPersistence("EXPORT_FAILED", errorMessage);
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Editing)
                 .Set(x => x.ExportRequested, false)
-                .Set(x => x.ExportErrorMessage, trimmed)
+                .Set(x => x.ExportErrorMessage, userMessage)
                 .Set(x => x.CurrentPhase, "export-failed")
                 .Set(x => x.PhaseProgress, 0),
             cancellationToken: CancellationToken.None);
@@ -1679,12 +1680,12 @@ public class VideoGenRunWorker : BackgroundService
                     .Set(x => x.Status, VideoExportTaskStatus.Failed)
                     .Set(x => x.CurrentPhase, "export-failed")
                     .Set(x => x.Progress, 0)
-                    .Set(x => x.ErrorMessage, trimmed)
+                    .Set(x => x.ErrorMessage, userMessage)
                     .Set(x => x.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
         }
         await UpdateProjectAsync(run, VideoProjectStatus.Editing);
-        await PublishEventAsync(run.Id, "export.error", new { message = trimmed });
+        await PublishEventAsync(run.Id, "export.error", new { message = userMessage });
     }
 
     private async Task UpdatePhaseAsync(VideoGenRun run, string phase, int progress)

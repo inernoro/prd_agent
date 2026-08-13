@@ -9,6 +9,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -231,13 +232,24 @@ public class VideoAgentController : ControllerBase
                 result.JobId,
                 result.ActualModel,
                 result.Cost,
-                result.ErrorMessage,
+                ErrorMessage = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? result.ErrorMessage
+                    : VideoGenerationUserError.ForPersistence("OPENROUTER_SUBMIT_FAILED", result.ErrorMessage),
                 RecoveryToken = recoveryToken,
                 OwnershipPersisted = ownershipPersisted,
             }));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { result.Success, result.JobId, result.ActualModel, result.Cost, result.ErrorMessage }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            result.Success,
+            result.JobId,
+            result.ActualModel,
+            result.Cost,
+            ErrorMessage = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                ? result.ErrorMessage
+                : VideoGenerationUserError.ForPersistence("OPENROUTER_SUBMIT_FAILED", result.ErrorMessage),
+        }));
     }
 
     [HttpGet("videogen-direct/status/{jobId}")]
@@ -262,7 +274,17 @@ public class VideoAgentController : ControllerBase
                 ownership.Model,
                 ownership.OfferingId,
                 ct);
-        return Ok(ApiResponse<object>.Ok(new { status.Status, status.VideoUrl, status.Cost, status.ErrorMessage, status.IsCompleted, status.IsFailed }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            status.Status,
+            status.VideoUrl,
+            status.Cost,
+            ErrorMessage = string.IsNullOrWhiteSpace(status.ErrorMessage)
+                ? status.ErrorMessage
+                : VideoGenerationUserError.ForPersistence("OPENROUTER_GEN_FAILED", status.ErrorMessage),
+            status.IsCompleted,
+            status.IsFailed,
+        }));
     }
 
     [HttpGet("videogen-direct/content/{jobId}")]
@@ -582,8 +604,12 @@ public class VideoAgentController : ControllerBase
             r.CreatedAt,
             r.StartedAt,
             r.EndedAt,
-            r.ErrorMessage,
-            r.ExportErrorMessage,
+            ErrorMessage = string.IsNullOrWhiteSpace(r.ErrorMessage)
+                ? r.ErrorMessage
+                : VideoGenerationUserError.ForPersistence(r.ErrorCode, r.ErrorMessage),
+            ExportErrorMessage = string.IsNullOrWhiteSpace(r.ExportErrorMessage)
+                ? r.ExportErrorMessage
+                : VideoGenerationUserError.ForPersistence("EXPORT_FAILED", r.ExportErrorMessage),
             ScenesCount = r.Scenes.Count,
             ScenesReady = r.Scenes.Count(scene => scene.Status == SceneItemStatus.Done && !string.IsNullOrWhiteSpace(scene.VideoUrl)),
             HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Submitting or SceneItemStatus.SubmittingClaimed or SceneItemStatus.Polling or SceneItemStatus.PollingClaimed or SceneItemStatus.Rendering),
@@ -604,7 +630,7 @@ public class VideoAgentController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
-        return Ok(ApiResponse<VideoGenRun>.Ok(run));
+        return Ok(ApiResponse<VideoGenRun>.Ok(VideoGenerationUserError.SanitizeForResponse(run)));
     }
 
     /// <summary>
@@ -920,7 +946,11 @@ public class VideoAgentController : ControllerBase
             {
                 foreach (var ev in events)
                 {
-                    await WriteEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
+                    await WriteEventAsync(
+                        ev.Seq.ToString(),
+                        ev.EventName,
+                        VideoGenerationUserError.SanitizeEventPayload(ev.EventName, ev.PayloadJson),
+                        cancellationToken);
                     lastSeq = ev.Seq;
                 }
             }

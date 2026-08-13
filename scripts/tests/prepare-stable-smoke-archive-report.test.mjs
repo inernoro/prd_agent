@@ -20,10 +20,21 @@ test('归档版按模块生成步骤并用不可变证据占位替换本地图�
   const output = prepareArchiveReport(report, manifest);
   assert.match(output, /## 步骤 1 登录/);
   assert.match(output, /## 步骤 2 文件/);
+  assert.match(output, /## 验收用例/);
+  assert.match(output, /\| 1 \| 登录 \| 冒烟、功能与视觉/);
+  assert.match(output, /\[图001\]\(#fig-001\)/);
+  assert.match(output, /\| 2 \| 文件 .*\| 不通过 \| 是 \|/);
   assert.match(output, /\{\{IMG:001-login\}\}/);
   assert.match(output, /\{\{IMG:003-file\}\}/);
   assert.doesNotMatch(output, /\/tmp\/old\.png/);
   assert.match(output, /## 视觉测试方法/);
+});
+
+test('已有验收用例章节时不重复生成', () => {
+  const report = `# 报告\n\n## 验收用例\n\n已有用例说明。\n\n## 视觉证据图片\n\n旧图片\n\n## 视觉测试方法\n\n方法`;
+  const manifest = [{ name: '001-entry', module: '登录', primaryState: '入口', status: '通过' }];
+  const archived = prepareArchiveReport(report, manifest);
+  assert.equal((archived.match(/## 验收用例/g) || []).length, 1);
 });
 
 test('归档版把历史截图别名统一到唯一图号', () => {

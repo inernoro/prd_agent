@@ -3979,6 +3979,22 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void VideoGenerationErrors_MustPassPersistenceAndResponseSafetyGates()
+    {
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+        var videoController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs");
+        var visualController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/VisualAgentVideoController.cs");
+
+        Assert.Contains("VideoGenerationUserError.ForPersistence(errorCode, errorMessage)", worker);
+        Assert.Contains("VideoGenerationUserError.ForPersistence(\"SCENE_RENDER_FAILED\", errorMessage)", worker);
+        Assert.Contains("VideoGenerationUserError.ForPersistence(\"EXPORT_FAILED\", errorMessage)", worker);
+        Assert.Contains("VideoGenerationUserError.SanitizeForResponse(run)", videoController);
+        Assert.Contains("VideoGenerationUserError.SanitizeForResponse(run)", visualController);
+        Assert.Contains("VideoGenerationUserError.SanitizeEventPayload(ev.EventName, ev.PayloadJson)", videoController);
+        Assert.Contains("VideoGenerationUserError.SanitizeEventPayload(ev.EventName, ev.PayloadJson)", visualController);
+    }
+
+    [Fact]
     public void ExternalConsole_CostSummaryPreservesUnknownAndCurrencyBoundaries()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");

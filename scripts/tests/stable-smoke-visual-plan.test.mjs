@@ -92,6 +92,15 @@ test('单图和多图视觉各有18条且覆盖产品主题与双设备', () => 
   }
 });
 
+test('移动端视觉位固化独立路径和入口结果阶段', () => {
+  const plan = buildVisualPlan(catalog, ['cds']);
+  const mobileSlots = plan.slots.filter((slot) => slot.viewportClass === 'mobile');
+  assert.ok(mobileSlots.length >= 4);
+  assert.ok(mobileSlots.every((slot) => slot.mobilePathId === `${slot.moduleId}-mobile`));
+  assert.ok(mobileSlots.every((slot) => ['action', 'result'].includes(slot.mobileStage)));
+  assert.deepEqual([...new Set(mobileSlots.map((slot) => slot.mobileStage))].sort(), ['action', 'result']);
+});
+
 test('主管清单不展示内部源码路径或执行命令', () => {
   const report = renderVisualPlan(buildVisualPlan(catalog));
   assert.match(report, /完整测试路径/);
