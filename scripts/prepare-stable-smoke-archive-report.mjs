@@ -23,6 +23,10 @@ function evidenceReference(item) {
 }
 
 function renderAcceptanceCases(manifest) {
+  const runIds = [...new Set(manifest.map((item) => String(item.runId || '').trim()).filter(Boolean))];
+  const runLine = runIds.length === 1
+    ? `运行编号：\`${runIds[0]}\`。`
+    : '运行编号：证据清单未提供唯一运行编号，请按需人工核对。';
   const commits = [...new Set(manifest.map((item) => String(item.commit || '').trim()).filter(Boolean))];
   const commitLine = commits.length === 1
     ? `固定测试版本：\`${commits[0]}\`。`
@@ -30,7 +34,7 @@ function renderAcceptanceCases(manifest) {
   const lines = [
     '## 验收用例',
     '',
-    `本表供审核人员先判断每个模块是否通过、是否需要干预；点击证据后可继续按完整面包屑逐图核对。${commitLine}`,
+    `本表供审核人员先判断每个模块是否通过、是否需要干预；点击证据后可继续按完整面包屑逐图核对。${runLine}${commitLine}`,
     '',
     '| 用例 | 模块 | 类型 | 完整测试路径 | 结论 | 是否需干预 | 证据 |',
     '|---:|---|---|---|---|---|---|',

@@ -511,35 +511,62 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
     {
         const string legacyIndexName = "uniq_llmgw_offering_tenant_logical_target";
         const string versionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v2";
+        string[] expectedKeys =
+        [
+            "TenantId",
+            "LogicalModelId",
+            "TargetKind",
+            "TargetId",
+            "SupersededByOfferingId",
+        ];
         var collection = _data.Database.GetCollection<BsonDocument>("llmgw_model_offerings");
         var indexes = await (await collection.Indexes.ListAsync(ct)).ToListAsync(ct);
         var versionAware = indexes.FirstOrDefault(
             x => x.GetValue("name", "").AsString == versionAwareIndexName);
-        if (versionAware is not null
-            && !versionAware.GetValue("key", new BsonDocument()).AsBsonDocument
-                .Contains("SupersededByOfferingId"))
+        if (versionAware is not null && !IsEquivalentOfferingIdentityIndex(versionAware, expectedKeys))
         {
             throw new InvalidOperationException(
                 $"OFFERING_IDENTITY_INDEX_MISMATCH: {versionAwareIndexName}");
         }
 
-        if (versionAware is null)
+        // MongoDB 不允许同一 key/options 仅以不同名称重复建索引。旧版本可能已经用旧名
+        // 完成了五字段升级；名称不影响唯一约束，此时直接复用，既避免启动失败，也避免
+        // 为改名制造无唯一索引窗口。只有不存在任何等价索引时才迁移旧四字段索引。
+        var equivalent = indexes.FirstOrDefault(
+            index => IsEquivalentOfferingIdentityIndex(index, expectedKeys));
+        if (equivalent is not null)
         {
-            await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys
-                    .Ascending("TenantId")
-                    .Ascending("LogicalModelId")
-                    .Ascending("TargetKind")
-                    .Ascending("TargetId")
-                    .Ascending("SupersededByOfferingId"),
-                new CreateIndexOptions { Name = versionAwareIndexName, Unique = true }), cancellationToken: ct);
+            _logger.LogInformation(
+                "[LlmGatewayData] Offering 版本感知唯一索引已就绪 index={Index}",
+                equivalent.GetValue("name", "").AsString);
+            return;
         }
 
-        // 新索引先就绪，再移除旧名。并发实例只会竞争删除旧索引，绝不会删除新索引。
         await DropIndexIfPresentAsync(collection, legacyIndexName, ct);
+        await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys
+                .Ascending("TenantId")
+                .Ascending("LogicalModelId")
+                .Ascending("TargetKind")
+                .Ascending("TargetId")
+                .Ascending("SupersededByOfferingId"),
+            new CreateIndexOptions { Name = versionAwareIndexName, Unique = true }), cancellationToken: ct);
         _logger.LogInformation(
             "[LlmGatewayData] Offering 唯一索引升级为版本感知结构 index={Index}",
             versionAwareIndexName);
+    }
+
+    private static bool IsEquivalentOfferingIdentityIndex(
+        BsonDocument index,
+        IReadOnlyList<string> expectedKeys)
+    {
+        var key = index.GetValue("key", new BsonDocument()).AsBsonDocument;
+        var unique = index.GetValue("unique", false);
+        return unique.IsBoolean
+            && unique.AsBoolean
+            && key.ElementCount == expectedKeys.Count
+            && key.Elements.Select(element => element.Name).SequenceEqual(expectedKeys)
+            && key.Elements.All(element => element.Value.IsNumeric && element.Value.ToInt32() == 1);
     }
 
     public async Task EnsureRetentionTtlIndexesAsync(CancellationToken ct)

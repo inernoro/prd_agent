@@ -1238,9 +1238,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Ascending(\"SupersededByOfferingId\")", initializer);
         Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v2", initializer);
         Assert.Contains("catch (MongoCommandException ex) when (ex.Code == 27)", initializer);
+        Assert.Contains("IsEquivalentOfferingIdentityIndex", initializer);
+        Assert.Contains("MongoDB 不允许同一 key/options 仅以不同名称重复建索引", initializer);
         Assert.True(
-            initializer.IndexOf("Name = versionAwareIndexName", StringComparison.Ordinal)
+            initializer.IndexOf("IsEquivalentOfferingIdentityIndex(index, expectedKeys)", StringComparison.Ordinal)
             < initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal));
+        Assert.True(
+            initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal)
+            < initializer.IndexOf("Name = versionAwareIndexName", StringComparison.Ordinal));
         Assert.Contains("Offering 唯一索引升级为版本感知结构", initializer);
     }
 
