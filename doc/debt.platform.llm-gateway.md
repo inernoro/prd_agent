@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 26 / in-progress: 8 / paid: 24 / 总计: 58
+当前 open: 27 / in-progress: 8 / paid: 24 / 总计: 59
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
