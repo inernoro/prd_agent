@@ -289,6 +289,7 @@
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
 - [功能验收体系 · 债务台账](./debt.acceptance.system.md) `debt.acceptance.system`
 - [智能体宇宙 · 债务台账](./debt.agent-universe.md) `debt.agent-universe`
+- [头像编辑器 · 债务台账](./debt.avatar-editor.md) `debt.avatar-editor`
 - [CDS 平台杂项 · 债务台账](./debt.cds.md) `debt.cds`
 - [CDS Agent 工作台 · 债务台账](./debt.cds.agent.md) `debt.cds.agent`
 - [CDS Agent 验收 smoke 断言漂移 · 债务台账](./debt.cds.agent.acceptance-smoke-drift.md) `debt.cds.agent.acceptance-smoke-drift`
