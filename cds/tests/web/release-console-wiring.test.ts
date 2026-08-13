@@ -171,7 +171,7 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
   });
 
   it('环境按后端下发的分组渲染，落后数来自 commitPosition', () => {
-    expect(PAGE).toContain("import { buildEnvironmentSections } from '@/lib/releaseEnvironments'");
+    expect(PAGE).toContain("from '@/lib/releaseEnvironments'");
     expect(PAGE).toContain('buildEnvironmentSections(center?.environments, rows)');
     expect(PAGE).toContain('item.commitPosition?.behindCount');
     // 后端 environment 枚举只有 production/staging/other —— 不许造一个 customer 分组
@@ -188,6 +188,24 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
     expect(sheetFn).toContain("aria-modal=\"true\"");
     // Esc 关闭：全屏浮层没有键盘出口是无障碍缺陷
     expect(sheetFn).toContain("event.key === 'Escape'");
+  });
+
+  /**
+   * 生产真数据抓到的两条，都是「编译通过、stub 看不出来」的那种：
+   * 1. 分支下拉整列空白——真实 /api/branches 的展示名字段是 branch，不是 name；
+   * 2. 默认环境落到一个已停用的临时目标上——rows[0] 不是选中判据。
+   */
+  it('分支展示名用 branch 字段，且不自建 BranchOption 类型', () => {
+    expect(PAGE).toContain('{item.branch}');
+    expect(PAGE).not.toMatch(/interface BranchOption\s*\{/);
+    expect(PAGE).toContain("import type { BranchOption, CenterResponse");
+  });
+
+  it('选中环境走 resolveSelectedTargetId，不用 rows[0] 兜底', () => {
+    expect(PAGE).toContain('resolveSelectedTargetId(envSections, targetId)');
+    // loadCenter 里也不许自己挑第一行
+    const load = bodyAfter(PAGE, 'const loadCenter = useCallback(async ()');
+    expect(load).not.toContain('res.rows[0]');
   });
 
   it('历史记录每条自带行内操作，不用先选中再去别处找按钮', () => {

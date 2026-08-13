@@ -569,7 +569,10 @@ export function ReleaseConsolePage(): JSX.Element {
                               }`}
                             />
                             <span className="min-w-0 flex-1">
-                              <span className={`block truncate text-[12.5px] font-medium ${selected ? 'text-primary' : ''}`}>
+                              <span
+                                title={item.target.name}
+                                className={`block truncate text-[12.5px] font-medium ${selected ? 'text-primary' : ''}`}
+                              >
                                 {item.target.name}
                                 {entry.isCanonical && section.entries.length > 1 ? (
                                   <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">主</span>
@@ -1031,7 +1034,8 @@ export function ReleaseConsolePage(): JSX.Element {
           >
             <div className="flex flex-col gap-3 p-4">
               <p className="text-xs leading-relaxed text-muted-foreground">
-                这一页只读。要改步骤、命令、健康检查地址，去
+                这一页只读。当前后端的计划模板只登记步骤名，不登记每步命令，所以下面多数步骤看不到命令行——
+                真正执行的脚本在「部署命令」一栏与实时输出里。要改步骤、命令、健康检查地址，去
                 <a className="mx-1 text-primary hover:underline" href="/release-center">发布中心</a>
                 的配置页签——后端没有第二处可写入口，这里再放一个编辑器就是画一个存不下去的表单。
               </p>
@@ -1053,7 +1057,12 @@ export function ReleaseConsolePage(): JSX.Element {
                           {step.command}
                         </pre>
                       ) : (
-                        <p className="mt-1.5 text-[11px] text-muted-foreground">这一步没有命令（由 CDS 自身执行）。</p>
+                        // 不要写成「这一步不执行命令」——那是在替后端圆场。当前三份计划模板
+                        // 都没给 steps[].command 赋值（release-service.ts 建 plan 处），
+                        // 所以这里如实说命令没登记，并指到真实脚本所在的地方。
+                        <p className="mt-1.5 text-[11px] text-muted-foreground">
+                          计划模板没有登记这一步的命令。实际执行的脚本见下方「部署命令」与实时输出。
+                        </p>
                       )}
                     </li>
                   ))}

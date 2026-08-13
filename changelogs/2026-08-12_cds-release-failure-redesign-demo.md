@@ -20,3 +20,5 @@
 | fix | cds | 发布控制台的流水线与 Agent 从 348px 右栏搬进全屏浮层（支持 Esc 关闭）——设计稿修掉的正是「配置类塞窄栏」这条结构问题，首版又犯了回去 |
 | fix | cds | 设计稿的「客户环境」分组是虚构的：后端 environment 枚举只有 production/staging/other，客户环境实际落在 other。按真枚举渲染，并加守卫禁止再造 customer 分组 |
 | feat | cds | 新增 `releaseConsoleView`：步骤命令按 planId + step.id 精确对齐（对不上就不显示命令，不拿别的计划顶替）、卡住判定纯函数（无日志时以发布开始时间为基准，时间戳解析不出来就不报） |
+| fix | cds | 生产真数据暴露三处（stub 全掩盖）：分支下拉整列空白（真实字段是 `branch` 不是 `name`，改为复用发布中心的 BranchOption 类型不再自建）、默认环境落到已停用的临时目标（改走既有 resolveSelectedTargetId，canonical 优先）、对照与来源两段文案粘连 |
+| docs | cds | 发布流水线浮层不再把「计划没登记命令」写成「由 CDS 自身执行」——后端三份 plan 模板从不给 steps[].command 赋值，如实说明并指向真实脚本所在（部署命令栏与实时输出） |
