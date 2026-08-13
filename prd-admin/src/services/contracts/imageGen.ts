@@ -22,6 +22,35 @@ export type ImageGenImage = {
   revisedPrompt?: string | null;
 };
 
+/**
+ * 任务 SSE 推送的单条事件载荷（imageDone / imageError / error / runStart 共用一个形状）。
+ * 字段一律 unknown：这是网络边界，收到什么由后端决定，读的时候各自收敛。
+ */
+export type ImageGenRunStreamPayload = {
+  type?: unknown;
+  errorMessage?: unknown;
+  asset?: { id?: unknown; sha256?: unknown; url?: unknown; originalUrl?: unknown; originalSha256?: unknown } | null;
+  url?: unknown;
+  originalUrl?: unknown;
+  originalSha256?: unknown;
+  /** 同一条计划项内的第几张图，分层用它给图层排序。 */
+  imageIndex?: unknown;
+  itemIndex?: unknown;
+  // 后端 runStart / imageDone 推送的模型身份；逻辑模型用于主展示，上游模型仅用于诊断。
+  modelId?: unknown;
+  logicalModelPublicId?: unknown;
+  modelGroupName?: unknown;
+  platformId?: unknown;
+  isAdaptive?: unknown;
+  adapterDisplayName?: unknown;
+  resolutionType?: unknown;
+  // 后端 imageDone 携带的尺寸真值（请求尺寸 vs 实际返回尺寸）
+  requestedSize?: unknown;
+  effectiveSize?: unknown;
+  sizeAdjusted?: unknown;
+  ratioAdjusted?: unknown;
+};
+
 export type ImageGenGenerateMeta = {
   requestedSize?: string | null;
   effectiveSize?: string | null;

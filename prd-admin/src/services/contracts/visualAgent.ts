@@ -173,6 +173,14 @@ export type UploadVisualAgentWorkspaceAssetContract = (input: {
 // -------- VisualAgent：生图任务化（服务端后台执行） --------
 
 export type CreateWorkspaceImageGenRunInput = {
+  /**
+   * generate（默认，文生图/图生图）或 layering（语义分层）。
+   * 分层此前只有同步端点，模型本身要二三十秒，实测稳定撞上边缘网关的 30 秒超时，
+   * 结果永远拿不到；走这条异步任务后产物与 HTTP 连接的存活时间脱钩。
+   */
+  operation?: 'generate' | 'layering';
+  /** 分层要拆成几层（1-10，仅 operation=layering 时有意义）。 */
+  layerCount?: number;
   prompt: string;
   targetKey: string;
   x?: number;
