@@ -1,19 +1,33 @@
 ---
-globs: prd-api/src/**/*.cs
+globs: prd-api/src/**/*.cs,prd-admin/src/**/*.ts,prd-admin/src/**/*.tsx,llmgw/**/*.cs,llmgw/web/src/**/*.ts,llmgw/web/src/**/*.tsx
 description: LLM Gateway 统一调用规则 + LlmRequestContext.UserId 必填 + 流式场景陷阱
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/llm-gateway.md
-     生成时间: 2026-08-11T09:03:38Z -->
+     生成时间: 2026-08-13T05:29:54Z -->
 
 
 # LLM Gateway 统一调用规则
 
-**一句话**：所有大模型调用走网关，且调用前必须开 LlmRequestContext 作用域把 UserId 填进去——漏了会以「User not found」的形式炸在运行时。
+**一句话**：所有大模型调用走网关；MAP 选择 AppCaller 获准的模型池，LLMGW 默认只在池内调度，跨池代选必须显式开启。
 **什么时候撞上**：写任何调用大模型的 Controller、Service 或 Worker。
 
 所有大模型调用必须通过 `ILlmGateway`，禁止直接调用底层 LLM 客户端。
+
+## 职责与故障隔离硬规则
+
+1. 用户可选模型必须来自 AppCallerCode 获准的模型池，提交稳定池标识；禁止用 Provider 模型名或 Offering 代替业务选择。
+2. LLMGW 可以在所选池内更换成员。跨模型池代选默认禁止，只有 AppCaller 明确配置允许时才能发生。
+3. 显式池未知、越权、类型不符或候选耗尽时必须结构化失败，禁止静默落到全局默认或 legacy 路由。
+4. 单成员失败只更新该成员健康，不得清空模型目录、禁用 AppCaller 或关闭 MAP 功能。
+5. MAP 维护推荐、风险建议与用户偏好；LLMGW 只返回池目录、健康和真实执行指标。
+6. Open 成员通过受限真实业务请求进入 HalfOpen；禁止默认创建消耗额度的合成探测请求。
+7. 通知、指标和控制台不是请求执行或自动恢复的前置依赖。任一辅助链路故障不得扩大到数据面。
+8. 所有池不可用时仍必须保留目录、错误详情、恢复和回滚入口。
+9. 隔离、恢复、默认池切换、跨池授权与回滚必须写入审计。
+
+详细规则与验收边界见 `doc/rule.platform.llm-gateway.md` 和 `doc/design.platform.model-pool.md`。
 
 ## 使用方式
 
