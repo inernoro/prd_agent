@@ -275,10 +275,13 @@ test('同一运行和提交可以复用既有视觉计划继续补证', () => {
     captureStartedAt: '2026-08-11T14:00:00.000Z',
     environments: ['cds', 'production'],
     environmentOrigins: { cds: 'https://cds.example.test', production: 'https://map.ebcone.net' },
+    gatewayEnvironmentOrigins: { cds: 'https://gw-cds.example.test', production: 'https://gw.example.test' },
     scope: 'full',
     slots: [
       { slotId: 'CDS-VISUAL-IDENTITY-01', environment: 'cds', pageOrigin: 'https://cds.example.test' },
+      { slotId: 'CDS-VISUAL-GATEWAY-01', environment: 'cds', pageOrigin: 'https://gw-cds.example.test' },
       { slotId: 'PRODUCTION-VISUAL-IDENTITY-01', environment: 'production', pageOrigin: 'https://map.ebcone.net' },
+      { slotId: 'PRODUCTION-VISUAL-GATEWAY-01', environment: 'production', pageOrigin: 'https://gw.example.test' },
     ],
   };
   const identity = { runId: 'stsmk-current', commit: 'a'.repeat(40), environments: ['cds', 'production'], scope: 'full' };
@@ -288,6 +291,10 @@ test('同一运行和提交可以复用既有视觉计划继续补证', () => {
   assert.equal(canReuseVisualPlan({ ...plan, environments: ['cds'] }, identity), false);
   assert.equal(canReuseVisualPlan({ ...plan, scope: 'production-read-only', slots: [] }, identity), false);
   assert.equal(canReuseVisualPlan({ ...plan, environmentOrigins: {} }, identity), false);
+  assert.equal(canReuseVisualPlan({
+    ...plan,
+    slots: [{ slotId: 'CDS-VISUAL-FOREIGN-01', environment: 'cds', pageOrigin: 'https://foreign.example.test' }],
+  }, identity), false);
   assert.equal(canReuseVisualPlan({
     ...plan,
     environments: ['production'],
@@ -589,6 +596,7 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
     branch: 'codex/review',
     commit: 'a'.repeat(40),
     folderPath: '稳定冒烟/2026-08',
+    reportDate: '2026-08-13',
   });
   assert.equal(archive.contract, 'functional-read-only');
   assert.equal(archive.args.includes('archive_report.py'), false);
@@ -604,6 +612,23 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
     false,
   );
   assert.equal(verifyArgs[3], '0');
+});
+
+test('完整视觉归档显式传递标准日期，避免从运行标识误推紧凑日期', () => {
+  const archive = buildStableSmokeArchiveCommand({
+    productionReadOnly: false,
+    runId: 'stsmk-20260813-final',
+    verdict: 'fail',
+    reportPath: '/tmp/report.md',
+    manifestPath: '/tmp/manifest.json',
+    branch: 'codex/review',
+    commit: 'a'.repeat(40),
+    folderPath: '稳定冒烟/2026-08',
+    reportDate: '2026-08-13',
+  });
+  const dateIndex = archive.args.indexOf('--report-date');
+  assert.equal(archive.contract, 'visual-l2');
+  assert.equal(archive.args[dateIndex + 1], '2026-08-13');
 });
 
 test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 MAP 通知', () => {

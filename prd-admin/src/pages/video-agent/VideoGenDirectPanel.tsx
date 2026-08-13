@@ -17,6 +17,7 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
+import { formatVideoGenerationError } from '@/lib/videoGenerationError';
 import { resolveApiUrl } from '@/services/real/apiClient';
 import {
   createVideoGenRunReal,
@@ -254,8 +255,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                 {Math.max(0, Math.min(100, currentRun?.phaseProgress ?? 0))}%
               </div>
               <div className="text-xs text-token-muted">
-                任务 ID：{currentRun?.id.slice(0, 12)}…
-                {currentRun?.directVideoJobId && <> · 上游任务：{currentRun.directVideoJobId.slice(0, 10)}…</>}
+                任务编号：{currentRun?.id.slice(0, 12)}…
               </div>
             </div>
           ) : isFailed ? (
@@ -263,13 +263,8 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               <AlertCircle size={32} className="text-rose-400" />
               <div className="text-base font-medium">生成失败</div>
               <div className="text-xs text-token-secondary whitespace-pre-wrap">
-                {currentRun?.errorMessage || '未知错误'}
+                {formatVideoGenerationError(currentRun?.errorMessage)}
               </div>
-              {currentRun?.errorCode === 'OPENROUTER_NOT_CONFIGURED' && (
-                <div className="mt-2 text-[11px] text-amber-300/80 bg-amber-500/10 rounded-lg px-3 py-2 border border-amber-500/30">
-                  提示：管理员需在容器环境变量中注入 <code className="font-mono">OPENROUTER_API_KEY</code>
-                </div>
-              )}
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3 text-token-secondary px-6 text-center">

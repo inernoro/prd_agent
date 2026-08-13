@@ -14,6 +14,44 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class OpenRouterVideoClientGatewayTests
 {
     [Fact]
+    public void VideoErrors_ShouldNeverExposeProviderDiagnosticsToUsers()
+    {
+        var quota = VideoGenerationUserError.FromGateway(new GatewayRawResponse
+        {
+            Success = false,
+            StatusCode = 402,
+            ErrorCode = "LLM_QUOTA_EXCEEDED",
+            ErrorMessage = "大模型平台额度已用尽或被限额。上游信息：Insufficient credits. Add more using https://openrouter.ai/settings/credits",
+        });
+        var generic = VideoGenerationUserError.FromGateway(new GatewayRawResponse
+        {
+            Success = false,
+            StatusCode = 500,
+            ErrorCode = "PROVIDER_ERROR",
+            Content = "{\"error\":{\"message\":\"provider token invalid at https://provider.example/settings\"}}",
+        });
+
+        quota.ShouldBe(GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
+        generic.ShouldBe(VideoGenerationUserError.ServiceUnavailable());
+        quota.ShouldNotContain("上游信息");
+        quota.ShouldNotContain("http");
+        generic.ShouldNotContain("provider");
+        generic.ShouldNotContain("http");
+    }
+
+    [Fact]
+    public void VideoErrors_ShouldKeepKnownRecoveryActionsWithoutRawProtocolDetails()
+    {
+        VideoGenerationUserError.FromDiagnostic(
+                "Duration 6s is not supported for this model. Supported durations: 5, 10s")
+            .ShouldBe("当前模型不支持 6 秒视频，仅支持 5, 10 秒。请改用支持的时长后重试。");
+        VideoGenerationUserError.FromDiagnostic("upstream timeout", 408)
+            .ShouldBe("视频生成等待超时，请稍后重试。");
+        VideoGenerationUserError.FromDiagnostic("bad request details", 400)
+            .ShouldBe("当前视频模型无法处理这次请求，请检查描述、参考图和视频参数后重试。");
+    }
+
+    [Fact]
     public async Task SubmitStatusAndDownload_ShouldUseGatewayRawPath()
     {
         var gateway = new CapturingGateway();

@@ -754,8 +754,13 @@ export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 
   const actualEnvironments = Array.isArray(plan?.environments) ? [...plan.environments].sort() : [];
   const hasEnvironmentOrigins = scope === 'production-read-only' || expectedEnvironments.every((environment) => (
     Boolean(plan?.environmentOrigins?.[environment])
-    && plan?.slots?.filter((slot) => slot.environment === environment)
-      .every((slot) => slot.pageOrigin === plan.environmentOrigins[environment])
+    && plan?.slots?.filter((slot) => slot.environment === environment).every((slot) => {
+      const allowedOrigins = new Set([
+        plan.environmentOrigins[environment],
+        plan.gatewayEnvironmentOrigins?.[environment],
+      ].filter(Boolean));
+      return allowedOrigins.has(slot.pageOrigin);
+    })
   ));
   return plan?.schemaVersion === '3.0'
     && String(plan.runId || '') === String(runId || '')
@@ -982,6 +987,7 @@ export function buildStableSmokeArchiveCommand({
   branch,
   commit,
   folderPath,
+  reportDate = new Date().toISOString().slice(0, 10),
 }) {
   if (productionReadOnly) {
     return {
@@ -1011,6 +1017,7 @@ export function buildStableSmokeArchiveCommand({
       '--target', `核心业务稳定冒烟 ${runId}`,
       '--report-kind', '发布验收',
       '--title-focus', '核心业务稳定冒烟',
+      '--report-date', reportDate,
       '--module', '稳定冒烟',
       '--type', '每48小时复测',
       '--folder-path', folderPath,

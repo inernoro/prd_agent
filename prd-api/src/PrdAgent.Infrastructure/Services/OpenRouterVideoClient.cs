@@ -55,8 +55,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoSubmitResult
             {
                 Success = false,
-                ErrorMessage = (resolution.ErrorMessage ?? "未配置可用的视频生成模型池。")
-                    + "\n请在「模型池管理」中创建一个类型为「视频生成」的模型池，添加 OpenRouter 视频模型（如 alibaba/wan-2.6）。"
+                ErrorMessage = VideoGenerationUserError.ServiceUnavailable()
             };
         }
 
@@ -130,7 +129,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoSubmitResult
             {
                 Success = false,
-                ErrorMessage = QuotaOrUpstreamMessage(rawResp)
+                ErrorMessage = VideoGenerationUserError.FromGateway(rawResp)
             };
         }
 
@@ -141,7 +140,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoSubmitResult
             {
                 Success = false,
-                ErrorMessage = "OpenRouter 响应缺少 id 字段"
+                ErrorMessage = VideoGenerationUserError.ServiceUnavailable()
             };
         }
 
@@ -203,7 +202,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                 ? await _gateway.ResolveOfferingAsync(appCallerCode, ModelTypes.VideoGen, offeringId, ct)
                 : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
         if (!statusResolution.Success)
-            return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = statusResolution.ErrorMessage };
+            return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = VideoGenerationUserError.ServiceUnavailable() };
 
         var statusBody = IsVolcengineVideoResolution(statusResolution)
             ? new JsonObject
@@ -230,7 +229,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoStatus
             {
                 Status = "failed",
-                ErrorMessage = QuotaOrUpstreamMessage(rawResp)
+                ErrorMessage = VideoGenerationUserError.FromGateway(rawResp)
             };
         }
 
@@ -255,7 +254,9 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         {
             Status = status,
             VideoUrl = videoUrl,
-            ErrorMessage = errMsg,
+            ErrorMessage = string.IsNullOrWhiteSpace(errMsg)
+                ? null
+                : VideoGenerationUserError.FromDiagnostic(errMsg),
             Cost = ReadCost(doc)
         };
     }
@@ -289,7 +290,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                 ? await _gateway.ResolveOfferingAsync(appCallerCode, ModelTypes.VideoGen, offeringId, ct)
                 : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
         if (!resolution.Success)
-            return new OpenRouterVideoDownload { Success = false, ErrorMessage = resolution.ErrorMessage };
+            return new OpenRouterVideoDownload { Success = false, ErrorMessage = VideoGenerationUserError.DownloadUnavailable() };
 
         if (IsVolcengineVideoResolution(resolution))
         {
@@ -299,7 +300,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                 return new OpenRouterVideoDownload
                 {
                     Success = false,
-                    ErrorMessage = status.ErrorMessage ?? $"视频任务尚未完成，status={status.Status}"
+                    ErrorMessage = status.ErrorMessage ?? "视频仍在生成中，请稍后重试"
                 };
             }
 
@@ -324,13 +325,16 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         if (!rawResp.Success || rawResp.BinaryContent == null || rawResp.BinaryContent.Length == 0)
         {
-            // 诊断信息进 error（随 run 落库，跨副本可读）：标称类型 + 二进制/文本长度，便于定位下载落空原因
             var diag = $"ct={rawResp.ContentType}, binLen={rawResp.BinaryContent?.Length ?? 0}, textLen={rawResp.Content?.Length ?? 0}";
-            // 与 submit/status 一致：额度耗尽时用 Gateway 友好文案(LLM_QUOTA_EXCEEDED)，其余保留 code/状态，再附诊断（Bugbot review）
+            _logger.LogWarning(
+                "视频下载失败 status={Status} errorCode={ErrorCode} diagnostic={Diagnostic}",
+                rawResp.StatusCode,
+                rawResp.ErrorCode,
+                diag);
             return new OpenRouterVideoDownload
             {
                 Success = false,
-                ErrorMessage = $"{QuotaOrUpstreamMessage(rawResp)} ({diag})",
+                ErrorMessage = VideoGenerationUserError.DownloadUnavailable(),
             };
         }
 
@@ -362,7 +366,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                 ? await _gateway.ResolveOfferingAsync(appCallerCode, ModelTypes.VideoGen, offeringId, ct)
                 : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
         if (!resolution.Success)
-            return OpenRouterVideoStream.Fail(resolution.ErrorMessage ?? "视频下载路由暂时不可用，请稍后重试");
+            return OpenRouterVideoStream.Fail(VideoGenerationUserError.DownloadUnavailable());
 
         if (IsVolcengineVideoResolution(resolution))
         {
@@ -611,38 +615,6 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             try { return costNode.GetValue<double>(); } catch { /* ignore */ }
         }
         return null;
-    }
-
-    private static string? ExtractErrorMessage(string body)
-    {
-        if (string.IsNullOrWhiteSpace(body)) return null;
-        try
-        {
-            var doc = JsonNode.Parse(body)?.AsObject();
-            if (doc == null) return null;
-            var err = doc["error"];
-            if (err is JsonObject errObj)
-            {
-                return errObj["message"]?.GetValue<string>() ?? errObj.ToJsonString();
-            }
-            return err?.ToString();
-        }
-        catch
-        {
-            return Truncate(body, 200);
-        }
-    }
-
-    // 额度用尽时优先用 Gateway 已构造的中文友好文案(LLM_QUOTA_EXCEEDED)，让「动起来」等视频路径与拆分镜
-    // 走同一套额度提示 + admin 告警；其余错误保留 /videos 端点特定的上游 message 解析（Bugbot review）。
-    private static string QuotaOrUpstreamMessage(GatewayRawResponse rawResp)
-    {
-        if (rawResp.ErrorCode == "LLM_QUOTA_EXCEEDED" && !string.IsNullOrWhiteSpace(rawResp.ErrorMessage))
-            return rawResp.ErrorMessage!;
-        return ExtractErrorMessage(rawResp.Content ?? string.Empty)
-            ?? rawResp.ErrorMessage
-            ?? rawResp.ErrorCode
-            ?? $"HTTP {rawResp.StatusCode}";
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
