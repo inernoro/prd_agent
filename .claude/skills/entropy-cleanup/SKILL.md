@@ -332,12 +332,17 @@ git push -u origin $(git branch --show-current)
   - **其余的每一个都要在它自己的 head 上跑审计**，不是在当前分支上跑——当前分支干净
     不代表那个 PR 干净，拿此处的绿灯去批准彼处的合并是在用一份不相干的证据放行。
 
-    做法：`git worktree add <临时目录> origin/<该PR的head分支>`（**用 worktree，禁止直接
-    `git checkout <sha>`**——那会 detach 当前工作区的 HEAD，Step 6.3 取当前分支名会拿到
-    空字符串，后续创建 PR 直接断掉）。在这个临时 worktree 里重跑一遍 D1-D4 双向扫描 +
-    `doc-readability-check.py --ratchet`，再用 `mcp__github__pull_request_read`（method=
-    `get_diff`）对这个 PR 走一遍 **6.4 同款内容核查**（删除行是否真是幽灵、追加行范围是否
-    仅限 doc/changelog/技能元数据、有没有混入代码文件或不属于本轮的生成物）。审计完成后
+    做法：先 `git fetch origin <该PR的head分支>`（孤立/浅 checkout 里这个远程分支的
+    ref 本地还不存在，`worktree add` 解析不了未 fetch 过的 ref），再
+    `git worktree add <临时目录> FETCH_HEAD`（**用 worktree，禁止直接 `git checkout <sha>`**
+    ——那会 detach 当前工作区的 HEAD，Step 6.3 取当前分支名会拿到空字符串，后续创建 PR
+    直接断掉）。在这个临时 worktree 里重跑一遍 D1-D4 双向扫描 + `doc-readability-check.py
+    --ratchet --baseline-ref origin/main`（**必须带 `--baseline-ref`**，否则比对的是那个
+    历史 PR 自己提交时冻结的基线文件——它可能比当前 main 的基线更宽松，会把「相对现在
+    main 其实在退步」的欠账放绿灯放过去；CI 自己跑 ratchet 也是带 `--baseline-ref` 调用，
+    这里对齐同一口径），再用 `mcp__github__pull_request_read`（method=`get_diff`）对这个
+    PR 走一遍 **6.4 同款内容核查**（删除行是否真是幽灵、追加行范围是否仅限
+    doc/changelog/技能元数据、有没有混入代码文件或不属于本轮的生成物）。审计完成后
     `git worktree remove <临时目录>`，确保当前工作分支分毫未动。
 
     - 结构审计（D1-D4+棘轮）与 6.4 内容核查**都**通过，且 `mcp__github__pull_request_read`
