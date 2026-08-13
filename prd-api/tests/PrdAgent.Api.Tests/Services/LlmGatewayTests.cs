@@ -2093,6 +2093,65 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenDirectOpenAiEditIsSelectedBeforeSend_ShouldRebuildPreparedOpenRouterBodyAsMultipart()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "LogicalModel",
+            ExpectedModel = "image2",
+            LogicalModelId = "logical-image2",
+            LogicalModelPublicId = "image2",
+            OfferingId = "offering-openai-image",
+            OfferingTargetKind = "model",
+            ActualModel = "gpt-image-1.5",
+            ActualPlatformId = "openai-platform",
+            ActualPlatformName = "OpenAI",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://api.openai.com/v1",
+            ApiKey = "openai-key",
+        };
+        var http = new SequenceHttpClientFactory(
+            (200, "{\"data\":[{\"b64_json\":\"aW1hZ2U=\"}]}"));
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter());
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "visual-agent.image.vision::generation",
+            ModelType = "generation",
+            ExpectedModel = "image2",
+            EndpointPath = "chat/completions",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray(new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = "combine the references",
+                }),
+            },
+            CanonicalImageRequest = new GatewayCanonicalImageRequest
+            {
+                Prompt = "combine the references",
+                Count = 1,
+                Size = "1024x1024",
+                Images = ["AQID", "BAUG"],
+            },
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        Assert.Contains("/images/edits", Assert.Single(http.RequestUris));
+        var multipartBody = Assert.Single(http.RequestBodies);
+        Assert.Contains("input-1.png", multipartBody);
+        Assert.Contains("input-2.png", multipartBody);
+        Assert.DoesNotContain("messages", multipartBody);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_UsesUpstreamModelSizeCapabilityBeforeLegacyAdapterTable()
     {
         var resolution = new GatewayModelResolution

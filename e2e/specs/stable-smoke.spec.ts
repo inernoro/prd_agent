@@ -2275,6 +2275,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       for (const offering of logical.offerings || []) {
         expect(offering.protocol || '').not.toMatch(/^https?:/i);
         expect(offering.endpointPath || '').not.toMatch(/^https?:|\\/);
+        if (logical.modelType === 'video-gen' && offering.protocol === 'openrouter') {
+          expect(
+            offering.endpointPath || '',
+            'OpenRouter 视频 Offering 必须保留动态路径，由客户端分别构造提交、轮询和下载端点',
+          ).toBe('');
+        }
         expect(offering.priority ?? 0).toBeGreaterThanOrEqual(0);
         expect(offering.weight ?? 1).toBeGreaterThan(0);
       }

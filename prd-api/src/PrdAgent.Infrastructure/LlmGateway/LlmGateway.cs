@@ -1749,6 +1749,27 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return source;
 
         var hasPreparedWireRequest = source.IsMultipart || source.RequestBody is not null;
+        var targetProtocol = string.IsNullOrWhiteSpace(targetResolution.Protocol)
+            ? targetResolution.PlatformType
+            : targetResolution.Protocol;
+        var normalizedTargetProtocol = targetProtocol?.Trim().ToLowerInvariant();
+        var targetIsDirectOpenAiImage = !targetResolution.IsExchange
+                                        && normalizedTargetProtocol is not ("google" or "gemini" or "gemini-compatible"
+                                            or "openrouter" or "openrouter-image" or "openrouter-images")
+                                        && !(targetResolution.ApiUrl?.Contains(
+                                            "openrouter.ai",
+                                            StringComparison.OrdinalIgnoreCase) ?? false);
+        var directOpenAiEditNeedsMultipart = targetIsDirectOpenAiImage
+                                             && source.CanonicalImageRequest.Images.Any(image =>
+                                                 !string.IsNullOrWhiteSpace(image))
+                                             && !source.IsMultipart;
+
+        // 调用方可能按逻辑模型的首选协议预建了 wire request，但健康路由会在发送前直接
+        // 跳过不可用主路。此时 currentResolution 为空并不代表 wire 与实际 Offering 匹配；
+        // 直连 OpenAI 多图必须重建为 /images/edits multipart，不能复用 OpenRouter messages。
+        if (directOpenAiEditNeedsMultipart)
+            return RebuildCanonicalImageRequest(source, targetResolution);
+
         return hasPreparedWireRequest && currentResolution is null
             ? source
             : RebuildCanonicalImageRequest(source, targetResolution);
