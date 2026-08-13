@@ -164,12 +164,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
 
-        var maxAttempts = GetProviderRetryMaxAttempts();
-        return candidates
-            .GroupBy(c => $"{c.ActualPlatformId}::{c.ActualModel}", StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .Take(maxAttempts)
-            .ToList();
+        return LimitProviderRetryResolutions(resolution, candidates.Skip(1));
     }
 
     private static List<ModelResolutionResult> GetProviderRetryResolutions(
@@ -195,12 +190,59 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
 
+        return LimitProviderRetryResolutions(resolution, candidates.Skip(1));
+    }
+
+    private static List<ModelResolutionResult> LimitProviderRetryResolutions(
+        ModelResolutionResult primary,
+        IEnumerable<ModelResolutionResult> retryCandidates)
+    {
         var maxAttempts = GetProviderRetryMaxAttempts();
-        return candidates
+        var retryBudget = Math.Max(0, maxAttempts - 1);
+        if (retryBudget == 0)
+            return [primary];
+
+        var uniqueCandidates = retryCandidates
             .GroupBy(c => $"{c.ActualPlatformId}::{c.ActualModel}", StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
+            .ToList();
+
+        // 跨池兜底必须预留一个尝试位。否则同池有两个成员时，默认两次重试上限会在
+        // 进入第二个模型池前耗尽，导致调用方配置的跨池自愈形同虚设。
+        var crossPoolCandidate = uniqueCandidates.FirstOrDefault(candidate => !IsSameModelPool(primary, candidate));
+        var orderedCandidates = new List<ModelResolutionResult>();
+        if (crossPoolCandidate is not null && retryBudget > 0)
+        {
+            var samePoolBudget = Math.Max(0, retryBudget - 1);
+            orderedCandidates.AddRange(uniqueCandidates
+                .Where(candidate => IsSameModelPool(primary, candidate))
+                .Take(samePoolBudget));
+            orderedCandidates.Add(crossPoolCandidate);
+            orderedCandidates.AddRange(uniqueCandidates.Where(candidate =>
+                !ReferenceEquals(candidate, crossPoolCandidate)
+                && !orderedCandidates.Contains(candidate)));
+        }
+        else
+        {
+            orderedCandidates.AddRange(uniqueCandidates);
+        }
+
+        return new[] { primary }
+            .Concat(orderedCandidates)
             .Take(maxAttempts)
             .ToList();
+    }
+
+    private static bool IsSameModelPool(ModelResolutionResult left, ModelResolutionResult right)
+    {
+        if (!string.IsNullOrWhiteSpace(left.ModelGroupId)
+            && !string.IsNullOrWhiteSpace(right.ModelGroupId))
+        {
+            return string.Equals(left.ModelGroupId, right.ModelGroupId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.Equals(left.ModelGroupCode, right.ModelGroupCode, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(left.ModelGroupName, right.ModelGroupName, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsProviderPinnedExpectedModel(

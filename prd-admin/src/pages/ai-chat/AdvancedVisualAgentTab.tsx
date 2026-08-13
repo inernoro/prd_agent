@@ -1330,8 +1330,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
 
   useEffect(() => {
-    // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
-    const modelCode = effectiveModel?.modelName;
+    // 生成请求仍使用模型池 ID；尺寸适配查询必须使用池内实际上游模型 ID，
+    // 否则 adapter-info 无法命中 Provider 适配器，尺寸/比例选项会被错误清空。
+    const modelCode = effectiveModel?.actualModelId || effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
       setCurrentModelSizesNotApplicable(false);

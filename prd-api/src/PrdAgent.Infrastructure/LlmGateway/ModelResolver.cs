@@ -1536,7 +1536,9 @@ public class ModelResolver : IModelResolver
         {
             var halfOpen = await TryClaimHalfOpenCandidateAsync(group, gatewayOwned, ct);
             if (halfOpen is not null)
-                candidates.Add(halfOpen);
+                // 半开成员是本轮恢复探测的优先候选，必须真正占据发送队列首位，
+                // 否则先发送健康成员会让半开租约白占位而无法完成验证。
+                candidates.Insert(0, halfOpen);
             return candidates;
         }
 
