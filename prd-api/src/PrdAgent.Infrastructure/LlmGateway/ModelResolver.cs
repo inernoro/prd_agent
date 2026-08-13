@@ -211,7 +211,7 @@ public class ModelResolver : IModelResolver
                 .FirstOrDefault(r => r.ModelType == modelType);
             var modelGroupIds = requirement?.ModelGroupIds;
 
-            if (HasDedicatedBinding(modelGroupIds))
+            if (HasDedicatedBinding(requirement?.ModelGroupIds))
             {
                 // 绑定看配置、不看查询结果，判据见 HasDedicatedBinding 的注释。
                 hasDedicatedBinding = true;
@@ -2152,6 +2152,10 @@ public class InMemoryModelResolver : IModelResolver
     private readonly List<LLMPlatform> _platforms = new();
     private readonly Dictionary<string, string> _apiKeys = new();
 
+    // InMemory 与生产 ModelResolver 共用同一个专属绑定判据，避免测试路径重新定义语义。
+    private static bool HasDedicatedBinding(IReadOnlyCollection<string>? boundGroupIds)
+        => ModelResolver.HasDedicatedBinding(boundGroupIds);
+
     /// <summary>
     /// 添加 AppCaller 配置
     /// </summary>
@@ -2248,7 +2252,7 @@ public class InMemoryModelResolver : IModelResolver
             var requirement = appCaller.ModelRequirements
                 .FirstOrDefault(r => r.ModelType == modelType);
 
-            if (ModelResolver.HasDedicatedBinding(requirement?.ModelGroupIds))
+            if (HasDedicatedBinding(requirement?.ModelGroupIds))
             {
                 // 与生产 ModelResolver 共用同一个判据函数，不再各判一次。
                 hasDedicatedBinding = true;

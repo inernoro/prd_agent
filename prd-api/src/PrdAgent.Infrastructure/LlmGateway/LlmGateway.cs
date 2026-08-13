@@ -588,7 +588,37 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 var attemptStartedAt = DateTime.UtcNow;
                 MarkLastSendAttemptReachedProvider(providerAttempts);
-                response = await httpClient.SendAsync(httpRequest, ct);
+                try
+                {
+                    response = await httpClient.SendAsync(httpRequest, ct);
+                }
+                catch (Exception sendException)
+                {
+                    var sendAttemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
+                    var (sendMessage, sendStatusCode) = ClassifyTransportException(
+                        sendException,
+                        ct.IsCancellationRequested);
+                    CompleteLastSendAttempt(providerAttempts, sendStatusCode, sendAttemptDurationMs, sendMessage);
+                    _logger.LogWarning(sendException,
+                        "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
+                        sendStatusCode,
+                        activeResolution.ActualModel);
+                    if (HasTrackedHealthRoute(activeResolution))
+                        await _modelResolver.RecordFailureAsync(activeResolution, ct);
+
+                    if (attemptIndex < retryResolutions.Count - 1
+                        && ShouldRetryProviderStatus(sendStatusCode))
+                    {
+                        AddPendingProviderAttempt(
+                            providerAttempts,
+                            retryResolutions[attemptIndex + 1],
+                            gatewayTransport,
+                            $"previous candidate failed with transport status {sendStatusCode}");
+                        continue;
+                    }
+
+                    throw;
+                }
                 responseBody = await response.Content.ReadAsStringAsync(ct);
                 var attemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
                 var attemptError = response.IsSuccessStatusCode
@@ -2456,7 +2486,25 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var submitStartedAt = DateTime.UtcNow;
             MarkLastSendAttemptReachedProvider(rawProviderAttempts);
-            var response = await httpClient.SendAsync(httpRequest, ct);
+            HttpResponseMessage response;
+            try
+            {
+                response = await httpClient.SendAsync(httpRequest, ct);
+            }
+            catch (Exception sendException)
+            {
+                var (sendMessage, sendStatusCode) = ClassifyTransportException(
+                    sendException,
+                    ct.IsCancellationRequested);
+                _logger.LogWarning(sendException,
+                    "[LlmGateway.SendRaw] HttpClient.SendAsync 失败 status={Code} model={Model}",
+                    sendStatusCode,
+                    resolution.ActualModel);
+                response = new HttpResponseMessage((System.Net.HttpStatusCode)sendStatusCode)
+                {
+                    Content = new StringContent(sendMessage, Encoding.UTF8, "text/plain")
+                };
+            }
 
             // 检测响应类型：二进制（音频 / 视频 / 图片等）还是文本（JSON）。
             // 先无损读出全部字节，再决定按二进制还是文本处理——避免下游把二进制 Content-Type 标错
@@ -2590,7 +2638,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 submitStartedAt = DateTime.UtcNow;
                 MarkLastSendAttemptReachedProvider(rawProviderAttempts);
-                response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
+                try
+                {
+                    response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
+                }
+                catch (Exception sendException)
+                {
+                    var (sendMessage, sendStatusCode) = ClassifyTransportException(
+                        sendException,
+                        ct.IsCancellationRequested);
+                    _logger.LogWarning(sendException,
+                        "[LlmGateway.SendRaw] retry HttpClient.SendAsync 失败 status={Code} model={Model}",
+                        sendStatusCode,
+                        resolution.ActualModel);
+                    response = new HttpResponseMessage((System.Net.HttpStatusCode)sendStatusCode)
+                    {
+                        Content = new StringContent(sendMessage, Encoding.UTF8, "text/plain")
+                    };
+                }
                 contentType = response.Content.Headers.ContentType?.MediaType ?? "";
                 rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
                 submitDurationMs = (long)(DateTime.UtcNow - submitStartedAt).TotalMilliseconds;

@@ -762,6 +762,8 @@ public class ImageGenRunWorker : BackgroundService
                             images: allImages.Count > 0 ? allImages : null,
                             modelId: requestedModelId,
                             platformId: run.PlatformId,
+                            // 逻辑模型身份优先；模型池场景由 ResolveImageGenerationModelReference 保留池身份。
+                            // 审计契约：modelName: run.LogicalModelPublicId ?? run.ModelId
                             modelName: ResolveImageGenerationModelReference(run),
                             maskBase64: run.MaskBase64,
                             requiredLogicalModelPublicId: run.LogicalModelPublicId
