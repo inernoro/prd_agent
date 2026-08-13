@@ -62,9 +62,32 @@ try {
 const evidenceRows = [
   ...collectPlaywrightCases(cdsReport, 'cds'),
   ...collectPlaywrightCases(productionReport, 'production'),
+  ...(Array.isArray(executionSummary?.supplementalEvidenceRows)
+    ? executionSummary.supplementalEvidenceRows
+    : []),
 ];
+const requiredCaseIdsByEnvironment = Object.fromEntries(selectedEnvironments.map((targetEnvironment) => {
+  const execution = executionSummary?.executions?.find((item) => item.environment === targetEnvironment);
+  const fromExecution = Array.isArray(execution?.requiredCaseIds) ? execution.requiredCaseIds : null;
+  return [
+    targetEnvironment,
+    fromExecution
+      || plan?.requiredCaseIdsByEnvironment?.[targetEnvironment]
+      || plan?.requiredCaseIds
+      || [],
+  ];
+}));
 const rows = reconcileCaseCoverage(
-  selectRequiredCaseIds(plan?.requiredCaseIds || [], grepExpression, evidenceRows),
+  grepExpression
+    ? Object.fromEntries(Object.entries(requiredCaseIdsByEnvironment).map(([targetEnvironment, caseIds]) => [
+      targetEnvironment,
+      selectRequiredCaseIds(
+        caseIds,
+        grepExpression,
+        evidenceRows.filter((row) => row.environment === targetEnvironment),
+      ),
+    ]))
+    : requiredCaseIdsByEnvironment,
   evidenceRows,
   selectedEnvironments.length > 0 ? selectedEnvironments : ['cds', 'production'],
 );
@@ -78,6 +101,7 @@ const summary = executionFailures.length > 0
 const notRunLedger = buildNotRunLedger(rows, {
   cds: Boolean(cdsReport),
   production: Boolean(productionReport),
+  productionRestricted: executionSummary?.productionSafetyGate?.restricted === true,
 });
 const verdict = summary.verdict;
 const totalDuration = rows.reduce((sum, row) => sum + row.durationMs, 0);

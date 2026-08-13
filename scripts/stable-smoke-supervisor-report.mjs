@@ -161,6 +161,22 @@ export function renderSupervisorReport({
     : counts.notRun > 0 ? '部分通过' : '通过';
   const managerIntervention = productionNotRun.length > 0 ? '需要：确认正式验收身份可用' : '不需要：由团队闭环剩余项';
   const methods = [...new Map(metadata.map((row) => [row.caseId, row])).values()];
+  const environmentCoverage = [...selectedEnvironmentSet].map((environment) => {
+    const environmentRows = metadata.filter((row) => row.environment === environment);
+    const passed = environmentRows.filter((row) => row.status === 'pass').length;
+    const failed = environmentRows.filter((row) => row.status === 'fail').length;
+    const notRun = environmentRows.filter((row) => row.status === 'not-run').length;
+    const blocker = notRun === 0
+      ? '无'
+      : environment === 'production' ? '正式环境专用身份或安全门槛' : '自动化步骤或依赖资源缺失';
+    const command = environment === 'cds'
+      ? 'node scripts/stable-smoke-run.mjs --cds-only'
+      : 'node scripts/stable-smoke-run.mjs';
+    const closeCondition = notRun === 0
+      ? '保持周期复测'
+      : '所有未执行项获得真实通过或失败结果，并完成清理回读';
+    return { environment, rows: environmentRows, passed, failed, notRun, blocker, command, closeCondition };
+  });
 
   const lines = [
     `# 核心业务稳定验收主管报告 · ${runId}`,
@@ -177,6 +193,25 @@ export function renderSupervisorReport({
     `| 通过 | ${counts.pass}/${counts.total} | 可抽查逐项账本中的证据与方法 |`,
     `| 不通过 | ${counts.fail}/${counts.total} | 必须修复并在 CDS 与正式环境复测 |`,
     `| 未执行 | ${counts.notRun}/${counts.total} | 必须补齐身份或自动化步骤，不能用入口截图代替 |`,
+    '',
+    '## 执行覆盖账本',
+    '',
+    '先看环境汇总，再按验收项补跑。补跑命令只包含安全的执行入口，不包含账号、密码或单次票据。',
+    '',
+    '| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 | 关闭条件 |',
+    '|---|---:|---:|---:|---:|---:|---|---|---|',
+    ...environmentCoverage.map((coverage) => `| ${environmentLabel(coverage.environment)} | ${coverage.rows.length} | ${coverage.passed + coverage.failed} | ${coverage.passed} | ${coverage.failed} | ${coverage.notRun} | ${coverage.blocker} | \`${coverage.command}\` | ${coverage.closeCondition} |`),
+    '',
+    '| 验收项编号 | 环境 | 阻塞类别 | 具体原因 | 代码或页面入口 | 补跑命令 | 关闭条件 |',
+    '|---|---|---|---|---|---|---|',
+    ...metadata.filter((row) => row.status === 'not-run').map((row) => {
+      const gap = gapByKey.get(`${row.environment}:${row.caseId}`);
+      const command = gap?.command || (row.environment === 'cds'
+        ? 'node scripts/stable-smoke-run.mjs --cds-only'
+        : 'node scripts/stable-smoke-run.mjs');
+      return `| ${row.caseId} | ${environmentLabel(row.environment)} | ${escapeCell(gap?.reasonCode || (row.environment === 'production' ? '正式身份或安全门槛' : '自动化或依赖缺口'))} | ${escapeCell(gap?.reason || '没有获得真实执行证据')} | ${escapeCell(gap?.sourcePath || row.breadcrumb)} | \`${escapeCell(command)}\` | ${escapeCell(gap?.closeCondition || '该项获得真实通过或失败结果，并完成清理回读')} |`;
+    }),
+    ...(counts.notRun === 0 ? ['| 无 | 全部环境 | 无 | 所有计划项均已执行 | 保持当前业务路径 | 无需补跑 | 保持周期复测 |'] : []),
     '',
     '## 需干预事项',
     '',

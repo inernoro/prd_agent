@@ -1751,6 +1751,21 @@ async function main() {
       envFileLoaded: local.loaded,
       executions,
       productionSafetyGate,
+      supplementalEvidenceRows: gatewayPersistenceEvidenceRow(gatewayPersistenceProbe),
+      environmentCoverage: selected.map((environment) => {
+        const environmentCoverageRows = rows.filter((row) => row.environment === environment);
+        const passed = environmentCoverageRows.filter((row) => row.status === 'pass').length;
+        const failed = environmentCoverageRows.filter((row) => row.status === 'fail').length;
+        const notRun = environmentCoverageRows.filter((row) => row.status === 'not-run').length;
+        return {
+          environment,
+          planned: environmentCoverageRows.length,
+          completed: passed + failed,
+          passed,
+          failed,
+          notRun,
+        };
+      }),
       coverage: summary,
       archive: { status: 'pending', reportUrl: '' },
       notification: { status: 'pending' },
@@ -1792,6 +1807,7 @@ async function main() {
       '--visual-gate', visualGateMarkdownPath,
       '--visual-plan', visualPlanForReportPath,
       '--technical-url', './technical-appendix.md',
+      '--execution-summary', summaryPath,
       '--output', supervisorPath,
     ]);
     if (compose.status !== 0) throw new Error('功能与视觉主管报告合并失败');

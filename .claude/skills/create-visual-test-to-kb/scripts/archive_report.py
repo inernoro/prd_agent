@@ -704,6 +704,54 @@ def _reviewer_summary(markdown):
     return {"headers": headers, "rows": rows, "counts": counts}
 
 
+def _business_decision_summary(markdown):
+    """Extract the stable-smoke use-case SSOT and visual evidence semantics.
+
+    The supervisor module matrix is useful for ownership, but it cannot answer
+    how many contract cases ran. Prefer the explicit boss-facing table when it
+    exists and fail closed if its arithmetic is inconsistent.
+    """
+    headers, rows = _table_records(markdown, "老板一页结论")
+    if not rows:
+        return None
+    values = {
+        _plain_cell(row.get("指标", "")): _plain_cell(row.get("数量", ""))
+        for row in rows
+    }
+    if "未执行" not in values and "功能未执行" in values:
+        values["未执行"] = values["功能未执行"]
+    required = ("计划测试", "已完成", "通过", "失败", "未执行")
+    if any(not re.fullmatch(r"\d+", values.get(field, "")) for field in required):
+        return None
+    counts = {field: int(values[field]) for field in required}
+    if counts["通过"] + counts["失败"] + counts["未执行"] != counts["计划测试"]:
+        raise RuntimeError("老板一页结论统计不守恒：通过 + 失败 + 未执行必须等于计划测试")
+    if counts["通过"] + counts["失败"] != counts["已完成"]:
+        raise RuntimeError("老板一页结论统计不守恒：通过 + 失败必须等于已完成")
+    visual_headers, visual_rows = _table_records(markdown, "截图证据怎么读")
+    visual_values = {
+        _plain_cell(row.get("视觉指标", "")): _plain_cell(row.get("数量", ""))
+        for row in visual_rows
+    }
+    visual = {
+        field: int(visual_values[field])
+        for field in ("计划截图槽位", "已采集且可审核", "能直接证明通过", "明确不通过", "不能证明业务结果")
+        if re.fullmatch(r"\d+", visual_values.get(field, ""))
+    }
+    failure_headers, failure_rows = _table_records(markdown, "不通过问题与复现")
+    environment_headers, environment_rows = _table_records(markdown, "双环境覆盖差异")
+    return {
+        "counts": counts,
+        "visual": visual,
+        "failures": failure_rows,
+        "environment": environment_rows,
+        "headers": headers,
+        "visual_headers": visual_headers,
+        "failure_headers": failure_headers,
+        "environment_headers": environment_headers,
+    }
+
+
 def _declares_supervisor_acceptance(target, body):
     scope = _scope_declaration_text(target, body)
     return bool(
@@ -2244,6 +2292,7 @@ def build_interactive_html(
     row_risk_count = sum(1 for it in problem_items if it.get("severity") in {"P1", "P2"})
     row_gap_count = _coverage_gap_count(markdown_content)
     reviewer_summary = _reviewer_summary(markdown_content)
+    business_summary = _business_decision_summary(markdown_content)
     report_time = _extract_report_time(markdown_content)
     report_time_html = (
         f'<time class="dl-item">报告时间 · {html.escape(report_time)}</time>' if report_time else ""
@@ -2305,7 +2354,16 @@ def build_interactive_html(
         )
     directory_html = "".join(directory_items) or '<p class="section-nav-empty">正文没有二级目录</p>'
     # 指标条按语义上色：0 个阻断项是好消息（绿），有阻断项必须红，缺口用墨色弱化。
-    if reviewer_summary:
+    if business_summary:
+        counts = business_summary["counts"]
+        summary_cards = [
+            ("计划测试", str(counts["计划测试"]), "本轮合同项", "accent"),
+            ("已完成", str(counts["已完成"]), "通过 + 失败", "accent"),
+            ("通过", str(counts["通过"]), "业务断言成立", "pass"),
+            ("失败", str(counts["失败"]), "需要处理和复测", "fail" if counts["失败"] else "pass"),
+            ("功能未执行", str(counts["未执行"]), "不能按通过计算", "gap" if counts["未执行"] else "pass"),
+        ]
+    elif reviewer_summary:
         counts = reviewer_summary["counts"]
         summary_cards = [
             ("全部通过", str(counts["pass"]), "模块", "pass"),
@@ -2313,11 +2371,11 @@ def build_interactive_html(
             ("不通过", str(counts["fail"]), "模块", "fail" if counts["fail"] else "pass"),
             ("未执行", str(counts["not_run"]), "模块", "gap" if counts["not_run"] else "pass"),
             ("需干预", str(counts["intervention"]), "模块", "risk" if counts["intervention"] else "pass"),
-            ("证据图", str(len(manifest)), "可点击跳转", "accent" if manifest else "gap"),
+            ("已采集截图", str(len(manifest)), "可审核不等于通过", "accent" if manifest else "gap"),
         ]
     else:
         summary_cards = [
-            ("证据图", str(len(manifest)), "可点击跳转", "accent" if manifest else "gap"),
+            ("已采集截图", str(len(manifest)), "可审核不等于通过", "accent" if manifest else "gap"),
             ("P0 定位项", str(row_fail_count), "阻断证据", "fail" if row_fail_count else "pass"),
             ("P1-P2 风险", str(row_risk_count), "风险定位", "risk" if row_risk_count else "pass"),
             ("缺口", str(row_gap_count), "未覆盖与弱相关", "gap" if row_gap_count else "pass"),
@@ -2330,7 +2388,83 @@ def build_interactive_html(
         for label, value, note, tone in summary_cards
     )
     reviewer_focus_html = ""
-    if reviewer_summary:
+    if business_summary:
+        counts = business_summary["counts"]
+        visual = business_summary["visual"]
+        environment = business_summary.get("environment") or []
+        completion_rate = counts["已完成"] / counts["计划测试"] * 100 if counts["计划测试"] else 0
+        executed_pass_rate = counts["通过"] / counts["已完成"] * 100 if counts["已完成"] else 0
+        failure_cards = []
+        for row in business_summary["failures"][:8]:
+            reason = html.escape(_plain_cell(row.get("根因", "")) or "未说明失败原因")
+            count = html.escape(_plain_cell(row.get("影响项数", "")) or "0")
+            modules = html.escape(_plain_cell(row.get("影响模块", "")) or "未标注模块")
+            case_ids = html.escape(_plain_cell(row.get("验收项编号", "")) or "未标注编号")
+            actual = html.escape(_plain_cell(row.get("实际结果", "")) or "未记录实际结果")
+            expected = html.escape(_plain_cell(row.get("期望结果", "")) or "未记录期望结果")
+            reproduction = html.escape(_plain_cell(row.get("复现方式", "")) or "未记录复现方式")
+            recovery = html.escape(_plain_cell(row.get("恢复动作", "")) or "未记录恢复动作")
+            owner = html.escape(_plain_cell(row.get("当前责任角色", "")) or "待认领")
+            due = html.escape(_plain_cell(row.get("完成时限", "")) or "未约定")
+            evidence_link = _render_inline(row.get("本次直接证据", "")) if row.get("本次直接证据") else ""
+            method_link = _render_inline(row.get("复测方法", "")) if row.get("复测方法") else ""
+            failure_cards.append(
+                '<article class="business-failure-card">'
+                f'<header><strong>{reason}</strong><span>{count} 项失败</span></header>'
+                f'<p><b>编号：</b>{case_ids}</p><p><b>影响：</b>{modules}</p>'
+                f'<p><b>实际：</b>{actual}</p><p><b>期望：</b>{expected}</p>'
+                f'<p><b>复现：</b>{reproduction}</p><p><b>恢复：</b>{recovery}</p>'
+                f'<p><b>责任：</b>{owner}；<b>时限：</b>{due}</p>'
+                f'<nav>{evidence_link}{(" · " if evidence_link and method_link else "")}{method_link}</nav>'
+                '</article>'
+            )
+        failure_html = "".join(failure_cards) or '<p class="executive-clear">本轮没有业务失败项。</p>'
+        environment_cards = []
+        for row in environment:
+            name = html.escape(_plain_cell(row.get("环境", "")) or "未标注环境")
+            planned = html.escape(_plain_cell(row.get("计划", "")) or "0")
+            completed = html.escape(_plain_cell(row.get("已完成", "")) or "0")
+            passed = html.escape(_plain_cell(row.get("通过", "")) or "0")
+            failed = html.escape(_plain_cell(row.get("失败", "")) or "0")
+            not_run = html.escape(_plain_cell(row.get("未执行", "")) or "0")
+            conclusion = html.escape(_plain_cell(row.get("业务结论", "")))
+            environment_cards.append(
+                '<article class="environment-coverage-card">'
+                f'<strong>{name}：完成 {completed}/{planned}</strong>'
+                f'<span>通过 {passed}，失败 {failed}，未执行 {not_run}</span>'
+                f'<small>{conclusion}</small>'
+                '</article>'
+            )
+        environment_html = (
+            '<div class="environment-coverage">' + "".join(environment_cards) + '</div>'
+            if environment_cards else ""
+        )
+        visual_html = ""
+        if visual:
+            visual_html = (
+                '<div class="evidence-meaning">'
+                f'<strong>截图：采集 {visual.get("已采集且可审核", 0)} / 计划 {visual.get("计划截图槽位", 0)}</strong>'
+                f'<span>直接证明通过 {visual.get("能直接证明通过", 0)}，明确不通过 {visual.get("明确不通过", 0)}，不能证明业务结果 {visual.get("不能证明业务结果", 0)}</span>'
+                '<small>“已采集”只代表图、路径、时间和方法齐全，不代表业务已经通过。</small>'
+                f'<small class="coincidence-warning">功能未执行 {counts["未执行"]} 项与不能证明业务结果 {visual.get("不能证明业务结果", 0)} 张是两个独立维度；数字相同纯属巧合，不能一一对应。</small>'
+                '</div>'
+            )
+        release_text = "当前不能放行" if counts["失败"] else "当前只能有条件放行" if counts["未执行"] else "当前可以放行"
+        reviewer_focus_html = (
+            '<section class="business-decision" aria-label="老板和业务专家一页结论">'
+            '<div class="focus-kicker">老板先看</div>'
+            f'<h2>{release_text}</h2>'
+            f'<p class="decision-lead">计划 {counts["计划测试"]} 项，完成 {counts["已完成"]} 项；'
+            f'通过 {counts["通过"]} 项、失败 {counts["失败"]} 项、未执行 {counts["未执行"]} 项。'
+            f'完成率 {completion_rate:.1f}%，已执行通过率 {executed_pass_rate:.1f}%。</p>'
+            f'{environment_html}'
+            f'{visual_html}'
+            '<h3>不通过问题、复现与恢复</h3>'
+            f'<div class="business-failure-grid">{failure_html}</div>'
+            '<a class="executive-matrix-link" href="#老板一页结论">查看完整业务统计与失败表</a>'
+            '</section>'
+        )
+    elif reviewer_summary:
         attention_rows = []
         for row in reviewer_summary["rows"]:
             axes = [_plain_cell(row.get(axis, "")) for axis in ("冒烟", "功能", "视觉")]
@@ -2369,7 +2503,7 @@ def build_interactive_html(
             '</section>'
         )
     problem_html = ""
-    if problem_items or verdict in {"conditional", "fail"}:
+    if not business_summary and (problem_items or verdict in {"conditional", "fail"}):
         if problem_items:
             cards = []
             for item in problem_items[:8]:
@@ -2570,6 +2704,27 @@ main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px
 .executive-item nav a,.executive-matrix-link{{font-weight:700;text-decoration:none;border-bottom:1px solid currentColor}}
 .executive-clear{{grid-column:1/-1;margin:0;padding:11px 12px;border-left:5px solid var(--pass);background:rgba(26,127,55,.05);color:var(--pass)}}
 .executive-matrix-link{{display:inline-block;margin-top:13px}}
+.business-decision{{margin:24px 0 18px;border:2px solid var(--ink);border-radius:3px;background:var(--paper-2);box-shadow:7px 7px 0 rgba(33,29,24,.12);padding:18px}}
+.business-decision h2{{margin:5px 0 8px;font-family:var(--serif);font-size:27px;line-height:1.35}}
+.business-decision h3{{margin:18px 0 10px;font-family:var(--serif);font-size:18px}}
+.decision-lead{{max-width:none;margin:0;padding:11px 13px;border-left:5px solid var(--fail);background:rgba(180,35,24,.055);font-size:15.5px;line-height:1.75;color:var(--ink)}}
+.environment-coverage{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin:12px 0 0}}
+.environment-coverage-card{{display:grid;gap:4px;padding:10px 12px;border:1px solid var(--line-2);background:var(--paper-1)}}
+.environment-coverage-card strong{{font-size:14px}}
+.environment-coverage-card span{{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}}
+.environment-coverage-card small{{font-size:11.5px;color:var(--fail)}}
+.evidence-meaning{{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;align-items:baseline;margin:14px 0 0;padding:11px 13px;border:1px solid var(--line-2);background:var(--accent-soft)}}
+.evidence-meaning strong{{font-size:14px}}
+.evidence-meaning span{{color:var(--ink-2)}}
+.evidence-meaning small{{grid-column:1/-1;color:var(--ink-3);font-size:12px}}
+.evidence-meaning .coincidence-warning{{color:var(--fail);font-weight:700}}
+.business-failure-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px}}
+.business-failure-card{{border:1px solid var(--line-2);border-left:5px solid var(--fail);background:rgba(180,35,24,.035);padding:12px 13px}}
+.business-failure-card header{{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px}}
+.business-failure-card header strong{{font-size:14px;line-height:1.5}}
+.business-failure-card header span{{flex:none;padding:2px 7px;background:var(--fail);color:#fff;border-radius:2px;font:700 11px var(--mono)}}
+.business-failure-card p{{max-width:none;margin:4px 0;padding:0;font-size:12.5px;line-height:1.65}}
+.business-failure-card nav{{margin-top:8px;font-size:12px;font-weight:700}}
 .failure-focus.is-conditional{{border-color:var(--warn);background:rgba(154,103,0,.045);box-shadow:6px 6px 0 rgba(154,103,0,.16)}}
 .focus-kicker{{font-family:var(--mono);font-size:10.5px;letter-spacing:.22em;color:var(--fail);font-weight:600}}
 .failure-focus.is-conditional .focus-kicker{{color:var(--warn)}}
@@ -2752,6 +2907,9 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 .badge{{font-size:14px;padding:8px 13px}}
 .metric{{flex:1 1 48%}}
 .metric strong{{font-size:25px}}
+.business-failure-grid{{grid-template-columns:1fr}}
+.evidence-meaning{{grid-template-columns:1fr}}
+.evidence-meaning small{{grid-column:auto}}
 .evidence-gallery{{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}}
 .shot-frame{{padding:9px}}
 .shot-frame img{{max-height:none}}

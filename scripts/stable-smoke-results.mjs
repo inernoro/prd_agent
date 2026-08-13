@@ -137,14 +137,21 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
     .map((row) => {
       const reportAvailable = reportAvailability[row.environment] === true;
       const isProduction = row.environment === 'production';
-      const reasonCode = reportAvailable ? 'automation-case-missing' : 'environment-report-missing';
-      const reason = reportAvailable
+      const productionRestricted = isProduction && reportAvailability.productionRestricted === true;
+      const reasonCode = productionRestricted
+        ? 'production-safety-restricted'
+        : reportAvailable ? 'automation-case-missing' : 'environment-report-missing';
+      const reason = productionRestricted
+        ? 'CDS 出现业务失败后触发安全门槛，正式环境按合同只执行只读检查，写入旅程未运行。'
+        : reportAvailable
         ? '本环境已有执行报告，但没有该 caseId 的真实步骤或执行证据。'
         : isProduction
           ? '正式环境专用合成身份未通过预检，因此没有生成正式环境执行报告。'
           : 'CDS 环境执行报告缺失，无法判断该 caseId 是否实际运行。';
       const environmentFlag = isProduction ? '' : '--cds-only';
-      const command = reportAvailable
+      const command = productionRestricted
+        ? '先修复 CDS 失败项并在 CDS 复测通过，再运行 node scripts/stable-smoke-run.mjs 完成正式环境安全矩阵'
+        : reportAvailable
         ? `先在 e2e/specs/stable-smoke.spec.ts 实现 [${row.caseId}]，再运行 node scripts/stable-smoke-run.mjs${environmentFlag ? ` ${environmentFlag}` : ''} --grep "\\[${row.caseId}\\]"`
         : isProduction
           ? '在 Keychain 配齐双环境凭据后运行 node scripts/stable-smoke-run.mjs；正式环境写入旅程必须先通过同轮 CDS 验证'
@@ -153,9 +160,11 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
         ...row,
         reasonCode,
         reason,
-        sourcePath: 'e2e/specs/stable-smoke.spec.ts',
+        sourcePath: productionRestricted ? 'scripts/stable-smoke-run.mjs' : 'e2e/specs/stable-smoke.spec.ts',
         command,
-        closeCondition: `报告中 ${row.environment}:${row.caseId} 出现 pass 或 fail 的真实执行证据`,
+        closeCondition: productionRestricted
+          ? `CDS 失败项关闭，且报告中 production:${row.caseId} 出现 pass 或 fail 的真实执行证据`
+          : `报告中 ${row.environment}:${row.caseId} 出现 pass 或 fail 的真实执行证据`,
       };
     });
 }

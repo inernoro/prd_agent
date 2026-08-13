@@ -239,6 +239,17 @@ test('正式环境已有报告但缺步骤时给正式环境补跑命令', () =>
   assert.doesNotMatch(ledger[0].command, /--cds-only/);
 });
 
+test('CDS 失败触发安全门槛时正式环境未执行项不得误报为自动化缺口', () => {
+  const ledger = buildNotRunLedger([
+    { caseId: 'VIDEO-001', environment: 'production', status: 'not-run' },
+  ], { cds: true, production: true, productionRestricted: true });
+  assert.equal(ledger[0].reasonCode, 'production-safety-restricted');
+  assert.match(ledger[0].reason, /安全门槛/);
+  assert.match(ledger[0].command, /先修复 CDS 失败项/);
+  assert.match(ledger[0].closeCondition, /CDS 失败项关闭/);
+  assert.doesNotMatch(ledger[0].command, /实现 \[VIDEO-001\]/);
+});
+
 test('失败优先于未执行，重试通过仍是 conditional', () => {
   assert.equal(summarizeCoverage([{ status: 'fail', retryCount: 0 }]).verdict, 'fail');
   assert.equal(summarizeCoverage([{ status: 'pass', retryCount: 1 }]).verdict, 'conditional');
