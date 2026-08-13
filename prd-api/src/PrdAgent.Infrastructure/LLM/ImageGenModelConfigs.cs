@@ -29,6 +29,42 @@ public static class ImageGenModelConfigs
             "OpenAI 兼容（apiyi）"),
         BuildOpenRouterGptImage2Config(),
 
+        // OpenAI 直连图片端点不接受 response_format，但保留标准 size 参数。
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "gpt-image-2*",
+            DisplayName = "GPT Image 2",
+            Provider = "OpenAI",
+            PlatformType = "openai",
+            LastUpdated = "2026-08-13",
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "通过 size 参数控制尺寸（OpenAI 图片端点白名单）",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1024x1536", "2:3"),
+                    new("1536x1024", "3:2"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxWidth = 1536,
+            MaxHeight = 1536,
+            MinWidth = 1024,
+            MinHeight = 1024,
+            Notes = new List<string>
+            {
+                "使用 OpenAI 图片端点的标准 size 参数",
+                "不传 response_format，避免上游 unknown_parameter 错误",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = true,
+            SupportsResponseFormat = false,
+        },
+
         // ===== gpt-image-1.5（标准 size 参数）=====
         // 与传统 OpenAI 兼容：通过 size 字段控制尺寸
         new ImageGenModelAdapterConfig

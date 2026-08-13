@@ -4005,6 +4005,17 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void VideoModelDirectory_MustReadGatewayAuthorityInsteadOfLegacyMapPools()
+    {
+        var videoController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs");
+
+        Assert.Contains("private readonly ILlmGateway _gateway;", videoController);
+        Assert.Contains("_gateway.GetAvailablePoolsAsync(", videoController);
+        Assert.DoesNotContain("IModelPoolQueryService modelPoolQuery", videoController);
+        Assert.DoesNotContain("_modelPoolQuery.GetModelPoolsAsync(", videoController);
+    }
+
+    [Fact]
     public void ExternalConsole_CostSummaryPreservesUnknownAndCurrencyBoundaries()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");

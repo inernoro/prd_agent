@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
@@ -28,7 +29,7 @@ public class VideoAgentController : ControllerBase
     private readonly IVideoGenService _videoGenService;
     private readonly IRunEventStore _runStore;
     private readonly MongoDbContext _db;
-    private readonly IModelPoolQueryService _modelPoolQuery;
+    private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAssetStorage _assetStorage;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -43,7 +44,7 @@ public class VideoAgentController : ControllerBase
         IVideoGenService videoGenService,
         IRunEventStore runStore,
         MongoDbContext db,
-        IModelPoolQueryService modelPoolQuery,
+        ILlmGateway gateway,
         IOpenRouterVideoClient videoClient,
         ILLMRequestContextAccessor llmRequestContext,
         IAssetStorage assetStorage,
@@ -54,7 +55,7 @@ public class VideoAgentController : ControllerBase
         _videoGenService = videoGenService;
         _runStore = runStore;
         _db = db;
-        _modelPoolQuery = modelPoolQuery;
+        _gateway = gateway;
         _videoClient = videoClient;
         _llmRequestContext = llmRequestContext;
         _assetStorage = assetStorage;
@@ -73,7 +74,7 @@ public class VideoAgentController : ControllerBase
     [HttpGet("models")]
     public async Task<IActionResult> ListVideoModels(CancellationToken ct)
     {
-        var pools = await _modelPoolQuery.GetModelPoolsAsync(
+        var pools = await _gateway.GetAvailablePoolsAsync(
             AppCallerRegistry.VideoAgent.VideoGen.Generate,
             ModelTypes.VideoGen,
             ct);

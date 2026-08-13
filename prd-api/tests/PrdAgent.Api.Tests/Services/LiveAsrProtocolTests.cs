@@ -297,6 +297,59 @@ public class LiveAsrProtocolTests
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData("gpt-4o-transcribe")]
+    [InlineData("gpt-4o-mini-transcribe")]
+    public async Task BatchFallback_OpenAiTranscribeModelsShouldUseCompactJson(string model)
+    {
+        var candidate = new ModelResolutionResult
+        {
+            Success = true,
+            ActualPlatformId = "openai",
+            ActualPlatformName = "OpenAI",
+            ActualModel = model,
+            PlatformType = "openai",
+            Protocol = "openai",
+        };
+        GatewayRawRequest? captured = null;
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<GatewayRawRequest, GatewayModelResolution, CancellationToken>(
+                (request, _, _) => captured = request)
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"text":"真实转写结果"}""",
+            });
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            HealthyResolver().Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
+        frames.Writer.TryComplete();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            _ => Task.CompletedTask,
+            null,
+            TestRequestContext());
+
+        result.Transcript.ShouldBe("真实转写结果");
+        captured.ShouldNotBeNull();
+        captured.MultipartFields.ShouldNotBeNull();
+        captured.MultipartFields["response_format"].ShouldBe("json");
+        captured.MultipartFields.ShouldNotContainKey("timestamp_granularities[]");
+    }
+
     [Fact]
     public async Task BatchFallback_ShouldKeepBoundedWindowsForLongRecording()
     {

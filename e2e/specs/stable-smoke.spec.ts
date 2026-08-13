@@ -2345,6 +2345,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       : 'stable-smoke-health-reset-probe';
     let currentOfferingId = offering!.id;
     let changed = false;
+    const enableReplacement = async (offeringId: string, action: string) => {
+      const enable = await request.put(`${baseUrl}/gw/logical-models/${logical!.id}/offerings/${offeringId}/enabled`, {
+        headers,
+        data: { enabled: true },
+      });
+      const enableBody = await enable.json() as ApiEnvelope<{ id: string; enabled: boolean; healthStatus: number }>;
+      expect(enable.ok(), enableBody.error?.message || `${action}后无法启用新 Offering`).toBe(true);
+      expect(enableBody.success, enableBody.error?.message || `${action}后无法启用新 Offering`).toBe(true);
+      expect(enableBody.data.enabled).toBe(true);
+      return enableBody.data;
+    };
     try {
       const update = await request.put(`${baseUrl}/gw/logical-models/${logical!.id}/offerings/${currentOfferingId}`, {
         headers,
@@ -2363,6 +2374,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(updateBody.data.consecutiveFailures).toBe(0);
       expect(updateBody.data.consecutiveSuccesses).toBe(0);
       currentOfferingId = updateBody.data.id;
+      await enableReplacement(currentOfferingId, '注入探针路由');
       changed = true;
     } finally {
       if (changed) {
@@ -2370,10 +2382,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           headers,
           data: { endpointPath: originalEndpoint },
         });
-        const restoreBody = await restore.json() as ApiEnvelope<{ endpointPath?: string; healthStatus: number }>;
+        const restoreBody = await restore.json() as ApiEnvelope<{ id: string; endpointPath?: string; healthStatus: number }>;
         expect(restore.ok(), restoreBody.error?.message || '网关路由配置恢复失败，需要立即人工处理').toBe(true);
         expect(restoreBody.data.endpointPath || '').toBe(originalEndpoint);
         expect(restoreBody.data.healthStatus).toBe(0);
+        await enableReplacement(restoreBody.data.id, '恢复原始路由');
       }
     }
   });

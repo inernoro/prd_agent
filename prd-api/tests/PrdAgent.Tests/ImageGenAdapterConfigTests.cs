@@ -133,6 +133,30 @@ public class ImageGenAdapterConfigTests
         Assert.Contains(config.SizesByResolution["1k"], x => x.AspectRatio == "3:4" && x.Size == "768x1024");
     }
 
+    [Fact]
+    public void DirectGptImage2_UsesStandardSizeWithoutResponseFormat()
+    {
+        var config = ImageGenModelAdapterRegistry.TryMatch("gpt-image-2");
+
+        Assert.NotNull(config);
+        Assert.Equal("OpenAI", config.Provider);
+        Assert.Equal(SizeConstraintTypes.Whitelist, config.SizeConstraintType);
+        Assert.Equal(SizeParamFormats.WxH, config.SizeParamFormat);
+        Assert.False(config.SupportsResponseFormat);
+        Assert.Contains(config.SizesByResolution["1k"], x => x.Size == "1024x1024");
+
+        var adapter = new PrdAgent.Infrastructure.LLM.Adapters.OpenAIPlatformAdapter();
+        var request = ImageGenRequestBuilder.BuildStandardGeneration(
+            "gpt-image-2",
+            "测试图片",
+            1,
+            "1024x1024",
+            "url",
+            adapter);
+        Assert.Null(request.EffectiveResponseFormat);
+        Assert.DoesNotContain("response_format", adapter.SerializeRequest(request.RequestBody));
+    }
+
     /// <summary>
     /// 验证 GetAdapterInfo 返回正确的 SizesByResolution
     /// </summary>
