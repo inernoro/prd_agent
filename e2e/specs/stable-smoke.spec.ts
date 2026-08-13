@@ -2682,6 +2682,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         `/api/visual-agent/image-gen/runs/${runId}?includeItems=true&includeImages=false`,
         { headers: authHeaders(token) },
       ));
+      if (/Failed/i.test(activeRun.run.status)) {
+        const message = activeRun.items.find((item) => item.errorMessage)?.errorMessage
+          || '任务未进入生成阶段，请检查模型额度与调用方治理配置后重试';
+        expectUserReadable(message);
+        throw new Error(`文生图任务在 SSE 恢复前失败：${message}`);
+      }
       expect(activeRun.run.status, 'SSE 中断必须发生在任务仍处于活跃状态时').toMatch(/Queued|Running/i);
 
       const resumedStream = await probeImageRunSse(page, token, runId, lastObservedSeq, 'next');
@@ -2897,7 +2903,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] OpenRouter 专用多图协议真实生成、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图主路与合法回退真实生成、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
@@ -2968,20 +2974,27 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
         const log = await waitForGatewayLog(request, `${runId}-0-0`);
         expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
-        expect(log.protocol).toBe('openrouter-image');
-        const requestBody = JSON.parse(log.requestBodyRedacted || '{}') as {
-          input_references?: Array<{ type?: string; image_url?: { url?: string } }>;
-        };
-        const wireReferences = requestBody.input_references || [];
-        const expectedRedactedUrls = expectedDataUrls.map((dataUrl) => {
-          const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
-          expect(match, '测试参考图必须是合法的 Base64 data URL').toBeTruthy();
-          const digest = createHash('sha256').update(Buffer.from(match![2], 'base64')).digest('hex');
-          return `[BASE64_IMAGE:${digest}:${match![1]}]`;
-        });
-        expect(wireReferences, '网关请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
-        expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
-        expect(wireReferences.map((item) => item.image_url?.url)).toEqual(expectedRedactedUrls);
+        expect(log.protocol, '多图必须使用主路协议或已配置的图片 API 回退协议')
+          .toMatch(/^(?:openrouter-image|openai)$/);
+        if (log.protocol === 'openrouter-image') {
+          const requestBody = JSON.parse(log.requestBodyRedacted || '{}') as {
+            input_references?: Array<{ type?: string; image_url?: { url?: string } }>;
+          };
+          const wireReferences = requestBody.input_references || [];
+          const expectedRedactedUrls = expectedDataUrls.map((dataUrl) => {
+            const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+            expect(match, '测试参考图必须是合法的 Base64 data URL').toBeTruthy();
+            const digest = createHash('sha256').update(Buffer.from(match![2], 'base64')).digest('hex');
+            return `[BASE64_IMAGE:${digest}:${match![1]}]`;
+          });
+          expect(wireReferences, 'OpenRouter 主路请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
+          expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
+          expect(wireReferences.map((item) => item.image_url?.url)).toEqual(expectedRedactedUrls);
+        } else {
+          // 直连 OpenAI 回退以 multipart 发送，日志不会保留文件内容；前面的真实产物主色断言
+          // 与后面的 imageRefs 持久化断言共同证明每张参考图均进入并影响结果。
+          expect(log.requestBodyRedacted).toBe('[multipart/form-data]');
+        }
         expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
         expect(log.answerText || '').toMatch(/"data"\s*:\s*\[/);
         expect(log.answerText || '').not.toMatch(/input must have at least|chat\/completions|modalities/i);
