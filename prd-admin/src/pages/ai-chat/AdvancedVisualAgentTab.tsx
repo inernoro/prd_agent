@@ -1003,8 +1003,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [poolModels]);
 
   const serverDefaultModel = useMemo(() => {
-    // 后端已按 priority + createdAt 排序，直接取第一个启用的模型
-    return allImageGenModels.find((m) => m.enabled) ?? null;
+    // 严格 AppCaller 的默认池由后端显式标记；不能用排序后的第一个池覆盖默认配置。
+    return allImageGenModels.find((m) => m.enabled && m.isDefault)
+      ?? allImageGenModels.find((m) => m.enabled)
+      ?? null;
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');

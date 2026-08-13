@@ -299,11 +299,12 @@ public sealed class NotificationsController : ControllerBase
         }
 
         var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return permissions.Contains(AdminPermissionCatalog.Super)
+        return User.IsInRole(UserRole.ADMIN.ToString())
+            && (permissions.Contains(AdminPermissionCatalog.Super)
             || permissions.Contains(AdminPermissionCatalog.SettingsWrite)
             || permissions.Contains(AdminPermissionCatalog.OpenPlatformManage)
             || permissions.Contains(AdminPermissionCatalog.AutomationsManage)
-            || permissions.Contains(AdminPermissionCatalog.DefectAgentManage);
+            || permissions.Contains(AdminPermissionCatalog.DefectAgentManage));
     }
 
     private static FilterDefinition<AdminNotification> BuildVisibleNotificationFilter(
