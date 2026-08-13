@@ -109,12 +109,22 @@ public class ModelResolver : IModelResolver
 
         // pinned 是精确模型语义，但不能越过 appCaller 的专用池治理边界。
         var pinnedWithinGatewayPool = false;
+        // model_policy=pool 会把用户选中的池写入 ExpectedModel；保留这份池身份，
+        // 因为下面为了精确 Provider 匹配会把 ExpectedModel 改成 PinnedModelId。
+        var requestedPoolIdentity = expectedModel?.Trim();
         if (gatewayRegistry.Groups.Count > 0
             && (!string.IsNullOrWhiteSpace(pinnedPlatformId) || !string.IsNullOrWhiteSpace(pinnedModelId)))
         {
+            var requestedPool = gatewayRegistry.StrictPoolContract && !string.IsNullOrWhiteSpace(requestedPoolIdentity)
+                ? gatewayRegistry.Groups.FirstOrDefault(group =>
+                    string.Equals(group.Id, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(group.Code, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(group.Name, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase))
+                : null;
+            var pinnedScope = requestedPool is null ? gatewayRegistry.Groups : [requestedPool];
             var pinnedAllowed = !string.IsNullOrWhiteSpace(pinnedPlatformId)
                                 && !string.IsNullOrWhiteSpace(pinnedModelId)
-                                && gatewayRegistry.Groups.Any(group => group.Models.Any(model =>
+                                && pinnedScope.Any(group => group.Models.Any(model =>
                                     string.Equals(model.PlatformId, pinnedPlatformId.Trim(), StringComparison.Ordinal)
                                     && string.Equals(model.ModelId, pinnedModelId.Trim(), StringComparison.Ordinal)));
             if (!pinnedAllowed)
@@ -143,9 +153,23 @@ public class ModelResolver : IModelResolver
         if (gatewayRegistry.Groups.Count > 0)
         {
             candidateGroups = gatewayRegistry.Groups;
-            if (gatewayRegistry.StrictPoolContract
-                && string.IsNullOrWhiteSpace(pinnedPlatformId)
-                && string.IsNullOrWhiteSpace(pinnedModelId))
+            if (gatewayRegistry.StrictPoolContract && pinnedWithinGatewayPool)
+            {
+                // 精确 Provider 也必须留在用户选择的池内；否则“池 A + pin(B)”
+                // 会绕过跨池开关，直接把请求送进同一 AppCaller 的另一池。
+                if (!string.IsNullOrWhiteSpace(requestedPoolIdentity))
+                {
+                    var selectedPool = candidateGroups.FirstOrDefault(group =>
+                        string.Equals(group.Id, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(group.Code, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(group.Name, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase));
+                    // 非 pool 策略也可能把 Provider 模型名放在 ExpectedModel；只有确实命中
+                    // 一个池身份时才收窄范围，避免把旧的精确 Provider 语义误判为非法池。
+                    if (selectedPool is not null)
+                        candidateGroups = [selectedPool];
+                }
+            }
+            else if (gatewayRegistry.StrictPoolContract)
             {
                 var requestedPool = string.IsNullOrWhiteSpace(expectedModel)
                     ? gatewayRegistry.DefaultModelPoolId
