@@ -15,3 +15,4 @@
 | fix | prd-api | 管理员网关告警仅对管理员可见可处理，并修正日志 requestId 深链 |
 | fix | llmgw | 严格 AppCaller 模型池只允许已认领的 LLMGW 池，避免保存后运行时失效 |
 | fix | prd-api | 显式模型池保持池内 Provider 重试，不再误把池选择当成单模型钉死 |
+| fix | llmgw | 运行态与权威配置门禁要求所有允许模型池引用都存在，避免任一缺失项误报可发布 |

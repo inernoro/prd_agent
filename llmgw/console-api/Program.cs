@@ -3653,9 +3653,10 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
         .Where(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "active", StringComparison.OrdinalIgnoreCase))
         .ToList();
     var activeWithGatewayPool = activeAppCallers.Count(d =>
-        GetReferencedModelPoolIds(d).Any(gwPoolIds.Contains));
+        AllReferencedModelPoolsExist(d, gwPoolIds));
     var activeWithUsableGatewayPool = activeAppCallers.Count(d =>
-        GetReferencedModelPoolIds(d).Any(usableGwPoolIds.Contains));
+        AllReferencedModelPoolsExist(d, gwPoolIds)
+        && GetReferencedModelPoolIds(d).Any(usableGwPoolIds.Contains));
     var activeMissingGatewayPool = activeAppCallers.Count - activeWithGatewayPool;
     var activeBoundPoolWithoutUsableMember = activeWithGatewayPool - activeWithUsableGatewayPool;
     var discovered = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
@@ -3703,7 +3704,7 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
     AddMapOnlyGaps(mapModelDocs, gwModelIds, "model", d => d.AsNullableString("ModelName") ?? d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
     AddMapOnlyGaps(mapExchangeDocs, gwExchangeIds, "exchange", d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
     gaps.AddRange(activeAppCallers
-        .Where(d => !GetReferencedModelPoolIds(d).Any(gwPoolIds.Contains))
+        .Where(d => !AllReferencedModelPoolsExist(d, gwPoolIds))
         .Take(30)
         .Select(d => new ConfigAuthorityGapItem
         {
@@ -3714,7 +3715,7 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
             Detail = "active appCaller 未绑定有效 GW 模型池；删除 MAP fallback 前必须修复。",
         }));
     gaps.AddRange(activeAppCallers
-        .Where(d => GetReferencedModelPoolIds(d).Any(gwPoolIds.Contains)
+        .Where(d => AllReferencedModelPoolsExist(d, gwPoolIds)
             && !GetReferencedModelPoolIds(d).Any(usableGwPoolIds.Contains))
         .Take(30)
         .Select(d => new ConfigAuthorityGapItem
@@ -3875,7 +3876,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .Select(x => x!)
         .ToHashSet(StringComparer.Ordinal);
     var activeMissingGatewayPool = activeAppCallers.Count(d =>
-        !GetReferencedModelPoolIds(d).Any(gwPoolIds.Contains));
+        !AllReferencedModelPoolsExist(d, gwPoolIds));
     var discoveredAppCallers = appCallerDocs.Count(d =>
         string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var governedAppCallers = appCallerDocs.Where(IsGovernedAppCaller).ToList();
@@ -3896,7 +3897,13 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .Where(gwPoolIds.Contains)
         .ToHashSet(StringComparer.Ordinal);
     var activeBoundPools = gwPoolDocs.Where(d => activeBoundPoolIds.Contains(d.GetStringOrEmpty("_id"))).ToList();
-    var activeBoundPoolWithoutUsableMember = activeBoundPools.Count(pool => !HasUsablePoolMember(pool, enabledGwPlatformIds, enabledGwModels, enabledGwExchanges));
+    var usablePoolIds = activeBoundPools
+        .Where(pool => HasUsablePoolMember(pool, enabledGwPlatformIds, enabledGwModels, enabledGwExchanges))
+        .Select(pool => pool.GetStringOrEmpty("_id"))
+        .ToHashSet(StringComparer.Ordinal);
+    var activeBoundPoolWithoutUsableMember = activeAppCallers.Count(d =>
+        AllReferencedModelPoolsExist(d, gwPoolIds)
+        && !GetReferencedModelPoolIds(d).Any(usablePoolIds.Contains));
     var mapFallbackObjectsRemaining =
         MapOnlyCount(mapPoolDocs, gwPoolIds)
         + MapOnlyCount(mapPlatformDocs, IdSet(gwPlatformDocs))
@@ -13436,6 +13443,12 @@ static List<string> GetReferencedModelPoolIds(BsonDocument d)
     Add(d.AsNullableString("DefaultModelPoolId"));
     foreach (var id in GetStringArray(d, "AllowedModelPoolIds")) Add(id);
     return ids;
+}
+
+static bool AllReferencedModelPoolsExist(BsonDocument d, HashSet<string> gatewayPoolIds)
+{
+    var references = GetReferencedModelPoolIds(d);
+    return references.Count > 0 && references.All(gatewayPoolIds.Contains);
 }
 
 static OperationAuditItem MapOperationAudit(BsonDocument d)

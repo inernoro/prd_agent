@@ -213,6 +213,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return false;
         }
 
+        if (resolution.ResolutionType is "GatewayRegistryPool" or "DedicatedPool" or "DefaultPool")
+        {
+            return false;
+        }
+
         // 选定模型池不是钉死某个 Provider。池身份允许同池 RetryCandidates 和半开成员
         // 继续接管；只有显式传入 Provider 模型名时才关闭候选切换。
         var requested = expectedModel.Trim();
