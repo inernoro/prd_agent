@@ -291,6 +291,9 @@ public sealed class HttpLlmGatewayClient
         {
             CanonicalImageRequest = request.CanonicalImageRequest,
             RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
+            // 首次提交保持为空，让 Serving 在同一逻辑模型内执行故障切换；
+            // 只有异步轮询/下载显式携带时才锁定提交成功的 Offering。
+            RequiredOfferingId = request.RequiredOfferingId,
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
@@ -573,6 +576,44 @@ public sealed class HttpLlmGatewayClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "[HttpLlmGatewayClient] ResolveModelAsync 失败 base={Base}", _baseUrl);
+            return new GatewayModelResolution { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
+    public async Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var http = CreateHttp(infiniteTimeout: false);
+            var dto = new
+            {
+                AppCallerCode = appCallerCode,
+                ModelType = modelType,
+                OfferingId = offeringId,
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/resolve") { Content = JsonBody(dto) };
+            ApplyRoutingHeaders(req, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
+            using var resp = await http.SendAsync(req, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return new GatewayModelResolution
+                {
+                    Success = false,
+                    ErrorMessage = $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}",
+                };
+            }
+
+            return JsonSerializer.Deserialize<GatewayModelResolution>(body, JsonOpts)
+                   ?? new GatewayModelResolution { Success = false, ErrorMessage = "serving 响应反序列化为空" };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HttpLlmGatewayClient] ResolveOfferingAsync 失败 base={Base}", _baseUrl);
             return new GatewayModelResolution { Success = false, ErrorMessage = ex.Message };
         }
     }

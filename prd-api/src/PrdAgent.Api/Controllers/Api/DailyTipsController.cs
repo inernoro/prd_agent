@@ -358,6 +358,14 @@ public sealed class DailyTipsController : ControllerBase
         // - advanced: 写入真实 Version，管理员升 Version 后 learnedVer < t.Version → 再次弹出。
         var learnedVersion = tier == "advanced" ? version : int.MaxValue;
 
+        // 历史用户可能把 LearnedTips 保存为 null。直接 $push 到 null 会让 Mongo 返回 500，
+        // 表面上按钮已经乐观变成“已学会”，刷新后教程却再次出现。先幂等初始化为空数组，
+        // 再执行 pull + push，保证新老用户都能稳定完成教程。
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId && u.LearnedTips == null,
+            Builders<User>.Update.Set(u => u.LearnedTips, new List<UserLearnedTip>()),
+            cancellationToken: ct);
+
         // 幂等写入:先剔除同 SourceId 的旧记录,再 push 新的 (SourceId, Version)。
         // Mongo 的 $pull 和 $push 不能在同一次 update 里作用于同一字段(冲突),
         // 拆两次调用即可,本端点不是热路径。
@@ -378,6 +386,41 @@ public sealed class DailyTipsController : ControllerBase
             cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { learned = new { sourceId, version = learnedVersion, tier } }));
+    }
+
+    /// <summary>
+    /// 合成测试专用：清理当前合成用户的一条官方教程进度，以便每轮都从真实空状态复测。
+    /// 普通登录会话不可调用，也不能操作其他用户。
+    /// </summary>
+    [HttpDelete("testing/learned/{sourceId}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> ResetSyntheticLearnedProgress(
+        [FromRoute] string sourceId,
+        CancellationToken ct = default)
+    {
+        if (!string.Equals(User.FindFirst("authType")?.Value, "synthetic-test", StringComparison.Ordinal))
+            return Forbid();
+
+        var normalizedSourceId = sourceId.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedSourceId)
+            || !BuildDefaultTips(DateTime.UtcNow).Any(t => t.SourceId == normalizedSourceId))
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "官方教程不存在，请刷新教程目录后重试"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId && u.LearnedTips == null,
+            Builders<User>.Update.Set(u => u.LearnedTips, new List<UserLearnedTip>()),
+            cancellationToken: ct);
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId,
+            Builders<User>.Update.PullFilter(u => u.LearnedTips!,
+                Builders<UserLearnedTip>.Filter.Eq(l => l.SourceId, normalizedSourceId)),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { reset = true, sourceId = normalizedSourceId }));
     }
 
     /// <summary>
@@ -658,7 +701,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=webpages-group-pills]", Title = "第 9 步：分组", Body = "「日期 / 文件夹」二选一，把站点按时间或自建文件夹归类。" },
                         new() { Selector = "[data-tour-id=webpages-view-toggle]", Title = "第 10 步：网格 / 列表视图", Body = "右侧 ⊞ / ☰ 切换；网格有缩略图，列表更紧凑。" },
                         new() { Selector = "[data-tour-id=webpages-folders]", Title = "第 11 步：文件夹 / 分组", Body = "个人空间用文件夹收纳同类站点，点文件夹名快速过滤；团队空间则是左侧树导航，按专题 / 分类组织，双击可改名，受限分组带锁标识。" },
-                        new() { Selector = "[data-tour-id=webpages-card]", Title = "第 12 步：站点卡片", Body = "每个站点一张卡，显示标题、缩略图、访问量和快捷操作。" },
+                        new() { Selector = "[data-tour-id=webpages-card]", Title = "第 12 步：站点卡片", Body = "每个站点一张卡，显示标题、缩略图、访问量和快捷操作。鼠标移到卡上会浮出操作条，点最右的「更多」可以展开二维码、公开页、评论管理、访客、移动、删除，以及「提问设置」——在那里打开开关，访客就能对着这个网页向 AI 提问。" },
                         new() { Selector = "[data-tour-id=webpages-viewcount]", Title = "第 13 步：访问量", Body = "卡片底部的眼睛图标 + 数字，是该站点累计被打开的次数。" },
                         new() { Selector = "[data-tour-id=share-dock-panel]", Title = "第 14 步：投放面板", Body = "右侧悬浮面板可把文件直接拖进来上传，并提供「公开 / 分享 / 回收」快捷槽位（折叠时先点一下展开）。看完点「完成」就上手啦" },
                     },

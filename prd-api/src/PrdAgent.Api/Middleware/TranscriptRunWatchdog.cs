@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Middleware;
 
@@ -18,6 +20,11 @@ public sealed class TranscriptRunWatchdog : BackgroundService
     private readonly ILogger<TranscriptRunWatchdog> _logger;
     private readonly TimeSpan _interval;
     private readonly TimeSpan _timeout;
+    private readonly IReadOnlyList<string> _compatibleOwnerIds;
+    private readonly string _instanceId;
+    private readonly bool _canAdoptLegacyRuns;
+    private readonly IReadOnlyList<string> _retiredLegacyOwnerIds;
+    private readonly DateTime? _legacyOwnerCreatedBeforeUtc;
 
     public TranscriptRunWatchdog(
         IServiceScopeFactory scopeFactory,
@@ -28,9 +35,13 @@ public sealed class TranscriptRunWatchdog : BackgroundService
         _logger = logger;
 
         var intervalSec = config.GetValue<int?>("TRANSCRIPT_WATCHDOG_INTERVAL_SECONDS") ?? 120;
-        var timeoutSec = config.GetValue<int?>("TRANSCRIPT_WATCHDOG_TIMEOUT_SECONDS") ?? 1800;
         _interval = TimeSpan.FromSeconds(Math.Clamp(intervalSec, 30, 600));
-        _timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec, 300, 7200));
+        _timeout = TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config);
+        _compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(config);
+        _instanceId = InstanceIdentity.Get(config);
+        _canAdoptLegacyRuns = DeploymentAuthority.CanAdoptLegacyTranscriptRuns(config);
+        _retiredLegacyOwnerIds = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(config);
+        _legacyOwnerCreatedBeforeUtc = DeploymentAuthority.GetLegacyTranscriptCreatedBeforeUtc(config);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -60,14 +71,27 @@ public sealed class TranscriptRunWatchdog : BackgroundService
 
         var deadline = DateTime.UtcNow - _timeout;
 
-        // 查找卡在 "processing" 且更新时间超过阈值的 run
+        var ownedProcessingRuns = Builders<TranscriptRun>.Filter.In(r => r.OwnerInstanceId, _compatibleOwnerIds);
+        var ownerScope = _canAdoptLegacyRuns
+            ? LegacyOwnerScope.Build<TranscriptRun>(
+                nameof(TranscriptRun.OwnerInstanceId),
+                _compatibleOwnerIds,
+                includeUnowned: true,
+                retiredLegacyOwnerIds: _retiredLegacyOwnerIds,
+                legacyOwnerCreatedBeforeUtc: _legacyOwnerCreatedBeforeUtc)
+            : ownedProcessingRuns;
+
+        // 当前部署只处理自己的超时 run；历史无 owner 的 processing run 仅由显式获权的
+        // 正式部署接管并标记失败，CDS 预览仍不能碰共享库中的历史任务。
         var filter =
             Builders<TranscriptRun>.Filter.Eq(r => r.Status, "processing") &
+            ownerScope &
             Builders<TranscriptRun>.Filter.Lt(r => r.UpdatedAt, deadline);
 
         var update = Builders<TranscriptRun>.Update
             .Set(r => r.Status, "failed")
             .Set(r => r.Error, $"任务超时（超过 {(int)_timeout.TotalMinutes} 分钟未完成）")
+            .Set(r => r.OwnerInstanceId, _instanceId)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
 
         var res = await db.TranscriptRuns.UpdateManyAsync(filter, update, cancellationToken: CancellationToken.None);
@@ -82,6 +106,7 @@ public sealed class TranscriptRunWatchdog : BackgroundService
             var stuckRuns = await db.TranscriptRuns
                 .Find(Builders<TranscriptRun>.Filter.Eq(r => r.Status, "failed") &
                       Builders<TranscriptRun>.Filter.Eq(r => r.Error, $"任务超时（超过 {(int)_timeout.TotalMinutes} 分钟未完成）") &
+                      Builders<TranscriptRun>.Filter.In(r => r.OwnerInstanceId, _compatibleOwnerIds) &
                       Builders<TranscriptRun>.Filter.Eq(r => r.Type, "asr"))
                 .Project(r => r.ItemId)
                 .ToListAsync();

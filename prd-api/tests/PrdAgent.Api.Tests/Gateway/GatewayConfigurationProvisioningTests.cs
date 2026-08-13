@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using PrdAgent.Core.Models;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Provisioning;
@@ -167,6 +168,163 @@ public sealed class GatewayConfigurationProvisioningTests
         document["IsVision"].AsBoolean.ShouldBeTrue();
         document["IsImageGen"].AsBoolean.ShouldBeTrue();
         document.Contains("ApiKeyEncrypted").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ImageGenerationModel_PersistsStructuredUpstreamSizeControlCapabilities()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeModel(new CreateModelRequest
+        {
+            PlatformId = "platform-1",
+            ModelName = "custom-image-model",
+            Capabilities = ["generation"],
+            ImageSizeControlMode = "field_and_prompt",
+            ImageSizeFieldFormat = "aspect_ratio",
+        }, out var draft, out var error).ShouldBeTrue(error);
+
+        var document = GatewayConfigurationProvisioning.BuildModelDocument(
+            draft!, "tenant-a", "model-image", null, DateTime.UnixEpoch);
+        var capabilityTypes = document["Capabilities"].AsBsonArray
+            .Select(item => item.AsBsonDocument["Type"].AsString)
+            .ToList();
+
+        capabilityTypes.ShouldContain("image_generation");
+        capabilityTypes.ShouldContain("parameter:image_size.prompt");
+        capabilityTypes.ShouldContain("parameter:image_size.field.aspect_ratio");
+        capabilityTypes
+            .Where(ImageSizeControlCapabilities.IsSizeControlCapability)
+            .ShouldBe(ImageSizeControlCapabilities.BuildCapabilityTypes(
+                ImageSizeControlModes.FieldAndPrompt,
+                ImageSizeFieldFormats.AspectRatio));
+    }
+
+    [Fact]
+    public void NonImageModel_RejectsImageSizeControlCapability()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeModel(new CreateModelRequest
+        {
+            PlatformId = "platform-1",
+            ModelName = "tutorial-chat",
+            Capabilities = ["chat"],
+            ImageSizeControlMode = "prompt",
+        }, out _, out var error).ShouldBeFalse();
+
+        error.ShouldContain("图片生成模型");
+    }
+
+    [Theory]
+    [InlineData("parameter:image_size.none")]
+    [InlineData(" PARAMETER:IMAGE_SIZE.FIELD.SIZE ")]
+    [InlineData("parameter.image_size.prompt")]
+    [InlineData("param:image_size.field.aspect_ratio")]
+    [InlineData("param.image_size.field.width_height")]
+    public void BulkCapabilityType_ReservesImageSizeNamespaceForDedicatedEndpoint(string capabilityType)
+    {
+        GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
+            capabilityType, out _, out var error).ShouldBeFalse();
+
+        error.ShouldContain("专用接口");
+    }
+
+    [Fact]
+    public void BulkCapabilityType_NormalizesOrdinaryCapability()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
+            " vision ", out var type, out var error).ShouldBeTrue(error);
+
+        type.ShouldBe("vision");
+    }
+
+    [Fact]
+    public void ImageSizeControlMapping_NormalizesSupportedParameterAliases()
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "param.image_size.prompt", ["Value"] = true },
+            new BsonDocument { ["Type"] = "parameter.image_size.field.aspect_ratio", ["Value"] = true },
+        ]);
+
+        result.Mode.ShouldBe("field_and_prompt");
+        result.FieldFormat.ShouldBe("aspect_ratio");
+    }
+
+    [Theory]
+    [InlineData(true, false, "inherit")]
+    [InlineData(false, true, "none")]
+    public void ImageSizeControlMapping_LaterAliasValueOverridesEarlierValue(
+        bool canonicalValue,
+        bool aliasValue,
+        string expectedMode)
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "parameter:image_size.none", ["Value"] = canonicalValue },
+            new BsonDocument { ["Type"] = "param.image_size.none", ["Value"] = aliasValue },
+        ]);
+
+        result.Mode.ShouldBe(expectedMode);
+        result.FieldFormat.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ContainsImageSizeControlCapability_RecognizesReservedNamespaceAliases()
+    {
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["seed", "parameter:image_size.none"]).ShouldBeTrue();
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["param.image_size.field.size"]).ShouldBeTrue();
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["image_generation", "parameter:seed"]).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void HasEnabledCapability_RequiresBooleanTrueValue()
+    {
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+        ], "image_generation").ShouldBeFalse();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "IMAGE_GENERATION", ["Value"] = true },
+        ], "image_generation").ShouldBeTrue();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "text_to_image", ["Value"] = true },
+        ], "image_generation", "text_to_image", "image").ShouldBeTrue();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image", ["Value"] = true },
+        ], "image_generation", "text_to_image", "image").ShouldBeTrue();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+            new BsonDocument { ["Type"] = "image", ["Value"] = true },
+        ], "image_generation", "text_to_image", "image").ShouldBeFalse();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image", ["Value"] = true },
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+        ], "image_generation", "text_to_image", "image").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ImageSizeControlMapping_IgnoresMissingAndNonBooleanValues()
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "parameter:image_size.none" },
+            new BsonDocument { ["Type"] = "parameter:image_size.prompt", ["Value"] = "true" },
+            new BsonDocument { ["Type"] = "parameter:image_size.field.size", ["Value"] = false },
+        ]);
+
+        result.Mode.ShouldBe("inherit");
+        result.FieldFormat.ShouldBeNull();
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v2.7 | **日期**：2026-07-18 | **状态**：开发中
+> **版本**：v2.8 | **日期**：2026-08-11 | **状态**：开发中
 
 **一句话**：网关与模型池的债务总表，含协议路由收口与多次生产取证记录。
 **谁该读**：接手网关的工程师；做发布判断的人。
@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 21 / in-progress: 4 / paid: 22 / 总计: 47
+当前 open: 22 / in-progress: 4 / paid: 22 / 总计: 48
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -20,6 +20,13 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-12-delete-provider-with-models | medium | 2026-08-12 | 只能删「干净的」Provider（名下无模型、无池引用）。带模型的删不掉，只能停用 | 想彻底清掉一个已经导入过模型的 Provider 时 | open | PR #1362 里做过级联（withModels）又撤了，撤的理由比做的理由重要：级联要动模型池的成员数组，而池那边有一整套别处维护的不变量——托管默认池 append-only、删成员前要过 `ValidateDefaultGatewayPoolMembersAsync` 确认池不会变空、每次改 `Models` 要递增 `Version` 让 `PoolVersionGuard` 能发现并发写；此外删除与批量导入之间还有 TOCTOU 窗口（导入先读到 Provider 还在，删除拍完快照后导入才插入，留下启用态孤儿模型），修它要 fencing 或多文档事务，而本部署是 standalone Mongo 无多文档事务（同库 `2026-07-14-tenant-provision-crash-consistency` 记着同一类约束）。在删除端点里把这四条再实现一遍等于开出与池模块并行的第二判据，漏掉任何一条换来的都是「删掉了、但某个调用方的默认池当场空了」这类静默事故。补法：连同池不变量在独立 PR 里做，复用池模块既有的守卫入口而不是重写；届时一并处理 fencing |
+| 2026-08-12-anthropic-discovery | low | 2026-08-12 | Anthropic 预设标了不支持模型发现，「查看模型」对 Claude 协议一律拒绝，接 Anthropic 的用户只能手敲模型标识 | 用户接入 Anthropic 并希望像别的上游一样勾选导入时 | open | PR #1362 review 第七轮提出：Anthropic 实际提供 `GET /v1/models`，用的正是探针已经在发的 `x-api-key` + `anthropic-version` 头，所以「没有模型列表接口」这个说法不成立。不在当前 PR 打开的理由：要新增一条 Claude 协议的清单解析路径（响应形状与 OpenAI 的 `data` 数组不一定一致），而手上没有 Anthropic 密钥可验证，改完只能靠猜——按范围熔断规则记账。补法：拿到一把 Anthropic 密钥后实测响应形状，再把预设的 SupportsModelDiscovery 打开并接上解析 |
+| 2026-08-12-import-capability-not-editable | medium | 2026-08-12 | 上游模型清单里，系统推断出的用途以只读 chip 展示，导入前改不了。推断错（例如图像分类模型撞上宽泛的 `-image` 生成规则）就会带着错用途导入，并被自动同步进对应的托管默认池；而现有的平台级用途编辑器只改模型文档、不改已经产生的池成员关系 | 上游出现标识具误导性的模型时 | open | PR #1362 review 提出，判断成立，且确实与本 PR 新写的 `minimal-user-input.md` 第 3 条「推断值必须可改」有张力。不在当前 PR 修的理由：要么在选择面板里长出一套用途编辑 UI，要么让池成员关系跟随用途变更——两条都是新语义类别，按范围熔断规则记账。当前缓解：默认只勾选「推断出了用途」的模型且用途以 `source=inferred` 标出，用户可整条不勾；导入后仍可用平台级用途编辑器改模型本身。补法：选择面板每行加用途多选，或导入前置一步「确认用途」，并让池成员关系跟随用途变更重算 |
+| 2026-08-12-local-preset-host-unreachable | medium | 2026-08-12 | Ollama / vLLM 两个本地预设的默认地址用 `host.docker.internal`，而标准 Linux Compose 拓扑里只有 `claude-sdk-sidecar` 配了 `extra_hosts: host-gateway`，`llmgw` 与 `llmgw-serve` 都没有——Linux Docker Engine 解析不了这个名字，于是控制台探测和真实调用都会失败，用户得自己改网络配置 | 用户在 Linux 部署上直接用本地预设的默认地址 | open | PR #1362 review 提出，判断成立。修它要动 `docker-compose*.yml` 给两个网关容器加 `extra_hosts`，属基础设施改动、与本 PR 的「接上游更省事」不是一个语义类别，按范围熔断规则记账不在当前 PR 展开。当前缓解：两个预设的介绍都明写「地址一定要按你的部署改（高级选项里）」，且测试连接失败时会给出「本地部署的上游要用容器能解析的主机名」这条下一步。补法二选一：给两个网关容器补 host-gateway 映射，或把默认地址换成同一 compose 网络里确实存在的服务名 |
+| 2026-08-11-console-api-no-unit-tests | medium | 2026-08-11 | 控制台 API 这个工程没有任何单测，也不在后端解决方案里。新增的上游预设、模型用途推断、上游价格解析都是**判断逻辑**，目前只有两条源码守卫（探测地址的版本号判据必须与网关一致、不许内置价目表）跑在后端测试工程里，行为本身没有用例；编译验证只靠 Docker 镜像构建那一条 job | 下次改动 console-api 的判断逻辑时 | open | 用途推断已在 402 个真实 OpenRouter 模型标识上跑过一次分布核对（覆盖 71%、零可疑误判），但那是一次性核对不是回归。补法：给控制台 API 建测试工程并接进 CI，或把这三个纯函数下沉到能被现有测试工程引用的位置 |
+| 2026-08-11-capability-inference-coverage | low | 2026-08-11 | 模型用途推断按标识关键词命中，对不认识的厂商家族推断不出用途，实测 402 个模型里 115 个落在「用途待定」 | 上游模型清单里陌生厂商占比升高时 | open | 刻意取「宁可不推断也不猜错」：推断错会把 chat 模型标成 embedding，进而污染向量库且事后认不出来。当前处理是显示「用途待定」且默认不勾选，由用户显式决定。要提高覆盖率只能持续补关键词，或改由模型自述能力（部分上游的模型列表接口会自述模态，可作为第二数据源） |
+| 2026-08-11-member-shortname-login-mismatch | medium | 2026-08-11 | 管理员创建成员时填写账号短名，系统成功保存为“租户短名.账号短名”；新成员若继续使用刚填写的短名登录，会看到“用户名或密码错误”。成员创建页称其为“账号短名”，登录页却只要求“用户名”，没有明确必须输入完整登录账号，导致用户误判密码或账号创建失败 | 任何独立 Gateway 成员首次使用管理员提供的账号登录时 | open | 创建成功提示和成员列表应明确标注并支持复制“完整登录账号”，登录页应展示完整账号示例；是否兼容短名登录必须先证明跨租户同名不会产生歧义、串租户或账号枚举风险 |
 | 2026-07-16-tenant-aggregate-hard-limit | medium | 2026-07-16 | 当前请求硬限制位于 appCaller 月预算、appCaller RPM 与 service key RPM；用量页能按 TenantId 汇总，但 `LlmGwTenant` 没有跨 appCaller 的月预算或速率字段，因此不存在单独的租户总硬上限 | 外部客户合同要求整个租户共享一个强制总预算或总速率，且不能只靠覆盖全部 appCaller 达成时 | paid | 已新增租户总月预算、单次原子预占和总 RPM；serving 以租户账本与分钟窗口跨 appCaller 原子执行，并与 appCaller 层同时返回限流头；控制台、并发/跨租户测试和权威教程同步更新。 |
 | 2026-07-14-tenant-provision-crash-consistency | high | 2026-07-14 | 租户和成员创建已对可捕获写异常执行补偿，并按 slug 或成员目标支持幂等重放；成员关键变更也会先写入包含 TenantId 的 pending 审计意图，再执行业务写入并完成审计。但 standalone Mongo 无多文档事务，进程在多次写入之间硬退出时仍可能留下半成品引用，或留下已完成业务但尚未收口的 pending 审计 | 开放匿名租户注册、控制台改为多副本，出现 provisioning 残留或 pending 审计告警前 | paid | 租户、成员和 owner 边界写入先登记带精确对象 ID、租约和 generation 的恢复操作；启动与 30 秒循环会 fencing 接管过期 pending/repairing 操作，回滚半成品或完成已提交的 owner 变更。Mongo 故障注入测试覆盖租户/成员硬退出和修复器二次退出接管 |
 | 2026-07-14-owner-mutation-lease-fencing | high | 2026-07-14 | 最后一个 owner 保护已使用租户级 30 秒租约和 membership version CAS 串行化常规并发；若一次 owner 变更停顿超过租约且另一实例接管，旧持有者仍可能在过期后继续提交不同 membership 的写入，租约 token 尚未形成跨文档 fencing | 控制台多副本运行、owner 变更可能超过 30 秒，或开放外部组织自主管理前 | paid | 移除可过期的进程锁；租户文档现在保存 active owner membership 权威集合和递增 fencing generation，移除 owner 使用单文档原子条件要求集合长度大于 1。并发移除测试证明两名 owner 只会成功移除一名；硬退出时 owner 权限按权威集合 fail-closed，并由恢复操作收口 membership |
@@ -64,6 +71,125 @@
 | 2026-07-07-production-runner-channel | critical | 2026-07-07 | LLM Gateway 生产 shadow-start 曾把正式 stage 绑定到 `self-hosted,prd-agent-prod`，造成 GitHub runner 与生产凭据的额外依赖 | 执行 LLM Gateway 生产发布 | paid | 生产发布权威已收口到 CDS target；GitHub Actions 只产出不可变构建物，不保存 LLMGW 生产凭据。2026-07-13 CDS Release `rel_51f99e083b7d6b4d` 以精确 SHA 验证成功，target 随后禁用，临时账号与 key 均已撤销 |
 | 2026-07-08-video-shadow-cost-cap | high | 2026-07-08 | LLM Gateway 生产 shadow 取证期曾批量触发视频生成真实入口，成功 submit 会产生真实供应商成本；后续余额不足/通道不可用只说明供应链阻断，不代表前序成功请求没有计费 | 任何生产 seed/canary 同时启用 `--include-video-direct`、`--include-visual-video-direct`、视频 poll/download 或提高 `--iterations` 时 | in-progress | 已在 `scripts/llmgw-map-shadow-seed.py` 增加默认 `--max-video-submits=3` 与 `--allow-high-cost-video` 显式解除闸门；视频能力暂缓期间，非视频 release gate 必须使用 scoped 过滤，不再为了全量门槛重复打视频供应商。2026-07-08 只读取证：`visual-agent.videogen::video-gen` 近期 http 成功 418 次，`video-agent.videogen::video-gen` http 成功 39 次，失败 7 次，失败集中在 APIyi 无通道、Ark 404、火山方舟 overdue balance 和模型池不可用。 |
 | 2026-07-07-prod-video-asr-upstream-unavailable | critical | 2026-07-07 | 生产 video/ASR raw 发布 gate 仍未闭合：`video-agent.videogen::video-gen` 绑定池不可用；APIyi `alibaba/wan-2.6`、`bytedance/seedance-2.0-fast` 均返回 no available channels；豆包 ASR 已补池并可解析，但真实 raw seed 返回 `Invalid X-Api-Key` | 全量 `LLMGW_MODE=http`、`canary-video-asr`、或宣称视频/ASR/字幕已迁移成功 | open | 已备份 `/root/backups/llmgw-prod-before-video-asr-evidence-20260707T070525+0800`、`/root/backups/llmgw-prod-before-restore-shadow-sample-20260707T073402+0800`、`/root/backups/llmgw-prod-before-video-reprobe-20260707T074011+0800`、`/root/backups/llmgw-prod-before-asr-pool-bootstrap-20260707T080433+0800`、`/root/backups/llmgw-prod-before-asr-seed-20260707T081332+0800`。生产仍为 `LlmGateway__Mode=shadow`、`LlmGateway__ShadowFullSamplePercent=1`、allowlist 空。2026-07-07 已用 `scripts/llmgw-prod-asr-pool-bootstrap.sh` 新增 `asr_doubao_bigmodel_pool` 并绑定四个 ASR caller：`document-store.subtitle::asr`、`transcript-agent.transcribe::asr`、`video-agent.v2d.transcribe::asr`、`video-agent.video-to-text::asr`。新版 upstream readiness 取证：四个 ASR caller 均解析为 DedicatedPool `doubao-asr-bigmodel` / `Exchange:豆包 ASR (BigModel)` / `protocol=exchange` / `Healthy`；视频仍返回“模型池内所有模型不可用”。同日备份后跑真实 MAP seed：`seed[1].session_chat` 成功，`seed[1].transcript_asr` 与 `seed[1].document_store_subtitle_asr` 均失败，错误为豆包 ASR `code=45000010, message=Invalid X-Api-Key`，证据文件在生产 `/tmp/llmgw-asr-seed-after-bootstrap.json`。只读 provider config audit 报告在生产 `/tmp/llmgw-provider-config-audit.json`：ASR key 可解密、长度 36、UUID 单 key 形态、`TargetAuthScheme=XApiKey` 合理；失败项为 no Healthy video-gen model 以及两个 ASR seed 失败。此前短时把原视频池健康恢复为 Healthy 且采样提到 100% 后跑 `--include-video-direct`，真实业务入口仍失败：`video direct upstream failed ... HTTP 404`，raw shadow `httpFail=5`。下一步必须补可用视频渠道和有效豆包 ASR key/resourceId，并重跑 `scripts/llmgw-prod-provider-config-audit.py --seed-evidence-json <new-seed>` 与 `scripts/llmgw-map-shadow-seed.py --include-video-direct --include-transcript-asr --include-document-store-subtitle-asr`，得到 `raw` allMatch 且 httpFail=0 后才可进入 video-asr 灰度。 |
+
+## 网关账号自助（2026-08-06 修复 + 剩余边界）
+
+网关是独立账号体系，但账号的钥匙此前配不出来：MAP 一键登录自动建号时，用户名取 `map-{哈希}`、
+口令取随机 48 字节，两个值没有任何人知道；改密端点又无条件校验旧口令；控制台的用户菜单里
+也没有任何入口能走到改密。三处叠加的结果是「网关明明有口令，却登不进去，也改不了」——
+用户 2026-08-06 直接把它称为断头设计。
+
+本次修复：新增「账号与安全」页（用户菜单常驻入口，任何角色可进），展示登录名与口令状态；
+由 MAP 一键登录换来的会话，设置口令时豁免旧口令——持有这种会话的人此刻就能再走一遍
+一键登录，要求旧口令拦不住任何人，却是忘记口令时唯一的回家路。豁免挂在**会话来源**上而不是
+账号属性上：用口令登录得到的会话一律照常校验，否则被盗会话就能直接改密。同时允许把自动
+用户名改成记得住的，否则设了口令也不知道用什么登录。判定收敛在 `LocalPasswordPolicy` 一处，
+接线由源码守卫钉住。
+
+一个差点埋进去的二次断头：最初的豁免条件是「联邦账号且从未设置过口令」，于是用户一旦设了
+口令又忘掉，就会第二次被锁在外面——和这次要修的形状一模一样。改为按会话来源判定才真正闭合。
+
+登录名默认跟随 MAP：自动名 `map-{哈希}` 是实现细节泄漏到用户身上，既然身份从 MAP 来，
+名字就该一致。建号即用 MAP 用户名，不合法或被占用才退回自动名；存量账号在下次一键登录时
+就地自愈；冲突不闷声退回，账号页明说是哪个名字被占了。
+
+真实环境验证（2026-08-06，用一次性测试账号跑通三条分支后清理）：
+
+| 分支 | 观察到的结果 |
+| --- | --- |
+| 建号即用 MAP 名 | 新用户首次一键登录，网关登录名等于其 MAP 用户名，未出现自动名 |
+| 冲突退回 + 说清原因 | 名字被占时退回自动名，账号接口返回建议名与「已被占用」标记 |
+| 占用解除后自愈 | 腾出名字后再次一键登录，自动改名成 MAP 用户名 |
+
+安全边界同批验证：一键登录会话免旧口令、口令登录会话必须填旧口令、匿名访问 401，三条全部成立。
+
+### 剩余边界（2026-08-12 收口，等后续验收）
+
+**一、硬截止机制建议收成最简形态（P1，设计问题不是某一行的问题）**
+
+`LlmGwJwt:MapSsoLifetimeMinutes` 允许把联邦会话收紧到任意分钟数。这个「任意」要同时和三样东西
+正确交互：`GwJwt.Issue` 的 5 分钟下限、`TryRenew` 的滑动续期判据、两个续签端点（改密 / 切租户）。
+本轮连续四次修复，**每一次的缺陷都是上一次修复引入的**，且全部出自这三处交互：
+
+1. 续签不传 lifetime → 15 分钟会话换成多天 token，`fed_session` 特权跟着延长
+2. 改传剩余时长 → 被 5 分钟下限抬高，每 2 分钟续一次即可无限续命
+3. 改传绝对时刻 → 没管「已经过去」的输入，`expires <= notBefore` 抛异常，而口令已落库
+4. 加了写入前预检 → 仍有 TOCTOU 窗口；且配置 ≥ 常规时长时 flag 是个假承诺
+
+第五个缺陷（初次签发仍走 lifetime 重载，配 1–4 分钟时被下限抬高）说明问题在设计不在实现——
+再补下去只是把下一个洞挪个位置。**建议二选一或都要**：
+
+- 配置**钳到 ≥5 分钟**并在启动日志明说。5 分钟下限从「隐形抬高」变成显式契约，第 5 类问题不存在。
+- 收紧的联邦会话**一律不参与任何续签**：改密照常成功，只是不发新 token、要求重登。
+  这样 `absoluteExpiresAt` 参数可以整个删掉，三处交互塌成一处——签发时用配置时长，此后没有第二条路径。
+
+采纳后本轮四次修复的大部分代码可以删除，而不是继续叠加。
+
+**二、初次签发未走绝对截止（P2，属于上一条的一个实例）**
+
+`MapSsoLifetimeMinutes` 配 1–4 分钟时，`/gw/auth/map-sso` 的初次签发走的仍是 lifetime 重载，
+被 5 分钟下限抬高；只有续签路径用了 `absoluteExpiresAt`。若采纳「配置钳到 ≥5 分钟」，此条自动消失。
+
+**三、首次建号的用户名竞态未重试（P2）**
+
+可用性查询与插入之间，另一个账号可能抢占 `preferredUsername`。此时唯一索引抛的重复键异常与
+「同一外部主体并发插入」同形，当前只按外部主体回查，回查不到就把一张本来有效的 SSO 票据标成
+`provisioning_failed`。应在该分支上用 `fallbackUsername` 重试建号（非竞态的冲突路径已经这么做了）。
+判据：「查询后、插入前被抢占，仍能用兜底名建号成功」。
+
+**四、bootstrap 管理员可以给自己改名，重启后会凭空多出一个特权账号（P1，安全相关）**
+
+本 PR 新增的改名能力**没有限制账号类型**：`/gw/auth/change-password` 的改名分支只做格式规范化与占用检查，
+任何已认证用户都能改自己的登录名，包括 `LLMGW_ADMIN_USER` 指定的 bootstrap 管理员。
+（控制台页面当前只在「自动生成的名字」或「有 MAP 建议名」时才显示输入框，本地管理员看不到该字段，
+但**端点本身是开放的**——UI 藏起来不等于关掉了。）
+
+后果链：bootstrap 管理员改名 → 下次进程启动 `SeedAdminAsync` 按 `Username == LLMGW_ADMIN_USER` 查不到 →
+**插入一个全新的管理员**，口令取 env 配置值或默认口令（默认口令时 `MustChangePassword=true`）→
+`EnsureInternalTenantAsync` 给它授予 owner 成员资格。等于系统里凭空多出一个特权账号，
+凭据是环境变量里的那个、或众所周知的默认值。
+
+修法二选一：
+- **禁止 bootstrap 账号改名**（一个条件即可，最省事、语义也最清楚）；
+- 或者让 bootstrap 发现改用**不可变身份**（固定 id / 专门的标记字段）而不是 `Username` 去找账号。
+
+判据：「把 bootstrap 管理员改名后重启，不得出现第二个管理员账号」。
+
+**四之二、自助改名不受租户命名空间约束，可抢占别的租户未来的规范名（P2，与第四条同根）**
+
+`/gw/members` 给本地成员的登录名是有规范的：`MembershipPolicy.TryCanonicalizeUsername` 把它规范成
+`<租户slug>.<短名>`。但本 PR 新增的自助改名只做全局格式校验与占用检查，接受任意裸用户名。
+于是 A 租户的成员可以把自己改成 `victim.alice`——那正是 B 租户将来给 alice 开号时会用的规范名；
+用户名索引是全局唯一的，B 租户后续开号就会撞 `USERNAME_UNAVAILABLE`，且看不出是被谁占的。
+
+与第四条是**同一个根**：改名能力落地时没有回答「谁能改」「能改成什么」这两个问题，
+只做了格式与占用。修法应一并考虑：本地账号的改名限制在其所属租户命名空间内，
+联邦账号另走一套（它的名字来自外部身份，本就不属于租户命名空间）。
+
+**四之三、改密成功但需重登的提示可能来不及被看见（P2）**
+
+我为「提交后才到期」做的那条 `requiresRelogin` 提示，前提是页面还在。但这条提示恰恰只在
+**到期时刻已经过去**时才出现，而 `AuthProvider` 会按同一个时间戳调度 `expireSession`，
+`RequireAuth` 随即把 `/account` 重定向到登录页——时钟正常同步时，那个定时器很可能在用户读到之前
+就把页面换掉了。等于我修好了「不撒谎」，却没保证「话能被听见」。
+修法：把这条终态提示做成跨登出/跳转仍然存活的东西（登录页可读的一次性提示），
+或者干脆渲染在受认证保护的路由之外。
+
+**五、改密续签仍有一个微秒级 TOCTOU（P2）**
+
+`FederatedHardDeadline` 检查与 `gwJwt.Issue` 之间若正好跨过硬截止，`Issue` 会抛
+`ArgumentOutOfRangeException`，而此时口令、用户名、SecurityVersion、审计都已提交——用户拿到 500，
+但改密其实成功了。窗口极窄（两行之间），但方向和第「二」条同源：**提交之后的失败必须表达成
+「成功 + 需要重登」，不能表达成失败**。修法是让签发把「已过期」作为一种可返回的结果而不是异常，
+由提交后的路径统一转成 `RequiresRelogin`。
+
+剩余边界（尚未偿还）：
+
+| 边界 | 说明 |
+| --- | --- |
+| 网关账号只能停用不能删除 | 组织页与 API 都只有创建与改状态，没有删除端点。自测或临时账号做完只能置 disabled，长期会在共享库里积累残骸（本轮自测已留下 4 个）。补删除端点前，任何自动化测试都不要批量建号 |
+| 独立口令账号忘记口令无自助路径 | 联邦账号可以从 MAP 一键登录回来重设（那次跳转已证明身份）；纯独立口令账号（如种子 admin）没有找回路径，也没有 Owner 重置他人口令的入口——组织页只在**新建**成员时能设初始口令。内部工具可接受，对外开放前须补 |
+| 登录名唯一性依赖唯一索引 | 占用检查与写入之间有窗口，靠 11000 兜底返回 USERNAME_TAKEN；若该集合尚未建唯一索引，并发改名可能撞出重名（索引由 DBA 手动创建，见 no-auto-index 规则） |
 
 ## 最新协议路由债务收口（2026-07-09）
 
@@ -599,6 +725,11 @@
 | ID | 严重度 | 状态 | 事实与收口条件 |
 |---|---|---|---|
 | `2026-07-17-sirius-dns-certificate` | P1 | blocked | `sirius.ebcone.net` 的公共权威 DNS 为 NXDOMAIN。现有腾讯云 COS 凭据调用 DNSPod `DescribeRecordList` 返回 `OperationDenied.NoPermissionToOperateDomain`，不能创建记录；正式 `map.ebcone.net` 证书 SAN 只包含自身，也不能复用。域名管理员需创建指向 `43.136.77.61` 的 A 记录，随后为 `sirius.ebcone.net` 单独签证书，套用 `llmgw/deploy/public-domain.nginx.example.conf`，经 `nginx -t`、reload、根页/实际资源/双健康/四协议无 key 401 和登录后真实数据复验后才可关闭。不得把仓库模板或 HTTP Host 预检写成“HTTPS 已上线”。 |
+| `2026-08-11-claimed-map-resource-resurrects-on-delete` | P1 | open | 内部租户删掉一条**从 MAP 认领来的**平台/模型/池/交换所后，它会重新出现。认领只是把同一个 `_id` 复制进 `gwPlatforms`（`claimed["SourceCollection"]="llmplatforms"`），MAP 原行原封不动；而列表是 `gwDocs ∪ mapDocs.Where(_id 不在 gwIds)`——GW 那份就是靠同 `_id` **遮住**了 MAP 那份。删掉 GW 副本 = 撤掉遮罩，MAP 原行立刻回到列表，且 ModelResolver 仍可能回落到它按旧配置调用。影响面：仅内部租户、且仅限「认领自 MAP」的资源；GW 原生资源的删除不受影响，已实机验证过。<br>**用户已拍板（2026-08-11）**：取「撤销认领、退回 MAP 只读」——删除认领资源 = 放弃 GW 管辖权，那条回到「MAP 有、GW 只读」状态，列表里仍可见但不可改；**不跨系统删 MAP 原件**。落地时按钮文案应从「删除」改为「撤销认领」，并提示「这条来自 MAP，如需彻底移除请到 MAP 处理」——现在表现成删除才是「删了又回来」的根源。<br>**原分析保留**：两条修法都是新语义类别——(a) 连 MAP 原行一起删，等于让网关控制台跨权威边界删 MAP 权威集合的数据，与「只能删已认领到 GW 的，MAP 来源请先认领」这条既有边界直接冲突；(b) 引入 tombstone / 抑制标记，且**列表与解析两条路径都要认它**，是一套新的可见性机制。按规则 5.5 属 B 类，需产品决策「删一条认领资源到底该是什么语义」，不由 Reviewer 单独授权。（2026-08-11 PR #1359 Review 七轮提出，触发范围熔断）|
+| `2026-08-11-platform-merge-split-out` | P2 | open | **上游合并（`POST /gw/platforms/{id}/merge-into/{targetId}`）已从 PR #1359 拆出**，代码原样保存在分支 `claude/llmgw-platform-merge-followup`，含端点本体、`RepointOfferingsAsync` / `NormalizedModelKey` 两个专用辅助、前端「合并到…」入口与全部合并守卫。<br>**为什么拆**：20 轮自动 Review 里有 9 轮打在这一个端点上，且开发过程中自己引入过两次回归（别名表做成全局匹配改坏无关平台的成员；归一去重让目标成员被源顶掉）。它也是这批功能里唯一带「跨四个集合、无事务、中断需重跑」告警的。删除能力、上游编辑、改类型闸、站内确认弹窗都不依赖它，先合那些价值更高、风险更低。<br>**续做时的已知边界**（都已在那条分支上修好，重开 PR 时要连测试一起带上）：offering 与池成员的 `ModelId` 必须一起改指；按归一名判同名；接口类型不同直接拒；删被丢弃模型必须排在所有改指之后（可重放）；别名匹配分表（`_id` 全局、模型名只在源平台内）；去重目标优先且按「最终指向哪个模型」算键；写池要带 `PoolVersionGuard` + `Inc(Version)`。<br>**仍未解决**：整个合并没有事务，中断可重放但不原子。（2026-08-11 用户决定「缩小 PR 先合」）|
+| `2026-08-11-delete-check-to-delete-race` | P2 | open | 删模型（及同形状的删交换所 / 删池 / **删逻辑模型时级联删它名下的 offering**）是「先查引用、再删」两步非原子：查完阻挡清单之后、`DeleteOneAsync` 之前，若并发有人新建 offering 或 upsert 池成员正好指到这个模型，那次写入会成功，随后删除照常执行，留下一条指向已不存在对象的引用——正是本 PR 花了几轮堵的那类静默残留，只不过发生在时间窗里。<br>**为什么本 PR 不修**：三条候选修法（Mongo 事务 / 删前先打 `Deleting` 标记再扫 / 把引用创建与删除串行化）都要引入这条链路上从未有过的新语义（分布式事务或两阶段删除状态机），且会牵动所有写引用的端点一起认那个中间态。按规则 5.5 属 B 类。当前控制台是低并发管理面（管理员手工操作），撞上这个窗口需要两个管理员同秒操作同一个模型，因此优先级定 P2 而非 P1。<br>逻辑模型那一路是同一形状的镜像：建 offering 会先校验父逻辑模型存在，若这次校验落在删逻辑模型的 `DeleteManyAsync` 之后、父文档删除之前，插进来的 offering 就永久成孤儿。修法与上同（事务 / 删除中标记 / 串行化），故合并记在这一条，不另开条目。（2026-08-11 PR #1359 Review 十一轮提出，十二轮补入逻辑模型镜像）|
+| `2026-08-12-preset-load-failure-silent` | P2 | open | Provider 预设清单（`ProviderPresetPicker`）拉取失败时界面不说话：既没有加载态、也没有错误提示与重试，用户看到的是一个空的预设区，分不清「这个部署没有预设」还是「刚才那次请求挂了」——违反 `expectation-management.md` 第一条（任何等待都要给「在做什么」）。<br>**为什么本 PR 不修**：要补的是 loading / error / retry 三个新 UI 状态 + 一条重试路径，属规则 5.5 的 B 类（建议合理但引入新语义类别）。本 PR 的单一目标是「预设导入 + 上游模型发现」的正确性，这条不证伪那个目标。修的时候要连带确认：预设是打包在前端还是从后端拉的，若是前者则本条不成立、直接结清。（2026-08-12 PR #1362 Review 提出，范围熔断后记账）|
+| `2026-08-12-probe-duration-excludes-body` | P2 | open | 「测试连通性」返回的耗时只算到**响应头到达**为止：`sw.Stop()` 排在 `ReadUpstreamBodyAsync` 之前，而探测本身是 `ResponseHeadersRead` 模式，body 是后面才流完的。上游先回头、再慢慢吐 body 时，界面上会显示一个明显偏小的毫秒数，用户据此判断「这家很快」是错的。<br>**为什么本 PR 不修**：`sw` 的读数同时喂给成功与失败两条返回路径，把 `Stop()` 挪到 body 读完之后会改变失败分支（非 2xx 不读 body）的口径，等于要重新定义「探测耗时」是「到头」还是「到全文」并同步前端文案——是新语义类别而非缺陷修复，按规则 5.5 属 B 类。当前读数偏小但单调、可比，不会导致错误配置落库。（2026-08-12 PR #1362 Review 提出，范围熔断后记账）|
 | `2026-07-17-cds-dataprotection-persistence` | P2 | open | CDS main 的 Console API 启动日志提示 `/root/.aspnet/DataProtection-Keys` 不持久且未配置 XML encryptor。当前 Gateway JWT 使用独立 `LlmGwJwt__Secret`，尚未发现会话故障；但若后续引入 ASP.NET DataProtection cookie、临时令牌或受保护载荷，容器替换会使旧数据失效。收口前应先盘点真实消费点，再决定挂载受限 volume 或显式禁用未使用能力，不能仅为消除 warning 保存明文 key。 |
 
 测试环境“真实数据”已经通过控制台正常链路形成，不能把密钥明文、生产租户快照或前端硬编码示例当作修复。若 CDS Mongo 被重建，恢复方式是使用独立测试租户从 Quickstart 创建 appCaller 和 tenant-scoped key，再对公开假上游发送请求；禁止复用生产 key，禁止批量调用付费模型。

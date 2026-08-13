@@ -35,6 +35,7 @@ const ALLOW_LIST: Record<string, string> = {
   '/': '首页 IndexPage（站点根，固定栏顶不参与可定制）',
   '/home': '首页移动版别名',
   '/login': '登录页（未鉴权状态）',
+  '/synthetic-login': '稳定冒烟一次性票据消费页（内部系统路由，不允许出现在导航）',
   '/agent-launcher': '首页浮层入口',
 
   // ── 全屏非 nav ──
@@ -243,9 +244,18 @@ describe('周报用量口径 · route token 必须指向真实路由', () => {
   const reportDir = path.resolve(TEST_DIR, '../../../../doc');
   const tokenLine = /\*\*用量口径\*\*\s*[：:]\s*(.+)/;
 
-  it('每个 route: token 都能在 App.tsx 里找到对应 <Route>', () => {
+  it('每个 route: token 都能找到对应 <Route>（App.tsx 字面量 + NAV_REGISTRY 自动生成）', () => {
     if (!fs.existsSync(reportDir)) return;
-    const routes = new Set(parseLiteralRoutesFromAppTsx());
+    // 路由有两个来源，缺一个判据就太窄（predicate-and-wiring-discipline 形状 1）：
+    // App.tsx 里的字面量 <Route>，以及 App.tsx 从 NAV_REGISTRY 自动 map 出来的那批
+    // （见 App.tsx 的 `NAV_REGISTRY.filter(...).map(e => <Route path={e.path} …/>)` 两处）。
+    // 只认字面量会把 /chat、/visual-agent 这类注册表路由误判成「不存在」，
+    // 而它们恰恰是新能力最常用的入口——误判的后果与 token 写错相反但同样坏：
+    // 作者会被逼着把正确的 token 改错，采用度从此永远查不到这个页面。
+    //
+    // 「注册了」本身不是「挂载了」——下一条用例负责钉住这两处 map 还在，
+    // 否则 map 被删掉后，这里仍会把已经 404 的注册表路由当成合法路由放行。
+    const routes = new Set([...parseLiteralRoutesFromAppTsx(), ...NAV_REGISTRY.map((e) => e.path)]);
     const problems: string[] = [];
     let checked = 0;
 
@@ -259,7 +269,7 @@ describe('周报用量口径 · route token 必须指向真实路由', () => {
           if (!t.startsWith('route:') || t.includes('{') || t.includes('|')) continue;
           checked += 1;
           const route = t.slice('route:'.length);
-          if (!routes.has(route)) problems.push(`${file}：${t} —— App.tsx 里没有这个 <Route>`);
+          if (!routes.has(route)) problems.push(`${file}：${t} —— App.tsx 与 NAV_REGISTRY 里都没有这个路由`);
         }
       }
     }
@@ -267,5 +277,51 @@ describe('周报用量口径 · route token 必须指向真实路由', () => {
     expect(problems, `用量口径的 route token 有 ${problems.length} 处指向不存在的路由：\n${problems.join('\n')}`).toEqual([]);
     // checked 为 0 是合法状态：标签约定从落地后的第一份周报开始生效
     expect(checked).toBeGreaterThanOrEqual(0);
+  });
+
+  /**
+   * 上一条用例把 NAV_REGISTRY 的 path 当成合法路由，前提是 App.tsx 真的把它们挂成了
+   * <Route>。这个前提今天成立，但它**不是自明的**：注册表路由只因为 App.tsx 里那两处
+   * `NAV_REGISTRY.filter(...).map(...)` 才可达。任一处被删、或 placement 谓词漂移，
+   * 对应条目立刻变成 404，而上一条用例照样判绿——因为它读的是同一份注册表，
+   * 拿「登记过」当成了「挂载了」（predicate-and-wiring-discipline 形状 8：
+   * 把一份在真实运行条件下不成立的声明当成证据）。
+   *
+   * 所以这里单独钉住那条接线：挂载块必须存在、必须真的渲染 <Route path={e.path}>，
+   * 且注册表里用到的每一种 placement 都得有块覆盖到。
+   */
+  it('NAV_REGISTRY 到 <Route> 的挂载接线必须还在，且覆盖注册表用到的每种 placement', () => {
+    // 抓 `NAV_REGISTRY.filter(<谓词>).map(` 及其后的渲染体
+    const blocks = [...appTsxRaw.matchAll(/NAV_REGISTRY\s*\.filter\(([\s\S]*?)\)\s*\.map\(([\s\S]{0,400})/g)].map(
+      (m) => ({ predicate: m[1], body: m[2] }),
+    );
+
+    expect(
+      blocks.length,
+      'App.tsx 里找不到任何 `NAV_REGISTRY.filter(...).map(...)` 挂载块——注册表路由已全部 404，' +
+        '周报 route token 守卫会因此把不可达的路由判成合法',
+    ).toBeGreaterThan(0);
+
+    const notRenderingRoute = blocks
+      .filter((b) => !(b.body.includes('<Route') && b.body.includes('path={e.path')))
+      .map((b) => b.predicate.trim());
+    expect(
+      notRenderingRoute,
+      `有挂载块不再渲染 <Route path={e.path}>，注册表路由不可达：\n${notRenderingRoute.join('\n')}`,
+    ).toEqual([]);
+
+    // 注册表里实际用到的 placement（undefined 记作 shell，与 App.tsx 的默认分支同义）
+    const usedPlacements = new Set(NAV_REGISTRY.map((e) => e.placement ?? 'shell'));
+    const predicates = blocks.map((b) => b.predicate).join('\n');
+    const uncovered = [...usedPlacements].filter((p) =>
+      p === 'shell'
+        ? // 默认分支写法是 `!e.placement || e.placement === 'shell'`，两种写法认其一
+          !(predicates.includes('!e.placement') || predicates.includes("=== 'shell'"))
+        : !predicates.includes(`'${p}'`),
+    );
+    expect(
+      uncovered,
+      `注册表用到的 placement 没有对应挂载块，这些条目已经 404：${uncovered.join('、')}`,
+    ).toEqual([]);
   });
 });

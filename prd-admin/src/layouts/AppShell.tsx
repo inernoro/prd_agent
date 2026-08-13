@@ -46,6 +46,7 @@ import {
   GraduationCap,
   Droplets,
   ExternalLink,
+  MoreHorizontal,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -70,12 +71,13 @@ import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
 import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
-import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
+import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
@@ -197,6 +199,7 @@ export default function AppShell() {
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const permissions = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
+  const canAiEditAvatar = isRoot || permissions.includes('super') || permissions.includes('visual-agent.use');
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
@@ -537,6 +540,9 @@ export default function AppShell() {
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const activeNavItem = visibleItems.find((it) => it.key === activeKey);
   const mobileAppName = isHomePage ? 'PRD Agent' : (activeNavItem?.label || 'PRD Agent');
+  // 移动端沉浸阅读：DocBrowser 阅读态接管顶栏（文档标题 + 返回），铃铛/汉堡随之隐藏，
+  // 返回一步恢复（stores/readerChromeStore.ts）
+  const readerOverride = useReaderChromeStore((s) => s.override);
   const suppressFloatingDock = location.pathname.startsWith('/cds-agent');
 
   // 液态玻璃一键开关（头像菜单内）：2026-07-17 起接到「界面材质」SSOT——
@@ -1039,7 +1045,9 @@ export default function AppShell() {
         );
       })()}
       {/* ── 移动端: 全局顶部导航栏 ── */}
-      {isMobile && (
+      {/* 沉浸阅读态（readerOverride 激活）：顶栏由 DocBrowser 自绘的单行阅读栏接管
+          （返回 + 标题 + 字号/全屏/更多同一行），AppShell 不再渲染自己的顶栏。 */}
+      {isMobile && !readerOverride && (
         <header
           className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{
@@ -1099,7 +1107,13 @@ export default function AppShell() {
         <MobileDrawer open={mobileDrawerOpen} onOpenChange={setMobileDrawerOpen}>
           {/* 用户信息 */}
           <div className="px-4 py-3 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10">
+            <button
+              type="button"
+              onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
+              className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+              aria-label="修改我的头像"
+              title="修改我的头像"
+            >
               <UserAvatar
                 src={resolveAvatarUrl({
                   username: user?.username,
@@ -1111,7 +1125,7 @@ export default function AppShell() {
                 alt="avatar"
                 className="h-full w-full object-cover"
               />
-            </div>
+            </button>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                 {user?.displayName || 'Admin'}
@@ -1177,15 +1191,6 @@ export default function AppShell() {
                 {gatewayOpening ? <MapSpinner size={16} className="ml-auto" /> : <ExternalLink size={16} className="ml-auto" />}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              <Settings size={18} />
-              <span className="text-sm">修改头像</span>
-            </button>
             <button
               type="button"
               onClick={() => {
@@ -1399,6 +1404,7 @@ export default function AppShell() {
 
           {/* ── 底部用户区域 ── */}
           <div
+            data-app-sidebar-account
             className={cn(
               'shrink-0',
               collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'
@@ -1429,13 +1435,16 @@ export default function AppShell() {
                 style={{ background: 'var(--nested-block-bg)' }}
               />
 
-              <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
-                {/* 头像+用户名（触发下拉菜单） */}
+              <div className={cn('relative flex items-center', collapsed ? 'flex-col justify-center gap-1' : 'gap-3')}>
+                {/* 头像直接打开编辑器，用户名保留用户菜单入口。 */}
                 <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <div
-                      className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
-                      title="用户菜单"
+                  <div className={cn('flex items-center', collapsed ? 'flex-col gap-1' : 'gap-3 flex-1 min-w-0')}>
+                    <button
+                      type="button"
+                      onClick={() => setAvatarOpen(true)}
+                      className="shrink-0 cursor-pointer rounded-full transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                      aria-label="修改我的头像"
+                      title="修改我的头像"
                     >
                       {/* 头像外圈 = 教程掌握度进度环(诉求 12):已学会本页教程占比,满环加毕业角标 */}
                       <AvatarProgressRing size={30} stroke={2.5}>
@@ -1451,17 +1460,38 @@ export default function AppShell() {
                           className="h-full w-full object-cover"
                         />
                       </AvatarProgressRing>
+                    </button>
 
-                      {/* 用户信息（仅展开时显示） */}
-                      {!collapsed && (
+                    {collapsed && (
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className="flex h-7 w-8 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          aria-label="打开用户菜单"
+                          title="用户菜单"
+                        >
+                          <MoreHorizontal size={16} />
+                        </button>
+                      </DropdownMenu.Trigger>
+                    )}
+
+                    {/* 用户信息（仅展开时显示，点击后打开用户菜单） */}
+                    {!collapsed && (
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 cursor-pointer rounded-[8px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          title="用户菜单"
+                        >
                         <div className="min-w-0 flex-1">
                           <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
                             {user?.displayName || 'Admin'}
                           </div>
                         </div>
-                      )}
-                    </div>
-                  </DropdownMenu.Trigger>
+                        </button>
+                      </DropdownMenu.Trigger>
+                    )}
+                  </div>
 
             <DropdownMenu.Portal>
               <DropdownMenu.Content
@@ -1474,22 +1504,30 @@ export default function AppShell() {
                 {/* 用户信息区 */}
                 <div className="px-2 py-3">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="h-10 w-10 rounded-full overflow-hidden shrink-0"
-                      style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                    <DropdownMenu.Item
+                      asChild
+                      onSelect={() => setAvatarOpen(true)}
                     >
-                      <UserAvatar
-                        src={resolveAvatarUrl({
-                          username: user?.username,
-                          userType: user?.userType,
-                          botKind: user?.botKind,
-                          avatarFileName: user?.avatarFileName ?? null,
-                          avatarUrl: user?.avatarUrl,
-                        })}
-                        alt="avatar"
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
+                      <button
+                        type="button"
+                        className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                        style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                        aria-label="修改我的头像"
+                        title="修改我的头像"
+                      >
+                        <UserAvatar
+                          src={resolveAvatarUrl({
+                            username: user?.username,
+                            userType: user?.userType,
+                            botKind: user?.botKind,
+                            avatarFileName: user?.avatarFileName ?? null,
+                            avatarUrl: user?.avatarUrl,
+                          })}
+                          alt="avatar"
+                          className="h-full w-full object-cover"
+                        />
+                      </button>
+                    </DropdownMenu.Item>
                     <div className="min-w-0 flex-1">
                       <div className="text-[14px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                         {user?.displayName || 'Admin'}
@@ -1506,7 +1544,7 @@ export default function AppShell() {
                   style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
 
-                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account，不再出现在此菜单 */}
+                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account。 */}
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
@@ -1724,15 +1762,19 @@ export default function AppShell() {
             username={user?.username}
             userType={user?.userType ?? null}
             avatarFileName={user?.avatarFileName ?? null}
+            currentAvatarUrl={resolveAvatarUrl({
+              username: user?.username,
+              userType: user?.userType,
+              botKind: user?.botKind,
+              avatarFileName: user?.avatarFileName ?? null,
+              avatarUrl: user?.avatarUrl,
+            })}
+            enableAiEdit={canAiEditAvatar}
             onUpload={async (file) => uploadMyAvatar({ file })}
-            onSave={async (avatarFileName) => {
-              if (!user?.userId) return;
-              const res = await updateMyAvatar(avatarFileName);
-              if (!res.success) throw new Error(res.error?.message || '保存失败');
-              // 同时更新 avatarFileName 和 avatarUrl，确保左下角头像立即更新
+            onPersisted={(avatar) => {
               patchUser({
-                avatarFileName: avatarFileName ?? null,
-                avatarUrl: res.data?.avatarUrl ?? null
+                avatarFileName: avatar.avatarFileName ?? null,
+                avatarUrl: avatar.avatarUrl ?? null,
               });
             }}
           />
@@ -1967,7 +2009,9 @@ export default function AppShell() {
               'relative w-full flex-1 min-h-0 flex flex-col',
               useCanvasPanel && 'overflow-auto',
               isMobile
-                ? 'px-[var(--mobile-padding,16px)] py-3'
+                // 沉浸阅读：主区零内边距，正文从顶栏下边缘直接开始、左右满铺
+                //（2026-08-10 用户「还有这么多空间没有利用到」「主页面尽可能的大」）
+                ? (readerOverride ? 'p-0' : 'px-[var(--mobile-padding,16px)] py-3')
                 : fullBleedMain
                   ? 'p-0'
                   : isHomePage

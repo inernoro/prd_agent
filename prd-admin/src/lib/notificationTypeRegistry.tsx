@@ -64,6 +64,7 @@ export const NOTIFICATION_TYPE_REGISTRY: Record<string, NotificationTypeConfig> 
   'server-expiry': { key: 'server-expiry', label: '服务器', icon: Server, accent: '#fdba74', popupStyle: 'alert' },
   'user-voice': { key: 'user-voice', label: '用户之声', icon: MessageSquareHeart, accent: '#f9a8d4', popupStyle: 'default' },
   'api-request-alert': { key: 'api-request-alert', label: 'API 告警', icon: Activity, accent: '#fca5a5', popupStyle: 'alert' },
+  'stable-smoke': { key: 'stable-smoke', label: '稳定冒烟', icon: ClipboardCheck, accent: '#fca5a5', popupStyle: 'alert' },
 };
 
 /**

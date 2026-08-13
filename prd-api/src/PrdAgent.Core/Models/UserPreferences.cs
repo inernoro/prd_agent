@@ -31,6 +31,18 @@ public class UserPreferences
     public ThemeConfig? ThemeConfig { get; set; }
 
     /// <summary>
+    /// 转录词云的个人词典。默认继承系统级（AppSettings.TranscriptLexicon），
+    /// 这里只放自己额外要保住的词。
+    /// </summary>
+    public List<string>? TranscriptLexicon { get; set; }
+
+    /// <summary>
+    /// 从系统级词典里屏蔽掉的词。系统表是全局的，某个词对别人有用、对我是噪音时，
+    /// 得能单独摘掉——否则用户只能忍着，或者要求改全局表。
+    /// </summary>
+    public List<string>? TranscriptLexiconMuted { get; set; }
+
+    /// <summary>
     /// 视觉代理偏好设置
     /// </summary>
     public VisualAgentPreferences? VisualAgentPreferences { get; set; }

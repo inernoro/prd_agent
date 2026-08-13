@@ -26,7 +26,13 @@ public class JwtService : IJwtService
         _accessTokenMinutes = accessTokenMinutes;
     }
 
-    public string GenerateAccessToken(User user, string clientType, string sessionKey, int tokenVersion)
+    public string GenerateAccessToken(
+        User user,
+        string clientType,
+        string sessionKey,
+        int tokenVersion,
+        int? expiresInMinutes = null,
+        string? authType = null)
     {
         var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secret));
         var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
@@ -61,11 +67,20 @@ public class JwtService : IJwtService
             claims.Add(new Claim("isRoot", "1"));
         }
 
+        if (!string.IsNullOrWhiteSpace(authType))
+        {
+            claims.Add(new Claim("authType", authType.Trim()));
+        }
+
+        var effectiveExpiresInMinutes = expiresInMinutes is > 0
+            ? Math.Min(expiresInMinutes.Value, _accessTokenMinutes)
+            : _accessTokenMinutes;
+
         var token = new JwtSecurityToken(
             issuer: _issuer,
             audience: _audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(_accessTokenMinutes),
+            expires: DateTime.UtcNow.AddMinutes(effectiveExpiresInMinutes),
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
@@ -141,4 +156,3 @@ public class JwtService : IJwtService
         }
     }
 }
-

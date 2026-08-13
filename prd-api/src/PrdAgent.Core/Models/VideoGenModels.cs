@@ -212,6 +212,9 @@ public class VideoGenScene
     /// <summary>本镜使用的 OpenRouter 模型 id（留空 = 跟随 Run.DirectVideoModel）</summary>
     public string? Model { get; set; }
 
+    /// <summary>本镜提交成功的 Offering ID，用于 worker 重启后精确恢复上游。</summary>
+    public string? OfferingId { get; set; }
+
     /// <summary>本镜时长（秒，留空 = 跟随 Run.DirectDuration）</summary>
     public int? Duration { get; set; }
 
@@ -254,6 +257,7 @@ public class VideoGenSceneVersion
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string VideoUrl { get; set; } = string.Empty;
+    public string? AssetSha256 { get; set; }
     public string? JobId { get; set; }
     public string? Model { get; set; }
     public string Prompt { get; set; } = string.Empty;
@@ -298,6 +302,8 @@ public class VideoGenRun
     // ─── OpenRouter 默认参数（direct 直接用；storyboard 作为分镜默认值） ───
 
     public string? DirectVideoModel { get; set; }
+    /// <summary>direct 模式提交成功的 Offering ID，用于轮询与下载精确恢复上游。</summary>
+    public string? DirectVideoOfferingId { get; set; }
     public string? DirectAspectRatio { get; set; }
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
@@ -316,6 +322,9 @@ public class VideoGenRun
 
     /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
+
+    /// <summary>最终视频在资产存储中的内容哈希，用于所有权校验后的单对象清理。</summary>
+    public string? VideoAssetSha256 { get; set; }
 
     /// <summary>最近一次独立导出任务 ID。</summary>
     public string? LatestExportTaskId { get; set; }
@@ -353,11 +362,33 @@ public class VideoGenRun
     public string? ErrorMessage { get; set; }
 
     /// <summary>
+    /// 删除请求的持久化标记。设置后该任务不再对普通查询可见，失败重试只继续清理，不再恢复播放。
+    /// </summary>
+    public DateTime? DeletionRequestedAt { get; set; }
+
+    /// <summary>后台恢复清理最近一次领取时间；失败任务超过退避窗口后可再次领取。</summary>
+    public DateTime? DeletionCleanupAttemptedAt { get; set; }
+
+    /// <summary>删除开始前固化的生成视频对象清单，保证中途失败后仍可幂等续作。</summary>
+    public List<VideoGenDeletionArtifact> DeletionArtifacts { get; set; } = new();
+
+    /// <summary>
     /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
     /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
     /// </summary>
     public bool ForceFullShadowSample { get; set; }
 }
+
+public sealed class VideoGenDeletionArtifact
+{
+    public string Sha256 { get; set; } = string.Empty;
+    public List<string> Urls { get; set; } = new();
+}
+
+public sealed record DeleteVideoGenRunResult(
+    bool Deleted,
+    bool ProjectDeleted,
+    int ArtifactsDeleted);
 
 [BsonIgnoreExtraElements]
 public class VideoExportTask
@@ -375,6 +406,35 @@ public class VideoExportTask
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
+}
+
+[BsonIgnoreExtraElements]
+public class DirectVideoJobOwnership
+{
+    public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
+
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AppKey { get; set; } = "video-agent";
+    public string OwnerAdminId { get; set; } = string.Empty;
+    public string JobId { get; set; } = string.Empty;
+    /// <summary>
+    /// 上游任务命名空间：优先使用 Offering，历史无 Offering 任务回退到模型。
+    /// Provider 本地 JobId 不是全局唯一，必须与本字段联合定位。
+    /// </summary>
+    public string JobNamespace { get; set; } = string.Empty;
+    public string? Model { get; set; }
+    public string? OfferingId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.Add(Retention);
+    public DateTime? RevokedAt { get; set; }
+
+    public static string BuildJobNamespace(string? offeringId, string? model)
+    {
+        var offering = (offeringId ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(offering)) return $"offering:{offering}";
+        var normalizedModel = (model ?? string.Empty).Trim();
+        return $"model:{(string.IsNullOrWhiteSpace(normalizedModel) ? "unknown" : normalizedModel)}";
+    }
 }
 
 public class VideoModelOption

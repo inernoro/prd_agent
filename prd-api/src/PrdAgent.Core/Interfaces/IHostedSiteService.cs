@@ -111,7 +111,8 @@ public interface IHostedSiteService
         string purpose = "share",
         bool forceNew = false,
         string visibility = "owner-only",
-        bool allocateShortLink = false);
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null);
 
     /// <summary>
     /// 事后为某条已存在的分享按需分配数字短链 /s/{seq}（用户在分享面板点「生成数字短链」）。
@@ -179,6 +180,14 @@ public interface IHostedSiteService
     /// <summary>切换站点是否允许评论（仅 owner / editor 可调）。返回更新后的站点；无权或不存在返回 null。</summary>
     Task<HostedSite?> SetCommentsEnabledAsync(string siteId, string userId, bool enabled, CancellationToken ct = default);
 
+    // ── 向我提问 ──
+
+    /// <summary>
+    /// 写入站点的「向我提问」配置（仅 owner / editor 可调，与评论开关同一套角色门）。
+    /// 返回更新后的站点；无权或不存在返回 null。
+    /// </summary>
+    Task<HostedSite?> SetAskConfigAsync(string siteId, string userId, AskConfigUpdate update, CancellationToken ct = default);
+
     /// <summary>
     /// 直连 siteId 列出评论（owner / 有访问权的团队成员视角）。
     /// 校验 viewer 对站点的访问权（与 GetByIdAsync 同款 owner/team 规则）；无权或不存在返回 null。
@@ -204,6 +213,53 @@ public interface IHostedSiteService
 
     /// <summary>删除评论（作者本人或站点 owner）。无权 / 不存在返回 false。</summary>
     Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 经分享链接解析出一个可读取正文的站点（公开访问路径）。校验分享门禁（撤销 / 过期 / 可见性 / 密码），
+    /// 与 ListCommentsByShareAsync 同一套判定源。siteId 为空取分享首站点；指定时必须属于该分享。
+    /// 供预览页取回站点入口 HTML 用（浏览器直接 fetch 托管域名会被 CORS 拦掉，必须走服务端同源代理）。
+    /// </summary>
+    Task<ShareSiteResolveResult> ResolveShareSiteAsync(
+        string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default);
+}
+
+/// <summary>站点「向我提问」配置的写入入参（owner 在提问设置抽屉里改的那几项）。</summary>
+public class AskConfigUpdate
+{
+    /// <summary>是否开放提问</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>面板欢迎语（空则前端用站点标题兜底）</summary>
+    public string? Welcome { get; set; }
+
+    /// <summary>站点级开场问题题库；分享时可从中挑选</summary>
+    public List<string>? SuggestedQuestions { get; set; }
+
+    /// <summary>是否允许未登录访客提问</summary>
+    public bool AllowAnonymous { get; set; }
+
+    /// <summary>每日提问上限（0 = 用系统默认）</summary>
+    public int DailyLimit { get; set; }
+}
+
+/// <summary>分享链接解析结果：拿到站点，或拿到一个可映射成 HTTP 状态的门禁错误。</summary>
+public class ShareSiteResolveResult
+{
+    public HostedSite? Site { get; set; }
+
+    /// <summary>
+    /// 门禁通过时带回分享链接本身。提问端点要读它的 AskSuggestedQuestions
+    /// （本链接自选的开场问题）；只有 Site 的话调用方就得再查一次库，
+    /// 而且会绕开这里已经做完的门禁判定。
+    /// </summary>
+    public WebPageShareLink? Share { get; set; }
+
+    public string? Error { get; set; }
+    public int HttpStatus { get; set; } = 200;
+    /// <summary>错误码：not_found / expired / VISIBILITY_DENIED / UNAUTHORIZED / rate_limited</summary>
+    public string? ErrorCode { get; set; }
+    /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试</summary>
+    public int? RetryAfterSeconds { get; set; }
 }
 
 public class HostedSiteCommentDto
@@ -259,12 +315,38 @@ public class ShareViewResult
     public string? CreatedBy { get; set; }
     public string? CreatedByName { get; set; }
     public List<SharedSiteInfo> Sites { get; set; } = new();
+
+    /// <summary>
+    /// 本次分享的「向我提问」呈现配置（首站点的开关 + 本链接实际该显示的开场问题）。
+    /// 随分享视图一起返回，省掉一次额外的受门禁保护的往返；关闭时为 null。
+    /// </summary>
+    public ShareAskInfo? Ask { get; set; }
+
     public string? Error { get; set; }
     public int HttpStatus { get; set; } = 200;
     /// <summary>错误码：visibility_denied / expired / wrong_password / rate_limited / not_found</summary>
     public string? ErrorCode { get; set; }
     /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试（驱动倒计时 UI）</summary>
     public int? RetryAfterSeconds { get; set; }
+}
+
+/// <summary>分享页渲染「向我提问」入口所需的一切（访客视角，不含 owner 才该看的配额等内部项）。</summary>
+public class ShareAskInfo
+{
+    /// <summary>被提问的站点 ID（合集分享取首站点）</summary>
+    public string SiteId { get; set; } = string.Empty;
+
+    /// <summary>是否显示提问入口</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>是否允许未登录访客提问；false 时前端要引导登录而不是直接开问</summary>
+    public bool AllowAnonymous { get; set; }
+
+    /// <summary>欢迎语（可空，前端用站点标题兜底）</summary>
+    public string? Welcome { get; set; }
+
+    /// <summary>本链接实际该显示的开场问题（已过 AskOpeningQuestions.Resolve，前端直接渲染即可）</summary>
+    public List<string> OpeningQuestions { get; set; } = new();
 }
 
 public class RenewShareResult
@@ -408,4 +490,14 @@ public class SharedSiteInfo
     /// PDF Viewer 接管；否则嵌套 iframe + sandbox 会被 Chrome 屏蔽。
     /// </summary>
     public string? PdfAssetUrl { get; set; }
+
+    /// <summary>
+    /// 包装资产类型（pdf / video / markdown …），普通 HTML 站为 null。
+    ///
+    /// 前端要靠它判断「这个站点有没有可读的 HTML 正文」。包装站的入口同样是 index.html，
+    /// 光看 entryFile 分不出来；而正文代理对任何非空包装类型都会拒绝，
+    /// 前端不知情就会拿一个「预期之内的拒绝」当失败，在一个本来显示正常的直链预览上
+    /// 盖一条错误角标。
+    /// </summary>
+    public string? WrappedAssetType { get; set; }
 }

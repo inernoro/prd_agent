@@ -268,14 +268,38 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ct);
     }
 
+    public Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        // Offering 是独立 Gateway 配置域中的稳定路由身份；恢复时必须回到权威网关，
+        // 不能在 MAP 旧模型池中按同名模型猜测。
+        return _http.ResolveOfferingAsync(appCallerCode, modelType, offeringId, ct);
+    }
+
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode, string modelType, CancellationToken ct = default)
     {
         if (RouteToHttp(appCallerCode))
             return await _http.GetAvailablePoolsAsync(appCallerCode, modelType, ct);
+
+        // 逻辑模型的解析和 raw 发送始终以独立 Gateway 为权威，因此模型目录也必须来自同一边界。
+        // 否则迁移期 MAP 进程内数据库可能展示一个 serving 租户无法解析的逻辑模型，形成“能选不能用”。
+        // 独立 Gateway 尚未配置目录时，只允许回退旧的非逻辑模型池；绝不重新暴露进程内逻辑模型。
+        var gatewayPools = await _http.GetAvailablePoolsAsync(appCallerCode, modelType, ct);
+        if (gatewayPools.Count > 0)
+            return gatewayPools;
+
         var inproc = await _inproc.GetAvailablePoolsAsync(appCallerCode, modelType, ct);
         FirePoolsCompare(appCallerCode, modelType, inproc);
-        return inproc;
+        return inproc
+            .Where(pool => !string.Equals(
+                pool.ResolutionType,
+                "LogicalModel",
+                StringComparison.OrdinalIgnoreCase))
+            .ToList();
     }
 
     /// <summary>
@@ -518,6 +542,7 @@ public sealed class ShadowLlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     {
         CanonicalImageRequest = request.CanonicalImageRequest,
         RequiredLogicalModelPublicId = request.RequiredLogicalModelPublicId,
+        RequiredOfferingId = request.RequiredOfferingId,
         AppCallerCode = request.AppCallerCode,
         ModelType = request.ModelType,
         EndpointPath = request.EndpointPath,

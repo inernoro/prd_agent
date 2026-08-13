@@ -57,6 +57,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
@@ -181,6 +182,7 @@ import {
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
   recoverableBackgroundTranscriptionRunId,
+  describeFailedTranscription,
   shouldRetryVaultServerCompletion,
   vaultClearServerCompletion,
   vaultDeleteSession,
@@ -1070,6 +1072,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
+  // 移动端沉浸阅读：DocBrowser 接管了 AppShell 顶栏（文档标题 + 返回），
+  // 本页店头行（库名 · 文档数 · 同步 · 分享）整行让位给正文（2026-08-10 用户确认交互）
+  const readerImmersive = useReaderChromeStore((s) => !!s.override);
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const currentUserId = useAuthStore(state => state.user?.userId ?? null);
   const [store, setStore] = useState<DocumentStore | null>(null);
@@ -1246,10 +1251,19 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     setBgTranscribeRunIds(current => enqueueBackgroundTranscriptionRun(current, normalized));
   }, []);
 
+  // 最近一次转录失败的说明（按当前选中条目）。null = 没失败过或已被新一轮覆盖。
+  const [transcribeFailure, setTranscribeFailure] = useState<{ reason: string; at: string | null } | null>(null);
+  // 在途轮询的 effect 只依赖 runId 列表（不能把选中项塞进 deps，否则每次切条目都重建定时器），
+  // 所以「这条失败 run 是不是当前这篇的」得靠 ref 取当下值，闭包里的旧值会张冠李戴。
+  const selectedEntryIdRef = useRef<string | undefined>(selectedEntryId);
+  useEffect(() => { selectedEntryIdRef.current = selectedEntryId; }, [selectedEntryId]);
+
   // 刷新不能抹掉服务端正在执行的转录/整理任务。选中文档恢复后，从服务端权威 run
   // 重新接回轮询；再补一次短延迟确认，覆盖首屏请求与 worker 认领并发的窗口。
   useEffect(() => {
     const entryId = selectedEntryId?.trim();
+    // 换条目先清空，否则上一条的失败说明会挂在下一条头上
+    setTranscribeFailure(null);
     if (!entryId) return;
     let cancelled = false;
     let recovered = false;
@@ -1260,6 +1274,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       // getAgentRun 只允许读取自己发起的任务；团队库里若最近一次在途 run 属于
       // 其他协作者，不能把它加入当前用户的轮询队列，否则 404 会让提示永久不消失。
       if (!currentUserId || res.data?.userId !== currentUserId) return;
+      // 失败态在这里落地：在途 run 有下面的看护、成功 run 会长出笔记，
+      // 只有失败 run 两头不沾，不接住就等于「跑过但界面装作没跑过」。
+      setTranscribeFailure(describeFailedTranscription(res.data));
       const runId = recoverableBackgroundTranscriptionRunId(res.data);
       if (!runId) return;
       recovered = true;
@@ -1694,6 +1711,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         } else if (st === 'failed') {
           revealCompletedTranscribeRunsRef.current.delete(runId);
           toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
+          // 失败说明也要落到常驻的失败卡上，不能只弹一条会自己消失的 toast。
+          // 只有 toast 的话，它消失之后页面又变回「跑过但装作没跑过」——正是这张卡要治的病；
+          // 原先只有「重新选中条目 / 刷新页面」那条恢复路径才会填这个 state。
+          if (res.data.sourceEntryId && res.data.sourceEntryId === selectedEntryIdRef.current) {
+            setTranscribeFailure(describeFailedTranscription(res.data));
+          }
         }
       }
     }, 5000);
@@ -2167,6 +2190,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           e.target.value = '';
         }} />
 
+      {!(isMobile && readerImmersive) && (
       <TabBar
         title={
           <div className="flex items-center gap-2">
@@ -2402,6 +2426,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           </div>
         }
       />
+      )}
 
       {/* 全局拖拽遮罩 */}
       {dragging && (
@@ -2436,6 +2461,27 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
         <DocBrowser
           entries={entries}
+          immersiveOnMobile
+          // 移动端沉浸阅读时店头行隐藏——空间信息与「分享」收进阅读区「更多」菜单（2026-08-10 demo 确认）
+          readerMenuExtra={isMobile ? (
+            <>
+              <div
+                className="px-2.5 pt-1 pb-2 mb-1 text-[11px] truncate"
+                style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-faint)' }}
+                title={store.name}
+              >
+                {store.name} · {entries.filter(e => e.sourceType !== 'github_directory').length} 个文档
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShareDialog(true)}
+                className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary transition-colors"
+              >
+                <Share2 size={13} className="flex-shrink-0 text-token-muted" />
+                <span className="truncate">分享</span>
+              </button>
+            </>
+          ) : undefined}
           tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
           onTagColorsChange={(next) => {
             // 乐观更新本地立刻反映；服务器保存走 single-flight 队列。
@@ -2505,9 +2551,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
+          transcribeFailure={transcribeFailure}
           onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {
+              // 重试即当作新一轮，先撤掉上一轮的失败说明，别让旧原因压在新进度上
+              setTranscribeFailure(null);
               setTranscribeFlow({ entryId: id, title: entry.title, style: styleKey ? { styleKey } : undefined });
               transcribeFlowOpenRef.current = true;
             }

@@ -11,8 +11,9 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import { useAuthStore } from '@/stores/authStore';
-import { updateMyAvatar, uploadMyAvatar } from '@/services';
+import { uploadMyAvatar } from '@/services';
 
 const ACCEPT = 'image/png,image/jpeg,image/gif,image/webp';
 
@@ -48,15 +49,15 @@ export function AccountSettings() {
       const fn = String(uploadRes.data?.avatarFileName || '').trim();
       if (!fn) throw new Error('上传返回为空');
 
-      const saveRes = await updateMyAvatar(fn);
-      if (!saveRes.success) throw new Error(saveRes.error?.message || '保存失败');
-
       patchUser({
         avatarFileName: fn,
-        avatarUrl: saveRes.data?.avatarUrl ?? null,
+        avatarUrl: uploadRes.data?.avatarUrl ?? null,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : '上传失败');
+      setError(toUserReadableErrorMessage(e, {
+        fallbackMessage: '头像上传未完成',
+        recoveryMessage: '请检查图片和网络后重新上传。',
+      }));
     } finally {
       setUploading(false);
     }

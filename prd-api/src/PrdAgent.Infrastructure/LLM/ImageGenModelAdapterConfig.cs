@@ -97,7 +97,7 @@ public class ImageGenModelAdapterConfig
     [Obsolete("比例信息已包含在 SizesByResolution 中")]
     public List<string> AllowedRatios { get; set; } = new();
 
-    /// <summary>尺寸参数格式：WxH / {width,height} / aspect_ratio</summary>
+    /// <summary>尺寸参数格式：WxH / {width,height} / aspect_ratio / none</summary>
     /// <summary>
     /// 该模型压根不存在"选尺寸"这件事（如语义分层：输出图层继承输入画布）。
     /// 置 true 表示它不进生图尺寸选择器，因此 SizesByResolution 三档必须全空——
@@ -108,6 +108,12 @@ public class ImageGenModelAdapterConfig
     public bool SizesNotApplicable { get; set; }
 
     public string SizeParamFormat { get; set; } = SizeParamFormats.WxH;
+
+    /// <summary>
+    /// 是否在保留原生尺寸参数的同时，把用户选择的画布尺寸写入 prompt 作为语义兜底。
+    /// 仅用于已确认上游会偶发忽略结构化尺寸字段的模型，不应按模型名在发送层硬编码。
+    /// </summary>
+    public bool InjectSizePrompt { get; set; }
 
     /// <summary>宽高必须整除的值（如 32、64）</summary>
     public int? MustBeDivisibleBy { get; set; }

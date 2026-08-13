@@ -606,6 +606,14 @@ public sealed class AdminPushNotificationServiceTests
                 testDb.Context,
                 new AdminPushDispatchSignal(),
                 NullLogger<AdminNotificationEventService>.Instance);
+            await testDb.Context.Users.InsertOneAsync(new User
+            {
+                UserId = "u1",
+                Username = "notification-target",
+                DisplayName = "通知目标",
+                Status = UserStatus.Active,
+                UserType = UserType.Human,
+            });
 
             await testDb.Context.AdminPushSubscriptions.InsertManyAsync(
             [
@@ -727,6 +735,38 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public async Task EventService_RejectsUnavailableTargetUserBeforePersisting()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+
+        try
+        {
+            var events = new AdminNotificationEventService(
+                testDb.Context,
+                new AdminPushDispatchSignal(),
+                NullLogger<AdminNotificationEventService>.Instance);
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => events.CreateAsync(
+                new AdminNotificationEventRequest
+                {
+                    Source = "stable-smoke",
+                    Title = "稳定冒烟失败",
+                    TargetUserId = "deleted-user",
+                    DedupKey = "run-1:case-1",
+                },
+                "admin",
+                CancellationToken.None));
+
+            Assert.Contains("目标用户不存在或不可用", error.Message);
+            Assert.Equal(0, await testDb.Context.AdminNotifications.CountDocumentsAsync(_ => true));
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task NotificationsController_HandleAll_ShouldOnlyHandleCurrentUserVisibleNotifications()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
@@ -773,6 +813,59 @@ public sealed class AdminPushNotificationServiceTests
         {
             await testDb.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task NotificationsController_StableSmoke_ShouldResolveConfiguredTargetUsername()
+    {
+        var testDb = await AdminPushTestDatabase.TryCreateAsync();
+
+        try
+        {
+            await testDb.Context.Users.InsertOneAsync(new User
+            {
+                UserId = "admin-user-id",
+                Username = "admin",
+                DisplayName = "管理员",
+                Status = UserStatus.Active,
+                UserType = UserType.Human,
+            });
+            var controller = CreateNotificationsController(testDb.Context, "stable-smoke-user", stableSmoke: true);
+
+            var result = await controller.CreateEvent(new AdminNotificationEventRequest
+            {
+                Source = "stable-smoke",
+                Title = "稳定冒烟失败",
+                TargetUsername = "admin",
+                DedupKey = "run-target-username",
+            }, CancellationToken.None);
+
+            Assert.IsType<OkObjectResult>(result);
+            var notification = await testDb.Context.AdminNotifications.Find(_ => true).SingleAsync();
+            Assert.Equal("admin-user-id", notification.TargetUserId);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public void NotificationsController_QuotaHistory_ShouldHideProviderDiagnostics()
+    {
+        var presentation = NotificationsController.ToUserReadablePresentation(new AdminNotification
+        {
+            Title = "上游信息",
+            Message = "Key limit exceeded at openrouter.ai/keys/abc",
+            Source = "llm-gateway-quota",
+        });
+
+        Assert.Equal("AI 创作服务需要管理员处理", presentation.Title);
+        Assert.Contains("请稍后重试", presentation.Message);
+        Assert.Contains("管理员需要检查", presentation.Message);
+        Assert.DoesNotContain("Key limit exceeded", presentation.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("openrouter", presentation.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/keys/", presentation.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -896,7 +989,10 @@ public sealed class AdminPushNotificationServiceTests
             NullLogger<AdminPushNotificationService>.Instance);
     }
 
-    private static NotificationsController CreateNotificationsController(MongoDbContext db, string userId)
+    private static NotificationsController CreateNotificationsController(
+        MongoDbContext db,
+        string userId,
+        bool stableSmoke = false)
     {
         var push = CreateService(db, new RecordingHttpClientFactory(HttpStatusCode.OK));
         var events = new AdminNotificationEventService(
@@ -904,16 +1000,24 @@ public sealed class AdminPushNotificationServiceTests
             new AdminPushDispatchSignal(),
             NullLogger<AdminNotificationEventService>.Instance);
 
-        return new NotificationsController(db, push, events)
+        var claims = new List<Claim>
+        {
+            new("sub", userId),
+        };
+        if (stableSmoke)
+        {
+            claims.Add(new Claim(
+                PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess,
+                "1"));
+        }
+
+        return new NotificationsController(db, push, events, TestConfiguration)
         {
             ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext
                 {
-                    User = new ClaimsPrincipal(new ClaimsIdentity(
-                    [
-                        new Claim("sub", userId),
-                    ], "test")),
+                    User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test")),
                 },
             },
         };
@@ -923,6 +1027,7 @@ public sealed class AdminPushNotificationServiceTests
         .AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["App:FrontendBaseUrl"] = "https://admin-push-bark-protocol-codex-prd-agent.miduo.org",
+            ["StableSmokeAuthentication:NotificationTargetUsername"] = "admin",
         })
         .Build();
 

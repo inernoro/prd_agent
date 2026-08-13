@@ -40,6 +40,7 @@ import { groupGitHubLogsByWeek } from './lib/groupGitHubLogsByWeek';
 import { burstParticles } from './lib/burstParticles';
 import { AnimatedNumber } from './components/AnimatedNumber';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import './changelog-dynamic.css';
 
 
@@ -267,6 +268,8 @@ function useIncrementalVisible(
 
 export default function ChangelogPage() {
   const isMobile = useIsMobile();
+  // 移动端沉浸阅读：周报正文打开时 DocBrowser 接管顶栏，本页 TabBar 行让位
+  const readerImmersive = useReaderChromeStore((s) => !!s.override);
   const currentWeek = useChangelogStore((s) => s.currentWeek);
   const releases = useChangelogStore((s) => s.releases);
   const loadingCurrent = useChangelogStore((s) => s.loadingCurrent);
@@ -1170,7 +1173,9 @@ export default function ChangelogPage() {
   return (
     <WeeklyReportSourcesProvider>
     <div className={`${isMobile ? 'gap-3' : 'gap-5'} flex flex-col h-full min-h-0`}>
-      {/* ── 顶部切换导航（周报 tab 下把来源 chip 合并到右侧 actions 槽，省一行） ── */}
+      {/* ── 顶部切换导航（周报 tab 下把来源 chip 合并到右侧 actions 槽，省一行）。
+          移动端沉浸阅读（周报正文打开时）整行隐藏，顶栏由 readerChromeStore 接管。 ── */}
+      {!(isMobile && readerImmersive) && (
       <TabBar
         items={[
           { key: 'update_center', label: '更新中心', icon: <Sparkles size={14} /> },
@@ -1207,6 +1212,7 @@ export default function ChangelogPage() {
           ) : undefined
         }
       />
+      )}
       <WeeklyReportSourceDialog />
 
       {activeTab === 'update_center' && (

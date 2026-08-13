@@ -85,6 +85,57 @@ public class OpenAIImageClient : IImageGenerationClient
         return stableModelId;
     }
 
+    internal static (string EndpointPath, JsonObject Body) BuildOpenRouterImageRequest(
+        string model,
+        string prompt,
+        int count,
+        string? normalizedSize,
+        IEnumerable<string>? imageReferences,
+        bool isAdaptiveModel)
+    {
+        var body = new JsonObject
+        {
+            ["model"] = model,
+            ["prompt"] = prompt,
+        };
+
+        // 自适应模型由提示词和上游能力决定输出规格，n / size 会被部分供应商拒绝。
+        if (!isAdaptiveModel)
+        {
+            body["n"] = Math.Clamp(count, 1, 10);
+            if (!string.IsNullOrWhiteSpace(normalizedSize))
+                body["size"] = normalizedSize;
+        }
+
+        var references = new JsonArray();
+        foreach (var image in imageReferences ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(image)) continue;
+            var dataUri = image.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                ? image
+                : $"data:image/png;base64,{image}";
+            references.Add(new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = dataUri }
+            });
+        }
+        if (references.Count > 0) body["input_references"] = references;
+
+        return ("images", body);
+    }
+
+    internal static bool ResolveEffectiveIsAdaptive(
+        GatewayModelResolution? resolution,
+        string? modelId)
+    {
+        var sizeControl = ImageSizeControlCapabilities.Parse(resolution?.ParameterCapabilities);
+        if (sizeControl.IsConfigured) return sizeControl.UsePrompt;
+
+        var adapter = ImageGenModelAdapterRegistry.TryMatch(modelId);
+        return adapter?.SizeConstraintType == SizeConstraintTypes.Adaptive;
+    }
+
 
     /// <summary>
     /// 统一图片生成入口：文生图 / 图生图 / 多图生图由 images 参数自动决定。
@@ -169,17 +220,17 @@ public class OpenAIImageClient : IImageGenerationClient
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空");
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请输入图片描述。");
         }
         if (string.IsNullOrWhiteSpace(appCallerCode))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 不能为空");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         var appDef = AppCallerRegistrationService.FindByAppCode(appCallerCode);
         if (appDef == null || !appDef.ModelTypes.Contains(ModelTypes.ImageGen))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 未注册或不支持 imageGen");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         if (n <= 0) n = 1;
@@ -202,8 +253,8 @@ public class OpenAIImageClient : IImageGenerationClient
             : await requestGateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
-                resolution.ErrorMessage ?? "未配置可用的生图模型（请在模型管理中设置 生图）");
+            _logger.LogError("生图模型调度失败: {Error}", resolution.ErrorMessage);
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         var apiUrl = resolution.ApiUrl;
@@ -216,7 +267,7 @@ public class OpenAIImageClient : IImageGenerationClient
             (apiUrlUri.Scheme != Uri.UriSchemeHttp && apiUrlUri.Scheme != Uri.UriSchemeHttps))
         {
             _logger.LogError("生图模型 API URL 无效（非 HTTP(S) 协议）: {ApiUrl}", apiUrl);
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, $"生图模型 API URL 无效（必须是 http:// 或 https:// 开头）: {apiUrl}");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         // Anthropic 不支持 images endpoint；避免误配后 500
@@ -231,16 +282,19 @@ public class OpenAIImageClient : IImageGenerationClient
         if (wireProtocol is "anthropic" or "claude" ||
             apiUrl.Contains("anthropic.com", StringComparison.OrdinalIgnoreCase))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型不支持 Anthropic 平台（请配置 OpenAI 兼容的 images API）");
+            _logger.LogError("生图模型协议不支持图片生成: {Protocol}", wireProtocol);
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         // 获取平台适配器（优先使用 Gateway 解析出的 wire 协议，避免同平台多协议时被 URL/模型名猜回旧适配器）。
         var platformAdapter = ImageGenPlatformAdapterFactory.GetAdapter(apiUrl, effectiveModelName, wireProtocol);
         var isVolces = platformAdapter.PlatformType == "volces"; // 保留兼容变量
-        // OpenRouter 图片生成不走 /images/generations，而是 /chat/completions + modalities:[image,text]，
-        // 图片在 choices[0].message.images[].image_url.url（base64 data URI）返回。详见 doc 与 LiteLLM 同款适配。
-        var isOpenRouter = apiUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(wireProtocol, "openrouter", StringComparison.OrdinalIgnoreCase);
+        // OpenRouter 有两条显式协议：openrouter-image 走专用 Images API；openrouter 保留
+        // chat/completions + modalities 的多模态模型兼容路径。不能只凭域名把专用图片模型改回 chat。
+        var isOpenRouterImagesApi = wireProtocol is "openrouter-image" or "openrouter-images";
+        var isOpenRouter = !isOpenRouterImagesApi
+            && (apiUrl.Contains("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(wireProtocol, "openrouter", StringComparison.OrdinalIgnoreCase));
         initImageBase64 = string.IsNullOrWhiteSpace(initImageBase64) ? null : initImageBase64.Trim();
         if (!platformAdapter.SupportsImageToImage && initImageBase64 != null)
         {
@@ -252,7 +306,7 @@ public class OpenAIImageClient : IImageGenerationClient
             : platformAdapter.GetEditsEndpoint(apiUrl);
         if (string.IsNullOrWhiteSpace(endpoint))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "生图模型 API URL 无效");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         // 原始请求尺寸（用于缓存命中与 meta/日志展示）
@@ -294,6 +348,10 @@ public class OpenAIImageClient : IImageGenerationClient
         {
             size = null;
         }
+
+        // 特殊模型拒绝尺寸字段，但仍允许用户选择画幅：在模型解析完成后，
+        // 由统一请求边界把结构化尺寸语言化，确保标准、Exchange、图生图等路径使用同一份实际 prompt。
+        prompt = ImageGenRequestBuilder.ApplyAdaptiveSizePrompt(prompt, reqParams, adapterConfig);
 
         // 非 Volces 且无适配器：尝试命中"允许尺寸白名单"缓存，避免先 400 再重试
         var capsKey = BuildCapsKey(null, platformIdForLog, null, effectiveModelName);
@@ -358,6 +416,18 @@ public class OpenAIImageClient : IImageGenerationClient
             Images = string.IsNullOrWhiteSpace(initImageBase64) ? new List<string>() : new List<string> { initImageBase64 },
             MaskBase64 = maskBase64,
         };
+        var canonicalSizeForSend = requestedSizeNorm;
+
+        GatewayCanonicalImageRequest CanonicalForCurrentSend()
+            => new()
+            {
+                Prompt = canonicalImageRequest.Prompt,
+                Count = canonicalImageRequest.Count,
+                Size = canonicalSizeForSend,
+                ResponseFormat = canonicalImageRequest.ResponseFormat,
+                Images = canonicalImageRequest.Images,
+                MaskBase64 = canonicalImageRequest.MaskBase64,
+            };
         
         // 使用平台适配器构建请求
         object reqObj;
@@ -460,7 +530,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         RequestBody = exchangeBody,
                         IsMultipart = false,
@@ -495,7 +565,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
@@ -512,7 +582,62 @@ public class OpenAIImageClient : IImageGenerationClient
                         }
                     }, resolution, token);
                 }
-                // OpenRouter 图片生成：chat/completions + modalities（文生图 / 图生图统一走这条）
+                // OpenRouter 专用 Images API：文生图与参考图统一使用顶层 prompt/aspect_ratio/input_references。
+                else if (isOpenRouterImagesApi)
+                {
+                    var orImageBody = new JsonObject
+                    {
+                        ["model"] = effectiveModelName,
+                        ["prompt"] = prompt,
+                        ["n"] = Math.Max(1, n),
+                    };
+                    var orImageAspect = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(size);
+                    if (orImageAspect != null)
+                    {
+                        orImageBody["aspect_ratio"] = orImageAspect;
+                    }
+                    if (initImageBase64 != null)
+                    {
+                        var dataUri = initImageBase64.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                            ? initImageBase64
+                            : $"data:image/png;base64,{initImageBase64}";
+                        orImageBody["input_references"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["type"] = "image_url",
+                                ["image_url"] = new JsonObject { ["url"] = dataUri },
+                            },
+                        };
+                    }
+
+                    _logger.LogInformation(
+                        "[OpenAIImageClient] OpenRouter 专用 Images API 请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Model={Model}",
+                        appCallerCode, initImageBase64 != null, effectiveModelName);
+
+                    return await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
+                    {
+                        AppCallerCode = appCallerCode,
+                        ModelType = "generation",
+                        ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
+                        RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
+                        EndpointPath = "images",
+                        RequestBody = orImageBody,
+                        IsMultipart = false,
+                        TimeoutSeconds = imageGenTimeoutSeconds,
+                        Context = new GatewayRequestContext
+                        {
+                            RequestId = requestId,
+                            SessionId = ctx?.SessionId,
+                            GroupId = ctx?.GroupId,
+                            UserId = ctx?.UserId,
+                            ViewRole = ctx?.ViewRole,
+                            QuestionText = prompt.Trim()
+                        }
+                    }, resolution, token);
+                }
+                // OpenRouter 多模态图片生成：chat/completions + modalities（文生图 / 图生图统一走这条）
                 // isOpenRouter = apiUrl 命中；forceOpenRouter = images/generations 返回 404 后的兜底重试
                 else if (isOpenRouter || forceOpenRouter)
                 {
@@ -546,7 +671,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     // 把所选画幅透传给 OpenRouter：其 chat/completions 出图用 image_config.aspect_ratio 控制形状，
                     // 不传则回退模型默认(通常方形)，导致 16:9 / 9:16 关键帧被裁切、与后续图生视频画幅错配（Codex review）。
                     // 仅在能从 size 推出受支持的比例时添加，推不出就不加(保持原行为，避免未知字段 400)。
-                    var orAspect = DeriveOpenRouterAspectRatio(size);
+                    var orAspect = ImageGenRequestBuilder.DeriveOpenRouterAspectRatio(size);
                     if (orAspect != null)
                     {
                         orBody["image_config"] = new JsonObject { ["aspect_ratio"] = orAspect };
@@ -561,7 +686,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = "chat/completions",
                         RequestBody = orBody,
@@ -613,7 +738,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         RequestBody = requestBody,
@@ -702,7 +827,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
                         ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                        CanonicalImageRequest = canonicalImageRequest,
+                        CanonicalImageRequest = CanonicalForCurrentSend(),
                         RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
                         EndpointPath = endpointPath,
                         IsMultipart = true,
@@ -758,6 +883,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     if (!string.IsNullOrEmpty(suggestedSize))
                     {
                         SetRequestedSizeForRetry(reqObj, initImageBase64, suggestedSize);
+                        canonicalSizeForSend = NormalizeSizeString(suggestedSize);
                         gatewayResp = await SendViaGatewayAsync(ct);
                     }
                 }
@@ -793,6 +919,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     if (!string.Equals(NormalizeSizeString(currentSize), NormalizeSizeString(chosenStr), StringComparison.OrdinalIgnoreCase))
                     {
                         SetRequestedSizeForRetry(reqObj, initImageBase64, chosenStr);
+                        canonicalSizeForSend = NormalizeSizeString(chosenStr);
                         gatewayResp = await SendViaGatewayAsync(ct);
                     }
                 }
@@ -801,7 +928,7 @@ public class OpenAIImageClient : IImageGenerationClient
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Image generate request failed");
-            return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+            return UserFailure(ImageGenerationUserError.FromException(ex));
         }
 
         // 处理响应（Gateway 已处理日志记录）
@@ -809,18 +936,7 @@ public class OpenAIImageClient : IImageGenerationClient
         if (!gatewayResp.Success)
         {
             _logger.LogWarning("Image generate failed: HTTP {Status} (body chars={Chars})", gatewayResp.StatusCode, body.Length);
-
-            // 对 400/422 等参数类错误尽量返回 INVALID_FORMAT，便于前端直接提示用户
-            if (gatewayResp.StatusCode >= 400 && gatewayResp.StatusCode < 500)
-            {
-                var msg = TryExtractUpstreamErrorMessage(body, out var em2) ? em2 : $"生图失败：HTTP {gatewayResp.StatusCode}";
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, msg);
-            }
-            // 5xx：优先透出上游错误（含 request id），便于定位"token/鉴权"类问题
-            var msg5xx = TryExtractUpstreamErrorMessage(body, out var em3)
-                ? $"生图失败：{em3}"
-                : $"生图失败：HTTP {gatewayResp.StatusCode}";
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, msg5xx);
+            return UserFailure(ImageGenerationUserError.FromGateway(gatewayResp));
         }
 
         try
@@ -835,7 +951,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 if (googleImages.Count == 0)
                 {
                     _logger.LogWarning("[Google] 响应中未找到图片数据。Body length={Len}", body.Length);
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "Google 生图响应中未包含图片数据");
+                    return UserFailure(ImageGenerationUserError.MissingImage());
                 }
 
                 var googleGenImages = new List<ImageGenImage>();
@@ -868,11 +984,23 @@ public class OpenAIImageClient : IImageGenerationClient
 
                     if (bytes == null || bytes.Length == 0) continue;
 
+                    StoredAsset? storedGoogle = null;
                     try
                     {
-                        var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
-                            domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        var displayUrl = stored.Url;
+                        var googleSize = NormalizeSizeString(size ?? requestedSizeRaw);
+                        var googleHasDimensions = TryParseSize(googleSize, out var googleWidth, out var googleHeight);
+                        storedGoogle = await SaveGeneratedOutputAsync(
+                            bytes,
+                            outMime,
+                            requestId,
+                            createdByAdminId,
+                            prompt,
+                            inputArtifactIds,
+                            googleHasDimensions ? googleWidth : 0,
+                            googleHasDimensions ? googleHeight : 0,
+                            ct);
+                        var displayUrl = storedGoogle.Url;
+                        var displaySha256 = storedGoogle.Sha256;
 
                         if (wmConfigGoogle != null)
                         {
@@ -882,6 +1010,7 @@ public class OpenAIImageClient : IImageGenerationClient
                                 var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
                                     domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                                 displayUrl = wmStored.Url;
+                                displaySha256 = wmStored.Sha256;
                             }
                             catch (Exception ex)
                             {
@@ -890,16 +1019,18 @@ public class OpenAIImageClient : IImageGenerationClient
                         }
 
                         googleGenImages[i].Url = displayUrl;
+                        googleGenImages[i].DisplaySha256 = displaySha256;
                         googleGenImages[i].Base64 = null;
-                        googleGenImages[i].OriginalUrl = stored.Url;
-                        googleGenImages[i].OriginalSha256 = stored.Sha256;
-                        cosInfosGoogle.Add(new { index = i, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
+                        googleGenImages[i].OriginalUrl = storedGoogle.Url;
+                        googleGenImages[i].OriginalSha256 = storedGoogle.Sha256;
+                        cosInfosGoogle.Add(new { index = i, url = storedGoogle.Url, sha256 = storedGoogle.Sha256, mime = storedGoogle.Mime, sizeBytes = storedGoogle.SizeBytes });
                     }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "[Google] COS 上传失败（index={Index}），回退 base64 内联返回", i);
                         // COS 上传失败时保留 base64，让前端仍能显示图片
                     }
+
                 }
 
                 _logger.LogInformation("[Google] 生图成功: ImageCount={Count}, COS={CosCount}", googleGenImages.Count, cosInfosGoogle.Count);
@@ -911,6 +1042,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         RequestedSize = requestedSizeRaw,
                         EffectiveSize = requestedSizeRaw,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
@@ -1011,6 +1143,12 @@ public class OpenAIImageClient : IImageGenerationClient
                     {
                         revised = rpEl.GetString();
                     }
+                    if (it.TryGetProperty("media_type", out var mediaTypeEl) && mediaTypeEl.ValueKind == JsonValueKind.String)
+                    {
+                        var mediaType = mediaTypeEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(mediaType) && mediaType.Contains('/'))
+                            dataUrlMime = mediaType;
+                    }
 
                     // 兼容某些网关/代理把 b64_json 返回成 data URL（data:image/png;base64,...）
                     if (!string.IsNullOrWhiteSpace(b64) && b64.TrimStart().StartsWith("data:", StringComparison.OrdinalIgnoreCase))
@@ -1041,7 +1179,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
             // OpenRouter 与标准 data[] 两条解析都没拿到图：统一在此判失败（替代原 OpenRouter 分支的早退，Bugbot review）
             if (images.Count == 0)
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "生图响应中未包含图片数据");
+                return UserFailure(ImageGenerationUserError.MissingImage());
 
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
             // 强约束：不把 base64 写入 Mongo；输出统一 re-host 到 COS（返回稳定 URL）
@@ -1051,6 +1189,7 @@ public class OpenAIImageClient : IImageGenerationClient
             var watermarkConfig = string.IsNullOrWhiteSpace(appKeyForWatermark) ? null : await TryGetWatermarkConfigAsync(appKeyForWatermark, ct);
             _logger.LogInformation("ImageGen watermark config resolved: {HasWatermark}", watermarkConfig != null);
             var cosInfos = new List<object>();
+            string? actualOutputSize = null;
             for (var i = 0; i < images.Count; i++)
             {
                 byte[]? bytes = null;
@@ -1081,11 +1220,26 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
-                // 1. 原图保存到 visual-agent 目录（核心数据，不会删除）
-                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                // 元数据采用实际图片尺寸；保存与 UploadArtifact 登记仍共用每 SHA 租约，
+                // 避免工作区清理在对象写入与登记之间删除产物。
+                var identifiedSize = IdentifyActualImageSize(bytes);
+                actualOutputSize ??= identifiedSize;
+                var sizeStr = NormalizeSizeString(identifiedSize ?? size);
+                var okDim = TryParseSize(sizeStr, out var w0, out var h0);
+                var stored = await SaveGeneratedOutputAsync(
+                    bytes,
+                    outMime,
+                    requestId,
+                    createdByAdminId,
+                    prompt,
+                    inputArtifactIds,
+                    okDim ? w0 : 0,
+                    okDim ? h0 : 0,
+                    ct);
 
                 // 2. 默认展示原图 URL
                 var displayUrl = stored.Url;
+                var displaySha256 = stored.Sha256;
 
                 // 3. 如果有水印配置，生成水印图保存到 watermark 目录（仅用于展示）
                 if (watermarkConfig != null)
@@ -1096,6 +1250,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
                         var watermarkedStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                         displayUrl = watermarkedStored.Url;
+                        displaySha256 = watermarkedStored.Sha256;
                     }
                     catch (Exception ex)
                     {
@@ -1106,30 +1261,10 @@ public class OpenAIImageClient : IImageGenerationClient
                 // 4. Url = 展示用（有水印时是 watermark 目录，无水印时是 imagemaster 目录）
                 //    OriginalUrl/OriginalSha256 = 原图（imagemaster 目录），用于参考图查找
                 images[i].Url = displayUrl;
+                images[i].DisplaySha256 = displaySha256;
                 images[i].Base64 = null;
                 images[i].OriginalUrl = stored.Url;
                 images[i].OriginalSha256 = stored.Sha256;
-
-                // 尺寸：优先使用本次请求最终 size（若解析失败则为 0）
-                var sizeStr = NormalizeSizeString(size);
-                var okDim = TryParseSize(sizeStr, out var w0, out var h0);
-                var output = new UploadArtifact
-                {
-                    Id = Guid.NewGuid().ToString("N"),
-                    RequestId = requestId,
-                    Kind = "output_image",
-                    CreatedByAdminId = createdByAdminId,
-                    Prompt = prompt,
-                    RelatedInputIds = inputArtifactIds.Count > 0 ? inputArtifactIds.ToList() : null,
-                    Sha256 = stored.Sha256,
-                    Mime = stored.Mime,
-                    Width = okDim ? w0 : 0,
-                    Height = okDim ? h0 : 0,
-                    SizeBytes = stored.SizeBytes,
-                    CosUrl = stored.Url,
-                    CreatedAt = DateTime.UtcNow
-                };
-                await _db.UploadArtifacts.InsertOneAsync(output, cancellationToken: ct);
 
                 // 写一份用于 LLM 日志摘要展示（不宜过大）
                 cosInfos.Add(new { index = images[i].Index, url = stored.Url, sha256 = stored.Sha256, mime = stored.Mime, sizeBytes = stored.SizeBytes });
@@ -1137,7 +1272,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
             // Gateway 已处理日志记录，无需手动记录
 
-            var finalSize = GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
+            var finalSize = actualOutputSize ?? GetCurrentRequestedSizeForRetry(reqObj, initImageBase64);
             var effectiveSize = string.IsNullOrWhiteSpace(finalSize) ? null : finalSize.Trim();
             var effectiveSizeNorm = NormalizeSizeString(effectiveSize);
             var sizeAdjusted = !string.IsNullOrWhiteSpace(requestedSizeNorm) &&
@@ -1154,6 +1289,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     EffectiveSize = effectiveSize,
                     SizeAdjusted = sizeAdjusted,
                     RatioAdjusted = ratioAdjusted,
+                    IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     SizeAdjustmentNote = sizeAdjusted && !string.IsNullOrWhiteSpace(requestedSizeRaw) && !string.IsNullOrWhiteSpace(effectiveSize)
                         ? $"本次尺寸替换：{requestedSizeRaw} -> {effectiveSize}"
                         : null
@@ -1194,22 +1330,22 @@ public class OpenAIImageClient : IImageGenerationClient
     {
         if (string.IsNullOrWhiteSpace(prompt))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空");
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请输入图片描述。");
         }
         if (string.IsNullOrWhiteSpace(appCallerCode))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 不能为空");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         var appDef = AppCallerRegistrationService.FindByAppCode(appCallerCode);
         if (appDef == null || !appDef.ModelTypes.Contains(ModelTypes.ImageGen))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, "appCallerCode 未注册或不支持 imageGen");
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         if (imageRefs == null || imageRefs.Count == 0)
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "imageRefs 不能为空（Vision API 需要至少一张图片）");
+            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请至少添加一张参考图。");
         }
 
         // Vision API 限制：最多 6 张图片
@@ -1223,6 +1359,9 @@ public class OpenAIImageClient : IImageGenerationClient
         var ctx = _ctxAccessor?.Current;
         var requestId = (ctx?.RequestId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(requestId)) requestId = Guid.NewGuid().ToString("N");
+        var createdByAdminId = ctx?.UserId ?? "system";
+        var outputSize = NormalizeSizeString(size);
+        var outputHasDimensions = TryParseSize(outputSize, out var outputWidth, out var outputHeight);
 
         // 通过 Gateway 解析模型调度
         var requiredLogicalModel = ResolveRequiredLogicalModelPublicId(
@@ -1235,13 +1374,20 @@ public class OpenAIImageClient : IImageGenerationClient
             : await requestGateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT,
-                resolution.ErrorMessage ?? "未配置可用的 Vision 生图模型");
+            _logger.LogError("多图生图模型调度失败: {Error}", resolution.ErrorMessage);
+            return UserFailure(ImageGenerationUserError.ModelUnavailable());
         }
 
         var effectiveModelName = resolution.ActualModel!;
         var platformIdForLog = resolution.ActualPlatformId;
         var platformNameForLog = resolution.ActualPlatformName;
+        var visionPlatformType = resolution.PlatformType?.Trim().ToLowerInvariant();
+        var visionWireProtocol = string.IsNullOrWhiteSpace(resolution.Protocol)
+            ? visionPlatformType
+            : resolution.Protocol.Trim().ToLowerInvariant();
+        if (string.Equals(visionWireProtocol, "unknown", StringComparison.OrdinalIgnoreCase))
+            visionWireProtocol = null;
+        var isOpenRouterImageApi = visionWireProtocol is "openrouter-image" or "openrouter-images";
         var canonicalImageRequest = new GatewayCanonicalImageRequest
         {
             Prompt = prompt,
@@ -1315,10 +1461,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 var respBody = gatewayResp.Content ?? string.Empty;
                 if (!gatewayResp.Success)
                 {
-                    var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var em)
-                        ? $"Exchange 生图错误: {em}"
-                        : $"Exchange 生图请求失败: HTTP {gatewayResp.StatusCode}";
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+                    return UserFailure(ImageGenerationUserError.FromGateway(gatewayResp));
                 }
 
                 // 解析 OpenAI 图片响应格式 { "data": [{"url": "...", "b64_json": "..."}] }
@@ -1380,9 +1523,13 @@ public class OpenAIImageClient : IImageGenerationClient
 
                     if (bytes == null || bytes.Length == 0) continue;
 
-                    var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
-                        domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                    var stored = await SaveGeneratedOutputAsync(
+                        bytes, outMime, requestId, createdByAdminId, prompt, [],
+                        outputHasDimensions ? outputWidth : 0,
+                        outputHasDimensions ? outputHeight : 0,
+                        ct);
                     var displayUrl = stored.Url;
+                    var displaySha256 = stored.Sha256;
 
                     if (wmConfig != null)
                     {
@@ -1392,6 +1539,7 @@ public class OpenAIImageClient : IImageGenerationClient
                             var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
                                 domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                             displayUrl = wmStored.Url;
+                            displaySha256 = wmStored.Sha256;
                         }
                         catch (Exception ex)
                         {
@@ -1400,6 +1548,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     }
 
                     images[i].Url = displayUrl;
+                    images[i].DisplaySha256 = displaySha256;
                     images[i].Base64 = null;
                     images[i].OriginalUrl = stored.Url;
                     images[i].OriginalSha256 = stored.Sha256;
@@ -1411,24 +1560,24 @@ public class OpenAIImageClient : IImageGenerationClient
                     Meta = new ImageGenResultMeta
                     {
                         RequestedSize = size,
-                        EffectiveSize = size
+                        EffectiveSize = size,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
             catch (HttpRequestException ex)
             {
                 _logger.LogError(ex, "[Exchange] 多图网络请求失败");
-                return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+                return UserFailure(ImageGenerationUserError.FromException(ex));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Exchange] 多图生成失败");
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message);
+                return UserFailure(ImageGenerationUserError.FromException(ex));
             }
         }
 
         // Google 原生路径：多图也用 generateContent 格式（inline_data parts）
-        var visionPlatformType = resolution.PlatformType?.ToLowerInvariant();
         if (visionPlatformType == "google" || visionPlatformType == "gemini")
         {
             try
@@ -1485,10 +1634,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 var respBody = gatewayResp.Content ?? string.Empty;
                 if (!gatewayResp.Success)
                 {
-                    var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var em)
-                        ? $"Google 生图错误: {em}"
-                        : $"Google 生图请求失败: HTTP {gatewayResp.StatusCode}";
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+                    return UserFailure(ImageGenerationUserError.FromGateway(gatewayResp));
                 }
 
                 // 解析 Google candidates 响应
@@ -1496,7 +1642,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 if (googleImgResults.Count == 0)
                 {
                     _logger.LogWarning("[Google] 多图响应中未找到图片数据");
-                    return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, "Google 生图响应中未包含图片数据");
+                    return UserFailure(ImageGenerationUserError.MissingImage());
                 }
 
                 var images = new List<ImageGenImage>();
@@ -1526,9 +1672,13 @@ public class OpenAIImageClient : IImageGenerationClient
 
                     if (bytes == null || bytes.Length == 0) continue;
 
-                    var stored = await _assetStorage.SaveAsync(bytes, outMime, ct,
-                        domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                    var stored = await SaveGeneratedOutputAsync(
+                        bytes, outMime, requestId, createdByAdminId, prompt, [],
+                        outputHasDimensions ? outputWidth : 0,
+                        outputHasDimensions ? outputHeight : 0,
+                        ct);
                     var displayUrl = stored.Url;
+                    var displaySha256 = stored.Sha256;
 
                     if (wmConfig != null)
                     {
@@ -1538,6 +1688,7 @@ public class OpenAIImageClient : IImageGenerationClient
                             var wmStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct,
                                 domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                             displayUrl = wmStored.Url;
+                            displaySha256 = wmStored.Sha256;
                         }
                         catch (Exception ex)
                         {
@@ -1546,6 +1697,7 @@ public class OpenAIImageClient : IImageGenerationClient
                     }
 
                     images[i].Url = displayUrl;
+                    images[i].DisplaySha256 = displaySha256;
                     images[i].Base64 = null;
                     images[i].OriginalUrl = stored.Url;
                     images[i].OriginalSha256 = stored.Sha256;
@@ -1559,19 +1711,20 @@ public class OpenAIImageClient : IImageGenerationClient
                     Meta = new ImageGenResultMeta
                     {
                         RequestedSize = size,
-                        EffectiveSize = size
+                        EffectiveSize = size,
+                        IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                     }
                 });
             }
             catch (HttpRequestException ex)
             {
                 _logger.LogError(ex, "[Google] 多图网络请求失败");
-                return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+                return UserFailure(ImageGenerationUserError.FromException(ex));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Google] 多图生成失败");
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message);
+                return UserFailure(ImageGenerationUserError.FromException(ex));
             }
         }
 
@@ -1658,14 +1811,40 @@ public class OpenAIImageClient : IImageGenerationClient
 
         try
         {
-            // 构建 Gateway 请求 - 使用 SendRawWithResolutionAsync 发送到 chat/completions
-            var requestBody = JsonNode.Parse(requestJson)?.AsObject() ?? new JsonObject();
+            JsonObject requestBody;
+            string endpointPath;
+            if (isOpenRouterImageApi)
+            {
+                var requestParams = ImageGenModelAdapterRegistry.BuildRequestParams(
+                    effectiveModelName,
+                    canonicalImageRequest.Size);
+                var openRouterRequest = BuildOpenRouterImageRequest(
+                    effectiveModelName,
+                    prompt,
+                    canonicalImageRequest.Count,
+                    canonicalImageRequest.Size,
+                    canonicalImageRequest.Images,
+                    requestParams.HasAdapter && requestParams.IsAdaptive);
+                requestBody = openRouterRequest.Body;
+                endpointPath = openRouterRequest.EndpointPath;
+                _logger.LogInformation(
+                    "[OpenAIImageClient] OpenRouter 专用多图请求: AppCallerCode={AppCallerCode}, ImageCount={Count}, Model={Model}",
+                    appCallerCode,
+                    imageRefs.Count,
+                    effectiveModelName);
+            }
+            else
+            {
+                requestBody = JsonNode.Parse(requestJson)?.AsObject() ?? new JsonObject();
+                endpointPath = "chat/completions";
+            }
+
             var gatewayRequest = new GatewayRawRequest
             {
                 AppCallerCode = appCallerCode,
                 ModelType = "generation",
                 ExpectedModel = resolution.LogicalModelPublicId ?? effectiveModelName,
-                EndpointPath = "/v1/chat/completions",
+                EndpointPath = endpointPath,
                 RequestBody = requestBody,
                 IsMultipart = false,
                 CanonicalImageRequest = canonicalImageRequest,
@@ -1701,10 +1880,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
             if (!gatewayResp.Success)
             {
-                var errorMsg = TryExtractUpstreamErrorMessage(respBody, out var errMsg)
-                    ? $"Vision API 错误: {errMsg}"
-                    : $"Vision API 请求失败: {gatewayResp.StatusCode}";
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, errorMsg);
+                return UserFailure(ImageGenerationUserError.FromGateway(gatewayResp));
             }
 
             // 解析响应（VisionChatCompletionImageExtractor：兼容三种形态并按优先级提取
@@ -1715,18 +1891,13 @@ public class OpenAIImageClient : IImageGenerationClient
             if (!VisionChatCompletionImageExtractor.TryExtractImages(
                     respBody, out var extractedImages, out var visionTextFallback, out var extractDiagnostics))
             {
-                var textPreview = string.IsNullOrWhiteSpace(visionTextFallback)
-                    ? null
-                    : (visionTextFallback.Length > 100 ? visionTextFallback[..100] + "..." : visionTextFallback);
                 _logger.LogWarning("[Vision API] 响应未解析出图片: {Diagnostics}; Text: {Text}",
                     extractDiagnostics,
                     string.IsNullOrWhiteSpace(visionTextFallback)
                         ? "(无)"
                         : (visionTextFallback.Length > 200 ? visionTextFallback[..200] + "..." : visionTextFallback));
                 // Gateway 已处理日志
-                var errMsg = $"Vision API 响应格式不支持（未找到图片数据）: {extractDiagnostics}" +
-                             (textPreview == null ? string.Empty : $"; 文本内容: {textPreview}");
-                return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INVALID_FORMAT, errMsg);
+                return UserFailure(ImageGenerationUserError.MissingImage());
             }
 
             var images = new List<ImageGenImage>();
@@ -1780,11 +1951,15 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 if (bytes == null || bytes.Length == 0) continue;
 
-                // 1. 原图保存到 visual-agent 目录
-                var stored = await _assetStorage.SaveAsync(bytes, outMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
+                var stored = await SaveGeneratedOutputAsync(
+                    bytes, outMime, requestId, createdByAdminId, prompt, [],
+                    outputHasDimensions ? outputWidth : 0,
+                    outputHasDimensions ? outputHeight : 0,
+                    ct);
 
                 // 2. 默认展示原图 URL
                 var displayUrl = stored.Url;
+                var displaySha256 = stored.Sha256;
 
                 // 3. 如果有水印配置，生成水印图
                 if (watermarkConfig != null)
@@ -1794,6 +1969,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         var rendered = await _watermarkRenderer.ApplyAsync(bytes, outMime, watermarkConfig, ct);
                         var watermarkedStored = await _assetStorage.SaveAsync(rendered.bytes, rendered.mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
                         displayUrl = watermarkedStored.Url;
+                        displaySha256 = watermarkedStored.Sha256;
                     }
                     catch (Exception ex)
                     {
@@ -1803,6 +1979,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
                 // 更新图片对象
                 images[i].Url = displayUrl;
+                images[i].DisplaySha256 = displaySha256;
                 images[i].Base64 = null;
                 images[i].OriginalUrl = stored.Url;
                 images[i].OriginalSha256 = stored.Sha256;
@@ -1818,14 +1995,15 @@ public class OpenAIImageClient : IImageGenerationClient
                 Meta = new ImageGenResultMeta
                 {
                     RequestedSize = size,
-                    EffectiveSize = size
+                    EffectiveSize = size,
+                    IsAdaptive = ResolveEffectiveIsAdaptive(gatewayResp.Resolution, effectiveModelName),
                 }
             });
         }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "[Vision API] 网络请求失败");
-            return ApiResponse<ImageGenResult>.Fail("NETWORK_ERROR", ex.Message);
+            return UserFailure(ImageGenerationUserError.FromException(ex));
         }
         catch (TaskCanceledException ex) when (ex.CancellationToken == ct)
         {
@@ -1835,9 +2013,53 @@ public class OpenAIImageClient : IImageGenerationClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Vision API] 未知错误");
-            return ApiResponse<ImageGenResult>.Fail(ErrorCodes.INTERNAL_ERROR, ex.Message);
+            return UserFailure(ImageGenerationUserError.FromException(ex));
         }
     }
+
+    private async Task<StoredAsset> SaveGeneratedOutputAsync(
+        byte[] bytes,
+        string mime,
+        string requestId,
+        string createdByAdminId,
+        string prompt,
+        IReadOnlyCollection<string> relatedInputIds,
+        int width,
+        int height,
+        CancellationToken ct)
+    {
+        var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var lease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{sha}",
+            ct);
+        var stored = await _assetStorage.SaveAsync(
+            bytes,
+            mime,
+            ct,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg);
+        await _db.UploadArtifacts.InsertOneAsync(new UploadArtifact
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            RequestId = requestId,
+            Kind = "output_image",
+            CreatedByAdminId = createdByAdminId,
+            Prompt = prompt,
+            RelatedInputIds = relatedInputIds.Count > 0 ? relatedInputIds.ToList() : null,
+            Sha256 = stored.Sha256,
+            Mime = stored.Mime,
+            Width = width,
+            Height = height,
+            SizeBytes = stored.SizeBytes,
+            CosUrl = stored.Url,
+            CreatedAt = DateTime.UtcNow,
+        }, cancellationToken: ct);
+        return stored;
+    }
+
+    private static ApiResponse<ImageGenResult> UserFailure(ImageGenerationUserError.Result error)
+        => ApiResponse<ImageGenResult>.Fail(error.Code, error.Message);
 
     /// <summary>
     /// 构建 Vision API 的 content 数组（text + 多个 image_url）
@@ -2465,30 +2687,6 @@ public class OpenAIImageClient : IImageGenerationClient
 
     private readonly record struct SizeCapsKey(string? ModelId, string? PlatformId, string? ModelNameLower);
 
-    // 从 "WxH" 像素尺寸推 OpenRouter image_config.aspect_ratio（受支持集合里取最接近的比例）。
-    // 推不出（空/格式错/无法解析）返回 null —— 调用方据此决定不加 image_config，保持原行为不引入未知字段（Codex review）。
-    private static string? DeriveOpenRouterAspectRatio(string? size)
-    {
-        if (string.IsNullOrWhiteSpace(size)) return null;
-        var parts = size.Trim().ToLowerInvariant().Split('x');
-        if (parts.Length != 2) return null;
-        if (!int.TryParse(parts[0], out var w) || !int.TryParse(parts[1], out var h) || w <= 0 || h <= 0) return null;
-        var target = (double)w / h;
-        var candidates = new (string Label, double Ratio)[]
-        {
-            ("1:1", 1.0), ("2:3", 2.0 / 3), ("3:2", 3.0 / 2), ("3:4", 3.0 / 4), ("4:3", 4.0 / 3),
-            ("4:5", 4.0 / 5), ("5:4", 5.0 / 4), ("9:16", 9.0 / 16), ("16:9", 16.0 / 9), ("21:9", 21.0 / 9),
-        };
-        var best = candidates[0];
-        var bestDiff = double.MaxValue;
-        foreach (var c in candidates)
-        {
-            var d = Math.Abs(c.Ratio - target);
-            if (d < bestDiff) { bestDiff = d; best = c; }
-        }
-        return best.Label;
-    }
-
     private static SizeCapsKey BuildCapsKey(string? modelId, string? platformId, string? modelName, string effectiveModelName)
     {
         var mid = string.IsNullOrWhiteSpace(modelId) ? null : modelId.Trim();
@@ -2734,6 +2932,20 @@ public class OpenAIImageClient : IImageGenerationClient
             return false;
         }
     }
+
+    internal static string? IdentifyActualImageSize(byte[]? bytes)
+    {
+        if (bytes == null || bytes.Length == 0) return null;
+        try
+        {
+            var info = SixLabors.ImageSharp.Image.Identify(bytes);
+            return info is { Width: > 0, Height: > 0 } ? $"{info.Width}x{info.Height}" : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 
 public class ImageGenResult
@@ -2747,6 +2959,8 @@ public class ImageGenImage
     public int Index { get; set; }
     public string? Base64 { get; set; }
     public string? Url { get; set; }
+    /// <summary>展示图 SHA256；启用水印时指向水印对象，否则与 OriginalSha256 相同。</summary>
+    public string? DisplaySha256 { get; set; }
     /// <summary>base64 图片的 MIME（如 image/jpeg / image/webp）。来源于 data URL 头，落库时据此设 outMime，避免 JPEG/WebP 被当 png 存（Bugbot review）。</summary>
     public string? Mime { get; set; }
     public string? RevisedPrompt { get; set; }
@@ -2762,6 +2976,7 @@ public class ImageGenResultMeta
     public string? EffectiveSize { get; set; }
     public bool SizeAdjusted { get; set; }
     public bool RatioAdjusted { get; set; }
+    public bool? IsAdaptive { get; set; }
     public string? SizeAdjustmentNote { get; set; }
 }
 

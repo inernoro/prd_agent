@@ -12,6 +12,7 @@ const baseSite: HostedSite = {
   cosPrefix: 'sites/site-1',
   entryFile: 'index.html',
   siteUrl: 'https://example.test/site-1',
+  pdfAssetUrl: undefined,
   coverImageUrl: 'https://example.test/cover.png',
   files: [{ path: 'index.html', cosKey: 'sites/site-1/index.html', size: 1024, mimeType: 'text/html' }],
   totalSize: 1024,

@@ -147,6 +147,26 @@ export function recoverableBackgroundTranscriptionRunId(
   return runId;
 }
 
+/**
+ * 最近一次转录如果是失败告终，页面必须留下痕迹。
+ *
+ * 在途 run 由上面那条恢复看护接管，成功 run 会长出笔记；只有失败 run 两头不沾——
+ * 关掉抽屉或刷新之后，整屏又退回「把录音转成文字」，用户根本看不出刚才跑过、更看不出为什么没成。
+ * 「我不清楚是好了还是坏了」就是从这个缝里漏出来的。
+ *
+ * 只认失败态；诊断块（后端追加的 [diagnostic] JSON）给的是排障细节，不是给用户看的，截掉。
+ */
+export function describeFailedTranscription(
+  run: { status?: string | null; errorMessage?: string | null; updatedAt?: string | null; createdAt?: string | null } | null | undefined,
+): { reason: string; at: string | null } | null {
+  if (run?.status?.trim().toLowerCase() !== 'failed') return null;
+  const raw = (run.errorMessage ?? '').split('[diagnostic]')[0].trim();
+  return {
+    reason: raw || '转录失败，原因未知',
+    at: (run.updatedAt ?? run.createdAt ?? null),
+  };
+}
+
 function openDb(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
     try {

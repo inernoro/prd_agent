@@ -21,6 +21,7 @@ public sealed class AdminNotificationSourceCatalogTests
     [InlineData("llm-gateway-quota")]
     [InlineData("api-request-alert")]
     [InlineData("server-expiry")]
+    [InlineData("stable-smoke")]
     public void ResolveSection_ShouldTreatOperationalSourcesAsAdmin(string source)
     {
         Assert.Equal(AdminNotificationSections.Admin, AdminNotificationSourceCatalog.ResolveSection(source));

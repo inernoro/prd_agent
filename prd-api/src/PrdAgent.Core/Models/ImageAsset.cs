@@ -19,6 +19,8 @@ public class ImageAsset
     public int Height { get; set; } = 0;
     public long SizeBytes { get; set; } = 0;
     public string Url { get; set; } = string.Empty;
+    /// <summary>Url 对应展示对象的 SHA256；启用水印时与 OriginalSha256 不同。</summary>
+    public string? DisplaySha256 { get; set; }
     public string? Prompt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -57,4 +59,3 @@ public class ImageAsset
     /// </summary>
     public string? DescriptionModelId { get; set; }
 }
-

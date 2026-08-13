@@ -27,6 +27,19 @@ describe('widget bridge polling gate', () => {
     const script = buildWidgetScript('branch-a', 'branch/a');
     expect(script).toContain('function defaultWidgetBottom(){');
     expect(script).toContain('return window.innerWidth<=640?88:12;');
-    expect(script).toContain('var pos={x:12,y:defaultWidgetBottom()};');
+    expect(script).toContain('var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};');
+  });
+
+  it('keeps the preview widget in a right-side safe area outside expanded navigation', () => {
+    const script = buildWidgetScript('branch-a', 'branch/a');
+    expect(script).toContain('function defaultWidgetLeft(){');
+    expect(script).toContain('return window.innerWidth<=640?12:Math.max(12,window.innerWidth-492);');
+    expect(script).toContain('var widgetWasDragged=false;');
+    expect(script).toContain("window.addEventListener('resize'");
+    expect(script).toContain('function setWidgetPosition(x,y){');
+    expect(script).toContain('var widgetWidth=Math.max(180,root.offsetWidth||0);');
+    expect(script).toContain('var widgetHeight=Math.max(50,root.offsetHeight||0);');
+    expect(script).toContain('setWidgetPosition(pos.x,pos.y);');
+    expect(script).not.toContain('if(widgetWasDragged)return;');
   });
 });

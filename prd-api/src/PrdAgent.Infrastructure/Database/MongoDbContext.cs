@@ -31,6 +31,8 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
+        _database.GetCollection<BsonDocument>("console_sso_tickets");
     public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
     public IMongoCollection<GroupMember> GroupMembers => _database.GetCollection<GroupMember>("groupmembers");
     // PRD 文档长期存储（原文 + 解析结构）
@@ -77,6 +79,10 @@ public class MongoDbContext
     public IMongoCollection<ImageGenRunItem> ImageGenRunItems => _database.GetCollection<ImageGenRunItem>("image_gen_run_items");
     public IMongoCollection<ImageGenRunEvent> ImageGenRunEvents => _database.GetCollection<ImageGenRunEvent>("image_gen_run_events");
     public IMongoCollection<UploadArtifact> UploadArtifacts => _database.GetCollection<UploadArtifact>("upload_artifacts");
+    public IMongoCollection<ProfileAvatarObjectCleanupTask> ProfileAvatarObjectCleanupTasks =>
+        _database.GetCollection<ProfileAvatarObjectCleanupTask>("profile_avatar_object_cleanup_tasks");
+    public IMongoCollection<DocumentAssetCleanupTask> DocumentAssetCleanupTasks =>
+        _database.GetCollection<DocumentAssetCleanupTask>("document_asset_cleanup_tasks");
     public IMongoCollection<AdminPromptOverride> AdminPromptOverrides => _database.GetCollection<AdminPromptOverride>("admin_prompt_overrides");
     public IMongoCollection<AdminIdempotencyRecord> AdminIdempotencyRecords => _database.GetCollection<AdminIdempotencyRecord>("admin_idempotency");
     public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");
@@ -271,6 +277,7 @@ public class MongoDbContext
     public IMongoCollection<VideoProject> VideoProjects => _database.GetCollection<VideoProject>("video_projects");
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
     public IMongoCollection<VideoExportTask> VideoExportTasks => _database.GetCollection<VideoExportTask>("video_export_tasks");
+    public IMongoCollection<DirectVideoJobOwnership> DirectVideoJobOwnerships => _database.GetCollection<DirectVideoJobOwnership>("direct_video_job_ownerships");
 
     // MD 转网页 PPT 生成运行记录（server-authority：刷新可重连/查看）
     public IMongoCollection<MdToPptRun> MdToPptRuns => _database.GetCollection<MdToPptRun>("md_to_ppt_runs");
@@ -355,6 +362,13 @@ public class MongoDbContext
     public IMongoCollection<SiteViewEvent> SiteViewEvents => _database.GetCollection<SiteViewEvent>("site_view_events");
     public IMongoCollection<HostedSiteComment> HostedSiteComments => _database.GetCollection<HostedSiteComment>("hosted_site_comments");
     public IMongoCollection<WebFolder> WebFolders => _database.GetCollection<WebFolder>("web_folders");
+
+    // 知识库语义检索：文档切块向量
+    public IMongoCollection<DocumentEmbedding> DocumentEmbeddings => _database.GetCollection<DocumentEmbedding>("document_embeddings");
+
+    // 网页托管「向我提问」
+    public IMongoCollection<HostedSiteAskSession> HostedSiteAskSessions => _database.GetCollection<HostedSiteAskSession>("hosted_site_ask_sessions");
+    public IMongoCollection<HostedSiteAskMessage> HostedSiteAskMessages => _database.GetCollection<HostedSiteAskMessage>("hosted_site_ask_messages");
 
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
@@ -860,21 +874,15 @@ public class MongoDbContext
         ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
             Builders<ImageGenRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt)));
         // 幂等键：同一 admin 下唯一（只对存在 IdempotencyKey 的文档生效）
-        try
-        {
-            ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
-                Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
-                new CreateIndexOptions<ImageGenRun>
-                {
-                    Name = "uniq_image_gen_runs_owner_idem",
-                    // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
-                    PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
-                }));
-        }
-        catch (MongoCommandException ex) when (IsIndexConflict(ex))
-        {
-            // ignore
-        }
+        ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
+            Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
+            new CreateIndexOptions<ImageGenRun>
+            {
+                Name = "uniq_image_gen_runs_owner_idem",
+                Unique = true,
+                // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
+                PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
+            }));
 
         // ImageGenRunItems：按 runId + (itemIndex,imageIndex) 唯一；按 owner + runId 查询
         ImageGenRunItems.Indexes.CreateOne(new CreateIndexModel<ImageGenRunItem>(
@@ -1809,6 +1817,21 @@ public class MongoDbContext
             PeerNodes.Indexes.CreateOne(new CreateIndexModel<PeerNode>(
                 Builders<PeerNode>.IndexKeys.Ascending(x => x.RemoteNodeId),
                 new CreateIndexOptions { Name = "uniq_peer_nodes_remote_node_id", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // 直出视频上游任务在 Offering 命名空间内只能归属一个业务身份。
+        try
+        {
+            DirectVideoJobOwnerships.Indexes.CreateOne(new CreateIndexModel<DirectVideoJobOwnership>(
+                Builders<DirectVideoJobOwnership>.IndexKeys
+                    .Ascending(x => x.AppKey)
+                    .Ascending(x => x.JobNamespace)
+                    .Ascending(x => x.JobId),
+                new CreateIndexOptions { Name = "uniq_direct_video_job_app_namespace_job", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {

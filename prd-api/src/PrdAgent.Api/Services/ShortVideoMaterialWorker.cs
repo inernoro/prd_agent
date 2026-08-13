@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -68,17 +69,24 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             // 容器退出后永远没人回收、永卡 running。一并回收是一次性过渡兜底（上线后新 run
             // 认领即打主，不再产生无主 running）。代价：若另一实例此刻在跑某个无主 running 会被
             // 误判失败——但无主 = 旧代码遗留，归属本不可分辨，过渡期代价可接受（Bugbot Medium）。
-            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var instanceId = InstanceIdentity.Get(configuration);
+            var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+            var ownerScope = LegacyOwnerScope.Build<ShortVideoMaterialRun>(
+                nameof(ShortVideoMaterialRun.OwnerInstanceId),
+                compatibleOwnerIds,
+                includeUnowned: true,
+                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+                legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
             var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
-                Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+                ownerScope);
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 recoverFilter,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.OwnerInstanceId, instanceId)
+                    .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -103,21 +111,28 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var instanceId = InstanceIdentity.Get(configuration);
+            var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+            var ownerScope = LegacyOwnerScope.Build<ShortVideoMaterialRun>(
+                nameof(ShortVideoMaterialRun.OwnerInstanceId),
+                compatibleOwnerIds,
+                includeUnowned: true,
+                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+                legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
             var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
             var current = _currentRunId ?? "";
             var filter = Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
                 Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
-                Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+                ownerScope);
             var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 filter,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.OwnerInstanceId, instanceId)
+                    .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_TIMEOUT)
                     .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -141,6 +156,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 r => r.Id == _currentRunId && r.Status == "running",
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, message)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -155,16 +171,23 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         var processor = scope.ServiceProvider.GetRequiredService<ShortVideoMaterialProcessor>();
 
         // 定向消费：只领取属于本实例（或历史无主）的 queued 任务，避免共享 Mongo 下多容器互抢。
-        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var instanceId = InstanceIdentity.Get(configuration);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+        var ownerScope = LegacyOwnerScope.Build<ShortVideoMaterialRun>(
+            nameof(ShortVideoMaterialRun.OwnerInstanceId),
+            compatibleOwnerIds,
+            includeUnowned: true,
+            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+            legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
             Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
-                Builders<ShortVideoMaterialRun>.Filter.Or(
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                    Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
+                ownerScope),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
+                .Set(r => r.ErrorCode, (string?)null)
+                .Set(r => r.ErrorMessage, (string?)null)
                 // 认领时盖上本实例归属（领取历史无主任务后必须打主，否则崩溃重启兜底匹配不到、永卡 running，Bugbot Medium）
                 .Set(r => r.OwnerInstanceId, instanceId)
                 .Set(r => r.UpdatedAt, DateTime.UtcNow),
@@ -192,6 +215,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             if (latest != null)
             {
                 latest.Status = "failed";
+                latest.ErrorCode = ErrorCodes.INTERNAL_ERROR;
                 latest.ErrorMessage = ex.Message;
                 ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, ex.Message);
                 latest.UpdatedAt = DateTime.UtcNow;
@@ -645,6 +669,11 @@ public sealed class ShortVideoMaterialProcessor
         var match = Regex.Match(input, @"https?://[^\s""']+", RegexOptions.IgnoreCase);
         return match.Success ? match.Value.TrimEnd('。', '，', ',', '.', ')', ']') : input.Trim();
     }
+
+    public static bool IsHttpUrl(string? value)
+        => Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+           && !string.IsNullOrWhiteSpace(uri.Host);
 
     public static string DetectPlatform(string url)
     {

@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -46,7 +47,15 @@ public class DocumentStoreAgentWorker : BackgroundService
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             // 只回收【本实例】残留的 Running——共享 Mongo 下，不能把别的分支/主干正在处理的
             // Running 任务误判成"崩溃残留"标记失败（定向消费，见 InstanceIdentity）。
-            var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var instanceId = InstanceIdentity.Get(configuration);
+            var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+            var ownerScope = LegacyOwnerScope.Build<DocumentStoreAgentRun>(
+                nameof(DocumentStoreAgentRun.OwnerInstanceId),
+                compatibleOwnerIds,
+                includeUnowned: true,
+                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+                legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
             // 回收范围 = 本实例 Running + 历史无主 Running（OwnerInstanceId 空）。
             // 无主 Running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
             // 这些 run 的容器一旦退出就永远没人回收、永远卡 running。把无主 Running 一并
@@ -55,10 +64,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             // 旧代码遗留，归属本就不可分辨，这个过渡期代价可接受（Bugbot Medium）。
             var recoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Running),
-                Builders<DocumentStoreAgentRun>.Filter.Or(
-                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
-                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                    Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+                ownerScope);
             var automaticRetryBudgetFilter = DocumentRecordingArchiveWorker
                 .BuildDeferredTranscriptionAutomaticRetryBudgetFilter();
             var deferredRecoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
@@ -81,6 +87,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                     .Set(r => r.EndedAt, null)
                     .Set(r => r.StartedAt, null)
                     .Set(r => r.AutomaticRetryNextAt, null)
+                    .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(
                         r => r.AutomaticRetryReason,
                         DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
@@ -90,6 +97,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                 recoverFilter,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                    .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(r => r.ErrorMessage, "服务重启，任务被中断")
                     .Set(r => r.EndedAt, restartAt),
                 cancellationToken: CancellationToken.None);
@@ -181,7 +189,15 @@ public class DocumentStoreAgentWorker : BackgroundService
 
         // 原子拾取一个 queued 任务（按创建时间）——定向消费：只领取属于本实例的任务，
         // 外加历史无主（OwnerInstanceId 空）的任务做兼容，避免共享 Mongo 下多容器互抢（见 InstanceIdentity）。
-        var instanceId = InstanceIdentity.Get(scope.ServiceProvider.GetRequiredService<IConfiguration>());
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var instanceId = InstanceIdentity.Get(configuration);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+        var ownerScope = LegacyOwnerScope.Build<DocumentStoreAgentRun>(
+            nameof(DocumentStoreAgentRun.OwnerInstanceId),
+            compatibleOwnerIds,
+            includeUnowned: true,
+            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+            legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
         var filter = Builders<DocumentStoreAgentRun>.Filter.And(
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
             Builders<DocumentStoreAgentRun>.Filter.Or(
@@ -191,10 +207,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                 Builders<DocumentStoreAgentRun>.Filter.Lte(
                     r => r.AutomaticRetryNextAt,
                     DateTime.UtcNow)),
-            Builders<DocumentStoreAgentRun>.Filter.Or(
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+            ownerScope);
         var update = Builders<DocumentStoreAgentRun>.Update
             .Set(r => r.Status, DocumentStoreRunStatus.Running)
             // 认领时盖上本实例归属：领取历史无主任务后必须打主，否则本实例崩溃重启时
@@ -295,25 +308,11 @@ public class DocumentStoreAgentWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[doc-store-agent] Run {RunId} failed", run.Id);
-            var msg = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
-
-            // SubtitleAsrException 携带诊断信息，原样塞进 SSE error / run.errorMessage
-            IDictionary<string, object?>? diagnostic = null;
-            if (ex is PrdAgent.Api.Services.SubtitleAsrException sae)
-                diagnostic = sae.Diagnostic;
-
-            // run.errorMessage 在 UI 兜底展示（非 SSE 路径），把诊断序列化进去（截断 1500）
-            string errorMessageForDb = msg;
-            if (diagnostic != null)
-            {
-                try
-                {
-                    var diagJson = System.Text.Json.JsonSerializer.Serialize(diagnostic);
-                    var combined = msg + "\n\n[diagnostic]\n" + diagJson;
-                    errorMessageForDb = combined.Length > 1500 ? combined[..1500] : combined;
-                }
-                catch { /* fall back to plain msg */ }
-            }
+            var userMessage = ex is SubtitleAsrException
+                || run.Kind == DocumentStoreAgentRunKind.Transcribe
+                || run.Kind == DocumentStoreAgentRunKind.Subtitle
+                ? AudioTranscriptionUserError.FromException(ex)
+                : "内容处理暂时失败。请稍后重试；已上传的原始内容仍会保留。";
 
             var failedAt = DateTime.UtcNow;
             var willRetry = DocumentRecordingArchiveWorker
@@ -343,7 +342,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             {
                 failedUpdate = Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                    .Set(r => r.ErrorMessage, errorMessageForDb)
+                    .Set(r => r.ErrorMessage, userMessage)
                     .Set(r => r.EndedAt, failedAt)
                     .Set(r => r.AutomaticRetryNextAt, null)
                     .Set(r => r.AutomaticRetryReason, null);
@@ -390,8 +389,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             {
                 await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "error", new
                 {
-                    message = msg,
-                    diagnostic,
+                    message = userMessage,
                 });
             }
         }

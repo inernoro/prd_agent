@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace PrdAgent.Infrastructure.LLM;
 
 /// <summary>
-/// 从 chat/completions 响应中提取生成图片的通用解析器（多图生图 Vision 分支专用）。
+/// 从图片生成或 chat/completions 响应中提取生成图片的通用解析器（多图生图 Vision 分支专用）。
 ///
 /// 背景：gemini 系模型经 OpenAI 兼容聚合网关（PlatformType=openai）返回图片时，
 /// 响应形态不止「content 纯字符串」一种：
@@ -15,6 +15,7 @@ namespace PrdAgent.Infrastructure.LLM;
 ///
 /// 纯静态解析：不发 HTTP、不读 DB，便于单元测试（VisionResponseImageExtractionTests）。
 /// 解析优先级：
+///   0. 专用图片 API 的 data[]（b64_json / base64 / url）
 ///   1. choices[].message.images[]（对象项取 image_url.url / image_url 字符串 / url；容忍纯字符串项）
 ///   2. 首个 message 的 content 为纯字符串 → 旧启发式（data URL / http URL / Markdown 图片 / 内嵌 JSON url|b64_json）
 ///   3. content 为多模态数组 → 收集 image_url 项，text 项拼接为文本兜底
@@ -64,8 +65,19 @@ public static class VisionChatCompletionImageExtractor
         using (doc)
         {
             var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("choices", out var choicesEl)
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                diagnostics = "响应根节点不是对象";
+                return false;
+            }
+
+            if (TryExtractDedicatedImageData(root, images, out var dedicatedCount))
+            {
+                diagnostics = $"data[]={dedicatedCount} 项";
+                return true;
+            }
+
+            if (!root.TryGetProperty("choices", out var choicesEl)
                 || choicesEl.ValueKind != JsonValueKind.Array
                 || choicesEl.GetArrayLength() == 0)
             {
@@ -190,6 +202,50 @@ public static class VisionChatCompletionImageExtractor
                           $"content={contentKind}";
             return images.Count > 0;
         }
+    }
+
+    private static bool TryExtractDedicatedImageData(
+        JsonElement root,
+        List<string> images,
+        out int itemCount)
+    {
+        itemCount = 0;
+        if (!root.TryGetProperty("data", out var dataEl) || dataEl.ValueKind != JsonValueKind.Array)
+            return false;
+
+        itemCount = dataEl.GetArrayLength();
+        foreach (var item in dataEl.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+
+            if (item.TryGetProperty("url", out var urlEl)
+                && urlEl.ValueKind == JsonValueKind.String
+                && IsUsableImageUrl(urlEl.GetString()))
+            {
+                images.Add(urlEl.GetString()!.Trim());
+                continue;
+            }
+
+            var base64 = item.TryGetProperty("b64_json", out var b64El) && b64El.ValueKind == JsonValueKind.String
+                ? b64El.GetString()
+                : item.TryGetProperty("base64", out var base64El) && base64El.ValueKind == JsonValueKind.String
+                    ? base64El.GetString()
+                    : null;
+            if (string.IsNullOrWhiteSpace(base64)) continue;
+            if (base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                images.Add(base64);
+                continue;
+            }
+
+            var mime = item.TryGetProperty("media_type", out var mimeEl) && mimeEl.ValueKind == JsonValueKind.String
+                ? mimeEl.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(mime) || !mime.Contains('/')) mime = "image/png";
+            images.Add($"data:{mime};base64,{base64}");
+        }
+
+        return images.Count > 0;
     }
 
     /// <summary>

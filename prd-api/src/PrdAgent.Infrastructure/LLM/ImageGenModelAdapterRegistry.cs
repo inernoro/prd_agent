@@ -325,6 +325,7 @@ public static class ImageGenModelAdapterRegistry
             // 直接返回按分辨率分组的尺寸配置，前端无需转换
             SizesByResolution = config.SizesByResolution,
             SizeParamFormat = config.SizeParamFormat,
+            SizesNotApplicable = config.SizesNotApplicable,
             MustBeDivisibleBy = config.MustBeDivisibleBy,
             MaxWidth = config.MaxWidth,
             MaxHeight = config.MaxHeight,
@@ -450,7 +451,7 @@ public static class ImageGenModelAdapterRegistry
         return string.Equals(p, input, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool TryParseSize(string? size, out int w, out int h)
+    internal static bool TryParseSize(string? size, out int w, out int h)
     {
         w = 0;
         h = 0;
@@ -551,6 +552,7 @@ public class ImageGenAdapterInfo
     public Dictionary<string, List<SizeOption>> SizesByResolution { get; set; } = new();
     
     public string SizeParamFormat { get; set; } = string.Empty;
+    public bool SizesNotApplicable { get; set; }
     public int? MustBeDivisibleBy { get; set; }
     public int? MaxWidth { get; set; }
     public int? MaxHeight { get; set; }
@@ -561,6 +563,6 @@ public class ImageGenAdapterInfo
     public bool SupportsImageToImage { get; set; }
     public bool SupportsInpainting { get; set; }
 
-    /// <summary>是否为自适应模型：true 表示前端不应展示尺寸选择器，应展示"自适应"徽标</summary>
+    /// <summary>是否为自适应模型：true 表示尺寸不通过 API 字段传输，不等于尺寸不可选择</summary>
     public bool IsAdaptive { get; set; }
 }

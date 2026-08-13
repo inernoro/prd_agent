@@ -4,6 +4,8 @@ import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, 
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
+import { githubPullRequestUrl } from '@/lib/github-urls';
+import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -263,29 +265,13 @@ interface DrawerActivityEvent {
   errorSummary?: string;
 }
 
-// GET /api/branches/:id/subdomain-aliases → gatewayUrls[]（声明了 cds.subdomain 的服务的命名入口）。
-interface GatewayUrlEntry {
-  subdomain: string;
+// GET /api/branches/:id/subdomain-aliases → 用户可见 Web 入口。
+interface WebEntryUrl {
+  subdomain?: string;
+  serviceId?: string;
   name: string;
   url: string;
-  /**
-   * 这条入口是不是可登录的网关控制台（而非 API 引擎的健康检查入口）。
-   *
-   * 由服务端 computeBranchGatewayUrls 下发，前端不再按子域名字自己判：
-   * 2026-07-29 控制台子域从 `llmgw-web` 改名为 `llmgw` 时，这里原本硬编码的
-   * 4 处 `=== 'llmgw-web'` 全部失效——控制台被当成健康检查入口标注、排序也不再
-   * 排在最前（Codex P2）。判据在 cds/src/services/preview-entrypoints.ts。
-   *
-   * 可选：老后端不返回该字段时退回按名字判，避免前后端版本错位时整块失灵。
-   */
-  isConsole?: boolean;
-}
-
-/** 老后端没有 isConsole 时的兜底（与 preview-entrypoints 的别名表同口径）。 */
-function isConsoleEntry(gw: GatewayUrlEntry): boolean {
-  if (typeof gw.isConsole === 'boolean') return gw.isConsole;
-  const sub = gw.subdomain.toLowerCase();
-  return sub === 'llmgw' || sub === 'llmgw-web';
+  primary: boolean;
 }
 
 // 2026-05-18: 分支生命周期系统日志（部署 / 停止 / 崩溃 / 重启 / 回收）。
@@ -609,9 +595,6 @@ function githubBranchTreeUrl(repoFullName: string, branchName: string): string {
   return `https://github.com/${repoFullName}/tree/${encodedBranch}`;
 }
 
-function githubPullRequestUrl(repoFullName: string, prNumber: number): string {
-  return `https://github.com/${repoFullName}/pull/${prNumber}`;
-}
 
 function deploymentStages(log: string[]): string[] {
   const stages = new Set<string>();
@@ -835,6 +818,7 @@ export function BranchDetailDrawer({
   deployments = [],
   activityEvents = [],
   previewUrl = '',
+  previewMode = 'multi',
   branchStatus,
   initialResourceId,
   initialResourceDetailTab,
@@ -861,6 +845,8 @@ export function BranchDetailDrawer({
    * domain configured). Drawer 仅在 running 时显示 URL chip。
    */
   previewUrl?: string;
+  /** 决定主入口是否需要保留 simple/port 模式下由调用方给出的 host。 */
+  previewMode?: PreviewMode;
   initialResourceId?: string | null;
   initialResourceDetailTab?: BranchResourceDetailTab | null;
   /**
@@ -876,9 +862,15 @@ export function BranchDetailDrawer({
   // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
   const now = useNowTick(open);
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
-  // 网关入口（声明了 cds.subdomain 的服务，如 LLM 网关 console/serving 获得独立命名域名）。
-  // 与主应用入口并列展示，让「多出口」在这个抽屉里可见（用户点名的「右侧面板显示两个入口和名字」）。
-  const [gatewayUrls, setGatewayUrls] = useState<GatewayUrlEntry[]>([]);
+  const [entryAliases, setEntryAliases] = useState<WebEntryCollectionLike<WebEntryUrl>>({});
+  const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(
+    () => resolveWebEntryPresentation(
+      previewMode,
+      previewUrl || branch?.previewUrl || '',
+      entryAliases,
+    ),
+    [branch?.previewUrl, entryAliases, previewMode, previewUrl],
+  );
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
   const [deploymentVersions, setDeploymentVersions] = useState<DeploymentVersionSummary[]>([]);
@@ -982,8 +974,8 @@ export function BranchDetailDrawer({
           .catch(() => ({ services: [] })),
         apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
           .catch(() => ({ resources: [] })),
-        apiRequest<{ gatewayUrls?: GatewayUrlEntry[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
-          .catch(() => ({ gatewayUrls: [] as GatewayUrlEntry[] })),
+        apiRequest<{ primaryEntry?: WebEntryUrl; webEntries?: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
+          .catch((): { primaryEntry?: WebEntryUrl; webEntries: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] } => ({ webEntries: [] })),
       ]);
       const found = (branchesRes.branches || []).find((b) => b.id === branchId);
       if (!found) {
@@ -998,7 +990,7 @@ export function BranchDetailDrawer({
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
-      setGatewayUrls(aliasesRes.gatewayUrls || []);
+      setEntryAliases(aliasesRes);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -1956,7 +1948,7 @@ export function BranchDetailDrawer({
         aria-label="关闭分支详情"
       />
       <div
-        className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl"
+        className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl md:w-2/3 md:border-l md:border-[hsl(var(--hairline))]"
         style={{ minHeight: 0 }}
       >
         <header className="cds-branch-detail-header flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
@@ -2052,94 +2044,55 @@ export function BranchDetailDrawer({
                   只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
               {/* 2026-07-26 用户拍板：入口卡不再常驻抽屉头部占每个页签 ~180px——
                   只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
-              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
+              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && primaryEntryUrl ? (
                 <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     <Rocket className="h-4 w-4" />
                     应用已上线
                   </div>
-                  {/* 入口卡片列:主应用入口(主色)在上,声明了 cds.subdomain 的网关入口(中性色)在下,
-                      每条整卡可点、带图标/名称/URL/打开箭头,视觉分层清晰。 */}
+                  {/* 入口卡片列：主入口在上，其余由 cds.web-entry-* 声明的页面在下。
+                      readiness/health URL 不属于用户入口，不在这里渲染。 */}
                   <div className="flex flex-col gap-1.5">
                     <a
-                      href={previewUrl || branch.previewUrl}
+                      href={primaryEntryUrl}
                       target="_blank"
                       rel="noreferrer"
-                      title="打开主应用入口"
+                      title={`打开 ${primaryEntry?.name || '主应用入口'}`}
                       className="group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]"
                     >
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white">
                         <Rocket className="h-4 w-4" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">主应用入口</span>
-                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{previewUrl || branch.previewUrl}</span>
+                        <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">{primaryEntry?.name || '主应用入口'}</span>
+                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{primaryEntryUrl}</span>
                       </span>
                       <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
                     </a>
-                    {[...gatewayUrls]
-                      .sort((a, b) => {
-                        // 网关控制台(真实可登录页面)排在引擎/健康入口之前。
-                        const rank = (gw: GatewayUrlEntry) => (isConsoleEntry(gw) ? 0 : 1);
-                        return rank(a) - rank(b) || a.subdomain.localeCompare(b.subdomain);
-                      })
-                      .map((gw) => {
-                        const isConsole = isConsoleEntry(gw);
-                        return (
+                    {[...webEntries]
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((entry) => (
                           <a
-                            key={gw.subdomain}
-                            href={gw.url}
+                            key={entry.serviceId || entry.subdomain || entry.url}
+                            href={entry.url}
                             target="_blank"
                             rel="noreferrer"
-                            title={isConsole ? `打开 ${gw.name} 网关控制台` : `打开 ${gw.name} 网关引擎健康检查`}
-                            className={
-                              isConsole
-                                ? 'group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]'
-                                : 'group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-emerald-500/40 hover:bg-emerald-500/[0.08]'
-                            }
+                            title={`打开 ${entry.name}`}
+                            className="group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-emerald-500/40 hover:bg-emerald-500/[0.08]"
                           >
-                            <span
-                              className={
-                                isConsole
-                                  ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white'
-                                  : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground'
-                              }
-                            >
-                              {isConsole ? <Terminal className="h-4 w-4" /> : <Server className="h-4 w-4" />}
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground">
+                              <Server className="h-4 w-4" />
                             </span>
                             <span className="min-w-0 flex-1">
                               <span className="flex items-center gap-1.5">
-                                <span
-                                  className={
-                                    isConsole
-                                      ? 'text-xs font-semibold text-emerald-700 dark:text-emerald-300'
-                                      : 'text-xs font-semibold text-foreground'
-                                  }
-                                >
-                                  {isConsole ? '网关控制台' : '网关引擎 · 健康'}
-                                </span>
-                                <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{gw.subdomain}</span>
+                                <span className="text-xs font-semibold text-foreground">{entry.name}</span>
+                                {entry.subdomain ? <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{entry.subdomain}</span> : null}
                               </span>
-                              <span
-                                className={
-                                  isConsole
-                                    ? 'block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70'
-                                    : 'block min-w-0 truncate font-mono text-[11px] text-muted-foreground'
-                                }
-                              >
-                                {gw.url}
-                              </span>
+                              <span className="block min-w-0 truncate font-mono text-[11px] text-muted-foreground">{entry.url}</span>
                             </span>
-                            <ExternalLink
-                              className={
-                                isConsole
-                                  ? 'h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300'
-                                  : 'h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-emerald-600'
-                              }
-                            />
+                            <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-emerald-600" />
                           </a>
-                        );
-                      })}
+                      ))}
                   </div>
                 </div>
               ) : null}
@@ -2288,19 +2241,16 @@ export function BranchDetailDrawer({
                 {activeTab === 'run' ? (
                   <ReplicaSetPanel
                     branchId={branch.id}
-                    previewUrl={branch.previewUrl || previewUrl}
+                    previewUrl={primaryEntryUrl}
                     services={branch.services || {}}
                     infra={infraServices.map((svc) => ({ id: svc.id, name: svc.name, dockerImage: svc.dockerImage, status: svc.status }))}
                     entries={[
                       // 入口卡入画布（2026-07-26 用户拍板）：抽屉头部入口卡只留总览，
-                      // 运行画布的入口节点承载同一组公开入口（主应用 + 命名子域网关）
-                      ...((previewUrl || branch.previewUrl) ? [{ name: '主应用', url: (previewUrl || branch.previewUrl)! }] : []),
-                      ...[...gatewayUrls]
-                        .sort((a, b) => {
-                          const rank = (gw: GatewayUrlEntry) => (isConsoleEntry(gw) ? 0 : 1);
-                          return rank(a) - rank(b) || a.subdomain.localeCompare(b.subdomain);
-                        })
-                        .map((gw) => ({ name: isConsoleEntry(gw) ? '网关控制台' : gw.subdomain, url: gw.url })),
+                      // 运行画布的入口节点承载同一组公开入口（主应用 + 其他 Web 页面）
+                      ...(primaryEntryUrl ? [{ name: primaryEntry?.name || '主应用', url: primaryEntryUrl }] : []),
+                      ...[...webEntries]
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((entry) => ({ name: entry.name, url: entry.url })),
                     ]}
                     onToast={onToast}
                   />
@@ -2619,7 +2569,7 @@ export function BranchDetailDrawer({
                         tone={memNow != null && memNow > 85 ? 'bad' : 'muted'} />
                       <OverviewTile label="网络" value={netNow != null ? `${formatBytes(netNow)}/s` : '—'}
                         sub={netNow != null ? '全服务收发合计' : '监控采样中…'} />
-                      <OverviewTile label="入口" value={running && (previewUrl || branch.previewUrl) ? `${1 + gatewayUrls.length} 个` : '未上线'}
+                      <OverviewTile label="入口" value={running && primaryEntryUrl ? `${1 + webEntries.length} 个` : '未上线'}
                         sub={running ? '上方入口卡直达' : '部署成功后出现'} tone={running ? 'good' : 'muted'} />
                     </div>
                   );

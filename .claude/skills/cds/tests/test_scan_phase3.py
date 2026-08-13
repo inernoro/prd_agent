@@ -144,6 +144,75 @@ services:
 
         # 端口来源标注
         assert "端口推断来源" in yaml_out
+        assert "cds.web-entry-name" in yaml_out
+        assert "cds.web-entry-path: \"/\"" in yaml_out
+
+
+def test_scan_prefers_root_routed_web_over_first_backend_and_preserves_named_entries():
+    with tempfile.TemporaryDirectory() as tmp:
+        for directory in ("api", "web", "help"):
+            Path(tmp, directory).mkdir()
+        Path(tmp, "docker-compose.yml").write_text("""\
+services:
+  api:
+    image: node:20
+    volumes: ["./api:/app"]
+    ports: ["5000"]
+  web:
+    image: node:20
+    volumes: ["./web:/app"]
+    ports: ["8000"]
+    labels:
+      cds.path-prefix: "/"
+      cds.subdomain: "admin"
+      cds.web-entry-name: "管理端"
+  help:
+    image: node:20
+    volumes: ["./help:/app"]
+    ports: ["8100"]
+    labels:
+      cds.subdomain: "help"
+      cds.web-entry-name: "帮助中心"
+      cds.web-entry-path: "/guide"
+""")
+        result = run_scan(tmp)
+        yaml_out = result["data"]["yaml"]
+
+        web_block = yaml_out.split("  web:", 1)[1].split("  help:", 1)[0]
+        help_block = yaml_out.split("  help:", 1)[1]
+        assert 'cds.path-prefix: "/"' in web_block
+        assert 'cds.web-entry-name: "管理端"' in web_block
+        assert 'cds.subdomain: "admin"' in web_block
+        assert 'cds.web-entry-name: "帮助中心"' in help_block
+        assert 'cds.web-entry-path: "/guide"' in help_block
+
+
+def test_scan_matches_web_service_names_on_token_boundaries():
+    """构建角色不能抢入口，website/webapp 等紧凑 Web 名仍应被识别。"""
+    for build_service in ("builder", "build-worker"):
+        for web_service in ("website", "webapp"):
+            with tempfile.TemporaryDirectory() as tmp:
+                Path(tmp, "docker-compose.yml").write_text(f"""\
+services:
+  api:
+    image: node:20
+    ports: ["5000"]
+  {build_service}:
+    image: node:20
+    ports: ["7000"]
+  {web_service}:
+    image: node:20
+    ports: ["8000"]
+""")
+                result = run_scan(tmp)
+                yaml_out = result["data"]["yaml"]
+
+                build_block = yaml_out.split(f"  {build_service}:", 1)[1].split(f"  {web_service}:", 1)[0]
+                web_block = yaml_out.split(f"  {web_service}:", 1)[1]
+                assert 'cds.path-prefix: "/"' not in build_block
+                assert f'cds.path-prefix: "/{build_service}/"' in build_block
+                assert 'cds.path-prefix: "/"' in web_block
+                assert "cds.web-entry-name" in web_block
 
 
 # ─────────────────────────────────────────────────────────

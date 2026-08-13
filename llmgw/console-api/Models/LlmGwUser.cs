@@ -24,18 +24,26 @@ public class LlmGwUser
     /// <summary>外部身份不可变主体。MAP 账号按 map:{userId} 绑定，不以可变用户名关联。</summary>
     public string? ExternalSubjectId { get; set; }
 
+    /// <summary>
+    /// 外部身份那边的登录名（MAP 用户名），每次一键登录刷新。
+    /// 用途只有一个：网关登录名默认跟它保持一致——SSO 进来的人不该被迫记住第二个名字。
+    /// 它是「建议值」不是权威：被占用或不合法时网关自己那个名字仍然算数。
+    /// </summary>
+    public string? ExternalUsername { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>
     /// 首登强制改密标记。缺省弱口令（admin/admin）种子账号置 true，登录后前端强制跳「设置新口令」，
     /// 改密成功前 mcp=1 的 token 不放行 /gw/logs*（服务端策略门 + 前端守卫双保险）。
-    /// LLMGW_ADMIN_PASSWORD 只用于首次 bootstrap 或破玻璃重置，不作为长期口令权威。
+    /// 默认模式下 LLMGW_ADMIN_PASSWORD 只用于首次 bootstrap 或破玻璃重置；
+    /// LLMGW_ADMIN_ENV_AUTHORITY=1 时由环境变量长期托管。
     /// </summary>
     public bool MustChangePassword { get; set; }
 
     /// <summary>
     /// 口令是否已被真人主动改过（认领）。change-password 成功后置 true。
-    /// 认领后重启不再被 LLMGW_ADMIN_PASSWORD 覆盖；只有 LLMGW_ADMIN_FORCE_RESET 会破玻璃重置。
+    /// 认领后重启默认不再被 LLMGW_ADMIN_PASSWORD 覆盖；只有一次性破玻璃或 env authority 模式会校准。
     /// </summary>
     public bool PasswordChangedByUser { get; set; }
 

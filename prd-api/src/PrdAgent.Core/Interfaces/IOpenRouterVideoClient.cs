@@ -22,6 +22,15 @@ public interface IOpenRouterVideoClient
         string? expectedModel = null,
         CancellationToken ct = default);
 
+    /// <summary>按提交阶段记录的 Offering 精确恢复任务状态。</summary>
+    Task<OpenRouterVideoStatus> GetStatusForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        string? expectedModel,
+        string? offeringId,
+        CancellationToken ct = default)
+        => GetStatusAsync(appCallerCode, jobId, expectedModel, ct);
+
     /// <summary>
     /// 下载视频 mp4 二进制（OpenRouter URL 需 API Key 鉴权，浏览器无法直接播放，
     /// 必须由后端下载后转存到 COS）
@@ -36,6 +45,26 @@ public interface IOpenRouterVideoClient
         int urlIndex = 0,
         string? expectedModel = null,
         CancellationToken ct = default);
+
+    /// <summary>按提交阶段记录的 Offering 精确恢复并下载视频。</summary>
+    Task<OpenRouterVideoDownload> DownloadVideoBytesForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex,
+        string? expectedModel,
+        string? offeringId,
+        CancellationToken ct = default)
+        => DownloadVideoBytesAsync(appCallerCode, jobId, urlIndex, expectedModel, ct);
+
+    /// <summary>打开视频响应流，供 HTTP 下载端点边读边写，避免把整段视频保留在托管内存。</summary>
+    Task<OpenRouterVideoStream> OpenVideoStreamForOfferingAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex,
+        string? expectedModel,
+        string? offeringId,
+        CancellationToken ct = default)
+        => Task.FromResult(OpenRouterVideoStream.Fail("当前视频客户端暂不支持流式下载"));
 }
 
 public class OpenRouterVideoSubmitRequest
@@ -92,6 +121,8 @@ public class OpenRouterVideoSubmitResult
     public double? Cost { get; set; }
     /// <summary>实际使用的模型 id（Gateway 解析结果）</summary>
     public string? ActualModel { get; set; }
+    /// <summary>实际完成提交的 Offering ID，供异步轮询和下载精确恢复上游。</summary>
+    public string? OfferingId { get; set; }
     /// <summary>按实际模型能力归一化后的生成时长。</summary>
     public int? ActualDurationSeconds { get; set; }
 }
@@ -122,4 +153,55 @@ public class OpenRouterVideoDownload
     public byte[]? Bytes { get; set; }
     public string? ContentType { get; set; }
     public string? ErrorMessage { get; set; }
+}
+
+/// <summary>由调用方释放的视频响应流。</summary>
+public sealed class OpenRouterVideoStream : IAsyncDisposable
+{
+    private IDisposable? _owner;
+
+    private OpenRouterVideoStream(
+        bool success,
+        Stream? content,
+        string? contentType,
+        long? contentLength,
+        string? errorMessage,
+        IDisposable? owner)
+    {
+        Success = success;
+        Content = content;
+        ContentType = contentType;
+        ContentLength = contentLength;
+        ErrorMessage = errorMessage;
+        _owner = owner;
+    }
+
+    public bool Success { get; }
+    public Stream? Content { get; }
+    public string? ContentType { get; }
+    public long? ContentLength { get; }
+    public string? ErrorMessage { get; }
+
+    public static OpenRouterVideoStream Ok(
+        Stream content,
+        string? contentType,
+        long? contentLength,
+        IDisposable owner)
+        => new(true, content, contentType, contentLength, null, owner);
+
+    public static OpenRouterVideoStream Fail(string message)
+        => new(false, null, null, null, message, null);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (Content != null)
+                await Content.DisposeAsync();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _owner, null)?.Dispose();
+        }
+    }
 }

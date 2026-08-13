@@ -107,7 +107,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = CandidateExtensions(d, t);
         foreach (var ext in exts)
         {
             if (!string.IsNullOrWhiteSpace(d) && !string.IsNullOrWhiteSpace(t))
@@ -129,7 +129,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = CandidateExtensions(d, t);
         foreach (var ext in exts)
         {
             try
@@ -142,6 +142,12 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             }
             catch (Exception ex)
             {
+                if (ext == "mp4"
+                    && string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                    && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+                {
+                    throw;
+                }
                 _logger.LogWarning(ex, "R2 deleteBySha failed. sha={Sha}", sha);
             }
         }
@@ -158,6 +164,17 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var ext = MimeToExt(mime);
         var key = BuildObjectKey(d, t, sha, ext);
         return BuildPublicUrl(key);
+    }
+
+    private static string[] CandidateExtensions(string? domain, string? type)
+    {
+        if (string.Equals(domain, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+            return ["mp4"];
+        if (string.Equals(domain, AppDomainPaths.DomainVisualAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeImg, StringComparison.Ordinal))
+            return ["png", "jpg", "jpeg", "webp", "gif"];
+        return ["png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt"];
     }
 
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
@@ -511,6 +528,21 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
     private bool IsSafeDeleteAllowed(string normalizedKey, out string reason)
     {
         if (IsItTestKey(normalizedKey)) { reason = "_it"; return true; }
+        if (AssetStorageDeletePolicy.IsVersionedUserAvatarKey(normalizedKey, _prefix))
+        {
+            reason = "superseded_avatar";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedVideoKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_video";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedImageKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_image";
+            return true;
+        }
         if (!_enableSafeDelete) { reason = "disabled"; return false; }
         if (_safeDeleteAllowPrefixes.Length == 0) { reason = "empty_allowlist"; return false; }
 
