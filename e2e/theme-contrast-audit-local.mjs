@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { AUDIT_FN, aggregate, renderMarkdown } from './contrast-audit-core.mjs';
+import { AUDIT_FN, aggregate, renderMarkdown, resampleGradientFindings } from './contrast-audit-core.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN = path.join(REPO_ROOT, 'prd-admin');
@@ -112,11 +112,14 @@ for (const theme of ['light', 'dark']) {
       await page.waitForTimeout(1800);
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
       if (actual !== theme) { console.log(`  [跳过] ${route} 主题未生效(${actual})`); continue; }
-      const findings = await page.evaluate(AUDIT_FN);
+      let findings = await page.evaluate(AUDIT_FN);
       if (findings.length) {
         const shot = `${theme}${route.replace(/\//g, '_')}.png`;
-        await page.screenshot({ path: path.join(OUT, shot) });
-        report.push({ theme, route, shot, findings });
+        const buf = await page.screenshot({ path: path.join(OUT, shot) });
+        // 渐变/背景图上的元素：祖先链推断出的底色是假的，改用截图真实像素重算
+        findings = await resampleGradientFindings(page, buf, findings);
+        findings = findings.filter((f) => f.ratio < f.need);   // 重算后达标的直接剔除
+        if (findings.length) report.push({ theme, route, shot, findings });
       }
       console.log(`[${theme}] ${route.padEnd(30)} ${findings.length} 处`);
     } catch (e) {

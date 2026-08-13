@@ -16,3 +16,6 @@
 | test | prd-admin | 修守卫三处判据缺陷：declValue 不认 `}` 导致 JSX style 取值越界误报（全仓 lightFg 1851→1611）、var() 兜底色误判（仅当变量在浅色块有定义才豁免）、hex 只认 6 位漏掉 `#fff` |
 | docs | prd-admin | debt.frontend.md 收口三轮验收状态：已验收项与三项拿不到视觉证据的浮层分列，写明卡点是程序化选区触发不了指针事件、下次取证必须用真实指针事件，并声明残余风险可接受 |
 | test | e2e | 新增全站双主题对比度审计脚本 `e2e/theme-contrast-audit.mjs`（pnpm audit:contrast）：登录后遍历 48 条路由 × 双主题，对实际渲染的文本/图标算真实对比度，按配色聚合出「影响多少条路由」，把浅色缺陷的验收从人工逐屏改为一次扫全站 |
+| fix | prd-admin | 修复分支徽章 BranchBadge 对比度不足：0.85 半透明彩底 + #e2e8f0 只有 2.93:1，改为不透明 800 档色 + 白字 7.09:1。该徽章出现在每一屏，全站对比度审计里 364 处命中归零 |
+| fix | prd-admin | 修复前端智能体页浅色主题下深字压深底（1.08:1）：页面钉死暗色画布但文字走全局 token，挂 tokens.css 的 surface-tone-dark 让内部 token 整体切暗，该页命中 24 → 10 |
+| test | e2e | 对比度审计新增渐变底像素重采样：祖先链取不到 background-color 时（层叠 linear-gradient / 背景图）改从本屏截图真实采样底色重算，此前这类元素一路穿到页面底色，144 处假阳性（含被误测的 Toast 自身） |

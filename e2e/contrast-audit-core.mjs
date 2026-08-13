@@ -87,7 +87,8 @@ export const AUDIT_FN = () => {
     const r = el.getBoundingClientRect();
     out.push({ kind: 'text', text: el.textContent.trim().slice(0, 24), sel: label(el),
       fg: cs.color, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
-      box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) } });
+      box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
+      vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });
   }
 
   for (const el of document.querySelectorAll('svg')) {
@@ -111,7 +112,8 @@ export const AUDIT_FN = () => {
     const r = el.getBoundingClientRect();
     out.push({ kind: 'icon', text: '', sel: label(el), fg: raw, bg: `rgb(${bg})`,
       ratio: +c.toFixed(2), need: 3, needsEye,
-      box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) } });
+      box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
+      vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });
   }
 
   return out.sort((a, b) => a.ratio - b.ratio).slice(0, 60);
@@ -146,4 +148,61 @@ export function renderMarkdown({ title, base, routeCount, report, groups, note }
     ...groups.slice(0, 40).map((g) =>
       `| ${g.routeCount} | ${g.kind} | \`${g.fg}\` | \`${g.bg}\` | ${g.ratio}:1 | ${g.need}:1 | \`${g.samples[0]}\` |`),
   ].join('\n');
+}
+
+
+/**
+ * 祖先链上有渐变/背景图时，算出来的底色是假的（会一路穿到页面底色）。
+ * 这里改为从本屏截图里**真实采样**该元素边缘的像素当底色重算 —— 采样点取元素框内
+ * 左上 2px 处，绕开字形。采样不到就保留 needsEye 标记交人工，不硬判失败。
+ */
+export async function resampleGradientFindings(page, shotBuffer, findings) {
+  const targets = findings.filter((f) => f.needsEye && f.vbox && f.vbox.w > 4 && f.vbox.h > 4);
+  if (!targets.length) return findings;
+  const results = await page.evaluate(async ({ b64, items }) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const scale = img.width / window.innerWidth;
+    const cv = document.createElement('canvas');
+    cv.width = img.width; cv.height = img.height;
+    const cx = cv.getContext('2d', { willReadFrequently: true });
+    cx.drawImage(img, 0, 0);
+
+    const one = document.createElement('canvas');
+    one.width = one.height = 1;
+    const oc = one.getContext('2d', { willReadFrequently: true });
+    const compose = (color, bg) => {
+      oc.clearRect(0, 0, 1, 1);
+      oc.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`;
+      oc.fillRect(0, 0, 1, 1);
+      try { oc.fillStyle = color; } catch { return null; }
+      oc.fillRect(0, 0, 1, 1);
+      const d = oc.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    };
+    const chan = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    const lum = ([r, g, b]) => 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+    const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+
+    return items.map(({ vbox, fg }) => {
+      const px = Math.round((vbox.x + 2) * scale);
+      const py = Math.round((vbox.y + 2) * scale);
+      if (px < 0 || py < 0 || px >= img.width || py >= img.height) return null;
+      const d = cx.getImageData(px, py, 1, 1).data;
+      const bg = [d[0], d[1], d[2]];
+      const composed = compose(fg, bg);
+      if (!composed) return null;
+      return { bg, ratio: +contrast(composed, bg).toFixed(2) };
+    });
+  }, { b64: shotBuffer.toString('base64'), items: targets.map((f) => ({ vbox: f.vbox, fg: f.fg })) });
+
+  targets.forEach((f, i) => {
+    const r = results[i];
+    if (!r) return;
+    f.bg = `rgb(${r.bg})`;
+    f.ratio = r.ratio;
+    f.sampled = true;          // 底色来自截图真实像素，不是祖先链推断
+  });
+  return findings;
 }

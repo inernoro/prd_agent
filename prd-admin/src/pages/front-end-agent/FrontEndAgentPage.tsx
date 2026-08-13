@@ -275,8 +275,11 @@ export function FrontEndAgentPage() {
 
   const ActiveIcon = activeTask.icon;
 
+  // surface-tone-dark：本页是钉死的暗色创作画布（bg-#0a0a0c），但文字此前走全局
+  // token —— 浅色主题下变成深字压深底，实测 1.08:1。用 tokens.css 提供的暗色画布
+  // 容器类让内部 token 整体切暗。
   return (
-    <div className="fea-page h-full min-h-0 flex flex-col overflow-hidden relative bg-[#0a0a0c]">
+    <div className="fea-page surface-tone-dark h-full min-h-0 flex flex-col overflow-hidden relative bg-[#0a0a0c]">
       <FrontEndCosmosBackground />
 
       <header className="relative shrink-0 px-6 pt-5 pb-3 fea-fade-up">
