@@ -123,6 +123,7 @@
 | 31 | PDF 包装站的壳子从 `cdn.jsdelivr.net` 取 PDF.js 把 PDF 画成 canvas。桌面站内大预览已改成直连原始 PDF、绕开壳子，但**分享页与移动端仍走壳子**（移动 Safari / 微信 WebView 在 iframe 里渲染不了 PDF，绕不开），CDN 不可达时那里依然只剩一条降级下载链 | 验收发现大预览空白后查出的根因。壳子已补 12s 加载超时，不会再永久转圈；但「看得见正文」在 CDN 不通的网络下仍做不到。且超时只对**新上传**的 PDF 生效——壳子 HTML 在上传时就烘进对象存储了，存量站要重传才带上 | 把 PDF.js 自托管到托管域名（或主站同源）后由壳子就近取，彻底摘掉第三方 CDN 依赖；存量站另跑一次壳子回填 |
 | 28 | 提问面板在「需要登录才能提问」这一态里只有一行说明加一枚 `LogIn` 图标，没有可点的登录控件，访客在面板里走到了死路 | PR #1358 第四轮 review 提出，判断成立但不属可阻塞类别：登录入口在分享页顶栏（「登录并保存」）本来就可达，功能没有不工作，只是这一屏里多走一步。按两轮熔断规则记账 | 把那枚图标换成真正的登录按钮，带 `redirect` 回当前分享页；顺带确认登录回来后面板保持展开、问题草稿不丢 |
 | 27 | 分享面板挑开场问题时用的是**大小写敏感**的去重，而后端 `AskOpeningQuestions.Normalize` 落库前按大小写不敏感去重。用户挑了只有大小写不同的两条，界面显示两条、存下去只剩一条，且不提示 | PR #1358 第四轮 review 提出，判断成立。属「设了没生效」的静默丢弃，与已修的题库上限同族，但触发要用户刻意挑大小写变体 | 前端 add / toggle / 选中态三处统一改成与后端一致的大小写不敏感比较，判定收进 `askTypes` 唯一函数 |
+| 32 | 「向我提问」（PR #1351/#1358）没有对应的 `design.*` 章节：[design.web-hosting.md](./design.web-hosting.md) 全文没有提及提问能力，唯一 SSOT 是 [plan.web-hosting.preview-and-ask.md](./plan.web-hosting.preview-and-ask.md)（状态看板）与本表这一堆逐条 review 修复 | entropy-cleanup PR #1367 review（Codex）指出：D6 若把交付该功能的 changelog 标记为「已处理」，会让后续扫描永久跳过这个真实的设计文档缺口。故对应 changelog 未登记进 `changelogs/.entropy-manifest.yml`，会持续被重新报出 | 在 [design.web-hosting.md](./design.web-hosting.md) 新增「向我提问」章节，覆盖为什么只依据本页正文回答、配额闸设计、开场问题三态语义；补齐后再登记 manifest |
 
 ### 已修复（closed）
 

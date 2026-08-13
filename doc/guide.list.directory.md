@@ -289,7 +289,6 @@
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
 - [功能验收体系 · 债务台账](./debt.acceptance.system.md) `debt.acceptance.system`
 - [智能体宇宙 · 债务台账](./debt.agent-universe.md) `debt.agent-universe`
-- [头像编辑器 · 债务台账](./debt.avatar-editor.md) `debt.avatar-editor`
 - [CDS 平台杂项 · 债务台账](./debt.cds.md) `debt.cds`
 - [CDS Agent 工作台 · 债务台账](./debt.cds.agent.md) `debt.cds.agent`
 - [CDS Agent 验收 smoke 断言漂移 · 债务台账](./debt.cds.agent.acceptance-smoke-drift.md) `debt.cds.agent.acceptance-smoke-drift`
@@ -315,6 +314,7 @@
 - [LLM 网关物理剥离 · 债务台账](./debt.platform.llm-gateway.isolation.md) `debt.platform.llm-gateway.isolation`
 - [LLM Gateway 协议保真 · 债务台账](./debt.platform.llm-gateway.protocol-fidelity.md) `debt.platform.llm-gateway.protocol-fidelity`
 - [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
+- [头像编辑器 · 债务台账](./debt.prd-agent.avatar-editor.md) `debt.prd-agent.avatar-editor`
 - [产品与项目管理智能体 · 债务台账](./debt.product-agent.md) `debt.product-agent`
 - [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
