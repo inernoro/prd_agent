@@ -31,26 +31,18 @@ import { useNowTick } from '@/hooks/useNowTick';
 import { ApiError, apiRequest, apiUrl } from '@/lib/api';
 import { buildReleaseAgentTask } from '@/lib/releaseAgentTask';
 import { detectStall, resolveStepDetails, type ConsolePlanLike } from '@/lib/releaseConsoleView';
-import { buildEnvironmentSections } from '@/lib/releaseEnvironments';
+import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/releaseEnvironments';
 import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress';
 import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { Chip, formatClock, formatDateTime, formatDuration } from './release-center/shared';
-import type { CenterResponse, ReleaseCommitMeta, ReleaseLogEntry, ReleaseRun } from './release-center/types';
+// BranchOption 复用发布中心那一份：分支的展示名是 `branch` 不是 `name`，
+// 自己再声明一个接口只会让 TS 对着一个不存在的字段点头（真实数据里下拉全是空的）。
+import type { BranchOption, CenterResponse, ReleaseCommitMeta, ReleaseLogEntry, ReleaseRun } from './release-center/types';
 import { isReleaseFailed, isReleaseTerminal } from './release-center/types';
 
 interface ProjectLite { id: string; name?: string; githubRepoFullName?: string }
-interface BranchOption {
-  id: string;
-  name: string;
-  commitSha?: string;
-  githubCommitSha?: string;
-  subject?: string;
-  /** 预览入口由后端下发，是发布来源的 SSOT。前端不推导、不拼域名（CLAUDE.md §11）。 */
-  previewUrl?: string;
-  previewUrls?: string[];
-}
 interface PreflightCheck { id?: string; label?: string; name?: string; status: string; blocking?: boolean; detail?: string }
 interface PreflightResult { checks: PreflightCheck[] }
 
@@ -170,7 +162,8 @@ export function ReleaseConsolePage(): JSX.Element {
       const res = await apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`);
       setCenter(res);
       setError('');
-      setTargetId((current) => (res.rows.some((row) => row.target.id === current) ? current : res.rows[0]?.target.id || ''));
+      // 只在当前选中项消失时清空，让 resolveSelectedTargetId 去挑；这里别自己挑 rows[0]。
+      setTargetId((current) => (res.rows.some((item) => item.target.id === current) ? current : ''));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
@@ -229,7 +222,27 @@ export function ReleaseConsolePage(): JSX.Element {
 
   /* ── 派生 ─────────────────────────────────────────────── */
   const rows = center?.rows || [];
-  const row = useMemo(() => rows.find((item) => item.target.id === targetId) || rows[0], [rows, targetId]);
+  /*
+   * 环境分组走后端下发的 environments（buildEnvironmentSections 是既有 SSOT）。
+   * 后端没下发时它退化成一个不分组的列表 —— 刻意不按 environment 字段自己分组，
+   * 那等于把归一判据抄第二份，同一个目标会在两个页面落进不同的组。
+   *
+   * 设计稿画了「客户」分组，后端的 environment 枚举只有 production / staging / other
+   * 三档，客户环境实际落在 other。造一个后端不存在的分组，用户按它筛出来永远是空的。
+   */
+  const envSections = useMemo(
+    () => buildEnvironmentSections(center?.environments, rows),
+    [center?.environments, rows],
+  );
+  /*
+   * 选中哪个环境交给既有的 resolveSelectedTargetId：用户选过的还在就保留，
+   * 否则回到第一个**启用中**的目标。用 rows[0] 会落到已停用的临时目标上——
+   * 真实数据里第一行正好是「MAP 正式环境 LLMGW 临时目标已关闭」。
+   */
+  const row = useMemo(() => {
+    const id = resolveSelectedTargetId(envSections, targetId);
+    return rows.find((item) => item.target.id === id) || rows[0];
+  }, [envSections, rows, targetId]);
   const commitMeta: Record<string, ReleaseCommitMeta> = center?.commitMeta || {};
   const runsOfProject = center?.runs || [];
   const failedRuns = runsOfProject.filter((item) => isReleaseFailed(item.status));
@@ -260,21 +273,6 @@ export function ReleaseConsolePage(): JSX.Element {
   const sourceUrls = resolveReleaseSourceUrls({ branch });
   const previewUrl = sourceUrls[0] || '';
   const etaText = running ? releaseEtaText(shown?.startedAt, row?.releaseEstimate, nowMs) : '';
-
-  /*
-   * 环境分组走后端下发的 environments（buildEnvironmentSections 是既有 SSOT）。
-   * 后端没下发时它退化成一个不分组的列表 —— 刻意不按 environment 字段自己分组，
-   * 那等于把归一判据抄第二份，同一个目标会在两个页面落进不同的组。
-   */
-  const envSections = useMemo(
-    () => buildEnvironmentSections(center?.environments, rows),
-    [center?.environments, rows],
-  );
-  /*
-   * 设计稿画了「客户」分组，后端的 environment 枚举只有 production / staging / other
-   * 三档（release-environment.ts::RELEASE_ENVIRONMENT_ORDER），客户环境实际落在 other。
-   * 这里按真枚举渲染 —— 造一个后端不存在的分组，用户按它筛出来的东西永远是空的。
-   */
 
   /**
    * 本次运行依据的计划。优先按 run.progress.planId 精确命中；没有运行记录时
@@ -618,7 +616,7 @@ export function ReleaseConsolePage(): JSX.Element {
                 {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
                 {branches.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name}
+                    {item.branch}
                     {item.commitSha ? ` · ${item.commitSha.slice(0, 7)}` : ''}
                     {commitMeta[item.commitSha || '']?.subject ? ` · ${commitMeta[item.commitSha || ''].subject}` : ''}
                   </option>
@@ -633,7 +631,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   : ''}
                 {isProtected ? ' · 受保护环境需二次确认' : ''}
                 <span className="ml-2 font-mono text-[10.5px]">
-                  来源 {previewUrl || '取不到预览地址，试跑会拦下这一项'}
+                  · 来源 {previewUrl || '取不到预览地址，试跑会拦下这一项'}
                   {sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}
                 </span>
               </span>
