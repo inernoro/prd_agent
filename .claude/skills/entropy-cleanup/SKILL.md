@@ -332,18 +332,19 @@ git push -u origin $(git branch --show-current)
   - **其余的每一个都要在它自己的 head 上跑审计**，不是在当前分支上跑——当前分支干净
     不代表那个 PR 干净，拿此处的绿灯去批准彼处的合并是在用一份不相干的证据放行。
 
-    做法：先 `git fetch origin <该PR的head分支>`（孤立/浅 checkout 里这个远程分支的
-    ref 本地还不存在，`worktree add` 解析不了未 fetch 过的 ref），再
-    `git worktree add <临时目录> FETCH_HEAD`（**用 worktree，禁止直接 `git checkout <sha>`**
-    ——那会 detach 当前工作区的 HEAD，Step 6.3 取当前分支名会拿到空字符串，后续创建 PR
-    直接断掉）。在这个临时 worktree 里重跑一遍 D1-D4 双向扫描 + `doc-readability-check.py
-    --ratchet --baseline-ref origin/main`（**必须带 `--baseline-ref`**，否则比对的是那个
-    历史 PR 自己提交时冻结的基线文件——它可能比当前 main 的基线更宽松，会把「相对现在
-    main 其实在退步」的欠账放绿灯放过去；CI 自己跑 ratchet 也是带 `--baseline-ref` 调用，
-    这里对齐同一口径），再用 `mcp__github__pull_request_read`（method=`get_diff`）对这个
-    PR 走一遍 **6.4 同款内容核查**（删除行是否真是幽灵、追加行范围是否仅限
-    doc/changelog/技能元数据、有没有混入代码文件或不属于本轮的生成物）。审计完成后
-    `git worktree remove <临时目录>`，确保当前工作分支分毫未动。
+    做法：先 `git fetch origin main <该PR的head分支>`（孤立/浅 checkout 里 `origin/main`
+    和这个远程分支的 ref 本地都可能还不存在或已过期，`worktree add` 与带 `--baseline-ref`
+    的棘轮都需要它们已 fetch 到），再 `git worktree add <临时目录> FETCH_HEAD`（**用
+    worktree，禁止直接 `git checkout <sha>`**——那会 detach 当前工作区的 HEAD，Step 6.3
+    取当前分支名会拿到空字符串，后续创建 PR 直接断掉）。在这个临时 worktree 里重跑一遍
+    D1-D4 双向扫描 + `doc-readability-check.py --ratchet --baseline-ref origin/main`
+    （**必须带 `--baseline-ref`**，否则比对的是那个历史 PR 自己提交时冻结的基线文件——
+    它可能比当前 main 的基线更宽松，会把「相对现在 main 其实在退步」的欠账放绿灯放过去；
+    CI 自己跑 ratchet 也是带 `--baseline-ref` 调用，这里对齐同一口径），再用
+    `mcp__github__pull_request_read`（method=`get_diff`）对这个 PR 走一遍 **6.4 同款内容
+    核查**（删除行是否真是幽灵、追加行范围是否仅限 doc/changelog/技能元数据、有没有混入
+    代码文件或不属于本轮的生成物）。审计完成后 `git worktree remove <临时目录>`，确保
+    当前工作分支分毫未动。
 
     - 结构审计（D1-D4+棘轮）与 6.4 内容核查**都**通过，且 `mcp__github__pull_request_read`
       （method=`get`）返回的 `mergeable_state` 为 `clean`/`unstable`（无冲突）→ **不要直接
@@ -352,6 +353,10 @@ git push -u origin $(git branch --show-current)
       比当天自己产出的 PR 更需要一次人的眼睛过一遍。把审计结论（干净，可合并）连同
       PR 号写进本轮新 PR 的「已知（非本轮阻塞）」小节，请用户确认后再合并，不要替用户
       按下合并键。
+    - `mergeable_state` 为 `behind`（分支落后于 main，无实质冲突只是没更新）→ 同样只
+      报告不处理：记「#N 落后于 main N 个提交，建议合并前先更新分支」，不擅自
+      `update_pull_request_branch` 或 rebase 它——那仍然是对另一个会话产出的分支做写
+      操作，交给用户或它自己下一轮跑。
     - `mergeable_state` 为 `dirty`（真冲突，通常是 `changelogs/.entropy-manifest.yml` 尾部
       追加点撞车）→ **禁止自动 rebase/强解冲突**（那需要判断哪些内容已被后续 PR 覆盖、
       哪些仍缺失，属于需要人工判断的场景，机械脚本不做这个决策）。只记录该 PR 号、
