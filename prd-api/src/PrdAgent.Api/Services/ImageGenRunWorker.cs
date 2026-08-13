@@ -1101,18 +1101,21 @@ public class ImageGenRunWorker : BackgroundService
             var url = image.Url;
             var originalUrl = image.OriginalUrl;
             var originalSha256 = image.OriginalSha256;
+            var displaySha256 = image.DisplaySha256;
             var base64 = image.Base64;
 
             ImageAsset? persisted = null;
             if (!string.IsNullOrWhiteSpace(run.WorkspaceId))
             {
                 persisted = await TryPersistToImageMasterAsync(
-                    run, prompt, requestedSize, effSize, base64, url, originalUrl, originalSha256, assetStorage, ct);
+                    run, prompt, requestedSize, effSize, base64, url, originalUrl, originalSha256,
+                    displaySha256, assetStorage, ct);
                 if (persisted != null)
                 {
                     url = persisted.Url;
                     originalUrl = persisted.OriginalUrl;
                     originalSha256 = persisted.OriginalSha256;
+                    displaySha256 = persisted.DisplaySha256;
                     base64 = null;
                 }
             }
@@ -1120,7 +1123,7 @@ public class ImageGenRunWorker : BackgroundService
             await UpsertRunItemAsync(
                 run, itemIndex, i, prompt, requestedSize, ImageGenRunItemStatus.Done,
                 base64, url, image.RevisedPrompt, null, null, ct, effSize,
-                meta?.SizeAdjusted ?? false, meta?.RatioAdjusted ?? false);
+                meta?.SizeAdjusted ?? false, meta?.RatioAdjusted ?? false, displaySha256);
             await _db.ImageGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
                 Builders<ImageGenRun>.Update.Inc(x => x.Done, 1),
@@ -1142,11 +1145,13 @@ public class ImageGenRunWorker : BackgroundService
                 url,
                 originalUrl,
                 originalSha256,
+                displaySha256,
                 asset = persisted == null ? null : new
                 {
                     id = persisted.Id,
                     sha256 = persisted.Sha256,
                     url = persisted.Url,
+                    displaySha256 = persisted.DisplaySha256,
                     originalUrl = persisted.OriginalUrl,
                     originalSha256 = persisted.OriginalSha256
                 },
