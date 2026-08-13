@@ -28,7 +28,8 @@
 | 订阅源定期同步 | 是 | DocumentSyncWorker (BackgroundService + PeriodicTimer) |
 | 手动触发同步 | 是 | POST /entries/{id}/sync |
 | 全文搜索 | 否 | 待实现（需 MongoDB Atlas Search 或 embedding） |
-| RAG / 语义检索 | 否 | 待实现 |
+| RAG / 语义检索 | 部分 | 已就绪：embedding 通路（网关 compute-then-send）、按模型/维度打标的向量存储、切块与增量索引哈希算法。未接线：没有 Worker 或服务实际调用切块/embedding 去处理存量文档并写入向量存储，检索服务、回答引用注入、前端挂库同样未接线。本部署也尚无可用的 embedding 供应商，用户可见的入口暂未打开，详见 [debt.knowledge-base.md](./debt.knowledge-base.md)（K-2）与 [debt.platform.embedding-provider.md](./debt.platform.embedding-provider.md) |
+| 移动端沉浸阅读 | 是 | 阅读组件（知识库与更新中心共用）按消费方显式开启接管顶栏、隐藏应用外壳；内联渲染的 HTML 报告提供多档字号（上传附件型 HTML 走隔离 iframe，不提供该控件） |
 
 ## 三、数据模型
 
