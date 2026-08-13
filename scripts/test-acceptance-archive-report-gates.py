@@ -281,6 +281,68 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
     if html.count('class="edition-version">v0.9</small>') != 2:
         raise AssertionError("report version must be visible in the sidebar and masthead")
 
+    business_report = """
+## 老板一页结论
+
+| 指标 | 数量 | 给业务读者的解释 |
+|---|---:|---|
+| 计划测试 | 191 | 本轮合同项 |
+| 已完成 | 79 | 已有明确结果 |
+| 通过 | 48 | 业务断言成立 |
+| 失败 | 31 | 需要处理和复测 |
+| 功能未执行 | 112 | 不能按通过计算 |
+
+## 双环境覆盖差异
+
+| 环境 | 计划 | 已完成 | 通过 | 失败 | 未执行 | 业务结论 |
+|---|---:|---:|---:|---:|---:|---|
+| CDS | 103 | 78 | 47 | 31 | 25 | 已执行完整矩阵，仍有失败 |
+| 正式环境 | 88 | 1 | 1 | 0 | 87 | 安全门槛下仅执行只读检查 |
+
+## 截图证据怎么读
+
+| 视觉指标 | 数量 | 代表什么 |
+|---|---:|---|
+| 计划截图槽位 | 148 | 合同要求 |
+| 已采集且可审核 | 148 | 字段齐全，不等于通过 |
+| 能直接证明通过 | 36 | 目标状态成立 |
+| 明确不通过 | 0 | 图片直接呈现失败 |
+| 不能证明业务结果 | 112 | 仍需运行态证据 |
+
+## 不通过问题与复现
+
+| 根因 | 影响项数 | 影响模块 | 验收项编号 | 实际结果 | 期望结果 | 复现方式 | 本次直接证据 | 复测方法 | 当前责任角色 | 完成时限 | 恢复动作 |
+|---|---:|---|---|---|---|---|---|---|---|---|---|
+| ASR 默认池没有健康成员 | 6 | 录音转笔记 | REC-003 | 无法转录 | 返回转录笔记 | 首页 → 知识库 → 上传音频 → 等待转录 | [失败记录](#老板一页结论) | [方法](#老板一页结论) | 录音负责人 | 下一轮复测前 | 恢复模型池后复测 |
+"""
+    business_html = archive.build_interactive_html(
+        "稳定冒烟",
+        "fail",
+        compiled_markdown(archive, business_report, annotated_manifest),
+        annotated_manifest,
+    )
+    for needle in (
+        '<span>计划测试</span><strong>191</strong>',
+        '<span>已完成</span><strong>79</strong>',
+        '<span>通过</span><strong>48</strong>',
+        '<span>失败</span><strong>31</strong>',
+        '<span>功能未执行</span><strong>112</strong>',
+        '计划 191 项，完成 79 项',
+        '已采集”只代表图、路径、时间和方法齐全，不代表业务已经通过',
+        'CDS：完成 78/103',
+        '正式环境：完成 1/88',
+        '数字相同纯属巧合，不能一一对应',
+        'ASR默认池没有健康成员',
+        '<b>复现：</b>首页→知识库→上传音频→等待转录',
+        '<b>恢复：</b>恢复模型池后复测',
+        '<b>编号：</b>REC-003',
+        '<b>责任：</b>录音负责人；<b>时限：</b>下一轮复测前',
+    ):
+        if needle not in business_html:
+            raise AssertionError(f"business decision page is missing: {needle}")
+    if "未抽取到结构化重点项" in business_html:
+        raise AssertionError("business decision reports must not show the generic extraction fallback")
+
     daily_report = """
 # 每日验收报告
 

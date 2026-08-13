@@ -1,6 +1,107 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { composeSupervisorReport } from '../compose-stable-smoke-supervisor-report.mjs';
+import {
+  collectBusinessFailureGroups,
+  composeSupervisorReport,
+  parseFunctionalExecutionCounts,
+  renderBusinessDecisionPage,
+} from '../compose-stable-smoke-supervisor-report.mjs';
+
+test('老板一页结论使用用例级守恒口径并解释截图证明力', () => {
+  const lead = '> 主管结论：不通过。共 191 项，48 项通过、31 项不通过、112 项未执行。';
+  const failureSection = `## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 问题或关闭条件 | 负责人 | 查看方法 |
+|---|---|---|---|---|---|---|---|---|
+| CDS | 录音转笔记 | 结束转录 | 功能 | 首页 → 知识库 → 录音转笔记 → 上传音频 → 等待转录 | 不通过 | ASR 默认池必须处于就绪状态 expect(received).toBe(expected) | 录音负责人 | [查看](#method-rec-003) |
+| CDS | 模型治理 | 默认池 | 功能 | 首页 → 开放平台 → 模型网关 → 默认池 | 不通过 | ASR 默认池必须处于就绪状态 Expected: true Received: false | 网关负责人 | [查看](#method-gw-001) |
+| CDS | 视频创作 | 成片 | 功能 | 首页 → 视频创作 → 提交脚本 → 等待成片 | 不通过 | 没有可用的视频生成模型 | 视频负责人 | [查看](#method-video-004) |`;
+  const visualLead = `## 主管先看
+
+| 项目 | 结果 | 说明 |
+|---|---|---|
+| 可审核证据 | 148/148 | 字段完整 |
+| 状态结果 | 通过 36，不通过 0，需补证 0，需干预 112 | 严格结论 |`;
+  const counts = parseFunctionalExecutionCounts(lead);
+  assert.deepEqual(counts, {
+    planned: 191,
+    completed: 79,
+    passed: 48,
+    failed: 31,
+    notRun: 112,
+    completionRate: 79 / 191 * 100,
+    executedPassRate: 48 / 79 * 100,
+    balanced: true,
+  });
+  const groups = collectBusinessFailureGroups(failureSection);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].count, 2);
+  assert.deepEqual(groups[0].caseIds.sort(), ['GW-001', 'REC-003']);
+  const page = renderBusinessDecisionPage(lead, failureSection, visualLead, {
+    runId: 'stsmk-20260813-1021-2f5a4329',
+    environmentCoverage: [
+      { environment: 'cds', planned: 103, completed: 78, passed: 47, failed: 31, notRun: 25 },
+      { environment: 'production', planned: 88, completed: 1, passed: 1, failed: 0, notRun: 87 },
+    ],
+  });
+  assert.match(page, /## 老板一页结论/);
+  assert.match(page, /\| 已完成 \| 79 \|/);
+  assert.match(page, /\| 完成率 \| 41\.4% \|/);
+  assert.match(page, /\| 已执行通过率 \| 60\.8% \|/);
+  assert.match(page, /\| 已采集且可审核 \| 148 \| 图片、路径、时间和方法字段齐全，不等于验收通过 \|/);
+  assert.match(page, /\| 能直接证明通过 \| 36 \|/);
+  assert.match(page, /功能未执行 112 项与截图不能证明业务结果 112 张是两个独立维度/);
+  assert.match(page, /## 双环境覆盖差异/);
+  assert.match(page, /\| CDS \| 103 \| 78 \| 47 \| 31 \| 25 \|/);
+  assert.match(page, /CDS 本轮完成 78\/103，仍有 25 项未执行/);
+  assert.match(page, /\| 正式环境 \| 88 \| 1 \| 1 \| 0 \| 87 \|/);
+  assert.match(page, /录音无法转写（语音识别资源不可用） \| 2 \|/);
+  assert.match(page, /GW-001、REC-003|REC-003、GW-001/);
+  assert.doesNotMatch(page, /expect\(|Expected:|Received:/);
+  assert.match(page, /准备一段有清晰中文语音的音频/);
+  assert.match(page, /2026-08-15 10:21（北京时间）前/);
+  assert.match(page, /补齐语音识别成员，交付一条可打开且刷新仍存在的转录笔记/);
+  assert.match(page, /查看逐项失败结果/);
+});
+
+test('执行汇总覆盖旧报告口径并同步首屏所有数字', () => {
+  const functional = `# 功能报告
+
+> 主管结论：不通过。共 206 项，47 项通过、31 项不通过、128 项未执行。
+
+## 主管先看
+
+| 决策项 | 结论 | 主管动作 |
+|---|---|---|
+| 功能验收 | 47/206 通过，31 不通过，128 未执行 | 查看失败清单 |
+
+## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 问题或关闭条件 | 负责人 | 查看方法 |
+|---|---|---|---|---|---|---|---|---|
+| CDS | 视觉创作 | 文生图 | 功能 | 首页 → 视觉创作 → 生成 | 不通过 | 模型不可用 | 视觉负责人 | [查看](#method-vis-002) |`;
+  const summary = { coverage: { total: 191, passed: 48, failed: 31, notRun: 112 } };
+  const report = composeSupervisorReport(functional, '# 视觉', '', '', '', summary);
+  assert.match(report, /共 191 项，48 项通过、31 项不通过、112 项未执行/);
+  assert.match(report, /功能验收 \| 48\/191 通过，31 不通过，112 未执行/);
+  assert.match(report, /\| 已完成 \| 79 \|/);
+  assert.doesNotMatch(report, /47\/206|共 206 项/);
+});
+
+test('失败日志包含未转义竖线时仍能还原负责人、编号并按业务根因归组', () => {
+  const failures = `## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 问题或关闭条件 | 负责人 | 查看方法 |
+|---|---|---|---|---|---|---|---|---|
+| CDS | 录音转笔记 | 结束转录 | 功能 | 首页 → 知识库 → 上传音频 → 等待转录 | 不通过 | expect(locator).toBeVisible failed Locator: getByText(/录音和原文已保存|查看转录笔记/) Timeout: 180000ms | 录音负责人 | [查看](#method-rec-003) |
+| CDS | 视觉创作 | 文生图 | 功能 | 首页 → 视觉创作 → 输入描述 → 生成 | 不通过 | SSE 中断必须发生在任务仍处于活跃状态时 Expected pattern: /Queued|Running/i Received string: Failed | 视觉负责人 | [查看](#method-vis-002) |`;
+  const groups = collectBusinessFailureGroups(failures);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups.flatMap((group) => group.caseIds).sort(), ['REC-003', 'VIS-002']);
+  assert.deepEqual(groups.flatMap((group) => group.owners).sort(), ['录音负责人', '视觉负责人']);
+  assert.match(groups.map((group) => group.reason).join('\n'), /录音上传后未在 180 秒内进入转录完成状态/);
+  assert.match(groups.map((group) => group.reason).join('\n'), /任务已提前失败/);
+});
 
 test('主管功能账本与视觉截图合成为单份报告且不带入旧结论', () => {
   const functional = `# 新主管报告
@@ -113,10 +214,10 @@ test('主管功能账本与视觉截图合成为单份报告且不带入旧结�
 148 项逐项清单
 `;
   const composed = composeSupervisorReport(functional, visual, visualGate, visualPlan);
-  assert.match(composed, /2 条 验收项 中有 1 条不通过/);
+  assert.match(composed, /2 条 验收项编号 中有 1 条不通过/);
   assert.equal((composed.match(/## 主管验收总览/g) || []).length, 1);
   assert.equal((composed.match(/## 主管先看/g) || []).length, 1);
-  assert.match(composed, /视觉验收 \| 0\/148 张可审核证据，0\/10 个模块通过/);
+  assert.match(composed, /截图证据 \| 已采集 0\/148 张可审核证据；0\/10 个模块有直接通过证据/);
   assert.doesNotMatch(composed, /旧口径 124 张|caseId/);
   assert.match(composed, /Verdict: fail/);
   assert.doesNotMatch(composed, /## 视觉证据预算/);
@@ -144,8 +245,10 @@ test('功能报告缺少主管先看时自动生成双账本首屏', () => {
   const gate = `# 门禁\n\n## 主管先看\n\n| 项目 | 结果 | 说明 |\n|---|---|---|\n| 能否发布 | 不可以 | 有异常 |\n| 状态结果 | 通过 125，不通过 9，需补证 7，需干预 7 | 严格结论 |\n| 可审核证据 | 148/148 | 已核销 |`;
   const report = composeSupervisorReport(functional, visual, gate);
   assert.match(report, /## 主管先看/);
+  assert.match(report, /## 老板一页结论/);
+  assert.match(report, /\| 已完成 \| 14 \|/);
   assert.match(report, /功能验收 \| 12\/20 通过，2 不通过，6 未执行/);
-  assert.match(report, /视觉验收 \| 148\/148；通过 125，不通过 9，需补证 7，需干预 7/);
+  assert.match(report, /截图证据 \| 已采集 148\/148；状态判定为 通过 125，不通过 9，需补证 7，需干预 7/);
   assert.ok(report.indexOf('## 主管先看') < report.indexOf('## 主管验收总览'));
 });
 
