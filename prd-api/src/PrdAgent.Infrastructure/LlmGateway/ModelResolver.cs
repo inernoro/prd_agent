@@ -2074,50 +2074,65 @@ public class ModelResolver : IModelResolver
 
         if (_gatewayDb is not null)
         {
-            var logs = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmrequestlogs");
-            var fb = Builders<BsonDocument>.Filter;
-            var since = DateTime.UtcNow.AddDays(-7);
-            var filter = fb.And(
-                fb.Eq("TenantId", CurrentTenantId),
-                fb.Eq("ModelPoolId", group.Id),
-                fb.Gte("StartedAt", since),
-                fb.In("Status", new[] { "succeeded", "failed" }));
-            var stats = await logs.Aggregate()
-                .Match(filter)
-                .Group(new BsonDocument
-                {
-                    { "_id", BsonNull.Value },
-                    { "AverageDurationMs", new BsonDocument("$avg", "$DurationMs") },
-                })
-                .FirstOrDefaultAsync(ct);
-            if (stats is not null
-                && stats.TryGetValue("AverageDurationMs", out var duration)
-                && !duration.IsBsonNull)
+            try
             {
-                averageDurationMs = duration.BsonType switch
+                var logs = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmrequestlogs");
+                var fb = Builders<BsonDocument>.Filter;
+                var since = DateTime.UtcNow.AddDays(-7);
+                var filter = fb.And(
+                    fb.Eq("TenantId", CurrentTenantId),
+                    fb.Eq("ModelPoolId", group.Id),
+                    fb.Gte("StartedAt", since),
+                    fb.In("Status", new[] { "succeeded", "failed" }));
+                var stats = await logs.Aggregate()
+                    .Match(filter)
+                    .Group(new BsonDocument
+                    {
+                        { "_id", BsonNull.Value },
+                        { "AverageDurationMs", new BsonDocument("$avg", "$DurationMs") },
+                    })
+                    .FirstOrDefaultAsync(ct);
+                if (stats is not null
+                    && stats.TryGetValue("AverageDurationMs", out var duration)
+                    && !duration.IsBsonNull)
                 {
-                    BsonType.Int32 => duration.AsInt32,
-                    BsonType.Int64 => duration.AsInt64,
-                    BsonType.Double => (long)Math.Round(duration.AsDouble),
-                    BsonType.Decimal128 => (long)Math.Round(Decimal128.ToDecimal(duration.AsDecimal128)),
-                    _ => null,
-                };
+                    averageDurationMs = duration.BsonType switch
+                    {
+                        BsonType.Int32 => duration.AsInt32,
+                        BsonType.Int64 => duration.AsInt64,
+                        BsonType.Double => (long)Math.Round(duration.AsDouble),
+                        BsonType.Decimal128 => (long)Math.Round(Decimal128.ToDecimal(duration.AsDecimal128)),
+                        _ => null,
+                    };
+                }
+                var recentTen = await logs.Find(filter)
+                    .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
+                    .Project(Builders<BsonDocument>.Projection.Include("Status"))
+                    .Limit(10)
+                    .ToListAsync(ct);
+                recentTenRequests = recentTen.Count;
+                if (recentTenRequests > 0)
+                {
+                    recentTenSuccessRatePercent = Math.Round(
+                        recentTen.Count(log => string.Equals(
+                            log.TryGetValue("Status", out var status) && status.IsString ? status.AsString : null,
+                            "succeeded",
+                            StringComparison.Ordinal)) * 100m / recentTenRequests,
+                        1,
+                        MidpointRounding.AwayFromZero);
+                }
             }
-            var recentTen = await logs.Find(filter)
-                .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
-                .Project(Builders<BsonDocument>.Projection.Include("Status"))
-                .Limit(10)
-                .ToListAsync(ct);
-            recentTenRequests = recentTen.Count;
-            if (recentTenRequests > 0)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                recentTenSuccessRatePercent = Math.Round(
-                    recentTen.Count(log => string.Equals(
-                        log.TryGetValue("Status", out var status) && status.IsString ? status.AsString : null,
-                        "succeeded",
-                        StringComparison.Ordinal)) * 100m / recentTenRequests,
-                    1,
-                    MidpointRounding.AwayFromZero);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // 日志统计是目录的可选增强信息；统计库故障不能阻断模型池发现与恢复操作。
+                _logger.LogWarning(
+                    ex,
+                    "[ModelResolver] 模型池统计不可用，返回无统计指标的模型池: PoolId={PoolId}",
+                    group.Id);
             }
         }
 
