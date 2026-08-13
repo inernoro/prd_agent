@@ -162,9 +162,28 @@ export interface CenterRow {
   dora?: ReleaseDoraMetrics;
 }
 
+/** 发布计划：步骤的标题与真实命令。后端 /releases/center 与 /releases/targets 都下发。 */
+export interface ReleasePlanStepLite {
+  id: string;
+  title: string;
+  kind: string;
+  command?: string;
+}
+
+export interface ReleasePlanLite {
+  id: string;
+  projectId: string;
+  name: string;
+  template: string;
+  targetType: string;
+  steps: ReleasePlanStepLite[];
+}
+
 export interface CenterResponse {
   rows: CenterRow[];
   runs: ReleaseRun[];
+  /** 步骤条要显示「这一步跑了什么」时用；按 run.progress.planId 对上。 */
+  plans?: ReleasePlanLite[];
   dora?: ReleaseDoraMetrics;
   commitMeta?: Record<string, ReleaseCommitMeta>;
   commitRail?: ReleaseCommitRail;

@@ -121,10 +121,82 @@ describe('发布控制台 · 并发口径不许对后端撒谎', () => {
   });
 
   it('发布配置只读，改配置指回发布中心，不开第二处写入口', () => {
-    const pane = PAGE.slice(PAGE.indexOf("pane === 'config'"), PAGE.indexOf("pane === 'agent'"));
-    expect(pane).toContain('href="/release-center"');
-    expect(pane).not.toContain('<input');
-    expect(pane).not.toContain('method: ');
+    const sheet = PAGE.slice(PAGE.indexOf("sheet === 'pipeline'"), PAGE.indexOf("sheet === 'agent'"));
+    expect(sheet).toContain('href="/release-center"');
+    expect(sheet).not.toContain('<input');
+    expect(sheet).not.toContain("method: 'POST'");
+  });
+
+  /**
+   * 受保护环境两段式确认。第一下只换按钮文案，第二下才真发——
+   * 若哪天有人把 isProtected 那一岔删掉，正式环境就变成一点就发。
+   */
+  it('受保护环境要点两下才真发', () => {
+    expect(PAGE).toContain("row?.target.isCanonical && row.target.environment === 'production'");
+    expect(PAGE).toContain('if (isProtected && !awaitingConfirm) { setConfirmTargetId(row.target.id); return; }');
+    expect(PAGE).toContain('确认发布到 ');
+  });
+});
+
+describe('发布控制台 · 对齐设计稿的组件', () => {
+  /**
+   * 「点了之后就卡住没后续」是用户提需求时的原话，卡住条就是它的答复。
+   * 这条守卫盯的是「它还在页面上」——删掉后页面照样编译、照样跑，只是抱怨原样复现。
+   */
+  it('卡住条在，并给出取证与中止两个出口', () => {
+    expect(PAGE).toContain('import { detectStall');
+    expect(PAGE).toContain('{stall.stalled ? (');
+    const strip = PAGE.slice(PAGE.indexOf('{stall.stalled ? ('), PAGE.indexOf('终态结论条'));
+    expect(strip).toContain('秒没有新输出了');
+    expect(strip).toContain("setSheet('agent')");
+    expect(strip).toContain('cancelRun()');
+  });
+
+  it('终态给结论条，失败挂重发、成功可回滚', () => {
+    const strip = PAGE.slice(PAGE.indexOf('{shown && !running ? ('), PAGE.indexOf('{preflight ? ('));
+    expect(strip).toContain('diagnosis?.headline');
+    expect(strip).toContain('retryRun(shown)');
+    expect(strip).toContain('rollbackRun(shown)');
+  });
+
+  it('步骤条带真实命令与真实耗时，未执行的给短横不编预估值', () => {
+    expect(PAGE).toContain('resolveStepDetails(shown');
+    const list = PAGE.slice(PAGE.indexOf('{progress.steps.map((step)'), PAGE.indexOf('{progress.degraded ?'));
+    // 断言的是「条件与渲染都用这个取值」，不只是「这串字符出现过」——
+    // 只改条件、留着内层引用的改法，宽判据抓不到（红绿闭环时验出来的）。
+    expect(list).toContain('{stepDetails.get(step.id)?.command ? (');
+    expect(list).toContain('{stepDetails.get(step.id)?.command}');
+    expect(list).toContain("typeof stepDetails.get(step.id)?.durationMs === 'number'");
+    expect(list).toContain(": '-'");
+  });
+
+  it('环境按后端下发的分组渲染，落后数来自 commitPosition', () => {
+    expect(PAGE).toContain("import { buildEnvironmentSections } from '@/lib/releaseEnvironments'");
+    expect(PAGE).toContain('buildEnvironmentSections(center?.environments, rows)');
+    expect(PAGE).toContain('item.commitPosition?.behindCount');
+    // 后端 environment 枚举只有 production/staging/other —— 不许造一个 customer 分组
+    expect(PAGE).not.toContain("=== 'customer'");
+  });
+
+  /** demo 自己修掉的结构问题：配置类不塞 348px 窄栏。别把它再犯回来。 */
+  it('流水线与 Agent 走全屏浮层，不塞回右侧窄栏', () => {
+    expect(PAGE).toContain("type SheetKind = 'pipeline' | 'agent' | null");
+    expect(PAGE).toContain("type RailPane = 'history' | 'failed'");
+    expect(PAGE).not.toContain("pane === 'config'");
+    const sheetFn = PAGE.slice(PAGE.indexOf('function Sheet('), PAGE.indexOf('export function ReleaseConsolePage'));
+    expect(sheetFn).toContain('fixed inset-0');
+    expect(sheetFn).toContain("aria-modal=\"true\"");
+    // Esc 关闭：全屏浮层没有键盘出口是无障碍缺陷
+    expect(sheetFn).toContain("event.key === 'Escape'");
+  });
+
+  it('历史记录每条自带行内操作，不用先选中再去别处找按钮', () => {
+    const rail = PAGE.slice(PAGE.indexOf('const list = pane ==='), PAGE.indexOf('══ 浮层：发布流水线'));
+    expect(rail).toContain('看日志');
+    expect(rail).toContain('重发这一版');
+    expect(rail).toContain('回滚到此版本');
+    expect(rail).toContain('retryRun(item)');
+    expect(rail).toContain('rollbackRun(item)');
   });
 });
 
