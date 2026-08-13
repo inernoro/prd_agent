@@ -1238,14 +1238,21 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
           </div>
         </div>
 
-        {/* 左下提示 */}
+        {/* 左下提示 —— 浮在星云画布上，底色由数据决定（星系配色一路铺到边角），
+            所以必须自带浮层底再写字；此前裸 #555 压在橙色星云上只有 1.0:1。 */}
         <div
           style={{
             position: 'absolute',
             bottom: 12,
             left: 12,
             fontSize: 11,
-            color: '#555',
+            color: 'var(--text-secondary)',
+            /* 必须用不透明档：半透明浮层底下就是星云画布，橙色星系一透上来
+               这行字又回到 2.2:1。canvas 上 backdrop-filter 也救不回来。 */
+            background: 'var(--overlay-panel-solid)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 8,
+            padding: '4px 8px',
             zIndex: 5,
           }}
         >

@@ -131,7 +131,7 @@ export function EmailAgentPage() {
       {/* Header */}
       <header className="shrink-0 flex items-center gap-3">
         <div className="w-10 h-10 rounded-lg bg-sky-500/10 border border-sky-400/20 flex items-center justify-center">
-          <Mail className="w-5 h-5 text-sky-300" />
+          <Mail className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-semibold text-token-primary truncate">邮件模板智能体</h1>
@@ -147,7 +147,7 @@ export function EmailAgentPage() {
           onClick={() => setHelpOpen(true)}
           className="shrink-0 h-8 px-3 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft text-xs text-token-primary inline-flex items-center gap-1.5 transition"
         >
-          <HelpCircle className="w-3.5 h-3.5 text-sky-300/85" /> 使用帮助
+          <HelpCircle className="w-3.5 h-3.5 text-[color:var(--accent-fg-blue)]" /> 使用帮助
         </button>
       </header>
 
@@ -288,7 +288,7 @@ function CatChip({ active, onClick, children }: { active: boolean; onClick: () =
       type="button"
       onClick={onClick}
       className={`h-7 px-2.5 rounded-full text-xs border transition ${
-        active ? 'border-sky-400/50 bg-sky-500/20 text-white' : 'border-token-subtle bg-token-nested text-token-secondary hover-text-primary'
+        active ? 'border-sky-400/50 bg-sky-500/20 text-[color:var(--accent-fg-blue)]' : 'border-token-subtle bg-token-nested text-token-secondary hover-text-primary'
       }`}
     >
       {children}

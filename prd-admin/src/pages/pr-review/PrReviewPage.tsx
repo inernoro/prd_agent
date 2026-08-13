@@ -115,8 +115,9 @@ export function PrReviewPage() {
     });
   }, [authStatus?.connected, itemsLoadedOnce, searchParams, setSearchParams, items, addItem]);
 
+  // surface-tone-dark：钉死暗底 + token 文字，浅色主题下会深字压深底（1.06:1）
   return (
-    <div className="min-h-full bg-[#0d0b16] text-token-primary">
+    <div className="min-h-full bg-[#0d0b16] text-token-primary surface-tone-dark">
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Header */}
         <div data-tour-id="pr-review-page-title" className="flex items-center gap-4 mb-6">

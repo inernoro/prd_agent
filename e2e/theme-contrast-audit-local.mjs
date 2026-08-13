@@ -37,7 +37,10 @@ fs.mkdirSync(OUT, { recursive: true });
 const ROUTES = (() => {
   const src = fs.readFileSync(path.join(ADMIN, 'src/app/navRegistry.tsx'), 'utf8');
   const all = [...src.matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]);
-  return [...new Set(all.filter((p) => !p.includes(':') && !p.includes('*')))].sort();
+  const list = [...new Set(all.filter((p) => !p.includes(':') && !p.includes('*')))].sort();
+  // AUDIT_ONLY=/a,/b 只跑指定路由（冒烟用）
+  const only = (process.env.AUDIT_ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return only.length ? list.filter((p) => only.includes(p)) : list;
 })();
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',

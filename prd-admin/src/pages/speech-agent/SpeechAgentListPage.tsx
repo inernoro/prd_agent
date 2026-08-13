@@ -7,8 +7,8 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 
 const STATUS_LABEL: Record<SpeechDeck['status'], { label: string; color: string }> = {
   draft: { label: '草稿', color: 'text-token-secondary' },
-  generating: { label: '生成中', color: 'text-amber-300' },
-  ready: { label: '已就绪', color: 'text-emerald-300' },
+  generating: { label: '生成中', color: 'text-[color:var(--accent-fg-amber)]' },
+  ready: { label: '已就绪', color: 'text-[color:var(--accent-fg-emerald)]' },
   failed: { label: '失败', color: 'text-rose-400' },
 };
 
@@ -42,7 +42,7 @@ export default function SpeechAgentListPage() {
       <header className="shrink-0 px-6 py-5 border-b border-token-subtle flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-token-primary flex items-center gap-2">
-            <Mic size={20} className="text-violet-300" />
+            <Mic size={20} className="text-[color:var(--accent-fg-violet)]" />
             演讲智能体
           </h1>
           <p className="mt-1 text-sm text-token-secondary">
@@ -52,7 +52,7 @@ export default function SpeechAgentListPage() {
         <button
           type="button"
           onClick={() => navigate('/speech-agent/new')}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-violet-500/90 hover:bg-violet-400 text-white text-sm font-medium transition-colors shadow-lg shadow-violet-500/20"
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors shadow-lg shadow-violet-500/20"
         >
           <Plus size={16} />
           新建演讲
@@ -85,18 +85,18 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-center px-6">
       <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-violet-500/30 to-fuchsia-500/20 border border-token-subtle flex items-center justify-center mb-5">
-        <Sparkles size={36} className="text-violet-200" />
+        <Sparkles size={36} className="text-[color:var(--accent-fg-violet)]" />
       </div>
       <h2 className="text-lg font-medium text-token-primary">还没有演讲</h2>
       <p className="mt-2 max-w-md text-sm text-token-secondary leading-relaxed">
         粘贴一段文章 / 报告 / 笔记，AI 会把它拆成
-        <span className="text-violet-200 mx-1">思维导图风格</span>
+        <span className="text-[color:var(--accent-fg-violet)] mx-1">思维导图风格</span>
         的演讲大纲——一节一图，可以直接上台讲。
       </p>
       <button
         type="button"
         onClick={onCreate}
-        className="mt-6 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-violet-500/90 hover:bg-violet-400 text-white text-sm font-medium transition-colors shadow-lg shadow-violet-500/20"
+        className="mt-6 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors shadow-lg shadow-violet-500/20"
       >
         <Plus size={16} />
         创建第一个演讲
@@ -122,7 +122,7 @@ function DeckCard({
     >
       <div className="flex items-start gap-3">
         <div className="shrink-0 w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500/30 to-fuchsia-500/20 border border-token-subtle flex items-center justify-center">
-          <FileText size={18} className="text-violet-200" />
+          <FileText size={18} className="text-[color:var(--accent-fg-violet)]" />
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-medium text-token-primary truncate">{deck.title || '未命名'}</h3>

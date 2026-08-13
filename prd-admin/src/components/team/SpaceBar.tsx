@@ -100,7 +100,7 @@ export function SpaceBar({
       onClick={onClick}
       className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5 shrink-0 whitespace-nowrap transition-colors"
       style={on
-        ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }
+        ? { background: 'var(--accent-primary-solid)', color: 'var(--accent-on-solid)' }
         : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
     >
       {label}
@@ -146,7 +146,7 @@ export function SpaceBar({
               onClick={() => void submitAdd()}
               className="h-8 px-3 rounded-[8px] text-[13px] shrink-0"
               style={addValue.trim() && !addBusy
-                ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }
+                ? { background: 'var(--accent-primary-solid)', color: 'var(--accent-on-solid)' }
                 : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
             >
               {addBusy ? '处理中…' : /^INV-/i.test(addValue.trim()) ? '加入' : '创建'}

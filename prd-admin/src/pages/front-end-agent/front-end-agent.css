@@ -44,12 +44,12 @@
 }
 
 .fea-subtitle-warm {
-  color: rgba(199, 210, 254, 0.58);
+  color: rgba(199, 210, 254, 0.78);
   letter-spacing: 0.01em;
 }
 
 .fea-subtitle-muted {
-  color: rgba(199, 210, 254, 0.38);
+  color: rgba(199, 210, 254, 0.78);
 }
 
 .fea-header-rule {
@@ -115,7 +115,7 @@
 .fea-task-pill-idle {
   border-color: rgba(99, 102, 241, 0.14);
   background: rgba(255, 255, 255, 0.04);
-  color: rgba(199, 210, 254, 0.55);
+  color: rgba(199, 210, 254, 0.78);
 }
 
 .fea-task-pill-idle:hover {
@@ -333,7 +333,7 @@
 }
 
 .fea-input::placeholder {
-  color: rgba(199, 210, 254, 0.32);
+  color: rgba(199, 210, 254, 0.78);
 }
 
 .fea-input:focus {
@@ -345,7 +345,7 @@
 .fea-aside-hint {
   border-color: rgba(99, 102, 241, 0.1);
   background: rgba(99, 102, 241, 0.03);
-  color: rgba(199, 210, 254, 0.38);
+  color: rgba(199, 210, 254, 0.78);
 }
 
 .fea-section-label {

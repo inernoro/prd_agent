@@ -225,9 +225,9 @@ export default function SpeechAgentCreatePage() {
 
           {sourceFileName && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-400/30">
-              <FileText size={14} className="text-violet-300" />
-              <span className="flex-1 text-sm text-violet-100 truncate">已读入文件：{sourceFileName}</span>
-              <span className="text-xs text-violet-300/70">{charCount} 字</span>
+              <FileText size={14} className="text-[color:var(--accent-fg-violet)]" />
+              <span className="flex-1 text-sm text-[color:var(--accent-fg-violet)] truncate">已读入文件：{sourceFileName}</span>
+              <span className="text-xs text-[color:var(--accent-fg-violet)]">{charCount} 字</span>
               <button
                 onClick={handleClearFile}
                 className="p-1 rounded-md hover-bg-soft text-token-secondary"
@@ -254,7 +254,7 @@ export default function SpeechAgentCreatePage() {
               aria-label="上传 .md 或 .txt 文件"
             />
             <div className="px-6 py-7 flex items-center gap-4 pointer-events-none">
-              <Upload size={22} className="text-violet-200/80" />
+              <Upload size={22} className="text-[color:var(--accent-fg-violet)]" />
               <div className="flex-1">
                 <p className="text-sm text-token-primary font-medium">拖入 / 点击上传文件</p>
                 <p className="text-xs text-token-muted mt-0.5">支持 .md / .txt 纯文本；上限 1 MB · PDF / Word 下一版本接入</p>
@@ -273,7 +273,7 @@ export default function SpeechAgentCreatePage() {
             onClick={openKbPicker}
             className="w-full px-4 py-3 rounded-xl border border-token-subtle bg-token-nested hover-bg-soft hover-border-token transition-all flex items-center gap-3"
           >
-            <BookOpen size={20} className="text-emerald-300/80" />
+            <BookOpen size={20} className="text-[color:var(--accent-fg-emerald)]" />
             <div className="flex-1 text-left">
               <div className="text-sm text-token-primary font-medium">从知识库选文档</div>
               <div className="text-xs text-token-muted">浏览你的知识库 → 选一篇文档作为输入</div>
@@ -309,11 +309,11 @@ export default function SpeechAgentCreatePage() {
                   if (kbSelectedEntryId) setKbSelectedEntryId(null);
                   if (sourceFileName) setSourceFileName(null);
                 }}
-                className="inline-flex items-center gap-1 text-violet-300/80 hover:text-violet-200"
+                className="inline-flex items-center gap-1 text-[color:var(--accent-fg-violet)] hover:text-[color:var(--accent-fg-violet)]"
               >
                 <ClipboardPaste size={12} /> 填入示例
               </button>
-              <span className={charCount >= 30 ? 'text-emerald-300/80' : 'text-token-muted'}>
+              <span className={charCount >= 30 ? 'text-[color:var(--accent-fg-emerald)]' : 'text-token-muted'}>
                 {charCount} 字{charCount < 30 && ` · 还差 ${30 - charCount} 字开始生成`}
               </span>
             </div>
@@ -375,7 +375,7 @@ export default function SpeechAgentCreatePage() {
               type="button"
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-lg bg-violet-500/90 hover:bg-violet-400 disabled:opacity-40 text-white text-sm font-medium transition-colors shadow-lg shadow-violet-500/20 disabled:shadow-none"
+              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-medium transition-colors shadow-lg shadow-violet-500/20 disabled:shadow-none"
             >
               {submitting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
               {submitting ? '创建中…' : '开始生成'}
@@ -396,7 +396,7 @@ export default function SpeechAgentCreatePage() {
             onClick={(e) => e.stopPropagation()}
           >
             <header className="shrink-0 px-5 py-4 border-b border-token-subtle flex items-center gap-3">
-              <BookOpen size={16} className="text-emerald-300" />
+              <BookOpen size={16} className="text-[color:var(--accent-fg-emerald)]" />
               <h2 className="text-base font-medium text-token-primary">从知识库选文档</h2>
               <button
                 type="button"
@@ -506,7 +506,7 @@ function ChipPicker({
               onClick={() => onChange(opt)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all border ${
                 active
-                  ? 'bg-violet-500/30 border-violet-400/60 text-violet-100'
+                  ? 'bg-violet-500/30 border-violet-400/60 text-[color:var(--accent-fg-violet)]'
                   : 'bg-token-nested border-token-subtle text-token-secondary hover-bg-soft'
               }`}
             >

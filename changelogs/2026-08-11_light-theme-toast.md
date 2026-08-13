@@ -19,3 +19,16 @@
 | fix | prd-admin | 修复分支徽章 BranchBadge 对比度不足：0.85 半透明彩底 + #e2e8f0 只有 2.93:1，改为不透明 800 档色 + 白字 7.09:1。该徽章出现在每一屏，全站对比度审计里 364 处命中归零 |
 | fix | prd-admin | 修复前端智能体页浅色主题下深字压深底（1.08:1）：页面钉死暗色画布但文字走全局 token，挂 tokens.css 的 surface-tone-dark 让内部 token 整体切暗，该页命中 24 → 10 |
 | test | e2e | 对比度审计新增渐变底像素重采样：祖先链取不到 background-color 时（层叠 linear-gradient / 背景图）改从本屏截图真实采样底色重算，此前这类元素一路穿到页面底色，144 处假阳性（含被误测的 Toast 自身） |
+| fix | prd-admin | 清空全站对比度审计剩余命中（82 → 0）：本轮覆盖 arena / pr-review / pa-agent / library / visual-agent / speech-agent / tapd-bug / shortcuts / my-assets 等 24 条路由 |
+| fix | prd-admin | 新增 --accent-primary-solid 与配套 --accent-on-solid：品牌色 --accent-primary 暗色档 #D97757 配白字只有 3.12:1，凡「实心填充 + 白字」改走 solid 档（暗 #B0523A / 浅 #A64B35，5.0~5.7:1）。已接 chat 新建会话、SpaceBar 空间切换、快捷指令三处按钮 |
+| fix | prd-admin | 修复 ShortcutsPage 引用了从未定义过的幽灵 token var(--accent)：三个实心按钮实际没有底色，白字直接压米白页面 1.2:1。全部改指 --accent-primary(-solid) |
+| fix | prd-admin | 修复共享 Badge 的 success/danger/warning 三档字色写死 500 档，落在同色 12% 淡底上（浅色主题 1.74:1）：统一改走双写的 --accent-fg-*，同一枚徽章出现在多少页就修好多少页 |
+| fix | prd-admin | 修复 pa-agent 顶栏文字直接压在 7s/9s 呼吸渐变上：底色亮度随动画在 (153,192,253)~(129,127,166) 之间摆，对比度不确定。顶栏改铺不带呼吸层的 --pa-bg-base 并抬到渐变之上 |
+| fix | prd-admin | 修复 library 落地页（固定浅色画布）三处品牌色对比不足：#16A34A→#15803D、#F97316→#C2410C、#64748B→#475569，四个 library 页面同步保持配色一致 |
+| fix | prd-admin | 修复 visual-agent 低 alpha 前景（rgba(199,210,254,.42~.55) / rgba(255,255,255,.35~.45)）与 SizePickerPanel 尺寸按钮，统一走 --text-muted 与 --accent-fg-violet |
+| fix | prd-admin | 修复 speech-agent 白字压 violet-500/90 按钮（3.67:1）：主按钮提到 violet-600；同页 violet-100/emerald-300 等为暗底设计的浅色前景改走 token |
+| fix | prd-admin | 剥掉 30 处 text-[color:var(--accent-fg-*)]/NN 的 alpha 后缀：浅色档已是 700/800 实色，再叠 70~80% 会把对比度拉回阈值以下 |
+| fix | prd-admin | 修复知识库宇宙图左下操作提示裸 #555 压在星云画布上（1.0:1）：改为 --overlay-panel-solid 不透明浮层 + --text-secondary（半透明档不行，canvas 上 backdrop-filter 救不回来） |
+| fix | prd-admin | 其余单点修复：automations 新建按钮、email-agent 分类 chip 与图标、infra-services / learning-center / report-agent / tech-doc-format-agent / project-route-agent 的浅色前景、task-tree 主按钮 #7c5cff→#6d3fe8、marketplace 分隔点用边框 token 当字色、DesktopAssetsPage 四枚统计图标、tapd-bug 必填红与告警琥珀 |
+| test | e2e | 对比度审计补 WCAG 1.4.3 Incidental 例外：失效控件（disabled / aria-disabled，含祖先）不计入。此前空数据页上 disabled:opacity-40 的按钮被反复报成缺陷（/arena 发送 1.78:1，但它本来就点不动） |
+| test | e2e | 对比度审计重采样改取元素框内众数色，不再单点采正中：隐前景那步偶尔被 React 重渲染抹掉，正中恰好压着字形就采到文字色本身，报出 fg===bg、比值 1.00 的假阳性（/pa-agent 的 A- 按钮） |

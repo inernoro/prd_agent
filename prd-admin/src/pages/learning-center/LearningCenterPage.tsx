@@ -115,7 +115,7 @@ export default function LearningCenterPage() {
                     style={{
                       minWidth: 30, height: 30, padding: '0 8px', borderRadius: 8, fontSize: 13,
                       background: 'linear-gradient(135deg, rgba(168,85,247,0.28), rgba(99,102,241,0.20))',
-                      border: '1px solid rgba(196,181,253,0.4)', color: '#c4b5fd',
+                      border: '1px solid rgba(196,181,253,0.4)', color: 'var(--accent-fg-violet)',
                     }}
                   >
                     Lv.{level}
@@ -147,7 +147,7 @@ export default function LearningCenterPage() {
               return (
                 <section key={cat} className="flex flex-col gap-3">
                   <div className="flex items-center gap-2">
-                    <Icon size={15} className="text-indigo-300" />
+                    <Icon size={15} className="text-[color:var(--accent-fg-blue)]" />
                     <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                       {meta.label}
                     </span>
@@ -259,7 +259,7 @@ function TutorialCard({ item, onStart }: { item: TutorialProgressItem; onStart: 
           style={{
             border: '1px solid rgba(167,139,250,0.4)',
             background: 'linear-gradient(135deg, rgba(168,85,247,0.22), rgba(99,102,241,0.16))',
-            color: '#c4b5fd',
+            color: 'var(--accent-fg-violet)',
           }}
         >
           <MapPin size={12} />

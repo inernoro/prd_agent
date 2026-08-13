@@ -106,7 +106,7 @@ export function FrontEndScreenshotInput({
   return (
     <label className="block">
       <span className="text-xs font-medium text-token-secondary">截图现象 / 设计稿差异描述</span>
-      <p className="mt-1 text-[11px] text-violet-200/55">
+      <p className="mt-1 text-[11px] text-violet-200/75">
         支持 Ctrl+V 直接粘贴截图，也可上传图片；可叠加文字说明差异点。
       </p>
       <textarea

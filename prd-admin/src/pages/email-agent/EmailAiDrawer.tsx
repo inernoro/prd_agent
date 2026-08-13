@@ -158,7 +158,7 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
       >
         <header className="shrink-0 px-5 py-4 border-b border-token-subtle flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-indigo-300" />
+            <Sparkles className="w-4 h-4 text-[color:var(--accent-fg-blue)]" />
             <h2 className="text-base font-semibold text-token-primary">AI 邮件助手</h2>
           </div>
           <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover-bg-soft text-token-secondary">
@@ -301,7 +301,7 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
                         toast.success('已应用到正文');
                       }}
                       disabled={!output}
-                      className="h-7 px-2 rounded-md text-[11px] text-indigo-200 hover:bg-indigo-500/15 inline-flex items-center gap-1 disabled:opacity-40"
+                      className="h-7 px-2 rounded-md text-[11px] text-[color:var(--accent-fg-blue)] hover:bg-indigo-500/15 inline-flex items-center gap-1 disabled:opacity-40"
                     >
                       应用到正文
                     </button>

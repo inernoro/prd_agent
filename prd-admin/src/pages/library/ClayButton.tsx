@@ -37,7 +37,7 @@ export function ClayButton({
   const s = CLAY_SIZE_MAP[size];
   const bg =
     variant === 'primary'
-      ? '#16A34A'
+      ? '#15803D'
       : variant === 'secondary'
       ? '#BFDBFE'
       : variant === 'white'
@@ -57,7 +57,7 @@ export function ClayButton({
         fontSize: s.text,
         fontWeight: 900,
         gap: s.gap,
-        background: active ? '#16A34A' : bg,
+        background: active ? '#15803D' : bg,
         border,
         boxShadow: shadow,
         color: active ? '#FFFFFF' : color,

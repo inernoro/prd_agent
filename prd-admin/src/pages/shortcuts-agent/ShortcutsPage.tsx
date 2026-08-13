@@ -42,7 +42,7 @@ import { copyWithFeedback } from '@/lib/clipboard';
 
 // ─── Binding type labels (收藏是必备功能，绑定是附加功能) ───
 const BINDING_LABELS: Record<string, { label: string; icon: typeof Bookmark; color: string }> = {
-  collect: { label: '仅收藏', icon: Bookmark, color: '#34c759' },
+  collect: { label: '仅收藏', icon: Bookmark, color: 'var(--accent-fg-success)' },
   workflow: { label: '工作流', icon: GitBranch, color: '#007aff' },
   agent: { label: '智能体', icon: Bot, color: '#af52de' },
 };
@@ -97,7 +97,7 @@ export default function ShortcutsPage() {
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
               padding: '8px 16px', borderRadius: 10,
-              background: 'var(--accent)', color: '#fff',
+              background: 'var(--accent-primary-solid)', color: '#fff',
               border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600,
             }}
           >
@@ -230,7 +230,7 @@ function ICloudTemplatePanel() {
         background: 'rgba(52, 199, 89, 0.06)',
         border: '1px solid rgba(52, 199, 89, 0.15)',
       }}>
-        <Cloud size={15} style={{ color: '#34c759', flexShrink: 0 }} />
+        <Cloud size={15} style={{ color: 'var(--accent-fg-success)', flexShrink: 0 }} />
         <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>
           iCloud 模板已配置
         </span>
@@ -238,7 +238,7 @@ function ICloudTemplatePanel() {
           href={template.iCloudUrl}
           target="_blank"
           rel="noopener noreferrer"
-          style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}
+          style={{ fontSize: 12, color: 'var(--accent-primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}
         >
           <ExternalLink size={11} /> 查看
         </a>
@@ -270,8 +270,8 @@ function ICloudTemplatePanel() {
           border: 'none', cursor: 'pointer', textAlign: 'left',
         }}
       >
-        <Cloud size={16} style={{ color: '#ff9500', flexShrink: 0 }} />
-        <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#ff9500' }}>
+        <Cloud size={16} style={{ color: 'var(--accent-fg-warning)', flexShrink: 0 }} />
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--accent-fg-warning)' }}>
           配置 iCloud 模板（iOS 用户扫码安装需要）
         </span>
         {expanded ? <ChevronUp size={14} style={{ color: 'var(--text-muted)' }} /> : <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />}
@@ -285,7 +285,7 @@ function ICloudTemplatePanel() {
             padding: '10px 12px', borderRadius: 10,
             background: 'rgba(255,149,0,0.08)', border: '1px solid rgba(255,149,0,0.18)',
           }}>
-            <strong style={{ color: '#ff9500' }}>配一次，全站受益。</strong>
+            <strong style={{ color: 'var(--accent-fg-warning)' }}>配一次，全站受益。</strong>
             未配置时，所有人扫码后只能<strong>手动新建快捷指令</strong>（步骤多、易出错）；
             配好这个 iCloud 模板后，全站用户扫码即可<strong>一键安装</strong>。
           </div>
@@ -299,7 +299,7 @@ function ICloudTemplatePanel() {
               { n: 1, icon: <Download size={12} />, text: '在 Mac 上下载模板文件', action: (
                 <a
                   href="/api/shortcuts/template-download"
-                  style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', marginLeft: 6 }}
+                  style={{ fontSize: 12, color: 'var(--accent-primary)', textDecoration: 'none', marginLeft: 6 }}
                 >
                   下载
                 </a>
@@ -316,7 +316,7 @@ function ICloudTemplatePanel() {
                   width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 10, fontWeight: 700,
-                  background: 'rgba(255,149,0,0.12)', color: '#ff9500',
+                  background: 'rgba(255,149,0,0.12)', color: 'var(--accent-fg-warning)',
                 }}>
                   {n}
                 </span>
@@ -344,7 +344,7 @@ function ICloudTemplatePanel() {
               disabled={saving || !iCloudUrl.trim()}
               style={{
                 padding: '8px 16px', borderRadius: 10, border: 'none',
-                background: 'var(--accent)', color: '#fff', fontSize: 13,
+                background: 'var(--accent-primary-solid)', color: '#fff', fontSize: 13,
                 fontWeight: 600, cursor: 'pointer',
                 opacity: saving || !iCloudUrl.trim() ? 0.5 : 1,
               }}
@@ -388,7 +388,7 @@ function LiveCollectionsPanel() {
       border: '1px solid var(--border-subtle)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <Inbox size={16} style={{ color: 'var(--accent)' }} />
+        <Inbox size={16} style={{ color: 'var(--accent-primary)' }} />
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
             实时收件箱
@@ -430,7 +430,7 @@ function LiveCollectionsPanel() {
                   padding: '2px 7px',
                   borderRadius: 999,
                   background: 'rgba(52,199,89,0.12)',
-                  color: '#34c759',
+                  color: 'var(--accent-fg-success)',
                   flexShrink: 0,
                 }}>
                   {item.status || 'saved'}
@@ -498,7 +498,7 @@ function ShortcutCard({ item, onExtend, onDelete }: { item: ShortcutItem; onExte
           <span style={{
             display: 'inline-flex', alignItems: 'center', gap: 3,
             fontSize: 11, padding: '2px 8px', borderRadius: 6,
-            background: 'rgba(52, 199, 89, 0.12)', color: '#34c759',
+            background: 'rgba(52, 199, 89, 0.12)', color: 'var(--accent-fg-success)',
           }}>
             <Bookmark size={10} /> 收藏
           </span>
@@ -649,9 +649,9 @@ function CreateShortcutDialog({
             borderRadius: 10, background: 'rgba(52, 199, 89, 0.08)',
             border: '1px solid rgba(52, 199, 89, 0.2)',
           }}>
-            <Bookmark size={14} style={{ color: '#34c759', flexShrink: 0 }} />
+            <Bookmark size={14} style={{ color: 'var(--accent-fg-success)', flexShrink: 0 }} />
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-              每次分享都会<strong style={{ color: '#34c759' }}>自动收藏</strong>，可额外绑定工作流或智能体
+              每次分享都会<strong style={{ color: 'var(--accent-fg-success)' }}>自动收藏</strong>，可额外绑定工作流或智能体
             </span>
           </div>
 
@@ -740,7 +740,7 @@ function CreateShortcutDialog({
                         width: 30, height: 30, borderRadius: 6, fontSize: 15,
                         border: 'none', cursor: 'pointer',
                         background: icon === ic ? 'var(--accent-muted)' : 'var(--surface-card)',
-                        outline: icon === ic ? '2px solid var(--accent)' : '1px solid var(--border-subtle)',
+                        outline: icon === ic ? '2px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
                       }}
                     >
                       {ic}
@@ -777,7 +777,7 @@ function CreateShortcutDialog({
             style={{
               padding: '12px 0', borderRadius: 10, border: 'none', cursor: 'pointer',
               fontSize: 15, fontWeight: 600,
-              background: 'var(--accent)', color: '#fff',
+              background: 'var(--accent-primary-solid)', color: '#fff',
               opacity: submitting || (bindingType !== 'collect' && !bindingTargetId) ? 0.5 : 1,
             }}
           >
@@ -864,7 +864,7 @@ function QRCodePanel({
             style={{
               padding: 6, borderRadius: 6, background: 'none',
               border: '1px solid var(--border-subtle)', cursor: 'pointer',
-              color: configCopied ? '#34c759' : 'var(--text-muted)',
+              color: configCopied ? 'var(--accent-fg-success)' : 'var(--text-muted)',
             }}
             title="复制安装配置"
           >
@@ -886,7 +886,7 @@ function QRCodePanel({
             style={{
               padding: 6, borderRadius: 6, background: 'none',
               border: '1px solid var(--border-subtle)', cursor: 'pointer',
-              color: copied ? '#34c759' : 'var(--text-muted)',
+              color: copied ? 'var(--accent-fg-success)' : 'var(--text-muted)',
             }}
           >
             {copied ? <Check size={14} /> : <Copy size={14} />}

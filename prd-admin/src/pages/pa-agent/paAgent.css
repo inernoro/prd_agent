@@ -534,6 +534,19 @@
   background: var(--pa-bg-base, var(--bg-base));
   box-shadow: 0 2px 16px -8px rgba(15, 23, 42, 0.12);
 }
+/*
+ * 顶栏必须自带实底：::before/::after 两层呼吸渐变带 7s/9s 动画，
+ * saturate/brightness 关键帧让底色亮度在一屏内来回摆（实测同一处从 (153,192,253)
+ * 摆到 (129,127,166)）。文字直接压在这种会动的底上，对比度是不确定的——
+ * 全站审计在 dark×/pa-agent 抓到 2.94 与 1.99 两处正是摆到暗端时取的样。
+ * 顶栏改铺 --pa-bg-base（不带呼吸层的纯底）并抬到渐变之上，把顶栏文字的底色钉死。
+ */
+.pa-agent-topbar {
+  position: relative;
+  z-index: 1;
+  background: var(--pa-bg-base, var(--bg-base));
+}
+
 .pa-agent-root[data-sidebar-open="false"] .pa-agent-main {
   margin-left: 8px;
   border-radius: 18px;
@@ -566,7 +579,7 @@
   --pa-border-default: rgba(190, 197, 208, 0.58);
   --pa-text-primary: #30343b;
   --pa-text-secondary: #454b54;
-  --pa-text-muted: #6b7280;
+  --pa-text-muted: #4b5563;   /* 4.47:1 → 6.99:1（呼吸渐变上 3.58:1） */
   --pa-accent-strong: #4285f4;
   --pa-accent-soft: #93c5fd;
   --pa-md-code-bg: rgba(149, 157, 169, 0.12);
@@ -974,7 +987,8 @@
 }
 .pa-toolbar-btn[data-active="true"] {
   background: rgba(37, 99, 235, 0.14);
-  color: #93c5fd;
+  /* #93c5fd 压在 14% 蓝底上只有 1.51:1 —— 浅底浅字 */
+  color: #1d4ed8;
   border-color: rgba(56, 189, 248, 0.35);
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-toolbar-btn[data-active="true"] {

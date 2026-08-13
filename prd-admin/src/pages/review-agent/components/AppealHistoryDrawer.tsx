@@ -68,7 +68,7 @@ export function AppealHistoryDrawer({ open, onClose, submissionId, canResolve, o
         <div className="flex items-center justify-between px-5 py-4 border-b border-token-subtle">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
-              <History className="w-4 h-4 text-indigo-400" />
+              <History className="w-4 h-4 text-[color:var(--accent-fg-blue)]" />
             </div>
             <div>
               <h3 className="text-sm font-semibold text-token-primary">申诉历史</h3>

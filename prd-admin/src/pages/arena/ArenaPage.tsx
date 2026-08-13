@@ -1254,9 +1254,11 @@ export function ArenaPage() {
   const totalCount = panels.length;
   const hasActiveProgress = hasBattle && totalCount > 0 && (isStreaming || completedCount > 0);
 
+  // surface-tone-dark：本页是钉死的暗色画布，但内部文字走全局 token，
+  // 浅色主题下变成深字压深底（实测 1.01:1）。
   return (
     <div
-      className="relative flex h-full text-white"
+      className="relative flex h-full text-white surface-tone-dark"
       style={{ minHeight: 0, fontFamily: 'var(--font-body)' }}
     >
       {/* Layer 0 · StaticBackdrop（absolute 模式，局限在 AppShell 主内容区） */}

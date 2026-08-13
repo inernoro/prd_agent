@@ -146,10 +146,10 @@ export function FrontEndPdaRailCard({ onOpen }: { onOpen: () => void }) {
                 重点
               </span>
             </div>
-            <p className="text-[11px] text-indigo-100/55 mt-0.5">uniapp-pda · 真机调试 · 发布排障</p>
+            <p className="text-[11px] text-indigo-100/75 mt-0.5">uniapp-pda · 真机调试 · 发布排障</p>
           </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-indigo-200/50 shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-indigo-200/75 shrink-0 mt-1" />
       </div>
       <div className="relative mt-3 grid grid-cols-2 gap-1.5">
         {PDA_LINKS.slice(0, 2).map((link) => (
@@ -158,7 +158,7 @@ export function FrontEndPdaRailCard({ onOpen }: { onOpen: () => void }) {
           </span>
         ))}
       </div>
-      <p className="relative mt-2 text-[10px] text-indigo-200/50">点击打开完整手册、快捷链接与 AI 排障模板</p>
+      <p className="relative mt-2 text-[10px] text-indigo-200/75">点击打开完整手册、快捷链接与 AI 排障模板</p>
     </button>
   );
 }

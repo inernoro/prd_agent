@@ -1191,7 +1191,8 @@
 }
 
 .marketplace-compat-dot {
-  color: var(--border-hover);
+  /* 边框 token 当文字色用，两个主题下都只有 1.8:1 —— 分隔点也要走文字档 */
+  color: var(--text-muted);
 }
 
 .marketplace-filter-content {

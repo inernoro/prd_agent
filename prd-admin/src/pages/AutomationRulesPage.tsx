@@ -518,7 +518,7 @@ export default function AutomationRulesPage() {
                 <button
                   onClick={() => setShowNewMenu(!showNewMenu)}
                   className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors hover-bg-soft"
-                  style={{ color: 'rgba(59,130,246,0.9)' }}
+                  style={{ color: 'var(--accent-fg-blue)' }}
                 >
                   <Plus size={14} /> 新建
                 </button>

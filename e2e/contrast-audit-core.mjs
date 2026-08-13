@@ -55,6 +55,22 @@ export const AUDIT_FN = () => {
     return r.width > 2 && r.height > 2;
   };
 
+  /*
+   * WCAG 1.4.3 的 Incidental 例外：失效（inactive）控件不受对比度约束。
+   * 不排除的话，空数据页上一排 disabled:opacity-40 的按钮会被当成缺陷反复报出来
+   * （/arena 的「发送」在无阵容时就是这样，压暗 60% 后 1.78:1，但它本来就点不动）。
+   * 判据取真实态：原生 disabled 或 aria-disabled，自身或任一祖先命中即跳过。
+   */
+  const inactive = (el) => {
+    let n = el, guard = 0;
+    while (n && n !== document.body && guard++ < 12) {
+      if (n.disabled === true) return true;
+      if (n.getAttribute && n.getAttribute('aria-disabled') === 'true') return true;
+      n = n.parentElement;
+    }
+    return false;
+  };
+
   const label = (el) => {
     const parts = [];
     let n = el, guard = 0;
@@ -68,10 +84,12 @@ export const AUDIT_FN = () => {
   };
 
   const out = [], seen = new Set();
+  let auditId = 0;
+  document.querySelectorAll('[data-audit-id]').forEach((n) => n.removeAttribute('data-audit-id'));
 
   for (const el of document.querySelectorAll('body *')) {
     const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-    if (!hasText || !visible(el)) continue;
+    if (!hasText || !visible(el) || inactive(el)) continue;
     const cs = getComputedStyle(el);
     if (isTransparent(cs.color)) continue;
     const { bg, needsEye } = effectiveBg(el);
@@ -85,14 +103,15 @@ export const AUDIT_FN = () => {
     if (seen.has(key)) continue;
     seen.add(key);
     const r = el.getBoundingClientRect();
-    out.push({ kind: 'text', text: el.textContent.trim().slice(0, 24), sel: label(el),
+    el.setAttribute('data-audit-id', String(++auditId));
+    out.push({ auditId, kind: 'text', text: el.textContent.trim().slice(0, 24), sel: label(el),
       fg: cs.color, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
       box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
       vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });
   }
 
   for (const el of document.querySelectorAll('svg')) {
-    if (!visible(el)) continue;
+    if (!visible(el) || inactive(el)) continue;
     const cs = getComputedStyle(el);
     const strokeOn = cs.stroke && cs.stroke !== 'none';
     const raw = strokeOn ? cs.stroke : (cs.fill && cs.fill !== 'none') ? cs.fill : cs.color;
@@ -110,7 +129,8 @@ export const AUDIT_FN = () => {
     if (seen.has(key)) continue;
     seen.add(key);
     const r = el.getBoundingClientRect();
-    out.push({ kind: 'icon', text: '', sel: label(el), fg: raw, bg: `rgb(${bg})`,
+    el.setAttribute('data-audit-id', String(++auditId));
+    out.push({ auditId, kind: 'icon', text: '', sel: label(el), fg: raw, bg: `rgb(${bg})`,
       ratio: +c.toFixed(2), need: 3, needsEye,
       box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
       vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });
@@ -156,10 +176,41 @@ export function renderMarkdown({ title, base, routeCount, report, groups, note }
  * 这里改为从本屏截图里**真实采样**该元素边缘的像素当底色重算 —— 采样点取元素框内
  * 左上 2px 处，绕开字形。采样不到就保留 needsEye 标记交人工，不硬判失败。
  */
-export async function resampleGradientFindings(page, shotBuffer, findings) {
-  const targets = findings.filter((f) => f.needsEye && f.vbox && f.vbox.w > 4 && f.vbox.h > 4);
+/**
+ * 渐变/背景图上的元素，祖先链推不出真实底色。
+ * 做法：把候选元素的前景临时设为透明、重截一屏，再在元素**正中**取色 ——
+ * 正中就是文字真正压着的地方，天然绕开圆角、外发光、阴影环。
+ *
+ * 前两版分别在「左上角内 2px」（落在圆角外，采到页面底）和「四边中点」
+ * （落在按钮外发光环上）翻过车，都会把好按钮误判成失败。
+ */
+export async function resampleGradientFindings(page, _unused, findings) {
+  const targets = findings.filter((f) => f.needsEye && f.auditId);
   if (!targets.length) return findings;
-  const results = await page.evaluate(async ({ b64, items }) => {
+
+  const ids = targets.map((f) => f.auditId);
+  // 隐前景
+  await page.evaluate((idList) => {
+    window.__auditRestore = [];
+    for (const id of idList) {
+      const el = document.querySelector(`[data-audit-id="${id}"]`);
+      if (!el) continue;
+      window.__auditRestore.push([el, el.style.color, el.style.fill, el.style.stroke]);
+      el.style.setProperty('color', 'transparent', 'important');
+      el.style.setProperty('fill', 'transparent', 'important');
+      el.style.setProperty('stroke', 'transparent', 'important');
+    }
+  }, ids);
+  const clean = await page.screenshot();
+  // 还原
+  await page.evaluate(() => {
+    for (const [el, c, f, st] of window.__auditRestore || []) {
+      el.style.color = c; el.style.fill = f; el.style.stroke = st;
+    }
+    delete window.__auditRestore;
+  });
+
+  const results = await page.evaluate(async ({ b64, idList }) => {
     const img = new Image();
     img.src = `data:image/png;base64,${b64}`;
     await img.decode();
@@ -168,7 +219,6 @@ export async function resampleGradientFindings(page, shotBuffer, findings) {
     cv.width = img.width; cv.height = img.height;
     const cx = cv.getContext('2d', { willReadFrequently: true });
     cx.drawImage(img, 0, 0);
-
     const one = document.createElement('canvas');
     one.width = one.height = 1;
     const oc = one.getContext('2d', { willReadFrequently: true });
@@ -185,24 +235,47 @@ export async function resampleGradientFindings(page, shotBuffer, findings) {
     const lum = ([r, g, b]) => 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
     const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
 
-    return items.map(({ vbox, fg }) => {
-      const px = Math.round((vbox.x + 2) * scale);
-      const py = Math.round((vbox.y + 2) * scale);
-      if (px < 0 || py < 0 || px >= img.width || py >= img.height) return null;
-      const d = cx.getImageData(px, py, 1, 1).data;
-      const bg = [d[0], d[1], d[2]];
+    return idList.map(({ id, fg }) => {
+      const el = document.querySelector(`[data-audit-id="${id}"]`);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const x0 = Math.max(0, Math.round(r.x * scale));
+      const y0 = Math.max(0, Math.round(r.y * scale));
+      const x1 = Math.min(img.width, Math.round((r.x + r.width) * scale));
+      const y1 = Math.min(img.height, Math.round((r.y + r.height) * scale));
+      if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+      /*
+       * 取元素框内的**众数色**当底色，而不是正中一个点。
+       * 单点采样在小控件上会翻车：把前景设成 transparent 这一步偶尔不生效
+       * （React 重渲染会抹掉临时 inline style），正中恰好压着字形，采到的
+       * 就是文字色本身 —— 报出来是 fg === bg、比值 1.00 的假阳性
+       * （/pa-agent 的 A- 按钮就是这样被误报的）。字形只占框内少数像素，
+       * 众数天然是底色，所以即使隐前景失败这一层也兜得住。
+       */
+      const px = cx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+      const buckets = new Map();
+      for (let i = 0; i < px.length; i += 4) {
+        const key = (px[i] >> 3 << 10) | (px[i + 1] >> 3 << 5) | (px[i + 2] >> 3);
+        let b = buckets.get(key);
+        if (!b) buckets.set(key, (b = [0, 0, 0, 0]));
+        b[0] += px[i]; b[1] += px[i + 1]; b[2] += px[i + 2]; b[3] += 1;
+      }
+      let best = null;
+      for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
+      if (!best) return null;
+      const bg = [Math.round(best[0] / best[3]), Math.round(best[1] / best[3]), Math.round(best[2] / best[3])];
       const composed = compose(fg, bg);
       if (!composed) return null;
       return { bg, ratio: +contrast(composed, bg).toFixed(2) };
     });
-  }, { b64: shotBuffer.toString('base64'), items: targets.map((f) => ({ vbox: f.vbox, fg: f.fg })) });
+  }, { b64: clean.toString('base64'), idList: targets.map((f) => ({ id: f.auditId, fg: f.fg })) });
 
   targets.forEach((f, i) => {
     const r = results[i];
     if (!r) return;
     f.bg = `rgb(${r.bg})`;
     f.ratio = r.ratio;
-    f.sampled = true;          // 底色来自截图真实像素，不是祖先链推断
+    f.sampled = true;
   });
   return findings;
 }

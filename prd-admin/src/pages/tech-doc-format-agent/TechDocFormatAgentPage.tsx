@@ -456,7 +456,7 @@ export function TechDocFormatAgentPage() {
       <header className="shrink-0 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-start gap-3">
           <div className="rounded-2xl border border-indigo-400/20 bg-indigo-500/10 p-3">
-            <FileText size={24} className="text-indigo-200" />
+            <FileText size={24} className="text-[color:var(--accent-fg-blue)]" />
           </div>
           <div>
             <h1 className="text-xl font-semibold text-[color:var(--text-primary)]">技术分析文档格式校验 Agent</h1>
@@ -568,7 +568,7 @@ export function TechDocFormatAgentPage() {
                   <div className="space-y-2">
                     {requirementFiles.map((file) => (
                       <div key={file.name} className="flex items-center gap-2 rounded-lg border border-token-subtle bg-token-nested px-2 py-1.5">
-                        <FileText size={13} className="shrink-0 text-indigo-200" />
+                        <FileText size={13} className="shrink-0 text-[color:var(--accent-fg-blue)]" />
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-xs text-[color:var(--text-primary)]">{file.name}</div>
                           <div className="text-[10px] text-[color:var(--text-secondary)]">{Math.ceil(file.size / 1024)} KB</div>
@@ -615,7 +615,7 @@ export function TechDocFormatAgentPage() {
                 </div>
 
                 {!githubAuth?.oauthConfigured && !githubAuthLoading && (
-                  <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-xs text-amber-100">
+                  <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-xs text-[color:var(--accent-fg-amber)]">
                     管理员尚未配置 GitHub OAuth Device Flow，暂不能选择仓库。
                   </div>
                 )}
@@ -1003,7 +1003,7 @@ export function TechDocFormatAgentPage() {
 function ValidationBadge({ result }: { result: ReturnType<typeof validateTechDocFormat> }) {
   if (result.passed) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">
+      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1 text-xs text-[color:var(--accent-fg-emerald)]">
         <CheckCircle2 size={12} />
         已通过
       </span>
@@ -1011,7 +1011,7 @@ function ValidationBadge({ result }: { result: ReturnType<typeof validateTechDoc
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1 text-xs text-amber-100">
+    <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1 text-xs text-[color:var(--accent-fg-amber)]">
       <AlertTriangle size={12} />
       待修复
     </span>
@@ -1031,7 +1031,7 @@ function MetricCard({
     tone === 'error'
       ? 'text-red-200'
       : tone === 'warning'
-        ? 'text-amber-100'
+        ? 'text-[color:var(--accent-fg-amber)]'
         : 'text-[color:var(--text-primary)]';
 
   return (
@@ -1064,7 +1064,7 @@ function IssueList({ issues, compact = false }: { issues: TechDocIssue[]; compac
             {issue.severity === 'error' ? (
               <XCircle size={14} className="mt-0.5 shrink-0 text-red-300" />
             ) : (
-              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-200" />
+              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-[color:var(--accent-fg-amber)]" />
             )}
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">

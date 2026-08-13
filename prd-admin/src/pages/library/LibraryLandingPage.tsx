@@ -53,7 +53,7 @@ const CARD_ACCENTS = [
   { bg: '#FECACA', icon: Code, iconColor: '#DC2626' },        // 红：代码/开发
   { bg: '#BFDBFE', icon: Palette, iconColor: '#2563EB' },     // 蓝：设计
   { bg: '#C7D2FE', icon: BarChart3, iconColor: '#6366F1' },   // 靛：数据
-  { bg: '#BBF7D0', icon: Smartphone, iconColor: '#16A34A' },  // 绿：移动
+  { bg: '#BBF7D0', icon: Smartphone, iconColor: '#15803D' },  // 绿：移动
   { bg: '#FED7AA', icon: Layers, iconColor: '#EA580C' },      // 橙：综合
   { bg: '#F9A8D4', icon: GraduationCap, iconColor: '#DB2777' }, // 粉：教育
 ];
@@ -147,7 +147,7 @@ export function LibraryLandingPage() {
               >
                 <span
                   className="w-2 h-2 rounded-full"
-                  style={{ background: '#16A34A', boxShadow: '0 0 6px #16A34A' }}
+                  style={{ background: '#15803D', boxShadow: '0 0 6px #15803D' }}
                 />
                 <span className="text-[12px] font-black" style={{ color: '#14532D' }}>
                   NEW · 社区驱动的知识库
@@ -166,8 +166,8 @@ export function LibraryLandingPage() {
                   letterSpacing: '-0.04em',
                 }}
               >
-                读<span style={{ color: '#16A34A' }}>万卷书</span>，<br />
-                行<span style={{ color: '#F97316' }}>万里路</span>。
+                读<span style={{ color: '#15803D' }}>万卷书</span>，<br />
+                行<span style={{ color: '#C2410C' }}>万里路</span>。
               </h1>
 
               <p
@@ -256,7 +256,7 @@ export function LibraryLandingPage() {
           </h2>
           <p
             className="text-center mb-10 text-[16px]"
-            style={{ color: '#64748B', fontWeight: 500 }}
+            style={{ color: '#475569', fontWeight: 500 }}
           >
             向行业专家学习，获取真实世界的经验与洞见
           </p>
@@ -287,7 +287,7 @@ export function LibraryLandingPage() {
                   className="p-1 rounded-full hover:bg-[#FEF3C7] transition-colors"
                   aria-label="清除搜索"
                 >
-                  <X size={16} strokeWidth={3} style={{ color: '#64748B' }} />
+                  <X size={16} strokeWidth={3} style={{ color: '#475569' }} />
                 </button>
               )}
             </div>
@@ -326,7 +326,7 @@ export function LibraryLandingPage() {
               <div className="text-[20px] font-black mb-1" style={{ color: '#1E1B4B' }}>
                 未找到匹配「{searchQuery}」的知识库
               </div>
-              <div className="text-[14px] font-semibold" style={{ color: '#64748B' }}>
+              <div className="text-[14px] font-semibold" style={{ color: '#475569' }}>
                 换个关键词试试，或清空搜索浏览全部
               </div>
             </div>
@@ -394,7 +394,7 @@ export function LibraryLandingPage() {
           </h2>
           <p
             className="text-center mb-14 text-[16px]"
-            style={{ color: '#64748B', fontWeight: 500 }}
+            style={{ color: '#475569', fontWeight: 500 }}
           >
             每一次分享都是一次教学相长
           </p>
@@ -417,7 +417,7 @@ export function LibraryLandingPage() {
             <Testimonial
               icon={GraduationCap}
               iconBg="#BBF7D0"
-              iconColor="#16A34A"
+              iconColor="#15803D"
               title="沉淀资产"
               body="知识库是永远不会过期的资产，今天写的明天就能被 AI 再利用。"
             />
@@ -431,7 +431,7 @@ export function LibraryLandingPage() {
           <div
             className="px-10 py-16 rounded-[36px] text-center"
             style={{
-              background: '#16A34A',
+              background: '#15803D',
               border: '4px solid #1E1B4B',
               boxShadow: '8px 8px 0 #1E1B4B',
             }}
@@ -564,7 +564,7 @@ function Stat({ num, label }: { num: number; label: string }) {
       >
         {num.toLocaleString()}+
       </div>
-      <div className="text-[12px] md:text-[13px] font-bold" style={{ color: '#64748B' }}>
+      <div className="text-[12px] md:text-[13px] font-bold" style={{ color: '#475569' }}>
         {label}
       </div>
     </div>
@@ -630,14 +630,14 @@ function HeroFeatureCard({
           >
             等待第一卷藏书
           </div>
-          <p className="text-[13px] mb-6 font-medium" style={{ color: '#64748B' }}>
+          <p className="text-[13px] mb-6 font-medium" style={{ color: '#475569' }}>
             成为第一位向社区分享知识的人
           </p>
           <button
             onClick={onPublish}
             className="w-full py-4 rounded-2xl text-[15px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
             style={{
-              background: '#16A34A',
+              background: '#15803D',
               border: '3px solid #1E1B4B',
               boxShadow: '0 4px 0 #1E1B4B',
               color: '#FFFFFF',
@@ -689,7 +689,7 @@ function HeroFeatureCard({
             >
               {store.name}
             </div>
-            <div className="text-[12px] font-bold mt-0.5 truncate" style={{ color: '#64748B' }}>
+            <div className="text-[12px] font-bold mt-0.5 truncate" style={{ color: '#475569' }}>
               {store.documentCount} 篇文档 · by {store.ownerName}
             </div>
           </div>
@@ -697,7 +697,7 @@ function HeroFeatureCard({
 
         <div className="mb-4">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-[13px] font-bold" style={{ color: '#64748B' }}>
+            <span className="text-[13px] font-bold" style={{ color: '#475569' }}>
               热度
             </span>
             <span
@@ -705,7 +705,7 @@ function HeroFeatureCard({
               style={{
                 fontFamily: "'Fredoka', sans-serif",
                 fontWeight: 700,
-                color: '#16A34A',
+                color: '#15803D',
               }}
             >
               {heatPct}%
@@ -719,13 +719,13 @@ function HeroFeatureCard({
               className="h-full transition-all duration-500"
               style={{
                 width: `${heatPct}%`,
-                background: '#16A34A',
+                background: '#15803D',
               }}
             />
           </div>
           <div
             className="flex items-center gap-4 mt-3 text-[11px] font-bold"
-            style={{ color: '#64748B' }}
+            style={{ color: '#475569' }}
           >
             <span className="flex items-center gap-1">
               <Heart size={12} strokeWidth={2.8} style={{ color: '#EC4899' }} fill="#FCE7F3" />
@@ -746,7 +746,7 @@ function HeroFeatureCard({
           onClick={() => onView(store.id)}
           className="w-full py-4 rounded-2xl text-[15px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
           style={{
-            background: '#16A34A',
+            background: '#15803D',
             border: '3px solid #1E1B4B',
             boxShadow: '0 4px 0 #1E1B4B',
             color: '#FFFFFF',
@@ -779,7 +779,7 @@ function HeroFeatureCard({
           boxShadow: '0 4px 0 #1E1B4B',
         }}
       >
-        <Star size={18} style={{ color: '#16A34A' }} strokeWidth={2.8} fill="#16A34A" />
+        <Star size={18} style={{ color: '#15803D' }} strokeWidth={2.8} fill="#15803D" />
       </div>
 
       {/* 左下角 */}
@@ -844,10 +844,10 @@ function CourseCard({
         >
           {store.name}
         </h3>
-        <p className="text-[13px] font-bold mb-3 truncate" style={{ color: '#64748B' }}>
+        <p className="text-[13px] font-bold mb-3 truncate" style={{ color: '#475569' }}>
           by {store.ownerName}
         </p>
-        <div className="flex items-center gap-3 text-[11px] font-bold" style={{ color: '#64748B' }}>
+        <div className="flex items-center gap-3 text-[11px] font-bold" style={{ color: '#475569' }}>
           <span className="flex items-center gap-1">
             <BookOpen size={12} strokeWidth={2.8} />
             {store.documentCount} 篇
@@ -872,7 +872,7 @@ function CourseCard({
           boxShadow: '0 2px 0 #1E1B4B',
         }}
       >
-        <Star size={12} strokeWidth={2.8} fill="#16A34A" style={{ color: '#16A34A' }} />
+        <Star size={12} strokeWidth={2.8} fill="#15803D" style={{ color: '#15803D' }} />
         <span className="text-[12px] font-black" style={{ color: '#14532D' }}>
           {(4 + Math.min(store.likeCount, 10) / 10).toFixed(1)}
         </span>
@@ -932,7 +932,7 @@ function Testimonial({
       >
         {title}
       </h3>
-      <p style={{ color: '#64748B', lineHeight: 1.65, fontSize: 14, fontWeight: 500 }}>
+      <p style={{ color: '#475569', lineHeight: 1.65, fontSize: 14, fontWeight: 500 }}>
         {body}
       </p>
     </div>
@@ -960,7 +960,7 @@ function EmptyState({ onPublish }: { onPublish: () => void }) {
       </h3>
       <p
         className="text-[14px] mb-8 max-w-md text-center font-medium"
-        style={{ color: '#64748B', lineHeight: 1.6 }}
+        style={{ color: '#475569', lineHeight: 1.6 }}
       >
         成为第一位向社区分享知识的开发者吧
       </p>

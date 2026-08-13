@@ -68,7 +68,7 @@ function SortHeader({
     <button
       onClick={onClick}
       className={`flex items-center gap-1 text-xs font-medium transition-colors ${
-        active ? 'text-indigo-300' : 'text-token-secondary hover-text-primary'
+        active ? 'text-[color:var(--accent-fg-blue)]' : 'text-token-secondary hover-text-primary'
       }`}
     >
       {children}
@@ -210,7 +210,7 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
                 onClick={() => applyShortcut(s.key as 'thisMonth' | 'last3' | 'last6' | 'thisYear')}
                 className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                   active
-                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                    ? 'bg-indigo-500/20 border-indigo-500/40 text-[color:var(--accent-fg-blue)]'
                     : 'border-token-subtle text-token-secondary hover-text-primary hover-border-token'
                 }`}
               >

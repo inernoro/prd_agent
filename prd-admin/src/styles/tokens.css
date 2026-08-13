@@ -321,6 +321,18 @@
   --accent-green: #7cfc00;
   --accent-primary: #D97757;
   --accent-primary-rgb: 217, 119, 87;
+  /*
+   * 白字实心按钮专用的品牌色。--accent-primary 本身是「品牌强调色」，
+   * 暗色档 #D97757 配白字只有 3.12:1（全站审计在 /chat 的新建会话按钮上抓到），
+   * 够不上 4.5。凡是「实心填充 + 白字」一律走这一档，不要直接铺 --accent-primary。
+   */
+  --accent-primary-solid: #B0523A;
+  /*
+   * 与 --accent-primary-solid 成对：铺了那个底就用这个字，两者必须一起改。
+   * 故意只在 :root 定义、浅色块不双写 —— 两个主题下 solid 档都是深赤陶，
+   * 字恒为白；而浅色块里出现 #fff 会被 themeSystem 的「浅色档禁止纯白」守卫拦下。
+   */
+  --accent-on-solid: #ffffff;
   --accent-gold: #D97757;
   --accent-gold-2: #E8A87C;
   --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
@@ -603,6 +615,7 @@
   /* 浅色品牌交互统一为暖赤陶；蓝色只保留给 semantic-info。 */
   --accent-primary: #A64B35;
   --accent-primary-rgb: 166, 75, 53;
+  --accent-primary-solid: #A64B35;   /* 浅色档本身已够深，白字 5.71:1 */
   --accent-gold: #A64B35;
   --accent-gold-2: #C36F52;
   --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);

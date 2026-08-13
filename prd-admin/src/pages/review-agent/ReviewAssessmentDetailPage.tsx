@@ -15,9 +15,9 @@ import type {
 } from '@/services';
 
 const TIER_STYLES: Record<string, string> = {
-  P0: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+  P0: 'bg-indigo-500/15 text-[color:var(--accent-fg-blue)] border-indigo-500/30',
   P1: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  P2: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  P2: 'bg-amber-500/15 text-[color:var(--accent-fg-amber)] border-amber-500/30',
   P3: 'bg-token-nested text-token-muted border-token-subtle',
 };
 
@@ -188,7 +188,7 @@ export function ReviewAssessmentDetailPage() {
             <ArrowLeft className="w-4 h-4 text-token-secondary" />
           </button>
           <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
-            <ListOrdered className="w-5 h-5 text-indigo-400" />
+            <ListOrdered className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
           </div>
           <div className="min-w-0">
             <h1 className="text-xl font-semibold text-token-primary truncate">{run.title}</h1>
@@ -269,7 +269,7 @@ export function ReviewAssessmentDetailPage() {
               </div>
             ))}
             {orderedItems.some(x => x.isContractualOverride) && (
-              <div className="px-3 py-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-sm text-indigo-300">
+              <div className="px-3 py-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-sm text-[color:var(--accent-fg-blue)]">
                 签约置顶 <span className="font-semibold">{orderedItems.filter(x => x.isContractualOverride).length}</span> 条
               </div>
             )}
@@ -280,7 +280,7 @@ export function ReviewAssessmentDetailPage() {
             )}
           </div>
           {run.globalMissingHints.length > 0 && (
-            <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-amber-300/90 space-y-1">
+            <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-[color:var(--accent-fg-amber)] space-y-1">
               {run.globalMissingHints.map((hint, i) => (
                 <p key={i}>{hint}</p>
               ))}
@@ -356,7 +356,7 @@ function ItemRow({
             <span className="inline-flex items-center gap-1.5">
               {item.priority}
               {item.isContractualOverride && (
-                <span className="text-[10px] text-indigo-300 border border-indigo-500/30 bg-indigo-500/10 rounded px-1">置顶</span>
+                <span className="text-[10px] text-[color:var(--accent-fg-blue)] border border-indigo-500/30 bg-indigo-500/10 rounded px-1">置顶</span>
               )}
             </span>
           ) : (
@@ -409,14 +409,14 @@ function ItemRow({
                     <td className="py-1.5 pr-3 text-right font-mono text-token-secondary">{f.anchor}/{anchorScale}</td>
                     <td className="py-1.5 pr-3 text-right font-mono text-token-secondary">{f.weightedScore}</td>
                     <td className="py-1.5 text-token-muted">
-                      {f.hasEvidence ? f.evidence : <span className="text-amber-400/70">表格中无证据，按保守值计</span>}
+                      {f.hasEvidence ? f.evidence : <span className="text-[color:var(--accent-fg-amber)]">表格中无证据，按保守值计</span>}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {item.missingInfo.length > 0 && (
-              <p className="text-[11px] text-amber-300/80 mb-1">建议补充信息：{item.missingInfo.join('、')}</p>
+              <p className="text-[11px] text-[color:var(--accent-fg-amber)] mb-1">建议补充信息：{item.missingInfo.join('、')}</p>
             )}
             {item.adjustmentLog.length > 0 && (
               <details className="text-[11px] text-token-muted">

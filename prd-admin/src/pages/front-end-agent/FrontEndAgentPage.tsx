@@ -326,7 +326,7 @@ export function FrontEndAgentPage() {
                   selected ? 'fea-task-pill-active' : 'fea-task-pill-idle'
                 }`}
               >
-                <Icon className={`w-3.5 h-3.5 ${selected ? 'text-indigo-200' : 'text-indigo-200/45'}`} />
+                <Icon className={`w-3.5 h-3.5 ${selected ? 'text-indigo-200' : 'text-indigo-200/75'}`} />
                 <span className="text-xs font-medium">{task.shortTitle}</span>
               </button>
             );
