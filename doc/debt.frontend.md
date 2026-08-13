@@ -191,6 +191,25 @@ MobileSafeBoundary 兜底卡、AutomationRulesPage 手动触发弹层）；PageH
 （`--tab-container-bg`）；Tooltip 箭头；代码块/Mermaid 源码统一到 `--nested-block-bg`；
 原生 `select` 的浅色 `color-scheme`。
 
+**三轮验收后的收口状态（2026-08-12）**：
+
+| 对象 | 视觉证据 | 结论 |
+|---|---|---|
+| Toast 成功态、教程抽屉、Mermaid 图与源码、原生 select、批注栏（桌面+移动）、Wikilink 悬浮卡（fallback 分支） | 双主题真人截图，页脚 sha 入镜 | 已验收 |
+| 划词 AI 改写浮层、划词批注输入浮层、Wikilink 联想面板 | **无**。三轮均未触发 | 见下 |
+
+后三者连续三轮拿不到视觉证据，卡点是**触发方式**而非产品：划词依赖真实指针拖选
+（`useContentSelection` 要 `window.getSelection()` 有非零 rect + mouseup/selectionchange
++ 防抖），`[[` 联想依赖真实按键序列写进 textarea；同一批里唯一 hover 触发的
+Wikilink 悬浮卡三轮里成了。用 `createRange()` 或 `fill()` 这类程序化方式设选区不会
+走到那条路径。下次要拿这三项的截图，必须用真实指针事件（Playwright `mouse.down/move/up`）
+或真人手动，不要再用程序化选区重试。
+
+它们当前的证据强度：`themeHardcodeRatchet` 的零容忍守卫保证这 10 个浮层面板
+写死浅色前景与写死深色背景**恒为 0**（配色 100% 走 token），且 token 族本身经
+Playwright 逐像素实测双主题全部 ≥4.5:1。**残余风险**：token 之外的机制（如某个
+第三方子组件自带配色）导致的浅色问题，源码守卫看不见。判定为可接受，不再开新一轮验收。
+
 **未清偿（本轮显式不做，避免一个 PR 无限扩范围）**：
 
 | 优先级 | 位置 | 浅色下的表现 | 不在本轮的原因 |
