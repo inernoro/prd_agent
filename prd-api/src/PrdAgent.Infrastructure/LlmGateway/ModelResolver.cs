@@ -2018,7 +2018,8 @@ public class ModelResolver : IModelResolver
             var filter = fb.And(
                 fb.Eq("TenantId", CurrentTenantId),
                 fb.Eq("ModelPoolId", group.Id),
-                fb.Gte("StartedAt", since));
+                fb.Gte("StartedAt", since),
+                fb.In("Status", new[] { "succeeded", "failed" }));
             var stats = await logs.Aggregate()
                 .Match(filter)
                 .Group(new BsonDocument

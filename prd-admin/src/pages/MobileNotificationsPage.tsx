@@ -89,12 +89,9 @@ export default function MobileNotificationsPage() {
     const isExternal = !isLlmGatewayAction && (item.actionKind === 'external' || /^https?:\/\//i.test(url));
     if (isExternal) window.open(url, '_blank', 'noopener,noreferrer');
     setHandlingIds((s) => new Set(s).add(item.id));
-    const res = await handleAdminNotification(item.id);
-    setHandlingIds((s) => { const next = new Set(s); next.delete(item.id); return next; });
-    if (res.success) {
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === item.id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
-      );
+    try {
+      // 先签发并校验网关深链，再持久化“已处理”。票据或入口解析失败时保留原通知，用户可以重试。
+      let gatewayHref: string | null = null;
       if (isLlmGatewayAction) {
         const ticket = await createLlmGatewaySsoTicket();
         if (!ticket.success) {
@@ -106,10 +103,20 @@ export default function MobileNotificationsPage() {
           toast.error('模型网关暂时无法打开', resolution.message);
           return;
         }
-        window.location.assign(resolution.href);
+        gatewayHref = resolution.href;
+      }
+      const res = await handleAdminNotification(item.id);
+      if (!res.success) return;
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === item.id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
+      );
+      if (gatewayHref) {
+        window.location.assign(gatewayHref);
       } else if (!isExternal) {
         navigate(url);
       }
+    } finally {
+      setHandlingIds((s) => { const next = new Set(s); next.delete(item.id); return next; });
     }
   }, [navigate]);
 

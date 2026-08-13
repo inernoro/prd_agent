@@ -2815,7 +2815,9 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             .Include("AppCallerCode")
             .Include("Title")
             .Include("Status")
-            .Include("ModelPoolId"))
+            .Include("ModelPoolId")
+            .Include("AllowedModelPoolIds")
+            .Include("DefaultModelPoolId"))
         .ToListAsync();
     var logFilter = Builders<BsonDocument>.Filter.Gte("StartedAt", since);
     var logStatsDocs = await logs.Aggregate()
@@ -2851,7 +2853,9 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             item.IsDefaultForType = string.Equals(item.Id, defaultPoolId, StringComparison.Ordinal);
         }
         var bound = appCallerDocs
-            .Where(d => string.Equals(d.AsNullableString("ModelPoolId"), item.Id, StringComparison.Ordinal))
+            .Where(d => string.Equals(d.AsNullableString("ModelPoolId"), item.Id, StringComparison.Ordinal)
+                || string.Equals(d.AsNullableString("DefaultModelPoolId"), item.Id, StringComparison.Ordinal)
+                || GetStringArray(d, "AllowedModelPoolIds").Contains(item.Id, StringComparer.Ordinal))
             .OrderByDescending(d => string.Equals(d.AsNullableString("Status"), "active", StringComparison.OrdinalIgnoreCase))
             .ThenBy(d => d.AsNullableString("Title") ?? d.GetStringOrEmpty("AppCallerCode"), StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -2875,7 +2879,8 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
         item.AverageDurationMs = stats?.AsNullableLong("AverageDurationMs");
         var recentTen = await logs.Find(TenantAccess.FilterTeamScope(http, fb.And(
                 fb.Eq("ModelPoolId", item.Id),
-                fb.Gte("StartedAt", since))))
+                fb.Gte("StartedAt", since),
+                fb.In("Status", new[] { "succeeded", "failed" }))))
             .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
             .Project(Builders<BsonDocument>.Projection.Include("Status"))
             .Limit(10)
@@ -3648,15 +3653,9 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
         .Where(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "active", StringComparison.OrdinalIgnoreCase))
         .ToList();
     var activeWithGatewayPool = activeAppCallers.Count(d =>
-    {
-        var poolId = d.AsNullableString("ModelPoolId");
-        return !string.IsNullOrWhiteSpace(poolId) && gwPoolIds.Contains(poolId);
-    });
+        GetReferencedModelPoolIds(d).Any(gwPoolIds.Contains));
     var activeWithUsableGatewayPool = activeAppCallers.Count(d =>
-    {
-        var poolId = d.AsNullableString("ModelPoolId");
-        return !string.IsNullOrWhiteSpace(poolId) && usableGwPoolIds.Contains(poolId);
-    });
+        GetReferencedModelPoolIds(d).Any(usableGwPoolIds.Contains));
     var activeMissingGatewayPool = activeAppCallers.Count - activeWithGatewayPool;
     var activeBoundPoolWithoutUsableMember = activeWithGatewayPool - activeWithUsableGatewayPool;
     var discovered = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
@@ -3704,11 +3703,7 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
     AddMapOnlyGaps(mapModelDocs, gwModelIds, "model", d => d.AsNullableString("ModelName") ?? d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
     AddMapOnlyGaps(mapExchangeDocs, gwExchangeIds, "exchange", d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
     gaps.AddRange(activeAppCallers
-        .Where(d =>
-        {
-            var poolId = d.AsNullableString("ModelPoolId");
-            return string.IsNullOrWhiteSpace(poolId) || !gwPoolIds.Contains(poolId);
-        })
+        .Where(d => !GetReferencedModelPoolIds(d).Any(gwPoolIds.Contains))
         .Take(30)
         .Select(d => new ConfigAuthorityGapItem
         {
@@ -3719,11 +3714,8 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
             Detail = "active appCaller 未绑定有效 GW 模型池；删除 MAP fallback 前必须修复。",
         }));
     gaps.AddRange(activeAppCallers
-        .Where(d =>
-        {
-            var poolId = d.AsNullableString("ModelPoolId");
-            return !string.IsNullOrWhiteSpace(poolId) && gwPoolIds.Contains(poolId) && !usableGwPoolIds.Contains(poolId);
-        })
+        .Where(d => GetReferencedModelPoolIds(d).Any(gwPoolIds.Contains)
+            && !GetReferencedModelPoolIds(d).Any(usableGwPoolIds.Contains))
         .Take(30)
         .Select(d => new ConfigAuthorityGapItem
         {
@@ -3795,6 +3787,8 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             .Include("AppCallerCode")
             .Include("Status")
             .Include("ModelPoolId")
+            .Include("AllowedModelPoolIds")
+            .Include("DefaultModelPoolId")
             .Include("ModelPolicy")
             .Include("ParameterPolicy")
             .Include("IngressProtocol")
@@ -3881,10 +3875,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .Select(x => x!)
         .ToHashSet(StringComparer.Ordinal);
     var activeMissingGatewayPool = activeAppCallers.Count(d =>
-    {
-        var poolId = d.AsNullableString("ModelPoolId");
-        return string.IsNullOrWhiteSpace(poolId) || !gwPoolIds.Contains(poolId);
-    });
+        !GetReferencedModelPoolIds(d).Any(gwPoolIds.Contains));
     var discoveredAppCallers = appCallerDocs.Count(d =>
         string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var governedAppCallers = appCallerDocs.Where(IsGovernedAppCaller).ToList();
@@ -3901,9 +3892,8 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
     var enabledGwModels = gwModelDocs.Where(d => d.AsNullableBool("Enabled") ?? true).ToList();
     var enabledGwExchanges = gwExchangeDocs.Where(d => d.AsNullableBool("Enabled") ?? true).ToList();
     var activeBoundPoolIds = activeAppCallers
-        .Select(d => d.AsNullableString("ModelPoolId"))
-        .Where(x => !string.IsNullOrWhiteSpace(x) && gwPoolIds.Contains(x!))
-        .Select(x => x!)
+        .SelectMany(GetReferencedModelPoolIds)
+        .Where(gwPoolIds.Contains)
         .ToHashSet(StringComparer.Ordinal);
     var activeBoundPools = gwPoolDocs.Where(d => activeBoundPoolIds.Contains(d.GetStringOrEmpty("_id"))).ToList();
     var activeBoundPoolWithoutUsableMember = activeBoundPools.Count(pool => !HasUsablePoolMember(pool, enabledGwPlatformIds, enabledGwModels, enabledGwExchanges));
@@ -4840,7 +4830,14 @@ app.MapGet("/gw/app-callers", async (
             fb.AnyEq("ObservedIngressProtocols", protocolNormalized)));
     }
     if (!string.IsNullOrWhiteSpace(requestType)) filters.Add(fb.Eq("RequestType", requestType.Trim()));
-    if (!string.IsNullOrWhiteSpace(modelPoolId)) filters.Add(fb.Eq("ModelPoolId", modelPoolId.Trim()));
+    if (!string.IsNullOrWhiteSpace(modelPoolId))
+    {
+        var requestedPoolId = modelPoolId.Trim();
+        filters.Add(fb.Or(
+            fb.Eq("ModelPoolId", requestedPoolId),
+            fb.Eq("DefaultModelPoolId", requestedPoolId),
+            fb.AnyEq("AllowedModelPoolIds", requestedPoolId)));
+    }
     var driftFilter = BuildAppCallerDriftFilter(drift);
     if (driftFilter is not null) filters.Add(driftFilter);
     if (!string.IsNullOrWhiteSpace(search))
@@ -9315,7 +9312,10 @@ app.MapDelete("/gw/pools/{id}", async (HttpContext http, string id) =>
     {
         IsCurrentDefault = await IsCurrentDefaultPoolAsync(gwModelPoolTypes, doc),
         AppCallers = (await gwAppCallers
-                .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("ModelPoolId", id)))
+                .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Or(
+                    Builders<BsonDocument>.Filter.Eq("ModelPoolId", id),
+                    Builders<BsonDocument>.Filter.Eq("DefaultModelPoolId", id),
+                    Builders<BsonDocument>.Filter.AnyEq("AllowedModelPoolIds", id))))
                 .ToListAsync())
             .Select(d => d.AsNullableString("Code") ?? d.GetStringOrEmpty("_id"))
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -13427,6 +13427,21 @@ static List<string> GetStringArray(BsonDocument d, string field)
         .Select(x => x.AsString)
         .Distinct(StringComparer.Ordinal)
         .ToList();
+}
+
+static List<string> GetReferencedModelPoolIds(BsonDocument d)
+{
+    var ids = new List<string>();
+    void Add(string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value) && !ids.Contains(value, StringComparer.Ordinal))
+            ids.Add(value);
+    }
+
+    Add(d.AsNullableString("ModelPoolId"));
+    Add(d.AsNullableString("DefaultModelPoolId"));
+    foreach (var id in GetStringArray(d, "AllowedModelPoolIds")) Add(id);
+    return ids;
 }
 
 static OperationAuditItem MapOperationAudit(BsonDocument d)

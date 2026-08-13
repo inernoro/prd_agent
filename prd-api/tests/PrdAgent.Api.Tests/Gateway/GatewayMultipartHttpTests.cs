@@ -92,6 +92,45 @@ public class GatewayMultipartHttpTests
     }
 
     [Fact]
+    public async Task HttpClient_StrictPoolRawRequest_PreservesPoolIdentityForSecondResolution()
+    {
+        GatewayRawRequest? captured = null;
+        var handler = new CapturingHandler(async request =>
+        {
+            captured = JsonSerializer.Deserialize<GatewayRawRequest>(
+                await request.Content!.ReadAsStringAsync(), PascalJson);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(
+                    new GatewayRawResponse { Success = true, StatusCode = 200, Content = "ok" },
+                    options: PascalJson),
+            };
+        });
+        var client = new HttpLlmGatewayClient(
+            new SingleClientFactory(new HttpClient(handler)),
+            Config("http://llmgw.test"),
+            NullLogger<HttpLlmGatewayClient>.Instance);
+
+        await client.SendRawWithResolutionAsync(
+            new GatewayRawRequest
+            {
+                AppCallerCode = "visual-agent.image.text2img::generation",
+                ModelType = "generation",
+                ExpectedModel = "provider-image-model",
+            },
+            new GatewayModelResolution
+            {
+                Success = true,
+                ResolutionType = "GatewayRegistryPool",
+                ModelGroupId = "pool-selected-by-appcaller",
+                ActualModel = "provider-image-model",
+            });
+
+        captured.ShouldNotBeNull();
+        captured!.ExpectedModel.ShouldBe("pool-selected-by-appcaller");
+    }
+
+    [Fact]
     public async Task HttpClient_AsyncFollowUp_PreservesRequiredOfferingId()
     {
         GatewayRawRequest? captured = null;
