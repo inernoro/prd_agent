@@ -333,12 +333,13 @@ git push -u origin $(git branch --show-current)
     不代表那个 PR 干净，拿此处的绿灯去批准彼处的合并是在用一份不相干的证据放行。
 
     做法（`git fetch` 一次只带一个 ref 目标，避免 `FETCH_HEAD` 落到哪一个取决于命令行
-    顺序的歧义；仓库常见浅克隆，历史不够棘轮会因为找不到公共祖先直接失败，两次 fetch
-    都要 `--depth=0` 补全历史）：
+    顺序的歧义；仓库常见浅克隆，历史不够棘轮会因为找不到公共祖先直接失败，`--unshallow`
+    只对浅克隆有效、对完整仓库跑会报错，所以失败就回退普通 fetch——一次成功后整个本地
+    仓库对该 remote 就是完整历史，第二条 fetch 不需要再补）：
 
     ```bash
-    git fetch --depth=0 origin main
-    git fetch --depth=0 origin <该PR的head分支>
+    git fetch origin main --unshallow 2>/dev/null || git fetch origin main
+    git fetch origin <该PR的head分支>
     git worktree add <临时目录> FETCH_HEAD
     ```
 
