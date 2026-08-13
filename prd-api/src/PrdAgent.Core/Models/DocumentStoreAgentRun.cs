@@ -25,7 +25,7 @@ public class DocumentStoreAgentRun
     public string UserId { get; set; } = string.Empty;
 
     /// <summary>
-    /// 归属实例（创建该 run 的部署实例 = git 分支，见 InstanceIdentity）。
+    /// 归属实例（创建该 run 的稳定部署域 + git 分支，见 InstanceIdentity）。
     /// 后台 Worker 只领取属于自己实例（或历史无主 null/空）的 run，避免共享 Mongo 下多容器互抢。
     /// </summary>
     public string? OwnerInstanceId { get; set; }

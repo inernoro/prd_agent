@@ -545,6 +545,211 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("表头必须严格为" in error for error in errors))
 
+    def test_not_run_report_requires_execution_coverage_ledger(self):
+        errors = archive_report._coverage_ledger_errors("未执行：12\nVerdict: conditional")
+        self.assertTrue(any("执行覆盖账本" in error for error in errors))
+
+    def test_execution_coverage_ledger_requires_actionable_fields(self):
+        body = """
+未执行：1
+
+## 执行覆盖账本
+
+| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |
+|---|---:|---:|---:|---:|---:|---|---|
+| CDS 环境 | 2 | 1 | 1 | 0 | 1 | 自动化缺口 | run command |
+
+| caseId | 为什么未执行 | 关闭条件 |
+|---|---|---|
+| REC-001 | 缺真实步骤 | 出现执行证据 |
+"""
+        self.assertEqual([], archive_report._coverage_ledger_errors(body))
+
+    def test_execution_coverage_ledger_rejects_missing_close_condition(self):
+        body = """
+not-run
+
+## 执行覆盖账本
+
+| 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |
+|---|---|---|---|---|---|---|
+| 2 | 1 | 1 | 0 | 1 | 自动化缺口 | run command |
+"""
+        errors = archive_report._coverage_ledger_errors(body)
+        self.assertTrue(any("关闭条件" in error for error in errors))
+
+    def test_reviewer_summary_separates_pass_fail_not_run_and_intervention(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+| 多图 | 首页 → 视觉创作 → 结果 | 通过 | 不通过 | 不通过 | P1 | 是 | [步骤](#e) | [截图](#f) | [缺陷](#g) | [方法](#h) |
+| 视频 | 首页 → 视频创作 → 成片 | 通过 | 未执行 | 未执行 | 无 | 需干预 | [步骤](#i) | [截图](#j) | [缺陷](#k) | [方法](#l) |
+"""
+        summary = archive_report._reviewer_summary(body)
+        self.assertIsNotNone(summary)
+        self.assertEqual(
+            {"pass": 1, "partial": 0, "fail": 1, "not_run": 1, "intervention": 2},
+            summary["counts"],
+        )
+
+    def test_supervisor_gate_rejects_pass_when_module_budget_is_short(self):
+        body = """
+验收场景：全面视觉回归
+
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 多图视觉创作 | 首页 → 视觉创作 → 生成结果 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 多图视觉创作 | 3 | 2 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        manifest = [
+            {"name": "01-a", "module": "多图视觉创作"},
+            {"name": "02-b", "module": "多图视觉创作"},
+        ]
+        errors = archive_report._supervisor_report_errors("全面视觉回归", body, manifest)
+        self.assertTrue(any("实际 2 < 计划 3" in error for error in errors))
+
+    def test_supervisor_gate_requires_clickable_reviewer_links(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | 见正文 | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 登录 | 1 | 1 | 通过 | 通过 | 不适用 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertTrue(any("查看步骤" in error and "可点击" in error for error in errors))
+
+    def test_supervisor_gate_accepts_complete_budget_and_manifest(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 登录 | 1 | 1 | 通过 | 通过 | 不适用 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertEqual([], errors)
+
+    def test_supervisor_gate_accepts_new_collected_and_qualified_coverage(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 未执行 | P2 | 是 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 合格证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 登录 | 未执行 | 登录 → 首页 → 头像 | 1 | 0/2 | 0/2 | 缺逐项元数据 | [查看](#visual-ledger-login) | [查看](#visual-method-login) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertEqual([], errors)
+
+    def test_supervisor_gate_accepts_auditable_evidence_header(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 可审核证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 登录 | 通过 | 登录 → 首页 → 头像 | 1 | 1/1 | 1/1 | 无 | [查看](#visual-ledger-login) | [查看](#visual-method-login) |
+"""
+        manifest = [{
+            "name": "01-login",
+            "module": "登录",
+            "primaryState": "登录",
+            "coverageStates": ["登录"],
+            "testType": "视觉",
+            "status": "通过",
+            "theme": "dark",
+            "viewportClass": "desktop",
+            "methodAnchor": "#visual-method-login",
+            "breadcrumb": "登录 → 首页 → 头像",
+        }]
+        errors = archive_report._supervisor_report_errors("主管验收", body, manifest)
+        self.assertEqual([], errors)
+
+    def test_supervisor_gate_rejects_false_qualified_count(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 合格证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 登录 | 通过 | 登录 → 首页 → 头像 | 1 | 1/1 | 1/1 | 无 | [查看](#visual-ledger-login) | [查看](#visual-method-login) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertTrue(any("报告可审核 1，manifest 可审核 0" in error for error in errors))
+
+    def test_failure_report_can_archive_explicit_runtime_failure_evidence(self):
+        errors = archive_report._warning_evidence_errors("fail", {
+            "name": "01-real-failure",
+            "warnings": ["自动捕获(P0,network): HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "保存动作真实返回 500，页面显示失败恢复提示",
+        })
+        self.assertEqual([], errors)
+
+    def test_pass_report_cannot_hide_runtime_failure_as_evidence(self):
+        errors = archive_report._warning_evidence_errors("pass", {
+            "name": "01-real-failure",
+            "warnings": ["自动捕获(P0,network): HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "保存动作真实返回 500，页面显示失败恢复提示",
+        })
+        self.assertTrue(any("pass 报告不能包含失败证据" in error for error in errors))
+
+    def test_failure_evidence_requires_a_specific_reason(self):
+        errors = archive_report._warning_evidence_errors("fail", {
+            "name": "01-real-failure",
+            "warnings": ["HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "失败",
+        })
+        self.assertTrue(any("failureReason" in error for error in errors))
+
 
 class InteractiveReportLinkContractTests(unittest.TestCase):
     manifest = [{
@@ -619,6 +824,26 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         )
         errors = archive_report._interactive_evidence_errors(content, self.manifest)
         self.assertTrue(any("无法唯一解析的内部链接" in error for error in errors))
+
+    def test_explicit_method_anchor_survives_markdown_rendering(self):
+        body = (
+            self.body("覆盖缺口")
+            + "\n\n| 测试方法 |\n"
+              "|---|\n"
+              "| [查看](#method-core-001) |\n\n"
+              '<a id="method-core-001"></a>\n'
+              "### 首页与静态资源\n"
+        )
+        rendered = archive_report.build_interactive_html(
+            "Commit验收 · 测试方法锚点",
+            "conditional",
+            body,
+            self.manifest,
+            figure_srcs=self.figure_srcs,
+        )
+        self.assertIn('href="#method-core-001"', rendered)
+        self.assertIn('<span id="method-core-001"></span>', rendered)
+        self.assertEqual([], archive_report._interactive_evidence_errors(rendered, self.manifest))
 
 
 if __name__ == "__main__":

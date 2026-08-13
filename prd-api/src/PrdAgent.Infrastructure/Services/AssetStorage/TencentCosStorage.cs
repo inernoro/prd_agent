@@ -396,8 +396,11 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 支持常见图片/字体/文本扩展
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        // 视频域只探测成片扩展，避免对其他安全护栏路径发起无效请求。
+        var exts = string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                   && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal)
+            ? new[] { "mp4" }
+            : new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var ext in exts)
         {
             // 1) 新规则（domain/type）
@@ -423,8 +426,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 由于 ext 可能未知，这里按常见图片/字体/文本扩展逐个尝试删除（不存在视为成功）
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = CandidateExtensions(d, t);
         foreach (var ext in exts)
         {
             try
@@ -438,6 +440,12 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             }
             catch (Exception ex)
             {
+                if (ext == "mp4"
+                    && string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                    && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+                {
+                    throw;
+                }
                 // DeleteAsync 可能被安全护栏拦截；这里不抛出以免影响上层业务（上层会决定是否降级）。
                 _logger.LogWarning(ex, "COS deleteBySha failed. sha={Sha}", sha);
             }
@@ -458,6 +466,17 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var ext = MimeToExt(mime);
         var key = BuildObjectKey(d, t, sha, ext);
         return BuildPublicUrl(key);
+    }
+
+    private static string[] CandidateExtensions(string? domain, string? type)
+    {
+        if (string.Equals(domain, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+            return ["mp4"];
+        if (string.Equals(domain, AppDomainPaths.DomainVisualAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeImg, StringComparison.Ordinal))
+            return ["png", "jpg", "jpeg", "webp", "gif"];
+        return ["png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt"];
     }
 
     public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
@@ -788,6 +807,26 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             return true;
         }
 
+        // 自服务头像使用用户哈希和内容哈希组成的单对象键；只允许精确删除该形态，
+        // 不允许删除头像目录、旧式文件名或任何前缀集合。
+        if (AssetStorageDeletePolicy.IsVersionedUserAvatarKey(normalizedKey, _prefix))
+        {
+            reason = "superseded_avatar";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedVideoKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_video";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedImageKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_image";
+            return true;
+        }
+
         // 2) 受控删除：默认关闭；开启后仅允许 domain/type 白名单前缀
         if (!_enableSafeDelete)
         {
@@ -1044,4 +1083,3 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return null;
     }
 }
-

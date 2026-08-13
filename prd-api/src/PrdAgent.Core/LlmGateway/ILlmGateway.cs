@@ -82,6 +82,22 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         CancellationToken ct = default);
 
     /// <summary>
+    /// 按异步任务提交阶段记录的 Offering ID 恢复精确路由。
+    /// </summary>
+    Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+        => Task.FromResult(new GatewayModelResolution
+        {
+            Success = false,
+            ResolutionType = "NotFound",
+            ExpectedModel = offeringId,
+            ErrorMessage = "当前网关实现不支持按 Offering 恢复路由",
+        });
+
+    /// <summary>
     /// 解析调用方已经声明的逻辑模型。该契约不能退回同名旧模型池：返回结果必须携带
     /// 相同的 LogicalModelPublicId，否则按解析失败处理。
     /// </summary>

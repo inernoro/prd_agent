@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -116,7 +117,9 @@ public class VisualAgentVideoController : ControllerBase
             r.CreatedAt,
             r.StartedAt,
             r.EndedAt,
-            r.ErrorMessage,
+            ErrorMessage = string.IsNullOrWhiteSpace(r.ErrorMessage)
+                ? r.ErrorMessage
+                : VideoGenerationUserError.ForPersistence(r.ErrorCode, r.ErrorMessage),
             // 兼容字段（分镜流程已废弃）
             ScenesCount = 0,
             ScenesReady = 0,
@@ -137,7 +140,7 @@ public class VisualAgentVideoController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
-        return Ok(ApiResponse<VideoGenRun>.Ok(run));
+        return Ok(ApiResponse<VideoGenRun>.Ok(VideoGenerationUserError.SanitizeForResponse(run)));
     }
 
     // 注：原分镜编辑 / 重生成 / 渲染触发 / 分镜预览 / 背景图 / TTS 等端点已全部移除
@@ -181,7 +184,11 @@ public class VisualAgentVideoController : ControllerBase
             {
                 foreach (var ev in events)
                 {
-                    await WriteEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
+                    await WriteEventAsync(
+                        ev.Seq.ToString(),
+                        ev.EventName,
+                        VideoGenerationUserError.SanitizeEventPayload(ev.EventName, ev.PayloadJson),
+                        cancellationToken);
                     lastSeq = ev.Seq;
                 }
                 lastKeepAliveAt = DateTime.UtcNow;

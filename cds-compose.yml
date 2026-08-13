@@ -52,6 +52,8 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (热重载)"
       command: >-
+        if ! command -v ffmpeg >/dev/null 2>&1; then
+        apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
         cd prd-api &&
         dotnet restore &&
         dotnet build --no-restore &&
@@ -61,6 +63,8 @@ x-cds-deploy-modes:
       # 每次部署前清掉 bin/obj，强制干净编译：dotnet 增量构建在 CDS 共享 worktree 下偶发
       # "撒谎"（源码改了却复用旧 DLL），清空后从零编译可彻底避免发布出不含最新改动的二进制。
       command: >-
+        if ! command -v ffmpeg >/dev/null 2>&1; then
+        apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
         cd prd-api &&
         rm -rf src/PrdAgent.Api/bin src/PrdAgent.Api/obj
         src/PrdAgent.Core/bin src/PrdAgent.Core/obj
@@ -253,6 +257,8 @@ services:
     ports:
       - "5000"
     command: >-
+      if ! command -v ffmpeg >/dev/null 2>&1; then
+      apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
       cd prd-api &&
       rm -rf src/PrdAgent.Api/obj src/PrdAgent.Api/bin
       src/PrdAgent.Core/obj src/PrdAgent.Core/bin
@@ -266,6 +272,14 @@ services:
     environment:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
       ASPNETCORE_ENVIRONMENT: Development
+      # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId。固定为 CDS，
+      # 不使用容器或 commit，既隔离正式环境，也保证滚动部署连续消费。
+      Deployment__Identity: "prd-agent:cds"
+      Deployment__AdoptLegacyBranchOwners: "false"
+      Deployment__RetiredLegacyBranchOwnerIds: ""
+      Deployment__LegacyOwnerCreatedBeforeUtc: ""
+      # CDS 自动验收永久入口：仍需通过仓库登记的 RSA 公钥签名，显式开关可独立熔断。
+      SYNTHETIC_LOGIN_ENABLED: "true"
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
@@ -273,8 +287,12 @@ services:
       MongoDB__DatabaseName: prdagent
       LlmGateway__DatabaseName: llm_gateway
       # CDS 预览虽使用 ASPNETCORE_ENVIRONMENT=Production，但不是正式生产；显式钉 inproc，
-      # 避免依赖代码缺省值。需要验证 HTTP 时由对应 CDS profile 明确改成 http/shadow。
+      # 避免依赖代码缺省值。单个业务调用方通过项目级白名单渐进切到 HTTP 权威，
+      # 不需要把整个 CDS 环境一次性切成 http/shadow。
       LlmGateway__Mode: "inproc"
+      # CDS 将 profile env 原样写入容器，不展开 Docker Compose 的 `${KEY:-default}` 语法。
+      # 录音转写调用方固定走独立 serving 权威；如需扩展灰度范围，必须通过受审 compose 导入修改。
+      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
@@ -283,9 +301,12 @@ services:
       # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
       LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
-      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
-      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
+      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
+      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       LlmGateway__Readiness__RequireAssetProbe: "false"
+      # 历史无归属队列只允许正式权威部署接管；所有 CDS 预览固定关闭。
+      # 只有 CDS main 会执行代码内固定截止线的一次性迁移，功能分支永不接管共享旧队列。
+      Transcript__AdoptLegacyUnownedRuns: ""
       LlmGateway__Retention__ApplyChanges: "false"
       LlmGateway__Retention__EnableTtlIndexes: "false"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
@@ -370,11 +391,12 @@ services:
       # 预览/fork 都能自签 token 读日志。未注入时由 llmgw/console-api 生产守卫 fail-closed。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
       LlmGwJwt__Issuer: prdagent-llmgw
-      # 控制台账号长期权威是 llm_gateway.llmgw_console_users。未设置 bootstrap 口令时内置 admin/admin
-      # 并强制首登改密；LLMGW_ADMIN_PASSWORD 仅用于空库首次创建或 LLMGW_ADMIN_FORCE_RESET 破玻璃，
-      # 不能作为每次启动覆盖数据库口令的长期权威。bare `${KEY}` 保留为可选透传，不带默认，避免 CDS
-      # 把 `${KEY:-default}` 解析成字面量覆盖项目变量。
+      # 默认由 llm_gateway.llmgw_console_users 托管账号；启用 LLMGW_ADMIN_ENV_AUTHORITY 后，env 长期托管
+      # admin，并且只在发现漂移时修复。bare `${KEY}` 保留为可选透传，不带默认，避免 CDS 把
+      # `${KEY:-default}` 解析成字面量覆盖项目变量。
       LLMGW_ADMIN_PASSWORD: "${LLMGW_ADMIN_PASSWORD}"
+      LLMGW_ADMIN_FORCE_RESET: "${LLMGW_ADMIN_FORCE_RESET}"
+      LLMGW_ADMIN_ENV_AUTHORITY: "${LLMGW_ADMIN_ENV_AUTHORITY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
       cds.readiness-path: "/gw/healthz"
@@ -403,8 +425,8 @@ services:
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
-      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
-      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
+      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
+      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       # CDS 源码 profile 同样没有稳定对象存储探针；不能只在 express profile 关闭。
       LlmGateway__Readiness__RequireAssetProbe: "false"
       # CDS 只验证 lifecycle dry-run；破坏性清理由正式 compose 显式启用。

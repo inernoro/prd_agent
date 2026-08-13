@@ -26,6 +26,7 @@ using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
 using PrdAgent.LlmGw.Organization;
 using PrdAgent.LlmGw.Provisioning;
+using PrdAgent.LlmGw.LogicalModels;
 using PrdAgent.LlmGw.Security;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -70,8 +71,10 @@ if (jwtTooShort)
 var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
 
 // 网关控制台登录账号：
-// - 长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不再被 env 覆盖。
-// - LLMGW_ADMIN_PASSWORD 仅用于“首次 bootstrap 创建账号”或 LLMGW_ADMIN_FORCE_RESET 破玻璃时的重置口令。
+// - 默认模式下，长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不被 env 覆盖。
+// - LLMGW_ADMIN_ENV_AUTHORITY=1 时，LLMGW_ADMIN_PASSWORD 是长期权威；启动只在检测到漂移时修复，
+//   密码和状态一致时不写库、不递增 SecurityVersion，避免每次重启让已有会话失效。
+// - LLMGW_ADMIN_FORCE_RESET 保留为兼容的一次性破玻璃开关，同样采用幂等修复。
 // - 未设 bootstrap 口令时，内置 admin/admin 引导 + 首登强制改密，避免新环境锁死。
 const string AdminUser = "admin";
 const string DefaultAdminPwd = "admin";
@@ -222,16 +225,32 @@ var app = builder.Build();
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
 
-// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，env 仅 bootstrap/破玻璃）──
-// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式重置 admin
+// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，可选 env 长期托管）──
+// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式校准 admin
 // 口令。用于「账号被认领但口令登不进」的死锁恢复。恢复后请把该 env 清掉。
 // **仅认真值**（Bugbot Medium）：只判「非空」会把 =0 / =false 误当开启，每次启动强制回 admin/admin 反而擦掉 env 口令。
-// 口令来源（2026-07-04 目标模式）：数据库是长期权威；LLMGW_ADMIN_PASSWORD 仅在首次创建或 force reset 时使用。
+// 永久在线模式：LLMGW_ADMIN_ENV_AUTHORITY=1 时，env 是 admin 口令权威。该模式要求显式配置非默认强口令。
 var forceResetRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET") ?? string.Empty).Trim();
 var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw, StringComparer.OrdinalIgnoreCase);
-var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
+var envAuthorityRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_ENV_AUTHORITY") ?? string.Empty).Trim();
+var envAuthorityAdmin = new[] { "1", "true", "yes", "on" }.Contains(envAuthorityRaw, StringComparer.OrdinalIgnoreCase);
+var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD")?.Trim();
+if (envAuthorityAdmin && (!GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd) || adminBootstrapPwd == DefaultAdminPwd))
+{
+    throw new InvalidOperationException(
+        $"LLMGW_ADMIN_ENV_AUTHORITY 已启用，但 LLMGW_ADMIN_PASSWORD 未达到至少 {GwPasswordPolicy.MinimumLength} 位的口令规则或仍为默认弱口令。" +
+        "请先配置独立强口令；服务拒绝以不可用的破窗账户启动。");
+}
 var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
-await SeedAdminAsync(gatewayDatabase, operationAudits, AdminUser, DefaultAdminPwd, internalTenantId, forceResetAdmin, adminBootstrapPwd);
+await SeedAdminAsync(
+    gatewayDatabase,
+    operationAudits,
+    AdminUser,
+    DefaultAdminPwd,
+    internalTenantId,
+    forceResetAdmin,
+    envAuthorityAdmin,
+    adminBootstrapPwd);
 
 // GW 请求日志由 llmgw-serve 写入独立 llm_gateway 库；控制台和 runtime gates 必须读取同一权威来源。
 var logs = gatewayDatabase.GetCollection<BsonDocument>("llmrequestlogs");
@@ -268,6 +287,9 @@ var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cos
 var costImportScopeLocks = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
 var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
 var legacyKeyUsage = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_usage");
+await LogicalModelCapabilityPolicy.BackfillLegacyGenerationModelsAsync(
+    gwLogicalModels,
+    CancellationToken.None);
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
 await EnsureInternalTenantAsync(
     users,
@@ -898,7 +920,7 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("INVALID_INPUT", "新口令不能为空"), jsonOptions);
     }
-    if (newPwd.Length < LocalPasswordPolicy.MinPasswordLength)
+    if (!LocalPasswordPolicy.MeetsMinimumLength(newPwd))
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("WEAK_PASSWORD", $"新口令至少 {LocalPasswordPolicy.MinPasswordLength} 位"), jsonOptions);
     }
@@ -927,6 +949,24 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     if (user is null || !user.IsActive)
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
+    }
+    if (envAuthorityAdmin && string.Equals(user.Username, AdminUser, StringComparison.Ordinal))
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "auth.change_password",
+            targetType: "llmgw_console_user",
+            targetId: user.Id,
+            targetName: user.Username,
+            success: false,
+            reason: "PASSWORD_MANAGED_BY_DEPLOYMENT");
+        return Json(
+            ApiEnvelope<ChangePasswordResultDto>.Fail(
+                "PASSWORD_MANAGED_BY_DEPLOYMENT",
+                "该管理员口令由部署配置统一管理，当前页面不能修改。请联系系统管理员更新后重新登录。"),
+            jsonOptions,
+            statusCode: 409);
     }
 
     // 会话来源参与判定：从 MAP 一键登录进来的人此刻就能再走一遍 SSO，
@@ -1770,7 +1810,7 @@ app.MapPost("/gw/members", async (HttpContext http, [FromBody] CreateMemberReque
     }
 
     var initialPassword = body.InitialPassword ?? string.Empty;
-    if (initialPassword.Length < 12)
+    if (!GwPasswordPolicy.MeetsMinimumLength(initialPassword))
         return Json(ApiEnvelope<object>.Fail("INVALID_PASSWORD", "新用户初始密码至少 12 位"), jsonOptions, 400);
     memberUser = new LlmGwUser
     {
@@ -2938,7 +2978,7 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
     var now = DateTime.UtcNow;
     var id = $"gw-logical-{Guid.NewGuid():N}";
-    var capabilities = (body?.Capabilities ?? new()).Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+    var capabilities = LogicalModelCapabilityPolicy.Normalize(modelType, body?.Capabilities);
     var appCallers = (body?.AllowedAppCallerCodes ?? new()).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     var document = new BsonDocument
     {
@@ -3009,7 +3049,12 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     }
     if (body.Capabilities is not null)
     {
-        var capabilities = body.Capabilities.Select(x => x.Trim().ToLowerInvariant()).Where(x => x.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        var existing = await gwLogicalModels.Find(
+                TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+            .Project(Builders<BsonDocument>.Projection.Include("ModelType"))
+            .FirstOrDefaultAsync();
+        var existingModelType = existing?.GetStringOrEmpty("ModelType") ?? string.Empty;
+        var capabilities = LogicalModelCapabilityPolicy.Normalize(existingModelType, body.Capabilities);
         updates.Add(Builders<BsonDocument>.Update.Set("Capabilities", new BsonArray(capabilities)));
     }
     if (body.AllowedAppCallerCodes is not null)
@@ -3065,7 +3110,12 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为 1 到 1000000"), jsonOptions, 400);
     if (!IsSafeOfferingEndpointPath(body?.EndpointPath))
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
-    var duplicate = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", id), fb.Eq("TargetKind", targetKind), fb.Eq("TargetId", targetId));
+    var duplicate = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("LogicalModelId", id),
+        fb.Eq("TargetKind", targetKind),
+        fb.Eq("TargetId", targetId),
+        fb.Not(fb.Exists("SupersededByOfferingId")));
     if (await gwModelOfferings.Find(duplicate).AnyAsync())
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("DUPLICATE_OFFERING", "该上游已绑定到此逻辑模型"), jsonOptions, 409);
 
@@ -3100,6 +3150,7 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
 
 app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId, [FromBody] UpdateModelOfferingRequest? body) =>
 {
+    var fb = Builders<BsonDocument>.Filter;
     if (body is null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "缺少更新内容"), jsonOptions, 400);
     if (body.MaxConcurrency is < 0 or > 10000)
@@ -3108,6 +3159,15 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为空、0 或 1 到 1000000"), jsonOptions, 400);
     if (!IsSafeOfferingEndpointPath(body.EndpointPath))
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", offeringId), Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+    var existing = await gwModelOfferings.Find(filter).FirstOrDefaultAsync();
+    if (existing is null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+    if (existing.Contains("SupersededByOfferingId"))
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            "OFFERING_SUPERSEDED",
+            "该 Offering 已有新版本，请刷新后编辑当前版本"), jsonOptions, 409);
     var updates = new List<UpdateDefinition<BsonDocument>>();
     if (body.UpstreamModelId is not null) updates.Add(SetOrUnset("UpstreamModelId", body.UpstreamModelId));
     if (body.Protocol is not null) updates.Add(SetOrUnset("Protocol", body.Protocol.ToLowerInvariant()));
@@ -3119,15 +3179,118 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
     if (body.Notes is not null) updates.Add(SetOrUnset("Notes", body.Notes));
     if (updates.Count == 0)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
+    var changedFieldCount = updates.Count;
+    var routingConfigurationChanged = OfferingRoutingChangePolicy.HasChanged(
+        existing.AsNullableString("UpstreamModelId"),
+        existing.AsNullableString("Protocol"),
+        existing.AsNullableString("EndpointPath"),
+        body.UpstreamModelId,
+        body.Protocol,
+        body.EndpointPath);
+    if (routingConfigurationChanged)
+    {
+        // Offering ID 是已受理异步任务的持久化路由身份，协议、Endpoint 与上游模型不得原地改写。
+        // 生成一个新 Offering 给后续任务使用；旧 Offering 退出新任务调度，但仍保留原路由，
+        // 使已经付费提交的视频任务在 worker 重启后仍能按旧 ID 轮询和下载。
+        var now = DateTime.UtcNow;
+        var replacementId = $"gw-offering-{Guid.NewGuid():N}";
+        var replacement = existing.DeepClone().AsBsonDocument;
+        replacement["_id"] = replacementId;
+        ApplyModelOfferingUpdate(replacement, body);
+        replacement["Enabled"] = false;
+        replacement["HealthStatus"] = 0;
+        replacement["ConsecutiveFailures"] = 0;
+        replacement["ConsecutiveSuccesses"] = 0;
+        replacement["SupersedesOfferingId"] = offeringId;
+        var stagingMarker = $"pending:{replacementId}";
+        replacement["SupersededByOfferingId"] = stagingMarker;
+        replacement["CreatedAt"] = now;
+        replacement["UpdatedAt"] = now;
+        replacement.Remove("SupersededAt");
+
+        await gwModelOfferings.InsertOneAsync(replacement);
+        var retirementFilter = fb.And(filter, fb.Not(fb.Exists("SupersededByOfferingId")));
+        var retired = await gwModelOfferings.FindOneAndUpdateAsync(
+            retirementFilter,
+            Builders<BsonDocument>.Update
+                .Set("Enabled", false)
+                .Set("SupersededByOfferingId", replacementId)
+                .Set("SupersededAt", now)
+                .Set("UpdatedAt", now),
+            new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+        if (retired is null)
+        {
+            await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "OFFERING_EDIT_CONFLICT",
+                "该 Offering 已被其他管理员更新，请刷新后重试"), jsonOptions, 409);
+        }
+
+        var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
+        var promoted = await gwModelOfferings.UpdateOneAsync(
+            TenantAccess.Filter(http, fb.And(
+                fb.Eq("_id", replacementId),
+                fb.Eq("SupersededByOfferingId", stagingMarker))),
+            Builders<BsonDocument>.Update
+                .Unset("SupersededByOfferingId")
+                .Set("Enabled", replacementEnabled)
+                .Set("UpdatedAt", DateTime.UtcNow));
+        if (promoted.ModifiedCount != 1)
+        {
+            await gwModelOfferings.UpdateOneAsync(
+                TenantAccess.Filter(http, fb.And(
+                    fb.Eq("_id", offeringId),
+                    fb.Eq("SupersededByOfferingId", replacementId))),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", replacementEnabled)
+                    .Unset("SupersededByOfferingId")
+                    .Unset("SupersededAt")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "OFFERING_PROMOTION_FAILED",
+                "新路由未能接管流量，原 Offering 已恢复，请重试"), jsonOptions, 503);
+        }
+        replacement.Remove("SupersededByOfferingId");
+        replacement["Enabled"] = replacementEnabled;
+
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            "model-offering.route-replaced",
+            "llmgw_model_offering",
+            replacementId,
+            replacement.GetStringOrEmpty("TargetId"),
+            true,
+            null,
+            new BsonDocument
+            {
+                { "logicalModelId", logicalId },
+                { "supersededOfferingId", offeringId },
+                { "fieldCount", changedFieldCount },
+                { "healthReset", true },
+            });
+        var logicalForReplacement = await gwLogicalModels.Find(
+            TenantAccess.Filter(http, fb.Eq("_id", logicalId))).FirstOrDefaultAsync();
+        var replacementModels = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+        var replacementExchanges = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+        var replacementPlatforms = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+        return Json(ApiEnvelope<ModelOfferingItem>.Ok(MapLogicalModel(
+            logicalForReplacement!,
+            new List<BsonDocument> { replacement },
+            replacementModels,
+            replacementExchanges,
+            replacementPlatforms).Offerings.Single()), jsonOptions);
+    }
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
-        Builders<BsonDocument>.Filter.Eq("_id", offeringId), Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
     var updated = await gwModelOfferings.FindOneAndUpdateAsync(filter, Builders<BsonDocument>.Update.Combine(updates),
         new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
     if (updated is null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
     await WriteOperationAuditAsync(operationAudits, http, "model-offering.update", "llmgw_model_offering", offeringId, updated.GetStringOrEmpty("TargetId"), true, null,
-        new BsonDocument { { "logicalModelId", logicalId }, { "fieldCount", updates.Count - 1 } });
+        new BsonDocument { { "logicalModelId", logicalId }, { "fieldCount", changedFieldCount }, { "healthReset", routingConfigurationChanged } });
     var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", logicalId))).FirstOrDefaultAsync();
     var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
     var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
@@ -7882,6 +8045,8 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
     await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("ApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "platform", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -7895,6 +8060,7 @@ app.MapPut("/gw/platforms/{id}/api-key", async (HttpContext http, string id, [Fr
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
@@ -7911,6 +8077,8 @@ app.MapDelete("/gw/platforms/{id}/api-key", async (HttpContext http, string id) 
     await gwPlatforms.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("ApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "platform", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -7924,6 +8092,7 @@ app.MapDelete("/gw/platforms/{id}/api-key", async (HttpContext http, string id) 
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
@@ -8243,6 +8412,8 @@ app.MapPut("/gw/models/{id}/api-key", async (HttpContext http, string id, [FromB
     await gwModels.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("ApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "model", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -8256,6 +8427,7 @@ app.MapPut("/gw/models/{id}/api-key", async (HttpContext http, string id, [FromB
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModels.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
@@ -8272,6 +8444,8 @@ app.MapDelete("/gw/models/{id}/api-key", async (HttpContext http, string id) =>
     await gwModels.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("ApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "model", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -8285,6 +8459,7 @@ app.MapDelete("/gw/models/{id}/api-key", async (HttpContext http, string id) =>
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModels.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
@@ -8741,6 +8916,8 @@ app.MapPut("/gw/exchanges/{id}/api-key", async (HttpContext http, string id, [Fr
     await gwModelExchanges.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Set("TargetApiKeyEncrypted", encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "exchange", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -8754,6 +8931,7 @@ app.MapPut("/gw/exchanges/{id}/api-key", async (HttpContext http, string id, [Fr
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", true } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModelExchanges.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions);
@@ -8770,6 +8948,8 @@ app.MapDelete("/gw/exchanges/{id}/api-key", async (HttpContext http, string id) 
     await gwModelExchanges.UpdateOneAsync(filter, Builders<BsonDocument>.Update
         .Unset("TargetApiKeyEncrypted")
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, "exchange", [id], gwModels, gwModelOfferings);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -8783,6 +8963,7 @@ app.MapDelete("/gw/exchanges/{id}/api-key", async (HttpContext http, string id) 
         {
             { "hasKey", new BsonDocument { { "from", hadKey }, { "to", false } } },
             { "authority", "llm_gateway" },
+            { "offeringsReset", resetOfferingCount },
         });
     var fresh = await gwModelExchanges.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<ExchangeItem>.Ok(MapExchange(fresh)), jsonOptions);
@@ -8882,7 +9063,11 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
     }
 
     var targetFilter = TenantAccess.Filter(http, filters.Count == 0 ? fb.Empty : fb.And(filters));
-    var matchedCount = await targetCollection.CountDocumentsAsync(targetFilter);
+    var matchedTargets = await targetCollection.Find(targetFilter)
+        .Project(Builders<BsonDocument>.Projection.Include("_id"))
+        .ToListAsync();
+    var matchedTargetIds = matchedTargets.Select(item => item.GetStringOrEmpty("_id")).ToList();
+    var matchedCount = matchedTargetIds.Count;
     var skippedCount = ids.Count > 0 ? Math.Max(0, ids.Count - matchedCount) : 0;
     if (matchedCount == 0)
     {
@@ -8900,6 +9085,8 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
     var updateResult = await targetCollection.UpdateManyAsync(targetFilter, Builders<BsonDocument>.Update
         .Set(encryptedField, encrypted)
         .Set("UpdatedAt", DateTime.UtcNow));
+    var resetOfferingCount = await ResetOfferingsAfterCredentialChangeAsync(
+        http, objectType, matchedTargetIds, gwModels, gwModelOfferings);
     var result = new BulkRotateApiKeysResult
     {
         ObjectType = objectType,
@@ -8925,6 +9112,7 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
             { "matchedCount", matchedCount },
             { "modifiedCount", updateResult.ModifiedCount },
             { "skippedCount", skippedCount },
+            { "offeringsReset", resetOfferingCount },
             { "hasKey", new BsonDocument { { "to", true } } },
             { "authority", "llm_gateway" },
         });
@@ -10635,9 +10823,10 @@ static async Task EnsureInternalTenantAsync(
 }
 
 // 幂等播种管理员。优先级（从高到低）：
-//   1) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：破玻璃，显式重置 admin 口令 + 强制改密。
-//   2) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
-//   3) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
+//   1) envAuthority（LLMGW_ADMIN_ENV_AUTHORITY=1）：env 是长期权威，只在口令或账号状态漂移时修复。
+//   2) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：一次性破玻璃，同样只在漂移时修复。
+//   3) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
+//   4) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
 static async Task SeedAdminAsync(
     IMongoDatabase db,
     IMongoCollection<BsonDocument> operationAudits,
@@ -10645,32 +10834,51 @@ static async Task SeedAdminAsync(
     string defaultPwd,
     string tenantId,
     bool forceReset = false,
+    bool envAuthority = false,
     string? envPassword = null)
 {
     var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
 
     // 多租户账号由 membership 控制，不得在 bootstrap 时禁用其它租户用户。
 
-    // 破玻璃优先级最高：显式打开时才改库中口令，用于账号被认领但口令丢失的死锁恢复。
-    if (forceReset)
+    // 环境变量长期托管或一次性破玻璃：只修复漂移。PBKDF2 每次 Hash 都有新盐，禁止在口令已经
+    // 匹配时重复写 Hash，否则每次启动都会制造无意义变更并使所有现有会话失效。
+    if (envAuthority || forceReset)
     {
         var resetPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
-        var resetHash = PasswordHasher.Hash(resetPassword);
         var resetMustChange = resetPassword == defaultPwd;
         var existingForce = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
         if (existingForce is not null)
         {
-            await users.UpdateOneAsync(u => u.Username == username,
-                Builders<LlmGwUser>.Update
-                    .Set(u => u.PasswordHash, resetHash)
-                    .Set(u => u.IsActive, true)
-                    .Set(u => u.MustChangePassword, resetMustChange)
-                    .Set(u => u.PasswordChangedByUser, false)
-                    .Inc(u => u.SecurityVersion, 1)
-                    .Set(u => u.UpdatedAt, DateTime.UtcNow));
+            var passwordDrifted = !PasswordHasher.Verify(resetPassword, existingForce.PasswordHash);
+            var activeDrifted = !existingForce.IsActive;
+            var mustChangeDrifted = existingForce.MustChangePassword != resetMustChange;
+            var ownershipDrifted = existingForce.PasswordChangedByUser;
+
+            if (!passwordDrifted && !activeDrifted && !mustChangeDrifted && !ownershipDrifted)
+                return;
+
+            var updates = new List<UpdateDefinition<LlmGwUser>>();
+            if (passwordDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.PasswordHash, PasswordHasher.Hash(resetPassword)));
+            if (activeDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
+            if (mustChangeDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.MustChangePassword, resetMustChange));
+            if (ownershipDrifted)
+                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.PasswordChangedByUser, false));
+
+            var securityStateChanged = passwordDrifted || activeDrifted || mustChangeDrifted;
+            if (securityStateChanged)
+                updates.Add(Builders<LlmGwUser>.Update.Inc(u => u.SecurityVersion, 1));
+            updates.Add(Builders<LlmGwUser>.Update.Set(u => u.UpdatedAt, DateTime.UtcNow));
+
+            await users.UpdateOneAsync(
+                u => u.Username == username,
+                Builders<LlmGwUser>.Update.Combine(updates));
             await WriteSystemOperationAuditAsync(
                 operationAudits,
-                action: "admin.force_reset",
+                action: envAuthority ? "admin.env_authority_reconcile" : "admin.force_reset",
                 targetType: "llmgw_console_user",
                 targetId: existingForce.Id,
                 targetName: username,
@@ -10678,7 +10886,9 @@ static async Task SeedAdminAsync(
                 reason: null,
                 changes: new BsonDocument
                 {
+                    { "mode", envAuthority ? "env_authority" : "force_reset" },
                     { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
+                    { "passwordDrifted", passwordDrifted },
                     { "mustChangePassword", new BsonDocument { { "from", existingForce.MustChangePassword }, { "to", resetMustChange } } },
                     { "passwordChangedByUser", new BsonDocument { { "from", existingForce.PasswordChangedByUser }, { "to", false } } },
                     { "wasActive", existingForce.IsActive },
@@ -10689,7 +10899,7 @@ static async Task SeedAdminAsync(
         {
             var resetUser = new LlmGwUser
             {
-                Username = username, PasswordHash = resetHash, DisplayName = username,
+                Username = username, PasswordHash = PasswordHasher.Hash(resetPassword), DisplayName = username,
                 IsActive = true, MustChangePassword = resetMustChange, PasswordChangedByUser = false,
                 Scopes = new[] { "logs:read" }, CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -10697,7 +10907,7 @@ static async Task SeedAdminAsync(
             await users.InsertOneAsync(resetUser);
             await WriteSystemOperationAuditAsync(
                 operationAudits,
-                action: "admin.force_reset_bootstrap",
+                action: envAuthority ? "admin.env_authority_bootstrap" : "admin.force_reset_bootstrap",
                 targetType: "llmgw_console_user",
                 targetId: resetUser.Id,
                 targetName: username,
@@ -10705,6 +10915,7 @@ static async Task SeedAdminAsync(
                 reason: null,
                 changes: new BsonDocument
                 {
+                    { "mode", envAuthority ? "env_authority" : "force_reset" },
                     { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
                     { "mustChangePassword", resetMustChange },
                 },
@@ -12524,6 +12735,33 @@ static bool IsSafeOfferingEndpointPath(string? value)
            && !path.Any(char.IsControl);
 }
 
+static void ApplyModelOfferingUpdate(BsonDocument document, UpdateModelOfferingRequest body)
+{
+    SetOrRemove("UpstreamModelId", body.UpstreamModelId);
+    SetOrRemove("Protocol", body.Protocol?.ToLowerInvariant());
+    SetOrRemove("EndpointPath", body.EndpointPath);
+    if (body.Priority is not null) document["Priority"] = Math.Clamp(body.Priority.Value, 0, 10000);
+    if (body.Weight is not null) document["Weight"] = Math.Clamp(body.Weight.Value, 1, 10000);
+    if (body.MaxConcurrency is not null)
+    {
+        if (body.MaxConcurrency > 0) document["MaxConcurrency"] = body.MaxConcurrency.Value;
+        else document.Remove("MaxConcurrency");
+    }
+    if (body.RateLimitPerMinute is not null)
+    {
+        if (body.RateLimitPerMinute > 0) document["RateLimitPerMinute"] = body.RateLimitPerMinute.Value;
+        else document.Remove("RateLimitPerMinute");
+    }
+    SetOrRemove("Notes", body.Notes);
+
+    void SetOrRemove(string field, string? value)
+    {
+        if (value is null) return;
+        if (string.IsNullOrWhiteSpace(value)) document.Remove(field);
+        else document[field] = value.Trim();
+    }
+}
+
 static LogicalModelItem MapLogicalModel(
     BsonDocument logical,
     IReadOnlyCollection<BsonDocument> offeringDocs,
@@ -12540,6 +12778,7 @@ static LogicalModelItem MapLogicalModel(
         .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
     var offerings = offeringDocs
         .Where(x => string.Equals(x.GetStringOrEmpty("LogicalModelId"), logicalId, StringComparison.Ordinal))
+        .Where(x => !x.Contains("SupersededByOfferingId"))
         .OrderBy(x => x.AsNullableInt("Priority") ?? 100)
         .Select(x =>
         {
@@ -13457,6 +13696,47 @@ static string? NormalizeCommitFilter(string? value)
     if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
         trimmed = trimmed[4..];
     return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
+}
+
+static async Task<long> ResetOfferingsAfterCredentialChangeAsync(
+    HttpContext http,
+    string objectType,
+    IEnumerable<string> changedIds,
+    IMongoCollection<BsonDocument> gatewayModels,
+    IMongoCollection<BsonDocument> offerings)
+{
+    var ids = changedIds
+        .Where(id => !string.IsNullOrWhiteSpace(id))
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+    if (ids.Count == 0) return 0;
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var targetKind = objectType;
+    var targetIds = ids;
+    if (string.Equals(objectType, "platform", StringComparison.Ordinal))
+    {
+        targetKind = "model";
+        var modelDocs = await gatewayModels.Find(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                Builders<BsonDocument>.Filter.In("PlatformId", ids)))
+            .Project(Builders<BsonDocument>.Projection.Include("_id"))
+            .ToListAsync();
+        targetIds = modelDocs.Select(item => item.GetStringOrEmpty("_id")).ToList();
+    }
+    if (targetIds.Count == 0) return 0;
+
+    var filter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("TargetKind", targetKind),
+        Builders<BsonDocument>.Filter.In("TargetId", targetIds));
+    var update = Builders<BsonDocument>.Update
+        .Set("HealthStatus", 0)
+        .Set("ConsecutiveFailures", 0)
+        .Set("ConsecutiveSuccesses", 0)
+        .Set("UpdatedAt", DateTime.UtcNow);
+    var result = await offerings.UpdateManyAsync(filter, update);
+    return result.ModifiedCount;
 }
 
 static async Task RunGatewayRecoveryLoopAsync(

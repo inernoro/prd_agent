@@ -28,6 +28,8 @@ public class ImageGenRunItem
 
     public string? Base64 { get; set; }
     public string? Url { get; set; }
+    /// <summary>Url 对应展示对象的 SHA256；水印图与原图必须分别持久化。</summary>
+    public string? DisplaySha256 { get; set; }
     public string? RevisedPrompt { get; set; }
 
     public string? ErrorCode { get; set; }
@@ -45,5 +47,4 @@ public enum ImageGenRunItemStatus
     Done,
     Error
 }
-
 

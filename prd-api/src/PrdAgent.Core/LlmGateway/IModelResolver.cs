@@ -25,6 +25,19 @@ public interface IModelResolver
         CancellationToken ct = default);
 
     /// <summary>
+    /// 按已经持久化的 Offering ID 恢复精确路由。用于异步任务在提交成功后继续轮询或下载，
+    /// 禁止重新进入负载均衡而命中另一个上游。
+    /// </summary>
+    Task<ModelResolutionResult> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+        => Task.FromResult(ModelResolutionResult.NotFound(
+            offeringId,
+            "当前模型调度器不支持按 Offering 恢复路由"));
+
+    /// <summary>
     /// 获取指定 AppCallerCode 的可用模型池列表
     /// </summary>
     Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
@@ -41,6 +54,12 @@ public interface IModelResolver
     /// 记录模型调用失败
     /// </summary>
     Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default);
+
+    /// <summary>
+    /// 记录确定性不可用故障。用于模型不存在、能力不匹配、凭据失效等重试不会自行恢复的配置问题，
+    /// 立即将对应上游移出调度，避免后续用户重复遇到同一错误。
+    /// </summary>
+    Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default);
 }
 
 /// <summary>

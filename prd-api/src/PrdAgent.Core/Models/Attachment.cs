@@ -28,6 +28,11 @@ public class Attachment
     
     /// <summary>文件访问URL</summary>
     public string Url { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 可安全回收的对象存储 Key。仅由服务端为受控临时资产写入；历史和普通业务附件为空。
+    /// </summary>
+    public string? StorageKey { get; set; }
     
     /// <summary>缩略图URL（仅图片）</summary>
     public string? ThumbnailUrl { get; set; }

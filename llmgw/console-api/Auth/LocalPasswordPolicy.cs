@@ -12,7 +12,7 @@ namespace PrdAgent.LlmGw.Auth;
 /// </summary>
 public static class LocalPasswordPolicy
 {
-    public const int MinPasswordLength = 12;
+    public const int MinPasswordLength = GwPasswordPolicy.MinimumLength;
     public const int MinUsernameLength = 3;
     public const int MaxUsernameLength = 32;
 
@@ -23,6 +23,9 @@ public static class LocalPasswordPolicy
     public const string ReservedUsernamePrefix = "map-";
 
     private static readonly Regex UsernamePattern = new("^[a-z0-9][a-z0-9._-]*$", RegexOptions.Compiled);
+
+    public static bool MeetsMinimumLength(string? password) =>
+        GwPasswordPolicy.MeetsMinimumLength(password);
 
     /// <summary>外部身份提供方建的账号（当前只有 MAP 联邦）。</summary>
     public static bool IsFederatedIdentity(string? identityProvider)

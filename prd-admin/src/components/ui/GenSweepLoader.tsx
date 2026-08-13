@@ -11,12 +11,12 @@ import { getGenAvgMs } from '@/lib/genTiming';
  * 超过预计转黄显示「即将完成」，避免「卡 93%」式假精确。
  *
  * 性能：纯 background-position + transform 动画（GPU 合成），全局样式单例注入；多实例不爆层。
- * 可读性：底部计时条用 invZoom 反缩放，任意画布缩放下文字与进度条都保持清晰可读。
+ * 可读性：底部计时条跟随宿主容器缩放，避免小节点下反向放大后被容器裁切。
  */
 
 const STYLE_ID = 'gen-sweep-loader-styles';
 const GLOBAL_CSS = `
-.gen-sweep{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none}
+.gen-sweep{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none;container-type:inline-size}
 .gen-sweep__fill{position:absolute;inset:0;
   background:
     linear-gradient(100deg, transparent 28%, rgba(129,140,248,0.20) 50%, transparent 72%),
@@ -25,12 +25,13 @@ const GLOBAL_CSS = `
   will-change:background-position;
   animation:gen-sweep-move 1.5s linear infinite;}
 @keyframes gen-sweep-move{to{background-position:-220% 0, 0 0}}
-.gen-sweep__bar{position:absolute;left:50%;bottom:10%;
-  transform:translateX(-50%) scale(var(--invZoom, 1));transform-origin:center bottom;
-  width:78%;min-width:140px;max-width:340px;display:flex;flex-direction:column;gap:6px;
+.gen-sweep__bar{position:absolute;left:50%;bottom:max(8px,10%);
+  transform:translateX(-50%);transform-origin:center bottom;
+  box-sizing:border-box;width:min(78%,340px);max-width:calc(100% - 16px);min-width:0;display:flex;flex-direction:column;gap:6px;
   background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);
-  border-radius:14px;padding:8px 11px;backdrop-filter:blur(4px)}
-.gen-sweep__row{display:flex;justify-content:space-between;gap:10px;font-size:11px;font-weight:800;line-height:1;color:rgba(255,255,255,0.86)}
+  border-radius:14px;padding:8px 11px;overflow:hidden;backdrop-filter:blur(4px)}
+.gen-sweep__row{min-width:0;display:flex;justify-content:space-between;gap:6px;font-size:clamp(8px,2.8cqw,11px);font-weight:800;line-height:1;color:rgba(255,255,255,0.86)}
+.gen-sweep__row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gen-sweep__est{color:rgba(255,255,255,0.55)}
 .gen-sweep__est--over{color:rgba(251,191,36,0.95)}
 .gen-sweep__track{height:5px;border-radius:99px;background:rgba(255,255,255,0.14);overflow:hidden}
@@ -66,9 +67,21 @@ export function GenSweepLoader({ createdAt, className }: { createdAt?: number; c
   const pct = Math.min(95, Math.round((elapsedMs / estMs) * 100));
 
   return (
-    <div className={`gen-sweep${className ? ` ${className}` : ''}`}>
+    <div className={`gen-sweep${className ? ` ${className}` : ''}`} data-testid="generation-progress">
       <div className="gen-sweep__fill" />
-      <div className="gen-sweep__bar">
+      <div
+        className="gen-sweep__bar"
+        data-testid="generation-progress-bar"
+        style={{
+          left: '50%',
+          bottom: 'max(8px, 10%)',
+          width: 'min(78%, 340px)',
+          maxWidth: 'calc(100% - 16px)',
+          minWidth: 0,
+          transform: 'translateX(-50%)',
+          overflow: 'hidden',
+        }}
+      >
         <div className="gen-sweep__row">
           <span>已耗时 {elapsedS}s</span>
           <span className={`gen-sweep__est${overtime ? ' gen-sweep__est--over' : ''}`}>

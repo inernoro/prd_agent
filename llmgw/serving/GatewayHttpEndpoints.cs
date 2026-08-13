@@ -812,8 +812,11 @@ public static class GatewayHttpEndpoints
                 }, jsonOpts, statusCode: StatusCodes.Status403Forbidden);
             }
             using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, body.AppCallerCode);
-            var resolution = await gateway.ResolveModelAsync(
-                body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None);
+            var resolution = string.IsNullOrWhiteSpace(body.OfferingId)
+                ? await gateway.ResolveModelAsync(
+                    body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None)
+                : await gateway.ResolveOfferingAsync(
+                    body.AppCallerCode, body.ModelType, body.OfferingId, CancellationToken.None);
             return Results.Json(resolution, jsonOpts);
         });
 
@@ -1049,13 +1052,19 @@ public static class GatewayHttpEndpoints
                 request = rehydrated.Request ?? request;
                 var routedRequest = ApplyIngressRouting(request, ingress);
                 using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
-                var res = await gateway.ResolveModelAsync(
-                    routedRequest.AppCallerCode,
-                    routedRequest.ModelType,
-                    routedRequest.ExpectedModel,
-                    routedRequest.PinnedPlatformId,
-                    routedRequest.PinnedModelId,
-                    token);
+                var res = string.IsNullOrWhiteSpace(routedRequest.RequiredOfferingId)
+                    ? await gateway.ResolveModelAsync(
+                        routedRequest.AppCallerCode,
+                        routedRequest.ModelType,
+                        routedRequest.ExpectedModel,
+                        routedRequest.PinnedPlatformId,
+                        routedRequest.PinnedModelId,
+                        token)
+                    : await gateway.ResolveOfferingAsync(
+                        routedRequest.AppCallerCode,
+                        routedRequest.ModelType,
+                        routedRequest.RequiredOfferingId,
+                        token);
                 var raw = await gateway.SendRawWithResolutionAsync(routedRequest, res, token);
                 multipartRequestSucceeded = raw.Success;
                 if (executionStore is not null && execution is not null)
@@ -4935,6 +4944,7 @@ public static class GatewayHttpEndpoints
         {
             CanonicalImageRequest = request.CanonicalImageRequest,
             RequiredLogicalModelPublicId = request.RequiredLogicalModelPublicId,
+            RequiredOfferingId = request.RequiredOfferingId,
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
@@ -5318,6 +5328,7 @@ public static class GatewayHttpEndpoints
         {
             CanonicalImageRequest = request.CanonicalImageRequest,
             RequiredLogicalModelPublicId = request.RequiredLogicalModelPublicId,
+            RequiredOfferingId = request.RequiredOfferingId,
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
@@ -5638,7 +5649,8 @@ public sealed record ResolveRequestDto(
     string? PinnedModelId,
     string? ModelPolicy = null,
     string? ModelPoolId = null,
-    GatewayRequestContext? Context = null);
+    GatewayRequestContext? Context = null,
+    string? OfferingId = null);
 
 // /gw/v1/client-stream 的请求体 DTO（PascalCase）。Messages 用 Core 的 LLMMessage，
 // 与 MAP 侧 HttpLlmClient 序列化口径一致。

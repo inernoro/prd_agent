@@ -490,7 +490,12 @@ export function TranscribeFlowDrawer({
         ) : (
           <div className="grid grid-cols-3 gap-2">
             {steps.map((s) => (
-              <div key={s.key} className="flex min-w-0 flex-col items-center text-center">
+              <div
+                key={s.key}
+                data-testid={`transcribe-step-${s.key}`}
+                data-state={s.state}
+                aria-current={s.state === 'active' ? 'step' : undefined}
+                className="flex min-w-0 flex-col items-center text-center">
                 <StepIcon state={s.state} />
                 <div className="mt-2 min-w-0">
               <span

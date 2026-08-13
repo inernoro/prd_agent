@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Servers;
 using PrdAgent.Core.Interfaces;
@@ -87,6 +88,50 @@ public class ImageMasterController : ControllerBase
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
+
+    private async Task<bool> TryDeleteUnreferencedGeneratedImageAsync(
+        string? sha256,
+        CancellationToken ct)
+    {
+        var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(sha)) return false;
+
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{sha}",
+            ct);
+
+        var imageAssetFilter = Builders<ImageAsset>.Filter.Or(
+            Builders<ImageAsset>.Filter.Eq(item => item.Sha256, sha),
+            Builders<ImageAsset>.Filter.Eq(item => item.OriginalSha256, sha),
+            Builders<ImageAsset>.Filter.Eq(item => item.DisplaySha256, sha));
+        if (await _db.ImageAssets.CountDocumentsAsync(imageAssetFilter, cancellationToken: ct) > 0)
+            return false;
+
+        var artifactFilter = Builders<UploadArtifact>.Filter.Eq(item => item.Sha256, sha);
+        if (await _db.UploadArtifacts.CountDocumentsAsync(artifactFilter, cancellationToken: ct) > 0)
+            return false;
+
+        if (await _db.ImageGenRunItems.CountDocumentsAsync(
+                item => item.DisplaySha256 == sha,
+                cancellationToken: ct) > 0)
+        {
+            return false;
+        }
+
+        var runFilter = Builders<ImageGenRun>.Filter.Or(
+            Builders<ImageGenRun>.Filter.Eq(item => item.InitImageAssetSha256, sha),
+            Builders<ImageGenRun>.Filter.Eq("ImageRefs.AssetSha256", sha));
+        if (await _db.ImageGenRuns.CountDocumentsAsync(runFilter, cancellationToken: ct) > 0)
+            return false;
+
+        await _assetStorage.DeleteByShaAsync(
+            sha,
+            ct,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg);
+        return true;
+    }
 
     private async Task<ImageMasterWorkspace?> GetWorkspaceIfAllowedAsync(string workspaceId, string adminId, CancellationToken ct)
     {
@@ -410,11 +455,7 @@ public class ImageMasterController : ControllerBase
                 {
                     try
                     {
-                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
-                        if (remain <= 0)
-                        {
-                            await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        }
+                        await TryDeleteUnreferencedGeneratedImageAsync(a.Sha256, ct);
                     }
                     catch
                     {
@@ -513,31 +554,88 @@ public class ImageMasterController : ControllerBase
             }
         }
 
+        var imageRuns = await _db.ImageGenRuns
+            .Find(x => x.WorkspaceId == wid)
+            .Project(x => new { x.Id, x.Status })
+            .ToListAsync(ct);
+        if (imageRuns.Any(x => x.Status is ImageGenRunStatus.Queued
+                or ImageGenRunStatus.ScopedQueued
+                or ImageGenRunStatus.Running))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.WORKSPACE_GENERATION_ACTIVE,
+                "该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除"));
+        }
+        var imageRunIds = imageRuns.Select(x => x.Id).ToArray();
+
         // 1) 删除画布
         await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
         // 2) 删除消息（workspace 维度）
         await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
-        // 3) 删除资产记录（workspace 维度），底层文件按 sha 全库引用计数决定是否删除
+        // 3) 先收集全部持久化归属与待回收摘要。共享工作区中的任务可能由成员创建，
+        // 删除与活动任务阻断都必须按 WorkspaceId 覆盖，而不是只看所有者。
         var assets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid).ToListAsync(ct);
+        var cleanupShas = new HashSet<string>(StringComparer.Ordinal);
+        static void AddCleanupSha(ISet<string> target, string? value)
+        {
+            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(normalized)) target.Add(normalized);
+        }
+        foreach (var asset in assets)
+        {
+            AddCleanupSha(cleanupShas, asset.Sha256);
+            AddCleanupSha(cleanupShas, asset.OriginalSha256);
+            AddCleanupSha(cleanupShas, asset.DisplaySha256);
+        }
+
+        // requestId 固定为 {runId}-{itemIndex}-{imageIndex}，用于收集当前工作区生成的原图归属。
+        UploadArtifact[] runArtifacts = [];
+        ImageGenRunItem[] runItems = [];
+        if (imageRunIds.Length > 0)
+        {
+            var artifactFilters = imageRunIds
+                .Select(runId => Builders<UploadArtifact>.Filter.Regex(
+                    x => x.RequestId,
+                    new BsonRegularExpression($"^{Regex.Escape(runId)}-\\d+-\\d+$")))
+                .ToArray();
+            var runArtifactFilter = Builders<UploadArtifact>.Filter.Or(artifactFilters);
+            runArtifacts = (await _db.UploadArtifacts.Find(runArtifactFilter).ToListAsync(ct)).ToArray();
+            runItems = (await _db.ImageGenRunItems
+                .Find(x => imageRunIds.Contains(x.RunId))
+                .ToListAsync(ct)).ToArray();
+            foreach (var artifact in runArtifacts) AddCleanupSha(cleanupShas, artifact.Sha256);
+            foreach (var item in runItems) AddCleanupSha(cleanupShas, item.DisplaySha256);
+        }
+
+        // 4) 所有数据库引用先删除。任一步失败都会在物理删除开始前中止，避免留下仍可见但
+        // 已经失去底层对象的产物记录。
         await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
-        foreach (var a in assets)
+        if (imageRunIds.Length > 0)
+        {
+            var runArtifactIds = runArtifacts.Select(x => x.Id).ToArray();
+            if (runArtifactIds.Length > 0)
+                await _db.UploadArtifacts.DeleteManyAsync(x => runArtifactIds.Contains(x.Id), ct);
+            await _db.ImageGenRunItems.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
+            await _db.ImageGenRunEvents.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
+            await _db.ImageGenRuns.DeleteManyAsync(x => imageRunIds.Contains(x.Id), ct);
+        }
+
+        // 5) 删除 workspace
+        await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == wid, ct);
+
+        // 6) 引用解除后再做引用安全的物理回收。请求断开不能打断服务端清理；失败最多留下
+        // 可后续回收的孤儿对象，不会产生数据库记录指向已删除对象的数据损坏。
+        foreach (var sha in cleanupShas)
         {
             try
             {
-                var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: ct);
-                if (remain <= 0)
-                {
-                    await _assetStorage.DeleteByShaAsync(a.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                }
+                await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None);
             }
-            catch
+            catch (Exception ex)
             {
-                // ignore: best-effort
+                _logger.LogWarning(ex, "ImageMaster workspace object cleanup failed: workspaceId={WorkspaceId} sha={Sha}", wid, sha);
             }
         }
-
-        // 4) 删除 workspace
-        await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == wid, ct);
 
         var payload = new { deleted = true };
         if (!string.IsNullOrWhiteSpace(idemKey))
@@ -1386,11 +1484,7 @@ public class ImageMasterController : ControllerBase
                     // 若新旧 sha 相同，底层文件仍会被新记录引用，禁止删除物理文件
                     if (!string.Equals(old.Sha256, stored.Sha256, StringComparison.OrdinalIgnoreCase))
                     {
-                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == old.Sha256, cancellationToken: ct);
-                        if (remain <= 0)
-                        {
-                            await _assetStorage.DeleteByShaAsync(old.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        }
+                        await TryDeleteUnreferencedGeneratedImageAsync(old.Sha256, ct);
                     }
                 }
                 catch
@@ -1849,7 +1943,9 @@ public class ImageMasterController : ControllerBase
         {
             var o = n as JsonObject;
             if (o == null) continue;
-            var k = (o["key"]?.GetValue<string>() ?? string.Empty).Trim();
+            // 前端持久化契约使用 id；历史服务端占位曾使用 key。两者都识别，
+            // 避免刷新时生成一个前端无法恢复的 key-only 重复节点。
+            var k = (o["id"]?.GetValue<string>() ?? o["key"]?.GetValue<string>() ?? string.Empty).Trim();
             if (string.Equals(k, targetKey, StringComparison.Ordinal))
             {
                 target = o;
@@ -1858,13 +1954,15 @@ public class ImageMasterController : ControllerBase
         }
         if (target == null)
         {
-            target = new JsonObject { ["key"] = targetKey };
+            target = new JsonObject { ["id"] = targetKey };
             elements.Add(target);
         }
 
-        target["kind"] = "generator";
+        // running 占位必须使用前端可恢复的 image 形状；generator 是画布工具节点，
+        // 其恢复逻辑会被视为静态节点，不能展示生成进度。
+        target["kind"] = "image";
         target["status"] = "running";
-        target["prompt"] = prompt ?? "";
+        target["name"] = prompt ?? "";
         if (x.HasValue) target["x"] = x.Value;
         if (y.HasValue) target["y"] = y.Value;
         if (w.HasValue) target["w"] = w.Value;
@@ -1915,14 +2013,10 @@ public class ImageMasterController : ControllerBase
 
         await _db.ImageAssets.DeleteOneAsync(x => x.Id == aid && x.WorkspaceId == wid, ct);
 
-        // 当 sha 在全库不再被任何 ImageAssets 引用时才删除底层文件
+        // 仅当 sha 不再被资产、上传记录或生图任务引用时才删除底层文件。
         try
         {
-            var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == asset.Sha256, cancellationToken: ct);
-            if (remain <= 0)
-            {
-                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-            }
+            await TryDeleteUnreferencedGeneratedImageAsync(asset.Sha256, ct);
         }
         catch
         {
@@ -2197,11 +2291,10 @@ public class ImageMasterController : ControllerBase
 
         await _db.ImageAssets.DeleteOneAsync(x => x.Id == aid && x.OwnerUserId == adminId, ct);
 
-        // 当 sha 在全库不再被任何 ImageAssets 引用时才删除底层文件，避免误删共享内容。
+        // 仅当 sha 不再被任何持久化记录引用时才删除底层文件，避免误删共享内容。
         try
         {
-            var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == asset.Sha256, cancellationToken: ct);
-            if (remain <= 0)
+            if (await TryDeleteUnreferencedGeneratedImageAsync(asset.Sha256, ct))
             {
                 _logger.LogInformation(
                     "ImageMaster deleting physical asset. adminId={AdminId} assetId={AssetId} sha={Sha} url={Url} domain={Domain} type={Type}",
@@ -2211,7 +2304,6 @@ public class ImageMasterController : ControllerBase
                     asset.Url,
                     AppDomainPaths.DomainVisualAgent,
                     AppDomainPaths.TypeImg);
-                await _assetStorage.DeleteByShaAsync(asset.Sha256, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
             }
         }
         catch (Exception ex)
@@ -2378,6 +2470,17 @@ public class ImageMasterController : ControllerBase
 
         try
         {
+            // 先给浏览器一个用户可见阶段事件，再进入模型解析。模型首 token 可能受排队、
+            // 冷启动影响；不能让用户在此期间只看到静止加载或仅收到不可见心跳。
+            var preparingData = JsonSerializer.Serialize(new
+            {
+                type = "progress",
+                stage = "preparing",
+                message = "正在准备文章配图标记"
+            }, JsonOptions);
+            await Response.WriteAsync($"data: {preparingData}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
             // 用户指定的模型作为 expectedModel 提示 Gateway 调度
             var userModelId = (request?.ModelId ?? string.Empty).Trim();
@@ -2636,11 +2739,7 @@ public class ImageMasterController : ControllerBase
                 {
                     try
                     {
-                        var remain = await _db.ImageAssets.CountDocumentsAsync(x => x.Sha256 == a.Sha256, cancellationToken: CancellationToken.None);
-                        if (remain <= 0)
-                        {
-                            await _assetStorage.DeleteByShaAsync(a.Sha256, CancellationToken.None, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-                        }
+                        await TryDeleteUnreferencedGeneratedImageAsync(a.Sha256, CancellationToken.None);
                     }
                     catch
                     {

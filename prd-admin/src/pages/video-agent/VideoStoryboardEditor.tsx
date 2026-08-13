@@ -33,6 +33,7 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { connectSse } from '@/lib/useSseStream';
+import { formatVideoGenerationError } from '@/lib/videoGenerationError';
 import {
   activateVideoSceneVersionReal,
   cancelVideoGenRunReal,
@@ -111,12 +112,7 @@ export const getStoryboardExperienceState = (
 };
 
 export const formatVideoSceneError = (message?: string): string => {
-  if (!message?.trim()) return '生成服务没有返回失败原因，请重新生成；若再次失败，请检查模型配置。';
-  const durationMatch = message.match(/Duration\s+(\d+)s\s+is not supported.*Supported durations:\s*([\d,\s]+)s/i);
-  if (durationMatch) {
-    return `当前模型不支持 ${durationMatch[1]} 秒视频，仅支持 ${durationMatch[2].trim()} 秒。系统将在重试时自动采用最接近的可用时长。`;
-  }
-  return message.trim();
+  return formatVideoGenerationError(message);
 };
 
 export const shouldKeepVideoRunPolling = (
@@ -516,7 +512,9 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           <div>
             <small>本次创作没有进入分镜阶段</small>
             <h2>没有生成可编辑镜头</h2>
-            <p>{run.errorMessage || '系统没有从原稿中得到有效分镜。原稿仍已保存在项目中，可以返回后调整内容再试。'}</p>
+            <p>{run.errorMessage
+              ? formatVideoGenerationError(run.errorMessage)
+              : '系统没有从原稿中得到有效分镜。原稿仍已保存在项目中，可以返回后调整内容再试。'}</p>
           </div>
           <div className="video-storyboard-empty__actions">
             {onBack && <Button variant="primary" onClick={onBack}>返回并调整原稿</Button>}

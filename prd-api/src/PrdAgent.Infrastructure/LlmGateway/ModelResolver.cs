@@ -562,6 +562,61 @@ public class ModelResolver : IModelResolver
     }
 
     /// <inheritdoc />
+    public async Task<ModelResolutionResult> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        var requiredOfferingId = (offeringId ?? string.Empty).Trim();
+        if (_gatewayDb is null || string.IsNullOrWhiteSpace(requiredOfferingId))
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "缺少可恢复的 Offering 路由");
+        }
+
+        var offerings = _gatewayDb.Context.Database
+            .GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        var offering = await offerings.Find(Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                // Enabled 和健康状态只控制新任务调度。已经被上游受理的任务仍必须
+                // 回到持久化的原 Offering 查询状态和下载结果。
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, requiredOfferingId)))
+            .FirstOrDefaultAsync(ct);
+        if (offering is null)
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "视频任务原上游当前不可用，请稍后重试或重新生成");
+        }
+
+        var logicalModels = _gatewayDb.Context.Database
+            .GetCollection<GatewayLogicalModel>("llmgw_logical_models");
+        var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Id, offering.LogicalModelId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType)))
+            .FirstOrDefaultAsync(ct);
+        if (logical is null || !SupportsAppCallerScenario(logical, appCallerCode))
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "视频任务原模型路由已失效，请重新生成");
+        }
+
+        var resolved = await TryBuildLogicalOfferingResolutionAsync(
+            logical,
+            offering,
+            logical.PublicId,
+            ct,
+            requireEnabled: false);
+        return resolved ?? ModelResolutionResult.NotFound(
+            requiredOfferingId,
+            "视频任务原上游配置已失效，请重新生成");
+    }
+
+    /// <inheritdoc />
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,
         string modelType,
@@ -750,6 +805,42 @@ public class ModelResolver : IModelResolver
         }
     }
 
+    /// <inheritdoc />
+    public async Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+        {
+            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            var offeringFilter = Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+            var offeringUpdate = Builders<GatewayModelOffering>.Update
+                .Inc(x => x.ConsecutiveFailures, 1)
+                .Set(x => x.ConsecutiveSuccesses, 0)
+                .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+            await offerings.UpdateOneAsync(offeringFilter, offeringUpdate, cancellationToken: ct);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
+            string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
+            string.IsNullOrWhiteSpace(resolution.ActualModel))
+            return;
+
+        var groupFilter = Builders<ModelGroup>.Filter.And(
+            Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
+            Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
+                m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
+        var groupUpdate = Builders<ModelGroup>.Update
+            .Inc("Models.$.ConsecutiveFailures", 1)
+            .Set("Models.$.ConsecutiveSuccesses", 0)
+            .Set("Models.$.HealthStatus", ModelHealthStatus.Unavailable)
+            .Set("Models.$.LastFailedAt", DateTime.UtcNow);
+        await GetHealthModelGroups(resolution).UpdateOneAsync(groupFilter, groupUpdate, cancellationToken: ct);
+    }
+
     #region Private Methods
 
     private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync(
@@ -777,24 +868,47 @@ public class ModelResolver : IModelResolver
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
                 Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
             .ToListAsync(ct);
-        var availableIds = offerings.Select(x => x.LogicalModelId).ToHashSet(StringComparer.Ordinal);
-        return logicalModels
-            .Where(x => availableIds.Contains(x.Id)
-                && (x.AllowedAppCallerCodes.Count == 0 || x.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase)))
-            .Select(x => new AvailableModelPool
+        var offeringsByLogicalModel = offerings
+            .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
+        var result = new List<AvailableModelPool>();
+        foreach (var logical in logicalModels)
+        {
+            if (!SupportsAppCallerScenario(logical, appCallerCode))
+                continue;
+
+            if (!offeringsByLogicalModel.TryGetValue(logical.Id, out var logicalOfferings))
+                continue;
+
+            // “启用且健康”只是控制面状态，不代表 Offering 指向的 Exchange、模型和平台仍然存在。
+            // 选择器只能展示在当前租户与 appCaller 下至少能完整解析一个上游的逻辑模型，避免用户
+            // 选中后才得到“模型不可用”。这里复用实际解析构建器，保证目录与执行链路采用同一规则。
+            var hasResolvableOffering = false;
+            foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
             {
-                Id = x.Id,
-                Name = x.Name,
-                Code = x.PublicId,
-                Priority = x.DisplayOrder,
+                if (await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct) is not null)
+                {
+                    hasResolvableOffering = true;
+                    break;
+                }
+            }
+            if (!hasResolvableOffering)
+                continue;
+
+            result.Add(new AvailableModelPool
+            {
+                Id = logical.Id,
+                Name = logical.Name,
+                Code = logical.PublicId,
+                Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",
-                IsDedicated = x.AllowedAppCallerCodes.Count > 0,
+                IsDedicated = logical.AllowedAppCallerCodes.Count > 0,
                 IsDefault = false,
                 Models =
                 [
                     new PoolModelInfo
                     {
-                        ModelId = x.PublicId,
+                        ModelId = logical.PublicId,
                         PlatformId = "logical-model",
                         PlatformName = "LLM Gateway",
                         Priority = 1,
@@ -802,7 +916,10 @@ public class ModelResolver : IModelResolver
                         HealthScore = 100,
                     }
                 ],
-            }).ToList();
+            });
+        }
+
+        return result;
     }
 
     private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync(
@@ -828,11 +945,10 @@ public class ModelResolver : IModelResolver
         if (logical is null)
             return null;
 
-        if (logical.AllowedAppCallerCodes.Count > 0
-            && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
+        if (!SupportsAppCallerScenario(logical, appCallerCode))
         {
             return ModelResolutionResult.NotFound(expectedModel,
-                $"逻辑模型未授权给当前 appCaller: model={logical.PublicId}, appCaller={appCallerCode}");
+                $"逻辑模型不支持当前 appCaller 场景: model={logical.PublicId}, appCaller={appCallerCode}");
         }
 
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
@@ -862,6 +978,52 @@ public class ModelResolver : IModelResolver
         if (resolved.Count > 1)
             selected.RetryCandidates = resolved.Skip(1).ToList();
         return selected;
+    }
+
+    internal static bool SupportsAppCallerScenario(GatewayLogicalModel logical, string appCallerCode)
+    {
+        if (logical.AllowedAppCallerCodes.Count > 0
+            && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // 图片分层不是普通的文生图、图生图或多图生成。即使历史配置曾误加这些能力，
+        // 也只能由专用 appCaller 调用，避免它进入通用模型选择器后把普通生图请求发给
+        // 必须携带输入图片的分层协议。
+        if (logical.Capabilities.Contains("image_layering", StringComparer.OrdinalIgnoreCase))
+        {
+            return string.Equals(
+                appCallerCode,
+                AppCallerRegistry.VisualAgent.Image.Layering,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        var requiredCapability = RequiredCapabilityForAppCaller(appCallerCode);
+        if (requiredCapability is null
+            || logical.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var hasScenarioCapabilities = logical.Capabilities.Any(x =>
+            x.Equals("text2img", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("img2img", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("vision_generation", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("image_layering", StringComparison.OrdinalIgnoreCase));
+        return !hasScenarioCapabilities
+               && logical.Capabilities.Contains("image_generation", StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? RequiredCapabilityForAppCaller(string appCallerCode)
+    {
+        if (appCallerCode.EndsWith(".text2img::generation", StringComparison.OrdinalIgnoreCase))
+            return "text2img";
+        if (appCallerCode.EndsWith(".img2img::generation", StringComparison.OrdinalIgnoreCase))
+            return "img2img";
+        if (appCallerCode.EndsWith(".vision::generation", StringComparison.OrdinalIgnoreCase))
+            return "vision_generation";
+        return null;
     }
 
     private List<GatewayModelOffering> OrderLogicalOfferings(
@@ -898,7 +1060,8 @@ public class ModelResolver : IModelResolver
         GatewayLogicalModel logical,
         GatewayModelOffering offering,
         string expectedModel,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool requireEnabled = true)
     {
         var capabilities = logical.Capabilities.Select(type => new LLMModelCapability
         {
@@ -928,10 +1091,12 @@ public class ModelResolver : IModelResolver
 
         if (string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
         {
+            var exchangeFilter = Builders<ModelExchange>.Filter.Eq(x => x.Id, offering.TargetId);
+            if (requireEnabled)
+                exchangeFilter &= Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true);
             var exchange = await FindGatewayOwnedExchangeAsync(
-                Builders<ModelExchange>.Filter.And(
-                    Builders<ModelExchange>.Filter.Eq(x => x.Id, offering.TargetId),
-                    Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true)), ct);
+                exchangeFilter,
+                ct);
             if (exchange is null) return null;
             item.PlatformId = exchange.Id;
             if (string.IsNullOrWhiteSpace(item.ModelId))
@@ -944,13 +1109,19 @@ public class ModelResolver : IModelResolver
         }
 
         var modelCollection = _gatewayDb!.Context.Database.GetCollection<LLMModel>("llmgw_models");
-        var model = await modelCollection.Find(Builders<LLMModel>.Filter.And(
-                Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
-                Builders<LLMModel>.Filter.Eq(x => x.Id, offering.TargetId),
-                Builders<LLMModel>.Filter.Eq(x => x.Enabled, true)))
+        var modelFilter = Builders<LLMModel>.Filter.And(
+            Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
+            Builders<LLMModel>.Filter.Eq(x => x.Id, offering.TargetId));
+        if (requireEnabled)
+            modelFilter &= Builders<LLMModel>.Filter.Eq(x => x.Enabled, true);
+        var model = await modelCollection.Find(modelFilter)
             .FirstOrDefaultAsync(ct);
         if (model is null || string.IsNullOrWhiteSpace(model.PlatformId)) return null;
-        var platform = await FindGatewayOwnedOrMapPlatformAsync(model.PlatformId, true, ct, allowMapFallback: false);
+        var platform = await FindGatewayOwnedOrMapPlatformAsync(
+            model.PlatformId,
+            requireEnabled,
+            ct,
+            allowMapFallback: false);
         if (platform is null) return null;
 
         item.PlatformId = platform.Id;
@@ -2033,6 +2204,26 @@ public class InMemoryModelResolver : IModelResolver
             model.HealthStatus = model.ConsecutiveFailures >= 5 ? ModelHealthStatus.Unavailable :
                                  model.ConsecutiveFailures >= 3 ? ModelHealthStatus.Degraded :
                                  ModelHealthStatus.Healthy;
+            model.LastFailedAt = DateTime.UtcNow;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            return Task.CompletedTask;
+
+        var group = _modelGroups.FirstOrDefault(g => g.Id == resolution.ModelGroupId);
+        var model = group?.Models?.FirstOrDefault(m =>
+            m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel);
+
+        if (model != null)
+        {
+            model.ConsecutiveFailures++;
+            model.ConsecutiveSuccesses = 0;
+            model.HealthStatus = ModelHealthStatus.Unavailable;
             model.LastFailedAt = DateTime.UtcNow;
         }
 

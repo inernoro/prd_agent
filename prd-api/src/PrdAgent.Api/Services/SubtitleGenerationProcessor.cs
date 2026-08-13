@@ -1736,7 +1736,7 @@ public static class SpeakerSources
 
 /// <summary>
 /// 字幕生成 ASR 阶段失败时抛出的异常，携带可观测的 diagnostic 数据，
-/// 由 DocumentStoreAgentWorker.cs 的 catch 透传到 SSE error / run.errorMessage。
+/// 仅供服务端排障使用；DocumentStoreAgentWorker 不得把它写入 SSE 或普通用户可读任务字段。
 /// </summary>
 public class SubtitleAsrException : Exception
 {

@@ -12,7 +12,7 @@ public class ShortVideoMaterialRun
     public string UserId { get; set; } = string.Empty;
 
     /// <summary>
-    /// 归属实例（创建该 run 的部署实例 = git 分支，见 InstanceIdentity）。
+    /// 归属实例（创建该 run 的稳定部署域 + git 分支，见 InstanceIdentity）。
     /// 后台 Worker 只领取属于自己实例（或历史无主 null/空）的 run，避免共享 Mongo 下多容器互抢。
     /// </summary>
     public string? OwnerInstanceId { get; set; }
@@ -68,6 +68,9 @@ public class ShortVideoMaterialRun
 
     /// <summary>时间轴片段条目 ID（旧运行记录兼容字段，不再默认生成）</summary>
     public string? TimelineEntryId { get; set; }
+
+    /// <summary>稳定错误分类，供客户端选择正确恢复动作；诊断细节仍只写 ErrorMessage。</summary>
+    public string? ErrorCode { get; set; }
 
     /// <summary>错误信息</summary>
     public string? ErrorMessage { get; set; }

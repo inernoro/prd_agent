@@ -6,7 +6,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
 import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap, Link2 } from 'lucide-react';
 import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
@@ -1828,11 +1828,8 @@ export default function UsersPage() {
         username={avatarTargetUser?.username}
         userType={avatarTargetUser?.userType ?? null}
         avatarFileName={avatarTargetUser?.avatarFileName ?? null}
-        onSave={async (avatarFileName) => {
-          if (!avatarTargetUser) return;
-          const res = await updateUserAvatar(avatarTargetUser.userId, avatarFileName);
-          if (!res.success) throw new Error(res.error?.message || '保存失败');
-          await load();
+        onPersisted={() => {
+          void load();
         }}
       />
 

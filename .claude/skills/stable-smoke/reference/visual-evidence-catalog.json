@@ -1,0 +1,217 @@
+{
+  "schemaVersion": "1.0",
+  "name": "核心业务全面视觉验收目录",
+  "purpose": "为每48小时稳定复测、发布前验收和缺陷回归提供模块级视觉证据预算，防止少量入口截图冒充全面通过。",
+  "regressionCaseIds": ["REG-visual-evidence-001"],
+  "statusVocabulary": ["通过", "不通过", "部分通过", "未执行", "需补证", "需干预"],
+  "allowedTestTypes": ["冒烟", "功能", "视觉", "回归"],
+  "evidenceItemRequiredFields": ["runId", "commit", "capturedAt", "slotId", "primaryState", "coverageStates", "testType", "status", "theme", "viewportClass", "methodAnchor", "breadcrumb", "pagePath", "path"],
+  "allowedThemes": ["light", "dark"],
+  "allowedViewportClasses": ["desktop", "mobile"],
+  "plannedScreenshotTarget": 148,
+  "requiredReportLinks": ["查看步骤", "查看截图", "查看缺陷", "关联测试方法"],
+  "reportLayers": {
+    "supervisor": "只包含主管结论、逐模块状态、完整面包屑、干预项、证据与测试方法链接，不出现命令、选择器、接口字段和源代码路径。",
+    "technicalAppendix": "单独归档命令、选择器、接口、requestId、日志和源代码入口，通过主管报告链接按需查看。"
+  },
+  "modules": [
+    {
+      "id": "identity-profile",
+      "name": "登录、权限与头像",
+      "breadcrumb": "登录 → 合成登录 → 首页 → 顶部头像 → 修改头像 → 上传或描述 → 生成预览 → 保存",
+      "entryPath": "/",
+      "uniqueScreenshotFloor": 14,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["登录", "会话", "头像入口", "编辑器", "上传", "描述", "加载", "预览", "保存", "刷新持久化", "移动端"],
+      "methods": ["真实导航", "功能主链路", "持久化", "移动端"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面头像编辑器", "primaryState": "编辑器", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下弹窗、预览和操作区完整可见"},
+        {"label": "移动端头像编辑器", "primaryState": "移动端", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端可完成上传与描述"},
+        {"label": "头像描述校验与恢复", "primaryState": "描述", "theme": "dark", "viewportClass": "desktop", "expectedProof": "无效描述给出可理解提示且可继续编辑"}
+      ]
+    },
+    {
+      "id": "recording-audio",
+      "name": "录音和音频上传",
+      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 录音转笔记 → 录音保护 → 转录原文",
+      "entryPath": "/document-store",
+      "uniqueScreenshotFloor": 16,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["入口", "权限允许", "权限拒绝", "录音开始", "暂停或结束", "音频上传", "上传完成", "转录进度", "转录结果", "失败恢复", "持久化", "移动端"],
+      "methods": ["权限边界", "文件上传", "异步进度", "结果持久化", "移动端"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面转录结果", "primaryState": "转录结果", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下原文、状态和后续操作完整"},
+        {"label": "移动端权限拒绝", "primaryState": "权限拒绝", "theme": "dark", "viewportClass": "mobile", "expectedProof": "拒绝麦克风后仍可改用音频上传"},
+        {"label": "移动端转录进度", "primaryState": "转录进度", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏进度持续变化且无遮挡"},
+        {"label": "失败后再次转录", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "失败信息说明恢复动作，原音频仍保留"}
+      ]
+    },
+    {
+      "id": "file-parsing",
+      "name": "文件上传与解析",
+      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 上传文件 → 解析进度 → 可读结果",
+      "entryPath": "/document-store",
+      "uniqueScreenshotFloor": 16,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["入口", "文件选择", "类型识别", "上传", "解析准备", "解析进度", "可读结果", "无效文件", "用户可读错误", "重试", "持久化", "移动端"],
+      "methods": ["文件边界", "异步进度", "用户可读错误", "结果持久化", "移动端"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面解析结果", "primaryState": "可读结果", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下结果内容和下载入口完整"},
+        {"label": "移动端损坏文件", "primaryState": "无效文件", "theme": "dark", "viewportClass": "mobile", "expectedProof": "损坏文件在移动端给出用户可读提示"},
+        {"label": "超长中文文件名", "primaryState": "类型识别", "theme": "dark", "viewportClass": "desktop", "expectedProof": "超长文件名不挤压状态与操作按钮"},
+        {"label": "移动端重试与回读", "primaryState": "重试", "theme": "dark", "viewportClass": "mobile", "expectedProof": "重试成功后刷新仍能读取解析结果"}
+      ]
+    },
+    {
+      "id": "short-video-parsing",
+      "name": "短视频上传与链接解析",
+      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 解析短视频 → 抽取与转写 → 时间轴结果",
+      "entryPath": "/document-store",
+      "uniqueScreenshotFloor": 12,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["入口", "视频上传", "链接输入", "抽取进度", "转写进度", "时间轴结果", "失败恢复", "移动端"],
+      "methods": ["双输入路径", "异步进度", "结果完整性", "失败恢复"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面链接输入", "primaryState": "链接输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下输入、提交与校验信息完整"},
+        {"label": "移动端视频上传", "primaryState": "视频上传", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端可选择并上传短视频"},
+        {"label": "超长错误提示", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "错误长文案不溢出并给出恢复动作"},
+        {"label": "移动端时间轴", "primaryState": "时间轴结果", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏时间轴可滚动且内容不裁切"}
+      ]
+    },
+    {
+      "id": "literary-creation",
+      "name": "文学创作",
+      "breadcrumb": "首页 → 文学创作 → 新建作品 → 流式创作 → 保存结果",
+      "entryPath": "/literary-agent",
+      "uniqueScreenshotFloor": 14,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["入口", "空态引导", "新建", "输入", "流式开始", "流式中间态", "完成", "保存", "刷新持久化", "失败恢复", "移动端"],
+      "methods": ["流式反馈", "核心生成", "持久化", "失败恢复", "移动端"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面创作完成态", "primaryState": "完成", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下正文、保存状态与操作区完整"},
+        {"label": "移动端流式中间态", "primaryState": "流式中间态", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端持续显示新增内容"},
+        {"label": "超长正文滚动与保存", "primaryState": "保存", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长文滚动时工具区可用且保存结果明确"}
+      ]
+    },
+    {
+      "id": "single-image-creation",
+      "name": "单图视觉创作",
+      "breadcrumb": "首页 → 视觉创作 → 输入描述或单张参考图 → 生成进度 → 图片结果",
+      "entryPath": "/visual-agent",
+      "uniqueScreenshotFloor": 18,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["入口", "空态", "描述输入", "单图上传", "参考图预览", "提交", "准备中", "生成中", "进度自适应", "结果", "继续编辑", "保存", "失败恢复", "移动端"],
+      "methods": ["真实生成", "进度状态机", "响应式布局", "用户可读错误", "移动端"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面生成结果", "primaryState": "结果", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下结果图、编辑与保存动作完整"},
+        {"label": "移动端生成进度", "primaryState": "进度自适应", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏进度条按容器宽度完整显示"},
+        {"label": "超长描述输入", "primaryState": "描述输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长描述换行后不挤压上传和提交动作"},
+        {"label": "方图与宽图进度边界", "primaryState": "生成中", "theme": "dark", "viewportClass": "desktop", "expectedProof": "不同画布比例下进度条均完整落在容器内"}
+      ]
+    },
+    {
+      "id": "multi-image-creation",
+      "name": "多图视觉创作",
+      "breadcrumb": "首页 → 视觉创作 → 添加两至三图 → 组合描述 → 生成结果",
+      "entryPath": "/visual-agent",
+      "uniqueScreenshotFloor": 18,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["入口", "第一张参考图", "第二张参考图", "第三张参考图", "引用识别", "顺序", "组合描述", "提交", "准备中", "生成中", "结果", "替换或删除", "失败恢复", "移动端"],
+      "methods": ["多附件关联", "真实生成", "进度状态机", "失败恢复", "移动端"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面三图引用", "primaryState": "第三张参考图", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下三张参考图、编号和顺序清晰"},
+        {"label": "移动端三图与组合描述", "primaryState": "移动端", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏可查看三图并完成组合描述"},
+        {"label": "超长组合描述", "primaryState": "组合描述", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长描述与引用标记不重叠、不丢失"},
+        {"label": "多比例生成进度边界", "primaryState": "生成中", "theme": "dark", "viewportClass": "desktop", "expectedProof": "不同结果尺寸下进度条完整且持续变化"}
+      ]
+    },
+    {
+      "id": "video-creation",
+      "name": "视频创作",
+      "breadcrumb": "首页 → 视频创作 → 脚本 → 分镜与关键帧 → 成片",
+      "entryPath": "/video-agent",
+      "uniqueScreenshotFloor": 16,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["入口", "新建", "脚本输入", "脚本生成", "分镜", "关键帧", "阶段进度", "动态反馈", "成片或受控终态", "失败恢复", "持久化", "移动端"],
+      "methods": ["长任务状态机", "阶段结果", "失败恢复", "持久化", "移动端"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面分镜", "primaryState": "分镜", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下分镜顺序与关键帧操作清晰"},
+        {"label": "移动端阶段进度", "primaryState": "阶段进度", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏长任务阶段持续变化且无遮挡"},
+        {"label": "超长脚本输入", "primaryState": "脚本输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长脚本滚动与生成动作保持可用"},
+        {"label": "部分失败与继续处理", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "局部失败明确指出影响并允许继续或重试"}
+      ]
+    },
+    {
+      "id": "image-model-routing",
+      "name": "图片模型路由与切换",
+      "originKind": "gateway",
+      "breadcrumb": "LLMGW 登录 → 逻辑模型 → Offering → 路由配置 → 前台选择 → 调用日志",
+      "entryPath": "/logical-models",
+      "stateBindings": {
+        "登录": {
+          "originKind": "gateway",
+          "entryPath": "/login"
+        },
+        "前台选择": {
+          "originKind": "app",
+          "entryPath": "/visual-agent"
+        },
+        "真实调用": {
+          "originKind": "app",
+          "entryPath": "/visual-agent"
+        },
+        "调用日志对应": {
+          "originKind": "gateway",
+          "entryPath": "/logs"
+        }
+      },
+      "uniqueScreenshotFloor": 12,
+      "requiredThemes": ["light", "dark"],
+      "requiredViewportClasses": ["desktop"],
+      "requiredStates": ["登录", "逻辑模型列表", "模型详情", "添加或编辑", "Offering", "路由启用", "前台选择", "真实调用", "调用日志对应", "失败提示"],
+      "methods": ["配置生效", "前后端一致性", "真实调用", "日志追踪", "失败恢复"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面路由配置", "primaryState": "路由启用", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下路由状态、优先级和保存动作完整"},
+        {"label": "Offering 失败与恢复", "primaryState": "失败提示", "theme": "light", "viewportClass": "desktop", "expectedProof": "不可用 Offering 提示可理解且可切换恢复"}
+      ]
+    },
+    {
+      "id": "errors-progress-responsive",
+      "name": "用户可读错误、生成进度与响应式布局",
+      "breadcrumb": "各业务功能 → 触发等待或失败 → 查看提示 → 执行恢复；各功能 → 切换窄屏 → 完成关键操作",
+      "entryPath": "/",
+      "uniqueScreenshotFloor": 12,
+      "requiredThemes": ["dark"],
+      "requiredViewportClasses": ["desktop", "mobile"],
+      "requiredStates": ["错误结果", "错误原因类别", "恢复动作", "阶段变化", "进度完整", "窄屏", "超长文案", "弹窗", "滚动", "无横向溢出"],
+      "methods": ["用户可读错误", "进度状态机", "响应式布局", "溢出断言", "恢复动作"],
+      "additionalEvidenceSlots": [
+        {"label": "暗色桌面超长错误", "primaryState": "超长文案", "theme": "dark", "viewportClass": "desktop", "expectedProof": "超长错误在暗色主题下换行完整且恢复动作可见"},
+        {"label": "移动端弹窗与滚动", "primaryState": "弹窗", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏弹窗不裁切，内部滚动与关闭动作可用"}
+      ]
+    }
+  ],
+  "uniqueScreenshotFloor": 148,
+  "countingRules": [
+    "每张截图文件只计一次，禁止复制同一图片补数量。",
+    "每张截图必须归属一个主模块，并可关联多个相邻断言。",
+    "入口截图只支持冒烟结论，不能单独支持功能或视觉通过。",
+    "模块实际截图少于预算或关键状态未覆盖时，视觉状态不得为通过。",
+    "主管总报告与技术附录必须拆成两个独立产物；选择器、命令、接口和日志不得进入主管正文。",
+    "每张截图必须声明 slotId、primaryState、coverageStates、testType、status、theme、viewportClass、methodAnchor 和 breadcrumb；缺任一字段不得判定视觉通过。",
+    "每个计划 slotId 必须由且只能由一张合格截图核销；缺位、重复占位或使用目录外 slotId 时不得判定视觉通过。",
+    "每张截图必须声明唯一 primaryState；标准状态只按 primaryState 核销，一张图不得替多个状态完成验收。",
+    "每条证据必须绑定实际截图文件路径；只有摘要哈希而没有可打开图片时不得判定视觉通过。",
+    "先探测页面真实主题能力；支持明暗主题的模块必须双主题取证，仅支持单主题的模块按目录注明后取证，并按目录覆盖桌面端与真实触控移动端。",
+    "采集文件与可审核证据分开统计；缺元数据、状态越界或主题与设备未绑定的图片不得计入有效截图；可审核不等于通过。",
+    "数量、关键状态、证据元数据和页面判定四道门同时通过，模块视觉结论才可为通过。"
+  ]
+}

@@ -160,7 +160,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             candidates.AddRange(resolution.RetryCandidates.Where(c =>
                 c.Success
                 && !string.IsNullOrWhiteSpace(c.ActualModel)
-                && !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase)));
+                && (!string.Equals(c.ActualPlatformId, resolution.ActualPlatformId, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
 
         var maxAttempts = GetProviderRetryMaxAttempts();
@@ -179,7 +180,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (request.Context?.IsHealthProbe == true
             || (!string.IsNullOrWhiteSpace(request.ExpectedModel) && string.IsNullOrWhiteSpace(resolution.LogicalModelId))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
-            || !string.IsNullOrWhiteSpace(request.PinnedModelId))
+            || !string.IsNullOrWhiteSpace(request.PinnedModelId)
+            || !string.IsNullOrWhiteSpace(request.RequiredOfferingId))
         {
             return candidates;
         }
@@ -189,7 +191,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             candidates.AddRange(resolution.RetryCandidates.Where(c =>
                 c.Success
                 && !string.IsNullOrWhiteSpace(c.ActualModel)
-                && !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase)));
+                && (!string.Equals(c.ActualPlatformId, resolution.ActualPlatformId, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
         }
 
         var maxAttempts = GetProviderRetryMaxAttempts();
@@ -214,6 +217,132 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         => statusCode is >= 401 and <= 404
            || statusCode is 408 or 409 or 425 or 429
            || statusCode is >= 500 and <= 599;
+
+    /// <summary>
+    /// 图片请求已经通过 canonical IR 证明包含有效描述时，部分上游仍会把协议或能力不匹配
+    /// 错报成 400 输入错误。此类错误属于 Offering 故障，应切换同一逻辑模型的下一供给；
+    /// 普通参数错误仍保持终止，避免重复发送用户的无效请求。
+    /// </summary>
+    internal static bool ShouldRetryRawProviderResponse(
+        int statusCode,
+        string? responseBody,
+        GatewayRawRequest request)
+    {
+        if (IsContentPolicyDenial(statusCode, responseBody))
+            return false;
+
+        if (ShouldRetryProviderStatus(statusCode))
+            return true;
+
+        var canonical = request.CanonicalImageRequest;
+        if (statusCode != 400
+            || canonical is null
+            || string.IsNullOrWhiteSpace(canonical.Prompt))
+        {
+            return false;
+        }
+
+        var message = TryExtractErrorMessage(responseBody ?? string.Empty) ?? responseBody ?? string.Empty;
+        return IsImageOfferingCapabilityMismatch(message);
+    }
+
+    internal static bool ShouldQuarantineRawProviderResponse(
+        int statusCode,
+        string? responseBody,
+        GatewayRawRequest request)
+    {
+        if (IsContentPolicyDenial(statusCode, responseBody))
+            return false;
+
+        // 凭据、付费和授权错误与请求类型无关。ASR、视频等非图片 Raw 请求同样必须隔离
+        // 故障 Offering，避免每个后续用户都重复命中同一坏路由。
+        if (statusCode is >= 401 and <= 403)
+            return true;
+
+        // 404 既可能表示模型/Endpoint 配错，也可能只是本次视频任务已过期。只有响应明确指向
+        // Offering 配置时才永久隔离；资源级 404 只结束或切换本次请求，不能影响其他用户。
+        if (statusCode == 404)
+        {
+            var notFoundMessage = TryExtractErrorMessage(responseBody ?? string.Empty)
+                ?? responseBody
+                ?? string.Empty;
+            return IsOfferingConfigurationNotFound(notFoundMessage);
+        }
+
+        var canonical = request.CanonicalImageRequest;
+        if (canonical is null || string.IsNullOrWhiteSpace(canonical.Prompt))
+            return false;
+
+        if (statusCode != 400)
+            return false;
+
+        var message = TryExtractErrorMessage(responseBody ?? string.Empty) ?? responseBody ?? string.Empty;
+        return IsImageOfferingCapabilityMismatch(message);
+    }
+
+    private static bool IsImageOfferingCapabilityMismatch(string message)
+        => message.Contains("Input must have at least 1 token", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("no endpoints found that support image output", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("does not support image generation", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("unsupported output modality", StringComparison.OrdinalIgnoreCase)
+           || message.Contains("unsupported modalities", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOfferingConfigurationNotFound(string message)
+    {
+        var identifiesMissingResource = message.Contains("not found", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("no such", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("unknown", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("not supported", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("unsupported", StringComparison.OrdinalIgnoreCase);
+        if (!identifiesMissingResource)
+            return false;
+
+        return message.Contains("model", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("endpoint", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("route", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsContentPolicyDenial(int statusCode, string? responseBody)
+    {
+        if (statusCode < 400 || string.IsNullOrWhiteSpace(responseBody))
+            return false;
+
+        var message = TryExtractErrorMessage(responseBody) ?? string.Empty;
+        var diagnostic = $"{message}\n{responseBody}";
+        return ImageGenerationUserError.IsContentSafetyDenial(diagnostic);
+    }
+
+    private Task RecordRawProviderFailureAsync(
+        ModelResolutionResult resolution,
+        int statusCode,
+        string? responseBody,
+        GatewayRawRequest request,
+        CancellationToken ct)
+    {
+        if (IsContentPolicyDenial(statusCode, responseBody))
+            return Task.CompletedTask;
+
+        if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
+            return _modelResolver.RecordUnavailableAsync(resolution, ct);
+
+        // 部分供应商用 429 insufficient_quota 表示额度耗尽。它不是普通请求限流，
+        // 应累计 Offering 健康失败以触发路由回退；明确的 rate limit 仍由下方 4xx 分支忽略。
+        if (IsQuotaExceeded(statusCode, responseBody))
+            return _modelResolver.RecordFailureAsync(resolution, ct);
+
+        // 408 表示 Provider 在时限内没有完成请求，属于服务健康失败而不是用户输入错误。
+        // 保留回退能力并累计健康失败，避免持续把超时 Offering 排在首位。
+        if (statusCode == 408)
+            return _modelResolver.RecordFailureAsync(resolution, ct);
+
+        // 其余 4xx 是本次请求级拒绝（尺寸、参考图、mask、限流等），不能累计为
+        // Offering 健康失败，否则同类用户输入连续出现会把健康路由错误下线。
+        if (statusCode is >= 400 and <= 499)
+            return Task.CompletedTask;
+
+        return _modelResolver.RecordFailureAsync(resolution, ct);
+    }
 
     private static bool IsAutoModelPolicy(GatewayRequest request)
         => string.Equals(request.Context?.ModelPolicy, "auto", StringComparison.OrdinalIgnoreCase);
@@ -1056,6 +1185,19 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 409);
         }
 
+
+        if (!string.IsNullOrWhiteSpace(request.RequiredOfferingId)
+            && !string.Equals(
+                request.RequiredOfferingId.Trim(),
+                resolution.OfferingId?.Trim(),
+                StringComparison.Ordinal))
+        {
+            return GatewayRawResponse.Fail(
+                "OFFERING_RESOLUTION_MISMATCH",
+                "异步任务原上游路由无法恢复，请重新生成",
+                409);
+        }
+
         // 将 GatewayModelResolution 转回 ModelResolutionResult 以复用内部执行逻辑
         // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
         var internalResolution = new ModelResolutionResult
@@ -1227,8 +1369,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         out RawHttpRequestBuildResult? result)
     {
         result = null;
-        if (request.CanonicalImageRequest is not null)
-            request = RebuildCanonicalImageRequest(request, resolution);
         var isExchange = resolution.IsExchange;
         var adapter = isExchange ? null : GetAdapterForResolution(resolution);
         string endpoint;
@@ -1598,6 +1738,20 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ExpectBinaryResponse = source.ExpectBinaryResponse,
             Context = source.Context,
         };
+    }
+
+    private static GatewayRawRequest PrepareCanonicalImageRequestForResolution(
+        GatewayRawRequest source,
+        ModelResolutionResult? currentResolution,
+        ModelResolutionResult targetResolution)
+    {
+        if (source.CanonicalImageRequest is null)
+            return source;
+
+        var hasPreparedWireRequest = source.IsMultipart || source.RequestBody is not null;
+        return hasPreparedWireRequest && currentResolution is null
+            ? source
+            : RebuildCanonicalImageRequest(source, targetResolution);
     }
 
     private static GatewayRawRequest ApplyResolvedImageSizeControlToBuiltRequest(
@@ -2012,6 +2166,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
+            // 上游调用方已经按首个 Offering 完成模型级参数适配时必须原样保留；仅 canonical
+            // 请求没有 wire body 时才在此补建。跨 Offering 切换则只在协议变化时重建。
+            request = PrepareCanonicalImageRequestForResolution(request, null, resolution);
+
             var gatewayResolution = resolution.ToGatewayResolution();
             var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
             if (!concurrency.Allowed)
@@ -2268,12 +2426,17 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             for (var attemptIndex = 1;
                  !response.IsSuccessStatusCode
                  && attemptIndex < retryResolutions.Count
-                 && ShouldRetryProviderStatus((int)response.StatusCode);
+                 && ShouldRetryRawProviderResponse((int)response.StatusCode, responseBody, request);
                  attemptIndex++)
             {
                 if (HasTrackedHealthRoute(resolution))
                 {
-                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                    await RecordRawProviderFailureAsync(
+                        resolution,
+                        (int)response.StatusCode,
+                        responseBody,
+                        request,
+                        ct);
                 }
 
                 var nextResolution = retryResolutions[attemptIndex];
@@ -2287,6 +2450,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     $"previous candidate failed with HTTP {(int)response.StatusCode}");
                 response.Dispose();
 
+                request = PrepareCanonicalImageRequestForResolution(request, resolution, nextResolution);
                 var buildError = TryBuildRawHttpRequest(request, nextResolution, out var nextBuild);
                 resolution = nextResolution;
                 gatewayResolution = resolution.ToGatewayResolution();
@@ -2577,7 +2741,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
                 else
                 {
-                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                    await RecordRawProviderFailureAsync(
+                        resolution,
+                        (int)response.StatusCode,
+                        responseBody,
+                        request,
+                        ct);
                 }
             }
 
@@ -3051,6 +3220,31 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
+    public async Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
+        {
+            return new GatewayModelResolution
+            {
+                Success = false,
+                ErrorMessage = error,
+                ResolutionType = "NotFound",
+            };
+        }
+
+        var result = await _modelResolver.ResolveOfferingAsync(
+            appCallerCode,
+            modelType,
+            offeringId,
+            ct);
+        return result.ToGatewayResolution();
+    }
+
+    /// <inheritdoc />
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,
         string modelType,
@@ -3192,7 +3386,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private async Task<(string Code, string Message)> HandleQuotaExceededAsync(string? platformName, string rawMessage)
     {
         var raw = rawMessage.Length > 220 ? rawMessage.Substring(0, 220) + "…" : rawMessage;
-        var friendly = $"大模型平台额度已用尽或被限额，请充值或更换 API Key。上游信息：{raw}";
+        const string friendly = "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。";
         try
         {
             if (_failoverNotifier != null)

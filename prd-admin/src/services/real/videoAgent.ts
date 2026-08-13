@@ -62,6 +62,12 @@ export const getVideoGenRunReal: GetVideoGenRunContract = async (runId) => {
   });
 };
 
+export const createVideoGenDownloadTicketReal = async (runId: string) =>
+  apiRequest<{ ticket: string; fileName: string }>(
+    api.videoAgent.runs.downloadTicket(encodeURIComponent(runId)),
+    { method: 'POST' },
+  );
+
 // 视觉创作（视觉分镜台）专用：走 visual-agent 自有 video-gen 端点，
 // 用 visual-agent 的权限/配额/appKey，避免 visual-agent-only 账号撞 video-agent 403。
 export const createVisualVideoRunReal: CreateVideoGenRunContract = async (input) => {

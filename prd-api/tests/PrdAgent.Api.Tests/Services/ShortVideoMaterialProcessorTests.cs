@@ -31,4 +31,22 @@ public class ShortVideoMaterialProcessorTests
 
         result.ShouldBe("https://cdn.example.test/video.mp4");
     }
+
+    [Theory]
+    [InlineData("这不是链接")]
+    [InlineData("/video.mp4")]
+    [InlineData("file:///tmp/video.mp4")]
+    [InlineData("https:///missing-host")]
+    public void IsHttpUrl_ShouldRejectNonPublicUrl(string value)
+    {
+        ShortVideoMaterialProcessor.IsHttpUrl(value).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("https://www.bilibili.com/video/BV1test")]
+    [InlineData(" http://example.test/video ")]
+    public void IsHttpUrl_ShouldAcceptCompleteHttpUrl(string value)
+    {
+        ShortVideoMaterialProcessor.IsHttpUrl(value).ShouldBeTrue();
+    }
 }

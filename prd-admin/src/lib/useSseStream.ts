@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
+import { tryRefreshAdminToken } from '@/services/real/apiClient';
 
 export type SsePhase = 'idle' | 'connecting' | 'streaming' | 'done' | 'error';
 
@@ -247,6 +248,13 @@ export interface ConnectSseOptions {
  * 返回 { success, errorCode?, errorMessage? }
  */
 export async function connectSse(opts: ConnectSseOptions): Promise<{ success: boolean; errorCode?: string; errorMessage?: string }> {
+  return connectSseWithRefresh(opts, false);
+}
+
+async function connectSseWithRefresh(
+  opts: ConnectSseOptions,
+  didRefresh: boolean,
+): Promise<{ success: boolean; errorCode?: string; errorMessage?: string }> {
   const { url, method = 'GET', body, headers = {}, onEvent, signal, skipAuth } = opts;
 
   const token = skipAuth ? null : useAuthStore.getState().token;
@@ -269,30 +277,41 @@ export async function connectSse(opts: ConnectSseOptions): Promise<{ success: bo
       ...(isPost && body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal,
     });
-  } catch (e) {
+  } catch {
     if (signal.aborted) return { success: true };
-    return { success: false, errorCode: 'NETWORK_ERROR', errorMessage: e instanceof Error ? e.message : '网络错误' };
+    return { success: false, errorCode: 'NETWORK_ERROR', errorMessage: '网络连接异常，请检查网络后重试。' };
   }
 
   if (res.status === 401) {
+    if (!skipAuth && !didRefresh && await tryRefreshAdminToken()) {
+      return connectSseWithRefresh(opts, true);
+    }
     const authStore = useAuthStore.getState();
     if (authStore.isAuthenticated) {
       authStore.logout();
       window.location.href = '/login';
     }
-    return { success: false, errorCode: 'UNAUTHORIZED', errorMessage: '未登录' };
+    return { success: false, errorCode: 'UNAUTHORIZED', errorMessage: '登录状态已过期，请重新登录后重试。' };
   }
 
   if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    return { success: false, errorCode: 'UNKNOWN', errorMessage: t || `HTTP ${res.status} ${res.statusText}` };
+    if (res.status === 403) {
+      return { success: false, errorCode: 'PERMISSION_DENIED', errorMessage: '当前账号没有执行此操作的权限。' };
+    }
+    if (res.status === 429) {
+      return { success: false, errorCode: 'RATE_LIMITED', errorMessage: '请求较多，请稍后重试。' };
+    }
+    if (res.status >= 500) {
+      return { success: false, errorCode: 'SERVER_UNAVAILABLE', errorMessage: '服务暂时不可用，请稍后重试。' };
+    }
+    return { success: false, errorCode: 'REQUEST_REJECTED', errorMessage: '当前请求未被接受，请检查输入后重试。' };
   }
 
   try {
     await readSseStream(res, onEvent, signal);
-  } catch (e) {
+  } catch {
     if (signal.aborted) return { success: true };
-    return { success: false, errorCode: 'NETWORK_ERROR', errorMessage: e instanceof Error ? e.message : 'SSE 读取失败' };
+    return { success: false, errorCode: 'NETWORK_ERROR', errorMessage: '连接中断，请检查网络后重试。' };
   }
 
   return { success: true };

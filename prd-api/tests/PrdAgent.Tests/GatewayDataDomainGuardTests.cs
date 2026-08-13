@@ -34,6 +34,26 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void ImageGeneration_UserFacingFailuresAlwaysUseTheNormalizationBoundary()
+    {
+        var client = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs");
+        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs");
+        var normalizer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenerationUserError.cs");
+        var rule = ReadRepoFile(".Codex/rules/user-readable-errors.md");
+
+        Assert.Contains("ImageGenerationUserError.FromGateway", client);
+        Assert.Contains("ImageGenerationUserError.FromException", client);
+        Assert.DoesNotContain("ApiResponse<ImageGenResult>.Fail(\"NETWORK_ERROR\", ex.Message)", client);
+        Assert.DoesNotContain("ApiResponse<ImageGenResult>.Fail(ErrorCodes.LLM_ERROR, ex.Message)", client);
+        Assert.DoesNotContain("Vision API 错误:", client);
+        Assert.DoesNotContain("请求失败: HTTP", client);
+        Assert.DoesNotContain("errorMessage = ex.Message", controller);
+        Assert.Contains("errorCode = ErrorCodes.IMAGE_GEN_UNAVAILABLE", controller);
+        Assert.Contains("原始响应只允许进入服务端日志", normalizer);
+        Assert.Contains("禁止向普通用户透传上游响应原文", rule);
+    }
+
+    [Fact]
     public void WorkloadIdentity_IsServerDerivedFilterableAndNeverStoresKeyMaterialInRequestLog()
     {
         var logModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/LlmRequestLog.cs");
@@ -449,8 +469,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("action: \"model.set_enabled\"", consoleProgram);
         Assert.Contains("action: \"pool.set_default\"", consoleProgram);
         Assert.Contains("WriteSystemOperationAuditAsync", consoleProgram);
-        Assert.Contains("action: \"admin.force_reset\"", consoleProgram);
-        Assert.Contains("action: \"admin.force_reset_bootstrap\"", consoleProgram);
+        Assert.Contains("\"admin.env_authority_reconcile\" : \"admin.force_reset\"", consoleProgram);
+        Assert.Contains("\"admin.env_authority_bootstrap\" : \"admin.force_reset_bootstrap\"", consoleProgram);
+        Assert.Contains("if (!passwordDrifted && !activeDrifted && !mustChangeDrifted && !ownershipDrifted)", consoleProgram);
+        Assert.Contains("var securityStateChanged = passwordDrifted || activeDrifted || mustChangeDrifted;", consoleProgram);
         Assert.Contains("action: \"admin.bootstrap\"", consoleProgram);
         Assert.Contains("action: \"admin.reactivate\"", consoleProgram);
         Assert.Contains("\"team.create\"", consoleProgram);
@@ -501,10 +523,12 @@ public class GatewayDataDomainGuardTests
         // 三处共用），Program.cs 不再内联那个 12。判据跟着改成「走没走共享判定源 +
         // 那个源上的值是不是 12」——比原来钉死一行字面量更强：既挡住有人把下限改小，
         // 也挡住有人绕开策略类再写一遍自己的判断（.claude/rules 形状 3/4a）。
-        Assert.Contains("newPwd.Length < LocalPasswordPolicy.MinPasswordLength", consoleProgram);
+        Assert.Contains("LocalPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
         Assert.Contains("\"WEAK_PASSWORD\"", consoleProgram);
         Assert.Contains("新口令至少 {LocalPasswordPolicy.MinPasswordLength} 位", consoleProgram);
-        Assert.Contains("public const int MinPasswordLength = 12;", localPasswordPolicy);
+        Assert.Contains("public const int MinPasswordLength = GwPasswordPolicy.MinimumLength;", localPasswordPolicy);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
+        Assert.Contains("PASSWORD_MANAGED_BY_DEPLOYMENT", consoleProgram);
         Assert.Contains("body.ExpectedVersion != membership.Version", consoleProgram);
         Assert.Contains("x.Version == previousVersion", consoleProgram);
         Assert.Contains("DEVELOPER_TEAM_REQUIRED", consoleProgram);
@@ -525,6 +549,35 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("^[a-z0-9][a-z0-9._-]{2,47}$", membershipPolicy);
         Assert.Contains("teamIds.All(activeTeamIds.Contains)", membershipPolicy);
         Assert.Contains("MaxCanonicalUsernameLength = 128", membershipPolicy);
+    }
+
+    [Fact]
+    public void EnvironmentAuthority_UsesTheSamePasswordPolicyAsInteractiveAccounts()
+    {
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var passwordPolicy = ReadRepoFile("llmgw/console-api/Auth/GwPasswordPolicy.cs");
+        var localPasswordPolicy = ReadRepoFile("llmgw/console-api/Auth/LocalPasswordPolicy.cs");
+
+        Assert.Contains("public const int MinimumLength = 12", passwordPolicy);
+        Assert.Contains("Environment.GetEnvironmentVariable(\"LLMGW_ADMIN_PASSWORD\")?.Trim()", consoleProgram);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd)", consoleProgram);
+        Assert.Contains("LocalPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
+        Assert.Contains("public const int MinPasswordLength = GwPasswordPolicy.MinimumLength;", localPasswordPolicy);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(password)", localPasswordPolicy);
+        Assert.DoesNotContain("envAuthorityAdmin && (string.IsNullOrWhiteSpace(adminBootstrapPwd)", consoleProgram);
+        Assert.DoesNotContain("adminBootstrapPwd!.Trim()", consoleProgram);
+    }
+
+    [Fact]
+    public void EnvironmentAuthority_RejectsInteractiveAdminPasswordChanges()
+    {
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("envAuthorityAdmin && string.Equals(user.Username, AdminUser, StringComparison.Ordinal)", consoleProgram);
+        Assert.Contains("PASSWORD_MANAGED_BY_DEPLOYMENT", consoleProgram);
+        Assert.Contains("该管理员口令由部署配置统一管理，当前页面不能修改。请联系系统管理员更新后重新登录。", consoleProgram);
+        Assert.Contains("statusCode: 409", consoleProgram);
     }
 
     [Fact]
@@ -1011,7 +1064,7 @@ public class GatewayDataDomainGuardTests
         Assert.True(
             dockerCompose.Split("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=", StringSplitOptions.None).Length - 1 >= 3,
             "api、llmgw-serve、llmgw 必须同时收到 registered appCaller 配置权威退场开关");
-        Assert.Contains("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}\"", cdsCompose);
+        Assert.Contains("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"false\"", cdsCompose);
         Assert.True(
             cdsCompose.Split("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers:", StringSplitOptions.None).Length - 1 >= 2,
             "CDS api 与 llmgw-serve 必须同时收到 registered appCaller 配置权威退场开关");
@@ -1024,6 +1077,11 @@ public class GatewayDataDomainGuardTests
             < initializer.IndexOf("callers.DeleteManyAsync", StringComparison.Ordinal),
             "重复 appCaller 必须先完整归档再删除");
         Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
+
+        Assert.Contains("LlmGateway__HttpAppCallerAllowlist: \"transcript-agent.transcribe::asr\"", cdsCompose);
+        Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist: \"${", cdsCompose);
+        Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${", cdsCompose);
+        Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${", cdsCompose);
         Assert.Contains("LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}", dockerCompose);
         Assert.Contains("LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}", dockerCompose);
         Assert.Contains("LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}", dockerCompose);
@@ -1034,7 +1092,8 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:?", dockerCompose);
         Assert.DoesNotContain("LLMGW_ADMIN_USER", dockerCompose);
         Assert.Contains("LlmGateway__DatabaseName: llm_gateway", cdsCompose);
-        Assert.Contains("控制台账号长期权威是 llm_gateway.llmgw_console_users", cdsCompose);
+        Assert.Contains("默认由 llm_gateway.llmgw_console_users 托管账号", cdsCompose);
+        Assert.Contains("LLMGW_ADMIN_ENV_AUTHORITY: \"${LLMGW_ADMIN_ENV_AUTHORITY}\"", cdsCompose);
     }
 
     [Fact]
@@ -1074,6 +1133,120 @@ public class GatewayDataDomainGuardTests
         {
             Assert.Contains("ForceFullShadowSample: run.ForceFullShadowSample", worker);
         }
+    }
+
+    [Fact]
+    public void TranscriptRunWorker_RejectsEmptyNonChatSuccessBeforeAcceptingCandidate()
+    {
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs");
+
+        Assert.Contains("validatedNonChatSegments", worker);
+        Assert.Contains("candidateSegments.Count > 0", worker);
+        Assert.Contains("非对话音频模型返回空或无效转写，自动尝试下一候选", worker);
+        Assert.Contains("validatedChatText != null || validatedNonChatSegments != null", worker);
+    }
+
+    [Fact]
+    public void TranscriptRuns_AreConsumedOnlyByTheirCreatingDeployment()
+    {
+        var model = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/TranscriptRun.cs");
+        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/TranscriptAgentController.cs");
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs");
+        var watchdog = ReadRepoFile("prd-api/src/PrdAgent.Api/Middleware/TranscriptRunWatchdog.cs");
+        var recordingWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/DocumentRecordingArchiveWorker.cs");
+        var documentWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/DocumentStoreAgentWorker.cs");
+        var shortVideoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ShortVideoMaterialWorker.cs");
+        var legacyOwnerScope = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/LegacyOwnerScope.cs");
+        var authority = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Security/DeploymentAuthority.cs");
+        var transcriptController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/TranscriptAgentController.cs");
+        var cdsCompose = ReadRepoFile("cds-compose.yml");
+        var productionCompose = ReadRepoFile("docker-compose.yml");
+
+        Assert.Contains("public string OwnerInstanceId { get; set; }", model);
+        Assert.Contains("OwnerInstanceId = InstanceIdentity.Get(_config)", controller);
+        Assert.Contains("Status = TranscriptRunStatuses.ScopedQueued", controller);
+        Assert.Contains("Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued)", worker);
+        Assert.Contains("Filter.Eq(r => r.Status, TranscriptRunStatuses.LegacyQueued)", worker);
+        Assert.Contains("LegacyOwnerScope.Build<TranscriptRun>", worker);
+        Assert.Contains("DeploymentAuthority.CanAdoptLegacyTranscriptRuns(configuration)", worker);
+        Assert.Contains("Filter.Or(scopedForCurrentInstance, adoptableLegacyRun)", worker);
+        Assert.Contains("AdoptLegacyTranscriptRunsKey", authority);
+        Assert.Contains("AdoptLegacyBranchOwnersKey", authority);
+        Assert.Contains("RetiredLegacyBranchOwnerIdsKey", authority);
+        Assert.Contains("LegacyOwnerCreatedBeforeUtcKey", authority);
+        Assert.Contains("LegacyTranscriptRolloutCreatedBeforeUtc", authority);
+        Assert.Contains("IsLegacyTranscriptMigrationAuthority", authority);
+        Assert.Contains("GetLegacyTranscriptCreatedBeforeUtc", worker);
+        Assert.DoesNotContain("GetRetiredLegacyBranchOwnerIds", ReadRepoFile("prd-api/src/PrdAgent.Api/Services/InstanceIdentity.cs"));
+        Assert.Contains("Transcript__AdoptLegacyUnownedRuns: \"\"", cdsCompose);
+        Assert.Contains("Deployment__Identity: \"prd-agent:cds\"", cdsCompose);
+        Assert.Contains("Deployment__AdoptLegacyBranchOwners: \"false\"", cdsCompose);
+        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds: \"\"", cdsCompose);
+        Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc: \"\"", cdsCompose);
+        Assert.Contains("Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}", productionCompose);
+        Assert.Contains("Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}", productionCompose);
+        Assert.Contains("Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}", productionCompose);
+        Assert.Contains("Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-2026-08-12T19:20:00Z}", productionCompose);
+        Assert.Contains("SYNTHETIC_LOGIN_ENABLED: \"true\"", cdsCompose);
+        Assert.Contains("Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-}", productionCompose);
+        Assert.True(
+            cdsCompose.Split("command -v ffmpeg", StringSplitOptions.None).Length - 1 >= 3,
+            "CDS API 的 dev、static 与默认源码命令都必须在启动前保证 ffmpeg 可用");
+        Assert.Contains("Sort.Ascending(r => r.CreatedAt)", worker);
+        Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", worker);
+        Assert.Contains("Filter.Eq(r => r.OwnerInstanceId, run.OwnerInstanceId)", worker);
+        Assert.Contains("Filter.In(r => r.OwnerInstanceId, _compatibleOwnerIds)", watchdog);
+        Assert.Contains("DeploymentAuthority.CanAdoptLegacyTranscriptRuns(config)", watchdog);
+        Assert.Contains("LegacyOwnerScope.Build<TranscriptRun>", watchdog);
+        Assert.Contains(".Set(r => r.OwnerInstanceId, _instanceId)", watchdog);
+        Assert.DoesNotContain("BranchOnlyOwnerPattern", legacyOwnerScope);
+        Assert.Contains("Filter.In(ownerField, retiredLegacyOwnerIds)", legacyOwnerScope);
+        Assert.Contains("Filter.Lte(\"CreatedAt\", legacyOwnerCreatedBeforeUtc.Value)", legacyOwnerScope);
+        Assert.Contains("var retiredLegacyOwnerIds = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration)", recordingWorker);
+        Assert.Contains("retiredLegacyOwnerIds: retiredLegacyOwnerIds", recordingWorker);
+        Assert.Contains("LegacyOwnerScope.Build<DocumentStoreAgentRun>", documentWorker);
+        Assert.Contains("LegacyOwnerScope.Build<ShortVideoMaterialRun>", shortVideoWorker);
+        Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", documentWorker);
+        Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", shortVideoWorker);
+        Assert.Contains("TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config)", watchdog);
+        Assert.Contains("TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)", worker);
+        Assert.Contains("while (!ct.IsCancellationRequested)", transcriptController);
+        Assert.DoesNotContain("i < 600", transcriptController);
+        Assert.Contains("OwnedProcessingRun(run)", worker);
+        Assert.Contains("candidate.ToGatewayResolution(),\n                    processingToken", worker);
+        Assert.Contains("public const string LegacyQueued = \"queued\"", model);
+    }
+
+    [Fact]
+    public void OfferingRouteEdits_CreateImmutableReplacementForAcceptedAsyncJobs()
+    {
+        var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("model-offering.route-replaced", consoleApi);
+        Assert.Contains("SupersedesOfferingId", consoleApi);
+        Assert.Contains("SupersededByOfferingId", consoleApi);
+        Assert.Contains("pending:{replacementId}", consoleApi);
+        Assert.Contains("replacement[\"Enabled\"] = false", consoleApi);
+        Assert.Contains("OFFERING_PROMOTION_FAILED", consoleApi);
+        Assert.Contains(".Where(x => !x.Contains(\"SupersededByOfferingId\"))", consoleApi);
+        Assert.True(
+            consoleApi.IndexOf("await gwModelOfferings.InsertOneAsync(replacement)", StringComparison.Ordinal)
+            < consoleApi.IndexOf(".Set(\"SupersededByOfferingId\", replacementId)", StringComparison.Ordinal));
+
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        Assert.Contains("EnsureOfferingIdentityIndexAsync", initializer);
+        Assert.Contains(".Ascending(\"SupersededByOfferingId\")", initializer);
+        Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v2", initializer);
+        Assert.Contains("catch (MongoCommandException ex) when (ex.Code == 27)", initializer);
+        Assert.Contains("IsEquivalentOfferingIdentityIndex", initializer);
+        Assert.Contains("MongoDB 不允许同一 key/options 仅以不同名称重复建索引", initializer);
+        Assert.True(
+            initializer.IndexOf("IsEquivalentOfferingIdentityIndex(index, expectedKeys)", StringComparison.Ordinal)
+            < initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal));
+        Assert.True(
+            initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal)
+            < initializer.IndexOf("Name = versionAwareIndexName", StringComparison.Ordinal));
+        Assert.Contains("Offering 唯一索引升级为版本感知结构", initializer);
     }
 
     [Fact]
@@ -1159,6 +1332,36 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ClaimNextRunByStatusAsync(ImageGenRunStatus.ScopedQueued", imageWorker);
         Assert.Contains("DeploymentScope.Current == null", imageWorker);
         Assert.Contains("ClaimNextRunByStatusAsync(ImageGenRunStatus.Queued", imageWorker);
+    }
+
+    [Fact]
+    public void WorkspaceDeletion_RemovesAllReferencesBeforePhysicalObjectCleanup()
+    {
+        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var helperStart = controller.IndexOf("private async Task<bool> TryDeleteUnreferencedGeneratedImageAsync", StringComparison.Ordinal);
+        var imageAssetCheck = controller.IndexOf("_db.ImageAssets.CountDocumentsAsync(imageAssetFilter", helperStart, StringComparison.Ordinal);
+        var uploadArtifactCheck = controller.IndexOf("_db.UploadArtifacts.CountDocumentsAsync(artifactFilter", helperStart, StringComparison.Ordinal);
+        var imageRunCheck = controller.IndexOf("_db.ImageGenRuns.CountDocumentsAsync(runFilter", helperStart, StringComparison.Ordinal);
+        var helperDeleteObject = controller.IndexOf("await _assetStorage.DeleteByShaAsync(", helperStart, StringComparison.Ordinal);
+        var collectArtifacts = controller.IndexOf("runArtifacts = (await _db.UploadArtifacts.Find", StringComparison.Ordinal);
+        var deleteAssetRecords = controller.IndexOf("await _db.ImageAssets.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
+        var deleteArtifactRecords = controller.IndexOf("await _db.UploadArtifacts.DeleteManyAsync", deleteAssetRecords, StringComparison.Ordinal);
+        var deleteRun = controller.IndexOf("await _db.ImageGenRuns.DeleteManyAsync", deleteArtifactRecords, StringComparison.Ordinal);
+        var deleteWorkspace = controller.IndexOf("await _db.ImageMasterWorkspaces.DeleteOneAsync", deleteRun, StringComparison.Ordinal);
+        var workspaceDeleteObject = controller.IndexOf("await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None)", deleteWorkspace, StringComparison.Ordinal);
+
+        Assert.True(helperStart >= 0, "底层对象删除必须复用统一的引用检查入口");
+        Assert.True(imageAssetCheck > helperStart, "删除对象前必须检查图片资产引用");
+        Assert.True(uploadArtifactCheck > imageAssetCheck, "删除对象前必须检查其他上传产物引用");
+        Assert.True(imageRunCheck > uploadArtifactCheck, "删除对象前必须检查其他生图任务引用");
+        Assert.True(helperDeleteObject > imageRunCheck, "全部引用检查通过后才能删除底层对象");
+        Assert.True(collectArtifacts >= 0, "工作区删除必须先按 runId 收集生成产物");
+        Assert.True(deleteAssetRecords > collectArtifacts, "收集归属完成后才能删除资产记录");
+        Assert.True(deleteArtifactRecords > deleteAssetRecords, "必须先解除资产引用再解除产物引用");
+        Assert.True(deleteRun > deleteArtifactRecords, "必须在底层对象回收前解除任务归属");
+        Assert.True(deleteWorkspace > deleteRun, "工作区记录必须在任务归属解除后删除");
+        Assert.True(workspaceDeleteObject > deleteWorkspace, "全部数据库引用解除后才能通过统一入口回收底层对象");
+        Assert.Contains(".Find(x => x.WorkspaceId == wid)", controller);
     }
 
     [Fact]
@@ -3614,7 +3817,8 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("expectedReferenceCount", worker);
         Assert.Contains("IMAGE_REF_UNAVAILABLE", worker);
-        Assert.Contains("参考图加载不完整", worker);
+        Assert.Contains("其他输入已保留", worker);
+        Assert.Contains("missingTags", worker);
         Assert.Contains("loadedImageRefs.Count < expectedReferenceCount", worker);
         Assert.Contains("Builders<ImageGenRun>.Update.Set(x => x.AppCallerCode, appCallerCode)", worker);
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.Img2Img", worker);
@@ -3782,6 +3986,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("operation: subtab === 'upstream' ? filterOperation || undefined : undefined", logsView);
         Assert.Contains("subtab === 'upstream' ? filterOperation : ''", logsView);
         Assert.Contains("{subtab === 'upstream' ? (", logsView);
+    }
+
+    [Fact]
+    public void VideoGenerationErrors_MustPassPersistenceAndResponseSafetyGates()
+    {
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+        var videoController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs");
+        var visualController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/VisualAgentVideoController.cs");
+
+        Assert.Contains("VideoGenerationUserError.ForPersistence(errorCode, errorMessage)", worker);
+        Assert.Contains("VideoGenerationUserError.ForPersistence(\"SCENE_RENDER_FAILED\", errorMessage)", worker);
+        Assert.Contains("VideoGenerationUserError.ForPersistence(\"EXPORT_FAILED\", errorMessage)", worker);
+        Assert.Contains("VideoGenerationUserError.SanitizeForResponse(run)", videoController);
+        Assert.Contains("VideoGenerationUserError.SanitizeForResponse(run)", visualController);
+        Assert.Contains("VideoGenerationUserError.SanitizeEventPayload(ev.EventName, ev.PayloadJson)", videoController);
+        Assert.Contains("VideoGenerationUserError.SanitizeEventPayload(ev.EventName, ev.PayloadJson)", visualController);
     }
 
     [Fact]
@@ -4520,6 +4740,60 @@ public class GatewayDataDomainGuardTests
             liveEndpoint.IndexOf("GatewayHttpEndpoints.OpenContextScope", StringComparison.Ordinal)
             < liveEndpoint.IndexOf("orchestrator.ExecuteAsync", StringComparison.Ordinal),
             "实时 ASR 必须先把已验证租户打开为请求上下文，再解析和访问该租户的模型供应商");
+    }
+
+    [Fact]
+    public void LogicalModelCatalog_OnlyPublishesOfferingsThatTheExecutionResolverCanBuild()
+    {
+        var resolver = ReadRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var catalogStart = resolver.IndexOf(
+            "private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync",
+            StringComparison.Ordinal);
+        var resolveStart = resolver.IndexOf(
+            "private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync",
+            catalogStart,
+            StringComparison.Ordinal);
+        Assert.True(catalogStart >= 0 && resolveStart > catalogStart);
+        var catalog = resolver[catalogStart..resolveStart];
+
+        Assert.Contains("OrderLogicalOfferings(logical, logicalOfferings)", catalog);
+        Assert.Contains("TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct)", catalog);
+        Assert.Contains("if (!hasResolvableOffering)", catalog);
+        Assert.DoesNotContain("availableIds.Contains", catalog);
+    }
+
+    [Fact]
+    public void AcceptedVideoJobs_ResolveTheirRetainedOfferingAfterControlPlaneDisable()
+    {
+        var resolver = ReadRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var lifecycleStart = resolver.IndexOf(
+            "public async Task<ModelResolutionResult> ResolveOfferingAsync",
+            StringComparison.Ordinal);
+        var lifecycleEnd = resolver.IndexOf(
+            "public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync",
+            lifecycleStart,
+            StringComparison.Ordinal);
+        Assert.True(lifecycleStart >= 0 && lifecycleEnd > lifecycleStart);
+        var lifecycle = resolver[lifecycleStart..lifecycleEnd];
+
+        Assert.DoesNotContain("Filter.Eq(x => x.Enabled, true)", lifecycle);
+        Assert.Contains("requireEnabled: false", lifecycle);
+    }
+
+    [Fact]
+    public void GatewayCredentialRotation_RecoversAffectedOfferingHealth()
+    {
+        var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("ResetOfferingsAfterCredentialChangeAsync", consoleApi);
+        Assert.Contains("http, \"platform\", [id], gwModels, gwModelOfferings", consoleApi);
+        Assert.Contains("http, \"model\", [id], gwModels, gwModelOfferings", consoleApi);
+        Assert.Contains("http, \"exchange\", [id], gwModels, gwModelOfferings", consoleApi);
+        Assert.Contains("http, objectType, matchedTargetIds, gwModels, gwModelOfferings", consoleApi);
+        Assert.Contains(".Set(\"HealthStatus\", 0)", consoleApi);
+        Assert.Contains(".Set(\"ConsecutiveFailures\", 0)", consoleApi);
     }
 
     /// <summary>

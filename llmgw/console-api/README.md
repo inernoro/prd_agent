@@ -18,8 +18,9 @@
 | `LlmGateway__DatabaseName` | `llm_gateway` | GW 租户、账号、密钥、路由、治理和审计状态库 |
 | `LlmGwJwt__Secret` | `llmgw-dev-secret-change-me-please-0001`（开发占位，必须改） | HS256 密钥，>=32 字符。独立于 MAP |
 | `LlmGwJwt__Issuer` | `prdagent-llmgw` | JWT issuer |
-| `LLMGW_ADMIN_PASSWORD` | 未设置时 `admin` | 仅首次 bootstrap 或 `LLMGW_ADMIN_FORCE_RESET=1` 破玻璃时使用；已有账号以数据库哈希为权威 |
-| `LLMGW_ADMIN_FORCE_RESET` | 空 | 设为 `1`/`true`/`yes`/`on` 时显式重置 admin 口令 |
+| `LLMGW_ADMIN_PASSWORD` | 未设置时 `admin` | 首次 bootstrap、一次性破玻璃或 env authority 模式的 admin 口令；不得提交仓库 |
+| `LLMGW_ADMIN_FORCE_RESET` | 空 | 设为真值时执行一次性幂等校准；口令和状态一致时不写库、不使会话失效 |
+| `LLMGW_ADMIN_ENV_AUTHORITY` | 空 | 设为真值时由 `LLMGW_ADMIN_PASSWORD` 长期托管 admin；要求非默认强口令，只在检测到漂移时修复 |
 | `GIT_COMMIT` | `""` | 由 CI 注入，`/gw/healthz` 回显 |
 
 环境变量用 `__` 双下划线映射到配置层级里的 `:`。
