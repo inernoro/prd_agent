@@ -904,7 +904,7 @@ public class ModelResolver : IModelResolver
                 ResolutionType = "LogicalModel",
                 IsDedicated = logical.AllowedAppCallerCodes.Count > 0,
                 IsDefault = false,
-                Capabilities = x.Capabilities?.ToList() ?? [],
+                Capabilities = logical.Capabilities?.ToList() ?? [],
                 Models =
                 [
                     new PoolModelInfo
