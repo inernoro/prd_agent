@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
@@ -23,6 +24,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
     private readonly TimeSpan _interval;
     private readonly TimeSpan _lookback;
     private readonly bool _canPublishNotifications;
+    private readonly string _internalTenantId;
 
     public LlmGatewayIncidentWatchdog(
         LlmGatewayDataContext gatewayDb,
@@ -35,6 +37,9 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         _mapDb = mapDb;
         _pushSignal = pushSignal;
         _logger = logger;
+        _internalTenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
         _canPublishNotifications = CanPublishNotifications(configuration);
         _interval = TimeSpan.FromSeconds(Math.Clamp(
             configuration.GetValue("LlmGateway:IncidentWatchdog:IntervalSeconds", 30), 10, 300));
@@ -78,6 +83,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         var since = DateTime.UtcNow - _lookback;
         var logs = await _gatewayDb.LlmRequestLogs
             .Find(x => x.StartedAt >= since
+                       && x.TenantId == _internalTenantId
                        && x.IsHealthProbe != true
                        && (x.Status == "failed" || x.Status == "succeeded"))
             .SortByDescending(x => x.StartedAt)

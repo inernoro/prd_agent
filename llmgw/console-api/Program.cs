@@ -3656,7 +3656,7 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
         AllReferencedModelPoolsExist(d, gwPoolIds));
     var activeWithUsableGatewayPool = activeAppCallers.Count(d =>
         AllReferencedModelPoolsExist(d, gwPoolIds)
-        && GetReferencedModelPoolIds(d).Any(usableGwPoolIds.Contains));
+        && IsAppCallerUsable(d, usableGwPoolIds));
     var activeMissingGatewayPool = activeAppCallers.Count - activeWithGatewayPool;
     var activeBoundPoolWithoutUsableMember = activeWithGatewayPool - activeWithUsableGatewayPool;
     var discovered = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
@@ -3716,7 +3716,7 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
         }));
     gaps.AddRange(activeAppCallers
         .Where(d => AllReferencedModelPoolsExist(d, gwPoolIds)
-            && !GetReferencedModelPoolIds(d).Any(usableGwPoolIds.Contains))
+            && !IsAppCallerUsable(d, usableGwPoolIds))
         .Take(30)
         .Select(d => new ConfigAuthorityGapItem
         {
@@ -3790,6 +3790,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             .Include("ModelPoolId")
             .Include("AllowedModelPoolIds")
             .Include("DefaultModelPoolId")
+            .Include("AllowCrossPoolFallback")
             .Include("ModelPolicy")
             .Include("ParameterPolicy")
             .Include("IngressProtocol")
@@ -3903,7 +3904,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .ToHashSet(StringComparer.Ordinal);
     var activeBoundPoolWithoutUsableMember = activeAppCallers.Count(d =>
         AllReferencedModelPoolsExist(d, gwPoolIds)
-        && !GetReferencedModelPoolIds(d).Any(usablePoolIds.Contains));
+        && !IsAppCallerUsable(d, usablePoolIds));
     var mapFallbackObjectsRemaining =
         MapOnlyCount(mapPoolDocs, gwPoolIds)
         + MapOnlyCount(mapPlatformDocs, IdSet(gwPlatformDocs))
@@ -13449,6 +13450,25 @@ static bool AllReferencedModelPoolsExist(BsonDocument d, HashSet<string> gateway
 {
     var references = GetReferencedModelPoolIds(d);
     return references.Count > 0 && references.All(gatewayPoolIds.Contains);
+}
+
+static bool IsAppCallerUsable(BsonDocument d, HashSet<string> usablePoolIds)
+{
+    var references = GetReferencedModelPoolIds(d);
+    if (references.Count == 0) return false;
+
+    var defaultPoolId = d.AsNullableString("DefaultModelPoolId")
+        ?? d.AsNullableString("ModelPoolId");
+    if (string.IsNullOrWhiteSpace(defaultPoolId))
+        return references.Any(usablePoolIds.Contains);
+
+    // 默认关闭跨池回退：默认池不可用时，即使次选池健康，也不能把
+    // “可发布/可用”报告成 true，因为真实请求仍只会命中默认池。
+    if (usablePoolIds.Contains(defaultPoolId)) return true;
+    var allowCrossPoolFallback = d.AsNullableBool("AllowCrossPoolFallback") ?? false;
+    return allowCrossPoolFallback
+        && references.Any(poolId => !string.Equals(poolId, defaultPoolId, StringComparison.Ordinal)
+                                    && usablePoolIds.Contains(poolId));
 }
 
 static OperationAuditItem MapOperationAudit(BsonDocument d)
