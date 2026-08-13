@@ -1759,15 +1759,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                                         && !(targetResolution.ApiUrl?.Contains(
                                             "openrouter.ai",
                                             StringComparison.OrdinalIgnoreCase) ?? false);
-        var directOpenAiEditNeedsMultipart = targetIsDirectOpenAiImage
-                                             && source.CanonicalImageRequest.Images.Any(image =>
-                                                 !string.IsNullOrWhiteSpace(image))
-                                             && !source.IsMultipart;
+        var directOpenAiPreparedRequestNeedsRebuild = targetIsDirectOpenAiImage
+                                                      && currentResolution is null
+                                                      && hasPreparedWireRequest;
 
         // 调用方可能按逻辑模型的首选协议预建了 wire request，但健康路由会在发送前直接
         // 跳过不可用主路。此时 currentResolution 为空并不代表 wire 与实际 Offering 匹配；
-        // 直连 OpenAI 多图必须重建为 /images/edits multipart，不能复用 OpenRouter messages。
-        if (directOpenAiEditNeedsMultipart)
+        // 直连 OpenAI 单图与多图都必须按实际 Offering 重建为 images API 请求，不能复用
+        // OpenRouter messages。多图会重建为 /images/edits multipart，单图为 /images/generations。
+        if (directOpenAiPreparedRequestNeedsRebuild)
             return RebuildCanonicalImageRequest(source, targetResolution);
 
         return hasPreparedWireRequest && currentResolution is null
