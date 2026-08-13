@@ -213,11 +213,21 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var orderedCandidates = new List<ModelResolutionResult>();
         if (crossPoolCandidate is not null && retryBudget > 0)
         {
-            var samePoolBudget = Math.Max(0, retryBudget - 1);
-            orderedCandidates.AddRange(uniqueCandidates
+            var samePoolCandidates = uniqueCandidates
                 .Where(candidate => IsSameModelPool(primary, candidate))
-                .Take(samePoolBudget));
-            orderedCandidates.Add(crossPoolCandidate);
+                .ToList();
+            // 半开候选本身就是恢复探测。若它作为 primary 失败，优先给同池健康成员
+            // 一次机会；否则默认两次尝试会直接跳到跨池，造成同池仍可用却被误判失效。
+            var primaryIsHalfOpenRecovery = string.Equals(
+                primary.HealthStatus,
+                ModelHealthStatus.Unavailable.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+            var samePoolBudget = primaryIsHalfOpenRecovery
+                ? Math.Min(1, retryBudget)
+                : Math.Max(0, retryBudget - 1);
+            orderedCandidates.AddRange(samePoolCandidates.Take(samePoolBudget));
+            if (orderedCandidates.Count < retryBudget)
+                orderedCandidates.Add(crossPoolCandidate);
             orderedCandidates.AddRange(uniqueCandidates.Where(candidate =>
                 !ReferenceEquals(candidate, crossPoolCandidate)
                 && !orderedCandidates.Contains(candidate)));

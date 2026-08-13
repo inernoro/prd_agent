@@ -121,6 +121,21 @@ public class ModelResolver : IModelResolver
                     || string.Equals(group.Code, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(group.Name, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase))
                 : null;
+
+            // GatewayIngressRequest 在 model_policy=pool 时把池身份写入 ExpectedModel；
+            // 精确 Provider 路由则通常把 ExpectedModel 设为同一个 PinnedModelId。
+            // 严格契约下，带 pin 的未知池身份不能降级成“任意允许池”，否则会绕过用户的池选择。
+            var looksLikeExplicitPoolSelection = !string.IsNullOrWhiteSpace(requestedPoolIdentity)
+                && !string.Equals(requestedPoolIdentity, pinnedModelId?.Trim(), StringComparison.OrdinalIgnoreCase);
+            if (gatewayRegistry.StrictPoolContract
+                && looksLikeExplicitPoolSelection
+                && requestedPool is null)
+            {
+                return ModelResolutionResult.NotFound(
+                    requestedPoolIdentity,
+                    $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPoolIdentity}");
+            }
+
             var pinnedScope = requestedPool is null ? gatewayRegistry.Groups : [requestedPool];
             var pinnedAllowed = !string.IsNullOrWhiteSpace(pinnedPlatformId)
                                 && !string.IsNullOrWhiteSpace(pinnedModelId)
