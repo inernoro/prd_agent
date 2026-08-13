@@ -332,12 +332,19 @@ git push -u origin $(git branch --show-current)
   - **其余的每一个都要在它自己的 head 上跑审计**，不是在当前分支上跑——当前分支干净
     不代表那个 PR 干净，拿此处的绿灯去批准彼处的合并是在用一份不相干的证据放行。
 
-    做法：先 `git fetch origin main <该PR的head分支>`（孤立/浅 checkout 里 `origin/main`
-    和这个远程分支的 ref 本地都可能还不存在或已过期，`worktree add` 与带 `--baseline-ref`
-    的棘轮都需要它们已 fetch 到），再 `git worktree add <临时目录> FETCH_HEAD`（**用
-    worktree，禁止直接 `git checkout <sha>`**——那会 detach 当前工作区的 HEAD，Step 6.3
-    取当前分支名会拿到空字符串，后续创建 PR 直接断掉）。在这个临时 worktree 里重跑一遍
-    D1-D4 双向扫描 + `doc-readability-check.py --ratchet --baseline-ref origin/main`
+    做法（`git fetch` 一次只带一个 ref 目标，避免 `FETCH_HEAD` 落到哪一个取决于命令行
+    顺序的歧义；仓库常见浅克隆，历史不够棘轮会因为找不到公共祖先直接失败，两次 fetch
+    都要 `--depth=0` 补全历史）：
+
+    ```bash
+    git fetch --depth=0 origin main
+    git fetch --depth=0 origin <该PR的head分支>
+    git worktree add <临时目录> FETCH_HEAD
+    ```
+
+    **用 worktree，禁止直接 `git checkout <sha>`**——那会 detach 当前工作区的 HEAD，
+    Step 6.3 取当前分支名会拿到空字符串，后续创建 PR 直接断掉。在这个临时 worktree 里
+    重跑一遍 D1-D4 双向扫描 + `doc-readability-check.py --ratchet --baseline-ref origin/main`
     （**必须带 `--baseline-ref`**，否则比对的是那个历史 PR 自己提交时冻结的基线文件——
     它可能比当前 main 的基线更宽松，会把「相对现在 main 其实在退步」的欠账放绿灯放过去；
     CI 自己跑 ratchet 也是带 `--baseline-ref` 调用，这里对齐同一口径），再用
@@ -347,12 +354,17 @@ git push -u origin $(git branch --show-current)
     当前工作分支分毫未动。
 
     - 结构审计（D1-D4+棘轮）与 6.4 内容核查**都**通过，且 `mcp__github__pull_request_read`
-      （method=`get`）返回的 `mergeable_state` 为 `clean`/`unstable`（无冲突）→ **不要直接
-      调用合并工具**。仓库策略是 PR 默认保持 Ready、关闭自动合并，未经用户明确指示不得
-      合并（`AGENTS.md` §5.5）——这条对历史 PR 同样成立，且历史 PR 的作者是另一个会话，
-      比当天自己产出的 PR 更需要一次人的眼睛过一遍。把审计结论（干净，可合并）连同
-      PR 号写进本轮新 PR 的「已知（非本轮阻塞）」小节，请用户确认后再合并，不要替用户
-      按下合并键。
+      （method=`get`）返回的 `mergeable_state` 为 `clean`（无冲突、必需检查全绿）→ **不要
+      直接调用合并工具**。仓库策略是 PR 默认保持 Ready、关闭自动合并，未经用户明确指示
+      不得合并（`AGENTS.md` §5.5）——这条对历史 PR 同样成立，且历史 PR 的作者是另一个
+      会话，比当天自己产出的 PR 更需要一次人的眼睛过一遍。把审计结论（干净，可合并）
+      连同 PR 号写进本轮新 PR 的「已知（非本轮阻塞）」小节，请用户确认后再合并，不要
+      替用户按下合并键。
+    - `mergeable_state` 为 `unstable`（无冲突，但有必需检查未过——GitHub `MergeStateStatus`
+      对 `UNSTABLE` 的定义就是「可合并但状态检查未全绿」）→ **不算「干净可合并」**，本地
+      D1-D4/棘轮/6.4 只覆盖文档结构与 diff 范围，不代表该 PR 真实 CI 全绿。记「#N 无冲突
+      但 CI 检查未过，需先看该 PR 自己的 check 状态再决定是否合并」，与 `clean` 分开报告，
+      不要混进「可合并」那一类。
     - `mergeable_state` 为 `behind`（分支落后于 main，无实质冲突只是没更新）→ 同样只
       报告不处理：记「#N 落后于 main N 个提交，建议合并前先更新分支」，不擅自
       `update_pull_request_branch` 或 rebase 它——那仍然是对另一个会话产出的分支做写
