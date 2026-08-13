@@ -40,6 +40,7 @@ const PAGE = read('pages/ReleaseConsolePage.tsx');
 const APP = read('App.tsx');
 const SHELL = read('components/layout/AppShell.tsx');
 const CENTER = read('pages/ReleaseCenterPage.tsx');
+const CSS = read('index.css');
 
 describe('发布控制台 · 路由与入口接线', () => {
   it('路由已注册在控制台外壳内（不注册就等于这一页不存在）', () => {
@@ -215,6 +216,44 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
     expect(rail).toContain('回滚到此版本');
     expect(rail).toContain('retryRun(item)');
     expect(rail).toContain('rollbackRun(item)');
+  });
+});
+
+/**
+ * 英文字形。用户原话「你的字体 low 爆了」，对照物是分支卡的分支名。
+ * 差距是三件事叠出来的：字号（10px vs 17px）、字重（400 vs 600）、
+ * 字距（撑开 0.14em vs 收紧 0.015em），外加字体栈根本不是同一个。
+ * 这几条删掉之后页面照样跑，所以必须钉住。
+ */
+describe('发布控制台 · 英文字形与分支卡同源', () => {
+  it('标识符字形是唯一一份定义，分支名与新页面共用', () => {
+    // 同一条规则里同时挂两个选择器 = SSOT；抄成两份迟早漂移
+    expect(CSS).toMatch(/\.cds-ident,\s*\n\s*\.cds-branch-name\s*\{/);
+    expect(CSS).toContain('font-family: ui-monospace, SFMono-Regular, Menlo, monospace');
+    expect(CSS).toContain('letter-spacing: -0.015em');
+  });
+
+  it('页面不用 Tailwind 的 font-mono —— 那个栈把没打包的 JetBrains Mono 排在第一位', () => {
+    expect(PAGE).not.toContain('font-mono');
+    expect(PAGE).toContain('cds-ident');
+  });
+
+  it('没有 11px 以下的字号：等宽字在 10px 下笔画会糊', () => {
+    const tooSmall = [...PAGE.matchAll(/text-\[(\d+(?:\.\d+)?)px\]/g)]
+      .map((m) => Number(m[1]))
+      .filter((n) => n < 11);
+    expect(tooSmall, `这些字号太小: ${tooSmall.join(', ')}`).toEqual([]);
+  });
+
+  it('分区标题走 CDS 房内惯例，不用 demo 的终端风宽字距', () => {
+    expect(PAGE).toContain('text-xs font-semibold uppercase tracking-normal text-muted-foreground');
+    expect(PAGE).not.toContain('tracking-[0.14em]');
+  });
+
+  it('日志区不用 break-all —— 它会把正常英文单词从中间劈开', () => {
+    const log = PAGE.slice(PAGE.indexOf('ref={logRef}'), PAGE.indexOf('shownLogs.length === 0'));
+    expect(log).toContain('break-words');
+    expect(log).not.toContain('break-all');
   });
 });
 

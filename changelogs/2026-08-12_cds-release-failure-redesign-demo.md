@@ -23,3 +23,5 @@
 | fix | cds | 生产真数据暴露三处（stub 全掩盖）：分支下拉整列空白（真实字段是 `branch` 不是 `name`，改为复用发布中心的 BranchOption 类型不再自建）、默认环境落到已停用的临时目标（改走既有 resolveSelectedTargetId，canonical 优先）、对照与来源两段文案粘连 |
 | docs | cds | 发布流水线浮层不再把「计划没登记命令」写成「由 CDS 自身执行」——后端三份 plan 模板从不给 steps[].command 赋值，如实说明并指向真实脚本所在（部署命令栏与实时输出） |
 | feat | skill | 新增 `/sandbox-net` 技能：沙箱里浏览器打不通真站时的固定通道（本地 TCP 隧道 + Node TLS 反代 + 鉴权头注入），含三步诊断表、可直接跑的三个脚本与失败症状对照表；全程不关证书校验，403/407 照实上报不绕路 |
+| fix | cds | 发布控制台英文字形对齐分支卡：标识符字形抽成共享的 `.cds-ident`（与 `.cds-branch-name` 同一条规则，ui-monospace + 收紧字距 + tabular-nums），页面弃用 Tailwind 的 `font-mono`（那个栈把仓库从未打包的 JetBrains Mono 排在首位，装没装的机器会看到两种英文字形）|
+| polish | cds | 发布控制台字号与字重回到 CDS 尺度：20 处 10px / 12 处 10.5px 抬到 11-13px，分区标题从 demo 的终端风（等宽 + 0.14em 宽字距）改回房内惯例 `text-xs font-semibold uppercase tracking-normal`，状态卡身份行给 medium；日志区 `break-all` 改 `break-words`，不再把英文单词从中间劈开 |

@@ -865,12 +865,21 @@
     100% { opacity: 0; transform: scale(1.5); }
   }
 
-  /* 分支名走等宽：与 llmgw 日志同一套英文字形（llmgw/web/src/theme.css --font-mono）。
-     分支名是标识符不是散文，等宽下 claude/ai-animation-demos-u7uvyr 这类串的
-     断字和数字对齐都更稳。 */
+  /* 标识符字形（分支名、commit sha、主机名、releaseId…）。
+     与 llmgw 日志同一套英文字形（llmgw/web/src/theme.css --font-mono）。
+     标识符不是散文，等宽下 claude/ai-animation-demos-u7uvyr 这类串的
+     断字和数字对齐都更稳；-0.015em 把等宽天然偏松的字距收回来。
+
+     刻意**不走** Tailwind 的 `font-mono`：那个栈把 `JetBrains Mono` 排在第一位，
+     而本仓库从没打包过它——装了它的机器和没装的机器会看到两种英文字形。
+     所有标识符统一用这个类，页面之间的英文字形才是同一套。
+
+     `.cds-branch-name` 是历史名字，保留给分支卡；新代码用 `.cds-ident`。 */
+  .cds-ident,
   .cds-branch-name {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     letter-spacing: -0.015em;
+    font-variant-numeric: tabular-nums;
   }
 
   /* 徽章环形巡光：只转渐变角度，不转元素。徽章是 52x27 的扁矩形，

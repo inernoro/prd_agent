@@ -487,8 +487,8 @@ export function ReleaseConsolePage(): JSX.Element {
           <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-lg max-lg:order-2 lg:overflow-hidden">
             <div className="shrink-0 border-b border-[hsl(var(--hairline))] p-3">
               <div className="mb-2 flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Projects</span>
-                <span className="font-mono text-[10px] text-muted-foreground">{projects.length} 个</span>
+                <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Projects</span>
+                <span className="cds-ident text-[11px] text-muted-foreground">{projects.length} 个</span>
               </div>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -521,7 +521,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   <span className={`truncate text-[13px] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
                     {item.name || item.id}
                   </span>
-                  <span className="truncate font-mono text-[10.5px] text-muted-foreground">
+                  <span className="truncate cds-ident text-xs text-muted-foreground">
                     {item.githubRepoFullName || item.id}
                   </span>
                 </button>
@@ -530,8 +530,8 @@ export function ReleaseConsolePage(): JSX.Element {
 
             <div className="min-h-0 shrink-0 border-t border-[hsl(var(--hairline))] p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Environments</span>
-                <span className="font-mono text-[10px] text-muted-foreground">{rows.length} 个</span>
+                <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Environments</span>
+                <span className="cds-ident text-[11px] text-muted-foreground">{rows.length} 个</span>
               </div>
               {rows.length === 0 ? (
                 <p className="text-xs text-muted-foreground">这个项目还没有发布目标，去发布中心添加环境。</p>
@@ -541,7 +541,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     <div key={section.environment} className="flex flex-col gap-1.5">
                       {/* 后端没下发分组时 buildEnvironmentSections 退化成单组，此时不画组标题 */}
                       {section.degraded ? null : (
-                        <span className="px-0.5 text-[10.5px] text-muted-foreground">{section.label}</span>
+                        <span className="px-0.5 text-[11.5px] text-muted-foreground">{section.label}</span>
                       )}
                       {[...section.entries, ...section.disabledEntries].map((entry) => {
                         const item = entry.row;
@@ -575,17 +575,17 @@ export function ReleaseConsolePage(): JSX.Element {
                               >
                                 {item.target.name}
                                 {entry.isCanonical && section.entries.length > 1 ? (
-                                  <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">主</span>
+                                  <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">主</span>
                                 ) : null}
                               </span>
-                              <span className="block truncate font-mono text-[10.5px] text-muted-foreground">
+                              <span className="block truncate cds-ident text-xs text-muted-foreground">
                                 {item.target.ssh?.host || item.target.type}
                                 {item.currentCommit ? ` · ${item.currentCommit.slice(0, 7)}` : ' · 未发布'}
                               </span>
                             </span>
                             {/* 落后主干几个提交由后端 commitPosition 给；算不出时它缺席，这里就不显示 */}
                             {typeof behind === 'number' && behind > 0 ? (
-                              <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-600 dark:text-amber-400">
+                              <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 cds-ident text-[11px] font-medium text-amber-600 dark:text-amber-400">
                                 落后 {behind}
                               </span>
                             ) : null}
@@ -610,11 +610,11 @@ export function ReleaseConsolePage(): JSX.Element {
 
             {/* 版本选在状态之上：先定「发哪一版」，再看「发得怎么样」。 */}
             <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
-              <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">要发布的版本</span>
+              <span className="shrink-0 text-xs font-semibold uppercase tracking-normal text-muted-foreground">要发布的版本</span>
               <select
                 value={branchId}
                 onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
-                className="h-8 max-w-[min(520px,50vw)] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs outline-none"
+                className="cds-ident h-8 max-w-[min(560px,50vw)] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[13px] outline-none"
               >
                 {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
                 {branches.map((item) => (
@@ -633,7 +633,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     : `替换线上的 ${row.currentCommit ? row.currentCommit.slice(0, 7) : '（未发布）'}`)
                   : ''}
                 {isProtected ? ' · 受保护环境需二次确认' : ''}
-                <span className="ml-2 font-mono text-[10.5px]">
+                <span className="ml-2 cds-ident text-xs">
                   · 来源 {previewUrl || '取不到预览地址，试跑会拦下这一项'}
                   {sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}
                 </span>
@@ -654,12 +654,12 @@ export function ReleaseConsolePage(): JSX.Element {
                     <h2 className={`text-xl font-bold ${failed ? 'text-red-600 dark:text-red-400' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
                     </h2>
-                    <span className="min-w-0 truncate text-xs text-muted-foreground">
+                    <span className="min-w-0 truncate text-[13px] text-muted-foreground">
                       {row ? (
                         <>
-                          <span className="font-mono">{row.target.name}</span>
-                          {shown ? <span className="font-mono"> · {shown.commitSha.slice(0, 7)}</span> : null}
-                          {!shown && row.currentCommit ? <span className="font-mono"> · 当前 {row.currentCommit.slice(0, 7)}</span> : null}
+                          <span className="cds-ident font-medium text-foreground/80">{row.target.name}</span>
+                          {shown ? <span className="cds-ident font-medium"> · {shown.commitSha.slice(0, 7)}</span> : null}
+                          {!shown && row.currentCommit ? <span className="cds-ident font-medium"> · 当前 {row.currentCommit.slice(0, 7)}</span> : null}
                           {typeof row.commitPosition?.behindCount === 'number' && row.commitPosition.behindCount > 0
                             ? `，落后主干 ${row.commitPosition.behindCount} 个提交`
                             : ''}
@@ -673,7 +673,7 @@ export function ReleaseConsolePage(): JSX.Element {
                       style={{ width: `${progress.steps.length ? Math.round((progress.steps.filter((s) => s.state === 'done').length / progress.steps.length) * 100) : 0}%` }}
                     />
                   </div>
-                  <div className="mt-2 flex flex-wrap justify-between gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground">
+                  <div className="mt-2 flex flex-wrap justify-between gap-x-4 gap-y-1 cds-ident text-xs text-muted-foreground">
                     <span>
                       {progress.steps.filter((s) => s.state === 'done').length}/{progress.steps.length || 0} 步骤
                       {shown ? ` · ${formatDateTime(shown.startedAt)}` : row?.currentCommit ? ` · 线上 ${row.currentCommit.slice(0, 7)}` : ''}
@@ -810,15 +810,15 @@ export function ReleaseConsolePage(): JSX.Element {
               {/* self-start：步骤条按内容收高，不撑成一个八成留白的高盒子 */}
               <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-lg border lg:max-h-full lg:self-start">
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Pipeline</span>
+                  <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Pipeline</span>
                   <span className="flex items-center gap-2">
-                    <span className="font-mono text-[10px] text-muted-foreground">
+                    <span className="cds-ident text-[11px] text-muted-foreground">
                       {progress.steps.filter((s) => s.state === 'done').length}/{progress.steps.length} 步骤
                     </span>
                     <button
                       type="button"
                       onClick={() => setSheet('pipeline')}
-                      className="font-mono text-[10px] text-muted-foreground hover:text-primary"
+                      className="cds-ident text-[11px] text-muted-foreground hover:text-primary"
                     >
                       看流水线
                     </button>
@@ -842,13 +842,13 @@ export function ReleaseConsolePage(): JSX.Element {
                         <span className={`block truncate text-xs ${step.state === 'pending' ? 'text-muted-foreground' : ''}`}>{step.label}</span>
                         {/* 这一步实际跑的命令。计划里没有就不显示——不拿别的步骤的命令顶上。 */}
                         {stepDetails.get(step.id)?.command ? (
-                          <span className="mt-0.5 block truncate font-mono text-[10.5px] text-muted-foreground">
+                          <span className="mt-0.5 block truncate cds-ident text-xs text-muted-foreground">
                             {stepDetails.get(step.id)?.command}
                           </span>
                         ) : null}
                       </span>
                       {/* 未执行的步骤给短横，不编一个预估值 */}
-                      <span className="mt-0.5 shrink-0 font-mono text-[10.5px] text-muted-foreground">
+                      <span className="mt-0.5 shrink-0 cds-ident text-xs text-muted-foreground">
                         {typeof stepDetails.get(step.id)?.durationMs === 'number'
                           ? `${Math.max(1, Math.round((stepDetails.get(step.id)?.durationMs || 0) / 1000))}s`
                           : '-'}
@@ -856,16 +856,16 @@ export function ReleaseConsolePage(): JSX.Element {
                     </div>
                   ))}
                   {progress.degraded ? (
-                    <p className="px-2.5 pt-1 text-[10.5px] text-muted-foreground">历史记录，仅按日志还原大致阶段。</p>
+                    <p className="px-2.5 pt-1 text-[11.5px] text-muted-foreground">历史记录，仅按日志还原大致阶段。</p>
                   ) : null}
                 </div>
               </section>
 
               <section className="cds-hairline flex min-h-0 flex-col overflow-hidden rounded-lg border bg-[hsl(var(--surface-sunken))]">
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Live output</span>
+                  <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Live output</span>
                   <span className="flex items-center gap-2">
-                    <span className="font-mono text-[10px] text-muted-foreground">{shownLogs.length} 行</span>
+                    <span className="cds-ident text-[11px] text-muted-foreground">{shownLogs.length} 行</span>
                     <Button variant="outline" size="sm" onClick={() => setFollowing((current) => !current)}>
                       {following ? '跟随最新' : '已暂停跟随'}
                     </Button>
@@ -883,7 +883,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
                     if (!atBottom && following) setFollowing(false);
                   }}
-                  className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-all p-3 font-mono text-[11.5px] leading-relaxed max-lg:max-h-72"
+                  className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 cds-ident text-[12.5px] leading-relaxed max-lg:max-h-72"
                   style={{ overscrollBehavior: 'contain' }}
                 >
                   {shownLogs.length === 0
@@ -912,7 +912,7 @@ export function ReleaseConsolePage(): JSX.Element {
                 >
                   {label}
                   {key === 'failed' && failedRuns.length > 0 ? (
-                    <span className="rounded bg-red-500/15 px-1 font-mono text-[10px] text-red-600 dark:text-red-400">{failedRuns.length}</span>
+                    <span className="rounded bg-red-500/15 px-1 cds-ident text-[11px] text-red-600 dark:text-red-400">{failedRuns.length}</span>
                   ) : null}
                 </button>
               ))}
@@ -955,7 +955,7 @@ export function ReleaseConsolePage(): JSX.Element {
                         >
                           <div className="flex min-w-0 items-baseline justify-between gap-2">
                             <span className="flex min-w-0 items-baseline gap-2">
-                              <span className="shrink-0 font-mono text-xs font-medium">{item.commitSha.slice(0, 7)}</span>
+                              <span className="shrink-0 cds-ident text-[12.5px] font-medium">{item.commitSha.slice(0, 7)}</span>
                               <span className="truncate text-[11.5px] text-muted-foreground">
                                 {itemRow?.target.name || item.targetId}
                               </span>
@@ -964,12 +964,12 @@ export function ReleaseConsolePage(): JSX.Element {
                               {itemFailed ? '失败' : live ? '线上' : '成功'}
                             </span>
                           </div>
-                          <div className="min-w-0 truncate font-mono text-[10.5px] text-muted-foreground">
+                          <div className="min-w-0 truncate cds-ident text-xs text-muted-foreground">
                             {item.operator || '-'} · {formatDateTime(item.startedAt)}
                             {formatDuration(item.startedAt, item.finishedAt) ? ` · ${formatDuration(item.startedAt, item.finishedAt)}` : ''}
                           </div>
                           {/* 行内操作：每条记录当场能做的事都在这儿，不用先选中再去别处找按钮 */}
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px]">
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px]">
                             <button
                               type="button"
                               className="text-muted-foreground hover:text-primary"
@@ -1048,12 +1048,12 @@ export function ReleaseConsolePage(): JSX.Element {
                   {(activePlan?.steps || []).map((step, index) => (
                     <li key={step.id} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
                       <div className="flex items-baseline gap-2">
-                        <span className="font-mono text-[10.5px] text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
+                        <span className="cds-ident text-xs text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
                         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{step.title}</span>
-                        <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">{step.kind}</span>
+                        <span className="shrink-0 cds-ident text-xs text-muted-foreground">{step.kind}</span>
                       </div>
                       {step.command ? (
-                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded bg-[hsl(var(--surface-base))] p-2 font-mono text-[11px] leading-relaxed">
+                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded bg-[hsl(var(--surface-base))] p-2 cds-ident text-xs leading-relaxed">
                           {step.command}
                         </pre>
                       ) : (
@@ -1069,19 +1069,19 @@ export function ReleaseConsolePage(): JSX.Element {
                 </ol>
               )}
               <dl className="grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-2 border-t border-[hsl(var(--hairline))] pt-3 text-xs">
-                <dt className="font-mono text-[10px] uppercase text-muted-foreground">方式</dt>
+                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">方式</dt>
                 <dd className="break-words">{row?.target.strategy?.mode || '项目现有脚本'}</dd>
-                <dt className="font-mono text-[10px] uppercase text-muted-foreground">部署命令</dt>
-                <dd className="break-all font-mono text-[11px]">{row?.target.strategy?.command || row?.target.ssh?.deployCommand || '未配置'}</dd>
-                <dt className="font-mono text-[10px] uppercase text-muted-foreground">站点目录</dt>
-                <dd className="break-all font-mono text-[11px]">{row?.target.ssh?.appPath || '未配置'}</dd>
-                <dt className="font-mono text-[10px] uppercase text-muted-foreground">健康检查</dt>
-                <dd className="break-all font-mono text-[11px]">{row?.target.ssh?.healthcheckUrl || '未配置'}</dd>
-                <dt className="font-mono text-[10px] uppercase text-muted-foreground">回滚</dt>
-                <dd className="break-all font-mono text-[11px]">{row?.target.ssh?.rollbackCommand || '重新发布上一个成功版本'}</dd>
-                <dt className="font-mono text-[10px] uppercase text-muted-foreground">并发</dt>
+                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">部署命令</dt>
+                <dd className="break-all cds-ident text-xs">{row?.target.strategy?.command || row?.target.ssh?.deployCommand || '未配置'}</dd>
+                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">站点目录</dt>
+                <dd className="break-all cds-ident text-xs">{row?.target.ssh?.appPath || '未配置'}</dd>
+                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">健康检查</dt>
+                <dd className="break-all cds-ident text-xs">{row?.target.ssh?.healthcheckUrl || '未配置'}</dd>
+                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">回滚</dt>
+                <dd className="break-all cds-ident text-xs">{row?.target.ssh?.rollbackCommand || '重新发布上一个成功版本'}</dd>
+                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">并发</dt>
                 <dd>服务端保证同一目标不并发（冲突返回 409）；跨目标那道锁是本页 UI 策略</dd>
-                <dt className="font-mono text-[10px] uppercase text-muted-foreground">卡住判定</dt>
+                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">卡住判定</dt>
                 <dd>超过 45 秒没有新输出即在状态区提示，并给出取证与中止入口</dd>
               </dl>
             </div>
@@ -1096,7 +1096,7 @@ export function ReleaseConsolePage(): JSX.Element {
             onClose={() => setSheet(null)}
             foot={(
               <>
-                <span className="font-mono text-[10.5px] text-muted-foreground">
+                <span className="cds-ident text-xs text-muted-foreground">
                   {shown ? `${agentTask().length} 字 · ${shownLogs.length} 行日志` : '没有可整理的现场'}
                 </span>
                 <Button size="sm" onClick={() => void copyAgentTask()} disabled={!shown}>
@@ -1110,7 +1110,7 @@ export function ReleaseConsolePage(): JSX.Element {
               <p className="text-xs leading-relaxed text-muted-foreground">
                 结论与判据全部取自 releaseDiagnosis 从本次真实日志里提取的内容；提不出来会如实写「未能提取」，不编原因。
               </p>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[12px] leading-relaxed">
+              <pre className="whitespace-pre-wrap break-words rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 cds-ident text-[12.5px] leading-relaxed">
                 {shown ? agentTask() : '选中一次运行后，这里给出可直接粘贴的任务文本。'}
               </pre>
             </div>
