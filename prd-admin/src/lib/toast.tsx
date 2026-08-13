@@ -23,6 +23,8 @@ type ToastState = {
   toasts: Toast[];
   addToast: (toast: Omit<Toast, 'id'>) => void;
   removeToast: (id: string) => void;
+  /** 就地改写一条已存在的 toast（长任务推进度用，避免弹一串新条）。 */
+  patchToast: (id: string, patch: Partial<Omit<Toast, 'id'>>) => void;
 };
 
 export const useToastStore = create<ToastState>((set) => ({
@@ -45,6 +47,11 @@ export const useToastStore = create<ToastState>((set) => ({
   removeToast: (id) => {
     set((state) => ({
       toasts: state.toasts.filter((t) => t.id !== id),
+    }));
+  },
+  patchToast: (id, patch) => {
+    set((state) => ({
+      toasts: state.toasts.map((t) => (t.id === id ? { ...t, ...patch } : t)),
     }));
   },
 }));
@@ -112,6 +119,15 @@ export const toast = {
     // addToast 内部生成 id，这里用最新添加的 toast id
     const toasts = useToastStore.getState().toasts;
     return toasts[toasts.length - 1]?.id ?? id;
+  },
+
+  /**
+   * 就地更新加载提示的文案。
+   * 长任务（分层、批量生成）要让用户看见进度在动——静止的「加载中」超过 2 秒就是体验缺陷，
+   * 而每推一步弹一条新 toast 又会刷屏，所以改写同一条。
+   */
+  update: (id: string, patch: { title?: string; message?: string }) => {
+    useToastStore.getState().patchToast(id, patch);
   },
 
   /** 移除指定 toast */

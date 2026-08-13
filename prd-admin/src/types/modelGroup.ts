@@ -75,6 +75,11 @@ export interface ModelGroupForApp extends ModelGroup {
   recentTenRequests?: number;
   /** 最近最多十次请求成功率。 */
   recentTenSuccessRatePercent?: number | null;
+  /**
+   * 网关声明的能力标签（image_generation / image_layering ...）。
+   * 用来区分「用户可以挑来生图的模型」与「只能被具体动作调用的能力」。
+   */
+  capabilities?: string[];
 }
 
 /**

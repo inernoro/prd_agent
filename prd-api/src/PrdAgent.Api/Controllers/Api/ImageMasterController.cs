@@ -1647,8 +1647,15 @@ public class ImageMasterController : ControllerBase
                 ? prompt[imageGenPrefix.Length..].Trim()
                 : prompt;
 
+            // 语义分层：MAP 只认 LLMGW 发布的通用能力标识，不感知上游平台与具体模型。
+            // 这个判定必须**最先**算出来：既要在模型必填校验之前（否则分层请求会先被
+            // 「必须提供模型」挡掉），也要在风格提示词拼接之前——分层的 prompt 是拆法指令，
+            // 把画风要求拼进去等于让模型去「按这个风格重画」，不是拆图。
+            var isLayering = string.Equals(
+                (request?.Operation ?? string.Empty).Trim(), "layering", StringComparison.OrdinalIgnoreCase);
+
             // 风格统一：若 workspace 设置了 StylePrompt，自动拼接到用户 prompt 后面
-            var stylePrompt = (ws.StylePrompt ?? string.Empty).Trim();
+            var stylePrompt = isLayering ? string.Empty : (ws.StylePrompt ?? string.Empty).Trim();
             if (!string.IsNullOrWhiteSpace(stylePrompt))
             {
                 prompt = $"{prompt}\n\n风格要求：{stylePrompt}";
@@ -1665,14 +1672,14 @@ public class ImageMasterController : ControllerBase
             if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
             var modelId = (request?.ModelId ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
-            if (!string.IsNullOrWhiteSpace(cfgModelId))
+            if (!isLayering && !string.IsNullOrWhiteSpace(cfgModelId))
             {
                 var m = await _db.LLMModels.Find(x => x.Id == cfgModelId && x.Enabled).FirstOrDefaultAsync(ct);
                 if (m == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "指定的模型不存在或未启用"));
                 platformId = m.PlatformId;
                 modelId = m.ModelName;
             }
-            else
+            else if (!isLayering)
             {
                 if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelId))
                 {
@@ -1701,16 +1708,27 @@ public class ImageMasterController : ControllerBase
 
             // 关键：先把”占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）
             // 使用 displayPrompt（不含生图意图前缀），避免前缀泄漏到 UI 展示
-            await UpsertWorkspaceCanvasPlaceholderAsync(
-                workspaceId: wid,
-                ownerUserId: ws.OwnerUserId,
-                targetKey: targetKey,
-                prompt: displayPrompt,
-                x: request?.X,
-                y: request?.Y,
-                w: request?.W,
-                h: request?.H,
-                ct: ct);
+            //
+            // 分层不走这条。这个占位写入是按 targetKey 找到那个元素、把它就地改成
+            // kind=generator / status=running——单图生成时 targetKey 就是那张待生成的图，
+            // 改它天经地义；但分层的 targetKey 是**原图**，改它等于把用户的原图变成一个
+            // 转圈的占位符。本 PR 已经关掉了分层的完成态回填（那条同样按 targetKey 找，
+            // 会把原图替换成某个图层），于是这一笔再没人撤销：页签在防抖落盘前关掉，
+            // 原图就永久以「running 的 generator」存在库里（Codex PR #1363 P1）。
+            // 分层的占位卡由前端自己按 {groupId}_layer_N 建，原图必须原封不动。
+            if (!isLayering)
+            {
+                await UpsertWorkspaceCanvasPlaceholderAsync(
+                    workspaceId: wid,
+                    ownerUserId: ws.OwnerUserId,
+                    targetKey: targetKey,
+                    prompt: displayPrompt,
+                    x: request?.X,
+                    y: request?.Y,
+                    w: request?.W,
+                    h: request?.H,
+                    ct: ct);
+            }
 
             // 转换多图引用（新架构）
             List<PrdAgent.Core.Models.MultiImage.ImageRefInput>? imageRefs = null;
@@ -1726,6 +1744,15 @@ public class ImageMasterController : ControllerBase
                 }).ToList();
             }
 
+            // 显式清掉 picker 传来的平台/模型，交给 Gateway 按逻辑模型解析。
+            if (isLayering)
+            {
+                cfgModelId = null;
+                platformId = null;
+                modelId = null;
+            }
+            var layerCount = isLayering ? Math.Clamp(request?.LayerCount ?? 4, 1, 10) : 1;
+
             var run = new ImageGenRun
             {
                 OwnerAdminId = adminId,
@@ -1736,10 +1763,11 @@ public class ImageMasterController : ControllerBase
                 ModelId = modelId,
                 LogicalModelPublicId = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                     ? modelId
-                    : null,
+                    // 分层的 platformId 已在上面清空，所以只会落到这一支；能力标识由网关发布，MAP 不感知上游。
+                    : isLayering ? PrdAgent.Core.Models.GatewayCapabilityIds.ImageLayering : null,
                 // 用户选择模型池时只保存池身份，交给 Gateway 做池内调度；逻辑模型仍携带稳定 PublicId。
-                // 只有兼容旧 picker 的真实 platformId + modelId 才记为 DirectModel。
-                ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
+                // 兼容旧 picker 的 platformId + modelId 仍记为 DirectModel。
+                ModelResolutionType = isLayering || string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                     ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
                     : string.Equals(platformId, "model-pool", StringComparison.OrdinalIgnoreCase)
                         ? null
@@ -1747,15 +1775,17 @@ public class ImageMasterController : ControllerBase
                 Size = size,
                 ResponseFormat = responseFormat,
                 MaxConcurrency = 1,
-                Items = new List<ImageGenRunPlanItem> { new() { Prompt = prompt, Count = 1, Size = null } },
-                Total = 1,
+                Items = new List<ImageGenRunPlanItem> { new() { Prompt = prompt, Count = layerCount, Size = null } },
+                Total = layerCount,
                 Done = 0,
                 Failed = 0,
                 CancelRequested = false,
                 LastSeq = 0,
                 IdempotencyKey = string.IsNullOrWhiteSpace(idemKey) ? null : idemKey,
                 CreatedAt = DateTime.UtcNow,
-                AppCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img, // 默认文生图，Worker 会根据参考图动态调整
+                AppCallerCode = isLayering
+                    ? AppCallerRegistry.VisualAgent.Image.Layering
+                    : AppCallerRegistry.VisualAgent.Image.Text2Img, // 默认文生图，Worker 会根据参考图动态调整
                 AppKey = AppKey, // 硬编码视觉创作的应用标识
                 WorkspaceId = wid,
                 TargetCanvasKey = targetKey,
@@ -1785,6 +1815,12 @@ public class ImageMasterController : ControllerBase
             }
 
             // 服务器权威性：后端自动保存 User 消息到 image_master_messages
+            // 分层除外：它的 prompt 是一句内部英文指令（Decompose this image into...），
+            // 且没有生图前缀，清洗兜底原样保留 —— 刷新工作区就会在可见对话里冒出一张
+            // 看不懂的英文卡片。Worker 侧的 SaveWorkspaceMessageAsync 早就为此对分层
+            // 直接返回 null，这条创建路径漏了同一个判断（Codex PR #1363 P2）。
+            if (!isLayering)
+            {
             try
             {
                 // 优先使用前端传入的完整用户消息（含标签/引用）。
@@ -1811,6 +1847,7 @@ public class ImageMasterController : ControllerBase
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[CreateWorkspaceImageGenRun] 保存 User 消息失败: workspace={WorkspaceId}", wid);
+            }
             }
 
             return Ok(ApiResponse<object>.Ok(new { runId = run.Id }));
@@ -3261,6 +3298,18 @@ public class ImageMasterController : ControllerBase
 
 public class CreateWorkspaceImageGenRunRequest
 {
+    /// <summary>
+    /// generate（默认，文生图/图生图）或 layering（语义分层）。
+    ///
+    /// 分层此前只有同步端点，而模型本身要二三十秒，实测稳定撞上边缘网关的 30 秒超时——
+    /// 用户永远拿不到结果。走这条异步 run 后，提交立即返回任务号，产物由 Worker 落库，
+    /// 与 HTTP 连接的存活时间脱钩。
+    /// </summary>
+    public string? Operation { get; set; }
+
+    /// <summary>分层要拆成几层（1-10，仅 Operation=layering 时有意义）。</summary>
+    public int? LayerCount { get; set; }
+
     public string Prompt { get; set; } = string.Empty;
     public string TargetKey { get; set; } = string.Empty;
     public double? X { get; set; }

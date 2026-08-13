@@ -207,6 +207,14 @@ public class AvailableModelPool
 
     /// <summary>最近最多十次请求成功率；没有样本时为空。</summary>
     public decimal? RecentTenSuccessRatePercent { get; init; }
+    /// <summary>
+    /// 网关声明的能力标签（如 image_generation / image_layering）。
+    ///
+    /// 应用侧靠它区分「可以挑来生图的模型」与「只能被动作调用的能力」。
+    /// 丢掉这个字段就是「图片分层」曾经混进模型选择器的根因——目录只说了
+    /// 「是什么模型」，没说「能拿来干什么」，前端只好来什么摆什么。
+    /// </summary>
+    public List<string> Capabilities { get; init; } = new();
 }
 
 /// <summary>

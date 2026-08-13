@@ -32,7 +32,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class ImageGenController : ControllerBase
 {
-    private const string ImageLayeringCapabilityId = "image-layering";
+    // 能力标识的唯一来源在 Core 的 GatewayCapabilityIds，此处只做本文件内的短别名。
+    private const string ImageLayeringCapabilityId = PrdAgent.Core.Models.GatewayCapabilityIds.ImageLayering;
 
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
@@ -115,8 +116,9 @@ public class ImageGenController : ControllerBase
         {
             foreach (var code in ImageGenAppCallerCodes)
             {
-                var pools = (await _gateway.GetAvailablePoolsAsync(code, modelType, ct))
-                    .Select(pool => MapAvailablePool(pool, modelType));
+                var pools = ToSelectableModels(
+                    await _gateway.GetAvailablePoolsAsync(code, modelType, ct),
+                    modelType);
                 foreach (var pool in pools)
                 {
                     if (seen.Add(pool.Id))
@@ -148,9 +150,7 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/text2img")]
     public async Task<IActionResult> GetText2ImgModels(CancellationToken ct)
     {
-        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.Text2Img, "generation", ct))
-            .Select(pool => MapAvailablePool(pool, "generation"))
-            .ToList();
+        var result = ToSelectableModels(await _gateway.GetAvailablePoolsAsync(AppCallerCodes.Text2Img, "generation", ct), "generation");
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
@@ -160,9 +160,7 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/img2img")]
     public async Task<IActionResult> GetImg2ImgModels(CancellationToken ct)
     {
-        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.Img2Img, "generation", ct))
-            .Select(pool => MapAvailablePool(pool, "generation"))
-            .ToList();
+        var result = ToSelectableModels(await _gateway.GetAvailablePoolsAsync(AppCallerCodes.Img2Img, "generation", ct), "generation");
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
@@ -172,16 +170,33 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/vision")]
     public async Task<IActionResult> GetVisionGenModels(CancellationToken ct)
     {
-        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.VisionGen, "generation", ct))
-            .Select(pool => MapAvailablePool(pool, "generation"))
-            .ToList();
+        var result = ToSelectableModels(await _gateway.GetAvailablePoolsAsync(AppCallerCodes.VisionGen, "generation", ct), "generation");
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
+
+    /// <summary>
+    /// 「选择模型」列表只放用户真的可以挑来生图的模型。
+    ///
+    /// 分层这类能力需要一张输入图、不吃提示词、也没有尺寸概念，摆进模型列表会让用户
+    /// 以为选了它就能生图（2026-08-07 用户实际撞上：底部 chip 变成「图片分层」，
+    /// 旁边还挂着对它毫无意义的 1K·1:1）。它只允许由快捷栏的具体动作按能力标识点名调用。
+    ///
+    /// 过滤只此一处：四个 models 端点全部经过它，新增端点也必须走，
+    /// 否则下一个接进来的操作类能力会从没过滤的那条路重新漏出去。
+    /// </summary>
+    private static List<ModelPoolForAppResult> ToSelectableModels(
+        IEnumerable<AvailableModelPool> pools,
+        string modelType)
+        => pools
+            .Where(pool => !GatewayCapabilityIds.IsOperationOnly(pool.Code, pool.Capabilities))
+            .Select(pool => MapAvailablePool(pool, modelType))
+            .ToList();
 
     private static ModelPoolForAppResult MapAvailablePool(AvailableModelPool pool, string modelType)
     {
         return new ModelPoolForAppResult
         {
+            Capabilities = pool.Capabilities?.ToList() ?? [],
             Id = pool.Id,
             Name = pool.Name,
             Code = pool.Code,
