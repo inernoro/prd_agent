@@ -22,3 +22,4 @@
 | feat | cds | 新增 `releaseConsoleView`：步骤命令按 planId + step.id 精确对齐（对不上就不显示命令，不拿别的计划顶替）、卡住判定纯函数（无日志时以发布开始时间为基准，时间戳解析不出来就不报） |
 | fix | cds | 生产真数据暴露三处（stub 全掩盖）：分支下拉整列空白（真实字段是 `branch` 不是 `name`，改为复用发布中心的 BranchOption 类型不再自建）、默认环境落到已停用的临时目标（改走既有 resolveSelectedTargetId，canonical 优先）、对照与来源两段文案粘连 |
 | docs | cds | 发布流水线浮层不再把「计划没登记命令」写成「由 CDS 自身执行」——后端三份 plan 模板从不给 steps[].command 赋值，如实说明并指向真实脚本所在（部署命令栏与实时输出） |
+| feat | skill | 新增 `/sandbox-net` 技能：沙箱里浏览器打不通真站时的固定通道（本地 TCP 隧道 + Node TLS 反代 + 鉴权头注入），含三步诊断表、可直接跑的三个脚本与失败症状对照表；全程不关证书校验，403/407 照实上报不绕路 |
