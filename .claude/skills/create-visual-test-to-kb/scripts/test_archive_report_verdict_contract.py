@@ -825,6 +825,26 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         errors = archive_report._interactive_evidence_errors(content, self.manifest)
         self.assertTrue(any("无法唯一解析的内部链接" in error for error in errors))
 
+    def test_explicit_method_anchor_survives_markdown_rendering(self):
+        body = (
+            self.body("覆盖缺口")
+            + "\n\n| 测试方法 |\n"
+              "|---|\n"
+              "| [查看](#method-core-001) |\n\n"
+              '<a id="method-core-001"></a>\n'
+              "### 首页与静态资源\n"
+        )
+        rendered = archive_report.build_interactive_html(
+            "Commit验收 · 测试方法锚点",
+            "conditional",
+            body,
+            self.manifest,
+            figure_srcs=self.figure_srcs,
+        )
+        self.assertIn('href="#method-core-001"', rendered)
+        self.assertIn('<span id="method-core-001"></span>', rendered)
+        self.assertEqual([], archive_report._interactive_evidence_errors(rendered, self.manifest))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -128,7 +128,16 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
     {
         var indexes = await (await collection.Indexes.ListAsync(ct)).ToListAsync(ct);
         if (indexes.Any(x => x.GetValue("name", "").AsString == indexName))
-            await collection.Indexes.DropOneAsync(indexName, ct);
+        {
+            try
+            {
+                await collection.Indexes.DropOneAsync(indexName, ct);
+            }
+            catch (MongoCommandException ex) when (ex.Code == 27)
+            {
+                // 多个 serving 实例可能同时完成同一迁移；同伴已删除即视为成功。
+            }
+        }
     }
 
     private async Task BackfillServiceKeyDirectoryAsync(CancellationToken ct)
@@ -500,30 +509,37 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
 
     private async Task EnsureOfferingIdentityIndexAsync(CancellationToken ct)
     {
-        const string indexName = "uniq_llmgw_offering_tenant_logical_target";
+        const string legacyIndexName = "uniq_llmgw_offering_tenant_logical_target";
+        const string versionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v2";
         var collection = _data.Database.GetCollection<BsonDocument>("llmgw_model_offerings");
         var indexes = await (await collection.Indexes.ListAsync(ct)).ToListAsync(ct);
-        var current = indexes.FirstOrDefault(x => x.GetValue("name", "").AsString == indexName);
-        var currentKey = current?.GetValue("key", new BsonDocument()).AsBsonDocument;
-        if (currentKey?.Contains("SupersededByOfferingId") == true)
-            return;
-
-        if (current is not null)
+        var versionAware = indexes.FirstOrDefault(
+            x => x.GetValue("name", "").AsString == versionAwareIndexName);
+        if (versionAware is not null
+            && !versionAware.GetValue("key", new BsonDocument()).AsBsonDocument
+                .Contains("SupersededByOfferingId"))
         {
-            await collection.Indexes.DropOneAsync(indexName, ct);
-            _logger.LogInformation(
-                "[LlmGatewayData] Offering 唯一索引升级为版本感知结构 index={Index}",
-                indexName);
+            throw new InvalidOperationException(
+                $"OFFERING_IDENTITY_INDEX_MISMATCH: {versionAwareIndexName}");
         }
 
-        await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-            Builders<BsonDocument>.IndexKeys
-                .Ascending("TenantId")
-                .Ascending("LogicalModelId")
-                .Ascending("TargetKind")
-                .Ascending("TargetId")
-                .Ascending("SupersededByOfferingId"),
-            new CreateIndexOptions { Name = indexName, Unique = true }), cancellationToken: ct);
+        if (versionAware is null)
+        {
+            await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+                Builders<BsonDocument>.IndexKeys
+                    .Ascending("TenantId")
+                    .Ascending("LogicalModelId")
+                    .Ascending("TargetKind")
+                    .Ascending("TargetId")
+                    .Ascending("SupersededByOfferingId"),
+                new CreateIndexOptions { Name = versionAwareIndexName, Unique = true }), cancellationToken: ct);
+        }
+
+        // 新索引先就绪，再移除旧名。并发实例只会竞争删除旧索引，绝不会删除新索引。
+        await DropIndexIfPresentAsync(collection, legacyIndexName, ct);
+        _logger.LogInformation(
+            "[LlmGatewayData] Offering 唯一索引升级为版本感知结构 index={Index}",
+            versionAwareIndexName);
     }
 
     public async Task EnsureRetentionTtlIndexesAsync(CancellationToken ct)

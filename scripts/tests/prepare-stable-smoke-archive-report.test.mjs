@@ -13,14 +13,15 @@ test('归档版按模块生成步骤并用不可变证据占位替换本地图�
 
 逐状态核对。`;
   const manifest = [
-    { name: '001-login', module: '登录', primaryState: '入口', status: '通过', breadcrumb: '登录 → 首页 → 头像', caption: '入口可见' },
-    { name: '002-result', module: '登录', primaryState: '结果', status: '通过', breadcrumb: '登录 → 首页 → 头像 → 结果', caption: '结果可见' },
-    { name: '003-file', module: '文件', primaryState: '上传', status: '不通过', breadcrumb: '首页 → 文件 → 上传', caption: '上传失败' },
+    { name: '001-login', module: '登录', primaryState: '入口', status: '通过', breadcrumb: '登录 → 首页 → 头像', caption: '入口可见', commit: 'a'.repeat(40) },
+    { name: '002-result', module: '登录', primaryState: '结果', status: '通过', breadcrumb: '登录 → 首页 → 头像 → 结果', caption: '结果可见', commit: 'a'.repeat(40) },
+    { name: '003-file', module: '文件', primaryState: '上传', status: '不通过', breadcrumb: '首页 → 文件 → 上传', caption: '上传失败', commit: 'a'.repeat(40) },
   ];
   const output = prepareArchiveReport(report, manifest);
   assert.match(output, /## 步骤 1 登录/);
   assert.match(output, /## 步骤 2 文件/);
   assert.match(output, /## 验收用例/);
+  assert.ok(output.includes(`固定测试版本：\`${'a'.repeat(40)}\``));
   assert.match(output, /\| 1 \| 登录 \| 冒烟、功能与视觉/);
   assert.match(output, /\[图001\]\(#fig-001\)/);
   assert.match(output, /\| 2 \| 文件 .*\| 不通过 \| 是 \|/);

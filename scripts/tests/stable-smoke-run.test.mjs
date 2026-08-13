@@ -643,6 +643,8 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /'--plan', gatePlanPath/);
   assert.match(source, /buildReportVerificationArgs/);
   assert.match(verifyOpenSource, /requiredTexts\.every/);
+  assert.match(verifyOpenSource, /const clickedTargets = new Set\(\)/);
+  assert.match(verifyOpenSource, /Array\.from\(document\.images\)\.every/);
   assert.match(source, /scripts\/compose-stable-smoke-supervisor-report\.mjs/);
   assert.match(source, /create-visual-test-to-kb\/scripts\/archive_report\.py/);
   assert.match(source, /create-visual-test-to-kb\/scripts\/verify-open\.mjs/);

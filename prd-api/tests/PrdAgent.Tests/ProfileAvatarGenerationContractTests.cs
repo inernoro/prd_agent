@@ -197,6 +197,14 @@ public class ProfileAvatarGenerationContractTests
             adminUsers.Split(
                 "TrackAndTryDeleteSupersededAvatarAsync",
                 StringSplitOptions.None).Length - 1 >= 2);
+        var adminAvatarUpdate = adminUsers[
+            adminUsers.IndexOf("UpdateUserAvatar", StringComparison.Ordinal)..
+            adminUsers.IndexOf("UploadUserAvatar", StringComparison.Ordinal)];
+        Assert.Contains("await _assetStorage.ExistsAsync(objectKey, ct)", adminAvatarUpdate);
+        Assert.Contains("原头像未变更", adminAvatarUpdate);
+        Assert.True(
+            adminAvatarUpdate.IndexOf("await _assetStorage.ExistsAsync(objectKey, ct)", StringComparison.Ordinal)
+            < adminAvatarUpdate.IndexOf("FindOneAndUpdateAsync", StringComparison.Ordinal));
         Assert.Contains("ReturnDocument = ReturnDocument.Before", adminUsers);
         Assert.True(
             cleanup.IndexOf("BuildUserMutationLeaseKey(task.UserId)", StringComparison.Ordinal)

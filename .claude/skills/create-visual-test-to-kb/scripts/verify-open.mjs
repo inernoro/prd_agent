@@ -105,6 +105,7 @@ async function auditInteractiveReports() {
       const links = frame.locator('a[href^="#"]');
       const count = await links.count();
       let clicked = 0;
+      const clickedTargets = new Set();
       for (let index = 0; index < count; index += 1) {
         const link = links.nth(index);
         const href = await link.getAttribute('href');
@@ -114,6 +115,8 @@ async function auditInteractiveReports() {
           clickErrors.push(`${href}: 锚点编码无效`);
           continue;
         }
+        if (clickedTargets.has(targetId)) continue;
+        clickedTargets.add(targetId);
         const targetCount = await frame.evaluate(
           (id) => document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length,
           targetId,
@@ -128,7 +131,7 @@ async function auditInteractiveReports() {
             const target = document.getElementById(id);
             if (!target) return false;
             const rect = target.getBoundingClientRect();
-            return rect.bottom > 0 && rect.top < window.innerHeight;
+            return rect.top >= -2 && rect.top < window.innerHeight;
           }, targetId);
           if (!targetVisible) clickErrors.push(`${label}: 点击后目标 #${targetId} 未进入可视区`);
         } catch (error) {
@@ -161,6 +164,9 @@ async function runAttempt(attempt) {
     await page.getByText(new RegExp(mustText)).first().waitFor({ state: 'visible', timeout: settleTimeoutMs }).catch(() => {});
   }
   const rendered = await waitForRenderedContent(mustText, minImg);
+  await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete), null, {
+    timeout: settleTimeoutMs,
+  }).catch(() => {});
   await sleep(1000);
   const finalRendered = await inspectRenderedContent();
   const txt = finalRendered.text || rendered.text;

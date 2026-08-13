@@ -1236,6 +1236,11 @@ public class GatewayDataDomainGuardTests
         var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
         Assert.Contains("EnsureOfferingIdentityIndexAsync", initializer);
         Assert.Contains(".Ascending(\"SupersededByOfferingId\")", initializer);
+        Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v2", initializer);
+        Assert.Contains("catch (MongoCommandException ex) when (ex.Code == 27)", initializer);
+        Assert.True(
+            initializer.IndexOf("Name = versionAwareIndexName", StringComparison.Ordinal)
+            < initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal));
         Assert.Contains("Offering 唯一索引升级为版本感知结构", initializer);
     }
 

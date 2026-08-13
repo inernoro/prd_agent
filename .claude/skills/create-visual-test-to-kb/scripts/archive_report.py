@@ -2009,6 +2009,13 @@ def markdown_to_html(markdown):
             out.append(stripped)
             i += 1
             continue
+        explicit_anchor = re.fullmatch(r'<a id="([a-z0-9-]+)"></a>', stripped)
+        if explicit_anchor:
+            # 报告表格会通过这些显式锚点跳到关联测试方法。仅接受严格的
+            # 小写字母、数字和连字符，并转换为无交互 span，避免放行任意 HTML。
+            out.append(f'<span id="{explicit_anchor.group(1)}"></span>')
+            i += 1
+            continue
         if stripped.startswith("|") and i + 1 < len(lines) and lines[i + 1].strip().startswith("|"):
             rows = []
             while i < len(lines) and lines[i].strip().startswith("|"):

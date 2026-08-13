@@ -503,6 +503,32 @@ public class UsersController : ControllerBase
                          ProfileAvatarObjectCleanupPolicy.BuildUserMutationLeaseKey(userId),
                          ct))
         {
+            if (!string.IsNullOrWhiteSpace(fileName))
+            {
+                var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{fileName}";
+                bool avatarExists;
+                try
+                {
+                    avatarExists = await _assetStorage.ExistsAsync(objectKey, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Admin avatar object validation failed. userId={UserId}", userId);
+                    return StatusCode(
+                        StatusCodes.Status503ServiceUnavailable,
+                        ApiResponse<object>.Fail(
+                            "AVATAR_STORAGE_UNAVAILABLE",
+                            "头像存储暂时不可用，原头像未变更，请稍后重试"));
+                }
+
+                if (!avatarExists)
+                {
+                    return NotFound(ApiResponse<object>.Fail(
+                        "AVATAR_NOT_FOUND",
+                        "头像文件不存在，原头像未变更，请重新上传后再试"));
+                }
+            }
+
             previousUser = await _db.Users.FindOneAndUpdateAsync<User, User>(
                 u => u.UserId == userId,
                 Builders<User>.Update.Set(u => u.AvatarFileName, fileName),

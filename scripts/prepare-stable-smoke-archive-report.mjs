@@ -23,10 +23,14 @@ function evidenceReference(item) {
 }
 
 function renderAcceptanceCases(manifest) {
+  const commits = [...new Set(manifest.map((item) => String(item.commit || '').trim()).filter(Boolean))];
+  const commitLine = commits.length === 1
+    ? `固定测试版本：\`${commits[0]}\`。`
+    : '固定测试版本：证据清单未提供唯一提交，请按需人工核对。';
   const lines = [
     '## 验收用例',
     '',
-    '本表供审核人员先判断每个模块是否通过、是否需要干预；点击证据后可继续按完整面包屑逐图核对。',
+    `本表供审核人员先判断每个模块是否通过、是否需要干预；点击证据后可继续按完整面包屑逐图核对。${commitLine}`,
     '',
     '| 用例 | 模块 | 类型 | 完整测试路径 | 结论 | 是否需干预 | 证据 |',
     '|---:|---|---|---|---|---|---|',
