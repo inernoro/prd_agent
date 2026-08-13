@@ -308,7 +308,7 @@ docs:
   debt.platform.llm-gateway.isolation: "LLM 网关物理剥离 · 债务台账"
   debt.platform.llm-gateway.protocol-fidelity: "LLM Gateway 协议保真 · 债务台账"
   debt.platform.production-release: "生产发布安全 · 债务台账"
-  debt.prd-agent.avatar-editor: "头像编辑器 · 债务台账"
+  debt.prd-agent: "prd-agent 平台杂项 · 债务台账"
   debt.product-agent: "产品与项目管理智能体 · 债务台账"
   debt.report-agent: "周报与日报 · 债务台账"
   debt.shortcuts-agent: "快捷指令 Agent · 债务台账"

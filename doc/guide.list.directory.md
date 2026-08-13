@@ -314,7 +314,7 @@
 - [LLM 网关物理剥离 · 债务台账](./debt.platform.llm-gateway.isolation.md) `debt.platform.llm-gateway.isolation`
 - [LLM Gateway 协议保真 · 债务台账](./debt.platform.llm-gateway.protocol-fidelity.md) `debt.platform.llm-gateway.protocol-fidelity`
 - [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
-- [头像编辑器 · 债务台账](./debt.prd-agent.avatar-editor.md) `debt.prd-agent.avatar-editor`
+- [prd-agent 平台杂项 · 债务台账](./debt.prd-agent.md) `debt.prd-agent`
 - [产品与项目管理智能体 · 债务台账](./debt.product-agent.md) `debt.product-agent`
 - [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
