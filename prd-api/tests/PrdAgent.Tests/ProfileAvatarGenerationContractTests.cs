@@ -45,7 +45,7 @@ public class ProfileAvatarGenerationContractTests
             "prd-api/src/PrdAgent.Api/Controllers/Api/ProfileController.cs"));
 
         Assert.Contains("Request.Headers[\"Idempotency-Key\"]", source);
-        Assert.Contains("DeploymentScope.ScopeIdempotencyKey($\"{ProfileAvatarRunAppKey}::", source);
+        Assert.Contains("DeploymentScope.ScopeDurableIdempotencyKey($\"{ProfileAvatarRunAppKey}::", source);
         Assert.Contains("x.IdempotencyKey == idempotencyKey", source);
         Assert.Contains("IdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey", source);
         Assert.Contains("BuildAvatarGenerationRunId(currentUserId, idempotencyKey)", source);

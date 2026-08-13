@@ -28,4 +28,21 @@ public sealed class DeploymentScopeTests
             "prd-agent::codex/feature",
             DeploymentScope.Compose("prd-agent", "codex/feature", revision: null));
     }
+
+    [Fact]
+    public void DurableIdempotencyScope_RemainsStableAcrossRevisionChanges()
+    {
+        const string key = "profile-avatar::client-request";
+        var durableScope = DeploymentScope.Compose("prd-agent", "codex/feature", revision: null);
+        var revisionA = DeploymentScope.Compose("prd-agent", "codex/feature", "commit-a");
+        var revisionB = DeploymentScope.Compose("prd-agent", "codex/feature", "commit-b");
+
+        Assert.NotEqual(revisionA, revisionB);
+        Assert.Equal(
+            "prd-agent::codex/feature::profile-avatar::client-request",
+            DeploymentScope.BuildScopedIdempotencyKey(key, durableScope));
+        Assert.NotEqual(
+            DeploymentScope.BuildScopedIdempotencyKey(key, revisionA),
+            DeploymentScope.BuildScopedIdempotencyKey(key, revisionB));
+    }
 }

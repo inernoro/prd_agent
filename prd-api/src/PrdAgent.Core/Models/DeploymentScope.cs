@@ -107,8 +107,22 @@ public static class DeploymentScope
     /// </summary>
     public static string ScopeIdempotencyKey(string key)
     {
+        return BuildScopedIdempotencyKey(key, Current);
+    }
+
+    /// <summary>
+    /// 把幂等键限制在稳定的项目与分支作用域，不包含 commit revision。
+    /// 只用于明确支持新 revision 接管旧 revision 持久任务的调用链；普通任务仍应使用
+    /// <see cref="ScopeIdempotencyKey(string)"/>，避免滚动发布期间复用旧版本任务。
+    /// </summary>
+    public static string ScopeDurableIdempotencyKey(string key)
+    {
+        return BuildScopedIdempotencyKey(key, CurrentDurable);
+    }
+
+    internal static string BuildScopedIdempotencyKey(string key, string? scope)
+    {
         if (string.IsNullOrWhiteSpace(key)) return key;
-        var scope = Current;
         return scope is null ? key : $"{scope}::{key}";
     }
 

@@ -535,7 +535,7 @@ public class ProfileController : ControllerBase
         if (rawIdempotencyKey.Length > 160) rawIdempotencyKey = rawIdempotencyKey[..160];
         var idempotencyKey = string.IsNullOrWhiteSpace(rawIdempotencyKey)
             ? string.Empty
-            : DeploymentScope.ScopeIdempotencyKey($"{ProfileAvatarRunAppKey}::{rawIdempotencyKey}");
+            : DeploymentScope.ScopeDurableIdempotencyKey($"{ProfileAvatarRunAppKey}::{rawIdempotencyKey}");
         if (!string.IsNullOrWhiteSpace(idempotencyKey))
         {
             var existingRun = await _db.ImageGenRuns
