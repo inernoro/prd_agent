@@ -462,7 +462,7 @@ export function ReportsPage(): JSX.Element {
         />
       )}
     >
-      <Workspace wide className="cds-workspace--fill cds-workspace--fluid">
+      <Workspace fluid className="cds-workspace--fill">
         <div className="flex h-full min-h-0 flex-col gap-3">
           {toast ? (
             <div className="shrink-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>

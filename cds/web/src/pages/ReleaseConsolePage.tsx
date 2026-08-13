@@ -475,7 +475,7 @@ export function ReleaseConsolePage(): JSX.Element {
         />
       )}
     >
-      <Workspace wide>
+      <Workspace fluid>
         {/* 移动端整页自然流；lg 起切回三栏填满，各栏自己滚 */}
         <div
           className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-[264px_minmax(0,1fr)_348px] lg:gap-4 lg:overflow-hidden"

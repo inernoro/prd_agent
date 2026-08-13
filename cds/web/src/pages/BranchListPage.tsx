@@ -3388,7 +3388,7 @@ export function BranchListPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide className="cds-branch-list-workspace">
+      <Workspace fluid>
         {/* Hero: search-or-paste branch with autocomplete dropdown — replaces
             the old left "tracked / remote" two-list panel which the user
             said wasn't useful. Daily flow: focus the input, see all branches,

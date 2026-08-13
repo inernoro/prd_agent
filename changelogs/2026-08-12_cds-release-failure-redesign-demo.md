@@ -25,3 +25,6 @@
 | feat | skill | 新增 `/sandbox-net` 技能：沙箱里浏览器打不通真站时的固定通道（本地 TCP 隧道 + Node TLS 反代 + 鉴权头注入），含三步诊断表、可直接跑的三个脚本与失败症状对照表；全程不关证书校验，403/407 照实上报不绕路 |
 | fix | cds | 发布控制台英文字形对齐分支卡：标识符字形抽成共享的 `.cds-ident`（与 `.cds-branch-name` 同一条规则，ui-monospace + 收紧字距 + tabular-nums），页面弃用 Tailwind 的 `font-mono`（那个栈把仓库从未打包的 JetBrains Mono 排在首位，装没装的机器会看到两种英文字形）|
 | polish | cds | 发布控制台字号与字重回到 CDS 尺度：20 处 10px / 12 处 10.5px 抬到 11-13px，分区标题从 demo 的终端风（等宽 + 0.14em 宽字距）改回房内惯例 `text-xs font-semibold uppercase tracking-normal`，状态卡身份行给 medium；日志区 `break-all` 改 `break-words`，不再把英文单词从中间劈开 |
+| fix | cds | 全站 workspace 宽度归一：修掉「页面声明的档位被 CSS 别名类悄悄改写」——项目列表与分支列表都写了 `wide`，前者被 `.cds-workspace-project-list` 压回 1240（宽屏两条死白），后者被 `.cds-branch-list-workspace` 放开成无上限，两页都没拿到 wide。改为档位只由 `<Workspace>` 的 props 决定，新增 `fluid` 档，删掉两个覆写类 |
+| polish | cds | 网格/台面类页面统一满铺（项目列表 / 分支列表 / 发布中心 / 发布控制台 / 状态页 / 报告页）；项目卡网格从写死 `xl:grid-cols-3` 改走共享的 `.cds-card-grid`（auto-fill，列数由可用宽度算）；横向留白按视口分档 16/32/48，满铺不顶到边 |
+| fix | cds | 项目卡暂停态的常驻操作条压住标题（「Claude SDK Sidecar Pool」被徽章和图标盖掉半截），paused 时给标题行留出让位内边距 |

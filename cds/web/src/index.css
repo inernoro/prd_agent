@@ -263,8 +263,18 @@
      auto-fill 自适应列,超宽屏应继续加列;若折叠到 wide(1440) 会在
      4K 屏右侧再造"大片留白"——正是 audit-cds-ui-regressions 守卫
      诞生时要防的回归(2026-07-05 三档归一时曾误折叠,CI 抓回)。 */
-  .cds-workspace.cds-branch-list-workspace {
-    max-width: none;
+  /*
+   * 卡片网格的唯一契约。列数由可用宽度算出来，不写死 `xl:grid-cols-3`——
+   * 写死列数的页面在宽屏上只会把卡片撑得越来越胖，或者干脆在中间留一条，
+   * 两侧空着（用户 2026-08-13 指着项目列表说的就是这个）。
+   *
+   * `min(100%, Npx)` 是窄屏兜底：容器比 N 还窄时列宽退成 100%，不会横向溢出。
+   */
+  .cds-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cds-card-min, 380px)), 1fr));
+    align-items: start;
+    gap: 1.25rem;
   }
 
   .cds-branch-card-grid {
@@ -3015,7 +3025,9 @@
   }
 
   .cds-main {
-    @apply min-w-0 px-8 pb-12 pt-6;
+    /* 横向留白按视口分档：窄屏 16 / 常规 32 / 超宽 48。满铺不等于顶到边，
+       2000px 以上还贴着 32px 边会显得局促。 */
+    @apply min-w-0 px-8 pb-12 pt-6 2xl:px-12;
     /*
      * flex-grow + min-height:0 让 main 填满 topbar 之下的列高。2026-06-23 起壳改为
      * h-screen 固定高,本列(grid item)被 stretch 成视口高,main = flex:1 拿到确定高度,
@@ -3084,10 +3096,6 @@
   /* 历史别名 → 三档映射(页面零改动),禁止再新增专属宽度。 */
   .cds-workspace-settings {
     max-width: var(--workspace-wide, 1440px);
-  }
-
-  .cds-workspace-project-list {
-    max-width: var(--workspace-standard, 1240px);
   }
 
   .cds-project-card {

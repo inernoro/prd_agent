@@ -785,7 +785,7 @@ export function ProjectListPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide className="cds-workspace-project-list">
+      <Workspace fluid>
         {legacy?.legacyInUse ? (
           <div className="mb-6">
             <LegacyBanner
@@ -812,7 +812,7 @@ export function ProjectListPage(): JSX.Element {
             <EmptyProjects onCreate={() => setCreateOpen(true)} />
           ) : null}
           {state.status === 'ok' && projects.length > 0 ? (
-            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="cds-card-grid">
               {projects.map((project) => (
                 <ProjectCard
                   key={project.id}
@@ -1379,7 +1379,7 @@ function ProjectListSkeleton(): JSX.Element {
           className="text-[13px] font-medium text-muted-foreground"
         />
       </div>
-      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="cds-card-grid">
         {SKELETON_CARD_WIDTHS.map((width, index) => (
           <article
             key={index}
@@ -1922,8 +1922,13 @@ function ProjectCard({
         }}
         className={`flex flex-1 flex-col rounded-lg transition-[filter,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${paused ? 'opacity-60 grayscale' : ''}`}
       >
-        {/* Header */}
-        <header className="flex items-start justify-between gap-3 px-5 pt-5">
+        {/*
+         * Header。右侧那排操作按钮是 absolute 浮在卡片右上角的，hover 才显形——
+         * 唯独 paused 时它常驻（opacity-100），会直接压在标题上（「Claude SDK
+         * Sidecar Pool」被「已暂停」徽章和六个图标盖掉半截）。所以 paused 时
+         * 给标题行留出让位的右内边距，其余状态维持原样不浪费横向空间。
+         */}
+        <header className={`flex items-start justify-between gap-3 px-5 pt-5 ${paused ? 'pr-[13.5rem]' : ''}`}>
           <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-tight">{title}</h2>
           {!isReady && cloneLabel ? (
             <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600">

@@ -559,7 +559,7 @@ export function StatusPage(): JSX.Element {
         />
       )}
     >
-      <Workspace wide className="cds-workspace--fill cds-workspace--fluid">
+      <Workspace fluid className="cds-workspace--fill">
         <div className="flex h-full min-h-0 flex-col gap-3">
           {/* 有数据时本次轮询失败只做顶部提示，保留旧数据；无数据时交给错误卡片 */}
           {phase === 'ready' && error ? (

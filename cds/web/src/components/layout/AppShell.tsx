@@ -1009,20 +1009,42 @@ export function Crumb({ items }: CrumbProps): JSX.Element {
 }
 
 export interface WorkspaceProps {
-  /** Use the wider 1360px cap for pages with right-side operations rail. */
+  /** 1440px 上限：高密度运营台面。 */
   wide?: boolean;
+  /**
+   * 去掉上限，吃满整列宽度。**网格/台面类页面用这个**（项目列表、分支列表、
+   * 发布中心、发布控制台）——卡片网格在宽屏被压在中间一条 1240 里，右侧留出
+   * 两条死白，是用户反复指出的「又窄又有空白」。
+   *
+   * 阅读/表单类页面**不要**用：2500px 宽的一行表单读起来很痛苦，它们保持
+   * standard/wide 的行宽上限。
+   *
+   * fluid 优先于 wide（两个都传时以 fluid 为准）。
+   */
+  fluid?: boolean;
   className?: string;
   children: ReactNode;
 }
 
 /*
  * Workspace — centered column inside <main>. Pages should render their content
- * inside this so that all pages share the same horizontal cap. Avoid
- * applying `max-w-*` directly on page content.
+ * inside this so that all pages share the same horizontal cap.
+ *
+ * **档位由这里的 props 决定，不许再用 className 在 CSS 里偷偷改写。**
+ * 历史上 `.cds-workspace-project-list` 把页面声明的 wide 压回 1240、
+ * `.cds-branch-list-workspace` 把 wide 放开成无上限——两个页面都写了 `wide`，
+ * 两个都没拿到 wide，而 TSX 上看不出任何异常（predicate-and-wiring-discipline
+ * 形状 6：判据读的值不是真正生效的那个值）。
  */
-export function Workspace({ wide = false, className, children }: WorkspaceProps): JSX.Element {
+export function Workspace({ wide = false, fluid = false, className, children }: WorkspaceProps): JSX.Element {
   return (
-    <div className={cn('cds-workspace', wide ? 'cds-workspace-wide' : null, className)}>
+    <div
+      className={cn(
+        'cds-workspace',
+        fluid ? 'cds-workspace--fluid' : wide ? 'cds-workspace-wide' : null,
+        className,
+      )}
+    >
       {children}
     </div>
   );

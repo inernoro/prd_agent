@@ -516,7 +516,7 @@ export function ReleaseCenterPage(): JSX.Element {
         />
       )}
     >
-      <Workspace wide>
+      <Workspace fluid>
         {/* 移动端整页自然流竖滚；lg 起切回填满视口、各窗格自己滚。 */}
         <div
           className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:overflow-hidden"
