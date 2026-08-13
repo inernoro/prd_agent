@@ -322,7 +322,7 @@ git push -u origin $(git branch --show-current)
 - 若 `git log origin/main..HEAD --oneline` 输出为空（当前分支没有超过 main 的 commit），**跳过 PR 创建**并结束。
 - 若当前分支是 `main`，**跳过 PR 创建**并结束（不能从 main 向 main 发 PR）。
 
-#### 6.2 检查是否已有未合并的熵减 PR（在其 head 上跑审计，不是当前 checkout）
+#### 6.2 检查是否已有未合并的熵减 PR（在其 head 上审计并上报，不擅自合并）
 
 使用 `mcp__github__list_pull_requests`（state=open, base=main）查询 `inernoro/prd_agent`。
 - 若已有标题含「熵减计划」的 open PR：
@@ -331,24 +331,37 @@ git push -u origin $(git branch --show-current)
     （这正是硬闸要防的事）。留给人处理，本轮继续创建新 PR。
   - **其余的每一个都要在它自己的 head 上跑审计**，不是在当前分支上跑——当前分支干净
     不代表那个 PR 干净，拿此处的绿灯去批准彼处的合并是在用一份不相干的证据放行。
-    做法：`git fetch origin <该PR的head分支>`，本地 checkout 到该 sha（不要动当前工作分支），
-    对这个 checkout 重跑一遍 D1-D4 双向扫描 + `doc-readability-check.py --ratchet`。
-    - 审计干净 且 `mcp__github__pull_request_read`（method=`get`）返回的 `mergeable_state`
-      为 `clean`/`unstable`（无冲突）→ 直接 `mcp__github__merge_pull_request`（squash）合并，
-      合并后删除该分支。**不需要等它自己的 Step 6 流程走完**——本轮就是那个「下一次」。
+
+    做法：`git worktree add <临时目录> origin/<该PR的head分支>`（**用 worktree，禁止直接
+    `git checkout <sha>`**——那会 detach 当前工作区的 HEAD，Step 6.3 取当前分支名会拿到
+    空字符串，后续创建 PR 直接断掉）。在这个临时 worktree 里重跑一遍 D1-D4 双向扫描 +
+    `doc-readability-check.py --ratchet`，再用 `mcp__github__pull_request_read`（method=
+    `get_diff`）对这个 PR 走一遍 **6.4 同款内容核查**（删除行是否真是幽灵、追加行范围是否
+    仅限 doc/changelog/技能元数据、有没有混入代码文件或不属于本轮的生成物）。审计完成后
+    `git worktree remove <临时目录>`，确保当前工作分支分毫未动。
+
+    - 结构审计（D1-D4+棘轮）与 6.4 内容核查**都**通过，且 `mcp__github__pull_request_read`
+      （method=`get`）返回的 `mergeable_state` 为 `clean`/`unstable`（无冲突）→ **不要直接
+      调用合并工具**。仓库策略是 PR 默认保持 Ready、关闭自动合并，未经用户明确指示不得
+      合并（`AGENTS.md` §5.5）——这条对历史 PR 同样成立，且历史 PR 的作者是另一个会话，
+      比当天自己产出的 PR 更需要一次人的眼睛过一遍。把审计结论（干净，可合并）连同
+      PR 号写进本轮新 PR 的「已知（非本轮阻塞）」小节，请用户确认后再合并，不要替用户
+      按下合并键。
     - `mergeable_state` 为 `dirty`（真冲突，通常是 `changelogs/.entropy-manifest.yml` 尾部
       追加点撞车）→ **禁止自动 rebase/强解冲突**（那需要判断哪些内容已被后续 PR 覆盖、
       哪些仍缺失，属于需要人工判断的场景，机械脚本不做这个决策）。只记录该 PR 号、
       审计结果（干净/有缺陷）与冲突原因，继续创建本轮新 PR，把这些信息写进新 PR 的
       「已知（非本轮阻塞）」小节。
+    - 6.4 内容核查不通过（发现幽灵删除、代码文件混入、越界改动）→ 明确标注「不建议合并，
+      原因：xxx」，同样只报告不处理。
     - 审计发现该 PR 内容已被更晚合并的其它 commit 完全覆盖（manifest 条目已在 main、
       或对应设计文档章节已存在）→ 在新 PR 里记一句「#N 已无净新增价值，建议直接关闭」，
       不强行合并一个空转的 PR。
   - **连续 3 个以上未合并的历史熵减 PR 时视为积压信号**：本轮除了推进当天的 D1-D7，
-    还要在 PR 正文里显式列出每一个积压 PR 的审计结论（合并 / 待人工解冲突 / 建议关闭），
+    还要在 PR 正文里显式列出每一个积压 PR 的审计结论（可合并 / 待人工解冲突 / 建议关闭），
     避免像 2026-08 那次一样堆到 6 个才被用户发现「怎么全是垃圾分支」。不要求当场解决
-    所有冲突（那超出机械审计范围），但**必须让积压可见**，不能只字不提地继续创建第 N+1
-    个新 PR。
+    所有冲突或替用户下合并决定（那超出机械审计范围），但**必须让积压可见**，不能只字
+    不提地继续创建第 N+1 个新 PR。
 
 #### 6.3 创建 PR
 
