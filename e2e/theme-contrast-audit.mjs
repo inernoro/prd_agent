@@ -25,6 +25,7 @@ import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AUDIT_FN, aggregate, renderMarkdown } from './contrast-audit-core.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN = path.join(REPO_ROOT, 'prd-admin');
@@ -45,100 +46,6 @@ function loadRoutes() {
   const all = [...src.matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]);
   return [...new Set(all.filter((p) => !p.includes(':') && !p.includes('*')))].sort();
 }
-
-const AUDIT_FN = () => {
-  const chan = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
-  const lum = ([r, g, b]) => 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
-  const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
-  const parse = (s) => {
-    const m = (s || '').match(/[\d.]+/g);
-    return m ? { rgb: [+m[0], +m[1], +m[2]], a: m.length > 3 ? +m[3] : 1 } : null;
-  };
-  const over = (fg, bg) => fg.rgb.map((c, i) => Math.round(c * fg.a + bg[i] * (1 - fg.a)));
-
-  const effectiveBg = (el) => {
-    let node = el, needsEye = false;
-    while (node && node.nodeType === 1) {
-      const cs = getComputedStyle(node);
-      if (cs.backgroundImage && cs.backgroundImage !== 'none') needsEye = true;
-      const bg = parse(cs.backgroundColor);
-      if (bg && bg.a > 0) {
-        if (bg.a >= 1) return { bg: bg.rgb, needsEye };
-        let p = node.parentElement, guard = 0, under = [255, 255, 255];
-        while (p && guard++ < 40) {
-          const pc = parse(getComputedStyle(p).backgroundColor);
-          if (pc && pc.a >= 1) { under = pc.rgb; break; }
-          p = p.parentElement;
-        }
-        return { bg: over(bg, under), needsEye };
-      }
-      node = node.parentElement;
-    }
-    return { bg: [255, 255, 255], needsEye };
-  };
-
-  const visible = (el) => {
-    const cs = getComputedStyle(el);
-    if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 2 && r.height > 2;
-  };
-
-  const label = (el) => {
-    const parts = [];
-    let n = el, guard = 0;
-    while (n && n.tagName !== 'BODY' && guard++ < 4) {
-      if (n.id) { parts.unshift(`#${n.id}`); break; }
-      const cls = (n.getAttribute('class') || '').split(/\s+/).filter(Boolean).slice(0, 2).join('.');
-      parts.unshift(n.tagName.toLowerCase() + (cls ? `.${cls}` : ''));
-      n = n.parentElement;
-    }
-    return parts.join('>');
-  };
-
-  const out = [], seen = new Set();
-
-  for (const el of document.querySelectorAll('body *')) {
-    const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-    if (!hasText || !visible(el)) continue;
-    const cs = getComputedStyle(el);
-    const fg = parse(cs.color);
-    if (!fg) continue;
-    const { bg, needsEye } = effectiveBg(el);
-    const c = contrast(over(fg, bg), bg);
-    const size = parseFloat(cs.fontSize);
-    const need = (size >= 18.66 || (size >= 14 && +cs.fontWeight >= 700)) ? 3 : 4.5;
-    if (c >= need) continue;
-    const key = `${cs.color}|${bg}|${label(el)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const r = el.getBoundingClientRect();
-    out.push({ kind: 'text', text: el.textContent.trim().slice(0, 24), sel: label(el),
-      fg: cs.color, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
-      box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) } });
-  }
-
-  for (const el of document.querySelectorAll('svg')) {
-    if (!visible(el)) continue;
-    const cs = getComputedStyle(el);
-    const raw = (cs.stroke && cs.stroke !== 'none') ? cs.stroke
-      : (cs.fill && cs.fill !== 'none') ? cs.fill : cs.color;
-    const fg = parse(raw);
-    if (!fg || fg.a === 0) continue;
-    const { bg, needsEye } = effectiveBg(el.parentElement || el);
-    const c = contrast(over(fg, bg), bg);
-    if (c >= 3) continue;
-    const key = `svg|${raw}|${bg}|${label(el)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const r = el.getBoundingClientRect();
-    out.push({ kind: 'icon', text: '', sel: label(el), fg: raw, bg: `rgb(${bg})`,
-      ratio: +c.toFixed(2), need: 3, needsEye,
-      box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) } });
-  }
-
-  return out.sort((a, b) => a.ratio - b.ratio).slice(0, 60);
-};
 
 const ROUTES = loadRoutes();
 fs.mkdirSync(OUT, { recursive: true });
@@ -191,34 +98,10 @@ for (const theme of ['light', 'dark']) {
 
 fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 2));
 
-// 按「同一组配色」聚合 —— 一个公共组件坏了会在几十个路由上重复报，聚合后才看得出病根
-const byColor = new Map();
-for (const r of report) {
-  for (const f of r.findings) {
-    const k = `${f.kind}|${f.fg}|${f.bg}`;
-    if (!byColor.has(k)) byColor.set(k, { ...f, routes: new Set(), samples: [] });
-    const g = byColor.get(k);
-    g.routes.add(`${r.theme}:${r.route}`);
-    if (g.samples.length < 3) g.samples.push(f.sel);
-  }
-}
-const groups = [...byColor.values()]
-  .map((g) => ({ ...g, routeCount: g.routes.size, routes: [...g.routes].slice(0, 6) }))
-  .sort((a, b) => b.routeCount - a.routeCount || a.ratio - b.ratio);
-
-const md = [
-  '# 全站双主题对比度审计',
-  '',
-  `站点 ${BASE}｜路由 ${ROUTES.length} 条｜命中 ${report.reduce((s, r) => s + r.findings.length, 0)} 处｜配色组 ${groups.length}`,
-  '',
-  '## 按配色聚合（影响路由数从多到少 —— 排在前面的基本都是公共组件）',
-  '',
-  '| 影响路由数 | 类型 | 前景 | 背景 | 实测 | 需要 | 样例元素 |',
-  '|---|---|---|---|---|---|---|',
-  ...groups.slice(0, 40).map((g) =>
-    `| ${g.routeCount} | ${g.kind} | \`${g.fg}\` | \`${g.bg}\` | ${g.ratio}:1 | ${g.need}:1 | \`${g.samples[0]}\` |`),
-].join('\n');
-fs.writeFileSync(path.join(OUT, 'report.md'), md);
+const groups = aggregate(report);
+fs.writeFileSync(path.join(OUT, 'report.md'), renderMarkdown({
+  title: '全站双主题对比度审计', base: BASE, routeCount: ROUTES.length, report, groups,
+}));
 
 console.log(`\n完成：${report.length} 个「路由×主题」命中，配色组 ${groups.length}`);
 console.log(`报告：${path.join(OUT, 'report.md')} / report.json，截图同目录`);
