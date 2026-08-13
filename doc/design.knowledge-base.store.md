@@ -28,7 +28,8 @@
 | 订阅源定期同步 | 是 | DocumentSyncWorker (BackgroundService + PeriodicTimer) |
 | 手动触发同步 | 是 | POST /entries/{id}/sync |
 | 全文搜索 | 否 | 待实现（需 MongoDB Atlas Search 或 embedding） |
-| RAG / 语义检索 | 否 | 待实现 |
+| RAG / 语义检索 | 部分 | 已就绪：embedding 通路（网关 compute-then-send）、按模型/维度打标的向量存储、切块与增量索引哈希算法。未接线：没有 Worker 或服务实际调用切块/embedding 去处理存量文档并写入向量存储，检索服务、回答引用注入、前端挂库同样未接线。本部署也尚无可用的 embedding 供应商，用户可见的入口暂未打开，详见 [debt.knowledge-base.md](./debt.knowledge-base.md)（K-2）与 [debt.platform.embedding-provider.md](./debt.platform.embedding-provider.md) |
+| 移动端沉浸阅读 | 是 | 阅读组件（知识库与更新中心共用）按消费方显式开启接管顶栏、隐藏应用外壳；内联渲染的 HTML 报告提供多档字号（上传附件型 HTML 走隔离 iframe，不提供该控件） |
 
 ## 三、数据模型
 
@@ -96,6 +97,9 @@
 
 - [design.emergence.explorer.md](./design.emergence.explorer.md) — 涌现探索器（文档空间的消费者）
 - [design.knowledge-base.multi-doc.md](./design.knowledge-base.multi-doc.md) — 桌面端多文档知识库（同一文档基础设施的另一个消费者）
+- [debt.knowledge-base.md](./debt.knowledge-base.md) — 录音/转录全链路台账（上传、实时转写、保险箱等）
+- [debt.speech-agent.md](./debt.speech-agent.md) — 说话人来源与逐句归属估算的具体边界（文档名沿用历史归档，条目内容实指本节录音/转录功能，非演讲智能体）
+- [changelogs/2026-08-11_recording-quality-and-llmgw-deletion.md](../changelogs/2026-08-11_recording-quality-and-llmgw-deletion.md)（转录笔记标注说话人来源、录音结果页来源如实展示、开场白与编造切分判据收紧、转录失败与重试如实展示）
 
 ## 七、知识库卡片置顶（2026-06-16）
 
