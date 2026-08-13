@@ -17,8 +17,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Plus, RefreshCw, Rocket, RotateCcw } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { LayoutPanelLeft, Plus, RefreshCw, Rocket, RotateCcw } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
@@ -500,6 +500,13 @@ export function ReleaseCenterPage(): JSX.Element {
           right={(
             <>
               <PaletteHint />
+              {/* 发布控制台：同一批数据的「专注发布」视图，带上当前项目免得进去重选。 */}
+              <Button variant="outline" size="sm" asChild>
+                <Link to={projectId ? `/release-console?project=${encodeURIComponent(projectId)}` : '/release-console'}>
+                  <LayoutPanelLeft />
+                  发布控制台
+                </Link>
+              </Button>
               <Button variant="outline" size="sm" onClick={() => void load()}>
                 <RefreshCw />
                 刷新

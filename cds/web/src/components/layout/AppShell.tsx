@@ -152,7 +152,8 @@ const ShellFrameContext = createContext(false);
 /** Map a pathname to the rail item that should light up. */
 function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/cds-settings')) return 'cds-settings';
-  if (pathname.startsWith('/release-center')) return 'release-center';
+  // 发布控制台与发布中心是同一件事的两个视图，共用一个导航高亮项。
+  if (pathname.startsWith('/release-center') || pathname.startsWith('/release-console')) return 'release-center';
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
   if (pathname.startsWith('/status')) return 'status';

@@ -1,0 +1,160 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+/**
+ * 发布控制台（`/release-console`）的**接线守卫**。
+ *
+ * 这一页新写的每一条线，删掉之后都不会红：路由没注册它只是访问不到、
+ * previewUrl 传空串照样能发布（只是产物地址丢了）、SSE 少订一个事件页面照样
+ * 有东西显示。这正是 predicate-and-wiring-discipline 的「形状 2：链路只建到
+ * 一半」，必须用源码守卫钉住。
+ *
+ * 判据一律窗口化（只在那一段函数体 / JSX 里断言），不做全文 toContain——
+ * 全文断言会被同名的注释、类型、import 喂饱，删掉真正的调用照样通过（假绿）。
+ */
+
+const WEB = path.resolve(process.cwd(), '../cds/web/src');
+
+function read(relative: string): string {
+  return fs.readFileSync(path.join(WEB, relative), 'utf8');
+}
+
+/** 取一个箭头函数/函数的函数体（跳过参数列表后配平大括号）。 */
+function bodyAfter(source: string, marker: string): string {
+  const start = source.indexOf(marker);
+  expect(start, `源码里找不到 ${marker}`).toBeGreaterThanOrEqual(0);
+  const open = source.indexOf('{', start + marker.length);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  throw new Error(`${marker} 的函数体没有闭合`);
+}
+
+const PAGE = read('pages/ReleaseConsolePage.tsx');
+const APP = read('App.tsx');
+const SHELL = read('components/layout/AppShell.tsx');
+const CENTER = read('pages/ReleaseCenterPage.tsx');
+
+describe('发布控制台 · 路由与入口接线', () => {
+  it('路由已注册在控制台外壳内（不注册就等于这一页不存在）', () => {
+    expect(APP).toContain("import('@/pages/ReleaseConsolePage')");
+    expect(APP).toMatch(/<Route path="\/release-console" element=\{<ReleaseConsolePage \/>\} \/>/);
+    // 必须落在 ConsoleLayout 那组里，否则没有侧栏/命令面板，跟其它控制台页不是一个东西。
+    const framed = APP.slice(APP.indexOf('<Route element={<ConsoleLayout />}>'), APP.indexOf('<Route path="*"'));
+    expect(framed).toContain('/release-console');
+  });
+
+  it('导航高亮跟发布中心归同一项，进这一页侧栏不会失焦', () => {
+    const fn = bodyAfter(SHELL, 'function activeNavKeyFor');
+    expect(fn).toContain("pathname.startsWith('/release-console')");
+    expect(fn).toMatch(/release-console'\)\)\s*return\s*'release-center'/);
+  });
+
+  it('发布中心有进这一页的入口，并把当前项目带过去', () => {
+    expect(CENTER).toContain('/release-console?project=');
+    expect(CENTER).toContain('encodeURIComponent(projectId)');
+  });
+});
+
+describe('发布控制台 · 数据接线', () => {
+  /**
+   * 最容易静默退化的一条：previewUrl 传空串，发布照样 202，只是产物地址没了，
+   * 部署脚本里的 CDS_PREVIEW_URL 变成空。所以钉死「取自 resolveReleaseSourceUrls」
+   * 而不是字面量。
+   */
+  it('发布来源地址取自后端下发的 previewUrl（SSOT），不是空串也不是前端拼的', () => {
+    expect(PAGE).toContain("import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress'");
+    expect(PAGE).toContain('resolveReleaseSourceUrls({ branch })');
+    const start = bodyAfter(PAGE, 'const startRelease = async ()');
+    expect(start).toContain('previewUrl }');
+    expect(start).not.toContain("previewUrl: ''");
+    const preflight = bodyAfter(PAGE, 'const runPreflight = async ()');
+    expect(preflight).toContain('previewUrl }');
+    expect(preflight).not.toContain("previewUrl: ''");
+    // 前端自己 slugify 预览域名是 CLAUDE.md §11 明令禁止的
+    expect(PAGE).not.toContain('.miduo.org');
+  });
+
+  it('三个 SSE 事件都订了：少订 release.log 就只剩转圈，少订 status 就永远不结束', () => {
+    const effect = PAGE.slice(PAGE.indexOf('new EventSource'), PAGE.indexOf('useEffect(() => {\n    if (following'));
+    expect(effect).toContain("addEventListener('snapshot'");
+    expect(effect).toContain("addEventListener('release.log'");
+    expect(effect).toContain("addEventListener('release.status'");
+    // 断线续传：afterSeq 必须带上最后一条 seq，否则重连会把已有日志再灌一遍
+    expect(effect).toContain('afterSeq=${logs.at(-1)?.seq || 0}');
+    expect(effect).toContain('source.close()');
+  });
+
+  it('只有终态才回源刷 center，中间态刷等于把 SSE 的省流优势还回去', () => {
+    const effect = PAGE.slice(PAGE.indexOf("addEventListener('release.status'"), PAGE.indexOf('return () => source.close()'));
+    expect(effect).toContain('isReleaseTerminal(data.run.status)) void loadCenter()');
+  });
+
+  it('Agent 现场文本走共享的 buildReleaseAgentTask，这一页不另起一套措辞', () => {
+    expect(PAGE).toContain("import { buildReleaseAgentTask } from '@/lib/releaseAgentTask'");
+    const fn = bodyAfter(PAGE, 'const agentTask = ()');
+    expect(fn).toContain('buildReleaseAgentTask({');
+    // 判据分裂守卫（形状 3）：页面里不许再拼一遍那几个段落标题
+    expect(fn).not.toContain('要求');
+    expect(fn).not.toContain('门禁');
+  });
+});
+
+describe('发布控制台 · 并发口径不许对后端撒谎', () => {
+  /**
+   * 设计稿写「同一时间只允许一处发布」，后端 assertTargetFree 保证的是**按目标**
+   * 互斥。页面可以额外收紧到跨目标，但必须说清哪一道是服务端保证、哪一道是 UI 策略，
+   * 否则用户会以为服务端拦得住并发，而实际上另一台机器同时发别的目标是允许的。
+   */
+  it('跨目标锁写明了是本页策略，服务端只保证同目标不并发', () => {
+    expect(PAGE).toContain('服务端保证同一目标不并发');
+    expect(PAGE).toContain('409');
+    expect(PAGE).toContain('跨目标这一道是本页额外收的口');
+    // 判据本身：blockedByOther 必须是「别的目标在跑」，不是「有任何 run 在跑」
+    expect(PAGE).toContain('liveRun.targetId !== row.target.id');
+  });
+
+  it('发布配置只读，改配置指回发布中心，不开第二处写入口', () => {
+    const pane = PAGE.slice(PAGE.indexOf("pane === 'config'"), PAGE.indexOf("pane === 'agent'"));
+    expect(pane).toContain('href="/release-center"');
+    expect(pane).not.toContain('<input');
+    expect(pane).not.toContain('method: ');
+  });
+});
+
+describe('发布控制台 · 窄屏与主题纪律', () => {
+  it('桌面三栏、窄屏自然流（desktop-fill 必须配 mobile-flow 兜底）', () => {
+    expect(PAGE).toContain('flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-[264px_minmax(0,1fr)_348px]');
+    expect(PAGE).toContain('lg:overflow-hidden');
+  });
+
+  /**
+   * 窄屏顺序：状态在最前。用户来这一页第一眼要看的是「现在成没成」，
+   * 按 DOM 顺序（左栏在前）会把状态卡压到第一屏之外——正是「点了之后就卡住
+   * 没后续」这个抱怨的成因。桌面不受影响，order 只在 max-lg 生效。
+   */
+  it('窄屏把状态排到第一位，项目与记录退到后面', () => {
+    expect(PAGE).toContain('max-lg:order-1 lg:overflow-hidden');
+    expect(PAGE).toContain('max-lg:order-2');
+    expect(PAGE).toContain('max-lg:order-3');
+    const mainAt = PAGE.indexOf('max-lg:order-1');
+    const asideAt = PAGE.indexOf('max-lg:order-2');
+    // order-1 必须挂在 <main> 上：挂错元素时这条会红
+    expect(PAGE.slice(PAGE.lastIndexOf('<', mainAt), mainAt)).toContain('main');
+    expect(PAGE.slice(PAGE.lastIndexOf('<', asideAt), asideAt)).toContain('aside');
+  });
+
+  it('颜色一律走 token，没有写死的暗色底或浅色字', () => {
+    // cds-theme-tokens.md 最高原则：白天主题下不许出现暗色字面量
+    expect(PAGE).not.toMatch(/#(0a0a0f|0b0b10|1f1d2b|0f1419|e8e8ec|cbd5e1)/i);
+    // 新栈 token 是 HSL 三元组，裸 var() 会让整条属性静默失效
+    expect(PAGE).not.toMatch(/:\s*var\(--surface-/);
+    expect(PAGE).toContain('hsl(var(--surface-sunken))');
+  });
+});
