@@ -322,22 +322,33 @@ git push -u origin $(git branch --show-current)
 - 若 `git log origin/main..HEAD --oneline` 输出为空（当前分支没有超过 main 的 commit），**跳过 PR 创建**并结束。
 - 若当前分支是 `main`，**跳过 PR 创建**并结束（不能从 main 向 main 发 PR）。
 
-#### 6.2 检查是否已有未合并的熵减 PR
+#### 6.2 检查是否已有未合并的熵减 PR（在其 head 上跑审计，不是当前 checkout）
 
 使用 `mcp__github__list_pull_requests`（state=open, base=main）查询 `inernoro/prd_agent`。
 - 若已有标题含「熵减计划」的 open PR：
   - **标题以 `[需人工] ` 开头的一律跳过**，不得合并。那是上一轮被 D4 硬闸挡下的 PR，
     里面带着未修复的可发现性缺陷；无条件合并它等于把硬闸的作用推迟一轮就作废
     （这正是硬闸要防的事）。留给人处理，本轮继续创建新 PR。
-  - **其余的也不在本步合并**，只记录 PR 号并继续创建新 PR。
-
-    原因：本步能跑的审计只覆盖调度器**当前 checkout**，而要合的是**另一个 PR 的 head**。
-    当前分支干净不代表那个 PR 干净——拿此处的绿灯去批准彼处的合并，是在用一份不相干的
-    证据放行。旧版这里是完全无校验的直接合并，本次不再补一个「看起来像校验」的动作，
-    而是把这个不安全的自动合并去掉。
-
-    旧 PR 由人处理，或等它自己那轮的 Step 6 流程走完。要恢复自动合并，必须先实现
-    「在被合并 PR 的 head 上跑审计」，而不是在当前分支上跑（见 `doc/debt.platform.agent-rule-scope.md`）。
+  - **其余的每一个都要在它自己的 head 上跑审计**，不是在当前分支上跑——当前分支干净
+    不代表那个 PR 干净，拿此处的绿灯去批准彼处的合并是在用一份不相干的证据放行。
+    做法：`git fetch origin <该PR的head分支>`，本地 checkout 到该 sha（不要动当前工作分支），
+    对这个 checkout 重跑一遍 D1-D4 双向扫描 + `doc-readability-check.py --ratchet`。
+    - 审计干净 且 `mcp__github__pull_request_read`（method=`get`）返回的 `mergeable_state`
+      为 `clean`/`unstable`（无冲突）→ 直接 `mcp__github__merge_pull_request`（squash）合并，
+      合并后删除该分支。**不需要等它自己的 Step 6 流程走完**——本轮就是那个「下一次」。
+    - `mergeable_state` 为 `dirty`（真冲突，通常是 `changelogs/.entropy-manifest.yml` 尾部
+      追加点撞车）→ **禁止自动 rebase/强解冲突**（那需要判断哪些内容已被后续 PR 覆盖、
+      哪些仍缺失，属于需要人工判断的场景，机械脚本不做这个决策）。只记录该 PR 号、
+      审计结果（干净/有缺陷）与冲突原因，继续创建本轮新 PR，把这些信息写进新 PR 的
+      「已知（非本轮阻塞）」小节。
+    - 审计发现该 PR 内容已被更晚合并的其它 commit 完全覆盖（manifest 条目已在 main、
+      或对应设计文档章节已存在）→ 在新 PR 里记一句「#N 已无净新增价值，建议直接关闭」，
+      不强行合并一个空转的 PR。
+  - **连续 3 个以上未合并的历史熵减 PR 时视为积压信号**：本轮除了推进当天的 D1-D7，
+    还要在 PR 正文里显式列出每一个积压 PR 的审计结论（合并 / 待人工解冲突 / 建议关闭），
+    避免像 2026-08 那次一样堆到 6 个才被用户发现「怎么全是垃圾分支」。不要求当场解决
+    所有冲突（那超出机械审计范围），但**必须让积压可见**，不能只字不提地继续创建第 N+1
+    个新 PR。
 
 #### 6.3 创建 PR
 
