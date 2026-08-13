@@ -185,15 +185,16 @@ public class ModelResolver : IModelResolver
         {
             var requirement = appCaller.ModelRequirements
                 .FirstOrDefault(r => r.ModelType == modelType);
+            var modelGroupIds = requirement?.ModelGroupIds;
 
-            if (HasDedicatedBinding(requirement?.ModelGroupIds))
+            if (HasDedicatedBinding(modelGroupIds))
             {
                 // 绑定看配置、不看查询结果，判据见 HasDedicatedBinding 的注释。
                 hasDedicatedBinding = true;
 
                 // ========== 第二步：查找专属模型池 ==========
                 candidateGroups = await _db.ModelGroups
-                    .Find(g => requirement.ModelGroupIds.Contains(g.Id))
+                    .Find(g => modelGroupIds!.Contains(g.Id))
                     .SortBy(g => g.Priority)
                     .ToListAsync(ct);
 
@@ -222,7 +223,26 @@ public class ModelResolver : IModelResolver
                 _logger.LogDebug(
                     "[ModelResolver] 使用默认模型池: ModelType={Type}, PoolCount={Count}, PoolNames={Names}",
                     modelType, candidateGroups.Count,
-                    string.Join(", ", candidateGroups.Select(g => g.Name)));
+                string.Join(", ", candidateGroups.Select(g => g.Name)));
+            }
+        }
+
+        // 池解析完成后的重试会携带 ModelGroupId 作为 expectedModel。即使是旧的
+        // MAP 兼容路径，也必须把池 ID 解释为“锁定该池”，不能退回按优先级重新选池，
+        // 否则同一个 Run 的第二次 resolve 可能漂移到另一个池。
+        if (!string.IsNullOrWhiteSpace(expectedModel)
+            && !string.Equals(resolutionType, "GatewayRegistryPool", StringComparison.Ordinal)
+            && candidateGroups is { Count: > 0 })
+        {
+            var poolCandidates = candidateGroups;
+            var requestedPool = poolCandidates.FirstOrDefault(group =>
+                string.Equals(group.Id, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(group.Code, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(group.Name, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (requestedPool is not null)
+            {
+                candidateGroups = [requestedPool];
+                expectedModel = null;
             }
         }
 

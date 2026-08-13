@@ -739,7 +739,7 @@ public class ImageGenRunWorker : BackgroundService
                             images: allImages.Count > 0 ? allImages : null,
                             modelId: requestedModelId,
                             platformId: run.PlatformId,
-                            modelName: run.LogicalModelPublicId ?? run.ModelId,
+                            modelName: ResolveImageGenerationModelReference(run),
                             maskBase64: run.MaskBase64,
                             requiredLogicalModelPublicId: run.LogicalModelPublicId
                                 ?? (string.Equals(run.PlatformId, "logical-model", StringComparison.OrdinalIgnoreCase)
@@ -1907,7 +1907,7 @@ public class ImageGenRunWorker : BackgroundService
                 : await gateway.ResolveModelAsync(
                     appCallerCode,
                     "generation",
-                    run.ModelId,
+                    ResolveImageGenerationModelReference(run),
                     ct: ct);
             if (!resolution.Success) return fallback;
 
@@ -1925,5 +1925,24 @@ public class ImageGenRunWorker : BackgroundService
                 run.Id);
             return fallback;
         }
+    }
+
+    /// <summary>
+    /// 模型池解析完成后，后续 Gateway resolve 必须继续使用池身份。
+    /// 池解析得到的 ModelId 是实际 Provider 模型名，不能再次作为 appCaller 的
+    /// expectedModel，否则严格模型池会把它当成新的池选择并拒绝请求。
+    /// </summary>
+    private static string? ResolveImageGenerationModelReference(ImageGenRun run)
+    {
+        if (!string.IsNullOrWhiteSpace(run.LogicalModelPublicId))
+            return run.LogicalModelPublicId;
+
+        if (run.ModelResolutionType is ModelResolutionType.DedicatedPool or ModelResolutionType.DefaultPool
+            && !string.IsNullOrWhiteSpace(run.ModelGroupId))
+        {
+            return run.ModelGroupId;
+        }
+
+        return run.ModelId;
     }
 }
