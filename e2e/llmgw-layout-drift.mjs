@@ -42,18 +42,20 @@ const MODELS = [
    桩里若只剩成功行，基准页就一个 chip 都不出——`chip规格种类` 的上限被人为收窄到 0，
    其余 8 条路由会集体"漂移"，而真实页面上从来都有失败行。
    同一个道理已经在上面的 timeseries 注释里写过一次：桩不代表真实版面，基准就是假的。 */
-const LOGS = [
-  {
-    id: 'l1', requestId: 'req-demo-0001', provider: 'demo', model: 'demo/chat-1', status: 'succeeded',
-    startedAt: nowIso, durationMs: 1234, inputTokens: 100, outputTokens: 200, totalTokens: 300,
-    appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
-  },
-  {
-    id: 'l2', requestId: 'req-demo-0002', provider: 'demo', model: 'demo/chat-1', status: 'failed',
-    statusCode: 502, startedAt: nowIso, durationMs: 880, inputTokens: 100, outputTokens: null,
-    totalTokens: 100, appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
-  },
-];
+/* 行数要够撑出纵向滚动：下面的「滚动位置不丢」断言必须真的滚得动，
+   两行的表体 scrollHeight == clientHeight，怎么滚都是 0，那条断言会变成永远绿的空跑。 */
+const LOGS = Array.from({ length: 40 }, (_, i) => (i === 1
+  ? {
+      id: 'l2', requestId: 'req-demo-0002', provider: 'demo', model: 'demo/chat-1', status: 'failed',
+      statusCode: 502, startedAt: nowIso, durationMs: 880, inputTokens: 100, outputTokens: null,
+      totalTokens: 100, appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
+    }
+  : {
+      id: `l${i + 1}`, requestId: `req-demo-${String(i + 1).padStart(4, '0')}`, provider: 'demo',
+      model: 'demo/chat-1', status: 'succeeded', startedAt: nowIso, durationMs: 1234,
+      inputTokens: 100, outputTokens: 200, totalTokens: 300,
+      appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
+    }));
 /* 模型池的卡片、成员行、操作区才是这个检测器要盯的规格来源；
    空列表只会渲染空状态，改坏了内边距/间距也照样"与基准一致"。 */
 const poolMember = (over) => ({
@@ -148,7 +150,7 @@ const STUBS = {
   '/models': { ...LIST, items: MODELS, models: MODELS },
   '/logs': { ...LIST, total: LOGS.length, items: LOGS },
   '/logs/meta': { models: [], providers: [], statuses: [], appCallerCodes: [], sessions: [], teams: [], serviceKeys: [], clientCodes: [], environments: [] },
-  '/logs/summary': { total: 2, succeeded: 1, failed: 1, totalTokens: 400, estimatedCostUsd: 0.01 },
+  '/logs/summary': { total: LOGS.length, succeeded: LOGS.length - 1, failed: 1, totalTokens: 400, estimatedCostUsd: 0.01 },
   // 趋势图是基准页自身的一部分，空 points 会让它整块不渲染 —— 基准就不再代表真实版面。
   '/logs/timeseries': { items: Array.from({ length: 14 }, (_, i) => ({ date: `2026-07-${String(i + 1).padStart(2, '0')}`, count: 3 + ((i * 7) % 11) })) },
   '/service-keys': [row({ id: 'k1', name: 'runtime-key', keyPrefix: 'gwk_demo', teamId: null, createdByUsername: 'demo', sourceSystem: 'map', clientCode: 'demo', environment: 'production', purpose: 'runtime', appCallerCodes: ['demo.chat::chat'], ingressProtocols: ['openai'], scopes: ['chat'], allowedCidrs: [] })],
@@ -366,6 +368,26 @@ const sidebarFooter = await page.evaluate(() => {
   };
 });
 
+// 表体的滚动位置必须能扛住一次重渲染。
+// 这条判据针对的是真实踩过的形状：LogTable 若定义在 LogsView 函数体里，
+// 组件类型每次渲染都变，React 整棵卸载重挂，.lg-log-table-body 的 DOM 节点被换掉、
+// scrollTop 归零。分页时代这只是「偶尔跳回顶部」，改成瀑布加载后会变成
+// 「越滚越弹回 + 反复触底重取」。源码扫描测不出来，只能真滚一次。
+await page.goto(`${base}/logs`);
+await page.waitForSelector('.lg-log-table-body');
+await page.waitForTimeout(900);
+const scrollKeep = await page.evaluate(async () => {
+  const body = document.querySelector('.lg-log-table-body');
+  if (!body) return { 可滚动: false, 原因: '找不到表体' };
+  if (body.scrollHeight <= body.clientHeight + 1) return { 可滚动: false, 原因: '桩数据撑不出滚动条' };
+  body.scrollTop = 120;
+  const before = body.scrollTop;
+  document.querySelector('.lg-log-trend-toggle')?.click();
+  await new Promise((r) => setTimeout(r, 350));
+  const after = document.querySelector('.lg-log-table-body');
+  return { 可滚动: true, 滚动前: before, 重渲染后: after ? after.scrollTop : -1 };
+});
+
 if (process.env.LLMGW_SCREENSHOT_PATH) {
   await page.screenshot({ path: process.env.LLMGW_SCREENSHOT_PATH, fullPage: true });
 }
@@ -409,7 +431,18 @@ for (const [route, m] of Object.entries(data)) {
   console.log(`${route.padEnd(17)} ${diffs.length ? '漂移: ' + diffs.join('；') : '与基准一致'}`);
   drift += diffs.length;
 }
-console.log(`\n合计漂移项: ${drift}`);
+console.log('表体滚动保持:', JSON.stringify(scrollKeep));
+if (!scrollKeep.可滚动) {
+  console.error(`无法验证滚动保持：${scrollKeep.原因}——这条断言正在空跑，请修桩数据。`);
+  drift += 1;
+} else if (scrollKeep.重渲染后 !== scrollKeep.滚动前) {
+  console.error(
+    `一次重渲染就把表体滚动位置冲掉了（${scrollKeep.滚动前} → ${scrollKeep.重渲染后}）。`
+    + '\n  多半是 LogTable 又被挪回 LogsView 函数体内：组件类型每次渲染都变，React 会整棵重挂。',
+  );
+  drift += 1;
+}
+
 console.log('侧栏页脚:', JSON.stringify(sidebarFooter));
 if (!sidebarFooter.存在) {
   console.error('侧栏页脚 .lg-sidebar-footer 不存在——「提交缺陷」失去唯一可见入口。');
@@ -427,5 +460,9 @@ if (exchangeLayout.cardCount > 1 && (exchangeLayout.columns !== 1 || !exchangeLa
   console.error('Exchange 列表必须保持单列且卡片等宽。');
   drift += 1;
 }
+// 总数必须打在**所有**断言之后：先打总数再跑断言，日志上会出现「合计漂移项: 0」
+// 紧跟着失败详情，读日志的人被那个 0 骗过去。
+console.log(`\n合计漂移项: ${drift}`);
+
 // 有漂移必须非零退出，否则任何按退出码判定的 CI / 本地校验都会把回归当通过。
 if (drift > 0) process.exitCode = 1;

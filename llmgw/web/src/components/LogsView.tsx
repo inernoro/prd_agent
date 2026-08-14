@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { RefreshCw, ChevronLeft, ChevronRight, ChevronUp, Search, SlidersHorizontal } from 'lucide-react';
+import { RefreshCw, ChevronUp, Search, SlidersHorizontal } from 'lucide-react';
 import { getLogs, getLogsMeta, getLogsSessions, getLogsSummary, getLogsTimeseries } from '@/lib/api';
 import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
@@ -170,6 +170,197 @@ function appDetailsHref(code: string) {
   return `/app-callers/view?code=${encodeURIComponent(code)}`;
 }
 
+
+const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
+
+/** 列宽下限：minmax(Npx, …) 取 N，纯 px 取本身，fr/auto 给一个保守值。 */
+function columnMinWidth(width: string): number {
+  const minmax = /minmax\(\s*([\d.]+)px/.exec(width);
+  if (minmax) return Number(minmax[1]);
+  const px = /^([\d.]+)px$/.exec(width.trim());
+  if (px) return Number(px[1]);
+  return 96;
+}
+
+/**
+ * 日志表格。
+ *
+ * **必须定义在模块作用域**，不能像原来那样写在 LogsView 函数体里：
+ * 内联声明会让组件类型每次渲染都变，React 认成另一个组件，整棵子树卸载重挂。
+ * 实测后果是 `.lg-log-table-body` 的 DOM 节点被换掉、scrollTop 从 200 归零——
+ * 也就是说滚到一半时任何一次状态变化都会把用户弹回顶部（分页时代不明显，
+ * 因为一页只有 30 行；改成瀑布加载后这会直接变成「越滚越回弹 + 反复触底加载」）。
+ *
+ * 瀑布加载的接线：底部放一个哨兵，用 IntersectionObserver 以滚动容器为 root 观察它，
+ * 进入视野就 onLoadMore。哨兵之外**另有一个常驻的「加载更多」按钮**（见 LogTableFooter）,
+ * 因为 observer 在键盘操作、reduce-motion、极短列表等场景下不一定会触发——
+ * 自动加载是快捷方式，不是唯一入口。
+ */
+export function LogTable<T>({
+  tableKey, columns, items, rowKey, onRow, render, rowTone, empty,
+  preferences, onPreferencesChange, settingsOpen, onSettingsOpenChange, settingsTab, onSettingsTabChange,
+  isNarrowViewport, hasMore, loadingMore, onLoadMore,
+}: {
+  tableKey: LogsSubTab;
+  columns: ColumnDef[];
+  items: T[];
+  rowKey: (t: T, idx: number) => string;
+  onRow?: (t: T) => void;
+  render: (col: ColumnDef, t: T) => ReactNode;
+  rowTone?: (t: T) => 'error' | 'running' | null;
+  empty: ReactNode;
+  preferences: LogTablePreferences;
+  onPreferencesChange: (value: LogTablePreferences) => void;
+  settingsOpen: boolean;
+  onSettingsOpenChange: (open: boolean) => void;
+  settingsTab: 'columns' | 'density';
+  onSettingsTabChange: (tab: 'columns' | 'density') => void;
+  isNarrowViewport: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+}) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  // onLoadMore 每次渲染都是新函数；放进 ref 就不必因为它重建 observer，
+  // 否则每次 setState 都会断开重连，触底那一刻正好可能观察不到。
+  const loadMoreRef = useRef(onLoadMore);
+  loadMoreRef.current = onLoadMore;
+
+  useEffect(() => {
+    const root = bodyRef.current;
+    const target = sentinelRef.current;
+    if (!root || !target || !hasMore || loadingMore) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadMoreRef.current();
+    }, { root, rootMargin: '240px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore]);
+
+  const visibleColumns = resolveLogTableColumns(columns, preferences);
+  const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
+  // 表格最小宽度必须由列自身的下限推出来，不能写死。
+  // 以前这里对 generations 硬编码 1832px，无论列怎么配都强制横向滚动，
+  // 右侧列被切、齿轮压住表头，中间还空出大片没人用的宽度。
+  const contentMinWidth = visibleColumns.reduce((sum, column) => sum + columnMinWidth(column.width), 0)
+    + (visibleColumns.length - 1) * 12 // column-gap
+    + 32 // 左右内边距
+    + 42; // 列设置齿轮
+  const tableMinWidth = isNarrowViewport ? NARROW_TABLE_MIN_WIDTH[tableKey] : contentMinWidth;
+  const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
+
+  return (
+    <div className="lg-log-table-scroll">
+      <div className="lg-log-table" data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth || undefined }}>
+        <div
+          className="lg-log-table-head"
+          style={{
+            display: 'grid',
+            minHeight: 42,
+            flexShrink: 0,
+            gridTemplateColumns: gridCols,
+          }}
+        >
+          {visibleColumns.map((c) => (
+            <div
+              key={c.key}
+              title={c.tip}
+              style={{ textAlign: alignOf(c.align) }}
+            >
+              {c.label}
+              {c.tip ? <span className="lg-log-column-info" aria-hidden="true">i</span> : null}
+            </div>
+          ))}
+          <LogTableSettings
+            columns={columns}
+            preferences={preferences}
+            onChange={onPreferencesChange}
+            open={settingsOpen}
+            onOpenChange={onSettingsOpenChange}
+            tab={settingsTab}
+            onTabChange={onSettingsTabChange}
+          />
+        </div>
+        <div ref={bodyRef} className="lg-log-table-body" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {items.length === 0
+            ? empty
+            : items.map((t, idx) => (
+                <div
+                  key={rowKey(t, idx)}
+                  onClick={onRow ? () => onRow(t) : undefined}
+                  onKeyDown={onRow ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onRow(t);
+                    }
+                  } : undefined}
+                  role={onRow ? 'button' : undefined}
+                  tabIndex={onRow ? 0 : undefined}
+                  className={[
+                    'lg-log-table-row',
+                    onRow ? 'lg-row-clickable' : '',
+                    rowTone?.(t) ? `is-${rowTone(t)}` : '',
+                  ].filter(Boolean).join(' ')}
+                  style={{
+                    display: 'grid',
+                    minHeight: rowHeight,
+                    alignItems: 'center',
+                    cursor: onRow ? 'pointer' : 'default',
+                    gridTemplateColumns: gridCols,
+                  }}
+                >
+                  {visibleColumns.map((c) => (
+                    <div key={c.key} style={{ minWidth: 0, textAlign: alignOf(c.align) }}>
+                      {render(c, t)}
+                    </div>
+                  ))}
+                  <span aria-hidden="true" />
+                </div>
+              ))}
+          {/* 触底提示条。禁止只放一个静止的「加载中…」——这里给的是三行骨架，
+              让「还在往下取」这件事在屏幕上持续有形（CLAUDE.md 规则 6）。 */}
+          {loadingMore ? (
+            <div className="lg-log-loading-more" role="status" aria-live="polite">
+              <span className="lg-log-skeleton-row" />
+              <span className="lg-log-skeleton-row" />
+              <span className="lg-log-skeleton-row" />
+              <span className="lg-log-loading-more-text">正在加载更多…</span>
+            </div>
+          ) : null}
+          {hasMore ? <div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" /> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 表尾：加载进度 + 手动「加载更多」。
+ * 常驻在滚动区之外，所以它同时承担两件事——告诉用户「已加载多少 / 还有没有」，
+ * 以及给键盘用户和 observer 没触发时留一条确定能用的路。
+ */
+function LogTableFooter({ loaded, total, hasMore, busy, onLoadMore }: {
+  loaded: number; total: number; hasMore: boolean; busy: boolean; onLoadMore: () => void;
+}) {
+  return (
+    <div className="lg-log-table-footer">
+      <span>
+        {total > 0 ? `已加载 ${loaded} / 共 ${total} 条` : `共 ${loaded} 条`}
+        {!hasMore && loaded > 0 ? ' · 已全部加载' : ''}
+      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {hasMore ? (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={onLoadMore}>
+            {busy ? <Spinner size={14} /> : null}
+            {busy ? '加载中' : '加载更多'}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function LogsView() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -235,11 +426,13 @@ export function LogsView() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [sessTotal, setSessTotal] = useState(0);
   const [sessPage, setSessPage] = useState(1);
   const [sessLoading, setSessLoading] = useState(false);
+  const [sessLoadingMore, setSessLoadingMore] = useState(false);
   const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
 
@@ -354,25 +547,37 @@ export function LogsView() {
   }, []);
 
   // 请求序号守卫：切筛选/翻页/tab 时丢弃过期响应，避免乱序覆盖（竞态）。
+  const rowsRef = useRef<LlmLogListItem[]>([]);
+  rowsRef.current = rows;
+  const sessionsRef = useRef<SessionItem[]>([]);
+  sessionsRef.current = sessions;
+
   const listSeq = useRef(0);
   const sessSeq = useRef(0);
   const insightSeq = useRef(0);
   const openedRequestIdRef = useRef('');
 
+  // 瀑布加载：第 1 页替换，后续页追加。
+  // 序号守卫仍然管用——切筛选/切 tab 会让 seq 前进，过期响应直接丢弃，不会把
+  // 上一套筛选的行追加到新列表后面（这是分页改累加最容易漏的一个竞态）。
   const loadList = useCallback(
     async (p: number) => {
       const seq = ++listSeq.current;
-      setLoading(true);
+      if (p === 1) setLoading(true); else setLoadingMore(true);
       const res = await getLogs({ ...baseParams, page: p, pageSize: PAGE_SIZE });
       if (seq !== listSeq.current) return;
       if (res.success && res.data) {
-        setRows(res.data.items ?? []);
+        const incoming = res.data.items ?? [];
+        setRows((current) => (p === 1 ? incoming : [...current, ...incoming]));
         setTotal(res.data.total ?? 0);
         setListError(null);
+        // 后端返回空页时把 total 拉回已加载数，避免 total 偏大导致哨兵反复触发。
+        if (incoming.length === 0 && p > 1) setTotal((t) => Math.min(t, rowsRef.current.length));
       } else {
         setListError(res.error?.message || '加载日志失败');
       }
       setLoading(false);
+      setLoadingMore(false);
     },
     [baseParams],
   );
@@ -380,17 +585,20 @@ export function LogsView() {
   const loadSessions = useCallback(
     async (p: number) => {
       const seq = ++sessSeq.current;
-      setSessLoading(true);
+      if (p === 1) setSessLoading(true); else setSessLoadingMore(true);
       const res = await getLogsSessions({ ...baseParams, page: p, pageSize: PAGE_SIZE });
       if (seq !== sessSeq.current) return;
       if (res.success && res.data) {
-        setSessions(res.data.items ?? []);
+        const incoming = res.data.items ?? [];
+        setSessions((current) => (p === 1 ? incoming : [...current, ...incoming]));
         setSessTotal(res.data.total ?? 0);
         setListError(null);
+        if (incoming.length === 0 && p > 1) setSessTotal((t) => Math.min(t, sessionsRef.current.length));
       } else {
         setListError(res.error?.message || '加载会话失败');
       }
       setSessLoading(false);
+      setSessLoadingMore(false);
     },
     [baseParams],
   );
@@ -406,10 +614,18 @@ export function LogsView() {
     setSeries(seriesResult.success && seriesResult.data ? seriesResult.data.items ?? [] : []);
   }, [baseParams]);
 
+  // 筛选一变就把累加结果清空并回到第 1 页；不清空的话新旧两套筛选的行会串在一起。
   useEffect(() => {
     setPage(1);
     setSessPage(1);
+    setRows([]);
+    setSessions([]);
   }, [baseParams]);
+  // 切 tab 同理：业务请求与上游调用共用 rows，留着上一个 tab 的行会先闪一屏错数据。
+  useEffect(() => {
+    setPage(1);
+    setRows([]);
+  }, [subtab]);
   useEffect(() => {
     if (subtab === 'generations' || subtab === 'upstream') loadList(page);
   }, [subtab, page, loadList]);
@@ -723,151 +939,6 @@ export function LogsView() {
   };
 
   // ── 表格渲染器 ──
-  function Table<T>({
-    tableKey,
-    columns,
-    items,
-    rowKey,
-    onRow,
-    render,
-    rowTone,
-    empty,
-  }: {
-    tableKey: LogsSubTab;
-    columns: ColumnDef[];
-    items: T[];
-    rowKey: (t: T, idx: number) => string;
-    onRow?: (t: T) => void;
-    render: (col: ColumnDef, t: T) => ReactNode;
-    rowTone?: (t: T) => 'error' | 'running' | null;
-    empty: ReactNode;
-  }) {
-    const preferences = normalizeLogTablePreferences(columns, tablePreferences[tableKey]);
-    const configuredColumns = resolveLogTableColumns(columns, preferences);
-    const visibleColumns = configuredColumns;
-    const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
-    // 表格最小宽度必须由列自身的下限推出来，不能写死。
-    // 以前这里对 generations 硬编码 1832px，无论列怎么配都强制横向滚动，
-    // 右侧列被切、齿轮压住表头，中间还空出大片没人用的宽度。
-    const columnMinWidth = (width: string): number => {
-      const minmax = /minmax\(\s*([\d.]+)px/.exec(width);
-      if (minmax) return Number(minmax[1]);
-      const px = /^([\d.]+)px$/.exec(width.trim());
-      if (px) return Number(px[1]);
-      return 96; // fr / auto 等无显式下限的列给一个保守值
-    };
-    const contentMinWidth = visibleColumns.reduce((sum, column) => sum + columnMinWidth(column.width), 0)
-      + (visibleColumns.length - 1) * 12 // column-gap
-      + 32 // 左右内边距
-      + 42; // 列设置齿轮
-    const tableMinWidth = isNarrowViewport ? NARROW_TABLE_MIN_WIDTH[tableKey] : contentMinWidth;
-    const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
-    const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
-    const updatePreferences = (value: LogTablePreferences) => setTablePreferences((current) => ({ ...current, [tableKey]: value }));
-    return (
-      <div className="lg-log-table-scroll">
-        <div className="lg-log-table" data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth || undefined }}>
-          <div
-            className="lg-log-table-head"
-            style={{
-              display: 'grid',
-              minHeight: 42,
-              flexShrink: 0,
-              gridTemplateColumns: gridCols,
-            }}
-          >
-            {visibleColumns.map((c) => (
-              <div
-                key={c.key}
-                title={c.tip}
-                style={{ textAlign: alignOf(c.align) }}
-              >
-                {c.label}
-                {c.tip ? <span className="lg-log-column-info" aria-hidden="true">i</span> : null}
-              </div>
-            ))}
-            <LogTableSettings
-              columns={columns}
-              preferences={preferences}
-              onChange={updatePreferences}
-              open={settingsOpen === tableKey}
-              onOpenChange={(open) => setSettingsOpen(open ? tableKey : null)}
-              tab={settingsTab}
-              onTabChange={setSettingsTab}
-            />
-          </div>
-          <div className="lg-log-table-body" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-            {items.length === 0
-              ? empty
-              : items.map((t, idx) => (
-                  <div
-                    key={rowKey(t, idx)}
-                    onClick={onRow ? () => onRow(t) : undefined}
-                    onKeyDown={onRow ? (event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        onRow(t);
-                      }
-                    } : undefined}
-                    role={onRow ? 'button' : undefined}
-                    tabIndex={onRow ? 0 : undefined}
-                    className={[
-                      'lg-log-table-row',
-                      onRow ? 'lg-row-clickable' : '',
-                      rowTone?.(t) ? `is-${rowTone(t)}` : '',
-                    ].filter(Boolean).join(' ')}
-                    style={{
-                      display: 'grid',
-                      minHeight: rowHeight,
-                      alignItems: 'center',
-                      cursor: onRow ? 'pointer' : 'default',
-                      gridTemplateColumns: gridCols,
-                    }}
-                  >
-                    {visibleColumns.map((c) => (
-                      <div key={c.key} style={{ minWidth: 0, textAlign: alignOf(c.align) }}>
-                        {render(c, t)}
-                      </div>
-                    ))}
-                    <span aria-hidden="true" />
-                  </div>
-                ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const Pager = ({ p, setP, tot, busy }: { p: number; setP: (n: number) => void; tot: number; busy: boolean }) => {
-    const pages = Math.max(1, Math.ceil(tot / PAGE_SIZE));
-    return (
-      <div
-        style={{
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '7px 12px',
-          fontSize: 'var(--fs-secondary)',
-          color: 'var(--text-muted)',
-          borderTop: '1px solid var(--border-subtle)',
-        }}
-      >
-        <span>
-          共 {tot} 条 · 第 {p}/{pages} 页
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Button variant="ghost" size="sm" disabled={busy || p <= 1} onClick={() => setP(p - 1)}>
-            <ChevronLeft size={14} />
-          </Button>
-          <Button variant="ghost" size="sm" disabled={busy || p >= pages} onClick={() => setP(p + 1)}>
-            <ChevronRight size={14} />
-          </Button>
-        </div>
-      </div>
-    );
-  };
-
   const emptyCell = (text: string, showActions = false) => (
     <div className="lg-log-empty">
       <strong>{text}</strong>
@@ -919,6 +990,17 @@ export function LogsView() {
     setFilterEnvironment('');
     setFilterPlatformId('');
   };
+  const hasMoreRows = rows.length < total;
+  const hasMoreSessions = sessions.length < sessTotal;
+  const loadMoreRows = useCallback(() => {
+    if (loading || loadingMore || !hasMoreRows) return;
+    setPage((p) => p + 1);
+  }, [hasMoreRows, loading, loadingMore]);
+  const loadMoreSessions = useCallback(() => {
+    if (sessLoading || sessLoadingMore || !hasMoreSessions) return;
+    setSessPage((p) => p + 1);
+  }, [hasMoreSessions, sessLoading, sessLoadingMore]);
+
   const successRate = summary?.total
     ? `${Math.round((summary.succeeded / summary.total) * 1000) / 10}%`
     : DASH;
@@ -1095,8 +1177,18 @@ export function LogsView() {
             {loading && rows.length === 0 ? (
               <SectionLoader text="正在加载…" />
             ) : (
-              <Table
+              <LogTable
                 tableKey="generations"
+                preferences={normalizeLogTablePreferences(GENERATIONS_COLUMNS, tablePreferences['generations'])}
+                onPreferencesChange={(value) => setTablePreferences((current) => ({ ...current, generations: value }))}
+                settingsOpen={settingsOpen === 'generations'}
+                onSettingsOpenChange={(open) => setSettingsOpen(open ? 'generations' : null)}
+                settingsTab={settingsTab}
+                onSettingsTabChange={setSettingsTab}
+                isNarrowViewport={isNarrowViewport}
+                hasMore={hasMoreRows}
+                loadingMore={loadingMore}
+                onLoadMore={loadMoreRows}
                 columns={GENERATIONS_COLUMNS}
                 items={rows}
                 rowKey={(it) => it.id}
@@ -1110,7 +1202,7 @@ export function LogsView() {
                 empty={emptyCell('该时间范围内还没有请求记录', true)}
               />
             )}
-            <Pager p={page} setP={setPage} tot={total} busy={loading} />
+            <LogTableFooter loaded={rows.length} total={total} hasMore={hasMoreRows} busy={loadingMore} onLoadMore={loadMoreRows} />
           </>
         )}
         {subtab === 'upstream' && (
@@ -1118,8 +1210,18 @@ export function LogsView() {
             {loading && rows.length === 0 ? (
               <SectionLoader text="正在加载…" />
             ) : (
-              <Table
+              <LogTable
                 tableKey="upstream"
+                preferences={normalizeLogTablePreferences(UPSTREAM_COLUMNS, tablePreferences['upstream'])}
+                onPreferencesChange={(value) => setTablePreferences((current) => ({ ...current, upstream: value }))}
+                settingsOpen={settingsOpen === 'upstream'}
+                onSettingsOpenChange={(open) => setSettingsOpen(open ? 'upstream' : null)}
+                settingsTab={settingsTab}
+                onSettingsTabChange={setSettingsTab}
+                isNarrowViewport={isNarrowViewport}
+                hasMore={hasMoreRows}
+                loadingMore={loadingMore}
+                onLoadMore={loadMoreRows}
                 columns={UPSTREAM_COLUMNS}
                 items={rows}
                 rowKey={(it) => it.id}
@@ -1128,7 +1230,7 @@ export function LogsView() {
                 empty={emptyCell('该时间范围内还没有上游调用记录', true)}
               />
             )}
-            <Pager p={page} setP={setPage} tot={total} busy={loading} />
+            <LogTableFooter loaded={rows.length} total={total} hasMore={hasMoreRows} busy={loadingMore} onLoadMore={loadMoreRows} />
           </>
         )}
         {subtab === 'sessions' && (
@@ -1136,8 +1238,18 @@ export function LogsView() {
             {sessLoading && sessions.length === 0 ? (
               <SectionLoader text="正在聚合会话…" />
             ) : (
-              <Table
+              <LogTable
                 tableKey="sessions"
+                preferences={normalizeLogTablePreferences(SESSIONS_COLUMNS, tablePreferences['sessions'])}
+                onPreferencesChange={(value) => setTablePreferences((current) => ({ ...current, sessions: value }))}
+                settingsOpen={settingsOpen === 'sessions'}
+                onSettingsOpenChange={(open) => setSettingsOpen(open ? 'sessions' : null)}
+                settingsTab={settingsTab}
+                onSettingsTabChange={setSettingsTab}
+                isNarrowViewport={isNarrowViewport}
+                hasMore={hasMoreSessions}
+                loadingMore={sessLoadingMore}
+                onLoadMore={loadMoreSessions}
                 columns={SESSIONS_COLUMNS}
                 items={sessions}
                 rowKey={(it, idx) => it.sessionId || String(idx)}
@@ -1145,7 +1257,7 @@ export function LogsView() {
                 empty={emptyCell('该时间范围内暂无带会话 ID 的请求')}
               />
             )}
-            <Pager p={sessPage} setP={setSessPage} tot={sessTotal} busy={sessLoading} />
+            <LogTableFooter loaded={sessions.length} total={sessTotal} hasMore={hasMoreSessions} busy={sessLoadingMore} onLoadMore={loadMoreSessions} />
           </>
         )}
       </Card>
