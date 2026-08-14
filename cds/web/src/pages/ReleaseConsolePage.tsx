@@ -161,7 +161,10 @@ export function ReleaseConsolePage(): JSX.Element {
   const [center, setCenter] = useState<CenterResponse | null>(null);
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [branchId, setBranchId] = useState('');
-  const [targetId, setTargetId] = useState('');
+  // 从发布中心跳过来时带着 target（与可选的 intent=rollback）——落地即选中那个目标，
+  // 不让用户在左栏里再找一遍。intent 只影响首屏提示，不代替回滚本身的二次确认。
+  const [targetId, setTargetId] = useState(params.get('target') || '');
+  const [arrivedIntent, setArrivedIntent] = useState(params.get('intent') || '');
   const [pane, setPane] = useState<RailPane>('history');
   const [sheet, setSheet] = useState<SheetKind>(null);
   /** 受保护环境的二次确认：存住待确认的目标 id，null 表示没有待确认动作。 */
@@ -199,6 +202,7 @@ export function ReleaseConsolePage(): JSX.Element {
       setCenter(res);
       setError('');
       // 只在当前选中项消失时清空，让 resolveSelectedTargetId 去挑；这里别自己挑 rows[0]。
+      // 从发布中心带过来的 target 也走这条：它在就保留，不在（换了项目）就让默认逻辑接管。
       setTargetId((current) => (res.rows.some((item) => item.target.id === current) ? current : ''));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -222,6 +226,19 @@ export function ReleaseConsolePage(): JSX.Element {
       })
       .catch(() => setBranches([]));
   }, [projectId, setParams]);
+
+  /**
+   * 选中的目标同步进 URL。发布中心跳过来带的是 `?target=`，这里把用户之后手动切换的
+   * 结果也写回去——否则刷新一下就跳回默认目标，分享的链接也指不到同一个环境。
+   */
+  useEffect(() => {
+    if (!targetId) return;
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('target', targetId);
+      return next;
+    }, { replace: true });
+  }, [targetId, setParams]);
 
   /* ── 实时：订阅当前 run 的 SSE ─────────────────────────── */
   useEffect(() => {
@@ -790,6 +807,24 @@ export function ReleaseConsolePage(): JSX.Element {
                 </div>
               </div>
             </section>
+
+            {/*
+              从发布中心点「回滚」跳过来。只做一件事：把人接住并指出下一步在哪。
+              真正的回滚仍然走既有的二次确认，这里不代替它——带个 query 参数就直接
+              退线上版本，那是把一个危险动作降级成一条链接。
+            */}
+            {arrivedIntent === 'rollback' && row ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-[10px] border border-amber-500/40 bg-amber-500/[0.06] px-3.5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+                <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 basis-full sm:basis-0">
+                  从发布中心过来回滚 {row.target.name}
+                  {row.canRollback
+                    ? '：在下方历史记录里选一版，点「回滚到此版本」；回滚同样要确认。'
+                    : '，但这个环境没有可回滚的历史版本。'}
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => setArrivedIntent('')}>知道了</Button>
+              </div>
+            ) : null}
 
             {blockedByOther && liveRow ? (
               <div className="flex shrink-0 items-center gap-2 rounded-lg border border-primary/30 bg-primary/[0.07] px-3 py-2 text-xs text-primary">

@@ -17,8 +17,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { LayoutPanelLeft, Plus, RefreshCw, Rocket, RotateCcw } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Plus, RefreshCw, Rocket } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
@@ -51,8 +51,10 @@ import { EnvironmentSidebar } from '@/pages/release-center/EnvironmentSidebar';
 import { EvidenceTab } from '@/pages/release-center/EvidenceTab';
 import { HealthTab } from '@/pages/release-center/HealthTab';
 import { OverviewTab } from '@/pages/release-center/OverviewTab';
+import { FleetMatrix } from '@/pages/release-center/FleetMatrix';
+import { buildFleetMetrics, buildFleetVerdict, toFleetEnv, type FleetSortKey } from '@/lib/releaseFleet';
 import { ReleaseTimeline, type TimelineFilter } from '@/pages/release-center/ReleaseTimeline';
-import { Chip, healthLabel, healthTone, formatResponseTime } from '@/pages/release-center/shared';
+import { formatDateTime } from '@/pages/release-center/shared';
 import {
   SiteWizardDialog,
   applyDiscoveredStrategy,
@@ -81,16 +83,40 @@ type LoadState =
   | { status: 'error'; message: string }
   | { status: 'ok'; center: CenterResponse; hosts: RemoteHostOption[] };
 
-type DetailTab = 'overview' | 'history' | 'config' | 'evidence' | 'auto' | 'health';
+/**
+ * 分区。照设计稿 design_handoff_release_center 的五段式——它与旧的六个 tab 不是
+ * 换名字：旧结构是「先选一个目标，再看它的六个页签」（控制台视角），新结构第一屏
+ * 是横着比所有环境的矩阵（治理视角），后四段才落到单个环境上。
+ */
+type CenterSection = 'fleet' | 'config' | 'rules' | 'health' | 'evidence';
 
-const DETAIL_TABS: Array<{ id: DetailTab; label: string }> = [
-  { id: 'overview', label: '概览' },
-  { id: 'history', label: '发布历史' },
-  { id: 'config', label: '配置' },
-  { id: 'evidence', label: '日志与证据' },
-  { id: 'auto', label: '自动发布' },
+const SECTIONS: Array<{ id: CenterSection; label: string }> = [
+  { id: 'fleet', label: '全环境矩阵' },
+  { id: 'config', label: '环境与配置' },
+  { id: 'rules', label: '自动发布规则' },
   { id: 'health', label: '健康监测' },
+  { id: 'evidence', label: '证据归档' },
 ];
+
+/**
+ * 宽屏判定走**实测宽度**而不是媒体查询：设计稿的阈值是 1264px，来源是
+ * 「1280 视口减掉滚动条实测 1271」。媒体查询量的是视口，这里量的是内容区，
+ * 左侧还有 72px 图标栏——两者对不上会在 1280 那一档抖动。
+ */
+function useMeasuredWide(threshold = 1264): [React.RefObject<HTMLDivElement>, boolean] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    const apply = (): void => setWide(node.offsetWidth >= threshold);
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [threshold]);
+  return [ref, wide];
+}
 
 export function ReleaseCenterPage(): JSX.Element {
   const [searchParams] = useSearchParams();
@@ -114,7 +140,11 @@ export function ReleaseCenterPage(): JSX.Element {
   >(() => (deepLink.targetId && deepLink.branchId && deepLink.commitSha
     ? { targetId: deepLink.targetId, branchId: deepLink.branchId, commitSha: deepLink.commitSha }
     : null));
-  const [tab, setTab] = useState<DetailTab>('overview');
+  const navigate = useNavigate();
+  const [section, setSection] = useState<CenterSection>('fleet');
+  const [fleetSort, setFleetSort] = useState<FleetSortKey>('severity');
+  const [rootRef, wide] = useMeasuredWide();
+  const configCardRef = useRef<HTMLDivElement>(null);
   const [historyFilter, setHistoryFilter] = useState<TimelineFilter>('all');
   const [toast, setToast] = useState('');
 
@@ -473,6 +503,52 @@ export function ReleaseCenterPage(): JSX.Element {
     }
   };
 
+  /* ── 全环境矩阵的派生值 ─────────────────────────────────────────── */
+
+  const fleetEnvs = useMemo(() => rows.map(toFleetEnv), [rows]);
+  const verdict = useMemo(() => buildFleetVerdict(fleetEnvs, nowMs), [fleetEnvs, nowMs]);
+  const metrics = useMemo(() => buildFleetMetrics(fleetEnvs), [fleetEnvs]);
+
+  /** 分区角标：只显示能算出来的数，算不出就不显示这个角标。 */
+  const sectionBadge = (id: CenterSection): string => {
+    if (id === 'fleet') return `${rows.length} 个`;
+    if (id === 'health') {
+      const unmonitored = fleetEnvs.filter((env) => env.health === 'unmonitored').length;
+      return unmonitored > 0 ? `${unmonitored} 未监测` : '';
+    }
+    return '';
+  };
+
+  /* ── 两页之间怎么跳 ─────────────────────────────────────────────────
+   *
+   * 发布中心「看」，发布控制台「做」。三条规则：
+   *
+   * 1. 顶栏主按钮进控制台，只带项目 —— 用户还没决定发哪个环境。
+   * 2. 矩阵行上的发布 / 提升 / 回滚**带上目标**，控制台落地即选中，不用重选；
+   *    回滚再带 intent，让控制台知道用户是来退版本的，由它承接二次确认。
+   * 3. 下钻（点行、点判断句里的环境名）**不跳页**，只切到本页的「环境与配置」——
+   *    看配置不该把人甩到另一个页面去。
+   *
+   * 参数一律走 query，不进路径：控制台是一个页面，不是每个环境一个路由。
+   */
+  const consoleHref = (targetId?: string, intent?: 'rollback'): string => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project', projectId);
+    if (targetId) params.set('target', targetId);
+    if (intent) params.set('intent', intent);
+    const query = params.toString();
+    return query ? `/release-console?${query}` : '/release-console';
+  };
+
+  const inspectEnv = (envId: string): void => {
+    setSelectedTargetId(envId);
+    setSection('config');
+  };
+
+  const executeInConsole = (envId: string, intent: 'deploy' | 'promote' | 'rollback'): void => {
+    navigate(consoleHref(envId, intent === 'rollback' ? 'rollback' : undefined));
+  };
+
   const historyRuns = historyFilter === 'failed'
     ? selectedRuns.filter((run) => run.status === 'failed' || run.status === 'rollback_failed')
     : selectedRuns;
@@ -483,237 +559,261 @@ export function ReleaseCenterPage(): JSX.Element {
       wide
       topbar={(
         <TopBar
-          left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布中心' }]} />}
+          left={(
+            <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布中心' }]} />
+              <span className="cds-ident text-[11.5px] text-muted-foreground">release center · 环境生命周期</span>
+              {/* 项目胶囊：这一页所有数字都在某个项目的语境里，项目必须一眼可见可换。 */}
+              {projects.length > 0 ? (
+                <select
+                  value={projectId}
+                  aria-label="项目"
+                  onChange={(event) => {
+                    const next = event.target.value.trim() || 'default';
+                    setProjectId(next);
+                    setSelectedTargetId('');
+                    setDraft((current) => ({ ...current, projectId: next }));
+                  }}
+                  className="h-7 max-w-[220px] rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-[12.5px] outline-none focus:border-[hsl(var(--hairline-strong))]"
+                >
+                  {!projects.some((project) => project.id === projectId) ? (
+                    <option value={projectId}>{projectId}（未知项目）</option>
+                  ) : null}
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name && project.name !== project.id ? `${project.name}（${project.id}）` : project.id}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </span>
+          )}
           right={(
             <>
               <PaletteHint />
-              {/* 发布控制台：同一批数据的「专注发布」视图，带上当前项目免得进去重选。 */}
-              <Button variant="outline" size="sm" asChild>
-                <Link to={projectId ? `/release-console?project=${encodeURIComponent(projectId)}` : '/release-console'}>
-                  <LayoutPanelLeft />
-                  发布控制台
-                </Link>
-              </Button>
               <Button variant="outline" size="sm" onClick={() => void load()}>
                 <RefreshCw />
                 刷新
+              </Button>
+              <Button variant="outline" size="sm" onClick={openCreateWizard}>
+                <Plus />
+                新建环境
+              </Button>
+              {/*
+                去发布控制台的主入口。发布中心不执行发布——所有「真的要发了」的动作
+                都在控制台完成，所以这个按钮是主按钮，不是一条不起眼的链接。
+                带上当前项目，进去不用重选。
+              */}
+              <Button size="sm" asChild>
+                <Link to={consoleHref()}>
+                  <Rocket />
+                  发布控制台
+                </Link>
               </Button>
             </>
           )}
         />
       )}
     >
-      <Workspace fluid>
-        {/* 移动端整页自然流竖滚；lg 起切回填满视口、各窗格自己滚。 */}
-        <div
-          /*
-           * 桌面端固定一屏：头部 shrink-0，详情区吃掉剩余高度并在自己那一格里滚。
-           *
-           * 这里曾经改成整页可滚，因为顶部的「站点发布」头部 + main 分支版本流水轴
-           * 把首屏吃掉近一半，下面的详情再也推不上去（用户原话「像被焊死了一样」）。
-           * 真正的病根是顶部太占地方，不是不该固定一屏——版本流水轴删掉、头部压成
-           * 一行之后，固定一屏重新成立，也不用再上下拖。
-           *
-           * 注意：页内面板一律不许 overscroll-behavior: contain（见
-           * tests/web/overscroll-containment.test.ts）。当初「滚不动」的直接原因是
-           * 它切断了滚动链，与这里 fill 还是 scroll 是两件事。
-           */
-          className="flex min-h-0 flex-col gap-4 overflow-y-auto lg:h-full lg:overflow-hidden"
-        >
-          {/* 头部压成一行：标题与说明同排。原来说明独占一行 + p-4，
-              两块顶部加起来吃掉近 40% 首屏，正是「头大的矮子」那个体感。 */}
-          <header className="cds-surface-raised cds-hairline shrink-0 rounded-[14px] px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-                <h1 className="text-base font-semibold">站点发布</h1>
-                <p className="min-w-0 text-[12.5px] text-muted-foreground">
-                  谁停在哪个提交、健不健康、坏了退哪一版。
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">项目</span>
-                  {projects.length > 0 ? (
-                    <select
-                      value={projectId}
-                      onChange={(event) => {
-                        const next = event.target.value.trim() || 'default';
-                        setProjectId(next);
-                        setSelectedTargetId('');
-                        setDraft((current) => ({ ...current, projectId: next }));
-                      }}
-                      className="h-9 w-56 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
-                    >
-                      {/* 当前 id 不在项目列表里（历史记忆值/敲错的旧值）也保留成一项，
-                          并明示「未知」，不再让用户面对莫名其妙的空列表 */}
-                      {!projects.some((project) => project.id === projectId) ? (
-                        <option value={projectId}>{projectId}（未知项目）</option>
-                      ) : null}
-                      {projects.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.name && project.name !== project.id ? `${project.name}（${project.id}）` : project.id}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={projectId}
-                      onChange={(event) => {
-                        const next = event.target.value.trim() || 'default';
-                        setProjectId(next);
-                        setSelectedTargetId('');
-                        setDraft((current) => ({ ...current, projectId: next }));
-                      }}
-                      className="h-9 w-48 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 font-mono text-sm outline-none focus:border-primary/60"
-                    />
-                  )}
-                </label>
-                <Button onClick={openCreateWizard}>
-                  <Plus />
-                  添加环境
-                </Button>
-              </div>
-            </div>
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        <div ref={rootRef} className="flex h-full min-h-0 flex-col">
+          {/* 分区导航。设计稿是 sticky；这一页在 CDS 里是固定外壳 + 内容区内滚，
+              导航天然常驻，效果相同而且不会在滚动时抖。 */}
+          <nav className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[hsl(var(--hairline))] px-6 py-2.5">
+            {SECTIONS.map((item) => {
+              const badge = sectionBadge(item.id);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={section === item.id}
+                  onClick={() => setSection(item.id)}
+                  className={`flex h-8 items-center gap-1.5 rounded-lg px-3 text-[12.5px] transition-colors duration-150 ${
+                    section === item.id
+                      ? 'bg-primary/[0.12] font-semibold text-primary'
+                      : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'
+                  }`}
+                >
+                  {item.label}
+                  {badge ? <span className="cds-ident text-[10.5px] opacity-70">{badge}</span> : null}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5">
             {toast ? (
-              <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
+              <div className="mb-4 rounded-[10px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-2.5 text-sm">
+                {toast}
+              </div>
             ) : null}
-          </header>
 
-          {state.status === 'loading' ? <LoadingBlock label="正在加载发布环境" /> : null}
-          {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+            {state.status === 'loading' ? <LoadingBlock label="正在加载发布环境" /> : null}
+            {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
 
-          {state.status === 'ok' && rows.length === 0 ? (
-            <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} />
-          ) : null}
+            {state.status === 'ok' && rows.length === 0 ? (
+              <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} />
+            ) : null}
 
-          {state.status === 'ok' && rows.length > 0 ? (
-            <>
-              {/* 手机：单列自然堆叠，高度由内容决定（flex-1 + basis 0 在无界高度里会塌成 0）。
-                  lg 起才切回主从网格并填满剩余高度。 */}
-              <div className="flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[288px_minmax(0,1fr)] lg:items-stretch">
-                <EnvironmentSidebar
-                  sections={sections}
-                  selectedTargetId={effectiveTargetId}
-                  branch={branchLabel}
-                  archivedTargets={archivedTargets}
-                  nowMs={nowMs}
-                  onSelect={(id) => { setSelectedTargetId(id); setTab('overview'); }}
-                  onAdd={openCreateWizard}
-                />
-
-                {selectedRow ? (
-                  <section className="cds-surface-raised cds-hairline flex flex-col overflow-hidden rounded-lg lg:h-full lg:min-h-0">
-                    <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 px-4 pb-3 pt-4">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="truncate text-lg font-semibold">{selectedRow.target.name}</h2>
-                          <Chip tone={healthTone(selectedRow.healthStatus)}>
-                            {healthLabel(selectedRow.healthStatus)}
-                            {selectedRow.health?.responseTimeMs ? ` · ${formatResponseTime(selectedRow.health.responseTimeMs)}` : ''}
-                          </Chip>
-                          {selectedRow.target.isCanonical !== false ? <Chip>主目标</Chip> : null}
-                          {!selectedRow.target.isEnabled ? <Chip tone="warn">已停用</Chip> : null}
-                        </div>
-                        <div className="mt-1.5 truncate text-xs text-muted-foreground">
-                          {publicUrlOf(selectedRow) || '未配置上线地址'}
-                          {selectedRow.target.ssh ? ` · ${selectedRow.target.ssh.user}@${selectedRow.target.ssh.host} · ${selectedRow.target.ssh.appPath}` : ''}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button onClick={() => setReleaseIntent({ row: selectedRow })}>
-                          <Rocket />
-                          发布新版本
-                        </Button>
-                        <Button variant="outline" onClick={() => openRollback(selectedRow)} disabled={!selectedRow.canRollback}>
-                          <RotateCcw />
-                          回滚
-                        </Button>
-                      </div>
+            {state.status === 'ok' && rows.length > 0 ? (
+              <div className="flex flex-col gap-[18px]">
+                {/* ══ 监控条：常驻所有分区，页面第一块 ══ */}
+                <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[14px] border px-[26px] py-[22px] max-lg:px-4">
+                  <div className="flex min-w-0 flex-1 basis-[320px] items-start gap-3">
+                    <span
+                      className={`mt-2 h-[9px] w-[9px] shrink-0 rounded-full ${
+                        verdict.tone === 'bad' ? 'bg-red-500 cds-verdict-pulse'
+                          : verdict.tone === 'warn' ? 'bg-amber-500 cds-verdict-pulse' : 'bg-emerald-500'
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[18px] font-bold leading-[1.45] max-2xl:text-[16.5px] max-lg:text-[15px]">
+                        {verdict.segments.map((seg, index) => (seg.envId ? (
+                          <button
+                            key={`${seg.text}-${index}`}
+                            type="button"
+                            onClick={() => inspectEnv(seg.envId as string)}
+                            className="text-primary underline decoration-dotted underline-offset-4"
+                          >
+                            {seg.text}
+                          </button>
+                        ) : (
+                          <span key={`${seg.text}-${index}`}>{seg.text}</span>
+                        )))}
+                      </p>
+                      <p className="mt-1.5 cds-ident text-xs text-muted-foreground">
+                        数据截至 {formatDateTime(new Date(nowMs).toISOString())} · {verdict.gap}
+                      </p>
                     </div>
+                  </div>
 
-                    <nav className="flex shrink-0 gap-0.5 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3">
-                      {DETAIL_TABS.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => setTab(item.id)}
-                          className={`shrink-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] transition-colors ${
-                            tab === item.id
-                              ? 'border-primary font-semibold text-foreground'
-                              : 'border-transparent text-muted-foreground hover:text-foreground'
-                          }`}
+                  {/* 四个归因指标。算不出的那一块不会出现在数组里，这里不占位。 */}
+                  {metrics.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 max-lg:basis-full">
+                      {metrics.map((metric) => (
+                        <div
+                          key={metric.key}
+                          className="min-w-[132px] flex-1 rounded-[10px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 max-lg:basis-[120px]"
                         >
-                          {item.label}
-                        </button>
+                          <div className="text-[10.5px] text-muted-foreground">{metric.label}</div>
+                          <div className={`cds-ident text-base font-bold ${
+                            metric.tone === 'bad' ? 'text-red-600 dark:text-red-400'
+                              : metric.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : ''
+                          }`}>
+                            {metric.value}
+                          </div>
+                          <div className="truncate text-[10.5px] text-muted-foreground" title={metric.attribution}>
+                            {metric.attribution}
+                          </div>
+                        </div>
                       ))}
-                    </nav>
-
-                    {/* 主产物区：移动端给最小高度避免塌成 0，lg 起 flex-1 填满整列。 */}
-                    <div
-                      className="min-h-[320px] p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
-                    >
-                      {tab === 'overview' ? (
-                        <OverviewTab
-                          row={selectedRow}
-                          runs={selectedRuns}
-                          commitMeta={commitMeta}
-                          branch={branchLabel}
-                          nowMs={nowMs}
-                          retryingRunId={retryingRunId}
-                          promoting={promoting}
-                          onPromote={() => void startPromotion(selectedRow)}
-                          onOpenLogs={setLogRun}
-                          onRetry={(run) => void retryRelease(run)}
-                          onRollback={(run) => openRollback(selectedRow, run)}
-                          onSeeAll={() => setTab('history')}
-                          onOpenConfig={() => setTab('config')}
-                        />
-                      ) : null}
-
-                      {tab === 'history' ? (
-                        <ReleaseTimeline
-                          title="发布历史"
-                          runs={historyRuns}
-                          row={selectedRow}
-                          commitMeta={commitMeta}
-                          nowMs={nowMs}
-                          liveReleaseId={selectedRow.currentVersion}
-                          retryingRunId={retryingRunId}
-                          filter={historyFilter}
-                          onFilter={setHistoryFilter}
-                          onOpenLogs={setLogRun}
-                          onRetry={(run) => void retryRelease(run)}
-                          onRollback={(run) => openRollback(selectedRow, run)}
-                        />
-                      ) : null}
-
-                      {tab === 'config' ? (
-                        <ConfigTab
-                          row={selectedRow}
-                          publicUrl={publicUrlOf(selectedRow)}
-                          onConfigure={() => openConfigureWizard(selectedRow.target)}
-                          onArchive={() => setArchiveState({ row: selectedRow, reason: '' })}
-                        />
-                      ) : null}
-
-                      {tab === 'evidence' ? <EvidenceTab row={selectedRow} runs={selectedRuns} /> : null}
-
-                      {tab === 'auto' ? (
-                        <AutoReleaseTab
-                          row={selectedRow}
-                          otherRows={otherRows}
-                          branches={branches}
-                          onToast={setToast}
-                        />
-                      ) : null}
-
-                      {tab === 'health' ? <HealthTab row={selectedRow} nowMs={nowMs} /> : null}
                     </div>
-                  </section>
+                  ) : null}
+
+                  {verdict.actionEnvId ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => inspectEnv(verdict.actionEnvId as string)}
+                      className="h-9 shrink-0 border-red-500/40 bg-red-500/[0.08] text-red-600 hover:bg-red-500/[0.14] dark:text-red-400 max-lg:w-full"
+                    >
+                      去处理 {fleetEnvs.find((env) => env.id === verdict.actionEnvId)?.name || verdict.actionEnvId}
+                    </Button>
+                  ) : null}
+                </section>
+
+                {/* ══ 分区一：全环境矩阵 ══ */}
+                {section === 'fleet' ? (
+                  <FleetMatrix
+                    envs={fleetEnvs}
+                    sort={fleetSort}
+                    onSort={setFleetSort}
+                    nowMs={nowMs}
+                    wide={wide}
+                    onInspect={inspectEnv}
+                    onExecute={executeInConsole}
+                  />
+                ) : null}
+
+                {/* ══ 分区二~五：都落到单个环境上，左边一列选环境 ══ */}
+                {section !== 'fleet' ? (
+                  <div className={wide ? 'grid grid-cols-[260px_minmax(0,1fr)] items-start gap-4' : 'flex flex-col gap-4'}>
+                    <EnvironmentSidebar
+                      sections={sections}
+                      selectedTargetId={effectiveTargetId}
+                      branch={branchLabel}
+                      archivedTargets={archivedTargets}
+                      nowMs={nowMs}
+                      onSelect={(id) => setSelectedTargetId(id)}
+                      onAdd={openCreateWizard}
+                    />
+
+                    {selectedRow ? (
+                      <div className="flex min-w-0 flex-col gap-4">
+                        {section === 'config' ? (
+                          <>
+                            <OverviewTab
+                              row={selectedRow}
+                              runs={selectedRuns}
+                              commitMeta={commitMeta}
+                              branch={branchLabel}
+                              nowMs={nowMs}
+                              retryingRunId={retryingRunId}
+                              promoting={promoting}
+                              onPromote={() => void startPromotion(selectedRow)}
+                              onOpenLogs={setLogRun}
+                              onRetry={(run) => void retryRelease(run)}
+                              onRollback={(run) => openRollback(selectedRow, run)}
+                              onSeeAll={() => setSection('evidence')}
+                              onOpenConfig={() => configCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                            />
+                            <div ref={configCardRef}>
+                              <ConfigTab
+                                row={selectedRow}
+                                publicUrl={publicUrlOf(selectedRow)}
+                                onConfigure={() => openConfigureWizard(selectedRow.target)}
+                                onArchive={() => setArchiveState({ row: selectedRow, reason: '' })}
+                              />
+                            </div>
+                          </>
+                        ) : null}
+
+                        {section === 'rules' ? (
+                          <AutoReleaseTab
+                            row={selectedRow}
+                            otherRows={otherRows}
+                            branches={branches}
+                            onToast={setToast}
+                          />
+                        ) : null}
+
+                        {section === 'health' ? <HealthTab row={selectedRow} nowMs={nowMs} /> : null}
+
+                        {section === 'evidence' ? (
+                          <>
+                            <ReleaseTimeline
+                              title="发布历史"
+                              runs={historyRuns}
+                              row={selectedRow}
+                              commitMeta={commitMeta}
+                              nowMs={nowMs}
+                              liveReleaseId={selectedRow.currentVersion}
+                              retryingRunId={retryingRunId}
+                              filter={historyFilter}
+                              onFilter={setHistoryFilter}
+                              onOpenLogs={setLogRun}
+                              onRetry={(run) => void retryRelease(run)}
+                              onRollback={(run) => openRollback(selectedRow, run)}
+                            />
+                            <EvidenceTab row={selectedRow} runs={selectedRuns} />
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-            </>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       </Workspace>
 

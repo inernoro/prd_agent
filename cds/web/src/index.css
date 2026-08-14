@@ -3184,11 +3184,23 @@
     to { opacity: 1; transform: none; }
   }
 
+  /* 发布中心监控条的状态点：有事要处理时透明度呼吸一下（设计稿 softPulse）。
+     全绿时不动——一直在闪就变成背景噪音，看久了反而没人注意。 */
+  .cds-verdict-pulse {
+    animation: cds-verdict-pulse 2.2s ease-in-out infinite;
+  }
+
+  @keyframes cds-verdict-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .cds-progress-fill,
     .cds-progress-fill--running,
     .cds-status-pulse,
-    .cds-log-line {
+    .cds-log-line,
+    .cds-verdict-pulse {
       animation: none;
       transition: none;
     }

@@ -75,7 +75,11 @@ describe('滚动链不许被页内面板切断', () => {
    */
   it('发布中心桌面端固定一屏', () => {
     const src = fs.readFileSync(path.join(WEB, 'pages/ReleaseCenterPage.tsx'), 'utf8');
-    expect(src).toContain('overflow-y-auto lg:h-full lg:overflow-hidden');
+    // 2026-08-14 分区重构后换了形态：外壳固定一屏（--fill），分区导航常驻，
+    // 内容区在自己那一格里滚。用户「应该固定一屏」的要求不变。
+    expect(src).toContain('cds-workspace--fill');
+    expect(src).toContain('flex h-full min-h-0 flex-col');
+    expect(src).toContain('min-h-0 flex-1 overflow-y-auto');
   });
 
   /**

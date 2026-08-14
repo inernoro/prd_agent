@@ -66,9 +66,33 @@ describe('发布控制台 · 路由与入口接线', () => {
     expect(read('lib/agent-onboarding.ts')).toContain("startsWith('/release-console')");
   });
 
-  it('发布中心有进这一页的入口，并把当前项目带过去', () => {
-    expect(CENTER).toContain('/release-console?project=');
-    expect(CENTER).toContain('encodeURIComponent(projectId)');
+  /**
+   * 发布中心 → 发布控制台的跳转契约（2026-08-14 按设计稿重构后）。
+   * 三个参数都在 consoleHref 一处拼：project 必带，target 让控制台落地即选中，
+   * intent=rollback 让它知道用户是来退版本的。散成三处拼字符串必然漂移。
+   */
+  it('发布中心跳过来时带项目、目标与意图，且只有一处拼参数', () => {
+    expect(CENTER).toContain("const consoleHref = (targetId?: string, intent?: 'rollback')");
+    expect(CENTER).toContain("params.set('project', projectId)");
+    expect(CENTER).toContain("params.set('target', targetId)");
+    expect(CENTER).toContain("params.set('intent', intent)");
+    expect(CENTER).toContain('/release-console?');
+    // 矩阵行上的执行动作必须走这一处，不许另拼一条 URL
+    expect(CENTER).toContain('navigate(consoleHref(envId,');
+    // 模板字面量只许出现一次——就是 consoleHref 自己那一处
+    expect(CENTER.match(/\/release-console\?\$\{/g) || [], '不许在别处再拼一遍 URL').toHaveLength(1);
+  });
+
+  /** 控制台这一侧要接住：target 落地即选中，intent 只提示不代替二次确认。 */
+  it('控制台读 target 与 intent，回滚仍要走确认', () => {
+    expect(PAGE).toContain("useState(params.get('target') || '')");
+    expect(PAGE).toContain("useState(params.get('intent') || '')");
+    expect(PAGE).toContain("arrivedIntent === 'rollback' && row");
+    // 带个 query 就直接退线上版本，那是把危险动作降级成一条链接
+    const strip = PAGE.slice(PAGE.indexOf("arrivedIntent === 'rollback' && row"), PAGE.indexOf('{blockedByOther'));
+    expect(strip).not.toContain('rollbackRun(');
+    // 用户手动切目标后也要写回 URL，否则刷新跳回默认目标
+    expect(PAGE).toContain("next.set('target', targetId)");
   });
 });
 

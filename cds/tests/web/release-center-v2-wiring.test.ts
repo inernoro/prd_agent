@@ -211,19 +211,24 @@ describe('发布中心 v2 · 变更历史的字段形状要跨层对齐', () => 
   });
 });
 
-describe('发布中心 v2 · 就地发布不许再把人踢走', () => {
-  it('「发布新版本」开的是本页抽屉，不是跳去分支列表', () => {
-    expect(page).toContain('setReleaseIntent({ row: selectedRow })');
-    expect(jsxElement(page, 'StartReleaseDialog')).toContain('intent={releaseIntent}');
-    // 旧版是 <Link to={`/branch-list?project=...`}>立即发布</Link>。
-    expect(page).not.toContain('/branch-list?project=');
+describe('发布中心 v2 · 执行动作一律交给发布控制台', () => {
+  /**
+   * 2026-08-14 按设计稿重构后口径反过来了：以前是「就地发布，别把人踢走」，
+   * 现在是「发布中心不执行发布」——它是治理台，一次发布归控制台。
+   * 两次并不矛盾：当初反对的是「跳去分支列表让人自己找」，现在跳的是
+   * 带着目标的控制台，落地即选中，比就地开抽屉更连贯。
+   */
+  it('矩阵行的发布 / 提升 / 回滚都跳控制台，不在本页开发布抽屉', () => {
+    const matrix = read('pages/release-center/FleetMatrix.tsx');
+    expect(matrix).toContain("onExecute(env.id, promote ? 'promote' : 'deploy')");
+    expect(matrix).toContain("onExecute(env.id, 'rollback')");
+    // 本页不许再有第二条执行路径
+    expect(matrix).not.toContain('apiRequest');
   });
 
-  it('抽屉自己跑发布前检查 + 开始发布，两个端点都在', () => {
-    expect(startDialog).toContain('/preflight');
-    expect(startDialog).toContain('/runs');
-    // 有阻断项就不许发：canStart 必须看 blocking。
-    expect(startDialog).toContain('blocking.length === 0');
+  it('下钻不跳页：点行 / 点判断句里的环境名只切到本页的环境与配置', () => {
+    expect(page).toContain('const inspectEnv = (envId: string): void => {');
+    expect(page).toContain("setSection('config')");
   });
 });
 
@@ -239,7 +244,7 @@ describe('发布中心 v2 · 预览地址推导只有一份', () => {
 });
 
 describe('发布中心 v2 · 布局纪律', () => {
-  it('桌面固定一屏，窄屏自然流兜底', () => {
+  it.skip('桌面固定一屏，窄屏自然流兜底（已被 2026-08-14 的分区重构取代，见下一条）', () => {
     // 桌面端固定一屏：头部 shrink-0，详情区吃掉剩余高度、在自己那一格里滚。
     //
     // 中间反复过一轮，记录清楚免得再来回：08-13 因为「下半部分拖不上去、像被焊死」
@@ -264,5 +269,32 @@ describe('发布中心 v2 · 布局纪律', () => {
       expect(source).not.toMatch(/#0[a-f0-9]{5}\b/i);
       expect(source).not.toMatch(/var\(--[a-z-]+,\s*#/i);
     }
+  });
+});
+
+/**
+ * 2026-08-14 按设计稿 design_handoff_release_center 重构：五分区 + 常驻监控条。
+ * 宽屏判定走**实测宽度**（ResizeObserver，阈值 1264），不是媒体查询——
+ * 媒体查询量视口，这一页量的是内容区，左边还有 72px 图标栏，两者在 1280 那档对不上。
+ */
+describe('发布中心 · 分区外壳', () => {
+  it('五个分区齐全，且第一屏是矩阵不是单目标详情', () => {
+    for (const label of ['全环境矩阵', '环境与配置', '自动发布规则', '健康监测', '证据归档']) {
+      expect(page, `缺分区 ${label}`).toContain(`label: '${label}'`);
+    }
+    expect(page).toContain("useState<CenterSection>('fleet')");
+  });
+
+  it('宽屏判定用实测宽度，不用媒体查询', () => {
+    expect(page).toContain('new ResizeObserver');
+    expect(page).toContain('node.offsetWidth >= threshold');
+    expect(page).toContain('useMeasuredWide(threshold = 1264)');
+  });
+
+  it('监控条常驻：判断句 + 归因指标都走可单测的纯函数', () => {
+    expect(page).toContain('buildFleetVerdict(fleetEnvs, nowMs)');
+    expect(page).toContain('buildFleetMetrics(fleetEnvs)');
+    // 判据不许在 JSX 里再算一遍
+    expect(page).not.toContain("filter((env) => env.health === 'failed').length > 0 ?");
   });
 });
