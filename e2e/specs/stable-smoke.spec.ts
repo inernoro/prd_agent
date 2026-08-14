@@ -2968,7 +2968,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
         const log = await waitForGatewayLog(request, `${runId}-0-0`);
         expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
-        expect(['openrouter-image', 'openai'], '多图逻辑模型只能走保留参考图语义的图片协议').toContain(log.protocol);
+        expect(
+          ['openrouter-image', 'openai', 'openai-compatible'],
+          '多图逻辑模型只能走保留参考图语义的图片协议',
+        ).toContain(log.protocol);
         const requestBody = JSON.parse(log.requestBodyRedacted || '{}') as {
           input_references?: Array<{ type?: string; image_url?: { url?: string } }>;
           content_type?: string;

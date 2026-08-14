@@ -79,7 +79,11 @@ const requiredCaseIdsByEnvironment = Object.fromEntries(selectedEnvironments.map
     && executionSummary?.productionSafetyGate?.restricted === true
     ? executionSummary.productionSafetyGate.grep
     : '';
-  const effectiveGrep = productionReadOnlyGrep || execution?.grep || grepExpression;
+  const productionRestrictedInDualRun = targetEnvironment === 'production'
+    && selectedEnvironments.length > 1
+    && executionSummary?.productionSafetyGate?.restricted === true;
+  const executionGrep = productionRestrictedInDualRun ? '' : execution?.grep;
+  const effectiveGrep = productionReadOnlyGrep || executionGrep || grepExpression;
   return [
     targetEnvironment,
     effectiveGrep
