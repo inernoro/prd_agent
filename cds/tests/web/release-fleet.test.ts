@@ -173,3 +173,38 @@ describe('排序', () => {
     expect(sortFleet(list, 'behind').map((e) => e.id)).toEqual(['many', 'zero', 'unknown']);
   });
 });
+
+/**
+ * 量纲换算的回归。后端 availability24h 是**比率 0..1**，这一层统一成百分数。
+ * 漏乘 100 会把 100% 显示成 1.00%——它看着像个正常数字，不会有人怀疑，
+ * 只会以为线上可用率崩了。2026-08-14 真实发生过一次。
+ */
+describe('可用率量纲：后端给比率，这一层换成百分数', () => {
+  it('0.99xx 的比率换算成 99.xx%，不是 0.99%', async () => {
+    const { toFleetEnv } = await import('../../web/src/lib/releaseFleet.js');
+    const row = {
+      target: { id: 't', name: 'prod', environment: 'production', isCanonical: true, isEnabled: true, type: 'ssh' },
+      currentVersion: '', currentCommit: 'abc1234', healthStatus: 'healthy',
+      health: { status: 'healthy', url: 'u', checkedAt: '', availability24h: 0.9986 },
+      canRollback: false,
+    } as never;
+    expect(toFleetEnv(row).availability24h).toBeCloseTo(99.86, 2);
+    expect(fleetAvailabilityText(toFleetEnv(row))).toBe('99.86%');
+  });
+
+  it('没有探测记录时仍是 null，不是 0', async () => {
+    const { toFleetEnv } = await import('../../web/src/lib/releaseFleet.js');
+    const row = {
+      target: { id: 't', name: 'x', environment: 'other', isEnabled: true, type: 'ssh' },
+      currentVersion: '', currentCommit: '', healthStatus: 'unknown', canRollback: false,
+    } as never;
+    expect(toFleetEnv(row).availability24h).toBeNull();
+  });
+});
+
+describe('落后最多：全都追平时不出这一块', () => {
+  it('最大值是 0 时整块不渲染', () => {
+    const metrics = buildFleetMetrics([env({ behindMain: 0 }), env({ id: 'b', behindMain: 0 })]);
+    expect(metrics.find((m) => m.key === 'behind')).toBeUndefined();
+  });
+});

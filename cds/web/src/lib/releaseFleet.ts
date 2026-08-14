@@ -47,7 +47,14 @@ export interface FleetEnv {
   /** 落后主干几个提交。后端算不出时缺席（null），不是 0。 */
   behindMain: number | null;
   health: FleetHealth;
-  /** 近 24 小时可用率，0..100。没接探测时是 null。 */
+  /**
+   * 近 24 小时可用率，**百分数 0..100**。没接探测时是 null。
+   *
+   * 后端 `ReleaseHealthProbe.availability24h` 是**比率 0..1**（见
+   * release-health-snapshot.ts，shared.tsx 的 formatAvailability 也是 ×100）。
+   * 这里在入口处一次换算成百分数，页面里就不用记「这个字段是哪种量纲」——
+   * 记错的代价是 100% 显示成 1.00%，而且看着像个正常数字，没人会怀疑。
+   */
   availability24h: number | null;
   lastRelease: FleetLastRelease | null;
   canRollback: boolean;
@@ -153,7 +160,8 @@ export function toFleetEnv(row: CenterRow): FleetEnv {
     liveSha: row.currentCommit || '',
     behindMain: typeof row.commitPosition?.behindCount === 'number' ? row.commitPosition.behindCount : null,
     health,
-    availability24h: probe?.availability24h ?? null,
+    // ×100：后端给的是比率，这一层统一成百分数（漏乘会把 100% 显示成 1.00%）
+    availability24h: typeof probe?.availability24h === 'number' ? probe.availability24h * 100 : null,
     lastRelease,
     canRollback: Boolean(row.canRollback),
     promotableSha: row.promotion?.commitSha || null,
@@ -314,6 +322,8 @@ export function buildFleetMetrics(envs: FleetEnv[]): FleetMetric[] {
     const mid = median(behinds.map((item) => item.behindMain || 0));
     // 只有一个环境时「最多 vs 中位」恒等，那句 `+0%` 是废话，不如不说。
     const ratio = behinds.length > 1 && mid !== null ? formatFleetRatio(worst.behindMain || 0, mid) : null;
+    // 最多也才 0，说明全都追平了——「落后最多 0 个提交」是一句没有信息的话，不出。
+    if ((worst.behindMain || 0) === 0) return metrics;
     metrics.push({
       key: 'behind',
       label: '落后最多',

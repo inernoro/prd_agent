@@ -122,10 +122,12 @@ function RowActions({ env, onInspect, onExecute, tall }: {
   onExecute: FleetMatrixProps['onExecute'];
   tall: boolean;
 }): JSX.Element {
+  // 操作列 192px 要装下三个控件：发布 76 + 回滚 68 + 图标 34 + 两个 4px 间隔 = 186。
+  // 之前 gap-1.5 + 默认内边距一共 200+，第三个按钮被挤到第二行。
   const size = tall ? 'h-11' : 'h-[30px]';
   const promote = Boolean(env.promotableSha);
   return (
-    <span className={`flex flex-wrap items-center justify-end gap-1.5 [&_button]:${size} [&_button]:rounded-lg`}>
+    <span className={`flex flex-nowrap items-center justify-end gap-1 [&_button]:${size} [&_button]:rounded-lg [&_button]:px-2.5 ${tall ? 'flex-wrap' : ''}`}>
       <Button
         size="sm"
         disabled={!env.enabled}
