@@ -36,6 +36,18 @@ public class DocumentStoreAgentRun
     /// </summary>
     public string ExecutionId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 最近一次中断恢复操作的唯一身份。恢复流程先推进正文代次、再重排同一 run；
+    /// 客户端收到未知写入结果时据此回读确认，避免误回滚已成功落库的恢复。
+    /// </summary>
+    public string RecoveryAttemptId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 中断恢复已经预留、但尚未完成 run 重排的正文代次。非空时 reconciliation
+    /// 必须继续同一恢复操作，不能把 entry/run 的暂时代次差异误判为 superseded。
+    /// </summary>
+    public long? PendingRecoveryOutputGeneration { get; set; }
+
     /// <summary>任务状态</summary>
     public string Status { get; set; } = DocumentStoreRunStatus.Queued;
 

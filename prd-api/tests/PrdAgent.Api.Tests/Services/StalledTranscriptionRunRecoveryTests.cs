@@ -285,6 +285,254 @@ public sealed class StalledTranscriptionRunRecoveryTests
     }
 
     [Fact]
+    public async Task RecoveryPublisher_ShouldRollbackWhenRunRequeueDefinitelyFails()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-recovery-rollback", 4);
+        var run = Run("run-recovery-rollback", entry.Id, "user-1", "self", DateTime.UtcNow, DateTime.UtcNow);
+        run.OutputGeneration = entry.AgentOutputGeneration;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None);
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
+                fixture.Db,
+                entry.Id,
+                run,
+                outputLease,
+                "recovery-attempt-rollback",
+                RecoveryRunFilter(run),
+                RecoveryRunUpdate,
+                CancellationToken.None,
+                (_, _, _) => throw new InvalidOperationException("injected requeue failure")));
+
+        var persistedEntry = await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync();
+        persistedEntry.AgentOutputGeneration.ShouldBe(4);
+        var persistedRun = await fixture.Db.DocumentStoreAgentRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persistedRun.Status.ShouldBe(DocumentStoreRunStatus.Running);
+        persistedRun.OutputGeneration.ShouldBe(4);
+        persistedRun.RecoveryAttemptId.ShouldBeEmpty();
+        persistedRun.PendingRecoveryOutputGeneration.ShouldBeNull();
+        persistedRun.AutomaticRetryCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task RecoveryPublisher_ShouldAcceptUnknownOutcomeWhenRunRequeueLanded()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-recovery-unknown", 7);
+        var run = Run("run-recovery-unknown", entry.Id, "user-1", "self", DateTime.UtcNow, DateTime.UtcNow);
+        run.OutputGeneration = entry.AgentOutputGeneration;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None);
+
+        var published = await DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
+            fixture.Db,
+            entry.Id,
+            run,
+            outputLease,
+            "recovery-attempt-unknown",
+            RecoveryRunFilter(run),
+            RecoveryRunUpdate,
+            CancellationToken.None,
+            async (filter, update, token) =>
+            {
+                await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    filter,
+                    update,
+                    cancellationToken: token);
+                throw new TimeoutException("injected unknown requeue result");
+            });
+
+        published.ShouldNotBeNull();
+        published.AgentOutputGeneration.ShouldBe(8);
+        var persistedRun = await fixture.Db.DocumentStoreAgentRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persistedRun.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        persistedRun.OutputGeneration.ShouldBe(8);
+        persistedRun.RecoveryAttemptId.ShouldBe("recovery-attempt-unknown");
+        persistedRun.PendingRecoveryOutputGeneration.ShouldBeNull();
+        persistedRun.AutomaticRetryCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RecoveryPublisher_ConditionalRollbackShouldNotOverwriteLaterGeneration()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-recovery-conflict", 2);
+        var run = Run("run-recovery-conflict", entry.Id, "user-1", "self", DateTime.UtcNow, DateTime.UtcNow);
+        run.OutputGeneration = entry.AgentOutputGeneration;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None);
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
+                fixture.Db,
+                entry.Id,
+                run,
+                outputLease,
+                "recovery-attempt-conflict",
+                RecoveryRunFilter(run),
+                RecoveryRunUpdate,
+                CancellationToken.None,
+                async (_, _, token) =>
+                {
+                    await fixture.Db.DocumentEntries.UpdateOneAsync(
+                        item => item.Id == entry.Id && item.AgentOutputGeneration == 3,
+                        Builders<DocumentEntry>.Update.Set(item => item.AgentOutputGeneration, 4),
+                        cancellationToken: token);
+                    throw new TimeoutException("injected later generation");
+                }));
+
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(4);
+        var persistedRun = await fixture.Db.DocumentStoreAgentRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persistedRun.Status.ShouldBe(DocumentStoreRunStatus.Running);
+        persistedRun.OutputGeneration.ShouldBe(2);
+        persistedRun.PendingRecoveryOutputGeneration.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task RecoveryPublisher_ShouldResumePersistedAttemptAfterCrashBetweenWrites()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-recovery-resume", 6);
+        var run = Run("run-recovery-resume", entry.Id, "user-1", "self", DateTime.UtcNow, DateTime.UtcNow);
+        run.OutputGeneration = 5;
+        run.RecoveryAttemptId = "recovery-attempt-resume";
+        run.PendingRecoveryOutputGeneration = 6;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None);
+
+        var published = await DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
+            fixture.Db,
+            entry.Id,
+            run,
+            outputLease,
+            run.RecoveryAttemptId,
+            RecoveryRunFilter(run),
+            RecoveryRunUpdate,
+            CancellationToken.None);
+
+        published.ShouldNotBeNull();
+        published.AgentOutputGeneration.ShouldBe(6);
+        var persistedRun = await fixture.Db.DocumentStoreAgentRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persistedRun.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        persistedRun.OutputGeneration.ShouldBe(6);
+        persistedRun.PendingRecoveryOutputGeneration.ShouldBeNull();
+        persistedRun.AutomaticRetryCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RecoveryPublisher_LostLeaseCannotRollbackReplacementAttempt()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-recovery-lease-handoff", 3);
+        var run = Run(
+            "run-recovery-lease-handoff",
+            entry.Id,
+            "user-1",
+            "self",
+            DateTime.UtcNow,
+            DateTime.UtcNow);
+        run.OutputGeneration = entry.AgentOutputGeneration;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        await using var staleLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None,
+            leaseDuration: TimeSpan.FromMilliseconds(150),
+            renewalInterval: TimeSpan.FromSeconds(5),
+            acquireTimeout: TimeSpan.FromSeconds(1));
+        var finalizeEntered = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFinalize = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var staleRecovery = DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
+            fixture.Db,
+            entry.Id,
+            run,
+            staleLease,
+            "recovery-attempt-lease-handoff",
+            RecoveryRunFilter(run),
+            RecoveryRunUpdate,
+            CancellationToken.None,
+            async (_, _, token) =>
+            {
+                finalizeEntered.TrySetResult(true);
+                await releaseFinalize.Task.WaitAsync(token);
+                return false;
+            });
+
+        await finalizeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(TimeSpan.FromMilliseconds(250));
+        await using var replacementLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None,
+            leaseDuration: TimeSpan.FromSeconds(5),
+            renewalInterval: TimeSpan.FromSeconds(1),
+            acquireTimeout: TimeSpan.FromSeconds(2));
+        releaseFinalize.TrySetResult(true);
+
+        await Should.ThrowAsync<DocumentStoreRunLeaseLostException>(() => staleRecovery);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(4);
+        var pending = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == run.Id)
+            .SingleAsync();
+        pending.Status.ShouldBe(DocumentStoreRunStatus.Running);
+        pending.OutputGeneration.ShouldBe(3);
+        pending.PendingRecoveryOutputGeneration.ShouldBe(4);
+        pending.AutomaticRetryCount.ShouldBe(0);
+
+        var published = await DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
+            fixture.Db,
+            entry.Id,
+            pending,
+            replacementLease,
+            pending.RecoveryAttemptId,
+            RecoveryRunFilter(pending),
+            RecoveryRunUpdate,
+            CancellationToken.None);
+
+        published.ShouldNotBeNull();
+        published.AgentOutputGeneration.ShouldBe(4);
+        var recovered = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == run.Id)
+            .SingleAsync();
+        recovered.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        recovered.OutputGeneration.ShouldBe(4);
+        recovered.PendingRecoveryOutputGeneration.ShouldBeNull();
+        recovered.AutomaticRetryCount.ShouldBe(1);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(recovered.OutputGeneration);
+    }
+
+    [Fact]
     public async Task SupersededRun_ShouldImmediatelyBecomeTerminal_ExactlyOnce()
     {
         await using var fixture = await RecordingRunMongoFixture.CreateAsync();
@@ -654,6 +902,28 @@ public sealed class StalledTranscriptionRunRecoveryTests
 
     private static string ContentId(string content)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+
+    private static DocumentEntry RecoveryEntry(string id, long generation)
+        => new()
+        {
+            Id = id,
+            StoreId = "store-1",
+            Title = "录音.m4a",
+            AgentOutputGeneration = generation,
+        };
+
+    private static FilterDefinition<DocumentStoreAgentRun> RecoveryRunFilter(DocumentStoreAgentRun run)
+        => Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(item => item.Id, run.Id),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(item => item.Status, DocumentStoreRunStatus.Running),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(item => item.ExecutionId, run.ExecutionId));
+
+    private static UpdateDefinition<DocumentStoreAgentRun> RecoveryRunUpdate(long generation)
+        => Builders<DocumentStoreAgentRun>.Update
+            .Set(item => item.Status, DocumentStoreRunStatus.Queued)
+            .Set(item => item.ExecutionId, string.Empty)
+            .Set(item => item.OutputGeneration, generation)
+            .Inc(item => item.AutomaticRetryCount, 1);
 
     private static DocumentStoreAgentRun Run(
         string id,

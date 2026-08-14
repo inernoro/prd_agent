@@ -193,28 +193,45 @@ public class DocumentStoreAgentWorker : BackgroundService
                     await outputLease.EnsureHeldAsync(CancellationToken.None);
 
                 UpdateDefinition<DocumentStoreAgentRun> update;
-                long? recoveredOutputGeneration = null;
                 if (DocumentRecordingArchiveWorker.HasDeferredTranscriptionAutomaticRetryBudget(current))
                 {
                     // 同一 deferred run 会保留 runId 重排，但必须取得新的输出代次。仅更换
                     // ExecutionId 只能保护 run 状态，无法阻止旧 execution 在网络恢复后凭
                     // 原代次覆盖正文；DocumentEntry 的 generation CAS 才是最终数据栅栏。
-                    var generationFilter = Builders<DocumentEntry>.Filter.And(
-                        Builders<DocumentEntry>.Filter.Eq(
-                            entry => entry.Id,
-                            current.SourceEntryId),
-                        Builders<DocumentEntry>.Filter.Eq(
-                            entry => entry.AgentOutputGeneration,
-                            current.OutputGeneration));
-                    var generationEntry = await db.DocumentEntries.FindOneAndUpdateAsync(
-                        generationFilter,
-                        Builders<DocumentEntry>.Update.Inc(
-                            entry => entry.AgentOutputGeneration,
-                            1),
-                        new FindOneAndUpdateOptions<DocumentEntry>
-                        {
-                            ReturnDocument = ReturnDocument.After,
-                        },
+                    var recoveryAttemptId = current.PendingRecoveryOutputGeneration.HasValue
+                                            && !string.IsNullOrWhiteSpace(current.RecoveryAttemptId)
+                        ? current.RecoveryAttemptId
+                        : Guid.NewGuid().ToString("N");
+                    var currentRunFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, current.Id),
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(
+                            r => r.ExecutionId,
+                            current.ExecutionId),
+                        recoverFilter);
+                    var generationEntry = await DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
+                        db,
+                        current.SourceEntryId,
+                        current,
+                        outputLease!,
+                        recoveryAttemptId,
+                        currentRunFilter,
+                        recoveredOutputGeneration => Builders<DocumentStoreAgentRun>.Update
+                            .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                            .Set(r => r.Phase, "服务中断，正在恢复完整录音转录")
+                            .Set(r => r.Progress, 0)
+                            .Set(r => r.ErrorMessage, null)
+                            .Set(r => r.FailureCode, null)
+                            .Set(r => r.EndedAt, null)
+                            .Set(r => r.StartedAt, null)
+                            .Set(r => r.HeartbeatAt, null)
+                            .Set(r => r.ExecutionId, string.Empty)
+                            .Set(r => r.OutputGeneration, recoveredOutputGeneration)
+                            .Set(r => r.AutomaticRetryNextAt, null)
+                            .Set(r => r.OwnerInstanceId, instanceId)
+                            .Set(
+                                r => r.AutomaticRetryReason,
+                                DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
+                            .Inc(r => r.AutomaticRetryCount, 1),
                         CancellationToken.None);
                     if (generationEntry == null)
                     {
@@ -238,24 +255,8 @@ public class DocumentStoreAgentWorker : BackgroundService
                             cancellationToken: CancellationToken.None);
                         continue;
                     }
-                    recoveredOutputGeneration = generationEntry.AgentOutputGeneration;
-                    update = Builders<DocumentStoreAgentRun>.Update
-                        .Set(r => r.Status, DocumentStoreRunStatus.Queued)
-                        .Set(r => r.Phase, "服务中断，正在恢复完整录音转录")
-                        .Set(r => r.Progress, 0)
-                        .Set(r => r.ErrorMessage, null)
-                        .Set(r => r.FailureCode, null)
-                        .Set(r => r.EndedAt, null)
-                        .Set(r => r.StartedAt, null)
-                        .Set(r => r.HeartbeatAt, null)
-                        .Set(r => r.ExecutionId, string.Empty)
-                        .Set(r => r.OutputGeneration, recoveredOutputGeneration.Value)
-                        .Set(r => r.AutomaticRetryNextAt, null)
-                        .Set(r => r.OwnerInstanceId, instanceId)
-                        .Set(
-                            r => r.AutomaticRetryReason,
-                            DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
-                        .Inc(r => r.AutomaticRetryCount, 1);
+                    recovered++;
+                    continue;
                 }
                 else
                 {
@@ -282,21 +283,6 @@ public class DocumentStoreAgentWorker : BackgroundService
                 if (result.ModifiedCount == 1)
                 {
                     recovered++;
-                }
-                else if (recoveredOutputGeneration.HasValue)
-                {
-                    var rollback = await db.DocumentEntries.UpdateOneAsync(
-                        entry => entry.Id == current.SourceEntryId
-                                 && entry.AgentOutputGeneration == recoveredOutputGeneration.Value,
-                        Builders<DocumentEntry>.Update.Set(
-                            entry => entry.AgentOutputGeneration,
-                            current.OutputGeneration),
-                        cancellationToken: CancellationToken.None);
-                    if (rollback.ModifiedCount != 1)
-                    {
-                        throw new InvalidOperationException(
-                            $"任务 {current.Id} 恢复认领失败，且输出代次 {recoveredOutputGeneration.Value} 回滚失败。");
-                    }
                 }
             }
             catch (Exception ex)
