@@ -90,6 +90,24 @@ public class ImageGenAdaptiveSizePromptTests
     }
 
     [Fact]
+    public void BuildStandardGeneration_OpenAiGptImage2_OmitsLegacyResponseFormatAndKeepsNativeSize()
+    {
+        var built = ImageGenRequestBuilder.BuildStandardGeneration(
+            "gpt-image-2",
+            "生成横版产品照",
+            1,
+            "1536x1024",
+            "url",
+            new OpenAIPlatformAdapter());
+
+        var body = Assert.IsType<Dictionary<string, object>>(built.RequestBody);
+        Assert.Equal("1536x1024", body["size"]);
+        Assert.False(body.ContainsKey("response_format"));
+        Assert.Null(built.EffectiveResponseFormat);
+        Assert.False(built.IsAdaptive);
+    }
+
+    [Fact]
     public void ApplyAdaptiveSizePrompt_SizeNotApplicableModel_DoesNotChangePrompt()
     {
         var requestParams = ImageGenModelAdapterRegistry.BuildRequestParams("fal-qwen-image-layered", "768x1024");

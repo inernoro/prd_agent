@@ -3350,7 +3350,8 @@ public class LlmGatewayTests
             SupportsImageGeneration = true,
         };
         var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"url\":\"https://cdn.example.com/edit.png\"}]}"));
-        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
 
         var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
@@ -3379,6 +3380,68 @@ public class LlmGatewayTests
         Assert.DoesNotContain("image%5B1%5D", body);
         Assert.DoesNotContain("name=\"image[0]\"", body);
         Assert.DoesNotContain("name=\"image[1]\"", body);
+        var logBody = JsonNode.Parse(logWriter.Start!.RequestBodyRedacted)!.AsObject();
+        Assert.Equal("multipart/form-data", logBody["content_type"]!.GetValue<string>());
+        Assert.EndsWith("/v1/images/edits", logBody["endpoint_path"]!.GetValue<string>());
+        Assert.Equal(2, logBody["file_count"]!.GetValue<int>());
+        var loggedFiles = logBody["files"]!.AsArray();
+        Assert.All(loggedFiles, file => Assert.Equal("image[]", file!["field"]!.GetValue<string>()));
+        Assert.Equal(
+            new[]
+            {
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[] { 1, 1, 1 })).ToLowerInvariant(),
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[] { 2, 2, 2 })).ToLowerInvariant(),
+            },
+            loggedFiles.Select(file => file!["sha256"]!.GetValue<string>()).ToArray());
+    }
+
+    [Fact]
+    public async Task SendRawWithResolutionAsync_WhenMultipartHasElevenImages_ShouldPreserveRequestOrderInLog()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "Pinned",
+            ActualModel = "image-edit-model",
+            ActualPlatformId = "platform-image",
+            ActualPlatformName = "Image Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com",
+            ApiKey = "sk-image",
+            SupportsImageGeneration = true,
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"url\":\"https://cdn.example.com/edit.png\"}]}"));
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
+        var imageContents = Enumerable.Range(0, 11)
+            .Select(index => new byte[] { (byte)index, (byte)(index + 1) })
+            .ToArray();
+        var multipartFiles = imageContents
+            .Select((content, index) => new KeyValuePair<string, (string FileName, byte[] Content, string MimeType)>(
+                $"image[{index}]",
+                ($"image-{index}.png", content, "image/png")))
+            .ToDictionary(item => item.Key, item => item.Value);
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "/v1/images/edits",
+            IsMultipart = true,
+            MultipartFields = new Dictionary<string, object> { ["prompt"] = "combine references" },
+            MultipartFiles = multipartFiles,
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var logBody = JsonNode.Parse(logWriter.Start!.RequestBodyRedacted)!.AsObject();
+        var loggedHashes = logBody["files"]!.AsArray()
+            .Select(file => file!["sha256"]!.GetValue<string>())
+            .ToArray();
+        var expectedHashes = imageContents
+            .Select(content => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)).ToLowerInvariant())
+            .ToArray();
+        Assert.Equal(expectedHashes, loggedHashes);
     }
 
     [Fact]

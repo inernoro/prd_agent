@@ -103,6 +103,33 @@ public sealed class ImageGenLogicalModelRoutingTests
             request.Body["input_references"]?[0]?["image_url"]?["url"]?.GetValue<string>());
     }
 
+    [Theory]
+    [InlineData("openai", "gpt-image-1.5", true)]
+    [InlineData("openai-compatible", "gpt-image-2", true)]
+    [InlineData("openrouter-image", "openai/gpt-image-2", false)]
+    [InlineData("openai", "gemini-2.5-flash-image", false)]
+    public void MultiImageRouting_UsesDedicatedEditApiOnlyForDeclaredOpenAIImageModels(
+        string protocol,
+        string model,
+        bool expected)
+    {
+        Assert.Equal(expected, OpenAIImageClient.ShouldUseOpenAIImagesEditApi(protocol, model));
+    }
+
+    [Theory]
+    [InlineData(null, 600)]
+    [InlineData(30, 60)]
+    [InlineData(900, 900)]
+    [InlineData(5000, 3600)]
+    public void ImageGenerationTimeout_UsesConfiguredValueWithinSharedBounds(
+        int? configuredTimeoutSeconds,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            OpenAIImageClient.ResolveImageGenerationTimeoutSeconds(configuredTimeoutSeconds));
+    }
+
     [Fact]
     public void ResolveEffectiveIsAdaptive_PrefersConfiguredPromptCapability()
     {

@@ -512,7 +512,11 @@ async function waitForGatewayLog(
     if (!response.ok()) return '';
     const body = await response.json() as ApiEnvelope<{ items: GatewayLogItem[] }>;
     matched = body.success
-      ? body.data.items.find((item) => item.requestId === requestId)
+      ? body.data.items.find((item) => (
+        item.requestId === requestId
+        && Boolean(item.logicalModelPublicId)
+        && !/gateway-auth/i.test(item.provider || '')
+      ))
       : undefined;
     return matched && !/running|pending/i.test(matched.status) ? matched.id : '';
   }, {
@@ -798,7 +802,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     page.on('response', (item) => {
       const url = new URL(item.url());
       if (url.origin === new URL(page.url()).origin
-        && /\.(?:js|css)$/.test(url.pathname)
+        && /\.(?:[cm]?[jt]sx?|css)$/.test(url.pathname)
         && !item.ok()) {
         resourceFailures.push(`${item.status()} ${item.url()}`);
       }
@@ -813,19 +817,34 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         .map((element) => element instanceof HTMLScriptElement ? element.src : (element as HTMLLinkElement).href)
         .filter((value) => {
           const url = new URL(value);
-          return url.origin === window.location.origin && /\.(?:js|css)$/.test(url.pathname);
+          return url.origin === window.location.origin && /\.(?:[cm]?[jt]sx?|css)$/.test(url.pathname);
         })
     ));
-    expect(entryAssets.some((url) => new URL(url).pathname.endsWith('.js')), '首页缺少入口 JS').toBe(true);
-    expect(entryAssets.some((url) => new URL(url).pathname.endsWith('.css')), '首页缺少入口 CSS').toBe(true);
+    expect(
+      entryAssets.some((url) => /\.(?:[cm]?[jt]sx?)$/.test(new URL(url).pathname)),
+      '首页缺少可执行入口脚本',
+    ).toBe(true);
+    const hasApplicationStyles = await page.locator('link[rel="stylesheet"][href], style[data-vite-dev-id]').evaluateAll((elements) => (
+      elements.some((element) => {
+        if (element instanceof HTMLLinkElement) {
+          const url = new URL(element.href);
+          return url.origin === window.location.origin && /\.css$/.test(url.pathname);
+        }
+        return element instanceof HTMLStyleElement && Boolean(element.textContent?.trim());
+      })
+    ));
+    expect(
+      hasApplicationStyles,
+      '首页缺少应用样式：生产构建应加载同源 CSS，Vite 开发模式应注入 data-vite-dev-id 样式',
+    ).toBe(true);
 
     for (const assetUrl of entryAssets) {
       const asset = await page.request.get(assetUrl);
       expect(asset.status(), `入口资源不可用：${assetUrl}`).toBe(200);
       expect((await asset.body()).byteLength, `入口资源为空：${assetUrl}`).toBeGreaterThan(0);
       const contentType = asset.headers()['content-type'] || '';
-      if (new URL(assetUrl).pathname.endsWith('.js')) {
-        expect(contentType, `入口 JS 类型错误：${assetUrl}`).toMatch(/javascript/i);
+      if (/\.(?:[cm]?[jt]sx?)$/.test(new URL(assetUrl).pathname)) {
+        expect(contentType, `入口脚本类型错误：${assetUrl}`).toMatch(/javascript|typescript/i);
       } else {
         expect(contentType, `入口 CSS 类型错误：${assetUrl}`).toMatch(/text\/css/i);
       }
@@ -2878,7 +2897,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] OpenRouter 专用多图协议真实生成、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图逻辑模型真实生成、语义保真、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
@@ -2949,20 +2968,42 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
         const log = await waitForGatewayLog(request, `${runId}-0-0`);
         expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
-        expect(log.protocol).toBe('openrouter-image');
+        expect(
+          ['openrouter-image', 'openai', 'openai-compatible'],
+          '多图逻辑模型只能走保留参考图语义的图片协议',
+        ).toContain(log.protocol);
         const requestBody = JSON.parse(log.requestBodyRedacted || '{}') as {
           input_references?: Array<{ type?: string; image_url?: { url?: string } }>;
+          content_type?: string;
+          endpoint_path?: string;
+          file_count?: number;
+          files?: Array<{ field?: string; mime_type?: string; size_bytes?: number; sha256?: string }>;
         };
-        const wireReferences = requestBody.input_references || [];
-        const expectedRedactedUrls = expectedDataUrls.map((dataUrl) => {
+        const expectedReferences = expectedDataUrls.map((dataUrl) => {
           const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
           expect(match, '测试参考图必须是合法的 Base64 data URL').toBeTruthy();
           const digest = createHash('sha256').update(Buffer.from(match![2], 'base64')).digest('hex');
-          return `[BASE64_IMAGE:${digest}:${match![1]}]`;
+          return { digest, mimeType: match![1], redactedUrl: `[BASE64_IMAGE:${digest}:${match![1]}]` };
         });
-        expect(wireReferences, '网关请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
-        expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
-        expect(wireReferences.map((item) => item.image_url?.url)).toEqual(expectedRedactedUrls);
+        if (log.protocol === 'openrouter-image') {
+          const wireReferences = requestBody.input_references || [];
+          expect(wireReferences, 'OpenRouter 请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
+          expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
+          expect(wireReferences.map((item) => item.image_url?.url)).toEqual(
+            expectedReferences.map((item) => item.redactedUrl),
+          );
+        } else {
+          expect(requestBody.content_type).toBe('multipart/form-data');
+          expect(requestBody.endpoint_path).toMatch(/\/images\/edits$/);
+          expect(requestBody.file_count, 'OpenAI 备用路由必须发送全部参考图文件').toBe(expectedDataUrls.length);
+          expect(requestBody.files?.map((item) => item.field)).toEqual(expectedDataUrls.map(() => 'image[]'));
+          expect(requestBody.files?.map((item) => item.mime_type)).toEqual(
+            expectedReferences.map((item) => item.mimeType),
+          );
+          expect(requestBody.files?.map((item) => item.sha256)).toEqual(
+            expectedReferences.map((item) => item.digest),
+          );
+        }
         expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
         expect(log.answerText || '').toMatch(/"data"\s*:\s*\[/);
         expect(log.answerText || '').not.toMatch(/input must have at least|chat\/completions|modalities/i);
@@ -3123,6 +3164,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       const picker = page.locator('input[type="file"][accept="image/*"]');
+      await expect(picker, '工作区回放完成后才允许上传，避免服务器空快照覆盖新图片').toBeEnabled({ timeout: 30_000 });
       const aFile = file('a.png', 220, 45, 60);
       const bFile = file('b.png', 35, 115, 225);
       const cFile = file('c.png', 45, 185, 90);
@@ -3139,6 +3181,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         );
         return detail.assets.map((asset) => asset.sha256).sort();
       }, { timeout: 30_000 }).toEqual([aSha256, bSha256, cSha256].sort());
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      await expect(page.locator('[data-testid="canvas-image"][alt="a.png"], [data-testid="canvas-image"][alt="b.png"], [data-testid="canvas-image"][alt="c.png"]')).toHaveCount(3);
       const uploadedDetail = await readEnvelope<{
         assets: Array<{ id: string; sha256: string; url: string }>;
       }>(await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail?assetLimit=20`, {
@@ -3148,8 +3192,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(deletedAssets).toHaveLength(2);
 
       await page.locator('[data-tour-id="visual-editor-canvas"]').click({ position: { x: 180, y: 180 } });
-      await page.locator('[title="b.png"]').click();
-      await page.locator('[title="a.png"]').click({ modifiers: ['Shift'] });
+      await page.locator('[data-testid="canvas-image"][alt="b.png"]').click();
+      await page.locator('[data-testid="canvas-image"][alt="a.png"]').click({ modifiers: ['Shift'] });
       const chips = page.locator('.image-chip-node');
       await expect(chips).toHaveCount(2);
       const chipLabels = await chips.allTextContents();
@@ -3160,8 +3204,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       // 自身的引用顺序与删除持久化，防止上游额度故障把本地状态回归伪装成超时。
       expect(chipLabels).toEqual(['b.png', 'a.png']);
 
-      await page.locator('[title="b.png"]').click();
-      await page.locator('[title="a.png"]').click({ modifiers: ['Shift'] });
+      await page.locator('[data-testid="canvas-image"][alt="b.png"]').click();
+      await page.locator('[data-testid="canvas-image"][alt="a.png"]').click({ modifiers: ['Shift'] });
 
       const deleteResponses: Response[] = [];
       const captureDeleteResponse = (response: Response) => {
@@ -3183,8 +3227,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.getByText('确认删除选中的 2 项？')).toBeVisible();
       await page.getByRole('button', { name: '删除', exact: true }).click();
       await expect(chips).toHaveCount(0);
-      await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
-      await expect(page.locator('[title="c.png"]')).toBeVisible();
+      await expect(page.locator('[data-testid="canvas-image"][alt="a.png"], [data-testid="canvas-image"][alt="b.png"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="canvas-image"][alt="c.png"]')).toBeVisible();
 
       await expect.poll(() => deleteResponses.length, { timeout: 30_000 }).toBe(2);
       page.off('response', captureDeleteResponse);
@@ -3210,8 +3254,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }
 
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
-      await expect(page.locator('[title="c.png"]')).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator('input[type="file"][accept="image/*"]')).toBeEnabled({ timeout: 30_000 });
+      await expect(page.locator('[data-testid="canvas-image"][alt="a.png"], [data-testid="canvas-image"][alt="b.png"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="canvas-image"][alt="c.png"]')).toBeVisible({ timeout: 30_000 });
       const reloadedDetail = await readEnvelope<{
         assets: Array<{ id: string; sha256: string; url: string }>;
         canvas: { payloadJson: string } | null;
@@ -3228,7 +3273,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(reloadedDetail.canvas?.payloadJson || '').not.toContain(asset.url);
       }
 
-      await page.locator('[title="c.png"]').click();
+      await page.locator('[data-testid="canvas-image"][alt="c.png"]').click();
       const verificationChips = page.locator('.image-chip-node');
       await expect(verificationChips).toHaveCount(1);
       await expect(verificationChips.first()).toContainText('c.png');
@@ -3256,6 +3301,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       const picker = page.locator('input[type="file"][accept="image/*"]');
+      await expect(picker, '工作区回放完成后才允许上传，避免服务器空快照覆盖新图片').toBeEnabled({ timeout: 30_000 });
 
       await picker.setInputFiles([file('dup1.png'), file('dup2.png')]);
       await expect(page.getByTestId('canvas-image')).toHaveCount(2, { timeout: 30_000 });

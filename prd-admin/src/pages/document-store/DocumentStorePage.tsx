@@ -196,6 +196,7 @@ import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocess
 import { parseCdsReportImportDeepLink, withoutCdsReportImportDeepLink } from './cdsReportImportDeepLink';
 import { TutorialLinkGraphDrawer, TutorialLinkedPages } from './TutorialLinkGraphDrawer';
 import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
+import { getSharedQuickCaptureRequest, type QuickCaptureRequestHolder } from './quickCaptureRequest';
 
 // 上传白名单：文档 + 音频 + 视频 + 图片（音频进库后可转录/生成字幕；后端 InferMime 已支持这些扩展名）。
 // 2026-07-13 用户反馈"上传录音文件上传不了"——旧白名单只有文档类，音频被文件选择器直接过滤。
@@ -3241,7 +3242,8 @@ export function DocumentStorePage() {
   const [quickCaptureResolving, setQuickCaptureResolving] = useState(
     () => hasQuickRecordRequest(location.search),
   );
-  const quickCaptureRequestInFlightRef = useRef(false);
+  type QuickCaptureResponse = Awaited<ReturnType<typeof getOrCreateQuickCaptureStore>>;
+  const quickCaptureRequestRef = useRef<QuickCaptureRequestHolder<QuickCaptureResponse>>({ current: null });
   const cdsImportRequestRef = useRef<string | null>(null);
   const tutorialRouteRequestRef = useRef<string | null>(null);
 
@@ -3325,16 +3327,17 @@ export function DocumentStorePage() {
       setQuickCaptureResolving(false);
       return;
     }
-    if (quickCaptureRequestInFlightRef.current) return;
-    quickCaptureRequestInFlightRef.current = true;
     setQuickCaptureResolving(true);
     let alive = true;
 
-    void getOrCreateQuickCaptureStore()
+    // StrictMode 会先清理再重跑 effect；两个 effect 共享同一个请求，但各自订阅结果。
+    // 这样第一次订阅失效后，第二次仍能消费服务端已经返回的快捷知识库。
+    void getSharedQuickCaptureRequest(quickCaptureRequestRef.current, getOrCreateQuickCaptureStore)
       .then((res) => {
         if (!alive) return;
         if (!res.success) {
           toast.error('快捷录音启动失败', res.error?.message ?? '无法准备快捷知识库');
+          setQuickCaptureResolving(false);
           navigate({
             pathname: location.pathname,
             search: withoutQuickRecordRequest(location.search),
@@ -3350,15 +3353,26 @@ export function DocumentStorePage() {
           action: 'record',
         });
         setSelectedStoreId(res.data.id);
+        // navigate 会先触发本 effect 的 cleanup；若只依赖 finally，alive 已变为 false，
+        // 页面会永久停在“正在打开快捷录音”。在改变 URL 前先结束准备态。
+        setQuickCaptureResolving(false);
         navigate({
           pathname: location.pathname,
           search: withDocumentStoreEntry(withoutQuickRecordRequest(location.search), res.data.id, null),
           hash: location.hash,
         }, { replace: true });
       })
+      .catch(() => {
+        if (!alive) return;
+        toast.error('快捷录音启动失败', '无法准备快捷知识库，请稍后重试');
+        navigate({
+          pathname: location.pathname,
+          search: withoutQuickRecordRequest(location.search),
+          hash: location.hash,
+        }, { replace: true });
+      })
       .finally(() => {
         if (alive) setQuickCaptureResolving(false);
-        quickCaptureRequestInFlightRef.current = false;
       });
 
     return () => { alive = false; };

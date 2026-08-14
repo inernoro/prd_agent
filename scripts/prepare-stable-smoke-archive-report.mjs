@@ -54,7 +54,7 @@ export function prepareArchiveReport(report, manifest) {
   const start = normalizedReport.indexOf('## 视觉证据图片');
   const end = normalizedReport.indexOf('## 视觉测试方法', start);
   if (start < 0 || end < 0 || end <= start) {
-    throw new Error('主管报告缺少“视觉证据图片”或“视觉测试方法”章节');
+    throw new Error('验收报告缺少“视觉证据图片”或“视觉测试方法”章节');
   }
   const steps = groupByModule(manifest).flatMap(([module, rows], moduleIndex) => [
     `## 步骤 ${moduleIndex + 1} ${module}`,

@@ -1,6 +1,6 @@
 ---
 name: stable-smoke
-version: 1.9.0
+version: 1.10.0
 description: 'Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".'
 ---
 
@@ -65,6 +65,7 @@ description: 'Runs a recurring dual-environment synthetic regression suite for c
 20. 全面视觉复测的可审核证据硬下限为 148 张，按十个模块分别核算；单图视觉创作和多图视觉创作各不少于 18 张。主管报告必须给出每个模块的采集文件数、可审核证据数、计划数、状态结果和“查看全部截图”链接，禁止只展示每模块首图让审核者误以为只有十几张。
 21. 完整 `/稳测` 禁止直接用空 manifest 进入视觉门禁。必须先用固定 runId 执行 `--dry-run` 生成仅含 CDS 的 `visual-plan.json`，再调用 `/验收` 的真人浏览器 harness 逐项取证，并通过 `--visual-manifest` 交给主运行器。只有 CDS 功能、清理和视觉门禁全部通过后，运行器才可生成 `visual-plan-production.json`；正式环境取证必须使用该计划，并通过 `--production-visual-manifest` 进入最终双环境门禁。缺少清单或路径不存在时必须在对应阶段前阻断；只有正式环境单独只读检查可使用空清单并判定视觉不适用。
 22. 双环境矩阵必须保留每个 caseId 的 CDS 与正式环境策略，分别生成必跑集合、grep 和覆盖账本。正式环境不得执行标记为“不主动”“不改正式配置”的用例；仅标记为“轮换”的用例按模块和固定 commit 确定性选择一条。用户定向 grep 只能缩小本环境允许集合，不能越权重新加入 CDS 专属故障或计费动作。
+23. 任何稳定冒烟验收报告必须归档到 CDS 验收中心，并以线上直达深链通过 `verify-open` 后才算完成。`/tmp`、`file://`、本机 HTML 和 Markdown 只能是生成过程中的临时草稿，不得作为报告入口、通知链接或交付结果。CDS 归档或打开校验失败时，必须标记验收链路失败并保持未完成，不得回退本地交付。
 
 ## 每轮工作流
 
@@ -80,7 +81,8 @@ Stable Smoke Progress:
 - [ ] 8. 通过 `--production-visual-manifest` 完成正式环境矩阵与双环境视觉门禁
 - [ ] 9. 比对双环境能力、文案、阶段和产物
 - [ ] 10. 对失败做一次确定性重试并分类，将新问题写入回归台账
-- [ ] 11. 按模块归档报告、截图、日志和 requestId
+- [ ] 11. 按模块将报告、截图、日志和 requestId 归档到 CDS 验收中心
+- [ ] 12. 对 CDS 线上直达深链执行 `verify-open`，确认正文、证据和可点击内链全部可用
 ```
 
 ### 1. 运行前置
@@ -148,13 +150,13 @@ Stable Smoke Progress:
 - 超时：单模块 30 分钟，整轮 120 分钟；超时按失败处理，不继续播放进度文案。
 - 通知：成功只归档；conditional 或 fail 必须发送模块、caseId、环境、requestId、证据和恢复动作。
 - 通知实现：`scripts/stable-smoke-notify.mjs` 只调用 MAP `/api/dashboard/notifications/events`，缺少目标用户 ID 时拒绝发送，避免误发全员。
-- 保留：报告和截图至少 90 天；回归台账永久保留。
+- 保留：CDS 线上报告和截图至少 90 天；回归台账永久保留。
 - 实现：Codex 桌面端本地自动化 `stable-smoke-48h`，执行环境必须为 `local`，工作目录固定为项目主工作区；调度使用 `RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=2;BYMINUTE=17`。
 - 边界：GitHub Actions 不参与 48 小时调度。CDS 负责 CDS 环境、部署状态和预览入口证据；本地自动化负责浏览器、凭据装载、双环境执行、报告归档和 MAP 通知。
 
 ## 输出格式
 
-固定输出两份报告：
+固定输出两层内容，可以是两份 CDS 线上报告，也可以是同一份 CDS 线上报告中可相互跳转的两个部分。下列 Markdown 名称只是中间写作源，不是可交付报告：
 
 1. `supervisor-report.md`：给主管和产品审核者，首屏先列能否发布、通过数、失败数、未执行数和需干预项；异常项提前，随后保留双环境全部人类可读验收项，并包含逐张视觉证据账本。每条功能和视觉证据都显示测试类型、完整面包屑、结论、责任人或干预原因，以及可点击截图和测试方法，不展示技术编号。
 2. `technical-appendix.md`：给开发与测试维护者，包含补跑命令、选择器、接口、requestId、日志、源代码入口和清理细节。主管报告只保留一个“查看技术附录”链接。
