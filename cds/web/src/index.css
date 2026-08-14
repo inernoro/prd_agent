@@ -3060,15 +3060,6 @@
     }
   }
 
-  /*
-   * 满铺到边（参考稿的三栏台面：左右两栏是贴边的整块面板，用一条边框分隔，
-   * 不是浮在底色上的圆角卡）。抵消 .cds-main 的内边距，值从同一组变量来。
-   */
-  .cds-workspace--bleed {
-    margin: calc(var(--cds-main-pt) * -1) calc(var(--cds-main-px) * -1) calc(var(--cds-main-pb) * -1);
-    width: auto;
-    max-width: none;
-  }
 
   /*
    * Workspace 宽度秩序(2026-07-02 布局归一) —— 全站只允许三档:
@@ -3102,6 +3093,29 @@
     display: flex;
     flex-direction: column;
   }
+
+  /*
+   * 满铺到边：参考稿的左右两栏是**贴边的整块面板**，用一条 1px 边框分隔，
+   * 不是浮在底色上、四周留缝的圆角卡。这里抵消 .cds-main 的内边距，
+   * 值取自同一组 --cds-main-* 变量，不另抄一份。
+   *
+   * 两个坑，都是实测撞出来的：
+   * 1. 必须排在 .cds-workspace 之后。同为 (0,1,0) 特异性，写在前面时
+   *    `.cds-workspace { margin-left:auto; margin-right:auto }` 后写的赢，
+   *    横向抵消会被静默吃掉——上下缩了、左右没动，看着像「只生效了一半」。
+   * 2. 高度要加回内边距。负 margin 不改变元素自身高度，配 --fill 的
+   *    height:100%（解析的是 .cds-main 的**内容盒**）时，底部仍会短一截 pb。
+   */
+  .cds-workspace--bleed {
+    margin: calc(var(--cds-main-pt) * -1) calc(var(--cds-main-px) * -1) calc(var(--cds-main-pb) * -1);
+    width: auto;
+    max-width: none;
+  }
+
+  .cds-workspace--bleed.cds-workspace--fill {
+    height: calc(100% + var(--cds-main-pt) + var(--cds-main-pb));
+  }
+
 
   .cds-workspace-wide {
     max-width: var(--workspace-wide, 1440px);

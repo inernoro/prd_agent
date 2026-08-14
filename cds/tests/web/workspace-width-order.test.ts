@@ -91,3 +91,23 @@ describe('Workspace 宽度秩序', () => {
     expect(CSS).toMatch(/\.cds-workspace--bleed \{[\s\S]{0,200}calc\(var\(--cds-main-px\) \* -1\)/);
   });
 });
+
+/**
+ * 满铺到边（`--bleed`）的两条硬性顺序/尺寸约束。两条都是实测撞出来的，
+ * 且都**不会报错、只会看起来「只生效了一半」**——正是需要守卫的形状。
+ */
+describe('Workspace 满铺到边', () => {
+  it('--bleed 必须排在 .cds-workspace 之后，否则横向抵消被 margin:auto 吃掉', () => {
+    const base = CSS.indexOf('.cds-workspace {');
+    const bleed = CSS.indexOf('.cds-workspace--bleed {');
+    expect(base, '.cds-workspace 基础规则应当存在').toBeGreaterThan(-1);
+    expect(bleed, '.cds-workspace--bleed 应当存在').toBeGreaterThan(-1);
+    expect(bleed, '同特异性后写的赢：--bleed 写在 .cds-workspace 之前时，横向抵消会被静默吃掉')
+      .toBeGreaterThan(base);
+  });
+
+  it('--bleed 配 --fill 时把内边距加回高度，否则底部短一截', () => {
+    expect(CSS).toContain('.cds-workspace--bleed.cds-workspace--fill');
+    expect(CSS).toMatch(/height: calc\(100% \+ var\(--cds-main-pt\) \+ var\(--cds-main-pb\)\)/);
+  });
+});
