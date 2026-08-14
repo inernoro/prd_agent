@@ -285,7 +285,7 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
    * 1024-1280 用自然流（各块竖排、自身限高滚动），到 xl 才切回固定外壳三栏。
    */
   it('三栏在 xl 才接管，lg 段仍走自然流', () => {
-    expect(PAGE).toContain('xl:grid-cols-[264px_minmax(0,1fr)_340px]');
+    expect(PAGE).toContain('xl:grid-cols-[240px_minmax(0,1fr)_300px]');
     expect(PAGE).toContain('2xl:grid-cols-[288px_minmax(0,1fr)_380px]');
     // lg 段不许再出现任何三栏/内滚开关，否则 1024 又会被塞回去
     expect(PAGE).not.toMatch(/(?<![a-z0-9-])lg:/);

@@ -484,7 +484,7 @@ export function ReleaseConsolePage(): JSX.Element {
             中栏**不给 min-width**——曾经写过 minmax(560px,1fr)，实测 1024 下右栏被切掉
             382px（grid 到 982 就没了，右栏画到 1364），1280 下仍切 126px。 */}
         <div
-          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto xl:grid xl:grid-cols-[264px_minmax(0,1fr)_340px] xl:gap-4 xl:overflow-hidden 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
+          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto xl:grid xl:grid-cols-[240px_minmax(0,1fr)_300px] xl:gap-4 xl:overflow-hidden 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
