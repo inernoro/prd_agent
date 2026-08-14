@@ -745,9 +745,14 @@ export function ReleaseConsolePage(): JSX.Element {
                     className={awaitingConfirm ? 'ring-2 ring-red-500/60' : undefined}
                   >
                     {busy === 'deploy' ? <Loader2 className="animate-spin" /> : <Rocket />}
+                    {/* 参考稿的按钮就三个词：开始发布 / 重新发布 / 发布中…。
+                        原来写「发布到 {很长的目标名}」，一个按钮就把 banner 顶成两行
+                        ——目标名副标题里已经有了，不用在按钮上再说一遍。
+                        只有二次确认那一下才点名目标：那是要人看清「到底发到哪」的时刻。 */}
                     {awaitingConfirm
                       ? `确认发布到 ${row?.target.name}`
-                      : row ? `发布到 ${row.target.name}` : '开始发布'}
+                      : busy === 'deploy' ? '发布中'
+                      : failed ? '重新发布' : '开始发布'}
                   </Button>
                   {awaitingConfirm ? (
                     <Button variant="ghost" onClick={() => setConfirmTargetId(null)}>取消</Button>
