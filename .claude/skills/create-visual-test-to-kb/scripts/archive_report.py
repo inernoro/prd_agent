@@ -4,14 +4,13 @@
 职责分离（2026-06-25）：验收能力归 CDS 验收中心，技能不再分流到 MAP 知识库。
 报告永远按项目入库 CDS；MAP 等系统通过知识库开放协议（peer-sync）从 CDS 拉取展示。
 
-三种输出模式（由 acceptance.config.json 的 report.mode 决定，缺省 = cds）：
+正式验收输出模式（由 acceptance.config.json 的 report.mode 决定，缺省 = cds）：
   - cds（默认主路）：截图先进入 CDS 内容寻址资产库，Markdown 写作源引用不可变图片地址
     → 交互 HTML → POST /api/reports，
     按项目 + 文件夹归类，带 verdict / tier / 部署上下文元数据 → 出 /reports 直达深链。
     依赖 env：CDS_HOST + (CDS_PROJECT_KEY 或 AI_ACCESS_KEY)。
-  - local：把报告写成本地 html/md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
-    适合没有 CDS / 离线兜底。
-  - doc-store（向后兼容，不推荐）：旧 MAP 知识库路径，仅当 config 显式保留 mode=doc-store 才走。
+  - local / doc-store：归档器会明确拒绝。离线文件只能由独立诊断流程生成，不能通过
+    正式归档入口产出，以免调用方把本地草稿误记为已完成验收。
 
 用法：
   python3 archive_report.py \
@@ -42,6 +41,15 @@ REPORT_KINDS = (
     "发布验收",
     "规范演练",
 )
+
+
+def require_cds_report_mode(mode):
+    """Reject delivery paths that cannot produce an immutable online report."""
+    if mode != "cds":
+        raise ValueError(
+            "[归档拒绝] 正式验收报告只允许 report.mode=cds，并且必须完成线上 verify-open；"
+            f"当前 mode={mode!r}。本地文件只能作为独立诊断草稿，不能由正式归档入口交付。"
+        )
 
 DAILY_REQUIRED_SECTIONS = (
     "结论分层",
@@ -2565,7 +2573,23 @@ def build_interactive_html(
                 f'<small class="coincidence-warning">功能未执行 {counts["未执行"]} 项与不能证明业务结果 {visual.get("不能证明业务结果", 0)} 张是两个独立维度；数字相同纯属巧合，不能一一对应。</small>'
                 '</div>'
             )
-        release_text = "当前不能放行" if counts["失败"] else "当前只能有条件放行" if counts["未执行"] else "当前可以放行"
+        release_failed = (
+            verdict == "fail"
+            or counts["失败"] > 0
+            or visual.get("明确不通过", 0) > 0
+        )
+        release_conditional = (
+            verdict == "conditional"
+            or counts["未执行"] > 0
+            or visual.get("不能证明业务结果", 0) > 0
+        )
+        release_text = (
+            "当前不能放行"
+            if release_failed
+            else "当前只能有条件放行"
+            if release_conditional
+            else "当前可以放行"
+        )
         decision_steps_html = (
             '<nav class="decision-steps" aria-label="报告处理步骤">'
             f'<a href="{metric_target("双环境覆盖差异", "结论与处理顺序")}"><b>1</b><span>确认结论<small>核对双环境是否允许放行</small></span></a>'
@@ -3368,6 +3392,12 @@ aside.mobile-nav-open .side-drawer{{display:block}}
       metricFilter=a.getAttribute('data-report-filter')||'';
       filterInput.value='';
       mode='all';
+      document.querySelectorAll('button[data-filter]').forEach(function(btn){{
+        btn.classList.toggle('active',btn.getAttribute('data-filter')==='all');
+      }});
+      applyFilter();
+    }}else if(metricFilter){{
+      metricFilter='';
       document.querySelectorAll('button[data-filter]').forEach(function(btn){{
         btn.classList.toggle('active',btn.getAttribute('data-filter')==='all');
       }});
@@ -4578,9 +4608,13 @@ def main():
     a = ap.parse_args()
 
     cfg = json.load(open(a.config))
-    # 职责分离（2026-06-25）：验收报告默认归 CDS 验收中心，技能不再分流到 MAP 知识库。
-    # local 仍作离线兜底；旧 doc-store 仅在 config 显式保留时走（向后兼容，不推荐）。
+    # 验收完成态只有 CDS 在线报告。local / doc-store 不能通过正式归档入口，
+    # 否则调用方可能把本地草稿或旧知识库条目误记为已完成验收。
     mode = cfg.get("report", {}).get("mode", "cds")
+    try:
+        require_cds_report_mode(mode)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     now = datetime.datetime.now().astimezone()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M:%S %Z%z"))
     verdict_cn = {"pass": "通过", "conditional": "有条件通过", "fail": "不通过"}.get(a.verdict, a.verdict)
@@ -4602,18 +4636,9 @@ def main():
             import sys as _sys; _sys.exit(2)
 
     preview = (cfg.get("previewUrlOverride") or "").strip()
-    if not preview and mode == "doc-store":
-        preview = preview_from_cmd(cfg["previewUrlCmd"])
 
     try:
-        if mode == "local":
-            run_local(cfg, a, title, report_id, body, manifest, build_meta(report_id, now, "local", a, preview), tags)
-        elif mode == "doc-store":
-            # 向后兼容：仅当 config 显式 mode=doc-store 才走旧 MAP 知识库路径。
-            run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags)
-        else:
-            # 默认主路：CDS 验收中心。
-            run_cds(cfg, a, title, report_id, body, manifest, now, tags)
+        run_cds(cfg, a, title, report_id, body, manifest, now, tags)
     except Exception as e:
         import sys as _sys
         print("\n[归档失败] 写库未完成（常见原因：预览环境 524 / 容器重启 / API 不可达）。")

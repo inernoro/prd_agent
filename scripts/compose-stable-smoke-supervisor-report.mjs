@@ -106,6 +106,26 @@ function countsFromExecutionSummary(executionSummary) {
   return [coverage.total, coverage.passed, coverage.failed, coverage.notRun].map(Number);
 }
 
+function normalizedVerdict(value) {
+  if (value === 'fail') return 'fail';
+  if (value === 'conditional' || value === 'not-run') return 'conditional';
+  return value === 'pass' ? 'pass' : '';
+}
+
+function strictestVerdict(...values) {
+  const rank = { pass: 0, conditional: 1, fail: 2 };
+  return values
+    .map(normalizedVerdict)
+    .filter(Boolean)
+    .reduce((current, candidate) => (rank[candidate] > rank[current] ? candidate : current), 'pass');
+}
+
+function authoritativeExecutionVerdict(executionSummary) {
+  const coverage = executionSummary?.coverage;
+  if (Array.isArray(coverage?.executionFailures) && coverage.executionFailures.length > 0) return 'fail';
+  return normalizedVerdict(coverage?.verdict);
+}
+
 export function parseFunctionalExecutionCounts(functionalLead, executionSummary = null) {
   const authoritative = countsFromExecutionSummary(executionSummary);
   const match = String(functionalLead || '').match(
@@ -311,7 +331,13 @@ function visualEvidenceCounts(visualGateLeadContent) {
   };
 }
 
-export function renderBusinessDecisionPage(functionalLead, failureSectionContent, visualGateLeadContent, executionSummary = null) {
+export function renderBusinessDecisionPage(
+  functionalLead,
+  failureSectionContent,
+  visualGateLeadContent,
+  executionSummary = null,
+  overallVerdict = '',
+) {
   const counts = parseFunctionalExecutionCounts(functionalLead, executionSummary);
   if (!counts) return '';
   const failures = collectBusinessFailureGroups(failureSectionContent);
@@ -333,9 +359,15 @@ export function renderBusinessDecisionPage(functionalLead, failureSectionContent
     (visual && (visual.needsEvidence > 0 || visual.reviewable < visual.planned))
     || (visualGateDisallowsRelease && !visualBlocksRelease),
   );
-  const releaseConclusion = counts.failed > 0 || visualBlocksRelease
-    ? '当前不能放行。'
+  const evidenceVerdict = counts.failed > 0 || visualBlocksRelease
+    ? 'fail'
     : counts.notRun > 0 || visualNeedsEvidence
+      ? 'conditional'
+      : 'pass';
+  const releaseVerdict = strictestVerdict(evidenceVerdict, overallVerdict);
+  const releaseConclusion = releaseVerdict === 'fail'
+    ? '当前不能放行。'
+    : releaseVerdict === 'conditional'
       ? '当前只能有条件放行。'
       : '当前可以放行。';
   const productionConclusion = productionCoverage
@@ -433,7 +465,12 @@ function synchronizeExecutiveSummary(executiveContent, visualGateLeadContent, co
   return synchronized;
 }
 
-function renderCombinedExecutiveSummary(functionalLead, visualGateLeadContent) {
+function renderCombinedExecutiveSummary(
+  functionalLead,
+  visualGateLeadContent,
+  overallVerdict = '',
+  executionSummary = null,
+) {
   const functionalMatch = String(functionalLead).match(/共\s*(\d+)\s*项，(\d+)\s*项通过、(\d+)\s*项不通过、(\d+)\s*项未执行/);
   const gateTable = parseMarkdownTable(visualGateLeadContent);
   const rowValue = (name) => {
@@ -450,7 +487,18 @@ function renderCombinedExecutiveSummary(functionalLead, visualGateLeadContent) {
   const functionalPassed = functionalMatch
     ? Number(functionalMatch[3]) === 0 && Number(functionalMatch[4]) === 0
     : !/不通过|部分通过/.test(functionalLead);
-  const canRelease = functionalPassed && rowValue('能否发布') === '可以';
+  const canRelease = functionalPassed
+    && rowValue('能否发布') === '可以'
+    && normalizedVerdict(overallVerdict) === 'pass';
+  const environmentCoverage = Array.isArray(executionSummary?.environmentCoverage)
+    ? executionSummary.environmentCoverage
+    : [];
+  const environmentSummary = environmentCoverage.length > 0
+    ? environmentCoverage.map((item) => {
+      const name = item.environment === 'cds' ? 'CDS' : item.environment === 'production' ? '正式环境' : item.environment;
+      return `${name}完成 ${item.completed}/${item.planned}，通过 ${item.passed}，失败 ${item.failed}，未执行 ${item.notRun}`;
+    }).join('；')
+    : '本轮未提供可计算的双环境执行汇总';
   return [
     '## 处理流程',
     '',
@@ -459,7 +507,7 @@ function renderCombinedExecutiveSummary(functionalLead, visualGateLeadContent) {
     `| 能否发布 | ${canRelease ? '可以' : '不可以'} | ${canRelease ? '保持每 48 小时复测' : '失败、未执行、缺证据和需干预项关闭前，不得宣布全面通过'} |`,
     `| 功能验收 | ${functionalSummary} | 优先查看失败和未执行清单，未执行不能按通过计算 |`,
     `| 截图证据 | 已采集 ${visualEvidence}；状态判定为 ${visualStatus} | 截图采集完成不等于业务验收通过；按“截图证据怎么读”理解证明范围 |`,
-    '| 环境覆盖 | CDS 已执行；正式环境未完成 | 正式环境必须使用独立合成身份执行同一账本 |',
+    `| 环境覆盖 | ${environmentSummary} | 以本轮双环境执行账本为准，不沿用历史运行结论 |`,
     '| 阅读顺序 | 本页结论 → 需处理异常 → 模块总览 → 逐项账本 → 截图 | 命令、接口、日志只看独立技术附录 |',
     '',
   ].join('\n');
@@ -479,7 +527,7 @@ function synchronizeMethodSummary(methodContent, visualGateLeadContent) {
   return methodContent;
 }
 
-export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
+export function renderHumanReadableAcceptanceDesign(gateModuleContent, executionSummary = null) {
   const rows = visualCoverageRows(gateModuleContent).map((row) => ({
     ...row,
     '视觉结论': row['视觉结论'] || '未执行',
@@ -496,6 +544,15 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     return totals;
   }, { actual: 0, planned: 0 });
   const allVisualPassed = rows.every((row) => row['视觉结论'] === '通过');
+  const environmentCoverage = Array.isArray(executionSummary?.environmentCoverage)
+    ? executionSummary.environmentCoverage
+    : [];
+  const environmentProof = environmentCoverage.length > 0
+    ? environmentCoverage.map((item) => {
+      const name = item.environment === 'cds' ? 'CDS' : item.environment === 'production' ? '正式环境' : item.environment;
+      return `${name}完成 ${item.completed}/${item.planned}，通过 ${item.passed}，失败 ${item.failed}，未执行 ${item.notRun}`;
+    }).join('；')
+    : '本轮未提供可计算的双环境执行汇总，不能判定全面通过';
   const lines = [
     '## 改动断言表',
     '',
@@ -513,10 +570,13 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     '',
     '| 用户旅程 | 融合范围 | 关键断点 | 当前判定 |',
     '|---|---|---|---|',
-    '| 登录后修改本人头像 | 登录、权限、头像、图片上传、生成进度、保存与移动端 | 入口、权限、上传、生成、持久化 | 登录、权限与头像视觉状态已通过，功能结果仍以功能账本为准 |',
-    '| 使用单图或多图完成视觉创作 | 上传、引用、模型路由、生成进度、结果和失败恢复 | 图片顺序、请求提交、动态进度、结果 | 单图和多图仍有失败或需干预状态，不能只凭最终结果图通过 |',
-    '| 内容上传后得到可读结果 | 文件、音频、短视频、解析进度、结果与恢复 | 类型识别、上传、解析、转录、持久化 | 文件、录音和短视频均存在失败、缺证或需干预项 |',
-    '| 从文稿到视频终态 | 文学创作、脚本、分镜、关键帧、成片与长任务反馈 | 流式生成、阶段进度、失败恢复、刷新回读 | 文学和视频的失败恢复证据未闭环，正式环境仍未执行 |',
+    ...rows.map((row) => {
+      const status = row['视觉结论'];
+      const conclusion = status === '通过'
+        ? '本轮视觉证据通过；功能结果仍以功能账本为准'
+        : `${status}：${row['缺口']}`;
+      return `| ${row['模块']}关键用户旅程 | ${row['真实面包屑']} | 入口、操作、结果、失败恢复与刷新回读 | ${conclusion} |`;
+    }),
     '',
     '## 证明力矩阵',
     '',
@@ -524,7 +584,7 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent) {
     '|---|---|---|---|---|---|',
     '| 功能通过 | 真实入口、输入、进度和结果页 | 按面包屑完成点击、输入、上传与回读 | 接口结果和持久化只作补充 | 任一步未执行、失败或无法回读 | 仅对已执行功能项有效 |',
     `| 视觉通过 | 每个计划状态各有唯一截图 | 使用真实鼠标或触控完成用户操作 | 截图元数据和运行记录只作补充 | 数量不足、状态缺失、重复图或严格结论非通过 | ${evidenceTotals.actual}/${evidenceTotals.planned} 张可审核；${allVisualPassed ? '全部严格通过' : '仍有异常状态，当前不成立'} |`,
-    '| 全面通过 | CDS 与正式环境同一套关键旅程均通过 | 两环境独立登录并完成全套 | 版本、回滚和报告记录 | 任一失败或未执行 | 正式环境未执行，当前不成立 |',
+    `| 全面通过 | CDS 与正式环境同一套关键旅程均通过 | 两环境独立登录并完成全套 | 版本、回滚和报告记录 | 任一失败或未执行 | ${environmentProof} |`,
     '',
     '## 页面优先证据分层',
     '',
@@ -679,7 +739,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   if (executionSummary && authoritativeCounts && !authoritativeCounts.balanced) {
     throw new Error('执行汇总统计不守恒：通过 + 失败 + 未执行必须等于计划测试');
   }
-  const functionalVerdict = authoritativeCounts
+  const countVerdict = authoritativeCounts
     ? authoritativeCounts.failed > 0
       ? 'fail'
       : authoritativeCounts.notRun > 0 ? 'conditional' : 'pass'
@@ -688,17 +748,22 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
       : /部分通过/.test(functional.lead)
         ? 'conditional'
         : 'pass';
-  const visualStatusMatch = String(visualGateMarkdown).match(/状态结果\s*\|\s*通过\s*\d+，不通过\s*(\d+)，需补证\s*\d+，需干预\s*(\d+)/);
-  const visualGateVerdict = !visualGateMarkdown || /结论：(通过|不适用)/.test(visualGate.lead)
+  const functionalVerdict = strictestVerdict(countVerdict, authoritativeExecutionVerdict(executionSummary));
+  const visualCounts = visualEvidenceCounts(visualGateLead?.content || '');
+  const visualGateVerdict = !visualGateMarkdown
     ? 'pass'
-    : visualStatusMatch && Number(visualStatusMatch[1]) === 0 && Number(visualStatusMatch[2]) === 0
-      ? 'conditional'
-      : 'fail';
-  const inferredVerdict = functionalVerdict === 'fail' || visualGateVerdict === 'fail'
-    ? 'fail'
-    : functionalVerdict === 'conditional' || visualGateVerdict === 'conditional'
-      ? 'conditional'
-      : 'pass';
+    : visualCounts && (visualCounts.failed > 0 || visualCounts.needsIntervention > 0)
+      ? 'fail'
+      : visualCounts && (visualCounts.needsEvidence > 0 || visualCounts.reviewable < visualCounts.planned)
+        ? 'conditional'
+        : /结论：(通过|不适用)/.test(visualGate.lead)
+          ? 'pass'
+          : visualCounts
+            ? 'conditional'
+            : /结论：不通过/.test(visualGate.lead)
+              ? 'fail'
+              : 'conditional';
+  const inferredVerdict = strictestVerdict(functionalVerdict, visualGateVerdict);
   const synchronizedLead = (authoritativeCounts
     ? functional.lead.replace(
       /共\s*\d+\s*项，\s*\d+\s*项通过、\s*\d+\s*项不通过、\s*\d+\s*项未执行/,
@@ -713,9 +778,15 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     functionalFailures?.content || '',
     visualGateLead?.content || '',
     executionSummary,
+    inferredVerdict,
   );
   if (!hasFunctionalExecutive) {
-    output.push(renderCombinedExecutiveSummary(synchronizedLead, visualGateLead?.content || ''), '');
+    output.push(renderCombinedExecutiveSummary(
+      synchronizedLead,
+      visualGateLead?.content || '',
+      inferredVerdict,
+      executionSummary,
+    ), '');
     if (businessDecisionPage) output.push(businessDecisionPage, '');
   }
   let businessDecisionInserted = !hasFunctionalExecutive && Boolean(businessDecisionPage);
@@ -762,7 +833,9 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   if (!visualSummaryInserted) {
     output.push(...visualGateSummary.flatMap((item) => [item.content, '']));
   }
-  const acceptanceDesign = visualGateModules ? renderHumanReadableAcceptanceDesign(visualGateModules.content) : '';
+  const acceptanceDesign = visualGateModules
+    ? renderHumanReadableAcceptanceDesign(visualGateModules.content, executionSummary)
+    : '';
   if (acceptanceDesign) output.push(acceptanceDesign, '');
   output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
   if (!visualLedgerInserted) output.push(...visualGateLedger.flatMap((item) => [item.content, '']));

@@ -5,6 +5,7 @@ import {
   composeSupervisorReport,
   parseFunctionalExecutionCounts,
   renderBusinessDecisionPage,
+  renderHumanReadableAcceptanceDesign,
 } from '../compose-stable-smoke-supervisor-report.mjs';
 
 test('结论与处理顺序使用用例级守恒口径并解释截图证明力', () => {
@@ -86,6 +87,44 @@ test('执行汇总覆盖旧报告口径并同步首屏所有数字', () => {
   assert.match(report, /功能验收 \| 48\/191 通过，31 不通过，112 未执行/);
   assert.match(report, /\| 已完成 \| 79 \|/);
   assert.doesNotMatch(report, /47\/206|共 206 项/);
+});
+
+test('执行进程失败是权威结论时不得被通过行数覆盖', () => {
+  const functional = '# 功能报告\n\n> 验收结论：通过。共 1 项，1 项通过、0 项不通过、0 项未执行。';
+  const summary = {
+    coverage: {
+      total: 1,
+      passed: 1,
+      failed: 0,
+      notRun: 0,
+      verdict: 'fail',
+      executionFailures: ['cds'],
+    },
+  };
+  const report = composeSupervisorReport(functional, '# 视觉', '', '', '', summary);
+
+  assert.match(report, /Verdict: fail/);
+  assert.match(report, /当前不能放行/);
+  assert.doesNotMatch(report, /当前可以放行/);
+});
+
+test('融合测试与双环境结论只描述本轮模块和执行汇总', () => {
+  const gateModules = `## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 可审核证据 | 缺口 | 查看全部截图 |
+|---|---|---|---:|---:|---|---|
+| 订单确认 | 通过 | 首页 → 订单 → 确认页 | 2 | 2/2 | 无 | [查看](#order-shots) |`;
+  const design = renderHumanReadableAcceptanceDesign(gateModules, {
+    environmentCoverage: [
+      { environment: 'cds', planned: 1, completed: 1, passed: 1, failed: 0, notRun: 0 },
+      { environment: 'production', planned: 1, completed: 1, passed: 1, failed: 0, notRun: 0 },
+    ],
+  });
+
+  assert.match(design, /订单确认关键用户旅程/);
+  assert.match(design, /CDS完成 1\/1，通过 1，失败 0，未执行 0/);
+  assert.match(design, /正式环境完成 1\/1，通过 1，失败 0，未执行 0/);
+  assert.doesNotMatch(design, /单图和多图|文件、录音和短视频|文学和视频|正式环境仍未执行/);
 });
 
 test('失败日志包含未转义竖线时仍能还原负责人、编号并按业务根因归组', () => {
@@ -260,7 +299,7 @@ test('功能通过但视觉门禁未通过时验收报告不得判通过', () =>
   const report = composeSupervisorReport(functional, visualGate, visualGate);
   assert.match(report, /Verdict: fail/);
   assert.match(report, /\| 能否发布 \| 不可以 \|/);
-  assert.match(report, /当前只能有条件放行/);
+  assert.match(report, /当前不能放行/);
   assert.doesNotMatch(report, /当前可以放行/);
 });
 

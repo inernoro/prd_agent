@@ -50,6 +50,15 @@ def compiled_markdown(archive, body, manifest):
 
 def main() -> None:
     archive = load_archive_module()
+    for rejected_mode in ("local", "doc-store"):
+        try:
+            archive.require_cds_report_mode(rejected_mode)
+        except ValueError as error:
+            if "只允许 report.mode=cds" not in str(error):
+                raise AssertionError(f"unexpected mode rejection: {error}") from error
+        else:
+            raise AssertionError(f"formal archive must reject report.mode={rejected_mode}")
+    archive.require_cds_report_mode("cds")
 
     naming_now = datetime(2026, 7, 23, 10, 0)
     naming_cfg = {"project": "prd-agent"}
@@ -393,8 +402,43 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         raise AssertionError("report guidance must be expressed as process steps, not reader roles")
     if "上传尚未形成通过证据，需要干预或补跑" in business_html:
         raise AssertionError("vague intervention captions must be replaced by owned close-out actions")
-    if "var metricFilter=''" not in business_html or "matchesMetricFilter(row)" not in business_html:
+    if any(needle not in business_html for needle in (
+        "var metricFilter=''",
+        "matchesMetricFilter(row)",
+        "else if(metricFilter)",
+    )):
         raise AssertionError("business metric cards must filter the item ledger to the selected result")
+    visual_failure_report = """
+# 稳定冒烟
+
+## 结论与处理顺序
+
+| 指标 | 数量 | 给业务读者的解释 |
+|---|---:|---|
+| 计划测试 | 1 | 本轮合同 |
+| 已完成 | 1 | 已有结果 |
+| 通过 | 1 | 业务断言成立 |
+| 失败 | 0 | 无功能失败 |
+| 未执行 | 0 | 已全部执行 |
+
+## 截图证据怎么读
+
+| 视觉指标 | 数量 | 代表什么 |
+|---|---:|---|
+| 计划截图槽位 | 1 | 视觉合同 |
+| 已采集且可审核 | 1 | 字段完整 |
+| 能直接证明通过 | 0 | 无 |
+| 明确不通过 | 1 | 截图呈现错误结果 |
+| 不能证明业务结果 | 0 | 无 |
+"""
+    visual_failure_html = archive.build_interactive_html(
+        "稳定冒烟",
+        "pass",
+        compiled_markdown(archive, visual_failure_report, annotated_manifest),
+        annotated_manifest,
+    )
+    if "当前不能放行" not in visual_failure_html or "当前可以放行" in visual_failure_html:
+        raise AssertionError("archived release banner must fail closed when visual evidence explicitly fails")
     offering_action = archive._evidence_action({
         "module": "图片模型路由与切换",
         "primaryState": "Offering",
