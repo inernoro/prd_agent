@@ -102,6 +102,7 @@ const notRunLedger = buildNotRunLedger(rows, {
   cds: Boolean(cdsReport),
   production: Boolean(productionReport),
   productionRestricted: executionSummary?.productionSafetyGate?.restricted === true,
+  productionSafetyGate: executionSummary?.productionSafetyGate,
 });
 const verdict = summary.verdict;
 const totalDuration = rows.reduce((sum, row) => sum + row.durationMs, 0);

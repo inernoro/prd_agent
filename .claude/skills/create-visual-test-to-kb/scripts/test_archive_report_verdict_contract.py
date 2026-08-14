@@ -759,6 +759,33 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
     }]
     figure_srcs = {"fig-01-proof": "https://assets.example.test/01-proof.png"}
 
+    def test_zero_failure_sentinel_renders_empty_state_instead_of_failure_card(self):
+        content = archive_report.build_interactive_html(
+            "稳定冒烟 · 零失败报告",
+            "pass",
+            """
+## 结论与处理顺序
+
+| 指标 | 数量 |
+|---|---:|
+| 计划测试 | 1 |
+| 已完成 | 1 |
+| 通过 | 1 |
+| 失败 | 0 |
+| 未执行 | 0 |
+
+## 不通过问题与复现
+
+| 根因 | 影响项数 | 影响模块 | 验收项编号 |
+|---|---:|---|---|
+| 无 | 0 | 无 | 无 |
+""",
+            [],
+            figure_srcs={},
+        )
+        self.assertIn("本轮没有业务失败项。", content)
+        self.assertNotIn('<article class="business-failure-card">', content)
+
     @staticmethod
     def body(gap_heading: str) -> str:
         return f"""

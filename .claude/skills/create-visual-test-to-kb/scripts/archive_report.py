@@ -2520,8 +2520,11 @@ def build_interactive_html(
         executed_pass_rate = counts["通过"] / counts["已完成"] * 100 if counts["已完成"] else 0
         failure_cards = []
         for row in business_summary["failures"][:8]:
+            raw_count = _plain_cell(row.get("影响项数", "")).strip()
+            if re.fullmatch(r"0+(?:\.0+)?", raw_count):
+                continue
             reason = html.escape(_plain_cell(row.get("根因", "")) or "未说明失败原因")
-            count = html.escape(_plain_cell(row.get("影响项数", "")) or "0")
+            count = html.escape(raw_count or "0")
             modules = html.escape(_plain_cell(row.get("影响模块", "")) or "未标注模块")
             case_ids = html.escape(_plain_cell(row.get("验收项编号", "")) or "未标注编号")
             actual = html.escape(_plain_cell(row.get("实际结果", "")) or "未记录实际结果")

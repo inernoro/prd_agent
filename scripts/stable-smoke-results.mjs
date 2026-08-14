@@ -138,11 +138,15 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
       const reportAvailable = reportAvailability[row.environment] === true;
       const isProduction = row.environment === 'production';
       const productionRestricted = isProduction && reportAvailability.productionRestricted === true;
+      const productionRestrictionReason = [
+        ...(reportAvailability.productionSafetyGate?.reasons || []),
+        reportAvailability.productionRestrictionReason,
+      ].filter(Boolean).join('；') || '本轮 CDS 验证未满足正式环境写入安全门要求';
       const reasonCode = productionRestricted
         ? 'production-safety-restricted'
         : reportAvailable ? 'automation-case-missing' : 'environment-report-missing';
       const reason = productionRestricted
-        ? 'CDS 出现业务失败后触发安全门槛，正式环境按合同只执行只读检查，写入旅程未运行。'
+        ? `正式环境安全门限制为只读检查，写入旅程未运行。原因：${productionRestrictionReason}。`
         : reportAvailable
         ? '本环境已有执行报告，但没有该 caseId 的真实步骤或执行证据。'
         : isProduction
@@ -150,7 +154,7 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
           : 'CDS 环境执行报告缺失，无法判断该 caseId 是否实际运行。';
       const environmentFlag = isProduction ? '' : '--cds-only';
       const command = productionRestricted
-        ? '先修复 CDS 失败项并在 CDS 复测通过，再运行 node scripts/stable-smoke-run.mjs 完成正式环境安全矩阵'
+        ? '先按安全门原因完成 CDS 全量复测与覆盖闭环，再运行 node scripts/stable-smoke-run.mjs 完成正式环境安全矩阵'
         : reportAvailable
         ? `先在 e2e/specs/stable-smoke.spec.ts 实现 [${row.caseId}]，再运行 node scripts/stable-smoke-run.mjs${environmentFlag ? ` ${environmentFlag}` : ''} --grep "\\[${row.caseId}\\]"`
         : isProduction
@@ -163,7 +167,7 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
         sourcePath: productionRestricted ? 'scripts/stable-smoke-run.mjs' : 'e2e/specs/stable-smoke.spec.ts',
         command,
         closeCondition: productionRestricted
-          ? `CDS 失败项关闭，且报告中 production:${row.caseId} 出现 pass 或 fail 的真实执行证据`
+          ? `正式环境安全门解除，且报告中 production:${row.caseId} 出现 pass 或 fail 的真实执行证据`
           : `报告中 ${row.environment}:${row.caseId} 出现 pass 或 fail 的真实执行证据`,
       };
     });
