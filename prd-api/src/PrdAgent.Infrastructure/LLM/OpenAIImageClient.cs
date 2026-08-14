@@ -1823,7 +1823,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
         try
         {
-            JsonObject requestBody;
+            JsonObject? requestBody;
             string endpointPath;
             if (isOpenRouterImageApi)
             {
@@ -1851,7 +1851,9 @@ public class OpenAIImageClient : IImageGenerationClient
                 // 只保留 canonical IR，让 Gateway 根据已解析 Offering 构建 wire；否则在
                 // image2 首选 OpenRouter 不可用、直接选中 OpenAI 备用供给时，旧的
                 // chat/completions 请求只会携带文本，参考图会被静默丢失。
-                requestBody = new JsonObject();
+                // null 明确表示 wire 尚未构建，禁止 PrepareCanonicalImageRequestForResolution
+                // 把空对象误判为调用方已准备好的 JSON 请求而跳过 multipart 重建。
+                requestBody = null;
                 endpointPath = "images/edits";
                 _logger.LogInformation(
                     "[OpenAIImageClient] OpenAI Images 多图请求: AppCallerCode={AppCallerCode}, ImageCount={Count}, Model={Model}",
