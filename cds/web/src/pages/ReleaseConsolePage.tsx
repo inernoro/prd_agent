@@ -489,7 +489,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
               不是项目列表。桌面三栏不受影响（order 只在 max-lg 生效）。 */}
-          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-xl:order-2 xl:overflow-hidden">
+          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-xl:order-2 max-xl:shrink-0 xl:overflow-hidden">
             <div className="shrink-0 border-b border-[hsl(var(--hairline))] p-3">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Projects</span>
@@ -605,7 +605,7 @@ export function ReleaseConsolePage(): JSX.Element {
           </aside>
 
           {/* ══ 中栏：状态是主角 ══ */}
-          <main className="flex min-h-0 flex-col gap-3 max-xl:order-1 xl:overflow-hidden">
+          <main className="flex min-h-0 flex-col gap-3 max-xl:order-1 max-xl:shrink-0 xl:overflow-hidden">
             {error ? (
               <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-3 py-2 text-sm text-red-600 dark:text-red-400">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -907,7 +907,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 右栏：只放「看记录」。配置与 Agent 走全屏浮层 ══ */}
           {/* 348px 的窄栏装不下发布流水线和一整段任务文本 —— 塞进来就是逼人在
               一条窄缝里横向读命令。这两块改成浮层，右栏专心做记录。 */}
-          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-xl:order-3 xl:overflow-hidden">
+          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-xl:order-3 max-xl:shrink-0 xl:overflow-hidden">
             <div className="flex shrink-0 items-center gap-1 border-b border-[hsl(var(--hairline))] px-2 pt-2">
               {([['history', '历史发布'], ['failed', '失败']] as Array<[RailPane, string]>).map(([key, label]) => (
                 <button
@@ -974,7 +974,10 @@ export function ReleaseConsolePage(): JSX.Element {
                               {itemFailed ? '失败' : live ? '线上' : '成功'}
                             </span>
                           </div>
-                          <div className="min-w-0 truncate cds-ident text-xs text-muted-foreground">
+                          {/* 换行而不是 truncate：这一行末尾是耗时，truncate 先吃掉的正好是它
+                              （300px 的右栏里 `1m42s` 被截成 `1m4…`）。三段都是要看的信息，
+                              宁可占两行。 */}
+                          <div className="min-w-0 cds-ident text-xs leading-snug text-muted-foreground">
                             {item.operator || '-'} · {formatDateTime(item.startedAt)}
                             {formatDuration(item.startedAt, item.finishedAt) ? ` · ${formatDuration(item.startedAt, item.finishedAt)}` : ''}
                           </div>

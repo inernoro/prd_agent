@@ -317,7 +317,7 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
    * 没后续」这个抱怨的成因。桌面不受影响，order 只在 max-xl 生效。
    */
   it('窄屏把状态排到第一位，项目与记录退到后面', () => {
-    expect(PAGE).toContain('max-xl:order-1 xl:overflow-hidden');
+    expect(PAGE).toContain('max-xl:order-1');
     expect(PAGE).toContain('max-xl:order-2');
     expect(PAGE).toContain('max-xl:order-3');
     const mainAt = PAGE.indexOf('max-xl:order-1');
@@ -333,5 +333,23 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
     // 新栈 token 是 HSL 三元组，裸 var() 会让整条属性静默失效
     expect(PAGE).not.toMatch(/:\s*var\(--surface-/);
     expect(PAGE).toContain('hsl(var(--surface-sunken))');
+  });
+});
+
+/**
+ * 窄屏（< xl）整页是自然流：外壳 `h-full ... overflow-y-auto` 是个有界滚动容器，
+ * 三块作为 flex item 默认 `shrink: 1`，会被压到比内容矮——而它们的 overflow-hidden
+ * 只在 xl 生效，于是内容直接溢出、画在下一块上面。390px 实测：PROJECTS、
+ * ENVIRONMENTS、历史发布三张卡互相叠印，读都读不了（cds 的 mobile-layout-fallback
+ * 第一条讲的就是这个）。窄屏必须 shrink-0，让外壳去滚。
+ */
+describe('发布控制台 · 窄屏不许叠印', () => {
+  it('三栏在窄屏都是 shrink-0，靠外壳滚动而不是被压扁', () => {
+    for (const order of ['max-xl:order-1', 'max-xl:order-2', 'max-xl:order-3']) {
+      const at = PAGE.indexOf(order);
+      expect(at, `${order} 不见了`).toBeGreaterThan(-1);
+      const cls = PAGE.slice(PAGE.lastIndexOf('className="', at), PAGE.indexOf('"', at));
+      expect(cls, `${order} 那一块窄屏会被压扁并叠印，需要 max-xl:shrink-0`).toContain('max-xl:shrink-0');
+    }
   });
 });
