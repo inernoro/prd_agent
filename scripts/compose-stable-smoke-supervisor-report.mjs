@@ -234,9 +234,23 @@ function businessRecoveryAction(reason) {
 function nextRetestDeadline(runId) {
   const match = String(runId || '').match(/stsmk-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);
   if (!match) return '下一轮 48 小时复测前';
-  const due = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + 2));
-  const date = [due.getUTCFullYear(), String(due.getUTCMonth() + 1).padStart(2, '0'), String(due.getUTCDate()).padStart(2, '0')].join('-');
-  return `${date} ${match[4]}:${match[5]}（北京时间）前`;
+  const due = new Date(Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]) + 2,
+    Number(match[4]),
+    Number(match[5]),
+  ));
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(due).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}（北京时间）前`;
 }
 
 export function collectBusinessFailureGroups(sectionContent) {
@@ -309,11 +323,34 @@ export function renderBusinessDecisionPage(functionalLead, failureSectionContent
   const coverageByEnvironment = new Map(environmentCoverage.map((item) => [item.environment, item]));
   const cdsCoverage = coverageByEnvironment.get('cds');
   const productionCoverage = coverageByEnvironment.get('production');
+  const productionSafetyGate = executionSummary?.productionSafetyGate;
   const deadline = nextRetestDeadline(executionSummary?.runId);
+  const visualGateDisallowsRelease = /结论\s*[：:]\s*不通过|\|\s*能否发布\s*\|\s*不可以\s*\|/.test(
+    String(visualGateLeadContent || ''),
+  );
+  const visualBlocksRelease = Boolean(visual && (visual.failed > 0 || visual.needsIntervention > 0));
+  const visualNeedsEvidence = Boolean(
+    (visual && (visual.needsEvidence > 0 || visual.reviewable < visual.planned))
+    || (visualGateDisallowsRelease && !visualBlocksRelease),
+  );
+  const releaseConclusion = counts.failed > 0 || visualBlocksRelease
+    ? '当前不能放行。'
+    : counts.notRun > 0 || visualNeedsEvidence
+      ? '当前只能有条件放行。'
+      : '当前可以放行。';
+  const productionConclusion = productionCoverage
+    ? productionSafetyGate?.restricted === true
+      ? `安全门已限制为只读检查：${productionSafetyGate.reasons?.join('；') || 'CDS 功能或视觉门禁尚未通过'}`
+      : productionCoverage.failed > 0
+        ? `正式环境已有 ${productionCoverage.failed} 项失败，必须修复后复测`
+        : productionCoverage.notRun > 0
+          ? `正式环境完成 ${productionCoverage.completed}/${productionCoverage.planned}，仍有 ${productionCoverage.notRun} 项未执行`
+          : `正式环境 ${productionCoverage.planned} 项已全部完成且通过`
+    : '';
   const lines = [
     '## 结论与处理顺序',
     '',
-    `> 本轮计划 ${counts.planned} 项，已完成 ${counts.completed} 项；通过 ${counts.passed} 项、失败 ${counts.failed} 项、未执行 ${counts.notRun} 项。${counts.failed > 0 ? '当前不能放行。' : counts.notRun > 0 ? '当前只能有条件放行。' : '当前可以放行。'}`,
+    `> 本轮计划 ${counts.planned} 项，已完成 ${counts.completed} 项；通过 ${counts.passed} 项、失败 ${counts.failed} 项、未执行 ${counts.notRun} 项。${releaseConclusion}`,
     '',
     '| 指标 | 数量 | 给业务读者的解释 |',
     '|---|---:|---|',
@@ -335,7 +372,7 @@ export function renderBusinessDecisionPage(functionalLead, failureSectionContent
       '| 环境 | 计划 | 已完成 | 通过 | 失败 | 未执行 | 业务结论 |',
       '|---|---:|---:|---:|---:|---:|---|',
       ...(cdsCoverage ? [`| CDS | ${cdsCoverage.planned} | ${cdsCoverage.completed} | ${cdsCoverage.passed} | ${cdsCoverage.failed} | ${cdsCoverage.notRun} | CDS 本轮完成 ${cdsCoverage.completed}/${cdsCoverage.planned}，仍有 ${cdsCoverage.notRun} 项未执行 |`] : []),
-      ...(productionCoverage ? [`| 正式环境 | ${productionCoverage.planned} | ${productionCoverage.completed} | ${productionCoverage.passed} | ${productionCoverage.failed} | ${productionCoverage.notRun} | CDS 失败触发安全门槛，本轮正式环境仅执行只读检查 |`] : []),
+      ...(productionCoverage ? [`| 正式环境 | ${productionCoverage.planned} | ${productionCoverage.completed} | ${productionCoverage.passed} | ${productionCoverage.failed} | ${productionCoverage.notRun} | ${productionConclusion} |`] : []),
       '',
     );
   }

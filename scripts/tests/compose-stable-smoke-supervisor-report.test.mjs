@@ -59,7 +59,7 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
   assert.match(page, /GW-001、REC-003|REC-003、GW-001/);
   assert.doesNotMatch(page, /expect\(|Expected:|Received:/);
   assert.match(page, /准备一段有清晰中文语音的音频/);
-  assert.match(page, /2026-08-15 10:21（北京时间）前/);
+  assert.match(page, /2026-08-15 18:21（北京时间）前/);
   assert.match(page, /补齐语音识别成员，交付一条可打开且刷新仍存在的转录笔记/);
   assert.match(page, /查看逐项失败结果/);
 });
@@ -260,6 +260,52 @@ test('功能通过但视觉门禁未通过时验收报告不得判通过', () =>
   const report = composeSupervisorReport(functional, visualGate, visualGate);
   assert.match(report, /Verdict: fail/);
   assert.match(report, /\| 能否发布 \| 不可以 \|/);
+  assert.match(report, /当前只能有条件放行/);
+  assert.doesNotMatch(report, /当前可以放行/);
+});
+
+test('视觉需干预时即使功能全部通过也不得显示可以放行', () => {
+  const lead = '> 主管结论：通过。共 2 项，2 项通过、0 项不通过、0 项未执行。';
+  const visualGate = `## 主管先看
+
+| 项目 | 结果 | 说明 |
+|---|---|---|
+| 可审核证据 | 2/2 | 字段完整 |
+| 状态结果 | 通过 1，不通过 0，需补证 0，需干预 1 | 一项需人工干预 |`;
+  const page = renderBusinessDecisionPage(lead, '', visualGate, { runId: 'stsmk-20260813-1021-abcd' });
+
+  assert.match(page, /当前不能放行/);
+  assert.doesNotMatch(page, /当前可以放行/);
+});
+
+test('正式环境结论依据安全门与实际覆盖而不是固定归因给 CDS', () => {
+  const lead = '> 主管结论：通过。共 2 项，2 项通过、0 项不通过、0 项未执行。';
+  const successful = renderBusinessDecisionPage(lead, '', '', {
+    runId: 'stsmk-20260813-1021-abcd',
+    productionSafetyGate: { restricted: false, reasons: [] },
+    environmentCoverage: [
+      { environment: 'production', planned: 2, completed: 2, passed: 2, failed: 0, notRun: 0 },
+    ],
+  });
+  const identityMissing = renderBusinessDecisionPage(lead, '', '', {
+    runId: 'stsmk-20260813-1021-abcd',
+    productionSafetyGate: { restricted: false, reasons: [] },
+    environmentCoverage: [
+      { environment: 'production', planned: 2, completed: 0, passed: 0, failed: 0, notRun: 2 },
+    ],
+  });
+  const restricted = renderBusinessDecisionPage(lead, '', '', {
+    runId: 'stsmk-20260813-1021-abcd',
+    productionSafetyGate: { restricted: true, reasons: ['CDS 视觉门禁未通过'] },
+    environmentCoverage: [
+      { environment: 'production', planned: 2, completed: 1, passed: 1, failed: 0, notRun: 1 },
+    ],
+  });
+
+  assert.match(successful, /正式环境 2 项已全部完成且通过/);
+  assert.doesNotMatch(successful, /CDS 失败触发/);
+  assert.match(identityMissing, /正式环境完成 0\/2，仍有 2 项未执行/);
+  assert.match(restricted, /安全门已限制为只读检查：CDS 视觉门禁未通过/);
 });
 
 test('视觉只有缺证而没有产品失败时验收报告判为有条件通过', () => {
