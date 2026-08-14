@@ -126,6 +126,35 @@ function authoritativeExecutionVerdict(executionSummary) {
   return normalizedVerdict(coverage?.verdict);
 }
 
+function environmentCoverageFromLedger(sectionContent) {
+  const table = parseMarkdownTable(sectionContent);
+  if (!table) return [];
+  const indexes = Object.fromEntries(
+    ['环境', '计划', '已执行', '通过', '失败', '未执行'].map((header) => [header, table.headers.indexOf(header)]),
+  );
+  if (Object.values(indexes).some((index) => index < 0)) return [];
+  return table.rows.flatMap((row) => {
+    const values = Object.fromEntries(
+      ['计划', '已执行', '通过', '失败', '未执行'].map((header) => [header, Number(plainCell(row[indexes[header]]))]),
+    );
+    if (Object.values(values).some((value) => !Number.isInteger(value) || value < 0)) return [];
+    const rawEnvironment = plainCell(row[indexes['环境']]);
+    const environment = rawEnvironment === 'CDS'
+      ? 'cds'
+      : rawEnvironment === '正式环境'
+        ? 'production'
+        : rawEnvironment;
+    return [{
+      environment,
+      planned: values['计划'],
+      completed: values['已执行'],
+      passed: values['通过'],
+      failed: values['失败'],
+      notRun: values['未执行'],
+    }];
+  });
+}
+
 export function parseFunctionalExecutionCounts(functionalLead, executionSummary = null) {
   const authoritative = countsFromExecutionSummary(executionSummary);
   const match = String(functionalLead || '').match(
@@ -572,9 +601,16 @@ export function renderHumanReadableAcceptanceDesign(gateModuleContent, execution
     '|---|---|---|---|',
     ...rows.map((row) => {
       const status = row['视觉结论'];
+      const statusCounts = plainCell(row['状态结果']);
+      const declaredGap = plainCell(row['缺口']);
+      const actionableGap = declaredGap && declaredGap !== '无'
+        ? declaredGap
+        : statusCounts
+          ? `状态分布：${statusCounts}`
+          : '按逐张账本完成剩余操作、结果回读和清理回读';
       const conclusion = status === '通过'
         ? '本轮视觉证据通过；功能结果仍以功能账本为准'
-        : `${status}：${row['缺口']}`;
+        : `${status}；${actionableGap}`;
       return `| ${row['模块']}关键用户旅程 | ${row['真实面包屑']} | 入口、操作、结果、失败恢复与刷新回读 | ${conclusion} |`;
     }),
     '',
@@ -732,11 +768,17 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   const visualGateModules = visualGate.sections.find((section) => section.title === '模块覆盖');
   const functionalModules = functional.sections.find((section) => section.title === '业务功能线与面包屑');
   const functionalFailures = functional.sections.find((section) => section.title === '未通过与未执行逐项清单');
+  const functionalCoverage = functional.sections.find((section) => section.title === '执行覆盖账本');
+  const ledgerEnvironmentCoverage = environmentCoverageFromLedger(functionalCoverage?.content || '');
+  const effectiveExecutionSummary = ledgerEnvironmentCoverage.length > 0
+    && !Array.isArray(executionSummary?.environmentCoverage)
+    ? { ...(executionSummary || {}), environmentCoverage: ledgerEnvironmentCoverage }
+    : executionSummary;
   const reviewerOverview = visualOverview
     ? synchronizeVisualOverview(visualOverview.content, visualGateModules?.content)
     : synthesizeReviewerOverview(functionalModules?.content || '', visualGateModules?.content || '');
-  const authoritativeCounts = parseFunctionalExecutionCounts(functional.lead, executionSummary);
-  if (executionSummary && authoritativeCounts && !authoritativeCounts.balanced) {
+  const authoritativeCounts = parseFunctionalExecutionCounts(functional.lead, effectiveExecutionSummary);
+  if (effectiveExecutionSummary && authoritativeCounts && !authoritativeCounts.balanced) {
     throw new Error('执行汇总统计不守恒：通过 + 失败 + 未执行必须等于计划测试');
   }
   const countVerdict = authoritativeCounts
@@ -748,7 +790,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
       : /部分通过/.test(functional.lead)
         ? 'conditional'
         : 'pass';
-  const functionalVerdict = strictestVerdict(countVerdict, authoritativeExecutionVerdict(executionSummary));
+  const functionalVerdict = strictestVerdict(countVerdict, authoritativeExecutionVerdict(effectiveExecutionSummary));
   const visualCounts = visualEvidenceCounts(visualGateLead?.content || '');
   const visualGateVerdict = !visualGateMarkdown
     ? 'pass'
@@ -770,6 +812,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
       `共 ${authoritativeCounts.planned} 项，${authoritativeCounts.passed} 项通过、${authoritativeCounts.failed} 项不通过、${authoritativeCounts.notRun} 项未执行`,
     )
     : functional.lead)
+    .replace(/验收主管报告/g, '验收报告')
     .replace(/主管报告/g, '验收报告')
     .replace(/主管结论/g, '验收结论');
   const output = [synchronizedLead, '', `Verdict: ${inferredVerdict}`, ''];
@@ -777,7 +820,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     synchronizedLead,
     functionalFailures?.content || '',
     visualGateLead?.content || '',
-    executionSummary,
+    effectiveExecutionSummary,
     inferredVerdict,
   );
   if (!hasFunctionalExecutive) {
@@ -785,7 +828,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
       synchronizedLead,
       visualGateLead?.content || '',
       inferredVerdict,
-      executionSummary,
+      effectiveExecutionSummary,
     ), '');
     if (businessDecisionPage) output.push(businessDecisionPage, '');
   }
@@ -834,7 +877,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     output.push(...visualGateSummary.flatMap((item) => [item.content, '']));
   }
   const acceptanceDesign = visualGateModules
-    ? renderHumanReadableAcceptanceDesign(visualGateModules.content, executionSummary)
+    ? renderHumanReadableAcceptanceDesign(visualGateModules.content, effectiveExecutionSummary)
     : '';
   if (acceptanceDesign) output.push(acceptanceDesign, '');
   output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
