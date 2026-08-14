@@ -43,3 +43,5 @@
 | test | prd-admin | 补齐旧转录被失联替代任务取代时的后台看护收敛回归 |
 | fix | prd-admin | 将转录首次发布 marker 视为可恢复在途状态并纳入失联判定 |
 | test | prd-admin | 补齐 publishing 状态刷新接管、停滞收敛与失败提示互斥回归 |
+| fix | prd-api | 拒绝视频 chat-audio 的无人声哨兵和助手回复并回退关键帧分析 |
+| test | prd-api | 补齐视频音频拒答、无人声与真实短句的解析回归 |

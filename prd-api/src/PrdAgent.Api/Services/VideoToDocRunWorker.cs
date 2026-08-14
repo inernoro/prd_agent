@@ -392,7 +392,14 @@ public class VideoToDocRunWorker : BackgroundService
         try
         {
             var text = AsrResponseContractPolicy.ExtractCompactTranscript(json);
-            if (text is null) return (new List<TranscriptSegment>(), "unknown");
+            if (text is null
+                || TranscribeNoteText.IsNoSpeechSentinel(text)
+                || LiveAsrBatchFallbackService.LooksLikeAssistantReply(text))
+            {
+                _logger.LogWarning(
+                    "VideoToDoc chat 音频返回无人声哨兵或助手回复，降级为纯视觉分析");
+                return (new List<TranscriptSegment>(), "unknown");
+            }
 
             return (new List<TranscriptSegment>
             {
