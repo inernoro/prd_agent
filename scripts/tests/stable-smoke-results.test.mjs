@@ -316,6 +316,31 @@ test('正式环境安全门受限时未执行账本展示真实原因而不固�
   assert.doesNotMatch(ledger[0].command, /实现 \[VIDEO-001\]/);
 });
 
+test('正式环境只读安全门允许的探针缺证时不得解释为写入受限', () => {
+  const ledger = buildNotRunLedger([
+    { caseId: 'CORE-001', environment: 'production', status: 'not-run' },
+    { caseId: 'VIDEO-001', environment: 'production', status: 'not-run' },
+  ], {
+    cds: false,
+    production: false,
+    productionRestricted: true,
+    productionSafetyGate: {
+      restricted: true,
+      grep: '\\[CORE-001\\]',
+      reasons: ['本轮未执行 CDS 全量测试，正式环境仅允许只读健康检查'],
+    },
+  });
+
+  assert.equal(ledger[0].reasonCode, 'production-read-only-evidence-missing');
+  assert.match(ledger[0].reason, /已允许只读检查 CORE-001/);
+  assert.doesNotMatch(ledger[0].reason, /写入旅程未运行/);
+  assert.match(ledger[0].command, /--production-only/);
+  assert.doesNotMatch(ledger[0].closeCondition, /安全门解除/);
+  assert.equal(ledger[1].reasonCode, 'production-safety-restricted');
+  assert.match(ledger[1].reason, /写入旅程未运行/);
+  assert.match(ledger[1].closeCondition, /安全门解除/);
+});
+
 test('失败优先于未执行，重试通过仍是 conditional', () => {
   assert.equal(summarizeCoverage([{ status: 'fail', retryCount: 0 }]).verdict, 'fail');
   assert.equal(summarizeCoverage([{ status: 'pass', retryCount: 1 }]).verdict, 'conditional');
