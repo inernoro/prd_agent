@@ -478,9 +478,13 @@ export function ReleaseConsolePage(): JSX.Element {
       {/* --fill：三栏是固定外壳 + 各栏内滚（参考稿即如此）。缺它时 h-full 解析不到
           高度，实时输出会把整页撑到近万像素——看着像填满，其实是页面在长。 */}
       <Workspace fluid className="cds-workspace--fill">
-        {/* 移动端整页自然流；lg 起切回三栏填满，各栏自己滚 */}
+        {/* 移动端整页自然流；lg 起切回三栏填满，各栏自己滚。
+            列宽照参考稿是 288/380，但那是在宽画布上量的：笔记本宽度下两侧一共吃掉
+            700px，中栏只剩一条缝。所以 lg..2xl 先收成 248/320，2xl 起才回到参考值。
+            中栏**不给 min-width**——曾经写过 minmax(560px,1fr)，实测 1024 下右栏被切掉
+            382px（grid 到 982 就没了，右栏画到 1364），1280 下仍切 126px。 */}
         <div
-          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-[288px_minmax(560px,1fr)_380px] lg:gap-4 lg:overflow-hidden"
+          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-[248px_minmax(0,1fr)_320px] lg:gap-4 lg:overflow-hidden 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
@@ -807,13 +811,15 @@ export function ReleaseConsolePage(): JSX.Element {
               </div>
             ) : null}
 
-            <div className="grid min-h-0 flex-1 gap-3.5 lg:grid-cols-[300px_minmax(0,1fr)]">
+            {/* 参考稿的流水线列是 300px，同样只在宽画布上成立：中栏 560 的时候
+                300 会把实时输出压到 246px，日志头那一排按钮直接被卡片切掉。 */}
+            <div className="grid min-h-0 flex-1 gap-3.5 lg:grid-cols-[232px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)]">
               {/* 与右侧日志等高（参考稿 grid 两列 stretch）。之前用 self-start 让它按内容收高，
                   结果卡片底边下面空出一大块底色 —— 悬空的短卡读起来是「洞」，不是「省地方」。 */}
               <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border">
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
                   <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Pipeline</span>
-                  <span className="flex items-center gap-2">
+                  <span className="flex flex-wrap items-center gap-2">
                     <span className="cds-ident text-[11px] text-muted-foreground">
                       {progress.steps.filter((s) => s.state === 'done').length}/{progress.steps.length} 步骤
                     </span>
@@ -864,9 +870,12 @@ export function ReleaseConsolePage(): JSX.Element {
               </section>
 
               <section className="cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border bg-[hsl(var(--surface-sunken))]">
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
+                {/* flex-wrap 不是可有可无：卡片是 overflow-hidden，这一排一旦超出宽度
+                    就被直接切掉（实测 scrollWidth 291 / clientWidth 244，「交给智能体」
+                    半个按钮消失在卡片外）。宽度不够时换行，不许裁。 */}
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
                   <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Live output</span>
-                  <span className="flex items-center gap-2">
+                  <span className="flex flex-wrap items-center gap-2">
                     <span className="cds-ident text-[11px] text-muted-foreground">{shownLogs.length} 行</span>
                     <Button variant="outline" size="sm" onClick={() => setFollowing((current) => !current)}>
                       {following ? '跟随最新' : '已暂停跟随'}

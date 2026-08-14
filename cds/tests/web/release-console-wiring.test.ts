@@ -279,10 +279,33 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
   /**
    * 列宽取自参考稿 f8d4af4b 的实测值。用户 2026-08-13 的原话是「你应该按照
    * 参考稿的设定，包括宽度」——首版自己拍了 264/348，看着就是不对味。
-   * 中栏给 560px 下界，是为了不让实时输出在中等宽度被两侧挤成细条。
+   *
+   * 但参考稿是在宽画布上量的：288+380+32 在 1024 宽只给中栏剩一条缝。
+   * 所以参考值挂在 2xl，lg..2xl 先收窄。
    */
-  it('三栏列宽照参考稿，不自己拍脑袋', () => {
-    expect(PAGE).toContain('lg:grid-cols-[288px_minmax(560px,1fr)_380px]');
+  it('宽画布上用参考稿列宽，笔记本宽度先收窄', () => {
+    expect(PAGE).toContain('2xl:grid-cols-[288px_minmax(0,1fr)_380px]');
+    expect(PAGE).toContain('lg:grid-cols-[248px_minmax(0,1fr)_320px]');
+  });
+
+  /**
+   * 中栏不许给 min-width。写过 `minmax(560px,1fr)`，实测 1024 宽下三栏总最小
+   * 1260px 超出可用的 878px，grid 到 982 就结束、右栏一路画到 1364——历史记录
+   * 那一整栏被切掉 382px（1280 下仍切 126px），而外层 overflow-hidden 让它
+   * 既不报横向滚动也看不出来。固定列 + 无下界的 1fr 才不会溢出。
+   */
+  it('中栏不设 min-width —— 那会把右栏挤出画布并被裁掉', () => {
+    expect(PAGE).not.toMatch(/grid-cols-\[[^\]]*minmax\(\d+px,\s*1fr\)/);
+  });
+
+  /**
+   * 流水线卡与实时输出卡都是 overflow-hidden，头部那一排（标签 + 计数 + 按钮）
+   * 超宽时会被直接裁掉——实测 scrollWidth 291 / clientWidth 244，「交给智能体」
+   * 半个按钮消失在卡片外。宽度不够必须换行，不许裁。
+   */
+  it('两张卡的头部可换行，不会把按钮裁在卡片外', () => {
+    const heads = PAGE.match(/flex shrink-0 flex-wrap items-center justify-between[^"]*/g) || [];
+    expect(heads.length, 'Pipeline 与 Live output 两个卡头都要能换行').toBeGreaterThanOrEqual(2);
   });
 
   /**

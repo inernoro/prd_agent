@@ -34,3 +34,5 @@
 | fix | cds | 发布中心「焊死」修复：页内面板的 `overscroll-behavior: contain` 全部移除（18 处，浮层保留）——`.cds-main` 当时有 381px 可滚，但鼠标停在详情面板上时 contain 切断了向外层的滚动链，页面永远不动；桌面端不再 lg:overflow-hidden，顶部标题块与版本流水轴可以被推上去 |
 | polish | cds | 发布中心头部从两行压到一行（描述并进标题行），版本流水轴节点间距收紧，顶部块高 86 -> 62 |
 | test | cds | 新增 `overscroll-containment` 守卫：页内面板不许再加 containment、浮层底座必须保留；发布中心桌面不许锁死整页滚、发布控制台必须带 --fill |
+| fix | cds | 发布控制台三栏在笔记本宽度把右栏切掉：中栏的 `minmax(560px,1fr)` 让三栏总最小 1260px，1024 宽下可用只有 878，历史记录整栏被裁 382px（1280 下仍裁 126px），外层 overflow-hidden 让它既不报横向滚动也看不出来。中栏改为无下界 1fr，参考稿的 288/380 挂到 2xl，lg..2xl 收成 248/320；流水线列同理 232 / 2xl 300 |
+| fix | cds | 流水线与实时输出的卡头超宽被裁（scrollWidth 291 / clientWidth 244，「交给智能体」半个按钮消失在卡片外）：两个卡头改为可换行 |
