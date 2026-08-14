@@ -18,3 +18,5 @@
 | fix | prd-admin | 工作区画布回放完成前禁用图片上传，避免初始快照覆盖新加入的多图 |
 | fix | prd-api | OpenAI 多图备用线路显式保留未构建 wire 状态，确保网关必走 multipart 编辑协议 |
 | fix | acceptance | 按真实安全门原因解释正式环境受限执行，并在零失败时展示空状态而非失败卡片 |
+| fix | prd-api | 多图 multipart 审计日志保留请求图片顺序，避免十张以上参考图错位归因 |
+| fix | acceptance | 报告仅在功能未执行数与视觉缺口数相等时说明数字巧合 |

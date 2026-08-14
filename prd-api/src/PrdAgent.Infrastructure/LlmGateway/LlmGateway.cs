@@ -3634,7 +3634,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private static string BuildMultipartRequestBodyForLog(GatewayRawRequest request, string endpoint)
     {
         var files = new JsonArray();
-        foreach (var (fieldName, file) in request.MultipartFiles?.OrderBy(item => item.Key)
+        foreach (var (fieldName, file) in request.MultipartFiles?.AsEnumerable()
                      ?? Enumerable.Empty<KeyValuePair<string, (string FileName, byte[] Content, string MimeType)>>())
         {
             files.Add(new JsonObject

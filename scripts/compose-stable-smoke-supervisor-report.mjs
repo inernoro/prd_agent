@@ -446,6 +446,10 @@ export function renderBusinessDecisionPage(
     );
   }
   if (visual) {
+    const inconclusiveVisualCount = visual.needsEvidence + visual.needsIntervention;
+    const equalCountNote = counts.notRun === inconclusiveVisualCount
+      ? '；本轮数字相同纯属巧合，不能一一对应'
+      : '；两者不能一一对应';
     lines.push(
       '## 截图证据怎么读',
       '',
@@ -455,9 +459,9 @@ export function renderBusinessDecisionPage(
       `| 已采集且可审核 | ${visual.reviewable} | 图片、路径、时间和方法字段齐全，不等于验收通过 |`,
       `| 能直接证明通过 | ${visual.passed} | 截图确实呈现了目标状态 |`,
       `| 明确不通过 | ${visual.failed} | 截图直接呈现错误结果 |`,
-      `| 不能证明业务结果 | ${visual.needsEvidence + visual.needsIntervention} | 只能证明页面可达，或需要运行态、外部模型、专项交互继续取证 |`,
+      `| 不能证明业务结果 | ${inconclusiveVisualCount} | 只能证明页面可达，或需要运行态、外部模型、专项交互继续取证 |`,
       '',
-      `> 注意：功能未执行 ${counts.notRun} 项与截图不能证明业务结果 ${visual.needsEvidence + visual.needsIntervention} 张是两个独立维度；本轮数字相同纯属巧合，不能一一对应。`,
+      `> 注意：功能未执行 ${counts.notRun} 项与截图不能证明业务结果 ${inconclusiveVisualCount} 张是两个独立维度${equalCountNote}。`,
       '',
     );
   }

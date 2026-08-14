@@ -71,6 +71,7 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
   assert.match(page, /\| 已采集且可审核 \| 148 \| 图片、路径、时间和方法字段齐全，不等于验收通过 \|/);
   assert.match(page, /\| 能直接证明通过 \| 36 \|/);
   assert.match(page, /功能未执行 112 项与截图不能证明业务结果 112 张是两个独立维度/);
+  assert.match(page, /本轮数字相同纯属巧合/);
   assert.match(page, /## 双环境覆盖差异/);
   assert.match(page, /\| CDS \| 103 \| 78 \| 47 \| 31 \| 25 \|/);
   assert.match(page, /CDS 本轮完成 78\/103，仍有 25 项未执行/);
@@ -82,6 +83,20 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
   assert.match(page, /2026-08-15 18:21（北京时间）前/);
   assert.match(page, /补齐语音识别成员，交付一条可打开且刷新仍存在的转录笔记/);
   assert.match(page, /查看逐项失败结果/);
+});
+
+test('功能未执行与视觉缺口数量不同时不得声称数字相同', () => {
+  const lead = '> 验收结论：有条件通过。共 1 项，1 项通过、0 项不通过、0 项未执行。';
+  const visualGate = `## 处理流程
+
+| 项目 | 结果 | 说明 |
+|---|---|---|
+| 可审核证据 | 5/10 | 尚缺五张证据 |
+| 状态结果 | 通过 5，不通过 0，需补证 5，需干预 0 | 需要继续取证 |`;
+  const page = renderBusinessDecisionPage(lead, '', visualGate);
+
+  assert.match(page, /功能未执行 0 项与截图不能证明业务结果 5 张是两个独立维度；两者不能一一对应/);
+  assert.doesNotMatch(page, /本轮数字相同/);
 });
 
 test('执行汇总覆盖旧报告口径并同步首屏所有数字', () => {

@@ -3396,6 +3396,55 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenMultipartHasElevenImages_ShouldPreserveRequestOrderInLog()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "Pinned",
+            ActualModel = "image-edit-model",
+            ActualPlatformId = "platform-image",
+            ActualPlatformName = "Image Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://provider.example.com",
+            ApiKey = "sk-image",
+            SupportsImageGeneration = true,
+        };
+        var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"url\":\"https://cdn.example.com/edit.png\"}]}"));
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
+        var imageContents = Enumerable.Range(0, 11)
+            .Select(index => new byte[] { (byte)index, (byte)(index + 1) })
+            .ToArray();
+        var multipartFiles = imageContents
+            .Select((content, index) => new KeyValuePair<string, (string FileName, byte[] Content, string MimeType)>(
+                $"image[{index}]",
+                ($"image-{index}.png", content, "image/png")))
+            .ToDictionary(item => item.Key, item => item.Value);
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "/v1/images/edits",
+            IsMultipart = true,
+            MultipartFields = new Dictionary<string, object> { ["prompt"] = "combine references" },
+            MultipartFiles = multipartFiles,
+        }, resolution);
+
+        Assert.True(response.Success, response.ErrorMessage);
+        var logBody = JsonNode.Parse(logWriter.Start!.RequestBodyRedacted)!.AsObject();
+        var loggedHashes = logBody["files"]!.AsArray()
+            .Select(file => file!["sha256"]!.GetValue<string>())
+            .ToArray();
+        var expectedHashes = imageContents
+            .Select(content => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)).ToLowerInvariant())
+            .ToArray();
+        Assert.Equal(expectedHashes, loggedHashes);
+    }
+
+    [Fact]
     public async Task SendRawWithResolutionAsync_WhenResolutionProtocolDiffersFromPlatform_ShouldUseProtocolAdapter()
     {
         var resolution = new GatewayModelResolution
