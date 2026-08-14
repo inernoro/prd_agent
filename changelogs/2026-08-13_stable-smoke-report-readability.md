@@ -12,4 +12,5 @@
 | fix | prd-admin | 修复 StrictMode 下快捷录音成功响应无人消费并永久转圈的问题 |
 | fix | e2e | CDS 静态资源验收兼容 Vite TypeScript 入口并继续拦截真实资源失败 |
 | fix | prd-api | 多图生图切换到 OpenAI 图片备用供给时保留全部参考图并走编辑协议 |
+| test | stable-smoke | 多图验收按参考图语义保真放行供应商切换，并审计备用路由全部文件摘要 |
 | fix | prd-admin | 图片贴近画布顶部时自动下移快捷操作栏，确保下载等操作始终可见 |

@@ -1586,7 +1586,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 Content = multipartContent
             };
-            requestBodyForLog = "[multipart/form-data]";
+            requestBodyForLog = BuildMultipartRequestBodyForLog(request, endpoint);
         }
         else
         {
@@ -2429,7 +2429,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     Content = multipartContent
                 };
-                requestBodyForLog = "[multipart/form-data]";
+                requestBodyForLog = BuildMultipartRequestBodyForLog(request, endpoint);
             }
             else
             {
@@ -3629,6 +3629,41 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
 
         return fieldName;
+    }
+
+    private static string BuildMultipartRequestBodyForLog(GatewayRawRequest request, string endpoint)
+    {
+        var files = new JsonArray();
+        foreach (var (fieldName, file) in request.MultipartFiles?.OrderBy(item => item.Key)
+                     ?? Enumerable.Empty<KeyValuePair<string, (string FileName, byte[] Content, string MimeType)>>())
+        {
+            files.Add(new JsonObject
+            {
+                ["field"] = NormalizeMultipartSendFieldName(fieldName),
+                ["mime_type"] = file.MimeType,
+                ["size_bytes"] = file.Content.LongLength,
+                ["sha256"] = Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(file.Content)).ToLowerInvariant(),
+            });
+        }
+
+        var fieldNames = new JsonArray();
+        foreach (var fieldName in request.MultipartFields?.Keys.OrderBy(value => value)
+                     ?? Enumerable.Empty<string>())
+        {
+            fieldNames.Add(fieldName);
+        }
+
+        return new JsonObject
+        {
+            ["content_type"] = "multipart/form-data",
+            ["endpoint_path"] = Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri)
+                ? endpointUri.AbsolutePath
+                : endpoint,
+            ["field_names"] = fieldNames,
+            ["file_count"] = files.Count,
+            ["files"] = files,
+        }.ToJsonString();
     }
 
     private static bool IsIndexedMultipartArrayField(string fieldName, string root)

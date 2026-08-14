@@ -3350,7 +3350,8 @@ public class LlmGatewayTests
             SupportsImageGeneration = true,
         };
         var http = new SequenceHttpClientFactory((200, "{\"data\":[{\"url\":\"https://cdn.example.com/edit.png\"}]}"));
-        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+        var logWriter = new CapturingLogWriter();
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
 
         var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
@@ -3379,6 +3380,19 @@ public class LlmGatewayTests
         Assert.DoesNotContain("image%5B1%5D", body);
         Assert.DoesNotContain("name=\"image[0]\"", body);
         Assert.DoesNotContain("name=\"image[1]\"", body);
+        var logBody = JsonNode.Parse(logWriter.Start!.RequestBodyRedacted)!.AsObject();
+        Assert.Equal("multipart/form-data", logBody["content_type"]!.GetValue<string>());
+        Assert.EndsWith("/v1/images/edits", logBody["endpoint_path"]!.GetValue<string>());
+        Assert.Equal(2, logBody["file_count"]!.GetValue<int>());
+        var loggedFiles = logBody["files"]!.AsArray();
+        Assert.All(loggedFiles, file => Assert.Equal("image[]", file!["field"]!.GetValue<string>()));
+        Assert.Equal(
+            new[]
+            {
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[] { 1, 1, 1 })).ToLowerInvariant(),
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[] { 2, 2, 2 })).ToLowerInvariant(),
+            },
+            loggedFiles.Select(file => file!["sha256"]!.GetValue<string>()).ToArray());
     }
 
     [Fact]

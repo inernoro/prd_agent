@@ -2884,7 +2884,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] OpenRouter 专用多图协议真实生成、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图逻辑模型真实生成、语义保真、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
@@ -2955,20 +2955,39 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
         const log = await waitForGatewayLog(request, `${runId}-0-0`);
         expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
-        expect(log.protocol).toBe('openrouter-image');
+        expect(['openrouter-image', 'openai'], '多图逻辑模型只能走保留参考图语义的图片协议').toContain(log.protocol);
         const requestBody = JSON.parse(log.requestBodyRedacted || '{}') as {
           input_references?: Array<{ type?: string; image_url?: { url?: string } }>;
+          content_type?: string;
+          endpoint_path?: string;
+          file_count?: number;
+          files?: Array<{ field?: string; mime_type?: string; size_bytes?: number; sha256?: string }>;
         };
-        const wireReferences = requestBody.input_references || [];
-        const expectedRedactedUrls = expectedDataUrls.map((dataUrl) => {
+        const expectedReferences = expectedDataUrls.map((dataUrl) => {
           const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
           expect(match, '测试参考图必须是合法的 Base64 data URL').toBeTruthy();
           const digest = createHash('sha256').update(Buffer.from(match![2], 'base64')).digest('hex');
-          return `[BASE64_IMAGE:${digest}:${match![1]}]`;
+          return { digest, mimeType: match![1], redactedUrl: `[BASE64_IMAGE:${digest}:${match![1]}]` };
         });
-        expect(wireReferences, '网关请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
-        expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
-        expect(wireReferences.map((item) => item.image_url?.url)).toEqual(expectedRedactedUrls);
+        if (log.protocol === 'openrouter-image') {
+          const wireReferences = requestBody.input_references || [];
+          expect(wireReferences, 'OpenRouter 请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
+          expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
+          expect(wireReferences.map((item) => item.image_url?.url)).toEqual(
+            expectedReferences.map((item) => item.redactedUrl),
+          );
+        } else {
+          expect(requestBody.content_type).toBe('multipart/form-data');
+          expect(requestBody.endpoint_path).toMatch(/\/images\/edits$/);
+          expect(requestBody.file_count, 'OpenAI 备用路由必须发送全部参考图文件').toBe(expectedDataUrls.length);
+          expect(requestBody.files?.map((item) => item.field)).toEqual(expectedDataUrls.map(() => 'image[]'));
+          expect(requestBody.files?.map((item) => item.mime_type)).toEqual(
+            expectedReferences.map((item) => item.mimeType),
+          );
+          expect(requestBody.files?.map((item) => item.sha256)).toEqual(
+            expectedReferences.map((item) => item.digest),
+          );
+        }
         expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
         expect(log.answerText || '').toMatch(/"data"\s*:\s*\[/);
         expect(log.answerText || '').not.toMatch(/input must have at least|chat\/completions|modalities/i);
