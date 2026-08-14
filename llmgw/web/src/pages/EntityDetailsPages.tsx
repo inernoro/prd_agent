@@ -485,7 +485,7 @@ function observedAppCaller(item: LlmLogListItem, requestedCode: string): Gateway
   return {
     id: `observed:${requestedCode}`,
     teamId: item.teamId || null,
-    appCallerCode: item.appCallerCode?.replace(/^G-/, '') || requestedCode,
+    appCallerCode: item.appCallerCode || requestedCode,
     requestType,
     sourceSystem: item.sourceSystem || '未标注',
     clientCode: item.clientCode || '未标注',
@@ -522,6 +522,8 @@ function observedAppCaller(item: LlmLogListItem, requestedCode: string): Gateway
 
 export function AppCallerDetailsPage() {
   const [params] = useSearchParams();
+  // URL 参数这一侧保留 G- 兼容：2026-08-14 之前控制台把 App 名显示成 `G-<code>`，
+  // 用户复制/收藏的链接里可能带着这个前缀。读入时削掉，写出时不再产生（见 appDetailsHref）。
   const requestedCode = (params.get('code') || '').replace(/^G-/, '');
   const requestedId = params.get('id') || '';
   const [app, setApp] = useState<GatewayAppCaller | null>(null);
@@ -548,10 +550,10 @@ export function AppCallerDetailsPage() {
       }
       const matched = appResult.data.items.find((item) => (
         item.id === requestedId
-        || item.appCallerCode.replace(/^G-/, '') === requestedCode
+        || item.appCallerCode === requestedCode
       )) ?? null;
       const recentItems = logResult?.success ? logResult.data.items : [];
-      const observed = recentItems.find((item) => item.appCallerCode?.replace(/^G-/, '') === requestedCode) ?? recentItems[0] ?? null;
+      const observed = recentItems.find((item) => item.appCallerCode === requestedCode) ?? recentItems[0] ?? null;
       const resolved = matched ?? (observed ? observedAppCaller(observed, requestedCode) : null);
       setRegistered(Boolean(matched));
       setApp(resolved);
@@ -568,7 +570,7 @@ export function AppCallerDetailsPage() {
   if (error) return <DetailError message={error} backHref="/logs" />;
   if (!app) return <DetailError message="当前租户中没有找到该 App，可能尚未注册或不在你的团队范围内。" backHref="/logs" />;
 
-  const displayCode = app.appCallerCode.startsWith('G-') ? app.appCallerCode : `G-${app.appCallerCode}`;
+  const displayCode = app.appCallerCode;
   return (
     <EntityDetailsShell
       kind="app"

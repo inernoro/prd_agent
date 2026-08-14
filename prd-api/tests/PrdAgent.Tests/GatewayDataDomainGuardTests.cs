@@ -4232,8 +4232,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("请求内容", drawer);
         Assert.Contains("响应内容", drawer);
         Assert.Contains("原始数据", drawer);
-        Assert.Contains("const displayName = detail.appCallerCodeDisplayName?.trim() || detail.appCallerTitle?.trim()", drawer);
-        Assert.Contains("const displayName = item.appCallerCodeDisplayName?.trim() || item.appCallerTitle?.trim()", logs);
+        // App 显示名优先取 appCallerCodeDisplayName / appCallerTitle —— 契约不变，位置变了。
+        // 2026-08-14 之前这段判断在 6 个前端文件里各抄了一遍，本处两条断言分别钉住其中两份的
+        // 字面实现；那正是「断言实现字面而非行为」的形状，抄第 7 份它也拦不住，
+        // 反过来还把重复固化成了契约。现在口径收敛到 lib/logsHelpers.ts 的 appDisplayName，
+        // 断言随之改为「唯一实现存在 + 两个消费方确实接上了它」。
+        var logsHelpers = ReadRepoFile("llmgw/web/src/lib/logsHelpers.ts");
+        Assert.Contains("export function appDisplayName(item: {", logsHelpers);
+        Assert.Contains("const displayName = item.appCallerCodeDisplayName?.trim() || item.appCallerTitle?.trim()", logsHelpers);
+        Assert.Contains("appDisplayName(detail)", drawer);
+        Assert.Contains("appDisplayName(it)", logs);
+        // 同批去掉了纯展示层的 `G-` 前缀：后端 appCallerCode 里没有它，appDetailsHref 也用原始
+        // code，它唯一的作用是在放不下的 App 列里白占两格，并让同一个 App 在不同渲染点因名字
+        // 哈希不同而出现两种图标颜色。写出 URL 的一侧不得再产生它（读入侧保留兼容旧链接）。
+        Assert.DoesNotContain("`G-${", logs);
+        Assert.DoesNotContain("`G-${", drawer);
+        Assert.DoesNotContain("`G-${", entityDetails);
         Assert.Contains("<ImageResponseGallery detail={detail}", drawer);
         Assert.Contains("detail.imageSuccessCount", drawer);
         Assert.Contains("s/image", drawer);

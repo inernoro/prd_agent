@@ -13,7 +13,7 @@ type Props = {
 
 function displayCode(log: LlmLogListItem) {
   const code = log.appCallerCode?.trim();
-  if (code) return code.startsWith('G-') ? code : `G-${code}`;
+  if (code) return code;
   return log.appCallerCodeDisplayName || log.appCallerTitle || '未标注 App';
 }
 

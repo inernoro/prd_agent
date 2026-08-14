@@ -10,7 +10,7 @@ import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { SectionLoader } from './ui';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
-import { DASH, computeTokPerSec, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
+import { DASH, appDisplayName, computeTokPerSec, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
 function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: string; icon: ReactNode }) {
   return (
@@ -333,11 +333,7 @@ function transportLabel(transport?: string | null): string {
 }
 
 function generationAppName(detail: LlmLogDetail): string {
-  const displayName = detail.appCallerCodeDisplayName?.trim() || detail.appCallerTitle?.trim();
-  if (displayName) return displayName;
-  const code = detail.appCallerCode?.trim();
-  if (code) return code.startsWith('G-') ? code : `G-${code}`;
-  return DASH;
+  return appDisplayName(detail);
 }
 
 function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg: string }[] {

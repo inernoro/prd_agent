@@ -32,6 +32,7 @@ import {
   fmtMs,
   fmtCompact,
   fmtCost,
+  appDisplayName,
   statusBadgeStyle,
   shortModelName,
   userLabel,
@@ -141,14 +142,6 @@ function initialQueryValue(key: string) {
   return new URLSearchParams(window.location.search).get(key) ?? '';
 }
 
-function appLabel(item: Pick<LlmLogListItem, 'appCallerCode' | 'appCallerCodeDisplayName' | 'appCallerTitle'>) {
-  const displayName = item.appCallerCodeDisplayName?.trim() || item.appCallerTitle?.trim();
-  if (displayName) return displayName;
-  const code = item.appCallerCode?.trim();
-  if (code) return code.startsWith('G-') ? code : `G-${code}`;
-  return DASH;
-}
-
 function modelDetailsHref(item: Pick<LlmLogListItem, 'logicalModelId' | 'logicalModelPublicId' | 'model' | 'platformId'>) {
   const query = new URLSearchParams();
   if (item.logicalModelId) query.set('logicalModelId', item.logicalModelId);
@@ -174,7 +167,7 @@ function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platform
 }
 
 function appDetailsHref(code: string) {
-  return `/app-callers/view?code=${encodeURIComponent(code.replace(/^G-/, ''))}`;
+  return `/app-callers/view?code=${encodeURIComponent(code)}`;
 }
 
 export function LogsView() {
@@ -509,25 +502,25 @@ export function LogsView() {
         );
       }
       case 'app': {
-        const title = `应用：${appLabel(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`;
+        const title = `应用：${appDisplayName(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`;
         const code = it.appCallerCode?.trim();
         if (!code) {
-          return <span className="lg-log-entity" title={title}><AppEntityIcon app={appLabel(it)} sourceSystem={it.sourceSystem} /><span className="lg-truncate">{appLabel(it)}</span></span>;
+          return <span className="lg-log-entity" title={title}><AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} /><span className="lg-truncate">{appDisplayName(it)}</span></span>;
         }
         return (
           <LogEntityHoverCard
             href={appDetailsHref(code)}
-            label={appLabel(it)}
-            subtitle={[code.startsWith('G-') ? code : `G-${code}`, it.sourceSystem || 'App', it.environment].filter(Boolean).join(' · ')}
+            label={appDisplayName(it)}
+            subtitle={[code, it.sourceSystem || 'App', it.environment].filter(Boolean).join(' · ')}
             description={it.clientCode
               ? `调用身份 ${it.clientCode}。进入详情可查看模型路由、预算、速率治理与最近请求。`
               : '进入详情可查看调用身份、模型路由、预算、速率治理与最近请求。'}
             actionLabel="查看 App"
-            icon={<AppEntityIcon app={appLabel(it)} sourceSystem={it.sourceSystem} size="lg" />}
+            icon={<AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} size="lg" />}
           >
             <span className="lg-log-entity" title={title}>
-              <AppEntityIcon app={appLabel(it)} sourceSystem={it.sourceSystem} />
-              <span className="lg-truncate">{appLabel(it)}</span>
+              <AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} />
+              <span className="lg-truncate">{appDisplayName(it)}</span>
             </span>
           </LogEntityHoverCard>
         );
@@ -674,7 +667,7 @@ export function LogsView() {
         return it.appCallerCode ? (
           <LogEntityHoverCard
             href={appDetailsHref(it.appCallerCode)}
-            label={it.appCallerCode.startsWith('G-') ? it.appCallerCode : `G-${it.appCallerCode}`}
+            label={it.appCallerCode}
             subtitle="会话调用 App"
             description="进入详情可查看调用身份、路由、治理和该 App 的最近请求。"
             actionLabel="查看 App"
