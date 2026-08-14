@@ -395,3 +395,25 @@ describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
     expect(PAGE).toContain('`确认发布到 ${row?.target.name}`');
   });
 });
+
+/**
+ * 状态条一行的宽度预算（实测 1600 宽：内容行 764px）。
+ *
+ * 换行判据用的是各项的**假想主尺寸**（flex-basis，中段被 min-width 兜住），
+ * 不是 grow 之后的结果——所以中段写 basis-0 也救不了：只要
+ * 52(图标) + 18 + 中段 min-width + 18 + 操作组 > 764 就换行，实测差 16px。
+ * 这条守卫钉住两个预算值，改大任意一个都要重新量。
+ */
+describe('发布控制台 · 状态条一行的宽度预算', () => {
+  it('中段 min-width 与版本选择宽度合起来留得下操作组', () => {
+    expect(PAGE).toContain('min-w-[160px] flex-1 basis-0');
+    expect(PAGE).toContain('max-w-[190px]');
+    const STACK_MIN = 160;
+    const SELECT_MAX = 190;
+    const ICON = 52;
+    const GAP = 18;
+    // 操作组 = 版本选择 + 发布 + 试跑 + 中止 + 三个 8px 间隔（1600 实测 512，此处按 190 的选择宽反推）
+    const GROUP = SELECT_MAX + 120 + 72 + 90 + 8 * 3;
+    expect(ICON + GAP + STACK_MIN + GAP + GROUP, '1600 宽下内容行只有 764px').toBeLessThanOrEqual(764);
+  });
+});

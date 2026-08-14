@@ -676,7 +676,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     （版本选择 + 三个按钮）约 520px，1600 宽下差几个像素就把状态条
                     挤成两行，跟参考稿的一行差在这。basis-0 让它只吃剩余空间，
                     换行与否只由「图标 + 操作组 + 这里的 min-width」决定，不再是巧合。 */}
-                <div className="min-w-[180px] flex-1 basis-0">
+                <div className="min-w-[160px] flex-1 basis-0">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <h2 className={`text-xl font-bold ${failed ? 'text-red-600 dark:text-red-400' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
@@ -726,7 +726,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
                     title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，试跑会拦下这一项'}
                     aria-label="要发布的版本"
-                    className="cds-ident h-10 max-w-[220px] rounded-[10px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-xs outline-none focus:border-[hsl(var(--hairline-strong))]"
+                    className="cds-ident h-10 max-w-[190px] rounded-[10px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-xs outline-none focus:border-[hsl(var(--hairline-strong))]"
                   >
                     {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
                     {branches.map((item) => (
