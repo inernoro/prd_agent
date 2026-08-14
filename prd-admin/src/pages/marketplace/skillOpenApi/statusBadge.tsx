@@ -6,25 +6,25 @@ const STATUS_META: Record<
 > = {
   active: {
     label: '有效',
-    color: 'rgba(134, 239, 172, 0.98)',
+    color: 'var(--accent-fg-success)',
     bg: 'rgba(34, 197, 94, 0.14)',
     border: 'rgba(34, 197, 94, 0.4)',
   },
   'expiring-soon': {
     label: '30 天内过期',
-    color: 'rgba(253, 224, 71, 0.98)',
+    color: 'var(--accent-fg-amber)',
     bg: 'rgba(234, 179, 8, 0.15)',
     border: 'rgba(234, 179, 8, 0.45)',
   },
   grace: {
     label: '已过期（宽限期内）',
-    color: 'rgba(251, 191, 36, 0.98)',
+    color: 'var(--accent-fg-warning)',
     bg: 'rgba(217, 119, 6, 0.16)',
     border: 'rgba(217, 119, 6, 0.5)',
   },
   expired: {
     label: '已过期',
-    color: 'rgba(252, 165, 165, 0.98)',
+    color: 'var(--accent-fg-danger)',
     bg: 'rgba(239, 68, 68, 0.15)',
     border: 'rgba(239, 68, 68, 0.4)',
   },
@@ -36,7 +36,7 @@ const STATUS_META: Record<
   },
   revoked: {
     label: '已撤销',
-    color: 'rgba(252, 165, 165, 0.98)',
+    color: 'var(--accent-fg-danger)',
     bg: 'rgba(239, 68, 68, 0.18)',
     border: 'rgba(239, 68, 68, 0.45)',
   },

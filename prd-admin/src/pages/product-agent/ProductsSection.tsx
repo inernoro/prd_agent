@@ -171,7 +171,7 @@ export function ProductsSection() {
           )}
           <button
             onClick={() => setEditing('new')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
           >
             <Plus size={15} /> 新建产品
           </button>
@@ -256,7 +256,7 @@ export function ProductsSection() {
                       e.stopPropagation();
                       void confirmDelete(p);
                     }}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-300/70 hover:text-red-300 hover:bg-red-500/10"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)]/70 hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10"
                   >
                     <Trash2 size={12} /> 删除
                   </button>
@@ -377,7 +377,7 @@ export function ProductsSection() {
                   <button
                     type="button"
                     onClick={() => void confirmDelete(p)}
-                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-red-300/70 hover:bg-red-500/10 hover:text-red-300"
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-danger)]/70 hover:bg-red-500/10 hover:text-[color:var(--accent-fg-danger)]"
                   >
                     <Trash2 size={12} /> 删除
                   </button>
@@ -546,7 +546,7 @@ function ProductEditModal({
           <button
             onClick={save}
             disabled={!name.trim() || saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
           >
             {saving ? <MapSpinner size={14} /> : <Plus size={14} />} {isNew ? '创建' : '保存'}
           </button>

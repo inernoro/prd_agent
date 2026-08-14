@@ -188,11 +188,11 @@ function AppealCard({
         <div className="flex gap-2 mt-3 pt-3 border-t border-token-subtle">
           <button
             onClick={onApprove}
-            className="flex-1 text-xs px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 transition-colors"
+            className="flex-1 text-xs px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-[color:var(--accent-fg-success)] border border-emerald-500/30 transition-colors"
           >通过</button>
           <button
             onClick={onReject}
-            className="flex-1 text-xs px-3 py-1.5 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 transition-colors"
+            className="flex-1 text-xs px-3 py-1.5 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-[color:var(--accent-fg-danger)] border border-rose-500/30 transition-colors"
           >驳回</button>
         </div>
       )}

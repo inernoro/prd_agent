@@ -837,7 +837,7 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
             <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.stdout}</pre>
           )}
           {typeof detail.stderr === 'string' && detail.stderr && (
-            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{detail.stderr}</pre>
+            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]/75">{detail.stderr}</pre>
           )}
         </div>
       );
@@ -856,10 +856,10 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
             <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{state.domTree}</pre>
           )}
           {Array.isArray(state.consoleErrors) && state.consoleErrors.length > 0 && (
-            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{JSON.stringify(state.consoleErrors, null, 2)}</pre>
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]/75">{JSON.stringify(state.consoleErrors, null, 2)}</pre>
           )}
           {Array.isArray(state.networkErrors) && state.networkErrors.length > 0 && (
-            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{JSON.stringify(state.networkErrors, null, 2)}</pre>
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]/75">{JSON.stringify(state.networkErrors, null, 2)}</pre>
           )}
         </div>
       );
@@ -3548,7 +3548,7 @@ export default function CdsAgentPage() {
           className="rounded-md px-3 py-1.5 text-sm transition-colors"
           style={
             viewMode === mode
-              ? { background: 'rgba(99,179,237,0.18)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }
+              ? { background: 'rgba(99,179,237,0.18)', border: '1px solid rgba(99,179,237,0.4)', color: 'var(--accent-fg-blue)' }
               : { color: 'rgba(255,255,255,0.55)' }
           }
         >
@@ -3887,7 +3887,7 @@ export default function CdsAgentPage() {
 	              return (
 	                <button key={mode.value} type="button" onClick={() => setSimpleTaskMode(mode.value)}
 	                  className="inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-xs font-semibold"
-	                  style={active ? { background: 'rgba(96,165,250,0.18)', color: 'rgba(191,219,254,0.96)' } : { color: 'rgba(255,255,255,0.46)' }}>
+	                  style={active ? { background: 'rgba(96,165,250,0.18)', color: 'var(--accent-fg-blue)' } : { color: 'rgba(255,255,255,0.46)' }}>
 	                  <Icon size={12} />{mode.label}
 	                </button>
 	              );
@@ -3925,7 +3925,7 @@ export default function CdsAgentPage() {
 	          {activeSessionRuntimeState.isLive && (
 	            <button type="button" onClick={() => void stopSession()} disabled={busy} title="停止"
 	              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg disabled:opacity-45"
-	              style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.34)', color: 'rgba(252,165,165,0.98)' }}>
+	              style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.34)', color: 'var(--accent-fg-danger)' }}>
 	              <Square size={13} />
 	            </button>
 	          )}
@@ -4077,7 +4077,7 @@ export default function CdsAgentPage() {
 	                    onClick={() => void startSession()}
 	                    disabled={busy}
 	                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold disabled:opacity-45"
-	                    style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.32)', color: 'rgba(191,219,254,0.95)' }}
+	                    style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.32)', color: 'var(--accent-fg-blue)' }}
 	                  >
 	                    <Play size={14} /> {primaryActionLabel(activeSessionEffectiveStatus)}
                   </button>
@@ -4088,7 +4088,7 @@ export default function CdsAgentPage() {
 	                    onClick={() => void stopSession()}
 	                    disabled={busy}
 	                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold disabled:opacity-45"
-	                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}
+	                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}
 	                  >
 	                    <Square size={14} /> 停止
                   </button>
@@ -4257,8 +4257,8 @@ export default function CdsAgentPage() {
                                   )}
                                   {waitingApproval && (
                                     <div className="mt-2 flex gap-2">
-                                      <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>允许</button>
-                                      <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>拒绝</button>
+                                      <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'var(--accent-fg-success)' }}>允许</button>
+                                      <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}>拒绝</button>
                                     </div>
                                   )}
                                 </div>
@@ -4380,7 +4380,7 @@ export default function CdsAgentPage() {
 	                <div className="flex justify-between gap-3"><span className="text-white/55">提交</span><span className="font-mono text-white/70">{gitContext.commit ? gitContext.commit.slice(0, 12) : 'n/a'}</span></div>
 	              </div>
 	              {gitContext.prUrl && (
-	                <a href={gitContext.prUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>
+	                <a href={gitContext.prUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'var(--accent-fg-success)' }}>
 	                  <Globe2 size={12} /> 打开 Pull Request
 	                </a>
 	              )}
@@ -4874,7 +4874,7 @@ export default function CdsAgentPage() {
                   onClick={() => void importDefaultProfile()}
                   disabled={busy}
                   className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
-                  style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'rgba(186,230,253,0.92)' }}
+                  style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'var(--accent-fg-blue)' }}
                 >
                   {busy ? <MapSpinner size={13} /> : <Download size={13} />} 从系统主模型同步
                 </button>
@@ -4935,7 +4935,7 @@ export default function CdsAgentPage() {
                     onClick={() => void importDefaultProfile()}
                     disabled={busy}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs"
-                    style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'rgba(186,230,253,0.92)' }}
+                    style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'var(--accent-fg-blue)' }}
                   >
                     {busy ? <MapSpinner size={13} /> : <Server size={13} />} 同步系统主模型
                   </button>
@@ -5071,7 +5071,7 @@ export default function CdsAgentPage() {
                     onClick={() => void saveProfile()}
                     disabled={busy || !profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
-                    style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.32)', color: 'rgba(186,230,253,0.96)' }}
+                    style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.32)', color: 'var(--accent-fg-blue)' }}
                   >
                     {busy ? <MapSpinner size={13} /> : <Plus size={13} />} 保存配置
                   </button>
@@ -5101,7 +5101,7 @@ export default function CdsAgentPage() {
                 onClick={() => void createSession()}
                 disabled={busy || !canCreateSession}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-45"
-                style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}
+                style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'var(--accent-fg-blue)' }}
               >
                 {busy ? <MapSpinner size={14} /> : <Plus size={14} />} 新建远程会话
               </button>
@@ -5177,7 +5177,7 @@ export default function CdsAgentPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canStartActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
+                <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canStartActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'var(--accent-fg-success)' }}>
                   <Play size={13} /> {activeSession ? primaryActionLabel(activeSessionEffectiveStatus) : '启动'}
                 </button>
                 <button
@@ -5190,7 +5190,7 @@ export default function CdsAgentPage() {
                   {activeSession?.manualTakeoverEnabled ? <UserCheck size={13} /> : <PauseCircle size={13} />}
                   {activeSession?.manualTakeoverEnabled ? '恢复 Agent' : '人工接管'}
                 </button>
-                <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>
+                <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}>
                   <Square size={13} /> 停止
                 </button>
                 <button type="button" onClick={() => void archiveSession()} disabled={!activeSession || busy || activeSession.status === 'running' || activeSession.status === 'creating' || activeSession.status === 'stopping'} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.68)' }}>
@@ -6163,8 +6163,8 @@ export default function CdsAgentPage() {
                           <EventBody event={event} />
                           {waitingApproval && (
                             <div className="mt-2 flex gap-2">
-                              <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>允许</button>
-                              <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>拒绝</button>
+                              <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'var(--accent-fg-success)' }}>允许</button>
+                              <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}>拒绝</button>
                             </div>
                           )}
                         </article>
@@ -6227,7 +6227,7 @@ export default function CdsAgentPage() {
 	                    className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none placeholder:text-white/55"
 	                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}
                   />
-                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput)} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
+                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput)} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'var(--accent-fg-blue)' }}>
                     {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />} {activeSession?.manualTakeoverEnabled ? '记录' : '发送'}
                   </button>
                 </div>

@@ -147,7 +147,7 @@ export function PrReviewPage() {
 
         {/* 深链自动发起审查提示 */}
         {autoStartNotice && (
-          <div className="mb-4 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-3 flex items-center gap-3 text-sm text-violet-100">
+          <div className="mb-4 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-3 flex items-center gap-3 text-sm text-[color:var(--accent-fg-violet)]">
             <GitPullRequest size={14} className="shrink-0" />
             <div className="flex-1 break-all">{autoStartNotice}</div>
             <button
@@ -163,7 +163,7 @@ export function PrReviewPage() {
 
         {/* Error banner */}
         {errorMessage && (
-          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-center gap-3 text-sm text-red-200">
+          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-center gap-3 text-sm text-[color:var(--accent-fg-danger)]">
             <div className="flex-1">{errorMessage}</div>
             <button
               type="button"

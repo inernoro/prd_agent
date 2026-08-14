@@ -304,7 +304,7 @@ export function UserSearchSelect({
                       </span>
                     )}
                     {isBot && (
-                      <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'rgba(34,197,94,0.9)' }}>
+                      <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'var(--accent-fg-success)' }}>
                         BOT
                       </span>
                     )}

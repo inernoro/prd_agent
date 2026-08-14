@@ -142,7 +142,7 @@ export function FrontEndPdaRailCard({ onOpen }: { onOpen: () => void }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold text-token-primary">PDA 项目手册</h3>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-indigo-300/30 bg-indigo-400/15 text-indigo-100/90">
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-indigo-300/30 bg-indigo-400/15 text-[color:var(--accent-fg-violet)]/90">
                 重点
               </span>
             </div>

@@ -156,7 +156,7 @@ export function FrontEndScreenshotInput({
       <button
         type="button"
         onClick={() => imageInputRef.current?.click()}
-        className="fea-btn mt-2 h-8 px-3 rounded-lg border border-violet-400/20 bg-violet-500/10 hover:bg-violet-500/15 text-xs text-violet-100 inline-flex items-center gap-1.5"
+        className="fea-btn mt-2 h-8 px-3 rounded-lg border border-violet-400/20 bg-violet-500/10 hover:bg-violet-500/15 text-xs text-[color:var(--accent-fg-violet)] inline-flex items-center gap-1.5"
       >
         <ImageIcon className="w-3.5 h-3.5" />
         上传截图

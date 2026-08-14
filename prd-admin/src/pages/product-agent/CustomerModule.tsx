@@ -107,7 +107,7 @@ function CustomerManage({ isAdmin, onConsult }: { isAdmin: boolean; onConsult: (
         </div>
         <button
           onClick={() => setSelected('new')}
-          className="ml-auto flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/15 px-2.5 py-1 text-xs text-cyan-300 hover:bg-cyan-500/25"
+          className="ml-auto flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/15 px-2.5 py-1 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25"
         >
           <Plus size={13} /> 新增客户
         </button>
@@ -148,7 +148,7 @@ function CustomerManage({ isAdmin, onConsult }: { isAdmin: boolean; onConsult: (
                     <button
                       onClick={() => onConsult(c.id)}
                       title="带该客户信息去营销问策"
-                      className="inline-flex items-center gap-1 rounded-md border border-cyan-500/25 px-2 py-1 text-[11px] text-cyan-300/90 opacity-0 hover:bg-cyan-500/15 group-hover:opacity-100"
+                      className="inline-flex items-center gap-1 rounded-md border border-cyan-500/25 px-2 py-1 text-[11px] text-[color:var(--accent-fg-blue)]/90 opacity-0 hover:bg-cyan-500/15 group-hover:opacity-100"
                     >
                       <Sparkles size={11} /> 营销问策
                     </button>
@@ -206,7 +206,7 @@ function CustomerDetail({
         {!isNew && (
           <button
             onClick={() => onConsult(customer!.id)}
-            className="ml-auto flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-200 hover:bg-cyan-500/25"
+            className="ml-auto flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25"
           >
             <Sparkles size={13} /> 营销问策
           </button>
@@ -360,11 +360,11 @@ function CustomerInfoForm({
       )}
 
       <div className="flex items-center gap-2">
-        <button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-500/30 disabled:opacity-40">
+        <button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-4 py-2 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30 disabled:opacity-40">
           {saving ? <MapSpinner size={14} /> : <Save size={14} />} {customer ? '保存' : '创建客户'}
         </button>
         {customer && isAdmin && (
-          <button onClick={onDelete} className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200 hover:bg-red-500/20">
+          <button onClick={onDelete} className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-[color:var(--accent-fg-danger)] hover:bg-red-500/20">
             <Trash2 size={14} /> 删除
           </button>
         )}
@@ -421,7 +421,7 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
       <div className="rounded-xl border border-token-subtle bg-token-nested p-3">
         <RichTextField value={content} onChange={setContent} minHeight={120} placeholder={FOLLOW_UP_PLACEHOLDER} />
         <div className="mt-2 flex justify-end">
-          <button onClick={add} disabled={saving} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 disabled:opacity-40">
+          <button onClick={add} disabled={saving} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] disabled:opacity-40">
             {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 添加跟进
           </button>
         </div>

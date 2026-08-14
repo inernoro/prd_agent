@@ -115,12 +115,12 @@ function buildCategoryConfig(isLight: boolean): Record<string, { label: string; 
     };
   }
   return {
-    development:   { label: '开发', color: 'rgba(59, 130, 246, 0.95)',  bg: 'rgba(59, 130, 246, 0.12)',  icon: Code2 },
-    meeting:       { label: '会议', color: 'rgba(168, 85, 247, 0.95)',  bg: 'rgba(168, 85, 247, 0.12)',  icon: Users },
-    communication: { label: '沟通', color: 'rgba(249, 115, 22, 0.95)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
-    documentation: { label: '文档', color: 'rgba(34, 197, 94, 0.95)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
-    testing:       { label: '测试', color: 'rgba(236, 72, 153, 0.95)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
-    todo:          { label: 'Todo', color: 'rgba(16, 185, 129, 0.95)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
+    development:   { label: '开发', color: 'var(--accent-fg-blue)',  bg: 'rgba(59, 130, 246, 0.12)',  icon: Code2 },
+    meeting:       { label: '会议', color: 'var(--accent-fg-violet)',  bg: 'rgba(168, 85, 247, 0.12)',  icon: Users },
+    communication: { label: '沟通', color: 'var(--accent-fg-warning)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
+    documentation: { label: '文档', color: 'var(--accent-fg-success)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
+    testing:       { label: '测试', color: 'var(--accent-fg-danger)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
+    todo:          { label: 'Todo', color: 'var(--accent-fg-success)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
     other:         { label: '其他', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.12)', icon: MoreHorizontal },
   };
 }
@@ -1360,7 +1360,7 @@ export function DailyLogPanel() {
                     ? (isSystem ? sysCfg!.bg : 'rgba(20, 184, 166, 0.12)')
                     : 'transparent';
                   const chipColor = isActive
-                    ? (isSystem ? sysCfg!.color : 'rgba(20, 184, 166, 0.95)')
+                    ? (isSystem ? sysCfg!.color : 'var(--accent-fg-success)')
                     : 'var(--text-muted)';
                   const chipBorder = isActive
                     ? (isSystem ? sysCfg!.color.replace('0.95', '0.3') : 'rgba(20, 184, 166, 0.3)')
@@ -1374,7 +1374,7 @@ export function DailyLogPanel() {
                         className="w-24 px-2 py-1 rounded-lg text-[11px] font-medium outline-none"
                         style={{
                           background: 'rgba(59, 130, 246, 0.08)',
-                          color: 'rgba(59, 130, 246, 0.95)',
+                          color: 'var(--accent-fg-blue)',
                           border: '1px solid rgba(59, 130, 246, 0.35)',
                         }}
                         value={editingTagDraft}
@@ -1567,13 +1567,13 @@ export function DailyLogPanel() {
           {currentWeekPendingTodos.length > 0 && (
             <GlassCard variant="subtle" className="p-4 flex flex-col gap-2">
               <div className="flex items-center gap-2">
-                <Check size={14} style={{ color: 'rgba(16, 185, 129, 0.9)' }} />
+                <Check size={14} style={{ color: 'var(--accent-fg-success)' }} />
                 <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                   本周待办
                 </span>
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded"
-                  style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'rgba(16, 185, 129, 0.9)' }}
+                  style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'var(--accent-fg-success)' }}
                 >
                   {currentWeekPendingTodos.length} 项未完成
                 </span>
@@ -1786,7 +1786,7 @@ export function DailyLogPanel() {
                                           className="w-20 px-1.5 py-0.5 rounded text-[10px] outline-none"
                                           style={{
                                             background: 'rgba(59, 130, 246, 0.08)',
-                                            color: 'rgba(59, 130, 246, 0.95)',
+                                            color: 'var(--accent-fg-blue)',
                                             border: '1px solid rgba(59, 130, 246, 0.35)',
                                           }}
                                           value={editingTagDraft}
@@ -1913,7 +1913,7 @@ export function DailyLogPanel() {
                                     <span
                                       key={ti}
                                       className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
-                                      style={{ background: 'rgba(20, 184, 166, 0.1)', color: 'rgba(20, 184, 166, 0.85)' }}
+                                      style={{ background: 'rgba(20, 184, 166, 0.1)', color: 'var(--accent-fg-success)' }}
                                     >
                                       <Tag size={8} /> {tag}
                                     </span>
@@ -1931,7 +1931,7 @@ export function DailyLogPanel() {
                                   && item.planWeekNumber != null && (
                                     <span
                                       className="text-[10px] px-1.5 py-0.5 rounded"
-                                      style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'rgba(16, 185, 129, 0.9)' }}
+                                      style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--accent-fg-success)' }}
                                     >
                                       计划周：{item.planWeekYear}-W{item.planWeekNumber}
                                     </span>
@@ -1939,7 +1939,7 @@ export function DailyLogPanel() {
                                 {item.category === DailyLogCategory.Todo && item.completedAt && (
                                   <span
                                     className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
-                                    style={{ background: 'rgba(16, 185, 129, 0.16)', color: 'rgba(16, 185, 129, 0.95)' }}
+                                    style={{ background: 'rgba(16, 185, 129, 0.16)', color: 'var(--accent-fg-success)' }}
                                   >
                                     <Check size={9} /> 已完成
                                   </span>
@@ -2132,7 +2132,7 @@ export function DailyLogPanel() {
                     {isTodayDate && (
                       <span
                         className="text-[8px] px-1 rounded font-medium"
-                        style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}
+                        style={{ color: 'var(--accent-fg-blue)', background: 'rgba(59, 130, 246, 0.1)' }}
                       >
                         今
                       </span>

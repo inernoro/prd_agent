@@ -1730,7 +1730,7 @@ export function ReprocessChatDrawer({
                   style={{
                     width: 25, height: 25,
                     background: 'rgba(34,197,94,0.18)',
-                    color: 'rgba(110,231,158,0.95)',
+                    color: 'var(--accent-fg-success)',
                     border: '1px solid rgba(34,197,94,0.30)',
                   }}
                 >
@@ -1827,7 +1827,7 @@ export function ReprocessChatDrawer({
                             style={{
                               width: 26, height: 26,
                               background: 'rgba(34,197,94,0.18)',
-                              color: 'rgba(110,231,158,0.95)',
+                              color: 'var(--accent-fg-success)',
                               border: '1px solid rgba(34,197,94,0.30)',
                             }}
                           >
@@ -1855,13 +1855,13 @@ export function ReprocessChatDrawer({
                         style={{
                           width: 26, height: 26,
                           background: 'rgba(96,165,250,0.18)',
-                          color: 'rgba(147,197,253,0.95)',
+                          color: 'var(--accent-fg-blue)',
                           border: '1px dashed rgba(96,165,250,0.40)',
                         }}
                       >
                         <Plus size={14} />
                       </span>
-                      <span className="text-[12px] font-medium" style={{ color: 'rgba(147,197,253,0.95)' }}>
+                      <span className="text-[12px] font-medium" style={{ color: 'var(--accent-fg-blue)' }}>
                         新建快捷智能体
                       </span>
                     </button>
@@ -1892,7 +1892,7 @@ export function ReprocessChatDrawer({
               style={{
                 background: 'rgba(168,85,247,0.10)',
                 border: '1px solid rgba(168,85,247,0.22)',
-                color: 'rgba(216,180,254,0.95)',
+                color: 'var(--accent-fg-violet)',
               }}
             >
               <Sparkles size={11} className="shrink-0 mt-0.5" />
@@ -1992,7 +1992,7 @@ export function ReprocessChatDrawer({
               style={{
                 background: 'rgba(239,68,68,0.10)',
                 border: '1px solid rgba(239,68,68,0.25)',
-                color: 'rgba(252,165,165,0.95)',
+                color: 'var(--accent-fg-danger)',
               }}
             >
               <AlertCircle size={12} className="mt-0.5 shrink-0" />
@@ -2216,13 +2216,13 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError, mode }: {
           style={{
             background: 'rgba(239,68,68,0.12)',
             border: '1px solid rgba(239,68,68,0.25)',
-            color: 'rgba(252,165,165,0.95)',
+            color: 'var(--accent-fg-danger)',
           }}>
           <AlertCircle size={20} />
         </div>
         <div>
           <p className="text-[13px] font-semibold text-token-primary mb-1">无法加载文档</p>
-          <p className="text-[11px] max-w-[340px] leading-relaxed" style={{ color: 'rgba(252,165,165,0.85)' }}>
+          <p className="text-[11px] max-w-[340px] leading-relaxed" style={{ color: 'var(--accent-fg-danger)' }}>
             {docLoadError}
           </p>
           <p className="text-[10px] text-token-muted mt-2 max-w-[340px] leading-relaxed">

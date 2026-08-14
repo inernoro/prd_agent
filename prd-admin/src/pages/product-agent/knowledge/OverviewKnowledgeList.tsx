@@ -130,7 +130,7 @@ export function OverviewKnowledgeList() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-sm text-token-primary truncate">{r.entry.title}</span>
-                    {r.entry.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/90 border border-cyan-500/20 shrink-0">{r.entry.category}</span>}
+                    {r.entry.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-[color:var(--accent-fg-blue)]/90 border border-cyan-500/20 shrink-0">{r.entry.category}</span>}
                     {(r.entry.tags ?? []).slice(0, 2).map((t) => (
                       <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary shrink-0">{t}</span>
                     ))}

@@ -982,7 +982,7 @@ export function SpotlightOverlay() {
                   border: 'none',
                   borderRadius: 999,
                   background: 'rgba(52,211,153,0.12)',
-                  color: 'rgba(52,211,153,0.95)',
+                  color: 'var(--accent-fg-success)',
                   cursor: 'pointer',
                 }}
               >

@@ -524,9 +524,17 @@
   --border-focus: rgba(166, 75, 53, 0.48);
 
   /* 玻璃效果仍使用暖纸色，避免主题切换后重新出现纯白板块。 */
-  --glass-bg-start: rgba(248, 245, 239, 0.98);
-  --glass-bg-end: rgba(239, 234, 225, 0.96);
-  --glass-border: rgba(26, 26, 31, 0.14);
+  /*
+   * 液态玻璃在浅色档「发虚、很奇怪」的物理原因：渐变的**收尾色**与页面底几乎同亮度。
+   * 页面底 #EEEAE3 相对亮度 0.8257，而原来的 --glass-bg-end rgba(239,234,225,.96)
+   * 算出来是 0.8263 —— ΔL = 0.0006，等于卡片从顶部可见一路淡进背景、下半截彻底消失。
+   * 卡片没有下边界，用户看到的就是一块糊在纸上的浮影。
+   * 改法：把整条渐变抬到页面底之上（收尾仍留 ΔL ≈ 0.072），边框从 14% 提到 18% 收住边缘。
+   * 暗色档不动 —— 那边深底本来就够衬托。
+   */
+  --glass-bg-start: rgba(252, 250, 246, 0.98);
+  --glass-bg-end: rgba(246, 243, 237, 0.97);
+  --glass-border: rgba(26, 26, 31, 0.18);
   /* 浅色下 Toast 底层必须也是暖纸色，否则语义色叠在深底上 + 深色正文 = 不可读。 */
   --toast-bg-base: rgba(252, 250, 247, 0.97);
   /* 浅色档一律压到 700/800：700 档的绿与琥珀落在暖纸底上只有 4.1~4.2:1，
@@ -835,6 +843,22 @@
   --text-on-media: #f7f7fb;
   --text-on-media-muted: rgba(247, 247, 251, 0.72);
   --workflow-accent-text-lightness: 65%;
+  /*
+   * 语义前景也必须跟着翻回暗色档，否则「把写死的浅色前景改走 --accent-fg-*」
+   * 这条修法在钉死暗画布的页面上会反向翻车：浅色主题下 --accent-fg-success
+   * 是 #166534（深绿），压在这里的深底上又变成深字压深底。
+   * 缺了这一组，token 化只对普通页面成立、对 surface-tone-dark 页面是陷阱。
+   */
+  --accent-fg-success: #22c55e;
+  --accent-fg-error: #f87171;
+  --accent-fg-info: #60a5fa;
+  --accent-fg-warning: #fb923c;
+  --accent-fg-violet: #c4b5fd;
+  --accent-fg-violet-strong: #e9d5ff;
+  --accent-fg-blue: #93c5fd;
+  --accent-fg-amber: #fbbf24;
+  --accent-fg-danger: #f87171;
+  --accent-fg-emerald: #34d399;
 }
 
 html, body {

@@ -173,7 +173,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
         {/* Return banner */}
         {report.status === WeeklyReportStatus.Returned && report.returnReason && (
           <div className="px-5 py-2.5" style={{ background: 'rgba(239, 68, 68, 0.06)', borderBottom: '1px solid rgba(239, 68, 68, 0.1)' }}>
-            <div className="text-[11px]" style={{ color: 'rgba(239, 68, 68, 0.85)' }}>
+            <div className="text-[11px]" style={{ color: 'var(--accent-fg-danger)' }}>
               <span className="font-medium">{report.returnedByName || '审阅人'}</span> 退回了此周报
               {report.returnedAt && <span> · {new Date(report.returnedAt).toLocaleDateString()}</span>}
               <div className="mt-0.5">原因：{report.returnReason}</div>
@@ -457,7 +457,7 @@ function CommentItem({
           </span>
           <span
             className="text-[10px] px-1.5 py-0.5 rounded-md"
-            style={{ background: 'rgba(99, 102, 241, 0.08)', color: 'rgba(99, 102, 241, 0.82)' }}
+            style={{ background: 'rgba(99, 102, 241, 0.08)', color: 'var(--accent-fg-violet)' }}
           >
             评论
           </span>

@@ -36,7 +36,7 @@ function AppealMiniChip({ status }: { status?: 'Pending' | 'Approved' | 'Rejecte
   if (!status) return null;
   if (status === 'Pending') {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-[color:var(--accent-fg-blue)] border border-blue-500/30">
         <ClockIcon className="w-2.5 h-2.5" /> 申诉中
       </span>
     );
@@ -49,7 +49,7 @@ function AppealMiniChip({ status }: { status?: 'Pending' | 'Approved' | 'Rejecte
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-rose-900/30 text-rose-300 border border-rose-700/40">
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-rose-900/30 text-[color:var(--accent-fg-danger)] border border-rose-700/40">
       <XCircle className="w-2.5 h-2.5" /> 申诉驳回
     </span>
   );
@@ -57,7 +57,7 @@ function AppealMiniChip({ status }: { status?: 'Pending' | 'Approved' | 'Rejecte
 
 function CheckboxBadge({ state }: { state: 'yes' | 'no' | 'none' }) {
   if (state === 'yes') {
-    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300">是</span>;
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-[color:var(--accent-fg-blue)]">是</span>;
   }
   if (state === 'no') {
     return <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">否</span>;
@@ -712,7 +712,7 @@ export function ReviewAgentResultPage() {
               type="button"
               onClick={retryReviewStream}
               disabled={streaming}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-500/15 px-3 py-1.5 text-xs text-amber-200 transition-colors hover:bg-amber-500/25 disabled:opacity-50"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-amber)] transition-colors hover:bg-amber-500/25 disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               重新连接评审

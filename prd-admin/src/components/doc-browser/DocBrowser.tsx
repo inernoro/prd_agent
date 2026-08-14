@@ -655,7 +655,7 @@ function TranscribeHeroCard({
               style={{
                 background: 'rgba(34,197,94,0.1)',
                 border: '1px solid rgba(34,197,94,0.22)',
-                color: 'rgba(74,222,128,0.95)',
+                color: 'var(--accent-fg-success)',
               }}>
               <BookOpen size={11} /> 转录笔记 <ChevronRight size={11} />
             </button>
@@ -667,7 +667,7 @@ function TranscribeHeroCard({
               style={{
                 background: 'rgba(168,85,247,0.1)',
                 border: '1px solid rgba(168,85,247,0.22)',
-                color: 'rgba(216,180,254,0.95)',
+                color: 'var(--accent-fg-violet)',
               }}>
               <Sparkles size={11} /> 字幕 <ChevronRight size={11} />
             </button>
@@ -1491,7 +1491,7 @@ function TreeNode({
               height: 15,
               lineHeight: '15px',
               background: 'rgba(59,130,246,0.12)',
-              color: 'rgba(96,165,250,0.95)',
+              color: 'var(--accent-fg-blue)',
             }}
             title="智能体处理中"
           >
@@ -3339,7 +3339,7 @@ export function DocBrowser({
                           style={{
                             background: 'rgba(168,85,247,0.14)',
                             border: '1px solid rgba(168,85,247,0.25)',
-                            color: 'rgba(216,180,254,0.95)',
+                            color: 'var(--accent-fg-violet)',
                           }}>
                           上传文件
                         </button>
@@ -3608,7 +3608,7 @@ export function DocBrowser({
                   style={{
                     background: 'rgba(168,85,247,0.08)',
                     border: '1px solid rgba(168,85,247,0.18)',
-                    color: 'rgba(216,180,254,0.95)',
+                    color: 'var(--accent-fg-violet)',
                   }}
                   title={commentCount > 0 ? `已有 ${commentCount} 条评论 — 点击查看 / 添加` : '划词评论 — 选中文本后浮起「添加评论」'}
                 >
@@ -3661,7 +3661,7 @@ export function DocBrowser({
                           <button
                             onClick={() => setMdEditRich((v) => !v)}
                             className={TOOLBAR_BTN}
-                            style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.18)', color: 'rgba(216,180,254,0.95)' }}
+                            style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.18)', color: 'var(--accent-fg-violet)' }}
                             title={mdEditRich ? '切换到源码模式（支持 [[ 引用自动补全）' : '切换到富文本（所见即所得）'}>
                             {mdEditRich ? '源码' : '富文本'}
                           </button>
@@ -3679,7 +3679,7 @@ export function DocBrowser({
                           }}
                           disabled={saving}
                           className={TOOLBAR_BTN}
-                          style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
+                          style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'var(--accent-fg-success)' }}>
                           {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={12} />}
                           保存
                         </button>
@@ -3783,7 +3783,7 @@ export function DocBrowser({
                       style={{
                         background: 'rgba(168,85,247,0.08)',
                         border: '1px solid rgba(168,85,247,0.22)',
-                        color: 'rgba(216,180,254,0.95)',
+                        color: 'var(--accent-fg-violet)',
                       }}
                       title="打开来源文件">
                       {isAudioSrc ? <AudioLines size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}

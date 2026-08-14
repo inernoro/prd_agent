@@ -62,7 +62,7 @@ export function CustomerSearchSelect({
       aria-label="快速新建客户"
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => { setQuickOpen(true); setQuickName(''); setQuickError(''); }}
-      className="shrink-0 flex items-center justify-center w-7 h-7 rounded-[6px] border border-token-subtle bg-token-nested text-token-secondary hover:text-cyan-200 hover:border-cyan-500/35 hover:bg-cyan-500/10 transition-colors"
+      className="shrink-0 flex items-center justify-center w-7 h-7 rounded-[6px] border border-token-subtle bg-token-nested text-token-secondary hover:text-[color:var(--accent-fg-blue)] hover:border-cyan-500/35 hover:bg-cyan-500/10 transition-colors"
     >
       <Plus size={14} />
     </button>
@@ -112,7 +112,7 @@ export function CustomerSearchSelect({
                 type="button"
                 onClick={() => void quickCreate()}
                 disabled={creating || !quickName.trim()}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40"
               >
                 {creating ? <MapSpinner size={14} /> : null}
                 创建并选中

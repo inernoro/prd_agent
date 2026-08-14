@@ -113,7 +113,7 @@ export function OwnerDecorator({ initialBio, initialBackground, onSaved }: Owner
       </div>
 
       {error && (
-        <div className="mb-3 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-100">
+        <div className="mb-3 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-1.5 text-[12px] text-[color:var(--accent-fg-danger)]">
           {error}
         </div>
       )}

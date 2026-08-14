@@ -523,7 +523,7 @@ export function TranscribeFlowDrawer({
           style={{
             background: 'rgba(239,68,68,0.08)',
             border: '1px solid rgba(239,68,68,0.2)',
-            color: 'rgba(248,113,113,0.95)',
+            color: 'var(--accent-fg-danger)',
           }}>
           <div className="whitespace-pre-wrap break-all">{errorMessage}</div>
         </div>
@@ -541,10 +541,10 @@ export function TranscribeFlowDrawer({
             background: 'rgba(34,197,94,0.08)',
             border: '1px solid rgba(34,197,94,0.2)',
           }}>
-          <span className="text-[13px] font-semibold" style={{ color: 'rgba(74,222,128,0.95)' }}>
+          <span className="text-[13px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
             查看转录笔记
           </span>
-          <ChevronRight size={15} style={{ color: 'rgba(74,222,128,0.95)' }} />
+          <ChevronRight size={15} style={{ color: 'var(--accent-fg-success)' }} />
         </button>
       )}
 
@@ -555,7 +555,7 @@ export function TranscribeFlowDrawer({
             background: 'rgba(34,197,94,0.08)',
             border: '1px solid rgba(34,197,94,0.2)',
           }}>
-          <p className="text-[13px] font-semibold" style={{ color: 'rgba(74,222,128,0.95)' }}>
+          <p className="text-[13px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
             录音和原文已保存
           </p>
           <p className="mt-1 text-[11px] text-token-muted">
@@ -598,7 +598,7 @@ export function TranscribeFlowDrawer({
                   title={s.description}
                   className="cursor-pointer rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors"
                   style={active
-                    ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,197,253,0.98)', boxShadow: 'inset 0 0 0 1px rgba(59,130,246,0.45)' }
+                    ? { background: 'rgba(59,130,246,0.18)', color: 'var(--accent-fg-blue)', boxShadow: 'inset 0 0 0 1px rgba(59,130,246,0.45)' }
                     : { background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
                   {s.label}
                 </button>
@@ -720,7 +720,7 @@ export function TranscribeFlowDrawer({
                   onClick={() => setSummaryView(key)}
                   className="cursor-pointer rounded-[7px] px-2 py-0.5 text-[11px] font-semibold transition-colors"
                   style={summaryView === key
-                    ? { background: 'rgba(59,130,246,0.16)', color: 'rgba(147,197,253,0.98)' }
+                    ? { background: 'rgba(59,130,246,0.16)', color: 'var(--accent-fg-blue)' }
                     : { color: 'var(--text-muted)' }}>
                   {label}
                 </button>
@@ -920,7 +920,7 @@ function StepIcon({ state }: { state: StepState }) {
     return (
       <span
         className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full"
-        style={{ background: 'rgba(34,197,94,0.15)', color: 'rgba(74,222,128,0.95)' }}>
+        style={{ background: 'rgba(34,197,94,0.15)', color: 'var(--accent-fg-success)' }}>
         <Check size={12} strokeWidth={2.5} />
       </span>
     );
@@ -936,7 +936,7 @@ function StepIcon({ state }: { state: StepState }) {
     return (
       <span
         className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full"
-        style={{ background: 'rgba(239,68,68,0.14)', color: 'rgba(248,113,113,0.95)' }}>
+        style={{ background: 'rgba(239,68,68,0.14)', color: 'var(--accent-fg-danger)' }}>
         <X size={12} strokeWidth={2.5} />
       </span>
     );

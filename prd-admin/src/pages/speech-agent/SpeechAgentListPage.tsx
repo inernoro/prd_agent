@@ -148,7 +148,7 @@ function DeckCard({
           e.stopPropagation();
           onDelete();
         }}
-        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-rose-500/20 text-white/50 hover:text-rose-300"
+        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-rose-500/20 text-white/50 hover:text-[color:var(--accent-fg-danger)]"
         aria-label="删除"
       >
         <Trash2 size={14} />

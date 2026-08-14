@@ -460,10 +460,10 @@ export default function AutomationRulesPage() {
         <GlassCard className="flex-shrink-0">
           <div className="px-4 py-3">
             <div className="flex items-center gap-2 mb-3">
-              <WorkflowIcon size={16} style={{ color: 'rgba(168,85,247,0.8)' }} />
+              <WorkflowIcon size={16} style={{ color: 'var(--accent-fg-violet)' }} />
               <span className="text-sm font-medium">事件驱动工作流</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{
-                background: 'rgba(168,85,247,0.08)', color: 'rgba(168,85,247,0.8)',
+                background: 'rgba(168,85,247,0.08)', color: 'var(--accent-fg-violet)',
                 border: '1px solid rgba(168,85,247,0.15)',
               }}>{eventWorkflows.length}</span>
               <div className="flex-1" />
@@ -497,7 +497,7 @@ export default function AutomationRulesPage() {
             </div>
             <div className="mt-3 px-1 py-2 rounded-[10px] text-xs" style={{ background: 'rgba(168,85,247,0.04)', border: '1px solid rgba(168,85,247,0.08)', color: 'var(--text-muted)' }}>
               事件驱动工作流比简单规则更强大：可以添加条件判断、数据处理、LLM 分析等中间步骤。
-              推荐在<button onClick={() => navigate('/workflow-agent')} className="underline mx-0.5" style={{ color: 'rgba(168,85,247,0.8)' }}>工作流编辑器</button>中创建事件触发的工作流来替代简单自动化规则。
+              推荐在<button onClick={() => navigate('/workflow-agent')} className="underline mx-0.5" style={{ color: 'var(--accent-fg-violet)' }}>工作流编辑器</button>中创建事件触发的工作流来替代简单自动化规则。
             </div>
           </div>
         </GlassCard>
@@ -696,7 +696,7 @@ export default function AutomationRulesPage() {
                         />
                       </div>
                       <div className="mt-2 p-2.5 rounded-[10px] text-xs" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.1)' }}>
-                        <div className="font-medium mb-1" style={{ color: 'rgba(168,85,247,0.9)' }}>示例</div>
+                        <div className="font-medium mb-1" style={{ color: 'var(--accent-fg-violet)' }}>示例</div>
                         <div style={{ color: 'var(--text-muted)' }}>
                           POST <code className="px-1 py-0.5 rounded bg-token-nested">{`{"username":"张三","repo":"my-project"}`}</code>
                         </div>

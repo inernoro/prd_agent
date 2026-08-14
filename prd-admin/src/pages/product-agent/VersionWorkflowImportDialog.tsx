@@ -214,7 +214,7 @@ export function VersionWorkflowImportDialog({
             <button
               onClick={() => void commit()}
               disabled={busy || matchedCount === 0}
-              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30 disabled:opacity-40"
             >
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />}
               确认导入 {matchedCount} 条

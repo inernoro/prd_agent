@@ -738,7 +738,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
         </div>
         {/* 追溯中提示 */}
         {traceAnchor && (
-          <span className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-amber-300 bg-amber-400/10 border border-amber-400/30">
+          <span className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-amber)] bg-amber-400/10 border border-amber-400/30">
             追溯中
             <button onClick={() => setTraceAnchor(null)} className="hover:text-white">
               <X size={11} />
@@ -949,11 +949,11 @@ function NodeDrawer({
         {/* 操作 */}
         <div className="flex items-center gap-2">
           {canOpen && (
-            <button onClick={onOpenDetail} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm">
+            <button onClick={onOpenDetail} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm">
               <ExternalLink size={13} /> 查看详情
             </button>
           )}
-          <button onClick={onTrace} className="flex-1 px-3 py-1.5 rounded-lg border border-amber-400/30 text-amber-300 hover:bg-amber-400/10 text-sm">
+          <button onClick={onTrace} className="flex-1 px-3 py-1.5 rounded-lg border border-amber-400/30 text-[color:var(--accent-fg-amber)] hover:bg-amber-400/10 text-sm">
             追溯关系路径
           </button>
         </div>
@@ -962,7 +962,7 @@ function NodeDrawer({
           <button
             onClick={runAnalysis}
             disabled={analysis.isStreaming}
-            className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/15 text-violet-200 border border-violet-500/40 hover:bg-violet-500/25 disabled:opacity-50 text-sm"
+            className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/15 text-[color:var(--accent-fg-violet)] border border-violet-500/40 hover:bg-violet-500/25 disabled:opacity-50 text-sm"
           >
             {analysis.isStreaming ? <MapSpinner size={13} /> : <Sparkles size={13} />} 关系分析
           </button>

@@ -495,7 +495,7 @@ function QuickInputBox(props: {
                     justifyContent: 'center',
                     fontSize: 9,
                     fontWeight: 700,
-                    color: 'rgba(99, 102, 241, 1)',
+                    color: 'var(--accent-fg-violet)',
                     flexShrink: 0,
                   }}
                 >
@@ -538,7 +538,7 @@ function QuickInputBox(props: {
                       borderRadius: 2,
                       border: 'none',
                       background: 'rgba(239,68,68,0.2)',
-                      color: 'rgba(239,68,68,0.9)',
+                      color: 'var(--accent-fg-danger)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',

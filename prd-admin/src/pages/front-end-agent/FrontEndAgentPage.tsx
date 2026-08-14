@@ -431,7 +431,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={handleAbort}
-                className="fea-btn fea-btn-danger w-full h-10 rounded-xl border border-rose-400/25 bg-rose-500/10 hover:bg-rose-500/15 text-sm text-rose-100 inline-flex items-center justify-center gap-2"
+                className="fea-btn fea-btn-danger w-full h-10 rounded-xl border border-rose-400/25 bg-rose-500/10 hover:bg-rose-500/15 text-sm text-[color:var(--accent-fg-danger)] inline-flex items-center justify-center gap-2"
               >
                 <StopCircle className="w-4 h-4" />
                 中止
@@ -475,7 +475,7 @@ export function FrontEndAgentPage() {
 
           <div className="flex-1 min-h-0 p-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {errorMsg ? (
-              <div className="rounded-xl border border-rose-400/20 bg-rose-500/10 p-4 text-sm text-rose-100 flex gap-2">
+              <div className="rounded-xl border border-rose-400/20 bg-rose-500/10 p-4 text-sm text-[color:var(--accent-fg-danger)] flex gap-2">
                 <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>{errorMsg}</span>
               </div>

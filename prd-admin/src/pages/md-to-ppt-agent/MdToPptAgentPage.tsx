@@ -1017,7 +1017,7 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
         <button
           onClick={() => onConfirm(msg)}
           disabled={disabled}
-          className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/25 disabled:opacity-40"
+          className="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-semibold bg-purple-500/20 text-[color:var(--accent-fg-violet)] hover:bg-purple-500/30 border border-purple-500/25 disabled:opacity-40"
         >
           <Check size={11} />
           确认，生成 PPT
@@ -2773,7 +2773,7 @@ export function MdToPptAgentPage() {
         <div className="space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/20 bg-emerald-400/8 px-2 py-1 text-[11px] font-semibold text-emerald-200">
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/20 bg-emerald-400/8 px-2 py-1 text-[11px] font-semibold text-[color:var(--accent-fg-success)]">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
                 {runtimeRouteLabel}
               </div>
@@ -2787,7 +2787,7 @@ export function MdToPptAgentPage() {
                 <button
                   onClick={() => void handlePublish()}
                   disabled={isPublishing}
-                  className="flex h-8 w-8 items-center justify-center rounded-md border border-blue-400/25 bg-blue-400/10 text-blue-200 disabled:opacity-50"
+                  className="flex h-8 w-8 items-center justify-center rounded-md border border-blue-400/25 bg-blue-400/10 text-[color:var(--accent-fg-blue)] disabled:opacity-50"
                   title="发布为网页"
                 >
                   {isPublishing ? <MapSpinner size={14} /> : <Globe size={15} />}
@@ -2812,7 +2812,7 @@ export function MdToPptAgentPage() {
           </div>
 
           {publishedUrl && (
-            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-emerald-100/80">
+            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-[color:var(--accent-fg-success)]/80">
               <div className="font-semibold text-emerald-100">已发布为网页</div>
               <a href={publishedUrl} target="_blank" rel="noreferrer" className="mt-1 block truncate underline decoration-emerald-200/40">
                 {publishedUrl}
@@ -2849,7 +2849,7 @@ export function MdToPptAgentPage() {
                   </span>
                 ))}
                 {pendingKbRefs.map((r, i) => (
-                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[10px] text-blue-100/80">
+                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[10px] text-[color:var(--accent-fg-blue)]/80">
                     <BookOpen size={10} />
                     <span className="max-w-[180px] truncate">{r.entryTitle}</span>
                     <button onClick={() => removeKbRef(i)}><X size={10} /></button>
@@ -3201,7 +3201,7 @@ export function MdToPptAgentPage() {
                         <button
                           onClick={handleRegenerateDeck}
                           disabled={isProcessing}
-                          className="inline-flex items-center gap-1 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-red-100 hover:bg-red-500/16 disabled:opacity-50"
+                          className="inline-flex items-center gap-1 rounded-md border border-red-400/25 bg-red-500/10 px-2 py-1 text-[11px] font-semibold text-[color:var(--accent-fg-danger)] hover:bg-red-500/16 disabled:opacity-50"
                         >
                           <RotateCcw size={11} />
                           重新生成
@@ -3227,7 +3227,7 @@ export function MdToPptAgentPage() {
                             <button
                               onClick={handleRegenerateDeck}
                               disabled={isProcessing}
-                              className="inline-flex items-center gap-1 rounded-md border border-purple-400/25 bg-purple-500/12 px-2 py-1 text-[11px] font-semibold text-purple-100 hover:bg-purple-500/18 disabled:opacity-50"
+                              className="inline-flex items-center gap-1 rounded-md border border-purple-400/25 bg-purple-500/12 px-2 py-1 text-[11px] font-semibold text-[color:var(--accent-fg-violet)] hover:bg-purple-500/18 disabled:opacity-50"
                             >
                               <RotateCcw size={11} />
                               重新生成整份
@@ -3280,7 +3280,7 @@ export function MdToPptAgentPage() {
                   {pendingKbRefs.map((r, i) => (
                     <div
                       key={i}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-[10px] text-blue-300 border border-blue-500/15"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-[10px] text-[color:var(--accent-fg-blue)] border border-blue-500/15"
                     >
                       <BookOpen size={9} />
                       <span className="truncate max-w-[120px]">{r.entryTitle}</span>
@@ -4119,7 +4119,7 @@ export function MdToPptAgentPage() {
                     </span>
                   ))}
                   {diagLines.length > 0 && (
-                    <span className="px-2 py-0.5 rounded border border-purple-400/20 bg-purple-400/8 text-[10px] text-purple-200">
+                    <span className="px-2 py-0.5 rounded border border-purple-400/20 bg-purple-400/8 text-[10px] text-[color:var(--accent-fg-violet)]">
                       {formatDiagStage(diagLines[diagLines.length - 1]?.stage)}
                     </span>
                   )}
@@ -4471,7 +4471,7 @@ export function MdToPptAgentPage() {
 
               {/* 编辑模式提示条 */}
               {editMode && (
-                <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-purple-500/10 border-b border-purple-500/20 text-[11px] text-purple-300">
+                <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-purple-500/10 border-b border-purple-500/20 text-[11px] text-[color:var(--accent-fg-violet)]">
                   <Pencil size={11} className="shrink-0" />
                   <span>
                     编辑模式：点击幻灯片里的文字直接修改，悬浮工具条 A+/A- 调字号，Esc 取消选中；点「完成编辑」保存
@@ -4488,7 +4488,7 @@ export function MdToPptAgentPage() {
               {pendingTemplateSwitch && !isStreaming && (
                 <div
                   data-testid="template-switch-confirm"
-                  className="shrink-0 flex items-center gap-2.5 px-3 py-2 bg-purple-500/10 border-b border-purple-500/25 text-[11px] text-purple-200"
+                  className="shrink-0 flex items-center gap-2.5 px-3 py-2 bg-purple-500/10 border-b border-purple-500/25 text-[11px] text-[color:var(--accent-fg-violet)]"
                 >
                   <Wand2 size={12} className="shrink-0" />
                   <span className="min-w-0 truncate">

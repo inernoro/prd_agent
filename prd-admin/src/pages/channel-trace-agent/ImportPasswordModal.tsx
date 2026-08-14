@@ -85,7 +85,7 @@ export function ImportPasswordModal({
           <button
             onClick={submit}
             disabled={checking || !value.trim()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500/15 text-[color:var(--accent-fg-success)] border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40"
           >
             {checking && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             确认导入

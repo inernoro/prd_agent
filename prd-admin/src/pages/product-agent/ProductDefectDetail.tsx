@@ -303,7 +303,7 @@ export function ProductDefectDetail({
     <div className="flex flex-col gap-4 min-h-0">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-red-500/10 text-red-200/90 border border-red-500/25">
+          <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-red-500/10 text-[color:var(--accent-fg-danger)]/90 border border-red-500/25">
             <Bug size={12} /> {defect.defectNo}
           </span>
           <input
@@ -321,7 +321,7 @@ export function ProductDefectDetail({
           />
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button type="button" onClick={convert} disabled={converting} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50">
+          <button type="button" onClick={convert} disabled={converting} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-[color:var(--accent-fg-blue)] bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50">
             {converting ? <MapSpinner size={14} /> : <GitBranch size={14} />} 转为需求
           </button>
           <button type="button" onClick={() => setShowTrace(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-token-subtle text-token-secondary hover-bg-soft text-sm">

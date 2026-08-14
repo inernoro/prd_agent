@@ -203,7 +203,7 @@ function PmQuickActionsConfigDialog({
           <button
             onClick={save}
             disabled={saving}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-500/20 text-blue-200 border border-blue-500/40 text-sm hover:bg-blue-500/30 disabled:opacity-40"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-500/20 text-[color:var(--accent-fg-blue)] border border-blue-500/40 text-sm hover:bg-blue-500/30 disabled:opacity-40"
           >
             {saving ? <MapSpinner size={14} /> : null} 保存
           </button>

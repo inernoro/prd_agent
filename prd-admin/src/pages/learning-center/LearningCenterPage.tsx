@@ -192,7 +192,7 @@ function MasteryRing({ pct, complete }: { pct: number; complete: boolean }) {
             <stop offset="100%" stopColor="#818cf8" />
           </linearGradient>
         </defs>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--nested-block-bg)" strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -236,7 +236,7 @@ function TutorialCard({ item, onStart }: { item: TutorialProgressItem; onStart: 
         {item.learned && (
           <span
             className="inline-flex items-center gap-1 shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold"
-            style={{ background: 'rgba(52,211,153,0.14)', color: 'rgba(52,211,153,0.95)' }}
+            style={{ background: 'rgba(52,211,153,0.14)', color: 'var(--accent-fg-success)' }}
           >
             <GraduationCap size={10} strokeWidth={2.6} />
             已学会

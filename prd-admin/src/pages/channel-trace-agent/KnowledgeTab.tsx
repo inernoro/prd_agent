@@ -155,7 +155,7 @@ export function KnowledgeTab() {
             <button
               onClick={ask}
               disabled={isStreaming || !question.trim()}
-              className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500/15 text-[color:var(--accent-fg-success)] border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               提问
@@ -319,7 +319,7 @@ export function KnowledgeTab() {
                         {it.tags.map((t) => (
                           <span
                             key={t}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300/80"
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-[color:var(--accent-fg-success)]/80"
                           >
                             {t}
                           </span>
@@ -480,7 +480,7 @@ function KnowledgeEditorModal({
           <button
             onClick={save}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500/15 text-[color:var(--accent-fg-success)] border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40"
           >
             {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             保存

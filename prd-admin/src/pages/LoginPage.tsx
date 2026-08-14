@@ -650,7 +650,7 @@ function ErrorBar({ children }: { children: React.ReactNode }) {
       style={{
         background: 'rgba(244, 63, 94, 0.08)',
         border: '1px solid rgba(244, 63, 94, 0.35)',
-        color: 'rgba(252, 165, 165, 0.95)',
+        color: 'var(--accent-fg-danger)',
         boxShadow: '0 0 24px rgba(244, 63, 94, 0.12)',
         fontFamily: 'var(--font-body)',
       }}

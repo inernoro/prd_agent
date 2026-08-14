@@ -32,3 +32,10 @@
 | fix | prd-admin | 其余单点修复：automations 新建按钮、email-agent 分类 chip 与图标、infra-services / learning-center / report-agent / tech-doc-format-agent / project-route-agent 的浅色前景、task-tree 主按钮 #7c5cff→#6d3fe8、marketplace 分隔点用边框 token 当字色、DesktopAssetsPage 四枚统计图标、tapd-bug 必填红与告警琥珀 |
 | test | e2e | 对比度审计补 WCAG 1.4.3 Incidental 例外：失效控件（disabled / aria-disabled，含祖先）不计入。此前空数据页上 disabled:opacity-40 的按钮被反复报成缺陷（/arena 发送 1.78:1，但它本来就点不动） |
 | test | e2e | 对比度审计重采样改取元素框内众数色，不再单点采正中：隐前景那步偶尔被 React 重渲染抹掉，正中恰好压着字形就采到文字色本身，报出 fg===bg、比值 1.00 的假阳性（/pa-agent 的 A- 按钮） |
+| test | prd-admin | 新增「同色调淡底 + 同色调浅字」源码棘轮 sameHueTintRatchet：底铺 rgba(某色,0.1~0.2)、字却写死同色 300/400/500 档，暗色成立、浅色下两层一起被暖纸底稀释 → 1.4~2.1:1。全仓扫出 553 处 / 158 个文件，正是用户「翻一页坏一页」的病根 |
+| fix | prd-admin | 按上述判据清扫 553 → 10：底一律不动，前景统一改走双写的 --accent-fg-*。覆盖 marketplaceTypes 的 CONFIG_TYPE_REGISTRY、theme.ts 的 ACCENT_STYLES、difficultyMeta、defect/report/product/pr-review 等 130+ 文件 |
+| fix | prd-admin | 修复 difficultyMeta 三档（学习中心与教程抽屉共用）：初级 1.56:1 / 中级 1.42:1 / 高级 2.06:1 → 5.5~5.9:1；同页「已学会」chip 与进度环底槽（白 10% 描边在暖纸上完全隐形）一并修 |
+| fix | prd-admin | 补 .surface-tone-dark 的 --accent-fg-* 全族：钉死暗画布的页面此前拿不到暗色档语义前景，把浅色前景 token 化会反向变成深字压深底 |
+| fix | prd-admin | 修复浅色档液态玻璃「发虚」：--glass-bg-end 相对亮度 0.8263 与页面底 #EEEAE3 的 0.8257 只差 0.0006，卡片下半截等于溶进背景、没有边界。整条渐变抬到页面底之上（收尾留 ΔL≈0.072），边框 14% → 18% |
+| test | prd-admin | 修 themeSystem 一条反向锁死 bug 的断言：原来逐字要求 ACCENT_STYLES.text 必须是 rgba 字面量——而那正是「淡底压浅字」的错误实现，谁修 bug 谁 CI 红。改为断言必须走 var(--accent-fg-*) |
+| test | e2e | 对比度审计判据补两处：失效控件按 WCAG 1.4.3 Incidental 例外不计；渐变底重采样改取元素框内众数色，不再单点采正中（隐前景偶被 React 重渲染抹掉，正中压着字形就采到文字色，报 fg===bg 的 1.00 假阳性） |

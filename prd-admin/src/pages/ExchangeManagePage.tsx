@@ -411,12 +411,12 @@ export function ExchangeManagePage() {
                     <span className="font-medium truncate">{exchange.name}</span>
                     {exchange.enabled ? (
                       <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full"
-                        style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)', border: '1px solid rgba(34,197,94,0.28)' }}>
+                        style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34,197,94,0.28)' }}>
                         <Zap size={10} /> 启用
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full"
-                        style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(239,68,68,0.95)', border: '1px solid rgba(239,68,68,0.28)' }}>
+                        style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.28)' }}>
                         <ZapOff size={10} /> 停用
                       </span>
                     )}
@@ -712,7 +712,7 @@ export function ExchangeManagePage() {
             {/* 旧格式迁移提示 */}
             {isLegacyFormat && (
               <div className="flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs"
-                style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)', color: 'rgba(234,179,8,0.9)' }}>
+                style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)', color: 'var(--accent-fg-amber)' }}>
                 <span className="mt-0.5 shrink-0">⚠</span>
                 <span>检测到旧格式配置（使用别名字段）。建议为每个模型填写「显示名」后保存，系统将自动迁移到新格式。</span>
               </div>

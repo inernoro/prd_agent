@@ -122,7 +122,7 @@ export function ProductImportDialog({
               type="button"
               onClick={() => void loadBundledTemplate()}
               disabled={parsing || busy}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/25 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25 disabled:opacity-50"
             >
               {parsing ? <MapSpinner size={14} /> : <Sparkles size={14} />} 一键加载初始模板（19 个应用）
             </button>
@@ -223,7 +223,7 @@ export function ProductImportDialog({
             <button
               onClick={() => void commit()}
               disabled={busy || parsing || rows.length === 0}
-              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30 disabled:opacity-40"
             >
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />} 确认导入 {rows.length} 条
             </button>

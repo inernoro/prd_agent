@@ -118,7 +118,7 @@ function AiFillBar({ productId, templateId, onFill }: { productId: string; templ
           {isStreaming ? (
             <button type="button" onClick={abort} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-token-subtle text-token-secondary text-xs"><MapSpinner size={13} /> 停止</button>
           ) : (
-            <button type="button" onClick={runFill} disabled={!text.trim()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-xs disabled:opacity-40">
+            <button type="button" onClick={runFill} disabled={!text.trim()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-xs disabled:opacity-40">
               <Sparkles size={13} /> 智能填充
             </button>
           )}
@@ -324,7 +324,7 @@ export function RequirementCreateForm({
     <div className="flex flex-col gap-0 w-full rounded-lg border border-token-subtle bg-[#0f1014] overflow-hidden">
       {/* TAPD 顶栏：类型 + 操作 */}
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-token-subtle bg-[#13151a]">
-        <span className="text-[12px] px-2 py-0.5 rounded text-amber-200 bg-amber-500/15 border border-amber-500/25">需求</span>
+        <span className="text-[12px] px-2 py-0.5 rounded text-[color:var(--accent-fg-amber)] bg-amber-500/15 border border-amber-500/25">需求</span>
         <span className="text-[12px] text-token-muted">新建</span>
         {initialStateLabel && (
           <span className="text-[11px] px-2 py-0.5 rounded bg-token-nested text-token-secondary border border-token-subtle">
@@ -369,7 +369,7 @@ export function RequirementCreateForm({
               <RichTextField value={description} onChange={setDescription} minHeight={440} placeholder="补充背景、目标、验收标准…" />
             </div>
           </div>
-          {message && <div className="rounded-md border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
+          {message && <div className="rounded-md border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
         </div>
 
         <div className="p-5 xl:p-6 bg-[#0f1014] flex flex-col gap-4">

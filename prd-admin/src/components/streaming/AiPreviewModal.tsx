@@ -146,7 +146,7 @@ export function AiPreviewModal({
                 type="button"
                 onClick={() => setThinkingOpen((v) => !v)}
                 className="w-full flex items-center gap-2 px-3 py-2 text-[11px] hover-bg-soft/[0.03] transition"
-                style={{ color: 'rgba(196,138,255,0.85)' }}
+                style={{ color: 'var(--accent-fg-violet)' }}
               >
                 {thinkingOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 <Brain size={12} />
@@ -191,7 +191,7 @@ export function AiPreviewModal({
 
           {/* Error */}
           {error && (
-            <div className="rounded-lg border p-3 text-[12px] flex items-start gap-2" style={{ borderColor: 'rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.06)', color: 'rgba(239,68,68,0.95)' }}>
+            <div className="rounded-lg border p-3 text-[12px] flex items-start gap-2" style={{ borderColor: 'rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.06)', color: 'var(--accent-fg-danger)' }}>
               <AlertTriangle size={14} className="mt-0.5 shrink-0" />
               <div>{error}</div>
             </div>

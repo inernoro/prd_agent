@@ -222,7 +222,7 @@ export function TranscriptKaraoke({
                   {parseRecordingAnswerParts(answer).map((part, index) => part.kind === 'text' ? (
                     <span key={index}>{part.text}</span>
                   ) : recordingCitationMatchesTimeline(part.start, timelineSegments) ? (
-                    <button key={index} type="button" onClick={() => seekRef.current?.(part.start)} className="mx-0.5 inline-flex min-h-8 items-center rounded-full px-2 font-mono text-[11px] font-semibold" style={{ background: 'rgba(59,130,246,0.14)', color: 'rgba(147,197,253,0.98)' }} title="从引用位置播放">{part.label}</button>
+                    <button key={index} type="button" onClick={() => seekRef.current?.(part.start)} className="mx-0.5 inline-flex min-h-8 items-center rounded-full px-2 font-mono text-[11px] font-semibold" style={{ background: 'rgba(59,130,246,0.14)', color: 'var(--accent-fg-blue)' }} title="从引用位置播放">{part.label}</button>
                   ) : <span key={index} className="mx-0.5 font-mono text-[11px] text-token-muted" title="原文时间轴中没有这个位置">{part.label}</span>)}
                 </div>
               )}
@@ -346,7 +346,7 @@ export function TranscriptKaraoke({
                           .finally(() => setSavingEdit(false));
                       }}
                       className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
-                      style={{ background: 'rgba(59,130,246,0.16)', color: 'rgba(147,197,253,0.98)' }}>
+                      style={{ background: 'rgba(59,130,246,0.16)', color: 'var(--accent-fg-blue)' }}>
                       <Check size={12} /> 保存
                     </button>
                   </div>

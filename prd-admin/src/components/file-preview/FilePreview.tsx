@@ -73,7 +73,7 @@ function RecordingArchiveProgress({
       <div className="flex items-start gap-3">
         <span
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]"
-          style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.98)' }}>
+          style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent-fg-blue)' }}>
           <CloudUpload size={18} />
         </span>
         <div className="min-w-0 flex-1">
@@ -586,7 +586,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
           rel="noopener noreferrer"
           download={entry.title}
           className="h-8 px-4 rounded-[8px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-          style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.9)' }}
+          style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'var(--accent-fg-blue)' }}
         >
           下载文件
         </a>
@@ -623,7 +623,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
         {ghUrl && (
           <a href={ghUrl} target="_blank" rel="noopener noreferrer"
             className="h-8 px-4 rounded-[8px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-            style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.9)' }}>
+            style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'var(--accent-fg-blue)' }}>
             在 GitHub 打开
           </a>
         )}

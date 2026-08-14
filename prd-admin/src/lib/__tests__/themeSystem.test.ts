@@ -162,11 +162,19 @@ describe('主题系统契约', () => {
     });
   });
 
-  it('强调色配置保持统一结构', () => {
+  it('强调色配置保持统一结构：底是淡色调、字走双写 token', () => {
     Object.values(ACCENT_STYLES).forEach((accent) => {
+      // 底与描边保持低透明度同色调 —— 这一层在两个主题下都成立
       expect(accent.bg).toMatch(/^rgba\(/);
       expect(accent.border).toMatch(/^rgba\(/);
-      expect(accent.text).toMatch(/^rgba\(/);
+      /*
+       * 字必须走 --accent-fg-*，不许再写 rgba 字面量。
+       * 这条断言原本写的是 `toMatch(/^rgba\(/)` —— 逐字要求那个**错误**实现存在：
+       * 底是 8% 淡色调、字写死 500 档，浅色主题下两层一起被暖纸底稀释，
+       * 就是全站最高频的「浅字压浅底」。谁去修这个 bug，谁的 CI 先红。
+       * 现在改成断言正确规则，让判据站在修复这一侧。
+       */
+      expect(accent.text).toMatch(/^var\(--accent-fg-[a-z-]+\)$/);
     });
   });
 

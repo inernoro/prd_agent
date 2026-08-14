@@ -1933,7 +1933,7 @@ function NodeEditPanel({
                 {nodeExecution.errorMessage && (
                   <div className="text-[11px] p-2 rounded-lg" style={{
                     background: 'rgba(239,68,68,0.06)',
-                    color: 'rgba(239,68,68,0.9)',
+                    color: 'var(--accent-fg-danger)',
                     border: '1px solid rgba(239,68,68,0.1)',
                   }}>
                     {nodeExecution.errorMessage}
@@ -2013,7 +2013,7 @@ function TestRunResultPanel({ result }: { result: CapsuleTestRunResult }) {
       {result.errorMessage && (
         <div className="text-[11px] p-2 rounded-lg" style={{
           background: 'rgba(239,68,68,0.06)',
-          color: 'rgba(239,68,68,0.9)',
+          color: 'var(--accent-fg-danger)',
           border: '1px solid rgba(239,68,68,0.1)',
         }}>
           {result.errorMessage}

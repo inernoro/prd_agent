@@ -7358,7 +7358,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         style={{
                           background: 'rgba(34, 197, 94, 0.08)',
                           border: '1px solid rgba(34, 197, 94, 0.25)',
-                          color: 'rgba(74, 222, 128, 0.75)',
+                          color: 'var(--accent-fg-success)',
                         }}
                         title="该模型为自适应尺寸，具体尺寸由 prompt 描述决定（可在 prompt 中写「横版 16:9」等）"
                       >
@@ -7400,7 +7400,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           style={{
                             background: 'rgba(34, 197, 94, 0.12)',
                             border: '1px solid rgba(34, 197, 94, 0.35)',
-                            color: 'rgba(74, 222, 128, 0.95)',
+                            color: 'var(--accent-fg-success)',
                           }}
                           title="选择尺寸"
                           onClick={(e) => e.stopPropagation()}
@@ -7528,7 +7528,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           style={{
                             background: 'rgba(99, 102, 241, 0.12)',
                             border: '1px solid rgba(99, 102, 241, 0.35)',
-                            color: 'rgba(129, 140, 248, 0.95)',
+                            color: 'var(--accent-fg-blue)',
                           }}
                           title="切换绘图模型"
                           onClick={(e) => e.stopPropagation()}
@@ -7642,17 +7642,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                             {m.name || m.modelName}
                                           </div>
                                           {m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.20)', color: 'rgb(192,132,252)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.20)', color: 'var(--accent-fg-violet)' }}>
                                               专属
                                             </span>
                                           )}
                                           {m.isDefault && !m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.18)', color: 'rgb(74,222,128)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.18)', color: 'var(--accent-fg-success)' }}>
                                               默认
                                             </span>
                                           )}
                                           {m.isLegacy && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.18)', color: 'rgb(250,204,21)' }}>
+                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.18)', color: 'var(--accent-fg-amber)' }}>
                                               传统
                                             </span>
                                           )}
@@ -8367,7 +8367,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     top: -10,
                     background: 'rgba(251,146,60,0.16)',
                     border: '1px solid rgba(251,146,60,0.42)',
-                    color: 'rgba(251,146,60,0.95)',
+                    color: 'var(--accent-fg-warning)',
                     boxShadow: '0 10px 28px rgba(0,0,0,0.35)',
                     pointerEvents: 'none',
                   }}
@@ -8729,7 +8729,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             style={{
                               background: 'rgba(250,204,21,0.12)',
                               border: '1px solid rgba(250,204,21,0.28)',
-                              color: 'rgba(250,204,21,0.95)',
+                              color: 'var(--accent-fg-amber)',
                             }}
                           >
                             <Sparkles size={10} />
@@ -8789,7 +8789,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                                 style={{
                                                   background: 'rgba(250,204,21,0.16)',
                                                   border: '1px solid rgba(250,204,21,0.3)',
-                                                  color: 'rgba(250,204,21,0.95)',
+                                                  color: 'var(--accent-fg-amber)',
                                                 }}
                                               >
                                                 <Sparkles size={9} />
@@ -8907,7 +8907,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 style={{
                                   border: '1px solid rgba(239, 68, 68, 0.35)',
                                   background: 'rgba(239, 68, 68, 0.10)',
-                                  color: 'rgba(248, 113, 113, 0.95)',
+                                  color: 'var(--accent-fg-danger)',
                                 }}
                                 onClick={() => {
                                   setStylePrompt('');

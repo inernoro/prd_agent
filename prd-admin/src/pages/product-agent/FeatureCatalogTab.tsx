@@ -361,7 +361,7 @@ export function FeatureCatalogTab({
               <button
                 type="button"
                 onClick={() => navigate(`/product-agent/p/${productId}/feature/new`)}
-                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 text-xs text-cyan-200 border border-cyan-500/30 hover:bg-cyan-500/25"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-cyan-500/15 px-3 text-xs text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25"
               >
                 <Plus size={14} /> 新建功能
               </button>

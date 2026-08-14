@@ -2199,9 +2199,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               style={syncBusy
                 ? { color: 'rgba(252,211,77,0.98)', background: 'rgba(245,158,11,0.14)', boxShadow: 'inset 0 0 0 1px rgba(245,158,11,0.42)' }
                 : store.peerSyncStatus === 'error'
-                  ? { color: 'rgba(252,165,165,0.96)', background: 'rgba(239,68,68,0.10)', boxShadow: 'inset 0 0 0 1px rgba(239,68,68,0.30)' }
+                  ? { color: 'var(--accent-fg-danger)', background: 'rgba(239,68,68,0.10)', boxShadow: 'inset 0 0 0 1px rgba(239,68,68,0.30)' }
                   : syncEstablished
-                    ? { color: 'rgba(94,234,212,0.96)', background: 'rgba(20,184,166,0.10)', boxShadow: 'inset 0 0 0 1px rgba(45,212,191,0.30)' }
+                    ? { color: 'var(--accent-fg-blue)', background: 'rgba(20,184,166,0.10)', boxShadow: 'inset 0 0 0 1px rgba(45,212,191,0.30)' }
                     : undefined}
               title={syncButtonTitle}
             >
@@ -2232,7 +2232,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 上传中的状态提示保留在此处，避免用户点完 FAB 上传后失去反馈。 */}
             {uploading && (
               <span className="flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
-                style={{ color: 'rgba(147,197,253,0.95)', background: 'rgba(59,130,246,0.12)' }}>
+                style={{ color: 'var(--accent-fg-blue)', background: 'rgba(59,130,246,0.12)' }}>
                 <MapSpinner size={12} /> 上传中
               </span>
             )}
@@ -2415,7 +2415,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           style={{ background: 'rgba(59,130,246,0.05)', border: '3px dashed rgba(59,130,246,0.3)' }}>
           <div className="text-center">
             <Upload size={32} style={{ color: 'rgba(59,130,246,0.6)', margin: '0 auto 8px' }} />
-            <p className="text-[14px] font-semibold" style={{ color: 'rgba(59,130,246,0.8)' }}>释放文件到此处上传</p>
+            <p className="text-[14px] font-semibold" style={{ color: 'var(--accent-fg-blue)' }}>释放文件到此处上传</p>
           </div>
         </div>
       )}
@@ -4554,7 +4554,7 @@ export function DocumentStorePage() {
                                   {entry.tags!.slice(0, 2).map(t => (
                                     <span key={t}
                                       className="inline-flex items-center h-[15px] px-1.5 rounded-[4px] text-[9px] font-medium max-w-[68px] truncate"
-                                      style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(59,130,246,0.85)' }}>
+                                      style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--accent-fg-blue)' }}>
                                       {t}
                                     </span>
                                   ))}

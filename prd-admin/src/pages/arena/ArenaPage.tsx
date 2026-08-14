@@ -1357,12 +1357,12 @@ export function ArenaPage() {
                         <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                           <span>{item.responseCount} 个模型</span>
                           {item.hasAttachments && (
-                            <ImageIcon className="w-3 h-3 ml-0.5" style={{ color: 'rgba(99,102,241,0.7)' }} />
+                            <ImageIcon className="w-3 h-3 ml-0.5" style={{ color: 'var(--accent-fg-violet)' }} />
                           )}
                           {item.revealed && (
                             <span
                               className="ml-1 text-[10px] px-1 py-0.5 rounded"
-                              style={{ background: 'rgba(99,102,241,0.15)', color: 'rgba(99,102,241,0.9)' }}
+                              style={{ background: 'rgba(99,102,241,0.15)', color: 'var(--accent-fg-violet)' }}
                             >
                               已揭晓
                             </span>
@@ -1649,7 +1649,7 @@ export function ArenaPage() {
                       className="w-full h-9 rounded-lg text-[13px] font-medium transition-colors"
                       style={{
                         background: 'rgba(99,102,241,0.15)',
-                        color: 'rgba(99,102,241,0.95)',
+                        color: 'var(--accent-fg-violet)',
                         border: '1px solid rgba(99,102,241,0.2)',
                       }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.25)'; }}
@@ -1729,7 +1729,7 @@ export function ArenaPage() {
                 <div className="text-center mb-4">
                   <div
                     className="text-[13px] mb-2 px-3 py-2 rounded-lg inline-block"
-                    style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+                    style={{ background: 'rgba(239,68,68,0.08)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.15)' }}
                   >
                     加载阵容失败: {lineupError}
                   </div>
@@ -2128,7 +2128,7 @@ export function ArenaPage() {
                             )}
                             <div
                               className="text-[13px] px-3 py-2 rounded-lg break-all"
-                              style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+                              style={{ background: 'rgba(239,68,68,0.08)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.15)' }}
                             >
                               {panel.errorMessage ?? '响应异常'}
                             </div>

@@ -163,7 +163,7 @@ function MessageMetadataInline({
             maxWidth: '70%',
             border: '1px solid rgba(139,92,246,0.20)',
             background: 'rgba(139,92,246,0.08)',
-            color: 'rgba(139,92,246,0.85)',
+            color: 'var(--accent-fg-violet)',
             fontSize: 10,
             fontWeight: 600,
           }}
@@ -518,7 +518,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
               fontWeight: 600,
               border: '1px solid rgba(129,140,248,0.25)',
               background: 'rgba(99,102,241,0.08)',
-              color: 'rgba(165,180,252,0.85)',
+              color: 'var(--accent-fg-blue)',
             }}
           >
             <span style={{ opacity: 0.7 }}>用户期望</span>

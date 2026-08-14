@@ -161,7 +161,7 @@ export function ProductObjectDetailPage() {
           <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-token-subtle text-token-secondary hover-bg-soft hover-text-primary shrink-0" title="返回">
             <ArrowLeft size={16} />
           </button>
-          <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">正式版本</span>
+          <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-[color:var(--accent-fg-success)]">正式版本</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           <div className="w-full px-5 xl:px-8 py-5">
@@ -179,7 +179,7 @@ export function ProductObjectDetailPage() {
           <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-token-subtle text-token-secondary hover-bg-soft hover-text-primary shrink-0" title="返回">
             <ArrowLeft size={16} />
           </button>
-          <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">内部版本</span>
+          <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-[color:var(--accent-fg-amber)]">内部版本</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           <div className="w-full px-5 xl:px-8 py-5">
@@ -354,7 +354,7 @@ function DetailScaffold({
                 <button
                   onClick={onSave}
                   disabled={saving || !title.trim() || !dirty}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
                 </button>
@@ -798,7 +798,7 @@ function FeatureCreateForm({
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
-          {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
+          {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
           <p className="text-[11px] text-token-muted-faint px-1">保存后进入功能详情，可继续维护版本纳入、缺陷追溯与状态流转。</p>
         </>
       }
@@ -1168,7 +1168,7 @@ function RequirementDetail({
                   <FieldLabel>来源缺陷</FieldLabel>
                   <button
                     onClick={() => gotoDefect(requirement.sourceDefectId!)}
-                    className="self-start flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-red-500/10 text-red-200/90 border border-red-500/30 hover:bg-red-500/20"
+                    className="self-start flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-red-500/10 text-[color:var(--accent-fg-danger)]/90 border border-red-500/30 hover:bg-red-500/20"
                   >
                     <Bug size={12} /> {tracedDefects.find((d) => d.id === requirement.sourceDefectId)?.defectNo ?? '由缺陷转化'}
                   </button>
@@ -1618,7 +1618,7 @@ function FeatureDetail({
           <Card title="动态">
             <ActivityTimeline entityType="feature" entityId={feature.id} />
           </Card>
-          {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
+          {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
         </>
       }
       sidebar={
@@ -2018,11 +2018,11 @@ function VersionDetail({
         <VersionDetailTab active={detailTab === 'basic'} onClick={() => setDetailTab('basic')}>基础信息</VersionDetailTab>
         <VersionDetailTab active={detailTab === 'requirements'} onClick={() => setDetailTab('requirements')}>
           需求
-          {linkedReqCount > 0 && <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">{linkedReqCount}</span>}
+          {linkedReqCount > 0 && <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-[color:var(--accent-fg-blue)]">{linkedReqCount}</span>}
         </VersionDetailTab>
         <VersionDetailTab active={detailTab === 'features'} onClick={() => setDetailTab('features')}>
           功能
-          {linkedFeatCount > 0 && <span className="ml-1.5 rounded-full bg-violet-400/20 px-1.5 text-[10px] text-violet-200">{linkedFeatCount}</span>}
+          {linkedFeatCount > 0 && <span className="ml-1.5 rounded-full bg-violet-400/20 px-1.5 text-[10px] text-[color:var(--accent-fg-violet)]">{linkedFeatCount}</span>}
         </VersionDetailTab>
       </div>
       <DetailScaffold

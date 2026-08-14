@@ -674,11 +674,11 @@ export function TipsDrawer() {
                   ? 'rgba(52,211,153,0.85)'
                   : 'rgba(167,139,250,0.95)';
               const chip = t.learned
-                ? { text: '已学会', bg: 'rgba(52,211,153,0.14)', fg: 'rgba(52,211,153,0.95)', cap: true }
+                ? { text: '已学会', bg: 'rgba(52,211,153,0.14)', fg: 'var(--accent-fg-success)', cap: true }
                 : t.isTargeted
-                  ? { text: '为你推送', bg: 'rgba(244,63,94,0.14)', fg: 'rgba(244,63,94,0.95)', cap: false }
+                  ? { text: '为你推送', bg: 'rgba(244,63,94,0.14)', fg: 'var(--accent-fg-danger)', cap: false }
                   : isUpdate
-                    ? { text: '更新', bg: 'rgba(56,189,248,0.14)', fg: 'rgba(125,211,252,0.95)', cap: false }
+                    ? { text: '更新', bg: 'rgba(56,189,248,0.14)', fg: 'var(--accent-fg-blue)', cap: false }
                     : isPageGuide
                       ? { text: '推荐', bg: 'rgba(167,139,250,0.16)', fg: '#c4b5fd', cap: false }
                       : null;

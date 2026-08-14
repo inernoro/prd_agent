@@ -177,7 +177,7 @@ export function RequirementRelationModal({
             <div className="flex justify-end mb-1.5">
               <button
                 onClick={() => setShowLinker(true)}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/10"
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/10"
               >
                 <Plus size={12} /> 关联缺陷
               </button>
@@ -214,7 +214,7 @@ export function RequirementRelationModal({
             <button
               onClick={save}
               disabled={saving}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
             >
               {saving ? <MapSpinner size={14} /> : <Link2 size={14} />} 保存关联
             </button>
@@ -301,7 +301,7 @@ export function DefectLinkerModal({
                   setItems((prev) => prev.filter((x) => x.id !== d.id));
                   onLinked();
                 }}
-                className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/10 shrink-0"
+                className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/10 shrink-0"
               >
                 <Link2 size={12} /> 追溯
               </button>

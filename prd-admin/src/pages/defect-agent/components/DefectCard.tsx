@@ -363,7 +363,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0 animate-pulse"
                   style={{
                     background: 'rgba(255, 100, 100, 0.25)',
-                    color: 'rgba(255, 120, 120, 1)',
+                    color: 'var(--accent-fg-danger)',
                     border: '1px solid rgba(255, 100, 100, 0.6)',
                     boxShadow: '0 0 8px rgba(255, 100, 100, 0.3)',
                   }}
@@ -378,7 +378,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0 animate-pulse"
                   style={{
                     background: 'rgba(120, 220, 180, 0.25)',
-                    color: 'rgba(120, 220, 180, 1)',
+                    color: 'var(--accent-fg-success)',
                     border: '1px solid rgba(120, 220, 180, 0.6)',
                     boxShadow: '0 0 8px rgba(120, 220, 180, 0.3)',
                   }}
@@ -395,7 +395,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
                   style={{
                     background: 'rgba(120, 220, 180, 0.14)',
-                    color: 'rgba(120, 220, 180, 0.9)',
+                    color: 'var(--accent-fg-success)',
                     border: '1px solid rgba(120, 220, 180, 0.4)',
                   }}
                   title="我已评论，等待对方回应"
@@ -409,7 +409,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
                   style={{
                     background: 'rgba(140, 190, 255, 0.12)',
-                    color: 'rgba(140, 190, 255, 0.95)',
+                    color: 'var(--accent-fg-blue)',
                     border: '1px solid rgba(140, 190, 255, 0.45)',
                   }}
                   title="我已读"
@@ -423,7 +423,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
                   style={{
                     background: 'rgba(255, 200, 80, 0.18)',
-                    color: 'rgba(255, 200, 80, 0.95)',
+                    color: 'var(--accent-fg-amber)',
                     border: '1px solid rgba(255, 200, 80, 0.4)',
                   }}
                   title="我已提交，等待对方查看"
@@ -438,7 +438,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
                   style={{
                     background: 'rgba(120, 220, 180, 0.14)',
-                    color: 'rgba(120, 220, 180, 0.9)',
+                    color: 'var(--accent-fg-success)',
                     border: '1px solid rgba(120, 220, 180, 0.4)',
                   }}
                   title="对方已评论"
@@ -452,7 +452,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
                   style={{
                     background: 'rgba(140, 190, 255, 0.12)',
-                    color: 'rgba(140, 190, 255, 0.95)',
+                    color: 'var(--accent-fg-blue)',
                     border: '1px solid rgba(140, 190, 255, 0.45)',
                   }}
                   title="对方已读"
@@ -466,7 +466,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
                   style={{
                     background: 'rgba(255, 200, 80, 0.18)',
-                    color: 'rgba(255, 200, 80, 0.95)',
+                    color: 'var(--accent-fg-amber)',
                     border: '1px solid rgba(255, 200, 80, 0.4)',
                   }}
                   title="对方已提交，等待你查看"

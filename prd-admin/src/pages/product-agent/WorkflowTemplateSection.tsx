@@ -293,7 +293,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
                               <button
                                 type="button"
                                 onClick={() => setRuleModal({ transition: tr, from, to })}
-                                className="p-0.5 rounded text-cyan-400/80 hover:text-cyan-300 hover:bg-cyan-500/10"
+                                className="p-0.5 rounded text-cyan-400/80 hover:text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10"
                                 title="设置流转附加字段及授权用户"
                               >
                                 <Settings2 size={14} />

@@ -675,7 +675,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
             return (
               <div key={c.key} className="shrink-0 rounded-2xl px-3 py-3 flex flex-col gap-2" style={{ background: 'rgba(180,40,40,0.12)', border: '1px solid rgba(220,80,80,0.35)' }}>
                 <div className="text-[12px] leading-snug" style={{ color: 'rgba(255,255,255,0.6)' }}>{c.prompt}</div>
-                <div className="text-[13px]" style={{ color: 'rgba(255,140,140,0.95)' }}>{c.errorMessage || '生成失败'}</div>
+                <div className="text-[13px]" style={{ color: 'var(--accent-fg-danger)' }}>{c.errorMessage || '生成失败'}</div>
                 <div>
                   <button type="button" className={actionBtnCls} style={actionBtnStyle} onClick={() => void handleGenerate(c.prompt)}>
                     <RefreshCw size={13} /> 重试
@@ -734,7 +734,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
               className="h-7 px-2.5 rounded-full text-[11px] shrink-0 whitespace-nowrap active:opacity-70"
               style={
                 size === s.id
-                  ? { background: 'rgba(120,120,255,0.25)', color: 'rgba(200,200,255,0.95)', border: '1px solid rgba(140,140,255,0.5)' }
+                  ? { background: 'rgba(120,120,255,0.25)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(140,140,255,0.5)' }
                   : { background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.08)' }
               }
               onClick={() => setSize(s.id)}

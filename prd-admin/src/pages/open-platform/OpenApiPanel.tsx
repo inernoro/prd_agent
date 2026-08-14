@@ -186,7 +186,7 @@ function KeyCard({ r, onManage }: { r: BindingRow; onManage: () => void }) {
           <span className="truncate max-w-[150px]">{defaultModel}</span>
         </span>
         {extra > 0 && <span className="px-1.5 py-0.5 rounded bg-token-nested text-token-muted text-[11px]">+{extra}</span>}
-        {r.chatIsFallback && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[11px]">降级</span>}
+        {r.chatIsFallback && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[color:var(--accent-fg-amber)] text-[11px]">降级</span>}
       </div>
 
       <div className="flex flex-col gap-1">

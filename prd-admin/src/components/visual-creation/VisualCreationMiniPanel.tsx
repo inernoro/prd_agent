@@ -678,7 +678,7 @@ export function VisualCreationMiniPanel({
             borderRadius: 8,
             background: 'rgba(239,68,68,0.1)',
             border: '1px solid rgba(239,68,68,0.3)',
-            color: 'rgba(255,180,180,0.9)',
+            color: 'var(--accent-fg-danger)',
             fontSize: 12,
           }}
         >

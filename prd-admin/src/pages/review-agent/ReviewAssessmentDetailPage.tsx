@@ -274,7 +274,7 @@ export function ReviewAssessmentDetailPage() {
               </div>
             )}
             {orderedItems.some(x => x.reasonablenessVerdict === '不合理') && (
-              <div className="px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-300">
+              <div className="px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-[color:var(--accent-fg-danger)]">
                 评论判定不合理 <span className="font-semibold">{orderedItems.filter(x => x.reasonablenessVerdict === '不合理').length}</span> 条
               </div>
             )}
@@ -366,7 +366,7 @@ function ItemRow({
         <td className="px-4 py-3">
           <p className="text-token-primary truncate max-w-[320px]">
             {isUnreasonable && (
-              <span className="text-[10px] text-red-300 border border-red-500/30 bg-red-500/10 rounded px-1 mr-1.5 align-middle">不合理</span>
+              <span className="text-[10px] text-[color:var(--accent-fg-danger)] border border-red-500/30 bg-red-500/10 rounded px-1 mr-1.5 align-middle">不合理</span>
             )}
             {item.name}
           </p>

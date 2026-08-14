@@ -358,7 +358,7 @@ export default function SpeechAgentCreatePage() {
           )}
 
           {error && (
-            <div className="px-3 py-2 rounded-lg border border-rose-400/40 bg-rose-500/10 text-sm text-rose-200">
+            <div className="px-3 py-2 rounded-lg border border-rose-400/40 bg-rose-500/10 text-sm text-[color:var(--accent-fg-danger)]">
               {error}
             </div>
           )}

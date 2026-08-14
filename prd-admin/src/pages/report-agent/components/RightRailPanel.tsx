@@ -120,7 +120,7 @@ export function RightRailPanel({ reportId, viewSummary, versionHistory, fallback
                       {user.isFrequent && (
                         <span
                           className="shrink-0 text-[10px] px-1 py-0.5 rounded"
-                          style={{ color: 'rgba(16,185,129,.95)', background: 'rgba(16,185,129,.14)' }}
+                          style={{ color: 'var(--accent-fg-success)', background: 'rgba(16,185,129,.14)' }}
                         >
                           常来
                         </span>

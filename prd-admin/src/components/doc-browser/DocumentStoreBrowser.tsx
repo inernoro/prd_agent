@@ -476,7 +476,7 @@ function ListManagerDialog({
             <button
               onClick={() => { if (adding.trim()) void onAdd(adding.trim()).then(() => setAdding('')); }}
               disabled={!adding.trim()}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 disabled:opacity-40 text-sm"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 disabled:opacity-40 text-sm"
             >
               <Plus size={14} /> 新增
             </button>

@@ -466,7 +466,7 @@ export default function ImageGenPanel() {
                           style={{
                             background: 'rgba(168, 85, 247, 0.12)',
                             border: '1px solid rgba(168, 85, 247, 0.28)',
-                            color: 'rgba(168, 85, 247, 0.95)',
+                            color: 'var(--accent-fg-violet)',
                           }}
                           title={
                             it.ratioAdjusted

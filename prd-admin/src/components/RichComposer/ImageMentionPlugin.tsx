@@ -284,7 +284,7 @@ export function ImageMentionPlugin({
               justifyContent: 'center',
               fontSize: 10,
               fontWeight: 700,
-              color: 'rgba(99, 102, 241, 1)',
+              color: 'var(--accent-fg-violet)',
             }}
           >
             {opt.refId}

@@ -917,7 +917,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
                     <div className="flex items-start gap-2.5">
                       <div className="w-7 h-7 rounded-[8px] flex items-center justify-center flex-shrink-0 mt-0.5"
                         style={{ background: 'rgba(147,51,234,0.1)', border: '1px solid rgba(147,51,234,0.15)' }}>
-                        <g.icon size={13} style={{ color: 'rgba(147,51,234,0.9)' }} />
+                        <g.icon size={13} style={{ color: 'var(--accent-fg-violet)' }} />
                       </div>
                       <div className="min-w-0 pr-4">
                         <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
@@ -1083,7 +1083,7 @@ export function EmergenceExplorerPage() {
                 <div key={s.step} className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center">
                   <div className="w-8 h-8 rounded-full flex items-center justify-center mb-2.5"
                     style={{ background: 'rgba(147,51,234,0.08)', border: '1px solid rgba(147,51,234,0.12)' }}>
-                    <s.icon size={14} style={{ color: 'rgba(147,51,234,0.85)' }} />
+                    <s.icon size={14} style={{ color: 'var(--accent-fg-violet)' }} />
                   </div>
                   <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
                     {s.title}

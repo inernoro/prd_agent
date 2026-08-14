@@ -1884,7 +1884,7 @@ function AutosaveIndicator({ status, lastSavedAt, lastError, onRetry }: Autosave
     return (
       <span
         className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full"
-        style={{ color: 'rgba(125, 211, 252, 0.95)', background: 'rgba(56, 189, 248, 0.1)' }}
+        style={{ color: 'var(--accent-fg-blue)', background: 'rgba(56, 189, 248, 0.1)' }}
       >
         <MapSpinner size={12} />
         保存中…
@@ -1896,7 +1896,7 @@ function AutosaveIndicator({ status, lastSavedAt, lastError, onRetry }: Autosave
       <button
         onClick={onRetry}
         className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full transition-colors"
-        style={{ color: 'rgba(248, 113, 113, 0.95)', background: 'rgba(239, 68, 68, 0.1)' }}
+        style={{ color: 'var(--accent-fg-danger)', background: 'rgba(239, 68, 68, 0.1)' }}
         title={lastError || ''}
       >
         <AlertCircle size={12} />
@@ -1910,7 +1910,7 @@ function AutosaveIndicator({ status, lastSavedAt, lastError, onRetry }: Autosave
     return (
       <span
         className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full"
-        style={{ color: 'rgba(134, 239, 172, 0.9)', background: 'rgba(34, 197, 94, 0.08)' }}
+        style={{ color: 'var(--accent-fg-success)', background: 'rgba(34, 197, 94, 0.08)' }}
       >
         <Check size={12} />
         已保存 · {hh}:{mm}

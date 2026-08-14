@@ -215,8 +215,8 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
               className="flex items-center gap-2 p-3 rounded-lg"
               style={{ background: 'rgba(120, 220, 180, 0.1)', border: '1px solid rgba(120, 220, 180, 0.25)' }}
             >
-              <Check size={16} style={{ color: 'rgba(120, 220, 180, 0.95)' }} />
-              <span className="text-sm" style={{ color: 'rgba(120, 220, 180, 0.95)' }}>链接已生成并复制到剪贴板</span>
+              <Check size={16} style={{ color: 'var(--accent-fg-success)' }} />
+              <span className="text-sm" style={{ color: 'var(--accent-fg-success)' }}>链接已生成并复制到剪贴板</span>
             </div>
 
             <div className="flex items-center gap-2">

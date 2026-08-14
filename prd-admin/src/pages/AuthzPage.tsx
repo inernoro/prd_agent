@@ -636,7 +636,7 @@ export default function AuthzPage() {
                             className="text-[10px] px-2 py-0.5 rounded-md"
                             style={{
                               background: 'rgba(99, 102, 241, 0.2)',
-                              color: 'rgba(99, 102, 241, 0.9)',
+                              color: 'var(--accent-fg-violet)',
                             }}
                           >
                             当前

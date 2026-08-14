@@ -207,7 +207,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
         {/* header */}
         <div className="flex shrink-0 items-center gap-3 border-b px-5 py-4" style={{ borderColor: 'rgba(148,163,184,0.14)' }}>
           <div className="flex h-9 w-9 items-center justify-center rounded-xl border" style={{ background: 'rgba(20,184,166,0.10)', borderColor: 'rgba(45,212,191,0.28)' }}>
-            <Layers size={16} style={{ color: 'rgb(94,234,212)' }} />
+            <Layers size={16} style={{ color: 'var(--accent-fg-blue)' }} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-semibold leading-tight">批量同步</div>
@@ -288,11 +288,11 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                   )}
 
                   <div className="mt-3 rounded-lg border px-3 py-2 text-[11px] leading-5" style={{ borderColor: 'rgba(45,212,191,0.18)', background: 'rgba(20,184,166,0.05)', color: 'var(--text-muted)' }}>
-                    <span style={{ color: 'rgb(94,234,212)', fontWeight: 600 }}>默认策略，无需设置：</span>保留原时间、覆盖同名条目、图片重传到目标域名，完成后回读校验。
+                    <span style={{ color: 'var(--accent-fg-blue)', fontWeight: 600 }}>默认策略，无需设置：</span>保留原时间、覆盖同名条目、图片重传到目标域名，完成后回读校验。
                   </div>
 
                   {(loadError || transferError) && (
-                    <div className="mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-[12px]" style={{ borderColor: 'rgba(248,113,113,0.28)', background: 'rgba(127,29,29,0.16)', color: 'rgb(252,165,165)' }}>
+                    <div className="mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-[12px]" style={{ borderColor: 'rgba(248,113,113,0.28)', background: 'rgba(127,29,29,0.16)', color: 'var(--accent-fg-danger)' }}>
                       <AlertTriangle size={15} className="mt-0.5 shrink-0" /><span>{transferError || loadError}</span>
                     </div>
                   )}

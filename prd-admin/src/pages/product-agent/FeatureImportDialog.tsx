@@ -135,7 +135,7 @@ export function FeatureImportDialog({
                 <MapSpinner size={14} /> <span className="ml-2">正在加载正式版本…</span>
               </div>
             ) : releases.length === 0 ? (
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200/75">
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]/75">
                 还没有正式版本。请先在单产品「版本」中申领正式版本号后再导入功能目录。
               </div>
             ) : (

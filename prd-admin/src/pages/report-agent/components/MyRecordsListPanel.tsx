@@ -97,12 +97,12 @@ function buildCategoryConfig(isLight: boolean): Record<string, { label: string; 
     };
   }
   return {
-    development:   { label: '开发', color: 'rgba(59, 130, 246, 0.95)',  bg: 'rgba(59, 130, 246, 0.12)',  icon: Code2 },
-    meeting:       { label: '会议', color: 'rgba(168, 85, 247, 0.95)',  bg: 'rgba(168, 85, 247, 0.12)',  icon: Users },
-    communication: { label: '沟通', color: 'rgba(249, 115, 22, 0.95)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
-    documentation: { label: '文档', color: 'rgba(34, 197, 94, 0.95)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
-    testing:       { label: '测试', color: 'rgba(236, 72, 153, 0.95)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
-    todo:          { label: 'Todo', color: 'rgba(16, 185, 129, 0.95)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
+    development:   { label: '开发', color: 'var(--accent-fg-blue)',  bg: 'rgba(59, 130, 246, 0.12)',  icon: Code2 },
+    meeting:       { label: '会议', color: 'var(--accent-fg-violet)',  bg: 'rgba(168, 85, 247, 0.12)',  icon: Users },
+    communication: { label: '沟通', color: 'var(--accent-fg-warning)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
+    documentation: { label: '文档', color: 'var(--accent-fg-success)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
+    testing:       { label: '测试', color: 'var(--accent-fg-danger)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
+    todo:          { label: 'Todo', color: 'var(--accent-fg-success)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
     other:         { label: '其他', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.12)', icon: MoreHorizontal },
   };
 }
