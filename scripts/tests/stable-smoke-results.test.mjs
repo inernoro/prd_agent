@@ -208,6 +208,63 @@ test('单环境技术报告明确展示另一环境未选择', () => {
   }
 });
 
+test('正式环境只读报告只统计安全门实际选择的用例', () => {
+  const runDirectory = mkdtempSync(join(tmpdir(), 'stable-smoke-production-only-report-'));
+  try {
+    const planPath = join(runDirectory, 'plan.json');
+    const productionResultPath = join(runDirectory, 'production.json');
+    const summaryPath = join(runDirectory, 'summary.json');
+    const reportPath = join(runDirectory, 'report.md');
+    const supervisorPath = join(runDirectory, 'supervisor.md');
+    writeFileSync(planPath, JSON.stringify({
+      verdict: 'pass',
+      requiredCaseIdsByEnvironment: {
+        production: ['CORE-001', 'REC-003', 'VIDEO-004'],
+      },
+      featureLines: [],
+    }));
+    writeFileSync(productionResultPath, JSON.stringify({
+      suites: [{
+        specs: [{
+          title: '[CORE-001] 首页可用',
+          tests: [{ results: [{ status: 'passed', duration: 10 }] }],
+        }],
+      }],
+    }));
+    writeFileSync(summaryPath, JSON.stringify({
+      productionSafetyGate: {
+        restricted: true,
+        grep: '\\[CORE-001\\]',
+        reasons: ['本轮仅执行正式环境只读检查'],
+      },
+      executions: [{
+        environment: 'production',
+        requiredCaseIds: ['CORE-001', 'REC-003', 'VIDEO-004'],
+        grep: '\\[CORE-001\\]',
+      }],
+    }));
+
+    const result = spawnSync(process.execPath, [
+      'scripts/render-stable-smoke-report.mjs',
+      '--plan', planPath,
+      '--production-input', productionResultPath,
+      '--execution-summary', summaryPath,
+      '--output', reportPath,
+      '--supervisor-output', supervisorPath,
+      '--environments', 'production',
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr);
+    const report = readFileSync(reportPath, 'utf8');
+    assert.match(report, /计划 1 条环境用例，通过 1 条，失败 0 条，未执行 0 条/);
+    assert.doesNotMatch(report, /REC-003|VIDEO-004/);
+    const supervisor = readFileSync(supervisorPath, 'utf8');
+    assert.doesNotMatch(supervisor, /REC-003|VIDEO-004/);
+  } finally {
+    rmSync(runDirectory, { recursive: true, force: true });
+  }
+});
+
 function expectCaseIds(actual, expected) {
   assert.deepEqual(actual, expected);
 }

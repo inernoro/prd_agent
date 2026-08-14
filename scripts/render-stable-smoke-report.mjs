@@ -69,25 +69,26 @@ const evidenceRows = [
 const requiredCaseIdsByEnvironment = Object.fromEntries(selectedEnvironments.map((targetEnvironment) => {
   const execution = executionSummary?.executions?.find((item) => item.environment === targetEnvironment);
   const fromExecution = Array.isArray(execution?.requiredCaseIds) ? execution.requiredCaseIds : null;
+  const plannedCaseIds = fromExecution
+    || plan?.requiredCaseIdsByEnvironment?.[targetEnvironment]
+    || plan?.requiredCaseIds
+    || [];
+  const environmentRows = evidenceRows.filter((row) => row.environment === targetEnvironment);
+  const productionReadOnlyGrep = targetEnvironment === 'production'
+    && selectedEnvironments.length === 1
+    && executionSummary?.productionSafetyGate?.restricted === true
+    ? executionSummary.productionSafetyGate.grep
+    : '';
+  const effectiveGrep = productionReadOnlyGrep || execution?.grep || grepExpression;
   return [
     targetEnvironment,
-    fromExecution
-      || plan?.requiredCaseIdsByEnvironment?.[targetEnvironment]
-      || plan?.requiredCaseIds
-      || [],
+    effectiveGrep
+      ? selectRequiredCaseIds(plannedCaseIds, effectiveGrep, environmentRows)
+      : plannedCaseIds,
   ];
 }));
 const rows = reconcileCaseCoverage(
-  grepExpression
-    ? Object.fromEntries(Object.entries(requiredCaseIdsByEnvironment).map(([targetEnvironment, caseIds]) => [
-      targetEnvironment,
-      selectRequiredCaseIds(
-        caseIds,
-        grepExpression,
-        evidenceRows.filter((row) => row.environment === targetEnvironment),
-      ),
-    ]))
-    : requiredCaseIdsByEnvironment,
+  requiredCaseIdsByEnvironment,
   evidenceRows,
   selectedEnvironments.length > 0 ? selectedEnvironments : ['cds', 'production'],
 );

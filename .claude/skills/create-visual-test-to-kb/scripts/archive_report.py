@@ -2581,12 +2581,18 @@ def build_interactive_html(
         )
         visual_html = ""
         if visual:
+            inconclusive_visual_count = visual.get("不能证明业务结果", 0)
+            equal_count_note = (
+                "；数字相同纯属巧合，不能一一对应"
+                if counts["未执行"] == inconclusive_visual_count
+                else "；两者不能一一对应"
+            )
             visual_html = (
                 '<div class="evidence-meaning">'
                 f'<strong>截图：采集 {visual.get("已采集且可审核", 0)} / 计划 {visual.get("计划截图槽位", 0)}</strong>'
-                f'<span>直接证明通过 {visual.get("能直接证明通过", 0)}，明确不通过 {visual.get("明确不通过", 0)}，不能证明业务结果 {visual.get("不能证明业务结果", 0)}</span>'
+                f'<span>直接证明通过 {visual.get("能直接证明通过", 0)}，明确不通过 {visual.get("明确不通过", 0)}，不能证明业务结果 {inconclusive_visual_count}</span>'
                 '<small>“已采集”只代表图、路径、时间和方法齐全，不代表业务已经通过。</small>'
-                f'<small class="coincidence-warning">功能未执行 {counts["未执行"]} 项与不能证明业务结果 {visual.get("不能证明业务结果", 0)} 张是两个独立维度；数字相同纯属巧合，不能一一对应。</small>'
+                f'<small class="coincidence-warning">功能未执行 {counts["未执行"]} 项与不能证明业务结果 {inconclusive_visual_count} 张是两个独立维度{equal_count_note}。</small>'
                 '</div>'
             )
         release_failed = (
