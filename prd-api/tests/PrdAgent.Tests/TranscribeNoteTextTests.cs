@@ -37,6 +37,8 @@ public class TranscribeNoteTextTests
     [InlineData("请提供音频文件。")]
     [InlineData("我没有听到任何内容")]
     [InlineData("谢谢观看")]
+    [InlineData("I'm sorry, I can't.")]
+    [InlineData("I’m sorry, I can’t")]
     public void LooksLikeNoSpeech_拒答与哨兵_判定为无语音(string transcript)
     {
         Assert.True(TranscribeNoteText.LooksLikeNoSpeech(transcript));
@@ -45,6 +47,8 @@ public class TranscribeNoteTextTests
     [Theory]
     [InlineData("明天上午十点开产品评审会，记得带上原型稿。")]
     [InlineData("买牛奶")]
+    [InlineData("接口返回 NO_SPEECH 时需要检查录音设备。")]
+    [InlineData("客户说 I'm sorry, I can't. 然后离开了。")]
     // 超过 40 字的真实内容即使包含敏感词也不误伤
     [InlineData("会上老板说请播放上次的演示视频，然后大家讨论了第三季度的目标和预算分配，最后定了三条待办。")]
     public void LooksLikeNoSpeech_真实语音_不误伤(string transcript)

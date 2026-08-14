@@ -38,7 +38,24 @@ public static class TranscribeNoteText
     public static bool LooksLikeNoSpeech(string transcript)
     {
         var t = transcript.Trim();
-        if (t.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase)) return true;
+        // NO_SPEECH 只能作为受控的完整哨兵出现。不能做包含匹配，否则会议里讨论
+        // “接口返回 NO_SPEECH”也会被误判为静音并丢弃真实发言。
+        if (t.Equals("NO_SPEECH", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("NO_SPEECH。", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("好的，NO_SPEECH", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("好的，NO_SPEECH。", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        // CDS 实机复现：纯静音被上游作为聊天请求处理后返回这句独立拒答。
+        // 只接受完整等值，不用 Contains，避免误伤会议里引用该原话的真实发言。
+        if (t.Equals("I'm sorry, I can't.", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I'm sorry, I can't", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I’m sorry, I can’t.", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I’m sorry, I can’t", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
         if (t.Length > 40) return false;
         string[] patterns =
         {
