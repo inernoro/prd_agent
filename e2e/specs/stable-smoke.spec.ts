@@ -824,6 +824,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       entryAssets.some((url) => /\.(?:[cm]?[jt]sx?)$/.test(new URL(url).pathname)),
       '首页缺少可执行入口脚本',
     ).toBe(true);
+    const hasApplicationStyles = await page.locator('link[rel="stylesheet"][href], style[data-vite-dev-id]').evaluateAll((elements) => (
+      elements.some((element) => {
+        if (element instanceof HTMLLinkElement) {
+          const url = new URL(element.href);
+          return url.origin === window.location.origin && /\.css$/.test(url.pathname);
+        }
+        return element instanceof HTMLStyleElement && Boolean(element.textContent?.trim());
+      })
+    ));
+    expect(
+      hasApplicationStyles,
+      '首页缺少应用样式：生产构建应加载同源 CSS，Vite 开发模式应注入 data-vite-dev-id 样式',
+    ).toBe(true);
 
     for (const assetUrl of entryAssets) {
       const asset = await page.request.get(assetUrl);

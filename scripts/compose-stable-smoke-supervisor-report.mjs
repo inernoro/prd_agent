@@ -96,6 +96,12 @@ function plainCell(value) {
     .trim();
 }
 
+function markdownTableCell(value) {
+  return String(value ?? '')
+    .replace(/\r?\n/g, '<br>')
+    .replace(/\|/g, '\\|');
+}
+
 function countsFromExecutionSummary(executionSummary) {
   const coverage = executionSummary?.coverage;
   if (!coverage) return null;
@@ -465,7 +471,21 @@ export function renderBusinessDecisionPage(
     for (const failure of failures) {
       const details = businessFailureDetails(failure);
       const recovery = businessRecoveryAction(failure.reason);
-      lines.push(`| ${failure.reason} | ${failure.count} | ${failure.modules.join('、') || '未标注'} | ${failure.caseIds.join('、') || '未标注'} | ${details.actual} | ${details.expected} | ${details.reproduction} | [查看逐项失败结果](#未通过与未执行逐项清单) | ${failure.methodLink || '查看逐项账本'} | ${failure.owners.join('、') || '待认领'} | ${deadline} | ${recovery} |`);
+      const cells = [
+        failure.reason,
+        failure.count,
+        failure.modules.join('、') || '未标注',
+        failure.caseIds.join('、') || '未标注',
+        details.actual,
+        details.expected,
+        details.reproduction,
+        '[查看逐项失败结果](#未通过与未执行逐项清单)',
+        failure.methodLink || '查看逐项账本',
+        failure.owners.join('、') || '待认领',
+        deadline,
+        recovery,
+      ].map(markdownTableCell);
+      lines.push(`| ${cells.join(' | ')} |`);
     }
   }
   lines.push('');

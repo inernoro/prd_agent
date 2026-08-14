@@ -8,6 +8,25 @@ import {
   renderHumanReadableAcceptanceDesign,
 } from '../compose-stable-smoke-supervisor-report.mjs';
 
+test('失败详情包含表格分隔符时仍保持单元格边界', () => {
+  const report = renderBusinessDecisionPage('', `
+## 未通过与未执行逐项清单
+
+| 模块 | 验收项 | 结果 | 详细测试路径 | 问题或关闭条件 | 负责人 | 查看方法 |
+|---|---|---|---|---|---|---|
+| 视觉创作 | 双图生成 | 不通过 | 首页 → 视觉创作 → 双图生成 | Expected /foo\\|bar/，实际未匹配 | 视觉负责人 | [查看方法](#method-vis-003) |
+`, '', {
+    coverage: { total: 1, passed: 0, failed: 1, notRun: 0 },
+  }, 'fail');
+
+  const failureLine = report.split('\n').find((line) => (
+    line.includes('Expected /foo') && line.includes('查看逐项失败结果')
+  )) || '';
+  assert.match(failureLine, /Expected \/foo\\\|bar\//);
+  const unescapedSeparators = [...failureLine.matchAll(/(?<!\\)\|/g)];
+  assert.equal(unescapedSeparators.length, 13);
+});
+
 test('结论与处理顺序使用用例级守恒口径并解释截图证明力', () => {
   const lead = '> 主管结论：不通过。共 191 项，48 项通过、31 项不通过、112 项未执行。';
   const failureSection = `## 未通过与未执行逐项清单
