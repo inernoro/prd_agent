@@ -50,6 +50,18 @@ public class AudioTranscriptionUserErrorTests
     }
 
     [Fact]
+    public void Classify_AllCandidatesReturnedEmptyTextStopsAutomaticRetry()
+    {
+        var failure = AudioTranscriptionUserError.Classify(
+            new InvalidOperationException($"{AudioTranscriptionUserError.AllCandidatesNoSpeech}: 所有候选均为空"));
+
+        Assert.Equal(AudioTranscriptionUserError.NoSpeech, failure.Code);
+        Assert.False(failure.AutomaticRetryAllowed);
+        Assert.Contains("没有识别到有效语音", failure.UserMessage);
+        Assert.Contains("原始音频已保留", failure.UserMessage);
+    }
+
+    [Fact]
     public void RetryOutcome_DoesNotPromiseAutomaticRetryWhenRunWillStop()
     {
         var failure = AudioTranscriptionUserError.Classify(new InvalidOperationException("HTTP 503"));

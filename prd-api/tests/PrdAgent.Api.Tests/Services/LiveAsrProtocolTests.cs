@@ -240,6 +240,11 @@ public class LiveAsrProtocolTests
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
         result.Transcript.ShouldContain("身体健康");
+        events[0].Type.ShouldBe(LiveAsrEventTypes.Ready);
+        var initialMessage = events[0].Message.ShouldNotBeNull();
+        initialMessage.ShouldContain("分段实时转写");
+        initialMessage.ShouldContain("5 秒");
+        initialMessage.ShouldNotContain("不可用");
         events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Partial && evt.Stable);
         events.ShouldContain(evt =>
             evt.Type == LiveAsrEventTypes.Degraded
@@ -574,7 +579,8 @@ public class LiveAsrProtocolTests
         readyEvent.Model.ShouldBeNull();
         var readyMessage = readyEvent.Message.ShouldNotBeNull();
         readyMessage.ShouldContain("录音仍会安全保存");
-        readyMessage.ShouldContain("重试完整转写");
+        readyMessage.ShouldContain("完整音频自动校准");
+        readyMessage.ShouldNotContain("不可用");
         readyMessage.ShouldNotContain("供应商");
         readyMessage.ShouldNotContain("Provider");
         readyMessage.ShouldNotContain("模型");

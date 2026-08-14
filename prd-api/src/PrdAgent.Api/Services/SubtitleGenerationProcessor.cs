@@ -788,6 +788,9 @@ public class SubtitleGenerationProcessor
             }
             catch (SubtitleAsrException ex)
             {
+                ex.Diagnostic.TryGetValue("reason", out var failureStage);
+                if (failureStage is not string)
+                    ex.Diagnostic.TryGetValue("stage", out failureStage);
                 failures.Add(new Dictionary<string, object?>
                 {
                     ["attempt"] = index + 1,
@@ -796,20 +799,29 @@ public class SubtitleGenerationProcessor
                     ["platformId"] = candidate.ActualPlatformId,
                     ["platformName"] = candidate.ActualPlatformName,
                     ["exchangeTransformerType"] = candidate.ExchangeTransformerType,
+                    ["stage"] = failureStage,
                     ["error"] = ex.Message,
                 });
 
                 if (index == candidates.Count - 1)
                 {
-                    if (candidates.Count == 1)
-                        throw;
-
                     var diagnostic = new Dictionary<string, object?>(ex.Diagnostic)
                     {
                         ["fallbackAttempts"] = failures,
                     };
+                    var allCandidatesReturnedNoSpeech = failures.Count == candidates.Count
+                        && failures.All(failure =>
+                            failure.GetValueOrDefault("stage") is string stage
+                            && (string.Equals(stage, "empty-content", StringComparison.Ordinal)
+                                || string.Equals(stage, "no-speech-content", StringComparison.Ordinal)
+                                || string.Equals(stage, "no-speech", StringComparison.Ordinal)));
+                    var message = allCandidatesReturnedNoSpeech
+                        ? $"{AudioTranscriptionUserError.AllCandidatesNoSpeech}: 所有 ASR 候选均成功响应但没有识别出有效语音"
+                        : candidates.Count == 1
+                            ? ex.Message
+                            : $"自动尝试 {candidates.Count} 个 ASR 方案仍失败：{ex.Message}";
                     throw new SubtitleAsrException(
-                        $"自动尝试 {candidates.Count} 个 ASR 方案仍失败：{ex.Message}",
+                        message,
                         diagnostic);
                 }
 
@@ -1598,7 +1610,7 @@ public class SubtitleGenerationProcessor
     private static Dictionary<string, object?> BuildHttpDiagnostic(
         GatewayModelResolution gwResolution, GatewayRawResponse? rawResp, Dictionary<string, object> fields)
     {
-        return new Dictionary<string, object?>
+        var diagnostic = new Dictionary<string, object?>
         {
             ["stage"] = "whisper-http",
             ["model"] = gwResolution?.ActualModel,
@@ -1614,6 +1626,9 @@ public class SubtitleGenerationProcessor
             // 排查提示：当响应体含"暂不支持该接口/不支持/not supported"等字样时，多半是平台路由问题
             ["hint"] = "如错误为「暂不支持该接口」，请检查模型池的平台 baseUrl 是否指向真支持 /v1/audio/transcriptions 的服务（如 https://api.gpt.ge / api.openai.com / api.groq.com/openai）",
         };
+        if (fields.TryGetValue("reason", out var reason))
+            diagnostic["reason"] = reason;
+        return diagnostic;
     }
 
     /// <summary>

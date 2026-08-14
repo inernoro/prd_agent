@@ -56,7 +56,7 @@ public sealed class LiveAsrBatchFallbackService
             // 首个成功窗口开始写入 partial/final 与会话结果。
             Provider = null,
             Model = null,
-            Message = "实时转写暂时不可用，录音仍会安全保存；结束录音后可重试完整转写。",
+            Message = "已启用分段实时转写，约 5 秒后显示第一段；录音仍会安全保存，结束后将用完整音频自动校准。",
         });
 
         // 候选状态属于整个录音会话，不属于单个五秒窗口。某候选完整失败后从

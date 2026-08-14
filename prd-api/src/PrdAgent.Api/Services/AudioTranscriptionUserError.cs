@@ -7,6 +7,7 @@ public static class AudioTranscriptionUserError
 {
     public const string RouteContractInvalid = "ASR_ROUTE_CONTRACT_INVALID";
     public const string NoSpeech = "ASR_NO_SPEECH";
+    public const string AllCandidatesNoSpeech = "ASR_ALL_CANDIDATES_NO_SPEECH";
     public const string AudioTooLong = "ASR_AUDIO_TOO_LONG";
     public const string UpstreamTemporary = "ASR_UPSTREAM_TEMPORARY";
 
@@ -28,7 +29,8 @@ public static class AudioTranscriptionUserError
 
         if (message.Contains("没有识别到有效语音", StringComparison.OrdinalIgnoreCase)
             || message.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("无有效语音", StringComparison.OrdinalIgnoreCase))
+            || message.Contains("无有效语音", StringComparison.OrdinalIgnoreCase)
+            || message.Contains(AllCandidatesNoSpeech, StringComparison.OrdinalIgnoreCase))
         {
             return new Failure(
                 NoSpeech,
