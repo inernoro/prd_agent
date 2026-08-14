@@ -187,7 +187,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { frameRate: '60fps (RAF)', renderer: 'Three.js' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#11111f' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#11111f' }}>
         <RainBackground opacity={0.5} rainCount={8000} cloudCount={15} />
       </div>
     ),
@@ -206,7 +206,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '0.5-1s', renderer: 'CSS' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#11111f' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#11111f' }}>
         <CssRainBackground opacity={0.6} rainCount={80} />
       </div>
     ),
@@ -227,7 +227,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { frameRate: '60fps (RAF)', renderer: 'Canvas' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#0d0d11' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#0d0d11' }}>
         <RecursiveGridBackdrop depth={60} speedDegPerSec={1.5} stroke="rgba(255, 105, 180, 0.6)" />
       </div>
     ),
@@ -244,7 +244,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '3-4s', renderer: 'CSS' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#0d0d11' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#0d0d11' }}>
         <ConvergingBeamsBackdrop durationMs={4000} stopAt={0.6} />
       </div>
     ),
@@ -279,7 +279,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { frameRate: '60fps (RAF)', renderer: 'Canvas' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#0a0a0c' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#0a0a0c' }}>
         <ParticleVortex particleCount={300} mouseFollow />
       </div>
     ),
@@ -301,7 +301,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '0.5s', renderer: 'CSS' },
     render: () => (
-      <div className="flex items-center justify-center h-full" style={{ background: '#1a1a2e' }}>
+      <div className="surface-tone-dark flex items-center justify-center h-full" style={{ background: '#1a1a2e' }}>
         <HeartLikeButton size={80} />
       </div>
     ),
@@ -377,7 +377,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '1.4s', delay: '50ms × 圆环', renderer: 'CSS' },
     render: (size) => (
-      <div className="flex items-center justify-center h-full p-4" style={{ background: '#0a0a12' }}>
+      <div className="surface-tone-dark flex items-center justify-center h-full p-4" style={{ background: '#0a0a12' }}>
         <SliceFlipTransition
           imageA={DEMO_IMAGES[0]}
           imageB={DEMO_IMAGES[1]}

@@ -258,7 +258,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
 
   return (
     <div
-      className="border-l border-l-token-subtle" style={{ width: 420, height: '100%', display: 'flex', flexDirection: 'column', background: 'rgba(18, 18, 24, 0.94)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+      className="surface-tone-dark border-l border-l-token-subtle" style={{ width: 420, height: '100%', display: 'flex', flexDirection: 'column', background: 'rgba(18, 18, 24, 0.94)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
     >
       {/* Header */}
       <div

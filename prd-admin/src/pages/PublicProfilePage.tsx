@@ -373,7 +373,7 @@ function SitesGrid({
           rel="noopener noreferrer"
           className="group flex flex-col overflow-hidden rounded-2xl border border-token-subtle bg-token-nested transition-all hover-border-token hover-bg-soft hover:shadow-[0_0_24px_rgba(56,189,248,0.15)]"
         >
-          <div className="relative overflow-hidden" style={{ aspectRatio: '16 / 9', background: '#0f1014' }}>
+          <div className="surface-tone-dark relative overflow-hidden" style={{ aspectRatio: '16 / 9', background: '#0f1014' }}>
             {s.coverImageUrl ? (
               <img
                 src={s.coverImageUrl}

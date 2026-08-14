@@ -169,7 +169,7 @@ function ToolbarButton(props: {
       {/* Tooltip */}
       {showTooltip && (
         <div
-          className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap pointer-events-none"
+          className="surface-tone-dark absolute left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap pointer-events-none"
           style={{
             background: 'rgba(30, 30, 35, 0.95)',
             color: '#fff',
@@ -430,7 +430,7 @@ function QuickInputBox(props: {
   return (
     <div className="max-w-full sm:max-w-[680px] w-full mx-auto px-3 sm:px-6 mt-8">
       <div
-        className="rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
+        className="surface-tone-dark rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
         style={{
           ...glassInputArea,
           // 暖褐色调磨砂玻璃，与金色主题协调
@@ -454,7 +454,7 @@ function QuickInputBox(props: {
           {/* 拖拽图片时的提示蒙层 */}
           {isDragging && (
             <div
-              className="absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-[16px] pointer-events-none"
+              className="surface-tone-dark absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-[16px] pointer-events-none"
               style={{
                 background: 'rgba(28, 24, 20, 0.92)',
                 border: '1px dashed rgba(99, 102, 241, 0.6)',
@@ -1289,7 +1289,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   return (
     <div
-      className="h-full min-h-0 flex flex-col overflow-auto relative"
+      className="surface-tone-dark h-full min-h-0 flex flex-col overflow-auto relative"
       style={{ background: '#0a0a0c' }}
     >
       {/* 夜景背景 */}

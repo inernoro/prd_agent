@@ -21,7 +21,7 @@ export function SizePickerPanel({ size, onSizeChange, width = 260 }: SizePickerP
 
   return (
     <div
-      className="rounded-[14px] p-3"
+      className="surface-tone-dark rounded-[14px] p-3"
       style={{
         width,
         background: 'rgba(32, 32, 36, 0.96)',

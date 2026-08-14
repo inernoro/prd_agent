@@ -859,7 +859,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
           {/* 图例 */}
           <Panel position="bottom-left">
             <div
-              className="flex items-center gap-3.5 px-3.5 py-2 rounded-[10px]"
+              className="surface-tone-dark flex items-center gap-3.5 px-3.5 py-2 rounded-[10px]"
               style={{
                 background: 'rgba(15,16,20,0.85)',
                 border: '1px solid rgba(255,255,255,0.1)',

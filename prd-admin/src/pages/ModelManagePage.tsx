@@ -1389,7 +1389,7 @@ export default function ModelManagePage() {
             }}
           >
             <div
-              className="fixed z-61 w-[220px] rounded-[14px] p-1.5"
+              className="surface-tone-dark fixed z-61 w-[220px] rounded-[14px] p-1.5"
               style={{
                 left: platformCtxMenu.x,
                 top: platformCtxMenu.y,

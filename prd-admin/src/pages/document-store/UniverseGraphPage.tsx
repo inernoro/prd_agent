@@ -871,7 +871,7 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
   // 早退会让顶层路由(/document-store/universe)首进时 canvas 不存在、循环永远没挂上。
   // 始终渲染完整布局,加载态由画布容器内的覆盖层承担。
   return (
-    <div className="h-full flex-1 flex flex-col" style={{ background: '#16161d', color: '#cfcfcf', minHeight: 0 }}>
+    <div className="surface-tone-dark h-full flex-1 flex flex-col" style={{ background: '#16161d', color: 'var(--text-secondary)', minHeight: 0 }}>
       {/* ── 实体顶栏（对齐知识星球顶栏 token,不再让控件浮在画布上看不清） ── */}
       <div
         className="shrink-0 border-b border-b-token-subtle"

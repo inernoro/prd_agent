@@ -340,7 +340,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   const status = statusLine(tone, { latestRun, problemRuns, progressRun });
 
   const modal = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+    <div className="surface-tone-dark fixed inset-0 z-[100] flex items-center justify-center p-4"
       style={{ background: 'rgba(5,7,12,0.70)' }} onClick={onClose}>
       <div className="flex w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border shadow-2xl"
         style={{ maxHeight: '88vh', background: 'linear-gradient(150deg,rgba(18,24,33,0.99),rgba(26,30,40,0.99))', borderColor: 'rgba(148,163,184,0.24)', color: 'var(--text-primary)' }}

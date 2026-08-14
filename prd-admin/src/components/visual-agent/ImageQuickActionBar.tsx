@@ -72,7 +72,7 @@ function ConfirmBubble({
   return (
     <div
       ref={ref}
-      className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg whitespace-nowrap z-50"
+      className="surface-tone-dark absolute left-1/2 -translate-x-1/2 bottom-full mb-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg whitespace-nowrap z-50"
       style={{
         background: 'rgba(32, 32, 38, 0.98)',
         border: '1px solid rgba(255,255,255,0.18)',

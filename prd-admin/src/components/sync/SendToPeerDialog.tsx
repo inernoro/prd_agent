@@ -189,7 +189,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   const primaryLabel = submitting ? '同步中…' : results ? '再次同步' : `开始${DIRECTION_VERB[direction]}`;
 
   const modal = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(5,7,12,0.70)' }} onClick={safeClose}>
+    <div className="surface-tone-dark fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(5,7,12,0.70)' }} onClick={safeClose}>
       <div className="flex w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border shadow-2xl"
         style={{ maxHeight: '86vh', background: 'linear-gradient(150deg,rgba(18,24,33,0.99),rgba(26,30,40,0.99))', borderColor: 'rgba(148,163,184,0.24)', color: 'var(--text-primary)' }}
         onClick={e => e.stopPropagation()}>
@@ -375,7 +375,7 @@ function BatchTopology({ count, nodeName, direction, tone, hasNode }: {
           </>)}
         </svg>
         {linked && (
-          <div className="absolute flex items-center justify-center rounded-full"
+          <div className="surface-tone-dark absolute flex items-center justify-center rounded-full"
             style={{ top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 24, height: 24, background: 'rgb(18,24,33)', border: `1.5px solid ${w.wire}`, color: w.strong }}>
             {tone === 'gold' ? <RefreshCw size={12} /> : <CheckCircle2 size={12} />}
           </div>

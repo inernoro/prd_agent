@@ -39,3 +39,5 @@
 | fix | prd-admin | 修复浅色档液态玻璃「发虚」：--glass-bg-end 相对亮度 0.8263 与页面底 #EEEAE3 的 0.8257 只差 0.0006，卡片下半截等于溶进背景、没有边界。整条渐变抬到页面底之上（收尾留 ΔL≈0.072），边框 14% → 18% |
 | test | prd-admin | 修 themeSystem 一条反向锁死 bug 的断言：原来逐字要求 ACCENT_STYLES.text 必须是 rgba 字面量——而那正是「淡底压浅字」的错误实现，谁修 bug 谁 CI 红。改为断言必须走 var(--accent-fg-*) |
 | test | e2e | 对比度审计判据补两处：失效控件按 WCAG 1.4.3 Incidental 例外不计；渐变底重采样改取元素框内众数色，不再单点采正中（隐前景偶被 React 重渲染抹掉，正中压着字形就采到文字色，报 fg===bg 的 1.00 假阳性） |
+| fix | prd-admin | 修复知识库分享页「皮肤完全反过来」：星图/双链图是钉死暗底的区域，但区域内的正文走 var(--text-*)，浅色主题下该 token 解析成深藏青 → 深字压近黑面板，实测 1.05:1（标题因为写死浅色所以可见，正文全糊）。给 DocumentGalaxyView / UniverseGraphPage / ReaderPanel 三处根容器标 surface-tone-dark，token 翻回暗色档后正文 17.46:1 |
+| fix | prd-admin | 同型镜像缺陷全仓清扫：容器钉死暗底、子树却用 token 取字色的还有 20 个文件 34 处（视觉创作工作台、PA 档案面板、涌现画布、同步中心、模型管理等），逐个标 surface-tone-dark |

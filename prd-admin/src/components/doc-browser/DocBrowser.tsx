@@ -4374,7 +4374,7 @@ function SelectionActionPopover({
   const left = Math.max(8, Math.min(window.innerWidth - estWidth - 8, selection.rect.left + selection.rect.width / 2 - estWidth / 2));
   return (
     <div
-      className="fixed z-40 h-8 px-1.5 rounded-[10px] flex items-center transition-all"
+      className="surface-tone-dark fixed z-40 h-8 px-1.5 rounded-[10px] flex items-center transition-all"
       style={{
         top,
         left,

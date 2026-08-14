@@ -9003,7 +9003,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           }}
         >
           <div
-            className="absolute rounded-[12px] py-1.5 min-w-[170px] shadow-2xl"
+            className="surface-tone-dark absolute rounded-[12px] py-1.5 min-w-[170px] shadow-2xl"
             style={{
               ...glassTooltip,
               left: imgContextMenu.x,
@@ -9096,7 +9096,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     <ChevronRight size={14} className="ml-auto opacity-50" />
                   </button>
                   <div
-                    className="absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[160px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
+                    className="surface-tone-dark absolute left-full top-0 ml-1 rounded-[10px] py-1 min-w-[160px] shadow-2xl opacity-0 pointer-events-none group-hover/export:opacity-100 group-hover/export:pointer-events-auto transition-opacity duration-150"
                     style={{
                       ...glassTooltip,
                       background: 'rgba(32,32,38,0.96)',
