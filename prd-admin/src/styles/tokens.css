@@ -335,6 +335,14 @@
   --accent-on-solid: #ffffff;
   --accent-gold: #D97757;
   --accent-gold-2: #E8A87C;
+  /*
+   * 压在 --accent-gold 实心底上的字色。两个主题的正确答案是**相反**的：
+   * 暗色档 gold 是亮橙 #D97757，要深字（深 5.57 / 白 3.12）；
+   * 浅色档 gold 是深赭 #A64B35，要白字（白 5.71 / 深 3.05）。
+   * 所以不能两边都写死同一个 #1a1a1a —— 通知未读徽章与「标记已处理」按钮
+   * 就是这么糊在浅色档的（实测 3.05:1，全部 36 条路由都有）。
+   */
+  --accent-on-gold: #1a1a1a;
   --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
 
   /* 选择/键盘游标是共享交互语义，不由页面各写一套蓝色。 */
@@ -625,6 +633,7 @@
   --accent-primary-rgb: 166, 75, 53;
   --accent-primary-solid: #A64B35;   /* 浅色档本身已够深，白字 5.71:1 */
   --accent-gold: #A64B35;
+  --accent-on-gold: #FBF8F2;   /* 浅色档按暖纸美学不用纯白（themeSystem 契约会拦纯白字面量）：暖白压深赭 gold 仍有 5.38:1 */
   --accent-gold-2: #C36F52;
   --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);
   --selection-bg: rgba(166, 75, 53, 0.10);
@@ -859,6 +868,7 @@
   --accent-fg-amber: #fbbf24;
   --accent-fg-danger: #f87171;
   --accent-fg-emerald: #34d399;
+  --accent-on-gold: #1a1a1a;
 }
 
 html, body {

@@ -342,7 +342,7 @@ export default function DefectAgentPage() {
               className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-[13px] font-semibold text-token-primary"
               style={{
                 background: 'var(--accent-gold)',
-                color: '#1a1a1a',
+                color: 'var(--accent-on-gold)',
                 boxShadow: '0 4px 14px rgba(245, 158, 11, 0.22)',
               }}
             >

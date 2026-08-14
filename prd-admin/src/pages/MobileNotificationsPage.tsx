@@ -151,7 +151,7 @@ export default function MobileNotificationsPage() {
                       <div className="mb-1 flex flex-wrap items-center gap-2">
                         <span
                           className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                          style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                          style={{ background: `${variant.accent}1f`, color: variant.fg }}
                         >
                           <ItemTypeIcon size={11} />
                           {variant.label}

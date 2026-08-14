@@ -796,11 +796,11 @@ export default function AppShell() {
           >
             {isSnoozed
               ? <BellOff size={18} style={{ color: 'var(--text-muted)' }} />
-              : <TypeIcon size={18} style={{ color: variant.accent }} />}
+              : <TypeIcon size={18} style={{ color: variant.fg }} />}
             {/* 未读数徽章 */}
             <span
               className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-bold"
-              style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+              style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
             >
               {activeNotifications.length > 999 ? '999+' : activeNotifications.length}
             </span>
@@ -835,13 +835,13 @@ export default function AppShell() {
                 className="mt-0.5 h-7 w-7 shrink-0 rounded-[9px] flex items-center justify-center"
                 style={{ background: `${variant.accent}22`, border: `1px solid ${variant.accent}55` }}
               >
-                <TypeIcon size={15} style={{ color: variant.accent }} />
+                <TypeIcon size={15} style={{ color: variant.fg }} />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
                 <div className="flex items-center gap-2">
                   <span
                     className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none"
-                    style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                    style={{ background: `${variant.accent}1f`, color: variant.fg }}
                   >
                     {variant.label}
                   </span>
@@ -1027,10 +1027,10 @@ export default function AppShell() {
                   type="button"
                   disabled={handlingId === toastNotification.id}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-[9px] transition-all duration-100 hover:brightness-110 active:scale-[0.97] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
-                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                  style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                   onClick={() => handleNotification(toastNotification.id)}
                 >
-                  {handlingId === toastNotification.id ? <MapSpinner size={12} color="#1a1a1a" /> : null}
+                  {handlingId === toastNotification.id ? <MapSpinner size={12} color="var(--accent-on-gold)" /> : null}
                   标记已处理
                 </button>
               </div>
@@ -1090,7 +1090,7 @@ export default function AppShell() {
               {notificationCount > 0 && (
                 <span
                   className="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 rounded-full flex items-center justify-center text-[9px] font-bold"
-                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                  style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                 >
                   {notificationCount > 99 ? '99+' : notificationCount}
                 </span>
@@ -1766,7 +1766,7 @@ export default function AppShell() {
                       className="rounded-[9px] px-3 py-1.5 text-[12px] transition-all"
                       style={
                         notificationDialogTab === tab.key
-                          ? { background: 'var(--accent-gold)', color: '#1a1a1a' }
+                          ? { background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }
                           : { color: 'var(--text-muted)' }
                       }
                       onClick={() => setNotificationDialogTab(tab.key)}
@@ -1835,7 +1835,7 @@ export default function AppShell() {
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span
                                     className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                                    style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                                    style={{ background: `${variant.accent}1f`, color: variant.fg }}
                                   >
                                     <ItemTypeIcon size={11} />
                                     {variant.label}
@@ -1923,7 +1923,7 @@ export default function AppShell() {
                                 <button
                                   type="button"
                                   className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
-                                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                                  style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                                   onClick={() => handleNotification(item.id)}
                                 >
                                   标记已处理
